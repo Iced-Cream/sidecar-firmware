@@ -1,0 +1,35 @@
+# The required status check "test": the tests that need no hardware, no firmware and no cross toolchain
+# (tools/run_portable_tests.sh), on a Linux runner. "core" runs the engine core's tests on macOS (core/host/um_host.cpp
+# uses Apple's JIT API, so the core's host build is macOS-only for now).
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Toolchain
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang
+      - name: ASan-friendly ASLR (the Pi tests run under ASan/UBSan)
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Portable tests
+        run: tools/run_portable_tests.sh
+        env:
+          CXX: clang++
+          CC: clang
+  core:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engines (Plaits, DaisySP, digidrum at their pinned commits)
+        run: make -C core engines
+      - name: Core tests
+        run: make -C core test -j3

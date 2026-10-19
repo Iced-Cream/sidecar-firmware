@@ -1,0 +1,23 @@
+{
+  "id": "sc.acid",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "ACID",
+  "short": "ACID",
+  "licence": "MIT",
+  "page2": "params",
+  "page2_title": "ACID MORE",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 2, "long": "Saw>Square", "short": "WAV", "look": "dial", "text": "number", "default": 0},
+    {"p": 3, "long": "Cutoff", "short": "CUT", "look": "dial", "text": "number", "default": 42},
+    {"p": 4, "long": "Resonance", "short": "RES", "look": "dial", "text": "number", "default": 92},
+    {"p": 5, "long": "Env Mod", "short": "ENV", "look": "dial", "text": "number", "default": 72},
+    {"p": 6, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 52},
+    {"p": 7, "long": "Accent", "short": "ACC", "look": "dial", "text": "number", "default": 80},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100},
+    {"p": 9, "long": "Slide Time", "short": "SLD", "look": "dial", "text": "number", "default": 40},
+    {"p": 10, "long": "Drive", "short": "DRV", "look": "dial", "text": "number", "default": 30},
+    {"p": 11, "long": "Amp Decay", "short": "ADC", "look": "dial", "text": "number", "default": 110}
+  ]
+}

@@ -1,0 +1,17 @@
+# Boot command line for the Pi 4 (config.txt's cmdline=; the kernel wants ONE line, so rt-tuning/cmdline.txt.oneline
+# is what goes on the card; this file explains each item). Lines starting with # are comments for humans only.
+#
+# console=ttyAMA0,115200      serial console on the PL011 (config.txt: dtoverlay=miniuart-bt moves Bluetooth off it)
+# root=/dev/mmcblk0p2         root partition (A/B scheme: the bootloader later picks p2 or p3)
+# rootwait ro                 wait for the card; mount read-only (the engine needs no writable root)
+# isolcpus=domain,managed_irq,3   take core 3 out of the scheduler's load balancing: only explicitly pinned threads run there
+# nohz_full=3                 no periodic tick on core 3 while a single task runs (needs isolcpus)
+# rcu_nocbs=3                 RCU callbacks are processed on other cores, not core 3
+# rcu_nocb_poll               ... without waking core 3 to offload them
+# irqaffinity=0-2             default IRQ affinity: the housekeeping cores (S10rt-tune then moves the USB/audio IRQs to 3)
+# nosoftlockup                no soft-lockup watchdog hrtimer on core 3
+# threadirqs                  force IRQ threading (implied by PREEMPT_RT; makes the intent explicit)
+# usbcore.autosuspend=-1      never autosuspend USB devices (a resume mid-stream = an Overbridge gap)
+# cpufreq.default_governor=performance   start with the performance governor before init runs
+# quiet loglevel=3            fewer console messages: boot time (target 5-8 s)
+# fsck.mode=skip              the root is read-only and rebuilt by flashing; no fsck delay

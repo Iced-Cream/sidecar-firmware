@@ -1,0 +1,19 @@
+{
+  "id": "sc.pluck",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "PLUCK",
+  "short": "PLCK",
+  "licence": "MIT",
+  "page2": "sample",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 2, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 64},
+    {"p": 3, "long": "Damping", "short": "DMP", "look": "dial", "text": "number", "default": 40},
+    {"p": 4, "long": "Colour", "short": "COL", "look": "dial", "text": "number", "default": 80},
+    {"p": 5, "long": "Pick Pos", "short": "POS", "look": "dial", "text": "number", "default": 30},
+    {"p": 6, "long": "Body", "short": "BOD", "look": "dial", "text": "number", "default": 40},
+    {"p": 7, "long": "Stretch", "short": "STR", "look": "dial", "text": "number", "default": 0},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100}
+  ]
+}

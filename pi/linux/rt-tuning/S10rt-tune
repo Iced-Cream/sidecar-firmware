@@ -1,0 +1,81 @@
+#!/bin/sh
+# Move-style real-time tuning for a Pi 4 (BusyBox/SysV init, PREEMPT_RT kernel).
+# Modelled on AbletonOS's init script, which does chrt 90/91 on the SPI IRQ threads,
+# puts all other IRQs and workqueues on cores 0-2 (mask 7) and the audio/DMA IRQs
+# on core 3 (mask 8). Here the "audio" side is: the USB host controller carrying the
+# Overbridge streams, plus any audio/DMA IRQ present, plus the engine on core 3.
+#
+# Core 3 is kept clear of general work by the cmdline (isolcpus=3 nohz_full=3
+# rcu_nocbs=3, see rt-tuning/cmdline.txt).
+#
+#   S10rt-tune start|stop|status       env: RT_DEBUG=1 prints what it does
+#
+# Mask layout:   0-2 = 0x7 (housekeeping)    3 = 0x8 (realtime)
+HK_MASK=7
+RT_MASK=8
+RT_CPU=3
+USB_PRIO=90     # USB host controller IRQ thread(s) (xhci_hcd on the Pi 4's VL805, dwc2 on the OTG port)
+AUDIO_PRIO=91   # audio / DMA IRQ thread(s): above USB, it has the harder deadline
+# IRQ names (as in /proc/interrupts and the irq/N-name thread comm):
+USB_RE='xhci|dwc2|dwc_otg|usb'
+AUDIO_RE='snd|i2s|audio|bcm2835-dma|dma'
+
+log() { echo "rt-tune: $*"; [ -n "$RT_DEBUG" ] && echo "rt-tune: $*" >/dev/kmsg 2>/dev/null; return 0; }
+FAILED=0
+w() { [ -e "$1" ] || return 0; echo "$2" >"$1" 2>/dev/null || { FAILED=$((FAILED+1)); [ -n "$RT_DEBUG" ] && log "cannot write $2 to $1"; }; return 0; }
+
+# "irq/57-xhci_hcd" threads -> "57|xhci_hcd|pid" (names may contain spaces, hence the | separator)
+irq_threads() {
+  for c in /proc/[0-9]*/comm; do
+    read -r name <"$c" 2>/dev/null || continue
+    case "$name" in irq/*-*) p=${c%/comm}; p=${p#/proc/}; n=${name#irq/}; echo "${n%%-*}|${n#*-}|$p";; esac
+  done
+}
+
+start() {
+  ncpu=$(grep -c '^processor' /proc/cpuinfo)
+  [ "$ncpu" -ge 4 ] || { log "only $ncpu cpus, skipping the core split"; HK_MASK=$(( (1<<ncpu) - 1 )); RT_MASK=$HK_MASK; RT_CPU=$((ncpu-1)); }
+
+  # 1. every IRQ (hence its RT thread) and the unbound workqueues on the housekeeping cores
+  for d in /proc/irq/[0-9]*; do w "$d/smp_affinity" "$(printf %x $HK_MASK)"; done   # some (per-cpu IRQs) refuse; fine
+  w /proc/irq/default_smp_affinity "$(printf %x $HK_MASK)"
+  w /sys/devices/virtual/workqueue/cpumask "$(printf %x $HK_MASK)"
+  for m in /sys/devices/virtual/workqueue/*/cpumask; do [ -e "$m" ] && w "$m" "$(printf %x $HK_MASK)"; done
+  # kernel threads that are not IRQ threads: keep them off core 3 too
+  taskset -p "$(printf %x $HK_MASK)" 2 >/dev/null 2>&1   # kthreadd (pid 2): its children inherit the mask
+
+  # 2. USB and audio/DMA IRQs onto core 3, RT priorities 90 / 91
+  irq_threads | while IFS="|" read -r irq name pid; do
+    if echo "$name" | grep -Eiq "$AUDIO_RE" && ! echo "$name" | grep -Eiq "$USB_RE"; then
+      w /proc/irq/$irq/smp_affinity "$(printf %x $RT_MASK)"; chrt -f -p $AUDIO_PRIO "$pid"; log "audio irq $irq $name -> cpu$RT_CPU, prio $AUDIO_PRIO"
+    elif echo "$name" | grep -Eiq "$USB_RE"; then
+      w /proc/irq/$irq/smp_affinity "$(printf %x $RT_MASK)"; chrt -f -p $USB_PRIO "$pid"; log "usb irq $irq $name -> cpu$RT_CPU, prio $USB_PRIO"
+    fi
+  done
+
+  # 3. no frequency scaling: the clock must not change under the audio thread
+  for g in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do [ -e "$g" ] && w "$g" performance; done
+
+  # 4. RT throttling off (the default 95% would stall a SCHED_FIFO thread that spins); stable timing over safety here
+  w /proc/sys/kernel/sched_rt_runtime_us -1
+  # no watchdog tick, no timer migration
+  w /proc/sys/kernel/timer_migration 0
+  w /proc/sys/kernel/watchdog 0
+  [ "$FAILED" -gt 0 ] && log "$FAILED affinity/sysctl writes refused (per-cpu IRQs, or an emulator); RT_DEBUG=1 lists them"
+  log "done"
+}
+
+status() {
+  echo "governor: $(cat /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor 2>/dev/null)"
+  irq_threads | while IFS="|" read -r irq name pid; do
+    echo "irq $irq $name pid $pid: $(chrt -p "$pid" 2>/dev/null | tr '\n' ' ') affinity $(cat /proc/irq/$irq/smp_affinity 2>/dev/null)"
+  done
+}
+
+case "$1" in
+  start) start ;;
+  stop) ;;
+  status) status ;;
+  restart|reload) start ;;
+  *) echo "usage: $0 start|stop|status"; exit 1 ;;
+esac

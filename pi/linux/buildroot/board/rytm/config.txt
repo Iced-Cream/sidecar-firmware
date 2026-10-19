@@ -1,0 +1,14 @@
+# Pi 4 firmware config (64-bit kernel, serial console on the PL011).
+start_file=start4.elf
+fixup_file=fixup4.dat
+kernel=Image
+arm_64bit=1
+disable_overscan=1
+# Bluetooth to the mini UART, so the PL011 (ttyAMA0) is the 115200 console
+dtoverlay=miniuart-bt
+enable_uart=1
+# no turbo scaling: fixed clock for timing (the kernel governor is performance too)
+force_turbo=1
+# boot speed
+boot_delay=0
+disable_splash=1

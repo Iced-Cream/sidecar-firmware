@@ -1,0 +1,56 @@
+Sidecar | Expander firmware - notices
+=====================================
+
+Copyright (c) 2026 trigcondition and contributors.
+
+Unofficial software. Not affiliated with, endorsed by or supported by Elektron
+Music Machines. "Analog Rytm" and "Overbridge" are trademarks of their owner and
+are used only to say what this software works with.
+
+Licence of this repository
+--------------------------
+Our own code is licensed under the GNU General Public License, version 2 or (at
+your option) any later version (GPL-2.0-or-later): LICENSE.
+
+Exceptions in this tree, as their headers state:
+  plugins/sc_*/, plugins/sc_render.py   the starter user machines: MIT
+                                        (SPDX headers in each file)
+  plugins/sc_grain/texture_data.h       the GRAIN texture sample: CC0 1.0
+                                        (plugins/sc_grain/LICENSE-texture.txt)
+  core/ui/fonts/                        own glyphs (core/ui/fonts/LICENSE)
+
+No Elektron firmware, and nothing extracted from it, is in this repository. The
+Rytm's USB descriptor values in teensy/ and pi/ are the interface facts a USB
+host needs to talk to the device.
+
+Third-party code
+----------------
+Third-party sources are not vendored here unless listed as "in tree". The rest is
+fetched at a pinned commit by the scripts named below into git-ignored folders.
+Full notices of every component in the released binaries: THIRD_PARTY_LICENSES.
+Licence texts: licenses/.
+
+In tree (ported or adapted; notices next to the code):
+  core/fx/rings_fx.h            Mutable Instruments Rings / stmlib (MIT)
+  core/fx/cloudseed_fx.h        Cloud Seed, Ghost Note Audio (MIT)
+  core/fx/ (others)             see core/fx/THIRD_PARTY_LICENSES.txt
+  sdk/rmp/shim/audio/           derived from PJRC Teensyduino core and Teensy
+                                Audio Library (MIT): sdk/rmp/shim/audio/NOTICE
+  sim/juno/juno_patches.h       Juno-106 patch data from shorepine/amy juno.py (MIT)
+  pi/circle/*.patch             patches to Circle (GPL-3.0-or-later)
+
+Fetched at build time:
+  Mutable Instruments eurorack  Plaits, stmlib (MIT)        sim/plaits/build.sh
+  DaisySP (Electrosmith)        (MIT)                       sim/daisysp/build.sh
+  digidrum (soejrd)             (MIT)                       sim/digidrum/build.sh
+  AMY (shorepine)               (MIT)                       sim/amy/fetch.sh
+  Befaco Noise Plethora         (GPL-3.0-or-later; one
+                                 algorithm CC BY-SA 4.0)    plugins/noiseplethora/fetch.sh
+                                                            (plugins/noiseplethora/NOTICE)
+  Circle (Rene Stange)          (GPL-3.0-or-later)          pi/circle/build.sh
+  LVGL                          (MIT)                       pi/ui/fetch-lvgl.sh
+  Teensyduino, USBHost_t36,     (MIT and others; installed
+  SdFat, LittleFS                with Teensyduino)          see THIRD_PARTY_LICENSES
+
+The Raspberry Pi build links Circle (GPL-3.0-or-later): a Pi engine binary is
+therefore distributed under GPL version 3, which GPL-2.0-or-later allows.

@@ -1,0 +1,24 @@
+{
+  "id": "sc.wavepad",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "WAVEPAD",
+  "short": "WPAD",
+  "licence": "MIT",
+  "page2": "params",
+  "page2_title": "WAVEPAD MORE",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 2, "long": "Morph", "short": "MOR", "look": "dial", "text": "number", "default": 44},
+    {"p": 3, "long": "Detune", "short": "DET", "look": "dial", "text": "number", "default": 50},
+    {"p": 4, "long": "Cutoff", "short": "CUT", "look": "dial", "text": "number", "default": 78},
+    {"p": 5, "long": "Attack", "short": "ATK", "look": "dial", "text": "number", "default": 28},
+    {"p": 6, "long": "Release", "short": "REL", "look": "dial", "text": "number", "default": 72},
+    {"p": 7, "long": "LFO Rate", "short": "RAT", "look": "dial", "text": "number", "default": 36},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100},
+    {"p": 9, "long": "LFO>Morph", "short": "LFM", "look": "dial", "text": "number", "default": 44},
+    {"p": 10, "long": "Resonance", "short": "RES", "look": "dial", "text": "number", "default": 24},
+    {"p": 11, "long": "Sub Osc", "short": "SUB", "look": "dial", "text": "number", "default": 30},
+    {"p": 12, "long": "Vel>Level", "short": "VEL", "look": "dial", "text": "number", "default": 64}
+  ]
+}

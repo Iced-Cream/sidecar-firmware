@@ -1,0 +1,149 @@
+diff --git a/lib/net/mdnsdaemon.cpp b/lib/net/mdnsdaemon.cpp
+index e6974e6..0dba14f 100644
+--- a/lib/net/mdnsdaemon.cpp
++++ b/lib/net/mdnsdaemon.cpp
+@@ -335,6 +335,17 @@ boolean CmDNSDaemon::SendMessage (boolean bResponse)
+ 		m_pNet->GetConfig ()->GetIPAddress ()->CopyTo (pTrailer->RData);
+ 
+ 		pMsg += sizeof *pTrailer;
++
++		// NSEC (RFC 6762 6.1): this name has an A record only (circle-mdns.patch)
++		static const u8 NSEC[] = {0xC0, 0x0C, 0x00, 47, 0x80, 0x01, 0x00, 0x00, 0x00, DNS_TTL_DEFAULT,
++					  0x00, 0x05, 0xC0, 0x0C, 0x00, 0x01, 0x40};
++		if ((int) sizeof NSEC > DNS_MAX_MESSAGE_SIZE-(pMsg-Buffer))
++		{
++			return FALSE;
++		}
++		memcpy (pMsg, NSEC, sizeof NSEC);
++		pMsg += sizeof NSEC;
++		pDNSHeader->nARCount = BE (1);
+ 	}
+ 
+ 	int nSize = pMsg - Buffer;
+@@ -395,60 +406,82 @@ int CmDNSDaemon::ParseQuery (const u8 *pBuffer, size_t nBufLen)
+ 		return -1;
+ 	}
+ 
+-	const u8 *pMsg = pBuffer + sizeof (TDNSHeader);
+-
+-	CString Name;
+-	u8 uchLen;
+-	boolean bFirst = TRUE;
+-	while (   nBufLen
+-	       && (uchLen = *pMsg++) != 0)
++	// rytm-teensy (circle-mdns.patch): every question, names with compression, the QU bit (macOS's first
++	// query asks for a unicast reply), case-insensitive names, and AAAA: our answer (A + an NSEC saying there is
++	// no AAAA) also ends getaddrinfo's wait for an IPv6 address (curl/browsers on macOS waited 5 s without it).
++	size_t nOff = sizeof (TDNSHeader);
++	unsigned nQuestions = be2le16 (pDNSHeader->nQDCount);
++	boolean bMatch = FALSE;
++	for (unsigned q = 0; q < nQuestions; q++)
+ 	{
+-		nBufLen--;
+-
+-		if ((uchLen & 0xC0) == 0xC0)	// compression not allowed here
++		CString Name;
++		size_t nPos = nOff;
++		boolean bJumped = FALSE;
++		unsigned nHops = 0;
++		for (;;)
+ 		{
+-			return -1;
++			if (nPos >= nBufLen)
++			{
++				return -1;
++			}
++			u8 uchLen = pBuffer[nPos];
++			if ((uchLen & 0xC0) == 0xC0)
++			{
++				if (nPos + 1 >= nBufLen || ++nHops > 8)
++				{
++					return -1;
++				}
++				size_t nTarget = (uchLen & 0x3F) << 8 | pBuffer[nPos+1];
++				if (!bJumped)
++				{
++					nOff = nPos + 2;
++				}
++				bJumped = TRUE;
++				nPos = nTarget;
++				continue;
++			}
++			if (uchLen & 0xC0)
++			{
++				return -1;
++			}
++			if (uchLen == 0)
++			{
++				if (!bJumped)
++				{
++					nOff = nPos + 1;
++				}
++				break;
++			}
++			if (nPos + 1 + uchLen > nBufLen)
++			{
++				return -1;
++			}
++			char Label[64];
++			memcpy (Label, pBuffer + nPos + 1, uchLen);
++			Label[uchLen] = '\0';
++			if (Name.GetLength () > 0)
++			{
++				Name.Append (".");
++			}
++			Name.Append (Label);
++			nPos += 1 + uchLen;
+ 		}
+-
+-		if (nBufLen < uchLen)
++		if (nOff + sizeof (TDNSQueryTrailer) > nBufLen)
+ 		{
+ 			return -1;
+ 		}
+-
+-		char Buffer[uchLen+1];
+-		memcpy (Buffer, pMsg, uchLen);
+-		Buffer[uchLen] = '\0';
+-
+-		pMsg += uchLen;
+-		nBufLen -= uchLen;
+-
+-		if (!bFirst)
++		const TDNSQueryTrailer *pTrailer = reinterpret_cast<const TDNSQueryTrailer *> (pBuffer + nOff);
++		nOff += sizeof (TDNSQueryTrailer);
++		u16 usType = be2le16 (pTrailer->nQType);
++		if (   strcasecmp (Name, m_HostnameWithDomain) == 0
++		    && (be2le16 (pTrailer->nQClass) & 0x7FFF) == DNS_QCLASS_IN
++		    && (usType == DNS_QTYPE_A || usType == 28 || usType == MDNS_QTYPE_ANY))
+ 		{
+-			Name.Append (".");
++			bMatch = TRUE;
+ 		}
+-
+-		Name.Append (Buffer);
+-
+-		bFirst = FALSE;
+-	}
+-
+-	// LOGDBG ("Query %s", Name.c_str ());
+-
+-	if (Name.Compare (m_HostnameWithDomain) != 0)
+-	{
+-		return -1;
+ 	}
+ 
+-	const TDNSQueryTrailer *pTrailer = reinterpret_cast<const TDNSQueryTrailer *> (pMsg);
+-	if (   nBufLen < sizeof *pTrailer
+-	    || (   pTrailer->nQType != BE (DNS_QTYPE_A)
+-	        && pTrailer->nQType != BE (MDNS_QTYPE_ANY))
+-	    || pTrailer->nQClass != BE (DNS_QCLASS_IN))
+-	{
+-		return -1;
+-	}
+-
+-	return 1;
++	return bMatch ? 1 : -1;
+ }
+ 
+ int CmDNSDaemon::ParseResponse (const u8 *pBuffer, size_t nBufLen, CIPAddress *pIPAddress)

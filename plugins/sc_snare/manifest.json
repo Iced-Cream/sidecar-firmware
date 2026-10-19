@@ -1,0 +1,22 @@
+{
+  "id": "sc.snare",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "SNARE",
+  "short": "SNRE",
+  "licence": "MIT",
+  "page2": "params",
+  "page2_title": "SNARE MORE",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 2, "long": "Body Decay", "short": "BDC", "look": "dial", "text": "number", "default": 40},
+    {"p": 3, "long": "Pitch Env", "short": "PEN", "look": "dial", "text": "number", "default": 52},
+    {"p": 4, "long": "Noise Tone", "short": "NTN", "look": "dial", "text": "number", "default": 74},
+    {"p": 5, "long": "Noise Decay", "short": "NDC", "look": "dial", "text": "number", "default": 50},
+    {"p": 6, "long": "Snap", "short": "SNP", "look": "dial", "text": "number", "default": 64},
+    {"p": 7, "long": "Body<>Noise", "short": "BAL", "look": "centred", "text": "bipolar", "default": 60},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100},
+    {"p": 9, "long": "Body Ratio", "short": "BRT", "look": "dial", "text": "number", "default": 64},
+    {"p": 10, "long": "Noise Reso", "short": "NRS", "look": "dial", "text": "number", "default": 30}
+  ]
+}

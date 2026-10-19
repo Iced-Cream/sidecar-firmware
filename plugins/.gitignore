@@ -1,0 +1,4 @@
+*.elf
+*.rmp
+*.dylib
+build/

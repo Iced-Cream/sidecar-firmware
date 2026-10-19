@@ -1,0 +1,6 @@
+{"id": "befaco.np.atari", "version": "1.0.0", "name": "NP ATARI", "short": "NPAT",
+ "licence": "GPL-3.0-or-later Befaco NP; Teensy Audio MIT", "page2": "sample",
+ "knobs": [
+   {"p": 2, "long": "X", "short": "X", "look": "dial", "text": "number"},
+   {"p": 3, "long": "Y", "short": "Y", "look": "dial", "text": "number"},
+   {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number"}]}

@@ -1,0 +1,30 @@
+# Boot FAT + A/B root partitions. B is an empty placeholder for the update scheme.
+image boot.vfat {
+	vfat {
+		files = {
+#BOOT_FILES#
+		}
+	}
+	size = 32M
+}
+
+image sdcard.img {
+	hdimage {
+	}
+
+	partition boot {
+		partition-type = 0xC
+		bootable = "true"
+		image = "boot.vfat"
+	}
+
+	partition rootfs_a {
+		partition-type = 0x83
+		image = "rootfs.ext4"
+	}
+
+	partition rootfs_b {
+		partition-type = 0x83
+		size = 320M
+	}
+}

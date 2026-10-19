@@ -1,0 +1,14 @@
+{
+  "id": "rytm.sine_test",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "SINE TEST",
+  "short": "SINE",
+  "licence": "MIT",
+  "page2": "sample",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar"},
+    {"p": 2, "long": "Level", "short": "LEV", "look": "fader", "text": "number"},
+    {"p": 3, "long": "Decay", "short": "DEC", "look": "dial", "text": "number"}
+  ]
+}

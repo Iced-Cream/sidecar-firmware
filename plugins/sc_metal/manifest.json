@@ -1,0 +1,23 @@
+{
+  "id": "sc.metal",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "METAL",
+  "short": "METL",
+  "licence": "MIT",
+  "page2": "params",
+  "page2_title": "METAL MORE",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 2, "long": "Ratio", "short": "RAT", "look": "list", "text": "enum",
+     "names": ["BELL", "COWBELL", "CLANK", "GONG", "CHIME", "PLATE", "GLASS", "TINE"], "default": 8},
+    {"p": 3, "long": "FM Index", "short": "IDX", "look": "dial", "text": "number", "default": 62},
+    {"p": 4, "long": "Index Decay", "short": "IDC", "look": "dial", "text": "number", "default": 42},
+    {"p": 5, "long": "Pitch Drop", "short": "DRP", "look": "dial", "text": "number", "default": 22},
+    {"p": 6, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 58},
+    {"p": 7, "long": "Tone", "short": "TON", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100},
+    {"p": 9, "long": "Feedback", "short": "FB", "look": "dial", "text": "number", "default": 12},
+    {"p": 10, "long": "Inharmonic", "short": "INH", "look": "centred", "text": "bipolar", "default": 64}
+  ]
+}

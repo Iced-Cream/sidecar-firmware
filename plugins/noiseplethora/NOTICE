@@ -1,0 +1,37 @@
+plugins/noiseplethora - notices for the packages built here (befaco.np.prime, .fibo, .phase, .fm, .pw,
+.ring, .noise, .walk, .atari; the first grouping .a, .b, .c)
+
+The algorithms are Befaco's Noise Plethora plugins (https://github.com/Befaco/Noise_plethora,
+commit 6dea19646f8acefa81cd12314fbb79c7776f1023), fetched by fetch.sh into vendor/ and compiled
+unchanged into the packages; their source is not in this repository. Copyright and licence as
+stated in each plugin header (P_<name>.hpp):
+
+  A prime PrimeCluster      Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  A prime PrimeCnoise       Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  A fibo  FibonacciCluster  Copyright (c) 2021 Befaco / Jeremy Bernstein; Creative Commons CC-BY-SA v4
+  A fibo  partialCluster    Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B phase phasingCluster    Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B phase clusterSaw        Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B fm    sineFMcluster     Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B fm    TriFMcluster      Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B pw    crCluster2        Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  B pw    pwCluster         Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C ring  radioOhNo         Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C ring  xModRingSqr       Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C ring  XModRingSine      Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C ring  CrossModRing      Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C noise resonoise         Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C noise basurilla         Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C noise Atari             Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C walk  WalkingFilomena   Copyright (c) 2021 Befaco / Julia Mugica / Ivan Paz; GPL-3.0-or-later
+  C ring  arrayOnTheRocks   Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C noise existencelsPain   Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+  C noise whoKnows          Copyright (c) 2021 Befaco / Jeremy Bernstein; GPL-3.0-or-later
+
+(the first two columns: the package in the first grouping A/B/C and in the small set.) All are
+GPL-3.0-or-later except fibo and A, GPL-3.0 (version 3 only): FibonacciCluster
+is CC BY-SA 4.0, which Creative Commons declares one-way compatible with GPLv3 (not "or later"); this
+reading is to be confirmed by the user before package fibo or A is distributed. NP's own framework (Plugin.hpp, PluginFactory.hpp, the
+firmware; CC BY-NC-SA 3.0) is not used: shim/Plugin.hpp replaces the base class.
+
+The packages also link Teensy Audio Library objects (MIT, PJRC): see sdk/rmp/shim/audio/NOTICE.

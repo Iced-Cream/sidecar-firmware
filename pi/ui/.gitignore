@@ -1,0 +1,5 @@
+*.o
+*.d
+host/obj/
+host/shot
+host/shot*.png

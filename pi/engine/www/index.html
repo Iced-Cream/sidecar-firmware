@@ -1,0 +1,1593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidecar | Expander</title>
+<style>
+  /* the wordmark face: Archivo Black (c) 2017 The Archivo Black Project Authors, SIL Open Font License 1.1
+     (http://scripts.sil.org/OFL), subset to the letters of "Sidecar"; offline, no external files */
+  @font-face { font-family:'Sidecar Word'; font-display:block; src:url(data:font/woff;base64,d09GRgABAAAAAAZYAA4AAAAAB6gAAQABAAAAAAAAAAAAAAAAAAAAAAAAAABHREVGAAAFtAAAABkAAAAgABUABUdQT1MAAAXQAAAAXAAAAHAr0iUER1NVQgAABiwAAAApAAAAKrj6uPRPUy8yAAAD9AAAAE8AAABgd1NvJWNtYXAAAAREAAAAQgAAAFQA6gGuZ2FzcAAABawAAAAIAAAACAAAABBnbHlmAAABRAAAAgUAAAJG4Y2RKmhlYWQAAAN8AAAANgAAADYJStjJaGhlYQAAA9QAAAAgAAAAJAkxBQ9obXR4AAADtAAAACAAAAAgEzUBNGxvY2EAAANoAAAAEgAAABIC9AJQbWF4cAAAA0wAAAAcAAAAIAAWAJVuYW1lAAAEiAAAARAAAAIqMaxJTXBvc3QAAAWYAAAAEwAAACD/uAAyeJxjYGTQ/v+FaR3THgZNBgYGMXFRZVMTNWUlNlERMXE5JnERNmUlNVNjETFjIzOghLoek6mJmTHj+1VM53V0dfQd3IOzAxiXdi3cfNHMUsvc1jUkL2h9G9Oe7EweFjkNKWFpKT5B1RCPqrKcThNlIRlJST4h9SjfwmwGBiYGOaC905hkGNQY9EE2iwJtNDYW5WMCWqjOBrQWaJGZMdQxospqIHuZgM4COcSUcdcMAQEVZkk9OStvPrU4+13Bc+q0leR1jzD2t3IHuqhbM8kERp8TFCtm4uRUlpdTmeIbKCclryAmwcLK6R3x75SqvJGWvC4DAyODCtAVBUBXiIHdoGyirCQKsgPoZbDPQZ49v/BgUlJa2s6FTd3z5nUzyeQXRRVaFsQUF/R0dPSAfAIyI47pKgMfgxQDg6I6TKORuKmxIIMo1MlAjzDuEbTKyy4pyY62PP6vN0wHCLzDezo7um2//dVm7Ew3TbMzUjSyh5pYDnSVCMhEUNgoQmIA4So2dmOQifdm/isxNjfSPzipZ/Kied1h3If0tZhkOnqULK20lBNyOrs7euojNQ1ArnQGepcL6EpmBnYGBmFTY1FmQWNB5+PHjzP5tbf/3cQk8PcDMDxsgKp2MMky8EPshQS+oLE4MC4Yp6g42JkfX8wr5GfIJMvNuNzB/jWTQICePgMAOfqJwgAAAHicY2BkYGDgYEhkYGcwYmBmAPEQAMgHAA+fAKwAAAAAADwAfwChAMoA9AEHASMAAAABAAAAAQGJNrLv4l8PPPUABwPoAAAAAM7ETncAAAAA1atFM/8Y/vUGqAO9AAAABwACAAAAAAAAAu4AAALSACsCmwAeApsAJAKbACQCmwAkAU0AQwG8ADx4nGNgZGBgzvuvx8DAtuu/xH85thUMQBEUwAEAg1AFS3icY2Bm6mGcwMDKwMDUxRTBwMDgDaEZ4xiMGG2AotxczExAwM0ClGNkQAKh3uF+DA4MwQxFzHn/9RgYWLgZLWBqmASYNgApBQZmANiCCVcAeJxjYGBgYmBgYAZiESDJCKZZGByANA8DB1COhSGYIZEhlSGToej/f6AoiJcM4f1f93/h/wX/5/6fCtYHBwDXxBCPAAB4nI2R0UoCURRF100Le/EDfPKhBws0izAoCEzoJdGIymcVmxkzR+aq4F/0RX1HX9B3tO/MFTFIYpi5++yzz9lzzgUKvJLD5A+BT70ZNpQUZXiPIl8e57jh2+M8J+bI431KpuPxARUTelzkwnzQImbGioSIgJA5Zc6pc8al0JOYkc6m8kPhiKX0ZW6Z0BfzJvygXMxYumFa3WShMxSXYBVX0q5zuViuONUTqI9TLBhQU1XMu9iuvlNlBuItVXmvVDNSZtt94328478eVRmok4sTTVPTTHUaXPPMPT06Qn/1rf6q3jX9tvJFkZs6km6q7Mb3v17rXWWbstK4m5mJs+rlOk90ut0G6c7uaP8AwdpXHnicY2BmAIP/WxmMGLAAACzCAeoAAAEAAf//AA94nGNgZGBg4GGAAEYgZGdgBLOgGAACLAAbAAAAeJxjYGRgYOBiUGEwYmBycfMJYeDLSSzJY+BjYAGKM/z/zwCSZ8xOLcpj4ACxwJiFgQnIYwRjiEomBjEGGSCPCchjB6vgYmAF8gQZmIGYhUESyBMAymgBAHoGCCF4nGNgZGBg4GJQY9BgYHJx8wlh4MtJLMljkGBgAYoz/P/PAAcAbZcFXQAAAA==) format('woff'); }
+  /* Sidecar | Expander, as the docs site: black and white with one green accent */
+  :root { color-scheme:light dark; --bg:#f6f6f6; --fg:#0e0e0e; --mut:#5c5c5c; --line:#c8c8c8; --card:#fff; --acc:#15843b; --acc-low:#d3f2dc; --acc-high:#0b5226; --on-acc:#fff; --warn:#a84a00; --ok:#15843b; --err:#c62828;
+    --r:4px; --font:ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; --mono:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --word:'Sidecar Word', 'Archivo Black', 'Arial Black', system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e0e0e; --fg:#ececec; --mut:#8f8f8f; --line:#383838; --card:#1c1c1c; --acc:#2dbd5c; --acc-low:#0d3b1c; --acc-high:#8be3a6; --on-acc:#0e0e0e; --warn:#e3964f; --ok:#2dbd5c; --err:#ff6b6b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 var(--font); -webkit-font-smoothing:antialiased; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:12px; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:4px 0 2px; }
+  h1 { margin:0; font-size:inherit; font-weight:inherit; }
+  .sc-title { display:flex; align-items:center; gap:.55rem; white-space:nowrap; color:var(--fg); }
+  .sc-word { font-family:var(--word); font-size:23px; line-height:1; letter-spacing:-.01em; }
+  .sc-sub { font-size:10px; letter-spacing:.32em; font-weight:600; color:var(--mut); border-left:1px solid var(--line); padding-left:.55rem; line-height:16px; }
+  .sub { color:var(--mut); font-size:12px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--warn); display:inline-block; align-self:center; }
+  .dot.on { background:var(--ok); }
+  #state { color:var(--mut); font-size:12px; }
+  .spacer { flex:1; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; min-width:0; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--mut); margin:0 0 8px; font-weight:700; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; min-width:0; }
+  .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--mut); }
+  .tile .v { font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .d { font:11px var(--mono); color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile.bad .v { color:var(--warn); }
+  .tile.good .v { color:var(--ok); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .row label { color:var(--mut); min-width:110px; }
+  button, select, input { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:var(--r); padding:4px 10px; }
+  :focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+  input[type=range], input[type=checkbox], input[type=radio], progress { accent-color:var(--acc); }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--fg); }
+  button.on { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
+  /* choice groups: the device's current state filled, a click pending, then confirmed or put back */
+  .seg { display:inline-flex; max-width:100%; }
+  .seg button { border-radius:0; margin-left:-1px; min-width:56px; }
+  .seg button:first-child { border-radius:var(--r) 0 0 var(--r); margin-left:0; }
+  .seg button:last-child { border-radius:0 var(--r) var(--r) 0; }
+  .seg button:focus-visible { position:relative; z-index:1; }
+  .seg button[aria-checked="true"] { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
+  .seg button[aria-checked="true"]:hover:not(:disabled) { background:var(--acc-high); border-color:var(--acc-high); }
+  .seg.pending button { cursor:progress; }
+  .seg button.pend { animation:pend .8s ease-in-out infinite alternate; }
+  @keyframes pend { from { opacity:1; } to { opacity:.45; } }
+  @media (prefers-reduced-motion: reduce) { .seg button.pend { animation:none; opacity:.6; } }
+  /* the takes' play buttons: the channel playing filled, a click pending until /status says it plays */
+  button[data-rp][aria-pressed="true"] { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
+  button[data-rp].pend { animation:pend .8s ease-in-out infinite alternate; }
+  @media (prefers-reduced-motion: reduce) { button[data-rp].pend { animation:none; opacity:.6; } }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .fb { font-size:12px; color:var(--ok); } .fb.err { color:var(--err); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
+  #log { height:52vh; min-height:240px; overflow:auto; margin:0; padding:8px; background:var(--bg); border:1px solid var(--line);
+         border-radius:var(--r); font:12px/1.45 var(--mono); white-space:pre-wrap; word-break:break-all; }
+  #log .me { color:var(--acc); }
+  #log .bad { color:var(--warn); }
+  #cmd { flex:1; min-width:160px; font-family:var(--mono); }
+  .note { color:var(--mut); font-size:12px; margin:6px 0 0; }
+  .opts { display:flex; gap:12px; flex-wrap:wrap; color:var(--mut); font-size:12px; align-items:center; }
+  .tbl { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:4px 6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th { white-space:normal; font-size:11px; font-weight:600; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  td.r, th.r { text-align:right; font-variant-numeric:tabular-nums; }
+  td.w { white-space:normal; }
+  .err { color:var(--err); }
+  .mut { color:var(--mut); }
+  .ok { color:var(--ok); }
+  .badge { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid currentColor; white-space:nowrap; }
+  .lnk { border:0; background:none; padding:0 2px; color:var(--acc); }
+  .lnk:hover { text-decoration:underline; }
+  .sm { padding:2px 8px; font-size:12px; }
+  .mem { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin:8px 0; }
+  .mem .k { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--mut); }
+  .mem .d { font:11px var(--mono); color:var(--mut); }
+  .bar { height:6px; background:var(--bg); border:1px solid var(--line); border-radius:3px; overflow:hidden; margin:3px 0; }
+  .bar i { display:block; height:100%; background:var(--acc); }
+  .bar.full i { background:var(--err); }
+  .slots { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin:8px 0; }
+  .slot { border:1px solid var(--line); border-radius:var(--r); padding:6px 8px; min-width:0; }
+  .slot .n { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .slot select { width:100%; margin-top:4px; }
+  .slot .src { font-size:11px; margin-top:2px; }
+  .msg { font-size:12px; margin:6px 0 0; white-space:pre-wrap; word-break:break-word; }
+  .prog > div { display:flex; gap:8px; align-items:center; font-size:12px; margin:3px 0; flex-wrap:wrap; }
+  .prog .nm { flex:1; min-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prog .bar { width:120px; }
+  .drop { min-height:80px; border-radius:var(--r); }
+  .drop.over { outline:2px dashed var(--acc); outline-offset:2px; }
+  #fs-crumb { font:13px var(--mono); gap:0; }
+  nav { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  nav a { padding:7px 12px 6px; color:var(--mut); text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+  nav a:hover { color:var(--fg); }
+  nav a.on { color:var(--fg); border-bottom-color:var(--acc); font-weight:700; }
+  .tab { display:none; min-width:0; }
+  .tab.on { display:grid; gap:12px; }
+  .fxs { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+  .fxs .sends { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; align-items:end; height:60px; margin:6px 0 2px; }
+  .fxs .sends i { display:block; background:var(--acc); border-radius:2px 2px 0 0; min-height:1px; }
+  .fxs .lab { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; font-size:10px; color:var(--mut); text-align:center; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; font-size:13px; }
+  .kv b { font-weight:normal; color:var(--mut); }
+  .kv span { overflow-wrap:anywhere; }
+  .chg { margin:8px 0; }
+  .chg h3 { font-size:11px; font-weight:600; color:var(--mut); margin:0 0 4px; text-transform:uppercase; letter-spacing:.04em; }
+  .chs { display:grid; grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); gap:6px; }
+  .ch { border:1px solid var(--line); border-radius:var(--r); padding:4px 6px; display:grid; gap:3px; cursor:pointer; min-width:0; }
+  .ch.on { border-color:var(--acc); }
+  .ch span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
+  .ch .bar { margin:0; }
+  .ch .bar i { transition:width .2s; }
+  .ch .bar.hot i { background:var(--err); }
+  #rec-go { min-width:120px; font-weight:600; }
+  #rec-go.on { background:var(--err); border-color:var(--err); color:#fff; }
+  #rec-go.armed { border-color:var(--err); color:var(--err); }
+  #rec-time { font:600 22px var(--mono); font-variant-numeric:tabular-nums; }
+  #rec-time.on { color:var(--err); }
+  #wifi .row[hidden] { display:none; }
+  #wifi .row > label:first-child { min-width:110px; }
+  #wf-net, #wf-ssid, #wf-psk { flex:1; min-width:0; max-width:340px; }
+  #wf-net { font-family:var(--font); }
+  .wf-check { color:var(--mut); font-size:12px; display:flex; gap:6px; align-items:center; }
+  #wf-join { font-weight:600; }
+  #wf-join.on:hover { background:var(--acc-high); border-color:var(--acc-high); }
+  .wf-bars { display:inline-flex; gap:1px; align-items:flex-end; height:11px; margin-right:4px; vertical-align:-1px; }
+  .wf-bars i { width:3px; background:var(--line); border-radius:1px; }
+  .wf-bars i.on { background:var(--acc); }
+  @media (max-width:640px) { #wifi .row > label:first-child { min-width:0; width:100%; } #wf-net, #wf-ssid, #wf-psk { max-width:none; } }
+  @media (max-width:640px) { nav a { padding:6px 8px; }  .hm { display:none; } th, td { padding:4px 3px; } .row label { min-width:0; } main { padding:10px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 class="sc-title" aria-label="Sidecar | Expander" translate="no"><span class="sc-word" aria-hidden="true">Sidecar</span><span class="sc-sub" aria-hidden="true">EXPANDER</span></h1>
+    <span class="spacer"></span>
+    <span class="dot" id="dot"></span><span id="state">connecting</span>
+  </header>
+  <nav id="tabs" role="tablist">
+    <a href="#status" data-tab="status">Status</a><a href="#sound" data-tab="sound">Sound</a><a href="#sendfx" data-tab="sendfx">Send FX</a><a href="#lfo" data-tab="lfo">LFO</a><a href="#record" data-tab="record">Record</a><a href="#machines" data-tab="machines">User machines</a><a href="#library" data-tab="library">Pool &amp; presets</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
+  </nav>
+
+  <div class="tab" id="tab-status">
+    <div class="tiles" id="tiles"></div>
+    <section id="wifi" aria-labelledby="wf-h">
+      <h2 id="wf-h">Wi-Fi</h2>
+      <div class="kv" id="wf-now"><b>Network</b><span>-</span></div>
+      <div class="row"><label id="l-wf">Wi-Fi</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-wf" id="wf-seg"><button type="button" role="radio" aria-checked="false" id="wf-on" data-wf="1">On</button><button type="button" role="radio" aria-checked="false" id="wf-off" data-wf="0">Off</button></div></div>
+      <div class="row"><label for="wf-net">Network</label>
+        <select id="wf-net"><option value="">(turn Wi-Fi on, then Refresh)</option></select>
+        <button id="wf-scan" class="sm" title="scan for networks">Refresh</button></div>
+      <div class="row" id="wf-other" hidden><label for="wf-ssid">Name (SSID)</label>
+        <input id="wf-ssid" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="the network's name"></div>
+      <div class="row" id="wf-pwrow"><label for="wf-psk">Password</label>
+        <input id="wf-psk" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" maxlength="64">
+        <button id="wf-show" class="sm" aria-pressed="false" aria-controls="wf-psk">Show</button></div>
+      <div class="row"><label></label><label class="wf-check"><input type="checkbox" id="wf-open"> open network (no password)</label></div>
+      <div class="row"><label></label>
+        <button id="wf-join" class="on">Connect and save</button><button id="wf-forget">Forget network</button></div>
+      <p class="msg" id="wf-msg" role="status" aria-live="polite"></p>
+      <p class="note">Sidecar uses one network at a time: <b>Connect and save</b> stores the network and restarts Sidecar on
+        Wi-Fi (the sound stops for a few seconds; Ethernet is unused while it is on Wi-Fi). If it is not connected within
+        <span id="wf-trial">90</span> s, the previous setting comes back and Sidecar restarts on it (Ethernet, if Wi-Fi was off),
+        so a wrong password cannot lock you out. This page follows to the Wi-Fi address at <code>sidecar.local</code> when this
+        computer is on that network. The password is stored only as the network's key, never shown again; this page has no
+        login yet, so anyone on the same network can change these settings.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-sound">
+    <section>
+      <h2>Sound</h2>
+      <div class="row"><label id="l-notes">MIDI notes</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-notes" data-key="notes"><button type="button" role="radio" aria-checked="false" data-cmd="notes=1" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="notes=0" data-val="false">Off</button></div>
+        <span class="fb" data-fb="notes" role="status" aria-live="polite"></span></div>
+      <div class="row"><label id="l-out">Output</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-out" data-key="out"><button type="button" role="radio" aria-checked="false" data-cmd="out=main" data-val="main">Main</button><button type="button" role="radio" aria-checked="false" data-cmd="out=tracks" data-val="tracks">Tracks</button></div>
+        <span class="fb" data-fb="out" role="status" aria-live="polite"></span></div>
+      <div class="row"><label id="l-fxsrc" title="what the Rytm sends on Overbridge IN L/R (channels 10/11): its AUDIO IN, or the delay + reverb return (needs the rui1024 Rytm build)">IN L/R source</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-fxsrc" data-key="fxsrc"><button type="button" role="radio" aria-checked="false" data-cmd="fxin=0" data-val="in">Inputs</button><button type="button" role="radio" aria-checked="false" data-cmd="fxin=1" data-val="fx">FX return</button></div>
+        <span class="fb" data-fb="fxsrc" role="status" aria-live="polite"></span><span id="fxin-note" class="mut"></span></div>
+      <p class="note" id="fxin-warn" hidden>Never send channels 10/11 back into the Rytm through Overbridge (computer audio, a mixer loop): that is a feedback loop.</p>
+      <div class="row"><label id="l-mac" title="the computer's USB audio OUT (USB-C) mixed into the Rytm's Overbridge inputs">Computer audio</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
+        <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
+      <div class="row"><label for="mvoice">Machine</label>
+        <select id="mvoice"></select>
+        <select id="mname" aria-label="machine"><option>plaits</option><option>juno</option><option>daisy</option><option>dsps</option>
+          <option>dd</option><option>fm</option></select>
+        <button id="mset">Set</button><span class="mut" id="mcur"></span>
+        <span class="fb" data-fb="mach" role="status" aria-live="polite"></span></div>
+      <div class="row"><label for="dvoice" id="l-drone">Drone</label>
+        <select id="dvoice"><option value="all">all</option></select>
+        <div class="seg" role="radiogroup" aria-labelledby="l-drone" data-key="drone">
+          <button type="button" role="radio" aria-checked="false" id="dset" data-cmd="drone=" data-val="on">On</button><button type="button" role="radio" aria-checked="false" data-cmd="drone=off" data-val="off">Off</button></div>
+        <span class="fb" data-fb="drone" role="status" aria-live="polite"></span></div>
+      <div class="row"><label for="fifo">FIFO target</label>
+        <input id="fifo" type="number" min="24" step="8" value="96" style="width:90px">
+        <button id="fifoset">Set</button><span class="mut" id="fifocur"></span>
+        <span class="fb" data-fb="fifo" role="status" aria-live="polite"></span></div>
+    </section>
+    <section>
+      <h2>Display</h2>
+      <div class="row"><label id="l-screensaver" title="black after this long without a touch on the display; the next touch only wakes it">Screensaver</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-screensaver" data-key="screensaver"><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=0" data-val="0">Off</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=15" data-val="15">15 min</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=60" data-val="60">1 h</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=240" data-val="240">4 h</button></div>
+        <span id="blank" class="mut"></span>
+        <span class="fb" data-fb="screensaver" role="status" aria-live="polite"></span></div>
+      <div class="row"><label>Brightness</label>
+        <input id="bright" type="range" min="5" max="100" step="5" value="100" style="width:200px"><span id="brightv" class="mut">100 %</span></div>
+      <p class="note">Brightness dims the picture, not the backlight (the panel's backlight has no software control).
+        Both are kept on the card (<code>/.rytm/display.txt</code>); <code>screensaver=</code> / <code>brightness=</code> in
+        cmdline.txt override them at boot.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-sendfx">
+    <section>
+      <h2>Send FX</h2>
+      <div class="fxs" id="fx"></div>
+      <div class="row"><button data-cmd="killfx">Kill tails</button><button data-cmd="sendfx">Stats to the log</button></div>
+      <p class="note">What the Rytm's kit sets: each FX's type, where it returns (PRE on 2/3, POST on 0/1) and the 12 tracks'
+        send levels.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-lfo">
+    <section><h2>LFOs</h2><p class="note">Eight LFOs on the Sidecar's voices (V1..V8: any parameter) or its send FX (FX1 / FX2
+      P2..P5), on top of the Rytm's value; the value comes back when the LFO stops. Saved per kit, as the Rytm's own LFOs (switched with the Rytm's kit); the same on the Rytm's LFO page (TRK + YES).</p></section>
+    <div id="lfo-root" class="grid"></div>
+  </div>
+
+  <div class="tab" id="tab-record">
+    <section>
+      <h2>Record</h2>
+      <div class="row"><button id="rec-go">&#9679; Record</button><span id="rec-time">0:00:00</span><span id="rec-state" class="mut"></span>
+        <span class="spacer"></span><span id="rec-free" class="mut"></span></div>
+      <div id="rec-warn" class="msg err"></div>
+      <div class="row"><label id="l-rm">Start and stop</label><div class="seg" role="radiogroup" aria-labelledby="l-rm"><button type="button" role="radio" aria-checked="false" data-rm="manual">Manual</button><button type="button" role="radio" aria-checked="false" data-rm="arm">Arm: PLAY starts, STOP ends</button></div></div>
+      <div class="row"><label id="l-rb">Bit depth</label><div class="seg" role="radiogroup" aria-labelledby="l-rb"><button type="button" role="radio" aria-checked="false" data-rb="24">24-bit</button><button type="button" role="radio" aria-checked="false" data-rb="16">16-bit</button></div>
+        <span class="fb" data-fb="bits" role="status" aria-live="polite"></span></div>
+      <div class="row"><label>Take name</label><input id="rec-name" maxlength="24" value="take" style="width:160px" autocomplete="off">
+        <span class="mut" id="rec-namehint">_001, _002, ... in /Recordings</span></div>
+      <div id="rec-card" class="note"></div>
+    </section>
+    <section>
+      <h2>Channels</h2>
+      <div class="row"><button id="rec-all">Select all</button><button id="rec-none">None</button><span class="spacer"></span><span id="rec-sum" class="mut"></span></div>
+      <div id="rec-ch"></div>
+      <p class="note">One WAV a channel (mono; Master and the FX returns as stereo files), all starting on the same frame and
+        the same length, so they line up in a DAW. Meters show the peak of the last second while armed or recording.</p>
+    </section>
+    <section>
+      <h2>Takes</h2>
+      <div class="row"><button id="rec-re">Refresh</button><span class="spacer"></span><span class="mut">/Recordings (also in Files)</span></div>
+      <div class="row"><button id="play-stop" class="sm" disabled>&#9632; Stop</button><span id="play-state" class="mut">Playback: click a channel to hear it on the Rytm's MAIN (not while recording).</span></div>
+      <div class="tbl" id="rec-takes"></div>
+      <div class="prog" id="rec-prog"></div>
+      <div id="rec-msg" class="msg"></div>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-machines">
+  <section id="um">
+    <h2>User machines</h2>
+    <div class="row"><b>Project</b> <span id="um-proj">-</span><span class="spacer"></span><span id="um-info" class="mut"></span>
+      <button id="um-rescan">Rescan</button>
+      <button id="um-upb">Upload machine (.rmp)</button><input id="um-file" type="file" accept=".rmp" multiple hidden></div>
+    <div class="slots" id="um-slots"></div>
+    <div class="row"><span class="mut" id="um-how"></span><span class="spacer"></span>
+      <button id="um-empty" title="every slot of this project explicitly empty: nothing is inherited or filled from the sounds">Start this project empty</button>
+      <button id="um-export">Export slot list</button>
+      <button id="um-impb">Import slot list</button><input id="um-imp" type="file" accept=".json,.txt,application/json" hidden></div>
+    <div class="tbl"><table><thead><tr><th>Name</th><th class="hm">ID</th><th>Ver</th><th class="r hm">File</th><th class="hm">FP</th>
+      <th class="r hm">Code+data</th><th class="r hm">State/voice</th><th class="r">CPU/voice</th><th>Slots</th><th>Fits</th><th></th></tr></thead>
+      <tbody id="um-list"><tr><td colspan="11" class="mut">-</td></tr></tbody></table></div>
+    <div class="mem" id="um-mem"></div>
+    <div id="um-res" class="msg"></div>
+    <div class="prog" id="um-prog"></div>
+    <div id="um-msg" class="msg"></div>
+    <p class="note">Machines are the <code>.rmp</code> packages in <code>/Plugins</code>. CPU/voice is measured once the
+      machine has played: one voice's render time, in % of one Pi render core and µs per 12-frame block. Before that,
+      and below it, the package's declared figure (in % of a Teensy voice budget).</p>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-library">
+  <section id="lib-pool">
+    <h2>Sample pool</h2>
+    <div class="row"><b>Project</b> <span id="lib-proj">-</span><span class="spacer"></span><span id="lib-sram" class="mut"></span>
+      <button id="lib-re">Refresh</button></div>
+    <div class="tbl"><table><thead><tr><th class="r">Slot</th><th>Sample</th><th class="hm">Path under /Samples</th><th></th></tr></thead>
+      <tbody id="lib-pool-list"><tr><td colspan="4" class="mut">-</td></tr></tbody></table></div>
+    <div class="row"><label for="lib-slot">Assign slot</label><input id="lib-slot" type="number" min="1" max="127" value="1" style="width:5em">
+      <span class="mut">from</span> <span id="lib-crumb" class="mut">/Samples</span><span class="spacer"></span><button id="lib-up" class="sm">Up</button></div>
+    <div id="lib-browse" class="tbl" style="max-height:260px;overflow:auto"></div>
+    <div id="lib-pool-msg" class="msg"></div>
+    <p class="note">The pool is the project's (the Rytm's current project: /.rytm/pools/&lt;project&gt;.txt, as on the
+      Teensy). DSP SAMPLE's SMP knob and user machines (API 2) pick slot 1..127; the Rytm gets the table at once.
+      Pick a .wav below to put it into the slot above.</p>
+  </section>
+  <section id="lib-juno">
+    <h2>JUNO list</h2>
+    <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Patch</th><th></th></tr></thead><tbody id="lib-juno-list"></tbody></table></div>
+    <div class="row"><label for="lib-juno-v">Save current</label><select id="lib-juno-v"></select>
+      <input id="lib-juno-n" placeholder="name" maxlength="23"><button id="lib-juno-save">Save to the list</button></div>
+    <div id="lib-juno-msg" class="msg"></div>
+    <p class="note">/.rytm/juno/&lt;project&gt;.txt. Save current stores the patch a JUNO voice plays now with its six
+      knobs (CUT RES ENV ATK DEC REL) as they are, into the first empty slot.</p>
+  </section>
+  <section id="lib-fm">
+    <h2>6-OP FM list</h2>
+    <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Voice</th><th></th></tr></thead><tbody id="lib-fm-list"></tbody></table></div>
+    <div class="row"><label for="lib-fm-v">Save current</label><select id="lib-fm-v"></select>
+      <button id="lib-fm-save">Add its ROM voice to the list</button></div>
+    <div id="lib-fm-msg" class="msg"></div>
+    <p class="note">/.rytm/fm/&lt;project&gt;.txt (a bank's MD5 and voice per slot). While the list is empty, PAT picks
+      the 96 ROM voices; once it has a voice, PAT picks from the list.</p>
+  </section>
+  <section id="lib-pre">
+    <h2>User machine presets</h2>
+    <div id="lib-pre-slots"></div>
+    <div id="lib-pre-msg" class="msg"></div>
+    <p class="note">/PRESETS/&lt;machine id&gt;/: &lt;name&gt;.txt ("P&lt;n&gt; &lt;value&gt;" lines) and the machine's own
+      preset files; the slot's PRE knob picks them in name order, as on the Teensy. Save current writes the knobs the
+      slot's last voice plays now.</p>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-files">
+  <section id="fs">
+    <h2>Files</h2>
+    <div class="row"><span class="mut">Go to</span>
+      <button class="sm" data-go="/">/</button><button class="sm" data-go="/Samples">Samples</button>
+      <button class="sm" data-go="/.rytm">.rytm</button><button class="sm" data-go="/Plugins">Plugins</button><button class="sm" data-go="/Recordings">Recordings</button>
+      <span class="spacer"></span><span id="fs-free" class="mut"></span></div>
+    <div class="row" id="fs-crumb"></div>
+    <div class="row"><button id="fs-upd">Up</button><button id="fs-mk">New folder</button>
+      <button id="fs-upb">Upload files</button><input id="fs-file" type="file" multiple hidden>
+      <button id="fs-upf">Upload folder</button><input id="fs-dir" type="file" webkitdirectory multiple hidden>
+      <button id="fs-re">Refresh</button>
+      <span class="spacer"></span><label class="mut"><input type="checkbox" id="fs-hidden"> show hidden</label></div>
+    <div id="fs-list" class="tbl drop"></div>
+    <div class="prog" id="fs-prog"></div>
+    <div id="fs-msg" class="msg"></div>
+    <p class="note">Drop files or folders on the list to upload them into this folder (folders whole, with their
+      subfolders; .DS_Store and ._ files are left out). Uploads go one at a time in small pieces: the page runs on
+      core 0 with the network, USB and the card, apart from the audio (render cores 1 and 2, control core 3).
+      🔒 marks boot files and the restore backup (read-only); Samples, Plugins and .rytm themselves are kept
+      (their contents can change).</p>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-log">
+    <section>
+      <h2>Log &amp; console</h2>
+      <div class="row">
+        <input id="cmd" placeholder="a console command, e.g. notemach=0:plaits, um, sendfx" autocomplete="off">
+        <button id="send">Send</button></div>
+      <div class="opts">
+        <label><input type="checkbox" id="hidestats" checked> hide the periodic stats lines</label>
+        <label><input type="checkbox" id="follow" checked> follow</label>
+        <button id="clear">Clear</button>
+        <span class="spacer"></span><span id="logpos"></span>
+      </div>
+      <pre id="log"></pre>
+      <p class="note">Commands are the serial console's (<code>:</code> lines, docs/pi-engine.md). Each one is logged as
+        <code>web: command</code>.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-about">
+    <section>
+      <h2>About</h2>
+      <div class="kv" id="about"></div>
+      <p class="note">Sidecar | Expander, a sound engine beside the drum machine. Core 0 runs the network (this page),
+        USB (Overbridge, USB-C) and the card; cores 1 and 2 render the voices and the send FX; core 3 is the control
+        core (MIDI, machines, loading). The page never waits on the audio: a request is answered from what the
+        cores last published.</p>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+// ---- the LFO tab: web/seg.js's Pending and web/lfo.js, put here by build.sh / tests/mock_web.py (shared with the Mini's page)
+/*@include web/seg.js@*/
+/*@include web/lfo.js@*/
+const TILES = [["cpu","CPU (cores 1/2/3)"],["fifo","FIFO"],["under","Underruns"],["ob","Overbridge"],
+  ["rytm","Rytm"],["gadget","USB-C"],["temp","Temperature"],["web","This page"]];
+$("#tiles").innerHTML = TILES.map(([k,n]) => `<div class="tile" id="t-${k}"><div class="k">${n}</div><div class="v">-</div><div class="d">&nbsp;</div></div>`).join("");
+function tile(k, v, d, cls) {
+  const t = $("#t-" + k);
+  t.querySelector(".v").textContent = v;
+  t.querySelector(".d").textContent = d || " ";
+  t.className = "tile" + (cls ? " " + cls : "");
+}
+// ---- tabs: #status, #sound, ... (deep links); the last one remembered
+const TABS = [...document.querySelectorAll("#tabs a")].map((a) => a.dataset.tab);
+let tab = "status";
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+function showTab(t) {
+  if (!TABS.includes(t)) t = "status";
+  tab = t;
+  document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === t));
+  document.querySelectorAll(".tab").forEach((d) => d.classList.toggle("on", d.id === "tab-" + t));
+  store("sidecar.tab", t);
+  if (t === "status") wfPoll();
+  if (t === "sound" || t === "lfo") pollStatus();
+  if (t === "machines") pollUm(true);
+  if (t === "library") { pollLib(true); libBrowse(libDir); }
+  if (t === "files") fsLs(fsCur);
+  if (t === "record") recTakes();
+  if (t === "log") { const l = $("#log"); if ($("#follow").checked) l.scrollTop = l.scrollHeight; }
+}
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+for (let v = 0; v < 8; v++) { $("#mvoice").add(new Option("voice " + v, v)); $("#dvoice").add(new Option("voice " + v, v)); }
+
+let status = null, last = {};          // last: the newest stats lines, by kind
+const STATS = /(rytmob: \d+ms IN|engine: engine: fifo|sidecar: \w+ alt|midigadget:)/;
+const PERIODIC = /^\S+ (\w+: )?(display|touch): (?!command|screensaver)/;   // the display's 10 s lines (touch diagnostics)
+
+async function cmd(c) {
+  appendLines([{ text: "> :" + c, cls: "me" }]);
+  let ok = false;
+  try {
+    const r = await fetch("/cmd", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "c=" + encodeURIComponent(c) });
+    ok = r.ok;
+    if (!r.ok) appendLines([{ text: "! " + r.status + " " + r.statusText, cls: "bad" }]);
+  } catch (e) { appendLines([{ text: "! " + e, cls: "bad" }]); }
+  postDone = Date.now();
+  setTimeout(pollStatus, 300);
+  return ok;
+}
+// ---- choice groups (Sound, Display, Wi-Fi, Record): the device's CURRENT state from /status filled in, a click shows a
+// pending state until /status confirms it; no confirmation in 2 s (or a refused command) puts the old state back with a
+// short message. Pending keeps one change per key; the text is "saved ✓" or the error.
+let postDone = 0, statusAt = 0;
+const pend = {
+  m: new Map(),
+  has(k) { return this.m.has(k); },
+  want(k) { return this.m.has(k) ? this.m.get(k).want : undefined; },
+  start(k, want) {
+    this.drop(k);
+    this.m.set(k, { want: String(want), t: setTimeout(() => { this.m.delete(k); this.say(k, "no answer from Sidecar, not changed", 1); }, 2000) });
+    this.say(k, "", 0);
+  },
+  drop(k) { const q = this.m.get(k); if (q) { clearTimeout(q.t); this.m.delete(k); } },
+  report(k, actual, text) { const q = this.m.get(k); if (!q || String(actual) !== q.want) return false; this.drop(k); this.say(k, text === undefined ? "saved \u2713" : text, 0); return true; },
+  fail(k, text) { if (this.m.has(k)) { this.drop(k); this.say(k, text, 1); } },
+  say(k, text, bad) {
+    const el = document.querySelector(`[data-fb="${k}"]`);
+    if (el) { el.textContent = text; el.classList.toggle("err", !!bad); clearTimeout(el._t); if (text) el._t = setTimeout(() => { el.textContent = ""; }, bad ? 5000 : 2500); }
+    paintSeg();
+  },
+};
+const droneVal = (d) => (d < 0 ? "off" : "on:" + (d === 8 ? "all" : d));
+function chosen(k) {      // the device's value of a group as the buttons' data-val, or undefined when /status has not said
+  const st = status || {}, v = st[k];
+  if (k === "drone") return v === undefined ? undefined : v < 0 ? "off" : "on";
+  if (k === "fxsrc") return st.fxin && st.fxin.state === "on" ? "fx" : st.fxin && st.fxin.state === "off" ? "in" : undefined;   // the Rytm's confirmed state
+  return v === undefined || v === null ? undefined : String(v);
+}
+function paintSeg() {
+  document.querySelectorAll(".seg[data-key]").forEach((g) => {
+    const k = g.dataset.key, cur = chosen(k), want = (pend.want(k) || "").split(":")[0] || undefined;
+    const gone = !online || (k === "mac" && status && status.mac === null);
+    g.classList.toggle("pending", want !== undefined);
+    g.setAttribute("aria-busy", String(want !== undefined));
+    g.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-checked", String(cur === b.dataset.val));
+      b.classList.toggle("pend", want === b.dataset.val);
+      b.tabIndex = cur === b.dataset.val || (cur === undefined && b === g.querySelector("button")) ? 0 : -1;
+      b.disabled = gone;
+      b.title = k === "mac" && gone && online ? "not in this gadget mode" : b.title;
+    });
+  });
+  const st = status || {}, v = +$("#mvoice").value, m = st.machines && st.machines[v] ? st.machines[v].toLowerCase() : "";
+  $("#mcur").textContent = m ? "now: " + m : "";
+  $("#fifocur").textContent = st.fifoTarget !== undefined ? "now: " + st.fifoTarget + " frames" : "";
+}
+function settle() {       // /status after a change: confirm what matches
+  const st = status || {};
+  for (const k of ["notes", "out", "mac", "screensaver"]) if (st[k] !== undefined && st[k] !== null) pend.report(k, st[k]);
+  if (st.drone !== undefined) pend.report("drone", droneVal(st.drone));
+  if (chosen("fxsrc")) pend.report("fxsrc", chosen("fxsrc"));
+  if (st.machines) for (let v = 0; v < 8; v++) pend.report("mach", v + ":" + (st.machines[v] || "").toLowerCase());
+  if (pend.has("fifo") && statusAt > postDone && st.fifoTarget !== undefined)   // the device limits the target: its value is the answer
+    pend.report("fifo", pend.want("fifo"), st.fifoTarget === +pend.want("fifo") ? undefined : `set to ${st.fifoTarget} (the limit)`);
+  if (document.activeElement !== $("#fifo") && !pend.has("fifo") && st.fifoTarget !== undefined) $("#fifo").value = st.fifoTarget;
+  const mv = +$("#mvoice").value;
+  if (!pend.has("mach") && document.activeElement !== $("#mname") && st.machines && st.machines[mv]) $("#mname").value = st.machines[mv].toLowerCase();
+  if (document.activeElement !== $("#dvoice") && st.drone >= 0) $("#dvoice").value = st.drone === 8 ? "all" : String(st.drone);
+  paintSeg();
+}
+async function choose(key, want, c) {
+  pend.start(key, want);
+  if (!(await cmd(c))) pend.fail(key, "Sidecar refused the command");
+}
+document.querySelectorAll(".seg[data-key] button").forEach((b) => b.addEventListener("click", () => {
+  const k = b.closest(".seg").dataset.key;
+  const on = k === "drone" && b.dataset.val === "on";
+  choose(k, on ? "on:" + $("#dvoice").value : b.dataset.val, b.dataset.cmd + (on ? $("#dvoice").value : ""));
+}));
+document.querySelectorAll(".seg").forEach((g) => g.addEventListener("keydown", (e) => {   // radio group: arrows move and choose
+  const bs = [...g.querySelectorAll("button:not(:disabled)")], i = bs.indexOf(document.activeElement);
+  const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  if (i < 0 || !d) return;
+  e.preventDefault();
+  const n = bs[(i + d + bs.length) % bs.length];
+  n.focus(); n.click();
+}));
+document.querySelectorAll("[data-cmd]").forEach((b) => { if (!b.closest(".seg")) b.addEventListener("click", () => cmd(b.dataset.cmd)); });
+$("#mvoice").onchange = () => { const m = status && status.machines && status.machines[+$("#mvoice").value]; if (m) $("#mname").value = m.toLowerCase(); paintSeg(); };
+$("#mset").onclick = () => { const v = $("#mvoice").value, n = $("#mname").value; choose("mach", v + ":" + n, "notemach=" + v + ":" + n); };
+$("#fifoset").onclick = () => { const n = $("#fifo").value | 0; pend.start("fifo", n); cmd("fifo=" + n).then((ok) => { if (!ok) pend.fail("fifo", "Sidecar refused the command"); }); };
+$("#bright").oninput = () => { $("#brightv").textContent = $("#bright").value + " %"; };
+$("#bright").onchange = () => cmd("brightness=" + $("#bright").value);
+$("#send").onclick = () => { const c = $("#cmd").value.trim().replace(/^:/, ""); if (c) cmd(c); $("#cmd").value = ""; };
+$("#cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#send").click(); });
+$("#clear").onclick = () => { $("#log").textContent = ""; };
+
+const MAXLINES = 3000;
+function appendLines(lines) {
+  if (!lines.length) return;
+  const log = $("#log"), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  const frag = document.createDocumentFragment();
+  for (const l of lines) {
+    const d = document.createElement("div");
+    d.textContent = l.text;
+    if (l.cls) d.className = l.cls;
+    if (l.stats) d.dataset.stats = 1;
+    frag.appendChild(d);
+  }
+  log.appendChild(frag);
+  while (log.childElementCount > MAXLINES) log.firstElementChild.remove();
+  applyHide();
+  if ($("#follow").checked && atEnd) log.scrollTop = log.scrollHeight;
+}
+function applyHide() {
+  const h = $("#hidestats").checked;
+  document.querySelectorAll("#log [data-stats]").forEach((d) => { d.style.display = h ? "none" : ""; });
+}
+$("#hidestats").onchange = applyHide;
+
+let since = 0, partial = "", online = false;
+const lfoUi = initLfo({ root: $("#lfo-root"), send: (c) => cmd(c), Pending, isOn: () => online });
+async function pollLog() {
+  if (qBusy || wifiBusy) { setTimeout(pollLog, 800); return; }    // paused while uploads or a Wi-Fi join run (the Pi's 4 connections)
+  try {
+    const r = await fetch("/log?since=" + since, { cache: "no-store" });
+    const t = await r.text();
+    const nl = t.indexOf("\n"), [start, end] = t.slice(0, nl).split(" ").map(Number);
+    let body = t.slice(nl + 1);
+    if (start !== since && since !== 0) { partial = ""; appendLines([{ text: "... (" + (start - since) + " bytes not shown)", cls: "bad" }]); }
+    since = end;
+    body = partial + body;
+    const parts = body.split("\n");
+    partial = parts.pop();
+    const out = [];
+    for (const p of parts) {
+      const m = p.match(STATS);
+      if (m) last[m[1].split(":")[0]] = p;
+      const per = !!m || PERIODIC.test(p);
+      out.push({ text: p, stats: per, cls: /\b(ERROR|error|fail|fault|warn)/i.test(p) && !per ? "bad" : "" });
+    }
+    appendLines(out);
+    renderStats();
+    $("#logpos").textContent = (end / 1024).toFixed(0) + " KB logged";
+    setOnline(true);
+  } catch (e) { setOnline(false); }
+  setTimeout(pollLog, 800);
+}
+// One /status request at a time, given up after 4 s: requests piled up while the Pi was unreachable (or its network
+// was busy) would arrive together, and every open connection is one of Circle's tasks (MAX_TASKS 20: a panic beyond)
+let statusBusy = false;
+async function pollStatus() {
+  if (statusBusy || qBusy || wifiBusy) return;         // paused while uploads or a Wi-Fi join run
+  statusBusy = true;
+  const t0 = Date.now();
+  try {
+    const r = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(4000) });
+    status = await r.json();
+    statusAt = t0;
+    renderStats();
+    if (status.rec) recRender(status.rec);
+    if (status.play) playRender(status.play);
+    setOnline(true);
+  } catch (e) { setOnline(false); }
+  statusBusy = false;
+}
+setInterval(pollStatus, 1000);
+function setOnline(on) {
+  online = on;
+  paintSeg();
+  $("#dot").className = "dot" + (on ? " on" : "");
+  if (!on) { $("#state").textContent = "not reachable"; return; }
+  if (status) {
+    const up = status.uptime, h = Math.floor(up / 3600), m = Math.floor(up / 60) % 60, s = up % 60;
+    $("#state").textContent = `${status.host || "sidecar"}.local · ${status.ip} · up ${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  }
+}
+const num = (re, s, i = 1) => { const m = s && s.match(re); return m ? m[i] : null; };
+function renderStats() {
+  const e = last["engine"], ob = last["rytmob"], sc = last["sidecar"], st = status || {};
+  if (e) {
+    const c = e.match(/cpu c1 ([\d.]+) c2 ([\d.]+) c3 ([\d.]+)/);
+    if (c) tile("cpu", `${c[1]} / ${c[2]} / ${c[3]} %`, "block max " + num(/max (\d+) us \|/, e) + " us · pass max " + num(/pass max (\d+)/, e) + " us");
+    const f = e.match(/fifo min (\d+) max (\d+) target (\d+) under (\d+)/);
+    if (f) tile("fifo", `${f[1]}..${f[2]}`, `target ${f[3]} frames`, +f[1] === 0 ? "bad" : "");
+  }
+  if (st.underruns !== undefined) tile("under", String(st.underruns), "engine FIFO, since boot", st.underruns ? "bad" : "good");
+  if (st.streaming) {
+    const g = ob ? num(/gap (\d+)/, ob) : null, l = ob ? num(/lost (\d+)/, ob) : null;
+    tile("ob", "streaming", ob ? `IN ${num(/IN (\d+)\/s/, ob)}/s · gap ${g} · lost ${l} · link ${st.link}` : "link " + st.link, (+g || +l) ? "bad" : "good");
+  } else if (st.link !== undefined) tile("ob", "idle", "link " + st.link + (st.link === "usb" ? " · no Overbridge stream" : ""));
+  if (st.streaming !== undefined) {
+    const on = st.streaming || st.rytmMidi;
+    tile("rytm", on ? "attached" : "not seen", (st.streaming ? "Overbridge" : "no stream") + " · " + (st.rytmMidi ? "USB MIDI" : "no MIDI"), on ? "good" : "");
+  }
+  if (st.gadget !== undefined) {
+    let d = st.gadget === "sidecar" ? "UAC2 12/12 + MIDI" : st.gadget === "midi" ? "MIDI echo" : "off";
+    if (sc) d = `alt ${num(/alt (\d+\/\d+)/, sc)} · computer audio ${st.mac ? "on" : "off"} · late ${num(/late (\d+\/\d+\/\d+)/, sc)}`;
+    tile("gadget", st.gadget === "0" ? "off" : st.gadget, d);
+  }
+  if (st.temp !== undefined) tile("temp", st.temp + " °C", "SoC", st.temp >= 80 ? "bad" : "");
+  if (st.web) tile("web", st.web.requests + " req", `max ${st.web.maxus} us · ${st.web.commands} commands`);
+  settle();
+  if (st.fxin) fxinShow(st.fxin);
+  if (st.lfo) lfoUi.show(st.lfo);   // the LFO tab (/status "lfo": core/lfo.cpp json)
+  if (st.brightness && document.activeElement !== $("#bright")) { $("#bright").value = st.brightness; $("#brightv").textContent = st.brightness + " %"; }
+  if (st.display !== undefined) $("#blank").textContent = !st.display ? "no display attached" : st.blank ? "the screen is black now (a touch wakes it)" : "";
+  if (st.fx && tab === "sendfx") $("#fx").innerHTML = st.fx.map((f, i) => `<div><b>FX ${i + 1}</b> · ${esc(f.type || "OFF")}
+    <span class="mut">· returns ${f.post ? "POST on 0/1" : "PRE on 2/3"}</span>
+    <div class="sends">${f.send.map((v) => `<i style="height:${(v / 127 * 100).toFixed(0)}%" title="${v}"></i>`).join("")}</div>
+    <div class="lab">${f.send.map((v, k) => `<span title="send ${v}">${k + 1}</span>`).join("")}</div></div>`).join("");
+  if (tab === "about") {
+    const up = st.uptime || 0;
+    const kv = [["Version", st.version ? `${st.version} (${st.commit}${st.dirty ? "-dirty" : ""})` : "-"], ["Host", (st.host || "sidecar") + ".local"], ["Address", st.ip], ["Uptime", Math.floor(up / 3600) + " h " + Math.floor(up / 60) % 60 + " min"],
+      ["Link", st.link], ["USB-C", st.gadget], ["Built", st.build], ["Circle", st.circle],
+      ["Web", st.web ? `${st.web.requests} requests · slowest ${st.web.maxus} us · ${st.web.commands} commands` : "-"]];
+    $("#about").innerHTML = kv.map(([k, v]) => `<b>${k}</b><span>${esc(v == null ? "-" : v)}</span>`).join("");
+  }
+}
+
+// ---- shared helpers for the user machines and the file browser
+const E = encodeURIComponent;
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+function hb(n) {
+  if (n == null || isNaN(n)) return "-";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i];
+}
+const join = (dir, name) => (dir === "/" ? "" : dir) + "/" + name;
+function say(el, text, bad) { el.textContent = text || ""; el.className = "msg" + (bad ? " err" : ""); }
+async function fsPost(url, body, ac) {       // every /fs/* POST answers "<code> <message>" as text
+  const r = await fetch(url, { method: "POST", body: body || "", signal: ac && ac.signal });
+  const t = (await r.text()).trim(), m = t.match(/^(\d{3})\s*([\s\S]*)$/);
+  if (!r.ok) return { code: r.status, msg: (m ? m[2] : t) || r.statusText };
+  return m ? { code: +m[1], msg: m[2] } : { code: 0, msg: t };
+}
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const BACKOFF = [500, 1000, 2000];
+async function fsRetry(url, body, ac) {      // fsPost, again after 0.5/1/2 s while the Pi refuses (503) or drops it
+  for (let i = 0; ; i++) {
+    try {
+      const r = await fsPost(url, body, ac);
+      if (r.code !== 503 || i >= BACKOFF.length) return r;
+    } catch (e) {
+      if ((e && e.name === "AbortError") || (ac && ac.signal.aborted) || i >= BACKOFF.length) throw e;
+    }
+    await sleep(BACKOFF[i]);
+  }
+}
+async function getRetry(url) {             // a GET, again after 0.5/1/2 s while the Pi refuses (503) or drops it
+  for (let i = 0; ; i++) {
+    try { const r = await fetch(url, { cache: "no-store" }); if (r.status !== 503 || i >= BACKOFF.length) return r; }
+    catch (e) { if (i >= BACKOFF.length) throw e; }
+    await sleep(BACKOFF[i]);
+  }
+}
+let CRCT = null;
+async function crc32File(file, it) {         // zlib/IEEE CRC-32, read in 1 MB slices so the page stays live
+  if (!CRCT) { CRCT = new Uint32Array(256); for (let i = 0; i < 256; i++) { let c = i; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; CRCT[i] = c; } }
+  let c = 0xffffffff;
+  for (let p = 0; p < file.size; p += 1 << 20) {
+    if (it.cancel) throw "cancelled";
+    const b = new Uint8Array(await file.slice(p, p + (1 << 20)).arrayBuffer());
+    for (let i = 0; i < b.length; i++) c = CRCT[(c ^ b[i]) & 255] ^ (c >>> 8);
+    it.show("checking " + Math.floor(100 * (p + b.length) / file.size) + " %", (p + b.length) / file.size);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+function progRow(box, name) {                // a progress line: name, bar, text, cancel
+  const d = document.createElement("div");
+  d.innerHTML = `<span class="nm"></span><span class="bar"><i style="width:0"></i></span><span class="st mut">waiting</span><button class="sm">Cancel</button>`;
+  d.querySelector(".nm").textContent = name;
+  box.appendChild(d);
+  return {
+    el: d, btn: d.querySelector("button"),
+    show(t, f, cls) {
+      d.querySelector(".st").textContent = t; d.querySelector(".st").className = "st " + (cls || "mut");
+      if (f != null) d.querySelector("i").style.width = Math.min(100, f * 100).toFixed(1) + "%";
+    },
+    end(t, cls) { this.show(t, null, cls); this.btn.textContent = "Dismiss"; this.btn.onclick = () => d.remove(); },
+  };
+}
+
+// ---- uploads: a queue, one request in flight at a time
+const CHUNK = 49152, Q = [];
+let qBusy = false;
+function enqueue(file, folder, box, after) {
+  const it = { file, path: join(folder, file.name), after, cancel: false };
+  it.run = () => uploadRetry(it);
+  Object.assign(it, progRow(box, it.path));
+  it.btn.onclick = () => {
+    it.cancel = true;
+    if (it.ac) it.ac.abort();
+    const i = Q.indexOf(it);
+    if (i >= 0) { Q.splice(i, 1); it.end("cancelled", "err"); }
+  };
+  Q.push(it);
+  runQ();
+}
+async function runQ() {
+  if (qBusy) return;
+  qBusy = true;
+  while (Q.length) {
+    const it = Q.shift();
+    let res;
+    try { res = { ok: true, msg: await it.run() }; it.end(res.msg, "ok"); }
+    catch (e) { res = { ok: false, msg: it.cancel ? "cancelled" : String(e && e.name === "AbortError" ? "cancelled" : e) }; it.end(res.msg, "err"); }
+    if (it.after) it.after(it, res);
+  }
+  qBusy = false;
+}
+async function upload(it) {
+  const f = it.file, size = f.size;
+  it.show("checking", 0);
+  const crc = await crc32File(f, it);
+  let off = 0, retry = 0, sent = 0;
+  const t0 = performance.now();
+  for (;;) {
+    if (it.cancel) throw "cancelled";
+    const fd = new FormData();
+    fd.append("f", f.slice(off, off + CHUNK), f.name);
+    it.ac = new AbortController();
+    const n0 = Math.min(CHUNK, size - off);
+    const r = await fsRetry(`/fs/put?path=${E(it.path)}&off=${off}&total=${size}&crc=${crc}`, fd, it.ac);
+    let m;
+    if (r.code === 200 && (m = r.msg.match(/^(ok|done)\s+(\d+)/))) {
+      if (m[1] === "done") return "done, " + hb(+m[2]);
+      sent += n0; off = +m[2];
+      const s = (performance.now() - t0) / 1000;
+      it.show(`${Math.floor(100 * off / size)} % · ${(sent / 1048576 / Math.max(s, 0.001)).toFixed(2)} MB/s`, off / size);
+    } else if (r.code === 409 && (m = r.msg.match(/^expected\s+(\d+)/))) {
+      if (++retry > 6) throw "409 " + r.msg + " (gave up after 6 resumes)";
+      off = +m[1];
+      it.show("resuming at " + hb(off), off / size);
+    } else throw r.code + " " + r.msg;
+  }
+}
+
+async function uploadRetry(it) {
+  for (let i = 0; ; i++) {
+    try { return await upload(it); }
+    catch (e) {
+      const m = String(e && e.message ? e.message : e);
+      if (it.cancel || (e && e.name === "AbortError") || /^4\d\d /.test(m) || i >= BACKOFF.length) {
+        if (!/^(403|507) /.test(m)) fsRetry(`/fs/del?path=${E(it.path + ".part")}`).catch(() => {});
+        throw e;
+      }
+      it.show(`retrying (${i + 1}/${BACKOFF.length}) after: ${m}`, null, "mut");
+      await sleep(BACKOFF[i]);
+    }
+  }
+}
+
+// ---- user machines (GET /um)
+const umEl = $("#um");
+let umLast = "", umPlugins = [], umBlockNs = 250000;
+let umBusy = false;
+async function pollUm(force) {
+  if (umBusy) return;
+  umBusy = true;
+  try { await pollUm1(force); } finally { umBusy = false; }
+}
+async function pollUm1(force) {
+  try {
+    const r = await fetch("/um", { cache: "no-store", signal: AbortSignal.timeout(4000) }), t = await r.text();
+    if (t === umLast && !force) return;
+    const busy = umEl.contains(document.activeElement) && document.activeElement.tagName === "SELECT";
+    if (busy) return;                          // do not rebuild a select the user has open
+    umLast = t;
+    renderUm(JSON.parse(t));
+  } catch (e) { $("#um-info").textContent = "no answer"; }
+}
+setInterval(() => { if (!document.hidden && tab === "machines" && !qBusy) pollUm(); }, 2000);
+const SLOTBAD = { MISSING: 1, BAD: 1, NO_ROOM: 1 };
+function cpuCell(p) {     // measured once it played (% of one Pi core, us per block); the declared figure as well
+  const decl = p.cpu != null ? `~${(p.cpu / 10).toFixed(1)} % decl.` : "";
+  if (!p.blocks || !p.ns) return `<span class="mut" title="the package's own figure, in % of one Teensy voice budget">${decl}</span>`;
+  return `${(100 * p.ns / umBlockNs).toFixed(2)} %<div class="mut" style="font-size:11px" title="measured: one voice's render call (12 frames), mean over ${p.blocks} blocks; declared: the package's own figure (Teensy budget)">${(p.ns / 1000).toFixed(1)} µs/block · ${decl}</div>`;
+}
+function renderUm(a) {
+  const P = a.filter((x) => x.t === "plugin"), S = {}, M = a.filter((x) => x.t === "mem");
+  const info = a.find((x) => x.t === "plugins") || {};
+  a.filter((x) => x.t === "slot").forEach((x) => { S[x.slot] = x; });
+  umPlugins = P;
+  if (info.block_ns) umBlockNs = info.block_ns;
+  $("#um-proj").textContent = info.project || "-";
+  $("#um-info").textContent = info.n !== undefined ? `${info.n} package${info.n === 1 ? "" : "s"} in ${info.dir || "/Plugins"}`
+    + (info.scanning ? " · scanning" : "") : "";
+  $("#um-list").innerHTML = P.length ? P.map((p, i) => {
+    const code = (p.image || 0) + (p.bss || 0), why = p.why || (p.status !== "ok" ? p.status : "");
+    return `<tr><td>${esc(p.name || p.id)}</td><td class="hm">${esc(p.id)}</td><td>${esc(p.ver)}</td><td class="r hm">${hb(p.size)}</td>
+      <td class="hm">${esc(p.fp)}</td><td class="r hm">${hb(code)}</td><td class="r hm">${hb(p.state)}</td>
+      <td class="r">${cpuCell(p)}</td><td>${(p.slots || []).map((s) => "U" + s).join(" ") || "-"}</td>
+      <td class="w">${p.fit ? `<span class="badge ok">fits</span>` : `<span class="badge err">no</span> <span class="err">${esc(why)}</span>`}
+        <span class="mut hm">${esc(p.target || "")}</span></td>
+      <td><button class="sm" data-del="${i}">Delete</button></td></tr>`;
+  }).join("") : `<tr><td colspan="11" class="mut">no machines in /Plugins: upload a .rmp</td></tr>`;
+  let slots = "";
+  for (let n = 1; n <= 5; n++) {
+    const s = S[n] || { state: "EMPTY", id: "" }, st = s.state || "EMPTY";
+    let nm = s.name || s.id || "", cls = SLOTBAD[st] ? "err" : st === "READY" ? "" : "mut";
+    if (st === "MISSING") nm = "!" + (s.name || s.id);
+    if (st === "EMPTY") nm = "(empty)";
+    let opts = `<option value="">(empty)</option>`, have = !s.id;
+    for (const p of P) if (p.fit) { const sel = p.id === s.id; have = have || sel; opts += `<option value="${esc(p.id)}"${sel ? " selected" : ""}>${esc(p.name || p.id)} ${esc(p.ver)}</option>`; }
+    if (!have) opts += `<option value="${esc(s.id)}" selected>!${esc(s.name || s.id)}</option>`;
+    const meas = s.blocks && s.ns ? ` · ${(100 * s.ns / umBlockNs).toFixed(2)} %/voice` : "";
+    const src = slotSrc(s);
+    slots += `<div class="slot"><div class="mut">U${n} · <span class="${cls}">${esc(st)}</span>${s.ver ? " · " + esc(s.ver) : ""}${meas}</div>
+      <div class="n ${cls}" title="${esc(s.id)}">${esc(nm)}</div><select data-slot="${n}" aria-label="assign U${n}">${opts}</select>
+      <div class="src ${src.cls}" data-src="${n}">${esc(src.text)}</div></div>`;
+  }
+  $("#um-slots").innerHTML = slots;
+  umSlots = S; umInfo = info;
+  $("#um-how").textContent = info.prints === "rytm" ? "slots resolved from the Rytm's report of the project's sounds"
+    : info.prints === "waiting" ? "waiting for the Rytm's report of the project's sounds"
+    : "older Rytm firmware: slots fill from the sounds' tags as they play";
+  const names = { code: "Code", data: "Data", state: "Voice state", sd: "SD card" };
+  let over = [];
+  $("#um-mem").innerHTML = M.map((m) => {
+    const f = m.size ? m.used / m.size : 0, full = m.used > m.size;
+    if (full) over.push(names[m.k] || m.k);
+    return `<div><div class="k">${esc(names[m.k] || m.k)}</div><div class="bar${full || f > 0.95 ? " full" : ""}"><i style="width:${Math.min(100, f * 100).toFixed(1)}%"></i></div>
+      <div class="d">${hb(m.used)} / ${hb(m.size)}</div></div>`;
+  }).join("");
+  const bad = [];
+  for (let n = 1; n <= 5; n++) if (S[n] && SLOTBAD[S[n].state]) bad.push("U" + n + " " + S[n].state);
+  const parts = M.map((m) => `${names[m.k] || m.k} ${hb(m.used)}/${hb(m.size)}`);
+  if (info.state_limit) parts.push("state limit " + hb(info.state_limit) + " per voice");
+  const ok = !over.length && !bad.length;
+  say($("#um-res"), (parts.join(" · ") || "-") + " — " + (ok ? "everything fits" : "does not fit: " + over.concat(bad).join(", ")), !ok);
+  if (ok) $("#um-res").classList.add("ok");
+}
+$("#um-slots").addEventListener("change", (e) => {
+  const s = e.target.dataset.slot;
+  if (!s) return;
+  cmd(e.target.value ? `um=assign:${s}:${e.target.value}` : `um=clear:${s}`);
+  e.target.blur();
+  setTimeout(() => pollUm(true), 300);
+});
+// ---- where a slot's machine came from; the slot list as a file (export / import), shared with the Teensy console's
+// web/slotlist.js (same format: {"format":"sidecar-slots","version":1,"project","slots":[{slot,id,ver,name,fp}|{slot,empty}]})
+let umSlots = {}, umInfo = {};
+const SRCTXT = { saved: "saved with the project", sounds: "from the project's sounds", inherited: "inherited from the previous project",
+  imported: "from an imported slot list", empty: "empty (cleared)", none: "" };
+function slotSrc(s) {
+  const fp = s.want_fp, nm = s.want_name ? ` (${s.want_name})` : "";
+  if (s.collision) return { text: `fingerprint ${fp} matches several machines: pick one`, cls: "err" };
+  if (s.unknown && s.src !== "empty") return { text: `needs a machine with fingerprint ${fp}${nm}`, cls: "err" };
+  if (s.state === "MISSING") return { text: `missing: install ${s.name || s.id}${s.ver ? " " + s.ver : ""}`, cls: "err" };
+  let t = SRCTXT[s.src || "none"] || "";
+  if (s.updated) t = "updated from the project's sounds";
+  if (s.src === "empty" && fp) t += ` · its sounds use fingerprint ${fp}${nm}`;
+  if (s.mixed) t += " · its sounds use more than one machine";
+  return { text: t || "-", cls: s.updated ? "ok" : "mut" };
+}
+function slotListExport(project, S) {
+  const slots = [];
+  for (let n = 1; n <= 5; n++) {
+    const s = S[n] || {};
+    if (s.id) slots.push({ slot: n, id: s.id, ver: s.ver || "", name: s.name || s.want_name || "", fp: s.fp || s.want_fp || 0 });
+    else if (s.src === "empty") slots.push({ slot: n, empty: true });
+  }
+  return { format: "sidecar-slots", version: 1, project: project || "", slots };
+}
+function slotListParse(text) {      // -> {project, slots} or throws; also "U<n> <id> <a.b.c>" lines (a slot map file)
+  let j;
+  try { j = JSON.parse(text); } catch (e) {
+    const slots = [];
+    for (const l of text.split(/\r?\n/)) {
+      const m = l.trim().match(/^U([1-5])\s+(\S+)\s+(\d+\.\d+\.\d+)$/);
+      if (m) slots.push({ slot: +m[1], id: m[2], ver: m[3] });
+      else if (l.trim()) throw new Error("not a slot list: " + l.trim().slice(0, 40));
+    }
+    return { project: "", slots };
+  }
+  if (!j || j.format !== "sidecar-slots" || !Array.isArray(j.slots)) throw new Error("not a Sidecar slot list");
+  const slots = j.slots.filter((x) => x && x.slot >= 1 && x.slot <= 5 && (x.empty || (typeof x.id === "string" && /^\S{1,31}$/.test(x.id))))
+    .map((x) => x.empty ? { slot: x.slot, empty: true } : { slot: x.slot, id: x.id, ver: /^\d+\.\d+\.\d+$/.test(x.ver || "") ? x.ver : "0.0.0",
+      name: String(x.name || "").replace(/[^\x20-\x7e]/g, "_").replace(/:/g, "_").slice(0, 10), fp: x.fp | 0 });
+  return { project: String(j.project || ""), slots };
+}
+function slotListCmds(list) {       // the console lines that apply it (um=put:...)
+  return list.slots.map((x) => x.empty ? `um=put:${x.slot}:-:0.0.0` : `um=put:${x.slot}:${x.id}:${x.ver}${x.name ? ":" + x.name : ""}`);
+}
+function slotListMissing(list, P) { // entries whose package is not installed here, by name
+  const have = new Set(P.filter((p) => p.fit).map((p) => p.id));
+  return list.slots.filter((x) => !x.empty && !have.has(x.id)).map((x) => `U${x.slot} ${x.name || x.id} ${x.ver} (${x.id})`);
+}
+$("#um-export").onclick = () => {
+  const l = slotListExport(umInfo.project, umSlots);
+  saveBlob(new Blob([JSON.stringify(l, null, 1) + "\n"], { type: "application/json" }), `${l.project || "project"}.slots.json`);
+};
+$("#um-impb").onclick = () => $("#um-imp").click();
+$("#um-imp").onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  let l;
+  try { l = slotListParse(await f.text()); } catch (err) { say($("#um-msg"), "import: " + err.message, true); return; }
+  const other = l.project && umInfo.project && l.project !== umInfo.project;
+  if (other && !confirm(`This slot list is for project ${l.project}. Apply it to ${umInfo.project}?`)) return;
+  for (const c of slotListCmds(l)) await cmd(c);
+  const miss = slotListMissing(l, umPlugins);
+  say($("#um-msg"), `imported ${l.slots.length} slot${l.slots.length === 1 ? "" : "s"}` +
+    (miss.length ? " - not installed: " + miss.join(", ") : " - every machine is installed"), miss.length > 0);
+  setTimeout(() => pollUm(true), 300);
+};
+$("#um-empty").onclick = () => {
+  if (!confirm("Start this project with U1..U5 empty? Nothing is inherited or filled from the project's sounds.")) return;
+  cmd("um=empty");
+  setTimeout(() => pollUm(true), 300);
+};
+function umRescan() { cmd("um=rescan"); setTimeout(() => pollUm(true), 400); setTimeout(() => pollUm(true), 2000); }
+$("#um-rescan").onclick = umRescan;
+$("#um-list").addEventListener("click", async (e) => {
+  const p = umPlugins[e.target.dataset.del];
+  if (!p || !confirm(`Delete ${p.file}?`)) return;
+  const r = await fsPost("/fs/del?path=" + E(p.file));
+  say($("#um-msg"), `delete ${p.file}: ${r.code} ${r.msg}`, r.code !== 200);
+  umRescan();
+  if (fsCur === "/Plugins") fsLs(fsCur);
+});
+$("#um-upb").onclick = () => $("#um-file").click();
+$("#um-file").onchange = (e) => {
+  for (const f of e.target.files) enqueue(f, "/Plugins", $("#um-prog"), umAfter);
+  e.target.value = "";
+};
+function umAfter(it, res) {
+  say($("#um-msg"), (res.ok ? "uploaded " : "") + it.path + ": " + res.msg, !res.ok);
+  umRescan();
+  if (fsCur === "/Plugins") fsLs(fsCur);
+}
+
+// ---- IN L/R source (/status "fxin": the setting and the Rytm's confirmed state; core/host_link.h, 26 / 27)
+function fxinShow(f) {
+  const on = f.state === "on";
+  $("#fxin-warn").hidden = !on;
+  $("#fxin-note").textContent = on ? "FX return on IN L/R (channels 10/11)" : f.state === "off" ? (f.want ? "asked, the Rytm still shows inputs" : "")
+    : f.state === "unsupported" ? "not supported by this Rytm build" : f.want ? "waiting for the Rytm" : "";
+  document.querySelectorAll("[data-nm]").forEach((l) => { l.lastChild.textContent = " " + (on ? l.dataset.fx : l.dataset.nm); });
+}
+
+// ---- record (/status "rec", the console's rec= commands, the takes through /fs)
+const REC = [["Master",[[0,"MASTER (stereo)"]]],
+  ["Drum machine inputs",[[1,"MAIN L"],[2,"MAIN R"],[3,"BD"],[4,"SD"],[5,"RS/CP"],[6,"BT"],[7,"LT"],[8,"MT/HT"],[9,"CH/OH"],[10,"CY/CB"],[11,"AUDIO IN L"],[12,"AUDIO IN R"]]],
+  ["Sidecar voices",[1,2,3,4,5,6,7,8].map((v) => [12 + v, "VOICE " + v])],
+  ["Send FX returns",[[21,"FX1 (stereo)"],[22,"FX2 (stereo)"]]]];
+const STEREO = { 0: 1, 21: 1, 22: 1 };
+let recSel = new Set([0]), recMode = "manual", recBits = 24, recLast = null, recPrevState = -1, recSynced = false;
+try { const j = JSON.parse(store("sidecar.rec") || "null");
+  if (j) { recSel = new Set(j.ch || [0]); recMode = j.mode === "arm" ? "arm" : "manual"; recBits = j.bits === 16 ? 16 : 24; $("#rec-name").value = j.name || "take"; }
+} catch (e) {}
+$("#rec-ch").innerHTML = REC.map(([g, chs]) => `<div class="chg"><h3>${g}</h3><div class="chs">` +
+  chs.map(([id, n]) => `<label class="ch" data-ch="${id}"><span${id === 11 || id === 12 ? ` data-nm="${n}" data-fx="FX RETURN ${id === 11 ? "L" : "R"}"` : ""}><input type="checkbox" data-ci="${id}"> ${n}</span><div class="bar"><i style="width:0"></i></div></label>`).join("") +
+  `</div></div>`).join("");
+const recIds = () => [...recSel].sort((a, b) => a - b).join(",") || "none";
+const recSamples = () => [...recSel].reduce((a, id) => a + (STEREO[id] ? 2 : 1), 0);
+const hms = (s) => `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function recSave() { store("sidecar.rec", JSON.stringify({ ch: [...recSel], mode: recMode, bits: recBits, name: $("#rec-name").value })); }
+function recBusy() { return recLast && recLast.state !== 0; }
+async function recPush(what) {   // the device's settings from the page's (idle only)
+  if (recBusy()) return;
+  if (!what || what === "ch") await cmd("rec=ch:" + recIds());
+  if (!what || what === "bits") await cmd("rec=bits:" + recBits);
+  if (!what || what === "name") { const n = $("#rec-name").value; if (/^[A-Za-z0-9_-]{1,24}$/.test(n)) await cmd("rec=name:" + n); }
+}
+function recView() {
+  document.querySelectorAll("#rec-ch .ch").forEach((el) => { const id = +el.dataset.ch, on = recSel.has(id);
+    el.classList.toggle("on", on); el.querySelector("input").checked = on; el.querySelector("input").disabled = recBusy(); });
+  document.querySelectorAll("[data-rm]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.rm === recMode)));
+  document.querySelectorAll("[data-rb]").forEach((b) => { b.setAttribute("aria-checked", String(+b.dataset.rb === recBits)); b.classList.toggle("pend", pend.want("bits") === b.dataset.rb); });
+  const bps = recSamples() * recBits / 8 * 48000, files = recSel.size;
+  $("#rec-sum").textContent = `${files} file${files === 1 ? "" : "s"} · ${(bps / 1048576).toFixed(2)} MB/s`;
+  const free = recLast ? recLast.freeMB * 1048576 : 0;
+  $("#rec-free").textContent = recLast && recLast.totalMB ? `${hb(free)} free · ${bps ? hms(free / bps) : "-"} left at this selection` : "";
+  $("#rec-name").disabled = recBusy();
+}
+$("#rec-ch").addEventListener("change", (e) => {
+  const id = e.target.dataset.ci; if (id === undefined) return;
+  e.target.checked ? recSel.add(+id) : recSel.delete(+id); recSave(); recView(); recPush("ch");
+});
+$("#rec-all").onclick = () => { if (recBusy()) return; recSel = new Set(REC.flatMap(([, c]) => c.map(([id]) => id))); recSave(); recView(); recPush("ch"); };
+$("#rec-none").onclick = () => { if (recBusy()) return; recSel = new Set(); recSave(); recView(); recPush("ch"); };
+document.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { if (recBusy()) return; recMode = b.dataset.rm; recSave(); recView(); });
+document.querySelectorAll("[data-rb]").forEach((b) => b.onclick = () => { if (recBusy()) return; recBits = +b.dataset.rb; recSave(); pend.start("bits", recBits); recView(); recPush("bits"); });
+$("#rec-name").onchange = () => { const ok = /^[A-Za-z0-9_-]{1,24}$/.test($("#rec-name").value);
+  say($("#rec-msg"), ok ? "" : "take name: 1 to 24 of A-Z a-z 0-9 _ -", !ok); if (ok) { recSave(); recPush("name"); } };
+$("#rec-go").onclick = async () => {
+  if (recBusy()) { await cmd("rec=stop"); return; }
+  if (!recSel.size) return say($("#rec-msg"), "select a channel first", true);
+  await recPush();
+  await cmd(recMode === "arm" ? "rec=arm" : "rec=start");
+};
+function recRender(r) {
+  recLast = r;
+  if (pend.has("bits") && r.bits === +pend.want("bits")) { pend.report("bits", r.bits); recView(); }
+  if (!recSynced && r.state === 0) {   // the page's remembered settings to the device, once
+    recSynced = true;
+    if (r.ch.join(",") !== [...recSel].sort((a, b) => a - b).join(",") || r.bits !== recBits || r.prefix !== $("#rec-name").value) recPush();
+  }
+  if (r.state !== 0) { recSel = new Set(r.ch); recBits = r.bits; recMode = r.arm ? "arm" : recMode; $("#rec-name").value = r.prefix; }
+  const secs = r.frames / 48000, b = $("#rec-go"), st = r.state;
+  b.className = st === 2 || st === 3 ? "on" : st === 1 ? "armed" : "";
+  b.innerHTML = st === 0 ? (recMode === "arm" ? "&#9679; Arm" : "&#9679; Record") : st === 1 ? "&#9632; Disarm" : "&#9632; Stop";
+  $("#rec-time").textContent = hms(st === 1 ? 0 : secs);
+  $("#rec-time").className = st === 2 ? "on" : "";
+  $("#rec-state").textContent = !r.ready ? "recording is off (cmdline recbuf=0, or no card)" : st === 1 ? "armed: waiting for PLAY" + (r.take ? ` (last: ${r.take})` : "")
+    : st === 2 ? r.take : st === 3 ? r.take + ": closing the files" : r.take ? "last take: " + r.take : "";
+  const w = [];
+  if (r.drops) w.push(`the card fell behind: ${r.drops} blocks dropped (${(r.silence / 48).toFixed(0)} ms written as silence)`);
+  if (r.outShort) w.push(`${r.outShort} Sidecar frames missing (written as silence)`);
+  if (r.error) w.push(r.error);
+  $("#rec-warn").textContent = w.join(" · ");
+  $("#rec-card").textContent = r.writes ? `Card: ${(r.cardKBps / 1024).toFixed(1)} MB/s while writing (needs ${(r.needKBps / 1024).toFixed(2)}), ` +
+    `worst write ${r.worstWriteMs} ms, buffer ${(r.ringMs / 1000).toFixed(1)} s (most used ${r.ringSlots ? Math.round(100 * r.ringMax / r.ringSlots) : 0} %), ${hb(r.bytes * 1024)} written.` : r.ready ? `Buffer: ${(r.ringMs / 1000).toFixed(1)} s at the device's selection.` : "";
+  document.querySelectorAll("#rec-ch .ch").forEach((el) => { const id = +el.dataset.ch, p = r.peak[id] || 0, bar = el.querySelector(".bar");
+    bar.querySelector("i").style.width = (recSel.has(id) && st ? Math.min(100, p / 10) : 0) + "%"; bar.classList.toggle("hot", p >= 990); });
+  if (recPrevState > 0 && st === 0 && tab === "record") recTakes();
+  recPrevState = st;
+  recView();
+}
+let recList = [];
+async function lsJson(p) { const r = await getRetry("/fs/ls?path=" + E(p)), t = (await r.text()).trim(); return t[0] === "{" ? JSON.parse(t) : null; }
+// ---- pool & presets (core/user/lists.h's /lists; /um's slots; the presets' folders through /fs)
+let libLast = "", libData = null, libDir = "/Samples", libUm = [];
+async function pollLib(force) {
+  try {
+    const [r, u] = await Promise.all([fetch("/lists", { cache: "no-store", signal: AbortSignal.timeout(4000) }),
+                                      fetch("/um", { cache: "no-store", signal: AbortSignal.timeout(4000) })]);
+    const t = await r.text(), ut = await u.text();
+    if (t + ut === libLast && !force) return;
+    if ($("#tab-library").contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName)) return;
+    libLast = t + ut;
+    libData = JSON.parse(t);
+    libUm = JSON.parse(ut).filter((x) => x.t === "slot");
+    renderLib();
+  } catch (e) { $("#lib-sram").textContent = "no answer"; }
+}
+setInterval(() => { if (!document.hidden && tab === "library" && !qBusy) pollLib(); }, 2000);
+function libVoices(sel, m) {
+  const was = sel.value, vs = (libData.voices || []).filter((v) => v.m === m);
+  sel.innerHTML = vs.length ? vs.map((v) => `<option value="${v.v}">voice ${v.v} (PAT ${v.pat})</option>`).join("")
+    : `<option value="">no voice plays ${m}</option>`;
+  if (vs.some((v) => String(v.v) === was)) sel.value = was;
+}
+function libList(L, kind) {
+  const rows = (L.list || []).map((e) => `<tr><td class="r">${e.slot}</td><td class="w${e.used ? (e.found === false ? " err" : "") : " mut"}">${e.used ? esc(e.name) : "(empty)"}</td>
+    <td class="r">${e.used ? `<button class="sm" data-lact="ren" data-k="${kind}" data-s="${e.slot}" data-n="${esc(e.name)}">Rename</button> ` : ""}
+    ${e.slot ? `<button class="sm" data-lact="up" data-k="${kind}" data-s="${e.slot}" title="swap with the slot above">Up</button> ` : ""}
+    ${e.used ? `<button class="sm" data-lact="del" data-k="${kind}" data-s="${e.slot}">Delete</button>` : ""}</td></tr>`);
+  return rows.join("") || `<tr><td colspan="3" class="mut">${kind === "fm" ? "empty: PAT picks the 96 ROM voices" : "empty: PAT picks the factory patches"}</td></tr>`;
+}
+function renderLib() {
+  const d = libData;
+  $("#lib-proj").textContent = d.project || "-";
+  $("#lib-sram").textContent = d.card ? (d.sram && d.sram[0] ? `sample RAM ${hb(d.sram[1])} / ${hb(d.sram[0])}` : "no sample RAM: DSP SAMPLE streams from the card") : "no card";
+  $("#lib-pool-list").innerHTML = (d.pool || []).map((e) => `<tr><td class="r">${e.slot}</td><td class="w${e.ok ? "" : " err"}">${esc(e.name)}${e.ok ? "" : " (not on the card)"}</td>
+    <td class="hm w mut">${esc(e.path)}</td><td class="r"><button class="sm" data-pslot="${e.slot}">Select</button> <button class="sm" data-pclr="${e.slot}">Clear</button></td></tr>`).join("")
+    || `<tr><td colspan="4" class="mut">empty pool</td></tr>`;
+  $("#lib-juno-list").innerHTML = libList(d.juno || {}, "juno");
+  $("#lib-fm-list").innerHTML = libList(d.fm || {}, "fm");
+  libVoices($("#lib-juno-v"), "JUNO");
+  libVoices($("#lib-fm-v"), "FM");
+  libPresets();
+}
+async function libBrowse(dir) {
+  const j = await lsJson(dir);
+  if (!j) { say($("#lib-pool-msg"), dir + ": not readable", true); return; }
+  libDir = j.path || dir;
+  $("#lib-crumb").textContent = libDir;
+  const ents = (j.entries || []).filter((x) => x.n[0] !== "." && (x.d || /\.wav$/i.test(x.n)))
+    .sort((a, b) => (b.d - a.d) || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
+  $("#lib-browse").innerHTML = `<table><tbody>${ents.map((x) => `<tr><td class="w">${x.d ? `<button class="lnk" data-bdir="${esc(join(libDir, x.n))}">${esc(x.n)}/</button>`
+    : `<button class="lnk" data-bwav="${esc(join(libDir, x.n))}" title="put into the slot above">${esc(x.n)}</button>`}</td><td class="r mut">${x.d ? "" : hb(x.s)}</td></tr>`).join("")
+    || `<tr><td class="mut">no .wav here</td></tr>`}</tbody></table>`;
+}
+async function libCmd(c, box) {
+  say(box, c);
+  await cmd(c);
+  setTimeout(() => pollLib(true), 400);
+}
+$("#lib-re").onclick = () => { pollLib(true); libBrowse(libDir); };
+$("#lib-up").onclick = () => { if (libDir !== "/Samples") libBrowse(libDir.replace(/\/[^/]*$/, "") || "/Samples"); };
+$("#lib-juno-save").onclick = () => { const v = $("#lib-juno-v").value, n = $("#lib-juno-n").value.trim().replace(/[:\t]/g, " ");
+  if (v !== "") libCmd("juno=save:" + v + (n ? ":" + n : ""), $("#lib-juno-msg")); };
+$("#lib-fm-save").onclick = () => { const v = $("#lib-fm-v").value; if (v !== "") libCmd("fm=save:" + v, $("#lib-fm-msg")); };
+$("#tab-library").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const D = b.dataset;
+  if (D.bdir) return libBrowse(D.bdir);
+  if (D.bwav) return libCmd(`pool=${+$("#lib-slot").value || 1}:${D.bwav.replace(/^\/Samples\//, "")}`, $("#lib-pool-msg"));
+  if (D.pslot) { $("#lib-slot").value = D.pslot; return; }
+  if (D.pclr) return libCmd(`pool=${D.pclr}:`, $("#lib-pool-msg"));
+  if (D.lact) {
+    const box = $("#lib-" + D.k + "-msg"), s = +D.s;
+    if (D.lact === "del" && confirm(`Delete ${D.k.toUpperCase()} slot ${s}?`)) return libCmd(`${D.k}=del:${s}`, box);
+    if (D.lact === "up") return libCmd(`${D.k}=swap:${s - 1}:${s}`, box);
+    if (D.lact === "ren") { const n = prompt("New name", D.n || ""); if (n && n.trim()) return libCmd(`${D.k}=ren:${s}:${n.trim().replace(/[:\t]/g, " ")}`, box); }
+    return;
+  }
+  if (D.prs) {   // a user machine's preset: rename / delete in /PRESETS/<id>/ (then the lists again), save current
+    const box = $("#lib-pre-msg"), dir = "/PRESETS/" + D.id;
+    if (D.prs === "save") {
+      const n = (prompt(`Save U${D.u}'s current sound as`, "") || "").trim();
+      if (n) return libCmd(`um=save:${D.u}:${n}`, box);
+      return;
+    }
+    if (D.prs === "del" && confirm("Delete preset " + D.f + "?")) { const r = await fsPost("/fs/del?path=" + E(dir + "/" + D.f)); say(box, r.msg, r.code !== 200); }
+    if (D.prs === "ren") {
+      const ext = D.f.replace(/^.*?(\.[^.]*)?$/, "$1"), n = (prompt("New name", D.f.slice(0, D.f.length - ext.length)) || "").trim();
+      if (!n || n.includes("/")) return;
+      const r = await fsPost("/fs/mv?path=" + E(dir + "/" + D.f) + "&to=" + E(dir + "/" + n + ext));
+      say(box, r.msg, r.code !== 200);
+    }
+    cmd("um=presets");
+    setTimeout(() => pollLib(true), 400);
+  }
+});
+async function libPresets() {
+  const box = $("#lib-pre-slots"), S = libUm.filter((s) => s.id);
+  if (!S.length) { box.innerHTML = `<p class="mut">no user slot assigned in this project</p>`; return; }
+  const parts = await Promise.all(S.map(async (s) => {
+    const j = await lsJson("/PRESETS/" + s.id), ext = (s.pre_ext || "").toLowerCase();
+    const files = (j && j.entries || []).filter((x) => !x.d && x.n[0] !== "." && (/\.txt$/i.test(x.n) || (ext && x.n.toLowerCase().endsWith("." + ext))))
+      .sort((a, b) => (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
+    return `<div class="slot" style="margin:6px 0"><div class="row"><b>U${s.slot}</b> ${esc(s.name || s.id)} <span class="mut">${esc(s.id)}</span>
+      <span class="spacer"></span><span class="mut">${s.pre_ok ? s.presets + " in the PRE list" : "scanning"}</span>
+      <button class="sm" data-prs="save" data-u="${s.slot}" data-id="${esc(s.id)}"${s.state === "READY" ? "" : " disabled"}>Save current</button></div>
+      <table><tbody>${files.map((x) => `<tr><td class="w">${esc(x.n)}</td><td class="r mut">${hb(x.s)}</td><td class="r">
+        <button class="sm" data-prs="ren" data-id="${esc(s.id)}" data-f="${esc(x.n)}">Rename</button>
+        <button class="sm" data-prs="del" data-id="${esc(s.id)}" data-f="${esc(x.n)}">Delete</button></td></tr>`).join("")
+        || `<tr><td class="mut">no presets (/PRESETS/${esc(s.id)}/)</td></tr>`}</tbody></table></div>`;
+  }));
+  box.innerHTML = parts.join("");
+}
+async function recTakes() {
+  const box = $("#rec-takes");
+  try {
+    const j = await lsJson("/Recordings");
+    if (!j) { box.innerHTML = `<p class="mut">No takes yet.</p>`; return; }
+    const takes = (j.entries || []).filter((x) => x.d).map((x) => x.n).sort().reverse().slice(0, 50);
+    recList = [];
+    for (const t of takes) {
+      const k = await lsJson("/Recordings/" + t), fs = k ? (k.entries || []).filter((x) => !x.d && /\.wav$/i.test(x.n)).sort((a, b) => a.n < b.n ? -1 : 1) : [];
+      recList.push({ t, files: fs, size: fs.reduce((a, x) => a + x.s, 0) });
+    }
+    box.innerHTML = recList.length ? `<table><thead><tr><th>Take</th><th class="r">Files</th><th class="r">Size</th><th class="hm">Channels</th><th></th></tr></thead><tbody>` +
+      recList.map((x, i) => `<tr><td>${esc(x.t)}</td><td class="r">${x.files.length}</td><td class="r">${hb(x.size)}</td>
+        <td class="w hm">${x.files.map((f) => /^\d\d_/.test(f.n) ? `<button class="sm" type="button" aria-pressed="false" data-rp="${i}" data-nn="${+f.n.slice(0, 2)}" data-t="${esc(x.t)}" data-c="${esc(f.n.replace(/^\d+_|\.wav$/gi, ""))}" title="play on the Rytm's MAIN">&#9654; ${esc(f.n.replace(/^\d+_|\.wav$/gi, ""))}</button>` : "").join(" ")}</td>
+        <td class="r"><button class="sm" data-rt="get" data-i="${i}">Download</button> <button class="sm" data-rt="del" data-i="${i}">Delete</button></td></tr>`).join("") +
+      `</tbody></table>` : `<p class="mut">No takes yet.</p>`;
+  } catch (e) { say($("#rec-msg"), "takes: " + e, true); }
+}
+$("#rec-re").onclick = recTakes;
+let playPend = null;   // the play button clicked, until /status confirms it (or 2 s)
+function playRender(p) {   // /status "play" (rec_play.h): the take's channel playing into the Rytm's MAIN
+  const on = p.state === 2 || p.state === 3, t = (ms) => hms(ms / 1000);
+  document.querySelectorAll("button[data-rp]").forEach((b) => {
+    const it = on && b.dataset.t === p.take && b.dataset.c === p.ch;
+    b.setAttribute("aria-pressed", it ? "true" : "false");
+    if (it && b === playPend) playPend = null;
+    b.classList.toggle("pend", b === playPend);
+  });
+  $("#play-stop").disabled = !on;
+  $("#play-state").textContent = on ? `Playing ${p.take} · ${p.ch} · ${t(p.posMs)} / ${t(p.lenMs)} · level ${p.level}` + (p.error ? " · " + p.error : "")
+    : p.error ? "Playback: " + p.error : "Playback: click a channel to hear it on the Rytm's MAIN (not while recording).";
+}
+$("#play-stop").onclick = () => cmd("play=stop");
+$("#rec-takes").addEventListener("click", async (e) => {
+  const pb = e.target.closest("[data-rp]");
+  if (pb) {
+    if (recBusy() && (recLast.state === 2 || recLast.state === 3)) return say($("#rec-msg"), "a take is recording: no playback now", true);
+    playPend = pb; pb.classList.add("pend");
+    setTimeout(() => { if (playPend === pb) { playPend = null; pb.classList.remove("pend"); } }, 2000);
+    return cmd(`play=start:${recList[pb.dataset.rp].t}/${pb.dataset.nn}`);
+  }
+  const b = e.target.closest("[data-rt]"); if (!b) return;
+  const x = recList[b.dataset.i], m = $("#rec-msg");
+  if (recBusy() && recLast.take === x.t) return say(m, x.t + " is recording: stop it first", true);
+  if (b.dataset.rt === "get") { for (const f of x.files) await download(`/Recordings/${x.t}/${f.n}`, f.s, $("#rec-prog")); return; }
+  if (!confirm(`Delete the take ${x.t} (${x.files.length} files, ${hb(x.size)})?`)) return;
+  for (const f of x.files) { const r = await fsPost("/fs/del?path=" + E(`/Recordings/${x.t}/${f.n}`)); if (r.code !== 200) return say(m, `${f.n}: ${r.code} ${r.msg}`, true); }
+  const r = await fsPost("/fs/del?path=" + E("/Recordings/" + x.t));
+  say(m, `delete ${x.t}: ${r.code} ${r.msg}`, r.code !== 200);
+  recTakes();
+});
+recView();
+
+// ---- files (GET /fs/ls)
+let fsCur = "/", fsEnt = [];
+async function fsLs(path) {
+  try {
+    const r = await getRetry("/fs/ls?path=" + E(path)), t = (await r.text()).trim();
+    if (!r.ok || t[0] !== "{") { say($("#fs-msg"), path + ": " + (t || r.status), true); return; }
+    const j = JSON.parse(t);
+    fsCur = j.path || path;
+    const all = j.entries || [], hide = !$("#fs-hidden").checked;
+    fsEnt = all.filter((x) => !(hide && x.n[0] === ".")).sort((a, b) => (b.d - a.d) || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
+    const nHidden = all.length - fsEnt.length;
+    $("#fs-free").textContent = j.total ? `${hb(j.free)} free of ${hb(j.total)}` : "";
+    const parts = fsCur.split("/").filter(Boolean);
+    let acc = "", cr = `<button class="lnk" data-go="/">/</button>`;
+    parts.forEach((p, i) => { acc += "/" + p; cr += `<button class="lnk" data-go="${esc(acc)}">${esc(p)}</button>${i < parts.length - 1 ? "/" : ""}`; });
+    $("#fs-crumb").innerHTML = cr;
+    $("#fs-list").innerHTML = `<table><thead><tr><th>Name</th><th class="r">Size</th><th></th></tr></thead><tbody>` +
+      (fsEnt.length ? fsEnt.map((x, i) => `<tr><td class="w">${x.d ? `<button class="lnk" data-open="${i}">${esc(x.n)}/</button>` : esc(x.n)}${x.ro === 1 ? ` <span title="boot file or restore backup: read-only">🔒</span>` : x.ro === 2 ? ` <span class="mut" title="the Sidecar's own folder: kept (its contents can change)">kept</span>` : ""}</td>
+        <td class="r">${x.d ? "" : hb(x.s)}</td><td class="r">${x.d ? "" : `<button class="sm" data-act="get" data-i="${i}">Download</button> `}${x.ro ? "" :
+        `<button class="sm" data-act="mv" data-i="${i}">Rename</button> <button class="sm" data-act="del" data-i="${i}">Delete</button>`}</td></tr>`).join("")
+        : `<tr><td colspan="3" class="mut">empty folder</td></tr>`) +
+      (nHidden ? `<tr><td colspan="3" class="mut">${nHidden} hidden (dot-file${nHidden === 1 ? "" : "s"}): tick "show hidden"</td></tr>` : "") +
+      (j.more ? `<tr><td colspan="3" class="mut">more entries not shown</td></tr>` : "") + `</tbody></table>`;
+  } catch (e) { say($("#fs-msg"), path + ": " + e, true); }
+}
+document.addEventListener("click", (e) => {
+  const g = e.target.closest("[data-go]");
+  if (g) fsLs(g.dataset.go);
+});
+$("#fs-upd").onclick = () => fsLs(fsCur.replace(/\/[^/]*$/, "") || "/");
+$("#fs-re").onclick = () => fsLs(fsCur);
+$("#fs-hidden").checked = store("sidecar.hidden") === "1";
+$("#fs-hidden").onchange = (e) => { store("sidecar.hidden", e.target.checked ? "1" : "0"); fsLs(fsCur); };
+const fsChanged = () => { fsLs(fsCur); if (fsCur === "/Plugins") umRescan(); };
+$("#fs-mk").onclick = async () => {
+  const n = prompt("New folder in " + fsCur);
+  if (!n) return;
+  if (n.includes("/")) return say($("#fs-msg"), "a name without /", true);
+  const r = await fsPost("/fs/mkdir?path=" + E(join(fsCur, n)));
+  say($("#fs-msg"), `new folder ${n}: ${r.code} ${r.msg}`, r.code !== 200);
+  fsLs(fsCur);
+};
+$("#fs-list").addEventListener("click", async (e) => {
+  const o = e.target.dataset.open;
+  if (o !== undefined) return fsLs(join(fsCur, fsEnt[o].n));
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const x = fsEnt[b.dataset.i], p = join(fsCur, x.n), m = $("#fs-msg");
+  if (b.dataset.act === "get") return download(p, x.s);
+  if (b.dataset.act === "del") {
+    if (!confirm(`Delete ${p}?` + (x.d ? " (a folder: only when empty)" : ""))) return;
+    const r = await fsPost("/fs/del?path=" + E(p));
+    say(m, `delete ${p}: ${r.code} ${r.msg}`, r.code !== 200);
+    fsChanged();
+  } else if (b.dataset.act === "mv") {
+    const n = prompt("New name for " + x.n, x.n);
+    if (!n || n === x.n) return;
+    if (n.includes("/")) return say(m, "a name without /", true);
+    const r = await fsPost(`/fs/mv?path=${E(p)}&to=${E(join(fsCur, n))}`);
+    say(m, `rename ${x.n} to ${n}: ${r.code} ${r.msg}`, r.code !== 200);
+    fsChanged();
+  }
+});
+async function download(path, size, box) {
+  const it = progRow(box || $("#fs-prog"), "download " + path), parts = [], t0 = performance.now();
+  let off = 0, stop = false;
+  it.btn.onclick = () => { stop = true; };
+  try {
+    while (off < size) {
+      if (stop) throw "cancelled";
+      const len = Math.min(65536, size - off);
+      const r = await getRetry(`/fs/get?path=${E(path)}&off=${off}&len=${len}`);
+      if (!r.ok) throw r.status + " " + ((await r.text()).trim() || r.statusText);
+      const b = await r.arrayBuffer();
+      if (!b.byteLength) throw "the file ended early at " + off;
+      parts.push(b); off += b.byteLength;
+      const s = (performance.now() - t0) / 1000;
+      it.show(`${Math.floor(100 * off / size)} % · ${(off / 1048576 / Math.max(s, 0.001)).toFixed(2)} MB/s`, off / size);
+    }
+    saveBlob(new Blob(parts), path.split("/").pop());
+    it.end("saved, " + hb(off), "ok");
+  } catch (e) { it.end(String(e), "err"); }
+}
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+function fsUpload(files, dir = fsCur) {
+  for (const f of files) {
+    if (junk(f.name)) continue;
+    enqueue(f, dir, $("#fs-prog"), (it, res) => {
+      if (!res.ok) say($("#fs-msg"), it.path + ": " + res.msg, true);
+      if (fsCur === dir) fsLs(dir);
+      if (dir === "/Plugins") umAfter(it, res);
+    });
+  }
+}
+// ---- folders: a tree (its folders, then its files in order) uploaded as one queue item
+const junk = (n) => n === ".DS_Store" || n.startsWith("._") || n === ".Trashes" || n === ".fseventsd" ||
+  n === ".Spotlight-V100" || n === "Thumbs.db" || n === "desktop.ini";
+function readAll(dirEntry) {                 // every entry of a folder (readEntries gives batches until an empty one)
+  const rd = dirEntry.createReader(), out = [];
+  return new Promise((ok, bad) => {
+    const more = () => rd.readEntries((es) => { if (!es.length) return ok(out); out.push(...es); more(); }, bad);
+    more();
+  });
+}
+const fileOf = (fe) => new Promise((ok, bad) => fe.file(ok, bad));
+async function walk(entry, rel, tree) {      // depth first, names sorted: folders before the files in them
+  if (junk(entry.name)) return;
+  if (entry.isFile) { tree.files.push({ rel, file: await fileOf(entry) }); return; }
+  tree.dirs.push(rel);
+  const es = (await readAll(entry)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const e of es) await walk(e, rel + "/" + e.name, tree);
+}
+function treeOfInput(files) {                // <input webkitdirectory>: webkitRelativePath "Kit/sub/a.wav"
+  const tree = { dirs: [], files: [] }, seen = new Set();
+  const fs = [...files].filter((f) => !f.webkitRelativePath.split("/").some(junk))
+    .sort((a, b) => (a.webkitRelativePath < b.webkitRelativePath ? -1 : 1));
+  for (const f of fs) {
+    const parts = f.webkitRelativePath.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const d = parts.slice(0, i).join("/");
+      if (!seen.has(d)) { seen.add(d); tree.dirs.push(d); }
+    }
+    tree.files.push({ rel: f.webkitRelativePath, file: f });
+  }
+  return tree;
+}
+function uploadTree(tree, base) {
+  if (!tree.dirs.length && !tree.files.length) return;
+  const box = $("#fs-prog"), dir = base, top = tree.dirs[0] || tree.files[0].rel.split("/")[0];
+  const total = tree.files.reduce((n, x) => n + x.file.size, 0), nf = tree.files.length;
+  const it = { path: join(base, top) + "/", cancel: false, sub: null, fails: [] };
+  Object.assign(it, progRow(box, `folder ${join(base, top)} (${nf} file${nf === 1 ? "" : "s"}, ${hb(total)})`));
+  it.btn.onclick = () => {
+    it.cancel = true;
+    if (it.sub) { it.sub.cancel = true; if (it.sub.ac) it.sub.ac.abort(); }
+    const i = Q.indexOf(it);
+    if (i >= 0) { Q.splice(i, 1); it.end("cancelled", "err"); }
+  };
+  it.run = async () => {
+    for (let i = 0; i < tree.dirs.length; i++) {
+      if (it.cancel) throw "cancelled";
+      it.show(`folders ${i + 1}/${tree.dirs.length}`, 0);
+      const r = await fsRetry(`/fs/mkdir?p=1&path=${E(join(base, tree.dirs[i]))}`);
+      if (r.code !== 200) throw `folder ${tree.dirs[i]}: ${r.code} ${r.msg}`;
+    }
+    let done = 0, bytes = 0;
+    for (const x of tree.files) {
+      if (it.cancel) throw "cancelled";
+      const sub = { file: x.file, path: join(base, x.rel), cancel: false };
+      Object.assign(sub, progRow(box, sub.path));
+      sub.btn.onclick = () => { sub.cancel = true; if (sub.ac) sub.ac.abort(); };   // this file only
+      it.sub = sub;
+      const show = sub.show.bind(sub);
+      sub.show = (t, f, cls) => { show(t, f, cls); if (f != null) it.show(`${done}/${nf} files · ${Math.floor(100 * (bytes + f * x.file.size) / Math.max(total, 1))} %`, (bytes + f * x.file.size) / Math.max(total, 1)); };
+      try { sub.end(await uploadRetry(sub), "ok"); if (nf > 8) setTimeout(() => sub.el.remove(), 2000); }
+      catch (e) {
+        if (it.cancel) { sub.end("cancelled", "err"); throw "cancelled"; }
+        const m = String(e && e.name === "AbortError" ? "cancelled" : e && e.message ? e.message : e);
+        it.fails.push(x); it.why = m;
+        if (nf > 1) sub.el.remove(); else sub.end(m, "err");   // one summary line below, not a row per failure
+      }
+      done++; bytes += x.file.size;
+      it.show(`${done}/${nf} files`, bytes / Math.max(total, 1));
+    }
+    it.sub = null;
+    if (it.fails.length) {
+      const k = it.fails.length;
+      throw `${nf - k}/${nf} files uploaded, ${k} failed (${it.fails.slice(0, 3).map((x) => x.rel.split("/").pop()).join(", ")}${k > 3 ? ", ..." : ""}; last error: ${it.why})`;
+    }
+    return `done, ${nf} file${nf === 1 ? "" : "s"}, ${hb(total)}`;
+  };
+  it.after = (_, res) => {
+    say($("#fs-msg"), `folder ${top}: ${res.msg}`, !res.ok);
+    if (!res.ok && it.fails.length && !it.cancel) {      // the failed files again, into the folders already made
+      const b = document.createElement("button");
+      b.className = "sm"; b.textContent = `Retry failed (${it.fails.length})`;
+      b.onclick = () => { it.el.remove(); uploadTree({ dirs: [], files: it.fails }, base); };
+      it.el.insertBefore(b, it.btn);
+    }
+    if (fsCur === dir) fsLs(dir);
+    if (dir === "/Plugins" || dir.startsWith("/Plugins/")) umRescan();
+  };
+  Q.push(it);
+  runQ();
+}
+$("#fs-upb").onclick = () => $("#fs-file").click();
+$("#fs-file").onchange = (e) => { fsUpload(e.target.files); e.target.value = ""; };
+$("#fs-upf").onclick = () => $("#fs-dir").click();
+$("#fs-dir").onchange = (e) => { uploadTree(treeOfInput(e.target.files), fsCur); e.target.value = ""; };
+const drop = $("#fs-list");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  const base = fsCur, items = [...(e.dataTransfer.items || [])];
+  // the entries now: the DataTransfer is emptied once this handler returns
+  const ents = items.map((i) => (i.kind === "file" && i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
+  if (!ents.some((x) => x && x.isDirectory)) { if (e.dataTransfer.files.length) fsUpload(e.dataTransfer.files); return; }
+  const loose = [];
+  for (const en of ents) {
+    if (!en) continue;
+    if (en.isFile) { if (!junk(en.name)) loose.push(await fileOf(en)); continue; }
+    const tree = { dirs: [], files: [] };
+    try { await walk(en, en.name, tree); } catch (err) { say($("#fs-msg"), en.name + ": could not read the folder: " + err, true); continue; }
+    uploadTree(tree, base);
+  }
+  if (loose.length) fsUpload(loose, base);
+});
+
+// ---- Wi-Fi settings (/wifi/*, wifi.h): the only place a network's name is shown. The password is sent once, in a
+// POST body, and never kept, shown again or pre-filled. A join restarts the Pi: background polling pauses (wifiBusy)
+// while this follows it, retrying as the upload code does.
+let wifiBusy = false, wifi = null, wfScanT = 0;
+const WF_WHY = { wrong_password: "the password was wrong", not_found: "the network was not found (out of range, or the name is wrong)",
+  no_dhcp: "it joined, but the network gave no address (DHCP)", not_started: "Wi-Fi did not start (the chip or its firmware)" };
+const wfBars = (rssi) => rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+async function wfGet() {
+  const r = await fetch("/wifi/status", { cache: "no-store", signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+async function wfPost(url, fields) {
+  for (let i = 0; ; i++) {                   // again after 0.5/1/2 s while the Pi refuses (503) or drops it
+    try {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(fields).toString(), signal: AbortSignal.timeout(8000) });
+      if (r.status === 503 && i < BACKOFF.length) { await sleep(BACKOFF[i]); continue; }
+      if (!r.ok) return { ok: false, error: "HTTP " + r.status };
+      return await r.json();
+    } catch (e) {
+      if (i >= BACKOFF.length) return { ok: false, error: "Sidecar did not answer" };
+      await sleep(BACKOFF[i]);
+    }
+  }
+}
+function wfSay(t, bad) { say($("#wf-msg"), t, bad); }
+function wfRender(w) {
+  wifi = w;
+  const net = w.net === "wifi" ? `Wi-Fi${w.ssid ? " · " + w.ssid : ""} · ${w.up ? w.ip : "not connected"}` : `Ethernet · ${w.ip}`;
+  const kv = [["Network", net], ["Wi-Fi", w.on ? (w.net === "wifi" ? "on" : "on (from the next start" + (w.ssid ? ", on the stored network)" : ")"))
+      : w.chip ? "off (the chip is up for scans)" : "off"], ["Stored network", w.ssid ? w.ssid + (w.open ? " (open)" : "") : "none"]];
+  if (w.cmdline !== null) kv.push(["cmdline.txt", "wifi=" + w.cmdline + " (wins over these settings)"]);
+  if (w.join.state === "failed") kv.push(["Last join", "failed: " + (WF_WHY[w.join.reason] || w.join.reason) + "; the previous setting is back"]);
+  $("#wf-now").innerHTML = kv.map(([k, v]) => `<b>${k}</b><span>${esc(v)}</span>`).join("");
+  $("#wf-on").setAttribute("aria-checked", String(!!w.on));
+  $("#wf-off").setAttribute("aria-checked", String(!w.on));
+  $("#wf-trial").textContent = w.trialSecs;
+  $("#wf-forget").disabled = !w.ssid;
+  const sel = $("#wf-net"), keep = sel.value;
+  if (!w.scanning && (w.networks.length || !w.chip)) {
+    const opts = w.networks.map((n) => {
+      const o = new Option(`${"▂▄▆█".slice(0, wfBars(n.rssi)).padEnd(4, "·")} ${n.secured ? "🔒" : "open"} ${n.ssid} · ${n.band} GHz`, n.ssid);
+      o.dataset.open = n.secured ? "" : "1";
+      o.title = `${n.rssi} dBm, channel ${n.ch}`;
+      return o;
+    });
+    if (!opts.length) opts.push(new Option(w.chip ? "(no networks found: Refresh)" : "(turn Wi-Fi on, then Refresh)", ""));
+    opts.push(new Option("Other network…", "__other"));
+    sel.replaceChildren(...opts);
+    if ([...sel.options].some((o) => o.value === keep) && keep) sel.value = keep;
+    else if (w.ssid && [...sel.options].some((o) => o.value === w.ssid)) sel.value = w.ssid;
+    wfPick();
+  }
+  $("#wf-scan").disabled = w.scanning;
+  $("#wf-scan").textContent = w.scanning ? "Scanning…" : "Refresh";
+}
+function wfPick() {
+  const o = $("#wf-net").selectedOptions[0], other = o && o.value === "__other";
+  $("#wf-other").hidden = !other;
+  if (o && !other && o.value) $("#wf-open").checked = !!o.dataset.open;
+  wfOpen();
+}
+function wfOpen() { $("#wf-pwrow").hidden = $("#wf-open").checked; }
+async function wfPoll() {
+  if (wifiBusy || qBusy) return;
+  try { wfRender(await wfGet()); } catch (e) { /* the tiles say "not reachable" */ }
+  if (wifi && wifi.scanning) { clearTimeout(wfScanT); wfScanT = setTimeout(wfPoll, 1000); }
+}
+setInterval(() => { if (!document.hidden && tab === "status") wfPoll(); }, 3000);
+$("#wf-net").onchange = wfPick;
+$("#wf-open").onchange = wfOpen;
+$("#wf-show").onclick = () => {
+  const p = $("#wf-psk"), show = p.type === "password";
+  p.type = show ? "text" : "password";
+  $("#wf-show").textContent = show ? "Hide" : "Show";
+  $("#wf-show").setAttribute("aria-pressed", String(show));
+};
+$("#wf-scan").onclick = async () => {
+  const r = await fetch("/wifi/scan", { cache: "no-store" }).then((x) => x.json()).catch(() => ({ ok: false, error: "Sidecar did not answer" }));
+  if (!r.ok) { wfSay(r.error, true); return; }
+  wfSay("scanning (5 s)…");
+  if (wifi) wfRender(Object.assign({}, wifi, { scanning: true }));
+  setTimeout(async () => { await wfPoll(); if (!wifi || !wifi.scanning) wfSay(""); }, 1000);
+};
+document.querySelectorAll("[data-wf]").forEach((b) => b.addEventListener("click", async () => {
+  const on = b.dataset.wf;
+  const r = await wfPost("/wifi/power", { on });
+  wfSay(r.ok ? (on === "1" ? "Wi-Fi on: Refresh scans for networks. " : "Wi-Fi off from the next start. ") +
+    (wifi && wifi.net === "wifi" && on === "0" ? "Sidecar stays on Wi-Fi until it restarts." : "") : r.error, !r.ok);
+  wfPoll();
+}));
+$("#wf-forget").onclick = async () => {
+  const r = await wfPost("/wifi/forget", {});
+  wfSay(r.ok ? "Forgotten" + (wifi && wifi.net === "wifi" ? ": Ethernet from the next start." : ".") : r.error, !r.ok);
+  wfPoll();
+};
+// the same checks as the Pi (wifi_conf.cpp check_join), before anything is sent
+function wfCheck(ssid, psk, open) {
+  const n = new TextEncoder().encode(ssid);
+  if (!n.length || n.length > 32 || [...n].some((c) => c < 0x20 || c === 0x7f)) return "the network name must be 1-32 bytes";
+  if (open) return psk ? "an open network takes no password" : "";
+  if (/^[0-9a-fA-F]{64}$/.test(psk) || (psk.length >= 8 && psk.length <= 63 && /^[\x20-\x7e]+$/.test(psk))) return "";
+  return "the password must be 8-63 characters (printable ASCII) or 64 hex digits";
+}
+$("#wf-join").onclick = async () => {
+  if (wifiBusy) return;
+  const sel = $("#wf-net"), other = sel.value === "__other", ssid = other ? $("#wf-ssid").value : sel.value;
+  const open = $("#wf-open").checked, psk = open ? "" : $("#wf-psk").value;
+  const bad = wfCheck(ssid, psk, open);
+  if (bad) { wfSay(bad, true); return; }
+  wifiBusy = true;
+  $("#wf-join").disabled = true;
+  try {
+    const f = { ssid, open: open ? "1" : "0" };
+    if (!open) f.psk = psk;
+    const r = await wfPost("/wifi/join", f);
+    $("#wf-psk").value = "";                 // never kept on the page
+    if (!r.ok) { wfSay(r.error, true); return; }
+    const t0 = Date.now(), limit = ((wifi && wifi.trialSecs) || 90) * 1000 + 120000;
+    let seen = false;                        // the Pi was away (restarting) at least once
+    wfSay("stored: Sidecar restarts on Wi-Fi…");
+    while (Date.now() - t0 < limit) {
+      await sleep(2000);
+      let w;
+      try { w = await wfGet(); } catch (e) { seen = true; wfSay("Sidecar is restarting… (" + Math.round((Date.now() - t0) / 1000) + " s)"); continue; }
+      const st = w.join.state;
+      if (st === "restarting" && !seen) { wfSay("stored: Sidecar restarts on Wi-Fi…"); continue; }
+      if (st === "trying") { wfRender(w); wfSay("connecting… " + w.join.left + " s left before it goes back"); continue; }
+      wfRender(w);
+      if (st === "up") { wfSay("connected: " + (w.ssid || "") + " · " + w.ip); return; }
+      if (st === "failed") { wfSay("not connected: " + (WF_WHY[w.join.reason] || w.join.reason) + ". The previous setting is back.", true); return; }
+    }
+    wfSay("no answer from Sidecar: if this computer is not on the new network, find it there at sidecar.local", true);
+  } finally {
+    $("#wf-psk").value = "";
+    $("#wf-join").disabled = false;
+    wifiBusy = false;
+  }
+};
+
+pollStatus(); pollLog();
+showTab(location.hash.slice(1) || store("sidecar.tab") || "status");
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+core/ui/fonts: font3x5 and font5x7 (gen_fonts.py and the generated font3x5.h / font5x7.h)
+
+The glyphs were drawn for this project (rytm-teensy, 2026-10-16) as ASCII art in gen_fonts.py; they are not
+copied or derived from any other font file or device firmware.
+
+To the extent possible under law, the authors have dedicated all copyright and related and neighbouring rights
+to this glyph data to the public domain worldwide (CC0 1.0 Universal,
+https://creativecommons.org/publicdomain/zero/1.0/). The data is distributed without any warranty.

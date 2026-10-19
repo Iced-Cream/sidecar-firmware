@@ -1,0 +1,10 @@
+build/
+out/
+sd/
+*.img
+*.log
+*.o
+*.d
+*.elf
+*.lst
+*.map

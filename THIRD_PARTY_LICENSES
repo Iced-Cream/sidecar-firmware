@@ -1,0 +1,813 @@
+Third-party components in Sidecar | Expander binaries
+======================================================
+
+Our own code: GPL-2.0-or-later (LICENSE). Full licence texts: licenses/GPL-2.0.txt,
+licenses/GPL-3.0.txt, licenses/LGPL-2.1.txt. Each entry below names where the component is used,
+its licence, and its notice as it ships upstream.
+
+
+##############################################################################
+# ALL BUILDS
+##############################################################################
+
+------------------------------------------------------------------------------
+Mutable Instruments Plaits, Rings and stmlib (eurorack, commit 08460a6)
+Licence: MIT. Teensy and Pi: Plaits machines; Pi: the RINGS send effect.
+------------------------------------------------------------------------------
+Copyright 2016 Emilie Gillet.
+
+Author: Emilie Gillet (emilie.o.gillet@gmail.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+See http://creativecommons.org/licenses/MIT/ for more information.
+
+-----------------------------------------------------------------------------
+
+Main synthesis voice.
+
+------------------------------------------------------------------------------
+DaisySP (Electrosmith, commit 2c72eaf)
+Licence: MIT, including its Plaits- and Soundpipe-derived parts.
+------------------------------------------------------------------------------
+DaisySP, copyright (c) 2020 Electrosmith, Corp. 
+
+Published under the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+Plaits, copyright 2016 Emilie Gillet (emilie.o.gillet@gmail.com)
+
+Published under the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+Soundpipe, copyright 2015 Paul Batchelor
+
+Published under the MIT license:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------------------------
+digidrum (soejrd, commit 2f893f9)
+Licence: MIT (SPDX-License-Identifier: MIT in each source file; no separate licence file or copyright line is given upstream).
+------------------------------------------------------------------------------
+SPDX-License-Identifier: MIT
+
+------------------------------------------------------------------------------
+AMY Juno-106 model (shorepine/amy, amy/juno.py)
+Licence: MIT, (c) Brian Whitman, Dan Ellis. The JUNO machine's signal path, curves and patch table are derived from it (sim/juno/juno_patches.h).
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+Send FX ports: Rings, CloudSeed and others (core/fx)
+Licence: MIT. The large FX run on the Pi build only.
+------------------------------------------------------------------------------
+Third-party code in core/fx (send FX), with its licences as they ship.
+
+================================================================================
+core/fx/rings_fx.h: ported from Mutable Instruments Rings (github.com/pichenettes/eurorack,
+commit 08460a6: rings/dsp, stmlib/dsp). The eurorack README: "Code (STM32F projects): MIT license."
+Each ported source file carries this notice:
+================================================================================
+Copyright 2015 Emilie Gillet.
+
+Author: Emilie Gillet (emilie.o.gillet@gmail.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+See http://creativecommons.org/licenses/MIT/ for more information.
+
+================================================================================
+core/fx/cloudseed_fx.h: ported from Cloud Seed by Ghost Note Audio (github.com/GhostNoteAudio/CloudSeedCore,
+commit deb21de; ValdemarOrn/CloudSeed). Its LICENSE:
+================================================================================
+MIT License
+
+Copyright (c) 2024 Ghost Note Audio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Its DSP source headers name the holder as "Copyright (c) 2024 Ghost Note Engineering Ltd".
+
+
+##############################################################################
+# TEENSY 4.1 BUILD
+##############################################################################
+
+------------------------------------------------------------------------------
+Teensyduino core library (PJRC), Teensyduino 1.62.0
+Licence: MIT with a device clause.
+------------------------------------------------------------------------------
+Teensyduino Core Library
+http://www.pjrc.com/teensy/
+Copyright (c) 2019 PJRC.COM, LLC.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+1. The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+2. If the Software is incorporated into a build system that allows
+selection among a list of target devices, then similar target
+devices manufactured by PJRC.COM must be included in the list of
+target devices and selectable in the same manner.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+Teensyduino core: Time.cpp, Stream/Printable/WCharacter headers; SPI library
+Licence: GNU LGPL version 2.1 (SPI: GPL-2.0 or LGPL-2.1, used under LGPL-2.1). Full text: licenses/LGPL-2.1.txt. These parts are statically linked: the written offer in README.md covers the materials needed to relink the firmware with a modified version of them.
+------------------------------------------------------------------------------
+time.c - low level time and date functions
+  Copyright (c) Michael Margolis 2009-2014
+
+  This library is free software; you can redistribute it and/or
+  modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either
+  version 2.1 of the License, or (at your option) any later version.
+
+  This library is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public
+  License along with this library; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
+  1.0  6  Jan 2010 - initial release
+  1.1  12 Feb 2010 - fixed leap year calculation error
+  1.2  1  Nov 2010 - fixed setTime bug (thanks to Korman for this)
+  1.3  24 Mar 2012 - many edits by Paul Stoffregen: fixed timeStatus() to update
+                     status, updated examples for Arduino 1.0, fixed ARM
+                     compatibility issues, added TimeArduinoDue and TimeTeensy3
+                     examples, add error checking and messages to RTC examples,
+                     add examples to DS1307RTC library.
+  1.4  5  Sep 2014 - compatibility with Arduino 1.5.7
+
+------------------------------------------------------------------------------
+USBHost_t36 (Paul Stoffregen)
+Licence: MIT.
+------------------------------------------------------------------------------
+USB EHCI Host for Teensy 3.6
+Copyright 2017 Paul Stoffregen (paul@pjrc.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+SdFat (Bill Greiman)
+Licence: MIT.
+------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2011..2020 Bill Greiman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+littlefs (Arm Limited) and the LittleFS wrapper (PJRC)
+Licence: BSD-3-Clause; the wrapper is MIT.
+------------------------------------------------------------------------------
+Copyright (c) 2017, Arm Limited. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+-  Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+-  Redistributions in binary form must reproduce the above copyright notice, this
+   list of conditions and the following disclaimer in the documentation and/or
+   other materials provided with the distribution.
+-  Neither the name of ARM nor the names of its contributors may be used to
+   endorse or promote products derived from this software without specific prior
+   written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+newlib, libgcc, libstdc++ (GNU Arm toolchain)
+Licence: newlib: BSD-style licences (see the newlib COPYING.NEWLIB); libgcc and libstdc++: GPL-3.0 with the GCC Runtime Library Exception, which allows distributing the compiled program under any terms.
+------------------------------------------------------------------------------
+
+
+##############################################################################
+# RASPBERRY PI 4B BUILD
+##############################################################################
+
+------------------------------------------------------------------------------
+Circle (Rene Stange), tag Step51.1.1, with our patches
+Licence: GNU GPL version 3. The Pi kernel as a whole is distributed under GPLv3: licenses/GPL-3.0.txt. Source: see the written offer in README.md.
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+FatFs (ChaN), Circle addon
+Licence: BSD-style 1-clause.
+------------------------------------------------------------------------------
+FatFs License
+
+FatFs has being developped as a personal project of the author, ChaN. It is free from the code anyone else wrote at current release. Following code block shows a copy of the FatFs license document that heading the source files.
+
+/*----------------------------------------------------------------------------/
+/  FatFs - Generic FAT Filesystem Module  Rx.xx                               /
+/-----------------------------------------------------------------------------/
+/
+/ Copyright (C) 20xx, ChaN, all right reserved.
+/
+/ FatFs module is an open source software. Redistribution and use of FatFs in
+/ source and binary forms, with or without modification, are permitted provided
+/ that the following condition is met:
+/
+/ 1. Redistributions of source code must retain the above copyright notice,
+/    this condition and the following disclaimer.
+/
+/ This software is provided by the copyright holder and contributors "AS IS"
+/ and any warranties related to this software are DISCLAIMED.
+/ The copyright owner or contributors be NOT LIABLE for any damages caused
+/ by use of this software.
+/----------------------------------------------------------------------------*/
+
+Therefore FatFs license is one of the BSD-style licenses, but there is a significant feature. FatFs is mainly intended for embedded systems. In order to extend the usability for commercial products, the redistributions of FatFs in binary form, such as embedded code, binary library and any forms without source code, do not need to include about FatFs in the documentations. This is equivalent to the 1-clause BSD license. Of course FatFs is compatible with the most of open source software licenses include GNU GPL. When you redistribute the FatFs source code with changes or create a fork, the license can also be changed to GNU GPL, BSD-style license or any open source software license that not conflict with FatFs license.
+
+------------------------------------------------------------------------------
+Circle SDCard driver emmc.cpp (John Cronin)
+Licence: MIT.
+------------------------------------------------------------------------------
+emmc.cpp
+
+Provides an interface to the EMMC controller and commands for interacting
+with an sd card
+
+Copyright (C) 2013 by John Cronin <jncronin@tysos.org>
+
+Modified for Circle by R. Stange
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+References:
+
+PLSS - SD Group Physical Layer Simplified Specification ver 3.00
+HCSS - SD Group Host Controller Simplified Specification ver 3.00
+
+Broadcom BCM2835 ARM Peripherals Guide
+
+------------------------------------------------------------------------------
+LVGL 9.4.0
+Licence: MIT.
+------------------------------------------------------------------------------
+MIT licence
+Copyright (c) 2025 LVGL Kft
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+Circle Wi-Fi driver (addon/wlan: the BCM4343x driver from Plan 9)
+Licence: Plan 9 software, released under the GNU GPL version 2 (text below). Used only when Wi-Fi is turned on; the SD card package ships Wi-Fi off and no Wi-Fi chip firmware.
+------------------------------------------------------------------------------
+The University of California, Berkeley, has been authorised by
+Alcatel-Lucent to release all Plan 9 software previously governed by
+the Lucent Public License, Version 1.02 under the GNU General
+Public License, Version 2.
+
+You can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation;
+version 2 of the License.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301
+USA
+
+The Plan 9 software is provided under the terms of the
+Lucent Public License, Version 1.02, reproduced below,
+with the following notable exceptions:
+
+1. No right is granted to create derivative works of or
+   to redistribute (other than with the Plan 9 Operating System)
+   the screen imprinter fonts identified in subdirectory
+   /lib/font/bit/lucida and printer fonts (Lucida Sans Unicode, Lucida
+   Sans Italic, Lucida Sans Demibold, Lucida Typewriter, Lucida Sans
+   Typewriter83), identified in subdirectory /sys/lib/postscript/font.
+   These directories contain material copyrights by B&H Inc. and Y&Y Inc.
+
+2. The printer fonts identified in subdirectory /sys/lib/ghostscript/font
+   are subject to the GNU GPL, reproduced in the file /LICENSE.gpl.
+
+3. The ghostscript program in the subdirectory /sys/src/cmd/gs is
+   covered by the Aladdin Free Public License, reproduced in the file
+   /LICENSE.afpl.
+
+Other, less notable exceptions are marked in the file tree with
+COPYING, COPYRIGHT, or LICENSE files.
+
+===================================================================
+
+Lucent Public License Version 1.02
+
+THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS PUBLIC
+LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION OF THE
+PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
+
+1. DEFINITIONS
+
+"Contribution" means:
+
+  a. in the case of Lucent Technologies Inc. ("LUCENT"), the Original
+     Program, and
+  b. in the case of each Contributor,
+
+     i. changes to the Program, and
+    ii. additions to the Program;
+
+    where such changes and/or additions to the Program were added to the
+    Program by such Contributor itself or anyone acting on such
+    Contributor's behalf, and the Contributor explicitly consents, in
+    accordance with Section 3C, to characterization of the changes and/or
+    additions as Contributions.
+
+"Contributor" means LUCENT and any other entity that has Contributed a
+Contribution to the Program.
+
+"Distributor" means a Recipient that distributes the Program,
+modifications to the Program, or any part thereof.
+
+"Licensed Patents" mean patent claims licensable by a Contributor
+which are necessarily infringed by the use or sale of its Contribution
+alone or when combined with the Program.
+
+"Original Program" means the original version of the software
+accompanying this Agreement as released by LUCENT, including source
+code, object code and documentation, if any.
+
+"Program" means the Original Program and Contributions or any part
+thereof
+
+"Recipient" means anyone who receives the Program under this
+Agreement, including all Contributors.
+
+2. GRANT OF RIGHTS
+
+ a. Subject to the terms of this Agreement, each Contributor hereby
+    grants Recipient a non-exclusive, worldwide, royalty-free copyright
+    license to reproduce, prepare derivative works of, publicly display,
+    publicly perform, distribute and sublicense the Contribution of such
+    Contributor, if any, and such derivative works, in source code and
+    object code form.
+    
+ b. Subject to the terms of this Agreement, each Contributor hereby
+    grants Recipient a non-exclusive, worldwide, royalty-free patent
+    license under Licensed Patents to make, use, sell, offer to sell,
+    import and otherwise transfer the Contribution of such Contributor, if
+    any, in source code and object code form. The patent license granted
+    by a Contributor shall also apply to the combination of the
+    Contribution of that Contributor and the Program if, at the time the
+    Contribution is added by the Contributor, such addition of the
+    Contribution causes such combination to be covered by the Licensed
+    Patents. The patent license granted by a Contributor shall not apply
+    to (i) any other combinations which include the Contribution, nor to
+    (ii) Contributions of other Contributors. No hardware per se is
+    licensed hereunder.
+    
+ c. Recipient understands that although each Contributor grants the
+    licenses to its Contributions set forth herein, no assurances are
+    provided by any Contributor that the Program does not infringe the
+    patent or other intellectual property rights of any other entity. Each
+    Contributor disclaims any liability to Recipient for claims brought by
+    any other entity based on infringement of intellectual property rights
+    or otherwise. As a condition to exercising the rights and licenses
+    granted hereunder, each Recipient hereby assumes sole responsibility
+    to secure any other intellectual property rights needed, if any. For
+    example, if a third party patent license is required to allow
+    Recipient to distribute the Program, it is Recipient's responsibility
+    to acquire that license before distributing the Program.
+
+ d. Each Contributor represents that to its knowledge it has sufficient
+    copyright rights in its Contribution, if any, to grant the copyright
+    license set forth in this Agreement.
+
+3. REQUIREMENTS
+
+A. Distributor may choose to distribute the Program in any form under
+this Agreement or under its own license agreement, provided that:
+
+ a. it complies with the terms and conditions of this Agreement;
+
+ b. if the Program is distributed in source code or other tangible
+    form, a copy of this Agreement or Distributor's own license agreement
+    is included with each copy of the Program; and
+
+ c. if distributed under Distributor's own license agreement, such
+    license agreement:
+
+      i. effectively disclaims on behalf of all Contributors all warranties
+         and conditions, express and implied, including warranties or
+         conditions of title and non-infringement, and implied warranties or
+         conditions of merchantability and fitness for a particular purpose;
+     ii. effectively excludes on behalf of all Contributors all liability
+         for damages, including direct, indirect, special, incidental and
+         consequential damages, such as lost profits; and
+    iii. states that any provisions which differ from this Agreement are
+         offered by that Contributor alone and not by any other party.
+
+B. Each Distributor must include the following in a conspicuous
+   location in the Program:
+
+   Copyright (C) 2003, Lucent Technologies Inc. and others. All Rights
+   Reserved.
+
+C. In addition, each Contributor must identify itself as the
+originator of its Contribution in a manner that reasonably allows
+subsequent Recipients to identify the originator of the Contribution.
+Also, each Contributor must agree that the additions and/or changes
+are intended to be a Contribution. Once a Contribution is contributed,
+it may not thereafter be revoked.
+
+4. COMMERCIAL DISTRIBUTION
+
+Commercial distributors of software may accept certain
+responsibilities with respect to end users, business partners and the
+like. While this license is intended to facilitate the commercial use
+of the Program, the Distributor who includes the Program in a
+commercial product offering should do so in a manner which does not
+create potential liability for Contributors. Therefore, if a
+Distributor includes the Program in a commercial product offering,
+such Distributor ("Commercial Distributor") hereby agrees to defend
+and indemnify every Contributor ("Indemnified Contributor") against
+any losses, damages and costs (collectively"Losses") arising from
+claims, lawsuits and other legal actions brought by a third party
+against the Indemnified Contributor to the extent caused by the acts
+or omissions of such Commercial Distributor in connection with its
+distribution of the Program in a commercial product offering. The
+obligations in this section do not apply to any claims or Losses
+relating to any actual or alleged intellectual property infringement.
+In order to qualify, an Indemnified Contributor must: a) promptly
+notify the Commercial Distributor in writing of such claim, and b)
+allow the Commercial Distributor to control, and cooperate with the
+Commercial Distributor in, the defense and any related settlement
+negotiations. The Indemnified Contributor may participate in any such
+claim at its own expense.
+
+For example, a Distributor might include the Program in a commercial
+product offering, Product X. That Distributor is then a Commercial
+Distributor. If that Commercial Distributor then makes performance
+claims, or offers warranties related to Product X, those performance
+claims and warranties are such Commercial Distributor's responsibility
+alone. Under this section, the Commercial Distributor would have to
+defend claims against the Contributors related to those performance
+claims and warranties, and if a court requires any Contributor to pay
+any damages as a result, the Commercial Distributor must pay those
+damages.
+
+5. NO WARRANTY
+
+EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, THE PROGRAM IS
+PROVIDED ON AN"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, EITHER EXPRESS OR IMPLIED INCLUDING, WITHOUT LIMITATION, ANY
+WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY
+OR FITNESS FOR A PARTICULAR PURPOSE. Each Recipient is solely
+responsible for determining the appropriateness of using and
+distributing the Program and assumes all risks associated with its
+exercise of rights under this Agreement, including but not limited to
+the risks and costs of program errors, compliance with applicable
+laws, damage to or loss of data, programs or equipment, and
+unavailability or interruption of operations.
+
+6. DISCLAIMER OF LIABILITY
+
+EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, NEITHER RECIPIENT NOR
+ANY CONTRIBUTORS SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING
+WITHOUT LIMITATION LOST PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OR
+DISTRIBUTION OF THE PROGRAM OR THE EXERCISE OF ANY RIGHTS GRANTED
+HEREUNDER, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+7. EXPORT CONTROL
+
+Recipient agrees that Recipient alone is responsible for compliance
+with the United States export administration regulations (and the
+export control laws and regulation of any other countries).
+
+8. GENERAL
+
+If any provision of this Agreement is invalid or unenforceable under
+applicable law, it shall not affect the validity or enforceability of
+the remainder of the terms of this Agreement, and without further
+action by the parties hereto, such provision shall be reformed to the
+minimum extent necessary to make such provision valid and enforceable.
+
+If Recipient institutes patent litigation against a Contributor with
+respect to a patent applicable to software (including a cross-claim or
+counterclaim in a lawsuit), then any patent licenses granted by that
+Contributor to such Recipient under this Agreement shall terminate as
+of the date such litigation is filed. In addition, if Recipient
+institutes patent litigation against any entity (including a
+cross-claim or counterclaim in a lawsuit) alleging that the Program
+itself (excluding combinations of the Program with other software or
+hardware) infringes such Recipient's patent(s), then such Recipient's
+rights granted under Section 2(b) shall terminate as of the date such
+litigation is filed.
+
+All Recipient's rights under this Agreement shall terminate if it
+fails to comply with any of the material terms or conditions of this
+Agreement and does not cure such failure in a reasonable period of
+time after becoming aware of such noncompliance. If all Recipient's
+rights under this Agreement terminate, Recipient agrees to cease use
+and distribution of the Program as soon as reasonably practicable.
+However, Recipient's obligations under this Agreement and any licenses
+granted by Recipient relating to the Program shall continue and
+survive.
+
+LUCENT may publish new versions (including revisions) of this
+Agreement from time to time. Each new version of the Agreement will be
+given a distinguishing version number. The Program (including
+Contributions) may always be distributed subject to the version of the
+Agreement under which it was received. In addition, after a new
+version of the Agreement is published, Contributor may elect to
+distribute the Program (including its Contributions) under the new
+version. No one other than LUCENT has the right to modify this
+Agreement. Except as expressly stated in Sections 2(a) and 2(b) above,
+Recipient receives no rights or licenses to the intellectual property
+of any Contributor under this Agreement, whether expressly, by
+implication, estoppel or otherwise. All rights in the Program not
+expressly granted under this Agreement are reserved.
+
+This Agreement is governed by the laws of the State of New York and
+the intellectual property laws of the United States of America. No
+party to this Agreement will bring a legal action under this Agreement
+more than one year after the cause of action arose. Each party waives
+its rights to a jury trial in any resulting litigation.
+
+------------------------------------------------------------------------------
+wpa_supplicant (hostap, Jouni Malinen and contributors), Circle addon/wlan/hostap
+Licence: BSD-3-Clause.
+------------------------------------------------------------------------------
+wpa_supplicant and hostapd
+--------------------------
+
+Copyright (c) 2002-2022, Jouni Malinen <j@w1.fi> and contributors
+All Rights Reserved.
+
+
+See the README file for the current license terms.
+
+This software was previously distributed under BSD/GPL v2 dual license
+terms that allowed either of those license alternatives to be
+selected. As of February 11, 2012, the project has chosen to use only
+the BSD license option for future distribution. As such, the GPL v2
+license option is no longer used. It should be noted that the BSD
+license option (the one with advertisement clause removed) is compatible
+with GPL and as such, does not prevent use of this software in projects
+that use GPL.
+
+Some of the files may still include pointers to GPL version 2 license
+terms. However, such copyright and license notifications are maintained
+only for attribution purposes and any distribution of this software
+after February 11, 2012 is no longer under the GPL v2 option.
+
+------------------------------------------------------------------------------
+Montserrat font (built into LVGL)
+Licence: SIL Open Font License 1.1, Copyright 2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat).
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+Font Awesome 5 Free symbols (built into LVGL)
+Licence: Icons: CC BY 4.0; font: SIL OFL 1.1 (https://fontawesome.com/license/free).
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+Raspberry Pi boot firmware (start4.elf, fixup4.dat)
+Licence: Redistributable in binary form for Raspberry Pi devices; ships with LICENCE.broadcom on the SD card.
+------------------------------------------------------------------------------
+Copyright (c) 2006, Broadcom Corporation.
+Copyright (c) 2015, Raspberry Pi (Trading) Ltd
+All rights reserved.
+
+Redistribution.  Redistribution and use in binary form, without
+modification, are permitted provided that the following conditions are
+met:
+
+* This software may only be used for the purposes of developing for, 
+  running or using a Raspberry Pi device, or authorised derivative
+  device manufactured via the element14 Raspberry Pi Customization Service
+* Redistributions must reproduce the above copyright notice and the
+  following disclaimer in the documentation and/or other materials
+  provided with the distribution.
+* Neither the name of Broadcom Corporation nor the names of its suppliers
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+
+DISCLAIMER.  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
+BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+------------------------------------------------------------------------------
+bcm2711-rpi-4-b.dtb
+Licence: GNU GPL version 2, built from https://github.com/raspberrypi/linux; ships with COPYING.linux on the SD card.
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+armstub8-rpi4.bin (Circle boot/armstub)
+Licence: BSD-3-Clause, Raspberry Pi (Trading) Ltd.
+------------------------------------------------------------------------------
+Modified version for the Raspberry Pi 4 which allows using FIQ with Circle
+
+
+##############################################################################
+# RYTM MODS (patch files)
+##############################################################################
+
+------------------------------------------------------------------------------
+elekloader core (irpina and contributors)
+Licence: GNU GPL version 2 or later: licenses/GPL-2.0.txt. https://github.com/irpina/elekloader. The patchers' firmware codec is elekloader's, vendored there from digikit (Em D, GPL-2.0-or-later).
+------------------------------------------------------------------------------

@@ -1,0 +1,187 @@
+diff --git a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+index 3728ef9..9d5e5cf 100644
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -31,6 +31,14 @@ class CXHCIDevice;
+ class CXHCIUSBDevice;
+ class CUSBRequest;
+ 
++// rytm-pi patch (pi/circle/spike2/circle-xhci-urbqueue.patch): up to XHCI_EP_MAX_URBS URBs in
++// flight per endpoint (stock Circle: 2), the endpoint state for diagnostics, and an optional
++// application hook that sees every transfer event (completion code) before it is dispatched.
++#define XHCI_EP_MAX_URBS	16
++extern void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID,
++				       unsigned nCompletionCode, unsigned nResidue,
++				       unsigned nPending) __attribute__ ((weak));
++
+ class CXHCIEndpoint	/// Encapsulates a single endpoint of an USB device for the xHCI driver
+ {
+ public:
+@@ -52,6 +60,9 @@ public:
+ 
+ 	boolean ResetFromHalted (void);
+ 
++	unsigned GetEPState (void);		// output endpoint context: 0 disabled, 1 running, 2 halted, 3 stopped, 4 error
++	unsigned GetPendingURBs (void) const	{ return m_nURBCount; }
++
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+ #endif
+@@ -86,7 +97,9 @@ private:
+ 	u8		 m_uchEndpointID;
+ 	u8		 m_uchEndpointType;
+ 
+-	CUSBRequest	*m_pURB[2];
++	CUSBRequest	*m_pURB[XHCI_EP_MAX_URBS];	// FIFO in TRB order: m_nURBHead is the oldest
++	unsigned	 m_nURBHead;
++	unsigned	 m_nURBCount;
+ 	volatile boolean m_bTransferCompleted;
+ 
+ 	u8		*m_pInputContextBuffer;
+diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+index a845481..999ea18 100644
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -41,7 +41,9 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, CXHCIDevice *pXHCIDevice)
+ 	m_pTransferRing (0),
+ 	m_uchEndpointID (1),
+ 	m_uchEndpointType (XHCI_EP_CONTEXT_EP_TYPE_CONTROL),
+-	m_pURB {0, 0},
++	m_pURB {},
++	m_nURBHead (0),
++	m_nURBCount (0),
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
+@@ -67,7 +69,9 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, const TUSBEndpointDescrip
+ 	m_pTransferRing (0),
+ 	m_uchEndpointID (0),
+ 	m_uchEndpointType (0),
+-	m_pURB {0, 0},
++	m_pURB {},
++	m_nURBHead (0),
++	m_nURBCount (0),
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
+@@ -230,8 +234,12 @@ boolean CXHCIEndpoint::Transfer (CUSBRequest *pURB, unsigned nTimeoutMs)
+ #endif
+ 
+ 			m_SpinLock.Acquire ();
+-			m_pURB[0] = m_pURB[1];
+-			m_pURB[1] = 0;
++			if (m_nURBCount > 0)
++			{
++				m_pURB[m_nURBHead] = 0;
++				m_nURBHead = (m_nURBHead + 1) % XHCI_EP_MAX_URBS;
++				m_nURBCount--;
++			}
+ 			m_SpinLock.Release ();
+ 			m_bTransferCompleted = TRUE;
+ 
+@@ -262,16 +270,16 @@ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 	u32 nBufLen = pURB->GetBufLen ();
+ 
+ 	m_SpinLock.Acquire ();
+-	if (m_pURB[0] == 0)
+-	{
+-		m_pURB[0] = pURB;
+-	}
+-	else
++	if (m_nURBCount >= XHCI_EP_MAX_URBS)
+ 	{
+-		assert (m_pURB[1] == 0);
+-		m_pURB[1] = pURB;
++		m_SpinLock.Release ();
++
++		return FALSE;
+ 	}
+-	m_SpinLock.Release ();
++	m_pURB[(m_nURBHead + m_nURBCount) % XHCI_EP_MAX_URBS] = pURB;
++	m_nURBCount++;
++	// the lock stays held until the doorbell: an URB resubmitted from a completion routine
++	// (IRQ) must not get its TRB between this URB's FIFO slot and this URB's TRB
+ 
+ 	if (   (m_uchEndpointType & 3) == 2		// bulk EP
+ 	    || (m_uchEndpointType & 3) == 3)		// interrupt EP
+@@ -392,18 +400,14 @@ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 	assert (XHCI_IS_ENDPOINTID (m_uchEndpointID));
+ 	m_pMMIO->db_write32 (m_pDevice->GetSlotID (), XHCI_REG_DB_TARGET_EP0 + m_uchEndpointID-1);
+ 
++	m_SpinLock.Release ();
++
+ 	return TRUE;
+ 
+ EnqueueError:
+-	m_SpinLock.Acquire ();
+-	if (m_pURB[1] != 0)
+-	{
+-		m_pURB[1] = 0;
+-	}
+-	else
+-	{
+-		m_pURB[0] = 0;
+-	}
++	assert (m_nURBCount > 0);
++	m_nURBCount--;					// the one just added (the tail)
++	m_pURB[(m_nURBHead + m_nURBCount) % XHCI_EP_MAX_URBS] = 0;
+ 	m_SpinLock.Release ();
+ 
+ 	return FALSE;
+@@ -420,7 +424,13 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 
+ 	DataMemBarrier ();
+ 
+-	CUSBRequest *pURB = m_pURB[0];
++	if (RytmXHCITransferEventHook != 0)
++	{
++		RytmXHCITransferEventHook (m_pDevice->GetSlotID (), m_uchEndpointID,
++					   uchCompletionCode, nTransferLength, m_nURBCount);
++	}
++
++	CUSBRequest *pURB = m_nURBCount > 0 ? m_pURB[m_nURBHead] : 0;
+ 	if (!pURB)
+ 	{
+ 		return;
+@@ -455,8 +465,9 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 	}
+ 
+ 	m_SpinLock.Acquire ();
+-	m_pURB[0] = m_pURB[1];
+-	m_pURB[1] = 0;
++	m_pURB[m_nURBHead] = 0;
++	m_nURBHead = (m_nURBHead + 1) % XHCI_EP_MAX_URBS;
++	m_nURBCount--;
+ 	m_SpinLock.Release ();
+ 
+ 	pURB->CallCompletionRoutine ();
+@@ -482,6 +493,19 @@ boolean CXHCIEndpoint::ResetFromHalted (void)
+ 								!!m_pTransferRing->GetCycleState ());
+ }
+ 
++unsigned CXHCIEndpoint::GetEPState (void)
++{
++	if (!m_bValid || m_pDevice == 0 || !XHCI_IS_ENDPOINTID (m_uchEndpointID))
++	{
++		return 0;
++	}
++
++	DataMemBarrier ();
++	TXHCIDeviceContext *pContext = m_pDevice->GetDeviceContext ();	// coherent shared memory
++
++	return ((volatile TXHCIEndpointContext *) &pContext->Endpoint[m_uchEndpointID-1])->EPState;
++}
++
+ #ifndef NDEBUG
+ 
+ void CXHCIEndpoint::DumpStatus (void)
+@@ -535,6 +559,9 @@ boolean CXHCIEndpoint::EnqueueTRB (u32 nControl, u32 nStatus, u32 nParameter1, u
+ 			       |    XHCI_INTERRUPTER_TARGET_DEFAULT
+ 			         << XHCI_TRANSFER_TRB_STATUS_INTERRUPTER_TARGET__SHIFT;
+ 
++	// with several TRBs queued the xHC may be fetching ahead: the cycle bit (in Control) must
++	// not become visible before the rest of the TRB
++	DataMemBarrier ();
+ 	pTransferTRB->Control = nControl | m_pTransferRing->GetCycleState ();
+ 
+ 	m_pTransferRing->IncrementEnqueue ();

@@ -1,0 +1,8 @@
+{"id": "befaco.np.noise", "version": "1.0.0", "name": "NP NOISE", "short": "NPNO",
+ "licence": "GPL-3.0-or-later Befaco NP; Teensy Audio MIT", "page2": "sample",
+ "knobs": [
+   {"p": 1, "long": "Algorithm", "short": "ALG", "look": "list", "text": "enum",
+    "names": ["Resonoi", "Basuril", "Atari", "ExistPn", "WhoKnow"]},
+   {"p": 2, "long": "X", "short": "X", "look": "dial", "text": "number"},
+   {"p": 3, "long": "Y", "short": "Y", "look": "dial", "text": "number"},
+   {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number"}]}

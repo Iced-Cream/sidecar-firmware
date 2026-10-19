@@ -1,0 +1,1 @@
+console=ttyAMA0,115200 root=/dev/mmcblk0p2 rootwait ro isolcpus=domain,managed_irq,3 nohz_full=3 rcu_nocbs=3 rcu_nocb_poll irqaffinity=0-2 nosoftlockup threadirqs usbcore.autosuspend=-1 cpufreq.default_governor=performance quiet loglevel=3 fsck.mode=skip

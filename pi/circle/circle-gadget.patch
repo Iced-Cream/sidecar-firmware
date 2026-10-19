@@ -1,0 +1,841 @@
+diff --git a/include/circle/usb/gadget/dwusbgadget.h b/include/circle/usb/gadget/dwusbgadget.h
+index d787270..8fa2471 100644
+--- a/include/circle/usb/gadget/dwusbgadget.h
++++ b/include/circle/usb/gadget/dwusbgadget.h
+@@ -85,6 +85,39 @@ public:
+ 	/// \note By default host-to-device requests will be ignored and other requests will be STALLed
+ 	virtual int OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pData);
+ 
++	/// \brief SET_INTERFACE has been received on EP0 (IRQ level)
++	/// \param uchInterface Interface number
++	/// \param uchAltSetting Alternate setting
++	/// \return FALSE to STALL the request
++	/// \note By default every alternate setting is accepted (and ignored)
++	virtual boolean OnSetInterface (u8 uchInterface, u8 uchAltSetting)	{ return TRUE; }
++
++	/// \brief GET_INTERFACE has been received on EP0 (IRQ level)
++	/// \param uchInterface Interface number
++	/// \return The current alternate setting, or < 0 to STALL the request
++	virtual int OnGetInterface (u8 uchInterface)				{ return 0; }
++
++	/// \brief Interrupt statistics (counted since boot)
++	/// \param pCount Receives the number of interrupts handled
++	/// \param pTicks Receives the time spent in the handler, in CNTPCT ticks
++	void GetIRQStats (unsigned *pCount, u64 *pTicks) const
++	{
++		*pCount = m_nIRQs;
++		*pTicks = m_nIRQTicks;
++	}
++
++	/// \brief Interrupt latency probe (since the last call): the longest time between two handler entries, the
++	///	   longest handler, and the gaps longer than nLongTicks (all in CNTPCT ticks); then reset
++	void TakeIRQGaps (u64 *pMaxGap, u64 *pMaxHandler, unsigned *pLong, u64 nLongTicks)
++	{
++		*pMaxGap = m_nMaxGap;
++		*pMaxHandler = m_nMaxHandler;
++		*pLong = m_nLongGaps;
++		m_nMaxGap = m_nMaxHandler = 0;
++		m_nLongGaps = 0;
++		m_nLongTicks = nLongTicks;
++	}
++
+ private:
+ 	boolean PowerOn (void);
+ 	boolean InitCore (void);
+@@ -101,6 +134,8 @@ private:
+ 	void HandleEnumerationDone (void);
+ 	void HandleInEPInterrupt (void);
+ 	void HandleOutEPInterrupt (void);
++	void HandleIncompleteIso (boolean bIn);
++	void CountIsoPending (int nDelta);	// the token interrupts are on while isochronous EPs wait for one
+ 	void InterruptHandler (void);
+ 	static void InterruptStub (void *pParam);
+ 
+@@ -144,6 +179,13 @@ private:
+ 	boolean m_bPnPEvent[PnPEventUnknown];
+ 
+ 	CDWUSBGadgetEndpoint *m_pEP[NumberOfEPs+1];
++
++	int m_nIsoPending;
++
++	volatile unsigned m_nIRQs;
++	volatile u64 m_nIRQTicks;
++	u64 m_nLastEntry, m_nMaxGap, m_nMaxHandler, m_nLongTicks;
++	unsigned m_nLongGaps;
+ };
+ 
+ #endif
+diff --git a/include/circle/usb/gadget/dwusbgadgetendpoint.h b/include/circle/usb/gadget/dwusbgadgetendpoint.h
+index 24fefbf..89f9f07 100644
+--- a/include/circle/usb/gadget/dwusbgadgetendpoint.h
++++ b/include/circle/usb/gadget/dwusbgadgetendpoint.h
+@@ -93,8 +93,8 @@ protected:
+ 	{
+ 		TypeControl,
+ 		TypeBulk,
+-		//TypeInterrupt,
+-		//TypeIsochronous
++		TypeInterrupt,
++		TypeIsochronous
+ 	};
+ 
+ 	/// \return Endpoint type
+@@ -132,6 +132,25 @@ protected:
+ 	/// \param bIn STALL next IN request, or OUT otherwise?
+ 	void Stall (boolean bIn);
+ 
++	// Isochronous EPs: BeginTransfer() arms one packet for a target (micro)frame, which the core serves only in a
++	// (micro)frame of its parity. The first transfer (and one after a miss) waits for the host's next token to
++	// the disabled EP, which gives the host's phase: target = that (micro)frame + the EP's interval. After a
++	// completion the next transfer's target is the last one + the interval. A target that passes unserved (an
++	// incomplete isochronous interrupt) disables the EP until the next token.
++
++	/// \brief Isochronous: transfers that missed their target and were re-armed (since creation)
++	unsigned GetIsoIncompleteCount (void) const	{ return m_nIsoIncomplete; }
++	/// \brief Isochronous: service (micro)frames skipped, because a transfer was re-armed too late
++	unsigned GetIsoLateCount (void) const		{ return m_nIsoLate; }
++	/// \brief Isochronous: CNTPCT at the last late re-arm (0: none)
++	u64 GetIsoLateStamp (void) const		{ return m_nIsoLateStamp; }
++
++	/// \brief Isochronous: disable an armed transfer and wait for it (IN: its TX FIFO is flushed)
++	void StopIsoTransfer (void);
++
++	/// \return The (micro)frame number of the last SOF (14 bits, DSTS.SOFFN; microframes at high speed)
++	static unsigned GetFrameNumber (void);
++
+ private:
+ 	size_t FinishTransfer (void);
+ 	void InitTransfer (void);
+@@ -141,6 +160,14 @@ private:
+ 	virtual void HandleOutInterrupt (void);
+ 	virtual void HandleInInterrupt (void);
+ 
++	// An incomplete isochronous transfer interrupt (GINTSTS): an armed isochronous transfer of this EP,
++	// whose (micro)frame nFrame has ended, is disabled and re-armed for the other parity.
++	void HandleIncompleteIso (unsigned nFrame);
++	void HandleIsoToken (void);
++	void SetIsoPending (boolean bPending);
++	void ArmIso (void);
++	void DisableEndpoint (void);
++
+ 	static void HandleUSBReset (void);
+ 
+ 	friend class CDWUSBGadget;
+@@ -159,6 +186,15 @@ private:
+ 	void *m_pTransferBuffer;
+ 	size_t m_nTransferLength;
+ 
++	// isochronous only
++	unsigned m_nInterval;			// (micro)frames
++	unsigned m_nTargetFrame;		// of the armed transfer
++	boolean m_bIsoContinue;			// the next transfer follows a completion
++	boolean m_bIsoPending;			// stored, armed at the host's next token
++	unsigned m_nIsoLate;
++	u64 m_nIsoLateStamp;
++	unsigned m_nIsoIncomplete;
++
+ 	DMA_BUFFER (u32, m_DummyBuffer, 1);	// for empty packet transfers
+ 
+ 	// next EP sequence including EP0
+diff --git a/include/circle/usb/gadget/usbmidigadget.h b/include/circle/usb/gadget/usbmidigadget.h
+index cce45b6..b716b8d 100644
+--- a/include/circle/usb/gadget/usbmidigadget.h
++++ b/include/circle/usb/gadget/usbmidigadget.h
+@@ -42,6 +42,9 @@ public:
+ 
+ 	~CUSBMIDIGadget (void);
+ 
++	/// \return The MIDI interface device (created on configuration), or nullptr
++	CUSBMIDIDevice *GetMIDIDevice (void) const	{ return m_pInterface; }
++
+ protected:
+ 	/// \brief Get device-specific descriptor
+ 	/// \param wValue Parameter from setup packet (descriptor type (MSB) and index (LSB))
+diff --git a/include/circle/usb/gadget/usbmidigadgetendpoint.h b/include/circle/usb/gadget/usbmidigadgetendpoint.h
+index 73c4674..b32bded 100644
+--- a/include/circle/usb/gadget/usbmidigadgetendpoint.h
++++ b/include/circle/usb/gadget/usbmidigadgetendpoint.h
+@@ -65,6 +65,10 @@ private:
+ 
+ 	static const size_t MaxOutMessageSize = 512;
+ 	static const size_t MaxInMessageSize = 512;
++	// An IN transfer of exactly wMaxPacketSize (512) ends without a short packet, so the host's read (macOS: longer
++	// than 512) stays open until more data comes: the last messages of a burst arrive only with the next one
++	// (measured on macOS 26). One packet less always ends a transfer short.
++	static const size_t MaxInTransferSize = MaxInMessageSize - 4;	// one USB MIDI event packet
+ 	DMA_BUFFER (u8, m_OutBuffer, MaxOutMessageSize);
+ 	DMA_BUFFER (u8, m_InBuffer, MaxInMessageSize);
+ 
+diff --git a/lib/usb/gadget/dwusbgadget.cpp b/lib/usb/gadget/dwusbgadget.cpp
+index 2e61b2d..04b54b4 100644
+--- a/lib/usb/gadget/dwusbgadget.cpp
++++ b/lib/usb/gadget/dwusbgadget.cpp
+@@ -43,7 +43,11 @@ CDWUSBGadget::CDWUSBGadget (CInterruptSystem *pInterruptSystem, TDeviceSpeed Dev
+ :	m_pInterruptSystem (pInterruptSystem),
+ 	m_DeviceSpeed (DeviceSpeed),
+ 	m_State (StatePowered),
+-	m_bPnPEvent {FALSE, FALSE}
++	m_bPnPEvent {FALSE, FALSE},
++	m_nIsoPending (0),
++	m_nIRQs (0),
++	m_nIRQTicks (0),
++	m_nLastEntry (0), m_nMaxGap (0), m_nMaxHandler (0), m_nLongTicks (~0ULL), m_nLongGaps (0)
+ {
+ 	for (unsigned i = 0; i <= NumberOfEPs; i++)
+ 	{
+@@ -442,6 +446,8 @@ void CDWUSBGadget::EnableDeviceInterrupts (void)
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_IN_EP_INTR);
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_OUT_EP_INTR);
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_IN_EP_MISMATCH);
++	IntMask.Or (DWHCI_CORE_INT_MASK_INCOMPL_ISO_IN);	// only with isochronous EPs armed
++	IntMask.Or (DWHCI_CORE_INT_MASK_INCOMPL_ISO_OUT);
+ 	IntMask.Write ();
+ }
+ 
+@@ -613,6 +619,8 @@ void CDWUSBGadget::HandleUSBReset (void)
+ 
+ 	SetDeviceAddress (0);
+ 
++	m_nIsoPending = 0;		// the token interrupts are off again (the masks above)
++
+ 	// Notify all EPs about USB reset
+ 	for (unsigned i = 0; i <= NumberOfEPs; i++)
+ 	{
+@@ -755,6 +763,62 @@ void CDWUSBGadget::HandleOutEPInterrupt (void)
+ 	}
+ }
+ 
++// An isochronous IN (OUT) transfer was armed, but not done in the (micro)frame, which ends now: each such EP is
++// re-armed for the other frame parity (CDWUSBGadgetEndpoint::HandleIncompleteIso).
++void CDWUSBGadget::HandleIncompleteIso (boolean bIn)
++{
++	unsigned nFrame = CDWUSBGadgetEndpoint::GetFrameNumber ();
++
++	if (m_State == StateConfigured)
++	{
++		for (unsigned i = 1; i <= NumberOfEPs; i++)
++		{
++			if (   m_pEP[i]
++			    && m_pEP[i]->GetDirection () == (  bIn ? CDWUSBGadgetEndpoint::DirectionIn
++							      : CDWUSBGadgetEndpoint::DirectionOut))
++			{
++				m_pEP[i]->HandleIncompleteIso (nFrame);
++			}
++		}
++	}
++
++	CDWHCIRegister IntStatus (DWHCI_CORE_INT_STAT,   bIn ? DWHCI_CORE_INT_MASK_INCOMPL_ISO_IN
++							 : DWHCI_CORE_INT_MASK_INCOMPL_ISO_OUT);
++	IntStatus.Write ();
++}
++
++void CDWUSBGadget::CountIsoPending (int nDelta)
++{
++	boolean bWasOn = m_nIsoPending > 0;
++	m_nIsoPending += nDelta;
++	if (m_nIsoPending < 0)
++	{
++		m_nIsoPending = 0;
++	}
++	boolean bOn = m_nIsoPending > 0;
++	if (bOn == bWasOn)
++	{
++		return;
++	}
++
++	CDWHCIRegister OutEPCommonIntMask (DWHCI_DEV_OUT_EP_COMMON_INT_MASK);
++	OutEPCommonIntMask.Read ();
++	CDWHCIRegister InEPCommonIntMask (DWHCI_DEV_IN_EP_COMMON_INT_MASK);
++	InEPCommonIntMask.Read ();
++	if (bOn)
++	{
++		OutEPCommonIntMask.Or (DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED);
++		InEPCommonIntMask.Or (DWHCI_DEV_IN_EP_INT_NAK);
++	}
++	else
++	{
++		OutEPCommonIntMask.And (~DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED);
++		InEPCommonIntMask.And (~DWHCI_DEV_IN_EP_INT_NAK);
++	}
++	OutEPCommonIntMask.Write ();
++	InEPCommonIntMask.Write ();
++}
++
+ void CDWUSBGadget::InterruptHandler (void)
+ {
+ 	PeripheralEntry ();
+@@ -794,6 +858,16 @@ void CDWUSBGadget::InterruptHandler (void)
+ 		HandleInEPInterrupt ();
+ 	}
+ 
++	if (nIntStatus & DWHCI_CORE_INT_MASK_INCOMPL_ISO_IN)
++	{
++		HandleIncompleteIso (TRUE);
++	}
++
++	if (nIntStatus & DWHCI_CORE_INT_MASK_INCOMPL_ISO_OUT)
++	{
++		HandleIncompleteIso (FALSE);
++	}
++
+ 	assert (!(nIntStatus & DWHCI_CORE_INT_MASK_IN_EP_MISMATCH));
+ 
+ 	PeripheralExit ();
+@@ -804,7 +878,20 @@ void CDWUSBGadget::InterruptStub (void *pParam)
+ 	CDWUSBGadget *pThis = static_cast<CDWUSBGadget *> (pParam);
+ 	assert (pThis != 0);
+ 
++	u64 t0, t1;
++	asm volatile ("isb; mrs %0, cntpct_el0" : "=r" (t0));
+ 	pThis->InterruptHandler ();
++	asm volatile ("isb; mrs %0, cntpct_el0" : "=r" (t1));
++	pThis->m_nIRQs++;
++	pThis->m_nIRQTicks += t1 - t0;
++	if (pThis->m_nLastEntry != 0)
++	{
++		u64 nGap = t0 - pThis->m_nLastEntry;
++		if (nGap > pThis->m_nMaxGap) pThis->m_nMaxGap = nGap;
++		if (nGap > pThis->m_nLongTicks) pThis->m_nLongGaps++;
++	}
++	pThis->m_nLastEntry = t0;
++	if (t1 - t0 > pThis->m_nMaxHandler) pThis->m_nMaxHandler = t1 - t0;
+ }
+ 
+ void CDWUSBGadget::AssignEndpoint (unsigned nEP, CDWUSBGadgetEndpoint *pEP)
+diff --git a/lib/usb/gadget/dwusbgadgetendpoint.cpp b/lib/usb/gadget/dwusbgadgetendpoint.cpp
+index add046f..bf1b059 100644
+--- a/lib/usb/gadget/dwusbgadgetendpoint.cpp
++++ b/lib/usb/gadget/dwusbgadgetendpoint.cpp
+@@ -21,6 +21,7 @@
+ #include <circle/usb/gadget/dwusbgadget.h>
+ #include <circle/usb/dwhciregister.h>
+ #include <circle/logger.h>
++#include <circle/timer.h>
+ #include <circle/debug.h>
+ #include <circle/util.h>
+ #include <assert.h>
+@@ -35,7 +36,14 @@ CDWUSBGadgetEndpoint::CDWUSBGadgetEndpoint (size_t nMaxPacketSize, CDWUSBGadget
+ 	m_Direction (DirectionInOut),
+ 	m_Type (TypeControl),
+ 	m_nEP (0),
+-	m_nMaxPacketSize (nMaxPacketSize)
++	m_nMaxPacketSize (nMaxPacketSize),
++	m_nInterval (1),
++	m_nTargetFrame (0),
++	m_bIsoContinue (FALSE),
++	m_bIsoPending (FALSE),
++	m_nIsoLate (0),
++	m_nIsoLateStamp (0),
++	m_nIsoIncomplete (0)
+ {
+ 	InitTransfer ();
+ 
+@@ -47,11 +55,19 @@ CDWUSBGadgetEndpoint::CDWUSBGadgetEndpoint (const TUSBEndpointDescriptor *pDesc,
+ 					    CDWUSBGadget *pGadget)
+ :	m_pGadget (pGadget),
+ 	m_Direction (pDesc->bEndpointAddress & 0x80 ? DirectionIn : DirectionOut),
+-	m_Type (TypeBulk),
++	m_Type (  (pDesc->bmAttributes & 0x03) == 1 ? TypeIsochronous
++		: (pDesc->bmAttributes & 0x03) == 3 ? TypeInterrupt : TypeBulk),
+ 	m_nEP (pDesc->bEndpointAddress & 0xF),
+-	m_nMaxPacketSize (pDesc->wMaxPacketSize & 0x7FF)
++	m_nMaxPacketSize (pDesc->wMaxPacketSize & 0x7FF),
++	m_nInterval (pDesc->bInterval >= 1 && pDesc->bInterval <= 16 ? 1 << (pDesc->bInterval-1) : 1),
++	m_nTargetFrame (0),
++	m_bIsoContinue (FALSE),
++	m_bIsoPending (FALSE),
++	m_nIsoLate (0),
++	m_nIsoLateStamp (0),
++	m_nIsoIncomplete (0)
+ {
+-	assert ((pDesc->bmAttributes & 0x03) == 2);	// Bulk
++	assert ((pDesc->bmAttributes & 0x03) != 0);	// not control
+ 
+ 	InitTransfer ();
+ 
+@@ -84,6 +100,8 @@ void CDWUSBGadgetEndpoint::SetMaxPacketSize (size_t nMaxPacketSize)
+ void CDWUSBGadgetEndpoint::OnUSBReset (void)
+ {
+ 	InitTransfer ();
++	m_bIsoContinue = FALSE;
++	m_bIsoPending = FALSE;		// the gadget's count is reset with the common EP interrupt masks
+ 
+ 	if (!m_nEP)
+ 	{
+@@ -124,10 +142,15 @@ void CDWUSBGadgetEndpoint::OnUSBReset (void)
+ 		EPCtrl.And (~DWHCI_DEV_EP_CTRL_MAX_PACKET_SIZ__MASK);
+ 		EPCtrl.Or (m_nMaxPacketSize << DWHCI_DEV_EP_CTRL_MAX_PACKET_SIZ__SHIFT);
+ 
+-		assert (m_Type == TypeBulk);	// TODO: Bulk only
+ 		EPCtrl.And (~DWHCI_DEV_EP_CTRL_EP_TYPE__MASK);
+-		EPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_TYPE_BULK << DWHCI_DEV_EP_CTRL_EP_TYPE__SHIFT);
+-		EPCtrl.Or (DWHCI_DEV_EP_CTRL_SETDPID_D0);
++		EPCtrl.Or (  (  m_Type == TypeIsochronous ? DWHCI_DEV_EP_CTRL_EP_TYPE_ISOCH
++			      : m_Type == TypeInterrupt ? DWHCI_DEV_EP_CTRL_EP_TYPE_INTR
++			      : DWHCI_DEV_EP_CTRL_EP_TYPE_BULK)
++			   << DWHCI_DEV_EP_CTRL_EP_TYPE__SHIFT);
++		if (m_Type != TypeIsochronous)
++		{
++			EPCtrl.Or (DWHCI_DEV_EP_CTRL_SETDPID_D0);
++		}
+ 
+ 		EPCtrl.Or (DWHCI_DEV_EP_CTRL_ACTIVE_EP);
+ 
+@@ -136,7 +159,11 @@ void CDWUSBGadgetEndpoint::OnUSBReset (void)
+ 			// Assign dedicated TX FIFO to EP
+ 			EPCtrl.And (~DWHCI_DEV_IN_EP_CTRL_TX_FIFO_NUM__MASK);
+ 			EPCtrl.Or (m_nEP << DWHCI_DEV_IN_EP_CTRL_TX_FIFO_NUM__SHIFT);
++		}
+ 
++		// the IN token learning queue (next EP sequence, EP mismatch count) is for non-periodic EPs only
++		if (m_Direction == DirectionIn && m_Type == TypeBulk)
++		{
+ 			// Update s_NextEPSeq[]
+ 			unsigned i;
+ 			for (i = 0; i <= CDWUSBGadget::NumberOfInEPs; i++)
+@@ -207,6 +234,37 @@ void CDWUSBGadgetEndpoint::BeginTransfer (TTransferMode Mode, void *pBuffer, siz
+ 	assert (m_nTransferLength == (size_t) -1);
+ 	m_nTransferLength = nLength;
+ 
++	if (m_Type == TypeIsochronous)
++	{
++		if (nLength)
++		{
++			CleanAndInvalidateDataCacheRange ((uintptr) pBuffer, nLength);
++		}
++
++		if (!m_bIsoContinue)
++		{
++			SetIsoPending (TRUE);		// armed at the host's next token (HandleIsoToken)
++
++			return;
++		}
++
++		// the next service (micro)frame, and not one in the past (a late re-arm skips one)
++		m_bIsoContinue = FALSE;
++		const unsigned Mask = 0x3FFF;
++		unsigned nNow = GetFrameNumber ();
++		m_nTargetFrame = (m_nTargetFrame + m_nInterval) & Mask;
++		for (unsigned i = 0; i < 64 && ((m_nTargetFrame - nNow - 1) & Mask) >= 0x2000; i++)
++		{
++			m_nTargetFrame = (m_nTargetFrame + m_nInterval) & Mask;
++			m_nIsoLate++;
++			asm volatile ("mrs %0, cntpct_el0" : "=r" (m_nIsoLateStamp));
++		}
++
++		ArmIso ();
++
++		return;
++	}
++
+ 	unsigned nPacketCount = 1;
+ 	if (nLength)
+ 	{
+@@ -228,6 +286,10 @@ void CDWUSBGadgetEndpoint::BeginTransfer (TTransferMode Mode, void *pBuffer, siz
+ 		CDWHCIRegister InEPXferSize (DWHCI_DEV_IN_EP_XFER_SIZ (m_nEP), 0);
+ 		InEPXferSize.Or (nPacketCount << DWHCI_DEV_EP_XFER_SIZ_PKT_CNT__SHIFT);
+ 		InEPXferSize.Or (nLength << DWHCI_DEV_EP_XFER_SIZ_XFER_SIZ__SHIFT);
++		if (m_Type == TypeInterrupt)
++		{
++			InEPXferSize.Or (1 << DWHCI_DEV_EP_XFER_SIZ_MULTI_CNT__SHIFT);
++		}
+ 		InEPXferSize.Write ();
+ 
+ 		CDWHCIRegister InEPDMAAddress (DWHCI_DEV_IN_EP_DMA_ADDR (m_nEP),
+@@ -236,8 +298,11 @@ void CDWUSBGadgetEndpoint::BeginTransfer (TTransferMode Mode, void *pBuffer, siz
+ 
+ 		CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (m_nEP), 0);
+ 		InEPCtrl.Read ();
+-		InEPCtrl.And (~DWHCI_DEV_IN_EP_CTRL_NEXT_EP__MASK);
+-		InEPCtrl.Or (s_NextEPSeq[m_nEP] << DWHCI_DEV_IN_EP_CTRL_NEXT_EP__SHIFT);
++		if (m_nEP == 0 || m_Type == TypeBulk)
++		{
++			InEPCtrl.And (~DWHCI_DEV_IN_EP_CTRL_NEXT_EP__MASK);
++			InEPCtrl.Or (s_NextEPSeq[m_nEP] << DWHCI_DEV_IN_EP_CTRL_NEXT_EP__SHIFT);
++		}
+ 		InEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_ENABLE);
+ 		InEPCtrl.Or (DWHCI_DEV_EP_CTRL_CLEAR_NAK);
+ 		InEPCtrl.Write ();
+@@ -271,6 +336,191 @@ void CDWUSBGadgetEndpoint::BeginTransfer (TTransferMode Mode, void *pBuffer, siz
+ 	}
+ }
+ 
++// Programs the stored isochronous transfer for m_nTargetFrame: one packet, the target's frame parity.
++void CDWUSBGadgetEndpoint::ArmIso (void)
++{
++	void *pBuffer = m_nTransferLength ? m_pTransferBuffer : m_DummyBuffer;
++	u32 nParity = m_nTargetFrame & 1 ? DWHCI_DEV_EP_CTRL_SETDPID_D1		// SetOddFr
++					 : DWHCI_DEV_EP_CTRL_SETDPID_D0;	// SetEvenFr
++	if (m_Direction == DirectionIn)
++	{
++		CDWHCIRegister InEPXferSize (DWHCI_DEV_IN_EP_XFER_SIZ (m_nEP), 0);
++		InEPXferSize.Or (1 << DWHCI_DEV_EP_XFER_SIZ_PKT_CNT__SHIFT);
++		InEPXferSize.Or (m_nTransferLength << DWHCI_DEV_EP_XFER_SIZ_XFER_SIZ__SHIFT);
++		InEPXferSize.Or (1 << DWHCI_DEV_EP_XFER_SIZ_MULTI_CNT__SHIFT);	// one packet per (micro)frame
++		InEPXferSize.Write ();
++
++		CDWHCIRegister InEPDMAAddress (DWHCI_DEV_IN_EP_DMA_ADDR (m_nEP), BUS_ADDRESS ((uintptr) pBuffer));
++		InEPDMAAddress.Write ();
++
++		CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (m_nEP));
++		InEPCtrl.Read ();
++		InEPCtrl.Or (nParity | DWHCI_DEV_EP_CTRL_EP_ENABLE | DWHCI_DEV_EP_CTRL_CLEAR_NAK);
++		InEPCtrl.Write ();
++	}
++	else
++	{
++		CDWHCIRegister OutEPXferSize (DWHCI_DEV_OUT_EP_XFER_SIZ (m_nEP), 0);
++		OutEPXferSize.Or (1 << DWHCI_DEV_EP_XFER_SIZ_PKT_CNT__SHIFT);
++		OutEPXferSize.Or (m_nTransferLength << DWHCI_DEV_EP_XFER_SIZ_XFER_SIZ__SHIFT);
++		OutEPXferSize.Write ();
++
++		CDWHCIRegister OutEPDMAAddress (DWHCI_DEV_OUT_EP_DMA_ADDR (m_nEP), BUS_ADDRESS ((uintptr) pBuffer));
++		OutEPDMAAddress.Write ();
++
++		CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (m_nEP));
++		OutEPCtrl.Read ();
++		OutEPCtrl.Or (nParity | DWHCI_DEV_EP_CTRL_EP_ENABLE | DWHCI_DEV_EP_CTRL_CLEAR_NAK);
++		OutEPCtrl.Write ();
++	}
++}
++
++void CDWUSBGadgetEndpoint::SetIsoPending (boolean bPending)
++{
++	if (m_bIsoPending == bPending)
++	{
++		return;
++	}
++
++	m_bIsoPending = bPending;
++
++	assert (m_pGadget);
++	m_pGadget->CountIsoPending (bPending ? 1 : -1);
++}
++
++// A token for this EP while it was not enabled (OUT: OUT token received when EP disabled; IN: NAK): the host
++// serves it in this (micro)frame, so a pending transfer is armed for one interval later (as the Linux dwc2 driver
++// does in buffer DMA mode).
++void CDWUSBGadgetEndpoint::HandleIsoToken (void)
++{
++	if (m_Type != TypeIsochronous || !m_bIsoPending)
++	{
++		return;
++	}
++
++	SetIsoPending (FALSE);
++	m_nTargetFrame = (GetFrameNumber () + m_nInterval) & 0x3FFF;
++	ArmIso ();
++}
++
++unsigned CDWUSBGadgetEndpoint::GetFrameNumber (void)
++{
++	CDWHCIRegister DeviceStatus (DWHCI_DEV_STS);
++
++	return (DeviceStatus.Read () >> 8) & 0x3FFF;		// SOFFN
++}
++
++// IRQ level. Disables this EP (when enabled) and waits until the core has done so (a few microseconds); the
++// transfer is not finished here. IN: its TX FIFO is flushed.
++void CDWUSBGadgetEndpoint::DisableEndpoint (void)
++{
++	if (m_Direction == DirectionIn)
++	{
++		CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (m_nEP));
++		if (InEPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
++		{
++			InEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
++					| DWHCI_DEV_EP_CTRL_SETDPID_D1));
++			InEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK | DWHCI_DEV_EP_CTRL_EP_DISABLE);
++			InEPCtrl.Write ();
++
++			CDWHCIRegister InEPInt (DWHCI_DEV_IN_EP_INT (m_nEP));
++			for (unsigned i = 0; i < 5000 && !(InEPInt.Read () & DWHCI_DEV_IN_EP_INT_EP_DISABLED); i++)
++			{
++			}
++		}
++
++		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP),   DWHCI_DEV_IN_EP_INT_EP_DISABLED
++									| DWHCI_DEV_IN_EP_INT_XFER_COMPLETE);
++		InEPIntAck.Write ();
++
++		// its TX FIFO flushed, polled here: CDWUSBGadget::FlushTxFIFO waits in 1 ms steps (MsDelay), which at IRQ
++		// level stalled core 0's other interrupts for 1 ms (measured: the xHCI host lost Overbridge blocks)
++		CDWHCIRegister Reset (DWHCI_CORE_RESET, 0);
++		Reset.Or (DWHCI_CORE_RESET_TX_FIFO_FLUSH);
++		Reset.Or (m_nEP << DWHCI_CORE_RESET_TX_FIFO_NUM__SHIFT);
++		Reset.Write ();
++		for (unsigned i = 0; i < 5000 && (Reset.Read () & DWHCI_CORE_RESET_TX_FIFO_FLUSH); i++)
++		{
++		}
++		CTimer::SimpleusDelay (1);		// 3 PHY clocks
++	}
++	else
++	{
++		CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (m_nEP));
++		if (OutEPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
++		{
++			// an OUT EP is disabled under the global OUT NAK
++			CDWHCIRegister DeviceCtrl (DWHCI_DEV_CTRL);
++			DeviceCtrl.Read ();
++			DeviceCtrl.Or (DWHCI_DEV_CTRL_SET_GLOBAL_OUT_NAK);
++			DeviceCtrl.Write ();
++
++			CDWHCIRegister IntStatus (DWHCI_CORE_INT_STAT);
++			for (unsigned i = 0;    i < 5000
++					     && !(IntStatus.Read () & DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF); i++)
++			{
++			}
++
++			OutEPCtrl.Read ();
++			OutEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
++					 | DWHCI_DEV_EP_CTRL_SETDPID_D1));
++			OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK | DWHCI_DEV_EP_CTRL_EP_DISABLE);
++			OutEPCtrl.Write ();
++
++			CDWHCIRegister OutEPInt (DWHCI_DEV_OUT_EP_INT (m_nEP));
++			for (unsigned i = 0; i < 5000 && !(OutEPInt.Read () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED); i++)
++			{
++			}
++
++			DeviceCtrl.Read ();
++			DeviceCtrl.And (~DWHCI_DEV_CTRL_SET_GLOBAL_OUT_NAK);
++			DeviceCtrl.Or (DWHCI_DEV_CTRL_CLEAR_GLOBAL_OUT_NAK);
++			DeviceCtrl.Write ();
++
++			CDWHCIRegister IntStatusAck (DWHCI_CORE_INT_STAT, DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF);
++			IntStatusAck.Write ();
++		}
++
++		CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (m_nEP),   DWHCI_DEV_OUT_EP_INT_EP_DISABLED
++									  | DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
++		OutEPIntAck.Write ();
++	}
++}
++
++void CDWUSBGadgetEndpoint::StopIsoTransfer (void)
++{
++	assert (m_Type == TypeIsochronous);
++
++	DisableEndpoint ();
++
++	SetIsoPending (FALSE);
++	InitTransfer ();
++	m_bIsoContinue = FALSE;
++}
++
++void CDWUSBGadgetEndpoint::HandleIncompleteIso (unsigned nFrame)
++{
++	if (m_Type != TypeIsochronous || !IsTransferActive () || m_bIsoPending)
++	{
++		return;
++	}
++
++	CDWHCIRegister EPCtrl (  m_Direction == DirectionIn
++			       ? DWHCI_DEV_IN_EP_CTRL (m_nEP)
++			       : DWHCI_DEV_OUT_EP_CTRL (m_nEP));
++	if (   !(EPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
++	    || ((nFrame - m_nTargetFrame) & 0x3FFF) >= 0x2000)	// its target is still to come: not missed
++	{
++		return;
++	}
++
++	// missed: disabled, and armed again at the host's next token (the same buffer)
++	DisableEndpoint ();
++	m_nIsoIncomplete++;
++	SetIsoPending (TRUE);
++}
++
+ void CDWUSBGadgetEndpoint::CancelTransfer (void)
+ {
+ 	if (m_TransferMode == TransferDataIn)
+@@ -310,6 +560,17 @@ size_t CDWUSBGadgetEndpoint::FinishTransfer (void)
+ 	assert (nXferSize <= m_nTransferLength);
+ 	nXferSize = m_nTransferLength - nXferSize;
+ 
++	// The core wrote the buffer behind the CPU's back: drop lines the CPU may have fetched meanwhile
++	// (speculatively), so it reads what the DMA wrote.
++	if (m_TransferMode != TransferDataIn && m_pTransferBuffer && m_nTransferLength)
++	{
++#if AARCH == 64
++		InvalidateDataCacheRange ((uintptr) m_pTransferBuffer, m_nTransferLength);
++#else
++		CleanAndInvalidateDataCacheRange ((uintptr) m_pTransferBuffer, m_nTransferLength);
++#endif
++	}
++
+ #ifdef USB_GADGET_DEBUG
+ 	LOGDBG ("%u byte(s) transferred", nXferSize);
+ 
+@@ -398,9 +659,22 @@ void CDWUSBGadgetEndpoint::HandleOutInterrupt (void)
+ 
+ 		size_t nLength = FinishTransfer ();
+ 
++		if (m_Type == TypeIsochronous)
++		{
++			m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
++		}
++
+ 		OnTransferComplete (FALSE, nLength);
+ 	}
+ 
++	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED)
++	{
++		CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED);
++		OutEPIntAck.Write ();
++
++		HandleIsoToken ();
++	}
++
+ 	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_AHB_ERROR)
+ 	{
+ 		LOGPANIC ("AHB error");
+@@ -408,7 +682,13 @@ void CDWUSBGadgetEndpoint::HandleOutInterrupt (void)
+ 
+ 	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED)
+ 	{
+-		LOGPANIC ("EP%u disabled", m_nEP);
++		if (m_Type != TypeIsochronous)
++		{
++			LOGPANIC ("EP%u disabled", m_nEP);
++		}
++
++		CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_EP_DISABLED);
++		OutEPIntAck.Write ();
+ 	}
+ }
+ 
+@@ -432,9 +712,22 @@ void CDWUSBGadgetEndpoint::HandleInInterrupt (void)
+ 
+ 		size_t nLength = FinishTransfer ();
+ 
++		if (m_Type == TypeIsochronous)
++		{
++			m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
++		}
++
+ 		OnTransferComplete (TRUE, nLength);
+ 	}
+ 
++	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_NAK)
++	{
++		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP), DWHCI_DEV_IN_EP_INT_NAK);
++		InEPIntAck.Write ();
++
++		HandleIsoToken ();
++	}
++
+ 	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_TIMEOUT)
+ 	{
+ 		LOGPANIC ("Timeout (EP %u)", m_nEP);
+@@ -447,7 +740,13 @@ void CDWUSBGadgetEndpoint::HandleInInterrupt (void)
+ 
+ 	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_EP_DISABLED)
+ 	{
+-		LOGPANIC ("EP%u disabled", m_nEP);
++		if (m_Type != TypeIsochronous)
++		{
++			LOGPANIC ("EP%u disabled", m_nEP);
++		}
++
++		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP), DWHCI_DEV_IN_EP_INT_EP_DISABLED);
++		InEPIntAck.Write ();
+ 	}
+ }
+ 
+diff --git a/lib/usb/gadget/dwusbgadgetendpoint0.cpp b/lib/usb/gadget/dwusbgadgetendpoint0.cpp
+index 2e0ecc7..f0166eb 100644
+--- a/lib/usb/gadget/dwusbgadgetendpoint0.cpp
++++ b/lib/usb/gadget/dwusbgadgetendpoint0.cpp
+@@ -24,6 +24,10 @@
+ #include <circle/logger.h>
+ #include <assert.h>
+ 
++#ifndef GET_INTERFACE
++#define GET_INTERFACE		10
++#endif
++
+ static const char FromEP0[] = "ep0";
+ 
+ CDWUSBGadgetEndpoint0::CDWUSBGadgetEndpoint0 (size_t nMaxPacketSize, CDWUSBGadget *pGadget)
+@@ -110,6 +114,28 @@ void CDWUSBGadgetEndpoint0::OnControlMessage (void)
+ 				       ? m_nBytesLeft : m_nMaxPacketSize);
+ 			} break;
+ 
++		case GET_INTERFACE:
++			if (   (pSetupData->bmRequestType & 0x1F) == 1	// interface
++			    && pSetupData->wLength == 1)
++			{
++				int nAlt = m_pGadget->OnGetInterface (pSetupData->wIndex & 0xFF);
++				if (nAlt >= 0)
++				{
++					m_InBuffer[0] = (u8) nAlt;
++
++					m_State = StateInDataPhase;
++
++					m_nBytesLeft = 1;
++					m_pBufPtr = m_InBuffer;
++					BeginTransfer (TransferDataIn, m_pBufPtr, m_nBytesLeft);
++					break;
++				}
++			}
++
++			Stall (TRUE);
++			BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
++			break;
++
+ 		case GET_STATUS:
+ 			if (pSetupData->wLength != 2)
+ 			{
+@@ -186,6 +212,24 @@ void CDWUSBGadgetEndpoint0::OnControlMessage (void)
+ 			BeginTransfer (TransferDataIn, nullptr, 0);
+ 			break;
+ 
++		case SET_INTERFACE:
++			if (   (pSetupData->bmRequestType & 0x1F) != 1	// interface
++			    || pSetupData->wLength != 0
++			    || !m_pGadget->OnSetInterface (pSetupData->wIndex & 0xFF,
++							   pSetupData->wValue & 0xFF))
++			{
++				Stall (TRUE);
++
++				BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
++
++				return;
++			}
++
++			m_State = StateInStatusPhase;
++
++			BeginTransfer (TransferDataIn, nullptr, 0);
++			break;
++
+ 		default:
+ 			if (pSetupData->wLength)
+ 			{
+diff --git a/lib/usb/gadget/usbmidigadgetendpoint.cpp b/lib/usb/gadget/usbmidigadgetendpoint.cpp
+index f3a1771..8ae9892 100644
+--- a/lib/usb/gadget/usbmidigadgetendpoint.cpp
++++ b/lib/usb/gadget/usbmidigadgetendpoint.cpp
+@@ -102,9 +102,9 @@ void CUSBMIDIGadgetEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
+ 			unsigned nBytesAvail = GetQueueBytesAvail ();
+ 			if (nBytesAvail)
+ 			{
+-				if (nBytesAvail > MaxInMessageSize)
++				if (nBytesAvail > MaxInTransferSize)
+ 				{
+-					nBytesAvail = MaxInMessageSize;
++					nBytesAvail = MaxInTransferSize;
+ 				}
+ 
+ 				Dequeue (m_InBuffer, nBytesAvail);
+@@ -165,9 +165,9 @@ boolean CUSBMIDIGadgetEndpoint::SendEventsHandler (const u8 *pData, unsigned nLe
+ 	m_bInActive = TRUE;
+ 
+ 	unsigned nBytesAvail = GetQueueBytesAvail ();
+-	if (nBytesAvail > MaxInMessageSize)
++	if (nBytesAvail > MaxInTransferSize)
+ 	{
+-		nBytesAvail = MaxInMessageSize;
++		nBytesAvail = MaxInTransferSize;
+ 	}
+ 
+ 	Dequeue (m_InBuffer, nBytesAvail);

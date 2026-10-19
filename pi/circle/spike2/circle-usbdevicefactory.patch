@@ -1,0 +1,25 @@
+--- a/lib/usb/usbdevicefactory.cpp
++++ b/lib/usb/usbdevicefactory.cpp
+@@ -56,6 +56,9 @@
+ #include <circle/usb/usbserialft231x.h>
+ #include <circle/usb/usbtouchscreen.h>
+ 
++// rytm-pi hook: the application may define this to claim the Analog Rytm MKII (1935:0b48)
++extern CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent) __attribute__ ((weak));
++
+ CUSBFunction *CUSBDeviceFactory::GetDevice (CUSBFunction *pParent, CString *pName)
+ {
+ 	assert (pParent != 0);
+@@ -73,7 +76,11 @@
+ 
+ 	CUSBFunction *pResult = 0;
+ 
+-	if (   pName->Compare ("int9-0-0") == 0
++	if (RytmObDeviceCreate != 0 && pName->Compare ("ven1935-b48") == 0)
++	{
++		pResult = RytmObDeviceCreate (pParent);
++	}
++	else if (   pName->Compare ("int9-0-0") == 0
+ 	    || pName->Compare ("int9-0-2") == 0)
+ 	{
+ 		pResult = new CUSBStandardHub (pParent);

@@ -1,0 +1,10 @@
+engines/
+hosted/
+*.o
+*.d
+*.img
+*.elf
+*.lst
+*.map
+*.hex
+tests/build/

@@ -1,0 +1,61 @@
+# Sidecar | Expander: firmware
+
+The source of the Sidecar firmware: the engine that runs on **Sidecar Mini** (Teensy 4.1) and **Sidecar**
+(Raspberry Pi 4B), a voice and send-effect expander on the USB port of an Analog Rytm MKII.
+
+This repository holds the source of **Sidecar 0.1.0**.
+
+- Release, binaries and install guides: <https://github.com/trigcondition/sidecar-expander/releases/tag/v0.1.0>
+- Documentation, the browser patcher and the web console: <https://trigcondition.github.io/sidecar-expander/>
+- The Rytm side (the OS mods the Sidecar talks to): [sidecar-mods](https://github.com/trigcondition/sidecar-mods)
+
+> **Unofficial, experimental software.** Not affiliated with, endorsed by or supported by Elektron. No Elektron
+> firmware, and nothing extracted from it, is in this repository.
+
+## Layout
+
+| path | what |
+|---|---|
+| `core/` | the engine core shared by both platforms: voices, machines, send FX, LFOs, presets, the remote pages' UI, the recorder; host tests in `core/tests` |
+| `teensy/` | Sidecar Mini: the `voiceloop` sketch, USB host to the Rytm, the plugin loader (`libraries/RytmPlugins`), the Overbridge block codec (`libraries/RytmHost`), setup scripts for the engine libraries |
+| `pi/` | Sidecar: the bare-metal engine on Circle (`pi/engine`, `pi/circle`), the display UI (`pi/ui`), Linux experiments (`pi/linux`) |
+| `plugins/` | user machine plugins (`.rmp`): the six starter machines `sc_*` (MIT), Noise Plethora packages, test plugins |
+| `sdk/` | the plugin SDK: ABI header, linker scripts, the Teensy Audio shim |
+| `sim/` | the Mac-side simulator, protocol and end-to-end tools (some need the rytm-emu emulator, which is not public) |
+| `web/` | the Sidecar Mini web console (WebSerial) |
+| `content/` | the starter content generator (Juno-106 and DX7 patch libraries) |
+| `tools/` | packaging, version, plugin pack/install, the portable test runner |
+| `docs/` | design notes and measurements |
+
+The version is in `VERSION` (`docs/versioning.md`).
+
+## Build
+
+Third-party engine sources (Mutable Instruments Plaits, DaisySP, digidrum, Circle, LVGL, ...) are not vendored: the
+setup scripts clone each at a pinned commit into git-ignored folders. See `NOTICE`.
+
+- Engine core on macOS: `make -C core engines && make -C core test` (the last line says `ALL CORE TESTS PASS`).
+- Sidecar Mini: arduino-cli with Teensyduino, `teensy/run_sketch.sh` (`docs/TEENSY-FIRST-TEST.md`).
+- Sidecar (Pi 4B): Docker, `pi/engine/build.sh` (`docs/pi-engine.md`).
+- Plugins: `make -C plugins/sc_acid` and so on (`docs/plugins.md`).
+- Starter content: `content/make_content.sh`.
+
+The build scripts were written on macOS; some use BSD `sed -i ''` and macOS tool paths.
+
+## Tests
+
+```
+tools/run_portable_tests.sh                  # Linux or macOS: no hardware, no firmware, no cross toolchain
+make -C core engines && make -C core test    # macOS
+```
+
+Both run on every pull request (`.github/workflows/test.yml`).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Licence
+
+GPL-2.0-or-later (`LICENSE`), except where a file says otherwise; third-party parts and their licences: `NOTICE`,
+`THIRD_PARTY_LICENSES`, `licenses/`.

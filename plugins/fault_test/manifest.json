@@ -1,0 +1,12 @@
+{
+  "id": "rytm.fault_test",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "FAULT",
+  "short": "FLT",
+  "licence": "MIT",
+  "page2": "sample",
+  "knobs": [
+    {"p": 1, "long": "Mode", "short": "MOD", "look": "list", "text": "enum"}
+  ]
+}

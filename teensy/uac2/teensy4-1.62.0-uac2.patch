@@ -1,0 +1,518 @@
+--- a/usb.c	2026-10-18
++++ b/usb.c	2026-10-18
+@@ -39,6 +39,7 @@
+ #include "usb_joystick.h"
+ #include "usb_flightsim.h"
+ #include "usb_touch.h"
++#include "usb_uac2.h"
+ #include "usb_midi.h"
+ #include "usb_audio.h"
+ #include "usb_mtp.h"
+@@ -388,6 +389,9 @@
+ 		}
+ 		#ifdef MIDI_INTERFACE
+ 		usb_midi_flush_output();
++		#endif
++		#ifdef UAC2_INTERFACE
++		usb_uac2_sof();
+ 		#endif
+ 		#ifdef MULTITOUCH_INTERFACE
+ 		usb_touchscreen_update_callback();
+@@ -507,6 +511,9 @@
+ 		#if defined(AUDIO_INTERFACE)
+ 		usb_audio_configure();
+ 		#endif
++		#if defined(UAC2_INTERFACE)
++		usb_uac2_configure();
++		#endif
+ 		#if defined(MTP_INTERFACE)
+ 		usb_mtp_configure();
+ 		#endif
+@@ -577,7 +584,20 @@
+ 					datalen = *(list->addr);
+ 				} else {
+ 					datalen = list->length;
++				}
++#if defined(UAC2_INTERFACE)
++				if (setup.wValue == 0x200 || setup.wValue == 0x700) {
++					// rytm-teensy: the configuration for the audio mode (usb_uac2_config_desc), then cut to wLength
++					int hs = setup.wValue == 0x200 ? usb_high_speed : !usb_high_speed;
++					memcpy(usb_descriptor_buffer, hs ? usb_config_descriptor_480 : usb_config_descriptor_12, datalen);
++					usb_uac2_config_desc(usb_descriptor_buffer, &datalen, hs);
++					if (setup.wValue == 0x700) usb_descriptor_buffer[1] = 7;
++					if (datalen > setup.wLength) datalen = setup.wLength;
++					arm_dcache_flush_delete(usb_descriptor_buffer, datalen);
++					endpoint0_transmit(usb_descriptor_buffer, datalen, 0);
++					return;
+ 				}
++#endif
+ 				if (datalen > setup.wLength) datalen = setup.wLength;
+ 
+ 				// copy the descriptor, from PROGMEM to DMAMEM
+@@ -644,6 +664,42 @@
+ 		}
+ 		break;
+ #endif
++#if defined(UAC2_INTERFACE)
++	  case 0x0B01: // SET_INTERFACE (alternate setting)
++		if (usb_uac2_set_interface(setup.wIndex, setup.wValue)) {
++			endpoint0_receive(NULL, 0, 0);
++			return;
++		}
++		break;
++	  case 0x0A81: // GET_INTERFACE (alternate setting)
++		{
++			int alt = usb_uac2_get_interface(setup.wIndex);
++			if (alt >= 0) {
++				endpoint0_buffer[0] = alt;
++				endpoint0_transmit(endpoint0_buffer, 1, 0);
++				return;
++			}
++		}
++		break;
++	  case 0x01A1: // UAC2 CUR (get), class request to an interface/entity
++	  case 0x02A1: // UAC2 RANGE (get)
++		{
++			uint32_t len = 0;
++			const uint8_t *p = usb_uac2_get_request(setup.bRequest, setup.wValue, setup.wIndex, setup.wLength, &len);
++			if (p) {
++				endpoint0_transmit(p, len, 0);
++				return;
++			}
++		}
++		break;
++	  case 0x0121: // UAC2 CUR (set)
++		if (usb_uac2_set_request_ok(setup.wValue, setup.wIndex) && setup.wLength <= sizeof(endpoint0_buffer)) {
++			endpoint0_setupdata.bothwords = setupdata;
++			endpoint0_receive(endpoint0_buffer, setup.wLength, 1);
++			return;
++		}
++		break;
++#endif
+ #if defined(AUDIO_INTERFACE)
+ 	  case 0x0B01: // SET_INTERFACE (alternate setting)
+ 		if (setup.wIndex == AUDIO_INTERFACE+1) {
+@@ -881,6 +937,11 @@
+ 			// any other feature report means Arduino Serial Monitor is open
+ 			usb_seremu_online = 1;
+ 		}
++	}
++#endif
++#ifdef UAC2_INTERFACE
++	if (setup.wRequestAndType == 0x0121) {
++		usb_uac2_set_request(setup.wValue, setup.wIndex, endpoint0_buffer, setup.wLength);
+ 	}
+ #endif
+ #ifdef AUDIO_INTERFACE
+--- a/usb_desc.c	2026-10-18
++++ b/usb_desc.c	2026-10-18
+@@ -670,7 +670,51 @@
+ #define EXPERIMENTAL_INTERFACE_DESC_SIZE 0
+ #endif
+ 
+-#define CONFIG_DESC_SIZE		EXPERIMENTAL_INTERFACE_DESC_POS+EXPERIMENTAL_INTERFACE_DESC_SIZE
++#define UAC2_INTERFACE_DESC_POS	EXPERIMENTAL_INTERFACE_DESC_POS+EXPERIMENTAL_INTERFACE_DESC_SIZE
++#ifdef  UAC2_INTERFACE
++// IAD 8, AC 9, AC header 9 + clock 8 + 2x input terminal 17 + 2x output terminal 12,
++// AS OUT 9+9+16+6+7+8+7 (with feedback), AS IN 9+9+16+6+7+8
++#define UAC2_AC_CS_SIZE			(9+8+17+12+17+12)
++#define UAC2_INTERFACE_DESC_SIZE	(8 + 9 + UAC2_AC_CS_SIZE + 62 + 55)
++#else
++#define UAC2_INTERFACE_DESC_SIZE	0
++#endif
++#define CONFIG_DESC_SIZE		UAC2_INTERFACE_DESC_POS+UAC2_INTERFACE_DESC_SIZE
++
++#ifndef MIDI_IINTERFACE
++#define MIDI_IINTERFACE 0
++#endif
++#ifdef UAC2_INTERFACE
++const uint16_t usb_uac2_desc_pos = UAC2_INTERFACE_DESC_POS;   // where the audio function starts (it is last)
++// rytm-teensy: USB Audio Class 2.0 function (Audio Device Class 2.0 spec, sections 4.7-4.10).
++// One internal fixed clock (id 0x10); OUT path: USB streaming IT 0x01 -> OT 0x02 (speaker);
++// IN path: IT 0x03 (line) -> USB streaming OT 0x04. No feature units.
++// stereo gets front left/right; more channels are left unassigned (bmChannelConfig 0: raw, numbered channels)
++#define UAC2_CHCFG(n) ((n) <= 2 ? ((1u << (n)) - 1u) : 0u)
++#define UAC2_U32(v) (uint8_t)((v) & 255), (uint8_t)(((v) >> 8) & 255), (uint8_t)(((v) >> 16) & 255), (uint8_t)(((v) >> 24) & 255)
++#define UAC2_FUNCTION_DESC(INTERVAL, OUTSIZE, INSIZE, FBSIZE, FBINTERVAL) \
++	8, 11, UAC2_INTERFACE, 3, 0x01, 0x00, 0x20, 5,	/* IAD: audio, IP version 2.00, iFunction string 5 */ \
++	9, 4, UAC2_INTERFACE, 0, 0, 0x01, 0x01, 0x20, 5,	/* AC interface, iInterface string 5 */ \
++	9, 0x24, 0x01, 0x00, 0x02, 0x08, LSB(UAC2_AC_CS_SIZE), MSB(UAC2_AC_CS_SIZE), 0x00, /* AC header, bcdADC 2.00, I/O box */ \
++	8, 0x24, 0x0A, 0x10, 0x01, 0x05, 0, 0,		/* clock source: internal fixed, freq + valid read-only */ \
++	17, 0x24, 0x02, 0x01, 0x01, 0x01, 0, 0x10, UAC2_CH_OUT, UAC2_U32(UAC2_CHCFG(UAC2_CH_OUT)), 0, 0, 0, 0, /* IT USB streaming */ \
++	12, 0x24, 0x03, 0x02, 0x01, 0x03, 0, 0x01, 0x10, 0, 0, 0,	/* OT speaker, from IT 0x01 */ \
++	17, 0x24, 0x02, 0x03, 0x01, 0x02, 0, 0x10, UAC2_CH_IN, UAC2_U32(UAC2_CHCFG(UAC2_CH_IN)), 0, 0, 0, 0, /* IT microphone */ \
++	12, 0x24, 0x03, 0x04, 0x01, 0x01, 0, 0x03, 0x10, 0, 0, 0,	/* OT USB streaming, from IT 0x03 */ \
++	9, 4, UAC2_INTERFACE+1, 0, 0, 0x01, 0x02, 0x20, 0,	/* AS OUT alt 0 */ \
++	9, 4, UAC2_INTERFACE+1, 1, 2, 0x01, 0x02, 0x20, 0,	/* AS OUT alt 1 */ \
++	16, 0x24, 0x01, 0x01, 0x00, 0x01, UAC2_U32(1), UAC2_CH_OUT, UAC2_U32(UAC2_CHCFG(UAC2_CH_OUT)), 0, /* AS general, PCM */ \
++	6, 0x24, 0x02, 0x01, UAC2_SUBSLOT, UAC2_SUBSLOT * 8,	/* format type I */ \
++	7, 5, UAC2_OUT_ENDPOINT, 0x05, LSB(OUTSIZE), MSB(OUTSIZE), INTERVAL,	/* iso async OUT */ \
++	8, 0x25, 0x01, 0, 0, 0, 0, 0,				/* CS iso data endpoint */ \
++	7, 5, UAC2_FB_ENDPOINT | 0x80, 0x11, FBSIZE, 0, FBINTERVAL,	/* explicit feedback */ \
++	9, 4, UAC2_INTERFACE+2, 0, 0, 0x01, 0x02, 0x20, 0,	/* AS IN alt 0 */ \
++	9, 4, UAC2_INTERFACE+2, 1, 1, 0x01, 0x02, 0x20, 0,	/* AS IN alt 1 */ \
++	16, 0x24, 0x01, 0x04, 0x00, 0x01, UAC2_U32(1), UAC2_CH_IN, UAC2_U32(UAC2_CHCFG(UAC2_CH_IN)), 0, \
++	6, 0x24, 0x02, 0x01, UAC2_SUBSLOT, UAC2_SUBSLOT * 8, \
++	7, 5, UAC2_IN_ENDPOINT | 0x80, 0x05, LSB(INSIZE), MSB(INSIZE), INTERVAL,	/* iso async IN */ \
++	8, 0x25, 0x01, 0, 0, 0, 0, 0,
++#endif
+ 
+ 
+ 
+@@ -935,7 +979,7 @@
+         0x01,                                   // bInterfaceClass (0x01 = Audio)
+         0x03,                                   // bInterfaceSubClass (0x03 = MIDI)
+         0x00,                                   // bInterfaceProtocol (unused for MIDI)
+-        0,                                      // iInterface
++        MIDI_IINTERFACE,                        // iInterface (rytm-teensy: USB_SERIAL_UAC2 names it, string 5)
+         // MIDI MS Interface Header, USB MIDI 6.1.2.1, page 21, Table 6-2
+         7,                                      // bLength
+         0x24,                                   // bDescriptorType = CS_INTERFACE
+@@ -1692,6 +1736,9 @@
+         LSB(512), MSB(512),                     // wMaxPacketSize
+         1,                                      // bInterval
+ #endif // EXPERIMENTAL_INTERFACE
++#ifdef UAC2_INTERFACE
++	UAC2_FUNCTION_DESC(UAC2_BINTERVAL_480, UAC2_OUT_SIZE_480, UAC2_IN_SIZE_480, 4, UAC2_FB_BINTERVAL_480)
++#endif
+ };
+ 
+ 
+@@ -1949,7 +1996,7 @@
+         0x01,                                   // bInterfaceClass (0x01 = Audio)
+         0x03,                                   // bInterfaceSubClass (0x03 = MIDI)
+         0x00,                                   // bInterfaceProtocol (unused for MIDI)
+-        0,                                      // iInterface
++        MIDI_IINTERFACE,                        // iInterface (rytm-teensy: USB_SERIAL_UAC2 names it, string 5)
+         // MIDI MS Interface Header, USB MIDI 6.1.2.1, page 21, Table 6-2
+         7,                                      // bLength
+         0x24,                                   // bDescriptorType = CS_INTERFACE
+@@ -2706,6 +2753,9 @@
+         LSB(64), MSB(64),                       // wMaxPacketSize
+         1,                                      // bInterval
+ #endif // EXPERIMENTAL_INTERFACE
++#ifdef UAC2_INTERFACE
++	UAC2_FUNCTION_DESC(1, UAC2_OUT_SIZE_12, UAC2_IN_SIZE_12, 3, 1)
++#endif
+ };
+ 
+ 
+@@ -2749,7 +2799,16 @@
+         2 + MANUFACTURER_NAME_LEN * 2,
+         3,
+         MANUFACTURER_NAME
++};
++#ifdef UAC2_INTERFACE
++// rytm-teensy: the audio function's own name (string 5: the IAD's iFunction, the AC interface's iInterface), the
++// product name as given (macOS's "USB Product Name" property turns '|' and '()' into '_')
++PROGMEM const struct usb_string_descriptor_struct usb_string_uac2_name = {
++        2 + PRODUCT_NAME_LEN * 2,
++        3,
++        PRODUCT_NAME
+ };
++#endif
+ PROGMEM const struct usb_string_descriptor_struct usb_string_product_name_default = {
+ 	2 + PRODUCT_NAME_LEN * 2,
+         3,
+@@ -2841,6 +2900,9 @@
+         {0x0301, 0x0409, (const uint8_t *)&usb_string_manufacturer_name, 0},
+         {0x0302, 0x0409, (const uint8_t *)&usb_string_product_name, 0},
+         {0x0303, 0x0409, (const uint8_t *)&usb_string_serial_number, 0},
++#ifdef UAC2_INTERFACE
++        {0x0305, 0x0409, (const uint8_t *)&usb_string_uac2_name, 0},
++#endif
+ 	{0, 0, NULL, 0}
+ };
+ 
+--- a/usb_desc.h	2026-10-18
++++ b/usb_desc.h	2026-10-18
+@@ -742,6 +742,84 @@
+   #define ENDPOINT3_CONFIG	ENDPOINT_RECEIVE_BULK + ENDPOINT_TRANSMIT_BULK
+   #define ENDPOINT4_CONFIG	ENDPOINT_RECEIVE_BULK + ENDPOINT_TRANSMIT_BULK
+   #define ENDPOINT5_CONFIG	ENDPOINT_RECEIVE_UNUSED + ENDPOINT_TRANSMIT_INTERRUPT
++
++#elif defined(USB_SERIAL_UAC2)
++  // rytm-teensy: Serial + USB Audio Class 2 (usb_uac2.c), 48 kHz, 24-bit in 3-byte subslots,
++  // async with an explicit feedback endpoint. Interfaces: CDC 0/1, MIDI 2, AudioControl 3, AS OUT 4, AS IN 5
++  // (without MIDI, -DUAC2_NO_MIDI: AudioControl 2, AS OUT 3, AS IN 4).
++  #define VENDOR_ID		0x16C0
++  #define PRODUCT_ID		0x048A
++  #define MANUFACTURER_NAME	{'T','e','e','n','s','y','d','u','i','n','o'}
++  #define MANUFACTURER_NAME_LEN	11
++  #define PRODUCT_NAME		{'S','i','d','e','c','a','r',' ','M','i','n','i'}
++  #define PRODUCT_NAME_LEN	12
++  #define EP0_SIZE		64
++  #ifndef UAC2_NO_MIDI   // Serial + MIDI + UAC2 (interfaces CDC 0/1, MIDI 2, UAC2 3..5); -DUAC2_NO_MIDI: Serial + UAC2
++  #define NUM_ENDPOINTS		6
++  #define NUM_INTERFACE		6
++  #else
++  #define NUM_ENDPOINTS		5
++  #define NUM_INTERFACE		5
++  #endif
++  #define CDC_IAD_DESCRIPTOR	1
++  #define CDC_STATUS_INTERFACE	0
++  #define CDC_DATA_INTERFACE	1	// Serial
++  #define CDC_ACM_ENDPOINT	2
++  #define CDC_RX_ENDPOINT       3
++  #define CDC_TX_ENDPOINT       3
++  #define CDC_ACM_SIZE          16
++  #define CDC_RX_SIZE_480       512
++  #define CDC_TX_SIZE_480       512
++  #define CDC_RX_SIZE_12        64
++  #define CDC_TX_SIZE_12        64
++  #ifndef UAC2_NO_MIDI
++  #define MIDI_INTERFACE        2	// MIDI (usb_midi.c), one cable, bulk endpoint 6 both ways
++  #define MIDI_IINTERFACE       5	// named by the audio function's string (usb_desc.c)
++  #define MIDI_NUM_CABLES       1
++  #define MIDI_TX_ENDPOINT      6
++  #define MIDI_TX_SIZE_12       64
++  #define MIDI_TX_SIZE_480      512
++  #define MIDI_RX_ENDPOINT      6
++  #define MIDI_RX_SIZE_12       64
++  #define MIDI_RX_SIZE_480      512
++  #define UAC2_INTERFACE	3	// AudioControl; AS OUT (host to Teensy) is 4, AS IN (Teensy to host) is 5
++  #else
++  #define UAC2_INTERFACE	2	// AudioControl; AS OUT (host to Teensy) is 3, AS IN (Teensy to host) is 4
++  #endif
++  #ifndef UAC2_CH_OUT
++  #define UAC2_CH_OUT		2	// channels host -> Teensy
++  #endif
++  #ifndef UAC2_CH_IN
++  #define UAC2_CH_IN		2	// channels Teensy -> host
++  #endif
++  #define UAC2_SUBSLOT		3	// bytes per sample (24-bit)
++  #define UAC2_RATE		48000
++  #define UAC2_OUT_ENDPOINT	4	// iso OUT, async
++  #define UAC2_FB_ENDPOINT	4	// iso IN 0x84, explicit feedback for the OUT endpoint
++  #define UAC2_IN_ENDPOINT	5	// iso IN 0x85, async
++  #ifndef UAC2_BINTERVAL_480
++  #define UAC2_BINTERVAL_480	2	// 2^(2-1) = 2 microframes = 250 us: 12 frames nominal
++  #define UAC2_FRAMES_480	12	// with UAC2_BINTERVAL_480 1: 6
++  #endif
++  #define UAC2_FRAMES_12	48	// full speed: 1 ms
++  #define UAC2_FB_BINTERVAL_480	4	// 8 microframes = 1 ms
++  #define UAC2_OUT_SIZE_480	((UAC2_FRAMES_480 + 1) * UAC2_CH_OUT * UAC2_SUBSLOT)
++  #define UAC2_IN_SIZE_480	((UAC2_FRAMES_480 + 1) * UAC2_CH_IN * UAC2_SUBSLOT)
++  // full speed carries at most 1023 B per iso packet: 49 frames x 2 ch x 3 B fits, more channels do not
++  // (the device still enumerates at full speed, the audio then needs high speed)
++  #define UAC2_FS_CAP(n)	((n) > 1023 ? 1023 : (n))
++  #define UAC2_OUT_SIZE_12	UAC2_FS_CAP((UAC2_FRAMES_12 + 1) * UAC2_CH_OUT * UAC2_SUBSLOT)
++  #define UAC2_IN_SIZE_12	UAC2_FS_CAP((UAC2_FRAMES_12 + 1) * UAC2_CH_IN * UAC2_SUBSLOT)
++  #if UAC2_IN_SIZE_480 > 1024 || UAC2_OUT_SIZE_480 > 1024
++  #error "UAC2: more than 1024 B per high-speed packet (13 frames x channels x 3 B): fewer channels"
++  #endif
++  #define ENDPOINT2_CONFIG	ENDPOINT_RECEIVE_UNUSED + ENDPOINT_TRANSMIT_INTERRUPT
++  #define ENDPOINT3_CONFIG	ENDPOINT_RECEIVE_BULK + ENDPOINT_TRANSMIT_BULK
++  #define ENDPOINT4_CONFIG	ENDPOINT_RECEIVE_ISOCHRONOUS + ENDPOINT_TRANSMIT_ISOCHRONOUS
++  #define ENDPOINT5_CONFIG	ENDPOINT_RECEIVE_UNUSED + ENDPOINT_TRANSMIT_ISOCHRONOUS
++  #ifndef UAC2_NO_MIDI
++  #define ENDPOINT6_CONFIG	ENDPOINT_RECEIVE_BULK + ENDPOINT_TRANSMIT_BULK
++  #endif
+ 
+ #elif defined(USB_AUDIO)
+   #define VENDOR_ID		0x16C0
+--- a/usb_midi.c	2026-10-18
++++ b/usb_midi.c	2026-10-18
+@@ -75,17 +75,41 @@
+ extern volatile uint8_t usb_high_speed;
+ 
+ 
+-#define TX_NUM   4
+-#define TX_SIZE  512 /* should be a multiple of MIDI_TX_SIZE_480 */
++// USB_SERIAL_UAC2 (rytm-teensy): the code in flash (the host build's ITCM is full; 1 kHz of packets runs fine from
++// the cache) and the buffers placeable in RAM1 (-DUSB_MIDI_BUF_ATTR=: DTCM, which the USB DMA reaches; RAM2 is full
++// there). Other USB types: as PJRC's.
++#if defined(USB_SERIAL_UAC2)
++#include "avr/pgmspace.h"
++#define MIDI_TEXT FLASHMEM
++#else
++#define MIDI_TEXT
++#endif
++#ifndef USB_MIDI_BUF_ATTR
++#define USB_MIDI_BUF_ATTR DMAMEM
++#endif
++// USB_SERIAL_UAC2: the buffers' counts and the transmit buffers' size settable (the Sidecar Mini's RAM2 is short):
++// a transmit buffer smaller than the packet size sends short packets of TX_SIZE (bulk: any length is a packet);
++// the receive buffers stay a whole packet each (the computer may send that much at once).
++#ifndef USB_MIDI_TX_NUM
++#define USB_MIDI_TX_NUM 4
++#endif
++#ifndef USB_MIDI_TX_SIZE
++#define USB_MIDI_TX_SIZE 512
++#endif
++#ifndef USB_MIDI_RX_NUM
++#define USB_MIDI_RX_NUM 6
++#endif
++#define TX_NUM   USB_MIDI_TX_NUM
++#define TX_SIZE  USB_MIDI_TX_SIZE /* a multiple of MIDI_TX_SIZE_480, or smaller (short packets) */
+ static transfer_t tx_transfer[TX_NUM] __attribute__ ((used, aligned(32)));
+-DMAMEM static uint8_t txbuffer[TX_SIZE * TX_NUM] __attribute__ ((aligned(32)));
++USB_MIDI_BUF_ATTR static uint8_t txbuffer[TX_SIZE * TX_NUM] __attribute__ ((aligned(32)));
+ static uint8_t tx_head=0;
+ static uint16_t tx_available=0;
+ static uint16_t tx_packet_size=0;
+ 
+-#define RX_NUM  6
++#define RX_NUM  USB_MIDI_RX_NUM
+ static transfer_t rx_transfer[RX_NUM] __attribute__ ((used, aligned(32)));
+-DMAMEM static uint8_t rx_buffer[RX_NUM * MIDI_RX_SIZE_480] __attribute__ ((aligned(32)));
++USB_MIDI_BUF_ATTR static uint8_t rx_buffer[RX_NUM * MIDI_RX_SIZE_480] __attribute__ ((aligned(32)));
+ static uint16_t rx_count[RX_NUM];
+ static uint16_t rx_index[RX_NUM];
+ static uint16_t rx_packet_size=0;
+@@ -97,7 +121,7 @@
+ static void rx_event(transfer_t *t);
+ 
+ 
+-void usb_midi_configure(void)
++MIDI_TEXT void usb_midi_configure(void)
+ {
+ 	printf("usb_midi_configure\n");
+ 	if (usb_high_speed) {
+@@ -118,6 +142,7 @@
+ 	rx_available = 0;
+ 	usb_config_rx(MIDI_RX_ENDPOINT, rx_packet_size, 0, rx_event);
+ 	usb_config_tx(MIDI_TX_ENDPOINT, tx_packet_size, 0, NULL); // TODO: is ZLP needed?
++	if (tx_packet_size > TX_SIZE) tx_packet_size = TX_SIZE;   // what a transmit buffer holds: one (short) packet
+ 	int i;
+ 	for (i=0; i < RX_NUM; i++) rx_queue_transfer(i);
+ 	transmit_previous_timeout = 0;
+@@ -137,7 +162,7 @@
+ // search the name to find it.  This data format is shown on page 16 in Figure #8.
+ // Byte 0 (shown on the left hand side of Figure #8) is the least significant byte
+ // of this 32 bit input.
+-void usb_midi_write_packed(uint32_t n)
++MIDI_TEXT void usb_midi_write_packed(uint32_t n)
+ {
+ 	printf("usb_midi_write_packed\n");
+ 	if (!usb_configuration) return;
+@@ -179,7 +204,7 @@
+ 	tx_noautoflush = 0;
+ }
+ 
+-void usb_midi_flush_output(void)
++MIDI_TEXT void usb_midi_flush_output(void)
+ {
+ 	//printf("usb_midi_flush_output\n");
+ 	if (tx_noautoflush == 0 && tx_available > 0) {
+@@ -198,7 +223,7 @@
+ 	}
+ }
+ 
+-void usb_midi_send_sysex_buffer_has_term(const uint8_t *data, uint32_t length, uint8_t cable)
++MIDI_TEXT void usb_midi_send_sysex_buffer_has_term(const uint8_t *data, uint32_t length, uint8_t cable)
+ {
+ 	cable = (cable & 0x0F) << 4;
+         while (length > 3) {
+@@ -215,7 +240,7 @@
+         }
+ }
+ 
+-void usb_midi_send_sysex_add_term_bytes(const uint8_t *data, uint32_t length, uint8_t cable)
++MIDI_TEXT void usb_midi_send_sysex_add_term_bytes(const uint8_t *data, uint32_t length, uint8_t cable)
+ {
+ 	cable = (cable & 0x0F) << 4;
+ 
+@@ -244,7 +269,7 @@
+ 	}
+ }
+ 
+-static void sysex_byte(uint8_t b)
++MIDI_TEXT static void sysex_byte(uint8_t b)
+ {
+ 	if (usb_midi_handleSysExPartial && usb_midi_msg_sysex_len >= USB_MIDI_SYSEX_MAX) {
+ 		// when buffer is full, send another chunk to partial handler.
+@@ -261,7 +286,7 @@
+ 
+ 
+ 
+-static void rx_queue_transfer(int i)
++MIDI_TEXT static void rx_queue_transfer(int i)
+ {
+ 	NVIC_DISABLE_IRQ(IRQ_USB1);
+ 	void *buffer = rx_buffer + i * MIDI_RX_SIZE_480;
+@@ -274,7 +299,7 @@
+ 
+ 
+ // called by USB interrupt when any packet is received
+-static void rx_event(transfer_t *t)
++MIDI_TEXT static void rx_event(transfer_t *t)
+ {
+ 	int len = rx_packet_size - ((t->status >> 16) & 0x7FFF);
+ 	len &= 0xFFFC; // MIDI packets must be multiple of 4 bytes
+@@ -295,12 +320,12 @@
+ }
+ 
+ 
+-uint32_t usb_midi_available(void)
++MIDI_TEXT uint32_t usb_midi_available(void)
+ {
+ 	return rx_available / 4;
+ }
+ 
+-uint32_t usb_midi_read_message(void)
++MIDI_TEXT uint32_t usb_midi_read_message(void)
+ {
+ 	uint32_t n = 0;
+ 	NVIC_DISABLE_IRQ(IRQ_USB1);
+@@ -322,7 +347,7 @@
+ 	return n;
+ }
+ 
+-int usb_midi_read(uint32_t channel)
++MIDI_TEXT int usb_midi_read(uint32_t channel)
+ {
+ 	uint32_t n, ch, type1, type2, b1;
+ 	
+--- a/usb_serial.c	2026-10-18
++++ b/usb_serial.c	2026-10-18
+@@ -68,7 +68,10 @@
+ static void usb_serial_flush_callback(void);
+ 
+ #define TX_NUM   4
+-#define TX_SIZE  2048 /* should be a multiple of CDC_TX_SIZE */
++#ifndef USB_SERIAL_TX_SIZE   // rytm-teensy (USB_SERIAL_UAC2 core copy): settable, 2048 as PJRC's (the Sidecar Mini: 1024)
++#define USB_SERIAL_TX_SIZE 2048
++#endif
++#define TX_SIZE  USB_SERIAL_TX_SIZE /* should be a multiple of CDC_TX_SIZE */
+ static transfer_t tx_transfer[TX_NUM] __attribute__ ((used, aligned(32)));
+ DMAMEM static uint8_t txbuffer[TX_SIZE * TX_NUM] __attribute__ ((aligned(32)));
+ static uint8_t tx_head=0;
+--- a/eeprom.c	2026-10-18
++++ b/eeprom.c	2026-10-18
+@@ -83,7 +83,15 @@
+ 	initialized = 1;
+ }
+ 
+-uint8_t eeprom_read_byte(const uint8_t *addr_ptr)
++// USB_SERIAL_UAC2 (rytm-teensy): the byte read and write in flash (the host build's ITCM is full); they call the
++// flash routines below, which stay in RAM and run with interrupts off.
++#if defined(USB_SERIAL_UAC2)
++#include "avr/pgmspace.h"
++#define EE_TEXT FLASHMEM
++#else
++#define EE_TEXT
++#endif
++EE_TEXT uint8_t eeprom_read_byte(const uint8_t *addr_ptr)
+ {
+ 	uint32_t addr = (uint32_t)addr_ptr;
+ 	uint32_t sector, offset;
+@@ -105,7 +113,7 @@
+ 	return data;
+ }
+ 
+-void eeprom_write_byte(uint8_t *addr_ptr, uint8_t data)
++EE_TEXT void eeprom_write_byte(uint8_t *addr_ptr, uint8_t data)
+ {
+ 	uint32_t addr = (uint32_t)addr_ptr;
+ 	uint32_t sector, offset, index, i;
+--- a/WProgram.h	2026-10-18
++++ b/WProgram.h	2026-10-18
+@@ -60,6 +60,7 @@
+ #include "usb_flightsim.h"
+ #include "MTP_Teensy.h"
+ #include "usb_audio.h"
++#include "usb_uac2.h"
+ #include "usb_touch.h"
+ //#include "usb_undef.h" // do not allow usb_desc.h stuff to leak to user programs
+ 

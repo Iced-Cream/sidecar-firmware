@@ -1,0 +1,22 @@
+{
+  "id": "rytm.v2_test",
+  "version": "1.0.0",
+  "name": "V2 TEST",
+  "short": "V2T",
+  "licence": "MIT",
+  "page2": "params",
+  "page2_title": "V2 PAGE 2",
+  "preset_ext": "v2p",
+  "knobs": [
+    {"p": 1, "long": "Preset", "short": "PRE", "text": "preset", "default": 0},
+    {"p": 2, "long": "Level", "short": "LEV", "look": "fader", "role": "preset", "default": 100},
+    {"p": 3, "long": "Tone", "short": "TON", "role": "preset"},
+    {"p": 4, "long": "Detune", "short": "DET", "look": "centred", "text": "bipolar", "role": "offset"},
+    {"p": 5, "long": "Sample", "short": "SMP", "text": "pool", "default": 0},
+    {"p": 6, "long": "Mode", "short": "MOD", "look": "list", "text": "enum", "names": ["SINE", "POOL"], "default": 0},
+    {"p": 7, "long": "Jump", "short": "JMP", "default": 0},
+    {"p": 8, "long": "Gain", "short": "GAN", "look": "fader", "default": 127},
+    {"p": 9, "long": "Root", "short": "ROT", "text": "note", "default": 60},
+    {"p": 10, "long": "Spare", "short": "SPR", "min": 10, "max": 20, "default": 15}
+  ]
+}

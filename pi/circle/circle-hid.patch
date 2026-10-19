@@ -1,0 +1,306 @@
+diff --color -ruN a/include/circle/usb/usbhiddevice.h b/include/circle/usb/usbhiddevice.h
+--- a/include/circle/usb/usbhiddevice.h	2026-10-16 17:09:39
++++ b/include/circle/usb/usbhiddevice.h	2026-10-16 17:10:01
+@@ -35,6 +35,25 @@
+ 
+ 	boolean ConfigureHID (unsigned nMaxReportSize = 0);
+ 
++	// circle-hid.patch: an error on the report endpoint halts it in the xHC, and the resubmit from the completion
++	// routine (IRQ) then goes nowhere. The routine now only marks it; Poll() (main loop, not IRQ: it issues xHCI
++	// commands) resets the endpoint and resubmits. Diagnostics for the display's log line.
++	struct THIDStats
++	{
++		unsigned nReports;		// completed requests with data
++		unsigned nErrors;		// completed requests with an error
++		unsigned nLastCode;		// the xHCI completion code of the last transfer error
++		unsigned nXhciErrors;		// the xHC's transfer error events on this endpoint
++		unsigned nResubmits;		// requests submitted again by Poll()
++		unsigned nResets;		// Poll()'s endpoint resets (halted/stopped/error state seen)
++		unsigned nFailed;		// resubmits or resets that failed
++		unsigned nState;		// endpoint state now: 0 off, 1 running, 2 halted, 3 stopped, 4 error
++		unsigned nPending;		// URBs queued on the endpoint
++		boolean  bGaveUp;		// 50 errors in a row: Poll() now retries once a second
++	};
++	void Poll (void);
++	void GetHIDStats (THIDStats *pStats);
++
+ protected:
+ 	// has to be called from Configure() in derived class, when initialization is done
+ 	boolean StartRequest (void);
+@@ -69,6 +88,10 @@
+ 
+ 	unsigned m_nErrorCount;		// see CompletionRoutine()
+ 	unsigned m_nLastErrorTicksHZ;	// see CompletionRoutine()
++	volatile boolean m_bRecover;	// set by the completion routine, cleared by Poll()
++	unsigned m_nLastRecoverTicks, m_nLastCheckTicks;
++	volatile unsigned m_nReports, m_nErrors;
++	unsigned m_nResubmits, m_nResets, m_nFailed;
+ };
+ 
+ #endif
+diff --color -ruN a/include/circle/usb/usbtouchscreen.h b/include/circle/usb/usbtouchscreen.h
+--- a/include/circle/usb/usbtouchscreen.h	2026-10-16 17:09:39
++++ b/include/circle/usb/usbtouchscreen.h	2026-10-16 17:10:01
+@@ -59,7 +59,13 @@
+ 
+ 	boolean Configure (void);
+ 
++	// circle-hid.patch: the (last) USB touch screen, for the diagnostics and CUSBHIDDevice::Poll(); 0: none
++	static CUSBTouchScreenDevice *Get (void)	{ return s_pThis; }
++	unsigned GetIgnored (void) const		{ return m_nIgnored; }	// reports dropped for size or report ID
++
+ private:
++	static CUSBTouchScreenDevice *volatile s_pThis;
++	volatile unsigned m_nIgnored;
+ 	void ReportHandler (const u8 *pReport, unsigned nReportSize);
+ 
+ 	boolean DecodeReportDescriptor (const u8 *pDesc, unsigned nDescSize);
+diff --color -ruN a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+--- a/include/circle/usb/xhciendpoint.h	2026-10-16 17:09:39
++++ b/include/circle/usb/xhciendpoint.h	2026-10-16 17:10:01
+@@ -62,6 +62,8 @@
+ 
+ 	unsigned GetEPState (void);		// output endpoint context: 0 disabled, 1 running, 2 halted, 3 stopped, 4 error
+ 	unsigned GetPendingURBs (void) const	{ return m_nURBCount; }
++	unsigned GetErrorCount (void) const	{ return m_nErrors; }		// transfer errors (circle-hid.patch)
++	unsigned GetLastErrorCode (void) const	{ return m_nLastError; }	// the xHCI completion code of the last one
+ 
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+@@ -100,6 +102,7 @@
+ 	CUSBRequest	*m_pURB[XHCI_EP_MAX_URBS];	// FIFO in TRB order: m_nURBHead is the oldest
+ 	unsigned	 m_nURBHead;
+ 	unsigned	 m_nURBCount;
++	volatile unsigned m_nErrors, m_nLastError;
+ 	volatile boolean m_bTransferCompleted;
+ 
+ 	u8		*m_pInputContextBuffer;
+diff --color -ruN a/lib/usb/usbhiddevice.cpp b/lib/usb/usbhiddevice.cpp
+--- a/lib/usb/usbhiddevice.cpp	2026-10-16 17:09:39
++++ b/lib/usb/usbhiddevice.cpp	2026-10-16 17:10:01
+@@ -22,6 +22,7 @@
+ #include <circle/logger.h>
+ #include <circle/util.h>
+ #include <circle/timer.h>
++#include <circle/usb/xhciendpoint.h>
+ #include <assert.h>
+ 
+ static const char FromUSBHID[] = "usbhid";
+@@ -44,7 +45,15 @@
+ 	m_pEndpointOut (0),
+ 	m_pReportBuffer (0),
+ 	m_nErrorCount (0),
+-	m_nLastErrorTicksHZ (0)
++	m_nLastErrorTicksHZ (0),
++	m_bRecover (FALSE),
++	m_nLastRecoverTicks (0),
++	m_nLastCheckTicks (0),
++	m_nReports (0),
++	m_nErrors (0),
++	m_nResubmits (0),
++	m_nResets (0),
++	m_nFailed (0)
+ {
+ 	if (m_nMaxReportSize > 0)
+ 	{
+@@ -230,11 +239,14 @@
+ 	if (pURB->GetStatus () != 0)
+ 	{
+ 		m_nErrorCount = 0;
++		m_nReports++;
+ 
+ 		ReportHandler (m_pReportBuffer, pURB->GetResultLength ());
+ 	}
+ 	else
+ 	{
++		m_nErrors++;
++
+ 		if (!GetHost ()->IsPlugAndPlay ())
+ 		{
+ 			ReportHandler (0, 0);
+@@ -256,6 +268,16 @@
+ 		}
+ 	}
+ 
++#if RASPPI >= 4
++	if (pURB->GetStatus () == 0 && GetHost ()->IsPlugAndPlay ())
++	{
++		// xHCI: the endpoint is halted now; Poll() resets it and submits again (circle-hid.patch)
++		delete pURB;
++		m_bRecover = TRUE;
++		return;
++	}
++#endif
++
+ 	delete pURB;
+ 
+ 	if (   bRestart
+@@ -271,4 +293,86 @@
+ 	assert (pThis != 0);
+ 	
+ 	pThis->CompletionRoutine (pURB);
++}
++
++void CUSBHIDDevice::Poll (void)
++{
++#if RASPPI >= 4
++	if (m_pReportEndpoint == 0 || m_pReportEndpoint->GetXHCIEndpoint () == 0)
++	{
++		return;
++	}
++
++	CXHCIEndpoint *pXHCI = m_pReportEndpoint->GetXHCIEndpoint ();
++	unsigned nNowHZ = CTimer::Get ()->GetTicks ();
++
++	if (!m_bRecover)
++	{
++		// not told by an error: look at the endpoint twice a second (a halt whose event never came)
++		if (nNowHZ - m_nLastCheckTicks < HZ / 2)
++		{
++			return;
++		}
++		m_nLastCheckTicks = nNowHZ;
++
++		unsigned nState = pXHCI->GetEPState ();
++		if (nState == 0 || nState == 1)
++		{
++			return;
++		}
++		m_bRecover = TRUE;
++	}
++
++	if (   m_nErrorCount >= MaxConsecutiveErrors
++	    && nNowHZ - m_nLastRecoverTicks < HZ)
++	{
++		return;						// slowed down, not given up
++	}
++	m_nLastRecoverTicks = nNowHZ;
++
++	if (pXHCI->GetEPState () >= 2)				// halted, stopped or error
++	{
++		m_nResets++;
++		if (!pXHCI->ResetFromHalted ())
++		{
++			m_nFailed++;
++		}
++	}
++
++	if (pXHCI->GetPendingURBs () > 0)
++	{
++		m_bRecover = FALSE;				// a request is queued: nothing to submit
++		return;
++	}
++	if (StartRequest ())
++	{
++		m_nResubmits++;
++		m_bRecover = FALSE;
++	}
++	else
++	{
++		m_nFailed++;					// retried at the next Poll
++	}
++#endif
++}
++
++void CUSBHIDDevice::GetHIDStats (THIDStats *pStats)
++{
++	memset (pStats, 0, sizeof *pStats);
++	pStats->nReports = m_nReports;
++	pStats->nErrors = m_nErrors;
++	pStats->nResubmits = m_nResubmits;
++	pStats->nResets = m_nResets;
++	pStats->nFailed = m_nFailed;
++	pStats->bGaveUp = m_nErrorCount >= MaxConsecutiveErrors;
++#if RASPPI >= 4
++	if (m_pReportEndpoint != 0 && m_pReportEndpoint->GetXHCIEndpoint () != 0)
++	{
++		CXHCIEndpoint *pXHCI = m_pReportEndpoint->GetXHCIEndpoint ();
++		pStats->nLastCode = pXHCI->GetLastErrorCode ();
++		pStats->nXhciErrors = pXHCI->GetErrorCount ();
++		pStats->nState = pXHCI->GetEPState ();
++		pStats->nPending = pXHCI->GetPendingURBs ();
++	}
++#endif
+ }
+diff --color -ruN a/lib/usb/usbtouchscreen.cpp b/lib/usb/usbtouchscreen.cpp
+--- a/lib/usb/usbtouchscreen.cpp	2026-10-16 17:09:39
++++ b/lib/usb/usbtouchscreen.cpp	2026-10-16 17:10:01
+@@ -55,9 +55,12 @@
+ 
+ LOGMODULE ("utouch");
+ 
++CUSBTouchScreenDevice *volatile CUSBTouchScreenDevice::s_pThis = 0;
++
+ CUSBTouchScreenDevice::CUSBTouchScreenDevice (CUSBFunction *pFunction)
+ :	CUSBHIDDevice (pFunction),
+-	m_pDevice (0)
++	m_pDevice (0),
++	m_nIgnored (0)
+ {
+ 	memset (&m_Report, 0, sizeof m_Report);
+ 
+@@ -69,6 +72,10 @@
+ 
+ CUSBTouchScreenDevice::~CUSBTouchScreenDevice (void)
+ {
++	if (s_pThis == this)
++	{
++		s_pThis = 0;
++	}
+ 	delete m_pDevice;
+ 	m_pDevice = 0;
+ }
+@@ -122,6 +129,7 @@
+ 	assert (m_pDevice == 0);
+ 	m_pDevice = new CTouchScreenDevice (0, 0, this);
+ 	assert (m_pDevice != 0);
++	s_pThis = this;
+ 
+ 	return TRUE;
+ }
+@@ -133,6 +141,7 @@
+ 	if (   pReport == 0
+ 	    || nReportSize != m_Report.ByteSize)
+ 	{
++		m_nIgnored++;
+ 		return;
+ 	}
+ 
+@@ -140,6 +149,7 @@
+ 	if (   m_Report.ReportID != 0
+ 	    && pReport[0] != m_Report.ReportID)
+ 	{
++		m_nIgnored++;
+ 		return;
+ 	}
+ 
+diff --color -ruN a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+--- a/lib/usb/xhciendpoint.cpp	2026-10-16 17:09:39
++++ b/lib/usb/xhciendpoint.cpp	2026-10-16 17:10:01
+@@ -44,6 +44,8 @@
+ 	m_pURB {},
+ 	m_nURBHead (0),
+ 	m_nURBCount (0),
++	m_nErrors (0),
++	m_nLastError (0),
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
+@@ -72,6 +74,8 @@
+ 	m_pURB {},
+ 	m_nURBHead (0),
+ 	m_nURBCount (0),
++	m_nErrors (0),
++	m_nLastError (0),
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
+@@ -460,6 +464,8 @@
+ 	}
+ 	else if (pURB->GetEndpoint ()->GetType () != EndpointTypeIsochronous)
+ 	{
++		m_nErrors++;				// circle-hid.patch: counted for the HID diagnostics
++		m_nLastError = uchCompletionCode;
+ 		CLogger::Get ()->Write (From, LogWarning, "Transfer error %u on endpoint %u",
+ 					(unsigned) uchCompletionCode, (unsigned) m_uchEndpointID);
+ 	}

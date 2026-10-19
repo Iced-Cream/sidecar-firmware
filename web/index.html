@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidecar Mini | Expander</title>
+<style>
+  /* the wordmark face: Archivo Black (c) 2017 The Archivo Black Project Authors, SIL Open Font License 1.1
+     (http://scripts.sil.org/OFL), subset to the letters of "Sidecar"; offline, no external files */
+  @font-face { font-family:'Sidecar Word'; font-display:block; src:url(data:font/woff;base64,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) format('woff'); }
+  /* Sidecar | Expander, as the docs site: black and white with one green accent */
+  :root { color-scheme:light dark; --bg:#f6f6f6; --fg:#0e0e0e; --mut:#5c5c5c; --line:#c8c8c8; --card:#fff; --acc:#15843b; --acc-low:#d3f2dc; --acc-high:#0b5226; --on-acc:#fff; --warn:#a84a00; --ok:#15843b; --err:#c62828;
+    --r:4px; --font:ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; --mono:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --word:'Sidecar Word', 'Archivo Black', 'Arial Black', system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e0e0e; --fg:#ececec; --mut:#8f8f8f; --line:#383838; --card:#1c1c1c; --acc:#2dbd5c; --acc-low:#0d3b1c; --acc-high:#8be3a6; --on-acc:#0e0e0e; --warn:#e3964f; --ok:#2dbd5c; --err:#ff6b6b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 var(--font); -webkit-font-smoothing:antialiased; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:12px; }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:4px 0 2px; }
+  h1 { margin:0; font-size:inherit; font-weight:inherit; }
+  .sc-title { display:flex; align-items:center; gap:.55rem; white-space:nowrap; color:var(--fg); }
+  .sc-word { font-family:var(--word); font-size:23px; line-height:1; letter-spacing:-.01em; }
+  .sc-mini { font-size:10px; letter-spacing:.32em; font-weight:700; color:var(--acc); line-height:16px; margin-left:-.1rem; }
+  .sc-sub { font-size:10px; letter-spacing:.32em; font-weight:600; color:var(--mut); border-left:1px solid var(--line); padding-left:.55rem; line-height:16px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--mut); display:inline-block; }
+  .dot.on { background:var(--ok); }
+  #state { color:var(--mut); }
+  .spacer { flex:1; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.14em; color:var(--mut); margin:0 0 8px; font-weight:700; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .row label { color:var(--mut); min-width:90px; }
+  button, select, input { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:var(--r); padding:4px 10px; }
+  :focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+  input[type=range], input[type=checkbox], input[type=radio], progress { accent-color:var(--acc); }
+  button { cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--fg); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
+  button.primary:hover:not(:disabled) { background:var(--acc-high); border-color:var(--acc-high); color:var(--card); }
+  :disabled { opacity:.45; cursor:not-allowed; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px; }
+  #status { font:12px var(--mono); color:var(--mut); }
+  #status b { color:var(--fg); font-weight:600; }
+  #log { height:46vh; min-height:220px; overflow:auto; margin:0; padding:8px; background:var(--bg); border:1px solid var(--line);
+         border-radius:var(--r); font:12px/1.45 var(--mono); white-space:pre-wrap; word-break:break-all; }
+  #log .me { color:var(--acc); }
+  #log .bad { color:var(--warn); }
+  #cmd { flex:1; min-width:180px; font-family:var(--mono); }
+  .note { color:var(--mut); font-size:12px; }
+  #nosupport { display:none; border-color:var(--warn); color:var(--warn); }
+  a { color:var(--acc); }
+  main > *, .grid > *, .tab > * { min-width:0; }
+  .mono { font-family:var(--mono); }
+  .ok { color:var(--ok); } .bad { color:var(--warn); }
+  .msg { min-height:1.4em; font-size:12px; color:var(--mut); } .msg.bad { color:var(--warn); }
+  button.small { padding:1px 8px; font-size:12px; }
+  button.danger { border-color:var(--warn); color:var(--warn); }
+  button.danger:hover:not(:disabled) { background:var(--warn); color:#fff; }
+  .bar { flex:1; min-width:80px; height:8px; background:var(--bg); border:1px solid var(--line); border-radius:4px; overflow:hidden; display:inline-block; }
+  .bar i { display:block; height:100%; background:var(--acc); width:0; transition:width .15s; }
+  .bar.hot i { background:var(--warn); }
+  #membars { display:grid; gap:4px; }
+  .mem { display:grid; grid-template-columns:160px 1fr 270px minmax(0,190px); gap:8px; align-items:center; font-size:12px; }
+  .mem .ml { color:var(--fg); } .mem .mv { font-family:var(--mono); } .mem .mx { color:var(--mut); }
+  @media (max-width:760px) { .mem { grid-template-columns:1fr; gap:2px; margin-bottom:6px; } }
+  .tablewrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th { text-align:left; font-weight:600; color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:4px 6px; border-bottom:1px solid var(--line); }
+  td { padding:4px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td.acts { white-space:nowrap; text-align:right; } td.acts > * { margin-left:4px; }
+  td.fname a { color:var(--fg); text-decoration:none; } tr.dir td.fname a { font-weight:600; }
+  .chip { display:inline-block; padding:0 6px; border-radius:var(--r); background:var(--acc-low); color:var(--acc-high); font-weight:700; font-size:11px; margin-right:3px; }
+  #plslots { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:6px; margin:8px 0; }
+  .slot { border:1px solid var(--line); border-radius:var(--r); padding:4px 8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:12px; }
+  .slot.ready { border-color:var(--ok); } .slot.missing, .slot.bad, .slot.no_room { border-color:var(--warn); }
+  .drop { border:1.5px dashed var(--line); border-radius:var(--r); padding:10px; text-align:center; color:var(--mut); margin:8px 0; }
+  .drop.over { border-color:var(--acc); background:color-mix(in srgb, var(--acc) 10%, transparent); color:var(--fg); }
+  .drop table { text-align:left; }
+  .drop label { color:var(--acc); cursor:pointer; text-decoration:underline; }
+  #crumbs a { color:var(--acc); text-decoration:none; } #crumbs { font-family:var(--mono); }
+  #xfers { display:grid; gap:4px; }
+  .xfer { display:grid; grid-template-columns:minmax(120px, 220px) 1fr minmax(160px, auto) auto; gap:8px; align-items:center; font-size:12px; }
+  .xfer.done .bar i { background:var(--ok); } .xfer.failed .bar i { background:var(--warn); }
+  @media (max-width:760px) { .xfer { grid-template-columns:1fr 1fr; } }
+  .warnbox { border:1px solid var(--warn); border-radius:var(--r); padding:6px 8px; color:var(--warn); font-size:12px; }
+  .row.end { justify-content:flex-end; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.35); display:grid; place-items:center; z-index:10; padding:16px; }
+  .dialog { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:14px 16px; max-width:460px; width:100%; box-shadow:0 8px 30px rgba(0,0,0,.25); }
+  .dialog p { margin:0 0 10px; } .askin { width:100%; margin-bottom:10px; }
+  nav { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  nav a { padding:7px 12px 6px; color:var(--mut); text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+  nav a:hover { color:var(--fg); }
+  nav a.on { color:var(--fg); border-bottom-color:var(--acc); font-weight:700; }
+  .tab { display:none; min-width:0; }
+  /* Record (as the Pi page's) */
+  #rec-go { min-width:120px; font-weight:600; }
+  #rec-go.on { background:var(--err); border-color:var(--err); color:#fff; }
+  #rec-go.armed { border-color:var(--err); color:var(--err); }
+  #rec-time { font:600 22px var(--mono); font-variant-numeric:tabular-nums; }
+  #rec-time.on { color:var(--err); }
+  button.on { border-color:var(--acc); color:var(--acc); font-weight:600; }
+  /* choice groups: the device's current state filled, a click pending, then confirmed */
+  .seg { display:inline-flex; max-width:100%; }
+  .seg button { border-radius:0; margin-left:-1px; min-width:56px; }
+  .seg button:first-child { border-radius:var(--r) 0 0 var(--r); margin-left:0; }
+  .seg button:last-child { border-radius:0 var(--r) var(--r) 0; }
+  .seg button:focus-visible { position:relative; z-index:1; }
+  .seg button[aria-checked="true"] { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
+  .seg button[aria-checked="true"]:hover:not(:disabled) { background:var(--acc-high); border-color:var(--acc-high); color:var(--card); }
+  .seg.pending button { cursor:progress; }
+  .seg button.pend { animation:pend .8s ease-in-out infinite alternate; }
+  @keyframes pend { from { opacity:1; } to { opacity:.45; } }
+  @media (prefers-reduced-motion: reduce) { .seg button.pend { animation:none; opacity:.6; } }
+  .fb { font-size:12px; color:var(--ok); } .fb.err { color:var(--warn); }
+  #rec-warn { color:var(--warn); }
+  #rec-levels { display:grid; grid-template-columns:repeat(13, minmax(0, 1fr)); gap:4px; align-items:end; }
+  #rec-levels .lv { display:flex; flex-direction:column; align-items:center; gap:3px; opacity:.45; }
+  #rec-levels .lv.on { opacity:1; }
+  #rec-levels .lv i { display:block; width:100%; height:0; max-height:90px; background:var(--acc); border-radius:2px; transition:height .12s; }
+  #rec-levels .lv { height:110px; justify-content:flex-end; }
+  #rec-levels .lv.hot i { background:var(--err); }
+  #rec-levels .lv span { font-size:9px; color:var(--mut); white-space:nowrap; overflow:hidden; max-width:100%; }
+  .tab.on { display:grid; gap:12px; }
+  #log .stats { display:none; } #log.showstats .stats { display:block; }
+  @media (max-width:640px) { nav a { padding:6px 8px; } main { padding:10px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 class="sc-title" aria-label="Sidecar Mini | Expander" translate="no"><span class="sc-word" aria-hidden="true">Sidecar</span><span class="sc-mini" aria-hidden="true">MINI</span><span class="sc-sub" aria-hidden="true">EXPANDER</span></h1>
+    <span class="dot" id="dot"></span><span id="state">not connected</span>
+    <span class="spacer"></span>
+    <button class="primary" id="connect">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+  </header>
+
+  <nav id="tabs">
+    <a href="#status" data-tab="status">Status</a><a href="#sound" data-tab="sound">Sound</a><a href="#record" data-tab="record">Record</a><a href="#lfo" data-tab="lfo">LFO</a><a href="#usb" data-tab="usb">USB</a><a href="#machines" data-tab="machines">User machines</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
+  </nav>
+
+  <section id="nosupport">This page needs WebSerial: use Chrome or Edge on a desktop, opened from localhost or https.</section>
+
+  <div class="tab" id="tab-status"><section><h2>Status</h2>
+  <div id="status">cpu <b data-k="cpu">-</b> % · peak <b data-k="peak">-</b> % · underruns <b data-k="underruns">-</b> ·
+    ob <b data-k="ob">-</b> · fifo <b data-k="fifo">-</b> (min <b data-k="fifoMin">-</b> max <b data-k="fifoMax">-</b>
+    target <b data-k="target">-</b>) · xruns <b data-k="xruns">-</b> · notes <b data-k="notesOn">-</b>
+    (<b data-k="notes">-</b> channel mask <b data-k="chans">-</b>) · out <b data-k="out">-</b></div>
+  <p class="note">From the Teensy's 2-second stats lines (hidden in the log unless you show them there).</p>
+  </section></div>
+
+  <div class="tab" id="tab-sound">
+    <section>
+      <h2>Sound</h2>
+      <div class="row"><label id="l-notes">MIDI notes</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-notes" data-key="notes"><button type="button" role="radio" aria-checked="false" data-cmd="notes=1" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="notes=0" data-val="false">Off</button></div>
+        <span class="fb" data-fb="notes" role="status" aria-live="polite"></span></div>
+      <div class="row"><label id="l-out">Output</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-out" data-key="out"><button type="button" role="radio" aria-checked="false" data-cmd="out=main" data-val="main">Main</button><button type="button" role="radio" aria-checked="false" data-cmd="out=tracks" data-val="tracks">Tracks</button></div>
+        <span class="fb" data-fb="out" role="status" aria-live="polite"></span></div>
+      <div class="row"><label id="l-fxsrc" title="what the Rytm sends on Overbridge IN L/R (channels 10/11): its AUDIO IN, or the delay + reverb return (needs the rui1024 Rytm build)">IN L/R source</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-fxsrc" data-key="fxsrc"><button type="button" role="radio" aria-checked="false" data-cmd="fxin=0" data-val="in">Inputs</button><button type="button" role="radio" aria-checked="false" data-cmd="fxin=1" data-val="fx">FX return</button></div>
+        <span class="fb" data-fb="fxsrc" role="status" aria-live="polite"></span><span id="fxin-note" class="note"></span></div>
+      <p class="note" id="fxin-warn" hidden>Never send channels 10/11 back into the Rytm through Overbridge (computer audio, a mixer loop): that is a feedback loop.</p>
+      <div class="row"><label id="l-mac" title="Sidecar Mini builds (teensy/host_uac2.sh): the computer's USB audio OUT 1..12 to the Rytm's Overbridge inputs">Computer audio</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
+        <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
+      <div class="row"><label for="mvoice">Machine</label>
+        <select id="mvoice"></select>
+        <select id="mname" aria-label="machine"><option>plaits</option><option>juno</option><option>daisy</option><option>dsps</option>
+          <option>grain</option><option>dd</option><option>fm</option></select>
+        <button id="mset">Set</button><span class="note" id="mcur"></span>
+        <span class="fb" data-fb="mach" role="status" aria-live="polite"></span></div>
+      <div class="row"><label for="fifo">FIFO target</label>
+        <input id="fifo" type="number" min="24" step="8" value="256" style="width:90px">
+        <button id="fifoset">Set</button><span class="note" id="fifocur"></span>
+        <span class="fb" data-fb="fifo" role="status" aria-live="polite"></span></div>
+      <p class="note">Output and FIFO are the USB host build's; the serial build answers them with a note.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-lfo">
+    <section><h2>LFOs</h2><p class="note">Four LFOs on the Sidecar's voices (V1..V8: any parameter) or its send FX (FX1 / FX2
+      P2..P5), on top of the Rytm's value; the value comes back when the LFO stops. Saved per kit, as the Rytm's own LFOs (switched with the Rytm's kit); the same on the Rytm's LFO page (TRK + YES).</p></section>
+    <div id="lfo-root" class="grid"></div>
+  </div>
+
+  <div class="tab" id="tab-record">
+    <section>
+      <h2>Record</h2>
+      <div class="row"><button id="rec-go" disabled>&#9679; Record</button><span id="rec-time">0:00:00</span><span id="rec-state" class="note"></span>
+        <span class="spacer"></span><span id="rec-free" class="note"></span></div>
+      <div id="rec-warn" class="msg"></div>
+      <div class="row"><label id="l-rm">Start and stop</label><div class="seg" role="radiogroup" aria-labelledby="l-rm"><button type="button" role="radio" aria-checked="false" data-rm="manual">Manual</button><button type="button" role="radio" aria-checked="false" data-rm="arm">Arm: PLAY starts, STOP ends</button></div></div>
+      <div class="row"><label id="l-rmode">Channels</label><div class="seg" role="radiogroup" aria-labelledby="l-rmode"><button type="button" role="radio" aria-checked="false" data-rmode="stereo">Stereo (MAIN L/R)</button><button type="button" role="radio" aria-checked="false" data-rmode="stems">Stems (12 Overbridge channels)</button></div>
+        <span id="rec-stems-note" class="note"></span></div>
+      <div class="row"><label id="l-rbits">Bit depth</label><div class="seg" role="radiogroup" aria-labelledby="l-rbits"><button type="button" role="radio" aria-checked="false" data-rbits="24">24-bit</button><button type="button" role="radio" aria-checked="false" data-rbits="16">16-bit</button></div>
+        <span class="fb" id="rec-fb" role="status" aria-live="polite"></span></div>
+      <div class="row"><label>Take name</label><input id="rec-name" maxlength="24" value="take" style="width:160px" autocomplete="off">
+        <span class="note">_001, _002, ... in /Recordings</span></div>
+      <div id="rec-card" class="note"></div>
+      <div id="rec-usb" class="note"></div>
+      <p class="note">Recording without PSRAM needs a fast SD card (A1/A2, U3/V30 class): the Teensy's own buffer holds only
+        57 ms of 24-bit stereo (85 ms at 16-bit). On a slower card, or if "the card fell behind" shows, record 16-bit.</p>
+      <div id="rec-msg" class="msg"></div>
+    </section>
+    <section>
+      <h2>Levels</h2>
+      <div id="rec-levels"></div>
+      <p class="note">The peak of the last half second while armed or recording, on the channels the take records. One WAV a
+        channel (MASTER as a stereo file), all starting on the same frame and the same length, so they line up in a DAW;
+        the same layout as the Sidecar (Pi). The takes are in <a href="#files">Files</a>, /Recordings.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-usb">
+    <section>
+      <h2>USB</h2>
+      <p class="note">Stereo: the Sidecar Mini is also a 2 in / 2 out USB audio interface on this port, 48 kHz. The computer records
+        the Rytm's MAIN L/R (with the Sidecar's voices as the Rytm plays them), and what it plays goes to the Rytm's MAIN input.
+        A change re-enumerates the Teensy (the page reconnects by itself); the Rytm keeps streaming. The mode is kept across
+        reboots. Multi (20 in / 12 out + MIDI) is the teensy/host_uac2.sh build.</p>
+      <div class="row"><label id="l-usbmode">Audio mode</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-usbmode" data-key="usbmode"><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=stereo" data-val="stereo">Stereo</button><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=multi" data-val="multi" title="20 in / 12 out: the teensy/host_uac2.sh build">Multi</button><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=off" data-val="off">Off</button></div>
+        <span class="fb" data-fb="usbmode" role="status" aria-live="polite"></span><span id="usbmodestate" class="note"></span></div>
+      <div class="row"><label>Computer</label><span id="uacstate" class="note" role="status" aria-live="polite">-</span></div>
+      <div class="row"><label>Card</label><a href="#files">Browse the SD card</a></div>
+      <div class="row"><label title="the micro-USB port as a USB disk for the SD card">Disk mode</label>
+        <button id="diskmode" disabled title="not in this firmware yet: docs/webui-protocol.md, Disk mode">USB disk mode (next step)</button></div>
+      <p class="note">USB disk mode (the card as a disk on the computer, faster than the browser) is not in this firmware yet.
+        When it comes, the computer's audio and MIDI to the Teensy stop until you switch back. The Rytm side keeps running.
+        Until then, use the card browser (Files).</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-machines">
+  <section id="machines">
+    <h2>User machines</h2>
+    <div class="row"><span id="plsum" class="note"></span><span class="spacer"></span>
+      <button id="plrescan" title="the store's list again (the Rytm's slot menu too); MISSING slots look again">Rescan</button>
+      <button id="plrefresh">Refresh</button></div>
+    <div id="plslots"></div>
+    <div class="row"><span id="plhow" class="note"></span><span class="spacer"></span>
+      <button id="plempty" title="every slot of this project explicitly empty: nothing is inherited or filled from the sounds">Start this project empty</button>
+      <button id="plexport">Export slot list</button>
+      <button id="plimport">Import slot list</button><input type="file" id="plimpfile" accept=".json,.txt,application/json" hidden></div>
+    <div class="tablewrap"><table id="pltable">
+      <thead><tr><th>Machine</th><th>Version</th><th>Package</th><th title="image + bss in the code arena while loaded">Code RAM</th>
+        <th title="RAM per voice playing it">State / voice</th><th>CPU / voice</th><th>API</th><th>Slots</th><th>Fit</th><th></th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="drop" id="pldrop">Drop <b>.rmp</b> packages here to install, or <label>choose files<input type="file" id="plpick" accept=".rmp" multiple hidden></label>.
+      A package that will not fit is refused before it is sent. Installing writes the Teensy's flash: only with the Rytm's transport stopped.</div>
+    <div id="plmsg" class="msg"></div>
+    <h2 style="margin-top:12px">Memory <button id="memrefresh" class="small">Refresh</button></h2>
+    <div id="membars"><span class="note">Connect to read the Teensy's memory map.</span></div>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-files">
+  <section id="card">
+    <h2>SD card</h2>
+    <div class="row"><span id="crumbs"></span><span class="spacer"></span><span id="cardfree" class="note"></span>
+      <button id="fdf" class="small" title="one scan of the card's allocation table">Measure free space</button></div>
+    <div class="row">
+      <button id="fup">Up</button><button id="frefresh">Refresh</button><button id="fmkdir">New folder</button>
+      <label class="note"><input type="checkbox" id="fhidden"> hidden files</label>
+      <span class="spacer"></span>
+      <button id="fdlsel">Download selected</button><button id="fdelsel" class="danger">Delete selected</button></div>
+    <div class="drop" id="fdrop">
+      <div class="tablewrap"><table id="ftable">
+        <thead><tr><th><input type="checkbox" id="fsel" aria-label="select all"></th><th>Name</th><th style="text-align:right">Size</th><th>Modified</th><th></th></tr></thead>
+        <tbody><tr><td></td><td colspan="4" class="note">Connect to browse the card.</td></tr></tbody></table></div>
+      <div style="margin-top:6px">Drop files or folders here to upload to this folder, or <label>choose files<input type="file" id="fpick" multiple hidden></label>
+        or <label>a folder<input type="file" id="fpickdir" webkitdirectory multiple hidden></label> (with its subfolders; .DS_Store and ._ files are left out).</div>
+    </div>
+    <div id="fmsg" class="msg"></div>
+    <div id="xfers"></div>
+    <p class="note">Transfers run in the Teensy's idle time, one card operation per loop pass. Writes, deletes and renames wait while the
+      Rytm's transport runs; reads go on, slowed down. New samples in /Samples show in the Rytm's browser after a reboot (the card index).</p>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-log">
+  <section>
+    <h2>Log &amp; console</h2>
+    <div class="row">
+      <input id="cmd" placeholder="console line, e.g. notes   (sent as :line, at most 63 characters)" maxlength="63" autocomplete="off">
+      <button id="send">Send</button>
+      <span class="spacer"></span>
+      <label class="note" title="the page's own '@' reply lines (JSON) in the log"><input type="checkbox" id="replies"> replies</label>
+      <label class="note" title="the 2-second cpu / usb host / midi notes lines"><input type="checkbox" id="showstats"> periodic stats</label>
+      <input id="filter" placeholder="filter" style="width:140px">
+      <button id="pause">Pause</button><button id="clear">Clear</button>
+    </div>
+    <pre id="log"></pre>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-about">
+  <section>
+    <h2>About</h2>
+    <p>Version <b id="version">-</b> (read from the Teensy: the <code>version</code> console command)</p>
+    <p>Sidecar Mini | Expander (Teensy 4.1), over WebSerial. Chrome or Edge on a desktop; <code>?mock</code> runs against a fake device.</p>
+    <p class="note">The page talks to the Teensy's console (<code>:</code> lines) and its web console frames
+      (docs/webui-protocol.md). Card writes and installs wait while the Rytm's transport runs.</p>
+  </section>
+  </div>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

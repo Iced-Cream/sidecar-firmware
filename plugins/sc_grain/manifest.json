@@ -1,0 +1,23 @@
+{
+  "id": "sc.grain",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "GRAIN",
+  "short": "GRN",
+  "licence": "MIT; built-in sample CC0-1.0",
+  "page2": "params",
+  "page2_title": "GRAIN MORE",
+  "knobs": [
+    {"p": 1, "long": "Position", "short": "POS", "look": "dial", "text": "number", "default": 40},
+    {"p": 2, "long": "Spray", "short": "SPR", "look": "dial", "text": "number", "default": 24},
+    {"p": 3, "long": "Grain Size", "short": "SIZ", "look": "dial", "text": "number", "default": 64},
+    {"p": 4, "long": "Density", "short": "DEN", "look": "dial", "text": "number", "default": 64},
+    {"p": 5, "long": "Pitch", "short": "PIT", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 6, "long": "Spread", "short": "SPD", "look": "dial", "text": "number", "default": 20},
+    {"p": 7, "long": "Reverse", "short": "REV", "look": "dial", "text": "number", "default": 0},
+    {"p": 8, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100},
+    {"p": 9, "long": "Attack", "short": "ATK", "look": "dial", "text": "number", "default": 20},
+    {"p": 10, "long": "Release", "short": "REL", "look": "dial", "text": "number", "default": 60},
+    {"p": 11, "long": "Tone", "short": "TON", "look": "dial", "text": "number", "default": 110}
+  ]
+}
