@@ -90,6 +90,7 @@ void CTcpTransport::StartConnect (void)
 
 void CTcpTransport::Adopt (CSocket *pSocket)
 {
+	m_ToComputer = UsbMidiFromStream ();	// osupdate: a new connection's bytes start clean
 	m_pSocket = pSocket;
 	m_pSocket->SetOptionSendTimeout (SendTimeoutUs);	// Send waits at most this long on a full TX queue
 	m_Parser.Reset ();

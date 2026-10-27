@@ -21,7 +21,8 @@ class MidiFilter {
   static const int kHead = 9;            // bytes of a SysEx's head that decide (3 packets)
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
-  void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }   // to the Rytm: OS updates go through (osupdate=1)
+  void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
+  void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays   // to the Rytm: OS updates go through (sidecar_gadget: osupdate=)
 
   // One packet in. emit(const uint8_t p[4]) is called for every packet that goes through (0..4 per call).
   template <class Emit>
