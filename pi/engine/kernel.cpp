@@ -252,6 +252,8 @@ boolean CKernel::Initialize (void)
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
 		m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
 				m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
+		if (m_Options.GetAppOptionDecimal ("osupdate", 0) == 1)
+			m_Logger.Write (From, LogWarning, "gadget: osupdate=1: Elektron OS updates from the computer pass to the Rytm");
 	}
 	else if (strcmp (pGadgetMode, "midi") == 0)
 	{

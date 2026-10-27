@@ -10,6 +10,7 @@
 
 #include "output.h"
 #include "shared.h"
+#include "sidecar_gadget.h"
 
 static const char From[] = "tcp";
 static const u8 HelloMidi = 1, HelloNoR = 2, HelloVoices = 4;		// oblink.rs's hello bits
@@ -19,7 +20,8 @@ static const u32 MaxWanted = 48000;					// 1 s of requests: more is clamped (cou
 
 CTcpTransport::CTcpTransport (CNetSubSystem *pNet)
 :	m_pNet (pNet), m_pSocket (0), m_nConnecting (-1), m_Parser (this), m_nPort (7301), m_nNextTry (0),
-	m_bHello (FALSE), m_nGranted (0), m_nWanted (0), m_nWaitSince (0), m_nPollStart (0), m_nPollSent (0), m_nFrames (0), m_nRequests (0),
+	m_bHello (FALSE), m_nGranted (0), m_nWanted (0), m_nWaitSince (0), m_nPollStart (0), m_nPollSent (0),
+	m_nComputerIn (0), m_nComputerOut (0), m_nFrames (0), m_nRequests (0),
 	m_nMidiIn (0), m_nMidiInLost (0), m_nMidiOut (0), m_nDropped (0), m_nConnects (0), m_nSilence (0),
 	m_nEarlyN (0), m_nClamped (0), m_nLastPoll (0), m_nPollGapMax (0), m_nWantedMax (0)
 {
@@ -171,6 +173,14 @@ void CTcpTransport::Midi (const u8 *pData, int nLength)
 	}
 	m_nMidiIn += nLength;
 	asm volatile ("dsb sy; sev");
+	// osupdate=1: the emulated Rytm's USB MIDI to the computer too, as a real Rytm's is (kernel.cpp
+	// MIDIPacketHandler): Transfer and elkflash wait for its answers
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar == 0 || !pSidecar->OsUpdate ()) return;
+	EnterCritical ();
+	for (int i = 0; i < nLength; i++) m_ToComputer.Feed (pData[i], [pSidecar] (const u8 *p) { pSidecar->FromRytmMIDI (p); });
+	LeaveCritical ();
+	m_nComputerOut += nLength;
 }
 
 void CTcpTransport::Poll (void)
@@ -179,6 +189,9 @@ void CTcpTransport::Poll (void)
 	if (m_nLastPoll != 0 && now - m_nLastPoll > m_nPollGapMax) m_nPollGapMax = now - m_nLastPoll;
 	m_nLastPoll = now;
 	Reap ();
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar != 0 && pSidecar->OsUpdate ())	// osupdate=1: the emulator takes the computer's MIDI (SendComputerMIDI)
+		pSidecar->RytmMIDIConnected (m_pSocket != 0 && m_bHello && (m_nGranted & HelloMidi) != 0);
 	if (m_pSocket == 0)
 	{
 		m_nDropped += g_ToHost.Drain ();	// no host: the engine's records go nowhere (whole, counted)
@@ -219,7 +232,34 @@ void CTcpTransport::Poll (void)
 	{
 		m_nPollSent = 0;			// this Poll's bounds (PollRoom)
 		SendFrames ();
-		if (m_pSocket != 0) SendMIDI ();
+		if (m_pSocket != 0) SendComputerMIDI ();
+		// a SysEx of the computer's still open keeps the engine's records back, as on USB (ob_usb.cpp)
+		if (m_pSocket != 0 && !(pSidecar != 0 && pSidecar->ForRytmInSysEx ())) SendMIDI ();
+	}
+}
+
+// osupdate=1: the computer's packets for the Rytm (the Sidecar gadget, filtered there) as one 'M' of their bytes per
+// send, up to a full message; the gadget's endpoint waits while its queue is full, so nothing is lost on the way
+void CTcpTransport::SendComputerMIDI (void)
+{
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar == 0 || !pSidecar->OsUpdate () || (m_nGranted & HelloMidi) == 0) return;
+	const unsigned nMax = sizeof m_Msg - 3;
+	while (PollRoom ())
+	{
+		unsigned n = 0;
+		u32 w;
+		while (n + 3 <= nMax && pSidecar->ForRytm (&w))
+		{
+			u8 p[4];
+			memcpy (p, &w, 4);
+			int k = usbmidi_packet_len (p);
+			for (int i = 0; i < k; i++) m_Msg[3 + n++] = p[1 + i];
+		}
+		if (n == 0) return;
+		emu_midi_head (m_Msg, (u16) n);
+		if (!SendAll (m_Msg, 3 + n, "computer MIDI")) return;
+		m_nComputerIn += n;
 	}
 }
 
@@ -313,10 +353,10 @@ void CTcpTransport::LogStats (CLogger *pLogger)
 	pLogger->Write (From, LogNotice,
 		"%s %u.%u.%u.%u:%u, hello %s (granted %u), frames %u/s in %u requests, wanted %u, silence %u, "
 		"midi in %u B (lost %u) out %u B dropped %u, connects %u, skipped %u B, early N %u, clamped %u, "
-		"wanted max %u, poll gap max %u us",
+		"wanted max %u, poll gap max %u us, computer midi %u B to the emulator, %u B back",
 		m_pSocket ? "connected to" : m_nConnecting >= 0 ? "connecting to" : "trying", m_Peer[0], m_Peer[1], m_Peer[2], m_Peer[3], m_nPort,
 		m_bHello ? "yes" : "no", m_nGranted, m_nFrames, m_nRequests, m_nWanted, m_nSilence, m_nMidiIn,
 		m_nMidiInLost, m_nMidiOut, m_nDropped, m_nConnects, (unsigned) m_Parser.Skipped (), m_nEarlyN, m_nClamped,
-		m_nWantedMax, m_nPollGapMax);
+		m_nWantedMax, m_nPollGapMax, m_nComputerIn, m_nComputerOut);
 	m_nFrames = m_nRequests = m_nWantedMax = m_nPollGapMax = 0;
 }

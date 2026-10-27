@@ -51,6 +51,7 @@ public:
 	boolean ForRytm (u32 *)				{ return FALSE; }
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
 	void RytmMIDIConnected (boolean)		{}
+	boolean OsUpdate (void) const			{ return FALSE; }
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
@@ -105,10 +106,13 @@ public:
 	void OnDeactivate (void) override;
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
+	boolean Held (void) const			{ return m_bHeld; }
+	void Resume (void);				// OUT, osupdate=1: re-arm a held endpoint (IRQs masked)
 
 private:
 	CSidecarGadget *m_pSidecar;
 	boolean m_bActive, m_bBusy;
+	boolean m_bHeld;				// OUT, osupdate=1: not re-armed while the Rytm-bound queue is full
 	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 	DMA_BUFFER (u8, m_Buffer, BufSize);
 };
@@ -140,6 +144,7 @@ public:
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
 	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
+	boolean OsUpdate (void) const			{ return m_bOsUpdate; }	// cmdline osupdate=1
 
 protected:
 	const void *GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength) override;
@@ -158,6 +163,7 @@ private:
 	void TakeOut (const u8 *pBuffer, size_t nLength);
 	unsigned Feedback (unsigned nFrame);
 	void MIDIFromHost (const u8 *pBuffer, size_t nLength);
+	boolean ToRytmRoom (void) const;		// osupdate=1: room in the Rytm-bound queue for one more OUT transfer
 	unsigned MIDIForHost (u8 *pBuffer, unsigned nMax);
 	void ToHost (const u8 *pPacket);		// one packet into the computer's queue (IRQs masked)
 	friend class CSidecarIsoEP;
@@ -178,6 +184,7 @@ private:
 	u64 m_nCntFrq, m_nT0;
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
+	boolean m_bOsUpdate;				// cmdline osupdate=1: Elektron OS updates pass to the Rytm, with flow control
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];
