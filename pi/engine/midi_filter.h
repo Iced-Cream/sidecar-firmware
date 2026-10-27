@@ -9,7 +9,7 @@
 //                  MIDI-CI, universal SysEx F0 7E|7F <dev> 0D ... (macOS 26 sends discovery on every port open;
 //                  an echoed CI message wedged CoreMIDI's port, measured in P1)
 //   to the Rytm    Elektron OS update F0 00 20 3C <dev> 00 7E|7F ... (an OS .syx file's messages: 7E data,
-//                  7F start/end; rytm-emu fw/*.syx, measured)
+//                  7F start/end; rytm-emu fw/*.syx, measured), unless SetPassOsUpdate(true) (cmdline osupdate=1)
 //                  the empty SysEx F0 F7 (macOS sends one on a port open, measured; it means nothing)
 // Portable: Mac-tested (tests/test_midi_filter.cpp).
 #pragma once
@@ -21,6 +21,7 @@ class MidiFilter {
   static const int kHead = 9;            // bytes of a SysEx's head that decide (3 packets)
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
+  void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }   // to the Rytm: OS updates go through (osupdate=1)
 
   // One packet in. emit(const uint8_t p[4]) is called for every packet that goes through (0..4 per call).
   template <class Emit>
@@ -86,7 +87,7 @@ class MidiFilter {
   enum State { kIdle, kHolding, kPassing, kDropping };
 
   bool Drop(const uint8_t* h, int n) const {
-    return HostLink(h, n) || MidiCi(h, n) || (to_rytm_ && (OsUpdate(h, n) || Empty(h, n)));
+    return HostLink(h, n) || MidiCi(h, n) || (to_rytm_ && ((!pass_os_update_ && OsUpdate(h, n)) || Empty(h, n)));
   }
   // A held SysEx cut short by a status byte or a new F0: its packets go through (undecided: a short one).
   template <class Emit>
@@ -104,6 +105,7 @@ class MidiFilter {
   }
 
   bool to_rytm_;
+  bool pass_os_update_ = false;
   State state_ = kIdle;
   uint8_t hold_[3][4];
   int held_ = 0;

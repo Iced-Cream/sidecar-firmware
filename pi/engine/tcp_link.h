@@ -18,6 +18,7 @@
 
 #include "emu_proto.h"
 #include "transport.h"
+#include "usbmidi_stream.h"
 
 // One connect attempt, filled by its CConnectTask (which the scheduler deletes when Run returns: nothing refers to
 // the task itself). The transport owns the slot; it adopts the socket when bDone, or deletes it when the attempt
@@ -73,6 +74,7 @@ private:
 	void Lost (const char *pWhy);
 	void SendFrames (void);
 	void SendMIDI (void);
+	void SendComputerMIDI (void);			// osupdate=1: the computer's MIDI (the Sidecar gadget) to the emulator
 
 	CNetSubSystem *m_pNet;
 	CSocket *m_pSocket;
@@ -92,6 +94,8 @@ private:
 	u8 m_Rx[8192];
 	u8 m_Tx[5 + 256 * 48];
 	u8 m_Msg[3 + 4096];			// one 'M': the engine's record (g_ToHost) after its head
+	UsbMidiFromStream m_ToComputer;		// osupdate=1: the emulator's MIDI bytes as packets for the computer
+	unsigned m_nComputerIn, m_nComputerOut;	// osupdate=1: bytes from the computer to the emulator, and back
 	// counters (frames and requests per second in LogStats, the rest since boot)
 	unsigned m_nFrames, m_nRequests, m_nMidiIn, m_nMidiInLost, m_nMidiOut, m_nDropped, m_nConnects, m_nSilence,
 		 m_nEarlyN, m_nClamped;

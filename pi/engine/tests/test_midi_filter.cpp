@@ -52,6 +52,21 @@ int main() {
     CHECK(f.DroppedMessages() == 5);
     CHECK(!f.InSysEx());
   }
+  // to the Rytm with SetPassOsUpdate(true) (cmdline osupdate=1): the OS update passes whole, the rest as before
+  {
+    MidiFilter f(true);
+    f.SetPassOsUpdate(true);
+    Bytes in, want;
+    for (const Bytes* m : {&note, &os_start, &os, &link, &os, &ci, &os_start, &tiny, &cc}) {
+      Bytes p = Pack(*m);
+      in.insert(in.end(), p.begin(), p.end());
+      if (m != &link && m != &ci && m != &tiny) want.insert(want.end(), p.begin(), p.end());
+    }
+    Bytes out = Run(f, in);
+    CHECK(out == want);
+    CHECK(f.DroppedMessages() == 3);
+    CHECK(!f.InSysEx());
+  }
   // to the computer: the OS-update shape passes (the Rytm never sends one; only the Rytm-bound side blocks it)
   {
     MidiFilter f(false);

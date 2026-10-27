@@ -4,6 +4,7 @@
 #include <circle/string.h>
 #include <circle/usb/usb.h>
 #include <circle/util.h>
+#include <circle/koptions.h>
 
 #include "ob_block.h"
 
@@ -200,7 +201,7 @@ void CSidecarIsoEP::OnTransferComplete (boolean bIn, size_t nLength)
 }
 
 CSidecarMIDIEP::CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget)
-:	CDWUSBGadgetEndpoint (pDesc, pGadget), m_pSidecar (pGadget), m_bActive (FALSE), m_bBusy (FALSE)
+:	CDWUSBGadgetEndpoint (pDesc, pGadget), m_pSidecar (pGadget), m_bActive (FALSE), m_bBusy (FALSE), m_bHeld (FALSE)
 {
 }
 
@@ -208,6 +209,7 @@ void CSidecarMIDIEP::OnActivate (void)
 {
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
+	m_bHeld = FALSE;
 	if (GetDirection () == DirectionIn) m_pSidecar->HostUp (TRUE);	// the computer configured us: the queue starts empty
 	if (GetDirection () == DirectionOut) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 	else Kick ();
@@ -217,6 +219,7 @@ void CSidecarMIDIEP::OnDeactivate (void)
 {
 	m_bActive = FALSE;
 	m_bBusy = FALSE;
+	m_bHeld = FALSE;
 	if (GetDirection () == DirectionIn) m_pSidecar->HostUp (FALSE);	// reset or deconfigured: idle again
 	CancelTransfer ();
 }
@@ -235,11 +238,21 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 	if (!bIn)
 	{
 		m_pSidecar->MIDIFromHost (m_Buffer, nLength);
-		if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
+		// osupdate=1: an OS file comes faster than the Rytm takes it; instead of dropping packets (nMidiFull), the
+		// endpoint waits (the computer's transfer is NAKed) until core 0's loop has sent enough (Poll: Resume)
+		if (m_pSidecar->m_bOsUpdate && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
+		else if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 		return;
 	}
 	m_bBusy = FALSE;
 	Kick ();
+}
+
+void CSidecarMIDIEP::Resume (void)
+{
+	if (!m_bHeld) return;
+	m_bHeld = FALSE;
+	if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 }
 
 // ---- the gadget ------------------------------------------------------------------------------------------------
@@ -250,6 +263,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
+	m_bOsUpdate (CKernelOptions::Get ()->GetAppOptionDecimal ("osupdate", 0) == 1),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
@@ -260,6 +274,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
+	m_ToRytmFilter.SetPassOsUpdate (m_bOsUpdate);
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
 	memset (m_nOutLast, 0, sizeof m_nOutLast);
@@ -731,6 +746,12 @@ void CSidecarGadget::MIDIToComputer (u32 nPacket)
 	LeaveCritical ();
 }
 
+// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
+boolean CSidecarGadget::ToRytmRoom (void) const
+{
+	return m_ToRytm.size () + 512 / 4 + 3 <= MIDIQueue;
+}
+
 boolean CSidecarGadget::ForRytm (u32 *pPacket)
 {
 	if (!m_ToRytm.pop (pPacket)) return FALSE;
@@ -744,6 +765,12 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 	UpdatePlugAndPlay ();
+	if (m_bOsUpdate && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
+	{
+		EnterCritical ();
+		m_pMIDIOut->Resume ();
+		LeaveCritical ();
+	}
 	// :midifake=on without the Rytm's MIDI: what would go to the Rytm comes back as if the Rytm had sent it
 	if (m_bFake && !m_bRytmMIDI)
 	{
