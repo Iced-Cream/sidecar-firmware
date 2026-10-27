@@ -219,7 +219,7 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 		m_pSidecar->MIDIFromHost (m_Buffer, nLength);
 		// osupdate=1: an OS file comes faster than the Rytm takes it; instead of dropping packets (nMidiFull), the
 		// endpoint waits (the computer's transfer is NAKed) until core 0's loop has sent enough (Poll: Resume)
-		if (m_pSidecar->m_bOsUpdate && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
+		if (m_pSidecar->OsUpdate () && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
 		else if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 		return;
 	}
@@ -242,7 +242,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_bOsUpdate (CKernelOptions::Get ()->GetAppOptionDecimal ("osupdate", 0) == 1),
+	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
@@ -253,7 +253,10 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
-	m_ToRytmFilter.SetPassOsUpdate (m_bOsUpdate);
+	const char *pOs = CKernelOptions::Get ()->GetAppOptionString ("osupdate", "off");
+	m_nOsUpdate = ParseOsUpdate (pOs);
+	if (m_nOsUpdate == ~0u) m_nOsUpdate = OsUpdateOff;
+	UpdateOsPass ();
 	memset (&m_Stats, 0, sizeof m_Stats);
 	m_Stats.nRingMin = m_Stats.nInMin = ~0u;
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (m_nCntFrq));
@@ -694,6 +697,42 @@ void CSidecarGadget::FromRytmMIDI (const u8 *pPacket)
 	if (m_pMIDIIn) m_pMIDIIn->Kick ();
 }
 
+unsigned CSidecarGadget::ParseOsUpdate (const char *p)
+{
+	if (strcmp (p, "off") == 0 || strcmp (p, "0") == 0) return OsUpdateOff;
+	if (strcmp (p, "emu") == 0 || strcmp (p, "1") == 0) return OsUpdateEmu;
+	if (strcmp (p, "rytm") == 0) return OsUpdateRytm;
+	return ~0u;
+}
+
+const char *CSidecarGadget::OsUpdateName (void) const
+{
+	return m_nOsUpdate == OsUpdateRytm ? "rytm" : m_nOsUpdate == OsUpdateEmu ? "emu" : "off";
+}
+
+void CSidecarGadget::UpdateOsPass (void)
+{
+	EnterCritical ();					// the filter runs in the gadget IRQ
+	m_ToRytmFilter.SetPassOsUpdate (OsPass ());
+	LeaveCritical ();
+}
+
+void CSidecarGadget::SetLinkTcp (boolean bTcp)
+{
+	if (bTcp == m_bLinkTcp) return;
+	m_bLinkTcp = bTcp;
+	UpdateOsPass ();
+	if (OsUpdate ())		// another source for the computer: half a SysEx of the old one never lands before the new one's
+	{
+		EnterCritical ();
+		m_ToHostFilter.Reset ();
+		m_nToHostTail = m_nToHostHead;
+		LeaveCritical ();
+	}
+	CLogger::Get ()->Write (From, LogNotice, "osupdate=%s: OS updates %s (host: %s)", OsUpdateName (),
+				OsPass () ? "pass" : "are dropped", bTcp ? "the emulator" : "USB");
+}
+
 // a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
 boolean CSidecarGadget::ToRytmRoom (void) const
 {
@@ -713,7 +752,7 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 	UpdatePlugAndPlay ();
-	if (m_bOsUpdate && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
+	if (OsUpdate () && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
 	{
 		EnterCritical ();
 		m_pMIDIOut->Resume ();
@@ -752,6 +791,19 @@ boolean CSidecarGadget::Command (const char *p)
 		LeaveCritical ();
 	}
 	else if (strcmp (p, "midifake=on") == 0 || strcmp (p, "midifake=off") == 0) m_bFake = p[10] == 'n';
+	else if (strncmp (p, "osupdate=", 9) == 0)
+	{
+		unsigned n = ParseOsUpdate (p + 9);
+		if (n == ~0u) L->Write (From, LogWarning, "osupdate=off|emu|rytm, not \"%s\"", p + 9);
+		else
+		{
+			m_nOsUpdate = n;
+			UpdateOsPass ();
+			L->Write (From, LogNotice, "osupdate=%s: OS updates %s (host: %s)", OsUpdateName (),
+				  OsPass () ? "pass" : "are dropped", m_bLinkTcp ? "the emulator" : "USB");
+		}
+		return TRUE;
+	}
 	else if (strcmp (p, "mac") != 0 && strcmp (p, "sidecar") != 0) return FALSE;
 	L->Write (From, LogNotice, "mac %s (the computer's OUT %s the Rytm), uac2test %s, midifake %s, %u in / %u out",
 		  m_bMac ? "on" : "off", m_bMac ? "added to what goes to" : "dropped before", m_bTest ? "on" : "off",

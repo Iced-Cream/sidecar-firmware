@@ -52,6 +52,8 @@ public:
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
 	void RytmMIDIConnected (boolean)		{}
 	boolean OsUpdate (void) const			{ return FALSE; }
+	const char *OsUpdateName (void) const		{ return "off"; }
+	void SetLinkTcp (boolean)			{}
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
@@ -144,7 +146,12 @@ public:
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
 	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
-	boolean OsUpdate (void) const			{ return m_bOsUpdate; }	// cmdline osupdate=1
+	// osupdate= (cmdline, or the :osupdate= command): off; emu (the default for osupdate=1): OS updates pass only while
+	// the TCP link (rytm-emu) is the host; rytm: also to a real Rytm on USB. Any but off: flow control and the emu relay
+	boolean OsUpdate (void) const			{ return m_nOsUpdate != OsUpdateOff; }
+	const char *OsUpdateName (void) const;
+	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
+	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp)
 
 protected:
 	const void *GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength) override;
@@ -184,7 +191,11 @@ private:
 	u64 m_nCntFrq, m_nT0;
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
-	boolean m_bOsUpdate;				// cmdline osupdate=1: Elektron OS updates pass to the Rytm, with flow control
+	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
+	unsigned m_nOsUpdate;				// osupdate=: see OsUpdate ()
+	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
+	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
+	static unsigned ParseOsUpdate (const char *p);	// off|0, emu|1, rytm; anything else: ~0u
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];

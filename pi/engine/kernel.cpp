@@ -252,8 +252,9 @@ boolean CKernel::Initialize (void)
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
 		m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
 				m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
-		if (m_Options.GetAppOptionDecimal ("osupdate", 0) == 1)
-			m_Logger.Write (From, LogWarning, "gadget: osupdate=1: Elektron OS updates from the computer pass to the Rytm");
+		if (m_pSidecar != 0 && m_pSidecar->OsUpdate ())
+			m_Logger.Write (From, LogWarning, "gadget: osupdate=%s: Elektron OS updates from the computer pass to %s",
+					m_pSidecar->OsUpdateName (), m_pSidecar->OsPass () ? "the Rytm on USB too" : "the emulator only");
 	}
 	else if (strcmp (pGadgetMode, "midi") == 0)
 	{
@@ -314,11 +315,12 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	memcpy (IP, k->m_IP, sizeof IP);
 	if (k->m_bNetOK) k->m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);	// DHCP on Wi-Fi: the lease's
 	s.Format ("\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,"
-		  "\"streaming\":%s,\"rytmMidi\":%s,\"temp\":%u,\"out\":\"%s\",\"notes\":%s,\"drone\":%d,\"fifoTarget\":%u,"
+		  "\"streaming\":%s,\"rytmMidi\":%s,\"osupdate\":\"%s\",\"osPass\":%s,\"temp\":%u,\"out\":\"%s\",\"notes\":%s,\"drone\":%d,\"fifoTarget\":%u,"
 		  "\"underruns\":%u",
 		  IP[0], IP[1], IP[2], IP[3], k->m_pTransport->Name (), k->m_pGadgetMode,
 		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
+		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off", k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false",
 		  k->m_CPUThrottle.GetTemperature (), g_Output.GetMode () == Output::kMain ? "main" : "tracks",
 		  CEngineCores::NotesOn () ? "true" : "false", CEngineCores::DroneVoice (), CEngineCores::FifoTarget (),
 		  g_Output.Underflows ());
@@ -647,7 +649,9 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 {
 	// the Rytm's MIDI to the computer (the Sidecar's filter drops the host link and MIDI-CI): Circle hands over each
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
-	if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->FromRytmMIDI (pPacket - 1);
+	// (osupdate on: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar != 0 && (!pSidecar->OsUpdate () || CObUsb::Active ())) pSidecar->FromRytmMIDI (pPacket - 1);
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();
 	for (unsigned i = 0; i < nLength; i++)
@@ -922,6 +926,7 @@ void CKernel::Run (void)
 		if (m_bSaveDisplay) SaveDisplaySettings ();
 		char Link[40];
 		if (m_Console.TakeLink (Link, sizeof Link)) UseLink (Link);
+		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// osupdate=emu follows the host
 		if (s_bRebootRequested) StopAndReboot ("the flasher's magic");
 		if (g_Guard.FatalWhy () != 0) StopAndReboot (g_Guard.FatalWhy ());
 		if (m_pWifi->TakeReboot ()) StopAndReboot ("the Wi-Fi settings (a join, or a failed one's revert)");
