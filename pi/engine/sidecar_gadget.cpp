@@ -242,7 +242,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE),
+	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE), m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
@@ -256,6 +256,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	const char *pOs = CKernelOptions::Get ()->GetAppOptionString ("osupdate", "off");
 	m_nOsUpdate = ParseOsUpdate (pOs);
 	if (m_nOsUpdate == ~0u) m_nOsUpdate = OsUpdateOff;
+	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 	UpdateOsPass ();
 	memset (&m_Stats, 0, sizeof m_Stats);
 	m_Stats.nRingMin = m_Stats.nInMin = ~0u;
@@ -681,6 +682,7 @@ void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 	{
 		if (pBuffer[i] == 0) continue;				// padding
 		m_Stats.nMidiFromHost++;
+		if (m_bUsbReboot) m_Reboot.Feed (pBuffer + i);		// the request is a host-link SysEx: dropped below
 		m_ToRytmFilter.Feed (pBuffer + i, [this] (const u8 *p)
 		{
 			u32 w;
@@ -695,6 +697,13 @@ void CSidecarGadget::FromRytmMIDI (const u8 *pPacket)
 {
 	m_ToHostFilter.Feed (pPacket, [this] (const u8 *p) { ToHost (p); });
 	if (m_pMIDIIn) m_pMIDIIn->Kick ();
+}
+
+boolean CSidecarGadget::TakeReboot (void)
+{
+	if (!m_Reboot.Matched ()) return FALSE;
+	m_Reboot.Clear ();
+	return TRUE;
 }
 
 unsigned CSidecarGadget::ParseOsUpdate (const char *p)

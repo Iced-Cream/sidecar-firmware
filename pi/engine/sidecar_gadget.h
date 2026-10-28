@@ -54,6 +54,8 @@ public:
 	boolean OsUpdate (void) const			{ return FALSE; }
 	const char *OsUpdateName (void) const		{ return "off"; }
 	void SetLinkTcp (boolean)			{}
+	boolean TakeReboot (void)			{ return FALSE; }
+	boolean UsbReboot (void) const			{ return FALSE; }
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
@@ -64,6 +66,7 @@ public:
 #include <circle/types.h>
 
 #include "midi_filter.h"
+#include "reboot_sysex.h"
 #include "spsc.h"
 
 #if __has_include("hosted/sidecar_config.h")
@@ -152,6 +155,8 @@ public:
 	const char *OsUpdateName (void) const;
 	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
 	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp)
+	boolean UsbReboot (void) const			{ return m_bUsbReboot; }
+	boolean TakeReboot (void);			// core 0's loop: the computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 
 protected:
 	const void *GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength) override;
@@ -194,6 +199,8 @@ private:
 	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
 	unsigned m_nOsUpdate;				// osupdate=: see OsUpdate ()
 	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
+	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
+	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
 	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
 	static unsigned ParseOsUpdate (const char *p);	// off|0, emu|1, rytm; anything else: ~0u
 

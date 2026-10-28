@@ -255,6 +255,8 @@ boolean CKernel::Initialize (void)
 		if (m_pSidecar != 0 && m_pSidecar->OsUpdate ())
 			m_Logger.Write (From, LogWarning, "gadget: osupdate=%s: Elektron OS updates from the computer pass to %s",
 					m_pSidecar->OsUpdateName (), m_pSidecar->OsPass () ? "the Rytm on USB too" : "the emulator only");
+		if (m_pSidecar != 0 && m_pSidecar->UsbReboot ())
+			m_Logger.Write (From, LogWarning, "gadget: usbreboot=1: the computer's reboot SysEx on the MIDI port reboots the Pi");
 	}
 	else if (strcmp (pGadgetMode, "midi") == 0)
 	{
@@ -928,6 +930,7 @@ void CKernel::Run (void)
 		if (m_Console.TakeLink (Link, sizeof Link)) UseLink (Link);
 		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// osupdate=emu follows the host
 		if (s_bRebootRequested) StopAndReboot ("the flasher's magic");
+		if (m_pSidecar != 0 && m_pSidecar->TakeReboot ()) StopAndReboot ("asked on the USB-C MIDI port (usbreboot=1)");
 		if (g_Guard.FatalWhy () != 0) StopAndReboot (g_Guard.FatalWhy ());
 		if (m_pWifi->TakeReboot ()) StopAndReboot ("the Wi-Fi settings (a join, or a failed one's revert)");
 		CSdFiles::TReboot SdReboot = CSdFiles::TakeReboot ();
