@@ -87,6 +87,9 @@ make -C lib/net -j$J >/dev/null
 # the HID endpoint recovery and diagnostics (pi/circle/circle-hid.patch: a halted xHCI interrupt endpoint is reset
 # and resubmitted from the main loop; counters for the display log line; idempotent), then lib/usb
 grep -q GetHIDStats include/circle/usb/usbhiddevice.h || patch -p1 < /repo/pi/circle/circle-hid.patch
+# a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
+# enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
+grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
