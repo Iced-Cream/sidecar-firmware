@@ -1,23 +1,22 @@
 diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
---- a/lib/usb/usbstandardhub.cpp	2026-10-28 12:45:44.426140519 +0000
-+++ b/lib/usb/usbstandardhub.cpp	2026-10-28 12:45:44.461933612 +0000
-@@ -608,15 +608,22 @@
- 				//CLogger::Get ()->Write (FromHub, LogDebug,
- 				//			"Device connected (port %u)", nPort+1);
- 
--				if (m_pDevice[nPort] == 0)
-+				// circle-replug.patch: a device that left and came back before this change was handled (a
-+				// Rytm rebooting after an OS update) shows only as "connected" here: the old device is gone
-+				if (m_pDevice[nPort] != 0)
+--- a/lib/usb/usbstandardhub.cpp	2026-10-28 13:06:15.967439401 +0000
++++ b/lib/usb/usbstandardhub.cpp	2026-10-28 13:06:16.000975194 +0000
+@@ -612,11 +612,23 @@
  				{
--					ReScanDevices ();
+ 					ReScanDevices ();
+ 				}
++				else if (!(m_pStatus[nPort]->wPortStatus & PORT_ENABLE__MASK))
++				{
++					// circle-replug.patch: a device that left and came back before this change was
++					// handled (a Rytm rebooting after an OS update) shows as connected, but the hub
++					// disabled the port when it left: the old device is gone. (A port still enabled
++					// is the device enumerated already, e.g. the first connect's change at boot.)
 +					CLogger::Get ()->Write (FromHub, LogNotice,
 +								"Device reconnected (port %u): enumerated again", nPort+1);
 +
 +					RemoveDeviceAt (nPort);
- 				}
-+
-+				ReScanDevices ();
++					ReScanDevices ();
++				}
  			}
  			else
  			{
@@ -29,25 +28,23 @@ diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
  				if (m_pDevice[nPort] != 0)
  				{
 diff -ruN a/lib/usb/xhcirootport.cpp b/lib/usb/xhcirootport.cpp
---- a/lib/usb/xhcirootport.cpp	2026-10-28 12:45:44.426186705 +0000
-+++ b/lib/usb/xhcirootport.cpp	2026-10-28 12:45:44.462192521 +0000
-@@ -203,15 +203,24 @@
- {
- 	if (IsConnected ())
- 	{
--		if (m_pUSBDevice == 0)
-+		// circle-replug.patch: called on a connect status change only; a device present while connected
-+		// left and came back before this ran (a Rytm rebooting after an OS update): the old one is gone
-+		if (m_pUSBDevice != 0)
+--- a/lib/usb/xhcirootport.cpp	2026-10-28 13:06:15.968068560 +0000
++++ b/lib/usb/xhcirootport.cpp	2026-10-28 13:06:16.001137944 +0000
+@@ -207,11 +207,24 @@
  		{
--			ReScanDevices ();
+ 			ReScanDevices ();
+ 		}
++		else if (!(m_pMMIO->pt_read32 (m_nPortIndex, XHCI_REG_OP_PORTS_PORTSC) & XHCI_REG_OP_PORTS_PORTSC_PED))
++		{
++			// circle-replug.patch: connected again, but the xHC disabled the port when the device
++			// left (a Rytm rebooting after an OS update): the old device is gone. (A port still
++			// enabled is the device enumerated already.)
 +			CLogger::Get ()->Write (From, LogNotice,
 +						"Device reconnected (port %u): enumerated again", m_nPortIndex+1);
 +
 +			RemoveDevice ();
- 		}
-+
-+		ReScanDevices ();
++			ReScanDevices ();
++		}
  	}
  	else
  	{
