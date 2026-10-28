@@ -1,0 +1,60 @@
+diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
+--- a/lib/usb/usbstandardhub.cpp	2026-10-28 12:45:44.426140519 +0000
++++ b/lib/usb/usbstandardhub.cpp	2026-10-28 12:45:44.461933612 +0000
+@@ -608,15 +608,22 @@
+ 				//CLogger::Get ()->Write (FromHub, LogDebug,
+ 				//			"Device connected (port %u)", nPort+1);
+ 
+-				if (m_pDevice[nPort] == 0)
++				// circle-replug.patch: a device that left and came back before this change was handled (a
++				// Rytm rebooting after an OS update) shows only as "connected" here: the old device is gone
++				if (m_pDevice[nPort] != 0)
+ 				{
+-					ReScanDevices ();
++					CLogger::Get ()->Write (FromHub, LogNotice,
++								"Device reconnected (port %u): enumerated again", nPort+1);
++
++					RemoveDeviceAt (nPort);
+ 				}
++
++				ReScanDevices ();
+ 			}
+ 			else
+ 			{
+-				//CLogger::Get ()->Write (FromHub, LogDebug,
+-				//			"Device disconnected (port %u)", nPort+1);
++				CLogger::Get ()->Write (FromHub, LogNotice,
++							"Device disconnected (port %u)", nPort+1);
+ 
+ 				if (m_pDevice[nPort] != 0)
+ 				{
+diff -ruN a/lib/usb/xhcirootport.cpp b/lib/usb/xhcirootport.cpp
+--- a/lib/usb/xhcirootport.cpp	2026-10-28 12:45:44.426186705 +0000
++++ b/lib/usb/xhcirootport.cpp	2026-10-28 12:45:44.462192521 +0000
+@@ -203,15 +203,24 @@
+ {
+ 	if (IsConnected ())
+ 	{
+-		if (m_pUSBDevice == 0)
++		// circle-replug.patch: called on a connect status change only; a device present while connected
++		// left and came back before this ran (a Rytm rebooting after an OS update): the old one is gone
++		if (m_pUSBDevice != 0)
+ 		{
+-			ReScanDevices ();
++			CLogger::Get ()->Write (From, LogNotice,
++						"Device reconnected (port %u): enumerated again", m_nPortIndex+1);
++
++			RemoveDevice ();
+ 		}
++
++		ReScanDevices ();
+ 	}
+ 	else
+ 	{
+ 		if (m_pUSBDevice != 0)
+ 		{
++			CLogger::Get ()->Write (From, LogNotice, "Device disconnected (port %u)", m_nPortIndex+1);
++
+ 			RemoveDevice ();
+ 		}
+ 	}
