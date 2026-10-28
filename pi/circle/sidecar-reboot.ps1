@@ -20,7 +20,7 @@ public static class WinMM {
     public struct MIDIHDR {
         public IntPtr lpData; public uint dwBufferLength, dwBytesRecorded; public IntPtr dwUser; public uint dwFlags;
         public IntPtr lpNext, reserved; public uint dwOffset;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public IntPtr[] dwReserved;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)] public IntPtr[] dwReserved;
     }
     [DllImport("winmm.dll")] public static extern uint midiOutGetNumDevs();
     [DllImport("winmm.dll", CharSet = CharSet.Unicode)] public static extern uint midiOutGetDevCaps(UIntPtr id, ref MIDIOUTCAPS caps, uint size);
@@ -50,7 +50,7 @@ $Data = [Runtime.InteropServices.Marshal]::AllocHGlobal($Msg.Length)
 [Runtime.InteropServices.Marshal]::Copy($Msg, 0, $Data, $Msg.Length)
 $Hdr = New-Object WinMM+MIDIHDR
 $Hdr.lpData = $Data; $Hdr.dwBufferLength = $Msg.Length; $Hdr.dwBytesRecorded = $Msg.Length
-$Hdr.dwReserved = New-Object IntPtr[] 4
+$Hdr.dwReserved = New-Object IntPtr[] 8
 $Size = [Runtime.InteropServices.Marshal]::SizeOf($Hdr)
 $P = [Runtime.InteropServices.Marshal]::AllocHGlobal($Size)
 [Runtime.InteropServices.Marshal]::StructureToPtr($Hdr, $P, $false)
