@@ -1,0 +1,424 @@
+// core/fx/master.cpp - see master.h.
+#include "fx/master.h"
+
+#include <string.h>
+
+#include <new>
+
+#include "fx/out_mix.h"
+#include "fx/send_fx.h"
+#include "platform.h"
+
+namespace core {
+namespace master {
+
+Control control;
+
+namespace {
+
+fx::SendFx* volatile g_fx = nullptr;
+fx::Control g_ctl;                    // the second SendFx's knobs: only knob[][] (from the slots), kill and clock (copied)
+float g_mix[kSlots];                  // the render core's: each slot's MIX, smoothed
+bool g_mix_set[kSlots];
+int8_t g_run_fx[kSlots] = {-1, -1, -1, -1};
+volatile float g_peak_in, g_peak_out;
+float g_lev = 1.0f;
+
+constexpr uint8_t kSendId[ins::kAllTypes - ins::kTypes] = {fx::kChorus, fx::kComb, fx::kTape, fx::kRings, fx::kCloudSeed, fx::kHalo};
+
+int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+bool same_ci(const char* a, const char* b) {
+  for (; *a && *b; ++a, ++b) {
+    char x = *a >= 'a' && *a <= 'z' ? (char)(*a - 32) : *a, y = *b >= 'a' && *b <= 'z' ? (char)(*b - 32) : *b;
+    if (x != y) return false;
+  }
+  return *a == *b;
+}
+int num(const char* p) {
+  if (*p < '0' || *p > '9') return -1;
+  int v = 0;
+  while (*p >= '0' && *p <= '9' && v < 100000) v = v * 10 + (*p++ - '0');
+  return v;
+}
+const char* field(const char* p, char* b, int cap) {
+  int n = 0;
+  while (*p && *p != ':') {
+    if (n < cap - 1) b[n++] = *p;
+    ++p;
+  }
+  b[n] = 0;
+  return *p == ':' ? p + 1 : p;
+}
+int index_of(int c, int s) { return (c - ins::kM0) * ins::kSlots + s; }
+void book(int i, int f) { control.fx[i] = (int8_t)f; }
+int free_fx() {
+  for (int f = 0; f < kFxSlots; ++f) {
+    bool used = false;
+    for (int i = 0; i < kSlots; ++i) used |= control.fx[i] == f;
+    if (!used) return f;
+  }
+  return -1;
+}
+fx::SendFx& sfx() {
+#ifndef CORE_HEAP_BUFFERS
+  if (!g_fx) g_fx = new fx::SendFx(48000.0f);
+#endif
+  return *g_fx;
+}
+
+// the slot's send TYPE over m <= ins::kChunk frames: the sum in, the return out, MIX the crossfade (127: only the return)
+void send_run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
+  // the TYPE playing and the SendFx slot it plays on, also while the slot fades out after the TYPE was changed or cleared
+  const int i = index_of(c, s), t = ins::engine().slot(c, s).cur;
+  if (control.fx[i] >= 0) g_run_fx[i] = control.fx[i];
+  const int f = g_run_fx[i];
+  float in[ins::kChunk], w[ins::kChunk][2];
+  for (int j = 0; j < m; ++j) in[j] = r ? 0.5f * (x[j] + r[j]) : x[j];
+  if (f >= 0 && f < kFxSlots && g_fx) {
+    g_ctl.knob[f][0] = t >= ins::kTypes && t < ins::kAllTypes ? kSendId[t - ins::kTypes] : (uint8_t)fx::kOff;
+    g_ctl.knob[f][1] = 0;
+    for (int k = 0; k < ins::kParams; ++k) g_ctl.knob[f][2 + k] = (uint8_t)(p[k] * 127.0f + 0.5f);
+    g_ctl.kill = fx::control.kill;
+    g_ctl.clock = fx::control.clock;
+    g_fx->Insert(f, in, m, w, g_ctl);
+  } else {
+    memset(w, 0, sizeof(float) * 2 * (unsigned)m);
+  }
+  const float tgt = ins::knob01(control.mix[i]);
+  if (!g_mix_set[i]) g_mix[i] = tgt, g_mix_set[i] = true;
+  const float a = g_mix[i], b = a + (tgt - a) * ((float)m / ((float)m + 144.0f));   // 3 ms a chunk, as a slot's params
+  g_mix[i] = fabsf(b - tgt) < 1e-4f ? tgt : b;
+  const float d = (g_mix[i] - a) / (float)m;
+  float q = a;
+  for (int j = 0; j < m; ++j) {
+    q += d;
+    y0[j] = x[j] + q * (w[j][0] - x[j]);
+    if (r) y1[j] = r[j] + q * (w[j][1] - r[j]);
+  }
+}
+
+struct Hook {
+  Hook() {
+    ins::send_insert = send_run;
+    for (int i = 0; i < kSlots; ++i) control.mix[i] = kMixDef, control.fx[i] = -1;
+    control.lev = kLevUnity;
+  }
+} g_hook;
+
+}  // namespace
+
+bool send_type(int t) { return t >= ins::kTypes && t < ins::kAllTypes; }
+
+bool on() {
+  for (int i = 0; i < kSlots; ++i)
+    if (ins::control.type[chain(i)][slot(i)]) return true;
+  for (int c = ins::kM0; c < ins::kChains; ++c)
+    if (ins::peq_set(ins::control, c)) return true;
+  return false;
+}
+
+bool accept(int c, int s, int t) {
+  const int i = index_of(c, s);
+  if (!send_type(t)) {
+    if (control.fx[i] >= 0) book(i, -1);
+    return true;
+  }
+  if (control.fx[i] >= 0) return true;   // it holds one already: the new TYPE follows it there
+  int f = free_fx();
+  if (f < 0) return false;
+  book(i, f);
+#ifndef CORE_HEAP_BUFFERS
+  sfx();
+#endif
+  return true;
+}
+
+void set_byp(int v) {
+  control.byp = v ? 1 : 0;
+  ins::touch();
+}
+void set_src(int v) {
+  control.src = v == kMix ? kMix : kRet;
+  ins::touch();
+}
+void set_lev(int v) {
+  control.lev = (uint8_t)clampi(v, 0, 127);
+  ins::touch();
+}
+void set_mix(int i, int v) {
+  if (i < 0 || i >= kSlots) return;
+  control.mix[i] = (uint8_t)clampi(v, 0, 127);
+  ins::touch();
+}
+void set_pair(int i, int v) {
+  if (i < 0 || i >= kSlots) return;
+  ins::control.mpair[i / ins::kSlots][slot(i)] = v ? 1 : 0;
+  ins::touch();
+}
+bool pair(int i) { return i >= 0 && i < kSlots && ins::control.mpair[i / ins::kSlots][slot(i)]; }
+
+int next_type(int i, int t, int d) {
+  const int n = ins::kAllTypes;
+  for (int k = 1; k < n; ++k) {
+    const int v = (t + d * k + n * 2) % n;
+    if (!send_type(v) || control.fx[i] >= 0 || free_fx() >= 0) return v;
+  }
+  return t;
+}
+
+bool zone_text(int t, int k, int v, char* b, int cap) {
+  if (!send_type(t) || k < 0 || k > 3) return false;
+  const fx::KnobLabels* l = fx::labels(kSendId[t - ins::kTypes]);
+  if (!l) return false;
+  const fx::Zone* z = nullptr;
+  for (int j = 0; j < l->nzones; ++j)
+    if (l->zones[j].knob == k && l->zones[j].lo <= v) z = &l->zones[j];
+  if (!z) return false;
+  if (z->show) sniprintf(b, cap, CORE_STR("%s %d"), z->name, v - z->lo + z->base);
+  else sniprintf(b, cap, "%s", z->name);
+  return true;
+}
+
+void clear() {
+  control.byp = 0, control.src = kRet, control.lev = kLevUnity;
+  for (int i = 0; i < kSlots; ++i) control.mix[i] = kMixDef, control.fx[i] = -1;
+  for (int c = 0; c < ins::kMasters; ++c)
+    for (int s = 0; s < ins::kSlots; ++s) ins::control.mpair[c][s] = 0;
+}
+
+// The Rytm's route byte 0x80006466, a set bit: that voice off the main bus. Packed from physical voices 7,6,5,4,0,1,2,3, MSB
+// first (sidecar-mods re/subsystems/compressor-hardware.md); here each stem's bit
+static constexpr uint8_t kRouteBit[kStems] = {3, 1, 7, 2, 0, 5, 4, 6};
+
+bool report(const uint8_t* d, int len) {
+  if (len < 16 || d[4] != 0x50 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return false;
+  const int route = (d[13] & 1) << 7 | (d[14] & 0x7F);
+  int off = 0;
+  for (int v = 0; v < kStems; ++v) {
+    control.pan[v] = d[5 + v] & 0x7F;
+    if ((route >> kRouteBit[v]) & 1) off |= 1 << v;
+  }
+  control.off_main = (uint8_t)off;
+  control.known = 1;
+  return true;
+}
+
+void link_lost() { control.known = 0; }
+
+int stems_on_main() {
+  if (!control.known) return 0;
+  int n = 0;
+  for (int v = 0; v < kStems; ++v) n += !((control.off_main >> v) & 1);
+  return n;
+}
+
+void reset() {
+  clear();
+  if (g_fx) g_fx->Reset();
+  memset(&g_ctl, 0, sizeof g_ctl);
+  for (int i = 0; i < kSlots; ++i) g_mix_set[i] = false, g_run_fx[i] = -1;
+  g_peak_in = g_peak_out = 0.0f;
+  g_lev = 1.0f;
+}
+
+// ---------------------------------------------------------------------------------------------------- the audio side
+
+void render(float (*y)[2], int n) {
+  float pi = g_peak_in, po = g_peak_out;
+  for (int i = 0; i < n; ++i) {
+    float a = fabsf(y[i][0]), b = fabsf(y[i][1]);
+    pi = fmaxf(pi, fmaxf(a, b));
+  }
+  amp::service_master();
+  ins::Engine& e = ins::engine();
+  for (int c = ins::kM0; c < ins::kChains; ++c)
+    if (e.Active(c, ins::control)) e.ProcessStereo(c, y, n, ins::control);
+  const float t = (float)control.lev * (1.0f / kLevUnity), g0 = g_lev;
+  float g1 = g0 + (t - g0) * ((float)n / ((float)n + 144.0f));
+  if (fabsf(g1 - t) < 1e-4f) g1 = t;
+  g_lev = g1;
+  const float dg = (g1 - g0) / (float)n;
+  float g = g0;
+  for (int i = 0; i < n; ++i) {
+    g += dg;
+    float l = out::Mixer::Limit(y[i][0] * g, kOutLimit), r = out::Mixer::Limit(y[i][1] * g, kOutLimit);
+    y[i][0] = l, y[i][1] = r;
+    po = fmaxf(po, fmaxf(fabsf(l), fabsf(r)));
+  }
+  g_peak_in = pi, g_peak_out = po;
+}
+
+void take_peaks(float* in, float* outp) {
+  *in = g_peak_in, *outp = g_peak_out;
+  g_peak_in = g_peak_out = 0.0f;
+}
+
+uint64_t bench(uint32_t* worst_block) {
+  *worst_block = 0;
+  if (on()) return 0;
+#ifndef CORE_HEAP_BUFFERS
+  sfx();
+#endif
+  if (!g_fx) return 0;
+  static const uint8_t kT[kSlots] = {ins::kComp, ins::kEq, ins::kMSpace, ins::kMCloud};
+  for (int i = 0; i < kSlots; ++i) {
+    ins::control.type[chain(i)][slot(i)] = kT[i];
+    for (int k = 0; k < ins::kParams; ++k) ins::control.play[chain(i)][slot(i)][k] = ins::labels(kT[i]).def[k];
+  }
+  control.fx[2] = 0, control.fx[3] = 1, control.mix[2] = control.mix[3] = 127;
+  for (int k = 0; k < ins::kEqParams; ++k) ins::control.peq[kEqChain][k] = (int8_t)ins::eq_store(k, k < 2 ? 20 : 70);
+  float y[12][2];
+  uint64_t sum = 0;
+  uint32_t worst = 0;
+  for (int n = 0; n < 4000; ++n) {
+    for (int i = 0; i < 12; ++i) {   // (the test signal outside the timing)
+      float a = sinf(0.05f * (float)(n * 12 + i)), b = sinf(0.031f * (float)(n * 12 + i));
+      y[i][0] = 0.2f * a + 0.1f * b, y[i][1] = 0.2f * a - 0.1f * b;
+    }
+    uint32_t t0 = cycles();
+    render(y, 12);
+    uint32_t t = cycles() - t0;
+    sum += t;
+    if (t > worst) worst = t;
+  }
+  *worst_block = worst;
+  // every byte back to nothing, the fades and the left effects' clears run out (no file marked: the bytes were set directly)
+  for (int i = 0; i < kSlots; ++i)
+    for (int k = 0; k < ins::kParams; ++k) ins::control.type[chain(i)][slot(i)] = 0, ins::control.play[chain(i)][slot(i)][k] = 0;
+  for (int k = 0; k < ins::kEqParams; ++k) ins::control.peq[kEqChain][k] = 0;
+  for (int n = 0; n < 200; ++n) {
+    memset(y, 0, sizeof y);
+    render(y, 12);
+  }
+  clear();
+  g_fx->Reset();
+  return sum;
+}
+
+unsigned long heap_bytes() {
+#ifdef CORE_HEAP_BUFFERS
+  return (unsigned long)sizeof(fx::SendFx) + 64;
+#else
+  return 0;
+#endif
+}
+void heap_place(void* mem) {
+#ifdef CORE_HEAP_BUFFERS
+  g_fx = new ((void*)(((uintptr_t)mem + 63) & ~(uintptr_t)63)) fx::SendFx(48000.0f);
+#else
+  (void)mem;
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------------- console, json, card
+
+static int slot_line(int i, char* o, int cap) {
+  const int c = chain(i), s = slot(i), t = ins::control.type[c][s];
+  const ins::Labels& L = ins::labels(t);
+  int n = sniprintf(o, cap, CORE_STR(" %d %s"), i + 1, L.name);
+  if (t == ins::kAmp && pair(i)) n += sniprintf(o + n, n < cap ? cap - n : 0, " L/R");
+  if (send_type(t)) n += sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR(" mix %d"), control.mix[i]);
+  return n;
+}
+
+bool command(const char* p, char* o, int cap) {
+  if (strncmp(p, "mfx", 3) != 0 || (p[3] && p[3] != '=') || !strcmp(p, "mfx=stats")) return false;   // (stats: the board's)
+  static const char kHelp[] =
+      "mfx=byp:0|1, mfx=src:ret|mix, mfx=lev:V, mfx=S:type:T|p1..p4:V|mix:V|pair:0|1|off (S 1..4), mfx=eq:hpf|lpf|low|high:V|off, mfx=reset";
+  if (p[3]) {
+    const char* q = p + 4;
+    char a[8], b[10], v[12];
+    q = field(q, a, sizeof a);
+    q = field(q, b, sizeof b);
+    field(q, v, sizeof v);
+    int i = a[0] >= '1' && a[0] < '1' + kSlots && !a[1] ? a[0] - '1' : -1;
+    if (same_ci(a, "byp")) set_byp(num(b) > 0);
+    else if (same_ci(a, "src")) {
+      if (!same_ci(b, "ret") && !same_ci(b, "mix")) return sniprintf(o, cap, "%s", kHelp), true;
+      set_src(same_ci(b, "mix") ? kMix : kRet);
+    } else if (same_ci(a, "lev") && num(b) >= 0) set_lev(num(b));
+    else if (same_ci(a, "reset")) {
+      for (int k = 0; k < kSlots; ++k) ins::set_type(chain(k), slot(k), ins::kOff);
+      for (int k = 0; k < ins::kEqParams; ++k) ins::set_eq(kEqChain, k, ins::kEqFlat(k));
+      clear();
+      ins::touch();
+    } else if (same_ci(a, "eq")) {
+      static const char* const kK[ins::kEqParams] = {"hpf", "lpf", "low", "high"};
+      if (same_ci(b, "off")) {
+        for (int k = 0; k < ins::kEqParams; ++k) ins::set_eq(kEqChain, k, ins::kEqFlat(k));
+      } else {
+        int k = -1;
+        for (int j = 0; j < ins::kEqParams; ++j)
+          if (same_ci(b, kK[j])) k = j;
+        if (k < 0 || num(v) < 0) return sniprintf(o, cap, "%s", kHelp), true;
+        ins::set_eq(kEqChain, k, num(v));
+      }
+    } else if (i >= 0) {
+      const int c = chain(i), s = slot(i);
+      if (same_ci(b, "off")) ins::set_type(c, s, ins::kOff);
+      else if (same_ci(b, "type")) {
+        int t = ins::type_from_name(v);
+        if (t < 0) return sniprintf(o, cap, "mfx: no type \"%s\"", v), true;
+        ins::set_type(c, s, t);
+        if (ins::control.type[c][s] != t)
+          return sniprintf(o, cap, CORE_STR("mfx: %s: %d send TYPEs play on the master at most"), ins::type_name(t), kFxSlots), true;
+      } else if (same_ci(b, "mix") && num(v) >= 0) set_mix(i, num(v));
+      else if (same_ci(b, "pair")) set_pair(i, num(v) > 0);
+      else if ((b[0] == 'p' || b[0] == 'P') && b[1] >= '1' && b[1] <= '4' && !b[2] && num(v) >= 0) ins::set_param(c, s, b[1] - '1', num(v));
+      else return sniprintf(o, cap, "%s", kHelp), true;
+    } else {
+      return sniprintf(o, cap, "%s", kHelp), true;
+    }
+  }
+  int n = sniprintf(o, cap, CORE_STR("mfx: %s, src %s, lev %d:"), control.byp ? "BYPASS" : "on", control.src == kMix ? "MIX" : "RET", control.lev);
+  for (int i = 0; i < kSlots && n < cap; ++i)
+    if (ins::control.type[chain(i)][slot(i)]) n += slot_line(i, o + n, cap - n);
+  if (n < cap && ins::eq_on(kEqChain)) n += sniprintf(o + n, cap - n, " EQ");
+  return true;
+}
+
+int json(char* o, int cap) {
+  int n = sniprintf(o, cap, CORE_STR("\"mfx\":{\"byp\":%d,\"src\":\"%s\",\"lev\":%d,\"on\":%d,\"s\":["), control.byp,
+                    control.src == kMix ? "mix" : "ret", control.lev, on() ? 1 : 0);
+  for (int i = 0; i < kSlots && n < cap; ++i) {
+    const int c = chain(i), s = slot(i), t = ins::control.type[c][s];
+    const ins::Labels& L = ins::labels(t);
+    char v[ins::kParams][8] = {};
+    if (t)
+      for (int j = 0; j < ins::kParams; ++j) ins::slot_value_text(c, s, j, ins::param(c, s, j), v[j], sizeof v[j]);
+    int k = sniprintf(o + n, cap - n, CORE_STR("%s{\"t\":\"%s\",\"p\":[%d,%d,%d,%d],\"l\":[\"%s\",\"%s\",\"%s\",\"%s\"],\"v\":[\"%s\",\"%s\",\"%s\",\"%s\"],\"mix\":%d,\"pair\":%d,\"send\":%d}"),
+                      i ? "," : "", ins::type_name(t), ins::param(c, s, 0), ins::param(c, s, 1), ins::param(c, s, 2), ins::param(c, s, 3),
+                      L.label[0], L.label[1], L.label[2], L.label[3], v[0], v[1], v[2], v[3], control.mix[i], pair(i) ? 1 : 0, send_type(t) ? 1 : 0);
+    if (k < 0 || k >= cap - n) return cap;
+    n += k;
+  }
+  int k = sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR("],\"peq\":[%d,%d,%d,%d],\"rep\":%d,\"onmain\":%d}"), ins::eq_param(kEqChain, 0),
+                    ins::eq_param(kEqChain, 1), ins::eq_param(kEqChain, 2), ins::eq_param(kEqChain, 3), control.known, stems_on_main());
+  return n + (k > 0 ? k : 0);
+}
+
+int line(char* b, int cap) {
+  int pairs = 0;
+  bool def = !control.byp && control.src == kRet && control.lev == kLevUnity;
+  for (int i = 0; i < kSlots; ++i) {
+    if (pair(i)) pairs |= 1 << i, def = false;
+    def = def && control.mix[i] == kMixDef;
+  }
+  if (def) return 0;
+  return sniprintf(b, cap, CORE_STR("MFX %d %s %d %d %d %d %d %d\n"), control.byp, control.src == kMix ? "MIX" : "RET", control.lev,
+                   control.mix[0], control.mix[1], control.mix[2], control.mix[3], pairs);
+}
+
+bool from_line(const char* const* w, int n) {
+  if (n > 1 && num(w[1]) >= 0) set_byp(num(w[1]));
+  if (n > 2) set_src(same_ci(w[2], "MIX") ? kMix : kRet);
+  if (n > 3 && num(w[3]) >= 0) set_lev(num(w[3]));
+  for (int i = 0; i < kSlots && 4 + i < n; ++i)
+    if (num(w[4 + i]) >= 0) set_mix(i, num(w[4 + i]));
+  if (n > 8 && num(w[8]) >= 0)
+    for (int i = 0; i < kSlots; ++i) set_pair(i, (num(w[8]) >> i) & 1);
+  return true;
+}
+
+}  // namespace master
+}  // namespace core

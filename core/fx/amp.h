@@ -12,8 +12,9 @@
 //   LEV   the output, -36..+6 dB (109 = 0 dB)
 // Only A2-Lite (1,871 weights, 48 kHz) is supported (the user's decision, 2026-10-23): A2-Full, NAM's A1 "Standard" /
 // "Lite" / "Feather" WaveNets and LSTMs are refused ("NOTLITE"); a capture at another rate is refused ("NOT 48K": no
-// resampler). The voice chains only (V1..V8): a bus chain does not take AMP. A stereo voice chain (OUT PRE / POST)
-// runs the capture once on (L + R) / 2 and puts it on both sides.
+// resampler). The voice chains (V1..V8) and the master's (core/fx/master.h): a bus chain does not take AMP. A stereo voice
+// chain (OUT PRE / POST) runs the capture once on (L + R) / 2 and puts it on both sides; the master's slot does too, or
+// runs an L/R pair (ins::Control::mpair: two instances, each side its own).
 //
 // Threads and memory. A fixed pool of kInstances engines (weights + instance + ring state, ~92 KB each), placed with
 // the INSERT chains' heap buffers (ins::heap_place) or static on the Mac: nothing is allocated after boot.
@@ -38,7 +39,8 @@ namespace amp {
 
 constexpr int kVoices = 8, kSlots = 2;
 constexpr int kMaxRunning = 6;              // AMP slots playing at once (the CPU cap; fix1049: 8 -> 6)
-constexpr int kInstances = kMaxRunning + 1; // + one for a capture change's crossfade
+constexpr int kMaxMaster = 2;               // the master chain's own, outside that cap: one L/R pair, or two slots
+constexpr int kInstances = kMaxRunning + kMaxMaster + 1; // + one for a capture change's crossfade
 constexpr int kWeights = 1871;              // A2-Lite's weight count (the only shape it runs)
 constexpr int kMaxModels = 64;              // /NAM/'s files listed at most
 constexpr int kNameMax = 48;                // a file's name (longer: left out of the list)
@@ -60,6 +62,7 @@ enum Status : uint8_t {
   kNot48k,      // a capture at another sample rate
   kCap,         // kMaxRunning AMP slots play already
   kNoMem,       // the pool was not placed
+  kCapM,        // kMaxMaster instances play on the master already
   kStatuses
 };
 const char* status_short(int s);   // "LOADING" .. (<= 7 characters); "" for kIdle / kPlaying
@@ -114,6 +117,7 @@ bool placed();
 void run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
 void fresh(int c, int s);          // the slot starts AMP from clean (its tone / DC state; not its capture)
 void service(int vi);              // voice_out's, every block: offers to voice vi's slots that did not run AMP
+void service_master();             // the same for the master's slots and pairs (master::render)
 
 // ---- the control side (core 3)
 void begin(bool card_ok);          // /NAM/ listed at the next steps
@@ -131,7 +135,8 @@ void knob_text(int c, int s, int v, char* b, int cap);
 // The card's AMP line ("AMP V1 A Plexi Crunch.namb"): the slot's capture by name, resolved once /NAM/ is listed
 void want_file(int c, int s, const char* file);
 const char* slot_file(int c, int s);   // the file the slot's knob picks ("" none)
-int running();                     // AMP slots with a capture (playing or fading)
+int running();                     // the voices' AMP slots with a capture (playing or fading)
+int running_master();              // the master's instances
 // The console: "amp" (the state), "amp=rescan"; false: not an amp command
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);      // "\"amp\":{...}"

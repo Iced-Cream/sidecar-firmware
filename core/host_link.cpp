@@ -10,6 +10,9 @@
 #include "fmt/fmt.h"
 #include "midim/midim.h"
 #include "fx/send_fx.h"
+#if CORE_POLY
+#include "fx/master.h"
+#endif
 #if CORE_MSAMP
 #include "bundle/kits.h"
 #include "bundle/prjslot.h"
@@ -299,6 +302,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
 #endif
 #if CORE_POLY
     if (arp::sysex(d, len)) return;   // 45: a sound's arpeggiator settings (core/arp/arp.h)
+    if (master::report(d, len)) return;   // 50: the stems' pans and who is off ROUTE TO MAIN (core/fx/master.h)
     if (d[4] == 0x2C || d[4] == 0x2D) {   // the sequencer's step ticks and state (core/seq/seq.h)
       seq::sysex(d, len);
       return;

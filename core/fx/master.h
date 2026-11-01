@@ -1,0 +1,86 @@
+// core/fx/master.h - the master FX (docs/MASTER-FX.md): one stereo chain after the Rytm's own FX, on the POST return. The
+// Rytm's analog mix cannot be replaced from the Pi, only added to: the chain takes what the Sidecar sends back (OUT 0/1,
+// and 2/3 moved onto 0/1), not the analog mix. SRC MIX adds the Rytm's stems: the whole mix once its tracks are off ROUTE TO
+// MAIN (the Rytm's own setting), panned from the Rytm's report 50 (0030-fx-in); stems still on main stay out of the sum.
+//
+// One FX code path: the chain is ins::Engine's chains kM0, kM0 + 1 (four slots in a row, then the second's POST EQ), with
+// every INSERT TYPE, AMP among them (its own cap, an L/R pair on a slot if asked), and the send FX's types as inserts:
+// a second fx::SendFx, reached by SendFx::Insert (the same fades, zones and clears), two of them at a time, mono in (as on
+// the buses), a MIX knob each. Saved per kit in the INSERT file: the slots' and PEQ's lines, one MFX line.
+//
+// Slots here are 0..3: chain(i) and slot(i) give the insert's chain and slot. ins::set_type() and friends take those, and
+// everything that keeps state stays there. CORE_POLY builds only (the Pi and the Mac).
+#pragma once
+#include <stdint.h>
+
+#include "fx/insert.h"
+
+namespace core {
+namespace master {
+
+constexpr int kSlots = ins::kMasters * ins::kSlots;   // 4
+constexpr int kFxSlots = 2;                           // send TYPEs playing at once (the second SendFx's two slots)
+constexpr int kEqChain = ins::kM0 + ins::kMasters - 1;   // the POST EQ at the end of the chain
+inline int chain(int i) { return ins::kM0 + i / ins::kSlots; }
+inline int slot(int i) { return i % ins::kSlots; }
+enum Src : uint8_t { kRet = 0, kMix = 1 };
+constexpr uint8_t kLevUnity = 100, kMixDef = 40;
+constexpr int kStems = 8;                             // IN 2..9: BD SD RS/CP BT LT MT/HT CH/OH CY/CB
+constexpr float kOutLimit = 1.0f;   // the chain's output ceiling: 0/1's full scale (-10.9 dB into the mix on the real Rytm); out_mix.h's knee
+
+// What the render core and core 0 read: byte fields, a torn read cannot happen
+struct Control {
+  volatile uint8_t byp;            // 1: the chain's output is out, the dry path back (bit for bit once faded)
+  volatile uint8_t src;            // Src
+  volatile uint8_t lev;            // the chain's output, 0..127, 100 unity
+  volatile uint8_t mix[kSlots];    // a send TYPE slot's dry / wet, 0..127
+  volatile int8_t fx[kSlots];      // the SendFx slot a send TYPE holds, -1 none
+  // The Rytm's report 50: the stems' pans (0..127, 64 centre, as they play: p-locks and LFOs in) and the stems off ROUTE TO
+  // MAIN (a bit a stem). Not saved, not the kit's. known 0: no report (older mods): every stem summed, centred
+  volatile uint8_t pan[kStems];
+  volatile uint8_t off_main;
+  volatile uint8_t known;
+};
+extern Control control;
+
+// ---- the control side (the Pi's core 3)
+bool on();                         // a slot has a TYPE, or the POST EQ is set: the chain runs
+bool accept(int c, int s, int t);  // ins::set_type's question: chain c's slot s may take TYPE t (the room for send TYPEs is
+                                   // booked here; the answer is no for a third: the slot keeps what it has)
+void set_byp(int on);
+void set_src(int src);
+void set_lev(int v);
+void set_mix(int i, int v);
+void set_pair(int i, int on);      // slot i's AMP: an L/R pair
+bool pair(int i);
+bool send_type(int t);             // t is one of the send TYPEs
+int next_type(int i, int t, int d);   // the TYPE after t for slot i, d +1 / -1 (the UIs' TYPE key: skips what it cannot take)
+bool zone_text(int t, int k, int v, char* b, int cap);   // a send TYPE's zone name for knob k at v; false: none, a number
+void clear();                      // defaults: nothing set (ins::clear); the Rytm's report stays
+bool report(const uint8_t* d, int len);   // F0 7D 52 54 50 <8 pans> <route byte's bit 7> <its bits 0..6> F7; false: not this one
+void link_lost();                  // the Rytm's USB gone: the report is forgotten until the next
+int stems_on_main();               // how many stems are still on main (0 while no report)
+void reset();                      // tests: the audio side too
+// The console: "mfx" (the state), "mfx=byp:0|1", "mfx=src:ret|mix", "mfx=lev:V", "mfx=S:type:T", "mfx=S:p1..p4:V",
+// "mfx=S:mix:V", "mfx=S:pair:0|1", "mfx=S:off" (S 1..4), "mfx=eq:hpf|lpf|low|high:V", "mfx=eq:off", "mfx=reset"
+bool command(const char* p, char* out, int cap);
+int json(char* out, int cap);      // "\"mfx\":{...}" (inside "ins", docs/MASTER-FX.md)
+// The card (insert_card.cpp): "MFX BYP SRC LEV MIX1 MIX2 MIX3 MIX4 PAIRS" (words, as "MFX 0 MIX 100 40 40 40 40 3"; PAIRS
+// a bit per slot), written only off the defaults
+constexpr int kLineWords = 10;
+int line(char* b, int cap);
+bool from_line(const char* const* w, int n);
+
+// ---- the audio side
+// The render core's: n frames L/R through the chain, LEV and the ceiling, in place (out_mix.h's knee: below it sample-exact).
+// y's peaks, in and out, kept for the meters.
+void render(float (*y)[2], int n);
+void take_peaks(float* in, float* out);   // the largest |sample| since the last call
+// The boot bench: a chain without AMP (COMP, EQ, SPACE, CLOUD, the POST EQ) over 1 s in 12-frame blocks through render(), on
+// the real engine; core::cycles() ticks, *worst_block the longest block. 0 when a chain is set (it is not touched).
+uint64_t bench(uint32_t* worst_block);
+unsigned long heap_bytes();        // the second SendFx (on CORE_HEAP_BUFFERS ports; else built on first use)
+void heap_place(void* mem);
+
+}  // namespace master
+}  // namespace core

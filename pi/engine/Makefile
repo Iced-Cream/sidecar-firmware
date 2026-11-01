@@ -66,7 +66,7 @@ OBJS += ../ui/sidecar_project.o
 # Hosted objects: the toolchain's C++ headers and newlib's libm, not Circle's (as spike3's Plaits): the core,
 # the engines and the engine's portable parts. Named *.cpp.o / *.cc.o / *.c.o under hosted/.
 # core/host/newlib_rand.cpp: DAISYSP's rand() with newlib's sequence, without newlib's libc (the one host file here).
-CORE_SRC := $(addprefix $(CORE)/,md/md.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp engine.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp \
+CORE_SRC := $(addprefix $(CORE)/,md/md.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp engine.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp \
             ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp \
             pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp wavetable/tables.cpp wavetable/wavetable.cpp granular/granular.cpp livein/livein.cpp midim/midim.cpp arp/arp.cpp chop/chop.cpp chop/slicemap.cpp host/newlib_rand.cpp user/um.cpp user/lists.cpp)
 CORE_SRC += $(wildcard $(CORE)/ui/page_*.cpp)

@@ -398,9 +398,17 @@ slots 1-based in two 7-bit bytes (n >> 7, n & 0x7F), 0 = none. The hello's (35) 
     04 RELOAD ALL <kit>   the KIT menu's RELOAD set to ALL
 4D 01 <dropped hi lo> <over hi lo>: rui1052d (round 6) - key presses 0026 dropped (each with its release, its queue
     full) and its waits past a stock dump run out (2 s with the flag never clear); on a change, at most once a second.
-0x4E is the next free id above these; 0x45 is the arpeggiator's (above).
+0x51 is the next free id above these (0x4E, 0x4F the bridge, 0x50 the mix report below); 0x45 is the arpeggiator's (above).
 """
 PRJ = 0x4B   # the project slot reports (above)
+# 0x50 (2026-11-01, sidecar-mods 0030-fx-in, the master FX's through mode): Rytm -> host <pan 0..7> <route bit 7> <route bits 0..6>:
+# each stem's PAN as it plays (p-locks, LFOs; 0..127, 64 centre; a shared voice's owning track), the route byte 0x80006466 (a
+# set bit: that voice off the main bus). On a change, at most 20 a second, and once a second; core/fx/master.h.
+MIX_REPORT = 0x50
+
+
+def mix_report(pans, route):
+    return _msg(MIX_REPORT, list(pans) + [(route >> 7) & 1, route & 0x7F])
 
 HDR = bytes([0xF0, 0x7D, 0x52, 0x54])
 AUDIO, TRIG, PARAMS, TRIG_PARAMS = 0x01, 0x02, 0x03, 0x04
