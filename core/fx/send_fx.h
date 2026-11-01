@@ -575,13 +575,7 @@ class SendFx {
 #if RYTM_SENDFX_LARGE
     for (int i = 0; i < n; ++i) gs_[i] = 0.0f;
 #endif
-    if (c.kill != kill_seen_) {   // All Sound Off: both FX leave like a TYPE change and come back to the same TYPE
-      kill_seen_ = c.kill;
-      for (int s = 0; s < kSlots; ++s) kill_[s] = plays(cur_[s]) && cur_[s] != kStutter;
-#if RYTM_SENDFX_LARGE
-      stutter_.Kill();   // STUTTER: the repeat drops to dry, the mix stays
-#endif
-    }
+    Killed(c);
     int sslot = stutter_slot(c);
     // the send mixes, both slots in one pass when both (likely) run: the stems loaded once, two independent chains
     float xs[kSlots][kMaxFrames];
@@ -599,20 +593,8 @@ class SendFx {
     for (int s = 0; s < kSlots; ++s) {
       uint8_t want = c.knob[s][0];
       if (want == kStutter && s != sslot) want = kOff;   // the other slot has it: this one silent (MISSING)
-      int want_zone = structure_of(want, c.knob[s]);
-      bool same = want == cur_[s] && want_zone == zone_[s] && !kill_[s];
-      if (!same && fade_[s] <= 0) {
-        kill_[s] = false;   // faded out (or silent): the left effect to be cleared, the new from clean
-        if (plays(cur_[s]) && !small_type(cur_[s])) dirty_[s] |= Bit(cur_[s]);
-        cur_[s] = kOff;
-        if (!plays(want) || !(dirty_[s] & Bit(want))) {   // else: waits
-          cur_[s] = want, zone_[s] = (int8_t)want_zone;
-          if (small_type(want)) Enter(s, want);   // from clean, in the shared block
-        }
-        same = want == cur_[s] && want_zone == zone_[s];
-      }
-      ClearSome(s, n * kClearBytesPerFrame);
-      int t = cur_[s];
+      bool same;
+      int t = Step(s, want, n, c, &same);
       if (!plays(t)) continue;   // off, an effect this build lacks, or waiting for its clear: silence
 #if RYTM_SENDFX_LARGE
       if (t == kStutter) {   // the insert: only its fade here, the DSP once below
@@ -630,46 +612,11 @@ class SendFx {
         if (vsend)
           for (int i = 0; i < n; ++i) xs[s][i] += vsend[i][s];
       }
-      const float* x = xs[s];
       float y[kMaxFrames][2];
       float xf[kMaxFrames];
       for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = 0.0f;
       any = true;
-      {   // the TYPE fade: down while another TYPE (or structure zone) waits, up otherwise
-        const int step = same ? 1 : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
-        int f = fade_[s];
-        if (step > 0 && f >= kFadeFrames)   // fully in (the usual case): unity
-          for (int i = 0; i < n; ++i) g_[i] = 1.0f;
-        else
-          for (int i = 0; i < n; ++i) {
-            f += step;
-            f = f < 0 ? 0 : f > kFadeFrames ? kFadeFrames : f;
-            g_[i] = (float)f * (1.0f / kFadeFrames);
-          }
-        fade_[s] = f;
-        if (!(step > 0 && f >= kFadeFrames && g_[n - 1] == 1.0f && g_[0] == 1.0f)) {
-          // the input fades with the output: a delay-based effect would else bring the input's first sample out after its
-          // delay as a hard onset (the fade-in long over by then)
-          for (int i = 0; i < n; ++i) xf[i] = x[i] * g_[i];
-          x = xf;
-        }
-      }
-      uint8_t k[kKnobs];
-      for (int j = 0; j < kKnobs; ++j) k[j] = c.knob[s][j];
-      if (int j = structure_knob(t)) k[j] = (uint8_t)(zone_[s] << 5 | (k[j] & 31));   // the zone playing until its fade-out ends
-      switch (t) {
-        case kChorus: st_[s].sm.chorus.Process(x, n, y, k + 2, sr_, a_); break;
-        case kComb: st_[s].sm.comb.Process(x, n, y, k + 2, sr_, a_); break;
-        case kCrush: st_[s].sm.crush.Process(x, n, y, k + 2, sr_, a_); break;
-        case kRingMod: st_[s].sm.ring.Process(x, n, y, k + 2, sr_, a_); break;
-        case kHalo: st_[s].sm.halo.Process(x, n, y, k + 2, sr_, a_); break;
-#if RYTM_SENDFX_LARGE
-        case kRings: st_[s].rings.Process(x, n, y, k + 2, sr_, a_); break;
-        case kCloudSeed: st_[s].cloud.Process(x, n, y, k + 2, sr_, a_); break;
-        case kTape: st_[s].tape.Process(x, n, y, k + 2, sr_, a_, c.clock); break;
-#endif
-        default: break;
-      }
+      Run(s, t, Gate(s, same, xs[s], xf, n), n, y, c);
       if (bus_insert) bus_insert(s, y, n);   // the bus's insert chain (core/fx/insert.h)
       upre |= pb[s][0] < 1.0f || pb[s][n - 1] < 1.0f;
       upost |= pb[s][0] > 0.0f || pb[s][n - 1] > 0.0f;
@@ -751,6 +698,20 @@ class SendFx {
     if (!main)
       for (int i = 0; i < n; ++i) out[i][0] += post[i][0], out[i][1] += post[i][1];
   }
+  // One slot as an insert (the master chain, core/fx/master.h): x[n] (mono, n <= kMaxFrames) -> the slot's return in y[n]
+  // L/R (overwritten), wet only, by the same TYPE fade, structure zones and clears as Process. c: the caller's own Control
+  // (its knob[s], its kill, the clock). No bus chain, no STUTTER (its ring is mono: a master would fold to mono), no limit.
+  FX_DSP void Insert(int s, const float* x, int n, float (*y)[2], const Control& c) {
+    if (n > kMaxFrames) n = kMaxFrames;
+    for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = 0.0f;
+    Killed(c);
+    bool same;
+    int t = Step(s, c.knob[s][0], n, c, &same);
+    if (!plays(t) || t == kStutter) return;
+    float xf[kMaxFrames];
+    Run(s, t, Gate(s, same, x, xf, n), n, y, c);
+    for (int i = 0; i < n; ++i) y[i][0] *= g_[i], y[i][1] *= g_[i];
+  }
 #if RYTM_SENDFX_LARGE
   const Stutter& stutter() const { return stutter_; }
 #endif
@@ -764,6 +725,73 @@ class SendFx {
 
  private:
   static uint32_t Bit(int t) { return 1u << (t & 31); }
+  FX_DSP void Killed(const Control& c) {
+    if (c.kill == kill_seen_) return;   // All Sound Off: both FX leave like a TYPE change and come back to the same TYPE
+    kill_seen_ = c.kill;
+    for (int s = 0; s < kSlots; ++s) kill_[s] = plays(cur_[s]) && cur_[s] != kStutter;
+#if RYTM_SENDFX_LARGE
+    stutter_.Kill();   // STUTTER: the repeat drops to dry, the mix stays
+#endif
+  }
+  // slot s toward TYPE want for this block: the switch once faded out, the left effect's clear; the TYPE playing now.
+  // same: it is what is wanted (its fade goes up)
+  FX_DSP int Step(int s, uint8_t want, int n, const Control& c, bool* same) {
+    int want_zone = structure_of(want, c.knob[s]);
+    *same = want == cur_[s] && want_zone == zone_[s] && !kill_[s];
+    if (!*same && fade_[s] <= 0) {
+      kill_[s] = false;   // faded out (or silent): the left effect to be cleared, the new from clean
+      if (plays(cur_[s]) && !small_type(cur_[s])) dirty_[s] |= Bit(cur_[s]);
+      cur_[s] = kOff;
+      if (!plays(want) || !(dirty_[s] & Bit(want))) {   // else: waits
+        cur_[s] = want, zone_[s] = (int8_t)want_zone;
+        if (small_type(want)) Enter(s, want);   // from clean, in the shared block
+      }
+      *same = want == cur_[s] && want_zone == zone_[s];
+    }
+    ClearSome(s, n * kClearBytesPerFrame);
+    return cur_[s];
+  }
+  // the TYPE fade into g_: down while another TYPE (or structure zone) waits, up otherwise; the input to run (x, or x
+  // faded into xf)
+  FX_DSP const float* Gate(int s, bool same, const float* x, float* xf, int n) {
+    const int step = same ? 1 : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
+    int f = fade_[s];
+    if (step > 0 && f >= kFadeFrames)   // fully in (the usual case): unity
+      for (int i = 0; i < n; ++i) g_[i] = 1.0f;
+    else
+      for (int i = 0; i < n; ++i) {
+        f += step;
+        f = f < 0 ? 0 : f > kFadeFrames ? kFadeFrames : f;
+        g_[i] = (float)f * (1.0f / kFadeFrames);
+      }
+    fade_[s] = f;
+    if (!(step > 0 && f >= kFadeFrames && g_[n - 1] == 1.0f && g_[0] == 1.0f)) {
+      // the input fades with the output: a delay-based effect would else bring the input's first sample out after its
+      // delay as a hard onset (the fade-in long over by then)
+      for (int i = 0; i < n; ++i) xf[i] = x[i] * g_[i];
+      return xf;
+    }
+    return x;
+  }
+  // TYPE t of slot s over x[n], its return into y (added)
+  FX_DSP void Run(int s, int t, const float* x, int n, float (*y)[2], const Control& c) {
+    uint8_t k[kKnobs];
+    for (int j = 0; j < kKnobs; ++j) k[j] = c.knob[s][j];
+    if (int j = structure_knob(t)) k[j] = (uint8_t)(zone_[s] << 5 | (k[j] & 31));   // the zone playing until its fade-out ends
+    switch (t) {
+      case kChorus: st_[s].sm.chorus.Process(x, n, y, k + 2, sr_, a_); break;
+      case kComb: st_[s].sm.comb.Process(x, n, y, k + 2, sr_, a_); break;
+      case kCrush: st_[s].sm.crush.Process(x, n, y, k + 2, sr_, a_); break;
+      case kRingMod: st_[s].sm.ring.Process(x, n, y, k + 2, sr_, a_); break;
+      case kHalo: st_[s].sm.halo.Process(x, n, y, k + 2, sr_, a_); break;
+#if RYTM_SENDFX_LARGE
+      case kRings: st_[s].rings.Process(x, n, y, k + 2, sr_, a_); break;
+      case kCloudSeed: st_[s].cloud.Process(x, n, y, k + 2, sr_, a_); break;
+      case kTape: st_[s].tape.Process(x, n, y, k + 2, sr_, a_, c.clock); break;
+#endif
+      default: break;
+    }
+  }
   // the send mix of slots ss[0..ns-1] (ns 1 or 2) into xs: each stem's level ramped linearly over the block
   // (Smooth::Ramp); a slot with every level 0 gets zeros
   FX_DSP void Mix(const float (*stems)[kStems], int n, const float (*tg)[kStems], const int* ss, int ns, float (*xs)[kMaxFrames]) {

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "fx/insert.h"
+#include "fx/master.h"
 #include "fx/out.h"
 #include "fx/send_fx.h"
 #include "ui/remote.h"
@@ -67,6 +68,47 @@ void Fill(sidecar_insfx_view_t* o, const float (*peaks)[2]) {
   uint32_t h = 2166136261u;
   const unsigned char* b = (const unsigned char*)&v;
   for (size_t i = 0; i < offsetof(sidecar_insfx_view_t, gen); ++i) h = (h ^ b[i]) * 16777619u;
+  v.gen = h;
+  *o = v;
+}
+
+void FillMaster(sidecar_mfx_view_t* o) {
+  using namespace core::ins;
+  namespace m = core::master;
+  float in, out;
+  m::take_peaks(&in, &out);
+  sidecar_mfx_view_t v;
+  memset(&v, 0, sizeof v);
+  v.valid = 1, v.on = m::on(), v.byp = m::control.byp, v.mix = m::control.src == m::kMix, v.lev = m::control.lev;
+  v.rep = m::control.known, v.onmain = (unsigned char)m::stems_on_main();
+  v.in = (unsigned char)(in >= 1.0f ? 127 : in * 127.0f), v.out = (unsigned char)(out >= 1.0f ? 127 : out * 127.0f);
+  for (int i = 0; i < m::kSlots; ++i) {
+    const int c = m::chain(i), s = m::slot(i), ty = control.type[c][s];
+    sidecar_mfx_slot_t& x = v.slot[i];
+    const Labels& L = labels(ty);
+    x.type = ty;
+    strncpy(x.name, L.name, sizeof x.name - 1);
+    strncpy(x.next, type_name(m::next_type(i, ty, 1)), sizeof x.next - 1);
+    for (int k = 0; k < kParams; ++k) {
+      strncpy(x.label[k], L.label[k], sizeof x.label[k] - 1);
+      x.v[k] = control.play[c][s][k];
+      if (ty) slot_value_text(c, s, k, param(c, s, k), x.val[k], sizeof x.val[k]);
+    }
+    x.send = m::send_type(ty), x.mix = m::control.mix[i], x.amp = ty == kAmp, x.pair = m::pair(i);
+  }
+  if (eq_on(m::kEqChain)) {
+    const Labels& L = eq_labels();
+    int n = 0;
+    for (int k = 0; k < kEqParams; ++k) {
+      char b[12];
+      eq_value_text(k, eq_playing(m::kEqChain, k), b, sizeof b);
+      n += sniprintf(v.peq + n, sizeof v.peq - (size_t)n, "%s%s %s", k ? "  " : "", L.label[k], b);
+      if (n >= (int)sizeof v.peq - 1) break;
+    }
+  }
+  uint32_t h = 2166136261u;
+  const unsigned char* b = (const unsigned char*)&v;
+  for (size_t i = 0; i < offsetof(sidecar_mfx_view_t, gen); ++i) h = (h ^ b[i]) * 16777619u;
   v.gen = h;
   *o = v;
 }

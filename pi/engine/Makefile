@@ -56,6 +56,7 @@ OBJS += ../ui/sidecar_voice.o
 OBJS += ../ui/sidecar_song.o
 # the INSERT FX page (pi/ui/sidecar_insfx.h, fx-ins), filled by insfx_pi.cpp
 OBJS += ../ui/sidecar_insfx.o
+OBJS += ../ui/sidecar_mfx.o
 # the REC page (pi/ui/sidecar_rec.h, the Overbridge recorder), filled by rec_pi.cpp
 OBJS += ../ui/sidecar_rec.o
 # touch2: the SCOPE page (pi/ui/sidecar_scope.h, scope_pi.cpp) and the SIDECAR STATUS page (sidecar_status.h, status_pi.cpp)
@@ -66,7 +67,7 @@ OBJS += ../ui/sidecar_project.o
 # Hosted objects: the toolchain's C++ headers and newlib's libm, not Circle's (as spike3's Plaits): the core,
 # the engines and the engine's portable parts. Named *.cpp.o / *.cc.o / *.c.o under hosted/.
 # core/host/newlib_rand.cpp: DAISYSP's rand() with newlib's sequence, without newlib's libc (the one host file here).
-CORE_SRC := $(addprefix $(CORE)/,md/md.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp engine.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp \
+CORE_SRC := $(addprefix $(CORE)/,md/md.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp engine.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp \
             ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp \
             pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp wavetable/tables.cpp wavetable/wavetable.cpp granular/granular.cpp livein/livein.cpp midim/midim.cpp arp/arp.cpp chop/chop.cpp chop/slicemap.cpp host/newlib_rand.cpp user/um.cpp user/lists.cpp)
 CORE_SRC += $(wildcard $(CORE)/ui/page_*.cpp)
@@ -82,7 +83,7 @@ CORE_SRC += $(CORE)/msamp/cardq.cpp $(wildcard $(CORE)/samp/*.cpp)   # the card 
 # messages, the slot map), hosted: user machines on the Pi (core/user/um.cpp, docs/user-machines-pi.md)
 RMPSRC := ../../teensy/libraries/RytmPlugins/src
 RMP_SRC := rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp
-PORT_SRC := neon_bench.cpp output.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp fsweb.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp \
+PORT_SRC := neon_bench.cpp output.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp masterfx_pi.cpp fsweb.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp \
             scope_pi.cpp status_pi.cpp stor_vol.cpp stor_bench.cpp lib_pi.cpp
 # the SEQ page's engine side (seqed_pi.cpp, ../ui/seq_touch.cpp): only with the sequencer's engine in the tree
 # (core/seq/seq.cpp, the seq-mvp branch); without it the page says there is no sequencer

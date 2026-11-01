@@ -7,6 +7,7 @@
 
 #include "fmt/fmt.h"
 #include "fx/insert.h"
+#include "fx/master.h"
 #include "fx/out.h"
 #include "platform.h"
 #include "pool/pool.h"
@@ -62,12 +63,17 @@ int words(const char* b, char (*w)[12], int max) {
   return n;
 }
 bool from_line(const char* b) {
-  char w[7][12];
-  int n = words(b, w, 7);
+  char w[master::kLineWords][12];
+  int n = words(b, w, master::kLineWords);
   if (n >= 3 && same_ci(w[0], "OUT")) {   // OUT V3 POST 100 64 64 0 (core/fx/out.h)
-    const char* wp[7];
+    const char* wp[master::kLineWords];
     for (int i = 0; i < n; ++i) wp[i] = w[i];
     return out::from_line(wp, n);
+  }
+  if (n >= 2 && same_ci(w[0], "MFX")) {   // the master's own settings (core/fx/master.h)
+    const char* wp[master::kLineWords];
+    for (int i = 0; i < n; ++i) wp[i] = w[i];
+    return master::from_line(wp, n);
   }
   if (n >= 5 && same_ci(w[0], "SEND")) {
     int c = chain_from_name(w[1]);
@@ -82,7 +88,7 @@ bool from_line(const char* b) {
   if (n >= 4 && same_ci(w[0], "AMP")) {   // AMP V1 A Plexi Crunch.namb (the rest of the line: the file, spaces kept)
     int c = chain_from_name(w[1]);
     int s = same_ci(w[2], "A") ? 0 : same_ci(w[2], "B") ? 1 : -1;
-    if (c < 0 || c >= kVoices || s < 0) return false;
+    if (c < 0 || (c >= kVoices && c < kM0) || s < 0) return false;
     const char* p = b;
     for (int k = 0; k < 3; ++k) {
       while (*p == ' ') ++p;
@@ -257,6 +263,10 @@ static bool save_text(bool queue) {
   }
   for (int v = 0; v < kVoices; ++v) {
     int n = out::line(v, b, sizeof b);
+    if (n > 0) add(b, n);
+  }
+  {
+    int n = master::line(b, sizeof b);   // only off its defaults
     if (n > 0) add(b, n);
   }
   if (!fits) {

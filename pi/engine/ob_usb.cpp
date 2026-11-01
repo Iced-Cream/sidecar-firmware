@@ -57,6 +57,7 @@
 
 #include "ob_block.h"
 #include "sendfx_pi.h"
+#include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
 #include "bridge.h"
 #include "device/device.h"
@@ -399,6 +400,7 @@ boolean CObUsb::Configure (void)
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
 	if (s_bActive) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
+	if (s_bActive) masterfx_pi::Reset ();
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_bStreaming = TRUE;
@@ -458,6 +460,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
 		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
+		if (s_bActive) masterfx_pi::Process (F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 		{
 			u8 nSt = 0;					// the voices on PRE / POST: their take files stereo
@@ -630,6 +633,14 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
 				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
+			}
+
+			if (masterfx_pi::WantStems ())	// SRC MIX: the stems onto 0/1 (core/fx/master.h)
+			{
+				s32 S[ob::kFramesPerBlock][8];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
+				masterfx_pi::Stems (S, ob::kFramesPerBlock);
 			}
 
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
