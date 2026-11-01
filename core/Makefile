@@ -156,6 +156,11 @@ $(B)/test_%: tests/test_%.cpp $(CORE_SRC) $(DEPS_H) $(B)/libengines.a
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE_SRC) $(B)/libengines.a
 
+# the Sidecar emulator: this engine and the Pi's output stage as a host for analog-emu's --ob-link (tools/sidecar_emu.cpp)
+sidecar-emu: $(B)/sidecar_emu
+$(B)/sidecar_emu: ../tools/sidecar_emu.cpp ../pi/engine/output.cpp $(B)/libcore.dylib
+	$(CXX) $(CXXFLAGS) -I../pi/engine -o $@ ../tools/sidecar_emu.cpp ../pi/engine/output.cpp -L$(B) -lcore -Wl,-rpath,$(abspath $(B))
+
 lib: $(B)/libcore.dylib
 $(B)/libcore.dylib: host/core_c.cpp $(CORE_SRC) $(DEPS_H) $(B)/libengines.a
 	@mkdir -p $(B)
