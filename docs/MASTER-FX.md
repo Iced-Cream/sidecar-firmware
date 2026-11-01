@@ -75,7 +75,7 @@ image holds; 1 ms of lookahead (48 frames), the gain a straight line down that a
 
 Four slots in a row, then a POST EQ, then LEV.
 
-- **One FX code path.** Slots 1, 2 are chain M1 of `ins::Engine`, slots 3, 4 chain M2, with its POST EQ. Every INSERT TYPE works.
+- **One FX code path.** Slots 1, 2 are chain M1 of `ins::Engine`, slots 3, 4 chain M2, with its POST EQ. Every INSERT TYPE works, SAT among them (docs/INSERT-FX.md): 15 frames each, tape on the mix is the use it was built for.
 - **AMP**: its own cap, 2 instances, outside the voices' 6. One instance on (L + R) / 2 on both sides, or an L/R pair (two instances,
   each side its own). `MAX 2` past that.
 - **Send FX types as inserts**: CHORUS, COMB, SPACE, RINGS, CLOUD, HALO: a second `fx::SendFx`, through `SendFx::Insert`, the same

@@ -92,6 +92,7 @@ that does not know `PEQ` treats the file as locked and keeps it as it is rather 
 | 7 | TREMOLO | RATE 0.1..20 Hz | DPTH | SHPE sine > square | PAN (R phase offset; mono chains sum it) |
 | 8 | RINGMOD | FREQ 10 Hz..5 kHz | SHPE sine > square | MOD 0.3 Hz +-1 oct | MIX |
 | 9 | AMP | MODL a NAM A2-Lite capture of `/NAM/` | GAIN -18..+18 dB into it | TONE tilt +-6 dB at 650 Hz | LEV -36..+6 dB |
+| 10 | SAT | CHAR TAPE, CONS, SOFT | DRV 0..+24 dB | TONE tilt +-6 dB at 1 kHz | MIX |
 
 FILTER and EQ are TPT state-variable filters (A. Simper's forms): stable for any setting, modulation-friendly. COMP is a
 peak detector with a 6 dB soft knee in the log domain (fast log2/exp2). DELAY's line is 4096 samples (85 ms) a channel.
@@ -101,6 +102,37 @@ Choosing a TYPE loads its defaults (EQ flat, a moderate filter, ...).
 and fades it in (OFF is that fade's dry end); DELAY's line takes its input faded in too (a cleared line would else
 return its first sample as a hard onset). Params are smoothed per block (3 ms), so p-lock jumps do not zipper. A NaN
 or runaway clears the slot (counted, `ins` shows `faults`).
+
+## SAT (TYPE 10): tape, console, soft
+
+A saturator on any chain (voices, buses, master): `core/fx/sat_fx.h`, curves after Airwindows (MIT; `core/fx/THIRD_PARTY_LICENSES.txt`).
+
+| CHAR | knob | what |
+|---|---|---|
+| TAPE | 0..42 | ToTape6's flattening curve past a shelf (+6 dB over 2.5 kHz, undone after: the highs saturate first), a head bump at 100 Hz, up to +3 dB with DRV |
+| CONS | 43..85 | Console7Channel's curve: clean, then close to a hard edge |
+| SOFT | 86..127 | Density's sine, held at its top |
+
+The curve runs at 4x (192 kHz): 27-tap and 7 / 11-tap halfband FIRs, flat to 18 kHz, -0.8 dB at 20 kHz. **Latency 15 frames (0.31 ms)**, the same on
+every CHAR [measured]. The level is made up for a -12 dBFS input, as DRIVE's, in RMS: such a sine moves +0..+1.9 dB across DRV on TAPE, under 0.5 dB on the others;
+louder input comes out quieter, white noise peaking at -6 dBFS down 5 dB (9 on TAPE) at DRV 127 [measured].
+
+**DRV 0 or MIX 0 is the dry signal, bit for bit, 0 frames late** [measured, mono and both stereo paths]. DRV's first four steps fade the wet in. Any wet at all and
+the dry path takes the wet's 15 frames (a 5 ms fade), so MIX in between does not comb. MIX 64 at 12 kHz: within 0.2 dB [measured].
+
+A CHAR change crossfades the two curves over 5 ms; a jump from TAPE to SOFT on a p-lock passes CONS, 10 ms at most. Largest sample step with CHAR changed every 37 ms 0.019 against a playing
+slot's own 0.017 [measured].
+
+Aliasing, DRV +24 dB, the loudest line that is no harmonic of the input, below 20 kHz, against the fundamental [measured, `tests/test_sat.cpp`]; a sine peaking at -6 / -12 dBFS. Without
+the 4x, every curve: -49 / -56 dB at 1 kHz, -18 / -21 at 5 kHz, -10 / -10 at 10 kHz.
+
+| CHAR | 1 kHz | 5 kHz | 10 kHz | 15 kHz |
+|---|---|---|---|---|
+| TAPE | -89 / -93 | -48 / -61 | -26 / -41 | -22 / -27 |
+| CONS | -88 / -98 | -49 / -60 | -34 / -43 | -26 / -44 |
+| SOFT | -99 / -111 | -58 / -73 | -40 / -62 | -28 / -49 |
+
+Cost: see "CPU" below, `bench ins SAT+SAT` on the Pi's boot bench.
 
 ## AMP (TYPE 9): NAM captures on a voice
 
@@ -150,7 +182,7 @@ A slot that cannot play passes the voice through TONE and LEV (dry). The card's 
 (`AMP V1 A Plexi Crunch.namb` after the slot's line), so the knob follows the file when others are added; a file no
 longer there is logged and the knob keeps its value.
 
-**Where.** The voice chains (V1..V8) and the master (docs/MASTER-FX.md, its own cap): a bus chain does not take AMP (the Rytm's TYPE stops at RINGMOD there, the
+**Where.** The voice chains (V1..V8) and the master (docs/MASTER-FX.md, its own cap): a bus chain does not take AMP (the Rytm's TYPE skips AMP there, the
 console says so). AMP is mono: a stereo voice chain (OUT PRE / POST) runs the capture once on (L + R) / 2 and puts it on
 both sides. GAIN goes into the capture, then a 5 Hz DC block, TONE and LEV. The capture's own output for silence
 (measured after its prewarm) is taken off: silence in, silence out (tested: 0.0 from the start, < 1e-5 one second
@@ -277,7 +309,7 @@ while all four are flat):
 Per voice that is 0.08 us of a 12-frame block on the Mac, **~0.34 us on a Pi 4**: about **0.5 % of the per-voice
 guard budget** (`guard: voice budget 62 us`, the default 25 % of a 250 us block), so it does not move the budget.
 The buses' are four more channels on render core 2 after the send FX, about the same again in total. Measured on the
-Pi by the boot bench's fifth row, `bench ins OFF+OFF` (`pi/engine/kernel.cpp`, `bridge::ins_bench` turns the post EQ
+Pi by the boot bench's last row, `bench ins OFF+OFF` (`pi/engine/kernel.cpp`, `bridge::ins_bench` turns the post EQ
 on only for that row, so the four pairs' numbers stay comparable with the table below).
 
 
@@ -292,6 +324,7 @@ by the boot bench's PLAITS ratio (x 4.4):
 | COMP + EQ | 0.50 % | ~2.2 % (the costliest) |
 | DRIVE + TREMOLO | 0.30 % | ~1.3 % |
 | CRUSH + RINGMOD | 0.32 % | ~1.4 % |
+| SAT + SAT | 1.8 % (3.7 % with the Pi's GCC flags, no vectoriser: tests/bench/bench.sh) | ~8..16 % |
 
 spread over the render cores (a voice's chain is ~0.3 % of a core at worst). The kernel's boot bench logs the real
 numbers on the Pi: `bench ins FILTER+DELAY: 8 voices x 2 slots x.xx % of a core, worst block y %` (core 0, after the
