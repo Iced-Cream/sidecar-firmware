@@ -1,7 +1,8 @@
 # Sidecar | Expander: firmware
 
-> **Development snapshot of 0.4.0: unstable, not a release.** Needs matching builds of both repos; flash at your own risk;
-> keep your 0.3.1 firmware for rollback. Use `main` for a release.
+> **`dev` is the development branch: unstable, not a release.** It carries the 0.4.0 line and needs matching builds of
+> both repos; flash at your own risk; keep your 0.3.1 firmware for rollback. Use `main` for a release. Pull requests go to
+> `dev` (see CONTRIBUTING.md).
 
 ## What's in this snapshot (since 0.3.2)
 
@@ -45,7 +46,7 @@ on a real Digitakt, and its mod is in the separate repository
 users. The 0.3 line brings poly tracks with the Sidecar's own sequencer; the machines MULTISAMPLE, WAVETABLE, GRANULAR, CHOP, LIVE IN and MD (built in); the user machines, now with NUSAW, VOX, HUSH1 and
 RAFFO; insert effects with AMP (Neural Amp Modeler captures); the SPACE echo; the recorder; projects kept by the Rytm's
 slot; and the pairing code for the web page. Release 0.3.2 works with the Rytm firmware 0.3.1; this branch needs the Rytm firmware built
-from the `dev-0.4.0` branch of sidecar-mods.
+from the `dev` branch of sidecar-mods.
 
 - Release and binaries: <https://github.com/trigcondition/sidecar-firmware/releases/tag/v0.3.2> (the Pi SD cards, the
   user machines, the starter content); 0.1.0 and 0.2.0: <https://github.com/trigcondition/sidecar-expander/releases>
