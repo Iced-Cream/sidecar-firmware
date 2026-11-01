@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "device/device.h"
 #include "platform.h"
 #include "poly.h"
 #include "user/um.h"
@@ -268,8 +269,12 @@ CORE_COLD void reset() {
   g_noroom = 0;
 }
 
-CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) { return arp::seq_on(vi, note, vel, cfg) || play_on(vi, note, vel, cfg); }
+CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
+  device::box_note(vi, note, vel);
+  return arp::seq_on(vi, note, vel, cfg) || play_on(vi, note, vel, cfg);
+}
 CORE_COLD void seq_off(int vi, int note) {
+  device::box_note(vi, note, 0);
   if (!arp::seq_off(vi, note)) play_off(vi, note);
 }
 CORE_COLD bool play_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
