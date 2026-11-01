@@ -1,7 +1,7 @@
 # MODEL E: a three-oscillator voice with a ladder filter (basses, leads)
 
-A Pi Sidecar user machine (RMPA package `modele.a64.rmp`, id `modele.voice`), shipped on its own, not in the release
-build. The oscillators are [ModelDigi](https://github.com/simonjohansson/ModelDigi)'s bank (GPL-2.0-or-later, vendored
+A Pi Sidecar user machine (RMPA package `modele.a64.rmp`, id `modele.voice`), version 1.1.0, in the release's plugins
+zip from 0.4.0. The oscillators are [ModelDigi](https://github.com/simonjohansson/ModelDigi)'s bank (GPL-2.0-or-later, vendored
 unchanged in `third_party/modeldigi`, the commit in `NOTICE`): three oscillators with edge-smoothed waves, oscillator
 3 as a modulator (taken before its level, so it can modulate in silence), analog drift and the mixer's saturation.
 ModelDigi stops at the oscillators; `modele.c` adds the rest of a playable voice: a 4-pole ladder (no unit delay in its
@@ -82,5 +82,5 @@ Install: upload `out/modele.a64.rmp` on the Pi's web page (http://sidecar.local,
 into `/Plugins`), or copy it into `/Plugins` on the card; then pick MODEL E for a user slot (U1..U5) from the Rytm's
 slot menu or the web page.
 
-In a release's plugins zip: add `modele` to the list in `package_pi.sh`, the GPL and `NOTICE.txt` to that zip's
-licence text, and `modele-source.tar.gz` beside the package.
+In a release's plugins zip (the docs repo's `scripts/package_pi.sh`): the package, `modele-LICENSE.txt`,
+`modele-NOTICE.txt` and `modele-source.tar.gz` beside it, outside the zip's MIT `LICENSE.txt`.

@@ -21,7 +21,9 @@ uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach,   // 
 bool idle_prepare();
 bool idle_save();
 void idle_stream();
-const char* idle_slowest(unsigned* us);   // the slowest idle step since the last call (core/engine.h IdleSlow)
+// the slowest idle step since the last call (core/engine.h IdleSlow), *sum all the named steps' us, *here the control core's
+// own time on the card (cardq::here_take)
+const char* idle_slowest(unsigned* us, unsigned* sum, unsigned* here);
 void idle_note(const char* name, unsigned us);
 bool take_restart();                       // another box needs its state folder (core/device/device.h): reboot
 // The control core's loop, every pass: the 13-byte 1D (user slots, all EMPTY) every 5 s, as the Teensy's loop sends

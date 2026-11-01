@@ -84,7 +84,7 @@ CORE_COLD bool engine_begin() {
 // ---- the idle steps' cost (engine.h IdleSlow)
 namespace {
 const char* g_slow_name = "";
-uint32_t g_slow_us = 0;
+uint32_t g_slow_us = 0, g_slow_sum = 0;
 template <class F>
 CORE_COLD bool timed(const char* n, F f) {
   uint32_t t = now_us();
@@ -94,11 +94,12 @@ CORE_COLD bool timed(const char* n, F f) {
 }
 }  // namespace
 CORE_COLD void idle_note(const char* name, uint32_t us) {
+  g_slow_sum += us;
   if (us > g_slow_us) g_slow_us = us, g_slow_name = name;
 }
 CORE_COLD IdleSlow idle_slowest_take() {
-  IdleSlow r = {g_slow_name, g_slow_us};
-  g_slow_name = "", g_slow_us = 0;
+  IdleSlow r = {g_slow_name, g_slow_us, g_slow_sum};
+  g_slow_name = "", g_slow_us = 0, g_slow_sum = 0;
   return r;
 }
 #define T_(n, e) timed(n, [&]() -> bool { return (e); })
@@ -165,7 +166,7 @@ CORE_COLD bool idle_save() {
 #if CORE_POLY
   settled = settled && !ins::settings_dirty(nullptr) && !seq::unsaved();
 #endif
-  return device::step(settled) || ix;   // a change of state folder: the last write, behind all of the above
+  return T_("device", device::step(settled)) || ix;   // a change of state folder: the last write, behind all of the above
 }
 
 // With the sample RAM: a stream within ~85 ms of running dry first, then MULTISAMPLE's streams and loads, then a load

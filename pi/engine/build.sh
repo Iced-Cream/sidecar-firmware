@@ -178,8 +178,10 @@ make -C lib/usb -j$J >/dev/null
 [ -f addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a ] || make -C addon/wlan/hostap/wpa_supplicant -f Makefile.circle -j$J >/dev/null
 # Pi 5: the DSI display driver (Circle'"'"'s addon/rp1dsi; docs/pi5.md "DSI display"), once. Its one change: the frame
 # buffer'"'"'s pointer and pitch in the header (pi/circle/circle-rp1dsi-fb.patch, inline, for the rotating blit of a Touch
-# Display 2: no object changes, so a built library stands; idempotent, its own file and marker)
+# Display 2: no object changes, so a built library stands; idempotent, its own file and marker), then the Touch Display 2
+# fixes (pi/circle/circle-rp1dsi-td2.patch: objects change, so a tree patched here rebuilds the library; the 7" keeps its flags)
 [ "$R" != 5 ] || grep -q circle-rp1dsi-fb addon/rp1dsi/rpitouchscreen.h || patch -p1 < /repo/pi/circle/circle-rp1dsi-fb.patch
+[ "$R" != 5 ] || grep -q circle-rp1dsi-td2 addon/rp1dsi/rpitouchscreen2.cpp || { patch -p1 < /repo/pi/circle/circle-rp1dsi-td2.patch && rm -f addon/rp1dsi/librp1dsi.a addon/rp1dsi/*.o; }
 [ "$R" != 5 ] || [ -f addon/rp1dsi/librp1dsi.a ] || make -C addon/rp1dsi -j$J >/dev/null
 # Pi 5: the NVMe SSD driver (Circle'"'"'s addon/nvme, unchanged, experimental; docs/STORAGE.md), once
 [ "$R" != 5 ] || [ -f addon/nvme/libnvme.a ] || make -C addon/nvme -j$J >/dev/null

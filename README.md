@@ -25,8 +25,7 @@ or the commits it came from; "host tests" means unit tests on a computer; "emula
 - **Idle sleep:** the idle cores sleep instead of spinning, `idlewfe=0` turns it off. One Pi 5 measurement: 66 C against 79 C after 16 minutes.
 - **Device profiles:** new in 0.3.2 and carried on here; the Digitakt has run in an emulator only.
 
-Not in this snapshot: **master FX**, and `circle-rp1dsi-td2.patch`, 0.3.2's Touch Display 2 fixes (contact id bound, the 5"
-panel's sync events, a silent GT911), which is on `main` and has not been merged into this line yet. On a 5" panel use `main`.
+Not in this snapshot: **master FX**.
 
 ## About
 

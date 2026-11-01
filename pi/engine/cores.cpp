@@ -166,6 +166,7 @@ static void KeysIn (u32 w)
 }	// PLAY/STOP: an armed recorder; clock / SPP: STUTTER's grid
 
 static volatile CEngineCores::TStall s_Stall;
+static const char * volatile s_pStallStep;
 CEngineCores::TStall CEngineCores::Stall (void)
 {
 	TStall s;
@@ -173,7 +174,10 @@ CEngineCores::TStall CEngineCores::Stall (void)
 	return s;
 }
 
-static volatile unsigned s_Gaps[CEngineCores::kGaps][7], s_nGaps;
+const char *CEngineCores::StallStep (void) { const char *p = s_pStallStep; return p ? p : ""; }
+
+static volatile unsigned s_Gaps[CEngineCores::kGaps][10], s_nGaps;
+static const char * volatile s_GapStep[CEngineCores::kGaps];
 static volatile boolean s_bPoll;
 boolean CEngineCores::WaitPolled (void) { return s_bPoll; }
 unsigned CEngineCores::Gaps (TGap *p)
@@ -184,6 +188,8 @@ unsigned CEngineCores::Gaps (TGap *p)
 		const volatile unsigned *g = s_Gaps[(n - k + i) % kGaps];
 		p[i].gap_us = g[0], p[i].at_frames = g[1], p[i].wfe_us = g[2], p[i].kctl = g[3], p[i].daif = g[4];
 		p[i].sec = g[5], p[i].sec_us = g[6];
+		const char *pStep = s_GapStep[(n - k + i) % kGaps];
+		p[i].step = pStep ? pStep : "", p[i].step_us = g[7], p[i].step_sum = g[8], p[i].here_us = g[9];
 	}
 	return k;
 }
@@ -423,6 +429,7 @@ void CEngineCores::Control (void)
 				s_bNotes ? "on" : "off");
 	u64 nPrevT0 = 0, nPrevWfe = 0;
 	unsigned nSec[6] = {}, nStreams = 0;
+	struct { const char *pName; unsigned nUs, nSum, nHere; } Slow[2] = {};	// the pass's tick and idle sections: their slowest step
 	for (;;)
 	{
 		u64 t0 = Ticks ();
@@ -434,8 +441,13 @@ void CEngineCores::Control (void)
 				nStreams = g_Output.Streams ();
 				for (unsigned i = 0; i < sizeof s_Stall / sizeof (unsigned); i++) ((volatile unsigned *) &s_Stall)[i] = 0;
 				s_nGaps = 0;
+				s_pStallStep = 0;
 			}
 			unsigned nGap = nPrevT0 ? (unsigned) ((t0 - nPrevT0) * 1000000 / TickRate ()) : 0;
+			unsigned nLong = 0;			// the section that took the pass's time
+			for (unsigned i = 1; i < 6; i++) if (nSec[i] > nSec[nLong]) nLong = i;
+			const auto &S = Slow[nLong == 3 ? 0 : 1];
+			const boolean bNamed = nLong == 3 || nLong == 5;
 			if (nGap > 2000)
 			{
 				s_Stall.gaps_over_2ms++;
@@ -445,15 +457,17 @@ void CEngineCores::Control (void)
 				volatile unsigned *g = s_Gaps[s_nGaps % kGaps];
 				g[0] = nGap, g[1] = g_Output.Diagnostics ().since_reset, g[2] = (unsigned) (nPrevWfe * 1000000 / TickRate ());
 				g[3] = (unsigned) nKc, g[4] = (unsigned) nDaif;
-				unsigned m = 0;			// the section that took the pass's time
-				for (unsigned i = 1; i < 6; i++) if (nSec[i] > nSec[m]) m = i;
-				g[5] = m, g[6] = nSec[m];
+				g[5] = nLong, g[6] = nSec[nLong];
+				g[7] = bNamed ? S.nUs : 0, g[8] = bNamed ? S.nSum : 0, g[9] = bNamed ? S.nHere : 0;
+				s_GapStep[s_nGaps % kGaps] = bNamed ? S.pName : "";
 				s_nGaps++;
 			}
 			if (nGap > s_Stall.gap_us)
 			{
 				s_Stall.gap_us = nGap, s_Stall.at_frames = g_Output.Diagnostics ().since_reset;
 				for (unsigned i = 0; i < 6; i++) s_Stall.sec_us[i] = nSec[i];	// the pass that just ended: the gap is its time
+				s_Stall.step_us = bNamed ? S.nUs : 0, s_Stall.step_sum = bNamed ? S.nSum : 0, s_Stall.here_us = bNamed ? S.nHere : 0;
+				s_pStallStep = bNamed ? S.pName : "";
 			}
 			nPrevT0 = t0;
 			for (unsigned i = 0; i < 6; i++) nSec[i] = 0;
@@ -513,11 +527,10 @@ void CEngineCores::Control (void)
 		}
 		Mark (3);			// the tick section ends here: Drone, bridge::tick and the pair popup
 		{	// its slowest step, named in the log past 2 ms (as the idle section's below)
-			unsigned nSlowUs;
-			const char *pSlow = bridge::idle_slowest (&nSlowUs);
+			Slow[0].pName = bridge::idle_slowest (&Slow[0].nUs, &Slow[0].nSum, &Slow[0].nHere);
 			if (nSec[3] > 2000)
-				CLogger::Get ()->Write (From, LogWarning, "control: tick section %u us, its slowest step %s (%u us)",
-							nSec[3], pSlow, nSlowUs);
+				CLogger::Get ()->Write (From, LogWarning, "control: tick section %u us, its slowest step %s (%u us), named steps %u us, card here %u us",
+							nSec[3], Slow[0].pName, Slow[0].nUs, Slow[0].nSum, Slow[0].nHere);
 		}
 		unsigned nLevel = g_Output.Level ();
 		if (nLevel < s_nFifoMin) s_nFifoMin = nLevel;
@@ -542,11 +555,10 @@ void CEngineCores::Control (void)
 		}
 		Mark (5);
 		{	// 7z: an idle section past 2 ms (the FIFO's refill waits that long): its slowest step, named in the log
-			unsigned nSlowUs;
-			const char *pSlow = bridge::idle_slowest (&nSlowUs);
+			Slow[1].pName = bridge::idle_slowest (&Slow[1].nUs, &Slow[1].nSum, &Slow[1].nHere);
 			if (nSec[5] > 2000)
-				CLogger::Get ()->Write (From, LogWarning, "control: idle section %u us, its slowest step %s (%u us)",
-							nSec[5], pSlow, nSlowUs);
+				CLogger::Get ()->Write (From, LogWarning, "control: idle section %u us, its slowest step %s (%u us), named steps %u us, card here %u us",
+							nSec[5], Slow[1].pName, Slow[1].nUs, Slow[1].nSum, Slow[1].nHere);
 		}
 		if (bWorked)
 		{

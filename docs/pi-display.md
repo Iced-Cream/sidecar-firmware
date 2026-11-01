@@ -282,8 +282,8 @@ On the Pi 5 see "DSI on the Pi 5" below. On the Pi 4:
 ### DSI on the Pi 5
 
 The Pi 5's firmware does not drive a DSI display: the engine drives it itself with Circle's `addon/rp1dsi` (Circle
-51.1.1, GPL-3.0, unchanged; `pi/engine/build.sh` builds `librp1dsi.a` in the Pi 5 tree). All *inferred* from Circle's
-sources; not yet run on hardware.
+51.1.1, GPL-3.0; `pi/engine/build.sh` applies `pi/circle/circle-rp1dsi-fb.patch` and `circle-rp1dsi-td2.patch`, for the Touch
+Display 2, and builds `librp1dsi.a` in the Pi 5 tree). The v1 path is *inferred* from Circle's sources, not yet run on hardware.
 
 - At boot (the boot screen), unless `dsi=0`: the engine reads the display regulator (I2C address 0x45, register 1) on
   each DSI port, **CAM/DISP 0 first, then CAM/DISP 1** (`dsi_port=0` or `1` in cmdline.txt: only that one). DISP0's I2C
@@ -344,10 +344,20 @@ The rotated picture, its cost and the mapped touch are built and host-tested, no
   UI's offset. A touch on the black margin lands on the UI's edge. Each poll is 3 I2C transfers, about 18 bytes at 100 kHz, about
   1.6 ms of busy-wait in core 0's loop, interrupts on (the I2C lock is task level), so this panel is polled every 20 ms, not
   10: about 8 % of the loop, whether or not a finger is down. The stats line's `longest update` includes it.
+- **The 5" panel:** the regulator's id picks it (low nibble 8 or 9). Same 720x1280, same code, same default rotation. Not measured with
+  this code. It runs in sync events, as Linux drives it and as the development build of bandersong (sidecar-firmware PR #4) ran on a 5";
+  that build used a 32-bit frame buffer, here it is 16 as on the 7". The 7" stays in sync pulses, measured (`circle-rp1dsi-td2.patch`).
+  If a 5" stays black, reseat the ribbon first (the cause of the black screen on that 5"), then open an issue with the log.
+- **Touch after a warm restart:** on a 5" the GT911 did not answer after a software restart until a power cycle (bandersong's
+  measurement; shutting the panel down first and a longer power-off at start did not help). The 7" has not been tried, and the cause is not
+  known. The engine restarts itself after an update, a Wi-Fi join or a change of device. If the controller is silent at start the log says
+  `rp1touch2: No touch controller at I2C 0x5D, running without touch` and the engine runs on without touch: use the web UI, or power
+  cycle. The contact id from the controller is bounded before it indexes anything (from the same PR).
 
 The log:
 
     display: DSI: DISP0: display regulator id 0xNN (Touch Display 2, 7")
+    rp1touch2: Touch controller GT911 at I2C 0x5D
     display: DSI: DISP0 1280x720 (rp1dsi, no scaling), rotation 270, touch Goodix polled
     display: UI 1280x720 on the frame buffer's 1280x720 (res=800x480|1024x600|1280x720 in /.rytm/display.txt or cmdline.txt)
     display: touch: DSI (rp1dsi)

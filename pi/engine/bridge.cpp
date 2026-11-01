@@ -124,9 +124,9 @@ uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach, int16
 bool idle_prepare() { return core::idle_prepare(); }
 bool idle_save() { return core::idle_save(); }
 void idle_stream() { core::idle_stream(); }
-const char* idle_slowest(unsigned* us) {
+const char* idle_slowest(unsigned* us, unsigned* sum, unsigned* here) {
   core::IdleSlow r = core::idle_slowest_take();
-  *us = r.us;
+  *us = r.us, *sum = r.sum, *here = core::cardq::here_take();
   return r.name;
 }
 void idle_note(const char* name, unsigned us) { core::idle_note(name, us); }

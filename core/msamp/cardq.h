@@ -103,6 +103,10 @@ constexpr uint32_t kTakeBackUs = 200000;   // (over a card's own pauses inside a
 bool take_back(Req* r);
 void run_here(Req* r);       // a request the full queue refused, run here (counted as taken back)
 bool idle(const Req* r);     // done, cancelled or never posted: the caller may reuse r (and its File)
+// The us the control core spent on the card since the last call (the control loop's slow-pass record: a step's time that is
+// really the card's): wait, take_back and run_here; here_note: the platform's own file calls, when one runs on that core
+uint32_t here_take();
+void here_note(uint32_t us);
 // the neediest stream's audio ahead (~0u: no stream), each pass; who: 0 MULTISAMPLE, 1 DSP SAMPLE, each with its own mark
 void set_need(uint32_t ahead_ms, uint32_t low_ms, int who = 0);
 // fix1041: a load's card operation, step by step on the control core (GRANULAR's and WAVETABLE's loads, a pool file's

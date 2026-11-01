@@ -23,7 +23,8 @@ bool idle_save();      // the project's name to /.rytm/project after a change: t
 void idle_stream();    // the streams' top-ups (the neediest first) and the sample RAM's loading
 // The idle steps' cost (7z, 2026-10-30): each step above is timed; the slowest since the last take, by name (the Pi's
 // control loop logs it when its idle section ran past 2 ms). idle_note: a step of the platform's own (user machines).
-struct IdleSlow { const char* name; uint32_t us; };
+// sum: every step's us since the last take (far under the section's time: the time went outside the named steps).
+struct IdleSlow { const char* name; uint32_t us, sum; };
 IdleSlow idle_slowest_take();
 void idle_note(const char* name, uint32_t us);
 

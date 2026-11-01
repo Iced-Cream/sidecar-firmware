@@ -200,27 +200,48 @@ CORE_COLD bool cancel(Req* r) {
   return false;
 }
 
+static uint32_t g_here_us;
+static bool g_here_run;   // a take-back's own file calls: counted once, as its request
+CORE_COLD uint32_t here_take() {
+  uint32_t r = g_here_us;
+  g_here_us = 0;
+  return r;
+}
+CORE_COLD void here_note(uint32_t us) {
+  if (!g_here_run) g_here_us += us;
+}
+
 CORE_COLD bool take_back(Req* r) {
   if (!cancel(r)) return false;
   --st.cancelled;
+  uint32_t t = now_us();
+  g_here_run = true;
   r->state = kRunning;
   run(r);
   sto(&r->state, kDone);
   ++st.taken_back;
+  g_here_run = false;
+  g_here_us += now_us() - t;
   return true;
 }
 
 CORE_COLD void run_here(Req* r) {
+  uint32_t t = now_us();
+  g_here_run = true;
   r->state = kRunning;
   run(r);
   sto(&r->state, kDone);
   ++st.taken_back;
+  g_here_run = false;
+  g_here_us += now_us() - t;
 }
 
 CORE_COLD void wait(Req* r) {
+  uint32_t t = now_us();
   while (ld(&r->state) == kPosted || ld(&r->state) == kRunning) {
     if (!on) break;   // (cannot happen: inline requests are done when post returns)
   }
+  g_here_us += now_us() - t;
 }
 
 CORE_COLD bool async(Req* r, Kind kind, File* f, const char* path, uint64_t off, uint8_t* buf, uint32_t len) {

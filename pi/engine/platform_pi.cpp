@@ -14,6 +14,7 @@
 #include "device/device.h"
 #include "console.h"
 #include "crumb.h"   // the crash breadcrumb: the last file call by path (2026-10-29)
+#include "msamp/cardq.h"   // here_note: a file call on the control core
 
 #if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
 bool g_bCardOff = false;   // testsecs= without testcard=1 (kernel.cpp): the card is not this engine's, every Fs::begin () refuses
@@ -408,7 +409,15 @@ File& File::operator=(const File& o) {
   return *this;
 }
 
+// A file call on the control core waits for FatFs's volume lock, so for whatever core 0 is doing on the card: its time goes to
+// the slow-pass record (core/msamp/cardq.h here_take). The rest of the card's calls run on the card core, none is meant for this one.
+struct CardHere {
+  uint32_t t = rytm_render_core() == 3 ? core::now_us() : 0;
+  ~CardHere() { if (rytm_render_core() == 3) core::cardq::here_note(core::now_us() - t); }
+};
+
 bool File::open(const char* path, int mode) {
+  CardHere h;
   close();
   return open_path(I(impl_), path, mode, 0);
 }
@@ -506,6 +515,7 @@ uint64_t File::fileSize() const {
 }
 
 int File::read(void* buf, size_t n) {
+  CardHere h;
   Impl& f = I(impl_);
   if (!f.open || f.isdir || (f.mode != kRead && f.mode != kReadWrite)) return -1;
   UINT got = 0;
@@ -640,6 +650,7 @@ bool Fs::remove(const char* path) {
 }
 
 bool Fs::exists(const char* path) {
+  CardHere h;
   if (is_root(path)) return true;
   char p[270];
   full(p, sizeof p, path);

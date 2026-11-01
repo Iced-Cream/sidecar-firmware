@@ -48,14 +48,18 @@ public:
 	static unsigned FifoTarget (void);
 	// The control loop's longest gap between two pass starts since the last Output::Reset (a new stream), with where that
 	// pass's time went: the sections midi keys cmds tick render idle (us each). at_frames: frames pulled since the Reset
-	// when the gap ended; gaps_over_2ms: how many gaps were that long. Racy reads from core 0 (a diagnostic).
-	struct TStall { unsigned gap_us, at_frames, gaps_over_2ms, sec_us[6]; };
+	// when the gap ended; gaps_over_2ms: how many gaps were that long. step_us, step_sum, here_us: of its longest section,
+	// tick or idle (none: 0): its slowest named step, all its named steps, the control core's own time on the card
+	// (cardq::here_take). Racy reads from core 0 (a diagnostic).
+	struct TStall { unsigned gap_us, at_frames, gaps_over_2ms, sec_us[6], step_us, step_sum, here_us; };
 	static TStall Stall (void);
+	static const char *StallStep (void);		// that slowest step's name, "" none. Kept here, /log's 64 KB are gone in 30 s
 	// The last kGaps gaps over 2 ms since the Reset, oldest first: {gap us, frames pulled at its end, us of that pass spent
 	// in its wfe (gap minus it: the pass itself), cntkctl_el1 then (the event stream's bits), DAIF (interrupt masks),
-	// the pass's longest section (0 midi, 1 keys, 2 cmds, 3 tick, 4 render, 5 idle) and its us}.
+	// the pass's longest section (0 midi, 1 keys, 2 cmds, 3 tick, 4 render, 5 idle) and its us, then as TStall its slowest
+	// step's name ("" none) and us, the named steps' us, the card's us on the control core}.
 	static const unsigned kGaps = 8;
-	struct TGap { unsigned gap_us, at_frames, wfe_us, kctl, daif, sec, sec_us; };
+	struct TGap { unsigned gap_us, at_frames, wfe_us, kctl, daif, sec, sec_us; const char *step; unsigned step_us, step_sum, here_us; };
 	static unsigned Gaps (TGap *p);			// returns how many (0..kGaps)
 	// The SysEx messages from the Rytm that took core 3 over 1 ms, oldest first: {command (byte 4), the next byte (a
 	// voice, a track..), length, us}.

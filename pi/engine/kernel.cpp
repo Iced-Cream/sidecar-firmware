@@ -495,7 +495,8 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  "\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u,"
 		  "\"outDiag\":{\"preResetPulled\":%u,\"resetLevel\":%u,\"firstPullLevel\":%d,\"armAt\":%d,\"armLevel\":%u,"
 		  "\"restartFirst\":%d,\"restartLast\":%d,\"underFirst\":%d,\"underLast\":%d,\"sinceReset\":%u},"
-		  "\"stall\":{\"gapUs\":%u,\"atFrames\":%u,\"over2ms\":%u,\"midi\":%u,\"keys\":%u,\"cmds\":%u,\"tick\":%u,\"render\":%u,\"idle\":%u}",
+		  "\"stall\":{\"gapUs\":%u,\"atFrames\":%u,\"over2ms\":%u,\"midi\":%u,\"keys\":%u,\"cmds\":%u,\"tick\":%u,\"render\":%u,\"idle\":%u,"
+		  "\"step\":\"%s\",\"stepUs\":%u,\"namedUs\":%u,\"cardHereUs\":%u}",
 		  IP[0], IP[1], IP[2], IP[3], k->m_pTransport->Name (), k->m_pGadgetMode,
 		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
@@ -507,17 +508,17 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  D.pre_reset_pulled, D.reset_level, (int) D.first_pull_level, (int) D.arm_at, D.arm_level, (int) D.restart_first,
 		  (int) D.restart_last, (int) D.under_first, (int) D.under_last, D.since_reset,
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
-		  ST.sec_us[5]);	// -1: did not happen
+		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
 	pOut->Append (s);
 	{	// the control loop's recent gaps over 2 ms: [gap us, frames pulled at the end, wfe us, cntkctl, DAIF, the pass's
-		// longest section (0 midi .. 5 idle, as "stall"), its us]
+		// longest section (0 midi .. 5 idle, as "stall"), its us, its slowest step and us, the named steps' us, the card's on core 3]
 		CEngineCores::TGap Gp[CEngineCores::kGaps];
 		unsigned nG = CEngineCores::Gaps (Gp);
 		pOut->Append (CEngineCores::WaitPolled () ? ",\"ctlwait\":\"poll\",\"gaps\":[" : ",\"ctlwait\":\"wfe\",\"gaps\":[");
 		for (unsigned i = 0; i < nG; i++)
 		{
-			s.Format ("%s[%u,%u,%u,%u,%u,%u,%u]", i ? "," : "", Gp[i].gap_us, Gp[i].at_frames, Gp[i].wfe_us, Gp[i].kctl, Gp[i].daif,
-				  Gp[i].sec, Gp[i].sec_us);
+			s.Format ("%s[%u,%u,%u,%u,%u,%u,%u,\"%s\",%u,%u,%u]", i ? "," : "", Gp[i].gap_us, Gp[i].at_frames, Gp[i].wfe_us, Gp[i].kctl, Gp[i].daif,
+				  Gp[i].sec, Gp[i].sec_us, Gp[i].step, Gp[i].step_us, Gp[i].step_sum, Gp[i].here_us);
 			pOut->Append (s);
 		}
 		pOut->Append ("]");
