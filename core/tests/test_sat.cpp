@@ -163,10 +163,20 @@ static void bus_page_reaches_sat() {
   CHECK(ins::control.type[ins::kBus0][0] == ins::kSat);
   p->enc(5, -1, false);
   CHECK(ins::control.type[ins::kBus0][0] == ins::kRing);
+  // past the list's end nothing happens: a tuned slot keeps its knobs, the card file stays clean
+  ins::set_type(ins::kBus0, 0, ins::kSat);
+  ins::set_param(ins::kBus0, 0, 1, 99);
+  ins::settings_clean();
+  p->enc(5, 1, false);
+  CHECK(ins::control.type[ins::kBus0][0] == ins::kSat && ins::param(ins::kBus0, 0, 1) == 99 && !ins::settings_dirty(nullptr));
+  ins::set_type(ins::kBus0, 0, ins::kOff);
+  ins::settings_clean();
+  p->enc(5, -1, false);
+  CHECK(ins::control.type[ins::kBus0][0] == ins::kOff && !ins::settings_dirty(nullptr));
   p->key(0x45);          // back
   p->key(0x45);
   ins::reset();
-  printf("test_sat: a bus's TYPE key steps over AMP\n");
+  printf("test_sat: a bus's TYPE key steps over AMP, and stops at the ends without touching the slot\n");
 }
 
 static void bit_exact() {
@@ -202,9 +212,14 @@ static void bit_exact() {
     size_t i = 0;
     for (; i < 4800; i += 12) e.ProcessMono(0, &y[i], 12, ins::control);
     set(0, 0, ins::kSat, c, 80, 64, 0);
+    x.resize(36000), y.resize(36000);
+    for (size_t j = 9600; j < x.size(); ++j) x[j] = x[j - 9600];
+    for (size_t j = 9600; j < y.size(); ++j) y[j] = x[j];
     for (; i < y.size(); i += 12) e.ProcessMono(0, &y[i], 12, ins::control);
-    CHECK(!memcmp(y.data() + 7200, x.data() + 7200, (x.size() - 7200) * sizeof(float)));
+    const size_t idle = 4800 + 2400 + satfx::kHold + satfx::kFade;   // the knob's smoothing, the hold, the fade
+    CHECK(!memcmp(y.data() + idle, x.data() + idle, (x.size() - idle) * sizeof(float)));
     CHECK(e.Faults() == 0);
+    x.resize(9600);
   }
   printf("test_sat: DRV 0 or MIX 0 bit for bit, mono and both stereo paths, from the first sample and back from a playing slot\n");
 }
@@ -233,6 +248,47 @@ static void latency_and_dry() {
     CHECK(std::fabs(g) < 1.0f);
   }
   printf("test_sat: latency %d samples (%.2f ms), the dry path with it\n", satfx::kLatency, satfx::kLatency * 1000.0f / kSr);
+}
+
+// a p-lock or an LFO takes DRV or MIX through 0 on a sustained tone: the wet ends, the delay stays, no dip. 1.6 kHz is the
+// worst tone: 15 frames are half its period
+static void through_zero() {
+  auto x = sine(1600, 0.25f, 48000);
+  auto low = [&](const std::vector<float>& y, size_t from) {   // the lowest peak over one period
+    float w = 9;
+    for (size_t i = from; i + 30 < y.size(); i += 6) {
+      float p = 0;
+      for (size_t j = i; j < i + 30; ++j) p = std::max(p, std::fabs(y[j]));
+      w = std::min(w, p);
+    }
+    return w;
+  };
+  for (int ci = 0; ci < 3; ++ci)
+    for (int knob = 0; knob < 2; ++knob) {   // DRV, MIX
+      Engine& e = fresh();
+      set(0, 0, ins::kSat, kChar[ci], 30, 64, 127);
+      auto y = x;
+      for (size_t i = 0; i < y.size(); i += 12) {
+        bool zero = (i / 2400) % 4 == 3 && i >= 9600;   // 50 ms at 0 every 200 ms
+        set(0, 0, ins::kSat, kChar[ci], knob == 0 && zero ? 0 : 30, 64, knob == 1 && zero ? 0 : 127);
+        e.ProcessMono(0, &y[i], 12, ins::control);
+      }
+      float w = low(y, 4800);
+      printf("test_sat: %s %s through 0 at 1.6 kHz: lowest peak %.3f (the tone 0.25)\n", kCharName[ci], knob ? "MIX" : "DRV", w);
+      CHECK(w > 0.2f);
+    }
+  // idle: long at 0 the path is x itself again, and still no step on the way
+  {
+    Engine& e = fresh();
+    set(0, 0, ins::kSat, kSoft, 30, 64, 127);
+    auto y = x;
+    size_t i = 0;
+    for (; i < 4800; i += 12) e.ProcessMono(0, &y[i], 12, ins::control);
+    set(0, 0, ins::kSat, kSoft, 0, 64, 127);
+    for (; i < y.size(); i += 12) e.ProcessMono(0, &y[i], 12, ins::control);
+    const size_t idle = 4800 + 2400 + satfx::kHold + satfx::kFade;   // the knob's smoothing, the hold, the fade
+    CHECK(!memcmp(y.data() + idle, x.data() + idle, (x.size() - idle) * sizeof(float)));
+  }
 }
 
 static void aliasing() {
@@ -494,6 +550,25 @@ static void cpu() {
   bench("a voice, SAT + SAT, mono", false, false);
   bench("a voice, SAT + SAT, stereo", true, false);
   bench("a voice, SAT + SAT, mono, CHAR fading", false, true);
+  // core 2's worst: every slot of the buses and the master on SAT, stereo
+  {
+    Engine& e = fresh();
+    for (int c = ins::kBus0; c < ins::kChains; ++c)
+      for (int s = 0; s < ins::kSlots; ++s) set(c, s, ins::kSat, kTape, 90, 80, 100);
+    float y[12][2];
+    double us = 0;
+    CHECK(timing_retry("SAT bus bench", [&] {
+      auto t0 = std::chrono::steady_clock::now();
+      for (int n = 0; n < blocks; ++n)
+        for (int c = ins::kBus0; c < ins::kChains; ++c) {
+          for (int i = 0; i < 12; ++i) y[i][0] = y[i][1] = x[i];
+          e.ProcessStereo(c, y, 12, ins::control);
+        }
+      us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count() / blocks;
+      return us < 250.0 / 4.4 / 2;
+    }));
+    printf("CPU (Mac): every bus and master slot on SAT (10): %.2f us a 12-frame block, %.1f %% of a core; x 4.4 ~%.1f us of 250\n", us, us / 2.5, us * 4.4);
+  }
 }
 
 int main() {
@@ -501,6 +576,7 @@ int main() {
   bus_page_reaches_sat();
   bit_exact();
   latency_and_dry();
+  through_zero();
   aliasing();
   level();
   no_click();

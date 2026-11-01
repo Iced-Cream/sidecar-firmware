@@ -117,8 +117,11 @@ The curve runs at 4x (192 kHz): 27-tap and 7 / 11-tap halfband FIRs, flat to 18 
 every CHAR [measured]. The level is made up for a -12 dBFS input, as DRIVE's, in RMS: such a sine moves +0..+1.9 dB across DRV on TAPE, under 0.5 dB on the others;
 louder input comes out quieter, white noise peaking at -6 dBFS down 5 dB (9 on TAPE) at DRV 127 [measured].
 
-**DRV 0 or MIX 0 is the dry signal, bit for bit, 0 frames late** [measured, mono and both stereo paths]. DRV's first four steps fade the wet in. Any wet at all and
-the dry path takes the wet's 15 frames (a 5 ms fade), so MIX in between does not comb. MIX 64 at 12 kHz: within 0.2 dB [measured].
+**DRV 0 or MIX 0 is the dry signal, bit for bit, 0 frames late, at the Engine** [measured, mono and both stereo paths]. That is the slot, not the whole path: on a voice `voice_out`
+still does its own float conversion and soft knee for a chain with a TYPE set, as for every other TYPE; a bus and the master have their limits after it. Only OFF skips those. DRV's first four steps fade the wet in. Any wet at all and
+the dry path takes the wet's 15 frames (a 5 ms fade), so MIX in between does not comb. MIX 64 at 12 kHz: within 0.2 dB [measured]. That fade is a moving comb, a dip at 1.6 kHz where 15 frames are half a period, so
+the delay stays for **250 ms after the wet ends**: a p-lock or an LFO taking DRV or MIX through 0 changes no delay (1.6 kHz at 0.25, lowest peak 0.245, 0.032 without the hold [measured]). The slot goes back to x itself after that. The two real changes of delay,
+out of a rest and back to it, still pass the comb once, 5 ms each: a sustained tone near 1.6 kHz dips there. A slot resting at DRV 0 or MIX 0 costs what a playing one does.
 
 A CHAR change crossfades the two curves over 5 ms; a jump from TAPE to SOFT on a p-lock passes CONS, 10 ms at most. Largest sample step with CHAR changed every 37 ms 0.019 against a playing
 slot's own 0.017 [measured].
@@ -324,11 +327,11 @@ by the boot bench's PLAITS ratio (x 4.4):
 | COMP + EQ | 0.50 % | ~2.2 % (the costliest) |
 | DRIVE + TREMOLO | 0.30 % | ~1.3 % |
 | CRUSH + RINGMOD | 0.32 % | ~1.4 % |
-| SAT + SAT | 1.8 % (3.7 % with the Pi's GCC flags, no vectoriser: tests/bench/bench.sh) | ~8..16 % |
+| SAT + SAT | 1.8 % (2.8 % with the Pi's GCC flags, no vectoriser: tests/bench/bench.sh) | ~8..13 % |
 
-spread over the render cores (a voice's chain is ~0.3 % of a core at worst). The kernel's boot bench logs the real
+spread over the render cores (a voice's chain is ~0.3 % of a core, SAT + SAT ~1..1.6 %, twice that in stereo). The kernel's boot bench logs the real
 numbers on the Pi: `bench ins FILTER+DELAY: 8 voices x 2 slots x.xx % of a core, worst block y %` (core 0, after the
-machine lines). Memory: 448 KB of DELAY lines (28 x 4096 floats), placed with the core's heap buffers (not in .bss).
+machine lines). Core 2's worst for SAT, every bus and master slot on it (10 stereo slots, no cap: they cost a bounded 2.3 % on the Mac, 3.5 % with the Pi's GCC flags, ~10..15 % on a Pi 4 [estimate]): `bench ins SAT buses+master`. Memory: 448 KB of DELAY lines (28 x 4096 floats), placed with the core's heap buffers (not in .bss).
 
 ## Left open / not built (the POST EQ)
 

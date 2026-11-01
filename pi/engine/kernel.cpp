@@ -801,6 +801,14 @@ void CKernel::LogBench (void)
 				nBlk / 10, nBlk % 10, nHash);
 		m_Timer.MsDelay (2);
 	}
+	{	// SAT on every slot of the buses and the master: what it can add to core 2
+		u32 nWorst = 0;
+		u64 nTicks = bridge::ins_bus_bench (&nWorst);
+		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		m_Logger.Write (From, LogNotice, "bench ins SAT buses+master: 10 stereo slots %u.%02u %% of a core, worst block %u.%u %%",
+				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
+		m_Timer.MsDelay (2);
+	}
 	// the NEON kernels against their C on this CPU (neon_bench.cpp)
 	{
 		u64 nC, nN;

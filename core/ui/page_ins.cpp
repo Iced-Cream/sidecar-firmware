@@ -292,7 +292,7 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
     case 5: {
       int n = clampi(t + d, 0, ins::kTypes - 1);
       if (n == ins::kAmp && ip.bus) n += d;   // a bus takes no AMP: past it
-      ins::set_type(ch, ip.slot, n);
+      if (n != t) ins::set_type(ch, ip.slot, n);   // the list's end: no reset of the knobs
       break;
     }
     case 6:

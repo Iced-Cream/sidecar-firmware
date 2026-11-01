@@ -177,6 +177,10 @@ int main(int argc, char** argv) {
       return bridge::ins_bench(p[0], p[1], &w, h) / (double)core::cycles_per_second();
     });
   }
+  run("ins SAT buses+master", [&](uint32_t* h) {
+    uint32_t w = 0;
+    return bridge::ins_bus_bench(&w, h) / (double)core::cycles_per_second();
+  });
   run("amp", [&](uint32_t* h) {
     uint32_t w = 0;
     *h = 0;

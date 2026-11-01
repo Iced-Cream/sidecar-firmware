@@ -11,8 +11,9 @@
 //   CONS  Console7Channel: sin(u |u|) / |u| x 0.8 + sin(u) x 0.2, u held at +-1.097
 //   SOFT  Density: sin(u), u held at +-pi/2
 // DRV 0..+24 dB; the level is made up for a -12 dBFS input (as DRIVE, in RMS). DRV's first four steps fade the wet in, so DRV 0
-// is the dry signal as MIX 0 is, bit for bit: the dry path is then x itself, 0 samples late, and takes kLatency (5 ms fade)
-// as soon as any wet plays, so MIX in between does not comb. A CHAR change crossfades the two curves over 5 ms.
+// is the dry signal as MIX 0 is, bit for bit: at rest the dry path is x itself, 0 samples late. Wet playing, it takes
+// kLatency (a 5 ms fade, a moving comb: half a period at 1.6 kHz), so MIX in between does not comb, and keeps it kHold past
+// the wet's end: a p-lock or an LFO through 0 changes no delay. A CHAR change crossfades the two curves over 5 ms.
 #pragma once
 #include <math.h>
 #include <stdint.h>
@@ -29,6 +30,7 @@ inline const char* char_name(int c) { return c == kTape ? "TAPE" : c == kCons ? 
 constexpr int kLatency = 15;   // frames of the wet path (the filters below: 13 + 2)
 constexpr int kBlock = 16;     // frames a run at most (ins::kChunk)
 constexpr int kFade = 240;     // a CHAR change, the dry path's change of delay: 5 ms
+constexpr int kHold = 12000;   // the dry path's delay stays this long after the wet ended: 250 ms
 
 constexpr float kHalfPi = 1.57079633f;
 constexpr float kPreGain = 1.0f;   // TAPE's shelf: +6 dB
@@ -86,6 +88,7 @@ struct Ch {
   float dry[kLatency];
   float pre, de, b1, b2, tl;     // the shelf both ways, the bump, the tilt
   float gp, cp[kChars], mp, ep;  // DRV, the levels, the mix and the dry path's delay share as the last run ended
+  int32_t hold;                  // frames left of the dry path's delay with no wet playing
   int16_t fade;                  // frames left of a CHAR change
   uint8_t on, from, to;
 };
@@ -215,11 +218,13 @@ inline void run(Ch& s, const Coefs& k, const float* x, float* y, int m) {
   memcpy(s.dry, d + m, sizeof s.dry);
   const float m0 = s.mp, m1 = k.mix;
   s.mp = m1;
-  if (m0 <= 0.0f && m1 <= 0.0f && s.ep <= 0.0f) {   // bypass: x itself
+  if (m0 > 0.0f || m1 > 0.0f) s.hold = kHold;
+  else s.hold = s.hold > m ? s.hold - m : 0;
+  if (!s.hold && s.ep <= 0.0f) {   // bypass: x itself
     memcpy(y, x, sizeof(float) * (unsigned)m);
     return;
   }
-  const float dm = (m1 - m0) / (float)m, de1 = m1 > 0.0f ? 1.0f / kFade : -1.0f / kFade;
+  const float dm = (m1 - m0) / (float)m, de1 = s.hold ? 1.0f / kFade : -1.0f / kFade;
   float mi = m0, e = s.ep;
   for (int i = 0; i < m; ++i) {
     mi += dm, e += de1;
