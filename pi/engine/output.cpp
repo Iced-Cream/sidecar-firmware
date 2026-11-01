@@ -87,7 +87,8 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
           float x = Limit(f.v[v] / 32768.0f * g);
           float a = x < 0 ? -x : x;
           if (a > peak_) peak_ = a;
-          out[i][kVoiceToChannel[v]] = To32(x);
+          const uint8_t ch = core::out::device().voice[v];   // the Rytm's: kVoiceToChannel, the old path bit for bit
+          if (ch < kChannels) out[i][ch] = To32(x);
         }
       }
       continue;
@@ -117,7 +118,8 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
         float x = Limit(trk[v] / 32768.0f * g);
         float a = x < 0 ? -x : x;
         if (a > peak_) peak_ = a;
-        out[i][core::out::device().voice[v]] = To32(x);
+        const uint8_t ch = core::out::device().voice[v];
+        if (ch < kChannels) out[i][ch] = To32(x);   // (a box with fewer voices: the rest have no channel)
       }
     }
     pre[0] *= g, pre[1] *= g, post[0] *= g, post[1] *= g;

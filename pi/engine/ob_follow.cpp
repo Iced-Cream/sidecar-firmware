@@ -36,6 +36,7 @@ CUSBFunction *CObFollow::Create (CUSBFunction *pParent)
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
 	if (pDesc->idVendor != core::device::kA4Vid || pDesc->idProduct != core::device::kA4Pid) return 0;
 	if (CKernelOptions::Get ()->GetAppOptionDecimal ("a4", 0) == 0) return 0;
+	if (core::device::active ().id == core::device::kIdA4) return 0;	// the A4 is the box in use: CObUsb's
 	if (s_pThis != 0)
 	{
 		CLogger::Get ()->Write (From, LogWarning, "an A4 already streams");

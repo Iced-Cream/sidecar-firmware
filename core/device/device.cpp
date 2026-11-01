@@ -1,5 +1,6 @@
 // core/device/device.cpp - see device.h. Per message, never per sample: cold.
 #include "device/device.h"
+#include "device/a4.h"
 #include "device/digitakt.h"
 #include "device/strip.h"
 
@@ -8,6 +9,7 @@
 #include "fmt/fmt.h"
 #include "fx/out.h"
 #include "host_link.h"
+#include "keys.h"
 #include "platform.h"
 
 namespace core {
@@ -27,8 +29,8 @@ static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
-static const Profile* s_list[kMax] = {&kRytm, &kDigitakt};
-static int s_n = 2;
+static const Profile* s_list[kMax] = {&kRytm, &kDigitakt, &kA4};
+static int s_n = 3;
 Link g_link = {};
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
@@ -46,7 +48,7 @@ void rytm_on_usb(bool on) { s_rytm_usb = on; }
 
 CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid) {
   for (int k = 0; k < s_n; ++k)
-    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio) return s_list[k];
+    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio && (!s_list[k]->audio_by_hello || g_link.box == s_list[k])) return s_list[k];
   return nullptr;
 }
 
@@ -214,6 +216,16 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
   return n;
 }
 
+// What the sequencer sent the box: its echo, the mod's report of the note it plays
+static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices];
+
+CORE_COLD void box_note(int vi, int note, int vel) {
+  const Profile* p = g_link.box;
+  if (!p || !p->note_out || vi < 0 || vi >= p->voices) return;
+  if (vel) s_sent[vi].note = (uint8_t)note, s_sent[vi].on = true, s_sent[vi].at = now_ms();
+  keys::forward_note((uint8_t)((vel ? 0x90 : 0x80) | vi), (uint8_t)note, (uint8_t)vel);
+}
+
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (len < 5 || d[len - 1] != 0xF7) return ++l.dropped, false;
   if (is_sidecar(d, len) && d[4] == kCmdHello) return hello(l, d, len), false;
@@ -234,6 +246,10 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (is_sidecar(d, len) && (l.box->in_allow[(d[4] & 0x7f) >> 5] >> (d[4] & 31) & 1)) {
     bool voiced = d[4] == 0x03 || d[4] == 0x04 || d[4] == 0x11;
     if (voiced && (d[5] & 7) >= l.box->voices) return ++l.dropped, false;
+    if (d[4] == 0x04 && len > 7 && s_sent[d[5] & 7].on && s_sent[d[5] & 7].note == d[6] && now_ms() - s_sent[d[5] & 7].at < kEchoMs) {
+      s_sent[d[5] & 7].on = false;
+      return false;
+    }
     if (l.box->controls && d[4] == 0x04) strip::trig(d[5] & 7);
     if (l.box->controls && d[4] == 0x11) strip::off(d[5] & 7);
     return true;

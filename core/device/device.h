@@ -102,6 +102,8 @@ struct Profile {
   const out::Device* audio;   // its Overbridge stream (core/fx/out.h): channels each way, return channels, a stereo mix or per
                               // voice, what the Pi's driver opens. Null: no audio, the driver leaves the USB id alone
   const Controls* controls;   // null: no controls report
+  bool note_out;              // the engine's own notes (the sequencer's) go to the box as MIDI, channel = voice: its voice's amp must open for the Sidecar's voice to sound
+  bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
 };
 
 const Profile& rytm();                 // the default
@@ -134,6 +136,9 @@ bool step(bool settled = true);
 // a Rytm's id caused, when the Rytm may not have enumerated yet. Another box's USB id changes nothing: its hello decides.
 void rytm_on_usb(bool on);
 constexpr uint32_t kSettleMs = 10000;
+// The sequencer played voice vi, or let it go (vel 0): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
+void box_note(int vi, int note, int vel);
+constexpr uint32_t kEchoMs = 40;
 const char* state_path_box(const char* path, char* buf, int cap);
 // path as the card has it: path itself, or in buf. Every file call passes here, so the Rytm's cost is the one test.
 // The file layer has no link to ask: this is g_link's folder.

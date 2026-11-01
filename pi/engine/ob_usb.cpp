@@ -66,7 +66,7 @@
 
 static const char From[] = "rytmob";
 
-static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, IN; the biggest OUT block too
+static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, the biggest block either way
 static const unsigned kBufSize = (CObUsb::MaxBlocks * kBlk + 63) & ~63u;	// 2944
 
 static_assert (CObUsb::MaxURBs <= XHCI_EP_MAX_URBS, "Circle's per-endpoint URB FIFO");
@@ -199,7 +199,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 		CLogger::Get ()->Write (From, LogWarning, "%s: a box already streams, no audio from this one", pAudio->name);
 		return 0;
 	}
-	if (pAudio->in_channels != ob::kChannels || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
+	if ((pAudio->in_channels != ob::kChannels && pAudio->in_channels != 8) || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
 	{
 		CLogger::Get ()->Write (From, LogError, "%s: %u channels in, %u out: not a stream this driver serves", pAudio->name,
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
@@ -243,6 +243,7 @@ void CObUsb::SetActive (boolean bActive)
 CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 :	CUSBFunction (pFunction),
 	m_pAudio (pAudio), m_nOutCh (pAudio->channels), m_nOutBlk (ob::block_bytes (pAudio->channels)),
+	m_nInCh (pAudio->in_channels), m_nInBlk (ob::block_bytes (pAudio->in_channels)),
 	m_pInDesc (0), m_pOutDesc (0), m_pIn (0), m_pOut (0),
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
@@ -323,7 +324,7 @@ boolean CObUsb::ScanDescriptors (void)
 			if (alt == ob::kAlt && intr)
 			{
 				unsigned nMps = e->wMaxPacketSize & 0x7FF;
-				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == kBlk) m_pInDesc = e;
+				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == m_nInBlk) m_pInDesc = e;
 				if (iface == ob::kOutIface && e->bEndpointAddress == ob::kOutEp && nMps == m_nOutBlk) m_pOutDesc = e;
 			}
 		}
@@ -344,7 +345,7 @@ boolean CObUsb::Configure (void)
 	if (!ScanDescriptors ())
 	{
 		CLogger::Get ()->Write (From, LogError, "no interrupt endpoints 0x83/0x03 (%u/%u B) at alt 3: "
-					"not in OVERBRIDGE mode?", kBlk, m_nOutBlk);
+					"not in OVERBRIDGE mode?", m_nInBlk, m_nOutBlk);
 		return FALSE;
 	}
 
@@ -377,7 +378,7 @@ boolean CObUsb::Configure (void)
 	m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
 	m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
 
-	const unsigned nLen = m_nBlocks * kBlk, nOutLen = m_nBlocks * m_nOutBlk;
+	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
 		m_pInURB[i] = new CUSBRequest (m_pIn, s_InBuf[i], nLen);
@@ -536,6 +537,21 @@ void CObUsb::OutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	((CObUsb *) pContext)->OutDone ((unsigned) (uintptr) pParam, pURB);
 }
 
+// An A4's IN block as the Rytm's layout (core/device/a4.cpp): MAIN and the tracks where they are, its two inputs on the AUDIO IN channels, the tracks it does not
+// have silent. Audio words are copied as they are: nothing here reads their value.
+void CObUsb::WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh)
+{
+	memcpy (pWide, pIn, ob::kHeaderBytes);
+	for (int f = 0; f < ob::kFramesPerBlock; f++)
+	{
+		const u8 *s = pIn + ob::kHeaderBytes + 4 * nCh * f;
+		u8 *d = pWide + ob::kHeaderBytes + 4 * ob::kChannels * f;
+		memcpy (d, s, 4 * (nCh - 2));
+		memset (d + 4 * (nCh - 2), 0, 4 * (ob::kChannels - nCh));
+		memcpy (d + 4 * (ob::kChannels - 2), s + 4 * (nCh - 2), 8);
+	}
+}
+
 // Runs in the xHCI interrupt.
 void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 {
@@ -557,11 +573,17 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (!ok) m_nInErrors++;
 	else
 	{
-		if (len % kBlk != 0) m_nInShort++;
-		for (unsigned b = 0; b < len / kBlk; b++)
+		if (len % m_nInBlk != 0) m_nInShort++;
+		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
-			const u8 *pBlk = pBuf + b * kBlk;
+			const u8 *pBlk = pBuf + b * m_nInBlk;
 			if (!ob::block_from_device (pBlk)) { m_nInBadMagic++; continue; }
+			u8 Wide[kBlk];
+			if (m_nInCh != ob::kChannels)	// a box with 8 channels: the 12-channel block every consumer below takes
+			{
+				WidenIn (pBlk, Wide, m_nInCh);
+				pBlk = Wide;
+			}
 
 			u16 c = ob::block_counter (pBlk);
 			if (m_bHaveIn && c != m_nExpectIn)

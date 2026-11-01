@@ -25,11 +25,18 @@ void CLogger::Write(const char*, int, const char* f, ...) {
   va_end(a);
   lines.push_back(b);
 }
+#include "device/a4.h"
 namespace core { namespace device {
+static bool g_a4_chosen = false;      // its hello chose it (device.cpp: audio_by_hello)
+const Profile& active() {             // (only ob_follow.cpp asks)
+  static Profile none;
+  return g_a4_chosen ? kA4 : none;
+}
 const Profile* by_usb(uint16_t vid, uint16_t pid) {   // device.cpp's list, without the engine it links
   static Profile rytm;
   rytm.audio = &out::kRytmMk2;
   if (vid == 0x1935 && pid == 0x0b48) return &rytm;
+  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen ? &kA4 : nullptr;
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
@@ -236,6 +243,50 @@ int main() {
     CHECK(a.ob == nullptr);
     a.ob = nullptr;
   }
+  core::device::g_a4_chosen = true;
+  {  // the A4 as the box in use: CObUsb, 256 / 200, each voice on its own channel, IN widened to 12
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob && a.ob->Configure());
+    same_sequence(a.host);
+    CHECK(CObUsb::Streaming() && !CObFollow::Streaming());
+    CHECK(a.host.in.size() == 8 && a.host.in.front()->len == 256);
+    CHECK(&core::out::device() == core::device::kA4.audio);
+    CHECK(g_rytm_usb == 0);
+    int16_t fr[64][8] = {};
+    for (auto& f : fr)
+      for (int v = 0; v < 8; ++v) f[v] = (int16_t)(1000 * (v + 1));
+    g_Output.SetMode(Output::kTracks);
+    g_Output.Push(fr, 64);
+    g_Output.Push(fr, 64);
+    uint16_t c = 0;
+    long at = 0;
+    a.in_a4(1, c, at, 1000.0);
+    CHECK(a.host.out.size() == 1 && a.host.out[0]->len == 200);
+    const uint8_t* o = a.host.out[0]->buf;
+    a.out_done();
+    for (int k = 0; k < 12; ++k) {         // past the fade-in
+      a.in_a4(1, c, at, 1000.0);
+      o = a.host.out.front()->buf;
+      if (k == 11)
+        for (int ch = 0; ch < 4; ++ch) CHECK(ob::block_sample(o, 6, 6, 2 + ch) != 0);
+      CHECK(ob::block_sample(o, 6, 6, 0) == 0 && ob::block_sample(o, 6, 6, 1) == 0);
+      a.out_done();
+    }
+    CHECK(g_Output.Underflows() == 0);
+    uint8_t in[256], w[368];
+    memset(in, 0, 256);
+    for (int f = 0; f < 7; ++f)
+      for (int ch = 0; ch < 8; ++ch) ob::put_be32(in + 32 + 4 * (8 * f + ch), (f + 1) * 16 + ch);
+    memset(w, 0xAA, sizeof w);
+    CObUsb::WidenIn(in, w, 8);
+    for (int f = 0; f < 7; ++f) {
+      for (int ch = 0; ch < 6; ++ch) CHECK(ob::block_sample(w, 12, f, ch) == (f + 1) * 16 + ch);
+      for (int ch = 6; ch < 10; ++ch) CHECK(ob::block_sample(w, 12, f, ch) == 0);
+      CHECK(ob::block_sample(w, 12, f, 10) == (f + 1) * 16 + 6 && ob::block_sample(w, 12, f, 11) == (f + 1) * 16 + 7);
+    }
+  }
+  CHECK(&core::out::device() == &core::out::kRytmMk2);
+  core::device::g_a4_chosen = false;
   {  // the Rytm alone with the A4's code in the build: OUT as ever, PRE silent
     Bus r(g_rytm, 0x0b48);
     CHECK(r.ob && r.ob->Configure());

@@ -55,7 +55,7 @@ constexpr float kSmoothMs = 3.0f;    // LEV / PAN / WID smoothing
 // device so far: the Analog Rytm MKII over Overbridge (device-specific: docs/STEREO.md "Device-specific").
 // `ret` is how the voices go back: per voice on their own channels, or a stereo mix on `post` (every voice POST, whatever its
 // OUT says: LEV, PAN and WID still apply; a box with two return channels, docs/device-profiles.md). A channel a device does
-// not have is kNoChannel. in_channels: device -> host channels a frame (the driver's consumers take 12).
+// not have is kNoChannel. in_channels: device -> host channels a frame (the driver widens 8 to the 12 its consumers take: core/device/a4.cpp).
 constexpr uint8_t kNoChannel = 0xFF;
 enum Return : uint8_t { kPerVoice = 0, kStereoMix = 1 };
 struct Device {

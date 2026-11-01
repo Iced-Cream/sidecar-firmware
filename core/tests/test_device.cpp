@@ -10,6 +10,7 @@
 
 #include "check.h"
 #include "device/device.h"
+#include "device/a4.h"
 #include "device/digitakt.h"
 #include "fmt/fmt.h"
 #include "engine.h"
@@ -303,6 +304,52 @@ int main() {
     steps();
     CHECK(g_restarts == 3 && !strcmp(folder(), "/.digitakt"));
     host_fake_time(false, 0);
+    device::reset();
+  }
+
+  // An Analog Four MKII with its mod: its USB id claims nothing until its hello has chosen it; four voices; a Rytm's command dropped
+  {
+    using device::kIdA4;
+    auto steps = [&] { for (int k = 0; k < 40; ++k) { device::step(); fmt::post_step(); } };
+    auto hello = [&] {
+      send(sidecar({device::kCmdHello, 1, (uint8_t)(kIdA4 >> 7), (uint8_t)(kIdA4 & 0x7f), 1, 'A', '4'}));
+      return (int)g_out.back()[8];
+    };
+    g_restarts = 0;
+    device::reset();
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);   // a stock A4 beside a Rytm: nothing
+    CHECK(hello() == device::kRestart);
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);
+    steps();
+    CHECK(g_restarts == 1);
+    device::reset();
+    g_out.clear();
+    device::boot();
+    CHECK(device::active().id == kIdA4 && !strcmp(device::g_link.state, "/.a4"));
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == &device::kA4);
+    CHECK(hello() == device::kOk);
+    const out::Device& a = *device::kA4.audio;
+    CHECK(a.channels == device::kA4OutChannels && a.in_channels == device::kA4InChannels && a.ret == out::kPerVoice);
+    for (int v = 0; v < 4; ++v) CHECK(a.voice[v] == 2 + v);
+    for (int v = 4; v < 8; ++v) CHECK(a.voice[v] == out::kNoChannel);
+    // the mod's reports are the engine's own, the machine in the voice byte
+    uint8_t buf[device::kMaxMessage];
+    auto passes = [&](std::vector<uint8_t> m) {
+      const uint8_t* d = m.data();
+      int len = (int)m.size();
+      return device::translate(device::g_link, d, len, buf);
+    };
+    std::vector<uint8_t> tr = {0x04, 0x03 | 0x08, 60, 100};   // JUNO on voice 3
+    for (int k = 0; k < 2 * 16 + 2; ++k) tr.push_back(k % 2 ? 0 : 64);
+    CHECK(passes(sidecar(tr)));
+    send(sidecar(tr));
+    tr[1] = 0x04 | 0x08;                                       // no fifth voice
+    CHECK(!passes(sidecar(tr)));
+    CHECK(!passes(sidecar({0x33, 1, 2})));                     // a Rytm-only command
+    g_out.clear();
+    send(sidecar({device::kCmdHello, 1, (uint8_t)(kIdA4 >> 7), (uint8_t)(kIdA4 & 0x7f), 1, 'A', '4'}));
+    CHECK(g_out.size() == 1);                                  // only the hello's answer goes back
+    fmt::post_step();
     device::reset();
   }
 
