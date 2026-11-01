@@ -33,7 +33,7 @@ All bytes after `F0` are 7-bit. `<value>` is 0..127, `<fraction>` is in 1/128 st
 F0 7D 52 54 4F 01 <id hi> <id lo> 01 [name bytes] F7
 ```
 
-`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `0x3F00` and up for private experiments. Ask for a number when a
+`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `3` the Analog Four MKII, `0x3F00` and up for private experiments. Ask for a number when a
 port is public. The Sidecar answers once per hello:
 
 ```
@@ -163,15 +163,17 @@ The driver is `pi/engine/ob_usb.cpp`, its log prefix `rytmob` for every box. It 
 and each direction's block is `32 + 7 x channels x 4` bytes. It refuses a descriptor that does not match the row. OUT goes out block for block with IN, so
 the sizes do not matter to the pacing: the box's stream is the clock.
 
-| | Rytm MKII | Digitakt mk1 |
-|---|---|---|
-| USB id, OVERBRIDGE mode | 1935:0b48 | 1935:0b2c |
-| Rate, frames a block | 48 kHz, 7 | the same |
-| Box -> host | 12 channels, 368 B | 12 channels, 368 B: MAIN L R, tracks 1..8, INPUT L R |
-| Host -> box | 12 channels, 368 B | **2 channels, 88 B**: MAIN L R |
-| Feedback | none: interrupt transfers, the device's IN paces | the same |
-| The voices back | each on its channel, through the track | one stereo mix on the main output |
-| Own voices in box -> host | yes, on the stems and MAIN | **no**: USB return is not in IN's MAIN |
+| | Rytm MKII | Digitakt mk1 | Analog Four MKII |
+|---|---|---|---|
+| USB id, OVERBRIDGE mode | 1935:0b48 | 1935:0b2c | 1935:0b47 |
+| Rate, frames a block | 48 kHz, 7 | the same | the same |
+| Box -> host | 12 channels, 368 B | 12 channels, 368 B: MAIN L R, tracks 1..8, INPUT L R | **8 channels, 256 B**: MAIN L R, tracks 1..4, INPUT L R; the driver widens it to the 12-channel layout |
+| Host -> box | 12 channels, 368 B | **2 channels, 88 B**: MAIN L R | **6 channels, 200 B**: MAIN L R, tracks 1..4 |
+| Feedback | none: interrupt transfers, the device's IN paces | the same | the same |
+| The voices back | each on its channel, through the track | one stereo mix on the main output | each on its channel, through the voice's analog filters and amp |
+| Own voices in box -> host | yes, on the stems and MAIN | **no**: USB return is not in IN's MAIN | yes, on the voice's channel |
+
+**The A4's insert points** [read in OS 1.56, 0x400febf0]: host channels 2..5 join each voice's noise word on the way to the DAC, x a gain that follows the voice's amp from 0.25 up, so they reach the analog voice as its noise does, and its amp must be open: a track that plays. Channels 0 / 1 join the effects' return x USB TO MAIN's gain. An A4's USB id claims nothing by itself (`audio_by_hello`): a stock A4 beside a Rytm stays out of the Rytm's way. Its hello picks `/.a4`, the one restart follows, and from that boot on the driver claims it. Before that the engine hears its hellos and nothing else (`pi/engine/hello_gate.h`), and sends it nothing. `note_out`: the sequencer's notes on an A4 voice also go to it as MIDI, channel = voice, so its amp opens, and the mod's report of that very note is dropped.
 
 Eight voices do not fit two channels: 8 x 4 bytes x 48 kHz needs 256 B a packet, and the endpoint takes 88. So on a Digitakt the voices have one
 stereo pair. They are never in the Digitakt's filters, FX or track levels, a track's mute stops its trigs but not a tail, and what comes back over USB
