@@ -8,8 +8,8 @@
 // 3's longest pass) plus up to one URB's frames; the chain's own effects add none. The direct path adds none. Bypass keeps
 // the chain running (tails go on, the core time stays, re-engaging is instant).
 //
-// The limiter (core/fx/limiter.h) is the last thing on 0/1 while SRC is MIX or the chain plays, and the only limit there: the
-// stems and the chain's output come to it unclipped, so everything on 0/1 is on floats until it. It adds its 48 frames (1 ms)
+// The limiter (core/fx/limiter.h) is the last thing on 0/1 while SRC is MIX or the chain plays: the stems and the chain's output
+// come to it unclipped; what was on 0/1 before them (POST voices, the OUT, POST returns) is integer and may have saturated. It adds its 48 frames (1 ms)
 // to all of 0/1, both sides of the chain's crossfade alike, and comes in before them and leaves after them. 2/3 and 4..11
 // keep their timing; take playback, after it, is not limited. Hosted (no Circle headers): ob_usb.cpp and cores.cpp call it.
 #pragma once

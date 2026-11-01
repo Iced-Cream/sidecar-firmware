@@ -24,7 +24,10 @@ class Limiter {
 
   // a frame in, the frame kLook ago out, in place
   void Frame(float& l, float& r) {
-    const float a = l < 0.0f ? -l : l, b = r < 0.0f ? -r : r, p = a > b ? a : b;
+    float a = l < 0.0f ? -l : l, b = r < 0.0f ? -r : r;
+    if (a != a) a = 0.0f;   // (a NaN on one side must not hide the other side's peak)
+    if (b != b) b = 0.0f;
+    const float p = a > b ? a : b;
     float* d = d_[w_];
     const float ol = d[0], or_ = d[1];
     d[0] = l, d[1] = r;
@@ -35,7 +38,7 @@ class Limiter {
       if (s < s_) {
         s_ = s, left_ = kLook;
       } else {   // already steep enough: it only has to go on longer
-        const int m = (int)((need - g_) / s_) + 1;
+        const int m = s_ < 0.0f ? (int)((need - g_) / s_) + 1 : 0;   // (no line and a need on the gain itself, rounding: nothing to do)
         left_ = m > kLook ? kLook : m;
       }
       hold_ = kLook + 1;
@@ -62,7 +65,7 @@ class Limiter {
   }
 
  private:
-  static constexpr float kAim = kCeiling * 0.99999f;   // (the line's rounding, over kLook additions, stays under the ceiling)
+  static constexpr float kAim = kCeiling * 0.9997f;   // (the line's rounding and the release's last step, 0.9998 to 1, stay under the ceiling)
   float d_[kLook][2] = {};
   float g_ = 1.0f, s_ = 0.0f, low_ = 1.0f;
   int w_ = 0, left_ = 0, hold_ = 0;

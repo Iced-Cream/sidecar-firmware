@@ -58,8 +58,9 @@ image holds; 1 ms of lookahead (48 frames), the gain a straight line down that a
 
 - **When:** SRC MIX, or a chain playing (not bypassed). With SRC RET and nothing set, or bypassed in SRC RET, it is out and not a
   sample is touched. `stereo=measure`: out.
-- **It is the only limit.** The stems are not clipped before it, and 0/1 is on floats up to it, so the sum can stand 18 dB over and
-  come out whole. The chain's output has a bound of its own, far above it (+24 dB, linear to 70 %), there only so nothing runs away: with SRC
+- **The stems and the chain are not clipped before it,** so their sum can stand 18 dB over and come out whole. What is already on 0/1 before
+  the stems (the POST voices, the computer's OUT, the POST returns) is summed as 32-bit integers and saturates at full scale first: a hot voice
+  plus a reverb return can flat-top, and the limiter then only scales that down. The chain's output has a bound of its own, far above it (+24 dB, linear to 70 %), there only so nothing runs away: with SRC
   RET the chain is protected by this same limiter, which comes in with it.
 - **Fades:** the limiter comes in first (its delay filled, then 5 ms), then the stems and the chain (10 ms); they leave first, then it. So
   nothing over full scale ever passes on the direct side of its crossfade. That crossfade is the plain signal against itself 1 ms later:

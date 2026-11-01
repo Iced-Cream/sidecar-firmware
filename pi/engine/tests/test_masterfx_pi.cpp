@@ -433,6 +433,24 @@ static void limiter_alone() {
     CHECK(top <= fx::Limiter::kCeiling);
     printf("test_masterfx_pi: limiter, %.1f dB over: largest sample out %.6f, ceiling %.2f\n", 20 * std::log10(over), top, fx::Limiter::kCeiling);
   }
+  // the release's last step: peaks just under the ceiling while the gain comes back past 0.9998
+  z.Reset();
+  double near = 0;
+  for (int i = 0; i < 400000; ++i) {
+    float l = i % 60000 == 0 ? 4.0f : (i % 7 == 0 ? 0.98f : 0.0f), r = 0.0f;
+    z.Frame(l, r);
+    near = std::max(near, (double)std::fabs(l));
+  }
+  CHECK(near <= fx::Limiter::kCeiling);
+  // a NaN on R does not hide a peak on L
+  z.Reset();
+  double seen = 0;
+  for (int i = 0; i < 200; ++i) {
+    float l = i == 60 ? 8.0f : 0.0f, r = i == 60 ? std::nanf("") : 0.0f;
+    z.Frame(l, r);
+    seen = std::max(seen, (double)std::fabs(l));
+  }
+  CHECK(seen <= fx::Limiter::kCeiling);
   // under the ceiling: the signal, kLook later, and not a bit else
   z.Reset();
   std::vector<float> in;

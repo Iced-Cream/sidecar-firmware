@@ -395,8 +395,9 @@ bool command(const char* p, char* o, int cap) {
 }
 
 int json(char* o, int cap) {
+  const int gr = gr10();
   int n = sniprintf(o, cap, CORE_STR("\"mfx\":{\"byp\":%d,\"src\":\"%s\",\"lev\":%d,\"trim\":%d,\"gr\":%d.%d,\"on\":%d,\"s\":["), control.byp,
-                    control.src == kMix ? "mix" : "ret", control.lev, -(int)control.trim, gr10() / 10, gr10() % 10, on() ? 1 : 0);
+                    control.src == kMix ? "mix" : "ret", control.lev, -(int)control.trim, gr / 10, gr % 10, on() ? 1 : 0);
   for (int i = 0; i < kSlots && n < cap; ++i) {
     const int c = chain(i), s = slot(i), t = ins::control.type[c][s];
     const ins::Labels& L = ins::labels(t);
