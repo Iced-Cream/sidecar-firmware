@@ -51,6 +51,7 @@ static int s_nRytmPatIndex = -1;
 #include "bridge.h"
 #include "shared.h"
 #include "midiout_q.h"	// the MIDI machine's USB-A queues
+#include "usb_box.h"	// which USB MIDI device is the host link
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
@@ -1286,15 +1287,12 @@ static boolean KeysTap (const u8 *p)
 	KeysPush (4u << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3]);
 	return TRUE;
 }
-// The Rytm: an Elektron device (its vendor or product string); a device without strings is taken for it (as before)
-static boolean IsRytm (CDevice *p)
+static TUsbBox BoxOf (CDevice *p)
 {
-	const char *v = p->GetProperty (CDevice::PropertyVendor), *n = p->GetProperty (CDevice::PropertyProduct);
-	if ((v == 0 || *v == 0) && (n == 0 || *n == 0)) return TRUE;
-	return (n != 0 && strstr (n, "Rytm") != 0) || (v != 0 && strstr (v, "Elektron") != 0);
+	return usb_box (p->GetProperty (CDevice::PropertyVendor), p->GetProperty (CDevice::PropertyProduct));
 }
 
-// The Rytm's USB MIDI interface (Circle's umidiN) once enumerated: read only. Every other USB MIDI device: a keyboard.
+// The Rytm's USB MIDI interface (Circle's umidiN) once enumerated: read only. Another Elektron box: left alone (usb_box.h). Every other USB MIDI device: a keyboard.
 // While the Rytm is missing every pass, else four times a second (a keyboard plugged in).
 void CKernel::UpdateMIDI (void)
 {
@@ -1313,7 +1311,19 @@ void CKernel::UpdateMIDI (void)
 		boolean bKnown = FALSE;
 		for (unsigned i = 0; i < MaxKeyboards; i++) bKnown |= s_pKeyboard[i] == p;
 		if (bKnown) continue;
-		if (IsRytm (p))
+		TUsbBox Box = BoxOf (p);
+		if (Box == UsbBoxOther)
+		{
+			static u32 s_nSaid;				// umidiN already logged
+			if (!(s_nSaid & 1u << n))
+			{
+				const char *pName = p->GetProperty (CDevice::PropertyProduct);
+				m_Logger.Write (From, LogNotice, "midi: %s (%s) is not the host link: nothing goes to it", pName != 0 && *pName ? pName : "an Elektron box", (const char *) Name);
+			}
+			s_nSaid |= 1u << n;
+			continue;
+		}
+		if (Box == UsbBoxHost)
 		{
 			if (m_pMIDI != 0) continue;
 			CUSBMIDIDevice *pMIDI = (CUSBMIDIDevice *) p;
