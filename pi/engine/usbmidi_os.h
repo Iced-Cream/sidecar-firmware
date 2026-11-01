@@ -4,7 +4,7 @@
 //   usbmidi=os:off   (default) Elektron OS upgrades from the computer are dropped, as in stock Sidecar
 //   usbmidi=os:emu   they pass only while the TCP link (rytm-emu) is the host
 //   usbmidi=os:on    they pass to the real Rytm on USB too (and to the emulator under link=tcp)
-// The same words work in cmdline.txt and as a console / POST /cmd command. The older osupdate=off|0|emu|1|rytm is kept
+// The same words work in cmdline.txt and as a serial console command (POST /cmd refuses them, web.cpp, as midibridge=). The older osupdate=off|0|emu|1|rytm is kept
 // as an alias (osupdate=1 is emu, osupdate=rytm is os:on); a valid usbmidi= wins when cmdline.txt has both.
 #pragma once
 #include <string.h>

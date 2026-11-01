@@ -887,7 +887,8 @@ wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/en
 (tests/test_usbmidi_os.cpp).
 
 - `usbmidi=os:off` (default), `usbmidi=os:emu` (pass only while the TCP link to rytm-emu is the host), `usbmidi=os:on`
-  (pass to the real Rytm on USB too). In `cmdline.txt`, or as a console command. `osupdate=off|0|emu|1|rytm` is the
+  (pass to the real Rytm on USB too). In `cmdline.txt`, or as a serial console command; `POST /cmd` refuses it, as it
+  refuses `midibridge=` (its origin check is the lenient one). `osupdate=off|0|emu|1|rytm` is the
   older name and still works (`rytm` = `os:on`, `1` = `emu`); a valid `usbmidi=` wins when both are given.
 - While on: the USB-C MIDI OUT endpoint waits (NAKs) instead of dropping when the Rytm-bound queue is full, so a whole
   OS file arrives; under `link=tcp`, the computer's MIDI goes to rytm-emu as `'M'` messages and its USB MIDI comes back.
