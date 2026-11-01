@@ -26,7 +26,7 @@ jobs:
           CXX: clang++
           CC: clang
   core:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Engines (Plaits, DaisySP, digidrum at their pinned commits)
