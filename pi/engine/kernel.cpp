@@ -819,6 +819,15 @@ void CKernel::LogBench (void)
 				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10, nBp * 6 / 100, nBp * 6 % 100);	// the cap: core/fx/amp.h kMaxRunning
 		m_Timer.MsDelay (2);
 	}
+	// the master chain (core/fx/master.h): add 2 x the AMP line for an L/R pair
+	{
+		u32 nWorst = 0;
+		u64 nTicks = bridge::mfx_bench (&nWorst);
+		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		m_Logger.Write (From, LogNotice, "bench mfx COMP EQ SPACE CLOUD POSTEQ: %u.%02u %% of a core, worst block %u.%u %%",
+				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
+		m_Timer.MsDelay (2);
+	}
 }
 
 // Task 3's boot self-check, before the cores start: one second of a PLAITS voice rendered offline (no USB), then
@@ -2100,6 +2109,18 @@ void CKernel::Run (void)
 					g_Output.TakeVoicePeaks (Pk);	// the OUT route's meters (PRE / POST voices)
 					insfx_pi::Fill (&s_InsView, Pk);
 					sidecar_insfx_set (&s_InsView);
+				}
+			}
+			if (sidecar_mfx_shown ())		// the MASTER FX page, the same way
+			{
+				static sidecar_mfx_view_t s_MfxView;
+				static unsigned s_nMfxAt;
+				unsigned nNow = m_Timer.GetClockTicks ();
+				if (nNow - s_nMfxAt >= 100000)
+				{
+					s_nMfxAt = nNow;
+					insfx_pi::FillMaster (&s_MfxView);
+					sidecar_mfx_set (&s_MfxView);
 				}
 			}
 			if (sidecar_wgview_shown ())		// the machine view: ~10 frames a second, redrawn only on a change

@@ -2,9 +2,12 @@
 // reads of the control side's bytes (drawing only, as voice_pi), the Rytm's selected track from core/ui/remote.cpp.
 #pragma once
 #include "../ui/sidecar_insfx.h"
+#include "../ui/sidecar_mfx.h"
 
 namespace insfx_pi {
 // ~10 times a second while the page shows: o from the newest values; o->gen changes only when something to draw changed
 // peaks (optional): each voice's pair as the output stage sent it since the last call (Output::TakeVoicePeaks)
 void Fill(sidecar_insfx_view_t* o, const float (*peaks)[2] = nullptr);
+// The MASTER FX page (pi/ui/sidecar_mfx.h), the same way, the chain's peaks since the last call
+void FillMaster(sidecar_mfx_view_t* o);
 }  // namespace insfx_pi
