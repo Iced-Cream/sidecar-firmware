@@ -12,7 +12,7 @@ const a = page.indexOf("const MFX_TYPES"), b = page.indexOf("function showMfx");
 assert.ok(a > 0 && b > a, "the section's code in index.html");
 const { mfxHtml, MFX_NOTE, MFX_TYPES } = new Function(page.slice(a, b) + "; return { mfxHtml, MFX_NOTE, MFX_TYPES };")();
 const slot = (t, o = {}) => ({ t, p: [1, 2, 3, 4], l: ["THR", "RAT", "SPD", "GAIN"], v: ["-1DB", "2", "3", "+4DB"], mix: 40, pair: 0, send: 0, ...o });
-const m = { byp: 0, src: "ret", lev: 100, on: 1, s: [slot("COMP"), slot("AMP", { pair: 1 }), slot("SPACE", { send: 1 }), slot("OFF")], peq: [0, 0, 64, 64] };
+const m = { byp: 0, src: "ret", lev: 100, trim: -6, gr: 0.0, on: 1, s: [slot("COMP"), slot("AMP", { pair: 1 }), slot("SPACE", { send: 1 }), slot("OFF")], peq: [0, 0, 64, 64] };
 
 test("the page's TYPE list is the engine's, in id order", () => {
   const h = readFileSync(join(HERE, "..", "..", "..", "core", "fx", "insert.cpp"), "utf8");
@@ -23,11 +23,13 @@ test("the page's TYPE list is the engine's, in id order", () => {
 test("the wiring: the section is in the tab, /status feeds it", () => {
   assert.match(page, /id="mfx"/);
   assert.match(page, /showMfx\(st\.ins && st\.ins\.mfx\)/);
+  assert.match(page, /id="mfx-gr"/);
 });
 test("a slot's controls follow its TYPE", () => {
   const h = mfxHtml(m);
   assert.match(h, /data-mfx="byp:1"[^>]*>On/);
   assert.match(h, /SRC RET/);
+  assert.match(h, /min="-24" max="0" value="-6" data-mfx-v="trim:"/);
   assert.match(h, /data-mfx-v="1:p1:"/);
   assert.match(h, /data-mfx="2:pair:0"[^>]*>L\/R pair/);
   assert.match(h, /data-mfx-v="3:mix:"/);

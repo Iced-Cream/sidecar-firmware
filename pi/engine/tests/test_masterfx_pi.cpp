@@ -1,6 +1,7 @@
 // pi/engine/tests/test_masterfx_pi.cpp - masterfx_pi (the OUT fill's side of the master chain, render core 2's), one thread
 // standing in for both, as test_sendfx_pi: nothing set = not a sample touched; bypassed = bit for bit; on = 0/1 and 2/3 go
 // through the chain and come back on 0/1; the crossfades have no click; the latency on POST; a dry ring; SRC MIX.
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -10,6 +11,7 @@
 
 #include "check.h"
 #include "fx/insert.h"
+#include "fx/limiter.h"
 #include "fx/master.h"
 #include "fx/out.h"
 #include "fx/out_measure.h"
@@ -43,6 +45,7 @@ extern "C" int core_snprintf(char* out, size_t n, const char* fmt, ...) {
 
 using namespace core;
 
+static const int kLook = fx::Limiter::kLook;
 static unsigned kFill = 21;   // frames a fill: 7 x obblocks (the default 1: see latency())
 static long g_t = 0;
 typedef void (*Gen)(long t, int32_t* ch);
@@ -152,7 +155,7 @@ static void latency() {
   CHECK(found >= 0);
   long lat = found - at;
   printf("test_masterfx_pi: added latency on POST: %ld frames (%.2f ms) at %u-frame fills (obblocks 3), kPrime %u\n", lat, lat / 48.0, kFill, masterfx_pi::kPrime);
-  CHECK(lat >= (long)masterfx_pi::kPrime && lat <= (long)masterfx_pi::kPrime + 2 * (long)kFill);
+  CHECK(lat >= (long)masterfx_pi::kPrime + kLook && lat <= (long)masterfx_pi::kPrime + kLook + 2 * (long)kFill);
   // the default URB, 7 frames (ob_usb.cpp obblocks 1)
   off();
   flat_chain();
@@ -169,8 +172,8 @@ static void latency() {
   }
   CHECK(found >= 0);
   lat = found - s_at;
-  printf("test_masterfx_pi: added latency on POST: %ld frames (%.2f ms) at 7-frame fills (the default), the chain adding none\n", lat, lat / 48.0);
-  CHECK(lat >= (long)masterfx_pi::kPrime && lat <= (long)masterfx_pi::kPrime + 2 * 7);
+  printf("test_masterfx_pi: added latency on POST: %ld frames (%.2f ms) at 7-frame fills (the default), the limiter's %d in it, the chain adding none\n", lat, lat / 48.0, kLook);
+  CHECK(lat >= (long)masterfx_pi::kPrime + kLook && lat <= (long)masterfx_pi::kPrime + kLook + 2 * 7);
   kFill = 21;
   // bypassed: none
   master::set_byp(1);
@@ -271,6 +274,7 @@ static void measure_stands_aside() {
   for (int k = 0; k < 40; ++k) fill(post_sine, f, kFill);
   CHECK(masterfx_pi::Wet() == 0.0f);
   printf("test_masterfx_pi: stereo=measure with a chain on: the chain out, the plain return measured\n");
+  out::meas::reset();
   out::reset();
 }
 
@@ -294,6 +298,7 @@ static void dry_ring() {
 static void src_mix_report() {
   off();
   master::set_src(master::kMix);
+  master::set_trim(0);
   int32_t f[64][12], s[64][8];
   double la = 0, ra = 0, step = 0, prev = 0;
   auto block = [&](bool measure) {
@@ -362,6 +367,7 @@ static void src_mix() {
   off();
   CHECK(!masterfx_pi::WantStems());
   master::set_src(master::kMix);
+  master::set_trim(0);
   CHECK(masterfx_pi::WantStems());
   int32_t f[64][12], s[64][8];
   auto block = [&](bool in) {
@@ -403,7 +409,264 @@ static void src_mix() {
   CHECK(mx == 0);
 }
 
+// ---- the limiter by itself (core/fx/limiter.h)
+static double g_rnd_state = 1;
+static double rnd() {   // -1..1
+  g_rnd_state = std::fmod(g_rnd_state * 16807.0, 2147483647.0);
+  return g_rnd_state / 1073741823.5 - 1.0;
+}
+
+static void limiter_alone() {
+  static fx::Limiter z;
+  // nothing over the ceiling: bursts, sines, noise, up to 36 dB over, left, right and both
+  for (double over : {1.5, 8.05, 64.0}) {
+    z.Reset();
+    double top = 0;
+    for (int i = 0; i < 2000000; ++i) {
+      const int seg = (i >> 11) & 7;
+      double a = seg == 0 ? 0.3 : seg == 1 ? over * std::sin(i * 0.31) : seg == 2 ? over * rnd() : seg == 3 ? (i % 97 == 0 ? over : 0.0) : over * (i & 1 ? 1 : -1) * ((i >> 6) & 1);
+      double b = seg == 4 ? 0.2 * rnd() : seg == 5 ? over : a * 0.5;
+      float l = (float)a, r = (float)b;
+      z.Frame(l, r);
+      top = std::max(top, (double)std::max(std::fabs(l), std::fabs(r)));
+    }
+    CHECK(top <= fx::Limiter::kCeiling);
+    printf("test_masterfx_pi: limiter, %.1f dB over: largest sample out %.6f, ceiling %.2f\n", 20 * std::log10(over), top, fx::Limiter::kCeiling);
+  }
+  // under the ceiling: the signal, kLook later, and not a bit else
+  z.Reset();
+  std::vector<float> in;
+  for (int i = 0; i < 4000; ++i) {
+    in.push_back((float)(0.97 * std::sin(i * 0.2)));
+    float l = in.back(), r = -l;
+    z.Frame(l, r);
+    if (i >= kLook) CHECK(l == in[i - kLook] && r == -in[i - kLook]);
+  }
+  // the stereo link: a peak on the left only takes the right down by the same gain, and it gets there before the peak
+  z.Reset();
+  for (int i = 0; i < 2000; ++i) {
+    float l = i == 1000 ? 4.0f : 0.0f, r = 0.5f;
+    const float g = z.Gain();
+    z.Frame(l, r);
+    if (i == 1000 + kLook) CHECK(std::fabs(l - 4.0f * z.Gain()) < 1e-5f && std::fabs(r - 0.5f * z.Gain()) < 1e-5f && z.Gain() < 0.246f);
+    if (i == 1000 + kLook) CHECK(l <= fx::Limiter::kCeiling && std::fabs(r / l - 0.125f) < 1e-5f);
+    if (i < 1000) CHECK(g == 1.0f);
+  }
+  // recovery: 18 dB of reduction, then quiet: within 1 % after 5 x the release, back at 1 after it
+  z.Reset();
+  for (int i = 0; i < 4800; ++i) {
+    float l = 8.05f * (float)std::sin(i * 0.05), r = l;
+    z.Frame(l, r);
+  }
+  double dip = z.Gain();
+  CHECK(dip < 0.125);
+  CHECK(z.TakeLow() < 0.125f && z.TakeLow() == 1.0f);
+  int back = -1;
+  for (int i = 0; i < 48000 && back < 0; ++i) {
+    float l = 0.1f, r = 0.1f;
+    z.Frame(l, r);
+    if (z.Gain() > 0.99f) back = i;
+  }
+  printf("test_masterfx_pi: limiter: %.1f dB down, within 1 %% after %.0f ms\n", -20 * std::log10(dip), back / 48.0);
+  CHECK(back > 19200 && back < 28800);   // 100 ms a time constant, about 4.4 of them
+  for (int i = 0; i < 48000; ++i) {
+    float l = 0.1f, r = 0.1f;
+    z.Frame(l, r);
+  }
+  CHECK(z.Gain() == 1.0f);
+  // the cost, the worst of it: every frame over the ceiling, 12 frames a block
+  z.Reset();
+  static float buf[1 << 16][2];
+  for (auto& b : buf) b[0] = (float)(3.0 * rnd()), b[1] = (float)(3.0 * rnd());
+  auto t0 = std::chrono::steady_clock::now();
+  float sum = 0;
+  for (int k = 0; k < 400; ++k)
+    for (auto& b : buf) {
+      float l = b[0], r = b[1];
+      z.Frame(l, r);
+      sum += l;
+    }
+  double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() / (400.0 * (1 << 16));
+  printf("test_masterfx_pi: limiter: %.1f ns a frame on this Mac under noise 10 dB over (%s)\n", ns, sum == 1e9f ? "!" : "ok");
+}
+
+// SRC MIX, a kit 18 dB over: nothing over the ceiling on 0/1, a level loss of the sine's shape only (no tanh first), the same
+// gain on both sides, the reading; 2/3 and the tracks not touched; the trim moves it; the way out ends bit for bit
+static double g_stem = 0.0;
+static void stems_block(int32_t (*f)[12], Gen g = nullptr) {
+  static int32_t s[64][8];
+  for (unsigned i = 0; i < kFill; ++i) {
+    const int32_t x = (int32_t)(g_stem / 8.0 * 2147483648.0 * std::sin(2 * M_PI * 110.0 * (double)(g_t + i) / 48000.0));
+    for (int v = 0; v < 8; ++v) s[i][v] = x;
+  }
+  masterfx_pi::Stems(s, kFill);
+  memset(f, 0, sizeof(int32_t) * 12 * kFill);
+  if (g)
+    for (unsigned i = 0; i < kFill; ++i) g(g_t + i, f[i]);
+  masterfx_pi::Process(f, kFill);
+  masterfx_pi::Render();
+  g_t += kFill;
+}
+
+static void through_limited() {
+  off();
+  master::set_src(master::kMix);
+  master::set_trim(0);
+  const double trims = (1 + 1 + 1 + 1 + 1 + 2 * masterfx_pi::kStemHotTrim + 1) / 8;   // MT/HT and CH/OH are trimmed: their share
+  g_stem = 8.05 / masterfx_pi::kStemOnPost / trims;   // 18 dB over on 0/1, as the owner's kit
+  int32_t f[64][12];
+  for (int k = 0; k < 300; ++k) stems_block(f);
+  double top = 0, e = 0;
+  long n = 0;
+  for (int k = 0; k < 3000; ++k) {
+    stems_block(f, all_sine);
+    for (unsigned i = 0; i < kFill; ++i) {
+      double a = f[i][0] / 2147483648.0, b = f[i][1] / 2147483648.0;
+      top = std::max(top, std::max(std::fabs(a), std::fabs(b)));
+      e += a * a, ++n;
+      CHECK(f[i][0] == f[i][1] || std::fabs(a - b) < 0.6);   // (0/1 of all_sine differ; both under one gain)
+      int32_t want[12];
+      memset(want, 0, sizeof want);
+      all_sine(g_t - kFill + i, want);
+      CHECK(!memcmp(f[i] + 2, want + 2, sizeof(int32_t) * 10));
+    }
+  }
+  CHECK(top <= fx::Limiter::kCeiling * (1 + 1e-6) && top > 0.97);
+  // a sine held under the ceiling by one gain stays a sine: RMS is its peak / sqrt 2. The soft clip made it squarer (0.8 and up)
+  const double rms = std::sqrt(e / (double)n);
+  printf("test_masterfx_pi: SRC MIX 18 dB over, trim 0: largest sample %.6f, RMS %.4f, reduction %.1f dB\n", top, rms, master::gr10() / 10.0);
+  CHECK(rms < 0.74);
+  CHECK(master::gr10() > 165 && master::gr10() < 205);
+  char o[900];
+  CHECK(master::json(o, sizeof o) > 0 && strstr(o, "\"trim\":0,\"gr\":1"));
+  g_log.clear();
+  CHECK(masterfx_pi::Command("mfx=stats") && g_log.find("limiter 1") != std::string::npos && g_log.find(" dB") != std::string::npos);
+  // the trim, smoothed: 12 dB less into it, no step on the way
+  master::set_trim(-12);
+  double step = 0, prev = f[kFill - 1][0] / 2147483648.0;
+  for (int k = 0; k < 40; ++k) {
+    stems_block(f);
+    for (unsigned i = 0; i < kFill; ++i) {
+      double a = f[i][0] / 2147483648.0;
+      step = std::max(step, std::fabs(a - prev)), prev = a;
+    }
+  }
+  CHECK(step < 0.06);
+  for (int k = 0; k < 2500; ++k) stems_block(f);   // the release, and the reading's second
+  for (int k = 0; k < 2500; ++k) stems_block(f);
+  printf("test_masterfx_pi: trim -12: reduction %.1f dB, largest step on the way %.4f\n", master::gr10() / 10.0, step);
+  CHECK(master::gr10() > 45 && master::gr10() < 85);
+  // out again: the stems first, then the limiter, then not a sample touched
+  master::set_src(master::kRet);
+  g_stem = 0;
+  for (int k = 0; k < 60; ++k) stems_block(f);
+  CHECK(master::gr10() == 0 && !masterfx_pi::WantStems());
+  for (int k = 0; k < 20; ++k) {
+    long t = g_t;
+    fill(all_sine, f, kFill);
+    for (unsigned i = 0; i < kFill; ++i) {
+      int32_t want[12];
+      memset(want, 0, sizeof want);
+      all_sine(t + i, want);
+      CHECK(!memcmp(f[i], want, sizeof want));
+    }
+  }
+  masterfx_pi::Reset();
+}
+
+// no click: the limiter and the stems in and out under a return that plays on, and under hot stems
+static void limiter_fades() {
+  off();
+  int32_t f[64][12];
+  for (double level : {0.0, 0.1, 1.0}) {
+    master::set_trim(0);
+    double step = 0, prev = 0, top = 0;
+    bool have = false;
+    for (int k = 0; k < 8000; ++k) {
+      if (k % 228 == 0) master::set_src(k % 456 ? master::kRet : master::kMix);
+      g_stem = level / masterfx_pi::kStemOnPost;
+      stems_block(f, post_sine);
+      for (unsigned i = 0; i < kFill; ++i) {
+        double a = f[i][0] / 2147483648.0;
+        if (have) step = std::max(step, std::fabs(a - prev));
+        top = std::max(top, std::fabs(a));
+        prev = a, have = true;
+      }
+    }
+    const double own = 0.2 * 2 * M_PI * 220.0 / 48000.0 + level * 2 * M_PI * 110.0 / 48000.0;
+    printf("test_masterfx_pi: SRC switched every 100 ms for 17 s, stems %.1f: largest step %.5f, the signals' own %.5f, largest sample %.4f\n", level, step, own, top);
+    CHECK(step < own * 1.4 + 2.0 * 1.2 / masterfx_pi::kFadeFrames);
+    CHECK(top <= 1.2 + 1e-6);
+    master::set_src(master::kRet);
+    g_stem = 0;
+    for (int k = 0; k < 60; ++k) stems_block(f);
+    masterfx_pi::Reset();
+  }
+}
+
+// SRC RET: the chain gets the limiter too, in once it has something to hold: hot input and LEV, nothing over the ceiling, and
+// bypassed it leaves with the chain
+static void chain_limited() {
+  off();
+  flat_chain();
+  master::set_lev(127);
+  int32_t f[64][12];
+  static auto hot = [](long t, int32_t* ch) {
+    ch[0] = (int32_t)(0.95 * 2147483648.0 * std::sin(2 * M_PI * 220.0 * (double)t / 48000.0));
+    ch[1] = ch[0] / 2;
+    ch[2] = ch[3] = ch[0] / 2;
+  };
+  for (int k = 0; k < 100; ++k) fill(hot, f, kFill);
+  CHECK(masterfx_pi::Wet() == 1.0f);
+  double top = 0;
+  for (int k = 0; k < 2000; ++k) {
+    fill(hot, f, kFill);
+    for (unsigned i = 0; i < kFill; ++i) top = std::max(top, std::fabs(f[i][0] / 2147483648.0));
+  }
+  printf("test_masterfx_pi: SRC RET, a chain asking for +9 dB: largest sample %.6f, reduction %.1f dB\n", top, master::gr10() / 10.0);
+  CHECK(top <= fx::Limiter::kCeiling * (1 + 1e-6) && top > 0.97 && master::gr10() > 50);
+}
+
+// stereo=measure in SRC MIX: stems and limiter out, the plain return, bit for bit; the stems' queue does not back up
+static void measure_through_mode() {
+  off();
+  master::set_src(master::kMix);
+  g_stem = 0.2;
+  int32_t f[64][12];
+  for (int k = 0; k < 100; ++k) stems_block(f);
+  char o[120];
+  CHECK(out::command("stereo=measure", o, sizeof o));
+  for (int k = 0; k < 60; ++k) stems_block(f);
+  for (int k = 0; k < 100; ++k) {
+    long t = g_t;
+    stems_block(f, all_sine);
+    for (unsigned i = 0; i < kFill; ++i) {
+      int32_t want[12];
+      memset(want, 0, sizeof want);
+      all_sine(t + i, want);
+      CHECK(!memcmp(f[i], want, sizeof want));
+    }
+  }
+  out::meas::reset();
+  out::reset();
+  uint32_t u0 = masterfx_pi::Read().stem_under;
+  for (int k = 0; k < 100; ++k) stems_block(f);
+  CHECK(masterfx_pi::Read().stem_under == u0);
+  double top = 0;
+  for (int k = 0; k < 100; ++k) {
+    stems_block(f);
+    for (unsigned i = 0; i < kFill; ++i) top = std::max(top, std::fabs(f[i][0] / 2147483648.0));
+  }
+  CHECK(top > 0.1);
+  printf("test_masterfx_pi: stereo=measure in SRC MIX: the plain return bit for bit, the stems back after it\n");
+  master::set_src(master::kRet);
+  g_stem = 0;
+  for (int k = 0; k < 60; ++k) stems_block(f);
+  masterfx_pi::Reset();
+}
+
 int main() {
+  limiter_alone();
   nothing_set_touches_nothing();
   bypass_bit_exact();
   latency();
@@ -413,6 +676,10 @@ int main() {
   dry_ring();
   src_mix();
   src_mix_report();
+  through_limited();
+  limiter_fades();
+  chain_limited();
+  measure_through_mode();
   CHECK(masterfx_pi::Command("mfx=stats") && g_log.find("core 2 load") != std::string::npos);
   CHECK(!masterfx_pi::Command("mfx"));
   printf("test_masterfx_pi: PASS\n");

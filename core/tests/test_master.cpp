@@ -297,6 +297,31 @@ static void per_kit(const std::string& c) {
   ins::kit_changed(10);
   CHECK(ins::control.type[ins::kM0][0] == ins::kMRings && master::control.mix[0] == 100 && master::control.src == master::kMix);
   ins::kit_changed(5);
+  // the stem trim: off its default in the line, at its default not; a line without it, the default; "MFX" stays off the file for a default kit
+  CHECK(master::control.trim == master::kTrimDef);
+  ins::kit_changed(10);
+  master::set_trim(-12);
+  ins::settings_due();
+  for (int i = 0; i < 40; ++i) idle_save(), card_core_turn();
+  CHECK(rd(c + "/.rytm/ins/MFX/k011.txt").find("MFX 0 MIX 100 100 40 40 40 0 -12\n") != std::string::npos);
+  ins::kit_changed(5);
+  CHECK(master::control.trim == master::kTrimDef);
+  ins::kit_changed(10);
+  CHECK(master::control.trim == 12);
+  master::set_trim(0);
+  char tl[80];
+  CHECK(master::line(tl, sizeof tl) > 0 && std::string(tl) == "MFX 0 MIX 100 100 40 40 40 0 0\n");
+  master::set_trim(-6);
+  CHECK(master::line(tl, sizeof tl) > 0 && std::string(tl) == "MFX 0 MIX 100 100 40 40 40 0\n");
+  master::set_trim(-40);
+  CHECK(master::control.trim == master::kTrimMax);
+  master::set_trim(-6);
+  ins::settings_due();
+  for (int i = 0; i < 40; ++i) idle_save(), card_core_turn();
+  ins::kit_changed(5);
+  ins::kit_changed(6);   // k007: an old line, 9 words
+  CHECK(master::control.trim == master::kTrimDef && master::control.src == master::kMix);
+  ins::kit_changed(5);
   printf("test_master: per kit: read, written, a kit change on RAM only; an old kit's file byte for byte\n");
 }
 
@@ -312,6 +337,16 @@ static void console_json() {
   CHECK(master::command("mfx=byp:1", o, sizeof o) && strstr(o, "BYPASS"));
   CHECK(master::command("mfx=src:mix", o, sizeof o) && strstr(o, "src MIX"));
   CHECK(master::command("mfx=lev:90", o, sizeof o) && strstr(o, "lev 90"));
+  CHECK(strstr(o, "trim -6"));
+  CHECK(master::command("mfx=trim:-12", o, sizeof o) && strstr(o, "trim -12") && master::control.trim == 12);
+  CHECK(master::json(o, sizeof o) > 0 && strstr(o, "\"trim\":-12,\"gr\":0.0"));
+  CHECK(master::command("mfx=trim:0", o, sizeof o) && master::control.trim == 0);
+  CHECK(master::command("mfx=trim:-99", o, sizeof o) && master::control.trim == master::kTrimMax);
+  CHECK(master::command("mfx=trim:6", o, sizeof o) && strstr(o, "mfx=trim") && master::control.trim == master::kTrimMax);   // refused: the help
+  CHECK(master::command("mfx=trim:-6", o, sizeof o) && master::control.trim == master::kTrimDef);
+  master::lim_gain = 0.5f;
+  CHECK(master::gr10() == 60);
+  master::lim_gain = 1.0f;
   CHECK(master::command("mfx=nonsense:1", o, sizeof o) && strstr(o, "mfx=byp"));
   CHECK(!master::command("mfx=stats", o, sizeof o));
   CHECK(!master::command("mfxx", o, sizeof o));

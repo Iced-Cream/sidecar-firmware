@@ -26,13 +26,17 @@ inline int slot(int i) { return i % ins::kSlots; }
 enum Src : uint8_t { kRet = 0, kMix = 1 };
 constexpr uint8_t kLevUnity = 100, kMixDef = 40;
 constexpr int kStems = 8;                             // IN 2..9: BD SD RS/CP BT LT MT/HT CH/OH CY/CB
-constexpr float kOutLimit = 1.0f;   // the chain's output ceiling: 0/1's full scale (-10.9 dB into the mix on the real Rytm); out_mix.h's knee
+// The chain's output: not the ceiling, a bound on what reaches the Pi's limiter (masterfx_pi, core/fx/limiter.h), which holds 0/1
+// (full scale there: -10.9 dB into the mix on the real Rytm) while a chain plays. Far over it, +24 dB: linear to 70 %, out_mix.h's knee
+constexpr float kOutLimit = 16.0f;
+constexpr uint8_t kTrimDef = 6, kTrimMax = 24;        // the stem trim, dB down
 
 // What the render core and core 0 read: byte fields, a torn read cannot happen
 struct Control {
   volatile uint8_t byp;            // 1: the chain's output is out, the dry path back (bit for bit once faded)
   volatile uint8_t src;            // Src
   volatile uint8_t lev;            // the chain's output, 0..127, 100 unity
+  volatile uint8_t trim;           // SRC MIX: every stem before the sum, dB down, 0..kTrimMax (smoothed: masterfx_pi)
   volatile uint8_t mix[kSlots];    // a send TYPE slot's dry / wet, 0..127
   volatile int8_t fx[kSlots];      // the SendFx slot a send TYPE holds, -1 none
   // The Rytm's report 50: the stems' pans (0..127, 64 centre, as they play: p-locks and LFOs in) and the stems off ROUTE TO
@@ -42,6 +46,8 @@ struct Control {
   volatile uint8_t known;
 };
 extern Control control;
+extern volatile float lim_gain;    // core 0's: the limiter's lowest gain of the last second or so, 1 while it is out
+int gr10();                        // ... as its reduction, in tenths of a dB (any core but the audio's: a log)
 
 // ---- the control side (the Pi's core 3)
 bool on();                         // a slot has a TYPE, or the POST EQ is set: the chain runs
@@ -50,6 +56,7 @@ bool accept(int c, int s, int t);  // ins::set_type's question: chain c's slot s
 void set_byp(int on);
 void set_src(int src);
 void set_lev(int v);
+void set_trim(int db);             // the stem trim, 0 .. -24 (dB)
 void set_mix(int i, int v);
 void set_pair(int i, int on);      // slot i's AMP: an L/R pair
 bool pair(int i);
@@ -61,18 +68,18 @@ bool report(const uint8_t* d, int len);   // F0 7D 52 54 50 <8 pans> <route byte
 void link_lost();                  // the Rytm's USB gone: the report is forgotten until the next
 int stems_on_main();               // how many stems are still on main (0 while no report)
 void reset();                      // tests: the audio side too
-// The console: "mfx" (the state), "mfx=byp:0|1", "mfx=src:ret|mix", "mfx=lev:V", "mfx=S:type:T", "mfx=S:p1..p4:V",
+// The console: "mfx" (the state), "mfx=byp:0|1", "mfx=src:ret|mix", "mfx=lev:V", "mfx=trim:DB", "mfx=S:type:T", "mfx=S:p1..p4:V",
 // "mfx=S:mix:V", "mfx=S:pair:0|1", "mfx=S:off" (S 1..4), "mfx=eq:hpf|lpf|low|high:V", "mfx=eq:off", "mfx=reset"
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);      // "\"mfx\":{...}" (inside "ins", docs/MASTER-FX.md)
-// The card (insert_card.cpp): "MFX BYP SRC LEV MIX1 MIX2 MIX3 MIX4 PAIRS" (words, as "MFX 0 MIX 100 40 40 40 40 3"; PAIRS
-// a bit per slot), written only off the defaults
+// The card (insert_card.cpp): "MFX BYP SRC LEV MIX1 MIX2 MIX3 MIX4 PAIRS [TRIM]" (words, as "MFX 0 MIX 100 40 40 40 40 3 -12";
+// PAIRS a bit per slot, TRIM in dB, left out at its default), written only off the defaults
 constexpr int kLineWords = 10;
 int line(char* b, int cap);
 bool from_line(const char* const* w, int n);
 
 // ---- the audio side
-// The render core's: n frames L/R through the chain, LEV and the ceiling, in place (out_mix.h's knee: below it sample-exact).
+// The render core's: n frames L/R through the chain, LEV and the bound (kOutLimit), in place (below its knee sample-exact).
 // y's peaks, in and out, kept for the meters.
 void render(float (*y)[2], int n);
 void take_peaks(float* in, float* out);   // the largest |sample| since the last call

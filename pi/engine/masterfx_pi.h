@@ -6,8 +6,12 @@
 //
 // The latency the chain adds on POST is the ring back to core 0, kPrime frames (2 ms: the send FX's margin against core
 // 3's longest pass) plus up to one URB's frames; the chain's own effects add none. The direct path adds none. Bypass keeps
-// the chain running (tails go on, the core time stays, re-engaging is instant). Hosted (no Circle headers): ob_usb.cpp and
-// cores.cpp call it.
+// the chain running (tails go on, the core time stays, re-engaging is instant).
+//
+// The limiter (core/fx/limiter.h) is the last thing on 0/1 while SRC is MIX or the chain plays, and the only limit there: the
+// stems and the chain's output come to it unclipped, so everything on 0/1 is on floats until it. It adds its 48 frames (1 ms)
+// to all of 0/1, both sides of the chain's crossfade alike, and comes in before them and leaves after them. 2/3 and 4..11
+// keep their timing; take playback, after it, is not limited. Hosted (no Circle headers): ob_usb.cpp and cores.cpp call it.
 #pragma once
 #include <stdint.h>
 
@@ -21,6 +25,7 @@ const unsigned kStemPrime = 64;                                                 
 // side; stems 5 and 6 (MT/HT, CH/OH) read 0.85 dB hot against what they put in MAIN, and are trimmed.
 constexpr float kPreOnPost = 2.786f, kStemOnPost = 3.508f, kStemHotTrim = 0.9067f;
 const unsigned kGainFrames = 512;   // a stem's pan or its coming off main: at most this long, end to end
+const unsigned kLimFade = 240;      // the limiter in and out, 5 ms: the direct signal against itself kLook frames later
 // core 0, the OUT fill, after AddReturn and before take playback: out[n] as about to be sent
 void Process(int32_t (*out)[12], unsigned n);
 // SRC MIX: core 0, the IN completion: the Rytm's stems IN 2..9 while it is asked for (WantStems): each stem panned as the
