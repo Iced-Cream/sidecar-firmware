@@ -11,6 +11,7 @@
 #include "../sidecar_theme.h"
 #include "../sidecar_voice.h"
 #include "../sidecar_insfx.h"
+#include "../sidecar_mfx.h"
 #include "../sidecar_song.h"
 #include "../sidecar_rec.h"
 #include "../sidecar_seqed.h"
@@ -305,6 +306,27 @@ static sidecar_wg_view_t s_Wg;
 // rui1036b: the VOICE page's view, faked: an analog BD (BD PLASTIC: its SRC labels, a kick on the scope, locks on a
 // few steps of a 16-step pattern) or a Sidecar track (MULTISAMPLE / 6-OP FM)
 static sidecar_voice_view_t s_Vv;
+// the MASTER FX page's view, as insfx_pi.cpp's FillMaster fills it
+static sidecar_mfx_view_t s_Mv;
+static void mfx_slot (int i, int type, const char *n, const char *next, const char *l0, const char *v0, int send, int amp)
+{
+	sidecar_mfx_slot_t *x = &s_Mv.slot[i];
+	static const char *const kL[3] = {"RES", "MODE", "DRV"}, *const kV[3] = {"7.2:1", "+6DB", "30"};
+	x->type = type, strcpy (x->name, n), strcpy (x->next, next), x->send = send, x->amp = amp, x->mix = 64, x->pair = amp;
+	strcpy (x->label[0], l0), strcpy (x->val[0], v0);
+	for (int k = 1; k < 4; k++) strcpy (x->label[k], kL[k - 1]), strcpy (x->val[k], kV[k - 1]);
+	for (int k = 0; k < 4; k++) x->v[k] = 30 + 25 * k;
+}
+static void mfx_fake (int src)
+{
+	memset (&s_Mv, 0, sizeof s_Mv);
+	s_Mv.valid = 1, s_Mv.on = 1, s_Mv.mix = src, s_Mv.lev = 100, s_Mv.in = 70, s_Mv.out = 90, s_Mv.gen = 100 + src;
+	mfx_slot (0, 5, "COMP", "DELAY", "THR", "-16DB", 0, 0);
+	mfx_slot (1, 9, "AMP", "CHORUS", "MODL", "PLEXICR", 0, 1);
+	mfx_slot (2, 12, "SPACE", "RINGS", "TIME", "1/8", 1, 0);
+	strcpy (s_Mv.slot[3].name, "OFF"), strcpy (s_Mv.slot[3].next, "FILTER");
+	strcpy (s_Mv.peq, "HPF 40  LPF OFF  LOW FLAT  HIGH +2.4DB");
+}
 // fx-ins: the INSERT FX page's view, faked as insfx_pi.cpp fills it: voice 3 (BT, a WAVETABLE chord) through FILTER +
 // DELAY, sends to bus 1 (CLOUDSEED + EQ) and bus 3 (dry, COMP, POST)
 static sidecar_insfx_view_t s_Iv;
@@ -1306,6 +1328,17 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (9);
 	EXPECT (sidecar_insfx_shown () && sidecar_ui_page () == 9);
 	ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-voice");
+	// the MASTER FX page: both SRCs, the commands its keys send
+	{
+		int pg = sidecar_ui_page ();
+		sidecar_ui_show (19);
+		EXPECT (sidecar_mfx_shown ());
+		mfx_fake (0); sidecar_mfx_set (&s_Mv); run (2); shot ("mfx-ret");
+		mfx_fake (1); sidecar_mfx_set (&s_Mv); run (2); shot ("mfx-mix");
+		mfx_fake (1); s_Mv.rep = 1; s_Mv.onmain = 3; s_Mv.gen++; sidecar_mfx_set (&s_Mv); run (2); shot ("mfx-through");
+		sidecar_ui_show (pg);
+		EXPECT (!sidecar_mfx_shown ());
+	}
 	EXPECT (sidecar_insfx_voice () == 2);
 	{
 		int e = DY / 6, sp = o ? LU (177) + DX / 2 : LU (380) + DX / 2;
