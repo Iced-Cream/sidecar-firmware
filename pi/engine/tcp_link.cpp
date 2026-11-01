@@ -90,7 +90,7 @@ void CTcpTransport::StartConnect (void)
 
 void CTcpTransport::Adopt (CSocket *pSocket)
 {
-	m_ToComputer = UsbMidiFromStream ();	// osupdate: a new connection's bytes start clean
+	m_ToComputer = UsbMidiFromStream ();	// usbmidi=os: a new connection's bytes start clean
 	m_pSocket = pSocket;
 	m_pSocket->SetOptionSendTimeout (SendTimeoutUs);	// Send waits at most this long on a full TX queue
 	m_Parser.Reset ();
@@ -174,7 +174,7 @@ void CTcpTransport::Midi (const u8 *pData, int nLength)
 	}
 	m_nMidiIn += nLength;
 	asm volatile ("dsb sy; sev");
-	// osupdate=1: the emulated Rytm's USB MIDI to the computer too, as a real Rytm's is (kernel.cpp
+	// usbmidi=os:: the emulated Rytm's USB MIDI to the computer too, as a real Rytm's is (kernel.cpp
 	// MIDIPacketHandler): Transfer and elkflash wait for its answers
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
 	if (pSidecar == 0 || !pSidecar->OsUpdate ()) return;
@@ -191,7 +191,7 @@ void CTcpTransport::Poll (void)
 	m_nLastPoll = now;
 	Reap ();
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	if (pSidecar != 0 && pSidecar->OsUpdate ())	// osupdate=1: the emulator takes the computer's MIDI (SendComputerMIDI)
+	if (pSidecar != 0 && pSidecar->OsUpdate ())	// usbmidi=os:: the emulator takes the computer's MIDI (SendComputerMIDI)
 		pSidecar->RytmMIDIConnected (m_pSocket != 0 && m_bHello && (m_nGranted & HelloMidi) != 0);
 	if (m_pSocket == 0)
 	{
@@ -239,7 +239,7 @@ void CTcpTransport::Poll (void)
 	}
 }
 
-// osupdate=1: the computer's packets for the Rytm (the Sidecar gadget, filtered there) as one 'M' of their bytes per
+// usbmidi=os:: the computer's packets for the Rytm (the Sidecar gadget, filtered there) as one 'M' of their bytes per
 // send, up to a full message; the gadget's endpoint waits while its queue is full, so nothing is lost on the way
 void CTcpTransport::SendComputerMIDI (void)
 {

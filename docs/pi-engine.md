@@ -879,6 +879,23 @@ token, one tool at a time and eight racing, the token from a 0600 file or the en
 pi/engine/tests/page_pair.test.mjs`: `/midibridge` and `/midibridge/set` refused to an unpaired client, and their web.cpp
 branch on the strict same-origin check with the switches from the body only. **Not yet checked on hardware.**
 
+### OS upgrades over the USB-C MIDI port (usbmidi=os:)
+
+Elektron Transfer or elkflash on the computer at the USB-C port can upgrade the Rytm's OS through the Sidecar. Off by
+default: the gadget's filter drops OS upgrade SysEx (`F0 00 20 3C <dev> 00 7E|7F`, `midi_filter.h`) as before. The
+wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/engine/usbmidi_os.h`
+(tests/test_usbmidi_os.cpp).
+
+- `usbmidi=os:off` (default), `usbmidi=os:emu` (pass only while the TCP link to rytm-emu is the host), `usbmidi=os:on`
+  (pass to the real Rytm on USB too). In `cmdline.txt`, or as a console command. `osupdate=off|0|emu|1|rytm` is the
+  older name and still works (`rytm` = `os:on`, `1` = `emu`); a valid `usbmidi=` wins when both are given.
+- While on: the USB-C MIDI OUT endpoint waits (NAKs) instead of dropping when the Rytm-bound queue is full, so a whole
+  OS file arrives; under `link=tcp`, the computer's MIDI goes to rytm-emu as `'M'` messages and its USB MIDI comes back.
+- `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false}` (`osUpgrade`: they pass right now).
+- After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
+- `usbreboot=1` (separate): the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi
+  (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows).
+
 ### Measurements
 
 - 2026-10-16, Pi 4 on the Mac's link-local Ethernet (169.254.61.60/16), the Rytm off: `sidecar.local` resolved by `dns-sd -G v4` and `getaddrinfo` (7 ms), the page 12.2 KB in 13 ms, `/status` and `/log` answered; `dns-sd -B _http._tcp` lists `Sidecar | Expander`.

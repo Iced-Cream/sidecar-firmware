@@ -1,5 +1,5 @@
 // pi/engine/usbmidi_stream.h - USB MIDI 1.0 event packets (cable 0) to and from a MIDI byte stream, for the TCP link's
-// osupdate=1 path (tcp_link.cpp): the computer's packets for the Rytm go to rytm-emu as bytes ('M'), and rytm-emu's
+// usbmidi=os: path (tcp_link.cpp): the computer's packets for the Rytm go to rytm-emu as bytes ('M'), and rytm-emu's
 // bytes (its USB MIDI output, any split) come back to the computer as packets. UsbMidiFromStream keeps running
 // status, passes real-time bytes at once (also inside a SysEx) and drops stray data bytes.
 // Portable (Mac-tested: tests/test_usbmidi_stream.cpp).

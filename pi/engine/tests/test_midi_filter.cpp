@@ -52,7 +52,7 @@ int main() {
     CHECK(f.DroppedMessages() == 5);
     CHECK(!f.InSysEx());
   }
-  // to the Rytm with SetPassOsUpdate(true) (cmdline osupdate=1): the OS update passes whole, the rest as before
+  // to the Rytm with SetPassOsUpdate(true) (usbmidi=os:on|emu): the OS update passes whole, the rest as before
   {
     MidiFilter f(true);
     f.SetPassOsUpdate(true);

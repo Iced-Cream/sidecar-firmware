@@ -70,6 +70,7 @@ public:
 
 #include "midi_filter.h"
 #include "reboot_sysex.h"
+#include "usbmidi_os.h"
 #include "spsc.h"
 #include "tohost_q.h"
 
@@ -118,12 +119,12 @@ public:
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
-	void Resume (void);				// OUT, osupdate=1: re-arm a held endpoint (IRQs masked)
+	void Resume (void);				// OUT, usbmidi=os: re-arm a held endpoint (IRQs masked)
 
 private:
 	CSidecarGadget *m_pSidecar;
 	boolean m_bActive, m_bBusy;
-	boolean m_bHeld;				// OUT, osupdate=1: not re-armed while the Rytm-bound queue is full
+	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
 	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 	DMA_BUFFER (u8, m_Buffer, BufSize);
 };
@@ -156,8 +157,9 @@ public:
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
 	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
-	// osupdate= (cmdline, or the :osupdate= command): off; emu (the default for osupdate=1): OS updates pass only while
-	// the TCP link (rytm-emu) is the host; rytm: also to a real Rytm on USB. Any but off: flow control and the emu relay
+	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
+	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
+	// flow control and the emu relay
 	boolean OsUpdate (void) const			{ return m_nOsUpdate != OsUpdateOff; }
 	const char *OsUpdateName (void) const;
 	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
@@ -182,7 +184,7 @@ private:
 	void TakeOut (const u8 *pBuffer, size_t nLength);
 	unsigned Feedback (unsigned nFrame);
 	void MIDIFromHost (const u8 *pBuffer, size_t nLength);
-	boolean ToRytmRoom (void) const;		// osupdate=1: room in the Rytm-bound queue for one more OUT transfer
+	boolean ToRytmRoom (void) const;		// usbmidi=os: room in the Rytm-bound queue for one more OUT transfer
 	unsigned MIDIForHost (u8 *pBuffer, unsigned nMax);
 	void ToHost (const u8 *pPacket);		// one packet into the computer's queue (IRQs masked)
 	void HostUp (boolean bUp);			// the MIDI IN endpoint (de)activated (gadget IRQ), or torn down (OnSuspend)
@@ -205,12 +207,12 @@ private:
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
 	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
-	unsigned m_nOsUpdate;				// osupdate=: see OsUpdate ()
+	unsigned m_nOsUpdate;				// usbmidi=os: see OsUpdate ()
 	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
 	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
 	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
 	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
-	static unsigned ParseOsUpdate (const char *p);	// off|0, emu|1, rytm; anything else: ~0u
+	static unsigned ModeFrom (unsigned nMode);	// usbmidi_os::Mode -> OsUpdateOff|Emu|Rytm
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];

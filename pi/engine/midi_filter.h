@@ -9,7 +9,7 @@
 //                  MIDI-CI, universal SysEx F0 7E|7F <dev> 0D ... (macOS 26 sends discovery on every port open;
 //                  an echoed CI message wedged CoreMIDI's port, measured in P1)
 //   to the Rytm    Elektron OS update F0 00 20 3C <dev> 00 7E|7F ... (an OS .syx file's messages: 7E data,
-//                  7F start/end; rytm-emu fw/*.syx, measured), unless SetPassOsUpdate(true) (cmdline osupdate=1)
+//                  7F start/end; rytm-emu fw/*.syx, measured), unless SetPassOsUpdate(true) (usbmidi=os:on|emu)
 //                  the empty SysEx F0 F7 (macOS sends one on a port open, measured; it means nothing)
 // Portable: Mac-tested (tests/test_midi_filter.cpp).
 #pragma once
@@ -22,7 +22,7 @@ class MidiFilter {
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
   void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
-  void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays   // to the Rytm: OS updates go through (sidecar_gadget: osupdate=)
+  void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays   // to the Rytm: OS updates go through (sidecar_gadget: usbmidi=os:)
 
   // One packet in. emit(const uint8_t p[4]) is called for every packet that goes through (0..4 per call).
   template <class Emit>
