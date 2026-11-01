@@ -166,6 +166,32 @@ static void edit_then_switch_back(const std::string& card) {
   printf("test_insert: an edit survives a kit change away and back before its card write lands\n");
 }
 
+// the card names a TYPE: a file from before SAT reads as it always did, the master's lines too, and SAT round-trips
+static void files_name_the_type(const std::string& card) {
+  wr_file(card + "/.rytm/ins/NAM/k002.txt",
+          "# Sidecar inserts\nV1 A FILTER 80 20 0 0\nV1 B CRUSH 40 80 0 127\nV2 A DRIVE 50 0 30 127\nV2 B EQ 64 64 64 64\n"
+          "V3 A COMP 50 60 40 20\nV3 B DELAY 90 40 30 64\nV4 A TREMOLO 64 90 0 0\nV4 B RINGMOD 64 0 0 127\nV5 A AMP 0 64 64 109\n"
+          "M1 A CHORUS 50 90 40 0\nM1 B HALO 70 30 60 0\nM2 A SAT 64 30 70 100\n");
+  uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x10, 'N', 'A', 'M', 0xF7};
+  engine_sysex(m, (int)sizeof m);
+  loaded();
+  ins::kit_changed(1);
+  const int want[][3] = {{0, 0, ins::kFilter}, {0, 1, ins::kCrush}, {1, 0, ins::kDrive}, {1, 1, ins::kEq}, {2, 0, ins::kComp}, {2, 1, ins::kDelay},
+                         {3, 0, ins::kTrem}, {3, 1, ins::kRing}, {4, 0, ins::kAmp}, {ins::kM0, 0, ins::kMChorus}, {ins::kM0, 1, ins::kMHalo},
+                         {ins::kM0 + 1, 0, ins::kSat}};
+  for (auto& w : want) CHECK(ins::control.type[w[0]][w[1]] == w[2]);
+  CHECK(ins::param(0, 0, 0) == 80 && ins::param(ins::kM0 + 1, 0, 1) == 30 && ins::param(ins::kM0 + 1, 0, 3) == 100);
+  ins::set_param(ins::kM0 + 1, 0, 1, 31);
+  ins::settings_due();
+  CHECK(ins::save());
+  for (int i = 0; i < 8; ++i) idle_save(), card_core_turn();
+  CHECK(rd_file(card + "/.rytm/ins/NAM/k002.txt").find("M2 A SAT 64 31 70 100\n") != std::string::npos);
+  ins::kit_changed(2);
+  ins::kit_changed(1);
+  CHECK(ins::control.type[ins::kM0 + 1][0] == ins::kSat && ins::param(ins::kM0 + 1, 0, 1) == 31);
+  printf("test_insert: files name the TYPE: every older one reads the same, SAT saved and read back\n");
+}
+
 // a kit without its own file whose default (the project's file) cannot be read: all off, and the kit is NOT locked (its
 // own file overwrites nothing, as the card path); a kit's own unreadable file still locks it
 static void unreadable_default_does_not_lock_the_kit(const std::string& card, uint64_t& us) {
@@ -1215,6 +1241,7 @@ int main() {
     edit_then_switch_back(tmpl);
     uint64_t us = 94000000;
     unreadable_default_does_not_lock_the_kit(tmpl, us);
+    files_name_the_type(tmpl);
     ins::reset();
     CHECK(system((std::string("rm -rf ") + tmpl).c_str()) == 0);
   }

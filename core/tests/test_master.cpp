@@ -134,13 +134,13 @@ static void types() {
   set(2, ins::kMHalo);
   CHECK(ins::control.type[master::chain(2)][master::slot(2)] == ins::kComp);
   CHECK(master::command("mfx=3:type:halo", o, sizeof o) && strstr(o, "at most"));
-  CHECK(master::next_type(2, ins::kAmp, 1) == ins::kOff);   // past AMP, past the send TYPEs: no room
+  CHECK(master::next_type(2, ins::kSat, 1) == ins::kOff);   // past SAT, past the send TYPEs: no room
   set(1, ins::kOff), set(2, ins::kMHalo);
   CHECK(ins::control.type[master::chain(2)][master::slot(2)] == ins::kMHalo);
   CHECK(master::control.fx[0] != master::control.fx[2] && master::control.fx[0] >= 0 && master::control.fx[2] >= 0);
-  CHECK(master::next_type(1, ins::kAmp, 1) == ins::kOff);
+  CHECK(master::next_type(1, ins::kSat, 1) == ins::kOff);
   set(0, ins::kOff);
-  CHECK(master::next_type(1, ins::kAmp, 1) == ins::kMChorus);
+  CHECK(master::next_type(1, ins::kSat, 1) == ins::kMChorus);
   all_off();
   CHECK(!master::on());
   printf("test_master: send TYPEs on the master only, two at a time; AMP not on a bus\n");

@@ -1328,6 +1328,9 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (9);
 	EXPECT (sidecar_insfx_shown () && sidecar_ui_page () == 9);
 	ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-voice");
+	ins_fake (12); ins_slot (2, 1, 10, "SAT", "CHAR", "DRV", "TONE", "MIX", "TAPE", "+8DB", "FLAT", "127", 0, 40, 64, 127);
+	sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-sat");
+	ins_fake (13); sidecar_insfx_set (&s_Iv); run (2);
 	// the MASTER FX page: both SRCs, the commands its keys send
 	{
 		int pg = sidecar_ui_page ();

@@ -16,7 +16,7 @@ static unsigned s_nGen = ~0u;
 static int s_nVoice = 0, s_bPicked = 0, s_nShown = -1;
 static sidecar_insfx_command_t s_Cmd;
 static const char *const kVoiceMap[] = {"BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB", ""};
-static const char *const kTypeName[10] = {"OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP"};
+static const char *const kTypeName[11] = {"OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "SAT"};
 
 static int oled (void) { return TH->id == THEME_OLED; }
 
@@ -42,7 +42,7 @@ static void type_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
 	int s = (int) (intptr_t) ud;
-	int t = (s_V.slot[s_nVoice][s].type + 1) % 10;
+	int t = (s_V.slot[s_nVoice][s].type + 1) % 11;
 	char c[40];
 	lv_snprintf (c, sizeof c, "ins=V%d:%c:type:%s", s_nVoice + 1, 'A' + s, kTypeName[t]);
 	if (s_Cmd) s_Cmd (c);

@@ -3,7 +3,7 @@
 //
 // TRACK view (the Rytm's selected track, rui1036b; else the last one, FUNC + G another): the chain as a strip (A, B and
 // the three sends), then A..D the selected slot's P1..P4 (the TYPE's labels, the values as the effect reads them:
-// Hz, dB, ms), E SLOT (A / B), F TYPE (a list: OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD; a turn takes the
+// Hz, dB, ms), E SLOT (A / B), F TYPE (a list: OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD AMP SAT; a turn takes the
 // type's defaults), G BUS (which send H edits), H SEND (the voice's level into that bus).
 // BUS view (YES; NO back): the same for bus G's chain: A..D, E SLOT, F TYPE, G BUS 1..3, H ROUTE (bus 3: PRE /
 // POST; buses 1 and 2 return as their send FX's P1 says: shown, not set here). Step locks of A..H: hold a trig on the
@@ -289,7 +289,12 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
   }
   switch (e) {
     case 4: ip.slot = clampi(ip.slot + d, 0, ins::kSlots - 1); break;
-    case 5: ins::set_type(ch, ip.slot, clampi(t + d, 0, ins::kTypes - 1)); break;
+    case 5: {
+      int n = clampi(t + d, 0, ins::kTypes - 1);
+      if (n == ins::kAmp && ip.bus) n += d;   // a bus takes no AMP: past it
+      ins::set_type(ch, ip.slot, n);
+      break;
+    }
     case 6:
       if (func && !ip.bus) {   // FUNC + G: another track
         ip.track = clampi(track_now() + d, 0, 11), ip.manual = true;

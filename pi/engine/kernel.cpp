@@ -786,11 +786,11 @@ void CKernel::LogBench (void)
 	}
 	m_nBenchMHz = nMHz;
 	// fx-ins (core/fx/insert.h): 8 voices' INSERT chains, two slots each, on core 0 (docs/INSERT-FX.md "CPU")
-	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
+	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD SAT+SAT, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
 	// the post EQ on only for that row; the four pairs are measured with it flat, i.e. skipped, so their numbers
 	// stay comparable with the ones in docs/INSERT-FX.md)
-	static const int Pairs[5][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {0, 0}};
-	for (unsigned p = 0; p < 5; p++)
+	static const int Pairs[6][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {10, 10}, {0, 0}};
+	for (unsigned p = 0; p < 6; p++)
 	{
 		u32 nWorst = 0;
 		u32 nHash = 0;

@@ -790,7 +790,7 @@ SENDFX_BUILT = (1, 2, 16, 17, 18, 5, 6, 8, 15)   # 1, 2, 16, 17, 18 everywhere (
 SENDFX_BUILT_TEENSY = (1, 2, 16, 17, 18)       # (and the Mac): a Teensy build reports them MISSING
 # fx-ins (core/fx/insert.h, docs/INSERT-FX.md): the INSERT slots' TYPE ids (stable: the card's files name them), the
 # seq p-lock params 24..31 lock the track's voice's INSERT A / B P1..P4 (core/seq/seq.h kLockIns; SEQ_LOCK_INS below)
-INSERT_TYPES = {0: "OFF", 1: "FILTER", 2: "CRUSH", 3: "DRIVE", 4: "EQ", 5: "COMP", 6: "DELAY", 7: "TREMOLO", 8: "RINGMOD", 9: "AMP"}
+INSERT_TYPES = {0: "OFF", 1: "FILTER", 2: "CRUSH", 3: "DRIVE", 4: "EQ", 5: "COMP", 6: "DELAY", 7: "TREMOLO", 8: "RINGMOD", 9: "AMP", 10: "SAT"}
 SENDFX_STUTTER = 15   # a master insert, not a send (core/fx/stutter_fx.h): one FX slot at a time, a second MISSING
 SENDFX_USER_FIRST, SENDFX_USER_SLOTS = 64, 4
 # track 12 pairs (words 0, 29, 38, 39, 40, 41) -> FX k's [TYPE, P1..P5] as (pair, half 0 hi / 1 lo)
