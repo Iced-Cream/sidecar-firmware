@@ -799,7 +799,7 @@ Licence: SIL Open Font License 1.1, Copyright 2011 The Montserrat Project Author
 
 ------------------------------------------------------------------------------
 Circle addon/rp1dsi (Rene Stange), linked into the Raspberry Pi 5 kernel
-Licence: GNU GPL version 3 (or later), like Circle itself: licenses/GPL-3.0.txt. DSI display and FT5x06 / GT911 touch driver for the Pi 5's RP1; source as Circle's with pi/circle/circle-rp1dsi-fb.patch and circle-rp1dsi-td2.patch, see the written offer in README.md.
+Licence: GNU GPL version 3 (or later), like Circle itself: licenses/GPL-3.0.txt. DSI display and FT5x06 / GT911 touch driver for the Pi 5's RP1; source as Circle's with pi/circle/circle-rp1dsi-fb.patch (on this development branch; a release also has circle-rp1dsi-td2.patch), see the written offer in README.md.
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -964,6 +964,11 @@ SOFTWARE.
 ------------------------------------------------------------------------------
 MD (plugins/mdkit): mdkit by Soejrd (commit 96157fe)
 Licence: CC0 1.0 Universal: see "mdkit" above (plugins/mdkit/NOTICE).
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+MODEL E (plugins/modele): the oscillator bank of ModelDigi (https://github.com/simonjohansson/ModelDigi, commit c412bdf2ab3b0b5b62484e8195c2f880d1964c67)
+Licence: GNU GPL version 2 or later: licenses/GPL-2.0.txt, and the upstream LICENSE unchanged in plugins/modele/third_party/modeldigi/LICENSE. Vendored unchanged: dsp/oscillator.c, oscillator.h, edge_kernel.h, mixer_curve.h (SPDX lines in each file). The whole package is GPL-2.0-or-later (plugins/modele/LICENSE, NOTICE); it is built on its own, not in the sidecar-pi-plugins zip, and its complete source goes with the binary (make package: modele-source.tar.gz).
 ------------------------------------------------------------------------------
 
 

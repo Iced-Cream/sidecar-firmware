@@ -13,7 +13,7 @@ namespace {
 Req* ring[kQueue];
 volatile uint32_t wr = 0, rd = 0;   // wr: the control core's, rd: the card core's
 volatile bool on = false;
-volatile uint32_t need_ms = ~0u, low = 0;
+volatile uint32_t need_ms[2] = {~0u, ~0u}, low[2] = {0, 0};
 Stats st;
 
 inline uint32_t ld(const volatile uint32_t* p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
@@ -118,7 +118,7 @@ void run(Req* r) {
     r->got = ok ? (int32_t)r->len : -1;
   } else if (r->kind == kExistsReq) {
     Fs fs;
-    r->got = fs.exists(r->path) ? 1 : 0;
+    r->got = r->off ? fs.lookup(r->path) : fs.exists(r->path) ? 1 : 0;
   } else if (r->kind == kRenameReq) {
     Fs fs;
     const char* to = (const char*)r->buf;
@@ -135,6 +135,22 @@ void run(Req* r) {
     File d;   // (the folder only for the open: File::open(dir, index) walks a fresh copy of it)
     r->got = d.open(r->path, core::kRead) && r->f->open(&d, (uint32_t)r->off, core::kRead) ? 1 : 0;
     d.close();
+  } else if (r->kind == kSmallReq) {
+    fmt::recover(r->path);
+    File f;
+    r->got = f.open(r->path, core::kRead) ? f.read(r->buf, r->len) : -1;
+    f.close();
+  } else if (r->kind == kAppendReq) {
+    if (r->off != 1) {
+      char d[kPathMax];
+      sniprintf(d, sizeof d, "%s", r->path);
+      char* sl = strrchr(d, '/');
+      if (sl && sl != d) *sl = 0, samp::mkdirs(d);
+    }
+    File f;
+    size_t n = f.open(r->path, r->off == 0 ? core::kWrite : core::kAppend) ? f.write(r->buf, r->len) : 0;
+    bool ok = f.close() && n == r->len;
+    r->got = ok ? (int32_t)r->len : n == r->len ? kAppendUnsure : n ? (int32_t)n : -1;
   } else if (r->kind == kFnReq) {
     r->fn(r);
   } else if (r->kind == kRemoveReq) {
@@ -194,6 +210,13 @@ CORE_COLD bool take_back(Req* r) {
   return true;
 }
 
+CORE_COLD void run_here(Req* r) {
+  r->state = kRunning;
+  run(r);
+  sto(&r->state, kDone);
+  ++st.taken_back;
+}
+
 CORE_COLD void wait(Req* r) {
   while (ld(&r->state) == kPosted || ld(&r->state) == kRunning) {
     if (!on) break;   // (cannot happen: inline requests are done when post returns)
@@ -220,9 +243,9 @@ CORE_COLD bool idle(const Req* r) {
   return s == kFree || s == kDone || s == kCancelled;
 }
 
-CORE_COLD void set_need(uint32_t ahead_ms, uint32_t low_ms) {
-  need_ms = ahead_ms;
-  low = low_ms;
+CORE_COLD void set_need(uint32_t ahead_ms, uint32_t low_ms, int who) {
+  need_ms[who] = ahead_ms;
+  low[who] = low_ms;
 }
 
 CORE_COLD Req* service() {
@@ -250,7 +273,7 @@ CORE_COLD uint32_t oldest_ms() {
   const Req* r = ring[r0 % kQueue];   // (a diagnostic read from another core: a request the card core has just taken, or a ghost slot of a cancelled one, can be read as the oldest - an age a little off, never a fault: ring slots are never freed)
   return r ? (now_us() - r->posted_us) / 1000 : 0;
 }
-CORE_COLD bool busy() { return pending() > 0 || need_ms < low; }
+CORE_COLD bool busy() { return pending() > 0 || need_ms[0] < low[0] || need_ms[1] < low[1]; }
 const Stats& stats() { return st; }
 CORE_COLD void note_yield() { ++st.yields; }
 CORE_COLD void note_upload_wait() { ++st.upload_waits; }
@@ -258,7 +281,7 @@ CORE_COLD void note_upload_wait() { ++st.upload_waits; }
 CORE_COLD void reset() {
   wr = rd = 0;
   on = false;
-  need_ms = ~0u, low = 0;
+  need_ms[0] = need_ms[1] = ~0u, low[0] = low[1] = 0;
   memset(&st, 0, sizeof st);
   // the posted settings write keeps a Req of its own here (fmt.h post_end): emptying the queue from under it would
   // leave its slot busy for good, and every later LFO / INSERT / keys save blocked

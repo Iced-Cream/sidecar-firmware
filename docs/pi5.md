@@ -1,7 +1,7 @@
 # The Pi engine on a Raspberry Pi 5 (first build, 2026-10-19)
 
 Status: **runs on a Pi 5** (*measured* 2026-10-19: Rytm, voices, remote UI, web UI over Ethernet, replug, Wi-Fi);
-the HDMI display shows the UI with touch (measured, at 1920x1080 unscaled); the 800x480 UI scaled to it is measured working (slightly soft); the DSI display (official 7" v1 and compatibles, through Circle's `addon/rp1dsi`) is built, not yet run; the Touch Display 2 7" is *measured* working, picture and touch, the 1024x600 UI rotated onto it ("DSI display"). Everything below about the hardware is *inferred* from Circle's sources,
+the HDMI display shows the UI with touch (measured, at 1920x1080 unscaled); the 800x480 UI scaled to it is measured working (slightly soft); the DSI display (official 7" v1 and compatibles, through Circle's `addon/rp1dsi`) is built, not yet run ("DSI display"). Everything below about the hardware is *inferred* from Circle's sources,
 its README and the Pi 5 device tree, unless marked *measured*. The Pi 4 build of the `pi5` branch was unchanged (same
 symbols and sizes as `final-010`, measured by comparing the two `kernel8-rpi4.elf` with `nm -S`). In 0.2.0 (`release-020`:
 `pi5` + `display-dsi` + `web-wifi`) the Pi 4 kernel differs from 0.1.0 only by those merges (`nm -S`, measured): the
@@ -22,8 +22,8 @@ The same engine as on the Pi 4 (`docs/pi-engine.md`), built with `RASPPI=5`, wit
 | Ethernet / web UI / mDNS `sidecar.local` | BCM54213 | RP1's MACB/GEM (Circle picks it) |
 | Wi-Fi | CYW43455 | the same chip, firmware files with the Pi 5's names (in the SD set): **works** (*measured* 2026-10-19: credentials entered on the web page, saved, connected) |
 | HDMI display (LVGL) | yes | needs `hdmi_force_hotplug=1`; the firmware's frame buffer is 1920x1080, the 800x480 UI is scaled to it ("HDMI display"); `display=0` turns it off |
-| DSI display + touch | the firmware's (frame buffer + FT5406 buffer) | Circle's `addon/rp1dsi` (display and FT5x06 or GT911 touch, no firmware), preferred over HDMI; v1: 800x480 unscaled (built, not run); Touch Display 2: the 1024x600 UI rotated, centred ("DSI display") |
-| USB-C gadget (UAC2 12/12 + MIDI to the computer) | yes | **compiled out** (`SIDECAR_NO_GADGET`); the boot log says `gadget: none on this board (Pi 5 build)` |
+| DSI display + touch | the firmware's (frame buffer + FT5406 buffer) | Circle's `addon/rp1dsi` (display and FT5x06 touch, no firmware), preferred over HDMI, 800x480 unscaled ("DSI display"; built, not run) |
+| USB-C gadget (UAC2 12/12 + MIDI to the computer) | yes | **compiled out** (`SIDECAR_NO_GADGET`, unless `PI5_GADGET=1`: "USB device side"); the boot log says `gadget: none on this board (Pi 5 build)` |
 | serial console | GPIO14/15, 921600 | GPIO14/15, 921600 (default, `PI5_UART=0`), or the 3-pin debug connector (`PI5_UART=10`) |
 | `sdboot` (serial bootloader + `engine.img`) and `flash.sh` | yes | not yet: see "Updating the kernel" |
 
@@ -254,12 +254,11 @@ Built, **not yet run** (everything here *inferred* from Circle 51.1.1's `addon/r
   no DSI probe. `dsi_port=0|1`: one port only.
 - Upside down in the case: `dsi_rotate=180` in cmdline.txt (picture and touch together). Mirrored touch only:
   `dsitouch_inv=1` (x), `2` (y), `3`.
+- Touch Display 2 (720x1280 portrait, mounted landscape): the 1280x720 UI (`res=1024x600`: the 1024x600 one centred), rotated in software, `dsi_rotate=270`
+  (default) or `90`; docs/pi-display.md, "Touch Display 2 on the Pi 5".
 - config.txt: nothing for DSI. The `[pi5]` HDMI lines stay (an HDMI-only setup needs `hdmi_force_hotplug=1`; with a DSI
   display they do no harm: the HDMI frame buffer is never opened). No `vc4-kms-*` overlay, no `display_auto_detect`.
-- Touch Display 2 (720x1280 portrait, mounted landscape): the 1024x600 UI centred, rotated in software, `dsi_rotate=270`
-  (default) or `90`; docs/pi-display.md, "Touch Display 2 on the Pi 5".
-- Build: `pi/engine/build.sh` applies `pi/circle/circle-rp1dsi-fb.patch` and `circle-rp1dsi-td2.patch` and builds
-  `addon/rp1dsi/librp1dsi.a` in the Pi 5 tree once; the engine
+- Build: `pi/engine/build.sh` builds `addon/rp1dsi/librp1dsi.a` in the Pi 5 tree once (Circle unchanged); the engine
   links it before `libinput` (both have a `CRPiTouchScreen`; rp1dsi's is the display, libinput's is the Pi 4's firmware
   touch and is not linked on the Pi 5).
 
@@ -314,17 +313,62 @@ What replaces it for now:
   power domain 6 (USB) of the firmware's power driver, a `usb-nop-xceiv` PHY (nothing to program), `status =
   "disabled"` by default. It is wired to the USB-C port, the Pi 5's power input (Linux uses it as a gadget with
   `dtoverlay=dwc2,dr_mode=peripheral`: *inferred*, not tried here).
-- **Circle: no.** `lib/usb/gadget/Makefile` builds the DWC2 gadget only for `RASPPI != 5`, `bcm2712.h` has no
-  `ARM_USB_BASE`, and the README's Pi 5 column lists no gadget driver.
-- **A port** (our `circle-gadget.patch` sits on top of it, unchanged, since it only touches the gadget library):
-  1. `bcm2712.h`: the DWC2 base (`0x1000480000`, core/host/device/power offsets as `bcm2835.h`'s) and its IRQ number.
-  2. Power: domain 6 through the firmware (the Pi 4 path is `SetPowerState (DEVICE_ID_USB_HCD)`: check that the
-     Pi 5 firmware takes the same tag, else the domain-state tag).
-  3. DMA addresses: the DWC2's internal DMA needs bus addresses below 4 GB; Circle's Pi 5 `BUS_ADDRESS` and where
-     its coherent region sits must be checked (the Pi 4 uses the 0xC0000000 alias).
-  4. `lib/usb/gadget/Makefile` for `RASPPI=5`, then the engine's Makefile keeps `gadget.o sidecar_gadget.o`.
-  5. Possible core differences (FIFO sizes in `GHWCFG*`, the isochronous timing our patch relies on): read and
-     log them at start.
+- **Circle: not by default.** `lib/usb/gadget/Makefile` builds the DWC2 gadget only for `RASPPI != 5`, and `bcm2712.h`
+  has no `ARM_USB_BASE`. `PI5_GADGET=1 RASPPI=5 pi/engine/build.sh` builds it, in a Circle tree of its own
+  (`circle-engine-pi5usb`, the host-side patches + `circle-gadget.patch` + `circle-pi5-gadget.patch`). It stays off at run
+  time unless `cmdline.txt` has `gadget=sidecar` or `gadget=midi` (the Pi 5's `GADGET` default is `0`), and the default Pi 5
+  build is as before, but for one boot line, `board: Raspberry Pi 5 build (kernel_2712.img)`, by which `sdboot.py` and
+  `make-sd-dual.sh` now tell a Pi 5 kernel.
+- **What was measured before** (branch `pi5-usbc`, kernels 1-6, 2026-10-19, powered and connected directly from a
+  MacBook; its `docs/pi5.md` has the detail): the core reads fine at `0x10_0048_0000`: `0x4F54280A`, HWCFG2 `0x228DDD50`,
+  HWCFG3 `0x0FF000E8`, HWCFG4 `0x1FF00020`, 4080 FIFO words, 8 EPs, dedicated FIFOs, IRQs arrive on SPI 73. The firmware
+  answers every power tag with state 0, the SD's too, so the answer says nothing. It leaves the core in host mode
+  (GUSBCFG `20402700`, DCTL `2`, SOFs counting, so the PHY clock runs). Forced to device mode the core shows B-session
+  valid, its pull-up on and DSTS suspended (line idle, not SE0: an unconnected pull-up would read as a USB reset), and yet
+  no USB reset came and the Mac saw nothing, with or without the dwc2 overlay applied. Kernel 7's result was never
+  recorded. Under Raspberry Pi OS the same board works through a hub (`dtoverlay=dwc2,dr_mode=peripheral`, 2026-10-31).
+- **What Linux does** (read in `drivers/usb/dwc2`, `raspberrypi-power.c` and the Pi 5 device tree): nothing else in
+  hardware. `usb@480000` has no `resets`; its PHY is a `usb-nop-xceiv` with no reset GPIO, no supply and no registers;
+  `clk-usb` is a fixed clock; `power-domains = <&power 6>` is the firmware's "set power state", device 3, state 1. So
+  what differs from Circle's kernels is the register sequence, the mailbox call's exact form or the cabling. Circle's
+  own lacks: DCTL.PwrOnPrgDone pulsed, GOTGINT / GINTSTS cleared before the connect, the global NAKs cleared, the
+  tag's request length 0. Those are `usbinit=4`, the default now; `pi/circle/pi5gadget` walks through all the ways.
+- **The port** (`pi/circle/circle-pi5-gadget.patch`, on top of `circle-gadget.patch`):
+  1. `bcm2835.h`, `bcm2711int.h`: the base `0x1000480000` (offsets as `bcm2835.h`'s), GIC SPI 73; `CDWHCIRegister` holds
+     64-bit addresses.
+  2. Power: the mailbox tag above, first, then the core is read whatever the answer.
+  3. DMA: `/axi`'s `dma-ranges` are 1:1 for the low 64 GB, so a DMA address is the ARM physical address, not the Pi 4's
+     `0xC0000000` alias, and the registers are 32-bit: below 4 GB, asserted (`new` takes from `HEAP_LOW`, below 1 GB).
+     The DT does not mark the core `dma-coherent`: cache maintenance as on the Pi 4.
+  4. `lib/usb/gadget/Makefile` for `RASPPI=5`; the model check; any `OT2` core; HWCFG logged, FIFO RAM checked.
+  5. `InitCorePi5` (`usbinit=` in `cmdline.txt`): the ways of leaving the firmware's host mode, `Reconnect (N)` to try
+     another at run time.
+- **Bring-up kernel** (`pi/circle/pi5gadget`, `pi/circle/build-pi5gadget.sh` -> `pi/circle/out/pi5gadget/kernel_2712.img`):
+  Circle's USB MIDI gadget alone, single core, no engine, every USB event on the serial console (Circle's own trace with
+  `USB_GADGET_DEBUG`), the computer's MIDI echoed (`pi/engine/tests/gadget_midi_test.py`). While no USB reset comes it
+  tries each `usbinit=` way for 6 s, so one boot answers for all of them; a watchdog (15 s) ends a hang and it reboots
+  after `testsecs=` (300 s), which ends a tryboot. Its `cmdline.txt` options and serial keys are at the top of `kernel.cpp`.
+  *Measured* 2026-10-31, through the Overhub II: it enumerates on the Mac as "Sidecar" 1209:0001 at 480 Mb/s, configured,
+  within about 15 s of the reboot; tryboot returns to Linux after `testsecs=`. Which `usbinit=` way did it: not known (no
+  serial then).
+- **Engine test mode** (`testsecs=S` in `cmdline.txt`, `PI5_GADGET=1` builds only): the engine on a card that is not
+  Sidecar's, with no Rytm: a tryboot of Raspberry Pi OS. `Fs::begin ()` refuses, so the engine runs as with no card and
+  writes nothing to that system's boot partition; the watchdog runs from the start of the boot; at S seconds it reboots.
+  The log goes to `/usbtest.log` on that partition, every 10 s, only if the file exists: a file made beforehand under
+  Linux, whose bytes are overwritten, so no cluster is allocated and the FATs are not written. Each write still ends by
+  rewriting the file's directory entry, one sector of the root directory: a reset in that moment could damage it, a small
+  risk to that system's boot partition. `make-sd-dual.sh` refuses a kernel with the test mode (`testsecs=`).
+  `testcard=1` with `testsecs=`: the engine uses the card as usual, so projects, presets and plugins can be tested on a tryboot.
+  The watchdog and the reboot stay, `/usbtest.log` goes on, and the black box writes `/.rytm/blackbox.log`. FatFs's name-changing
+  calls go through a gate in these kernels only (`card_guard.h`, `--wrap`): on the card only `/.rytm` and fsweb's content folders
+  may change. `config.txt`, `cmdline.txt`, the kernels, `overlays/` and anything else at the root are refused with `FR_DENIED`
+  and a `cardguard: testcard: ...` log line, whichever path asks: port 7310's PUT and DEL, the Wi-Fi import `sidecar-wifi.txt`,
+  and the pairing recourse `sidecar-paircode.txt`. So a boot with no display writes no code down: use the Rytm's screen, the
+  serial console, or devices already paired in `/.rytm/pair.txt`. `/.rytm` is readable under Linux, Wi-Fi key and paired hashes
+  included. Unlike the mode without it this writes FATs: a reset during a write can damage that partition, and it is small.
+  `uac2test=1` starts the test source (`:uac2test=on`: tones on IN 1-10, IN 11 / 12 the loopback of OUT 1 / 12, the generic
+  timer the clock), `midifake=1` the MIDI loop. In the test source each second logs every OUT channel's rising zero
+  crossings and peak: `sidecar: test out Hz/peak: 1:1009/251 2:1103/251 ...` (peak in 1/1000 of full scale, -12 dBFS = 251).
 - **Power**: in gadget mode the Pi 5 is powered from the computer's USB-C port (or a USB-C power/data splitter, or
   5 V on the header). A Mac port gives at most 3 A: enough to boot (the Pi 5 then limits its USB ports to 600 mA),
   the Rytm has its own supply.

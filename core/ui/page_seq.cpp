@@ -278,7 +278,7 @@ CORE_COLD const char* machine_long(int t) {
   int vb = remote_track_machine(t);
   if (vb < 0) return "?";
   if (vb == 0x7F) return "ANALOG";
-  return user_slot_of(vb & 0x78) >= 0 ? "A USER MACHINE" : core::machine_long(vb & 0x78);   // (core/machines.h)
+  return user_slot_of(vb & 0x78) >= 0 ? "A USER MACHINE" : core::machine_long(machine_of((uint8_t)vb));   // (core/machines.h)
 }
 CORE_COLD void prompt_draw(Canvas& c, const seq::View& w) {
   char b[kTextLen + 1];
@@ -367,7 +367,7 @@ CORE_COLD const char* p2_label(int vb, int e) {
   static const char* const px[8] = {"P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16"};
   static const char* const ds[8] = {"XTN", "XDC", "SEED", "OUT", "XP4", "XLV", "XP5", "WID"};   // rui1050: DAISYSP P11 SEED
   static const char* const cp[8] = {"STUT", "SLEN", "TAPE", "TTIM", "ATK", "DEC", "DIR", "LOOP"};   // CHOP (core/chop/chop.h)
-  int m = vb >= 0 && vb != 0x7F ? vb & 0x78 : -1;
+  int m = vb >= 0 && vb != 0x7F ? machine_of((uint8_t)vb) : -1;
   return (m == kFm ? fm : m == kMultiMachine ? ms : m == kWaveMachine ? wt : m == kGranMachine ? gr : m == kDaisy ? ds
           : m == kChopMachine ? cp : px)[e & 7];
 }

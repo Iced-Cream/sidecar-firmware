@@ -6,10 +6,11 @@
 #define RMP_FILE_MAGIC_A64 0x41504D52u   /* "RMPA": an AArch64 image (the Pi; 2026-10-17, docs/user-machines-pi.md): the
                                            same header, manifest and plugin ABI built for AArch64; relocations
                                            RMP_REL_ABS64 only, the image placed at a 4096-byte aligned address */
-#define RMP_FORMAT 4u          /* the newest the loader accepts. rmp_pack.py writes 3 (the manifest head and knobs
+#define RMP_FORMAT 5u          /* the newest the loader accepts. rmp_pack.py writes 3 (the manifest head and knobs
                                   below), or 4: format 3 with an RLB2 block (below) - a package an older host (3 at
-                                  most) refuses rather than show its list knob's first list for every value */
-#define RMP_FORMAT_RMP1 3u     /* the newest for an RMP1 (Teensy) package: format 4 is RMPA only */
+                                  most) refuses rather than show its list knob's first list for every value; or 5: a
+                                  list over 16 names, which a host of limit 16 refuses rather than show the wrong names */
+#define RMP_FORMAT_RMP1 3u     /* the newest for an RMP1 (Teensy) package: formats 4 and 5 are RMPA only */
 #define RMP_FORMAT_MIN 1u      /* the oldest the loader accepts: 1 differs only in the manifest
                                   (20-byte knobs p, look, text, pad, long, short; no name table) */
 #define RMP_HEADER_BYTES 96u
@@ -48,7 +49,7 @@ typedef struct __attribute__((packed)) {
    entries as the knobs' enum_count add up to, each RMP_ENUM_NAME_BYTES, NUL-padded
    ASCII, at most RMP_ENUM_NAME_BYTES - 1 characters). */
 #define RMP_ENUM_NAME_BYTES 8
-#define RMP_ENUM_MAX 16             /* names per knob */
+#define RMP_ENUM_MAX 36             /* names per knob (16 until 0.4.0; a host serves an older Rytm 16: core/user/um.cpp) */
 typedef struct __attribute__((packed)) { char name[RMP_ENUM_NAME_BYTES]; } rmp_enum_name;
 typedef struct __attribute__((packed)) {
   char name[10]; char short_name[4]; char licence[48]; uint8_t page2; uint8_t knob_count;

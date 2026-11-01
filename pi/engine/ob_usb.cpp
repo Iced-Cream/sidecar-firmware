@@ -40,6 +40,7 @@
 //     endpoint state is printed so a halt shows).
 //
 #include "ob_usb.h"
+#include "simd.h"
 #include "usbmidi_pack.h"
 #include "sidecar_gadget.h"
 #include "midibridge_pi.h"
@@ -465,7 +466,10 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		}
 		if (g_Rec.wants_side ()) g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);	// the voices as rendered, the FX, the pairs
 		if (bridge::samp_wants_voices ()) bridge::samp_voices (V, ob::kFramesPerBlock, LR, X);	// the sampler's Sidecar voice (X: its FX, CHOP)
-		ob::put_frames (pBlock, m_nOutCh, F);
+		for (int f = 0; f < ob::kFramesPerBlock; f++)
+		{
+			core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
+		}
 
 		if (s_bCapOn)
 		{
@@ -864,6 +868,11 @@ void CObUsbTransport::Poll (void)
 	TCircleIo Io;
 	Io.pMIDI = m_pMIDI;
 	Io.pSidecar = CSidecarGadget::Get ();
-	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), CTimer::GetClockTicks ());
+	unsigned nNow = CTimer::GetClockTicks ();
+	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), nNow);
 	midibridge_pi::SetRytmFail (m_Merge.bridge_failed ());
+	boolean bSending = m_pMIDI != 0 && m_bSend && !m_Merge.failed ();
+	g_bRytmOff = !bSending;
+	if (m_Resync.tick (m_Merge.dropped () + g_nToHostFull + bridge::to_host_dropped (), bSending, nNow))
+		g_bRytmResync = true;
 }

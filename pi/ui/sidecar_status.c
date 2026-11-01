@@ -33,8 +33,8 @@ static int oled (void) { return TH->id == THEME_OLED; }
 static uint32_t c_ink (void) { return oled () ? TH->ink : TH->win_ink; }
 static uint32_t c_dim (void) { return oled () ? TH->dim : TH->win_dim; }
 static uint32_t c_alert (void) { return oled () ? TH->accent_hi : TH->bad; }
-static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : &lv_font_montserrat_12; }
-static const lv_font_t *f_val (void) { return oled () ? TH->f_body : &lv_font_montserrat_14; }
+static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : TH->f_micro; }
+static const lv_font_t *f_val (void) { return oled () ? TH->f_body : TH->f_small; }
 
 static lv_obj_t *val (lv_obj_t *p, int x, int y, int w, int right)
 {
@@ -58,28 +58,28 @@ static void rows (lv_obj_t *p, int y, int rp, int w, int capw, int n, const char
 	for (int i = 0; i < n; i++)
 	{
 		int ry = y + i * rp;
-		th_label (p, O ? 6 : 12, ry + (fv - fc) / 2 + (O ? 1 : 1), f_cap (), O ? TH->dim : TH->win_dim, cap[i]);
-		out[i] = val (p, (O ? 6 : 12) + capw, ry, w - capw - (O ? 10 : 24), 0);
+		th_label (p, O ? LU (6) : LU (12), ry + (fv - fc) / 2 + (O ? 1 : 1), f_cap (), O ? TH->dim : TH->win_dim, cap[i]);
+		out[i] = val (p, (O ? LU (6) : LU (12)) + capw, ry, w - capw - (O ? LU (10) : LU (24)), 0);
 	}
 }
 
 void sidecar_status_create (void *parent, int y0)
 {
 	const int O = oled (), dx = TH->dx, dy = TH->dy;
-	const int pw = O ? TH->w - 48 : TH->w, ph = O ? TH->h : 428 + dy;
+	const int pw = O ? TH->w - LU (48) : TH->w, ph = O ? TH->h : LU (428) + dy;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
 	s_Page = pg;
 	s_nGen = ~0u;
 	memset (&s_V, 0, sizeof s_V);
 	const int kind = O ? TH_PANEL_GROUP : TH_PANEL_WINDOW;
 	// two columns: VOICES, SEND FX, VERSIONS | CPU, LINKS. 1024x600: wider columns, taller rows
-	const int top = O ? 15 : 6, gap = O ? 4 : 8, mx = O ? 0 : 8;
-	const int cw = (pw - 2 * mx - gap) / 2, rx = mx + cw + gap, H = ph - top - (O ? 0 : 4);
-	const int pt = O ? 12 : 26;				// the panel's title (its rows start below it)
-	const int rp = O ? 12 + dy / 16 : 22 + dy / 16;	// a row
+	const int top = O ? LU (15) : LU (6), gap = O ? LU (4) : LU (8), mx = O ? 0 : LU (8);
+	const int cw = (pw - 2 * mx - gap) / 2, rx = mx + cw + gap, H = ph - top - (O ? 0 : LU (4));
+	const int pt = O ? LU (12) : LU (26);				// the panel's title (its rows start below it)
+	const int rp = O ? LU (12) + dy / 16 : LU (22) + dy / 16;	// a row
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		th_titlebar_set (s_TitleBar, "SIDECAR STATUS", "", 0);
 		s_Title = s_Sub = 0;
 	}
@@ -89,71 +89,71 @@ void sidecar_status_create (void *parent, int y0)
 		s_Title = s_Sub = 0;
 	}
 	// ---- left: VOICES (8 rows), SEND FX (2), VERSIONS (3)
-	const int vh = pt + 8 * rp + (O ? 2 : 6), fh = pt + 2 * rp + (O ? 2 : 6), verh = H - vh - fh - 2 * gap;
+	const int vh = pt + LU (8) * rp + (O ? 2 : LU (6)), fh = pt + 2 * rp + (O ? 2 : LU (6)), verh = H - vh - fh - 2 * gap;
 	lv_obj_t *vp = th_panel (pg, mx, top, cw, vh, O ? "VOICES" : "Voices: machine and load", kind);	// (seqx: shorter, the instances right of it)
-	const int namew = O ? 35 : 64, machw = O ? 50 + dx / 8 : 92 + dx / 8, pctw = O ? 26 : 52;
+	const int namew = O ? LU (35) : LU (64), machw = O ? LU (50) + dx / 8 : LU (92) + dx / 8, pctw = O ? LU (26) : LU (52);
 	for (int n = 0; n < SST_VOICES; n++)
 	{
 		int vi = kVoiceOrder[n], ry = pt + n * rp, fv = lv_font_get_line_height (f_val ());
-		lv_obj_t *nm = th_label (vp, O ? 6 : 12, ry, f_val (), O ? TH->sub : TH->accent, kVoiceName[vi]);
+		lv_obj_t *nm = th_label (vp, O ? LU (6) : LU (12), ry, f_val (), O ? TH->sub : TH->accent, kVoiceName[vi]);
 		(void) nm;
-		s_VMach[vi] = val (vp, (O ? 6 : 12) + namew, ry, machw, 0);
-		int bx = (O ? 6 : 12) + namew + machw + (O ? 4 : 8), bw = cw - bx - pctw - (O ? 8 : 22);
-		s_VLoad[vi] = th_meter (vp, bx, ry + (O ? 2 : 4), bw, O ? fv - 4 : fv - 6, 500, TH_METER_H, O ? TH->ink : TH->accent);	// full: half a core
+		s_VMach[vi] = val (vp, (O ? LU (6) : LU (12)) + namew, ry, machw, 0);
+		int bx = (LU (O ? 6 : 12)) + namew + machw + (LU (O ? 4 : 8)), bw = cw - bx - pctw - (LU (O ? 8 : 22));
+		s_VLoad[vi] = th_meter (vp, bx, ry + (O ? 2 : LU (4)), bw, O ? fv - LU (4) : fv - LU (6), 500, TH_METER_H, O ? TH->ink : TH->accent);	// full: half a core
 		th_meter_set (s_VLoad[vi], 0);
-		s_VPct[vi] = val (vp, cw - pctw - (O ? 6 : 18), ry, pctw, 1);
+		s_VPct[vi] = val (vp, cw - pctw - (O ? LU (6) : LU (18)), ry, pctw, 1);
 	}
 	const int ix = O ? cw / 3 : cw / 2;		// E0: right of the title (the OLED's is short)
-	s_Inst = th_label (vp, ix, O ? 1 : 7, f_cap (), O ? TH->dim : TH->win_dim, "");
-	lv_obj_set_size (s_Inst, cw - ix - (O ? 8 : 18), lv_font_get_line_height (f_cap ()));
+	s_Inst = th_label (vp, ix, O ? 1 : LU (7), f_cap (), O ? TH->dim : TH->win_dim, "");
+	lv_obj_set_size (s_Inst, cw - ix - (O ? LU (8) : LU (18)), lv_font_get_line_height (f_cap ()));
 	lv_label_set_long_mode (s_Inst, LV_LABEL_LONG_MODE_DOTS);
 	lv_obj_set_style_text_align (s_Inst, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_obj_t *fp = th_panel (pg, mx, top + vh + gap, cw, fh, O ? "SEND FX" : "Send FX (the kit's)", kind);
 	for (int k = 0; k < 2; k++)
 	{
 		int ry = pt + k * rp;
-		th_label (fp, O ? 6 : 12, ry, f_val (), k ? c_ink () : (O ? th_oled_secondary (127) : 0x34C85A), k ? "FX 2" : "FX 1");
-		s_Fx[k] = val (fp, (O ? 6 : 12) + namew + (O ? 4 : 8), ry, cw - namew - (O ? 60 : 120), 0);
-		s_FxPp[k] = val (fp, cw - (O ? 46 : 92), ry, O ? 40 : 74, 1);
+		th_label (fp, O ? LU (6) : LU (12), ry, f_val (), k ? c_ink () : (O ? th_oled_secondary (127) : 0x34C85A), k ? "FX 2" : "FX 1");
+		s_Fx[k] = val (fp, (O ? LU (6) : LU (12)) + namew + (O ? LU (4) : LU (8)), ry, cw - namew - (O ? LU (60) : LU (120)), 0);
+		s_FxPp[k] = val (fp, cw - (O ? LU (46) : LU (92)), ry, O ? LU (40) : LU (74), 1);
 	}
 	lv_obj_t *verp = th_panel (pg, mx, top + vh + fh + 2 * gap, cw, verh, O ? "VERSIONS + LIBRARY" : "Versions and the sample library", kind);
-	int vrp = (verh - pt - (O ? 2 : 6)) / V_N;		// (five rows: tighter where the panel is short)
+	int vrp = (verh - pt - (LU (O ? 2 : 6))) / V_N;		// (five rows: tighter where the panel is short)
 	if (vrp > rp) vrp = rp;
-	int vy = (verh - pt - V_N * vrp - (O ? 2 : 6)) / 2;
-	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? 54 : 96, V_N, O ? kVerCap : kVerCapC, s_Ver);
+	int vy = (verh - pt - V_N * vrp - (LU (O ? 2 : 6))) / 2;
+	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? LU (54) : LU (96), V_N, O ? kVerCap : kVerCapC, s_Ver);
 	// ---- right: CPU (4 cores, 4 rows), LINKS (9 rows)
-	const int cph = pt + 4 * rp + C_N * rp + (O ? 4 : 10);
+	const int cph = pt + 4 * rp + C_N * rp + (O ? LU (4) : LU (10));
 	lv_obj_t *cp = th_panel (pg, rx, top, cw, cph, O ? "CPU" : "CPU", kind);
 	for (int c = 0; c < SST_CORES; c++)
 	{
 		int ry = pt + c * rp, fv = lv_font_get_line_height (f_val ());
 		char b[16];
 		lv_snprintf (b, sizeof b, O ? "CORE %d" : "Core %d", c);
-		th_label (cp, O ? 6 : 12, ry + (O ? 1 : 1), f_cap (), O ? TH->dim : TH->win_dim, b);
-		int bx = O ? 50 : 76, bw = cw - bx - pctw - (O ? 8 : 22);
-		s_Core[c] = th_meter (cp, bx, ry + (O ? 2 : 4), bw, O ? fv - 4 : fv - 6, 100, TH_METER_H, O ? TH->ink : TH->accent);
+		th_label (cp, O ? LU (6) : LU (12), ry + (O ? 1 : 1), f_cap (), O ? TH->dim : TH->win_dim, b);
+		int bx = LU (O ? 50 : 76), bw = cw - bx - pctw - (LU (O ? 8 : 22));
+		s_Core[c] = th_meter (cp, bx, ry + (O ? 2 : LU (4)), bw, O ? fv - LU (4) : fv - LU (6), 100, TH_METER_H, O ? TH->ink : TH->accent);
 		th_meter_set (s_Core[c], -1);
-		s_CorePct[c] = val (cp, cw - pctw - (O ? 6 : 18), ry, pctw, 1);
+		s_CorePct[c] = val (cp, cw - pctw - (O ? LU (6) : LU (18)), ry, pctw, 1);
 	}
-	rows (cp, pt + 4 * rp + (O ? 3 : 6), rp, cw, O ? 64 : 120, C_N, O ? kCpuCap : kCpuCapC, s_Cpu);
+	rows (cp, pt + 4 * rp + (O ? 3 : LU (6)), rp, cw, O ? LU (64) : LU (120), C_N, O ? kCpuCap : kCpuCapC, s_Cpu);
 	// like the VOICES title's instances; from a quarter in (right aligned): room for CLOCK LOWERED
-	s_Clock = th_label (cp, cw / 4, O ? 1 : 7, f_cap (), O ? TH->dim : TH->win_dim, "");
-	lv_obj_set_size (s_Clock, cw * 3 / 4 - (O ? 8 : 18), lv_font_get_line_height (f_cap ()));
+	s_Clock = th_label (cp, cw / 4, O ? 1 : LU (7), f_cap (), O ? TH->dim : TH->win_dim, "");
+	lv_obj_set_size (s_Clock, cw * 3 / 4 - (O ? LU (8) : LU (18)), lv_font_get_line_height (f_cap ()));
 	lv_obj_set_style_text_align (s_Clock, LV_TEXT_ALIGN_RIGHT, 0);
 	{	// the temperature shares the FIFO row (a row more would squeeze LINKS): the FIFO's value gets the left part
-		const int tw = O ? 56 : 130, fx = (O ? 6 : 12) + (O ? 64 : 120);
-		lv_obj_set_width (s_Cpu[C_FIFO], cw - fx - tw - (O ? 10 : 24));
-		s_Temp = val (cp, cw - tw - (O ? 6 : 18), pt + 4 * rp + (O ? 3 : 6) + C_FIFO * rp, tw, 1);
+		const int tw = O ? LU (56) : LU (130), fx = (O ? LU (6) : LU (12)) + (O ? LU (64) : LU (120));
+		lv_obj_set_width (s_Cpu[C_FIFO], cw - fx - tw - (O ? LU (10) : LU (24)));
+		s_Temp = val (cp, cw - tw - (O ? LU (6) : LU (18)), pt + 4 * rp + (O ? 3 : LU (6)) + C_FIFO * rp, tw, 1);
 	}
 	const int lh = H - cph - gap;
 	lv_obj_t *lp = th_panel (pg, rx, top + cph + gap, cw, lh, O ? "LINKS" : "Links", kind);
-	const int lrp = (lh - pt - (O ? 3 : 8)) / R_LINKS;
-	rows (lp, pt + (O ? 1 : 2), lrp, cw, O ? 54 : 104, R_LINKS, O ? kLinkCap : kLinkCapC, s_Link);
+	const int lrp = (lh - pt - (O ? 3 : LU (8))) / R_LINKS;
+	rows (lp, pt + (O ? 1 : 2), lrp, cw, O ? LU (54) : LU (104), R_LINKS, O ? kLinkCap : kLinkCapC, s_Link);
 	// the pairing code right of the LINKS title (as E0's instances sit on the VOICES title): the panel's rows are
 	// full at this height, and the code belongs with the network anyway
 	const int px = O ? cw / 3 : cw / 2;
-	s_Pair = th_label (lp, px, O ? 1 : 7, f_cap (), O ? TH->dim : TH->win_dim, "");
-	lv_obj_set_size (s_Pair, cw - px - (O ? 8 : 18), lv_font_get_line_height (f_cap ()));
+	s_Pair = th_label (lp, px, O ? 1 : LU (7), f_cap (), O ? TH->dim : TH->win_dim, "");
+	lv_obj_set_size (s_Pair, cw - px - (O ? LU (8) : LU (18)), lv_font_get_line_height (f_cap ()));
 	lv_label_set_long_mode (s_Pair, LV_LABEL_LONG_MODE_DOTS);
 	lv_obj_set_style_text_align (s_Pair, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);

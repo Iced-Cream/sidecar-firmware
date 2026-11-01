@@ -32,7 +32,7 @@ def relabel(rmp, man):
     body = rmp[96:start] + mb
     body += b"\0" * (-len(body) % 4)
     f = list(struct.unpack(rmp_pack.HEADER_FMT, rmp[:96]))
-    f[3] = man["id"].encode(); f[10] = len(mb); f[12] = zlib.crc32(body) & 0xFFFFFFFF
+    f[1] = rmp_pack.package_format(man); f[3] = man["id"].encode(); f[10] = len(mb); f[12] = zlib.crc32(body) & 0xFFFFFFFF
     return struct.pack(rmp_pack.HEADER_FMT, *f) + body
 
 

@@ -164,6 +164,25 @@ int main() {
   CHECK(seq::poly_of(1).detune == 5 && seq::poly_of(1).spread == 8 && seq::poly_of(1).group == 1);
   CHECK(shown("GROUP 1: STORED ONLY"));
   png("poly_3_set.png");
+  // 7g: encoder G is PAD OCT, -3..+3 (clamped, no wrap), shown signed
+  CHECK(shown("OCT") && seq::poly_of(1).oct == 0);
+  turn(6, +1);
+  tick();
+  CHECK(seq::poly_of(1).oct == 1);
+  dump("oct");
+  CHECK(shown("+1") && shown("SD PAD OCT:+1"));
+  for (int i = 0; i < 5; ++i) turn(6, +1);
+  tick();
+  CHECK(seq::poly_of(1).oct == 3 && shown("SD PAD OCT:+3"));
+  for (int i = 0; i < 9; ++i) turn(6, -1);
+  tick();
+  CHECK(seq::poly_of(1).oct == -3 && shown("SD PAD OCT:-3"));
+  for (int i = 0; i < 3; ++i) turn(6, +1);
+  tick();
+  CHECK(seq::poly_of(1).oct == 0);
+  turn(6, +1);   // OCT +1 stays set through the round-trip checks below (tracks.txt, the console)
+  tick();
+  CHECK(seq::poly_of(1).oct == 1);
   std::string r = cmd("seq=poly:2");
   printf("  %s\n", r.c_str());
   CHECK(r.find("VOICES 3 ROTATE UNISON 2 DETUNE 5 SPREAD 8 GROUP 1") != std::string::npos);
@@ -211,7 +230,7 @@ int main() {
     size_t got = f ? fread(tb, 1, sizeof tb - 1, f) : 0;
     if (f) pclose(f);
     printf("  tracks.txt: %.*s\n", (int)got, tb);
-    CHECK(got > 0 && strstr(tb, "mask=") && strstr(tb, "poly=2:0,1,2,5,8,1"));
+    CHECK(got > 0 && strstr(tb, "mask=") && strstr(tb, "poly=2:0,1,2,5,8,1,1"));
     host_card_model(false);
     cardq::set_worker(false);
     CHECK(seq::poly_of(1).voices == 0 && seq::poly_of(1).group == 1);

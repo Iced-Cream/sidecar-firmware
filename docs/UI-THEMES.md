@@ -1,7 +1,7 @@
 # UI themes: the Pi display's design system
 
-The Sidecar Pi's touchscreen (800x480 or 1024x600, LVGL 9.4, `pi/ui`; docs/pi-display.md) has two themes, each laid out
-for both sizes ("Sizes" below):
+The Sidecar Pi's touchscreen (800x480, 1024x600 or 1280x720, LVGL 9.4, `pi/ui`; docs/pi-display.md) has two themes, each laid out
+for all three sizes ("Sizes" below):
 
 | theme | what | default |
 |---|---|---|
@@ -17,13 +17,13 @@ Every page exists in both themes: home, Settings (Sound, Send FX, Display, About
 
 The display has no LFO, Wi-Fi or preset/pool browser pages. Those live on the web page and the Rytm's remote pages, which are outside `pi/ui` and unchanged.
 
-Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,classic}-*.png`, `make -C pi/ui/host shot.png SIZE=1024x600` the same at 1024x600 (`shots-1024x600/`), `make -C pi/ui/host splash.png` the boot screens and `make -C pi/ui/host anim` an animation of the OLED piano roll (`seq-oled.mp4`, `seq-oled.gif`).
+Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,classic}-*.png`, `make -C pi/ui/host shot.png SIZE=1024x600` the same at 1024x600 (`shots-1024x600/`), `SIZE=1280x720` at 1280x720, `make -C pi/ui/host bounds` compares the 1024x600 and 1280x720 layouts (`check_bounds.py`), `make -C pi/ui/host splash.png` the boot screens and `make -C pi/ui/host anim` an animation of the OLED piano roll (`seq-oled.mp4`, `seq-oled.gif`).
 
-## Sizes (800x480, 1024x600)
+## Sizes (800x480, 1024x600, 1280x720)
 
 - **Which:** the display hands LVGL a screen of 800x480 or 1024x600 (docs/pi-display.md "Screen sizes": the frame
-  buffer's size, `res=`, else 800x480 centred). `sidecar_ui_create` passes it to `sidecar_theme_screen`: 1024x600 (or
-  more) gives the wide layouts.
+  buffer's size, `res=`, else 800x480 centred), or 1280x720 on Touch Display 2. `sidecar_ui_create` passes it to
+  `sidecar_theme_screen`: 1024x600 (or more) gives the wide layouts, 1280x720 (or more) the big ones.
 - **The theme table carries the size:** `TH->w, h` (OLED 400x240 or 512x300 dots, CLASSIC 800x480 or 1024x600 px),
   `TH->bw, bh` (the 800x480 layout's size in the theme's pixels) and `TH->dx, dy` (what the screen adds: 0 x 0, or OLED
   112 x 60 dots, CLASSIC 224 x 120 px). The dot stays 2x2 pixels, the fonts the same faces: text keeps its physical
@@ -46,6 +46,19 @@ Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,classic}-*.png`, `m
     their meters the width (more segments); the transport row keeps its height; the takes' rows grow the same way
     (CLASSIC: 8 rows of 54 px instead of 7 of 44); the delete's confirmation keeps its size, centred.
 - **Unchanged at 800x480:** the host renders at 800x480 are pixel-identical to before the change.
+- **1280x720 (640x360 dots, CLASSIC 1280x720 px):** the panel is 7" like the 1024x600 ones, so its pixels are smaller
+  (0.12 mm against 0.15) and the same pixel sizes would read a fifth smaller. The layout is not a scaled picture:
+  - **`LU (n)`** (`sidecar_theme.h`), n x 5/4 here and n elsewhere, wraps the base layout's numbers. The base comes out at
+    500x300 dots / 1000x600 px; `TH->dx, dy` is what is left on top (140 x 60 dots, 280 x 120 px) and goes where it goes at
+    1024x600. A key's height, a row, a margin are in LU; a line stays one dot wide, a grid stays in whole dots.
+  - **Faces:** OLED micro 5x9, body and title 6x11 (DOT 5x9 a column wider and two rows taller, `dotfont.py`), big 6x11 bold at
+    2x. CLASSIC Montserrat 16 / 18 / 20 / 22 / 24 / 28 instead of 12 / 14 / 16 / 18 / 20 / 22 / 24 (the pages take them from
+    `TH->f_*`; 28 is off in Circle's lv_conf.h, so `sidecar_font28.c` compiles LVGL's table itself).
+  - **Touch:** a key row 26 dots (52 px), CLASSIC 60 px or more; `TH->gap` one more; the tightest rows (SEQ's tool column, a few short keys in the lanes, CHOP's tabs) 40-46 px. The nav icons have each dot doubled.
+  - SEQ: OLED 16 dots a step at two pages (8 at four, whole), CLASSIC 33 px. RYTM: 25 dots a step, CLASSIC 65 px.
+  - SCOPE, VOICE and GRANULAR draw more pixels than their view has columns: only here the columns are joined by a slope.
+  - `make -C pi/ui/host bounds`: every object of every page against 1024x600: on the screen, the page filling it, no
+    control lost, every touch target at least 1.12 x its size there (or 60 px), no clickable siblings overlapping.
 
 ## The grid (OLED)
 
@@ -69,7 +82,7 @@ Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,classic}-*.png`, `m
     angle, so brightness may only go up). It costs one shift and mask a pixel (`c >> 1 & 0x7BEF`, `c >> 2 & 0x39E7`).
   - The dots are 0.26-0.38 mm apart on a 5-7" 800x480 panel: the grid is finer, the look is the same.
   - The 3x3 mode was not kept: every page's OLED layout would have needed both sizes.
-- **1024x600:** 512x300 dots, the same 2x2 cell ("Sizes").
+- **1024x600:** 512x300 dots, the same 2x2 cell ("Sizes"). **1280x720:** 640x360 dots, the same cell.
 - **Touch:** the pointer is divided the same way (`sidecar_ui_to_ui`). The smallest target is 21 dots = 42 px, as before.
   - The page-strip cells (18 x 22 dots, 36 x 44 px) are the narrowest, about as wide as before (39 px).
 - **Pattern colours.** Four exact RGB565 values (no drawing produces them otherwise in this theme: 1-bit fonts, square corners, no anti-aliasing) become patterns during the expansion, by the dot's position on the grid:
@@ -362,6 +375,18 @@ view), `core/build/rui_pool/`, `core/build/rui_project/`.
 ## Cost
 
 Measured on the Mac by `./shot` (it prints them).
+
+1280x720 against 1024x600 (a Mac run of each, Mac us; about 1.35 x):
+
+| redraw | OLED 1024x600 | OLED 1280x720 | CLASSIC 1024x600 | CLASSIC 1280x720 |
+|---|---|---|---|---|
+| home, full | 430 | 574 | 610 | 823 |
+| SEQ, full | 450 | 596 | 857 | 1071 |
+| SCOPE, full | 443 | 591 | 683 | 985 |
+| SCOPE, a trace + the meters (15 a second) | 314 | 411 | 493 | 508 |
+| STATUS, full | 737 | 794 | 798 | 1244 |
+| REC, full | 695 | 746 | 958 | 1303 |
+| REC, all 23 meters | 52 | 72 | 98 | 129 |
 
 touch2's pages (Mac us; Pi 4 est. at the draw factor x34, an upper bound):
 

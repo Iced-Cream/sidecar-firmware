@@ -150,6 +150,7 @@ void ins_open_out();   // rui1047: the INSERT page on its OUT view of the Rytm's
 // device's page request for track t (the Rytm's track menu item: 30 page 0x20 + t, from_menu: NO goes back to the stock
 // screen) or the SIDECAR MENU's entry (t -1: the Rytm's selected track); poly_page_closed: the page closed
 extern const ExtraPage kPolyPage;
+extern const ExtraPage kArpPage;   // the arpeggiator (core/arp/arp.h)
 void poly_page_open(int track, bool from_menu);
 // CHOP (page_chop.cpp, core/chop/chop.h): the SRC view's page for the machine, its picture, and the slice editor (page
 // "CHOP", off the ring). chop_src_push: a push of encoder B..H on a CHOP track's SRC view (31 0x71..0x77) opens the editor

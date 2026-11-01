@@ -65,11 +65,13 @@ struct Desc {
   char err[96];            // why parse() returned false
 };
 
-// Parse len bytes of SFZ text; dir is the .sfz's folder on the card ("/MULTISAMPLE/Piano", no trailing '/').
+// Parse len bytes of SFZ text (or of an Elektron .elmulti: text with a [[key-zones]] table goes to elmulti.h); dir is the .sfz's folder on the card ("/MULTISAMPLE/Piano", no trailing '/').
 // False (d->err says why) when no region is left.
 bool parse(const char* text, int len, const char* dir, Desc* d);
 // "c4" "C#3" "db-1" "60" -> 0..127 (note_offset / octave_offset not applied); -1 not a note
 int note_value(const char* s);
+// A Region with the SFZ defaults (full key / velocity range, key centre 60, ...): the .elmulti reader starts from it
+Region default_region_sfz();
 // a + "/" + b with "." and ".." resolved, '\' as '/', no doubled '/'; b absolute ('/'...) replaces a. False: too
 // long, or above the root.
 bool join_path(const char* a, const char* b, char* out, int cap);

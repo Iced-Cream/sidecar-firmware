@@ -15,6 +15,10 @@
 #include "console.h"
 #include "crumb.h"   // the crash breadcrumb: the last file call by path (2026-10-29)
 
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+bool g_bCardOff = false;   // testsecs= without testcard=1 (kernel.cpp): the card is not this engine's, every Fs::begin () refuses
+#endif
+
 namespace {
 
 struct Impl {
@@ -597,7 +601,11 @@ bool File::getModifyDateTime(uint16_t* date, uint16_t* time) const {
 }
 
 // ---- the card
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+bool Fs::begin() { return !g_bCardOff && f_mount(&s_FatFs, "SD:", 1) == FR_OK; }
+#else
 bool Fs::begin() { return f_mount(&s_FatFs, "SD:", 1) == FR_OK; }
+#endif
 
 bool Fs::mkdir(const char* path) {   // with its parents, as SdFat's mkdir
   char p[270];

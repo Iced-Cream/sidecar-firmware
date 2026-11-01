@@ -15,6 +15,8 @@ public:
 	{
 		u64 nTicks;			// generic-timer ticks since the last TakeStats
 		u64 nBusy[4];			// ticks working, per core
+		u64 nSleep[4];			// ticks asleep in a counted wfe, per core
+		unsigned nWakes[4];		// how many of those wfe returned
 		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)
 		u64 nVoice[8];			// touch2: render ticks per voice (the display's STATUS page)
 		unsigned nBlocks, nMaxBlockUs, nMaxPassUs, nFifoMin, nFifoMax, nMidiBytes, nSysEx, nNotes, nNoteChans;
@@ -30,6 +32,7 @@ public:
 		u64 nTicks;		// render ticks for 1 s of audio (4000 blocks)
 		u32 nWorst;		// the longest block's ticks
 		int nPeak;		// voice 0's largest |sample| (0: the machine rendered silence)
+		u32 nHash;		// its output's FNV-1a: two kernels' benches compared bit for bit
 	};
 
 	CEngineCores (CMemorySystem *pMemorySystem) : CMultiCoreSupport (pMemorySystem) {}
@@ -60,6 +63,13 @@ public:
 	struct TSlowSx { unsigned cmd, arg, len, us; };
 	static unsigned SlowSysex (TSlowSx *p);		// returns how many (0..kSlowSx)
 	static boolean WaitPolled (void);		// :ctlwait=poll - the control loop spins instead of wfe (an A/B for the gaps)
+	// Idle sleep (docs/pi-engine.md "Idle sleep"). idlewfe=0 on the cmdline, :idlewfe=0 on the console: core 3 spins while
+	// the render cores work and core 0's loop waits in MsSleep, as before; the render cores' and the control loop's own wfe
+	// were always there and stay.
+	static void SetIdleWfe (boolean bOn);
+	static boolean IdleWfe (void);
+	static void EventStream (void);			// the calling core: a wfe sleeps 152 us at most
+	static void Sleep (void);			// core 0: one counted sleep (idlewait::nap)
 	static boolean NotesOn (void);			// notes=, for the web page (read only)
 	static int DroneVoice (void);			// -1 off, 0..7 one voice, 8 all
 	// The transport's default FIFO target (kernel.cpp UseLink: usb FifoUsb, tcp FifoTcp), unless a fifo= (the

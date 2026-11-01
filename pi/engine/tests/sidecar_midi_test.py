@@ -11,6 +11,8 @@ The port: the one named "Sidecar | Expander (Pi)" (teensy/uac2/coreaudio_pick.py
 SIDECAR_NAME.
 Nothing here ever reaches a Rytm: with the Rytm's MIDI connected the Pi sends these to it instead, so run it only
 with the Rytm unplugged from the Pi (the script refuses when the Pi's log is not at hand: check :midifake first).
+The computer's notes go to the keys path, not to the Rytm (core/keys.h): set :keys=mac:off on the Pi's console first, or
+every note-on is missing here. Without a card this lasts for the boot.
 """
 import os
 import random

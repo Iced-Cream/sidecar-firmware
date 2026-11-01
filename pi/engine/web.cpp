@@ -21,6 +21,7 @@
 #include "rec_pi.h"		// TakeBusy: /fs never deletes the take being recorded
 #include "lib/library.h"
 #include "poolweb.h"
+#include "presetweb.h"
 #include "paircode.h"
 #include "paircode_pi.h"
 #include "blackbox_pi.h"
@@ -816,6 +817,13 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 	else if (strcmp (pPath, "/pool") == 0)		// the Pool tab: one bank of a POOL list (poolweb.h; reads only)
 	{
 		int n = poolweb::json (pParams, (char *) pBuffer, *pLength);
+		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
+		*pLength = n;
+		*ppContentType = "application/json";
+	}
+	else if (strcmp (pPath, "/presets") == 0)		// the Pool tab's JUNO / 6-OP lists: a window of the preset index (presetweb.h; reads only)
+	{
+		int n = presetweb::json (pParams, (char *) pBuffer, *pLength);
 		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
 		*pLength = n;
 		*ppContentType = "application/json";

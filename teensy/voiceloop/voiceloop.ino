@@ -1191,7 +1191,7 @@ FLASHMEM void plug_send_meta(int s) {
 // 1B list arg: P(arg+1)'s enum names (read from the package), 8 a message. The package stays open
 // while more of the slot's enum asks wait (a burst costs one store open), released after the last.
 FLASHMEM void plug_send_enum(int s, int arg) {
-  char names[16][8];
+  char names[RMP_ENUM_MAX][8];
   int k = plug_desc_ok[s] ? rmp_desc_find(&plug_desc[s], arg + 1) : -1;
   int n = k >= 0 ? rmp_manifest_enum(&plug_desc[s], k, plug_store_rd, (void*)plug_map.slot[s].id, names) : 0;
   if (!plug_enum_todo[s]) rmp_store_release();

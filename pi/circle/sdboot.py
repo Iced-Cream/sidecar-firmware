@@ -297,7 +297,9 @@ def board(img):
     """4 or 5: the board a Pi engine kernel image was built for (RASPPI); else SystemExit."""
     if b"==== rytm-pi engine" not in img:
         raise SystemExit("not a Pi engine kernel image (no '==== rytm-pi engine' in it)")
-    return 5 if b"gadget: none on this board (Pi 5 build)" in img else 4
+    # the Pi 5 build's boot line (kernel.cpp); Pi 5 kernels from before it: the gadget stand-in's line
+    pi5 = (b"board: Raspberry Pi 5 build (kernel_2712.img)", b"gadget: none on this board (Pi 5 build)")
+    return 5 if any(m in img for m in pi5) else 4
 
 
 def sizes(pi):

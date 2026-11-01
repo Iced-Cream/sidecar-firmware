@@ -77,9 +77,12 @@ void project_load();
 void project_fill_begin();
 bool project_fill_step();
 bool project_loading();
+void project_lists_step();   // each pass: the JUNO / FM lists of a project just switched to (a card core: requests)
 void pool_close_file(int line);   // the line's File closed (with a card core: by pool_closes_step)
 bool pool_closing(int line);      // ... not yet: no open of that File before
 void pool_closes_step();     // each pass: lines forgotten, their files closed by the card core (one request at a time)
+bool lists_busy();           // ... under way: the old lists still there, an edit of them refused
+void project_lists_rekey(const char* key);   // ... and the project moved to another key meanwhile
 #endif
 void pool_set(int line, int folder, int file, const card::FileRec& r);
 void pool_add(int folder, int file);           // 0F LOAD TO PROJ (a sample, a JUNO patch, a DX7 voice)

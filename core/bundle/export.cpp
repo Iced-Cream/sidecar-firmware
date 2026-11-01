@@ -10,6 +10,7 @@
 #include "../lib/pools.h"
 #include "../lib/pools_fmt.h"
 #include "../msamp/sfz.h"
+#include "../pool/pool.h"
 #include "projects.h"
 #include "rmp_loader.h"
 #include "rmp_resolve.h"
@@ -633,6 +634,13 @@ bool export_sub_step() {
         if (env().song_recording && env().song_recording()) return fail("a song take is recording: stop the song recording first"), true;
         if (now_ms() - E.t0_ms < env().flush_ms) return false;   // the idle saves (1 s after the last edit) first
         if (pools::saving() && now_ms() - E.t0_ms < env().flush_ms + kPoolsFlushMs) return false;   // the lists' too
+      }
+      {   // a list from before 0.4.0, its project not opened since: the voices go with the zip when the banks are here
+        char fm[kCardPath];
+        sniprintf(fm, sizeof fm, "/.rytm/fm/%s.txt", E.key);
+        if (fmt::pending(fm)) return false;
+        int left = dxlib.fill_file(fm);
+        if (left) log(CORE_STR("export: %s's FM list: %d voices not in its file (%s)"), E.key, left, left < 0 ? "not read" : "their banks are not on this card");
       }
       E.st = E_FILES, E.i = 0;
       if (!E.sub) set_phase(kCollect, 0);

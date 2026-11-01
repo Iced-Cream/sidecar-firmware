@@ -498,7 +498,7 @@ bool in_scope(const char* path) {
 uint8_t kind_of(const char* name) {
   size_t l = strlen(name);
   auto ends = [&](const char* e) { size_t k = strlen(e); return l > k && !strcasecmp(name + l - k, e); };
-  return ends(".wav") ? kKindWav : ends(".aif") || ends(".aiff") ? kKindAiff : ends(".sfz") ? kKindSfz : kKindNone;
+  return ends(".wav") ? kKindWav : ends(".aif") || ends(".aiff") ? kKindAiff : ends(".sfz") || ends(".elmulti") ? kKindSfz : kKindNone;
 }
 bool is_recording(const char* path) { return !strncasecmp(path, "/Recordings/", 12); }
 bool under(const char* path, const char* dir) {

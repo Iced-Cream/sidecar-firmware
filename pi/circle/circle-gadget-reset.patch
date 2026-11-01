@@ -1,0 +1,28 @@
+circle-gadget-reset.patch - HandleUSBReset at IRQ level no longer waits in 1 ms steps: FlushTxFIFO polls (pi/circle/gadget_flush.h, copied in as
+circle/usb/gadget/gadgetflush.h). After circle-gadget.patch and circle-gadget-wake.patch; on the Pi 5 after circle-pi5-gadget.patch. GPL-3.0-or-later as Circle.
+--- a/lib/usb/gadget/dwusbgadget.cpp
++++ b/lib/usb/gadget/dwusbgadget.cpp
+@@ -29,6 +29,7 @@
+ #include <circle/sysconfig.h>
+ #include <circle/logger.h>
+ #include <circle/timer.h>
++#include <circle/usb/gadget/gadgetflush.h>
+ #include <assert.h>
+ 
+ // FIFO sizes, in 32-bit words
+@@ -460,12 +461,13 @@
+ 	Reset.Or (nFIFO << DWHCI_CORE_RESET_TX_FIFO_NUM__SHIFT);
+ 	Reset.Write ();
+ 
+-	if (!WaitForBit (&Reset, DWHCI_CORE_RESET_TX_FIFO_FLUSH, FALSE, 10))
++	// polled (circle-gadget-reset, gadgetflush.h): HandleUSBReset is IRQ level, and WaitForBit waits in 1 ms steps
++	if (!GadgetBitClears (Reset, DWHCI_CORE_RESET_TX_FIFO_FLUSH))
+ 	{
+ 		return;
+ 	}
+ 
+-	CTimer::Get ()->usDelay (1);		// Wait for 3 PHY clocks
++	CTimer::SimpleusDelay (1);		// Wait for 3 PHY clocks
+ }
+ 
+ void CDWUSBGadget::FlushRxFIFO (void)

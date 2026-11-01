@@ -22,6 +22,7 @@
 #endif
 #include "pool/pool.h"
 #include "ui/extra.h"
+#include "ui/remote.h"
 #include "voices.h"
 
 namespace core {
@@ -350,6 +351,8 @@ CORE_COLD void draw_sample(Canvas& c, const Rect& r, const Cell& cell, const Sou
   const char* name = mode < 0 ? (lop >= 1 ? "LOOP" : "ONE") : rytm::SampleModes::Name(mode);
   c.put_text(slot, kRSmall, r.x + r.w - 13, y0 + h / 2 - 2, name, kAlignCentre);
   status(c, w, s, x0, wd, y0, h, kSlotStatus);
+  int ph = core::dsp_playhead(vi);   // the playhead: as CHOP's, an inverted column
+  if (ph >= 0) c.vline(x0 + ph * (wd - 1) / 65534, y0, y0 + h - 1, kXor);
 }
 
 // GRAIN: in[0] POS (STA), in[1] SIZE (END), in[2] DENS (LOP)
@@ -387,7 +390,8 @@ CORE_COLD void draw_grain(Canvas& c, const Rect& r, const Cell& cell, const Sour
   (void)slot;
 }
 
-// ---- the pages (machines.h kDspSample; P9..P16 = 8..15: TUN FIN SMP MOD STA END LOP LEV)
+// ---- the pages (machines.h kDspSample; as the Rytm's SMPL page since rytm-mods 7h: TUN FIN MOD ENG STA END LOP LEV: P9 P10 P12 P1
+// P13..P16; SMP, P11, is the SRC view's knob A)
 UI_ROM const Cell kDspsCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawSample, nullptr},
     {kKnob, 0, 1, 1, 1, {12, kNone, kNone, kNone}, 0, nullptr},
@@ -397,8 +401,8 @@ UI_ROM const Cell kDspsCells[] = {
 };
 UI_ROM const Page kDspsPage = {
     "DSP SAMPLE", kDspSample, sizeof kDspsCells / sizeof kDspsCells[0], kDspsCells,
-    {8, 9, 10, 11, 12, 13, 14, 15},
-    {"TUN", "FIN", "SMP", "MOD", "STA", "END", "LOP", "LEV"},
+    {8, 9, 11, 0, 12, 13, 14, 15},
+    {"TUN", "FIN", "MOD", "ENG", "STA", "END", "LOP", "LEV"},
 };
 UI_ROM const Cell kGrainCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawGrain, nullptr},
@@ -409,8 +413,8 @@ UI_ROM const Cell kGrainCells[] = {
 };
 UI_ROM const Page kGrainPage = {
     "GRAIN", kDspSample, sizeof kGrainCells / sizeof kGrainCells[0], kGrainCells,
-    {8, 9, 10, 11, 12, 13, 14, 15},
-    {"TUN", "FIN", "SMP", "MOD", "POS", "SIZE", "DENS", "LEV"},
+    {8, 9, 11, 0, 12, 13, 14, 15},
+    {"TUN", "FIN", "MOD", "ENG", "POS", "SIZE", "DENS", "LEV"},
 };
 // The GRAIN machine (machines.h kGrainMachine): the same view, MOD's word its SPRY
 UI_ROM const Page kGrainMachinePage = {
@@ -419,8 +423,9 @@ UI_ROM const Page kGrainMachinePage = {
     {"TUN", "FIN", "SMP", "SPRY", "POS", "SIZE", "DENS", "LEV"},
 };
 
-// The SRC view (remote.cpp): the Rytm's encoders there are the SRC page's own, P1..P8 (for DSP SAMPLE the resonator:
-// ENG STR BRI DMP MIX FB TUN LEV; the sample's P9..P16 are the SMPL page's, turned there). The same picture, the
+// The SRC view (remote.cpp): the Rytm's encoders there are the SRC page's own: for DSP SAMPLE SMP (P11, the picker, as every
+// sample machine's knob A; rytm-mods 7h) and the resonator's STR BRI DMP MIX SEED TUN LEV; ENG is SMPL knob D, the rest of the
+// sample's P9..P16 the SMPL page's. The same picture, the
 // waveform above, the knobs of P5..P8 below, so a turn on the Rytm shows.
 UI_ROM const Cell kDspsSrcCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawSample, nullptr},
@@ -431,8 +436,14 @@ UI_ROM const Cell kDspsSrcCells[] = {
 };
 UI_ROM const Page kDspsSrcPage = {
     "DSP SAMPLE", kDspSample, sizeof kDspsSrcCells / sizeof kDspsSrcCells[0], kDspsSrcCells,
+    {10, 1, 2, 3, 4, 5, 6, 7},
+    {"SMP", "STR", "BRI", "DMP", "MIX", "SEED", "TUN", "LEV"},   // rui1050: P6 (never read: FB fixed) SEED MOD's slot
+};
+// A Rytm before rytm-mods 7h (its 19s say no 36 names, remote_rytm_040): its knob A is still ENG
+UI_ROM const Page kDspsSrcPage030 = {
+    "DSP SAMPLE", kDspSample, sizeof kDspsSrcCells / sizeof kDspsSrcCells[0], kDspsSrcCells,
     {0, 1, 2, 3, 4, 5, 6, 7},
-    {"ENG", "STR", "BRI", "DMP", "MIX", "SEED", "TUN", "LEV"},   // rui1050: P6 (never read: FB fixed) SEED MOD's slot
+    {"ENG", "STR", "BRI", "DMP", "MIX", "SEED", "TUN", "LEV"},
 };
 UI_ROM const Cell kGrainSrcCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawGrain, nullptr},
@@ -443,6 +454,11 @@ UI_ROM const Cell kGrainSrcCells[] = {
 };
 UI_ROM const Page kGrainSrcPage = {
     "GRAIN", kDspSample, sizeof kGrainSrcCells / sizeof kGrainSrcCells[0], kGrainSrcCells,
+    {10, 1, 2, 3, 4, 5, 6, 7},
+    {"SMP", "STR", "BRI", "DMP", "MIX", "FB", "TUN", "LEV"},
+};
+UI_ROM const Page kGrainSrcPage030 = {
+    "GRAIN", kDspSample, sizeof kGrainSrcCells / sizeof kGrainSrcCells[0], kGrainSrcCells,
     {0, 1, 2, 3, 4, 5, 6, 7},
     {"ENG", "STR", "BRI", "DMP", "MIX", "FB", "TUN", "LEV"},
 };
@@ -450,7 +466,8 @@ UI_ROM const Page kGrainSrcPage = {
 }  // namespace
 
 CORE_COLD const Page* src_view_page(const Page* p) {
-  return p == &kDspsPage ? &kDspsSrcPage : p == &kGrainPage ? &kGrainSrcPage : p;
+  bool now = remote_rytm_040();
+  return p == &kDspsPage ? (now ? &kDspsSrcPage : &kDspsSrcPage030) : p == &kGrainPage ? (now ? &kGrainSrcPage : &kGrainSrcPage030) : p;
 }
 
 CORE_COLD const Page* code_page_for_machine(int machine) {
@@ -470,6 +487,10 @@ CORE_COLD uint32_t draw_key(const Cell& c, const Source& s) {
     const void* w = wave_of_slot(smp_slot(s), &st, &prog);
     h = (uint32_t)(w ? (uintptr_t)w : 1) ^ (uint32_t)st << 8 ^ (uint32_t)(prog / 16) << 12 ^ (uint32_t)(mode_of(vi, (float)s.param(11)) + 1) << 20 ^
         (uint32_t)(smp_slot(s) < 1) << 28;
+    if (c.arg == kDrawSample) {   // the playhead moves the picture: 2 px steps of the ~100 (a tile or two a frame)
+      int ph = core::dsp_playhead(vi);
+      h = (h ^ (uint32_t)(ph < 0 ? 0 : 1 + ph / 1311)) * 16777619u;
+    }
   } else if (c.arg == kDrawGran || c.arg == kDrawWt || c.arg == kDrawGrList || c.arg == kDrawWtList || c.arg == kDrawMsList ||
              c.arg == kDrawBankList) {
     h = wavegrain_key(c, s);

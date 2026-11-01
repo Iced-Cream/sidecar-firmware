@@ -101,8 +101,6 @@ bool g_ready = false, card_on = false;
 volatile bool began = false;
 bool (*play_fn)() = nullptr;
 Stats st;
-uint8_t pre_done[kCodes / 8];   // the preload's rows done (preload_step)
-bool pre_on = false;
 // an instrument being added: its .sfz read first
 struct SfzJob {
   bool on, take;
@@ -482,7 +480,7 @@ CORE_COLD void loaded_used(uint32_t n, bool absent) {
   const fmt::Format* f = fmt::find("poolused");
   fmt::Info info;
   fmt::Bytes in = {(const uint8_t*)text, n};
-  if (J.too_big || fmt::load(*f, in, nullptr, &info) != fmt::kOk) {   // class D: losing it costs only preloading
+  if (J.too_big || fmt::load(*f, in, nullptr, &info) != fmt::kOk) {   // class D: losing it costs little (SELECT UNUSED's counts)
     log(CORE_STR("pools: %s not read (rebuilt as rows play)"), J.path);
     return;
   }
@@ -509,7 +507,6 @@ CORE_COLD void list_loaded() {   // a list (or the used set) of the project's lo
   ++load_next;
   if (load_next > kLists) {
     load_next = -1, g_ready = true;
-    memset(pre_done, 0, sizeof pre_done), pre_on = true;
     log(CORE_STR("pools: %s: samples %d, wavetables %d, instruments %d"), cur_key, count(kSamples), count(kTables),
         count(kInstr));
   }
@@ -683,29 +680,6 @@ CORE_COLD bool referenced(const lib::Ref& r) {
   }
   return false;
 }
-// ---- the preload (the design's 4.2): after a project's lists are read, the SAMPLES rows of its used set, the most
-// seen first, into the pool RAM as prefetches (free space only: up to the budget, nothing evicted)
-CORE_COLD bool preload_step() {
-  if (!pre_on || !pcache::ok()) return false;
-  int best = -1;
-  uint32_t bc = 0;
-  for (int c = 0; c < kCodes; ++c) {
-    if (pre_done[c >> 3] >> (c & 7) & 1) continue;
-    uint32_t k = U.n[kSamples * kCodes + c];
-    const Entry& e = L[kSamples].e[c];
-    if (!k || e.type != kSample || !playable(e)) continue;
-    if (k > bc) bc = k, best = c;
-  }
-  if (best < 0) {
-    pre_on = false;
-    return false;
-  }
-  pre_done[best >> 3] |= (uint8_t)(1 << (best & 7));
-  const Entry& e = L[kSamples].e[best];
-  pcache::want(e.ref, e.path, true);
-  return true;
-}
-
 // ---- edits
 CORE_COLD bool can_edit(int l) { return l >= 0 && l < kLists && !L[l].locked && g_ready; }
 CORE_COLD int row_check(int c) {
@@ -963,8 +937,7 @@ CORE_COLD bool step() {
     return true;
   }
   if (fill_step()) return true;
-  if (resolve_step()) return true;
-  return preload_step();
+  return resolve_step();
 }
 bool ready() { return g_ready; }
 bool saving() { return J.io == kIoWrite || any_dirty(); }

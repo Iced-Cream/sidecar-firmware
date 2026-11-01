@@ -61,7 +61,7 @@ typedef struct { signed char lit[2], hold[2]; unsigned char clip, armed, press, 
 static cell_t s_Drawn[CELLS];
 
 static int oled (void) { return TH->id == THEME_OLED; }
-static const lv_font_t *mi_font (void) { return oled () ? TH->f_micro : &lv_font_montserrat_14; }
+static const lv_font_t *mi_font (void) { return oled () ? TH->f_micro : TH->f_small; }
 static void cmd (const char *c) { if (s_Cmd) s_Cmd (c); }
 static int busy (void) { return s_V.state == SRV_REC || s_V.state == SRV_SAVING; }
 int sidecar_rec_stereo (int id) { return id == 0 || id == 21 || id == 22; }
@@ -76,26 +76,26 @@ static lv_obj_t *label_w (lv_obj_t *p, int x, int y, int w, const lv_font_t *f, 
 }
 
 // ---- geometry (the 800x480 layouts plus what the screen adds: TH->dx, dy)
-static int W (void) { return oled () ? TH->w - 48 : TH->w; }
-static int grid_y (void) { return oled () ? 72 : 88; }
-static int grid_h (void) { return oled () ? 168 + TH->dy : 336 + TH->dy; }
+static int W (void) { return oled () ? TH->w - LU (48) : TH->w; }
+static int grid_y (void) { return oled () ? LU (72) : LU (88); }
+static int grid_h (void) { return oled () ? LU (168) + TH->dy : LU (336) + TH->dy; }
 static int pitch (void) { return grid_h () / ROWS; }			// 21 / 28 dots, 42 / 57 px
-static int col_w (void) { return oled () ? (W () - 4) / 3 : (W () - 16 - 16) / 3; }
-static int col_x (int c) { return oled () ? c * (col_w () + 2) : 8 + c * (col_w () + 8); }
+static int col_w (void) { return oled () ? (W () - LU (4)) / 3 : (W () - LU (16) - LU (16)) / 3; }
+static int col_x (int c) { return oled () ? c * (col_w () + 2) : LU (8) + c * (col_w () + LU (8)); }
 // a cell's meter: its x range and the bars' rows, in the grid's coordinates
 static void meter_geo (int c, int r, int *x0, int *x1, int *y0, int *bh, int *clipx)
 {
 	int x = col_x (c), y = r * pitch (), w = col_w (), h = pitch ();
 	if (oled ())
 	{
-		*x0 = x + 50 + TH->dx / 12, *x1 = x + w - 9, *clipx = x + w - 6;
+		*x0 = x + LU (50) + TH->dx / 12, *x1 = x + w - LU (9), *clipx = x + w - LU (6);
 		*bh = h >= 26 ? 7 : 5;
 		*y0 = y + (h - *bh) / 2;
 	}
 	else
 	{
-		*x0 = x + 112 + TH->dx / 12, *x1 = x + w - 40, *clipx = *x1 + 4;	// the clip lamp inside the window
-		*bh = 12 + TH->dy / 20;
+		*x0 = x + LU (112) + TH->dx / 12, *x1 = x + w - LU (40), *clipx = *x1 + LU (4);	// the clip lamp inside the window
+		*bh = LU (12) + TH->dy / 20;
 		*y0 = y + (h - *bh) / 2;
 	}
 }
@@ -153,7 +153,7 @@ static void clock_draw (lv_event_t *e)
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
 	int O = oled (), st = s_V.state;
-	int dw = O ? 10 : 20, dh = O ? 18 : 34, t = O ? 2 : 4, gap = O ? 2 : 6, cw = O ? 4 : 10;
+	int dw = LU (O ? 10 : 20), dh = LU (O ? 18 : 34), t = LU (O ? 2 : 4), gap = LU (O ? 2 : 6), cw = LU (O ? 4 : 10);
 	uint32_t on, off = O ? 0x1C1C1C : 0x1A1C1F;
 	if (O) on = st == SRV_REC ? TH->accent_hi : st == SRV_ARMED ? TH->ink : s_V.take[0] ? TH->ink : TH->dim;
 	else on = st == SRV_REC ? TH->bad : st == SRV_ARMED ? TH->warn : TH->win_ink;
@@ -185,8 +185,8 @@ static void rec_draw (lv_event_t *e)
 	int pressed = lv_obj_has_state (o, LV_STATE_PRESSED), dis = !s_V.valid || st == SRV_SAVING;
 	int rec = st == SRV_REC, blink = (lv_tick_get () / 500) & 1;
 	const char *txt = rec ? "STOP" : st == SRV_SAVING ? "SAVING" : st == SRV_ARMED ? "REC NOW" : "REC";
-	const lv_font_t *f = O ? TH->f_body : &lv_font_montserrat_16;
-	int fh = lv_font_get_line_height (f), mr = O ? 7 : 12, my = (h - (2 * mr + 1) - 3 - fh) / 2 + mr;
+	const lv_font_t *f = O ? TH->f_body : TH->f_body;
+	int fh = lv_font_get_line_height (f), mr = LU (O ? 7 : 12), my = (h - (2 * mr + 1) - 3 - fh) / 2 + mr;
 	uint32_t ink;
 	if (O)
 	{
@@ -201,7 +201,7 @@ static void rec_draw (lv_event_t *e)
 			th_paint_key (l, &c, "", 0, f, TH_KEY_ACCENT, 0, pressed, dis, 0);
 			ink = pressed ? 0x000000 : dis ? TH->faint : TH->ink;
 		}
-		if (rec) th_fill (l, &c, w / 2 - 5, my - 5, w / 2 + 5, my + 5, ink, LV_OPA_COVER, 0);		// stop: a square
+		if (rec) th_fill (l, &c, w / 2 - LU (5), my - LU (5), w / 2 + LU (5), my + LU (5), ink, LV_OPA_COVER, 0);		// stop: a square
 		else if (st == SRV_ARMED)						// armed: a ring, its centre blinking
 		{
 			disc (l, &c, w / 2, my, mr, ink);
@@ -216,7 +216,7 @@ static void rec_draw (lv_event_t *e)
 		ink = dis ? 0x6E7176 : 0xE8E8E8;
 		uint32_t red = 0xFF3B30;
 		if (rec)
-			th_fill (l, &c, w / 2 - 9, my - 9, w / 2 + 9, my + 9, 0xF0F0F0, LV_OPA_COVER, 2);
+			th_fill (l, &c, w / 2 - LU (9), my - LU (9), w / 2 + LU (9), my + LU (9), 0xF0F0F0, LV_OPA_COVER, 2);
 		else
 		{
 			uint32_t r = dis ? 0x5A3030 : st == SRV_ARMED && !blink ? 0x7A2420 : red;
@@ -285,7 +285,7 @@ static void grid_draw (lv_event_t *e)
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
 	int O = oled (), ph = pitch (), cw = col_w ();
-	const lv_font_t *f = O ? TH->f_body : &lv_font_montserrat_16;
+	const lv_font_t *f = O ? TH->f_body : TH->f_body;
 	int fh = lv_font_get_line_height (f);
 	const lv_area_t *clip = &l->_clip_area;
 	for (int k = 0; k < CELLS; k++)
@@ -311,7 +311,7 @@ static void grid_draw (lv_event_t *e)
 		{
 			int all = (s_V.mask & 0x7FFFFFu) == 0x7FFFFFu;
 			lv_area_t a = {c.x1 + x + (O ? 0 : 0), c.y1 + y + (O ? 1 : 2), c.x1 + x + cw - 1, c.y1 + y + ph - (O ? 2 : 3)};
-			th_paint_key (l, &a, all ? "NONE" : "ALL", 0, O ? TH->f_body : &lv_font_montserrat_16, TH_KEY, 0, cs.press, !cs.en, 0);
+			th_paint_key (l, &a, all ? "NONE" : "ALL", 0, O ? TH->f_body : TH->f_body, TH_KEY, 0, cs.press, !cs.en, 0);
 			continue;
 		}
 		const char *name = s_V.name[id][0] ? s_V.name[id] : "-";
@@ -320,9 +320,9 @@ static void grid_draw (lv_event_t *e)
 			if (cs.press && cs.en) th_fill (l, &c, x, y + 1, x + cw - 1, y + ph - 2, DOT_DITHER, LV_OPA_COVER, 0);
 			uint32_t ink = cs.press && cs.en ? 0x000000 : cs.armed ? TH->ink : busy () ? TH->faint : TH->dim;
 			int sq = (ph - 7) / 2;
-			if (cs.armed) th_fill (l, &c, x + 3, y + sq, x + 9, y + sq + 6, s_V.state == SRV_REC ? TH->accent_hi : TH->accent, LV_OPA_COVER, 0);
-			else th_frame (l, &c, x + 3, y + sq, x + 9, y + sq + 6, busy () ? 0x3C3C3C : TH->faint, 1, 0);
-			th_text (l, &c, x + 12, y + (ph - fh) / 2 + 1, x0 - x - 14, f, ink, LV_TEXT_ALIGN_LEFT, name);
+			if (cs.armed) th_fill (l, &c, x + 3, y + sq, x + LU (9), y + sq + LU (6), s_V.state == SRV_REC ? TH->accent_hi : TH->accent, LV_OPA_COVER, 0);
+			else th_frame (l, &c, x + 3, y + sq, x + LU (9), y + sq + LU (6), busy () ? 0x3C3C3C : TH->faint, 1, 0);
+			th_text (l, &c, x + LU (12), y + (ph - fh) / 2 + 1, x0 - x - LU (14), f, ink, LV_TEXT_ALIGN_LEFT, name);
 			if (r < ROWS - 1 && !(cs.press && cs.en))	// a faint rule between rows
 				for (int dx = x + 13; dx < x + cw - 2; dx += 2) th_fill (l, &c, dx, y + ph - 1, dx, y + ph - 1, 0x262626, LV_OPA_COVER, 0);
 		}
@@ -332,12 +332,12 @@ static void grid_draw (lv_event_t *e)
 			th_paint_key (l, &a, "", 0, f, TH_KEY, 0, cs.press && cs.en, 0, 0);
 			int ly = y + ph / 2;
 			uint32_t led = cs.armed ? (s_V.state == SRV_REC ? 0xFF3B30 : 0xD83A2E) : 0x4C4E52;
-			if (cs.armed) th_fill (l, &c, x + 8, ly - 9, x + 26, ly + 9, th_mix (0x2B2D30, led, 80), LV_OPA_COVER, LV_RADIUS_CIRCLE);
-			th_fill (l, &c, x + 12, ly - 5, x + 22, ly + 5, led, LV_OPA_COVER, LV_RADIUS_CIRCLE);
-			th_text (l, &c, x + 32, y + (ph - fh) / 2, x0 - x - 40, f, cs.armed ? 0xF0F0F0 : busy () ? 0x6E7176 : 0xB8BBC0,
+			if (cs.armed) th_fill (l, &c, x + LU (8), ly - LU (9), x + LU (26), ly + LU (9), th_mix (0x2B2D30, led, 80), LV_OPA_COVER, LV_RADIUS_CIRCLE);
+			th_fill (l, &c, x + LU (12), ly - LU (5), x + LU (22), ly + LU (5), led, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+			th_text (l, &c, x + LU (32), y + (ph - fh) / 2, x0 - x - LU (40), f, cs.armed ? 0xF0F0F0 : busy () ? 0x6E7176 : 0xB8BBC0,
 				 LV_TEXT_ALIGN_LEFT, name);
-			th_fill (l, &c, x0 - 4, y0 - 4, clipx + 10, y0 + bh + 3, 0x08090A, LV_OPA_COVER, 3);	// the meter's window
-			th_frame (l, &c, x0 - 4, y0 - 4, clipx + 10, y0 + bh + 3, 0x3A3C40, 1, 3);
+			th_fill (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, 0x08090A, LV_OPA_COVER, 3);	// the meter's window
+			th_frame (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, 0x3A3C40, 1, 3);
 		}
 	meter:;
 		int n = nseg (x0, x1), st = sidecar_rec_stereo (id);
@@ -349,7 +349,7 @@ static void grid_draw (lv_event_t *e)
 		}
 		else bar (l, &c, x0, y0, bh, n, cs.lit[0], cs.hold[0], cs.armed);
 		if (O) th_fill (l, &c, clipx, y0, clipx + 3, y0 + bh - 1, cs.clip ? TH->accent_hi : 0x262626, LV_OPA_COVER, 0);
-		else th_fill (l, &c, clipx, y0, clipx + 6, y0 + bh - 1, cs.clip ? 0xFF3B30 : 0x3A2A2A, LV_OPA_COVER, 1);
+		else th_fill (l, &c, clipx, y0, clipx + LU (6), y0 + bh - 1, cs.clip ? 0xFF3B30 : 0x3A2A2A, LV_OPA_COVER, 1);
 	}
 }
 
@@ -444,8 +444,8 @@ static void dlg_show (int i)
 	size_text (sz, sizeof sz, t->kb);
 	len_text (ln, sizeof ln, t->secs);
 	char nm[SRV_NAME];		// a long name cut in the middle: its start and its date both show
-	const lv_font_t *f0 = oled () ? TH->f_body : &lv_font_montserrat_22;
-	th_fit_middle (nm, sizeof nm, f0, t->name, (oled () ? 284 : 472) - th_text_width (f0, oled () ? "DELETE ?" : "Delete ?"));
+	const lv_font_t *f0 = oled () ? TH->f_body : TH->f_mid2;
+	th_fit_middle (nm, sizeof nm, f0, t->name, (LU (oled () ? 284 : 472)) - th_text_width (f0, oled () ? "DELETE ?" : "Delete ?"));
 	lv_snprintf (b, sizeof b, oled () ? "DELETE %s?" : "Delete %s?", nm);
 	th_label_set (s_DlgText[0], b);
 	lv_snprintf (b, sizeof b, oled () ? "%d FILES, %s, %s" : "%d files, %s, %s long", t->files, sz, ln);
@@ -514,8 +514,8 @@ static int pl_row (void)	// the playing take's row (-1: none, or scrolled away)
 		if (!strcmp (s_V.takes[s_nTop + r].name, s_V.pl_take)) return r;
 	return -1;
 }
-static int bar_h (void) { return oled () ? 2 : 4; }
-static int bar_x0 (void) { return oled () ? 16 : 32; }
+static int bar_h (void) { return oled () ? 2 : LU (4); }
+static int bar_x0 (void) { return oled () ? LU (16) : LU (32); }
 static int bar_px (int w)	// the filled width of a bar of w
 {
 	if (s_V.pl_state == SRV_PL_NONE || !s_V.pl_len_ms) return 0;
@@ -523,7 +523,7 @@ static int bar_px (int w)	// the filled width of a bar of w
 	if (p > s_V.pl_len_ms) p = s_V.pl_len_ms;
 	return (int) (p * (unsigned) w / s_V.pl_len_ms);
 }
-static int bar_w (lv_obj_t *o) { return lv_obj_get_width (o) - bar_x0 () - (oled () ? 4 : 14); }
+static int bar_w (lv_obj_t *o) { return lv_obj_get_width (o) - bar_x0 () - (LU (oled () ? 4 : 14)); }
 static void bar_inval (int i)
 {
 	lv_area_t c;
@@ -557,7 +557,7 @@ static void hit_draw (lv_event_t *e)
 	int w = lv_area_get_width (&c), h = lv_area_get_height (&c), O = oled();
 	int on = i == s_nPlRow, paused = on && s_V.pl_state == SRV_PL_PAUSED;
 	int pressed = lv_obj_has_state (o, LV_STATE_PRESSED) && !busy ();
-	int gh = O ? 9 : 14, gx = O ? 4 : 6;
+	int gh = LU (O ? 9 : 14), gx = LU (O ? 4 : 6);
 	if (O)
 	{
 		if (pressed) th_fill (l, &c, 0, 0, w - 1, h - 1, DOT_SHADE, LV_OPA_COVER, 0);
@@ -643,7 +643,7 @@ static void takes_update (void)
 		th_label_fit (s_TName[i], t->name);
 		th_label_color (s_TName[i], pl || (s_nTop + i == 0 && !strcmp (t->name, s_V.take)) ? (O ? 0xFFFFFF : TH->accent_hi) : O ? TH->ink : TH->win_ink);	// (L2: playing white)
 		// the playing row: its length column becomes "elapsed / length" over the size and files columns
-		lv_obj_set_width (s_TLen[i], pl ? lv_obj_get_width (s_THit[i]) - (lv_obj_get_x (s_TLen[i]) - lv_obj_get_x (s_THit[i])) - 4 : oled () ? 48 : 110);
+		lv_obj_set_width (s_TLen[i], pl ? lv_obj_get_width (s_THit[i]) - (lv_obj_get_x (s_TLen[i]) - lv_obj_get_x (s_THit[i])) - LU (4) : oled () ? LU (48) : LU (110));
 		th_label_color (s_TLen[i], pl ? (oled () ? 0xFFFFFF : TH->accent_hi) : oled () ? TH->ink : TH->win_ink);
 		if (pl) pl_time (b, sizeof b); else len_text (b, sizeof b, t->secs);
 		th_label_set (s_TLen[i], b);
@@ -691,7 +691,7 @@ static void arm_cb (lv_obj_t *o, int idx, void *ud)
 void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 {
 	int O = oled ();
-	const int dx = TH->dx, dy = TH->dy, Wd = W (), H = O ? TH->h : 428 + dy;
+	const int dx = TH->dx, dy = TH->dy, Wd = W (), H = O ? TH->h : LU (428) + dy;
 	s_Cmd = c;
 	s_bTakes = 0, s_nDel = -1, s_nPress = -1, s_nTakesGen = ~0u, s_nRows = TROWS, s_nTop = 0, s_nDlg = DLG_NONE, s_nDragY = -1;
 	s_nStatusW = -1, s_nValidWas = -1, s_nClock = ~0u;
@@ -702,41 +702,41 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 	const lv_font_t *mi = mi_font ();
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, Wd, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, Wd, LU (13));
 		th_titlebar_set (s_TitleBar, "REC", "", 0);
 		s_State = 0;
-		s_RecKey = th_box (pg, 0, 15, 62, 46);
-		s_ArmKey = th_key (pg, 64, 15, 46, 46, "ARM", TH_KEY, arm_cb, 0);
-		s_StopKey = th_key (pg, 64, 15, 46, 46, "STOP", TH_KEY | TH_KEY_SMALL, stop_cb, 0);
-		s_Clock = th_box (pg, 114, 15, 72, 22);
-		s_Take = label_w (pg, 114, 38, 120 + dx / 2, TH->f_body, TH->ink, 0);
-		s_Status = label_w (pg, 114, 51, 120 + dx / 2, mi, TH->dim, 0);
-		for (int i = 0; i < 4; i++) s_Info[i] = label_w (pg, 237 + dx / 2, 16 + i * 11, 62 + dx / 2, mi, i == 0 ? TH->ink : TH->dim, 0);
-		s_TakesKey = th_key (pg, 301 + dx, 15, 51, 46, "TAKES", TH_KEY | TH_KEY_SMALL, takes_cb, 0);
-		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, 63, mi, TH->faint, kGroup[g]);
+		s_RecKey = th_box (pg, 0, LU (15), LU (62), LU (46));
+		s_ArmKey = th_key (pg, LU (64), LU (15), LU (46), LU (46), "ARM", TH_KEY, arm_cb, 0);
+		s_StopKey = th_key (pg, LU (64), LU (15), LU (46), LU (46), "STOP", TH_KEY | TH_KEY_SMALL, stop_cb, 0);
+		s_Clock = th_box (pg, LU (114), LU (15), LU (72), LU (22));
+		s_Take = label_w (pg, LU (114), LU (38), LU (120) + dx / 2, TH->f_body, TH->ink, 0);
+		s_Status = label_w (pg, LU (114), LU (51), LU (120) + dx / 2, mi, TH->dim, 0);
+		for (int i = 0; i < 4; i++) s_Info[i] = label_w (pg, LU (237) + dx / 2, LU (16) + i * LU (11), LU (62) + dx / 2, mi, i == 0 ? TH->ink : TH->dim, 0);
+		s_TakesKey = th_key (pg, LU (301) + dx, LU (15), LU (51), LU (46), "TAKES", TH_KEY | TH_KEY_SMALL, takes_cb, 0);
+		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, LU (63), mi, TH->faint, kGroup[g]);
 	}
 	else
 	{
 		s_TitleBar = 0;
-		const int ww = 508 + dx;		// the display window; the keys at its right
-		th_panel (pg, 8, 6, ww, 62, "", TH_PANEL_WINDOW);
-		s_Clock = th_box (pg, 20, 6, 156, 62);
-		s_Take = label_w (pg, 188, 12, ww - 188 - 112, &lv_font_montserrat_18, TH->win_ink, 0);
-		s_State = label_w (pg, ww - 112, 15, 106, &lv_font_montserrat_14, TH->win_dim, 1);
-		s_Status = label_w (pg, 188, 41, ww - 188 - 6, mi, TH->win_dim, 0);
-		s_Info[0] = label_w (pg, 188 + 150, 41, ww - 188 - 150 - 6, mi, TH->win_dim, 1);
+		const int ww = LU (508) + dx;		// the display window; the keys at its right
+		th_panel (pg, LU (8), LU (6), ww, LU (62), "", TH_PANEL_WINDOW);
+		s_Clock = th_box (pg, LU (20), LU (6), LU (156), LU (62));
+		s_Take = label_w (pg, LU (188), LU (12), ww - LU (188) - LU (112), TH->f_mid, TH->win_ink, 0);
+		s_State = label_w (pg, ww - LU (112), LU (15), LU (106), TH->f_small, TH->win_dim, 1);
+		s_Status = label_w (pg, LU (188), LU (41), ww - LU (188) - LU (6), mi, TH->win_dim, 0);
+		s_Info[0] = label_w (pg, LU (188) + LU (150), LU (41), ww - LU (188) - LU (150) - LU (6), mi, TH->win_dim, 1);
 		s_Info[1] = s_Info[2] = s_Info[3] = 0;
 		int kx = 8 + ww + 8;
-		s_RecKey = th_box (pg, kx, 6, 100, 62);
-		s_ArmKey = th_key (pg, kx + 106, 6, 80, 62, "ARM", TH_KEY, arm_cb, 0);
-		s_StopKey = th_key (pg, kx + 106, 6, 80, 62, "STOP", TH_KEY, stop_cb, 0);
-		th_key_font (s_StopKey, &lv_font_montserrat_16);
-		s_TakesKey = th_key (pg, kx + 192, 6, Wd - 8 - (kx + 192), 62, "TAKES", TH_KEY, takes_cb, 0);
-		th_key_font (s_ArmKey, &lv_font_montserrat_16);
-		th_key_font (s_TakesKey, &lv_font_montserrat_16);
+		s_RecKey = th_box (pg, kx, LU (6), LU (100), LU (62));
+		s_ArmKey = th_key (pg, kx + LU (106), LU (6), LU (80), LU (62), "ARM", TH_KEY, arm_cb, 0);
+		s_StopKey = th_key (pg, kx + LU (106), LU (6), LU (80), LU (62), "STOP", TH_KEY, stop_cb, 0);
+		th_key_font (s_StopKey, TH->f_body);
+		s_TakesKey = th_key (pg, kx + LU (192), LU (6), Wd - LU (8) - (kx + LU (192)), LU (62), "TAKES", TH_KEY, takes_cb, 0);
+		th_key_font (s_ArmKey, TH->f_body);
+		th_key_font (s_TakesKey, TH->f_body);
 		for (int g = 0; g < 3; g++)
 		{
-			s_Group[g] = th_label (pg, col_x (g) + 2, 72, &lv_font_montserrat_12, TH->sub, kGroupC[g]);
+			s_Group[g] = th_label (pg, col_x (g) + 2, LU (72), TH->f_micro, TH->sub, kGroupC[g]);
 			lv_obj_set_style_text_letter_space (s_Group[g], 2, 0);
 		}
 	}
@@ -753,60 +753,60 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 	// the takes: a header, a row a take (name, length, size, files, DEL)
 	if (O)
 	{
-		s_TBox = th_box (pg, 0, 62, Wd, H - 62);
+		s_TBox = th_box (pg, 0, LU (62), Wd, H - LU (62));
 		static const char *const kH[4] = {"TAKE", "LENGTH", "SIZE", "FILES"};
-		const int hx[4] = {3, 150 + dx / 3, 202 + dx / 2, 258 + 2 * dx / 3};
+		const int hx[4] = {3, LU (150) + dx / 3, LU (202) + dx / 2, LU (258) + 2 * dx / 3};
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], 1, mi, TH->faint, kH[k]);
 		const int rh = pitch ();
 		s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{
 			int y = 10 + i * rh, ty = y + (rh - 11) / 2 + 1;
-			s_THit[i] = th_box (s_TBox, 0, y, Wd - 50, rh);		// the row's tap (21 dots): play / pause
+			s_THit[i] = th_box (s_TBox, 0, y, Wd - LU (50), rh);		// the row's tap (21 dots): play / pause
 			lv_obj_add_flag (s_THit[i], LV_OBJ_FLAG_CLICKABLE);
 			lv_obj_add_flag (s_THit[i], LV_OBJ_FLAG_PRESS_LOCK);		// a drag off the row still scrolls
 			lv_obj_add_event_cb (s_THit[i], hit_draw, LV_EVENT_DRAW_MAIN, (void *) (intptr_t) i);
 			lv_obj_add_event_cb (s_THit[i], hit_cb, LV_EVENT_ALL, (void *) (intptr_t) i);
-			s_TName[i] = label_w (s_TBox, 16, ty, 130 + dx / 3, TH->f_body, TH->ink, 0);
-			s_TLen[i] = label_w (s_TBox, hx[1], ty, 48, TH->f_body, TH->ink, 0);
-			s_TSize[i] = label_w (s_TBox, hx[2], ty, 52, TH->f_body, TH->dim, 0);
-			s_TFiles[i] = label_w (s_TBox, hx[3], ty, 30, TH->f_body, TH->dim, 0);
-			s_TDel[i] = th_key (s_TBox, Wd - 48, y + 1, 48, rh - 2, "DEL", TH_KEY_DANGER | TH_KEY_SMALL, del_cb, (void *) (intptr_t) i);
+			s_TName[i] = label_w (s_TBox, LU (16), ty, LU (130) + dx / 3, TH->f_body, TH->ink, 0);
+			s_TLen[i] = label_w (s_TBox, hx[1], ty, LU (48), TH->f_body, TH->ink, 0);
+			s_TSize[i] = label_w (s_TBox, hx[2], ty, LU (52), TH->f_body, TH->dim, 0);
+			s_TFiles[i] = label_w (s_TBox, hx[3], ty, LU (30), TH->f_body, TH->dim, 0);
+			s_TDel[i] = th_key (s_TBox, Wd - LU (48), y + 1, LU (48), rh - 2, "DEL", TH_KEY_DANGER | TH_KEY_SMALL, del_cb, (void *) (intptr_t) i);
 			lv_obj_set_ext_click_area (s_TDel[i], 1);		// the row's whole pitch: 21 dots
 		}
-		s_TEmpty = label_w (s_TBox, 0, 10 + 3 * rh, Wd, TH->f_body, TH->dim, -1);
+		s_TEmpty = label_w (s_TBox, 0, LU (10) + 3 * rh, Wd, TH->f_body, TH->dim, -1);
 	}
 	else
 	{
-		s_TBox = th_box (pg, 0, 72, Wd, H - 72);
-		th_panel (s_TBox, 8, 0, Wd - 16, H - 76, "", TH_PANEL_WINDOW);
+		s_TBox = th_box (pg, 0, LU (72), Wd, H - LU (72));
+		th_panel (s_TBox, LU (8), 0, Wd - LU (16), H - LU (76), "", TH_PANEL_WINDOW);
 		static const char *const kH[4] = {"Take", "Length", "Size", "Files"};
-		const int hx[4] = {28, 360 + dx / 3, 480 + dx / 2, 600 + 2 * dx / 3};
-		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], 10, &lv_font_montserrat_14, TH->win_dim, kH[k]);
-		const int nr = (H - 76 - 40) / 44 < TROWS ? (H - 76 - 40) / 44 : TROWS, rh = (H - 76 - 40) / nr;	// 7 rows of 44 px, 8 of 54
+		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, 600 + 2 * dx / 3};
+		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], LU (10), TH->f_small, TH->win_dim, kH[k]);
+		const int nr = (H - LU (76) - LU (40)) / LU (44) < TROWS ? (H - LU (76) - LU (40)) / LU (44) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 7 rows of 44 px, 8 of 54
 		s_nRows = nr, s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{
 			int y = 34 + i * rh, ty = y + (rh - 22) / 2;
-			s_THit[i] = th_box (s_TBox, 14, y, Wd - 24 - 100 - 8 - 14, rh);	// the row's tap (44 px or more): play / pause
+			s_THit[i] = th_box (s_TBox, LU (14), y, Wd - LU (24) - LU (100) - LU (8) - LU (14), rh);	// the row's tap (44 px or more): play / pause
 			lv_obj_add_flag (s_THit[i], LV_OBJ_FLAG_CLICKABLE);
 			lv_obj_add_flag (s_THit[i], LV_OBJ_FLAG_PRESS_LOCK);		// a drag off the row still scrolls
 			lv_obj_add_event_cb (s_THit[i], hit_draw, LV_EVENT_DRAW_MAIN, (void *) (intptr_t) i);
 			lv_obj_add_event_cb (s_THit[i], hit_cb, LV_EVENT_ALL, (void *) (intptr_t) i);
-			s_TName[i] = label_w (s_TBox, hx[0] + 18, ty, 302 + dx / 3, &lv_font_montserrat_18, TH->win_ink, 0);
-			s_TLen[i] = label_w (s_TBox, hx[1], ty, 110, &lv_font_montserrat_18, TH->win_ink, 0);
-			s_TSize[i] = label_w (s_TBox, hx[2], ty, 110, &lv_font_montserrat_18, TH->win_dim, 0);
-			s_TFiles[i] = label_w (s_TBox, hx[3], ty, 60, &lv_font_montserrat_18, TH->win_dim, 0);
-			s_TDel[i] = th_key (s_TBox, Wd - 24 - 100, y + 2, 100, rh - 4, "Delete", TH_KEY_DANGER, del_cb, (void *) (intptr_t) i);
+			s_TName[i] = label_w (s_TBox, hx[0] + LU (18), ty, LU (302) + dx / 3, TH->f_mid, TH->win_ink, 0);
+			s_TLen[i] = label_w (s_TBox, hx[1], ty, LU (110), TH->f_mid, TH->win_ink, 0);
+			s_TSize[i] = label_w (s_TBox, hx[2], ty, LU (110), TH->f_mid, TH->win_dim, 0);
+			s_TFiles[i] = label_w (s_TBox, hx[3], ty, LU (60), TH->f_mid, TH->win_dim, 0);
+			s_TDel[i] = th_key (s_TBox, Wd - LU (24) - LU (100), y + 2, LU (100), rh - LU (4), "Delete", TH_KEY_DANGER, del_cb, (void *) (intptr_t) i);
 			lv_obj_set_ext_click_area (s_TDel[i], 2);		// the row's pitch: 44 px
-			th_key_font (s_TDel[i], &lv_font_montserrat_14);
+			th_key_font (s_TDel[i], TH->f_small);
 		}
-		s_TEmpty = label_w (s_TBox, 8, 34 + 3 * rh, Wd - 16, &lv_font_montserrat_18, TH->win_dim, -1);
+		s_TEmpty = label_w (s_TBox, LU (8), LU (34) + 3 * rh, Wd - LU (16), TH->f_mid, TH->win_dim, -1);
 	}
 	lv_obj_add_flag (s_TBox, LV_OBJ_FLAG_HIDDEN);
 
 	// recording off: one line over the grid
-	s_Off = label_w (pg, 0, grid_y () + grid_h () / 2 - 12, Wd, O ? TH->f_body : &lv_font_montserrat_18, O ? TH->dim : TH->ink, -1);
+	s_Off = label_w (pg, 0, grid_y () + grid_h () / 2 - LU (12), Wd, O ? TH->f_body : TH->f_mid, O ? TH->dim : TH->ink, -1);
 	lv_obj_add_flag (s_Off, LV_OBJ_FLAG_HIDDEN);
 
 	// the delete's confirmation: centred, its size kept on 1024x600, over a layer that takes every other tap (a cancel)
@@ -821,28 +821,28 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 	lv_obj_add_flag (s_Scrim, LV_OBJ_FLAG_HIDDEN);
 	if (O)
 	{
-		s_Dlg = th_box (pg, (Wd - 300) / 2, 66 + dy / 2, 300, 110);
+		s_Dlg = th_box (pg, (Wd - LU (300)) / 2, LU (66) + dy / 2, LU (300), LU (110));
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
 		lv_obj_set_style_border_width (s_Dlg, 1, 0);
 		lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);		// taps stop here
-		for (int i = 0; i < 3; i++) s_DlgText[i] = label_w (s_Dlg, 8, 8 + i * 16 + (i ? 4 : 0), 284, i ? mi : TH->f_body, i == 2 ? TH->accent_hi : TH->ink, 0);
-		s_DlgNo = th_key (s_Dlg, 8, 70, 136, 32, "CANCEL", TH_KEY, dlg_cb, (void *) 0);
-		s_DlgYes = th_key (s_Dlg, 156, 70, 136, 32, "DELETE", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
+		for (int i = 0; i < 3; i++) s_DlgText[i] = label_w (s_Dlg, LU (8), LU (8) + i * LU (16) + (i ? LU (4) : 0), LU (284), i ? mi : TH->f_body, i == 2 ? TH->accent_hi : TH->ink, 0);
+		s_DlgNo = th_key (s_Dlg, LU (8), LU (70), LU (136), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);
+		s_DlgYes = th_key (s_Dlg, LU (156), LU (70), LU (136), LU (32), "DELETE", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
 	}
 	else
 	{
-		s_Dlg = th_box (pg, (Wd - 520) / 2, 100 + dy / 2, 520, 220);
-		th_panel (s_Dlg, 0, 0, 520, 220, "", TH_PANEL_WINDOW);
+		s_Dlg = th_box (pg, (Wd - LU (520)) / 2, LU (100) + dy / 2, LU (520), LU (220));
+		th_panel (s_Dlg, 0, 0, LU (520), LU (220), "", TH_PANEL_WINDOW);
 		lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);
 		for (int i = 0; i < 3; i++)
-			s_DlgText[i] = label_w (s_Dlg, 24, 20 + i * 34 + (i ? 6 : 0), 472, i ? &lv_font_montserrat_16 : &lv_font_montserrat_22,
+			s_DlgText[i] = label_w (s_Dlg, LU (24), LU (20) + i * LU (34) + (i ? LU (6) : 0), LU (472), i ? TH->f_body : TH->f_mid2,
 						i == 2 ? TH->warn : TH->win_ink, 0);
-		s_DlgNo = th_key (s_Dlg, 24, 146, 224, 56, "Cancel", TH_KEY, dlg_cb, (void *) 0);
-		s_DlgYes = th_key (s_Dlg, 272, 146, 224, 56, "Delete", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
-		th_key_font (s_DlgNo, &lv_font_montserrat_20);
-		th_key_font (s_DlgYes, &lv_font_montserrat_20);
+		s_DlgNo = th_key (s_Dlg, LU (24), LU (146), LU (224), LU (56), "Cancel", TH_KEY, dlg_cb, (void *) 0);
+		s_DlgYes = th_key (s_Dlg, LU (272), LU (146), LU (224), LU (56), "Delete", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
+		th_key_font (s_DlgNo, TH->f_title);
+		th_key_font (s_DlgYes, TH->f_title);
 	}
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
@@ -977,7 +977,7 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 		{
 			s_nStatusW = sw;
 			lv_obj_set_width (s_Status, sw);
-			lv_obj_set_x (s_Info[0], 188 + sw);
+			lv_obj_set_x (s_Info[0], LU (188) + sw);
 			lv_obj_set_width (s_Info[0], full - sw > 0 ? full - sw : 1);
 		}
 		if (!known) lv_snprintf (b, sizeof b, "%s", fr);

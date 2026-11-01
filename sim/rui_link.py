@@ -199,6 +199,7 @@ class Host:
             os.makedirs(frames_dir, exist_ok=True)
         self.frames, self.nframe = 0, 0
         self.out = []
+        self.muted = 0   # bytes swallowed by --mute, not yet reported
         self.vb_seen = {}
 
     def t(self):
@@ -272,6 +273,8 @@ class Host:
                 self.note(tx="mask", encs=sorted(mk[0]) if mk else None, keys=sorted(mk[1]) if mk else None)
             elif P.RUI_FIRST <= cmd <= P.RUI_LAST or cmd in (P.RUI_NAMES, P.RUI_WRITE, P.RUI_BANK_LIST):   # (rui1038: 47 / 48; rui1040: 4A)
                 self.note(tx=f"{cmd:#x}", body=list(body))
+            elif cmd == 0x0E:   # a listing for 0023's SIDECAR folder
+                self.note(tx="0x0e", body=list(body[:8]), n=len(body))
             elif cmd == P.POOL_TABLE:   # DSP SAMPLE's 14 table (the pools: bank A of SAMPLES)
                 rep, rows = P.decode_pool_table(body)
                 self.note(tx="0x14", replace=rep, rows=[list(x) for x in rows])
@@ -408,6 +411,13 @@ class Host:
                 self.note(bundle=ph, msg=self.lib.core_c_bundle_msg().decode(errors="replace"))
         if self.rec:
             self.rec_tick()
+        if self.lfo and not getattr(self, "lfo_loaded", False) and self.frames % 4800 < 64 and self.t() > 0.2 and \
+                (self.lfo_json() or {"l": [{}]})["l"][0].get("tgt") == "OFF":   # the project's store full: its LFOs (none) took ours, set before
+            self.lfo_loaded = True                         # that as the old project's: ours again, once
+            self.note(ev="lfo-again")
+            rb = ctypes.create_string_buffer(200)
+            for c in self.lfo.split(";"):
+                self.lib.core_c_lfo_command(c.encode(), rb, 200)
         if self.lfo or self.emu_clock:
             us = 1_000_000 + self.frames * 1_000_000 // SR
             self.lib.core_c_fake_time(1, us)
@@ -418,8 +428,8 @@ class Host:
             self.note(seqcmd=c, out=self.seq_command(c))
         if self.seq_tick:   # the Pi's control loop runs the sequencer's tick too (rytm_dump's transport: the pools' P3)
             self.lib.core_c_poly_tick()
-            if self.seq_idle:   # and its idle passes (the project's store fills, the prefetch, the saves)
-                self.lib.core_c_idle(4)
+        self.lib.core_c_lib(64)    # the sample library, the Pi's core 0 (lib_pi::poll): a browser's folder comes from its RAM index
+        self.lib.core_c_idle(4)    # and the idle passes: srclib's steps, the project's store fills, the prefetch, the saves
         self.lib.core_c_rui_tick(ctypes.c_uint32(self.frames * 1000 // SR))
         self.take()
 
@@ -442,7 +452,7 @@ class Host:
         return list(w)
 
 
-def serve(h, link, secs, stop_at, hello=HELLO_MIDI | HELLO_NO_R | HELLO_VOICES):
+def serve(h, link, secs, stop_at, hello=HELLO_MIDI | HELLO_NO_R | HELLO_VOICES, mute=None):
     host, port = link.rsplit(":", 1)
     t0 = time.time()
     while True:
@@ -537,7 +547,15 @@ def serve(h, link, secs, stop_at, hello=HELLO_MIDI | HELLO_NO_R | HELLO_VOICES):
                 break
             else:
                 sys.exit(f"bad message {buf[:8]!r}")
+        if mute and h.t() >= mute[1] and h.muted:   # sending is back: what the Pi's control core does on a drop count change
+            h.note(ev="unmute", dropped=h.muted)
+            h.muted = 0
+            if hasattr(h.lib, "core_c_rui_resync"):
+                h.lib.core_c_rui_resync()
         for m in h.out:
+            if mute and mute[0] <= h.t() < mute[1]:   # the Pi's merge with its sending off: whole records gone, no replug
+                h.muted += len(m)
+                continue
             for i in range(0, len(m), 60000):
                 c = m[i:i + 60000]
                 s.sendall(b"M" + struct.pack("<H", len(c)) + c)
@@ -553,11 +571,12 @@ def main():
     ap.add_argument("--frames")
     ap.add_argument("--stop-at", type=float, default=None)
     ap.add_argument("--secs", type=float, default=900.0)
+    ap.add_argument("--mute", help="A:B seconds of the link's clock: every core -> Rytm byte swallowed, no re-enumeration")
     a = ap.parse_args()
     h = Host(a.card, a.log, a.frames)
     print("rui_link: ready", flush=True)   # (rui_e2e.py starts the emulator on this line: the core is up first)
     try:
-        serve(h, a.link, a.secs, a.stop_at)
+        serve(h, a.link, a.secs, a.stop_at, mute=[float(x) for x in a.mute.split(":")] if a.mute else None)
     finally:
         h.note(lfo=h.lfo_json())
         if h.seq_tick:

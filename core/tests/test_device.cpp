@@ -17,6 +17,7 @@
 #include "fx/send_fx.h"
 #include "lfo.h"
 #include "pool/pool.h"
+#include "seq/seq.h"
 #include "sysex.h"
 #include "ui/remote.h"
 #include "host_link.h"
@@ -336,12 +337,15 @@ int main() {
     remove((std::string(tmpl) + "/.rytm/device").c_str());
     static bool s_saved;
     s_saved = false, g_restarts = 0;
-    hooks.device_restart = [] { ++g_restarts, s_saved = !lfo::dirty() && !project_dirty; };
+    hooks.device_restart = [] { ++g_restarts, s_saved = !lfo::dirty() && !project_dirty && !seq::unsaved(); };
+    for (int k = 0; k < 200000 && project_loading(); ++k) idle_save();
     lfo::Settings ls = lfo::get(0);
     ls.depth = ls.depth == 20 ? 10 : 20;
     lfo::set(0, ls);
     CHECK(lfo::dirty());
     project_dirty = true;
+    char sb[80];
+    CHECK(seq::command("seq=lat:200", sb, sizeof sb) && seq::unsaved());   // held for kSaveMs otherwise: edits of the last second lost at the restart
     send(hello(kBoxId + 1));
     for (int k = 0; k < 200 && !g_restarts; ++k) idle_save();
     CHECK(g_restarts == 1 && s_saved);

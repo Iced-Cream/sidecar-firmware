@@ -217,7 +217,7 @@ static bool g_worker = false;
 static uint64_t g_card3 = 0;
 static double g_max_step_us = 0, g_sum_step_us = 0;
 static uint32_t g_steps = 0;
-static int g_phase_max[5];   // the longest step (us) by the load's phase it started in
+static int g_phase_max[7];   // the longest step (us) by the load's phase it started in
 static bool step3() {
   host_card_core(3);
   uint64_t c = host_card_us(3);
@@ -365,6 +365,7 @@ int main() {
     // a read step converts kConvFrames at most: ~5 us here, the Pi 4 ~34x slower (a loose bound: a first touch of
     // fresh memory can take longer on the Mac)
     if (!g_capture) CHECK(g_phase_max[4] < 100);
+    if (!g_capture) CHECK(g_phase_max[5] < 100);   // (the placing of the samples, a step each)
     if (!g_capture) CHECK(host_card_us(0) > c0);
     printf("test_msamp_load: seed %d: %u steps, the longest %.1f us, mean %.2f us (Mac; by phase idle %d sfz %d header %d "
            "open %d read %d); control core card time %llu us\n", kRef[i].seed, g_steps, g_max_step_us, g_sum_step_us / g_steps,

@@ -48,9 +48,11 @@ stamp() { { strings -a "$1" || true; } | sed -n 's/.*==== rytm-pi engine ==== Si
 S4=$(stamp "$K4"); S5=$(stamp "$K5")
 [ -n "$S4" ] && [ "$S4" = "$S5" ] || { echo "the kernels' stamps differ: Pi 4 '$S4', Pi 5 '$S5'"; exit 1; }
 case "$S4" in *dirty*) echo "the kernels are built from a dirty tree ($S4)"; exit 1;; esac
-P5S='gadget: none on this board (Pi 5 build)'
-! grep -aqF "$P5S" "$K4" || { echo "$K4 is a Pi 5 kernel"; exit 1; }
-grep -aqF "$P5S" "$K5" || { echo "$K5 is not a Pi 5 kernel"; exit 1; }
+P5S=(-e 'board: Raspberry Pi 5 build (kernel_2712.img)' -e 'gadget: none on this board (Pi 5 build)')	# the second: Pi 5 kernels from before the first
+! grep -aqF "${P5S[@]}" "$K4" || { echo "$K4 is a Pi 5 kernel"; exit 1; }
+grep -aqF "${P5S[@]}" "$K5" || { echo "$K5 is not a Pi 5 kernel"; exit 1; }
+# a PI5_GADGET=1 kernel has the test mode (testsecs=: no card, a reboot at the end): never on a release card
+for k in "$K4" "$K5"; do ! grep -aqF 'testsecs=' "$k" || { echo "$k is a test kernel (PI5_GADGET=1)"; exit 1; }; done
 COMMIT=$(echo "$S4" | sed -n 's/.*(\([0-9a-f]*\)).*/\1/p')
 
 # Wi-Fi chip firmware: RPi-Distro/firmware-nonfree at the commit Circle's addon/wlan/firmware/Makefile pins, once
@@ -124,7 +126,7 @@ disable_splash=1
 boot_delay=0
 os_check=0
 # A DSI display on CAM/DISP 0 or 1 needs no line either: the engine drives it itself (Circle's addon/rp1dsi) and
-# prefers it to HDMI. Upside down: dsi_rotate=180 in cmdline.txt (lcd_rotate does nothing on the Pi 5); dsi=0 there:
+# prefers it to HDMI. Upside down: dsi_rotate=180 in cmdline.txt, 90 on a Touch Display 2 (lcd_rotate does nothing on the Pi 5); dsi=0 there:
 # HDMI only. No vc4-kms-* overlay or display_auto_detect=1 (they are for Linux).
 
 # The Pi 5's HDMI display (micro-HDMI 0, next to USB-C, on before power-on; docs/pi5.md "HDMI display"): only

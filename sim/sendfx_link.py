@@ -15,7 +15,7 @@ line, each stamped with "f" = frames the Rytm asked for so far (48 kHz: the emul
   {"tx": [cmd, payload]}       a SysEx the core sent the Rytm
 --wav: 3 channels at 48 kHz - the synthetic stem (BD, IN 2), the SendFx's L and R. The stem: a one-sample impulse
 every 0.25 s (amplitude 0.5) on BD; the other stems silent. One process per run (the core keeps module state).
---replay: no link; a fresh core takes the logged run's 0x20 messages at their frames and renders the stem (impulse as
+--replay: no link; a fresh core takes the logged run's messages at their frames and renders the stem (impulse as
 above, or sine: 220 Hz at 0.3 on BD) through SendFx in the same blocks: an impulse replay equals the live --wav.
 """
 import argparse
@@ -79,7 +79,12 @@ class Host:
         self.core.lib.core_c_sendfx_command(c.encode(), r, 400)
         return r.value.decode()
 
+    def fake_time(self):
+        """The core's clock on the frames, live and in a replay alike: all_sound_off's 100 ms and the rest stay the same run."""
+        self.core.lib.core_c_fake_time(1, ctypes.c_uint64(1_000_000 + self.frames * 1_000_000 // SR))
+
     def from_rytm(self, msg):
+        self.fake_time()
         r = P.parse(msg)
         self.note(rx=r if r else msg)
         self.core.report(msg)
@@ -198,12 +203,15 @@ def replay(h, log, stem, blocks):
         lines = f.readlines()
     for line in lines:
         e = json.loads(line)
-        if "rx" in e and e["rx"][0] == P.SENDFX and isinstance(e["rx"][1], str):
-            rx.setdefault(e["f"], []).append(P.HDR + bytes([P.SENDFX]) + bytes.fromhex(e["rx"][1]) + b"\xf7")
-    lib = h.core.lib
+        if "rx" in e:   # every message the core took: a hello clears the send FX, a project loads its slots
+            m = e["rx"]
+            m = bytes.fromhex(m) if isinstance(m, str) else P.HDR + bytes([m[0]]) + bytes.fromhex(m[1]) + b"\xf7"
+            rx.setdefault(e["f"], []).append(m)
     for n in np.load(blocks):
+        h.fake_time()
         for m in rx.pop(h.frames, []):
-            lib.core_c_sendfx_take(m, len(m))
+            h.core.report(m)
+            h.core.take_sysex()
         h.render(int(n), stem)
         h.frames += int(n)
 

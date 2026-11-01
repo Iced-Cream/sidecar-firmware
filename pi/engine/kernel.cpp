@@ -3,6 +3,7 @@
 // link=tcp), the console, the stats, the clean stop before a reboot; without a Rytm, the self-test transport
 // (selftest.h). Cores 1-3: cores.cpp.
 #include "kernel.h"
+#include "idlewait.h"
 #include "mbtrace.h"
 #include "blackbox_pi.h"	// the black box (2026-10-30): the whole log appended to /.rytm/blackbox.log
 #include "crumb.h"		// the crash breadcrumb (2026-10-29): kept over a watchdog reset, reported here at the next boot
@@ -14,6 +15,7 @@ static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last
 #include "sidecar_splash.h"	// the boot screen's look (uistyle= on the cmdline)
 #include "sidecar_seqed.h"
 #include "wgview_pi.h"		// the display's WAVETABLE / GRANULAR view
+#include "preset_pi.h"		// the display's JUNO / 6-OP FM preset pages
 #include "chopview_pi.h"		// the display's CHOP page
 #include "song_pi.h"		// the display's SONG page (core/song)
 #include "voice_pi.h"		// the display's VOICE page, the Rytm's UP + T1..T5 (rui1036b)
@@ -48,6 +50,8 @@ static int s_nRytmPatIndex = -1;
 
 #include "bridge.h"
 #include "shared.h"
+#include "midiout_q.h"	// the MIDI machine's USB-A queues
+#include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
@@ -60,6 +64,13 @@ static int s_nRytmPatIndex = -1;
 #include "stor_pi.h"
 #include "version.h"
 #include <circle/new.h>
+
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+extern bool g_bCardOff;			// platform_pi.cpp: testsecs=
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
+#endif
+#endif
 
 // The network options' defaults when cmdline.txt has none: build.sh writes hosted/net_defaults.h from PI_IP,
 // PI_NETMASK and EMUHOST (its defaults: the ones below). cmdline.txt wins; it can be edited from the Mac with the card
@@ -89,7 +100,6 @@ static void BundleCommand (const char *pCmd)
 }
 
 static unsigned s_nLoopMax, s_nLoopN, s_nLoopSum;	// core 0's loop: its MsSleep (1) in us (/status "core0", reset when read)
-static unsigned s_nToHostFull;		// engine bytes for the host lost: a full g_MidiOut (none expected) or a record > 4096 B
 
 // "a.b.c.d" or "a.b.c.d:port" -> IP (and port if asked); FALSE if malformed, trailing junk included ("1.2.3.4x",
 // ":7301abc", a port where none is asked).
@@ -171,12 +181,12 @@ void CKernel::ToHost (const u8 *pData, int nLength)
 	if (nLength <= 0) return;
 	if (nLength > 4096)				// longer than one 'M' (tcp_link.h's m_Msg): dropped, counted
 	{
-		s_nToHostFull += nLength;
+		g_nToHostFull += nLength;
 		return;
 	}
 	if (g_MidiOut.size () + 2 + nLength > kMidiOutBytes)
 	{
-		s_nToHostFull += nLength;
+		g_nToHostFull += nLength;
 		return;
 	}
 	g_MidiOut.push ((u8) nLength);
@@ -238,6 +248,22 @@ boolean CKernel::Initialize (void)
 	if (bOK) bOK = m_Timer.Initialize ();
 	if (!bOK) return FALSE;
 	m_Logger.Write (From, LogNotice, "==== rytm-pi engine ==== Sidecar " SIDECAR_VERSION_FULL ", CPU %u MHz", m_CPUThrottle.GetClockRate () / 1000000);
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+	// testsecs=S (docs/pi5.md "Engine test mode"): a run on a card that is not Sidecar's, a tryboot on Raspberry Pi OS. The
+	// card is never mounted for the engine, so nothing is written to that system's boot partition; the watchdog runs
+	// from here on, and at S seconds the Pi reboots, which ends the tryboot. testcard=1 with it: the engine uses the card
+	// as usual, projects, presets and plugins on a tryboot, but changes nothing outside Sidecar's folders (card_guard.h)
+	m_nTestSecs = m_Options.GetAppOptionDecimal ("testsecs", 0);
+	if (m_nTestSecs != 0)
+	{
+		m_bTestCard = m_Options.GetAppOptionDecimal ("testcard", 0) != 0;
+		g_bCardOff = !m_bTestCard;
+		g_bCardGuard = m_bTestCard;
+		m_Watchdog.Start (15);
+		m_Logger.Write (From, LogNotice, "testsecs=%u: %s, the watchdog on, a reboot at the end", m_nTestSecs,
+				m_bTestCard ? "testcard=1: the card in use, Sidecar's folders only" : "no card for the engine");
+	}
+#endif
 	m_Logger.RegisterPanicHandler (CrumbPanic);
 	s_nPmRsts = read32 (ARM_PM_RSTS);
 	crumb::Report ([this] (const char *pLine) { m_Logger.Write ("crumb", LogNotice, "%s", pLine); }, s_nPmRsts, 6144);
@@ -311,6 +337,7 @@ boolean CKernel::Initialize (void)
 				 strcmp (m_Options.GetAppOptionString ("notes", "off"), "on") == 0
 				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
 	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
+	CEngineCores::SetIdleWfe (m_Options.GetAppOptionDecimal ("idlewfe", 1) != 0);	// docs/pi-engine.md "Idle sleep"
 	ApplyBudget (m_nClockMHz, TRUE);			// the voice guard's budget, for the clock the engine runs at
 	m_Console.Initialize ();
 	BootStep (4);
@@ -329,7 +356,7 @@ boolean CKernel::Initialize (void)
 	if (m_pDisplay != 0)
 	{
 		BootStep (8);
-		LoadDisplayRes (bCard);			// res=: the UI's size (800x480 / 1024x600), before LVGL starts
+		LoadDisplayRes (bCard);			// res=: the UI's size (800x480 / 1024x600 / 1280x720), before LVGL starts
 		m_pDisplay->SetUiSize (m_nResW, m_nResH);
 		if (m_pDisplay->Initialize ())
 		{
@@ -343,8 +370,12 @@ boolean CKernel::Initialize (void)
 	// USB-C, the computer's side: gadget=sidecar (default: UAC2 + USB MIDI, sidecar_gadget.h), midi (P1's MIDI
 	// echo, gadget.h) or 0. The default can be built in (GADGET=midi pi/engine/build.sh): the serial bootloader
 	// card's cmdline.txt is not edited from the Mac. A gadget that fails to start is left alone (no destructor).
+#if RASPPI >= 5
+	// what pi/circle/sdboot.py and make-sd-dual.sh tell a Pi 5 kernel by, gadget or not (older ones: the line below)
+	m_Logger.Write (From, LogNotice, "board: Raspberry Pi 5 build (kernel_2712.img)");
+#endif
 #ifdef SIDECAR_NO_GADGET
-	const char *pGadgetMode = "0";			// Pi 5: no gadget in Circle (docs/pi5.md); gadget= is ignored
+	const char *pGadgetMode = "0";			// Pi 5 without PI5_GADGET=1 (docs/pi5.md); gadget= is ignored
 	m_pGadgetMode = pGadgetMode;
 	m_Logger.Write (From, LogNotice, "gadget: none on this board (Pi 5 build)");
 	if (0)
@@ -368,6 +399,15 @@ boolean CKernel::Initialize (void)
 	}
 #ifndef SIDECAR_NO_GADGET
 	else m_Logger.Write (From, LogNotice, "gadget: off");
+#endif
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+	if (m_nTestSecs != 0)
+	{
+		m_Watchdog.Start (15);
+		if (m_pSidecar != 0 && m_Options.GetAppOptionDecimal ("uac2test", 0) != 0) m_pSidecar->Command ("uac2test=on");
+		if (m_pSidecar != 0 && m_Options.GetAppOptionDecimal ("midifake", 0) != 0) m_pSidecar->Command ("midifake=on");
+		blackbox_pi::TestLog (m_bTestCard);		// the boot's log, should the rest not get far
+	}
 #endif
 	// the network: one stack on one device (Circle), Ethernet (static: the direct cable has no DHCP server) or, with
 	// wifi=1 and a stored network, Wi-Fi (DHCP unless wifi.txt has ip=); mDNS: sidecar.local on either (web.h)
@@ -460,7 +500,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
 		  nTempWeb, k->m_Thermal.warn ? "true" : "false",
-		  thermal::clock_low_mhz ((int) k->m_nClockMHz, (int) k->m_nClockSetting, (int) nTempWeb),	// MHz, 0: not lowered
+		  thermal::clock_low_mhz ((int) k->m_nClockMHz, (int) k->AskedMHz (), (int) nTempWeb),	// MHz, 0: not lowered
 		  g_Output.GetMode () == Output::kMain ? "main" : "tracks",
 		  CEngineCores::NotesOn () ? "true" : "false", CEngineCores::DroneVoice (), CEngineCores::FifoTarget (),
 		  g_Output.Underflows (), g_Output.RestartUnderflows (), g_Output.Streams (),
@@ -511,7 +551,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		}
 		pOut->Append ("]");
 	}
-	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u}", k->m_nClockSetting, k->m_nClockMHz, k->m_nBudgetUs);
+	// setting: cpumhz=, where 1500 means the board's full clock; mhz: what the firmware says it set; fullMhz, minMhz: its range;
+	// measuredMhz: what it measured (MeasureClock, up to 10 s old, 0: none yet); socMaxC: Circle's throttle (socmaxtemp)
+	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s}",
+		  k->m_nClockSetting, k->m_nClockMHz, k->m_nBudgetUs, k->AskedMHz (), k->m_CPUThrottle.GetMaxClockRate () / 1000000,
+		  k->m_CPUThrottle.GetMinClockRate () / 1000000, k->m_nMeasuredMHz, k->m_Options.GetSoCMaxTemp (),
+		  k->m_bClockCapped ? "true" : "false");
+	pOut->Append (s);
+	s.Format (",\"idle\":{\"wfe\":%s,\"asleepPct\":[%u,%u,%u,%u],\"wakes\":[%u,%u,%u,%u]}", CEngineCores::IdleWfe () ? "true" : "false",
+		  k->m_nAsleepPct[0], k->m_nAsleepPct[1], k->m_nAsleepPct[2], k->m_nAsleepPct[3],
+		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
 	pOut->Append (s);
 	pOut->Append (",\"machines\":[");			// each voice's machine (the Sound tab shows the current one)
 	for (unsigned v = 0; v < 8; v++)
@@ -721,9 +770,9 @@ void CKernel::LogBench (void)
 			unsigned nBlk = (unsigned) (r.nWorst * 1000 / nBlock);		// 1/10 % of a block
 			if (nBp > nWorstBp) nWorstBp = nBp;
 			if (nBlk > nWorstBlk) nWorstBlk = nBlk;
-			m_Logger.Write (From, LogNotice, "bench c%u %s: %u.%02u %% of a core per voice, worst block %u.%u %% -> %u voices a core, peak %d",
+			m_Logger.Write (From, LogNotice, "bench c%u %s: %u.%02u %% of a core per voice, worst block %u.%u %% -> %u voices a core, peak %d, hash %08X",
 					c, CEngineCores::BenchMachine[m], nBp / 100, nBp % 100, nBlk / 10, nBlk % 10,
-					nBp ? 8000 / nBp : 999, r.nPeak);		// at 80 % of a core
+					nBp ? 8000 / nBp : 999, r.nPeak, r.nHash);	// at 80 % of a core
 			m_Timer.MsDelay (2);	// ~150 B a line takes 1.6 ms at 921600 baud: Circle's 2 KB TX buffer drops when full
 		}
 		m_Logger.Write (From, LogNotice, "bench %s: %u.%02u %% of a core per voice at %u MHz -> %u voices a core (worst of cores 0-3, worst block %u.%u %%, budget %u %%)",
@@ -742,12 +791,23 @@ void CKernel::LogBench (void)
 	for (unsigned p = 0; p < 5; p++)
 	{
 		u32 nWorst = 0;
-		u64 nTicks = bridge::ins_bench (Pairs[p][0], Pairs[p][1], &nWorst);
+		u32 nHash = 0;
+		u64 nTicks = bridge::ins_bench (Pairs[p][0], Pairs[p][1], &nWorst, &nHash);
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
-		m_Logger.Write (From, LogNotice, "bench ins %s+%s: 8 voices x 2 slots %u.%02u %% of a core, worst block %u.%u %%",
+		m_Logger.Write (From, LogNotice, "bench ins %s+%s: 8 voices x 2 slots %u.%02u %% of a core, worst block %u.%u %%, hash %08X",
 				bridge::ins_bench_name (Pairs[p][0]), bridge::ins_bench_name (Pairs[p][1]), nBp / 100, nBp % 100,
-				nBlk / 10, nBlk % 10);
+				nBlk / 10, nBlk % 10, nHash);
 		m_Timer.MsDelay (2);
+	}
+	// the NEON kernels against their C on this CPU (neon_bench.cpp)
+	{
+		u64 nC, nN;
+		for (unsigned r = 0; const char *pName = bridge::neon_bench (r, &nC, &nN); r++)
+		{
+			m_Logger.Write (From, LogNotice, "bench neon %s: C %u us, NEON %u us (%u %%)", pName, (unsigned) (nC * 1000000 / nCntFrq),
+					(unsigned) (nN * 1000000 / nCntFrq), nC ? (unsigned) (nN * 100 / nC) : 0);
+			m_Timer.MsDelay (2);
+		}
 	}
 	// INSERT AMP (core/fx/amp.h): one NAM A2-Lite instance, a synthetic capture (docs/INSERT-FX.md "AMP")
 	{
@@ -972,7 +1032,7 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 	return pThis->m_pSidecar != 0 && pThis->m_pSidecar->Command (pCmd);
 }
 
-// res= in /.rytm/display.txt or cmdline.txt (cmdline wins): "800x480" or "1024x600" fixes the UI's size, "auto" (or
+// res= in /.rytm/display.txt or cmdline.txt (cmdline wins): "800x480", "1024x600" or "1280x720" fixes the UI's size, "auto" (or
 // none) lets the display choose (the frame buffer's size if it is one of them, else 800x480 centred; docs/pi-display.md
 // "Screen sizes"). Read once, before the display's Initialize; a change takes a reboot. Kept when display.txt is written.
 void CKernel::LoadDisplayRes (boolean bCard)
@@ -998,9 +1058,9 @@ void CKernel::LoadDisplayRes (boolean bCard)
 		unsigned w = 0, h = 0;
 		while (*p >= '0' && *p <= '9') w = w * 10 + (unsigned) (*p++ - '0');
 		if (*p == 'x' || *p == 'X') for (p++; *p >= '0' && *p <= '9'; p++) h = h * 10 + (unsigned) (*p - '0');
-		if ((w == 800 && h == 480) || (w == 1024 && h == 600)) { rW = w; rH = h; }
+		if ((w == 800 && h == 480) || (w == 1024 && h == 600) || (w == 1280 && h == 720)) { rW = w; rH = h; }
 		else if (strncmp (p, "auto", 4) == 0) rW = rH = 0;
-		else m_Logger.Write (From, LogWarning, "display: res= in %s: 800x480, 1024x600 or auto", pFrom);
+		else m_Logger.Write (From, LogWarning, "display: res= in %s: 800x480, 1024x600, 1280x720 or auto", pFrom);
 	};
 	const char *ps = strstr (Text, "\nres=");
 	ps = strncmp (Text, "res=", 4) == 0 ? Text + 4 : ps ? ps + 5 : 0;
@@ -1133,6 +1193,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
 {
 	((CKernel *) pContext)->m_pMIDI = 0;
+	g_bRytmGone = true;				// the MIDI machine's USB notes: no hello will end them (the control core's)
 }
 
 // The Pi's own keyboards (core/keys.h): every other USB MIDI device in the USB-A ports, up to four, as sources 0..3 (in
@@ -1162,8 +1223,12 @@ static void KeysRemoved (CDevice *pDevice, void *pContext)
 	KeysPush ((u32) i << 24 | 0xF4u << 16);
 	LeaveCritical ();
 }
-// The auto-sampler's notes for an external synth (g_AsampMidi, shared.h): the computer's (the Sidecar gadget's MIDI IN) or
-// the first USB-A device's (a synth or an interface there); none there: dropped
+// The auto-sampler's notes for an external synth and the MIDI machine's (g_AsampMidi, shared.h): port 1 the computer's (the
+// Sidecar gadget's MIDI IN), 2 the first USB-A device's (a synth or an interface there), 3 every USB-A device's (the MIDI machine,
+// core/midim/midim.h); none there: dropped. USB-A never waits: each device has a queue (midiout_q.h) and one transfer in flight
+// (circle-midi-async.patch), so a device that does not drain costs only its own queue; what it cannot take is shed, note-offs last.
+// A failed transfer's note-offs go again, 100 ms later.
+static MidiOutQ s_OutQ[MaxKeyboards];
 static void AsampMidiSend (CSidecarGadget *pSidecar)
 {
 	u32 w;
@@ -1175,18 +1240,41 @@ static void AsampMidiSend (CSidecarGadget *pSidecar)
 		{
 			if (pSidecar != 0) pSidecar->MIDIToComputer (w);
 		}
-		else if (nPort == 2)
+		else if (nPort == 2 || nPort == 3)
 			for (unsigned i = 0; i < MaxKeyboards; i++)
 			{
-				CDevice *p = s_pKeyboard[i];
-				if (p == 0) continue;
-				u8 Pkt[4];
-				memcpy (Pkt, &w, 4);
-				((CUSBMIDIDevice *) p)->SendEventPackets (Pkt, 4);
-				break;
+				if (s_pKeyboard[i] == 0) continue;
+				s_OutQ[i].push (w);
+				if (nPort == 2) break;
 			}
 	}
+	for (unsigned i = 0; i < MaxKeyboards; i++)
+	{
+		CUSBMIDIDevice *p = (CUSBMIDIDevice *) s_pKeyboard[i];
+		if (p == 0)
+		{
+			s_OutQ[i].clear ();
+			continue;
+		}
+		unsigned nState = p->GetSendState ();
+		if (nState == 1) continue;
+		unsigned nNow = CTimer::GetClockTicks ();	// (1 MHz)
+		if (nState == 2)
+		{
+			s_OutQ[i].failed ();
+			s_OutQ[i].hold (nNow);
+		}
+		if (s_OutQ[i].held (nNow)) continue;
+		u32 Batch[MidiOutQ::kBatch];
+		unsigned n = s_OutQ[i].pop (Batch);
+		if (n != 0 && !p->SendEventPacketsAsync ((const u8 *) Batch, n * 4))
+		{
+			s_OutQ[i].failed ();
+			s_OutQ[i].hold (nNow);
+		}
+	}
 }
+
 // The computer's packet (gadget IRQ): its notes, sustain and all-notes-off go to core::keys (which plays them here or
 // passes them on to the Rytm); everything else to the Rytm as before
 static boolean KeysTap (const u8 *p)
@@ -1292,7 +1380,7 @@ void CKernel::PushUi (void)
 	u.ui_look = s_nUiLook;
 	u.temp_c = (int) m_nTempC;		// the temperature warning's banner (thermal.h)
 	u.temp_warn = m_Thermal.warn ? 1 : 0;
-	u.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) m_nClockSetting, (int) m_nTempC);	// Circle's throttle
+	u.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) AskedMHz (), (int) m_nTempC);	// Circle's throttle
 	u.cpu_mhz = (int) m_nClockSetting;
 	u.drone = CEngineCores::DroneVoice ();
 	u.fifo = CEngineCores::FifoTarget ();
@@ -1359,6 +1447,11 @@ void CKernel::LogStats (void)
 	ThermalStep (nTemp);
 	FollowClock ();
 	auto pct = [&] (u64 t) { return (unsigned) (t * 1000 / s.nTicks); };	// tenths of a percent
+	for (int c = 0; c < 4; c++)
+	{
+		m_nAsleepPct[c] = (pct (s.nSleep[c]) + 5) / 10;
+		m_nWakes[c] = s.nWakes[c];
+	}
 	CString Mach;
 	for (int k = 0; k < bridge::kMachines; k++)
 	{
@@ -1414,7 +1507,7 @@ void CKernel::LogStats (void)
 		sv.pass_max_us = s.nMaxPassUs, sv.fifo_min = s.nFifoMin, sv.fifo_target = CEngineCores::FifoTarget ();
 		sv.temp_c = (int) nTemp;
 		sv.temp_warn = m_Thermal.warn ? 1 : 0;
-		sv.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) m_nClockSetting, (int) nTemp);
+		sv.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) AskedMHz (), (int) nTemp);
 		sv.cpu_mhz = (int) m_nClockMHz;
 		sv.blocks = s_nBlocksTotal;
 		sv.ob = m_pTransport->Running () ? 1 : 0;
@@ -1432,10 +1525,17 @@ void CKernel::LogStats (void)
 		s.nFifoMin, s.nFifoMax, CEngineCores::FifoTarget (), g_Output.Underflows (), g_Output.RestartUnderflows (), g_Output.Streams (), s.nBlocks, s.nMaxBlockUs,
 		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
-		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + s_nToHostFull + bridge::to_host_dropped (), (unsigned) (g_Output.TakePeak () * 1000),
+		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (g_Output.TakePeak () * 1000),
 		nTemp);
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
+	if (s_nPowerTick % 10 == 5)				// every 10 s: the heat's figures, in the black box as well
+	{
+		MeasureClock ();
+		m_Logger.Write (From, LogNotice, "idle: asleep %u %u %u %u %%, wakes %u %u %u %u a second (cores 0-3), wfe %s, ARM clock %u MHz, measured %u, SoC %u C",
+				m_nAsleepPct[0], m_nAsleepPct[1], m_nAsleepPct[2], m_nAsleepPct[3], m_nWakes[0], m_nWakes[1], m_nWakes[2], m_nWakes[3],
+				CEngineCores::IdleWfe () ? "on" : "off", m_nClockMHz, m_nMeasuredMHz, nTemp);
+	}
 	if (s_nPowerTick % 60 == 0 && m_bWeb) CWebServer::LogStats (&m_Logger);	// the web page's connections, once a minute
 	if (s_nPowerTick % 60 == 0) paircode_pi::WarnTick ();	// and the loud line while the pairing code is off or fixed
 	if (m_pGadget != 0) m_pGadget->LogStats (&m_Logger);
@@ -1516,7 +1616,14 @@ void CKernel::LoadClock (boolean bCard)
 	m_nClockSetting = nMHz;
 	if (nMHz == 1500) m_nClockMHz = (m_CPUThrottle.GetClockRate () + 500000) / 1000000;	// as Circle set it (its maximum): no change
 	else SetClock (nMHz);
-	m_Logger.Write (From, LogNotice, "cpu: setting %u MHz, ARM clock %u MHz", m_nClockSetting, m_nClockMHz);
+	m_Logger.Write (From, LogNotice, "cpu: setting %u MHz, ARM clock %u MHz (asks for %u; the firmware's range %u-%u, Circle lowers it above %u C)",
+			m_nClockSetting, m_nClockMHz, AskedMHz (), m_CPUThrottle.GetMinClockRate () / 1000000, m_CPUThrottle.GetMaxClockRate () / 1000000,
+			m_Options.GetSoCMaxTemp ());
+}
+
+unsigned CKernel::AskedMHz (void) const
+{
+	return cpuclock::asked_mhz (m_nClockSetting, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
 }
 
 // Runtime, not config.txt's arm_freq: Settings > System can set it, it takes a tap and no reboot, and a boot file the file
@@ -1622,7 +1729,7 @@ void CKernel::ThermalStep (unsigned nTempC)
 	if (thermal::popup_due (m_ThermalPopup, m_Thermal, e, bridge::rui_popups ()))
 	{
 		char L1[33], L2[33];
-		thermal::popup_text (L1, L2, (int) nTempC, thermal::clock_low_mhz ((int) m_nClockMHz, (int) m_nClockSetting, (int) nTempC));
+		thermal::popup_text (L1, L2, (int) nTempC, thermal::clock_low_mhz ((int) m_nClockMHz, (int) AskedMHz (), (int) nTempC));
 		bridge::rui_popup (L1, L2);
 	}
 }
@@ -1645,8 +1752,30 @@ void CKernel::FollowClock (void)
 	ApplyBudget (nMHz, TRUE);
 }
 
+// What the firmware measures, not what it says it set: GET_CLOCK_RATE repeats the rate asked for, so the firmware's own
+// throttle (80 C soft, 85 C hard, undervoltage) is invisible to FollowClock. One mailbox call, every 10 s, not per /status
+// request; logged when the two part and when they agree again. Only reported: the voice budget stays on FollowClock's.
+void CKernel::MeasureClock (void)
+{
+	static boolean s_bOff = FALSE;
+	CBcmPropertyTags Tags;
+	TPropertyTagClockRate Tag;
+	Tag.nClockId = CLOCK_ID_ARM;
+	boolean bOK;
+	{ mbtrace::Scope Mb (5); bOK = Tags.GetTag (PROPTAG_GET_CLOCK_RATE_MEASURED, &Tag, sizeof Tag, 4); }
+	if (!bOK) return;
+	m_nMeasuredMHz = (Tag.nRate + 500000) / 1000000;
+	boolean bOff = cpuclock::measured_off (m_nClockMHz, m_nMeasuredMHz);
+	if (bOff == s_bOff) return;
+	s_bOff = bOff;
+	m_Logger.Write (From, bOff ? LogWarning : LogNotice, "cpu: measured %u MHz, reported %u MHz (SoC %u C)", m_nMeasuredMHz, m_nClockMHz, m_nTempC);
+}
+
 void CKernel::BootStep (unsigned nStep)
 {
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+	if (m_nTestSecs != 0) m_Watchdog.Start (15);	// fed through the boot
+#endif
 	if (m_pDisplay != 0) m_pDisplay->SplashStep (nStep);
 }
 
@@ -1667,6 +1796,25 @@ void CKernel::StopAndReboot (const char *pWhy, boolean bTryboot)
 	reboot ();
 }
 
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+void CKernel::UsbTestTick (void)
+{
+	static unsigned s_nLastLog;
+	unsigned nNow = m_Timer.GetUptime ();
+	if (nNow >= m_nTestSecs)
+	{
+		m_Logger.Write (From, LogNotice, "testsecs: %u s are up", m_nTestSecs);
+		blackbox_pi::TestLog (m_bTestCard);
+		StopAndReboot ("testsecs");
+	}
+	if (nNow >= s_nLastLog + 10)
+	{
+		s_nLastLog = nNow;
+		blackbox_pi::TestLog (m_bTestCard);
+	}
+}
+#endif
+
 void CKernel::Run (void)
 {
 	m_Serial.RegisterMagicReceivedHandler (RebootMagic, RebootRequest);
@@ -1675,6 +1823,8 @@ void CKernel::Run (void)
 	m_nLastStats = m_Timer.GetTicks ();
 	if (m_Options.GetAppOptionDecimal ("selftest", 0) == 1) SetSelfTest (TRUE, "cmdline");
 	m_Watchdog.Start (15);
+	CEngineCores::EventStream ();		// core 0's wfe at the loop's end: 152 us at most (idlewait.h)
+	m_Logger.Write (From, LogNotice, "idle: wfe %s (idlewfe=0 turns it off)", CEngineCores::IdleWfe () ? "on" : "off");
 	u64 nLoopT = 0;
 	boolean bCrumbCard = FALSE;
 	for (;;)
@@ -1693,6 +1843,9 @@ void CKernel::Run (void)
 			nLoopT = t;
 		}
 		m_Watchdog.Start (15);	// fed: a hang of this loop reboots in 15 s (the BCM watchdog's maximum: a TCP connect may block for seconds)
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+		if (m_nTestSecs != 0) UsbTestTick ();
+#endif
 		if (m_Console.TakeWatchdogTest ())
 		{
 			m_Logger.Write (From, LogWarning, "watchdog test: core 0 hangs (the watchdog reboots in 15 s)");
@@ -1724,22 +1877,35 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (14, 200); m_pTransport->Poll (); }
 		if (m_pTransport != &m_Tcp) m_Tcp.Reap ();	// a connect abandoned by :link=usb is closed when it ends
 		{ mbtrace::Scope Mb (15, 200); m_Console.Poll (); }
-		{ mbtrace::Scope Mb (16, 200); bridge::card_service (8); }		// the streams' card requests first (core/msamp/cardq.h)
+		// the card's turns, MIDI between the requests (card_pass.h): only the USB transport's Poll, which is the merge (TCP's may connect)
+		auto CardPass = [this] ()
+		{
+			card_pass (8, [] { mbtrace::Scope Mb (16, 200); return bridge::card_service (1); },
+				   [this]
+				   {
+					AsampMidiSend (m_pSidecar);
+					if (m_pTransport == &m_Usb) { mbtrace::Scope Mb (14, 200); m_Usb.Poll (); }
+				   });
+		};
+		CardPass ();								// the streams' card requests first (core/msamp/cardq.h)
 		{ mbtrace::Scope Mb (17, 200); rec_pi::Poll (); }			// the recorder's ring to the card: one 64 KB piece a pass at most
-		{ mbtrace::Scope Mb (16, 200); bridge::card_service (8); }
+		CardPass ();
 		{					// a project bundle's step: one piece, only while the card queue is idle
 			unsigned nRecSecs;
 			boolean bBundle;
 			{ crumb::Section Cs (21); bBundle = bundle_pi::poll (rec_pi::UiState (&nRecSecs)); }
 			if (!bBundle)
 			{
-				{ mbtrace::Scope Mb (16, 200); bridge::card_service (8); }
+				CardPass ();
 				crumb::Section Cs (22);
 				lib_pi::poll ();	// the sample library's step: one piece, the same rules, never during a bundle job
 			}
 		}
-		{ mbtrace::Scope Mb (16, 200); bridge::card_service (8); }
+		CardPass ();
 		{ mbtrace::Scope Mb (19, 200); stor_pi::Poll (bPlugAndPlay); }		// USB drives in and out, the bench's step (stor_pi.h)
+#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+		if (m_nTestSecs == 0 || m_bTestCard)
+#endif
 		blackbox_pi::Poll ();						// the log to /.rytm/blackbox.log (its own crumb section, 42)
 		{ mbtrace::Scope Mb (20, 200); bridge::samp_poll (); }			// SAMPLING / the AUTO-SAMPLER: a take's step (core/samp)
 		if (m_pDisplay != 0)
@@ -1947,6 +2113,18 @@ void CKernel::Run (void)
 					sidecar_wgview_set (&s_WgView);
 				}
 			}
+			if (sidecar_preset_shown () || sidecar_wgview_pool_page_shown ())	// the preset pages (and the POOL page's JUNO / 6-OP tabs' counts)
+			{
+				static sidecar_preset_view_t s_PreView;
+				static unsigned s_nPreAt;
+				unsigned nNow = m_Timer.GetClockTicks ();
+				if (nNow - s_nPreAt >= 100000)
+				{
+					s_nPreAt = nNow;
+					preset_pi::Fill (&s_PreView);
+					sidecar_preset_set (&s_PreView);
+				}
+			}
 			if (sidecar_chop_shown ())		// the CHOP page: ~10 frames a second, redrawn only on a change
 			{
 				static sidecar_chop_view_t s_ChopView;
@@ -1990,7 +2168,13 @@ void CKernel::Run (void)
 		else
 		{
 			unsigned t = m_Timer.GetClockTicks ();
-			{ crumb::Section Cs (40); m_Scheduler.MsSleep (1); }	// the network's tasks run meanwhile
+			{
+				crumb::Section Cs (40);
+				if (CEngineCores::IdleWfe ())			// the network's tasks run in the Yields (idlewait.h)
+					idlewait::spend (t, 1000, [&] { return m_Timer.GetClockTicks (); }, [&] { m_Scheduler.Yield (); },
+							 [] { CEngineCores::Sleep (); });
+				else m_Scheduler.MsSleep (1);			// the network's tasks run meanwhile
+			}
 			t = m_Timer.GetClockTicks () - t;	// how late the loop wakes: core 0's tasks (Wi-Fi's polling) measured
 			s_nLoopN++;
 			s_nLoopSum += t;

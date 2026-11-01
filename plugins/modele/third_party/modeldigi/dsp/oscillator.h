@@ -1,0 +1,41 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef MODELDIGI_OSCILLATOR_H
+#define MODELDIGI_OSCILLATOR_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct {
+    uint32_t frequency_q16_16[3]; /* Hz * 65536, bounded to 1/16..20000 Hz */
+    uint8_t waveform[3]; /* triangle, combination, reverse saw, saw, square, wide, narrow */
+    uint16_t level[3]; /* exact multiplier level / 65535 */
+    uint32_t modulation_depth_q16_16; /* 0..2 octaves * 65536, not recorded amount */
+    bool modulation_enabled;
+    bool osc3_control;
+    bool analog; /* drift and mixer; off freezes drift */
+} modeldigi_osc_params;
+
+/* Private layout: not a sound format or a stable ABI. */
+typedef struct {
+    uint32_t phase[3]; /* Q0.32 cycles */
+    uint32_t last[3];  /* each voice's previous step, for its edge corrections */
+    int32_t tail[11];  /* the next samples' pending output and corrections */
+    uint32_t frame;            /* Analog-on frames rendered, for the drift grid */
+    uint32_t seed;             /* drift noise */
+    int32_t wander[3], drift[3];  /* each oscillator's pitch drift, 2^-24 octave */
+    int32_t mix_in, mix_residue;  /* the mixer's previous input and its distortion */
+    int32_t dc_in, dc_out;     /* the mixer's DC blocker */
+} modeldigi_osc_state;
+
+/* Initializes persistent state. */
+void modeldigi_osc_init(modeldigi_osc_state *state);
+/* 48 kHz mono Q31 with fixed 1/16 bank gain, 6 samples late; no firmware dependencies.
+ * Output may be NULL for zero frames, which changes nothing. State/params
+ * must be valid. Parameters are constant per call. Frequencies clamp to the
+ * bounds above, invalid shapes become triangle. */
+void modeldigi_osc_render(modeldigi_osc_state *state,
+                         const modeldigi_osc_params *params,
+                         int32_t *output, size_t frames);
+
+#endif

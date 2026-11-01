@@ -138,12 +138,12 @@ bool juno_line(const char* l, uint32_t n) {   // juno_lib.h parse: 36 hex [TAB n
 }
 bool rd_juno(const Bytes& in, const Sniffed& s, char* why, int cap) { return lines(in, s, 63, juno_line, why, cap); }
 bool sn_fm(const Bytes& in, Sniffed* o) { return sniff_text(in, "fm", o); }
-bool fm_line(const char* l, uint32_t n) {   // dx7_lib.h parse: 32 hex TAB voice [TAB name]
+bool fm_line(const char* l, uint32_t n) {   // dx7_lib.h parse: 32 hex TAB voice [TAB name [TAB 256 hex, the voice]]
   if (!n) return true;
   if (n < 34 || !hexrun(l, 32) || l[32] != '\t' || l[33] < '0' || l[33] > '9') return false;
   return printable(l, n);
 }
-bool rd_fm(const Bytes& in, const Sniffed& s, char* why, int cap) { return lines(in, s, 80, fm_line, why, cap); }
+bool rd_fm(const Bytes& in, const Sniffed& s, char* why, int cap) { return lines(in, s, 344, fm_line, why, cap); }
 bool sn_lfo(const Bytes& in, Sniffed* o) { return sniff_text(in, "lfo", o); }
 bool sn_ins(const Bytes& in, Sniffed* o) { return sniff_text(in, "ins", o); }
 bool sn_kits(const Bytes& in, Sniffed* o) { return sniff_text(in, "kits", o); }   // core/bundle/kits.h: kNNN.sks / .prv

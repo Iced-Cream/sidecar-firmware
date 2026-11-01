@@ -31,7 +31,7 @@ namespace {
 // (/Samples, docs/LIBRARY.md, docs/POOLS.md), machine packages and their backups (/Plugins, /MACHINES, /PRESETS,
 // docs/plugins.md), recordings (/Recordings), project bundles (/Bundles, docs/BUNDLES.md), the instrument and table
 // folders (/MULTISAMPLE, /WAVETABLES, /GRANULAR), chop maps (/CHOP, docs/CHOP.md), AMP captures (/NAM,
-// docs/LIBRARY.md) and the JUNO / DX7 banks. Add a folder here when the engine starts using one, not elsewhere.
+// docs/LIBRARY.md) and the JUNO / DX7 banks. Add a folder here when the engine starts using one, and to card_guard.h.
 const char* const kContent[] = {"/Bundles", "/CHOP", "/DX7", "/GRANULAR", "/JUNO", "/MACHINES", "/MULTISAMPLE",
                                 "/NAM", "/PRESETS", "/Plugins", "/Recordings", "/Samples", "/WAVETABLES"};
 

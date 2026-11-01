@@ -36,6 +36,18 @@ implemented 2026-10-08, P1..P8 only):
   sound's stored slot 47, so index 0 is SEND FX 1/2 on every track (0x20 below).
   The wire format is unchanged.
 
+  cmd 0x44 / 0x43 (2026-10-31, backlog 7o): the MIDI machine's 0x04 / 0x03, the same bytes, voice byte plain (every value of voice byte
+  & 0x78 is taken); rytm-mods 0021, machine 50. Older hosts ignore them. In 33 its track says machine 50, vb flag 0. The host answers with
+  MIDI, not sound: core/midim/midim.h. Host -> Rytm, its DIN destination, one channel message on the Rytm's MIDI OUT (rytm-mods 0026):
+
+    F0 7D 52 54 4F 01 <status & 7F> <d1> [<d2>] F7                  C0..DF: two bytes, else three
+
+  cmd 0x45 (2026-11-01, backlog 7ae): a sound's arpeggiator code, 10 bits, both ways, the same bytes (rytm-mods 0026, 0021: stored slot 46, live +0x6d and
+  the two bits above the tag; core/arp/arp.h reads it). Rytm -> host after a hello or an open, when the active kit's sound has another code, and straight before a trig whose kit's code ext_render has not said; host -> Rytm
+  an edit (the Rytm writes the live sound and the project copy, then says it back). The hello's caps bit 3 says the Rytm keeps it. 30's page 4: the ARP page.
+
+    F0 7D 52 54 45 01 <track 0..11> <code & 7F> <code >> 7> F7      = 10 bytes
+
   cmd 0x11 NOTE_OFF: the voice's gate closed - pad released, the sequencer
   trig's LEN elapsed, or the sequencer stopped (rytm-mods 0021-ext,
   2026-10-09; older firmware never sends it):
@@ -386,7 +398,7 @@ slots 1-based in two 7-bit bytes (n >> 7, n & 0x7F), 0 = none. The hello's (35) 
     04 RELOAD ALL <kit>   the KIT menu's RELOAD set to ALL
 4D 01 <dropped hi lo> <over hi lo>: rui1052d (round 6) - key presses 0026 dropped (each with its release, its queue
     full) and its waits past a stock dump run out (2 s with the flag never clear); on a change, at most once a second.
-0x4E is the next free id.
+0x4E is the next free id above these; 0x45 is the arpeggiator's (above).
 """
 PRJ = 0x4B   # the project slot reports (above)
 

@@ -1,0 +1,18 @@
+plugins/modele - notices for the MODEL E package (modele.voice, modele.a64.rmp)
+
+MODEL E's oscillators, oscillator 3's modulation, the analog drift and the mixer saturation are ModelDigi's
+oscillator bank, built in unchanged (third_party/modeldigi: dsp/oscillator.c, oscillator.h, edge_kernel.h,
+mixer_curve.h). modele.c's tuning, range and modulation-depth laws follow ModelDigi's machines/digitakt/controls.c.
+  Taken from:  https://github.com/simonjohansson/ModelDigi  commit c412bdf2ab3b0b5b62484e8195c2f880d1964c67
+               (2026-10-23)
+  Licence:     GPL-2.0-or-later (third_party/modeldigi/LICENSE, the upstream LICENSE unchanged; the files' SPDX lines)
+
+The ladder filter, the contours, glide, noise and the glue (modele.c, manifest.json, the Makefile, tests/):
+GPL-2.0-or-later, Copyright (C) 2026 trigcondition and contributors (LICENSE). They are this package's own, and they
+are under the GPL because the package as a whole is. The package links sdk/rmp/shim (MIT, GPL-compatible).
+
+Source: the package is free software and its complete corresponding source goes with it (modele-source.tar.gz: the
+plugin, the vendored files, the SDK and packer that build it). Whoever passes the binary on passes that on too.
+
+"Model D" names the layout this voice follows. MODEL E is not affiliated with or endorsed by any synthesizer maker;
+Moog and Minimoog are their owners' trademarks.

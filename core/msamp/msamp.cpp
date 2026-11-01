@@ -220,7 +220,13 @@ struct Smp {
   int priv;                  // the loop part's private block (-1 none)
   bool cached;               // the head was in the cache already (not read here)
   uint8_t ch;                // its head / loop part / ring layout: 1 mono, 2 L R interleaved
+  // 7ad (docs/superpowers/specs/2026-10-30-load-on-first-play.md): played, it is kept whole in the pool RAM
+  uint8_t keep;              // Keep
+  uint32_t head0;            // the head's frames as planned: what a kept sample gives back to
+  uint32_t keep_ms;          // when it was refused (no room): tried again kKeepRetryMs later
+  uint32_t used_ms;          // its last note (which kept sample gives back first)
 };
+enum Keep : uint8_t { kKeepNone, kKeepQueued, kKeepFilling, kKeepKept, kKeepNever };
 enum SlotState : uint8_t { kFree, kLoading, kReady };
 struct Slot {
   SlotState state;
@@ -270,16 +276,21 @@ struct Note {
   volatile uint32_t wgen, wp;   // the stream: wp path frames of start wgen are in the ring
   // render -> control
   volatile uint32_t done;    // the seq of the start that finished (or was killed)
+  volatile uint32_t taken;   // the seq of the start it reads now (an older start's blocks are not read any more)
   volatile uint32_t rgen, rd;   // the start rgen reads at file frame rd (the lowest it may still need)
   // the control core's own
   bool held;                 // started and not released
   int8_t slot;
+  int16_t smp;
   uint8_t key, vel;
   bool rtrig;                // a release region's note
   bool live;                 // a live pad's note (live_on): its channel's note-off releases it, not a trig
   int8_t ch;
   uint8_t mnote;
   uint32_t order;
+  int pin;                   // the block its start reads, pinned until the note is free (-1 none)
+  int pin2;                  // its sample's block since it was kept: not read by this note, held so that a sample
+                             // that sounds is never given back (-1 none)
   // the render core's own
   uint32_t r_seq;
   bool r_on, r_rel, r_sounded;
@@ -296,7 +307,7 @@ struct Wr {
   int slot, smp;
   uint32_t head_n, ws, we, path_end, wp;
   float fps;                 // frames a second it reads at
-  File f;
+  File* f;                   // (a closing file is handed over to a Close, which gives its free one: wr_close)
   bool open;
   int8_t rq;                 // its card request in flight (rqs, cardq.h), -1 none
   bool ending;               // its note ended while a request ran: closed when that completes
@@ -310,6 +321,16 @@ struct Rq {
   uint8_t buf[kStreamChunk];
 };
 
+// A stream's file closes on the card core (7z: FatFs takes the card's lock for a close too): the File goes to a Close,
+// the Wr goes on with the Close's free one, at once, whatever the card core is doing. As many as notes at most.
+struct Close {
+  cardq::Req r;
+  File* f;
+  bool on;
+};
+Close* closes = nullptr;     // [kTotal]
+int nclosing = 0;
+
 // path frame <-> file frame: the ring holds the frames after the head, the preloaded loop part left out
 inline uint32_t path_of(uint32_t f, uint32_t head_n, uint32_t ws, uint32_t we) {
   if (f < head_n) return 0;
@@ -320,6 +341,53 @@ inline uint32_t file_of(uint32_t p, uint32_t head_n, uint32_t ws, uint32_t we) {
   uint32_t f = head_n + p;
   return ws < we && f >= ws ? f + (we - ws) : f;
 }
+
+// A start over a note still sounding (pick): the block of the start replaced stays pinned until the render core has
+// taken the new start.
+struct OldPin {
+  Note* n;
+  uint32_t seq;              // the new start
+  int blk;
+};
+constexpr int kOldPins = 2 * kTotal;
+OldPin oldpins[kOldPins];
+int noldpins = 0;
+
+// The kept samples' queue (first play's order) and the one fill at a time (fill_step). The fill copies what it reads
+// from the sample (a), so that a slot released under it leaves it nothing to touch but its own block.
+constexpr int kKeepQ = 64;
+constexpr uint32_t kKeepRetryMs = 2000;    // a sample refused for want of room tried again, at a note, this much later
+constexpr uint32_t kCopyFrames = 4096;     // frames of the head or loop part a step copies
+constexpr uint32_t kKeepIdleMs = 30000;    // a fill takes room only from a kept sample not played for this long: a working
+                                           // set bigger than the pool RAM stays as it is, the rest streams, no swapping
+constexpr uint32_t kFillGapMs = 20;        // a fill's reads this far apart while a DSP SAMPLE stream plays (fill_step)
+struct KeepQ {
+  int8_t slot;
+  int16_t smp;
+};
+KeepQ kq[kKeepQ];
+int kq_at = 0, kq_n = 0;
+struct Fill {
+  bool on, ending, ok, open, closing;
+  int slot, smp;             // the sample (slot -1: abandoned)
+  int e;                     // its cache entry
+  Audio a;
+  uint8_t ch;
+  int16_t* dst;
+  uint32_t got, frames;      // frames in dst, from the first on; the sample's
+  const int16_t* head;
+  const int16_t* res2;
+  uint32_t head_n, ws, we;
+  uint32_t bn, bp;           // the last read's bytes in buf, of them converted
+  uint32_t read_ms;          // when the last read went out
+  File f;
+  cardq::Req rq;
+  uint8_t buf[kStreamChunk];
+};
+Fill* fill = nullptr;
+bool g_keep = true;          // msamp=keep:0: nothing kept
+bool g_pace_test = false;    // tests: as if a DSP SAMPLE stream played
+int kept_now = 0;
 
 Slot slots[kSlots];
 Entry* list = nullptr;
@@ -375,7 +443,7 @@ uint32_t rnd = 22222;
 // core never waits on the card (a 32 KB read there took 3.6-8.9 ms, measured: msamp.read). Its own request and File,
 // never a stream's (rqs, Wr); f and buf are touched by the control core only when no request of the job is in flight.
 // A read's frames are converted kConvFrames a step. Without a card core (the Mac's tests) each request runs at once.
-enum Phase : uint8_t { kIdle, kSfzRead, kHeaders, kSampleOpen, kSampleRead };
+enum Phase : uint8_t { kIdle, kSfzRead, kHeaders, kSampleOpen, kSampleRead, kPlan, kLimits };
 constexpr uint32_t kConvFrames = 1024;   // frames a step converts at most (measured: tests/test_msamp_load.cpp)
 struct Job {
   Phase phase;
@@ -399,6 +467,7 @@ struct Job {
   int16_t cv[kStreamChunk];   // (8-bit mono: a sample a byte)
 };
 Job* job = nullptr;
+bool limits_due = false;      // the card's stream limits still to read (step_limits)
 
 CORE_COLD const char* slot_name(int s) {
   const char* p = strrchr(slots[s].path, '/');
@@ -432,6 +501,31 @@ CORE_COLD int resident(int entry) {
   return -1;
 }
 CORE_COLD Wr& wr_of(int vi, int k) { return wrs[vi * kPerVoice + k]; }
+// true: closed. Posted while the queue has room for the streams' requests as well (kInflight)
+CORE_COLD bool close_step(Close& c) {
+  if (c.r.state == cardq::kFree && cardq::pending() + kInflight >= cardq::kQueue) return false;
+  return cardq::async(&c.r, cardq::kCloseReq, c.f, nullptr, 0, nullptr, 0);
+}
+CORE_COLD void wr_close(Wr& w) {
+  for (int i = 0; i < kTotal; ++i) {
+    Close& c = closes[i];
+    if (c.on) continue;
+    File* t = c.f;
+    c.f = w.f, w.f = t;
+    c.on = true, ++nclosing;
+    c.r.state = cardq::kFree;
+    if (close_step(c)) c.on = false, --nclosing;
+    return;
+  }
+  w.f->close();   // (kTotal closes waiting: a card core held up for long, as a take-back)
+  ++st.closes_here;
+}
+CORE_COLD void closes_step() {
+  for (int i = 0; nclosing && i < kTotal; ++i) {
+    Close& c = closes[i];
+    if (c.on && close_step(c)) c.on = false, --nclosing;
+  }
+}
 // A stream whose note is done: its file closed (a request still running for it: when that completes, stream_step).
 CORE_COLD void wr_end(Wr& w) {
   w.on = false;
@@ -443,7 +537,7 @@ CORE_COLD void wr_end(Wr& w) {
     rqs[w.rq].wi = -1;
     w.rq = -1;
   }
-  if (w.open) w.f.close();
+  if (w.open) wr_close(w);
   w.open = false;
   w.ending = false;
 }
@@ -491,6 +585,45 @@ CORE_COLD bool steal_stream(bool any_held, int xv, int xk) {
   return true;
 }
 
+// ---- pins: a note holds the block it reads (7ad: nothing evicts, shrinks or frees what a note plays)
+CORE_COLD void pins_step();
+CORE_COLD void note_pin(Note& n, int blk) {
+  if (noldpins == kOldPins) pins_step();
+  if (n.pin2 >= 0) pcache::unpin(n.pin2), n.pin2 = -1;
+  if (n.pin >= 0) {
+    if (note_free(n)) pcache::unpin(n.pin);
+    else if (noldpins < kOldPins) oldpins[noldpins++] = {&n, n.seq + 2, n.pin};   // (post's: the new start's seq)
+    // (else a render core that has taken none of kOldPins starts: the pin stays, a block held rather than one read freed)
+  }
+  n.pin = blk;
+  pcache::pin(blk);
+}
+CORE_COLD void pins_step() {
+  for (int v = 0; v < kVoices; ++v)
+    for (int k = 0; k < kPerVoice; ++k) {
+      Note& n = notes[v][k];
+      if ((n.pin >= 0 || n.pin2 >= 0) && note_free(n)) {
+        if (n.pin >= 0) pcache::unpin(n.pin), n.pin = -1;
+        if (n.pin2 >= 0) pcache::unpin(n.pin2), n.pin2 = -1;
+      }
+    }
+  for (int i = 0; i < noldpins; ++i)
+    if ((int32_t)(ld_acq(&oldpins[i].n->taken) - oldpins[i].seq) >= 0) {
+      pcache::unpin(oldpins[i].blk);
+      oldpins[i--] = oldpins[--noldpins];
+    }
+}
+// Its first note: the sample queued to be kept
+CORE_COLD void keep_request(int s, int i) {
+  Slot& sl = slots[s];
+  Smp& m = sl.smp[i];
+  if (!g_keep || sl.ram || sl.d.load == 2 || m.keep != kKeepNone || m.frames > pcache::kMaxFrames) return;
+  if (m.keep_ms && now_ms() - m.keep_ms < kKeepRetryMs) return;
+  if (kq_n >= kKeepQ) return;   // (a later note asks again)
+  kq[(kq_at + kq_n++) % kKeepQ] = {(int8_t)s, (int16_t)i};
+  m.keep = kKeepQueued;
+}
+
 // ---- starting notes
 CORE_COLD float tscale(float v) { return exp2f((v - 64.0f) / 16.0f); }
 CORE_COLD float coef(float secs) {   // per sample, -60 dB after secs
@@ -522,7 +655,7 @@ CORE_COLD int pick(int vi) {
 }
 
 CORE_COLD void start_region(int vi, int s, const Region& r, int key, int vel, float cg, bool rtrig) {
-  const Smp& m = slots[s].smp[r.sample];
+  Smp& m = slots[s].smp[r.sample];
   if (!m.ok) return;
   const float* p = vp[vi];
   if (!rtrig && count_active() >= kTotal) {   // the cap in all: the voice's own oldest goes
@@ -606,14 +739,17 @@ CORE_COLD void start_region(int vi, int s, const Region& r, int key, int vel, fl
     x.w0 = path_of(f0, m.head_n, m.ws, m.we);
   }
   n.held = !x.one_shot && !rtrig;
-  n.slot = (int8_t)s;
+  n.slot = (int8_t)s, n.smp = (int16_t)r.sample;
   n.key = (uint8_t)key, n.vel = (uint8_t)vel;
   n.rtrig = rtrig;
   n.live = cur_live.on && !rtrig, n.ch = cur_live.ch, n.mnote = cur_live.mnote;
   n.order = ++order_n;
+  m.used_ms = now_ms();
+  note_pin(n, m.blk);
   st_rel(&n.wgen, 0);   // the old start's stream is over
   post(n, x);
   if (streams) {
+    keep_request(s, r.sample);
     w.on = true, w.gen = n.seq, w.slot = s, w.smp = r.sample;
     w.head_n = m.head_n, w.ws = m.ws, w.we = m.we;
     w.path_end = path_of(stream_end, m.head_n, m.ws, m.we);
@@ -712,6 +848,35 @@ CORE_COLD uint32_t ahead_frames(int vi, int k, const Wr& w) {
   return lead + (w.wp > pr ? w.wp - pr : 0);
 }
 
+// n frames (interleaved for ch 2) into the note's ring at its write place, published
+CORE_COLD void ring_put(int vi, int k, Wr& w, int ch, const int16_t* src, uint32_t n) {
+  int16_t* ring = rings + (size_t)(vi * kPerVoice + k) * kRing;
+  if (ch == 2) {
+    for (uint32_t i = 0; i < n; ++i) {
+      uint32_t p = 2 * ((w.wp + i) & (kRing / 2 - 1));
+      ring[p] = src[2 * i], ring[p + 1] = src[2 * i + 1];
+    }
+  } else {
+    for (uint32_t i = 0; i < n; ++i) ring[(w.wp + i) & (kRing - 1)] = src[i];
+  }
+  w.wp += n;
+  st_rel(&notes[vi][k].wp, w.wp);
+}
+// File frame f on in RAM for a stream (the frames there in *have): its sample kept since the note started, or the fill
+// that is past it. The note's start stays as it was (its head, its ring): only where its ring's frames come from
+// changes, on this core; nullptr: from the card.
+CORE_COLD const int16_t* ram_frames(const Wr& w, const Smp& m, uint32_t f, uint32_t* have) {
+  if (m.head_n >= m.frames && f < m.frames) {
+    *have = m.frames - f;
+    return m.head + (size_t)f * m.ch;
+  }
+  if (fill->on && fill->slot == w.slot && fill->smp == w.smp && f < fill->got) {
+    *have = fill->got - f;
+    return fill->dst + (size_t)f * m.ch;
+  }
+  return nullptr;
+}
+
 // A stream request done (cardq.h): an open's file, a read's frames into the note's ring.
 CORE_COLD void complete(Rq& q) {
   Wr& w = wrs[q.wi];
@@ -720,7 +885,7 @@ CORE_COLD void complete(Rq& q) {
   q.wi = -1;
   q.r.state = cardq::kFree;
   if (w.ending) {   // its note ended meanwhile
-    if (w.f.isOpen()) w.f.close();
+    if (w.f->isOpen()) wr_close(w);
     w.open = w.ending = false;
     return;
   }
@@ -735,20 +900,9 @@ CORE_COLD void complete(Rq& q) {
   const Smp& m = slots[w.slot].smp[w.smp];
   int got = q.r.got;
   uint32_t whole = got > 0 ? (uint32_t)got / q.fb : 0;
-  int16_t* ring = rings + (size_t)(vi * kPerVoice + k) * kRing;
-  if (m.ch == 2) {
-    convert(m.a, q.buf, whole, job->cv, 2);
-    for (uint32_t i = 0; i < whole; ++i) {
-      uint32_t p = 2 * ((w.wp + i) & (kRing / 2 - 1));
-      ring[p] = job->cv[2 * i], ring[p + 1] = job->cv[2 * i + 1];
-    }
-  } else {
-    convert(m.a, q.buf, whole, job->cv);
-    for (uint32_t i = 0; i < whole; ++i) ring[(w.wp + i) & (kRing - 1)] = job->cv[i];
-  }
-  w.wp += whole;
+  convert(m.a, q.buf, whole, job->cv, m.ch);
+  ring_put(vi, k, w, m.ch, job->cv, whole);
   if (whole < q.fr) w.path_end = w.wp;   // the file ended early
-  st_rel(&notes[vi][k].wp, w.wp);
   ++st.stream_reads;
   st.stream_bytes += (uint64_t)whole * q.fb;
 }
@@ -760,6 +914,8 @@ CORE_COLD void complete(Rq& q) {
 CORE_COLD bool stream_step() {
   bool did = false;
   uint32_t now_u = now_us();
+  pins_step();
+  closes_step();
   for (int i = 0; i < kInflight; ++i) {
     if (rqs[i].wi < 0) continue;
     if (cardq::idle(&rqs[i].r) ||   // done; or waiting too long for a held-up card core: run here
@@ -781,11 +937,34 @@ CORE_COLD bool stream_step() {
   // the recorder and uploads hold off while a stream is below half its read-ahead (cardq::busy)
   cardq::set_need(all < 1e8f ? (uint32_t)all : ~0u, ahead_ms / 2);
   if (bv < 0 || best >= (float)ahead_ms) return did;
+  Wr& w = wr_of(bv, bk);
+  const Smp& m = slots[w.slot].smp[w.smp];
+  // how far it may write: the ring's room past the reader, to the path's end, to the loop part's start
+  uint32_t lead, rp = reader_path(bv, bk, w, &lead);
+  const uint32_t cap = kRing / (m.ch == 2 ? 2 : 1);   // the ring's frames (a stereo sample: half)
+  uint32_t room = rp + cap - 64 > w.wp ? rp + cap - 64 - w.wp : 0;
+  if (!room && w.open) return did;
+  uint32_t f = file_of(w.wp, w.head_n, w.ws, w.we);
+  uint32_t fb = m.a.ch * (m.a.bits / 8);
+  uint32_t fr = kStreamChunk / fb;
+  if (fr > room) fr = room;
+  if (fr > w.path_end - w.wp) fr = w.path_end - w.wp;
+  if (w.ws < w.we && f < w.ws && f + fr > w.ws) fr = w.ws - f;
+  if (f + fr > m.frames) fr = f < m.frames ? m.frames - f : 0;
+  if (!fr && w.open) {
+    w.path_end = w.wp;
+    return did;
+  }
+  uint32_t have = 0;
+  if (const int16_t* src = fr ? ram_frames(w, m, f, &have) : nullptr) {   // in RAM by now: no card
+    ring_put(bv, bk, w, m.ch, src, fr < have ? fr : have);
+    ++st.ram_feeds;
+    return true;
+  }
   int qi = -1;
   for (int i = 0; i < kInflight && qi < 0; ++i)
     if (rqs[i].wi < 0) qi = i;
   if (qi < 0) return did;
-  Wr& w = wr_of(bv, bk);
   // bandwidth: a note near dry takes a released tail's reads, and once nearly out, the oldest held one's (at most one a
   // kCriticalMs: a card stall does not empty the voices at once)
   static uint32_t last_steal = 0;
@@ -793,37 +972,30 @@ CORE_COLD bool stream_step() {
   if (best < (float)kCriticalMs && now - last_steal >= kCriticalMs &&
       (steal_stream(false, bv, bk) || (best < kCriticalMs / 3.0f && steal_stream(true, bv, bk))))
     last_steal = now;
-  const Smp& m = slots[w.slot].smp[w.smp];
   Rq& q = rqs[qi];
-  q.r.f = &w.f;
+  q.r.f = w.f;
   if (!w.open) {
     q.r.kind = cardq::kOpenReq;
     strncpy(q.r.path, slots[w.slot].d.samples[w.smp], sizeof q.r.path - 1);
     q.r.path[sizeof q.r.path - 1] = 0;
   } else {
-    // how far it may write: the ring's room past the reader, to the path's end, to the loop part's start
-    uint32_t lead, rp = reader_path(bv, bk, w, &lead);
-    const uint32_t cap = kRing / (m.ch == 2 ? 2 : 1);   // the ring's frames (a stereo sample: half)
-    uint32_t room = rp + cap - 64 > w.wp ? rp + cap - 64 - w.wp : 0;
-    if (!room) return did;
-    uint32_t f = file_of(w.wp, w.head_n, w.ws, w.we);
-    uint32_t fb = m.a.ch * (m.a.bits / 8);
-    uint32_t fr = kStreamChunk / fb;
-    if (fr > room) fr = room;
-    if (fr > w.path_end - w.wp) fr = w.path_end - w.wp;
-    if (w.ws < w.we && f < w.ws && f + fr > w.ws) fr = w.ws - f;
-    if (f + fr > m.frames) fr = f < m.frames ? m.frames - f : 0;
-    if (!fr) {
-      w.path_end = w.wp;
-      return did;
-    }
     q.r.kind = cardq::kReadReq;
     q.r.off = (uint64_t)m.a.data_off + (uint64_t)f * fb;
     q.r.buf = q.buf;
     q.r.len = fr * fb;
     q.wp = w.wp, q.fr = fr, q.fb = fb;
   }
-  if (!cardq::post(&q.r)) return did;
+  // The queue full (core 0 held up, other streams' requests and taken-back ghosts in it): nothing is posted, so nothing can be taken back after
+  // kTakeBackUs. The same wait, then the same way out: the neediest stream's read here, one a pass, once it is near dry (cardq::run_here, as DSP's)
+  static bool refused = false;
+  static uint32_t refused_us = 0;
+  if (cardq::post(&q.r)) {
+    refused = false;
+  } else {
+    if (!refused) refused = true, refused_us = now_u;
+    if (now_u - refused_us <= cardq::kTakeBackUs || best >= 2.0f * kCriticalMs) return did;   // (before kCriticalMs: under it a note takes a released tail's reads)
+    cardq::run_here(&q.r);
+  }
   q.wi = bv * kPerVoice + bk;
   w.rq = (int8_t)qi;
   if (!cardq::worker()) complete(q);   // it ran in post()
@@ -846,11 +1018,30 @@ CORE_COLD const pools::Member* member_of(const pools::Member* mem, int nm, int i
     if (!strcasecmp(base_name(mem[k].ref.hint), b)) return &mem[k];
   return nullptr;
 }
+// The cache's ref of the slot's sample i
+CORE_COLD void sample_ref(int s, int i, lib::Ref* ref) {
+  Slot& sl = slots[s];
+  int nm = 0;
+  const pools::Member* mem = sl.entry >= 0 ? pools::members(pools::kInstr, sl.entry, &nm) : nullptr;
+  const pools::Member* mi = member_of(mem, nm, i, sl.d.samples[i]);
+  if (mi) *ref = mi->ref;
+  else lib::ref_for_path(sl.d.samples[i], ref);
+}
+inline uint64_t blk_bytes(uint32_t frames, int ch) { return ((uint64_t)frames * 2 * ch + 63) & ~(uint64_t)63; }
+// The fill given up on (a slot released, a project change): no waiting: its request ends, its file closes through the
+// card queue, its block goes, at its later steps (fill_step)
+CORE_COLD void fill_abandon() {
+  if (fill->slot >= 0) slots[fill->slot].smp[fill->smp].keep = kKeepNone;   // (a later note may ask again)
+  fill->slot = -1, fill->ending = true, fill->ok = false;
+}
 // a slot's memory given back: its heads unpinned (they stay in the cache until evicted), its loop parts released
 CORE_COLD void slot_release(int s) {
   Slot& sl = slots[s];
+  if (fill && fill->on && fill->slot == s) fill_abandon();
   for (int i = 0; sl.smp && i < sl.d.nsamples && i < kMaxSamples; ++i) {
     Smp& m = sl.smp[i];
+    if (m.keep == kKeepKept) --kept_now, pcache::unmark_kept(m.blk);
+    m.keep = kKeepNone;
     if (m.pe >= 0 && !m.cached && m.blk < 0) pcache::fill_end(m.pe, 0, false);   // a head still to read (a load abandoned)
     if (m.blk >= 0) pcache::unpin(m.blk);
     if (m.priv >= 0) pcache::release(m.priv);
@@ -963,8 +1154,8 @@ CORE_COLD void loaded() {
   }
 }
 
-// After the headers: RAM or STREAM, and each sample's parts placed: its head in the pool RAM's shared cache (found
-// there already - a whole copy plays from RAM, nothing streams - or filled here), its loop part in a private block.
+// After the headers: RAM or STREAM; then plan_sample places each sample's parts, one a step (7z: fill_begin a sample,
+// ~1.6-2 ms estimated for hundreds of them in one pass).
 CORE_COLD void plan() {
   Slot& sl = slots[job->slot];
   uint64_t budget = pcache::stats().budget;
@@ -995,62 +1186,65 @@ CORE_COLD void plan() {
   if (want_ram && !sl.ram)
     log(CORE_STR("msamp: %s: RAM needs %lu KB, more than half the pool RAM (%lu KB): streamed instead"), slot_name(job->slot),
         (unsigned long)(sl.need_ram >> 10), (unsigned long)(budget >> 10));
-  int nm = 0;
-  const pools::Member* mem = pools::members(pools::kInstr, job->entry, &nm);
-  for (int i = 0; i < sl.d.nsamples; ++i) {
-    Smp& m = sl.smp[i];
-    m.pe = m.blk = m.priv = -1, m.cached = false;
-    if (!m.frames) continue;
-    // the loop: the file's, else the first region's on this sample
-    if (!m.has_loop)
-      for (int r = 0; r < sl.d.nregions; ++r) {
-        const Region& g = sl.d.regions[r];
-        if (g.sample != i || g.loop_end == kUnset) continue;
-        m.loop_s = g.loop_start == kUnset ? g.offset : g.loop_start, m.loop_e = g.loop_end;
-        m.has_loop = m.loop_e > m.loop_s && m.loop_e < m.frames;
-        break;
-      }
-    m.ch = (uint8_t)ram_ch(m.a);
-    uint32_t hn = (uint32_t)(m.rate * head_ms / 1000.0f);
-    if (sl.ram || hn + hn / 4 >= m.frames) hn = m.frames;
-    if (hn > pcache::kMaxFrames) hn = pcache::kMaxFrames;
-    lib::Ref ref;
-    const pools::Member* mi = member_of(mem, nm, i, sl.d.samples[i]);
-    if (mi) ref = mi->ref;
-    else lib::ref_for_path(sl.d.samples[i], &ref);
-    // the cache first: a whole copy (a GRANULAR source, a DSP SAMPLE slot, another instrument) or a long enough head
-    int16_t* dst = nullptr;
-    int have = -1;
-    int pe = pcache::fill_begin(ref, hn, m.frames, m.rate, &dst, &have, m.ch);
-    pcache::Info in;
-    if (pe < 0 && have >= 0 && pcache::get(have, &in)) {
-      m.pe = have, m.blk = in.blk, m.cached = true;
-      m.ch = in.ch;   // (the cache's layout: the loop part and the ring follow it)
-      pcache::pin(in.blk);
-      m.head = in.pcm;
-      hn = in.whole ? (in.frames < m.frames ? in.frames : m.frames) : in.frames < hn ? in.frames : hn;
-      if (in.whole && in.frames >= m.frames) hn = m.frames;
-    } else if (pe >= 0) {
-      m.pe = pe;
-      m.head = dst;
-    } else {
-      log(CORE_STR("msamp: %s: %s left out (no room in the pool RAM for %lu KB)"), slot_name(job->slot), sl.d.samples[i],
-          (unsigned long)(((uint64_t)hn * 2 * m.ch) >> 10));
-      ++st.left_out;
-      m.frames = 0;
-      continue;
+}
+// Sample i's parts: its head in the pool RAM's shared cache (found there already - a whole copy plays from RAM, nothing
+// streams - or filled here), its loop part in a private block.
+CORE_COLD void plan_sample(int i) {
+  Slot& sl = slots[job->slot];
+  Smp& m = sl.smp[i];
+  m.pe = m.blk = m.priv = -1, m.cached = false;
+  if (!m.frames) return;
+  // the loop: the file's, else the first region's on this sample
+  if (!m.has_loop)
+    for (int r = 0; r < sl.d.nregions; ++r) {
+      const Region& g = sl.d.regions[r];
+      if (g.sample != i || g.loop_end == kUnset) continue;
+      m.loop_s = g.loop_start == kUnset ? g.offset : g.loop_start, m.loop_e = g.loop_end;
+      m.has_loop = m.loop_e > m.loop_s && m.loop_e < m.frames;
+      break;
     }
-    m.head_n = hn;
-    m.ws = m.we = 0;
-    m.res2 = nullptr;
-    if (hn < m.frames && m.has_loop && m.loop_e + 1 > hn) {
-      uint32_t ws = m.loop_s > hn ? m.loop_s : hn, we = m.loop_e + 1;
-      void* p2 = nullptr;
-      if (we - ws <= kLoopMax && (m.priv = pcache::alloc_private((uint64_t)(we - ws) * 2 * m.ch, &p2)) >= 0)
-        m.ws = ws, m.we = we, m.res2 = (const int16_t*)p2;
-    }
-    sl.used += ((uint64_t)m.head_n * 2 * m.ch + 63 & ~(uint64_t)63) + (uint64_t)(m.we - m.ws) * 2 * m.ch;
+  m.ch = (uint8_t)ram_ch(m.a);
+  uint32_t hn = (uint32_t)(m.rate * head_ms / 1000.0f);
+  if (sl.ram || hn + hn / 4 >= m.frames) hn = m.frames;
+  if (hn > pcache::kMaxFrames) hn = pcache::kMaxFrames;
+  lib::Ref ref;
+  sample_ref(job->slot, i, &ref);
+  // the cache first: a whole copy (a GRANULAR source, a DSP SAMPLE slot, another instrument) or a long enough head
+  int16_t* dst = nullptr;
+  int have = -1;
+  int pe = pcache::fill_begin(ref, hn, m.frames, m.rate, &dst, &have, m.ch);
+  m.head0 = hn;
+  pcache::Info in;
+  if (pe < 0 && have >= 0 && pcache::get(have, &in)) {
+    m.pe = have, m.blk = in.blk, m.cached = true;
+    m.ch = in.ch;   // (the cache's layout: the loop part and the ring follow it)
+    pcache::pin(in.blk);
+    m.head = in.pcm;
+    hn = in.whole ? (in.frames < m.frames ? in.frames : m.frames) : in.frames < hn ? in.frames : hn;
+    if (in.whole && in.frames >= m.frames) hn = m.frames;
+    // (a stream instrument's sample whole in the cache: as a kept one, unless a loop part would be missing without it)
+    if (hn >= m.frames && m.head0 < m.frames && !sl.ram && !(m.has_loop && m.loop_e + 1 > m.head0))
+      m.keep = kKeepKept, ++kept_now, pcache::mark_kept(in.blk, m.head0);
+  } else if (pe >= 0) {
+    m.pe = pe;
+    m.head = dst;
+  } else {
+    log(CORE_STR("msamp: %s: %s left out (no room in the pool RAM for %lu KB)"), slot_name(job->slot), sl.d.samples[i],
+        (unsigned long)(((uint64_t)hn * 2 * m.ch) >> 10));
+    ++st.left_out;
+    m.frames = 0;
+    return;
   }
+  m.head_n = hn;
+  m.ws = m.we = 0;
+  m.res2 = nullptr;
+  if (hn < m.frames && m.has_loop && m.loop_e + 1 > hn) {
+    uint32_t ws = m.loop_s > hn ? m.loop_s : hn, we = m.loop_e + 1;
+    void* p2 = nullptr;
+    if (we - ws <= kLoopMax && (m.priv = pcache::alloc_private((uint64_t)(we - ws) * 2 * m.ch, &p2)) >= 0)
+      m.ws = ws, m.we = we, m.res2 = (const int16_t*)p2;
+  }
+  sl.used += ((uint64_t)m.head_n * 2 * m.ch + 63 & ~(uint64_t)63) + (uint64_t)(m.we - m.ws) * 2 * m.ch;
 }
 
 CORE_COLD void next_sample() {
@@ -1119,8 +1313,18 @@ done:
     return true;
   }
   plan();
-  job->smp = -1;
-  next_sample();
+  job->smp = 0;
+  job->phase = kPlan;
+  return true;
+}
+CORE_COLD bool step_plan() {
+  Slot& sl = slots[job->slot];
+  if (fill->on && fill->ending) return false;   // an abandoned fill's block and entry first (step): room, nothing filling
+  plan_sample(job->smp);
+  if (++job->smp >= sl.d.nsamples) {
+    job->smp = -1;
+    next_sample();
+  }
   return true;
 }
 
@@ -1257,6 +1461,170 @@ CORE_COLD bool step_sfz() {
   return true;
 }
 
+// ---- kept samples (7ad, docs/superpowers/specs/2026-10-30-load-on-first-play.md)
+// Sample i of slot s has its whole data in the cache (Info in, entry e): new notes play it from RAM. Notes in flight
+// keep their own start; the old block goes with their pins.
+CORE_COLD void keep_publish(int s, int i, int e, const pcache::Info& in) {
+  Slot& sl = slots[s];
+  Smp& m = sl.smp[i];
+  sl.used += blk_bytes(m.frames, m.ch) - blk_bytes(m.head_n, m.ch);
+  pcache::pin(in.blk);
+  pcache::unpin(m.blk);
+  m.pe = e, m.blk = in.blk, m.head = in.pcm, m.head_n = m.frames;
+  m.keep = kKeepKept;
+  ++kept_now;
+  pcache::mark_kept(in.blk, m.head0);
+  for (int v = 0; v < kVoices; ++v)   // (the notes in flight read the old head: they hold this one too, while they sound)
+    for (int k = 0; k < kPerVoice; ++k) {
+      Note& n = notes[v][k];
+      if (n.slot == s && n.smp == i && n.pin2 < 0 && !note_free(n)) n.pin2 = in.blk, pcache::pin(in.blk);
+    }
+}
+// The cache took a kept sample back to its head for room (pcache::mark_kept): no note reads it, so the new address is
+// ours alone. It streams again; its next note is a first play.
+CORE_COLD void gave_back(int blk, const int16_t* pcm) {
+  for (int s = 0; s < kSlots; ++s) {
+    Slot& sl = slots[s];
+    for (int i = 0; sl.state != kFree && i < sl.d.nsamples; ++i) {
+      Smp& m = sl.smp[i];
+      if (m.keep != kKeepKept || m.blk != blk) continue;
+      sl.used -= blk_bytes(m.head_n, m.ch) - blk_bytes(m.head0, m.ch);
+      --kept_now;
+      m.head = pcm, m.head_n = m.head0, m.keep = kKeepNone;
+      ++st.keep_given_back;
+      return;
+    }
+  }
+}
+CORE_COLD void keep_pop() {
+  kq_at = (kq_at + 1) % kKeepQ, --kq_n;
+}
+// The next sample of the queue: its block (the cache makes room as for anyone, kept samples given back when that makes
+// a hole); no room: it streams, a note tries again later
+CORE_COLD void fill_next() {
+  Fill& f = *fill;
+  for (; kq_n; keep_pop()) {
+    const KeepQ q = kq[kq_at];
+    Slot& sl = slots[q.slot];
+    if (q.smp >= sl.d.nsamples || sl.smp[q.smp].keep != kKeepQueued) continue;
+    if (sl.state == kReady && sl.entry >= 0) break;
+    sl.smp[q.smp].keep = kKeepNone;
+  }
+  if (!kq_n) return;
+  const int s = kq[kq_at].slot, i = kq[kq_at].smp;
+  Smp& m = slots[s].smp[i];
+  lib::Ref ref;
+  sample_ref(s, i, &ref);
+  if (pcache::held(pcache::find(ref))) return;   // something else loads this content now: then
+  int16_t* dst = nullptr;
+  int have = -1;
+  pcache::set_give_min_idle(kKeepIdleMs);
+  int e = pcache::fill_begin(ref, m.frames, m.frames, m.rate, &dst, &have, m.ch);
+  pcache::set_give_min_idle(0);
+  if (e < 0 && have >= 0) {   // whole in the cache by now (another machine, another instrument)
+    pcache::Info in;
+    bool same = pcache::get(have, &in) && in.frames >= m.frames && in.ch == m.ch;
+    if (same) keep_publish(s, i, have, in);
+    else m.keep = kKeepNever;
+    keep_pop();
+    return;
+  }
+  if (e < 0) {
+    m.keep = kKeepNone, m.keep_ms = now_ms() | 1;
+    ++st.keep_refused;
+    keep_pop();
+    return;
+  }
+  m.keep = kKeepFilling;
+  keep_pop();
+  f.on = true, f.ending = f.ok = f.open = f.closing = false;
+  f.slot = s, f.smp = i, f.e = e;
+  f.a = m.a, f.ch = m.ch, f.dst = dst, f.got = 0, f.frames = m.frames;
+  f.head = m.head, f.head_n = m.head_n, f.res2 = m.res2, f.ws = m.ws, f.we = m.we;
+  f.bn = f.bp = 0;
+  f.rq.state = cardq::kFree;
+  ++st.fills;
+}
+CORE_COLD void fill_finish() {
+  Fill& f = *fill;
+  const bool ok = f.ok && f.slot >= 0;
+  pcache::fill_end(f.e, ok ? f.got : 0, ok);
+  f.on = false;
+  if (f.slot < 0) return;
+  Smp& m = slots[f.slot].smp[f.smp];
+  pcache::Info in;
+  if (ok && pcache::get(f.e, &in) && in.whole) keep_publish(f.slot, f.smp, f.e, in);
+  else m.keep = kKeepNever;   // (a read that failed: it streams as it did)
+}
+// One step of the fill, behind everything else: its frames from the head and the loop part where RAM has them, else a
+// read of up to kStreamChunk through the card queue, posted only while nothing waits for the card and no stream is
+// under its low mark (cardq::busy), converted kConvFrames a step into the new block. Never waits; the block is not
+// published until it is whole.
+CORE_COLD void fill_step() {
+  Fill& f = *fill;
+  if (!f.on) fill_next();
+  if (!f.on) return;
+  if (f.ending) {
+    if (!f.closing) {   // a request of the fill's still out: its end first
+      if (!cardq::idle(&f.rq)) return;
+      if (f.rq.state == cardq::kDone && f.rq.kind == cardq::kOpenReq && f.rq.got == 1) f.open = true;
+      f.rq.state = cardq::kFree;
+      f.closing = f.open;
+    }
+    if (f.closing && !cardq::async(&f.rq, cardq::kCloseReq, &f.f, nullptr, 0, nullptr, 0)) return;
+    f.closing = f.open = false;
+    fill_finish();
+    return;
+  }
+  const int ch = f.ch;
+  if (f.got < f.head_n || (f.res2 && f.got >= f.ws && f.got < f.we)) {   // in RAM already
+    const bool head = f.got < f.head_n;
+    uint32_t n = (head ? f.head_n : f.we) - f.got;
+    if (n > kCopyFrames) n = kCopyFrames;
+    const int16_t* src = head ? f.head + (size_t)f.got * ch : f.res2 + (size_t)(f.got - f.ws) * ch;
+    memcpy(f.dst + (size_t)f.got * ch, src, (size_t)n * 2 * ch);
+    f.got += n;
+    return;
+  }
+  const uint32_t fb = f.a.ch * (f.a.bits / 8);
+  if (f.bp < f.bn) {   // the block read: converted
+    uint32_t n = (f.bn - f.bp) / fb;
+    if (n > kConvFrames) n = kConvFrames;
+    convert(f.a, f.buf + f.bp, n, f.dst + (size_t)f.got * ch, ch);
+    f.got += n;
+    f.bp += n * fb;
+    return;
+  }
+  if (f.got >= f.frames) {
+    f.ok = true, f.ending = true;
+    return;
+  }
+  if (f.rq.state == cardq::kFree) {
+    // the streams first. A machine waits for this very sample (a want during its fill): only the requests waiting.
+    // A DSP SAMPLE stream reads the card on this core, past the queue and its marks: reads spaced so that it seldom
+    // meets one (FatFs's lock)
+    const bool wanted = pcache::busy(f.e);
+    if (wanted ? cardq::pending() > 0 : cardq::busy()) return;
+    if (!wanted && (g_pace_test || dsp_streams_playing()) && now_ms() - f.read_ms < kFillGapMs) return;
+    f.read_ms = now_ms();
+  }
+  if (!f.open) {
+    if (!cardq::async(&f.rq, cardq::kOpenReq, &f.f, slots[f.slot].d.samples[f.smp], 0, nullptr, 0)) return;
+    f.open = f.rq.got == 1;
+    if (!f.open) f.ending = true;
+    return;
+  }
+  uint32_t fr = kStreamChunk / fb, left = f.frames - f.got;
+  if (fr > left) fr = left;
+  if (f.res2 && f.got < f.ws && f.got + fr > f.ws) fr = f.ws - f.got;
+  if (!cardq::async(&f.rq, cardq::kReadReq, &f.f, nullptr, (uint64_t)f.a.data_off + (uint64_t)f.got * fb, f.buf, fr * fb)) return;
+  uint32_t whole = f.rq.got > 0 ? (uint32_t)f.rq.got / fb : 0;
+  ++st.fill_reads;
+  st.fill_bytes += (uint64_t)whole * fb;
+  if (!whole) f.ending = true;   // (a read error, a file shorter than it was)
+  f.bn = whole * fb, f.bp = 0;
+}
+
 // The voice's selection from INST (the control core's, at every report): the pool row; OFF / empty / missing: silent
 CORE_COLD void select(int vi) {
   int e = srclib::code_of(vp[vi][0]);
@@ -1298,18 +1666,27 @@ CORE_COLD void compose() {
     if (want[vi] >= 0 || v[vi].ms) select(vi);
 }
 
-// /.rytm/sdtest.txt's read-ahead and stream count (sdtest.h), if the card was tested
-CORE_COLD void load_limits() {
-  File f;
-  if (!f.open("/.rytm/sdtest.txt", kRead)) return;
-  char t[600];
-  int n = f.read(t, sizeof t - 1);
-  f.close();
-  if (n <= 0) return;
+// /.rytm/sdtest.txt's read-ahead and stream count (sdtest.h), if the card was tested: the job's first work after begin
+CORE_COLD bool step_limits() {
+  constexpr uint32_t kCap = 599;
+  if (job->opening) {
+    if (!cardq::async(&job->rq, cardq::kOpenReq, &job->f, "/.rytm/sdtest.txt", 0, nullptr, 0)) return false;
+    job->opening = false;
+    if (job->rq.got != 1) job->phase = kIdle;
+    else job->open = true;
+    return true;
+  }
+  if (!cardq::async(&job->rq, cardq::kReadReq, &job->f, nullptr, 0, job->buf, kCap)) return false;
+  int n = job->rq.got;
+  job_close();
+  job->phase = kIdle;
+  if (n <= 0) return true;
+  char* t = (char*)job->buf;
   t[n] = 0;
   const char* a = strstr(t, "ahead_ms=");
   const char* s = strstr(t, "streams=");
   if (a && s) set_stream_limits((uint32_t)to_int(a + 9), to_int(s + 8));
+  return true;
 }
 
 }  // namespace
@@ -1320,17 +1697,26 @@ CORE_COLD void set_stream_limits(uint32_t a, int n) {
   log(CORE_STR("msamp: streaming read-ahead %lu ms, at most %d notes streaming"), (unsigned long)ahead_ms, max_streams);
 }
 CORE_COLD void set_head_ms(uint32_t ms) { head_ms = ms < 50 ? 50 : ms > 120000 ? 120000 : ms; }
+CORE_COLD void set_keep(bool on) { g_keep = on; }
+void pace_for_tests(bool on) { g_pace_test = on; }
+int keep_waiting() { return kq_n + (fill && fill->on ? 1 : 0); }
 
 CORE_COLD void begin(bool card) {
   card_ok = card;
   if (!job) {
     job = new Job();
     job->text = new char[kSfzMax + 1];
+    fill = new Fill();
+    for (int v = 0; v < kVoices; ++v)
+      for (int k = 0; k < kPerVoice; ++k) notes[v][k].pin = notes[v][k].pin2 = -1;
     lbuf[0] = new Entry[srclib::kEntries];
     lbuf[1] = new Entry[srclib::kEntries];
     list = lbuf[0];
     wrs = new Wr[kVoices * kPerVoice];
-    for (int i = 0; i < kVoices * kPerVoice; ++i) wrs[i].rq = -1, wrs[i].on = wrs[i].open = wrs[i].ending = false;
+    for (int i = 0; i < kVoices * kPerVoice; ++i)
+      wrs[i].rq = -1, wrs[i].on = wrs[i].open = wrs[i].ending = false, wrs[i].f = new File();
+    closes = new Close[kTotal];
+    for (int i = 0; i < kTotal; ++i) closes[i].f = new File(), closes[i].on = false, closes[i].r.state = cardq::kFree;
     rqs = new Rq[kInflight];
     for (int i = 0; i < kInflight; ++i) rqs[i].wi = -1, rqs[i].r.state = cardq::kFree;
     rings = new int16_t[(size_t)kVoices * kPerVoice * kRing];
@@ -1344,11 +1730,15 @@ CORE_COLD void begin(bool card) {
       sl.seq = new uint16_t[kMaxRegions];
     }
     pcache::begin(pool_ram_budget());   // the pool RAM (the first machine to start takes it)
+    pcache::set_give_back(gave_back);
     arena = pcache::ok();
     slot_cap = pcache::stats().budget;
     st.arena = slot_cap, st.slot_cap = slot_cap;
     for (int s = 0; s < kSlots; ++s)
-      for (int i = 0; i < kMaxSamples; ++i) slots[s].smp[i].pe = slots[s].smp[i].blk = slots[s].smp[i].priv = -1;
+      for (int i = 0; i < kMaxSamples; ++i) {
+        slots[s].smp[i].pe = slots[s].smp[i].blk = slots[s].smp[i].priv = -1;
+        slots[s].smp[i].keep = kKeepNone;
+      }
     log(CORE_STR("msamp: instruments in the pool RAM (%lu MB, shared), %d slots; stream rings %lu KB"),
         (unsigned long)(slot_cap >> 20), kSlots, (unsigned long)((uint64_t)kVoices * kPerVoice * kRing * 2 >> 10));
   }
@@ -1360,7 +1750,7 @@ CORE_COLD void begin(bool card) {
   memset(lpend, 0, sizeof lpend);
   for (int vi = 0; vi < kVoices; ++vi)
     for (int k = 0; k < kPerVoice; ++k) notes[vi][k].slot = -1, wr_end(wr_of(vi, k));
-  if (card) load_limits();
+  limits_due = card;
 }
 
 CORE_COLD void rescan() {   // the card changed: failed instruments tried again, the ones not playing read again on use
@@ -1384,6 +1774,11 @@ CORE_COLD bool step() {
     StepTimer t("msamp.stream");
     if (stream_step()) return true;
   }
+  if (fill->on && fill->slot >= 0 && slots[fill->slot].entry < 0) fill_abandon();   // a project change it plays on through
+  if (fill->on && fill->ending) {   // a fill given up on ends whatever the job does: its file, its block
+    StepTimer t("msamp.fill");
+    fill_step();
+  }
   if (job->closing) {   // the job's file closed first (the card queue's), then its next card work
     StepTimer t("msamp.close");
     if (!cardq::async(&job->rq, cardq::kCloseReq, &job->f, nullptr, 0, nullptr, 0)) return false;
@@ -1392,6 +1787,11 @@ CORE_COLD bool step() {
   }
   switch (job->phase) {
     case kIdle:
+      if (limits_due) {
+        limits_due = false;
+        job->opening = true, job->phase = kLimits;
+        return true;
+      }
       if (srclib::pool_sig(srclib::kMs) != composed_sig) {   // the INSTRUMENTS pool changed (a row, a state)
         StepTimer t("msamp.compose");
         compose();
@@ -1399,10 +1799,17 @@ CORE_COLD bool step() {
       }
       {
         StepTimer t("msamp.start");
-        return start_load();
+        if (start_load()) return true;
       }
+      {   // (behind all the rest: a fill's step never takes a pass, so it says nothing)
+        StepTimer t("msamp.fill");
+        fill_step();
+      }
+      return false;
     case kSfzRead: { StepTimer t("msamp.sfz"); return step_sfz(); }
     case kHeaders: { StepTimer t("msamp.header"); return step_header(); }
+    case kPlan: { StepTimer t("msamp.plan"); return step_plan(); }
+    case kLimits: { StepTimer t("msamp.limits"); return step_limits(); }
     case kSampleOpen: { StepTimer t("msamp.open"); return step_sample_open(); }
     case kSampleRead: { StepTimer t("msamp.read"); return step_sample_read(); }
   }
@@ -1589,6 +1996,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
       __atomic_thread_fence(__ATOMIC_ACQUIRE);
       if (ld_rlx(&n.seq) == q) {
         n.r_seq = q, n.r = c, n.r_on = true, n.r_rel = false, n.r_sounded = false;
+        st_rel(&n.taken, q);
         n.pos = c.pos, n.stage = 0, n.n = 0, n.lvl = 0, n.ug = 1;
       }
     }
@@ -1750,6 +2158,11 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     sniprintf(out, cap, "msamp: heads of %lu ms from the next load", (unsigned long)head_ms);
     return true;
   }
+  if (!strncmp(a, "keep:", 5)) {
+    set_keep(to_int(a + 5) != 0);
+    sniprintf(out, cap, "msamp: played samples %s", g_keep ? "kept in RAM" : "not kept (those kept stay)");
+    return true;
+  }
   if (!strncmp(a, "ahead:", 6) || !strncmp(a, "streams:", 8)) {
     if (a[0] == 'a') set_stream_limits((uint32_t)to_int(a + 6), max_streams);
     else set_stream_limits(ahead_ms, to_int(a + 8));
@@ -1780,11 +2193,13 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
   stats();
   int n = sniprintf(out, cap, "msamp: %d listed, %d/%d resident (cap %lu MB each), %d/%d notes now (peak %d), %d streaming "
                               "(peak %d, max %d, ahead %lu ms), %lu underruns, %lu bandwidth steals, %lu KB streamed, "
+                              "%d samples kept in RAM (%lu KB, %d waiting), "
                               "%lu trigs, %lu notes, %lu steals, %lu waits (%lu late), %lu loads (%lu failed, %lu left out), "
                               "%lu saves held by the card core%s;",
                     nlist, st.resident, kSlots, (unsigned long)(slot_cap >> 20), st.active, kTotal, st.peak, st.streams,
                     st.streams_peak, max_streams, (unsigned long)ahead_ms, (unsigned long)st.underruns,
-                    (unsigned long)st.bw_steals, (unsigned long)(st.stream_bytes >> 10), (unsigned long)st.trigs,
+                    (unsigned long)st.bw_steals, (unsigned long)(st.stream_bytes >> 10), kept_now,
+                    (unsigned long)(pcache::stats().kept >> 10), keep_waiting(), (unsigned long)st.trigs,
                     (unsigned long)st.notes, (unsigned long)st.steals, (unsigned long)st.waits, (unsigned long)st.late,
                     (unsigned long)st.loads, (unsigned long)st.load_fails, (unsigned long)st.left_out,
                     (unsigned long)fmt::post_held(), fmt::post_stalled() ? " (one now)" : "");
@@ -1803,6 +2218,7 @@ const Stats& stats() {
   st.active = count_active();
   st.streams = count_streams();
   st.underruns = ld_rlx(&g_underruns);
+  st.kept = kept_now, st.kept_bytes = pcache::stats().kept;
   int res = 0;
   for (int s = 0; s < kSlots; ++s) res += slots[s].state == kReady;
   st.resident = res;

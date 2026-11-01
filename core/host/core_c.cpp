@@ -14,6 +14,7 @@
 #include "msamp/msamp.h"
 #include "msamp/sdtest.h"
 #include "nmach.h"
+#include "lib/library.h"
 #include "livein/livein.h"
 #include "fx/send_fx.h"
 #include "fx/insert.h"
@@ -141,6 +142,21 @@ int core_c_lists_json(char* out, int cap) { lists::publish_now(); return lists::
 
 void core_c_sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 
+int core_c_dsp_playhead(int vi) { return core::dsp_playhead(vi); }
+
+// The sample library (core/lib): on the Pi the kernel starts it and steps it on core 0 (lib_pi); here only a host that browses
+// folders asks for it: srclib lists them from its RAM index, READING for ever without one. Each call: up to `pieces` steps.
+int core_c_lib(int pieces) {
+  static bool on = false;
+  if (!on) {
+    on = true;
+    core::lib::begin(true);
+  }
+  int did = 0;
+  while (did < pieces && core::lib::step()) ++did;
+  return did;
+}
+
 // The work between requests until there is none (at most `passes` jobs); returns the jobs run.
 int core_c_idle(int passes) {
   int did = 0;
@@ -222,6 +238,7 @@ int core_c_sendfx_process(const float* stems, int n, float* out, float sr) {
 
 // ---- the remote UI (core/ui/remote.h) for sim/rui_link.py and sim/rui_render.py
 void core_c_rui_tick(uint32_t ms) { core::ui::remote_tick(ms); }
+void core_c_rui_resync() { core::ui::remote_resync(); }
 // The LFOs (core/lfo.h): the control side's tick, the Rytm's channel messages, the console, the JSON, the page's view;
 // core_c_fake_time: now_us / now_ms read us (on 0: the real clock), so the emulator link runs them on emulated time.
 void core_c_fake_time(int on, uint64_t us) { core::host_fake_time(on != 0, us); }

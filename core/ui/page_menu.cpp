@@ -32,7 +32,7 @@ struct Entry {
 // rui1051: the pages only their keys open (page_keys.h sc_shortcut_only: SEQ, INSERT, POOL, CHOP) are not rows; the
 // tests hold the list to that rule (test_ui)
 UI_ROM const Entry kEntries[] = {
-    {"POLY CONFIG", "POLY"}, {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
+    {"POLY CONFIG", "POLY"}, {"ARP", "ARP"},         {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
     {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"PROJECT", "PROJECT"},  {"STATUS", "SIDECAR"}, {"SYSTEM", "SYSTEM"},
     {"WEB UI", "WEB UI"},    {"KEYS (ALL COMBOS)", nullptr},
 };

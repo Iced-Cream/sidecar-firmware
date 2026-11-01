@@ -43,6 +43,12 @@ constexpr uint32_t kAnsMs = 400;
 #if UM_NAMES_CACHE
 constexpr int kNamesMax = 256 + RMP_ENUM_MAX;   // enum_first is 8 bits: the last knob's names end below this
 #endif
+// What a Rytm caches of a list knob. 0021 since 0.4.0 says 36 in its slot asks (19 what 0, arg 1); 0.3.x's sends arg 0 and
+// keeps 16: its steps store 8 k. So such a Rytm gets a list of 16, entry k the name the plugin's own zone of 8 k has (a 36-name
+// list: every 2.25th), and what it shows is what plays, the other names unreachable; the knob's long name says so.
+constexpr int kOldRytmNames = 16;
+bool g_rytm_names36 = false;
+uint8_t g_old_said;   // slots whose list was cut, logged once
 struct Pkg {
   char file[80];          // card path
   char id[32];
@@ -63,7 +69,7 @@ struct Pkg {
   // from here, never from the card (send_enum runs in the SysEx handler on the control core; a card read there took
   // 3 ms a time - an underrun on every ask, and a label set following its ENGINE / TYPE asks after every switch)
   uint8_t names[kNamesMax * RMP_ENUM_NAME_BYTES];
-  uint16_t nnames;        // entries cached (0: none, or the table did not fit: send_enum reads the file as before)
+  uint16_t nnames;        // entries cached (0: none; a table cut short: what it holds)
 #endif
 };
 
@@ -83,6 +89,13 @@ char g_names[kStore][80];  // the listing
 int g_nnames = 0;
 
 // ---- the project's map and the slots
+#if CORE_MSAMP
+// 7z (2026-10-31): a project's map and notes are read by the card core (map_step, from idle()): until both are here
+// g_map and its file names stay the old project's and everything goes on as if the project had changed a moment later.
+enum : uint8_t { kMrIdle, kMrMap, kMrNotes };
+uint8_t g_mr = kMrIdle;           // the read under way
+bool g_mr_again = false;          // a newer project meanwhile: read again when its request ends
+#endif
 rmp_slot_map g_map;
 char g_map_file[64] = "";
 // ---- which machine a slot plays (rmp_resolve.h): the notes file next to the map, the fingerprints the Rytm reports
@@ -138,18 +151,26 @@ core::File g_jf;
 cardq::Req g_jrq;
 bool g_jopen = false;   // the open is still to come (job_step's first part)
 bool g_jclosing = false;   // the close is posted (job_step's last part, until its request is done)
-// the request still running (a job abandoned mid-read): waited for, one card operation at most, before the File is reused
-void jrq_settle() {
-  if (!cardq::idle(&g_jrq) && !cardq::cancel(&g_jrq)) cardq::wait(&g_jrq);
+bool g_jdrop = false;   // a job ended or abandoned: its request's end and the file's close still to come (jf_drain)
+// The file free again (true), else called again from idle(): a request under way runs to its end, the close is a request
+// too (2026-10-31: this waited for the request and closed the file here, on the control core, the card's holder's time).
+// No new job posts anything before (job_step).
+bool jf_drain() {
+  if (!cardq::idle(&g_jrq)) return false;
   g_jrq.state = cardq::kFree;
+  if (g_jf.isOpen() && !cardq::async(&g_jrq, cardq::kCloseReq, &g_jf, nullptr, 0, nullptr, 0)) return false;
+  g_jdrop = false;
+  return true;
 }
 #endif
-void jf_close() {   // a job ended or abandoned (failure paths): its request settled, the file closed here
+void jf_close() {   // a job ended or abandoned (failure paths)
 #if CORE_MSAMP
-  jrq_settle();
   g_jopen = g_jclosing = false;
-#endif
+  g_jdrop = true;
+  jf_drain();
+#else
   if (g_jf.isOpen()) g_jf.close();
+#endif
 }
 uint32_t g_job_off = 0, g_job_len = 0, g_job_crc = 0;
 
@@ -231,10 +252,12 @@ bool ends_rmp(const char* n) {
   const char* e = n + l - 4;
   return e[0] == '.' && (e[1] | 32) == 'r' && (e[2] | 32) == 'm' && (e[3] | 32) == 'p';
 }
+#if !CORE_MSAMP || !UM_NAMES_CACHE
 bool file_rd(void* ctx, uint32_t off, uint8_t* b, uint32_t n) {
   core::File* f = (core::File*)ctx;
   return f->seekSet(off) && f->read(b, n) == (int)n;
 }
+#endif
 #if UM_NAMES_CACHE
 // a package's cached name table read at the manifest's own offsets (names_at ..), as rmp_manifest_enum asks for them
 struct NamesRd { const Pkg* e; };
@@ -375,6 +398,21 @@ void send_meta(int s) {
     if (p != &d) d = *p;
     rmp_desc_pad_unused(&d);
     p = &d;
+    if (!g_rytm_names36)
+      for (int k = 0; k < d.nknobs; ++k) {
+        rmp_desc_knob& q = d.knob[k];
+        if (q.enum_count <= kOldRytmNames) continue;
+        char* t = q.long_name;   // "Osc 1 16/36" (13 B): shown as the knob turns
+        int i = 0;
+        while (i < 6 && t[i]) ++i;
+        t[i++] = ' ', t[i++] = '1', t[i++] = '6', t[i++] = '/';
+        t[i++] = (char)('0' + q.enum_count / 10), t[i++] = (char)('0' + q.enum_count % 10), t[i] = 0;
+        q.enum_count = kOldRytmNames;
+        if (!(g_old_said >> s & 1)) {
+          g_old_said |= (uint8_t)(1u << s);
+          core::log("um: U%d %s: this Rytm's mods hold 16 names of a list: 16 reachable (update the Sidecar mods)", s + 1, d.name);
+        }
+      }
   }
   int g = g_meta.gen[s];
   int st = rmp_proto_state(g_slot[s].st);
@@ -382,13 +420,12 @@ void send_meta(int s) {
   for (int part = 1; p && part < rmp_meta_nparts(p); ++part) core::to_rytm(m, rmp_build_meta_part(m, s + 1, g, part, p));
 }
 void send_enum(int s, int arg) {
-  char names[16][8];
+  char names[RMP_ENUM_MAX][8];
   int n = 0;
   int k = find_slot(s);
   if (k >= 0) {
     const rmp_desc& d = g_pkg[k].desc;
     int q = rmp_desc_find(&d, arg + 1);
-    core::File f;
     // a list whose names follow another list knob (RLB2: MD's TYPE after its ENGINE): the set shown's names, from the
     // block read at the scan; the static set (-1) and every other knob: the package's own name table
     int ln = q >= 0 ? rmp_labels_enum(&g_pkg[k].lbl, lbl_shown(s, g_pkg[k]), arg + 1, names) : -1;
@@ -398,13 +435,19 @@ void send_enum(int s, int arg) {
     } else if (q >= 0 && g_pkg[k].nnames) {
       NamesRd r{&g_pkg[k]};
       n = rmp_manifest_enum(&d, q, names_rd, &r, names);
-#endif
-    } else if (q >= 0 && f.open(g_pkg[k].file, core::kRead)) {
+    }
+#else
+    } else if (core::File f; q >= 0 && f.open(g_pkg[k].file, core::kRead)) {
       n = rmp_manifest_enum(&d, q, file_rd, &f, names);
       f.close();
     }
+#endif
   }
   if (n < 0) n = 0;
+  if (!g_rytm_names36 && n > kOldRytmNames) {   // ascending: an entry only moves down over ones already taken
+    for (int i = 0; i < kOldRytmNames; ++i) memmove(names[i], names[i * n / kOldRytmNames], sizeof names[i]);
+    n = kOldRytmNames;
+  }
   uint8_t m[RMP_MSG_MAX];
   int first = 0;
   do {
@@ -463,6 +506,7 @@ uint8_t g_note_wait = 0;                   // bit vi: silent meanwhile
 constexpr uint32_t kNoteHoldUs = 2000;     // a held note plays by then, loaded or not
 uint32_t g_pre_again_ms = 0;               // a preset written (core 0 writes it later): every list scanned again then
 bool g_pre_again = false;
+char g_pre_path[72];                       // that preset (its write landed first)
 
 // ---- pool samples for API-2 plugins (pool_info / pool_read): the sample RAM's copy of the pool slot (the Pi's heap),
 // resolved and pinned by the control core; a render core only reads its voice's entry, or asks for a slot (want).
@@ -998,6 +1042,11 @@ bool pre_save(int s, const char* raw, char* out, int cap) {
   }
   char path[72];
   sniprintf(path, sizeof path, "/PRESETS/%s/%s.txt", g_map.slot[s].id, name);
+#if CORE_MSAMP
+  if (cardq::worker()) {   // (write_atomic makes the folders)
+    if (!core::fmt::post_queue(path, txt, len)) { sniprintf(out, cap, "%s not written", path); return false; }
+  } else
+#endif
   if (!(ex->write_file ? ex->write_file(path, txt, len) : false)) {
     core::Fs fs;
     char dir[48];
@@ -1009,6 +1058,7 @@ bool pre_save(int s, const char* raw, char* out, int cap) {
     if (f.isOpen()) f.close();
     if (!ok) { sniprintf(out, cap, "%s not written", path); return false; }
   }
+  copy(g_pre_path, path, sizeof g_pre_path);
   g_pre_again = true;   // core 0 may write it a little later: every list scanned again then
   g_pre_again_ms = core::now_ms() + 300;
   sniprintf(out, cap, "U%d preset %s saved (voice %d)", s + 1, name, vi);
@@ -1051,6 +1101,9 @@ int pkg_refs(rmp_pkg_ref* r);
 void note_log(int s, const char* what);
 // Lazily (a Rytm without 0x25): a trig's tag names the machine an empty or inherited slot should play.
 void lazy_tag(int s, int tag) {
+#if CORE_MSAMP
+  if (g_mr) return;   // (not against the old project's map)
+#endif
   if (g_prints_have || g_scan || !tag || g_lazy_fp[s] == tag) return;
   g_lazy_fp[s] = (uint16_t)tag;
   rmp_pkg_ref r[kStore];
@@ -1163,6 +1216,62 @@ void map_file(char* out, int cap) {
   core::pool_file(fn, sizeof fn);   // "/.rytm/pools/<name>.txt"
   sniprintf(out, cap, "/.rytm/slots/%s", fn + 13);
 }
+// The notes' name from the map's
+void notes_file(char* d, const char* map, int cap) {
+  copy(d, map, cap);
+  int l = (int)strlen(d);
+  if (l > 4 && !strcmp(d + l - 4, ".txt")) memcpy(d + l - 4, ".inf", 4);
+}
+// The project's map (b[0..n)) and notes (nb[0..k)) as read; n, k -1: missing or unreadable.
+void map_take(const char* b, int n, const char* nb, int k) {
+  memset(&g_map, 0, sizeof g_map);
+  g_map_locked = n > 0 && !rmp_slots_parse(b, (uint32_t)n, &g_map);
+  if (g_map_locked)
+    core::log("um: %s is not a slot map this build reads (a newer Sidecar's, or damaged) - every slot empty, the file "
+              "kept as it is (not written)", g_map_file);
+  bool notes = k > 0 && rmp_notes_parse(nb, (uint32_t)k, &g_notes);
+  g_notes_locked = k > 0 && !notes;
+  if (g_notes_locked) core::log("um: %s is not a notes file this build reads - kept as it is (not written)", g_notes_file);
+  g_fresh = rmp_resolve_open(&g_map, &g_notes, n >= 0, notes);
+}
+#if CORE_MSAMP
+cardq::Req g_mrq;
+char g_mr_map[64], g_mr_notes[64];   // the files read (g_map_file, g_notes_file once both are here)
+char g_mr_b[2][512];
+int g_mr_n[2];
+// The map's read, a request a file (kSmallReq: recover, open, read, close): the map, the notes, then both taken at once.
+// A save of the file still on its way lands first (a project left and come back to at once). The request's own step:
+// a newer project meanwhile (g_mr_again) reads again from the map.
+void map_step() {
+  while (g_mr) {
+    int w = g_mr == kMrMap ? 0 : 1;
+    const char* path = w ? g_mr_notes : g_mr_map;
+    if (g_mrq.state == cardq::kFree && core::fmt::pending(path)) return;
+    if (!core::card_ok) g_mr_n[w] = -1;
+    else if (!cardq::async(&g_mrq, cardq::kSmallReq, nullptr, path, 0, (uint8_t*)g_mr_b[w], sizeof g_mr_b[w])) return;
+    else g_mr_n[w] = g_mrq.got;
+    if (g_mr_again) {
+      g_mr_again = false;
+      g_mr = kMrMap;
+    } else if (!w) {
+      g_mr = kMrNotes;
+    } else {
+      g_mr = kMrIdle;
+      copy(g_map_file, g_mr_map, sizeof g_map_file);
+      copy(g_notes_file, g_mr_notes, sizeof g_notes_file);
+      map_take(g_mr_b[0], g_mr_n[0], g_mr_b[1], g_mr_n[1]);
+      core::log("um: project %s, map %s%s", core::project, g_map_file, g_fresh ? " (none: fresh)" : "");
+    }
+  }
+}
+void map_read() {   // (no card core, as at boot: done here; with one from idle())
+  map_file(g_mr_map, sizeof g_mr_map);
+  notes_file(g_mr_notes, g_mr_map, sizeof g_mr_notes);
+  if (g_mr) g_mr_again = true;
+  else g_mr = kMrMap;
+  if (!cardq::worker()) map_step();
+}
+#else
 // a small file read whole: its length (-1 missing / unreadable)
 int read_small(const char* path, char* b, int cap) {
   core::File f;
@@ -1172,31 +1281,27 @@ int read_small(const char* path, char* b, int cap) {
   return n;
 }
 void map_read() {
-  memset(&g_map, 0, sizeof g_map);
   map_file(g_map_file, sizeof g_map_file);
-  copy(g_notes_file, g_map_file, sizeof g_notes_file);
-  int l = (int)strlen(g_notes_file);
-  if (l > 4 && !strcmp(g_notes_file + l - 4, ".txt")) memcpy(g_notes_file + l - 4, ".inf", 4);
-  char b[512];
+  notes_file(g_notes_file, g_map_file, sizeof g_notes_file);
+  char b[512], nb[512];
   core::fmt::recover(g_map_file);     // 0.3.0: a cut between write_atomic's renames - the previous map back (fmt.h)
   core::fmt::recover(g_notes_file);
   int n = read_small(g_map_file, b, sizeof b);
-  g_map_locked = n > 0 && !rmp_slots_parse(b, (uint32_t)n, &g_map);
-  if (g_map_locked)
-    core::log("um: %s is not a slot map this build reads (a newer Sidecar's, or damaged) - every slot empty, the file "
-              "kept as it is (not written)", g_map_file);
-  int k = read_small(g_notes_file, b, sizeof b);
-  bool notes = k > 0 && rmp_notes_parse(b, (uint32_t)k, &g_notes);
-  g_notes_locked = k > 0 && !notes;
-  if (g_notes_locked) core::log("um: %s is not a notes file this build reads - kept as it is (not written)", g_notes_file);
-  g_fresh = rmp_resolve_open(&g_map, &g_notes, n >= 0, notes);
+  int k = read_small(g_notes_file, nb, sizeof nb);
+  map_take(b, n, nb, k);
+  core::log("um: project %s, map %s%s", core::project, g_map_file, g_fresh ? " (none: fresh)" : "");
 }
+#endif
 // 0.3.0 power-cut safety: core::fmt::write_atomic, not the tmp-remove-rename this did before. The slot map says which
 // plugin is in which U-slot and cannot be worked out again from anything else, and a cut between that remove and that
 // rename left no file at all; write_atomic reads the .tmp back and keeps the old file as .prev until the new one is in
-// place (fmt.h; it makes the folders too). The Pi hands the write to core 0 instead (Exec::write_file is
-// um_pi.cpp QueueWrite -> the umwrite task -> SdWriteWhole, the same write_atomic); this is the Mac's own path.
+// place (fmt.h; it makes the folders too). With a card core the write is fmt's posted queue (7z 2026-10-31: the same
+// write_atomic on core 0, a newer text of a file replacing an older one, map_step's wait for it); true: taken, a failed
+// write logged by post_step. Without one this is the Mac's own path.
 bool write_whole(const char* path, const char* txt, uint32_t n) {
+#if CORE_MSAMP
+  if (cardq::worker()) return core::fmt::post_queue(path, txt, n);
+#endif
   if (ex->write_file) return ex->write_file(path, txt, n);
   return core::fmt::write_atomic(path, txt, n);
 }
@@ -1270,7 +1375,6 @@ void project_reload() {
   // a fresh project waits for the Rytm's fingerprints (if it sends them) before it inherits
   // (always: after a boot this Rytm may not have sent one yet; an older Rytm only inherits 1.5 s later)
   g_fresh_until = core::now_ms() + kFreshWaitMs;
-  core::log("um: project %s, map %s%s", core::project, g_map_file, g_fresh ? " (none: fresh)" : "");
 }
 
 // ---- the scan of the card's packages
@@ -1357,6 +1461,213 @@ void scan_fail(Pkg& e, const char* why) {
   e.ok = false;
   copy(e.why, why, sizeof e.why);
 }
+// The whole file read: its CRC, the entry table's sizes, the manifest (rd: where those bytes are).
+void scan_check(Pkg& e, rmp_read_fn rd, void* ctx) {
+  bool ok = ~g_scan_crc == e.crc;
+  if (!ok) scan_fail(e, "CRC wrong (damaged file)");
+  uint8_t t[16];
+  if (ok && rd(ctx, RMP_HEADER_BYTES + g_scan_info.entry_offset, t, 16)) {
+    uint32_t magic, api;
+    memcpy(&magic, t, 4); memcpy(&api, t + 4, 4); memcpy(&e.state, t + 8, 4); memcpy(&e.cpu, t + 12, 4);
+    if (magic != RMP_PLUGIN_MAGIC || api < RMP_API_MIN || api > RMP_API) { ok = false; scan_fail(e, "bad entry table"); }
+  }
+  if (ok && !rmp_manifest_read(&g_scan_info, rd, ctx, &e.desc)) { ok = false; scan_fail(e, "bad manifest"); }
+  if (ok) rmp_manifest_labels(&g_scan_info, rd, ctx, &e.desc, &e.lbl);   // (none, or malformed: the static labels)
+#if UM_NAMES_CACHE
+  e.nnames = 0;
+  if (ok && e.desc.names_at) {   // the name table, whole: the entries every knob's enum_first + enum_count reach
+    uint32_t total = 0;
+    for (int j = 0; j < e.desc.nknobs; ++j) {
+      uint32_t t = (uint32_t)e.desc.knob[j].enum_first + e.desc.knob[j].enum_count;
+      if (e.desc.knob[j].enum_count && t > total) total = t;
+    }
+    uint32_t room = e.desc.names_end > e.desc.names_at ? (e.desc.names_end - e.desc.names_at) / RMP_ENUM_NAME_BYTES : 0;
+    if (total > room) total = room;   // a table cut short: what it holds (a list past it has no names, as read from the file)
+    if (total && total <= (uint32_t)kNamesMax && rd(ctx, e.desc.names_at, e.names, total * RMP_ENUM_NAME_BYTES))
+      e.nnames = (uint16_t)total;
+  }
+#endif
+  if (ok && e.target != rmp_host_target) { ok = false; scan_fail(e, e.target == RMP_TARGET_A64 ? "for the Pi (AArch64)" : "for the Teensy (ARM)"); }
+  if (ok && e.state > kStateMax) { ok = false; scan_fail(e, "state too big"); }
+  if (ok && g_scan_info.data_start + RMP_A64_ALIGN > (ex ? ex->total : 0)) { ok = false; scan_fail(e, "code too big"); }
+  e.ok = ok;
+}
+#if CORE_MSAMP
+// 7z (2026-10-31): the scan's card work on the card core, as the load's and the presets' (measured on the Pi with the
+// Rytm streaming: 25 ms stalls of the control core, three dropouts of 0.3-1 s). The folder's open, its entries 8 a kDirReq,
+// the close; each package's open, reads of kScanRead, the close: a request a step, a request of the scan's own at a time.
+// The CRC runs over what a read brought, up to 300 us a step. What the old scan read again at the end (the entry table, the
+// manifest, the name table, the labels) is kept from those same reads, windows set from the header. A rescan during a
+// pass abandons it: the request under way runs to its end, the file open is closed, the pass starts over; only a whole
+// pass is ever published (before: the pass ran on and published what it had read, then the next one).
+constexpr uint32_t kScanRead = 32768;      // one card operation of ~2 ms on the card core, as a stream's read
+constexpr uint32_t kCrcUs = 300;
+constexpr uint32_t kCapHead = 84u + 32u * 26u + (256u + RMP_ENUM_MAX) * RMP_ENUM_NAME_BYTES;   // head, knobs, name table
+constexpr uint32_t kCapTail = 5u + RMP_LABELS_DEPS + RMP_LABELS_PARAMS + RMP_LABELS_SETS * RMP_ENUM_NAME_BYTES +
+                              RMP_LABELS_SETS * RMP_LABELS_PARAMS * RMP_LABEL_BYTES + RMP_LABELS_FOOTER;   // the labels' block
+cardq::Req g_srq;
+cardq::DirRec g_sent[8];
+core::File g_sd;                           // the folder
+uint8_t g_sbuf[kScanRead];
+uint32_t g_sb_n = 0, g_sb_at = 0;          // g_sbuf's bytes, the CRC's place in them
+uint8_t g_cap[16 + kCapHead + kCapTail];
+struct ScanWin { uint32_t at, len; uint8_t* d; };
+ScanWin g_win[3];                          // the entry table, the manifest's start, its end (package offsets)
+enum : uint8_t { kSsBegin, kSsDirOpen, kSsDirList, kSsDirClose, kSsNext, kSsOpen, kSsRead, kSsCrc, kSsEnd, kSsClose, kSsDrop };
+uint8_t g_ss = kSsBegin;
+// A burst of rescans (an upload's, a bundle's, one a file): the next pass starts once they have been quiet this long, and
+// everything else in idle() goes on meanwhile
+constexpr uint32_t kRescanQuietMs = 150;
+uint32_t g_scan_at = 0;
+bool scan_wait() { return g_scan && g_ss == kSsBegin && (int32_t)(core::now_ms() - g_scan_at) < 0; }
+void win_set(const rmp_info& i) {
+  uint32_t at = RMP_HEADER_BYTES + i.image_size + 8u * i.reloc_count, ms = i.manifest_size;
+  uint32_t h = ms < kCapHead ? ms : kCapHead, t = ms < kCapTail ? ms : kCapTail;
+  g_win[0] = ScanWin{RMP_HEADER_BYTES + i.entry_offset, 16, g_cap};
+  g_win[1] = ScanWin{at, h, g_cap + 16};
+  g_win[2] = ScanWin{at + ms - t, t, g_cap + 16 + kCapHead};
+}
+void win_take(uint32_t off, const uint8_t* b, uint32_t n) {   // what a read brought of the windows
+  for (const ScanWin& w : g_win) {
+    uint32_t lo = off > w.at ? off : w.at, hi = off + n < w.at + w.len ? off + n : w.at + w.len;
+    if (lo < hi) memcpy(w.d + (lo - w.at), b + (lo - off), hi - lo);
+  }
+}
+bool win_rd(void*, uint32_t off, uint8_t* b, uint32_t n) {
+  for (const ScanWin& w : g_win)
+    if (off >= w.at && (uint64_t)off - w.at + n <= w.len) {
+      memcpy(b, w.d + (off - w.at), n);
+      return true;
+    }
+  return false;
+}
+// One scan step: at most one request's result taken and the next posted, and kCrcUs of CRC.
+void scan_step() {
+  if (g_scan_again) {
+    if (!cardq::idle(&g_srq)) return;   // (its File and buffer not touched before)
+    g_srq.state = cardq::kFree;
+    g_scan_again = false;
+    g_scan = 1;
+    g_ss = g_sd.isOpen() || g_sf.isOpen() ? kSsDrop : kSsBegin;
+  }
+  for (;;) {
+    Pkg& e = g_work[g_nwork < kStore ? g_nwork : 0];
+    if (g_ss == kSsBegin) {
+      if (scan_wait()) return;
+      g_nnames = g_over = g_nwork = g_scan_i = 0;
+      if (core::card_ok) {
+        g_ss = kSsDirOpen;
+      } else {
+        g_ss = kSsNext;
+        g_scan = 2;
+      }
+    } else if (g_ss == kSsDirOpen) {
+      if (!cardq::async(&g_srq, cardq::kOpenReq, &g_sd, g_dir, 0, nullptr, 0)) return;
+      g_ss = g_srq.got == 1 && g_sd.isDir() ? kSsDirList : g_sd.isOpen() ? kSsDirClose : kSsNext;
+      if (g_ss == kSsNext) g_scan = 2;
+    } else if (g_ss == kSsDirList) {
+      if (!cardq::async(&g_srq, cardq::kDirReq, &g_sd, nullptr, 0, (uint8_t*)g_sent, sizeof g_sent)) return;
+      int got = g_srq.got;
+      for (int k = 0; k < got; ++k) {
+        char n[64];
+        copy(n, g_sent[k].name, sizeof n);
+        if (g_sent[k].dir || n[0] == '.' || !ends_rmp(n)) continue;
+        if (g_nnames >= kStore) { ++g_over; continue; }
+        sniprintf(g_names[g_nnames++], sizeof g_names[0], "%s/%s", g_dir, n);
+      }
+      if (got == (int)(sizeof g_sent / sizeof g_sent[0])) return;   // (fewer: the folder's end)
+      g_ss = kSsDirClose;
+    } else if (g_ss == kSsDirClose) {
+      if (!cardq::async(&g_srq, cardq::kCloseReq, &g_sd, nullptr, 0, nullptr, 0)) return;
+      g_ss = kSsNext;
+      g_scan = 2;
+    } else if (g_ss == kSsNext) {
+      if (g_scan_i >= g_nnames) {
+        g_ss = kSsBegin;
+        g_scan = 0;
+        scan_finish();
+        return;
+      }
+      memset(&e, 0, sizeof e);
+      copy(e.file, g_names[g_scan_i], sizeof e.file);
+      const char* base = strrchr(e.file, '/');
+      rmp_desc_from_id(base ? base + 1 : e.file, &e.desc);
+      memset(g_win, 0, sizeof g_win);
+      memset(g_cap, 0, sizeof g_cap);
+      g_ss = kSsOpen;
+    } else if (g_ss == kSsOpen) {
+      if (!cardq::async(&g_srq, cardq::kOpenReq, &g_sf, e.file, 0, nullptr, 0)) return;
+      if (g_srq.got != 1) {
+        scan_fail(e, "unreadable");
+        ++g_nwork, ++g_scan_i;
+        g_ss = kSsNext;
+        continue;
+      }
+      e.size = (uint32_t)g_sf.fileSize();
+      g_scan_off = 0;
+      if (e.size >= RMP_HEADER_BYTES) {
+        g_ss = kSsRead;
+      } else {
+        scan_fail(e, "bad size");
+        g_ss = kSsClose;
+      }
+    } else if (g_ss == kSsRead) {
+      uint32_t n = e.size - g_scan_off < kScanRead ? e.size - g_scan_off : kScanRead;
+      if (!cardq::async(&g_srq, cardq::kReadReq, &g_sf, nullptr, g_scan_off, g_sbuf, n)) return;
+      g_sb_n = n, g_sb_at = 0, g_ss = kSsCrc;
+      if (g_srq.got != (int32_t)n) {
+        scan_fail(e, g_scan_off ? "read error" : "bad size");
+        g_ss = kSsClose;
+      } else if (g_scan_off == 0) {   // a new file: its header
+        rmp_status st = rmp_verify_header_any(g_sbuf, e.size, &g_scan_info);
+        if (st != RMP_OK) {
+          scan_fail(e, st == RMP_ERR_MAGIC ? "not a machine package" : st == RMP_ERR_API ? "plugin API too new"
+                       : st == RMP_ERR_FORMAT ? "format not supported" : "bad size");
+          g_ss = kSsClose;
+          continue;
+        }
+        copy(e.id, g_scan_info.id, sizeof e.id);
+        e.version = g_scan_info.version, e.compat = g_scan_info.compatible_from;
+        e.image = g_scan_info.image_size, e.bss = g_scan_info.bss_size;
+        e.api = (uint8_t)g_scan_info.api, e.target = g_scan_info.target, e.crc = g_scan_info.crc32;
+        e.hflags = g_scan_info.flags;
+        e.fp = rmp_plugin_fp(e.id);
+        rmp_desc_from_id(e.id, &e.desc);
+        win_set(g_scan_info);
+        g_sb_at = RMP_HEADER_BYTES;
+        g_scan_crc = 0xFFFFFFFFu;
+      }
+      if (g_ss == kSsCrc) win_take((uint32_t)g_scan_off, g_sbuf, n);
+      return;
+    } else if (g_ss == kSsCrc) {   // 8 KB of the CRC at a time, for kCrcUs a step (one idle pass each would slow a boot's loads)
+      uint32_t t0 = core::now_us();
+      do {
+        uint32_t n = g_sb_n - g_sb_at < kChunk ? g_sb_n - g_sb_at : kChunk;
+        g_scan_crc = rmp_crc32_update(g_scan_crc, g_sbuf + g_sb_at, n);
+        g_sb_at += n;
+      } while (g_sb_at < g_sb_n && core::now_us() - t0 < kCrcUs);
+      if (g_sb_at < g_sb_n) return;
+      g_scan_off += g_sb_n;
+      if (g_scan_off >= e.size) {
+        g_ss = kSsEnd;
+        return;
+      }
+      g_ss = kSsRead;
+    } else if (g_ss == kSsEnd) {
+      scan_check(e, win_rd, nullptr);   // (memory only)
+      g_ss = kSsClose;
+    } else if (g_ss == kSsClose) {
+      if (!cardq::async(&g_srq, cardq::kCloseReq, &g_sf, nullptr, 0, nullptr, 0)) return;
+      ++g_nwork, ++g_scan_i;
+      g_ss = kSsNext;
+    } else {   // kSsDrop: the pass abandoned
+      if (!cardq::async(&g_srq, cardq::kCloseReq, g_sd.isOpen() ? &g_sd : &g_sf, nullptr, 0, nullptr, 0)) return;
+      g_ss = kSsBegin;
+    }
+  }
+}
+#else
+bool scan_wait() { return false; }
 // One scan step: the listing, or one package's header, 8 KB of its CRC, or its manifest.
 bool scan_step() {
   if (g_scan == 1) {
@@ -1434,40 +1745,13 @@ bool scan_step() {
     g_scan_off += n;
     return true;
   }
-  // the whole file read: its CRC, the entry table's sizes, the manifest
-  bool ok = ~g_scan_crc == e.crc;
-  if (!ok) scan_fail(e, "CRC wrong (damaged file)");
-  uint8_t t[16];
-  if (ok && file_rd(&g_sf, RMP_HEADER_BYTES + g_scan_info.entry_offset, t, 16)) {
-    uint32_t magic, api;
-    memcpy(&magic, t, 4); memcpy(&api, t + 4, 4); memcpy(&e.state, t + 8, 4); memcpy(&e.cpu, t + 12, 4);
-    if (magic != RMP_PLUGIN_MAGIC || api < RMP_API_MIN || api > RMP_API) { ok = false; scan_fail(e, "bad entry table"); }
-  }
-  if (ok && !rmp_manifest_read(&g_scan_info, file_rd, &g_sf, &e.desc)) { ok = false; scan_fail(e, "bad manifest"); }
-  if (ok) rmp_manifest_labels(&g_scan_info, file_rd, &g_sf, &e.desc, &e.lbl);   // (none, or malformed: the static labels)
-#if UM_NAMES_CACHE
-  e.nnames = 0;
-  if (ok && e.desc.names_at) {   // the name table, whole: the entries every knob's enum_first + enum_count reach
-    uint32_t total = 0;
-    for (int j = 0; j < e.desc.nknobs; ++j) {
-      uint32_t t = (uint32_t)e.desc.knob[j].enum_first + e.desc.knob[j].enum_count;
-      if (e.desc.knob[j].enum_count && t > total) total = t;
-    }
-    uint64_t end = (uint64_t)e.desc.names_at + (uint64_t)total * RMP_ENUM_NAME_BYTES;
-    if (total && total <= (uint32_t)kNamesMax && end <= e.desc.names_end &&
-        file_rd(&g_sf, e.desc.names_at, e.names, total * RMP_ENUM_NAME_BYTES))
-      e.nnames = (uint16_t)total;
-  }
-#endif
-  if (ok && e.target != rmp_host_target) { ok = false; scan_fail(e, e.target == RMP_TARGET_A64 ? "for the Pi (AArch64)" : "for the Teensy (ARM)"); }
-  if (ok && e.state > kStateMax) { ok = false; scan_fail(e, "state too big"); }
-  if (ok && g_scan_info.data_start + RMP_A64_ALIGN > (ex ? ex->total : 0)) { ok = false; scan_fail(e, "code too big"); }
-  e.ok = ok;
+  scan_check(e, file_rd, &g_sf);
   g_sf.close();
   g_scan_off = 0;
   ++g_nwork, ++g_scan_i;
   return true;
 }
+#endif
 
 // ---- the writable parts of the images (data + bss): a bump arena of 4096-aligned blocks, reset with the code's
 constexpr uint32_t kDataArena = 4u << 20;
@@ -1559,6 +1843,7 @@ void job_step() {
   int s = g_job;
   const Pkg& e = g_pkg[g_slot[s].pkg];
 #if CORE_MSAMP
+  if (g_jdrop) return;   // (the job before it: its file still closing)
   if (g_jopen) {   // the open, on the card core
     if (!cardq::async(&g_jrq, cardq::kOpenReq, &g_jf, e.file, 0, nullptr, 0)) return;
     g_jopen = false;
@@ -1592,8 +1877,9 @@ void job_step() {
   if (g_jf.isOpen()) g_jclosing = true;   // (by the request's end, not the handle's flag: the close may be running)
   if (g_jclosing && !cardq::async(&g_jrq, cardq::kCloseReq, &g_jf, nullptr, 0, nullptr, 0)) return;   // (later)
   g_jclosing = false;
+#else
+  if (g_jf.isOpen()) g_jf.close();
 #endif
-  if (g_jf.isOpen()) g_jf.close();   // (no card core: here, as before)
   UMT("um.place");   // the placement, the cache sync and the plugin's init() (one step)
   rmp_info info;
   rmp_status st = rmp_verify_header(g_buf, g_job_len, &info);
@@ -1664,11 +1950,34 @@ bool assign_id(int s, const char* id, uint32_t version) {
   return true;
 }
 
+#if CORE_MSAMP
+// A change of the map while the project's map is being read (a 1E, a console or web um=... right after a project change)
+// waits for it, from idle(), never here: made now it would change the old project's map, and the read takes as long as
+// the card core does. One 1E a slot (the newest), kHeldCmds commands.
+constexpr int kHeldCmds = 8;
+struct HeldAssign { bool on; rmp_assign a; };
+HeldAssign g_held_as[kSlots];
+char g_held_cmd[kHeldCmds][96];
+int g_nheld_cmd = 0;
+#endif
+void assign_run(const rmp_assign& a);
+#if CORE_MSAMP
+void held_run();
+#endif
 void on_assign(const uint8_t* d, int len) {
   rmp_assign a;
   if (!rmp_parse_assign(d, len, &a) || a.slot < 1 || a.slot > kSlots) return;
+  g_ans_t[a.slot - 1] = core::now_ms();
+#if CORE_MSAMP
+  if (g_mr) {
+    g_held_as[a.slot - 1] = HeldAssign{true, a};
+    return;
+  }
+#endif
+  assign_run(a);
+}
+void assign_run(const rmp_assign& a) {
   int s = a.slot - 1;
-  g_ans_t[s] = core::now_ms();
   if (a.op == RMP_OP_CLEAR) {
     assign_id(s, "", 0);
     g_ans[s] = (int8_t)a.op;
@@ -1688,6 +1997,8 @@ void on_ask(const uint8_t* d, int len) {
   if (a.what == RMP_ASK_INSTALLED || core::now_ms() - g_1d_ms >= 3000) g_1d_owed = true;
   int s = a.slot - 1;
   if (a.what == RMP_ASK_META && a.slot >= 1) {
+    g_rytm_names36 = a.arg & 1;
+    core::ui::remote_rytm_040(g_rytm_names36);   // (and SMP on its knob A: rytm-mods 7h, the same flash)
     meta_poll();
     if (a.gen && a.gen == g_meta.gen[s] && settled(s)) {
       uint8_t m[RMP_MSG_MAX];
@@ -1850,10 +2161,16 @@ void publish() {
 }  // namespace
 
 void rekey(const char* key) {
+#if CORE_MSAMP
+  if (g_mr) {   // a read under way: of the name just moved; g_map_file stays g_map's until it ends
+    sniprintf(g_mr_map, sizeof g_mr_map, "/.rytm/slots/%s.txt", key);
+    notes_file(g_mr_notes, g_mr_map, sizeof g_mr_notes);
+    g_mr_again = true;
+    return;
+  }
+#endif
   sniprintf(g_map_file, sizeof g_map_file, "/.rytm/slots/%s.txt", key);
-  copy(g_notes_file, g_map_file, sizeof g_notes_file);
-  int l = (int)strlen(g_notes_file);
-  if (l > 4 && !strcmp(g_notes_file + l - 4, ".txt")) memcpy(g_notes_file + l - 4, ".inf", 4);
+  notes_file(g_notes_file, g_map_file, sizeof g_notes_file);
 }
 
 void begin(const Exec* e, const char* d) {
@@ -1899,7 +2216,15 @@ void begin(const Exec* e, const char* d) {
 bool idle() {
   if (!ex) return false;
   bool did = true;
-  if (g_scan) { UMT("um.scan"); scan_step(); }
+#if CORE_MSAMP
+  if (g_jdrop) jf_drain();
+  if (g_mr) {
+    UMT("um.map");
+    map_step();
+    if (!g_mr) held_run();
+  } else
+#endif
+  if (g_scan && !scan_wait()) { UMT("um.scan"); scan_step(); }
   else if (g_full) {
     for (int vi = 0; vi < core::kVoices; ++vi) voice_leave(vi);
     for (int s = 0; s < kSlots; ++s) slot_set(s, g_map.slot[s].id[0] ? RMP_SLOT_LOADING : RMP_SLOT_EMPTY, nullptr, -1);
@@ -1927,10 +2252,10 @@ bool idle() {
   } else if (pscan_busy()) {
     UMT("um.pscan");
     pscan_step();
-  } else did = false;
+  } else did = scan_wait();
   { UMT("um.notes"); notes_overdue(); }
   { UMT("um.upool"); if (upool_pass()) did = true; }
-  if (g_pre_again && (int32_t)(core::now_ms() - g_pre_again_ms) >= 0) {   // a preset written: the lists again
+  if (g_pre_again && (int32_t)(core::now_ms() - g_pre_again_ms) >= 0 && !core::fmt::pending(g_pre_path)) {   // a preset written: the lists again
     g_pre_again = false;
     for (int s = 0; s < kSlots; ++s) pre_invalidate(s);
   }
@@ -1962,9 +2287,17 @@ bool idle() {
 }
 
 void rescan() {
-  if (g_scan) g_scan_again = true;
-  else g_scan = 1;
+  if (g_scan) {
+    g_scan_again = true;
+#if CORE_MSAMP
+    g_scan_at = core::now_ms() + kRescanQuietMs;
+#endif
+  } else {
+    g_scan = 1;
+  }
 }
+
+bool tag_ok(int s, int tag) { return s >= 0 && s < kSlots && g_slot[s].st == RMP_SLOT_READY && tag == g_slot[s].fp; }
 
 // ---- E0: instances (core/inst.h)
 static_assert(kInst == core::inst::kTotal, "um's instance states: one per core::inst instance");
@@ -2035,8 +2368,36 @@ void inst_render(int vi, int i, float* o) {
     o[k] = o[k] == o[k] ? (o[k] > 1.0f ? 1.0f : o[k] < -1.0f ? -1.0f : o[k]) : 0.0f;
 }
 
+#if CORE_MSAMP
+namespace {
+void held_run() {   // the map is here
+  for (int s = 0; s < kSlots; ++s)
+    if (g_held_as[s].on) {
+      g_held_as[s].on = false;
+      assign_run(g_held_as[s].a);
+    }
+  for (int i = 0; i < g_nheld_cmd; ++i) {
+    char o[160];
+    if (command(g_held_cmd[i], o, sizeof o) && o[0]) core::log("um: %s", o);
+  }
+  g_nheld_cmd = 0;
+}
+bool map_cmd(const char* c) {   // a command that changes the map
+  return !strncmp(c, "um=assign:", 10) || !strncmp(c, "um=clear:", 9) || !strcmp(c, "um=empty") || !strncmp(c, "um=put:", 7);
+}
+}  // namespace
+#endif
+
 bool command(const char* c, char* out, int cap) {
   out[0] = 0;
+#if CORE_MSAMP
+  if (g_mr && map_cmd(c)) {
+    if (g_nheld_cmd >= kHeldCmds || strlen(c) >= sizeof g_held_cmd[0]) { sniprintf(out, cap, "the project's map is loading: again in a moment"); return true; }
+    copy(g_held_cmd[g_nheld_cmd++], c, sizeof g_held_cmd[0]);
+    sniprintf(out, cap, "after the project's map is read");
+    return true;
+  }
+#endif
   if (strcmp(c, "um") == 0) {
     char vb[12];
     for (int i = 0; i < g_npkg; ++i)

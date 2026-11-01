@@ -34,6 +34,15 @@
 
 #include "juno_patches.h"
 
+#ifndef RYTM_RENDER_O3
+// The render at -O3 where GCC builds for AArch64 (the Pi): the file around it stays -O2 (core/engines/engines.mk)
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__)
+#define RYTM_RENDER_O3 __attribute__((optimize("O3")))
+#else
+#define RYTM_RENDER_O3
+#endif
+#endif
+
 namespace juno {
 
 class Voice {
@@ -104,7 +113,7 @@ class Voice {
 
   const char* name() const { return ext_ ? ext_name_ : kPatches[patch_ < 0 ? 0 : patch_].name; }
 
-  void Render(float* out, int n) {
+  RYTM_RENDER_O3 void Render(float* out, int n) {
     if (stage_ == kOff && amp_ == 0.0f) {
       float d = 0.0035f * sr_;
       for (int i = 0; i < n; ++i) out[i] = Chorus(0.0f, d);

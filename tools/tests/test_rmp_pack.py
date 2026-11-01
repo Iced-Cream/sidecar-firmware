@@ -168,17 +168,24 @@ class Labels(unittest.TestCase):
         self.assertEqual((rmp_pack.package_format(m), rmp_pack.package_format(json.loads(json.dumps(SINE)))), (4, 3))
         m1 = json.loads(json.dumps(m)); m1["type_labels"] = dict(knob=10, params=[1], sets=[[None], [None]])
         self.assertEqual(rmp_pack.package_format(m1), 3)
-        self.assertEqual(rmp_pack.FORMAT, 4)
+        self.assertEqual(rmp_pack.FORMAT, 5)
+        # 0.4.0: a list over 16 names is format 5, so a host of limit 16 refuses it (it would cut the list and show the wrong
+        # names while the plugin plays all of them); 16 stays as it was; labels following a list keep their limit of 16
+        m17 = json.loads(json.dumps(SINE)); m17["knobs"][0].update(look="list", text="enum", names=[f"N{i}" for i in range(17)])
+        self.assertEqual(rmp_pack.package_format(m17), 5)
+        m17["knobs"][0]["names"].pop()
+        self.assertEqual(rmp_pack.package_format(m17), 3)
+        self.assertEqual(rmp_pack.package_format(dict(m, type_labels=dict(tl, lists=[["BD", "SD"], ["X"] * 17]))), 5)
         end = 96 + h["image_size"] + 8 * h["reloc_count"] + h["manifest_size"]
         self.assertEqual(rmp[end - 4:end], b"RLB2")
         five = [[None, None]] * 5
         for bad, text in ((dict(tl, follows=10), "another list knob"),
                           (dict(tl, follows=1), "another list knob"),
                           (dict(tl, lists=[["BD", "SD"]]), "must hold 2 lists"),
-                          (dict(tl, lists=[["BD", "SD"], []]), "1..16 names"),
+                          (dict(tl, lists=[["BD", "SD"], []]), "1..36 names"),
                           (dict(tl, lists=[["BD", "SD"], ["TOOLONGNAME"]], sets=five[:3]), "limit is 7"),
                           (dict(tl, lists=[["SD", "BD"], ["BD", "MT", "HH"]]), "must equal P10's names"),
-                          (dict(tl, lists=[["BD", "SD"], ["X"] * 17], sets=[[None, None]] * 19), "1..16 names"),
+                          (dict(tl, lists=[["BD", "SD"], ["X"] * 37], sets=[[None, None]] * 19), "1..36 names"),
                           (dict(tl, params=[9]), "other knobs"),
                           (dict(tl, sets=five[:4]), "must hold 5 sets"),
                           ({k: v for k, v in tl.items() if k != "lists"}, "neither")):
@@ -380,9 +387,11 @@ class Negative(unittest.TestCase):
             (knob(text="roman"), "text"),
             (knob(color="red"), "unknown key"),
             (knob(names=["a", "b"]), "only for look 'list'"),
-            (knob(look="list", names=[]), "1..16 names"),
-            (knob(look="list", names="ab"), "1..16 names"),
-            (knob(look="list", names=["n%d" % i for i in range(17)]), "1..16 names"),
+            (knob(look="list", names=[]), "1..36 names"),
+            (knob(look="list", names="ab"), "1..36 names"),
+            (knob(look="list", names=["n%d" % i for i in range(37)]), "1..36 names"),
+            (with_(knobs=[dict(M["knobs"][0], look="list", text="enum", names=["n%d" % i for i in range(17)])] + M["knobs"][1:],
+                   type_labels=dict(knob=M["knobs"][0]["p"], params=[M["knobs"][1]["p"]], sets=[[None]] * 17)), "limit for labels"),
             (knob(look="list", names=["a", ""]), "must not be empty"),
             (knob(look="list", names=["EIGHTCHR"]), "limit is 7"),
             (knob(look="list", names=["caf\u00e9"]), "printable ASCII"),

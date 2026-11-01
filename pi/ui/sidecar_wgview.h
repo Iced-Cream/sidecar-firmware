@@ -122,6 +122,7 @@ int sidecar_wgview_wanted (void);
 // Commands through fn (sidecar_ui's).
 void sidecar_wgview_set_command (void (*fn) (const char *cmd));
 void sidecar_wgview_set_page (void (*fn) (int open));	// ALL POOLS opens the POOL page (1), its DONE leaves it (0)
+void sidecar_wgview_set_preset (void (*fn) (int kind));	// the POOL page's JUNO / 6-OP tabs (sidecar_preset.h) open that page on that list
 void sidecar_wgview_list (int on);			// the machine view's POOL shown / the picture again
 int sidecar_wgview_list_shown (void);
 void sidecar_wgview_lib (int on);			// FILES aimed at the shown bank's first empty row / back to the rows

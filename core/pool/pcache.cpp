@@ -23,6 +23,8 @@ struct Blk {
   uint16_t pins;
   int16_t ent;      // the entry whose data it is (-1: private, or an orphan waiting for its last pin)
   uint8_t live, priv;
+  uint64_t give;    // marked kept: the bytes it needs given back (0 not marked)
+  uint32_t give_frames;
 };
 struct Ent {
   uint8_t st;       // State
@@ -51,6 +53,8 @@ int nord = 0;
 Ent* E = nullptr;       // [kEntries]
 bool began = false;
 bool g_mono = false;   // poolmono=1
+GiveBack g_give = nullptr;
+uint32_t g_min_idle = 0;
 Stats st;
 
 // the load (one at a time) and the queue (wants before prefetches)
@@ -94,6 +98,7 @@ CORE_COLD void free_block(int b) {
     }
   st.used -= B[b].bytes;
   if (B[b].priv) st.priv -= B[b].bytes;
+  if (B[b].give) st.kept -= B[b].bytes, B[b].give = 0;
 }
 CORE_COLD void dequeue(int e) {
   for (int i = 0; i < nq; ++i)
@@ -133,6 +138,33 @@ CORE_COLD bool evictable(int b) {
   const Ent& x = E[k.ent];
   return x.st == kReady && x.blk == b && x.grow < 0 && !x.filling && J.e != k.ent;
 }
+// a kept block that may give back: only its one holder, nothing loads it, nobody just asked for it
+CORE_COLD bool givable(int b) {
+  const Blk& k = B[b];
+  if (!k.give || k.priv || k.pins != 1 || k.ent < 0) return false;
+  const Ent& x = E[k.ent];
+  return x.st == kReady && x.blk == b && x.grow < 0 && !x.filling && J.e != k.ent && !queued(k.ent) &&
+         now_ms() - x.used_ms >= kShrinkGuardMs && now_ms() - k.used_ms >= g_min_idle;
+}
+// Block b's first frames moved up to end at *top (memmove: the caller goes from the last block down; top null: they stay
+// where they are), the rest free. Its one pin is its holder's: no core reads it (givable).
+CORE_COLD void give_back(int b, uint64_t* top) {
+  Blk& k = B[b];
+  Ent& x = E[k.ent];
+  const int ch = x.ch == 2 ? 2 : 1;
+  const uint32_t fr = k.give_frames;
+  const uint64_t off = top ? *top - k.give : k.off;
+  int16_t* d = (int16_t*)(arena + off);
+  if (top) memmove(d, data(b), (size_t)fr * 2 * ch);
+  for (int c = 0; c < ch; ++c) d[fr * ch + c] = d[(fr - 1) * ch + c];   // the guard frame
+  st.used -= k.bytes - k.give;
+  st.kept -= k.bytes;
+  k.off = off, k.bytes = k.give, k.give = 0;
+  x.frames = fr, x.whole = false, x.cut = false;
+  if (top) *top = off;
+  ++st.shrinks;
+  if (g_give) g_give(b, d);
+}
 // a block of bytes; may_evict: least recently used window of evictable blocks; -1 none
 CORE_COLD int alloc(uint64_t bytes, bool may_evict, bool priv, int ent) {
   uint64_t need = up(bytes ? bytes : 1);
@@ -155,18 +187,27 @@ CORE_COLD int alloc(uint64_t bytes, bool may_evict, bool priv, int ent) {
     uint32_t now = now_ms();
     int32_t best_age = -1;
     uint64_t best_bytes = ~0ull;
-    int bf = -1, bl = -1;
-    for (int i = 0; i <= nord; ++i) {   // start at the hole before block i (its previous block's end)
-      uint64_t s = i ? B[ord[i - 1]].off + B[ord[i - 1]].bytes : 0;
-      int32_t newest = 0;
-      uint64_t ev = 0;
+    int bf = -1, bl = -1, bh = -1;
+    uint64_t bs = 0;
+    for (int w = 0; w < 2 * (nord + 1); ++w) {   // start at the hole before block i (its previous block's end) or, h, at the
+      const int i = w / 2;                       // end of what a kept block before it would keep
+      const int h = w & 1 && i && !evictable(ord[i - 1]) && givable(ord[i - 1]) ? ord[i - 1] : -1;
+      if ((w & 1) && h < 0) continue;
+      uint64_t s = h >= 0 ? B[h].off + B[h].give : i ? B[ord[i - 1]].off + B[ord[i - 1]].bytes : 0;
+      int32_t newest = h >= 0 ? (int32_t)(now - B[h].used_ms) : 0;
+      uint64_t ev = 0, heads = 0;   // heads: what the window's kept blocks keep, at its far end
       int j = i;
       bool ok = true;
-      bool any = false;
+      bool any = h >= 0;
       while (true) {
         uint64_t e = j < nord ? B[ord[j]].off : arena_bytes;
-        if (e - s >= need) break;
-        if (j >= nord || j - i >= 64 || !evictable(ord[j])) {   // (a window of 64 blocks at most)
+        if (e - s >= need + heads) break;
+        bool give = j < nord && !evictable(ord[j]) && givable(ord[j]);
+        if (j >= nord || j - i >= 64 || (!give && !evictable(ord[j]))) {   // (a window of 64 blocks at most)
+          ok = false;
+          break;
+        }
+        if (give && (heads += B[ord[j]].give) > kMoveMax) {
           ok = false;
           break;
         }
@@ -177,7 +218,7 @@ CORE_COLD int alloc(uint64_t bytes, bool may_evict, bool priv, int ent) {
         ++j;
       }
       if (!ok || !any) continue;
-      if (newest > best_age || (newest == best_age && ev < best_bytes)) best_age = newest, best_bytes = ev, bf = i, bl = j;
+      if (newest > best_age || (newest == best_age && ev < best_bytes)) best_age = newest, best_bytes = ev, bf = i, bl = j, bh = h, bs = s;
     }
     if (bf < 0) return -1;
     int nev = bl - bf;
@@ -185,12 +226,18 @@ CORE_COLD int alloc(uint64_t bytes, bool may_evict, bool priv, int ent) {
     int nv = 0;
     for (int k = bf; k < bl && nv < 64; ++k) victims[nv++] = ord[k];
     if (nv < nev) return -1;
-    best_off = bf ? B[ord[bf - 1]].off + B[ord[bf - 1]].bytes : 0;
-    for (int k = 0; k < nv; ++k) {
+    best_off = bs;
+    uint64_t top = bl < nord ? B[ord[bl]].off : arena_bytes;
+    for (int k = nv - 1; k >= 0; --k) {   // (from the last down: each head moves up, over nothing still to move)
       int v = victims[k];
+      if (!evictable(v)) {
+        give_back(v, &top);
+        continue;
+      }
       ++st.evictions;
       drop_entry(B[v].ent);
     }
+    if (bh >= 0) give_back(bh, nullptr);
   }
   for (pos = 0; pos < nord && B[ord[pos]].off < best_off; ++pos) {}
   memmove(ord + pos + 1, ord + pos, sizeof(int) * (nord - pos));
@@ -198,6 +245,7 @@ CORE_COLD int alloc(uint64_t bytes, bool may_evict, bool priv, int ent) {
   ++nord;
   Blk& k = B[id];
   k.off = best_off, k.bytes = need, k.used_ms = now_ms(), k.pins = 0, k.ent = (int16_t)ent, k.live = 1, k.priv = priv;
+  k.give = 0, k.give_frames = 0;
   st.used += need;
   if (priv) st.priv += need;
   return id;
@@ -409,6 +457,8 @@ CORE_COLD void fill_end(int e, uint32_t written, bool okk) {
   if (x.drop_after || !okk || written < 2 || b < 0) {
     free_block(b);
     if (x.drop_after || x.st != kReady) drop_entry(e);
+    else if (x.want_whole && x.path[0]) enqueue(e, x.path, false);   // (a fill that took over a whole load: it goes on)
+    x.want_whole = false;
     return;
   }
   int16_t* d = (int16_t*)data(b);
@@ -432,6 +482,23 @@ CORE_COLD void fill_end(int e, uint32_t written, bool okk) {
 CORE_COLD bool busy(int e) {   // a whole load waits or runs for it (queued, running, or after its fill)
   return began && e >= 0 && e < kEntries && E[e].st != kNone && (queued(e) || J.e == e || (E[e].filling && E[e].want_whole));
 }
+CORE_COLD bool held(int e) { return began && e >= 0 && e < kEntries && E[e].st != kNone && (J.e == e || E[e].filling); }
+CORE_COLD void mark_kept(int b, uint32_t frames) {
+  if (!began || b < 0 || b >= kBlocks || !B[b].live || B[b].priv || B[b].ent < 0 || frames < 2) return;
+  const Ent& x = E[B[b].ent];
+  uint64_t need = up(((uint64_t)frames + 1) * 2 * (x.ch == 2 ? 2 : 1));
+  if (frames >= x.frames || need >= B[b].bytes) return;
+  if (!B[b].give) st.kept += B[b].bytes;
+  B[b].give = need, B[b].give_frames = frames;
+}
+CORE_COLD void unmark_kept(int b) {
+  if (!began || b < 0 || b >= kBlocks || !B[b].live || !B[b].give) return;
+  st.kept -= B[b].bytes;
+  B[b].give = 0;
+}
+CORE_COLD void set_give_back(GiveBack hook) { g_give = hook; }
+CORE_COLD void set_give_min_idle(uint32_t ms) { g_min_idle = ms; }
+CORE_COLD int pins(int b) { return began && b >= 0 && b < kBlocks && B[b].live ? B[b].pins : 0; }
 CORE_COLD bool is(int e, const lib::Ref& r) {
   return began && e >= 0 && e < kEntries && E[e].st != kNone && same_key(E[e].key, r);
 }

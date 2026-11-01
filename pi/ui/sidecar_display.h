@@ -20,7 +20,7 @@ public:
 	boolean Initialize (void);		// FALSE: no frame buffer (no display at boot); then Update does nothing
 
 	// The UI's size (docs/pi-display.md "Screen sizes"): 800x480 or 1024x600, the frame buffer's when it is one of them,
-	// else 800x480 centred 1:1 on it with black borders (Pi 4), or scaled up to it (Pi 5's HDMI). SetUiSize before
+	// 1280x720 on Touch Display 2, else 800x480 centred 1:1 on it with black borders (Pi 4), or scaled up to it (Pi 5's HDMI). SetUiSize before
 	// Initialize overrides that (res= in /.rytm/display.txt or cmdline.txt; 0, 0: automatic). The HDMI display's EDID
 	// (its preferred mode) is logged and, on the Pi 5, picks 1024x600 for a 1024x600 panel.
 	void SetUiSize (unsigned nWidth, unsigned nHeight)	{ m_nUiReqW = nWidth; m_nUiReqH = nHeight; }

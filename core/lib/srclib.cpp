@@ -5,6 +5,8 @@
 #if CORE_MSAMP
 #include "srclib.h"
 
+#include "../presets/preset_index.h"
+
 #include <string.h>
 #include <strings.h>
 
@@ -58,7 +60,7 @@ CORE_COLD bool ends(const char* n, const char* ext) {
 }
 CORE_COLD bool accepts_cls(int c, const char* n) {
   if (!n[0] || n[0] == '.') return false;
-  return c == 1 ? ends(n, ".sfz") : ends(n, ".wav") || ends(n, ".aif") || ends(n, ".aiff");
+  return c == 1 ? ends(n, ".sfz") || ends(n, ".elmulti") : ends(n, ".wav") || ends(n, ".aif") || ends(n, ".aiff");
 }
 // the machine's virtual folders at the root (GRANULAR: @INPUTS @BUILT-IN; WAVETABLE: @BUILT-IN)
 CORE_COLD int nvirt(int k) { return k == kGr ? 2 : k == kWt ? 1 : 0; }
@@ -281,6 +283,7 @@ CORE_COLD bool step() {
 }
 CORE_COLD void changed(const char* path) {
   ensure();
+  presets::changed(path);   // (/JUNO, /DX7: the preset browser's index)
   for (int i = 0; i < kCache; ++i) {
     Listing& L = cache[i];
     if (!L.used) continue;

@@ -332,9 +332,9 @@ CORE_COLD bool scope_key(int) { return false; }
 
 UI_ROM const ExtraPage kScopePage = {"SCOPE", nullptr, scope_draw, scope_enc, scope_key, 0x07, true, nullptr, nullptr};
 #if CORE_POLY && CORE_MSAMP
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kPoolPage, &kSeqPage, &kInsPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kPolyPage, &kChopPage};   // SAMPLE (core/samp) where REC shows, POOL (core/lib/pools.h) after AUTO; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kPoolPage, &kSeqPage, &kInsPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kPolyPage, &kChopPage, &kArpPage};   // SAMPLE (core/samp) where REC shows, POOL (core/lib/pools.h) after AUTO; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
 #elif CORE_POLY
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSeqPage, &kInsPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kPolyPage};   // SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSeqPage, &kInsPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kPolyPage, &kArpPage};   // SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
 #else
 UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kMenuPage, &kKeysPage, &kWebUiPage};   // the page order: LFO, REC (where shown), SCOPE last
 #endif

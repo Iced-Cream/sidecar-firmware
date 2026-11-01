@@ -178,9 +178,12 @@ struct PolyCfg {
   uint8_t detune;   // 0..127: the stack's spread in pitch, 127 = +-50 cents at its edges
   uint8_t spread;   // 0..127: the stack's pan spread (a voice on OUT PRE / POST; mono on TRK)
   uint8_t group;    // 0 none; 1..kPolyGroups: a poly group across tracks (data model only: docs/POLYPHONY.md "E0")
+  int8_t oct;       // -3..+3 (BACKLOG 7g PAD OCT): 12 x oct added to the pads' notes (CHRO) and the Rytm's pad 0x04 notes
+                    // on this track's voice; steps record the shifted pitch; host keyboards and playback unshifted
 };
+constexpr int kMaxPadOct = 3;
 inline bool poly_default(const PolyCfg& c) {
-  return !c.voices && !c.alloc && c.unison <= 1 && !c.detune && !c.spread && !c.group;
+  return !c.voices && !c.alloc && c.unison <= 1 && !c.detune && !c.spread && !c.group && !c.oct;
 }
 // seqtop P2 (docs/SEQ-IDEAS.md P2): a track's own speed, a ratio of the Rytm track's step clock (which already runs at
 // the Rytm track's SCALE). 0 FOLLOW = 1:1 (as before). Elektron's set (1/8 .. 2 with 3/4 and 3/2) and the free ratios
@@ -389,6 +392,12 @@ bool sysex(const uint8_t* d, int len);         // a whole 2C / 2D from the Rytm 
 void hello();                                  // the Rytm's hello (35): 2E again, a resync asked
 // Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying)
 void set_clock_tracks(uint16_t mask);
+// The arpeggiator (core/arp/arp.h): the tracks to pin as its notes are the host's, and whether it wants the clock (BD's ticks)
+void set_arp_tracks(uint16_t pins, bool clock);
+// Its time: position p in 1/16ths since PLAY falls at host frame origin + p per16, `latency` early as the sequencer's notes. false: no
+// clock now (stopped, or no tick yet). *lat the latency either way.
+bool beat_map(double* origin, double* per16, int* lat);
+double tempo();                                // the BPM last reported, 0 none
 void midi(uint8_t st, uint8_t d1, uint8_t d2); // a channel message (the Rytm's pads, a host keyboard): poly::midi's note sink (init)
 // A note heard on voice vi (pitch as the voice plays it): what midi() records and step-enters, for a source that knows
 // its voice and track (core/keys.h: a keyboard on the Pi; track -1: the seq track on vi shown first, else the first)
@@ -399,6 +408,8 @@ bool rytm_live_rec();                          // the Rytm records live (2D 06 R
 void pre_block();                              // before each render block (kBlock frames): due notes started / ended
 void tick(uint32_t ms);                        // the control loop: LEDs, the page's state, the debounced save
 bool idle();                                   // a card job (load / prefetch / save): true if it did one
+void save_due();    // a restart is coming: idle saves the edits now, not when they settle
+bool unsaved();     // edits idle has not posted yet
 void project_changed();                        // 0x10 named another project (pool.h project)
 void project_leaving();                        // 1042: before pool.cpp takes a new name: the old project's edits saved
 #if CORE_MSAMP
@@ -413,6 +424,7 @@ void rekey(const char* name);
 void loading_begin();
 #endif
 int pattern_locked(int index);                       // 1042: pattern index's file is locked (1 newer, 2 damaged), 0 not
+int pad_oct(int vi);                           // BACKLOG 7g: the PAD OCT (-3..+3) of the seq track on voice vi (0 none)
 bool owns_voice(int vi);                       // a seq track plays on voice vi now: its 0x04s make no note
 bool any_tracks();                             // a seq track is set (the mask)
 bool shown_wanted();                           // the SEQ page was asked for (seq=show, the Rytm's seq mode)

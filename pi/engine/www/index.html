@@ -97,6 +97,7 @@
   .mut { color:var(--mut); }
   .ok { color:var(--ok); }
   .wn { color:var(--warn); }
+  #pl [hidden] { display:none !important; }   /* the JUNO / 6-OP lists swap the bank view (a class's display outranks the UA's [hidden]) */
   .plbar { display:inline-block; vertical-align:middle; width:90px; } .plbar[hidden] { display:none; }
   .badge { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid currentColor; white-space:nowrap; }
   .lnk { border:0; background:none; padding:0 2px; color:var(--acc); }
@@ -449,21 +450,32 @@
   <section id="pl">
     <h2>Pool</h2>
     <div class="row"><div class="seg" id="pl-lists" role="radiogroup" aria-label="POOL list">
-      <button data-pk="smp" aria-checked="true">SAMPLES</button><button data-pk="wt" aria-checked="false">WAVETABLES</button><button data-pk="inst" aria-checked="false">INSTRUMENTS</button></div>
+      <button data-pk="smp" aria-checked="true">SAMPLES</button><button data-pk="wt" aria-checked="false">WAVETABLES</button><button data-pk="inst" aria-checked="false">INSTRUMENTS</button><button data-pk="juno" aria-checked="false" title="the JUNO machine's preset list">JUNO</button><button data-pk="fm" aria-checked="false" title="the 6-OP FM machine's voice list">6-OP FM</button></div>
       <span class="spacer"></span><span class="mut">Project</span> <b id="pl-proj">-</b></div>
-    <div class="row"><div class="seg" id="pl-banks" role="radiogroup" aria-label="bank"></div>
+    <div class="row" data-nopre><div class="seg" id="pl-banks" role="radiogroup" aria-label="bank"></div>
       <span class="spacer"></span><span style="white-space:nowrap"><span class="mut">RAM</span> <span id="pl-ram" title="the POOL's RAM: the samples and instruments (each file once) and the wavetables, of the budget">-</span>
       <span class="bar plbar" id="pl-rambar" hidden><i></i></span></span></div>
     <div id="pl-lock" class="pwarn" hidden></div>
-    <div class="row"><button id="pl-unused" title="the rows not seen playing in this project">Select unused</button>
+    <div class="row" data-nopre><button id="pl-unused" title="the rows not seen playing in this project">Select unused</button>
       <button id="pl-none">Select none</button><button id="pl-unload" disabled>Unload selected</button>
       <button id="pl-undo" title="the last replace or unload of this list, back">Undo</button>
       <span class="spacer"></span><span id="pl-count" class="mut"></span><button id="pl-re">Refresh</button></div>
     <div id="pl-warn" class="pwarn" hidden></div>
-    <div class="tbl"><table><thead><tr><th></th><th class="r">Row</th><th>Name</th><th>State</th><th class="r">Size</th>
+    <div class="tbl" data-nopre><table><thead><tr><th></th><th class="r">Row</th><th>Name</th><th>State</th><th class="r">Size</th>
       <th class="r" title="times seen playing in this project">Played</th><th class="r" title="voices on the row now">Now</th><th></th></tr></thead>
       <tbody id="pl-rows"><tr><td colspan="8" class="mut">-</td></tr></tbody></table></div>
-    <div id="pl-pick" hidden>
+    <div id="pl-pre" hidden>
+      <div class="row"><b id="pl-pre-title"></b><span class="spacer"></span><span id="pl-pre-count" class="mut"></span>
+        <button id="pl-pre-add" title="the card's presets (the index of /JUNO and /DX7, read at boot): into the list's first empty slot">Add presets</button><button id="pl-pre-re">Refresh</button></div>
+      <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Preset</th><th></th></tr></thead><tbody id="pl-pre-rows"><tr><td colspan="3" class="mut">-</td></tr></tbody></table></div>
+      <div id="pl-pre-ix" hidden>
+        <div class="row"><b id="pl-pre-what"></b><span class="spacer"></span><button id="pl-pre-up" class="sm">Up</button><button id="pl-pre-x" class="sm">Close</button></div>
+        <div class="row mut" id="pl-pre-path"></div>
+        <div id="pl-pre-list" class="tbl" style="max-height:340px;overflow:auto"></div>
+        <div class="row"><button id="pl-pre-prev" class="sm">Previous</button><span id="pl-pre-pos" class="mut"></span><button id="pl-pre-next" class="sm">Next</button></div>
+      </div>
+    </div>
+    <div id="pl-pick" hidden data-nopre>
       <div class="row"><b id="pl-pick-what"></b><span class="spacer"></span><button id="pl-pick-up" class="sm">Up</button><button id="pl-pick-x" class="sm">Cancel</button></div>
       <div class="row mut" id="pl-pick-dir"></div>
       <div id="pl-pick-list" class="tbl" style="max-height:260px;overflow:auto"></div>
@@ -475,7 +487,11 @@
       Replacing or unloading a row in use asks first, and is refused while the Rytm plays. Select unused picks the
       rows not seen playing in this project: a parameter lock on the Rytm that has not played yet is not known.
       Undo takes back the last replace or unload of the list. MISSING: the file is gone from the card (the row is
-      silent); CHANGED: the file's content changed (Accept takes the new content).</p>
+      silent); CHANGED: the file's content changed (Accept takes the new content). JUNO and 6-OP FM are the two preset
+      lists, the same rows the Rytm's knob A and the touchscreen show: Add presets browses the RAM index of /JUNO and
+      /DX7 (FACTORY and ROM on top, banks as folders; the card is not read while you scroll) and puts a preset into the
+      list's first empty slot, Replace into the slot you chose. Renaming, deleting and saving a voice's patch stay in
+      the Presets tab.</p>
   </section>
   </div>
 
@@ -571,7 +587,7 @@
       🔒 marks boot files and the restore backup (read-only); Samples, Plugins and .rytm themselves are kept
       (their contents can change). WAV files uploaded into GRANULAR (and one folder level below it), WAVETABLES or
       MULTISAMPLE are in the machines' browsers at once (rescanned after each upload). <b>+SMP</b> / <b>+WT</b> (any WAV
-      or AIFF) and <b>+INST</b> (an .sfz) add the file to the project's POOL (SAMPLES, WAVETABLES or INSTRUMENTS), into
+      or AIFF) and <b>+INST</b> (an .sfz or Elektron .elmulti) add the file to the project's POOL (SAMPLES, WAVETABLES or INSTRUMENTS), into
       the first free row of the POOL bank chosen above; a file already in that list keeps its row. <b>Fill bank</b>
       puts a folder's files into a bank's empty rows. The rows are in the Pool tab, the Rytm's bank list and the
       touchscreen; a row's audio is loaded into RAM when a voice plays it.</p>
@@ -2483,7 +2499,7 @@ $("#fs-mk").onclick = async () => {
 const POOLS = { smp: "SAMPLES", wt: "WAVETABLES", inst: "INSTRUMENTS" };
 function poolBtns(x, i) {
   if (x.d || x.n[0] === ".") return "";
-  const k = /\.(wav|aif|aiff)$/i.test(x.n) ? ["smp", "wt"] : /\.sfz$/i.test(x.n) ? ["inst"] : [];
+  const k = /\.(wav|aif|aiff)$/i.test(x.n) ? ["smp", "wt"] : /\.(sfz|elmulti)$/i.test(x.n) ? ["inst"] : [];
   return k.map((m) => `<button class="sm" data-act="pool" data-k="${m}" data-i="${i}" title="Add to the POOL's ${POOLS[m]} (the first free row of the POOL bank)">+${m.toUpperCase()}</button> `).join("");
 }
 function bankBtn(x, i) {
@@ -2521,7 +2537,7 @@ $("#fs-list").addEventListener("click", async (e) => {
   if (b.dataset.act === "fill") {
     const kb = bankOf(prompt(`Fill which POOL bank with ${p}'s files? A list (smp, wt or inst) and a bank A..H, e.g. "smp C"`, `smp ${$("#fs-bank").value}`));
     if (!kb) return say(m, 'a list (smp, wt or inst) and a bank A..H, e.g. "smp C"', true);
-    if (kb[0] === "inst") return say(m, "INSTRUMENTS are not filled from a folder: add each .sfz with +INST", true);
+    if (kb[0] === "inst") return say(m, "INSTRUMENTS are not filled from a folder: add each .sfz / .elmulti with +INST", true);
     if (p.length > 159) return say(m, "the path is too long for the POOL (159 characters at most)", true);
     const [t, bad] = fillSay(await poolSend(`pool=${kb[0]}:fill:${kb[1]}:${p}`, kb[0]), p, kb[0], kb[1]);
     return say(m, t, bad);
@@ -2648,11 +2664,12 @@ async function poolSend(c, k) {
 }
 let plK = store("sidecar.pool") || "smp", plB = +(store("sidecar.poolbank") || 0) & 7, plLast = "", plData = null, plBusy = false;
 let plSel = new Set(), plWarn = "", plPickAt = null, plPickDir = "/Samples";
-if (!POOLS[plK]) plK = "smp";
+if (!POOLS[plK] && plK !== "juno" && plK !== "fm") plK = "smp";
 $("#pl-banks").innerHTML = [...POOL_BANKS].map((b, i) => `<button data-pb="${i}" aria-checked="${i === plB}">${b}</button>`).join("");
 const plIo = (k) => ({ send: (c) => poolSend(c, k), ask: async (q) => confirm(q) });
 const plEntry = (row) => { const d = plData && plData.bank; return d ? (d.rows || []).map(plRow).find((e) => POOL_BANKS[d.bank] + String(e.row).padStart(3, "0") === row) : null; };
 async function plPoll(force) {
+  if (plK === "juno" || plK === "fm") return prPoll(force);
   try {
     const r = await getRetry(`/pool?l=${plK}&b=${plB}`), t = await r.text();
     if (t === plLast && !force) return;
@@ -2694,6 +2711,8 @@ $("#pl-lists").addEventListener("click", (e) => {
   plK = b.dataset.pk;
   store("sidecar.pool", plK);
   plSel.clear(); plWarn = ""; plPickAt = null; $("#pl-pick").hidden = true; say($("#pl-msg"), "");
+  prShow();
+  if (plK === "juno" || plK === "fm") { prIx = null; return prPoll(true); }
   cmd(`pool=${plK}:shown:${POOL_BANKS[plB]}`);   // the bank a view shows: the sampler's takes go there
   plPoll(true);
 });
@@ -2734,7 +2753,7 @@ async function plPick(dir) {
   const j = await lsJson(dir) || (dir !== "/" ? await lsJson("/") : null);
   if (!j) return say($("#pl-msg"), dir + ": not readable", true);
   plPickDir = j.path || dir;
-  const want = plPickAt.k === "inst" ? /\.sfz$/i : /\.(wav|aif|aiff)$/i;
+  const want = plPickAt.k === "inst" ? /\.(sfz|elmulti)$/i : /\.(wav|aif|aiff)$/i;
   const ents = (j.entries || []).filter((x) => x.n[0] !== "." && (x.d || want.test(x.n)))
     .sort((a, b) => (b.d - a.d) || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
   $("#pl-pick").hidden = false;
@@ -2742,7 +2761,7 @@ async function plPick(dir) {
   $("#pl-pick-dir").textContent = plPickDir;
   $("#pl-pick-list").innerHTML = `<table><tbody>${ents.map((x) => `<tr><td class="w">${x.d ? `<button class="lnk" data-pdir="${esc(join(plPickDir, x.n))}">${esc(x.n)}/</button>`
     : `<button class="lnk" data-pfile="${esc(join(plPickDir, x.n))}">${esc(x.n)}</button>`}</td><td class="r mut">${x.d ? "" : hb(x.s)}</td></tr>`).join("")
-    || `<tr><td class="mut">no ${plPickAt.k === "inst" ? ".sfz" : "WAV / AIFF"} files here</td></tr>`}</tbody></table>`;
+    || `<tr><td class="mut">no ${plPickAt.k === "inst" ? ".sfz / .elmulti" : "WAV / AIFF"} files here</td></tr>`}</tbody></table>`;
 }
 $("#pl-pick-list").addEventListener("click", (e) => {
   const b = e.target.closest("button");
@@ -2787,6 +2806,106 @@ $("#pl-undo").onclick = () => plAct(async () => {
   say($("#pl-msg"), a ? `${POOLS[plK]}: ${a.text}` : "sent, no answer yet", !a || a.text !== "undone");
 });
 $("#pl-re").onclick = () => plPoll(true);
+// ---- the Pool tab's JUNO / 6-OP FM lists (GET /presets: pi/engine/presetweb.h; an add is the console's
+// preset=juno|fm:add|set:<gen>:<folder>:<row>[:<slot>], core/user/lists.h): the project's list as the Rytm's PAT picks it,
+// and the RAM index of /JUNO and /DX7 to add from. The index is the control core's; this page keeps its own folder.
+const PRE_NAMES = { juno: "JUNO", fm: "6-OP FM" }, PRE_PAGE = 50;
+// the project's list: PAT, the preset ("-" an empty slot), Replace; the built-ins (nothing listed) say so
+const preListHtml = (d) => (d.rows || []).map((r, i) => {
+  const at = (d.o || 0) + i, used = r[1] & 2;
+  return `<tr><td class="r">${at}</td><td>${used ? esc(r[0]) : '<span class="mut">-</span>'}${d.builtin ? ' <span class="mut">built-in</span>' : ""}</td>` +
+    `<td class="r"><button class="sm" data-pre="rep" data-at="${at}" title="Replace slot ${at}: choose a preset from the index">Replace</button></td></tr>`;
+}).join("") || '<tr><td colspan="3" class="mut">-</td></tr>';
+// the index: a folder opens, a preset is added (or set, when a slot was chosen)
+const preIxHtml = (d, at) => (d.rows || []).map((r, i) => (r[1] & 1)
+  ? `<tr><td class="w"><button class="lnk" data-pre="dir" data-kid="${(d.kids || [])[i]}">${esc(r[0])}/</button></td><td class="r"></td></tr>`
+  : `<tr><td class="w">${esc(r[0])}</td><td class="r"><button class="sm" data-pre="add" data-row="${(d.o || 0) + i}">${at >= 0 ? "Set slot " + at : "Add"}</button></td></tr>`).join("")
+  || `<tr><td class="mut">${d.ready === false ? "reading the card" : "empty folder"}</td></tr>`;
+let prIx = null, prLast = "", prBusy = false, prSeq = null, prKind = "";   // prIx: {f, o, at, gen} while the index is open
+function prShow() {
+  const pre = plK === "juno" || plK === "fm";
+  document.querySelectorAll("#pl [data-nopre]").forEach((x) => { x.hidden = pre; });
+  $("#pl-pre").hidden = !pre;
+  document.querySelectorAll("#pl-lists button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.pk === plK)));
+  if (pre) $("#pl-pre-title").textContent = `${PRE_NAMES[plK]} list`;
+}
+async function prGet(f, o, n) {
+  const r = await getRetry(`/presets?k=${plK}&f=${f}&o=${o}&n=${n}`);
+  return JSON.parse(await r.text());
+}
+async function prPoll(force) {
+  if (prBusy) return;
+  try {
+    const l = await prGet(-1, 0, 200), x = prIx ? await prGet(prIx.f, prIx.o, PRE_PAGE) : null;
+    const t = JSON.stringify([l, x]);
+    if (t === prLast && !force) return;
+    prLast = t;
+    prRender(l, x);
+  } catch (e) { $("#pl-pre-count").textContent = "no answer from Sidecar"; }
+}
+function prRender(l, x) {
+  if (prKind !== plK) { prKind = plK; prSeq = l.msg ? l.msg.seq : 0; }
+  if (l.msg && l.msg.seq !== prSeq) { prSeq = l.msg.seq; say($("#pl-msg"), l.msg.text, /FULL|LOADING|NOT/.test(l.msg.text)); }
+  $("#pl-pre-count").textContent = `${(l.rows || []).length} slot${(l.rows || []).length === 1 ? "" : "s"}${l.builtin ? " (the built-ins: the first add makes the list)" : ""}`;
+  $("#pl-pre-rows").innerHTML = preListHtml(l);
+  const ix = $("#pl-pre-ix");
+  ix.hidden = !prIx;
+  if (!prIx || !x) return;
+  if (x.ready && prIx.gen && x.gen !== prIx.gen) {   // the card changed and the index was walked again: its folder numbers are new
+    prIx.f = plK === "fm" ? 1 : 0; prIx.o = 0; prIx.gen = 0;
+    say($("#pl-msg"), "the card changed: the index is new, opened again at its top");
+    return prPoll(true);
+  }
+  if (x.ready) prIx.gen = x.gen;
+  $("#pl-pre-what").textContent = prIx.at >= 0 ? `Replace ${PRE_NAMES[plK]} slot ${prIx.at} with:` : `Add to the first empty ${PRE_NAMES[plK]} slot:`;
+  $("#pl-pre-path").textContent = x.ready ? (x.title || PRE_NAMES[plK]) + (x.full ? " (the index is full: the rest is left out)" : "") : "reading the card";
+  $("#pl-pre-up").disabled = !(x.ready && x.up >= 0);
+  $("#pl-pre-list").innerHTML = `<table><tbody>${preIxHtml(x, prIx.at)}</tbody></table>`;
+  const tot = x.total || 0;
+  $("#pl-pre-pos").textContent = tot ? `${x.o + 1}-${Math.min(x.o + (x.rows || []).length, tot)} of ${tot}` : "";
+  $("#pl-pre-prev").disabled = !(x.o > 0);
+  $("#pl-pre-next").disabled = !(x.o + PRE_PAGE < tot);
+}
+async function prAdd(row) {   // a preset into the list; the answer is the next /presets' msg (the voice of a bank is read first)
+  if (!prIx || !prIx.gen) return;
+  const at = prIx.at, c = `preset=${plK}:${at >= 0 ? "set" : "add"}:${prIx.gen}:${prIx.f}:${row}` + (at >= 0 ? `:${at}` : "");
+  const before = prSeq;
+  prBusy = true;
+  try {
+    if (!(await cmd(c))) return say($("#pl-msg"), "refused", true);
+    say($("#pl-msg"), "sent");
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      const l = await prGet(-1, 0, 200);
+      if (l.msg && l.msg.seq !== before) { prSeq = l.msg.seq; say($("#pl-msg"), l.msg.text, /FULL|LOADING|NOT/.test(l.msg.text)); break; }
+    }
+    if (at >= 0) prIx = null;   // a slot named: back to the list
+  } finally { prBusy = false; prPoll(true); }
+}
+$("#pl-pre-add").onclick = () => { prIx = { f: plK === "fm" ? 1 : 0, o: 0, at: -1, gen: 0 }; prPoll(true); };
+$("#pl-pre-re").onclick = () => prPoll(true);
+$("#pl-pre-rows").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pre=rep]");
+  if (!b) return;
+  prIx = { f: plK === "fm" ? 1 : 0, o: 0, at: +b.dataset.at, gen: 0 };
+  prPoll(true);
+});
+$("#pl-pre-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pre]");
+  if (!b || !prIx) return;
+  if (b.dataset.pre === "dir") { prIx.f = +b.dataset.kid; prIx.o = 0; prPoll(true); }
+  else prAdd(+b.dataset.row);
+});
+$("#pl-pre-up").onclick = async () => {
+  if (!prIx) return;
+  const x = await prGet(prIx.f, prIx.o, 1);
+  if (x.ready && x.up >= 0) { prIx.f = x.up; prIx.o = 0; prPoll(true); }
+};
+$("#pl-pre-x").onclick = () => { prIx = null; prPoll(true); };
+$("#pl-pre-prev").onclick = () => { if (prIx) { prIx.o = Math.max(0, prIx.o - PRE_PAGE); prPoll(true); } };
+$("#pl-pre-next").onclick = () => { if (prIx) { prIx.o += PRE_PAGE; prPoll(true); } };
+prShow();
+if (plK === "juno" || plK === "fm") prPoll(true);
 // ---- end the Pool tab
 async function download(path, size, box) {
   const it = progRow(box || $("#fs-prog"), "download " + path), parts = [], t0 = performance.now();

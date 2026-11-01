@@ -47,7 +47,7 @@ RMP_COLD rmp_status rmp_verify_header_any(const uint8_t *hdr, uint32_t len, rmp_
   if (h.magic != RMP_FILE_MAGIC && h.magic != RMP_FILE_MAGIC_A64) return RMP_ERR_MAGIC;
   uint8_t target = h.magic == RMP_FILE_MAGIC_A64 ? RMP_TARGET_A64 : RMP_TARGET_ARM32;
   uint32_t table = target == RMP_TARGET_A64 ? RMP_PLUGIN_BYTES_A64 : RMP_PLUGIN_BYTES;
-  // 1..3: same image, relocations; 4 (format 3 with an RLB2 block) an RMPA package only: the Teensy shows no
+  // 1..3: same image, relocations; 4 (format 3 with an RLB2 block), 5 (a list over 16 names) RMPA packages only: the Teensy shows no
   // labels that follow a knob, so an RMP1 package stops at 3
   if (h.format < RMP_FORMAT_MIN || h.format > (target == RMP_TARGET_A64 ? RMP_FORMAT : RMP_FORMAT_RMP1)) return RMP_ERR_FORMAT;
   if (h.api < RMP_API_MIN || h.api > RMP_API) return RMP_ERR_API;                  // API 1 plugins still load

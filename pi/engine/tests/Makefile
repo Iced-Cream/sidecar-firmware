@@ -32,6 +32,14 @@ build/test_hid_digitizer: test_hid_digitizer.cpp ../../circle/hid_digitizer.h ch
 build/test_hid_reenum: test_hid_reenum.cpp ../../circle/hid_reenum.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# the DWC2 gadget's bus suspend and resume (pi/circle/gadget_wake.h, circle-gadget-wake.patch)
+build/test_gadget_wake: test_gadget_wake.cpp ../../circle/gadget_wake.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
+# a USB reset's TX FIFO flush at IRQ level (pi/circle/gadget_flush.h, circle-gadget-reset.patch)
+build/test_gadget_flush: test_gadget_flush.cpp ../../circle/gadget_flush.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # the touch screen's 4-point calibration (pi/ui/touch_cal.c, Settings > Display)
 build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal.h check.h
 	@mkdir -p build
@@ -83,6 +91,11 @@ build/test_poolweb: test_poolweb.cpp ../poolweb.cpp ../poolweb.h $(CORE)/lib/poo
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_poolweb.cpp ../poolweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# the web page's JUNO / 6-OP FM lists (presetweb.cpp, GET /presets) over core/presets' index on the core's Mac library
+build/test_presetweb: test_presetweb.cpp ../presetweb.cpp ../presetweb.h $(CORE)/presets/preset_index.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_presetweb.cpp ../presetweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 $(CORE)/build/libcore.dylib: $(wildcard $(CORE)/*.cpp $(CORE)/*/*.cpp $(CORE)/*.h $(CORE)/*/*.h)
 	@test -f $(CORE)/build/libengines.a || { echo "bundleweb: run 'make -C core engines' first"; exit 1; }
 	$(MAKE) -C $(CORE) lib

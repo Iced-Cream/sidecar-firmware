@@ -84,8 +84,10 @@ class CSidecarIsoEP : public CDWUSBGadgetEndpoint
 public:
 	enum TRole { RoleOut, RoleFeedback, RoleIn };
 	CSidecarIsoEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget, TRole Role);
-	void OnActivate (void) override {}		// started by SET_INTERFACE
+	void OnActivate (void) override;		// started by SET_INTERFACE
 	void OnDeactivate (void) override		{ Stop (); }
+	void OnSuspend (void) override			{ Stop (); }	// a reset after this never calls OnDeactivate
+	void OnResume (void) override;			// a resume without a reset: the stream goes on, no SET_INTERFACE comes
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Start (void);
 	void Stop (void);
@@ -230,7 +232,13 @@ private:
 		unsigned nFbSent, nFb, nMacPeak;		// nMacPeak: the computer's largest |sample| mixed (24-bit)
 		unsigned nReq, nBadReq;
 		unsigned nMidiFromHost, nMidiToHost, nMidiToRytm, nMidiFull, nMidiNoRytm;
+#if RASPPI >= 5
+		unsigned nOutCross[ChOut], nOutPeak[ChOut];	// test source: each OUT channel, for the log (no Rytm, no serial needed)
+#endif
 	} m_Stats;
+#if RASPPI >= 5
+	s32 m_nOutLast[ChOut];
+#endif
 	unsigned m_nLastIRQs;
 	u64 m_nLastTicks, m_nLastStamp;
 	u8 m_StringBuffer[80];

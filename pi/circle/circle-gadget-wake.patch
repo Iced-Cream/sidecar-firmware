@@ -1,0 +1,149 @@
+circle-gadget-wake.patch - the DWC2 gadget's bus resume, on top of circle-gadget.patch (Pi 4 and Pi 5; pi/engine/build.sh).
+Its own file and marker, as circle-hid-reenum2.patch: circle-gadget.patch is already applied in every existing tree, so an
+edit to it would not reach them. Needs include/circle/usb/gadget/gadgetwake.h, pi/circle/gadget_wake.h copied in.
+  - the wake-up interrupt on; it, or endpoint activity during a suspend, returns to the state before the suspend and calls
+    the new CDWUSBGadgetEndpoint::OnResume (). Before, a resume without a reset left EP0 dropping SETUPs until a reset
+  - a suspend interrupt that runs after the bus resumed (DSTS.SuspSts clear) is ignored
+GPL-3.0-or-later as Circle.
+diff --git a/include/circle/usb/gadget/dwusbgadget.h b/include/circle/usb/gadget/dwusbgadget.h
+index 8fa2471..bb5e83f 100644
+--- a/include/circle/usb/gadget/dwusbgadget.h
++++ b/include/circle/usb/gadget/dwusbgadget.h
+@@ -26,6 +26,7 @@
+ #include <circle/usb/usb.h>
+ #include <circle/interrupt.h>
+ #include <circle/types.h>
++#include <circle/usb/gadget/gadgetwake.h>
+ 
+ class CDWUSBGadget : public CUSBController	/// DW USB gadget on Raspberry Pi (3)A(+), Zero (2) (W), 4B
+ {
+@@ -130,6 +131,7 @@ private:
+ 	void FlushRxFIFO (void);
+ 
+ 	void HandleUSBSuspend (void);
++	void HandleWakeUp (void);
+ 	void HandleUSBReset (void);
+ 	void HandleEnumerationDone (void);
+ 	void HandleInEPInterrupt (void);
+@@ -168,6 +170,7 @@ private:
+ 	};
+ 
+ 	TState m_State;
++	gadgetwake::Tracker m_Wake;		// the state before a bus suspend (gadgetwake.h)
+ 
+ 	enum TPnPEvent
+ 	{
+diff --git a/include/circle/usb/gadget/dwusbgadgetendpoint.h b/include/circle/usb/gadget/dwusbgadgetendpoint.h
+index 89f9f07..9242f04 100644
+--- a/include/circle/usb/gadget/dwusbgadgetendpoint.h
++++ b/include/circle/usb/gadget/dwusbgadgetendpoint.h
+@@ -65,6 +65,9 @@ public:
+ 	/// \note Override this to abort pending transfers.
+ 	virtual void OnSuspend (void) {}
+ 
++	/// \brief The bus woke from that suspend without a reset (IRQ level)
++	virtual void OnResume (void) {}
++
+ 	/// \brief Set the maximum packet size of this EP (e.g. after speed negotiation)
+ 	/// \param nMaxPacketSize New maximum packet size in bytes
+ 	void SetMaxPacketSize (size_t nMaxPacketSize);
+diff --git a/lib/usb/gadget/dwusbgadget.cpp b/lib/usb/gadget/dwusbgadget.cpp
+index 04b54b4..234d4a6 100644
+--- a/lib/usb/gadget/dwusbgadget.cpp
++++ b/lib/usb/gadget/dwusbgadget.cpp
+@@ -441,6 +441,7 @@ void CDWUSBGadget::EnableDeviceInterrupts (void)
+ 
+ 	// Enable interrupts
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_USB_SUSPEND);
++	IntMask.Or (DWHCI_CORE_INT_MASK_WKUP_INTR);		// circle-gadget-wake.patch
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_USB_RESET_INTR);
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_ENUM_DONE);
+ 	IntMask.Or (DWHCI_CORE_INT_MASK_IN_EP_INTR);
+@@ -516,8 +517,8 @@ void CDWUSBGadget::HandleUSBSuspend (void)
+ 	// Trace: always log suspend with current state (diagnosis for issue #591)
+ 	LOGTRACE ("USB suspend (state %u)", (unsigned) m_State);
+ 
+-	if (   m_State != StatePowered
+-	    && m_State != StateSuspended)
++	CDWHCIRegister DeviceStatus (DWHCI_DEV_STS);
++	if (m_Wake.Suspend (m_State, StatePowered, StateSuspended, DeviceStatus.Read () & 1))	// DSTS.SuspSts
+ 	{
+ 		// Do NOT tear down the core or disable interrupts here. Treating a
+ 		// bus suspend as a disconnect (PnP event -> EP teardown and full core
+@@ -542,6 +543,28 @@ void CDWUSBGadget::HandleUSBSuspend (void)
+ 	IntStatus.Write ();
+ }
+ 
++// The bus resumed without a reset: back to the state before the suspend, so EP0 hears the host's next SETUP.
++void CDWUSBGadget::HandleWakeUp (void)
++{
++	int nState = m_Wake.Wake ();
++	if (nState == gadgetwake::kNone)
++	{
++		return;
++	}
++
++	LOGTRACE ("USB resume (back to state %u)", (unsigned) nState);
++
++	m_State = (TState) nState;
++
++	for (unsigned i = 0; i <= NumberOfEPs; i++)
++	{
++		if (m_pEP[i])
++		{
++			m_pEP[i]->OnResume ();
++		}
++	}
++}
++
+ void CDWUSBGadget::HandleUSBReset (void)
+ {
+ #ifdef USB_GADGET_DEBUG
+@@ -551,6 +574,8 @@ void CDWUSBGadget::HandleUSBReset (void)
+ 	// Trace: always log bus reset with current state (diagnosis for issue #591)
+ 	LOGTRACE ("USB reset (state %u)", (unsigned) m_State);
+ 
++	m_Wake.Reset ();
++
+ 	switch (m_State)
+ 	{
+ 	case StateConfigured:
+@@ -703,6 +728,11 @@ void CDWUSBGadget::HandleInEPInterrupt (void)
+ 		|| m_State == StateEnumDone
+ 		|| m_State == StateConfigured);
+ 
++	if (m_State == StateSuspended && m_Wake.Pending ())
++	{
++		HandleWakeUp ();			// activity on the bus: it is awake
++	}
++
+ 	CDWHCIRegister AllEPsIntStat (DWHCI_DEV_ALL_EPS_INT_STAT);
+ 	CDWHCIRegister AllEPsIntMask (DWHCI_DEV_ALL_EPS_INT_MASK);
+ 	u32 nInEPStat = (AllEPsIntStat.Read () & AllEPsIntMask.Read ()) & 0xFFFF;
+@@ -738,6 +768,11 @@ void CDWUSBGadget::HandleOutEPInterrupt (void)
+ 		|| m_State == StateEnumDone
+ 		|| m_State == StateConfigured);
+ 
++	if (m_State == StateSuspended && m_Wake.Pending ())
++	{
++		HandleWakeUp ();			// activity on the bus: it is awake
++	}
++
+ 	CDWHCIRegister AllEPsIntStat (DWHCI_DEV_ALL_EPS_INT_STAT);
+ 	CDWHCIRegister AllEPsIntMask (DWHCI_DEV_ALL_EPS_INT_MASK);
+ 	u32 nOutEPStat = (AllEPsIntStat.Read () & AllEPsIntMask.Read ()) >> 16;
+@@ -831,6 +866,14 @@ void CDWUSBGadget::InterruptHandler (void)
+ 	LOGDBG ("IRQ (status 0x%08X, state %u)", nIntStatus, (unsigned) m_State);
+ #endif
+ 
++	if (nIntStatus & DWHCI_CORE_INT_MASK_WKUP_INTR)
++	{
++		HandleWakeUp ();
++
++		CDWHCIRegister WakeAck (DWHCI_CORE_INT_STAT, DWHCI_CORE_INT_MASK_WKUP_INTR);
++		WakeAck.Write ();
++	}
++
+ 	if (nIntStatus & DWHCI_CORE_INT_MASK_USB_SUSPEND)
+ 	{
+ 		HandleUSBSuspend ();

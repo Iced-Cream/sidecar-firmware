@@ -76,7 +76,11 @@ static const seq_geo_t *G = &kGeoClassic;
 static void geo_size (const seq_geo_t *b)
 {
 	seq_geo_t g = *b;
-	const int dx = TH->dx, dy = TH->dy, gx = oled () ? dx * 6 / 7 : dx;	// OLED: 96 of the 112 dots (12 a step)
+	int *f = (int *) &g;					// 1280x720: the whole table in LU
+	for (unsigned i = 0; i < sizeof g / sizeof *f; i++) f[i] = LU (f[i]);
+	int dx = TH->dx, dy = TH->dy, gx = oled () ? dx * 6 / 7 : dx;	// OLED: 96 of the 112 dots (12 a step)
+	// 1280x720: OLED 16 dots a step at two pages (8 at four), CLASSIC 33 px; the pitch keys take what is left
+	if (TH->big) gx = oled () ? 512 - g.grid_w : 1056 - g.grid_w;
 	g.pg_h += dy;
 	g.grid_w += gx;
 	g.grid_h += dy * 2 / 3;
@@ -88,7 +92,7 @@ static void geo_size (const seq_geo_t *b)
 		g.tracks_w += dx / 4;
 		g.strip_x = g.tracks_x + g.tracks_w + 6;
 		g.snap_w += dx / 4;
-		g.snap_x = TH->w - 48 - g.snap_w;
+		g.snap_x = TH->w - LU (48) - g.snap_w;
 		g.strip_w = g.snap_x - 6 - g.strip_x;
 		g.cell = g.strip_w / 8;
 		g.tools_y += dy;
@@ -102,6 +106,11 @@ static void geo_size (const seq_geo_t *b)
 	{
 		g.tracks_w += dx / 4;
 		g.strip_x += dx / 4;
+		if (TH->big)					// room for the header's longest line (SW 62) and the step card's
+		{
+			g.tracks_x += 48, g.strip_x += 48;
+			g.card_w += 48;
+		}
 		g.cell += dx / 16;
 		g.strip_w = g.cell * 8 - 2;
 		g.tools_x += dx;
@@ -383,12 +392,12 @@ static void draw_note (lv_layer_t *l, const lv_area_t *c, int step, int micro, i
 			frame (l, c, a.x1 - 1, a.y1 - 1, a.x2 + 1, a.y2 + 1, 0xFFFFFF, 1, 0);
 			if (a.x2 - a.x1 >= 6) fill (l, c, a.x2 - 2, a.y1, a.x2 - 2, a.y2, 0x000000, LV_OPA_COVER, 0);
 		}
-		if (s_RowH >= 8 && a.x2 - a.x1 >= 20)		// the name in the micro face (7 rows) on a bar of 7 rows or more (T4)
+		if (s_RowH >= LU (8) && a.x2 - a.x1 >= LU (20))		// the name in the micro face (7 rows) on a bar of 7 rows or more (T4)
 		{
 			char b[8];
 			note_name (pitch, b, sizeof b);
 			int bh = a.y2 - a.y1 + 1;
-			text (l, c, a.x1 + 2, bh <= 8 ? a.y1 - 1 : a.y1 + (bh - 9) / 2, a.x2 - a.x1 - 2, TH->f_micro, 0x000000, LV_TEXT_ALIGN_LEFT, b);
+			text (l, c, a.x1 + 2, bh <= LU (8) ? a.y1 - 1 : a.y1 + (bh - LU (9)) / 2, a.x2 - a.x1 - 2, TH->f_micro, 0x000000, LV_TEXT_ALIGN_LEFT, b);
 		}
 		return;
 	}
@@ -398,11 +407,11 @@ static void draw_note (lv_layer_t *l, const lv_area_t *c, int step, int micro, i
 		frame (l, c, a.x1 - 1, a.y1 - 1, a.x2 + 1, a.y2 + 1, 0xE8E8E8, 2, 3);
 		fill (l, c, a.x2 - 3, a.y1 + 2, a.x2 - 2, a.y2 - 2, 0x101010, LV_OPA_COVER, 0);	// the resize grip
 	}
-	if (s_RowH >= 14 && a.x2 - a.x1 >= 34)
+	if (s_RowH >= LU (14) && a.x2 - a.x1 >= LU (34) + (TH->big ? 2 : 0))
 	{
 		char b[8];
 		note_name (pitch, b, sizeof b);
-		text (l, c, a.x1 + 5, a.y1 + (a.y2 - a.y1 + 1 - 14) / 2, a.x2 - a.x1 - 6, &lv_font_montserrat_12, 0x101010,
+		text (l, c, a.x1 + LU (5), a.y1 + (a.y2 - a.y1 + 1 - LU (14)) / 2, a.x2 - a.x1 - LU (6), TH->f_micro, 0x101010,
 		      LV_TEXT_ALIGN_LEFT, b);
 	}
 }
@@ -488,7 +497,7 @@ static void keys_draw (lv_event_t *e)
 		{
 			char b[8];
 			note_name (p, b, sizeof b);
-			text (l, &c, 3, y + (s_RowH - 14) / 2, KEYS_W - 8, &lv_font_montserrat_12,
+			text (l, &c, 3, y + (s_RowH - LU (14)) / 2, KEYS_W - LU (8), TH->f_micro,
 			      p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->win_dim, LV_TEXT_ALIGN_LEFT, b);
 		}
 	}
@@ -500,8 +509,8 @@ static void keys_draw (lv_event_t *e)
 			if (p % 12) continue;
 			char b[8];
 			note_name (p, b, sizeof b);
-			int ty = y + s_RowH - 9, tw = th_text_width (TH->f_micro, b);
-			fill (l, &c, 0, ty + 1, tw + 1, ty + 8, 0x000000, LV_OPA_COVER, 0);
+			int ty = y + s_RowH - LU (9), tw = th_text_width (TH->f_micro, b);
+			fill (l, &c, 0, ty + 1, tw + 1, ty + LU (8), 0x000000, LV_OPA_COVER, 0);
 			text (l, &c, 1, ty, KEYS_W - 3, TH->f_micro, p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->ink, LV_TEXT_ALIGN_LEFT, b);
 		}
 }
@@ -512,7 +521,7 @@ static void ruler_draw (lv_event_t *e)
 	lv_area_t c;
 	lv_obj_get_coords (s_Ruler, &c);
 	int px = GRID_W / (16 * s_Pages);
-	const lv_font_t *f = oled () ? TH->f_micro : &lv_font_montserrat_12;
+	const lv_font_t *f = oled () ? TH->f_micro : TH->f_micro;
 	for (int s = s_First * 16; s < (s_First + s_Pages) * 16; s += 4)
 	{
 		int x = x_of (s * STEP96);
@@ -523,7 +532,7 @@ static void ruler_draw (lv_event_t *e)
 		uint32_t ink = s % 16 ? (oled () ? TH->dim : TH->dim) : TH->ink;
 		if (oled ()) fill (l, &c, x, s % 16 ? 6 : 0, x, G->rul_h - 1, s % 16 ? TH->faint : TH->line_page, LV_OPA_COVER, 0);
 		else fill (l, &c, x, s % 16 ? 9 : 0, x, G->rul_h - 1, s % 16 ? 0x6C6E72 : 0x3A3C40, LV_OPA_COVER, 0);
-		text (l, &c, x + 2, -1, 30, f, ink, LV_TEXT_ALIGN_LEFT, b);
+		text (l, &c, x + 2, -1, LU (30), f, ink, LV_TEXT_ALIGN_LEFT, b);
 	}
 	// T4 / S3: a step with a trig condition (FILL, A:B, a probability ..) a mark at the ruler's foot
 	for (int s = s_First * 16; s < (s_First + s_Pages) * 16 && s < SEQED_STEPS; s++)
@@ -548,7 +557,7 @@ static void strip_draw (lv_event_t *e)
 		char b[4];
 		lv_snprintf (b, sizeof b, "%d", p + 1);
 		// a trig key a page: the shown ones checked, the playing one's LED white (core/seq's PAGE LEDs)
-		th_paint_key (l, &a, b, 0, oled () ? TH->f_body : &lv_font_montserrat_16, TH_KEY_TRIG, on, 0, !there,
+		th_paint_key (l, &a, b, 0, oled () ? TH->f_body : TH->f_body, TH_KEY_TRIG, on, 0, !there,
 			      p == playing ? LED_PLAY : there ? 0 : 0);
 	}
 }
@@ -558,12 +567,12 @@ static void lane_draw (lv_event_t *e)
 	lv_layer_t *l = lv_event_get_layer (e);
 	lv_area_t c;
 	lv_obj_get_coords (s_Lane, &c);
-	const int ox = GRID_X - LANE_X, top = oled () ? 4 : 8, h = LANE_H - (oled () ? 7 : 14);
-	const lv_font_t *f = oled () ? TH->f_micro : &lv_font_montserrat_12;
+	const int ox = GRID_X - LANE_X, top = oled () ? LU (4) : LU (8), h = LANE_H - (oled () ? LU (7) : LU (14));
+	const lv_font_t *f = oled () ? TH->f_micro : TH->f_micro;
 	if (oled ()) frame (l, &c, 0, 0, G->lane_w - 1, LANE_H - 1, DOT_DOTTED, 1, 0);
 	fill (l, &c, ox, top + h, ox + GRID_W - 1, top + h, oled () ? TH->dim : 0x383838, LV_OPA_COVER, 0);
 	fill (l, &c, ox, top + h / 2, ox + GRID_W - 1, top + h / 2, oled () ? DOT_DOTTED : 0x222222, LV_OPA_COVER, 0);
-	text (l, &c, oled () ? 3 : 0, oled () ? 3 : 4, KEYS_W, f, oled () ? TH->dim : TH->win_dim, LV_TEXT_ALIGN_LEFT, "VEL");
+	text (l, &c, oled () ? 3 : 0, oled () ? 3 : LU (4), KEYS_W, f, oled () ? TH->dim : TH->win_dim, LV_TEXT_ALIGN_LEFT, "VEL");
 	// seq-ux: the lock lane over the velocities: a step with parameter locks (the Rytm's hold trig + SRC / SMPL / FX
 	// + a knob) a bar along its width, brighter with more locks (a heatmap)
 	for (int s = s_First * 16; s < (s_First + s_Pages) * 16 && s < SEQED_STEPS; s++)
@@ -586,7 +595,7 @@ static void lane_draw (lv_event_t *e)
 		int x0 = x_of (s * STEP96);
 		if (x0 < 0 || x0 >= GRID_W) continue;
 		const char *m = x & 2 ? "R" : x & 4 ? "F" : x & 1 ? "~" : x & 8 ? "?" : "/";
-		text (l, &c, ox + x0 + 1, oled () ? 3 : 6, oled () ? 8 : 12, f, oled () ? TH->ink : TH->accent, LV_TEXT_ALIGN_LEFT, m);
+		text (l, &c, ox + x0 + 1, oled () ? 3 : LU (6), oled () ? LU (8) : LU (12), f, oled () ? TH->ink : TH->accent, LV_TEXT_ALIGN_LEFT, m);
 	}
 	for (int s = s_First * 16; s <= (s_First + s_Pages) * 16; s += 16)
 	{
@@ -612,7 +621,7 @@ static void lane_draw (lv_event_t *e)
 		{
 			char b[8];
 			lv_snprintf (b, sizeof b, "%d", g.mode == G_LANE ? g.nvel : s_V.note[i].vel);
-			text (l, &c, oled () ? 3 : 0, oled () ? 17 : 24, KEYS_W, oled () ? TH->f_body : &lv_font_montserrat_16,
+			text (l, &c, oled () ? 3 : 0, oled () ? LU (17) : LU (24), KEYS_W, oled () ? TH->f_body : TH->f_body,
 			      oled () ? TH->ink : TH->win_ink, LV_TEXT_ALIGN_LEFT, b);
 		}
 	}
@@ -643,8 +652,8 @@ static void card_update (void)
 	note_rect (st, mi, pi, ln, &a);
 	note_rect (n->step, n->micro, n->pitch, n->len, &o);	// where it was (the outline while it moves)
 	int top = a.y1 < o.y1 ? a.y1 : o.y1, bot = a.y2 > o.y2 ? a.y2 : o.y2;
-	int gap = oled () ? 4 : 8;
-	int x = GRID_X + a.x1 - (oled () ? 12 : 20), y = GRID_Y + top - G->card_h - gap;
+	int gap = LU (oled () ? 4 : 8);
+	int x = GRID_X + a.x1 - (LU (oled () ? 12 : 20)), y = GRID_Y + top - G->card_h - gap;
 	if (y < GRID_Y + 2) y = GRID_Y + bot + gap;
 	x = clampi (x, GRID_X + (oled () ? 0 : 2), GRID_X + GRID_W - G->card_w - (oled () ? 0 : 2));
 	lv_obj_set_pos (s_Card, x, y);
@@ -758,7 +767,7 @@ static void point (lv_obj_t *o, int *x, int *y)
 
 static int hit (int x, int y, int *resize)
 {
-	int m = oled () ? 2 : 4;				// a finger's slack: 4 px, two dots
+	int m = LU (oled () ? 2 : 4);				// a finger's slack: 4 px, two dots
 	for (int i = s_V.n - 1; i >= 0; i--)
 	{
 		const sidecar_seq_note_t *n = &s_V.note[i];
@@ -815,7 +824,7 @@ static void grid_cb (lv_event_t *e)
 	{
 		g.x = x; g.y = y;
 		if (g.mode == G_PINCH || g.mode == G_NONE) return;
-		int dx = x - g.x0, dy = y - g.y0, slop = oled () ? 4 : 8;
+		int dx = x - g.x0, dy = y - g.y0, slop = LU (oled () ? 4 : 8);
 		if (!g.moved && dx * dx + dy * dy < slop * slop) return;
 		if (s_bLocked && (g.mode == G_NOTE || g.mode == G_RESIZE)) g.mode = G_PAN;	// T5 VIEW: a drag scrolls
 		if (g.longdone) return;
@@ -1005,10 +1014,10 @@ static void lane_cb (lv_event_t *e)
 	int x, y;
 	point (s_Lane, &x, &y);
 	x -= GRID_X - LANE_X;
-	const int top = oled () ? 4 : 8, h = LANE_H - (oled () ? 7 : 14);
+	const int top = oled () ? LU (4) : LU (8), h = LANE_H - (oled () ? LU (7) : LU (14));
 	if (code == LV_EVENT_PRESSED)
 	{
-		int best = -1, bd = oled () ? 7 : 14;
+		int best = -1, bd = LU (oled () ? 7 : 14);
 		for (int i = 0; i < s_V.n; i++)
 		{
 			const sidecar_seq_note_t *n = &s_V.note[i];
@@ -1051,7 +1060,7 @@ static void ctl_cb (lv_obj_t *m, int i, void *ud);
 static lv_obj_t *seg (lv_obj_t *parent, int x, int y, int w, int h, const char *const *map, int sel, int kind)
 {
 	lv_obj_t *m = th_seg (parent, x, y, w, h, map, kind, ctl_cb, 0);
-	if (!oled ()) th_seg_font (m, &lv_font_montserrat_14);
+	if (!oled ()) th_seg_font (m, TH->f_small);
 	if (sel >= 0) th_seg_set (m, sel);
 	return m;
 }
@@ -1673,7 +1682,7 @@ void sidecar_seqed_touch2 (int down, int x, int y)
 		return;
 	}
 	if (g.mode != G_PINCH) return;
-	int dx = iabs (x - g.x), dy = iabs (y - g.y), min = oled () ? 20 : 40;
+	int dx = iabs (x - g.x), dy = iabs (y - g.y), min = LU (oled () ? 20 : 40);
 	int pages = g.pages0, rh = g.rowh0;
 	if (g.d0x > min && dx > 0) pages = clampi ((g.pages0 * g.d0x + dx / 2) / dx, 1, 8);	// apart: fewer pages
 	if (g.d0y > min) rh = clampi (g.rowh0 * dy / g.d0y, G->row_min, G->row_max);
@@ -1729,7 +1738,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	}
 	memset (s_TrackTxt, 0, sizeof s_TrackTxt);
 	s_TrackMap[0] = 0;
-	const int PW = oled () ? TH->w - 48 : TH->w, dx = TH->dx;	// the page's width; what 1024x600 adds
+	const int PW = oled () ? TH->w - LU (48) : TH->w, dx = TH->dx;	// the page's width; what 1024x600 adds
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, PW, G->pg_h);
 	s_Page = pg;
 	const lv_font_t *mic = TH->f_micro;
@@ -1737,7 +1746,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	// header
 	if (oled ())
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, PW, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, PW, LU (13));
 		s_Title = s_Where = 0;
 		s_Tracks = th_seg (pg, G->tracks_x, G->tracks_y, G->tracks_w, G->tracks_h, (const char *const[]) {"-", "-", "-", "-", ""},
 				   TH_KEY, track_cb, 0);
@@ -1746,26 +1755,26 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	else
 	{
 		s_TitleBar = 0;
-		lv_obj_t *acc = th_box (pg, 12, 8, 3, 40);
+		lv_obj_t *acc = th_box (pg, LU (12), LU (8), 3, LU (40));
 		lv_obj_set_style_bg_color (acc, lv_color_hex (TH->accent), 0);
 		lv_obj_set_style_bg_opa (acc, LV_OPA_COVER, 0);
-		lv_obj_t *t = label (pg, 22, 7, &lv_font_montserrat_12, 0x1E7A3E, "SIDECAR SEQ");
+		lv_obj_t *t = label (pg, LU (22), LU (7), TH->f_micro, 0x1E7A3E, "SIDECAR SEQ");
 		lv_obj_set_style_text_letter_space (t, 2, 0);
-		s_Title = label (pg, 132, 7, &lv_font_montserrat_12, TH->ink, "");
-		s_Where = label (pg, 22, 25, &lv_font_montserrat_18, TH->ink, "-");
-		lv_obj_set_width (s_Where, 226 + dx / 4);
+		s_Title = label (pg, LU (132), LU (7), TH->f_micro, TH->ink, "");
+		s_Where = label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
+		lv_obj_set_width (s_Where, LU (226) + dx / 4);
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_DOTS);
 		s_Tracks = th_seg (pg, G->tracks_x, G->tracks_y, G->tracks_w, G->tracks_h, (const char *const[]) {"-", "-", "-", "-", ""},
 				   TH_KEY, track_cb, 0);
-		th_seg_font (s_Tracks, &lv_font_montserrat_14);
-		button (pg, 660 + dx, 4, 132, 48, "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, &lv_font_montserrat_16);
-		s_Snap = button (pg, G->snap_x, G->snap_y, G->snap_w, G->snap_h, snap_text (), TH_KEY, snap_cb, &lv_font_montserrat_12);
+		th_seg_font (s_Tracks, TH->f_small);
+		button (pg, LU (660) + dx, LU (4), LU (132), LU (48), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
+		s_Snap = button (pg, G->snap_x, G->snap_y, G->snap_w, G->snap_h, snap_text (), TH_KEY, snap_cb, TH->f_micro);
 	}
 	s_Strip = drawn (pg, G->strip_x, G->strip_y, G->strip_w, G->strip_h, strip_draw, strip_cb, 0, 0);
 	lv_obj_add_event_cb (s_Strip, ext_draw, LV_EVENT_REFR_EXT_DRAW_SIZE, 0);	// CLASSIC: the keys' glow
 
 	// the roll, in a display window (CLASSIC: the hardware's bezel around it)
-	if (!oled ()) th_panel (pg, G->keys_x - 6, G->rul_y - 4, G->grid_x + G->grid_w - G->keys_x + 12, G->grid_y + G->grid_h - G->rul_y + 10, "", TH_PANEL_WINDOW);
+	if (!oled ()) th_panel (pg, G->keys_x - LU (6), G->rul_y - LU (4), G->grid_x + G->grid_w - G->keys_x + LU (12), G->grid_y + G->grid_h - G->rul_y + LU (10), "", TH_PANEL_WINDOW);
 	s_Ruler = drawn (pg, GRID_X, G->rul_y, GRID_W, G->rul_h, ruler_draw, 0, 0, 0);
 	s_Keys = drawn (pg, G->keys_x, GRID_Y, KEYS_W, GRID_H, keys_draw, keys_cb, TH->win, 1);
 	s_Grid = drawn (pg, GRID_X, GRID_Y, GRID_W, GRID_H, grid_draw, grid_cb, oled () ? 0 : TH->row_out, 1);
@@ -1773,14 +1782,14 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	lv_obj_set_style_bg_color (s_Head, lv_color_hex (TH->play), 0);
 	lv_obj_set_style_bg_opa (s_Head, oled () ? LV_OPA_COVER : LV_OPA_80, 0);
 	lv_obj_add_flag (s_Head, LV_OBJ_FLAG_HIDDEN);
-	s_Empty = label (pg, GRID_X + (oled () ? 6 : 40), GRID_Y + (oled () ? 40 : 110), oled () ? mic : &lv_font_montserrat_16, TH->win_dim, "");
-	lv_obj_set_width (s_Empty, GRID_W - (oled () ? 12 : 80));
+	s_Empty = label (pg, GRID_X + (oled () ? LU (6) : LU (40)), GRID_Y + (oled () ? LU (40) : LU (110)), oled () ? mic : TH->f_body, TH->win_dim, "");
+	lv_obj_set_width (s_Empty, GRID_W - (oled () ? LU (12) : LU (80)));
 	lv_obj_set_style_text_align (s_Empty, LV_TEXT_ALIGN_CENTER, 0);
 	if (oled ())					// pitch up, the window's pages, pitch down
 	{
-		const int px = GRID_X + GRID_W + 3, pw = PW - px, ph = 36 + TH->dy / 6;	// 318, 34 x 36 at 400x240
+		const int px = GRID_X + GRID_W + 3, pw = PW - px, ph = LU (36) + TH->dy / 6;	// 318, 34 x 36 at 400x240
 		th_key (pg, px, GRID_Y, pw, ph, LV_SYMBOL_UP, TH_KEY, pitch_cb, (void *) (intptr_t) 1);
-		s_Zoom = th_key (pg, px, GRID_Y + ph + 4, pw, GRID_H - 2 * ph - 8, "2", TH_KEY, pitch_cb, (void *) (intptr_t) 0);
+		s_Zoom = th_key (pg, px, GRID_Y + ph + LU (4), pw, GRID_H - 2 * ph - LU (8), "2", TH_KEY, pitch_cb, (void *) (intptr_t) 0);
 		th_key (pg, px, GRID_Y + GRID_H - ph, pw, ph, LV_SYMBOL_DOWN, TH_KEY, pitch_cb, (void *) (intptr_t) -1);
 	}
 	else s_Zoom = 0;
@@ -1798,7 +1807,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 			lv_obj_set_style_radius (p, 6, 0);
 		}
 		lv_obj_add_flag (p, LV_OBJ_FLAG_HIDDEN);
-		s_PanelInfo[t] = oled () ? label (p, 3, 1, mic, TH->dim, "") : label (p, 8, 2, &lv_font_montserrat_12, TH->ink, "");
+		s_PanelInfo[t] = oled () ? label (p, 3, 1, mic, TH->dim, "") : label (p, LU (8), 2, TH->f_micro, TH->ink, "");
 		s_Panel[t] = p;
 	}
 	static const char *const kNoChords[] = {"-", ""};
@@ -1810,23 +1819,23 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 #define LX(v)	((v) * G->lane_w / 352)			// the 400x240 layout's x and widths, stretched to the lane
 #define LY(v)	((v) * LANE_H / 44)
 		s_ChordM = seg (s_Panel[SEQED_CHORD], 0, 0, G->lane_w, LY (21), kNoChords, -1, K);
-		label (s_Panel[SEQED_CHORD], 3, LY (23) + (LY (21) - 7) / 2, mic, TH->dim, "INV");
-		s_InvM = seg (s_Panel[SEQED_CHORD], 24, LY (23), LX (150) - 24, LY (21), kInvMap, s_Inv, K);
-		label (s_Panel[SEQED_CHORD], LX (158), LY (23) + (LY (21) - 7) / 2, mic, TH->dim, "STRUM");
-		s_ChStrM = seg (s_Panel[SEQED_CHORD], LX (158) + 34, LY (23), G->lane_w - LX (158) - 34, LY (21), kChStrMap, s_ChStr, K);
+		label (s_Panel[SEQED_CHORD], 3, LY (23) + (LY (21) - LU (7)) / 2, mic, TH->dim, "INV");
+		s_InvM = seg (s_Panel[SEQED_CHORD], LU (24), LY (23), LX (150) - LU (24), LY (21), kInvMap, s_Inv, K);
+		label (s_Panel[SEQED_CHORD], LX (158), LY (23) + (LY (21) - LU (7)) / 2, mic, TH->dim, "STRUM");
+		s_ChStrM = seg (s_Panel[SEQED_CHORD], LX (158) + LU (34), LY (23), G->lane_w - LX (158) - LU (34), LY (21), kChStrMap, s_ChStr, K);
 		lv_obj_add_flag (s_PanelInfo[SEQED_CHORD], LV_OBJ_FLAG_HIDDEN);
-		lv_obj_set_width (s_PanelInfo[SEQED_STRUM], G->lane_w - 4);
+		lv_obj_set_width (s_PanelInfo[SEQED_STRUM], G->lane_w - LU (4));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_STRUM], LV_LABEL_LONG_MODE_CLIP);
-		s_StrumM = seg (s_Panel[SEQED_STRUM], 0, 12, LX (156), LANE_H - 12, kStrumMap, s_StrumI, K);
-		s_DirM = seg (s_Panel[SEQED_STRUM], LX (162), 12, LX (255) - LX (162), LANE_H - 12, kDirMap, s_StrumDir, K);
-		button (s_Panel[SEQED_STRUM], LX (261), 12, G->lane_w - LX (261), LANE_H - 12, "APPLY", TH_KEY_ACCENT, apply_cb, 0);
-		lv_obj_set_width (s_PanelInfo[SEQED_HUMAN], G->lane_w - 4);
+		s_StrumM = seg (s_Panel[SEQED_STRUM], 0, LU (12), LX (156), LANE_H - LU (12), kStrumMap, s_StrumI, K);
+		s_DirM = seg (s_Panel[SEQED_STRUM], LX (162), LU (12), LX (255) - LX (162), LANE_H - LU (12), kDirMap, s_StrumDir, K);
+		button (s_Panel[SEQED_STRUM], LX (261), LU (12), G->lane_w - LX (261), LANE_H - LU (12), "APPLY", TH_KEY_ACCENT, apply_cb, 0);
+		lv_obj_set_width (s_PanelInfo[SEQED_HUMAN], G->lane_w - LU (4));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_HUMAN], LV_LABEL_LONG_MODE_CLIP);
-		label (s_Panel[SEQED_HUMAN], 3, 12 + (LANE_H - 12 - 7) / 2 + 1, mic, TH->dim, "T");
-		s_HumTM = seg (s_Panel[SEQED_HUMAN], 12, 12, LX (141) - 12, LANE_H - 12, kHumTMap, s_HumT, K);
-		label (s_Panel[SEQED_HUMAN], LX (147), 12 + (LANE_H - 12 - 7) / 2 + 1, mic, TH->dim, "V");
-		s_HumVM = seg (s_Panel[SEQED_HUMAN], LX (147) + 9, 12, LX (255) - LX (147) - 9, LANE_H - 12, kHumVMap, s_HumV, K);
-		button (s_Panel[SEQED_HUMAN], LX (261), 12, G->lane_w - LX (261), LANE_H - 12, "APPLY", TH_KEY_ACCENT, apply_cb, 0);
+		label (s_Panel[SEQED_HUMAN], 3, LU (12) + (LANE_H - LU (12) - LU (7)) / 2 + 1, mic, TH->dim, "T");
+		s_HumTM = seg (s_Panel[SEQED_HUMAN], LU (12), LU (12), LX (141) - LU (12), LANE_H - LU (12), kHumTMap, s_HumT, K);
+		label (s_Panel[SEQED_HUMAN], LX (147), LU (12) + (LANE_H - LU (12) - LU (7)) / 2 + 1, mic, TH->dim, "V");
+		s_HumVM = seg (s_Panel[SEQED_HUMAN], LX (147) + LU (9), LU (12), LX (255) - LX (147) - LU (9), LANE_H - LU (12), kHumVMap, s_HumV, K);
+		button (s_Panel[SEQED_HUMAN], LX (261), LU (12), G->lane_w - LX (261), LANE_H - LU (12), "APPLY", TH_KEY_ACCENT, apply_cb, 0);
 		s_RootM = seg (s_Panel[SEQED_KEY], 0, 0, G->lane_w, LY (21), kRootMap, s_Root, K);
 		th_seg_gap (s_RootM, 2);
 		s_ScaleM = seg (s_Panel[SEQED_KEY], 0, LY (23), LX (190), LY (21), kScaleMap, s_Scale, K);
@@ -1844,90 +1853,90 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		s_RndS = th_key (s_Panel[SEQED_STEP], LX (300), LY (23), G->lane_w - LX (300), LY (21), "RND", TH_KEY, stepkey_cb, 0);
 		lv_obj_add_flag (s_PanelInfo[SEQED_STEP], LV_OBJ_FLAG_HIDDEN);
 		// SWING: the info line, then - / the presets / + (the value's own key: the info line; - and + by 1 %)
-		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - 4);
+		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - LU (4));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_SWING], LV_LABEL_LONG_MODE_CLIP);
-		th_key (s_Panel[SEQED_SWING], 0, 12, LX (34), LANE_H - 12, "-", TH_KEY, swing_cb, (void *) (intptr_t) -1);
-		s_SwingM = seg (s_Panel[SEQED_SWING], LX (37), 12, LX (278), LANE_H - 12, kSwingMap, -1, K);
-		th_key (s_Panel[SEQED_SWING], LX (318), 12, G->lane_w - LX (318), LANE_H - 12, "+", TH_KEY, swing_cb, (void *) (intptr_t) 1);
+		th_key (s_Panel[SEQED_SWING], 0, LU (12), LX (34), LANE_H - LU (12), "-", TH_KEY, swing_cb, (void *) (intptr_t) -1);
+		s_SwingM = seg (s_Panel[SEQED_SWING], LX (37), LU (12), LX (278), LANE_H - LU (12), kSwingMap, -1, K);
+		th_key (s_Panel[SEQED_SWING], LX (318), LU (12), G->lane_w - LX (318), LANE_H - LU (12), "+", TH_KEY, swing_cb, (void *) (intptr_t) 1);
 		// POLY (seqx E0): the info line, then VOICES / ALLOCATION / UNISON
-		lv_obj_set_width (s_PanelInfo[SEQED_POLY], G->lane_w - 4);
+		lv_obj_set_width (s_PanelInfo[SEQED_POLY], G->lane_w - LU (4));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_POLY], LV_LABEL_LONG_MODE_CLIP);
-		s_VoicesM = seg (s_Panel[SEQED_POLY], 0, 12, LX (190), LANE_H - 12, kVoicesMap, -1, K);
-		s_AllocM = seg (s_Panel[SEQED_POLY], LX (194), 12, LX (290) - LX (194), LANE_H - 12, kAllocMapO, 0, K);
-		s_UniM = seg (s_Panel[SEQED_POLY], LX (294), 12, G->lane_w - LX (294), LANE_H - 12, kUniMapO, 0, K);
+		s_VoicesM = seg (s_Panel[SEQED_POLY], 0, LU (12), LX (190), LANE_H - LU (12), kVoicesMap, -1, K);
+		s_AllocM = seg (s_Panel[SEQED_POLY], LX (194), LU (12), LX (290) - LX (194), LANE_H - LU (12), kAllocMapO, 0, K);
+		s_UniM = seg (s_Panel[SEQED_POLY], LX (294), LU (12), G->lane_w - LX (294), LANE_H - LU (12), kUniMapO, 0, K);
 	}
 	else
 	{
 #define CX(v)	((v) * G->lane_w / 684)			// the 800x480 layout's x and widths, stretched to the lane
-		const int ky = 20 + (LANE_H - 70) / 4, kh = 48 + (LANE_H - 70) / 2;	// 20, 48 at 800x480
-		s_ChordM = seg (s_Panel[SEQED_CHORD], 4, ky, CX (450), kh, kNoChords, -1, TH_KEY);
-		th_seg_font (s_ChordM, &lv_font_montserrat_12);		// eleven keys of 37 px: "SUS4" fits at 12
+		const int ky = LU (20) + (LANE_H - LU (70)) / 4, kh = LU (48) + (LANE_H - LU (70)) / 2;	// 20, 48 at 800x480
+		s_ChordM = seg (s_Panel[SEQED_CHORD], LU (4), ky, CX (450), kh, kNoChords, -1, TH_KEY);
+		th_seg_font (s_ChordM, TH->f_micro);		// eleven keys of 37 px: "SUS4" fits at 12
 		s_InvM = seg (s_Panel[SEQED_CHORD], CX (462), ky, CX (112), kh, kInvMap, s_Inv, TH_KEY);
 		lv_obj_set_width (s_PanelInfo[SEQED_CHORD], CX (450));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_CHORD], LV_LABEL_LONG_MODE_DOTS);
-		label (s_Panel[SEQED_CHORD], CX (462) + 2, 2, &lv_font_montserrat_12, TH->ink, "INVERSION");
-		label (s_Panel[SEQED_CHORD], CX (582) + 2, 2, &lv_font_montserrat_12, TH->ink, "STRUM /96");
-		s_ChStrM = seg (s_Panel[SEQED_CHORD], CX (582), ky, G->lane_w - 4 - CX (582), kh, kChStrMap, s_ChStr, TH_KEY);
-		s_StrumM = seg (s_Panel[SEQED_STRUM], 4, ky, CX (330), kh, kStrumMap, s_StrumI, TH_KEY);
+		label (s_Panel[SEQED_CHORD], CX (462) + 2, 2, TH->f_micro, TH->ink, "INVERSION");
+		label (s_Panel[SEQED_CHORD], CX (582) + 2, 2, TH->f_micro, TH->ink, "STRUM /96");
+		s_ChStrM = seg (s_Panel[SEQED_CHORD], CX (582), ky, G->lane_w - LU (4) - CX (582), kh, kChStrMap, s_ChStr, TH_KEY);
+		s_StrumM = seg (s_Panel[SEQED_STRUM], LU (4), ky, CX (330), kh, kStrumMap, s_StrumI, TH_KEY);
 		s_DirM = seg (s_Panel[SEQED_STRUM], CX (342), ky, CX (160), kh, kDirMap, s_StrumDir, TH_KEY);
-		button (s_Panel[SEQED_STRUM], CX (520), ky, G->lane_w - 4 - CX (520), kh, "APPLY VIEW", TH_KEY_FUNC, apply_cb, &lv_font_montserrat_16);
-		label (s_Panel[SEQED_HUMAN], 8, ky + kh / 2 - 8, &lv_font_montserrat_14, TH->ink, "TIME");
-		s_HumTM = seg (s_Panel[SEQED_HUMAN], 52, ky, CX (282) - 52, kh, kHumTMap, s_HumT, TH_KEY);
-		label (s_Panel[SEQED_HUMAN], CX (296), ky + kh / 2 - 8, &lv_font_montserrat_14, TH->ink, "VEL");
-		s_HumVM = seg (s_Panel[SEQED_HUMAN], CX (296) + 36, ky, CX (512) - CX (296) - 36, kh, kHumVMap, s_HumV, TH_KEY);
-		button (s_Panel[SEQED_HUMAN], CX (520), ky, G->lane_w - 4 - CX (520), kh, "APPLY VIEW", TH_KEY_FUNC, apply_cb, &lv_font_montserrat_16);
+		button (s_Panel[SEQED_STRUM], CX (520), ky, G->lane_w - LU (4) - CX (520), kh, "APPLY VIEW", TH_KEY_FUNC, apply_cb, TH->f_body);
+		label (s_Panel[SEQED_HUMAN], LU (8), ky + kh / 2 - LU (8), TH->f_small, TH->ink, "TIME");
+		s_HumTM = seg (s_Panel[SEQED_HUMAN], LU (52), ky, CX (282) - LU (52), kh, kHumTMap, s_HumT, TH_KEY);
+		label (s_Panel[SEQED_HUMAN], CX (296), ky + kh / 2 - LU (8), TH->f_small, TH->ink, "VEL");
+		s_HumVM = seg (s_Panel[SEQED_HUMAN], CX (296) + LU (36), ky, CX (512) - CX (296) - LU (36), kh, kHumVMap, s_HumV, TH_KEY);
+		button (s_Panel[SEQED_HUMAN], CX (520), ky, G->lane_w - LU (4) - CX (520), kh, "APPLY VIEW", TH_KEY_FUNC, apply_cb, TH->f_body);
 		// seqtop: KEY, PLAY and STEP in two rows under their info line
-		const int r1 = 18, rh = (LANE_H - 22) / 2, r2 = r1 + rh + 2;	// 18, 24, 44 at 800x480
-		const lv_font_t *f12 = &lv_font_montserrat_12;
-		s_RootM = seg (s_Panel[SEQED_KEY], 4, r1, CX (440), rh, kRootMap, s_Root, TH_KEY);
+		const int r1 = LU (18), rh = (LANE_H - LU (22)) / 2, r2 = r1 + rh + 2;	// 18, 24, 44 at 800x480
+		const lv_font_t *f12 = TH->f_micro;
+		s_RootM = seg (s_Panel[SEQED_KEY], LU (4), r1, CX (440), rh, kRootMap, s_Root, TH_KEY);
 		th_seg_gap (s_RootM, 2);
 		th_seg_font (s_RootM, f12);
-		s_ScaleM = seg (s_Panel[SEQED_KEY], CX (452), r1, G->lane_w - 4 - CX (452), rh, kScaleMap, s_Scale, TH_KEY);
+		s_ScaleM = seg (s_Panel[SEQED_KEY], CX (452), r1, G->lane_w - LU (4) - CX (452), rh, kScaleMap, s_Scale, TH_KEY);
 		th_seg_font (s_ScaleM, f12);
-		label (s_Panel[SEQED_KEY], 8, r2 + rh / 2 - 7, f12, TH->ink, "QNT");
-		s_QntM = seg (s_Panel[SEQED_KEY], 40, r2, CX (240) - 40, rh, kQntMap, 0, TH_KEY);
+		label (s_Panel[SEQED_KEY], LU (8), r2 + rh / 2 - LU (7), f12, TH->ink, "QNT");
+		s_QntM = seg (s_Panel[SEQED_KEY], LU (40), r2, CX (240) - LU (40), rh, kQntMap, 0, TH_KEY);
 		th_seg_font (s_QntM, f12);
-		label (s_Panel[SEQED_KEY], CX (252), r2 + rh / 2 - 7, f12, TH->ink, "SEED");
+		label (s_Panel[SEQED_KEY], CX (252), r2 + rh / 2 - LU (7), f12, TH->ink, "SEED");
 		th_key_font (th_key (s_Panel[SEQED_KEY], CX (300), r2, CX (60), rh, "-", TH_KEY, seed_cb, (void *) (intptr_t) -1), f12);
 		s_Free = button (s_Panel[SEQED_KEY], CX (366), r2, CX (110), rh, "FREE", TH_KEY, seed_cb, f12);
 		th_key_font (th_key (s_Panel[SEQED_KEY], CX (482), r2, CX (60), rh, "+", TH_KEY, seed_cb, (void *) (intptr_t) 1), f12);
-		s_SpdM = seg (s_Panel[SEQED_PLAY], 4, r1, CX (340), rh, kSpdMap, -1, TH_KEY);
+		s_SpdM = seg (s_Panel[SEQED_PLAY], LU (4), r1, CX (340), rh, kSpdMap, -1, TH_KEY);
 		th_seg_font (s_SpdM, f12);
-		s_DirM2 = seg (s_Panel[SEQED_PLAY], CX (352), r1, G->lane_w - 4 - CX (352), rh, kDir2Map, 0, TH_KEY);
+		s_DirM2 = seg (s_Panel[SEQED_PLAY], CX (352), r1, G->lane_w - LU (4) - CX (352), rh, kDir2Map, 0, TH_KEY);
 		th_seg_font (s_DirM2, f12);
-		s_RndM = seg (s_Panel[SEQED_PLAY], 4, r2, CX (200), rh, kRndMap, 0, TH_KEY);
+		s_RndM = seg (s_Panel[SEQED_PLAY], LU (4), r2, CX (200), rh, kRndMap, 0, TH_KEY);
 		th_seg_font (s_RndM, f12);
 		s_OctM = seg (s_Panel[SEQED_PLAY], CX (212), r2, CX (120), rh, kOctMap, 1, TH_KEY);
 		th_seg_font (s_OctM, f12);
 		s_WghtM = seg (s_Panel[SEQED_PLAY], CX (344), r2, CX (264), rh, kWghtMap, 0, TH_KEY);
 		th_seg_font (s_WghtM, f12);
-		button (s_Panel[SEQED_PLAY], CX (616), r2, G->lane_w - 4 - CX (616), rh, "PRINT", TH_KEY_FUNC, print_cb, f12);
-		s_RtM = seg (s_Panel[SEQED_STEP], 4, r1, CX (380), rh, kRtMap, -1, TH_KEY);
+		button (s_Panel[SEQED_PLAY], CX (616), r2, G->lane_w - LU (4) - CX (616), rh, "PRINT", TH_KEY_FUNC, print_cb, f12);
+		s_RtM = seg (s_Panel[SEQED_STEP], LU (4), r1, CX (380), rh, kRtMap, -1, TH_KEY);
 		th_seg_font (s_RtM, f12);
-		s_FxM = seg (s_Panel[SEQED_STEP], CX (392), r1, G->lane_w - 4 - CX (392), rh, kFxMap, -1, TH_KEY);
+		s_FxM = seg (s_Panel[SEQED_STEP], CX (392), r1, G->lane_w - LU (4) - CX (392), rh, kFxMap, -1, TH_KEY);
 		th_seg_font (s_FxM, f12);
-		s_RndS = button (s_Panel[SEQED_STEP], 4, r2, CX (120), rh, "RND", TH_KEY, stepkey_cb, f12);
-		label (s_Panel[SEQED_STEP], CX (136), r2 + rh / 2 - 7, f12, TH->ink, "LOCKS");
+		s_RndS = button (s_Panel[SEQED_STEP], LU (4), r2, CX (120), rh, "RND", TH_KEY, stepkey_cb, f12);
+		label (s_Panel[SEQED_STEP], CX (136), r2 + rh / 2 - LU (7), f12, TH->ink, "LOCKS");
 		s_CondM = seg (s_Panel[SEQED_STEP], CX (192), r2, CX (260), rh, kCondMap, -1, TH_KEY);
 		th_seg_font (s_CondM, f12);
 		s_SlideK = th_key (s_Panel[SEQED_STEP], CX (464), r2, CX (130), rh, "SLIDE", TH_KEY, stepkey_cb, (void *) (intptr_t) 1);
 		th_key_font (s_SlideK, f12);
-		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - 16);
+		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - LU (16));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_SWING], LV_LABEL_LONG_MODE_DOTS);
-		th_key_font (th_key (s_Panel[SEQED_SWING], 4, ky, CX (80), kh, "-", TH_KEY, swing_cb, (void *) (intptr_t) -1), &lv_font_montserrat_24);
+		th_key_font (th_key (s_Panel[SEQED_SWING], LU (4), ky, CX (80), kh, "-", TH_KEY, swing_cb, (void *) (intptr_t) -1), TH->f_big);
 		s_SwingM = seg (s_Panel[SEQED_SWING], CX (92), ky, CX (500), kh, kSwingMap, -1, TH_KEY);
-		th_key_font (th_key (s_Panel[SEQED_SWING], CX (600), ky, G->lane_w - 4 - CX (600), kh, "+", TH_KEY, swing_cb, (void *) (intptr_t) 1),
-			     &lv_font_montserrat_24);
+		th_key_font (th_key (s_Panel[SEQED_SWING], CX (600), ky, G->lane_w - LU (4) - CX (600), kh, "+", TH_KEY, swing_cb, (void *) (intptr_t) 1),
+			     TH->f_big);
 		// POLY (seqx E0): VOICES, ALLOCATION, UNISON with their names above, the info line over VOICES
 		lv_obj_set_width (s_PanelInfo[SEQED_POLY], CX (320));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_POLY], LV_LABEL_LONG_MODE_DOTS);
-		s_VoicesM = seg (s_Panel[SEQED_POLY], 4, ky, CX (320), kh, kVoicesMap, -1, TH_KEY);
-		th_seg_font (s_VoicesM, &lv_font_montserrat_14);
-		label (s_Panel[SEQED_POLY], CX (330) + 2, 2, &lv_font_montserrat_12, TH->ink, "ALLOCATION");
+		s_VoicesM = seg (s_Panel[SEQED_POLY], LU (4), ky, CX (320), kh, kVoicesMap, -1, TH_KEY);
+		th_seg_font (s_VoicesM, TH->f_small);
+		label (s_Panel[SEQED_POLY], CX (330) + 2, 2, TH->f_micro, TH->ink, "ALLOCATION");
 		s_AllocM = seg (s_Panel[SEQED_POLY], CX (330), ky, CX (196), kh, kAllocMap, 0, TH_KEY);
-		th_seg_font (s_AllocM, &lv_font_montserrat_12);
-		label (s_Panel[SEQED_POLY], CX (538) + 2, 2, &lv_font_montserrat_12, TH->ink, "UNISON");
-		s_UniM = seg (s_Panel[SEQED_POLY], CX (538), ky, G->lane_w - 4 - CX (538), kh, kUniMap, 0, TH_KEY);
+		th_seg_font (s_AllocM, TH->f_micro);
+		label (s_Panel[SEQED_POLY], CX (538) + 2, 2, TH->f_micro, TH->ink, "UNISON");
+		s_UniM = seg (s_Panel[SEQED_POLY], CX (538), ky, G->lane_w - LU (4) - CX (538), kh, kUniMap, 0, TH_KEY);
 	}
 
 	// tools
@@ -1936,10 +1945,10 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	{
 		s_Tools = th_seg (pg, G->tools_x, G->tools_y, G->tools_w, G->tools_h, kToolMap, TH_KEY, ctl_cb, 0);
 		th_seg_gap (s_Tools, 4);
-		th_seg_font (s_Tools, &lv_font_montserrat_14);
+		th_seg_font (s_Tools, TH->f_small);
 		th_seg_set (s_Tools, s_Tool);
 	}
-	const lv_font_t *uf = oled () ? 0 : &lv_font_montserrat_12;
+	const lv_font_t *uf = oled () ? 0 : TH->f_micro;
 	s_Undo = button (pg, G->undo_x, G->undo_y, G->undo_w, G->undo_h, "UNDO", TH_KEY, undo_cb, uf);
 	s_Redo = th_key (pg, G->redo_x, G->undo_y, G->undo_w + (oled () ? 0 : 0), G->undo_h, "REDO", TH_KEY,
 			 undo_cb, (void *) 1);
@@ -1953,9 +1962,9 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		lv_obj_set_style_bg_opa (s_Card, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent_hi), 0);
 		lv_obj_set_style_border_width (s_Card, 1, 0);
-		s_CardText = label (s_Card, 5, 3, TH->f_body, TH->ink, "");
-		s_CardSub = label (s_Card, 5, 21, mic, TH->dim, "");
-		button (s_Card, G->card_w - 33, 3, 30, 30, LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, 0);
+		s_CardText = label (s_Card, LU (5), 3, TH->f_body, TH->ink, "");
+		s_CardSub = label (s_Card, LU (5), LU (21), mic, TH->dim, "");
+		button (s_Card, G->card_w - LU (33), 3, LU (30), LU (30), LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, 0);
 	}
 	else
 	{
@@ -1963,13 +1972,13 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent), 0);
 		lv_obj_set_style_border_width (s_Card, 1, 0);
 		lv_obj_set_style_radius (s_Card, 8, 0);
-		s_CardText = label (s_Card, 10, 6, &lv_font_montserrat_16, TH->win_ink, "");
-		s_CardSub = label (s_Card, 10, 30, &lv_font_montserrat_12, TH->win_dim, "");
-		button (s_Card, G->card_w - 52, 5, 46, 44, LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, &lv_font_montserrat_16);
+		s_CardText = label (s_Card, LU (10), LU (6), TH->f_body, TH->win_ink, "");
+		s_CardSub = label (s_Card, LU (10), LU (30), TH->f_micro, TH->win_dim, "");
+		button (s_Card, G->card_w - LU (52), LU (5), LU (46), LU (44), LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, TH->f_body);
 	}
 	lv_obj_add_flag (s_Card, LV_OBJ_FLAG_HIDDEN);
 	// T5: the toast over the grid's top edge (an edit, or why a tap did not edit)
-	s_Toast = label (pg, GRID_X + 4, GRID_Y + 3, oled () ? TH->f_body : &lv_font_montserrat_16, oled () ? TH->ink : TH->win_ink, "");
+	s_Toast = label (pg, GRID_X + LU (4), GRID_Y + 3, oled () ? TH->f_body : TH->f_body, oled () ? TH->ink : TH->win_ink, "");
 	lv_obj_set_style_bg_color (s_Toast, lv_color_hex (oled () ? 0x000000 : 0x202226), 0);
 	lv_obj_set_style_bg_opa (s_Toast, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_color (s_Toast, lv_color_hex (oled () ? TH->ink : TH->accent), 0);

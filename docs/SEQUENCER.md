@@ -831,8 +831,15 @@ built since (rui1048, below, "E0 on the Rytm"); the RANDOM page waits for the se
   Elektronauts threads on ALLOCATION]: **VOICES** 0 AUTO / 1..8, **ALLOCATION** REASSIGN (default) / ROTATE / RESET,
   **UNISON** 1..8 with **DETUNE** (127 = +-50 cents at the stack's edges) and **SPREAD** (pan, on a voice on OUT PRE /
   POST), **GROUP** 0..4 (the data model of a poly group across tracks; not played yet - docs/POLYPHONY.md 7).
+- **PAD OCT (encoder G, `seq=poly:T:oct=-3..3`; BACKLOG 7g):** the Rytm's CHRO pads reach C2..B5 only. PAD OCT adds
+  12 x OCT to the pitch the pads (CHRO notes bound to the track's voice) and the Rytm's pad 0x04 notes make on that
+  track's voice, so the pads reach 0..119 with no firmware change. The recorded steps hold the shifted pitch (what
+  sounds); the chord the pads make is written back to the Rytm as root - 12 x OCT (clamped to 36..84). A host keyboard
+  (`poly=bind`) and the sequencer's own playback are not shifted; steps already recorded do not move when OCT changes.
+  Stored as a 8th byte of the pattern's poly block (written only when OCT is not 0, so a file without OCT stays byte for
+  byte as before) and as the 8th number of `poly=` (optional).
 - **Where it is stored (decided):** in the pattern (a v4 block per track), and as the Rytm track's **default** in
-  `tracks.txt` (`poly=T:V,A,U,D,S,G`): a track plays its pattern's config, else its default - the last one set on it in
+  `tracks.txt` (`poly=T:V,A,U,D,S,G,O`; O, the PAD OCT, is optional when read): a track plays its pattern's config, else its default - the last one set on it in
   this project. So a track keeps its voicing across patterns as an A4 keeps POLY CONFIG in its kit, a pattern may still
   differ, and nothing new is written to the card on the control core (the pattern's and the tracks' existing saves).
   Per kit was the alternative: the A4's place, but the Sidecar's seq data has no per-kit file, and a new per-kit card

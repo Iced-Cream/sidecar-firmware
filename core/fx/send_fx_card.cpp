@@ -2,6 +2,7 @@
 // /.rytm/fxslots/<project>.txt (the project's user-FX slot map). Cold: boot, a project change, the idle step.
 #include "fmt/fmt.h"
 #include "fx/send_fx.h"
+#include "msamp/cardq.h"
 #include "pool/pool.h"
 
 namespace core {
@@ -58,16 +59,19 @@ static CORE_COLD int hexv(char c) {
   return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
-CORE_COLD void slots_load(const char* project) {
-  for (int u = 0; u < kUserSlots; ++u) user[u].tag = 0, user[u].name[0] = 0;
-  char fn[72], safe[48];
-  pool_file(safe, sizeof safe);   // "/.rytm/pools/<safe>.txt": the same safe name
-  sniprintf(fn, sizeof fn, "/.rytm/fxslots/%s", safe + 13);
-  (void)project;
-  File f;
-  if (!f.open(fn, kRead)) return;
+// The map's text into user[]. n bytes of g_stext
+static char g_stext[CORE_MSAMP ? 4096 : 512];   // (formats.cpp: 4 KB at most; only the first lines are read)
+static CORE_COLD void slots_parse(uint32_t n) {
+  uint32_t at = 0;
   char b[64];
-  for (int u = 0; u < kUserSlots && line(f, b, sizeof b); ++u) {
+  for (int u = 0; u < kUserSlots && at < n; ++u) {
+    int k = 0;
+    while (at < n) {
+      char c = g_stext[at++];
+      if (c == '\n') break;
+      if (c != '\r' && k < (int)sizeof b - 1) b[k++] = c;
+    }
+    b[k] = 0;
     int t = 0, i = 0;
     for (; i < 4 && hexv(b[i]) >= 0; ++i) t = t << 4 | hexv(b[i]);
     if (i != 4 || b[4] != ' ' || (t & 0x3FFF) == 0) continue;
@@ -75,8 +79,60 @@ CORE_COLD void slots_load(const char* project) {
     strncpy(user[u].name, b + 5, sizeof user[u].name - 1);
     user[u].name[sizeof user[u].name - 1] = 0;
   }
-  f.close();
 }
+
+static char g_spath[72];
+static CORE_COLD void slots_name() {
+  char safe[48];
+  pool_file(safe, sizeof safe);   // "/.rytm/pools/<safe>.txt": the same safe name
+  sniprintf(g_spath, sizeof g_spath, "/.rytm/fxslots/%s", safe + 13);
+}
+
+#if CORE_MSAMP
+// A project change's read on the card core (core/msamp/cardq.h), never here: the 0x10 comes on the control core, and an open behind core 0's
+// read or the recorder's write would hold it for that call, a card's pause too (100-137 ms measured). Another project while one is read: read again.
+static cardq::Req g_sreq;
+static bool g_sbusy, g_sagain;
+
+CORE_COLD void slots_load(const char* project) {
+  (void)project;
+  for (int u = 0; u < kUserSlots; ++u) user[u].tag = 0, user[u].name[0] = 0;
+  if (g_sbusy) {
+    g_sagain = true;
+    return;
+  }
+  slots_name();
+  g_sbusy = true;
+}
+
+CORE_COLD bool slots_step() {
+  while (g_sbusy) {
+    if (!cardq::async(&g_sreq, cardq::kSmallReq, nullptr, g_spath, 0, (uint8_t*)g_stext, sizeof g_stext)) return false;
+    if (g_sagain) {
+      g_sagain = false;
+      slots_name();
+      continue;
+    }
+    g_sbusy = false;
+    if (g_sreq.got > 0) slots_parse((uint32_t)g_sreq.got);
+  }
+  return true;
+}
+#else
+CORE_COLD void slots_load(const char* project) {
+  (void)project;
+  for (int u = 0; u < kUserSlots; ++u) user[u].tag = 0, user[u].name[0] = 0;
+  slots_name();
+  File f;
+  if (!f.open(g_spath, kRead)) return;
+  int c;
+  uint32_t n = 0;
+  while (n < sizeof g_stext && (c = f.read()) >= 0) g_stext[n++] = (char)c;
+  f.close();
+  slots_parse(n);
+}
+CORE_COLD bool slots_step() { return true; }
+#endif
 
 }  // namespace fx
 }  // namespace core

@@ -1,7 +1,7 @@
 // pi/ui/host/shot.c - the Pi screen on the Mac: LVGL renders sidecar_ui into an 800x480 RGB565 buffer (the OLED theme's
 // dots expanded as the Pi's flush expands them: sidecar_dot_expand), with made-up status and touches, written as PPMs.
 // No window, no SDL.
-//   ./shot OUTDIR [WxH]      every page in both themes (WxH: the screen, 800x480 or 1024x600) (OUTDIR/oled-*.ppm, OUTDIR/classic-*.ppm), the controls' commands
+//   ./shot OUTDIR [WxH]      every page in both themes (WxH: the screen, 800x480, 1024x600 or 1280x720) (OUTDIR/oled-*.ppm, OUTDIR/classic-*.ppm), the controls' commands
 //                            checked, the SEQ gestures checked against core/seq, the draw costs printed; fails on a miss
 //   ./shot anim OUTDIR [N]   the SEQ piano roll playing in the OLED theme: N frames (default 300) at 20 fps, frame-NNNN.ppm
 #include "lvgl.h"
@@ -16,6 +16,7 @@
 #include "../sidecar_seqed.h"
 #include "../sidecar_rytmpat.h"
 #include "../sidecar_wgview.h"
+#include "../sidecar_preset.h"
 #include "../sidecar_scope.h"
 #include "../sidecar_chop.h"
 #include "../sidecar_status.h"
@@ -27,8 +28,8 @@
 #include <string.h>
 #include <time.h>
 
-#define WMAX 1024
-#define HMAX 600
+#define WMAX 1280
+#define HMAX 720
 static int W = 800, H = 480;			// the screen (./shot OUTDIR 1024x600: the wide layouts)
 static uint16_t s_Fb[WMAX * HMAX];
 static uint16_t s_Buf[WMAX * HMAX / 10];
@@ -213,6 +214,24 @@ static int text_shown (lv_obj_t *o, const char *needle)	// a shown label under o
 	for (uint32_t i = 0; i < n; i++) if (text_shown (lv_obj_get_child (o, (int32_t) i), needle)) return 1;
 	return 0;
 }
+// every shown object of a page, for check_bounds.py: its path of child numbers, its box in screen pixels, clickable or not
+static void bounds_walk (FILE *f, lv_obj_t *o, const char *path)
+{
+	if (lv_obj_has_flag (o, LV_OBJ_FLAG_HIDDEN)) return;
+	lv_area_t c;
+	lv_obj_get_coords (o, &c);
+	int dot = sidecar_ui_dot (), ox, oy;
+	sidecar_ui_origin (&ox, &oy);
+	fprintf (f, "%s %d %d %d %d %d\n", path, ox + c.x1 * dot, oy + c.y1 * dot, ox + (c.x2 + 1) * dot - 1, oy + (c.y2 + 1) * dot - 1,
+		 lv_obj_has_flag (o, LV_OBJ_FLAG_CLICKABLE) ? 1 : 0);
+	uint32_t n = lv_obj_get_child_count (o);
+	for (uint32_t i = 0; i < n; i++)
+	{
+		char q[160];
+		snprintf (q, sizeof q, "%s.%u", path, (unsigned) i);
+		bounds_walk (f, lv_obj_get_child (o, (int32_t) i), q);
+	}
+}
 static void shot (const char *name)
 {
 	char p[400];
@@ -222,6 +241,12 @@ static void shot (const char *name)
 	fit_walk (lv_layer_top ());
 	snprintf (p, sizeof p, "%s/%s-%s.ppm", s_Dir, s_Pre, name);
 	write_ppm (p);
+	snprintf (p, sizeof p, "%s/%s-%s.bounds", s_Dir, s_Pre, name);
+	FILE *f = fopen (p, "w");
+	if (!f) { perror (p); exit (1); }
+	bounds_walk (f, lv_screen_active (), "s");
+	bounds_walk (f, lv_layer_top (), "t");
+	fclose (f);
 }
 
 static void drag (int x0, int y0, int x1, int y1, int steps, const char *name)	// UI coordinates
@@ -615,6 +640,62 @@ static void wg_fake (int kind, double t)
 	}
 }
 
+// the JUNO / 6-OP FM preset pages' view (the Pi reads the preset index and the project's lists): a JUNO list of 40 slots with
+// four empty ones, the FM list holding the built-ins (96 rows), and the index: JUNO / FACTORY (128), Pads, DX7 / ROM (96), mine
+static sidecar_preset_view_t s_PrV;
+static unsigned s_nPreGen, s_nPreSeq;
+static char s_PreMsg[40];
+static int s_PreBuiltFm = 1;
+static const char *const kPreJn[10] = {"Brass", "Strings", "Bass 1", "Pad warm", "Lead saw", "Organ", "Pluck", "Choir", "Sync lead", "Sub bass"};
+static const char *const kPreFm[8] = {"BRASS  1", "E.PIANO 1", "STRINGS1", "CLAV  1", "HARP  1", "MARIMBA", "BASS  1", "FLUTE  1"};
+static int pre_total (int kind, int f)
+{
+	if (f < 0) return kind == 0 ? 40 : s_PreBuiltFm ? 96 : 12;
+	return f == 0 ? 5 : f == 2 ? 128 : f == 3 ? 9 : f == 1 ? 3 : f == 4 ? 96 : f == 5 ? 32 : 32;
+}
+static void pre_row (int kind, int f, int i, char *nm, int n, int *flags, int *kid)
+{
+	*flags = 0, *kid = -1;
+	if (f < 0)
+	{
+		int used = kind == 0 ? i % 11 != 2 : 1;
+		*flags = used ? 2 : 0;
+		if (!used) nm[0] = 0;
+		else if (kind == 0) snprintf (nm, n, "%s", kPreJn[i % 10]);
+		else snprintf (nm, n, "%s", kPreFm[i % 8]);
+		return;
+	}
+	if (f == 0) { static const char *const r[5] = {"FACTORY", "Pads", "bass.syx", "lead.syx", "pluck.syx"}; snprintf (nm, n, "%s", r[i]); if (i < 2) *flags = 1, *kid = i ? 3 : 2; }
+	else if (f == 1) { static const char *const r[3] = {"ROM", "mine", "rhodes"}; snprintf (nm, n, "%s", r[i]); *flags = 1, *kid = i ? 4 + i : 4; }
+	else if (f == 2) snprintf (nm, n, "%c%d%d %s", i < 64 ? 'A' : 'B', (i & 63) / 8 + 1, i % 8 + 1, kPreJn[i % 10]);
+	else if (f == 3) snprintf (nm, n, "%s", kPreJn[(i + 3) % 10]);
+	else if (f == 4) snprintf (nm, n, "%s", kPreFm[i % 8]);
+	else snprintf (nm, n, "VOICE %02d", i + 1);
+}
+static void pre_fake (void)
+{
+	sidecar_preset_view_t *v = &s_PrV;
+	memset (v, 0, sizeof *v);
+	v->kind = sidecar_preset_kind (), v->folder = sidecar_preset_folder (), v->first = sidecar_preset_first ();
+	v->ready = 1, v->igen = 7, v->up = -1;
+	v->count[0] = 40, v->count[1] = s_PreBuiltFm ? 96 : 12;
+	int f = v->folder, t = pre_total (v->kind, f);
+	v->total = t;
+	v->built_in = f < 0 && v->kind == 1 && s_PreBuiltFm;
+	static const char *const kT[7] = {"JUNO", "DX7", "JUNO/FACTORY", "JUNO/Pads", "DX7/ROM", "DX7/mine", "DX7/rhodes"};
+	if (f >= 0) snprintf (v->title, sizeof v->title, "%s", kT[f]), v->up = f < 2 ? -1 : f < 4 ? 0 : 1;
+	for (int i = 0; i < PRE_ROWS && v->first + i < t; i++)
+	{
+		int fl, kid;
+		pre_row (v->kind, f, v->first + i, v->name[i], PRE_NAME, &fl, &kid);
+		v->flags[i] = (unsigned char) fl, v->kid[i] = (short) kid, v->n = i + 1;
+	}
+	v->msg_seq = s_nPreSeq;
+	snprintf (v->msg, sizeof v->msg, "%s", s_PreMsg);
+	v->gen = ++s_nPreGen;
+}
+#define PRE_PUSH()	do { pre_fake (); sidecar_preset_set (&s_PrV); run (2); } while (0)
+
 // ---- the SONG page's made-up take (the Pi fills it from core/song: song_pi.cpp): 32 bars, A01 A02 A03 A01, mutes,
 // scenes, a PERF swell, a tempo push, knob lanes (the Rytm's, one of the Sidecar's send FX), two markers
 static sidecar_song_view_t s_Sv;
@@ -740,20 +821,20 @@ static void rec_play (int state, unsigned secs, int frames)	// a few views 40 ms
 }
 
 // ---- the pages of one theme, their controls' commands, the SEQ gestures
-// The taps are the 800x480 layouts' places, moved by what a 1024x600 screen adds (DX, DY: TH->dx, dy) the way the pages
-// move their controls (sidecar_ui.c, sidecar_seqed.c, ...): the same checks run at both sizes.
+// The taps are the 800x480 layouts' places in LU, moved by what the screen adds (DX, DY: TH->dx, dy) the way the pages
+// move their controls (sidecar_ui.c, sidecar_seqed.c, ...): the same checks run at all three sizes.
 static int DX, DY;
-#define OW_HIT_X	(352 + DX - 40)						// OLED: the home title bar's REC status
-#define NAV_X		(377 + DX)						// OLED: the navigation column
-#define NAV_Y(i)	((i) * ((240 + DY) / 8) + (240 + DY) / 16 - 1)		// eight keys (UX review N1)
-#define CNAV_X(i)	(300 + (i) * ((800 + DX - 12 - 300 + 4) / 8) + ((800 + DX - 12 - 300 + 4) / 8 - 4) / 2)	// CLASSIC: the title bar's row
-#define VS(v)		((v) * (199 + DY) / 199)				// OLED: a settings page's y (sidecar_ui.c)
-#define CY(v)		((v) * (358 + DY) / 358)				// CLASSIC: the same
-#define CH		(48 + DY / 15)
-#define WG_KY		(o ? 204 + DY + 17 : 52 + 372 + DY + 26)		// the machine view's keys (sidecar_wgview.c)
-#define WG_SRC_X	(o ? 264 + 3 * DX / 4 + (88 + DX / 4) / 2 : 616 + 3 * DX / 4 + (176 + DX / 4) / 2)
-#define WG_MID_X	(o ? 180 + DX / 2 + (78 + DX / 4) / 2 : 312 + DX / 2 + (296 + DX / 4) / 2)	// ALL POOLS / UNUSED / FILL
-#define WG_DN_X		(o ? 90 + DX / 4 + (84 + DX / 4) / 2 : 164 + DX / 4 + (140 + DX / 4) / 2)
+#define OW_HIT_X	(LU (352) + DX - LU (40))						// OLED: the home title bar's REC status
+#define NAV_X		(LU (377) + DX)						// OLED: the navigation column
+#define NAV_Y(i)	((i) * ((LU (240) + DY) / 8) + (LU (240) + DY) / 16 - 1)		// eight keys (UX review N1)
+#define CNAV_X(i)	(LU (300) + (i) * ((LU (800) + DX - LU (12) - LU (300) + LU (4)) / 8) + ((LU (800) + DX - LU (12) - LU (300) + LU (4)) / 8 - LU (4)) / 2)	// CLASSIC: the title bar's row
+#define VS(v)		((v) * (LU (240) + DY - LU (41)) / 199)				// OLED: a settings page's y (sidecar_ui.c)
+#define CY(v)		((v) * (LU (358) + DY) / 358)				// CLASSIC: the same
+#define CH		(LU (48) + DY / 15)
+#define WG_KY		(o ? LU (204) + DY + LU (17) : LU (52) + LU (372) + DY + LU (26))		// the machine view's keys (sidecar_wgview.c)
+#define WG_SRC_X	(o ? LU (264) + 3 * DX / 4 + (LU (88) + DX / 4) / 2 : LU (616) + 3 * DX / 4 + (LU (176) + DX / 4) / 2)
+#define WG_MID_X	(o ? LU (180) + DX / 2 + (LU (78) + DX / 4) / 2 : LU (312) + DX / 2 + (LU (296) + DX / 4) / 2)	// ALL POOLS / UNUSED / FILL
+#define WG_DN_X		(o ? LU (90) + DX / 4 + (LU (84) + DX / 4) / 2 : LU (164) + DX / 4 + (LU (140) + DX / 4) / 2)
 // ---- the PROJECT page's view (core/bundle/feed.h's Feed as the kernel copies it)
 static sidecar_project_view_t s_Pv;
 static void project_fake (int phase)
@@ -934,7 +1015,7 @@ static void theme_run (int style, const char *pre)
 		EXPECT_CMD ("touchcal=0,32766,0,32766,0");
 		EXPECT (s_nCmds == n0 + 1);
 		sidecar_ui_touch_cal_start ();
-		int cx = TH->w / 2, cy = TH->h / 2 + (o ? 30 : 70);
+		int cx = TH->w / 2, cy = TH->h / 2 + (o ? LU (30) : LU (70));
 		sidecar_ui_touch (1, 16000, 16000, sx (cx), sy (cy));
 		sidecar_ui_touch (0, 16000, 16000, sx (cx), sy (cy));
 		EXPECT (sidecar_ui_touch_cal_step () == -1 && s_nCmds == n0 + 1);	// cancelled
@@ -961,9 +1042,9 @@ static void theme_run (int style, const char *pre)
 	{
 	// the POOL (core/lib/pools.h): the list's rows below a tab row (the POOL page: two), FILES aimed at a row, a row's
 	// menu (a long press), the P3 confirm, the message row (UNDO), SELECT UNUSED
-	const int wlr = o ? 18 : 31, wly = o ? 16 : 52 + 44, wlx = o ? 150 : 24 + 200, lh = (o ? 180 : 310) + DY;
-	const int tx0 = o ? 0 : 24, rw = (o ? 352 - 5 : 752 - 8) + DX - 3, tw = rw / 8, tw3 = rw / 3;
-	const int yes_x = tx0 + (o ? 8 : 40) + 12, no_x = tx0 + rw - (o ? 8 : 40) - 12;
+	const int wlr = o ? LU (18) : LU (31), wly = o ? LU (16) : LU (52) + LU (44), wlx = o ? LU (150) : LU (24) + LU (200), lh = (o ? LU (180) : LU (310)) + DY;
+	const int tx0 = o ? 0 : LU (24), rw = (o ? LU (352) - LU (5) : LU (752) - LU (8)) + DX - 3, tw = rw / 8, tw5 = rw / 5;
+	const int yes_x = tx0 + (o ? LU (8) : LU (40)) + LU (12), no_x = tx0 + rw - (o ? LU (8) : LU (40)) - LU (12);
 #define WG_ROW(i)	(wly + (i) * wlr + wlr / 2)				// the list area's i-th row
 #define WG_BOX(n, j)	(wly + (lh - (n) * wlr) / 2 + (j) * wlr + wlr / 2)	// the box of n rows' j-th
 #define WG_MSG		(wly + (lh / wlr - 1) * wlr + wlr / 2)			// the message row
@@ -1092,15 +1173,15 @@ static void theme_run (int style, const char *pre)
 	EXPECT (sidecar_ui_page () == 15 && sidecar_wgview_pool_page_shown () && sidecar_wgview_list_shown ());
 	sidecar_wgview_set_page_list (WGV_SAMPLES);
 	WG_PUSH (); shot ("pool-page-samples");
-	tap (tx0 + tw3 + tw3 / 2, WG_ROW (0)); WG_PUSH ();
+	tap (tx0 + tw5 + tw5 / 2, WG_ROW (0)); WG_PUSH ();
 	EXPECT (sidecar_wgview_page_list () == WGV_TABLES && sidecar_wgview_list_id () == WGV_TABLES);
 	shot ("pool-page-tables");
-	tap (tx0 + 2 * tw3 + tw3 / 2, WG_ROW (0)); WG_PUSH ();
+	tap (tx0 + 2 * tw5 + tw5 / 2, WG_ROW (0)); WG_PUSH ();
 	EXPECT (sidecar_wgview_page_list () == WGV_INSTR);
 	shot ("pool-page-instr");
 	tap (wlx, WG_ROW (2 + 1)); EXPECT (sidecar_wgview_asking () == 2);
 	tap (wlx, WG_BOX (4, 3)); EXPECT (!sidecar_wgview_asking ());				// CANCEL
-	tap (tx0 + tw3 / 2, WG_ROW (0)); WG_PUSH ();
+	tap (tx0 + tw5 / 2, WG_ROW (0)); WG_PUSH ();
 	tap (wlx, WG_ROW (2 + 5)); WG_PUSH ();							// A005: changed
 	EXPECT (sidecar_wgview_asking () == 2);
 	shot ("pool-page-menu");
@@ -1108,10 +1189,72 @@ static void theme_run (int style, const char *pre)
 	tap (WG_SRC_X, WG_KY);			// DONE: back
 	EXPECT (sidecar_ui_page () == 7 && !sidecar_wgview_pool_page_shown () && !sidecar_wgview_list_shown ());
 	sidecar_ui_show (1); run (2);
-	if (o) tap ((352 + DX) * 7 / 12, 16 + 11); else tap (12 + (776 + DX) * 7 / 12, 60 + 24);	// Settings > Pool (the 4th of 6 tabs)
+	if (o) tap ((LU (352) + DX) * 7 / 12, LU (16) + LU (11)); else tap (LU (12) + (LU (776) + DX) * 7 / 12, LU (60) + LU (24));	// Settings > Pool (the 4th of 6 tabs)
 	EXPECT (sidecar_ui_page () == 15 && sidecar_wgview_pool_page_shown ());
 	tap (WG_SRC_X, WG_KY);			// DONE
 	EXPECT (sidecar_ui_page () == 1);
+	// the POOL page's JUNO / 6-OP tabs: the preset pages (sidecar_preset.c). The JUNO list, a slot's menu (REPLACE), the
+	// index aimed at the slot (a folder, a preset: preset=juno:set:..), an empty slot, ADD (the first empty slot), the FM
+	// list holding the built-ins, the index scrolled, the tabs back to the pool lists
+	{
+		const int pup_x = o ? (LU (84) + DX / 4) / 2 : LU (16) + (LU (140) + DX / 4) / 2;
+		s_PreBuiltFm = 1, s_PreMsg[0] = 0;
+		sidecar_ui_show (15); run (2);
+		sidecar_wgview_set_page_list (WGV_SAMPLES);
+		PRE_PUSH (); WG_PUSH ();
+		shot ("pool-page-5tabs");
+		tap (tx0 + 3 * tw5 + tw5 / 2, WG_ROW (0));
+		EXPECT (sidecar_ui_page () == 18 && sidecar_preset_shown () && sidecar_preset_kind () == 0 && !sidecar_wgview_shown ());
+		PRE_PUSH (); shot ("preset-juno");
+		tap (wlx, WG_ROW (1 + 2)); PRE_PUSH ();							// an empty slot: the index aimed at it
+		EXPECT (sidecar_preset_index_shown () && sidecar_preset_folder () == 0);
+		shot ("preset-index-slot");
+		tap (wlx, WG_ROW (1)); PRE_PUSH ();							// the path row at a root: back to the list
+		EXPECT (!sidecar_preset_index_shown () && sidecar_preset_folder () == -1);
+		tap (wlx, WG_ROW (1 + 3)); PRE_PUSH ();							// a filled slot: its menu
+		EXPECT (sidecar_preset_asking ());
+		shot ("preset-menu");
+		tap (wlx, WG_BOX (3, 1)); PRE_PUSH ();							// REPLACE
+		EXPECT (sidecar_preset_index_shown () && !sidecar_preset_asking ());
+		tap (wlx, WG_ROW (2)); PRE_PUSH ();							// FACTORY/
+		EXPECT (sidecar_preset_folder () == 2);
+		shot ("preset-replace-index");
+		tap (wlx, WG_ROW (2 + 2)); EXPECT_CMD ("preset=juno:set:7:2:2:3");			// A13 Bass 1 into slot 3
+		EXPECT (!sidecar_preset_index_shown ());
+		snprintf (s_PreMsg, sizeof s_PreMsg, "JUNO 003 SET"); s_nPreSeq++;
+		PRE_PUSH (); shot ("preset-replaced");
+		tap (WG_MID_X, WG_KY); PRE_PUSH ();							// ADD: the first empty slot
+		EXPECT (sidecar_preset_index_shown () && sidecar_preset_folder () == 0);
+		tap (wlx, WG_ROW (2 + 1)); PRE_PUSH ();							// Pads/
+		EXPECT (sidecar_preset_folder () == 3);
+		tap (wlx, WG_ROW (2 + 1)); EXPECT_CMD ("preset=juno:add:7:3:1");			// stays in the index
+		EXPECT (sidecar_preset_index_shown ());
+		snprintf (s_PreMsg, sizeof s_PreMsg, "JUNO 002 ADDED"); s_nPreSeq++;
+		PRE_PUSH (); shot ("preset-added");
+		tap (wlx, WG_ROW (1)); PRE_PUSH ();							// up to JUNO
+		EXPECT (sidecar_preset_folder () == 0);
+		tap (WG_SRC_X, WG_KY); PRE_PUSH ();							// BACK to the list
+		EXPECT (!sidecar_preset_index_shown ());
+		tap (tx0 + 4 * tw5 + tw5 / 2, WG_ROW (0)); PRE_PUSH ();				// 6-OP FM: the built-ins
+		EXPECT (sidecar_preset_kind () == 1);
+		shot ("preset-fm-builtin");
+		tap (WG_MID_X, WG_KY); PRE_PUSH ();
+		EXPECT (sidecar_preset_folder () == 1);
+		tap (wlx, WG_ROW (2)); PRE_PUSH ();							// ROM/
+		EXPECT (sidecar_preset_folder () == 4);
+		tap (WG_DN_X, WG_KY); PRE_PUSH ();							// DOWN: a page on
+		EXPECT (sidecar_preset_first () > 0);
+		shot ("preset-fm-rom-scrolled");
+		tap (wlx, WG_ROW (2 + 1)); { char want[48]; snprintf (want, sizeof want, "preset=fm:add:7:4:%d", sidecar_preset_first () + 1); EXPECT_CMD (want); }
+		s_nPreSeq++; snprintf (s_PreMsg, sizeof s_PreMsg, "FM 096 ADDED"); PRE_PUSH ();
+		tap (tx0 + tw5 / 2, WG_ROW (0));							// SAMPLES: the POOL page again
+		EXPECT (sidecar_ui_page () == 15 && sidecar_wgview_pool_page_shown () && sidecar_wgview_page_list () == WGV_SAMPLES);
+		sidecar_ui_show (15); run (2);
+		tap (tx0 + 3 * tw5 + tw5 / 2, WG_ROW (0)); EXPECT (sidecar_ui_page () == 18);
+		tap (WG_SRC_X, WG_KY);									// DONE: where the POOL page came from
+		EXPECT (sidecar_ui_page () != 18 && !sidecar_preset_shown ());
+		(void) pup_x;
+	}
 #undef WG_ROW
 #undef WG_BOX
 #undef WG_MSG
@@ -1121,8 +1264,8 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (0); run (2);
 	{
 		const char *keep = s_St.track[6];
-#define CYCB_TAP() do { if (o) { int cw = (352 + DX - 4) / 2, kp = (106 + DY / 2 - 14) / 4, kw = (cw - 8) / 2; tap (3 + kw + 2 + kw / 2, 15 + 12 + 3 * kp + kp / 2); } \
-			else { int tw = 476 + DX * 3 / 4, kw = (tw - 36) / 2, kp = 48 + DY / 8; tap (12 + 12 + kw + 10 + kw / 2, 64 + 32 + 3 * kp + kp / 2); } } while (0)	// CY/CB: voice 6
+#define CYCB_TAP() do { if (o) { int cw = (LU (352) + DX - LU (4)) / 2, kp = (LU (106) + DY / 2 - LU (14)) / 4, kw = (cw - LU (8)) / 2; tap (3 + kw + 2 + kw / 2, LU (15) + LU (12) + 3 * kp + kp / 2); } \
+			else { int tw = LU (476) + DX * 3 / 4, kw = (tw - LU (36)) / 2, kp = LU (48) + DY / 8; tap (LU (12) + LU (12) + kw + LU (10) + kw / 2, LU (64) + LU (32) + 3 * kp + kp / 2); } } while (0)	// CY/CB: voice 6
 		s_St.track[6] = "MULTI"; sidecar_ui_status (&s_St); run (2);
 		CYCB_TAP ();
 		EXPECT (sidecar_ui_page () == 8); EXPECT_CMD ("voicepick=10");
@@ -1139,11 +1282,11 @@ static void theme_run (int style, const char *pre)
 	EXPECT (sidecar_voice_shown () && sidecar_ui_page () == 8);
 	EXPECT (sidecar_ui_nav_lit () == 3);				// N2: VOICE lights VOICE, never SET
 	voice_fake (0); sidecar_voice_set (&s_Vv); run (2); shot ("voice-analog-bd");
-	if (o) tap (150, 91 + DY / 6 + 40); else tap (440 + DX / 4 + 100, 52 + 84 + 100);	// touch2: the scope -> SCOPE (TRACK)
+	if (o) tap (LU (150), LU (91) + DY / 6 + LU (40)); else tap (LU (440) + DX / 4 + LU (100), LU (52) + LU (84) + LU (100));	// touch2: the scope -> SCOPE (TRACK)
 	EXPECT (sidecar_ui_page () == 12 && sidecar_scope_source () == -1);
 	sidecar_ui_show (8);
 	voice_fake (1); sidecar_voice_set (&s_Vv); run (2); shot ("voice-multisample");
-	if (o) tap (150, 87 + DY / 6 + 50); else tap (440 + DX / 4 + 100, 52 + 80 + 100);	// touch2: the panel -> the banks
+	if (o) tap (LU (150), LU (87) + DY / 6 + LU (50)); else tap (LU (440) + DX / 4 + LU (100), LU (52) + LU (80) + LU (100));	// touch2: the panel -> the banks
 	EXPECT (sidecar_ui_page () == 7 && sidecar_wgview_list_shown ());
 	sidecar_wgview_list (0);
 	sidecar_ui_show (8);
@@ -1165,16 +1308,16 @@ static void theme_run (int style, const char *pre)
 	ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-voice");
 	EXPECT (sidecar_insfx_voice () == 2);
 	{
-		int e = DY / 6, sp = o ? 177 + DX / 2 : 380 + DX / 2;
-		if (o) tap (sp / 2, 41 + e + (21 + e) / 2); else tap (24 + (sp - 8) / 2, 52 + 96 + e + (40 + e / 2) / 2);
+		int e = DY / 6, sp = o ? LU (177) + DX / 2 : LU (380) + DX / 2;
+		if (o) tap (sp / 2, LU (41) + e + (LU (21) + e) / 2); else tap (LU (24) + (sp - LU (8)) / 2, LU (52) + LU (96) + e + (LU (40) + e / 2) / 2);
 	}			// slot A's TYPE: FILTER -> the next
 	EXPECT_CMD ("ins=V3:A:type:CRUSH");
 	{	// the OUT key (voice 3 on POST): the next route, TRK
 		int e = DY / 6;
-		if (o) tap (35, 136 + 3 * e + 3 * (16 + e / 2) + 4); else tap (24 + 70, 52 + 286 + 3 * e + 3 * (28 + e / 2) + 11);
+		if (o) tap (LU (35), LU (136) + 3 * e + 3 * (LU (16) + e / 2) + LU (4)); else tap (LU (24) + LU (70), LU (52) + LU (286) + 3 * e + 3 * (LU (28) + e / 2) + LU (11));
 	}
 	EXPECT_CMD ("out=V3:trk");
-	if (o) tap (20, 16 + (21 + DY / 6) / 2); else tap (24 + 47, 52 + 44 + (40 + DY / 12) / 2);			// V1: another voice (nothing set)
+	if (o) tap (LU (20), LU (16) + (LU (21) + DY / 6) / 2); else tap (LU (24) + LU (47), LU (52) + LU (44) + (LU (40) + DY / 12) / 2);			// V1: another voice (nothing set)
 	EXPECT (sidecar_insfx_voice () == 0);
 	run (2); shot ("insfx-empty");
 	// the SONG page: a take replaying (the playhead), recording, the replay's confirmation, the how-to, zoomed in
@@ -1183,8 +1326,8 @@ static void theme_run (int style, const char *pre)
 	song_fake (SSG_OFF, 0); sidecar_song_set (&s_Sv); run (2); shot ("song-timeline");
 	song_fake (SSG_REPLAYING, 19 * SSG_BAR + 5 * SSG_PPQ); sidecar_song_set (&s_Sv); run (2); shot ("song-replaying");
 	{
-		int ky = o ? 224 + DY : 52 + 366 + DY + 27;
-#define SONG_KEY(k) (o ? (k) * (44 + DX / 8) + 21 + ((k) > 3 ? 2 : 0) : 12 + (k) * (97 + DX / 8) + 46)
+		int ky = o ? LU (224) + DY : LU (52) + LU (366) + DY + LU (27);
+#define SONG_KEY(k) (o ? (k) * (LU (44) + DX / 8) + LU (21) + ((k) > 3 ? 2 : 0) : LU (12) + (k) * (LU (97) + DX / 8) + LU (46))
 		song_fake (SSG_OFF, 0); sidecar_song_set (&s_Sv); run (2);
 		tap (SONG_KEY (0), ky); EXPECT_CMD ("song=arm");
 		tap (SONG_KEY (1), ky); EXPECT_CMD ("song=replay");
@@ -1196,9 +1339,9 @@ static void theme_run (int style, const char *pre)
 		song_fake (SSG_OFF, 0); sidecar_song_set (&s_Sv); run (2);
 		tap (SONG_KEY (2), ky); EXPECT_CMD ("song=prev");	// (< > back once it is no longer offered)
 		song_fake (SSG_CONFIRM, 0); sidecar_song_set (&s_Sv); run (2); shot ("song-confirm");
-		if (o) tap (DX / 2 + 9 + 180 + 73, DY / 2 + 20 + 178 + 16); else tap (DX / 2 + 120 + 300 + 118, DY / 2 + 52 + 40 + 270 + 25);
+		if (o) tap (DX / 2 + LU (9) + LU (180) + LU (73), DY / 2 + LU (20) + LU (178) + LU (16)); else tap (DX / 2 + LU (120) + LU (300) + LU (118), DY / 2 + LU (52) + LU (40) + LU (270) + LU (25));
 		EXPECT_CMD ("song=confirm");
-		if (o) tap (DX / 2 + 9 + 8 + 73, DY / 2 + 20 + 178 + 16); else tap (DX / 2 + 120 + 24 + 118, DY / 2 + 52 + 40 + 270 + 25);
+		if (o) tap (DX / 2 + LU (9) + LU (8) + LU (73), DY / 2 + LU (20) + LU (178) + LU (16)); else tap (DX / 2 + LU (120) + LU (24) + LU (118), DY / 2 + LU (52) + LU (40) + LU (270) + LU (25));
 		EXPECT_CMD ("song=cancel");
 		song_fake (SSG_OFF, 0); strcpy (s_Sv.config, "ENCODER DEST INT, OUTPUT CH AUTO"); s_Sv.cfg_wrong = 3; s_Sv.gen++;
 		sidecar_song_set (&s_Sv); run (2);
@@ -1210,7 +1353,7 @@ static void theme_run (int style, const char *pre)
 		run (2); shot ("song-recording-zoom");
 		// a drag scrolls (FOLLOW off)
 		song_fake (SSG_OFF, 0); sidecar_song_set (&s_Sv); run (2);
-		if (o) drag (270, 90, 90, 90, 6, "song-scrolled"); else drag (600, 52 + 200, 200, 52 + 200, 6, "song-scrolled");
+		if (o) drag (LU (270), LU (90), LU (90), LU (90), 6, "song-scrolled"); else drag (LU (600), LU (52) + LU (200), LU (200), LU (52) + LU (200), 6, "song-scrolled");
 		tap (SONG_KEY (4), ky); tap (SONG_KEY (4), ky); tap (SONG_KEY (4), ky); tap (SONG_KEY (4), ky);
 		EXPECT (sidecar_song_zoom () == 0);
 #undef SONG_KEY
@@ -1219,13 +1362,13 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (11);
 	EXPECT (sidecar_rec_shown () && sidecar_ui_page () == 11 && !sidecar_song_shown ());
 	{
-		const int Wd = o ? 352 + DX : 800 + DX;
-		const int ky = o ? 15 + 23 : 52 + 6 + 31;
-		const int rec_x = o ? 31 : 524 + DX + 50, arm_x = o ? 64 + 23 : 524 + DX + 106 + 40;
-		const int tak_x = o ? 301 + DX + 25 : 716 + DX + (800 + DX - 8 - (716 + DX)) / 2;
-		const int cw = o ? (Wd - 4) / 3 : (Wd - 32) / 3, ph = o ? (168 + DY) / 8 : (336 + DY) / 8;
-#define REC_CX(c) (o ? (c) * (cw + 2) + cw / 2 : 8 + (c) * (cw + 8) + cw / 2)
-#define REC_CY(r) ((o ? 72 : 52 + 88) + (r) * ph + ph / 2)
+		const int Wd = o ? LU (352) + DX : LU (800) + DX;
+		const int ky = o ? LU (15) + LU (23) : LU (52) + LU (6) + LU (31);
+		const int rec_x = o ? LU (31) : LU (524) + DX + LU (50), arm_x = o ? LU (64) + LU (23) : LU (524) + DX + LU (106) + LU (40);
+		const int tak_x = o ? LU (301) + DX + LU (25) : LU (716) + DX + (LU (800) + DX - LU (8) - (LU (716) + DX)) / 2;
+		const int cw = o ? (Wd - LU (4)) / 3 : (Wd - LU (32)) / 3, ph = o ? (LU (168) + DY) / 8 : (LU (336) + DY) / 8;
+#define REC_CX(c) (o ? (c) * (cw + 2) + cw / 2 : LU (8) + (c) * (cw + LU (8)) + cw / 2)
+#define REC_CY(r) ((o ? LU (72) : LU (52) + LU (88)) + (r) * ph + ph / 2)
 		rec_play (SRV_IDLE, 83, 12); shot ("rec-idle");
 		tap (rec_x, ky); EXPECT_CMD ("rec=start");
 		tap (arm_x, ky); EXPECT_CMD ("rec=arm");
@@ -1244,9 +1387,9 @@ static void theme_run (int style, const char *pre)
 		EXPECT (sidecar_rec_takes_shown ());
 		run (2); shot ("rec-takes");
 		{	// playback: a tap on a take plays / pauses it, STOP resets; the playing row's glyph, frame and bar
-			const int rx = o ? 100 : 300, stop_x = arm_x;
-			const int rh0 = o ? ph : (312 + DY) / ((312 + DY) / 44 < 8 ? (312 + DY) / 44 : 8);
-#define REC_RY(i) (o ? 62 + 10 + (i) * rh0 + rh0 / 2 : 52 + 72 + 34 + (i) * rh0 + rh0 / 2)
+			const int rx = o ? LU (100) : LU (300), stop_x = arm_x;
+			const int rh0 = o ? ph : (LU (312) + DY) / ((LU (312) + DY) / LU (44) < 8 ? (LU (312) + DY) / LU (44) : 8);
+#define REC_RY(i) (o ? LU (62) + LU (10) + (i) * rh0 + rh0 / 2 : LU (52) + LU (72) + LU (34) + (i) * rh0 + rh0 / 2)
 			tap (rx, REC_RY (0)); EXPECT_CMD ("play=toggle:take_004");
 			tap (rx, REC_RY (2)); EXPECT_CMD ("play=toggle:take_002");
 			s_PlSt = SRV_PL_PLAYING, s_PlTake = "take_002", s_PlLenMs = 3725000;
@@ -1261,17 +1404,17 @@ static void theme_run (int style, const char *pre)
 			rec_fake (SRV_IDLE, 3723, 2); sidecar_rec_set (&s_Rv); run (2);
 #undef REC_RY
 		}
-		const int dl_x = o ? Wd - 24 : Wd - 74, rh = o ? ph : (312 + DY) / ((312 + DY) / 44 < 8 ? (312 + DY) / 44 : 8);
-#define REC_DY(i) (o ? 62 + 10 + (i) * rh + rh / 2 : 52 + 72 + 34 + (i) * rh + rh / 2)
+		const int dl_x = o ? Wd - LU (24) : Wd - LU (74), rh = o ? ph : (LU (312) + DY) / ((LU (312) + DY) / LU (44) < 8 ? (LU (312) + DY) / LU (44) : 8);
+#define REC_DY(i) (o ? LU (62) + LU (10) + (i) * rh + rh / 2 : LU (52) + LU (72) + LU (34) + (i) * rh + rh / 2)
 		snprintf (s_Last, sizeof s_Last, "none");
 		tap (dl_x, REC_DY (1));
 		run (2); shot ("rec-delete");
 		EXPECT_CMD ("none");
-		const int dx0 = o ? (Wd - 300) / 2 : (Wd - 520) / 2, dy0 = o ? 66 + DY / 2 : 52 + 100 + DY / 2;
-		if (o) tap (dx0 + 8 + 68, dy0 + 70 + 16); else tap (dx0 + 24 + 112, dy0 + 146 + 28);	// CANCEL
+		const int dx0 = o ? (Wd - LU (300)) / 2 : (Wd - LU (520)) / 2, dy0 = o ? LU (66) + DY / 2 : LU (52) + LU (100) + DY / 2;
+		if (o) tap (dx0 + LU (8) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (24) + LU (112), dy0 + LU (146) + LU (28));	// CANCEL
 		EXPECT_CMD ("none");
 		tap (dl_x, REC_DY (1));
-		if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);	// DELETE
+		if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));	// DELETE
 		EXPECT_CMD ("rec=del:take_003");
 		tap (tak_x, ky);
 		EXPECT (!sidecar_rec_takes_shown ());
@@ -1285,10 +1428,10 @@ static void theme_run (int style, const char *pre)
 			tap (tak_x, ky);
 			EXPECT (sidecar_rec_takes_shown ());
 			run (2); shot ("rec-takes-usb");
-			tap (o ? 100 : 300, REC_DY (1)); EXPECT_CMD ("play=toggle:USB:take_003");
+			tap (o ? LU (100) : LU (300), REC_DY (1)); EXPECT_CMD ("play=toggle:USB:take_003");
 			tap (dl_x, REC_DY (1));
 			run (2); shot ("rec-delete-usb");
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);	// DELETE
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));	// DELETE
 			EXPECT_CMD ("rec=del:USB:take_003");
 			tap (tak_x, ky);
 			EXPECT (!sidecar_rec_takes_shown ());
@@ -1296,7 +1439,7 @@ static void theme_run (int style, const char *pre)
 		}
 		{	// 5d: many takes, newest first: a vertical drag scrolls them a row at a time (the header says which show)
 			char want[96];
-			const int rx = o ? 100 : 300, nr = o ? 8 : (312 + DY) / 44 < 8 ? (312 + DY) / 44 : 8;
+			const int rx = o ? LU (100) : LU (300), nr = o ? 8 : (LU (312) + DY) / LU (44) < 8 ? (LU (312) + DY) / LU (44) : 8;
 			s_RecMany = 1;
 			rec_play (SRV_IDLE, 83, 2);
 			tap (tak_x, ky);
@@ -1318,13 +1461,13 @@ static void theme_run (int style, const char *pre)
 			tap (rx, REC_DY (nr - 1));
 			snprintf (want, sizeof want, "play=toggle:%s", rec_many (22)); EXPECT_CMD (want);
 			tap (dl_x, REC_DY (nr - 1));					// the delete of a scrolled row: that take
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));
 			snprintf (want, sizeof want, "rec=del:%s", rec_many (22)); EXPECT_CMD (want);
 			tap (dl_x, REC_DY (nr - 1));					// the list changes under an open dialog:
 			s_Rv.takes_gen++, s_Rv.ntakes = 22;				// the take asked about gone - the dialog closes
 			sidecar_rec_set (&s_Rv); run (2);
 			snprintf (s_Last, sizeof s_Last, "none");
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);	// (a row there now)
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));	// (a row there now)
 			EXPECT (strncmp (s_Last, "rec=del:", 8) != 0);			// no delete
 			rec_play (SRV_IDLE, 83, 2);						// (all 23 again: the top kept)
 			tap (dl_x, REC_DY (0));						// a newer take inserted before it: still that one
@@ -1332,7 +1475,7 @@ static void theme_run (int style, const char *pre)
 			snprintf (s_Rv.takes[0].name, SRV_NAME, "jam-night_2026-10-28_0900");
 			s_Rv.takes_gen++;
 			sidecar_rec_set (&s_Rv); run (2);
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));
 			snprintf (want, sizeof want, "rec=del:%s", rec_many (22 - nr)); EXPECT_CMD (want);	// (the top: 22 takes less the rows)
 			tap (tak_x, ky);
 			EXPECT (!sidecar_rec_takes_shown ());
@@ -1345,15 +1488,15 @@ static void theme_run (int style, const char *pre)
 			tap (rec_x, ky); EXPECT_CMD ("none");
 			run (2); shot ("rec-warn");
 			EXPECT (text_shown (lv_screen_active (), "82 %"));
-			if (o) tap (dx0 + 8 + 68, dy0 + 70 + 16); else tap (dx0 + 24 + 112, dy0 + 146 + 28);	// CANCEL
+			if (o) tap (dx0 + LU (8) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (24) + LU (112), dy0 + LU (146) + LU (28));	// CANCEL
 			EXPECT_CMD ("none");
 			tap (rec_x, ky);
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);	// RECORD
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));	// RECORD
 			EXPECT_CMD ("rec=start");
 			snprintf (s_Last, sizeof s_Last, "none");
 			tap (arm_x, ky); EXPECT_CMD ("none");
 			run (2); shot ("rec-warn-arm");
-			if (o) tap (dx0 + 156 + 68, dy0 + 70 + 16); else tap (dx0 + 272 + 112, dy0 + 146 + 28);	// ARM
+			if (o) tap (dx0 + LU (156) + LU (68), dy0 + LU (70) + LU (16)); else tap (dx0 + LU (272) + LU (112), dy0 + LU (146) + LU (28));	// ARM
 			EXPECT_CMD ("rec=arm");
 			s_RecWarn = 0;
 			rec_play (SRV_IDLE, 83, 2);
@@ -1365,7 +1508,7 @@ static void theme_run (int style, const char *pre)
 #undef REC_DY
 		// the home page's REC status opens it
 		sidecar_ui_show (0); run (2);
-		if (o) tap (OW_HIT_X, 6); else tap (24 + 476 + DX * 3 / 4 + (800 + DX - 12 - (24 + 476 + DX * 3 / 4)) - 75, 64 + 70 + DY / 8 + 18);	// (NOW: the Recorder row)
+		if (o) tap (OW_HIT_X, LU (6)); else tap (LU (24) + LU (476) + DX * 3 / 4 + (LU (800) + DX - LU (12) - (LU (24) + LU (476) + DX * 3 / 4)) - LU (75), LU (64) + LU (70) + DY / 8 + LU (18));	// (NOW: the Recorder row)
 		EXPECT (sidecar_ui_page () == 11);
 	}
 
@@ -1375,10 +1518,10 @@ static void theme_run (int style, const char *pre)
 	EXPECT (sidecar_scope_shown () && sidecar_ui_page () == 12 && !sidecar_rec_shown ());
 	sidecar_scope_debug (-1, 1, 0, 0);
 	{
-		const int pw = o ? 352 + DX : 800 + DX, y0 = o ? 0 : 52;
-		const int ah = o ? 133 + DY * 2 / 3 : 196 + DY * 2 / 3, sy = y0 + (o ? 18 + ah : 254 + DY * 2 / 3), sh = o ? 63 + DY / 3 : 108 + DY / 3;
-		const int sxx = o ? 0 : 8, gap = o ? 2 : 8, cw = ((o ? pw : pw - 16) + gap) / 12 - gap, q = DX / 4;
-		const int ky = o ? 218 + DY + 11 : 52 + 372 + DY + 26;
+		const int pw = o ? LU (352) + DX : LU (800) + DX, y0 = o ? 0 : LU (52);
+		const int ah = o ? LU (133) + DY * 2 / 3 : LU (196) + DY * 2 / 3, sy = y0 + (o ? LU (18) + ah : LU (254) + DY * 2 / 3), sh = o ? LU (63) + DY / 3 : LU (108) + DY / 3;
+		const int sxx = o ? 0 : LU (8), gap = o ? 2 : LU (8), cw = ((o ? pw : pw - LU (16)) + gap) / 12 - gap, q = DX / 4;
+		const int ky = o ? LU (218) + DY + LU (11) : LU (52) + LU (372) + DY + LU (26);
 #define SC_COL(k) (sxx + (k) * (cw + gap) + cw / 2)
 		for (int f = 0; f < 6; f++) { scope_fake (f); sidecar_scope_set (&s_Sc); run (1); }
 		shot ("scope-track");
@@ -1386,22 +1529,22 @@ static void theme_run (int style, const char *pre)
 		EXPECT (sidecar_scope_source () == 0);
 		for (int f = 6; f < 10; f++) { scope_fake (f); sidecar_scope_set (&s_Sc); run (1); }
 		shot ("scope-main");
-		tap (o ? 100 + q : 206 + q, ky); EXPECT (sidecar_scope_timebase () == 0);	// TIME <
-		for (int i = 0; i < 4; i++) tap (o ? 222 + 2 * q : 502 + 2 * q, ky);		// TIME > x 4: 683 ms, a sweep
+		tap (o ? LU (100) + q : LU (206) + q, ky); EXPECT (sidecar_scope_timebase () == 0);	// TIME <
+		for (int i = 0; i < 4; i++) tap (o ? LU (222) + 2 * q : LU (502) + 2 * q, ky);		// TIME > x 4: 683 ms, a sweep
 		EXPECT (sidecar_scope_timebase () == 4);
-		tap (o ? (246 + 2 * q + pw) / 2 : (550 + 2 * q + pw - 8) / 2, ky);		// GAIN: x1
+		tap (o ? (LU (246) + 2 * q + pw) / 2 : (LU (550) + 2 * q + pw - LU (8)) / 2, ky);		// GAIN: x1
 		EXPECT (sidecar_scope_gain () == 1);
 		tap (SC_COL (1), sy + sh / 2);							// BD
 		EXPECT (sidecar_scope_source () == 1);
 		for (int f = 10; f < 16; f++) { scope_fake (f); sidecar_scope_set (&s_Sc); run (1); }
 		shot ("scope-sweep");
-		tap (o ? (76 + q) / 2 : 83 + q / 2, ky);					// FREEZE
+		tap (o ? (LU (76) + q) / 2 : LU (83) + q / 2, ky);					// FREEZE
 		EXPECT (sidecar_scope_frozen ());
 		for (int f = 16; f < 20; f++) { scope_fake (f); sidecar_scope_set (&s_Sc); run (1); }
 		shot ("scope-frozen");
-		tap (o ? (76 + q) / 2 : 83 + q / 2, ky);					// FREEZE off
+		tap (o ? (LU (76) + q) / 2 : LU (83) + q / 2, ky);					// FREEZE off
 		EXPECT (!sidecar_scope_frozen ());
-		tap (sxx + 11 * (cw + gap) + (pw - (o ? 0 : 8) - (sxx + 11 * (cw + gap))) / 2, sy + sh / 2);	// TRACK
+		tap (sxx + 11 * (cw + gap) + (pw - (o ? 0 : LU (8)) - (sxx + 11 * (cw + gap))) / 2, sy + sh / 2);	// TRACK
 		EXPECT (sidecar_scope_source () == -1);
 		sidecar_scope_debug (-1, 1, 0, 0);
 		s_Sc.valid = 0; s_Sc.gen++; sidecar_scope_set (&s_Sc); run (2); shot ("scope-nolink");
@@ -1477,16 +1620,16 @@ static void theme_run (int style, const char *pre)
 	status_fake (0); sidecar_status_set (&s_Stv);
 	EXPECT (text_shown (lv_screen_active (), o ? "1500 MHZ" : "1500 MHz"));
 	sidecar_ui_show (0); run (2);
-	if (o) { int cw = (352 + DX - 4) / 2; tap (cw + 4 + cw / 2, 15 + (106 + DY / 2) / 2); }
-	else { int tw = 476 + DX * 3 / 4, sxp = 24 + tw, sw = 800 + DX - 12 - sxp; tap (sxp + sw / 2, 64 + 40); }	// (NOW: the pattern row)
+	if (o) { int cw = (352 + DX - 4) / 2; tap (cw + LU (4) + cw / 2, LU (15) + (LU (106) + DY / 2) / 2); }
+	else { int tw = 476 + DX * 3 / 4, sxp = 24 + tw, sw = 800 + DX - 12 - sxp; tap (sxp + sw / 2, LU (64) + LU (40)); }	// (NOW: the pattern row)
 	EXPECT (sidecar_ui_page () == 13);
 
 	// ---- PROJECT (project bundles): the home page's PROJECT panel opens it; the list, the stick, the bundles, delete's
 	// confirmation (DELETE grey for a second), the progress with WAITING, the summary with a machine left out, done, failed
 	sidecar_ui_show (0); run (2);
 	snprintf (s_Last, sizeof s_Last, "none");
-	if (o) { int cw = (352 + DX - 4) / 2; tap (cw / 2, 124 + DY / 2 + 40); }
-	else { int lw = 380 + DX / 2, px = 24 + lw, pw = 800 + DX - 12 - px; tap (px + pw / 2, 308 + DY / 2 + 40); }
+	if (o) { int cw = (352 + DX - 4) / 2; tap (cw / 2, LU (124) + DY / 2 + LU (40)); }
+	else { int lw = 380 + DX / 2, px = 24 + lw, pw = 800 + DX - 12 - px; tap (px + pw / 2, LU (308) + DY / 2 + LU (40)); }
 	EXPECT (sidecar_ui_page () == 14 && sidecar_project_shown () && !sidecar_status_shown ());
 	EXPECT_CMD ("bundle=list:card");
 	{
@@ -1588,75 +1731,75 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (0); run (3);
 	if (o)
 	{
-		const int lw = 172 + DX / 2, rx = 176 + DX / 2, rw = 352 + DX - rx, cw = (352 + DX - 4) / 2;
+		const int lw = LU (172) + DX / 2, rx = LU (176) + DX / 2, rw = LU (352) + DX - rx, cw = (LU (352) + DX - LU (4)) / 2;
 		tap (NAV_X, NAV_Y (7));							// SET: the settings (the last page: About)
 		(void) lw;
-#define OTAB(k)	((352 + DX) * (2 * (k) + 1) / 12)				// 6 tabs: Sound, Send FX, Display, Pool, Service, About
-		tap (OTAB (0), 27);								// tab: Sound
-		tap (44 + DX / 8, 41 + VS (24) + VS (22) / 2);         EXPECT_CMD ("notes=0");	// ENGINE panel at y 41: notes Off
-		tap (127 + 3 * DX / 8, 41 + VS (63) + VS (22) / 2);   EXPECT_CMD ("out=tracks");
-		tap (127 + 3 * DX / 8, 41 + VS (102) + VS (22) / 2);  EXPECT_CMD ("mac=on");
-		tap (rx + 4 + (rw - 8) * 7 / 8, 41 + VS (13) + VS (46) / 4);				// BT = voice 1 (row 1, 4th: the Rytm's track order)
-		tap (rx + 4 + (rw - 8) * 5 / 6, 41 + VS (76) + VS (46) * 3 / 4);  EXPECT_CMD ("notemach=1:md");	// machine MD (row 2, last; DIGIDRUM before 0.3.0)
-		tap (OTAB (4), 27);							// tab: Service (T18): FIFO, the drone
+#define OTAB(k)	((LU (352) + DX) * (2 * (k) + 1) / 12)				// 6 tabs: Sound, Send FX, Display, Pool, Service, About
+		tap (OTAB (0), LU (27));								// tab: Sound
+		tap (LU (44) + DX / 8, LU (41) + VS (24) + VS (22) / 2);         EXPECT_CMD ("notes=0");	// ENGINE panel at y 41: notes Off
+		tap (LU (127) + 3 * DX / 8, LU (41) + VS (63) + VS (22) / 2);   EXPECT_CMD ("out=tracks");
+		tap (LU (127) + 3 * DX / 8, LU (41) + VS (102) + VS (22) / 2);  EXPECT_CMD ("mac=on");
+		tap (rx + LU (4) + (rw - LU (8)) * 7 / 8, LU (41) + VS (13) + VS (46) / 4);				// BT = voice 1 (row 1, 4th: the Rytm's track order)
+		tap (rx + LU (4) + (rw - LU (8)) * 5 / 6, LU (41) + VS (76) + VS (46) * 3 / 4);  EXPECT_CMD ("notemach=1:md");	// machine MD (row 2, last; DIGIDRUM before 0.3.0)
+		tap (OTAB (4), LU (27));							// tab: Service (T18): FIFO, the drone
 		EXPECT (sidecar_ui_page () == 16);
 		run (2); shot ("service");
-		tap (22, 41 + VS (24) + VS (24) / 2);                 EXPECT_CMD ("fifo=88");
-		tap (182, 41 + VS (24) + VS (24) / 2);                EXPECT_CMD ("fifo=96");
-		tap (4 + (352 + DX - 12) / 6, 41 + VS (74) + VS (22) / 2);         EXPECT_CMD ("drone=off");
-		tap (4 + (352 + DX - 12) / 2, 41 + VS (74) + VS (22) / 2);         EXPECT_CMD ("drone=1");
-		tap (4 + (352 + DX - 12) * 5 / 6, 41 + VS (74) + VS (22) / 2);     EXPECT_CMD ("drone=all");
-		tap (4 + (352 + DX - 12) / 6, 41 + VS (141) + VS (22) / 2);        EXPECT_CMD ("cpumhz=1500");	// the CPU clock option
-		tap (4 + (352 + DX - 12) / 2, 41 + VS (141) + VS (22) / 2);        EXPECT_CMD ("cpumhz=1200");
-		tap (4 + (352 + DX - 12) * 5 / 6, 41 + VS (141) + VS (22) / 2);    EXPECT_CMD ("cpumhz=1000");
+		tap (LU (22), LU (41) + VS (24) + VS (24) / 2);                 EXPECT_CMD ("fifo=88");
+		tap (LU (182), LU (41) + VS (24) + VS (24) / 2);                EXPECT_CMD ("fifo=96");
+		tap (LU (4) + (LU (352) + DX - LU (12)) / 6, LU (41) + VS (74) + VS (22) / 2);         EXPECT_CMD ("drone=off");
+		tap (LU (4) + (LU (352) + DX - LU (12)) / 2, LU (41) + VS (74) + VS (22) / 2);         EXPECT_CMD ("drone=1");
+		tap (LU (4) + (LU (352) + DX - LU (12)) * 5 / 6, LU (41) + VS (74) + VS (22) / 2);     EXPECT_CMD ("drone=all");
+		tap (LU (4) + (LU (352) + DX - LU (12)) / 6, LU (41) + VS (141) + VS (22) / 2);        EXPECT_CMD ("cpumhz=1500");	// the CPU clock option
+		tap (LU (4) + (LU (352) + DX - LU (12)) / 2, LU (41) + VS (141) + VS (22) / 2);        EXPECT_CMD ("cpumhz=1200");
+		tap (LU (4) + (LU (352) + DX - LU (12)) * 5 / 6, LU (41) + VS (141) + VS (22) / 2);    EXPECT_CMD ("cpumhz=1000");
 		run (2); shot ("system-1000");
-		tap (OTAB (1), 27);							// tab: Send FX
-		tap (266 + DX + 40, 41 + 14 + 12);  EXPECT_CMD ("killfx");
-		tap (OTAB (2), 27);							// tab: Display
-		tap (84 + (262 + DX) / 8, 41 + VS (43) + VS (24) / 2);      EXPECT_CMD ("screensaver=0");
-		tap (84 + (262 + DX) * 5 / 8, 41 + VS (43) + VS (24) / 2);  EXPECT_CMD ("screensaver=60");
+		tap (OTAB (1), LU (27));							// tab: Send FX
+		tap (LU (266) + DX + LU (40), LU (41) + LU (14) + LU (12));  EXPECT_CMD ("killfx");
+		tap (OTAB (2), LU (27));							// tab: Display
+		tap (LU (84) + (LU (262) + DX) / 8, LU (41) + VS (43) + VS (24) / 2);      EXPECT_CMD ("screensaver=0");
+		tap (LU (84) + (LU (262) + DX) * 5 / 8, LU (41) + VS (43) + VS (24) / 2);  EXPECT_CMD ("screensaver=60");
 		(void) cw;
 		tap (NAV_X, NAV_Y (0));							// HOME
 		shot ("hidden");
 		sidecar_ui_show (6); run (3);
 		unsigned taps = sidecar_ui_taps ();
-		tap (84 + 30, 41 + VS (73) + VS (24) / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
+		tap (LU (84) + LU (30), LU (41) + VS (73) + VS (24) / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
 	}
 	else
 	{
-		const int x0 = 12 + 400 + DX / 2 + 12, vw = 364 + DX / 2, by = 308 + DY / 2, e = DY / 6, lw = 380 + DX / 2;
-		tap (CNAV_X (7), 25);							// Set (the last page: About)
-#define CTAB(k)	(12 + (776 + DX) * (2 * (k) + 1) / 12)
-		tap (CTAB (0), 84);								// tab: Sound
-		tap (100, 114 + CY (48) + CH / 2);                 EXPECT_CMD ("notes=0");
-		tap (300 + 3 * DX / 8, 114 + CY (118) + CH / 2);   EXPECT_CMD ("out=tracks");
-		tap (300 + 3 * DX / 8, 114 + CY (188) + CH / 2);   EXPECT_CMD ("mac=on");
-		tap (x0 + 140 + 7 * DX / 32, 114 + CY (48) + CH / 2);			// BT = voice 1 (4th key: the Rytm's track order)
-		tap (x0 + vw - 20, 114 + CY (118) + CH / 2);   EXPECT_CMD ("notemach=1:md");
-		tap (CTAB (4), 84);								// tab: Service (T18)
+		const int x0 = LU (12) + LU (400) + DX / 2 + LU (12), vw = LU (364) + DX / 2, by = LU (308) + DY / 2, e = DY / 6, lw = LU (380) + DX / 2;
+		tap (CNAV_X (7), LU (25));							// Set (the last page: About)
+#define CTAB(k)	(LU (12) + (LU (776) + DX) * (2 * (k) + 1) / 12)
+		tap (CTAB (0), LU (84));								// tab: Sound
+		tap (LU (100), LU (114) + CY (48) + CH / 2);                 EXPECT_CMD ("notes=0");
+		tap (LU (300) + 3 * DX / 8, LU (114) + CY (118) + CH / 2);   EXPECT_CMD ("out=tracks");
+		tap (LU (300) + 3 * DX / 8, LU (114) + CY (188) + CH / 2);   EXPECT_CMD ("mac=on");
+		tap (x0 + LU (140) + 7 * DX / 32, LU (114) + CY (48) + CH / 2);			// BT = voice 1 (4th key: the Rytm's track order)
+		tap (x0 + vw - LU (20), LU (114) + CY (118) + CH / 2);   EXPECT_CMD ("notemach=1:md");
+		tap (CTAB (4), LU (84));								// tab: Service (T18)
 		EXPECT (sidecar_ui_page () == 16);
 		run (2); shot ("service");
-		tap (12 + 12 + 48, 114 + CY (48) + CH / 2);            EXPECT_CMD ("fifo=88");
-		tap (12 + 270 + 48, 114 + CY (48) + CH / 2);           EXPECT_CMD ("fifo=96");
-		tap (12 + 12 + 40, 114 + CY (138) + CH / 2);           EXPECT_CMD ("drone=off");
-		tap (12 + 12 + 182, 114 + CY (138) + CH / 2);          EXPECT_CMD ("drone=1");
-		tap (12 + 12 + 364 - 30, 114 + CY (138) + CH / 2);     EXPECT_CMD ("drone=all");
-		tap (12 + 12 + 40, 114 + CY (266) + CH / 2);           EXPECT_CMD ("cpumhz=1500");	// the CPU clock option
-		tap (12 + 12 + 182, 114 + CY (266) + CH / 2);          EXPECT_CMD ("cpumhz=1200");
-		tap (12 + 12 + 364 - 30, 114 + CY (266) + CH / 2);     EXPECT_CMD ("cpumhz=1000");
+		tap (LU (12) + LU (12) + LU (48), LU (114) + CY (48) + CH / 2);            EXPECT_CMD ("fifo=88");
+		tap (LU (12) + LU (270) + LU (48), LU (114) + CY (48) + CH / 2);           EXPECT_CMD ("fifo=96");
+		tap (LU (12) + LU (12) + LU (40), LU (114) + CY (138) + CH / 2);           EXPECT_CMD ("drone=off");
+		tap (LU (12) + LU (12) + LU (182), LU (114) + CY (138) + CH / 2);          EXPECT_CMD ("drone=1");
+		tap (LU (12) + LU (12) + LU (364) - LU (30), LU (114) + CY (138) + CH / 2);     EXPECT_CMD ("drone=all");
+		tap (LU (12) + LU (12) + LU (40), LU (114) + CY (266) + CH / 2);           EXPECT_CMD ("cpumhz=1500");	// the CPU clock option
+		tap (LU (12) + LU (12) + LU (182), LU (114) + CY (266) + CH / 2);          EXPECT_CMD ("cpumhz=1200");
+		tap (LU (12) + LU (12) + LU (364) - LU (30), LU (114) + CY (266) + CH / 2);     EXPECT_CMD ("cpumhz=1000");
 		run (2); shot ("system-1000");
-		tap (CTAB (1), 84);								// tab: Send FX
-		tap (674 + DX, 114 + 52);                EXPECT_CMD ("killfx");
-		tap (CTAB (2), 84);								// tab: Display
-		tap (190 + 60, 114 + CY (98) + CH / 2);                      EXPECT_CMD ("screensaver=0");
-		tap (190 + (570 + DX) * 5 / 8 + 4, 114 + CY (98) + CH / 2);  EXPECT_CMD ("screensaver=60");
+		tap (CTAB (1), LU (84));								// tab: Send FX
+		tap (LU (674) + DX, LU (114) + LU (52));                EXPECT_CMD ("killfx");
+		tap (CTAB (2), LU (84));								// tab: Display
+		tap (LU (190) + LU (60), LU (114) + CY (98) + CH / 2);                      EXPECT_CMD ("screensaver=0");
+		tap (LU (190) + (LU (570) + DX) * 5 / 8 + LU (4), LU (114) + CY (98) + CH / 2);  EXPECT_CMD ("screensaver=60");
 		(void) by; (void) e; (void) lw;
-		tap (CNAV_X (0), 25);							// Home
+		tap (CNAV_X (0), LU (25));							// Home
 		sidecar_ui_show (0); run (3);
 		shot ("hidden");
 		sidecar_ui_show (6); run (3);
 		unsigned taps = sidecar_ui_taps ();
-		tap (190 + 55, 114 + CY (160) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
+		tap (LU (190) + LU (55), LU (114) + CY (160) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
 	}
 	// N1: the eight navigation keys in both themes - each opens its page and lights itself; VOICE asks for the Rytm's
 	// track again (voicepick=-1).
@@ -1670,7 +1813,7 @@ static void theme_run (int style, const char *pre)
 		{
 			EXPECT (!strcmp (sidecar_ui_nav_page (k), kPage[k]));
 			EXPECT (!strcmp (sidecar_ui_nav_key (k), kKey[k]));
-			if (o) tap (NAV_X, NAV_Y (k)); else tap (CNAV_X (k), 25);
+			if (o) tap (NAV_X, NAV_Y (k)); else tap (CNAV_X (k), LU (25));
 			if (kPg[k] >= 0) EXPECT (sidecar_ui_page () == kPg[k]);
 			else EXPECT (sidecar_ui_page () == 1 || sidecar_ui_page () == 2 || sidecar_ui_page () == 3 || sidecar_ui_page () == 6 || sidecar_ui_page () == 16);
 			EXPECT (sidecar_ui_nav_lit () == k);
@@ -1689,10 +1832,10 @@ static void theme_run (int style, const char *pre)
 		sidecar_ui_show (0); run (2); shot ("stage-home");
 		sidecar_ui_show (13); run (2); shot ("stage-status");
 		sidecar_ui_show (6); run (2); shot ("stage-display");
-		tap (84 + (262 + DX) / 4, 41 + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=studio");
+		tap (LU (84) + (LU (262) + DX) / 4, LU (41) + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=studio");
 		EXPECT (sidecar_dot_get_look () == 0);
-		tap (84 + (262 + DX) * 3 / 4, 41 + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=stage");
-		tap (84 + (262 + DX) / 4, 41 + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=studio");
+		tap (LU (84) + (LU (262) + DX) * 3 / 4, LU (41) + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=stage");
+		tap (LU (84) + (LU (262) + DX) / 4, LU (41) + VS (136) + VS (24) / 2); EXPECT_CMD ("uilook=studio");
 		s_St.ui_look = 0; sidecar_ui_status (&s_St);
 		sidecar_ui_show (0); run (2);
 	}
@@ -1801,7 +1944,7 @@ static void theme_run (int style, const char *pre)
 	hold (SX (9, 1), PY (65, top));
 	EXPECT (seqdemo_note (8, 9, 65, 0, 0) > 0 && !strncmp (sidecar_seqed_toast (), "+ F4 S10", 8));
 	run (2); shot ("seq-toast");
-	hold (SX (9, 1) - (o ? 4 : 10), PY (65, top));					// selected: a long press deletes
+	hold (SX (9, 1) - (o ? LU (4) : LU (10)), PY (65, top));					// selected: a long press deletes
 	EXPECT (seqdemo_note (8, 9, 65, 0, 0) == 0 && !strncmp (sidecar_seqed_toast (), "- F4 S10", 8));
 	s_SeqPlay = 0; seqdemo_view (&s_View, 0); sidecar_seqed_view (&s_View);		// stopped: taps edit
 	// gestures on one page: a tap adds a note, a tap on it (selected) deletes it, a drag moves one, UNDO
@@ -1810,7 +1953,7 @@ static void theme_run (int style, const char *pre)
 	run (3);
 	tap (SX (9, 1), PY (65, top));
 	EXPECT (seqdemo_note (8, 9, 65, 0, 0) > 0);
-	tap (SX (9, 1) - (o ? 4 : 10), PY (65, top));
+	tap (SX (9, 1) - (o ? LU (4) : LU (10)), PY (65, top));
 	EXPECT (seqdemo_note (8, 9, 65, 0, 0) == 0);
 	int m0 = 0;
 	EXPECT (seqdemo_note (8, 2, 72, 0, &m0) > 0);
@@ -1818,7 +1961,7 @@ static void theme_run (int style, const char *pre)
 	drag (nx, PY (72, top), nx + gw / 16, PY (73, top), 6, 0);		// one step later, a semitone up: micro kept
 	int m1 = 99;
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) == 0 && seqdemo_note (8, 3, 73, 0, &m1) > 0 && m1 == m0);
-	if (o) tap (249 + 5 * DX / 7 + (50 + DX / 7) / 2, 218 + DY + 11); else tap (722 + DX, 52 + 400 + DY);	// UNDO
+	if (o) tap (LU (249) + 5 * DX / 7 + (LU (50) + DX / 7) / 2, LU (218) + DY + LU (11)); else tap (LU (722) + DX, LU (52) + LU (400) + DY);	// UNDO
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) > 0 && seqdemo_note (8, 3, 73, 0, 0) == 0);
 	// editing a note: selected, dragged later and up (where it was: an outline), its card
 	sidecar_seqed_debug (SEQED_DRAW, 0, 1, top + 1, 13, 74);
@@ -1866,14 +2009,14 @@ static void theme_run (int style, const char *pre)
 	sidecar_seqed_debug (SEQED_SWING, 0, 2, top, -1, -1);
 	run (3);
 	{
-		int lw = o ? 352 + DX : 684 + DX, lyy = o ? 171 + DY * 2 / 3 : 52 + 354 + DY * 2 / 3, lhh = o ? 44 + DY - DY * 2 / 3 : 70 + DY - DY * 2 / 3;
-		int kyy = o ? lyy + 12 + (lhh - 12) / 2 : lyy + 20 + (lhh - 70) / 4 + (48 + (lhh - 70) / 2) / 2;
-#define SLX(v) (o ? (v) * lw / 352 : 8 + (v) * lw / 684)
+		int lw = o ? LU (352) + DX : LU (684) + DX, lyy = o ? LU (171) + DY * 2 / 3 : LU (52) + LU (354) + DY * 2 / 3, lhh = o ? LU (44) + DY - DY * 2 / 3 : LU (70) + DY - DY * 2 / 3;
+		int kyy = o ? lyy + LU (12) + (lhh - LU (12)) / 2 : lyy + LU (20) + (lhh - LU (70)) / 4 + (LU (48) + (lhh - LU (70)) / 2) / 2;
+#define SLX(v) (o ? (v) * lw / 352 : LU (8) + (v) * lw / 684)
 		int s0 = o ? SLX (37) : SLX (92), sw8 = o ? 278 * lw / 352 : 500 * lw / 684;
 		tap (s0 + sw8 * 5 / 16, kyy); EXPECT_CMD ("seq=swing:9:58"); EXPECT (seqdemo_swing (8) == 58);	// preset 58
-		tap (o ? SLX (318) + (lw - SLX (318)) / 2 : SLX (600) + (lw - 4 - (600 * lw / 684)) / 2, kyy);	// +
+		tap (o ? SLX (318) + (lw - SLX (318)) / 2 : SLX (600) + (lw - LU (4) - (600 * lw / 684)) / 2, kyy);	// +
 		EXPECT_CMD ("seq=swing:9:59"); EXPECT (seqdemo_swing (8) == 59);
-		tap (o ? SLX (17) : 8 + 4 + 40 * lw / 684, kyy); tap (o ? SLX (17) : 8 + 4 + 40 * lw / 684, kyy);		// - -
+		tap (o ? SLX (17) : LU (8) + LU (4) + 40 * lw / 684, kyy); tap (o ? SLX (17) : LU (8) + LU (4) + 40 * lw / 684, kyy);		// - -
 		EXPECT_CMD ("seq=swing:9:57"); EXPECT (seqdemo_swing (8) == 57);
 		tap (s0 + sw8 / 16, kyy); EXPECT_CMD ("seq=swing:9:50"); EXPECT (seqdemo_swing (8) == 50);	// straight
 		tap (s0 + sw8 * 7 / 16, kyy); EXPECT (seqdemo_swing (8) == 62);
@@ -1885,12 +2028,12 @@ static void theme_run (int style, const char *pre)
 	sidecar_seqed_debug (SEQED_POLY, 0, 2, top, -1, -1);
 	run (3);
 	{
-		int lw = o ? 352 + DX : 684 + DX, lyy = o ? 171 + DY * 2 / 3 : 52 + 354 + DY * 2 / 3, lhh = o ? 44 + DY - DY * 2 / 3 : 70 + DY - DY * 2 / 3;
-		int kyy = o ? lyy + 12 + (lhh - 12) / 2 : lyy + 20 + (lhh - 70) / 4 + (48 + (lhh - 70) / 2) / 2;
-#define SLX(v) (o ? (v) * lw / 352 : 8 + (v) * lw / 684)
-		int v0 = o ? 0 : 8 + 4, vw = o ? 190 * lw / 352 : 320 * lw / 684;			// VOICES: 7 keys
+		int lw = o ? LU (352) + DX : LU (684) + DX, lyy = o ? LU (171) + DY * 2 / 3 : LU (52) + LU (354) + DY * 2 / 3, lhh = o ? LU (44) + DY - DY * 2 / 3 : LU (70) + DY - DY * 2 / 3;
+		int kyy = o ? lyy + LU (12) + (lhh - LU (12)) / 2 : lyy + LU (20) + (lhh - LU (70)) / 4 + (LU (48) + (lhh - LU (70)) / 2) / 2;
+#define SLX(v) (o ? (v) * lw / 352 : LU (8) + (v) * lw / 684)
+		int v0 = o ? 0 : LU (8) + LU (4), vw = o ? 190 * lw / 352 : 320 * lw / 684;			// VOICES: 7 keys
 		int a0 = o ? SLX (194) : SLX (330), aw = o ? SLX (290) - SLX (194) : 196 * lw / 684;	// ALLOCATION: 3
-		int u0 = o ? SLX (294) : SLX (538), uw = o ? lw - SLX (294) : lw - 4 - 538 * lw / 684;	// UNISON: 4
+		int u0 = o ? SLX (294) : SLX (538), uw = o ? lw - SLX (294) : lw - LU (4) - 538 * lw / 684;	// UNISON: 4
 		tap (v0 + vw * 9 / 14, kyy); EXPECT_CMD ("seq=poly:9:voices=4"); EXPECT ((seqdemo_poly (8) & 15) == 4);
 		tap (a0 + aw / 2, kyy); EXPECT_CMD ("seq=poly:9:alloc=rotate"); EXPECT ((seqdemo_poly (8) >> 4 & 3) == 1);
 		tap (u0 + uw * 3 / 8, kyy); EXPECT_CMD ("seq=poly:9:unison=2"); EXPECT ((seqdemo_poly (8) >> 6) == 2);
@@ -1900,14 +2043,14 @@ static void theme_run (int style, const char *pre)
 	// seqtop: KEY (the pattern's QNT and seed), PLAY (T9's speed, direction, random notes), STEP (the selected note's
 	// step 14: a ratchet, FX 1, its locks' condition, random notes) - each a command line, the model follows
 	{
-		int lw = o ? 352 + DX : 684 + DX, lyy = o ? 171 + DY * 2 / 3 : 52 + 354 + DY * 2 / 3, lhh = o ? 44 + DY - DY * 2 / 3 : 70 + DY - DY * 2 / 3;
-		int rh = (lhh - 22) / 2, y1 = o ? lyy + (21 * lhh / 44) / 2 : lyy + 18 + rh / 2, y2 = o ? lyy + 23 * lhh / 44 + (21 * lhh / 44) / 2 : lyy + 18 + rh + 2 + rh / 2;
-#define SLX(v) (o ? (v) * lw / 352 : 8 + (v) * lw / 684)
+		int lw = o ? LU (352) + DX : LU (684) + DX, lyy = o ? LU (171) + DY * 2 / 3 : LU (52) + LU (354) + DY * 2 / 3, lhh = o ? LU (44) + DY - DY * 2 / 3 : LU (70) + DY - DY * 2 / 3;
+		int rh = (lhh - LU (22)) / 2, y1 = o ? lyy + (21 * lhh / 44) / 2 : lyy + LU (18) + rh / 2, y2 = o ? lyy + 23 * lhh / 44 + (21 * lhh / 44) / 2 : lyy + LU (18) + rh + 2 + rh / 2;
+#define SLX(v) (o ? (v) * lw / 352 : LU (8) + (v) * lw / 684)
 #define KEYAT(x0, w, i, n) ((x0) + (w) * (2 * (i) + 1) / (2 * (n)))
 		int pat = 0;
 		sidecar_seqed_debug (SEQED_KEY, 0, 2, top, -1, -1);
 		run (3);
-		if (o) tap (KEYAT (SLX (194), SLX (292) - SLX (194), 2, 3), y2); else tap (KEYAT (8 + 40, (684 + DX) * 240 / 684 - 40, 2, 3), y2);	// QNT PLAY
+		if (o) tap (KEYAT (SLX (194), SLX (292) - SLX (194), 2, 3), y2); else tap (KEYAT (LU (8) + LU (40), (LU (684) + DX) * 240 / 684 - LU (40), 2, 3), y2);	// QNT PLAY
 		EXPECT_CMD ("seq=key:C:MIN:play"); seqdemo_x (8, &pat); EXPECT ((pat >> 8 & 3) == 2 && (pat >> 4 & 15) == 2);
 		tap (o ? SLX (296) + (lw - SLX (296)) / 2 : SLX (366) + 110 * lw / 684 / 2, y2);	// FREE -> fixed
 		EXPECT_CMD ("seq=seed:0"); seqdemo_x (8, &pat); EXPECT (pat >> 10 & 1);
@@ -1915,23 +2058,23 @@ static void theme_run (int style, const char *pre)
 		shot ("seq-key-qnt");
 		sidecar_seqed_debug (SEQED_PLAY, 0, 2, top, -1, -1);
 		run (3);
-		tap (o ? KEYAT (0, lw, 1, 10) : KEYAT (8 + 4, 340 * lw / 684, 1, 10), y1);			// SPD 1/4
+		tap (o ? KEYAT (0, lw, 1, 10) : KEYAT (LU (8) + LU (4), 340 * lw / 684, 1, 10), y1);			// SPD 1/4
 		EXPECT_CMD ("seq=spd:9:1/4"); EXPECT ((seqdemo_x (8, 0) & 15) == 2);
-		tap (o ? KEYAT (0, 212 * lw / 352, 2, 6) : KEYAT (SLX (352), lw - 4 - 352 * lw / 684, 2, 6), y1 + (o ? y2 - y1 : 0));	// DIR PEND
+		tap (o ? KEYAT (0, 212 * lw / 352, 2, 6) : KEYAT (SLX (352), lw - LU (4) - 352 * lw / 684, 2, 6), y1 + (o ? y2 - y1 : 0));	// DIR PEND
 		EXPECT_CMD ("seq=dir:9:pend"); EXPECT ((seqdemo_x (8, 0) >> 4 & 15) == 2);
-		tap (o ? KEYAT (SLX (216), lw - SLX (216), 2, 3) : KEYAT (8 + 4, 200 * lw / 684, 2, 3), y2);	// RND TRACK
+		tap (o ? KEYAT (SLX (216), lw - SLX (216), 2, 3) : KEYAT (LU (8) + LU (4), 200 * lw / 684, 2, 3), y2);	// RND TRACK
 		EXPECT_CMD ("seq=rnd:9:mode=track,oct=2,wght=flat"); EXPECT ((seqdemo_x (8, 0) >> 8) == 2);
 		shot ("seq-play");
 		sidecar_seqed_debug (SEQED_STEP, 0, 2, top, 13, 74);
 		run (3);
 		int fx = 0, lc = 0, rn = 0;
-		tap (o ? KEYAT (0, lw, 3, 8) : KEYAT (8 + 4, 380 * lw / 684, 3, 8), y1);			// RTRG 4
+		tap (o ? KEYAT (0, lw, 3, 8) : KEYAT (LU (8) + LU (4), 380 * lw / 684, 3, 8), y1);			// RTRG 4
 		EXPECT_CMD ("seq=rtrg:9:14:cnt=4,mode=chord,rate=auto"); EXPECT ((seqdemo_xstep (8, 13, 0, 0, 0) & 255) == 4);
-		tap (o ? KEYAT (0, 176 * lw / 352, 1, 6) : KEYAT (SLX (392), lw - 4 - 392 * lw / 684, 1, 6), o ? y2 : y1);	// FX OCT+
+		tap (o ? KEYAT (0, 176 * lw / 352, 1, 6) : KEYAT (SLX (392), lw - LU (4) - 392 * lw / 684, 1, 6), o ? y2 : y1);	// FX OCT+
 		EXPECT_CMD ("seq=fx:9:14:1:OCT:1"); seqdemo_xstep (8, 13, &fx, 0, 0); EXPECT ((fx & 255) == 7 && (fx >> 8) == 1);
 		tap (o ? KEYAT (SLX (180), SLX (296) - SLX (180), 1, 4) : KEYAT (SLX (192), 260 * lw / 684, 1, 4), y2);	// LOCKS 50%
 		EXPECT_CMD ("seq=lcond:9:14:all:50%"); seqdemo_xstep (8, 13, 0, &lc, 0); EXPECT ((lc & 255) == 93);
-		tap (o ? SLX (300) + (lw - SLX (300)) / 2 : 8 + 4 + 120 * lw / 684 / 2, y2);			// RND
+		tap (o ? SLX (300) + (lw - SLX (300)) / 2 : LU (8) + LU (4) + 120 * lw / 684 / 2, y2);			// RND
 		EXPECT_CMD ("seq=rndstep:9:14:1"); seqdemo_xstep (8, 13, 0, 0, &rn); EXPECT (rn == 1);
 		run (3);
 		shot ("seq-step");
@@ -1954,7 +2097,7 @@ static void theme_run (int style, const char *pre)
 	int mv = 0, vv = 0;
 	EXPECT (seqdemo_note (8, 28, 72, &vv, &mv) > 0);
 	int lx = gx + (28 * 96 + mv) * gw / (1536 * 4) + (o ? 0 : 1);
-	int ltop = o ? 4 : 8, lhh = lh - (o ? 7 : 14);
+	int ltop = o ? LU (4) : LU (8), lhh = lh - (o ? LU (7) : LU (14));
 	drag (lx, ly + ltop + lhh - vv * lhh / 127, lx, ly + ltop + lhh - 40 * lhh / 127, 6, "seq-velocity");
 	EXPECT (seqdemo_note (8, 28, 72, &vv, 0) > 0 && vv >= 34 && vv <= 46);
 	// bigger rows (a pinch): note names in the bars
@@ -2022,14 +2165,14 @@ static void theme_run (int style, const char *pre)
 	EXPECT (rytm_pattern_decode (rec, sizeof rec, &rd) == 0);
 	sidecar_rytmpat_set (&rd, 3, "SHARED SET", "KIT 07  BROKEN BEAT", "sample pattern (host render)");
 	sidecar_rytmpat_page (0);
-	const int prh = (o ? 10 : 22) + DY * 2 / 3 / 12, pcw = (o ? 256 + DX * 4 / 7 : 640 + DX * 6 / 7) / 64;	// sidecar_rytmpat.c
-	if (o) { tap (NAV_X, NAV_Y (2)); tap (10, 48 + 8 * prh + prh / 2); }		// PAT, the CH row
-	else { tap (720 + DX, 52 + 30); tap (8 + 20, 52 + 70 + 8 * prh + prh / 2); }
+	const int prh = (o ? LU (10) : LU (22)) + DY * 2 / 3 / 12, pcw = (o ? LU (256) + DX * 4 / 7 : LU (640) + DX * 6 / 7) / 64;	// sidecar_rytmpat.c
+	if (o) { tap (NAV_X, NAV_Y (2)); tap (LU (10), LU (48) + LU (8) * prh + prh / 2); }		// PAT, the CH row
+	else { tap (LU (720) + DX, LU (52) + LU (30)); tap (LU (8) + LU (20), LU (52) + LU (70) + LU (8) * prh + prh / 2); }
 	sidecar_rytmpat_select (8, 3);
 	sidecar_rytmpat_playhead (13);
 	shot ("rytm-pattern");
-	if (o) { tap (176 + 9 * DX / 20, 26); tap (24 + 60 * pcw + 2, 48 + prh + prh / 2); }	// ALL, SD step 61
-	else { tap (404 + DX + 4 * 52 + 26, 52 + 28); tap (52 + 60 * pcw + 5, 52 + 70 + 1 * prh + prh / 2); }
+	if (o) { tap (LU (176) + 9 * DX / 20, LU (26)); tap (LU (24) + LU (60) * pcw + 2, LU (48) + prh + prh / 2); }	// ALL, SD step 61
+	else { tap (LU (404) + DX + 4 * LU (52) + LU (26), LU (52) + LU (28)); tap (LU (52) + LU (60) * pcw + LU (5), LU (52) + LU (70) + 1 * prh + prh / 2); }
 	sidecar_rytmpat_playhead (58);
 	shot ("rytm-all");
 	sidecar_rytmpat_page (0);
@@ -2177,7 +2320,7 @@ static void anim (const char *dir, int nframes)
 	run (3);
 	int gx, gy, gw, gh, rh, ly, lh;
 	sidecar_seqed_geom (&gx, &gy, &gw, &gh, &rh, &ly, &lh);
-	const int dpos = 405;			// 121.5 BPM: a step is 123.5 ms, a 50 ms frame 0.405 of a step
+	const int dpos = LU (405);			// 121.5 BPM: a step is 123.5 ms, a 50 ms frame 0.405 of a step
 	int pos = 0;
 	frames (dir, &pos, dpos, 50);		// 0 .. 2.5 s: playing page 1-2, the strummed chords lighting up
 	// 2.5 .. 5 s: the melody's note on step 7 dragged two steps later and a tone up, its card along
@@ -2205,7 +2348,7 @@ static void anim (const char *dir, int nframes)
 	frames (dir, &pos, dpos, 46);
 	// 9 .. 11.5 s: back to DRAW; the new chord's top note's velocity pulled down in the lane
 	s_Px = sx (24); s_Py = sy (229); s_Down = 1; frames (dir, &pos, dpos, 3); s_Down = 0; frames (dir, &pos, dpos, 6);
-	int lx = gx + (24 * 96 + 36) * gw / 3072 + 1, lt = ly + 4, lhh = lh - 7;
+	int lx = gx + (24 * 96 + 36) * gw / 3072 + 1, lt = ly + LU (4), lhh = lh - LU (7);
 	s_Px = sx (lx); s_Py = sy (lt + 4); s_Down = 1;
 	for (int i = 1; i <= 20; i++) { s_Py = sy (lt + 4 + (lhh - 20) * i / 20); frame (dir, &pos, dpos); }
 	s_Down = 0;
@@ -2270,7 +2413,7 @@ int main (int argc, char **argv)
 	for (int i = 1; i < argc; i++)				// a screen size anywhere on the line: 1024x600
 		if (sscanf (argv[i], "%dx%d", &W, &H) == 2)
 		{
-			if (W < 320 || H < 240 || W > WMAX || H > HMAX) { fprintf (stderr, "shot: %dx%d: 320x240 .. 1024x600\n", W, H); return 2; }
+			if (W < 320 || H < 240 || W > WMAX || H > HMAX) { fprintf (stderr, "shot: %dx%d: 320x240 .. 1280x720\n", W, H); return 2; }
 			for (int k = i; k + 1 < argc; k++) argv[k] = argv[k + 1];
 			argc--;
 			break;

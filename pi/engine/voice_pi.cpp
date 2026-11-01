@@ -187,7 +187,7 @@ void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern) {
   int vb = t >= 0 ? core::ui::remote_track_machine(t) : -1;
   v.sidecar = vb >= 0 && vb != 0x7F;
   memcpy(v.name, name, 13);
-  if (v.sidecar) sniprintf(v.name, sizeof v.name, "%s", core::machine_long(vb & 0x78));   // the shared long name (UX review T3, T7)
+  if (v.sidecar) sniprintf(v.name, sizeof v.name, "%s", core::machine_long(core::machine_of((uint8_t)vb)));   // the shared long name (UX review T3, T7)
   memcpy(v.val, val, 8);
   memcpy(v.label, label, sizeof v.label);
   // the scope and level: the track's stem from the input tap (its voice's channel)
@@ -226,7 +226,7 @@ void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern) {
     v.level = lev < 0 ? 0 : lev;
   }
   // the machine's panel
-  int mach = v.sidecar ? vb & 0x78 : -1;
+  int mach = v.sidecar ? core::machine_of((uint8_t)vb) : -1;
   v.mode = mach == core::kFm ? SVV_FM : mach == core::kMultiMachine ? SVV_MULTI : mach == core::kDaisy ? SVV_DAISY : SVV_PLAIN;
   if (v.mode == SVV_FM) fill_fm(v);
   else if (v.mode == SVV_MULTI) fill_multi(v, core::ui::remote_track_voice(t), t);

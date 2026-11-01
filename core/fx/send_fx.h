@@ -59,6 +59,7 @@
 #include "fx/rings_fx.h"
 #endif
 #include "fx/knob_labels.h"
+#include "simd.h"
 #include "fx/stutter_fx.h"   // its clock word in every build; its Stutter (2 MiB) placed only with RYTM_SENDFX_LARGE
 
 namespace core {
@@ -161,7 +162,8 @@ extern volatile bool card_dirty;
 // board's idle step). send_fx_card.cpp (the core's card).
 void card_load();
 void card_save();
-void slots_load(const char* project);
+void slots_load(const char* project);   // the map starts over, empty; with CORE_MSAMP read by the card core: slots_step
+bool slots_step();                      // takes a read in; true: none under way, user[] is the project's
 constexpr int kUserSlots = 4;
 struct UserFx {
   uint16_t tag;    // 1..0x3FFF; 0 = the slot is empty
@@ -774,18 +776,7 @@ class SendFx {
         on[k] |= g[k][v] != 0.0f || gain_[s][v].y != 0.0f;
       }
     if (ns == 2 && on[0] && on[1]) {
-      float* x0 = xs[ss[0]];
-      float* x1 = xs[ss[1]];
-      for (int i = 0; i < n; ++i) {
-        float p0 = 0.0f, q0 = 0.0f, p1 = 0.0f, q1 = 0.0f;
-#pragma GCC unroll 8
-        for (int v = 0; v < kStems; v += 2) {
-          const float a = stems[i][v], b = stems[i][v + 1];
-          g[0][v] += dg[0][v], g[0][v + 1] += dg[0][v + 1], g[1][v] += dg[1][v], g[1][v + 1] += dg[1][v + 1];
-          p0 += a * g[0][v], q0 += b * g[0][v + 1], p1 += a * g[1][v], q1 += b * g[1][v + 1];
-        }
-        x0[i] = p0 + q0, x1[i] = p1 + q1;
-      }
+      simd::mix2(stems, n, g, dg, xs[ss[0]], xs[ss[1]]);
       return;
     }
     for (int k = 0; k < ns; ++k) {

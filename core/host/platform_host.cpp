@@ -280,8 +280,12 @@ size_t File::getName(char* out, size_t n) const {
   return k;
 }
 
+static std::string g_fail_read;
+static uint64_t g_fail_read_at = 0;
+void host_fail_read(const char* p, uint64_t at, bool on) { g_fail_read = on && p ? p : "", g_fail_read_at = at; }
 int File::read(void* buf, size_t n) {
   if (!fp_ || (mode_ != kRead && mode_ != kReadWrite)) return -1;
+  if (!g_fail_read.empty() && path_ == g_fail_read && pos_ >= g_fail_read_at) return -1;   // a card error from there on
   if (vol_gone(path_)) return -1;   // its stick pulled
   if (g_cm && n) {   // FatFs: the sectors past the one it holds, from the card
     uint64_t s0 = pos_ / 512, s1 = (pos_ + n - 1) / 512, k = s1 - s0 + 1 - (s0 == rsec_ ? 1 : 0);
@@ -299,10 +303,13 @@ int File::read() {
   return read(&b, 1) == 1 ? b : -1;
 }
 
+static int g_short = -1;
+void host_short_write(int bytes) { g_short = bytes; }
 size_t File::write(const void* buf, size_t n) {
   if (!fp_ || mode_ == kRead) return 0;
   if (vol_gone(path_)) return 0;
   if (!change()) return 0;
+  if (g_short >= 0 && n > (size_t)g_short) n = (size_t)g_short, g_short = -1;
   if (mode_ == kAppend) pos_ = size_;   // as O_APPEND: every write at the end
   fseek(fp_, (long)pos_, SEEK_SET);
   size_t w = fwrite(buf, 1, n, fp_);

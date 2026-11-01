@@ -26,7 +26,7 @@ RMP_COLD bool rmp_manifest_read(const rmp_info *info, rmp_read_fn rd, void *ctx,
   memset(d, 0, sizeof *d);
   d->pre = -1;
   int fmt = info->format;
-  if (fmt < 1 || fmt > 4) return false;   // (4: format 3 with an RLB2 block, rmp_format.h)
+  if (fmt < 1 || fmt > (int)RMP_FORMAT) return false;   // (4: format 3 with an RLB2 block, 5: a list over 16 names; rmp_format.h)
   uint32_t hb = fmt >= 3 ? 84u : 64u, kb = fmt == 1 ? 20u : fmt == 2 ? 22u : 26u;
   uint64_t at64 = (uint64_t)RMP_HEADER_BYTES + info->image_size + 8ull * info->reloc_count;
   if (info->manifest_size < hb || at64 + info->manifest_size > 0xFFFFFFFFull) return false;
@@ -85,14 +85,14 @@ RMP_COLD bool rmp_manifest_read(const rmp_info *info, rmp_read_fn rd, void *ctx,
   return true;
 }
 
-RMP_COLD int rmp_manifest_enum(const rmp_desc *d, int k, rmp_read_fn rd, void *ctx, char names[16][8]) {
-  memset(names, 0, 16 * 8);
+RMP_COLD int rmp_manifest_enum(const rmp_desc *d, int k, rmp_read_fn rd, void *ctx, char names[RMP_ENUM_MAX][8]) {
+  memset(names, 0, RMP_ENUM_MAX * 8);
   if (k < 0 || k >= d->nknobs || !d->names_at) return 0;
   const rmp_desc_knob &q = d->knob[k];
   if (!q.enum_count) return 0;
   uint64_t from = (uint64_t)d->names_at + 8ull * q.enum_first, to = from + 8ull * q.enum_count;
   if (to > d->names_end) return -1;
-  uint8_t b[16 * 8];
+  uint8_t b[RMP_ENUM_MAX * 8];
   if (!rd(ctx, (uint32_t)from, b, 8u * q.enum_count)) return -1;
   for (int i = 0; i < q.enum_count; ++i) {
     clean(names[i], b + 8 * i, 7);   // the 8th byte is the terminator
@@ -211,10 +211,10 @@ RMP_COLD bool rmp_labels_apply(const rmp_labels *l, int set, rmp_desc *d) {
   return did;
 }
 
-RMP_COLD int rmp_labels_enum(const rmp_labels *l, int set, int p, char names[16][8]) {
+RMP_COLD int rmp_labels_enum(const rmp_labels *l, int set, int p, char names[RMP_ENUM_MAX][8]) {
   if (!l || !l->dep || set < 0 || set >= l->nsets || p != l->knob) return -1;
   int v = dep_of(l, set);
-  memset(names, 0, 16 * 8);
+  memset(names, 0, RMP_ENUM_MAX * 8);
   for (int i = 0; i < l->count[v]; ++i) memcpy(names[i], l->names[l->base[v] + i], 8);
   return l->count[v];
 }

@@ -55,93 +55,93 @@ void sidecar_insfx_create (void *parent, int y0)
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the same rows, wider, the keys and knobs a little taller (e)
 	const int dx = TH->dx, dy = TH->dy, e = dy / 6;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - 48 : TH->w, o ? TH->h : 428 + dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - LU (48) : TH->w, o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
 	{
-		const int sp = 177 + dx / 2, kp = 44 + dx / 8;
-		s_TitleBar = th_titlebar (pg, 0, 0, 352 + dx, 13);
+		const int sp = LU (177) + dx / 2, kp = LU (44) + dx / 8;
+		s_TitleBar = th_titlebar (pg, 0, 0, LU (352) + dx, LU (13));
 		th_titlebar_set (s_TitleBar, "INSERT FX", "", 0);
 		s_Title = 0;
-		s_Voice = th_seg (pg, 0, 16, 352 + dx, 21 + e, kVoiceMap, TH_KEY | TH_KEY_SMALL, voice_cb, 0);
+		s_Voice = th_seg (pg, 0, LU (16), LU (352) + dx, LU (21) + e, kVoiceMap, TH_KEY | TH_KEY_SMALL, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
-			s_Type[s] = th_key (pg, s * sp, 41 + e, sp - 2, 21 + e, "A OFF", TH_KEY | TH_KEY_SMALL, type_cb, (void *) (intptr_t) s);
+			s_Type[s] = th_key (pg, s * sp, LU (41) + e, sp - 2, LU (21) + e, "A OFF", TH_KEY | TH_KEY_SMALL, type_cb, (void *) (intptr_t) s);
 			for (int k = 0; k < 4; k++)
 			{
 				int i = s * 4 + k, x = s * sp + k * kp;
-				s_Knob[i] = th_meter (pg, x, 66 + 2 * e, kp - 2, 51 + e, 127, TH_METER_KNOB, s ? TH->ink : th_oled_secondary (127));
-				s_Val[i] = th_label (pg, x, 118 + 3 * e, TH->f_micro, TH->dim, "");
+				s_Knob[i] = th_meter (pg, x, LU (66) + 2 * e, kp - 2, LU (51) + e, 127, TH_METER_KNOB, s ? TH->ink : th_oled_secondary (127));
+				s_Val[i] = th_label (pg, x, LU (118) + 3 * e, TH->f_micro, TH->dim, "");
 				lv_obj_set_width (s_Val[i], kp - 1);
 				lv_obj_set_style_text_align (s_Val[i], LV_TEXT_ALIGN_CENTER, 0);
 			}
 		}
 		for (int b = 0; b < 3; b++)
 		{
-			const int y = 136 + 3 * e + b * (16 + e / 2);
+			const int y = LU (136) + 3 * e + b * (LU (16) + e / 2);
 			s_SendL[b] = th_label (pg, 0, y, TH->f_micro, TH->dim, "");
-			lv_obj_set_width (s_SendL[b], 72);
-			s_Send[b] = th_meter (pg, 74, y + 1, 76 + dx / 2, 7, 127, TH_METER_H, TH->ink);
-			s_Bus[b] = th_label (pg, 158 + dx / 2, y, TH->f_micro, TH->dim, "");
-			lv_obj_set_width (s_Bus[b], 194 + dx / 2);
+			lv_obj_set_width (s_SendL[b], LU (72));
+			s_Send[b] = th_meter (pg, LU (74), y + 1, LU (76) + dx / 2, LU (7), 127, TH_METER_H, TH->ink);
+			s_Bus[b] = th_label (pg, LU (158) + dx / 2, y, TH->f_micro, TH->dim, "");
+			lv_obj_set_width (s_Bus[b], LU (194) + dx / 2);
 		}
 		{	// the OUT row
-			const int y = 136 + 3 * e + 3 * (16 + e / 2), g = 76 + dx / 6;
-			s_Out = th_key (pg, 0, y - 2, 70, 13 + e / 2, "OUT TRK", TH_KEY | TH_KEY_SMALL, out_cb, 0);
+			const int y = LU (136) + 3 * e + 3 * (LU (16) + e / 2), g = LU (76) + dx / 6;
+			s_Out = th_key (pg, 0, y - 2, LU (70), LU (13) + e / 2, "OUT TRK", TH_KEY | TH_KEY_SMALL, out_cb, 0);
 			for (int k = 0; k < 3; k++)
 			{
-				s_OutL[k] = th_label (pg, 74 + k * g, y, TH->f_micro, TH->dim, "");
-				lv_obj_set_width (s_OutL[k], 40);
-				s_OutM[k] = th_meter (pg, 116 + k * g, y + 1, g - 46, 7, 127, TH_METER_H, TH->ink);
+				s_OutL[k] = th_label (pg, LU (74) + k * g, y, TH->f_micro, TH->dim, "");
+				lv_obj_set_width (s_OutL[k], LU (40));
+				s_OutM[k] = th_meter (pg, LU (116) + k * g, y + 1, g - LU (46), LU (7), 127, TH_METER_H, TH->ink);
 			}
 			for (int c = 0; c < 2; c++)
-				s_Pk[c] = th_meter (pg, 74 + 3 * g, y + c * 5, 352 + dx - (74 + 3 * g), 3, 127, TH_METER_H, th_oled_secondary (127));
+				s_Pk[c] = th_meter (pg, LU (74) + 3 * g, y + c * 5, LU (352) + dx - (LU (74) + 3 * g), 3, 127, TH_METER_H, th_oled_secondary (127));
 		}
-		s_Info = th_label (pg, 0, 206 + dy, TH->f_micro, TH->faint, "");
-		lv_obj_set_width (s_Info, 352 + dx);
+		s_Info = th_label (pg, 0, LU (206) + dy, TH->f_micro, TH->faint, "");
+		lv_obj_set_width (s_Info, LU (352) + dx);
 	}
 	else
 	{
-		const int sp = 380 + dx / 2, kp = 94 + dx / 8;
+		const int sp = LU (380) + dx / 2, kp = LU (94) + dx / 8;
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, 784 + dx, 414 + dy, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, &lv_font_montserrat_18, TH->win_ink, "INSERT FX");
-		s_Voice = th_seg (pg, 24, 44, 752 + dx, 40 + e / 2, kVoiceMap, TH_KEY, voice_cb, 0);
+		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "INSERT FX");
+		s_Voice = th_seg (pg, LU (24), LU (44), LU (752) + dx, LU (40) + e / 2, kVoiceMap, TH_KEY, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
-			s_Type[s] = th_key (pg, 24 + s * sp, 96 + e, sp - 8, 40 + e / 2, "A OFF", TH_KEY, type_cb, (void *) (intptr_t) s);
+			s_Type[s] = th_key (pg, LU (24) + s * sp, LU (96) + e, sp - LU (8), LU (40) + e / 2, "A OFF", TH_KEY, type_cb, (void *) (intptr_t) s);
 			for (int k = 0; k < 4; k++)
 			{
 				int i = s * 4 + k, x = 24 + s * sp + k * kp;
-				s_Knob[i] = th_meter (pg, x, 146 + e + e / 2, kp - 8, 110 + e, 127, TH_METER_KNOB, TH->win_ink);
-				s_Val[i] = th_label (pg, x, 258 + 2 * e + e / 2, &lv_font_montserrat_14, TH->win_dim, "");
-				lv_obj_set_width (s_Val[i], kp - 8);
+				s_Knob[i] = th_meter (pg, x, LU (146) + e + e / 2, kp - LU (8), LU (110) + e, 127, TH_METER_KNOB, TH->win_ink);
+				s_Val[i] = th_label (pg, x, LU (258) + 2 * e + e / 2, TH->f_small, TH->win_dim, "");
+				lv_obj_set_width (s_Val[i], kp - LU (8));
 				lv_obj_set_style_text_align (s_Val[i], LV_TEXT_ALIGN_CENTER, 0);
 			}
 		}
 		for (int b = 0; b < 3; b++)
 		{
-			const int y = 286 + 3 * e + b * (28 + e / 2);
-			s_SendL[b] = th_label (pg, 24, y, &lv_font_montserrat_16, TH->win_ink, "");
-			lv_obj_set_width (s_SendL[b], 200);
-			s_Send[b] = th_meter (pg, 230, y + 4, 200 + dx / 2, 14, 127, TH_METER_H, TH->win_ink);
-			s_Bus[b] = th_label (pg, 450 + dx / 2, y, &lv_font_montserrat_16, TH->win_dim, "");
-			lv_obj_set_width (s_Bus[b], 326 + dx / 2);
+			const int y = LU (286) + 3 * e + b * (LU (28) + e / 2);
+			s_SendL[b] = th_label (pg, LU (24), y, TH->f_body, TH->win_ink, "");
+			lv_obj_set_width (s_SendL[b], LU (200));
+			s_Send[b] = th_meter (pg, LU (230), y + LU (4), LU (200) + dx / 2, LU (14), 127, TH_METER_H, TH->win_ink);
+			s_Bus[b] = th_label (pg, LU (450) + dx / 2, y, TH->f_body, TH->win_dim, "");
+			lv_obj_set_width (s_Bus[b], LU (326) + dx / 2);
 		}
 		{	// the OUT row
-			const int y = 286 + 3 * e + 3 * (28 + e / 2), g = 160 + dx / 6;
-			s_Out = th_key (pg, 24, y - 2, 140, 26 + e / 4, "OUT TRK", TH_KEY, out_cb, 0);
+			const int y = LU (286) + 3 * e + 3 * (LU (28) + e / 2), g = LU (160) + dx / 6;
+			s_Out = th_key (pg, LU (24), y - 2, LU (140), LU (26) + e / 4, "OUT TRK", TH_KEY, out_cb, 0);
 			for (int k = 0; k < 3; k++)
 			{
-				s_OutL[k] = th_label (pg, 176 + k * g, y + 2, &lv_font_montserrat_14, TH->win_ink, "");
-				lv_obj_set_width (s_OutL[k], 74);
-				s_OutM[k] = th_meter (pg, 252 + k * g, y + 6, g - 84, 10, 127, TH_METER_H, TH->win_ink);
+				s_OutL[k] = th_label (pg, LU (176) + k * g, y + 2, TH->f_small, TH->win_ink, "");
+				lv_obj_set_width (s_OutL[k], LU (74));
+				s_OutM[k] = th_meter (pg, LU (252) + k * g, y + LU (6), g - LU (84), LU (10), 127, TH_METER_H, TH->win_ink);
 			}
 			for (int c = 0; c < 2; c++)
-				s_Pk[c] = th_meter (pg, 176 + 3 * g, y + 2 + c * 12, 776 + dx - (176 + 3 * g), 8, 127, TH_METER_H, TH->win_ink);
+				s_Pk[c] = th_meter (pg, LU (176) + 3 * g, y + 2 + c * LU (12), LU (776) + dx - (LU (176) + 3 * g), LU (8), 127, TH_METER_H, TH->win_ink);
 		}
-		s_Info = th_label (pg, 24, 402 + dy, &lv_font_montserrat_14, TH->win_dim, "");
-		lv_obj_set_width (s_Info, 752 + dx);
+		s_Info = th_label (pg, LU (24), LU (402) + dy, TH->f_small, TH->win_dim, "");
+		lv_obj_set_width (s_Info, LU (752) + dx);
 	}
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
 }

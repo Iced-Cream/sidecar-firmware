@@ -89,6 +89,7 @@ At boot, before the render loops start, every core runs the bench in turn (cores
 | `notes=on\|off` | off | MIDI channels 1..8 play voices 0..7 (the note adapter) |
 | `voicebudget=P` | 50 | a voice's budget in % of a block (5..100), the share measured at 1500 MHz: it is scaled by 1500 / the CPU clock (`cpumhz=`; "CPU clock" below). A voice is muted only when it is over budget while its render core is overloaded (its block took 80 % of a block or more), 200 blocks (50 ms) in a row; a burst never mutes. A muted voice is unmuted by `:unmute` or by a change of its machine |
 | `cpumhz=1500\|1200\|1000` | 1500 | the CPU clock option (Settings > System; `/.rytm/display.txt` has it too, cmdline wins). 1500 is the board's full clock; "CPU clock" below |
+| `idlewfe=0` | 1 | turns off the idle sleep added for the heat (core 0's loop, core 3's render wait; "Idle sleep" below); `:idlewfe=0` / `:idlewfe=1` on the console do it live, for an A/B |
 | `split=N` | 4 | voices 0..N-1 render on core 1, N..7 on core 2 (1..7) |
 | `display=0\|1` | 1 | the HDMI display and its USB touch, drawn from core 0's loop (`docs/pi-display.md`); `width=` `height=` (Circle's) set the frame buffer's size, else the firmware's mode |
 | `bench=0\|1` | 1 | the boot bench (6 machines x 4 cores, 1 s of audio each; see Measurements). A core that does not finish its bench in 20 s is fatal (`bench: core N did not finish ...`, clean stop, reboot into the bootloader); `bench=0` then boots without it |
@@ -904,8 +905,8 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
 - **On at 80 C, off below 75 C** (75 / 70 until 2026-10-29, then briefly 78 / 73; the user: the unit does not feel hot
   and the Pi has its own throttle). 79 stays warned, 75 stays warned, 74 clears; a unit sitting at 80 does not flicker
   (tests: `pi/engine/tests/test_thermal.cpp`). A reading of 0 (the mailbox failed) changes nothing.
-- **The clock Circle lowered.** Above `socmaxtemp` (78 on the card, Circle's maximum) `CCPUThrottle` drops the ARM clock to
-  600 MHz and raises it 3 C below, so by 80 C the clock has usually been lowered already. `thermal::clock_low_mhz` (the
+- **The clock Circle lowered.** Above `socmaxtemp` (78 on the card, Circle's maximum; 60 on a card with no `socmaxtemp=`, which
+  is what `make-sd-pi5.sh` makes) `CCPUThrottle` drops the ARM clock to its minimum (600 MHz, a Pi 5's 1500) and raises it 3 C below, so by 80 C the clock has usually been lowered already. `thermal::clock_low_mhz` (the
   clock read back well below the setting, the SoC at 75 C or more; a lower Settings clock is not "lowered") makes it
   honest: warned, the banner says `SoC 80 °C - clock lowered to 600 MHz.` (OLED `SOC 80C - CLOCK LOWERED TO 600 MHZ`), the
   Rytm's popup `SOC 80C CLOCK LOWERED / TO 600 MHZ (UP+T10)`, the STATUS page's CPU title line `600 MHz: clock lowered
@@ -925,6 +926,29 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
   mid-edit for a condition that is not an emergency (the firmware throttles at 80 C, 85 C is its hard limit) is the wrong
   trade. It appears when the page closes, if the warning still stands.
 
+## Idle sleep (2026-11-01)
+
+Where each core waits, after a Pi 5 reached 79 C at 1-4 % voice load. Nothing was measured yet on hardware.
+
+- **Render cores (1, 2):** `wfe` between blocks, always did. Woken by core 3's `sev` after it publishes `s_nGen`; checked right
+  before the `wfe`, so a `sev` cannot be lost (the event stays set and `wfe` returns at once; `tests/test_idlewait.cpp`
+  walks every interleaving). No event stream, no bound: a real loss would end in the 20 ms fatal, and none is possible.
+- **Control core (3):** `wfe` between passes, always did, bound 152 us by the event stream, needed there because a whole pass
+  lies between its checks and its `wfe` and a spin lock inside can spend the event. New: it also sleeps while the render cores
+  work (it spun). Each worker signals after publishing `s_nDone`; a wake is the time to leave `wfe`, well under 1 us (no
+  retention state is enabled), 152 us at worst if a `sev` were missed. A voice budget of 125 us is not spent here: the wait
+  ends when the slower render core signals, and a block is 250 us with a FIFO of 96 frames (2 ms) behind it.
+- **Core 0:** the only core that really spun: `MsSleep (1)` at the loop's end leaves the CPU to Circle's scheduler, and
+  `CNetTask` is always ready, so it runs the network's `Process` flat out. Now the loop yields to the tasks and sleeps in
+  `wfe` until the 1 ms is over (`idlewait::spend`; no Circle change). The sleep is `sevl; wfe; wfe` (`idlewait::nap`), not one
+  `wfe`: the network's round ends in `CSpinLock::Acquire` and left the event register set, so a plain `wfe` returned at once
+  (Pi 5: 1.2 million wakes a second, 3 % asleep). Core 0 waits for no event, so dropping it loses nothing; the other cores keep a plain `wfe`. Interrupts (USB, audio) wake it at once, as they
+  interrupted the spin. The loop and the network's polling are late by 152 us at most (the event stream; while
+  rendering about 80 us, from the other cores' `sev`). Card service, USB polling and the display stay in the loop as they were:
+  the sleep is only in the time the loop already gave away, not in `Yield`s inside a card or USB wait.
+- **Seen in:** `/status` `"idle":{"wfe":true,"asleepPct":[c0,c1,c2,c3],"wakes":[...]}` (the last second, wakes a second), and
+  every 10 s the log line `idle: asleep ...` with the clock and the SoC temperature. Core 3's pass-through wakes are in `wakes`.
+
 ## CPU clock (2026-10-25)
 
 Settings > System > CPU clock: **1500** (the default: the board's full clock, 1500 MHz on the Pi 4; a Pi 5 keeps its own
@@ -932,6 +956,12 @@ maximum), **1200** or **1000 MHz**. It is also a console command (`cpumhz=1200`;
 `cpumhz=` in `/.rytm/display.txt` (not written while it is the default), and `cpumhz=` in cmdline.txt wins. It is applied
 at boot before the boot bench, so the bench measures the clock the engine plays at.
 
+- **On a Pi 5.** The firmware's range is 1500-2400. The setting 1500 means "full", so the clock is **2400**; 1200 and 1000 both
+  come to **1500**, the firmware's minimum, held there (`Update` off): the way to run a Pi 5 at 1500 on purpose. `/status`
+  `cpu`: `setting`, `mhz` (what the firmware says it set), `askedMhz` (what the setting comes to here), `fullMhz`, `minMhz`,
+  `measuredMhz` (what it measured, every 10 s, mailbox id 5: `mhz` only repeats the rate asked for, so the firmware's own
+  throttle shows only here; a gap over 5 % is logged), `socMaxC`, `capped`. "Clock lowered" compares with `askedMhz` (it
+  compared with the setting, so a Pi 5 lowered to 1500 was not "lowered").
 - **Mechanism: runtime, not config.txt's `arm_freq`.** `arm_freq` needs a reboot, lives in a boot file the file API
   deliberately cannot write, and could not be a Settings choice; set in config.txt it would also move Circle's idea of its
   maximum (what `CCPUThrottle` calls "maximum" is the firmware's maximum clock, believed to follow `arm_freq`; not checked on

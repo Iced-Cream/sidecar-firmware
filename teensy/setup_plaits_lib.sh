@@ -12,7 +12,8 @@ L=$D/libraries/Plaits
 SHIM=$D/../sim/plaits/shim/plaits/user_data.h
 RNG=$D/../sim/plaits/shim/stmlib/utils/random.h
 if [ "${1:-}" = --if-stale ] && [ -d "$L" ] && cmp -s "$D/../sim/plaits/fm_machine.h" "$L/src/fm_machine.h" &&
-   cmp -s "$SHIM" "$L/user_data.h.src" && cmp -s "$RNG" "$L/src/stmlib/utils/random.h"; then
+   cmp -s "$SHIM" "$L/user_data.h.src" && cmp -s "$RNG" "$L/src/stmlib/utils/random.h" &&
+   cmp -s "$D/../sim/plaits/operator_neon.h" "$L/src/plaits/dsp/fm/operator_neon.h"; then
   exit 0
 fi
 "$D/../sim/plaits/build.sh" >/dev/null   # makes sure the vendor checkout exists
@@ -45,6 +46,12 @@ sed -i '' 's|^#include "plaits/resources.h"$|#include "plaits/resources.h"\n#inc
 perl -0pi -e 's|(void SixOpEngine::LoadUserData\(const uint8_t\* user_data\) \{\n)|$1  if (user_data \&\& user_data == fm_user_bank()) {   // rytm: one voice, into patch fm_user_slot()\n    fm::Patch* target = \&patches_[fm_user_slot() \& 1];\n    target->Unpack(user_data);\n    for (int i = 0; i < kNumSixOpVoices; ++i) {\n      if ((fm_user_slot() \& 2) ? true : voice_[i].patch() == target) voice_[i].UnloadPatch();\n    }\n    return;\n  }\n|' "$S"
 grep -q 'rytm: one voice, into patch fm_user_slot()' "$S" || { echo "six_op_engine.cc: patch failed"; exit 1; }
 cp "$D/../sim/plaits/fm_machine.h" "$L/src/fm_machine.h"
+# The FM operators' NEON path on AArch64 (sim/plaits/operator_neon.h, inside plaits::fm, after the C renamed RenderOperatorsC)
+O="$L/src/plaits/dsp/fm/operator.h"
+cp "$D/../sim/plaits/operator_neon.h" "$L/src/plaits/dsp/fm/operator_neon.h"
+perl -0pi -e 's|void RenderOperators\(\n|void RenderOperatorsC(\n|; s|\};\s*\n\}  // namespace fm|};\n\n#include "plaits/dsp/fm/operator_neon.h"\n\n}  // namespace fm|' "$O"
+perl -pi -e 's|^(#include <algorithm>)$|$1\n#if defined(__ARM_NEON) \&\& defined(__aarch64__)\n#include <arm_neon.h>\n#endif|' "$O"
+grep -q 'arm_neon.h' "$O" && grep -q 'operator_neon.h' "$O" || { echo "operator.h: NEON patch failed"; exit 1; }
 # Voice::Init runs at startup and when a voice returns from a plugin (voiceloop): cold, so it
 # lives in program flash, not in ITCM (RAM1 is tight; see run_sketch.sh's ITCM check).
 V2="$L/src/plaits/dsp/voice.cc"

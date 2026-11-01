@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arp/arp.h"
 #include "hooks.h"   // hooks.transport: the mods' PLAY / STOP to the platform (the recorder)
 #include "fx/send_fx.h"
 #include "fx/insert.h"
@@ -15,6 +16,7 @@
 #include "inst.h"
 #include "lfo.h"
 #include "machines.h"
+#include "midim/midim.h"
 #include "platform.h"
 #include "poly.h"
 #include "fmt/fmt.h"   // write_atomic / recover: every build's pattern saves (0.3.0 power-cut safety)
@@ -96,6 +98,10 @@ void set_transport(int t) {
   if (t == transport) return;
   const int was = transport;
   transport = t;
+#if CORE_MSAMP
+  if (t != kPlay) midim::stop();   // MIDI: what the sequencers hold ends here, whatever 0x11s come
+#endif
+  if (t != kPlay) arp::stop();     // the arpeggiator: a trig's and the sequencer's notes end, keys run on free
   if (hooks.transport) hooks.transport(t == kPlay ? (was == kPause ? 0xFB : 0xFA) : 0xFC);
 }
 int64_t transport_frame = INT64_MIN;   // the Rytm frame of the last TRANSPORT (older ticks after it: ignored)
@@ -293,6 +299,8 @@ uint32_t pat_changed_ms = 0;    // a pattern change (02 / 03): the SCALE reports
 uint16_t pin_extra = 0;
 bool pin_seq = true;
 uint16_t clock_extra = 0;       // core/song's clock-only tracks (2E bytes 3 / 4)
+uint16_t arp_pins = 0;          // the arpeggiator's tracks: pinned as a seq track is (its notes are the host's)
+bool arp_clock = false;         // ... BD's ticks asked for, its grid
 int clock_sent = -1;
 int pin_sent = -1;              // the 2E's pin part last sent (pin_extra | !pin_seq << 12), -1 none
 uint16_t silent_sent = 0xFFFF;  // the last 46 (0xFFFF: none since the hello)
@@ -823,7 +831,7 @@ CORE_COLD void load_tracks() {
   if (ps) pin_seq = atoi(ps + 7) != 0;
   const char* lm = strstr(b, "latset=");
   if (lm) cal.manual = atoi(lm + 7) != 0;
-  for (const char* q = strstr(b, "poly="); q; q = strstr(q + 5, "poly=")) {   // E0: poly=T:V,A,U,D,S,G (T 1..12)
+  for (const char* q = strstr(b, "poly="); q; q = strstr(q + 5, "poly=")) {   // E0: poly=T:V,A,U,D,S,G[,O] (T 1..12; O = PAD OCT, signed, optional)
     int a[7] = {0}, k = 0;
     const char* c = q + 5;
     for (; k < 7 && *c >= '0' && *c <= '9'; ++k) {
@@ -838,6 +846,7 @@ CORE_COLD void load_tracks() {
     pc.voices = (uint8_t)clampi(a[1], 0, kMaxVoicesCfg), pc.alloc = (uint8_t)(a[2] < kAllocs ? a[2] : 0);
     pc.unison = (uint8_t)clampi(a[3], 0, kMaxUnison), pc.detune = (uint8_t)clampi(a[4], 0, 127);
     pc.spread = (uint8_t)clampi(a[5], 0, 127), pc.group = (uint8_t)clampi(a[6], 0, kPolyGroups);
+    pc.oct = (int8_t)(c[-1] == ',' ? clampi(atoi(c), -kMaxPadOct, kMaxPadOct) : 0);   // 7g: the optional PAD OCT (signed)
   }
 }
 // tracks.txt's text (the mask, the latency, the pins, E0's default poly configs)
@@ -847,8 +856,8 @@ CORE_COLD int tracks_text(char* b, int cap) {
   for (int r = 0; r < kRytmTracks && n < cap - 40; ++r) {   // E0: the tracks' default poly configs (none: no line)
     const PolyCfg& pc = poly_def[r];
     if (!poly_default(pc))
-      n += sniprintf(b + n, cap - n, CORE_STR("poly=%d:%d,%d,%d,%d,%d,%d\n"), r + 1, pc.voices, pc.alloc, pc.unison,
-                     pc.detune, pc.spread, pc.group);
+      n += sniprintf(b + n, cap - n, CORE_STR("poly=%d:%d,%d,%d,%d,%d,%d,%d\n"), r + 1, pc.voices, pc.alloc,
+                     pc.unison, pc.detune, pc.spread, pc.group, pc.oct);
   }
   return n;
 }
@@ -2614,6 +2623,7 @@ CORE_COLD void reset() {
                                         restart_skip[r] = 0;
   pat_len = pat_spd = pat_mode = pat_chg = -1, fill = false;
   pin_extra = 0, pin_seq = true, pin_sent = -1, silent_sent = 0xFFFF, clock_extra = 0, clock_sent = -1;
+  arp_pins = 0, arp_clock = false;
   cal.state = 0, cal.vi = -1, cal.track = -1, cal.n = 0, cal.found = -1, cal.auto_done = false, cal.manual = false;
   cal.fed_ms = 0;
   predict = true, pred_to = -1, pat_start = -1, pat_start_track = -1;
@@ -2665,6 +2675,20 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 }
 
 CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra = (uint16_t)(m & 0xFFF); }
+CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins = (uint16_t)(pins & 0xFFF), arp_clock = clock; }
+CORE_COLD double tempo() { return bpm; }
+CORE_COLD bool beat_map(double* origin, double* per16, int* lat) {
+  *lat = latency;
+  if (transport != kPlay || !fol.valid) return false;
+  for (int r = 0; r < kRytmTracks; ++r) {
+    const StepClock& c = clk[r];
+    if (!c.on || c.period <= 0 || !(in_mask(r) || (clock_now >> r & 1))) continue;
+    *per16 = c.period * speed_mult(c.speed);
+    *origin = (double)fol.to_host((int64_t)(c.anchor - (double)c.anchor_abs * c.period)) - latency;
+    return true;
+  }
+  return false;
+}
 
 CORE_COLD void hello() {
   if (!cur) reset();   // (before engine_begin: the tests that skip it)
@@ -2755,6 +2779,13 @@ CORE_COLD void project_changed() {
   load_due = false;
 }
 
+CORE_COLD int pad_oct(int vi) {
+  if (!mask || !cur) return 0;
+  for (int r = 0; r < kRytmTracks; ++r)
+    if ((mask >> r & 1) && voice_of(r) == vi) return cfg_of(track_of(*cur, r), r).oct;
+  return 0;
+}
+
 CORE_COLD bool owns_voice(int vi) {
   if (!mask) return false;
   for (int r = 0; r < kRytmTracks; ++r)
@@ -2793,6 +2824,7 @@ void pre_block() {
   }
   slide_tick();   // seqtop X1
   plan();
+  arp::block(h);   // (after the events: a chord's off and the next one's on in one block is no gap)
   hframes += kBlock;
 }
 
@@ -2800,7 +2832,9 @@ CORE_COLD void midi(uint8_t status, uint8_t d1, uint8_t d2) {
   int kind = status & 0xF0, ch = status & 0x0F;
   if (kind != 0x90 && kind != 0x80) return;
   int off = 0, vi = poly::bound_voice(ch, &off);
-  note(vi, kind == 0x90 && d2, clampi(d1 + (vi >= 0 ? off : 0), 0, 127), d2, -1);
+  int pitch = d1 + (vi >= 0 ? off : 0);
+  if (vi >= 0 && off != 0 && (pitch < 0 || pitch > 127)) return;   // 7g: out of range it never sounded (poly.cpp drops it): not recorded
+  note(vi, kind == 0x90 && d2, clampi(pitch, 0, 127), d2, -1);
 }
 
 CORE_COLD bool owns_track(int t) { return in_mask(t); }
@@ -3760,14 +3794,14 @@ CORE_COLD void page_leds(uint8_t c[4]) {
 // ---- the pin's silence (46): a pinned track whose voice has nothing of the host's sounding, nothing planned, for
 // kSilentMs (release tails included: poly's voice activity) gets its VCA closed; anything planned opens it at once
 // (planning runs 32 ms ahead of the note, the 46 needs a USB MIDI hop).
-static CORE_COLD uint16_t pinned() { return (uint16_t)((pin_seq ? mask : 0) | pin_extra); }
+static CORE_COLD uint16_t pinned() { return (uint16_t)((pin_seq ? mask : 0) | pin_extra | arp_pins); }
 static CORE_COLD void silence_tick(uint32_t ms) {
   uint16_t pm = pinned(), sil = 0;
   if (!pm) return;
   for (int r = 0; r < kRytmTracks; ++r) {
     if (!(pm >> r & 1)) continue;
     int vi = voice_of(r);
-    bool busy = vi >= 0 && (poly::active(vi) || poly::voice_notes(vi) > 0 || poly::pad_sounding(vi));   // fix1052: its pad
+    bool busy = vi >= 0 && (poly::active(vi) || poly::voice_notes(vi) > 0 || poly::pad_sounding(vi) || arp::busy(vi));   // fix1052: its pad
     for (int i = 0; i < nev && !busy; ++i) busy = ev[i].track == r;
     for (int n = 0; n < 128 && vi >= 0 && !busy; ++n) busy = sounding[vi][n] != 0;
     if (cal.state && cal.vi == vi) busy = true;
@@ -3792,7 +3826,8 @@ static CORE_COLD void cal_start(int r) {
   cal.deadline_ms = now_ms() + 3000;
 }
 static CORE_COLD void cal_tick(uint32_t ms) {
-  if (!cal.auto_done && !cal.manual && transport == kStop && ms - cal.fed_ms < 500 && fol.valid) {
+  // not while a project loads: its tracks.txt takes the latency back, and the Rytm's first seconds are that load
+  if (!cal.auto_done && !cal.manual && !g_loading && transport == kStop && ms - cal.fed_ms < 500 && fol.valid) {
     uint16_t pm = pinned() & mask;
     for (int r = 0; r < kRytmTracks && pm; ++r)
       if (pm >> r & 1) {
@@ -3825,6 +3860,8 @@ static CORE_COLD void cal_tick(uint32_t ms) {
         st.cal_last = m;
         ++st.cals;
         log(CORE_STR("seq: latency calibrated on track %d: %d frames (%d..%d)"), cal.track + 1, m, v[0], v[kCalClicks - 1]);
+      } else {
+        cal.auto_done = false;   // refused and put back by the load: again once it has loaded
       }
     } else {
       ++st.cal_fails;
@@ -3855,11 +3892,12 @@ CORE_COLD void tick(uint32_t ms) {
       log(CORE_STR("seq: lock page knob %c: %s"), 'A' + e, ui.cond_e == e ? "COND" : "value");
     }
   remask(true);   // per pattern poly: a 33 (a track's machine) since
+  arp::tick(ms);
   // per pattern poly, the switch: the Rytm must hear the next pattern's capture before it plays that pattern's first step
   // (or the step plays with the old one). With a pattern queued (prefetched in nxt) its new seq tracks are clocked (the
   // 2E's clock part: their ticks, nothing else - the prediction plans their first steps); kSwitchLead + the latency
   // before the predicted switch its mask goes out whole. A miss drops the prediction: the current mask again.
-  uint16_t wm = mask, ck = clock_extra;
+  uint16_t wm = mask, ck = (uint16_t)(clock_extra | (arp_clock ? 1 : 0));
   if (transport == kPlay && pat_queued >= 0 && pat_queued != cur->index && nxt->index == pat_queued) {
     uint16_t nm = mask_of(*nxt);
     if (pred_to == pat_queued && fol.valid &&
@@ -3868,12 +3906,13 @@ CORE_COLD void tick(uint32_t ms) {
     else
       ck |= (uint16_t)(nm & ~mask);
   }
-  int pin_now = pin_extra | (pin_seq ? 0 : 1 << 12);
+  uint16_t pin_x = (uint16_t)(pin_extra | arp_pins);
+  int pin_now = pin_x | (pin_seq ? 0 : 1 << 12);
   if (hello_due || mask_sent != wm || pin_sent != pin_now || clock_sent != ck) {
     // the 7-byte form (rytm-mods 1033's pin part) only when it says more than the 3- / 5-byte one: older builds refuse it
     uint8_t b[7] = {(uint8_t)(wm & 0x7F), (uint8_t)(wm >> 7 & 0x1F), (uint8_t)((hello_due ? 2 : 0) | (pin_seq ? 0 : 4)),
-                    (uint8_t)(ck & 0x7F), (uint8_t)(ck >> 7 & 0x1F), (uint8_t)(pin_extra & 0x7F),
-                    (uint8_t)(pin_extra >> 7 & 0x1F)};
+                    (uint8_t)(ck & 0x7F), (uint8_t)(ck >> 7 & 0x1F), (uint8_t)(pin_x & 0x7F),
+                    (uint8_t)(pin_x >> 7 & 0x1F)};
     send_cmd(kMaskCmd, b, pin_now ? 7 : ck ? 5 : 3);
     if (wm != mask) ++st.mask_early;
     mask_sent = wm, hello_due = false, pin_sent = pin_now, clock_sent = ck, clock_now = ck;
@@ -3922,6 +3961,11 @@ CORE_COLD void tick(uint32_t ms) {
     ui.pleds_stock = true;
   }
 }
+
+CORE_COLD void save_due() {
+  if (dirty || tracks_dirty) save_now = true;
+}
+CORE_COLD bool unsaved() { return dirty || tracks_dirty || sav_pending; }
 
 CORE_COLD bool idle() {
   if (!cur) reset();   // (before engine_begin: the tests that skip it)
@@ -4268,8 +4312,8 @@ CORE_COLD int poly_json(char* out, int cap) {
     inst::Resolved rs;
     int m = -1, vi = voice_of(r);
     if (vi >= 0 && inst::resolve_for(vi, c, &rs, &m)) inst::describe_short(rs, m, info, sizeof info);
-    n += sniprintf(out + n, cap - n, "%s{\"t\":%d,\"v\":%d,\"a\":%d,\"u\":%d,\"d\":%d,\"s\":%d,\"g\":%d,\"own\":%d,\"info\":\"%s\"}",
-                   first ? "" : ",", r + 1, c.voices, c.alloc, c.unison, c.detune, c.spread, c.group,
+    n += sniprintf(out + n, cap - n, "%s{\"t\":%d,\"v\":%d,\"a\":%d,\"u\":%d,\"d\":%d,\"s\":%d,\"g\":%d,\"o\":%d,\"own\":%d,\"info\":\"%s\"}",
+                   first ? "" : ",", r + 1, c.voices, c.alloc, c.unison, c.detune, c.spread, c.group, c.oct,
                    t && !poly_default(t->poly) ? 1 : 0, info);
     first = false;
   }
@@ -4622,7 +4666,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     int r = atoi(p + 9) - 1;
     const char* q = strchr(p + 9, ':');
     if (r < 0 || r >= kRytmTracks)
-      return sniprintf(out, cap, CORE_STR("seq=poly:T[:auto|voices=0..8,alloc=reassign|rotate|reset,unison=1..8,detune=0..127,spread=0..127,group=0..4]")), true;
+      return sniprintf(out, cap, CORE_STR("seq=poly:T[:auto|voices=0..8,alloc=reassign|rotate|reset,unison=1..8,detune=0..127,spread=0..127,group=0..4,oct=-3..3]")), true;
     Track* t = q ? slot_for(r) : track_of(*cur, r, false);
     PolyCfg c = cfg_of(t, r);
     if (q) {

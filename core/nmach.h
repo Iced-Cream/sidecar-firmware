@@ -9,6 +9,7 @@
 #include "granular/granular.h"
 #include "lib/pools.h"
 #include "lib/srclib.h"
+#include "midim/midim.h"
 #include "seq/rytm_dump.h"
 #include "msamp/msamp.h"
 #include "pool/pool.h"
@@ -29,6 +30,7 @@ inline int of(int vi) {
   if (x.wt) return kWaveMachine;
   if (x.gr) return kGranMachine;
   if (x.cp) return kChopMachine;
+  if (x.mi) return kMidiMachine;
   return forced(vi & 7);
 }
 inline bool is(int vi) { return of(vi) != 0; }
@@ -39,6 +41,7 @@ inline void report(int vi, int note, int vel, const float* p) {
     case kWaveMachine: wt::report(vi, note, vel, p); break;
     case kGranMachine: gr::report(vi, note, vel, p); break;
     case kChopMachine: chop::report(vi, note, vel, p); break;
+    case kMidiMachine: midim::report(vi, note, vel, p); break;
     default: break;
   }
 }
@@ -48,6 +51,7 @@ inline void note_off(int vi) {
     case kWaveMachine: wt::note_off(vi); break;
     case kGranMachine: gr::note_off(vi); break;
     case kChopMachine: chop::note_off(vi); break;
+    case kMidiMachine: midim::note_off(vi); break;
     default: break;
   }
 }
@@ -57,6 +61,7 @@ inline void live_on(int vi, int key, int vel, int ch, int mnote) {
     case kWaveMachine: wt::live_on(vi, key, vel, ch, mnote); break;
     case kGranMachine: gr::live_on(vi, key, vel, ch, mnote); break;
     case kChopMachine: chop::live_on(vi, key, vel, ch, mnote); break;
+    case kMidiMachine: midim::live_on(vi, key, vel, ch, mnote); break;
     default: break;
   }
 }
@@ -66,6 +71,7 @@ inline void live_off(int vi, int ch, int mnote) {
     case kWaveMachine: wt::live_off(vi, ch, mnote); break;
     case kGranMachine: gr::live_off(vi, ch, mnote); break;
     case kChopMachine: chop::live_off(vi, ch, mnote); break;
+    case kMidiMachine: midim::live_off(vi, ch, mnote); break;
     default: break;
   }
 }
@@ -75,6 +81,7 @@ inline int voice_notes(int vi) {
     case kWaveMachine: return wt::voice_notes(vi);
     case kGranMachine: return gr::voice_notes(vi);
     case kChopMachine: return chop::voice_notes(vi);
+    case kMidiMachine: return midim::voice_notes(vi);
     default: return 0;
   }
 }
@@ -84,6 +91,7 @@ inline void silence_all(int vi) {
   if (v[vi & 7].wt) wt::silence(vi & 7);
   if (v[vi & 7].gr) gr::silence(vi & 7);
   if (v[vi & 7].cp) chop::silence(vi & 7);
+  midim::silence(vi & 7);   // (whatever the voice plays now: its notes were sent)
 }
 // The render core's, a voice on OUT PRE / POST: the notes' pair added into l / r (MULTISAMPLE, GRANULAR: true;
 // WAVETABLE has no stereo of its own: false, the caller renders it mono)

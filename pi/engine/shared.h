@@ -34,5 +34,9 @@ extern char g_KeyNames[5][24];
 // MIDI device on the USB-A ports; sent on cable 0). g_bComputerMidi: the Sidecar gadget (USB-C) is up (core 0 sets it).
 extern Spsc<uint32_t, 256> g_AsampMidi;
 extern volatile bool g_bComputerMidi;
+extern volatile bool g_bRytmGone;   // the Rytm's USB MIDI went (core 0 -> control core, once a removal)
+extern unsigned g_nToHostFull;      // engine bytes for the host lost: a full g_MidiOut (none expected) or a record > 4096 B
+extern volatile bool g_bRytmResync; // records for the Rytm were lost and sending is on again (core 0 -> control core, DropResync)
+extern volatile bool g_bRytmOff;    // records for the Rytm are being dropped: no umidi1, or a failed send has the sending off (core 0 -> control core)
 
 #endif

@@ -3,6 +3,7 @@
 
 #if CORE_MSAMP
 #include "wavetable.h"
+#include "simd.h"
 
 #include <math.h>
 #include <string.h>
@@ -802,7 +803,8 @@ void render_add(int vi, float* out, int nfr) {
         const float* A = data + (size_t)fa * kFrameFloats + loff;
         const float* B = data + (size_t)fb * kFrameFloats + loff;
         float o = 0;
-        for (int j = 0; j < nu; ++j) {
+        if (k.warp <= 1 && w[nu - 1] > 0) o = simd::wt_unison(n.ph, iu, w, nu, k.warp, sync_r, lsz, A, B, ft);   // (nu: the weights > 0)
+        else for (int j = 0; j < nu; ++j) {
           if (w[j] <= 0) {
             n.ph[j] += iu[j];
             continue;

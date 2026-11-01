@@ -178,7 +178,9 @@ struct Rec {
   uint64_t next_stall = 0;
   uint32_t yields = 0, pieces = 0;
 } g_rec;
+static bool g_card_away = false;   // core 0 held up: nothing served
 static void card_core() {
+  if (g_card_away) return;
   g_rec.backlog += g_rec.mbps * 1e6 * 250e-6;   // a block's worth
   if (g_rec.backlog > g_rec.max_backlog) g_rec.max_backlog = g_rec.backlog;
   for (int i = 0; i < 64 && g_card.busy_until <= g_us; ++i) {
@@ -787,6 +789,35 @@ static void test_card_queue() {
   printf("test_msamp: card queue PASS\n");
 }
 
+// Core 0 held up and the queue full before the streams start (a blocking connect, the queue's requests and ghosts): nothing they post goes in, so
+// nothing can be taken back. After the same wait the neediest stream's read runs here: the same output as the RAM instrument, no underrun.
+static void test_card_queue_full() {
+  Card none;
+  std::vector<int16_t> a = run_sim("simram.sfz", 1, 3, none);
+  Card pi;
+  pi.mbps = 12, pi.lat_lo_ms = 0.3, pi.lat_hi_ms = 3;
+  cardq::reset();
+  cardq::set_worker(true);
+  static cardq::Req fill[cardq::kQueue];
+  for (cardq::Req& r : fill) {
+    memset((void*)&r, 0, sizeof r);
+    r.kind = cardq::kReadReq;
+    CHECK(cardq::post(&r));
+  }
+  g_rec = Rec();
+  g_rec.on = true, g_card_away = true;
+  uint32_t u0 = stats().underruns, t0 = cardq::stats().taken_back, f0 = cardq::stats().full;
+  std::vector<int16_t> b = run_sim("simstream.sfz", 1, 3, pi);
+  uint32_t uq = stats().underruns - u0, tq = cardq::stats().taken_back - t0;
+  printf("test_msamp: queue full, core 0 away: %u underruns, %u refused, %u reads run here\n", uq, cardq::stats().full - f0, tq);
+  CHECK(uq == 0 && a == b);
+  CHECK(tq > 0 && cardq::pending() == cardq::kQueue);   // the queue never moved
+  g_card_away = false;
+  g_rec = Rec();
+  cardq::reset();
+  printf("test_msamp: card queue full PASS\n");
+}
+
 // A cancelled request reposted (core/store's refill does this): its first ring slot stays behind as a ghost, until the
 // card core passes it. The card core must run the repost once, with its new fields (the new buffer, never the old
 // one), and skip the other slot; pending() drains to 0.
@@ -1015,6 +1046,7 @@ int main() {
   test_headroom();
   test_streaming();
   test_card_queue();
+  test_card_queue_full();
   test_card_queue_repost();
   test_stereo();
   system(("rm -rf '" + g_card_dir + "'").c_str());

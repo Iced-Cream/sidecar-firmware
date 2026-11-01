@@ -103,11 +103,12 @@ int main(int argc, char **argv) {
   { CHECK(rmp_verify(pkg.data(), 10, &info) == RMP_ERR_SIZE); }
   { auto t = pkg; t[0] ^= 0xFF; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &info) == RMP_ERR_MAGIC); }
   { auto t = pkg; t[4] = 9; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &info) == RMP_ERR_FORMAT); }
-  // formats 1..3 load (they differ only in the manifest; the CRC covers the body, not the header); 0 and 4 (RMPA only) do not
+  // formats 1..3 load (they differ only in the manifest; the CRC covers the body, not the header); 0, 4 and 5 (RMPA only) do not
   { auto t = pkg; t[4] = 1; rmp_info i1; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &i1) == RMP_OK && i1.format == 1); }
   { auto t = pkg; t[4] = 2; rmp_info i2; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &i2) == RMP_OK && i2.format == 2); }
   { auto t = pkg; t[4] = 3; rmp_info i3; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &i3) == RMP_OK && i3.format == 3); }
   { auto t = pkg; t[4] = 4; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &info) == RMP_ERR_FORMAT); }
+  { auto t = pkg; t[4] = 5; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &info) == RMP_ERR_FORMAT); }
   { auto t = pkg; t[4] = 0; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &info) == RMP_ERR_FORMAT); }
   // plugin API 1 and 2 load; 0, 3 and 99 do not
   { auto t = pkg; t[6] = 1; rmp_info a1; CHECK(rmp_verify(t.data(), (uint32_t)t.size(), &a1) == RMP_OK && a1.api == 1); }

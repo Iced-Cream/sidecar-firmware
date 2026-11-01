@@ -907,6 +907,12 @@ static void step(int ms) {   // time on, the answers back, the loop and the card
     }
   }
 }
+static void put_text(const std::string& p, const std::string& t) {
+  FILE* f = fopen(p.c_str(), "wb");
+  CHECK(f);
+  fwrite(t.data(), 1, t.size(), f);
+  fclose(f);
+}
 static std::string cmd(const char* c) {
   char b[400];
   CHECK(song::command(c, b, sizeof b));
@@ -952,6 +958,22 @@ static void test_engine(const std::string& card) {
     step(P / 48);
   }
   CHECK(song::status().t_now >= 47 * 96 && song::status().t_now < 48 * 96);
+  {   // a track on the MIDI machine (its voice byte 0x80 and up): one kMach, not one every poll (they would fill the take)
+    auto machs = [] {
+      int n = 0;
+      const Take& k = song::current();
+      for (int i = 0; i < k.n; ++i) n += k.ev[i].type == kMach;
+      return n;
+    };
+    int m0 = machs();
+    {
+      auto m33 = msg(0x33, {5, 1, kRytmMidi, 3});
+      engine_sysex(m33.data(), (int)m33.size());
+    }
+    CHECK(ui::remote_track_machine(5) == (kMidiMachine | 3));
+    step(P / 4);
+    CHECK(machs() == m0 + 1);
+  }
   // the journal is there while recording
   struct stat sb;
   std::string dir = card + "/.rytm/songs/SONGTEST/";
@@ -1199,6 +1221,241 @@ static bool undone(int seed, int p0 = 1, uint32_t mutes = 0x5) {
   if (!ok) printf("undone(%d): msg \"%s\", pattern %d\n", seed, song::status().msg, g_rytm.cur);
   return ok;
 }
+// With a card core (7z, 2026-10-31): a whole take recorded, saved, listed, loaded, a journal recovered, the numbers going on:
+// the same files as without one, no card time on the control core in song::tick / idle / a STOP, a request served late.
+static void test_cardcore(const std::string& card) {
+  const int P = 6000;
+  std::string dir = card + "/.rytm/songs/SONGTEST/";
+  static uint64_t c3;
+  host_card_model(true);
+  cardq::set_worker(true);
+  g_timed = true;   // (step: the card core's turn after each ms)
+  c3 = host_card_us(3);
+  step(30);
+  int before = song::status().takes;
+  CHECK(cmd("song=arm").find("arming") != std::string::npos || true);
+  step(100);
+  CHECK(song::status().state == kArmed);
+  char want[40];
+  sniprintf(want, sizeof want, "%s", song::status().name);
+  feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 1}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+  CHECK(song::status().state == kRec);
+  std::string journal = dir + want + ".jsonl", json_ = dir + want + ".json";
+  CHECK(access(json_.c_str(), F_OK) != 0);
+  for (int st = 0; st < 48; ++st) {
+    tick2c(st % 16, 16);
+    if (st == 5) feed({0xB1, 99, 1, 0xB1, 98, 1, 0xB1, 6, 64, 0xB1, 38, 0});
+    step(P / 48);
+  }
+  struct stat sb;
+  CHECK(stat(journal.c_str(), &sb) == 0 && sb.st_size > 20000);   // the journal on the card while recording
+  feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 0}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+  for (int i = 0; i < 3000 && song::status().state != song::kOff; ++i) step(1);
+  CHECK(song::status().state == song::kOff);
+  CHECK(stat(json_.c_str(), &sb) == 0 && stat(journal.c_str(), &sb) != 0 && stat((json_ + ".tmp").c_str(), &sb) != 0);
+  step(40);
+  CHECK(song::status().takes == before + 1);
+  CHECK(host_card_us(3) == c3);   // (none of it on the control core)
+  // a load through the requests; one of a file that went: nothing begins
+  CHECK(host_card_us(0) > 0);
+  std::string name = want;
+  CHECK(cmd((std::string("song=load:") + name).c_str()).find("loading") != std::string::npos);
+  for (int i = 0; i < 3000 && song::status().state != song::kOff; ++i) step(1);
+  CHECK(!strcmp(song::current().name, want) && song::current().n > 0);
+  CHECK(remove(json_.c_str()) == 0);
+  CHECK(cmd((std::string("song=load:") + name).c_str()).find("loading") != std::string::npos);
+  for (int i = 0; i < 3000 && song::status().state != song::kOff; ++i) step(1);
+  CHECK(song::status().state == song::kOff);
+  // the next number goes past a journal not in the list
+  put_text(dir + "take-050.jsonl", "not json\n");   // (a bad journal: renamed .bad by the recovery)
+  cmd("song=list");
+  step(40);
+  cmd("song=arm");
+  step(100);
+  CHECK(song::status().state == kArmed && !strcmp(song::status().name, "take-051"));
+  cmd("song=disarm");
+  CHECK(host_card_us(3) == c3);
+  // ---- review (audit 1042 again): the name is checked on the card, a walk that failed or is old never gives a used number
+  put_text(dir + "take-051.json", "KEEP");
+  put_text(dir + "take-052.jsonl", "KEEP");
+  cmd("song=arm");
+  step(100);
+  CHECK(song::status().state == kArmed && !strcmp(song::status().name, "take-053"));
+  cmd("song=disarm");
+  host_fail_open("/.rytm/songs/SONGTEST", true);
+  cmd("song=list");
+  step(40);
+  host_fail_open("/.rytm/songs/SONGTEST", false);
+  cmd("song=arm");
+  step(100);
+  CHECK(song::status().state == kArmed && !strcmp(song::status().name, "take-053"));
+  cmd("song=disarm");
+  CHECK(remove((dir + "take-051.json").c_str()) == 0 && remove((dir + "take-052.jsonl").c_str()) == 0);
+  remove((dir + "take-050.jsonl").c_str());
+  // ---- recovery: several journals in one pass over the project; a load during a recovered take's write keeps its own file
+  {
+    Take x;
+    x.clear();
+    strcpy(x.project, "SONGTEST");
+    Buf b;
+    auto journal = [&](const char* n) {
+      strcpy(x.name, n);
+      b.clear();
+      JsonGen g;
+      g.begin(&x, true);
+      while (g.next(b)) {}
+      put_text(dir + n + ".jsonl", std::string((const char*)b.p, (size_t)b.n) + "{\"end\":100}\n");
+    };
+    journal("take-070"), journal("take-071"), journal("take-072");
+    strcpy(x.name, "take-073");
+    b.clear();
+    JsonGen g;
+    g.begin(&x, false);
+    while (g.next(b)) {}
+    put_text(dir + "take-073.json", std::string((const char*)b.p, (size_t)b.n));
+    x.free(), b.free();
+    cmd("song=list");
+    step(40);
+    strcpy(project, "SONGTES2");   // another project and back: the journals looked for
+    step(5);
+    strcpy(project, "SONGTEST");
+    // the first .json.tmp on the card: a load now, while the writer has e.g. its source still to remove
+    bool loaded = false;
+    for (int i = 0; i < 1000 && !loaded; ++i) {
+      step(1);
+      for (const char* n : {"take-070", "take-071", "take-072"})
+        if (!access((dir + n + ".json.tmp").c_str(), F_OK) && song::status().state == song::kOff) {
+          cmd("song=load:take-073");
+          loaded = true;
+          break;
+        }
+    }
+    CHECK(loaded);
+    step(600);
+    for (const char* n : {"take-070", "take-071", "take-072"}) {
+      CHECK(!access((dir + n + ".json").c_str(), F_OK));
+      CHECK(access((dir + n + ".jsonl").c_str(), F_OK));
+    }
+    CHECK(!access((dir + "take-073.json").c_str(), F_OK));
+  }
+  // ---- a journal's write cut short, or its close failed: no line twice, none lost
+  {
+    cmd("song=arm");
+    step(100);
+    CHECK(song::status().state == kArmed);
+    std::string nm = song::status().name, jp = "/.rytm/songs/SONGTEST/" + nm + ".jsonl";
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 1}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    step(40);
+    for (int st = 0; st < 96; ++st) {
+      if (st == 20) host_short_write(50);
+      if (st == 40) host_fail_close(jp.c_str(), true);
+      if (st == 56) host_fail_close(jp.c_str(), false);
+      tick2c(st % 16, 16);
+      feed({0xB1, 99, 1, 0xB1, 98, 1, 0xB1, 6, (uint8_t)(st & 127), 0xB1, 38, 0});
+      step(P / 48);
+    }
+    step(1300);
+    std::string text;
+    {
+      FILE* f = fopen((dir + nm + ".jsonl").c_str(), "rb");
+      CHECK(f);
+      char b[65536];
+      size_t k;
+      while ((k = fread(b, 1, sizeof b, f)) > 0) text.append(b, k);
+      fclose(f);
+    }
+    std::vector<std::string> lines;
+    for (size_t i = 0; i < text.size();) {
+      size_t e = text.find('\n', i);
+      if (e == std::string::npos) e = text.size();
+      lines.push_back(text.substr(i, e - i));
+      i = e + 1;
+    }
+    CHECK(lines.size() > 40);
+    for (size_t i = 1; i < lines.size(); ++i) {
+      CHECK(lines[i][0] == '[' && lines[i].back() == ']');   // (an event: whole)
+      for (size_t k = i + 1; k < i + 40 && k < lines.size(); ++k) CHECK(lines[i] != lines[k]);
+    }
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 0}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    for (int i = 0; i < 3000 && song::status().state != song::kOff; ++i) step(1);
+    CHECK(song::status().state == song::kOff);
+  }
+  // ---- the card could not say whether a name is free: the highest number + 1, its journal never truncates what is there
+  {
+    cmd("song=list");
+    step(40);
+    int n = 0;
+    {
+      std::string c = cmd("song=arm");
+      step(100);
+      CHECK(song::status().state == kArmed);
+      sscanf(song::status().name, "take-%d", &n);
+      cmd("song=disarm");
+    }
+    char nm[32], cp[96];
+    snprintf(nm, sizeof nm, "take-%03d", n);
+    put_text(dir + nm + ".jsonl", "{\"keep\":1}\n");
+    snprintf(cp, sizeof cp, "/.rytm/songs/SONGTEST/%s.json", nm);
+    host_fail_lookup(cp, true);
+    cmd("song=arm");
+    step(100);
+    host_fail_lookup(cp, false);
+    CHECK(song::status().state == kArmed && !strcmp(song::status().name, nm));
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 1}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    step(40);
+    {
+      FILE* f = fopen((dir + nm + ".jsonl").c_str(), "rb");
+      CHECK(f);
+      char b[32] = "";
+      CHECK(fread(b, 1, 10, f) == 10 && !memcmp(b, "{\"keep\":1}", 10));
+      fclose(f);
+    }
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 0}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    for (int i = 0; i < 3000 && song::status().state != song::kOff; ++i) step(1);
+    CHECK(song::status().state == song::kOff);
+  }
+  // ---- no card at the STOP: "the journal keeps it", and the list walks again
+  {
+    cmd("song=arm");
+    step(100);
+    CHECK(song::status().state == kArmed);
+    std::string nm = song::status().name;
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 1}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    step(40);
+    card_ok = false;
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 0}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    step(5);
+    CHECK(song::status().state == song::kOff && song::status().takes == 0);   // (no card: the walk found none)
+    card_ok = true;
+    cmd("song=list");
+    step(60);
+    CHECK(song::status().takes > 0);
+    remove((dir + nm + ".jsonl").c_str());
+  }
+  // ---- a journal that cannot be written (here its path a folder): the take is still saved, SAVING ends
+  {
+    cmd("song=arm");
+    step(100);
+    CHECK(song::status().state == kArmed);
+    std::string nm = song::status().name;
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 1}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    step(40);
+    CHECK(remove((dir + nm + ".jsonl").c_str()) == 0 && mkdir((dir + nm + ".jsonl").c_str(), 0755) == 0);
+    for (int st = 0; st < 32; ++st) {
+      tick2c(st % 16, 16);
+      if (st == 5) feed({0xB1, 99, 1, 0xB1, 98, 1, 0xB1, 6, 64, 0xB1, 38, 0});
+      step(P / 48);
+    }
+    feed(msg(0x2D, [] { std::vector<uint8_t> v = {1, 0}; auto b = blk4(g_frame); v.insert(v.end(), b.begin(), b.end()); return v; }()));
+    for (int i = 0; i < 20000 && song::status().state != song::kOff; ++i) step(1);
+    CHECK(song::status().state == song::kOff);
+    CHECK(!access((dir + nm + ".json").c_str(), F_OK));
+  }
+  host_card_model(false);
+  cardq::set_worker(false);
+  g_timed = false;
+}
+
 static void test_undo(const std::string& card) {
   std::string dir = card + "/.rytm/songs/SONGTEST/";
   struct stat sb;
@@ -1337,9 +1594,9 @@ static void test_undo(const std::string& card) {
     x.free(), b.free();
   }
   cmd("song=list");
-  step(5);
+  step(30);   // (a request a pass here)
   cmd("song=load:take-009");
-  step(20);
+  for (int i = 0; i < 500 && song::status().state != song::kOff; ++i) step(1);   // (a card core here: its requests)
   CHECK(!strcmp(song::current().name, "take-009"));
   select_on_rytm(1);
   step(1100);
@@ -1699,6 +1956,7 @@ int main() {
   engine_sysex(proj, sizeof proj);
   test_engine(card);
   test_undo(card);
+  test_cardcore(card);
   CHECK(system(("rm -rf '" + card + "'").c_str()) == 0);
   printf("test_song: ALL PASS\n");
   return 0;

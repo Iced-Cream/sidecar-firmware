@@ -3,10 +3,12 @@
 #include "device/device.h"
 #include "host_link.h"
 #include "inst.h"
+#include "arp/arp.h"
 
 #include <string.h>
 
 #include "fmt/fmt.h"
+#include "midim/midim.h"
 #include "fx/send_fx.h"
 #if CORE_MSAMP
 #include "bundle/kits.h"
@@ -74,22 +76,30 @@ static CORE_COLD void sendfx_state_out(bool all) {
 }
 static char fx_project[24] = "\x01";   // the project whose fxslots file is loaded (never a real name at boot)
 
+static bool fx_owed = false;           // the Rytm is told the slots' names when the card core has read them
+
 CORE_COLD void sendfx_project() {
   if (strcmp(fx_project, project) == 0) return;
   strcpy(fx_project, project);
   fx::slots_load(project);
+  fx_owed = true;
+  sendfx_step();
+}
+
+CORE_COLD bool sendfx_step() {
+  if (!fx_owed || !fx::slots_step()) return false;
+  fx_owed = false;
+  sendfx_names_out();
+  sendfx_labels_out();
+  sendfx_state_out(true);
+  return true;
 }
 
 // 2026-10-27 (core/bundle/prjslot.h): a switch made by the slot reports, as the 10's below
 CORE_COLD void host_project_changed() {
   if (hooks.project_seen) hooks.project_seen();
   else slots_1d(1000);
-  if (strcmp(fx_project, project) != 0) {
-    sendfx_project();
-    sendfx_names_out();
-    sendfx_labels_out();
-    sendfx_state_out(true);
-  }
+  sendfx_project();
 }
 
 namespace fxin {
@@ -185,6 +195,9 @@ static CORE_COLD void contact() {
 
 CORE_COLD void link_reset(const char* why) {
   for (int vi = 0; vi < kVoices; ++vi) voice_silence(vi);
+#if CORE_MSAMP
+  midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
+#endif
   if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
 }
 
@@ -208,12 +221,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     kits::name_seen(d + 5, len - 5);   // (another name: kit reports waiting are of the project before)
 #endif
     set_project(d + 5, len - 5);
-    if (strcmp(fx_project, project) != 0) {   // the user-FX slot map follows the project
-      sendfx_project();
-      sendfx_names_out();
-      sendfx_labels_out();
-      sendfx_state_out(true);
-    }
+    sendfx_project();   // the user-FX slot map follows the project
     return;
   }
   if (len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {
@@ -290,6 +298,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     if (poly::reply(d, len)) return;   // 28 02: the Rytm's answer to a chord write-back (core/poly.h)
 #endif
 #if CORE_POLY
+    if (arp::sysex(d, len)) return;   // 45: a sound's arpeggiator settings (core/arp/arp.h)
     if (d[4] == 0x2C || d[4] == 0x2D) {   // the sequencer's step ticks and state (core/seq/seq.h)
       seq::sysex(d, len);
       return;
@@ -321,6 +330,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
   int cmd = d[4], vi = d[5] & 7;
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
+    if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate
     if (inst::seq_mono(vi)) return;   // E0: the sequencer's mono note is ended by its own note-off, not the Rytm's
 #endif
     voice_note_off(vi);

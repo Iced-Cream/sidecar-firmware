@@ -28,8 +28,8 @@ static char s_Last[64];
 
 static int oled (void) { return TH->id == THEME_OLED; }
 static int U (void) { return oled () ? 1 : 2; }
-static const lv_font_t *f_small (void) { return oled () ? TH->f_micro : &lv_font_montserrat_14; }
-static const lv_font_t *f_body (void) { return oled () ? TH->f_small : &lv_font_montserrat_16; }
+static const lv_font_t *f_small (void) { return oled () ? TH->f_micro : TH->f_small; }
+static const lv_font_t *f_body (void) { return oled () ? TH->f_small : TH->f_body; }
 static uint32_t c_ink (void) { return oled () ? TH->ink : TH->win_ink; }
 static uint32_t c_dim (void) { return oled () ? TH->dim : TH->win_dim; }
 
@@ -97,7 +97,7 @@ static void wave_draw (lv_event_t *e)
 	{
 		const char *t = !s_bHave || !s_V.valid ? (O ? "NO CHOP VOICE: PICK CHOP ON A TRACK" : "No CHOP voice: pick CHOP on a track")
 			      : !s_V.ready ? (O ? "LOADING THE SAMPLE" : "Loading the sample") : (O ? "NO SLICES" : "No slices");
-		th_text (l, &c, 0, h / 2 - fh / 2, w, O ? TH->f_body : &lv_font_montserrat_18, c_dim (), LV_TEXT_ALIGN_CENTER, t);
+		th_text (l, &c, 0, h / 2 - fh / 2, w, O ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER, t);
 		return;
 	}
 	int top = fh + 2 * u, mid = top + (h - top) / 2, amp = (h - top) / 2 - 2 * u;
@@ -298,8 +298,8 @@ static void col_x (int w, int *x)	// S START LEN F1..Fnf (x[3 + nf]: the end)
 {
 	int O = oled (), n = nf ();
 	x[0] = 2 * U ();
-	x[1] = x[0] + (O ? 15 : 30);
-	int sw = O ? 33 : 62;			// "999.9" / "1367" (ms) in the list's font
+	x[1] = x[0] + LU (O ? 15 : 30);
+	int sw = LU (O ? 33 : 62);			// "999.9" / "1367" (ms) in the list's font
 	x[2] = x[1] + sw, x[3] = x[2] + sw;
 	for (int i = 1; i <= n; i++) x[3 + i] = x[3] + (w - x[3]) * i / n;
 }
@@ -389,7 +389,7 @@ static void keys_update (void)
 	{
 		lv_snprintf (b, sizeof b, O ? "CHOP  V%d %s" : "CHOP   V%d %s", s_V.voice + 1, s_V.track >= 0 && s_V.track < 12 ? kTrack[s_V.track] : "");
 		char nm[24];
-		th_fit_middle (nm, sizeof nm, O ? TH->f_body : &lv_font_montserrat_16, s_V.name, O ? 110 + TH->dx / 2 : 220 + TH->dx / 2);
+		th_fit_middle (nm, sizeof nm, O ? TH->f_body : TH->f_body, s_V.name, O ? LU (110) + TH->dx / 2 : LU (220) + TH->dx / 2);
 		if (s_V.lazy) lv_snprintf (r, sizeof r, O ? "LAZY %d  TAP!" : "LAZY %d   tap the pads", s_V.lazy_n);
 		else if (s_V.rs_state == SCH_RS_OFFER) lv_snprintf (r, sizeof r, O ? "S%d -> %s?" : "S%d -> %s: replace?", s_V.rs_slice + 1, s_V.rs_row);
 		else lv_snprintf (r, sizeof r, O ? "%s  %d SL%s" : "%s   %d slices%s", nm, s_V.n, s_V.dirty ? " *" : "");
@@ -480,16 +480,16 @@ static void zoom_cb (lv_obj_t *o, int idx, void *ud)
 static void layout (void)
 {
 	int O = oled (), u = U ();
-	int pw = O ? TH->w - 48 : TH->w;
-	int x0 = O ? 0 : 8, top = O ? 15 : 8, kh = O ? 22 : 52;
-	int ph = O ? TH->h : 428 + TH->dy;
-	int ky = ph - kh - (O ? 0 : 4);
+	int pw = O ? TH->w - LU (48) : TH->w;
+	int x0 = O ? 0 : LU (8), top = LU (O ? 15 : 8), kh = LU (O ? 22 : 52);
+	int ph = O ? TH->h : LU (428) + TH->dy;
+	int ky = ph - kh - (O ? 0 : LU (4));
 	int lw = (pw - 2 * x0) * 58 / 100;
-	r_wave = (rc_t) {x0, top, lw, (O ? 78 : 150) + TH->dy / 2};
-	r_tabs = (rc_t) {x0, r_wave.y + r_wave.h + 2 * u, lw, O ? 12 : 30};
+	r_wave = (rc_t) {x0, top, lw, LU (O ? 78 : 150) + TH->dy / 2};
+	r_tabs = (rc_t) {x0, r_wave.y + r_wave.h + 2 * u, lw, TH->big ? (O ? 23 : 50) : O ? 12 : 30};	// 1280x720: a key's height
 	r_pads = (rc_t) {x0, r_tabs.y + r_tabs.h + 2 * u, lw, ky - (r_tabs.y + r_tabs.h + 2 * u) - 3 * u};
 	int lx = x0 + lw + 4 * u, lwid = pw - x0 - lx;
-	int eh = O ? 34 : 76;
+	int eh = LU (O ? 34 : 76);
 	r_list = (rc_t) {lx, top, lwid, ky - top - eh - 4 * u};
 	r_edit = (rc_t) {lx, r_list.y + r_list.h + 2 * u, lwid, eh};
 	r_keys = (rc_t) {x0, ky, pw - 2 * x0, kh};
@@ -497,22 +497,22 @@ static void layout (void)
 void sidecar_chop_create (void *parent, int y0)
 {
 	int O = oled (), u = U ();
-	int pw = O ? TH->w - 48 : TH->w;
+	int pw = O ? TH->w - LU (48) : TH->w;
 	layout ();
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : 428 + TH->dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->dy);
 	s_Page = pg;
 	s_nGen = ~0u, s_nGridI = 2;
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		s_Title = 0;
 	}
 	else
 	{
 		s_TitleBar = 0;
-		r_wave.y += 30, r_list.y += 30, r_list.h -= 30, r_wave.h -= 6;
-		r_tabs.y += 24, r_pads.y += 24, r_pads.h -= 24;
-		s_Title = th_label (pg, 12, 8, &lv_font_montserrat_18, TH->ink, "CHOP");
+		r_wave.y += LU (30), r_list.y += LU (30), r_list.h -= LU (30), r_wave.h -= LU (6);
+		r_tabs.y += LU (24), r_pads.y += LU (24), r_pads.h -= LU (24);
+		s_Title = th_label (pg, LU (12), LU (8), TH->f_mid, TH->ink, "CHOP");
 	}
 	s_Wave = th_box (pg, r_wave.x, r_wave.y, r_wave.w, r_wave.h);
 	lv_obj_add_flag (s_Wave, LV_OBJ_FLAG_CLICKABLE);
@@ -530,10 +530,10 @@ void sidecar_chop_create (void *parent, int y0)
 	lv_obj_add_flag (s_List, LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_add_event_cb (s_List, list_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_event_cb (s_List, list_cb, LV_EVENT_ALL, 0);
-	s_EditLab = th_label (pg, r_edit.x + 2 * u, r_edit.y + u, O ? TH->f_small : &lv_font_montserrat_16, TH->ink, "");
+	s_EditLab = th_label (pg, r_edit.x + 2 * u, r_edit.y + u, O ? TH->f_small : TH->f_body, TH->ink, "");
 	lv_obj_set_width (s_EditLab, r_edit.w - 4 * u);
 	static const char *const kEd[E_N] = {LV_SYMBOL_UP, LV_SYMBOL_DOWN, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "-", "+"};
-	int ey = r_edit.y + (O ? 12 : 28), eh = r_edit.h - (O ? 12 : 28), ew = (r_edit.w - 5 * TH->gap) / E_N;
+	int ey = r_edit.y + LU (O ? 12 : 28), eh = r_edit.h - LU (O ? 12 : 28), ew = (r_edit.w - 5 * TH->gap) / E_N;
 	for (int i = 0; i < E_N; i++)
 		s_Ed[i] = th_key (pg, r_edit.x + i * (ew + TH->gap), ey, ew, eh, kEd[i], i >= E_MINUS ? TH_KEY_ACCENT : TH_KEY, ed_cb, (void *) (intptr_t) i);
 	static const char *const kKeysO[K_N] = {"LAZY", "TAP", "UNDO", "GRID 16", "TRANS", "ADD", "DEL", "RSMP"};
@@ -543,7 +543,7 @@ void sidecar_chop_create (void *parent, int y0)
 	{
 		int kind = i == K_LAZY ? TH_KEY_FUNC | TH_KEY_HOLD : i == K_TAP ? TH_KEY_ACCENT : i == K_DEL ? TH_KEY_DANGER : TH_KEY;
 		s_Key[i] = th_key (pg, r_keys.x + i * (kw + TH->gap), r_keys.y, kw, r_keys.h, O ? kKeysO[i] : kKeysC[i], kind, key_cb, (void *) (intptr_t) i);
-		if (!O) th_key_font (s_Key[i], &lv_font_montserrat_16);
+		if (!O) th_key_font (s_Key[i], TH->f_body);
 	}
 	keys_update ();
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);

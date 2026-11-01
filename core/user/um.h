@@ -11,7 +11,9 @@
 //            address, relocated (rmp_loader: RMP_REL_ABS64), the caches synchronised, init() called once.
 //   cores    everything here runs on the control core (the Pi's core 3, the Mac's caller) between blocks, except
 //            user_render (a render core) and json_copy (any core, the web on the Pi's core 0).
-//            No card access in a call longer than one 8 KB read; writes go out through Exec::write_file.
+//            No card access on it with a card core (core/msamp/cardq.h: the Pi's core 0): the scan, the load, the presets
+//            and the slot maps are requests a step, writes go through fmt::post_queue. Without one (the Mac) a request runs
+//            at once and a write goes through Exec::write_file.
 #pragma once
 #include <stdint.h>
 
@@ -26,8 +28,7 @@ struct Exec {
   void (*sync)(void* p, uint32_t bytes); // after writing code: D-cache clean to PoU, I-cache invalidate, barriers
   void (*barrier)();                     // a render core, before it first runs code placed since its last call (isb); may be null
   uint32_t total;                        // the arena's bytes (for the resources)
-  // A small card file written whole (tmp + rename) away from the audio path: the Pi hands it to core 0, the Mac
-  // writes it at once. Null: written here.
+  // A small card file written whole (tmp + rename) when no card core runs (with one: fmt::post_queue). Null: written here.
   bool (*write_file)(const char* path, const void* data, uint32_t n);
   // RW memory for the images' writable parts (data + bss), 4096-aligned, within +-4 GB of the code (ADRP's reach);
   // reset together with the code. Null: a 4 MB block of um_heap (the Pi: code and data both in its low heap).
@@ -71,6 +72,7 @@ struct UiView {
   struct { char name[12]; uint8_t state; } slot[kSlots];   // state: an rmp_slot_state
 };
 bool ui_view(UiView* out);
+bool tag_ok(int slot, int tag);   // slot (0..4) is ready and holds the plugin of this sound tag
 // E0 (core/inst.h): a user machine's instances on voice vi. i: the instance's index in core::inst's pool (0..31),
 // each its own state of the package voice vi's slot plays (voice_init / voice_enter on its first note there,
 // voice_leave when the slot's image changes or inst_stop), the voice's params as the voice's own state gets them (its

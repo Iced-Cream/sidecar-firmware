@@ -65,15 +65,17 @@ class Run:
     """One scenario: the core host (its own process) and dtboot on the base, with key events."""
 
     def __init__(self, name, length, events=(), slots=None, extra=(), turn_png=False, snap=None, start=None,
-                 save=False):
+                 save=False, slots_project=False):
         self.name = name
         os.makedirs(OUT, exist_ok=True)
         tmp = tempfile.mkdtemp(prefix="sfxe2e-")
         card = os.path.join(tmp, "card")
         os.makedirs(os.path.join(card, ".rytm", "fxslots"))
         os.makedirs(os.path.join(card, "Samples"))   # the core takes a card without /Samples as no card
-        if slots:   # the default project's user-FX slot map (the base sends no 0x10: project "")
-            open(os.path.join(card, ".rytm", "fxslots", "_default.txt"), "w").write("\n".join(slots) + "\n")
+        # the user-FX slot map of the default project, and with slots_project of the base's own: the Rytm's 0x10 names it
+        # about 0.4 s in (project @001, slot mode) and the core re-sends the list for it
+        for key in ("_default", "@001") if slots_project else ("_default",) if slots else ():
+            open(os.path.join(card, ".rytm", "fxslots", f"{key}.txt"), "w").write("\n".join(slots) + "\n")
         port = free_port()
         self.log_path = os.path.join(OUT, f"{name}.jsonl")
         self.wav = os.path.join(OUT, f"{name}.wav")
@@ -350,17 +352,18 @@ def t_names(c):
           "(replace on the first): OFF, the built effects and UFX1's MYVERB at 64",
           names and names[0][0] and names[0][1] == len(built) + 1 and names[0][2] == built + [(64, "MYVERB")],
           f"{len(asks)} asks, {len(burst)} messages, {names[:1]}")
-    # a short run that ends before the project message (about 4.9 s: the core re-sends the list for the new project, whose
-    # fxslots file is empty, so MYVERB goes): 0029 holds the two-message list - the first message replaces, the second appends
-    r0 = Run("names0", 800, ev, slots=["1234 MYVERB"], save=True, extra=type_poke(0, 2))
+    # MYVERB in the base's project too, so the list it sends stays two messages: 0029 holds them - the first message
+    # replaces, the second appends
+    r0 = Run("names0", 800, ev, slots=["1234 MYVERB"], save=True, extra=type_poke(0, 2), slots_project=True)
     my = shown(r0.snap_out, 64)
     print(f"    0029's name for id 64 at 800M (before the project message): {my}")
     check("names: 0029 took the list's second message (appended to the first's): UFX1 is named MYVERB in its TYPE list",
           my == "MYVERB", my)
     labs = [P.decode_sendfx_labels(m) for _, m in r.tx(P.SENDFX_LABELS)]
     want_l = [(i, list(lab), [tuple(z) for z in zs]) for i, (lab, zs) in sorted(P.SENDFX_LABEL_SETS.items())]
+    # (a whole run of them: a hello or a project starts the list again, a run cut short by that is no fault)
     check("names: and 0x24 LABELS for each built effect (protocol.py's SENDFX_LABEL_SETS)",
-          labs[:len(want_l)] == want_l, f"{[x[0] for x in labs]}")
+          any(labs[i:i + len(want_l)] == want_l for i in range(len(labs))), f"{[x[0] for x in labs]}")
     st = [P.decode_sendfx_state(m) for _, m in r.tx(P.SENDFX_STATE)]
     fx1 = [(s["id"], s["state"], s["name"]) for s in st if s["fx"] == 0]
     fx1 = [(s["id"], s["state"], s["name"]) for x in runs for s in

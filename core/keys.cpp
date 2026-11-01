@@ -10,10 +10,12 @@
 #include "fmt/fmt.h"
 #include "hooks.h"
 #include "machines.h"
+#include "midim/midim.h"
 #if CORE_MSAMP
 #include "nmach.h"
 #endif
 #include "poly.h"
+#include "arp/arp.h"
 #include "seq/seq.h"
 #include "ui/remote.h"
 
@@ -85,7 +87,7 @@ CORE_COLD bool forced_poly(int vi) {
 }
 CORE_COLD bool poly_machine(int vb) {
   int m = vb & 0x78;
-  return m == kFm || m == kMultiMachine || m == kWaveMachine || m == kGranMachine || m == kChopMachine;
+  return m == kFm || m == kMultiMachine || m == kWaveMachine || m == kGranMachine || m == kChopMachine || (vb & 0x80);
 }
 
 // The track on voice vi the Rytm's 33 says plays a Sidecar machine (a poly machine first), else its first track
@@ -108,7 +110,7 @@ CORE_COLD bool poly_track(int t, int* vi) {
   if (*vi < 0) return false;
   int vb = ui::remote_track_machine(t);
   if (vb == 0x7F) return false;   // an analog track (a shared voice's other track may be ours)
-  if (vb >= 0 && !poly_machine(vb) && !forced_poly(*vi)) return false;
+  if (vb >= 0 && !poly_machine(vb) && !forced_poly(*vi) && !arp::on(*vi)) return false;
   return poly::plays_poly(*vi);
 }
 
@@ -170,7 +172,15 @@ CORE_COLD void close_gesture(Src& s) {
   s.open = false;
   if (s.g_n >= 2 && s.g_vi >= 0) {
     poly::Detected d = poly::keys_view(s.g_vi, s.g_notes, s.g_n);
-    if (s.rec && s.g_track >= 0) {   // the Rytm recorded the gesture's first note: the chord into that step
+    bool words = true;
+#if CORE_MSAMP
+    words = !v[s.g_vi].mi;   // MIDI: P13..P16 are its CC numbers, no chord words
+#endif
+    {
+      int vb = s.g_track >= 0 ? ui::remote_track_machine(s.g_track) : -1;
+      if (vb >= 0 && !poly_machine(vb) && !forced_poly(s.g_vi)) words = false;   // here for the arpeggiator: no chord words
+    }
+    if (s.rec && s.g_track >= 0 && words) {   // the Rytm recorded the gesture's first note: the chord into that step
       poly::Chord w = d.c;
       uint8_t back[poly::kMaxNotes];
       if (w.chd) w.voi = poly::expand(d.root, d.c, back);
@@ -187,6 +197,9 @@ CORE_COLD void close_gesture(Src& s) {
 }
 
 CORE_COLD void note_on(int src, int ch, int note, int vel) {
+#if CORE_MSAMP
+  if (midim::echo(src == kComputer ? midim::kUsbC : midim::kUsbA, ch, note, vel)) return;   // our own note back (a thru): a loop
+#endif
   Src& s = srcs[src];
   uint32_t ms = now_ms();
   if (Key* old = find(s, ch, note)) release(src, *old);   // the same key again (a sustained one too): retriggered

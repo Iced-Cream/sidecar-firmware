@@ -5,6 +5,7 @@
 #include "sidecar_wgview.h"
 #include "sidecar_theme.h"
 #include "sidecar_vlabel.h"
+#include "sidecar_preset.h"
 #include "lvgl.h"
 #include <string.h>
 
@@ -15,6 +16,7 @@ static unsigned s_nGen = ~0u;
 static int s_nWant = -1;
 static void (*s_Cmd) (const char *);
 static void (*s_PageFn) (int);
+static void (*s_PresetFn) (int);			// the POOL page's JUNO / 6-OP tabs: the preset page on that list
 static int s_bList, s_nTop = -1;		// the POOL shown (over the picture), its first row
 static int s_bLib;				// FILES shown (over the rows)
 // the rows: a bank's row 0..127; FILES: >= 0 an item of the folder, LROW_PATH the folder's path (a tap: the root),
@@ -53,7 +55,13 @@ static void draw_gran (lv_layer_t *l, const lv_area_t *c, int w, int h)
 	for (int x = 0; v->ncols > 0 && x < w; x += step)
 	{
 		int i = x * v->ncols / w;
-		int a = mid - (int) (v->wmx[i] / pk * amp), b = mid - (int) (v->wmn[i] / pk * amp);
+		float mx = v->wmx[i], mn = v->wmn[i];
+		if (TH->big && i + 1 < v->ncols)		// 1280x720: more dots than columns, no steps between them
+		{
+			const float f = (float) (x * v->ncols % w) / (float) w;
+			mx += (v->wmx[i + 1] - mx) * f, mn += (v->wmn[i + 1] - mn) * f;
+		}
+		int a = mid - (int) (mx / pk * amp), b = mid - (int) (mn / pk * amp);
 		if (o)						// the outline: the top and bottom envelopes as joined runs of dots
 		{
 			seg (l, c, x, x ? (pa < a ? pa + 1 : pa > a ? pa - 1 : a) : a, a, wave, 1);
@@ -145,7 +153,7 @@ static void draw_ms (lv_layer_t *l, const lv_area_t *c, int w, int h)
 	if (k1 < k0) k0 = 24, k1 = 84;
 	k0 = k0 / 12 * 12, k1 = k1 / 12 * 12 + 11;
 	if (k1 - k0 < 35) k1 = k0 + 35 > 127 ? 127 : k0 + 35;
-	const int kh = h * 2 / 5, zh = h - kh - (o ? 4 : 8), ky = h - kh;
+	const int kh = h * 2 / 5, zh = h - kh - (o ? LU (4) : LU (8)), ky = h - kh;
 	// the keys as a piano: seven white keys an octave over the width, the black keys narrower over their gaps (a key's
 	// left and right edge: KX, KR)
 	static const unsigned char kWi[12] = {0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6};
@@ -167,7 +175,7 @@ static void draw_ms (lv_layer_t *l, const lv_area_t *c, int w, int h)
 		int xr = (KX (v->ms_root[z]) + KR (v->ms_root[z])) / 2;
 		th_fill (l, c, xr, yb - rh, xr, yb, lit ? TH->accent : c_dim (), LV_OPA_COVER, 0);
 	}
-	const lv_font_t *fl = o ? TH->f_micro : &lv_font_montserrat_12;
+	const lv_font_t *fl = o ? TH->f_micro : TH->f_micro;
 	for (int k = k0; k <= k1; k++)			// white keys first, their octave's C named
 	{
 		if (ms_black (k)) continue;
@@ -187,7 +195,7 @@ static void draw_ms (lv_layer_t *l, const lv_area_t *c, int w, int h)
 #undef KX
 #undef KR
 	if (!v->ms_ready)
-		th_text (l, c, 0, zh / 2 - 6, w, o ? TH->f_body : &lv_font_montserrat_18, c_dim (), LV_TEXT_ALIGN_CENTER,
+		th_text (l, c, 0, zh / 2 - LU (6), w, o ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 v->name[0] ? (o ? "LOADING" : "Loading") : (o ? "NO INSTRUMENT: TAP POOL" : "No instrument: tap POOL"));
 }
 
@@ -211,8 +219,8 @@ enum { M_REPLACE, M_UNLOAD, M_ACCEPT, M_CANCEL };
 #define UNLOAD_PER	19			// rows a command ("pool=inst:unload:" + "A010:yes," each: the console's 191)
 #define UNLOAD_CMDS	8			// commands a tap (the control core's queue holds 16)
 
-static int row_h (void) { return oled () ? 18 : 31; }
-static int bar_w (void) { return oled () ? 5 : 8; }
+static int row_h (void) { return oled () ? LU (18) : LU (31); }
+static int bar_w (void) { return oled () ? LU (5) : LU (8); }
 static int hdr (void) { return s_bLib ? 0 : s_bPage ? 2 : 1; }	// the tab rows on top (not scrolled)
 static int nvis (void) { return lv_obj_get_height (s_List) / row_h (); }
 static int msg_on (void) { return s_Msg[0] || (s_bSelect && !s_bLib); }
@@ -312,7 +320,7 @@ static int menu_items (int *ids)
 static int box_rows (void) { int ids[4]; return s_nAsk ? 3 : s_nMenu >= 0 ? menu_items (ids) + 1 : 0; }
 static void box_geom (int w, int h, int *x0, int *y0, int *bw)
 {
-	int rh = row_h (), n = box_rows (), m = oled () ? 8 : 40;
+	int rh = row_h (), n = box_rows (), m = LU (oled () ? 8 : 40);
 	*x0 = m, *bw = w - bar_w () - 3 - 2 * m;
 	*y0 = (h - n * rh) / 2;
 }
@@ -348,7 +356,7 @@ static void draw_box (lv_layer_t *l, const lv_area_t *c, int w, int h)
 	char t[48], row[5];
 	row_text (code_of (s_nMenu), row);
 	lv_snprintf (t, sizeof t, "%s  %s", row, rows_ok () ? s_V.rname[s_nMenu] : "");
-	th_text (l, c, x0 + 4, y0 + (rh - fs->line_height) / 2, bw - 8, fs, c_dim (), LV_TEXT_ALIGN_LEFT, t);
+	th_text (l, c, x0 + LU (4), y0 + (rh - fs->line_height) / 2, bw - LU (8), fs, c_dim (), LV_TEXT_ALIGN_LEFT, t);
 	for (int i = 0; i < m; i++)
 	{
 		int y = y0 + (i + 1) * rh;
@@ -381,13 +389,19 @@ static void list_draw (lv_event_t *e)
 	uint32_t line = od ? TH->faint : th_mix (c_bg (), c_dim (), 90);
 	for (int i = 0; i < nh; i++)			// the tab rows: the POOL page's lists, then the banks A..H
 	{
-		int y = i * rh, list_row = s_bPage && i == 0, nt = list_row ? 3 : 8, cw = rw / nt;
+		int y = i * rh, list_row = s_bPage && i == 0, nt = list_row ? 5 : 8, cw = rw / nt;
 		for (int b = 0; b < nt; b++)
 		{
 			char t[24];
 			int on = list_row ? b == s_nPageList : b == s_nBank, x0 = b * cw;
 			static const char *const kTab[3] = {"SAMPLES", "TABLES", "INSTR"};
-			if (list_row) lv_snprintf (t, sizeof t, "%s %d", kTab[b], v->count[b]);
+			if (list_row && b >= 3)			// the preset lists (sidecar_preset.c): JUNO, 6-OP
+			{
+				int n = sidecar_preset_count (b - 3);
+				if (n >= 0) lv_snprintf (t, sizeof t, "%s %d", b == 3 ? "JUNO" : "6-OP", n);
+				else lv_snprintf (t, sizeof t, "%s", b == 3 ? "JUNO" : "6-OP");
+			}
+			else if (list_row) lv_snprintf (t, sizeof t, "%s %d", kTab[b], v->count[b]);
 			else lv_snprintf (t, sizeof t, "%c", 'A' + b);
 			if (on) th_fill (l, &c, x0 + 1, y + 1, x0 + cw - 2, y + rh - 2, TH->sel_bg, LV_OPA_COVER, 0);
 			th_text (l, &c, x0, y + (rh - fb->line_height) / 2, cw, list_row ? fs : fb, on ? TH->sel_ink : c_dim (),
@@ -430,7 +444,7 @@ static void list_draw (lv_event_t *e)
 				}
 				else right = s_bReplace ? "REPLACE" : "SET";
 			}
-			th_text (l, &c, pad, y + (rh - fb->line_height) / 2, rw - 2 * pad - (od ? 48 : 90), fb, ink, LV_TEXT_ALIGN_LEFT, t);
+			th_text (l, &c, pad, y + (rh - fb->line_height) / 2, rw - 2 * pad - (od ? LU (48) : LU (90)), fb, ink, LV_TEXT_ALIGN_LEFT, t);
 			th_text (l, &c, pad, y + (rh - fs->line_height) / 2, rw - 2 * pad, fs, rink, LV_TEXT_ALIGN_RIGHT, right);
 			th_fill (l, &c, 0, y + rh - 1, rw, y + rh - 1, od ? TH->bg : th_mix (c_bg (), c_dim (), 40), LV_OPA_COVER, 0);
 			continue;
@@ -446,7 +460,7 @@ static void list_draw (lv_event_t *e)
 		else if (f & WGV_RF_USED) th_frame (l, &c, pad, my, pad + mw - 1, my + mw - 1, on ? ink : c_dim (), 1, 0);
 		const char *nm = k == 0 ? "OFF" : empty ? "---" : v->rname[k];
 		lv_snprintf (t, sizeof t, "%03d  %s%s", k, f & WGV_RF_MISSING ? "!" : f & WGV_RF_CHANGED ? "~" : "", nm);
-		th_text (l, &c, pad + mw + (od ? 3 : 6), y + (rh - fb->line_height) / 2, rw - 2 * pad - mw - (od ? 60 : 120), fb, ink,
+		th_text (l, &c, pad + mw + (od ? 3 : LU (6)), y + (rh - fb->line_height) / 2, rw - 2 * pad - mw - (od ? LU (60) : LU (120)), fb, ink,
 			 LV_TEXT_ALIGN_LEFT, t);
 		if (on && v->note[0]) lv_snprintf (rt, sizeof rt, "%s", v->note);
 		else state_text (k, rt, sizeof rt);
@@ -664,8 +678,9 @@ static void list_tap (lv_event_t *e)
 	s_Msg[0] = 0, s_nUndo = -1;
 	if (i < nh)					// the tab rows
 	{
-		int rw = w - bar_w () - 3, list_row = s_bPage && i == 0, nt = list_row ? 3 : 8, cw = rw / nt, b = x / (cw > 0 ? cw : 1);
+		int rw = w - bar_w () - 3, list_row = s_bPage && i == 0, nt = list_row ? 5 : 8, cw = rw / nt, b = x / (cw > 0 ? cw : 1);
 		b = b < 0 ? 0 : b >= nt ? nt - 1 : b;
+		if (list_row && b >= 3) { if (s_PresetFn) s_PresetFn (b - 3); return; }	// JUNO / 6-OP: the preset page
 		if (list_row) sidecar_wgview_set_page_list (b);
 		else
 		{
@@ -805,6 +820,7 @@ static void key_cb (lv_obj_t *o, int idx, void *ud)
 
 void sidecar_wgview_set_command (void (*fn) (const char *cmd)) { s_Cmd = fn; }
 void sidecar_wgview_set_page (void (*fn) (int open)) { s_PageFn = fn; }
+void sidecar_wgview_set_preset (void (*fn) (int kind)) { s_PresetFn = fn; }
 int sidecar_wgview_list_shown (void) { return s_Page && s_bList && (list_kind () || s_bPage); }
 int sidecar_wgview_lib_shown (void) { return sidecar_wgview_list_shown () && s_bLib; }
 int sidecar_wgview_bank (void) { return s_nBank; }
@@ -888,42 +904,42 @@ void sidecar_wgview_create (void *parent, int y0)
 	s_V.list = -1, s_V.sel = -1;
 	// 1024x600: the picture and the list take what the screen adds (TH->dx, dy: more rows), the keys get wider
 	const int dx = TH->dx, dy = TH->dy, q = dx / 4;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - 48 : TH->w, o ? TH->h : 428 + dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - LU (48) : TH->w, o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
 	{
-		const int ky = 204 + dy;
-		s_TitleBar = th_titlebar (pg, 0, 0, 352 + dx, 13);
+		const int ky = LU (204) + dy;
+		s_TitleBar = th_titlebar (pg, 0, 0, LU (352) + dx, LU (13));
 		th_titlebar_set (s_TitleBar, "MACHINE", "", 0);
 		s_Title = 0;
-		s_Area = th_box (pg, 3, 18, 346 + dx, 178 + dy);
-		s_List = th_box (pg, 0, 16, 352 + dx, 180 + dy);
+		s_Area = th_box (pg, 3, LU (18), LU (346) + dx, LU (178) + dy);
+		s_List = th_box (pg, 0, LU (16), LU (352) + dx, LU (180) + dy);
 		s_Info = th_label (pg, 3, ky, TH->f_micro, TH->dim, "");
-		s_Info2 = th_label (pg, 3, ky + 18, TH->f_micro, TH->dim, "");
-		s_Src = th_key (pg, 264 + 3 * q, ky, 88 + q, 34, "POOL", TH_KEY_FUNC | TH_KEY_SMALL, key_cb, (void *) 0);
-		s_Up = th_key (pg, 0, ky, 84 + q, 34, "UP", TH_KEY | TH_KEY_SMALL, key_cb, (void *) 1);
-		s_Dn = th_key (pg, 90 + q, ky, 84 + q, 34, "DOWN", TH_KEY | TH_KEY_SMALL, key_cb, (void *) 2);
-		s_Done = th_key (pg, 264 + 3 * q, ky, 88 + q, 34, "DONE", TH_KEY_ACCENT | TH_KEY_SMALL, key_cb, (void *) 3);
-		s_Mid = th_key (pg, 180 + 2 * q, ky, 78 + q, 34, "ALL POOLS", TH_KEY_FUNC | TH_KEY_SMALL, key_cb, (void *) 4);
+		s_Info2 = th_label (pg, 3, ky + LU (18), TH->f_micro, TH->dim, "");
+		s_Src = th_key (pg, LU (264) + 3 * q, ky, LU (88) + q, LU (34), "POOL", TH_KEY_FUNC | TH_KEY_SMALL, key_cb, (void *) 0);
+		s_Up = th_key (pg, 0, ky, LU (84) + q, LU (34), "UP", TH_KEY | TH_KEY_SMALL, key_cb, (void *) 1);
+		s_Dn = th_key (pg, LU (90) + q, ky, LU (84) + q, LU (34), "DOWN", TH_KEY | TH_KEY_SMALL, key_cb, (void *) 2);
+		s_Done = th_key (pg, LU (264) + 3 * q, ky, LU (88) + q, LU (34), "DONE", TH_KEY_ACCENT | TH_KEY_SMALL, key_cb, (void *) 3);
+		s_Mid = th_key (pg, LU (180) + 2 * q, ky, LU (78) + q, LU (34), "ALL POOLS", TH_KEY_FUNC | TH_KEY_SMALL, key_cb, (void *) 4);
 	}
 	else
 	{
-		const int ky = 372 + dy;
+		const int ky = LU (372) + dy;
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, 784 + dx, 360 + dy, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, &lv_font_montserrat_18, TH->win_ink, "MACHINE");
-		s_Area = th_box (pg, 24, 44, 752 + dx, 310 + dy);
-		s_List = th_box (pg, 24, 44, 752 + dx, 310 + dy);
-		s_Info = th_label (pg, 16, ky + 4, &lv_font_montserrat_18, TH->ink, "");
-		s_Info2 = th_label (pg, 16, ky + 30, &lv_font_montserrat_14, TH->dim, "");
-		s_Src = th_key (pg, 616 + 3 * q, ky, 176 + q, 52, "POOL", TH_KEY_FUNC, key_cb, (void *) 0);
-		s_Up = th_key (pg, 16, ky, 140 + q, 52, "UP", TH_KEY, key_cb, (void *) 1);
-		s_Dn = th_key (pg, 164 + q, ky, 140 + q, 52, "DOWN", TH_KEY, key_cb, (void *) 2);
-		s_Done = th_key (pg, 616 + 3 * q, ky, 176 + q, 52, "DONE", TH_KEY_ACCENT, key_cb, (void *) 3);
-		s_Mid = th_key (pg, 312 + 2 * q, ky, 296 + q, 52, "ALL POOLS", TH_KEY_FUNC, key_cb, (void *) 4);
+		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (360) + dy, "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "MACHINE");
+		s_Area = th_box (pg, LU (24), LU (44), LU (752) + dx, LU (310) + dy);
+		s_List = th_box (pg, LU (24), LU (44), LU (752) + dx, LU (310) + dy);
+		s_Info = th_label (pg, LU (16), ky + LU (4), TH->f_mid, TH->ink, "");
+		s_Info2 = th_label (pg, LU (16), ky + LU (30), TH->f_small, TH->dim, "");
+		s_Src = th_key (pg, LU (616) + 3 * q, ky, LU (176) + q, LU (52), "POOL", TH_KEY_FUNC, key_cb, (void *) 0);
+		s_Up = th_key (pg, LU (16), ky, LU (140) + q, LU (52), "UP", TH_KEY, key_cb, (void *) 1);
+		s_Dn = th_key (pg, LU (164) + q, ky, LU (140) + q, LU (52), "DOWN", TH_KEY, key_cb, (void *) 2);
+		s_Done = th_key (pg, LU (616) + 3 * q, ky, LU (176) + q, LU (52), "DONE", TH_KEY_ACCENT, key_cb, (void *) 3);
+		s_Mid = th_key (pg, LU (312) + 2 * q, ky, LU (296) + q, LU (52), "ALL POOLS", TH_KEY_FUNC, key_cb, (void *) 4);
 	}
-	lv_obj_set_width (s_Info, (o ? 174 : 290) + 2 * q);
-	lv_obj_set_width (s_Info2, (o ? 174 : 290) + 2 * q);
+	lv_obj_set_width (s_Info, (o ? LU (174) : LU (290)) + 2 * q);
+	lv_obj_set_width (s_Info2, (o ? LU (174) : LU (290)) + 2 * q);
 	lv_obj_add_event_cb (s_Area, area_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_event_cb (s_List, list_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_flag (s_List, LV_OBJ_FLAG_CLICKABLE);

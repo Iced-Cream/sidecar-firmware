@@ -335,6 +335,51 @@ static void test_merge_poll() {
 
 // R2-M1: the computer's realtime (its clock) never waits behind a hold: one F8 a Poll, during a bridge SysEx of the
 // largest size and during an engine song dump in pieces, each out in the Poll it arrived; its notes wait, in order
+// lateattach: DropResync on the merge's own counters, as CObUsbTransport::Poll has it: a send that fails once tells the
+// remote UI once, after the off-period, whatever was dropped during it
+static void test_drop_resync() {
+  static UsbMidiMerge m;
+  FakeIo io;
+  DropResync r;
+  uint32_t t = 1000;
+  auto poll = [&](bool send = true) {
+    m.poll(io, true, send, nullptr, nullptr, t);
+    return r.tick(m.dropped(), send && !m.failed(), t);
+  };
+  const Bytes rec = {0xF0, 0x7D, 0x52, 0x54, 0x3C, 1, 0xF7};
+  io.engine.push_back(rec);
+  CHECK(!poll());					// nothing lost: nothing to tell
+  io.fail_after = 0;
+  io.engine.push_back(rec);
+  CHECK(!poll() && m.failed() && m.dropped() != 0);	// lost, but sending is off: a whole frame would go the same way
+  for (int i = 0; i < 100; i++) {			// the off-period: every record dropped, nothing said
+    t += 100000;
+    if (t - 1000 >= UsbMidiMerge::kRetryUs - 100000) break;
+    io.engine.push_back(rec);
+    CHECK(!poll());
+  }
+  t += 200000;
+  CHECK(poll() && !m.failed());				// sending is on again: told once
+  CHECK(!poll());
+  t += 2000000;
+  io.engine.push_back(rec);
+  CHECK(!poll());					// and no more without a new loss
+  // a loss in a second off-period: told again, one per off-period
+  io.fail_after = 0;
+  io.engine.push_back(rec);
+  CHECK(!poll() && m.failed());
+  t += UsbMidiMerge::kRetryUs * 2;
+  CHECK(poll());
+  // two losses inside kGapUs: one tell, the second after the gap (a whole frame that overflows a queue asks for no storm)
+  DropResync g;
+  uint32_t u = 5000;
+  CHECK(g.tick(1, true, u) && !g.tick(2, true, u + 1000) && !g.tick(2, true, u + DropResync::kGapUs - 1));
+  CHECK(g.tick(2, true, u + DropResync::kGapUs));
+  // no sending at all (tohost=0, no umidi1): never
+  DropResync n;
+  CHECK(!n.tick(100, false, 0) && !n.tick(200, false, 5000000));
+}
+
 static void test_realtime_through_holds() {
   ToRytm* t = new ToRytm;
   UsbMidiMerge* m = new UsbMidiMerge;
@@ -922,6 +967,7 @@ int main() {
   test_realtime_through_holds();
   test_not_reading();
   test_transport_order();
+  test_drop_resync();
   test_pieces();
   test_parser();
   test_backpressure();

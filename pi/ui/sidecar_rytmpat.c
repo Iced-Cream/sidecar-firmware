@@ -43,12 +43,15 @@ static const pat_geo_t *G = &kGeoClassic;
 static void geo_size (const pat_geo_t *b)
 {
 	pat_geo_t g = *b;
+	int *f = (int *) &g;					// 1280x720: the whole table in LU
+	for (unsigned i = 0; i < sizeof g / sizeof *f; i++) f[i] = LU (f[i]);
+	g.lanes = b->lanes;
 	const int dx = TH->dx, dy = TH->dy, o = TH->id == THEME_OLED;
 	const int gx = o ? dx * 4 / 7 : dx * 6 / 7;		// OLED 64 of the 112 dots, CLASSIC 192 of the 224 px
 	g.pg_h += dy;
 	g.gw += gx;
 	g.rowh += dy * 2 / 3 / 12;
-	const int gh = 12 * (g.rowh - b->rowh);			// what the rows add
+	const int gh = LU (12) * (g.rowh - LU (b->rowh));			// what the rows add
 	g.ly += gh;
 	g.lh += dy - gh;
 	if (dy) g.lanes = (g.lh - g.lane_y0 - (o ? 0 : 4)) / g.lane_h;	// 6 at 1024x600 (4 at 800x480)
@@ -178,11 +181,11 @@ static void names_draw (lv_event_t *e)
 		if (oled ())
 		{
 			if (sel) fill (l, &c, 0, y, G->names_w - 1, y + ROWH - 1, TH->sel_bg, LV_OPA_COVER, 0);
-			text (l, &c, 0, y + (ROWH - 10) / 2, G->names_w, TH->f_micro, sel ? TH->sel_ink : TH->dim, LV_TEXT_ALIGN_CENTER, nm[t]);
+			text (l, &c, 0, y + (ROWH - LU (10)) / 2, G->names_w, TH->f_micro, sel ? TH->sel_ink : TH->dim, LV_TEXT_ALIGN_CENTER, nm[t]);
 			continue;
 		}
 		if (sel) fill (l, &c, 0, y + 1, 39, y + ROWH - 2, TH->accent, LV_OPA_COVER, 3);
-		text (l, &c, 0, y + (ROWH - 16) / 2, 40, &lv_font_montserrat_14, sel ? 0x101010 : TH->win_ink, LV_TEXT_ALIGN_CENTER, nm[t]);
+		text (l, &c, 0, y + (ROWH - LU (16)) / 2, LU (40), TH->f_small, sel ? 0x101010 : TH->win_ink, LV_TEXT_ALIGN_CENTER, nm[t]);
 	}
 }
 
@@ -192,14 +195,14 @@ static void ruler_draw (lv_event_t *e)
 	lv_area_t c;
 	lv_obj_get_coords (s_Ruler, &c);
 	int n = nsteps (), f = first (), w = cellw (), wide = oled () ? w >= 12 : w >= 20;
-	const lv_font_t *ft = oled () ? TH->f_micro : &lv_font_montserrat_12;
+	const lv_font_t *ft = oled () ? TH->f_micro : TH->f_micro;
 	for (int i = 0; i < n; i += (wide ? 1 : 4))
 	{
 		int s = f + i;
 		char b[6];
 		if (!wide && s % 16 == 0) lv_snprintf (b, sizeof b, "P%d", s / 16 + 1); else lv_snprintf (b, sizeof b, "%d", s + 1);
 		uint32_t ink = oled () ? (s % 4 ? TH->faint : TH->dim) : (s % 4 ? 0x6C6E72 : TH->win_dim);
-		text (l, &c, i * w, -1, w * (wide ? 1 : 4), ft, ink, wide ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT, b);
+		text (l, &c, i * w, -1, w * (wide ? 1 : LU (4)), ft, ink, wide ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT, b);
 	}
 }
 
@@ -212,7 +215,7 @@ static void locks_draw (lv_event_t *e)
 	const char *const *nm = rytm_track_names ();
 	for (int i = 0; i < s_P.nparams; i++) total += s_P.lock[i].track == s_Track;
 	char b[80];
-	const lv_font_t *ft = o ? TH->f_micro : &lv_font_montserrat_12;
+	const lv_font_t *ft = o ? TH->f_micro : TH->f_micro;
 	if (o)
 	{
 		frame (l, &c, 0, 4, G->lane_name_x + G->lane_name_w - 1, LH - 1, DOT_DOTTED, 1, 0);
@@ -222,7 +225,7 @@ static void locks_draw (lv_event_t *e)
 			     s_P.nlocks, RYTM_LOCKS);
 		int tw = th_text_width (ft, b);
 		fill (l, &c, 4, 0, 4 + tw + 5, 8, 0x000000, LV_OPA_COVER, 0);
-		text (l, &c, 7, -1, 340 + TH->dx, ft, TH->dim, LV_TEXT_ALIGN_LEFT, b);
+		text (l, &c, LU (7), -1, LU (340) + TH->dx, ft, TH->dim, LV_TEXT_ALIGN_LEFT, b);
 	}
 	else
 	{
@@ -230,10 +233,10 @@ static void locks_draw (lv_event_t *e)
 		lv_snprintf (sh, sizeof sh, " (%d shown)", LANES);
 		lv_snprintf (b, sizeof b, "P-LOCKS  %s   %d parameter%s locked%s      pattern lock slots %d/%d", nm[s_Track], total,
 			     total == 1 ? "" : "s", total > LANES ? sh : "", s_P.nlocks, RYTM_LOCKS);
-		text (l, &c, 10, 4, 600 + TH->dx, ft, TH->ink, LV_TEXT_ALIGN_LEFT, b);
+		text (l, &c, LU (10), LU (4), LU (600) + TH->dx, ft, TH->ink, LV_TEXT_ALIGN_LEFT, b);
 	}
 	if (!total)
-		text (l, &c, GX - (o ? 0 : 2), o ? 28 : 30, 500, o ? TH->f_micro : &lv_font_montserrat_14, o ? TH->faint : TH->dim,
+		text (l, &c, GX - (o ? 0 : 2), o ? LU (28) : LU (30), LU (500), o ? TH->f_micro : TH->f_small, o ? TH->faint : TH->dim,
 		      LV_TEXT_ALIGN_LEFT, o ? "NO P-LOCKS ON THIS TRACK" : "no p-locks on this track");
 	for (int i = 0; i < s_P.nparams && lane < LANES; i++)
 	{
@@ -261,7 +264,7 @@ static void locks_draw (lv_event_t *e)
 			if (w >= 30)
 			{
 				lv_snprintf (b, sizeof b, "%d", v);
-				text (l, &c, x, y + 1, w, &lv_font_montserrat_12, v > 70 ? 0x101010 : 0xE8E8E8, LV_TEXT_ALIGN_CENTER, b);
+				text (l, &c, x, y + 1, w, TH->f_micro, v > 70 ? 0x101010 : 0xE8E8E8, LV_TEXT_ALIGN_CENTER, b);
 			}
 		}
 		lane++;
@@ -452,63 +455,63 @@ void sidecar_rytmpat_create (void *parent, int y0, void (*back) (void))
 	s_Back = back;
 	geo_size (oled () ? &kGeoOled : &kGeoClassic);
 	int o = oled (), dx = TH->dx;
-	const int PW = o ? TH->w - 48 : TH->w;			// the page's width
+	const int PW = o ? TH->w - LU (48) : TH->w;			// the page's width
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, PW, G->pg_h);
 	s_Page = pg;
 	static const char *const kPages[] = {"1", "2", "3", "4", "ALL", ""};
 	if (o)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, PW, 13);
-		s_PageM = th_seg (pg, 0, 15, 195 + dx / 2, 22, kPages, TH_KEY_TRIG, page_cb, 0);
-		s_Where = th_label (pg, 201 + dx / 2, 22, TH->f_micro, TH->dim, "READ ONLY");
-		lv_obj_set_width (s_Where, PW - 201 - dx / 2);
+		s_TitleBar = th_titlebar (pg, 0, 0, PW, LU (13));
+		s_PageM = th_seg (pg, 0, LU (15), LU (195) + dx / 2, LU (22), kPages, TH_KEY_TRIG, page_cb, 0);
+		s_Where = th_label (pg, LU (201) + dx / 2, LU (22), TH->f_micro, TH->dim, "READ ONLY");
+		lv_obj_set_width (s_Where, PW - LU (201) - dx / 2);
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_CLIP);
 		s_Info = 0;
 	}
 	else
 	{
 		s_TitleBar = 0;
-		lv_obj_t *acc = th_box (pg, 12, 8, 3, 40);
+		lv_obj_t *acc = th_box (pg, LU (12), LU (8), 3, LU (40));
 		lv_obj_set_style_bg_color (acc, lv_color_hex (TH->lock), 0);
 		lv_obj_set_style_bg_opa (acc, LV_OPA_COVER, 0);
-		s_Where = th_label (pg, 22, 7, &lv_font_montserrat_12, 0x8A5A10, "READ ONLY");
+		s_Where = th_label (pg, LU (22), LU (7), TH->f_micro, 0x8A5A10, "READ ONLY");
 		lv_obj_set_style_text_letter_space (s_Where, 1, 0);
-		lv_obj_set_size (s_Where, 376 + dx, 16);
+		lv_obj_set_size (s_Where, LU (376) + dx, LU (16));
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_DOTS);
-		s_Info = th_label (pg, 22, 25, &lv_font_montserrat_18, TH->ink, "-");
-		lv_obj_set_size (s_Info, 376 + dx, 24);
+		s_Info = th_label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
+		lv_obj_set_size (s_Info, LU (376) + dx, LU (24));
 		lv_label_set_long_mode (s_Info, LV_LABEL_LONG_MODE_DOTS);
-		s_PageM = th_seg (pg, 404 + dx, 4, 260, 48, kPages, TH_KEY_TRIG, page_cb, 0);
-		th_seg_font (s_PageM, &lv_font_montserrat_16);
-		lv_obj_t *b = th_key (pg, 672 + dx, 4, 120, 48, "SEQ", TH_KEY_FUNC, back_cb, 0);
-		th_key_font (b, &lv_font_montserrat_16);
-		th_panel (pg, 2, G->rul_y - 4, GX + GW, GH + 22, "", TH_PANEL_WINDOW);	// the grid's display window
+		s_PageM = th_seg (pg, LU (404) + dx, LU (4), LU (260), LU (48), kPages, TH_KEY_TRIG, page_cb, 0);
+		th_seg_font (s_PageM, TH->f_body);
+		lv_obj_t *b = th_key (pg, LU (672) + dx, LU (4), LU (120), LU (48), "SEQ", TH_KEY_FUNC, back_cb, 0);
+		th_key_font (b, TH->f_body);
+		th_panel (pg, 2, G->rul_y - LU (4), GX + GW, GH + LU (22), "", TH_PANEL_WINDOW);	// the grid's display window
 	}
 	th_seg_set (s_PageM, s_Pg);
 
 	s_Ruler = drawn (pg, GX, G->rul_y, GW, G->rul_h, ruler_draw, 0);
 	s_Names = drawn (pg, G->names_x, GY, G->names_w, GH, names_draw, 1);
 	s_Grid = drawn (pg, GX, GY, GW, GH, grid_draw, 1);
-	if (!o) th_panel (pg, 2, LY - 2, PW - 10, LH + 2, "", TH_PANEL_GROUP);
-	s_Locks = drawn (pg, o ? 0 : 2, LY, o ? PW : PW - 10, LH, locks_draw, 0);	// the lane names right of the lanes
-	s_Head = th_box (pg, GX, GY - (o ? 1 : 4), o ? 1 : 2, GH + (o ? 2 : 8));
+	if (!o) th_panel (pg, 2, LY - 2, PW - LU (10), LH + 2, "", TH_PANEL_GROUP);
+	s_Locks = drawn (pg, o ? 0 : 2, LY, o ? PW : PW - LU (10), LH, locks_draw, 0);	// the lane names right of the lanes
+	s_Head = th_box (pg, GX, GY - (o ? 1 : LU (4)), o ? 1 : 2, GH + (o ? 2 : LU (8)));
 	lv_obj_set_style_bg_color (s_Head, lv_color_hex (TH->play), 0);
 	lv_obj_set_style_bg_opa (s_Head, o ? LV_OPA_COVER : LV_OPA_50, 0);
 	lv_obj_add_flag (s_Head, LV_OBJ_FLAG_HIDDEN);
 
 	// the step card
 	lv_obj_t *cp = th_panel (pg, G->card_x, G->card_y, G->card_w, G->card_h, "", o ? TH_PANEL_BARE : TH_PANEL_WINDOW);
-	const lv_font_t *ft = o ? TH->f_micro : &lv_font_montserrat_12;
-	s_CardT = th_label (cp, o ? 0 : 8, o ? 0 : 8, o ? TH->f_body : ft, o ? TH->ink : TH->accent, "");
-	lv_obj_set_width (s_CardT, G->card_w - (o ? 0 : 12));
+	const lv_font_t *ft = o ? TH->f_micro : TH->f_micro;
+	s_CardT = th_label (cp, o ? 0 : LU (8), o ? 0 : LU (8), o ? TH->f_body : ft, o ? TH->ink : TH->accent, "");
+	lv_obj_set_width (s_CardT, G->card_w - (o ? 0 : LU (12)));
 	lv_label_set_long_mode (s_CardT, o ? LV_LABEL_LONG_MODE_CLIP : LV_LABEL_LONG_MODE_WRAP);
 	for (int i = 0; i < 8; i++)
 	{
-		s_Card[i] = th_label (cp, o ? 0 : 8, o ? 15 + i * G->line : 44 + i * G->line, ft, i == 7 ? (o ? TH->accent : TH->lock) : o ? TH->ink : TH->win_ink, "");
-		lv_obj_set_size (s_Card[i], G->card_w - (o ? 0 : 12), o ? 9 : 16);
+		s_Card[i] = th_label (cp, o ? 0 : LU (8), o ? LU (15) + i * G->line : LU (44) + i * G->line, ft, i == 7 ? (o ? TH->accent : TH->lock) : o ? TH->ink : TH->win_ink, "");
+		lv_obj_set_size (s_Card[i], G->card_w - (o ? 0 : LU (12)), o ? LU (9) : LU (16));
 		lv_label_set_long_mode (s_Card[i], LV_LABEL_LONG_MODE_CLIP);
 	}
-	if (!o) th_label (cp, 8, G->card_h - 22, ft, TH->win_dim, "* = track");
+	if (!o) th_label (cp, LU (8), G->card_h - LU (22), ft, TH->win_dim, "* = track");
 	header ();
 	card_update ();
 	sidecar_rytmpat_playhead (s_Play);

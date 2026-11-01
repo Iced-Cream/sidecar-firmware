@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 namespace bridge {
+inline uint32_t to_host_dropped() { return 0; }
 inline bool samp_wants_voices() { return false; }
 inline bool samp_wants_in() { return false; }
 inline bool tap_on() { return false; }

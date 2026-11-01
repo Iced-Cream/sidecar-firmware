@@ -86,7 +86,7 @@ bool accepts_file(int list, const char* path) {
   const char* b = strrchr(path, '/');
   b = b ? b + 1 : path;
   if (!b[0] || b[0] == '.') return false;
-  if (list == kInstr) return ends(b, ".sfz");
+  if (list == kInstr) return ends(b, ".sfz") || ends(b, ".elmulti");
   if (list == kSamples || list == kTables) return ends(b, ".wav") || ends(b, ".aif") || ends(b, ".aiff");
   return false;
 }
@@ -200,7 +200,7 @@ bool parse_more(int list, Parser* ps, const char* s, uint32_t n, LineFn fn, void
         if (!lib::parse_ref(p, &o.ref)) return say(why, cap, "a reference it does not read");
         const char* tail = strchr(p, '\t');
         if (!extras(tail ? tail : "", &o)) return say(why, cap, "extras it does not read");
-        if (t == kInstrument && !accepts_file(kInstr, o.ref.hint)) return say(why, cap, "an instrument that is not an .sfz");
+        if (t == kInstrument && !accepts_file(kInstr, o.ref.hint)) return say(why, cap, "an instrument that is not an .sfz or .elmulti");
       }
       inst = t == kInstrument;
     }

@@ -1,0 +1,584 @@
+circle-pi5-gadget.patch - Circle's DWC2 USB gadget on the Raspberry Pi 5 (BCM2712), on top of circle-gadget.patch
+(applied by pi/engine/build.sh with PI5_GADGET=1, and by pi/circle/build-pi5gadget.sh; docs/pi5.md "USB device side").
+Written from the Pi 5 device tree (/axi/usb@480000) and Circle's own DWC2 code. GPL-3.0-or-later as Circle.
+  - bcm2835.h: ARM_USB_BASE 0x1000480000 on RASPPI 5 (the core, host, device and power offsets as on the Pi 4)
+  - bcm2711int.h: ARM_IRQ_USB = GIC SPI 73 on RASPPI 5 (C1 and D0 steppings)
+  - dwhciregister: 64-bit register addresses (uintptr; the Pi 4's are 32-bit values, unchanged)
+  - lib/usb/gadget/Makefile: the gadget library on every RASPPI
+  - dwusbgadget: the Pi 5 / CM5 accepted; on RASPPI 5 the core powered as Linux does ("set power state", device 3) and
+    read whatever the firmware answers, any "OT2" core version, GHWCFG2-4 logged, the FIFO RAM checked; InitCorePi5's
+    seven ways of bringing the core up from the firmware's host mode (usbinit=), Reconnect () to try another at run
+    time, DumpRegisters (), GetUSBResetCount ()
+  - dwusbgadget.cpp: the FIFOs as Linux sizes them for the dwc2 overlay: RX 558, NPTX 32, TX 512 x5, 256 x2 (this patch is
+    applied in Pi 5 trees only)
+  - dwusbgadgetendpoint.cpp: on RASPPI 5 DMA addresses are ARM physical addresses (/axi's dma-ranges map them 1:1),
+    below 4 GB (asserted), not the VideoCore's 0xC0000000 alias
+diff --git a/include/circle/bcm2711int.h b/include/circle/bcm2711int.h
+index b0424d4..e551245 100644
+--- a/include/circle/bcm2711int.h
++++ b/include/circle/bcm2711int.h
+@@ -68,6 +68,7 @@
+ 
+ #else
+ 
++#define ARM_IRQ_USB		GIC_SPI (73)	// DWC2 OTG (DT: /axi/usb@480000, also on D0)
+ #define ARM_IRQ_DMA0		GIC_SPI (80)
+ #define ARM_IRQ_DMA1		GIC_SPI (81)
+ #define ARM_IRQ_DMA2		GIC_SPI (82)
+diff --git a/include/circle/bcm2835.h b/include/circle/bcm2835.h
+index 4ed80d4..6312179 100644
+--- a/include/circle/bcm2835.h
++++ b/include/circle/bcm2835.h
+@@ -223,7 +223,11 @@
+ //
+ // USB Host Controller
+ //
++#if RASPPI <= 4
+ #define ARM_USB_BASE		(ARM_IO_BASE + 0x980000)
++#else
++#define ARM_USB_BASE		0x1000480000UL		// BCM2712's DWC2 OTG core (DT: /axi/usb@480000)
++#endif
+ 
+ #define ARM_USB_CORE_BASE	ARM_USB_BASE
+ #define ARM_USB_HOST_BASE	(ARM_USB_BASE + 0x400)
+diff --git a/include/circle/usb/dwhciregister.h b/include/circle/usb/dwhciregister.h
+index bff54a9..dcdcfd7 100644
+--- a/include/circle/usb/dwhciregister.h
++++ b/include/circle/usb/dwhciregister.h
+@@ -26,8 +26,8 @@
+ class CDWHCIRegister
+ {
+ public:
+-	CDWHCIRegister (u32 nAddress);
+-	CDWHCIRegister (u32 nAddress, u32 nValue);
++	CDWHCIRegister (uintptr nAddress);
++	CDWHCIRegister (uintptr nAddress, u32 nValue);
+ 	~CDWHCIRegister (void);
+ 
+ 	u32 Read (void);
+@@ -52,7 +52,7 @@ public:
+ 	
+ private:
+ 	boolean	m_bValid;
+-	u32	m_nAddress;
++	uintptr	m_nAddress;
+ 	u32	m_nBuffer;
+ };
+ 
+diff --git a/include/circle/usb/gadget/dwusbgadget.h b/include/circle/usb/gadget/dwusbgadget.h
+index 8fa2471..6dbdfb8 100644
+--- a/include/circle/usb/gadget/dwusbgadget.h
++++ b/include/circle/usb/gadget/dwusbgadget.h
+@@ -118,8 +118,25 @@ public:
+ 		m_nLongTicks = nLongTicks;
+ 	}
+ 
++#if RASPPI >= 5
++	/// \brief Pi 5 bring-up (docs/pi5.md): the core's registers logged
++	void DumpRegisters (const char *pWhen);
++
++	/// \brief Pi 5 bring-up: soft-disconnected, the core set up again the way nInit says (InitCorePi5), connected
++	/// \note Task level, while not configured by a host
++	boolean Reconnect (unsigned nInit);
++
++	/// \return USB resets seen since boot: 0 means the host never saw this device connect
++	unsigned GetUSBResetCount (void) const	{ return m_nUSBResets; }
++#endif
++
+ private:
+ 	boolean PowerOn (void);
++#if RASPPI >= 5
++	boolean CheckHardware (void);
++	void SetUSBPower (boolean bOn);
++	boolean InitCorePi5 (unsigned nInit);
++#endif
+ 	boolean InitCore (void);
+ 	void InitCoreDevice (void);
+ 
+@@ -186,6 +203,12 @@ private:
+ 	volatile u64 m_nIRQTicks;
+ 	u64 m_nLastEntry, m_nMaxGap, m_nMaxHandler, m_nLongTicks;
+ 	unsigned m_nLongGaps;
++
++#if RASPPI >= 5
++	volatile unsigned m_nUSBResets;
++	u32 m_nBootUSBConfig;			// GUSBCFG as the boot firmware left it
++	boolean m_bBootUSBConfig;
++#endif
+ };
+ 
+ #endif
+diff --git a/lib/usb/dwhciregister.cpp b/lib/usb/dwhciregister.cpp
+index a7648e8..b65d4d4 100644
+--- a/lib/usb/dwhciregister.cpp
++++ b/lib/usb/dwhciregister.cpp
+@@ -22,13 +22,13 @@
+ #include <circle/logger.h>
+ #include <assert.h>
+ 
+-CDWHCIRegister::CDWHCIRegister (u32 nAddress)
++CDWHCIRegister::CDWHCIRegister (uintptr nAddress)
+ :	m_bValid (FALSE),
+ 	m_nAddress (nAddress)
+ {
+ }
+ 
+-CDWHCIRegister::CDWHCIRegister (u32 nAddress, u32 nValue)
++CDWHCIRegister::CDWHCIRegister (uintptr nAddress, u32 nValue)
+ :	m_bValid (TRUE),
+ 	m_nAddress (nAddress),
+ 	m_nBuffer (nValue)
+@@ -118,13 +118,13 @@ void CDWHCIRegister::Dump (void) const
+ 	{
+ 		CLogger::Get ()->Write ("dwhci", LogDebug,
+ 					"Register at 0x%X is 0x%X",
+-					m_nAddress & 0xFFF, m_nBuffer);
++					(unsigned) (m_nAddress & 0xFFF), m_nBuffer);
+ 	}
+ 	else
+ 	{
+ 		CLogger::Get ()->Write ("dwhci", LogDebug,
+ 					"Register at 0x%X was not set",
+-					m_nAddress & 0xFFF);
++					(unsigned) (m_nAddress & 0xFFF));
+ 	}
+ }
+ 
+diff --git a/lib/usb/gadget/Makefile b/lib/usb/gadget/Makefile
+index 51f47bf..0eab4ad 100644
+--- a/lib/usb/gadget/Makefile
++++ b/lib/usb/gadget/Makefile
+@@ -24,14 +24,11 @@ all: libusbgadget.a
+ 
+ include $(CIRCLEHOME)/Rules.mk
+ 
+-ifneq ($(strip $(RASPPI)),5)
+ OBJS	= dwusbgadget.o dwusbgadgetendpoint.o dwusbgadgetendpoint0.o \
+ 	  usbmidigadget.o usbmidigadgetendpoint.o \
+ 	  usbcdcgadget.o usbcdcgadgetendpoint.o \
+ 	  usbmsdgadget.o usbmsdgadgetendpoint.o
+ 
+-endif
+-
+ libusbgadget.a: $(OBJS)
+ 	@echo "  AR    $@"
+ 	@rm -f $@
+diff --git a/lib/usb/gadget/dwusbgadget.cpp b/lib/usb/gadget/dwusbgadget.cpp
+index 04b54b4..8776d94 100644
+--- a/lib/usb/gadget/dwusbgadget.cpp
++++ b/lib/usb/gadget/dwusbgadget.cpp
+@@ -24,18 +24,22 @@
+ #include <circle/usb/gadget/dwusbgadgetendpoint0.h>
+ #include <circle/sched/scheduler.h>
+ #include <circle/machineinfo.h>
++#include <circle/memio.h>
++#include <circle/koptions.h>
+ #include <circle/bcmpropertytags.h>
+ #include <circle/synchronize.h>
+ #include <circle/sysconfig.h>
+ #include <circle/logger.h>
++#include <circle/string.h>
+ #include <circle/timer.h>
+ #include <assert.h>
+ 
+ // FIFO sizes, in 32-bit words
+ #define TOTAL_FIFO_SIZE		4080
+-#define RX_FIFO_SIZE		512
++#define RX_FIFO_SIZE		558	// the Pi 5: the sizes Linux's dwc2 overlay sets (measured 12/12 + MIDI there)
+ #define NPER_TX_FIFO_SIZE	32
+-#define DEDICATED_TX_FIFO_SIZE	384	// for each IN EP (7 times)
++#define DEDICATED_TX_FIFO_SIZE(i) ((i) < 5 ? 512 : 256)	// IN EP i+1
++#define DEDICATED_TX_FIFO_TOTAL	(5*512 + 2*256)
+ 
+ LOGMODULE ("dwgadget");
+ 
+@@ -48,6 +52,9 @@ CDWUSBGadget::CDWUSBGadget (CInterruptSystem *pInterruptSystem, TDeviceSpeed Dev
+ 	m_nIRQs (0),
+ 	m_nIRQTicks (0),
+ 	m_nLastEntry (0), m_nMaxGap (0), m_nMaxHandler (0), m_nLongTicks (~0ULL), m_nLongGaps (0)
++#if RASPPI >= 5
++	, m_nUSBResets (0), m_nBootUSBConfig (0), m_bBootUSBConfig (FALSE)
++#endif
+ {
+ 	for (unsigned i = 0; i <= NumberOfEPs; i++)
+ 	{
+@@ -84,7 +91,10 @@ boolean CDWUSBGadget::Initialize (boolean bScanDevices)
+ 	    && Model != MachineModelCM0
+ 	    && Model != MachineModel3APlus
+ 	    && Model != MachineModel4B
+-	    && Model != MachineModel400)
++	    && Model != MachineModel400
++	    && Model != MachineModel5		// the USB-C port (BCM2712's DWC2)
++	    && Model != MachineModelCM5
++	    && Model != MachineModelCM5Lite)
+ 	{
+ 		LOGERR ("This Raspberry Pi model does not support USB gadget mode");
+ 		return FALSE;
+@@ -92,18 +102,41 @@ boolean CDWUSBGadget::Initialize (boolean bScanDevices)
+ 
+ 	PeripheralEntry ();
+ 
++#if RASPPI >= 5
++	// BCM2712: the core is in a power domain of its own (USB), switched on before its registers are read
++	if (!PowerOn ())
++	{
++		LOGERR ("Cannot power on");
++		return FALSE;
++	}
++
++	LOGNOTE ("Reading the core at 0x%lX", (unsigned long) ARM_USB_CORE_BASE);
++	CTimer::Get ()->MsDelay (20);		// the line is out, should the read stop the bus
++#endif
++
+ 	CDWHCIRegister VendorId (DWHCI_CORE_VENDOR_ID);
++#if RASPPI >= 5
++	if ((VendorId.Read () & 0xFFFFF000) != 0x4F542000)	// "OT2" and the core's version
++#else
+ 	if (VendorId.Read () != 0x4F54280A)
++#endif
+ 	{
+ 		LOGERR ("Unknown vendor 0x%0X", VendorId.Get ());
+ 		return FALSE;
+ 	}
+ 
++#if RASPPI >= 5
++	if (!CheckHardware ())
++	{
++		return FALSE;
++	}
++#else
+ 	if (!PowerOn ())
+ 	{
+ 		LOGERR ("Cannot power on");
+ 		return FALSE;
+ 	}
++#endif
+ 
+ 	// Disable all interrupts
+ 	CDWHCIRegister AHBConfig (DWHCI_CORE_AHB_CFG);
+@@ -199,6 +232,13 @@ int CDWUSBGadget::OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pDat
+ 
+ boolean CDWUSBGadget::PowerOn (void)
+ {
++#if RASPPI >= 5
++	SetUSBPower (TRUE);
++	CTimer::Get ()->MsDelay (10);
++
++	return TRUE;				// the core is read whatever the answer (it says nothing on the Pi 5, measured)
++#endif
++
+ 	CBcmPropertyTags Tags;
+ 	TPropertyTagPowerState PowerState;
+ 	PowerState.nDeviceId = DEVICE_ID_USB_HCD;
+@@ -213,8 +253,241 @@ boolean CDWUSBGadget::PowerOn (void)
+ 	return TRUE;
+ }
+ 
++#if RASPPI >= 5
++
++// BCM2712: the core's power, as Linux's raspberrypi-power driver does it: the old "set power state" tag, device 3 (the
++// USB HCD), bit 0 the state, no wait bit, request length 0. Every firmware answer is 0 here, for every device (measured),
++// so the answer is logged and not looked at.
++void CDWUSBGadget::SetUSBPower (boolean bOn)
++{
++	struct
++	{
++		TPropertyTag	Tag;
++		u32		nId;
++		u32		nState;
++	}
++	PACKED Tag;
++	Tag.Tag.nTagId = PROPTAG_SET_POWER_STATE;
++	Tag.Tag.nValueBufSize = 8;
++	Tag.Tag.nValueLength = 0;
++	Tag.nId = DEVICE_ID_USB_HCD;
++	Tag.nState = bOn ? 1 : 0;
++
++	CBcmPropertyTags Tags;
++	boolean bOK = Tags.GetTags (&Tag, sizeof Tag);
++	LOGNOTE ("Set power %u %s: mailbox %s, length 0x%X, state 0x%X", DEVICE_ID_USB_HCD, bOn ? "on" : "off",
++		 bOK ? "ok" : "failed", Tag.Tag.nValueLength, Tag.nState);
++}
++
++// The FIFO layout of InitCoreDevice() and NumberOfIn/OutEPs are the Pi 4's core's; this one is logged and checked.
++boolean CDWUSBGadget::CheckHardware (void)
++{
++	DumpRegisters ("as the firmware left them");
++
++	CDWHCIRegister VendorId (DWHCI_CORE_VENDOR_ID);
++	CDWHCIRegister HWConfig2 (DWHCI_CORE_HW_CFG2);
++	CDWHCIRegister HWConfig3 (DWHCI_CORE_HW_CFG3);
++	CDWHCIRegister HWConfig4 (DWHCI_CORE_HW_CFG4);
++	u32 nCfg2 = HWConfig2.Read ();
++	u32 nCfg3 = HWConfig3.Read ();
++	u32 nCfg4 = HWConfig4.Read ();
++	unsigned nFIFODepth = DWHCI_CORE_HW_CFG3_DFIFO_DEPTH (nCfg3);
++	unsigned nEPs = ((nCfg2 >> 10) & 0xF) + 1;			// device EPs, EP0 included
++	unsigned nInEPs = DWHCI_CORE_HW_CFG4_NUM_IN_EPS (nCfg4) + 1;	// IN EPs, EP0 included
++
++	LOGNOTE ("Core 0x%08X, HWCFG2 0x%08X, HWCFG3 0x%08X, HWCFG4 0x%08X: FIFO %u words, %u EPs, %u IN EPs%s",
++		 VendorId.Read (), nCfg2, nCfg3, nCfg4, nFIFODepth, nEPs, nInEPs,
++		 nCfg4 & DWHCI_CORE_HW_CFG4_DED_FIFO_EN ? ", dedicated FIFOs" : "");
++
++	if (   nEPs < NumberOfEPs + 1
++	    || nInEPs < NumberOfInEPs + 1
++	    || !(nCfg4 & DWHCI_CORE_HW_CFG4_DED_FIFO_EN))
++	{
++		LOGWARN ("Core differs from the Pi 4's (%u EPs, %u IN EPs, dedicated FIFOs expected)",
++			 NumberOfEPs + 1, NumberOfInEPs + 1);
++	}
++
++	if (nFIFODepth < TOTAL_FIFO_SIZE)	// the layout would run past the FIFO RAM
++	{
++		LOGERR ("FIFO RAM %u words, %u needed", nFIFODepth, TOTAL_FIFO_SIZE);
++
++		return FALSE;
++	}
++
++	return TRUE;
++}
++
++void CDWUSBGadget::DumpRegisters (const char *pWhen)
++{
++	static const u16 Offsets[] =
++	{
++		0x000, 0x004, 0x008, 0x00C, 0x010, 0x014, 0x018, 0x024,		// GOTGCTL GOTGINT GAHBCFG GUSBCFG GRSTCTL GINTSTS GINTMSK GRXFSIZ
++		0x028, 0x02C, 0x030, 0x034, 0x038, 0x03C, 0x040, 0x054,		// GNPTXFSIZ GNPTXSTS GI2CCTL GPVNDCTL GGPIO GUID GSNPSID GLPMCFG
++		0x058, 0x05C, 0x060, 0x100, 0x104, 0x400, 0x440, 0x800,		// GPWRDN GDFIFOCFG GADPCTL HPTXFSIZ DIEPTXF1 HCFG HPRT0 DCFG
++		0x804, 0x808, 0x810, 0x814, 0x818, 0x81C, 0x900, 0xB00,		// DCTL DSTS DIEPMSK DOEPMSK DAINT DAINTMSK DIEPCTL0 DOEPCTL0
++		0xE00,									// PCGCCTL
++	};
++	const unsigned nCount = sizeof Offsets / sizeof Offsets[0];
++	for (unsigned i = 0; i < nCount; i += 8)
++	{
++		CString Line;
++		for (unsigned j = i; j < i + 8 && j < nCount; j++)
++		{
++			CString Item;
++			Item.Format (" %03X=%08X", Offsets[j], read32 (ARM_USB_CORE_BASE + Offsets[j]));
++			Line.Append (Item);
++		}
++		LOGNOTE ("Registers %s:%s", pWhen, (const char *) Line);
++	}
++}
++
++boolean CDWUSBGadget::Reconnect (unsigned nInit)
++{
++	CDWHCIRegister AHBConfig (DWHCI_CORE_AHB_CFG);
++	AHBConfig.Read ();
++	AHBConfig.And (~DWHCI_CORE_AHB_CFG_GLOBALINT_MASK);
++	AHBConfig.Write ();
++
++	CDWHCIRegister DeviceCtrl (DWHCI_DEV_CTRL);
++	DeviceCtrl.Read ();
++	DeviceCtrl.Or (DWHCI_DEV_CTRL_SOFT_DISCONNECT);
++	DeviceCtrl.Write ();
++	CTimer::Get ()->MsDelay (20);
++
++	boolean bOK = InitCorePi5 (nInit);
++
++	m_State = StateSuspended;
++
++	AHBConfig.Read ();
++	AHBConfig.Or (DWHCI_CORE_AHB_CFG_GLOBALINT_MASK);
++	AHBConfig.Write ();
++
++	return bOK;
++}
++
++// The Pi 5's core comes from the boot firmware in host mode (GUSBCFG 20402700: ForceHstMode; DCTL 2, measured), and its
++// firmware sets up the PHY. pi/circle/pi5gadget connected on the first ways it tried (which one: not logged yet), so all stay selectable (usbinit= in
++// cmdline.txt, pi/circle/pi5gadget walks through them):
++//   0  no soft reset, the firmware's GUSBCFG kept, device mode forced
++//   1  soft reset and Circle's PHY fields (the Pi 4's way)
++//   2  soft reset, then the firmware's GUSBCFG back, device mode forced
++//   3  soft reset, UTMI+ 8 bit, HNP/SRP off, turnaround 9, timeout calibration 7, soft-disconnected during the setup
++//   4  as 3, then what Linux's dwc2 does that Circle does not: GOTGINT and GINTSTS cleared, a pulse of
++//      DCTL.PwrOnPrgDone, the global NAKs cleared (the default)
++//   5  as 4, full speed only
++//   6  as 4, after the firmware's power off and on again
++boolean CDWUSBGadget::InitCorePi5 (unsigned nInit)
++{
++	if (nInit == 6)
++	{
++		SetUSBPower (FALSE);
++		CTimer::Get ()->MsDelay (100);
++		SetUSBPower (TRUE);
++		CTimer::Get ()->MsDelay (100);
++	}
++
++	CDWHCIRegister USBConfig (DWHCI_CORE_USB_CFG);
++	u32 nBefore = USBConfig.Read ();
++	if (!m_bBootUSBConfig)
++	{
++		m_nBootUSBConfig = nBefore;
++		m_bBootUSBConfig = TRUE;
++	}
++	USBConfig.And (~(1U << 29));				// ForceHstMode
++	USBConfig.Or (DWHCI_CORE_USB_CFG_FORCE_DEV_MODE);
++	USBConfig.Write ();
++	CTimer::Get ()->MsDelay (25);
++	LOGNOTE ("usbinit=%u: GUSBCFG %08X -> %08X (the firmware's: %08X)", nInit, nBefore, USBConfig.Read (),
++		 m_nBootUSBConfig);
++
++	if (nInit != 0)
++	{
++		if (!Reset ())
++		{
++			LOGERR ("Reset failed");
++			return FALSE;
++		}
++
++		USBConfig.Read ();
++		if (nInit == 2)
++		{
++			USBConfig.Set ((m_nBootUSBConfig & ~(1U << 29)) | DWHCI_CORE_USB_CFG_FORCE_DEV_MODE);
++		}
++		else
++		{
++			USBConfig.And (~(  DWHCI_CORE_USB_CFG_ULPI_UTMI_SEL | DWHCI_CORE_USB_CFG_PHYIF
++					 | DWHCI_CORE_USB_CFG_SRP_CAPABLE | DWHCI_CORE_USB_CFG_HNP_CAPABLE));
++			USBConfig.Or (DWHCI_CORE_USB_CFG_FORCE_DEV_MODE);
++			if (nInit >= 3)
++			{
++				USBConfig.And (~(DWHCI_CORE_USB_CFG_TURNAROUND_TIME__MASK | 7U));
++				USBConfig.Or ((9 << DWHCI_CORE_USB_CFG_TURNAROUND_TIME__SHIFT) | 7U);
++			}
++		}
++		USBConfig.Write ();
++		CTimer::Get ()->MsDelay (25);
++	}
++
++	CDWHCIRegister AHBConfig (DWHCI_CORE_AHB_CFG);
++	AHBConfig.Read ();
++	AHBConfig.Or (DWHCI_CORE_AHB_CFG_DMAENABLE);
++	AHBConfig.Or (DWHCI_CORE_AHB_CFG_WAIT_AXI_WRITES);
++	AHBConfig.And (~DWHCI_CORE_AHB_CFG_MAX_AXI_BURST__MASK);
++	AHBConfig.Write ();
++
++	CDWHCIRegister DeviceCtrl (DWHCI_DEV_CTRL);
++	DeviceCtrl.Read ();
++	DeviceCtrl.Or (DWHCI_DEV_CTRL_SOFT_DISCONNECT);
++	DeviceCtrl.Write ();
++
++	InitCoreDevice ();
++
++	if (nInit >= 4)
++	{
++		if (nInit == 5)
++		{
++			CDWHCIRegister DeviceConfig (DWHCI_DEV_CFG);
++			DeviceConfig.Read ();
++			DeviceConfig.And (~DWHCI_DEV_CFG_DEV_SPEED__MASK);
++			DeviceConfig.Or (DWHCI_DEV_CFG_DEV_SPEED_FS << DWHCI_DEV_CFG_DEV_SPEED__SHIFT);
++			DeviceConfig.Write ();
++		}
++
++		CDWHCIRegister OTGInt (DWHCI_CORE_OTG_INT, ~0U);
++		OTGInt.Write ();
++		CDWHCIRegister IntStatus (DWHCI_CORE_INT_STAT, ~0U);
++		IntStatus.Write ();
++
++		DeviceCtrl.Read ();
++		DeviceCtrl.Or (1 << 11);			// PwrOnPrgDone
++		DeviceCtrl.Write ();
++		CTimer::SimpleusDelay (10);
++		DeviceCtrl.Read ();
++		DeviceCtrl.And (~(1U << 11));
++		DeviceCtrl.Or (DWHCI_DEV_CTRL_CLEAR_GLOBAL_OUT_NAK | (1 << 8));	// and CGNPInNak
++		DeviceCtrl.Write ();
++	}
++
++	CTimer::Get ()->MsDelay (3);			// the host sees the disconnect
++	DeviceCtrl.Read ();
++	DeviceCtrl.And (~DWHCI_DEV_CTRL_SOFT_DISCONNECT);
++	DeviceCtrl.Write ();
++
++	LOGNOTE ("usbinit=%u done: GUSBCFG %08X, connected", nInit, USBConfig.Read ());
++
++	return TRUE;
++}
++
++#endif
++
+ boolean CDWUSBGadget::InitCore (void)
+ {
++#if RASPPI >= 5
++	CKernelOptions *pOptions = CKernelOptions::Get ();
++
++	return InitCorePi5 (pOptions != 0 ? pOptions->GetAppOptionDecimal ("usbinit", 4) : 4);
++#endif
++
+ 	if (!Reset ())
+ 	{
+ 		LOGERR ("Reset failed");
+@@ -278,8 +551,7 @@ void CDWUSBGadget::InitCoreDevice (void)
+ 	DeviceConfig.Write ();
+ 
+ 	// Configure data FIFO sizes (dynamic FIFO sizing enabled)
+-	ASSERT_STATIC (   RX_FIFO_SIZE + NPER_TX_FIFO_SIZE + DEDICATED_TX_FIFO_SIZE*NumberOfInEPs
+-		       <= TOTAL_FIFO_SIZE);
++	ASSERT_STATIC (RX_FIFO_SIZE + NPER_TX_FIFO_SIZE + DEDICATED_TX_FIFO_TOTAL <= TOTAL_FIFO_SIZE);
+ 
+ 	CDWHCIRegister RxFIFOSize (DWHCI_CORE_RX_FIFO_SIZ, RX_FIFO_SIZE);
+ 	RxFIFOSize.Write ();
+@@ -289,20 +561,20 @@ void CDWUSBGadget::InitCoreDevice (void)
+ 	NonPeriodicTxFIFOSize.Or (NPER_TX_FIFO_SIZE << 16);
+ 	NonPeriodicTxFIFOSize.Write ();
+ 
++	unsigned nFIFOStart = RX_FIFO_SIZE + NPER_TX_FIFO_SIZE;
+ 	for (unsigned i = 0; i < NumberOfInEPs; i++)
+ 	{
+ 		CDWHCIRegister TxFIFOSize (DWHCI_CORE_DEV_TX_FIFO (i), 0);
+-		TxFIFOSize.Or (RX_FIFO_SIZE + NPER_TX_FIFO_SIZE + DEDICATED_TX_FIFO_SIZE*i);
+-		TxFIFOSize.Or (DEDICATED_TX_FIFO_SIZE << 16);
++		TxFIFOSize.Or (nFIFOStart);
++		TxFIFOSize.Or (DEDICATED_TX_FIFO_SIZE (i) << 16);
++		nFIFOStart += DEDICATED_TX_FIFO_SIZE (i);
+ 		TxFIFOSize.Write ();
+ 		TxFIFOSize.Read ();
+ 	}
+ 
+ 	CDWHCIRegister DataFIFOConfig (DWHCI_CORE_DFIFO_CFG, 0);
+ 	DataFIFOConfig.Or (TOTAL_FIFO_SIZE << DWHCI_CORE_DFIFO_CFG_FIFO_CFG__SHIFT);
+-	DataFIFOConfig.Or (   (  RX_FIFO_SIZE + NPER_TX_FIFO_SIZE
+-			       + DEDICATED_TX_FIFO_SIZE*NumberOfInEPs)
+-			   << DWHCI_CORE_DFIFO_CFG_EPINFO_BASE__SHIFT);
++	DataFIFOConfig.Or (nFIFOStart << DWHCI_CORE_DFIFO_CFG_EPINFO_BASE__SHIFT);
+ 	DataFIFOConfig.Write ();
+ 
+ 	FlushTxFIFO (0x10);	 	// Flush all TX FIFOs
+@@ -544,6 +816,9 @@ void CDWUSBGadget::HandleUSBSuspend (void)
+ 
+ void CDWUSBGadget::HandleUSBReset (void)
+ {
++#if RASPPI >= 5
++	m_nUSBResets++;
++#endif
+ #ifdef USB_GADGET_DEBUG
+ 	LOGDBG ("USB reset");
+ #endif
+diff --git a/lib/usb/gadget/dwusbgadgetendpoint.cpp b/lib/usb/gadget/dwusbgadgetendpoint.cpp
+index bf1b059..88b2781 100644
+--- a/lib/usb/gadget/dwusbgadgetendpoint.cpp
++++ b/lib/usb/gadget/dwusbgadgetendpoint.cpp
+@@ -26,6 +26,19 @@
+ #include <circle/util.h>
+ #include <assert.h>
+ 
++#if RASPPI >= 5
++// BCM2712: the DWC2 is on the AXI bus, whose dma-ranges map ARM physical addresses 1:1 (DT /axi), not through the
++// VideoCore's 0xC0000000 alias the Pi <= 4 use. Its DMA address registers have 32 bits: buffers must be below 4 GB
++// (the kernel image and HEAP_LOW, where new allocates, are).
++static inline u32 DWGadgetDMAAddress (uintptr nAddress)
++{
++	assert (nAddress < 0x100000000UL);
++	return (u32) nAddress;
++}
++#undef BUS_ADDRESS
++#define BUS_ADDRESS(addr)	DWGadgetDMAAddress (addr)
++#endif
++
+ LOGMODULE ("dwgadgetep");
+ 
+ u8 CDWUSBGadgetEndpoint::s_NextEPSeq[DWHCI_MAX_EPS_CHANNELS];

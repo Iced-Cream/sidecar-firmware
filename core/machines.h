@@ -38,7 +38,12 @@ constexpr int kGranMachine = 0x38;
 // and Mac only; on the Rytm from rui1051 (0021's machine 48, LT TEST); `livein=voice:V` plays it on voice V whatever
 // built-in machine is reported.
 constexpr int kLiveMachine = 0x78;
-inline int machine_of(uint8_t voice_byte) { return voice_byte & 0x78; }
+// MIDI (core/midim/midim.h): sends MIDI, plays nothing. Pi and Mac only. Every value of voice byte & 0x78 was taken, so no flag:
+// its reports are 0x44 / 0x43 (0x04 / 0x03 otherwise), its track in 33 goes by the machine byte (kRytmMidi). 0x80 is the host's
+// own number, set in track_vb and the voice's state, never on the wire (SysEx bytes are 7 bits).
+constexpr int kMidiMachine = 0x80;
+constexpr int kRytmMidi = 50;   // the Rytm's machine number (HH TEST; rytm-mods 0021)
+inline int machine_of(uint8_t voice_byte) { return voice_byte & 0x80 ? kMidiMachine : voice_byte & 0x78; }
 // The user slots U1..U5 (flags 0x50 0x58 0x60 0x68 0x70) -> 0..4; -1 not a user slot (rmp_slot_of_flag's rule).
 inline int user_slot_of(int m) { return (m >= 0x50 && m <= 0x70 && !(m & 7)) ? (m - 0x50) >> 3 : -1; }
 
@@ -59,6 +64,7 @@ inline const char* machine_short(int m) {
     case kGranMachine: return "GRAN";
     case kLiveMachine: return "LIVEIN";
     case kChopMachine: return "CHOP";
+    case kMidiMachine: return "MIDI";
     default: {
       static const char* const u[5] = {"U1", "U2", "U3", "U4", "U5"};
       int s = user_slot_of(m);
@@ -80,6 +86,7 @@ inline const char* machine_long(int m) {
     case kGranMachine: return "GRANULAR";
     case kLiveMachine: return "LIVE IN";
     case kChopMachine: return "CHOP";
+    case kMidiMachine: return "MIDI";
     default: {
       static const char* const u[5] = {"USER 1", "USER 2", "USER 3", "USER 4", "USER 5"};
       int s = user_slot_of(m);

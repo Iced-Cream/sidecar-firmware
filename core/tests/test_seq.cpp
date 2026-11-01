@@ -2066,6 +2066,24 @@ int main() {
     poly::midi(0x9D, 1, 100), poly::midi(0x8D, 1, 0);       // SD's pad: not a seq track
     CHECK(poly::stats().seq_pads == sp0 + 2);
     printf("  fix1040b: a seq track's own pad plays its voice (either order), the Rytm's own trig and SD's pad do not\n");
+    // 7g PAD OCT: a normal pad's 0x04 note enters the voice shifted (the CHRO pads' bound shift and the recording are
+    // test_poly's: the channel binds from the Rytm's own trigs there)
+    {
+      CHECK(seq::pad_oct(bvi) == 0);
+      cmd("seq=poly:1:oct=2");
+      CHECK(seq::pad_oct(bvi) == 2 && seq::poly_of(0).oct == 2);
+      // a normal pad with OCT +1: still played once (its 0x04 note enters the voice shifted; out of range: not at all)
+      uint32_t sp1 = poly::stats().seq_pads;
+      cmd("seq=poly:1:oct=1");
+      poly::midi(0x9D, 0, 100);
+      CHECK(poly::seq_pad(bvi, 60, 100));
+      poly::midi(0x8D, 0, 0);
+      advance_ms(300);
+      CHECK(poly::stats().seq_pads == sp1 + 1);
+      cmd("seq=poly:1:oct=0");
+      CHECK(seq::pad_oct(bvi) == 0);
+      printf("  7g: PAD OCT per track (seq=poly:T:oct=N), a normal pad still plays once\n");
+    }
   }
   // ---- 1042 data safety: a pattern file that does not load (a newer Sidecar's version, a bad CRC, cut short) is locked:
   // edits stay in memory, the file is never written over (before: the next save wrote an empty pattern + the edit)

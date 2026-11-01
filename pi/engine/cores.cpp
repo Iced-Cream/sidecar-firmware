@@ -1,5 +1,5 @@
 // pi/engine/cores.cpp - see cores.h. The block handshake: core 3 bumps s_nGen and signals (sev); cores 1 and 2
-// render their halves of s_Block and publish s_nDone; core 3 waits (spinning, with a 20 ms limit), then pushes the
+// render their halves of s_Block and publish s_nDone; core 3 waits (in wfe, with a 20 ms limit), then pushes the
 // block into the output stage. Nothing else touches the engine core while a block renders.
 #include "cores.h"
 #include "crumb.h"	// the crash breadcrumb: each core's heartbeat and section (2026-10-29)
@@ -10,6 +10,7 @@
 
 #include "bridge.h"
 #include "guard.h"
+#include "idlewait.h"
 #include "midi_in.h"
 #include "notes.h"
 #include "paircode_pi.h"
@@ -46,6 +47,9 @@ static u64 s_Mach[3][bridge::kMachines];
 static_assert (sizeof CEngineCores::TStats::nMach / sizeof (u64) == bridge::kMachines, "nMach is bridge::kMachines");
 static u64 s_VoiceTicks[bridge::kVoices];		// touch2: per voice (each voice renders on one core only)
 static volatile u64 s_nBusy[4];
+static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
+static volatile unsigned s_nWakes[4];
+static volatile boolean s_bIdleWfe = TRUE;		// idlewfe=0: core 3's render wait spins and core 0's loop sleeps as before
 static volatile unsigned s_nBlocks, s_nMaxBlock, s_nMaxPass, s_nFifoMin = ~0u, s_nFifoMax, s_nMidiBytes, s_nNotes;
 static volatile unsigned s_nNoteChans;	// bit c: a note-on on MIDI channel c+1 this second
 static u64 s_nLastTake;
@@ -110,7 +114,13 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	if (s_bNotes && !s_bModded) s_Notes.Channel (s, a, b);
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff ();	// the send FX hear it with the notes off too
 }
-static MidiIn s_Midi (FromRytm, OnChannel, rec_pi::Transport);
+// The Rytm's realtime bytes: the recorder's and STUTTER's (rec_pi::Transport), and MIDI's on USB-A (core/midim/midim.h)
+static void OnRealtime (uint8_t s, uint16_t spp)
+{
+	rec_pi::Transport (s, spp);
+	bridge::midim_realtime (s);
+}
+static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
 // The Pi's own keyboards' notes for the Rytm (core/keys.h: an analog track's, a forwarded one's): one USB MIDI event
 // packet each into g_KeysToRytm (core 0's transport sends them between whole messages); a full queue drops it
 static volatile unsigned s_nKeysLost;
@@ -129,6 +139,21 @@ static bool AsampMidiOut (int nPort, const uint8_t *m, int n)
 	if (n == 0) return nPort == 0 ? g_bComputerMidi : TRUE;
 	if (n != 3 || m[0] < 0x80 || m[0] >= 0xF0) return FALSE;
 	u32 w = (u32) ((nPort + 1) << 4 | m[0] >> 4) | (u32) m[0] << 8 | (u32) m[1] << 16 | (u32) m[2] << 24;
+	if (!g_AsampMidi.push (w)) { s_nAsampLost++; return FALSE; }
+	return TRUE;
+}
+// The MIDI machine's USB destinations (core/midim/midim.h: 2 the computer, 3 every USB-A device; DIN is the core's own to_rytm):
+// one packet each into g_AsampMidi (kernel.cpp's AsampMidiSend, core 0): a channel message or a realtime byte
+static bool MidimOut (int nDest, const uint8_t *m, int n)
+{
+	if (nDest != 2 && nDest != 3) return FALSE;
+	if (nDest == 2 && !g_bComputerMidi) return FALSE;
+	if (n < 1 || n > 3 || m[0] < 0x80) return FALSE;
+	bool bOff = (m[0] & 0xF0) == 0x80 || ((m[0] & 0xF0) == 0x90 && n == 3 && m[2] == 0);
+	unsigned nFill = g_AsampMidi.size ();
+	if (!bOff && nFill >= ((m[0] & 0xF0) == 0x90 ? 192u : 128u)) { s_nAsampLost++; return FALSE; }	// the rest of the queue is the note-offs'
+	u32 nCin = m[0] >= 0xF8 ? 0x0F : m[0] >> 4;
+	u32 w = (u32) ((nDest == 2 ? 1 : 3) << 4) | nCin | (u32) m[0] << 8 | (n > 1 ? (u32) m[1] << 16 : 0) | (n > 2 ? (u32) m[2] << 24 : 0);
 	if (!g_AsampMidi.push (w)) { s_nAsampLost++; return FALSE; }
 	return TRUE;
 }
@@ -161,6 +186,37 @@ unsigned CEngineCores::Gaps (TGap *p)
 		p[i].sec = g[5], p[i].sec_us = g[6];
 	}
 	return k;
+}
+
+// One wfe, counted. Every caller has just checked what it waits for: an event set after that check makes this return at
+// once, so the check and this wfe cannot lose a wake-up (tests/test_idlewait.cpp, the model). A core's first and last
+// readings of the counter cost about 10 ns against a 250 us block.
+static inline void Wfe (unsigned nCore)
+{
+	u64 t = Ticks ();
+	asm volatile ("wfe");
+	s_nSleep[nCore] += Ticks () - t;
+	s_nWakes[nCore]++;
+}
+// Core 0's: not Wfe (0), which the event left by the network's spin lock ends at once (idlewait::nap)
+void CEngineCores::Sleep (void)
+{
+	u64 t = Ticks ();
+	idlewait::nap ([] { asm volatile ("sevl"); }, [] { asm volatile ("wfe"); });
+	s_nSleep[0] += Ticks () - t;
+	s_nWakes[0]++;
+}
+void CEngineCores::SetIdleWfe (boolean bOn) { s_bIdleWfe = bOn; }
+boolean CEngineCores::IdleWfe (void) { return s_bIdleWfe; }
+
+// The generic timer's event stream on the calling core: an event every 2^13 counter ticks (152 us at 54 MHz, both boards),
+// so a wfe never sleeps longer than that
+void CEngineCores::EventStream (void)
+{
+	u64 nKctl;
+	asm volatile ("mrs %0, cntkctl_el1" : "=r" (nKctl));
+	nKctl = (nKctl & ~(u64) 0xF0) | (12 << 4) | (1 << 2);	// EVNTI 12 (an event as bit 12 rises: every 8192 ticks), EVNTEN
+	asm volatile ("msr cntkctl_el1, %0; isb" : : "r" (nKctl));
 }
 
 static unsigned ClampTarget (unsigned n) { return n < 24 ? 24 : n > 1024 ? 1024 : n; }
@@ -199,7 +255,7 @@ void CEngineCores::BenchCore (unsigned nCore)
 	for (unsigned m = 0; m < BenchMachines; m++)
 	{
 		s_Bench[nCore][m].nTicks = bridge::bench (BenchMachine[m], &s_Bench[nCore][m].nWorst,
-						       &s_Bench[nCore][m].nPeak);
+						       &s_Bench[nCore][m].nPeak, &s_Bench[nCore][m].nHash);
 	}
 }
 
@@ -276,7 +332,7 @@ void CEngineCores::Worker (unsigned nCore)
 		else
 		{
 			crumb::Enter (201);
-			while ((nGen = __atomic_load_n (&s_nGen, __ATOMIC_ACQUIRE)) == s_nSeen[nCore]) asm volatile ("wfe");
+			while ((nGen = __atomic_load_n (&s_nGen, __ATOMIC_ACQUIRE)) == s_nSeen[nCore]) Wfe (nCore);
 			crumb::BeatEnter (nCore, 200);
 			s_nGenNow[nCore] = nGen;
 			s_nT0[nCore] = Ticks ();
@@ -315,14 +371,17 @@ void CEngineCores::RenderBlock (void)
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
 	u64 t0 = Ticks (), nLimit = TickRate () / 50;		// 20 ms
-	while (__atomic_load_n (&s_nDone[1], __ATOMIC_ACQUIRE) != nGen
-	       || __atomic_load_n (&s_nDone[2], __ATOMIC_ACQUIRE) != nGen)
+	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under
+	// 1 us: clock gating, no retention state is enabled), and core 3's event stream bounds it at 152 us if a sev were ever
+	// missed, which also keeps the 20 ms limit below alive. An event another core's sev spends here (a FIFO pull) costs
+	// nothing: this path always passes again without sleeping (bWorked), and the FIFO's level is read again first.
+	const boolean bDone = idlewait::wait ([&] { return __atomic_load_n (&s_nDone[1], __ATOMIC_ACQUIRE) == nGen
+							   && __atomic_load_n (&s_nDone[2], __ATOMIC_ACQUIRE) == nGen; },
+					      [&] { return Ticks () - t0 > nLimit; }, [] { Wfe (3); }, s_bIdleWfe);
+	if (!bDone)
 	{
-		if (Ticks () - t0 > nLimit)
-		{
-			g_Guard.Fatal ("a render core did not finish its block in 20 ms");
-			for (;;) asm volatile ("wfe");		// core 0 stops the stream and reboots
-		}
+		g_Guard.Fatal ("a render core did not finish its block in 20 ms");
+		for (;;) asm volatile ("wfe");		// core 0 stops the stream and reboots
 	}
 	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());
 	if (nUs > s_nMaxBlock) s_nMaxBlock = nUs;
@@ -352,17 +411,14 @@ void CEngineCores::Control (void)
 	// the Rytm's SIDECAR MENU > WEB UI (core/ui/page_menu.cpp): paircode_pi's, which only asks core 0 (Poll)
 	bridge::webui_init (paircode_pi::WebOn, paircode_pi::MenuWeb, paircode_pi::MenuGate, paircode_pi::MenuDevices,
 			    paircode_pi::MenuNewCode, paircode_pi::MenuForget);
-	// The generic timer's event stream on this core: an event every 2^13 counter ticks (152 us at the Pi 4's
-	// 54 MHz), so the wfe below never sleeps longer than that. A sev from core 0 (a pull from the FIFO) can be
+	// The generic timer's event stream on this core, so the wfe below never sleeps longer than 152 us. A sev from core 0 (a pull from the FIFO) can be
 	// consumed by a wfe inside this core's own work (a spinlock: the logger, the card), and the next sev may be
 	// a poll of core 0 away (1.2..3.3 ms measured on the TCP link): the FIFO then stayed empty and the link sent
 	// silence (docs/pi-engine.md "FIFO target").
-	u64 nKctl;
-	asm volatile ("mrs %0, cntkctl_el1" : "=r" (nKctl));
-	nKctl = (nKctl & ~(u64) 0xF0) | (12 << 4) | (1 << 2);	// EVNTI 12 (an event as bit 12 rises: every 8192 ticks), EVNTEN
-	asm volatile ("msr cntkctl_el1, %0; isb" : : "r" (nKctl));
+	EventStream ();
 	bridge::keys_set_forward (KeysToRytm);
 	bridge::asamp_set_midi_out (AsampMidiOut);
+	bridge::midim_set_out (MidimOut);
 	CLogger::Get ()->Write (From, LogNotice, "core 3 up: control (fifo target %u frames, MIDI notes %s)", s_nTarget,
 				s_bNotes ? "on" : "off");
 	u64 nPrevT0 = 0, nPrevWfe = 0;
@@ -429,6 +485,9 @@ void CEngineCores::Control (void)
 		}
 		Mark (2);
 		Drone ();
+		if (g_bRytmGone) { g_bRytmGone = false; bridge::rytm_gone (); }
+		bridge::rytm_link (!g_bRytmOff);
+		if (g_bRytmResync) { g_bRytmResync = false; bridge::rytm_resync (); }
 		bridge::tick ();
 		// the pairing code on the Rytm's screen when it was asked for (paircode_pi.h): the remote UI is this
 		// core's, and TakeShow only reads the code, which never changes after the boot
@@ -500,7 +559,7 @@ void CEngineCores::Control (void)
 		{
 			u64 tW = Ticks ();
 			if (s_bPoll) for (u64 u = tW; Ticks () - u < TickRate () / 20000;) {}	// 50 us spin: no wfe
-			else asm volatile ("wfe");	// woken by the OUT fill, a MIDI byte or a command (sev)
+			else Wfe (3);			// woken by the OUT fill, a MIDI byte or a command (sev)
 			nPrevWfe = Ticks () - tW;
 		}
 	}
@@ -543,6 +602,11 @@ void CEngineCores::Command (const char *p)
 		s_bPoll = strcmp (p + 8, "poll") == 0;
 		L->Write (From, LogNotice, "control loop waits by %s", s_bPoll ? "polling" : "wfe");
 	}
+	else if (strncmp (p, "idlewfe=", 8) == 0)	// the cmdline's idlewfe=, live: an A/B for the heat
+	{
+		s_bIdleWfe = p[8] != '0';
+		L->Write (From, LogNotice, "idle wfe %s", s_bIdleWfe ? "on" : "off");
+	}
 	else if (strcmp (p, "unmute") == 0)
 	{
 		g_Guard.Unmute ();
@@ -563,7 +627,7 @@ void CEngineCores::Command (const char *p)
 		g_Guard.ArmHang (atoi (p + 9) & 7);
 		L->Write (From, LogNotice, "guard: voice %d runs 30 ms long once (fatal: clean stop, reboot)", atoi (p + 9) & 7);
 	}
-	else if (strncmp (p, "pool=", 5) == 0 || strncmp (p, "juno=", 5) == 0 || strncmp (p, "fm=", 3) == 0)
+	else if (strncmp (p, "pool=", 5) == 0 || strncmp (p, "juno=", 5) == 0 || strncmp (p, "fm=", 3) == 0 || strncmp (p, "preset=", 7) == 0)
 	{
 		char Out[160];		// the pool and the JUNO / FM lists (core/user/lists.h)
 		lists::command (p, Out, sizeof Out);
@@ -638,6 +702,13 @@ void CEngineCores::TakeStats (TStats *s)
 	{
 		s->nVoice[v] = s_VoiceTicks[v];
 		s_VoiceTicks[v] = 0;
+	}
+	for (int c = 0; c < 4; c++)
+	{
+		s->nSleep[c] = s_nSleep[c];
+		s_nSleep[c] = 0;
+		s->nWakes[c] = s_nWakes[c];
+		s_nWakes[c] = 0;
 	}
 	s->nBlocks = s_nBlocks; s_nBlocks = 0;
 	s->nMaxBlockUs = s_nMaxBlock; s_nMaxBlock = 0;

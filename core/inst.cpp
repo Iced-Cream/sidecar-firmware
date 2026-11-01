@@ -1,5 +1,6 @@
 // core/inst.cpp - see inst.h. Per note and per config: cold (the control core); render_add: the render core's.
 #include "inst.h"
+#include "arp/arp.h"
 
 #if CORE_POLY
 #include <math.h>
@@ -267,7 +268,11 @@ CORE_COLD void reset() {
   g_noroom = 0;
 }
 
-CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
+CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) { return arp::seq_on(vi, note, vel, cfg) || play_on(vi, note, vel, cfg); }
+CORE_COLD void seq_off(int vi, int note) {
+  if (!arp::seq_off(vi, note)) play_off(vi, note);
+}
+CORE_COLD bool play_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
   if (vi < 0 || vi >= kVoices || note < 0 || note > 127 || !pool) return false;
   VP& p = vp[vi];
   int m = machine_now(vi);
@@ -326,7 +331,7 @@ CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
   return true;
 }
 
-CORE_COLD void seq_off(int vi, int note) {
+CORE_COLD void play_off(int vi, int note) {
   if (vi < 0 || vi >= kVoices || !pool) return;
   VP& p = vp[vi];
   if (p.path == kPathPool) {

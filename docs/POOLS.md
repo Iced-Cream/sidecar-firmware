@@ -224,10 +224,10 @@ machine) or `used(l, c)` (seen in this project).
 - **Loads** go through the card core (`cardq`), one 32 KB read converted a step; wants before prefetches.
 - **Unload:** an unloaded row's audio is dropped at once when no other row (a SAMPLES row or an instrument's member)
   holds the same content and nothing pins it, else when unpinned (`pcache::forget`).
-- **Preload at project load:** after the lists are read, the SAMPLES rows of the used set, the most seen first, as
-  prefetches (free space only: up to the budget, nothing evicted) (`pools.cpp` `preload_step`). DSP SAMPLE also
-  prefetches its bank A files under `/Samples` whenever bank A changes (`pool_sync`). WAVETABLES and INSTRUMENTS are not
-  preloaded: a table loads on use, an instrument loads its heads on use.
+- **Nothing whole at project load** (2026-10-30, BACKLOG 7ad, docs/superpowers/specs/2026-10-30-load-on-first-play.md):
+  no preload of the used set, no prefetch of DSP SAMPLE's bank A. A sample comes in when a voice selects it (GRANULAR, CHOP,
+  DSP SAMPLE) or, MULTISAMPLE, its heads with the instrument and the rest in the background after its first note; then
+  it stays until the room is needed. `pool-used.txt` still counts for SELECT UNUSED and P3.
 - **WAVETABLE's tables** keep their own memory (6 built-ins plus 4 card slots of mip frames, 7200 KB a slot on the Mac
   [measured: test_loadstall's log], set aside at boot). The figure counts them in the budget and shows them apart.
 - **The figure** (`pools::ram()`): budget = the arena + the tables' memory; used = the cache's bytes; tables apart;
@@ -326,19 +326,17 @@ K is `smp`, `wt` or `inst`. The older `lib=gr|wt|ms:` pool commands are gone; `l
 
 ## 7. DSP SAMPLE on every bank (rui1045)
 
-> **Where you pick the sample differs per machine (on purpose, for now).** WAVETABLE and MULTISAMPLE open their POOL
-> list from **encoder A** of their page; **DSP SAMPLE** opens it from **encoder D (SMP) on its SMPL page**, because its
-> SRC page keeps room for the resonator (the user, 2026-10-29). FUNC + YES on DSP SAMPLE's SRC page opens the sample
-> browser. A later clean-up may line the machines up (docs/BACKLOG.md "DSP SAMPLE's picker").
+> **Every sample machine picks the same way:** encoder A of its SRC page opens the POOL list. On DSP SAMPLE that knob is SMP since
+> rytm-mods 7h; its ENG moved to encoder D of the SMPL page. Only the knobs' places moved: SMP stays P11, word 19, so a saved
+> sound plays the same sample. With an older Rytm (its slot asks say so) the Pi's SRC view keeps ENG on knob A.
 
 - SMP (P11, word 19) holds `index << 8 | bank << 5` like GRANULAR's SRC (rytm-mods 0026 / 0021 "1045": its own record,
   fine-flagged, so a p-lock keeps the bank over a power-off; 0029 keeps the bank on a turn). It plays **SAMPLES row
   `bank` / `index`** of all eight banks. An old kit or lock (7 bits) reads as bank A.
-- **On the Rytm:** turning SMP (knob D of DSP SAMPLE's SMPL page; knob A of its SRC page stays ENG, the engine) opens
-  the same bank list as GRANULAR's SRC (4A with P11's value; the Rytm shows the Sidecar's frame over the SMPL page while
-  it is open): the tabs A..H, the SAMPLES names, FUNC + YES loads a file into the row, YES commits `48 <t> 10 <index>
+- **On the Rytm:** turning SMP (knob A of DSP SAMPLE's SRC page) opens the same bank list as GRANULAR's SRC (4A with P11's
+  value): the tabs A..H, the SAMPLES names, FUNC + YES loads a file into the row, YES commits `48 <t> 10 <index>
   <bank << 4> 1` (with trigs held a P11 lock). The knob's own text is the SAMPLES names of the bank the Rytm holds (47
-  list 0, as GRANULAR's SRC: C005 / the name / OFF). The list page: `SAMPLE`, the SMPL page's labels
+  list 0, as GRANULAR's SRC: C005 / the name / OFF). The list page: `SAMPLE`, the SRC page's labels
   (`page_wavegrain.cpp` `kDsBankPage`; no GRANULAR preview on a DSP SAMPLE voice).
 - **FUNC + YES on DSP SAMPLE's SRC page** (rui1049 + fix1049; the hardware pass 2026-10-23: the SRC view said SMP OFF,
   FUNC + YES there opened nothing and SMP on the SMPL page only stepped through the empty rows of a new project's
@@ -466,3 +464,43 @@ What the code does where it differs from the spec [measured: read in the code on
   `/.rytm/projects/_default/samples.pool.txt` with the test WAV in A001 (when no `/.rytm/project` exists); its note 48
   should play 220 Hz.
 - A card error on a list file (pull the card mid-read): the list locks, nothing is written over it.
+
+## JUNO and 6-OP FM presets (0.4.0)
+
+PAT on JUNO and 6-OP FM opens the same bank list as the pools: knob A on the SRC page, rows, YES takes the row, NO leaves.
+The rows are the project's list (`/.rytm/juno/<project>.txt`, `/.rytm/fm/<project>.txt`, the files LOAD TO PROJ always wrote);
+PAT is the row, as before, and the last row answers any PAT past the list. There are no banks: LEFT / RIGHT move eight rows.
+
+- **No list**: the rows are the built-ins, as PAT plays them: JUNO 128 rows (Juno-106 A11..B88), 6-OP FM 96 rows (Plaits' ROM
+  voices; PAT 96..127 plays the last). A saved PAT plays what it played.
+- **FUNC + YES** on the list: the card's presets, `/JUNO` and `/DX7` from a RAM index, with **FACTORY** and **ROM** as folders.
+  A bank is a folder of its patches or voices. YES on a preset adds it to the list's first empty slot, the cursor lands on its
+  row (a preset in the list already: its row, `IN LIST nnn`), and YES again takes it.
+- **The first add seeds the list with the built-ins, row = PAT**, so a saved PAT keeps its preset. 6-OP FM: the 96 ROM rows, the
+  add lands on row 96, 31 rows of room. (PAT 96..127 played the last ROM voice on an empty list; they now reach the rows added
+  there.) JUNO: rows 0..126 are the factory's and PAT 127 stays B88. PAT is 7 bits and every value was a factory patch, so no row
+  is free: YES asks `REPLACE nnn? YES`, nnn the list's cursor row, and only that row changes. Pick a row no sound uses.
+  LOAD TO PROJ seeds too and takes the highest row still factory (B87 first). A seeded row plays as the factory's, its gain too.
+
+Memory: a list is in RAM with the project (JUNO 127 x 43 B, FM 127 x 160 B). PAT changes and trigs read only that. The index
+(core/presets/preset_index.h) is walked in pieces on the card core after the boot and 2 s after the last change reported under
+`/JUNO` or `/DX7`; while it walks the browser says READING. Scrolling reads no card, adding a DX7 voice reads its 128 bytes on the
+card core. An FM list line carries the voice as a fourth column (256 hex digits), so a project's zip plays on a card without its
+banks; a list from before 0.4.0 gets the column when its project loads, or at its export, with the banks on the card (voices whose
+bank is not on the card stay out, the log says how many). A read error never writes a list back.
+The index keeps a share per kind (JUNO 3072 rows, FM 5120); past it the browser's root says FULL and the rest is left out.
+
+### On the touchscreen and the web page (0.4.0)
+
+The same lists and the same index: the POOL page's fourth and fifth tabs, **JUNO** and **6-OP**, and the Pool tab's JUNO and
+6-OP FM buttons. Rows as the Rytm's knob A shows them (`000 name`, `---` an empty slot, the built-ins 128 / 96 rows while nothing is
+listed). A tap on a filled row opens REPLACE / CANCEL, a tap on an empty row opens the index aimed at that slot, ADD opens it for the
+first empty slot; in the index a folder opens, a preset is added (or set into the slot chosen: REPLACE). Pick, rename, delete and
+save-voice stay with the Rytm and the web Presets tab. Why it was not a copy of the sample pools' pages: those are built on
+`pools::Entry` (banks of 128 codes, hashes, files, states) and a browser that is the control core's (`browse=` moves a cursor on it).
+The index is a tree of up to 8192 rows that the control core rewrites in place while it walks, and the Rytm's list state (`bl`) is
+one cursor. So the display and the web page keep their own folder and place and ask for a window: `presets::view()` copies it out
+on any core and refuses a copy a walk touched; an add is `preset=juno|fm:add|set:<gen>:<folder>:<row>[:<slot>]`
+(core/user/lists.h) on the control core, `gen` being the walk the folder numbers belong to (a stale one is refused), and its word
+comes back as `presets::result_text()` (the page's message row). Web: `GET /presets` (pi/engine/presetweb.h). Nothing reads the card
+on the way: the display and web tasks read RAM, the DX7 voice's 128 bytes are read by the card core as before.

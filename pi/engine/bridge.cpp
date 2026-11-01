@@ -28,6 +28,8 @@
 #include "msamp/sdtest.h"
 #include "nmach.h"   // WAVETABLE, GRANULAR (wt= / gr= on the console, the live input)
 #include "livein/livein.h"   // LIVE IN (livein on the console, AUDIO IN from the IN completion)
+#include "midim/midim.h"     // MIDI: "midim" on the console
+#include "arp/arp.h"         // the arpeggiator: "arp" on the console
 #include "samp/autosamp.h"
 #include "samp/sampler.h"
 #include "slots.h"
@@ -226,11 +228,18 @@ bool poly_command(const char* p, char* out, int cap) {
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
-         core::livein::command(p, out, cap);    // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)
+         core::livein::command(p, out, cap) ||  // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)
+         core::midim::command(p, out, cap) ||   // MIDI: "midim" (core/midim/midim.h)
+         core::arp::command(p, out, cap);       // the arpeggiator: "arp" (core/arp/arp.h)
 }
 void keys_midi(int src, uint8_t st, uint8_t d1, uint8_t d2) { core::keys::midi(src, st, d1, d2); }
 void keys_source(int src, bool present, const char* name) { core::keys::source(src, present, name); }
 void keys_set_forward(void (*f)(uint8_t, uint8_t, uint8_t)) { core::keys::set_forward(f); }
+void midim_set_out(bool (*f)(int, const uint8_t*, int)) { core::midim::set_out(f); }
+void rytm_gone() { core::midim::link_lost(); core::arp::link_lost(); }
+void rytm_resync() { core::ui::remote_resync(); core::midim::resync(); }
+void rytm_link(bool up) { core::midim::link_state(up); }
+void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
 void asamp_set_midi_out(bool (*f)(int, const uint8_t*, int)) { core::samp::asamp_set_midi_out(f); }
 bool keys_computer_on() { return core::keys::computer_on(); }
 const char* keys_line(char* b, int cap) { return core::keys::line(b, cap); }
@@ -385,14 +394,14 @@ void reinit_voices() { voices_boot_state(); }
 
 static void bench_out(const uint8_t* d, int n) { core::engine_sysex(d, n); }
 
-uint64_t bench(const char* machine, uint32_t* worst_block, int* peak) {
+uint64_t bench(const char* machine, uint32_t* worst_block, int* peak, uint32_t* hash) {
   core::NoteAdapter na(bench_out);
   na.SetMachine(0, machine);
   na.Channel(0x90, 48, 100);
-  while (core::idle_prepare()) {}   // DSP SAMPLE: its head read before it plays
+  for (uint32_t t0 = core::now_ms(); (core::idle_prepare() || core::prepare_waiting()) && core::now_ms() - t0 < 1000;) {}   // DSP SAMPLE: its head read (core 0) before it plays
   static int16_t blk[kBlock][kVoices];
   uint64_t mach[kMachines] = {0}, sum = 0;
-  uint32_t worst = 0;
+  uint32_t worst = 0, h = 2166136261u;
   int pk = 0;
   const bool live = !strcmp(machine, "livein");   // LIVE IN: a synthetic AUDIO IN (a 220 Hz tone at -12 dBFS)
   if (!strcmp(machine, "chop")) {   // CHOP: 8 slice players (its VOICES' most) on 1 s of a synthetic break, looped, MORPH on
@@ -421,16 +430,20 @@ uint64_t bench(const char* machine, uint32_t* worst_block, int* peak) {
     uint32_t t = core::render_voices(blk, kBlock, 0, 0, 1, mach);
     sum += t;
     if (t > worst) worst = t;
-    for (int s = 0; s < kBlock; ++s) pk = blk[s][0] > pk ? blk[s][0] : -blk[s][0] > pk ? -blk[s][0] : pk;
+    for (int s = 0; s < kBlock; ++s) {
+      pk = blk[s][0] > pk ? blk[s][0] : -blk[s][0] > pk ? -blk[s][0] : pk;
+      if (hash) h = (h ^ (uint16_t)blk[s][0]) * 16777619u;
+    }
     if (b == 2000) na.Channel(0x90, 55, 100);   // a second note halfway (a retrigger, as a pattern would)
   }
   na.Channel(0x80, 55, 0);
   voices_boot_state();
   *worst_block = worst;
   if (peak) *peak = pk;
+  if (hash) *hash = h;
   return sum;
 }
-uint64_t ins_bench(int a, int b, uint32_t* worst_block) {
+uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
   using namespace core::ins;
   static Engine* e = nullptr;
   static float (*lines)[kLine] = nullptr;
@@ -447,20 +460,23 @@ uint64_t ins_bench(int a, int b, uint32_t* worst_block) {
     for (int k = 0; k < kEqParams; ++k)
       c.peq[v][k] = (int8_t)(a == kOff && b == kOff ? eq_store(k, k < 2 ? 70 : 100) : eq_store(k, kEqFlat(k)));
   }
-  float x[kBlock];
+  float x[kVoices][kBlock];
   uint64_t sum = 0;
-  uint32_t worst = 0;
+  uint32_t worst = 0, h = 2166136261u;
   for (int n = 0; n < 4000; ++n) {
+    for (int v = 0; v < kVoices; ++v)   // (the test signal outside the timing: its sinf would weigh more than the chains)
+      for (int s = 0; s < kBlock; ++s) x[v][s] = 0.3f * sinf(0.05f * (float)(n * kBlock + s) * (float)(v + 1));
     uint32_t t0 = core::cycles();
-    for (int v = 0; v < kVoices; ++v) {
-      for (int s = 0; s < kBlock; ++s) x[s] = 0.3f * sinf(0.05f * (float)(n * kBlock + s) * (float)(v + 1));
-      e->ProcessMono(v, x, kBlock, c);
-    }
+    for (int v = 0; v < kVoices; ++v) e->ProcessMono(v, x[v], kBlock, c);
     uint32_t t = core::cycles() - t0;
     sum += t;
     if (t > worst) worst = t;
+    if (hash)
+      for (int v = 0; v < kVoices; ++v)
+        for (int s = 0; s < kBlock; ++s) h = (h ^ (uint32_t)(int32_t)(x[v][s] * 1048576.0f)) * 16777619u;
   }
   *worst_block = worst;
+  if (hash) *hash = h;
   return sum;
 }
 const char* ins_bench_name(int t) { return core::ins::type_name(t); }
@@ -501,7 +517,7 @@ uint32_t machine_gen(int vi) {
 const char* machine_name(int vi) {
   const core::V& x = core::v[vi & 7];
   // the shared short names (core/machines.h machine_short: the Rytm's SIDECAR page says the same)
-  return x.user >= 0 ? "USER" : core::machine_short(x.li ? core::kLiveMachine : x.cp ? core::kChopMachine : x.gr ? core::kGranMachine : x.wt ? core::kWaveMachine : x.ms ? core::kMultiMachine
+  return x.user >= 0 ? "USER" : core::machine_short(x.mi ? core::kMidiMachine : x.li ? core::kLiveMachine : x.cp ? core::kChopMachine : x.gr ? core::kGranMachine : x.wt ? core::kWaveMachine : x.ms ? core::kMultiMachine
                                                     : x.fm ? core::kFm : x.juno ? core::kJuno : x.grain ? core::kGrainMachine
                                                     : x.dsps ? core::kDspSample : x.daisy ? core::kDaisy : x.md ? core::kMd : core::kPlaits);
 }
@@ -514,7 +530,7 @@ int track_src_json(char* out, int cap) {
   if (n <= 0 || n >= cap) return 0;
   for (int t = 0; t < 12; ++t) {
     int vb = core::ui::remote_track_machine(t);
-    const char* m = vb < 0 ? "?" : vb == 0x7F ? "RYTM" : core::machine_short(vb & 0x78);
+    const char* m = vb < 0 ? "?" : vb == 0x7F ? "RYTM" : core::machine_short(core::machine_of((uint8_t)vb));
     int k = sniprintf(out + n, cap - n, "%s{\"m\":\"%s\",\"vb\":%d}", t ? "," : "", m, vb);
     if (k <= 0 || k >= cap - n) return 0;
     n += k;

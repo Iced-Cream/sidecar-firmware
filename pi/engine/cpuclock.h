@@ -34,6 +34,22 @@ inline unsigned target_hz (unsigned nSettingMHz, unsigned nMinHz, unsigned nMaxH
 	return (unsigned) hz;
 }
 
+// The clock the setting asks for, in MHz, as the firmware's range gives it: what "the clock is lowered" is measured against.
+// A Pi 5: 1500 asks for 2400; 1200 and 1000 for 1500, the firmware's minimum there. A Pi 4: 1500 / 1200 / 1000.
+inline unsigned asked_mhz (unsigned nSettingMHz, unsigned nMinHz, unsigned nMaxHz)
+{
+	return (unsigned) (((unsigned long long) target_hz (nSettingMHz, nMinHz, nMaxHz) + 500000ull) / 1000000ull);
+}
+
+// The firmware's measured ARM clock against the clock it says it set (GET_CLOCK_RATE only repeats what was asked): more than
+// 5 % apart, so its own throttle, which Circle and the voice budget do not see, shows. 0 on either side: not known.
+inline bool measured_off (unsigned nReadMHz, unsigned nMeasuredMHz)
+{
+	if (nReadMHz == 0 || nMeasuredMHz == 0) return false;
+	unsigned nDiff = nReadMHz > nMeasuredMHz ? nReadMHz - nMeasuredMHz : nMeasuredMHz - nReadMHz;
+	return nDiff * 20 > nReadMHz;
+}
+
 // The guard's budget in counter ticks: nBasePct (5..100) of a 12-frame block at 48 kHz, scaled for the clock
 inline unsigned budget_ticks (unsigned long long nCntFrq, unsigned nBasePct, unsigned nMHz)
 {

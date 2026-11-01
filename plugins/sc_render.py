@@ -7,7 +7,7 @@
 # rmp_host (48000 Hz, max_block 12, log, xorshift32 random), runs init, voice_init on a zeroed state,
 # params with the manifest defaults (a P without a knob = 64), note_on(note, 0.8), renders 1.5 s in
 # blocks of 12 with note_off at 0.5 s, checks the result and writes plugins/build-wav/<name>.wav.
-#   python plugins/sc_render.py [sc_acid ... | nusaw | vox | hush1 | raffo]   (build first: make -C plugins/sc_xxx; the six by default)
+#   python plugins/sc_render.py [sc_acid ... | nusaw | vox | hush1 | raffo | modele]   (build first: make -C plugins/sc_xxx; the six by default)
 import ctypes as C
 import json
 import pathlib
@@ -71,6 +71,7 @@ SPEC = {
     "vox":        dict(note=57, kind="gated", pitch=True),   # plugins/vox (its own package, not a starter)
     "hush1":      dict(note=48, kind="gated", pitch=True),   # plugins/hush1 (its own package, not a starter)
     "raffo":      dict(note=48, kind="gated", pitch=True),   # plugins/raffo (its own package, not a starter)
+    "modele":     dict(note=48, kind="gated", pitch=True),   # plugins/modele (its own package, not a starter)
 }
 
 
@@ -258,4 +259,4 @@ def main(names):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:] or [n for n in SPEC if n.startswith("sc_")]))   # nusaw, vox, hush1, raffo by name
+    sys.exit(main(sys.argv[1:] or [n for n in SPEC if n.startswith("sc_")]))   # nusaw, vox, hush1, raffo, modele by name

@@ -1,0 +1,194 @@
+diff -ruN a/include/circle/usb/usbmidi.h b/include/circle/usb/usbmidi.h
+--- a/include/circle/usb/usbmidi.h	2026-11-01 00:53:26
++++ b/include/circle/usb/usbmidi.h	2026-11-01 00:53:26
+@@ -66,6 +66,13 @@
+ 	///	  Format is not validated
+ 	boolean SendEventPackets (const u8 *pData, unsigned nLength);
+ 
++	/// circle-midi-async.patch
++	/// \brief Start sending packets without waiting; at most one transfer at a time per device
++	/// \return TRUE: started. FALSE: one is in flight, or no such path (the gadget), nothing sent
++	boolean SendEventPacketsAsync (const u8 *pData, unsigned nLength);
++	/// \return 0 idle, 1 a transfer in flight, 2 idle, and the last one failed (this call clears that)
++	unsigned GetSendState (void);
++
+ 	/// \brief Send one or more messages in plain MIDI message format
+ 	/// \param nCable Cable number (0-15)
+ 	/// \param pData Pointer to the message buffer
+@@ -88,6 +95,9 @@
+ 	typedef boolean TSendEventsHandler (const u8 *pData, unsigned nLength, void *pParam);
+ 	void RegisterSendEventsHandler (TSendEventsHandler *pHandler, void *pParam);
+ 
++	typedef unsigned TSendStateHandler (void *pParam);
++	void RegisterSendEventsAsyncHandler (TSendEventsHandler *pHandler, TSendStateHandler *pState, void *pParam);
++
+ 	boolean GetAllSoundOffOnUSBError (void) const;
+ 
+ 	friend class CUSBMIDIHostDevice;
+@@ -98,6 +108,9 @@
+ 	void *m_pPacketHandlerParam;
+ 
+ 	TSendEventsHandler *m_pSendEventsHandler;
++	TSendEventsHandler *m_pSendAsyncHandler = 0;
++	TSendStateHandler *m_pSendStateHandler = 0;
++	void *m_pSendAsyncParam = 0;
+ 	void *m_pSendEventsParam;
+ 
+ 	boolean m_bAllSoundOff;
+diff -ruN a/include/circle/usb/usbmidihost.h b/include/circle/usb/usbmidihost.h
+--- a/include/circle/usb/usbmidihost.h	2026-11-01 00:53:26
++++ b/include/circle/usb/usbmidihost.h	2026-11-01 00:53:26
+@@ -39,12 +39,15 @@
+ 	boolean Configure (void);
+ 
+ 	static boolean SendEventsHandler (const u8 *pData, unsigned nLength, void *pParam);
++	static boolean SendAsyncHandler (const u8 *pData, unsigned nLength, void *pParam);	// circle-midi-async.patch
++	static unsigned SendStateHandler (void *pParam);
+ 
+ private:
+ 	boolean StartRequest (void);
+ 
+ 	void CompletionRoutine (CUSBRequest *pURB);
+ 	static void CompletionStub (CUSBRequest *pURB, void *pParam, void *pContext);
++	static void TxCompletionStub (CUSBRequest *pURB, void *pParam, void *pContext);
+ 
+ 	void TimerHandler (TKernelTimerHandle hTimer);
+ 	static void TimerStub (TKernelTimerHandle hTimer, void *pParam, void *pContext);
+@@ -61,6 +64,11 @@
+ 	unsigned m_nNextBuffer;
+ 
+ 	TKernelTimerHandle m_hTimer;
++
++	static const unsigned TxBufferSize = 64;
++	u8 *m_pTxBuffer = 0;			// one transfer's, written only while none is in flight
++	volatile boolean m_bTxBusy = FALSE;
++	volatile boolean m_bTxFailed = FALSE;
+ };
+ 
+ #endif
+diff -ruN a/lib/usb/usbmidi.cpp b/lib/usb/usbmidi.cpp
+--- a/lib/usb/usbmidi.cpp	2026-11-01 00:53:26
++++ b/lib/usb/usbmidi.cpp	2026-11-01 00:53:26
+@@ -138,6 +138,16 @@
+ 	return (*m_pSendEventsHandler) (pData, nLength, m_pSendEventsParam);
+ }
+ 
++boolean CUSBMIDIDevice::SendEventPacketsAsync (const u8 *pData, unsigned nLength)
++{
++	return m_pSendAsyncHandler != 0 && (*m_pSendAsyncHandler) (pData, nLength, m_pSendAsyncParam);
++}
++
++unsigned CUSBMIDIDevice::GetSendState (void)
++{
++	return m_pSendStateHandler != 0 ? (*m_pSendStateHandler) (m_pSendAsyncParam) : 0;
++}
++
+ boolean CUSBMIDIDevice::SendPlainMIDI (unsigned nCable, const u8 *pData, unsigned nLength,
+ 				       unsigned nChunkSize)
+ {
+@@ -332,6 +342,13 @@
+ 	}
+ 
+ 	return bResult;
++}
++
++void CUSBMIDIDevice::RegisterSendEventsAsyncHandler (TSendEventsHandler *pHandler, TSendStateHandler *pState, void *pParam)
++{
++	m_pSendAsyncHandler = pHandler;
++	m_pSendStateHandler = pState;
++	m_pSendAsyncParam = pParam;
+ }
+ 
+ void CUSBMIDIDevice::RegisterSendEventsHandler (TSendEventsHandler *pHandler, void *pParam)
+diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
+--- a/lib/usb/usbmidihost.cpp	2026-11-01 00:53:26
++++ b/lib/usb/usbmidihost.cpp	2026-11-01 00:53:26
+@@ -84,6 +84,9 @@
+ 
+ 	delete m_pEndpointOut;
+ 	m_pEndpointOut = 0;
++
++	delete [] m_pTxBuffer;			// (an URB left in flight dies with the device, as the IN endpoint's does)
++	m_pTxBuffer = 0;
+ }
+ 
+ boolean CUSBMIDIHostDevice::Configure (void)
+@@ -185,6 +188,12 @@
+ 	m_pInterface = new CUSBMIDIDevice (this);
+ 	assert (m_pInterface != 0);
+ 	m_pInterface->RegisterSendEventsHandler (SendEventsHandler, this);
++	if (m_pEndpointOut != 0)
++	{
++		m_pTxBuffer = new u8[TxBufferSize];
++		assert (m_pTxBuffer != 0);
++		m_pInterface->RegisterSendEventsAsyncHandler (SendAsyncHandler, SendStateHandler, this);
++	}
+ 
+ 	return StartRequest ();
+ }
+@@ -207,6 +216,65 @@
+ 	memcpy (Buffer, pData, nLength);
+ 
+ 	return pThis->GetHost ()->Transfer (pThis->m_pEndpointOut, Buffer, nLength) >= 0;
++}
++
++// circle-midi-async.patch: one OUT URB at a time, never waiting: a device that does not take it holds that URB, nothing else
++boolean CUSBMIDIHostDevice::SendAsyncHandler (const u8 *pData, unsigned nLength, void *pParam)
++{
++	CUSBMIDIHostDevice *pThis = static_cast<CUSBMIDIHostDevice *> (pParam);
++	assert (pThis);
++
++	if (   pThis->m_pEndpointOut == 0 || pThis->m_bTxBusy
++	    || nLength == 0 || nLength > TxBufferSize || (nLength & 3) != 0)
++	{
++		return FALSE;
++	}
++
++	memcpy (pThis->m_pTxBuffer, pData, nLength);
++
++	CUSBRequest *pURB = new CUSBRequest (pThis->m_pEndpointOut, pThis->m_pTxBuffer, nLength);
++	assert (pURB != 0);
++	pURB->SetCompletionRoutine (TxCompletionStub, 0, pThis);
++
++	pThis->m_bTxBusy = TRUE;
++	if (!pThis->GetHost ()->SubmitAsyncRequest (pURB))
++	{
++		pThis->m_bTxBusy = FALSE;
++		delete pURB;
++
++		return FALSE;
++	}
++
++	return TRUE;
++}
++
++unsigned CUSBMIDIHostDevice::SendStateHandler (void *pParam)
++{
++	CUSBMIDIHostDevice *pThis = static_cast<CUSBMIDIHostDevice *> (pParam);
++	assert (pThis);
++
++	if (pThis->m_bTxBusy)
++	{
++		return 1;
++	}
++	if (pThis->m_bTxFailed)
++	{
++		pThis->m_bTxFailed = FALSE;
++
++		return 2;
++	}
++
++	return 0;
++}
++
++void CUSBMIDIHostDevice::TxCompletionStub (CUSBRequest *pURB, void *pParam, void *pContext)
++{
++	CUSBMIDIHostDevice *pThis = (CUSBMIDIHostDevice *) pContext;
++	assert (pThis != 0);
++
++	pThis->m_bTxFailed = pURB->GetStatus () == 0;
++	delete pURB;
++	pThis->m_bTxBusy = FALSE;
+ }
+ 
+ boolean CUSBMIDIHostDevice::StartRequest (void)

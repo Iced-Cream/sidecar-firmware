@@ -1,6 +1,6 @@
 # Pi display
 
-The Pi engine draws a Sidecar screen on an 800x480 or a 1024x600 display (see "Screen sizes"): HDMI with USB touch, or a
+The Pi engine draws a Sidecar screen on an 800x480, a 1024x600 or a 1280x720 display (see "Screen sizes"): HDMI with USB touch, or a
 DSI display (the official 7" display and compatibles, see "Supported screens"): on the Pi 4 the firmware drives it, on the Pi 5 Circle's
 `addon/rp1dsi` ("DSI on the Pi 5"). The UI is built with LVGL 9.4.0 (MIT),
 the version Circle 51.1.1's `addon/lvgl` submodule pins. The code is in `pi/ui`:
@@ -128,7 +128,7 @@ redraws the area it uncovers in 48-line bands, about the cost of that first draw
 | GeeekPi EP-0194 7" IPS HDMI (1024x600, USB capacitive touch, HDMI in) | Display measured (`display: 1024x600`). Touch (USB 0416:c169 "TSTP MTouch"): stock Circle took it for a keyboard (`input none`). Its boot-keyboard interface's 84-byte descriptor (measured) is an absolute mouse (ID 2, button 1 = finger, X/Y 0..32767): `circle-touch-pointer.patch` binds it as a single-touch screen ("USB touch screens" below), to be confirmed on the panel. config.txt as in "Screen sizes". |
 | Official Raspberry Pi 7" Touch Display v1 (DSI, 800x480) | Expected on both boards, not yet measured here. Pi 4: firmware frame buffer + `CRPiTouchScreen` (firmware touch buffer). Pi 5: Circle's `addon/rp1dsi` (display and touch, no firmware). |
 | OSOYOO 7" IPS DSI V4.0 (800x480, 15-pin DSI) | Expected, to be confirmed: sold as plug-and-play on Raspberry Pi OS, which normally means it emulates the official display (ATTiny regulator at I2C 0x45, TC358762 bridge, FT5x06 touch at 0x38). The boot log names what answers ("DSI on the Pi 5"). |
-| Raspberry Pi Touch Display 2 | Pi 4: not supported (needs a KMS DSI panel driver and a Goodix touch driver, which Circle does not have on the Pi 4). Pi 5: `addon/rp1dsi` drives it, the 1024x600 UI centred on the landscape 1280x720, rotated in software. Measured on the 7" (2026-10-31, a 0.4.0 test kernel with this display code): picture, rotation 270, touch on the right controls, Rytm, voices. The 5" is expected, not measured with this code ("Touch Display 2 on the Pi 5"). |
+| Raspberry Pi Touch Display 2 | Pi 4: not supported (needs a KMS DSI panel driver and a Goodix touch driver, which Circle does not have on the Pi 4). Pi 5: `addon/rp1dsi` drives it (measured: the panel shows the UI, Pi 5, Sidecar 0.4.0-dev dbb9e63); the 1024x600 UI centred on the landscape 1280x720 measured by the owner (de3ab4d: picture, touch, low CPU); the 1280x720 layout built and host-tested, not yet run ("Touch Display 2 on the Pi 5"). |
 
 ### USB touch screens
 
@@ -194,8 +194,9 @@ taken (`pi/ui/touch_cal.c`, unit test `pi/engine/tests/test_touch_cal.cpp`):
 
 ### Screen sizes
 
-The UI has two sizes, each with its own layout in both themes (docs/UI-THEMES.md "Sizes"): **800x480** (the Waveshare
-LCDs, DSI displays; unchanged) and **1024x600** (OLED 512x300 dots; a 7" 1024x600 panel such as the GeeekPi EP-0194).
+The UI has three sizes, each with its own layout in both themes (docs/UI-THEMES.md "Sizes"): **800x480** (the Waveshare
+LCDs, DSI displays; unchanged), **1024x600** (OLED 512x300 dots; a 7" 1024x600 panel such as the GeeekPi EP-0194) and
+**1280x720** (OLED 640x360 dots; Touch Display 2 on the Pi 5, chosen by default on that panel).
 The size follows the **frame buffer**, which the firmware sets from config.txt before Circle starts:
 
 - Frame buffer 800x480 or 1024x600: the UI at that size, 1:1.
@@ -205,7 +206,8 @@ The size follows the **frame buffer**, which the firmware sets from config.txt b
   "HDMI display"), so the UI is scaled to it as before. It is 1024x600 (scaled x1.875 x1.8) when the display's EDID
   prefers 1024x600, else 800x480. A frame buffer of exactly 1024x600 or 800x480 is not scaled. [inferred: the Pi 5's
   answer to the EDID property is not yet seen on hardware.]
-- **Override:** `res=800x480`, `res=1024x600` or `res=auto` in `/.rytm/display.txt` (a line of its own, added by hand; kept
+- Touch Display 2 (a portrait panel turned, "Touch Display 2 on the Pi 5"): 1280x720, the whole panel. HDMI at any size never picks 1280x720 by itself.
+- **Override:** `res=800x480`, `res=1024x600`, `res=1280x720` or `res=auto` in `/.rytm/display.txt` (a line of its own, added by hand; kept
   when the engine rewrites the file) or in `cmdline.txt` (wins). Read once at boot, before LVGL starts: a change needs a
   reboot. A size that does not fit the frame buffer is refused (log line) and the choice is automatic. Example: a
   1024x600 frame buffer with `res=800x480` shows the 800x480 layout centred (bigger margins, the same pixel sizes).
@@ -280,8 +282,8 @@ On the Pi 5 see "DSI on the Pi 5" below. On the Pi 4:
 ### DSI on the Pi 5
 
 The Pi 5's firmware does not drive a DSI display: the engine drives it itself with Circle's `addon/rp1dsi` (Circle
-51.1.1, GPL-3.0; `pi/engine/build.sh` applies `pi/circle/circle-rp1dsi-fb.patch` and `circle-rp1dsi-td2.patch`, for the Touch
-Display 2, and builds `librp1dsi.a` in the Pi 5 tree). The v1 path is *inferred* from Circle's sources, not yet run on hardware.
+51.1.1, GPL-3.0, unchanged; `pi/engine/build.sh` builds `librp1dsi.a` in the Pi 5 tree). All *inferred* from Circle's
+sources; not yet run on hardware.
 
 - At boot (the boot screen), unless `dsi=0`: the engine reads the display regulator (I2C address 0x45, register 1) on
   each DSI port, **CAM/DISP 0 first, then CAM/DISP 1** (`dsi_port=0` or `1` in cmdline.txt: only that one). DISP0's I2C
@@ -317,23 +319,18 @@ Display 2, and builds `librp1dsi.a` in the Pi 5 tree). The v1 path is *inferred*
 
 ### Touch Display 2 on the Pi 5
 
-720x1280 portrait, mounted landscape. *Measured* on the 7" (2026-10-31, a 0.4.0 test kernel with this display code): the 1024x600 UI
-centred, rotation 270, touch on the right controls, the Rytm, voices. On that mounting memory (0,0) is the viewed bottom left, columns
-going up, rows right, so 270 is the right way up there. That kernel drove the panel at 16 bits, in Circle's sync pulse mode, with no
-change to `addon/rp1dsi` but the frame buffer accessors. The blit's real cost is still to be read from the stats line.
+720x1280 portrait, mounted landscape. *Measured* on dbb9e63, unrotated: rp1dsi drives this panel, touch responds; a photo on the
+owner's mounting puts memory (0,0) at the viewed bottom left, columns going up, rows right, so 270 is the right way up there.
+The rotated picture, its cost and the mapped touch are built and host-tested, not yet run.
 
 - **cmdline.txt:** nothing for the owner's mounting. `dsi_rotate=270` is the default (Linux's `rotate=270` on the same
   unit, a quarter turn clockwise); upside down: `dsi_rotate=90`. The panel takes these two; 0 or unset means 270, 180 logs
   a warning and uses 270 (`SetRotation` is the v1 display's only). The angle means what it means on Linux: how far the
   picture is turned counter-clockwise on the panel (`pi/ui/dsi_rotate.h`).
-- **The picture:** the frame is 1280x720. The UI is 1024x600 at (128, 60), black around it, no scaling; `res=800x480` gives
-  the 800x480 UI at (240, 120). (Before this the UI's display was 720x1280, which is below the wide layouts' 1024x600, so
+- **The picture:** the frame is 1280x720 and the UI fills it: the 1280x720 layout (docs/UI-THEMES.md "Sizes"). `res=1024x600`
+  gives the 1024x600 UI at (128, 60), black around it, no scaling, `res=800x480` the 800x480 UI at (240, 120). (Before this the UI's display was 720x1280, which is below the wide layouts' 1024x600, so
   the 800x480 layout came up in the middle of the panel.) Which size is chosen at run time (`ChooseUi`): one kernel for every screen, the
   `sd-1024x600` card differs only in config.txt's HDMI mode.
-- **The 5" panel:** the regulator's id picks it (low nibble 8 or 9). Same 720x1280, same code, same default rotation, and the 1024x600
-  UI is physically small on it. Not measured with this code. It runs in sync events, as Linux drives it and as the development build of
-  bandersong (sidecar-firmware PR #4) ran on a 5"; that build used a 32-bit frame buffer, here it is 16 as on the 7". The 7" stays in sync
-  pulses, measured. If a 5" stays black, reseat the ribbon first (the cause of the black screen on that 5"), then open an issue with the log.
 - **The blit:** LVGL hands over dirty areas only, at most a 48-row band. `CSidecarDisplay::PutFrame` turns each straight
   into the panel's frame buffer (`pi/circle/circle-rp1dsi-fb.patch` gives its pointer and pitch), cleans the rows it wrote from
   the data cache, one barrier for the area. Through `SetArea` a 1024-wide band would be 1024 panel rows with a barrier each.
@@ -347,18 +344,12 @@ change to `addon/rp1dsi` but the frame buffer accessors. The blit's real cost is
   UI's offset. A touch on the black margin lands on the UI's edge. Each poll is 3 I2C transfers, about 18 bytes at 100 kHz, about
   1.6 ms of busy-wait in core 0's loop, interrupts on (the I2C lock is task level), so this panel is polled every 20 ms, not
   10: about 8 % of the loop, whether or not a finger is down. The stats line's `longest update` includes it.
-- **Touch after a warm restart:** on a 5" the GT911 did not answer after a software restart until a power cycle (bandersong's
-  measurement; shutting the panel down first and a longer power-off at start did not help). The 7" has not been tried, and the cause is not
-  known. The engine restarts itself after an update, a Wi-Fi join or a change of device. If the controller is silent at start the log says
-  `rp1touch2: No touch controller at I2C 0x5D, running without touch` and the engine runs on without touch: use the web UI, or power
-  cycle. The contact id from the controller is bounded before it indexes anything (from the same PR).
 
 The log:
 
     display: DSI: DISP0: display regulator id 0xNN (Touch Display 2, 7")
-    rp1touch2: Touch controller GT911 at I2C 0x5D
     display: DSI: DISP0 1280x720 (rp1dsi, no scaling), rotation 270, touch Goodix polled
-    display: UI 1024x600 centred on the frame buffer's 1280x720 (res=800x480|1024x600 in /.rytm/display.txt or cmdline.txt)
+    display: UI 1280x720 on the frame buffer's 1280x720 (res=800x480|1024x600|1280x720 in /.rytm/display.txt or cmdline.txt)
     display: touch: DSI (rp1dsi)
     display: touch: down raw 360,640 -> 512,299
     engine: display: 1024x600, input touch (DSI), longest update N us, rotate 270 longest N us, total N us

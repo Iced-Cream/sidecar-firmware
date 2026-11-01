@@ -5,7 +5,7 @@
 // reading of 0 (the mailbox failed: CCPUThrottle::GetTemperature returns 0) changes nothing. update() returns what
 // happened this sample, so the log line and the Rytm's popup come once per crossing, not once per sample.
 // Circle's own throttle acts first: above socmaxtemp (78 on the card, Circle's maximum) CCPUThrottle drops the ARM clock
-// to its minimum (600 MHz on the Pi 4) and raises it 3 C below. clock_low_mhz() says so: the warning then says the
+// to its minimum (600 MHz on the Pi 4, 1500 on the Pi 5) and raises it 3 C below. clock_low_mhz() says so: the warning then says the
 // clock was lowered, and between 78 and 80 a quiet status line does (STATUS, /status: no banner, no popup).
 #ifndef _thermal_h
 #define _thermal_h
@@ -58,11 +58,11 @@ inline bool popup_due (Popup &p, const State &s, Event e, unsigned shown)
 }
 
 // The ARM clock the heat lowered (MHz), 0: not lowered. Lowered: the clock read back (kernel FollowClock) well below the
-// setting (Settings > System; a lower setting is not "lowered"), with the SoC near Circle's limit (it raises the clock
+// clock the setting asks for (cpuclock::asked_mhz: 2400 at a Pi 5's default; a lower setting is not "lowered"), with the SoC near Circle's limit (it raises the clock
 // again 3 C below; a failed reading, 0, is not hot).
-inline int clock_low_mhz (int clock_mhz, int setting_mhz, int temp_c)
+inline int clock_low_mhz (int clock_mhz, int asked_mhz, int temp_c)
 {
-	if (clock_mhz <= 0 || setting_mhz <= 0 || clock_mhz + 50 >= setting_mhz) return 0;
+	if (clock_mhz <= 0 || asked_mhz <= 0 || clock_mhz + 50 >= asked_mhz) return 0;
 	return temp_c >= kThrottleC - 3 ? clock_mhz : 0;
 }
 

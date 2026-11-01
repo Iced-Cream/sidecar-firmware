@@ -10,7 +10,7 @@ struct rmp_desc_knob {
   uint8_t p;                          // 1..16
   uint8_t look, kind, role;           // RMP_LOOK_*, RMP_TEXT_* (the manifest's "text"), RMP_ROLE_*
   uint8_t min, max, def;              // 0..127, min <= def <= max
-  uint8_t enum_first, enum_count;     // into the package's name table (enum_count <= 16)
+  uint8_t enum_first, enum_count;     // into the package's name table (enum_count <= RMP_ENUM_MAX)
   char long_name[13], short_name[5];  // printable ASCII, NUL-padded and always NUL-terminated (12 / 4 characters)
 };
 struct rmp_desc {
@@ -34,7 +34,7 @@ struct rmp_desc {
 bool rmp_manifest_read(const rmp_info *info, rmp_read_fn rd, void *ctx, rmp_desc *d);
 // Knob k's enum names (knob[k].enum_count of them) into names[][8], NUL-padded, at most 7 characters:
 // the count, 0 when it has none, -1 on a read error or a name table that does not hold them.
-int rmp_manifest_enum(const rmp_desc *d, int k, rmp_read_fn rd, void *ctx, char names[16][8]);
+int rmp_manifest_enum(const rmp_desc *d, int k, rmp_read_fn rd, void *ctx, char names[RMP_ENUM_MAX][8]);
 // The knob for P p (1..16): its index in knob[], -1 none.
 int rmp_desc_find(const rmp_desc *d, int p);
 // Labels that follow a list knob (rmp_format.h RMP_LABELS_*): per value of the list knob `knob`, the long / short
@@ -66,7 +66,7 @@ int rmp_labels_pick(const rmp_labels *l, const float *p);
 bool rmp_labels_apply(const rmp_labels *l, int set, rmp_desc *d);
 // RLB2: knob's names for set's dep value (count[v] of them, into names[][8], NUL-padded) when p is knob; -1 otherwise
 // (RLB1, another P, no set: the package's own name table, rmp_manifest_enum).
-int rmp_labels_enum(const rmp_labels *l, int set, int p, char names[16][8]);
+int rmp_labels_enum(const rmp_labels *l, int set, int p, char names[RMP_ENUM_MAX][8]);
 // A description without a manifest (a missing package): the name is the id's last dot-separated
 // part in upper case, at most 10 characters (befaco.np.atari -> "ATARI"), the short name its first 4
 // (both NUL-terminated); no knobs.

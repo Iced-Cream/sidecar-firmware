@@ -121,7 +121,7 @@ int main() {
                       {"song", fmt::kProject, 1}, {"display", fmt::kSetting, 1}, {"keys", fmt::kSetting, 1},
                       {"fxin", fmt::kSetting, 1}, {"sendfx", fmt::kSetting, 1}, {"wifi", fmt::kSetting, 1},
                       {"project", fmt::kSetting, 1}, {"projects", fmt::kSetting, 1}, {"sdtest", fmt::kSetting, 1},
-                      {"cardindex", fmt::kDerived, 4}, {"dx7idx", fmt::kDerived, 1}, {"rmpa", fmt::kExchange, 4},
+                      {"cardindex", fmt::kDerived, 4}, {"dx7idx", fmt::kDerived, 1}, {"rmpa", fmt::kExchange, 5},
                       {"bundle", fmt::kExchange, 1}, {"library", fmt::kProject, 1}, {"library-log", fmt::kProject, 1},
                       {"library-state", fmt::kProject, 1}, {"samplepool", fmt::kProject, 1},
                       {"wtpool", fmt::kProject, 1}, {"instpool", fmt::kProject, 1}, {"poolused", fmt::kDerived, 1},
@@ -681,6 +681,7 @@ int main() {
     CHECK(rd("/pq/a.txt") == "A7\n" && rd("/pq/b.txt") == "B3\n" && rd("/pq/c.txt") == "C3\n");
     CHECK(!fmt::post_step());   // a done here
     CHECK(fmt::post_step());    // b into the slot, posted
+    CHECK(!fmt::post_step());   // ... and it only waits now: no step, the streams' idle step goes on (post_step's true is a write just posted)
     card_turn();
     CHECK(rd("/pq/b.txt") == "B7\n" && rd("/pq/c.txt") == "C3\n" && fmt::post_busy());
     for (int i = 0; i < 8 && fmt::post_busy(); ++i) fmt::post_step(), card_turn();
@@ -696,7 +697,7 @@ int main() {
     uint64_t now = now_us();
     host_fake_time(true, now + cardq::kTakeBackUs + 1000);
     uint32_t held0 = fmt::post_held(), took0 = cardq::stats().taken_back;
-    for (int i = 0; i < 4; ++i) CHECK(fmt::post_step() && fmt::post_busy());   // still posted
+    for (int i = 0; i < 4; ++i) CHECK(!fmt::post_step() && fmt::post_busy());   // still posted: only waiting, no step
     CHECK(rd("/pq/b.txt") == "B7\n" && fmt::post_held() == held0 + 1 && cardq::stats().taken_back == took0);
     card_turn();
     CHECK(!fmt::post_step() && !fmt::post_busy() && rd("/pq/b.txt") == "B8\n");   // written by the card core
@@ -724,11 +725,11 @@ int main() {
       while (fmt::post_busy()) fmt::post_step(), card_turn();
       CHECK(total(&o) == 0 && o == 0);
       // held: posted, the card core not running
-      CHECK(fmt::post_queue("/pq/u4.txt", "U4\n", 3) && fmt::post_step());
+      CHECK(fmt::post_queue("/pq/u4.txt", "U4\n", 3) && !fmt::post_step() && fmt::post_busy());
       host_fake_time(true, t0 + 6000000);
       CHECK(total(&o) == 1);
       host_fake_time(true, t0 + 6000000 + cardq::kTakeBackUs + 1000);
-      CHECK(fmt::post_step() && total(&o) == 1);   // held: still once
+      CHECK(!fmt::post_step() && fmt::post_stalled() && total(&o) == 1);   // held: still once
       card_turn();
       while (fmt::post_busy()) fmt::post_step(), card_turn();
       CHECK(total(&o) == 0 && o == 0);

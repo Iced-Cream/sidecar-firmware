@@ -33,13 +33,13 @@ enum { K_EXPORT, K_IMPORT, K_DELETE, K_UP, K_DOWN, K_TRASH };
 enum { L_PROJECTS, L_BUNDLES, L_TRASH };
 
 static int oled (void) { return TH->id == THEME_OLED; }
-static int W (void) { return oled () ? TH->w - 48 : TH->w; }
-static int H (void) { return oled () ? TH->h : 428 + TH->dy; }
+static int W (void) { return oled () ? TH->w - LU (48) : TH->w; }
+static int H (void) { return oled () ? TH->h : LU (428) + TH->dy; }
 static uint32_t c_ink (void) { return oled () ? TH->ink : TH->win_ink; }
 static uint32_t c_dim (void) { return oled () ? TH->dim : TH->win_dim; }
 static uint32_t c_alert (void) { return oled () ? TH->accent_hi : TH->bad; }
-static const lv_font_t *f_val (void) { return oled () ? TH->f_body : &lv_font_montserrat_18; }
-static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : &lv_font_montserrat_14; }
+static const lv_font_t *f_val (void) { return oled () ? TH->f_body : TH->f_mid; }
+static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : TH->f_small; }
 static void cmd (const char *c) { if (s_Cmd) s_Cmd (c); }
 
 static void upper (char *s) { if (oled ()) for (; *s; s++) if (*s >= 'a' && *s <= 'z') *s -= 32; }
@@ -603,38 +603,38 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, Hd);
 	s_Page = pg;
 	// the top: the title (OLED: its bar carries the free space), the picker, the job's line, EJECT
-	const int top = O ? 15 : 6, th = O ? 22 : 56, ky = Hd - (O ? 23 : 62), kh = O ? 22 : 56;
-	const int ly = top + th + (O ? 3 : 8), lh = ky - ly - (O ? 2 : 8);
+	const int top = O ? LU (15) : LU (6), th = O ? LU (22) : LU (56), ky = Hd - (O ? LU (23) : LU (62)), kh = O ? LU (22) : LU (56);
+	const int ly = top + th + (O ? 3 : LU (8)), lh = ky - ly - (O ? 2 : LU (8));
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, Wd, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, Wd, LU (13));
 		th_titlebar_set (s_TitleBar, "PROJECT", "", 0);
 		s_Title = 0;
 		static const char *const m0[] = {"CARD", ""};
-		s_Dest = th_seg (pg, 0, top, 140 + dx / 4, th, m0, TH_KEY | TH_KEY_SMALL, dest_cb, 0);
-		s_Status = label_w (pg, 146 + dx / 4, top + 6, Wd - 146 - dx / 4 - 52, TH->f_micro, TH->dim, 0);
-		s_Eject = th_key (pg, Wd - 48, top, 48, th, "EJECT", TH_KEY | TH_KEY_SMALL, eject_cb, 0);
+		s_Dest = th_seg (pg, 0, top, LU (140) + dx / 4, th, m0, TH_KEY | TH_KEY_SMALL, dest_cb, 0);
+		s_Status = label_w (pg, LU (146) + dx / 4, top + LU (6), Wd - LU (146) - dx / 4 - LU (52), TH->f_micro, TH->dim, 0);
+		s_Eject = th_key (pg, Wd - LU (48), top, LU (48), th, "EJECT", TH_KEY | TH_KEY_SMALL, eject_cb, 0);
 	}
 	else
 	{
 		s_TitleBar = 0;
-		th_panel (pg, 8, top, Wd - 16, th, "", TH_PANEL_WINDOW);
+		th_panel (pg, LU (8), top, Wd - LU (16), th, "", TH_PANEL_WINDOW);
 		static const char *const m0[] = {"SD card", ""};
-		s_Dest = th_seg (pg, 16, top + 4, 300 + dx / 4, th - 8, m0, TH_KEY, dest_cb, 0);
-		th_seg_font (s_Dest, &lv_font_montserrat_16);
-		s_Title = label_w (pg, 330 + dx / 4, top + 6, Wd - 330 - dx / 4 - 130, &lv_font_montserrat_14, TH->win_dim, 0);
-		s_Status = label_w (pg, 330 + dx / 4, top + 28, Wd - 330 - dx / 4 - 130, &lv_font_montserrat_16, TH->win_ink, 0);
-		s_Eject = th_key (pg, Wd - 120, top + 4, 104, th - 8, "Eject", TH_KEY, eject_cb, 0);
-		th_key_font (s_Eject, &lv_font_montserrat_16);
+		s_Dest = th_seg (pg, LU (16), top + LU (4), LU (300) + dx / 4, th - LU (8), m0, TH_KEY, dest_cb, 0);
+		th_seg_font (s_Dest, TH->f_body);
+		s_Title = label_w (pg, LU (330) + dx / 4, top + LU (6), Wd - LU (330) - dx / 4 - LU (130), TH->f_small, TH->win_dim, 0);
+		s_Status = label_w (pg, LU (330) + dx / 4, top + LU (28), Wd - LU (330) - dx / 4 - LU (130), TH->f_body, TH->win_ink, 0);
+		s_Eject = th_key (pg, Wd - LU (120), top + LU (4), LU (104), th - LU (8), "Eject", TH_KEY, eject_cb, 0);
+		th_key_font (s_Eject, TH->f_body);
 	}
 	lv_obj_add_flag (s_Eject, LV_OBJ_FLAG_HIDDEN);
 	// the list (left) and the selection's details (right)
-	const int lw = O ? Wd * 3 / 5 : (Wd - 24) * 3 / 5, lx = O ? 0 : 8, rx = lx + lw + (O ? 3 : 8), rw = Wd - rx - (O ? 0 : 8);
-	const int pitch = O ? 21 : 44, hdr = O ? 0 : 8;
+	const int lw = O ? Wd * 3 / 5 : (Wd - LU (24)) * 3 / 5, lx = O ? 0 : LU (8), rx = lx + lw + (O ? 3 : LU (8)), rw = Wd - rx - (O ? 0 : LU (8));
+	const int pitch = O ? LU (21) : LU (44), hdr = O ? 0 : LU (8);
 	s_nRows = (lh - hdr) / pitch;
 	if (s_nRows > NROWS_MAX) s_nRows = NROWS_MAX;
 	s_ListPanel = th_panel (pg, lx, ly, lw, lh, "", O ? TH_PANEL_GROUP : TH_PANEL_WINDOW);
-	const int sw = O ? 52 : 100, ww = O ? 56 : 120;
+	const int sw = O ? LU (52) : LU (100), ww = O ? LU (56) : LU (120);
 	for (int r = 0; r < NROWS_MAX; r++)
 	{
 		s_Row[r] = 0;
@@ -648,19 +648,19 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 		s_Row[r] = row;
 		const lv_font_t *fv = f_val ();
 		int ty = (pitch - lv_font_get_line_height (fv)) / 2;
-		s_RowName[r] = label_w (row, O ? 4 : 12, ty, lw - sw - ww - (O ? 10 : 30), fv, c_ink (), 0);
-		s_RowSize[r] = label_w (row, lw - sw - ww - (O ? 4 : 12), ty, sw, f_cap (), c_dim (), 1);
-		s_RowWhen[r] = label_w (row, lw - ww - (O ? 2 : 8), ty, ww - (O ? 2 : 4), f_cap (), c_dim (), 1);
+		s_RowName[r] = label_w (row, O ? LU (4) : LU (12), ty, lw - sw - ww - (O ? LU (10) : LU (30)), fv, c_ink (), 0);
+		s_RowSize[r] = label_w (row, lw - sw - ww - (O ? LU (4) : LU (12)), ty, sw, f_cap (), c_dim (), 1);
+		s_RowWhen[r] = label_w (row, lw - ww - (O ? 2 : LU (8)), ty, ww - (O ? 2 : LU (4)), f_cap (), c_dim (), 1);
 		lv_obj_add_flag (row, LV_OBJ_FLAG_HIDDEN);
 	}
-	s_Empty = label_w (pg, lx, ly + lh / 2 - 8, lw, f_cap (), c_dim (), -1);
+	s_Empty = label_w (pg, lx, ly + lh / 2 - LU (8), lw, f_cap (), c_dim (), -1);
 	th_panel (pg, rx, ly, rw, lh, O ? "" : "", O ? TH_PANEL_GROUP : TH_PANEL_WINDOW);
-	const int ip = O ? 14 + TH->dy / 12 : 30 + TH->dy / 10;
-	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? 4 : 14), ly + (O ? 4 : 12) + k * ip, rw - (O ? 8 : 28), k ? f_cap () : f_val (), c_ink (), 0);
+	const int ip = O ? LU (14) + TH->dy / 12 : LU (30) + TH->dy / 10;
+	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? LU (4) : LU (14)), ly + (O ? LU (4) : LU (12)) + k * ip, rw - (O ? LU (8) : LU (28)), k ? f_cap () : f_val (), c_ink (), 0);
 	// the keys
 	static const char *const kO[6] = {"EXPORT CARD", "IMPORT...", "DELETE", "UP", "DOWN", "TRASH"};
 	static const char *const kC[6] = {"Export > card", "Import...", "Delete", "Up", "Down", "Trash"};
-	const int g = O ? 2 : 8, kx0 = O ? 0 : 8, kw = Wd - 2 * kx0, uw = O ? 32 + dx / 8 : 80 + dx / 8;
+	const int g = O ? 2 : LU (8), kx0 = O ? 0 : LU (8), kw = Wd - 2 * kx0, uw = O ? LU (32) + dx / 8 : LU (80) + dx / 8;
 	const int bw = (kw - 2 * uw - 5 * g) / 4;	// (four wide keys: EXPORT IMPORT DELETE TRASH, then UP DOWN)
 	for (int k = 0; k < 6; k++)
 	{
@@ -669,7 +669,7 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 		int w = slot < 4 ? bw : uw;
 		s_Key[k] = th_key (pg, x, ky, w, kh, O ? kO[k] : kC[k], k == K_DELETE ? TH_KEY_DANGER : k == K_EXPORT ? TH_KEY_ACCENT : TH_KEY,
 				   key_cb, (void *) (intptr_t) k);
-		if (!O) th_key_font (s_Key[k], &lv_font_montserrat_16);
+		if (!O) th_key_font (s_Key[k], TH->f_body);
 	}
 	// the dialog: over a layer that takes every other tap
 	s_Scrim = th_box (pg, 0, 0, Wd, Hd);
@@ -680,7 +680,7 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 		lv_obj_set_style_bg_opa (s_Scrim, LV_OPA_50, 0);
 	}
 	lv_obj_add_flag (s_Scrim, LV_OBJ_FLAG_HIDDEN);
-	const int dw = O ? 330 + dx / 2 : 680 + dx / 2, dh = O ? 196 + TH->dy / 2 : 384 + TH->dy / 2;
+	const int dw = O ? LU (330) + dx / 2 : LU (680) + dx / 2, dh = O ? LU (196) + TH->dy / 2 : LU (384) + TH->dy / 2;
 	s_Dlg = th_box (pg, (Wd - dw) / 2, (Hd - dh) / 2, dw, dh);
 	if (O)
 	{
@@ -691,10 +691,10 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 	}
 	else th_panel (s_Dlg, 0, 0, dw, dh, "", TH_PANEL_WINDOW);
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);
-	const int lp = O ? 13 + TH->dy / 16 : 30 + TH->dy / 12, tx = O ? 6 : 20, tw = dw - 2 * tx;
+	const int lp = O ? LU (13) + TH->dy / 16 : LU (30) + TH->dy / 12, tx = O ? LU (6) : LU (20), tw = dw - 2 * tx;
 	for (int i = 0; i < NDLG; i++)
 	{
-		int ly2 = (O ? 5 : 14) + (i < 6 ? i * lp : 5 * lp + (O ? 21 : 44) + (O ? 4 : 10));	// (6: under the machines' keys)
+		int ly2 = (LU (O ? 5 : 14)) + (i < 6 ? i * lp : 5 * lp + (LU (O ? 21 : 44)) + (LU (O ? 4 : 10)));	// (6: under the machines' keys)
 		s_DlgText[i] = label_w (s_Dlg, tx, ly2, tw, i ? f_cap () : f_val (), c_ink (), 0);
 		if (i == 6 || i == 1)	// two lines: the summary's Rytm step, a done / failed message
 		{
@@ -702,18 +702,18 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 			lv_obj_set_height (s_DlgText[i], 2 * lv_font_get_line_height (f_cap ()));
 		}
 	}
-	s_DlgBar = th_meter (s_Dlg, tx, (O ? 5 : 14) + 2 * lp + 1, tw, O ? 8 : 16, 1000, TH_METER_H, O ? TH->ink : TH->accent);
-	const int mk = O ? 21 : 44, mw = (tw - 3 * (O ? 2 : 8)) / 4;
+	s_DlgBar = th_meter (s_Dlg, tx, (O ? LU (5) : LU (14)) + 2 * lp + 1, tw, O ? LU (8) : LU (16), 1000, TH_METER_H, O ? TH->ink : TH->accent);
+	const int mk = O ? LU (21) : LU (44), mw = (tw - 3 * (O ? 2 : LU (8))) / 4;
 	for (int i = 0; i < 4; i++)
 	{
-		s_DlgMach[i] = th_key (s_Dlg, tx + i * (mw + (O ? 2 : 8)), (O ? 5 : 14) + 5 * lp - (O ? 2 : 4), mw, mk, "", TH_KEY | TH_KEY_HOLD | TH_KEY_SMALL,
+		s_DlgMach[i] = th_key (s_Dlg, tx + i * (mw + (O ? 2 : LU (8))), (O ? LU (5) : LU (14)) + 5 * lp - (O ? 2 : LU (4)), mw, mk, "", TH_KEY | TH_KEY_HOLD | TH_KEY_SMALL,
 				       mach_cb, (void *) (intptr_t) i);
-		if (!O) th_key_font (s_DlgMach[i], &lv_font_montserrat_14);
+		if (!O) th_key_font (s_DlgMach[i], TH->f_small);
 	}
-	const int bh = O ? 24 : 56, by = dh - bh - (O ? 5 : 16), bw2 = (tw - (O ? 8 : 24)) / 2;
+	const int bh = O ? LU (24) : LU (56), by = dh - bh - (O ? LU (5) : LU (16)), bw2 = (tw - (O ? LU (8) : LU (24))) / 2;
 	s_DlgNo = th_key (s_Dlg, tx, by, bw2, bh, "CANCEL", TH_KEY, dlg_cb, (void *) 0);
-	s_DlgYes = th_key (s_Dlg, tx + bw2 + (O ? 8 : 24), by, bw2, bh, "OK", TH_KEY_ACCENT, dlg_cb, (void *) 1);
-	if (!O) { th_key_font (s_DlgNo, &lv_font_montserrat_20); th_key_font (s_DlgYes, &lv_font_montserrat_20); }
+	s_DlgYes = th_key (s_Dlg, tx + bw2 + (O ? LU (8) : LU (24)), by, bw2, bh, "OK", TH_KEY_ACCENT, dlg_cb, (void *) 1);
+	if (!O) { th_key_font (s_DlgNo, TH->f_title); th_key_font (s_DlgYes, TH->f_title); }
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_HIDDEN);
 	static lv_timer_t *s_Tick;
 	if (!s_Tick) s_Tick = lv_timer_create (delete_tick, 250, 0);

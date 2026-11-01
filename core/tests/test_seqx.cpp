@@ -241,6 +241,25 @@ static void test_file() {
   CHECK(u && u->seed_own && u->seed == 12 && u->seed_same && u->poly.voices == 6 && u->poly.alloc == seq::kAllocReset &&
         u->poly.unison == 3 && u->poly.detune == 100 && u->poly.spread == 127 && u->poly.group == 2);
   CHECK(seq::pack(q, buf2, sizeof buf2) == n && !memcmp(buf, buf2, n));   // the round trip: the same bytes
+  // 7g PAD OCT: an OCT of 0 keeps the 7-byte block (the bytes above), a signed OCT a byte more, read back; the console
+  // takes a signed number and clamps it to -3..+3
+  {
+    int n7 = n;
+    t->poly.oct = -2;
+    n = seq::pack(p, buf, sizeof buf);
+    CHECK(n == n7 + 1 && seq::unpack(q, 3, buf, n) && seq::track_of(q, 2)->poly.oct == -2 && seq::track_of(q, 2)->poly.group == 2);
+    CHECK(seq::pack(q, buf2, sizeof buf2) == n && !memcmp(buf, buf2, n));
+    t->poly.oct = 0;
+    n = seq::pack(p, buf, sizeof buf);
+    CHECK(n == n7 && seq::unpack(q, 3, buf, n) && seq::track_of(q, 2)->poly.oct == 0);
+    t->poly.oct = 3;
+    CHECK(seq::poly_default(seq::PolyCfg{}) && !seq::poly_default(t->poly));
+    seq::PolyCfg only_oct = {};
+    only_oct.oct = 1;
+    CHECK(!seq::poly_default(only_oct));
+    t->poly.oct = 0;
+    n = seq::pack(p, buf, sizeof buf);
+  }
   // a damaged block (cut short inside the trailer, the CRC fixed up): refused as damaged, the pattern empty
   {
     std::vector<uint8_t> d(buf, buf + n);
@@ -419,6 +438,11 @@ static void test_poly_track(const std::string& card) {
   CHECK(cmd("seq=poly:2").find("VOICES 3 ROTATE") != std::string::npos);
   CHECK(cmd("seq=poly:2:alloc=sideways").find("alloc=") != std::string::npos);   // refused, unchanged
   CHECK(cmd("seq=poly:2:voices=3,alloc=rotate,unison=1").find("VOICES 3") != std::string::npos);
+  // 7g: oct is signed, -3..+3 (clamped), shown only when set, and a config of its own (not "default")
+  CHECK(cmd("seq=poly:2:oct=-2").find("OCT -2") != std::string::npos && seq::poly_of(1).oct == -2);
+  CHECK(cmd("seq=poly:2:oct=+9").find("OCT +3") != std::string::npos && seq::poly_of(1).oct == 3);
+  CHECK(cmd("seq=poly:2:oct=x").find("a number") != std::string::npos && seq::poly_of(1).oct == 3);
+  CHECK(cmd("seq=poly:2:oct=0").find("OCT") == std::string::npos && seq::poly_of(1).oct == 0);
   seq::Track* t = seq::edit_track(1, true);
   CHECK(t && t->poly.voices == 3 && t->poly.alloc == seq::kAllocRotate);
   t->length = 16;

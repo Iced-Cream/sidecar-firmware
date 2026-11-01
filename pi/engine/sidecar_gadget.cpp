@@ -1,6 +1,7 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
 
+#include <circle/string.h>
 #include <circle/usb/usb.h>
 #include <circle/util.h>
 
@@ -123,7 +124,11 @@ const void *CSidecarGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 		// test tools pick it by its exact name (teensy/uac2/coreaudio_pick.py, UAC2_NAME)
 		if (i == StrManufacturer) return String ("Sidecar", pLength);
 		if (i == StrProduct || i == StrAudio || i == StrMIDI) return String (SIDECAR_NAME, pLength);
+#if RASPPI >= 5
+		if (i == StrSerial) return String ("PI5", pLength);
+#else
 		if (i == StrSerial) return String ("PI4", pLength);
+#endif
 		if (i >= StrOutCh && i < StrOutCh + ChOut) return String (OutNames[i - StrOutCh], pLength);
 		if (i >= StrInCh && i < StrInCh + ChIn) return String (InNames[i - StrInCh], pLength);
 		break;
@@ -138,6 +143,20 @@ const void *CSidecarGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 CSidecarIsoEP::CSidecarIsoEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget, TRole Role)
 :	CDWUSBGadgetEndpoint (pDesc, pGadget), m_pSidecar (pGadget), m_Role (Role), m_bRunning (FALSE)
 {
+}
+
+// a new configuration: every interface at alt 0 again (a reset after a bus suspend passes no SET_INTERFACE). Stopped too: a wake's OnResume may
+// have started the stream, and Start would then pass the next SET_INTERFACE by (alt 1 / 1, no packets)
+void CSidecarIsoEP::OnActivate (void)
+{
+	m_pSidecar->m_uchOutAlt = m_pSidecar->m_uchInAlt = 0;
+	Stop ();
+}
+
+void CSidecarIsoEP::OnResume (void)
+{
+	if (m_Role == RoleOut && m_pSidecar->m_uchOutAlt) m_pSidecar->OnSetInterface (1, m_pSidecar->m_uchOutAlt);
+	else if (m_Role == RoleIn && m_pSidecar->m_uchInAlt) m_pSidecar->OnSetInterface (2, m_pSidecar->m_uchInAlt);
 }
 
 void CSidecarIsoEP::Arm (void)
@@ -242,6 +261,9 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 {
 	s_pThis = this;
 	memset (&m_Stats, 0, sizeof m_Stats);
+#if RASPPI >= 5
+	memset (m_nOutLast, 0, sizeof m_nOutLast);
+#endif
 	m_Stats.nRingMin = m_Stats.nInMin = ~0u;
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (m_nCntFrq));
 	asm volatile ("mrs %0, cntpct_el0" : "=r" (m_nT0));
@@ -472,6 +494,15 @@ void CSidecarGadget::TakeOut (const u8 *p, size_t nLength)
 			Frame[c] = (s32) ((p[3 * c] << 8) | (p[3 * c + 1] << 16) | (p[3 * c + 2] << 24)) >> 8;
 		if (m_bTest)
 		{
+#if RASPPI >= 5
+			for (unsigned c = 0; c < ChOut; c++)
+			{
+				unsigned a = Frame[c] < 0 ? -Frame[c] : Frame[c];
+				if (a > m_Stats.nOutPeak[c]) m_Stats.nOutPeak[c] = a;
+				if (m_nOutLast[c] <= 0 && Frame[c] > 0) m_Stats.nOutCross[c]++;
+				m_nOutLast[c] = Frame[c];
+			}
+#endif
 			if (m_nLoopHead - m_nLoopTail >= Ring) { m_Stats.nOutOver++; continue; }
 			m_LoopRing[m_nLoopHead % Ring][0] = Frame[0];
 			m_LoopRing[m_nLoopHead % Ring][1] = Frame[ChOut - 1];
@@ -775,6 +806,10 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 	m_Stats.nRingMin = m_Stats.nInMin = ~0u;
 	m_Stats.nRingMax = m_Stats.nInMax = 0;
 	m_Stats.nMacPeak = 0;
+#if RASPPI >= 5
+	memset (m_Stats.nOutCross, 0, sizeof m_Stats.nOutCross);
+	memset (m_Stats.nOutPeak, 0, sizeof m_Stats.nOutPeak);
+#endif
 	LeaveCritical ();
 	const boolean bSource = (s64) (nNow - m_nSrcTick) < (s64) (m_nCntFrq / 50);	// the IRQ may set it after nNow
 	unsigned nFbmHz = (unsigned) ((u64) s.nFb * 4000 * 1000 / 65536);
@@ -796,4 +831,17 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 		m_ToRytmFilter.DroppedMessages (), m_ToHostFilter.DroppedMessages (),
 		m_ToHost.IsUp () ? "up" : "none", m_ToHost.Ups (), nRate, nPpm / 10000, nPpm / 100 % 100,
 		(unsigned) (nMaxGap * 1000000 / m_nCntFrq), (unsigned) (nMaxHandler * 1000000 / m_nCntFrq), nLong, nLateAgo);
+#if RASPPI >= 5
+	if (m_bTest)		// each OUT channel over this second: crossings (~Hz), peak in 1/1000 of full scale (-12 dBFS: 251)
+	{
+		CString Line;
+		for (unsigned c = 0; c < ChOut; c++)
+		{
+			CString Item;
+			Item.Format (" %u:%u/%u", c + 1, s.nOutCross[c], (unsigned) ((u64) s.nOutPeak[c] * 1000 / 8388607));
+			Line.Append (Item);
+		}
+		pLogger->Write (From, LogNotice, "test out Hz/peak:%s", (const char *) Line);
+	}
+#endif
 }

@@ -358,7 +358,7 @@ namespace {
 constexpr uint8_t kVersion = 4;   // rui1040: v3 = flags bits 2..7 the trig condition (written only when a step has one)
 constexpr int kHeader = 12, kTrackHead = 11, kStepHead = 8, kNoteBytes = 5, kLockBytes = 3, kBlockHead = 4;
 // the known blocks' payloads (bytes after the head)
-constexpr int kSeedBytes = 3, kTrackSeedBytes = 5, kPolyBytes = 7;
+constexpr int kSeedBytes = 3, kTrackSeedBytes = 5, kPolyBytes = 8, kPolyBytesMin = 7;   // (8: + PAD OCT, 7g; a 7-byte block of an older build reads as OCT 0)
 constexpr int kSpeedBytes = 2;   // seqtop P2: <track> <speed id>
 constexpr int kDirBytes = 2;     // seqtop P1: <track> <direction id>
 constexpr int kOnBytes = 2;      // per pattern poly: <track> <on 0|1>
@@ -410,8 +410,9 @@ CORE_COLD void known_blocks(const Pattern& p, W& w, int* count) {
     }
     if (!poly_default(t.poly)) {
       const PolyCfg& c = t.poly;
-      w.b(kBlkPoly), w.b(kBlkTrack), w.h(kPolyBytes), w.b(t.rytm), w.b(c.voices), w.b(c.alloc), w.b(c.unison),
-          w.b(c.detune), w.b(c.spread), w.b(c.group);
+      w.b(kBlkPoly), w.b(kBlkTrack), w.h(c.oct ? kPolyBytes : kPolyBytesMin), w.b(t.rytm), w.b(c.voices), w.b(c.alloc),
+          w.b(c.unison), w.b(c.detune), w.b(c.spread), w.b(c.group);
+      if (c.oct) w.b((uint8_t)c.oct);   // (7g: an OCT of 0 keeps the 7-byte block of before, byte for byte)
       ++*count;
     }
     if (t.speed) {   // seqtop P2
@@ -638,7 +639,7 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
       bool known = id == kBlkSeed || id == kBlkTrackSeed || id == kBlkPoly || id == kBlkSpeed || id == kBlkDir ||
                    id == kBlkScale || id == kBlkRnd || id == kBlkSmod || id == kBlkLockCond || id == kBlkRtrg ||
                    id == kBlkSlide || id == kBlkFx || id == kBlkOn;
-      int need = id == kBlkSeed ? kSeedBytes : id == kBlkTrackSeed ? kTrackSeedBytes : id == kBlkPoly ? kPolyBytes
+      int need = id == kBlkSeed ? kSeedBytes : id == kBlkTrackSeed ? kTrackSeedBytes : id == kBlkPoly ? kPolyBytesMin
                : id == kBlkSpeed ? kSpeedBytes : id == kBlkDir ? kDirBytes : id == kBlkScale ? kScaleBytes
                : id == kBlkRnd ? kRndBytes : id == kBlkSmod ? kSmodBytes : id == kBlkOn ? kOnBytes : 1;
       if (known && bl < need) { r.ok = false; break; }   // (a later build may make a block longer, never shorter)
@@ -652,6 +653,7 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
           pc.voices = (uint8_t)clampi(q[1], 0, kMaxVoicesCfg), pc.alloc = (uint8_t)(q[2] < kAllocs ? q[2] : 0);
           pc.unison = (uint8_t)clampi(q[3], 0, kMaxUnison), pc.detune = (uint8_t)clampi(q[4], 0, 127);
           pc.spread = (uint8_t)clampi(q[5], 0, 127), pc.group = (uint8_t)clampi(q[6], 0, kPolyGroups);
+          pc.oct = (int8_t)(bl >= kPolyBytes ? clampi((int8_t)q[7], -kMaxPadOct, kMaxPadOct) : 0);
         }
       } else if (id == kBlkOn) {   // per pattern poly
         if (t) t->on = q[1] ? 1 : 0;

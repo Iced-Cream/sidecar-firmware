@@ -29,6 +29,9 @@ void reset();   // tests: every instance free, the counters cleared
 // the voice's sequencer notes. seq_on false: nothing plays it (no voice machine that takes notes).
 bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg);
 void seq_off(int vi, int note);
+// The same, past the arpeggiator (core/arp/arp.h): seq_on / seq_off above hand it the voice's notes while its mode is on; these are its output.
+bool play_on(int vi, int note, int vel, const seq::PolyCfg& cfg);
+void play_off(int vi, int note);
 bool active(int vi);       // vi has instances sounding (render_add has work)
 bool seq_mono(int vi);     // vi plays a sequencer note on its own machine now (the mono path): the Rytm's 0x11 leaves it
 void silence(int vi);      // CC 120, the link reset, the voice's machine changed: its instances gone at once

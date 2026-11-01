@@ -20,8 +20,9 @@
 #include "../granular/granular.h"
 #include "../lib/pools.h"
 #include "../lib/srclib.h"
-#include "../msamp/cardq.h"
 #include "../store/store.h"
+#include "../msamp/cardq.h"
+#include "../presets/preset_index.h"
 #endif
 
 namespace core {
@@ -185,11 +186,6 @@ CORE_COLD void pool_sync(bool force, bool send) {
   if (rd) log(CORE_STR("pool %s: DSP SAMPLE: %d samples (%d outside /Samples: RAM only)"), project[0] ? project : "_default", used, outside);
   for (int i = 0; i < 8; ++i) prepared[i][0] = -2;   // voices: prepare again
   if (hooks.pool_changed) hooks.pool_changed(-1);   // plugin voices too
-  if (psram) {
-    psram->clear_prefetch();
-    for (int i = 0; i < npool; ++i)
-      if (pool[i].folder >= 0) psram->want(pool[i].folder, pool[i].file, true);
-  }
   if (send) send_pool();
 }
 CORE_COLD void pool_load() {   // a project change: empty until its SAMPLES pool is read (set_project sends the 14)
@@ -302,6 +298,95 @@ CORE_COLD void project_save() {
 // repeats the Rytm sends every few seconds.
 bool project_seen = false;
 
+#if CORE_MSAMP
+// 7z (2026-10-31): the project's JUNO and FM lists read by the card core, a bounded piece a request, into a copy: the list file,
+// 16 banks' MD5s, a slot's voice from the card. Until the copy is whole the old project's lists stay (and their file names: an
+// edit made then is held or refused, lists_busy); taken in at once with the voices on their PAT and the names to the Rytm.
+namespace {
+enum : uint8_t { kLsIdle, kLsJuno, kLsFm, kLsBanks, kLsVoices };
+uint8_t g_ls = kLsIdle;
+bool g_ls_again = false;
+int g_ls_k = 0;
+cardq::Req g_lrq;
+char g_lj_file[48], g_lf_file[48];
+jlib::Patch g_lj[jlib::kMaxList];
+dx7::Slot g_lf[dx7::kMaxList];
+uint8_t g_lv[dx7::kMaxList][128];
+bool g_lc[dx7::kMaxList];
+int g_lj_n = 0, g_lf_n = 0;
+bool g_lf_old = false;   // voices read from their banks: a list from before 0.4.0, written again with them
+bool g_lf_whole = true;  // ... unless its read failed: a part of a list is never written over the file
+struct HeldAdd { int folder, file; };
+HeldAdd g_held_add[4];
+int g_nheld_add = 0;
+constexpr int kBanksAPiece = 16;
+void lists_card(cardq::Req*) {   // the card core
+  if (g_ls == kLsJuno) jlib::Lib::read_list(g_lj_file, g_lj, &g_lj_n);
+  else if (g_ls == kLsFm) g_lf_whole = dx7::Lib::read_list(g_lf_file, g_lf, &g_lf_n, g_lv, g_lc);
+  else if (g_ls == kLsBanks) dxlib.resolve(g_lf, g_lf_n, g_ls_k, g_ls_k + kBanksAPiece);
+  else
+    for (; g_ls_k < g_lf_n; ++g_ls_k)   // (voices the file holds, ROM voices: no card time; up to the next card read)
+      if (!g_lc[g_ls_k] && dxlib.cache(g_lf, g_lf_n, g_ls_k, g_lv[g_ls_k], &g_lc[g_ls_k])) {
+        g_lf_old = true;
+        break;
+      }
+}
+void lists_begin() {
+  jlib::Lib::list_path(project, g_lj_file, sizeof g_lj_file);
+  dx7::Lib::list_path(project, g_lf_file, sizeof g_lf_file);
+  if (g_ls) g_ls_again = true;
+  else g_ls = kLsJuno;
+}
+void lists_done() {
+  g_ls = kLsIdle;
+  junolib.take_list(g_lj_file, g_lj, g_lj_n);
+  juno_relist();
+  dxlib.take_list(g_lf_file, g_lf, g_lf_n, g_lv, g_lc);
+  if (g_lf_old && g_lf_whole) dxlib.resave();
+  g_lf_old = false;
+  fm_relist();
+  send_juno_names();
+  send_fm_names();
+  for (int i = 0; i < g_nheld_add; ++i) pool_add(g_held_add[i].folder, g_held_add[i].file);
+  g_nheld_add = 0;
+}
+}  // namespace
+bool lists_busy() { return g_ls != kLsIdle; }
+// the project moved to another key during the read (core/bundle/prjslot.cpp rekey_all): read again there, take_list then keeps it
+CORE_COLD void project_lists_rekey(const char* key) {
+  if (!g_ls) return;
+  jlib::Lib::list_path(key, g_lj_file, sizeof g_lj_file);
+  dx7::Lib::list_path(key, g_lf_file, sizeof g_lf_file);
+  g_ls_again = true;
+}
+CORE_COLD void project_lists_step() {
+  if (!g_ls) return;
+  if (g_lrq.state == cardq::kFree) {   // (the list's save on its way: it lands first)
+    if (g_ls == kLsJuno && fmt::pending(g_lj_file)) return;
+    if (g_ls == kLsFm && fmt::pending(g_lf_file)) return;
+  }
+  g_lrq.fn = lists_card;
+  if (!cardq::async(&g_lrq, cardq::kFnReq, nullptr, nullptr, 0, nullptr, 0)) return;
+  if (g_ls_again) {
+    g_ls_again = false;
+    g_ls = kLsJuno;
+  } else if (g_ls == kLsJuno) {
+    g_ls = kLsFm;
+  } else if (g_ls == kLsFm) {
+    g_ls = kLsBanks, g_ls_k = 0;
+  } else if (g_ls == kLsBanks) {
+    g_ls_k += kBanksAPiece;
+    if (g_ls_k >= dxlib.nodes()) g_ls = kLsVoices, g_ls_k = 0;
+  } else if (++g_ls_k >= g_lf_n) {
+    lists_done();
+  }
+}
+#else
+bool lists_busy() { return false; }
+void project_lists_rekey(const char*) {}
+void project_lists_step() {}
+#endif
+
 // The switch itself: the old project's unsaved edits into its own files, then the new name's files loaded
 CORE_COLD static void switch_to(const char* n) {
 #if CORE_POLY
@@ -313,10 +398,17 @@ CORE_COLD static void switch_to(const char* n) {
   if (strcmp(project, project_name)) log(CORE_STR("project: %s (%s)"), project, project_name);
   else log(CORE_STR("project: %s"), project);
   pool_load();
-  junolib.load_list(project);
-  juno_relist();
-  dxlib.load_list(project);
-  fm_relist();
+#if CORE_MSAMP
+  if (cardq::worker()) {
+    lists_begin();
+  } else
+#endif
+  {
+    junolib.load_list(project);
+    juno_relist();
+    dxlib.load_list(project);
+    fm_relist();
+  }
   if (hooks.project_changed) hooks.project_changed();   // the project's machines (the Teensy's plugins)
 #if CORE_MSAMP
   // 2026-10-26, the RAM store: the project's LFO, INSERT and sequencer files read into RAM by the card core first; the
@@ -465,7 +557,12 @@ CORE_COLD void project_load() {
 #if CORE_MSAMP
 // 0F / 12 into the SAMPLES pool's bank A (the pool list decides: one entry per hash, a file there already keeps its row)
 CORE_COLD void pool_add(int folder, int file) {
+  if (g_ls && card_ok && folder >= cards.folders()) {   // a JUNO patch or a DX7 voice, the new project's lists on their way
+    if (g_nheld_add < (int)(sizeof g_held_add / sizeof g_held_add[0])) g_held_add[g_nheld_add++] = HeldAdd{folder, file};
+    return;
+  }
   if (card_ok && folder >= dx_base()) {
+    presets::seed(presets::kIxFm);   // (an empty list: a saved PAT keeps its preset)
     if (dxlib.add(folder - dx_base(), file) >= 0) {
       send_fm_names();
       fm_relist();
@@ -473,7 +570,14 @@ CORE_COLD void pool_add(int folder, int file) {
     return;
   }
   if (card_ok && folder >= cards.folders()) {
-    if (junolib.add(folder - cards.folders(), file) >= 0) {
+    presets::seed(presets::kIxJuno);
+    int j = folder - cards.folders(), s = junolib.add(j, file);
+    if (s < 0) {   // no empty row: the highest still its factory patch (the browser asks which)
+      jlib::Patch p;
+      if ((s = presets::spare_juno()) >= 0 && junolib.patch(j, file, p.name, p.b)) junolib.set_row(s, p.b, p.name);
+      else s = -1;
+    }
+    if (s >= 0) {
       send_juno_names();
       juno_relist();
     }
