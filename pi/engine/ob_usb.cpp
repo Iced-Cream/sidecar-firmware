@@ -56,6 +56,7 @@
 #include <assert.h>
 
 #include "ob_block.h"
+#include "ob_follow.h"
 #include "sendfx_pi.h"
 #include "rec_pi.h"
 #include "bridge.h"
@@ -185,6 +186,8 @@ CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
 // 1935:000d: Circle's MIDI driver takes it).
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
+	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
+	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
 	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct);
 	if (p == 0) return 0;
@@ -206,7 +209,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 }
 
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
-// Only the Rytm is on the bus in this spike, so the endpoint ID alone picks 0x83 / 0x03.
+// The endpoint ID alone picks 0x83 / 0x03: with a4=1 the A4's events are counted in these two as well.
 void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID, unsigned nCompletionCode,
 				unsigned nResidue, unsigned nPending)
 {
@@ -458,6 +461,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
 		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
+		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 		{
 			u8 nSt = 0;					// the voices on PRE / POST: their take files stereo
@@ -730,6 +734,7 @@ void CObUsb::PumpOut (void)
 
 void CObUsb::LogAllStats (CLogger *pLogger)
 {
+	CObFollow::LogStats (pLogger);
 	CObUsb *p = s_pThis;
 	if (p == 0 || !p->m_bStreaming) return;
 	p->Log (pLogger);
@@ -813,6 +818,7 @@ void CObUsb::Log (CLogger *pLogger)
 // power-cycled).
 void CObUsb::Stop (void)
 {
+	CObFollow::Stop ();
 	CObUsb *p = s_pThis;
 	if (p == 0) return;
 	p->m_bStreaming = FALSE;
@@ -830,6 +836,7 @@ void CObUsb::Stop (void)
 // From an exception on core 0 (guard.cpp): only the flag - no more resubmits; nothing that waits or allocates.
 void CObUsb::EmergencyStop (void)
 {
+	CObFollow::EmergencyStop ();
 	if (s_pThis != 0) s_pThis->m_bStreaming = FALSE;
 }
 

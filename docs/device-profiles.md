@@ -214,7 +214,7 @@ A board with no restart hook (`hooks.device_restart`, Pi only) answers status 0 
 
 **A Rytm and a Digitakt both on USB:** whichever got there first keeps the Sidecar, with no restart loop. While a Rytm is on USB, a hello that would
 leave `/.rytm` is answered status 4, wait, and takes effect after the Rytm goes; so is one in the first 10 s of a boot the Rytm's id caused,
-when the Rytm may not have enumerated yet (`/.rytm/device` says `1 usb` then). One box streams: the second keeps its MIDI, with no audio.
+when the Rytm may not have enumerated yet (`/.rytm/device` says `1 usb` then). One box streams: the second keeps its MIDI, with no audio (the exception is `a4=1`, under "Several devices").
 
 A box without `state_dir` shares `/.rytm`. A box sends no project name unless it can, so it stays on the project its folder
 last had: `_default` on a new folder.
@@ -241,6 +241,9 @@ A second device at the same time would need:
 - **Audio return.** The Pi's Overbridge host serves one device, with one stream and one clock. A second box needs a second
   USB stream, and the two boxes' sample clocks differ, so one has to be resampled, or its audio goes out somewhere else. The
   Pi's USB bandwidth and CPU budget need measuring first.
+
+A first step of this exists: `a4=1` (`docs/pi-engine.md`) streams an Analog Four MKII beside the Rytm, stock firmware, audio only: no link, no hello,
+no voices. The Rytm's stream stays the clock and the A4's is resampled to it (`pi/engine/drift_src.h`). Its USB MIDI is no host link (`pi/engine/usb_box.h`).
 
 Also: a way to tell the links apart (each USB MIDI device calls its own handler; the Rytm path's message has no port on it
 yet), and a remote UI that belongs to one link.

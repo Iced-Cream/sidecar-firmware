@@ -89,6 +89,7 @@ At boot, before the render loops start, every core runs the bench in turn (cores
 | `notes=on\|off` | off | MIDI channels 1..8 play voices 0..7 (the note adapter) |
 | `voicebudget=P` | 50 | a voice's budget in % of a block (5..100), the share measured at 1500 MHz: it is scaled by 1500 / the CPU clock (`cpumhz=`; "CPU clock" below). A voice is muted only when it is over budget while its render core is overloaded (its block took 80 % of a block or more), 200 blocks (50 ms) in a row; a burst never mutes. A muted voice is unmuted by `:unmute` or by a change of its machine |
 | `cpumhz=1500\|1200\|1000` | 1500 | the CPU clock option (Settings > System; `/.rytm/display.txt` has it too, cmdline wins). 1500 is the board's full clock; "CPU clock" below |
+| `a4=1` | 0 | an Analog Four MKII in OVERBRIDGE mode on USB-A: its MAIN goes into the Rytm's PRE pair (2 / 3) through an adaptive resampler, no A4 firmware mod (`ob_follow.h`, `drift_src.h`). `a4ch=N` the IN pair (default 0, MAIN), `a4att=N` dB down (default 6). A Rytm alone: unchanged |
 | `idlewfe=0` | 1 | turns off the idle sleep added for the heat (core 0's loop, core 3's render wait; "Idle sleep" below); `:idlewfe=0` / `:idlewfe=1` on the console do it live, for an A/B |
 | `split=N` | 4 | voices 0..N-1 render on core 1, N..7 on core 2 (1..7) |
 | `display=0\|1` | 1 | the HDMI display and its USB touch, drawn from core 0's loop (`docs/pi-display.md`); `width=` `height=` (Circle's) set the frame buffer's size, else the firmware's mode |
