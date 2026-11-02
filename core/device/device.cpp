@@ -139,8 +139,10 @@ CORE_COLD bool step(bool settled) {
   return false;
 }
 
+static uint32_t s_held[kVoices][4];   // box_note's
 static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
   if (p == l.box) return;
+  memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
   if (!l.box) l.out = hooks.to_rytm;
   hooks.to_rytm = p ? filtered_out : l.out;
   l.box = p;
@@ -216,14 +218,28 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
   return n;
 }
 
-// What the sequencer sent the box: its echo, the mod's report of the note it plays
+// What the sequencer sent the box: its echo, the mod's report of the note it plays; and what is held there, so that an all-off is an off for each
 static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices];
 
 CORE_COLD void box_note(int vi, int note, int vel) {
   const Profile* p = g_link.box;
-  if (!p || !p->note_out || vi < 0 || vi >= p->voices) return;
-  if (vel) s_sent[vi].note = (uint8_t)note, s_sent[vi].on = true, s_sent[vi].at = now_ms();
-  keys::forward_note((uint8_t)((vel ? 0x90 : 0x80) | vi), (uint8_t)note, (uint8_t)vel);
+  if (!p || !p->note_out || vi < 0 || vi >= p->voices || note > 127) return;
+  const uint8_t off = (uint8_t)(0x80 | vi);
+  if (note < 0) {   // inst::seq_off's -1: every note of the voice
+    for (int n = 0; n < 128; ++n)
+      if (s_held[vi][n >> 5] >> (n & 31) & 1) keys::forward_note(off, (uint8_t)n, 0);
+    memset(s_held[vi], 0, sizeof s_held[vi]);
+    return;
+  }
+  uint32_t bit = 1u << (note & 31);
+  if (vel) {
+    s_sent[vi].note = (uint8_t)note, s_sent[vi].on = true, s_sent[vi].at = now_ms();
+    s_held[vi][note >> 5] |= bit;
+    keys::forward_note((uint8_t)(0x90 | vi), (uint8_t)note, (uint8_t)vel);
+  } else {
+    s_held[vi][note >> 5] &= ~bit;
+    keys::forward_note(off, (uint8_t)note, 0);
+  }
 }
 
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {

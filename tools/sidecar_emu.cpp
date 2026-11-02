@@ -41,6 +41,7 @@ struct Opts {
   double seconds = 0;
   struct Trig { double at, len; int voice, note; bool on, off; };
   std::vector<Trig> trigs;
+  double all_off = -1;
 } o;
 char** g_argv;
 int g_fd = -1;
@@ -113,6 +114,7 @@ struct Wav {
 // ---- the voices: one block into the output stage, as the Pi's control and render cores do it
 // A MIDI message for the box, as the Pi's keys forward queue sends it on the host link
 void box_midi(uint8_t st, uint8_t a, uint8_t b) {
+  printf("sidecar_emu: to the box %02x %02x %02x at %.3f\n", st, a, b, (double)g_frames / kRate);
   uint8_t m[6] = {'M', 3, 0, st, a, b};
   if (write(g_fd, m, 6) != 6) return;
 }
@@ -120,6 +122,11 @@ void box_midi(uint8_t st, uint8_t a, uint8_t b) {
 // --trig: the sequencer's way into a voice (core/inst.h seq_on), at a time on the box's clock
 void trigs_due() {
   double t = (double)g_frames / kRate;
+  if (o.all_off >= 0 && t >= o.all_off) {   // the sequencer's stop: seq.cpp release() on every voice
+    o.all_off = -1;
+    for (int v = 0; v < kVoices; ++v) inst::seq_off(v, -1);
+    for (auto& x : o.trigs) x.off = true;
+  }
   for (auto& x : o.trigs) {
     seq::PolyCfg cfg = {};
     if (!x.on && t >= x.at) x.on = true, inst::seq_on(x.voice, x.note, 100, cfg), ++g_seq;
@@ -276,12 +283,13 @@ int main(int argc, char** argv) {
     else if (a == "--out-wav") o.out_wav = next();
     else if (a == "--in-wav") o.in_wav = next();
     else if (a == "--seconds") o.seconds = atof(next());
+    else if (a == "--all-off") o.all_off = atof(next());   // AT: every voice's notes off, as a stop
     else if (a == "--trig") {   // AT:LEN:VOICE:NOTE, seconds of emulated time (after the restart: it starts at 0 again)
       Opts::Trig t = {};
       if (sscanf(next(), "%lf:%lf:%d:%d", &t.at, &t.len, &t.voice, &t.note) != 4) return 2;
       o.trigs.push_back(t);
     }
-    else return fprintf(stderr, "sidecar_emu --link HOST:PORT --card DIR [--out-wav F] [--in-wav F] [--seconds S] [--trig AT:LEN:VOICE:NOTE]\n"), 2;
+    else return fprintf(stderr, "sidecar_emu --link HOST:PORT --card DIR [--out-wav F] [--in-wav F] [--seconds S] [--trig AT:LEN:VOICE:NOTE] [--all-off AT]\n"), 2;
   }
   if (o.card.empty()) return fprintf(stderr, "sidecar_emu: --card DIR\n"), 2;
   signal(SIGPIPE, SIG_IGN);

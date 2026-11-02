@@ -136,7 +136,7 @@ bool step(bool settled = true);
 // a Rytm's id caused, when the Rytm may not have enumerated yet. Another box's USB id changes nothing: its hello decides.
 void rytm_on_usb(bool on);
 constexpr uint32_t kSettleMs = 10000;
-// The sequencer played voice vi, or let it go (vel 0): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
+// The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;
 const char* state_path_box(const char* path, char* buf, int cap);

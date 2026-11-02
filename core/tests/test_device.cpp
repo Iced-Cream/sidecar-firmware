@@ -12,6 +12,7 @@
 #include "device/device.h"
 #include "device/a4.h"
 #include "device/digitakt.h"
+#include "keys.h"
 #include "fmt/fmt.h"
 #include "engine.h"
 #include "fx/out.h"
@@ -346,6 +347,27 @@ int main() {
     tr[1] = 0x04 | 0x08;                                       // no fifth voice
     CHECK(!passes(sidecar(tr)));
     CHECK(!passes(sidecar({0x33, 1, 2})));                     // a Rytm-only command
+    // the sequencer's notes as MIDI: an all-off (note -1, seq.cpp's stop) is an off for each note held, never a data byte over 127
+    {
+      static std::vector<std::vector<uint8_t>> sent;
+      sent.clear();
+      keys::set_forward([](uint8_t st, uint8_t a, uint8_t b) { sent.push_back({st, a, b}); });
+      device::box_note(1, 60, 100);
+      device::box_note(1, 64, 90);
+      device::box_note(1, 67, 80);
+      device::box_note(1, 60, 0);                              // one let go by itself
+      device::box_note(2, 48, 100);
+      sent.clear();
+      device::box_note(1, -1, 0);
+      CHECK(sent.size() == 2);
+      for (auto& m : sent) CHECK(m[0] == 0x81 && m[1] <= 127 && (m[1] == 64 || m[1] == 67) && m[2] == 0);
+      sent.clear();
+      device::box_note(1, -1, 0);                              // nothing held: nothing sent
+      CHECK(sent.empty());
+      device::box_note(2, -1, 0);                              // another voice's stays its own
+      CHECK(sent.size() == 1 && sent[0][0] == 0x82 && sent[0][1] == 48);
+      keys::set_forward(nullptr);
+    }
     g_out.clear();
     send(sidecar({device::kCmdHello, 1, (uint8_t)(kIdA4 >> 7), (uint8_t)(kIdA4 & 0x7f), 1, 'A', '4'}));
     CHECK(g_out.size() == 1);                                  // only the hello's answer goes back
