@@ -29,7 +29,7 @@ const Profile kA4 = {
     {},   // nothing goes back but the hello's answer: the A4's receive path stays out of it
     nullptr,
     "/.a4",
-    {1u << 0x03 | 1u << 0x04 | 1u << 0x11},
+    {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x3B - 32)},   // 3B its kit
     kBracketFull, &kA4Audio, nullptr,
     true, true};
 
