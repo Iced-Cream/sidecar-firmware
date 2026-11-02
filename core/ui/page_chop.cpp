@@ -272,6 +272,7 @@ CORE_COLD void ed_enc(int e, int d, bool func) {
   if (!m || !m->n) return;
   ed.touched = e;
   ed.sel = clampi(ed.sel, 0, m->n - 1);
+  const int l = e == 0 ? list_turn_long(e, d) : list_turn(e, d);   // SLICE, ZOOM, GRID, FX and the small fields
   const chop::Slice& s = m->s[ed.sel];
   if (ed.view == 0) {
     uint32_t a, b;
@@ -280,14 +281,14 @@ CORE_COLD void ed_enc(int e, int d, bool func) {
     if (px < 1) px = 1;
     int32_t st = func ? d : d * px;
     switch (e) {
-      case 0: ed.sel = clampi(ed.sel + d, 0, m->n - 1); break;
+      case 0: ed.sel = clampi(ed.sel + l, 0, m->n - 1); break;
       case 1: chop::edit_start(vi, ed.sel, (int32_t)s.start + st), ++ed.edits; break;
       case 2: chop::edit_end(vi, ed.sel, (int32_t)s.end + st), ++ed.edits; break;
-      case 3: ed.zoom = clampi(ed.zoom + (d > 0 ? 1 : -1), 0, 4); break;
-      case 4: ed.grid = clampi(ed.grid + d * (func ? 1 : (ed.grid >= 16 ? 4 : 1)), 2, chop::kMaxSlices); break;
+      case 3: ed.zoom = clampi(ed.zoom + l, 0, 4); break;
+      case 4: ed.grid = clampi(ed.grid + l * (func ? 1 : (ed.grid >= 16 ? 4 : 1)), 2, chop::kMaxSlices); break;
       case 5: ed.sens = clampi(ed.sens + d * (func ? 1 : 4), 0, 127); break;
       case 6: chop::set_latency(clampi(chop::latency() + d * (func ? 1 : 24), 0, 9600)); break;
-      default: ed.fx = d > 0; break;
+      default: if (l) ed.fx = l > 0; break;
     }
     return;
   }
@@ -300,6 +301,8 @@ CORE_COLD void ed_enc(int e, int d, bool func) {
   if (!func && (f == chop::kFAtk || f == chop::kFDec || f == chop::kFTms)) step = 10;
   if (!func && f == chop::kFNudge) step = 48;   // 1 ms (FUNC: a frame)
   if (!func && (f == chop::kFSlen || f == chop::kFSdec || f == chop::kFNbr)) step = 5;
+  if (hi - lo < 16) d = l;   // an enumerated field or a small count
+  if (!d) return;
   chop::edit_field(vi, ed.sel, f, clampi(chop::field_get(s, f) + d * step, lo, hi));
   ++ed.edits;
 }

@@ -223,25 +223,27 @@ CORE_COLD void pool_draw(Canvas& c, int page, int npages, uint32_t ms) {
 
 CORE_COLD void pool_enc(int e, int delta, bool func) {
   if (!delta) return;
+  const int st = e == 2 ? list_turn_long(e, delta) : list_turn(e, delta);
+  if (!st) return;
   P.ask = false;
   if (e == 0) {
-    int l = P.list + delta;
+    int l = P.list + st;
     P.list = l < 0 ? 0 : l >= pools::kLists ? pools::kLists - 1 : l;
     P.browse = false;
   } else if (e == 1) {
-    int b = P.bank + delta;
+    int b = P.bank + st;
     P.bank = b < 0 ? 0 : b >= pools::kBanks ? pools::kBanks - 1 : b;
     pools::shown(P.list, P.bank);   // takes go to the bank last shown
   } else if (e == 2) {
     if (P.browse) {
-      int n = srclib::count(P.list), cu = P.cur + delta * (func ? 8 : 1);
+      int n = srclib::count(P.list), cu = P.cur + st * (func ? 8 : 1);
       P.cur = cu < 0 ? 0 : cu >= n ? (n > 0 ? n - 1 : 0) : cu;
     } else {
-      int r = P.row + delta * (func ? 8 : 1);
+      int r = P.row + st * (func ? 8 : 1);
       P.row = r < 0 ? 0 : r >= pools::kRows ? pools::kRows - 1 : r;
     }
   } else if (e == 3) {
-    int a = P.act + delta;
+    int a = P.act + st;
     P.act = a < 0 ? 0 : a >= kActs ? kActs - 1 : a;
     P.unused_shown = false;
   }

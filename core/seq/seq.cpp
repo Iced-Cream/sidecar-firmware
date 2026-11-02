@@ -25,6 +25,7 @@
 #include "store/store.h"
 #endif
 #include "sysex.h"
+#include "ui/page.h"
 #include "ui/remote.h"
 #include "voices.h"
 
@@ -2072,7 +2073,8 @@ CORE_COLD void toggle(int k) {
 }
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
+// d: the report's counts, l: the same report's list step (ui::list_turn, once a report), for the lists: CHD, INV, SEL
+CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func, int l = 0) {
   // an empty step's first turn: the track's default note (dbg: a chord made by turning starts from C3 / dnote, not from
   // whatever was played last; a tap still takes the last chord played, the pads under a held trig their own notes)
   if (!s.n && e != 7) fill_default(t, s, false);
@@ -2114,8 +2116,9 @@ CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
         }
       }
       int chd = s.chd, inv = s.inv;
-      if (e == 4) chd = clampi(chd + d, 0, poly::kChords - 1);
-      else inv = clampi(inv + d, 0, poly::kInvs - 1);
+      if (!l) break;
+      if (e == 4) chd = clampi(chd + l, 0, poly::kChords - 1);
+      else inv = clampi(inv + l, 0, poly::kInvs - 1);
       set_chord_in(s, root, chd, inv, s.note[0].vel, s.note[0].len, s.strum, key, scale);
       ui.sel = 0;
       break;
@@ -2124,7 +2127,7 @@ CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
       apply_strum(s, clampi(s.strum + d * (func ? 8 : 2), -kSub / 2, kSub / 2));
       break;
     case 7:
-      ui.sel = clampi(ui.sel + d, 0, s.n);
+      ui.sel = clampi(ui.sel + l, 0, s.n);
       break;
   }
 }
@@ -2297,24 +2300,25 @@ CORE_COLD void preview() {
   ++st.previews;
 }
 
-CORE_COLD void settings_enc(int e, int d, bool func) {
+CORE_COLD void settings_enc(int e, int d, bool func, int l) {
   int r = ui_track();
   switch (e) {
     case 0:
-      if (!seqmode) ui.track = clampi(ui.track + d, 0, kRytmTracks - 1), ui.page = 0;
+      if (!seqmode && l) ui.track = clampi(ui.track + l, 0, kRytmTracks - 1), ui.page = 0;
       break;
     case 1: {   // seq-ux: on through the make prompt's checks; UX review R2: off only through the track's menu (FUNC + DOWN, updown1029; DOWN ux1027; YES before) - a
-      bool on = d > 0;   // turn down shows how, it never asks by itself
+      if (!l) break;
+      bool on = l > 0;   // turn down shows how, it never asks by itself
       if (on && !in_mask(r)) ui.prompt = can_seq(r) == 1 ? kPromptMake : kPromptExplain, ui.prompt_track = r;
       else if (!on && in_mask(r)) ui.off_hint_ms = now_ms() | 1;
       break;
     }
     case 2: {
-      Track* t = slot_for(r);
+      Track* t = l ? slot_for(r) : nullptr;
       if (!t) break;
       int len = t->length;   // 0 AUTO, then 16 32 .. 128 (FUNC: by one step)
-      if (func) len = clampi(len + d, 0, kMaxSteps);
-      else if (d > 0) len = clampi((len / 16 + 1) * 16, 0, kMaxSteps);
+      if (func) len = clampi(len + l, 0, kMaxSteps);
+      else if (l > 0) len = clampi((len / 16 + 1) * 16, 0, kMaxSteps);
       else len = len % 16 ? len / 16 * 16 : clampi(len - 16, 0, kMaxSteps);
       set_length(*t, r, len);
       ui.page = clampi(ui.page, 0, npages_of(eff_len(t, r)) - 1);
@@ -2322,10 +2326,10 @@ CORE_COLD void settings_enc(int e, int d, bool func) {
       break;
     }
     case 3:
-      quant = clampi(quant + d, 0, 1), tracks_touch();
+      if (l) quant = clampi(quant + l, 0, 1), tracks_touch();
       break;
     case 4:
-      ui.follow = d > 0;
+      if (l) ui.follow = l > 0;
       break;
     case 5:
       latency = clampi(latency + d * (func ? 480 : 48), 0, 4800);
@@ -2364,7 +2368,7 @@ CORE_COLD void smod_forget(int r) {   // R1b: the offsets sampled under the old 
 // ratios too), G TLEN (the track's length, as the notes view's C); SCALE's A KEY, B SCL, C QNT (the pattern's); RANDOM's
 // A SEED (fully down FREE; FUNC +-100), B RNG (R1's octaves), C WGHT, D MODE, E SRNG (SEED MOD's range; fully down OFF,
 // up from OFF its source: the machine's SEED slot), F SQNT, G SAFF. A..D of DEFAULTS are rui1040's (the new steps').
-CORE_COLD void track_page_enc(int e, int d, bool func) {
+CORE_COLD void track_page_enc(int e, int d, bool func, int l) {
   int r = ui_track();
   Track* t = ui_track_data(true);
   if (!t) return;
@@ -2374,15 +2378,16 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
       case 1: t->dvel = (uint8_t)clampi(t->dvel + d * (func ? 8 : 1), 1, 127); break;
       case 2: t->dlen = (uint16_t)clampi(t->dlen + d * (func ? kSub : kSub / 16), 1, 16 * kSub); break;
       case 3: t->swing = (uint8_t)clampi((t->swing > 50 ? t->swing : 50) + d, 50, 80); break;
-      case 4: t->dir = (uint8_t)clampi(t->dir + d, 0, kDirs - 1), replan(r); break;
-      case 5: t->speed = (uint8_t)speed_step(t->speed, d, func), replan(r); break;
-      case 6: settings_enc(2, d, func); return;   // (marks it dirty)
+      case 4: if (l) t->dir = (uint8_t)clampi(t->dir + l, 0, kDirs - 1), replan(r); break;
+      case 5: if (l) t->speed = (uint8_t)speed_step(t->speed, l, func), replan(r); break;
+      case 6: settings_enc(2, d, func, l); return;   // (marks it dirty)
       default: return;
     }
   } else if (ui.tv == kTvScale) {
-    if (e == 0) cur->key = (uint8_t)clampi(cur->key + d, 0, 11);
-    else if (e == 1) cur->scale = (uint8_t)clampi(cur->scale + d, 0, kScales - 1);
-    else if (e == 2) cur->qnt = (uint8_t)clampi(cur->qnt + d, 0, kQnts - 1);
+    if (!l) return;
+    if (e == 0) cur->key = (uint8_t)clampi(cur->key + l, 0, 11);
+    else if (e == 1) cur->scale = (uint8_t)clampi(cur->scale + l, 0, kScales - 1);
+    else if (e == 2) cur->qnt = (uint8_t)clampi(cur->qnt + l, 0, kQnts - 1);
     else return;
     replan(-1);
   } else if (ui.tv == kTvRandom) {
@@ -2395,9 +2400,9 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
         replan(-1);
         break;
       }
-      case 1: t->rnd_oct = (uint8_t)clampi((t->rnd_oct ? t->rnd_oct : kRndOctDef) + d, 1, 4); break;
-      case 2: t->rnd_wght = (uint8_t)clampi(t->rnd_wght + d, 0, kWeights - 1); break;
-      case 3: t->rnd_mode = (uint8_t)clampi(t->rnd_mode + d, 0, kRndModes - 1); break;
+      case 1: t->rnd_oct = (uint8_t)clampi((t->rnd_oct ? t->rnd_oct : kRndOctDef) + l, 1, 4); break;
+      case 2: t->rnd_wght = (uint8_t)clampi(t->rnd_wght + l, 0, kWeights - 1); break;
+      case 3: t->rnd_mode = (uint8_t)clampi(t->rnd_mode + l, 0, kRndModes - 1); break;
       case 4:
         if (!t->smod_src) {
           if (d <= 0) return;
@@ -2414,8 +2419,8 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
         }
         smod_forget(r);
         break;
-      case 5: t->smod_quant = (uint8_t)clampi(t->smod_quant + d, 0, kSqs - 1), smod_forget(r); break;
-      case 6: t->smod_aff = (uint8_t)clampi(t->smod_aff + d, 0, kAffs - 1), smod_forget(r); break;
+      case 5: t->smod_quant = (uint8_t)clampi(t->smod_quant + l, 0, kSqs - 1), smod_forget(r); break;
+      case 6: t->smod_aff = (uint8_t)clampi(t->smod_aff + l, 0, kAffs - 1), smod_forget(r); break;
       default: return;
     }
     replan(r);
@@ -2441,21 +2446,21 @@ CORE_COLD void note_turn(Track& t, Step& s, int d, bool func) {
   }
 }
 // RTRG (P4 / M4): A RATE, B CNT (OFF, 2..16), C VCRV, D PCRV (-24..24), E MODE, F OCT, G GATE (1..100 %)
-CORE_COLD void rtrg_turn(Track& t, Step& s, int e, int d, bool func) {
+CORE_COLD void rtrg_turn(Track& t, Step& s, int e, int d, bool func, int l) {
   Rtrg& x = s.rt;
   switch (e) {
-    case 0: x.rate = (uint8_t)clampi(x.rate + d, 0, kRtRates - 1); break;
+    case 0: x.rate = (uint8_t)clampi(x.rate + l, 0, kRtRates - 1); break;
     case 1: {
       int c = x.cnt < 2 ? 0 : x.cnt;
-      c = clampi(c + d * (func ? 4 : 1), 0, kRtMax);
-      if (c == 1) c = d > 0 ? 2 : 0;
+      c = clampi(c + l * (func ? 4 : 1), 0, kRtMax);
+      if (c == 1) c = l > 0 ? 2 : 0;
       x.cnt = (uint8_t)c;
       break;
     }
-    case 2: x.vcrv = (uint8_t)clampi(x.vcrv + d, 0, kVcs - 1); break;
+    case 2: x.vcrv = (uint8_t)clampi(x.vcrv + l, 0, kVcs - 1); break;
     case 3: x.pcrv = (int8_t)clampi(x.pcrv + d * (func ? 12 : 1), -24, 24); break;
-    case 4: x.mode = (uint8_t)clampi(x.mode + d, 0, kRtModes - 1); break;
-    case 5: x.oct = (uint8_t)clampi((x.oct ? x.oct : 1) + d, 1, 4); break;
+    case 4: x.mode = (uint8_t)clampi(x.mode + l, 0, kRtModes - 1); break;
+    case 5: x.oct = (uint8_t)clampi((x.oct ? x.oct : 1) + l, 1, 4); break;
     case 6: {
       int g = clampi((x.gate ? x.gate : 100) + d * (func ? 10 : 1), 1, 100);
       x.gate = (uint8_t)(g == 100 ? 0 : g);
@@ -2470,19 +2475,19 @@ CORE_COLD int fx_default(int c) {
   static const int8_t kDef[kFxCmds] = {0, 2, 24, 48, 50, 2, 20, 1, 7, 1, 0, 0, 1, 1, 1};
   return c >= 0 && c < kFxCmds ? kDef[c] : 0;
 }
-CORE_COLD void fx_turn(Step& s, int e, int d, bool func) {
+CORE_COLD void fx_turn(Step& s, int e, int d, bool func, int l) {
   if (e > 3) return;
   Fx& f = s.fx[e / 2];
   if (!(e & 1)) {
-    int c = clampi(f.cmd + d, 0, kFxCmds - 1);
+    int c = clampi(f.cmd + l, 0, kFxCmds - 1);
     if (c != f.cmd) f.cmd = (uint8_t)c, f.val = (uint8_t)(int8_t)fx_default(c);
     return;
   }
   if (!f.cmd) return;
   if (f.cmd == kFxLop) {
     int n = (f.val & 15) + 1, k = (f.val >> 4) + 1;
-    if (func) k = clampi(k + d, 1, 16);
-    else n = clampi(n + d, 1, 16);
+    if (func) k = clampi(k + l, 1, 16);
+    else n = clampi(n + l, 1, 16);
     f.val = (uint8_t)((k - 1) << 4 | (n - 1));
     return;
   }
@@ -3680,15 +3685,18 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
     if (!shown || !delta || !in_mask(ui_track())) return false;
     if (ui.prompt || (ui.held && ui.lockpg >= 0)) return true;   // (nothing under a prompt or a lock page)
     ui.touched = 8;
-    ne_turn(delta, func);
+    if (const int l = ui::list_turn(e, delta)) ne_turn(l, func);
     return true;
   }
   if ((!seqmode && !shown) || e < 0 || e > 7 || !delta) return false;
   ui.touched = e;
   if (ui.prompt && shown) return true;   // seq-ux: nothing under a prompt
+  // the lists, switches and small counts below (ui::list_turn, once a report; the long ones: the conditions); the rest values
+  const int l = ui.held && (e == ui.cond_e || (ui.sv == kSvTrig && e == 4)) ? ui::list_turn_long(e, delta) : ui::list_turn(e, delta);
   if (ui.held && ui.lockpg >= 0) {      // seq-ux: the lock page: the held steps' locks (rui1050: a knob on COND, its condition)
-    if (e == ui.cond_e && lock_param_of(ui.lockpg, e) >= 0) lcond_turn(lock_param_of(ui.lockpg, e), delta, func);
-    else lock_turn(e, delta, func);
+    if (e == ui.cond_e && lock_param_of(ui.lockpg, e) >= 0) {
+      if (l) lcond_turn(lock_param_of(ui.lockpg, e), l, func);
+    } else lock_turn(e, delta, func);
     return true;
   }
   if (ui.ne && shown && !(ui.held && ui.sv != kSvNotes)) {   // U1 NOTE EDIT: A..E on the highlighted note / the selection
@@ -3703,8 +3711,8 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
     for (int k = 0; k < 16; ++k)
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
-        if (ui.sv == kSvRtrg) rtrg_turn(*t, s, e, delta, func);
-        else fx_turn(s, e, delta, func);
+        if (ui.sv == kSvRtrg) rtrg_turn(*t, s, e, delta, func, l);
+        else fx_turn(s, e, delta, func, l);
         ui.held_used[k] = true;
       }
     replan(ui_track());
@@ -3719,10 +3727,10 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
         if (e == 0) note_turn(*t, s, delta, func), replan(ui_track());   // rui1050: RND below the lowest note
-        else if (kMap[e] >= 0) edit_step(*t, s, kMap[e], delta, func);
+        else if (kMap[e] >= 0) edit_step(*t, s, kMap[e], delta, func, l);
         else {   // COND: the trig condition / probability on one knob, as stock's
           if (!s.n) fill_default(*t, s, false);
-          cond_knob_set_i(s, cond_knob_i(s) + delta * (func ? 8 : 1));
+          cond_knob_set_i(s, cond_knob_i(s) + l * (func ? 8 : 1));
         }
         ui.held_used[k] = true;
       }
@@ -3736,17 +3744,17 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
         if (e == 0) note_turn(*t, s, delta, func), replan(ui_track());   // rui1050: RND below the lowest note
-        else edit_step(*t, s, e, delta, func);
+        else edit_step(*t, s, e, delta, func, l);
         ui.held_used[k] = true;
       }
     mark_dirty();
     return true;
   }
   if (shown && ui.tv != kTvNotes) {   // rui1040: the track's defaults for new steps; rui1050: DEFAULTS / SCALE / RANDOM
-    track_page_enc(e, delta, func);
+    track_page_enc(e, delta, func, l);
     return true;
   }
-  if (shown) settings_enc(e, delta, func);
+  if (shown) settings_enc(e, delta, func, l);
   return true;
 }
 

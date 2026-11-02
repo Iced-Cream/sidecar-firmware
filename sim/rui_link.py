@@ -165,6 +165,8 @@ class Host:
             self.core.report(self.voice1)
         self.sendfx = os.environ.get("RUI_SENDFX")
         lib.core_c_fake_time.argtypes = [ctypes.c_int, ctypes.c_uint64]
+        # a list knob's turn of N here is N entries, unless the test is of the pacing (rui_e2e listknobs, RUI_LIST_PACED=1)
+        lib.core_c_list_pacing(1 if os.environ.get("RUI_LIST_PACED") == "1" else 0)
         lib.core_c_lfo_tick.argtypes = [ctypes.c_uint32]
         lib.core_c_lfo_midi.argtypes = [ctypes.c_int] * 3
         lib.core_c_lfo_command.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]

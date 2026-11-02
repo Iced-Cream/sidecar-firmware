@@ -84,6 +84,8 @@ CORE_COLD void arp_enc(int e, int d, bool) {
   int t = track_now();
   if (remote_track_machine(t) == 0x7F) return;
   touched = e;
+  d = list_turn(e, d);
+  if (!d) return;
   arp::Cfg c = arp::get(t);
   switch (e) {
     case 0: c.mode = (uint8_t)step(c.mode, d, arp::kModes); break;

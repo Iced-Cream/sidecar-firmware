@@ -120,7 +120,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
 CORE_COLD void mfx_enc(int e, int d, bool func) {
   if (!d) return;
   mp.touched = e;
-  const int st = func ? 8 : 1;
+  const int st = func ? 8 : 1, l = list_turn(e, d);   // the slot, type and switches: lists; the rest values
   if (mp.eq) {
     if (e < ins::kEqParams) ins::set_eq(master::kEqChain, e, ins::eq_param(master::kEqChain, e) + d * st);
     else if (e == 7) master::set_lev(master::control.lev + d * st);
@@ -130,14 +130,14 @@ CORE_COLD void mfx_enc(int e, int d, bool func) {
   if (e < 4) {
     if (t) ins::set_param(ch, s, e, ins::param(ch, s, e) + d * st);
   } else if (e == 4) {
-    mp.slot = clampi(mp.slot + d, 0, master::kSlots - 1);
+    mp.slot = clampi(mp.slot + l, 0, master::kSlots - 1);
   } else if (e == 5) {
-    ins::set_type(ch, s, master::next_type(mp.slot, t, d > 0 ? 1 : -1));
+    if (l) ins::set_type(ch, s, master::next_type(mp.slot, t, l));
   } else if (e == 6) {
     if (master::send_type(t)) master::set_mix(mp.slot, master::control.mix[mp.slot] + d * st);
-    else if (t == ins::kAmp) master::set_pair(mp.slot, d > 0);
+    else if (t == ins::kAmp && l) master::set_pair(mp.slot, l > 0);
   } else if (e == 7) {
-    master::set_src(d > 0 ? master::kMix : master::kRet);
+    if (l) master::set_src(l > 0 ? master::kMix : master::kRet);
   }
 }
 

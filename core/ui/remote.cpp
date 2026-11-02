@@ -570,6 +570,8 @@ CORE_COLD void on_enc(int e, int delta, bool func) {
   const Page* p = page_for_voice(machine_of_voice(s.voice), s.voice);
   if (!p || p->enc[e] == kNone) return;
   int k = p->enc[e] & 15, cur = (int)lfo::base_of(s.voice, k, v[s.voice].p[k]);
+  if (is_list(*p, k)) delta = list_turn(e, delta);
+  if (!delta) return;
   int nv = step_value(*p, k, cur < 0 ? 0 : cur > 127 ? 127 : cur, delta, func);
   if (nv != cur) set_param(s.voice, k, nv);
 }

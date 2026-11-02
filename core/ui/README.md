@@ -31,6 +31,28 @@ Geometry as the stock screens [measured in rytm-emu]: title bar rows 0..8 (inver
 cells (dials of radius 7 at rows 12..23 / 34..45, labels centred at rows 26 / 48), bottom bar rows 55..63 (inverted,
 the touched parameter as stock's "BD LEV:" with a level box).
 
+## List knobs
+
+The Rytm reports a knob's raw panel counts, summed, once a UI pass: `32 <e> <64 + delta>` about every 67 ms in rytm-emu with
+the page open [measured], however fast the panel sends them. A stock dial step takes about 4 counts on a Rytm (60 counts at
+4 a tick moved FRQ 12 steps [measured on a unit]), stock's enums 6 with a hold-off (0029 design). So a report's size is not
+a number of entries, and a report is not a detent: a slow turn gives a count or two in every report.
+
+Every list, enumerated value, small count and switch goes through `list_turn` (`list_turn_long` for long lists, page.h,
+pages.cpp); continuous values keep the counts and FUNC x 8.
+
+- The first report after 300 ms of rest (`kListRestMs`) steps at once, whatever its size: a nudge is never lost.
+- While turning, one entry every 4 counts (`kListCounts`), at most one every 60 ms (`kListGapMs`); the counts over a step
+  are dropped, so a hard turn walks the list and skips nothing. The gap is a little under the report period: it holds
+  back only reports that bunch up, and such a report's counts wait for the next.
+- A reversal starts the count over, so a knob jittering on a detent does not bounce a switch. Lists clamp, none wraps.
+- Long lists (LFO TARGET and PARAM, the bank list's rows, files and presets, POOL's rows and files, the PROJECT cursor,
+  AUTO's entries, REC's takes, SAMPLE's bars, CHOP's slices, COND): a report of 8 counts or more (`kListFastCounts`, where
+  stock's own acceleration starts) moves 4 entries (`kListFast`), about 60 entries a second, and FUNC multiplies as it
+  did: 127 entries take about 2 s of spin, about 8.5 s of steady turning, a second with FUNC.
+
+Timing feel needs the real Rytm: the constants are in page.h. `list_pacing(false)` gives the counts through, for tests of what a page does (a test turns faster than a hand).
+
 ## Page format
 
 A page is the Rytm's encoder grid: the 9-row title bar and two rows of four 32x22 cells, encoders A..D over the top row,

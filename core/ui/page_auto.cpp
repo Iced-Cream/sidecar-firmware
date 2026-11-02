@@ -44,7 +44,7 @@ uint32_t g_start_ms = 0;      // when the running view saw the first take
 uint32_t g_noaud_ms = 0;      // DONE: YES found no MULTISAMPLE track to audition on (shown until then)
 
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-// The SRC knob's step: the kind + delta, clamped to 6-OP FM .. EXT (no wrap: a fast turn's large delta lands on an end)
+// The SRC knob's step (list_turn): clamped to 6-OP FM .. EXT, no wrap
 CORE_COLD int auto_src_step(int src, int delta) { return clampi(src + delta, 0, samp::kASources - 1); }
 // The tap channel whose level the bottom bar shows for a real-time source (-1: none, offline)
 CORE_COLD int live_channel(const samp::Plan& p) {
@@ -208,9 +208,10 @@ CORE_COLD void auto_enc(int e, int delta, bool func) {
   g_edit = true;
   samp::Plan p = samp::asamp_plan();
   int stp = func ? 8 : 1;
+  const int l = e == 1 ? list_turn_long(e, delta) : list_turn(e, delta);   // the lists and small counts; the rest values
   switch (e) {
     case 0: {   // the source kind: an ordered list, clamped at its ends (one kind a detent)
-      int s = auto_src_step((int)p.src, delta);
+      int s = auto_src_step((int)p.src, l);
       if (s != (int)p.src) {
         p.src = (samp::ASrc)s;
         p.pat = p.voice = p.track = 0, p.chro = false;
@@ -225,20 +226,20 @@ CORE_COLD void auto_enc(int e, int delta, bool func) {
     case 1: {
       int n = samp::asamp_entries(p.src);
       if (p.src == samp::kAExt) {   // USB 1..16, DEV 1..16, RYTM 1..16
-        int i = clampi(p.port * 16 + (p.midi_ch & 15) + delta * (func ? 16 : 1), 0, n - 1);
+        int i = clampi(p.port * 16 + (p.midi_ch & 15) + l * (func ? 16 : 1), 0, n - 1);
         p.port = (uint8_t)(i / 16), p.midi_ch = i % 16;
         break;
       }
       int* q = p.src == samp::kAVoice ? &p.voice : p.src == samp::kATrack ? &p.track : &p.pat;
-      *q = clampi(*q + delta * (p.src == samp::kAFm || p.src == samp::kAJuno ? stp : 1), 0, n - 1);
+      *q = clampi(*q + l * (p.src == samp::kAFm || p.src == samp::kAJuno ? stp : 1), 0, n - 1);
       if (p.src == samp::kATrack) p.midi_ch = p.track;   // the Rytm's default: track N on channel N
       break;
     }
     case 2: p.lo = clampi(p.lo + delta * (func ? 12 : 1), 0, p.hi); break;
     case 3: p.hi = clampi(p.hi + delta * (func ? 12 : 1), p.lo, 127); break;
-    case 4: p.step = clampi(p.step + delta, 1, 24); break;
-    case 5: layers_of(&p, clampi(p.nvel + delta, 1, 8)); break;
-    case 6: p.rr = clampi(p.rr + delta, 1, 4); break;
+    case 4: p.step = clampi(p.step + l, 1, 24); break;
+    case 5: if (l) layers_of(&p, clampi(p.nvel + l, 1, 8)); break;
+    case 6: p.rr = clampi(p.rr + l, 1, 4); break;
     case 7: p.hold_ms = (uint32_t)clampi((int)p.hold_ms + delta * (func ? 1000 : 100), 100, 20000); break;
   }
   samp::asamp_configure(p);

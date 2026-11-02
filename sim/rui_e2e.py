@@ -2,7 +2,7 @@
 """The remote UI end to end in rytm-emu: the emulated Rytm (rytm-mods 0026-remote-ui, build rui1022) against the real
 engine core (sim/rui_link.py: core/build/libcore.dylib's remote UI host, core/ui), over the Overbridge link.
 
-    python3 sim/rui_e2e.py [TEST ...]       TESTS: connect sidecar plaits status leave gone keys splash latehello scope wave rec play gfx extmach machines sdvoice srcgfx srcwave noexit lfo srcview srcdrop latency (default all but latency, srcdrop and srcview)
+    python3 sim/rui_e2e.py [TEST ...]       TESTS: connect sidecar plaits status leave gone keys splash latehello scope wave rec play gfx extmach machines sdvoice srcgfx srcwave noexit lfo listknobs srcview srcdrop latency (default all but latency, srcdrop and srcview)
                                             the pools (rui1043): srclist srcbrowse poolset (poolset-gr / -wt / -ms) poolrefuse poolp3 poolnames pooldsp, or "pools" for all of them
                                             rui1048 (RUI_TAG=rui1048): polycfg polymake (POLY CONFIG from the track menu; E0's make prompt)
                                             rui1049 (RUI_TAG_1043=rui1049): dspsrcyes (FUNC + YES on DSP SAMPLE's SRC view: the browser at once)
@@ -1411,6 +1411,24 @@ def lfo_des(d):
     return [(int(d[3 * k:3 * k + 2], 16) - 64, int(d[3 * k + 2], 16)) for k in range(16)]
 
 
+def t_listknobs(e):
+    # core/ui README "List knobs" on the Rytm's own reports, the core's clock emulated (RUI_LFO): LFO WAVE on knob E
+    os.environ["RUI_LFO"] = "lfo=1:wav:0"
+    os.environ["RUI_LIST_PACED"] = "1"
+    try:
+        r = e.run("listknobs", 4200, ENTER + [(800, "press", "UP", 150), (840, "press", "LFO"), (1400, "turn", "4:+16", 3, 100),
+                                              (2000, "turn", "4:+40", 1, 50), (2600, "turn", "4:-1", 1, 50),
+                                              (3200, "turn", "4:+1", 8, 20)])
+    finally:
+        os.environ.pop("RUI_LFO", None)
+        os.environ.pop("RUI_LIST_PACED", None)
+    lj = [x["lfo"] for x in r["events"] if "lfo" in x and x["lfo"]]
+    w = lj[-1]["l"][0]["wav"] if lj else None
+    check("listknobs: 3 + 1 hard reports up, a count back, 8 slow counts up: WAVE at 3 + 1 - 1 + 2 (before: its end, 7)",
+          w == 5, w)
+    panel_check("listknobs", r, live=True)
+
+
 def t_lfo(e):
     # L1 on FX1's P2 (a square at 0.02 Hz), L2 a fast sine on FX2's P3, L3 on voice 1's HRM (the engine's own); 1026: no
     # Rytm targets, so not a single CC goes to the Rytm
@@ -2702,7 +2720,7 @@ def t_noteedit(e):
 
 TESTS = dict(presetlist=t_presetlist, sidecarload=t_sidecarload, polypat=t_polypat, noteedit=t_noteedit, upmapover=t_upmapover, connect=t_connect, sidecar=t_sidecar, plaits=t_plaits, status=t_status, leave=t_leave, gone=t_gone, keys=t_keys,
              splash=t_splash, latehello=t_latehello, latency=t_latency, scope=t_scope, wave=t_wave, rec=t_rec, play=t_play, gfx=t_gfx, extmach=t_extmach,
-             machines=t_machines, sdvoice=t_sdvoice, srcgfx=t_srcgfx, srcwave=t_srcwave, noexit=t_noexit, lfo=t_lfo, upamp=t_upamp, polycfg=t_polycfg, polymake=t_polymake,
+             machines=t_machines, sdvoice=t_sdvoice, srcgfx=t_srcgfx, srcwave=t_srcwave, noexit=t_noexit, lfo=t_lfo, listknobs=t_listknobs, upamp=t_upamp, polycfg=t_polycfg, polymake=t_polymake,
              srcview=t_srcview, srcturn=t_srcturn, srcsmp=t_srcsmp, srcreplug=t_srcreplug, srcdrop=t_srcdrop, srclist=t_srclist, srcbrowse=t_srcbrowse, project=t_project,
              poolset=t_poolset, poolrefuse=t_poolrefuse, poolp3=t_poolp3, poolnames=t_poolnames, pooldsp=t_pooldsp, dspbank=t_dspbank, dspsrcyes=t_dspsrcyes,
              chopmach=t_chopmach, chopchro=t_chopchro, choplazy=t_choplazy,

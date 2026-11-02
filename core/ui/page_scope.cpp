@@ -317,14 +317,15 @@ CORE_COLD int step(int v, int d, int n) {
 }
 
 CORE_COLD void scope_enc(int e, int delta, bool) {
+  const int l = list_turn(e, delta);
   if (e == 0) {
-    int s = step(sc.src, delta, kTapSources);
+    int s = step(sc.src, l, kTapSources);
     if (s != sc.src) sc.src = (uint8_t)s, sc.fresh = true;
   } else if (e == 1) {
-    int t = step(sc.tb, delta, kTbs);
+    int t = step(sc.tb, l, kTbs);
     if (t != sc.tb) sc.tb = (uint8_t)t, sc.fresh = true;
   } else if (e == 2) {
-    sc.gain = (uint8_t)step(sc.gain, delta, 8);
+    sc.gain = (uint8_t)step(sc.gain, l, 8);
   }
 }
 

@@ -198,10 +198,10 @@ CORE_COLD void keys_draw(Canvas& c, int page, int npages, uint32_t ms) {
 }
 
 CORE_COLD void menu_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.cur += delta > 0 ? 1 : -1, clampv(&M.cur, &M.top, kNum);
+  if (e == 0 && delta) M.cur += list_turn(e, delta), clampv(&M.cur, &M.top, kNum);
 }
 CORE_COLD void keys_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.ktop += delta > 0 ? 1 : -1;
+  if (e == 0 && delta) M.ktop += list_turn(e, delta);
 }
 
 CORE_COLD bool menu_key(int code) {
@@ -295,7 +295,8 @@ CORE_COLD void web_draw(Canvas& c, int page, int npages, uint32_t ms) {
   if (M.wnote_new) M.wnote_new = false, M.wnote_ms = ms | 1;
 }
 CORE_COLD void web_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.wcur += delta > 0 ? 1 : -1, M.wconfirm = false;
+  const int l = e == 0 ? list_turn(e, delta) : 0;
+  if (l) M.wcur += l, M.wconfirm = false;
   if (M.wcur < 0) M.wcur = 0;
   if (M.wcur >= kWebRows) M.wcur = kWebRows - 1;
 }
