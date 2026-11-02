@@ -36,6 +36,7 @@ void play_off(int vi, int note);
 // summed into the voice's channel. false: this machine has no second note (MD, a mono user machine) or the voice's notes come another
 // way (a seq track, the arpeggiator, a live MIDI binding): the trig goes on as a trig. chord_off lets them all go, the first stays the voice's.
 bool chord_on(int vi, int note, int vel);
+bool chord_single(int vi);   // vi's machine has one note to give (MD, a mono user machine), nothing else plays its notes: a chord's other notes are dropped, a flam otherwise
 void chord_off(int vi);
 bool active(int vi);       // vi has instances sounding (render_add has work)
 bool seq_mono(int vi);     // vi plays a sequencer note on its own machine now (the mono path): the Rytm's 0x11 leaves it

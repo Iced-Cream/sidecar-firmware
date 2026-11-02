@@ -519,7 +519,29 @@ int main() {
       quiet(2);
       poly::silence(2);
     }
-    {   // MD plays no second note: each 04 stays a hit
+    {   // MD plays no second note: a chord is its first hit
+      static int hits;
+      auto seen = hooks.trig_seen;
+      hooks.trig_seen = [] { ++hits; };
+      hits = 0;
+      send(trig(kMd | 3, 60));
+      send(trig(kMd | 3, 64));
+      send(trig(kMd | 3, 67));
+      CHECK(hits == 1);                        // one hit: a chord's other notes are no flam
+      quiet(3);
+      hits = 0;
+      send(trig(kMd | 3, 60));
+      send(off(3));                            // the mod's mono line: an 11 between, two hits
+      send(trig(kMd | 3, 64));
+      CHECK(hits == 2);
+      quiet(3);
+      hits = 0;
+      send(trig(kMd | 3, 60));
+      usleep((device::kChordMs + 10) * 1000);
+      send(trig(kMd | 3, 64));                 // too far apart: two hits
+      CHECK(hits == 2);
+      hooks.trig_seen = seen;
+      quiet(3);
       send(trig(kMd | 3, 60));
       send(trig(kMd | 3, 64));
       CHECK(notes(3) == 0);

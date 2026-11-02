@@ -278,6 +278,7 @@ static CORE_COLD bool chord_note(int vi, uint8_t vb, uint8_t note, uint8_t vel) 
     c.notes[c.n++] = note, c.at = ms;
     return true;
   }
+  if (near && inst::chord_single(vi)) return c.at = ms, true;   // one hit, as the box's own step: 04s this close are a flam
   if (c.n > 1) inst::chord_off(vi);   // a new note, no off before it: the amp's tail, as a mono retrig
   c.n = 1, c.vb = vb, c.notes[0] = note, c.at = ms;
 #else

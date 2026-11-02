@@ -379,6 +379,14 @@ CORE_COLD bool chord_on(int vi, int note, int vel) {
   if (d.own_pool || d.pitch == kPitchNone || resolve(kCfg, d).instances <= 1) return false;
   return play_on(vi, note, vel, kCfg);
 }
+CORE_COLD bool chord_single(int vi) {
+  if (vi < 0 || vi >= kVoices || seq::owns_voice(vi) || arp::on(vi) || poly::live_now(vi)) return false;
+  int m = machine_now(vi);
+  if (m == kFm) return false;
+  Decl d = decl_of(vi, m);
+  static constexpr seq::PolyCfg kCfg = {3, 0, 0, 0, 0, 0, 0};
+  return !d.own_pool && (d.pitch == kPitchNone || resolve(kCfg, d).instances <= 1);
+}
 CORE_COLD void chord_off(int vi) {
   if (vi < 0 || vi >= kVoices) return;
   if (v[vi].fm) poly::note_off(vi);
