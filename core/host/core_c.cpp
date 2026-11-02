@@ -18,6 +18,7 @@
 #include "livein/livein.h"
 #include "fx/send_fx.h"
 #include "fx/insert.h"
+#include "fx/master.h"
 #include "fx/out.h"
 #include "um_host.h"
 #include "user/lists.h"
@@ -407,7 +408,7 @@ int core_c_rytm_record(uint8_t* out, uint32_t* gen) {
 // and the OUT route's (out=...), the answer in out; 0 not one of them.
 int core_c_msamp_command(const char* c, char* out, int cap) {
   return core::msamp::command(c, out, cap) || core::nm::command(c, out, cap) || core::sdtest::command(c, false, out, cap) ||
-                 core::livein::command(c, out, cap) || core::ins::command(c, out, cap) || core::out::command(c, out, cap)
+                 core::livein::command(c, out, cap) || core::ins::command(c, out, cap) || core::master::command(c, out, cap) || core::out::command(c, out, cap)
              ? 1
              : 0;
 }

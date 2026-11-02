@@ -15,6 +15,7 @@
 #include "notes.h"
 #include "paircode_pi.h"
 #include "sendfx_pi.h"
+#include "masterfx_pi.h"
 #include "rec_pi.h"
 #include "shared.h"
 #include "user/lists.h"
@@ -367,6 +368,7 @@ void CEngineCores::Worker (unsigned nCore)
 		__atomic_store_n (&s_nDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 		if (nCore == 2) sendfx_pi::Render ();	// the send FX, after the block (sendfx_pi.h)
+		if (nCore == 2) masterfx_pi::Render ();	// the master chain, after the send FX (masterfx_pi.h)
 	}
 }
 
@@ -659,6 +661,9 @@ void CEngineCores::Command (const char *p)
 		L->Write (From, LogNotice, "%s", Lo);
 	}
 	else if (sendfx_pi::Command (p))		// sendfx, sendfxout=, sendlvl=, sendknob= (sendfx_pi.h)
+	{
+	}
+	else if (masterfx_pi::Command (p))		// mfx=stats (masterfx_pi.h)
 	{
 	}
 	else if (strncmp (p, "um", 2) == 0 && (p[2] == 0 || p[2] == '='))	// the user machines (core/user/um.h)

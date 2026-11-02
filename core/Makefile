@@ -17,7 +17,7 @@ RMPSRC   := ../teensy/libraries/RytmPlugins/src
 CXXFLAGS := -std=c++17 -O2 -DCORE_UI_TOOLS=1 -DCORE_POLY=1 -DCORE_MSAMP=1 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=fast -fPIC -I. -Ihost -I$(RMPSRC) -I../sdk $(ENG_INC) $(ENG_FLAGS)
 CFLAGS   := -std=c99 -O2 -g -ffp-contract=fast -fPIC -w $(ENG_INC)
 # The core's own sources (grows task by task) and the Mac port.
-CORE_SRC := engine.cpp project_key.cpp md/md.cpp $(wildcard device/*.cpp) $(wildcard bundle/*.cpp) lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp $(wildcard ui/page_*.cpp) $(wildcard seq/*.cpp) $(wildcard song/*.cpp) $(wildcard rec/*.cpp) pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp msamp/cardq.cpp $(wildcard samp/*.cpp) $(wildcard wavetable/*.cpp) $(wildcard granular/*.cpp) livein/livein.cpp midim/midim.cpp arp/arp.cpp $(wildcard chop/*.cpp) $(wildcard lib/*.cpp) $(wildcard fmt/*.cpp) $(wildcard store/*.cpp) host/platform_host.cpp host/newlib_rand.cpp \
+CORE_SRC := engine.cpp project_key.cpp md/md.cpp $(wildcard device/*.cpp) $(wildcard bundle/*.cpp) lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp $(wildcard ui/page_*.cpp) $(wildcard seq/*.cpp) $(wildcard song/*.cpp) $(wildcard rec/*.cpp) pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp msamp/cardq.cpp $(wildcard samp/*.cpp) $(wildcard wavetable/*.cpp) $(wildcard granular/*.cpp) livein/livein.cpp midim/midim.cpp arp/arp.cpp $(wildcard chop/*.cpp) $(wildcard lib/*.cpp) $(wildcard fmt/*.cpp) $(wildcard store/*.cpp) host/platform_host.cpp host/newlib_rand.cpp \
             user/um.cpp user/lists.cpp host/um_host.cpp $(addprefix $(RMPSRC)/,rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp)
 TESTS    := $(patsubst tests/%.cpp,$(B)/%,$(wildcard tests/test_*.cpp))
 ENG_OBJ  := $(patsubst $(ENG)/%,$(B)/eng-obj/%.o,$(ENG_SRC) $(ENG_C_SRC))
@@ -26,6 +26,12 @@ DEPS_H   := $(filter-out version.h,$(wildcard *.h */*.h host/*.h tests/*.h))
 MC       := $(B)/mc
 MC_FLAGS := -DRYTM_RENDER_CORES=3
 MC_OBJ   := $(patsubst $(ENG)/%,$(MC)/eng-obj/%.o,$(ENG_SRC) $(ENG_C_SRC))
+# The core's objects, one set a configuration, compiled once: every test links them. A plain list and not an archive: modules
+# register themselves in static constructors (fx/master.cpp's Hook), which an archive would leave out. ../ becomes _up/
+CORE_O      := $(patsubst %.cpp,%.o,$(subst ../,_up/,$(CORE_SRC)))
+CORE_OBJ    := $(addprefix $(B)/obj/,$(CORE_O))
+MC_CORE_OBJ := $(addprefix $(MC)/obj/,$(CORE_O))
+.SECONDARY:   # (make would delete the objects after a run as intermediates, and compile them all again the next)
 
 .PHONY: engines test lib clean demo-wavegrain demo-insfx demo-tape demo-amp demo-livein demo-chop bundle-tool fuzz-fmt
 # the format registry's fuzz target (tests/fuzz_fmt.cpp; docs/LIBRARY.md "Tests"): libFuzzer + ASan + UBSan with
@@ -112,8 +118,14 @@ $(MC)/libengines.a: $(MC_OBJ)
 	@test -d $(ENG)/Plaits || { echo "core: run 'make -C core engines' first"; exit 1; }
 	rm -f $@ && ar rcs $@ $^
 MC_TESTS := $(patsubst tests/mc/%.cpp,$(MC)/%,$(wildcard tests/mc/test_*.cpp))
-$(MC)/test_%: tests/mc/test_%.cpp $(CORE_SRC) $(DEPS_H) $(MC)/libengines.a
-	$(CXX) $(CXXFLAGS) $(MC_FLAGS) -pthread -o $@ $< $(CORE_SRC) $(MC)/libengines.a
+$(MC)/obj/_up/%.o: ../%.cpp $(DEPS_H) | $(MC)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(MC_FLAGS) -pthread -c -o $@ $<
+$(MC)/obj/%.o: %.cpp $(DEPS_H) | $(MC)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(MC_FLAGS) -pthread -c -o $@ $<
+$(MC)/test_%: tests/mc/test_%.cpp $(MC_CORE_OBJ) $(DEPS_H) $(MC)/libengines.a
+	$(CXX) $(CXXFLAGS) $(MC_FLAGS) -pthread -o $@ $< $(MC_CORE_OBJ) $(MC)/libengines.a
 
 $(B)/eng-obj/%.c.o: $(ENG)/%.c
 	@mkdir -p $(dir $@)
@@ -123,9 +135,16 @@ $(B)/eng-obj/%.c.o: $(ENG)/%.c
 SMALL       := $(B)/small
 SMALL_FLAGS := -DRYTM_SENDFX_LARGE=0
 SMALL_TESTS := $(patsubst tests/small/%.cpp,$(SMALL)/%,$(wildcard tests/small/test_*.cpp))
-$(SMALL)/test_%: tests/small/test_%.cpp $(CORE_SRC) $(DEPS_H) $(B)/libengines.a
+SMALL_CORE_OBJ := $(addprefix $(SMALL)/obj/,$(CORE_O))
+$(SMALL)/obj/_up/%.o: ../%.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(SMALL_FLAGS) -Itests -c -o $@ $<
+$(SMALL)/obj/%.o: %.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(SMALL_FLAGS) -Itests -c -o $@ $<
+$(SMALL)/test_%: tests/small/test_%.cpp $(SMALL_CORE_OBJ) $(DEPS_H) $(B)/libengines.a
 	@mkdir -p $(SMALL)
-	$(CXX) $(CXXFLAGS) $(SMALL_FLAGS) -Itests -o $@ $< $(CORE_SRC) $(B)/libengines.a
+	$(CXX) $(CXXFLAGS) $(SMALL_FLAGS) -Itests -o $@ $< $(SMALL_CORE_OBJ) $(B)/libengines.a
 
 # Every test run is its own target, so `make -j10 test` runs them side by side (2026-10-26: the one-after-another loop
 # took ~45 min with the builds; every test works in its own mkdtemp folder). A run's output goes to <test>.log and is
@@ -152,9 +171,15 @@ test-serial: $(ALL_TESTS)
 	@set -e; for t in $(ALL_TESTS); do ./$$t; done; echo "ALL CORE TESTS PASS"
 .PHONY: test-serial
 
-$(B)/test_%: tests/test_%.cpp $(CORE_SRC) $(DEPS_H) $(B)/libengines.a
+$(B)/obj/_up/%.o: ../%.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/obj/%.o: %.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/test_%: tests/test_%.cpp $(CORE_OBJ) $(DEPS_H) $(B)/libengines.a
 	@mkdir -p $(B)
-	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE_SRC) $(B)/libengines.a
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE_OBJ) $(B)/libengines.a
 
 # the Sidecar emulator: this engine and the Pi's output stage as a host for analog-emu's --ob-link (tools/sidecar_emu.cpp)
 sidecar-emu: $(B)/sidecar_emu

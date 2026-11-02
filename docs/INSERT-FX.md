@@ -150,7 +150,7 @@ A slot that cannot play passes the voice through TONE and LEV (dry). The card's 
 (`AMP V1 A Plexi Crunch.namb` after the slot's line), so the knob follows the file when others are added; a file no
 longer there is logged and the knob keeps its value.
 
-**Where.** The voice chains only (V1..V8): a bus chain does not take AMP (the Rytm's TYPE stops at RINGMOD there, the
+**Where.** The voice chains (V1..V8) and the master (docs/MASTER-FX.md, its own cap): a bus chain does not take AMP (the Rytm's TYPE stops at RINGMOD there, the
 console says so). AMP is mono: a stereo voice chain (OUT PRE / POST) runs the capture once on (L + R) / 2 and puts it on
 both sides. GAIN goes into the capture, then a 5 Hz DC block, TONE and LEV. The capture's own output for silence
 (measured after its prewarm) is taken off: silence in, silence out (tested: 0.0 from the start, < 1e-5 one second

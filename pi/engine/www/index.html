@@ -363,6 +363,13 @@
       <p class="note">What the Rytm's kit sets: each FX's type, where it returns (PRE on 2/3, POST on 0/1) and the 12 tracks'
         send levels.</p>
     </section>
+    <section>
+      <h2>Master FX</h2>
+      <div id="mfx"></div>
+      <p class="note" id="mfx-gr"></p>
+      <div class="row"><button data-cmd="mfx=stats">Stats to the log</button><button data-cmd="mfx=reset">Clear the chain</button></div>
+      <p class="note" id="mfx-note"></p>
+    </section>
   </div>
 
   <div class="tab" id="tab-lfo">
@@ -1052,6 +1059,44 @@ let status = null, last = {};          // last: the newest stats lines, by kind
 const STATS = /(rytmob: \d+ms IN|engine: engine: fifo|sidecar: \w+ alt|midigadget:)/;
 const PERIODIC = /^\S+ (\w+: )?(display|touch): (?!command|screensaver)/;   // the display's 10 s lines (touch diagnostics)
 
+// ---- the master FX (/status "ins" "mfx", core/fx/master.h; docs/MASTER-FX.md): four slots, the switches; every control a console line
+const MFX_TYPES = ["OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "CHORUS", "COMB", "SPACE", "RINGS", "CLOUD", "HALO"];
+const MFX_NOTE = {
+  ret: "SRC RET: the chain takes what the Sidecar sends back. The Rytm's own mix is not in it: the Pi can add to that mix, not replace it.",
+  mix: "SRC MIX (through mode): the Rytm's 8 stems go through the chain, panned as on the Rytm. Tracks left on ROUTE TO MAIN stay analog. The Rytm's delay and reverb stay in MAIN, outside the chain.",
+  old: "SRC MIX (through mode): these Rytm mods send no pans or routing, so all 8 stems are added, mono. Take every track off ROUTE TO MAIN on the Rytm, or you hear them twice. The Rytm's delay and reverb stay outside the chain.",
+};
+let mfxLast = "";
+function mfxHtml(m) {
+  const key = (c, t, on) => `<button type="button" data-mfx="${c}"${on ? ' class="on"' : ""}>${t}</button>`;
+  let h = `<div class="row">${key(m.byp ? "byp:0" : "byp:1", m.byp ? "Bypassed" : "On", !m.byp)}${key(m.src === "mix" ? "src:ret" : "src:mix", "SRC " + m.src.toUpperCase(), m.src === "mix")}` +
+    `<label>LEV <input type="range" min="0" max="127" value="${m.lev}" data-mfx-v="lev:"></label> ${m.lev}` +
+    `<label>STEM TRIM <input type="range" min="-24" max="0" value="${m.trim}" data-mfx-v="trim:"></label> ${m.trim} dB</div><div class="fxs">`;
+  m.s.forEach((s, i) => {
+    const n = i + 1;
+    h += `<div><label>${n} <select data-mfx-t="${n}">` + MFX_TYPES.map((t) => `<option${t === s.t ? " selected" : ""}>${t}</option>`).join("") + "</select></label>";
+    if (s.t !== "OFF") {
+      s.p.forEach((v, k) => { h += `<div><label>${s.l[k]} <input type="range" min="0" max="127" value="${v}" data-mfx-v="${n}:p${k + 1}:"></label> ${s.v[k]}</div>`; });
+      if (s.send) h += `<div><label>MIX <input type="range" min="0" max="127" value="${s.mix}" data-mfx-v="${n}:mix:"></label> ${s.mix}</div>`;
+      if (s.t === "AMP") h += "<div>" + key(`${n}:pair:${s.pair ? 0 : 1}`, s.pair ? "L/R pair" : "One on L+R", s.pair) + "</div>";
+    }
+    h += "</div>";
+  });
+  return h + "</div>";
+}
+function showMfx(m) {
+  if (!m) return;
+  $("#mfx-gr").textContent = `Limiter: ${m.gr} dB of reduction`;   // (changes all the time: outside what redraws the section)
+  const j = JSON.stringify({ ...m, gr: 0 }), box = $("#mfx");
+  if (j === mfxLast || box.contains(document.activeElement)) return;   // (not under a dragged slider)
+  mfxLast = j;
+  box.innerHTML = mfxHtml(m);
+  $("#mfx-note").textContent = (m.src === "mix" && !m.rep ? MFX_NOTE.old : MFX_NOTE[m.src] || "") +
+    (m.src === "mix" && m.onmain ? ` ${m.onmain} voices are still on main.` : "");
+  box.querySelectorAll("[data-mfx]").forEach((b) => { b.onclick = () => cmd("mfx=" + b.dataset.mfx); });
+  box.querySelectorAll("[data-mfx-v]").forEach((r) => { r.onchange = () => { cmd("mfx=" + r.dataset.mfxV + r.value); r.blur(); }; });
+  box.querySelectorAll("[data-mfx-t]").forEach((t) => { t.onchange = () => { cmd("mfx=" + t.dataset.mfxT + ":type:" + t.value); t.blur(); }; });
+}
 async function cmd(c) {
   appendLines([{ text: "> :" + c, cls: "me" }]);
   let ok = false;
@@ -1442,6 +1487,7 @@ function renderStats() {
   if (st.fxin) fxinShow(st.fxin);
   if (st.lfo) lfoUi.show(st.lfo);   // the LFO tab (/status "lfo": core/lfo.cpp json)
   showPoly(st);                       // E0: the poly tracks (/status "poly", "inst": core/seq, core/inst.h)
+  showMfx(st.ins && st.ins.mfx);      // the master FX (/status "ins" "mfx": core/fx/master.h)
   showSeqx(st);                       // seqtop: the sequencer's top-8 settings (/status "seqx": core/seq)
   if (st.brightness && document.activeElement !== $("#bright")) { $("#bright").value = st.brightness; $("#brightv").textContent = st.brightness + " %"; }
   if (st.display !== undefined) $("#blank").textContent = !st.display ? "no display attached" : st.blank ? "the screen is black now (a touch wakes it)" : "";

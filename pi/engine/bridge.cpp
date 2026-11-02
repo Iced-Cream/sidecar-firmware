@@ -9,6 +9,7 @@
 #include "lfo.h"
 #include "device/device.h"
 #include "fx/insert.h"
+#include "fx/master.h"
 #include "fx/out.h"
 #include "heap_buffers.h"
 #include "keys.h"
@@ -225,6 +226,7 @@ bool poly_command(const char* p, char* out, int cap) {
          core::seq::command(p, out, cap) || core::keys::command(p, out, cap) || core::rytm_dump::command(p, out, cap) ||
          core::song::command(p, out, cap) || core::inst::command(p, out, cap) ||
          core::ins::command(p, out, cap) ||   // fx-ins: "ins", "ins=..." (core/fx/insert.h)
+         core::master::command(p, out, cap) ||   // the master FX: "mfx", "mfx=..." (core/fx/master.h)
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
@@ -236,7 +238,7 @@ void keys_midi(int src, uint8_t st, uint8_t d1, uint8_t d2) { core::keys::midi(s
 void keys_source(int src, bool present, const char* name) { core::keys::source(src, present, name); }
 void keys_set_forward(void (*f)(uint8_t, uint8_t, uint8_t)) { core::keys::set_forward(f); }
 void midim_set_out(bool (*f)(int, const uint8_t*, int)) { core::midim::set_out(f); }
-void rytm_gone() { core::midim::link_lost(); core::arp::link_lost(); }
+void rytm_gone() { core::midim::link_lost(); core::arp::link_lost(); core::master::link_lost(); }
 void rytm_resync() { core::ui::remote_resync(); core::midim::resync(); }
 void rytm_link(bool up) { core::midim::link_state(up); }
 void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
@@ -481,6 +483,7 @@ uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
 }
 const char* ins_bench_name(int t) { return core::ins::type_name(t); }
 uint64_t amp_bench(uint32_t* worst_block) { return core::amp::bench(worst_block); }
+uint64_t mfx_bench(uint32_t* worst_block) { return core::master::bench(worst_block); }
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);
   if (n > 0 && n < cap - 2) {

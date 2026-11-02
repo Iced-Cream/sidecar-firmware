@@ -145,6 +145,7 @@ struct NeRoll {   // the last NOTE EDIT frame's roll (tests)
 NeRoll ne_roll_shown();
 extern const ExtraPage kSongPage;  // SONG RECORD (page_song.cpp, core/song/song.h), last
 extern const ExtraPage kInsPage;   // fx-ins: the INSERT page (page_ins.cpp, core/fx/insert.h), after SEQ
+extern const ExtraPage kMasterPage;   // the master FX (page_mfx.cpp, core/fx/master.h), after INSERT
 void ins_open_out();   // rui1047: the INSERT page on its OUT view of the Rytm's selected track (UP + AMP: 30 page 3)
 // rui1048: POLY CONFIG (page_poly.cpp): a track's poly config (seq.h PolyCfg) on the Rytm's screen. poly_page_open: the
 // device's page request for track t (the Rytm's track menu item: 30 page 0x20 + t, from_menu: NO goes back to the stock
@@ -171,6 +172,7 @@ int poly_page_track();   // the track it shows (tests)
 #if CORE_UI_TOOLS
 // tests and the renderer: the view (track -1: the Rytm's; out: the OUT view; eq: ins1112's EQ view, RIGHT)
 void ins_page_set(bool bus, int slot, int busel, int track, bool out = false, bool eq = false);
+void mfx_page_set(int slot, bool eq);
 #endif
 #endif
 #if CORE_POLY && CORE_MSAMP
