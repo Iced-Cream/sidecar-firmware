@@ -208,6 +208,21 @@ CORE_COLD int command_x(Pattern& pt, const char* p, int* track, char* out, int c
     char b[12];
     return sniprintf(out, cap, CORE_STR("seq: track %d step %d: %d lock%s %s"), r + 1, si + 1, n, n > 1 ? "s" : "", lock_cond_text(c, b, sizeof b)), 1;
   }
+  if (!strncmp(p, "seq=alock:", 10)) {   // arp locks: seq=alock:T:S:F:V - step S's lock of the arp's field F (0 MODE 1 SPD 2 RNG 3 GATE 4 SWNG) to its
+                                         // knob's index V; V -1: none (the touch editor's ARP; the Rytm's hold a trig + FLTR; seq=lock: the same locks)
+    int r = atoi(p + 10) - 1;
+    const char* q = strchr(p + 10, ':');
+    const char* q2 = q ? strchr(q + 1, ':') : nullptr;
+    const char* q3 = q2 ? strchr(q2 + 1, ':') : nullptr;
+    int si = q ? atoi(q + 1) - 1 : -1, f = q2 ? atoi(q2 + 1) : -1, val = q3 ? atoi(q3 + 1) : -2;
+    Track* t = q3 && si >= 0 && si < kMaxSteps && f >= 0 && f < kArpLocks && val >= -1 && val <= kArpLockMax[f] && r >= 0 && r < kRytmTracks
+                   ? track_of(pt, r, false) : nullptr;
+    if (!t) return sniprintf(out, cap, CORE_STR("seq=alock:T:S:0..4:V (MODE SPD RNG GATE SWNG, V the value's index, -1 none)")), -1;
+    Step& s = t->step[si];
+    bool ok = val < 0 ? clear_lock(s, kLockArp + f) : set_lock(s, kLockArp + f, val << 7);
+    *track = r;
+    return sniprintf(out, cap, CORE_STR("seq: track %d step %d: %d locks%s"), r + 1, si + 1, s.nl, ok || val < 0 ? "" : " (full)"), 1;
+  }
   if (!strncmp(p, "seq=fx:", 7)) {   // seqtop H1: seq=fx:T:S:C:CMD:VAL | seq=fx:T:S:C:off (C 1 / 2; CMD RTG DLY CUT CHN RND RNV OCT
                                       // TRS JMP JRN LOP SKP DIR FIL; LOP's VAL NxX, DIR's a direction)
     int r = atoi(p + 7) - 1;
@@ -245,7 +260,7 @@ CORE_COLD int command_x(Pattern& pt, const char* p, int* track, char* out, int c
     int n = 0;
     for (int k = 0; t && k < t->step[si].nl; ++k) {
       int x = t->step[si].lock[k].param;
-      if (!all && x != prm) continue;
+      if ((!all && x != prm) || arp_lock(x)) continue;   // (an arp lock holds)
       t->step[si].slide = on ? t->step[si].slide | 1u << x : t->step[si].slide & ~(1u << x);
       ++n;
     }

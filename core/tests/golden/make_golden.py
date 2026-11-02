@@ -76,6 +76,12 @@ tr5 = [dict(track=1, length=12, speed=P.SEQ_SPEEDS.index("2/3"), dir=P.SEQ_DIRS.
 v5 = P.sqp_pack(tr5, scale=(2, P.SEQ_SCALES.index("DOR"), 2))   # M1: D dorian, QNT PLAY
 assert v5[4] == 4
 put("sqp", 4, "p003.sqp", v5)
+# arp locks (a required block): step 1 a note, MODE UP and RNG 2 octaves on a 1:3 condition beside a P3 lock; step 5 a lock trig, SPD 1/32
+tr6 = [dict(track=2, steps={0: dict(notes=[(60, 100, 192, 0)], locks=[(P.SEQ_LOCK_ARP, 1 << 7), (P.SEQ_LOCK_ARP + 2, 1 << 7, 9 + 2), (2, 90 << 7)]),
+                            4: dict(notes=[], locks=[(P.SEQ_LOCK_ARP + 1, 5 << 7)])})]
+v6 = P.sqp_pack(tr6)
+assert v6[4] == 4
+put("sqp", 4, "p004.sqp", v6)
 put("tracks", 1, "tracks.txt", "mask=0x005\nlat=12\nquant=1\npin=0x000\npinseq=1\nlatset=0\n")   # seq.cpp save_tracks
 put("song", 1, "take-1.json", '{"format":"sidecar-song","version":1,"project":"LIVE","name":"take-1","length":1920,'
     '"events":[]}\n')

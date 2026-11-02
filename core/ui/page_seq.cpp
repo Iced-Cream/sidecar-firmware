@@ -15,6 +15,7 @@
 #if CORE_POLY
 #include <string.h>
 
+#include "arp/arp.h"
 #include "fx/insert.h"
 #include "fx/send_fx.h"
 #include "inst.h"
@@ -357,7 +358,7 @@ CORE_COLD void prompt_draw(Canvas& c, const seq::View& w) {
     footer(c, "NO: BACK");
   }
 }
-UI_ROM const char* const kLockNames[8] = {"TRIG", "SRC", "SMPL", "FLTR", "AMP", "LFO", "FX", "INS"};
+UI_ROM const char* const kLockNames[8] = {"TRIG", "SRC", "SMPL", "ARP", "AMP", "LFO", "FX", "INS"};   // (kLpFltr: FLTR opens the arp's)
 // The SMPL page's labels by machine (rytm-mods 0026 cu tables; 0021's for 6-OP FM)
 CORE_COLD const char* p2_label(int vb, int e) {
   static const char* const fm[8] = {"TUN", "FIN", "BR", "SMP", "CHD", "INV", "SPR", "VOI"};
@@ -371,9 +372,22 @@ CORE_COLD const char* p2_label(int vb, int e) {
   return (m == kFm ? fm : m == kMultiMachine ? ms : m == kWaveMachine ? wt : m == kGranMachine ? gr : m == kDaisy ? ds
           : m == kChopMachine ? cp : px)[e & 7];
 }
+// An arp lock's value, its name: "UP" "1/32" "2 OCT" "25%" "58%"
+CORE_COLD void arp_text(int prm, int v, char* b, int cap) {
+  switch (prm - seq::kLockArp) {
+    case 0: sniprintf(b, cap, "%s", arp::mode_name(v)); break;
+    case 1: sniprintf(b, cap, "%s", arp::speed_name(v)); break;
+    case 2: sniprintf(b, cap, CORE_STR("%d OCT"), v + 1); break;
+    case 3: sniprintf(b, cap, CORE_STR("%d%%"), arp::gate_pct(v)); break;
+    default: sniprintf(b, cap, CORE_STR("%d%%"), arp::swing_pct(v)); break;
+  }
+}
 CORE_COLD void lock_label(int pg, int t, int e, char* b, int cap) {
   b[0] = 0;
-  if (pg == seq::kLpSrc) {
+  if (pg == seq::kLpFltr) {
+    static const char* const k[seq::kArpLocks] = {"MODE", "SPD", "RNG", "GATE", "SWNG"};
+    sniprintf(b, cap, "%s", k[e < seq::kArpLocks ? e : 0]);
+  } else if (pg == seq::kLpSrc) {
     const Page* p = remote_track_page(t);
     if (p && p->label[e][0]) sniprintf(b, cap, "%.4s", p->label[e]);
     else sniprintf(b, cap, CORE_STR("P%d"), e + 1);
@@ -404,7 +418,7 @@ CORE_COLD void lock_draw(Canvas& c, const seq::View& w) {
     any = true;
     int lv = seq::held_lock(prm);
     int v = (lv >= 0 ? lv : seq::lock_base(prm)) >> 7;
-    knob(c, r, v);
+    knob(c, r, seq::arp_lock(prm) ? v * 127 / seq::lock_top(prm) : v);
     lock_label(pg, w.track, e, l, sizeof l);
     int lx = r.x + kCellW / 2, ly = r.y + kLabelDy;
     if (lv >= 0) {   // locked: the label inverted and the cell framed, as the Rytm marks a p-locked knob
@@ -440,14 +454,18 @@ CORE_COLD void lock_draw(Canvas& c, const seq::View& w) {
     if (lc > 0) seq::lock_cond_text(lc, cb, sizeof cb);
     if (w.msg) sniprintf(b, sizeof b, "%s", w.msg);   // rui1050: SLIDE ON / NO LOCK
     else if (e == w.cond_e) sniprintf(b, sizeof b, CORE_STR("S%d %s COND:%s"), w.page * 16 + first + 1, l, lc > 0 ? cb : "---");
-    else sniprintf(b, sizeof b, CORE_STR("S%d %s:%d%s%s%s"), w.page * 16 + first + 1, l, (lv >= 0 ? lv : seq::lock_base(prm)) >> 7,
+    else if (seq::arp_lock(prm)) {
+      char vt[8];
+      arp_text(prm, (lv >= 0 ? lv : seq::lock_base(prm)) >> 7, vt, sizeof vt);
+      sniprintf(b, sizeof b, CORE_STR("S%d %s:%s%s%s%s"), w.page * 16 + first + 1, l, vt, lv >= 0 && !lc ? " LOCK" : "", lc > 0 ? " " : "", cb);
+    } else sniprintf(b, sizeof b, CORE_STR("S%d %s:%d%s%s%s"), w.page * 16 + first + 1, l, (lv >= 0 ? lv : seq::lock_base(prm)) >> 7,
                    lv >= 0 && !lc && !sl ? " LOCK" : "", lc > 0 ? " " : "", cb);
     if (sl && !w.msg && e != w.cond_e) {
       size_t n = strlen(b);
       sniprintf(b + n, sizeof b - n, " SLD");
     }
     // (the level box only beside the plain form: a condition / slide / COND needs the bar's width)
-    footer(c, b, w.msg || lc > 0 || sl || e == w.cond_e ? -1 : (lv >= 0 ? lv : seq::lock_base(prm)) >> 7);
+    footer(c, b, w.msg || lc > 0 || sl || e == w.cond_e || seq::arp_lock(prm) ? -1 : (lv >= 0 ? lv : seq::lock_base(prm)) >> 7);
   } else if (w.msg) {
     footer(c, w.msg);
   } else if (held > 1) {

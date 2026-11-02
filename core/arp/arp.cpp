@@ -48,8 +48,17 @@ struct Vo {
   bool seq_cfg;          // the notes came from the sequencer: its poly config
   seq::PolyCfg pcfg;
   uint16_t sig;          // the machines on the voice's tracks at the last look (machines())
+  uint32_t plain[4];     // pitches the sequencer played past the arp under a lock of MODE OFF: their off goes to the machine, whatever is held here then
 };
+struct Lk {
+  uint8_t mask, val[seq::kArpLocks];
+  int8_t track;
+  int64_t until;
+};
+static_assert(seq::kArpLockMax[0] == kModes - 1 && seq::kArpLockMax[1] == kSpeeds - 1 && seq::kArpLockMax[2] == kRanges - 1 &&
+              seq::kArpLockMax[3] == kGates - 1 && seq::kArpLockMax[4] == kSwings - 1, "seq.h's arp lock ranges");
 Vo vo[kVoices];
+Lk lk[kVoices];
 uint16_t code[12];
 uint8_t running = 0;   // bit vi
 Stats st;
@@ -70,6 +79,20 @@ CORE_COLD int code_of(int vi) {
   for (int t = 0; t < 12; ++t)
     if (ui::remote_track_voice(t) == vi && code_on(code[t]) && sidecar_track(t)) return code[t];
   return 0;
+}
+// The voice's settings at frame h: the code, a lock laid over it. A lock past its step is gone here
+CORE_COLD Cfg cfg_at(int vi, int64_t h) {
+  Lk& l = lk[vi];
+  if (l.mask && h >= l.until) l.mask = 0;
+  int cc = code_of(vi);
+  if (!l.mask) return decode(cc);
+  Cfg c = decode(cc ? cc : code[l.track]);   // (the sound's OFF: its other values still its own)
+  if (l.mask & 1) c.mode = l.val[0];
+  if (l.mask & 2) c.speed = l.val[1];
+  if (l.mask & 4) c.range = l.val[2];
+  if (l.mask & 8) c.gate = l.val[3];
+  if (l.mask & 16) c.swing = l.val[4];
+  return c;
 }
 CORE_COLD void wake(int vi) {
   if (!vo[vi].run) {
@@ -132,6 +155,11 @@ CORE_COLD int list_of(const Vo& x, int mode, uint8_t* pit, uint8_t* vel) {
   }
   return n;
 }
+// MODE OFF by a lock, the sound's on: the note ends, the hold rests, placed again when the lock goes
+CORE_COLD void rest(int vi) {
+  sound_off(vi);
+  vo[vi].started = false;
+}
 // The note at position pos of the pattern over c.range octaves
 CORE_COLD int pick(int pos, int n, const Cfg& c, int* idx) {
   int m = n * (c.range + 1), i;
@@ -177,7 +205,7 @@ CORE_COLD int release(int vi, int src, int key, int note) {
   memcpy(save, x.h, sizeof save);
   int gone = drop(vi, src, key, note);
   if (!gone || x.n || !x.run || x.pos || x.note >= 0) return gone;
-  Cfg c = decode(code_of(vi));
+  Cfg c = cfg_at(vi, (int64_t)seq::frames());
   if (c.mode == kOff) return gone;
   memcpy(x.h, save, sizeof save);
   x.n = was;
@@ -245,15 +273,31 @@ CORE_COLD Cfg get(int t) { return decode(t >= 0 && t < 12 ? code[t] : 0); }
 CORE_COLD bool on(int vi) { return vi >= 0 && vi < kVoices && code_of(vi) != 0; }
 
 CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
-  if (!on(vi)) return false;
+  if (vi >= 0 && vi < kVoices && lk[vi].mask) {
+    Cfg c = cfg_at(vi, (int64_t)seq::frames());
+    if (c.mode == kOff) {
+      if (lk[vi].mask & 1) vo[vi].plain[note >> 5 & 3] |= 1u << (note & 31);
+      if (vo[vi].run && !on(vi)) end(vi);   // (its lock gone just now: before the note it could end)
+      return false;
+    }
+    if (!on(vi) && vo[vi].note != note) inst::play_off(vi, note);   // locked on: a plain note of that pitch gives way (one off comes for both)
+  } else if (!on(vi)) {
+    return false;
+  }
   vo[vi].seq_cfg = true, vo[vi].pcfg = cfg;
   add(vi, note, vel, kLiveSeq, note);
   return true;
 }
 CORE_COLD bool seq_off(int vi, int note) {
   if (vi < 0 || vi >= kVoices) return false;
-  if (note < 0) return drop(vi, kLiveSeq, -1, -1), false;
-  return release(vi, kLiveSeq, note, note) > 0;
+  if (note < 0) {
+    memset(vo[vi].plain, 0, sizeof vo[vi].plain);
+    return drop(vi, kLiveSeq, -1, -1), false;
+  }
+  uint32_t& w = vo[vi].plain[note >> 5 & 3], bit = 1u << (note & 31);
+  bool plain = (w & bit) != 0;
+  w &= ~bit;
+  return release(vi, kLiveSeq, note, note) > 0 && !plain;
 }
 CORE_COLD bool live_on(int vi, int note, int vel, int ch, int key) {
   if (!on(vi)) return false;
@@ -285,6 +329,18 @@ CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
 }
 CORE_COLD bool trig_off(int vi) { return vi >= 0 && vi < kVoices && release(vi, kLiveTrig, -1, -1) > 0; }
 
+CORE_COLD void lock(int vi, int track, int mask, const uint8_t* val, int64_t until) {
+  if (vi < 0 || vi >= kVoices) return;
+  Lk& l = lk[vi];
+  l.mask = (uint8_t)(mask & 31), l.track = (int8_t)(track >= 0 && track < 12 ? track : 0), l.until = until;
+  for (int i = 0; i < seq::kArpLocks; ++i) l.val[i] = (uint8_t)(val[i] <= seq::kArpLockMax[i] ? val[i] : seq::kArpLockMax[i]);
+  if (vo[vi].run && cfg_at(vi, (int64_t)seq::frames()).mode == kOff) {   // now, not at the block: the step's own notes come next
+    if (on(vi)) rest(vi);
+    else end(vi);
+  }
+}
+CORE_COLD int locked(int vi) { return vi >= 0 && vi < kVoices && (int64_t)seq::frames() < lk[vi].until ? lk[vi].mask : 0; }
+
 void block(int64_t h) {
   if (!running) return;
   uint32_t t0 = now_us();
@@ -300,10 +356,10 @@ void block(int64_t h) {
       x.started = false, x.pos = 0;
       continue;
     }
-    int cc = code_of(vi);
-    Cfg c = decode(cc);
+    Cfg c = cfg_at(vi, h);
     if (c.mode == kOff) {
-      end(vi);
+      if (on(vi)) rest(vi);
+      else end(vi);
       continue;
     }
     double p = clk ? per : seq::step_frames(seq::tempo() > 1 ? seq::tempo() : 120.0, 2);
@@ -449,6 +505,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
 
 CORE_COLD void reset() {
   memset(vo, 0, sizeof vo);
+  memset(lk, 0, sizeof lk);
   for (Vo& x : vo) x.note = -1;
   memset(code, 0, sizeof code);
   memset(&st, 0, sizeof st);

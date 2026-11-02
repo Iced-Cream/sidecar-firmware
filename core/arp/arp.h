@@ -23,6 +23,11 @@
 // keys and pads that are down run on, free. Another kit (a 3B naming the same kit is an open's: nothing), machine change, a voice's silence, the link gone, a mode set OFF:
 // everything of the voice ends now, but a trig just made (the new kit's own step, reported before its 3B).
 //
+// Locks (docs/SEQUENCER.md "Arp locks"): a sequencer step locks any of the five settings (seq.h kLockArp), on a seq track only. lock() lays them over the
+// voice's settings from the step until the next step, or until another step's set says otherwise; a voice with no lock runs the code above and nothing else.
+// The code's values stay as they were. MODE locked on, the sound's OFF: the step's notes are held here, and end with the step. MODE locked OFF, the sound's on: the
+// step's own notes play as if no arp, what was held rests and runs on after it. A note sounding keeps its own pitch for its off, whatever the lock does to the pattern.
+//
 // The control side (the Pi's core 3): between render blocks, no card, bounded work: pre_block does nothing while no voice runs,
 // else at most kVoices clock reads, a sort of kHeld notes at each note.
 #pragma once
@@ -63,6 +68,10 @@ bool live_on(int vi, int note, int vel, int ch, int key);          // a pad's or
 bool live_off(int vi, int ch, int key);     // true: it was; key -1: every note of ch, false
 bool trig(int vi, int note, int vel, const float* p);              // a Rytm trig (mono on the voice): true when held here
 bool trig_off(int vi);                      // its 0x11: true when it ended the voice's trig here
+
+// The sequencer's step: fields of mask (bit i: val[i], in Cfg's order) laid over the voice's settings until host frame until; mask 0: none now. track: the step's
+void lock(int vi, int track, int mask, const uint8_t* val, int64_t until);
+int locked(int vi);                         // the mask in force, 0 none
 
 void block(int64_t h);                      // seq::pre_block, each render block: h its first frame
 void stop();                                // the transport left PLAY

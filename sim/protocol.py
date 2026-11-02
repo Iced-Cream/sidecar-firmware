@@ -789,7 +789,8 @@ SENDFX_TYPES = {0: "OFF", 1: "CHORUS", 2: "COMB", 3: "DELAY", 4: "PINGPONG", 5: 
 SENDFX_BUILT = (1, 2, 16, 17, 18, 5, 6, 8, 15)   # 1, 2, 16, 17, 18 everywhere (the Teensy's small set); 5, 6, 8, 15 the Pi
 SENDFX_BUILT_TEENSY = (1, 2, 16, 17, 18)       # (and the Mac): a Teensy build reports them MISSING
 # fx-ins (core/fx/insert.h, docs/INSERT-FX.md): the INSERT slots' TYPE ids (stable: the card's files name them), the
-# seq p-lock params 24..31 lock the track's voice's INSERT A / B P1..P4 (core/seq/seq.h kLockIns; SEQ_LOCK_INS below)
+# seq p-lock params 24..31 lock the track's voice's INSERT A / B P1..P4 (core/seq/seq.h kLockIns; SEQ_LOCK_INS below);
+# 32..36 the arpeggiator's MODE SPD RNG GATE SWNG for that step only (kLockArp; SEQ_LOCK_ARP)
 INSERT_TYPES = {0: "OFF", 1: "FILTER", 2: "CRUSH", 3: "DRIVE", 4: "EQ", 5: "COMP", 6: "DELAY", 7: "TREMOLO", 8: "RINGMOD", 9: "AMP", 10: "SAT"}
 SENDFX_STUTTER = 15   # a master insert, not a send (core/fx/stutter_fx.h): one FX slot at a time, a second MISSING
 SENDFX_USER_FIRST, SENDFX_USER_SLOTS = 64, 4
@@ -1598,6 +1599,7 @@ SQP_BLK_RTRG, SQP_BLK_SLIDE, SQP_BLK_FX = 10, 11, 12
 #     where the rule for a file without it (a track holding steps is on, an empty one off) would read it otherwise
 #     (a track's on=0|1)
 SQP_BLK_ON = 13
+SQP_BLK_ARP = 14   # arp locks: <track>, its steps hold some (they are in the lock lists): required, an older Sidecar locks the file
 SEQ_FX_CMDS = ("---", "RTG", "DLY", "CUT", "CHN", "RND", "RNV", "OCT", "TRS", "JMP", "JRN", "LOP", "SKP", "DIR", "FIL")
 SEQ_RT_MODES = ("CHORD", "WALK", "UP", "DOWN", "UPDN", "RND", "PLAYED", "CONV")
 SEQ_RT_RATES = ("AUTO", "2", "1", "2/3", "1/2", "1/3", "1/4", "1/6", "1/8")
@@ -1612,7 +1614,8 @@ SEQ_DIRS = ("FWD", "REV", "PEND", "PING", "RND", "BROWN")   # P1 (core/seq/rng.h
 SEQ_SPEEDS = ("FOLLOW", "1/8", "1/4", "1/2", "3/4", "3/2", "2", "2/3", "5/4", "7/8")   # P2: Sidecar steps per Rytm step
 SQP_BLK_REQUIRED, SQP_BLK_PER_STEP, SQP_BLK_TRACK = 1, 2, 4
 SQP_ALLOCS = ("REASSIGN", "ROTATE", "RESET")   # PolyCfg.alloc (core/seq/seq.h; the Analog Four's POLY CONFIG names)
-SEQ_LOCKS, SEQ_LOCK_FX, SEQ_LOCK_INS, SEQ_LOCK_PARAMS = 12, 16, 24, 32   # fx-ins: 24..31 the INSERT params
+SEQ_LOCKS, SEQ_LOCK_FX, SEQ_LOCK_INS, SEQ_LOCK_PARAMS = 12, 16, 24, 37   # fx-ins: 24..31 the INSERT params
+SEQ_LOCK_ARP, SEQ_ARP_TOP = 32, (5, 5, 2, 2, 2)   # arp locks: 32..36 MODE SPD RNG GATE SWNG (core/arp/arp.h), their largest values
 SEQ_MAX_STEPS, SEQ_MAX_NOTES = 128, 8
 
 
@@ -1677,6 +1680,8 @@ def sqp_pack(tracks, seed=None, blocks=(), scale=None):
                       for x in st.get("locks", [])[:SEQ_LOCKS] if x[0] in st.get("slide", ()))
         if sl:
             bl.append((SQP_BLK_SLIDE, SQP_BLK_TRACK | SQP_BLK_REQUIRED | SQP_BLK_PER_STEP, bytes([t["track"]]) + sl))
+        if any(SEQ_LOCK_ARP <= x[0] < SEQ_LOCK_PARAMS for st in t.get("steps", {}).values() for x in st.get("locks", [])[:SEQ_LOCKS]):
+            bl.append((SQP_BLK_ARP, SQP_BLK_TRACK | SQP_BLK_REQUIRED | SQP_BLK_PER_STEP, bytes([t["track"]])))
         fx = b"".join(bytes([i, st["fx"][0][0], st["fx"][0][1] & 255, st["fx"][1][0], st["fx"][1][1] & 255])
                       for i, st in sorted(t.get("steps", {}).items()) if st.get("fx") and (st["fx"][0][0] or st["fx"][1][0]))
         if fx:
@@ -1779,6 +1784,8 @@ def sqp_unpack(data, extra=None):
                 for e in range(1, len(pay) - 1, 2):
                     if pay[e] in tr["steps"]:
                         tr["steps"][pay[e]].setdefault("slide", []).append(pay[e + 1])
+            elif bid == SQP_BLK_ARP and tr is not None:
+                pass   # (the locks are in the steps' lists; sqp_pack writes it again)
             elif bid == SQP_BLK_RTRG and tr is not None:
                 for e in range(1, len(pay) - 7, 8):
                     if pay[e] in tr["steps"]:
