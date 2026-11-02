@@ -1,6 +1,5 @@
 # The required status check "test": the tests that need no hardware, no firmware and no cross toolchain
-# (tools/run_portable_tests.sh), on a Linux runner. "core" runs the engine core's tests on macOS (core/host/um_host.cpp
-# uses Apple's JIT API, so the core's host build is macOS-only for now).
+# (tools/run_portable_tests.sh), on a Linux runner. The engine core's tests are in core.yml.
 name: test
 on:
   push:
@@ -25,11 +24,3 @@ jobs:
         env:
           CXX: clang++
           CC: clang
-  core:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - name: Engines (Plaits, DaisySP, digidrum at their pinned commits)
-        run: make -C core engines
-      - name: Core tests
-        run: make -C core test -j3
