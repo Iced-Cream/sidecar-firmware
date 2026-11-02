@@ -562,14 +562,17 @@ On seq tracks only: a plain Rytm track's arp is 10 bits in the sound, not a Rytm
   step included: that is how a chord held over several steps changes on one of them.
 - **That step only.** Other locks hold to the next trig; these end at the next step, an empty one too. A step with no arp lock, a track
   with none: the arp as it was, bit for bit.
-- **Where:** a step's set reaches the voice 2 ms before the step, to 2 ms before the next, so a grid point on the step takes
-  them even when the grid is another track's clock. A shared voice: the last step that locked it.
+- **Where:** the window is the step's place on the grid, swing and DLY left out, as the arp's grid has neither: from 2 ms before it
+  (earlier when a note's micro starts earlier) to 2 ms before the next step, so a grid point on the step takes them even when the
+  grid is another track's clock. The step's whole lock set goes at that start, its P and FX locks too, ahead of swing or DLY. A note
+  delayed past the window plays by the next step's values. A shared voice: the last step that locked it.
 - **MODE:** locked to OFF with the sound's on: the step's own notes play as without an arp, a chord held from before rests and goes on
   after the step. Locked on with the sound's OFF: the step's notes arpeggiate with the sound's other values; a note longer than
-  the step ends with it. A lock with no MODE on an arp that is OFF does nothing. RNG or MODE moving under a sounding note: the note
+  the step ends with it. With no grid point left in the step (an odd step on a swung track, a slow SPD, a late note) the first note
+  plays at the note's own place. A lock with no MODE on an arp that is OFF does nothing. RNG or MODE moving under a sounding note: the note
   keeps its pitch for its off.
 - **File:** a track with any carries `kBlkArp` = 14, required, `<track>`: version 4, so an older Sidecar locks the file (never plays it
-  without them, never saves over it). A value past a table locks it too. Without arp locks a pattern's bytes are as before.
+  without them, never saves over it). A value past a table locks it too, block or none. Without arp locks a pattern's bytes are as before.
 
 ### How the locks play [measured, core/tests/test_seq.cpp, sim/seq_e2e.py lock]
 

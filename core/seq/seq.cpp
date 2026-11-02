@@ -425,7 +425,10 @@ CORE_COLD void note_on(int vi, int note, int vel, int r) {
 }
 CORE_COLD void note_off(int vi, int note) {
   if (!sounding[vi][note]) return;
-  if (--sounding[vi][note]) return;
+  if (--sounding[vi][note]) {
+    arp::plain_off(vi, note);   // (a short note beside a long one of its pitch: nothing without a lock of MODE OFF)
+    return;
+  }
   inst::seq_off(vi, note);
   ++st.notes_off;
 }
@@ -1321,10 +1324,13 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
         if (!sw) ls.slide |= (uint16_t)(1u << ls.n), ls.to[ls.n] = to, ls.end[ls.n] = end;
       }
       ls.l[ls.n++] = l;
-      // arp locks: from just before the step to just before the next, so its grid point takes them whichever track's clock it runs on
+      // arp locks: the step's place on the grid, swing and DLY left out (the arp's grid has neither), just before it to just before the next, so
+      // its point takes them whichever track's clock it runs on. The whole set goes then, its other locks too
       if (arp_lock(l.param) && !ls.arp_end) {
-        ls.arp_end = fol.to_host((int64_t)(fs0 + per + dly * per / kSub)) - latency - kArpEarly;
-        lf = lf - kArpEarly < (int64_t)hframes ? (int64_t)hframes : lf - kArpEarly;
+        int64_t g0 = fol.to_host((int64_t)fs0) - latency;
+        ls.arp_end = fol.to_host((int64_t)(fs0 + per)) - latency - kArpEarly;
+        lf = (lf < g0 ? lf : g0) - kArpEarly;
+        if (lf < (int64_t)hframes) lf = (int64_t)hframes;
       }
     }
     push(lf, fol.to_host((int64_t)fs0), ++ev_id, 2, vi, slot, 0, r, pred);   // (sf: the grid's - a replan cuts by it)

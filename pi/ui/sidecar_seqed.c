@@ -1189,7 +1189,9 @@ static void x_view (void)
 	int nl = 0, n = st >= 0 ? lv_snprintf (b, sizeof b, oled () ? "ARP LOCKS %d:" : "ARP LOCKS   step %d:", st + 1) : 0;
 	for (int f = 0; f < 5; f++)
 	{
+		static const int kAKeys[5] = {7, 7, 4, 4, 4};		// (the maps' keys)
 		int x = st >= 0 ? s_V.arpl[st] >> (3 * f) & 7 : 0;
+		if (x >= kAKeys[f]) x = 0;
 		if (s_ArpM[f]) th_seg_set (s_ArpM[f], st >= 0 ? x : -1);
 		if (x)
 		{

@@ -345,6 +345,28 @@ static void test_arp_locks() {
   c = seq::crc32(b + 12, n - 12);
   for (int k = 0; k < 4; ++k) b[8 + k] = (uint8_t)(c >> (8 * k));
   CHECK(!seq::unpack(q, 4, b, n) && seq::unpack_error() == seq::kUnpackNewer);
+  // no block in the file, a value past its table all the same (a damaged or hand-made file): never read as one; one inside it: as any lock
+  {
+    static seq::Pattern w;
+    seq::clear(w, 4);
+    seq::Track* wt = seq::track_of(w, 2, true);
+    wt->on = 1;
+    CHECK(seq::set_lock(wt->step[3], 3, 99 << 7));
+    int m = seq::pack(w, b, sizeof b), pv = -1;
+    CHECK(m > 0 && b[4] == 2);
+    for (int i = 12; i + 2 < m && pv < 0; ++i)
+      if (b[i] == 3 && (b[i + 1] | b[i + 2] << 8) == 99 << 7) pv = i;
+    CHECK(pv > 0);
+    auto bytes = [&](int prm, int val) {
+      b[pv] = (uint8_t)prm, b[pv + 1] = (uint8_t)(val & 0xFF), b[pv + 2] = (uint8_t)(val >> 8);
+      uint32_t x = seq::crc32(b + 12, m - 12);
+      for (int k = 0; k < 4; ++k) b[8 + k] = (uint8_t)(x >> (8 * k));
+    };
+    bytes(seq::kLockArp + 2, 7 << 7);
+    CHECK(!seq::unpack(q, 4, b, m) && seq::unpack_error() == seq::kUnpackNewer);
+    bytes(seq::kLockArp + 2, 1 << 7);
+    CHECK(seq::unpack(q, 4, b, m) && seq::lock_of(seq::track_of(q, 2)->step[3], seq::kLockArp + 2) == 1 << 7);
+  }
   // the console's line (the touch editor's ARP): a value past its table refused, -1 clears
   char o[120];
   int tr = -1;

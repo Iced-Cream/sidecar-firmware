@@ -744,15 +744,18 @@ int main() {
       int64_t at;
       int on, note;
     };
+    int take_micro = 0;
+    std::string take_cmd;
     auto take = [&](arp::Cfg base, std::vector<std::vector<int>> locks, std::vector<int> notes = {60, 64}, int len = 11 * seq::kSub, int step0 = 0) {
       halt();
       run(4800);
       seq::Track* tr = seq::edit_track(0, true);
       CHECK(tr);
       for (int s = 0; s < 16; ++s) tr->step[s] = {};
-      for (int n : notes) seq::add_note(tr->step[step0], {(uint8_t)n, 100, (uint16_t)len, 0, 0});
+      for (int n : notes) seq::add_note(tr->step[step0], {(uint8_t)n, 100, (uint16_t)len, (int8_t)take_micro, 0});
       if (!notes.empty()) tr->step[step0].flags |= 1, tr->step[step0].prob = 100;
       for (auto& l : locks) CHECK(seq::set_lock(tr->step[l[0]], seq::kLockArp + l[1], l[2] << 7));
+      if (!take_cmd.empty()) CHECK(seq::command(take_cmd.c_str(), b, sizeof b));
       seq::touched();
       arp::set(0, base);
       run(4800);
@@ -858,6 +861,70 @@ int main() {
     auto on1 = take(cfg(arp::kOff, 5), {{0, 0, arp::kUp}});
     same(note_at(on1, 0, S - 200), {60, 64});
     same(note_at(on1, S - 200, 12 * S), {});
+    // a swung track: the arp's grid is straight, a step's lock holds from the step's place on it, odd steps as even
+    {
+      auto swing = [&](int v) { seq::edit_track(0, true)->swing = (uint8_t)v, seq::touched(); };
+      swing(58);
+      auto b58 = take(cfg(arp::kUp), {});
+      auto r3 = take(cfg(arp::kUp), {{3, 2, 1}});
+      same(note_at(r3, 3 * S - 100, 4 * S - 100), {76});
+      same_but(b58, r3, 3 * S - 100, 3 * S + 3100);
+      auto r2 = take(cfg(arp::kUp), {{2, 2, 1}});
+      same(note_at(r2, 2 * S - 100, 3 * S - 100), {72});
+      same_but(b58, r2, 2 * S - 100, 2 * S + 3100);
+      auto o3 = take(cfg(arp::kUp), {{3, 0, arp::kOff}});
+      same(note_at(o3, 3 * S - 100, 4 * S - 100), {});
+      same(note_at(o3, 4 * S - 100, 5 * S - 100), {64});
+      // the sound's OFF, MODE locked on: no grid point left in the step: its first note at the note's own place, not lost, ended with the step
+      auto first = [&](arp::Cfg sound, int64_t at) {
+        auto h = take(sound, {{1, 0, arp::kUp}}, {60, 64}, 11 * seq::kSub, 1);
+        same(note_at(h, S - 100, 2 * S - 100), {60});
+        same(note_at(h, 2 * S - 100, 12 * S), {});
+        for (auto& x : h)
+          if (x.on) CHECK(llabs(x.at - at) <= 96);
+      };
+      first(cfg(arp::kOff), S + S * 16 / 100);   // swing 58, an odd step
+      swing(50);
+      first(cfg(arp::kOff, 1), S);               // SPD 1/8 and 1/4: their point is not on this step
+      first(cfg(arp::kOff, 0), S);
+      take_micro = 24;
+      first(cfg(arp::kOff), S + S / 4);          // a note 1/4 late
+      take_micro = 0;
+      // DLY: the step's place on the grid is its window: the next step's point stays the sound's
+      take_cmd = "seq=fx:1:3:1:DLY:48";
+      auto d2 = take(cfg(arp::kUp), {{2, 2, 1}});
+      same(note_at(d2, 2 * S - 100, 3 * S - 100), {72});
+      same(note_at(d2, 3 * S - 100, 4 * S - 100), {64});
+      take_cmd = "seq=fx:1:3:1:off";
+      take(cfg(arp::kUp), {});
+      take_cmd = "";
+    }
+    // a short plain note under MODE OFF, the pitch of a long one the arp holds: it ends at its own length
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      seq::add_note(tr->step[0], {60, 100, 8 * seq::kSub, 0, 0});
+      seq::add_note(tr->step[2], {60, 100, 24, 0, 0});
+      tr->step[0].flags |= 1, tr->step[2].flags |= 1, tr->step[0].prob = tr->step[2].prob = 100;
+      seq::set_lock(tr->step[2], seq::kLockArp, arp::kOff);
+      seq::touched();
+      arp::set(0, cfg(arp::kUp));
+      run(4800);
+      g.clear();
+      play();
+      int64_t o = c.t0 - lat;
+      run(6000 * 10);
+      CHECK(midim::voice_notes(0) == 0 && !arp::busy(0));
+      bool ended = false;
+      for (auto& e : g) ended = ended || ((e.status & 0xF0) != 0x90 && llabs(e.h - o - (2 * S + S / 4)) <= 96);
+      CHECK(ended);
+      halt();
+      run(12000);
+      pairs_closed();
+      g.clear();
+    }
     // a lock with no MODE on an arp that is off: nothing
     auto nm = take(cfg(arp::kOff), {{0, 1, 5}, {0, 2, 2}});
     same(note_at(nm, 0, 2 * S), {60, 64});

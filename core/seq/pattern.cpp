@@ -625,6 +625,11 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
       int locks = r.b();
       for (int j = 0; j < locks && r.ok; ++j) {
         int prm = r.b(), val = ver >= 2 ? r.h() : r.b() << 7;
+        if (r.ok && arp_lock(prm) && (val & 0x3FFF) > lock_top(prm) << 7) {   // a value this build does not know: a newer Sidecar's, with or without the block
+          clear(p, index);
+          g_unpack_err = kUnpackNewer;
+          return false;
+        }
         if (prm < kLockParams && tmp.nl < kLocks) tmp.lock[tmp.nl++] = {(uint8_t)prm, 0, (uint16_t)(val & 0x3FFF)};
       }
       if (!tmp.n && !tmp.nl) continue;   // (an empty step: nothing to keep)
@@ -709,16 +714,7 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
         for (int e = 1; e + kSlideEntry <= bl; e += kSlideEntry)
           if (t && q[e] < kMaxSteps && q[e + 1] < kLockArp && lock_of(t->step[q[e]], q[e + 1]) >= 0)   // (a lock that is there)
             t->step[q[e]].slide |= 1u << q[e + 1];
-      } else if (id == kBlkArp) {   // arp locks; a value this build does not know: a newer Sidecar's
-        for (int i = 0; t && i < kMaxSteps; ++i)
-          for (int k = 0; k < t->step[i].nl; ++k) {
-            const Lock& l = t->step[i].lock[k];
-            if (arp_lock(l.param) && l.value > lock_top(l.param) << 7) {
-              clear(p, index);
-              g_unpack_err = kUnpackNewer;
-              return false;
-            }
-          }
+      } else if (id == kBlkArp) {   // arp locks: read with the steps, the block only stops an older build
       } else if (id == kBlkRtrg) {   // seqtop P4 / M4; a mode / rate / curve this build does not know: a newer Sidecar's
         for (int e = 1; e + kRtrgEntry <= bl; e += kRtrgEntry) {
           const uint8_t* x = q + e;

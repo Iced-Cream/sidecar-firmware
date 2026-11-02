@@ -64,6 +64,7 @@ bool on(int vi);                            // voice vi arpeggiates (its machine
 
 bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg);   // the sequencer's note: true when held here
 bool seq_off(int vi, int note);             // true: it was; note -1: every sequencer note, false (the caller ends its own too)
+void plain_off(int vi, int note);           // the sequencer's off of a pitch still sounding on another of its notes: a note played past a lock of MODE OFF ends
 bool live_on(int vi, int note, int vel, int ch, int key);          // a pad's or keyboard's note; key names it for live_off
 bool live_off(int vi, int ch, int key);     // true: it was; key -1: every note of ch, false
 bool trig(int vi, int note, int vel, const float* p);              // a Rytm trig (mono on the voice): true when held here

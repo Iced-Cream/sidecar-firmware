@@ -279,7 +279,7 @@ void to_view(const Track* t, sidecar_seq_view_t* v) {
     v->lcond[i] = (unsigned char)lc;
     for (int f = 0; f < core::seq::kArpLocks; ++f) {
       int x = core::seq::lock_of(s, core::seq::kLockArp + f);
-      if (x >= 0) v->arpl[i] |= (unsigned short)(((x >> 7) + 1) << (3 * f));
+      if (x >= 0 && x >> 7 <= core::seq::kArpLockMax[f]) v->arpl[i] |= (unsigned short)(((x >> 7) + 1) << (3 * f));
     }
   }
   for (int i = 0; i < kMaxSteps; ++i) {

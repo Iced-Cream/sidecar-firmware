@@ -48,7 +48,7 @@ struct Vo {
   bool seq_cfg;          // the notes came from the sequencer: its poly config
   seq::PolyCfg pcfg;
   uint16_t sig;          // the machines on the voice's tracks at the last look (machines())
-  uint32_t plain[4];     // pitches the sequencer played past the arp under a lock of MODE OFF: their off goes to the machine, whatever is held here then
+  uint32_t plain[4];     // pitches the sequencer played past the arp under a lock of MODE OFF: the first off of that pitch goes to the machine (plain_off)
 };
 struct Lk {
   uint8_t mask, val[seq::kArpLocks];
@@ -294,10 +294,15 @@ CORE_COLD bool seq_off(int vi, int note) {
     memset(vo[vi].plain, 0, sizeof vo[vi].plain);
     return drop(vi, kLiveSeq, -1, -1), false;
   }
+  vo[vi].plain[note >> 5 & 3] &= ~(1u << (note & 31));
+  return release(vi, kLiveSeq, note, note) > 0;
+}
+CORE_COLD void plain_off(int vi, int note) {
+  if (vi < 0 || vi >= kVoices || note < 0) return;
   uint32_t& w = vo[vi].plain[note >> 5 & 3], bit = 1u << (note & 31);
-  bool plain = (w & bit) != 0;
+  if (!(w & bit)) return;
   w &= ~bit;
-  return release(vi, kLiveSeq, note, note) > 0 && !plain;
+  inst::play_off(vi, note);
 }
 CORE_COLD bool live_on(int vi, int note, int vel, int ch, int key) {
   if (!on(vi)) return false;
@@ -389,6 +394,8 @@ void block(int64_t h) {
     } else {   // free: one interval on from the last, at the tempo now
       f = x.free_o + g + (x.next & 1 ? sw * g : 0), f1 = x.free_o + 2 * g + (x.next & 1 ? 0 : sw * g);
     }
+    // MODE locked on, the sound's OFF: no point left in the step (a swung or late note, a slow SPD): its first note now, or the hold ends unheard
+    if (!x.pos && lk[vi].mask && !on(vi) && f >= (double)lk[vi].until) f = (double)h;
     if ((double)h + kBlock / 2 < f) continue;
     sound_off(vi);   // (a gate of 100 %, or a late one)
     if ((double)h - f > kBlock) ++st.late;
