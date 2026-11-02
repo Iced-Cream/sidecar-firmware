@@ -64,6 +64,12 @@ int main() {
     e.add(0, 2, BoxOther, "ev\"il\\\n<b>");
     CHECK(e.json(b, sizeof b, 1, "Analog Rytm MKII", caps) > 0);
     CHECK(strstr(b, "\"name\":\"evil<b>\""));
+    {   // a box's whole USB name, not "Elektron Analog Four MK"
+      BoxList l;
+      l.add(3, 1, BoxHost, "Elektron Analog Four MKII");
+      char j[256];
+      CHECK(l.json(j, sizeof j, 3, "x", nullptr) != 0 && strstr(j, "\"name\":\"Elektron Analog Four MKII\""));
+    }
     CHECK(!strstr(b, "\"tracks\""));                           // no profile, no counts
     BoxList f;
     for (unsigned k = 0; k < BoxList::kMax + 3; ++k) f.add(1, (uint8_t)k, BoxSpare, "Elektron Analog Rytm MKII with a long name");

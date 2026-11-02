@@ -1387,8 +1387,9 @@ void CKernel::UpdateMIDI (void)
 			pMIDI->RegisterPacketHandler (MIDIPacketHandler);
 			m_Usb.SetMIDI (0);			// a replug's umidi may sit at the old one's address: the sender sees it as new
 			m_pMIDI = pMIDI;
-			m_Logger.Write (From, LogNotice, "midi: the Rytm's USB MIDI found (%s), listening; the engine's replies %s",
-					(const char *) Name,
+			const char *pBox = p->GetProperty (CDevice::PropertyProduct);	// the box's own name: the profile follows its hello, later
+			m_Logger.Write (From, LogNotice, "midi: %s's USB MIDI found (%s), listening; the engine's replies %s",
+					pBox != 0 && *pBox ? pBox : "the host box", (const char *) Name,
 					m_Options.GetAppOptionDecimal ("tohost", 1) != 0 ? "go to it (host link)" : "are dropped (tohost=0)");
 			continue;
 		}

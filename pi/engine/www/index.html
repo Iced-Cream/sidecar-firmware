@@ -147,6 +147,7 @@
   .chs { display:grid; grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); gap:6px; }
   .ch { border:1px solid var(--line); border-radius:var(--r); padding:4px 6px; display:grid; gap:3px; cursor:pointer; min-width:0; }
   .ch.on { border-color:var(--acc); }
+  .ch[data-gone] { display:none; }
   .ch span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
   .ch .bar { margin:0; }
   .ch .bar i { transition:width .2s; }
@@ -1032,6 +1033,7 @@ function boxRender(boxes) {
     return e;
   }));
   if (!me || me.feat === undefined) return;
+  recBox(me.id);
   const short = BOX_SHORT[me.id] || me.name;
   if (short !== boxShort) {
     boxShort = short;
@@ -2199,6 +2201,8 @@ const REC = [["Master",[[0,"MASTER (stereo)"]]],
   // docs/STEREO.md: the PRE / POST voices' pairs as sent (a voice on PRE / POST records its own file in stereo)
   ["OUT route pairs",[[23,"PRE (stereo)"],[24,"POST (stereo)"]]]];
 const STEREO = { 0: 1, 21: 1, 22: 1, 23: 1, 24: 1 };
+// The IN channels as the served box has them (ids 3..10 are the Rytm's tracks): an A4 sends four, on ids 3..6, and has no ids 7..10.
+function recInView(boxId) { return boxId === 3 ? { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4" }, gone: [7, 8, 9, 10] } : { names: {}, gone: [] }; }
 let recSel = new Set([0]), recMode = "manual", recBits = 24, recVol = "SD", recLast = null, recPrevState = -1, recSynced = false;
 try { const j = JSON.parse(store("sidecar.rec") || "null");
   if (j) { recSel = new Set(j.ch || [0]); recMode = j.mode === "arm" ? "arm" : "manual"; recBits = j.bits === 16 ? 16 : 24; $("#rec-name").value = j.name && j.name !== "take" ? j.name : ""; }
@@ -2221,6 +2225,16 @@ $("#rec-ch").innerHTML = REC.map(([g, chs]) => `<div class="chg"><h3>${g}</h3><d
   chs.map(([id, n]) => `<label class="ch" data-ch="${id}"><span${id === 11 || id === 12 ? ` data-nm="${n}" data-fx="FX RETURN ${id === 11 ? "L" : "R"}"` : ""}><input type="checkbox" data-ci="${id}"> ${n}</span><div class="bar"><i style="width:0"></i></div></label>`).join("") +
   `</div></div>`).join("");
 const recIds = () => [...recSel].sort((a, b) => a - b).join(",") || "none";
+function recBox(boxId) {
+  const { names, gone } = recInView(boxId);
+  document.querySelectorAll("#rec-ch .ch").forEach((el) => {
+    const id = +el.dataset.ch, name = REC[1][1].find((c) => c[0] === id);
+    if (id < 3 || id > 10 || !name) return;
+    el.querySelector("span").lastChild.textContent = " " + (names[id] || name[1]);
+    el.toggleAttribute("data-gone", gone.includes(id));
+  });
+  if (gone.some((id) => recSel.delete(id))) { recSave(); recView(); recPush("ch"); }
+}
 // 5d: the warning before a take - the selection needs more than 70 % of the destination's write speed (/status rec
 // speedKBps: stor=bench's, else a default for the kind of volume): its load in %, 0 when it fits (or no speed known)
 function recLoad(needKBps, speedKBps) { return speedKBps > 0 ? Math.round(needKBps * 100 / speedKBps) : 0; }
@@ -2300,7 +2314,7 @@ $("#rec-ch").addEventListener("change", (e) => {
   const id = e.target.dataset.ci; if (id === undefined) return;
   e.target.checked ? recSel.add(+id) : recSel.delete(+id); recSave(); recView(); recPush("ch");
 });
-$("#rec-all").onclick = () => { if (recBusy()) return; recSel = new Set(REC.flatMap(([, c]) => c.map(([id]) => id))); recSave(); recView(); recPush("ch"); };
+$("#rec-all").onclick = () => { if (recBusy()) return; recSel = new Set([...document.querySelectorAll("#rec-ch .ch:not([data-gone])")].map((el) => +el.dataset.ch)); recSave(); recView(); recPush("ch"); };
 $("#rec-none").onclick = () => { if (recBusy()) return; recSel = new Set(); recSave(); recView(); recPush("ch"); };
 document.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { if (recBusy()) return; recMode = b.dataset.rm; recSave(); recView(); });
 document.querySelectorAll("[data-rb]").forEach((b) => b.onclick = () => { if (recBusy()) return; recBits = +b.dataset.rb; recSave(); pend.start("bits", recBits); recView(); recPush("bits"); });

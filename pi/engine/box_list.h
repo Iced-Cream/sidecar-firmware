@@ -77,7 +77,7 @@ class BoxList {
     uint16_t id;
     uint8_t slot;         // umidiN; 0 the served box, unplugged
     TBoxRole role;
-    char name[24];
+    char name[32];        // USB's product string: "Elektron Analog Four MKII"; 9 full rows still fit /status's 1536 B
   };
   struct Out {
     char* p;

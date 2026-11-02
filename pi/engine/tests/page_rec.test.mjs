@@ -14,6 +14,15 @@ assert.ok(a > 0 && b > a, "the destination helpers in index.html");
 const F = new Function(page.slice(a, b) + "; return { recVolChoices, recTakeRoots };")();
 const vols = (o) => ["SD", "USB", "USB2", "USB3", "NVME"].map((name) => ({ name, state: o[name] || "absent" }));
 
+const ia = page.indexOf("function recInView");
+assert.ok(ia > 0, "recInView in index.html");
+const V = new Function(page.slice(ia, page.indexOf("\n", ia)) + "; return recInView;")();
+test("the IN channels: an A4's four, named T1..T4, ids 7..10 gone; every other box as the Rytm's", () => {
+  assert.deepEqual(V(3), { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4" }, gone: [7, 8, 9, 10] });
+  assert.deepEqual(V(1), { names: {}, gone: [] });
+  assert.deepEqual(V(2), { names: {}, gone: [] });
+});
+
 test("the SD always; a mounted drive; the chosen one marked when it is not mounted", () => {
   assert.deepEqual(F.recVolChoices(vols({ SD: "mounted" }), "SD"), [{ n: "SD", ok: true }]);
   assert.deepEqual(F.recVolChoices(vols({ USB: "mounted", NVME: "unavailable" }), "SD"), [{ n: "SD", ok: true }, { n: "USB", ok: true }]);
