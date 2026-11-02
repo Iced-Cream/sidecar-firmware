@@ -106,6 +106,7 @@ CORE_COLD void boot() {
     l.out = hooks.to_rytm;
     hooks.to_rytm = filtered_out;
     l.box = s_list[k];
+    out::set_trim(2, l.box->trk10);   // (its hello finds it selected: this is the usual way in)
     log(CORE_STR("device: %s, state in %s"), l.box->name, l.state ? l.state : "/.rytm");
   }
 }

@@ -460,6 +460,19 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
+    {   // the usual way in: the boot after its hello's restart picks the box, and its hello then changes nothing
+      Fs f;
+      File w;
+      CHECK(w.open("/.rytm/device", kWrite));
+      CHECK(w.write((const uint8_t*)"3\n", 2) == 2);
+      w.close();
+      device::boot();
+      CHECK(device::active().id == device::kIdA4 && out::control.trk10 == 120);
+      send(hello(device::kA4.id));
+      CHECK(out::control.trk10 == 120);
+      device::reset();
+      CHECK(f.remove("/.rytm/device"));
+    }
   }
 
   printf("test_device: ok\n");
