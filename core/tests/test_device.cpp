@@ -436,6 +436,23 @@ int main() {
     out::set_route(0, out::kTrk), out::set_route(2, out::kTrk);
   }
 
+  // The voices' own-channel trim is the profile's: the A4's insert point sits low, the Rytm and the Digitakt stay at 0, bit for bit
+  {
+    device::reset();
+    CHECK(out::control.trk10 == 0);
+    CHECK(device::rytm().trk10 == 0 && device::kDigitakt.trk10 == 0 && device::kA4.trk10 == 120);
+    CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
+    device::g_link.state = "/.a4";                     // the folder chosen at boot: this hello is accepted
+    send(hello(device::kA4.id));
+    CHECK(device::foreign() && device::active().id == device::kIdA4);
+    CHECK(out::control.trk10 == 120);
+    out::set_trim(2, 60);                              // a live stereo=trim:trk
+    send(hello(device::kA4.id));                       // a repeated hello is no change of box
+    CHECK(out::control.trk10 == 60);
+    device::reset();                                   // back to the Rytm
+    CHECK(!device::foreign() && out::control.trk10 == 0);
+  }
+
   printf("test_device: ok\n");
   return 0;
 }

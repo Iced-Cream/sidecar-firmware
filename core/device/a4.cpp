@@ -5,7 +5,7 @@
 // stage, through USB TO MAIN's gain. 2..5 the synth voices: each added to that voice's own DAC word, the one its digital noise takes, so a Sidecar voice goes
 // through the voice's analog filters and amp, and from there to the A4's chorus, delay and reverb: these are the per-channel insert points, as on the Rytm. The gain
 // there follows the voice's amp, from 0.25 up, and the analog VCA must be open: a track that plays. A4 -> host 8 channels / 256 B: MAIN L R, the voices 1..4,
-// INPUT L R (names from Overwitch; the emulator's notes say words 0 / 1 and 6 / 7 the other way round: a unit decides). The driver widens that block to the
+// INPUT L R (names from Overwitch; a unit showed MAIN on 0 / 1, its voices on theirs). The loop: 197 frames, 4.1 ms, a voice's tap to its channel on IN [measured on a unit, voice 1; 191 voice 3]. The driver widens that block to the
 // 12 channels its consumers take: 0..5 as they are, 6..9 silent, INPUT on 10 / 11. So this row's `audio_in` is the wide block's.
 #include "device/a4.h"
 
@@ -16,7 +16,7 @@ namespace device {
 
 static constexpr uint8_t N = out::kNoChannel;
 const out::Device kA4Audio = {"Analog Four MKII", kA4OutChannels, {0, 1}, {0, 1}, {2, 3, 4, 5, N, N, N, N}, {0, 1, 2, 3, 4, 5, 6, 7},
-                              {{0, -1}, {1, -1}, {2, -1}, {3, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}}, {10, 11}, 0,
+                              {{0, -1}, {1, -1}, {2, -1}, {3, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}}, {10, 11}, 197,
                               kA4InChannels, out::kPerVoice};
 
 const Profile kA4 = {
@@ -31,7 +31,8 @@ const Profile kA4 = {
     "/.a4",
     {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x3B - 32)},   // 3B its kit
     kBracketFull, &kA4Audio, nullptr,
-    true, true};
+    true, true,
+    120};   // +12 dB: the insert point's gain rests at 0.25 [measured on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, no audible problem so far]; over +12 the 0.25 limit plus the trim hits full scale
 
 }  // namespace device
 }  // namespace core

@@ -152,6 +152,7 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
   if (!l.box) l.out = hooks.to_rytm;
   hooks.to_rytm = p ? filtered_out : l.out;
   l.box = p;
+  out::set_trim(2, active().trk10);   // a live stereo=trim:trk lasts until the box changes
   log(CORE_STR("device: %s"), active().name);
   link_reset("device");   // the box before it: its notes and transport unknown
 }

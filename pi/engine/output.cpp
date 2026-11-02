@@ -43,6 +43,14 @@ uint32_t Output::Push(const int16_t (*frames)[kVoices], uint32_t n, const int16_
   return k;
 }
 
+// x before any limit. No gain or down: the -12 dBFS limit, then the gain, the Rytm's path bit for bit. Up (a box whose insert point sits low): the gain first and one knee
+// toward full scale, so a hot voice is not cut at the limit and clipped again.
+float Output::Own(float x, float t) {
+  if (t > 1.0f) return core::out::Mixer::Limit(x * t, 0.9999f);
+  x = Limit(x) * t;
+  return x > 0.9999f ? 0.9999f : x < -0.9999f ? -0.9999f : x;
+}
+
 void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoices], const Taps* taps) {
   const core::out::Control& c = *ctl_;
   bool block_set = false;
@@ -85,11 +93,11 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
         out[i][0] = out[i][1] = To32(main_.Sum(f.v, g));
       } else {
         for (int v = 0; v < kVoices; ++v) {
-          float x = Limit(f.v[v] / 32768.0f * g);
+          const float y = f.v[v] / 32768.0f * g, x = Limit(y);
           float a = x < 0 ? -x : x;
           if (a > peak_) peak_ = a;
           const uint8_t ch = core::out::device().voice[v];   // the Rytm's: kVoiceToChannel, the old path bit for bit
-          if (ch < kChannels) out[i][ch] = To32(Hot(x, trk_gain));
+          if (ch < kChannels) out[i][ch] = To32(Own(y, trk_gain));
         }
       }
       continue;
@@ -116,11 +124,11 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
       out[i][core::out::device().post[0]] = out[i][core::out::device().post[1]] = To32(main_.Sum(m, g));
     } else {
       for (int v = 0; v < kVoices; ++v) {
-        float x = Limit(trk[v] / 32768.0f * g);
+        const float y = trk[v] / 32768.0f * g, x = Limit(y);
         float a = x < 0 ? -x : x;
         if (a > peak_) peak_ = a;
         const uint8_t ch = core::out::device().voice[v];
-        if (ch < kChannels) out[i][ch] = To32(Hot(x, trk_gain));   // (a box with fewer voices: the rest have no channel)
+        if (ch < kChannels) out[i][ch] = To32(Own(y, trk_gain));   // (a box with fewer voices: the rest have no channel)
       }
     }
     pre[0] *= g, pre[1] *= g, post[0] *= g, post[1] *= g;
