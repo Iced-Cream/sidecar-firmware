@@ -53,6 +53,7 @@ static int s_nRytmPatIndex = -1;
 #include "midiout_q.h"	// the MIDI machine's USB-A queues
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "hello_gate.h"
+#include "box_list.h"
 #include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
@@ -482,11 +483,27 @@ void CKernel::WebHealth (CString *pOut, void *pParam)
 	pOut->Append (Power);
 }
 
+static BoxList s_Boxes;						// /status "boxes": written and read by core 0's tasks
+
+static bool BoxCapsOf (u16 nId, BoxCaps *pCaps)
+{
+	const core::device::Profile *p = core::device::by_id (nId);
+	if (p == 0) return false;
+	*pCaps = {p->tracks, p->voices, p->params, p->features, p->state_dir};
+	return true;
+}
+
 // /status's members (core 0: a web task). Plain reads of state other cores write: a stale value at worst.
 void CKernel::WebStatus (CString *pOut, void *pParam)
 {
 	CKernel *k = (CKernel *) pParam;
 	CString s;
+	char Boxes[1536];
+	if (s_Boxes.json (Boxes, sizeof Boxes, core::device::active ().id, core::device::active ().name, BoxCapsOf) != 0)
+	{
+		pOut->Append (Boxes + 1);		// (past its comma: the first member here)
+		pOut->Append (",");
+	}
 	unsigned nTempWeb = s_nTempC;			// the stats line's last read (about 1 s old): no firmware call per request
 	const Output::Diag D = g_Output.Diagnostics ();
 	const CEngineCores::TStall ST = CEngineCores::Stall ();
@@ -1196,6 +1213,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 
 // An A4's USB MIDI before it is the box in use: its hello reaches the engine while no Rytm has the link, nothing else does, and nothing goes back (usb_box.h).
 static CDevice *volatile s_pHelloBox;
+static volatile boolean s_bHelloHeard;				// it has the mod: its hello came, taken or not (box_list.h)
 static volatile boolean s_bLinkUp;				// a host link is up
 static HelloGate s_HelloGate;
 static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
@@ -1203,6 +1221,7 @@ static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	for (unsigned i = 0; i < nLength; i++)
 	{
 		unsigned n = s_HelloGate.feed (pPacket[i]);
+		if (n != 0) s_bHelloHeard = TRUE;
 		if (n == 0 || s_bLinkUp || !CObUsb::Active ()) continue;
 		for (unsigned k = 0; k < n; k++)
 			if (!g_MidiIn.push (s_HelloGate.data ()[k])) s_nMidiInLost++;
@@ -1212,6 +1231,7 @@ static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 static void HelloRemoved (CDevice *pDevice, void *pContext)
 {
 	s_pHelloBox = 0;
+	s_bHelloHeard = FALSE;
 }
 
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
@@ -1338,7 +1358,7 @@ void CKernel::UpdateMIDI (void)
 		if (Box == UsbBoxHello)
 		{
 			if (core::device::active ().id == core::device::kIdA4) Box = UsbBoxHost;	// it chose this boot's folder: it is the box in use
-			else if (s_pHelloBox == p) continue;
+			else if (s_pHelloBox != 0) continue;		// one is heard at a time: a second A4 waits for that one to go
 			else
 			{
 				s_pHelloBox = p;
@@ -1392,6 +1412,19 @@ void CKernel::UpdateMIDI (void)
 		LeaveCritical ();
 		m_Logger.Write (From, LogNotice, "keys: keyboard %u: %s (%s), its notes play the %s", i + 1, g_KeyNames[i],
 				(const char *) Name, "Rytm's selected track (core/keys.h)");
+	}
+	s_Boxes.clear ();
+	for (unsigned n = 1; n <= 8; n++)
+	{
+		CString Name;
+		Name.Format ("umidi%u", n);
+		CDevice *p = CDeviceNameService::Get ()->GetDevice (Name, FALSE);
+		if (p == 0 || (m_pGadget != 0 && m_pGadget->IsMIDIDevice (p))) continue;
+		if (p != m_pMIDI && BoxOf (p) == UsbBoxKeyboard) continue;
+		const char *pProduct = p->GetProperty (CDevice::PropertyProduct);
+		u16 nId = p == m_pMIDI ? core::device::active ().id : usb_box_id (pProduct);
+		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
+		s_Boxes.add (nId, n, Role, pProduct);
 	}
 }
 

@@ -54,6 +54,21 @@ IGNORE = os.environ.get("MOCK_IGNORE", "")   # e.g. "out,mac": those commands ar
 FXIN = {"want": 0, "rytm": -1 if os.environ.get("MOCK_FXIN") == "old" else 0}
 
 
+# /status "boxes" (pi/engine/box_list.h): MOCK_BOXES=rytm|a4|a4wait|tworytms|a4off
+RYTM_CAPS = {"tracks": 12, "voices": 8, "params": 16, "feat": 511, "state": "/.rytm"}
+A4_CAPS = {"tracks": 6, "voices": 4, "params": 16, "feat": 0, "state": "/.a4"}
+def box(key, n, name, role, caps, on=1):
+    return {"key": key, "id": int(key.split("-")[0]), "n": n, "name": name, "role": role, "on": on, **caps}
+BOXES = {
+    "rytm": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS)],
+    "a4": [box("3-1", 1, "Elektron Analog Four MKII", "host", A4_CAPS)],
+    "a4off": [box("3-0", 1, "Analog Four MKII", "host", A4_CAPS, 0)],
+    "a4wait": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS), box("3-2", 1, "Elektron Analog Four MKII", "waiting", A4_CAPS)],
+    "tworytms": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS), box("1-2", 2, "Elektron Analog Rytm MKII", "spare", RYTM_CAPS),
+                 box("3-3", 1, "Elektron Analog Four MKII", "listening", A4_CAPS), box("3-4", 2, "Elektron Analog Four MKII", "spare", A4_CAPS),
+                 box("0-5", 1, "Elektron Digitone", "other", {})],
+}
+
 def fxin_status():
     st = "on" if FXIN["rytm"] == 1 else "off" if FXIN["rytm"] == 0 else "unsupported"
     return {"want": FXIN["want"], "state": st, "rytm": FXIN["rytm"]}
@@ -1101,6 +1116,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/status":
             return self.send(json.dumps({
                 "host": "sidecar", "uptime": int(time.time() - T0), "web": {"requests": 1, "maxus": 900, "commands": 0, "refused": REFUSED[0], "idle": 0, "open": 1},
+                "boxes": BOXES[os.environ.get("MOCK_BOXES", "rytm")],
                 "power": POWER,
                 "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "streaming": True,
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,

@@ -250,6 +250,20 @@ no voices. The Rytm's stream stays the clock and the A4's is resampled to it (`p
 Also: a way to tell the links apart (each USB MIDI device calls its own handler; the Rytm path's message has no port on it
 yet), and a remote UI that belongs to one link.
 
+## What the page is told
+
+`/status` has `boxes`, one row for every Elektron box on the USB-A ports (`pi/engine/box_list.h`), and always the box this boot serves, `on` 0 while it is unplugged.
+A row: `key`, `id` (the profile's), `n` (first, second of that type), `name`, `role`, `on`; with a profile also `tracks`, `voices`,
+`params`, `feat` (the `Feature` bits) and `state`. Roles: `host` served, `waiting` its mod said hello while another box is in use, `listening` no hello heard, `spare`
+known and not used, `other` no profile. So two Rytms, or two A4s and a Rytm, are separate rows with separate keys, and the page counts them.
+
+The key is the type and Circle's `umidiN`: it tells two plugged-in boxes apart and may change when one is replugged or the Pi restarts. Two boxes of a type served
+at once also need their own state folders, keyed by something that stays with the box, such as its USB serial number; Circle's MIDI device does not carry that yet.
+The engine serves one box and one state folder per type today.
+With two A4s one is heard for a hello, the other waits for it to go.
+
+The page (`pi/engine/www/index.html`) shows the row of boxes, puts the served box's name in its text and hides what `feat` rules out (`data-needs`, `data-lacks`).
+
 ## Rules that do not change
 
 With a Rytm the layer adds one pointer test and one compare per incoming SysEx, on the control core, and nothing on the

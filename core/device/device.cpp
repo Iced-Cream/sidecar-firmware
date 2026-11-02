@@ -46,6 +46,12 @@ const Profile& active() { return g_link.box ? *g_link.box : kRytm; }
 uint32_t dropped() { return g_link.dropped; }
 void rytm_on_usb(bool on) { s_rytm_usb = on; }
 
+CORE_COLD const Profile* by_id(uint16_t id) {
+  for (int k = 0; k < s_n; ++k)
+    if (s_list[k]->id == id) return s_list[k];
+  return nullptr;
+}
+
 CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid) {
   for (int k = 0; k < s_n; ++k)
     if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio && (!s_list[k]->audio_by_hello || g_link.box == s_list[k])) return s_list[k];

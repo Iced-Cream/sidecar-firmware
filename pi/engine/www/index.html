@@ -40,6 +40,13 @@
   .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; }
   .tile { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; min-width:0; }
   /* 1025: the 12 Rytm tracks' reported SRC machine - 12 narrow cells, 6 a row at a phone's width */
+  #boxes { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0 2px; }
+  #boxes:empty { display:none; }
+  .box { border:1px solid var(--line); border-radius:var(--r); padding:3px 8px; font-size:12px; font-weight:700; white-space:nowrap; }
+  .box small { font-size:11px; font-weight:400; color:var(--mut); margin-left:6px; }
+  .box.off, .box.quiet { font-weight:400; color:var(--mut); }
+  [data-needs][data-out] { display:none !important; }
+  [data-lacks]:not([data-out]) { display:none !important; }
   .chips { display:grid; grid-template-columns:repeat(auto-fit, minmax(62px, 1fr)); gap:6px; }
   .chip { border:1px solid var(--line); border-radius:var(--r); padding:5px 6px; text-align:center; min-width:0; }
   .chip .k { font-size:10px; letter-spacing:.1em; color:var(--mut); }
@@ -170,14 +177,15 @@
     <span class="spacer"></span>
     <span class="dot" id="dot"></span><span id="state">connecting</span>
   </header>
+  <div id="boxes" role="list" aria-label="Boxes on USB"></div>
   <nav id="tabs" role="tablist">
-    <a href="#status" data-tab="status">Status</a><a href="#sound" data-tab="sound">Sound</a><a href="#sendfx" data-tab="sendfx">Send FX</a><a href="#lfo" data-tab="lfo">LFO</a><a href="#record" data-tab="record">Record</a><a href="#machines" data-tab="machines">User machines</a><a href="#pool" data-tab="pool">Pool</a><a href="#library" data-tab="library">Presets</a><a href="#project" data-tab="project">Project</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
+    <a href="#status" data-tab="status">Status</a><a href="#sound" data-tab="sound">Sound</a><a href="#sendfx" data-tab="sendfx" data-needs="sendfx">Send FX</a><a href="#lfo" data-tab="lfo">LFO</a><a href="#record" data-tab="record">Record</a><a href="#machines" data-tab="machines">User machines</a><a href="#pool" data-tab="pool" data-needs="pools">Pool</a><a href="#library" data-tab="library">Presets</a><a href="#project" data-tab="project">Project</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
   </nav>
 
   <div class="tab" id="tab-status">
     <div class="pwarn" id="pwarn" role="alert" hidden></div>
     <div class="tiles" id="tiles"></div>
-    <section id="srcm" aria-labelledby="sm-h" hidden>
+    <section id="srcm" aria-labelledby="sm-h" data-needs="srcview" hidden>
       <h2 id="sm-h">Rytm tracks (SRC)</h2>
       <div class="chips" id="sm-grid"></div>
       <p class="note">The machine each track reports over the Sidecar link, as the Rytm itself names it - not what
@@ -214,7 +222,7 @@
       <div class="kv"><b>This device</b><span id="ac-this">-</span></div>
       <div class="row"><label></label><button id="ac-forget">Forget this device</button><button id="ac-all">Forget every device</button></div>
       <p class="msg" id="ac-msg" role="status" aria-live="polite"></p>
-      <p class="note">Sidecar shows an 8-digit code on the Rytm's screen and on its own screen (STATUS page,
+      <p class="note">Sidecar shows an 8-digit code <span data-needs="remoteui">on the Rytm's screen and </span>on its own screen (STATUS page,
         <b>PAIR CODE</b>). Entering it once lets this browser change things; reading the status and the log never needs it.
         A remembered device keeps working after Sidecar restarts, and <b>Forget</b> makes it ask for the code again.
         <b>Forget every device</b> also ends every other browser's and <code>sdboot.py</code>'s access. The code is
@@ -273,10 +281,10 @@
       <div class="row"><label id="l-out">Output</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-out" data-key="out"><button type="button" role="radio" aria-checked="false" data-cmd="out=main" data-val="main">Main</button><button type="button" role="radio" aria-checked="false" data-cmd="out=tracks" data-val="tracks">Tracks</button></div>
         <span class="fb" data-fb="out" role="status" aria-live="polite"></span></div>
-      <div class="row"><label id="l-fxsrc" title="what the Rytm sends on Overbridge IN L/R (channels 10/11): its AUDIO IN, or the delay + reverb return (needs the rui1024 Rytm build)">IN L/R source</label>
+      <div class="row" data-needs="fxin"><label id="l-fxsrc" title="what the Rytm sends on Overbridge IN L/R (channels 10/11): its AUDIO IN, or the delay + reverb return (needs the rui1024 Rytm build)">IN L/R source</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-fxsrc" data-key="fxsrc"><button type="button" role="radio" aria-checked="false" data-cmd="fxin=0" data-val="in">Inputs</button><button type="button" role="radio" aria-checked="false" data-cmd="fxin=1" data-val="fx">FX return</button></div>
         <span class="fb" data-fb="fxsrc" role="status" aria-live="polite"></span><span id="fxin-note" class="mut"></span></div>
-      <p class="note" id="fxin-warn" hidden>Never send channels 10/11 back into the Rytm through Overbridge (computer audio, a mixer loop): that is a feedback loop.</p>
+      <p class="note" id="fxin-warn" data-needs="fxin" hidden>Never send channels 10/11 back into the Rytm through Overbridge (computer audio, a mixer loop): that is a feedback loop.</p>
       <div class="row"><label id="l-mac" title="the computer's USB audio OUT (USB-C) mixed into the Rytm's Overbridge inputs">Computer audio</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
         <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
@@ -425,6 +433,7 @@
   <div class="tab" id="tab-machines">
   <section id="um">
     <h2>User machines</h2>
+    <p class="note" data-lacks="userslots">This box's Sidecar page has no user slots yet: machines can be kept here, but its tracks cannot play them.</p>
     <div class="row"><b>Project</b> <span id="um-proj">-</span><span class="spacer"></span><span id="um-info" class="mut"></span>
       <button id="um-rescan">Rescan</button>
       <button id="um-upb">Upload machine (.rmp)</button><input id="um-file" type="file" accept=".rmp" multiple hidden></div>
@@ -527,6 +536,7 @@
   <div class="tab" id="tab-project">
   <section id="pb">
     <h2>Projects</h2>
+    <p class="note" data-lacks="project">This box reports no project name, so its Sidecar state stays in one project.</p>
     <div class="row"><span class="mut">Every Sidecar project on the card. A bundle (<b>.sidecar.zip</b>) holds a project's
       Sidecar files, every sample it uses, its song takes and machines, and the Rytm project file if you add one.</span>
       <span class="spacer"></span><label class="mut"><input type="checkbox" id="pb-takes" checked> unused sampler takes</label>
@@ -625,7 +635,7 @@
   <div id="pair-wrap" hidden>
     <div id="pair-box" role="dialog" aria-modal="true" aria-labelledby="pair-h">
       <h2 id="pair-h">Pairing code</h2>
-      <p id="pair-why">Sidecar asks for a code before this page may change anything. It is on the Rytm's screen and on
+      <p id="pair-why">Sidecar asks for a code before this page may change anything. It is <span data-needs="remoteui">on the Rytm's screen and </span>on
         Sidecar's own screen (STATUS page, <b>PAIR CODE</b>), and it changes every time Sidecar restarts.</p>
       <div class="row"><label for="pair-code">Code</label>
         <input id="pair-code" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -633,7 +643,7 @@
       <div class="row"><label></label><label class="wf-check"><input type="checkbox" id="pair-rem" checked>
         remember this device (no code after a restart)</label></div>
       <div class="row"><label></label><button id="pair-go" class="on">Pair</button>
-        <button id="pair-showrytm" title="puts the code on the Rytm's screen again (at most every 10 s)">Show it on the Rytm</button></div>
+        <button id="pair-showrytm" data-needs="remoteui" title="puts the code on the Rytm's screen again (at most every 10 s)">Show it on the Rytm</button></div>
       <p class="msg" id="pair-msg" role="status" aria-live="polite"></p>
       <p class="note" id="pair-note" hidden></p>
       <p class="note">The status and the log are readable without the code, so you can watch Sidecar while it is
@@ -881,7 +891,7 @@ function mbRender(m) {
   $("#mb-state").textContent = `${st} — port ${m.port}` + (m.osUpgrade ? " — OS UPGRADES ALLOWED" : "") + (m.dataWrites ? " — +DRIVE WRITES ALLOWED" : "");
   $("#mb-state").className = m.osUpgrade || m.dataWrites ? "err" : "";
   const kb = (n) => n >= 10240 ? `${Math.round(n / 1024)} KB` : `${n} B`;
-  $("#mb-bytes").textContent = `to the Rytm ${kb(m.toRytm)} (${m.toRytmMsgs} msgs), from it ${kb(m.fromRytm)}; ` +
+  $("#mb-bytes").textContent = `to the ${boxShort} ${kb(m.toRytm)} (${m.toRytmMsgs} msgs), from it ${kb(m.fromRytm)}; ` +
     `${m.drops} dropped (the tool did not read), ${m.blocked} OS upgrade and ${m.blockedData} +Drive write message(s) blocked` +
     (m.tooLong || m.junk ? `, ${m.tooLong} too long, ${m.junk} stray bytes` : "") + (m.rytmFail ? `, ${m.rytmFail} USB send(s) failed` : "");
   $("#mb-on").disabled = m.on; $("#mb-off").disabled = !m.on;
@@ -912,12 +922,12 @@ $("#mb-on").onclick = () => mbSet({ on: "1" });
 $("#mb-off").onclick = () => mbSet({ on: "0" });
 $("#mb-os").onchange = () => {
   const on = $("#mb-os").checked;
-  if (on && !confirm("Allow Elektron OS upgrades through the bridge? A tool connected to it could then flash the Rytm. This lasts until the bridge is turned off.")) { $("#mb-os").checked = false; return; }
+  if (on && !confirm("Allow Elektron OS upgrades through the bridge? A tool connected to it could then flash the box. This lasts until the bridge is turned off.")) { $("#mb-os").checked = false; return; }
   mbSet({ os: on ? "1" : "0" });
 };
 $("#mb-data").onchange = () => {
   const on = $("#mb-data").checked;
-  if (on && !confirm("Allow +Drive writes through the bridge? A tool connected to it could then replace, delete or clear projects and samples on the Rytm. This lasts until the bridge is turned off.")) { $("#mb-data").checked = false; return; }
+  if (on && !confirm("Allow +Drive writes through the bridge? A tool connected to it could then replace, delete or clear projects and samples on the box. This lasts until the bridge is turned off.")) { $("#mb-data").checked = false; return; }
   mbSet({ data: on ? "1" : "0" });
 };
 $("#mb-copy").onclick = () => { try { navigator.clipboard.writeText(mbTok); say($("#mb-msg"), "token copied"); } catch (e) {} };
@@ -964,7 +974,7 @@ const TABS = [...document.querySelectorAll("#tabs a")].map((a) => a.dataset.tab)
 let tab = "status";
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 function showTab(t) {
-  if (!TABS.includes(t)) t = "status";
+  if (!TABS.includes(t) || document.querySelector(`#tabs a[data-tab="${t}"][data-out]`)) t = "status";
   tab = t;
   document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === t));
   document.querySelectorAll(".tab").forEach((d) => d.classList.toggle("on", d.id === "tab-" + t));
@@ -980,6 +990,59 @@ function showTab(t) {
   if (t === "log") { const l = $("#log"); if ($("#follow").checked) l.scrollTop = l.scrollHeight; }
 }
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+// ---- the boxes (/status "boxes", pi/engine/box_list.h): every box on USB, a row each, so two of a kind stay two; each row's key is its own. Sidecar serves one, role
+// host. Its feature bits (core/device/device.h) say which parts of this page apply; its name replaces the Rytm's in the page's words.
+const BOX_FEAT = { remoteui: 1, project: 2, kits: 4, patterns: 8, sendfx: 16, userslots: 32, srcview: 64, fxin: 128, pools: 256 };
+const BOX_SHORT = { 1: "Rytm", 2: "Digitakt", 3: "A4" };
+const BOX_ROLE = {
+  host: ["in use", "Sidecar serves this box"],
+  waiting: ["waiting", "its mod said hello; Sidecar serves one box at a time, so it waits for the box in use to go"],
+  listening: ["no mod heard", "no Sidecar mod has said hello from this box"],
+  spare: ["not used", "Sidecar serves one box at a time"],
+  other: ["not supported", "Sidecar has no profile for this box"],
+};
+const boxWords = [];   // the page's own text with the Rytm in it, as written
+(function () {
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()) if (w.currentNode.nodeValue.includes("Rytm") && !w.currentNode.parentElement.closest("script, style"))
+    boxWords.push([w.currentNode, "nodeValue", w.currentNode.nodeValue]);
+  document.querySelectorAll("[title]").forEach((e) => { if (e.title.includes("Rytm")) boxWords.push([e, "title", e.title]); });
+})();
+let boxShort = "Rytm", boxSeen = "";
+function boxLabel(b, all) {
+  const name = BOX_SHORT[b.id] || b.name || "Unknown box";
+  return all.filter((x) => x.id === b.id).length > 1 ? `${name} ${b.n}` : name;
+}
+function boxRender(boxes) {
+  if (!Array.isArray(boxes) || boxes.length === 0) return;   // an older kernel: the page as it was
+  const seen = JSON.stringify(boxes);
+  if (seen === boxSeen) return;
+  boxSeen = seen;
+  const me = boxes.find((b) => b.role === "host");
+  const row = $("#boxes");
+  row.replaceChildren(...[...boxes].sort((a, b) => (b === me) - (a === me)).map((b) => {
+    const e = document.createElement("span"), s = document.createElement("small");
+    const [word, why] = !b.on ? ["not connected", "the box this boot serves"] : BOX_ROLE[b.role] || ["", ""];
+    e.className = "box" + (!b.on ? " off" : b.role === "host" ? "" : " quiet");
+    e.setAttribute("role", "listitem");
+    e.textContent = boxLabel(b, boxes);
+    s.textContent = word;
+    e.title = `${b.name}: ${why}`;
+    e.append(s);
+    return e;
+  }));
+  if (!me || me.feat === undefined) return;
+  const short = BOX_SHORT[me.id] || me.name;
+  if (short !== boxShort) {
+    boxShort = short;
+    for (const [n, k, t] of boxWords) n[k] = t.replaceAll("Rytm", short);
+  }
+  document.querySelectorAll("[data-needs], [data-lacks]").forEach((e) => {
+    const k = e.dataset.needs || e.dataset.lacks;
+    e.toggleAttribute("data-out", !(me.feat & BOX_FEAT[k]));
+  });
+  if (document.querySelector(`#tabs a[data-tab="${tab}"][data-out]`)) showTab("status");
+}
 const VNAME = ["BD", "BT", "SD", "LT", "CH/OH", "MT/HT", "CY/CB", "RS/CP"];   // a voice by the Rytm track(s) that play it; its index stays the value
 for (const v of [0, 2, 7, 1, 3, 5, 4, 6]) { $("#mvoice").add(new Option(VNAME[v], v)); $("#dvoice").add(new Option(VNAME[v], v)); }
 
@@ -1313,6 +1376,7 @@ async function pollStatus() {
     if (r.headers.get("X-Sidecar-Pair")) { setOnline(false, "waiting for the pairing code"); statusBusy = false; return; }
     status = await r.json();
     statusAt = t0;
+    boxRender(status.boxes);
     renderStats();
     if (status.rec) recRender(status.rec);
     if (status.sdtest) sdtRender(status.sdtest);
@@ -1326,6 +1390,7 @@ async function pollStatus() {
   statusBusy = false;
 }
 setInterval(pollStatus, 1000);
+fetch("/status", { cache: "no-store" }).then((r) => r.json()).then((o) => boxRender(o.boxes)).catch(() => {});   // the pairing dialog's words too: pollStatus waits for it
 function setOnline(on, why) {
   online = on;
   paintSeg();

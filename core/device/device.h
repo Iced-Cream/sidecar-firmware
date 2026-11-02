@@ -108,6 +108,7 @@ struct Profile {
 
 const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use
+const Profile* by_id(uint16_t id);        // the known box with this id; null none
 const Profile* by_usb(uint16_t vid, uint16_t pid);   // the known box with this USB id and an audio row (the Pi's driver); null none
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
 // What one connected box has chosen: its profile, its state folder, its output, its counts. There is one link today, g_link
