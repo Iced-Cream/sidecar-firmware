@@ -130,6 +130,7 @@ HOSTED_CFLAGS = $(ARCH) -O2 -std=c99 -fno-math-errno -ffp-contract=fast -g -MMD 
 # from where -ffp-contract=fast fuses a multiply (docs/superpowers/specs/2026-10-31-neon-pass.md "Compiler")
 $(patsubst %,hosted/core/%.o,$(HOT_O3)) $(patsubst %,hosted/$(ENG)/%.o,$(HOT_O3_ENG)): HOSTED_FLAGS += -O3
 
+hosted/a4_in.cpp.o: HOSTED_FLAGS += -I ../../teensy/libraries/RytmHost
 hosted/core/%.o: $(CORE)/%
 	@mkdir -p $(dir $@)
 	@echo "  CPP   $@ (hosted)"
