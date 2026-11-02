@@ -449,6 +449,15 @@ int main() {
     out::set_trim(2, 60);                              // a live stereo=trim:trk
     send(hello(device::kA4.id));                       // a repeated hello is no change of box
     CHECK(out::control.trk10 == 60);
+    static int s_user = -1;                            // U1..U5: the A4 reports them as the Rytm does, the voice byte's flag
+    hooks.user_report = [](int, int s, int, int, int, int) { s_user = s; };
+    std::vector<uint8_t> t = sidecar({0x04, 0x50 + 1, 60, 100});
+    t.pop_back();
+    for (int k = 0; k < 16; ++k) t.push_back(64), t.push_back(0);
+    t.push_back(0), t.push_back(0), t.push_back(0xf7);
+    send(t);
+    CHECK(s_user == 0);
+    hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
   }

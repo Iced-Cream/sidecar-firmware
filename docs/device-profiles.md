@@ -114,7 +114,8 @@ For modulation faster or deeper than this, use the Sidecar's own LFOs (`core/lfo
 | Channels each way, block sizes, a stereo mix or per-voice returns, return and stem channels | the profile's `audio`, an `out::Device` row |
 | Which of the box's pages reach which of the Sidecar's stages | the profile's `controls` |
 | Remote UI pages | off for a box unless `kRemoteUi`; in practice Rytm only, the pages are drawn for its screen |
-| Kits, patterns, project names, send FX reports, user slots | Rytm only: a box's messages cannot reach them. The `Feature` bits only declare them so far |
+| Kits, patterns, project names, send FX reports | Rytm only: a box's messages cannot reach them. The `Feature` bits only declare them so far |
+| User slots | a box that reports the U1..U5 flags plays them (the A4); the web's User machines tab fills them, in the box's own folder. The labels and presets of 19..1E stay the Rytm's |
 | `kVoices`, `kBlock`, P1..P16 inside the engine | stay the engine's: a profile fits a box into them |
 | The word "Rytm" in UI strings, and the engine's message builders | unchanged |
 | Device -> host channels of the driver's consumers | 12 (the recorder, the sampler, the stems, the Sidecar's USB-C): a box with another count is refused until they follow |

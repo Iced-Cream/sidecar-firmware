@@ -24,7 +24,7 @@ const Profile kA4 = {
     6, 4, 16,
     {0x7D, 0x52, 0x54},
     0x04, 0x03, 0x11,
-    0,
+    kUserSlots,   // U1..U5 on its SIDECAR page; the web's User machines tab fills them, in /.a4/slots
     0, 0, {}, {},
     {},   // nothing goes back but the hello's answer: the A4's receive path stays out of it
     nullptr,
