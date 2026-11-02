@@ -21,7 +21,7 @@ your firmware mod --- USB MIDI SysEx ---> host_sysex (core/host_link.cpp)
   dropped, so it cannot reach a Rytm-only path.
 - Out: what the engine sends goes through your profile's `out_allow`, which by default lets nothing through. A box with
   a small CPU is not loaded with the Rytm's pages, pool tables and label lists.
-- Back: the Rytm's own hello (0x35) returns to the Rytm, unless your profile has `kRemoteUi`.
+- Back: the Rytm's own hello (0x35) returns to the Rytm. A box with `kRemoteUi` says hello to the pages with 0x36.
 
 ## What a device must send
 
@@ -113,7 +113,7 @@ For modulation faster or deeper than this, use the Sidecar's own LFOs (`core/lfo
 | USB vendor and product id | the profile; the Pi's Overbridge driver claims a box by them (`device::by_usb`) |
 | Channels each way, block sizes, a stereo mix or per-voice returns, return and stem channels | the profile's `audio`, an `out::Device` row |
 | Which of the box's pages reach which of the Sidecar's stages | the profile's `controls` |
-| Remote UI pages | off for a box unless `kRemoteUi`; in practice Rytm only, the pages are drawn for its screen |
+| Remote UI pages | off for a box unless `kRemoteUi`: the Rytm and the A4 ("Remote UI on a box"). A page that needs a feature the box lacks is hidden (`extra_for_box`) |
 | Kits, patterns, project names, send FX reports | Rytm only: a box's messages cannot reach them. The `Feature` bits only declare them so far |
 | User slots | a box that reports the U1..U5 flags plays them (the A4); the web's User machines tab fills them, in the box's own folder. The labels and presets of 19..1E stay the Rytm's |
 | `kVoices`, `kBlock`, P1..P16 inside the engine | stay the engine's: a profile fits a box into them |
@@ -251,6 +251,16 @@ no voices. The Rytm's stream stays the clock and the A4's is resampled to it (`p
 
 Also: a way to tell the links apart (each USB MIDI device calls its own handler; the Rytm path's message has no port on it
 yet), and a remote UI that belongs to one link.
+
+## Remote UI on a box
+
+A box with a 128 x 64 screen of the Rytm's layout (byte = page + 8 x column) can show the pages. List `kRemoteUi` in `features`, `Profile::screen` for its voice names and the bottom bar's words, and these commands, with the 0x30 family's version byte 1 after the command:
+
+- `out_allow`: 36 37 38 39 3A 3C. The box gets the frame's rectangles and commit, keepalive, catch mask, splash and close. No 3D, 3E, 3F or 34: the engine draws the text into the frame for a box (`wire_ready`, `preview()`), because its text routine is the Rytm's.
+- `in_allow`: 30 31 32: opened or closed, a key in the Rytm's codes, a turn.
+- 0x36 is the box's hello to the pages: `<uptime hi> <uptime lo> <caps>`, uptime in 50 ms ticks, caps bit 0 understood 36. The engine reads it as a 35. Not 35: that asks for `/.rytm`, and an older engine would restart on it. Send it only after the 4F answer said accepted (status 1).
+
+The rules are the Rytm's (`mods/0026-remote-ui` in sidecar-mods): the box draws the last committed frame while the page is open, and 1 s with no message from the host gives its own screen back. An open is the user's alone. The status page shows `voices` voices by `screen->names`, and voice pages join the ring once a voice has reported. On the A4 the pages shown are SIDECAR, SYSTEM, the voices, SCOPE, REC, the MENU, LFO and WEB UI; POOL, SAMPLE, AUTO, CHOP, SEQ, SONG, POLY, INSERT, MASTER, ARP, PROJECT and KEYS need features it lacks. SCOPE's source list still names the Rytm's tracks.
 
 ## What the page is told
 

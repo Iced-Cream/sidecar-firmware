@@ -297,7 +297,13 @@ static CORE_COLD void chord_end(int vi) {
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (len < 5 || d[len - 1] != 0xF7) return ++l.dropped, false;
   if (is_sidecar(d, len) && d[4] == kCmdHello) return hello(l, d, len), false;
-  if (is_sidecar(d, len) && d[4] == 0x35 && !(l.box->features & kRemoteUi)) {   // a Rytm's USB port came up
+  if (is_sidecar(d, len) && d[4] == 0x36 && (l.box->features & kRemoteUi) && len <= kMaxMessage) {   // a box's screen says hello: 35 is the Rytm's, and asks for /.rytm
+    memcpy(m, d, (size_t)len);
+    m[4] = 0x35;
+    d = m;
+    return true;
+  }
+  if (is_sidecar(d, len) && d[4] == 0x35) {   // a Rytm's USB port came up
     if (other_folder(l, nullptr)) {
       if (hooks.device_restart) change_folder(l, nullptr);
       return ++l.dropped, false;

@@ -28,6 +28,7 @@
 #include "output.h"
 #include "poly.h"
 #include "seq/seq.h"
+#include "ui/remote.h"
 
 using namespace core;
 
@@ -42,6 +43,9 @@ struct Opts {
   struct Trig { double at, len; int voice, note; bool on, off; };
   std::vector<Trig> trigs;
   double all_off = -1;
+  double pair_at = -1;     // --pair-at: the pairing popup at this time, a made-up test code, never a real one
+  bool flood = false;
+  std::string frame;       // --frame-out: the last frame the screen was sent, 1024 B, at the end
 } o;
 char** g_argv;
 int g_fd = -1;
@@ -77,10 +81,24 @@ void midi_in(const uint8_t* d, int n) {
   }
 }
 
-void engine_out(const uint8_t* m, int n) {   // through the profile's filter: the hello's answer alone, for the A4
+uint64_t g_screen_bytes, g_screen_msgs, g_screen_commits;
+std::vector<uint8_t> g_tx;
+void engine_out(const uint8_t* m, int n) {   // through the profile's filter
   if (n >= 9 && m[4] == device::kCmdHello && m[8] == device::kOk) ++g_ok;
-  uint8_t h[3] = {'M', (uint8_t)n, (uint8_t)(n >> 8)};
-  if (write(g_fd, h, 3) != 3 || write(g_fd, m, n) != n) return;
+  else g_screen_bytes += (uint64_t)n, ++g_screen_msgs, g_screen_commits += n > 4 && m[4] == 0x39;
+  g_tx.push_back('M'), g_tx.push_back((uint8_t)n), g_tx.push_back((uint8_t)(n >> 8));
+  g_tx.insert(g_tx.end(), m, m + n);
+}
+// After the block it answered: a page's frames do not hold up the audio on the one socket, as they do not on the Pi, where each has its own endpoint
+void tx_flush() {
+  const uint8_t* p = g_tx.data();
+  size_t left = g_tx.size();
+  while (left) {
+    ssize_t w = write(g_fd, p, left);
+    if (w <= 0) break;
+    p += w, left -= (size_t)w;
+  }
+  g_tx.clear();
 }
 
 // ---- WAV, 32 bit, the header written at the end
@@ -154,6 +172,28 @@ void control_tick() {
   if (!idle_prepare() && !idle_save()) idle_stream();
 }
 
+// What the Pi's control core does for the screen: the status once a second, the tick each pass. The numbers are a made-up unit's.
+void screen_tick() {
+  static uint32_t said = 0;
+  uint32_t ms = (uint32_t)(g_frames * 1000 / kRate);
+  if (ms - said >= 1000 || !said) {
+    said = ms | 1;
+    ui::RemoteStatus st = {};
+    st.ob = 1, st.rec = 1, st.eth = 2, st.ip[0] = 10, st.ip[3] = 2;
+    for (int k = 0; k < 3; ++k) st.cpu[k] = 10 + k;
+    st.underruns = g_out.Underflows();
+    ui::remote_status(st);
+  }
+  if (o.pair_at >= 0 && (double)g_frames / kRate >= o.pair_at) {
+    o.pair_at = -1;
+    ui::remote_pair_code("9173 2046");
+    ui::remote_popup("SIDECAR PAIR CODE", "9173 2046", ui::kPopupMaxMs, true);
+  }
+  ui::remote_tick(ms);
+  static uint32_t forced = 0;   // --flood: a whole frame each 25 ms while a page is open, as many bytes as the screen can ever ask of the link
+  if (o.flood && ui::remote_open() && ms - forced >= 25) forced = ms, ui::remote_resync();
+}
+
 void pull(uint32_t n) {
   static std::vector<int32_t> buf;
   buf.resize(1 + n * Output::kChannels);
@@ -164,6 +204,7 @@ void pull(uint32_t n) {
     while (g_out.Level() < k + 2 * kBlock) render_block();
     g_out.Pull(f + done, k);
     done += k, g_frames += k;
+    screen_tick();
   }
   const int ch = out::device().channels;
   for (uint32_t i = 0; i < n; ++i) {
@@ -182,6 +223,7 @@ void pull(uint32_t n) {
     if (w <= 0) return;
     p += w, left -= (size_t)w;
   }
+  tx_flush();
 }
 
 // ---- the link, rytm-emu src/oblink.rs: host side
@@ -243,7 +285,7 @@ void run() {
       }
       if (need == ~0u || have < need) break;
       if (p[0] == 'N') pull(p[1] | p[2] << 8 | p[3] << 16 | (uint32_t)p[4] << 24);
-      else if (p[0] == 'M') midi_in(p + 3, need - 3);
+      else if (p[0] == 'M') midi_in(p + 3, need - 3), tx_flush();
       else if (p[0] == 'R') {
         uint32_t n = (need - 5) / 48;
         const int32_t* s = (const int32_t*)(p + 5);
@@ -284,6 +326,9 @@ int main(int argc, char** argv) {
     else if (a == "--in-wav") o.in_wav = next();
     else if (a == "--seconds") o.seconds = atof(next());
     else if (a == "--all-off") o.all_off = atof(next());   // AT: every voice's notes off, as a stop
+    else if (a == "--pair-at") o.pair_at = atof(next());
+    else if (a == "--frame-out") o.frame = next();
+    else if (a == "--flood") o.flood = true;
     else if (a == "--trig") {   // AT:LEN:VOICE:NOTE, seconds of emulated time (after the restart: it starts at 0 again)
       Opts::Trig t = {};
       if (sscanf(next(), "%lf:%lf:%d:%d", &t.at, &t.len, &t.voice, &t.note) != 4) return 2;
@@ -316,6 +361,11 @@ int main(int argc, char** argv) {
   if (g_fd < 0) return fprintf(stderr, "sidecar_emu: no link at %s\n", o.link.c_str()), 1;
   run();
   stats(g_restart ? "restart" : "end");
+  printf("sidecar_emu: screen %llu B in %llu messages, %llu commits, opens %lu, keys %lu, turns %lu, bad %lu\n", (unsigned long long)g_screen_bytes, (unsigned long long)g_screen_msgs,
+         (unsigned long long)g_screen_commits, (unsigned long)ui::remote_stats().opens, (unsigned long)ui::remote_stats().keys, (unsigned long)ui::remote_stats().encs, (unsigned long)ui::remote_stats().bad);
+  if (!o.frame.empty()) {
+    if (FILE* f = fopen(o.frame.c_str(), "wb")) fwrite(ui::remote_frame(), 1, 1024, f), fclose(f);
+  }
   g_wo.close(), g_wi.close();
   close(g_fd);
   if (g_restart) {

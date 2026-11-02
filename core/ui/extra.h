@@ -47,6 +47,7 @@ enum : uint8_t { kLedOff = 0, kLedBlueDim = 43, kLedBlue = 47, kLedOrange = 52, 
 inline uint8_t extra_encs(const ExtraPage& x) { return x.encs_now ? x.encs_now() : x.encs; }
 int extra_pages();                    // how many there are (shown or not)
 const ExtraPage& extra_page(int i);   // in the page order
+bool extra_for_box(const char* title);   // this page means something on the box in use (the Rytm: all do): device.h Feature
 
 // ---- the Overbridge input tap. Channels as the Rytm sends them (ob_block.h): 0 / 1 MAIN L / R, 2 + t track t's voice
 // (BD SD RS BT LT MT CH CY), 10 / 11 AUDIO IN L / R; int32 full scale.

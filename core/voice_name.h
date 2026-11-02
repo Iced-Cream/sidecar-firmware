@@ -3,10 +3,13 @@
 // card files keep "V1".."V8".
 #pragma once
 
+#include "device/device.h"
+
 namespace core {
 
 inline const char* voice_name(int v) {
   static const char* const k[8] = {"BD", "BT", "SD", "LT", "CH/OH", "MT/HT", "CY/CB", "RS/CP"};
+  if (device::g_link.box && device::g_link.box->screen) return device::g_link.box->screen->names[v & 7];
   return k[v & 7];
 }
 
