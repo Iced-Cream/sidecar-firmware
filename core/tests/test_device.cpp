@@ -440,12 +440,12 @@ int main() {
   {
     device::reset();
     CHECK(out::control.trk10 == 0);
-    CHECK(device::rytm().trk10 == 0 && device::kDigitakt.trk10 == 0 && device::kA4.trk10 == 120);
+    CHECK(device::rytm().trk10 == 0 && device::kDigitakt.trk10 == 0 && device::kA4.trk10 == 180);
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
     device::g_link.state = "/.a4";                     // the folder chosen at boot: this hello is accepted
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
-    CHECK(out::control.trk10 == 120);
+    CHECK(out::control.trk10 == 180);
     out::set_trim(2, 60);                              // a live stereo=trim:trk
     send(hello(device::kA4.id));                       // a repeated hello is no change of box
     CHECK(out::control.trk10 == 60);
@@ -467,9 +467,9 @@ int main() {
       CHECK(w.write((const uint8_t*)"3\n", 2) == 2);
       w.close();
       device::boot();
-      CHECK(device::active().id == device::kIdA4 && out::control.trk10 == 120);
+      CHECK(device::active().id == device::kIdA4 && out::control.trk10 == 180);
       send(hello(device::kA4.id));
-      CHECK(out::control.trk10 == 120);
+      CHECK(out::control.trk10 == 180);
       device::reset();
       CHECK(f.remove("/.rytm/device"));
     }
