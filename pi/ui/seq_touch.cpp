@@ -256,6 +256,7 @@ void to_view(const Track* t, sidecar_seq_view_t* v) {
   memset(v->locks, 0, sizeof v->locks);
   memset(v->xstep, 0, sizeof v->xstep), memset(v->rt_cnt, 0, sizeof v->rt_cnt), memset(v->rt_mode, 0, sizeof v->rt_mode);
   memset(v->fx_cmd, 0, sizeof v->fx_cmd), memset(v->fx_val, 0, sizeof v->fx_val), memset(v->lcond, 0, sizeof v->lcond);
+  memset(v->arpl, 0, sizeof v->arpl);
   v->speed = v->dir = v->rnd_mode = v->rnd_wght = 0, v->rnd_oct = 2;
   memset(v->cond, 0, sizeof v->cond);
   if (!t) return;
@@ -270,12 +271,16 @@ void to_view(const Track* t, sidecar_seq_view_t* v) {
     int lc = 0;
     for (int k = 0; k < s.nl && !lc; ++k) lc = s.lock[k].cond;
     bool sl = false;
-    for (int k = 0; k < s.nl; ++k) sl |= (s.slide >> (s.lock[k].param & 31) & 1) != 0;
+    for (int k = 0; k < s.nl; ++k) sl |= core::seq::lock_slides(s, s.lock[k].param);
     v->xstep[i] = (unsigned char)((s.xf & core::seq::kXfRnd ? 1 : 0) | (core::seq::rt_on(s.rt) ? 2 : 0) |
                                   (s.fx[0].cmd || s.fx[1].cmd ? 4 : 0) | (lc ? 8 : 0) | (sl ? 16 : 0));
     v->rt_cnt[i] = s.rt.cnt, v->rt_mode[i] = s.rt.mode;
     v->fx_cmd[i] = s.fx[0].cmd, v->fx_val[i] = (signed char)s.fx[0].val;
     v->lcond[i] = (unsigned char)lc;
+    for (int f = 0; f < core::seq::kArpLocks; ++f) {
+      int x = core::seq::lock_of(s, core::seq::kLockArp + f);
+      if (x >= 0) v->arpl[i] |= (unsigned short)(((x >> 7) + 1) << (3 * f));
+    }
   }
   for (int i = 0; i < kMaxSteps; ++i) {
     const Step& s = t->step[i];

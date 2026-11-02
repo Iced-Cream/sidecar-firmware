@@ -150,9 +150,15 @@ extern "C" int seqdemo_xstep(int rytm, int step, int* fx, int* lc, int* rnd) {
   if (!t || step < 0 || step >= kMaxSteps) return -1;
   const Step& s = t->step[step];
   if (fx) *fx = s.fx[0].cmd | (uint8_t)s.fx[0].val << 8;
-  if (lc) *lc = s.nl ? s.lock[0].cond | (s.slide >> (s.lock[0].param & 31) & 1) << 8 : -1;
+  if (lc) *lc = s.nl ? s.lock[0].cond | (lock_slides(s, s.lock[0].param) ? 1 : 0) << 8 : -1;
   if (rnd) *rnd = s.xf & kXfRnd ? 1 : 0;
   return s.rt.cnt | s.rt.mode << 8;
+}
+extern "C" int seqdemo_arpl(int rytm, int step, int f) {   // the step's arp lock of field f, its index; -1 none
+  const Track* t = track_of(g_p, rytm);
+  if (!t || step < 0 || step >= kMaxSteps) return -1;
+  int x = lock_of(t->step[step], kLockArp + f);
+  return x < 0 ? -1 : x >> 7;
 }
 extern "C" int seqdemo_seed(void) { return g_p.seed; }
 // tests: Rytm track rytm's swing (50 straight), -1 no such seq track
