@@ -10,6 +10,7 @@
 // kTileRate a second (a token bucket over the remote host's tile count), so the Rytm's panel link and MIDI keep room.
 #include <string.h>
 
+#include "device/device.h"
 #include "rec/rec_names.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -342,6 +343,17 @@ UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kM
 }  // namespace
 
 CORE_COLD int extra_pages() { return (int)(sizeof kPages / sizeof kPages[0]); }
+// A box's pages: what each needs of the Rytm's side (device.h Feature). The rest draw from the engine alone: REC, SCOPE, LFO, MENU, WEB UI
+CORE_COLD bool extra_for_box(const char* title) {
+  if (!device::foreign()) return true;
+  struct Need { const char* title; uint32_t f; };
+  static UI_ROM const Need kNeeds[] = {{"SAMPLE", device::kPools}, {"AUTO", device::kPools}, {"POOL", device::kPools}, {"CHOP", device::kPools}, {"SEQ", device::kPatterns},
+                                       {"SONG", device::kPatterns}, {"POLY", device::kPatterns}, {"INSERT", device::kSendFx}, {"MASTER", device::kSendFx}, {"ARP", device::kSrcView},
+                                       {"PROJECT", device::kProject}, {"KEYS", device::kRytmKeys}};
+  for (const Need& n : kNeeds)
+    if (!strcmp(n.title, title)) return (device::active().features & n.f) != 0;
+  return true;
+}
 CORE_COLD const ExtraPage& extra_page(int i) { return *kPages[i < 0 ? 0 : i >= extra_pages() ? extra_pages() - 1 : i]; }
 
 #if CORE_UI_TOOLS

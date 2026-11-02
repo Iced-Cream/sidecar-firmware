@@ -9,8 +9,8 @@
 //        / 0x11; everything else from it is dropped, so a Rytm-only command never reaches a Rytm-only path.
 //   out  what the engine sends goes through out_allow (default for a profile: nothing): a box with a small CPU is not
 //        loaded with the Rytm's pages, pool tables and label lists, and there is no per-message answer.
-// The Rytm's own hello 0x35 goes back to the Rytm (a box unplugged, a Rytm plugged in), unless the box's profile has
-// the remote UI. All of it runs where engine_sysex runs (the Pi's core 3); nothing here runs per sample. kVoices,
+// The Rytm's own hello 0x35 goes back to the Rytm (a box unplugged, a Rytm plugged in); a box with the remote UI says 0x36
+// to its pages. All of it runs where engine_sysex runs (the Pi's core 3); nothing here runs per sample. kVoices,
 // P1..P16 and the engine's own message layout stay the engine's: a profile fits a box into them.
 //
 // State: a box with a state_dir keeps its projects, settings and pools there, not in /.rytm, so two devices' state never
@@ -49,6 +49,7 @@ enum Feature : uint32_t {
   kSrcView = 1u << 6,      // 29, 2A, 2B: the stock SRC page's values
   kFxIn = 1u << 7,         // 26, 27
   kPools = 1u << 8,        // 0D..0F, 12..18: the card's lists on the box's screen
+  kRytmKeys = 1u << 9,     // the page tables' keys (ui/page_keys.h): the Rytm's panel
 };
 
 // What a box can do, plainly. A box picks one and fills in the options; no new code for a box that fits.
@@ -72,6 +73,12 @@ struct Controls {
   uint8_t n;                       // values in its report
   uint8_t target[kMaxControls];    // value k's Control
   uint8_t type[8];                 // kCtlType's value -> FilterKind
+};
+
+// A box with kRemoteUi: what its screen says that the Rytm's says in the Rytm's words. Pages that need a feature it lacks are hidden (extra.h extra_for_box).
+struct Screen {
+  const char* names[8];    // a voice's name for the user, for the voices it uses
+  const char* keys;        // the bottom bar of the connect splash: how the pages open
 };
 
 struct Profile {
@@ -106,6 +113,7 @@ struct Profile {
   bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
   int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
   bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (a poly track, one report a note: the A4)
+  const Screen* screen;       // with kRemoteUi; null: the Rytm's words
 };
 
 const Profile& rytm();                 // the default

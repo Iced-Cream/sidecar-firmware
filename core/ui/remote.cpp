@@ -10,6 +10,7 @@
 
 #include "fx/send_fx.h"
 #include "fx/insert.h"
+#include "device/device.h"
 #include "hooks.h"
 #include "keys.h"
 #include "lfo.h"
@@ -223,8 +224,9 @@ struct StatusView {
     // badge (pixels: the Rytm inverts only a glyph's own cell, which drew a bare inverted glyph), the machine centred in
     // the 22 px after it (the Rytm draws "PLAITS" 24 px wide [measured, rytm-emu rui1021])
     static UI_ROM const uint8_t kShownOrder[8] = {0, 2, 7, 1, 3, 5, 4, 6};
-    for (int n = 0; n < kVoices; ++n) {
-      int vi = kShownOrder[n];
+    const bool box = device::foreign();
+    for (int n = 0; n < (box ? device::active().voices : kVoices); ++n) {
+      int vi = box ? n : kShownOrder[n];
       int x = 32 * (n & 3), y = 13 + 11 * (n >> 2);
       c.fill(Rect{(int16_t)x, (int16_t)(y - 1), 10, 7}, kOn);
       sniprintf(b, sizeof b, "%.2s", voice_name(vi));
@@ -414,6 +416,18 @@ CORE_COLD int TrackSource::code(int k) const {
   return Source::code(k);
 }
 
+// A box draws no text of ours (the Rytm's text routine has no counterpart there): its frames carry the text in their pixels, in the host's font (preview()), so only 38s and a 39 go.
+// `wire` is what the diff and the send read: `work` on the Rytm, whose bytes stay what they were. The items stay in `work`, which the pages draw over.
+CORE_RAM2 Canvas baked;
+Canvas* wire = &work;
+CORE_COLD void wire_ready() {
+  wire = &work;
+  if (!device::foreign()) return;
+  preview(work, baked.fb);
+  memset(baked.txt, 0, sizeof baked.txt);
+  wire = &baked;
+}
+
 CORE_COLD void send(const uint8_t* m, int n) {
   to_rytm(m, n);
   s.stats.bytes += (uint32_t)n;
@@ -436,7 +450,7 @@ CORE_COLD void send_short(uint8_t cmd, const uint8_t* b, int nb) {   // nb <= kM
 CORE_COLD void send_rect(int c0, int p, int nc) {
   uint8_t raw[8 * kTileCols], m[16 + 8 * kTileCols + kTileCols * 8 / 7 + 2];
   int nr = 0;
-  for (int x = c0 * 8; x < (c0 + nc) * 8; ++x) raw[nr++] = work.fb[p + 8 * x];
+  for (int x = c0 * 8; x < (c0 + nc) * 8; ++x) raw[nr++] = wire->fb[p + 8 * x];
   int n = head(m, kRect);
   m[n++] = s.seq;
   m[n++] = (uint8_t)c0;
@@ -457,7 +471,7 @@ CORE_COLD void send_rect(int c0, int p, int nc) {
 
 // 3D: slot i of `work` (empty: the slot cleared)
 CORE_COLD void send_text(int i) {
-  const TextItem& t = work.txt[i];
+  const TextItem& t = wire->txt[i];
   uint8_t m[16 + kTextLen];
   int n = head(m, kText);
   m[n++] = s.seq, m[n++] = (uint8_t)i, m[n++] = t.x & 0x7F, m[n++] = t.y & 0x3F, m[n++] = t.font & 0x7F;
@@ -499,6 +513,7 @@ CORE_COLD int page_ids(int* ids) {
   for (int k = 0; k < extra_pages() && n < kMaxIds; ++k) {
     // R3: MENU / KEYS only while shown; rui1051: the pages only their keys open too (page_keys.h sc_shortcut_only)
     if ((extra_page(k).off_ring || sc_shortcut_only(extra_page(k).title)) && s.voice != kExtra0 - k) continue;
+    if (!extra_for_box(extra_page(k).title)) continue;
     if (!extra_page(k).shown || extra_page(k).shown()) ids[n++] = kExtra0 - k;
   }
   return n;
@@ -623,6 +638,7 @@ CORE_COLD void voice_footer(const Page& p, const char* name, const Source& src, 
 // 3F for every encoder whose binding the Rytm does not have yet: numeric parameters echo into the bottom bar's slot
 // ("BD HRM:" + the value), lists and the SIDECAR page none.
 CORE_COLD void send_echoes(const Page* p, int vi) {
+  if (device::foreign()) return;
   for (int e = 0; e < 8; ++e) {
     uint8_t slot = kEchoNone, val = 0, fl = 0;
     char pre[12] = "";
@@ -710,6 +726,7 @@ CORE_COLD void send_leds(const uint8_t* c) {
 }
 // A page that lights the trig keys (ExtraPage::leds_now): sent when it shows and on every change, mode 0 when it is left
 CORE_COLD void update_leds(const ExtraPage* x) {
+  if (device::foreign()) return;
   uint8_t c[16];
   bool want = !s.legacy && x && x->leds_now && x->leds_now(c);
   if (want && (!s.leds_on || memcmp(c, s.leds, 16))) send_leds(c);
@@ -720,7 +737,7 @@ CORE_COLD void update_leds(const ExtraPage* x) {
 CORE_COLD int send_part(const uint32_t tiles[4], uint64_t texts, bool clear_first) {
   int n = 0;
   s.seq = (uint8_t)((s.seq + 1) & 0x7F);
-  if (clear_first) {
+  if (clear_first && !device::foreign()) {
     uint8_t b = s.seq;
     send_short(kTextClear, &b, 1);
   }
@@ -805,14 +822,15 @@ CORE_COLD void frame(uint32_t ms) {
   send_echoes(p, s.voice);
   uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
   uint64_t texts = 0;
-  int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
+  wire_ready();
+  int tiles = s.sent_valid ? wire->diff_tiles(sent, mask) : kTiles;
 #if CORE_UI_TOOLS
   work.check_overlap();
 #endif
-  int ntext = s.sent_valid ? work.diff_text(sent, &texts) : 0;
+  int ntext = s.sent_valid ? wire->diff_text(sent, &texts) : 0;
   if (!s.sent_valid)
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i, ++ntext;
+      if (wire->txt[i].s[0]) texts |= 1ull << i, ++ntext;
   if (tiles || ntext) {
     // the touched knob's cell and the bottom bar first, in a commit of their own, when there is more
     uint32_t first[4] = {}, rest[4];
@@ -837,7 +855,7 @@ CORE_COLD void frame(uint32_t ms) {
     } else {
       send_part(mask, texts, !s.sent_valid);
     }
-    sent = work;
+    sent = *wire;
     s.sent_valid = true;
     s.last_tx = ms;
     s.stats.tiles += (uint32_t)tiles;
@@ -906,6 +924,7 @@ CORE_COLD void src_tick(uint32_t ms) {
     s.stats.widgets += (uint32_t)drawn;
     uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
     uint64_t texts = 0;
+    wire = &work;   // (a box has no SRC view)
     int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
 #if CORE_UI_TOOLS
     work.check_overlap();
@@ -940,6 +959,7 @@ CORE_COLD void src_tick(uint32_t ms) {
 // running down over kSplashMs, the bottom bar naming how the pages open.
 CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
   char b[kTextLen + 1];
+  const device::Screen* bx = device::foreign() ? device::active().screen : nullptr;
   c.clear();
   header(c, kStatusTitle, 0, 0, "USB");
   int dx = 0;
@@ -953,7 +973,7 @@ CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
       if (row >> x & 1) c.pixel(kIconX - dx + x, kIconY + y);
   }
   c.put_text(kSlotFree, kRBold, 54, 19, "CONNECTED");
-  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), kVoices, fx::kSlots);
+  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), bx ? device::active().voices : kVoices, fx::kSlots);
   c.put_text(kSlotFree + 1, kRSmall, 54, 33, b);
   const uint8_t* ip = ssrc.st.ip;
   if ((ssrc.st.eth == 2 || ssrc.st.wifi == 2) && (ip[0] | ip[1] | ip[2] | ip[3]))
@@ -965,7 +985,7 @@ CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
   if (w > 0) c.hline(2, 2 + w - 1, 52);
   char f[32];
   sniprintf(f, sizeof f, "%s: SIDECAR PAGES", sc_combo_keys("pages"));   // the device's table (ui/page_keys.h)
-  footer(c, f);
+  footer(c, bx ? bx->keys : f);
 }
 
 // The splash's frames: at once, then every kSlideStepMs while the icon slides, every kSplashStepMs after (only the
@@ -986,15 +1006,16 @@ CORE_COLD void splash_tick(uint32_t ms) {
   splash_draw(work, t);
   uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
   uint64_t texts = 0;
-  int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
-  if (s.sent_valid) work.diff_text(sent, &texts);
+  wire_ready();
+  int tiles = s.sent_valid ? wire->diff_tiles(sent, mask) : kTiles;
+  if (s.sent_valid) wire->diff_text(sent, &texts);
   else
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i;
+      if (wire->txt[i].s[0]) texts |= 1ull << i;
   if (tiles || texts) send_part(mask, texts, !s.sent_valid);
   else send_short(kAlive, nullptr, 0);
   s.stats.tiles += (uint32_t)tiles;
-  sent = work;
+  sent = *wire;
   s.sent_valid = true;
   s.last_tx = ms;
   if (first) {
@@ -1074,10 +1095,11 @@ CORE_COLD void popup_tick(uint32_t ms) {
     popup_draw(work);
     uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
     uint64_t texts = 0;
+    wire_ready();
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i;
+      if (wire->txt[i].s[0]) texts |= 1ull << i;
     send_part(mask, texts, true);
-    sent = work;
+    sent = *wire;
     s.sent_valid = true;
     popup_hold(ms, hold);
     ++s.popups;
@@ -1107,7 +1129,7 @@ CORE_COLD void popup_tick(uint32_t ms) {
 volatile uint16_t disp_owned = 0;   // bit p: the platform's touchscreen shows page p (remote_display_owns)
 CORE_COLD bool extra_here(const char* title) {   // an ExtraPage of that title is in the list now (or none is: the status)
   for (int k = 0; k < extra_pages(); ++k)
-    if (!strcmp(extra_page(k).title, title)) return !extra_page(k).shown || extra_page(k).shown();
+    if (!strcmp(extra_page(k).title, title)) return extra_for_box(title) && (!extra_page(k).shown || extra_page(k).shown());
   return true;
 }
 CORE_COLD void display_remote_page(int page) {

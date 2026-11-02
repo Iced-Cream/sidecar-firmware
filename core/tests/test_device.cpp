@@ -21,13 +21,16 @@
 #include "pool/pool.h"
 #include "seq/seq.h"
 #include "sysex.h"
+#include "ui/extra.h"
 #include "ui/remote.h"
+#include "voice_name.h"
 #include "host_link.h"
 #include "inst.h"
 #include "poly.h"
 #include "voices.h"
 
 using namespace core;
+using ui::extra_for_box;
 
 static int g_restarts = 0;
 static bool exists_on_card(const char* root, const char* p) {   // past the engine's own paths: where it really is
@@ -659,6 +662,45 @@ int main() {
       send(off(1));
       voice_silence(1);
     }
+  }
+
+  {  // the A4's screen: the pages' messages alone, their text in the pixels, its hello never the Rytm's 35, the Rytm's pages hidden
+    device::reset();
+    device::g_link.state = "/.a4";
+    send(hello(device::kA4.id));
+    CHECK(device::foreign() && device::active().id == device::kIdA4);
+    ui::remote_reset();
+    g_out.clear();
+    send(sidecar({0x36, 1, 0, 100, 1}));
+    CHECK(ui::remote_caps() == 1 && device::active().id == device::kIdA4);
+    CHECK(!strcmp(voice_name(0), "T1") && !strcmp(voice_name(3), "T4"));
+    g_out.clear();
+    send(sidecar({0x30, 1, 0, 1, 0}));
+    CHECK(ui::remote_open());
+    uint32_t ms = 1000;
+    ui::remote_tick(ms);
+    CHECK(count(0x37) == 1 && count(0x38) >= 8 && count(0x39) == 1);
+    for (auto& m : g_out) CHECK(m[4] == 0x37 || m[4] == 0x38 || m[4] == 0x39 || m[4] == 0x3C);
+    uint32_t dropped0 = device::dropped();
+    int on = 0;
+    const uint8_t* fb = ui::remote_frame();
+    for (int x = 0; x < 128; ++x) on += __builtin_popcount(fb[7 + 8 * x]);   // the title bar's page
+    CHECK(on > 100);
+    for (int k = 0; k < 24; ++k) {
+      send(sidecar({0x31, 1, 0, 0x41, 1}));
+      send(sidecar({0x31, 1, 0, 0x41, 0}));
+      ui::remote_tick(ms += 50);
+      const char* t = ui::remote_page_title();
+      for (const char* no : {"SEQ", "SONG", "POOL", "SAMPLE", "AUTO", "INSERT", "MASTER", "PROJECT", "KEYS", "ARP", "POLY"}) CHECK(!t || strcmp(t, no));
+      CHECK(!t || extra_for_box(t));
+    }
+    CHECK(device::dropped() == dropped0);          // nothing it asked for was filtered
+    send(sidecar({0x30, 1, 0, 0, 3}));
+    CHECK(!ui::remote_open());
+    ui::remote_reset();
+    device::reset();
+    CHECK(!strcmp(voice_name(0), "BD"));
+    CHECK(extra_for_box("SEQ"));
   }
 
   printf("test_device: ok\n");

@@ -19,21 +19,24 @@ const out::Device kA4Audio = {"Analog Four MKII", kA4OutChannels, {0, 1}, {0, 1}
                               {{0, -1}, {1, -1}, {2, -1}, {3, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}}, {10, 11}, 197,
                               kA4InChannels, out::kPerVoice};
 
+static const Screen kA4Screen = {{"T1", "T2", "T3", "T4", "-", "-", "-", "-"}, "OSC1 ON SIDECAR: PAGES"};
+
 const Profile kA4 = {
     kIdA4, "Analog Four MKII", kA4Vid, kA4Pid,
     6, 4, 16,
     {0x7D, 0x52, 0x54},
     0x04, 0x03, 0x11,
-    kUserSlots,   // U1..U5 on its SIDECAR page; the web's User machines tab fills them, in /.a4/slots
+    kUserSlots | kRemoteUi,   // U1..U5 on its SIDECAR page; the web's User machines tab fills them, in /.a4/slots. Remote UI: the pages on its screen, text drawn here
     0, 0, {}, {},
-    {},   // nothing goes back but the hello's answer: the A4's receive path stays out of it
+    {0, 1u << (0x36 - 32) | 1u << (0x37 - 32) | 1u << (0x38 - 32) | 1u << (0x39 - 32) | 1u << (0x3A - 32) | 1u << (0x3C - 32)},   // the pages alone: 36 37 38 39 3A 3C, and the hello's answer
     nullptr,
     "/.a4",
-    {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x3B - 32)},   // 3B its kit
+    {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x30 - 32) | 1u << (0x31 - 32) | 1u << (0x32 - 32) | 1u << (0x3B - 32)},   // 3B its kit; 30 31 32 its screen
     kBracketFull, &kA4Audio, nullptr,
     true, true,
     180,   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
-    true};   // a poly track's chord: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
+    true,   // a poly track's chord: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
+    &kA4Screen};
 
 }  // namespace device
 }  // namespace core
