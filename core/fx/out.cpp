@@ -156,6 +156,7 @@ bool any_stereo() {
   return false;
 }
 void set_trim(int pair, int db10) {
+  if (pair == 2) control.trk10 = (int16_t)clampi(db10, -240, 240);
   if (pair < 0 || pair > 1) return;
   control.trim10[pair] = (int16_t)clampi(db10, -240, 120);
 }
@@ -218,9 +219,9 @@ bool command(const char* p, char* o, int cap) {
     q = field(q, b, sizeof b);
     field(q, c, sizeof c);
     if (same_ci(a, "trim")) {
-      int pair = same_ci(b, "pre") ? 0 : same_ci(b, "post") ? 1 : -1, v = num(c);
+      int pair = same_ci(b, "pre") ? 0 : same_ci(b, "post") ? 1 : same_ci(b, "trk") ? 2 : -1, v = num(c);
       if (pair < 0 || v == -100000) {
-        sniprintf(o, cap, "stereo=trim:pre|post:DB10 (tenths of a dB, -240..120)");
+        sniprintf(o, cap, "stereo=trim:pre|post|trk:DB10 (tenths of a dB, -240..120, trk ..240)");
         return true;
       }
       set_trim(pair, v);
@@ -243,10 +244,10 @@ bool command(const char* p, char* o, int cap) {
       meas::text(o, cap);
       return true;
     } else if (a[0]) {
-      sniprintf(o, cap, "stereo, stereo=trim:pre|post:DB10, stereo=measure[:trk[:V]]|measure:stop, stereo=result");
+      sniprintf(o, cap, "stereo, stereo=trim:pre|post|trk:DB10, stereo=measure[:trk[:V]]|measure:stop, stereo=result");
       return true;
     }
-    int n = sniprintf(o, cap, CORE_STR("stereo: trim PRE %d POST %d (0.1 dB)"), control.trim10[0], control.trim10[1]);
+    int n = sniprintf(o, cap, CORE_STR("stereo: trim PRE %d POST %d TRK %d (0.1 dB)"), control.trim10[0], control.trim10[1], control.trk10);
     for (int v = 0; v < kVoices && n > 0 && n < cap; ++v)
       if (control.route[v] != kTrk) {
         int k = sniprintf(o + n, cap - n, ", ");

@@ -38,6 +38,23 @@ int main() {
   o.Pull(f, 7);
   CHECK(f[0][Output::kVoiceToChannel[2]] == (int32_t)(Output::kLimit * 2147483648.0f));
   CHECK(o.TakePeak() > 0.24f && o.TakePeak() == 0.0f);
+  {  // stereo=trim:trk: the voices' own channels only, after the limit, held inside To32's range
+    static core::out::Control c;
+    core::out::defaults(c);
+    c.trk10 = 60;
+    o.SetOutControl(&c);
+    while (o.Level()) o.Pull(f, 7);
+    o.Push(blk, 12);
+    o.Pull(f, 7);
+    CHECK(std::fabs(f[0][Output::kVoiceToChannel[2]] / 2147483648.0f - 0.25f * std::pow(10.0f, 0.3f)) < 1e-3f);
+    c.trk10 = 240;
+    while (o.Level()) o.Pull(f, 7);
+    o.Push(blk, 12);
+    o.Pull(f, 7);
+    CHECK(f[0][Output::kVoiceToChannel[2]] > 2100000000);
+    o.SetOutControl(nullptr);
+    o.TakePeak();
+  }
   const uint8_t map[8] = {4, 7, 5, 8, 10, 9, 11, 6};             // ob_block.h's kVoiceToRytm
   for (int v = 0; v < 8; ++v) CHECK(Output::kVoiceToChannel[v] == map[v]);
   {   // two underrun buckets: the refill burst after a Reset is "restart"; an empty FIFO after it reached its target is not

@@ -54,6 +54,7 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
     armed_ = true, d_.arm_at = base, d_.arm_level = fifo_.size();
   const Mode mode = GetMode();
   const bool test = core::out::meas::active();   // stereo=measure: its test signals (core/fx/out_measure.h)
+  const float trk_gain = c.trk10 ? powf(10.0f, (float)c.trk10 / 200.0f) : 1.0f;   // stereo=trim:trk (once a block: a change is a step, a test setting)
   for (uint32_t i = 0; i < n; ++i) {
     for (int ch = 0; ch < kChannels; ++ch) out[i][ch] = 0;
     if (taps && taps->feed) memset(taps->feed[i], 0, sizeof taps->feed[i]);
@@ -88,7 +89,7 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
           float a = x < 0 ? -x : x;
           if (a > peak_) peak_ = a;
           const uint8_t ch = core::out::device().voice[v];   // the Rytm's: kVoiceToChannel, the old path bit for bit
-          if (ch < kChannels) out[i][ch] = To32(x);
+          if (ch < kChannels) out[i][ch] = To32(Hot(x, trk_gain));
         }
       }
       continue;
@@ -119,7 +120,7 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
         float a = x < 0 ? -x : x;
         if (a > peak_) peak_ = a;
         const uint8_t ch = core::out::device().voice[v];
-        if (ch < kChannels) out[i][ch] = To32(x);   // (a box with fewer voices: the rest have no channel)
+        if (ch < kChannels) out[i][ch] = To32(Hot(x, trk_gain));   // (a box with fewer voices: the rest have no channel)
       }
     }
     pre[0] *= g, pre[1] *= g, post[0] *= g, post[1] *= g;

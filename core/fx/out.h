@@ -89,11 +89,12 @@ struct Control {
   volatile uint8_t dec[kVoices];     // DSP SAMPLE's DEC: 0 OFF, else 1..127
   volatile uint8_t open[kVoices];    // the mute gate's target: 1 sounding, 0 the voice's track muted
   volatile int16_t trim10[2];        // the PRE / POST pair's trim, tenths of a dB (the calibration; 0 by default)
+  volatile int16_t trk10;            // the voices' own channels' trim, tenths of a dB: a box whose insert point sits lower than the Rytm's; 0 by default
 };
 extern Control control;
 inline void defaults(Control& c) {
   for (int v = 0; v < kVoices; ++v) c.route[v] = kTrk, c.lev[v] = 100, c.pan[v] = 64, c.wid[v] = 64, c.dec[v] = 0, c.open[v] = 1;
-  c.trim10[0] = c.trim10[1] = 0;
+  c.trim10[0] = c.trim10[1] = 0, c.trk10 = 0;
 }
 
 inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
@@ -114,14 +115,14 @@ void lfo_offset(int vi, int k, int off);     // the LFOs' targets O1..O8 (k 0..2
 void set_mutes(uint16_t mask);               // the Rytm's 12 tracks muted (seq: 2D 01 05 / CC 94)
 void trig_track(int vi, int track);          // the track that triggered voice vi (the Sidecar sequencer's), -1 unknown
 bool any_stereo();                           // a voice is routed PRE or POST
-void set_trim(int pair, int db10);           // stereo=trim:pre|post:DB10
+void set_trim(int pair, int db10);           // stereo=trim:pre|post|trk:DB10; pair 0 pre, 1 post, 2 trk
 // The kit file's line ("OUT V3 POST 100 64 64 0"): from_line takes one (false: not an OUT line it reads); line(vi)
 // writes the voice's when it is not the default (0 none)
 bool from_line(const char* const* w, int n);
 int line(int vi, char* b, int cap);
 void clear();                                // every voice TRK, LEV 100, PAN 64, WID 64, DEC OFF (a new kit file)
 // The console: "out=V3:post", "out=V3:lev:100", "out=V3:pan:64", "out=V3:wid:64", "out=V3:dec:off|N", "out=V3"
-// (that voice), "out=list"; "stereo" the routes and the calibration; "stereo=trim:pre|post:DB10";
+// (that voice), "out=list"; "stereo" the routes and the calibration; "stereo=trim:pre|post|trk:DB10";
 // "stereo=measure[:trk[:V]]" / "stereo=measure:stop" (core/fx/out_measure.h, docs/STEREO.md "Measurements"). False: not an out / stereo command (out=main and
 // out=tracks are the output stage's own: not taken here).
 bool command(const char* p, char* out, int cap);
