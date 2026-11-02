@@ -32,6 +32,11 @@ void seq_off(int vi, int note);
 // The same, past the arpeggiator (core/arp/arp.h): seq_on / seq_off above hand it the voice's notes while its mode is on; these are its output.
 bool play_on(int vi, int note, int vel, const seq::PolyCfg& cfg);
 void play_off(int vi, int note);
+// A box's chord (device.h Profile::chords): its first note is the voice's own machine, played by the trig; each further note here,
+// summed into the voice's channel. false: this machine has no second note (MD, a mono user machine) or the voice's notes come another
+// way (a seq track, the arpeggiator, a live MIDI binding): the trig goes on as a trig. chord_off lets them all go, the first stays the voice's.
+bool chord_on(int vi, int note, int vel);
+void chord_off(int vi);
 bool active(int vi);       // vi has instances sounding (render_add has work)
 bool seq_mono(int vi);     // vi plays a sequencer note on its own machine now (the mono path): the Rytm's 0x11 leaves it
 void silence(int vi);      // CC 120, the link reset, the voice's machine changed: its instances gone at once

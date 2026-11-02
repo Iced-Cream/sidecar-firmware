@@ -91,6 +91,8 @@ struct View {
   bool live;
 };
 View view(int vi);
+bool live_now(int vi);                        // a MIDI channel is bound to vi and in use: its notes are the voice's, the trigs swallowed by take_live
+bool chord_add(int vi, int note, int vel);    // 6-OP FM: one more note beside the voice's mono note, at a trig's gain, released by note_off
 int voice_notes(int vi);                      // vi's notes sounding now: the pool's (6-OP FM) or MULTISAMPLE's
 void note_off(int vi);                        // 0x11: its trig notes released
 void silence(int vi);                         // CC 120 / left FM / the link reset: every note of the voice gone

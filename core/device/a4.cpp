@@ -32,7 +32,8 @@ const Profile kA4 = {
     {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x3B - 32)},   // 3B its kit
     kBracketFull, &kA4Audio, nullptr,
     true, true,
-    180};   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
+    180,   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
+    true};   // a poly track's chord: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
 
 }  // namespace device
 }  // namespace core

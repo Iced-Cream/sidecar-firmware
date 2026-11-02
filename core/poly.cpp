@@ -625,6 +625,20 @@ CORE_COLD bool take_trig(int vi, int note, int vel, const float* p) {
   return true;
 }
 
+CORE_COLD bool live_now(int vi) {
+  if (!slots) return false;
+  int ch = chan_of_voice(vi & 7);
+  return ch >= 0 && chan_active(chans[ch], now_ms());
+}
+
+CORE_COLD bool chord_add(int vi, int note, int vel) {
+  vi &= 7;
+  if (!slots || !v[vi].fm || note < 0 || note > 127) return false;
+  start(vi, note, vel, 1.0f, false, -1, 0);
+  ++st.chords;
+  return true;
+}
+
 CORE_COLD View view(int vi) { return views[vi & 7]; }
 
 CORE_COLD int voice_notes(int vi) {

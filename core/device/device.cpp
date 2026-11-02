@@ -9,6 +9,9 @@
 #include "fmt/fmt.h"
 #include "fx/out.h"
 #include "host_link.h"
+#if CORE_POLY
+#include "inst.h"
+#endif
 #include "keys.h"
 #include "platform.h"
 
@@ -147,9 +150,11 @@ CORE_COLD bool step(bool settled) {
 }
 
 static uint32_t s_held[kVoices][4];   // box_note's
+static struct { uint8_t n, vb, notes[kChordNotes]; uint32_t at; } s_chord[kVoices];   // chord_note's: the notes so far, the machine, the newest note's time
 static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
   if (p == l.box) return;
   memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
+  memset(s_chord, 0, sizeof s_chord);
   if (!l.box) l.out = hooks.to_rytm;
   hooks.to_rytm = p ? filtered_out : l.out;
   l.box = p;
@@ -226,8 +231,16 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
   return n;
 }
 
-// What the sequencer sent the box: its echo, the mod's report of the note it plays; and what is held there, so that an all-off is an off for each
-static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices];
+// What the sequencer sent the box: its echoes, the mod's report of each note it plays, a chord's as well; and what is held there, so that an all-off is an off for each
+static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices][kChordNotes];
+static uint8_t s_sent_w[kVoices];
+
+static CORE_COLD bool is_echo(int vi, uint8_t note) {
+  uint32_t ms = now_ms();
+  for (auto& s : s_sent[vi])
+    if (s.on && s.note == note && ms - s.at < kEchoMs) return s.on = false, true;
+  return false;
+}
 
 CORE_COLD void box_note(int vi, int note, int vel) {
   const Profile* p = g_link.box;
@@ -241,13 +254,43 @@ CORE_COLD void box_note(int vi, int note, int vel) {
   }
   uint32_t bit = 1u << (note & 31);
   if (vel) {
-    s_sent[vi].note = (uint8_t)note, s_sent[vi].on = true, s_sent[vi].at = now_ms();
+    auto& s = s_sent[vi][s_sent_w[vi]++ % kChordNotes];
+    s.note = (uint8_t)note, s.on = true, s.at = now_ms();
     s_held[vi][note >> 5] |= bit;
     keys::forward_note((uint8_t)(0x90 | vi), (uint8_t)note, (uint8_t)vel);
   } else {
     s_held[vi][note >> 5] &= ~bit;
     keys::forward_note(off, (uint8_t)note, 0);
   }
+}
+
+// A box's trig on a voice, with Profile::chords: true when it joined the voice's chord, so the message goes no further. The first
+// note is the 0x04 it always was, on the voice's own machine: nothing waits, and a lone trig never comes here for more.
+static CORE_COLD bool chord_note(int vi, uint8_t vb, uint8_t note, uint8_t vel) {
+#if CORE_POLY
+  auto& c = s_chord[vi];
+  uint32_t ms = now_ms();
+  bool near = c.n && c.vb == vb && ms - c.at < kChordMs;
+  if (near)
+    for (int k = 0; k < c.n; ++k)
+      if (c.notes[k] == note) return c.n > 1;   // a note of the chord twice is one; alone, a retrig as ever
+  if (near && c.n < kChordNotes && inst::chord_on(vi, note, vel)) {
+    c.notes[c.n++] = note, c.at = ms;
+    return true;
+  }
+  if (c.n > 1) inst::chord_off(vi);   // a new note, no off before it: the amp's tail, as a mono retrig
+  c.n = 1, c.vb = vb, c.notes[0] = note, c.at = ms;
+#else
+  (void)vi, (void)vb, (void)note, (void)vel;
+#endif
+  return false;
+}
+
+static CORE_COLD void chord_end(int vi) {
+#if CORE_POLY
+  if (s_chord[vi].n > 1) inst::chord_off(vi);
+#endif
+  s_chord[vi].n = 0;
 }
 
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
@@ -270,10 +313,9 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (is_sidecar(d, len) && (l.box->in_allow[(d[4] & 0x7f) >> 5] >> (d[4] & 31) & 1)) {
     bool voiced = d[4] == 0x03 || d[4] == 0x04 || d[4] == 0x11;
     if (voiced && (d[5] & 7) >= l.box->voices) return ++l.dropped, false;
-    if (d[4] == 0x04 && len > 7 && s_sent[d[5] & 7].on && s_sent[d[5] & 7].note == d[6] && now_ms() - s_sent[d[5] & 7].at < kEchoMs) {
-      s_sent[d[5] & 7].on = false;
-      return false;
-    }
+    if (d[4] == 0x04 && len > 7 && is_echo(d[5] & 7, d[6])) return false;
+    if (l.box->chords && d[4] == 0x04 && len > 7 && chord_note(d[5] & 7, d[5] & 0x78, d[6], d[7])) return false;
+    if (l.box->chords && d[4] == 0x11) chord_end(d[5] & 7);
     if (l.box->controls && d[4] == 0x04) strip::trig(d[5] & 7);
     if (l.box->controls && d[4] == 0x11) strip::off(d[5] & 7);
     return true;

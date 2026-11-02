@@ -370,6 +370,21 @@ CORE_COLD void play_off(int vi, int note) {
   }
 }
 
+CORE_COLD bool chord_on(int vi, int note, int vel) {
+  if (vi < 0 || vi >= kVoices || seq::owns_voice(vi) || arp::on(vi) || poly::live_now(vi)) return false;
+  int m = machine_now(vi);
+  if (m == kFm) return poly::chord_add(vi, note, vel);
+  Decl d = decl_of(vi, m);
+  static constexpr seq::PolyCfg kCfg = {3, 0, 0, 0, 0, 0, 0};   // the notes past the first; REASSIGN
+  if (d.own_pool || d.pitch == kPitchNone || resolve(kCfg, d).instances <= 1) return false;
+  return play_on(vi, note, vel, kCfg);
+}
+CORE_COLD void chord_off(int vi) {
+  if (vi < 0 || vi >= kVoices) return;
+  if (v[vi].fm) poly::note_off(vi);
+  else play_off(vi, -1);
+}
+
 CORE_COLD bool seq_mono(int vi) { return vi >= 0 && vi < kVoices && vp[vi].path == kPathMono && vp[vi].mono >= 0; }
 CORE_COLD bool active(int vi) {
   for (int i = 0; pool && i < kTotal; ++i)

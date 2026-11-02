@@ -23,6 +23,9 @@
 #include "sysex.h"
 #include "ui/remote.h"
 #include "host_link.h"
+#include "inst.h"
+#include "poly.h"
+#include "voices.h"
 
 using namespace core;
 
@@ -455,6 +458,7 @@ int main() {
     t.pop_back();
     for (int k = 0; k < 16; ++k) t.push_back(64), t.push_back(0);
     t.push_back(0), t.push_back(0), t.push_back(0xf7);
+    usleep((device::kEchoMs + 5) * 1000);              // (60 went to the box on this voice above: past its echo)
     send(t);
     CHECK(s_user == 0);
     hooks.user_report = nullptr;
@@ -472,6 +476,188 @@ int main() {
       CHECK(out::control.trk10 == 180);
       device::reset();
       CHECK(f.remove("/.rytm/device"));
+    }
+  }
+
+  // A poly track's chord on the A4's voices: one 04 a note, on the voice's machine; a lone trig is what it always was
+  {
+    auto trig = [](int vb, int note, int vel = 100) {
+      std::vector<uint8_t> t = {0x04, (uint8_t)vb, (uint8_t)note, (uint8_t)vel};
+      for (int k = 0; k < 2 * 16 + 2; ++k) t.push_back(k % 2 ? 0 : 64);
+      return sidecar(t);
+    };
+    auto off = [](int vi) { return sidecar({0x11, (uint8_t)vi}); };
+    auto notes = [](int vi) { return inst::voice_notes(vi) + poly::voice_notes(vi); };
+    auto quiet = [&](int vi) { send(off(vi)); voice_silence(vi); usleep(25000); };
+    device::g_link.state = "/.a4";
+    send(hello(device::kA4.id));
+    CHECK(device::kA4.chords && !device::rytm().chords && !device::kDigitakt.chords);
+
+    for (int m : {kPlaits, kJuno, kDaisy}) {   // three notes: the voice's own machine, two beside it, in order
+      inst::reset();
+      send(trig(m | 1, 60));
+      CHECK(notes(1) == 0);                    // a lone trig: no instance, as ever
+      send(trig(m | 1, 64));
+      send(trig(m | 1, 67));
+      CHECK(inst::voice_notes(1) == 2);
+      send(trig(m | 1, 64));                   // twice in a chord is once
+      CHECK(inst::voice_notes(1) == 2);
+      send(off(1));                            // 0x11 lets all of them go
+      CHECK(inst::stat(1).sounding <= 2);
+      quiet(1);
+      CHECK(notes(1) == 0);
+    }
+    {   // 6-OP FM: its pool, released with the voice
+      send(trig(kFm | 2, 60));
+      CHECK(poly::voice_notes(2) == 0);
+      send(trig(kFm | 2, 64));
+      send(trig(kFm | 2, 67));
+      send(trig(kFm | 2, 71));
+      CHECK(poly::voice_notes(2) == 3 && poly::held_notes(2) == 3);
+      send(off(2));
+      CHECK(poly::held_notes(2) == 0);
+      quiet(2);
+      poly::silence(2);
+    }
+    {   // MD plays no second note: each 04 stays a hit
+      send(trig(kMd | 3, 60));
+      send(trig(kMd | 3, 64));
+      CHECK(notes(3) == 0);
+      quiet(3);
+    }
+    {   // too far apart, or an 11 between (the mod's mono track): notes of a line, not a chord
+      send(trig(kPlaits | 0, 60));
+      usleep((device::kChordMs + 5) * 1000);
+      send(trig(kPlaits | 0, 64));
+      CHECK(notes(0) == 0);
+      usleep((device::kChordMs + 5) * 1000);
+      send(trig(kPlaits | 0, 60));
+      send(off(0));
+      send(trig(kPlaits | 0, 64));
+      CHECK(notes(0) == 0);
+      send(trig(kPlaits | 0, 60));             // the same note at once: a retrig
+      CHECK(notes(0) == 1);                    // (60 and 64: this one a chord's second note)
+      quiet(0);
+    }
+    {   // a new chord with no off, in the old one's tail: the old notes go
+      send(trig(kPlaits | 0, 60));
+      send(trig(kPlaits | 0, 64));
+      usleep((device::kChordMs + 5) * 1000);
+      send(trig(kPlaits | 0, 62));
+      CHECK(inst::stat(0).sounding <= 1);
+      quiet(0);
+    }
+    {   // a machine change inside the window is no chord
+      send(trig(kPlaits | 0, 60));
+      send(trig(kJuno | 0, 64));
+      CHECK(notes(0) == 0);
+      quiet(0);
+    }
+    {   // the sequencer's chord to the box: each note's echo is dropped, the voice plays it once
+      uint32_t before = inst::voice_notes(0);
+      static std::vector<std::vector<uint8_t>> sent;
+      keys::set_forward([](uint8_t st, uint8_t a, uint8_t b) { sent.push_back({st, a, b}); });
+      device::box_note(0, 60, 100);
+      device::box_note(0, 64, 100);
+      device::box_note(0, 67, 100);
+      const uint8_t* d;
+      uint8_t buf[device::kMaxMessage];
+      for (int n : {60, 64, 67}) {
+        auto m = trig(kPlaits | 0, n);
+        d = m.data();
+        int len = (int)m.size();
+        CHECK(!device::translate(device::g_link, d, len, buf));
+      }
+      auto m = trig(kPlaits | 0, 67);          // once only
+      d = m.data();
+      int len = (int)m.size();
+      CHECK(device::translate(device::g_link, d, len, buf));
+      device::box_note(0, -1, 0);
+      keys::set_forward(nullptr);
+      CHECK(inst::voice_notes(0) == before);
+      quiet(0);
+    }
+    {   // a MIDI channel bound and in use (the A4's note send on 6-OP FM): its notes are the voice's, no second copy from the trigs
+      send(trig(kFm | 2, 60));
+      poly::midi(0x92, 60, 100);
+      send(off(2));
+      poly::midi(0x82, 60, 0);
+      usleep(40000);
+      for (int n = 0; n < 2; ++n) {
+        poly::midi(0x92, 60, 100);
+        send(trig(kFm | 2, 60));
+        poly::midi(0x82, 60, 0);
+        usleep(40000);
+      }
+      CHECK(poly::live_now(2));
+      poly::midi(0x92, 60, 100);
+      poly::midi(0x92, 64, 100);
+      send(trig(kFm | 2, 60));
+      send(trig(kFm | 2, 64));
+      CHECK(poly::held_notes(2) == 2);
+      poly::midi(0x82, 60, 0);
+      poly::midi(0x82, 64, 0);
+      quiet(2);
+      poly::reset();
+    }
+    {   // what is heard, tonal settings through the real report: each note of the chord on the voice's one channel
+      auto tuned = [](int vb, int note) {
+        static const uint8_t pl[16] = {93, 64, 0, 0, 127, 0, 64, 127, 64, 64, 0, 64, 64, 0, 0, 100};   // a tonal PLAITS engine, a long DEC, TUN and FM centred, LEV up, GLD 0, VOL 100
+        std::vector<uint8_t> t = {0x04, (uint8_t)vb, (uint8_t)note, 100};
+        for (int k = 0; k < 16; ++k) t.push_back(pl[k]), t.push_back(0);
+        t.push_back(0), t.push_back(0);
+        return sidecar(t);
+      };
+      auto tone = [](int vi, int note) {          // Goertzel, one ring: 0.1 s
+        double f = 440 * std::pow(2.0, (note - 69) / 12.0), k = 2 * std::cos(2 * M_PI * f / 48000), a = 0, b = 0;
+        for (int i = 0; i < kBlock * 400; ++i) {
+          double c = ring[i][vi] / 32768.0 + k * a - b;
+          b = a, a = c;
+        }
+        return a * a + b * b - k * a * b;
+      };
+      auto heard = [&](double* o) {               // power over 0.8 s: a chord beats, one window says little
+        double p[3] = {0, 0, 0};
+        for (int w = 0; w < 8; ++w) {
+          render();
+          p[0] += tone(1, 60), p[1] += tone(1, 64), p[2] += tone(1, 66);
+        }
+        for (int k = 0; k < 3; ++k) o[k] = 10 * std::log10(p[k] / 8 + 1e-12);
+      };
+      for (int m : {kPlaits, kJuno}) {
+        send(tuned(m | 1, 60));                   // the engine in place
+        render();
+        double alone[3], other[3], ch[3];
+        const int ns[3] = {60, 64, 66};
+        for (int k = 0; k < 3; ++k) {             // each note by itself on the voice's machine
+          quiet(1);
+          render();
+          send(tuned(m | 1, ns[k]));
+          double p[3];
+          heard(p);
+          alone[k] = p[k];
+          if (k == 0) other[1] = p[1], other[2] = p[2];
+        }
+        quiet(1);
+        render();
+        for (int n : ns) send(tuned(m | 1, n));
+        CHECK(inst::voice_notes(1) == 2);
+        heard(ch);
+        printf("  chord, machine %02x: dB on 60 64 66, each alone %.1f %.1f %.1f, 60's own on the others %.1f %.1f; in the chord %.1f %.1f %.1f\n", m, alone[0], alone[1], alone[2], other[1], other[2], ch[0], ch[1], ch[2]);
+        for (int k = 1; k < 3; ++k) CHECK(ch[k] > other[k] + 12 && ch[k] > alone[k] - 6);   // there, about 3 dB under alone: the headroom gain
+        quiet(1);
+        render();
+      }
+    }
+    {   // the Rytm: the same bytes are what they always were, no chord
+      device::reset();
+      device::g_link.state = nullptr;
+      send(trig(kPlaits | 1, 60));
+      send(trig(kPlaits | 1, 64));
+      send(trig(kPlaits | 1, 67));
+      CHECK(notes(1) == 0);
+      send(off(1));
+      voice_silence(1);
     }
   }
 

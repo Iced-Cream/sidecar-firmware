@@ -105,6 +105,7 @@ struct Profile {
   bool note_out;              // the engine's own notes (the sequencer's) go to the box as MIDI, channel = voice: its voice's amp must open for the Sidecar's voice to sound
   bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
   int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
+  bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (a poly track, one report a note: the A4)
 };
 
 const Profile& rytm();                 // the default
@@ -141,6 +142,8 @@ constexpr uint32_t kSettleMs = 10000;
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;
+constexpr uint32_t kChordMs = 20;   // from a chord's last note to its next; the A4's mod keeps a mono track's trigs apart by the same time (a4_report.c CHORD_GAP)
+constexpr int kChordNotes = 4;      // the A4's most on a trig [read in OS 1.56]
 const char* state_path_box(const char* path, char* buf, int cap);
 // path as the card has it: path itself, or in buf. Every file call passes here, so the Rytm's cost is the one test.
 // The file layer has no link to ask: this is g_link's folder.
