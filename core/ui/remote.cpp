@@ -1590,7 +1590,7 @@ CORE_COLD void remote_show_page(const char* title) {
   }
   if (!strcmp(title, kStatusTitle)) {   // the status page (SIDECAR, the first): the page opens on it
     if (s.open && s.voice != -1) back_push(s.voice), lfo_left(s.voice, -1), s.voice = -1, s.page_changed = true, s.input = true, s.via = -1;
-    else if (!s.open) want_title = nullptr, remote_request(true);
+    else if (!s.open && !device::foreign()) want_title = nullptr, remote_request(true);
     return;
   }
   if (s.open) {
@@ -1602,6 +1602,7 @@ CORE_COLD void remote_show_page(const char* title) {
       }
     return;
   }
+  if (device::foreign()) return;   // a box's screen opens by its user alone (a4_rx takes 3A's close only): nothing to ask, and a title left here would land the next open on it
   want_title = title;
   remote_request(true);
 }

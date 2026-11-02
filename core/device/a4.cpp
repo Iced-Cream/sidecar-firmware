@@ -19,7 +19,7 @@ const out::Device kA4Audio = {"Analog Four MKII", kA4OutChannels, {0, 1}, {0, 1}
                               {{0, -1}, {1, -1}, {2, -1}, {3, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}}, {10, 11}, 197,
                               kA4InChannels, out::kPerVoice};
 
-static const Screen kA4Screen = {{"T1", "T2", "T3", "T4", "-", "-", "-", "-"}, "OSC1 ON SIDECAR: PAGES"};
+static const Screen kA4Screen = {{"T1", "T2", "T3", "T4", "-", "-", "-", "-"}, "UP + YES: PAGES"};
 
 const Profile kA4 = {
     kIdA4, "Analog Four MKII", kA4Vid, kA4Pid,
@@ -35,7 +35,7 @@ const Profile kA4 = {
     kBracketFull, &kA4Audio, nullptr,
     true, true,
     180,   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
-    true,   // a poly track's chord: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
+    true,   // a chord on any track: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
     &kA4Screen};
 
 }  // namespace device

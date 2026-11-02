@@ -77,7 +77,7 @@ struct Controls {
 
 // A box with kRemoteUi: what its screen says that the Rytm's says in the Rytm's words. Pages that need a feature it lacks are hidden (extra.h extra_for_box).
 struct Screen {
-  const char* names[8];    // a voice's name for the user, for the voices it uses
+  const char* names[8];    // a voice's name for the user, for the voices it uses; SCOPE and the meters too, each on IN 2 + the voice; "-" a channel it does not fill
   const char* keys;        // the bottom bar of the connect splash: how the pages open
 };
 
