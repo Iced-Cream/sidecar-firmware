@@ -108,6 +108,52 @@ int main() {
     Bytes p = Pack(big);
     CHECK(Run(f, p) == p);
   }
+  // the pass toggled in the middle of a message: a message already passing goes on to its end (the decision is the
+  // head's), so turning the pass off alone is not enough - Cut () drops the rest up to its end, and the next message is
+  // decided afresh; a message still held when the pass goes off is decided with the new pass
+  {
+    Bytes big = {0xF0, 0x00, 0x20, 0x3C, 0x0C, 0x00, 0x7E};
+    for (int i = 0; i < 60; i++) big.push_back((uint8_t)i);
+    big.push_back(0xF7);
+    Bytes p = Pack(big), half(p.begin(), p.begin() + 40), rest(p.begin() + 40, p.end());
+    {
+      MidiFilter f(true);
+      f.SetPassOsUpdate(true);
+      Bytes out = Run(f, half);
+      CHECK(out == half);
+      f.SetPassOsUpdate(false);
+      out = Run(f, rest);
+      CHECK(out == rest);                // the pass alone does not stop it
+    }
+    {
+      MidiFilter f(true);
+      f.SetPassOsUpdate(true);
+      CHECK(Run(f, half) == half);
+      f.SetPassOsUpdate(false);
+      f.Cut();
+      CHECK(f.InSysEx());
+      CHECK(Run(f, rest).empty());       // dropped up to its end
+      CHECK(!f.InSysEx());
+      CHECK(Run(f, p).empty());          // the next one: decided with the pass off
+      Bytes n = Pack(note);
+      CHECK(Run(f, n) == n);
+    }
+    {
+      MidiFilter f(true);                // held (2 packets of the head) when the pass goes off: dropped whole
+      f.SetPassOsUpdate(true);
+      Bytes head(p.begin(), p.begin() + 8);
+      CHECK(Run(f, head).empty());
+      f.SetPassOsUpdate(false);
+      CHECK(Run(f, Bytes(p.begin() + 8, p.end())).empty());
+      CHECK(f.OsMessages() == 1);
+    }
+    {
+      MidiFilter f(true);                // Cut while idle changes nothing
+      f.Cut();
+      Bytes k = Pack(kit);
+      CHECK(Run(f, k) == k);
+    }
+  }
   // usbmidi=os:off is byte-identical to dev (before usbmidi=os:) toward the Rytm: dev's drop rule, copied here, against
   // the filter with the pass off, over every device byte, the OS commands 7E 7F and neighbours, h[5] 00 and 01, and
   // messages cut short. With the pass on, only device byte 0C's 7E|7F may differ (it passes).

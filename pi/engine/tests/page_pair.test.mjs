@@ -178,7 +178,30 @@ test("the Rytm MIDI bridge's routes are paired and same-origin only", () => {
   assert.match(branch, /FormValue \(pFormData, "on"/, "on= from the body only");
   assert.doesNotMatch(branch, /FormValue \(pParams/, "never from the URL");
   // /cmd refuses midibridge= (its origin check is the lenient one)
-  assert.match(body, /strncmp \(Cmd, "midibridge=", 11\) == 0\)/);
+  assert.match(cmdRefusal(body), /strncmp \(Cmd, "midibridge=", 11\) == 0/);
+});
+
+// /cmd's refusal: the condition of the if that answers 400 before the command reaches the console
+function cmdRefusal(body) {
+  const c = body.indexOf('strcmp (pPath, "/cmd") == 0');
+  assert.ok(c > 0, "web.cpp's /cmd branch");
+  const i = body.indexOf("if (!FromPage", c);
+  const j = body.indexOf("return HTTPBadRequest;", i);
+  assert.ok(i > c && j > i && j < body.indexOf("m_pConsole->Command (Cmd)", c), "the refusal comes before the console");
+  return body.slice(i, j);
+}
+
+// usbmidi=os: (and its older name osupdate=) lets OS upgrades through the USB-C MIDI port (usbmidi_os.h), so /cmd
+// refuses both as it refuses midibridge=, whatever the value: cmdline.txt or the serial console only. Exact prefixes:
+// the gadget's own parser (sidecar_gadget.cpp Command) uses the same ones, so nothing else spells them
+test("/cmd refuses usbmidi= and osupdate=", () => {
+  const body = WEB_CPP.slice(WEB_CPP.indexOf("THTTPStatus CWebServer::GetContent"));
+  const r = cmdRefusal(body);
+  assert.match(r, /strncmp \(Cmd, "usbmidi=", 8\) == 0/);
+  assert.match(r, /strncmp \(Cmd, "osupdate=", 9\) == 0/);
+  assert.doesNotMatch(r, /bForm && strncmp \(Cmd, "usbmidi="/, "refused from the body too, not only the URL");
+  const gadget = readFileSync(join(HERE, "..", "sidecar_gadget.cpp"), "utf8");
+  assert.match(gadget, /strncmp \(p, "usbmidi=", 8\) == 0 \|\| strncmp \(p, "osupdate=", 9\) == 0/);
 });
 
 test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
