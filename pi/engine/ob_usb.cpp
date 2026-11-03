@@ -46,6 +46,8 @@
 #include "midibridge_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
+#include <circle/usb/usbhcirootport.h>
+#include <circle/usb/usbstandardhub.h>
 #include <circle/usb/usb.h>
 #include <circle/usb/xhciendpoint.h>
 #include <circle/koptions.h>
@@ -57,6 +59,7 @@
 
 #include "ob_block.h"
 #include "ob_follow.h"
+#include "ob_speed.h"
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
@@ -106,6 +109,10 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 }
 
 CObUsb *CObUsb::s_pThis = 0;
+static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
+static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
+static CUSBStandardHub *s_pRetryHub = 0;		// or the Pi 4's VL805 hub (BuiltInHub), which lives as long too
+static u32 NowMs (void) { return (u32) (CTimer::GetClockTicks64 () / (CLOCKHZ / 1000)); }	// wraps at 2^32 ms
 volatile boolean CObUsb::s_bActive = TRUE;
 s32 *CObUsb::s_pCapBuf = 0;
 volatile unsigned CObUsb::s_nCapPos = 0;
@@ -185,6 +192,22 @@ CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
 // The hook the patched CUSBDeviceFactory calls for every "ven1935-..." name (weak reference there): a box with an audio row
 // and the stream shape this driver serves, else 0 and Circle goes on to the device's interfaces (a Digitakt in USB MIDI mode,
 // 1935:000d: Circle's MIDI driver takes it).
+// The hub a box hangs off when that hub is the Pi 4's own: the VL805's USB 2 hub (2109:3431) right on a root port,
+// part of the board, so a pointer to it stays good for as long as the controller. Any other hub can be unplugged
+// while a retry waits, so it gets none (0) - also an external hub with the same generic VIA id, so Pi 4 builds only.
+static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
+{
+#if RASPPI != 4 && !defined (OB_USB_TEST)
+	return 0;
+#endif
+	CUSBStandardHub *pHub = pDevice->GetParentHub ();
+	if (pHub == 0) return 0;
+	CUSBDevice *pHubDevice = pHub->GetDevice ();
+	const TUSBDeviceDescriptor *pDesc = pHubDevice->GetDeviceDescriptor ();
+	if (pHubDevice->GetParentRootPort () == 0 || pDesc->idVendor != 0x2109 || pDesc->idProduct != 0x3431) return 0;
+	return pHub;
+}
+
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
@@ -207,6 +230,19 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 		return 0;
 	}
 	return new CObUsb (pParent, pAudio);
+}
+
+void CObUsb::PollReEnum (void)
+{
+	if (!obspeed::due (s_Retry, NowMs ()) || (s_pRetryPort == 0 && s_pRetryHub == 0)) return;
+	CLogger::Get ()->Write (From, LogNotice, "enumerating the box again (try %u of %u)", s_Retry.tries, obspeed::kTries);
+	// the hot-plug path: port reset, address, configure (this driver again). A hub resets each of its empty ports
+	// that has something connected; a root port with a device already on it only rescans that device
+	if (!(s_pRetryPort != 0 ? s_pRetryPort->ReScanDevices () : s_pRetryHub->ReScanDevices ()))
+	{
+		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it (unplugged, or something else "
+					"is on it now)");
+	}
 }
 
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
@@ -342,6 +378,36 @@ boolean CObUsb::Configure (void)
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
 				(unsigned) pDevDesc->idProduct);
+
+	// Overbridge needs high speed. Below it the stream cannot start ("cannot submit the first URBs"), so refuse at
+	// once and have the root port enumerate the box again (ob_speed.h): a new port reset, a new chance at high speed
+	if (GetDevice ()->GetSpeed () != USBSpeedHigh)
+	{
+		static const char *Speeds[] = {"LS", "FS", "HS", "SS", "?"};
+		const char *pSpeed = Speeds[GetDevice ()->GetSpeed () <= USBSpeedUnknown ? GetDevice ()->GetSpeed () : 4];
+		unsigned nNow = NowMs ();
+		CUSBHCIRootPort *pPort = GetDevice ()->GetParentRootPort ();
+		CUSBStandardHub *pHub = pPort == 0 ? BuiltInHub (GetDevice ()) : 0;
+		if (pPort == 0 && pHub == 0)
+		{
+			CLogger::Get ()->Write (From, LogError, "%s came up at %s, Overbridge needs HS: behind a hub, so no retry; "
+						"unplug it and plug it in again", m_pAudio->name, pSpeed);
+		}
+		else if (obspeed::refused (s_Retry, nNow))
+		{
+			s_pRetryPort = pPort, s_pRetryHub = pHub;
+			CLogger::Get ()->Write (From, LogWarning, "%s came up at %s, Overbridge needs HS: enumerating it again "
+						"in %u s (try %u of %u)", m_pAudio->name, pSpeed,
+						obspeed::kWaitMs[s_Retry.tries] / 1000, s_Retry.tries + 1, obspeed::kTries);
+		}
+		else
+		{
+			CLogger::Get ()->Write (From, LogError, "%s still at %s after %u tries: unplug it and plug it in again, "
+						"or try another cable or port", m_pAudio->name, pSpeed, obspeed::kTries);
+		}
+		return FALSE;
+	}
+	obspeed::high_speed (s_Retry);
 
 	if (!ScanDescriptors ())
 	{

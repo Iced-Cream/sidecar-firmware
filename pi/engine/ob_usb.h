@@ -42,6 +42,10 @@ public:
 	static boolean Active (void)		{ return s_bActive; }
 
 	static void WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh);	// an 8-channel IN block as the 12-channel layout
+	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
+	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
+	static void PollReEnum (void);
+
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
 
