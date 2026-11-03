@@ -23,7 +23,7 @@ const F = new Function(cut("const esc =", "const join =") + cut("const POOLS", '
 const kinds = (h) => [...h.matchAll(/data-k="(\w+)"/g)].map((m) => m[1]);
 
 test("one noun: the tabs, the buttons and the notes say POOL, never a machine's pool", () => {
-  assert.match(page, /<a href="#pool" data-tab="pool">Pool<\/a><a href="#library" data-tab="library">Presets<\/a>/);
+  assert.match(page, /<a href="#pool" data-tab="pool"[^>]*>Pool<\/a><a href="#library" data-tab="library">Presets<\/a>/);
   assert.ok(!/Pool &amp; presets|Sample pool|Sidecar pool|GR pool|bank pool|(GRANULAR|WAVETABLE|MULTISAMPLE|machine)'s pool/i.test(page), "no old pool names");
   assert.ok(!/lib=(gr|wt|ms):(add|fill)|lib=\$\{/.test(page), "the removed lib=K:add / fill lines");
   assert.ok(!page.includes('id="lib-pool"'), "the old DSP pool section is gone");

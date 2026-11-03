@@ -38,6 +38,37 @@ int main() {
   o.Pull(f, 7);
   CHECK(f[0][Output::kVoiceToChannel[2]] == (int32_t)(Output::kLimit * 2147483648.0f));
   CHECK(o.TakePeak() > 0.24f && o.TakePeak() == 0.0f);
+  {  // stereo=trim:trk, the voices' own channels only. Up: the gain first, one soft knee to full scale, so a hot voice is not cut at -12 dBFS and clipped again.
+     // Down or 0: the -12 dBFS limit, then the gain
+    static core::out::Control c;
+    const int vch = Output::kVoiceToChannel[2];
+    auto once = [&](int16_t s) {
+      for (int k = 0; k < 12; ++k) blk[k][2] = s;
+      while (o.Level()) o.Pull(f, 7);
+      o.Push(blk, 12);
+      o.Pull(f, 7);
+      return f[0][vch] / 2147483648.0f;
+    };
+    core::out::defaults(c);
+    o.SetOutControl(&c);
+    CHECK(once(32767) == Output::kLimit);                        // 0: the limit, as with no control at all
+    c.trk10 = 120;
+    const float t = std::pow(10.0f, 0.6f);
+    CHECK(std::fabs(once(3277) - 0.1f * t) < 1e-3f);             // under the knee: the gain alone
+    const float a = once(8192), b = once(11010), d = once(16384);  // 0.25, 0.336 (FM6's peak on the unit), 0.5 at the box
+    CHECK(a > 0.7f && a < b && b < d && d <= 0.9999f);           // over the old 0.25: still rising, never past full scale
+    CHECK(once(-11010) == -b);
+    c.route[3] = core::out::kPre;                                // a voice off TRK: the mix path takes the same trim
+    CHECK(std::fabs(once(11010) - b) < 1e-3f);
+    c.route[3] = core::out::kTrk;
+    c.trk10 = 240;
+    CHECK(once(32767) > 0.99f && once(32767) <= 0.9999f);
+    c.trk10 = -60;                                               // down: under the limit, as before
+    CHECK(std::fabs(once(32767) - 0.25f * std::pow(10.0f, -0.3f)) < 1e-3f);
+    for (int k = 0; k < 12; ++k) blk[k][2] = 32767;
+    o.SetOutControl(nullptr);
+    o.TakePeak();
+  }
   const uint8_t map[8] = {4, 7, 5, 8, 10, 9, 11, 6};             // ob_block.h's kVoiceToRytm
   for (int v = 0; v < 8; ++v) CHECK(Output::kVoiceToChannel[v] == map[v]);
   {   // two underrun buckets: the refill burst after a Reset is "restart"; an empty FIFO after it reached its target is not

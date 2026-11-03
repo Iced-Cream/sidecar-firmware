@@ -10,6 +10,7 @@
 // kTileRate a second (a token bucket over the remote host's tile count), so the Rytm's panel link and MIDI keep room.
 #include <string.h>
 
+#include "device/device.h"
 #include "rec/rec_names.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -28,6 +29,9 @@ UI_ROM const uint8_t kVoiceCh[8] = {2 + 0, 2 + 3, 2 + 1, 2 + 4, 2 + 6, 2 + 5, 2 
 // meters and the SCOPE's sources 1..8: each shows its track's channel (a Sidecar voice's level on the track that plays
 // it, an analog track's its own), named by the track, never by the Sidecar's voice number (voice 1 is BT's).
 UI_ROM const char* const kChName[8] = {"BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY"};
+
+// A box's own words (device.h Screen): its voices are its tracks, in order, on IN 2 + the voice; "-" a channel it does not fill.
+CORE_COLD const device::Screen* box_screen() { return device::foreign() ? device::active().screen : nullptr; }
 
 volatile int t_src = 0;
 CORE_RAM2 int16_t t_ring[kTapRing][2];
@@ -75,8 +79,10 @@ CORE_COLD void tap_in(const int32_t* f, int n, int stride) {
 
 CORE_COLD void tap_enable(bool on) { tap_enabled = on; }
 CORE_COLD void tap_source(int src) { t_src = src < 0 ? 0 : src >= kTapSources ? kTapSources - 1 : src; }
-CORE_COLD int tap_channel_of_voice(int vi) { return kVoiceCh[vi & 7]; }
+CORE_COLD int tap_channel_of_voice(int vi) { return box_screen() ? 2 + (vi & 7) : kVoiceCh[vi & 7]; }
 CORE_COLD const char* tap_source_name(int src) {
+  const device::Screen* bx = box_screen();
+  if (bx && src >= 1 && src <= 8) return bx->names[src - 1];
   static const char* const n[kTapSources] = {"MAIN", "BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB", "IN L", "IN R"};
   if (rec::fxin() && (src == 9 || src == 10)) return src == 9 ? "FX L" : "FX R";
   return n[src < 0 || src >= kTapSources ? 0 : src];
@@ -156,7 +162,9 @@ CORE_COLD void Meters::draw(Canvas& c, int y, int h, int slot0) const {
   char b[4];
   c.put_text(slot0, kRSmall, pos(0) + 7, y + h + 2, "MAIN", kAlignCentre);
   for (int v = 0; v < 8; ++v) {
-    b[0] = kChName[v][0], b[1] = kChName[v][1], b[2] = 0;
+    const char* n = box_screen() ? box_screen()->names[v] : kChName[v];
+    if (n[0] == '-') continue;
+    b[0] = n[0], b[1] = n[1], b[2] = 0;
     c.put_text(slot0 + 1 + v, kRSmall, pos(2 + v) + 2, y + h + 2, b, kAlignCentre);
   }
   c.put_text(slot0 + 9, kRSmall, 118, y + h + 2, rec::fxin() ? "FX" : "IN", kAlignCentre);
@@ -320,6 +328,7 @@ CORE_COLD void scope_enc(int e, int delta, bool) {
   const int l = list_turn(e, delta);
   if (e == 0) {
     int s = step(sc.src, l, kTapSources);
+    while (l && box_screen() && s >= 1 && s <= 8 && tap_source_name(s)[0] == '-') s += l > 0 ? 1 : -1;   // a channel the box does not fill
     if (s != sc.src) sc.src = (uint8_t)s, sc.fresh = true;
   } else if (e == 1) {
     int t = step(sc.tb, l, kTbs);
@@ -343,6 +352,17 @@ UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kM
 }  // namespace
 
 CORE_COLD int extra_pages() { return (int)(sizeof kPages / sizeof kPages[0]); }
+// A box's pages: what each needs of the Rytm's side (device.h Feature). The rest draw from the engine alone: REC, SCOPE, LFO, MENU, WEB UI
+CORE_COLD bool extra_for_box(const char* title) {
+  if (!device::foreign()) return true;
+  struct Need { const char* title; uint32_t f; };
+  static UI_ROM const Need kNeeds[] = {{"SAMPLE", device::kPools}, {"AUTO", device::kPools}, {"POOL", device::kPools}, {"CHOP", device::kPools}, {"SEQ", device::kPatterns},
+                                       {"SONG", device::kPatterns}, {"POLY", device::kPatterns}, {"INSERT", device::kSendFx}, {"MASTER", device::kSendFx}, {"ARP", device::kSrcView},
+                                       {"PROJECT", device::kProject}, {"KEYS", device::kRytmKeys}};
+  for (const Need& n : kNeeds)
+    if (!strcmp(n.title, title)) return (device::active().features & n.f) != 0;
+  return true;
+}
 CORE_COLD const ExtraPage& extra_page(int i) { return *kPages[i < 0 ? 0 : i >= extra_pages() ? extra_pages() - 1 : i]; }
 
 #if CORE_UI_TOOLS

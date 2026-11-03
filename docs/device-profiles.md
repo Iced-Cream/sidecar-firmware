@@ -21,7 +21,7 @@ your firmware mod --- USB MIDI SysEx ---> host_sysex (core/host_link.cpp)
   dropped, so it cannot reach a Rytm-only path.
 - Out: what the engine sends goes through your profile's `out_allow`, which by default lets nothing through. A box with
   a small CPU is not loaded with the Rytm's pages, pool tables and label lists.
-- Back: the Rytm's own hello (0x35) returns to the Rytm, unless your profile has `kRemoteUi`.
+- Back: the Rytm's own hello (0x35) returns to the Rytm. A box with `kRemoteUi` says hello to the pages with 0x36.
 
 ## What a device must send
 
@@ -33,7 +33,7 @@ All bytes after `F0` are 7-bit. `<value>` is 0..127, `<fraction>` is in 1/128 st
 F0 7D 52 54 4F 01 <id hi> <id lo> 01 [name bytes] F7
 ```
 
-`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `0x3F00` and up for private experiments. Ask for a number when a
+`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `3` the Analog Four MKII, `0x3F00` and up for private experiments. Ask for a number when a
 port is public. The Sidecar answers once per hello:
 
 ```
@@ -113,8 +113,9 @@ For modulation faster or deeper than this, use the Sidecar's own LFOs (`core/lfo
 | USB vendor and product id | the profile; the Pi's Overbridge driver claims a box by them (`device::by_usb`) |
 | Channels each way, block sizes, a stereo mix or per-voice returns, return and stem channels | the profile's `audio`, an `out::Device` row |
 | Which of the box's pages reach which of the Sidecar's stages | the profile's `controls` |
-| Remote UI pages | off for a box unless `kRemoteUi`; in practice Rytm only, the pages are drawn for its screen |
-| Kits, patterns, project names, send FX reports, user slots | Rytm only: a box's messages cannot reach them. The `Feature` bits only declare them so far |
+| Remote UI pages | off for a box unless `kRemoteUi`: the Rytm and the A4 ("Remote UI on a box"). A page that needs a feature the box lacks is hidden (`extra_for_box`) |
+| Kits, patterns, project names, send FX reports | Rytm only: a box's messages cannot reach them. The `Feature` bits only declare them so far |
+| User slots | a box that reports the U1..U5 flags plays them (the A4); the web's User machines tab fills them, in the box's own folder. The labels and presets of 19..1E stay the Rytm's |
 | `kVoices`, `kBlock`, P1..P16 inside the engine | stay the engine's: a profile fits a box into them |
 | The word "Rytm" in UI strings, and the engine's message builders | unchanged |
 | Device -> host channels of the driver's consumers | 12 (the recorder, the sampler, the stems, the Sidecar's USB-C): a box with another count is refused until they follow |
@@ -163,15 +164,18 @@ The driver is `pi/engine/ob_usb.cpp`, its log prefix `rytmob` for every box. It 
 and each direction's block is `32 + 7 x channels x 4` bytes. It refuses a descriptor that does not match the row. OUT goes out block for block with IN, so
 the sizes do not matter to the pacing: the box's stream is the clock.
 
-| | Rytm MKII | Digitakt mk1 |
-|---|---|---|
-| USB id, OVERBRIDGE mode | 1935:0b48 | 1935:0b2c |
-| Rate, frames a block | 48 kHz, 7 | the same |
-| Box -> host | 12 channels, 368 B | 12 channels, 368 B: MAIN L R, tracks 1..8, INPUT L R |
-| Host -> box | 12 channels, 368 B | **2 channels, 88 B**: MAIN L R |
-| Feedback | none: interrupt transfers, the device's IN paces | the same |
-| The voices back | each on its channel, through the track | one stereo mix on the main output |
-| Own voices in box -> host | yes, on the stems and MAIN | **no**: USB return is not in IN's MAIN |
+| | Rytm MKII | Digitakt mk1 | Analog Four MKII |
+|---|---|---|---|
+| USB id, OVERBRIDGE mode | 1935:0b48 | 1935:0b2c | 1935:0b47 |
+| Rate, frames a block | 48 kHz, 7 | the same | the same |
+| Box -> host | 12 channels, 368 B | 12 channels, 368 B: MAIN L R, tracks 1..8, INPUT L R | **8 channels, 256 B**: MAIN L R, tracks 1..4, INPUT L R; the driver widens it to the 12-channel layout |
+| Host -> box | 12 channels, 368 B | **2 channels, 88 B**: MAIN L R | **6 channels, 200 B**: MAIN L R, tracks 1..4 |
+| Feedback | none: interrupt transfers, the device's IN paces | the same | the same |
+| OUT -> IN loop (`loop_frames`, LIVE IN's latency) | 289 frames | 0: no way back | 197 frames, 4.1 ms, measured on a unit, through the analog voice |
+| The voices back | each on its channel, through the track | one stereo mix on the main output | each on its channel, through the voice's analog filters and amp |
+| Own voices in box -> host | yes, on the stems and MAIN | **no**: USB return is not in IN's MAIN | yes, on the voice's channel |
+
+**The A4's insert points** [read in OS 1.56, 0x400febf0]: host channels 2..5 join each voice's noise word on the way to the DAC, x a gain that follows the voice's amp from 0.25 up, so they reach the analog voice as its noise does, and its amp must be open: a track that plays. Channels 0 / 1 join the effects' return x USB TO MAIN's gain. An A4's USB id claims nothing by itself (`audio_by_hello`): a stock A4 beside a Rytm stays out of the Rytm's way. Its hello picks `/.a4`, the one restart follows, and from that boot on the driver claims it. Before that the engine hears its hellos and nothing else (`pi/engine/hello_gate.h`), and sends it nothing. `note_out`: the sequencer's notes on an A4 voice also go to it as MIDI, channel = voice, so its amp opens, and the mod's report of that very note is dropped. `chords`: a track's chord, mono or poly, reaches the engine as one 04 a note, because the A4's sequencer puts a whole chord in one event and its keys and MIDI give a note a block [measured in the emulator, OS 1.56, against the unit's one trig a step on a mod that read one slot]. Different notes on a voice, each within `kChordMs` of the last, are a chord: the first is the trig it always was on the voice's machine, each further one sums into the voice's channel (`inst::chord_on`: instances for PLAITS, JUNO, DAISYSP and user machines that declare them; `poly::chord_add` for 6-OP FM), and 0x11 lets all of them go. MD and mono user machines have no second note. A seq track, the arpeggiator and a live MIDI binding keep their own notes. All of a chord enters one analog voice, the voice of its track's number. `trk10`: the profile's trim on the voices' own channels, +18 dB for the A4 (`stereo=trim:trk:DB10` changes it live, until the box changes), because that gain rests low; 0 for the Rytm and the Digitakt, whose path stays bit for bit. A trim up goes before the voice's limit: one knee toward full scale instead of the -12 dBFS cut (`Output::Own`, `pi/engine/output.cpp`). At +12 dB the ceiling is where it was (0.25 x 3.98), the voice just reaches it softly; at +18 dB a peak past full scale goes through that knee.
 
 Eight voices do not fit two channels: 8 x 4 bytes x 48 kHz needs 256 B a packet, and the endpoint takes 88. So on a Digitakt the voices have one
 stereo pair. They are never in the Digitakt's filters, FX or track levels, a track's mute stops its trigs but not a tail, and what comes back over USB
@@ -214,7 +218,7 @@ A board with no restart hook (`hooks.device_restart`, Pi only) answers status 0 
 
 **A Rytm and a Digitakt both on USB:** whichever got there first keeps the Sidecar, with no restart loop. While a Rytm is on USB, a hello that would
 leave `/.rytm` is answered status 4, wait, and takes effect after the Rytm goes; so is one in the first 10 s of a boot the Rytm's id caused,
-when the Rytm may not have enumerated yet (`/.rytm/device` says `1 usb` then). One box streams: the second keeps its MIDI, with no audio.
+when the Rytm may not have enumerated yet (`/.rytm/device` says `1 usb` then). One box streams: the second keeps its MIDI, with no audio (the exception is `a4=1`, under "Several devices").
 
 A box without `state_dir` shares `/.rytm`. A box sends no project name unless it can, so it stays on the project its folder
 last had: `_default` on a new folder.
@@ -242,8 +246,35 @@ A second device at the same time would need:
   USB stream, and the two boxes' sample clocks differ, so one has to be resampled, or its audio goes out somewhere else. The
   Pi's USB bandwidth and CPU budget need measuring first.
 
+A first step of this exists: `a4=1` (`docs/pi-engine.md`) streams an Analog Four MKII beside the Rytm, stock firmware, audio only: no link, no hello,
+no voices. The Rytm's stream stays the clock and the A4's is resampled to it (`pi/engine/drift_src.h`). Its USB MIDI is no host link (`pi/engine/usb_box.h`).
+
 Also: a way to tell the links apart (each USB MIDI device calls its own handler; the Rytm path's message has no port on it
 yet), and a remote UI that belongs to one link.
+
+## Remote UI on a box
+
+A box with a 128 x 64 screen of the Rytm's layout (byte = page + 8 x column) can show the pages. List `kRemoteUi` in `features`, `Profile::screen` for its voice names and the bottom bar's words, and these commands, with the 0x30 family's version byte 1 after the command:
+
+- `out_allow`: 36 37 38 39 3A 3C. The box gets the frame's rectangles and commit, keepalive, catch mask, splash and close. No 3D, 3E, 3F or 34: the engine draws the text into the frame for a box (`wire_ready`, `preview()`), because its text routine is the Rytm's.
+- `in_allow`: 30 31 32: opened or closed, a key in the Rytm's codes, a turn.
+- 0x36 is the box's hello to the pages: `<uptime hi> <uptime lo> <caps>`, uptime in 50 ms ticks, caps bit 0 understood 36. The engine reads it as a 35. Not 35: that asks for `/.rytm`, and an older engine would restart on it. Send it only after the 4F answer said accepted (status 1).
+
+The rules are the Rytm's (`mods/0026-remote-ui` in sidecar-mods): the box draws the last committed frame while the page is open, and 1 s with no message from the host gives its own screen back. An open is the user's alone. So the engine asks a box for no open: `remote_show_page` with the page closed stays quiet there. SCOPE, its sources and the meters take `screen->names` too, each voice on IN 2 + the voice; a name `-` is a channel the box does not fill, skipped. The status page shows `voices` voices by `screen->names`, and voice pages join the ring once a voice has reported. On the A4 the pages shown are SIDECAR, SYSTEM, the voices, SCOPE, REC, the MENU, LFO and WEB UI; POOL, SAMPLE, AUTO, CHOP, SEQ, SONG, POLY, INSERT, MASTER, ARP, PROJECT and KEYS need features it lacks. SCOPE's source list still names the Rytm's tracks.
+
+## What the page is told
+
+`/status` has `boxes`, one row for every Elektron box on the USB-A ports (`pi/engine/box_list.h`), and always the box this boot serves, `on` 0 while it is unplugged.
+A row: `key`, `id` (the profile's), `n` (first, second of that type), `name`, `role`, `on`; with a profile also `tracks`, `voices`,
+`params`, `feat` (the `Feature` bits) and `state`. Roles: `host` served, `waiting` its mod said hello while another box is in use, `listening` no hello heard, `spare`
+known and not used, `other` no profile. So two Rytms, or two A4s and a Rytm, are separate rows with separate keys, and the page counts them.
+
+The key is the type and Circle's `umidiN`: it tells two plugged-in boxes apart and may change when one is replugged or the Pi restarts. Two boxes of a type served
+at once also need their own state folders, keyed by something that stays with the box, such as its USB serial number; Circle's MIDI device does not carry that yet.
+The engine serves one box and one state folder per type today.
+With two A4s one is heard for a hello, the other waits for it to go.
+
+The page (`pi/engine/www/index.html`) shows the row of boxes, puts the served box's name in its text and hides what `feat` rules out (`data-needs`, `data-lacks`).
 
 ## Rules that do not change
 

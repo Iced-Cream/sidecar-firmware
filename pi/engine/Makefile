@@ -12,7 +12,7 @@ include $(CORE)/engines/engines.mk
 # MULTISAMPLE (core/msamp): the Circle side's platform_pi.cpp defines its arena (core/platform.h)
 DEFINE += -DCORE_MSAMP=1
 # Circle-side objects: Circle's flags and headers (Rules.mk's %.o: %.cpp)
-OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o cores.o console.o selftest.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o um_pi.o wifi.o rec_pi.o
+OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o ob_follow.o cores.o console.o selftest.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o um_pi.o wifi.o rec_pi.o
 OBJS += paircode_pi.o          # the pairing code's Pi side (paircode_pi.h; the portable paircode.cpp is in PORT_SRC)
 OBJS += midibridge_pi.o        # the Rytm MIDI bridge (midibridge_pi.h; the portable part is the header midibridge.h)
 # the volumes besides the card and the storage bench (docs/STORAGE.md): Circle's side; the logic is hosted (PORT_SRC)
@@ -83,7 +83,7 @@ CORE_SRC += $(CORE)/msamp/cardq.cpp $(wildcard $(CORE)/samp/*.cpp)   # the card 
 # messages, the slot map), hosted: user machines on the Pi (core/user/um.cpp, docs/user-machines-pi.md)
 RMPSRC := ../../teensy/libraries/RytmPlugins/src
 RMP_SRC := rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp
-PORT_SRC := neon_bench.cpp output.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp masterfx_pi.cpp fsweb.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp \
+PORT_SRC := neon_bench.cpp output.cpp a4_in.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp masterfx_pi.cpp fsweb.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp \
             scope_pi.cpp status_pi.cpp stor_vol.cpp stor_bench.cpp lib_pi.cpp
 # the SEQ page's engine side (seqed_pi.cpp, ../ui/seq_touch.cpp): only with the sequencer's engine in the tree
 # (core/seq/seq.cpp, the seq-mvp branch); without it the page says there is no sequencer
@@ -131,6 +131,7 @@ HOSTED_CFLAGS = $(ARCH) -O2 -std=c99 -fno-math-errno -ffp-contract=fast -g -MMD 
 # from where -ffp-contract=fast fuses a multiply (docs/superpowers/specs/2026-10-31-neon-pass.md "Compiler")
 $(patsubst %,hosted/core/%.o,$(HOT_O3)) $(patsubst %,hosted/$(ENG)/%.o,$(HOT_O3_ENG)): HOSTED_FLAGS += -O3
 
+hosted/a4_in.cpp.o: HOSTED_FLAGS += -I ../../teensy/libraries/RytmHost
 hosted/core/%.o: $(CORE)/%
 	@mkdir -p $(dir $@)
 	@echo "  CPP   $@ (hosted)"

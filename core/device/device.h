@@ -9,8 +9,8 @@
 //        / 0x11; everything else from it is dropped, so a Rytm-only command never reaches a Rytm-only path.
 //   out  what the engine sends goes through out_allow (default for a profile: nothing): a box with a small CPU is not
 //        loaded with the Rytm's pages, pool tables and label lists, and there is no per-message answer.
-// The Rytm's own hello 0x35 goes back to the Rytm (a box unplugged, a Rytm plugged in), unless the box's profile has
-// the remote UI. All of it runs where engine_sysex runs (the Pi's core 3); nothing here runs per sample. kVoices,
+// The Rytm's own hello 0x35 goes back to the Rytm (a box unplugged, a Rytm plugged in); a box with the remote UI says 0x36
+// to its pages. All of it runs where engine_sysex runs (the Pi's core 3); nothing here runs per sample. kVoices,
 // P1..P16 and the engine's own message layout stay the engine's: a profile fits a box into them.
 //
 // State: a box with a state_dir keeps its projects, settings and pools there, not in /.rytm, so two devices' state never
@@ -49,6 +49,7 @@ enum Feature : uint32_t {
   kSrcView = 1u << 6,      // 29, 2A, 2B: the stock SRC page's values
   kFxIn = 1u << 7,         // 26, 27
   kPools = 1u << 8,        // 0D..0F, 12..18: the card's lists on the box's screen
+  kRytmKeys = 1u << 9,     // the page tables' keys (ui/page_keys.h): the Rytm's panel
 };
 
 // What a box can do, plainly. A box picks one and fills in the options; no new code for a box that fits.
@@ -72,6 +73,12 @@ struct Controls {
   uint8_t n;                       // values in its report
   uint8_t target[kMaxControls];    // value k's Control
   uint8_t type[8];                 // kCtlType's value -> FilterKind
+};
+
+// A box with kRemoteUi: what its screen says that the Rytm's says in the Rytm's words. Pages that need a feature it lacks are hidden (extra.h extra_for_box).
+struct Screen {
+  const char* names[8];    // a voice's name for the user, for the voices it uses; SCOPE and the meters too, each on IN 2 + the voice; "-" a channel it does not fill
+  const char* keys;        // the bottom bar of the connect splash: how the pages open
 };
 
 struct Profile {
@@ -102,10 +109,16 @@ struct Profile {
   const out::Device* audio;   // its Overbridge stream (core/fx/out.h): channels each way, return channels, a stereo mix or per
                               // voice, what the Pi's driver opens. Null: no audio, the driver leaves the USB id alone
   const Controls* controls;   // null: no controls report
+  bool note_out;              // the engine's own notes (the sequencer's) go to the box as MIDI, channel = voice: its voice's amp must open for the Sidecar's voice to sound
+  bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
+  int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
+  bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (one report a note: the A4, on any track)
+  const Screen* screen;       // with kRemoteUi; null: the Rytm's words
 };
 
 const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use
+const Profile* by_id(uint16_t id);        // the known box with this id; null none
 const Profile* by_usb(uint16_t vid, uint16_t pid);   // the known box with this USB id and an audio row (the Pi's driver); null none
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
 // What one connected box has chosen: its profile, its state folder, its output, its counts. There is one link today, g_link
@@ -134,6 +147,11 @@ bool step(bool settled = true);
 // a Rytm's id caused, when the Rytm may not have enumerated yet. Another box's USB id changes nothing: its hello decides.
 void rytm_on_usb(bool on);
 constexpr uint32_t kSettleMs = 10000;
+// The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
+void box_note(int vi, int note, int vel);
+constexpr uint32_t kEchoMs = 40;
+constexpr uint32_t kChordMs = 20;   // from a chord's last note to its next; the A4's mod keeps a mono track's trigs apart by the same time (a4_report.c CHORD_GAP)
+constexpr int kChordNotes = 4;      // the A4's most on a trig [read in OS 1.56]
 const char* state_path_box(const char* path, char* buf, int cap);
 // path as the card has it: path itself, or in buf. Every file call passes here, so the Rytm's cost is the one test.
 // The file layer has no link to ask: this is g_link's folder.

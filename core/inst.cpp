@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "device/device.h"
 #include "platform.h"
 #include "poly.h"
 #include "user/um.h"
@@ -268,8 +269,12 @@ CORE_COLD void reset() {
   g_noroom = 0;
 }
 
-CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) { return arp::seq_on(vi, note, vel, cfg) || play_on(vi, note, vel, cfg); }
+CORE_COLD bool seq_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
+  device::box_note(vi, note, vel);
+  return arp::seq_on(vi, note, vel, cfg) || play_on(vi, note, vel, cfg);
+}
 CORE_COLD void seq_off(int vi, int note) {
+  device::box_note(vi, note, 0);
   if (!arp::seq_off(vi, note)) play_off(vi, note);
 }
 CORE_COLD bool play_on(int vi, int note, int vel, const seq::PolyCfg& cfg) {
@@ -363,6 +368,29 @@ CORE_COLD void play_off(int vi, int note) {
     }
     if (note >= 0) break;
   }
+}
+
+CORE_COLD bool chord_on(int vi, int note, int vel) {
+  if (vi < 0 || vi >= kVoices || seq::owns_voice(vi) || arp::on(vi) || poly::live_now(vi)) return false;
+  int m = machine_now(vi);
+  if (m == kFm) return poly::chord_add(vi, note, vel);
+  Decl d = decl_of(vi, m);
+  static constexpr seq::PolyCfg kCfg = {3, 0, 0, 0, 0, 0, 0};   // the notes past the first; REASSIGN
+  if (d.own_pool || d.pitch == kPitchNone || resolve(kCfg, d).instances <= 1) return false;
+  return play_on(vi, note, vel, kCfg);
+}
+CORE_COLD bool chord_single(int vi) {
+  if (vi < 0 || vi >= kVoices || seq::owns_voice(vi) || arp::on(vi) || poly::live_now(vi)) return false;
+  int m = machine_now(vi);
+  if (m == kFm) return false;
+  Decl d = decl_of(vi, m);
+  static constexpr seq::PolyCfg kCfg = {3, 0, 0, 0, 0, 0, 0};
+  return !d.own_pool && (d.pitch == kPitchNone || resolve(kCfg, d).instances <= 1);
+}
+CORE_COLD void chord_off(int vi) {
+  if (vi < 0 || vi >= kVoices) return;
+  if (v[vi].fm) poly::note_off(vi);
+  else play_off(vi, -1);
 }
 
 CORE_COLD bool seq_mono(int vi) { return vi >= 0 && vi < kVoices && vp[vi].path == kPathMono && vp[vi].mono >= 0; }

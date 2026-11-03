@@ -35,7 +35,7 @@ const Profile kDigitakt = {
     nullptr,
     "/.digitakt",
     {1u << 0x03 | 1u << 0x04 | 1u << 0x11},
-    kBracketMix, &kDigitaktAudio, &kDigitaktControls};
+    kBracketMix, &kDigitaktAudio, &kDigitaktControls, false, false};
 
 }  // namespace device
 }  // namespace core

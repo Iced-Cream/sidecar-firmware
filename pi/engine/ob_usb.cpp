@@ -56,6 +56,7 @@
 #include <assert.h>
 
 #include "ob_block.h"
+#include "ob_follow.h"
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
@@ -66,7 +67,7 @@
 
 static const char From[] = "rytmob";
 
-static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, IN; the biggest OUT block too
+static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, the biggest block either way
 static const unsigned kBufSize = (CObUsb::MaxBlocks * kBlk + 63) & ~63u;	// 2944
 
 static_assert (CObUsb::MaxURBs <= XHCI_EP_MAX_URBS, "Circle's per-endpoint URB FIFO");
@@ -186,6 +187,8 @@ CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
 // 1935:000d: Circle's MIDI driver takes it).
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
+	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
+	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
 	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct);
 	if (p == 0) return 0;
@@ -197,7 +200,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 		CLogger::Get ()->Write (From, LogWarning, "%s: a box already streams, no audio from this one", pAudio->name);
 		return 0;
 	}
-	if (pAudio->in_channels != ob::kChannels || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
+	if ((pAudio->in_channels != ob::kChannels && pAudio->in_channels != 8) || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
 	{
 		CLogger::Get ()->Write (From, LogError, "%s: %u channels in, %u out: not a stream this driver serves", pAudio->name,
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
@@ -207,7 +210,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 }
 
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
-// Only the Rytm is on the bus in this spike, so the endpoint ID alone picks 0x83 / 0x03.
+// The endpoint ID alone picks 0x83 / 0x03: with a4=1 the A4's events are counted in these two as well.
 void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID, unsigned nCompletionCode,
 				unsigned nResidue, unsigned nPending)
 {
@@ -241,6 +244,7 @@ void CObUsb::SetActive (boolean bActive)
 CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 :	CUSBFunction (pFunction),
 	m_pAudio (pAudio), m_nOutCh (pAudio->channels), m_nOutBlk (ob::block_bytes (pAudio->channels)),
+	m_nInCh (pAudio->in_channels), m_nInBlk (ob::block_bytes (pAudio->in_channels)),
 	m_pInDesc (0), m_pOutDesc (0), m_pIn (0), m_pOut (0),
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
@@ -321,7 +325,7 @@ boolean CObUsb::ScanDescriptors (void)
 			if (alt == ob::kAlt && intr)
 			{
 				unsigned nMps = e->wMaxPacketSize & 0x7FF;
-				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == kBlk) m_pInDesc = e;
+				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == m_nInBlk) m_pInDesc = e;
 				if (iface == ob::kOutIface && e->bEndpointAddress == ob::kOutEp && nMps == m_nOutBlk) m_pOutDesc = e;
 			}
 		}
@@ -342,7 +346,7 @@ boolean CObUsb::Configure (void)
 	if (!ScanDescriptors ())
 	{
 		CLogger::Get ()->Write (From, LogError, "no interrupt endpoints 0x83/0x03 (%u/%u B) at alt 3: "
-					"not in OVERBRIDGE mode?", kBlk, m_nOutBlk);
+					"not in OVERBRIDGE mode?", m_nInBlk, m_nOutBlk);
 		return FALSE;
 	}
 
@@ -375,7 +379,7 @@ boolean CObUsb::Configure (void)
 	m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
 	m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
 
-	const unsigned nLen = m_nBlocks * kBlk, nOutLen = m_nBlocks * m_nOutBlk;
+	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
 		m_pInURB[i] = new CUSBRequest (m_pIn, s_InBuf[i], nLen);
@@ -460,6 +464,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
 		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
+		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 		{
@@ -535,6 +540,21 @@ void CObUsb::OutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	((CObUsb *) pContext)->OutDone ((unsigned) (uintptr) pParam, pURB);
 }
 
+// An A4's IN block as the Rytm's layout (core/device/a4.cpp): MAIN and the tracks where they are, its two inputs on the AUDIO IN channels, the tracks it does not
+// have silent. Audio words are copied as they are: nothing here reads their value.
+void CObUsb::WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh)
+{
+	memcpy (pWide, pIn, ob::kHeaderBytes);
+	for (int f = 0; f < ob::kFramesPerBlock; f++)
+	{
+		const u8 *s = pIn + ob::kHeaderBytes + 4 * nCh * f;
+		u8 *d = pWide + ob::kHeaderBytes + 4 * ob::kChannels * f;
+		memcpy (d, s, 4 * (nCh - 2));
+		memset (d + 4 * (nCh - 2), 0, 4 * (ob::kChannels - nCh));
+		memcpy (d + 4 * (ob::kChannels - 2), s + 4 * (nCh - 2), 8);
+	}
+}
+
 // Runs in the xHCI interrupt.
 void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 {
@@ -556,11 +576,17 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (!ok) m_nInErrors++;
 	else
 	{
-		if (len % kBlk != 0) m_nInShort++;
-		for (unsigned b = 0; b < len / kBlk; b++)
+		if (len % m_nInBlk != 0) m_nInShort++;
+		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
-			const u8 *pBlk = pBuf + b * kBlk;
+			const u8 *pBlk = pBuf + b * m_nInBlk;
 			if (!ob::block_from_device (pBlk)) { m_nInBadMagic++; continue; }
+			u8 Wide[kBlk];
+			if (m_nInCh != ob::kChannels)	// a box with 8 channels: the 12-channel block every consumer below takes
+			{
+				WidenIn (pBlk, Wide, m_nInCh);
+				pBlk = Wide;
+			}
 
 			u16 c = ob::block_counter (pBlk);
 			if (m_bHaveIn && c != m_nExpectIn)
@@ -741,6 +767,7 @@ void CObUsb::PumpOut (void)
 
 void CObUsb::LogAllStats (CLogger *pLogger)
 {
+	CObFollow::LogStats (pLogger);
 	CObUsb *p = s_pThis;
 	if (p == 0 || !p->m_bStreaming) return;
 	p->Log (pLogger);
@@ -824,6 +851,7 @@ void CObUsb::Log (CLogger *pLogger)
 // power-cycled).
 void CObUsb::Stop (void)
 {
+	CObFollow::Stop ();
 	CObUsb *p = s_pThis;
 	if (p == 0) return;
 	p->m_bStreaming = FALSE;
@@ -841,6 +869,7 @@ void CObUsb::Stop (void)
 // From an exception on core 0 (guard.cpp): only the flag - no more resubmits; nothing that waits or allocates.
 void CObUsb::EmergencyStop (void)
 {
+	CObFollow::EmergencyStop ();
 	if (s_pThis != 0) s_pThis->m_bStreaming = FALSE;
 }
 
