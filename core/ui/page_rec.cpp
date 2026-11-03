@@ -229,15 +229,17 @@ CORE_COLD void rec_enc(int e, int delta, bool) {
   if (!delta) return;
   if (e >= 1 && e <= 3) {   // B the channel, C the take, D the level
     if (!p_have || rec_busy()) return;
-    __atomic_fetch_add(e == 1 ? &p_dch : e == 2 ? &p_dtake : &p_dlev, delta, __ATOMIC_ACQ_REL);
+    int n = e == 1 ? list_turn(e, delta) : e == 2 ? list_turn_long(e, delta) : delta;
+    __atomic_fetch_add(e == 1 ? &p_dch : e == 2 ? &p_dtake : &p_dlev, n, __ATOMIC_ACQ_REL);
     p_touched = true;
     return;
   }
   if (e != 0) return;
   RecInfo i;
   if (!rec_get(&i)) return;
-  if (delta > 0 && i.state == kRecIdle) request(kRecArm);
-  else if (delta < 0 && i.state == kRecArmed) request(kRecDisarm);
+  const int l = list_turn(e, delta);
+  if (l > 0 && i.state == kRecIdle) request(kRecArm);
+  else if (l < 0 && i.state == kRecArmed) request(kRecDisarm);
 }
 
 CORE_COLD bool rec_key(int code) {

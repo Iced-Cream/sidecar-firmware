@@ -243,6 +243,7 @@ void core_c_rui_resync() { core::ui::remote_resync(); }
 // The LFOs (core/lfo.h): the control side's tick, the Rytm's channel messages, the console, the JSON, the page's view;
 // core_c_fake_time: now_us / now_ms read us (on 0: the real clock), so the emulator link runs them on emulated time.
 void core_c_fake_time(int on, uint64_t us) { core::host_fake_time(on != 0, us); }
+void core_c_list_pacing(int on) { core::ui::list_pacing(on != 0); }
 void core_c_lfo_tick(uint32_t us) { core::lfo::tick(us); }
 void core_c_lfo_midi(int st, int d1, int d2) { core::lfo::midi_in((uint8_t)st, (uint8_t)d1, (uint8_t)d2); }
 int core_c_lfo_command(const char* p, char* out, int cap) { return core::lfo::command(p, out, cap) ? 1 : 0; }

@@ -146,36 +146,43 @@ CORE_COLD void lfo_draw(Canvas& c, int page, int npages, uint32_t ms) {
   else main_draw(c, page, npages, s);
 }
 
+// The LFO or, in the design view, the step before / after (knob A's list, the keys' too)
+CORE_COLD void lfo_walk(int d) {
+  if (lp.design) lp.step = clampi(lp.step + d, 0, lfo::kSteps - 1);
+  else lp.sel = clampi(lp.sel + d, 0, lfo::kLfos - 1), lp.dot_ms = 0;
+  lp.touched = 0;
+}
+
 CORE_COLD void lfo_enc(int e, int d, bool func) {
   if (!d) return;
   lfo::Settings s = lfo::get(lp.sel);
+  const int l = !lp.design && (e == 1 || e == 2) ? list_turn_long(e, d) : list_turn(e, d);   // TARGET, PARAM: long lists
+  if (e == 0) return lfo_walk(l);
   if (lp.design) {
     lp.touched = e;
-    if (e == 0) lp.step = clampi(lp.step + d, 0, lfo::kSteps - 1);
-    else if (e == 1) s.step[lp.step] = (int8_t)clampi(s.step[lp.step] + d * (func ? 8 : 1), -64, 63);
-    else if (e == 2) s.shape[lp.step] = (uint8_t)clampi(s.shape[lp.step] + d, 0, lfo::kShapes - 1);
-    else if (e == 3) lp.preset = clampi(lp.preset + d, 0, lfo::kPresets - 1), lfo::preset(&s, lp.preset);
+    if (e == 1) s.step[lp.step] = (int8_t)clampi(s.step[lp.step] + d * (func ? 8 : 1), -64, 63);
+    else if (e == 2) s.shape[lp.step] = (uint8_t)clampi(s.shape[lp.step] + l, 0, lfo::kShapes - 1);
+    else if (e == 3 && l) lp.preset = clampi(lp.preset + l, 0, lfo::kPresets - 1), lfo::preset(&s, lp.preset);
     lfo::set(lp.sel, s);
     return;
   }
   lp.touched = e;
   switch (e) {
-    case 0: lp.sel = clampi(lp.sel + d, 0, lfo::kLfos - 1); lp.dot_ms = 0; return;
     case 1: {
-      int t = clampi(s.target + d, 0, lfo::kTargets - 1);
+      int t = clampi(s.target + l, 0, lfo::kTargets - 1);
       if (t != s.target) s.target = (uint8_t)t, s.param = t >= lfo::kTVoice && t < lfo::kTFx ? 1 : 0;
       break;
     }
-    case 2: s.param = (uint8_t)clampi(s.param + d, 0, lfo::params_of(s.target) ? lfo::params_of(s.target) - 1 : 0); break;
+    case 2: s.param = (uint8_t)clampi(s.param + l, 0, lfo::params_of(s.target) ? lfo::params_of(s.target) - 1 : 0); break;
     case 3: s.depth = (int8_t)clampi(s.depth + d * (func ? 8 : 1), -64, 63); break;
-    case 4: s.wave = (uint8_t)clampi(s.wave + d, 0, lfo::kWaves - 1); break;
-    case 5: s.rate = (uint8_t)clampi(s.rate + d * (func && !s.sync ? 8 : 1), 0, s.sync ? lfo::kDivs - 1 : lfo::kFreeRates - 1); break;
+    case 4: s.wave = (uint8_t)clampi(s.wave + l, 0, lfo::kWaves - 1); break;
+    case 5: s.rate = (uint8_t)clampi(s.rate + (s.sync ? l : d * (func ? 8 : 1)), 0, s.sync ? lfo::kDivs - 1 : lfo::kFreeRates - 1); break;
     case 6: {
-      int y = clampi(s.sync + d, 0, 1);
+      int y = clampi(s.sync + l, 0, 1);
       if (y != s.sync) s.sync = (uint8_t)y, s.rate = y ? 8 : 64;   // 1/4, ~0.6 Hz
       break;
     }
-    case 7: s.retrig = (uint8_t)clampi(s.retrig + d, 0, lfo::kRetrigs - 1); break;
+    case 7: s.retrig = (uint8_t)clampi(s.retrig + l, 0, lfo::kRetrigs - 1); break;
     default: return;
   }
   lfo::set(lp.sel, s);
@@ -187,7 +194,7 @@ CORE_COLD bool lfo_key(int code) {
     return true;
   }
   if (code == 0x40 || code == 0x41) {   // ux1027: LEFT / RIGHT the LFO before / after (the design view: the step), as A
-    lfo_enc(0, code == 0x41 ? 1 : -1, false);
+    lfo_walk(code == 0x41 ? 1 : -1);
     return true;
   }
   if (!lp.design) return false;

@@ -146,24 +146,23 @@ CORE_COLD void samp_draw(Canvas& c, int page, int npages, uint32_t ms) {
   footer(c, b, s.state == samp::kRecording ? (int)(s.peak * 127) : -1);
 }
 
-// A list knob's step: one entry a detent, clamped at the list's ends (no wrap: a fast turn's large delta, or turning on
-// past an end, never jumps to the other end), as every Sidecar list knob (pages.cpp step_value, SCOPE)
+// A list knob's step (list_turn), clamped at the list's ends: no wrap, turning on past an end never jumps to the other end
 CORE_COLD int clamp_step(int v, int d, int n) { v += d; return v < 0 ? 0 : v >= n ? n - 1 : v; }
 
 CORE_COLD void samp_enc(int e, int delta, bool func) {
   if (!delta) return;
   samp::Config c = samp::config();
   if (e == 0) {
-    int i = clamp_step(index_of(c), delta, kSources);
+    int i = clamp_step(index_of(c), list_turn(e, delta), kSources);
     source_of(i, &c);
   } else if (e == 1) {
     if (func && c.start == samp::kThreshold) c.thr_db = c.thr_db + delta < -60 ? -60 : c.thr_db + delta > -1 ? -1 : c.thr_db + delta;   // FUNC: the threshold, dBFS
-    else c.start = (samp::Start)clamp_step(c.start, delta, 4);
+    else c.start = (samp::Start)clamp_step(c.start, list_turn(e, delta), 4);
   } else if (e == 2) {
-    int b = c.bars + delta;
+    int b = c.bars + list_turn_long(e, delta);
     c.bars = (uint8_t)(b < 0 ? 0 : b > 64 ? 64 : b);
   } else if (e == 3) {
-    int i = clamp_step(slices_index(c), delta, 4);
+    int i = clamp_step(slices_index(c), list_turn(e, delta), 4);
     c.slices = i == 0 ? samp::kTransients : i == 3 ? samp::kNoSlices : samp::kGrid;
     c.grid_n = i == 1 ? 8 : 16;
   } else {

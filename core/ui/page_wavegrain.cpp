@@ -875,6 +875,8 @@ CORE_COLD bool src_bank_key(int code, bool down) {
 CORE_COLD bool src_bank_enc(int e, int delta, bool func) {
 #if CORE_MSAMP
   if (!bl.on || e != 0) return false;
+  delta = list_turn_long(e, delta);
+  if (!delta) return true;
   if (bl.preset >= 0) {   // (the index, or the list's rows)
     preset_sync();
     int& p = bl.browse ? bl.cur : bl.row;

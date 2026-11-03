@@ -267,18 +267,19 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
 CORE_COLD void ins_enc(int e, int d, bool func) {
   if (!d) return;
   ip.touched = e;
+  const int l = list_turn(e, d);   // the slot, type, route, track and bus: lists; the rest values
   if (ip.eq) {   // ins1112: A HPF, B LPF, C LOW, D HIGH; G the bus (FUNC + G another track, as elsewhere)
     int ch = chain_now();
     if (e < ins::kEqParams) ins::set_eq(ch, e, ins::eq_param(ch, e) + d * (func ? 8 : 1));
     else if (e == 6) {
-      if (func && !ip.bus) ip.track = clampi(track_now() + d, 0, 11), ip.manual = true;
-      else ip.busel = clampi(ip.busel + d, 0, ins::kBuses - 1);
+      if (func && !ip.bus) ip.track = clampi(track_now() + l, 0, 11), ip.manual = true;
+      else ip.busel = clampi(ip.busel + l, 0, ins::kBuses - 1);
     }
     return;
   }
   if (ip.out) {   // A OUT, B LEV, C PAN, D WID, E DEC (DSP SAMPLE)
     int vi = voice_now();
-    if (e == 0) out::set_route(vi, clampi(out::control.route[vi] + d, 0, out::kRoutes - 1));
+    if (e == 0) out::set_route(vi, clampi(out::control.route[vi] + l, 0, out::kRoutes - 1));
     else if (e <= 3 || (e == 4 && dsp_sample_now())) out::set_param(vi, e - 1, out::param(vi, e - 1) + d * (func ? 8 : 1));
     return;
   }
@@ -288,23 +289,24 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
     return;
   }
   switch (e) {
-    case 4: ip.slot = clampi(ip.slot + d, 0, ins::kSlots - 1); break;
+    case 4: ip.slot = clampi(ip.slot + l, 0, ins::kSlots - 1); break;
     case 5: {
-      int n = clampi(t + d, 0, ins::kTypes - 1);
-      if (n == ins::kAmp && ip.bus) n += d;   // a bus takes no AMP: past it
+      if (!l) break;
+      int n = clampi(t + l, 0, ins::kTypes - 1);
+      if (n == ins::kAmp && ip.bus) n = clampi(n + l, 0, ins::kTypes - 1);   // a bus takes no AMP: past it
       if (n != t) ins::set_type(ch, ip.slot, n);   // the list's end: no reset of the knobs
       break;
     }
     case 6:
       if (func && !ip.bus) {   // FUNC + G: another track
-        ip.track = clampi(track_now() + d, 0, 11), ip.manual = true;
+        ip.track = clampi(track_now() + l, 0, 11), ip.manual = true;
       } else {
-        ip.busel = clampi(ip.busel + d, 0, ins::kBuses - 1);
+        ip.busel = clampi(ip.busel + l, 0, ins::kBuses - 1);
       }
       break;
     case 7:
       if (!ip.bus) ins::set_send(ch, ip.busel, ins::control.send[ch][ip.busel] + d * (func ? 8 : 1));
-      else if (ip.busel == 2) ins::set_route3(d > 0);
+      else if (ip.busel == 2 && l) ins::set_route3(l > 0);
       break;
     default: break;
   }
