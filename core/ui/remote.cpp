@@ -377,6 +377,7 @@ struct State {
   uint8_t srcv[12][16] = {};
   uint8_t srcl[12][16] = {};      // rui1038: the 2A's fraction bytes (P1 of GRANULAR / WAVETABLE / MULTISAMPLE: bank << 4)
   int16_t src14[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1's last 14 bits by 2A or our 48 (song)
+  int16_t wr_pat[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1 our 48 wrote, its answer owed (presetpick)
   uint16_t src_known[12] = {};
   RemoteStats stats = {};
 };
@@ -1431,7 +1432,13 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     }
     case kWrite:   // rui1036: 48 <track> <param> <status>: the Rytm's answer to our write (logged when refused)
       if (n < 3) break;
-      if (b[2]) core::log("rui: 48 write track %d P%d refused (status %d)", b[0] + 1, b[1] + 1, b[2]);
+      if (b[2] == 4) core::log("rui: 48 write track %d P%d locked on the steps held", b[0] + 1, b[1] + 1);   // (1038)
+      else if (b[2]) core::log("rui: 48 write track %d P%d refused (status %d)", b[0] + 1, b[1] + 1, b[2]);
+      if (b[0] < 12 && b[1] == 0 && s.wr_pat[b[0]] >= 0) {   // presetpick: PAT written into a JUNO track's sound (not a
+        int t = b[0], pat = s.wr_pat[t];                     // lock, status 4): its patch's knobs now, whatever its voice
+        s.wr_pat[t] = -1;                                    // is doing (a silent one reports nothing until its next trig)
+        if (!b[2] && have_tracks && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kJuno) core::juno_sound_pat(kTrackVoice[t], pat);
+      }
       return;
     case kKit:   // 1026: the Rytm's active kit: the LFOs are per kit (core/lfo.h)
       if (n < 1 || b[0] > 127) break;
@@ -1825,6 +1832,7 @@ CORE_COLD bool remote_track_write(int t, int k, int value, int lo, int flags) {
                   (uint8_t)(flags & 0x7f)};
   send_short(kWrite, b, flags ? 5 : lo > 0 ? 4 : 3);
   if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
+  if (k == 0) s.wr_pat[t] = b[2];   // (its answer: kWrite)
   return true;
 }
 CORE_COLD int remote_track_src14(int t) { return t >= 0 && t < 12 ? s.src14[t] : -1; }

@@ -231,14 +231,15 @@ CORE_COLD void fm_relist() {
 }
 
 // JUNO knob sync (15 <voice> <CUT RES ENV ATK DEC REL>): when the sound's PAT
-// (a 0x03 report, or the first report that makes the voice JUNO; not a
-// p-locked PAT on a trig) or the list entry it points at picks another patch,
-// the Rytm gets that patch's own six sliders for the track's knobs; until a
-// report carries all six (or kJunoHold ms passed) the incoming six are
-// ignored and the patch's own play.
+// (a 0x03 report, the first report that makes the voice JUNO, or the bank
+// list's commit the Rytm answered as written: juno_sound_pat; not a p-locked
+// PAT on a trig) or the list entry it points at picks another patch, the Rytm
+// gets that patch's own six sliders for the track's knobs. Until a report
+// carries all six, or one of the six moves off the Rytm's value at the sync (a
+// knob turned, a lock), the incoming six are ignored and the patch's own play:
+// the Rytm writes a 15 into its knobs only at its next screen draw (rytm-mods
+// 0021 ext_ui_tick), which a still screen can put off for seconds (presetpick).
 const int kJunoByte[6] = {5, 6, 7, 11, 12, 14};
-
-const uint32_t kJunoHold = 300;
 
 int juno_pat[kVoices];            // the sound's PAT; -1 none yet
 
@@ -248,7 +249,8 @@ uint8_t juno_kb[kVoices][18];     // its bytes
 
 uint8_t juno_hold[kVoices][6];
 
-uint32_t juno_hold_t[kVoices];
+uint8_t juno_from[kVoices][6];    // the Rytm's six at the sync
+uint8_t juno_rytm[kVoices][6];    // the Rytm's six in its last report (their LFO bases; x.p holds the patch's while held)
 
 bool juno_holding[kVoices];
 
@@ -288,22 +290,38 @@ __attribute__((noinline)) CORE_COLD void juno_select(int vi, int pat, bool sync,
     if (force || key != juno_key[vi] || memcmp(b, juno_kb[vi], 18) != 0) {
       juno_key[vi] = key;
       memcpy(juno_kb[vi], b, 18);
-      for (int i = 0; i < 6; ++i) juno_hold[vi][i] = b[kJunoByte[i]] & 0x7f;
+      for (int i = 0; i < 6; ++i) juno_hold[vi][i] = b[kJunoByte[i]] & 0x7f, juno_from[vi][i] = juno_rytm[vi][i];
       uint8_t m[13];
       to_rytm(m, sysex_juno_knobs(m, vi, juno_hold[vi]));
       juno_holding[vi] = true;
-      juno_hold_t[vi] = now_ms();
     }
   }
   if (juno_holding[vi]) {
-    bool same = true;
-    for (int i = 0; i < 6; ++i) same = same && (int)x.p[1 + i] == juno_hold[vi][i];
-    if (same || now_ms() - juno_hold_t[vi] >= kJunoHold)
+    bool same = true, moved = false;
+    for (int i = 0; i < 6; ++i) {
+      same = same && juno_rytm[vi][i] == juno_hold[vi][i];
+      moved = moved || juno_rytm[vi][i] != juno_from[vi][i];
+    }
+    if (same || moved)
       juno_holding[vi] = false;
     else
       for (int i = 0; i < 6; ++i) x.p[1 + i] = juno_hold[vi][i];
   }
   junos[vi].SetKnobs(x.p);
+}
+
+// The sound's PAT is pat now (the bank list's commit, the Rytm's 48 answered "written": rytm-mods 0026 wr_tick): as a 0x03
+// carrying it. The Rytm reports a voice only while it sounds, so after a pick on a silent voice the next trig's 0x04 was
+// the first to carry the new PAT, and a trig's PAT may be a p-lock: the knobs were never synced (presetpick).
+CORE_COLD void juno_sound_pat(int vi, int pat) {
+  vi &= 7;
+  V& x = v[vi];
+  if (!x.juno || pat < 0 || pat > 127) return;
+  x.p[0] = (float)pat;   // (the next report brings it too; until then JUNO's SetKnobs reads PAT from here)
+  juno_select(vi, pat, true, false);
+#if CORE_POLY
+  inst::knobs(vi);
+#endif
 }
 
 // The JUNO list changed (a new project, LOAD TO PROJ): voices whose PAT now
@@ -840,9 +858,14 @@ __attribute__((noinline)) CORE_COLD void voice_report(int cmd, const uint8_t* d,
     poly::knobs(vi, x.p);
 #endif
   }
-  if (x.juno)   // PAT steps through the project's JUNO list, if any; the
-                // knobs follow the sound's PAT (0x03), not a p-locked one (0x04)
+  if (x.juno) {   // PAT steps through the project's JUNO list, if any; the
+                  // knobs follow the sound's PAT (0x03), not a p-locked one (0x04)
+    for (int i = 0; i < 6; ++i) {
+      int r = (int)lfo::base_of(vi, 1 + i, x.p[1 + i]);
+      juno_rytm[vi][i] = (uint8_t)(r < 0 ? 0 : r > 127 ? 127 : r);
+    }
     juno_select(vi, (int)x.p[0], cmd == 0x03 || !was_juno, !was_juno);
+  }
 #if CORE_POLY
   if (x.juno) inst::knobs(vi);   // E0: the instances' knobs (a PAT change reaches them at their next note)
 #endif
