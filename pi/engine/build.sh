@@ -183,6 +183,10 @@ grep -q circle-hub-rearm lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circ
 # request that failed again at once kept UpdatePlugAndPlay'"'"'s loop going until the watchdog rebooted the Pi - v6.3, flash 1;
 # its own file and marker, as -reenum2; idempotent)
 grep -q circle-hub-rearm2 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
+# then a recovery that sends nothing to the hub (circle-hub-rearm3.patch: v2 cleared the halt on the hub and read every
+# port at once, synchronously, and a failed port read is a LogPanic - likely the Pi reboots of v6.3/v6.4; 250 ms first;
+# its own file and marker; idempotent)
+grep -q circle-hub-rearm3 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm3.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

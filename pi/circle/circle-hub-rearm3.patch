@@ -1,0 +1,48 @@
+diff -ruN a/include/circle/usb/usbstandardhub.h b/include/circle/usb/usbstandardhub.h
+--- a/include/circle/usb/usbstandardhub.h
++++ b/include/circle/usb/usbstandardhub.h
+@@ -76,6 +76,7 @@
+ 	// CUSBHostController::UpdatePlugAndPlay's loop going for ever (core 0 held, the watchdog)
+ 	void ScheduleRecovery (void);			// IRQ or task level
+ 	static void RecoveryTimer (TKernelTimerHandle hTimer, void *pParam, void *pContext);
++	// circle-hub-rearm3.patch: the recovery sends nothing to the hub (no halt clearing, no port reads), 250 ms first
+ 
+ private:
+ 	TUSBHubDescriptor *m_pHubDesc;
+diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
+--- a/lib/usb/usbstandardhub.cpp
++++ b/lib/usb/usbstandardhub.cpp
+@@ -654,11 +654,20 @@
+ 			}
+ 		}
+ #endif
+-		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT,
+-					    CLEAR_FEATURE, ENDPOINT_HALT, m_pInterruptEndpoint->GetNumber () | 0x80, 0, 0);
+-		m_pInterruptEndpoint->ResetPID ();
++		// circle-hub-rearm3.patch: nothing more is sent to the hub here. v2 cleared the halt on the hub and read
++		// every port with synchronous control requests right after the error, likely while the hub was still not
++		// answering - and a failed port read is a LogPanic in this function (halt, the watchdog: v6.3/v6.4, one
++		// Rytm OS update in five to seven). A change the hub latched meanwhile stays in its change bits, and the
++		// hub reports it again once the request below is armed, so the port loop is not needed.
++		if (!StartStatusChangeRequest ())
++		{
++			CLogger::Get ()->Write (FromHub, LogError, "Cannot restart request");
++
++			s_nRearmFailures++;
++			ScheduleRecovery ();
++		}
+ 
+-		usStatusBitmap = ((1U << m_nPorts) - 1) << 1;	// every port (bit 0, the hub itself, is not)
++		return;
+ 	}
+ 
+ 	//CLogger::Get ()->Write (FromHub, LogDebug, "Status change (0x%04X)",
+@@ -791,7 +800,7 @@
+ 		return;
+ 	}
+ 
+-	unsigned nDelayMs = nErrors < 50 ? 20 * nErrors : 1000;
++	unsigned nDelayMs = 250 * nErrors;		// circle-hub-rearm3.patch: 250 ms first (v2: 20 ms), the hub given time
+ 	if (nDelayMs > 1000)
+ 	{
+ 		nDelayMs = 1000;
