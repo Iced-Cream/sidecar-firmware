@@ -882,7 +882,10 @@ branch on the strict same-origin check with the switches from the body only. **N
 ### OS upgrades over the USB-C MIDI port (usbmidi=os:)
 
 Elektron Transfer or elkflash on the computer at the USB-C port can upgrade the Rytm's OS through the Sidecar. Off by
-default: the gadget's filter drops OS upgrade SysEx (`F0 00 20 3C <dev> 00 7E|7F`, `midi_filter.h`) as before. The
+default: the gadget's filter drops OS upgrade SysEx (`F0 00 20 3C <dev> 00 7E|7F`, any device byte, `midi_filter.h`)
+exactly as before, the same rule as the Rytm MIDI bridge's. When on, only the stock OS files' device byte `0C` passes;
+the same shape on any other device byte stays dropped. Known limit (as before): other Elektron SysEx whose payload
+starts `7E|7F`, such as a test build's `7D` or an RPC's `10`, is dropped toward the Rytm too. The
 wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/engine/usbmidi_os.h`
 (tests/test_usbmidi_os.cpp).
 

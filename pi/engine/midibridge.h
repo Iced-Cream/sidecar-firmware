@@ -77,7 +77,9 @@ inline bool rpc_read(uint8_t cmd) {
 }
 inline Kind classify(const uint8_t* m, unsigned n) {
   if (n < 8 || m[0] != 0xF0 || m[1] != 0x00 || m[2] != 0x20 || m[3] != 0x3C || m[5] != 0x00) return kPlain;
-  if (m[6] == 0x7E || m[6] == 0x7F) return kOsUpgrade;			// the .syx image's messages
+  // the .syx image's messages, whatever the device byte (m[4]): the same broad rule as the USB-C port's filter
+  // with usbmidi=os:off (midi_filter.h OsUpdate)
+  if (m[6] == 0x7E || m[6] == 0x7F) return kOsUpgrade;
   if (m[4] == 0x7D) return kPlain;					// analoghealth's channel
   if (m[4] == 0x07 && m[6] >= 0x50 && m[6] <= 0x6F) return kPlain;	// the Rytm's dumps and dump requests
   // 8-to-7: m[6] holds the first group's top bits, m[7..13] its bytes: seq hi, seq lo, resp hi, resp lo, command
