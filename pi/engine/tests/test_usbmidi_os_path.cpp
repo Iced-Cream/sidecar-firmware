@@ -9,7 +9,7 @@
 #include "usbmidi_pack.h"
 
 using Bytes = std::vector<uint8_t>;
-using Path = ToRytmPath<2048>;
+using Path = OwnedToRytmPath<2048>;
 using usbmidi_os::kEmu;
 using usbmidi_os::kOff;
 using usbmidi_os::kOn;

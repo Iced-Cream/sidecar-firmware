@@ -271,7 +271,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nLoopHead (0), m_nLoopTail (0), m_bLoopPriming (TRUE),
 	m_bWinStarted (FALSE), m_bWinRytm (FALSE), m_nWinUFrames (0), m_nLastFrameNo (0), m_nWinQ16 (0),
 	m_nFbBase (6 << 16),
-	m_ToHostFilter (false),
+	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
 	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
@@ -937,7 +937,7 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 		m_pIso[EPOut] ? m_pIso[EPOut]->Incomplete () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Incomplete () : 0,
 		m_pIso[EPIn] ? m_pIso[EPIn]->Incomplete () : 0,
 		s.nMidiFromHost, s.nMidiToHost, s.nMidiToRytm, s.nMidiFull, s.nMidiNoRytm,
-		m_ToRytmPath.Filter ().DroppedMessages (), m_ToHostFilter.DroppedMessages (),
+		m_ToRytmFilter.DroppedMessages (), m_ToHostFilter.DroppedMessages (),
 		m_ToHost.IsUp () ? "up" : "none", m_ToHost.Ups (), nRate, nPpm / 10000, nPpm / 100 % 100,
 		(unsigned) (nMaxGap * 1000000 / m_nCntFrq), (unsigned) (nMaxHandler * 1000000 / m_nCntFrq), nLong, nLateAgo);
 #if RASPPI >= 5

@@ -1,8 +1,9 @@
 // pi/engine/usbmidi_os_path.h - the computer's MIDI on its way to the Rytm (sidecar_gadget.cpp) and the usbmidi=os:
 // decisions around it, kept here so the Mac tests run the same code (tests/test_usbmidi_os_path.cpp).
 //
-// ToRytmPath: the Rytm-bound filter (midi_filter.h), the queue the gadget IRQ fills and core 0's loop empties (the USB
-// merge, or the TCP link's SendComputerMIDI), and whether a SysEx is half sent. Cut () drops all of it at once - what
+// ToRytmPath: works on the Rytm-bound filter (midi_filter.h), the queue the gadget IRQ fills and core 0's loop empties
+// (the USB merge, or the TCP link's SendComputerMIDI), and whether a SysEx is half sent - the gadget's own members
+// (OwnedToRytmPath holds them itself, for the tests). Cut () drops all of it at once - what
 // waits, the rest of the SysEx being filtered and the half-sent one's state - so nothing of a message meant for one
 // destination reaches the next: the emulator's OS image never the real Rytm.
 //
@@ -33,7 +34,7 @@
 template <uint32_t N>
 class ToRytmPath {
  public:
-  ToRytmPath() : filter_(true) {}
+  ToRytmPath(MidiFilter& filter, Spsc<uint32_t, N>& q, bool& in_sysex) : filter_(filter), q_(q), in_sysex_(in_sysex) {}
 
   // the gadget IRQ: one packet of the computer's (after the keys tap); FALSE when the queue was full (dropped)
   bool FromHost(const uint8_t* p) {
@@ -74,10 +75,22 @@ class ToRytmPath {
   const MidiFilter& Filter() const { return filter_; }
 
  private:
-  MidiFilter filter_;
-  Spsc<uint32_t, N> q_;
-  bool in_sysex_ = false;
+  MidiFilter& filter_;
+  Spsc<uint32_t, N>& q_;
+  bool& in_sysex_;
   unsigned cut_ = 0;
+};
+
+template <uint32_t N>
+struct ToRytmParts {
+  MidiFilter filter{true};
+  Spsc<uint32_t, N> q;
+  bool in_sysex = false;
+};
+template <uint32_t N>
+class OwnedToRytmPath : private ToRytmParts<N>, public ToRytmPath<N> {
+ public:
+  OwnedToRytmPath() : ToRytmPath<N>(this->filter, this->q, this->in_sysex) {}
 };
 
 class OsGate {

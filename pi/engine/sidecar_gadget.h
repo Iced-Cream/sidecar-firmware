@@ -254,10 +254,12 @@ private:
 	unsigned m_nFbBase;
 
 	// MIDI
-	ToRytmPath<MIDIQueue> m_ToRytmPath;		// filter and queue; producer: the gadget IRQ; consumer: core 0's loop
-	MidiFilter m_ToHostFilter;
+	MidiFilter m_ToRytmFilter, m_ToHostFilter;
+	Spsc<u32, MIDIQueue> m_ToRytm;			// producer: the gadget IRQ; consumer: core 0's loop
 	ToHostQueue<MIDIQueue> m_ToHost;		// producers: IRQs and the loop (IRQs masked); consumer: the IRQ. Up only while the
 							// computer has the MIDI IN endpoint configured (tohost_q.h): none there, nothing queued
+	boolean m_bToRytmSysEx;
+	ToRytmPath<MIDIQueue> m_ToRytmPath {m_ToRytmFilter, m_ToRytm, m_bToRytmSysEx};	// the three above (usbmidi_os_path.h)
 
 	struct TStats
 	{
