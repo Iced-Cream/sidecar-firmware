@@ -962,6 +962,15 @@ function paintSrc(src) {
 const TILES = [["cpu","CPU (cores 1/2/3)"],["fifo","FIFO"],["under","Underruns"],["ob","Overbridge"],
   ["rytm","Rytm"],["gadget","USB-C"],["temp","Temperature"],["power","Power"],["web","This page"]];
 $("#tiles").innerHTML = TILES.map(([k,n]) => `<div class="tile" id="t-${k}"><div class="k">${n}</div><div class="v">-</div><div class="d">&nbsp;</div></div>`).join("");
+// the USB-C card (/status "gadget" "mac" "usbHost"; sc: the gadget's newest stats line): the same on the Pi 4 and the Pi 5.
+// usbHost false: the Sidecar device is up but no computer has configured it (a power supply alone sends no USB reset)
+function gadgetTile(st, sc) {
+  const m = (re) => { const r = sc && sc.match(re); return r ? r[1] : null; };
+  let d = st.gadget === "sidecar" ? "UAC2 12/12 + MIDI" : st.gadget === "midi" ? "MIDI echo" : "off";
+  if (st.gadget === "sidecar" && st.usbHost === false) d = `no computer on USB-C · computer audio ${st.mac ? "on" : "off"}`;
+  else if (sc) d = `alt ${m(/alt (\d+\/\d+)/)} · computer audio ${st.mac ? "on" : "off"} · late ${m(/late (\d+\/\d+\/\d+)/)}`;
+  return [st.gadget === "0" ? "off" : st.gadget, d];
+}
 // the temperature card's detail and class (pi/engine/thermal.h): the warning on at 80 °C, off below 75 °C; clockLow,
 // the ARM clock Circle's throttle lowered (socmaxtemp 78: 600 MHz), said with the warning and quietly under it
 function tempTile(st) {
@@ -1468,11 +1477,7 @@ function renderStats() {
     const on = st.streaming || st.rytmMidi;
     tile("rytm", on ? "attached" : "not seen", (st.streaming ? "Overbridge" : "no stream") + " · " + (st.rytmMidi ? "USB MIDI" : "no MIDI"), on ? "good" : "");
   }
-  if (st.gadget !== undefined) {
-    let d = st.gadget === "sidecar" ? "UAC2 12/12 + MIDI" : st.gadget === "midi" ? "MIDI echo" : "off";
-    if (sc) d = `alt ${num(/alt (\d+\/\d+)/, sc)} · computer audio ${st.mac ? "on" : "off"} · late ${num(/late (\d+\/\d+\/\d+)/, sc)}`;
-    tile("gadget", st.gadget === "0" ? "off" : st.gadget, d);
-  }
+  if (st.gadget !== undefined) tile("gadget", ...gadgetTile(st, sc));
   if (st.temp !== undefined) tile("temp", st.temp + " °C", ...tempTile(st));
   if (st.power) {                    // the supply (pi/engine/power_state.h): get_throttled, the Pi 5's USB-PD current
     const p = st.power, bad = !!p.warn;

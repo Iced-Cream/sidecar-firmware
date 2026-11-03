@@ -3,6 +3,8 @@
 #   pi/circle/pi5gadget -> pi/circle/out/pi5gadget/kernel_2712.img
 # Its Circle tree, build/circle-pi5gadget: a copy of build/circle (run build.sh first), RASPPI=5, single core,
 # circle-gadget.patch + circle-gadget-wake.patch + circle-pi5-gadget.patch + circle-gadget-reset.patch, USB_GADGET_DEBUG (every event logged), a 32 KB serial buffer (a full one drops text). Made again when a patch changes.
+# Not the engine: the engine's test kernels for tryboots (testsecs=, /usbtest.log, testcard=1) are
+# PI5_GADGET=1 PI5_TESTMODE=1 RASPPI=5 pi/engine/build.sh; PI5_GADGET=1 alone (the Pi 5 default) is the release build.
 # CIRCLE_BUILD: the build dir, as for pi/engine/build.sh (a worktree points it at the main checkout's build/).
 set -euo pipefail
 cd "$(dirname "$0")"

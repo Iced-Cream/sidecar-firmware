@@ -257,7 +257,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_bWinStarted (FALSE), m_bWinRytm (FALSE), m_nWinUFrames (0), m_nLastFrameNo (0), m_nWinQ16 (0),
 	m_nFbBase (6 << 16),
 	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
-	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
+	m_nQuietSecs (0), m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
 	memset (&m_Stats, 0, sizeof m_Stats);
@@ -786,6 +786,11 @@ boolean CSidecarGadget::Command (const char *p)
 
 void CSidecarGadget::LogStats (CLogger *pLogger)
 {
+	// No computer on USB-C (none has configured the device, no stream, no test source): a line a minute, not a second.
+	// A Pi on a plain power supply never sees a USB reset (the Pi 5's USB-C is its power input too), so this is its
+	// normal state; the counters below simply cover the whole minute.
+	if (!m_ToHost.IsUp () && !m_uchOutAlt && !m_uchInAlt && !m_bTest && ++m_nQuietSecs < 60) return;
+	m_nQuietSecs = 0;
 	unsigned nIRQs;
 	u64 nTicks, nNow = Now ();
 	GetIRQStats (&nIRQs, &nTicks);

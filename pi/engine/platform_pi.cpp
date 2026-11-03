@@ -16,7 +16,7 @@
 #include "crumb.h"   // the crash breadcrumb: the last file call by path (2026-10-29)
 #include "msamp/cardq.h"   // here_note: a file call on the control core
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 bool g_bCardOff = false;   // testsecs= without testcard=1 (kernel.cpp): the card is not this engine's, every Fs::begin () refuses
 #endif
 
@@ -611,7 +611,7 @@ bool File::getModifyDateTime(uint16_t* date, uint16_t* time) const {
 }
 
 // ---- the card
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 bool Fs::begin() { return !g_bCardOff && f_mount(&s_FatFs, "SD:", 1) == FR_OK; }
 #else
 bool Fs::begin() { return f_mount(&s_FatFs, "SD:", 1) == FR_OK; }

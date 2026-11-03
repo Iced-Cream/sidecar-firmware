@@ -5,10 +5,10 @@
 #   ./make-sd-dual.sh [K4 SDBOOT K5]
 #     K4      the Pi 4 kernel (pi/engine/kernel8-rpi4.img, RASPPI=4 pi/engine/build.sh), wrapped as engine.img
 #     SDBOOT  the Pi 4's sdboot (pi/circle/out/sdboot.img, build-sdboot.sh)
-#     K5      the Pi 5 kernel (pi/engine/kernel_2712.img, RASPPI=5 pi/engine/build.sh), as kernel_2712.img
+#     K5      the Pi 5 kernel (pi/engine/kernel_2712.img, RASPPI=5 pi/engine/build.sh: the USB-C gadget in, no test mode), as kernel_2712.img
 # Environment (optional): CIRCLE_BUILD (default pi/circle/build), OUT, CMDLINE (default "sdport=0"), CONTENT (a
 # sidecar-content-* folder: JUNO/, DX7/, MULTISAMPLE/ if present, README.txt, NOTICE.txt, copied to the card; README/NOTICE as
-# STARTER-CONTENT-*.txt), NO_DISPLAY=1 (both boards' HDMI lines commented out), HDMI_RES=800x480 (default: the
+# STARTER-CONTENT-*.txt), PI5_NOGADGET=1 (accept a Pi 5 kernel built with PI5_GADGET=0), NO_DISPLAY=1 (both boards' HDMI lines commented out), HDMI_RES=800x480 (default: the
 # Waveshare 5"/7" HDMI LCDs) or 1024x600 (a 1024x600 panel such as the GeeekPi EP-0194: the HDMI mode; the engine then
 # draws its 1024x600 layouts, docs/pi-display.md "Screen sizes").
 # The two kernels must carry the same Sidecar version stamp ("0.1.0 (<commit>)"), not -dirty.
@@ -51,8 +51,15 @@ case "$S4" in *dirty*) echo "the kernels are built from a dirty tree ($S4)"; exi
 P5S=(-e 'board: Raspberry Pi 5 build (kernel_2712.img)' -e 'gadget: none on this board (Pi 5 build)')	# the second: Pi 5 kernels from before the first
 ! grep -aqF "${P5S[@]}" "$K4" || { echo "$K4 is a Pi 5 kernel"; exit 1; }
 grep -aqF "${P5S[@]}" "$K5" || { echo "$K5 is not a Pi 5 kernel"; exit 1; }
-# a PI5_GADGET=1 kernel has the test mode (testsecs=: no card, a reboot at the end): never on a release card
-for k in "$K4" "$K5"; do ! grep -aqF 'testsecs=' "$k" || { echo "$k is a test kernel (PI5_GADGET=1)"; exit 1; }; done
+# a PI5_TESTMODE=1 kernel has the engine test mode (testsecs=: no card, a reboot at the end): never on a release card.
+# (Before 0.4.0 every PI5_GADGET=1 kernel had it; now PI5_GADGET=1 alone is the release build.)
+for k in "$K4" "$K5"; do ! grep -aqF 'testsecs=' "$k" || { echo "$k is a test kernel (PI5_TESTMODE=1, or an old PI5_GADGET=1 build)"; exit 1; }; done
+# the Pi 5 release kernel has the USB-C gadget (computer audio, as on the Pi 4; RASPPI=5 pi/engine/build.sh, PI5_GADGET
+# default 1). One built with PI5_GADGET=0 says "gadget: none on this board": refused unless PI5_NOGADGET=1 asks for it.
+if grep -aqF 'gadget: none on this board (Pi 5 build)' "$K5"; then
+  [ "${PI5_NOGADGET:-0}" = 1 ] || { echo "$K5 has no USB-C gadget (PI5_GADGET=0): build it with RASPPI=5 pi/engine/build.sh, or PI5_NOGADGET=1"; exit 1; }
+fi
+grep -aqF 'gadget: USB-C Sidecar' "$K5" || [ "${PI5_NOGADGET:-0}" = 1 ] || { echo "$K5: no USB-C Sidecar gadget in it"; exit 1; }
 COMMIT=$(echo "$S4" | sed -n 's/.*(\([0-9a-f]*\)).*/\1/p')
 
 # Wi-Fi chip firmware: RPi-Distro/firmware-nonfree at the commit Circle's addon/wlan/firmware/Makefile pins, once

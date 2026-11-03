@@ -128,7 +128,7 @@ void Poll (void)
 	if (++s_nFailsInRow == 10) Off ("/.rytm/blackbox.log could not be written 10 times in a row");
 }
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 // testsecs=: the log into a file made beforehand, only its bytes overwritten (see docs/pi5.md "Engine test mode"): no
 // cluster is allocated, the FATs stay as they are. f_close still rewrites the file's directory entry, every 10 s: a reset
 // during that one sector write could damage the root directory. No file: no log. Without testcard=1 the engine has no

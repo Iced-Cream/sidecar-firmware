@@ -1,6 +1,6 @@
 # pi/engine/tests/Makefile - the Pi engine's portable parts on the Mac: make -C pi/engine/tests (shim/: the few
 # Circle headers guard.h needs). make -C pi/engine/tests content: bridge.cpp's self-test content (test_content.cpp)
-# against the core's Mac port (make -C core engines first; the core library is built here as needed). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI bridge's Mac relay (tools/tests/test_rytm_bridge.py).
+# against the core's Mac port (make -C core engines first; the core library is built here as needed). Also the build's version stamp (tools/tests/test_gen_version.sh), the Pi 5 release kernel's flags (test_pi5_flags.sh: the gadget, no test mode) and the Rytm MIDI bridge's Mac relay (tools/tests/test_rytm_bridge.py).
 $(shell ../../../tools/gen_version.sh)
 CXX ?= c++
 CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -I.. -I../../../core -Ishim -fsanitize=address,undefined -fno-sanitize-recover=all
@@ -14,7 +14,7 @@ CORE_SRC := $(addprefix $(CORE)/,engine.cpp project_key.cpp lfo.cpp hooks.cpp no
             pool/pool.cpp pool/sample_ram_pool.cpp presets/libs.cpp host/platform_host.cpp host/newlib_rand.cpp)
 .PHONY: all clean content fatfs-mac
 all: $(TESTS)
-	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
+	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; ./test_pi5_flags.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)

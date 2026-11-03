@@ -1,6 +1,6 @@
 // pi/engine/card_guard.h - testcard=1 (docs/pi5.md "Engine test mode"): the engine runs on the boot partition of Raspberry
 // Pi OS, which is not its own card. What it may change there: Sidecar's folders, nothing else. This is the rule; the
-// gate is card_guard.cpp, which wraps FatFs's calls that change a name (the linker's --wrap, PI5_GADGET=1 builds only).
+// gate is card_guard.cpp, which wraps FatFs's calls that change a name (the linker's --wrap, PI5_TESTMODE=1 builds only).
 // A change to anything else is refused with FR_DENIED, so config.txt, cmdline.txt, the kernels, overlays/ and whatever
 // else lies at the root stay as they are, whichever of the engine's paths asks (the file port's PUT and DEL too).
 // Reads are not limited. Other drives (USB:, NVME:) are not this card. pi/engine/tests/test_card_guard.cpp runs it on the Mac.

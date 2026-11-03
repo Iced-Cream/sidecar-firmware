@@ -1118,7 +1118,7 @@ class H(BaseHTTPRequestHandler):
                 "host": "sidecar", "uptime": int(time.time() - T0), "web": {"requests": 1, "maxus": 900, "commands": 0, "refused": REFUSED[0], "idle": 0, "open": 1},
                 "boxes": BOXES[os.environ.get("MOCK_BOXES", "rytm")],
                 "power": POWER,
-                "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "streaming": True,
+                "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "usbHost": True, "streaming": True,
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,
                 "machines": STATE["machines"],
                 "fx": [{"type": "PLATE", "post": 0, "send": [0, 20, 64, 127, 0, 0, 0, 90, 0, 0, 10, 0]},

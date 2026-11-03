@@ -31,12 +31,20 @@ DEFINE += -DSERIAL_DEVICE_DEFAULT=$(or $(PI5_UART),0)
 ifneq ($(PI5_GADGET),1)
 DEFINE += -DSIDECAR_NO_GADGET
 GADGET_OBJS =
-else
-# the test kernels' testcard=1 (card_guard.h, docs/pi5.md "Engine test mode"): FatFs's calls that change a name go
-# through card_guard.cpp, the libraries' too. Nothing here in a kernel that can be released.
+endif
+# PI5_TESTMODE=1 (build.sh; needs PI5_GADGET=1): the engine test mode (docs/pi5.md "Engine test mode"): testsecs=, its
+# watchdog and reboot, /usbtest.log, and testcard=1's gate: FatFs's calls that change a name go through card_guard.cpp,
+# the libraries' too. Never in a kernel that can be released (make-sd-dual.sh refuses "testsecs=").
+ifeq ($(PI5_TESTMODE),1)
+ifneq ($(PI5_GADGET),1)
+$(error PI5_TESTMODE=1 needs PI5_GADGET=1)
+endif
+DEFINE += -DSIDECAR_PI5_TESTMODE
 OBJS += card_guard.o
 LDFLAGS += --wrap=f_open --wrap=f_unlink --wrap=f_rename --wrap=f_mkdir
 endif
+else ifeq ($(PI5_TESTMODE),1)
+$(error PI5_TESTMODE=1 is for RASPPI=5 only)
 endif
 # the display (docs/pi-display.md; HDMI, DSI): pi/ui, LVGL from the tree's addon/lvgl (build.sh adds it)
 OBJS += ../ui/sidecar_display.o ../ui/sidecar_ui.o ../ui/sidecar_splash.o ../ui/sidecar_wordmark.o
@@ -118,6 +126,13 @@ LIBS = $(if $(filter 5,$(strip $(RASPPI))),$(CIRCLEHOME)/addon/rp1dsi/librp1dsi.
        $(CIRCLEHOME)/lib/libcircle.a
 
 include $(CIRCLEHOME)/Rules.mk
+
+# the build's flags, for pi/engine/tests/test_pi5_flags.sh (no kernel built: make print-flags with a stand-in CIRCLEHOME); after Rules.mk, so its all stays the default goal
+print-flags:
+	@echo "DEFINE=$(strip $(DEFINE))"
+	@echo "OBJS=$(strip $(filter card_guard.o gadget.o sidecar_gadget.o,$(OBJS)))"
+	@echo "LDFLAGS=$(strip $(LDFLAGS))"
+.PHONY: print-flags
 
 # RYTM_RENDER_CORES=4: the render state voices share is per core (cores 1 and 2 render at once; rytm_render_core() in
 # platform_pi.cpp): a 6-OP FM reload's stage and bank pointer, GRAIN's budget, stmlib's Random and rand(). Every

@@ -69,11 +69,14 @@ static int s_nRytmPatIndex = -1;
 #include "version.h"
 #include <circle/new.h>
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
-extern bool g_bCardOff;			// platform_pi.cpp: testsecs=
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
-extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
+// The Pi 5 engine test mode (PI5_TESTMODE=1 builds only; docs/pi5.md "Engine test mode"): testsecs=, its watchdog and
+// reboot, /usbtest.log, testcard=1. A plain PI5_GADGET=1 build has the gadget and none of this, so a release card takes it.
+#ifdef SIDECAR_PI5_TESTMODE
+#if RASPPI < 5 || defined (SIDECAR_NO_GADGET)
+#error "SIDECAR_PI5_TESTMODE: a Pi 5 gadget build only (PI5_GADGET=1 PI5_TESTMODE=1 RASPPI=5)"
 #endif
+extern bool g_bCardOff;			// platform_pi.cpp: testsecs=
+extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
 #endif
 
 // The network options' defaults when cmdline.txt has none: build.sh writes hosted/net_defaults.h from PI_IP,
@@ -252,7 +255,7 @@ boolean CKernel::Initialize (void)
 	if (bOK) bOK = m_Timer.Initialize ();
 	if (!bOK) return FALSE;
 	m_Logger.Write (From, LogNotice, "==== rytm-pi engine ==== Sidecar " SIDECAR_VERSION_FULL ", CPU %u MHz", m_CPUThrottle.GetClockRate () / 1000000);
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	// testsecs=S (docs/pi5.md "Engine test mode"): a run on a card that is not Sidecar's, a tryboot on Raspberry Pi OS. The
 	// card is never mounted for the engine, so nothing is written to that system's boot partition; the watchdog runs
 	// from here on, and at S seconds the Pi reboots, which ends the tryboot. testcard=1 with it: the engine uses the card
@@ -405,7 +408,7 @@ boolean CKernel::Initialize (void)
 #ifndef SIDECAR_NO_GADGET
 	else m_Logger.Write (From, LogNotice, "gadget: off");
 #endif
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0)
 	{
 		m_Watchdog.Start (15);
@@ -511,7 +514,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	u8 IP[4];
 	memcpy (IP, k->m_IP, sizeof IP);
 	if (k->m_bNetOK) k->m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);	// DHCP on Wi-Fi: the lease's
-	s.Format ("\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,"
+	s.Format ("\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,\"usbHost\":%s,"
 		  "\"streaming\":%s,\"rytmMidi\":%s,\"temp\":%u,\"tempWarn\":%s,\"clockLow\":%d,\"out\":\"%s\",\"notes\":%s,\"drone\":%d,\"fifoTarget\":%u,"
 		  "\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u,"
 		  "\"outDiag\":{\"preResetPulled\":%u,\"resetLevel\":%u,\"firstPullLevel\":%d,\"armAt\":%d,\"armLevel\":%u,"
@@ -520,6 +523,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  "\"step\":\"%s\",\"stepUs\":%u,\"namedUs\":%u,\"cardHereUs\":%u}",
 		  IP[0], IP[1], IP[2], IP[3], k->m_pTransport->Name (), k->m_pGadgetMode,
 		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
+		  k->m_pSidecar ? (k->m_pSidecar->HostOn () ? "true" : "false") : "null",	// a computer has configured USB-C's Sidecar
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
 		  nTempWeb, k->m_Thermal.warn ? "true" : "false",
 		  thermal::clock_low_mhz ((int) k->m_nClockMHz, (int) k->AskedMHz (), (int) nTempWeb),	// MHz, 0: not lowered
@@ -1875,7 +1879,7 @@ void CKernel::MeasureClock (void)
 
 void CKernel::BootStep (unsigned nStep)
 {
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0) m_Watchdog.Start (15);	// fed through the boot
 #endif
 	if (m_pDisplay != 0) m_pDisplay->SplashStep (nStep);
@@ -1898,7 +1902,7 @@ void CKernel::StopAndReboot (const char *pWhy, boolean bTryboot)
 	reboot ();
 }
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 void CKernel::UsbTestTick (void)
 {
 	static unsigned s_nLastLog;
@@ -1945,7 +1949,7 @@ void CKernel::Run (void)
 			nLoopT = t;
 		}
 		m_Watchdog.Start (15);	// fed: a hang of this loop reboots in 15 s (the BCM watchdog's maximum: a TCP connect may block for seconds)
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 		if (m_nTestSecs != 0) UsbTestTick ();
 #endif
 		if (m_Console.TakeWatchdogTest ())
@@ -2006,7 +2010,7 @@ void CKernel::Run (void)
 		}
 		CardPass ();
 		{ mbtrace::Scope Mb (19, 200); stor_pi::Poll (bPlugAndPlay); }		// USB drives in and out, the bench's step (stor_pi.h)
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 		if (m_nTestSecs == 0 || m_bTestCard)
 #endif
 		blackbox_pi::Poll ();						// the log to /.rytm/blackbox.log (its own crumb section, 42)
