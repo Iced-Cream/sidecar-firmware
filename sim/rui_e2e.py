@@ -2463,9 +2463,9 @@ def t_project(e):
     end = texts_of("project", r)
     check("project: done: SAVE THE RYTM PROJECT AS JAM 1021 2", any("SAVE THE RYTM PROJECT AS" in t for t in end) and
           any("JAM 1021 2" in t for t in end), end)
-    r = os.path.join(e.core_card, ".rytm")   # (its pool lists' folder, or any other project file the bundle carried)
+    rytm = os.path.join(e.core_card, ".rytm")   # (its pool lists' folder, or any other project file the bundle carried)
     got = [p for p in ("projects/JAM 1021 2", "slots/JAM 1021 2.txt", "seq/JAM 1021 2", "lfo/JAM 1021 2.txt", "songs/JAM 1021 2")
-           if os.path.exists(os.path.join(r, p))]
+           if os.path.exists(os.path.join(rytm, p))]
     check("project: the core's card has the imported project (JAM 1021 2's files) and the bundle in /Bundles",
           got and any(f.endswith(".sidecar.zip") for f in os.listdir(os.path.join(e.core_card, "Bundles"))), got)
     panel_check("project", r)
