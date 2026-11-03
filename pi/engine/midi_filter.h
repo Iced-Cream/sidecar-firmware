@@ -8,8 +8,10 @@
 //   both ways      the engine's host-link SysEx F0 7D 52 54 ... (the Rytm and the engine talk to each other only)
 //                  MIDI-CI, universal SysEx F0 7E|7F <dev> 0D ... (macOS 26 sends discovery on every port open;
 //                  an echoed CI message wedged CoreMIDI's port, measured in P1)
-//   to the Rytm    Elektron OS update F0 00 20 3C <dev> 00 7E|7F ... (an OS .syx file's messages: 7E data,
-//                  7F start/end; rytm-emu fw/*.syx, measured), unless SetPassOsUpdate(true) (usbmidi=os:on|emu)
+//   to the Rytm    Elektron OS update F0 00 20 3C 0C 00 7E|7F ... (an OS .syx file's messages: 7E data,
+//                  7F start/end; device byte 0C = the OS updater; rytm-emu fw/*.syx, measured), unless
+//                  SetPassOsUpdate(true) (usbmidi=os:on|emu). Other device bytes (07 dumps, 10 RPC, 7D test builds)
+//                  never match, whatever their payload starts with.
 //                  the empty SysEx F0 F7 (macOS sends one on a port open, measured; it means nothing)
 // Portable: Mac-tested (tests/test_midi_filter.cpp).
 #pragma once
@@ -19,6 +21,7 @@
 class MidiFilter {
  public:
   static const int kHead = 9;            // bytes of a SysEx's head that decide (3 packets)
+  static const uint8_t kOsUpdateDevice = 0x0C;   // the device byte of an Elektron OS .syx's messages
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
   void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
@@ -81,7 +84,8 @@ class MidiFilter {
   static bool MidiCi(const uint8_t* h, int n) { return n >= 4 && (h[1] == 0x7E || h[1] == 0x7F) && h[3] == 0x0D; }
   static bool Empty(const uint8_t* h, int n) { return n == 2 && h[1] == 0xF7; }
   static bool OsUpdate(const uint8_t* h, int n) {
-    return n >= 7 && h[1] == 0x00 && h[2] == 0x20 && h[3] == 0x3C && h[5] == 0x00 && (h[6] == 0x7E || h[6] == 0x7F);
+    return n >= 7 && h[1] == 0x00 && h[2] == 0x20 && h[3] == 0x3C && h[4] == kOsUpdateDevice && h[5] == 0x00 &&
+           (h[6] == 0x7E || h[6] == 0x7F);
   }
 
  private:
