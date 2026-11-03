@@ -23,6 +23,12 @@ build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ..
 	@mkdir -p build/ob_src
 	cp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h build/ob_src/
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -I../../../teensy/libraries/RytmHost -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp build/ob_src/ob_follow.cpp ../a4_in.cpp ../output.cpp $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp -DOB_USB_TEST
+# core/ui/tap_names.h on its own, no system header (rec_pi.cpp's include: the kernel build has no <new>); rec_pi.cpp
+# includes it and declares tap_source_name nowhere by hand
+build/test_tap_names: test_tap_names.cpp $(CORE)/ui/tap_names.h ../rec_pi.cpp
+	@mkdir -p build
+	grep -q '^#include "ui/tap_names.h"' ../rec_pi.cpp && ! grep -n 'tap_source_name *(int' ../rec_pi.cpp
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -nostdinc -nostdinc++ -I$(CORE) -o $@ $<
 # the USB touch screen's descriptor parser and contact tracker (pi/circle/hid_digitizer.h, circle-touch.patch)
 build/test_hid_digitizer: test_hid_digitizer.cpp ../../circle/hid_digitizer.h check.h
 	@mkdir -p build

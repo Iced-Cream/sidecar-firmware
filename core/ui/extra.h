@@ -9,6 +9,7 @@
 
 #include "fx/send_fx.h"   // RYTM_SENDFX_LARGE: 0 on the Teensy build
 #include "ui/page.h"
+#include "ui/tap_names.h"   // tap_source_name, tap_channel_of_voice (on their own for the Pi's rec_pi.cpp)
 #include "ui/ui.h"
 
 namespace core {
@@ -72,8 +73,7 @@ void tap_enable(bool on);
 // The scope's source: 0 MAIN (L + R) / 2, 1..8 Sidecar voice 1..8 (its track's channel), 9 / 10 AUDIO IN L / R.
 constexpr int kTapSources = 11;
 void tap_source(int src);
-const char* tap_source_name(int src);   // "MAIN" "BD" "SD" "RS/CP" .. "CY/CB" (track order) "IN L" "IN R"
-int tap_channel_of_voice(int vi);       // the IN channel of Sidecar voice vi (0..7)
+// tap_source_name, tap_channel_of_voice: ui/tap_names.h
 // The peaks since the last call, |x| >> 16 (0..32767), channel order; the entries since *rd as (min, max) >> 16, at most
 // max, oldest first (an overrun skips to the oldest still held); returns how many.
 void tap_take_peaks(uint16_t out[kTapCh]);

@@ -16,7 +16,7 @@
 #include "sendfx_pi.h"
 #include "bridge.h"
 #include "hooks.h"	// core::hooks.transport: the mods' PLAY / STOP arm the recorder too
-namespace core { namespace ui { const char* tap_source_name(int src); } }	// ui/extra.h's: the stems' names, as SCOPE has them (extra.h pulls <new> in, which the kernel build has not)
+#include "ui/tap_names.h"	// tap_source_name: the stems' names, as SCOPE has them (not ui/extra.h: it pulls <new> in, which the kernel build has not)
 #include "voice_name.h"	// the voices' names for the user
 #include "lib/library.h"	// the sample library: a take indexed (not hashed: docs/LIBRARY.md)
 #include "bundle/projects.h"	// the wall clock (the web page's POST /time) and its zone: the take names, FatFs's dates
