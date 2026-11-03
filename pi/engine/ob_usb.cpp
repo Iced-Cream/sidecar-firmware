@@ -257,6 +257,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
+	m_bPeakCh = pOpt->GetAppOptionDecimal ("obpk", 0) != 0;
+	memset ((void *) m_nInPeakCh, 0, sizeof m_nInPeakCh);
 	const char *pMode = pOpt->GetAppOptionString ("obout", "paced");
 	m_OutMode = strcmp (pMode, "free") == 0 ? OutFree : strcmp (pMode, "off") == 0 ? OutOff : OutPaced;
 	const char *pCtr = pOpt->GetAppOptionString ("obctr", "zero");
@@ -646,6 +648,17 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
 			if (s < 0) s = -s;
 			if (s > m_nInPeak) m_nInPeak = s;
+			if (m_bPeakCh)		// obpk=1: every channel, every frame (12 x 7 compares a block)
+			{
+				static_assert ((int) PeakChannels == (int) ob::kChannels, "obpk: one peak per IN channel");
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (unsigned c = 0; c < PeakChannels; c++)
+					{
+						int32_t v = ob::block_sample (pBlk, ob::kChannels, f, c) >> 8;
+						if (v < 0) v = -v;
+						if (v > m_nInPeakCh[c]) m_nInPeakCh[c] = v;
+					}
+			}
 
 			// capture: MAIN L/R (Rytm -> host channels 0, 1). The samples are int32 full
 			// Stored raw (int32): the Rytm's on-wire scale is checked from this capture.
@@ -774,6 +787,8 @@ void CObUsb::Log (CLogger *pLogger)
 	int nPeak = m_nInPeak;
 	m_nInMaxDt = 0;
 	m_nInPeak = 0;
+	int nPeakCh[PeakChannels];
+	for (unsigned c = 0; c < PeakChannels; c++) nPeakCh[c] = m_nInPeakCh[c], m_nInPeakCh[c] = 0;
 	unsigned nOutAge = (now - m_nLastOutUs) / 1000;
 	unsigned nInPend = m_nInPending, nOutPend = m_nOutPending, nCredit = m_nCredit;
 	TEvStats ei = s_EvIn, eo = s_EvOut;
@@ -813,6 +828,13 @@ void CObUsb::Log (CLogger *pLogger)
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
 			ei.nEvents, ei.nSuccess, ei.nShort, ei.nMissed, ei.nOther + ei.nRing, ei.nLastOther, ei.nOrphan,
 			eo.nEvents, eo.nSuccess, eo.nMissed, eo.nOther + eo.nRing + eo.nShort, eo.nLastOther, eo.nOrphan);
+
+	if (m_bPeakCh)		// obpk=1: "obpk: <ch 0> .. <ch 11>", 24-bit peaks (0: digital zero all second)
+	{
+		pLogger->Write (From, LogNotice, "obpk: %d %d | %d %d %d %d %d %d %d %d | %d %d",
+				nPeakCh[0], nPeakCh[1], nPeakCh[2], nPeakCh[3], nPeakCh[4], nPeakCh[5], nPeakCh[6], nPeakCh[7],
+				nPeakCh[8], nPeakCh[9], nPeakCh[10], nPeakCh[11]);
+	}
 
 	m_nPrevIn = nIn;
 	m_nPrevOut = nOut;

@@ -1501,6 +1501,30 @@ int main() {
     advance_ms(300), tk();
     CHECK(rq() == 1);
     ans();
+    // the link bench (rytmpat=bench:N): N requests back to back, one in flight, each answer timed; a lost one a timeout
+    {
+      char o[256];
+      CHECK(rytm_dump::command("rytmpat=bench:0", o, sizeof o) && strstr(o, "1..1000"));
+      g_out.clear();
+      CHECK(rytm_dump::command("rytmpat=bench:5", o, sizeof o) && strstr(o, "bench 0/5 running"));
+      const int rtt[5] = {40, 60, 50, -1, 70};   // ms; -1: no answer
+      for (int i = 0; i < 5; ++i) {
+        tk();
+        CHECK(rq() == i + 1);   // one in flight: the next only after the answer (or the timeout)
+        if (rtt[i] < 0) {
+          advance_ms(rytm_dump::kTimeoutMs + 10), tk();
+          continue;
+        }
+        advance_ms(rtt[i]);
+        ans();
+      }
+      tk();
+      CHECK(rq() == 5);   // done: nothing more
+      const rytm_dump::Bench& b = rytm_dump::bench();
+      CHECK(b.done == 4 && b.timeouts == 1 && b.left == 0 && b.min_ms == 40 && b.max_ms == 70 && b.median_ms == 60);
+      CHECK(rytm_dump::command("rytmpat", o, sizeof o) && strstr(o, "bench 4/5: median 60 ms min 40 max 70"));
+      printf("  %s\n", strstr(o, "bench"));
+    }
     rytm_dump::set_active(false);
     printf("  rytm dump: requests %u answers %u bad %u\n", rytm_dump::stats().requests, rytm_dump::stats().answers,
            rytm_dump::stats().bad);

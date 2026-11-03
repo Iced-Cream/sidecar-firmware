@@ -135,6 +135,11 @@ private:
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
+	// obpk=1 (off by default; companion phase 1's channel check): the largest |sample| of every IN channel
+	// (0/1 MAIN, 2..9 the voices, 10/11 AUDIO IN), every frame, per second, logged after the stats line
+	static const unsigned PeakChannels = 12;
+	boolean m_bPeakCh;
+	volatile int m_nInPeakCh[PeakChannels];
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
 
 	// times (CTimer::GetClockTicks, us)

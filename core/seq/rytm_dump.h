@@ -68,7 +68,16 @@ struct Stats {
 };
 const Stats& stats();
 void reset();                                       // tests
-bool command(const char* p, char* out, int cap);    // "rytmpat" (state), "rytmpat=on|voice|off|fetch"
+bool command(const char* p, char* out, int cap);    // "rytmpat" (state), "rytmpat=on|voice|off|fetch|bench:N"
+// The link bench (companion phase 1, "measure"): N fetches back to back, one in flight, each answer's round trip
+// timed from the request's tick to its F7 (now_ms). Read only: stock pattern dump requests, nothing written on the
+// Rytm. A lost answer counts as a timeout and the bench goes on with the next. Results in "rytmpat".
+struct Bench {
+  uint32_t asked, left, done, timeouts, start_ms, end_ms, min_ms, max_ms, median_ms;
+};
+constexpr int kBenchMax = 1000;
+bool bench_start(int n);                            // false: n out of 1..kBenchMax
+const Bench& bench();
 #endif
 
 }  // namespace rytm_dump

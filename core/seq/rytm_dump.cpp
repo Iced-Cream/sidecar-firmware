@@ -1,6 +1,7 @@
 // core/seq/rytm_dump.cpp - see rytm_dump.h: the stock pattern dump of the Rytm's working buffer. Control side; cold.
 #include "seq/rytm_dump.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "hooks.h"
@@ -59,6 +60,31 @@ int hold = 0;
 int last_pattern = -1;
 void (*consumer)(const uint8_t*, int, int) = nullptr;
 Stats st;
+Bench bn;
+uint16_t* bn_rtt = nullptr;   // each answer's round trip (ms, capped), for the median; allocated on the first bench
+
+CORE_COLD void bench_answer(uint32_t ms) {   // a good answer, or a timeout (ms = 0xFFFFFFFF)
+  if (!bn.left) return;
+  --bn.left;
+  if (ms == 0xFFFFFFFFu) {
+    ++bn.timeouts;
+  } else {
+    if (!bn.done || ms < bn.min_ms) bn.min_ms = ms;
+    if (ms > bn.max_ms) bn.max_ms = ms;
+    bn_rtt[bn.done++] = (uint16_t)(ms > 0xFFFF ? 0xFFFF : ms);
+  }
+  if (bn.left) {
+    due = true, due_ms = now_ms();   // the next at once
+    return;
+  }
+  bn.end_ms = now_ms();
+  for (uint32_t i = 1; i < bn.done; ++i)   // insertion sort: at most kBenchMax, once at the end, control side
+    for (uint32_t j = i; j > 0 && bn_rtt[j - 1] > bn_rtt[j]; --j) {
+      uint16_t t = bn_rtt[j];
+      bn_rtt[j] = bn_rtt[j - 1], bn_rtt[j - 1] = t;
+    }
+  bn.median_ms = bn.done ? bn_rtt[bn.done / 2] : 0;
+}
 
 CORE_COLD void alloc() {
   if (!rec) rec = new uint8_t[kRecord], buf = new uint8_t[kAnswer];
@@ -82,7 +108,21 @@ CORE_COLD void reset() {
   pat_due = dirty_due = playing = sent_any = false, hold = 0;
   consumer = nullptr;
   memset(&st, 0, sizeof st);
+  memset(&bn, 0, sizeof bn);
 }
+
+CORE_COLD bool bench_start(int n) {
+  if (n < 1 || n > kBenchMax) return false;
+  if (!bn_rtt) bn_rtt = new uint16_t[kBenchMax];
+  memset(&bn, 0, sizeof bn);
+  bn.asked = bn.left = (uint32_t)n;
+  bn.start_ms = now_ms();
+  if (!pg) pg = kPagePattern;
+  retried = true;   // a lost answer: the bench's next request, not the retry
+  want(0);
+  return true;
+}
+const Bench& bench() { return bn; }
 
 CORE_COLD void set_page(int p) {
   if (p && !pg) want(0);
@@ -147,7 +187,9 @@ CORE_COLD void byte(uint8_t b) {
   }
   memcpy(rec, buf, kRecord);
   rec_pattern = p, ++gen, ++st.answers;
-  waiting = false, retried = false;
+  bool mine = waiting;   // (a late answer after a timeout is kept, but not timed)
+  waiting = false, retried = bn.left != 0;
+  if (mine) bench_answer(now_ms() - sent_ms);
   if (consumer) consumer(rec, kRecord, p);
 }
 
@@ -155,7 +197,8 @@ CORE_COLD void tick(uint32_t ms) {
   if (waiting && ms - sent_ms > kTimeoutMs) {   // lost: once more, then wait for the next trigger
     waiting = false;
     ++st.timeouts;
-    if (!retried) retried = true, due = true, due_ms = ms;
+    if (bn.left) bench_answer(0xFFFFFFFFu);
+    else if (!retried) retried = true, due = true, due_ms = ms;
   }
   if (!pg || waiting) return;
   bool go = due && hold < 2 && after(ms, due_ms);
@@ -184,12 +227,25 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
   else if (!strcmp(p, "rytmpat=voice")) set_page(kPageVoice);
   else if (!strcmp(p, "rytmpat=off")) set_active(false);
   else if (!strcmp(p, "rytmpat=fetch")) pg = pg ? pg : kPagePattern, want(0);
-  else if (p[7]) return sniprintf(out, cap, CORE_STR("rytmpat | rytmpat=on|voice|off|fetch")), true;
+  else if (!strncmp(p, "rytmpat=bench:", 14)) {
+    if (!bench_start(atoi(p + 14)))
+      return sniprintf(out, cap, CORE_STR("rytmpat=bench:N, N 1..%d"), kBenchMax), true;
+  } else if (p[7]) return sniprintf(out, cap, CORE_STR("rytmpat | rytmpat=on|voice|off|fetch|bench:N")), true;
   sniprintf(out, cap, CORE_STR("rytmpat: %s%s%s, pattern %d (gen %lu), requests %lu answers %lu bad %lu timeouts %lu"
                                 " dirties %lu"),
             pg == kPageVoice ? "voice" : pg ? "on" : "off", hold ? ", held (song)" : "", stale() ? ", stale" : "",
             rec_pattern, (unsigned long)gen, (unsigned long)st.requests, (unsigned long)st.answers,
             (unsigned long)st.bad, (unsigned long)st.timeouts, (unsigned long)st.dirties);
+  if (bn.asked) {   // the link bench: answers, round trips, and the answers' bytes over the whole run's time
+    int k = (int)strlen(out);
+    uint32_t t = (bn.left ? now_ms() : bn.end_ms) - bn.start_ms;
+    uint32_t kbs = t ? (uint32_t)((uint64_t)bn.done * kAnswer / t) : 0;   // bytes per ms = KB/s
+    if (k < cap)
+      sniprintf(out + k, cap - k, CORE_STR(" | bench %lu/%lu%s: median %lu ms min %lu max %lu, %lu KB/s, timeouts %lu"),
+                (unsigned long)bn.done, (unsigned long)bn.asked, bn.left ? " running" : "",
+                (unsigned long)bn.median_ms, (unsigned long)bn.min_ms, (unsigned long)bn.max_ms, (unsigned long)kbs,
+                (unsigned long)bn.timeouts);
+  }
   return true;
 }
 #endif
