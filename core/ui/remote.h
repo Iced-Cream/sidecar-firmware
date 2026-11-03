@@ -96,6 +96,21 @@ struct RemoteWebUi {
 };
 void remote_webui(const RemoteWebUi* h);
 const RemoteWebUi* remote_webui();
+// The USER SLOTS page (page_slots.cpp): which installed user machine each slot U1..U5 plays. The platform's user
+// machines (core/user/um.cpp installs these in um::begin: the Pi, the Mac); none set (the Teensy) and the page is not
+// shown. Control side, as the console's um commands.
+struct RemoteSlots {
+  int (*machines)();   // the installed list: the box's own (loadable packages, the newest version of each id)
+  // entry i (0..machines() - 1): its name into name (the list's, as the box shows it), *id its package id; false: none
+  bool (*machine)(int i, char* name, int cap, const char** id);
+  // slot s (0..4) as the box shows it into name ("---" empty, "!NAME" missing / no room, "NAME..." loading); returns
+  // the id the slot map names ("" explicitly empty or nothing)
+  const char* (*slot)(int s, char* name, int cap);
+  // a console command (um::command: "um=assign:<1..5>:<id>", "um=clear:<1..5>"), the web page's own path; false: not one
+  bool (*command)(const char* c, char* out, int cap);
+};
+void remote_slots(const RemoteSlots* h);
+const RemoteSlots* remote_slots();
 // UX review F1 / F4: a short popup on the Rytm's own screen (the page closed: through the connect splash's 36, so every
 // key and knob stays the Rytm's; ~0.8 s; the same text again within 2 s: not shown twice). Sent only to a Rytm whose
 // hello said it understands 36. Also on the first underrun of the session (remote_status: SIDECAR AUDIO DROPOUT).

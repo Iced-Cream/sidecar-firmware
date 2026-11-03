@@ -150,6 +150,18 @@ latency),
 `sim/rui_probe.py` (one frame of pixels + text items onto the emulated Rytm's panel: how the Rytm draws a font; its
 screens are firmware output and stay out of git), `core/tests/test_ui.cpp`.
 
+## USER SLOTS (`page_slots.cpp`)
+
+Which installed user machine each slot U1..U5 plays, on the box's own screen: for any box with the remote UI and
+`kUserSlots` (the Rytm, the A4; `extra_for_box`), on the ring after SCOPE, SAMPLE and AUTO (the A4's last: LEFT on SIDECAR; PROJECT
+stays the Rytm's last) and a row of the SIDECAR MENU. Rows U1..U5 with each slot's machine as the box shows it; UP / DOWN or A the row, B a
+machine from the installed list (`---` first: clear) one entry a detent (`list_turn`), shown with a `?`; YES sends
+`um=assign:<slot>:<id>` / `um=clear:<slot>` through `RemoteSlots::command` (`um::command`, the web page's and the
+console's path), NO drops a pick (with none: SIDECAR). The platform's hooks (`remote.h RemoteSlots`) come from
+`um::begin`; without them (the Teensy) the page is not shown. docs/user-machines-pi.md has the details;
+`core/tests/test_ui_slots.cpp` the tests (a platform model, then the real user machines on the Rytm and the A4's
+profile) and `build/rui_pages/slots_*.png`.
+
 ## The connect splash (1023)
 
 When its USB port comes up, rytm-mods 0026 (1023) sends **35** `<uptime >> 7> <uptime & 0x7F> <caps>` (uptime in the
