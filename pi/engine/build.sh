@@ -187,6 +187,9 @@ grep -q circle-hid-reenum3 include/circle/usb/usbhiddevice.h || patch -p1 < /rep
 # then any Elektron device reaches the Overbridge driver, which asks the device profiles (circle-usbdevicefactory2.patch, not an edit
 # to the spike2 patch: the same reason as -reenum2; a box with no audio row is 0 and Circle goes on to its interfaces); idempotent
 grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /repo/pi/circle/circle-usbdevicefactory2.patch
+# a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
+# enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
+grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

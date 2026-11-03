@@ -8,4 +8,5 @@ class CSidecarGadget {   // no gadget in the test
   void RytmMIDIConnected(bool) {}
   bool ForRytm(u32*) { return false; }
   bool ForRytmInSysEx() { return false; }
+  void ComputerSendFailed() {}
 };
