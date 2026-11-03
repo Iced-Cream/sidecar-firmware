@@ -1,0 +1,126 @@
+diff -ruN a/include/circle/usb/usbstandardhub.h b/include/circle/usb/usbstandardhub.h
+--- a/include/circle/usb/usbstandardhub.h
++++ b/include/circle/usb/usbstandardhub.h
+@@ -27,6 +27,7 @@
+ #include <circle/usb/usbdevice.h>
+ #include <circle/usb/usbhostcontroller.h>
+ #include <circle/numberpool.h>
++#include <circle/timer.h>
+ #include <circle/types.h>
+ 
+ class CUSBStandardHub : public CUSBFunction
+@@ -70,12 +71,20 @@
+ 	void HandlePortStatusChange (void);
+ 	friend class CUSBHostController;
+ 
++	// circle-hub-rearm2.patch: the recovery is asked for from a kernel timer, never from the completion or from
++	// HandlePortStatusChange itself - an endpoint that fails at once again would otherwise keep
++	// CUSBHostController::UpdatePlugAndPlay's loop going for ever (core 0 held, the watchdog)
++	void ScheduleRecovery (void);			// IRQ or task level
++	static void RecoveryTimer (TKernelTimerHandle hTimer, void *pParam, void *pContext);
++
+ private:
+ 	TUSBHubDescriptor *m_pHubDesc;
+ 
+ 	CUSBEndpoint *m_pInterruptEndpoint;
+ 	u8 *m_pStatusChangeBuffer;
+-	volatile boolean m_bStatusError;		// circle-hub-rearm.patch: set in the completion (IRQ), handled at task level
++	volatile boolean m_bStatusError;
++	volatile TKernelTimerHandle m_hRecoveryTimer;	// circle-hub-rearm2.patch
++	volatile unsigned m_nConsecErrors;		// circle-hub-rearm2.patch: since the last good completion		// circle-hub-rearm.patch: set in the completion (IRQ), handled at task level
+ 
+ 	unsigned m_nPorts;
+ 	boolean m_bPowerIsOn;
+diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
+--- a/lib/usb/usbstandardhub.cpp
++++ b/lib/usb/usbstandardhub.cpp
+@@ -45,6 +45,8 @@
+ 	m_pInterruptEndpoint (0),
+ 	m_pStatusChangeBuffer (0),
+ 	m_bStatusError (FALSE),
++	m_hRecoveryTimer (0),
++	m_nConsecErrors (0),
+ 	m_nPorts (0),
+ 	m_bPowerIsOn (FALSE)
+ #if RASPPI >= 4
+@@ -62,6 +64,12 @@
+ 
+ CUSBStandardHub::~CUSBStandardHub (void)
+ {
++	if (m_hRecoveryTimer != 0)			// circle-hub-rearm2.patch
++	{
++		CTimer::Get ()->CancelKernelTimer (m_hRecoveryTimer);
++		m_hRecoveryTimer = 0;
++	}
++
+ 	if (m_nDeviceNumber != 0)
+ 	{
+ 		CDeviceNameService::Get ()->RemoveDevice (DevicePrefix, m_nDeviceNumber, FALSE);
+@@ -583,6 +591,7 @@
+ 	{
+ 		assert (pURB->GetResultLength () > 0);
+ 
++		m_nConsecErrors = 0;			// circle-hub-rearm2.patch
+ 		GetHost ()->PortStatusChanged (this);
+ 	}
+ 	else
+@@ -601,8 +610,7 @@
+ 			CXHCIEndpoint *pXHCI = m_pInterruptEndpoint->GetXHCIEndpoint ();
+ 			s_nStatusLastError = pXHCI != 0 ? pXHCI->GetLastErrorCode () : 0;
+ #endif
+-			m_bStatusError = TRUE;
+-			GetHost ()->PortStatusChanged (this);
++			ScheduleRecovery ();		// circle-hub-rearm2.patch: from a timer, rate-limited
+ 		}
+ 	}
+ 
+@@ -758,8 +766,46 @@
+ 	{
+ 		CLogger::Get ()->Write (FromHub, LogError, "Cannot restart request");
+ 
+-		s_nRearmFailures++;			// circle-hub-rearm.patch: tried again at the next update
+-		m_bStatusError = TRUE;
+-		GetHost ()->PortStatusChanged (this);
++		s_nRearmFailures++;			// circle-hub-rearm.patch: tried again
++		ScheduleRecovery ();			// circle-hub-rearm2.patch: later, from a timer
+ 	}
+ }
++
++// circle-hub-rearm2.patch: one recovery at a time, 20 ms after the first error, backing off to 1 s; after 50 errors
++// in a row (no good completion between) the hub is given up, as Circle did before, with a line saying so.
++void CUSBStandardHub::ScheduleRecovery (void)
++{
++	if (m_hRecoveryTimer != 0)
++	{
++		return;					// one is due already
++	}
++
++	unsigned nErrors = ++m_nConsecErrors;
++	if (nErrors > 50)
++	{
++		if (nErrors == 51)
++		{
++			CLogger::Get ()->Write (FromHub, LogError, "Status change request failed 50 times in a row: given up");
++		}
++
++		return;
++	}
++
++	unsigned nDelayMs = nErrors < 50 ? 20 * nErrors : 1000;
++	if (nDelayMs > 1000)
++	{
++		nDelayMs = 1000;
++	}
++
++	m_hRecoveryTimer = CTimer::Get ()->StartKernelTimer (MSEC2HZ (nDelayMs), RecoveryTimer, 0, this);
++}
++
++void CUSBStandardHub::RecoveryTimer (TKernelTimerHandle hTimer, void *pParam, void *pContext)
++{
++	CUSBStandardHub *pThis = (CUSBStandardHub *) pContext;
++	assert (pThis != 0);
++
++	pThis->m_hRecoveryTimer = 0;
++	pThis->m_bStatusError = TRUE;
++	pThis->GetHost ()->PortStatusChanged (pThis);
++}
