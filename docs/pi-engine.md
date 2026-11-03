@@ -903,8 +903,14 @@ wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/en
 - `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false,"aborted":N}` (`osUpgrade`: they pass right now;
   `aborted`: upgrades cut since boot).
 - After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
+- While on or emu, `POST /cmd` also refuses `link=tcp:<address>` (it would send the computer's MIDI, an OS image
+  included, to any host); `link=tcp` (cmdline's `emuhost=`) and `link=usb` stay allowed.
+- The filter does not look at the box type: with an Analog Four attached, an A4 OS file on device byte `0C` would
+  pass too while on. Untested; the setting is meant for the Rytm.
 - `usbreboot=1` (separate): the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi
-  (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows).
+  (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows). Any program on the computer can send it,
+  and with the rpiboot GPIO held low the Pi then boots whatever the computer serves: a developer's option, never on a
+  unit used to play live.
 
 ### Measurements
 

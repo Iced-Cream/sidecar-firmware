@@ -200,6 +200,8 @@ test("/cmd refuses usbmidi= and osupdate=", () => {
   assert.match(r, /strncmp \(Cmd, "usbmidi=", 8\) == 0/);
   assert.match(r, /strncmp \(Cmd, "osupdate=", 9\) == 0/);
   assert.doesNotMatch(r, /bForm && strncmp \(Cmd, "usbmidi="/, "refused from the body too, not only the URL");
+  // while usbmidi=os: is on, link=tcp:<address> too (the review's L6): the computer's MIDI to any host
+  assert.match(r, /strncmp \(Cmd, "link=tcp:", 9\) == 0 && pSidecar != 0 && pSidecar->OsUpdate \(\)/);
   const gadget = readFileSync(join(HERE, "..", "sidecar_gadget.cpp"), "utf8");
   assert.match(gadget, /strncmp \(p, "usbmidi=", 8\) == 0 \|\| strncmp \(p, "osupdate=", 9\) == 0/);
 });

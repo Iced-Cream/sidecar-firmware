@@ -125,12 +125,12 @@ public:
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
 	void Resume (void);				// OUT, usbmidi=os: re-arm a held endpoint (IRQs masked)
+	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 
 private:
 	CSidecarGadget *m_pSidecar;
 	boolean m_bActive, m_bBusy;
 	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
-	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 	DMA_BUFFER (u8, m_Buffer, BufSize);
 };
 
@@ -194,6 +194,7 @@ private:
 	unsigned Feedback (unsigned nFrame);
 	void MIDIFromHost (const u8 *pBuffer, size_t nLength);
 	boolean ToRytmRoom (void) const;		// usbmidi=os: room in the Rytm-bound queue for one more OUT transfer
+							// (CSidecarMIDIEP::BufSize / 4 packets and what the filter holds)
 	unsigned MIDIForHost (u8 *pBuffer, unsigned nMax);
 	void ToHost (const u8 *pPacket);		// one packet into the computer's queue (IRQs masked)
 	void HostUp (boolean bUp);			// the MIDI IN endpoint (de)activated (gadget IRQ), or torn down (OnSuspend)

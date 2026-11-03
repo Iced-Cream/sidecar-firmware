@@ -811,10 +811,10 @@ void CSidecarGadget::SetLinkTcp (boolean bTcp)
 				OsPass () ? "pass" : "are dropped", bTcp ? "the emulator" : "USB");
 }
 
-// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
+// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (MidiFilter::kHoldPackets)
 boolean CSidecarGadget::ToRytmRoom (void) const
 {
-	return m_ToRytmPath.Room (512 / 4);
+	return m_ToRytmPath.Room (CSidecarMIDIEP::BufSize / 4);
 }
 
 boolean CSidecarGadget::ForRytm (u32 *pPacket)

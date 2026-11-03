@@ -26,6 +26,7 @@
 #include "paircode_pi.h"
 #include "blackbox_pi.h"
 #include "midibridge_pi.h"
+#include "sidecar_gadget.h"	// usbmidi=os: /cmd refuses link=tcp:<address> while it is on
 #include "wifi_conf.h"
 #include "hosted/web_page.h"	// build.sh: www/index.html as WebPage[] (a raw string)
 #include "hosted/web_page_gz.h"	// build.sh: the same, gzip -9n, as WebPageGz[] (what "/" sends)
@@ -595,10 +596,14 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		// midibridge= neither: /cmd's origin check is the lenient one, and the bridge can carry an OS upgrade, so it
 		// is turned on only from the page (POST /midibridge/set, strict) or on the serial console. usbmidi= (and its
 		// older name osupdate=) neither, for the same reason: it lets OS upgrades through the USB-C MIDI port
-		// (usbmidi_os.h); cmdline.txt or the serial console only
+		// (usbmidi_os.h); cmdline.txt or the serial console only. And while usbmidi=os: is on or emu, link=tcp:<address>
+		// neither: it would send the computer's MIDI (Transfer content, an OS image) to any host and bring that
+		// host's MIDI back as the Rytm's. link=tcp (cmdline's emuhost=) and link=usb stay allowed
+		CSidecarGadget *pSidecar = CSidecarGadget::Get ();
 		if (!FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), FALSE)
 		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0
-		    || strncmp (Cmd, "usbmidi=", 8) == 0 || strncmp (Cmd, "osupdate=", 9) == 0)
+		    || strncmp (Cmd, "usbmidi=", 8) == 0 || strncmp (Cmd, "osupdate=", 9) == 0
+		    || (strncmp (Cmd, "link=tcp:", 9) == 0 && pSidecar != 0 && pSidecar->OsUpdate ()))
 		{
 			memset (Cmd, 0, sizeof Cmd);
 			return HTTPBadRequest;
