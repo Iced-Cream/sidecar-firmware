@@ -68,6 +68,8 @@ CORE_COLD void bench_answer(uint32_t ms) {   // a good answer, or a timeout (ms 
   --bn.left;
   if (ms == 0xFFFFFFFFu) {
     ++bn.timeouts;
+    log(CORE_STR("linkbench: request %lu timed out (no answer in %lu ms)"), (unsigned long)(bn.asked - bn.left),
+        (unsigned long)kTimeoutMs);
   } else {
     if (!bn.done || ms < bn.min_ms) bn.min_ms = ms;
     if (ms > bn.max_ms) bn.max_ms = ms;
@@ -84,6 +86,9 @@ CORE_COLD void bench_answer(uint32_t ms) {   // a good answer, or a timeout (ms 
       bn_rtt[j] = bn_rtt[j - 1], bn_rtt[j - 1] = t;
     }
   bn.median_ms = bn.done ? bn_rtt[bn.done / 2] : 0;
+  log(CORE_STR("linkbench: done, %lu/%lu answered, median %lu ms min %lu max %lu, timeouts %lu, %lu ms in all"),
+      (unsigned long)bn.done, (unsigned long)bn.asked, (unsigned long)bn.median_ms, (unsigned long)bn.min_ms,
+      (unsigned long)bn.max_ms, (unsigned long)bn.timeouts, (unsigned long)(bn.end_ms - bn.start_ms));
 }
 
 CORE_COLD void alloc() {
@@ -117,7 +122,7 @@ CORE_COLD bool bench_start(int n) {
   memset(&bn, 0, sizeof bn);
   bn.asked = bn.left = (uint32_t)n;
   bn.start_ms = now_ms();
-  if (!pg) pg = kPagePattern;
+  log(CORE_STR("linkbench: start, %d requests, one in flight, timeout %lu ms"), n, (unsigned long)kTimeoutMs);
   retried = true;   // a lost answer: the bench's next request, not the retry
   want(0);
   return true;
@@ -200,7 +205,7 @@ CORE_COLD void tick(uint32_t ms) {
     if (bn.left) bench_answer(0xFFFFFFFFu);
     else if (!retried) retried = true, due = true, due_ms = ms;
   }
-  if (!pg || waiting) return;
+  if ((!pg && !bn.left) || waiting) return;   // (the bench runs whatever page the platform wants)
   bool go = due && hold < 2 && after(ms, due_ms);
   go = go || (pat_due && !pat_held() && after(ms, pat_ms + kPatternMs));
   go = go || (dirty_due && !dirty_held() && after(ms, dirty_at()));
@@ -208,8 +213,13 @@ CORE_COLD void tick(uint32_t ms) {
   due = pat_due = dirty_due = false;   // the answer has every edit up to now
   waiting = true, sent_any = true, sent_ms = ms;
   ++st.requests;
+  if (bn.left && bn.asked - bn.left < 3)
+    log(CORE_STR("linkbench: request %lu sent (pattern %d)"), (unsigned long)(bn.asked - bn.left + 1),
+        last_pattern < 0 ? 0 : last_pattern);
   uint8_t m[15];
-  request(m, last_pattern);
+  // the bench never sends 0x80 (a status byte inside the SysEx: the USB MIDI path dropped it on a unit, 2026-11-03):
+  // the active pattern when the mod reported it, else stored pattern 0 (A01; a read either way)
+  request(m, bn.left && last_pattern < 0 ? 0 : last_pattern);
   to_rytm(m, (int)sizeof m);
 }
 
