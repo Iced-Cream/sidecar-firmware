@@ -409,6 +409,74 @@ static void src_mix() {
   CHECK(mx == 0);
 }
 
+// SRC MIX from a kit's line with no chain at all (no TYPE, the POST EQ flat: on() false), the default trim, the Rytm's report:
+// BD off main at pan 50 is on 0/1 by its law, SD still on main is not; bypassed, the same; SRC RET with no chain: the stems
+// leave and 0/1 is bit for bit again (a pattern went silent until ROUTE TO MAIN was back on, 2026-11-03: not this path)
+static void src_mix_empty_chain() {
+  off();
+  const char* w[] = {"MFX", "0", "MIX", "100", "40", "40", "40", "40", "0"};   // as a kit's INSERT file has it
+  CHECK(master::from_line(w, 9));
+  CHECK(master::control.src == master::kMix && !master::on() && master::control.trim == master::kTrimDef);
+  CHECK(masterfx_pi::WantStems());
+  uint8_t m[16] = {0xF0, 0x7D, 0x52, 0x54, 0x50, 50, 64, 64, 64, 64, 64, 64, 64, 0, 1 << 3, 0xF7};   // BD: pan 50, off main
+  CHECK(master::report(m, 16));
+  CHECK(master::stems_on_main() == 7);
+  int32_t f[64][12], s[64][8];
+  double la = 0, ra = 0;
+  bool exact = true;
+  auto block = [&](bool measure) {
+    const long t0 = g_t;
+    for (unsigned i = 0; i < kFill; ++i) {
+      memset(s[i], 0, sizeof s[i]);
+      const double x = 0.04 * 2147483648.0 * std::sin(2 * M_PI * 220.0 * (double)(g_t + i) / 48000.0);
+      s[i][0] = (int32_t)x;       // BD, off main
+      s[i][1] = (int32_t)x * 4;   // SD, on main: never on 0/1 (it would double)
+    }
+    if (masterfx_pi::WantStems()) masterfx_pi::Stems(s, kFill);   // as ob_usb.cpp's IN completion
+    memset(f, 0, sizeof f);
+    for (unsigned i = 0; i < kFill; ++i) post_sine(g_t + i, f[i]);   // the POST voices: what was on 0/1 already
+    masterfx_pi::Process(f, kFill);
+    masterfx_pi::Render();
+    g_t += kFill;
+    if (measure) {
+      for (unsigned i = 0; i < kFill; ++i) {
+        int32_t now[12] = {}, was[12] = {};
+        post_sine(t0 + i, now);
+        exact = exact && !memcmp(f[i], now, sizeof now);
+        // the stems' share: 0/1 less the POST sine of kLook frames ago (the limiter's delay; under its ceiling it is linear)
+        post_sine(t0 + (long)i - kLook, was);
+        la = std::max(la, std::fabs((f[i][0] - (double)was[0]) / 2147483648.0));
+        ra = std::max(ra, std::fabs((f[i][1] - (double)was[1]) / 2147483648.0));
+      }
+    }
+  };
+  auto run = [&]() {
+    for (int k = 0; k < 100; ++k) block(false);
+    la = ra = 0, exact = true;
+    for (int k = 0; k < 100; ++k) block(true);
+  };
+  const double trim = std::pow(10.0, -6.0 / 20.0), r = 50.0 / 64.0;
+  const double wl = 0.04 * masterfx_pi::kStemOnPost * trim * (2.0 - r), wr = 0.04 * masterfx_pi::kStemOnPost * trim * r;
+  run();
+  printf("test_masterfx_pi: SRC MIX, no chain, trim -6, BD off main at pan 50: L %.4f R %.4f (want %.4f %.4f), SD on main left out\n", la, ra, wl, wr);
+  CHECK(std::fabs(la - wl) < 0.003 && std::fabs(ra - wr) < 0.003);
+  CHECK(!exact);
+  master::set_byp(1);   // bypass keeps the mix: the stems stay, with the limiter
+  run();
+  CHECK(std::fabs(la - wl) < 0.003 && std::fabs(ra - wr) < 0.003);
+  printf("test_masterfx_pi: SRC MIX, no chain, bypassed: L %.4f R %.4f, the same sum on 0/1\n", la, ra);
+  master::set_byp(0);
+  master::set_src(master::kRet);   // SRC RET with no chain: the stems and the limiter leave, then not a sample touched
+  for (int k = 0; k < 100; ++k) block(false);
+  CHECK(!masterfx_pi::WantStems());
+  la = ra = 0, exact = true;
+  for (int k = 0; k < 100; ++k) block(true);
+  CHECK(exact);
+  printf("test_masterfx_pi: SRC RET, no chain: the stems gone, 0/1 bit for bit\n");
+  master::link_lost();
+  masterfx_pi::Reset();
+}
+
 // ---- the limiter by itself (core/fx/limiter.h)
 static double g_rnd_state = 1;
 static double rnd() {   // -1..1
@@ -694,6 +762,7 @@ int main() {
   dry_ring();
   src_mix();
   src_mix_report();
+  src_mix_empty_chain();
   through_limited();
   limiter_fades();
   chain_limited();
