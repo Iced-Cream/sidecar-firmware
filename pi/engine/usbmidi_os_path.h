@@ -10,7 +10,9 @@
 //   pass ()         the filter lets OS upgrades (device byte 0C) through: on, or emu while the TCP link is the host
 //   SetLink / SetMode  TRUE: cut the path now. With the setting on or emu, any host switch (the queue was meant for the
 //                   old one); with any setting, the pass going from on to off.
-//   Hold            the OUT endpoint's flow control: held while on and the queue has no room for a whole transfer
+//   Hold / Resume   the OUT endpoint's flow control: held while on and the queue has no room for a whole transfer;
+//                   resumed when there is room, or at once when the setting is off (dev never holds): turning it off
+//                   while held never leaves the computer's MIDI OUT NAKed
 #pragma once
 #include <stdint.h>
 #include <string.h>
@@ -89,7 +91,7 @@ class OsGate {
   // the OUT endpoint, at the end of a transfer: wait instead of re-arming (room: ToRytmPath::Room)
   bool Hold(bool room) const { return On() && !room; }
   // core 0's loop: re-arm a held endpoint
-  bool Resume(bool held, bool room) const { return held && On() && room; }
+  bool Resume(bool held, bool room) const { return held && (!On() || room); }
 
  private:
   usbmidi_os::Mode mode_ = usbmidi_os::kOff;

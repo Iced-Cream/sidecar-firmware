@@ -157,6 +157,17 @@ int main() {
     CHECK(g.Resume(true, p.Room(128)));
     CHECK(!g.Resume(false, p.Room(128)));          // not held: nothing to re-arm
   }
+  // M1: the setting turned off while the endpoint is held and the queue still full: re-armed at once, whatever the room
+  // (before: Resume only while on, so the computer's MIDI OUT stayed NAKed until a USB reset)
+  for (usbmidi_os::Mode from : {kOn, kEmu}) {
+    OsGate g;
+    g.SetMode(from);
+    CHECK(g.Hold(false));
+    CHECK(!g.Resume(true, false));
+    g.SetMode(kOff);
+    CHECK(g.Resume(true, false));
+    CHECK(!g.Hold(false));                          // and never held again while off
+  }
   printf("test_usbmidi_os_path: PASS\n");
   return 0;
 }

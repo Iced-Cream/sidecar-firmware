@@ -802,6 +802,7 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 	UpdatePlugAndPlay ();
+	// a held OUT endpoint: re-armed when there is room, or at once when the setting is off (turned off while held)
 	if (m_pMIDIOut != 0 && m_Gate.Resume (m_pMIDIOut->Held (), ToRytmRoom ()))
 	{
 		EnterCritical ();
