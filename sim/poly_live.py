@@ -57,6 +57,8 @@ class PolyHost:
         self.lib.core_c_rui_tick.argtypes = [ctypes.c_uint32]
         self.lib.core_c_rui_status.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.core_c_rui_status(1, 0, -1, -1, -1)
+        # a list knob's turn of N here is N entries, as in rui_link.py (the pacing has its own test: rui_e2e listknobs)
+        self.lib.core_c_list_pacing(1 if os.environ.get("RUI_LIST_PACED") == "1" else 0)
         self.lib.core_c_rytm_byte.argtypes = [ctypes.c_int]
         self.lib.core_c_seq_rytm_audio.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.lib.core_c_rytm_record.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint32)]
