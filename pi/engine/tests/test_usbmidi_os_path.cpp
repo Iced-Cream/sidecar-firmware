@@ -45,10 +45,7 @@ static bool HasSysExData(const Bytes& packets) {   // any SysEx packet (start, c
   return false;
 }
 // the gadget's step: the gate decides, the path is cut if told, the filter follows the pass
-static void Apply(Path& p, const OsGate& g, bool cut) {
-  if (cut) p.Cut();
-  p.Filter().SetPassOsUpdate(g.Pass());
-}
+static void Apply(Path& p, const OsGate& g, bool cut) { ApplyGate(p, g, cut); }   // UpdateOsPass's own code
 static Bytes OsMsg(uint8_t cmd, int len, uint8_t first = 0) {   // an OS .syx message's shape (device byte 0C), len
   Bytes m = {0xF0, 0x00, 0x20, 0x3C, 0x0C, 0x00, cmd};          // data bytes; first: the start's 01, the end's 02
   for (int i = 0; i < len; i++) m.push_back(i == 0 && first ? first : (uint8_t)(i * 7 & 0x7F));
@@ -254,8 +251,7 @@ int main() {
     CHECK(!g.Quiet(p.Filter().OsMessages(), t));
     t += 1;
     CHECK(g.Quiet(p.Filter().OsMessages(), t));    // quiet for kQuietUs: the pass is back
-    p.Filter().AwaitStart(true);                   // as the gadget does: from a new start
-    Apply(p, g, false);
+    Apply(p, g, false);                            // the pass on again: from a new start
     CHECK(g.Pass() && p.Filter().PassOsUpdate() && !g.Aborted());
     Feed(p, Pack(start));                          // a new upgrade goes through
     CHECK(Drain(p) == Pack(start));
@@ -277,8 +273,7 @@ int main() {
     Apply(p, g, lost);
     t += OsGate::kQuietUs + 100;                   // the sender pauses
     CHECK(g.Quiet(p.Filter().OsMessages(), t));
-    p.Filter().AwaitStart(true);
-    Apply(p, g, false);
+    Apply(p, g, false);                            // as Poll: the pass on, the wait set by ApplyGate
     CHECK(g.Pass());
     for (int k = 0; k < 3; k++) Feed(p, Pack(data));   // and goes on with the image's tail
     Feed(p, Pack(end));                            // and its end (7F 02): not a start, dropped too
@@ -329,6 +324,47 @@ int main() {
     CHECK(g.Lost(true, false, 2, t0 + 600000u));
     CHECK(!g.Quiet(2, t0 + 2500000u));             // past the wrap, 2 s after
     CHECK(g.Quiet(2, t0 + 500000u + OsGate::kQuietUs));
+  }
+  // the setting turned on again (or off, then on) after an abort while its sender still streams: the pass turning on
+  // sets the wait, so the rest of the aborted image never passes with a hole in it (the gadget's Command: SetMode,
+  // then UpdateOsPass's ApplyGate)
+  for (bool via_off : {false, true}) {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(kOn));
+    uint32_t t = 7000;
+    Feed(p, Pack(start));
+    Feed(p, Pack(data));
+    g.Seen(p.Filter().OsMessages(), t);
+    Drain(p);
+    Feed(p, Pack(data));
+    bool lost = g.Lost(true, p.Busy(), p.Filter().OsMessages(), t + 10);
+    CHECK(lost);
+    Apply(p, g, lost);
+    Feed(p, Pack(data));                           // still streaming: no quiet
+    if (via_off) Apply(p, g, g.SetMode(kOff));
+    Apply(p, g, g.SetMode(kOn));                   // the owner turns it on again
+    CHECK(g.Pass() && p.Filter().AwaitingStart());
+    for (int k = 0; k < 3; k++) Feed(p, Pack(data));
+    Feed(p, Pack(end));
+    CHECK(Drain(p).empty());                       // the tail and its end: dropped
+    Feed(p, Pack(start));
+    Feed(p, Pack(data));
+    Bytes want = Pack(start), d = Pack(data);
+    want.insert(want.end(), d.begin(), d.end());
+    CHECK(Drain(p) == want);                       // a new upgrade from its start
+  }
+  // a setting that keeps the pass on (on, then on again with nothing aborted) does not start a wait mid-upgrade
+  {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(kOn));
+    Feed(p, Pack(start));
+    Drain(p);
+    Apply(p, g, g.SetMode(kOn));
+    CHECK(!p.Filter().AwaitingStart());
+    Feed(p, Pack(data));
+    CHECK(Drain(p) == Pack(data));
   }
   // M5: the Rytm leaves right after a finished upgrade (it reboots): nothing on the way, no abort; with data still
   // waiting, an abort. A new setting clears an abort.

@@ -21,8 +21,8 @@
 //                   waiting, during an upgrade (an OS message seen within kQuietUs): the upgrade is aborted - the path
 //                   cut, OS messages dropped - rather than the Rytm getting an image with a hole in it. The pass comes
 //                   back once the computer has sent no OS message for kQuietUs (it gave up or finished), or at a new
-//                   setting; after the quiet the filter still drops OS messages until a new upgrade's start
-//                   (MidiFilter::AwaitStart, os_upgrade::start), so a sender that paused mid-image never gets its tail
+//                   setting; whenever the pass turns on (ApplyGate) the filter drops OS messages until a new upgrade's
+//                   start (MidiFilter::AwaitStart, os_upgrade::start), so a sender that paused mid-image never gets its tail
 //                   through: an image's end (7F 02) stays dropped too, only its start (7F 01) ends the wait.
 //   Switched        a host switch during an upgrade (setting on or emu) aborts it the same way: the rest of an image
 //                   meant for one host never reaches the other, also with on, where the pass would stay on.
@@ -177,3 +177,16 @@ class OsGate {
   uint32_t os_msgs_ = 0, os_at_ = 0;
   unsigned aborts_ = 0;
 };
+
+// The gadget's one step (sidecar_gadget.cpp UpdateOsPass, IRQs masked): cut the path if told, then the filter's pass
+// from the gate. Whenever the pass turns on - a setting, a host switch, the quiet after an abort - the filter waits for
+// a new upgrade's start (every upgrade begins with one), so the rest of an aborted image never passes with a hole in
+// it, also when the setting is turned on again while its sender still streams. The packets cut.
+template <uint32_t N>
+inline unsigned ApplyGate(ToRytmPath<N>& p, const OsGate& g, bool cut) {
+  unsigned n = cut ? p.Cut() : 0;
+  bool pass = g.Pass();
+  if (pass && !p.Filter().PassOsUpdate()) p.Filter().AwaitStart(true);
+  p.Filter().SetPassOsUpdate(pass);
+  return n;
+}

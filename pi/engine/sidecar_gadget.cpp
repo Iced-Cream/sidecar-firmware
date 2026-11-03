@@ -278,7 +278,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_Gate.SetMode (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
 						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
-	m_ToRytmPath.Filter ().SetPassOsUpdate (m_Gate.Pass ());	// no IRQ yet
+	ApplyGate (m_ToRytmPath, m_Gate, FALSE);		// no IRQ yet
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
 	memset (m_nOutLast, 0, sizeof m_nOutLast);
@@ -760,12 +760,8 @@ void CSidecarGadget::UpdateOsPass (boolean bCut, const char *pWhy)
 {
 	unsigned n = 0;
 	EnterCritical ();					// the filter and the queue's producer run in the gadget IRQ
-	if (bCut)
-	{
-		n = m_ToRytmPath.Cut ();
-		if (m_pMIDIOut != 0) m_pMIDIOut->Resume ();
-	}
-	m_ToRytmPath.Filter ().SetPassOsUpdate (m_Gate.Pass ());
+	n = ApplyGate (m_ToRytmPath, m_Gate, bCut);		// the pass turning on: a new start first (usbmidi_os_path.h)
+	if (bCut && m_pMIDIOut != 0) m_pMIDIOut->Resume ();
 	LeaveCritical ();
 	if (bCut) CLogger::Get ()->Write (From, LogNotice, "usbmidi=os: %s: the computer's MIDI on its way to the Rytm dropped (%u packets)",
 					  pWhy, n);
@@ -837,10 +833,7 @@ void CSidecarGadget::Poll (void)
 	UpdatePlugAndPlay ();
 	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
 	{
-		EnterCritical ();
-		m_ToRytmPath.Filter ().AwaitStart (TRUE);	// the aborted image's tail never passes on its own: a new start first
-		LeaveCritical ();
-		UpdateOsPass (FALSE, 0);
+		UpdateOsPass (FALSE, 0);		// the pass on again: from a new start (ApplyGate)
 		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one, from a new start",
 					OsUpdateName (), OsPass () ? "pass" : "are dropped");
 	}
@@ -891,9 +884,6 @@ boolean CSidecarGadget::Command (const char *p)
 		if (n == usbmidi_os::kInvalid) L->Write (From, LogWarning, "usbmidi=os:on|off|emu, not \"%s\"", p);
 		else
 		{
-			EnterCritical ();
-			m_ToRytmPath.Filter ().AwaitStart (FALSE);	// a new setting starts over
-			LeaveCritical ();
 			UpdateOsPass (m_Gate.SetMode (n), "the setting");	// the pass off: nothing of an upgrade goes on
 			L->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s (host: %s)", OsUpdateName (),
 				  OsPass () ? "pass" : "are dropped", m_Gate.Tcp () ? "the emulator" : "USB");

@@ -907,8 +907,9 @@ wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/en
 - If data is lost during an upgrade (a send to the Rytm fails, or the Rytm or emulator goes away with data still
   queued), the upgrade is aborted rather than continued with a hole in the image: the log says `OS upgrade ABORTED`,
   OS messages are dropped until the computer has sent none for 3 s, then pass again from a new upgrade's start (the
-  image's `7F` or the RPC's OsUpgradeStart), so the tail of the aborted image never goes through. Start the upgrade
-  again.
+  image's start `7F 01` or the RPC's OsUpgradeStart), so the tail of the aborted image, its end `7F 02` included, never
+  goes through. The same wait starts whenever the pass turns on (the setting turned on again, a host switch), so an
+  upgrade always passes from its start. Start the upgrade again.
 - `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false,"aborted":N}` (`osUpgrade`: they pass right now;
   `aborted`: upgrades cut since boot).
 - After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
