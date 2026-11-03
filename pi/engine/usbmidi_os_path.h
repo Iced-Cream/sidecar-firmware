@@ -21,7 +21,10 @@
 //                   waiting, during an upgrade (an OS message seen within kQuietUs): the upgrade is aborted - the path
 //                   cut, OS messages dropped - rather than the Rytm getting an image with a hole in it. The pass comes
 //                   back once the computer has sent no OS message for kQuietUs (it gave up or finished), or at a new
-//                   setting. Seen () must run every loop (Quiet does), so "within kQuietUs" is measured from when
+//                   setting.
+//   Switched        a host switch during an upgrade (setting on or emu) aborts it the same way: the rest of an image
+//                   meant for one host never reaches the other, also with on, where the pass would stay on.
+//                   Seen () must run every loop (Quiet does), so "within kQuietUs" is measured from when
 //                   the count last moved.
 #pragma once
 #include <stdint.h>
@@ -138,6 +141,14 @@ class OsGate {
   bool Lost(bool send_failed, bool busy, uint32_t os_msgs, uint32_t now_us) {
     Seen(os_msgs, now_us);
     if (aborted_ || !Pass() || !Upgrading(now_us) || !(send_failed || busy)) return false;
+    aborted_ = true;
+    aborts_++;
+    return true;
+  }
+  // a host switch that cut the path (SetLink's TRUE): TRUE when an upgrade was under way, now aborted
+  bool Switched(bool cut, uint32_t os_msgs, uint32_t now_us) {
+    Seen(os_msgs, now_us);
+    if (!cut || aborted_ || !On() || !Upgrading(now_us)) return false;
     aborted_ = true;
     aborts_++;
     return true;

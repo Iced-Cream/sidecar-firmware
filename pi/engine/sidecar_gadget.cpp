@@ -799,7 +799,15 @@ void CSidecarGadget::OsLost (boolean bSendFailed, const char *pWhy)
 void CSidecarGadget::SetLinkTcp (boolean bTcp)
 {
 	if (bTcp == m_Gate.Tcp ()) return;
-	UpdateOsPass (m_Gate.SetLink (bTcp), "a host switch");	// the emulator's OS image never reaches the real Rytm
+	boolean bCut = m_Gate.SetLink (bTcp);
+	// an upgrade under way is aborted (also with on, where the pass stays): the rest of the image meant for the old host
+	// never reaches the new one
+	boolean bAbort = m_Gate.Switched (bCut, m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ());
+	UpdateOsPass (bCut, bAbort ? "an OS upgrade aborted" : "a host switch");	// the emulator's image never reaches the Rytm
+	if (bAbort)
+		CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: the host switched during it. Neither host "
+					"got the whole OS: start the upgrade again (OS messages are dropped until the computer stops "
+					"sending them for %u s)", OsGate::kQuietUs / 1000000);
 	if (OsUpdate ())		// another source for the computer: half a SysEx of the old one never lands before the new one's
 	{
 		EnterCritical ();

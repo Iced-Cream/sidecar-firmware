@@ -110,6 +110,38 @@ int main() {
     Feed(p, Pack(start));                          // a new message passes again (the setting is on)
     CHECK(Drain(p) == Pack(start));
   }
+  // M-a: usbmidi=os:on, an upgrade to the emulator under way, link=usb: the switch aborts it, so the rest of the image
+  // and its end never reach the real Rytm (the pass would stay on with on); counted; 3 s of quiet bring the pass back
+  for (usbmidi_os::Mode mode : {kOn, kEmu}) {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(mode));
+    Apply(p, g, g.SetLink(true));
+    uint32_t t = 100;
+    Feed(p, Pack(start));
+    Feed(p, Pack(data));
+    Drain(p);                                      // the emulator took them
+    g.Seen(p.Filter().OsMessages(), t);
+    Feed(p, Pack(data), 0, 40);
+    t += 1000;
+    bool cut = g.SetLink(false);
+    CHECK(cut);
+    CHECK(g.Switched(cut, p.Filter().OsMessages(), t));
+    CHECK(g.Aborted() && !g.Pass() && g.Aborts() == 1);
+    Apply(p, g, cut);
+    Feed(p, Pack(data), 40);                       // the rest of the message under way
+    Feed(p, Pack(data));                           // the rest of the image
+    Feed(p, Pack(start));                          // its end (7F)
+    Feed(p, Pack(note));
+    CHECK(Drain(p) == Pack(note));                 // only the note reaches the real Rytm
+    CHECK(!g.Switched(g.SetLink(true), p.Filter().OsMessages(), t));   // aborted already: counted once
+    CHECK(g.Aborts() == 1);
+    // no upgrade under way: a switch only cuts (as before), no abort
+    OsGate h;
+    h.SetMode(mode);
+    CHECK(!h.Switched(h.SetLink(true), 0, 50));
+    CHECK(!h.Aborted() && h.Aborts() == 0);
+  }
   // usbmidi=os:off: a host switch cuts nothing (dev's behaviour); the same switch twice is no switch
   {
     OsGate g;
