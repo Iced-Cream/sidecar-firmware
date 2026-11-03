@@ -47,6 +47,9 @@ inline bool rpc(const uint8_t* m, int n) {
 }
 // with the setting off: dropped (the union of what the filter and the bridge dropped before)
 inline bool any(const uint8_t* m, int n) { return image(m, n) || rpc(m, n); }
+// a new upgrade's first message: the image's 7F (start and end share it: only the shape is known) or the RPC's
+// OsUpgradeStart (50)
+inline bool start(const uint8_t* m, int n) { return (image(m, n) && m[6] == 0x7F) || rpc_command(m, n) == 0x50; }
 // with the setting on: let through (the rest of any() stays dropped)
 inline bool pass(const uint8_t* m, int n) { return (image(m, n) && m[4] == kImageDevice) || rpc(m, n); }
 }  // namespace os_upgrade
@@ -61,6 +64,10 @@ class MidiFilter {
   // to the Rytm: OS upgrades (os_upgrade::pass) go through (sidecar_gadget: usbmidi=os:)
   void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
   bool PassOsUpdate() const { return pass_os_update_; }
+  // after an aborted upgrade (usbmidi_os_path.h): with the pass on, OS messages stay dropped until a start
+  // (os_upgrade::start) passes, so the tail of the aborted image never goes through on its own
+  void AwaitStart(bool on) { await_start_ = on; }
+  bool AwaitingStart() const { return await_start_; }
   void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays
   // a new destination: the SysEx under way (held or passing) is dropped up to its end, so its rest never goes out as
   // a continuation without a start (which Feed would pass); the next SysEx is decided afresh
@@ -116,6 +123,7 @@ class MidiFilter {
       dropped_msgs_++;
       state_ = ends ? kIdle : kDropping;
     } else {
+      if (await_start_ && OsUpdate(head_, head_n_)) await_start_ = false;   // the start that ends the wait
       for (int i = 0; i < held_; i++) emit(hold_[i]);
       state_ = ends ? kIdle : kPassing;
     }
@@ -141,7 +149,8 @@ class MidiFilter {
 
   bool Drop(const uint8_t* h, int n) const {
     return HostLink(h, n) || MidiCi(h, n) ||
-           (to_rytm_ && ((OsUpdate(h, n) && !(pass_os_update_ && OsUpdatePass(h, n))) || Empty(h, n)));
+           (to_rytm_ && ((OsUpdate(h, n) && !(pass_os_update_ && OsUpdatePass(h, n) &&
+                                              (!await_start_ || os_upgrade::start(h, n)))) || Empty(h, n)));
   }
   // A held SysEx cut short by a status byte or a new F0: its packets go through (undecided: a short one).
   template <class Emit>
@@ -152,6 +161,7 @@ class MidiFilter {
         dropped_ += held_;
         dropped_msgs_++;
       } else {
+        if (await_start_ && OsUpdate(head_, head_n_)) await_start_ = false;
         for (int i = 0; i < held_; i++) emit(hold_[i]);
       }
     }
@@ -160,7 +170,7 @@ class MidiFilter {
   }
 
   bool to_rytm_;
-  bool pass_os_update_ = false;
+  bool pass_os_update_ = false, await_start_ = false;
   State state_ = kIdle;
   uint8_t hold_[kHoldPackets][4];
   int held_ = 0;

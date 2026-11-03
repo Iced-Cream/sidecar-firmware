@@ -837,8 +837,11 @@ void CSidecarGadget::Poll (void)
 	UpdatePlugAndPlay ();
 	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
 	{
+		EnterCritical ();
+		m_ToRytmPath.Filter ().AwaitStart (TRUE);	// the aborted image's tail never passes on its own: a new start first
+		LeaveCritical ();
 		UpdateOsPass (FALSE, 0);
-		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one",
+		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one, from a new start",
 					OsUpdateName (), OsPass () ? "pass" : "are dropped");
 	}
 	// a held OUT endpoint: re-armed when there is room, or at once when the setting is off (turned off while held)
@@ -888,6 +891,9 @@ boolean CSidecarGadget::Command (const char *p)
 		if (n == usbmidi_os::kInvalid) L->Write (From, LogWarning, "usbmidi=os:on|off|emu, not \"%s\"", p);
 		else
 		{
+			EnterCritical ();
+			m_ToRytmPath.Filter ().AwaitStart (FALSE);	// a new setting starts over
+			LeaveCritical ();
 			UpdateOsPass (m_Gate.SetMode (n), "the setting");	// the pass off: nothing of an upgrade goes on
 			L->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s (host: %s)", OsUpdateName (),
 				  OsPass () ? "pass" : "are dropped", m_Gate.Tcp () ? "the emulator" : "USB");

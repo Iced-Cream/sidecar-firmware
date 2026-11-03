@@ -254,10 +254,57 @@ int main() {
     CHECK(!g.Quiet(p.Filter().OsMessages(), t));
     t += 1;
     CHECK(g.Quiet(p.Filter().OsMessages(), t));    // quiet for kQuietUs: the pass is back
+    p.Filter().AwaitStart(true);                   // as the gadget does: from a new start
     Apply(p, g, false);
     CHECK(g.Pass() && p.Filter().PassOsUpdate() && !g.Aborted());
     Feed(p, Pack(start));                          // a new upgrade goes through
     CHECK(Drain(p) == Pack(start));
+  }
+  // the aborted image's tail: a sender pausing longer than kQuietUs mid-image, then going on, never gets its tail
+  // through: after the quiet the filter waits for a new start (image 7F or the RPC's 50)
+  {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(kOn));
+    uint32_t t = 1000;
+    Feed(p, Pack(start));
+    Feed(p, Pack(data));
+    g.Seen(p.Filter().OsMessages(), t);
+    Drain(p);
+    Feed(p, Pack(data));
+    bool lost = g.Lost(true, p.Busy(), p.Filter().OsMessages(), t + 10);
+    CHECK(lost);
+    Apply(p, g, lost);
+    t += OsGate::kQuietUs + 100;                   // the sender pauses
+    CHECK(g.Quiet(p.Filter().OsMessages(), t));
+    p.Filter().AwaitStart(true);
+    Apply(p, g, false);
+    CHECK(g.Pass());
+    for (int k = 0; k < 3; k++) Feed(p, Pack(data));   // and goes on with the image's tail
+    CHECK(Drain(p).empty());
+    CHECK(p.Filter().AwaitingStart());
+    Feed(p, Pack(note));
+    CHECK(Drain(p) == Pack(note));                 // other MIDI as ever
+    Feed(p, Pack(start));                          // a new upgrade: its start ends the wait
+    Feed(p, Pack(data));
+    Bytes want = Pack(start), d = Pack(data);
+    want.insert(want.end(), d.begin(), d.end());
+    CHECK(Drain(p) == want);
+    CHECK(!p.Filter().AwaitingStart());
+    // the RPC's OsUpgradeStart ends the wait too; its Write does not
+    Path q;
+    q.Filter().SetPassOsUpdate(true);
+    q.Filter().AwaitStart(true);
+    Bytes w51 = {0xF0, 0x00, 0x20, 0x3C, 0x10, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x51, 0x01, 0xF7};
+    Bytes w50 = w51;
+    w50[11] = 0x50;
+    Feed(q, Pack(w51));
+    CHECK(Drain(q).empty());
+    Feed(q, Pack(w50));
+    Feed(q, Pack(w51));
+    Bytes wq = Pack(w50), w1 = Pack(w51);
+    wq.insert(wq.end(), w1.begin(), w1.end());
+    CHECK(Drain(q) == wq);
   }
   // M5: the Rytm leaves right after a finished upgrade (it reboots): nothing on the way, no abort; with data still
   // waiting, an abort. A new setting clears an abort.
