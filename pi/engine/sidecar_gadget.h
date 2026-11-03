@@ -56,6 +56,7 @@ public:
 	void RytmMIDIConnected (boolean)		{}
 	boolean OsUpdate (void) const			{ return FALSE; }
 	const char *OsUpdateName (void) const		{ return "off"; }
+	boolean OsPass (void) const			{ return FALSE; }
 	void SetLinkTcp (boolean)			{}
 	boolean TakeReboot (void)			{ return FALSE; }
 	boolean UsbReboot (void) const			{ return FALSE; }
