@@ -306,6 +306,29 @@ int main() {
     wq.insert(wq.end(), w1.begin(), w1.end());
     CHECK(Drain(q) == wq);
   }
+  // the clock wraps (32-bit us, ~71.6 min): the window works across the wrap, and an old sighting never comes back
+  // a wrap period later (the loop calls Quiet, so Seen, every pass)
+  {
+    OsGate g;
+    g.SetMode(kOn);
+    const uint32_t t0 = 0xFFFFFFFFu - 1000000u;    // 1 s before the wrap
+    g.Seen(1, t0);
+    CHECK(g.Upgrading(t0));
+    CHECK(g.Upgrading(t0 + 2000000u));              // 1 s after the wrap: still within 3 s
+    CHECK(!g.Upgrading(t0 + OsGate::kQuietUs));
+    for (uint64_t t = t0; t < (uint64_t)t0 + 0x100000000ull + 2000000u; t += 500000u) {
+      CHECK(!g.Quiet(1, (uint32_t)t));              // the loop, every 0.5 s, for a whole wrap period and more
+      bool in = t - t0 < OsGate::kQuietUs;
+      CHECK(g.Upgrading((uint32_t)t) == in);        // never again after the first 3 s
+    }
+    CHECK(!g.Lost(true, true, 1, t0 + 1000000u));   // a wrap period later, at the old time: no spurious abort
+    CHECK(g.Aborts() == 0);
+    // an abort across the wrap: quiet comes 3 s after the last OS message, wrap or not
+    g.Seen(2, t0 + 500000u);
+    CHECK(g.Lost(true, false, 2, t0 + 600000u));
+    CHECK(!g.Quiet(2, t0 + 2500000u));             // past the wrap, 2 s after
+    CHECK(g.Quiet(2, t0 + 500000u + OsGate::kQuietUs));
+  }
   // M5: the Rytm leaves right after a finished upgrade (it reboots): nothing on the way, no abort; with data still
   // waiting, an abort. A new setting clears an abort.
   {

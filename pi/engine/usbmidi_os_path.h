@@ -130,14 +130,18 @@ class OsGate {
   bool EngineWaits(bool computer_in_sysex) const { return On() && computer_in_sysex; }
 
   // the filter's count of OS-upgrade messages (MidiFilter::OsMessages), at core 0's loop
+  // The clock is Circle's 32-bit microseconds (wraps every ~71.6 min): the window is a signed difference, and an old
+  // sighting is forgotten once the window has passed, so a wrap never brings it back
   void Seen(uint32_t os_msgs, uint32_t now_us) {
     if (os_msgs != os_msgs_) {
       os_msgs_ = os_msgs;
       os_at_ = now_us;
       os_seen_ = true;
+    } else if (os_seen_ && !Within(now_us)) {
+      os_seen_ = false;
     }
   }
-  bool Upgrading(uint32_t now_us) const { return os_seen_ && now_us - os_at_ < kQuietUs; }
+  bool Upgrading(uint32_t now_us) const { return os_seen_ && Within(now_us); }
   // data was lost on the way (send_failed) or the destination left with data still on the way (busy): TRUE when that
   // aborts an upgrade (cut the path then, and say so loudly)
   bool Lost(bool send_failed, bool busy, uint32_t os_msgs, uint32_t now_us) {
@@ -165,6 +169,10 @@ class OsGate {
 
  private:
   usbmidi_os::Mode mode_ = usbmidi_os::kOff;
+  bool Within(uint32_t now_us) const {
+    int32_t d = (int32_t)(now_us - os_at_);
+    return d >= 0 && d < (int32_t)kQuietUs;
+  }
   bool tcp_ = false, aborted_ = false, os_seen_ = false;
   uint32_t os_msgs_ = 0, os_at_ = 0;
   unsigned aborts_ = 0;
