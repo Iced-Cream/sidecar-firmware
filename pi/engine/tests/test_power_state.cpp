@@ -12,7 +12,7 @@ int main ()
 	char b[512];
 	State s;
 	CHECK (warning (s) == 0 && short_warning (s) == 0);		// nothing known: no warning
-	CHECK (json (s, b, sizeof b) > 0 && strstr (b, "\"known\":false") && strstr (b, "\"maxCurrent\":null") && strstr (b, "\"warn\":null}"));
+	CHECK (json (s, b, sizeof b) > 0 && strstr (b, "\"known\":false") && strstr (b, "\"maxCurrent\":null") && strstr (b, "\"warn\":null,\"note\":null}"));
 	line (s, b, sizeof b);
 	CHECK (strstr (b, "throttled unknown") != 0);
 
@@ -56,13 +56,17 @@ int main ()
 	s.throttled = 0;
 	s.max_ma = 3000;						// Pi 5 without the 5 A PD negotiation
 	s.board = 5;
-	CHECK (warning (s) && strstr (warning (s), "3 A mode") && strstr (warning (s), "27 W (5 V 5 A)"));
+	CHECK (warning (s) == 0 && short_warning (s) == 0);		// 3 A mode alone: a note, not a warning
+	CHECK (note (s) && strstr (note (s), "3 A mode") && strstr (note (s), "600 mA") && !strstr (note (s), "weak"));
 	json (s, b, sizeof b);
-	CHECK (strstr (b, "\"maxCurrent\":3000"));
+	CHECK (strstr (b, "\"maxCurrent\":3000") && strstr (b, "\"warn\":null") && strstr (b, "\"note\":\"3 A mode"));
 	line (s, b, sizeof b);
-	CHECK (strstr (b, "max_current 3000 mA"));
+	CHECK (strstr (b, "max_current 3000 mA") && strstr (b, "| ok | 3 A mode"));
+	s.throttled = 0x50000;						// with under-voltage since boot: the warning, no note
+	CHECK (warning (s) && strstr (warning (s), "since boot") && note (s) == 0);
+	s.throttled = 0;
 	s.max_ma = 5000;
-	CHECK (warning (s) == 0);
+	CHECK (warning (s) == 0 && note (s) == 0);
 
 	CHECK (json (s, b, 16) > 16 && strlen (b) == 15);		// cut, still terminated
 	printf ("power_state: OK\n");

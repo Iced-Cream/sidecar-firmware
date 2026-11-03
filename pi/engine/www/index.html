@@ -1478,7 +1478,7 @@ function renderStats() {
     const p = st.power, bad = !!p.warn;
     tile("power", !p.known ? "unknown" : bad ? "too weak" : "ok",
       (p.maxCurrent != null ? (p.maxCurrent / 1000) + " A · " : "") + (p.uvNow ? "under-voltage now" : p.uvBoot ? "under-voltage since boot" : "no under-voltage")
-      + (p.throttledNow || p.cappedNow ? " · throttled" : ""), bad ? "bad" : p.known ? "good" : "");
+      + (p.throttledNow || p.cappedNow ? " · throttled" : "") + (p.note ? " · " + p.note : ""), bad ? "bad" : p.known ? "good" : "");
     $("#pwarn").hidden = !bad;
     if (bad) $("#pwarn").textContent = "⚠ " + p.warn.charAt(0).toUpperCase() + p.warn.slice(1) + " (Wi-Fi and the web page suffer first).";
   }

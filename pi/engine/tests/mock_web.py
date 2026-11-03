@@ -37,10 +37,10 @@ REFUSED = [0]
 # the supply (power_state.cpp's json): MOCK_POWER=weak: a Pi 5 on a hub port (3 A mode, under-voltage since boot)
 POWER = ({"known": True, "throttled": 0x50000, "uvNow": False, "uvBoot": True, "throttledNow": False, "throttledBoot": True,
           "cappedNow": False, "cappedBoot": False, "maxCurrent": 3000,
-          "warn": "power supply too weak (no 5 A USB-PD: 3 A mode): use the 27 W (5 V 5 A) adapter directly"}
+          "warn": "power supply too weak (under-voltage since boot): use the 27 W (5 V 5 A) adapter directly", "note": None}
          if os.environ.get("MOCK_POWER") == "weak" else
          {"known": True, "throttled": 0, "uvNow": False, "uvBoot": False, "throttledNow": False, "throttledBoot": False,
-          "cappedNow": False, "cappedBoot": False, "maxCurrent": 5000, "warn": None})
+          "cappedNow": False, "cappedBoot": False, "maxCurrent": 5000, "warn": None, "note": None})
 LOG = []
 BOOT = {"config.txt", "config.txt.bak", "cmdline.txt", "bootcode.bin", "licence.broadcom", "issue.txt"}
 BOOTP = ("sdboot", "engine.img", "kernel", "start", "fixup", "armstub", "tryboot.txt", "bcm27")
