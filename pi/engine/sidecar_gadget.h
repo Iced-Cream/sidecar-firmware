@@ -72,6 +72,7 @@ public:
 #include "midi_filter.h"
 #include "reboot_sysex.h"
 #include "usbmidi_os.h"
+#include "usbmidi_os_path.h"
 #include "spsc.h"
 #include "tohost_q.h"
 
@@ -156,15 +157,15 @@ public:
 	void FromRytmMIDI (const u8 *pPacket);		// xHCI IRQ: one event packet from the Rytm
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
-	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
+	boolean ForRytmInSysEx (void) const		{ return m_ToRytmPath.InSysEx (); }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
 	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
 	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
 	// flow control and the emu relay
-	boolean OsUpdate (void) const			{ return m_nOsUpdate != OsUpdateOff; }
-	const char *OsUpdateName (void) const;
-	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
-	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp)
+	boolean OsUpdate (void) const			{ return m_Gate.On (); }
+	const char *OsUpdateName (void) const		{ return usbmidi_os::name (m_Gate.Mode ()); }
+	boolean OsPass (void) const			{ return m_Gate.Pass (); }
+	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp UseLink, at the switch)
 	boolean UsbReboot (void) const			{ return m_bUsbReboot; }
 	boolean TakeReboot (void);			// core 0's loop: the computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 
@@ -207,13 +208,11 @@ private:
 	u64 m_nCntFrq, m_nT0;
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
-	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
-	unsigned m_nOsUpdate;				// usbmidi=os: see OsUpdate ()
-	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
+	OsGate m_Gate;					// usbmidi=os: the setting and the host (usbmidi_os_path.h)
 	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
 	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
-	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
-	static unsigned ModeFrom (unsigned nMode);	// usbmidi_os::Mode -> OsUpdateOff|Emu|Rytm
+	void UpdateOsPass (boolean bCut, const char *pWhy);	// the filter's pass from m_Gate; bCut: drop what is on its
+								// way to the Rytm first (usbmidi_os_path.h Cut)
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];
@@ -246,11 +245,10 @@ private:
 	unsigned m_nFbBase;
 
 	// MIDI
-	MidiFilter m_ToRytmFilter, m_ToHostFilter;
-	Spsc<u32, MIDIQueue> m_ToRytm;			// producer: the gadget IRQ; consumer: core 0's loop
+	ToRytmPath<MIDIQueue> m_ToRytmPath;		// filter and queue; producer: the gadget IRQ; consumer: core 0's loop
+	MidiFilter m_ToHostFilter;
 	ToHostQueue<MIDIQueue> m_ToHost;		// producers: IRQs and the loop (IRQs masked); consumer: the IRQ. Up only while the
 							// computer has the MIDI IN endpoint configured (tohost_q.h): none there, nothing queued
-	boolean m_bToRytmSysEx;
 
 	struct TStats
 	{

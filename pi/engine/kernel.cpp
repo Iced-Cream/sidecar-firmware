@@ -729,6 +729,7 @@ void CKernel::UseLink (const char *pSpec)
 		CEngineCores::LinkFifoTarget (FifoTcp);
 		m_Logger.Write (From, LogNotice, "link: tcp to %u.%u.%u.%u:%u (fifo target %u frames)", IP[0], IP[1], IP[2],
 				IP[3], nPort, CEngineCores::FifoTarget ());
+		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (TRUE);	// usbmidi=os: in the same step (the queue is cut)
 		return;
 	}
 	if (pSpec == 0 || strcmp (pSpec, "usb") != 0)
@@ -746,6 +747,9 @@ void CKernel::UseLink (const char *pSpec)
 	CObUsb::SetActive (TRUE);
 	if (m_pTransport == &m_Tcp) m_pTransport = &m_Usb;
 	CEngineCores::LinkFifoTarget (FifoUsb);
+	// usbmidi=os: in the same step, before the USB merge's next Poll: what waited for the emulator (an OS image under
+	// emu) is cut, never sent to the real Rytm
+	if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);
 	m_Logger.Write (From, LogNotice, "link: %s", m_pTransport->Name ());
 }
 

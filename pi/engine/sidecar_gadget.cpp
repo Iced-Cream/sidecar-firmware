@@ -240,7 +240,7 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 		m_pSidecar->MIDIFromHost (m_Buffer, nLength);
 		// usbmidi=os: an OS file comes faster than the Rytm takes it; instead of dropping packets (nMidiFull), the
 		// endpoint waits (the computer's transfer is NAKed) until core 0's loop has sent enough (Poll: Resume)
-		if (m_pSidecar->OsUpdate () && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
+		if (m_pSidecar->m_Gate.Hold (m_pSidecar->ToRytmRoom ())) m_bHeld = TRUE;
 		else if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 		return;
 	}
@@ -263,21 +263,21 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE), m_bUsbReboot (FALSE),
+	m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
 	m_nLoopHead (0), m_nLoopTail (0), m_bLoopPriming (TRUE),
 	m_bWinStarted (FALSE), m_bWinRytm (FALSE), m_nWinUFrames (0), m_nLastFrameNo (0), m_nWinQ16 (0),
 	m_nFbBase (6 << 16),
-	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
+	m_ToHostFilter (false),
 	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
-	m_nOsUpdate = ModeFrom (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
-							   CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
+	m_Gate.SetMode (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
+						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
-	UpdateOsPass ();
+	m_ToRytmPath.Filter ().SetPassOsUpdate (m_Gate.Pass ());	// no IRQ yet
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
 	memset (m_nOutLast, 0, sizeof m_nOutLast);
@@ -723,12 +723,7 @@ void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 		m_Stats.nMidiFromHost++;
 		if (m_bUsbReboot) m_Reboot.Feed (pBuffer + i);		// the request is a host-link SysEx: dropped below
 		if (g_pSidecarKeysTap != 0 && (*g_pSidecarKeysTap) (pBuffer + i)) continue;
-		m_ToRytmFilter.Feed (pBuffer + i, [this] (const u8 *p)
-		{
-			u32 w;
-			memcpy (&w, p, 4);
-			if (!m_ToRytm.push (w)) m_Stats.nMidiFull++;
-		});
+		if (!m_ToRytmPath.FromHost (pBuffer + i)) m_Stats.nMidiFull++;
 	}
 }
 
@@ -757,29 +752,29 @@ boolean CSidecarGadget::TakeReboot (void)
 	return TRUE;
 }
 
-unsigned CSidecarGadget::ModeFrom (unsigned nMode)
+// the filter's pass from m_Gate, in one step with the cut (both under the gadget IRQ's mask): no packet of the old
+// pass state's SysEx gets in between. bCut: everything on its way to the Rytm (or the emulator) is dropped - the queue,
+// the rest of the SysEx in the filter, the half-sent state - and a held OUT endpoint is re-armed (the queue is empty)
+void CSidecarGadget::UpdateOsPass (boolean bCut, const char *pWhy)
 {
-	return nMode == usbmidi_os::kOn ? OsUpdateRytm : nMode == usbmidi_os::kEmu ? OsUpdateEmu : OsUpdateOff;
-}
-
-const char *CSidecarGadget::OsUpdateName (void) const
-{
-	return usbmidi_os::name (m_nOsUpdate == OsUpdateRytm ? usbmidi_os::kOn : m_nOsUpdate == OsUpdateEmu ? usbmidi_os::kEmu
-										 : usbmidi_os::kOff);
-}
-
-void CSidecarGadget::UpdateOsPass (void)
-{
-	EnterCritical ();					// the filter runs in the gadget IRQ
-	m_ToRytmFilter.SetPassOsUpdate (OsPass ());
+	unsigned n = 0;
+	EnterCritical ();					// the filter and the queue's producer run in the gadget IRQ
+	if (bCut)
+	{
+		n = m_ToRytmPath.Cut ();
+		if (m_pMIDIOut != 0) m_pMIDIOut->Resume ();
+	}
+	m_ToRytmPath.Filter ().SetPassOsUpdate (m_Gate.Pass ());
 	LeaveCritical ();
+	if (bCut) CLogger::Get ()->Write (From, LogNotice, "usbmidi=os: %s: the computer's MIDI on its way to the Rytm dropped (%u packets)",
+					  pWhy, n);
 }
 
+// core 0's loop, at the switch itself (kernel.cpp UseLink, before the next Poll of either link)
 void CSidecarGadget::SetLinkTcp (boolean bTcp)
 {
-	if (bTcp == m_bLinkTcp) return;
-	m_bLinkTcp = bTcp;
-	UpdateOsPass ();
+	if (bTcp == m_Gate.Tcp ()) return;
+	UpdateOsPass (m_Gate.SetLink (bTcp), "a host switch");	// the emulator's OS image never reaches the real Rytm
 	if (OsUpdate ())		// another source for the computer: half a SysEx of the old one never lands before the new one's
 	{
 		EnterCritical ();
@@ -794,15 +789,12 @@ void CSidecarGadget::SetLinkTcp (boolean bTcp)
 // a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
 boolean CSidecarGadget::ToRytmRoom (void) const
 {
-	return m_ToRytm.size () + 512 / 4 + 3 <= MIDIQueue;
+	return m_ToRytmPath.Room (512 / 4);
 }
 
 boolean CSidecarGadget::ForRytm (u32 *pPacket)
 {
-	if (!m_ToRytm.pop (pPacket)) return FALSE;
-	u8 cin = *pPacket & 0x0F, b1 = (*pPacket >> 8) & 0xFF;
-	if (cin == 0x4 && b1 == 0xF0) m_bToRytmSysEx = TRUE;
-	else if (cin == 0x5 || cin == 0x6 || cin == 0x7) { if (m_bToRytmSysEx || b1 == 0xF7) m_bToRytmSysEx = FALSE; }
+	if (!m_ToRytmPath.Pop (pPacket)) return FALSE;
 	m_Stats.nMidiToRytm++;
 	return TRUE;
 }
@@ -810,7 +802,7 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 	UpdatePlugAndPlay ();
-	if (OsUpdate () && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
+	if (m_pMIDIOut != 0 && m_Gate.Resume (m_pMIDIOut->Held (), ToRytmRoom ()))
 	{
 		EnterCritical ();
 		m_pMIDIOut->Resume ();
@@ -856,10 +848,9 @@ boolean CSidecarGadget::Command (const char *p)
 		if (n == usbmidi_os::kInvalid) L->Write (From, LogWarning, "usbmidi=os:on|off|emu, not \"%s\"", p);
 		else
 		{
-			m_nOsUpdate = ModeFrom (n);
-			UpdateOsPass ();
+			UpdateOsPass (m_Gate.SetMode (n), "the setting");	// the pass off: nothing of an upgrade goes on
 			L->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s (host: %s)", OsUpdateName (),
-				  OsPass () ? "pass" : "are dropped", m_bLinkTcp ? "the emulator" : "USB");
+				  OsPass () ? "pass" : "are dropped", m_Gate.Tcp () ? "the emulator" : "USB");
 		}
 		return TRUE;
 	}
@@ -914,7 +905,7 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 		m_pIso[EPOut] ? m_pIso[EPOut]->Incomplete () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Incomplete () : 0,
 		m_pIso[EPIn] ? m_pIso[EPIn]->Incomplete () : 0,
 		s.nMidiFromHost, s.nMidiToHost, s.nMidiToRytm, s.nMidiFull, s.nMidiNoRytm,
-		m_ToRytmFilter.DroppedMessages (), m_ToHostFilter.DroppedMessages (),
+		m_ToRytmPath.Filter ().DroppedMessages (), m_ToHostFilter.DroppedMessages (),
 		m_ToHost.IsUp () ? "up" : "none", m_ToHost.Ups (), nRate, nPpm / 10000, nPpm / 100 % 100,
 		(unsigned) (nMaxGap * 1000000 / m_nCntFrq), (unsigned) (nMaxHandler * 1000000 / m_nCntFrq), nLong, nLateAgo);
 #if RASPPI >= 5

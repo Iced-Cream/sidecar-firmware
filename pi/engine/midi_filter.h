@@ -23,6 +23,7 @@
 class MidiFilter {
  public:
   static const int kHead = 9;            // bytes of a SysEx's head that decide (3 packets)
+  static const int kHoldPackets = 3;     // packets held back at most, then emitted at once
   static const uint8_t kOsUpdateDevice = 0x0C;   // the device byte of an Elektron OS .syx's messages
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
@@ -30,6 +31,16 @@ class MidiFilter {
   void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
   bool PassOsUpdate() const { return pass_os_update_; }
   void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays
+  // a new destination: the SysEx under way (held or passing) is dropped up to its end, so its rest never goes out as
+  // a continuation without a start (which Feed would pass); the next SysEx is decided afresh
+  void Cut() {
+    if (state_ == kHolding || state_ == kPassing) {
+      dropped_ += held_;
+      dropped_msgs_++;
+      state_ = kDropping;
+    }
+    held_ = 0;
+  }
 
   // One packet in. emit(const uint8_t p[4]) is called for every packet that goes through (0..4 per call).
   template <class Emit>
@@ -119,7 +130,7 @@ class MidiFilter {
   bool to_rytm_;
   bool pass_os_update_ = false;
   State state_ = kIdle;
-  uint8_t hold_[3][4];
+  uint8_t hold_[kHoldPackets][4];
   int held_ = 0;
   uint8_t head_[kHead];
   int head_n_ = 0;
