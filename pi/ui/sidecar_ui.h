@@ -53,6 +53,9 @@ typedef struct
 	int		temp_warn;			// 1: the temperature warning is on (80 C up, off below 75 C: pi/engine/thermal.h): a banner
 	int		clock_low_mhz;			// the ARM clock Circle's throttle lowered it to (thermal.h clock_low_mhz), 0: not lowered
 	int		cpu_mhz;			// the CPU clock setting (Settings > System: 1500 / 1200 / 1000), 0: not known
+	// the box in use (core/device): every page names it and its voices so; a change rebuilds the pages (once a boot, as a rule)
+	const char	*box;				// its word for the user ("Rytm", "A4"), 0: "Rytm"
+	const char	*voice[SIDECAR_UI_TRACKS];	// voice v's name for the user ("T1", "-" one it does not use), 0: the Rytm's (sidecar_vlabel.h)
 } sidecar_ui_status_t;
 
 // A command line as the serial console takes it (":notes=1", without the colon): the caller runs it (CConsole::Command)
@@ -98,6 +101,14 @@ void sidecar_ui_to_ui (int *x, int *y);				// screen -> UI coordinates (clamped)
 int sidecar_ui_bright (void);					// OLED: the dots' brightness for the expansion, 0..256
 								// (CLASSIC: 256, a black layer dims the picture)
 void sidecar_ui_status (const sidecar_ui_status_t *s);		// labels change only when their text does
+// The box in use, as the last status said (the Rytm before one): its word ("Rytm", "A4"; upper: "RYTM", "A4") and its voices'
+// names, for every page. A box with its own names lists its voices in their order; the Rytm's in its track order.
+const char *sidecar_ui_box (void);
+const char *sidecar_ui_box_up (void);
+const char *sidecar_ui_voice (int v);				// voice v's name ("BD", "T1")
+int sidecar_ui_voice_at (int n);				// the n-th place in a list of the voices: its voice
+int sidecar_ui_voice_pos (int v);				// voice v's place in that list
+int sidecar_ui_box_names (void);				// 1: the box has its own voices' names (not the Rytm's)
 void sidecar_ui_touch (int pressed, int raw_x, int raw_y, int x, int y);	// the calibration readout
 // Settings > Display > CALIBRATE (touch_cal.h): the 4 crosses over everything; each release on one takes its raw values,
 // then "touchcal=X0,X1,Y0,Y1,SWAP" is sent (RESET: "touchcal=off"). The step 0..3 shown, -1: not calibrating (tests)

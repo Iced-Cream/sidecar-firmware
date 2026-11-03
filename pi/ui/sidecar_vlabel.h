@@ -1,5 +1,6 @@
 // pi/ui/sidecar_vlabel.h - a Sidecar voice is named for the Rytm track(s) that play it, never a number (voice 1 is BT's,
-// voice 2 SD's; the routing is core/ui/remote.cpp kTrackVoice). Lists run in the Rytm's track order.
+// voice 2 SD's; the routing is core/ui/remote.cpp kTrackVoice). Lists run in the Rytm's track order. The pages ask
+// sidecar_ui_voice / _at / _pos (sidecar_ui.h), which are these for the Rytm and the box's own names for another box.
 #ifndef SIDECAR_VLABEL_H
 #define SIDECAR_VLABEL_H
 

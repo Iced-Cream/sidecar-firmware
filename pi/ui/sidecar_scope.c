@@ -9,6 +9,7 @@
 // window with the trace in its white, the meters as recessed LED ladders (green, amber, red) in rubber keys.
 #include "sidecar_scope.h"
 #include "sidecar_theme.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' names
 #include "lvgl.h"
 #include "src/misc/lv_area_private.h"	// lv_area_intersect, l->_clip_area: a meter's strip redrawn alone
 #include <math.h>
@@ -47,10 +48,24 @@ int sidecar_scope_source (void) { return s_nSrc; }
 int sidecar_scope_timebase (void) { return s_nTb; }
 int sidecar_scope_frozen (void) { return s_bFrozen; }
 int sidecar_scope_gain (void) { return s_nGainSel; }
+// TRACK's name: the Rytm's selected track; a box with its own names: the channel shown (its track's stem)
+static const char *src_name (int s);
+static const char *track_name (int tr)
+{
+	if (sidecar_ui_box_names ()) return s_bHave ? src_name (s_V.src) : "-";
+	return tr >= 0 && tr < 12 ? kTrack[tr] : "-";
+}
+static const char *usb_words (void)	// what the page waits for, in the box's word
+{
+	static char b[64];
+	lv_snprintf (b, sizeof b, oled () ? "THE %s'S USB AUDIO: THE TRACKS, MAIN AND IN" : "the %s's USB audio: its tracks, MAIN and IN", oled () ? sidecar_ui_box_up () : sidecar_ui_box ());
+	return b;
+}
 static const char *src_name (int s)
 {
 	if (s < 0 || s >= SSC_SOURCES) return "-";
-	return s_bHave && s_V.name[s][0] ? s_V.name[s] : kDefName[s];
+	if (s_bHave && s_V.name[s][0]) return s_V.name[s];
+	return s >= 1 && s <= 8 && sidecar_ui_box_names () ? sidecar_ui_voice (s - 1) : kDefName[s];	// a box's own: voice v on IN 2 + v (core tap_source_name)
 }
 
 // ---- geometry: the 800x480 layouts plus what the screen adds (TH->dx, dy): the trace gets two thirds of the height,
@@ -127,7 +142,7 @@ static void area_draw (lv_event_t *e)
 		th_text (l, &c, 0, h / 2 - fh - 2, w, O ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 O ? "NO OVERBRIDGE AUDIO YET" : "No Overbridge audio yet");
 		th_text (l, &c, 0, h / 2 + LU (4), w, fm, c_dim (), LV_TEXT_ALIGN_CENTER,
-			 O ? "THE RYTM'S USB AUDIO: THE TRACKS, MAIN AND IN" : "the Rytm's USB audio: its tracks, MAIN and IN");
+			 usb_words ());
 		return;
 	}
 	const sidecar_scope_view_t *v = &s_V;
@@ -160,7 +175,7 @@ static void area_draw (lv_event_t *e)
 	// the corners: the source (TRACK: the Rytm's), the gain; the timebase a division; the peak; FROZEN
 	char b[40];
 	int s = v->src;
-	if (s_nSrc < 0) lv_snprintf (b, sizeof b, O ? "TRACK %s" : "Track %s", v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-");
+	if (s_nSrc < 0) lv_snprintf (b, sizeof b, O ? "TRACK %s" : "Track %s", track_name (v->track));
 	else lv_snprintf (b, sizeof b, "%s", src_name (s));
 	th_text (l, &c, pad, pad - 1, w / 2, O ? TH->f_body : TH->f_body, c_ink (), LV_TEXT_ALIGN_LEFT, b);
 	if (s_nGainSel) lv_snprintf (b, sizeof b, "X%d", g); else lv_snprintf (b, sizeof b, O ? "AUTO X%d" : "AUTO x%d", g);
@@ -364,8 +379,8 @@ static void keys_update (void)
 	else lv_snprintf (b, sizeof b, oled () ? "GAIN AUTO" : "Gain AUTO");
 	th_key_text (s_Gain, b);
 	int tr = s_bHave ? s_V.track : -1;
-	th_key_sub (s_TrackKey, tr >= 0 && tr < 12 ? kTrack[tr] : "-");
-	const char *sn = s_nSrc < 0 ? (tr >= 0 && tr < 12 ? kTrack[tr] : "-") : src_name (s_nSrc);
+	th_key_sub (s_TrackKey, track_name (tr));
+	const char *sn = s_nSrc < 0 ? track_name (tr) : src_name (s_nSrc);
 	if (oled ())
 	{
 		lv_snprintf (r, sizeof r, "%s%s  %s", s_bFrozen ? "FROZEN  " : "", sn, kTb[s_nTb]);

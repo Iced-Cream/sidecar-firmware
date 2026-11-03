@@ -114,7 +114,10 @@ struct Profile {
   int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
   bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (one report a note: the A4, on any track)
   const Screen* screen;       // with kRemoteUi; null: the Rytm's words
+  const char* short_name;     // the box's word for the user where the Sidecar would say "Rytm" ("A4"); null: name
 };
+// The box's word for the user: its short name, else its name, else "box"
+inline const char* short_name(const Profile& p) { return p.short_name ? p.short_name : p.name ? p.name : "box"; }
 
 const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use

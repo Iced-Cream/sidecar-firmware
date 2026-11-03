@@ -27,7 +27,7 @@ static constexpr Profile kRytm = {
     0x04, 0x03, 0x11,
     kRemoteUi | kProject | kKits | kPatterns | kSendFx | kUserSlots | kSrcView | kFxIn | kPools,
     0, 0, {}, {}, {}, nullptr, nullptr, {},
-    kBracketFull, &out::kRytmMk2, nullptr, false, false};
+    kBracketFull, &out::kRytmMk2, nullptr, false, false, 0, false, nullptr, "Rytm"};
 static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 

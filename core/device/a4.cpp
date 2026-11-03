@@ -36,7 +36,8 @@ const Profile kA4 = {
     true, true,
     180,   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
     true,   // a chord on any track: the mod reports each note. All of it stays on the voice's channel, and that enters one analog voice
-    &kA4Screen};
+    &kA4Screen,
+    "A4"};
 
 }  // namespace device
 }  // namespace core

@@ -336,6 +336,8 @@ int main() {
     CHECK(!strcmp(ui::tap_source_name(1), "T1") && !strcmp(ui::tap_source_name(4), "T4") && !strcmp(ui::tap_source_name(9), "IN L"));   // the box's own words on SCOPE, its voices on their channels
     CHECK(ui::tap_channel_of_voice(1) == 3 && ui::tap_channel_of_voice(3) == 5);
     CHECK(!strcmp(device::kA4.screen->keys, "UP + YES: PAGES"));
+    CHECK(!strcmp(device::short_name(device::active()), "A4") && !strcmp(device::short_name(device::rytm()), "Rytm"));   // the box's word on the touchscreen
+    CHECK(!strcmp(voice_name(0), "T1") && !strcmp(voice_name(4), "-"));
     CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == &device::kA4);
     CHECK(hello() == device::kOk);
     const out::Device& a = *device::kA4.audio;

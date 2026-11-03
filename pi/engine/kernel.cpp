@@ -1456,6 +1456,9 @@ void CKernel::PushUi (void)
 	u.rytm = CObUsb::Streaming () || m_pMIDI != 0;
 	u.underruns = g_Output.Underflows ();
 	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (v);
+	const core::device::Profile &Box = core::device::active ();	// the box in use: its word and its voices' names
+	u.box = core::device::short_name (Box);
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.voice[v] = Box.screen ? Box.screen->names[v] : 0;
 	u.poly = bridge::poly_voices ();	// UX review S1: the POLY badges
 	u.pattern = bridge::rytm_pattern (&u.transport);	// T1: HOME's NOW panel
 	u.note = m_pTransport == &m_Tcp ? "link: tcp" : m_pTransport == &m_SelfTest ? "link: self-test" : "link: usb";

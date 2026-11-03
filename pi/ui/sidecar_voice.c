@@ -4,6 +4,7 @@
 // FUNC teal (no red); CLASSIC the same drawings at its scale in the display window.
 #include "sidecar_voice.h"
 #include "sidecar_theme.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' names
 #include "lvgl.h"
 #include <math.h>
 #include <stddef.h>
@@ -458,12 +459,14 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 		// UX review T7: the title names the track and its machine ("VOICE  RS  6-OP FM"; voice_pi puts the shared long
 		// name in v->name for a Sidecar machine), the name line the Rytm's own name
 		char t[48], r[32];
-		const char *tn = v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-";
+		const char *tn = sidecar_ui_box_names () ? (v->track >= 0 && v->track < 8 ? sidecar_ui_voice (v->track) : "-")	// a box's track: its voice
+				 : v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-";
 		if (v->valid) lv_snprintf (r, sizeof r, "%s  %s", tn, v->sidecar ? v->name : "ANALOG");
 		else lv_snprintf (r, sizeof r, "-");
 		if (s_TitleBar) th_titlebar_set (s_TitleBar, "VOICE", r, 0);
 		else { lv_snprintf (t, sizeof t, "VOICE  %s", r); th_label_set (s_Title, t); }
-		th_label_set (s_Name, v->valid ? v->name : "WAITING FOR THE RYTM");
+		lv_snprintf (t, sizeof t, "WAITING FOR THE %s", sidecar_ui_box_up ());
+		th_label_set (s_Name, v->valid ? v->name : t);
 		if (v->pattern >= 0) lv_snprintf (t, sizeof t, "PATTERN %c%02d  UP + T4: HERE", 'A' + v->pattern / 16, v->pattern % 16 + 1);
 		else lv_snprintf (t, sizeof t, "UP + T1..T8 ON THE RYTM: PAGES");
 		th_label_set (s_Info, t);
