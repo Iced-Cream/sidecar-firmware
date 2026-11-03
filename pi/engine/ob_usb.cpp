@@ -193,9 +193,12 @@ CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
 // 1935:000d: Circle's MIDI driver takes it).
 // The hub a box hangs off when that hub is the Pi 4's own: the VL805's USB 2 hub (2109:3431) right on a root port,
 // part of the board, so a pointer to it stays good for as long as the controller. Any other hub can be unplugged
-// while a retry waits, so it gets none (0).
+// while a retry waits, so it gets none (0) - also an external hub with the same generic VIA id, so Pi 4 builds only.
 static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
 {
+#if RASPPI != 4 && !defined (OB_USB_TEST)
+	return 0;
+#endif
 	CUSBStandardHub *pHub = pDevice->GetParentHub ();
 	if (pHub == 0) return 0;
 	CUSBDevice *pHubDevice = pHub->GetDevice ();

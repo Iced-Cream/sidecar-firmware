@@ -236,8 +236,9 @@ int main() {
       b.dev.speed = USBSpeedFull, b.dev.hub = &hub;
       CHECK(b.ob && !b.ob->Configure());
       CHECK(CLogger::Get()->lines.back().find("behind a hub, so no retry") != std::string::npos);
+      auto n = CLogger::Get()->lines.size();
       CTimer::s_now64 = 60000000, CObUsb::PollReEnum();
-      CHECK(hub.rescans == 0 && port.rescans == 1);
+      CHECK(hub.rescans == 0 && port.rescans == 1 && CLogger::Get()->lines.size() == n);   // nothing was scheduled
     }
     {  // the Pi 4: every box hangs off the VL805's own hub (2109:3431 on a root port), which is retried
       CUSBDevice hd;
