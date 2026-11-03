@@ -37,12 +37,15 @@ int main() {
   const Bytes ci = {0xF0, 0x7E, 0x7F, 0x0D, 0x70, 0x02, 1, 2, 3, 4, 5, 6, 7, 8, 0xF7};
   const Bytes tiny = {0xF0, 0xF7}, short3 = {0xF0, 0x01, 0xF7};
   const Bytes uni = {0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7};   // identity request: universal, not CI
+  // OS-update look-alikes on other device bytes: a test build's message (7D) and an RPC (10) whose payload starts 7E|7F
+  const Bytes tb = {0xF0, 0x00, 0x20, 0x3C, 0x7D, 0x00, 0x7E, 1, 2, 3, 0xF7};
+  const Bytes rpc = {0xF0, 0x00, 0x20, 0x3C, 0x10, 0x00, 0x7F, 1, 2, 0xF7};
 
   // to the Rytm: the kit, notes, CCs, clock, tiny SysEx and non-CI universal pass; OS update, host link, CI do not
   {
     MidiFilter f(true);
     Bytes in, want;
-    for (const Bytes* m : {&note, &kit, &os, &cc, &link, &ci, &clock, &os_start, &tiny, &short3, &uni, &note}) {
+    for (const Bytes* m : {&note, &kit, &os, &cc, &link, &ci, &clock, &os_start, &tiny, &short3, &uni, &tb, &rpc, &note}) {
       Bytes p = Pack(*m);
       in.insert(in.end(), p.begin(), p.end());
       if (m != &os && m != &link && m != &ci && m != &os_start && m != &tiny) want.insert(want.end(), p.begin(), p.end());
@@ -50,6 +53,21 @@ int main() {
     Bytes out = Run(f, in);
     CHECK(out == want);
     CHECK(f.DroppedMessages() == 5);
+    CHECK(!f.InSysEx());
+  }
+  // to the Rytm with SetPassOsUpdate(true) (usbmidi=os:on|emu): the OS update passes whole, the rest as before
+  {
+    MidiFilter f(true);
+    f.SetPassOsUpdate(true);
+    Bytes in, want;
+    for (const Bytes* m : {&note, &os_start, &os, &link, &os, &ci, &os_start, &tiny, &cc}) {
+      Bytes p = Pack(*m);
+      in.insert(in.end(), p.begin(), p.end());
+      if (m != &link && m != &ci && m != &tiny) want.insert(want.end(), p.begin(), p.end());
+    }
+    Bytes out = Run(f, in);
+    CHECK(out == want);
+    CHECK(f.DroppedMessages() == 3);
     CHECK(!f.InSysEx());
   }
   // to the computer: the OS-update shape passes (the Rytm never sends one; only the Rytm-bound side blocks it)

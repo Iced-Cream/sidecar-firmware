@@ -390,6 +390,11 @@ boolean CKernel::Initialize (void)
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
 		m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
 				m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
+		if (m_pSidecar != 0 && m_pSidecar->OsUpdate ())
+			m_Logger.Write (From, LogWarning, "gadget: usbmidi=os:%s: Elektron OS upgrades from the computer pass to %s",
+					m_pSidecar->OsUpdateName (), m_pSidecar->OsPass () ? "the Rytm on USB too" : "the emulator only");
+		if (m_pSidecar != 0 && m_pSidecar->UsbReboot ())
+			m_Logger.Write (From, LogWarning, "gadget: usbreboot=1: the computer's reboot SysEx on the MIDI port reboots the Pi");
 	}
 	else if (strcmp (pGadgetMode, "midi") == 0)
 	{
@@ -510,6 +515,9 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  (int) D.restart_last, (int) D.under_first, (int) D.under_last, D.since_reset,
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
+	pOut->Append (s);
+	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they pass now
+		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off", k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false");
 	pOut->Append (s);
 	{	// the control loop's recent gaps over 2 ms: [gap us, frames pulled at the end, wfe us, cntkctl, DAIF, the pass's
 		// longest section (0 midi .. 5 idle, as "stall"), its us, its slowest step and us, the named steps' us, the card's on core 3]
@@ -1192,7 +1200,9 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 {
 	// the Rytm's MIDI to the computer (the Sidecar's filter drops the host link and MIDI-CI): Circle hands over each
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
-	if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->FromRytmMIDI (pPacket - 1);
+	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar != 0 && (!pSidecar->OsUpdate () || CObUsb::Active ())) pSidecar->FromRytmMIDI (pPacket - 1);
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();
@@ -2180,7 +2190,9 @@ void CKernel::Run (void)
 		paircode_pi::Poll ();			// the Rytm's SIDECAR MENU > WEB UI asks: a new code, forget, web on / off
 		char Link[40];
 		if (m_Console.TakeLink (Link, sizeof Link)) UseLink (Link);
+		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// usbmidi=os:emu follows the host
 		if (s_bRebootRequested) StopAndReboot ("the flasher's magic");
+		if (m_pSidecar != 0 && m_pSidecar->TakeReboot ()) StopAndReboot ("asked on the USB-C MIDI port (usbreboot=1)");
 		if (g_Guard.FatalWhy () != 0) StopAndReboot (g_Guard.FatalWhy ());
 		if (m_pWifi->TakeReboot ()) StopAndReboot ("the Wi-Fi settings (a join, or a failed one's revert)");
 		if (bridge::take_restart ()) StopAndReboot ("another device's state folder");

@@ -54,6 +54,11 @@ public:
 	boolean ForRytm (u32 *)				{ return FALSE; }
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
 	void RytmMIDIConnected (boolean)		{}
+	boolean OsUpdate (void) const			{ return FALSE; }
+	const char *OsUpdateName (void) const		{ return "off"; }
+	void SetLinkTcp (boolean)			{}
+	boolean TakeReboot (void)			{ return FALSE; }
+	boolean UsbReboot (void) const			{ return FALSE; }
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
@@ -64,6 +69,8 @@ public:
 #include <circle/types.h>
 
 #include "midi_filter.h"
+#include "reboot_sysex.h"
+#include "usbmidi_os.h"
 #include "spsc.h"
 #include "tohost_q.h"
 
@@ -111,10 +118,13 @@ public:
 	void OnDeactivate (void) override;
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
+	boolean Held (void) const			{ return m_bHeld; }
+	void Resume (void);				// OUT, usbmidi=os: re-arm a held endpoint (IRQs masked)
 
 private:
 	CSidecarGadget *m_pSidecar;
 	boolean m_bActive, m_bBusy;
+	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
 	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 	DMA_BUFFER (u8, m_Buffer, BufSize);
 };
@@ -147,6 +157,15 @@ public:
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
 	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
+	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
+	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
+	// flow control and the emu relay
+	boolean OsUpdate (void) const			{ return m_nOsUpdate != OsUpdateOff; }
+	const char *OsUpdateName (void) const;
+	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
+	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp)
+	boolean UsbReboot (void) const			{ return m_bUsbReboot; }
+	boolean TakeReboot (void);			// core 0's loop: the computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 
 protected:
 	const void *GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength) override;
@@ -165,6 +184,7 @@ private:
 	void TakeOut (const u8 *pBuffer, size_t nLength);
 	unsigned Feedback (unsigned nFrame);
 	void MIDIFromHost (const u8 *pBuffer, size_t nLength);
+	boolean ToRytmRoom (void) const;		// usbmidi=os: room in the Rytm-bound queue for one more OUT transfer
 	unsigned MIDIForHost (u8 *pBuffer, unsigned nMax);
 	void ToHost (const u8 *pPacket);		// one packet into the computer's queue (IRQs masked)
 	void HostUp (boolean bUp);			// the MIDI IN endpoint (de)activated (gadget IRQ), or torn down (OnSuspend)
@@ -186,6 +206,13 @@ private:
 	u64 m_nCntFrq, m_nT0;
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
+	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
+	unsigned m_nOsUpdate;				// usbmidi=os: see OsUpdate ()
+	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
+	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
+	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
+	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
+	static unsigned ModeFrom (unsigned nMode);	// usbmidi_os::Mode -> OsUpdateOff|Emu|Rytm
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];

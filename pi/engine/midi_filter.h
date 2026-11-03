@@ -8,8 +8,10 @@
 //   both ways      the engine's host-link SysEx F0 7D 52 54 ... (the Rytm and the engine talk to each other only)
 //                  MIDI-CI, universal SysEx F0 7E|7F <dev> 0D ... (macOS 26 sends discovery on every port open;
 //                  an echoed CI message wedged CoreMIDI's port, measured in P1)
-//   to the Rytm    Elektron OS update F0 00 20 3C <dev> 00 7E|7F ... (an OS .syx file's messages: 7E data,
-//                  7F start/end; rytm-emu fw/*.syx, measured)
+//   to the Rytm    Elektron OS update F0 00 20 3C 0C 00 7E|7F ... (an OS .syx file's messages: 7E data,
+//                  7F start/end; device byte 0C = the OS updater; rytm-emu fw/*.syx, measured), unless
+//                  SetPassOsUpdate(true) (usbmidi=os:on|emu). Other device bytes (07 dumps, 10 RPC, 7D test builds)
+//                  never match, whatever their payload starts with.
 //                  the empty SysEx F0 F7 (macOS sends one on a port open, measured; it means nothing)
 // Portable: Mac-tested (tests/test_midi_filter.cpp).
 #pragma once
@@ -19,8 +21,11 @@
 class MidiFilter {
  public:
   static const int kHead = 9;            // bytes of a SysEx's head that decide (3 packets)
+  static const uint8_t kOsUpdateDevice = 0x0C;   // the device byte of an Elektron OS .syx's messages
 
   explicit MidiFilter(bool to_rytm) : to_rytm_(to_rytm) {}
+  void SetPassOsUpdate(bool pass) { pass_os_update_ = pass; }
+  void Reset() { held_ = 0; head_n_ = 0; state_ = kIdle; }        // a new source: nothing of the old one's SysEx stays   // to the Rytm: OS updates go through (sidecar_gadget: usbmidi=os:)
 
   // One packet in. emit(const uint8_t p[4]) is called for every packet that goes through (0..4 per call).
   template <class Emit>
@@ -79,14 +84,15 @@ class MidiFilter {
   static bool MidiCi(const uint8_t* h, int n) { return n >= 4 && (h[1] == 0x7E || h[1] == 0x7F) && h[3] == 0x0D; }
   static bool Empty(const uint8_t* h, int n) { return n == 2 && h[1] == 0xF7; }
   static bool OsUpdate(const uint8_t* h, int n) {
-    return n >= 7 && h[1] == 0x00 && h[2] == 0x20 && h[3] == 0x3C && h[5] == 0x00 && (h[6] == 0x7E || h[6] == 0x7F);
+    return n >= 7 && h[1] == 0x00 && h[2] == 0x20 && h[3] == 0x3C && h[4] == kOsUpdateDevice && h[5] == 0x00 &&
+           (h[6] == 0x7E || h[6] == 0x7F);
   }
 
  private:
   enum State { kIdle, kHolding, kPassing, kDropping };
 
   bool Drop(const uint8_t* h, int n) const {
-    return HostLink(h, n) || MidiCi(h, n) || (to_rytm_ && (OsUpdate(h, n) || Empty(h, n)));
+    return HostLink(h, n) || MidiCi(h, n) || (to_rytm_ && ((!pass_os_update_ && OsUpdate(h, n)) || Empty(h, n)));
   }
   // A held SysEx cut short by a status byte or a new F0: its packets go through (undecided: a short one).
   template <class Emit>
@@ -104,6 +110,7 @@ class MidiFilter {
   }
 
   bool to_rytm_;
+  bool pass_os_update_ = false;
   State state_ = kIdle;
   uint8_t hold_[3][4];
   int held_ = 0;

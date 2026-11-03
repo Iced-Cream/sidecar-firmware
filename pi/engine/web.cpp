@@ -593,9 +593,12 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		if (!bForm && !FormValue (pParams, "c", Cmd, sizeof Cmd)) return HTTPBadRequest;
 		// another site's page cannot post commands (its Origin is not ours); wifi= only in a POST's body (never a URL)
 		// midibridge= neither: /cmd's origin check is the lenient one, and the bridge can carry an OS upgrade, so it
-		// is turned on only from the page (POST /midibridge/set, strict) or on the serial console
+		// is turned on only from the page (POST /midibridge/set, strict) or on the serial console. usbmidi= (and its
+		// older name osupdate=) neither, for the same reason: it lets OS upgrades through the USB-C MIDI port
+		// (usbmidi_os.h); cmdline.txt or the serial console only
 		if (!FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), FALSE)
-		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0)
+		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0
+		    || strncmp (Cmd, "usbmidi=", 8) == 0 || strncmp (Cmd, "osupdate=", 9) == 0)
 		{
 			memset (Cmd, 0, sizeof Cmd);
 			return HTTPBadRequest;
