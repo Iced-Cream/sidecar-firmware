@@ -1415,6 +1415,10 @@ def t_listknobs(e):
     # core/ui README "List knobs" on the Rytm's own reports, the core's clock emulated (RUI_LFO): LFO WAVE on knob E
     os.environ["RUI_LFO"] = "lfo=1:wav:0"
     os.environ["RUI_LIST_PACED"] = "1"
+    # a core card of its own: after t_lfo the shared one holds L1 (FX1, WAVE 4), whose project load rui_link only
+    # overrides on a card with no LFOs (L1 OFF), so WAVE would start at 4 and end clamped at 7
+    keep = e.core_card
+    e.core_card = tempfile.mkdtemp(prefix="rui_e2e_card_")
     try:
         r = e.run("listknobs", 4200, ENTER + [(800, "press", "UP", 150), (840, "press", "LFO"), (1400, "turn", "4:+16", 3, 100),
                                               (2000, "turn", "4:+40", 1, 50), (2600, "turn", "4:-1", 1, 50),
@@ -1422,7 +1426,8 @@ def t_listknobs(e):
     finally:
         os.environ.pop("RUI_LFO", None)
         os.environ.pop("RUI_LIST_PACED", None)
-    lj = [x["lfo"] for x in r["events"] if "lfo" in x and x["lfo"]]
+        e.core_card = keep
+    lj =[x["lfo"] for x in r["events"] if "lfo" in x and x["lfo"]]
     w = lj[-1]["l"][0]["wav"] if lj else None
     check("listknobs: 3 + 1 hard reports up, a count back, 8 slow counts up: WAVE at 3 + 1 - 1 + 2 (before: its end, 7)",
           w == 5, w)
