@@ -349,7 +349,7 @@ page's make prompt says `FUNC+CHRO: POLY CONFIG`. An older host reads page 0x20 
 UP + AMP), POOL (UP + T13, or SRC LIST's) and CHOP (a push on its SRC view) work on what the selected track holds, so
 they are not in the SIDECAR MENU and not on the LEFT / RIGHT ring (`page_keys.h sc_rytm_mk2_only`, read by
 `sc_shortcut_only`; `core/ui/remote.cpp page_ids`): they open from that track by their keys. The SIDECAR MENU lists
-POLY CONFIG, SAMPLE, AUTO SAMPLE, SONG, REC, SCOPE, LFO, PROJECT, STATUS, SYSTEM and KEYS (ALL COMBOS) (`test_ui` holds
+POLY CONFIG, ARP, SAMPLE, AUTO SAMPLE, SONG, REC, SCOPE, LFO, PROJECT, STATUS, SYSTEM, USER SLOTS, WEB UI and KEYS (ALL COMBOS) (`test_ui` holds
 the rule, not the count). NO on a page opened by a shortcut goes back to where it was opened from: the stock screen
 (the page closes, `3A 0 0`, one NO not two) when it was opened there, the Sidecar page under it when it was opened over
 one (two levels kept: SCOPE, then UP + LFO, then UP + T12: NO PROJECT -> LFO -> SCOPE -> SIDECAR); a page opened from

@@ -35,7 +35,7 @@ struct Entry {
 UI_ROM const Entry kEntries[] = {
     {"POLY CONFIG", "POLY"}, {"ARP", "ARP"},         {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
     {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"PROJECT", "PROJECT"},  {"STATUS", "SIDECAR"}, {"SYSTEM", "SYSTEM"},
-    {"WEB UI", "WEB UI"},    {"KEYS (ALL COMBOS)", nullptr},
+    {"USER SLOTS", "USER SLOTS"}, {"WEB UI", "WEB UI"}, {"KEYS (ALL COMBOS)", nullptr},
 };
 constexpr int kAll = sizeof kEntries / sizeof kEntries[0];
 // The rows this box has: all on the Rytm

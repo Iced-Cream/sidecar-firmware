@@ -37,6 +37,11 @@ void keys_map(bool on);    // UP held alone (on: KEYS shown, T1..T10 lit) / let 
 bool keys_map_on();        // the map shows (the touchscreen shows it too)
 bool keys_map_over(bool on);   // rui1050: UP held alone over an open page (on: KEYS as its map); off: true when it showed
 void lfo_page_reset();   // ux1027: the LFO page back on its main view (the page left)
+// USER SLOTS (page_slots.cpp): U1..U5's machines (remote.h RemoteSlots), on the ring after SCOPE / AUTO and in the MENU
+extern const ExtraPage kSlotsPage;
+void slots_page_reset();   // tests: row U1, no pick, no note
+int slots_page_row();      // tests: the row (0..4)
+int slots_page_pick();     // tests: the pick (-1 none, 0 "---", 1.. the installed entry + 1)
 void keys_map_drop();      // a hello or the page closed: the map (and its touchscreen overlay) gone
 void menu_reset();         // tests
 int menu_rows();                     // rui1051 (tests): the MENU's rows and the page title of row i (null: KEYS)

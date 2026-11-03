@@ -188,6 +188,24 @@ core library, because `teensy/setup_core_lib.sh` leaves `core/user/` out.
   - When the arenas fill up, everything is loaded again once (the arenas are reset with no voice playing); if it
     still does not fit, the slot is NO_ROOM.
 - **Console** (serial, or the web page's command box): `um`, `um=rescan`, `um=assign:<1..5>:<id>`, `um=clear:<1..5>`.
+- **The USER SLOTS page** (the box's own screen, `core/ui/page_slots.cpp`): any box with the remote UI and the user
+  slots (the Rytm, the A4) can set U1..U5 there, with no firmware mod of its own for it. UP + YES opens the Sidecar's
+  pages; the page is on the LEFT / RIGHT ring after SCOPE, SAMPLE and AUTO (on the A4 the ring's last: LEFT once on
+  SIDECAR), and a row of the SIDECAR MENU.
+  - Rows U1..U5, each the machine its slot plays as the box shows it (`---` empty, `!NAME` missing or no room,
+    `NAME...` loading).
+  - UP / DOWN or knob A pick the row. Knob B steps through the installed list (the box's own list: one entry per id,
+    the newest version), one machine per detent (`list_turn`); `---` comes first and clears the slot. The row shows
+    the pick with a `?`, and the bottom bar says `YES: SET U2  NO: KEEP`.
+  - YES sends the console's command, `um=assign:<slot>:<id>` or `um=clear:<slot>`: the same call the web page's select
+    makes, so the map, its save, the notes (`RMP_SRC_SAVED`), the fingerprints and the project's list behave the same.
+    The answer is in the bottom bar for 2 s (`U2 = NUSAW`, `U2 CLEARED`, `SET WHEN THE MAP IS READ` while a project's
+    map is still being read).
+  - NO drops a pick; with none, NO goes back to SIDECAR as on every page. A pick is also dropped when the row changes
+    or the page is left.
+  - With an empty `/Plugins` the bottom bar says `NO MACHINES IN /PLUGINS`; a slot can still be cleared.
+  - The page shows only where the platform has the user machines (`um::begin` installs its hooks,
+    `core::ui::remote_slots`): the Pi and the Mac's core lib, not the Teensy.
 
 ## JSON (shared with the Teensy's web console, docs/webui-protocol.md on teensy-webui-plugins)
 
