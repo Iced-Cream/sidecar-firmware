@@ -174,6 +174,8 @@ uint64_t bench(const char* machine, uint32_t* worst_block, int* peak = nullptr, 
 // slots, 4000 12-frame blocks (1 s), an engine and values of its own (the live chains untouched). Returns the ticks in
 // total, *worst_block the longest block. ins_bench_name: "FILTER" ..
 uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash = nullptr);
+// SAT on every slot of the chains core 2 runs (buses, master), in stereo: the worst SAT can load it
+uint64_t ins_bus_bench(uint32_t* worst_block, uint32_t* hash = nullptr);
 // neon_bench.cpp: NEON kernel row (0..) against its C, ticks of the same work in each; its name, null past the last row
 const char* neon_bench(unsigned row, uint64_t* c_ticks, uint64_t* neon_ticks);
 int ins_json(char* out, int cap);   // "\"ins\":{...}" (core/fx/insert.h json: the /status page's)

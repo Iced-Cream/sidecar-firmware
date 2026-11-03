@@ -30,6 +30,7 @@ const Labels kLabels[kAllTypes] = {
     {"TREMOLO", {"RATE", "DPTH", "SHPE", "PAN"}, {64, 90, 0, 0}},
     {"RINGMOD", {"FREQ", "SHPE", "MOD", "MIX"}, {64, 0, 0, 127}},
     {"AMP", {"MODL", "GAIN", "TONE", "LEV"}, {0, 64, 64, 109}},   // core/fx/amp.h
+    {"SAT", {"CHAR", "DRV", "TONE", "MIX"}, {0, 40, 64, 127}},    // core/fx/sat_fx.h
     // the master's: the send FX's knobs P2..P5, their labels (core/fx/master.h)
     {"CHORUS", FXL(kChorusLabels), {50, 90, 40, 0}},
     {"COMB", FXL(kCombLabels), {40, 30, 40, 20}},
@@ -255,6 +256,22 @@ void value_text(int t, int k, int v, char* b, int cap) {
       else sniprintf(b, cap, CORE_STR("%c%dDB"), db < 0 ? '-' : '+', db < 0 ? -db : db);
       return;
     }
+    case kSat:
+      if (k == 0) {
+        sniprintf(b, cap, "%s", satfx::char_name(satfx::char_of(v)));
+        return;
+      }
+      if (k == 1) {
+        sniprintf(b, cap, CORE_STR("+%dDB"), (v * 24 + 63) / 127);
+        return;
+      }
+      if (k == 2) {
+        int db = ((v - 64) * 6 + (v >= 64 ? 31 : -31)) / 63;
+        if (!db) sniprintf(b, cap, "FLAT");
+        else sniprintf(b, cap, CORE_STR("%c%dDB"), db < 0 ? '-' : '+', db < 0 ? -db : db);
+        return;
+      }
+      break;
     default: break;
   }
   if (t >= kTypes && master::zone_text(t, k, v, b, cap)) return;   // a send TYPE's zones (MODAL 12, 1/16)
@@ -578,7 +595,7 @@ bool command(const char* p, char* o, int cap) {
   } else if (same_ci(key, "type")) {
     int t = type_from_name(val);
     if (t < 0) {
-      sniprintf(o, cap, CORE_STR("ins: no type \"%s\" (OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD AMP)"), val);
+      sniprintf(o, cap, CORE_STR("ins: no type \"%s\" (OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD AMP SAT)"), val);
       return true;
     }
     if (t == kAmp && c >= kVoices && c < kM0) {

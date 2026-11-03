@@ -75,6 +75,7 @@ int seqdemo_swing (int rytm);
 int seqdemo_poly (int rytm);
 int seqdemo_x (int rytm, int *pat);
 int seqdemo_xstep (int rytm, int step, int *fx, int *lc, int *rnd);
+int seqdemo_arpl (int rytm, int step, int f);
 int seqdemo_seed (void);
 int seqdemo_rytm_parse (const unsigned char *m, int n, unsigned char *rec, int *pattern);
 
@@ -1328,6 +1329,9 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (9);
 	EXPECT (sidecar_insfx_shown () && sidecar_ui_page () == 9);
 	ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-voice");
+	ins_fake (12); ins_slot (2, 1, 10, "SAT", "CHAR", "DRV", "TONE", "MIX", "TAPE", "+8DB", "FLAT", "127", 0, 40, 64, 127);
+	sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-sat");
+	ins_fake (13); sidecar_insfx_set (&s_Iv); run (2);
 	// the MASTER FX page: both SRCs, the commands its keys send
 	{
 		int pg = sidecar_ui_page ();
@@ -1994,7 +1998,7 @@ static void theme_run (int style, const char *pre)
 	drag (nx, PY (72, top), nx + gw / 16, PY (73, top), 6, 0);		// one step later, a semitone up: micro kept
 	int m1 = 99;
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) == 0 && seqdemo_note (8, 3, 73, 0, &m1) > 0 && m1 == m0);
-	if (o) tap (LU (249) + 5 * DX / 7 + (LU (50) + DX / 7) / 2, LU (218) + DY + LU (11)); else tap (LU (722) + DX, LU (52) + LU (400) + DY);	// UNDO
+	if (o) tap (LU (278) + 5 * DX / 7 + (LU (35) + DX / 7) / 2, LU (218) + DY + LU (11)); else tap (LU (722) + DX, LU (52) + LU (400) + DY);	// UNDO
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) > 0 && seqdemo_note (8, 3, 73, 0, 0) == 0);
 	// editing a note: selected, dragged later and up (where it was: an outline), its card
 	sidecar_seqed_debug (SEQED_DRAW, 0, 1, top + 1, 13, 74);
@@ -2114,6 +2118,31 @@ static void theme_run (int style, const char *pre)
 		sidecar_seqed_debug (SEQED_STEP, 0, 2, top, -1, -1);
 		run (2);
 		shot ("seq-step-none");
+		sidecar_seqed_debug (SEQED_ARP, 0, 2, top, 13, 74);
+		run (3);
+		tap (o ? KEYAT (0, 196 * lw / 352, 2, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 2, 7), y1);		// MODE UP
+		EXPECT_CMD ("seq=alock:9:14:0:1"); EXPECT (seqdemo_arpl (8, 13, 0) == 1);
+		tap (o ? KEYAT (0, 176 * lw / 352, 6, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 6, 7), y2);		// SPD 1/32
+		EXPECT_CMD ("seq=alock:9:14:1:5"); EXPECT (seqdemo_arpl (8, 13, 1) == 5);
+		tap (o ? KEYAT (SLX (200), lw - SLX (200), 3, 4) : KEYAT (SLX (412), lw - LU (4) - 412 * lw / 684, 3, 4), y1);	// GATE 100
+		EXPECT_CMD ("seq=alock:9:14:3:2"); EXPECT (seqdemo_arpl (8, 13, 3) == 2);
+		tap (o ? KEYAT (SLX (180), SLX (262) - SLX (180), 2, 4) : KEYAT (SLX (412), 130 * lw / 684, 2, 4), y2);	// RNG 2
+		EXPECT_CMD ("seq=alock:9:14:2:1"); EXPECT (seqdemo_arpl (8, 13, 2) == 1);
+		tap (o ? KEYAT (SLX (266), lw - SLX (266), 3, 4) : KEYAT (SLX (548), lw - LU (4) - 548 * lw / 684, 3, 4), y2);	// SWNG 66
+		EXPECT_CMD ("seq=alock:9:14:4:2"); EXPECT (seqdemo_arpl (8, 13, 4) == 2);
+		tap (o ? KEYAT (0, 176 * lw / 352, 0, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 0, 7), y2);		// SPD's first key: no lock
+		EXPECT_CMD ("seq=alock:9:14:1:-1"); EXPECT (seqdemo_arpl (8, 13, 1) == -1);
+		run (3);
+		shot ("seq-arp");
+		sidecar_seqed_debug (SEQED_ARP, 0, 2, top, -1, -1);
+		run (2);
+		shot ("seq-arp-none");
+		for (int f = 0; f < 5; f++)
+		{
+			char l[40];
+			snprintf (l, sizeof l, "seq=alock:9:14:%d:-1", f);
+			seqdemo_command (l);
+		}
 		// (back as it was for the shots after)
 		seqdemo_command ("seq=spd:9:follow"), seqdemo_command ("seq=dir:9:fwd"), seqdemo_command ("seq=rnd:9:mode=off");
 		seqdemo_command ("seq=rtrg:9:14:off"), seqdemo_command ("seq=fx:9:14:1:off"), seqdemo_command ("seq=lcond:9:14:all:---");

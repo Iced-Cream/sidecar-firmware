@@ -57,9 +57,9 @@ static const seq_geo_t kGeoOled = {
 	.tracks_x = 0, .tracks_y = 15, .tracks_w = 111, .tracks_h = 22,
 	.rul_y = 39, .rul_h = 9, .grid_x = 27, .grid_y = 48, .grid_w = 288, .grid_h = 120, .keys_x = 0, .keys_w = 24,
 	.lane_x = 0, .lane_y = 171, .lane_w = 352, .lane_h = 44,
-	.tools_x = 0, .tools_y = 218, .tools_w = 243, .tools_h = 22,
+	.tools_x = 0, .tools_y = 218, .tools_w = 272, .tools_h = 22,
 	.snap_x = 283, .snap_y = 15, .snap_w = 69, .snap_h = 22,
-	.undo_x = 249, .undo_y = 218, .undo_w = 50, .undo_h = 22, .redo_x = 302,
+	.undo_x = 278, .undo_y = 218, .undo_w = 35, .undo_h = 22, .redo_x = 316,
 	.row_h = 5, .row_min = 4, .row_max = 15,
 	.card_w = 172, .card_h = 36, .head_w = 1,
 };
@@ -144,6 +144,7 @@ static lv_obj_t *s_SwingM;				// SWING's presets (a value between them: none che
 static lv_obj_t *s_VoicesM, *s_AllocM, *s_UniM;		// POLY's (seqx E0): VOICES, ALLOCATION, UNISON
 static lv_obj_t *s_QntM, *s_Free;			// seqtop KEY: QNT, the seed's FREE / FIX key
 static lv_obj_t *s_SpdM, *s_DirM2, *s_RndM, *s_OctM, *s_WghtM;	// seqtop PLAY: speed, direction, R1's mode / octaves / weight
+static lv_obj_t *s_ArpM[5];				// ARP: the selected note's step's arp locks, MODE SPD RNG GATE SWNG
 static lv_obj_t *s_RtM, *s_FxM, *s_RndS, *s_CondM, *s_SlideK;	// seqtop STEP: ratchet / arp, FX 1, random notes, the locks'
 static int s_KeyV = -1, s_ScaleV = -1;			// the view's key / scale last taken (a new one moves the KEY tool)
 static int s_SwingLast = 58;				// the last swing that was not straight (the value key's toggle)
@@ -219,6 +220,12 @@ static const char *const kRtLine[8] = {"off", "cnt=2,mode=chord,rate=auto", "cnt
 static const char *const kFxMap[] = {"---", "OCT+", "OCT-", "RND2", "JMP1", "SKP1", ""};
 static const char *const kFxLine[6] = {"off", "OCT:1", "OCT:-1", "RND:2", "JMP:1", "SKP:1"};
 static const char *const kCondMap[] = {"---", "50%", "1:2", "FILL", ""};
+// ARP: a lock of each of the arp's five on that step; the first key: no lock, the sound's value plays
+static const char *const kAModeMap[] = {"MODE", "OFF", "UP", "DOWN", "UPDN", "RND", "PLAY", ""};
+static const char *const kASpdMap[] = {"SPD", "1/4", "1/8", "1/8T", "1/16", "16T", "1/32", ""};
+static const char *const kARngMap[] = {"RNG", "1", "2", "3", ""};
+static const char *const kAGateMap[] = {"GATE", "25", "50", "100", ""};
+static const char *const kASwngMap[] = {"SWG", "50", "58", "66", ""};
 static const char *const kCondLine[4] = {"---", "50%", "1:2", "fill"};
 static const int kCondCode[4] = {0, 44 + 49, 9, 1};		// core/seq's COND codes (50 %: kConds + 49)
 static const char *const kRootMap[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", ""};
@@ -235,8 +242,8 @@ static const char *const kHumTMap[] = {"0", "2", "4", "8", "16", ""};
 static const int kHumV[4] = {0, 6, 12, 24};
 static const char *const kHumVMap[] = {"0", "6", "12", "24", ""};
 static const char *const kToolMap[] = {"DRAW", "\n", "CHORD", "\n", "STRUM", "\n", "HUMAN", "\n", "KEY", "\n", "SWING", "\n", "POLY",
-				       "\n", "PLAY", "\n", "STEP", ""};
-static const char *const kToolRow[] = {"DRAW", "CHRD", "STRM", "HUM", "KEY", "SWG", "POLY", "PLAY", "STEP", ""};
+				       "\n", "PLAY", "\n", "STEP", "\n", "ARP", ""};
+static const char *const kToolRow[] = {"DRAW", "CHRD", "STRM", "HUM", "KEY", "SWG", "POLY", "PLAY", "STEP", "ARP", ""};
 // POLY (seqx E0): VOICES (AUTO: the machine's default), the Analog Four's ALLOCATION modes, UNISON's stack
 static const int kVoicesV[7] = {0, 1, 2, 3, 4, 6, 8};
 static const char *const kVoicesMap[] = {"AUTO", "1", "2", "3", "4", "6", "8", ""};
@@ -1178,6 +1185,23 @@ static void x_view (void)
 	else lv_snprintf (b, sizeof b, oled () ? "STEP %d: %s%s%s%s" : "STEP   %d:%s%s%s%s", st + 1, (s_V.xstep[st] & 2) ? " ratchet/arp" : "",
 			  (s_V.xstep[st] & 4) ? " FX" : "", (s_V.xstep[st] & 1) ? " random notes" : "", (s_V.xstep[st] & 24) ? " lock cond/slide" : "");
 	set_text (s_PanelInfo[SEQED_STEP], b);
+	static const char *const *const kAMaps[5] = {kAModeMap, kASpdMap, kARngMap, kAGateMap, kASwngMap};
+	int nl = 0, n = st >= 0 ? lv_snprintf (b, sizeof b, oled () ? "ARP LOCKS %d:" : "ARP LOCKS   step %d:", st + 1) : 0;
+	for (int f = 0; f < 5; f++)
+	{
+		static const int kAKeys[5] = {7, 7, 4, 4, 4};		// (the maps' keys)
+		int x = st >= 0 ? s_V.arpl[st] >> (3 * f) & 7 : 0;
+		if (x >= kAKeys[f]) x = 0;
+		if (s_ArpM[f]) th_seg_set (s_ArpM[f], st >= 0 ? x : -1);
+		if (x)
+		{
+			nl++;
+			n += lv_snprintf (b + n, sizeof b - n, " %s", kAMaps[f][x]);
+		}
+	}
+	if (st < 0) lv_snprintf (b, sizeof b, oled () ? "ARP: SELECT A NOTE (DRAW)" : "ARP LOCKS   select a note with DRAW: the arp's values for its step only");
+	else if (!nl) lv_snprintf (b + n, sizeof b - n, " none, the sound's arp");
+	set_text (s_PanelInfo[SEQED_ARP], b);
 }
 static void x_send (const char *fmt, const char *a)
 {
@@ -1375,6 +1399,16 @@ static void ctl_cb (lv_obj_t *m, int i, void *ud)
 		if (m == s_RndM) s_V.rnd_mode = i % 3; else if (m == s_OctM) s_V.rnd_oct = i % 4 + 1; else s_V.rnd_wght = i % 6;
 		lv_snprintf (kv, sizeof kv, "mode=%s,oct=%d,wght=%s", kRndWord[s_V.rnd_mode % 3], s_V.rnd_oct, kWghtWord[s_V.rnd_wght % 6]);
 		x_send ("seq=rnd:%d:%s", kv);
+		return;
+	}
+	else if (m == s_ArpM[0] || m == s_ArpM[1] || m == s_ArpM[2] || m == s_ArpM[3] || m == s_ArpM[4])
+	{
+		if (!step_ok ()) { x_view (); return; }
+		int f = 0;
+		while (m != s_ArpM[f]) f++;
+		char a[16];
+		lv_snprintf (a, sizeof a, "%d:%d", f, i - 1);
+		step_send ("alock", a);
 		return;
 	}
 	else if (m == s_RtM || m == s_FxM || m == s_CondM)
@@ -1813,6 +1847,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	static const char *const kNoChords[] = {"-", ""};
 	// seqtop: a layout sets only its own (a rebuild in the other style must not keep the old one's deleted objects)
 	s_QntM = s_Free = s_SpdM = s_DirM2 = s_RndM = s_OctM = s_WghtM = s_RtM = s_FxM = s_RndS = s_CondM = s_SlideK = 0;
+	memset (s_ArpM, 0, sizeof s_ArpM);
 	if (oled ())
 	{
 		const int K = TH_KEY;				// the body face: chord names read at arm's length
@@ -1852,6 +1887,13 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		s_CondM = seg (s_Panel[SEQED_STEP], LX (180), LY (23), LX (296) - LX (180), LY (21), kCondMap, -1, K);
 		s_RndS = th_key (s_Panel[SEQED_STEP], LX (300), LY (23), G->lane_w - LX (300), LY (21), "RND", TH_KEY, stepkey_cb, 0);
 		lv_obj_add_flag (s_PanelInfo[SEQED_STEP], LV_OBJ_FLAG_HIDDEN);
+		// ARP: its five, the first key of each no lock (the state's in the keys: no room for the line)
+		s_ArpM[0] = seg (s_Panel[SEQED_ARP], 0, 0, LX (196), LY (21), kAModeMap, -1, K);
+		s_ArpM[3] = seg (s_Panel[SEQED_ARP], LX (200), 0, G->lane_w - LX (200), LY (21), kAGateMap, -1, K);
+		s_ArpM[1] = seg (s_Panel[SEQED_ARP], 0, LY (23), LX (176), LY (21), kASpdMap, -1, K);
+		s_ArpM[2] = seg (s_Panel[SEQED_ARP], LX (180), LY (23), LX (262) - LX (180), LY (21), kARngMap, -1, K);
+		s_ArpM[4] = seg (s_Panel[SEQED_ARP], LX (266), LY (23), G->lane_w - LX (266), LY (21), kASwngMap, -1, K);
+		lv_obj_add_flag (s_PanelInfo[SEQED_ARP], LV_OBJ_FLAG_HIDDEN);
 		// SWING: the info line, then - / the presets / + (the value's own key: the info line; - and + by 1 %)
 		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - LU (4));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_SWING], LV_LABEL_LONG_MODE_CLIP);
@@ -1921,6 +1963,12 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		th_seg_font (s_CondM, f12);
 		s_SlideK = th_key (s_Panel[SEQED_STEP], CX (464), r2, CX (130), rh, "SLIDE", TH_KEY, stepkey_cb, (void *) (intptr_t) 1);
 		th_key_font (s_SlideK, f12);
+		s_ArpM[0] = seg (s_Panel[SEQED_ARP], LU (4), r1, CX (400), rh, kAModeMap, -1, TH_KEY);
+		s_ArpM[3] = seg (s_Panel[SEQED_ARP], CX (412), r1, G->lane_w - LU (4) - CX (412), rh, kAGateMap, -1, TH_KEY);
+		s_ArpM[1] = seg (s_Panel[SEQED_ARP], LU (4), r2, CX (400), rh, kASpdMap, -1, TH_KEY);
+		s_ArpM[2] = seg (s_Panel[SEQED_ARP], CX (412), r2, CX (130), rh, kARngMap, -1, TH_KEY);
+		s_ArpM[4] = seg (s_Panel[SEQED_ARP], CX (548), r2, G->lane_w - LU (4) - CX (548), rh, kASwngMap, -1, TH_KEY);
+		for (int f = 0; f < 5; f++) th_seg_font (s_ArpM[f], f12);
 		lv_obj_set_width (s_PanelInfo[SEQED_SWING], G->lane_w - LU (16));
 		lv_label_set_long_mode (s_PanelInfo[SEQED_SWING], LV_LABEL_LONG_MODE_DOTS);
 		th_key_font (th_key (s_Panel[SEQED_SWING], LU (4), ky, CX (80), kh, "-", TH_KEY, swing_cb, (void *) (intptr_t) -1), TH->f_big);

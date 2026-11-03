@@ -61,6 +61,7 @@ typedef struct
 	unsigned char	fx_cmd[SEQED_STEPS];	// H1: FX column 1's command (core/seq kFx*), its value
 	signed char	fx_val[SEQED_STEPS];
 	unsigned char	lcond[SEQED_STEPS];	// V1: the step's first conditional lock's COND code (0 none)
+	unsigned short	arpl[SEQED_STEPS];	// arp locks: 3 bits each from bit 0, MODE SPD RNG GATE SWNG: 0 none, else the value's index + 1
 	int		edit_page;		// rui1051: the Rytm's edit page of the shown track (PAGE), -1 unknown: stopped,
 						// the grid's window moves to hold it when it changes
 	// U1 NOTE EDIT on the Rytm (core/seq note_edit; docs/SEQ-IDEAS.md U1): on, the highlighted note (step, pitch; -1
@@ -89,8 +90,8 @@ void sidecar_seqed_set_rytm_cb (void (*fn) (void));		// the RYTM button (the Ryt
 // seqtop: KEY is the pattern's real key (seq=key:K:S:Q) with QNT and R1's random notes (seq=rnd:T:mode=..); PLAY the
 // shown track's speed and direction (seq=spd / seq=dir) and the pattern's seed (seq=seed:N|free); STEP the selected
 // note's step: its ratchet / arp (seq=rtrg), FX column 1 (seq=fx), random notes (seq=rndstep), its locks' condition and
-// slide (seq=lcond / seq=slide, every lock of the step).
-enum { SEQED_DRAW, SEQED_CHORD, SEQED_STRUM, SEQED_HUMAN, SEQED_KEY, SEQED_SWING, SEQED_POLY, SEQED_PLAY, SEQED_STEP, SEQED_TOOLS };
+// slide (seq=lcond / seq=slide, every lock of the step). ARP: the selected note's step's arp locks (seq=alock).
+enum { SEQED_DRAW, SEQED_CHORD, SEQED_STRUM, SEQED_HUMAN, SEQED_KEY, SEQED_SWING, SEQED_POLY, SEQED_PLAY, SEQED_STEP, SEQED_ARP, SEQED_TOOLS };
 void sidecar_seqed_debug (int tool, int first_page, int pages, int top_pitch, int sel_step, int sel_pitch);
 void sidecar_seqed_debug_drag (int step, int micro, int pitch, int len);	// a drag in progress on the selection (-1: none)
 void sidecar_seqed_debug_key (int root, int scale, int chd, int inv, int strum);

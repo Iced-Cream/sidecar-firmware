@@ -786,11 +786,11 @@ void CKernel::LogBench (void)
 	}
 	m_nBenchMHz = nMHz;
 	// fx-ins (core/fx/insert.h): 8 voices' INSERT chains, two slots each, on core 0 (docs/INSERT-FX.md "CPU")
-	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
+	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD SAT+SAT, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
 	// the post EQ on only for that row; the four pairs are measured with it flat, i.e. skipped, so their numbers
 	// stay comparable with the ones in docs/INSERT-FX.md)
-	static const int Pairs[5][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {0, 0}};
-	for (unsigned p = 0; p < 5; p++)
+	static const int Pairs[6][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {10, 10}, {0, 0}};
+	for (unsigned p = 0; p < 6; p++)
 	{
 		u32 nWorst = 0;
 		u32 nHash = 0;
@@ -799,6 +799,14 @@ void CKernel::LogBench (void)
 		m_Logger.Write (From, LogNotice, "bench ins %s+%s: 8 voices x 2 slots %u.%02u %% of a core, worst block %u.%u %%, hash %08X",
 				bridge::ins_bench_name (Pairs[p][0]), bridge::ins_bench_name (Pairs[p][1]), nBp / 100, nBp % 100,
 				nBlk / 10, nBlk % 10, nHash);
+		m_Timer.MsDelay (2);
+	}
+	{	// SAT on every slot of the buses and the master: what it can add to core 2
+		u32 nWorst = 0;
+		u64 nTicks = bridge::ins_bus_bench (&nWorst);
+		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		m_Logger.Write (From, LogNotice, "bench ins SAT buses+master: 10 stereo slots %u.%02u %% of a core, worst block %u.%u %%",
+				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
 	}
 	// the NEON kernels against their C on this CPU (neon_bench.cpp)

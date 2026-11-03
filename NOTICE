@@ -40,6 +40,7 @@ Licence texts: licenses/.
 In tree (ported or adapted; notices next to the code):
   core/fx/rings_fx.h            Mutable Instruments Rings / stmlib (MIT)
   core/fx/cloudseed_fx.h        Cloud Seed, Ghost Note Audio (MIT)
+  core/fx/sat_fx.h              curves after Airwindows, Chris Johnson (MIT)
   core/fx/ (others)             see core/fx/THIRD_PARTY_LICENSES.txt
   sdk/rmp/shim/audio/           derived from PJRC Teensyduino core and Teensy
                                 Audio Library (MIT): sdk/rmp/shim/audio/NOTICE

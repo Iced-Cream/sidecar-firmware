@@ -995,7 +995,7 @@ const STATS = /(rytmob: \d+ms IN|engine: engine: fifo|sidecar: \w+ alt|midigadge
 const PERIODIC = /^\S+ (\w+: )?(display|touch): (?!command|screensaver)/;   // the display's 10 s lines (touch diagnostics)
 
 // ---- the master FX (/status "ins" "mfx", core/fx/master.h; docs/MASTER-FX.md): four slots, the switches; every control a console line
-const MFX_TYPES = ["OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "CHORUS", "COMB", "SPACE", "RINGS", "CLOUD", "HALO"];
+const MFX_TYPES = ["OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "SAT", "CHORUS", "COMB", "SPACE", "RINGS", "CLOUD", "HALO"];
 const MFX_NOTE = {
   ret: "SRC RET: the chain takes what the Sidecar sends back. The Rytm's own mix is not in it: the Pi can add to that mix, not replace it.",
   mix: "SRC MIX (through mode): the Rytm's 8 stems go through the chain, panned as on the Rytm. Tracks left on ROUTE TO MAIN stay analog. The Rytm's delay and reverb stay in MAIN, outside the chain.",
