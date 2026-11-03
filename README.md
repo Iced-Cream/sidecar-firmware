@@ -19,7 +19,7 @@ or the commits it came from; "host tests" means unit tests on a computer; "emula
 - **Longer enum lists:** list knobs of up to 36 names (`RMP_FORMAT` 5); an older Rytm build still gets 16. Host and emulator tests.
 - **MIDI machine:** machine 50 sends a track out as MIDI. DIN tested in the emulator; USB unverified on hardware.
 - **Arpeggiator:** per sound, any Sidecar machine and the MIDI machine (UP + FLTR on the Rytm). Hardware OK on FM.
-- **Pi 5 USB-C audio and MIDI:** 12 x 12 and MIDI, needs a build with `PI5_GADGET=1` and its own power supply. Pi 5 test results only (`docs/pi5.md`); the computer-sleep test is still open.
+- **Pi 5 USB-C audio and MIDI (in testing):** 12 x 12 and MIDI, on by default as on the Pi 4 (`gadget=0` in `cmdline.txt` turns it off). The Pi 5's USB-C is also its power input: connect the computer through a powered USB-C hub or dock that passes data and powers the Pi. Measured through a hub with test kernels only (`docs/pi5.md`); the computer-sleep test is still open.
 - **Touch Display 2 at 1280x720:** the UI fills the panel, `res=1024x600` gives the older centred layout. Built and host-tested; no run of this layout on the panel is on record.
 - **Card I/O off the control core:** sample overviews, scans, lists and stream work go to the card core. 0 underruns in the Pi 5 hardware pass.
 - **NEON:** render kernels for AArch64, bit-exact against the C with clang (`core/tests/test_neon.cpp`). Measured on a Pi 4.

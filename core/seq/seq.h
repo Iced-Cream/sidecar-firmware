@@ -76,8 +76,13 @@ struct Note {
 // knobs' are integers << 7). A step with locks and no notes is a lock trig (Elektron's trigless lock).
 // fx-ins: kLockIns + 4 s + k: the track's voice's INSERT slot s (A / B) P(k + 1) (core/fx/insert.h; integers << 7). An
 // older Sidecar drops those locks when it reads the file (param >= its kLockParams).
+// arp locks: kLockArp + 0..4: the track's voice's arpeggiator MODE SPD RNG GATE SWNG (core/arp/arp.h Cfg, knob indices << 7), for that
+// step only (a set's lock holds to the next trig: these end at the next step), never sliding. A file with one carries kBlkArp, required.
 constexpr int kLocks = 12;          // locks a step
-constexpr int kLockFx = 16, kLockIns = 24, kLockParams = 32;
+constexpr int kLockFx = 16, kLockIns = 24, kLockArp = 32, kArpLocks = 5, kLockParams = 37;
+constexpr uint8_t kArpLockMax[kArpLocks] = {5, 5, 2, 2, 2};
+inline bool arp_lock(int param) { return param >= kLockArp && param < kLockArp + kArpLocks; }
+inline int lock_top(int param) { return arp_lock(param) ? kArpLockMax[param - kLockArp] : 127; }   // a lock's largest integer part
 struct Lock {
   uint8_t param;
   uint8_t cond;     // seqtop V1: the lock's own condition (the COND knob's code; 0 always: see lock_cond_ok)
@@ -131,6 +136,7 @@ struct Step {
   Note note[kNotes];
   Lock lock[kLocks];
 };
+inline bool lock_slides(const Step& s, int param) { return param < kLockArp && (s.slide >> param & 1); }
 // rui1040: Elektron-style trig conditions (the stock Rytm's set), evaluated per step by the planner: FILL / !FILL (the
 // Rytm's FILL key, 2D 0C), PRE / !PRE (this track's last condition result), NEI / !NEI (the track before's), 1ST / !1ST
 // (the first loop since PLAY or a pattern switch), A:B (true on loop A of every B, loops counted from PLAY / the switch).
@@ -161,6 +167,7 @@ bool lock_cond_ok(int c);                                // a code a lock may ho
 // seqtop X1: a sliding lock glides from its value to the value of the param's next lock (the next step in play order
 // - direction and jumps included - that locks it, within one loop), reaching it at that step's start; without one it
 // holds. The ramp runs on the control side (pre_block, every 4 render blocks: 1 ms), through the same path as a lock.
+// An arp lock is a choice, not a level: it holds, no slide (Step.slide has a bit for params below 32 only).
 const char* lock_cond_text(int c, char* b, int cap);     // "---" "FILL" "1:4" "30%"
 int lock_cond_parse(const char* s);                       // "fill" "!1st" "1:4" "30%" or a code; -1 none
 // E0 (docs/SEQ-IDEAS.md, docs/POLYPHONY.md "E0"): a seq track's poly config, modelled on the Analog Four MKII's POLY
@@ -284,8 +291,9 @@ constexpr int kKeepBytes = 1024;
 // than play it without them: Q1's rule)
 enum : uint8_t { kBlkSeed = 1, kBlkTrackSeed = 2, kBlkPoly = 3, kBlkSpeed = 4, kBlkDir = 5, kBlkScale = 6, kBlkRnd = 7,
                  kBlkSmod = 8, kBlkLockCond = 9, kBlkRtrg = 10, kBlkSlide = 11, kBlkFx = 12,
-                 kBlkOn = 13 };   // per pattern poly: <track> <on 0|1>, not required, written only where the rule above
+                 kBlkOn = 13,     // per pattern poly: <track> <on 0|1>, not required, written only where the rule above
                                   // (steps: on) does not already say it
+                 kBlkArp = 14 };  // arp locks: <track>, a track's steps hold some (in their lock lists): an older Sidecar locks the file
 enum : uint8_t { kBlkRequired = 1, kBlkPerStep = 2, kBlkTrack = 4 };   // a block's flags; kBlkTrack: payload[0] its Rytm track
 struct Pattern {
   int index;            // 0..127 (A01 = 0), -1 none
@@ -513,7 +521,7 @@ enum : int { kMenuBack = 0, kMenuOff, kMenuLen, kMenuQnt, kMenuDir, kMenuPrint }
 constexpr int kMenuRows = 6;
 constexpr uint32_t kLongPushMs = 400;   // rui1050: a lock page's encoder held this long: its COND
 enum : int { kLpTrig = 0, kLpSrc, kLpSmpl, kLpFltr, kLpAmp, kLpLfo, kLpFx, kLpIns };   // TRIG SRC SMPL FLTR AMP LFO FX; INS:
-                                                                                      // FX pressed again (fx-ins)
+                                                                                      // FX pressed again (fx-ins); FLTR's page: the arp's
 View view();
 // UX review T1, any core (two plain reads, drawing only): the active pattern (-1 none yet) and the transport (kStop ..)
 int pattern_now();

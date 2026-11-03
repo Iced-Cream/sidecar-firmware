@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
       uint64_t t = bridge::bench(m, &w, &pk, h);
       return t / (double)core::cycles_per_second();
     });
-  static const int kP[][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {0, 0}};
+  static const int kP[][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {10, 10}, {0, 0}};
   for (auto& p : kP) {
     char nm[48];
     snprintf(nm, sizeof nm, "ins %s+%s", bridge::ins_bench_name(p[0]), bridge::ins_bench_name(p[1]));
@@ -177,6 +177,10 @@ int main(int argc, char** argv) {
       return bridge::ins_bench(p[0], p[1], &w, h) / (double)core::cycles_per_second();
     });
   }
+  run("ins SAT buses+master", [&](uint32_t* h) {
+    uint32_t w = 0;
+    return bridge::ins_bus_bench(&w, h) / (double)core::cycles_per_second();
+  });
   run("amp", [&](uint32_t* h) {
     uint32_t w = 0;
     *h = 0;

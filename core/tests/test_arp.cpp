@@ -734,6 +734,326 @@ int main() {
     send(msg(0x33, {0, 1, 50, 0}));
     hooks.user_report = was;
   }
+  // arp locks (seq.h kLockArp): the sequencer's steps. A chord held over the whole loop, a lock on an empty step (a lock trig) or on the note's own step
+  {
+    char b[200];
+    machine33(0, 50, 0);
+    rep(0x43, 0, -1, 0, words());
+    CHECK(seq::command("seq=track:1:on", b, sizeof b));
+    struct Hit {
+      int64_t at;
+      int on, note;
+    };
+    int take_micro = 0;
+    std::string take_cmd;
+    auto take = [&](arp::Cfg base, std::vector<std::vector<int>> locks, std::vector<int> notes = {60, 64}, int len = 11 * seq::kSub, int step0 = 0) {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      CHECK(tr);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      for (int n : notes) seq::add_note(tr->step[step0], {(uint8_t)n, 100, (uint16_t)len, (int8_t)take_micro, 0});
+      if (!notes.empty()) tr->step[step0].flags |= 1, tr->step[step0].prob = 100;
+      for (auto& l : locks) CHECK(seq::set_lock(tr->step[l[0]], seq::kLockArp + l[1], l[2] << 7));
+      if (!take_cmd.empty()) CHECK(seq::command(take_cmd.c_str(), b, sizeof b));
+      seq::touched();
+      arp::set(0, base);
+      run(4800);
+      g.clear();
+      play();
+      int64_t o = c.t0 - lat;
+      run(6000 * 12 + 3000 - c.delay - 960);
+      if (len < 12 * seq::kSub) CHECK(midim::voice_notes(0) == 0 && !arp::busy(0));
+      halt();
+      run(12000);
+      std::vector<Hit> h;
+      for (auto& e : g) h.push_back({e.h - o, (e.status & 0xF0) == 0x90, e.note});
+      pairs_closed();                                                 // nothing hangs, on the machine either
+      CHECK(midim::voice_notes(0) == 0 && !arp::busy(0) && !arp::locked(0));
+      g.clear();
+      return h;
+    };
+    auto note_at = [](const std::vector<Hit>& h, int64_t from, int64_t to) {
+      std::vector<int> r;
+      for (auto& x : h)
+        if (x.on && x.at >= from && x.at < to) r.push_back(x.note);
+      return r;
+    };
+    auto same_but = [](const std::vector<Hit>& a, const std::vector<Hit>& k, int64_t from, int64_t to) {   // equal outside [from, to), to a Rytm block
+      std::vector<Hit> x, y;
+      for (auto& e : a)
+        if (e.at < from || e.at >= to) x.push_back(e);
+      for (auto& e : k)
+        if (e.at < from || e.at >= to) y.push_back(e);
+      CHECK(x.size() == y.size());
+      for (size_t i = 0; i < x.size() && i < y.size(); ++i) CHECK(x[i].on == y[i].on && x[i].note == y[i].note && llabs(x[i].at - y[i].at) <= 32);
+    };
+    const int64_t S = 6000;
+    auto base = take(cfg(arp::kUp), {});   // UP over {60, 64}: a note a step, 50 %
+    same(note_at(base, 0, 6 * S - 100), {60, 64, 60, 64, 60, 64});
+    // a lock on one step changes that step only: no lock anywhere is what the arp did before, each of the five
+    auto dn = take(cfg(arp::kUp), {{2, 0, arp::kDown}});                    // MODE on step 3: DOWN's note at the same place of the pattern
+    same(note_at(dn, 2 * S - 100, 3 * S - 100), {64});
+    same_but(base, dn, 2 * S - 100, 2 * S + 3100);
+    auto rg = take(cfg(arp::kUp), {{2, 2, 1}});                             // RNG 2 octaves: position 2 is the octave up
+    same(note_at(rg, 2 * S - 100, 3 * S - 100), {72});
+    same_but(base, rg, 2 * S - 100, 2 * S + 3100);
+    auto sp = take(cfg(arp::kUp), {{2, 1, 5}});                             // SPD 1/32: two notes in that step, on its grid, and the next on the Rytm's step
+    same(note_at(sp, 2 * S - 100, 3 * S - 100), {60, 64});
+    {
+      std::vector<int64_t> at;
+      for (auto& x : sp)
+        if (x.on && x.at >= 2 * S - 100 && x.at < 4 * S - 100) at.push_back(x.at);
+      CHECK(at.size() == 3 && llabs(at[0] - 2 * S) <= 24 && llabs(at[1] - (2 * S + S / 2)) <= 24 && llabs(at[2] - 3 * S) <= 24);
+    }
+    same(note_at(sp, 3 * S - 100, 5 * S - 100), {60, 64});                  // and the pattern goes on from where it is
+    auto gt = take(cfg(arp::kUp), {{2, 3, 2}});                             // GATE 100: that note long, as many, the others 50
+    auto off_of = [](const std::vector<Hit>& h, int64_t from) {
+      for (auto& x : h)
+        if (!x.on && x.at > from) return x.at - from;
+      return (int64_t)-1;
+    };
+    CHECK(llabs(off_of(base, 2 * S) - S / 2) <= 96 && off_of(gt, 2 * S) >= S - 96);
+    CHECK(llabs(off_of(gt, 3 * S + 100) - (S / 2 - 100)) <= 96);
+    same(note_at(gt, 0, 6 * S - 100), {60, 64, 60, 64, 60, 64});
+    auto sw = take(cfg(arp::kUp), {{3, 4, 2}});                             // SWNG 66 on the odd point of step 4: late by 0.32 of it, then straight again
+    {
+      std::vector<int64_t> at;
+      for (auto& x : sw)
+        if (x.on && x.at >= 2 * S - 100 && x.at < 5 * S - 100) at.push_back(x.at);
+      CHECK(at.size() == 3 && llabs(at[0] - 2 * S) <= 24 && llabs(at[1] - (3 * S + S * 32 / 100)) <= 24 && llabs(at[2] - 4 * S) <= 24);
+    }
+    same_but(base, sw, 3 * S - 100, 4 * S - 100);
+    // on a swung base a lock of SPD lands on its grid: the sound's SWNG 66 stays in force over the lock
+    auto bs = take(cfg(arp::kUp, 3, 0, 1, 2), {{5, 1, 3}});
+    auto bl = take(cfg(arp::kUp, 3, 0, 1, 2), {{5, 2, 1}});
+    same_but(bs, bl, 5 * S - 100, 6 * S + 2000);
+    // MODE OFF: the step rests, the hold goes on after it; the arp's other notes where they were
+    auto rs = take(cfg(arp::kUp), {{2, 0, arp::kOff}});
+    same(note_at(rs, 2 * S - 100, 3 * S - 100), {});
+    same(note_at(rs, 0, 2 * S - 100), {60, 64});
+    same(note_at(rs, 3 * S - 100, 5 * S - 100), {60, 64});
+    // MODE OFF on a step with its own note, the same pitch held from before: that note plays plain, its off reaches the machine though the arp holds the pitch
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      seq::add_note(tr->step[0], {60, 100, seq::kSub + 60, 0, 0});
+      seq::add_note(tr->step[1], {60, 100, 80, 0, 0});
+      tr->step[0].flags |= 1, tr->step[1].flags |= 1, tr->step[0].prob = tr->step[1].prob = 100;
+      seq::set_lock(tr->step[1], seq::kLockArp, arp::kOff);
+      seq::touched();
+      arp::set(0, cfg(arp::kUp));
+      run(4800);
+      g.clear();
+      play();
+      run(6000 * 6);
+      CHECK(midim::voice_notes(0) == 0 && !arp::busy(0));   // (before STOP: the MIDI machine's own stop would close it)
+      halt();
+      run(12000);
+      pairs_closed();
+      g.clear();
+    }
+    // the sound's OFF: MODE UP on one step arps that step and no other; a note past the step ends with it, no stuck note. Its SPD the sound's
+    auto of = take(cfg(arp::kOff), {});
+    same(note_at(of, 0, 2 * S), {60, 64});   // (plain: the chord)
+    auto on1 = take(cfg(arp::kOff, 5), {{0, 0, arp::kUp}});
+    same(note_at(on1, 0, S - 200), {60, 64});
+    same(note_at(on1, S - 200, 12 * S), {});
+    // a swung track: the arp's grid is straight, a step's lock holds from the step's place on it, odd steps as even
+    {
+      auto swing = [&](int v) { seq::edit_track(0, true)->swing = (uint8_t)v, seq::touched(); };
+      swing(58);
+      auto b58 = take(cfg(arp::kUp), {});
+      auto r3 = take(cfg(arp::kUp), {{3, 2, 1}});
+      same(note_at(r3, 3 * S - 100, 4 * S - 100), {76});
+      same_but(b58, r3, 3 * S - 100, 3 * S + 3100);
+      auto r2 = take(cfg(arp::kUp), {{2, 2, 1}});
+      same(note_at(r2, 2 * S - 100, 3 * S - 100), {72});
+      same_but(b58, r2, 2 * S - 100, 2 * S + 3100);
+      auto o3 = take(cfg(arp::kUp), {{3, 0, arp::kOff}});
+      same(note_at(o3, 3 * S - 100, 4 * S - 100), {});
+      same(note_at(o3, 4 * S - 100, 5 * S - 100), {64});
+      // the sound's OFF, MODE locked on: no grid point left in the step: its first note at the note's own place, not lost, ended with the step
+      auto first = [&](arp::Cfg sound, int64_t at) {
+        auto h = take(sound, {{1, 0, arp::kUp}}, {60, 64}, 11 * seq::kSub, 1);
+        same(note_at(h, S - 100, 2 * S - 100), {60});
+        same(note_at(h, 2 * S - 100, 12 * S), {});
+        for (auto& x : h)
+          if (x.on) CHECK(llabs(x.at - at) <= 96);
+      };
+      first(cfg(arp::kOff), S + S * 16 / 100);   // swing 58, an odd step
+      swing(50);
+      first(cfg(arp::kOff, 1), S);               // SPD 1/8 and 1/4: their point is not on this step
+      first(cfg(arp::kOff, 0), S);
+      take_micro = 24;
+      first(cfg(arp::kOff), S + S / 4);          // a note 1/4 late
+      take_micro = 0;
+      // DLY: the step's place on the grid is its window: the next step's point stays the sound's
+      take_cmd = "seq=fx:1:3:1:DLY:48";
+      auto d2 = take(cfg(arp::kUp), {{2, 2, 1}});
+      same(note_at(d2, 2 * S - 100, 3 * S - 100), {72});
+      same(note_at(d2, 3 * S - 100, 4 * S - 100), {64});
+      take_cmd = "seq=fx:1:3:1:off";
+      take(cfg(arp::kUp), {});
+      take_cmd = "";
+    }
+    // a short plain note under MODE OFF, the pitch of a long one the arp holds: it ends at its own length
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      seq::add_note(tr->step[0], {60, 100, 8 * seq::kSub, 0, 0});
+      seq::add_note(tr->step[2], {60, 100, 24, 0, 0});
+      tr->step[0].flags |= 1, tr->step[2].flags |= 1, tr->step[0].prob = tr->step[2].prob = 100;
+      seq::set_lock(tr->step[2], seq::kLockArp, arp::kOff);
+      seq::touched();
+      arp::set(0, cfg(arp::kUp));
+      run(4800);
+      g.clear();
+      play();
+      int64_t o = c.t0 - lat;
+      run(6000 * 10);
+      CHECK(midim::voice_notes(0) == 0 && !arp::busy(0));
+      bool ended = false;
+      for (auto& e : g) ended = ended || ((e.status & 0xF0) != 0x90 && llabs(e.h - o - (2 * S + S / 4)) <= 96);
+      CHECK(ended);
+      halt();
+      run(12000);
+      pairs_closed();
+      g.clear();
+    }
+    // a lock with no MODE on an arp that is off: nothing
+    auto nm = take(cfg(arp::kOff), {{0, 1, 5}, {0, 2, 2}});
+    same(note_at(nm, 0, 2 * S), {60, 64});
+    // the same pitches, plain, then taken by a lock on the next step, the arp too slow to play them all: the plain note gives way, none left open
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      for (int n : {60, 64}) {
+        seq::add_note(tr->step[0], {(uint8_t)n, 100, seq::kSub + 20, 0, 0});
+        seq::add_note(tr->step[1], {(uint8_t)n, 100, seq::kSub - 10, 0, 0});
+      }
+      tr->step[0].flags |= 1, tr->step[1].flags |= 1, tr->step[0].prob = tr->step[1].prob = 100;
+      seq::set_lock(tr->step[1], seq::kLockArp, arp::kUp << 7);
+      seq::set_lock(tr->step[1], seq::kLockArp + 1, 0);   // 1/4
+      seq::touched();
+      arp::set(0, cfg(arp::kOff));
+      run(4800);
+      g.clear();
+      play();
+      run(6000 * 8);
+      CHECK(midim::voice_notes(0) == 0 && !arp::busy(0));
+      halt();
+      run(12000);
+      pairs_closed();
+      g.clear();
+    }
+    // RNG and MODE moving with a note sounding at gate 100, every step locked some other way: every off finds its note
+    {
+      std::vector<std::vector<int>> l;
+      for (int s = 0; s < 12; ++s) l.push_back({s, s & 1 ? 2 : 0, s & 1 ? (s >> 1) % 3 : 1 + (s >> 1) % 5});
+      take(cfg(arp::kUp, 3, 2, 2), l);
+    }
+    // a condition that fails leaves the lock out: FILL, none held
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      seq::add_note(tr->step[0], {60, 100, 11 * seq::kSub, 0, 0});
+      seq::add_note(tr->step[0], {64, 100, 11 * seq::kSub, 0, 0});
+      tr->step[0].flags |= 1, tr->step[0].prob = 100;
+      seq::set_lock(tr->step[2], seq::kLockArp + 2, 1 << 7);
+      tr->step[2].lock[0].cond = seq::kCondFill;
+      seq::touched();
+      arp::set(0, cfg(arp::kUp));
+      run(4800);
+      g.clear();
+      play();
+      run(6000 * 5);
+      same(ons(), {60, 64, 60, 64, 60, 64});
+      halt();
+      run(12000);
+      g.clear();
+    }
+    // stopped, a key held: a lock of MODE OFF rests it for its time, no catching up after, and STOP or the end of its frame leaves nothing behind
+    {
+      halt();
+      run(4800);
+      for (int s = 0; s < 16; ++s) seq::edit_track(0, true)->step[s] = {};
+      seq::touched();
+      arp::set(0, cfg(arp::kUp));
+      chord(0, {60});
+      run(4000);
+      g.clear();
+      uint8_t val[seq::kArpLocks] = {arp::kOff, 0, 0, 0, 0};
+      arp::lock(0, 0, 1, val, (int64_t)seq::frames() + 6000 * 2);
+      CHECK(arp::locked(0) == 1);
+      run(6000 * 2 - 100);
+      CHECK(ons().empty());
+      run(6000 * 2 + 300);
+      CHECK(ons().size() == 3 && !arp::locked(0));   // at its end and a step each after
+      arp::lock(0, 0, 1, val, (int64_t)seq::frames() + 6000);
+      arp::lock(0, 0, 0, val, 0);
+      CHECK(!arp::locked(0));
+      unchord(0, {60});
+      run(6000);
+      pairs_closed();
+      g.clear();
+    }
+    // a step's preview, stopped (hold a trig + YES): its arp locks for its step's time, then the sound's again
+    {
+      halt();
+      run(4800);
+      seq::Track* tr = seq::edit_track(0, true);
+      for (int s = 0; s < 16; ++s) tr->step[s] = {};
+      seq::add_note(tr->step[0], {60, 100, 48, 0, 0});
+      tr->step[0].flags |= 1, tr->step[0].prob = 100;
+      seq::set_lock(tr->step[0], seq::kLockArp, arp::kUp << 7);
+      seq::touched();
+      arp::set(0, cfg(arp::kOff));
+      seq::view_set(0, 0, -1, false);
+      CHECK(seq::ui_key(0, true, true));
+      run(960);
+      CHECK(seq::ui_key(0x44, true, true));
+      seq::ui_key(0x44, false, true);
+      run(960);
+      CHECK(arp::locked(0) == 1);
+      seq::ui_key(0, false, true);
+      run(12000);
+      CHECK(!arp::locked(0) && !arp::busy(0) && midim::voice_notes(0) == 0);
+      pairs_closed();
+      g.clear();
+    }
+    // the cost: 8 voices, 16 notes each at 1/32, every voice locked again at every pass
+    {
+      arp::Cfg cf = cfg(arp::kUp, 5, 2, 0);
+      for (int t : {0, 1, 2, 4, 5, 6, 8, 10}) arp::set(t, cf);
+      for (int vi = 0; vi < 8; ++vi)
+        for (int k = 0; k < arp::kHeld; ++k) arp::live_on(vi, 30 + k, 100, 1, k);
+      uint8_t val[seq::kArpLocks] = {arp::kRandom, 5, 2, 0, 2};
+      double worst = 0;
+      for (int i = 0; i < 2000; ++i) {
+        auto a = std::chrono::steady_clock::now();
+        for (int vi = 0; vi < 8; ++vi) arp::lock(vi, vi, 31, val, (int64_t)seq::frames() + 6000);
+        seq::pre_block();
+        double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - a).count();
+        if (us > worst) worst = us;
+      }
+      printf("arp locks: 8 voices locked at every block, 16 notes each: a block's worst %.1f us here\n", worst);
+      CHECK(worst < 2000);
+      for (int vi = 0; vi < 8; ++vi) arp::lock(vi, vi, 0, val, 0), arp::end(vi);
+      for (int t : {0, 1, 2, 4, 5, 6, 8, 10}) arp::set(t, cfg(arp::kOff));
+    }
+    arp::set(0, cfg(arp::kOff));
+    CHECK(seq::command("seq=track:1:off", b, sizeof b));
+    run(960);
+  }
   printf("test_arp OK\n");
   return 0;
 }

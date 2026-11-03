@@ -13,7 +13,7 @@
 //                 cores' business); the bus chains on the send FX's core (the Pi's render core 2).
 //
 // TYPE ids (stable: the card's files name them, sim/protocol.py INSERT_TYPES): 0 OFF, 1 FILTER, 2 CRUSH, 3 DRIVE,
-// 4 EQ, 5 COMP, 6 DELAY, 7 TREMOLO, 8 RINGMOD, 9 AMP. Params P1..P4 0..127 (labels: kLabels):
+// 4 EQ, 5 COMP, 6 DELAY, 7 TREMOLO, 8 RINGMOD, 9 AMP, 10 SAT. Params P1..P4 0..127 (labels: kLabels):
 //   FILTER  CUT 20 Hz x 2^(10 v) | RES Q 0.5..20 | MODE LP -> BP -> HP (a continuous morph) | DRV 0..+24 dB before it
 //           (a TPT state-variable filter: stable for any cutoff / resonance, modulated per block without zipper)
 //   CRUSH   RATE the hold 1..64 samples | BITS 16..2 | DRV 0..+18 dB before the quantizer | MIX
@@ -29,6 +29,8 @@
 //   RINGMOD FREQ 10 Hz..5 kHz | SHPE sine -> square | MOD a 0.3 Hz +-1 octave sweep | MIX
 //   AMP     MODL a NAM A2-Lite capture of /NAM/ | GAIN -18..+18 dB into it | TONE a +-6 dB tilt | LEV -36..+6 dB
 //           (core/fx/amp.h: the voice chains only, mono; a capture loads off the render core and crossfades in)
+//   SAT     CHAR TAPE | CONS | SOFT | DRV 0..+24 dB | TONE a +-6 dB tilt at 1 kHz | MIX (core/fx/sat_fx.h: 4x, DRV 0 or
+//           MIX 0 the dry signal, else 15 frames late, dry path included)
 //
 // A TYPE change never clicks: the slot's wet share crossfades to dry over kFadeFrames (5 ms), the new effect starts
 // from a clean state, then fades in (OFF is the dry end of that fade). Params are smoothed per block (3 ms).
@@ -38,6 +40,7 @@
 #include <string.h>
 
 #include "fx/amp.h"
+#include "fx/sat_fx.h"
 
 namespace core {
 namespace ins {
@@ -47,14 +50,15 @@ constexpr int kChains = kVoices + kBuses + kMasters;   // 0..7 the voices' chain
 constexpr int kBus0 = kVoices;              // chain of bus b (0..2): kBus0 + b
 constexpr int kM0 = kBus0 + kBuses;         // the master chain (core/fx/master.h): two chains in a row, four slots, the second's POST EQ
 // kTypes: what every chain takes. The master's chains also take the send FX's types as inserts (core/fx/master.h): the ids
-// after them, stable as the rest
-enum Type : uint8_t { kOff = 0, kFilter, kCrush, kDrive, kEq, kComp, kDelay, kTrem, kRing, kAmp, kTypes,
+// after them, never stored (the card's files name a TYPE; a new one goes before kTypes and moves these)
+enum Type : uint8_t { kOff = 0, kFilter, kCrush, kDrive, kEq, kComp, kDelay, kTrem, kRing, kAmp, kSat, kTypes,
                       kMChorus = kTypes, kMComb, kMSpace, kMRings, kMCloud, kMHalo, kAllTypes };
 constexpr int kLine = 4096;          // DELAY's line, a power of 2: 85 ms at 48 kHz (TIME's 80 ms + MOD's 4 ms)
 // a line per voice slot channel (two: a voice on OUT PRE / POST runs its chain in stereo, core/fx/out.h), two per bus slot
 constexpr int kLines = kVoices * kSlots * 2 + kBuses * kSlots * 2 + kMasters * kSlots * 2;
 constexpr int kFadeFrames = 240;     // a TYPE change: 5 ms out, 5 ms in
 constexpr int kChunk = 16;           // frames per parameter update (a voice block is 12)
+static_assert(kChunk == satfx::kBlock, "SAT's buffers");
 constexpr float kPi = 3.14159265f;
 
 // ins1112, the POST EQ: one more stage at the end of every chain, after both slots (AMP among them). The voices' is
@@ -130,6 +134,7 @@ struct Dsp {
   float car = 0;                 // RINGMOD's carrier phase
   float dly = 0;                 // DELAY's smoothed time (samples), 0 = start at the target
   uint32_t w = 0;                // DELAY's write index
+  satfx::Ch sat{};               // SAT
   float* line = nullptr;
   void Clear() {
     float* l = line;
@@ -179,6 +184,7 @@ struct Slot {
   SvfK f;                    // FILTER
   SvfK eq[3];                // EQ: low shelf, bell, high shelf
   float c[8];
+  satfx::Coefs sat{};        // SAT
 };
 
 inline float knob01(uint8_t v) { return (float)(v > 127 ? 127 : v) * (1.0f / 127.0f); }
@@ -514,6 +520,7 @@ class Engine {
         o.c[3] = p[2];                            // the sweep's depth, octaves
         break;
       }
+      case kSat: satfx::set(o.sat, p, sr_); break;
       default: break;
     }
   }
@@ -664,6 +671,7 @@ class Engine {
         d.car = car - floorf(car), d.lfo = ph - floorf(ph);
         break;
       }
+      case kSat: satfx::run(d.sat, o.sat, x, y, m); break;
       default:
         for (int i = 0; i < m; ++i) y[i] = x[i];
         break;

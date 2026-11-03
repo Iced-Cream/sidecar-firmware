@@ -430,5 +430,69 @@ print(json.dumps(out))
             shutil.rmtree(card, True)
 
 
+
+SOPHIE_PKG = os.path.join(REPO, "plugins", "sophie", "sophie.a64.rmp")
+
+
+@unittest.skipUnless(os.path.exists(SOPHIE_PKG), "build SOPHIE: make -C plugins/sophie a64")
+class TestSophie(unittest.TestCase):
+    """SOPHIE (plugins/sophie) on the card: scanned, fits, assigned to U1; a trig at the manifest's defaults (the kick)
+    sounds and decays to silence; every MODL entry sounds; two trigs 50 ms apart both sound."""
+
+    def test_sophie(self):
+        card = tempfile.mkdtemp(prefix="um-")
+        try:
+            os.makedirs(os.path.join(card, "Samples"))
+            os.makedirs(os.path.join(card, "Plugins"))
+            shutil.copy(SOPHIE_PKG, os.path.join(card, "Plugins", "sophie.rmp"))
+            with open(os.path.join(REPO, "plugins", "sophie", "manifest.json")) as f:
+                m = json.load(f)
+            d = [64] * 16
+            for k in m["knobs"]:
+                d[k["p"] - 1] = k.get("default", 64)
+            r = scenario(card, f"""
+d = {d!r}
+def stats(a):
+    return [float(np.abs(a).max()), float(np.sqrt(np.mean(a * a))), bool(np.isfinite(a).all())]
+out = {{}}
+e.um_command("um=assign:1:sophie.perc"); e.idle()
+e.report(P.trig_params(0x50, 60, 100, [v << 7 for v in d])); e.idle()
+a = e.frames(48000)[:, 0].astype(float) / 32767
+out["kick"] = stats(a[:14400]) + [float(np.abs(a[24000:]).max())]
+out["models"] = []
+for z in range(8):
+    q = list(d); q[1] = z * 16 + 8
+    e.report(P.trig_params(0x50, 60, 100, [v << 7 for v in q])); e.idle()
+    out["models"].append(stats(e.frames(24000)[:, 0].astype(float) / 32767))
+e.report(P.trig_params(0x50, 60, 100, [v << 7 for v in d])); e.idle()
+b1 = e.frames(2400)[:, 0].astype(float) / 32767
+e.report(P.trig_params(0x50, 60, 100, [v << 7 for v in d])); e.idle()
+b2 = e.frames(4800)[:, 0].astype(float) / 32767
+out["two"] = [stats(b1), stats(b2)]
+out["json"] = [x for x in e.um_json() if x["t"] in ("plugin", "slot") and x.get("id") == "sophie.perc"]
+print(json.dumps(out))
+""")
+            peak, rms, fin, tail = r["kick"]
+            self.assertTrue(fin)
+            self.assertGreater(peak, 0.05)
+            self.assertLess(peak, 1.0)
+            self.assertGreater(rms, 0.01)
+            self.assertLess(tail, 1e-3)   # the 0.28 s kick has died away by 0.5 s
+            for z, (pk, rm, fi) in enumerate(r["models"]):
+                self.assertTrue(fi, z)
+                self.assertGreater(rm, 0.005, z)
+                self.assertLess(pk, 1.0, z)
+            for pk, rm, fi in r["two"]:
+                self.assertTrue(fi)
+                self.assertGreater(rm, 0.01)
+            plug = [x for x in r["json"] if x["t"] == "plugin"]
+            slot = [x for x in r["json"] if x["t"] == "slot"]
+            self.assertEqual(len(plug), 1)
+            self.assertTrue(plug[0]["fit"])
+            self.assertEqual(plug[0]["target"], "a64")
+            self.assertEqual(slot[0]["state"], "READY")
+        finally:
+            shutil.rmtree(card, True)
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ enum Route : uint8_t { kNone = 0, kPoly = 1, kRytm = 2, kProbe = 3 };   // the l
 #if CORE_POLY
 // The platform's: a channel message for the Rytm (the Pi: core 0 sends it on the Rytm's USB MIDI); nullptr drops them
 void set_forward(void (*f)(uint8_t st, uint8_t d1, uint8_t d2));
+void forward_note(uint8_t st, uint8_t d1, uint8_t d2);     // one channel message that way, for the device layer (a box's voices)
 void midi(int src, uint8_t st, uint8_t d1, uint8_t d2);   // a channel message from source src
 void tick(uint32_t ms);                                    // poly::tick's: the gesture windows, the learned track's age
 bool take_trig(int vi, int note);                          // poly::take_live's: a 0x04 for a forwarded note: true swallowed

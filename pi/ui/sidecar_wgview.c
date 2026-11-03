@@ -5,6 +5,7 @@
 #include "sidecar_wgview.h"
 #include "sidecar_theme.h"
 #include "sidecar_vlabel.h"
+#include "sidecar_ui.h"		// sidecar_ui_voice: the box's names
 #include "sidecar_preset.h"
 #include "lvgl.h"
 #include <string.h>
@@ -970,7 +971,7 @@ static void title_update (void)
 	{
 		int l = cur_list ();
 		if (s_bPage) lv_snprintf (t, sizeof t, "POOL  %s", lname (l));
-		else lv_snprintf (t, sizeof t, "%s  %s %s", lname (l), mname (), kVoiceName[v->voice & 7]);
+		else lv_snprintf (t, sizeof t, "%s  %s %s", lname (l), mname (), sidecar_ui_voice (v->voice));
 		if (s_bSelect) lv_snprintf (r, sizeof r, "%d SELECTED", n_selected ());
 		else if (v->locked && v->list == l) lv_snprintf (r, sizeof r, "LOCKED");
 		else if (v->ram_known) lv_snprintf (r, sizeof r, "RAM %u MB %d%%", v->ram_mb, v->ram_pct);
@@ -979,7 +980,7 @@ static void title_update (void)
 	else
 	{
 		const char *k = v->kind ? mname () : "NO WAVETABLE / GRANULAR / MULTISAMPLE VOICE";
-		if (v->kind) lv_snprintf (t, sizeof t, "%s  %s", k, kVoiceName[v->voice & 7]);
+		if (v->kind) lv_snprintf (t, sizeof t, "%s  %s", k, sidecar_ui_voice (v->voice));
 		else lv_snprintf (t, sizeof t, "%s", k);
 		lv_snprintf (r, sizeof r, "%s", v->kind ? v->name : "");
 	}

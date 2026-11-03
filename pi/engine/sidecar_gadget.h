@@ -45,6 +45,7 @@ public:
 	void Poll (void)				{}
 	void LogStats (CLogger *)			{}
 	boolean MacOn (void) const			{ return FALSE; }
+	boolean HostOn (void) const			{ return FALSE; }
 	boolean Command (const char *)			{ return FALSE; }
 	void FromRytmBlock (const u8 *)			{}
 	void FromEngine (const s32 (*)[12], unsigned)	{}
@@ -151,6 +152,7 @@ public:
 	void Poll (void);				// core 0's loop: plug-and-play, :midifake
 	void LogStats (CLogger *pLogger);
 	boolean MacOn (void) const			{ return m_bMac; }	// :mac= (the web page's status)
+	boolean HostOn (void) const			{ return m_ToHost.IsUp (); }	// a computer has configured the device (/status "usbHost")
 	boolean Command (const char *pCmd);		// a console command for the Sidecar (TRUE: it was one)
 
 	// the engine's side (core 0)
@@ -276,6 +278,7 @@ private:
 #if RASPPI >= 5
 	s32 m_nOutLast[ChOut];
 #endif
+	unsigned m_nQuietSecs;				// LogStats: seconds since the last line while no computer is there
 	unsigned m_nLastIRQs;
 	u64 m_nLastTicks, m_nLastStamp;
 	u8 m_StringBuffer[80];

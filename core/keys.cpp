@@ -293,6 +293,7 @@ CORE_COLD void learn(int vi) {
 }  // namespace
 
 CORE_COLD void set_forward(void (*f)(uint8_t, uint8_t, uint8_t)) { fwd_fn = f; }
+CORE_COLD void forward_note(uint8_t st, uint8_t d1, uint8_t d2) { if (fwd_fn) fwd_fn(st, d1, d2); }
 CORE_COLD bool computer_on() { return mac_on; }
 
 CORE_COLD int auto_channel() { return auto_ch; }

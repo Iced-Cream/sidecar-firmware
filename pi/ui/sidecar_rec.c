@@ -5,6 +5,7 @@
 // CLASSIC lights the Rytm's red record LEDs.
 #include "sidecar_rec.h"
 #include "sidecar_theme.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' order
 #include "lvgl.h"
 #include "src/misc/lv_area_private.h"	// lv_area_intersect, l->_clip_area: a cell's meter redrawn alone
 #include <math.h>
@@ -24,6 +25,15 @@ static const signed char kCell[CELLS] = {
 };
 static const char *const kGroup[3] = {"RYTM STEMS", "SIDECAR VOICES", "MIX + RETURNS"};
 static const char *const kGroupC[3] = {"RYTM STEMS", "SIDECAR VOICES", "MIX AND RETURNS"};
+// cell k's channel: column 1 the voices in the box's list order (the Rytm's as kCell has it)
+static int cell (int k) { return k >= ROWS && k < 2 * ROWS ? 13 + sidecar_ui_voice_at (k - ROWS) : kCell[k]; }
+static const char *group (int g, int classic)	// column g's title: the stems named for the box
+{
+	static char b[32];
+	if (g) return (classic ? kGroupC : kGroup)[g];
+	lv_snprintf (b, sizeof b, "%s STEMS", sidecar_ui_box_up ());
+	return b;
+}
 
 #define DB_FLOOR	(-60.0f)
 #define FALL_DB_S	24.0f
@@ -240,7 +250,7 @@ static void rec_cb (lv_event_t *e)
 static void cell_state (int k, cell_t *o)
 {
 	memset (o, 0, sizeof *o);
-	int id = kCell[k], c = k / ROWS, r = k % ROWS;
+	int id = cell (k), c = k / ROWS, r = k % ROWS;
 	o->press = s_nPress == k;
 	o->en = s_V.valid && !busy () && s_V.state != SRV_ARMED;
 	if (id == C_ALL) return;
@@ -290,7 +300,7 @@ static void grid_draw (lv_event_t *e)
 	const lv_area_t *clip = &l->_clip_area;
 	for (int k = 0; k < CELLS; k++)
 	{
-		int col = k / ROWS, r = k % ROWS, id = kCell[k];
+		int col = k / ROWS, r = k % ROWS, id = cell (k);
 		int x = col_x (col), y = r * ph;
 		lv_area_t ca = {c.x1 + x - 4, c.y1 + y, c.x1 + x + cw + 3, c.y1 + y + ph + 3}, tmp;
 		if (!lv_area_intersect (&tmp, &ca, clip)) continue;		// (a meter's redraw: the other cells untouched)
@@ -398,7 +408,7 @@ static void grid_cb (lv_event_t *e)
 	cell_inval (k);
 	if (code != LV_EVENT_RELEASED || cell_at (p) != k) return;
 	if (!s_V.valid || busy () || s_V.state == SRV_ARMED) return;	// the recorder takes a selection only when idle
-	int id = kCell[k];
+	int id = cell (k);
 	char b[24];
 	if (id == C_ALL) lv_snprintf (b, sizeof b, "rec=ch:%s", (s_V.mask & 0x7FFFFFu) == 0x7FFFFFu ? "none" : "all");
 	else lv_snprintf (b, sizeof b, "rec=ch:%c%d", s_V.mask >> id & 1 ? '-' : '+', id);
@@ -713,7 +723,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_Status = label_w (pg, LU (114), LU (51), LU (120) + dx / 2, mi, TH->dim, 0);
 		for (int i = 0; i < 4; i++) s_Info[i] = label_w (pg, LU (237) + dx / 2, LU (16) + i * LU (11), LU (62) + dx / 2, mi, i == 0 ? TH->ink : TH->dim, 0);
 		s_TakesKey = th_key (pg, LU (301) + dx, LU (15), LU (51), LU (46), "TAKES", TH_KEY | TH_KEY_SMALL, takes_cb, 0);
-		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, LU (63), mi, TH->faint, kGroup[g]);
+		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, LU (63), mi, TH->faint, group (g, 0));
 	}
 	else
 	{
@@ -736,7 +746,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		th_key_font (s_TakesKey, TH->f_body);
 		for (int g = 0; g < 3; g++)
 		{
-			s_Group[g] = th_label (pg, col_x (g) + 2, LU (72), TH->f_micro, TH->sub, kGroupC[g]);
+			s_Group[g] = th_label (pg, col_x (g) + 2, LU (72), TH->f_micro, TH->sub, group (g, 1));
 			lv_obj_set_style_text_letter_space (s_Group[g], 2, 0);
 		}
 	}
@@ -955,8 +965,8 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 		th_label_color (s_Info[2], drv && v->vol_missing ? TH->accent_hi : TH->dim);
 		if (msg[0]) lv_snprintf (r, sizeof r, "%s", msg);
 		else if (v->drops) lv_snprintf (r, sizeof r, "CARD BEHIND: %u DROPPED", v->drops);
-		else if (st == SRV_ARMED) lv_snprintf (r, sizeof r, "RYTM PLAY STARTS IT");
-		else if (st == SRV_REC) lv_snprintf (r, sizeof r, v->arm_mode ? "RYTM STOP ENDS IT" : "TAP STOP TO END");
+		else if (st == SRV_ARMED) lv_snprintf (r, sizeof r, "%s PLAY STARTS IT", sidecar_ui_box_up ());
+		else if (st == SRV_REC) lv_snprintf (r, sizeof r, v->arm_mode ? "%s STOP ENDS IT" : "TAP STOP TO END", sidecar_ui_box_up ());
 		else if (st == SRV_SAVING) lv_snprintf (r, sizeof r, "CLOSING THE FILES");
 		else lv_snprintf (r, sizeof r, "TAP: CHANNEL ON/OFF");
 		for (char *q = r; *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;

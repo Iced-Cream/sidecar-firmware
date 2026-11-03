@@ -9,6 +9,7 @@
 
 #include "fx/send_fx.h"   // RYTM_SENDFX_LARGE: 0 on the Teensy build
 #include "ui/page.h"
+#include "ui/tap_names.h"   // tap_source_name, tap_channel_of_voice (on their own for the Pi's rec_pi.cpp)
 #include "ui/ui.h"
 
 namespace core {
@@ -37,6 +38,11 @@ void keys_map(bool on);    // UP held alone (on: KEYS shown, T1..T10 lit) / let 
 bool keys_map_on();        // the map shows (the touchscreen shows it too)
 bool keys_map_over(bool on);   // rui1050: UP held alone over an open page (on: KEYS as its map); off: true when it showed
 void lfo_page_reset();   // ux1027: the LFO page back on its main view (the page left)
+// USER SLOTS (page_slots.cpp): U1..U5's machines (remote.h RemoteSlots), on the ring after SCOPE / AUTO and in the MENU
+extern const ExtraPage kSlotsPage;
+void slots_page_reset();   // tests: row U1, no pick, no note
+int slots_page_row();      // tests: the row (0..4)
+int slots_page_pick();     // tests: the pick (-1 none, 0 "---", 1.. the installed entry + 1)
 void keys_map_drop();      // a hello or the page closed: the map (and its touchscreen overlay) gone
 void menu_reset();         // tests
 int menu_rows();                     // rui1051 (tests): the MENU's rows and the page title of row i (null: KEYS)
@@ -47,6 +53,7 @@ enum : uint8_t { kLedOff = 0, kLedBlueDim = 43, kLedBlue = 47, kLedOrange = 52, 
 inline uint8_t extra_encs(const ExtraPage& x) { return x.encs_now ? x.encs_now() : x.encs; }
 int extra_pages();                    // how many there are (shown or not)
 const ExtraPage& extra_page(int i);   // in the page order
+bool extra_for_box(const char* title);   // this page means something on the box in use (the Rytm: all do): device.h Feature
 
 // ---- the Overbridge input tap. Channels as the Rytm sends them (ob_block.h): 0 / 1 MAIN L / R, 2 + t track t's voice
 // (BD SD RS BT LT MT CH CY), 10 / 11 AUDIO IN L / R; int32 full scale.
@@ -66,8 +73,7 @@ void tap_enable(bool on);
 // The scope's source: 0 MAIN (L + R) / 2, 1..8 Sidecar voice 1..8 (its track's channel), 9 / 10 AUDIO IN L / R.
 constexpr int kTapSources = 11;
 void tap_source(int src);
-const char* tap_source_name(int src);   // "MAIN" "BD" "SD" "RS/CP" .. "CY/CB" (track order) "IN L" "IN R"
-int tap_channel_of_voice(int vi);       // the IN channel of Sidecar voice vi (0..7)
+// tap_source_name, tap_channel_of_voice: ui/tap_names.h
 // The peaks since the last call, |x| >> 16 (0..32767), channel order; the entries since *rd as (min, max) >> 16, at most
 // max, oldest first (an overrun skips to the oldest still held); returns how many.
 void tap_take_peaks(uint16_t out[kTapCh]);

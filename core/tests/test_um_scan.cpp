@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "check.h"
+#include "device/a4.h"
+#include "device/device.h"
 #include "engine.h"
 #include "fmt/fmt.h"
 #include "msamp/cardq.h"
@@ -301,7 +303,7 @@ int main() {
   fixture();
   CHECK(fs.mkdir("/.rytm/slots"));
 
-  hooks.to_rytm = out;
+  hooks.to_rytm = ::out;
   CHECK(engine_begin());
   um::begin(host_um_exec());
   sysex({0xf0, 0x7d, 0x52, 0x54, 0x10, 'U', 'M', 'S', 0xf7});
@@ -555,6 +557,17 @@ int main() {
   CHECK(um::command("um=rescan", o, sizeof o));
   idle_all();
   CHECK(plugins(json()) == plugins(j0));
+
+  // ---- a box with a folder of its own (the A4's /.a4): the web tab's assign lands there, and its report's voice byte plays the slot
+  {
+    device::g_link.state = "/.a4";
+    CHECK(um::command("um=assign:2:rytm.scanb", o, sizeof o));
+    idle_all();
+    CHECK(um::slot_view(1).state == RMP_SLOT_READY);
+    CHECK(fs.exists("/.a4/slots/UMS.txt") && !slurp("/.a4/slots/UMS.txt").empty());
+    device::reset();
+    CHECK(device::kA4.features & device::kUserSlots);
+  }
   printf("test_um_scan: PASS\n");
   return 0;
 }

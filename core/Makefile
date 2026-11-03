@@ -152,7 +152,7 @@ $(SMALL)/test_%: tests/small/test_%.cpp $(SMALL_CORE_OBJ) $(DEPS_H) $(B)/libengi
 ALL_TESTS := $(TESTS) $(MC_TESTS) $(SMALL_TESTS)
 # The tests that check a wall-clock bound (a control pass under the FIFO, a call under 50 us): run one at a time after
 # the parallel batch, when nothing else loads the CPU (under -j10 test_library_stall measured a 2142 us pass, 1835 alone)
-TIMING_TESTS := $(addprefix $(B)/,test_bundle_stall test_library_stall test_loadstall test_insert test_library test_tape \
+TIMING_TESTS := $(addprefix $(B)/,test_bundle_stall test_library_stall test_loadstall test_insert test_sat test_library test_tape \
                   test_send_fx test_srclib test_seqtop test_noteedit test_stereo test_msamp_load)
 # The Teensy's configuration (no CORE_POLY, no CORE_MSAMP: no built-in MD), compiled for syntax only on the files the
 # MD change touched that build there today (voices.cpp, ui/remote.cpp, lfo.cpp and a few more already fail in that
@@ -180,6 +180,11 @@ $(B)/obj/%.o: %.cpp $(DEPS_H) | $(B)/libengines.a
 $(B)/test_%: tests/test_%.cpp $(CORE_OBJ) $(DEPS_H) $(B)/libengines.a
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE_OBJ) $(B)/libengines.a
+
+# the Sidecar emulator: this engine and the Pi's output stage as a host for analog-emu's --ob-link (tools/sidecar_emu.cpp)
+sidecar-emu: $(B)/sidecar_emu
+$(B)/sidecar_emu: ../tools/sidecar_emu.cpp ../pi/engine/output.cpp $(B)/libcore.dylib
+	$(CXX) $(CXXFLAGS) -I../pi/engine -o $@ ../tools/sidecar_emu.cpp ../pi/engine/output.cpp -L$(B) -lcore -Wl,-rpath,$(abspath $(B))
 
 lib: $(B)/libcore.dylib
 $(B)/libcore.dylib: host/core_c.cpp $(CORE_SRC) $(DEPS_H) $(B)/libengines.a

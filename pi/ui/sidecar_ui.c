@@ -45,8 +45,7 @@ static const char *const kTabMap[] = {"Sound", "Send FX", "Display", "Pool", "Sy
 static const int kTabPage[N_TABS] = {PG_SOUND, PG_FX, PG_DISPLAY, PG_POOL, PG_SERVICE, PG_ABOUT};
 static const char *const kOnOff[] = {"Off", "On", ""};
 static const char *const kOutMap[] = {"Main", "Tracks", ""};
-static const char *const kVoiceMap[] = {"BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB", ""};
-static const char *const kVoiceMap2[] = {"BD", "SD", "RS/CP", "BT", "\n", "LT", "MT/HT", "CH/OH", "CY/CB", ""};
+static const char *s_VoiceMap[9], *s_VoiceMap2[10];	// the voices' keys in list order (voice_maps: the box's names)
 #define N_MACH 7	// MD in DIGIDRUM's (DD's) place since 2026-10-29
 static const char *const kMachMap[] = {"PLAITS", "JUNO", "FM", "DAISY", "DSPS", "GRAIN", "MD", ""};
 static const char *const kMachMap2[] = {"PLAITS", "JUNO", "FM", "DAISY", "\n", "DSPS", "GRAIN", "MD", ""};
@@ -151,6 +150,41 @@ static sidecar_ui_command_t s_Cmd;
 static void *s_CmdParam;
 static sidecar_ui_status_t s_St;			// the last state given: the voice selector and a rebuild re-read it
 static int s_bHaveSt;
+// the box in use (sidecar_ui_status_t box / voice): the Rytm until a status names another
+static char s_Box[24] = "Rytm", s_BoxUp[24] = "RYTM", s_VName[SIDECAR_UI_TRACKS][8];
+static int s_bVNames;					// 1: s_VName holds the box's own names
+const char *sidecar_ui_box (void) { return s_Box; }
+const char *sidecar_ui_box_up (void) { return s_BoxUp; }
+const char *sidecar_ui_voice (int v) { return s_bVNames ? s_VName[v & 7] : kVoiceName[v & 7]; }
+int sidecar_ui_voice_at (int n) { return s_bVNames ? n & 7 : kVoiceOrder[n & 7]; }
+int sidecar_ui_voice_pos (int v) { return s_bVNames ? v & 7 : kVoicePos[v & 7]; }
+int sidecar_ui_box_names (void) { return s_bVNames; }
+// a status's box taken: 1 when its word or its voices' names changed (the pages built with the old ones)
+static int box_take (const sidecar_ui_status_t *s)
+{
+	const char *w = s->box && s->box[0] ? s->box : "Rytm";
+	int own = 0, changed = strncmp (w, s_Box, sizeof s_Box - 1) != 0;
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) if (s->voice[v]) own = 1;
+	if (own != s_bVNames) changed = 1;
+	for (int v = 0; own && v < SIDECAR_UI_TRACKS; v++)
+		if (strncmp (s->voice[v] ? s->voice[v] : "-", s_VName[v], sizeof s_VName[v] - 1)) changed = 1;
+	if (!changed) return 0;
+	lv_snprintf (s_Box, sizeof s_Box, "%s", w);
+	for (int i = 0; i < (int) sizeof s_BoxUp; i++) s_BoxUp[i] = s_Box[i] >= 'a' && s_Box[i] <= 'z' ? s_Box[i] - 32 : s_Box[i];
+	s_bVNames = own;
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) lv_snprintf (s_VName[v], sizeof s_VName[v], "%s", own && s->voice[v] ? s->voice[v] : "-");
+	return 1;
+}
+static void voice_maps (void)
+{
+	for (int i = 0, k = 0; i < 8; i++)
+	{
+		s_VoiceMap[i] = sidecar_ui_voice (sidecar_ui_voice_at (i));
+		if (i == 4) s_VoiceMap2[k++] = "\n";
+		s_VoiceMap2[k++] = s_VoiceMap[i];
+	}
+	s_VoiceMap[8] = s_VoiceMap2[9] = "";
+}
 static int s_nVoice;					// the voice the machine and drone controls act on
 static unsigned s_nFifo = 96;
 static int s_nDim = 100;
@@ -413,7 +447,7 @@ static void seg_cb (lv_obj_t *m, int i, void *ud)
 	case SEG_NOTES:	command (i ? "notes=1" : "notes=0"); break;
 	case SEG_OUT:	command (i ? "out=tracks" : "out=main"); break;
 	case SEG_MAC:	command (i ? "mac=on" : "mac=off"); break;
-	case SEG_VOICE:	s_nVoice = kVoiceOrder[i & 7]; s_Sel[SEG_MACH] = -2; th_seg_set (s_Seg[SEG_MACH], -1); voice_view (); break;
+	case SEG_VOICE:	s_nVoice = sidecar_ui_voice_at (i); s_Sel[SEG_MACH] = -2; th_seg_set (s_Seg[SEG_MACH], -1); voice_view (); break;
 	case SEG_MACH:
 		lv_snprintf (b, sizeof b, "notemach=%d:%s", s_nVoice, kMachCmd[i]);
 		command (b);
@@ -590,7 +624,7 @@ static void oled_home (lv_obj_t *h)
 	const int kp = (th - LU (14)) / 4, kw = (cw - LU (8)) / 2;	// 23 / 30 dots a row, keys 83 / 111 wide
 	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
 	{
-		s_Track[i] = th_key (tp, 3 + (i / 4) * (kw + 2), LU (12) + (i % 4) * kp, kw, kp - 2, "-", TH_KEY | TH_KEY_LEFT, track_cb, (void *) (intptr_t) kVoiceOrder[i]);
+		s_Track[i] = th_key (tp, 3 + (i / 4) * (kw + 2), LU (12) + (i % 4) * kp, kw, kp - 2, "-", TH_KEY | TH_KEY_LEFT, track_cb, (void *) (intptr_t) sidecar_ui_voice_at (i));
 	}
 
 	// UX review T1: NOW - what matters on stage: the pattern (L3: the page's hero value) and the transport, the
@@ -657,14 +691,14 @@ static void oled_sound (lv_obj_t *pg)
 	label_w (l, LU (6), VS (138), lw - LU (12), TH->f_micro, TH->faint, "FIFO, DRONE, CLOCK: SYSTEM");
 
 	lv_obj_t *r = th_panel (pg, rx, LU (41), rw, UH - LU (41), "MIDI NOTES IN", TH_PANEL_GROUP);
-	seg (r, SEG_VOICE, LU (4), VS (13), rw - LU (8), VS (46), kVoiceMap2, TH_KEY_TRIG);
+	seg (r, SEG_VOICE, LU (4), VS (13), rw - LU (8), VS (46), (voice_maps (), s_VoiceMap2), TH_KEY_TRIG);
 	label (r, LU (6), VS (65), TH->f_micro, TH->dim, "MIDI-ONLY VOICE MACHINE");	// (T18: not the track's machine)
 	seg (r, SEG_MACH, LU (4), VS (76), rw - LU (8), VS (46), kMachMap2, TH_KEY | TH_KEY_SMALL);
 	label_w (r, LU (6), VS (130), rw - LU (12), TH->f_micro, TH->faint, "PLAYS MIDI NOTES SENT TO THE");
 	label_w (r, LU (6), VS (130) + LU (11), rw - LU (12), TH->f_micro, TH->faint, "VOICE. A TRACK'S MACHINE IS");
 	label_w (r, LU (6), VS (130) + LU (22), rw - LU (12), TH->f_micro, TH->faint, "THE RYTM'S SRC PAGE.");
-	th_seg_set (s_Seg[SEG_VOICE], kVoicePos[s_nVoice & 7]);
-	s_Sel[SEG_VOICE] = kVoicePos[s_nVoice & 7];
+	th_seg_set (s_Seg[SEG_VOICE], sidecar_ui_voice_pos (s_nVoice));
+	s_Sel[SEG_VOICE] = sidecar_ui_voice_pos (s_nVoice);
 }
 
 static void oled_service (lv_obj_t *pg)		// UX review T18: the engineering controls, for testing
@@ -812,15 +846,15 @@ static void classic_sound (lv_obj_t *pg)
 
 	lv_obj_t *r = th_panel (pg, LU (400) + dx, 0, LU (388) + dx, ph, "MIDI notes in", TH_PANEL_GROUP);
 	label (r, LU (12), CY (30), sm, TH->dim, "Voice");
-	seg (r, SEG_VOICE, LU (12), CY (48), LU (364) + dx, CH (48), kVoiceMap, TH_KEY_TRIG);
+	seg (r, SEG_VOICE, LU (12), CY (48), LU (364) + dx, CH (48), (voice_maps (), s_VoiceMap), TH_KEY_TRIG);
 	th_seg_gap (s_Seg[SEG_VOICE], 2);				// eight keys of 44 px
 	th_seg_font (s_Seg[SEG_VOICE], TH->f_micro);	// "CH/OH" fits at 12
 	label (r, LU (12), CY (100), sm, TH->dim, "MIDI-only voice machine");	// (T18: not the track's machine)
 	seg (r, SEG_MACH, LU (12), CY (118), LU (364) + dx, CH (48), kMachMap, TH_KEY | TH_KEY_SMALL);
 	lv_obj_t *h = label_w (r, LU (12), CY (180), LU (364) + dx, sm, TH->sub, "Plays the MIDI notes sent to the voice. A track's machine is the Rytm's SRC page.");
 	lv_label_set_long_mode (h, LV_LABEL_LONG_MODE_WRAP);
-	th_seg_set (s_Seg[SEG_VOICE], kVoicePos[s_nVoice & 7]);
-	s_Sel[SEG_VOICE] = kVoicePos[s_nVoice & 7];
+	th_seg_set (s_Seg[SEG_VOICE], sidecar_ui_voice_pos (s_nVoice));
+	s_Sel[SEG_VOICE] = sidecar_ui_voice_pos (s_nVoice);
 }
 
 static void classic_service (lv_obj_t *pg)	// UX review T18: the engineering controls, for testing
@@ -924,7 +958,7 @@ static void classic_home (lv_obj_t *h)
 	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
 	{
 		int x = 12 + (i / 4) * (kw + 10), y = 32 + (i % 4) * kp;
-		s_Track[i] = th_key (tp, x, y, kw, kp - LU (6), "-", TH_KEY_PAD | TH_KEY_LEFT, track_cb, (void *) (intptr_t) kVoiceOrder[i]);
+		s_Track[i] = th_key (tp, x, y, kw, kp - LU (6), "-", TH_KEY_PAD | TH_KEY_LEFT, track_cb, (void *) (intptr_t) sidecar_ui_voice_at (i));
 		th_key_font (s_Track[i], TH->f_body);
 	}
 
@@ -1104,7 +1138,9 @@ static void conn_draw_body (lv_event_t *e)
 	lv_area_t keep = l->_clip_area, vis = {c.x1 + vx0, c.y1, c.x1 + vx1 - 1, c.y2};
 	if (!lv_area_intersect (&l->_clip_area, &keep, &vis)) { l->_clip_area = keep; return; }
 	const int od = oled ();
-	const char *word = od ? (up ? "CONNECTED" : "DISCONNECTED") : (up ? "RYTM CONNECTED" : "RYTM DISCONNECTED");
+	char cw[48];
+	lv_snprintf (cw, sizeof cw, "%s %s", s_BoxUp, up ? "CONNECTED" : "DISCONNECTED");
+	const char *word = od ? (up ? "CONNECTED" : "DISCONNECTED") : cw;
 	const lv_font_t *f = od ? TH->f_big : TH->f_title;
 	const int tw = th_text_width (f, word);
 	int tx = od ? (w - tw) / 2 : w - 24 - tw;
@@ -1217,8 +1253,9 @@ static void build (void)
 	lv_obj_add_flag (s_Power, LV_OBJ_FLAG_HIDDEN);
 	conn_build (top);					// under the dimming layer
 	// F2: VOICE, INSERT FX and PAT mirror the Rytm: while it is not connected they say they show the last they had
-	s_Stale = th_label (top, oled () ? OW - LU (172) : TH->w - (TH->big ? 350 : 330), oled () ? 1 : LU (56), TH->big && !oled () ? TH->f_small : TH->f_body, TH->bad,
-			    oled () ? "NO RYTM: SHOWING LAST" : "Rytm not connected: showing the last");
+	char sb[64];
+	lv_snprintf (sb, sizeof sb, oled () ? "NO %s: SHOWING LAST" : "%s not connected: showing the last", oled () ? s_BoxUp : s_Box);
+	s_Stale = th_label (top, oled () ? OW - LU (172) : TH->w - (TH->big ? 350 : 330), oled () ? 1 : LU (56), TH->big && !oled () ? TH->f_small : TH->f_body, TH->bad, sb);
 	th_label_color (s_Stale, TH->bad);
 	lv_obj_add_flag (s_Stale, LV_OBJ_FLAG_HIDDEN);
 	{	// N3: the UP map (every UP + key: the device's table), shown while UP is held alone on the Rytm
@@ -1259,7 +1296,7 @@ static void build (void)
 	touch_view (s_nTouchShown);
 	seg_set (SEG_STYLE, s_nStyle);
 	seg_set (SEG_LOOK, sidecar_dot_get_look ());
-	if (s_Seg[SEG_VOICE]) { th_seg_set (s_Seg[SEG_VOICE], kVoicePos[s_nVoice & 7]); s_Sel[SEG_VOICE] = kVoicePos[s_nVoice & 7]; }
+	if (s_Seg[SEG_VOICE]) { th_seg_set (s_Seg[SEG_VOICE], sidecar_ui_voice_pos (s_nVoice)); s_Sel[SEG_VOICE] = sidecar_ui_voice_pos (s_nVoice); }
 	show_page (s_nPage);
 }
 
@@ -1281,6 +1318,7 @@ void sidecar_ui_create (void)
 // the redraw after a switch, in bands: one band each lv_timer_handler call (each core 0 Update draws about a quarter or a
 // sixth of the screen, never all of it at once), a wipe from the top
 static int s_nWipe, s_nWipeBands;
+static void rebuild (void);
 static void wipe_cb (lv_timer_t *t)
 {
 	lv_display_t *d = lv_display_get_default ();
@@ -1296,6 +1334,12 @@ void sidecar_ui_style (int style)
 	if (style == s_nStyle && s_nBuilt) return;
 	s_nStyle = style;
 	if (!s_nBuilt) return;					// sidecar_ui_create builds it
+	rebuild ();
+}
+
+// the pages built again in the theme set (a new theme, or a box with other names)
+static void rebuild (void)
+{
 	// the old objects go first (seqed / rytmpat keep their models: their create re-reads them); nothing is drawn
 	// while the pages are rebuilt, then the screen is redrawn band by band (wipe_cb)
 	lv_display_t *d = lv_display_get_default ();
@@ -1417,6 +1461,13 @@ static void uslot_tick (lv_timer_t *t) { (void) t; uslot_paint (); }
 void sidecar_ui_status (const sidecar_ui_status_t *s)
 {
 	char b[80];
+	if (box_take (s) && s_nBuilt)					// another box: its words on every page, built anew
+	{
+		s_St = *s;
+		s_bHaveSt = 1;
+		rebuild ();						// its build applies s
+		return;
+	}
 	if (s->ui_style >= 0 && s->ui_style != s_nStyleSeen)		// a change of the stored setting, not our own tap
 	{
 		s_nStyleSeen = s->ui_style;
@@ -1440,7 +1491,7 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		{
 			fmt_rec (b, sizeof b, s, "");
 			char r[48];
-			lv_snprintf (r, sizeof r, "%s%s%s", b, b[0] ? "  " : "", s->rytm ? "RYTM" : "NO RYTM");
+			lv_snprintf (r, sizeof r, "%s%s%s%s", b, b[0] ? "  " : "", s->rytm ? "" : "NO ", s_BoxUp);
 			th_titlebar_set (s_Title, "SIDECAR EXPANDER", r, 0);
 			// REC: a white LED blinking with the take's seconds (OLED has no red); else the Rytm: teal, or none
 			int blink = s->rec == 2 && (s->rec_secs & 1) == 0;
@@ -1450,7 +1501,8 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 	}
 	else if (s->rytm != s_nRytm)
 	{
-		set_text (s_Rytm, s->rytm ? "Rytm connected" : "No Rytm link");
+		lv_snprintf (b, sizeof b, s->rytm ? "%s connected" : "No %s link", s_Box);
+		set_text (s_Rytm, b);
 		th_label_color (s_Rytm, s->rytm ? TH->accent : 0xFF6B6B);
 	}
 	s_nRytm = s->rytm;
@@ -1483,7 +1535,9 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		if (s->pattern >= 0) lv_snprintf (b, sizeof b, "%c%02d", 'A' + s->pattern / 16 % 8, s->pattern % 16 + 1);
 		else lv_snprintf (b, sizeof b, "-");
 		set_text (s_NowPat, b);
-		set_text (s_NowTr, !s->rytm ? (oled () ? "NO RYTM" : "no Rytm") : s->transport == 1 ? (oled () ? "PLAYING" : "playing")
+		char nb[32];
+		lv_snprintf (nb, sizeof nb, oled () ? "NO %s" : "no %s", oled () ? s_BoxUp : s_Box);
+		set_text (s_NowTr, !s->rytm ? nb : s->transport == 1 ? (oled () ? "PLAYING" : "playing")
 				    : s->transport == 2 ? (oled () ? "PAUSED" : "paused") : (oled () ? "STOPPED" : "stopped"));
 		if (s_NowTr) th_label_color (s_NowTr, s->transport == 1 ? (oled () ? 0xFFFFFF : TH->ok) : dim);
 		fmt_rec (b, sizeof b, s, oled () ? "OFF" : "off");
@@ -1519,10 +1573,10 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 	}
 	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
 	{
-		int vi = kVoiceOrder[i];
+		int vi = sidecar_ui_voice_at (i);
 		const char *n = s->track[vi] && s->track[vi][0] ? s->track[vi] : "-";
-		if (oled ()) lv_snprintf (b, sizeof b, "%s %s", kVoiceName[vi], n);
-		else lv_snprintf (b, sizeof b, "%s   %s", kVoiceName[vi], n);
+		if (oled ()) lv_snprintf (b, sizeof b, "%s %s", sidecar_ui_voice (vi), n);
+		else lv_snprintf (b, sizeof b, "%s   %s", sidecar_ui_voice (vi), n);
 		th_key_text (s_Track[i], b);
 		th_key_sub (s_Track[i], s->poly >> vi & 1 ? (oled () ? "POLY TRACK" : "poly track") : "");	// S1
 	}

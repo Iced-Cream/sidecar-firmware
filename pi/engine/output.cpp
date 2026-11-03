@@ -43,6 +43,14 @@ uint32_t Output::Push(const int16_t (*frames)[kVoices], uint32_t n, const int16_
   return k;
 }
 
+// x before any limit. No gain or down: the -12 dBFS limit, then the gain, the Rytm's path bit for bit. Up (a box whose insert point sits low): the gain first and one knee
+// toward full scale, so a hot voice is not cut at the limit and clipped again.
+float Output::Own(float x, float t) {
+  if (t > 1.0f) return core::out::Mixer::Limit(x * t, 0.9999f);
+  x = Limit(x) * t;
+  return x > 0.9999f ? 0.9999f : x < -0.9999f ? -0.9999f : x;
+}
+
 void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoices], const Taps* taps) {
   const core::out::Control& c = *ctl_;
   bool block_set = false;
@@ -54,6 +62,7 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
     armed_ = true, d_.arm_at = base, d_.arm_level = fifo_.size();
   const Mode mode = GetMode();
   const bool test = core::out::meas::active();   // stereo=measure: its test signals (core/fx/out_measure.h)
+  const float trk_gain = c.trk10 ? powf(10.0f, (float)c.trk10 / 200.0f) : 1.0f;   // stereo=trim:trk (once a block: a change is a step, a test setting)
   for (uint32_t i = 0; i < n; ++i) {
     for (int ch = 0; ch < kChannels; ++ch) out[i][ch] = 0;
     if (taps && taps->feed) memset(taps->feed[i], 0, sizeof taps->feed[i]);
@@ -84,10 +93,11 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
         out[i][0] = out[i][1] = To32(main_.Sum(f.v, g));
       } else {
         for (int v = 0; v < kVoices; ++v) {
-          float x = Limit(f.v[v] / 32768.0f * g);
+          const float y = f.v[v] / 32768.0f * g, x = Limit(y);
           float a = x < 0 ? -x : x;
           if (a > peak_) peak_ = a;
-          out[i][kVoiceToChannel[v]] = To32(x);
+          const uint8_t ch = core::out::device().voice[v];   // the Rytm's: kVoiceToChannel, the old path bit for bit
+          if (ch < kChannels) out[i][ch] = To32(Own(y, trk_gain));
         }
       }
       continue;
@@ -114,10 +124,11 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
       out[i][core::out::device().post[0]] = out[i][core::out::device().post[1]] = To32(main_.Sum(m, g));
     } else {
       for (int v = 0; v < kVoices; ++v) {
-        float x = Limit(trk[v] / 32768.0f * g);
+        const float y = trk[v] / 32768.0f * g, x = Limit(y);
         float a = x < 0 ? -x : x;
         if (a > peak_) peak_ = a;
-        out[i][core::out::device().voice[v]] = To32(x);
+        const uint8_t ch = core::out::device().voice[v];
+        if (ch < kChannels) out[i][ch] = To32(Own(y, trk_gain));   // (a box with fewer voices: the rest have no channel)
       }
     }
     pre[0] *= g, pre[1] *= g, post[0] *= g, post[1] *= g;

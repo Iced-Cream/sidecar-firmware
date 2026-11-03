@@ -18,7 +18,8 @@ running it through a chain and sending it back is a feedback loop. So there are 
 | Rytm's distortion and compressor | as ever on the analog mix; 2/3 leaves them while a chain runs | only process the Rytm's FX returns routed PRE: not the voices |
 | latency | +3 ms on what goes through the chain (2 ms the way back, 1 ms the limiter); bypassed, none | analog tracks about 5.9 ms later (282 frames [measured: the return path]), +1 ms the limiter, +2 ms with a chain on |
 
-Bypass in SRC MIX keeps the mix: the stems stay on 0/1, with the limiter, and only the chain leaves.
+Bypass in SRC MIX keeps the mix: the stems stay on 0/1, with the limiter, and only the chain leaves. So does an empty chain
+(no TYPE in any slot, the POST EQ flat): SRC MIX alone sums the stems off main [code, `test_masterfx_pi` src_mix_empty_chain].
 
 The Rytm's own controls in through mode:
 
@@ -75,7 +76,7 @@ image holds; 1 ms of lookahead (48 frames), the gain a straight line down that a
 
 Four slots in a row, then a POST EQ, then LEV.
 
-- **One FX code path.** Slots 1, 2 are chain M1 of `ins::Engine`, slots 3, 4 chain M2, with its POST EQ. Every INSERT TYPE works.
+- **One FX code path.** Slots 1, 2 are chain M1 of `ins::Engine`, slots 3, 4 chain M2, with its POST EQ. Every INSERT TYPE works, SAT among them (docs/INSERT-FX.md): 15 frames each, tape on the mix is the use it was built for.
 - **AMP**: its own cap, 2 instances, outside the voices' 6. One instance on (L + R) / 2 on both sides, or an L/R pair (two instances,
   each side its own). `MAX 2` past that.
 - **Send FX types as inserts**: CHORUS, COMB, SPACE, RINGS, CLOUD, HALO: a second `fx::SendFx`, through `SendFx::Insert`, the same
@@ -110,6 +111,8 @@ No p-locks and no LFO targets yet.
 
 In the INSERT file (docs/INSERT-FX.md): `M1 A COMP 50 60 40 20`, `AMP M2 A file`, `PEQ M2 40 0 64 70`, and only off its defaults
 `MFX BYP SRC LEV MIX1 MIX2 MIX3 MIX4 PAIRS [TRIM]` (`PAIRS`: a bit a slot; `TRIM` in dB, left out at -6: an older line loads at the default). A kit without them plays and saves byte for byte as before [measured].
+A kit without its own file plays the project's default (`/.rytm/ins/<project>.txt`), its MFX line and SRC with it; a
+Sidecar bundle, the Rytm's SAVE KIT to another kit and RELOAD KIT carry the line too (core/bundle/kits.h).
 An older Sidecar does not read these lines: it keeps such a file as it is and plays the kit without a chain.
 
 ## Signal path, threads

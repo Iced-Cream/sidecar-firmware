@@ -256,6 +256,14 @@ int main() {
     CHECK(t5 && t5->speed == seq::kSpd2_3 && t5->dir == seq::kDirPend && t5->length == 12 && t5->step[3].note[0].micro == 6);
     n = seq::pack(pt, out, sizeof out);
     CHECK(n == (int)v5.size() && !memcmp(out, v5.data(), n));
+    // arp locks: read, written back byte for byte. A file of before them reads as it did (p000..p003 above)
+    std::vector<uint8_t> v6 = slurp(golden_dir() + "/sqp/v4/p004.sqp");
+    CHECK(seq::unpack(pt, 4, v6.data(), (int)v6.size()) && pt.nkeep == 0);
+    const seq::Track* t6 = seq::track_of(pt, 2);
+    CHECK(t6 && t6->step[0].nl == 3 && seq::lock_of(t6->step[0], seq::kLockArp) == 1 << 7 && seq::lock_of(t6->step[0], seq::kLockArp + 2) == 1 << 7 &&
+          t6->step[0].lock[1].cond == 11 && seq::lock_of(t6->step[4], seq::kLockArp + 1) == 5 << 7 && !t6->step[4].n);
+    n = seq::pack(pt, out, sizeof out);
+    CHECK(n == (int)v6.size() && !memcmp(out, v6.data(), n));
     // an older Sidecar (its registry entry: sqp v3, read natively from v1) locks a v4 pattern: never played without
     // its blocks, never saved over
     fmt::Format old = *fmt::find("sqp");

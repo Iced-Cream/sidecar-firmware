@@ -2038,6 +2038,22 @@ struct Js {
   }
   void num(const char* k, uint32_t v) { char t[24]; sniprintf(t, sizeof t, "\"%s\":%u", k, (unsigned)v); put(t); }
 };
+// Slot s as the Rytm shows it (the display's view, the USER SLOTS page): its machine's name, "---" empty, "NAME..."
+// loading, else the reason ("!ROOM NPPR")
+void slot_shown(int s, char* out, int cap) {
+  rmp_desc d;
+  const rmp_desc* p = slot_desc(s, &d);
+  rmp_slot_state st = g_slot[s].st;
+  const char* nm = p ? p->name : "";
+  if (!g_map.slot[s].id[0]) copy(out, "---", cap);
+  else if (st == RMP_SLOT_READY) copy(out, nm, cap);
+  else if (st == RMP_SLOT_LOADING) sniprintf(out, cap, "%.8s...", nm);
+  else {
+    char w[10];
+    rmp_why_name(w, rmp_why_of(rmp_proto_state(st), RMP_WHY_NONE), p);
+    sniprintf(out, cap, "!%.10s", w[0] ? w : nm);
+  }
+}
 void publish() {
   uint32_t seq = g_jseq;
   int w = (int)((seq / 2 + 1) & 1);
@@ -2141,22 +2157,29 @@ void publish() {
   UiView& u = g_ui[w];   // the display's view, in the same buffer half
   copy(u.project, core::project[0] ? core::project : "_default", sizeof u.project);
   for (int s = 0; s < kSlots; ++s) {
-    rmp_desc d;
-    const rmp_desc* p = slot_desc(s, &d);
-    rmp_slot_state st = g_slot[s].st;
-    const char* nm = p ? p->name : "";
-    u.slot[s].state = (uint8_t)st;
-    if (!g_map.slot[s].id[0]) copy(u.slot[s].name, "---", sizeof u.slot[s].name);
-    else if (st == RMP_SLOT_READY) copy(u.slot[s].name, nm, sizeof u.slot[s].name);
-    else if (st == RMP_SLOT_LOADING) sniprintf(u.slot[s].name, sizeof u.slot[s].name, "%.8s...", nm);
-    else {   // the reason, as on the Rytm: "!ROOM NPPR"
-      char w[10];
-      rmp_why_name(w, rmp_why_of(rmp_proto_state(st), RMP_WHY_NONE), p);
-      sniprintf(u.slot[s].name, sizeof u.slot[s].name, "!%.10s", w[0] ? w : nm);
-    }
+    u.slot[s].state = (uint8_t)g_slot[s].st;
+    slot_shown(s, u.slot[s].name, sizeof u.slot[s].name);
   }
   __atomic_store_n(&g_jseq, seq + 2, __ATOMIC_RELEASE);   // the reader takes buffer (seq/2) & 1
 }
+
+// The USER SLOTS page's hooks (core/ui/remote.h RemoteSlots): the installed list the box gets (1B), the slots as the
+// display shows them, and the console's own commands for a change - the web page's path, so the map, the fingerprints,
+// the save and the project's list are the same whoever asks
+int ui_machines() { return g_ninst; }
+bool ui_machine(int i, char* name, int cap, const char** id) {
+  if (i < 0 || i >= g_ninst) return false;
+  const Pkg& e = g_pkg[g_inst[i]];
+  copy(name, e.name, cap);
+  *id = e.id;
+  return true;
+}
+const char* ui_slot(int s, char* name, int cap) {
+  if (s < 0 || s >= kSlots) { copy(name, "", cap); return ""; }
+  slot_shown(s, name, cap);
+  return g_map.slot[s].id;
+}
+const core::ui::RemoteSlots kUiSlots = {ui_machines, ui_machine, ui_slot, command};
 
 }  // namespace
 
@@ -2207,6 +2230,7 @@ void begin(const Exec* e, const char* d) {
   core::hooks.project_seen = on_project_seen;
   core::hooks.project_changed = on_project_changed;
   core::hooks.slot_prints = on_prints;
+  core::ui::remote_slots(&kUiSlots);   // the USER SLOTS page on the box's screen
   project_reload();
   g_scan = 1;
   core::log("um: user machines from %s (code arena %u KB, %u KB state a voice)", g_dir, (unsigned)(e->total >> 10),

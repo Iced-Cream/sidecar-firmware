@@ -1,4 +1,4 @@
-// pi/engine/card_guard.cpp - see card_guard.h. PI5_GADGET=1 builds only (Makefile): the linker's --wrap sends every call
+// pi/engine/card_guard.cpp - see card_guard.h. PI5_TESTMODE=1 builds only (Makefile): the linker's --wrap sends every call
 // to these FatFs functions, the engine's and the libraries', through here. Off (the default) it only passes them on.
 // f_truncate, f_expand, f_write and f_sync work on a file already open, f_open decided on that; nothing in the engine
 // calls f_chmod, f_utime, f_setlabel or f_mkfs.

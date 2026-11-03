@@ -50,3 +50,18 @@ test("the temperature card says the clock was lowered", () => {
   assert.deepEqual(T({ temp: 80, tempWarn: true, clockLow: 0 }), ["SoC · running hot (warning until below 75 °C)", "bad"]);
   assert.deepEqual(T({ temp: 50 }), ["SoC", ""]);   // an older engine: no clockLow
 });
+
+// 0.4.0: the USB-C card, the Pi 5's computer audio on as on the Pi 4 (/status "usbHost": a computer has configured the
+// device; false on a plain power supply, where no USB reset ever comes)
+test("the USB-C card says whether a computer is there", () => {
+  const i = page.indexOf("function gadgetTile("), j = page.indexOf("function tempTile(");
+  assert.ok(i > 0 && j > i, "gadgetTile in index.html");
+  const G = new Function(page.slice(i, j) + "; return gadgetTile;")();
+  const sc = "sidecar: timer alt 1/1 mac on pk 0 | out ... | late 0/0/0 incompl 0/0/0";
+  assert.deepEqual(G({ gadget: "sidecar", mac: true, usbHost: false }, sc), ["sidecar", "no computer on USB-C · computer audio on"]);
+  assert.deepEqual(G({ gadget: "sidecar", mac: false, usbHost: true }, sc), ["sidecar", "alt 1/1 · computer audio off · late 0/0/0"]);
+  assert.deepEqual(G({ gadget: "sidecar", mac: true, usbHost: true }, undefined), ["sidecar", "UAC2 12/12 + MIDI"]);
+  assert.deepEqual(G({ gadget: "sidecar", mac: true }, sc), ["sidecar", "alt 1/1 · computer audio on · late 0/0/0"]);   // an older engine: no usbHost
+  assert.deepEqual(G({ gadget: "0", mac: null, usbHost: null }, undefined), ["off", "off"]);
+  assert.deepEqual(G({ gadget: "midi", mac: null, usbHost: null }, undefined), ["midi", "MIDI echo"]);
+});

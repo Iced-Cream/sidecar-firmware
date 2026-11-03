@@ -76,9 +76,24 @@ class PageView {
   uint32_t keys_[kMaxCells] = {};
 };
 
-// The encoder's new value: one zone a step on a kList cell's parameter (its zone's centre), else v + delta (x 8 with
-// FUNC held), 0..127.
+// The encoder's new value: one zone a step (delta's sign) on a kList cell's parameter (its zone's centre: pace it with
+// list_turn), else v + delta (x 8 with FUNC held), 0..127.
 int step_value(const Page& p, int param, int v, int delta, bool func);
+bool is_list(const Page& p, int param);   // a kList cell's parameter
+// A list knob, the one rule for every list, enumerated value and switch on the Rytm's encoders (core/ui/README.md, "List
+// knobs"). delta is raw panel counts: the Rytm reports a knob's sum about every 67 ms, so size and timing of a report say
+// nothing about entries. list_turn: -1, 0 or +1, the entries to move for this report of encoder e (A..H, 8 DATA); call it
+// once a report, whatever the page does with it. The first report after a rest steps at once, whatever its size, then one
+// entry every kListCounts counts, at most one every kListGapMs; a reversal starts its count over, so a jittering knob does
+// not bounce. Clamp the result, never wrap. list_turn_long: for long lists, as list_turn, x kListFast when the report
+// holds kListFastCounts or more (a spin); FUNC's jump stays the page's.
+constexpr int kListCounts = 4;       // one entry; a dial's step on a Rytm is about this (README)
+constexpr int kListGapMs = 60;
+constexpr int kListRestMs = 300;
+constexpr int kListFastCounts = 8, kListFast = 4;
+int list_turn(int e, int delta);
+int list_turn_long(int e, int delta);
+void list_pacing(bool on);   // off: the counts as they come (tests of what a page does: tests/check.h, sim/rui_link.py)
 // The built-in machine table's pages (pages.cpp): the page for a voice byte's machine (null: none), the SIDECAR status
 // page, and the widget gallery (demo 0 / 1: every widget kind, for core/ui's renderer and tests).
 const Page* page_for_machine(int machine);

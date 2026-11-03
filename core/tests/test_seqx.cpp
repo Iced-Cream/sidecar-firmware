@@ -292,6 +292,95 @@ static std::vector<uint8_t> with_blocks(const uint8_t* f, int n, const std::vect
   for (int k = 0; k < 4; ++k) d[8 + k] = (uint8_t)(c >> (8 * k));
   return d;
 }
+// arp locks: params past the old 32, a slot like any lock (12 at most), the file: a required block, so an older Sidecar locks it; a pattern without any: as before
+static void test_arp_locks() {
+  static seq::Pattern p, q;
+  static uint8_t a[1 << 18], b[1 << 18];
+  seq::clear(p, 4);
+  seq::Track* t = seq::track_of(p, 2, true);
+  t->on = 1;
+  seq::add_note(t->step[0], {60, 100, 48, 0, 0});
+  int was = seq::pack(p, a, sizeof a);
+  CHECK(was > 0 && a[4] == 2);
+  CHECK(seq::set_lock(t->step[3], seq::kLockArp, 2 << 7) && t->step[3].nl == 1);   // a lock trig: no notes
+  CHECK(seq::set_lock(t->step[0], seq::kLockArp + 4, 9 << 7) && seq::lock_of(t->step[0], seq::kLockArp + 4) == 2 << 7);   // past its table: its last
+  CHECK(!seq::set_lock(t->step[0], seq::kLockArp + seq::kArpLocks, 0));                 // the next id: none yet
+  for (int k = 0; k < 11; ++k) CHECK(seq::set_lock(t->step[0], k, 10 << 7));
+  CHECK(t->step[0].nl == 12 && !seq::set_lock(t->step[0], seq::kLockArp + 1, 1 << 7));  // the 12 hold for them too
+  CHECK(seq::set_lock(t->step[0], seq::kLockArp + 4, 1 << 7));                          // a lock already there: its slot
+  // they do not slide, and their slot's bit of P1 stays clear of them
+  t->step[0].slide = 1u << 0;
+  CHECK(seq::lock_slides(t->step[0], 0) && !seq::lock_slides(t->step[0], seq::kLockArp));
+  CHECK(seq::clear_lock(t->step[0], seq::kLockArp + 4) && t->step[0].slide == 1u);
+  CHECK(seq::set_lock(t->step[0], seq::kLockArp + 4, 1 << 7));
+  seq::set_lock(t->step[0], 1, 3 << 7);
+  CHECK(seq::lock_cond_ok(11));
+  for (int k = 0; k < t->step[0].nl; ++k)
+    if (t->step[0].lock[k].param == seq::kLockArp + 4) t->step[0].lock[k].cond = 11;   // V1's condition on one
+  int n = seq::pack(p, a, sizeof a);
+  CHECK(n > was && n <= seq::pack_bound() && a[4] == 4);
+  CHECK(seq::unpack(q, 4, a, n));
+  const seq::Track* r = seq::track_of(q, 2);
+  CHECK(r && r->step[3].nl == 1 && seq::lock_of(r->step[3], seq::kLockArp) == 2 << 7 && !r->step[3].n);
+  CHECK(r->step[0].nl == 12 && seq::lock_of(r->step[0], seq::kLockArp + 4) == 1 << 7 && r->step[0].slide == 1u);
+  for (int k = 0; k < r->step[0].nl; ++k) CHECK((r->step[0].lock[k].cond == 11) == (r->step[0].lock[k].param == seq::kLockArp + 4));
+  CHECK(seq::pack(q, b, sizeof b) == n && !memcmp(a, b, (size_t)n));   // read and written back, byte for byte
+  // an older Sidecar, its build without the block: the same bytes under an id it does not know, required: locked, never played or saved over
+  int at = -1;
+  for (int i = n - 8; i > 12 && at < 0; --i)
+    if (a[i] == seq::kBlkArp && a[i + 1] == (seq::kBlkTrack | seq::kBlkRequired | seq::kBlkPerStep) && a[i + 2] == 1 && !a[i + 3] && a[i + 4] == 2) at = i;
+  CHECK(at > 0);
+  memcpy(b, a, (size_t)n);
+  b[at] = 0x7E;
+  uint32_t c = seq::crc32(b + 12, n - 12);
+  for (int k = 0; k < 4; ++k) b[8 + k] = (uint8_t)(c >> (8 * k));
+  CHECK(!seq::unpack(q, 4, b, n) && seq::unpack_error() == seq::kUnpackNewer && !seq::track_of(q, 2));
+  // a value this build's table does not hold (a newer Sidecar's): locked, not clamped
+  memcpy(b, a, (size_t)n);
+  int v = -1;
+  for (int i = 12; i + 2 < at && v < 0; ++i)
+    if (b[i] == seq::kLockArp && b[i + 1] == 0 && b[i + 2] == 1) v = i;   // the step 4 lock: <param> <2 << 7>
+  CHECK(v > 0);
+  b[v + 2] = 7;
+  c = seq::crc32(b + 12, n - 12);
+  for (int k = 0; k < 4; ++k) b[8 + k] = (uint8_t)(c >> (8 * k));
+  CHECK(!seq::unpack(q, 4, b, n) && seq::unpack_error() == seq::kUnpackNewer);
+  // no block in the file, a value past its table all the same (a damaged or hand-made file): never read as one; one inside it: as any lock
+  {
+    static seq::Pattern w;
+    seq::clear(w, 4);
+    seq::Track* wt = seq::track_of(w, 2, true);
+    wt->on = 1;
+    CHECK(seq::set_lock(wt->step[3], 3, 99 << 7));
+    int m = seq::pack(w, b, sizeof b), pv = -1;
+    CHECK(m > 0 && b[4] == 2);
+    for (int i = 12; i + 2 < m && pv < 0; ++i)
+      if (b[i] == 3 && (b[i + 1] | b[i + 2] << 8) == 99 << 7) pv = i;
+    CHECK(pv > 0);
+    auto bytes = [&](int prm, int val) {
+      b[pv] = (uint8_t)prm, b[pv + 1] = (uint8_t)(val & 0xFF), b[pv + 2] = (uint8_t)(val >> 8);
+      uint32_t x = seq::crc32(b + 12, m - 12);
+      for (int k = 0; k < 4; ++k) b[8 + k] = (uint8_t)(x >> (8 * k));
+    };
+    bytes(seq::kLockArp + 2, 7 << 7);
+    CHECK(!seq::unpack(q, 4, b, m) && seq::unpack_error() == seq::kUnpackNewer);
+    bytes(seq::kLockArp + 2, 1 << 7);
+    CHECK(seq::unpack(q, 4, b, m) && seq::lock_of(seq::track_of(q, 2)->step[3], seq::kLockArp + 2) == 1 << 7);
+  }
+  // the console's line (the touch editor's ARP): a value past its table refused, -1 clears
+  char o[120];
+  int tr = -1;
+  CHECK(seq::command_x(p, "seq=alock:3:9:1:5", &tr, o, sizeof o) == 1 && tr == 2 && seq::lock_of(t->step[8], seq::kLockArp + 1) == 5 << 7);
+  CHECK(seq::command_x(p, "seq=alock:3:9:2:3", &tr, o, sizeof o) == -1 && seq::command_x(p, "seq=alock:3:9:5:0", &tr, o, sizeof o) == -1);
+  CHECK(seq::command_x(p, "seq=alock:3:9:1:-1", &tr, o, sizeof o) == 1 && !t->step[8].nl);
+  CHECK(seq::command_x(p, "seq=slide:3:4:33:1", &tr, o, sizeof o) == -1 && !t->step[3].slide);   // (no slide on one)
+  // the last arp lock gone: the block goes, the file as it was
+  seq::clear_lock(t->step[3], seq::kLockArp);
+  t->step[0].slide = 0, t->step[0].nl = 0;
+  CHECK(seq::pack(p, b, sizeof b) == was && b[4] == 2);
+  printf("  arp locks: 12 a step, the file read and written back, a required block, an older build locks it\n");
+}
+
 static void test_unknown_blocks() {
   static seq::Pattern p, q;
   static uint8_t buf[1 << 17], buf2[1 << 17];
@@ -510,6 +599,7 @@ int main() {
   test_step_for();
   test_file();
   test_unknown_blocks();
+  test_arp_locks();
   char tmpl[] = "/tmp/core_seqx_XXXXXX";
   CHECK(mkdtemp(tmpl));
   std::string card = tmpl;

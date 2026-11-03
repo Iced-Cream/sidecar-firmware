@@ -445,7 +445,7 @@ uint64_t bench(const char* machine, uint32_t* worst_block, int* peak, uint32_t* 
   if (hash) *hash = h;
   return sum;
 }
-uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
+static core::ins::Engine* ins_bench_engine() {
   using namespace core::ins;
   static Engine* e = nullptr;
   static float (*lines)[kLine] = nullptr;
@@ -453,6 +453,41 @@ uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
   memset(lines, 0, sizeof(float) * kLines * kLine);
   e->Place(lines);
   e->Reset();
+  return e;
+}
+uint64_t ins_bus_bench(uint32_t* worst_block, uint32_t* hash) {
+  using namespace core::ins;
+  Engine* e = ins_bench_engine();
+  static Control c;
+  memset(&c, 0, sizeof c);
+  for (int ch = kBus0; ch < kChains; ++ch)
+    for (int s = 0; s < kSlots; ++s) {
+      c.type[ch][s] = kSat;
+      for (int k = 0; k < kParams; ++k) c.play[ch][s][k] = (uint8_t)(40 + 20 * k);
+    }
+  float y[kChains - kBus0][kBlock][2];
+  uint64_t sum = 0;
+  uint32_t worst = 0, h = 2166136261u;
+  for (int n = 0; n < 4000; ++n) {
+    for (int ch = 0; ch < kChains - kBus0; ++ch)
+      for (int s = 0; s < kBlock; ++s)
+        y[ch][s][0] = 0.3f * sinf(0.05f * (float)(n * kBlock + s) * (float)(ch + 1)), y[ch][s][1] = 0.8f * y[ch][s][0];
+    uint32_t t0 = core::cycles();
+    for (int ch = 0; ch < kChains - kBus0; ++ch) e->ProcessStereo(kBus0 + ch, y[ch], kBlock, c);
+    uint32_t t = core::cycles() - t0;
+    sum += t;
+    if (t > worst) worst = t;
+    if (hash)
+      for (int ch = 0; ch < kChains - kBus0; ++ch)
+        for (int s = 0; s < kBlock; ++s) h = (h ^ (uint32_t)(int32_t)(y[ch][s][0] * 1048576.0f)) * 16777619u;
+  }
+  *worst_block = worst;
+  if (hash) *hash = h;
+  return sum;
+}
+uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
+  using namespace core::ins;
+  Engine* e = ins_bench_engine();
   static Control c;
   memset(&c, 0, sizeof c);
   for (int v = 0; v < kVoices; ++v) {

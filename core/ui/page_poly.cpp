@@ -153,7 +153,8 @@ CORE_COLD void poly_enc(int e, int d, bool func) {
   pp.touched = e;
   if (own_pool(m) && e >= 1 && e <= 4) return;   // the machine's own pool: VOICES only (the page shows "-")
   seq::PolyCfg c = seq::poly_of(t);
-  int step = d > 0 ? 1 : -1;
+  const int step = list_turn(e, d);   // DETUNE, SPREAD: values
+  if (!step && e != 3 && e != 4) return;
   switch (e) {
     case 0: apply(t, "voices", clampi(c.voices + step, 0, seq::kMaxVoicesCfg)); break;
     case 1: apply(t, "alloc", clampi(c.alloc + step, 0, seq::kAllocs - 1)); break;

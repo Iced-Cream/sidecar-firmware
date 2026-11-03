@@ -52,6 +52,9 @@ static int s_nRytmPatIndex = -1;
 #include "shared.h"
 #include "midiout_q.h"	// the MIDI machine's USB-A queues
 #include "usb_box.h"	// which USB MIDI device is the host link
+#include "hello_gate.h"
+#include "box_list.h"
+#include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
@@ -66,11 +69,14 @@ static int s_nRytmPatIndex = -1;
 #include "version.h"
 #include <circle/new.h>
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
-extern bool g_bCardOff;			// platform_pi.cpp: testsecs=
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
-extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
+// The Pi 5 engine test mode (PI5_TESTMODE=1 builds only; docs/pi5.md "Engine test mode"): testsecs=, its watchdog and
+// reboot, /usbtest.log, testcard=1. A plain PI5_GADGET=1 build has the gadget and none of this, so a release card takes it.
+#ifdef SIDECAR_PI5_TESTMODE
+#if RASPPI < 5 || defined (SIDECAR_NO_GADGET)
+#error "SIDECAR_PI5_TESTMODE: a Pi 5 gadget build only (PI5_GADGET=1 PI5_TESTMODE=1 RASPPI=5)"
 #endif
+extern bool g_bCardOff;			// platform_pi.cpp: testsecs=
+extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
 #endif
 
 // The network options' defaults when cmdline.txt has none: build.sh writes hosted/net_defaults.h from PI_IP,
@@ -249,7 +255,7 @@ boolean CKernel::Initialize (void)
 	if (bOK) bOK = m_Timer.Initialize ();
 	if (!bOK) return FALSE;
 	m_Logger.Write (From, LogNotice, "==== rytm-pi engine ==== Sidecar " SIDECAR_VERSION_FULL ", CPU %u MHz", m_CPUThrottle.GetClockRate () / 1000000);
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	// testsecs=S (docs/pi5.md "Engine test mode"): a run on a card that is not Sidecar's, a tryboot on Raspberry Pi OS. The
 	// card is never mounted for the engine, so nothing is written to that system's boot partition; the watchdog runs
 	// from here on, and at S seconds the Pi reboots, which ends the tryboot. testcard=1 with it: the engine uses the card
@@ -349,8 +355,9 @@ boolean CKernel::Initialize (void)
 	BootStep (6);
 	if (!m_USBHCI.Initialize ()) return FALSE;		// the Rytm is enumerated by plug-and-play in Run
 	// the volumes besides the card (stor_pi.h, docs/STORAGE.md): USB drives as they come (core 0's loop); the Pi 5's
-	// NVMe SSD now if one answers (nvme=0 in cmdline.txt skips it)
-	stor_pi::Init (&m_USBHCI, &m_Interrupt, m_Options.GetAppOptionDecimal ("nvme", 1) != 0);
+	// NVMe SSD now if one answers, only with nvme=1 in cmdline.txt: the probe with the Rytm already on USB has been
+	// followed by the Rytm dropping off (issue 11; cause not proven)
+	stor_pi::Init (&m_USBHCI, &m_Interrupt, m_Options.GetAppOptionDecimal ("nvme", 0) != 0);
 	BootStep (7);
 	// the HDMI display and its USB touch (docs/pi-display.md), driven from core 0's loop: display=0 turns it off.
 	// LVGL's home screen replaces the boot screen at the first Update.
@@ -406,7 +413,7 @@ boolean CKernel::Initialize (void)
 #ifndef SIDECAR_NO_GADGET
 	else m_Logger.Write (From, LogNotice, "gadget: off");
 #endif
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0)
 	{
 		m_Watchdog.Start (15);
@@ -485,18 +492,34 @@ void CKernel::WebHealth (CString *pOut, void *pParam)
 	pOut->Append (Power);
 }
 
+static BoxList s_Boxes;						// /status "boxes": written and read by core 0's tasks
+
+static bool BoxCapsOf (u16 nId, BoxCaps *pCaps)
+{
+	const core::device::Profile *p = core::device::by_id (nId);
+	if (p == 0) return false;
+	*pCaps = {p->tracks, p->voices, p->params, p->features, p->state_dir};
+	return true;
+}
+
 // /status's members (core 0: a web task). Plain reads of state other cores write: a stale value at worst.
 void CKernel::WebStatus (CString *pOut, void *pParam)
 {
 	CKernel *k = (CKernel *) pParam;
 	CString s;
+	char Boxes[1536];
+	if (s_Boxes.json (Boxes, sizeof Boxes, core::device::active ().id, core::device::active ().name, BoxCapsOf) != 0)
+	{
+		pOut->Append (Boxes + 1);		// (past its comma: the first member here)
+		pOut->Append (",");
+	}
 	unsigned nTempWeb = s_nTempC;			// the stats line's last read (about 1 s old): no firmware call per request
 	const Output::Diag D = g_Output.Diagnostics ();
 	const CEngineCores::TStall ST = CEngineCores::Stall ();
 	u8 IP[4];
 	memcpy (IP, k->m_IP, sizeof IP);
 	if (k->m_bNetOK) k->m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);	// DHCP on Wi-Fi: the lease's
-	s.Format ("\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,"
+	s.Format ("\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,\"usbHost\":%s,"
 		  "\"streaming\":%s,\"rytmMidi\":%s,\"temp\":%u,\"tempWarn\":%s,\"clockLow\":%d,\"out\":\"%s\",\"notes\":%s,\"drone\":%d,\"fifoTarget\":%u,"
 		  "\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u,"
 		  "\"outDiag\":{\"preResetPulled\":%u,\"resetLevel\":%u,\"firstPullLevel\":%d,\"armAt\":%d,\"armLevel\":%u,"
@@ -505,6 +528,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  "\"step\":\"%s\",\"stepUs\":%u,\"namedUs\":%u,\"cardHereUs\":%u}",
 		  IP[0], IP[1], IP[2], IP[3], k->m_pTransport->Name (), k->m_pGadgetMode,
 		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
+		  k->m_pSidecar ? (k->m_pSidecar->HostOn () ? "true" : "false") : "null",	// a computer has configured USB-C's Sidecar
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
 		  nTempWeb, k->m_Thermal.warn ? "true" : "false",
 		  thermal::clock_low_mhz ((int) k->m_nClockMHz, (int) k->AskedMHz (), (int) nTempWeb),	// MHz, 0: not lowered
@@ -799,11 +823,11 @@ void CKernel::LogBench (void)
 	}
 	m_nBenchMHz = nMHz;
 	// fx-ins (core/fx/insert.h): 8 voices' INSERT chains, two slots each, on core 0 (docs/INSERT-FX.md "CPU")
-	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
+	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD SAT+SAT, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
 	// the post EQ on only for that row; the four pairs are measured with it flat, i.e. skipped, so their numbers
 	// stay comparable with the ones in docs/INSERT-FX.md)
-	static const int Pairs[5][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {0, 0}};
-	for (unsigned p = 0; p < 5; p++)
+	static const int Pairs[6][2] = {{1, 6}, {5, 4}, {3, 7}, {2, 8}, {10, 10}, {0, 0}};
+	for (unsigned p = 0; p < 6; p++)
 	{
 		u32 nWorst = 0;
 		u32 nHash = 0;
@@ -812,6 +836,14 @@ void CKernel::LogBench (void)
 		m_Logger.Write (From, LogNotice, "bench ins %s+%s: 8 voices x 2 slots %u.%02u %% of a core, worst block %u.%u %%, hash %08X",
 				bridge::ins_bench_name (Pairs[p][0]), bridge::ins_bench_name (Pairs[p][1]), nBp / 100, nBp % 100,
 				nBlk / 10, nBlk % 10, nHash);
+		m_Timer.MsDelay (2);
+	}
+	{	// SAT on every slot of the buses and the master: what it can add to core 2
+		u32 nWorst = 0;
+		u64 nTicks = bridge::ins_bus_bench (&nWorst);
+		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		m_Logger.Write (From, LogNotice, "bench ins SAT buses+master: 10 stereo slots %u.%02u %% of a core, worst block %u.%u %%",
+				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
 	}
 	// the NEON kernels against their C on this CPU (neon_bench.cpp)
@@ -1216,6 +1248,29 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	asm volatile ("dsb sy; sev");
 }
 
+// An A4's USB MIDI before it is the box in use: its hello reaches the engine while no Rytm has the link, nothing else does, and nothing goes back (usb_box.h).
+static CDevice *volatile s_pHelloBox;
+static volatile boolean s_bHelloHeard;				// it has the mod: its hello came, taken or not (box_list.h)
+static volatile boolean s_bLinkUp;				// a host link is up
+static HelloGate s_HelloGate;
+static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
+{
+	for (unsigned i = 0; i < nLength; i++)
+	{
+		unsigned n = s_HelloGate.feed (pPacket[i]);
+		if (n != 0) s_bHelloHeard = TRUE;
+		if (n == 0 || s_bLinkUp || !CObUsb::Active ()) continue;
+		for (unsigned k = 0; k < n; k++)
+			if (!g_MidiIn.push (s_HelloGate.data ()[k])) s_nMidiInLost++;
+		asm volatile ("dsb sy; sev");
+	}
+}
+static void HelloRemoved (CDevice *pDevice, void *pContext)
+{
+	s_pHelloBox = 0;
+	s_bHelloHeard = FALSE;
+}
+
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
 {
 	((CKernel *) pContext)->m_pMIDI = 0;
@@ -1325,6 +1380,7 @@ void CKernel::UpdateMIDI (void)
 	if (m_pMIDI != 0 && nNow - s_nScanAt < 250000) return;
 	s_nScanAt = nNow;
 	g_pSidecarKeysTap = KeysTap;
+	s_bLinkUp = m_pMIDI != 0;
 	// umidiN in Circle's numbering: the gadget's own MIDI device (USB-C, gadget.h) takes a number too
 	for (unsigned n = 1; n <= 8; n++)
 	{
@@ -1336,6 +1392,19 @@ void CKernel::UpdateMIDI (void)
 		for (unsigned i = 0; i < MaxKeyboards; i++) bKnown |= s_pKeyboard[i] == p;
 		if (bKnown) continue;
 		TUsbBox Box = BoxOf (p);
+		if (Box == UsbBoxHello)
+		{
+			if (core::device::active ().id == core::device::kIdA4) Box = UsbBoxHost;	// it chose this boot's folder: it is the box in use
+			else if (s_pHelloBox != 0) continue;		// one is heard at a time: a second A4 waits for that one to go
+			else
+			{
+				s_pHelloBox = p;
+				((CUSBMIDIDevice *) p)->RegisterRemovedHandler (HelloRemoved, this);
+				((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
+				m_Logger.Write (From, LogNotice, "midi: an Analog Four MKII (%s): nothing goes to it, listening for its mod's hello", (const char *) Name);
+				continue;
+			}
+		}
 		if (Box == UsbBoxOther)
 		{
 			static u32 s_nSaid;				// umidiN already logged
@@ -1355,8 +1424,9 @@ void CKernel::UpdateMIDI (void)
 			pMIDI->RegisterPacketHandler (MIDIPacketHandler);
 			m_Usb.SetMIDI (0);			// a replug's umidi may sit at the old one's address: the sender sees it as new
 			m_pMIDI = pMIDI;
-			m_Logger.Write (From, LogNotice, "midi: the Rytm's USB MIDI found (%s), listening; the engine's replies %s",
-					(const char *) Name,
+			const char *pBox = p->GetProperty (CDevice::PropertyProduct);	// the box's own name: the profile follows its hello, later
+			m_Logger.Write (From, LogNotice, "midi: %s's USB MIDI found (%s), listening; the engine's replies %s",
+					pBox != 0 && *pBox ? pBox : "the host box", (const char *) Name,
 					m_Options.GetAppOptionDecimal ("tohost", 1) != 0 ? "go to it (host link)" : "are dropped (tohost=0)");
 			continue;
 		}
@@ -1381,6 +1451,19 @@ void CKernel::UpdateMIDI (void)
 		m_Logger.Write (From, LogNotice, "keys: keyboard %u: %s (%s), its notes play the %s", i + 1, g_KeyNames[i],
 				(const char *) Name, "Rytm's selected track (core/keys.h)");
 	}
+	s_Boxes.clear ();
+	for (unsigned n = 1; n <= 8; n++)
+	{
+		CString Name;
+		Name.Format ("umidi%u", n);
+		CDevice *p = CDeviceNameService::Get ()->GetDevice (Name, FALSE);
+		if (p == 0 || (m_pGadget != 0 && m_pGadget->IsMIDIDevice (p))) continue;
+		if (p != m_pMIDI && BoxOf (p) == UsbBoxKeyboard) continue;
+		const char *pProduct = p->GetProperty (CDevice::PropertyProduct);
+		u16 nId = p == m_pMIDI ? core::device::active ().id : usb_box_id (pProduct);
+		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
+		s_Boxes.add (nId, n, Role, pProduct);
+	}
 }
 
 // The display's state, read the way /status reads it (plain reads of what other cores write: a stale value at worst), so
@@ -1392,6 +1475,9 @@ void CKernel::PushUi (void)
 	u.rytm = CObUsb::Streaming () || m_pMIDI != 0;
 	u.underruns = g_Output.Underflows ();
 	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (v);
+	const core::device::Profile &Box = core::device::active ();	// the box in use: its word and its voices' names
+	u.box = core::device::short_name (Box);
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.voice[v] = Box.screen ? Box.screen->names[v] : 0;
 	u.poly = bridge::poly_voices ();	// UX review S1: the POLY badges
 	u.pattern = bridge::rytm_pattern (&u.transport);	// T1: HOME's NOW panel
 	u.note = m_pTransport == &m_Tcp ? "link: tcp" : m_pTransport == &m_SelfTest ? "link: self-test" : "link: usb";
@@ -1808,7 +1894,7 @@ void CKernel::MeasureClock (void)
 
 void CKernel::BootStep (unsigned nStep)
 {
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0) m_Watchdog.Start (15);	// fed through the boot
 #endif
 	if (m_pDisplay != 0) m_pDisplay->SplashStep (nStep);
@@ -1831,7 +1917,7 @@ void CKernel::StopAndReboot (const char *pWhy, boolean bTryboot)
 	reboot ();
 }
 
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 void CKernel::UsbTestTick (void)
 {
 	static unsigned s_nLastLog;
@@ -1878,7 +1964,7 @@ void CKernel::Run (void)
 			nLoopT = t;
 		}
 		m_Watchdog.Start (15);	// fed: a hang of this loop reboots in 15 s (the BCM watchdog's maximum: a TCP connect may block for seconds)
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 		if (m_nTestSecs != 0) UsbTestTick ();
 #endif
 		if (m_Console.TakeWatchdogTest ())
@@ -1888,6 +1974,7 @@ void CKernel::Run (void)
 		}
 		boolean bPlugAndPlay;
 		{ mbtrace::Scope Mb (10, 200); bPlugAndPlay = m_USBHCI.UpdatePlugAndPlay (); }
+		CObUsb::PollReEnum ();		// a box that came up below high speed (ob_speed.h)
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
@@ -1938,7 +2025,7 @@ void CKernel::Run (void)
 		}
 		CardPass ();
 		{ mbtrace::Scope Mb (19, 200); stor_pi::Poll (bPlugAndPlay); }		// USB drives in and out, the bench's step (stor_pi.h)
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 		if (m_nTestSecs == 0 || m_bTestCard)
 #endif
 		blackbox_pi::Poll ();						// the log to /.rytm/blackbox.log (its own crumb section, 42)

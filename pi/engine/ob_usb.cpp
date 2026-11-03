@@ -46,6 +46,8 @@
 #include "midibridge_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
+#include <circle/usb/usbhcirootport.h>
+#include <circle/usb/usbstandardhub.h>
 #include <circle/usb/usb.h>
 #include <circle/usb/xhciendpoint.h>
 #include <circle/koptions.h>
@@ -56,6 +58,8 @@
 #include <assert.h>
 
 #include "ob_block.h"
+#include "ob_follow.h"
+#include "ob_speed.h"
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
@@ -66,7 +70,7 @@
 
 static const char From[] = "rytmob";
 
-static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, IN; the biggest OUT block too
+static const unsigned kBlk = ob::block_bytes (ob::kChannels);			// 368, the biggest block either way
 static const unsigned kBufSize = (CObUsb::MaxBlocks * kBlk + 63) & ~63u;	// 2944
 
 static_assert (CObUsb::MaxURBs <= XHCI_EP_MAX_URBS, "Circle's per-endpoint URB FIFO");
@@ -105,6 +109,10 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 }
 
 CObUsb *CObUsb::s_pThis = 0;
+static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
+static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
+static CUSBStandardHub *s_pRetryHub = 0;		// or the Pi 4's VL805 hub (BuiltInHub), which lives as long too
+static u32 NowMs (void) { return (u32) (CTimer::GetClockTicks64 () / (CLOCKHZ / 1000)); }	// wraps at 2^32 ms
 volatile boolean CObUsb::s_bActive = TRUE;
 s32 *CObUsb::s_pCapBuf = 0;
 volatile unsigned CObUsb::s_nCapPos = 0;
@@ -184,8 +192,26 @@ CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
 // The hook the patched CUSBDeviceFactory calls for every "ven1935-..." name (weak reference there): a box with an audio row
 // and the stream shape this driver serves, else 0 and Circle goes on to the device's interfaces (a Digitakt in USB MIDI mode,
 // 1935:000d: Circle's MIDI driver takes it).
+// The hub a box hangs off when that hub is the Pi 4's own: the VL805's USB 2 hub (2109:3431) right on a root port,
+// part of the board, so a pointer to it stays good for as long as the controller. Any other hub can be unplugged
+// while a retry waits, so it gets none (0) - also an external hub with the same generic VIA id, so Pi 4 builds only.
+static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
+{
+#if RASPPI != 4 && !defined (OB_USB_TEST)
+	return 0;
+#endif
+	CUSBStandardHub *pHub = pDevice->GetParentHub ();
+	if (pHub == 0) return 0;
+	CUSBDevice *pHubDevice = pHub->GetDevice ();
+	const TUSBDeviceDescriptor *pDesc = pHubDevice->GetDeviceDescriptor ();
+	if (pHubDevice->GetParentRootPort () == 0 || pDesc->idVendor != 0x2109 || pDesc->idProduct != 0x3431) return 0;
+	return pHub;
+}
+
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
+	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
+	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
 	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct);
 	if (p == 0) return 0;
@@ -197,7 +223,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 		CLogger::Get ()->Write (From, LogWarning, "%s: a box already streams, no audio from this one", pAudio->name);
 		return 0;
 	}
-	if (pAudio->in_channels != ob::kChannels || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
+	if ((pAudio->in_channels != ob::kChannels && pAudio->in_channels != 8) || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
 	{
 		CLogger::Get ()->Write (From, LogError, "%s: %u channels in, %u out: not a stream this driver serves", pAudio->name,
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
@@ -206,8 +232,21 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	return new CObUsb (pParent, pAudio);
 }
 
+void CObUsb::PollReEnum (void)
+{
+	if (!obspeed::due (s_Retry, NowMs ()) || (s_pRetryPort == 0 && s_pRetryHub == 0)) return;
+	CLogger::Get ()->Write (From, LogNotice, "enumerating the box again (try %u of %u)", s_Retry.tries, obspeed::kTries);
+	// the hot-plug path: port reset, address, configure (this driver again). A hub resets each of its empty ports
+	// that has something connected; a root port with a device already on it only rescans that device
+	if (!(s_pRetryPort != 0 ? s_pRetryPort->ReScanDevices () : s_pRetryHub->ReScanDevices ()))
+	{
+		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it (unplugged, or something else "
+					"is on it now)");
+	}
+}
+
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
-// Only the Rytm is on the bus in this spike, so the endpoint ID alone picks 0x83 / 0x03.
+// The endpoint ID alone picks 0x83 / 0x03: with a4=1 the A4's events are counted in these two as well.
 void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID, unsigned nCompletionCode,
 				unsigned nResidue, unsigned nPending)
 {
@@ -241,6 +280,7 @@ void CObUsb::SetActive (boolean bActive)
 CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 :	CUSBFunction (pFunction),
 	m_pAudio (pAudio), m_nOutCh (pAudio->channels), m_nOutBlk (ob::block_bytes (pAudio->channels)),
+	m_nInCh (pAudio->in_channels), m_nInBlk (ob::block_bytes (pAudio->in_channels)),
 	m_pInDesc (0), m_pOutDesc (0), m_pIn (0), m_pOut (0),
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
@@ -321,7 +361,7 @@ boolean CObUsb::ScanDescriptors (void)
 			if (alt == ob::kAlt && intr)
 			{
 				unsigned nMps = e->wMaxPacketSize & 0x7FF;
-				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == kBlk) m_pInDesc = e;
+				if (iface == ob::kInIface && e->bEndpointAddress == ob::kInEp && nMps == m_nInBlk) m_pInDesc = e;
 				if (iface == ob::kOutIface && e->bEndpointAddress == ob::kOutEp && nMps == m_nOutBlk) m_pOutDesc = e;
 			}
 		}
@@ -339,10 +379,40 @@ boolean CObUsb::Configure (void)
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
 				(unsigned) pDevDesc->idProduct);
 
+	// Overbridge needs high speed. Below it the stream cannot start ("cannot submit the first URBs"), so refuse at
+	// once and have the root port enumerate the box again (ob_speed.h): a new port reset, a new chance at high speed
+	if (GetDevice ()->GetSpeed () != USBSpeedHigh)
+	{
+		static const char *Speeds[] = {"LS", "FS", "HS", "SS", "?"};
+		const char *pSpeed = Speeds[GetDevice ()->GetSpeed () <= USBSpeedUnknown ? GetDevice ()->GetSpeed () : 4];
+		unsigned nNow = NowMs ();
+		CUSBHCIRootPort *pPort = GetDevice ()->GetParentRootPort ();
+		CUSBStandardHub *pHub = pPort == 0 ? BuiltInHub (GetDevice ()) : 0;
+		if (pPort == 0 && pHub == 0)
+		{
+			CLogger::Get ()->Write (From, LogError, "%s came up at %s, Overbridge needs HS: behind a hub, so no retry; "
+						"unplug it and plug it in again", m_pAudio->name, pSpeed);
+		}
+		else if (obspeed::refused (s_Retry, nNow))
+		{
+			s_pRetryPort = pPort, s_pRetryHub = pHub;
+			CLogger::Get ()->Write (From, LogWarning, "%s came up at %s, Overbridge needs HS: enumerating it again "
+						"in %u s (try %u of %u)", m_pAudio->name, pSpeed,
+						obspeed::kWaitMs[s_Retry.tries] / 1000, s_Retry.tries + 1, obspeed::kTries);
+		}
+		else
+		{
+			CLogger::Get ()->Write (From, LogError, "%s still at %s after %u tries: unplug it and plug it in again, "
+						"or try another cable or port", m_pAudio->name, pSpeed, obspeed::kTries);
+		}
+		return FALSE;
+	}
+	obspeed::high_speed (s_Retry);
+
 	if (!ScanDescriptors ())
 	{
 		CLogger::Get ()->Write (From, LogError, "no interrupt endpoints 0x83/0x03 (%u/%u B) at alt 3: "
-					"not in OVERBRIDGE mode?", kBlk, m_nOutBlk);
+					"not in OVERBRIDGE mode?", m_nInBlk, m_nOutBlk);
 		return FALSE;
 	}
 
@@ -375,7 +445,7 @@ boolean CObUsb::Configure (void)
 	m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
 	m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
 
-	const unsigned nLen = m_nBlocks * kBlk, nOutLen = m_nBlocks * m_nOutBlk;
+	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
 		m_pInURB[i] = new CUSBRequest (m_pIn, s_InBuf[i], nLen);
@@ -460,6 +530,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
 		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
+		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 		{
@@ -535,6 +606,21 @@ void CObUsb::OutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	((CObUsb *) pContext)->OutDone ((unsigned) (uintptr) pParam, pURB);
 }
 
+// An A4's IN block as the Rytm's layout (core/device/a4.cpp): MAIN and the tracks where they are, its two inputs on the AUDIO IN channels, the tracks it does not
+// have silent. Audio words are copied as they are: nothing here reads their value.
+void CObUsb::WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh)
+{
+	memcpy (pWide, pIn, ob::kHeaderBytes);
+	for (int f = 0; f < ob::kFramesPerBlock; f++)
+	{
+		const u8 *s = pIn + ob::kHeaderBytes + 4 * nCh * f;
+		u8 *d = pWide + ob::kHeaderBytes + 4 * ob::kChannels * f;
+		memcpy (d, s, 4 * (nCh - 2));
+		memset (d + 4 * (nCh - 2), 0, 4 * (ob::kChannels - nCh));
+		memcpy (d + 4 * (ob::kChannels - 2), s + 4 * (nCh - 2), 8);
+	}
+}
+
 // Runs in the xHCI interrupt.
 void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 {
@@ -556,11 +642,17 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (!ok) m_nInErrors++;
 	else
 	{
-		if (len % kBlk != 0) m_nInShort++;
-		for (unsigned b = 0; b < len / kBlk; b++)
+		if (len % m_nInBlk != 0) m_nInShort++;
+		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
-			const u8 *pBlk = pBuf + b * kBlk;
+			const u8 *pBlk = pBuf + b * m_nInBlk;
 			if (!ob::block_from_device (pBlk)) { m_nInBadMagic++; continue; }
+			u8 Wide[kBlk];
+			if (m_nInCh != ob::kChannels)	// a box with 8 channels: the 12-channel block every consumer below takes
+			{
+				WidenIn (pBlk, Wide, m_nInCh);
+				pBlk = Wide;
+			}
 
 			u16 c = ob::block_counter (pBlk);
 			if (m_bHaveIn && c != m_nExpectIn)
@@ -741,6 +833,7 @@ void CObUsb::PumpOut (void)
 
 void CObUsb::LogAllStats (CLogger *pLogger)
 {
+	CObFollow::LogStats (pLogger);
 	CObUsb *p = s_pThis;
 	if (p == 0 || !p->m_bStreaming) return;
 	p->Log (pLogger);
@@ -824,6 +917,7 @@ void CObUsb::Log (CLogger *pLogger)
 // power-cycled).
 void CObUsb::Stop (void)
 {
+	CObFollow::Stop ();
 	CObUsb *p = s_pThis;
 	if (p == 0) return;
 	p->m_bStreaming = FALSE;
@@ -841,6 +935,7 @@ void CObUsb::Stop (void)
 // From an exception on core 0 (guard.cpp): only the flag - no more resubmits; nothing that waits or allocates.
 void CObUsb::EmergencyStop (void)
 {
+	CObFollow::EmergencyStop ();
 	if (s_pThis != 0) s_pThis->m_bStreaming = FALSE;
 }
 

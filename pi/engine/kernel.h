@@ -146,7 +146,7 @@ private:
 	unsigned		m_nResFileW, m_nResFileH;	// display.txt's res= alone (kept when the file is written)
 	void LoadDisplayRes (boolean bCard);
 	void LoadDisplaySettings (boolean bCard);
-#if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
+#ifdef SIDECAR_PI5_TESTMODE
 	unsigned		m_nTestSecs = 0;	// testsecs= (docs/pi5.md "Engine test mode"): 0 off
 	boolean			m_bTestCard = FALSE;	// testcard=1 with testsecs=: the card in use, Sidecar's folders only (card_guard.h)
 	void UsbTestTick (void);			// core 0's loop: the log to the card, the reboot at the end

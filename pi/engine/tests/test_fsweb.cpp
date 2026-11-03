@@ -471,6 +471,7 @@ int main() {
     fsweb::rename(B, k, "/Samples/Moved", &r);
     CHECK(r.status == want);
   }
+  CHECK(fsweb::kept_dir("/.digitakt") && fsweb::kept_dir("/.a4") && fsweb::kept_dir("/.A4"));   // each box's state folder
   CHECK(!fsweb::kept_dir("/Samples/kit") && !fsweb::kept_dir("/Samples2") && !fsweb::kept_dir("/x/Samples"));
   CHECK(!fsweb::kept_dir("/Bundles/a.sidecar.zip"));   // a bundle itself can go
   // the boot files are not reachable here at all now (the root is content only), so these are 404, not 403

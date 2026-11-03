@@ -6,6 +6,7 @@
 
 #include "../scope_pi.h"
 #include "check.h"
+#include "device/device.h"
 #include "platform.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -35,6 +36,11 @@ int remote_selected_track(uint32_t* gen) {
   return g_track;
 }
 }  // namespace ui
+namespace device {   // the box in use: scope_pi asks foreign() and active().voices
+Link g_link{};
+static Profile s_rytm{};
+const Profile& active() { return g_link.box ? *g_link.box : s_rytm; }
+}  // namespace device
 }  // namespace core
 
 // n entries of a sine (period p entries, amplitude a of full scale), each entry a min / max pair around the value
@@ -90,6 +96,13 @@ int main() {
   // TRACK's mapping: every Rytm track to its voice's stem
   static const int kWant[12] = {1, 2, 3, 3, 4, 5, 6, 6, 7, 7, 8, 8};
   for (int t = 0; t < 12; ++t) CHECK(scope_pi::SourceOfTrack(t) == kWant[t]);
+  // an A4: its tracks T1..T4 are voices 0..3, sources 1..4; T5, T6 and beyond none
+  static core::device::Profile a4{};
+  a4.voices = 4;
+  core::device::g_link.box = &a4;
+  CHECK(core::device::foreign());
+  for (int t = 0; t < 6; ++t) CHECK(scope_pi::SourceOfTrack(t) == (t < 4 ? 1 + t : 0));
+  core::device::g_link.box = nullptr;
   scope_pi::Leave();
   CHECK(!core::ui::tap_enabled);
   printf("test_scope_pi: PASS\n");

@@ -276,7 +276,7 @@ void Init (CUSBHCIDevice *pUSB, CInterruptSystem *pInterrupt, boolean bNVMe)
 	if (!bNVMe)
 	{
 		stor::set_available (stor::kNVME, false);
-		CLogger::Get ()->Write (From, LogNotice, "NVME: off (nvme=0)");
+		CLogger::Get ()->Write (From, LogNotice, "NVME: off (nvme=1 in cmdline.txt looks for an SSD)");
 	}
 	else
 	{

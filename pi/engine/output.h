@@ -104,6 +104,7 @@ class Output {
   };
   static float Limit(float x) { return x > kLimit ? kLimit : x < -kLimit ? -kLimit : x; }
   static int32_t To32(float x) { return (int32_t)(x * 2147483648.0f); }
+  static float Own(float x, float t);   // a voice for its own channel, the trim's gain t
   static int32_t Add(int32_t a, float x) {
     int64_t s = (int64_t)a + (int64_t)(x * 2147483648.0f);
     return s > 2147483647 ? 2147483647 : s < -2147483647 - 1 ? -2147483647 - 1 : (int32_t)s;

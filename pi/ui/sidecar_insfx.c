@@ -6,6 +6,7 @@
 #include "sidecar_insfx.h"
 #include "sidecar_theme.h"
 #include "sidecar_vlabel.h"
+#include "sidecar_ui.h"		// sidecar_ui_voice: the box's names
 #include "lvgl.h"
 #include <string.h>
 
@@ -15,8 +16,14 @@ static sidecar_insfx_view_t s_V;
 static unsigned s_nGen = ~0u;
 static int s_nVoice = 0, s_bPicked = 0, s_nShown = -1;
 static sidecar_insfx_command_t s_Cmd;
-static const char *const kVoiceMap[] = {"BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB", ""};
-static const char *const kTypeName[10] = {"OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP"};
+static const char *s_VoiceMap[9];	// the voices in list order, by the box's names (voice_map)
+static const char *const *voice_map (void)
+{
+	for (int i = 0; i < 8; i++) s_VoiceMap[i] = sidecar_ui_voice (sidecar_ui_voice_at (i));
+	s_VoiceMap[8] = "";
+	return s_VoiceMap;
+}
+static const char *const kTypeName[11] = {"OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "SAT"};
 
 static int oled (void) { return TH->id == THEME_OLED; }
 
@@ -25,7 +32,7 @@ static void refresh (int all);
 static void voice_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) ud;
-	s_nVoice = kVoiceOrder[i & 7], s_bPicked = 1;
+	s_nVoice = sidecar_ui_voice_at (i), s_bPicked = 1;
 	refresh (1);
 }
 
@@ -42,7 +49,7 @@ static void type_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
 	int s = (int) (intptr_t) ud;
-	int t = (s_V.slot[s_nVoice][s].type + 1) % 10;
+	int t = (s_V.slot[s_nVoice][s].type + 1) % 11;
 	char c[40];
 	lv_snprintf (c, sizeof c, "ins=V%d:%c:type:%s", s_nVoice + 1, 'A' + s, kTypeName[t]);
 	if (s_Cmd) s_Cmd (c);
@@ -63,7 +70,7 @@ void sidecar_insfx_create (void *parent, int y0)
 		s_TitleBar = th_titlebar (pg, 0, 0, LU (352) + dx, LU (13));
 		th_titlebar_set (s_TitleBar, "INSERT FX", "", 0);
 		s_Title = 0;
-		s_Voice = th_seg (pg, 0, LU (16), LU (352) + dx, LU (21) + e, kVoiceMap, TH_KEY | TH_KEY_SMALL, voice_cb, 0);
+		s_Voice = th_seg (pg, 0, LU (16), LU (352) + dx, LU (21) + e, voice_map (), TH_KEY | TH_KEY_SMALL, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
 			s_Type[s] = th_key (pg, s * sp, LU (41) + e, sp - 2, LU (21) + e, "A OFF", TH_KEY | TH_KEY_SMALL, type_cb, (void *) (intptr_t) s);
@@ -106,7 +113,7 @@ void sidecar_insfx_create (void *parent, int y0)
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
 		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "INSERT FX");
-		s_Voice = th_seg (pg, LU (24), LU (44), LU (752) + dx, LU (40) + e / 2, kVoiceMap, TH_KEY, voice_cb, 0);
+		s_Voice = th_seg (pg, LU (24), LU (44), LU (752) + dx, LU (40) + e / 2, voice_map (), TH_KEY, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
 			s_Type[s] = th_key (pg, LU (24) + s * sp, LU (96) + e, sp - LU (8), LU (40) + e / 2, "A OFF", TH_KEY, type_cb, (void *) (intptr_t) s);
@@ -165,9 +172,9 @@ static void refresh (int all)
 	if (all || s_nShown != vi)
 	{
 		s_nShown = vi;
-		th_seg_set (s_Voice, kVoicePos[vi & 7]);
+		th_seg_set (s_Voice, sidecar_ui_voice_pos (vi));
 	}
-	lv_snprintf (r, sizeof r, "%s  KNOBS ON RYTM", kVoiceName[vi & 7]);	// T10: the knobs mirror the Rytm's (read only here)
+	lv_snprintf (r, sizeof r, "%s  KNOBS ON %s", sidecar_ui_voice (vi), sidecar_ui_box_up ());	// T10: the knobs mirror the Rytm's (read only here)
 	if (s_TitleBar) th_titlebar_set (s_TitleBar, "INSERT FX", r, 0);
 	else { lv_snprintf (t, sizeof t, "INSERT FX  %s", r); th_label_set (s_Title, t); }
 	for (int s = 0; s < 2; s++)

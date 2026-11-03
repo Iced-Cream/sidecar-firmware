@@ -11,7 +11,7 @@ the firmware's DSI as in 0.1.0) and the red POWER line. The USB-C gadget, sdboot
 
 ## What the Pi 5 build is
 
-The same engine as on the Pi 4 (`docs/pi-engine.md`), built with `RASPPI=5`, with one part taken out:
+The same engine as on the Pi 4 (`docs/pi-engine.md`), built with `RASPPI=5`:
 
 | | Pi 4 | Pi 5 build |
 |---|---|---|
@@ -23,13 +23,26 @@ The same engine as on the Pi 4 (`docs/pi-engine.md`), built with `RASPPI=5`, wit
 | Wi-Fi | CYW43455 | the same chip, firmware files with the Pi 5's names (in the SD set): **works** (*measured* 2026-10-19: credentials entered on the web page, saved, connected) |
 | HDMI display (LVGL) | yes | needs `hdmi_force_hotplug=1`; the firmware's frame buffer is 1920x1080, the 800x480 UI is scaled to it ("HDMI display"); `display=0` turns it off |
 | DSI display + touch | the firmware's (frame buffer + FT5406 buffer) | Circle's `addon/rp1dsi` (display and FT5x06 touch, no firmware), preferred over HDMI, 800x480 unscaled ("DSI display"; built, not run) |
-| USB-C gadget (UAC2 12/12 + MIDI to the computer) | yes | **compiled out** (`SIDECAR_NO_GADGET`, unless `PI5_GADGET=1`: "USB device side"); the boot log says `gadget: none on this board (Pi 5 build)` |
+| USB-C gadget (UAC2 12/12 + MIDI to the computer) | yes | **yes, in testing** (0.4.0): on by default as on the Pi 4, `gadget=0` in `cmdline.txt` turns it off; needs a powered USB-C hub or dock that passes data, since USB-C is also the Pi 5's power input ("USB device side"). `PI5_GADGET=0` compiles it out (`SIDECAR_NO_GADGET`; boot log `gadget: none on this board (Pi 5 build)`) |
 | serial console | GPIO14/15, 921600 | GPIO14/15, 921600 (default, `PI5_UART=0`), or the 3-pin debug connector (`PI5_UART=10`) |
 | `sdboot` (serial bootloader + `engine.img`) and `flash.sh` | yes | not yet: see "Updating the kernel" |
 
-Circle patches on the Pi 5 tree: the two spike2 xHCI patches (in the `pi/circle/build/circle` checkout it is copied
-from), `circle-hid.patch`, `circle-mdns.patch`, `circle-http-origin.patch`. Not `circle-gadget.patch` (DWC2 gadget
-files, which Circle builds only for the Pi <= 4).
+Circle patches on the Pi 5 tree (`circle-engine-pi5usb`): the two spike2 xHCI patches (in the `pi/circle/build/circle`
+checkout it is copied from), `circle-hid.patch`, `circle-mdns.patch`, `circle-http-origin.patch`, and for the gadget
+`circle-gadget.patch`, `circle-gadget-wake.patch`, `circle-pi5-gadget.patch`, `circle-gadget-reset.patch` (Circle builds
+its DWC2 gadget only for the Pi <= 4 without them). A `PI5_GADGET=0` build uses `circle-engine-pi5`, without the gadget
+patches.
+
+Build flags for the Pi 5 (`pi/engine/build.sh`; `BUILD_FLAGS=1` prints what a build would use and stops):
+
+| flags | kernel | for |
+|---|---|---|
+| `RASPPI=5` (`PI5_GADGET=1` is the default) | the engine with the USB-C gadget, `GADGET` default `sidecar` | release cards (`make-sd-dual.sh`), `pi5-try` |
+| `RASPPI=5 PI5_GADGET=1 PI5_TESTMODE=1` | the same plus the engine test mode (`testsecs=`, the test watchdog, `/usbtest.log`, `testcard=1`'s card gate) | tryboots of Raspberry Pi OS only: `make-sd-dual.sh` refuses it (`testsecs=`) |
+| `RASPPI=5 PI5_GADGET=0` | no gadget (`SIDECAR_NO_GADGET`), as before 0.4.0 | a fallback; `make-sd-dual.sh` takes it only with `PI5_NOGADGET=1` |
+
+`pi/engine/tests/test_pi5_flags.sh` (in `make -C pi/engine/tests`) checks this table without building a kernel: build.sh's
+flags, the Makefile's defines, objects and link flags, and the sources' `#if` lines for each build.
 
 ## Build
 
@@ -75,8 +88,8 @@ Copy the **contents** of `pi/circle/out/pi5-sd/` to the root of a FAT32 (MBR) ca
     kernel=kernel_2712.img
 
 No `cmdline.txt`: the build's defaults apply (`ip=169.254.61.60`, `netmask=255.255.0.0`, `emuhost=169.254.61.59:7301`,
-as built above). Options go in a one-line `cmdline.txt` as on the Pi 4 (`docs/pi-engine.md`, "Options"); `gadget=`
-is ignored on the Pi 5. No Wi-Fi credentials are on the card; Wi-Fi is off until it is turned on from the web page
+as built above). Options go in a one-line `cmdline.txt` as on the Pi 4 (`docs/pi-engine.md`, "Options"), `gadget=`
+too (ignored only by a `PI5_GADGET=0` kernel). No Wi-Fi credentials are on the card; Wi-Fi is off until it is turned on from the web page
 or with `sidecar-wifi.txt` (`docs/pi-engine.md`, "Wi-Fi without a cable").
 
 The card is also the engine's card (`/Samples`, `/.rytm/`, recordings): the first boot writes the self-test content.
@@ -88,8 +101,12 @@ power. Measured 2026-10-19: fed from a hub port (an Overhub on the 27 W adapter:
 Wi-Fi ran badly (~25 `httpd: Receive failed (-12)` in 3 minutes, the page 5.4 s and "503 busy"); on the adapter directly
 none of that (0 in a session, the page 0.12-0.15 s). The engine logs the supply at boot, on a change and once a minute
 (`power: throttled 0x... (under-voltage now/boot, ...) | max_current N mA | ok` or the warning; `max_current` is the
-firmware's `/chosen/power/max_current`, Pi 5 only, inferred from its device tree and not yet seen on this board), the
-web page shows a Power tile and a warning, the display's bottom line `POWER TOO WEAK: use 27 W adapter` in red. The
+firmware's `/chosen/power/max_current`, Pi 5 only), the web page shows a Power tile and a warning, the display's bottom
+line `POWER TOO WEAK: use 27 W adapter` in red. The warning is for under-voltage only. A `max_current` below 5000 with no
+under-voltage is a note on the Power tile and in the log that names the measured current: `3 A mode (no 5 A USB-PD)`
+with the USB ports' 600 mA in all at 3000, `1.5 A mode (no 5 A USB-PD)` with "use the 27 W adapter directly" below
+3 A (one hub's USB-C port reports 1500). One Pi 5 on the 27 W adapter, plugged in directly, reports 3000 with no
+under-voltage ever. The
 warning names each board's official supply: Pi 5 "use the 27 W (5 V 5 A) adapter directly", Pi 4 "use the official 15 W
 (5.1 V 3 A) supply" (display: `POWER TOO WEAK: use 15 W supply`).
 
@@ -97,8 +114,10 @@ warning names each board's official supply: Pi 5 "use the 27 W (5 V 5 A) adapter
 
 `pi/circle/make-sd-dual.sh K4 SDBOOT K5` (the release: `sidecar-expander/scripts/package_pi.sh`, which builds all
 three from one commit) makes `out/sidecar-sd/`, `out/sidecar-pi-sd-<commit>.zip` (+ `.sha256`) and
-`out/BUILD-INFO-pi.txt`. It refuses kernels whose version stamps differ, a `-dirty` stamp, or a kernel for the wrong
-board.
+`out/BUILD-INFO-pi.txt`. It refuses kernels whose version stamps differ, a `-dirty` stamp, a kernel for the wrong
+board, a kernel with the engine test mode (the string `testsecs=`: `PI5_TESTMODE=1`, or a `PI5_GADGET=1` build from
+before 0.4.0), and a Pi 5 kernel without the USB-C gadget (`PI5_GADGET=0`) unless `PI5_NOGADGET=1` is set. The Pi 5
+kernel of a release is thus the plain `RASPPI=5 pi/engine/build.sh` one: gadget in, computer audio on by default.
 
 `config.txt` (the firmware reads it top to bottom; after `[pi4]` only a Pi 4B/400/CM4 uses the lines, after `[pi5]`
 only a Pi 5/500/CM5, after `[all]` both; a later value wins):
@@ -158,7 +177,7 @@ Side by side, no name in common: Pi 4 `start4.elf fixup4.dat bcm2711-rpi-4-b.dtb
 engine.img`; Pi 5 `kernel_2712.img bcm2712-rpi-5-b.dtb bcm2712d0-rpi-5-b.dtb overlays/bcm2712d0.dtbo`; Wi-Fi in
 `firmware/`, the same three RPi-Distro files under both names (Circle's `ether4330.c`: `brcmfmac43455-sdio.*` for
 RASPPI <= 4, `brcmfmac43455-sdio.raspberrypi,5-model-b.*` for 5) with `LICENCE.cypress` and `NOTICE`. Shared:
-`cmdline.txt` (`sdport=0`; `gadget=` is ignored on the Pi 5), the starter content (`JUNO/`, `DX7/`,
+`cmdline.txt` (`sdport=0`; `gadget=0` turns the USB-C gadget off on both boards), the starter content (`JUNO/`, `DX7/`,
 `STARTER-CONTENT-*.txt`), `/Plugins`, `/Samples`, `/.rytm` (Wi-Fi settings too: one network for both boards).
 
 **Plugins**: the same RMPA packages load on both (*inferred*): they are built `-mcpu=cortex-a72` (ARMv8.0, which
@@ -173,7 +192,7 @@ an empty `/Plugins`.
 - **Card swap** (the release's way: `cmdline.txt` has `sdport=0`, so TCP 7310 is off): unzip the new set over the
   card; each board's files are replaced together.
 - `sdboot.py install IMG [IMG]` (with `sdport` on, or `SIDECAR_LINK=serial`) puts each image where its board boots
-  it, by what the image is (the Pi 5 build's `gadget: none on this board (Pi 5 build)` string): a Pi 4 kernel ->
+  it, by what the image is (the Pi 5 build's `board: Raspberry Pi 5 build (kernel_2712.img)` line, or the older kernels' `gadget: none on this board (Pi 5 build)`): a Pi 4 kernel ->
   `engine.img` (wrapped), a Pi 5 kernel -> `kernel_2712.img` (plain, `.prev` kept). Run from either board, the other
   board's kernel stays as it was, so the card still boots it. `install` refuses anything that is not a Pi engine
   kernel; `pi5-try` refuses a Pi 4 kernel and writes `[pi5] kernel=sdboot-try.img`; `pi5-commit` refuses a
@@ -315,11 +334,32 @@ What replaces it for now:
   "disabled"` by default. It is wired to the USB-C port, the Pi 5's power input (Linux uses it as a gadget with
   `dtoverlay=dwc2,dr_mode=peripheral`: *inferred*, not tried here).
 - **Circle: not by default.** `lib/usb/gadget/Makefile` builds the DWC2 gadget only for `RASPPI != 5`, and `bcm2712.h`
-  has no `ARM_USB_BASE`. `PI5_GADGET=1 RASPPI=5 pi/engine/build.sh` builds it, in a Circle tree of its own
-  (`circle-engine-pi5usb`, the host-side patches + `circle-gadget.patch` + `circle-pi5-gadget.patch`). It stays off at run
-  time unless `cmdline.txt` has `gadget=sidecar` or `gadget=midi` (the Pi 5's `GADGET` default is `0`), and the default Pi 5
-  build is as before, but for one boot line, `board: Raspberry Pi 5 build (kernel_2712.img)`, by which `sdboot.py` and
-  `make-sd-dual.sh` now tell a Pi 5 kernel.
+  has no `ARM_USB_BASE`. `RASPPI=5 pi/engine/build.sh` builds it (`PI5_GADGET=1`, the default since 0.4.0), in a Circle
+  tree of its own (`circle-engine-pi5usb`, the host-side patches + `circle-gadget.patch` + `circle-gadget-wake.patch` +
+  `circle-pi5-gadget.patch` + `circle-gadget-reset.patch`).
+- **On by default (0.4.0, in testing).** The Pi 5's `GADGET` default is `sidecar`, as on the Pi 4: UAC2 12 in / 12 out
+  and USB MIDI on USB-C, the web page's Sound tab and the touchscreen's Settings > Sound offer computer audio as on the
+  Pi 4 (both go by `/status` "sidecar" / "mac": the Sidecar device is up). `gadget=0` in `cmdline.txt` turns it off,
+  `gadget=midi` gives P1's MIDI echo. The USB-C port is also the Pi 5's power input, so the computer reaches it through a
+  **powered USB-C hub or dock that passes data and powers the Pi** (for example a dock with USB-PD pass-through that
+  can give 5 A; a Mac port alone gives 3 A at most, and the Pi 5 then limits its USB-A ports to 600 mA). Measured so far
+  through an Overhub II at 480 Mb/s (the bring-up kernel and the engine's test kernels, "Engine test mode"); the release
+  kernel with a computer on USB-C has not yet run on hardware. Kernels before 0.4.0 that had the gadget compiled in
+  (`PI5_GADGET=1`, run on a Pi 5 in 2026-11) defaulted to `gadget=0`; they ran on the official 27 W supply with no boot,
+  power or engine problem, but with the gadget not started.
+- **A power supply alone on USB-C** (no computer; read from the code, not yet measured with the gadget started): the
+  core is set up and its pull-up is on, but no host ever sends a USB reset, so the device stays unconfigured. The
+  gadget has no timer and no retry: Circle's DWC2 driver has only the bus's interrupts (reset, enumeration done,
+  suspend, wake-up, endpoints; not the start of frame), and an idle line makes at most one suspend. Nothing spins: core
+  0's loop polls one flag (`UpdatePlugAndPlay`) and drains an empty MIDI queue; the IN ring takes the Rytm's frames
+  (12 channels a frame, the oldest dropped, as on the Pi 4) and the computer's OUT adds nothing to the Rytm's stream
+  (no OUT alternate setting). The audio cores (1-2) and the control core (3) never touch the gadget. The log has the
+  boot's `gadget: USB-C Sidecar up` and then the gadget's stats line once a minute (not each second) while no computer
+  has configured it. `/status` says `"gadget":"sidecar","sidecar":true,"usbHost":false`; the page's USB-C card says
+  "no computer on USB-C". The same core and driver run this way on every Pi 4 on its own supply.
+  The USB-PD negotiation (the Pi 5's 5 A) is the boot firmware's, on the CC lines, before the kernel starts; the
+  gadget drives only D+ / D- and its power domain (the firmware's "set power state", device 3, as Linux's dwc2), so
+  nothing in the code touches it; the engine only reads the firmware's `max_current` (`/status` "power").
 - **What was measured before** (branch `pi5-usbc`, kernels 1-6, 2026-10-19, powered and connected directly from a
   MacBook; its `docs/pi5.md` has the detail): the core reads fine at `0x10_0048_0000`: `0x4F54280A`, HWCFG2 `0x228DDD50`,
   HWCFG3 `0x0FF000E8`, HWCFG4 `0x1FF00020`, 4080 FIFO words, 8 EPs, dedicated FIFOs, IRQs arrive on SPI 73. The firmware
@@ -352,13 +392,15 @@ What replaces it for now:
   *Measured* 2026-10-31, through the Overhub II: it enumerates on the Mac as "Sidecar" 1209:0001 at 480 Mb/s, configured,
   within about 15 s of the reboot; tryboot returns to Linux after `testsecs=`. Which `usbinit=` way did it: not known (no
   serial then).
-- **Engine test mode** (`testsecs=S` in `cmdline.txt`, `PI5_GADGET=1` builds only): the engine on a card that is not
+- **Engine test mode** (`testsecs=S` in `cmdline.txt`, `PI5_GADGET=1 PI5_TESTMODE=1` builds only; before 0.4.0 every
+  `PI5_GADGET=1` build had it): the engine on a card that is not
   Sidecar's, with no Rytm: a tryboot of Raspberry Pi OS. `Fs::begin ()` refuses, so the engine runs as with no card and
   writes nothing to that system's boot partition; the watchdog runs from the start of the boot; at S seconds it reboots.
   The log goes to `/usbtest.log` on that partition, every 10 s, only if the file exists: a file made beforehand under
   Linux, whose bytes are overwritten, so no cluster is allocated and the FATs are not written. Each write still ends by
   rewriting the file's directory entry, one sector of the root directory: a reset in that moment could damage it, a small
-  risk to that system's boot partition. `make-sd-dual.sh` refuses a kernel with the test mode (`testsecs=`).
+  risk to that system's boot partition. `make-sd-dual.sh` refuses a kernel with the test mode (`testsecs=`). Build:
+  `PI5_GADGET=1 PI5_TESTMODE=1 RASPPI=5 pi/engine/build.sh` (same Circle tree; switching the flag rebuilds the objects).
   `testcard=1` with `testsecs=`: the engine uses the card as usual, so projects, presets and plugins can be tested on a tryboot.
   The watchdog and the reboot stay, `/usbtest.log` goes on, and the black box writes `/.rytm/blackbox.log`. FatFs's name-changing
   calls go through a gate in these kernels only (`card_guard.h`, `--wrap`): on the card only `/.rytm` and fsweb's content folders
@@ -370,8 +412,8 @@ What replaces it for now:
   `uac2test=1` starts the test source (`:uac2test=on`: tones on IN 1-10, IN 11 / 12 the loopback of OUT 1 / 12, the generic
   timer the clock), `midifake=1` the MIDI loop. In the test source each second logs every OUT channel's rising zero
   crossings and peak: `sidecar: test out Hz/peak: 1:1009/251 2:1103/251 ...` (peak in 1/1000 of full scale, -12 dBFS = 251).
-- **Power**: in gadget mode the Pi 5 is powered from the computer's USB-C port (or a USB-C power/data splitter, or
-  5 V on the header). A Mac port gives at most 3 A: enough to boot (the Pi 5 then limits its USB ports to 600 mA),
+- **Power**: with a computer on USB-C the Pi 5 is powered through that cable: a powered USB-C hub or dock that
+  passes data (the way to test it), the computer's own port, a USB-C power/data splitter, or 5 V on the header. A Mac port gives at most 3 A: enough to boot (the Pi 5 then limits its USB ports to 600 mA),
   the Rytm has its own supply.
 - **Estimate**: 1-2 days to bring up Circle's MIDI gadget on the Pi 5 (steps 1-4), then about a day for our UAC2
   12/12 + MIDI on it and the Mac tests (`pi/engine/tests/sidecar_*_test.py`), unless the core differs. A risk worth
@@ -380,7 +422,7 @@ What replaces it for now:
 ## Test checklist (Pi 5, Rytm, Mac)
 
 1. **Boot log**: serial at 921600 on pins 6/8/10. Expect Circle's banner, the engine's `==== rytm-pi engine` line,
-   `gadget: none on this board (Pi 5 build)`, the network line (`169.254.61.60`), then a stats line a second. Note the
+   `board: Raspberry Pi 5 build (kernel_2712.img)`, `gadget: USB-C Sidecar up (12 in / 12 out, ...)`, the network line (`169.254.61.60`), then a stats line a second. Note the
    time from power-on to the banner. No output at all: try `PI5_UART=10` and the debug connector (or `uart_2ndstage=1`
    to see the firmware's own lines there), then `display=0` in `cmdline.txt`.
 2. **Self-test** (no Rytm): the console's self-test (`docs/pi-engine.md`, "The self-test") runs and the stats line shows
@@ -401,4 +443,5 @@ What replaces it for now:
    line's `input touch (DSI)` and `longest update`; with HDMI also plugged in, the UI stays on DSI; `dsi=0` gives HDMI.
 9. **Update path**: `sdboot.py pi5-try` with a rebuilt kernel, check it boots, power-cycle (the old kernel), then
    `pi5-try` again and `pi5-commit`.
-10. Not applicable on the Pi 5 build: the USB-C Sidecar tests (`sidecar_*_test.py`, `gadget_midi_test.py`).
+10. **USB-C Sidecar** (a powered USB-C hub or dock between the computer and the Pi that passes data): the USB-C tests
+    (`sidecar_*_test.py`, `gadget_midi_test.py`); `/status` `usbHost` true once the computer has configured it.

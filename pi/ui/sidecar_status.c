@@ -6,6 +6,7 @@
 #include "sidecar_status.h"
 #include "sidecar_theme.h"
 #include "sidecar_vlabel.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' names
 #include "lvgl.h"
 #include <string.h>
 
@@ -94,8 +95,8 @@ void sidecar_status_create (void *parent, int y0)
 	const int namew = O ? LU (35) : LU (64), machw = O ? LU (50) + dx / 8 : LU (92) + dx / 8, pctw = O ? LU (26) : LU (52);
 	for (int n = 0; n < SST_VOICES; n++)
 	{
-		int vi = kVoiceOrder[n], ry = pt + n * rp, fv = lv_font_get_line_height (f_val ());
-		lv_obj_t *nm = th_label (vp, O ? LU (6) : LU (12), ry, f_val (), O ? TH->sub : TH->accent, kVoiceName[vi]);
+		int vi = sidecar_ui_voice_at (n), ry = pt + n * rp, fv = lv_font_get_line_height (f_val ());
+		lv_obj_t *nm = th_label (vp, O ? LU (6) : LU (12), ry, f_val (), O ? TH->sub : TH->accent, sidecar_ui_voice (vi));
 		(void) nm;
 		s_VMach[vi] = val (vp, (O ? LU (6) : LU (12)) + namew, ry, machw, 0);
 		int bx = (LU (O ? 6 : 12)) + namew + machw + (LU (O ? 4 : 8)), bw = cw - bx - pctw - (LU (O ? 8 : 22));
@@ -147,8 +148,11 @@ void sidecar_status_create (void *parent, int y0)
 	}
 	const int lh = H - cph - gap;
 	lv_obj_t *lp = th_panel (pg, rx, top + cph + gap, cw, lh, O ? "LINKS" : "Links", kind);
+	const char *cap[R_LINKS];				// the box's row: its word (the Rytm's: "RYTM", "Rytm")
+	for (int i = 0; i < R_LINKS; i++) cap[i] = (O ? kLinkCap : kLinkCapC)[i];
+	cap[R_RYTM] = O ? sidecar_ui_box_up () : sidecar_ui_box ();
 	const int lrp = (lh - pt - (O ? 3 : LU (8))) / R_LINKS;
-	rows (lp, pt + (O ? 1 : 2), lrp, cw, O ? LU (54) : LU (104), R_LINKS, O ? kLinkCap : kLinkCapC, s_Link);
+	rows (lp, pt + (O ? 1 : 2), lrp, cw, O ? LU (54) : LU (104), R_LINKS, cap, s_Link);
 	// the pairing code right of the LINKS title (as E0's instances sit on the VOICES title): the panel's rows are
 	// full at this height, and the code belongs with the network anyway
 	const int px = O ? cw / 3 : cw / 2;

@@ -75,6 +75,7 @@ int seqdemo_swing (int rytm);
 int seqdemo_poly (int rytm);
 int seqdemo_x (int rytm, int *pat);
 int seqdemo_xstep (int rytm, int step, int *fx, int *lc, int *rnd);
+int seqdemo_arpl (int rytm, int step, int f);
 int seqdemo_seed (void);
 int seqdemo_rytm_parse (const unsigned char *m, int n, unsigned char *rec, int *pattern);
 
@@ -1328,6 +1329,9 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (9);
 	EXPECT (sidecar_insfx_shown () && sidecar_ui_page () == 9);
 	ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-voice");
+	ins_fake (12); ins_slot (2, 1, 10, "SAT", "CHAR", "DRV", "TONE", "MIX", "TAPE", "+8DB", "FLAT", "127", 0, 40, 64, 127);
+	sidecar_insfx_set (&s_Iv); run (2); shot ("insfx-sat");
+	ins_fake (13); sidecar_insfx_set (&s_Iv); run (2);
 	// the MASTER FX page: both SRCs, the commands its keys send
 	{
 		int pg = sidecar_ui_page ();
@@ -1994,7 +1998,7 @@ static void theme_run (int style, const char *pre)
 	drag (nx, PY (72, top), nx + gw / 16, PY (73, top), 6, 0);		// one step later, a semitone up: micro kept
 	int m1 = 99;
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) == 0 && seqdemo_note (8, 3, 73, 0, &m1) > 0 && m1 == m0);
-	if (o) tap (LU (249) + 5 * DX / 7 + (LU (50) + DX / 7) / 2, LU (218) + DY + LU (11)); else tap (LU (722) + DX, LU (52) + LU (400) + DY);	// UNDO
+	if (o) tap (LU (278) + 5 * DX / 7 + (LU (35) + DX / 7) / 2, LU (218) + DY + LU (11)); else tap (LU (722) + DX, LU (52) + LU (400) + DY);	// UNDO
 	EXPECT (seqdemo_note (8, 2, 72, 0, 0) > 0 && seqdemo_note (8, 3, 73, 0, 0) == 0);
 	// editing a note: selected, dragged later and up (where it was: an outline), its card
 	sidecar_seqed_debug (SEQED_DRAW, 0, 1, top + 1, 13, 74);
@@ -2114,6 +2118,31 @@ static void theme_run (int style, const char *pre)
 		sidecar_seqed_debug (SEQED_STEP, 0, 2, top, -1, -1);
 		run (2);
 		shot ("seq-step-none");
+		sidecar_seqed_debug (SEQED_ARP, 0, 2, top, 13, 74);
+		run (3);
+		tap (o ? KEYAT (0, 196 * lw / 352, 2, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 2, 7), y1);		// MODE UP
+		EXPECT_CMD ("seq=alock:9:14:0:1"); EXPECT (seqdemo_arpl (8, 13, 0) == 1);
+		tap (o ? KEYAT (0, 176 * lw / 352, 6, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 6, 7), y2);		// SPD 1/32
+		EXPECT_CMD ("seq=alock:9:14:1:5"); EXPECT (seqdemo_arpl (8, 13, 1) == 5);
+		tap (o ? KEYAT (SLX (200), lw - SLX (200), 3, 4) : KEYAT (SLX (412), lw - LU (4) - 412 * lw / 684, 3, 4), y1);	// GATE 100
+		EXPECT_CMD ("seq=alock:9:14:3:2"); EXPECT (seqdemo_arpl (8, 13, 3) == 2);
+		tap (o ? KEYAT (SLX (180), SLX (262) - SLX (180), 2, 4) : KEYAT (SLX (412), 130 * lw / 684, 2, 4), y2);	// RNG 2
+		EXPECT_CMD ("seq=alock:9:14:2:1"); EXPECT (seqdemo_arpl (8, 13, 2) == 1);
+		tap (o ? KEYAT (SLX (266), lw - SLX (266), 3, 4) : KEYAT (SLX (548), lw - LU (4) - 548 * lw / 684, 3, 4), y2);	// SWNG 66
+		EXPECT_CMD ("seq=alock:9:14:4:2"); EXPECT (seqdemo_arpl (8, 13, 4) == 2);
+		tap (o ? KEYAT (0, 176 * lw / 352, 0, 7) : KEYAT (LU (8) + LU (4), 400 * lw / 684, 0, 7), y2);		// SPD's first key: no lock
+		EXPECT_CMD ("seq=alock:9:14:1:-1"); EXPECT (seqdemo_arpl (8, 13, 1) == -1);
+		run (3);
+		shot ("seq-arp");
+		sidecar_seqed_debug (SEQED_ARP, 0, 2, top, -1, -1);
+		run (2);
+		shot ("seq-arp-none");
+		for (int f = 0; f < 5; f++)
+		{
+			char l[40];
+			snprintf (l, sizeof l, "seq=alock:9:14:%d:-1", f);
+			seqdemo_command (l);
+		}
 		// (back as it was for the shots after)
 		seqdemo_command ("seq=spd:9:follow"), seqdemo_command ("seq=dir:9:fwd"), seqdemo_command ("seq=rnd:9:mode=off");
 		seqdemo_command ("seq=rtrg:9:14:off"), seqdemo_command ("seq=fx:9:14:1:off"), seqdemo_command ("seq=lcond:9:14:all:---");
@@ -2440,6 +2469,69 @@ static void conn_run (const char *dir)
 	}
 }
 
+// ./shot a4 OUTDIR [WxH]: an A4 the box in use (core/device/a4.cpp: "A4", voices T1..T4, "-" the four it does not use): the connect
+// splash, HOME (connected and not), STATUS, REC, SCOPE, INSERT FX and Sound in both themes say the A4 and T1..T4, never the Rytm's
+// tracks; a4-<theme>-<page>.ppm. The Rytm's own shots stay the plain run's.
+static void a4_run (const char *dir)
+{
+	static const char *const kT[8] = {"T1", "T2", "T3", "T4", "-", "-", "-", "-"};
+	snprintf (s_Dir, sizeof s_Dir, "%s", dir);
+	char p[400];
+	for (int st = 0; st < 2; st++)
+	{
+		const char *th = st ? "classic" : "oled";
+		snprintf (s_Pre, sizeof s_Pre, "a4-%s", th);
+		sidecar_ui_style (st ? THEME_CLASSIC : THEME_OLED);
+		run (12);
+		status_init (st ? THEME_CLASSIC : THEME_OLED);
+		DX = TH->dx, DY = TH->dy;
+		s_St.box = "A4";
+		for (int v = 0; v < 8; v++) s_St.voice[v] = kT[v];
+		s_St.rytm = 0;
+		sidecar_ui_status (&s_St);			// a new box: the pages rebuilt with its words
+		sidecar_ui_show (0);
+		run (8);
+		EXPECT (!strcmp (sidecar_ui_box (), "A4") && !strcmp (sidecar_ui_box_up (), "A4") && sidecar_ui_box_names ());
+		EXPECT (!strcmp (sidecar_ui_voice (1), "T2") && sidecar_ui_voice_at (1) == 1 && sidecar_ui_voice_pos (3) == 3);
+		EXPECT (sidecar_ui_get_style () == (st ? THEME_CLASSIC : THEME_OLED));
+		s_St.rytm = 1;
+		sidecar_ui_status (&s_St);			// the link comes up: the connect splash
+		for (int ms = 0; ms <= 700; ms += 20) { lv_timer_handler (); lv_refr_now (NULL); lv_tick_inc (20); }
+		snprintf (p, sizeof p, "%s/%s-conn-up.ppm", dir, s_Pre);
+		write_ppm (p);
+		run (60);
+		shot ("home");
+		sidecar_ui_show (13); status_fake (0); sidecar_status_set (&s_Stv); run (2); shot ("status");
+		sidecar_ui_show (11); rec_fake (SRV_ARMED, 0, 0);
+		for (int k = 0; k < 8; k++)		// as rec_pi.cpp names them for the A4: its stems and voices
+		{
+			snprintf (s_Rv.name[3 + k], sizeof s_Rv.name[0], "%s", kT[k]);
+			snprintf (s_Rv.name[13 + k], sizeof s_Rv.name[0], "%s", kT[k]);
+		}
+		sidecar_rec_set (&s_Rv); run (2); shot ("rec");
+		sidecar_ui_show (12); sidecar_scope_debug (-1, 1, 0, 0);
+		for (int f = 0; f < 6; f++)
+		{
+			scope_fake (f);
+			for (int k = 0; k < 8; k++) snprintf (s_Sc.name[1 + k], sizeof s_Sc.name[0], "%s", kT[k]);	// tap_source_name for the A4
+			sidecar_scope_set (&s_Sc); run (1);
+		}
+		shot ("scope");
+		sidecar_ui_show (8); voice_fake (1); s_Vv.track = 3; s_Vv.gen++; sidecar_voice_set (&s_Vv); run (2); shot ("voice");	// the A4's T4
+		sidecar_ui_show (9); ins_fake (11); sidecar_insfx_set (&s_Iv); run (2); shot ("insfx");
+		sidecar_ui_show (1); run (2); shot ("sound");
+		sidecar_ui_show (0); s_St.rytm = 0; sidecar_ui_status (&s_St); run (60); shot ("home-off");
+		s_St.box = 0;					// back to the Rytm: its words again
+		for (int v = 0; v < 8; v++) s_St.voice[v] = 0;
+		s_St.rytm = 1;
+		sidecar_ui_status (&s_St); run (60);
+		EXPECT (!strcmp (sidecar_ui_box (), "Rytm") && !sidecar_ui_box_names () && !strcmp (sidecar_ui_voice (1), "BT") && sidecar_ui_voice_at (1) == 2);
+		shot ("home-rytm-again");
+	}
+	if (s_nFit) printf ("shot a4: %d strings do not fit (TEXT-FIT above)\n", s_nFit);
+	printf (s_nFail ? "shot a4: %d checks FAILED\n" : "shot a4: all checks ok (both themes)\n", s_nFail);
+}
+
 int main (int argc, char **argv)
 {
 	lv_init ();
@@ -2479,6 +2571,12 @@ int main (int argc, char **argv)
 		}
 		printf ("wganim: %d frames in %s\n", n, argv[2]);
 		return 0;
+	}
+	if (argc > 2 && !strcmp (argv[1], "a4"))
+	{
+		th_fit_report = fit_painted;
+		a4_run (argv[2]);
+		return s_nFail != 0 || s_nFit != 0;
 	}
 	if (argc > 2 && !strcmp (argv[1], "conn"))
 	{

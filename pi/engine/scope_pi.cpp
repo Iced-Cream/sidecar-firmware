@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "device/device.h"
 #include "platform.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -66,7 +67,11 @@ int window(sidecar_scope_view_t* o) {
 }
 }  // namespace
 
-int SourceOfTrack(int t) { return t >= 0 && t < 12 ? kTrackSrc[t] : 0; }
+// Another box (the A4): its track t is Sidecar voice t, on source 1 + t (tap_source_name gives it the box's name)
+int SourceOfTrack(int t) {
+  if (core::device::foreign()) return t >= 0 && t < core::device::active().voices ? 1 + t : 0;
+  return t >= 0 && t < 12 ? kTrackSrc[t] : 0;
+}
 
 void Leave() {
   ui::tap_enable(false);

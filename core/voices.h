@@ -98,6 +98,7 @@ void fm_note_on(int vi, int note, int vel);   // 6-OP FM's mono note (voice_repo
 void fm_relist();
 int juno_pick(int pat, const uint8_t** b, const char** name);
 void juno_select(int vi, int pat, bool sync, bool force);
+void juno_sound_pat(int vi, int pat);   // the sound's PAT, as the Rytm wrote it (the bank list's commit)
 void juno_relist();
 bool refill_neediest(uint32_t below);
 bool pool_line_open(int line);   // a pool line's file (open_on_card): false while the card core opens it

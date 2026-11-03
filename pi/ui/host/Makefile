@@ -40,6 +40,11 @@ shots-all: shot
 	$(MAKE) shot.png SIZE=800x480
 	$(MAKE) shot.png SIZE=1024x600
 	$(MAKE) shot.png SIZE=1280x720
+# shots-a4/: an A4 the box in use (./shot a4): its word and its T1..T4 on the splash, HOME, STATUS, REC, SCOPE, INSERT FX, Sound
+shots-a4: shot
+	@rm -rf obj/shots-a4; mkdir -p obj/shots-a4 shots-a4
+	./shot a4 obj/shots-a4 $(SIZE)
+	for f in obj/shots-a4/*.ppm; do sips -s format png $$f --out shots-a4/$$(basename $$f .ppm).png >/dev/null; done
 # bounds: the layouts compared (check_bounds.py), the 1024x600 and 1280x720 shots' objects
 bounds: shot
 	@rm -rf obj/bounds-1024 obj/bounds-1280; mkdir -p obj/bounds-1024 obj/bounds-1280
@@ -107,6 +112,6 @@ obj/lv_conf.h: $(LVCONF)
 obj/%.o: $(LVGL)/%.c obj/lv_conf.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c -o $@ $<
-.PHONY: test clean anim shots-all shot.png splash-wide bounds
+.PHONY: test clean anim shots-all shots-a4 shot.png splash-wide bounds
 clean:
 	rm -rf obj shot shot*.png seq-*.png rytm-*.png shots shots-* seq-oled.mp4 seq-oled.gif

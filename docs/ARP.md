@@ -20,6 +20,8 @@ What it plays: a Rytm trig (until its LEN or the pad's release; its CHD chord on
 in CHRO, keyboards on the Pi. With the mode on, keyboards and pads reach any Sidecar machine, not just the polyphonic ones. One note sounds at a time. On a poly track it plays with that track's POLY CONFIG;
 elsewhere on the voice's own machine, mono. With MODE OFF nothing changes.
 
+On a Sidecar seq track a step can lock any of the five for that step only: hold the step, press FLTR (`docs/SEQUENCER.md` "Arp locks"). Not on a plain Rytm track.
+
 An ARP track is pinned (its amp held open, as a seq track's): the notes are the host's, the Rytm's envelope does not gate each one, and the amp and filter envelopes do not shape them. Not on the MIDI machine.
 
 ## Time
@@ -36,4 +38,4 @@ nothing is left playing. A new kit's first trig is spared: the Rytm reports the 
 
 `45 01 <track> <lo> <hi>`, both ways, in `sim/protocol.py`. The Rytm stores 10 bits and never reads them.
 
-Console: `arp`, `arp=T:mode=1,spd=3,rng=1,gate=1,swng=0`. Tests: `core/tests/test_arp.cpp`, `sim/arp_e2e.py`, rytm-mods `tools/emu/ar_emu.py`.
+Console: `arp`, `arp=T:mode=1,spd=3,rng=1,gate=1,swng=0`; a step's locks `seq=alock:T:S:F:V`. Tests: `core/tests/test_arp.cpp`, `sim/arp_e2e.py`, rytm-mods `tools/emu/ar_emu.py`.
