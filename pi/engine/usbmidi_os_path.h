@@ -23,7 +23,7 @@
 //                   back once the computer has sent no OS message for kQuietUs (it gave up or finished), or at a new
 //                   setting; after the quiet the filter still drops OS messages until a new upgrade's start
 //                   (MidiFilter::AwaitStart, os_upgrade::start), so a sender that paused mid-image never gets its tail
-//                   through. The image's start and end share 7F, so a lone end passes too (its data does not).
+//                   through: an image's end (7F 02) stays dropped too, only its start (7F 01) ends the wait.
 //   Switched        a host switch during an upgrade (setting on or emu) aborts it the same way: the rest of an image
 //                   meant for one host never reaches the other, also with on, where the pass would stay on.
 //                   Seen () must run every loop (Quiet does), so "within kQuietUs" is measured from when

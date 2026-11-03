@@ -47,9 +47,12 @@ inline bool rpc(const uint8_t* m, int n) {
 }
 // with the setting off: dropped (the union of what the filter and the bridge dropped before)
 inline bool any(const uint8_t* m, int n) { return image(m, n) || rpc(m, n); }
-// a new upgrade's first message: the image's 7F (start and end share it: only the shape is known) or the RPC's
+// a new upgrade's first message: the image's start (7F 01; its end is 7F 02 - the first and last message of every local
+// .syx: Rytm MKII OS 1.72 1.73 1.74, Rytm MKI 1.74, A4 MKII 1.56, Digitakt 1.54, Syntakt 1.42) or the RPC's
 // OsUpgradeStart (50)
-inline bool start(const uint8_t* m, int n) { return (image(m, n) && m[6] == 0x7F) || rpc_command(m, n) == 0x50; }
+inline bool start(const uint8_t* m, int n) {
+  return (image(m, n) && n >= 8 && m[6] == 0x7F && m[7] == 0x01) || rpc_command(m, n) == 0x50;
+}
 // with the setting on: let through (the rest of any() stays dropped)
 inline bool pass(const uint8_t* m, int n) { return (image(m, n) && m[4] == kImageDevice) || rpc(m, n); }
 }  // namespace os_upgrade

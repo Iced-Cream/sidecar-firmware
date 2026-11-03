@@ -154,6 +154,21 @@ int main() {
       CHECK(Run(f, k) == k);
     }
   }
+  // waiting for a start after an aborted upgrade (AwaitStart): the image's end (7F 02) and data stay dropped, its
+  // start (7F 01, as the stock .syx files' first message) ends the wait; the RPC's 50 ends it too
+  {
+    const Bytes s0 = {0xF0, 0x00, 0x20, 0x3C, 0x0C, 0x00, 0x7F, 0x01, 0x07, 0x00, 0x01, 0x72, 0x00, 0x72, 0x68, 0xF7};
+    Bytes e0 = s0;
+    e0[7] = 0x02;
+    CHECK(os_upgrade::start(s0.data(), (int)s0.size()) && !os_upgrade::start(e0.data(), (int)e0.size()));
+    CHECK(os_upgrade::pass(e0.data(), (int)e0.size()));     // an end passes when no wait is on
+    MidiFilter f(true);
+    f.SetPassOsUpdate(true);
+    f.AwaitStart(true);
+    CHECK(Run(f, Pack(e0)).empty() && Run(f, Pack(os)).empty() && f.AwaitingStart());
+    CHECK(Run(f, Pack(s0)) == Pack(s0) && !f.AwaitingStart());
+    CHECK(Run(f, Pack(os)) == Pack(os) && Run(f, Pack(e0)) == Pack(e0));
+  }
   // usbmidi=os:off never drops less than dev (before usbmidi=os:) toward the Rytm: dev's drop rule, copied here, against
   // the filter with the pass off, over every device byte, the image commands 7E 7F and neighbours, h[5] 00 and 01,
   // messages cut short, and RPC frames on every command. Off differs from dev only where the shared rule adds the

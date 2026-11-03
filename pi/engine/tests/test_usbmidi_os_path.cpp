@@ -49,15 +49,15 @@ static void Apply(Path& p, const OsGate& g, bool cut) {
   if (cut) p.Cut();
   p.Filter().SetPassOsUpdate(g.Pass());
 }
-static Bytes OsMsg(uint8_t cmd, int len) {   // an OS .syx message's shape (device byte 0C), len data bytes
-  Bytes m = {0xF0, 0x00, 0x20, 0x3C, 0x0C, 0x00, cmd};
-  for (int i = 0; i < len; i++) m.push_back((uint8_t)(i * 7 & 0x7F));
+static Bytes OsMsg(uint8_t cmd, int len, uint8_t first = 0) {   // an OS .syx message's shape (device byte 0C), len
+  Bytes m = {0xF0, 0x00, 0x20, 0x3C, 0x0C, 0x00, cmd};          // data bytes; first: the start's 01, the end's 02
+  for (int i = 0; i < len; i++) m.push_back(i == 0 && first ? first : (uint8_t)(i * 7 & 0x7F));
   m.push_back(0xF7);
   return m;
 }
 
 int main() {
-  const Bytes note = {0x90, 60, 100}, start = OsMsg(0x7F, 4), data = OsMsg(0x7E, 300);
+  const Bytes note = {0x90, 60, 100}, start = OsMsg(0x7F, 4, 0x01), data = OsMsg(0x7E, 300), end = OsMsg(0x7F, 4, 0x02);
 
   // H2: usbmidi=os:emu, the emulator the host, an upgrade under way; link=usb in the middle of it: nothing of the
   // image - queued, the message being filtered, or what the computer sends after - reaches the real Rytm
@@ -131,7 +131,7 @@ int main() {
     Apply(p, g, cut);
     Feed(p, Pack(data), 40);                       // the rest of the message under way
     Feed(p, Pack(data));                           // the rest of the image
-    Feed(p, Pack(start));                          // its end (7F)
+    Feed(p, Pack(end));                            // its end (7F 02)
     Feed(p, Pack(note));
     CHECK(Drain(p) == Pack(note));                 // only the note reaches the real Rytm
     CHECK(!g.Switched(g.SetLink(true), p.Filter().OsMessages(), t));   // aborted already: counted once
@@ -281,6 +281,7 @@ int main() {
     Apply(p, g, false);
     CHECK(g.Pass());
     for (int k = 0; k < 3; k++) Feed(p, Pack(data));   // and goes on with the image's tail
+    Feed(p, Pack(end));                            // and its end (7F 02): not a start, dropped too
     CHECK(Drain(p).empty());
     CHECK(p.Filter().AwaitingStart());
     Feed(p, Pack(note));
@@ -338,7 +339,7 @@ int main() {
     uint32_t t = 5000;
     Feed(p, Pack(start));
     Feed(p, Pack(data));
-    Feed(p, Pack(start));                          // the end message
+    Feed(p, Pack(end));                            // the end message
     Drain(p);
     CHECK(!p.Busy());
     CHECK(!g.Lost(false, p.Busy(), p.Filter().OsMessages(), t));
