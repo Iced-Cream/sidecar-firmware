@@ -841,6 +841,8 @@ task only once whole (256 KB queue); the relay sends with a 2 ms limit. A client
   re-checked when a queued message would start, so a switch turned off drops what was queued under it):
   - **OS upgrades**: the MIDI RPC's OsUpgradeStart / Write / End (0x50..0x52) and the OS `.syx` image's own messages
     (`F0 00 20 3C <dev> 00 7E|7F`, as `Analog-Rytm_MKII_OS1.74.syx`). Switch: *allow OS upgrades* / `midibridge=os:on`.
+    The rule is shared with the USB-C port's filter (`midi_filter.h` `os_upgrade`): with the switch on, the image passes
+    only on the stock files' device byte `0C`; the RPC's upgrade commands pass on any.
   - **+Drive writes, as an allowlist**: every RPC command but the confirmed reads needs the switch, so an unknown id
     fails closed. The reads (elektroid's `src/connectors/elektron.c`): ping 01, version 02, UID 03, screenshot 04,
     storage info 05, query 09; the sample file system's read dir 10, file info 22 23, reader 30-32; the raw file
@@ -878,6 +880,47 @@ with the opt-in `--passive`, a tool that reads first let through, its later text
 token, one tool at a time and eight racing, the token from a 0600 file or the environment only, `::1`. `node --test
 pi/engine/tests/page_pair.test.mjs`: `/midibridge` and `/midibridge/set` refused to an unpaired client, and their web.cpp
 branch on the strict same-origin check with the switches from the body only. **Not yet checked on hardware.**
+
+### OS upgrades over the USB-C MIDI port (usbmidi=os:)
+
+Elektron Transfer or elkflash on the computer at the USB-C port can upgrade the Rytm's OS through the Sidecar. Off by
+default. The gadget's filter and the Rytm MIDI bridge use one rule for what an OS upgrade is (`midi_filter.h`,
+`os_upgrade`): the `.syx` image's messages (`F0 00 20 3C <dev> 00 7E|7F`, any device byte) and the MIDI RPC's
+OsUpgradeStart / Write / End (0x50..0x52). Off, both drop all of it, at least what each dropped before (the USB-C port
+now also drops the RPC's upgrade commands, as the bridge always did). On, both pass only the image on the stock OS
+files' device byte `0C` and the RPC's upgrade commands; the image shape on any other device byte stays dropped (the
+bridge's `midibridge=os:on` passed it before). Known limit (as before): other Elektron SysEx whose payload starts
+`7E|7F`, such as a test build's `7D` or an RPC's `10`, is dropped toward the Rytm too. The filter now decides on a
+SysEx's first 13 bytes (5 packets) instead of 9. The
+wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/engine/usbmidi_os.h`
+(tests/test_usbmidi_os.cpp).
+
+- `usbmidi=os:off` (default), `usbmidi=os:emu` (pass only while the TCP link to rytm-emu is the host), `usbmidi=os:on`
+  (pass to the real Rytm on USB too). In `cmdline.txt`, or as a serial console command; `POST /cmd` refuses it, as it
+  refuses `midibridge=` (its origin check is the lenient one). `osupdate=off|0|emu|1|rytm` is the
+  older name and still works (`rytm` = `os:on`, `1` = `emu`); a valid `usbmidi=` wins when both are given.
+- While on: the USB-C MIDI OUT endpoint waits (NAKs) instead of dropping when the Rytm-bound queue is full, so a whole
+  OS file arrives; under `link=tcp`, the computer's MIDI goes to rytm-emu as `'M'` messages and its USB MIDI comes back.
+- A host switch (`link=usb` / `link=tcp`) while on or emu drops what is still on its way to the old host, so an
+  emulator's OS image never reaches the real Rytm; so does turning the pass off. A switch during an upgrade aborts it
+  (as below), also with `on`: the rest of an image meant for one host never reaches the other.
+- If data is lost during an upgrade (a send to the Rytm fails, or the Rytm or emulator goes away with data still
+  queued), the upgrade is aborted rather than continued with a hole in the image: the log says `OS upgrade ABORTED`,
+  OS messages are dropped until the computer has sent none for 3 s, then pass again from a new upgrade's start (the
+  image's start `7F 01` or the RPC's OsUpgradeStart), so the tail of the aborted image, its end `7F 02` included, never
+  goes through. The same wait starts whenever the pass turns on (the setting turned on again, a host switch), so an
+  upgrade always passes from its start. Start the upgrade again.
+- `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false,"aborted":N}` (`osUpgrade`: they pass right now;
+  `aborted`: upgrades cut since boot).
+- After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
+- While on or emu, `POST /cmd` also refuses `link=tcp:<address>` (it would send the computer's MIDI, an OS image
+  included, to any host); `link=tcp` (cmdline's `emuhost=`) and `link=usb` stay allowed.
+- The filter does not look at the box type: with an Analog Four attached, an A4 OS file on device byte `0C` would
+  pass too while on. Untested; the setting is meant for the Rytm.
+- `usbreboot=1` (separate): the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi
+  (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows). Any program on the computer can send it,
+  and with the rpiboot GPIO held low the Pi then boots whatever the computer serves: a developer's option, never on a
+  unit used to play live.
 
 ### Measurements
 
