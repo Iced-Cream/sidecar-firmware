@@ -1,7 +1,7 @@
 // pi/engine/stor_pi.h - the volumes besides the boot card in the Pi kernel (docs/STORAGE.md): USB mass storage
 // (USB:, USB2:, USB3: - Circle's umsd1..3 and FatFs) mounted and unmounted as sticks come and go (core 0's loop, after
 // UpdatePlugAndPlay), a safe eject; on the Pi 5 an NVMe SSD (NVME:, Circle's addon/nvme, started at boot when one
-// answers: nvme=0 in cmdline.txt skips it); the bench (stor_bench.h); /status's "stor"; the STATUS page's rows.
+// answers, with nvme=1 in cmdline.txt); the bench (stor_bench.h); /status's "stor"; the STATUS page's rows.
 // The logic is stor_vol.cpp / stor_bench.cpp (portable, tested on the Mac); this is Circle's side of them.
 //
 // Everything here is core 0's. Core 3 (the audio) never touches these volumes. A later user (the bundles' library on
@@ -24,7 +24,7 @@ void stor_diskio_stats (unsigned *pSplit, unsigned *pBounced);
 
 namespace stor_pi {
 // CKernel::Initialize, after the USB host started: the volumes' memory; the Pi 5's NVMe SSD (bNVMe: cmdline nvme=,
-// default 1) - a PCIe link that does not come up costs ~100 ms, a drive that does not answer its controller's own
+// default 0) - a PCIe link that does not come up costs ~200 ms, a drive that does not answer its controller's own
 // timeout (CAP.TO, reported by the drive: seconds at worst), logged either way
 void Init (CUSBHCIDevice *pUSB, CInterruptSystem *pInterrupt, boolean bNVMe);
 void Poll (boolean bPlugAndPlay);	// core 0's loop: hot-plug (on a change, and once a second), one bench step

@@ -12,7 +12,7 @@ Spec: `docs/superpowers/specs/2026-10-14-pi-engine-design.md`. Plan: `docs/super
   - the kernel, `pi/engine/kernel8-rpi4.img`. It links Circle (GPLv3), so the built image is GPLv3 as a whole.
   Everything builds in Docker (image `rytm-circle`).
   The Raspberry Pi 5: `RASPPI=5 pi/engine/build.sh` -> `pi/engine/kernel_2712.img` (its own Circle tree, no USB-C gadget), the SD set by `pi/circle/make-sd-pi5.sh`: `docs/pi5.md`.
-  USB drives (`USB:`), the Pi 5's NVMe SSD (`NVME:`, Circle's `addon/nvme`, experimental; `nvme=0` skips it), exFAT behind `STOR_EXFAT=1` (off), and the storage bench `stor=bench[:VOL]`: `docs/STORAGE.md`.
+  USB drives (`USB:`), the Pi 5's NVMe SSD (`NVME:`, Circle's `addon/nvme`, experimental; only with `nvme=1`), exFAT behind `STOR_EXFAT=1` (off), and the storage bench `stor=bench[:VOL]`: `docs/STORAGE.md`.
 - After a change: `pi/engine/build.sh kernel && CIRCLE_TREE=circle-engine pi/circle/flash.sh ../engine 45`.
   - `flash.sh` builds the `.hex` and sends the reboot magic (`RYTM-REBOOT`, 921600 baud) to the running kernel.
   - It then uploads through the serial bootloader and logs SECS seconds to `pi/circle/out/engine-<time>.log`.

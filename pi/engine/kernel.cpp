@@ -352,8 +352,9 @@ boolean CKernel::Initialize (void)
 	BootStep (6);
 	if (!m_USBHCI.Initialize ()) return FALSE;		// the Rytm is enumerated by plug-and-play in Run
 	// the volumes besides the card (stor_pi.h, docs/STORAGE.md): USB drives as they come (core 0's loop); the Pi 5's
-	// NVMe SSD now if one answers (nvme=0 in cmdline.txt skips it)
-	stor_pi::Init (&m_USBHCI, &m_Interrupt, m_Options.GetAppOptionDecimal ("nvme", 1) != 0);
+	// NVMe SSD now if one answers, only with nvme=1 in cmdline.txt: the probe with the Rytm already on USB has been
+	// followed by the Rytm dropping off (issue 11; cause not proven)
+	stor_pi::Init (&m_USBHCI, &m_Interrupt, m_Options.GetAppOptionDecimal ("nvme", 0) != 0);
 	BootStep (7);
 	// the HDMI display and its USB touch (docs/pi-display.md), driven from core 0's loop: display=0 turns it off.
 	// LVGL's home screen replaces the boot screen at the first Update.
