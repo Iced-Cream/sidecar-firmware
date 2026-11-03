@@ -21,7 +21,9 @@ int main() {
     t += 10500;
     CHECK(!refused(r, t) && !r.pending);   // still at full speed after three: stays off
     CHECK(!due(r, t + 60000));
-    CHECK(!refused(r, t + 20000));         // a refusal within kForgetMs: still spent
+    CHECK(!refused(r, t + 15000));         // a replug within kForgetMs of the last retry: still spent
+    CHECK(!refused(r, t + 19000));         // and that replug did not push the window on
+    CHECK(refused(r, t + 20000));          // kForgetMs after the last retried refusal: a new plug
   }
   {  // a replug long after it gave up: the whole budget again
     Retry r;

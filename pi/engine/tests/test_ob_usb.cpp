@@ -9,6 +9,7 @@
 #include "ob_usb.h"
 #include "shared.h"
 #include <circle/timer.h>
+#include <circle/usb/usbstandardhub.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -226,11 +227,37 @@ int main() {
     }
     CTimer::s_now64 = 30000000, CObUsb::PollReEnum();
     CHECK(port.rescans == 1);
-    {  // behind a hub: no root port to reset, the log says to replug it
+    {  // behind an external hub: it could be unplugged while a retry waits, so none; the log says to replug
+      CUSBDevice hd;
+      hd.desc = {0x05e3, 0x0608};   // some hub, on a root port
+      hd.root = &port;
+      CUSBStandardHub hub(&hd);
       Bus b(g_rytm, 0x0b48);
-      b.dev.speed = USBSpeedFull;
+      b.dev.speed = USBSpeedFull, b.dev.hub = &hub;
       CHECK(b.ob && !b.ob->Configure());
       CHECK(CLogger::Get()->lines.back().find("behind a hub, so no retry") != std::string::npos);
+      CTimer::s_now64 = 60000000, CObUsb::PollReEnum();
+      CHECK(hub.rescans == 0 && port.rescans == 1);
+    }
+    {  // the Pi 4: every box hangs off the VL805's own hub (2109:3431 on a root port), which is retried
+      CUSBDevice hd;
+      hd.desc = {0x2109, 0x3431};
+      hd.root = &port;
+      CUSBStandardHub vl805(&hd);
+      for (int k = 0; k < 3; ++k) {
+        Bus b(g_rytm, 0x0b48);
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+        CHECK(b.ob && !b.ob->Configure());
+        CHECK(CLogger::Get()->lines.back().find("(try " + std::to_string(k + 1) + " of 3)") != std::string::npos);
+        CTimer::s_now64 += 10000000, CObUsb::PollReEnum();
+        CHECK(vl805.rescans == k + 1);
+      }
+      Bus b(g_rytm, 0x0b48);   // still at full speed after three: stays off, says so
+      b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(CLogger::Get()->lines.back().find("still at FS after 3 tries") != std::string::npos);
+      CTimer::s_now64 += 60000000, CObUsb::PollReEnum();
+      CHECK(vl805.rescans == 3 && port.rescans == 1);
     }
     CTimer::s_now64 = 0;
   }

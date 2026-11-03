@@ -22,8 +22,8 @@ namespace obspeed {
 static const unsigned kTries = 3;
 static const unsigned kWaitMs[kTries] = {2000, 5000, 10000};
 
-// A refusal this long after the previous one is a new plug, not one of our retries (each comes back within about
-// a second of its re-enumeration): the budget is full again.
+// A refusal this long after the last retried one is a new plug, not one of our retries (each comes back within
+// about a second of its re-enumeration): the budget is full again.
 static const unsigned kForgetMs = 30000;
 
 struct Retry
@@ -41,12 +41,12 @@ inline bool refused (Retry &r, uint32_t now_ms)
 {
 	if (r.seen && now_ms - r.last_ms > kForgetMs) r.tries = 0;
 	r.seen = true;
-	r.last_ms = now_ms;
 	if (r.tries >= kTries)
 	{
-		r.pending = false;
+		r.pending = false;		// (last_ms stays at the last retried refusal: replugs do not push it on)
 		return false;
 	}
+	r.last_ms = now_ms;
 	r.pending = true;
 	r.at_ms = now_ms + kWaitMs[r.tries];
 	return true;
