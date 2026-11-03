@@ -8,6 +8,7 @@
 #include "ob_block.h"
 #include "ob_usb.h"
 #include "shared.h"
+#include <circle/timer.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -198,6 +199,41 @@ int main() {
     CHECK(g_Output.Underflows() == 0);
   }
   CHECK(&core::out::device() == &core::out::kRytmMk2);   // the box gone: the Rytm's table again
+
+  {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
+    struct Port : CUSBHCIRootPort {
+      int rescans = 0;
+      boolean ReScanDevices() override { ++rescans; return TRUE; }
+    } port;
+    CTimer::s_now64 = 10000000;   // 10 s
+    auto lines = CLogger::Get()->lines.size();
+    {
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull, b.dev.root = &port;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(b.host.ctl.empty() && b.host.in.empty());   // no SET_INTERFACE, no URB
+      CHECK(CLogger::Get()->lines.size() > lines);
+      CHECK(CLogger::Get()->lines.back().find("came up at FS, Overbridge needs HS: enumerating it again in 2 s (try 1 of 3)") != std::string::npos);
+    }
+    CTimer::s_now64 = 11999000, CObUsb::PollReEnum();
+    CHECK(port.rescans == 0);
+    CTimer::s_now64 = 12000000, CObUsb::PollReEnum(), CObUsb::PollReEnum();
+    CHECK(port.rescans == 1);   // once
+    {  // the port's new reset gives high speed: streams, and the budget is back
+      Bus b(g_rytm, 0x0b48);
+      b.dev.root = &port;
+      CHECK(b.ob && b.ob->Configure());
+    }
+    CTimer::s_now64 = 30000000, CObUsb::PollReEnum();
+    CHECK(port.rescans == 1);
+    {  // behind a hub: no root port to reset, the log says to replug it
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(CLogger::Get()->lines.back().find("behind a hub, so no retry") != std::string::npos);
+    }
+    CTimer::s_now64 = 0;
+  }
 
   printf("test_ob_usb: ok\n");
   return 0;

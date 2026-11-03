@@ -41,6 +41,10 @@ public:
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 
+	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
+	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
+	static void PollReEnum (void);
+
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
 

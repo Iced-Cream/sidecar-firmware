@@ -46,6 +46,7 @@
 #include "midibridge_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
+#include <circle/usb/usbhcirootport.h>
 #include <circle/usb/usb.h>
 #include <circle/usb/xhciendpoint.h>
 #include <circle/koptions.h>
@@ -56,6 +57,7 @@
 #include <assert.h>
 
 #include "ob_block.h"
+#include "ob_speed.h"
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
@@ -105,6 +107,9 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 }
 
 CObUsb *CObUsb::s_pThis = 0;
+static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
+static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
+static u32 NowMs (void) { return (u32) (CTimer::GetClockTicks64 () / (CLOCKHZ / 1000)); }	// wraps at 2^32 ms
 volatile boolean CObUsb::s_bActive = TRUE;
 s32 *CObUsb::s_pCapBuf = 0;
 volatile unsigned CObUsb::s_nCapPos = 0;
@@ -204,6 +209,16 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 		return 0;
 	}
 	return new CObUsb (pParent, pAudio);
+}
+
+void CObUsb::PollReEnum (void)
+{
+	if (!obspeed::due (s_Retry, NowMs ()) || s_pRetryPort == 0) return;
+	CLogger::Get ()->Write (From, LogNotice, "enumerating the box again (try %u of %u)", s_Retry.tries, obspeed::kTries);
+	if (!s_pRetryPort->ReScanDevices ())		// the hot-plug path: port reset, address, configure (this driver again)
+	{
+		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it (unplugged?)");
+	}
 }
 
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
@@ -338,6 +353,35 @@ boolean CObUsb::Configure (void)
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
 				(unsigned) pDevDesc->idProduct);
+
+	// Overbridge needs high speed. Below it the stream cannot start ("cannot submit the first URBs"), so refuse at
+	// once and have the root port enumerate the box again (ob_speed.h): a new port reset, a new chance at high speed
+	if (GetDevice ()->GetSpeed () != USBSpeedHigh)
+	{
+		static const char *Speeds[] = {"LS", "FS", "HS", "SS", "?"};
+		const char *pSpeed = Speeds[GetDevice ()->GetSpeed () <= USBSpeedUnknown ? GetDevice ()->GetSpeed () : 4];
+		unsigned nNow = NowMs ();
+		CUSBHCIRootPort *pPort = GetDevice ()->GetParentRootPort ();
+		if (pPort == 0)
+		{
+			CLogger::Get ()->Write (From, LogError, "%s came up at %s, Overbridge needs HS: behind a hub, so no retry; "
+						"unplug it and plug it in again", m_pAudio->name, pSpeed);
+		}
+		else if (obspeed::refused (s_Retry, nNow))
+		{
+			s_pRetryPort = pPort;
+			CLogger::Get ()->Write (From, LogWarning, "%s came up at %s, Overbridge needs HS: enumerating it again "
+						"in %u s (try %u of %u)", m_pAudio->name, pSpeed,
+						obspeed::kWaitMs[s_Retry.tries] / 1000, s_Retry.tries + 1, obspeed::kTries);
+		}
+		else
+		{
+			CLogger::Get ()->Write (From, LogError, "%s still at %s after %u tries: unplug it and plug it in again, "
+						"or try another cable or port", m_pAudio->name, pSpeed, obspeed::kTries);
+		}
+		return FALSE;
+	}
+	obspeed::high_speed (s_Retry);
 
 	if (!ScanDescriptors ())
 	{
