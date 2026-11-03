@@ -13,6 +13,8 @@
 //   Hold / Resume   the OUT endpoint's flow control: held while on and the queue has no room for a whole transfer;
 //                   resumed when there is room, or at once when the setting is off (dev never holds): turning it off
 //                   while held never leaves the computer's MIDI OUT NAKed
+//   EngineWaits     the TCP link holds the engine's records back behind a half-sent computer SysEx only while the
+//                   setting is on: off is dev's behaviour (the TCP link never looked at the computer's MIDI)
 #pragma once
 #include <stdint.h>
 #include <string.h>
@@ -92,6 +94,8 @@ class OsGate {
   bool Hold(bool room) const { return On() && !room; }
   // core 0's loop: re-arm a held endpoint
   bool Resume(bool held, bool room) const { return held && (!On() || room); }
+  // the TCP link: the engine's records wait behind the computer's half-sent SysEx
+  bool EngineWaits(bool computer_in_sysex) const { return On() && computer_in_sysex; }
 
  private:
   usbmidi_os::Mode mode_ = usbmidi_os::kOff;

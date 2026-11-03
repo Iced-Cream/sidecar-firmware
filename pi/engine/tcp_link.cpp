@@ -234,8 +234,9 @@ void CTcpTransport::Poll (void)
 		m_nPollSent = 0;			// this Poll's bounds (PollRoom)
 		SendFrames ();
 		if (m_pSocket != 0) SendComputerMIDI ();
-		// a SysEx of the computer's still open keeps the engine's records back, as on USB (ob_usb.cpp)
-		if (m_pSocket != 0 && !(pSidecar != 0 && pSidecar->ForRytmInSysEx ())) SendMIDI ();
+		// usbmidi=os: (on or emu only): a SysEx of the computer's still open keeps the engine's records back, as on
+		// USB (ob_usb.cpp). Off: as before usbmidi=os:, the engine's records never wait here
+		if (m_pSocket != 0 && !(pSidecar != 0 && pSidecar->EngineWaits ())) SendMIDI ();
 	}
 }
 

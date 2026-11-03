@@ -168,6 +168,28 @@ int main() {
     CHECK(g.Resume(true, false));
     CHECK(!g.Hold(false));                          // and never held again while off
   }
+  // M2: the TCP link's engine records wait behind the computer's half-sent SysEx only while the setting is on. Off: a
+  // half-sent state left from before a switch (nothing pops the queue under link=tcp then) never holds them back
+  {
+    OsGate g;
+    CHECK(!g.EngineWaits(true));
+    CHECK(!g.EngineWaits(false));
+    g.SetMode(kOn);
+    CHECK(g.EngineWaits(true));
+    CHECK(!g.EngineWaits(false));
+    g.SetMode(kEmu);
+    CHECK(g.EngineWaits(true));
+    g.SetMode(kOff);
+    CHECK(!g.EngineWaits(true));
+    // the frozen state the review describes: the computer's kit dump half sent, then the setting off
+    Bytes kit = {0xF0, 0x00, 0x20, 0x3C, 0x07, 0x00, 0x52, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xF7};
+    Path q;
+    Feed(q, Pack(kit), 0, 16);
+    uint32_t w;
+    while (q.Pop(&w)) {}
+    CHECK(q.InSysEx());                             // half sent
+    CHECK(!g.EngineWaits(q.InSysEx()));             // off: the engine's records go anyway
+  }
   printf("test_usbmidi_os_path: PASS\n");
   return 0;
 }

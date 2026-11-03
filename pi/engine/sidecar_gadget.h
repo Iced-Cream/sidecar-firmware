@@ -53,6 +53,7 @@ public:
 	void MIDIToComputer (u32)			{}
 	boolean ForRytm (u32 *)				{ return FALSE; }
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
+	boolean EngineWaits (void) const		{ return FALSE; }
 	void RytmMIDIConnected (boolean)		{}
 	boolean OsUpdate (void) const			{ return FALSE; }
 	const char *OsUpdateName (void) const		{ return "off"; }
@@ -158,6 +159,8 @@ public:
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
 	boolean ForRytmInSysEx (void) const		{ return m_ToRytmPath.InSysEx (); }
+	// the TCP link: the engine's records wait behind the computer's half-sent SysEx (usbmidi=os: on or emu only)
+	boolean EngineWaits (void) const		{ return m_Gate.EngineWaits (m_ToRytmPath.InSysEx ()); }
 	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
 	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
 	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
