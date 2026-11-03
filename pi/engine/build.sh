@@ -179,6 +179,10 @@ grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/
 # any xHCI error and the hub reported no port change until a reboot - T103, a Rytm OS update whose re-attach was never
 # seen; the endpoint is reset, every port read, the request re-armed and a line logged; after circle-replug, idempotent)
 grep -q circle-hub-rearm lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm.patch
+# then the recovery from a rate-limited kernel timer (circle-hub-rearm2.patch: v1 asked for it from the completion, so a
+# request that failed again at once kept UpdatePlugAndPlay'"'"'s loop going until the watchdog rebooted the Pi - v6.3, flash 1;
+# its own file and marker, as -reenum2; idempotent)
+grep -q circle-hub-rearm2 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
