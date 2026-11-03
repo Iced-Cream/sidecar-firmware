@@ -262,6 +262,7 @@ static void per_kit(const std::string& c) {
   const std::string old = "# Sidecar inserts: CHAIN SLOT TYPE P1 P2 P3 P4 / PEQ CHAIN HPF LPF LOW HIGH / AMP CHAIN SLOT FILE / SEND Vn B1 B2 B3 / ROUTE B3 PRE|POST / OUT Vn TRK|PRE|POST LEV PAN WID DEC\nV2 A EQ 64 64 100 64\nSEND V2 0 0 55\n";
   wrs(c + "/.rytm/ins/MFX/k006.txt", old.c_str());
   wrs(c + "/.rytm/ins/MFX/k007.txt", "# x\nV1 A DRIVE 50 0 30 127\nM1 A COMP 50 60 40 20\nM1 B SPACE 40 50 0 20\nM2 A AMP 30 64 64 109\nAMP M2 A Synth A.namb\nM2 B EQ 64 64 64 64\nPEQ M2 40 0 64 70\nMFX 1 MIX 90 40 77 40 40 4\n");
+  wrs(c + "/.rytm/ins/MFX/k013.txt", "# x\nMFX 0 MIX 100 40 40 40 40 0\n");   // SRC MIX and nothing else: no chain
   uint8_t msg[] = {0xF0, 0x7D, 0x52, 0x54, 0x10, 'M', 'F', 'X', 0xF7};
   engine_sysex(msg, (int)sizeof msg);
   loaded();
@@ -322,6 +323,10 @@ static void per_kit(const std::string& c) {
   ins::kit_changed(6);   // k007: an old line, 9 words
   CHECK(master::control.trim == master::kTrimDef && master::control.src == master::kMix);
   ins::kit_changed(5);
+  ins::kit_changed(12);   // k013: SRC MIX with an empty chain loads as it is (the stems summed: test_masterfx_pi)
+  CHECK(master::control.src == master::kMix && !master::on() && !master::control.byp && master::control.trim == master::kTrimDef);
+  ins::kit_changed(5);
+  CHECK(master::control.src == master::kRet);
   printf("test_master: per kit: read, written, a kit change on RAM only; an old kit's file byte for byte\n");
 }
 
