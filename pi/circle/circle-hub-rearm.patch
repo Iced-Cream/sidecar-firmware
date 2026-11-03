@@ -1,0 +1,129 @@
+diff -ruN a/include/circle/usb/usbstandardhub.h b/include/circle/usb/usbstandardhub.h
+--- a/include/circle/usb/usbstandardhub.h
++++ b/include/circle/usb/usbstandardhub.h
+@@ -55,6 +55,12 @@
+ 	const TUSBHubInfo *GetHubInfo (void) const;
+ #endif
+ 
++	// circle-hub-rearm.patch: the status-change request ended in an error (any hub, since boot): how often,
++	// the last error (the xHCI completion code; 0 on DWHCI), and how often re-arming it failed
++	static unsigned GetStatusErrors (void)		{ return s_nStatusErrors; }
++	static unsigned GetStatusLastError (void)	{ return s_nStatusLastError; }
++	static unsigned GetRearmFailures (void)		{ return s_nRearmFailures; }
++
+ private:
+ 	boolean EnumeratePorts (void);
+ 
+@@ -69,6 +75,7 @@
+ 
+ 	CUSBEndpoint *m_pInterruptEndpoint;
+ 	u8 *m_pStatusChangeBuffer;
++	volatile boolean m_bStatusError;		// circle-hub-rearm.patch: set in the completion (IRQ), handled at task level
+ 
+ 	unsigned m_nPorts;
+ 	boolean m_bPowerIsOn;
+@@ -82,6 +89,10 @@
+ 
+ 	unsigned m_nDeviceNumber;
+ 	static CNumberPool s_DeviceNumberPool;
++
++	static unsigned s_nStatusErrors;
++	static unsigned s_nStatusLastError;
++	static unsigned s_nRearmFailures;
+ };
+ 
+ #endif
+diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
+--- a/lib/usb/usbstandardhub.cpp
++++ b/lib/usb/usbstandardhub.cpp
+@@ -20,6 +20,9 @@
+ #include <circle/usb/usbstandardhub.h>
+ #include <circle/usb/usbdevicefactory.h>
+ #include <circle/usb/xhciusbdevice.h>
++#if RASPPI >= 4
++#include <circle/usb/xhciendpoint.h>	// circle-hub-rearm.patch
++#endif
+ #include <circle/devicenameservice.h>
+ #include <circle/logger.h>
+ #include <circle/timer.h>
+@@ -29,6 +32,9 @@
+ #include <assert.h>
+ 
+ CNumberPool CUSBStandardHub::s_DeviceNumberPool (1);
++unsigned CUSBStandardHub::s_nStatusErrors = 0;
++unsigned CUSBStandardHub::s_nStatusLastError = 0;
++unsigned CUSBStandardHub::s_nRearmFailures = 0;
+ 
+ static const char FromHub[] = "usbhub";
+ static const char DevicePrefix[] = "uhub";
+@@ -38,6 +44,7 @@
+ 	m_pHubDesc (0),
+ 	m_pInterruptEndpoint (0),
+ 	m_pStatusChangeBuffer (0),
++	m_bStatusError (FALSE),
+ 	m_nPorts (0),
+ 	m_bPowerIsOn (FALSE)
+ #if RASPPI >= 4
+@@ -584,6 +591,19 @@
+ 		{
+ 			StartStatusChangeRequest ();
+ 		}
++		else
++		{
++			// circle-hub-rearm.patch: Circle used to stop here, and the hub never reported a port change
++			// again: no unplug, no replug, until a reboot (T103: a Rytm rebooting after an OS update stayed
++			// gone). The task level recovers the endpoint, reads every port and arms the request again.
++			s_nStatusErrors++;
++#if RASPPI >= 4
++			CXHCIEndpoint *pXHCI = m_pInterruptEndpoint->GetXHCIEndpoint ();
++			s_nStatusLastError = pXHCI != 0 ? pXHCI->GetLastErrorCode () : 0;
++#endif
++			m_bStatusError = TRUE;
++			GetHost ()->PortStatusChanged (this);
++		}
+ 	}
+ 
+ 	delete pURB;
+@@ -607,6 +627,32 @@
+ 		usStatusBitmap |= (u16) m_pStatusChangeBuffer[1] << 8;
+ 	}
+ 
++	if (m_bStatusError)
++	{
++		// circle-hub-rearm.patch: the request ended in an error, so the buffer holds nothing. A halted endpoint
++		// is reset (an xHCI endpoint takes no new transfer before that) and cleared on the hub, and every port
++		// is read: a change the hub latched meanwhile shows in its change bits and is handled below.
++		m_bStatusError = FALSE;
++		CLogger::Get ()->Write (FromHub, LogWarning, "Status change request failed (error %u, %u so far): re-armed",
++					s_nStatusLastError, s_nStatusErrors);
++#if RASPPI >= 4
++		CXHCIEndpoint *pXHCI = m_pInterruptEndpoint->GetXHCIEndpoint ();
++		if (   pXHCI != 0
++		    && pXHCI->GetEPState () >= 2)	// halted, stopped or error
++		{
++			if (!pXHCI->ResetFromHalted ())
++			{
++				CLogger::Get ()->Write (FromHub, LogError, "Cannot reset the status change endpoint");
++			}
++		}
++#endif
++		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT,
++					    CLEAR_FEATURE, ENDPOINT_HALT, m_pInterruptEndpoint->GetNumber () | 0x80, 0, 0);
++		m_pInterruptEndpoint->ResetPID ();
++
++		usStatusBitmap = ((1U << m_nPorts) - 1) << 1;	// every port (bit 0, the hub itself, is not)
++	}
++
+ 	//CLogger::Get ()->Write (FromHub, LogDebug, "Status change (0x%04X)",
+ 	//			(unsigned) usStatusBitmap);
+ 
+@@ -711,5 +757,9 @@
+ 	if (!StartStatusChangeRequest ())
+ 	{
+ 		CLogger::Get ()->Write (FromHub, LogError, "Cannot restart request");
++
++		s_nRearmFailures++;			// circle-hub-rearm.patch: tried again at the next update
++		m_bStatusError = TRUE;
++		GetHost ()->PortStatusChanged (this);
+ 	}
+ }
