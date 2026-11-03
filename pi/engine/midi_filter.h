@@ -79,6 +79,7 @@ class MidiFilter {
     int n = ends ? (cin == 0x5 ? 1 : cin == 0x6 ? 2 : 3) : 3;
     for (int i = 0; i < n && head_n_ < kHead; i++) head_[head_n_++] = p[1 + i];
     if (!ends && head_n_ < kHead) return;
+    if (to_rytm_ && OsUpdate(head_, head_n_)) os_msgs_++;
     if (Drop(head_, head_n_)) {
       dropped_ += held_;
       dropped_msgs_++;
@@ -93,6 +94,8 @@ class MidiFilter {
   uint32_t DroppedPackets() const { return dropped_; }
   uint32_t DroppedMessages() const { return dropped_msgs_; }
   bool InSysEx() const { return state_ != kIdle; }
+  // toward the Rytm: the OS-upgrade messages seen (passed or dropped), for usbmidi_os_path.h's OsGate
+  uint32_t OsMessages() const { return os_msgs_; }
 
   // The predicates (public: the tests use them).
   static bool HostLink(const uint8_t* h, int n) { return n >= 4 && h[1] == 0x7D && h[2] == 0x52 && h[3] == 0x54; }
@@ -116,6 +119,7 @@ class MidiFilter {
   template <class Emit>
   void Abort(Emit emit) {
     if (state_ == kHolding) {
+      if (to_rytm_ && OsUpdate(head_, head_n_)) os_msgs_++;
       if (Drop(head_, head_n_)) {
         dropped_ += held_;
         dropped_msgs_++;
@@ -134,5 +138,5 @@ class MidiFilter {
   int held_ = 0;
   uint8_t head_[kHead];
   int head_n_ = 0;
-  uint32_t dropped_ = 0, dropped_msgs_ = 0;
+  uint32_t dropped_ = 0, dropped_msgs_ = 0, os_msgs_ = 0;
 };

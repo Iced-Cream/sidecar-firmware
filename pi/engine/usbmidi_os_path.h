@@ -7,7 +7,8 @@
 // destination reaches the next: the emulator's OS image never the real Rytm.
 //
 // OsGate: the setting (usbmidi_os.h Mode), the current host, and an aborted upgrade.
-//   pass ()         the filter lets OS upgrades (device byte 0C) through: on, or emu while the TCP link is the host
+//   pass ()         the filter lets OS upgrades (device byte 0C) through: on, or emu while the TCP link is the host;
+//                   never while an aborted upgrade is still being sent
 //   SetLink / SetMode  TRUE: cut the path now. With the setting on or emu, any host switch (the queue was meant for the
 //                   old one); with any setting, the pass going from on to off.
 //   Hold / Resume   the OUT endpoint's flow control: held while on and the queue has no room for a whole transfer;
@@ -15,6 +16,12 @@
 //                   while held never leaves the computer's MIDI OUT NAKed
 //   EngineWaits     the TCP link holds the engine's records back behind a half-sent computer SysEx only while the
 //                   setting is on: off is dev's behaviour (the TCP link never looked at the computer's MIDI)
+//   Lost / Quiet    a send of the computer's packets failed, or the Rytm (or the emulator) went away with OS data still
+//                   waiting, during an upgrade (an OS message seen within kQuietUs): the upgrade is aborted - the path
+//                   cut, OS messages dropped - rather than the Rytm getting an image with a hole in it. The pass comes
+//                   back once the computer has sent no OS message for kQuietUs (it gave up or finished), or at a new
+//                   setting. Seen () must run every loop (Quiet does), so "within kQuietUs" is measured from when
+//                   the count last moved.
 #pragma once
 #include <stdint.h>
 #include <string.h>
@@ -60,6 +67,8 @@ class ToRytmPath {
     cut_ += n;
     return n;
   }
+  // OS data on the way: queued, half sent, or a SysEx in the filter
+  bool Busy() const { return q_.size() != 0 || in_sysex_ || filter_.InSysEx(); }
   unsigned CutPackets() const { return cut_; }
   MidiFilter& Filter() { return filter_; }
   const MidiFilter& Filter() const { return filter_; }
@@ -73,10 +82,14 @@ class ToRytmPath {
 
 class OsGate {
  public:
+  static constexpr uint32_t kQuietUs = 3000000;
+
   bool On() const { return mode_ == usbmidi_os::kOn || mode_ == usbmidi_os::kEmu; }
-  bool Pass() const { return mode_ == usbmidi_os::kOn || (mode_ == usbmidi_os::kEmu && tcp_); }
+  bool Pass() const { return !aborted_ && (mode_ == usbmidi_os::kOn || (mode_ == usbmidi_os::kEmu && tcp_)); }
   bool Tcp() const { return tcp_; }
   usbmidi_os::Mode Mode() const { return mode_; }
+  bool Aborted() const { return aborted_; }
+  unsigned Aborts() const { return aborts_; }
 
   bool SetLink(bool tcp) {
     if (tcp == tcp_) return false;
@@ -87,6 +100,7 @@ class OsGate {
   bool SetMode(usbmidi_os::Mode m) {
     bool was = Pass();
     mode_ = m == usbmidi_os::kInvalid ? usbmidi_os::kOff : m;
+    aborted_ = false;			// a new setting starts over
     return was && !Pass();
   }
 
@@ -97,7 +111,35 @@ class OsGate {
   // the TCP link: the engine's records wait behind the computer's half-sent SysEx
   bool EngineWaits(bool computer_in_sysex) const { return On() && computer_in_sysex; }
 
+  // the filter's count of OS-upgrade messages (MidiFilter::OsMessages), at core 0's loop
+  void Seen(uint32_t os_msgs, uint32_t now_us) {
+    if (os_msgs != os_msgs_) {
+      os_msgs_ = os_msgs;
+      os_at_ = now_us;
+      os_seen_ = true;
+    }
+  }
+  bool Upgrading(uint32_t now_us) const { return os_seen_ && now_us - os_at_ < kQuietUs; }
+  // data was lost on the way (send_failed) or the destination left with data still on the way (busy): TRUE when that
+  // aborts an upgrade (cut the path then, and say so loudly)
+  bool Lost(bool send_failed, bool busy, uint32_t os_msgs, uint32_t now_us) {
+    Seen(os_msgs, now_us);
+    if (aborted_ || !Pass() || !Upgrading(now_us) || !(send_failed || busy)) return false;
+    aborted_ = true;
+    aborts_++;
+    return true;
+  }
+  // core 0's loop: TRUE once when an aborted upgrade's sender has gone quiet (the pass is back)
+  bool Quiet(uint32_t os_msgs, uint32_t now_us) {
+    Seen(os_msgs, now_us);
+    if (!aborted_ || Upgrading(now_us)) return false;
+    aborted_ = false;
+    return true;
+  }
+
  private:
   usbmidi_os::Mode mode_ = usbmidi_os::kOff;
-  bool tcp_ = false;
+  bool tcp_ = false, aborted_ = false, os_seen_ = false;
+  uint32_t os_msgs_ = 0, os_at_ = 0;
+  unsigned aborts_ = 0;
 };

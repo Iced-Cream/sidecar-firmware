@@ -190,6 +190,68 @@ int main() {
     CHECK(q.InSysEx());                             // half sent
     CHECK(!g.EngineWaits(q.InSysEx()));             // off: the engine's records go anyway
   }
+  // M5: a failed send during an upgrade aborts it: the path cut, OS messages dropped (never the rest of the image with a
+  // hole in it), loud; the pass back once the computer has sent no OS message for kQuietUs
+  {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(kOn));
+    uint32_t t = 1000;
+    CHECK(!g.Lost(true, false, p.Filter().OsMessages(), t));   // no upgrade seen: a failed send of notes aborts nothing
+    Feed(p, Pack(start));
+    for (int k = 0; k < 3; k++) Feed(p, Pack(data));
+    CHECK(p.Filter().OsMessages() == 4);
+    g.Seen(p.Filter().OsMessages(), t);
+    uint32_t w;
+    for (int k = 0; k < 5; k++) CHECK(p.Pop(&w));   // the merge took a chunk; its send fails
+    t += 1000;
+    bool lost = g.Lost(true, p.Busy(), p.Filter().OsMessages(), t);
+    CHECK(lost && g.Aborted() && !g.Pass() && g.Aborts() == 1);
+    Apply(p, g, lost);
+    CHECK(p.Size() == 0 && !p.Filter().PassOsUpdate());
+    CHECK(!g.Lost(false, true, p.Filter().OsMessages(), t));   // the Rytm's MIDI then down too: one abort, not two
+    // the computer goes on sending the image: all dropped, and it keeps the pass off
+    for (int k = 0; k < 5; k++) {
+      t += 500000;
+      Feed(p, Pack(data));
+      CHECK(!g.Quiet(p.Filter().OsMessages(), t));
+    }
+    Feed(p, Pack(note));
+    CHECK(Drain(p) == Pack(note));                 // its notes still go
+    t += OsGate::kQuietUs - 1;
+    CHECK(!g.Quiet(p.Filter().OsMessages(), t));
+    t += 1;
+    CHECK(g.Quiet(p.Filter().OsMessages(), t));    // quiet for kQuietUs: the pass is back
+    Apply(p, g, false);
+    CHECK(g.Pass() && p.Filter().PassOsUpdate() && !g.Aborted());
+    Feed(p, Pack(start));                          // a new upgrade goes through
+    CHECK(Drain(p) == Pack(start));
+  }
+  // M5: the Rytm leaves right after a finished upgrade (it reboots): nothing on the way, no abort; with data still
+  // waiting, an abort. A new setting clears an abort.
+  {
+    Path p;
+    OsGate g;
+    Apply(p, g, g.SetMode(kOn));
+    uint32_t t = 5000;
+    Feed(p, Pack(start));
+    Feed(p, Pack(data));
+    Feed(p, Pack(start));                          // the end message
+    Drain(p);
+    CHECK(!p.Busy());
+    CHECK(!g.Lost(false, p.Busy(), p.Filter().OsMessages(), t));
+    Feed(p, Pack(data));
+    CHECK(p.Busy());
+    CHECK(g.Lost(false, p.Busy(), p.Filter().OsMessages(), t + 10));
+    CHECK(!g.Pass());
+    Apply(p, g, g.SetMode(kOn));
+    CHECK(g.Pass() && !g.Aborted());
+    // off or emu over USB: no pass, so nothing to abort
+    OsGate h;
+    h.SetMode(kEmu);
+    h.Seen(1, 0);
+    CHECK(!h.Lost(true, true, 2, 10));
+  }
   printf("test_usbmidi_os_path: PASS\n");
   return 0;
 }

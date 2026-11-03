@@ -881,6 +881,11 @@ void CObUsbTransport::Poll (void)
 	Io.pSidecar = CSidecarGadget::Get ();
 	unsigned nNow = CTimer::GetClockTicks ();
 	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), nNow);
+	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
+	{
+		m_nMacFailedSeen = m_Merge.mac_failed ();
+		if (Io.pSidecar != 0) Io.pSidecar->ComputerSendFailed ();
+	}
 	midibridge_pi::SetRytmFail (m_Merge.bridge_failed ());
 	boolean bSending = m_pMIDI != 0 && m_bSend && !m_Merge.failed ();
 	g_bRytmOff = !bSending;

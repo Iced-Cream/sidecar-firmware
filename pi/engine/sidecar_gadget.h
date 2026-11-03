@@ -54,6 +54,8 @@ public:
 	boolean ForRytm (u32 *)				{ return FALSE; }
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
 	boolean EngineWaits (void) const		{ return FALSE; }
+	void ComputerSendFailed (void)			{}
+	unsigned OsAborts (void) const			{ return 0; }
 	void RytmMIDIConnected (boolean)		{}
 	boolean OsUpdate (void) const			{ return FALSE; }
 	const char *OsUpdateName (void) const		{ return "off"; }
@@ -161,7 +163,9 @@ public:
 	boolean ForRytmInSysEx (void) const		{ return m_ToRytmPath.InSysEx (); }
 	// the TCP link: the engine's records wait behind the computer's half-sent SysEx (usbmidi=os: on or emu only)
 	boolean EngineWaits (void) const		{ return m_Gate.EngineWaits (m_ToRytmPath.InSysEx ()); }
-	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
+	void RytmMIDIConnected (boolean bOn);		// core 0's loop: the USB merge or the TCP link can take the computer's MIDI
+	void ComputerSendFailed (void);			// core 0's loop: a send of the computer's packets failed (they are lost)
+	unsigned OsAborts (void) const			{ return m_Gate.Aborts (); }	// usbmidi=os: upgrades aborted (/status)
 	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
 	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
 	// flow control and the emu relay
@@ -216,6 +220,7 @@ private:
 	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
 	void UpdateOsPass (boolean bCut, const char *pWhy);	// the filter's pass from m_Gate; bCut: drop what is on its
 								// way to the Rytm first (usbmidi_os_path.h Cut)
+	void OsLost (boolean bSendFailed, const char *pWhy);	// usbmidi=os: an upgrade lost data on the way: abort it
 
 	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];

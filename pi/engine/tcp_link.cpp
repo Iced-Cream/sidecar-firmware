@@ -260,7 +260,11 @@ void CTcpTransport::SendComputerMIDI (void)
 		}
 		if (n == 0) return;
 		emu_midi_head (m_Msg, (u16) n);
-		if (!SendAll (m_Msg, 3 + n, "computer MIDI")) return;
+		if (!SendAll (m_Msg, 3 + n, "computer MIDI"))
+		{
+			pSidecar->ComputerSendFailed ();	// those bytes are lost: an upgrade under way is aborted
+			return;
+		}
 		m_nComputerIn += n;
 	}
 }

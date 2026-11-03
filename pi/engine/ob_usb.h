@@ -183,6 +183,7 @@ private:
 	// the order, the pacing and the failure rule: usbmidi_merge.h (portable, Mac-tested); Poll is its Circle side
 	UsbMidiMerge m_Merge;
 	DropResync m_Resync;
+	unsigned m_nMacFailedSeen = 0;			// m_Merge.mac_failed () told to the Sidecar gadget (usbmidi=os:)
 	CUSBMIDIDevice *m_pMIDI = 0;
 	boolean m_bSend = TRUE;
 };

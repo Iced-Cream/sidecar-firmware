@@ -5,6 +5,7 @@
 #include <circle/usb/usb.h>
 #include <circle/util.h>
 #include <circle/koptions.h>
+#include <circle/timer.h>
 
 #include "ob_block.h"
 
@@ -770,6 +771,30 @@ void CSidecarGadget::UpdateOsPass (boolean bCut, const char *pWhy)
 					  pWhy, n);
 }
 
+// a send of the computer's packets failed (the USB merge, the TCP link): they are gone
+void CSidecarGadget::ComputerSendFailed (void)
+{
+	OsLost (TRUE, "a send to the Rytm failed");
+}
+
+void CSidecarGadget::RytmMIDIConnected (boolean bOn)
+{
+	if (m_bRytmMIDI && !bOn) OsLost (FALSE, "the Rytm stopped taking MIDI");	// what waits is drained (Poll)
+	m_bRytmMIDI = bOn;
+}
+
+// usbmidi=os:, an upgrade under way and data lost on the way: rather than let the rest through with a hole in it, the
+// path is cut and OS messages are dropped until the computer has sent none for OsGate::kQuietUs (Poll), loudly
+void CSidecarGadget::OsLost (boolean bSendFailed, const char *pWhy)
+{
+	if (!m_Gate.Lost (bSendFailed, m_ToRytmPath.Busy (), m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))
+		return;
+	UpdateOsPass (TRUE, "an OS upgrade aborted");
+	CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: %s during it, part of the image is lost. "
+				"The Rytm did not get the whole OS: start the upgrade again (OS messages are dropped until the "
+				"computer stops sending them for %u s)", pWhy, OsGate::kQuietUs / 1000000);
+}
+
 // core 0's loop, at the switch itself (kernel.cpp UseLink, before the next Poll of either link)
 void CSidecarGadget::SetLinkTcp (boolean bTcp)
 {
@@ -802,6 +827,12 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 	UpdatePlugAndPlay ();
+	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
+	{
+		UpdateOsPass (FALSE, 0);
+		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one",
+					OsUpdateName (), OsPass () ? "pass" : "are dropped");
+	}
 	// a held OUT endpoint: re-armed when there is room, or at once when the setting is off (turned off while held)
 	if (m_pMIDIOut != 0 && m_Gate.Resume (m_pMIDIOut->Held (), ToRytmRoom ()))
 	{

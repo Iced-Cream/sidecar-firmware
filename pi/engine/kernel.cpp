@@ -516,8 +516,9 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
 	pOut->Append (s);
-	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they pass now
-		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off", k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false");
+	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
+		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
+		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
 	pOut->Append (s);
 	{	// the control loop's recent gaps over 2 ms: [gap us, frames pulled at the end, wfe us, cntkctl, DAIF, the pass's
 		// longest section (0 midi .. 5 idle, as "stall"), its us, its slowest step and us, the named steps' us, the card's on core 3]

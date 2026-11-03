@@ -895,7 +895,13 @@ wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/en
   older name and still works (`rytm` = `os:on`, `1` = `emu`); a valid `usbmidi=` wins when both are given.
 - While on: the USB-C MIDI OUT endpoint waits (NAKs) instead of dropping when the Rytm-bound queue is full, so a whole
   OS file arrives; under `link=tcp`, the computer's MIDI goes to rytm-emu as `'M'` messages and its USB MIDI comes back.
-- `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false}` (`osUpgrade`: they pass right now).
+- A host switch (`link=usb` / `link=tcp`) while on or emu drops what is still on its way to the old host, so an
+  emulator's OS image never reaches the real Rytm; so does turning the pass off.
+- If data is lost during an upgrade (a send to the Rytm fails, or the Rytm or emulator goes away with data still
+  queued), the upgrade is aborted rather than continued with a hole in the image: the log says `OS upgrade ABORTED`,
+  OS messages are dropped until the computer has sent none for 3 s, then pass again. Start the upgrade again.
+- `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false,"aborted":N}` (`osUpgrade`: they pass right now;
+  `aborted`: upgrades cut since boot).
 - After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
 - `usbreboot=1` (separate): the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi
   (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows).
