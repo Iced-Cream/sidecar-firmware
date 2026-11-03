@@ -270,6 +270,7 @@ int main() {
     CHECK(g_restarts == 1);
     reboot();
     CHECK(!strcmp(folder(), "/.digitakt") && hello(kIdDigitakt) == device::kOk);
+    CHECK(device::foreign() && device::box_screen() == nullptr && !strcmp(voice_name(0), "BD"));   // no Screen: the Rytm's words (L7: one read of the box)
     reboot();   // the next day: no Digitakt, a stock Rytm: its id alone goes home, once
     CHECK(!strcmp(folder(), "/.digitakt"));
     device::rytm_on_usb(true);
@@ -337,7 +338,7 @@ int main() {
     CHECK(ui::tap_channel_of_voice(1) == 3 && ui::tap_channel_of_voice(3) == 5);
     CHECK(!strcmp(device::kA4.screen->keys, "UP + YES: PAGES"));
     CHECK(!strcmp(device::short_name(device::active()), "A4") && !strcmp(device::short_name(device::rytm()), "Rytm"));   // the box's word on the touchscreen
-    CHECK(!strcmp(voice_name(0), "T1") && !strcmp(voice_name(4), "-"));
+    CHECK(device::box_screen() == device::kA4.screen && !strcmp(voice_name(0), "T1") && !strcmp(voice_name(4), "-"));
     CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == &device::kA4);
     CHECK(hello() == device::kOk);
     const out::Device& a = *device::kA4.audio;
@@ -726,7 +727,7 @@ int main() {
     CHECK(!ui::remote_open());
     ui::remote_reset();
     device::reset();
-    CHECK(!strcmp(voice_name(0), "BD"));
+    CHECK(device::box_screen() == nullptr && !strcmp(voice_name(0), "BD"));
     CHECK(extra_for_box("SEQ"));
   }
 

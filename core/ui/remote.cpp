@@ -968,7 +968,7 @@ CORE_COLD void src_tick(uint32_t ms) {
 // running down over kSplashMs, the bottom bar naming how the pages open.
 CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
   char b[kTextLen + 1];
-  const device::Screen* bx = device::foreign() ? device::active().screen : nullptr;
+  const device::Screen* bx = device::box_screen();
   c.clear();
   header(c, kStatusTitle, 0, 0, "USB");
   int dx = 0;

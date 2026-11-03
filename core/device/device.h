@@ -160,6 +160,12 @@ const char* state_path_box(const char* path, char* buf, int cap);
 // The file layer has no link to ask: this is g_link's folder.
 inline const char* state_path(const char* path, char* buf, int cap) { return g_link.state ? state_path_box(path, buf, cap) : path; }
 inline bool foreign(const Link& l = g_link) { return l.box != nullptr; }
+// The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
+// the control core may set the box. Null: the Rytm, or a box without a Screen.
+inline const Screen* box_screen(const Link& l = g_link) {
+  const Profile* p = __atomic_load_n(&l.box, __ATOMIC_RELAXED);
+  return p ? p->screen : nullptr;
+}
 // A whole message from a box: d and len are what host_sysex goes on with (the translation, in m; or the message itself
 // when it is a 35 that gave the Rytm back); false: nothing more to do.
 bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m);

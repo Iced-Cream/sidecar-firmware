@@ -31,7 +31,7 @@ UI_ROM const uint8_t kVoiceCh[8] = {2 + 0, 2 + 3, 2 + 1, 2 + 4, 2 + 6, 2 + 5, 2 
 UI_ROM const char* const kChName[8] = {"BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY"};
 
 // A box's own words (device.h Screen): its voices are its tracks, in order, on IN 2 + the voice; "-" a channel it does not fill.
-CORE_COLD const device::Screen* box_screen() { return device::foreign() ? device::active().screen : nullptr; }
+CORE_COLD const device::Screen* box_screen() { return device::box_screen(); }
 
 volatile int t_src = 0;
 CORE_RAM2 int16_t t_ring[kTapRing][2];
