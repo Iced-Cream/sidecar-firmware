@@ -2247,8 +2247,9 @@ const REC = [["Master",[[0,"MASTER (stereo)"]]],
   // docs/STEREO.md: the PRE / POST voices' pairs as sent (a voice on PRE / POST records its own file in stereo)
   ["OUT route pairs",[[23,"PRE (stereo)"],[24,"POST (stereo)"]]]];
 const STEREO = { 0: 1, 21: 1, 22: 1, 23: 1, 24: 1 };
-// The IN channels as the served box has them (ids 3..10 are the Rytm's tracks): an A4 sends four, on ids 3..6, and has no ids 7..10.
-function recInView(boxId) { return boxId === 3 ? { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4" }, gone: [7, 8, 9, 10] } : { names: {}, gone: [] }; }
+// The IN channels and the Sidecar's voices as the served box has them (ids 3..10 are the Rytm's tracks, 13..20 its voices): an A4 sends four, on ids 3..6,
+// and has no ids 7..10; its voices 1..4 (ids 13..16) are its tracks T1..T4 (core/device/a4.cpp kA4Screen), shown in that order, and it has no voices 5..8.
+function recInView(boxId) { return boxId === 3 ? { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4", 13: "T1", 14: "T2", 15: "T3", 16: "T4" }, gone: [7, 8, 9, 10, 17, 18, 19, 20] } : { names: {}, gone: [] }; }
 let recSel = new Set([0]), recMode = "manual", recBits = 24, recVol = "SD", recLast = null, recPrevState = -1, recSynced = false;
 try { const j = JSON.parse(store("sidecar.rec") || "null");
   if (j) { recSel = new Set(j.ch || [0]); recMode = j.mode === "arm" ? "arm" : "manual"; recBits = j.bits === 16 ? 16 : 24; $("#rec-name").value = j.name && j.name !== "take" ? j.name : ""; }
@@ -2274,10 +2275,11 @@ const recIds = () => [...recSel].sort((a, b) => a - b).join(",") || "none";
 function recBox(boxId) {
   const { names, gone } = recInView(boxId);
   document.querySelectorAll("#rec-ch .ch").forEach((el) => {
-    const id = +el.dataset.ch, name = REC[1][1].find((c) => c[0] === id);
-    if (id < 3 || id > 10 || !name) return;
+    const id = +el.dataset.ch, name = (id >= 13 ? REC[2] : REC[1])[1].find((c) => c[0] === id);
+    if (id < 3 || id > 20 || !name) return;
     el.querySelector("span").lastChild.textContent = " " + (names[id] || name[1]);
     el.toggleAttribute("data-gone", gone.includes(id));
+    el.style.order = id >= 13 && names[id] ? String(id) : "";   // a box's own voices in its order (the Rytm's: its track order, as written)
   });
   if (gone.some((id) => recSel.delete(id))) { recSave(); recView(); recPush("ch"); }
 }

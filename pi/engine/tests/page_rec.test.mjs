@@ -17,8 +17,8 @@ const vols = (o) => ["SD", "USB", "USB2", "USB3", "NVME"].map((name) => ({ name,
 const ia = page.indexOf("function recInView");
 assert.ok(ia > 0, "recInView in index.html");
 const V = new Function(page.slice(ia, page.indexOf("\n", ia)) + "; return recInView;")();
-test("the IN channels: an A4's four, named T1..T4, ids 7..10 gone; every other box as the Rytm's", () => {
-  assert.deepEqual(V(3), { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4" }, gone: [7, 8, 9, 10] });
+test("the IN channels and the voices: an A4's four, named T1..T4, ids 7..10 and 17..20 gone; every other box as the Rytm's", () => {
+  assert.deepEqual(V(3), { names: { 3: "T1", 4: "T2", 5: "T3", 6: "T4", 13: "T1", 14: "T2", 15: "T3", 16: "T4" }, gone: [7, 8, 9, 10, 17, 18, 19, 20] });
   assert.deepEqual(V(1), { names: {}, gone: [] });
   assert.deepEqual(V(2), { names: {}, gone: [] });
 });
