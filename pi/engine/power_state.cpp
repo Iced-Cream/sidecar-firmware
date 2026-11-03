@@ -16,14 +16,6 @@ const char *warning (const State &s)
 	return 0;
 }
 
-// 3 A mode alone is a note, not a warning: the official 27 W adapter, plugged in directly, reported 3000 on one Pi 5
-// with no under-voltage ever (2026-11-02 and 11-03). What it costs for sure is the USB ports' current.
-const char *note (const State &s)
-{
-	if (warning (s) || !(s.max_ma > 0 && s.max_ma < 5000)) return 0;	// Pi 5 only (the Pi 4 has no max_current)
-	return "3 A mode (no 5 A USB-PD): the USB ports give 600 mA in all, enough for boxes with their own power";
-}
-
 // The display's short form (its bottom line is about 36 characters at 12 px)
 const char *short_warning (const State &s)
 {
@@ -45,6 +37,29 @@ struct Out
 };
 }
 
+// Reduced-power mode alone is a note, not a warning: the official 27 W adapter, plugged in directly, reported 3000 on one
+// Pi 5 with no under-voltage ever (2026-11-02 and 11-03). The note names the current the firmware measured: the owner's
+// hub reported 1500 (rc040 review M1), which is not "3 A mode". The 600 mA USB-port figure is the firmware's 3 A mode
+// limit (docs/pi5.md), so it is said for 3000 only; what the ports get below 3 A is not documented here.
+int note (const State &s, char *pOut, unsigned nSize)
+{
+	Out o (pOut, nSize);
+	if (warning (s) || !(s.max_ma > 0 && s.max_ma < 5000)) return 0;	// Pi 5 only (the Pi 4 has no max_current)
+	const unsigned ma = (unsigned) s.max_ma;
+	o.u (ma / 1000);						// amperes: "3", "1.5", "2.25"
+	if (ma % 1000)
+	{
+		unsigned f = ma % 1000 / 10;				// two decimals at most, no trailing zero
+		o.s (".");
+		if (f % 10) { char d[3] = {(char) ('0' + f / 10), (char) ('0' + f % 10), 0}; o.s (d); }
+		else o.u (f / 10);
+	}
+	o.s (" A mode (no 5 A USB-PD)");
+	if (ma == 3000) o.s (": the USB ports give 600 mA in all, enough for boxes with their own power");
+	else if (ma < 3000) o.s (": less than the Pi 5's 3 A, use the 27 W adapter directly");
+	return (int) o.len;
+}
+
 // /status's member, without a leading comma: "power":{...}
 int json (const State &st, char *pOut, unsigned nSize)
 {
@@ -57,8 +72,9 @@ int json (const State &st, char *pOut, unsigned nSize)
 	if (st.max_ma >= 0) o.u ((unsigned) st.max_ma); else o.s ("null");
 	o.s (",\"warn\":");
 	if (w) o.s ("\"").s (w).s ("\""); else o.s ("null");	// the warnings and notes hold no character JSON escapes
+	char n[128];
 	o.s (",\"note\":");
-	if (note (st)) o.s ("\"").s (note (st)).s ("\""); else o.s ("null");
+	if (note (st, n, sizeof n)) o.s ("\"").s (n).s ("\""); else o.s ("null");
 	o.s ("}");
 	return (int) o.len;
 }
@@ -76,7 +92,8 @@ int line (const State &st, char *pOut, unsigned nSize)
 	o.s (" | max_current ");
 	if (st.max_ma >= 0) o.u ((unsigned) st.max_ma).s (" mA"); else o.s ("n/a");
 	if (w || st.known) o.s (" | ").s (w ? w : "ok");
-	if (note (st)) o.s (" | ").s (note (st));
+	char n[128];
+	if (note (st, n, sizeof n)) o.s (" | ").s (n);
 	return (int) o.len;
 }
 

@@ -102,9 +102,11 @@ Wi-Fi ran badly (~25 `httpd: Receive failed (-12)` in 3 minutes, the page 5.4 s 
 none of that (0 in a session, the page 0.12-0.15 s). The engine logs the supply at boot, on a change and once a minute
 (`power: throttled 0x... (under-voltage now/boot, ...) | max_current N mA | ok` or the warning; `max_current` is the
 firmware's `/chosen/power/max_current`, Pi 5 only), the web page shows a Power tile and a warning, the display's bottom
-line `POWER TOO WEAK: use 27 W adapter` in red. The warning is for under-voltage only. 3 A mode with no under-voltage is
-a note on the Power tile and in the log (the USB ports give 600 mA in all): one Pi 5 on the 27 W adapter, plugged in
-directly, reports 3000 with no under-voltage ever. The
+line `POWER TOO WEAK: use 27 W adapter` in red. The warning is for under-voltage only. A `max_current` below 5000 with no
+under-voltage is a note on the Power tile and in the log that names the measured current: `3 A mode (no 5 A USB-PD)`
+with the USB ports' 600 mA in all at 3000, `1.5 A mode (no 5 A USB-PD)` with "use the 27 W adapter directly" below
+3 A (one hub's USB-C port reports 1500). One Pi 5 on the 27 W adapter, plugged in directly, reports 3000 with no
+under-voltage ever. The
 warning names each board's official supply: Pi 5 "use the 27 W (5 V 5 A) adapter directly", Pi 4 "use the official 15 W
 (5.1 V 3 A) supply" (display: `POWER TOO WEAK: use 15 W supply`).
 
