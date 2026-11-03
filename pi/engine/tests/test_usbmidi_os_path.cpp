@@ -138,7 +138,7 @@ int main() {
       CHECK(Drain(p).empty());
     }
   }
-  // flow control: held while on and without room for a whole transfer (128 packets and the filter's 3)
+  // flow control: held while on and without room for a whole transfer (128 packets and what the filter may hold)
   {
     Path p;
     OsGate g;
@@ -147,7 +147,7 @@ int main() {
     CHECK(p.Room(128));
     CHECK(!g.Hold(p.Room(128)));
     uint8_t clk[4] = {0x0F, 0xF8, 0, 0};
-    while (p.Size() + 128 + 3 <= 2048) CHECK(p.FromHost(clk));
+    while (p.Size() + 128 + MidiFilter::kHoldPackets <= 2048) CHECK(p.FromHost(clk));
     CHECK(!p.Room(128));
     CHECK(g.Hold(p.Room(128)));
     CHECK(!g.Resume(true, p.Room(128)));
@@ -184,7 +184,7 @@ int main() {
     // the frozen state the review describes: the computer's kit dump half sent, then the setting off
     Bytes kit = {0xF0, 0x00, 0x20, 0x3C, 0x07, 0x00, 0x52, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0xF7};
     Path q;
-    Feed(q, Pack(kit), 0, 16);
+    Feed(q, Pack(kit), 0, 20);                      // 5 of its 6 packets: decided, passing
     uint32_t w;
     while (q.Pop(&w)) {}
     CHECK(q.InSysEx());                             // half sent

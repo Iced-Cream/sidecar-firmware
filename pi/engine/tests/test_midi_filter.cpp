@@ -154,9 +154,11 @@ int main() {
       CHECK(Run(f, k) == k);
     }
   }
-  // usbmidi=os:off is byte-identical to dev (before usbmidi=os:) toward the Rytm: dev's drop rule, copied here, against
-  // the filter with the pass off, over every device byte, the OS commands 7E 7F and neighbours, h[5] 00 and 01, and
-  // messages cut short. With the pass on, only device byte 0C's 7E|7F may differ (it passes).
+  // usbmidi=os:off never drops less than dev (before usbmidi=os:) toward the Rytm: dev's drop rule, copied here, against
+  // the filter with the pass off, over every device byte, the image commands 7E 7F and neighbours, h[5] 00 and 01,
+  // messages cut short, and RPC frames on every command. Off differs from dev only where the shared rule adds the
+  // bridge's RPC OsUpgradeStart / Write / End (os_upgrade::rpc): dropped now, passed by dev. With the pass on, only
+  // os_upgrade::pass goes through. (The bridge's side of the same rule: test_midibridge test_os_rule.)
   {
     auto dev_drop = [](const uint8_t* h, int n) {   // origin/dev ccab290's MidiFilter::Drop for to_rytm = true
       bool host_link = n >= 4 && h[1] == 0x7D && h[2] == 0x52 && h[3] == 0x54;
@@ -165,31 +167,42 @@ int main() {
       bool empty = n == 2 && h[1] == 0xF7;
       return host_link || midi_ci || os_update || empty;
     };
+    const int kDevHead = 9;                         // dev's head
     std::vector<Bytes> cases = {os, os_start, tb, rpc, kit, link, ci, tiny, short3, uni};
-    for (int dev = 0; dev < 0x80; dev++)
+    for (int dev = 0; dev < 0x80; dev++) {
       for (uint8_t cmd : {0x7E, 0x7F, 0x7D, 0x10, 0x52, 0x00})
         for (uint8_t h5 : {0x00, 0x01}) {
           cases.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, h5, cmd, 0x01, 0x02, 0x03, 0xF7});
           cases.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, h5, cmd, 0xF7});      // a head of 8 bytes
           cases.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, h5, 0xF7});           // cut before the command
         }
-    unsigned n_dropped = 0, n_passed_on = 0;
+      // an RPC frame (8-to-7: m[6] the top bits, m[7..11] seq hi lo, resp hi lo, command), every command
+      for (int c = 0; c < 0x80; c++)
+        for (uint8_t top : {0x00, 0x04})            // 0x04: the command's top bit (a reply): the same verdict
+          cases.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, 0x00, top, 0x00, 0x05, 0x00, 0x00, (uint8_t)c, 0x01, 0xF7});
+    }
+    unsigned n_dev = 0, n_more = 0, n_passed_on = 0;
     for (const Bytes& m : cases) {
-      int hn = m.size() < (size_t)MidiFilter::kHead ? (int)m.size() : MidiFilter::kHead;
-      bool want_drop = dev_drop(m.data(), hn);
+      int n = (int)m.size();
+      bool was = dev_drop(m.data(), n < kDevHead ? n : kDevHead);
       MidiFilter off(true), on(true);
       on.SetPassOsUpdate(true);
       Bytes p = Pack(m);
       bool off_drop = Run(off, p).empty(), on_drop = Run(on, p).empty();
-      CHECK(off_drop == want_drop);
-      CHECK(off.DroppedMessages() == (want_drop ? 1u : 0u));
-      bool stock = m.size() >= 7 && m[4] == 0x0C && m[5] == 0x00 && (m[6] == 0x7E || m[6] == 0x7F);
-      CHECK(on_drop == (want_drop && !stock));
-      n_dropped += want_drop;
+      CHECK(!was || off_drop);                      // never less than dev
+      CHECK(off_drop == (was || os_upgrade::rpc(m.data(), n)));   // more only by the bridge's RPC rule
+      CHECK(off.DroppedMessages() == (off_drop ? 1u : 0u));
+      CHECK(off.OsMessages() == (os_upgrade::any(m.data(), n) ? 1u : 0u));
+      CHECK(on_drop == (off_drop && !os_upgrade::pass(m.data(), n)));
+      n_dev += was;
+      n_more += off_drop && !was;
       n_passed_on += off_drop && !on_drop;
     }
-    CHECK(n_dropped > 2 * 128);         // every device byte's 7E and 7F
-    CHECK(n_passed_on == 6);            // os, os_start, and device 0C's h5 00 with 7E or 7F, in both lengths
+    CHECK(n_dev > 2 * 128);             // every device byte's 7E and 7F
+    // RPC 50..52 (and the replies) on every device byte but analoghealth's 7D
+    CHECK(n_more == 127 * 3 * 2);
+    // os, os_start, device 0C's h5 00 with 7E or 7F in both lengths, and every RPC 50..52
+    CHECK(n_passed_on == 6 + n_more);
   }
   printf("test_midi_filter: PASS\n");
   return 0;

@@ -841,6 +841,8 @@ task only once whole (256 KB queue); the relay sends with a 2 ms limit. A client
   re-checked when a queued message would start, so a switch turned off drops what was queued under it):
   - **OS upgrades**: the MIDI RPC's OsUpgradeStart / Write / End (0x50..0x52) and the OS `.syx` image's own messages
     (`F0 00 20 3C <dev> 00 7E|7F`, as `Analog-Rytm_MKII_OS1.74.syx`). Switch: *allow OS upgrades* / `midibridge=os:on`.
+    The rule is shared with the USB-C port's filter (`midi_filter.h` `os_upgrade`): with the switch on, the image passes
+    only on the stock files' device byte `0C`; the RPC's upgrade commands pass on any.
   - **+Drive writes, as an allowlist**: every RPC command but the confirmed reads needs the switch, so an unknown id
     fails closed. The reads (elektroid's `src/connectors/elektron.c`): ping 01, version 02, UID 03, screenshot 04,
     storage info 05, query 09; the sample file system's read dir 10, file info 22 23, reader 30-32; the raw file
@@ -882,10 +884,14 @@ branch on the strict same-origin check with the switches from the body only. **N
 ### OS upgrades over the USB-C MIDI port (usbmidi=os:)
 
 Elektron Transfer or elkflash on the computer at the USB-C port can upgrade the Rytm's OS through the Sidecar. Off by
-default: the gadget's filter drops OS upgrade SysEx (`F0 00 20 3C <dev> 00 7E|7F`, any device byte, `midi_filter.h`)
-exactly as before, the same rule as the Rytm MIDI bridge's. When on, only the stock OS files' device byte `0C` passes;
-the same shape on any other device byte stays dropped. Known limit (as before): other Elektron SysEx whose payload
-starts `7E|7F`, such as a test build's `7D` or an RPC's `10`, is dropped toward the Rytm too. The
+default. The gadget's filter and the Rytm MIDI bridge use one rule for what an OS upgrade is (`midi_filter.h`,
+`os_upgrade`): the `.syx` image's messages (`F0 00 20 3C <dev> 00 7E|7F`, any device byte) and the MIDI RPC's
+OsUpgradeStart / Write / End (0x50..0x52). Off, both drop all of it, at least what each dropped before (the USB-C port
+now also drops the RPC's upgrade commands, as the bridge always did). On, both pass only the image on the stock OS
+files' device byte `0C` and the RPC's upgrade commands; the image shape on any other device byte stays dropped (the
+bridge's `midibridge=os:on` passed it before). Known limit (as before): other Elektron SysEx whose payload starts
+`7E|7F`, such as a test build's `7D` or an RPC's `10`, is dropped toward the Rytm too. The filter now decides on a
+SysEx's first 13 bytes (5 packets) instead of 9. The
 wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/engine/usbmidi_os.h`
 (tests/test_usbmidi_os.cpp).
 
