@@ -165,6 +165,12 @@ UI_ROM const char* const kTrackName[12] = {"BD", "SD", "RS", "CP", "BT", "LT", "
 // A voice's name for the user: the track(s) that play it (core/voice_name.h), never the Sidecar's voice number (voice 1
 // is BT's, voice 2 SD's).
 CORE_COLD const char* voice_label(int vi) { return voice_name(vi); }
+// rc040 review H1: another track on t's voice (a shared voice's pair) plays JUNO too
+CORE_COLD bool juno_partner(int t) {
+  for (int u = 0; u < 12; ++u)
+    if (u != t && kTrackVoice[u] == kTrackVoice[t] && track_vb[u] != kNotOurs && machine_of(track_vb[u]) == kJuno) return true;
+  return false;
+}
 CORE_COLD int machine_of_voice(int vi) {
   vi &= 7;
   if (have_tracks) {
@@ -1461,7 +1467,12 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (b[0] < 12 && b[1] == 0 && s.wr_pat[b[0]] >= 0) {   // presetpick: PAT written into a JUNO track's sound (not a
         int t = b[0], pat = s.wr_pat[t];                     // lock, status 4): its patch's knobs now, whatever its voice
         s.wr_pat[t] = -1;                                    // is doing (a silent one reports nothing until its next trig)
-        if (!b[2] && have_tracks && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kJuno) core::juno_sound_pat(kTrackVoice[t], pat);
+        // rc040 review H1: on a shared voice (RS/CP, MT/HT, CH/OH, CY/CB) the Rytm routes the 15 to OWNER(voice), the
+        // track that trigged it last, which the Pi cannot tell. With the partner track also JUNO that may be the partner:
+        // its CUT..REL would be overwritten. So no sync then (as before presetpick: the next 0x03 carrying the PAT syncs).
+        // With the partner not JUNO, a JUNO voice (x.juno, juno_sound_pat) can only be this track's.
+        if (!b[2] && have_tracks && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kJuno && !juno_partner(t))
+          core::juno_sound_pat(kTrackVoice[t], pat);
       }
       return;
     case kKit:   // 1026: the Rytm's active kit: the LFOs are per kit (core/lfo.h)

@@ -28,8 +28,8 @@ static uint64_t g_us = 1000000;
 static void later(int ms) { g_us += 1000ull * ms, host_fake_time(true, g_us); }
 static const int kSix[6] = {5, 6, 7, 11, 12, 14};   // a patch's bytes behind CUT RES ENV ATK DEC REL (voices.cpp kJunoByte)
 
-static void report(int cmd, int pat, const uint8_t* six) {   // a 0x04 (note 60) or 0x03 for voice 0, JUNO
-  std::vector<uint8_t> m = {0xF0, 0x7D, 0x52, 0x54, (uint8_t)cmd, (uint8_t)(kJuno | 0)};
+static void report(int cmd, int pat, const uint8_t* six, int vi = 0) {   // a 0x04 (note 60) or 0x03 for voice vi, JUNO
+  std::vector<uint8_t> m = {0xF0, 0x7D, 0x52, 0x54, (uint8_t)cmd, (uint8_t)(kJuno | vi)};
   if (cmd == 0x04) m.push_back(60), m.push_back(100);
   float p[16] = {(float)pat, 0, 0, 0, 0, 0, 0, 127};
   for (int i = 0; i < 6; ++i) p[1 + i] = six[i];
@@ -40,33 +40,41 @@ static void report(int cmd, int pat, const uint8_t* six) {   // a 0x04 (note 60)
 static void sliders(int pat, uint8_t* six) {
   for (int i = 0; i < 6; ++i) six[i] = juno::kPatches[pat].b[kSix[i]] & 0x7F;
 }
-static int knob_syncs(const uint8_t* six) {   // 15 <voice 0> <six>: the patch's knobs to the Rytm
+static int knob_syncs(const uint8_t* six, int vi = 0) {   // 15 <voice vi> <six>: the patch's knobs to the Rytm
   int n = 0;
   for (auto& m : g_out)
-    if (m.size() == 13 && m[4] == 0x15 && m[5] == 0 && !memcmp(m.data() + 6, six, 6)) ++n;
+    if (m.size() == 13 && m[4] == 0x15 && m[5] == vi && (!six || !memcmp(m.data() + 6, six, 6))) ++n;
   return n;
 }
-static int pat_writes(int pat) {   // 48 <track 0> <P1> <pat> ...: the bank list's commit
+static int pat_writes(int pat, int t = 0) {   // 48 <track t> <P1> <pat> ...: the bank list's commit
   int n = 0;
   for (auto& m : g_out)
-    if (m.size() > 9 && m[4] == 0x48 && m[6] == 0 && m[7] == 0 && m[8] == pat) ++n;
+    if (m.size() > 9 && m[4] == 0x48 && m[6] == t && m[7] == 0 && m[8] == pat) ++n;
   return n;
 }
-static void answer(int status) {   // the Rytm's 48 for track 0's P1
-  const uint8_t m[10] = {0xF0, 0x7D, 0x52, 0x54, 0x48, 1, 0, 0, (uint8_t)status, 0xF7};
+static void answer(int status, int t = 0) {   // the Rytm's 48 for track t's P1
+  const uint8_t m[10] = {0xF0, 0x7D, 0x52, 0x54, 0x48, 1, (uint8_t)t, 0, (uint8_t)status, 0xF7};
   engine_sysex(m, 10);
 }
-static bool plays(const uint8_t* six) {   // the voice's CUT..REL now
+static bool plays(const uint8_t* six, int vi = 0) {   // the voice's CUT..REL now
   for (int i = 0; i < 6; ++i)
-    if ((int)v[0].p[1 + i] != six[i]) return false;
+    if ((int)v[vi].p[1 + i] != six[i]) return false;
   return true;
 }
-static void pick(int from, int to) {   // the bank list on track 0 (opened on PAT from), the cursor to row to, YES
-  ui::src_bank_list(0, 0, kJuno, from, 1, 0);
+static void pick(int from, int to, int t = 0, int vi = 0) {   // the bank list on track t (opened on PAT from), the cursor to row to, YES
+  ui::src_bank_list(t, vi, kJuno, from, 1, 0);
   CHECK(ui::src_bank_state().on && ui::src_bank_state().row == from);
   ui::src_bank_enc(0, to - from, false);
   CHECK(ui::src_bank_state().row == to);
-  ui::src_bank_list(0, 0, kJuno, from, 0, 1);
+  ui::src_bank_list(t, vi, kJuno, from, 0, 1);
+}
+static void machines_rs_cp(bool rs_juno, bool cp_juno) {   // 33 for RS and CP (tracks 2, 3): JUNO (41) or analog (not ours)
+  uint8_t m[13] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 2, 2,
+                   (uint8_t)(rs_juno ? 41 : 2), (uint8_t)(rs_juno ? kJuno : 0x7F),
+                   (uint8_t)(cp_juno ? 41 : 3), (uint8_t)(cp_juno ? kJuno : 0x7F), 0xF7};
+  engine_sysex(m, 13);
+  CHECK(ui::remote_track_machine(2) == (rs_juno ? (kJuno | 7) : 0x7F));   // (the voice byte: machine | voice 7)
+  CHECK(ui::remote_track_machine(3) == (cp_juno ? (kJuno | 7) : 0x7F));
 }
 
 int main() {
@@ -137,6 +145,38 @@ int main() {
   turned[3] = (uint8_t)(c[3] > 60 ? c[3] - 20 : c[3] + 20);   // ATK
   report(0x03, 20, turned);
   CHECK(plays(turned));
+
+  // ---- rc040 review H1: RS and CP share voice 7, and the Rytm routes a 15 to the track that trigged the voice last
+  // (0021 jn_sysex, OWNER(voice)), which the Pi cannot tell. Both JUNO, CP's sound (patch 40) sounding last: a pick on
+  // RS must not switch the voice, nor send a 15 that would land on CP's knobs and kit.
+  const int kRsCp = 7;
+  machines_rs_cp(true, true);
+  report(0x04, 40, c, kRsCp);   // CP trigs: its patch 40 on voice 7, the knobs synced to it
+  CHECK(v[kRsCp].juno && juno_pat[kRsCp] == 40 && knob_syncs(c, kRsCp) >= 1 && plays(c, kRsCp));
+  g_out.clear();
+  pick(3, 20, 2, kRsCp);   // RS's list (its own PAT 3), row 20, YES
+  CHECK(pat_writes(20, 2) == 1);
+  answer(0, 2);
+  CHECK(knob_syncs(nullptr, kRsCp) == 0);   // no 15 for voice 7
+  CHECK(juno_pat[kRsCp] == 40 && (int)v[kRsCp].p[0] == 40 && plays(c, kRsCp));   // CP's sound untouched
+  report(0x03, 20, c, kRsCp);   // RS's sound reports its new PAT (RS sounding: it owns the voice now): the sync, as before
+  CHECK(knob_syncs(b, kRsCp) == 1 && juno_pat[kRsCp] == 20 && plays(b, kRsCp));
+
+  // ---- RS JUNO, CP analog: a JUNO voice 7 can only be RS's: the pick syncs at once, as BD's
+  machines_rs_cp(true, false);
+  report(0x04, 20, b, kRsCp);
+  g_out.clear();
+  pick(20, 40, 2, kRsCp);
+  answer(0, 2);
+  CHECK(knob_syncs(c, kRsCp) == 1 && juno_pat[kRsCp] == 40 && plays(c, kRsCp));
+
+  // ---- CP JUNO, RS analog: the same for a pick on CP (track 3)
+  machines_rs_cp(false, true);
+  report(0x04, 40, c, kRsCp);
+  g_out.clear();
+  pick(40, 3, 3, kRsCp);
+  answer(0, 3);
+  CHECK(knob_syncs(a, kRsCp) == 1 && juno_pat[kRsCp] == 3 && plays(a, kRsCp));
   printf("test_presetpick: PASS\n");
   return 0;
 }
