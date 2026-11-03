@@ -12,7 +12,9 @@
 //                         list behave as they do there
 //   NO                    a pick dropped; with none, back to SIDECAR (as every page)
 //   knobs C..H            taken and ignored (not the stock parameters under the page)
-// The pick is dropped when the row changes and when the page has not been drawn for kStaleMs (it was left).
+// The pick is dropped when the row changes and when the page has not been drawn for kStaleMs (it was left). It holds
+// the machine's id and name, not only its list index: a rescan between knob B and YES (a package uploaded from the web
+// meanwhile) can reorder the list, and YES assigns the machine shown (rc040 review L4).
 #include <string.h>
 
 #include "ui/extra.h"
@@ -36,8 +38,10 @@ struct State {
   bool note_new;      // a note set by a key: timed from the next frame
   uint32_t note_ms, drawn_ms;
   char note[26];
+  char pick_id[32];   // pick > 0: the picked machine's package id (um.cpp Pkg::id) and name, as knob B found them
+  char pick_name[16];
 };
-State S = {0, -1, false, 0, 0, {}};
+State S = {0, -1, false, 0, 0, {}, {}, {}};
 
 CORE_COLD int machines() { return hooks && hooks->machines ? hooks->machines() : 0; }
 CORE_COLD const char* machine_name(int i, const char** id) {   // installed entry i, null past the end
@@ -56,6 +60,21 @@ CORE_COLD int current(int s) {
   }
   return 0;
 }
+// The list entry (1..) whose id is the pick's now, 0 when it is gone from the list
+CORE_COLD int pick_entry() {
+  for (int i = 0, n = machines(); i < n; ++i) {
+    const char* mid;
+    if (machine_name(i, &mid) && !strcmp(mid, S.pick_id)) return i + 1;
+  }
+  return 0;
+}
+CORE_COLD void set_pick(int p) {   // the pick is list entry p (0: "---"): its id and name held
+  const char* id = "";
+  const char* nm = p > 0 ? machine_name(p - 1, &id) : nullptr;
+  S.pick = p;
+  sniprintf(S.pick_id, sizeof S.pick_id, "%s", nm ? id : "");
+  sniprintf(S.pick_name, sizeof S.pick_name, "%s", nm ? nm : "");
+}
 CORE_COLD void set_note(const char* t) {
   sniprintf(S.note, sizeof S.note, "%s", t);
   S.note_new = true;
@@ -69,7 +88,11 @@ CORE_COLD void slots_draw(Canvas& c, int page, int npages, uint32_t ms) {
   if (S.row < 0) S.row = 0;
   if (S.row >= kSlots) S.row = kSlots - 1;
   const int n = machines();
-  if (S.pick > n) S.pick = n;   // (the list shrank)
+  if (S.pick > 0) {   // the list may have been rescanned: the pick follows its machine (gone: still shown, YES says so)
+    const int e = pick_entry();
+    if (e) S.pick = e;
+    else if (S.pick > n) S.pick = n > 0 ? n : 1;
+  }
   for (int s = 0; s < kSlots; ++s) {
     const bool on = s == S.row;
     const int y = kRowY + s * kRowH;
@@ -80,9 +103,7 @@ CORE_COLD void slots_draw(Canvas& c, int page, int npages, uint32_t ms) {
     nm[0] = 0;
     if (hooks && hooks->slot) hooks->slot(s, nm, sizeof nm);
     if (on && S.pick >= 0) {
-      const char* id;
-      const char* p = S.pick ? machine_name(S.pick - 1, &id) : "---";
-      sniprintf(v, sizeof v, "%s?", p ? p : "");
+      sniprintf(v, sizeof v, "%s?", S.pick ? S.pick_name : "---");
     } else {
       sniprintf(v, sizeof v, "%s", nm[0] ? nm : "---");
     }
@@ -108,8 +129,9 @@ CORE_COLD void slots_enc(int e, int delta, bool) {
     return;
   }
   const int n = machines();
-  int p = (S.pick < 0 ? current(S.row) : S.pick) + l;   // the first detent moves from what the slot plays
-  S.pick = p < 0 ? 0 : p > n ? n : p;
+  const int from = S.pick < 0 ? current(S.row) : S.pick > 0 && pick_entry() ? pick_entry() : S.pick;
+  int p = from + l;   // the first detent moves from what the slot plays
+  set_pick(p < 0 ? 0 : p > n ? n : p);
   S.note_new = false, S.note_ms = 0;   // the bottom bar says what YES does now
 }
 
@@ -117,17 +139,15 @@ CORE_COLD void slots_enc(int e, int delta, bool) {
 CORE_COLD void take() {
   if (!hooks || !hooks->command) return;
   char c[64], out[120];
-  const char* id = "";
-  if (S.pick > 0 && machine_name(S.pick - 1, &id) && id[0]) sniprintf(c, sizeof c, "um=assign:%d:%s", S.row + 1, id);
+  if (S.pick > 0 && S.pick_id[0]) sniprintf(c, sizeof c, "um=assign:%d:%s", S.row + 1, S.pick_id);   // the id held
   else if (S.pick == 0) sniprintf(c, sizeof c, "um=clear:%d", S.row + 1);
   else return;
   out[0] = 0;
   const bool ok = hooks->command(c, out, sizeof out);
-  const char* name;
   if (!ok) set_note("NOT HERE");
   else if (out[0] == 'U') {   // "U2 = <id>", "U2 cleared"
     char b[26];
-    if (S.pick && (name = machine_name(S.pick - 1, &id))) sniprintf(b, sizeof b, "U%d = %s", S.row + 1, name);
+    if (S.pick && S.pick_name[0]) sniprintf(b, sizeof b, "U%d = %s", S.row + 1, S.pick_name);
     else sniprintf(b, sizeof b, "U%d CLEARED", S.row + 1);
     set_note(b);
   } else if (!strncmp(out, "after", 5)) set_note("SET WHEN THE MAP IS READ");   // a project change's map being read
@@ -166,7 +186,7 @@ UI_ROM const ExtraPage kSlotsPage = {"USER SLOTS", slots_shown, slots_draw, slot
 
 CORE_COLD void remote_slots(const RemoteSlots* h) { hooks = h; }
 CORE_COLD const RemoteSlots* remote_slots() { return hooks; }
-CORE_COLD void slots_page_reset() { S = State{0, -1, false, 0, 0, {}}; }
+CORE_COLD void slots_page_reset() { S = State{0, -1, false, 0, 0, {}, {}, {}}; }
 CORE_COLD int slots_page_row() { return S.row; }
 CORE_COLD int slots_page_pick() { return S.pick; }
 

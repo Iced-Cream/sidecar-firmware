@@ -243,6 +243,29 @@ static void test_model() {
   turn(1, 1);
   CHECK(slots_page_pick() == 1);
   key(kNo);
+  // rc040 review L4: a rescan between knob B and YES (a package uploaded from the web) reorders the list: YES assigns
+  // the machine shown, not the entry now at the picked index
+  CHECK(slots_page_row() == 3 && slots_page_pick() == -1);
+  turn(1, 1), turn(1, 1), turn(1, 1);
+  CHECK(slots_page_pick() == 3 && shown("HUSH1?"));
+  M.list = {{"AARDV", "rytm.aardv"}, {"HUSH1", "rytm.hush1"}, {"NUSAW", "rytm.nusaw"}, {"VOX", "rytm.vox"}};
+  tick();
+  CHECK(slots_page_pick() == 2 && shown("HUSH1?"));   // the pick follows its machine
+  M.list = {{"VOX", "rytm.vox"}, {"NUSAW", "rytm.nusaw"}, {"AARDV", "rytm.aardv"}, {"HUSH1", "rytm.hush1"}};
+  key(kYes);   // (reordered again, no frame in between)
+  CHECK(M.cmds.size() == 3 && M.cmds[2] == "um=assign:4:rytm.hush1" && M.slot[3] == "rytm.hush1" && shown("U4 = HUSH1"));
+  turn(1, 1);   // the knob steps from the held machine's place now: HUSH1 is last, so it stays
+  CHECK(slots_page_pick() == 4 && shown("HUSH1?"));
+  turn(1, -1);
+  CHECK(slots_page_pick() == 3 && shown("AARDV?"));
+  M.list = {{"VOX", "rytm.vox"}, {"NUSAW", "rytm.nusaw"}, {"HUSH1", "rytm.hush1"}};   // the picked machine removed
+  tick();
+  CHECK(shown("AARDV?"));   // still the one shown: YES sends its id (um::command answers "is not installed")
+  key(kYes);
+  CHECK(M.cmds.size() == 4 && M.cmds[3] == "um=assign:4:rytm.aardv");
+  M.list = {{"NUSAW", "rytm.nusaw"}, {"VOX", "rytm.vox"}, {"HUSH1", "rytm.hush1"}};
+  M.slot[3] = "rytm.gone";
+  tick();
   printf("ui slots: rows, knob B through the list, YES um=assign / um=clear, NO keeps, a pick dropped on a row change or leaving\n");
 
   // list knobs: one machine every 4 counts while turning, the first report after a rest at once, a hard turn skips none
