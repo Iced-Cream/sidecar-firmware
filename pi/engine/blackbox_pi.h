@@ -6,6 +6,9 @@
 namespace blackbox_pi {
 void Poll (void);			// core 0's loop: starts 5 s into the boot, then writes when due (blackbox.h)
 void Flush (void);			// a planned reboot (StopAndReboot): the last lines out first
+#ifdef SIDECAR_PI5_TESTMODE
+void TestLog (bool bMounted);		// testsecs= (kernel.cpp): the new lines into /usbtest.log, if that file exists; bMounted: testcard=1, the card is the engine's (blackbox_pi.cpp)
+#endif
 unsigned Status (char *pOut, unsigned nMax);
 // GET /blackbox (pairing-gated; web.cpp): the file's bytes from nOff (~0: its last nMax), *pSize its size; 0 none
 unsigned Read (bool bOld, unsigned long long nOff, char *pOut, unsigned nMax, unsigned long long *pSize, unsigned long long *pFrom);	// the /status object: {"on":..,"bytes":..,"lost":..,"writes":..,"fails":..}

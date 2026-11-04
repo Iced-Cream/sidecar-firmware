@@ -68,6 +68,7 @@ int main ()
 	CHECK (clock_low_mhz (600, 1500, 75) == 600 && clock_low_mhz (600, 1500, 74) == 0);	// Circle raises it 3 C below
 	CHECK (clock_low_mhz (1500, 1500, 81) == 0);			// hot, the clock still full: not lowered
 	CHECK (clock_low_mhz (1000, 1000, 81) == 0 && clock_low_mhz (1199, 1200, 81) == 0);	// a lower setting is not "lowered"
+	CHECK (clock_low_mhz (1500, 2400, 79) == 1500 && clock_low_mhz (2400, 2400, 81) == 0);	// a Pi 5: lowered from its own full clock
 	CHECK (clock_low_mhz (0, 1500, 81) == 0 && clock_low_mhz (600, 0, 81) == 0 && clock_low_mhz (600, 1500, 0) == 0);	// unknowns
 
 	// the Rytm's popup: honest about the clock

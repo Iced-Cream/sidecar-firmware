@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include "elmulti.h"
 #include "text.h"
 
 namespace core {
@@ -310,7 +311,10 @@ CORE_COLD bool join_path(const char* a, const char* b, char* out, int cap) {
   return true;
 }
 
+CORE_COLD Region default_region_sfz() { return default_region(); }
+
 CORE_COLD bool parse(const char* t, int len, const char* dir, Desc* d) {
+  if (is_elmulti(t, len)) return parse_elmulti(t, len, dir, d);   // 7q: Elektron's multisample format, same regions
   d->nregions = d->nsamples = d->ignored = d->skipped = d->malformed = d->load = 0;
   d->first_ignored[0] = d->err[0] = 0;
   Parser* P = new Parser;   // ~1 KB of levels and defines: off the control core's stack

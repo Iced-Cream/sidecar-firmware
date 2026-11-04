@@ -1,4 +1,5 @@
 // core/user/lists.cpp - see lists.h. Control core only, but json_copy (any core).
+#include "../presets/preset_index.h"
 #include "lists.h"
 
 #include <stdlib.h>
@@ -128,7 +129,7 @@ void publish() {
     j.put(i ? ",{" : "{"); j.num("slot", i);
     j.put(",\"name\":"); j.str(s.used ? s.name : "", sizeof s.name);
     j.put(",\"used\":"); j.put(s.used ? "true" : "false");
-    j.put(",\"found\":"); j.put(s.used && s.bank != -1 ? "true" : "false"); j.put("}");
+    j.put(",\"found\":"); j.put(s.used && (s.bank != -1 || core::dxlib.has_voice(i)) ? "true" : "false"); j.put("}");
   }
   j.put("]},\"voices\":[");
   for (int vi = 0; vi < core::kVoices; ++vi) {
@@ -217,6 +218,7 @@ bool cmd_list(bool juno, const char* a, char* out, int cap) {
   const char* what = juno ? "juno" : "fm";
   const char* e;
   bool ok = false;
+  if (core::lists_busy()) { sniprintf(out, cap, "%s: the project's list is loading: again in a moment", what); return true; }
   if (!strncmp(a, "del:", 4)) {
     int s = num(a + 4, &e);
     ok = *e == 0 && (juno ? core::junolib.clear(s) : core::dxlib.clear(s));
@@ -248,6 +250,7 @@ bool cmd_list(bool juno, const char* a, char* out, int cap) {
         float p = x.p[1 + k];
         pb[kJunoByte[k]] = (uint8_t)(!(p > 0.0f) ? 0 : p >= 127.0f ? 127 : (int)(p + 0.5f));
       }
+      core::presets::seed(core::presets::kIxJuno);   // (an empty list: a saved PAT keeps its preset)
       int s = core::junolib.put(pb, name && name[0] ? name : nm);
       ok = s >= 0;
       sniprintf(out, cap, ok ? "juno slot %d = voice %d's patch" : "juno: the list is full", s, vi);
@@ -258,9 +261,10 @@ bool cmd_list(bool juno, const char* a, char* out, int cap) {
         return true;
       }
       int r = core::fm_pat[vi] < 0 ? 0 : core::fm_pat[vi] >= dx7::kRomVoices ? dx7::kRomVoices - 1 : core::fm_pat[vi];
-      int s = core::dxlib.add_rom(r);
+      core::presets::seed(core::presets::kIxFm);
+      int s = r;
       ok = s >= 0;
-      sniprintf(out, cap, ok ? "fm slot %d = ROM voice %d (the list now replaces the ROM's for PAT)" : "fm: not added", s, r);
+      sniprintf(out, cap, ok ? "fm slot %d = ROM voice %d (the list holds the ROM's rows, PAT unchanged)" : "fm: not added", s, r);
     }
   } else {
     sniprintf(out, cap, "usage: %s=ren:<slot>:<name> | %s=del:<slot> | %s=swap:<a>:<b> | %s=save:<voice>", what, what, what, what);
@@ -271,6 +275,27 @@ bool cmd_list(bool juno, const char* a, char* out, int cap) {
     else { core::send_fm_names(); core::fm_relist(); }
     publish_now();
   }
+  return true;
+}
+
+// preset=juno|fm:add|set:<gen>:<folder>:<row>[:<at>]: a row of the preset index (core/presets/preset_index.h) into the
+// project's list: add = its first empty slot, set = that slot <at> (REPLACE). gen: the index the folder numbers are of
+bool cmd_preset(const char* a, char* out, int cap) {
+  namespace P = core::presets;
+  int kind = !strncmp(a, "juno:", 5) ? P::kIxJuno : !strncmp(a, "fm:", 3) ? P::kIxFm : -1;
+  if (kind < 0) { sniprintf(out, cap, "usage: preset=juno|fm:add|set:<gen>:<folder>:<row>[:<at>]"); return true; }
+  const char* e = a + (kind == P::kIxJuno ? 5 : 3);
+  bool set = !strncmp(e, "set:", 4);
+  if (!set && strncmp(e, "add:", 4)) { sniprintf(out, cap, "usage: preset=juno|fm:add|set:<gen>:<folder>:<row>[:<at>]"); return true; }
+  e += 4;
+  const char* t;
+  int gen = num(e, &t), f = *t == ':' ? num(t + 1, &t) : -1, r = *t == ':' ? num(t + 1, &t) : -1, at = *t == ':' ? num(t + 1, &t) : -1;
+  if (*t || f < 0 || r < 0 || (set && at < 0)) { sniprintf(out, cap, "preset: needs gen, folder, row%s", set ? " and at" : ""); return true; }
+  if ((uint32_t)gen != P::gen()) { sniprintf(out, cap, "preset: the index changed, open the folder again"); return true; }
+  bool there = false;
+  int s = P::add(kind, f, r, &there, set ? at : -1, set);
+  if (s == P::kAddRead) sniprintf(out, cap, "preset: reading the voice");
+  else P::result_text(out, cap);
   return true;
 }
 
@@ -285,6 +310,7 @@ bool command(const char* c, char* out, int cap) {
   if (!strncmp(c, "pool=", 5)) r = cmd_pool(c + 5, out, cap);
   else if (!strncmp(c, "juno=", 5)) r = cmd_list(true, c + 5, out, cap);
   else if (!strncmp(c, "fm=", 3)) r = cmd_list(false, c + 3, out, cap);
+  else if (!strncmp(c, "preset=", 7)) r = cmd_preset(c + 7, out, cap);
   else return false;
   publish_now();
   return r;

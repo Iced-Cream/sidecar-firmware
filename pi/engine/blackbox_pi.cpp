@@ -128,6 +128,37 @@ void Poll (void)
 	if (++s_nFailsInRow == 10) Off ("/.rytm/blackbox.log could not be written 10 times in a row");
 }
 
+#ifdef SIDECAR_PI5_TESTMODE
+// testsecs=: the log into a file made beforehand, only its bytes overwritten (see docs/pi5.md "Engine test mode"): no
+// cluster is allocated, the FATs stay as they are. f_close still rewrites the file's directory entry, every 10 s: a reset
+// during that one sector write could damage the root directory. No file: no log. Without testcard=1 the engine has no
+// card and Poll () does not run: a card of Raspberry Pi OS is mounted here for the moment of each write. With testcard=1
+// the engine's mount is there (a mount here would pull it from under the engine) and Poll () runs too: this has its own
+// place in the log.
+void TestLog (bool bMounted)
+{
+	static FATFS s_Fs;
+	static uint64_t s_nPos, s_nTestDone, s_nTestLost;
+	if (!bMounted && f_mount (&s_Fs, "SD:", 1) != FR_OK) return;
+	FIL f;
+	if (f_open (&f, "SD:/usbtest.log", FA_WRITE | FA_OPEN_EXISTING) == FR_OK)
+	{
+		const uint64_t nSize = f_size (&f);
+		for (int i = 0; i < 64 && s_nPos < nSize; i++)
+		{
+			unsigned n = blackbox::take (crumb::area (), &s_nTestDone, s_Buf, blackbox::kChunk, &s_nTestLost);
+			if (n == 0) break;
+			if (n > nSize - s_nPos) n = (unsigned) (nSize - s_nPos);
+			UINT w = 0;
+			if (f_lseek (&f, s_nPos) != FR_OK || f_write (&f, s_Buf, n, &w) != FR_OK || w == 0) break;
+			s_nPos += w;
+		}
+		f_close (&f);
+	}
+	if (!bMounted) f_mount (0, "SD:", 0);
+}
+#endif
+
 void Flush (void)
 {
 	for (int i = 0; i < 4 && s_State == kOn && crumb::area ()->log_total != s_nDone; ++i)

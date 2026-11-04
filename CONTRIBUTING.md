@@ -2,13 +2,18 @@
 
 Thanks for helping with Sidecar. Bug reports, tests on hardware, fixes, machines and effects are all welcome.
 
+`main` holds the releases, `dev` is the development branch: work goes on a feature branch off `dev`, and pull requests go
+to `dev`. Releases reach `main` from `dev`, and the maintainer merges those. Feature branches are public too. `dev` moves and can be
+broken; it is not a release. On every branch: no firmware (see Rules), and run the tests below before you open the pull
+request.
+
 ## Workflow
 
-1. **Fork** this repository on GitHub and clone your fork.
-2. Create a branch for your change: `git checkout -b fix-scope-meter`.
+1. **Fork** this repository on GitHub and clone your fork, then `git checkout dev`.
+2. Create a branch for your change from `dev`: `git checkout -b fix-scope-meter dev`.
 3. Make the change, with a test where the code has one (`core/tests`, `pi/engine/tests`, `web/*.test.mjs`, ...).
 4. Run the tests (below) and make sure they pass.
-5. Push the branch to your fork and open a **pull request** against `main`. Fill in the template.
+5. Push the branch to your fork and open a **pull request** against `dev`. Fill in the template.
 6. The `test` check must pass, and a code owner reviews and approves before the pull request is merged.
    `main` takes no direct pushes or force pushes.
 

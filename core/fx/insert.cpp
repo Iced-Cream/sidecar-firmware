@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "fx/master.h"
 #include "fx/out.h"
 #include "fx/send_fx.h"
 #include "platform.h"
@@ -13,10 +14,12 @@ namespace core {
 namespace ins {
 
 Control control;
+void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
 
-const Labels kLabels[kTypes] = {
+#define FXL(x) {fx::x.label[0], fx::x.label[1], fx::x.label[2], fx::x.label[3]}
+const Labels kLabels[kAllTypes] = {
     {"OFF", {"", "", "", ""}, {0, 0, 0, 0}},
     {"FILTER", {"CUT", "RES", "MODE", "DRV"}, {80, 20, 0, 0}},
     {"CRUSH", {"RATE", "BITS", "DRV", "MIX"}, {40, 80, 0, 127}},
@@ -27,8 +30,23 @@ const Labels kLabels[kTypes] = {
     {"TREMOLO", {"RATE", "DPTH", "SHPE", "PAN"}, {64, 90, 0, 0}},
     {"RINGMOD", {"FREQ", "SHPE", "MOD", "MIX"}, {64, 0, 0, 127}},
     {"AMP", {"MODL", "GAIN", "TONE", "LEV"}, {0, 64, 64, 109}},   // core/fx/amp.h
+    {"SAT", {"CHAR", "DRV", "TONE", "MIX"}, {0, 40, 64, 127}},    // core/fx/sat_fx.h
+    // the master's: the send FX's knobs P2..P5, their labels (core/fx/master.h)
+    {"CHORUS", FXL(kChorusLabels), {50, 90, 40, 0}},
+    {"COMB", FXL(kCombLabels), {40, 30, 40, 20}},
+#if RYTM_SENDFX_LARGE
+    {"SPACE", FXL(kTapeLabels), {40, 50, 0, 20}},
+    {"RINGS", FXL(kRingsLabels), {50, 0, 80, 60}},
+    {"CLOUD", FXL(kCloudSeedLabels), {0, 70, 40, 30}},
+#else
+    {"SPACE", {"", "", "", ""}, {0, 0, 0, 0}},
+    {"RINGS", {"", "", "", ""}, {0, 0, 0, 0}},
+    {"CLOUD", {"", "", "", ""}, {0, 0, 0, 0}},
+#endif
+    {"HALO", FXL(kHaloLabels), {70, 30, 60, 0}},
 };
-const char* const kChainNames[kChains] = {"V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "B1", "B2", "B3"};
+#undef FXL
+const char* const kChainNames[kChains] = {"V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "B1", "B2", "B3", "M1", "M2"};
 
 uint8_t g_knob[kChains][kSlots][kParams];
 int16_t g_lock[kVoices][kSlots][kParams];   // -1 none
@@ -125,6 +143,7 @@ void clear_settings() {
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) control.send[v][b] = 0;
   control.route3 = 0;
+  master::clear();
 }
 
 // bus 3's soft limit, as the send FX's pairs (send_fx.h kLimitFx / kLimitMain)
@@ -136,15 +155,15 @@ float g_send_g[kVoices][kBuses];   // the OUT fill's ramped send gains (core 0)
 
 // ---------------------------------------------------------------------------------------------------- names
 
-const Labels& labels(int t) { return kLabels[t >= 0 && t < kTypes ? t : 0]; }
-const char* type_name(int t) { return t >= 0 && t < kTypes ? kLabels[t].name : "?"; }
+const Labels& labels(int t) { return kLabels[t >= 0 && t < kAllTypes ? t : 0]; }
+const char* type_name(int t) { return t >= 0 && t < kAllTypes ? kLabels[t].name : "?"; }
 int type_from_name(const char* s) {
-  for (int t = 0; t < kTypes; ++t)
+  for (int t = 0; t < kAllTypes; ++t)
     if (same_ci(s, kLabels[t].name)) return t;
   if (same_ci(s, "TREM")) return kTrem;
   if (same_ci(s, "RING")) return kRing;
   int v = num(s);
-  return v >= 0 && v < kTypes ? v : -1;
+  return v >= 0 && v < kAllTypes ? v : -1;
 }
 const char* chain_name(int c) { return c >= 0 && c < kChains ? kChainNames[c] : "?"; }
 int chain_from_name(const char* s) {
@@ -237,8 +256,25 @@ void value_text(int t, int k, int v, char* b, int cap) {
       else sniprintf(b, cap, CORE_STR("%c%dDB"), db < 0 ? '-' : '+', db < 0 ? -db : db);
       return;
     }
+    case kSat:
+      if (k == 0) {
+        sniprintf(b, cap, "%s", satfx::char_name(satfx::char_of(v)));
+        return;
+      }
+      if (k == 1) {
+        sniprintf(b, cap, CORE_STR("+%dDB"), (v * 24 + 63) / 127);
+        return;
+      }
+      if (k == 2) {
+        int db = ((v - 64) * 6 + (v >= 64 ? 31 : -31)) / 63;
+        if (!db) sniprintf(b, cap, "FLAT");
+        else sniprintf(b, cap, CORE_STR("%c%dDB"), db < 0 ? '-' : '+', db < 0 ? -db : db);
+        return;
+      }
+      break;
     default: break;
   }
+  if (t >= kTypes && master::zone_text(t, k, v, b, cap)) return;   // a send TYPE's zones (MODAL 12, 1/16)
   sniprintf(b, cap, CORE_STR("%d"), v);
 }
 
@@ -251,8 +287,10 @@ void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
 // ---------------------------------------------------------------------------------------------------- settings
 
 void set_type(int c, int s, int t, bool keep) {
-  if (!valid(c, s) || t < 0 || t >= kTypes) return;
-  if (t == kAmp && c >= kVoices) return;   // AMP: the voice chains only (amp.h)
+  if (!valid(c, s) || t < 0 || t >= kAllTypes) return;
+  if (t == kAmp && c >= kVoices && c < kM0) return;   // AMP: the voice chains and the master (amp.h)
+  if (t >= kTypes && c < kM0) return;                 // a send TYPE: the master's chains only
+  if (c >= kM0 && !master::accept(c, s, t)) return;   // no room for another send TYPE
   if (control.type[c][s] == t && keep) return;
   control.type[c][s] = (uint8_t)t;
   if (!keep)
@@ -434,11 +472,12 @@ static struct BusHook {
 } g_bus_hook;
 
 // the DELAY lines, then AMP's engine pool (amp.h; on the Mac: its own static memory)
-unsigned long heap_bytes() { return sizeof(float) * kLines * kLine + amp::heap_bytes(); }
+unsigned long heap_bytes() { return sizeof(float) * kLines * kLine + amp::heap_bytes() + master::heap_bytes(); }
 void heap_place(void* mem) {
   memset(mem, 0, heap_bytes());
   g_engine.Place((float(*)[kLine])mem);
   amp::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine);
+  master::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine + amp::heap_bytes());
 }
 
 // ---------------------------------------------------------------------------------------------------- the card's hooks
@@ -556,11 +595,15 @@ bool command(const char* p, char* o, int cap) {
   } else if (same_ci(key, "type")) {
     int t = type_from_name(val);
     if (t < 0) {
-      sniprintf(o, cap, CORE_STR("ins: no type \"%s\" (OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD AMP)"), val);
+      sniprintf(o, cap, CORE_STR("ins: no type \"%s\" (OFF FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD AMP SAT)"), val);
       return true;
     }
-    if (t == kAmp && c >= kVoices) {
-      sniprintf(o, cap, "ins: AMP is for the voice chains (V1..V8), not the buses");
+    if (t == kAmp && c >= kVoices && c < kM0) {
+      sniprintf(o, cap, "ins: AMP is for the voice chains (V1..V8) and the master, not the buses");
+      return true;
+    }
+    if (t >= kTypes && c < kM0) {
+      sniprintf(o, cap, "ins: %s is for the master chain (mfx=)", kLabels[t].name);
       return true;
     }
     set_type(c, s, t);
@@ -585,7 +628,7 @@ bool command(const char* p, char* o, int cap) {
 
 int json(char* o, int cap) {
   int n = sniprintf(o, cap, CORE_STR("\"ins\":{\"kit\":%d,\"route3\":%d,\"c\":["), kit() + 1, control.route3);
-  for (int c = 0; c < kChains && n < cap; ++c) {
+  for (int c = 0; c < kM0 && n < cap; ++c) {   // (the master's chains: "mfx", below)
     int k = sniprintf(o + n, cap - n, CORE_STR("%s{\"n\":\"%s\",\"s\":["), c ? "," : "", kChainNames[c]);
     if (k < 0 || k >= cap - n) return cap;
     n += k;
@@ -615,6 +658,9 @@ int json(char* o, int cap) {
   k = sniprintf(o + n, n < cap ? cap - n : 0, ",");
   if (k > 0) n += k;
   if (n < cap) n += amp::json(o + n, cap - n);
+  k = sniprintf(o + n, n < cap ? cap - n : 0, ",");
+  if (k > 0) n += k;
+  if (n < cap) n += master::json(o + n, cap - n);
   k = sniprintf(o + n, n < cap ? cap - n : 0, "}");
   return n + (k > 0 ? k : 0);
 }
@@ -636,6 +682,7 @@ void reset() {
     for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f;
   g_engine.Reset();
   amp::reset();
+  master::reset();
   g_stats = Stats();
   out::reset();
   g_dirty = false;

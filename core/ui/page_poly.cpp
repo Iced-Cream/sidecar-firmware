@@ -3,7 +3,7 @@
 //
 // A track's poly config (seq.h PolyCfg, the Analog Four MKII's POLY CONFIG words): A VOICES (AUTO, 1..8), B ALLOCATION
 // (REASSIGN / ROTATE / RESET), C UNISON (OFF, 2..8), D DETUNE and E SPREAD (0..127; FUNC: by 8), F GROUP (OFF, 1..4:
-// stored, not played yet). The line under the title is what it resolves to on the track's machine now, as the
+// stored, not played yet), G PAD OCT (-3..+3: the pads' range on this track, BACKLOG 7g). The line under the title is what it resolves to on the track's machine now, as the
 // touchscreen's POLY tool says it (inst::describe_short's words, the machine left out for the Rytm's 25 characters:
 // "4 NOTES 4 INST 2.92%", CUT when the budget or the machine's maximum cut it). Every edit is the console's
 // `seq=poly:T:<key>=<value>` (seq::command): the pattern's config and the track's default, as there.
@@ -29,8 +29,8 @@ namespace ui {
 namespace {
 
 UI_ROM const char* const kTrackNames[12] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"};
-UI_ROM const char* const kLab[8] = {"VOIC", "ALLC", "UNIS", "DTUN", "SPRD", "GRP", "-", "-"};
-UI_ROM const char* const kLong[6] = {"VOICES", "ALLOCATION", "UNISON", "DETUNE", "SPREAD", "GROUP"};
+UI_ROM const char* const kLab[8] = {"VOIC", "ALLC", "UNIS", "DTUN", "SPRD", "GRP", "OCT", "-"};
+UI_ROM const char* const kLong[7] = {"VOICES", "ALLOCATION", "UNISON", "DETUNE", "SPREAD", "GROUP", "PAD OCT"};
 UI_ROM const char* const kAllocShort[seq::kAllocs] = {"REASGN", "ROTATE", "RESET"};
 constexpr int kInfoY = 12, kRow0 = 28, kRow1 = 43;   // the info line; the encoder rows' label rows (values 6 below)
 
@@ -56,7 +56,7 @@ CORE_COLD int track_now() {
 // the track's machine: 0 none known, 1 analog, 2 a Sidecar machine (*m its voice byte & 0x78)
 CORE_COLD int kind_of(int t, int* m) {
   int vb = remote_track_machine(t);
-  *m = vb >= 0 && vb != 0x7F ? vb & 0x78 : -1;
+  *m = vb >= 0 && vb != 0x7F ? machine_of((uint8_t)vb) : -1;
   return vb < 0 ? 0 : vb == 0x7F ? 1 : 2;
 }
 CORE_COLD bool own_pool(int m) {
@@ -71,6 +71,7 @@ CORE_COLD void value_text(const seq::PolyCfg& c, int e, char* b, int cap) {
     case 3: sniprintf(b, cap, CORE_STR("%d"), c.detune); break;
     case 4: sniprintf(b, cap, CORE_STR("%d"), c.spread); break;
     case 5: c.group ? sniprintf(b, cap, CORE_STR("%d"), c.group) : sniprintf(b, cap, "OFF"); break;
+    case 6: c.oct ? sniprintf(b, cap, CORE_STR("%+d"), c.oct) : sniprintf(b, cap, "0"); break;
     default: sniprintf(b, cap, "-"); break;
   }
 }
@@ -125,7 +126,7 @@ CORE_COLD void poly_draw(Canvas& c, int page, int npages, uint32_t ms) {
   int e = pp.touched;
   if (!poly) {
     footer(c, "YES: MAKE IT A POLY TRACK");
-  } else if (e >= 0 && e < 6) {
+  } else if (e >= 0 && e < 7) {
     char v[12];
     if (e == 1) sniprintf(v, sizeof v, "%s", inst::alloc_name(cfg.alloc));
     else value_text(cfg, e, v, sizeof v);
@@ -146,20 +147,22 @@ CORE_COLD void apply(int t, const char* key, int v) {
 }
 
 CORE_COLD void poly_enc(int e, int d, bool func) {
-  if (!d || e < 0 || e > 5) return;
+  if (!d || e < 0 || e > 6) return;
   int t = track_now(), m = -1;
   if (kind_of(t, &m) != 2 || !seq::owns_track(t)) return;   // (no config to edit: the page says why)
   pp.touched = e;
   if (own_pool(m) && e >= 1 && e <= 4) return;   // the machine's own pool: VOICES only (the page shows "-")
   seq::PolyCfg c = seq::poly_of(t);
-  int step = d > 0 ? 1 : -1;
+  const int step = list_turn(e, d);   // DETUNE, SPREAD: values
+  if (!step && e != 3 && e != 4) return;
   switch (e) {
     case 0: apply(t, "voices", clampi(c.voices + step, 0, seq::kMaxVoicesCfg)); break;
     case 1: apply(t, "alloc", clampi(c.alloc + step, 0, seq::kAllocs - 1)); break;
     case 2: apply(t, "unison", clampi((c.unison > 1 ? c.unison : 1) + step, 1, seq::kMaxUnison)); break;
     case 3: apply(t, "detune", clampi(c.detune + d * (func ? 8 : 1), 0, 127)); break;
     case 4: apply(t, "spread", clampi(c.spread + d * (func ? 8 : 1), 0, 127)); break;
-    default: apply(t, "group", clampi(c.group + step, 0, seq::kPolyGroups)); break;
+    case 5: apply(t, "group", clampi(c.group + step, 0, seq::kPolyGroups)); break;
+    default: apply(t, "oct", clampi(c.oct + step, -seq::kMaxPadOct, seq::kMaxPadOct)); break;
   }
 }
 
@@ -201,7 +204,7 @@ CORE_COLD bool poly_shown() {
 
 }  // namespace
 
-UI_ROM const ExtraPage kPolyPage = {"POLY", poly_shown, poly_draw, poly_enc, poly_key, 0x3F, false, nullptr, nullptr, nullptr,
+UI_ROM const ExtraPage kPolyPage = {"POLY", poly_shown, poly_draw, poly_enc, poly_key, 0x7F, false, nullptr, nullptr, nullptr,
                                     true};
 
 CORE_COLD void poly_page_open(int track, bool from_menu) {

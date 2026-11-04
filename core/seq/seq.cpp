@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arp/arp.h"
 #include "hooks.h"   // hooks.transport: the mods' PLAY / STOP to the platform (the recorder)
 #include "fx/send_fx.h"
 #include "fx/insert.h"
@@ -15,6 +16,7 @@
 #include "inst.h"
 #include "lfo.h"
 #include "machines.h"
+#include "midim/midim.h"
 #include "platform.h"
 #include "poly.h"
 #include "fmt/fmt.h"   // write_atomic / recover: every build's pattern saves (0.3.0 power-cut safety)
@@ -23,6 +25,7 @@
 #include "store/store.h"
 #endif
 #include "sysex.h"
+#include "ui/page.h"
 #include "ui/remote.h"
 #include "voices.h"
 
@@ -96,6 +99,10 @@ void set_transport(int t) {
   if (t == transport) return;
   const int was = transport;
   transport = t;
+#if CORE_MSAMP
+  if (t != kPlay) midim::stop();   // MIDI: what the sequencers hold ends here, whatever 0x11s come
+#endif
+  if (t != kPlay) arp::stop();     // the arpeggiator: a trig's and the sequencer's notes end, keys run on free
   if (hooks.transport) hooks.transport(t == kPlay ? (was == kPause ? 0xFB : 0xFA) : 0xFC);
 }
 int64_t transport_frame = INT64_MIN;   // the Rytm frame of the last TRANSPORT (older ticks after it: ignored)
@@ -226,8 +233,9 @@ struct FLock {
 };
 FLock flk;
 int8_t ilk_owner[kVoices][8];   // fx-ins: the track whose step locked voice v's insert param j (slot j / 4), -1 none
+int8_t alk_owner[kVoices];      // arp locks: the track whose step locked voice v's arpeggiator, -1 none
 struct IlkInit {
-  IlkInit() { memset(ilk_owner, -1, sizeof ilk_owner); }
+  IlkInit() { memset(ilk_owner, -1, sizeof ilk_owner), memset(alk_owner, -1, sizeof alk_owner); }
 } ilk_init;
 uint8_t (*fx_prev)(int, int, uint8_t) = nullptr;   // the knob filter before ours (the LFOs')
 struct LockSet {
@@ -237,6 +245,7 @@ struct LockSet {
   uint16_t slide;
   uint16_t to[kLocks];
   int64_t end[kLocks];
+  int64_t arp_end;   // its arp locks hold to this host frame (arp::lock)
 };
 // X1: a track's slides now (from the lock set applied last): param p from `from` at f0 to `to` at f1
 struct Slide {
@@ -248,6 +257,7 @@ Slide slides[kRytmTracks][kLocks];
 LockSet cur_set[kRytmTracks];   // the set each track applied last (the slides re-apply it with their values)
 uint16_t slide_any = 0;         // the tracks with a slide running
 constexpr int kLockSets = 64;
+constexpr int kArpEarly = 96;   // frames (2 ms) an arp lock leads its step: the arp's grid may be another track's clock
 LockSet lset[kLockSets];
 int lset_w = 0;
 CORE_COLD float lock_float(int v) { return (float)(v >> 7) + (float)(v & 127) / 128.0f; }
@@ -293,6 +303,8 @@ uint32_t pat_changed_ms = 0;    // a pattern change (02 / 03): the SCALE reports
 uint16_t pin_extra = 0;
 bool pin_seq = true;
 uint16_t clock_extra = 0;       // core/song's clock-only tracks (2E bytes 3 / 4)
+uint16_t arp_pins = 0;          // the arpeggiator's tracks: pinned as a seq track is (its notes are the host's)
+bool arp_clock = false;         // ... BD's ticks asked for, its grid
 int clock_sent = -1;
 int pin_sent = -1;              // the 2E's pin part last sent (pin_extra | !pin_seq << 12), -1 none
 uint16_t silent_sent = 0xFFFF;  // the last 46 (0xFFFF: none since the hello)
@@ -414,7 +426,10 @@ CORE_COLD void note_on(int vi, int note, int vel, int r) {
 }
 CORE_COLD void note_off(int vi, int note) {
   if (!sounding[vi][note]) return;
-  if (--sounding[vi][note]) return;
+  if (--sounding[vi][note]) {
+    arp::plain_off(vi, note);   // (a short note beside a long one of its pitch: nothing without a lock of MODE OFF)
+    return;
+  }
   inst::seq_off(vi, note);
   ++st.notes_off;
 }
@@ -502,6 +517,22 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
         ilk_owner[vi][j] = -1;
         ins::lock(vi, j / 4, j % 4, -1);
       }
+    }
+  }
+  if (vi >= 0 && vi < kVoices) {   // arp locks: the step's only (core/arp/arp.h); a track that locks none does nothing here
+    uint8_t awant = 0, av[kArpLocks] = {0};
+    for (int i = 0; i < n && ls->arp_end > (int64_t)hframes; ++i)
+      if (arp_lock(ls->l[i].param)) {
+        int j = ls->l[i].param - kLockArp;
+        awant |= (uint8_t)(1u << j), av[j] = (uint8_t)(ls->l[i].value >> 7);
+      }
+    if (awant) {
+      alk_owner[vi] = (int8_t)r;
+      arp::lock(vi, r, awant, av, ls->arp_end);
+      ++st.locks_applied;
+    } else if (alk_owner[vi] == r) {
+      alk_owner[vi] = -1;
+      arp::lock(vi, r, 0, av, 0);
     }
   }
   uint8_t fwant = 0, fv[8];
@@ -823,7 +854,7 @@ CORE_COLD void load_tracks() {
   if (ps) pin_seq = atoi(ps + 7) != 0;
   const char* lm = strstr(b, "latset=");
   if (lm) cal.manual = atoi(lm + 7) != 0;
-  for (const char* q = strstr(b, "poly="); q; q = strstr(q + 5, "poly=")) {   // E0: poly=T:V,A,U,D,S,G (T 1..12)
+  for (const char* q = strstr(b, "poly="); q; q = strstr(q + 5, "poly=")) {   // E0: poly=T:V,A,U,D,S,G[,O] (T 1..12; O = PAD OCT, signed, optional)
     int a[7] = {0}, k = 0;
     const char* c = q + 5;
     for (; k < 7 && *c >= '0' && *c <= '9'; ++k) {
@@ -838,6 +869,7 @@ CORE_COLD void load_tracks() {
     pc.voices = (uint8_t)clampi(a[1], 0, kMaxVoicesCfg), pc.alloc = (uint8_t)(a[2] < kAllocs ? a[2] : 0);
     pc.unison = (uint8_t)clampi(a[3], 0, kMaxUnison), pc.detune = (uint8_t)clampi(a[4], 0, 127);
     pc.spread = (uint8_t)clampi(a[5], 0, 127), pc.group = (uint8_t)clampi(a[6], 0, kPolyGroups);
+    pc.oct = (int8_t)(c[-1] == ',' ? clampi(atoi(c), -kMaxPadOct, kMaxPadOct) : 0);   // 7g: the optional PAD OCT (signed)
   }
 }
 // tracks.txt's text (the mask, the latency, the pins, E0's default poly configs)
@@ -847,8 +879,8 @@ CORE_COLD int tracks_text(char* b, int cap) {
   for (int r = 0; r < kRytmTracks && n < cap - 40; ++r) {   // E0: the tracks' default poly configs (none: no line)
     const PolyCfg& pc = poly_def[r];
     if (!poly_default(pc))
-      n += sniprintf(b + n, cap - n, CORE_STR("poly=%d:%d,%d,%d,%d,%d,%d\n"), r + 1, pc.voices, pc.alloc, pc.unison,
-                     pc.detune, pc.spread, pc.group);
+      n += sniprintf(b + n, cap - n, CORE_STR("poly=%d:%d,%d,%d,%d,%d,%d,%d\n"), r + 1, pc.voices, pc.alloc,
+                     pc.unison, pc.detune, pc.spread, pc.group, pc.oct);
   }
   return n;
 }
@@ -1280,19 +1312,27 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
     if (lf < (int64_t)hframes) lf = (int64_t)hframes;
     int slot = lset_w++ % kLockSets;
     LockSet& ls = lset[slot];
-    ls.n = 0, ls.slide = 0;
+    ls.n = 0, ls.slide = 0, ls.arp_end = 0;
     if (s.slide) slide_ahead(p, t, r, a, pred);
     for (int k = 0; k < s.nl && k < kLocks; ++k) {   // V1: a lock whose own condition fails is left out (its base back)
       const Lock& l = s.lock[k];
       if (!lock_pass(l, r, at, rng_key(seed_of(p, t, r, a, 1, pred, true), r, idx, lk, kRngLock, l.param))) continue;
       int64_t j;
       uint16_t to;
-      if ((s.slide >> (l.param & 31) & 1) && slide_target(t, l.param, &j, &to)) {   // X1: to the param's next lock
+      if (lock_slides(s, l.param) && slide_target(t, l.param, &j, &to)) {   // X1: to the param's next lock
         int64_t end = fol.to_host((int64_t)(fs0 + (double)j * per)) - latency;
         bool sw = !pred && pred_to >= 0 && pred_abs[r] >= 0 && fs0 + (double)j * per >= (double)pred_frame;   // (a switch first)
         if (!sw) ls.slide |= (uint16_t)(1u << ls.n), ls.to[ls.n] = to, ls.end[ls.n] = end;
       }
       ls.l[ls.n++] = l;
+      // arp locks: the step's place on the grid, swing and DLY left out (the arp's grid has neither), just before it to just before the next, so
+      // its point takes them whichever track's clock it runs on. The whole set goes then, its other locks too
+      if (arp_lock(l.param) && !ls.arp_end) {
+        int64_t g0 = fol.to_host((int64_t)fs0) - latency;
+        ls.arp_end = fol.to_host((int64_t)(fs0 + per)) - latency - kArpEarly;
+        lf = (lf < g0 ? lf : g0) - kArpEarly;
+        if (lf < (int64_t)hframes) lf = (int64_t)hframes;
+      }
     }
     push(lf, fol.to_host((int64_t)fs0), ++ev_id, 2, vi, slot, 0, r, pred);   // (sf: the grid's - a replan cuts by it)
   }
@@ -2063,7 +2103,8 @@ CORE_COLD void toggle(int k) {
 }
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
+// d: the report's counts, l: the same report's list step (ui::list_turn, once a report), for the lists: CHD, INV, SEL
+CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func, int l = 0) {
   // an empty step's first turn: the track's default note (dbg: a chord made by turning starts from C3 / dnote, not from
   // whatever was played last; a tap still takes the last chord played, the pads under a held trig their own notes)
   if (!s.n && e != 7) fill_default(t, s, false);
@@ -2105,8 +2146,9 @@ CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
         }
       }
       int chd = s.chd, inv = s.inv;
-      if (e == 4) chd = clampi(chd + d, 0, poly::kChords - 1);
-      else inv = clampi(inv + d, 0, poly::kInvs - 1);
+      if (!l) break;
+      if (e == 4) chd = clampi(chd + l, 0, poly::kChords - 1);
+      else inv = clampi(inv + l, 0, poly::kInvs - 1);
       set_chord_in(s, root, chd, inv, s.note[0].vel, s.note[0].len, s.strum, key, scale);
       ui.sel = 0;
       break;
@@ -2115,7 +2157,7 @@ CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func) {
       apply_strum(s, clampi(s.strum + d * (func ? 8 : 2), -kSub / 2, kSub / 2));
       break;
     case 7:
-      ui.sel = clampi(ui.sel + d, 0, s.n);
+      ui.sel = clampi(ui.sel + l, 0, s.n);
       break;
   }
 }
@@ -2155,9 +2197,11 @@ CORE_COLD void set_seq(int r, bool on) {
       'A' + cur->index / 16 % 8, cur->index % 16 + 1);
 }
 // The lock page's encoder e: the param it locks (-1 none). SRC A..H = P1..P8, SMPL = P9..P16, FX A..D = FX1 P2..P5,
-// E..H = FX2's; TRIG, FLTR, AMP and LFO lock nothing on the host (the Rytm's analog side, its own LFO).
+// E..H = FX2's; FLTR A..E = the arp's MODE SPD RNG GATE SWNG (the Rytm's own filter is not locked here); TRIG, AMP and LFO lock
+// nothing on the host (the Rytm's analog side, its own LFO).
 CORE_COLD int lock_param_of(int pg, int e) {
   if (e < 0 || e > 7) return -1;
+  if (pg == kLpFltr) return e < kArpLocks ? kLockArp + e : -1;
   return pg == kLpSrc ? e : pg == kLpSmpl ? 8 + e : pg == kLpFx && e / 4 < fx::kSlots ? kLockFx + e : pg == kLpIns ? kLockIns + e
                                                                                                              : -1;
 }
@@ -2165,6 +2209,11 @@ CORE_COLD int lock_param_of(int pg, int e) {
 // knob's, 14 bits
 CORE_COLD int base_value(int r, int param) {
   if (param < 16) return ui::remote_track_param(r, param) << 7;
+  if (arp_lock(param)) {   // the track's sound's
+    arp::Cfg c = arp::get(r);
+    const uint8_t f[kArpLocks] = {c.mode, c.speed, c.range, c.gate, c.swing};
+    return f[param - kLockArp] << 7;
+  }
   if (param >= kLockIns && param < kLockIns + 8) {   // fx-ins: the insert's knob (core/fx/insert.h)
     int vi = voice_of(r);
     return vi >= 0 && vi < kVoices ? ins::param(vi, (param - kLockIns) / 4, (param - kLockIns) % 4) << 7 : 0;
@@ -2183,7 +2232,7 @@ CORE_COLD void lock_turn(int e, int d, bool func) {
     Step& s = t->step[ui.page * kStepsPerPage + k];
     int cur_v = lock_of(s, prm);
     if (cur_v < 0) cur_v = base_value(r, prm);
-    int nv = clampi((cur_v >> 7) + d * (func ? 8 : 1), 0, 127) << 7;
+    int nv = clampi((cur_v >> 7) + d * (func ? 8 : 1), 0, lock_top(prm)) << 7;
     if (set_lock(s, prm, nv)) ++st.locks_set;
     ui.held_used[k] = true;
   }
@@ -2261,7 +2310,7 @@ CORE_COLD void preview() {
     if (!locked && (s.nl || (any_locks && notes))) {
       int slot = lset_w++ % kLockSets;
       LockSet& ls = lset[slot];
-      ls.n = s.nl > kLocks ? kLocks : s.nl, ls.slide = 0;
+      ls.n = s.nl > kLocks ? kLocks : s.nl, ls.slide = 0, ls.arp_end = now + (int64_t)per;
       memcpy(ls.l, s.lock, sizeof(Lock) * ls.n);
       push(now, now, ++ev_id, 2, vi, slot, 0, r, false);
       locked = true;
@@ -2282,30 +2331,31 @@ CORE_COLD void preview() {
   }
   if (locked && transport != kPlay) {   // stopped: the locked params back to their bases after the last note
     int slot = lset_w++ % kLockSets;
-    lset[slot].n = 0, lset[slot].slide = 0;
+    lset[slot].n = 0, lset[slot].slide = 0, lset[slot].arp_end = 0;
     push(end, end, ++ev_id, 2, vi, slot, 0, r, false);
   }
   ++st.previews;
 }
 
-CORE_COLD void settings_enc(int e, int d, bool func) {
+CORE_COLD void settings_enc(int e, int d, bool func, int l) {
   int r = ui_track();
   switch (e) {
     case 0:
-      if (!seqmode) ui.track = clampi(ui.track + d, 0, kRytmTracks - 1), ui.page = 0;
+      if (!seqmode && l) ui.track = clampi(ui.track + l, 0, kRytmTracks - 1), ui.page = 0;
       break;
     case 1: {   // seq-ux: on through the make prompt's checks; UX review R2: off only through the track's menu (FUNC + DOWN, updown1029; DOWN ux1027; YES before) - a
-      bool on = d > 0;   // turn down shows how, it never asks by itself
+      if (!l) break;
+      bool on = l > 0;   // turn down shows how, it never asks by itself
       if (on && !in_mask(r)) ui.prompt = can_seq(r) == 1 ? kPromptMake : kPromptExplain, ui.prompt_track = r;
       else if (!on && in_mask(r)) ui.off_hint_ms = now_ms() | 1;
       break;
     }
     case 2: {
-      Track* t = slot_for(r);
+      Track* t = l ? slot_for(r) : nullptr;
       if (!t) break;
       int len = t->length;   // 0 AUTO, then 16 32 .. 128 (FUNC: by one step)
-      if (func) len = clampi(len + d, 0, kMaxSteps);
-      else if (d > 0) len = clampi((len / 16 + 1) * 16, 0, kMaxSteps);
+      if (func) len = clampi(len + l, 0, kMaxSteps);
+      else if (l > 0) len = clampi((len / 16 + 1) * 16, 0, kMaxSteps);
       else len = len % 16 ? len / 16 * 16 : clampi(len - 16, 0, kMaxSteps);
       set_length(*t, r, len);
       ui.page = clampi(ui.page, 0, npages_of(eff_len(t, r)) - 1);
@@ -2313,10 +2363,10 @@ CORE_COLD void settings_enc(int e, int d, bool func) {
       break;
     }
     case 3:
-      quant = clampi(quant + d, 0, 1), tracks_touch();
+      if (l) quant = clampi(quant + l, 0, 1), tracks_touch();
       break;
     case 4:
-      ui.follow = d > 0;
+      if (l) ui.follow = l > 0;
       break;
     case 5:
       latency = clampi(latency + d * (func ? 480 : 48), 0, 4800);
@@ -2355,7 +2405,7 @@ CORE_COLD void smod_forget(int r) {   // R1b: the offsets sampled under the old 
 // ratios too), G TLEN (the track's length, as the notes view's C); SCALE's A KEY, B SCL, C QNT (the pattern's); RANDOM's
 // A SEED (fully down FREE; FUNC +-100), B RNG (R1's octaves), C WGHT, D MODE, E SRNG (SEED MOD's range; fully down OFF,
 // up from OFF its source: the machine's SEED slot), F SQNT, G SAFF. A..D of DEFAULTS are rui1040's (the new steps').
-CORE_COLD void track_page_enc(int e, int d, bool func) {
+CORE_COLD void track_page_enc(int e, int d, bool func, int l) {
   int r = ui_track();
   Track* t = ui_track_data(true);
   if (!t) return;
@@ -2365,15 +2415,16 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
       case 1: t->dvel = (uint8_t)clampi(t->dvel + d * (func ? 8 : 1), 1, 127); break;
       case 2: t->dlen = (uint16_t)clampi(t->dlen + d * (func ? kSub : kSub / 16), 1, 16 * kSub); break;
       case 3: t->swing = (uint8_t)clampi((t->swing > 50 ? t->swing : 50) + d, 50, 80); break;
-      case 4: t->dir = (uint8_t)clampi(t->dir + d, 0, kDirs - 1), replan(r); break;
-      case 5: t->speed = (uint8_t)speed_step(t->speed, d, func), replan(r); break;
-      case 6: settings_enc(2, d, func); return;   // (marks it dirty)
+      case 4: if (l) t->dir = (uint8_t)clampi(t->dir + l, 0, kDirs - 1), replan(r); break;
+      case 5: if (l) t->speed = (uint8_t)speed_step(t->speed, l, func), replan(r); break;
+      case 6: settings_enc(2, d, func, l); return;   // (marks it dirty)
       default: return;
     }
   } else if (ui.tv == kTvScale) {
-    if (e == 0) cur->key = (uint8_t)clampi(cur->key + d, 0, 11);
-    else if (e == 1) cur->scale = (uint8_t)clampi(cur->scale + d, 0, kScales - 1);
-    else if (e == 2) cur->qnt = (uint8_t)clampi(cur->qnt + d, 0, kQnts - 1);
+    if (!l) return;
+    if (e == 0) cur->key = (uint8_t)clampi(cur->key + l, 0, 11);
+    else if (e == 1) cur->scale = (uint8_t)clampi(cur->scale + l, 0, kScales - 1);
+    else if (e == 2) cur->qnt = (uint8_t)clampi(cur->qnt + l, 0, kQnts - 1);
     else return;
     replan(-1);
   } else if (ui.tv == kTvRandom) {
@@ -2386,9 +2437,9 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
         replan(-1);
         break;
       }
-      case 1: t->rnd_oct = (uint8_t)clampi((t->rnd_oct ? t->rnd_oct : kRndOctDef) + d, 1, 4); break;
-      case 2: t->rnd_wght = (uint8_t)clampi(t->rnd_wght + d, 0, kWeights - 1); break;
-      case 3: t->rnd_mode = (uint8_t)clampi(t->rnd_mode + d, 0, kRndModes - 1); break;
+      case 1: t->rnd_oct = (uint8_t)clampi((t->rnd_oct ? t->rnd_oct : kRndOctDef) + l, 1, 4); break;
+      case 2: t->rnd_wght = (uint8_t)clampi(t->rnd_wght + l, 0, kWeights - 1); break;
+      case 3: t->rnd_mode = (uint8_t)clampi(t->rnd_mode + l, 0, kRndModes - 1); break;
       case 4:
         if (!t->smod_src) {
           if (d <= 0) return;
@@ -2405,8 +2456,8 @@ CORE_COLD void track_page_enc(int e, int d, bool func) {
         }
         smod_forget(r);
         break;
-      case 5: t->smod_quant = (uint8_t)clampi(t->smod_quant + d, 0, kSqs - 1), smod_forget(r); break;
-      case 6: t->smod_aff = (uint8_t)clampi(t->smod_aff + d, 0, kAffs - 1), smod_forget(r); break;
+      case 5: t->smod_quant = (uint8_t)clampi(t->smod_quant + l, 0, kSqs - 1), smod_forget(r); break;
+      case 6: t->smod_aff = (uint8_t)clampi(t->smod_aff + l, 0, kAffs - 1), smod_forget(r); break;
       default: return;
     }
     replan(r);
@@ -2432,21 +2483,21 @@ CORE_COLD void note_turn(Track& t, Step& s, int d, bool func) {
   }
 }
 // RTRG (P4 / M4): A RATE, B CNT (OFF, 2..16), C VCRV, D PCRV (-24..24), E MODE, F OCT, G GATE (1..100 %)
-CORE_COLD void rtrg_turn(Track& t, Step& s, int e, int d, bool func) {
+CORE_COLD void rtrg_turn(Track& t, Step& s, int e, int d, bool func, int l) {
   Rtrg& x = s.rt;
   switch (e) {
-    case 0: x.rate = (uint8_t)clampi(x.rate + d, 0, kRtRates - 1); break;
+    case 0: x.rate = (uint8_t)clampi(x.rate + l, 0, kRtRates - 1); break;
     case 1: {
       int c = x.cnt < 2 ? 0 : x.cnt;
-      c = clampi(c + d * (func ? 4 : 1), 0, kRtMax);
-      if (c == 1) c = d > 0 ? 2 : 0;
+      c = clampi(c + l * (func ? 4 : 1), 0, kRtMax);
+      if (c == 1) c = l > 0 ? 2 : 0;
       x.cnt = (uint8_t)c;
       break;
     }
-    case 2: x.vcrv = (uint8_t)clampi(x.vcrv + d, 0, kVcs - 1); break;
+    case 2: x.vcrv = (uint8_t)clampi(x.vcrv + l, 0, kVcs - 1); break;
     case 3: x.pcrv = (int8_t)clampi(x.pcrv + d * (func ? 12 : 1), -24, 24); break;
-    case 4: x.mode = (uint8_t)clampi(x.mode + d, 0, kRtModes - 1); break;
-    case 5: x.oct = (uint8_t)clampi((x.oct ? x.oct : 1) + d, 1, 4); break;
+    case 4: x.mode = (uint8_t)clampi(x.mode + l, 0, kRtModes - 1); break;
+    case 5: x.oct = (uint8_t)clampi((x.oct ? x.oct : 1) + l, 1, 4); break;
     case 6: {
       int g = clampi((x.gate ? x.gate : 100) + d * (func ? 10 : 1), 1, 100);
       x.gate = (uint8_t)(g == 100 ? 0 : g);
@@ -2461,19 +2512,19 @@ CORE_COLD int fx_default(int c) {
   static const int8_t kDef[kFxCmds] = {0, 2, 24, 48, 50, 2, 20, 1, 7, 1, 0, 0, 1, 1, 1};
   return c >= 0 && c < kFxCmds ? kDef[c] : 0;
 }
-CORE_COLD void fx_turn(Step& s, int e, int d, bool func) {
+CORE_COLD void fx_turn(Step& s, int e, int d, bool func, int l) {
   if (e > 3) return;
   Fx& f = s.fx[e / 2];
   if (!(e & 1)) {
-    int c = clampi(f.cmd + d, 0, kFxCmds - 1);
+    int c = clampi(f.cmd + l, 0, kFxCmds - 1);
     if (c != f.cmd) f.cmd = (uint8_t)c, f.val = (uint8_t)(int8_t)fx_default(c);
     return;
   }
   if (!f.cmd) return;
   if (f.cmd == kFxLop) {
     int n = (f.val & 15) + 1, k = (f.val >> 4) + 1;
-    if (func) k = clampi(k + d, 1, 16);
-    else n = clampi(n + d, 1, 16);
+    if (func) k = clampi(k + l, 1, 16);
+    else n = clampi(n + l, 1, 16);
     f.val = (uint8_t)((k - 1) << 4 | (n - 1));
     return;
   }
@@ -2517,6 +2568,10 @@ CORE_COLD void lcond_turn(int prm, int d, bool func) {
   else replan(ui_track()), mark_dirty();   // (a step planned already plays its new condition)
 }
 CORE_COLD void slide_toggle(int prm) {
+  if (arp_lock(prm)) {   // (a choice, not a level)
+    say("ARP LOCKS DO NOT SLIDE");
+    return;
+  }
   Track* t = ui_track_data(false);
   int locks = 0, sliding = 0;
   for (int pass = 0; pass < 2; ++pass)
@@ -2526,7 +2581,7 @@ CORE_COLD void slide_toggle(int prm) {
       ui.held_used[k] = true;
       if (lock_of(s, prm) < 0) continue;
       if (!pass) {
-        ++locks, sliding += (s.slide >> prm & 1) != 0;
+        ++locks, sliding += lock_slides(s, prm);
       } else {
         bool on = sliding < locks;
         s.slide = on ? s.slide | 1u << prm : s.slide & ~(1u << prm);
@@ -2614,6 +2669,7 @@ CORE_COLD void reset() {
                                         restart_skip[r] = 0;
   pat_len = pat_spd = pat_mode = pat_chg = -1, fill = false;
   pin_extra = 0, pin_seq = true, pin_sent = -1, silent_sent = 0xFFFF, clock_extra = 0, clock_sent = -1;
+  arp_pins = 0, arp_clock = false;
   cal.state = 0, cal.vi = -1, cal.track = -1, cal.n = 0, cal.found = -1, cal.auto_done = false, cal.manual = false;
   cal.fed_ms = 0;
   predict = true, pred_to = -1, pat_start = -1, pat_start_track = -1;
@@ -2665,6 +2721,20 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 }
 
 CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra = (uint16_t)(m & 0xFFF); }
+CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins = (uint16_t)(pins & 0xFFF), arp_clock = clock; }
+CORE_COLD double tempo() { return bpm; }
+CORE_COLD bool beat_map(double* origin, double* per16, int* lat) {
+  *lat = latency;
+  if (transport != kPlay || !fol.valid) return false;
+  for (int r = 0; r < kRytmTracks; ++r) {
+    const StepClock& c = clk[r];
+    if (!c.on || c.period <= 0 || !(in_mask(r) || (clock_now >> r & 1))) continue;
+    *per16 = c.period * speed_mult(c.speed);
+    *origin = (double)fol.to_host((int64_t)(c.anchor - (double)c.anchor_abs * c.period)) - latency;
+    return true;
+  }
+  return false;
+}
 
 CORE_COLD void hello() {
   if (!cur) reset();   // (before engine_begin: the tests that skip it)
@@ -2755,6 +2825,13 @@ CORE_COLD void project_changed() {
   load_due = false;
 }
 
+CORE_COLD int pad_oct(int vi) {
+  if (!mask || !cur) return 0;
+  for (int r = 0; r < kRytmTracks; ++r)
+    if ((mask >> r & 1) && voice_of(r) == vi) return cfg_of(track_of(*cur, r), r).oct;
+  return 0;
+}
+
 CORE_COLD bool owns_voice(int vi) {
   if (!mask) return false;
   for (int r = 0; r < kRytmTracks; ++r)
@@ -2793,6 +2870,7 @@ void pre_block() {
   }
   slide_tick();   // seqtop X1
   plan();
+  arp::block(h);   // (after the events: a chord's off and the next one's on in one block is no gap)
   hframes += kBlock;
 }
 
@@ -2800,7 +2878,9 @@ CORE_COLD void midi(uint8_t status, uint8_t d1, uint8_t d2) {
   int kind = status & 0xF0, ch = status & 0x0F;
   if (kind != 0x90 && kind != 0x80) return;
   int off = 0, vi = poly::bound_voice(ch, &off);
-  note(vi, kind == 0x90 && d2, clampi(d1 + (vi >= 0 ? off : 0), 0, 127), d2, -1);
+  int pitch = d1 + (vi >= 0 ? off : 0);
+  if (vi >= 0 && off != 0 && (pitch < 0 || pitch > 127)) return;   // 7g: out of range it never sounded (poly.cpp drops it): not recorded
+  note(vi, kind == 0x90 && d2, clampi(pitch, 0, 127), d2, -1);
 }
 
 CORE_COLD bool owns_track(int t) { return in_mask(t); }
@@ -3646,15 +3726,18 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
     if (!shown || !delta || !in_mask(ui_track())) return false;
     if (ui.prompt || (ui.held && ui.lockpg >= 0)) return true;   // (nothing under a prompt or a lock page)
     ui.touched = 8;
-    ne_turn(delta, func);
+    if (const int l = ui::list_turn(e, delta)) ne_turn(l, func);
     return true;
   }
   if ((!seqmode && !shown) || e < 0 || e > 7 || !delta) return false;
   ui.touched = e;
   if (ui.prompt && shown) return true;   // seq-ux: nothing under a prompt
+  // the lists, switches and small counts below (ui::list_turn, once a report; the long ones: the conditions); the rest values
+  const int l = ui.held && (e == ui.cond_e || (ui.sv == kSvTrig && e == 4)) ? ui::list_turn_long(e, delta) : ui::list_turn(e, delta);
   if (ui.held && ui.lockpg >= 0) {      // seq-ux: the lock page: the held steps' locks (rui1050: a knob on COND, its condition)
-    if (e == ui.cond_e && lock_param_of(ui.lockpg, e) >= 0) lcond_turn(lock_param_of(ui.lockpg, e), delta, func);
-    else lock_turn(e, delta, func);
+    if (e == ui.cond_e && lock_param_of(ui.lockpg, e) >= 0) {
+      if (l) lcond_turn(lock_param_of(ui.lockpg, e), l, func);
+    } else lock_turn(e, delta, func);
     return true;
   }
   if (ui.ne && shown && !(ui.held && ui.sv != kSvNotes)) {   // U1 NOTE EDIT: A..E on the highlighted note / the selection
@@ -3669,8 +3752,8 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
     for (int k = 0; k < 16; ++k)
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
-        if (ui.sv == kSvRtrg) rtrg_turn(*t, s, e, delta, func);
-        else fx_turn(s, e, delta, func);
+        if (ui.sv == kSvRtrg) rtrg_turn(*t, s, e, delta, func, l);
+        else fx_turn(s, e, delta, func, l);
         ui.held_used[k] = true;
       }
     replan(ui_track());
@@ -3685,10 +3768,10 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
         if (e == 0) note_turn(*t, s, delta, func), replan(ui_track());   // rui1050: RND below the lowest note
-        else if (kMap[e] >= 0) edit_step(*t, s, kMap[e], delta, func);
+        else if (kMap[e] >= 0) edit_step(*t, s, kMap[e], delta, func, l);
         else {   // COND: the trig condition / probability on one knob, as stock's
           if (!s.n) fill_default(*t, s, false);
-          cond_knob_set_i(s, cond_knob_i(s) + delta * (func ? 8 : 1));
+          cond_knob_set_i(s, cond_knob_i(s) + l * (func ? 8 : 1));
         }
         ui.held_used[k] = true;
       }
@@ -3702,17 +3785,17 @@ CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
       if (ui.held >> k & 1) {
         Step& s = t->step[ui.page * kStepsPerPage + k];
         if (e == 0) note_turn(*t, s, delta, func), replan(ui_track());   // rui1050: RND below the lowest note
-        else edit_step(*t, s, e, delta, func);
+        else edit_step(*t, s, e, delta, func, l);
         ui.held_used[k] = true;
       }
     mark_dirty();
     return true;
   }
   if (shown && ui.tv != kTvNotes) {   // rui1040: the track's defaults for new steps; rui1050: DEFAULTS / SCALE / RANDOM
-    track_page_enc(e, delta, func);
+    track_page_enc(e, delta, func, l);
     return true;
   }
-  if (shown) settings_enc(e, delta, func);
+  if (shown) settings_enc(e, delta, func, l);
   return true;
 }
 
@@ -3760,14 +3843,14 @@ CORE_COLD void page_leds(uint8_t c[4]) {
 // ---- the pin's silence (46): a pinned track whose voice has nothing of the host's sounding, nothing planned, for
 // kSilentMs (release tails included: poly's voice activity) gets its VCA closed; anything planned opens it at once
 // (planning runs 32 ms ahead of the note, the 46 needs a USB MIDI hop).
-static CORE_COLD uint16_t pinned() { return (uint16_t)((pin_seq ? mask : 0) | pin_extra); }
+static CORE_COLD uint16_t pinned() { return (uint16_t)((pin_seq ? mask : 0) | pin_extra | arp_pins); }
 static CORE_COLD void silence_tick(uint32_t ms) {
   uint16_t pm = pinned(), sil = 0;
   if (!pm) return;
   for (int r = 0; r < kRytmTracks; ++r) {
     if (!(pm >> r & 1)) continue;
     int vi = voice_of(r);
-    bool busy = vi >= 0 && (poly::active(vi) || poly::voice_notes(vi) > 0 || poly::pad_sounding(vi));   // fix1052: its pad
+    bool busy = vi >= 0 && (poly::active(vi) || poly::voice_notes(vi) > 0 || poly::pad_sounding(vi) || arp::busy(vi));   // fix1052: its pad
     for (int i = 0; i < nev && !busy; ++i) busy = ev[i].track == r;
     for (int n = 0; n < 128 && vi >= 0 && !busy; ++n) busy = sounding[vi][n] != 0;
     if (cal.state && cal.vi == vi) busy = true;
@@ -3792,7 +3875,8 @@ static CORE_COLD void cal_start(int r) {
   cal.deadline_ms = now_ms() + 3000;
 }
 static CORE_COLD void cal_tick(uint32_t ms) {
-  if (!cal.auto_done && !cal.manual && transport == kStop && ms - cal.fed_ms < 500 && fol.valid) {
+  // not while a project loads: its tracks.txt takes the latency back, and the Rytm's first seconds are that load
+  if (!cal.auto_done && !cal.manual && !g_loading && transport == kStop && ms - cal.fed_ms < 500 && fol.valid) {
     uint16_t pm = pinned() & mask;
     for (int r = 0; r < kRytmTracks && pm; ++r)
       if (pm >> r & 1) {
@@ -3825,6 +3909,8 @@ static CORE_COLD void cal_tick(uint32_t ms) {
         st.cal_last = m;
         ++st.cals;
         log(CORE_STR("seq: latency calibrated on track %d: %d frames (%d..%d)"), cal.track + 1, m, v[0], v[kCalClicks - 1]);
+      } else {
+        cal.auto_done = false;   // refused and put back by the load: again once it has loaded
       }
     } else {
       ++st.cal_fails;
@@ -3855,11 +3941,12 @@ CORE_COLD void tick(uint32_t ms) {
       log(CORE_STR("seq: lock page knob %c: %s"), 'A' + e, ui.cond_e == e ? "COND" : "value");
     }
   remask(true);   // per pattern poly: a 33 (a track's machine) since
+  arp::tick(ms);
   // per pattern poly, the switch: the Rytm must hear the next pattern's capture before it plays that pattern's first step
   // (or the step plays with the old one). With a pattern queued (prefetched in nxt) its new seq tracks are clocked (the
   // 2E's clock part: their ticks, nothing else - the prediction plans their first steps); kSwitchLead + the latency
   // before the predicted switch its mask goes out whole. A miss drops the prediction: the current mask again.
-  uint16_t wm = mask, ck = clock_extra;
+  uint16_t wm = mask, ck = (uint16_t)(clock_extra | (arp_clock ? 1 : 0));
   if (transport == kPlay && pat_queued >= 0 && pat_queued != cur->index && nxt->index == pat_queued) {
     uint16_t nm = mask_of(*nxt);
     if (pred_to == pat_queued && fol.valid &&
@@ -3868,12 +3955,13 @@ CORE_COLD void tick(uint32_t ms) {
     else
       ck |= (uint16_t)(nm & ~mask);
   }
-  int pin_now = pin_extra | (pin_seq ? 0 : 1 << 12);
+  uint16_t pin_x = (uint16_t)(pin_extra | arp_pins);
+  int pin_now = pin_x | (pin_seq ? 0 : 1 << 12);
   if (hello_due || mask_sent != wm || pin_sent != pin_now || clock_sent != ck) {
     // the 7-byte form (rytm-mods 1033's pin part) only when it says more than the 3- / 5-byte one: older builds refuse it
     uint8_t b[7] = {(uint8_t)(wm & 0x7F), (uint8_t)(wm >> 7 & 0x1F), (uint8_t)((hello_due ? 2 : 0) | (pin_seq ? 0 : 4)),
-                    (uint8_t)(ck & 0x7F), (uint8_t)(ck >> 7 & 0x1F), (uint8_t)(pin_extra & 0x7F),
-                    (uint8_t)(pin_extra >> 7 & 0x1F)};
+                    (uint8_t)(ck & 0x7F), (uint8_t)(ck >> 7 & 0x1F), (uint8_t)(pin_x & 0x7F),
+                    (uint8_t)(pin_x >> 7 & 0x1F)};
     send_cmd(kMaskCmd, b, pin_now ? 7 : ck ? 5 : 3);
     if (wm != mask) ++st.mask_early;
     mask_sent = wm, hello_due = false, pin_sent = pin_now, clock_sent = ck, clock_now = ck;
@@ -3922,6 +4010,11 @@ CORE_COLD void tick(uint32_t ms) {
     ui.pleds_stock = true;
   }
 }
+
+CORE_COLD void save_due() {
+  if (dirty || tracks_dirty) save_now = true;
+}
+CORE_COLD bool unsaved() { return dirty || tracks_dirty || sav_pending; }
 
 CORE_COLD bool idle() {
   if (!cur) reset();   // (before engine_begin: the tests that skip it)
@@ -4178,7 +4271,7 @@ CORE_COLD int held_lock_cond(int param, bool* slide) {
     const Step& s = t->step[ui.page * kStepsPerPage + k];
     for (int i = 0; i < s.nl; ++i)
       if (s.lock[i].param == param) {
-        if (slide) *slide = (s.slide >> param & 1) != 0;
+        if (slide) *slide = lock_slides(s, param);
         return s.lock[i].cond;
       }
   }
@@ -4268,8 +4361,8 @@ CORE_COLD int poly_json(char* out, int cap) {
     inst::Resolved rs;
     int m = -1, vi = voice_of(r);
     if (vi >= 0 && inst::resolve_for(vi, c, &rs, &m)) inst::describe_short(rs, m, info, sizeof info);
-    n += sniprintf(out + n, cap - n, "%s{\"t\":%d,\"v\":%d,\"a\":%d,\"u\":%d,\"d\":%d,\"s\":%d,\"g\":%d,\"own\":%d,\"info\":\"%s\"}",
-                   first ? "" : ",", r + 1, c.voices, c.alloc, c.unison, c.detune, c.spread, c.group,
+    n += sniprintf(out + n, cap - n, "%s{\"t\":%d,\"v\":%d,\"a\":%d,\"u\":%d,\"d\":%d,\"s\":%d,\"g\":%d,\"o\":%d,\"own\":%d,\"info\":\"%s\"}",
+                   first ? "" : ",", r + 1, c.voices, c.alloc, c.unison, c.detune, c.spread, c.group, c.oct,
                    t && !poly_default(t->poly) ? 1 : 0, info);
     first = false;
   }
@@ -4307,7 +4400,7 @@ CORE_COLD int seqx_json(char* out, int cap) {
       n += sniprintf(out + n, cap - n, "],\"sl\":[");
       f3 = true;
       for (int k = 0; k < s.nl && n < cap - 20; ++k)
-        if (s.slide >> (s.lock[k].param & 31) & 1) n += sniprintf(out + n, cap - n, "%s%d", f3 ? "" : ",", s.lock[k].param + 1), f3 = false;
+        if (lock_slides(s, s.lock[k].param)) n += sniprintf(out + n, cap - n, "%s%d", f3 ? "" : ",", s.lock[k].param + 1), f3 = false;
       n += sniprintf(out + n, cap - n, "]}");
     }
     if (n < cap) n += sniprintf(out + n, cap - n, "]}");
@@ -4539,7 +4632,8 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
   }
   if (!strncmp(p, "seq=lock:", 9)) {   // seq=lock:T:S:P:V - step S (1..) of track T locks param P (1..16 P1..P16,
                                         // 17..20 FX1 P2..P5, 21..24 FX2's, 25..28 INSERT A P1..P4,
-                                        // 29..32 INSERT B's) to V (0..127); V -1: that lock removed
+                                        // 29..32 INSERT B's, 33..37 the arp's MODE SPD RNG GATE SWNG) to V (0..127; the arp's their
+                                        // knob's index); V -1: that lock removed
     int a[4] = {0, 0, 0, 0}, k = 0;
     const char* q = p + 9;
     for (; k < 4 && *q; ++k) {
@@ -4550,7 +4644,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     }
     int r = a[0] - 1, si = a[1] - 1, prm = a[2] - 1;
     Track* t = k == 4 && si >= 0 && si < kMaxSteps && prm >= 0 && prm < kLockParams ? slot_for(r) : nullptr;
-    if (!t) return sniprintf(out, cap, CORE_STR("seq=lock:T:S:P:V (P 1..16 the machine's, 17..24 FX1 / FX2 P2..P5, 25..32 INSERT A / B P1..P4; V 0..127, -1 off)")), true;
+    if (!t) return sniprintf(out, cap, CORE_STR("seq=lock:T:S:P:V (P 1..16 the machine's, 17..24 FX1 / FX2 P2..P5, 25..32 INSERT A / B P1..P4, 33..37 ARP MODE SPD RNG GATE SWNG; V 0..127, -1 off)")), true;
     Step& st_ = t->step[si];
     bool ok = a[3] < 0 ? clear_lock(st_, prm) : set_lock(st_, prm, clampi(a[3], 0, 127) << 7);
     replan(r);
@@ -4622,7 +4716,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     int r = atoi(p + 9) - 1;
     const char* q = strchr(p + 9, ':');
     if (r < 0 || r >= kRytmTracks)
-      return sniprintf(out, cap, CORE_STR("seq=poly:T[:auto|voices=0..8,alloc=reassign|rotate|reset,unison=1..8,detune=0..127,spread=0..127,group=0..4]")), true;
+      return sniprintf(out, cap, CORE_STR("seq=poly:T[:auto|voices=0..8,alloc=reassign|rotate|reset,unison=1..8,detune=0..127,spread=0..127,group=0..4,oct=-3..3]")), true;
     Track* t = q ? slot_for(r) : track_of(*cur, r, false);
     PolyCfg c = cfg_of(t, r);
     if (q) {

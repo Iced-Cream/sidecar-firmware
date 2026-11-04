@@ -135,6 +135,21 @@ static void setup_card() {
   CHECK(f);
   fprintf(f, "<region> sample=c4.wav pitch_keycenter=60\n");
   fclose(f);
+  // 7q: an Elektron .elmulti one level deeper than the .sfz instruments (/MULTISAMPLE/elmulti/<name>/), its WAVs beside it,
+// names with spaces and '#'. SYNTHETIC text in the shape of the format's description (never a real instrument)
+  CHECK(system(("mkdir -p '" + g_card + "/MULTISAMPLE/elmulti/pad'").c_str()) == 0);
+  wg::write_file(g_card + "/MULTISAMPLE/elmulti/pad/pad C2 V110.wav", wg::wav_bytes(24000, 1, 16, 48000, 1, "", tone(130.8)));
+  wg::write_file(g_card + "/MULTISAMPLE/elmulti/pad/pad F#2 V110.wav", wg::wav_bytes(24000, 1, 16, 48000, 1, "", tone(185.0)));
+  f = fopen((g_card + "/MULTISAMPLE/elmulti/pad/pad.elmulti").c_str(), "w");
+  CHECK(f);
+  fprintf(f, "# ELEKTRON MULTI-SAMPLE MAPPING FORMAT\nversion = 0\nname = 'pad'\n");
+  const char* nm[2] = {"pad C2 V110.wav", "pad F#2 V110.wav"};
+  for (int i = 0; i < 2; ++i)
+    fprintf(f, "\n[[key-zones]]\npitch = %d\nkey-center = %d.0\n\n[[key-zones.velocity-layers]]\nvelocity = 0.99607843\n"
+               "strategy = 'Forward'\n\n[[key-zones.velocity-layers.sample-slots]]\nsample = '%s'\nloop-mode = 'Forward'\n"
+               "loop-start = 1000\nloop-end = 20000\nloop-crossfade = 32\nkeep-looping-on-release = true\n",
+            48 + 6 * i, 48 + 6 * i, nm[i]);
+  fclose(f);
   host_set_card(g_card.c_str());
 }
 
@@ -247,6 +262,19 @@ static void test_banks() {
   // MULTISAMPLE: INST B001 plays the .sfz, B000 (OFF) has no instrument
   CHECK(pu::put(pools::kInstr, "B001", "/Samples/Keys/piano/piano.sfz") == pools::kOk);
   CHECK(!strcmp(msamp::entry_name(129), "piano"));
+  // 7q: the browser finds the .elmulti in /MULTISAMPLE/elmulti/pad (folders under /MULTISAMPLE are browsable like /Samples),
+  // INST takes it, and the entry reads through the .sfz reader's parse(): its two WAVs (spaces, '#') are its members
+  {
+    const char* n = nullptr;
+    bool dir = false;
+    CHECK(srclib::cd(srclib::kMs, "/MULTISAMPLE/elmulti/pad"));
+    idle();
+    CHECK(srclib::count(srclib::kMs) == 1 && srclib::item(srclib::kMs, 0, &n, &dir, nullptr) && !strcmp(n, "pad.elmulti") && !dir);
+    CHECK(pu::put(pools::kInstr, "B002", "/MULTISAMPLE/elmulti/pad/pad.elmulti") == pools::kOk);
+    tick(200);
+    CHECK(!strcmp(msamp::entry_name(130), "pad"));
+    CHECK(pools::at(pools::kInstr, 130).nm == 2);
+  }
   wg::params(kMultiMachine, 2, {1 + 1 / 8.0f, 64, 100, 0, 64, 64, 64, 64, 64, 64, 0, 0, 0, 0, 0, 0});
   idle();
   tick(200);
@@ -280,7 +308,7 @@ static void test_banks() {
 }
 
 // 3. the pool RAM (core/pool/pcache.h): a WAV played by GRANULAR and a member of an instrument is one copy; the RAM
-// figure; an unloaded row's audio leaves; the preload follows the used set at a project's (re)load
+// figure; an unloaded row's audio leaves; nothing is preloaded at a project's (re)load
 static void test_shared_ram() {
   FILE* f = fopen((g_card + "/Samples/Drums/Kicks/kick.sfz").c_str(), "w");
   CHECK(f);
@@ -317,7 +345,8 @@ static void test_shared_ram() {
   lib::Ref kr;
   lib::ref_for_path("/Samples/Drums/Kicks/kick.wav", &kr);
   CHECK(pcache::find(kr, 0) < 0 || pcache::stats().ready < s1.ready);
-  // the preload: rows seen playing come back into RAM when the project is read again (no voice on them)
+  // no preload (BACKLOG 7ad: a project load loads no sample sets): a row seen playing does not come back into RAM when the
+  // project is read again, not before a voice wants it; nor a DSP SAMPLE row (bank A) when it goes into the list
   CHECK(pu::put(pools::kSamples, "B050", "/Samples/Drums/clap.aif") == pools::kOk);
   pools::seen(pools::kSamples, pools::code(1, 50));
   tick(1500);   // (the used set written)
@@ -330,8 +359,12 @@ static void test_shared_ram() {
   snprintf(core::project, sizeof core::project, "%s", "");
   for (int i = 0; i < 400 && (strcmp(pools::project(), "_default") || !pools::ready()); ++i) tick(10);
   tick(500);
-  CHECK(pcache::find(cr, pcache::kWhole) >= 0);   // preloaded
-  printf("test_srclib: shared pool RAM, unload, preload ok\n");
+  CHECK(pcache::find(cr, pcache::kWhole) < 0);
+  CHECK(pu::put(pools::kSamples, "B050", "") == pools::kOk);
+  CHECK(pu::put(pools::kSamples, "A099", "/Samples/Drums/clap.aif") == pools::kOk);
+  tick(500);
+  CHECK(pcache::find(cr, pcache::kWhole) < 0);
+  printf("test_srclib: shared pool RAM, unload, no preload ok\n");
 }
 
 // ---- the browser's listings from the library's RAM index (Task 6b): never a card read on the control core

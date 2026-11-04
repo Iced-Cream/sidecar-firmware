@@ -1,0 +1,32 @@
+{
+  "id": "sophie.perc",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "SOPHIE",
+  "short": "SOPH",
+  "licence": "MIT (Sophie DSP: Matt Estela)",
+  "page2": "params",
+  "page2_title": "SOPHIE MORE",
+  "max_voices": 8,
+  "pitch": "note",
+  "knobs": [
+    {"p": 1, "long": "Tune", "short": "TUN", "look": "centred", "text": "bipolar", "default": 54},
+    {"p": 2, "long": "Model", "short": "MODL", "look": "list", "text": "enum",
+     "names": ["FUSE", "STACK", "SPLIT", "SHARD", "KICK", "KICK ST", "KICK SP", "KICK SH"], "default": 72},
+    {"p": 3, "long": "Color", "short": "COLR", "look": "dial", "text": "number", "default": 30},
+    {"p": 4, "long": "Metal", "short": "METL", "look": "dial", "text": "number", "default": 10},
+    {"p": 5, "long": "Feedback", "short": "FDBK", "look": "dial", "text": "number", "default": 8},
+    {"p": 6, "long": "Sweep", "short": "SWP", "look": "centred", "text": "bipolar", "default": 99},
+    {"p": 7, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 58},
+    {"p": 8, "long": "Crush", "short": "CRSH", "look": "dial", "text": "number", "default": 0},
+    {"p": 9, "long": "Drive", "short": "DRV", "look": "dial", "text": "number", "default": 74},
+    {"p": 10, "long": "Cutoff", "short": "CUT", "look": "dial", "text": "number", "default": 127},
+    {"p": 11, "long": "Resonance", "short": "RES", "look": "dial", "text": "number", "default": 0},
+    {"p": 12, "long": "Filter Type", "short": "FLT", "look": "list", "text": "enum",
+     "names": ["LPF", "HPF", "NOTCH", "DJ", "BPF"], "default": 12},
+    {"p": 13, "long": "Ring Time", "short": "RTIM", "look": "dial", "text": "number", "default": 77},
+    {"p": 14, "long": "Ring Feedbk", "short": "RFB", "look": "dial", "text": "number", "default": 0},
+    {"p": 15, "long": "Ring Mix", "short": "RMIX", "look": "dial", "text": "number", "default": 0},
+    {"p": 16, "long": "Ring Tone", "short": "RTON", "look": "dial", "text": "number", "default": 89}
+  ]
+}

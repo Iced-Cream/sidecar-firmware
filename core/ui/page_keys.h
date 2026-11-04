@@ -81,6 +81,7 @@ static const sc_combo_t sc_rytm_mk2_combos[] = {
 	{"lfo", "UP+LFO", "SIDECAR LFOS", "LFO LFOS", "TRK+LFO", "LFO"},
 	{"ins", "UP+FX", "INSERT FX", "FX INSERT FX", "TRK+FX", "INSERT"},
 	{"out", "UP+AMP", "INSERT OUT VIEW", "AMP OUT", 0, 0},
+	{"arp", "UP+FLTR", "ARPEGGIATOR", "FLTR ARP", 0, "ARP"},	/* 7ae: 30 page 4 (rytm-mods 0026) */
 	{"copy", "T+UP+REC", "COPY STEPS (SEQ)", 0, "T+FUNC+REC", 0, "T+REC COPY"},
 	{"paste", "T+UP+STOP", "PASTE STEPS", 0, "T+FUNC+STOP", 0, "T+STOP PASTE"},
 	{"clear", "T+UP+PLAY", "CLEAR STEPS", 0, "T+FUNC+PLAY", 0, "T+PLAY CLEAR"},

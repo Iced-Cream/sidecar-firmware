@@ -93,9 +93,11 @@ uint64_t host_card_us(int core);                           // modeled card time 
 void host_power_cut(int64_t after);
 // tests: opening this card path fails (a card error on a file that is there), until set off
 void host_fail_open(const char* card_path, bool on);
+void host_short_write(int bytes);                          // the next write stops after this many bytes (a full card)
 void host_fail_close(const char* path, bool on);   // that file's close() false (FatFs's f_close failed), closed anyway
 // tests: listing this card folder (File::nextEntry) fails after `after` entries - nextFailed() true - until set off
 void host_fail_readdir(const char* card_path, int after, bool on);
+void host_fail_read(const char* card_path, uint64_t at, bool on);   // reads of the file fail from byte at
 // tests: Fs::lookup / exists of this card path is a card error (-1 / false), until set off
 void host_fail_lookup(const char* card_path, bool on);
 uint64_t host_changes();

@@ -30,7 +30,9 @@
 // allowlist from elektroid's src/connectors/elektron.c, so an unknown id fails closed): the +Drive's writes. Each has
 // its own switch, off at every boot and with the bridge. The RPC command is decoded whatever the device byte (m[4]),
 // except the Rytm's own dumps and requests (device 07, id 0x50..0x6F at m[6]) and analoghealth's channel (device 7D),
-// whose bytes are not RPC.
+// whose bytes are not RPC. The OS-upgrade part is midi_filter.h's os_upgrade, the same rule as the USB-C port's filter:
+// with the os switch on only os_upgrade::pass goes through (the image on device 0C, the RPC's 50..52), the image shape
+// on any other device byte stays blocked.
 // (The stock OS drops device 7D, which suggests its RPC parser checks the device byte; decoding all others is defence
 // in depth.) Anything else - kit and pattern dumps, the mods' own SysEx - passes.
 #pragma once
@@ -38,6 +40,7 @@
 #include <string.h>
 
 #include "lib/sha256.h"
+#include "midi_filter.h"	// os_upgrade: the OS-upgrade rule shared with the USB-C port
 
 namespace midibridge {
 
@@ -76,15 +79,11 @@ inline bool rpc_read(uint8_t cmd) {
   }
 }
 inline Kind classify(const uint8_t* m, unsigned n) {
-  if (n < 8 || m[0] != 0xF0 || m[1] != 0x00 || m[2] != 0x20 || m[3] != 0x3C || m[5] != 0x00) return kPlain;
-  if (m[6] == 0x7E || m[6] == 0x7F) return kOsUpgrade;			// the .syx image's messages
-  if (m[4] == 0x7D) return kPlain;					// analoghealth's channel
-  if (m[4] == 0x07 && m[6] >= 0x50 && m[6] <= 0x6F) return kPlain;	// the Rytm's dumps and dump requests
-  // 8-to-7: m[6] holds the first group's top bits, m[7..13] its bytes: seq hi, seq lo, resp hi, resp lo, command
-  if (n < 13) return kPlain;
-  uint8_t cmd = (uint8_t)((m[11] | ((m[6] & (0x40 >> 4)) ? 0x80 : 0)) & 0x7F);	// a reply's bit: refused all the same
-  if (cmd >= 0x50 && cmd <= 0x52) return kOsUpgrade;
-  return rpc_read(cmd) ? kPlain : kDataWrite;		// an allowlist: an unknown id fails closed
+  const int k = (int)n;					// at most kMaxMsg
+  if (os_upgrade::any(m, k)) return kOsUpgrade;			// the image (any device byte), the RPC's 50..52
+  int cmd = os_upgrade::rpc_command(m, k);			// not RPC: analoghealth's 7D, the Rytm's own dumps
+  if (cmd < 0) return kPlain;
+  return rpc_read((uint8_t)cmd) ? kPlain : kDataWrite;	// an allowlist: an unknown id fails closed
 }
 inline bool is_os_upgrade(const uint8_t* m, unsigned n) { return classify(m, n) == kOsUpgrade; }
 
@@ -430,7 +429,7 @@ class ToRytm {
  private:
   bool refused(const uint8_t* m, unsigned n) {
     Kind k = classify(m, n);
-    if (k == kOsUpgrade && !os_) { st_.blocked++; return true; }
+    if (k == kOsUpgrade && !(os_ && os_upgrade::pass(m, (int)n))) { st_.blocked++; return true; }
     if (k == kDataWrite && !data_) { st_.blocked_data++; return true; }
     return false;
   }

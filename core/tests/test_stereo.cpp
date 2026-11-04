@@ -195,7 +195,7 @@ int main() {
           break;
         }
     CHECK(fo >= 0 && rec.channels == 2);
-    static uint8_t head[rytm::StreamVoice::kHead], ring[rytm::StreamVoice::kRing];
+    static uint8_t head[rytm::StreamVoice::kHead], ring[rytm::StreamVoice::kRingBytes];
     static rytm::StreamVoice sv;
     sv.attach(head, ring);
     CHECK(sv.prepare(idx, fo, 0, 0.0f));
@@ -203,14 +203,22 @@ int main() {
     std::vector<float> L, R, M;
     float l[12], r[12];
     for (int b = 0; b < 2000; ++b) {
-      while (sv.refill()) {}
+      for (bool more = true; more;) {   // (a card core here: requests)
+        more = sv.refill() != 0;
+        more = cardq::service() != nullptr || more;
+        sv.step(now_us());
+      }
       sv.render(0, 0, 1, false, 1.0f, l, 12, r);
       L.insert(L.end(), l, l + 12), R.insert(R.end(), r, r + 12);
     }
     for (int i = 0; i < 24000; ++i) CHECK(L[i] == q16(sig(i, 0)) / 32768.0f && R[i] == q16(sig(i, 1)) / 32768.0f);
     sv.trigger();
     for (int b = 0; b < 2000; ++b) {
-      while (sv.refill()) {}
+      for (bool more = true; more;) {   // (a card core here: requests)
+        more = sv.refill() != 0;
+        more = cardq::service() != nullptr || more;
+        sv.step(now_us());
+      }
       sv.render(0, 0, 1, false, 1.0f, l, 12);
       M.insert(M.end(), l, l + 12);
     }

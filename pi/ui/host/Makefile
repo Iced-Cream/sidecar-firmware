@@ -16,18 +16,18 @@ SEQFLAGS = -std=c++17 -O1 -Wall -Wno-unused-function -DCORE_POLY=1 -DCORE_MSAMP=
 	   -I$(CORE)/../teensy/libraries/RytmPlugins/src -I$(CORE)/../sdk -I$(ENG)/Plaits -I$(ENG)/Juno -I$(ENG)/DaisySP \
 	   -I$(ENG)/Sampler -I obj -I $(LVGL) -DLV_CONF_INCLUDE_SIMPLE
 UI_C := ../sidecar_ui.c ../sidecar_theme.c ../sidecar_dot.c ../sidecar_dotfont.c ../sidecar_wordmark.c ../sidecar_seqed.c \
-	../sidecar_rytmpat.c ../rytm_pattern.c ../sidecar_wgview.c ../sidecar_voice.c ../sidecar_insfx.c ../sidecar_song.c ../sidecar_rec.c \
-	../sidecar_scope.c ../sidecar_status.c ../sidecar_project.c ../sidecar_chop.c ../touch_cal.c rytm_fake.c
+	../sidecar_rytmpat.c ../rytm_pattern.c ../sidecar_wgview.c ../sidecar_voice.c ../sidecar_insfx.c ../sidecar_mfx.c ../sidecar_song.c ../sidecar_rec.c \
+	../sidecar_scope.c ../sidecar_status.c ../sidecar_project.c ../sidecar_chop.c ../sidecar_preset.c ../sidecar_font28.c ../touch_cal.c rytm_fake.c
 UI_O := $(addprefix obj/ui-,$(notdir $(UI_C:.c=.o)))
 SEQ_O := obj/seq_touch.o obj/seqdemo.o obj/seq_pattern.o obj/seq_music.o obj/seq_xcmd.o obj/poly.o obj/rytm_dump.o obj/inst_alloc.o
 UI_H := ../sidecar_ui.h ../sidecar_theme.h ../sidecar_dot.h ../sidecar_dotfont.h ../sidecar_seqed.h ../sidecar_rytmpat.h \
-	../rytm_pattern.h ../seq_touch.h ../sidecar_wgview.h ../sidecar_voice.h ../sidecar_insfx.h ../sidecar_song.h ../sidecar_rec.h \
-	../sidecar_scope.h ../sidecar_status.h ../sidecar_project.h ../sidecar_chop.h ../touch_cal.h
+	../rytm_pattern.h ../seq_touch.h ../sidecar_wgview.h ../sidecar_voice.h ../sidecar_insfx.h ../sidecar_mfx.h ../sidecar_song.h ../sidecar_rec.h \
+	../sidecar_scope.h ../sidecar_status.h ../sidecar_project.h ../sidecar_chop.h ../sidecar_preset.h ../touch_cal.h
 
 # shots/: every page in both themes (oled-*.png, classic-*.png: home, sound, fx, display, about, hidden, home-info,
 # power, seq-*, rytm-*). ./shot also checks the commands the controls send and fails if a SEQ gesture does not reach the
 # model; it prints the draw costs. shot.png: the OLED home page.
-# SIZE=1024x600: the wide layouts, into shots-1024x600/ (and shot-1024x600.png); shots-all: both sizes
+# SIZE=1024x600 or 1280x720: those layouts, into shots-WxH/ (and shot-WxH.png); shots-all: all three sizes
 SIZE ?= 800x480
 SHOTS := $(if $(filter 800x480,$(SIZE)),shots,shots-$(SIZE))
 SHOTPNG := $(if $(filter 800x480,$(SIZE)),shot.png,shot-$(SIZE).png)
@@ -39,6 +39,18 @@ shot.png: shot
 shots-all: shot
 	$(MAKE) shot.png SIZE=800x480
 	$(MAKE) shot.png SIZE=1024x600
+	$(MAKE) shot.png SIZE=1280x720
+# shots-a4/: an A4 the box in use (./shot a4): its word and its T1..T4 on the splash, HOME, STATUS, REC, SCOPE, INSERT FX, Sound
+shots-a4: shot
+	@rm -rf obj/shots-a4; mkdir -p obj/shots-a4 shots-a4
+	./shot a4 obj/shots-a4 $(SIZE)
+	for f in obj/shots-a4/*.ppm; do sips -s format png $$f --out shots-a4/$$(basename $$f .ppm).png >/dev/null; done
+# bounds: the layouts compared (check_bounds.py), the 1024x600 and 1280x720 shots' objects
+bounds: shot
+	@rm -rf obj/bounds-1024 obj/bounds-1280; mkdir -p obj/bounds-1024 obj/bounds-1280
+	./shot obj/bounds-1024 1024x600 >/dev/null
+	./shot obj/bounds-1280 1280x720 >/dev/null
+	python3 check_bounds.py obj/bounds-1024 obj/bounds-1280
 # splash.png (OLED, the default) and splash-classic.png: the boot screen (sidecar_splash.c), no LVGL
 splash.png: ../sidecar_splash.c ../sidecar_splash.h ../sidecar_wordmark.c ../sidecar_dot.c ../sidecar_dotfont.c splash.c
 	@mkdir -p obj
@@ -100,6 +112,6 @@ obj/lv_conf.h: $(LVCONF)
 obj/%.o: $(LVGL)/%.c obj/lv_conf.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c -o $@ $<
-.PHONY: test clean anim shots-all shot.png splash-wide
+.PHONY: test clean anim shots-all shots-a4 shot.png splash-wide bounds
 clean:
 	rm -rf obj shot shot*.png seq-*.png rytm-*.png shots shots-* seq-oled.mp4 seq-oled.gif

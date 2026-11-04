@@ -36,7 +36,7 @@ constexpr uint32_t kCopyMax = 65536;     // kCopyReq: bytes a request copies at 
 // kAtomicReq (core/fmt/fmt.h write_atomic): buf[0..len) to path as kWriteReq does, but through <path>.tmp, read back and
 // renamed into place (the old file kept until the new one is whole); got the bytes written (-1 failed, the old file kept).
 // kExistsReq: got 1 when path is on the card (a file or a folder), 0 not (the pool lists: an open that failed on a file
-// that is there is an error, not an absent list)
+// that is there is an error, not an absent list); off 1: -1 when the card could not tell (Fs::lookup)
 // kRenameReq (core/bundle/rename.h): path renamed to the NUL-ended name in buf (a file or a folder); got 1 done, 0 not
 // (the target there already, or the card refused)
 // kListReq (2026-10-26, the RAM store's fill: core/store/store.h): the names of path's entries (a folder; its files and
@@ -58,16 +58,22 @@ constexpr uint32_t kCopyMax = 65536;     // kCopyReq: bytes a request copies at 
 // whose dir index is over 0xFFFF is left out.
 // kOpenAtReq (2026-10-30, um's preset load): f opened (core::kRead) as the entry with dir index off of the folder path
 // (a DirRec's index); got 1 opened, 0 not. f's fileSize() is known then (no card access to read it).
-// kFnReq (2026-10-31, the sample overview, core/ui/page_wave.cpp): r->fn(r) on the card core: a bounded piece of card work whose
-// results go to memory only its owner reads after the request's end.
+// kSmallReq (2026-10-31, um's slot map): a small file read whole: fmt::recover(path) (a power cut between write_atomic's
+// renames), path opened, read into buf[0..len), closed; got the bytes read, -1 not there or unreadable.
+// kAppendReq (2026-10-31, core/song/song.cpp's journal and take files): buf[0..len) written to path, opened, written and
+// closed in the request: off 0: its folders made, created or truncated; 1: appended; 2: its folders made, appended; got len, the bytes
+// written of a part, kAppendUnsure (all written, the close failed) or -1 (none).
+// kFnReq (2026-10-31, the project's JUNO / FM lists, core/pool/pool.cpp): r->fn(r) on the card core: a bounded piece of card
+// work whose results go to memory only its owner reads after the request's end.
 enum Kind : uint8_t { kOpenReq, kReadReq, kCloseReq, kWriteReq, kAtomicReq, kExistsReq, kRenameReq, kListReq, kCopyReq,
-                      kRemoveReq, kDirReq, kOpenAtReq, kFnReq, kKinds };   // (not kOpen / kRead: core::kRead is a file mode)
+                      kRemoveReq, kDirReq, kOpenAtReq, kSmallReq, kAppendReq, kFnReq, kKinds };   // (not kOpen / kRead: core::kRead is a file mode)
 struct DirRec {              // kDirReq's record
   uint16_t index;            // the entry's dir index (File::open(dir, index))
   uint8_t dir;               // 1 a folder
   char name[128];            // NUL-ended ("" when it had none)
 };
 constexpr int32_t kListMissing = -1, kListUnread = -2;
+constexpr int32_t kAppendUnsure = -2;   // kAppendReq: every byte written, the close failed (nothing to write again)
 enum State : uint32_t { kFree = 0, kPosted, kRunning, kDone, kCancelled };
 
 struct Req {
@@ -95,8 +101,14 @@ void wait(Req* r);           // until r is done (a running request: one card ope
 // (fmt's posted settings / pattern writes do not take back: they stay posted, fmt::post_held - phase 3, 2026-10-26)
 constexpr uint32_t kTakeBackUs = 200000;   // (over a card's own pauses inside a write: 100-137 ms measured)
 bool take_back(Req* r);
+void run_here(Req* r);       // a request the full queue refused, run here (counted as taken back)
 bool idle(const Req* r);     // done, cancelled or never posted: the caller may reuse r (and its File)
-void set_need(uint32_t ahead_ms, uint32_t low_ms);   // the neediest stream's audio ahead (~0u: no stream), each pass
+// The us the control core spent on the card since the last call (the control loop's slow-pass record: a step's time that is
+// really the card's): wait, take_back and run_here; here_note: the platform's own file calls, when one runs on that core
+uint32_t here_take();
+void here_note(uint32_t us);
+// the neediest stream's audio ahead (~0u: no stream), each pass; who: 0 MULTISAMPLE, 1 DSP SAMPLE, each with its own mark
+void set_need(uint32_t ahead_ms, uint32_t low_ms, int who = 0);
 // fix1041: a load's card operation, step by step on the control core (GRANULAR's and WAVETABLE's loads, a pool file's
 // write): call it each step with the same request until it returns true (done: r->got); false while it waits
 // (posted, running, or the queue full: posted at a later call). Nothing waits or spins. Without a card core it runs at

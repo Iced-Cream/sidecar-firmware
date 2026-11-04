@@ -9,6 +9,7 @@
 
 #include "fx/send_fx.h"   // RYTM_SENDFX_LARGE: 0 on the Teensy build
 #include "ui/page.h"
+#include "ui/tap_names.h"   // tap_source_name, tap_channel_of_voice (on their own for the Pi's rec_pi.cpp)
 #include "ui/ui.h"
 
 namespace core {
@@ -37,6 +38,11 @@ void keys_map(bool on);    // UP held alone (on: KEYS shown, T1..T10 lit) / let 
 bool keys_map_on();        // the map shows (the touchscreen shows it too)
 bool keys_map_over(bool on);   // rui1050: UP held alone over an open page (on: KEYS as its map); off: true when it showed
 void lfo_page_reset();   // ux1027: the LFO page back on its main view (the page left)
+// USER SLOTS (page_slots.cpp): U1..U5's machines (remote.h RemoteSlots), on the ring after SCOPE / AUTO and in the MENU
+extern const ExtraPage kSlotsPage;
+void slots_page_reset();   // tests: row U1, no pick, no note
+int slots_page_row();      // tests: the row (0..4)
+int slots_page_pick();     // tests: the pick (-1 none, 0 "---", 1.. the installed entry + 1)
 void keys_map_drop();      // a hello or the page closed: the map (and its touchscreen overlay) gone
 void menu_reset();         // tests
 int menu_rows();                     // rui1051 (tests): the MENU's rows and the page title of row i (null: KEYS)
@@ -47,6 +53,7 @@ enum : uint8_t { kLedOff = 0, kLedBlueDim = 43, kLedBlue = 47, kLedOrange = 52, 
 inline uint8_t extra_encs(const ExtraPage& x) { return x.encs_now ? x.encs_now() : x.encs; }
 int extra_pages();                    // how many there are (shown or not)
 const ExtraPage& extra_page(int i);   // in the page order
+bool extra_for_box(const char* title);   // this page means something on the box in use (the Rytm: all do): device.h Feature
 
 // ---- the Overbridge input tap. Channels as the Rytm sends them (ob_block.h): 0 / 1 MAIN L / R, 2 + t track t's voice
 // (BD SD RS BT LT MT CH CY), 10 / 11 AUDIO IN L / R; int32 full scale.
@@ -66,8 +73,7 @@ void tap_enable(bool on);
 // The scope's source: 0 MAIN (L + R) / 2, 1..8 Sidecar voice 1..8 (its track's channel), 9 / 10 AUDIO IN L / R.
 constexpr int kTapSources = 11;
 void tap_source(int src);
-const char* tap_source_name(int src);   // "MAIN" "BD" "SD" "RS/CP" .. "CY/CB" (track order) "IN L" "IN R"
-int tap_channel_of_voice(int vi);       // the IN channel of Sidecar voice vi (0..7)
+// tap_source_name, tap_channel_of_voice: ui/tap_names.h
 // The peaks since the last call, |x| >> 16 (0..32767), channel order; the entries since *rd as (min, max) >> 16, at most
 // max, oldest first (an overrun skips to the oldest still held); returns how many.
 void tap_take_peaks(uint16_t out[kTapCh]);
@@ -145,11 +151,13 @@ struct NeRoll {   // the last NOTE EDIT frame's roll (tests)
 NeRoll ne_roll_shown();
 extern const ExtraPage kSongPage;  // SONG RECORD (page_song.cpp, core/song/song.h), last
 extern const ExtraPage kInsPage;   // fx-ins: the INSERT page (page_ins.cpp, core/fx/insert.h), after SEQ
+extern const ExtraPage kMasterPage;   // the master FX (page_mfx.cpp, core/fx/master.h), after INSERT
 void ins_open_out();   // rui1047: the INSERT page on its OUT view of the Rytm's selected track (UP + AMP: 30 page 3)
 // rui1048: POLY CONFIG (page_poly.cpp): a track's poly config (seq.h PolyCfg) on the Rytm's screen. poly_page_open: the
 // device's page request for track t (the Rytm's track menu item: 30 page 0x20 + t, from_menu: NO goes back to the stock
 // screen) or the SIDECAR MENU's entry (t -1: the Rytm's selected track); poly_page_closed: the page closed
 extern const ExtraPage kPolyPage;
+extern const ExtraPage kArpPage;   // the arpeggiator (core/arp/arp.h)
 void poly_page_open(int track, bool from_menu);
 // CHOP (page_chop.cpp, core/chop/chop.h): the SRC view's page for the machine, its picture, and the slice editor (page
 // "CHOP", off the ring). chop_src_push: a push of encoder B..H on a CHOP track's SRC view (31 0x71..0x77) opens the editor
@@ -170,6 +178,7 @@ int poly_page_track();   // the track it shows (tests)
 #if CORE_UI_TOOLS
 // tests and the renderer: the view (track -1: the Rytm's; out: the OUT view; eq: ins1112's EQ view, RIGHT)
 void ins_page_set(bool bus, int slot, int busel, int track, bool out = false, bool eq = false);
+void mfx_page_set(int slot, bool eq);
 #endif
 #endif
 #if CORE_POLY && CORE_MSAMP

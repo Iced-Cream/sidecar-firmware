@@ -10,6 +10,7 @@
 #include "fx/send_fx.h"
 #include "hooks.h"
 #include "machines.h"
+#include "msamp/cardq.h"
 #include "platform.h"
 #include "pool/pool.h"
 #include "seq/rytm_dump.h"
@@ -23,6 +24,8 @@ namespace song {
 // ---- paths: the project's folder (core/project_key.h). Phase 0: a folder named by the old rule (spaces and dots as
 // '_', no trim, "_none") is renamed to the key's once, when the key's does not exist yet; with both there the key's is
 // used and the old one left alone.
+static char g_mig_old[64], g_mig_new[64];   // a folder to rename once (idle(), through the card queue)
+static uint8_t g_mig = 0;
 void folder(char* b, int cap) {
   static char s_done[kKeyMax + 1] = {1, 0};   // the project the migration was checked for (none yet)
   char k[kKeyMax], o[kKeyMax];
@@ -32,12 +35,9 @@ void folder(char* b, int cap) {
   sniprintf(s_done, sizeof s_done, "%s", project);
   project_key_song_v0(project, o, sizeof o);
   if (!strcmp(o, k)) return;
-  char old[64];
-  sniprintf(old, sizeof old, "/.rytm/songs/%s", o);
-  Fs fs;
-  if (fs.exists(b) || !fs.exists(old)) return;
-  if (fs.rename(old, b)) log(CORE_STR("song: %s -> %s (the project key, once)"), old, b);
-  else log(CORE_STR("song: cannot rename %s to %s"), old, b);
+  sniprintf(g_mig_old, sizeof g_mig_old, "/.rytm/songs/%s", o);
+  sniprintf(g_mig_new, sizeof g_mig_new, "%s", b);
+  g_mig = 1;
 }
 
 namespace {
@@ -90,20 +90,26 @@ struct Engine {
   bool fetch_for_arm = false;
   // the clock mask
   bool clock_on = false;
-  // card: the journal
-  Buf jbuf;
-  File jf;
-  bool jopen = false;
-  uint32_t jbar = 0, jsync_bar = 0;
+  // 7z (2026-10-31): every card operation here is a request (core/msamp/cardq.h), one Req per user that can run at the same
+  // time as another; idle() takes the results, nothing waits and nothing touches the card on the control core.
+  // card: the journal: jbuf gathers, jout is on its way (kAppendReq: each flush opened, written, closed on the card core)
+  Buf jbuf, jout;
+  cardq::Req jrq;
+  bool jfirst = false;       // its first write: the file created (the folders made)
+  uint32_t jretry = 0;
+  int jfails = 0;            // writes failed in a row: the saved take goes on without them
+  uint32_t jbar = 0;
   int jevents = 0, jwritten = 0;   // events in the journal so far
   char jpath[96] = "";
   // card: a writer (the song file, a backup, a recovered take)
   JsonGen gen;
   Buf wbuf;
-  File wf;
+  cardq::Req wrq;
+  enum : uint8_t { kWsPiece, kWsRemove, kWsRename, kWsDropTmp, kWsJournal, kWsSource } ws = kWsPiece;
+  bool wfirst = false, wposted = false, wmore = false, wok = false;
   bool writing = false;
   int write_kind = 0;        // 1 song, 3 recovered (the backup: fmt's posted queue, EnginePort::backup)
-  char wpath[96] = "", wtmp[100] = "";
+  char wpath[96] = "", wtmp[100] = "", wsrc[96] = "";   // wsrc: the journal a recovered take came from
   Take scratch;              // a backup / a recovered take being written
   // UNDO REPLAY's backup sets (song.h): set[cur] the undo's, set[1 - cur] the one a confirm writes; each entry a file,
   // formatted in idle() (jobs), into the RAM store and fmt's posted queue (fid: its write's id, 0 once it is on the card)
@@ -141,20 +147,39 @@ struct Engine {
   uint32_t pc_ms = 0;            // the Sidecar's own last PC (its 2D 02 report is not the user's pattern change)
   // card: a reader
   File rf;
+  cardq::Req rrq;
+  bool rabort = false;
+  int rtake_i = -1;          // take_i before a load began (its open failed: back)
+  char rbad[100] = "";
   Buf rtext;
   JsonRead rd;
-  int read_stage = 0;        // 0 none, 1 reading the file, 2 parsing
+  int read_stage = 0;        // 0 none, 1 reading the file, 2 parsing, 3 its open, 4 its close, 5 a bad journal renamed
   char rpath[96] = "";
   bool read_recover = false; // a journal (recovered into scratch, then written)
   // the takes in the project's folder
   char takes[kMaxTakes][40];
   int ntakes = 0, take_i = -1;
-  bool list_due = false;
+  int take_hi = 0;           // the highest take-NNN seen in the project's folder (.json and .jsonl, listed or not): where a
+                             // name starts; each candidate is then asked of the card (name_step: a walk can fail or be old)
+  cardq::Req nrq;
+  uint8_t an = 0;            // the name's check under way: 1 its .json, 2 its .jsonl
+  int an_n = 0;
+  bool name_unchecked = false;   // the last name's check failed: its journal never truncates
+  bool list_due = false, arm_due = false;
+  // the folder's walk (the take list and the journals to recover: one pass)
+  cardq::Req lrq;
+  File ld;
+  cardq::DirRec lrec[8];
+  int ls = 0;                // 0 none, 1 the folder's open, 2 its entries, 3 its close
+  bool lfor_list = false, lfor_rec = false;
+  char lnew[kMaxTakes][40];
+  int ln = 0, lhi = 0;
+  char lfound[64] = "";
   char project_seen[24] = "\x01";
   bool recover_scan_due = false;
   // the Sidecar's own (polled)
   uint8_t fx_send[kTracks][2], fx_knob[2][6], fx_route;
-  int8_t mach[kTracks];
+  int16_t mach[kTracks];   // (a voice byte: MIDI's is 0x80 and up)
   int16_t src[kTracks];   // rui1038: P1's 14 bits as last recorded (-2: not polled yet)
   uint32_t poll_ms = 0;
   // the display
@@ -210,58 +235,140 @@ void request(uint8_t id) {
 bool card() { return card_ok; }
 
 // ---- the take list (the project's *.json, newest name last: take-001 ...)
-void list_takes() {
+bool read_begin(const char* path, bool recover);
+void arm();
+// The folder's rename, once (folder()): by requests, before anything reads the folder.
+bool mig_step() {
   Engine& e = eng();
-  e.ntakes = 0;
-  if (!card()) return;
-  char d[64];
-  folder(d, sizeof d);
-  File dir, f;
-  if (!dir.open(d, kRead)) return;
-  while (f.openNext(&dir, kRead) && e.ntakes < kMaxTakes) {
-    char nm[64];
-    f.getName(nm, sizeof nm);
-    bool isdir = f.isDir();
-    f.close();
-    int l = (int)strlen(nm);
-    if (isdir || nm[0] == '.' || l < 6 || strcmp(nm + l - 5, ".json")) continue;
-    nm[l - 5] = 0;
-    sniprintf(e.takes[e.ntakes++], 40, "%s", nm);
+  if (g_mig == 1) {
+    if (!cardq::async(&e.lrq, cardq::kExistsReq, nullptr, g_mig_new, 0, nullptr, 0)) return false;
+    g_mig = e.lrq.got == 1 ? 0 : 2;
+    return true;
   }
-  dir.close();
-  for (int i = 1; i < e.ntakes; ++i)   // sorted by name
-    for (int j = i; j > 0 && strcmp(e.takes[j - 1], e.takes[j]) > 0; --j) {
-      char t[40];
-      memcpy(t, e.takes[j], 40), memcpy(e.takes[j], e.takes[j - 1], 40), memcpy(e.takes[j - 1], t, 40);
+  if (g_mig == 2) {
+    if (!cardq::async(&e.lrq, cardq::kExistsReq, nullptr, g_mig_old, 0, nullptr, 0)) return false;
+    g_mig = e.lrq.got == 1 ? 3 : 0;
+    return true;
+  }
+  if (!cardq::async(&e.lrq, cardq::kRenameReq, nullptr, g_mig_old, 0, (uint8_t*)g_mig_new, 0)) return false;
+  if (e.lrq.got == 1) log(CORE_STR("song: %s -> %s (the project key, once)"), g_mig_old, g_mig_new);
+  else log(CORE_STR("song: cannot rename %s to %s"), g_mig_old, g_mig_new);
+  g_mig = 0;
+  return true;
+}
+void list_end() {
+  Engine& e = eng();
+  e.ls = 0;
+  if (e.lhi > e.take_hi) e.take_hi = e.lhi;   // (never lowered: a walk that failed saw nothing)
+  if (e.lfor_list) {
+    e.ntakes = e.ln;
+    memcpy(e.takes, e.lnew, sizeof(e.takes[0]) * (size_t)e.ln);
+    for (int i = 1; i < e.ntakes; ++i)   // sorted by name
+      for (int j = i; j > 0 && strcmp(e.takes[j - 1], e.takes[j]) > 0; --j) {
+        char t[40];
+        memcpy(t, e.takes[j], 40), memcpy(e.takes[j], e.takes[j - 1], 40), memcpy(e.takes[j - 1], t, 40);
+      }
+    e.take_i = -1;
+    for (int i = 0; i < e.ntakes; ++i)
+      if (e.take_valid && !strcmp(e.takes[i], e.take.name)) e.take_i = i;
+  }
+  if (e.lfor_rec && e.lfound[0]) {   // a journal left: recovered (one a pass, more may follow)
+    char d[64], p[128];
+    folder(d, sizeof d);
+    sniprintf(p, sizeof p, "%s/%s", d, e.lfound);
+    if (read_begin(p, true)) e.recover_scan_due = true;
+  }
+  if (e.arm_due && !e.list_due) e.arm_due = false, arm();
+}
+// The project's *.json (newest name last: take-001 ...), the highest number there, a journal left: a request a step.
+// False while a request only waits.
+bool list_step() {
+  Engine& e = eng();
+  char d[64];
+  if (e.ls == 0) {
+    if (!e.list_due && !e.recover_scan_due) return false;
+    e.lfor_list = e.list_due;
+    e.lfor_rec = e.recover_scan_due && card() && e.state != kRec && !e.read_stage && !e.writing;
+    e.recover_scan_due = e.recover_scan_due && card() && !e.lfor_rec;   // (busy: again when it is over)
+    e.list_due = false;
+    if (!e.lfor_list && !e.lfor_rec) return false;
+    e.ln = e.lhi = 0, e.lfound[0] = 0;
+    if (!card()) {
+      list_end();
+      return true;
     }
-  e.take_i = -1;
-  for (int i = 0; i < e.ntakes; ++i)
-    if (e.take_valid && !strcmp(e.takes[i], e.take.name)) e.take_i = i;
+    e.ls = 1;
+  }
+  if (e.ls == 1) {
+    folder(d, sizeof d);
+    if (!cardq::async(&e.lrq, cardq::kOpenReq, &e.ld, d, 0, nullptr, 0)) return false;
+    if (e.lrq.got == 1) {
+      e.ls = 2;
+    } else {
+      list_end();
+      return true;
+    }
+  }
+  while (e.ls == 2) {   // (without a card core: the whole folder here, as before)
+    if (!cardq::async(&e.lrq, cardq::kDirReq, &e.ld, nullptr, 0, (uint8_t*)e.lrec, sizeof e.lrec)) return false;
+    int got = e.lrq.got;
+    for (int i = 0; i < got; ++i) {
+      char nm[64];
+      sniprintf(nm, sizeof nm, "%s", e.lrec[i].name);
+      int l = (int)strlen(nm);
+      bool json = l >= 6 && !strcmp(nm + l - 5, ".json"), jsonl = l > 6 && !strcmp(nm + l - 6, ".jsonl");
+      if (e.lrec[i].dir || nm[0] == '.') {
+        if (!e.lrec[i].dir && jsonl && !e.lfound[0]) sniprintf(e.lfound, sizeof e.lfound, "%s", nm);
+        continue;
+      }
+      if (jsonl && !e.lfound[0]) sniprintf(e.lfound, sizeof e.lfound, "%s", nm);
+      if ((json || jsonl) && !strncmp(nm, "take-", 5)) {
+        int v = 0;
+        for (const char* p = nm + 5; *p >= '0' && *p <= '9'; ++p) v = v * 10 + (*p - '0');
+        if (v > e.lhi) e.lhi = v;
+      }
+      if (!json || e.ln >= kMaxTakes) continue;
+      nm[l - 5] = 0;
+      sniprintf(e.lnew[e.ln++], 40, "%s", nm);
+    }
+    if (got != (int)(sizeof e.lrec / sizeof e.lrec[0])) e.ls = 3;
+  }
+  if (!cardq::async(&e.lrq, cardq::kCloseReq, &e.ld, nullptr, 0, nullptr, 0)) return false;
+  list_end();
+  return true;
 }
 
-// a free name: take-NNN after the highest (no wall clock on the Pi: numbered)
-void new_name(char* out, int cap) {
+// a free name: take-NNN after the highest (no wall clock on the Pi: numbered). Each candidate asked of the card, its .json and
+// its .jsonl (the walk may have failed or be old), so a take is never written over another (data-safety audit 1042).
+void arm_go();
+bool name_step() {
   Engine& e = eng();
-  int hi = 0;
-  for (int i = 0; i < e.ntakes; ++i)
-    if (!strncmp(e.takes[i], "take-", 5)) {
-      int v = 0;
-      for (const char* p = e.takes[i] + 5; *p >= '0' && *p <= '9'; ++p) v = v * 10 + (*p - '0');
-      if (v > hi) hi = v;
+  while (e.an) {
+    char d[64], p[112];
+    folder(d, sizeof d);
+    sniprintf(p, sizeof p, "%s/take-%03d.json%s", d, e.an_n, e.an == 1 ? "" : "l");
+    if (card()) {
+      if (!cardq::async(&e.nrq, cardq::kExistsReq, nullptr, p, 1, nullptr, 0)) return false;
+      if (e.nrq.got < 0) {   // the card could not tell: the walk's number, the journal appended to whatever is there
+        log(CORE_STR("song: %s not checked (a card error)"), p);
+        e.an = 0, e.an_n = e.take_hi + 1, e.name_unchecked = true;
+        arm_go();
+        return true;
+      }
+      if (e.nrq.got == 1 && e.an_n < e.take_hi + 1000) {
+        ++e.an_n, e.an = 1;
+        continue;
+      }
     }
-  // the list may be short (it failed to read, or holds kMaxTakes of more): the name is checked on the card too, so a
-  // take is never written over another (data-safety audit 1042)
-  char d[64], p[112];
-  folder(d, sizeof d);
-  Fs fs;
-  for (int n = hi + 1; n < hi + 1000; ++n) {
-    sniprintf(out, cap, "take-%03d", n);
-    sniprintf(p, sizeof p, "%s/%s.json", d, out);
-    if (card() && fs.exists(p)) continue;
-    sniprintf(p, sizeof p, "%s/%s.jsonl", d, out);
-    if (card() && fs.exists(p)) continue;
-    return;
+    if (e.an == 1 && card()) {
+      e.an = 2;
+      continue;
+    }
+    e.an = 0;
+    arm_go();
+    return true;
   }
+  return false;
 }
 
 // ---- the clock mask (seq's 2E): BD ticks while armed or replaying
@@ -337,7 +444,7 @@ void poll_sidecar(bool record) {
     int vb = ui::remote_track_machine(t);
     if (vb != e.mach[t]) {
       if (record && e.mach[t] != -2 && vb >= 0) e.rec.machine(t, vb, f, e.ms_now);
-      e.mach[t] = (int8_t)vb;
+      e.mach[t] = (int16_t)vb;
     }
     // rui1038: GRANULAR SRC / WAVETABLE TBL / MULTISAMPLE INST at 14 bits (the bank), from the SRC view's 2A and the
     // Sidecar's own 48 writes (ui::remote_track_src14); their 7-bit CC / NRPN on the track's channel are dropped
@@ -387,15 +494,11 @@ EnginePort g_port;
 bool write_begin(const Take* t, const char* path, int kind) {
   Engine& e = eng();
   if (e.writing || !card()) return false;
-  char d[64];
-  folder(d, sizeof d);
-  Fs fs;
-  fs.mkdir(d);
   sniprintf(e.wpath, sizeof e.wpath, "%s", path);
   sniprintf(e.wtmp, sizeof e.wtmp, "%s.tmp", path);
-  if (!e.wf.open(e.wtmp, kWrite)) return false;
   e.gen.begin(t, false);
   e.writing = true, e.write_kind = kind;
+  e.ws = Engine::kWsPiece, e.wfirst = true, e.wposted = false, e.wok = true;
   return true;
 }
 
@@ -565,55 +668,109 @@ bool EnginePort::relink(int k, const Buf& kit) {
   return true;
 }
 
+// A piece of the JSON a request (its folders made, the .tmp created at the first), then the old file removed, the .tmp renamed,
+// the journal or the recovered source removed: each a request. False while one only waits.
 bool write_step() {
   Engine& e = eng();
   if (!e.writing) return false;
-  e.wbuf.clear();
-  bool more = e.gen.next(e.wbuf);
-  bool ok = true;
-  if (e.wbuf.n && (int)e.wf.write(e.wbuf.p, e.wbuf.n) != e.wbuf.n) ok = false;
-  if (more && ok) return true;
-  e.wf.close();
-  Fs fs;
-  fs.remove(e.wpath);
-  ok = ok && fs.rename(e.wtmp, e.wpath);
-  if (!ok) fs.remove(e.wtmp);
-  e.writing = false;
+  if (e.ws == Engine::kWsPiece) {
+    if (!e.wposted) {
+      e.wbuf.clear();
+      e.wmore = e.gen.next(e.wbuf);
+      e.wposted = true;
+    }
+    if (e.wbuf.n || e.wfirst) {
+      if (!cardq::async(&e.wrq, cardq::kAppendReq, nullptr, e.wtmp, e.wfirst ? 0 : 1, e.wbuf.p, (uint32_t)e.wbuf.n)) return false;
+      if (e.wrq.got != e.wbuf.n) e.wok = false;
+    }
+    e.wfirst = e.wposted = false;
+    if (e.wmore && e.wok) return true;
+    // (a new take's name is free, and kRenameReq never goes over a file: only a recovered take replaces one)
+    e.ws = !e.wok ? Engine::kWsDropTmp : e.write_kind == 3 ? Engine::kWsRemove : Engine::kWsRename;
+    return true;
+  }
+  if (e.ws == Engine::kWsRemove) {
+    if (!cardq::async(&e.wrq, cardq::kRemoveReq, nullptr, e.wpath, 0, nullptr, 0)) return false;
+    e.ws = Engine::kWsRename;
+  }
+  if (e.ws == Engine::kWsRename) {
+    if (!cardq::async(&e.wrq, cardq::kRenameReq, nullptr, e.wtmp, 0, (uint8_t*)e.wpath, 0)) return false;
+    e.wok = e.wrq.got == 1;
+    e.ws = e.wok ? Engine::kWsJournal : Engine::kWsDropTmp;
+  }
+  if (e.ws == Engine::kWsDropTmp) {
+    if (!cardq::async(&e.wrq, cardq::kRemoveReq, nullptr, e.wtmp, 0, nullptr, 0)) return false;
+    e.ws = Engine::kWsJournal;
+  }
   int kind = e.write_kind;
-  if (ok && e.jpath[0] && kind == 1) fs.remove(e.jpath), e.jpath[0] = 0;
-  if (kind == 3 && ok) fs.remove(e.rpath);
-  set_msg(ok ? "saved %s" : "could not write %s", strrchr(e.wpath, '/') + 1);
+  if (e.ws == Engine::kWsJournal) {
+    if (e.wok && e.jpath[0] && kind == 1) {
+      if ((e.jout.n || e.jbuf.n) && e.jfails < 3) return false;   // (its last lines land first; the take is safe now anyway)
+      e.jout.clear(), e.jbuf.clear();
+      if (!cardq::async(&e.wrq, cardq::kRemoveReq, nullptr, e.jpath, 0, nullptr, 0)) return false;
+      e.jpath[0] = 0;
+    }
+    e.ws = Engine::kWsSource;
+  }
+  if (e.wok && kind == 3 && !cardq::async(&e.wrq, cardq::kRemoveReq, nullptr, e.wsrc, 0, nullptr, 0)) return false;
+  if (!e.wok && kind == 3) e.recover_scan_due = false;   // (it stays: not looked at again until the next visit)
+  e.writing = false;
+  set_msg(e.wok ? "saved %s" : "could not write %s", strrchr(e.wpath, '/') + 1);
   if (kind == 1 && e.state == kSaving) e.state = kOff;
   e.list_due = true;
   return true;
 }
 
 // ---- the journal
+// What jbuf gathered to the card, one request at a time; a failed write stays in jout and is tried again a second later.
+void journal_step() {
+  Engine& e = eng();
+  if (!e.jout.n) {
+    if (!e.jbuf.n || !e.jpath[0]) return;
+    e.jout.add(e.jbuf.p, e.jbuf.n);
+    e.jbuf.clear();
+  }
+  if (e.jretry && (int32_t)(e.ms_now - e.jretry) < 0) return;
+  if (!cardq::async(&e.jrq, cardq::kAppendReq, nullptr, e.jpath, e.jfirst ? (e.name_unchecked ? 2 : 0) : 1, e.jout.p, (uint32_t)e.jout.n)) return;
+  // (kAppendUnsure: all of it written, the close failed: nothing to write again)
+  if (e.jrq.got != e.jout.n && e.jrq.got != cardq::kAppendUnsure) {   // (what was written stays written: the rest next time, no line twice)
+    if (e.jfirst && !e.jretry) set_msg("cannot write the journal %s", strrchr(e.jpath, '/') ? strrchr(e.jpath, '/') + 1 : e.jpath);
+    if (e.jrq.got > 0) {
+      memmove(e.jout.p, e.jout.p + e.jrq.got, (size_t)(e.jout.n - e.jrq.got));
+      e.jout.n -= e.jrq.got;
+      e.jfirst = false;
+      e.jfails = -1;   // (it moved on)
+    }
+    ++e.jfails;
+    e.jretry = e.ms_now + 1000;
+    if (!e.jretry) e.jretry = 1;
+    return;
+  }
+  e.jout.clear();
+  e.jfirst = false;
+  e.jretry = 0;
+  e.jfails = 0;
+}
 void journal_open() {
   Engine& e = eng();
   if (!card()) return;
   char d[64];
   folder(d, sizeof d);
-  Fs fs;
-  fs.mkdir(d);
   sniprintf(e.jpath, sizeof e.jpath, "%s/%s.jsonl", d, e.take.name);
   e.jbuf.clear();
+  e.jout.clear();
   JsonGen g;
   g.begin(&e.take, true);
   while (g.next(e.jbuf)) {}
   e.jevents = e.jwritten = 0;
-  e.jbar = e.jsync_bar = 0;
-  e.jopen = e.jf.open(e.jpath, kWrite);
-  if (e.jopen) {
-    e.jf.write(e.jbuf.p, e.jbuf.n);
-    e.jbuf.clear();
-  } else {
-    set_msg("cannot write the journal %s", strrchr(e.jpath, '/') ? strrchr(e.jpath, '/') + 1 : e.jpath);
-  }
+  e.jbar = 0;
+  e.jfirst = true;
+  e.jretry = 0;
+  e.jfails = 0;
+  journal_step();
 }
 
-// events not yet journalled into the line buffer; written every bar or 64 events (or at STOP), the file closed and
-// reopened every 4 bars (the card's sync)
+// events not yet journalled into the line buffer; to the card every bar or 64 events (or at STOP)
 bool journal_flush(bool force) {
   Engine& e = eng();
   if (!e.jpath[0]) return false;
@@ -631,13 +788,7 @@ bool journal_flush(bool force) {
   e.jbar = bar;
   if (force) e.jbuf.addf("{\"end\":%u}\n", (unsigned)e.take.end);
   if (!e.jbuf.n) return false;
-  if (!e.jopen) e.jopen = e.jf.open(e.jpath, kAppend);
-  if (e.jopen) e.jf.write(e.jbuf.p, e.jbuf.n);
-  e.jbuf.clear();
-  if (force || bar >= e.jsync_bar + 4) {
-    e.jf.close(), e.jopen = false;
-    e.jsync_bar = bar;
-  }
+  journal_step();
   return true;
 }
 
@@ -645,33 +796,58 @@ bool journal_flush(bool force) {
 bool read_begin(const char* path, bool recover) {
   Engine& e = eng();
   if (e.read_stage || !card()) return false;
-  if (!e.rf.open(path, kRead)) return false;
   sniprintf(e.rpath, sizeof e.rpath, "%s", path);
   e.rtext.clear();
-  e.read_stage = 1, e.read_recover = recover;
+  e.read_stage = 3, e.read_recover = recover, e.rabort = false;
   return true;
 }
 
 bool read_step() {
   Engine& e = eng();
+  if (e.read_stage == 3) {
+    if (!cardq::async(&e.rrq, cardq::kOpenReq, &e.rf, e.rpath, 0, nullptr, 0)) return false;
+    if (e.rrq.got != 1) {   // not there: nothing began
+      e.read_stage = 0;
+      if (e.read_recover) e.recover_scan_due = false;
+      else if (e.state == kLoading) e.state = kOff, e.take_i = e.rtake_i;
+      return true;
+    }
+    e.read_stage = 1;
+  }
   if (e.read_stage == 1) {
-    if (!e.rtext.reserve(e.rtext.n + 16384 + 1)) { e.rf.close(), e.read_stage = 0; return true; }
-    int k = e.rf.read(e.rtext.p + e.rtext.n, 16384);
+    if (!e.rtext.reserve(e.rtext.n + 16384 + 1)) {
+      e.rabort = true;
+      e.read_stage = 4;
+      return true;
+    }
+    if (!cardq::async(&e.rrq, cardq::kReadReq, &e.rf, nullptr, (uint64_t)e.rtext.n, e.rtext.p + e.rtext.n, 16384)) return false;
+    int k = e.rrq.got;
     if (k > 0) {
       e.rtext.n += k;
       e.rtext.p[e.rtext.n] = 0;
       return true;
     }
-    e.rf.close();
+    e.read_stage = 4;
+  }
+  if (e.read_stage == 5) {
+    if (!cardq::async(&e.rrq, cardq::kRenameReq, nullptr, e.rpath, 0, (uint8_t*)e.rbad, 0)) return false;
+    if (e.rrq.got != 1) e.recover_scan_due = false;   // (it stays: not looked at again until the next visit)
+    e.read_stage = 0;
+    return true;
+  }
+  if (e.read_stage == 4) {
+    if (!cardq::async(&e.rrq, cardq::kCloseReq, &e.rf, nullptr, 0, nullptr, 0)) return false;
+    if (e.rabort) {
+      e.read_stage = 0;
+      return true;
+    }
     if (e.read_recover) {   // a journal: into scratch, then written as <name>.json
       char err[48];
       e.read_stage = 0;
       if (!recover_journal((const char*)e.rtext.p, e.rtext.n, &e.scratch, err, sizeof err)) {
         set_msg("cannot recover %s", strrchr(e.rpath, '/') ? strrchr(e.rpath, '/') + 1 : e.rpath);
-        Fs fs;
-        char bad[100];
-        sniprintf(bad, sizeof bad, "%s.bad", e.rpath);
-        fs.rename(e.rpath, bad);
+        sniprintf(e.rbad, sizeof e.rbad, "%s.bad", e.rpath);
+        e.read_stage = 5;
         return true;
       }
       char p[96];
@@ -679,6 +855,7 @@ bool read_step() {
       p[strlen(p) - 1] = 0;   // .jsonl -> .json
       log(CORE_STR("song: recovered %d events from %s"), e.scratch.n, e.rpath);
       if (!write_begin(&e.scratch, p, 3)) e.recover_scan_due = true;
+      else sniprintf(e.wsrc, sizeof e.wsrc, "%s", e.rpath);
       return true;
     }
     ++e.take_gen;
@@ -712,44 +889,32 @@ void load_take(int i) {
   char d[64], p[96];
   folder(d, sizeof d);
   sniprintf(p, sizeof p, "%s/%s.json", d, e.takes[i]);
+  e.rtake_i = e.take_i;
   if (read_begin(p, false)) e.state = kLoading, e.take_i = i;
-}
-
-// a journal left in the project's folder: recovered (one a pass)
-bool recover_scan() {
-  Engine& e = eng();
-  e.recover_scan_due = false;
-  if (!card() || e.state == kRec || e.read_stage || e.writing) return false;
-  char d[64];
-  folder(d, sizeof d);
-  File dir, f;
-  if (!dir.open(d, kRead)) return false;
-  char found[64] = "";
-  while (f.openNext(&dir, kRead)) {
-    char nm[64];
-    f.getName(nm, sizeof nm);
-    f.close();
-    int l = (int)strlen(nm);
-    if (l > 6 && !strcmp(nm + l - 6, ".jsonl")) { sniprintf(found, sizeof found, "%s", nm); break; }
-  }
-  dir.close();
-  if (!found[0]) return false;
-  char p[128];
-  sniprintf(p, sizeof p, "%s/%s", d, found);
-  if (read_begin(p, true)) e.recover_scan_due = true;   // (more may follow)
-  return true;
 }
 
 // ---- states
 void arm() {
   Engine& e = eng();
   if (e.state != kOff) { set_msg("busy (%s): not armed", state_name(e.state)); return; }
+  if (e.list_due || e.ls || strcmp(e.project_seen, project)) {   // the folder's walk first: the new take's number
+    if (strcmp(e.project_seen, project)) e.list_due = true;
+    e.arm_due = true;
+    return;
+  }
+  if (e.an) return;
+  e.an_n = e.take_hi + 1, e.an = 1, e.name_unchecked = false;
+  name_step();
+}
+void arm_go() {
+  Engine& e = eng();
+  if (e.state != kOff) return;
   if (e.undo) undo_end("armed");
   ++e.take_gen;
   e.take.clear();
   e.take_valid = true;
   sniprintf(e.take.project, sizeof e.take.project, "%s", project);
-  new_name(e.take.name, sizeof e.take.name);
+  sniprintf(e.take.name, sizeof e.take.name, "take-%03d", e.an_n);
   e.rec.arm(&e.take);
   e.rec.pattern = e.pattern;
   if (e.bpm > 0) e.rec.tempo(e.bpm, now_frame(), e.ms_now);
@@ -801,6 +966,7 @@ void rec_stop() {
   if (!write_begin(&e.take, p, 1)) {
     set_msg("cannot write %s: the journal keeps it", p);
     e.state = kOff;
+    e.list_due = true;   // (its number counts)
   } else {
     log(CORE_STR("song: %s stopped at bar %u, %d events"), e.take.name, (unsigned)(e.take.end / kBar + 1), e.take.n);
   }
@@ -1173,6 +1339,7 @@ CORE_COLD void tick(uint32_t ms) {
   if (strcmp(e.project_seen, project)) {   // a project named: its takes, its journals recovered
     sniprintf(e.project_seen, sizeof e.project_seen, "%s", project);
     e.list_due = e.recover_scan_due = true;
+    e.take_hi = 0;
     undo_end("another project");
   }
   if (e.bwait) {   // the confirm's set on the card (each file's own result), or not: the restore told
@@ -1273,18 +1440,15 @@ CORE_COLD void tick(uint32_t ms) {
 
 CORE_COLD bool idle() {
   Engine& e = eng();
+  if (g_mig) return mig_step();
+  journal_step();
+  if (name_step()) return true;
   if (e.state == kRec && journal_flush(false)) return true;
   if (undo_step()) return true;  // (UNDO REPLAY's read back: a file a pass)
   if (job_step()) return true;   // (UNDO REPLAY's backup files: formatted here a piece a pass, never in a SysEx handler)
   if (write_step()) return true;
   if (read_step()) return true;
-  if (e.list_due) {
-    e.list_due = false;
-    list_takes();
-    return true;
-  }
-  if (e.recover_scan_due) return recover_scan();
-  return false;
+  return list_step();
 }
 
 CORE_COLD Status status() {
@@ -1418,13 +1582,11 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
 
 CORE_COLD void reset() {
   if (E) {
-    if (E->jopen) E->jf.close();
-    if (E->writing) E->wf.close();
     if (E->read_stage == 1) E->rf.close();
     E->take.free(), E->scratch.free(), E->rst.backup.free(), E->rst.relinked.free(), E->jtext.free();
     for (int k = 0; k < kUndoMax - 1; ++k) E->rst.extra[k].free();
     for (int k = 0; k < kUndoMax; ++k) E->set[0][k].free(), E->set[1][k].free(), E->utake[k].free();
-    E->jbuf.free(), E->wbuf.free(), E->rtext.free();
+    E->jbuf.free(), E->jout.free(), E->wbuf.free(), E->rtext.free();
     delete E;
     E = nullptr;
   }

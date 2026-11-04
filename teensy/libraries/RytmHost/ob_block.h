@@ -96,14 +96,6 @@ inline void put_voice_frame(uint8_t* blk, int channels, int f, const int16_t* v,
   }
 }
 
-// Host -> device: a block's frames, the first `channels` of each row of F (a Digitakt takes 2 of the 12 the output stage makes).
-inline void put_frames(uint8_t* blk, int channels, const int32_t (*F)[kChannels]) {
-  for (int f = 0; f < kFramesPerBlock; ++f) {
-    uint8_t* fr = blk + kHeaderBytes + 4 * channels * f;
-    for (int c = 0; c < channels; ++c) put_be32(fr + 4 * c, F[f][c]);
-  }
-}
-
 // Device -> host.
 inline bool block_from_device(const uint8_t* blk) { return blk[0] == 0x07 && blk[1] == 0x00; }
 inline uint16_t block_counter(const uint8_t* blk) { return (uint16_t)(blk[2] << 8 | blk[3]); }

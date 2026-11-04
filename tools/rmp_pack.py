@@ -340,7 +340,7 @@ def _build(elf, man, manifest, ver, compat):
     body = bytes(image) + b"".join(struct.pack("<II", off | typ << 28, val) for off, typ, val in relocs) + manifest
     body += b"\0" * (-len(body) % 4)
     if package_format(man) > 3:
-        raise PackError("manifest type_labels.follows: an RMPA (Pi) package only (format 4; the Teensy shows no "
+        raise PackError("manifest type_labels.follows or a list over 16 names: an RMPA (Pi) package only (format 4, 5; the Teensy shows no "
                         "labels that follow a knob)")
     head = struct.pack(HEADER_FMT, 0x31504D52, package_format(man), api, man["id"].encode(), ver, compat,
                        len(image), bss, entry, len(relocs), len(manifest), header_flags(man), zlib.crc32(body) & 0xFFFFFFFF, b"\0" * 20)
@@ -370,16 +370,23 @@ def header_flags(m):
         f |= RMP_PITCH_NONE << RMP_HF_PITCH_SHIFT
     return f
 KNOB_KEYS = {"p", "long", "short", "look", "text", "names", "role", "min", "max", "default"}
-ENUM_NAME_BYTES, ENUM_MAX = 8, 16   # = RMP_ENUM_NAME_BYTES, RMP_ENUM_MAX in rmp_format.h
+ENUM_NAME_BYTES, ENUM_MAX = 8, 36   # = RMP_ENUM_NAME_BYTES, RMP_ENUM_MAX in rmp_format.h
 KNOB1_BYTES, KNOB2_BYTES, KNOB_BYTES = 20, 22, 26   # a knob in formats 1, 2, 3 (rmp_knob, rmp_knob3)
 HEAD2_BYTES, HEAD_BYTES = 64, 84                    # the manifest head in formats 1/2, 3 (rmp_manifest_head3)
-FORMAT = 4                          # = RMP_FORMAT, the newest; parse_manifest reads formats 1..4
+FORMAT = 5                          # = RMP_FORMAT, the newest; parse_manifest reads formats 1..5
 # Format 4 (2026-10-27, review of plugins/mdkit's MD) is format 3's manifest with an RLB2 block ("type_labels" with
 # "follows"): a host that does not read RLB2 would show the first list's names for every value of "follows", so the
 # package says it needs one (an older host refuses format 4). Every other package stays format 3, byte for byte.
+# Format 5 (0.4.0) is format 3 or 4 with a list of over 16 names (knob or type_labels list): a host of limit 16 would cut it to
+# 16 names, show those and leave the plugin playing v x N / 128 of all N, the wrong entry with no error: it refuses format 5.
+OLD_ENUM_MAX = 16
 def package_format(m):
     tl = m.get("type_labels")
-    return 4 if isinstance(tl, dict) and "follows" in tl else 3
+    tl = tl if isinstance(tl, dict) else {}
+    lists = [k.get("names") for k in m.get("knobs", []) if isinstance(k, dict)] + list(tl.get("lists") or [])
+    if any(isinstance(n, list) and len(n) > OLD_ENUM_MAX for n in lists):
+        return 5
+    return 4 if "follows" in tl else 3
 
 def _str(v, what, limit, required=True):
     if not isinstance(v, str):
@@ -545,6 +552,8 @@ def _labels(m):
     sets = tl["sets"]
     if dp is None:
         n = len(knobs[kp]["names"])
+        if n > LABELS_SETS1:
+            raise PackError(f"manifest type_labels.knob: P{kp}'s {n} names, the limit for labels following a list is {LABELS_SETS1}")
         if not isinstance(sets, list) or len(sets) != n:
             raise PackError(f"manifest type_labels.sets: must hold {n} sets (one per name of P{kp})")
     elif not isinstance(sets, list) or len(sets) != n:
@@ -646,7 +655,7 @@ def parse_relocs(rmp):
     return out
 
 def parse_manifest(rmp):
-    """The manifest of a package in formats 1..4 (1 and 2 with format 3's defaults; 4 reads as 3)."""
+    """The manifest of a package in formats 1..5 (1 and 2 with format 3's defaults; 4 and 5 read as 3)."""
     h = parse_header(rmp); p = 96 + h["image_size"] + 8 * h["reloc_count"]
     fmt = h["format"]
     name, short, lic, page2, n = struct.unpack_from("<10s4s48sBB", rmp, p); p += HEAD2_BYTES

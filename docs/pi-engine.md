@@ -11,8 +11,8 @@ Spec: `docs/superpowers/specs/2026-10-14-pi-engine-design.md`. Plan: `docs/super
   - the engines' sources;
   - the kernel, `pi/engine/kernel8-rpi4.img`. It links Circle (GPLv3), so the built image is GPLv3 as a whole.
   Everything builds in Docker (image `rytm-circle`).
-  The Raspberry Pi 5: `RASPPI=5 pi/engine/build.sh` -> `pi/engine/kernel_2712.img` (its own Circle tree, no USB-C gadget), the SD set by `pi/circle/make-sd-pi5.sh`: `docs/pi5.md`.
-  USB drives (`USB:`), the Pi 5's NVMe SSD (`NVME:`, Circle's `addon/nvme`, experimental; `nvme=0` skips it), exFAT behind `STOR_EXFAT=1` (off), and the storage bench `stor=bench[:VOL]`: `docs/STORAGE.md`.
+  The Raspberry Pi 5: `RASPPI=5 pi/engine/build.sh` -> `pi/engine/kernel_2712.img` (its own Circle tree, `circle-engine-pi5usb`, with the USB-C gadget: computer audio and MIDI on by default as on the Pi 4, `gadget=0` in `cmdline.txt` turns it off), the SD set by `pi/circle/make-sd-pi5.sh` or `make-sd-dual.sh`: `docs/pi5.md`. `PI5_GADGET=0` builds it without the gadget; `PI5_GADGET=1 PI5_TESTMODE=1` is the engine test mode for tryboots (`docs/pi5.md` "Engine test mode"), never on a release card.
+  USB drives (`USB:`), the Pi 5's NVMe SSD (`NVME:`, Circle's `addon/nvme`, experimental; only with `nvme=1`), exFAT behind `STOR_EXFAT=1` (off), and the storage bench `stor=bench[:VOL]`: `docs/STORAGE.md`.
 - After a change: `pi/engine/build.sh kernel && CIRCLE_TREE=circle-engine pi/circle/flash.sh ../engine 45`.
   - `flash.sh` builds the `.hex` and sends the reboot magic (`RYTM-REBOOT`, 921600 baud) to the running kernel.
   - It then uploads through the serial bootloader and logs SECS seconds to `pi/circle/out/engine-<time>.log`.
@@ -89,6 +89,8 @@ At boot, before the render loops start, every core runs the bench in turn (cores
 | `notes=on\|off` | off | MIDI channels 1..8 play voices 0..7 (the note adapter) |
 | `voicebudget=P` | 50 | a voice's budget in % of a block (5..100), the share measured at 1500 MHz: it is scaled by 1500 / the CPU clock (`cpumhz=`; "CPU clock" below). A voice is muted only when it is over budget while its render core is overloaded (its block took 80 % of a block or more), 200 blocks (50 ms) in a row; a burst never mutes. A muted voice is unmuted by `:unmute` or by a change of its machine |
 | `cpumhz=1500\|1200\|1000` | 1500 | the CPU clock option (Settings > System; `/.rytm/display.txt` has it too, cmdline wins). 1500 is the board's full clock; "CPU clock" below |
+| `a4=1` | 0 | an Analog Four MKII in OVERBRIDGE mode on USB-A: its MAIN goes into the Rytm's PRE pair (2 / 3) through an adaptive resampler, no A4 firmware mod (`ob_follow.h`, `drift_src.h`). `a4ch=N` the IN pair (default 0, MAIN), `a4att=N` dB down (default 6). A Rytm alone: unchanged. An A4 with the sidecar-mods `a4` mod needs no option: its hello makes it the Sidecar's box (docs/device-profiles.md) |
+| `idlewfe=0` | 1 | turns off the idle sleep added for the heat (core 0's loop, core 3's render wait; "Idle sleep" below); `:idlewfe=0` / `:idlewfe=1` on the console do it live, for an A/B |
 | `split=N` | 4 | voices 0..N-1 render on core 1, N..7 on core 2 (1..7) |
 | `display=0\|1` | 1 | the HDMI display and its USB touch, drawn from core 0's loop (`docs/pi-display.md`); `width=` `height=` (Circle's) set the frame buffer's size, else the firmware's mode |
 | `bench=0\|1` | 1 | the boot bench (6 machines x 4 cores, 1 s of audio each; see Measurements). A core that does not finish its bench in 20 s is fatal (`bench: core N did not finish ...`, clean stop, reboot into the bootloader); `bench=0` then boots without it |
@@ -180,8 +182,8 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
 
 **The diagnostics (leave them on in a release build).** All in `/status`, all on one scale: frames pulled since the last `Reset()` (48 per ms).
 - `outDiag`: where the counts fell (`preResetPulled`, `resetLevel`, `firstPullLevel`, `armAt`, `armLevel`, `restartFirst/Last`, `underFirst/Last`, `sinceReset`; -1: did not happen).
-- `stall`: the control loop's worst gap between two passes since the Reset, with the time of each section of that pass (`midi keys cmds tick render idle`); all small means the core was away.
-- `gaps`: the last 8 gaps over 2 ms, `[gap us, atFrames, wfe us, cntkctl, DAIF]`.
+- `stall`: the control loop's worst gap between two passes since the Reset, with the time of each section of that pass (`midi keys cmds tick render idle`); all small means the core was away. When the longest section is tick or idle: `step` and `stepUs`, its slowest named step (core/engine.h `IdleSlow`); `namedUs`, all its named steps (far under the section: the time went outside them); `cardHereUs`, core 3's own time on the card (`cardq::here_take`: a wait for a running request, a take-back, a file call on core 3). These stay until the next stream; `/log`'s 64 KB are gone in about 30 s, the log line `control: idle section ...` lives on in the black box.
+- `gaps`: the last 8 gaps over 2 ms, `[gap us, atFrames, wfe us, cntkctl, DAIF, section, its us, step, stepUs, namedUs, cardHereUs]`.
 - `mb` (the last 16 calls of at least 200 us) and `mbBoot` (the first 64 calls in the first 10 s of the current stream, **frozen** when full, cleared by the next stream): core 0's firmware calls and loop sections (`mbtrace.h` lists the ids; id 30 is a whole loop iteration of 1 ms or more). `:ctlwait=poll` makes the control loop spin instead of `wfe` for an A/B.
 - Cost (by reading the code, not measured): a few compares and an add per `Pull`, six counter reads and a 64-bit divide per control-loop pass (about every 152 us idle), two counter reads per wrapped core-0 section; no locks, no allocation, all plain words with racy reads. Cheap enough to leave on.
 - **Design lesson: `/status` only answers 20 to 40 s after boot and `/log` holds ~25 s, so anything needed about boot must be frozen, not rolling.** A rolling ring was overwritten before anyone could read it (this one, and the USB hub descriptor line earlier the same day). Freeze at the event (`mbBoot`), or keep a counter that carries enough to reconstruct it (`outDiag`).
@@ -541,8 +543,8 @@ The Pi serves its own page over the on-board Ethernet, like Ableton Move's move.
 - **Everything here is behind the pairing code** since 0.3.0, except the page itself, `/health`, `/log` and the pairing endpoints: see "Pairing code" below for the full open set and for what `/fs/*` can reach.
 - Name: the network's hostname is `sidecar`. Circle's mDNS daemon answers `sidecar.local` (A) and publishes the service `Sidecar | Expander` (`_http._tcp`, port 80; `dns-sd -B _http._tcp` lists it). A second Sidecar on the same network becomes `sidecar-1.local`. `pi/circle/circle-mdns.patch` (applied by `build.sh`, rebuilds `lib/net`) makes Circle's daemon read every question (with name compression), accept the QU bit and any case, and answer AAAA with an NSEC "A only" record: without it macOS's `getaddrinfo` (curl, browsers) waited 5 s for an IPv6 address before using the A record (measured 2026-10-16: `curl http://sidecar.local/` timed out at 5 s; with the patch 7 ms lookup, 13 ms for the page; `dns-sd -Q sidecar.local AAAA` shows "No Such Record").
 - Addresses: the Pi has no DHCP client on the direct cable, so its address is built in or set in cmdline.txt (`ip=`, `netmask=`, "Phase 1" above). For a Mac on a self-assigned link-local address (no manual IP), build with `PI_IP=169.254.61.60 PI_NETMASK=255.255.0.0 ./build.sh kernel` (any free 169.254.x.y/16): the Mac then reaches it with no network settings at all. The Mac's manual 192.168.77.1/24 and the default 192.168.77.2 work too.
-- Endpoints: `GET /` the page; `GET /status` JSON (host, ip, uptime, link, gadget mode, Sidecar up, computer audio, Overbridge streaming, the Rytm's USB MIDI, temperature (`temp`) and its warning (`tempWarn`), out, notes, drone, FIFO target, underruns, and the page's own request count and longest handler time in us); `GET /log?since=N` the console log from byte N (first line `START END`, then the bytes; the next poll asks `since=END`), from a 64 KB ring that the logger fills next to the serial port (`CLogTee`: any core may log, one spin lock); `POST /cmd` with `c=<command>` (form encoded): the serial console's own parser (`CConsole::Command`, the `:` lines), logged as `web: command :...`; `GET /lists` the project's pool and JUNO / FM lists and each voice's machine (`core/user/lists.h`, published by core 3 when it changes); `GET /pool?l=smp|wt|inst&b=A..H[&u=1]` one bank of a POOL list with the lists' status and the RAM figure (`pi/engine/poolweb.h`, read only). `wdtest` is refused from the web (its reboot ends a RAM kernel; with sdboot the card's engine comes back).
-- The page polls `/status` every second and `/log` every 0.8 s. Tiles: CPU of cores 1/2/3, FIFO min..max and target, underruns, Overbridge (IN packets/s, gap, lost: parsed from the `rytmob:` line), Rytm attached (stream or USB MIDI), USB-C gadget (alt settings, computer audio, late), temperature, the page's own cost. Controls: notes on/off, out main/tracks, computer audio on/off, a machine per voice (`notemach=`), drone on/off, FIFO target, and a free command line. The per-second stats lines are hidden in the log view by default (a checkbox shows them). The **Pool** tab (the pools build): the three POOL lists, banks A..H, the RAM figure, the rows' states, Accept, Replace, Unload, Select unused, Undo (docs/POOLS.md section 6); the Files tab's +SMP / +WT / +INST and Fill bank. The **Presets** tab (before: "Pool & presets", with the DSP SAMPLE pool, now in the Pool tab): the JUNO and FM lists (rename, move up, delete, save what a voice plays now) and each assigned user slot's presets in `/PRESETS/<id>/` (rename, delete through `/fs`, save current with `um=save`).
+- Endpoints: `GET /` the page; `GET /status` JSON (host, ip, uptime, link, gadget mode, Sidecar up, computer audio, `usbHost` (a computer has configured the USB-C Sidecar: `false` on a plain power supply, `null` without the gadget), Overbridge streaming, the Rytm's USB MIDI, temperature (`temp`) and its warning (`tempWarn`), out, notes, drone, FIFO target, underruns, and the page's own request count and longest handler time in us); `GET /log?since=N` the console log from byte N (first line `START END`, then the bytes; the next poll asks `since=END`), from a 64 KB ring that the logger fills next to the serial port (`CLogTee`: any core may log, one spin lock); `POST /cmd` with `c=<command>` (form encoded): the serial console's own parser (`CConsole::Command`, the `:` lines), logged as `web: command :...`; `GET /lists` the project's pool and JUNO / FM lists and each voice's machine (`core/user/lists.h`, published by core 3 when it changes); `GET /pool?l=smp|wt|inst&b=A..H[&u=1]` one bank of a POOL list with the lists' status and the RAM figure (`pi/engine/poolweb.h`, read only). `wdtest` is refused from the web (its reboot ends a RAM kernel; with sdboot the card's engine comes back).
+- The page polls `/status` every second and `/log` every 0.8 s. Tiles: CPU of cores 1/2/3, FIFO min..max and target, underruns, Overbridge (IN packets/s, gap, lost: parsed from the `rytmob:` line), Rytm attached (stream or USB MIDI), USB-C gadget (alt settings, computer audio, late; "no computer on USB-C" while none has configured it), temperature, the page's own cost. Controls: notes on/off, out main/tracks, computer audio on/off, a machine per voice (`notemach=`), drone on/off, FIFO target, and a free command line. The per-second stats lines are hidden in the log view by default (a checkbox shows them). The USB-C Sidecar's line (`sidecar: ... alt`) comes once a minute instead while no computer has configured the device (a power supply alone on USB-C), every second once one has. The **Pool** tab (the pools build): the three POOL lists, banks A..H, the RAM figure, the rows' states, Accept, Replace, Unload, Select unused, Undo (docs/POOLS.md section 6); the Files tab's +SMP / +WT / +INST and Fill bank. The **Presets** tab (before: "Pool & presets", with the DSP SAMPLE pool, now in the Pool tab): the JUNO and FM lists (rename, move up, delete, save what a voice plays now) and each assigned user slot's presets in `/PRESETS/<id>/` (rename, delete through `/fs`, save current with `um=save`).
 - Project bundles (2026-10-22, docs/BUNDLES.md): the Project tab and `GET /bundle/projects|list|status|plan|zip`,
   `GET /bundle-sw.js`, `POST /bundle/export|verify|import|cancel|finish|delete`, `POST /time` (the page's clock, sent when
   it opens), `GET /usb/status` (`pi/engine/bundleweb.h`). Every POST passes the strict same-origin check. The bundle job
@@ -840,6 +842,8 @@ task only once whole (256 KB queue); the relay sends with a 2 ms limit. A client
   re-checked when a queued message would start, so a switch turned off drops what was queued under it):
   - **OS upgrades**: the MIDI RPC's OsUpgradeStart / Write / End (0x50..0x52) and the OS `.syx` image's own messages
     (`F0 00 20 3C <dev> 00 7E|7F`, as `Analog-Rytm_MKII_OS1.74.syx`). Switch: *allow OS upgrades* / `midibridge=os:on`.
+    The rule is shared with the USB-C port's filter (`midi_filter.h` `os_upgrade`): with the switch on, the image passes
+    only on the stock files' device byte `0C`; the RPC's upgrade commands pass on any.
   - **+Drive writes, as an allowlist**: every RPC command but the confirmed reads needs the switch, so an unknown id
     fails closed. The reads (elektroid's `src/connectors/elektron.c`): ping 01, version 02, UID 03, screenshot 04,
     storage info 05, query 09; the sample file system's read dir 10, file info 22 23, reader 30-32; the raw file
@@ -878,6 +882,47 @@ token, one tool at a time and eight racing, the token from a 0600 file or the en
 pi/engine/tests/page_pair.test.mjs`: `/midibridge` and `/midibridge/set` refused to an unpaired client, and their web.cpp
 branch on the strict same-origin check with the switches from the body only. **Not yet checked on hardware.**
 
+### OS upgrades over the USB-C MIDI port (usbmidi=os:)
+
+Elektron Transfer or elkflash on the computer at the USB-C port can upgrade the Rytm's OS through the Sidecar. Off by
+default. The gadget's filter and the Rytm MIDI bridge use one rule for what an OS upgrade is (`midi_filter.h`,
+`os_upgrade`): the `.syx` image's messages (`F0 00 20 3C <dev> 00 7E|7F`, any device byte) and the MIDI RPC's
+OsUpgradeStart / Write / End (0x50..0x52). Off, both drop all of it, at least what each dropped before (the USB-C port
+now also drops the RPC's upgrade commands, as the bridge always did). On, both pass only the image on the stock OS
+files' device byte `0C` and the RPC's upgrade commands; the image shape on any other device byte stays dropped (the
+bridge's `midibridge=os:on` passed it before). Known limit (as before): other Elektron SysEx whose payload starts
+`7E|7F`, such as a test build's `7D` or an RPC's `10`, is dropped toward the Rytm too. The filter now decides on a
+SysEx's first 13 bytes (5 packets) instead of 9. The
+wording follows the Rytm MIDI bridge's `midibridge=os:on`; the parsing is `pi/engine/usbmidi_os.h`
+(tests/test_usbmidi_os.cpp).
+
+- `usbmidi=os:off` (default), `usbmidi=os:emu` (pass only while the TCP link to rytm-emu is the host), `usbmidi=os:on`
+  (pass to the real Rytm on USB too). In `cmdline.txt`, or as a serial console command; `POST /cmd` refuses it, as it
+  refuses `midibridge=` (its origin check is the lenient one). `osupdate=off|0|emu|1|rytm` is the
+  older name and still works (`rytm` = `os:on`, `1` = `emu`); a valid `usbmidi=` wins when both are given.
+- While on: the USB-C MIDI OUT endpoint waits (NAKs) instead of dropping when the Rytm-bound queue is full, so a whole
+  OS file arrives; under `link=tcp`, the computer's MIDI goes to rytm-emu as `'M'` messages and its USB MIDI comes back.
+- A host switch (`link=usb` / `link=tcp`) while on or emu drops what is still on its way to the old host, so an
+  emulator's OS image never reaches the real Rytm; so does turning the pass off. A switch during an upgrade aborts it
+  (as below), also with `on`: the rest of an image meant for one host never reaches the other.
+- If data is lost during an upgrade (a send to the Rytm fails, or the Rytm or emulator goes away with data still
+  queued), the upgrade is aborted rather than continued with a hole in the image: the log says `OS upgrade ABORTED`,
+  OS messages are dropped until the computer has sent none for 3 s, then pass again from a new upgrade's start (the
+  image's start `7F 01` or the RPC's OsUpgradeStart), so the tail of the aborted image, its end `7F 02` included, never
+  goes through. The same wait starts whenever the pass turns on (the setting turned on again, a host switch), so an
+  upgrade always passes from its start. Start the upgrade again.
+- `/status`: `"usbmidi":{"os":"off|emu|on","osUpgrade":true|false,"aborted":N}` (`osUpgrade`: they pass right now;
+  `aborted`: upgrades cut since boot).
+- After the upgrade the Rytm reboots; `pi/circle/circle-replug.patch` has the hub enumerate it again.
+- While on or emu, `POST /cmd` also refuses `link=tcp:<address>` (it would send the computer's MIDI, an OS image
+  included, to any host); `link=tcp` (cmdline's `emuhost=`) and `link=usb` stay allowed.
+- The filter does not look at the box type: with an Analog Four attached, an A4 OS file on device byte `0C` would
+  pass too while on. Untested; the setting is meant for the Rytm.
+- `usbreboot=1` (separate): the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi
+  (`reboot_sysex.h`; `pi/circle/sidecar-reboot.ps1` sends it on Windows). Any program on the computer can send it,
+  and with the rpiboot GPIO held low the Pi then boots whatever the computer serves: a developer's option, never on a
+  unit used to play live.
+
 ### Measurements
 
 - 2026-10-16, Pi 4 on the Mac's link-local Ethernet (169.254.61.60/16), the Rytm off: `sidecar.local` resolved by `dns-sd -G v4` and `getaddrinfo` (7 ms), the page 12.2 KB in 13 ms, `/status` and `/log` answered; `dns-sd -B _http._tcp` lists `Sidecar | Expander`.
@@ -904,8 +949,8 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
 - **On at 80 C, off below 75 C** (75 / 70 until 2026-10-29, then briefly 78 / 73; the user: the unit does not feel hot
   and the Pi has its own throttle). 79 stays warned, 75 stays warned, 74 clears; a unit sitting at 80 does not flicker
   (tests: `pi/engine/tests/test_thermal.cpp`). A reading of 0 (the mailbox failed) changes nothing.
-- **The clock Circle lowered.** Above `socmaxtemp` (78 on the card, Circle's maximum) `CCPUThrottle` drops the ARM clock to
-  600 MHz and raises it 3 C below, so by 80 C the clock has usually been lowered already. `thermal::clock_low_mhz` (the
+- **The clock Circle lowered.** Above `socmaxtemp` (78 on the card, Circle's maximum; 60 on a card with no `socmaxtemp=`, which
+  is what `make-sd-pi5.sh` makes) `CCPUThrottle` drops the ARM clock to its minimum (600 MHz, a Pi 5's 1500) and raises it 3 C below, so by 80 C the clock has usually been lowered already. `thermal::clock_low_mhz` (the
   clock read back well below the setting, the SoC at 75 C or more; a lower Settings clock is not "lowered") makes it
   honest: warned, the banner says `SoC 80 °C - clock lowered to 600 MHz.` (OLED `SOC 80C - CLOCK LOWERED TO 600 MHZ`), the
   Rytm's popup `SOC 80C CLOCK LOWERED / TO 600 MHZ (UP+T10)`, the STATUS page's CPU title line `600 MHz: clock lowered
@@ -925,6 +970,29 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
   mid-edit for a condition that is not an emergency (the firmware throttles at 80 C, 85 C is its hard limit) is the wrong
   trade. It appears when the page closes, if the warning still stands.
 
+## Idle sleep (2026-11-01)
+
+Where each core waits, after a Pi 5 reached 79 C at 1-4 % voice load. Nothing was measured yet on hardware.
+
+- **Render cores (1, 2):** `wfe` between blocks, always did. Woken by core 3's `sev` after it publishes `s_nGen`; checked right
+  before the `wfe`, so a `sev` cannot be lost (the event stays set and `wfe` returns at once; `tests/test_idlewait.cpp`
+  walks every interleaving). No event stream, no bound: a real loss would end in the 20 ms fatal, and none is possible.
+- **Control core (3):** `wfe` between passes, always did, bound 152 us by the event stream, needed there because a whole pass
+  lies between its checks and its `wfe` and a spin lock inside can spend the event. New: it also sleeps while the render cores
+  work (it spun). Each worker signals after publishing `s_nDone`; a wake is the time to leave `wfe`, well under 1 us (no
+  retention state is enabled), 152 us at worst if a `sev` were missed. A voice budget of 125 us is not spent here: the wait
+  ends when the slower render core signals, and a block is 250 us with a FIFO of 96 frames (2 ms) behind it.
+- **Core 0:** the only core that really spun: `MsSleep (1)` at the loop's end leaves the CPU to Circle's scheduler, and
+  `CNetTask` is always ready, so it runs the network's `Process` flat out. Now the loop yields to the tasks and sleeps in
+  `wfe` until the 1 ms is over (`idlewait::spend`; no Circle change). The sleep is `sevl; wfe; wfe` (`idlewait::nap`), not one
+  `wfe`: the network's round ends in `CSpinLock::Acquire` and left the event register set, so a plain `wfe` returned at once
+  (Pi 5: 1.2 million wakes a second, 3 % asleep). Core 0 waits for no event, so dropping it loses nothing; the other cores keep a plain `wfe`. Interrupts (USB, audio) wake it at once, as they
+  interrupted the spin. The loop and the network's polling are late by 152 us at most (the event stream; while
+  rendering about 80 us, from the other cores' `sev`). Card service, USB polling and the display stay in the loop as they were:
+  the sleep is only in the time the loop already gave away, not in `Yield`s inside a card or USB wait.
+- **Seen in:** `/status` `"idle":{"wfe":true,"asleepPct":[c0,c1,c2,c3],"wakes":[...]}` (the last second, wakes a second), and
+  every 10 s the log line `idle: asleep ...` with the clock and the SoC temperature. Core 3's pass-through wakes are in `wakes`.
+
 ## CPU clock (2026-10-25)
 
 Settings > System > CPU clock: **1500** (the default: the board's full clock, 1500 MHz on the Pi 4; a Pi 5 keeps its own
@@ -932,6 +1000,12 @@ maximum), **1200** or **1000 MHz**. It is also a console command (`cpumhz=1200`;
 `cpumhz=` in `/.rytm/display.txt` (not written while it is the default), and `cpumhz=` in cmdline.txt wins. It is applied
 at boot before the boot bench, so the bench measures the clock the engine plays at.
 
+- **On a Pi 5.** The firmware's range is 1500-2400. The setting 1500 means "full", so the clock is **2400**; 1200 and 1000 both
+  come to **1500**, the firmware's minimum, held there (`Update` off): the way to run a Pi 5 at 1500 on purpose. `/status`
+  `cpu`: `setting`, `mhz` (what the firmware says it set), `askedMhz` (what the setting comes to here), `fullMhz`, `minMhz`,
+  `measuredMhz` (what it measured, every 10 s, mailbox id 5: `mhz` only repeats the rate asked for, so the firmware's own
+  throttle shows only here; a gap over 5 % is logged), `socMaxC`, `capped`. "Clock lowered" compares with `askedMhz` (it
+  compared with the setting, so a Pi 5 lowered to 1500 was not "lowered").
 - **Mechanism: runtime, not config.txt's `arm_freq`.** `arm_freq` needs a reboot, lives in a boot file the file API
   deliberately cannot write, and could not be a Settings choice; set in config.txt it would also move Circle's idea of its
   maximum (what `CCPUThrottle` calls "maximum" is the firmware's maximum clock, believed to follow `arm_freq`; not checked on

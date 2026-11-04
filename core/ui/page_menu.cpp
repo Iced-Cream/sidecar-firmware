@@ -12,6 +12,7 @@
 // Every shortcut comes from the device's table (ui/page_keys.h). Both stay off the LEFT / RIGHT ring (ExtraPage::off_ring).
 #include <string.h>
 
+#include "device/device.h"
 #include "ui/extra.h"
 #include "ui/page_keys.h"
 #include "ui/remote.h"
@@ -32,15 +33,27 @@ struct Entry {
 // rui1051: the pages only their keys open (page_keys.h sc_shortcut_only: SEQ, INSERT, POOL, CHOP) are not rows; the
 // tests hold the list to that rule (test_ui)
 UI_ROM const Entry kEntries[] = {
-    {"POLY CONFIG", "POLY"}, {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
+    {"POLY CONFIG", "POLY"}, {"ARP", "ARP"},         {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
     {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"PROJECT", "PROJECT"},  {"STATUS", "SIDECAR"}, {"SYSTEM", "SYSTEM"},
-    {"WEB UI", "WEB UI"},    {"KEYS (ALL COMBOS)", nullptr},
+    {"USER SLOTS", "USER SLOTS"}, {"WEB UI", "WEB UI"}, {"KEYS (ALL COMBOS)", nullptr},
 };
-constexpr int kNum = sizeof kEntries / sizeof kEntries[0];
+constexpr int kAll = sizeof kEntries / sizeof kEntries[0];
+// The rows this box has: all on the Rytm
+CORE_COLD int nrows() {
+  int n = 0;
+  for (int i = 0; i < kAll; ++i) n += extra_for_box(kEntries[i].page ? kEntries[i].page : "KEYS");
+  return n;
+}
+CORE_COLD const Entry& row(int r) {
+  for (int i = 0; i < kAll; ++i)
+    if (extra_for_box(kEntries[i].page ? kEntries[i].page : "KEYS") && !r--) return kEntries[i];
+  return kEntries[0];
+}
 
 // a page's shortcut from the device's table: its page request (UP+T11), else the combo that opens it (UP+TRIG); KEYS:
 // the modifier held alone
 CORE_COLD const char* shortcut(const char* page, char* b, int cap) {
+  if (device::foreign()) return nullptr;   // the table's keys are the Rytm's
   const sc_keymap_t* m = sc_keymap();
   if (!page) { sniprintf(b, cap, "HOLD %s", m->modifier); return b; }
   for (int i = 0; i < m->npages; ++i)
@@ -103,7 +116,7 @@ CORE_COLD bool available(const Entry& e) {   // its page is in the list now (or 
   if (!strcmp(e.page, "WEB UI")) return remote_webui() != nullptr;
   for (int k = 0; k < extra_pages(); ++k) {
     const ExtraPage& x = extra_page(k);
-    if (!strcmp(x.title, e.page)) return !x.shown || x.shown();
+    if (!strcmp(x.title, e.page)) return extra_for_box(x.title) && (!x.shown || x.shown());
   }
   return false;
 }
@@ -111,9 +124,9 @@ CORE_COLD bool available(const Entry& e) {   // its page is in the list now (or 
 CORE_COLD void menu_draw(Canvas& c, int page, int npages, uint32_t ms) {
   c.clear();
   header(c, "SIDECAR MENU", page, npages, nullptr);
-  clampv(&M.cur, &M.top, kNum);
-  for (int i = 0; i < kRows && M.top + i < kNum; ++i) {
-    const Entry& e = kEntries[M.top + i];
+  clampv(&M.cur, &M.top, nrows());
+  for (int i = 0; i < kRows && M.top + i < nrows(); ++i) {
+    const Entry& e = row(M.top + i);
     bool on = M.top + i == M.cur, ok = available(e);
     int y = kRowY + i * kRowH;
     if (on) c.fill(Rect{0, (int16_t)(y - 1), 128, kRowH}, kOn);
@@ -198,20 +211,20 @@ CORE_COLD void keys_draw(Canvas& c, int page, int npages, uint32_t ms) {
 }
 
 CORE_COLD void menu_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.cur += delta > 0 ? 1 : -1, clampv(&M.cur, &M.top, kNum);
+  if (e == 0 && delta) M.cur += list_turn(e, delta), clampv(&M.cur, &M.top, nrows());
 }
 CORE_COLD void keys_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.ktop += delta > 0 ? 1 : -1;
+  if (e == 0 && delta) M.ktop += list_turn(e, delta);
 }
 
 CORE_COLD bool menu_key(int code) {
   if (code == kUp || code == kDown) {
     M.cur += code == kUp ? -1 : 1;
-    clampv(&M.cur, &M.top, kNum);
+    clampv(&M.cur, &M.top, nrows());
     return true;
   }
   if (code == kYes) {
-    const Entry& e = kEntries[M.cur];
+    const Entry& e = row(M.cur);
     if (!available(e)) {
       sniprintf(M.note, sizeof M.note, "%s: NOT HERE NOW", e.name);
       M.note_ms = now_ms() | 1;
@@ -295,7 +308,8 @@ CORE_COLD void web_draw(Canvas& c, int page, int npages, uint32_t ms) {
   if (M.wnote_new) M.wnote_new = false, M.wnote_ms = ms | 1;
 }
 CORE_COLD void web_enc(int e, int delta, bool) {
-  if (e == 0 && delta) M.wcur += delta > 0 ? 1 : -1, M.wconfirm = false;
+  const int l = e == 0 ? list_turn(e, delta) : 0;
+  if (l) M.wcur += l, M.wconfirm = false;
   if (M.wcur < 0) M.wcur = 0;
   if (M.wcur >= kWebRows) M.wcur = kWebRows - 1;
 }
@@ -339,8 +353,8 @@ UI_ROM const ExtraPage kMenuPage = {"MENU", menu_shown, menu_draw, menu_enc, men
 UI_ROM const ExtraPage kKeysPage = {"KEYS", keys_shown, keys_draw, keys_enc, keys_key, 0x01, false, nullptr, nullptr,
                                     keys_leds, true};
 
-CORE_COLD int menu_rows() { return kNum; }
-CORE_COLD const char* menu_row_page(int i) { return i >= 0 && i < kNum ? kEntries[i].page : nullptr; }
+CORE_COLD int menu_rows() { return kAll; }
+CORE_COLD const char* menu_row_page(int i) { return i >= 0 && i < kAll ? kEntries[i].page : nullptr; }
 CORE_COLD void menu_open() {
   M.menu_on = true;
   remote_show_page("MENU");

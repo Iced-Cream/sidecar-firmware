@@ -264,8 +264,9 @@ void CSidecarDisplay::ReadEdid (void)
 }
 
 // The UI's size and its place in the frame buffer: res= (SetUiSize) if it fits, else the frame buffer's size when it is
-// 800x480 or 1024x600 (the two layouts, sidecar_theme.h), else 800x480 centred 1:1 with black borders (no scaling: no
-// blur). Pi 5 on scaled HDMI: ScaleSetup chose already (res= redoes it). A frame buffer smaller than 800x480: its own size.
+// 800x480 or 1024x600 (two of the three layouts, sidecar_theme.h), else 800x480 centred 1:1 with black borders (no scaling:
+// no blur). Touch Display 2 (a portrait panel turned, 1280x720): the 1280x720 layout, res=1024x600 the wide one centred.
+// Pi 5 on scaled HDMI: ScaleSetup chose already (res= redoes it). A frame buffer smaller than 800x480: its own size.
 void CSidecarDisplay::ChooseUi (void)
 {
 	const unsigned FW = m_nFbWidth, FH = m_nFbHeight;
@@ -288,7 +289,7 @@ void CSidecarDisplay::ChooseUi (void)
 		const boolean bExact = (FW == 800 && FH == 480) || (FW == 1024 && FH == 600);
 		W = bExact || FW < 800 || FH < 480 ? FW : 800;
 		H = bExact || FW < 800 || FH < 480 ? FH : 480;
-		if (m_nDsiRot) W = 1024, H = 600;		// Touch Display 2's 1280x720: the bigger layout, centred
+		if (m_nDsiRot) W = FW, H = FH;			// Touch Display 2: its own layout, the whole panel
 	}
 	m_nWidth = W;
 	m_nHeight = H;
@@ -310,7 +311,7 @@ void CSidecarDisplay::ChooseUi (void)
 			delete [] pRow;
 		}
 	}
-	LOGNOTE ("UI %ux%u%s on the frame buffer's %ux%u%s (res=800x480|1024x600 in /.rytm/display.txt or cmdline.txt)", W, H,
+	LOGNOTE ("UI %ux%u%s on the frame buffer's %ux%u%s (res=800x480|1024x600|1280x720 in /.rytm/display.txt or cmdline.txt)", W, H,
 		 m_nOffX || m_nOffY ? " centred" : "", FW, FH, bReq ? ", res= given" : "");
 }
 
@@ -517,10 +518,8 @@ boolean CSidecarDisplay::OpenRp1Dsi (void)
 				m_nPanelPitch = pDsi->GetPitch () / sizeof (u16);
 				m_nFbWidth = m_nPanelH;
 				m_nFbHeight = m_nPanelW;
-				m_nWidth = m_nFbWidth < 1024 ? m_nFbWidth : 1024;	// the boot screen at the UI's size and place
-				m_nHeight = m_nFbHeight < 600 ? m_nFbHeight : 600;
-				m_nOffX = (m_nFbWidth - m_nWidth) / 2;
-				m_nOffY = (m_nFbHeight - m_nHeight) / 2;
+				m_nWidth = m_nFbWidth;			// the boot screen on the whole panel
+				m_nHeight = m_nFbHeight;
 			}
 			CDevice *pTouch = bTouch ? DsiTouchDevice (pBefore, TRUE) : 0;
 			if (pTouch)
@@ -574,7 +573,7 @@ void CSidecarDisplay::ScaleSetup (unsigned nWidth, unsigned nHeight)
 	m_nWidth = nWidth;
 	m_nHeight = nHeight;
 	m_bScaled = TRUE;
-	LOGNOTE ("UI %ux%u scaled to the frame buffer's %ux%u (x %u.%02u, y %u.%02u; res=800x480|1024x600 sets the UI's size)",
+	LOGNOTE ("UI %ux%u scaled to the frame buffer's %ux%u (x %u.%02u, y %u.%02u; res=800x480|1024x600|1280x720 sets the UI's size)",
 		 nWidth, nHeight, FW, FH, FW / nWidth, FW * 100 / nWidth % 100, FH / nHeight, FH * 100 / nHeight % 100);
 }
 #endif
@@ -626,10 +625,10 @@ boolean CSidecarDisplay::Initialize (void)
 	lv_tick_set_cb (H::Tick);
 	lv_log_register_print_cb (H::Log);
 
-	const unsigned nPixels = m_nWidth * 48;			// a 48-line band: 77 KB at 800 wide, 98 KB at 1024
+	const unsigned nPixels = m_nWidth * 48;			// a 48-line band: 77 KB at 800 wide, 98 KB at 1024, 123 KB at 1280
 	m_pBuffer = new (HEAP_DMA30) u16[nPixels];
 	if (!m_pBuffer) return FALSE;
-	m_pDotBuf = new (HEAP_DMA30) u16[m_nWidth * DotRows * SIDECAR_DOT];	// 51 KB at 800 wide, 66 KB at 1024
+	m_pDotBuf = new (HEAP_DMA30) u16[m_nWidth * DotRows * SIDECAR_DOT];	// 51 KB at 800 wide, 66 KB at 1024, 82 KB at 1280
 	if (!m_pDotBuf) return FALSE;
 
 	lv_display_t *pDisplay = lv_display_create (m_nWidth, m_nHeight);

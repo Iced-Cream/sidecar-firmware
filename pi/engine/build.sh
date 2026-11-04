@@ -10,11 +10,20 @@
 # GADGET (default sidecar): the USB-C gadget when cmdline.txt has no gadget= (sidecar, midi: P1's echo, 0: off).
 # SIDECAR_CH_IN (default 12): the Sidecar's UAC2 IN channels, 12 or 20 (the Pi's voices on 13-20). SIDECAR_NAME (default
 # "Sidecar | Expander (Pi)"): its USB product name.
-# RASPPI (default 4): 5 builds for the Pi 5 (docs/pi5.md) in its own Circle tree, pi/circle/build/circle-engine-pi5
-# (made from pi/circle/build/circle as circle-engine is; the host-side patches, no gadget patch), -> kernel_2712.img,
-# the USB-C gadget compiled out. PI5_UART (default 0): the Pi 5's console UART, 0 = GPIO14/15 (pins 8/10, the Pi 4's
-# wiring), 10 = the 3-pin debug connector. The objects here are one board's at a time: switching RASPPI (or PI5_UART)
-# removes them first, so the next build is a full one.
+# RASPPI (default 4): 5 builds for the Pi 5 (docs/pi5.md) -> kernel_2712.img, with the USB-C gadget (PI5_GADGET below,
+# default 1 on the Pi 5). PI5_UART (default 0): the Pi 5's console UART, 0 = GPIO14/15 (pins 8/10, the Pi 4's
+# wiring), 10 = the 3-pin debug connector. The objects here are one board's at a time: switching RASPPI (or PI5_UART,
+# PI5_GADGET) removes them first, so the next build is a full one.
+# PI5_GADGET (RASPPI=5 only, default 1): 1 the USB-C gadget compiled in (docs/pi5.md "USB device side"), in a Circle tree
+# of its own, pi/circle/build/circle-engine-pi5usb (circle-gadget.patch, circle-gadget-wake.patch, circle-pi5-gadget.patch,
+# circle-gadget-reset.patch; a changed patch is put in again). The first run also stops at the hostap clone, as for any
+# new tree: run it twice. On at run time as on the Pi 4 (GADGET default sidecar; gadget=0 in cmdline.txt turns it off).
+# 0: the gadget compiled out, in pi/circle/build/circle-engine-pi5 (the host-side patches only), as before 0.4.0.
+# PI5_TESTMODE=1 (needs PI5_GADGET=1, default 0): the engine test mode for tryboots of Raspberry Pi OS (docs/pi5.md "Engine
+# test mode": testsecs=, its watchdog and reboot, /usbtest.log, testcard=1's card gate). Never on a release card:
+# make-sd-dual.sh refuses a kernel with "testsecs=" in it. Same Circle tree as PI5_GADGET=1.
+# BUILD_FLAGS=1: print the flags this build would use (tree, kernel, PI5_*, GADGET default, the make line) and stop,
+# before anything is written (pi/engine/tests/test_pi5_flags.sh).
 # STOR_EXFAT (default 0; docs/STORAGE.md): 1 builds against a Circle tree of its own (<tree>-exfat, made from
 # pi/circle/build/circle as the others) whose FatFs has FF_FS_EXFAT 1 and FF_LBA64 1 (exFAT and GPT drives) - every
 # library that uses FatFs (the wlan addon, wpa_supplicant) compiled with it, as their FIL / FATFS layouts change. Tested
@@ -22,15 +31,28 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO=$(git rev-parse --show-toplevel)
-"$REPO/core/engines/setup_engines.sh" "$PWD/engines" >/dev/null
-"$REPO/tools/gen_version.sh"   # core/version.h: VERSION, the commit (docs/versioning.md); on the host, the container has no git
 R=${RASPPI:-4}
 case $R in 4) TREE=circle-engine; KIMG=kernel8-rpi4.img;; 5) TREE=circle-engine-pi5; KIMG=kernel_2712.img;;
   *) echo "RASPPI must be 4 or 5"; exit 1;; esac
 P5U=${PI5_UART:-0}
+P5G=${PI5_GADGET:-$( [ "$R" = 5 ] && echo 1 || echo 0)}
+case $P5G in 0) ;; 1) [ "$R" = 5 ] || { echo "PI5_GADGET needs RASPPI=5"; exit 1; }; TREE=circle-engine-pi5usb;;
+  *) echo "PI5_GADGET must be 0 or 1"; exit 1;; esac
+P5T=${PI5_TESTMODE:-0}
+case $P5T in 0) ;; 1) [ "$P5G" = 1 ] || { echo "PI5_TESTMODE needs PI5_GADGET=1 (and RASPPI=5)"; exit 1; };;
+  *) echo "PI5_TESTMODE must be 0 or 1"; exit 1;; esac
 EXF=${STOR_EXFAT:-0}
 case $EXF in 0) ;; 1) TREE=$TREE-exfat;; *) echo "STOR_EXFAT must be 0 or 1"; exit 1;; esac
-STAMP="RASPPI=$R PI5_UART=$P5U$( [ "$EXF" = 1 ] && echo ' STOR_EXFAT=1' || true)"
+STAMP="RASPPI=$R PI5_UART=$P5U$( [ "$EXF" = 1 ] && echo ' STOR_EXFAT=1' || true)$( [ "$P5G" = 1 ] && echo " PI5_GADGET=1 PI5_TESTMODE=$P5T" || true)"
+# (PI5_TESTMODE is in the stamp even at 0: objects from a PI5_GADGET=1 build made before the split carry the test mode)
+GDEF=${GADGET:-sidecar}		# the USB-C gadget when cmdline.txt has no gadget=: sidecar on both boards
+if [ "${BUILD_FLAGS:-0}" = 1 ]; then
+  printf 'TREE=%s\nKIMG=%s\nPI5_GADGET=%s\nPI5_TESTMODE=%s\nGADGET_DEFAULT=%s\nSTAMP=%s\nMAKE=make -C /repo/pi/engine CIRCLEHOME=<tree> PI5_UART=%s PI5_GADGET=%s PI5_TESTMODE=%s\n' \
+    "$TREE" "$KIMG" "$P5G" "$P5T" "$GDEF" "$STAMP" "$P5U" "$P5G" "$P5T"
+  exit 0
+fi
+"$REPO/core/engines/setup_engines.sh" "$PWD/engines" >/dev/null
+"$REPO/tools/gen_version.sh"   # core/version.h: VERSION, the commit (docs/versioning.md); on the host, the container has no git
 if [ "$(cat hosted/.board 2>/dev/null || echo 'RASPPI=4 PI5_UART=0')" != "$STAMP" ]; then
   echo "board changed to $STAMP: removing the other board's objects"
   rm -rf hosted; rm -f ./*.o ./*.d ../ui/*.o ../ui/*.d
@@ -38,7 +60,7 @@ fi
 mkdir -p hosted
 echo "$STAMP" > hosted/.board
 NETH=$(printf '#define NET_DEFAULT_IP\t\t"%s"\n#define NET_DEFAULT_NETMASK\t"%s"\n#define NET_DEFAULT_EMUHOST\t"%s"\n#define GADGET_DEFAULT\t\t"%s"\n' \
-  "${PI_IP:-192.168.77.2}" "${PI_NETMASK:-255.255.255.0}" "${EMUHOST:-192.168.77.1:7301}" "${GADGET:-sidecar}")
+  "${PI_IP:-192.168.77.2}" "${PI_NETMASK:-255.255.255.0}" "${EMUHOST:-192.168.77.1:7301}" "$GDEF")
 [ "$(cat hosted/net_defaults.h 2>/dev/null)" = "$NETH" ] || printf '%s\n' "$NETH" > hosted/net_defaults.h
 SCH=$(printf '#define SIDECAR_CH_IN\t%s\n#define SIDECAR_NAME\t"%s"\n' "${SIDECAR_CH_IN:-12}" "${SIDECAR_NAME:-Sidecar | Expander (Pi)}")	# IN 12, or 20 (the Pi's voices on 13-20); the device's name
 [ "$(cat hosted/sidecar_config.h 2>/dev/null)" = "$SCH" ] || printf '%s\n' "$SCH" > hosted/sidecar_config.h
@@ -63,7 +85,7 @@ HOSTAP=$BUILD/$TREE/addon/wlan/hostap
 if [ -d "$BUILD/$TREE" ] && [ ! -f "$HOSTAP/wpa_supplicant/Makefile.circle" ]; then
   rm -rf "$HOSTAP" && git clone -q https://github.com/rsta2/hostap.git "$HOSTAP" && git -C "$HOSTAP" checkout -q 966cab4a3bc958e7ff304a46d91a6172a1bfecaf
 fi
-docker run --rm -v "$REPO":/repo -v "$BUILD":/repo/pi/circle/build -w /repo/pi/engine -e MODE="${1:-all}" -e R=$R -e TREE=$TREE -e P5U=$P5U -e EXF=$EXF rytm-circle bash -euo pipefail -c '
+docker run --rm -v "$REPO":/repo -v "$BUILD":/repo/pi/circle/build -w /repo/pi/engine -e MODE="${1:-all}" -e R=$R -e TREE=$TREE -e P5U=$P5U -e P5G=$P5G -e P5T=$P5T -e EXF=$EXF rytm-circle bash -euo pipefail -c '
 T=/repo/pi/circle/build/$TREE
 J=$(nproc)
 grep -q "KERNEL_MAX_SIZE=0x1000000" $T/Config.mk 2>/dev/null || { [ ! -d $T ] || echo "tree $T: another KERNEL_MAX_SIZE, rebuilding it"; rm -f $T/.engine-ready; MODE=all; }
@@ -86,11 +108,30 @@ if { [ "$MODE" = all ] || [ ! -d $T ]; } && [ ! -f $T/.engine-ready ]; then
   make -C addon/SDCard -j$J
   touch .engine-ready
 fi
+# USB-A MIDI out without waiting (circle-midi-async.patch: one OUT URB in flight per device, midiout_q.h and kernel.cpp s AsampMidiSend); idempotent.
+# Before the gadget library: its CUSBMIDIDevice comes from the same header, and a first build would allocate the smaller class
+grep -q circle-midi-async $T/include/circle/usb/usbmidi.h || (cd $T && patch -p1 < /repo/pi/circle/circle-midi-async.patch)
 # the USB-C gadget (pi/circle/circle-gadget.patch: IRQ stats, the MIDI device accessor, isochronous endpoints;
 # idempotent, also on a tree made before it), then its library (up to date: nothing to do)
 cd $T
-if [ "$R" = 4 ]; then	# Pi 5: Circle has no gadget there (docs/pi5.md)
+if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: both patches, again when either changed (the patched files back from the clean tree first)
+  P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
+  if [ "$(cat .pi5-gadget-sum 2>/dev/null)" != "$S" ]; then
+    for f in $(cat $PP | sed -n "s,^+++ b/,,p" | sort -u); do cp /repo/pi/circle/build/circle/$f $f; done
+    cp $P/gadget_wake.h include/circle/usb/gadget/gadgetwake.h
+    cp $P/gadget_flush.h include/circle/usb/gadget/gadgetflush.h
+    for f in $PP; do patch -p1 < $f; done
+    echo "$S" > .pi5-gadget-sum
+  fi
+  make -C lib/usb/gadget -j$J >/dev/null
+elif [ "$R" = 4 ]; then	# the Pi 4 (a Pi 5 with PI5_GADGET=0: no gadget, docs/pi5.md)
   grep -q GetIRQStats include/circle/usb/gadget/dwusbgadget.h || patch -p1 < /repo/pi/circle/circle-gadget.patch
+  # then the bus resume (circle-gadget-wake.patch: its own file and marker, as circle-hid-reenum2.patch; idempotent)
+  cmp -s /repo/pi/circle/gadget_wake.h include/circle/usb/gadget/gadgetwake.h || cp /repo/pi/circle/gadget_wake.h include/circle/usb/gadget/gadgetwake.h
+  grep -q circle-gadget-wake lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-wake.patch
+  # then the reset at IRQ level without 1 ms waits (circle-gadget-reset.patch, gadget_flush.h; idempotent)
+  cmp -s /repo/pi/circle/gadget_flush.h include/circle/usb/gadget/gadgetflush.h || cp /repo/pi/circle/gadget_flush.h include/circle/usb/gadget/gadgetflush.h
+  grep -q circle-gadget-reset lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-reset.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi
 # f_expand in FatFs (pi/circle/circle-fatfs-expand.patch: FF_USE_EXPAND 1 - the recorder reserves the space of each
@@ -146,21 +187,24 @@ grep -q circle-hid-reenum3 include/circle/usb/usbhiddevice.h || patch -p1 < /rep
 # then any Elektron device reaches the Overbridge driver, which asks the device profiles (circle-usbdevicefactory2.patch, not an edit
 # to the spike2 patch: the same reason as -reenum2; a box with no audio row is 0 and Circle goes on to its interfaces); idempotent
 grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /repo/pi/circle/circle-usbdevicefactory2.patch
+# a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
+# enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
+grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
 [ -f addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a ] || make -C addon/wlan/hostap/wpa_supplicant -f Makefile.circle -j$J >/dev/null
-# Pi 5: the DSI display driver, addon/rp1dsi of Circle (docs/pi5.md "DSI display"), once. Two changes, each with its own
-# file and marker, idempotent. circle-rp1dsi-fb.patch: the frame buffer pointer and pitch in the header, for the rotating
-# blit of a Touch Display 2; inline, no object changes. circle-rp1dsi-td2.patch: the Touch Display 2 fixes (contact id
-# bounded, the 5 inch panel in sync events, no touch device for a silent GT911); objects change, so the library is rebuilt.
+# Pi 5: the DSI display driver (Circle'"'"'s addon/rp1dsi; docs/pi5.md "DSI display"), once. Its one change: the frame
+# buffer'"'"'s pointer and pitch in the header (pi/circle/circle-rp1dsi-fb.patch, inline, for the rotating blit of a Touch
+# Display 2: no object changes, so a built library stands; idempotent, its own file and marker), then the Touch Display 2
+# fixes (pi/circle/circle-rp1dsi-td2.patch: objects change, so a tree patched here rebuilds the library; the 7" keeps its flags)
 [ "$R" != 5 ] || grep -q circle-rp1dsi-fb addon/rp1dsi/rpitouchscreen.h || patch -p1 < /repo/pi/circle/circle-rp1dsi-fb.patch
 [ "$R" != 5 ] || grep -q circle-rp1dsi-td2 addon/rp1dsi/rpitouchscreen2.cpp || { patch -p1 < /repo/pi/circle/circle-rp1dsi-td2.patch && rm -f addon/rp1dsi/librp1dsi.a addon/rp1dsi/*.o; }
 [ "$R" != 5 ] || [ -f addon/rp1dsi/librp1dsi.a ] || make -C addon/rp1dsi -j$J >/dev/null
 # Pi 5: the NVMe SSD driver (Circle'"'"'s addon/nvme, unchanged, experimental; docs/STORAGE.md), once
 [ "$R" != 5 ] || [ -f addon/nvme/libnvme.a ] || make -C addon/nvme -j$J >/dev/null
 /repo/pi/ui/lvgl-in-tree.sh $T			# addon/lvgl/lvgl and liblvgl.a, once per LVGL commit
-make -C /repo/pi/engine CIRCLEHOME=$T PI5_UART=$P5U -j$J
+make -C /repo/pi/engine CIRCLEHOME=$T PI5_UART=$P5U PI5_GADGET=$P5G PI5_TESTMODE=$P5T -j$J
 # The kernel (text + data + bss from 0x80000) must fit Circle'"'"'s KERNEL_MAX_SIZE: past it the bss runs into the
 # stacks and the Pi dies before the serial console (2026-10-23: 8.43 MB against 8 MB, a black screen, no log).
 EL=/repo/pi/engine/kernel8-rpi4.elf; [ "$R" = 5 ] && EL=/repo/pi/engine/kernel_2712.elf

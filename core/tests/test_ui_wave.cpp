@@ -14,6 +14,9 @@
 #include "pool/pool.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
+#include "pool/pcache.h"
+#include "lib/library.h"
+#include "engine.h"
 #include "voices.h"
 #include "wav.h"
 
@@ -159,6 +162,45 @@ int main() {
     int xc2 = 1 + 90 * 125 / 120;
     CHECK(col_px(xc2, 10, 12) == 3 && !px(xc, 10));
   }
+  // ---- a RAM-only mode's first trig, its sample not in RAM (no preload, 7ad): it sounds when the sample is in, not never
+  {
+    core::lib::Ref r;
+    core::lib::ref_for_path("/Samples/Kit/b.wav", &r);
+    p[10] = 2, p[11] = 56;
+    uint8_t t[41] = {0xF0, 0x7D, 0x52, 0x54, 0x04, (uint8_t)core::kDspSample, 64, 100};
+    for (int k = 0; k < 16; ++k) t[8 + 2 * k] = p[k], t[9 + 2 * k] = 0;
+    t[40] = 0xF7;
+    report03(0, core::kDspSample, p);   // (the voice off the sample first: its pin goes)
+    p[10] = 1;
+    report03(0, core::kDspSample, p);
+    tick(2);
+    core::pcache::forget(r);
+    CHECK(core::pcache::find(r, core::pcache::kWhole) < 0);
+    const uint32_t late0 = core::ram_late;
+    core::engine_sysex(t, 41);          // SMP 2 p-locked on the trig
+    CHECK(!core::from_ram[0]);          // not in yet: it waits
+    for (int i = 0; i < 4000 && !core::from_ram[0]; ++i) core::idle_prepare(), core::idle_stream(), tick(1);
+    CHECK(core::from_ram[0] && core::ram_late == late0);
+    CHECK(core::pcache::find(r, core::pcache::kWhole) >= 0);
+    // its gate closed during the wait: it plays and closes, nothing hangs (GRAIN holds while the gate is open)
+    report03(0, core::kDspSample, p);
+    uint8_t noff[7] = {0xF0, 0x7D, 0x52, 0x54, 0x11, 0, 0xF7};
+    core::engine_sysex(noff, 7);
+    p[10] = 1;
+    report03(0, core::kDspSample, p);
+    tick(2);
+    core::pcache::forget(r);
+    CHECK(core::pcache::find(r, core::pcache::kWhole) < 0);
+    core::engine_sysex(t, 41);
+    CHECK(!core::from_ram[0]);
+    core::engine_sysex(noff, 7);        // the gate, before the sample is in
+    for (int i = 0; i < 4000 && !core::from_ram[0]; ++i) core::idle_prepare(), core::idle_stream(), tick(1);
+    CHECK(core::from_ram[0]);
+    static float bl[256];
+    static float pa[8] = {};
+    for (int i = 0; i < 400 && core::engines[0].playing(); ++i) core::engines[0].Render(pa, bl, 256);
+    CHECK(!core::engines[0].playing());
+  }
   // ---- machine graphics (page_gfx.cpp): JUNO's envelope, 6-OP FM's algorithms, GRAIN's cloud
   for (int alg = 0; alg < 32; ++alg) {   // every operator placed; a modulator above what it modulates; within the cell
     int8_t col[6], lev[6];
@@ -245,9 +287,25 @@ int main() {
     CHECK(remote_stats().page == 4 && shown("DSP SAMPLE") && !shown("SMP OFF") && !shown("LOADING") && s2 == 2);
     CHECK((int)core::v[0].p[10] == 0);   // the voice untouched
     CHECK(col_px(1 + (85 * 100 + 127) / 128, 18, 24) >= 3);   // b.wav's burst drawn
-    // the Rytm's encoders on its SRC page are P1..P8 (DSP SAMPLE's resonator): the view shows those (ENG..LEV), and a
+    {   // the playhead: a voice reading at half the file inverts that column of the waveform, gone when it stops
+      int xh = 1 + 32767 * 99 / 65534, c0 = col_px(xh, 11, 24);
+      bool was = core::v[0].dsps, live = core::v[0].live;
+      core::v[0].dsps = true, core::v[0].live = true;
+      core::g_dsp_head[0] = 1 + 32767;
+      tick(100);
+      int c1 = col_px(xh, 11, 24);
+      CHECK(core::dsp_playhead(0) == 32767 && c1 != c0);
+      core::g_dsp_head[0] = 0;
+      tick(100);
+      CHECK(core::dsp_playhead(0) == -1 && col_px(xh, 11, 24) == c0);
+      core::v[0].dsps = was, core::v[0].live = live;
+    }
+    CHECK(shown("ENG"));   // a 0.3.x Rytm (no 36-name asks): its knob A is still ENG
+    remote_rytm_040(true);
+    tick(400);
+    // the Rytm's encoders on its SRC page are P1..P8 (DSP SAMPLE's resonator): the view shows those (SMP, STR..LEV), and a
     // turn of MIX (P5, 2A first 4) moves its knob. (It showed P9..P16 only, the SMPL page's: dead under the encoders.)
-    CHECK(shown("ENG") && shown("MIX") && shown("LEV") && !shown("FIN") && !shown("STA"));
+    CHECK(shown("SMP") && shown("MIX") && shown("LEV") && !shown("FIN") && !shown("STA"));
     auto knob_px = [&]() { int n = 0; for (int x = 0; x < 32; ++x) n += col_px(x, 31, 50); return n; };
     int k0 = knob_px();
     const uint8_t mix[12] = {0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, 0, 4, 1, 127, 0, 0xF7};
@@ -257,7 +315,7 @@ int main() {
     const uint8_t mod[12] = {0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, 0, 11, 1, 56, 0, 0xF7};   // MOD 56: GRAIN's zone
     core::engine_sysex(mod, 12);
     tick(30);
-    CHECK(shown("GRAIN") && shown("ENG") && !shown("POS") && remote_stats().page == 4);   // the SRC page's knobs under the grain view
+    CHECK(shown("GRAIN") && shown("SMP") && !shown("POS") && remote_stats().page == 4);   // the SRC page's knobs under the grain view
     const uint8_t off[9] = {0xF0, 0x7D, 0x52, 0x54, 0x29, 1, 0, 0, 0xF7};
     core::engine_sysex(off, 9);
   }

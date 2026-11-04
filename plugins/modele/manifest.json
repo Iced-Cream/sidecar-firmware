@@ -1,0 +1,30 @@
+{
+  "id": "modele.voice",
+  "version": "1.1.0",
+  "compatible_from": "1.1.0",
+  "name": "MODEL E",
+  "short": "MDLE",
+  "licence": "GPL-2.0-or-later (oscillators: ModelDigi)",
+  "page2": "params",
+  "page2_title": "MODEL E MORE",
+  "max_voices": 8,
+  "pitch": "note",
+  "knobs": [
+    {"p": 1, "long": "Osc 1", "short": "OSC1", "look": "list", "text": "enum", "names": ["LO TRI", "LO T/S", "LO SAW", "LO SQR", "LO WID", "LO NAR", "32 TRI", "32 T/S", "32 SAW", "32 SQR", "32 WID", "32 NAR", "16 TRI", "16 T/S", "16 SAW", "16 SQR", "16 WID", "16 NAR", "8 TRI", "8 T/S", "8 SAW", "8 SQR", "8 WID", "8 NAR", "4 TRI", "4 T/S", "4 SAW", "4 SQR", "4 WID", "4 NAR", "2 TRI", "2 T/S", "2 SAW", "2 SQR", "2 WID", "2 NAR"], "default": 72},
+    {"p": 2, "long": "Osc 2", "short": "OSC2", "look": "list", "text": "enum", "names": ["LO TRI", "LO T/S", "LO SAW", "LO SQR", "LO WID", "LO NAR", "32 TRI", "32 T/S", "32 SAW", "32 SQR", "32 WID", "32 NAR", "16 TRI", "16 T/S", "16 SAW", "16 SQR", "16 WID", "16 NAR", "8 TRI", "8 T/S", "8 SAW", "8 SQR", "8 WID", "8 NAR", "4 TRI", "4 T/S", "4 SAW", "4 SQR", "4 WID", "4 NAR", "2 TRI", "2 T/S", "2 SAW", "2 SQR", "2 WID", "2 NAR"], "default": 72},
+    {"p": 3, "long": "Osc 3", "short": "OSC3", "look": "list", "text": "enum", "names": ["LO TRI", "LO RSW", "LO SAW", "LO SQR", "LO WID", "LO NAR", "32 TRI", "32 RSW", "32 SAW", "32 SQR", "32 WID", "32 NAR", "16 TRI", "16 RSW", "16 SAW", "16 SQR", "16 WID", "16 NAR", "8 TRI", "8 RSW", "8 SAW", "8 SQR", "8 WID", "8 NAR", "4 TRI", "4 RSW", "4 SAW", "4 SQR", "4 WID", "4 NAR", "2 TRI", "2 RSW", "2 SAW", "2 SQR", "2 WID", "2 NAR"], "default": 56},
+    {"p": 4, "long": "Osc 2 Tune", "short": "TUN2", "look": "centred", "text": "bipolar", "default": 70},
+    {"p": 5, "long": "Osc 3 Tune", "short": "TUN3", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 6, "long": "Osc 1<>2 Mix", "short": "MIX", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 7, "long": "Noise<>Osc 3", "short": "O3NZ", "look": "centred", "text": "bipolar", "default": 104},
+    {"p": 8, "long": "Osc 3 Mod", "short": "MOD", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 9, "long": "Cutoff", "short": "CUT", "look": "dial", "text": "number", "default": 44},
+    {"p": 10, "long": "Emphasis", "short": "EMPH", "look": "dial", "text": "number", "default": 44},
+    {"p": 11, "long": "Contour Amt", "short": "CONT", "look": "dial", "text": "number", "default": 72},
+    {"p": 12, "long": "Glide<>Atk", "short": "G<>A", "look": "centred", "text": "bipolar", "default": 64},
+    {"p": 13, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 66},
+    {"p": 14, "long": "Sustain", "short": "SUS", "look": "dial", "text": "number", "default": 64},
+    {"p": 15, "long": "Mode", "short": "MODE", "look": "list", "text": "enum", "names": ["K0 AN", "K1 AN", "K2 AN", "K3 AN", "K0 AN R", "K1 AN R", "K2 AN R", "K3 AN R", "K0", "K1", "K2", "K3", "K0 R", "K1 R", "K2 R", "K3 R"], "default": 20},
+    {"p": 16, "long": "Level", "short": "LEV", "look": "fader", "text": "number", "default": 100}
+  ]
+}

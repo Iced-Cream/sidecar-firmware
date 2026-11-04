@@ -164,7 +164,7 @@ test("the page gzip-compressed and /status power against the mock", async (t) =>
   assert.equal(raw.headers.get("content-encoding"), null);
   assert.equal(await raw.text(), html);
   const st = await (await fetch(base + "/status")).json();
-  assert.match(st.power.warn, /too weak.*27 W \(5 V 5 A\) adapter directly/);
+  assert.match(st.power.warn, /too weak \(under-voltage since boot\).*27 W \(5 V 5 A\) adapter directly/);
   assert.equal(st.power.maxCurrent, 3000);
   assert.equal(typeof st.web.idle, "number");
 });

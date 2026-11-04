@@ -32,6 +32,7 @@ const Decl kBuiltins[] = {
     {kGranMachine, 6, 8, kPitchNote, true, 122, kPeak},   // granular.h kPerVoice
     {kLiveMachine, 1, 1, kPitchNone, false, 4, kPeak},   // LIVE IN: one input a voice, mono only (livein.h)
     {kChopMachine, 8, 8, kPitchNote, true, 30, kPeak},    // CHOP: its own pool of slice players (chop.h kPerVoice; the note is the slice)
+    {kMidiMachine, 8, 8, kPitchNote, true, 0, 0},         // MIDI (core/midim/midim.h): its "pool" the held-note table; no audio, no cost
 };
 int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 }  // namespace
@@ -168,11 +169,13 @@ CORE_COLD bool parse_cfg(const char* kv, seq::PolyCfg* c, char* err, int cap) {
     const char* e = strchr(k, '=');
     const char* next = strchr(k, ',');
     if (!e || (next && next < e)) {
-      if (err) sniprintf(err, cap, "KEY=VALUE pairs (voices alloc unison detune spread group)");
+      if (err) sniprintf(err, cap, "KEY=VALUE pairs (voices alloc unison detune spread group oct)");
       return false;
     }
     const char* v = e + 1;
     int x = 0;
+    bool neg = *k == 'o' && *v == '-';   // oct: a signed number (7g)
+    if (neg || (*k == 'o' && *v == '+')) ++v;
     bool num = *v >= '0' && *v <= '9';
     for (const char* q = v; *q >= '0' && *q <= '9' && x < 1000; ++q) x = x * 10 + (*q - '0');
     switch (*k) {
@@ -180,6 +183,7 @@ CORE_COLD bool parse_cfg(const char* kv, seq::PolyCfg* c, char* err, int cap) {
       case 'u': c->unison = (uint8_t)clampi(x, 0, seq::kMaxUnison); break;
       case 'd': c->detune = (uint8_t)clampi(x, 0, 127); break;
       case 's': c->spread = (uint8_t)clampi(x, 0, 127); break;
+      case 'o': c->oct = (int8_t)clampi(neg ? -x : x, -seq::kMaxPadOct, seq::kMaxPadOct); break;
       case 'g': c->group = (uint8_t)clampi(x, 0, seq::kPolyGroups); break;
       case 'a': {
         int a = -1;
@@ -212,6 +216,7 @@ CORE_COLD int describe(const seq::PolyCfg& c, const Resolved* r, int machine, ch
   if (n < cap)
     n += sniprintf(out + n, cap - n, " %s UNISON %d DETUNE %d SPREAD %d GROUP %d", alloc_name(c.alloc),
                    c.unison > 1 ? c.unison : 1, c.detune, c.spread, c.group);
+  if (c.oct && n < cap) n += sniprintf(out + n, cap - n, " OCT %+d", c.oct);
   if (r && n < cap)
     n += sniprintf(out + n, cap - n, " -> %s: %d instance%s, %d note%s at once%s (%d.%02d %% a core)", machine_short(machine),
                    r->instances, r->instances == 1 ? "" : "s", r->lanes, r->lanes == 1 ? "" : "s",

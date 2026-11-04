@@ -12,6 +12,7 @@
 #include "check.h"
 #include "bundle/projects.h"
 #include "engine.h"
+#include "fmt/fmt.h"
 #include "hooks.h"
 #include "lib/srclib.h"
 #include "msamp/cardq.h"
@@ -109,6 +110,7 @@ int main() {
   put("/.rytm/songs/LIVE_SET/take-001.json", "{}");
   strcpy(project, "LIVE SET");
   song::folder(fn, sizeof fn);
+  while (song::idle()) {}   // (the rename: requests, from idle)
   CHECK(!strcmp(fn, "/.rytm/songs/LIVE SET"));
   CHECK(is_file("/.rytm/songs/LIVE SET/take-001.json") && !is_dir("/.rytm/songs/LIVE_SET"));
   // both there: the key's stays, the old one is left alone (no merge)
@@ -116,16 +118,19 @@ int main() {
   put("/.rytm/songs/JAM 2/take-001.json", "new");
   strcpy(project, "JAM 2");
   song::folder(fn, sizeof fn);
+  while (song::idle()) {}   // (the rename: requests, from idle)
   CHECK(slurp("/.rytm/songs/JAM 2/take-001.json") == "new" && slurp("/.rytm/songs/JAM_2/take-001.json") == "old");
   // a name the two rules agree on: nothing to do
   put("/.rytm/songs/PLAIN/take-001.json", "p");
   strcpy(project, "PLAIN");
   song::folder(fn, sizeof fn);
+  while (song::idle()) {}   // (the rename: requests, from idle)
   CHECK(slurp("/.rytm/songs/PLAIN/take-001.json") == "p");
   // no project: _none -> _default
   put("/.rytm/songs/_none/take-001.json", "n");
   project[0] = 0;
   song::folder(fn, sizeof fn);
+  while (song::idle()) {}   // (the rename: requests, from idle)
   CHECK(!strcmp(fn, "/.rytm/songs/_default") && slurp("/.rytm/songs/_default/take-001.json") == "n");
 
   // ---- the project index: each 10 counts, the line written by the card queue (one write for back-to-back names)
@@ -193,6 +198,27 @@ int main() {
   CHECK(slurp("/.rytm/projects.txt").find("CARDQ\tCARDQ\t") != std::string::npos);
   host_card_model(false);
   cardq::reset();
+
+  // ---- writes that only wait are no step: idle_save false, so idle_stream goes on (a burst of N writes must not leave the streams one pass a write).
+  // The two posted here (the index's, the project file's) are steps; then nothing until the card core has run them
+  projects::reset_for_tests();
+  cardq::set_worker(true);
+  projects::note("WAITING");
+  CHECK(fmt::post_queue("/waits-a.txt", "a\n", 2) && fmt::post_queue("/waits-b.txt", "b\n", 2));
+  strcpy(project, "WAITING"), project_dirty = true;   // (a 10 that changes it)
+  int steps = 0;
+  for (int i = 0; i < 50; ++i) steps += idle_save();
+  CHECK(steps <= 2 && fmt::post_busy() && !idle_save());
+  CHECK(!projects::save());                                 // the index's own write, waiting
+  for (int i = 0; i < 40 && (fmt::post_busy() || project_dirty || cardq::pending()); ++i) {
+    while (cardq::service()) {}
+    idle_save();
+  }
+  while (cardq::service()) {}
+  idle_save();
+  cardq::set_worker(false);
+  CHECK(slurp("/waits-a.txt") == "a\n" && slurp("/waits-b.txt") == "b\n" && slurp("/.rytm/project") == "WAITING");
+  CHECK(slurp("/.rytm/projects.txt").find("WAITING\tWAITING\t") != std::string::npos);
 
   // ---- /Bundles is not a sample source
   CHECK(srclib::hidden_name("Bundles") && srclib::hidden_name("bundles"));

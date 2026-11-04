@@ -145,8 +145,8 @@ int main() {
   }
 
   g_out.clear();
-  pool_add(cards.folders() + 0, 0);   // TEENSY folder JUNO's first patch: into the project's JUNO list
-  CHECK(junolib.listed() == 1 && !strcmp(junolib.slot(0).name, "Pad") && g_out[0][4] == 0x16);
+  pool_add(cards.folders() + 0, 0);   // TEENSY folder JUNO's first patch: the list seeded (saved PATs keep theirs), on its highest row
+  CHECK(junolib.listed() == 127 && !strcmp(junolib.slot(126).name, "Pad") && g_out[0][4] == 0x16);
 
   project[0] = 0;
   project_load();   // at boot: /.rytm/project names the project, its SAMPLES pool loads

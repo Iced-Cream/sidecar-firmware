@@ -2,7 +2,7 @@
 """The remote UI end to end in rytm-emu: the emulated Rytm (rytm-mods 0026-remote-ui, build rui1022) against the real
 engine core (sim/rui_link.py: core/build/libcore.dylib's remote UI host, core/ui), over the Overbridge link.
 
-    python3 sim/rui_e2e.py [TEST ...]       TESTS: connect sidecar plaits status leave gone keys splash latehello scope wave rec play gfx extmach machines sdvoice srcgfx srcwave noexit lfo srcview latency (default all but latency and srcview)
+    python3 sim/rui_e2e.py [TEST ...]       TESTS: connect sidecar plaits status leave gone keys splash latehello scope wave rec play gfx extmach machines sdvoice srcgfx srcwave noexit lfo listknobs srcview srcdrop latency (default all but latency, srcdrop and srcview)
                                             the pools (rui1043): srclist srcbrowse poolset (poolset-gr / -wt / -ms) poolrefuse poolp3 poolnames pooldsp, or "pools" for all of them
                                             rui1048 (RUI_TAG=rui1048): polycfg polymake (POLY CONFIG from the track menu; E0's make prompt)
                                             rui1049 (RUI_TAG_1043=rui1049): dspsrcyes (FUNC + YES on DSP SAMPLE's SRC view: the browser at once)
@@ -51,7 +51,7 @@ snapshot (200 M instructions = 1 emulated second). The checks:
            twice opens its page, the overview loads (LOADING, then the mode), STA turned moves the region's marker in
            frames of few tiles, MOD turned into GRAIN's zone turns the page into GRAIN (POS SIZE DENS), the panel equals
            the frame.
-  rec      the REC page with a model of the Pi's recorder (RUI_REC): LEFT x5 from SIDECAR (POOL, AUTO, SAMPLE, SCOPE, then REC), its mask
+  rec      the REC page with a model of the Pi's recorder (RUI_REC): LEFT x4 from SIDECAR (AUTO, SAMPLE, SCOPE, then REC), its mask
            (encoders A..D), YES records (the take's time in large digits, RECORDING), YES again stops, A turned right arms;
            the page stays (YES is the page's), the panel equals the frame.
   play     playback on the REC page against the model's synthetic takes (RUI_REC): B turned picks the channel, B
@@ -172,7 +172,7 @@ class Emu:
     def at(self, ms):
         return f"{self.clock + ms / 5:g}M"
 
-    def run(self, name, ms, events=(), link=True, stop_at=None, save=False, extra=()):
+    def run(self, name, ms, events=(), link=True, stop_at=None, save=False, extra=(), link_args=()):
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -200,6 +200,7 @@ class Emu:
                     self.core_card, "--log", log, "--frames", frames]
             if stop_at is not None:
                 args += ["--stop-at", str(stop_at)]
+            args += list(link_args)
             lt = os.path.join(OUT, f"{name}.link.txt")
             sp = subprocess.Popen(args, stdout=open(lt, "w"), stderr=subprocess.STDOUT)
             t0 = time.time()
@@ -733,7 +734,7 @@ def t_wave(e):
     os.environ["CORE_SAMPLE_RAM_MB"] = "16"
     try:
         r = e.run("wave", 3400, ENTER + [(800, "press", "RIGHT"), (1000, "press", "RIGHT"), (1600, "turn", "4:+1", 10, 20),
-                                         (2400, "turn", "3:+2", 28, 20)])
+                                         (2400, "turn", "2:+2", 28, 20)])
     finally:
         os.environ.pop("RUI_VOICE1", None)
         os.environ.pop("CORE_SAMPLE_RAM_MB", None)
@@ -761,10 +762,10 @@ def t_wave(e):
     shot("wave", os.path.join(OUT, "wave.png"))
 
 
-# SIDECAR -> REC by LEFT: with RUI_REC the ring ends ... LFO, REC, SCOPE, SAMPLE, AUTO, POOL (SAMPLE and AUTO show where REC does;
-# the pools' POOL page) [measured: the catch masks after each LEFT: POOL 0F, AUTO FF, SAMPLE 0F, SCOPE 07, REC 01], so REC is the 5th
-# page to the left. Presses are short (60 ms); the 5th lands before the first YES.
-REC_NAV = [(800 + 90 * i, "press", "LEFT", 60) for i in range(5)]
+# SIDECAR -> REC by LEFT: with RUI_REC the ring ends ... REC, SCOPE, SAMPLE, AUTO (SAMPLE and AUTO show where REC does; LFO and,
+# since rui1051, POOL are off the ring), so REC is the 4th page to the left. Presses are short (60 ms); the 4th lands before the
+# first YES.
+REC_NAV = [(800 + 90 * i, "press", "LEFT", 60) for i in range(4)]
 
 
 def t_rec(e):
@@ -778,7 +779,7 @@ def t_rec(e):
         os.environ.pop("RUI_TAP", None)
     st = [x for x in r["events"] if "stats" in x]
     page = st[-1]["stats"][14:16] if st else None
-    check("rec: LEFT x5 from SIDECAR opens REC (extra page 1: LFO, REC, SCOPE, SAMPLE, AUTO, POOL) and YES keeps it", page == [3, 1], page)
+    check("rec: LEFT x4 from SIDECAR opens REC (extra page 1: LFO, REC, SCOPE, ...) and YES keeps it", page == [3, 1], page)
     masks = ev(r, tx="mask")
     check("rec: its catch mask takes encoders A..D (A arming, B C D playback)", bool(masks) and masks[-1]["encs"] == [0, 1, 2, 3],
           masks[-1:] if masks else None)
@@ -1156,12 +1157,13 @@ def t_srcwave(_e):
     t_open = t + 1000
     t_mod = t_open + 1600
     evs += [(t_open, "press", "TRK", 300), (t_open + 100, "press", "YES"), (t_open + 600, "press", "RIGHT"),
-            (t_open + 800, "press", "RIGHT"), (t_open + 1100, "turn", "2:+1", 1, 20), (t_mod, "turn", "3:+2", 28, 20)]
-    os.environ.update(RUI_SAMPLES="1", CORE_SAMPLE_RAM_MB="16")
+            (t_open + 800, "press", "RIGHT"), (t_mod, "turn", "2:+2", 28, 20)]
+    # (its page has no SMP since ENG took that encoder: pool slot 1 by the voice's params, as wave)
+    os.environ.update(RUI_VOICE1="0x20:0,64,64,64,0,64,64,100,64,64,1,0,10,110,0,100", CORE_SAMPLE_RAM_MB="16")
     try:
         r = e.run("srcwave", t_mod + 1800, evs)
     finally:
-        os.environ.pop("RUI_SAMPLES", None)
+        os.environ.pop("RUI_VOICE1", None)
         os.environ.pop("CORE_SAMPLE_RAM_MB", None)
     bd = [tuple(x["tracks"][0]) for x in ev(r, rx="machines") if x["t0"] == 0]
     check("srcwave: BD's 33: DSP SAMPLE (45, 0x20)", bool(bd) and bd[-1] == (45, 0x20), bd[-3:])
@@ -1252,6 +1254,47 @@ def t_srcreplug(_e):
               f"commits after the last {len(com)}", flush=True)
         check(f"{name}: a hello after the replug, then the Rytm's 29 0 1", hel and on, (hel, on[:3]))
         check(f"{name}: the core answers with frames", bool(com), len(com))
+        end = texts_of(name, r)
+        check(f"{name}: the core's last frame is BD's JUNO view", "JUNO" in end, end[:4])
+        panel_check(name, r)
+        shot(name, os.path.join(OUT, f"{name}.png"))
+
+
+def t_srcdrop(_e):
+    """Late attach (notes: lateattach-fable.md H1), the link mutes without a replug: BD on JUNO, its SRC page; every core
+    -> Rytm byte swallowed for SRCDROP_MS (2500, past the Rytm's 1 s timeout) as the Pi's merge does with its sending off,
+    no re-enumeration and so no hello. (shown) the view is up when the mute starts and a turn moves CUT inside it; (first)
+    the mute starts before the view's first frame, the stock SRC page under it. After the mute, within 1 s: a whole frame
+    (all 128 tiles in one commit) and the panel equal to the core's last frame, BD's JUNO view."""
+    tag = os.environ.get("RUI_TAG_1027", "rui1027")
+    if not os.path.exists(os.path.join(EMU, f"sections/us_{tag}.json")):
+        check(f"srcdrop: the {tag} base in rytm-emu", False)
+        return
+    gone = int(os.environ.get("SRCDROP_MS", "2500"))
+    for case in ("shown", "first"):
+        e = Emu(tag)
+        evs, t = [], 300
+        for k in ["SRC", "SRC"] + ["DOWN"] * EXT_DOWNS["JUNO"] + ["YES"]:
+            evs.append((t, "press", k))
+            t += 500
+        t_mute = t + 1500 if case == "shown" else t - 2200   # (first: the list's cursor reaches JUNO and YES comes inside it)
+        if case == "shown":
+            evs.append((t_mute + 500, "turn", "1:+8", 6, 50))
+        t_back = t_mute + gone
+        t_end = t_back + 4000
+        name = f"srcdrop-{case}"
+        r = e.run(name, t_end, evs, link_args=["--mute", f"{t_mute / 1000}:{t_back / 1000}"])
+        hel = [x["t"] for x in ev(r, rx="0x35")]
+        check(f"{name}: no hello after the mute starts (no re-enumeration)",
+              not [h for h in hel if h >= t_mute / 1000], hel)
+        un = ev(r, ev="unmute")
+        check(f"{name}: the mute swallowed core bytes", bool(un), un[:1])
+        back = t_back / 1000
+        com = [x for x in ev(r, tx="commit") if x["t"] >= back]
+        whole = [x for x in com if x["tiles"] >= 128 and x["t"] < back + 1]
+        print(f"    {name}: hellos {[round(h, 2) for h in hel]}, commits after {len(com)}, "
+              f"tiles {[x['tiles'] for x in com[:6]]}", flush=True)
+        check(f"{name}: a whole frame within 1 s of the mute's end", bool(whole), [(x["t"], x["tiles"]) for x in com[:4]])
         end = texts_of(name, r)
         check(f"{name}: the core's last frame is BD's JUNO view", "JUNO" in end, end[:4])
         panel_check(name, r)
@@ -1366,6 +1409,29 @@ def t_srcturn(_e):
 def lfo_des(d):
     """The LFO JSON's design hex -> [(value, shape)] x 16."""
     return [(int(d[3 * k:3 * k + 2], 16) - 64, int(d[3 * k + 2], 16)) for k in range(16)]
+
+
+def t_listknobs(e):
+    # core/ui README "List knobs" on the Rytm's own reports, the core's clock emulated (RUI_LFO): LFO WAVE on knob E
+    os.environ["RUI_LFO"] = "lfo=1:wav:0"
+    os.environ["RUI_LIST_PACED"] = "1"
+    # a core card of its own: after t_lfo the shared one holds L1 (FX1, WAVE 4), whose project load rui_link only
+    # overrides on a card with no LFOs (L1 OFF), so WAVE would start at 4 and end clamped at 7
+    keep = e.core_card
+    e.core_card = tempfile.mkdtemp(prefix="rui_e2e_card_")
+    try:
+        r = e.run("listknobs", 4200, ENTER + [(800, "press", "UP", 150), (840, "press", "LFO"), (1400, "turn", "4:+16", 3, 100),
+                                              (2000, "turn", "4:+40", 1, 50), (2600, "turn", "4:-1", 1, 50),
+                                              (3200, "turn", "4:+1", 8, 20)])
+    finally:
+        os.environ.pop("RUI_LFO", None)
+        os.environ.pop("RUI_LIST_PACED", None)
+        e.core_card = keep
+    lj =[x["lfo"] for x in r["events"] if "lfo" in x and x["lfo"]]
+    w = lj[-1]["l"][0]["wav"] if lj else None
+    check("listknobs: 3 + 1 hard reports up, a count back, 8 slow counts up: WAVE at 3 + 1 - 1 + 2 (before: its end, 7)",
+          w == 5, w)
+    panel_check("listknobs", r, live=True)
 
 
 def t_lfo(e):
@@ -2098,10 +2164,9 @@ def t_dspbank(_e):
         evs.append((t, "press", k))
         t += 400
     t0 = t + 2500
-    evs += [(t0, "press", "SMPL"), (t0 + 600, "turn", "3:+1", 1, 50), (t0 + 1100, "press", "RIGHT"),
-            (t0 + 1400, "press", "RIGHT"), (t0 + 1800, "turn", "3:+20", 1, 50), (t0 + 2200, "press", "FUNC", 300),
-            (t0 + 2300, "press", "YES"), (t0 + 3100, "press", "YES"), (t0 + 3900, "press", "YES"),
-            (t0 + 4600, "press", "SRC"), (t0 + 6000, "press", "BD")]
+    evs += [(t0 + 600, "turn", "0:+1", 1, 50), (t0 + 1100, "press", "RIGHT"),   # (7h: SMP is knob A of the SRC page)
+            (t0 + 1400, "press", "RIGHT"), (t0 + 1800, "turn", "0:+20", 1, 50), (t0 + 2200, "press", "FUNC", 300),
+            (t0 + 2300, "press", "YES"), (t0 + 3100, "press", "YES"), (t0 + 3900, "press", "YES"), (t0 + 6000, "press", "BD")]
     ks = pool_env(RUI_NM="browse=gr:cd:/Samples/E2E", RUI_FRESH="1", RUI_SAMPLES="1", CORE_SAMPLE_RAM_MB="16")
     try:
         r = e.run("dspbank", t0 + 7500, evs, save=True)
@@ -2158,7 +2223,7 @@ def t_dspbank(_e):
     pool_card(e2.core_card)
     evs2 = [x for x in evs if x[0] < t0 + 1100]   # to the list's opening
     tt = t0 + 1100
-    evs2 += [(tt, "turn", "3:+20", 1, 50)]
+    evs2 += [(tt, "turn", "0:+20", 1, 50)]
     tt += 500
     for b in range(8):
         if b:
@@ -2180,6 +2245,121 @@ def t_dspbank(_e):
           len(on3) == 8 and heads == [f"{c}020" for c in "ABCDEFGH"], (len(on3), heads))
     check("dspbank: the core's browser opened in every bank (4A 0 1 eight times, each closed by NO: 4A 0 0)",
           a42 == [[0, 1], [0, 0]] * 8, a42)
+
+
+def preset_card(card):
+    """/JUNO (a patch, a bank of 3), /DX7 (a bank of 32 voices) on the core's card."""
+    def dump(code, seed):
+        return bytes([0xf0, 0x41, 0x30, 0, code]) + bytes((seed + i) & 0x7f for i in range(18)) + b"\xf7"
+    os.makedirs(os.path.join(card, "JUNO"), exist_ok=True)
+    os.makedirs(os.path.join(card, "DX7"), exist_ok=True)
+    os.makedirs(os.path.join(card, "Samples"), exist_ok=True)
+    open(os.path.join(card, "JUNO", "alpha.syx"), "wb").write(dump(5, 11))
+    open(os.path.join(card, "JUNO", "bank.syx"), "wb").write(b"".join(dump(i, 31 + i) for i in range(3)))
+    v = bytearray(4096)
+    for i in range(32):
+        v[128 * i + 118:128 * i + 128] = b"VOICE %02d  " % i
+    open(os.path.join(card, "DX7", "mine.syx"), "wb").write(bytes(v))
+
+
+def preset_file(card, kind):
+    d = os.path.join(card, ".rytm", kind)
+    out = []
+    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        out += [ln.split("\t") for ln in open(os.path.join(d, f), errors="replace").read().splitlines()]
+    return out
+
+
+def t_presetlist(_e):
+    """0.4.0, the real core: BD on JUNO, FUNC + YES on its SRC view: the list with the card's presets (the RAM index:
+    FACTORY, alpha, bank); DOWN to alpha, YES: ADDED 000, the project's JUNO list on the card; YES commits PAT 0. The same
+    on 6-OP FM: mine/, its 32 voices, YES adds VOICE 00 with its bytes in the list's file."""
+    tag = pool_tag()
+    if not os.path.exists(os.path.join(EMU, f"sections/us_{tag}.json")):
+        check(f"presetlist: the {tag} base in rytm-emu", False)
+        return
+    for title in ("JUNO", "6-OP FM"):
+        name = "presetlist-" + ("juno" if title == "JUNO" else "fm")
+        e = Emu(tag)
+        preset_card(e.core_card)
+        evs, t = [], 300
+        for k in ["SRC", "SRC"] + ["DOWN"] * EXT_DOWNS[title] + ["YES"]:
+            evs.append((t, "press", k))
+            t += 400
+        t0 = t + 3000
+        evs += [(t0, "press", "FUNC", 300), (t0 + 100, "press", "YES")]
+        if title == "JUNO":
+            keys = ["DOWN", "DOWN", "YES", "YES", "YES"]     # (FACTORY, bank/, alpha; no free row: REPLACE 000? YES; YES commits)
+        else:
+            keys = ["DOWN", "YES", "YES", "YES"]      # (ROM, mine/, VOICE 00)
+        for i, k in enumerate(keys):
+            evs.append((t0 + 900 + 500 * i, "press", k))
+        ks = pool_env(RUI_FRESH="1")
+        try:
+            r = e.run(name, t0 + 4000, evs, save=True)
+        finally:
+            for k in ks:
+                os.environ.pop(k, None)
+        tx = [str(x) for x in texts_all(name, r)]
+        print(f"  {name}: {tx[next((i for i, x in enumerate(tx) if x.startswith('ADD:')), 0):][:60]}")
+        bl = ev(r, rx="banklist")
+        check(f"{name}: the Rytm's 4A on then 3 (srcyes), YES commits", len(bl) >= 3 and bl[1]["on"] == 3 and
+              any(x["on"] == 0 and x["why"] == "yes" for x in bl), bl)
+        check(f"{name}: the index's rows on the page", any(x.startswith("ADD:") for x in tx) and
+              any(("FACTORY" if title == "JUNO" else "ROM") in x for x in tx), tx[:20])
+        row = 0 if title == "JUNO" else 96   # (the built-ins seeded, row = PAT)
+        check(f"{name}: ADDED {row:03d} on the list", any(f"ADDED {row:03d}" in x for x in tx), tx[-12:])
+        lst = preset_file(e.core_card, "juno" if title == "JUNO" else "fm")
+        print(f"  {name}: list {len(lst)} rows")
+        if title == "JUNO":
+            check(f"{name}: the project's JUNO list holds alpha", any("alpha" in " ".join(x) for x in lst), lst)
+        else:
+            check(f"{name}: the FM list holds VOICE 00 and its bytes", len(lst) == 97 and lst[96][2] == "VOICE 00" and len(lst[96]) == 4 and
+                  len(lst[96][3]) == 256, lst[-1:])
+        w48 = [x["body"][1:6] for x in ev(r, tx="0x48")]
+        check(f"{name}: YES commits PAT {row} (the core's 48 0 0 {row} 0 1)", [0, 0, row, 0, 1] in w48, w48)
+        fr = last_frame(name, r)
+        if fr:
+            frame_png(os.path.join(OUT, name + ".png"), fr)
+        shot(name, os.path.join(OUT, name + ".png"))
+
+
+def t_sidecarload(_e):
+    """The documented path, the real core: the sample browser (FUNC + SMPL, DOWN, FUNC + YES), SIDECAR at the +Drive root,
+    JUNO and DX7 in it, a DX7 bank a folder of 32 voices; RUI_TAG_SC the Rytm build."""
+    tag = os.environ.get("RUI_TAG_SC", pool_tag())
+    if not os.path.exists(os.path.join(EMU, f"sections/us_{tag}.json")):
+        check(f"sidecarload: the {tag} base in rytm-emu", False)
+        return
+    # SIDECAR, DX7, mine, VOICE 00 ticked, the menu's LOAD TO PROJ
+    keys = os.environ.get("SC_KEYS", "DOWN,DOWN,F+YES,DOWN,DOWN,F+YES,DOWN,F+YES,DOWN,YES,RIGHT,DOWN,DOWN,YES,YES").split(",")
+    e = Emu(tag)
+    preset_card(e.core_card)
+    evs = [(1100, "press", "FUNC", 1000), (1150, "press", "SMPL"), (1400, "press", "DOWN"), (1500, "press", "FUNC", 1000), (1550, "press", "YES")]
+    t = 2800
+    for k in keys:
+        if k.startswith("F+"):   # the browser's FUNC + key
+            evs += [(t, "press", "FUNC", 300), (t + 80, "press", k[2:])]
+        else:
+            evs.append((t, "press", k))
+        t += 900
+    os.environ["RUI_DBG_SX"] = "1"
+    try:
+        r = e.run(f"sidecarload-{tag}", t + 1500, evs, save=True)
+    finally:
+        os.environ.pop("RUI_DBG_SX", None)
+    sx = [x["sx"][8:] for x in r["events"] if "sx" in x and x["sx"][:8].lower() == "f07d5254" and x["sx"][8:10] in ("0d", "0f", "0D", "0F")]
+    print(f"  sidecarload {tag}: 0D / 0F {sx[:20]}")
+    for f in ("juno", "fm"):
+        print(f"  list {f}: {len(preset_file(e.core_card, f))} rows, last {[x[:3] for x in preset_file(e.core_card, f)[-1:]]}")
+    if "SC_KEYS" not in os.environ:
+        ls0e = [x["body"][:8] for x in ev(r, tx="0x0e")]
+        check("sidecarload: SIDECAR listed (0D 0), the DX7 bank as 32 voices", any(b[6:8] == [0, 32] for b in ls0e), ls0e)
+        check("sidecarload: LOAD TO PROJ reached the core (0F)", any(x.startswith("0f") for x in sx), sx)
+        lst = preset_file(e.core_card, "fm")
+        check("sidecarload: the FM list holds VOICE 00 after the ROM's rows, with its bytes", len(lst) == 97 and lst[96][2] == "VOICE 00" and
+              len(lst[96]) == 4, lst[-1:])
+    shot(f"sidecarload-{tag}", os.path.join(OUT, f"sidecarload-{tag}.png"))
 
 
 def t_dspsrcyes(_e):
@@ -2283,9 +2463,9 @@ def t_project(e):
     end = texts_of("project", r)
     check("project: done: SAVE THE RYTM PROJECT AS JAM 1021 2", any("SAVE THE RYTM PROJECT AS" in t for t in end) and
           any("JAM 1021 2" in t for t in end), end)
-    r = os.path.join(e.core_card, ".rytm")   # (its pool lists' folder, or any other project file the bundle carried)
+    rytm = os.path.join(e.core_card, ".rytm")   # (its pool lists' folder, or any other project file the bundle carried)
     got = [p for p in ("projects/JAM 1021 2", "slots/JAM 1021 2.txt", "seq/JAM 1021 2", "lfo/JAM 1021 2.txt", "songs/JAM 1021 2")
-           if os.path.exists(os.path.join(r, p))]
+           if os.path.exists(os.path.join(rytm, p))]
     check("project: the core's card has the imported project (JAM 1021 2's files) and the bundle in /Bundles",
           got and any(f.endswith(".sidecar.zip") for f in os.listdir(os.path.join(e.core_card, "Bundles"))), got)
     panel_check("project", r)
@@ -2543,10 +2723,10 @@ def t_noteedit(e):
         shot(name, os.path.join(OUT, f"{name}.png"))
 
 
-TESTS = dict(polypat=t_polypat, noteedit=t_noteedit, upmapover=t_upmapover, connect=t_connect, sidecar=t_sidecar, plaits=t_plaits, status=t_status, leave=t_leave, gone=t_gone, keys=t_keys,
+TESTS = dict(presetlist=t_presetlist, sidecarload=t_sidecarload, polypat=t_polypat, noteedit=t_noteedit, upmapover=t_upmapover, connect=t_connect, sidecar=t_sidecar, plaits=t_plaits, status=t_status, leave=t_leave, gone=t_gone, keys=t_keys,
              splash=t_splash, latehello=t_latehello, latency=t_latency, scope=t_scope, wave=t_wave, rec=t_rec, play=t_play, gfx=t_gfx, extmach=t_extmach,
-             machines=t_machines, sdvoice=t_sdvoice, srcgfx=t_srcgfx, srcwave=t_srcwave, noexit=t_noexit, lfo=t_lfo, upamp=t_upamp, polycfg=t_polycfg, polymake=t_polymake,
-             srcview=t_srcview, srcturn=t_srcturn, srcsmp=t_srcsmp, srcreplug=t_srcreplug, srclist=t_srclist, srcbrowse=t_srcbrowse, project=t_project,
+             machines=t_machines, sdvoice=t_sdvoice, srcgfx=t_srcgfx, srcwave=t_srcwave, noexit=t_noexit, lfo=t_lfo, listknobs=t_listknobs, upamp=t_upamp, polycfg=t_polycfg, polymake=t_polymake,
+             srcview=t_srcview, srcturn=t_srcturn, srcsmp=t_srcsmp, srcreplug=t_srcreplug, srcdrop=t_srcdrop, srclist=t_srclist, srcbrowse=t_srcbrowse, project=t_project,
              poolset=t_poolset, poolrefuse=t_poolrefuse, poolp3=t_poolp3, poolnames=t_poolnames, pooldsp=t_pooldsp, dspbank=t_dspbank, dspsrcyes=t_dspsrcyes,
              chopmach=t_chopmach, chopchro=t_chopchro, choplazy=t_choplazy,
              **{f"poolset-{k}": (lambda k: lambda e: t_poolset(e, (k,)))(k) for k in ("gr", "wt", "ms")})
@@ -2555,13 +2735,26 @@ DEFAULT = ["connect", "sidecar", "plaits", "status", "leave", "gone", "keys", "s
            "machines", "srcgfx", "srcwave", "noexit", "lfo"]
 
 
+# The voice pages on the TRK + YES ring: a Rytm with the SRC view (rui1027 on, every release) has none, remote.cpp src_capable, so
+# these runs are the path of an older build whatever RUI_TAG names: on its base, RUI_TAG_VOICE (rui1023) and RUI_TAG_VOICE_1025.
+VOICE_PAGES = ("plaits", "keys", "wave", "gfx", "extmach", "machines", "sdvoice", "srcgfx", "srcwave")
+
+
 def main():
+    global TAG
     names = sys.argv[1:] or DEFAULT
     names = [x for n in names for x in (POOLS if n == "pools" else [n])]
     e = Emu()
+    tag, tag25 = TAG, os.environ.get("RUI_TAG_1025", "rui1025")
+    e_voice = None   # (one card for these runs too: wave reads it as the runs before left it)
     for n in names:
         print(f"[{n}]", flush=True)
-        TESTS[n](e)
+        voice = n in VOICE_PAGES
+        TAG = os.environ.get("RUI_TAG_VOICE", "rui1023") if voice else tag
+        os.environ["RUI_TAG_1025"] = os.environ.get("RUI_TAG_VOICE_1025", "rui1025") if voice else tag25
+        if voice and not e_voice:
+            e_voice = Emu()
+        TESTS[n](e_voice if voice else e)
     print("ALL PASS" if not FAILS else f"FAILED: {FAILS}")
     sys.exit(1 if FAILS else 0)
 

@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     CHECK(d.knob[2].min == 10 && d.knob[2].max == 120 && d.knob[2].def == 100 && d.knob[2].role == RMP_ROLE_OFFSET);
     CHECK(d.knob[3].kind == RMP_TEXT_POOL && str_is(d.knob[3].long_name, 12, "Sample") && str_is(d.knob[3].short_name, 4, "SMP"));
     CHECK(rmp_desc_find(&d, 5) == 3 && rmp_desc_find(&d, 4) == -1);
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 0, rd, nullptr, nm) == 2 && !strcmp(nm[0], "PrimeCl") && !strcmp(nm[1], "PrimeCn"));
     CHECK(rmp_manifest_enum(&d, 2, rd, nullptr, nm) == 0);   // no names
   }
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     CHECK(rmp_manifest_read(&i, rd, nullptr, &d));
     CHECK(d.nknobs == 1 && d.knob[0].min == 0 && d.knob[0].max == 127 && d.knob[0].def == 64 && d.knob[0].role == 0);
     CHECK(d.p2_title[0] == 0 && d.preset_ext[0] == 0 && d.pre == -1);
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 0, rd, nullptr, nm) == 3 && !strcmp(nm[2], "C"));
   }
   {   // format 1: no names
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     CHECK(rmp_manifest_read(&i, rd, nullptr, &d));
     CHECK(d.nknobs == 1 && d.knob[0].p == 2 && d.knob[0].look == RMP_LOOK_CENTRED && d.knob[0].kind == RMP_TEXT_BIPOLAR);
     CHECK(d.names_at == 0);
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 0, rd, nullptr, nm) == 0);
   }
   {   // skipped knobs: p 0, p 17, a P seen before; unprintable bytes made '_'; a bad range repaired
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
     CHECK(strlen(d.preset_ext) == 7 && !strcmp(d.preset_ext, "abcdefg"));
     CHECK(strlen(d.knob[0].long_name) == 12 && !strcmp(d.knob[0].long_name, "TwelveLetter"));
     CHECK(strlen(d.knob[0].short_name) == 4 && !strcmp(d.knob[0].short_name, "FOUR"));
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 0, rd, nullptr, nm) == 1 && !strcmp(nm[0], "EIGHTCH"));   // at most 7
     rmp_desc_from_id("x.ABCDEFGHIJKLMN", &d);
     CHECK(strlen(d.name) == 10 && !strcmp(d.name, "ABCDEFGHIJ") && strlen(d.short_name) == 4);
@@ -125,7 +125,8 @@ int main(int argc, char **argv) {
     rmp_info i = make(3, "X", "X", 0, "", "", {{1, 0, 0, 0, 0, 0, 0, 127, 64, "A", "A"}}, {});
     rmp_info t = i; t.manifest_size -= 1; CHECK(!rmp_manifest_read(&t, rd, nullptr, &d));
     t = i; t.format = 4; CHECK(rmp_manifest_read(&t, rd, nullptr, &d) && d.format == 4 && d.nknobs == 1);   // 4: as 3 (RLB2)
-    t = i; t.format = 5; CHECK(!rmp_manifest_read(&t, rd, nullptr, &d));
+    t = i; t.format = 5; CHECK(rmp_manifest_read(&t, rd, nullptr, &d) && d.format == 5 && d.nknobs == 1);   // 5: as 3 (a list over 16 names)
+    t = i; t.format = 6; CHECK(!rmp_manifest_read(&t, rd, nullptr, &d));
     t = i; t.image_size = 100000; CHECK(!rmp_manifest_read(&t, rd, nullptr, &d));
   }
   {   // labels that follow a list knob (RMP_LABELS_*): the block at the manifest's end, the static labels before it
@@ -146,7 +147,7 @@ int main(int argc, char **argv) {
     rmp_info li = i; li.manifest_size += (uint32_t)blk.size();
     CHECK(rmp_manifest_read(&li, rd, nullptr, &d));   // the old reading: the same knobs, the names reachable
     CHECK(d.nknobs == 4 && str_is(d.knob[0].long_name, 12, "Pitch"));
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 2, rd, nullptr, nm) == 3 && !strcmp(nm[2], "MA"));
     rmp_labels L;
     reads = 0;
@@ -196,7 +197,7 @@ int main(int argc, char **argv) {
     pkg.insert(pkg.end(), blk.begin(), blk.end());
     rmp_info li = i; li.manifest_size += (uint32_t)blk.size();
     CHECK(rmp_manifest_read(&li, rd, nullptr, &d));   // the old reading: TYPE's own (static) names
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_manifest_enum(&d, 3, rd, nullptr, nm) == 2 && !strcmp(nm[1], "SD"));
     rmp_labels L;
     reads = 0;
@@ -278,20 +279,20 @@ int main(int argc, char **argv) {
         if (L.ndep < 1 || L.ndep > RMP_LABELS_DEPS) return false;
         int sum = 0;
         for (int v = 0; v < L.ndep; ++v) {
-          if (L.count[v] < 1 || L.count[v] > 16 || L.base[v] != sum) return false;
+          if (L.count[v] < 1 || L.count[v] > RMP_ENUM_MAX || L.base[v] != sum) return false;
           sum += L.count[v];
         }
         if (sum != L.nsets) return false;
       }
       float pv[16];
-      char nm[16][8];
+      char nm[RMP_ENUM_MAX][8];
       for (float a : {0.0f, 63.0f, 127.0f, 1e9f, -1e9f, __builtin_nanf("")})
         for (float b : {0.0f, 64.0f, 127.0f, 1e9f, __builtin_nanf("")}) {
           for (float &x : pv) x = b;
           if (L.dep) pv[L.dep - 1] = a;
           int set = rmp_labels_pick(&L, pv);
           if (set < 0 || set >= L.nsets) return false;
-          if (L.dep && rmp_labels_enum(&L, set, L.knob, nm) > 16) return false;
+          if (L.dep && rmp_labels_enum(&L, set, L.knob, nm) > RMP_ENUM_MAX) return false;
         }
       return true;
     };
@@ -299,14 +300,16 @@ int main(int argc, char **argv) {
     rmp_labels L;
     size_t at = 0;
     std::vector<uint8_t> blk;
-    // the largest: 32 sets (16 + 16) taken; 33 (16 + 16 + 1) refused; a count of 17 refused
+    // the largest: 32 sets (16 + 16) taken; 33 (16 + 16 + 1) refused; a count of 17 taken, of 37 refused
     rmp_info i = mk({16, 16}, &blk, &at);
     CHECK(rmp_manifest_read(&i, rd, nullptr, &dd) && rmp_manifest_labels(&i, rd, nullptr, &dd, &L) && L.nsets == 32 && sane(L));
-    char nm[16][8];
+    char nm[RMP_ENUM_MAX][8];
     CHECK(rmp_labels_enum(&L, 31, 10, nm) == 16 && !strcmp(nm[15], "T31"));
     i = mk({16, 16, 1}, &blk, &at);
     CHECK(rmp_manifest_read(&i, rd, nullptr, &dd) && !rmp_manifest_labels(&i, rd, nullptr, &dd, &L) && zero(L));
     i = mk({17, 1}, &blk, &at);
+    CHECK(rmp_manifest_read(&i, rd, nullptr, &dd) && rmp_manifest_labels(&i, rd, nullptr, &dd, &L) && L.nsets == 18 && sane(L));
+    i = mk({37, 1}, &blk, &at);
     CHECK(rmp_manifest_read(&i, rd, nullptr, &dd) && !rmp_manifest_labels(&i, rd, nullptr, &dd, &L) && zero(L));
     // a good one to damage
     i = mk({2, 3}, &blk, &at);

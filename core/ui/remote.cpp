@@ -10,11 +10,14 @@
 
 #include "fx/send_fx.h"
 #include "fx/insert.h"
+#include "device/device.h"
 #include "hooks.h"
 #include "keys.h"
 #include "lfo.h"
 #include "machines.h"
+#include "midim/midim.h"
 #include "poly.h"
+#include "arp/arp.h"
 #include "pool/pool.h"
 #include "seq/seq.h"
 #include "song/song.h"
@@ -115,6 +118,7 @@ CORE_COLD int machine_of_state(int vi) {
   if (x.user < 0 && x.gr) return kGranMachine;    // GRANULAR (0x38, or gr=voice:V)
   if (x.user < 0 && x.li) return kLiveMachine;    // LIVE IN (0x78, or livein=voice:V)
   if (x.user < 0 && x.cp) return kChopMachine;    // CHOP (0x18, or chop=voice:V)
+  if (x.user < 0 && x.mi) return kMidiMachine;    // MIDI (0x43 / 0x44)
 #endif
   return x.user >= 0 ? 0x50 + 8 * x.user : x.fm ? kFm : x.juno ? kJuno : x.grain ? kGrainMachine : x.dsps ? kDspSample : x.daisy ? kDaisy
                                                                                  : x.md ? kMd : kPlaits;
@@ -139,8 +143,14 @@ uint8_t track_vb[12];
 // for BD and MT / HT, so its voice bits are replaced by this one's and only its machine flag is kept.
 UI_ROM const uint8_t kTrackVoice[12] = {0, 2, 7, 7, 1, 3, 5, 5, 4, 4, 6, 6};
 // 0x40 is MD (machines.h kMd): ours where the build has it (CORE_MD); on a build without, not ours (as analog)
-CORE_COLD uint8_t track_vb_of(int t, uint8_t vb) {
+// machine: 33's machine byte; MIDI has no flag (machines.h): 0x80 and the voice here, machine_of reads it
+CORE_COLD uint8_t track_vb_of(int t, uint8_t vb, int machine) {
   vb &= 0x7F;
+#if CORE_MSAMP
+  if (machine == kRytmMidi && vb != kNotOurs && !(vb & 0x78)) return (uint8_t)(kMidiMachine | kTrackVoice[t]);
+#else
+  (void)machine;
+#endif
 #if !CORE_MD
   if ((vb & 0x78) == kMd) return kNotOurs;
 #endif
@@ -155,11 +165,17 @@ UI_ROM const char* const kTrackName[12] = {"BD", "SD", "RS", "CP", "BT", "LT", "
 // A voice's name for the user: the track(s) that play it (core/voice_name.h), never the Sidecar's voice number (voice 1
 // is BT's, voice 2 SD's).
 CORE_COLD const char* voice_label(int vi) { return voice_name(vi); }
+// rc040 review H1: another track on t's voice (a shared voice's pair) plays JUNO too
+CORE_COLD bool juno_partner(int t) {
+  for (int u = 0; u < 12; ++u)
+    if (u != t && kTrackVoice[u] == kTrackVoice[t] && track_vb[u] != kNotOurs && machine_of(track_vb[u]) == kJuno) return true;
+  return false;
+}
 CORE_COLD int machine_of_voice(int vi) {
   vi &= 7;
   if (have_tracks) {
     for (int t = 0; t < 12; ++t)   // the first track on this voice with a Sidecar machine (CP after RS, OH after CH...)
-      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == vi) return track_vb[t] & 0x78;
+      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == vi) return machine_of(track_vb[t]);
     return kNoMachine;
   }
   return reported[vi] && (CORE_MD || !v[vi].md) ? machine_of_state(vi) : kNoMachine;   // (MD without CORE_MD: none)
@@ -214,8 +230,9 @@ struct StatusView {
     // badge (pixels: the Rytm inverts only a glyph's own cell, which drew a bare inverted glyph), the machine centred in
     // the 22 px after it (the Rytm draws "PLAITS" 24 px wide [measured, rytm-emu rui1021])
     static UI_ROM const uint8_t kShownOrder[8] = {0, 2, 7, 1, 3, 5, 4, 6};
-    for (int n = 0; n < kVoices; ++n) {
-      int vi = kShownOrder[n];
+    const bool box = device::foreign();
+    for (int n = 0; n < (box ? device::active().voices : kVoices); ++n) {
+      int vi = box ? n : kShownOrder[n];
       int x = 32 * (n & 3), y = 13 + 11 * (n >> 2);
       c.fill(Rect{(int16_t)x, (int16_t)(y - 1), 10, 7}, kOn);
       sniprintf(b, sizeof b, "%.2s", voice_name(vi));
@@ -303,6 +320,8 @@ constexpr uint8_t kPageLfo = 1;   // 30's page byte (rui1026): 0 the default (SI
 constexpr uint8_t kPageSeq = 0x10;   // rui1036: 0x10 + t (16..27) the SEQ page of track t (rui1037: TRK + TRIG; rui1036: FUNC + LFO)
 constexpr uint8_t kPageIns = 2;      // fx-ins: 2 the INSERT page (proposed rytm-mods 0026 mapping: TRK + FX; docs/INSERT-FX.md)
 constexpr uint8_t kPageInsOut = 3;   // rui1047: 3 the INSERT page on its OUT view (UP + AMP; stereo / POST, docs/STEREO.md); an older host reads it as the SIDECAR page
+int kit_said = -1;                   // the kit the last 3B named
+constexpr uint8_t kPageArp = 4;      // 7ae: UP + FLTR, the ARP page (page_arp.cpp); an older host reads it as the SIDECAR page
 constexpr uint8_t kPagePoly = 0x20;  // rui1048: 0x20 + t (32..43) POLY CONFIG of track t (the Rytm's track menu, FUNC + CHRO; page_poly.cpp); an older host reads it as the SIDECAR page
 constexpr int kExtra0 = -10;   // s.voice of extra page k (extra.h: SCOPE, REC): kExtra0 - k
 constexpr int kMaxIds = 2 + kVoices + 16;
@@ -346,6 +365,7 @@ struct State {
   uint32_t now_ms = 0, open_ms = 0;   // the last remote_tick's clock; when the page was last opened (30 on)
   bool caps36 = false;       // the Rytm's hello said it understands 36 (the splash, the popups)
   int caps = 0;              // fix1049: the hello's caps byte whole (bit 1: 16 send FX label tables, rui1049)
+  bool presets_told = false; // 0.4.0: the Rytm knows, since its last hello, that JUNO's / FM's PAT lists are drawn here (4A 7F 1)
   bool popup = false, popup_clock = false;   // F1 / F4: a popup owed / running (the page closed)
   bool popup_over = false, modal_shown = false;   // the pairing code's modal: over a page too, and drawn last frame
   uint32_t popup_t0 = 0, popup_last = 0, popups = 0, popup_ms = 0;   // popup_ms: how long it stays (0: kPopupMs)
@@ -365,6 +385,7 @@ struct State {
   uint8_t srcv[12][16] = {};
   uint8_t srcl[12][16] = {};      // rui1038: the 2A's fraction bytes (P1 of GRANULAR / WAVETABLE / MULTISAMPLE: bank << 4)
   int16_t src14[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1's last 14 bits by 2A or our 48 (song)
+  int16_t wr_pat[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1 our 48 wrote, its answer owed (presetpick)
   uint16_t src_known[12] = {};
   RemoteStats stats = {};
 };
@@ -402,6 +423,18 @@ CORE_COLD int TrackSource::code(int k) const {
   return Source::code(k);
 }
 
+// A box draws no text of ours (the Rytm's text routine has no counterpart there): its frames carry the text in their pixels, in the host's font (preview()), so only 38s and a 39 go.
+// `wire` is what the diff and the send read: `work` on the Rytm, whose bytes stay what they were. The items stay in `work`, which the pages draw over.
+CORE_RAM2 Canvas baked;
+Canvas* wire = &work;
+CORE_COLD void wire_ready() {
+  wire = &work;
+  if (!device::foreign()) return;
+  preview(work, baked.fb);
+  memset(baked.txt, 0, sizeof baked.txt);
+  wire = &baked;
+}
+
 CORE_COLD void send(const uint8_t* m, int n) {
   to_rytm(m, n);
   s.stats.bytes += (uint32_t)n;
@@ -424,7 +457,7 @@ CORE_COLD void send_short(uint8_t cmd, const uint8_t* b, int nb) {   // nb <= kM
 CORE_COLD void send_rect(int c0, int p, int nc) {
   uint8_t raw[8 * kTileCols], m[16 + 8 * kTileCols + kTileCols * 8 / 7 + 2];
   int nr = 0;
-  for (int x = c0 * 8; x < (c0 + nc) * 8; ++x) raw[nr++] = work.fb[p + 8 * x];
+  for (int x = c0 * 8; x < (c0 + nc) * 8; ++x) raw[nr++] = wire->fb[p + 8 * x];
   int n = head(m, kRect);
   m[n++] = s.seq;
   m[n++] = (uint8_t)c0;
@@ -445,7 +478,7 @@ CORE_COLD void send_rect(int c0, int p, int nc) {
 
 // 3D: slot i of `work` (empty: the slot cleared)
 CORE_COLD void send_text(int i) {
-  const TextItem& t = work.txt[i];
+  const TextItem& t = wire->txt[i];
   uint8_t m[16 + kTextLen];
   int n = head(m, kText);
   m[n++] = s.seq, m[n++] = (uint8_t)i, m[n++] = t.x & 0x7F, m[n++] = t.y & 0x3F, m[n++] = t.font & 0x7F;
@@ -487,6 +520,7 @@ CORE_COLD int page_ids(int* ids) {
   for (int k = 0; k < extra_pages() && n < kMaxIds; ++k) {
     // R3: MENU / KEYS only while shown; rui1051: the pages only their keys open too (page_keys.h sc_shortcut_only)
     if ((extra_page(k).off_ring || sc_shortcut_only(extra_page(k).title)) && s.voice != kExtra0 - k) continue;
+    if (!extra_for_box(extra_page(k).title)) continue;
     if (!extra_page(k).shown || extra_page(k).shown()) ids[n++] = kExtra0 - k;
   }
   return n;
@@ -558,6 +592,8 @@ CORE_COLD void on_enc(int e, int delta, bool func) {
   const Page* p = page_for_voice(machine_of_voice(s.voice), s.voice);
   if (!p || p->enc[e] == kNone) return;
   int k = p->enc[e] & 15, cur = (int)lfo::base_of(s.voice, k, v[s.voice].p[k]);
+  if (is_list(*p, k)) delta = list_turn(e, delta);
+  if (!delta) return;
   int nv = step_value(*p, k, cur < 0 ? 0 : cur > 127 ? 127 : cur, delta, func);
   if (nv != cur) set_param(s.voice, k, nv);
 }
@@ -611,6 +647,7 @@ CORE_COLD void voice_footer(const Page& p, const char* name, const Source& src, 
 // 3F for every encoder whose binding the Rytm does not have yet: numeric parameters echo into the bottom bar's slot
 // ("BD HRM:" + the value), lists and the SIDECAR page none.
 CORE_COLD void send_echoes(const Page* p, int vi) {
+  if (device::foreign()) return;
   for (int e = 0; e < 8; ++e) {
     uint8_t slot = kEchoNone, val = 0, fl = 0;
     char pre[12] = "";
@@ -698,6 +735,7 @@ CORE_COLD void send_leds(const uint8_t* c) {
 }
 // A page that lights the trig keys (ExtraPage::leds_now): sent when it shows and on every change, mode 0 when it is left
 CORE_COLD void update_leds(const ExtraPage* x) {
+  if (device::foreign()) return;
   uint8_t c[16];
   bool want = !s.legacy && x && x->leds_now && x->leds_now(c);
   if (want && (!s.leds_on || memcmp(c, s.leds, 16))) send_leds(c);
@@ -708,7 +746,7 @@ CORE_COLD void update_leds(const ExtraPage* x) {
 CORE_COLD int send_part(const uint32_t tiles[4], uint64_t texts, bool clear_first) {
   int n = 0;
   s.seq = (uint8_t)((s.seq + 1) & 0x7F);
-  if (clear_first) {
+  if (clear_first && !device::foreign()) {
     uint8_t b = s.seq;
     send_short(kTextClear, &b, 1);
   }
@@ -793,14 +831,15 @@ CORE_COLD void frame(uint32_t ms) {
   send_echoes(p, s.voice);
   uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
   uint64_t texts = 0;
-  int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
+  wire_ready();
+  int tiles = s.sent_valid ? wire->diff_tiles(sent, mask) : kTiles;
 #if CORE_UI_TOOLS
   work.check_overlap();
 #endif
-  int ntext = s.sent_valid ? work.diff_text(sent, &texts) : 0;
+  int ntext = s.sent_valid ? wire->diff_text(sent, &texts) : 0;
   if (!s.sent_valid)
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i, ++ntext;
+      if (wire->txt[i].s[0]) texts |= 1ull << i, ++ntext;
   if (tiles || ntext) {
     // the touched knob's cell and the bottom bar first, in a commit of their own, when there is more
     uint32_t first[4] = {}, rest[4];
@@ -825,7 +864,7 @@ CORE_COLD void frame(uint32_t ms) {
     } else {
       send_part(mask, texts, !s.sent_valid);
     }
-    sent = work;
+    sent = *wire;
     s.sent_valid = true;
     s.last_tx = ms;
     s.stats.tiles += (uint32_t)tiles;
@@ -849,7 +888,7 @@ CORE_COLD int track_machine(int t) {
   if (livein::forced(kTrackVoice[t]) && (!have_tracks || (track_vb[t] != kNotOurs && user_slot_of(track_vb[t] & 0x78) < 0)))
     return kLiveMachine;   // livein=voice:V: the LIVE IN page on a Sidecar track of V
 #endif
-  if (have_tracks) return track_vb[t] == kNotOurs ? kNoMachine : track_vb[t] & 0x78;
+  if (have_tracks) return track_vb[t] == kNotOurs ? kNoMachine : machine_of(track_vb[t]);
   return machine_of_voice(kTrackVoice[t]);
 }
 CORE_COLD const Page* track_page(int t) {   // DSP SAMPLE's GRAIN view by the Rytm's MOD (P12) once it came
@@ -894,6 +933,7 @@ CORE_COLD void src_tick(uint32_t ms) {
     s.stats.widgets += (uint32_t)drawn;
     uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
     uint64_t texts = 0;
+    wire = &work;   // (a box has no SRC view)
     int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
 #if CORE_UI_TOOLS
     work.check_overlap();
@@ -928,6 +968,7 @@ CORE_COLD void src_tick(uint32_t ms) {
 // running down over kSplashMs, the bottom bar naming how the pages open.
 CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
   char b[kTextLen + 1];
+  const device::Screen* bx = device::box_screen();
   c.clear();
   header(c, kStatusTitle, 0, 0, "USB");
   int dx = 0;
@@ -941,7 +982,7 @@ CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
       if (row >> x & 1) c.pixel(kIconX - dx + x, kIconY + y);
   }
   c.put_text(kSlotFree, kRBold, 54, 19, "CONNECTED");
-  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), kVoices, fx::kSlots);
+  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), bx ? device::active().voices : kVoices, fx::kSlots);
   c.put_text(kSlotFree + 1, kRSmall, 54, 33, b);
   const uint8_t* ip = ssrc.st.ip;
   if ((ssrc.st.eth == 2 || ssrc.st.wifi == 2) && (ip[0] | ip[1] | ip[2] | ip[3]))
@@ -953,7 +994,7 @@ CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
   if (w > 0) c.hline(2, 2 + w - 1, 52);
   char f[32];
   sniprintf(f, sizeof f, "%s: SIDECAR PAGES", sc_combo_keys("pages"));   // the device's table (ui/page_keys.h)
-  footer(c, f);
+  footer(c, bx ? bx->keys : f);
 }
 
 // The splash's frames: at once, then every kSlideStepMs while the icon slides, every kSplashStepMs after (only the
@@ -974,15 +1015,16 @@ CORE_COLD void splash_tick(uint32_t ms) {
   splash_draw(work, t);
   uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
   uint64_t texts = 0;
-  int tiles = s.sent_valid ? work.diff_tiles(sent, mask) : kTiles;
-  if (s.sent_valid) work.diff_text(sent, &texts);
+  wire_ready();
+  int tiles = s.sent_valid ? wire->diff_tiles(sent, mask) : kTiles;
+  if (s.sent_valid) wire->diff_text(sent, &texts);
   else
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i;
+      if (wire->txt[i].s[0]) texts |= 1ull << i;
   if (tiles || texts) send_part(mask, texts, !s.sent_valid);
   else send_short(kAlive, nullptr, 0);
   s.stats.tiles += (uint32_t)tiles;
-  sent = work;
+  sent = *wire;
   s.sent_valid = true;
   s.last_tx = ms;
   if (first) {
@@ -1062,10 +1104,11 @@ CORE_COLD void popup_tick(uint32_t ms) {
     popup_draw(work);
     uint32_t mask[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
     uint64_t texts = 0;
+    wire_ready();
     for (int i = 0; i < kTextSlots; ++i)
-      if (work.txt[i].s[0]) texts |= 1ull << i;
+      if (wire->txt[i].s[0]) texts |= 1ull << i;
     send_part(mask, texts, true);
-    sent = work;
+    sent = *wire;
     s.sent_valid = true;
     popup_hold(ms, hold);
     ++s.popups;
@@ -1095,7 +1138,7 @@ CORE_COLD void popup_tick(uint32_t ms) {
 volatile uint16_t disp_owned = 0;   // bit p: the platform's touchscreen shows page p (remote_display_owns)
 CORE_COLD bool extra_here(const char* title) {   // an ExtraPage of that title is in the list now (or none is: the status)
   for (int k = 0; k < extra_pages(); ++k)
-    if (!strcmp(extra_page(k).title, title)) return !extra_page(k).shown || extra_page(k).shown();
+    if (!strcmp(extra_page(k).title, title)) return extra_for_box(title) && (!extra_page(k).shown || extra_page(k).shown());
   return true;
 }
 CORE_COLD void display_remote_page(int page) {
@@ -1158,6 +1201,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
           for (int k = 0; k < extra_pages(); ++k)
             if (!strcmp(extra_page(k).title, "SEQ")) s.voice = kExtra0 - k;
         }
+        if (b[0] == kPageArp)
+          for (int k = 0; k < extra_pages(); ++k)
+            if (!strcmp(extra_page(k).title, "ARP")) s.voice = kExtra0 - k;
         if (b[0] < kPagePoly || b[0] >= kPagePoly + 12) poly_page_closed();   // rui1048: another page asked: POLY's state gone
         if (b[0] >= kPagePoly && b[0] < kPagePoly + 12) {   // rui1048: the track menu's POLY CONFIG of track b[0] - 0x20
           poly_page_open(b[0] - kPagePoly, true);
@@ -1273,13 +1319,28 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       // One track turned JUNO / 6-OP FM (the SRC list, n 1): its PAT list (16 / 17) pushed now. The Rytm keeps one
       // list cache for both (and the U slots' lists); the 17 that follows every 16 at a project load evicts JUNO's,
       // and the Rytm asks again only once in 200 draws [measured, rytm-emu rui1025: ~38 s of factory names].
-      if (b[1] == 1 && track_vb[b[0]] != track_vb_of(b[0], b[3])) {
+      if (b[1] == 1 && track_vb[b[0]] != track_vb_of(b[0], b[3], b[2])) {
         if ((b[3] & 0x78) == kJuno) send_juno_names();
         else if ((b[3] & 0x78) == kFm) send_fm_names();
       }
       for (int i = 0; i < b[1]; ++i)
-        track_vb[b[0] + i] = track_vb_of(b[0] + i, b[3 + 2 * i]), tracks_known |= (uint16_t)(1u << (b[0] + i));
+        track_vb[b[0] + i] = track_vb_of(b[0] + i, b[3 + 2 * i], b[2 + 2 * i]), tracks_known |= (uint16_t)(1u << (b[0] + i));
       have_tracks = true;
+#if CORE_MSAMP
+      for (int vi = 0; vi < kVoices; ++vi) {
+        bool any = false, other = false;
+        for (int t = 0; t < 12; ++t)
+          if (kTrackVoice[t] == vi && track_vb[t] != kNotOurs) (track_vb[t] & kMidiMachine ? any : other) = true;
+        const V& x = v[vi];
+        if (x.mi && !any) v[vi].mi = false, midim::leave(vi);   // no track on the voice plays it any more (ext_render's 0x11 stopped with it)
+        // The machine known before the voice's first report (a Pi restart, BD on MIDI: a note from a key or the sequencer would play PLAITS). Only a
+        // voice with no other machine: a change from one is the next report's, which ends what that machine plays
+        else if (!x.mi && any && !other && x.user < 0 && !nm::is(vi) && !x.li && !x.fm && !x.juno && !x.md && !x.daisy) v[vi].mi = true;
+      }
+#endif
+#if CORE_POLY
+      arp::machines();   // a voice's machine changed: its arpeggio ends
+#endif
       s.stats.machines++;
       return;
     }
@@ -1330,6 +1391,13 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         int kb = remote_track_src_param(t);
         if (b[1] <= kb && kb < b[1] + b[2]) s.src14[t] = (int16_t)((b[3 + 2 * (kb - b[1])] & 0x7F) << 7 | (b[4 + 2 * (kb - b[1])] & 0x7F));
       }
+#if CORE_MSAMP
+      if (have_tracks && track_vb[t] != kNotOurs && (track_vb[t] & kMidiMachine) && s.src_known[t] == 0xFFFF) {
+        float w[16];   // MIDI: a knob sends with the voice idle too (its 0x03s only come while it plays)
+        for (int k = 0; k < 16; ++k) w[k] = s.srcv[t][k] + s.srcl[t][k] / 128.0f;
+        midim::report(kTrackVoice[t], -1, 0, w);
+      }
+#endif
       if (b[2] == 1) s.src_last = (int8_t)b[1];
       else if (t == s.src_track) src_list_quiet();   // a kit's values at once (a load): no list for its SRC
       if (t == s.src_track) s.input = true;   // drawn at once (the input path), a burst coalesced to its latest values
@@ -1394,11 +1462,31 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     }
     case kWrite:   // rui1036: 48 <track> <param> <status>: the Rytm's answer to our write (logged when refused)
       if (n < 3) break;
-      if (b[2]) core::log("rui: 48 write track %d P%d refused (status %d)", b[0] + 1, b[1] + 1, b[2]);
+      if (b[2] == 4) core::log("rui: 48 write track %d P%d locked on the steps held", b[0] + 1, b[1] + 1);   // (1038)
+      else if (b[2]) core::log("rui: 48 write track %d P%d refused (status %d)", b[0] + 1, b[1] + 1, b[2]);
+      if (b[0] < 12 && b[1] == 0 && s.wr_pat[b[0]] >= 0) {   // presetpick: PAT written into a JUNO track's sound (not a
+        int t = b[0], pat = s.wr_pat[t];                     // lock, status 4): its patch's knobs now, whatever its voice
+        s.wr_pat[t] = -1;                                    // is doing (a silent one reports nothing until its next trig)
+        // rc040 review H1: on a shared voice (RS/CP, MT/HT, CH/OH, CY/CB) the Rytm routes the 15 to OWNER(voice), the
+        // track that trigged it last, which the Pi cannot tell. With the partner track also JUNO that may be the partner:
+        // its CUT..REL would be overwritten. So no sync then (as before presetpick: the next 0x03 carrying the PAT syncs).
+        // With the partner not JUNO, a JUNO voice (x.juno, juno_sound_pat) can only be this track's.
+        if (!b[2] && have_tracks && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kJuno && !juno_partner(t))
+          core::juno_sound_pat(kTrackVoice[t], pat);
+      }
       return;
     case kKit:   // 1026: the Rytm's active kit: the LFOs are per kit (core/lfo.h)
       if (n < 1 || b[0] > 127) break;
       lfo::kit_changed(b[0]);
+      if (b[0] != kit_said) {  // (a 3B also comes with every page open and hello: the same kit is no change)
+        kit_said = b[0];
+#if CORE_MSAMP
+        midim::kit_switched(); // MIDI: its held notes off; the new kit's PRG and the rest go out at its reports
+#endif
+#if CORE_POLY
+        arp::kit_changed();    // the arpeggios end; the new kit's settings come as 45s
+#endif
+      }
 #if CORE_POLY
       ins::kit_changed(b[0]);   // the inserts are per kit too (core/fx/insert.h)
 #endif
@@ -1407,6 +1495,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
 #endif
       return;
     case kHello: {   // 1023: <uptime >> 7> <uptime & 0x7F> <caps>: the splash when the Rytm was up before the link
+      s.presets_told = false;
       if (n < 3) break;
       s.stats.hellos++;
       int up = b[0] << 7 | b[1];
@@ -1451,6 +1540,14 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
 }
 
 CORE_COLD void remote_tick(uint32_t ms) {
+  if (!s.presets_told && s.src_track >= 0) {
+    int m = track_machine(s.src_track);
+    if (m == core::kJuno || m == core::kFm) {
+      const uint8_t cap[9] = {0xF0, 0x7D, 0x52, 0x54, kBankList, 1, 0x7F, 1, 0xF7};
+      core::to_rytm(cap, 9);
+      s.presets_told = true;
+    }
+  }
   s.now_ms = ms;
 #if CORE_POLY && CORE_MSAMP
   static uint32_t rename_seen = 0;   // UX review B1: a rename's question shows the PROJECT page (it asks there)
@@ -1486,6 +1583,18 @@ CORE_COLD void remote_tick(uint32_t ms) {
   }
 }
 
+// What was sent to the Rytm may not have reached it (records dropped between here and its USB port, no replug and so no
+// hello): nothing tells this file which, and a diff against a frame the Rytm never got leaves it on the stock page or on
+// a page with holes. Everything owed since a hello goes again, as after one, with nothing of the Rytm's state reset: a
+// whole frame, the mask, the LEDs, the splash or the modal over, the names.
+CORE_COLD void remote_resync() {
+  s.sent_valid = false, s.mask_valid = false, s.echo_valid = false, s.leds_on = false, s.clock_set = false;
+  s.src_told = -1, s.splash_clock = false, s.presets_told = false;
+  if (s.popup_over) s.popup_clock = false;
+  src_names_resend();
+  ++s.stats.resyncs;
+}
+
 CORE_COLD void remote_request(bool on) {
   uint8_t b[2] = {0, (uint8_t)(on ? 1 : 0)};
   send_short(kOpen, b, 2);
@@ -1501,7 +1610,7 @@ CORE_COLD void remote_show_page(const char* title) {
   }
   if (!strcmp(title, kStatusTitle)) {   // the status page (SIDECAR, the first): the page opens on it
     if (s.open && s.voice != -1) back_push(s.voice), lfo_left(s.voice, -1), s.voice = -1, s.page_changed = true, s.input = true, s.via = -1;
-    else if (!s.open) want_title = nullptr, remote_request(true);
+    else if (!s.open && !device::foreign()) want_title = nullptr, remote_request(true);
     return;
   }
   if (s.open) {
@@ -1513,6 +1622,7 @@ CORE_COLD void remote_show_page(const char* title) {
       }
     return;
   }
+  if (device::foreign()) return;   // a box's screen opens by its user alone (a4_rx takes 3A's close only): nothing to ask, and a title left here would land the next open on it
   want_title = title;
   remote_request(true);
 }
@@ -1744,7 +1854,7 @@ CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], ui
 CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) {
   int n = 0;
   for (int t = 0; t < 12; ++t) {
-    if (kTrackVoice[t] != (vi & 7) || !have_tracks || track_vb[t] == kNotOurs || (track_vb[t] & 0x78) != machine) continue;
+    if (kTrackVoice[t] != (vi & 7) || !have_tracks || track_vb[t] == kNotOurs || machine_of(track_vb[t]) != machine) continue;
     uint8_t b[4] = {(uint8_t)t, (uint8_t)(k & 15), (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), (uint8_t)(lo & 0x7f)};
     send_short(kWrite, b, lo > 0 ? 4 : 3);   // rui1038: the fraction byte (a bank) only when there is one: older builds too
     if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
@@ -1758,9 +1868,13 @@ CORE_COLD bool remote_track_write(int t, int k, int value, int lo, int flags) {
                   (uint8_t)(flags & 0x7f)};
   send_short(kWrite, b, flags ? 5 : lo > 0 ? 4 : 3);
   if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
+  if (k == 0) s.wr_pat[t] = b[2];   // (its answer: kWrite)
   return true;
 }
 CORE_COLD int remote_track_src14(int t) { return t >= 0 && t < 12 ? s.src14[t] : -1; }
+static bool g_rytm_040 = false;
+CORE_COLD void remote_rytm_040(bool on) { g_rytm_040 = on; }
+CORE_COLD bool remote_rytm_040() { return g_rytm_040; }
 CORE_COLD int remote_track_src_param(int t) {
   return t >= 0 && t < 12 && have_tracks && track_vb[t] != kNotOurs && (track_vb[t] & 0x78) == kDspSample ? 10 : 0;
 }

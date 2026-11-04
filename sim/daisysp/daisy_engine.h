@@ -22,10 +22,23 @@
 
 #include <stdlib.h>
 
+#if defined(__ARM_NEON) && defined(__aarch64__) && !defined(CORE_NO_NEON)
+#include <arm_neon.h>
+#endif
+
 #include "Filters/onepole.h"
 #include "Filters/svf.h"
 #include "Utility/dcblock.h"
 #include "Utility/delayline.h"
+
+#ifndef RYTM_RENDER_O3
+// The render at -O3 where GCC builds for AArch64 (the Pi): the file around it stays -O2 (core/engines/engines.mk)
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__)
+#define RYTM_RENDER_O3 __attribute__((optimize("O3")))
+#else
+#define RYTM_RENDER_O3
+#endif
+#endif
 
 namespace rytm {
 
@@ -240,10 +253,30 @@ class BlockResonator {
       q *= q_loss;
     }
   }
+#if defined(__ARM_NEON) && defined(__aarch64__) && !defined(CORE_NO_NEON)
+  // AArch64: the four modes in one register. The modes' states as the C below, bit for bit; only the output's sum runs in
+  // another order, within a few ulp of the float, and nothing feeds back from it.
+  inline float Process(float in) {
+    const float32x4_t x = vdupq_n_f32(in);
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    for (int i = 0; i < kModes; i += 4) {
+      const float32x4_t s1 = vld1q_f32(s1_ + i), s2 = vld1q_f32(s2_ + i), g = vld1q_f32(g_ + i);
+      const float32x4_t hp = vmulq_f32(vsubq_f32(vfmsq_f32(x, vld1q_f32(rg_ + i), s1), s2), vld1q_f32(h_ + i));
+      const float32x4_t bp = vfmaq_f32(s1, g, hp), lp = vfmaq_f32(s2, g, bp);
+      vst1q_f32(s1_ + i, vfmaq_f32(bp, g, hp));
+      vst1q_f32(s2_ + i, vfmaq_f32(lp, g, bp));
+      acc = vfmaq_f32(acc, vld1q_f32(gain_ + i), bp);
+    }
+    return vaddvq_f32(acc);
+  }
+  inline float ProcessC(float in) {
+#else
+  inline float Process(float in) { return ProcessC(in); }
   // Four modes at a time, their steps interleaved: the Teensy's in-order
   // core then overlaps one mode's latencies with the others' work (the same
   // arithmetic per mode, the sum in mode order, as one at a time).
-  inline float Process(float in) {
+  inline float ProcessC(float in) {
+#endif
     float out = 0.0f;
     for (int i = 0; i < kModes; i += 4) {
       float a1 = s1_[i], b1 = s1_[i + 1], c1 = s1_[i + 2], d1 = s1_[i + 3];
@@ -293,6 +326,9 @@ class BlockResonator {
     }
     return 1.0f / stretch;
   }
+#if defined(__ARM_NEON) && defined(__aarch64__) && !defined(CORE_NO_NEON)
+  alignas(16)   // a misaligned q store read back the next sample costs more than the 4 modes win (measured: 4 x)
+#endif
   float amp_[kModes], g_[kModes], rg_[kModes], h_[kModes], gain_[kModes];
   float s1_[kModes], s2_[kModes];
 };
@@ -315,7 +351,7 @@ class DaisyEngine {
   // starts a strike on the first sample. `in` (n samples, or null): an analog
   // voice's audio to excite it instead, with EXC as its gain. Writes n floats,
   // about -1..1.
-  void Render(int model, float note, float structure, float brightness,
+  RYTM_RENDER_O3 void Render(int model, float note, float structure, float brightness,
               float damping, float accent, float exciter, bool trigger,
               float level, float* out, int n, const float* in = nullptr) {
     if (model < 0) model = 0;
@@ -393,7 +429,7 @@ class DaisyEngine {
 
  private:
   // MODAL, STRING, RESON rung by outside audio, no strike of their own.
-  void RenderInput(int model, float f, float structure, float brightness, float damping,
+  RYTM_RENDER_O3 void RenderInput(int model, float f, float structure, float brightness, float damping,
                    const float* in, float gain, float level, float* out, int n) {
     float f0 = f / sr_;
     if (f0 > 0.25f) f0 = 0.25f;

@@ -156,7 +156,8 @@ header and compares the layout.
   `licence` (at most 48), `page2` (`"sample"` or `"params"`: whether the SMPL page is a sample layer or 8 more knobs) and
   `knobs`, a list of at most 32: `p` (1..16, each once), `long` (at most 12), `short` (at most 4), `look` (`dial` `centred`
   `fader` `list`), `text` (`number` `bipolar` `enum` `list` `note` `time`) and, for look `list`, **`names`**: 1..16 value
-  names of 1..7 printable ASCII characters each (at most 255 names per package). A knob is 26 bytes in the manifest (22
+  names of 1..7 printable ASCII characters each (at most 36 a knob, 16 before 0.4.0, and 255 per package; a Rytm whose
+  mods keep 16 is served 16, each the name of the zone its step stores, and the knob's long name says `16/36`). A knob is 26 bytes in the manifest (22
   in format 2; `enum_first`/`enum_count` index a name table of NUL-padded 8-byte entries after the knobs); the format-1
   knob (20 bytes) has no names.
   Format 3 adds per knob `role` (`free` default, `preset`: a preset sets it and it is written back to the

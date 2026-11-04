@@ -39,10 +39,13 @@ struct V {
   bool wt, gr;         // WAVETABLE, GRANULAR (core/nmach.h): their notes render in wt:: / gr::render_add
   bool li;             // LIVE IN (core/livein/livein.h): the device's AUDIO IN through the voice's chain
   bool cp;             // CHOP (core/chop/chop.h, a note machine of core/nmach.h): its slices render in chop::render_add
+  bool mi;             // MIDI (core/midim/midim.h, a note machine of core/nmach.h): sends MIDI, never live
 #endif
 };
 
 extern V v[kVoices];
+extern uint16_t g_dsp_head[kVoices];
+int dsp_playhead(int vi);   // DSP SAMPLE: where the voice reads, 0..65534 of the file; -1 none (racy, for drawing)
 extern rytm::DaisyEngine daisy[kVoices];
 extern juno::Voice junos[kVoices];
 #ifdef CORE_HEAP_BUFFERS   // heap_buffers.h: placed at boot
@@ -56,12 +59,12 @@ extern uint8_t fm_stage[RYTM_RENDER_CORES][rytm::FmMachine::kStageBytes];   // p
 extern rytm::StreamVoice streams[kVoices];
 #ifdef CORE_HEAP_BUFFERS   // heap_buffers.h: placed at boot
 extern uint8_t (*stream_heads)[rytm::StreamVoice::kHead];
-extern uint8_t (*stream_rings_a)[rytm::StreamVoice::kRing];
-extern uint8_t (*stream_rings_b)[rytm::StreamVoice::kRing];
+extern uint8_t (*stream_rings_a)[rytm::StreamVoice::kRingBytes];
+extern uint8_t (*stream_rings_b)[rytm::StreamVoice::kRingBytes];
 #else
 extern uint8_t stream_heads[kVoices][rytm::StreamVoice::kHead];
-extern uint8_t stream_rings_a[4][rytm::StreamVoice::kRing];
-extern uint8_t stream_rings_b[4][rytm::StreamVoice::kRing];
+extern uint8_t stream_rings_a[4][rytm::StreamVoice::kRingBytes];
+extern uint8_t stream_rings_b[4][rytm::StreamVoice::kRingBytes];
 #endif
 extern int prepared[kVoices][3];   // folder, file, STA
 extern float trig_note[kVoices];
@@ -95,12 +98,17 @@ void fm_note_on(int vi, int note, int vel);   // 6-OP FM's mono note (voice_repo
 void fm_relist();
 int juno_pick(int pat, const uint8_t** b, const char** name);
 void juno_select(int vi, int pat, bool sync, bool force);
+void juno_sound_pat(int vi, int pat);   // the sound's PAT, as the Rytm wrote it (the bank list's commit)
 void juno_relist();
 bool refill_neediest(uint32_t below);
 bool pool_line_open(int line);   // a pool line's file (open_on_card): false while the card core opens it
+bool prepare_waiting();   // a prepare not ended (a head on the card core)
+void streams_step();   // each pass: the DSP SAMPLE streams' finished requests, what they need of the card core (cardq::set_need)
 
 // Boot: the sample RAM (after the card) and the voices (after the project: pool_load resets prepared[]).
 void sample_ram_init();
+bool dsp_streams_playing();           // a DSP SAMPLE stream plays now (it reads the card on the control core)
+extern uint32_t ram_late;             // trigs of a RAM-only mode whose sample came too late (voices.cpp kRamLateMs)
 void voices_init();
 // A 0x04 / 0x03 report (d: the whole F0..F7, len bytes) and a 0x11 note-off.
 void voice_report(int cmd, const uint8_t* d, int len);

@@ -54,7 +54,17 @@ struct Xchg {
   volatile int32_t inst;
   volatile uint32_t offer, done;
 };
-Xchg g_x[kVoices][kSlots];
+// voices 0..7, buses (nothing: AMP's dry form), the master's chains, then one more row a master chain: the R side of an
+// L/R pair, slot for slot
+constexpr int kRows = ins::kChains + ins::kMasters;
+inline bool row_on(int c) { return (c >= 0 && c < kVoices) || (c >= ins::kM0 && c < kRows); }
+inline bool is_pair_row(int c) { return c >= ins::kChains && c < kRows; }
+inline int parent(int c) { return is_pair_row(c) ? ins::kM0 + (c - ins::kChains) : c; }   // the chain whose knobs it follows
+inline bool wanted(int c, int s) {   // the row's slot is an AMP that should hold an instance
+  int pc = parent(c);
+  return ins::control.type[pc][s] == ins::kAmp && (!is_pair_row(c) || ins::control.mpair[pc - ins::kM0][s]);
+}
+Xchg g_x[kRows][kSlots];
 
 // the render core's per slot (bus chains included: they run AMP's dry form)
 struct Audio {
@@ -64,7 +74,7 @@ struct Audio {
   bool ran = false;
   float lp = 0, dcx = 0, dcy = 0;
 };
-Audio g_a[ins::kChains][kSlots];
+Audio g_a[kRows][kSlots];
 
 // the control core's per slot
 struct Ctl {
@@ -76,7 +86,7 @@ struct Ctl {
   bool refused = false;      // the cap's refusal counted once
   char pending[kNameMax];    // the card's AMP line, resolved once listed
 };
-Ctl g_k[kVoices][kSlots];
+Ctl g_k[kRows][kSlots];
 
 // the /NAM/ list: two buffers, the readers (any core: texts) take the published one
 struct List {
@@ -163,8 +173,8 @@ inline float db_gain(float db) { return ins::fast_exp2(db * 0.16609640f); }   //
 // ---------------------------------------------------------------------------------------------------- texts
 
 const char* status_short(int s) {
-  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM"};
-  static_assert(kMaxRunning == 6, "the MAX text names the cap");
+  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM", "MAX 2"};
+  static_assert(kMaxRunning == 6 && kMaxMaster == 2, "the MAX texts name the caps");
   return s >= 0 && s < kStatuses ? t[s] : "";
 }
 const char* status_long(int s) {
@@ -177,7 +187,8 @@ const char* status_long(int s) {
       "not a NAM model this reads (damaged, cut short or not .nam / .namb)",
       "the capture is not 48 kHz (no resampler)",
       "6 AMP inserts play already (the CPU cap)",
-      "no memory for the AMP engines"};
+      "no memory for the AMP engines",
+      "2 AMP instances play on the master already (its own cap)"};
   return s >= 0 && s < kStatuses ? t[s] : "?";
 }
 Status parse_status(Parse p) {
@@ -445,14 +456,18 @@ void fresh(int c, int s) {
   if (c < 0 || c >= ins::kChains || s < 0 || s >= kSlots) return;
   Audio& a = g_a[c][s];
   a.lp = a.dcx = a.dcy = 0;
+  if (c >= ins::kM0) {
+    Audio& b = g_a[ins::kChains + (c - ins::kM0)][s];   // the pair's R side
+    b.lp = b.dcx = b.dcy = 0;
+  }
 }
 
-void run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
-  if (m > NAM_A2LITE_MAX_BUFFER_SIZE) m = NAM_A2LITE_MAX_BUFFER_SIZE;
-  float u[NAM_A2LITE_MAX_BUFFER_SIZE], o[NAM_A2LITE_MAX_BUFFER_SIZE];
-  for (int i = 0; i < m; ++i) u[i] = ins::flush(r ? 0.5f * (x[i] + r[i]) : x[i]);   // AMP is mono
-  Audio& a = g_a[c < 0 ? 0 : c >= ins::kChains ? ins::kChains - 1 : c][s & 1];
-  if (c >= 0 && c < kVoices && g_pool) {
+namespace {
+// one capture over u[m] (mono) into y: row c's instance, GAIN in front, DC block, TONE, LEV after it
+void one(int c, int s, const float* p, const float* u, float* y0, int m) {
+  float o[NAM_A2LITE_MAX_BUFFER_SIZE];
+  Audio& a = g_a[c < 0 ? 0 : c >= kRows ? kRows - 1 : c][s & 1];
+  if (row_on(c) && g_pool) {
     a.ran = true;
     take(c, s, a, true);
   }
@@ -490,17 +505,31 @@ void run(int c, int s, const float* p, const float* x, const float* r, float* y0
     float z = o[i] - dx + R * dy;
     dx = o[i], dy = z;
     lp += al * (z - lp);
-    float out = (gl * lp + gh * (z - lp)) * lev;
-    y0[i] = out;
-    if (r) y1[i] = out;
+    y0[i] = (gl * lp + gh * (z - lp)) * lev;
   }
   a.lp = ins::flush(lp), a.dcx = ins::flush(dx), a.dcy = ins::flush(dy);
+}
+}  // namespace
+
+void run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
+  if (m > NAM_A2LITE_MAX_BUFFER_SIZE) m = NAM_A2LITE_MAX_BUFFER_SIZE;
+  float u[NAM_A2LITE_MAX_BUFFER_SIZE];
+  if (r && c >= ins::kM0 && c < ins::kChains && ins::control.mpair[c - ins::kM0][s & 1]) {   // the master's L/R pair
+    for (int i = 0; i < m; ++i) u[i] = ins::flush(x[i]);
+    one(c, s, p, u, y0, m);
+    for (int i = 0; i < m; ++i) u[i] = ins::flush(r[i]);
+    one(ins::kChains + (c - ins::kM0), s, p, u, y1, m);
+    return;
+  }
+  for (int i = 0; i < m; ++i) u[i] = ins::flush(r ? 0.5f * (x[i] + r[i]) : x[i]);   // AMP is mono
+  one(c, s, p, u, y0, m);
+  if (r) memcpy(y1, y0, sizeof(float) * m);
 }
 
 // voice_out's (insert.cpp) every block, before the chain: an offer to a slot that did not run AMP last block is taken
 // at once (nothing plays it: no fade), a fade left half-way finishes
 void service(int vi) {
-  if (vi < 0 || vi >= kVoices || !g_pool) return;
+  if (!row_on(vi) || !g_pool) return;
   for (int s = 0; s < kSlots; ++s) {
     Audio& a = g_a[vi][s];
     if (!a.ran) {
@@ -509,6 +538,10 @@ void service(int vi) {
     }
     a.ran = false;
   }
+}
+
+void service_master() {
+  for (int c = ins::kM0; c < kRows; ++c) service(c);
 }
 
 // ---------------------------------------------------------------------------------------------------- the list
@@ -559,10 +592,10 @@ void publish() {
 
 // ---------------------------------------------------------------------------------------------------- the control side
 
-Status status(int c, int s) { return c >= 0 && c < kVoices && s >= 0 && s < kSlots ? g_k[c][s].st : kIdle; }
+Status status(int c, int s) { return row_on(c) && s >= 0 && s < kSlots ? g_k[c][s].st : kIdle; }
 void knob_text(int c, int s, int v, char* b, int cap) {
   Status st = status(c, s);
-  if (c >= kVoices) {
+  if (!row_on(c)) {
     sniprintf(b, cap, "V ONLY");
     return;
   }
@@ -580,13 +613,19 @@ void knob_text(int c, int s, int v, char* b, int cap) {
   sniprintf(b, cap, "%s", status_short(st));
 }
 void want_file(int c, int s, const char* f) {
-  if (c < 0 || c >= kVoices || s < 0 || s >= kSlots) return;
+  if (!row_on(c) || s < 0 || s >= kSlots) return;
   sniprintf(g_k[c][s].pending, kNameMax, "%s", f ? f : "");
 }
 const char* slot_file(int c, int s) {
-  if (c < 0 || c >= kVoices || s < 0 || s >= kSlots) return "";
+  if (!row_on(c) || s < 0 || s >= kSlots) return "";
   if (g_k[c][s].pending[0]) return g_k[c][s].pending;   // not listed yet: kept as the card has it
   return model_file(model_for_knob(ins::param(c, s, 0)));
+}
+int running_master() {
+  int n = 0;
+  for (int c = ins::kM0; c < kRows; ++c)
+    for (int s = 0; s < kSlots; ++s) n += g_k[c][s].cur >= 0;
+  return n;
 }
 int running() {
   int n = 0;
@@ -636,7 +675,7 @@ void job_fail(Parse p) {
   Ctl& k = g_k[j.c][j.s];
   k.fail_model = j.model, k.fail_gen = j.gen, k.fail_st = parse_status(p), k.st = k.fail_st;
   free_inst(j.inst);
-  log(CORE_STR("amp: %s %c: %s: %s"), ins::chain_name(j.c), 'A' + j.s, j.path, status_long(k.fail_st));
+  log(CORE_STR("amp: %s %c: %s: %s"), ins::chain_name(parent(j.c)), 'A' + j.s, j.path, status_long(k.fail_st));
 }
 
 bool job_step() {
@@ -774,7 +813,7 @@ bool job_step() {
       j.ph = kNone;
       // still wanted? (the knob / a lock moved on, the TYPE changed: the instance is kept for a later reuse)
       Ctl& k = g_k[j.c][j.s];
-      bool want = ins::control.type[j.c][j.s] == ins::kAmp && model_for_knob(ins::control.play[j.c][j.s][0]) == j.model &&
+      bool want = wanted(j.c, j.s) && model_for_knob(ins::control.play[parent(j.c)][j.s][0]) == j.model &&
                   j.gen == g_gen;
       if (!want || acq(&g_x[j.c][j.s].done) != g_x[j.c][j.s].offer) {
         free_inst(j.inst);
@@ -783,7 +822,7 @@ bool job_step() {
       __atomic_thread_fence(__ATOMIC_RELEASE);
       offer(j.c, j.s, j.inst);
       k.st = kPlaying, k.refused = false;
-      log(CORE_STR("amp: %s %c: %s"), ins::chain_name(j.c), 'A' + j.s, model_file(j.model));
+      log(CORE_STR("amp: %s %c: %s"), ins::chain_name(parent(j.c)), 'A' + j.s, model_file(j.model));
       return true;
     }
     default: break;
@@ -826,11 +865,12 @@ bool step() {
     publish();
   }
   bool did = false;
-  for (int c = 0; c < kVoices; ++c)
+  for (int c = 0; c < kRows; ++c)
     for (int s = 0; s < kSlots; ++s) {
+      if (!row_on(c)) continue;
       Ctl& k = g_k[c][s];
       Xchg& x = g_x[c][s];
-      const bool is_amp = ins::control.type[c][s] == ins::kAmp;
+      const bool is_amp = wanted(c, s);
       if (acq(&x.done) != x.offer) {   // the render core has not taken the last offer yet
         if (!is_amp) k.st = kIdle;
         continue;
@@ -855,7 +895,7 @@ bool step() {
         k.st = kLoading;
         continue;
       }
-      const int want = model_for_knob(ins::control.play[c][s][0]);
+      const int want = model_for_knob(ins::control.play[parent(c)][s][0]);
       if (want < 0) {
         k.st = kNoFiles;
         if (k.cur >= 0) offer(c, s, -1), did = true;
@@ -870,9 +910,9 @@ bool step() {
         if (k.cur >= 0) offer(c, s, -1), did = true;
         continue;
       }
-      if (k.cur < 0 && running() >= kMaxRunning) {
+      if (k.cur < 0 && (c < kVoices ? running() >= kMaxRunning : running_master() >= kMaxMaster)) {
         if (!k.refused) ++g_stats.refused, k.refused = true;
-        k.st = kCap;
+        k.st = c < kVoices ? kCap : kCapM;
         continue;
       }
       int i = pick_inst(want);
@@ -915,7 +955,7 @@ bool command(const char* p, char* o, int cap) {
   int n = sniprintf(o, cap, "amp: %d captures in %s, %d of %d playing, loads %u reuses %u refused %u",
                    models(), kFolder, running(), kMaxRunning, (unsigned)g_stats.loads, (unsigned)g_stats.reuses,
                    (unsigned)g_stats.refused);
-  for (int c = 0; c < kVoices && n < cap; ++c)
+  for (int c = 0; c < ins::kChains && n < cap; ++c)
     for (int s = 0; s < kSlots && n < cap; ++s) {
       if (g_k[c][s].st == kIdle) continue;
       int k = sniprintf(o + n, cap - n, "; %s %c %s: %s", ins::chain_name(c), 'A' + s, slot_file(c, s),
@@ -930,7 +970,7 @@ int json(char* o, int cap) {
   if (cap <= 0) return 0;
   int n = sniprintf(o, cap, "\"amp\":{\"models\":%d,\"running\":%d,\"cap\":%d,\"slots\":[", models(), running(), kMaxRunning);
   bool first = true;
-  for (int c = 0; c < kVoices; ++c)
+  for (int c = 0; c < ins::kChains; ++c)
     for (int s = 0; s < kSlots; ++s) {
       if (n >= cap) return cap;
       if (g_k[c][s].st == kIdle) continue;
@@ -951,12 +991,12 @@ int json(char* o, int cap) {
 const Stats& stats() { return g_stats; }
 
 void reset() {
-  for (int c = 0; c < kVoices; ++c)
+  for (int c = 0; c < kRows; ++c)
     for (int s = 0; s < kSlots; ++s) {
       g_k[c][s] = Ctl();
       g_x[c][s].inst = -1, g_x[c][s].offer = 0, g_x[c][s].done = 0;
     }
-  for (int c = 0; c < ins::kChains; ++c)
+  for (int c = 0; c < kRows; ++c)
     for (int s = 0; s < kSlots; ++s) g_a[c][s] = Audio();
   for (int i = 0; i < kInstances; ++i) g_meta[i].busy = false;
   bool lw = g_job.list_wanted || (g_job.ph == kList);

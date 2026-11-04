@@ -11,6 +11,7 @@
 #include "check.h"
 #include "host_link.h"
 #include "poly.h"
+#include "seq/seq.h"
 #include "ui/remote.h"
 #include "voices.h"
 
@@ -527,6 +528,60 @@ static void test_first_note() {
   printf("test_poly: first note PASS\n");
 }
 
+// BACKLOG 7g PAD OCT: a seq track's pads (CHRO, bound by the Rytm's own trigs) enter its voice 12 x OCT higher; the binding
+// reports the shifted offset (the sequencer records it), the chord written back to the Rytm is the pads' own (root - 12 x
+// OCT), a host keyboard (poly=bind) stays unshifted
+static void test_pad_oct() {
+  voices_init();
+  link_reset("test");
+  g_out.clear();
+  char o[200];
+  CHECK(seq::command("seq=track:9:on", o, sizeof o));   // CH (voice 4) is a Sidecar-sequenced track
+  CHECK(seq::owns_voice(4) && seq::pad_oct(4) == 0);
+  CHECK(seq::command("seq=poly:9:oct=1", o, sizeof o) && seq::pad_oct(4) == 1);
+  send(report(0x04, kFm | 4, 60, 127, fm(0)));
+  advance_ms(1);
+  poly::midi(0x9D, 36, 127);
+  advance_ms(40);
+  poly::midi(0x9D, 38, 127);
+  advance_ms(1);
+  send(report(0x04, kFm | 4, 62, 127, fm(0)));
+  CHECK(poly::stats().bound[13] == 4);
+  int off = 0;
+  CHECK(poly::bound_voice(13, &off) == 4 && off == 24 + 12);   // the Rytm's +24, and the track's octave up
+  CHECK(poly::stats().active == 2 && poly::stats().live_notes == 2);
+  advance_ms(poly::kGestureMs + 2);
+  CHECK(count_cmd(0x28, 0x01) == 1);
+  auto& w = g_out.back();
+  CHECK(w.size() == 13 && w[6] == 8 && w[7] == 60);   // the root the pads played (C), not C one octave up
+  poly::midi(0x8D, 36, 0);
+  poly::midi(0x8D, 38, 0);
+  // a pad pushed out of range by OCT +3 (70 + 24 + 36 = 130) does not sound: no live note started
+  CHECK(seq::command("seq=poly:9:oct=3", o, sizeof o));
+  advance_ms(500);
+  uint32_t ln0 = poly::stats().live_notes;
+  poly::midi(0x9D, 70, 100);
+  CHECK(poly::stats().live_notes == ln0);
+  poly::midi(0x8D, 70, 0);
+  poly::midi(0x9D, 40, 100);   // 40 + 60 = 100: in range, sounds
+  CHECK(poly::stats().live_notes == ln0 + 1);
+  poly::midi(0x8D, 40, 0);
+  // OCT -3 and 0: the shift follows the track's setting; the root clamps to 36..84
+  CHECK(seq::command("seq=poly:9:oct=-3", o, sizeof o));
+  CHECK(poly::bound_voice(13, &off) == 4 && off == 24 - 36);
+  CHECK(seq::command("seq=poly:9:oct=0", o, sizeof o));
+  CHECK(poly::bound_voice(13, &off) == 4 && off == 24);
+  // a host keyboard's direct channel on the same voice: unshifted
+  CHECK(seq::command("seq=poly:9:oct=2", o, sizeof o));
+  CHECK(poly::command("poly=bind:3:4", o, sizeof o));
+  CHECK(poly::bound_voice(2, &off) == 4 && off == 0);
+  CHECK(poly::command("poly=bind:3:off", o, sizeof o));
+  // a voice no seq track plays: no shift
+  CHECK(seq::command("seq=track:9:off", o, sizeof o));
+  CHECK(!seq::owns_voice(4) && seq::pad_oct(4) == 0);
+  printf("test_poly: PAD OCT PASS\n");
+}
+
 int main() {
   test_first_note();
   test_expand();
@@ -534,6 +589,7 @@ int main() {
   test_texts();
   test_pool();
   test_live();
+  test_pad_oct();
   test_headroom();
   test_steal();
   printf("test_poly: PASS\n");

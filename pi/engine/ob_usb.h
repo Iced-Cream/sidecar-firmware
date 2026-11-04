@@ -1,7 +1,7 @@
 //
 // ob_usb.h - Circle USB function driver for an Elektron box in OVERBRIDGE mode: the Analog Rytm MKII (VID 0x1935, PID 0x0b48)
 // and any box whose device profile has an audio row (core/device, docs/device-profiles.md "Audio"): alt 3, interrupt
-// IN 0x83 / OUT 0x03, each direction's block size from the profile (the Rytm 368 / 368, the Digitakt 368 / 88), the descriptor
+// IN 0x83 / OUT 0x03, each direction's block size from the profile (the Rytm 368 / 368, the Digitakt 368 / 88, an A4 256 / 200), the descriptor
 // checked against it. The log's prefix stays rytmob for every box.
 //
 // Run-time options (cmdline.txt on the SD card, one line, space separated; all optional):
@@ -40,6 +40,11 @@ public:
 	static boolean Streaming (void)		{ return s_pThis != 0 && s_pThis->m_bStreaming; }
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
+
+	static void WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh);	// an 8-channel IN block as the 12-channel layout
+	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
+	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
+	static void PollReEnum (void);
 
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
@@ -105,6 +110,7 @@ private:
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called
 	const unsigned m_nOutCh, m_nOutBlk;		// host -> device: channels a frame, bytes a block
+	const unsigned m_nInCh, m_nInBlk;		// device -> host
 
 	// options
 	unsigned m_nURBs, m_nBlocks, m_nOutDelay;
@@ -182,6 +188,8 @@ public:
 private:
 	// the order, the pacing and the failure rule: usbmidi_merge.h (portable, Mac-tested); Poll is its Circle side
 	UsbMidiMerge m_Merge;
+	DropResync m_Resync;
+	unsigned m_nMacFailedSeen = 0;			// m_Merge.mac_failed () told to the Sidecar gadget (usbmidi=os:)
 	CUSBMIDIDevice *m_pMIDI = 0;
 	boolean m_bSend = TRUE;
 };

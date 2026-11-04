@@ -31,7 +31,7 @@ namespace {
 // (/Samples, docs/LIBRARY.md, docs/POOLS.md), machine packages and their backups (/Plugins, /MACHINES, /PRESETS,
 // docs/plugins.md), recordings (/Recordings), project bundles (/Bundles, docs/BUNDLES.md), the instrument and table
 // folders (/MULTISAMPLE, /WAVETABLES, /GRANULAR), chop maps (/CHOP, docs/CHOP.md), AMP captures (/NAM,
-// docs/LIBRARY.md) and the JUNO / DX7 banks. Add a folder here when the engine starts using one, not elsewhere.
+// docs/LIBRARY.md) and the JUNO / DX7 banks. Add a folder here when the engine starts using one, and to card_guard.h.
 const char* const kContent[] = {"/Bundles", "/CHOP", "/DX7", "/GRANULAR", "/JUNO", "/MACHINES", "/MULTISAMPLE",
                                 "/NAM", "/PRESETS", "/Plugins", "/Recordings", "/Samples", "/WAVETABLES"};
 
@@ -99,7 +99,7 @@ bool read_only(const char* p) {
 }
 
 bool kept_dir(const char* p) {
-  static const char* const kKept[] = {"/.rytm", "/.digitakt", "/Samples", "/Plugins", "/Bundles"};   // Bundles: docs/BUNDLES.md
+  static const char* const kKept[] = {"/.rytm", "/.digitakt", "/.a4", "/Samples", "/Plugins", "/Bundles"};   // Bundles: docs/BUNDLES.md
   for (const char* k : kKept) if (ieq(p, k, strlen(k) + 1)) return true;
   return false;
 }

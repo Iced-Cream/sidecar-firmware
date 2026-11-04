@@ -817,7 +817,11 @@ int main() {
     g_reserve_slow = true;
     g_reserves = 0;
     take(20);
-    CHECK(g_reserves == 2 && strstr(g_log[g_log.size() - 2].c_str(), "20 MB reserved in 200"));
+    {   // the stub's clock moves 1 s a reservation, plus the real time of writing its 20 MB (more on a loaded machine)
+      const char* rl = strstr(g_log[g_log.size() - 2].c_str(), "20 MB reserved in ");
+      unsigned ms = 0;
+      CHECK(g_reserves == 2 && rl && sscanf(rl, "20 MB reserved in %u ms", &ms) == 1 && ms >= 2000 && ms < 2500);
+    }
     g_reserve_slow = false;
     g_skew = 0;
     CHECK(rec::parse_list("master,bd", &m, err, sizeof err) && rn.configure(m, 24, err, sizeof err));

@@ -42,6 +42,7 @@
 #include <string.h>
 
 #include "fx/knob_labels.h"
+#include "simd.h"
 
 namespace core {
 namespace fx {
@@ -130,6 +131,7 @@ struct ModDelay {
   static constexpr int kUpdate = 8;
   float buf[N];
   int w = 0, da = 1, count = kUpdate;
+  bool no_neon = false;   // the test's reference: the C alone
   float phase = 0.3f, ga = 1, gb = 0, delay = 100, target = 100, mod_amount = 0, mod_rate = 0;
   void Clear() { memset(buf, 0, sizeof buf); }
   void Update() {
@@ -148,7 +150,21 @@ struct ModDelay {
       if (count >= kUpdate) Update(), count = 0;
       int run = kUpdate - count < n - i ? kUpdate - count : n - i;
       count += run;
-      for (int e = i + run; i < e; ++i) {
+      int e = i + run;
+#if CORE_NEON
+      // 4 samples at a time while the reads stay clear of this batch's writes (behind them, or, the line nearly full, far
+      // enough ahead: the batch writes first) and nothing wraps: the same products, lane by lane
+      for (const float32x4_t va = vdupq_n_f32(ga), vb = vdupq_n_f32(gb); !no_neon && da >= 4 && da <= N - 5 && i + 4 <= e; i += 4) {
+        int ia = w - da, ib = ia - 1;
+        ia += N & -(ia < 0), ib += N & -(ib < 0);
+        if (w + 4 > N || ia + 4 > N || ib + 4 > N) break;
+        vst1q_f32(buf + w, vld1q_f32(in + i));
+        vst1q_f32(out + i, vfmaq_f32(vmulq_f32(vld1q_f32(buf + ib), vb), vld1q_f32(buf + ia), va));
+        w += 4;
+        if (w >= N) w = 0;
+      }
+#endif
+      for (; i < e; ++i) {
         buf[w] = in[i];
         int ia = w - da, ib = ia - 1;
         ia += N & -(ia < 0), ib += N & -(ib < 0);
@@ -165,6 +181,7 @@ struct ModAllpass {
   static constexpr int kUpdate = 8;
   float buf[N];
   int idx = 0, da = 1, db = 2, count = kUpdate;
+  bool no_neon = false;   // the test's reference: the C alone
   float phase = 0.3f, ga = 1, gb = 0, delay = 100, target = 100, feedback = 0.5f, mod_amount = 0, mod_rate = 0;
   void Clear() { memset(buf, 0, sizeof buf); }
   void Update() {
@@ -184,7 +201,23 @@ struct ModAllpass {
       if (count >= kUpdate) Update(), count = 0;
       int run = kUpdate - count < n - i ? kUpdate - count : n - i;
       count += run;
-      for (int e = i + run; i < e; ++i) {
+      int e = i + run;
+#if CORE_NEON
+      for (const float32x4_t va = vdupq_n_f32(ga), vb = vdupq_n_f32(gb), fb = vdupq_n_f32(feedback), tiny = vdupq_n_f32(1e-20f);
+           !no_neon && da >= 4 && da <= N - 5 && i + 4 <= e; i += 4) {
+        int ia = idx - da, ib = idx - db;
+        ia += N & -(ia < 0), ib += N & -(ib < 0);
+        if (idx + 4 > N || ia + 4 > N || ib + 4 > N) break;
+        float32x4_t o = vfmaq_f32(vmulq_f32(vld1q_f32(buf + ib), vb), vld1q_f32(buf + ia), va);
+        float32x4_t v = vfmaq_f32(vld1q_f32(in + i), o, fb);
+        v = vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(v), vcaltq_f32(v, tiny)));   // the denormals' guard below
+        vst1q_f32(buf + idx, v);
+        vst1q_f32(out + i, vfmsq_f32(o, v, fb));
+        idx += 4;
+        if (idx >= N) idx = 0;
+      }
+#endif
+      for (; i < e; ++i) {
         int ia = idx - da, ib = idx - db;
         ia += N & -(ia < 0), ib += N & -(ib < 0);
         float o = buf[ia] * ga + buf[ib] * gb;

@@ -1,6 +1,7 @@
 // test_dsi_rotate.cpp - pi/ui/dsi_rotate.h on the Mac: the frame's pixels on a portrait panel at 90 and 270, the UI's
-// 1024x600 centred in 1280x720, every pixel of a blit against the mapping, and a touch at a pixel coming back to that
-// pixel. Run with an argument "bench": the blit's cost on this machine, one full 1024x600 screen in LVGL's 48-row bands.
+// 1024x600 centred in 1280x720 and the whole 1280x720 layout, every pixel of a blit against the mapping, and a touch at a
+// pixel coming back to that pixel. Run with an argument "bench": the blit's cost on this machine, a full screen of each size
+// in LVGL's 48-row bands.
 #include "../../ui/dsi_rotate.h"
 #include "check.h"
 #include <chrono>
@@ -99,27 +100,57 @@ static void blits (unsigned nRot)
 	CHECK (!dsirot::blit (Fb.data (), PW, PW, PH, nRot, 0, 0, 0, 1, Src.data (), 1, &a, &b, &c, &d));
 }
 
+// the 1280x720 layout (no offset): the whole frame in bands, every panel pixel once and from its frame pixel; every corner
+// of the frame touched comes back to itself
+static void full_frame (void)
+{
+	std::vector<uint16_t> Fb (PW * PH), Band (FW * 48);
+	for (unsigned nRot : {270u, 90u})
+	{
+		std::fill (Fb.begin (), Fb.end (), 0);
+		unsigned a, b, c, d;
+		for (unsigned y = 0; y < FH; y += 48)
+		{
+			const unsigned h = FH - y < 48 ? FH - y : 48;
+			for (unsigned r = 0; r < h; r++)
+				for (unsigned x = 0; x < FW; x++) Band[r * FW + x] = (uint16_t) (1 + (y + r) * 3 + x * 5);
+			CHECK (dsirot::blit (Fb.data (), PW, PW, PH, nRot, 0, y, FW, h, Band.data (), FW, &a, &b, &c, &d));
+		}
+		for (unsigned fy = 0; fy < FH; fy++)
+			for (unsigned fx = 0; fx < FW; fx++)
+			{
+				unsigned px, py, bx, by;
+				dsirot::to_panel (nRot, PW, PH, fx, fy, &px, &py);
+				CHECK (Fb[py * PW + px] == (uint16_t) (1 + fy * 3 + fx * 5));
+				dsirot::to_frame (nRot, PW, PH, px, py, &bx, &by);
+				CHECK (bx == fx && by == fy);
+			}
+	}
+}
+
 static void bench (void)
 {
 	std::vector<uint16_t> Fb (PW * PH), Band (UW * 48);
 	for (unsigned i = 0; i < Band.size (); i++) Band[i] = (uint16_t) i;
 	unsigned a, b, c, d;
 	for (unsigned nRot : {270u, 90u})
+	for (unsigned nBig = 0; nBig < 2; nBig++)
 	{
+		const unsigned UW2 = nBig ? FW : UW, UH2 = nBig ? FH : UH, OX2 = nBig ? 0 : OX, OY2 = nBig ? 0 : OY;
 		double dBest = 1e9;
 		for (int nRun = 0; nRun < 50; nRun++)
 		{
 			auto t0 = std::chrono::steady_clock::now ();
-			for (unsigned y = 0; y < UH; y += 48)
+			for (unsigned y = 0; y < UH2; y += 48)
 			{
-				unsigned h = UH - y < 48 ? UH - y : 48;
-				dsirot::blit (Fb.data (), PW, PW, PH, nRot, OX, OY + y, UW, h, Band.data (), UW, &a, &b, &c, &d);
+				unsigned h = UH2 - y < 48 ? UH2 - y : 48;
+				dsirot::blit (Fb.data (), PW, PW, PH, nRot, OX2, OY2 + y, UW2, h, Band.data (), UW2, &a, &b, &c, &d);
 			}
 			double dUs = std::chrono::duration<double, std::micro> (std::chrono::steady_clock::now () - t0).count ();
 			if (dUs < dBest) dBest = dUs;
 		}
-		printf ("rotation %u: 1024x600 in 48-row bands: %.0f us (best of 50), %.2f ns a pixel, no cache clean\n", nRot, dBest,
-			dBest * 1000 / (UW * UH));
+		printf ("rotation %u: %ux%u in 48-row bands: %.0f us (best of 50), %.2f ns a pixel, no cache clean\n", nRot, UW2, UH2, dBest,
+			dBest * 1000 / (UW2 * UH2));
 	}
 }
 
@@ -127,6 +158,7 @@ int main (int argc, char **)
 {
 	if (argc > 1) { bench (); return 0; }
 	corners ();
+	full_frame ();
 	for (unsigned nRot : {270u, 90u})
 	{
 		roundtrip (nRot);

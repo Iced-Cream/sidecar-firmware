@@ -146,7 +146,7 @@ def run(name, emu, out, length, events, seq_cmds, card_dir, voice=0, extra=(), p
     log = open(os.path.join(out, f"{name}.log"), "w")
     host = subprocess.Popen([sys.executable, os.path.join(HERE, "poly_live.py"), "--link", f"127.0.0.1:{port}", "--card",
                              card_dir, "--wav", os.path.join(out, f"{name}.wav"), "--prime", prime, "--seq",
-                             ",".join(seq_cmds)] + list(extra), stdout=log, stderr=subprocess.STDOUT)
+                             ",".join(seq_cmds), "--no-machines"] + list(extra), stdout=log, stderr=subprocess.STDOUT)
     time.sleep(1.5)   # the core's boot
     at = lambda t: f"{7400 + t:g}M"   # noqa: E731
     cmd = [os.path.join(emu, "target/release/dtboot"), f"fw/AR173_us_{TAG}.syx", "--load", f"sections/us_{TAG}.snap",
@@ -427,7 +427,8 @@ def ux_runs(a):
     # (seq mode, the SEQ page); T1 held + SRC + B and G turned: the lock page; T1 let go: the SEQ page with its locks
     ev = [(100, "SRC"), (200, "SRC")] + [(300 + 50 * i, "DOWN") for i in range(20)] + [(1320, "YES"),
           (1450, "TRK", 40), (1460, "TRIG")]
-    after = [(1700, "YES"), (1800, "RECORD"), (1900, "T1", 400), (1940, "SRC"), (1980, "turn", "1:+3", 4, 10),
+    # (the steps set at 6.0 s, before the track is made poly, are kept notes: YES, then RESTORE 5 NOTES? asks: YES again)
+    after = [(1700, "YES"), (1750, "YES"), (1800, "RECORD"), (1900, "T1", 400), (1940, "SRC"), (1980, "turn", "1:+3", 4, 10),
              (2050, "turn", "6:-2", 3, 10)]
     seq = ["seq=lat:192"]
     at = []   # BD's steps and locks once the project is named (the Rytm's 10 loads its own: earlier ones would go)
@@ -758,7 +759,7 @@ def rui1050_runs(a):
         check("r50key: SCALE, B +2 (MIN), C +2 (QNT PLAY): E4 plays as Eb4, C D F as written", pit == [60, 62, 63, 65] and
               "KEY C MIN QNT PLAY" in xline(log), pit)
     if "r50seed" in runs:
-        at2 = ["--at", "6.9:seq=played:1", "--at", "9.9:seq=played:1", "--at", "9.95:seq=x:1"]
+        at2 = ["--at", "7.2:seq=played:1", "--at", "9.9:seq=played:1", "--at", "9.95:seq=x:1"]
         log, _ = run("r50seed", a.emu, a.out, 2100, rec + [(500, "TRIG", 20), (540, "TRIG", 20), (580, "TRIG", 20),
                      (650, "turn", "0:7", 6, 10), (760, "turn", "3:2", 1, 10)] + play + [(1500, "PLAY"), (2000, "STOP")],
                      seq, newcard("r50seed"), extra=at2)

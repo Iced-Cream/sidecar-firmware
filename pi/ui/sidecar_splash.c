@@ -72,10 +72,11 @@ static void oled_draw (uint16_t *fb, unsigned pitch, unsigned w, unsigned h)
 	for (unsigned j = 0; j < h; j++)
 		for (unsigned i = 0; i < w; i++) fb[j * pitch + i] = 0;
 	const char *name = "SIDECAR";
-	int tw = otext_w (name, 4, 1, 4), x = (gw - tw) / 2, y = gh / 2 - 52;
-	otext (fb, pitch, w, h, name, x, y, 4, 1, 4, O_INK);
+	const int s = gw >= 640 ? 6 : 4;			// 1280x720: the name and the bar larger
+	int tw = otext_w (name, s, 1, s), x = (gw - tw) / 2, y = gh / 2 - 13 * s;
+	otext (fb, pitch, w, h, name, x, y, s, 1, s, O_INK);
 	const char *sub = "EXPANDER";
-	int sw = otext_w (sub, 1, 0, 3), sx = (gw - sw) / 2, sy = y + 36 + 10;
+	int sw = otext_w (sub, 1, 0, 3), sx = (gw - sw) / 2, sy = y + 9 * s + 10;
 	otext (fb, pitch, w, h, sub, sx, sy, 1, 0, 3, O_DIM);
 	for (int i = x; i < sx - 8; i += 2) odot (fb, pitch, w, h, i, sy + 4, O_DIM);		// dotted rules either side
 	for (int i = sx + sw + 8 + ((sx + sw + 8 - x) & 1); i < x + tw; i += 2) odot (fb, pitch, w, h, i, sy + 4, O_DIM);
@@ -86,10 +87,10 @@ static void oled_progress (uint16_t *fb, unsigned pitch, unsigned w, unsigned h,
 {
 	int gw, gh;
 	oled_layout (w, h, &gw, &gh);
-	const int n = (int) steps, sw = 21, gap = 3, tot = n * (sw + gap) - gap;
-	int x0 = (gw - tot) / 2, y0 = gh / 2 + 27;
+	const int big = gw >= 640, n = (int) steps, sw = big ? 34 : 21, gap = 3, tot = n * (sw + gap) - gap;
+	int x0 = (gw - tot) / 2, y0 = gh / 2 + (big ? 16 : 27);
 	for (int k = 0; k < n; k++)
-		for (int j = 0; j < 4; j++)
+		for (int j = 0; j < (big ? 6 : 4); j++)
 			for (int i = 0; i < sw; i++)
 				odot (fb, pitch, w, h, x0 + k * (sw + gap) + i, y0 + j, k < (int) step ? O_SEG : O_OFF);
 }
@@ -140,7 +141,8 @@ static int text (uint16_t *fb, unsigned pitch, unsigned w, unsigned h, const cha
 		for (unsigned k = 0; k < sizeof Font / sizeof Font[0]; k++)
 		{
 			if (Font[k].c != *t) continue;
-			for (int r = 0; r < dotfont_5x9.h; r++)
+			const int nr = w >= 1280 ? 7 : dotfont_5x9.h;	// (the table has 7 rows: below 1280 the 8th and 9th read past them, kept so those renders stay as they are)
+			for (int r = 0; r < nr; r++)
 				for (int b = 0; b < 5; b++)
 					if (Font[k].row[r] & (0x10 >> b)) rect (fb, pitch, w, h, x + b * s, y + r * s, s, s, c);
 		}

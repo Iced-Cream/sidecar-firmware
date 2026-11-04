@@ -57,6 +57,8 @@ class PolyHost:
         self.lib.core_c_rui_tick.argtypes = [ctypes.c_uint32]
         self.lib.core_c_rui_status.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.lib.core_c_rui_status(1, 0, -1, -1, -1)
+        # a list knob's turn of N here is N entries, as in rui_link.py (the pacing has its own test: rui_e2e listknobs)
+        self.lib.core_c_list_pacing(1 if os.environ.get("RUI_LIST_PACED") == "1" else 0)
         self.lib.core_c_rytm_byte.argtypes = [ctypes.c_int]
         self.lib.core_c_seq_rytm_audio.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.lib.core_c_rytm_record.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint32)]
@@ -106,7 +108,7 @@ class PolyHost:
         """n frames x 8 voices, in small chunks so the core's clock and poly's tick follow."""
         while getattr(self, "timed", None) and self.timed[0][0] <= self.t():
             c = self.timed.pop(0)[1]
-            self.log(f"at: {c} -> {self.seq(c)}")
+            self.log(f"at: {c} -> {self.ctl('cmd ' + c) if c.startswith('ins') else self.seq(c)}")
         parts = []
         while n > 0:
             k = min(n, CHUNK)
@@ -159,9 +161,10 @@ class PolyHost:
             if c == 0xF7:
                 msg = bytes(self.sx) + b"\xf7"
                 self.sx = None
-                if len(msg) > 5 and (msg[4] == 0x28 or (msg[4] == 0x2D and len(msg) > 6 and msg[6] != 9)):
+                if len(msg) > 5 and (msg[4] == 0x28 or (msg[4] == 0x2D and len(msg) > 6 and (msg[6] != 9 or os.environ.get("POLY_LOG_2D")))):
                     self.log("Rytm -> host  " + msg.hex(" "))
-                self.core.report(msg)
+                if not (self.no_machines and len(msg) > 5 and msg[4] == 0x33):
+                    self.core.report(msg)
                 self.take()
                 return
             if c & 0x80:
@@ -388,6 +391,8 @@ def main():
                     "link hello (the voices' machines before the Rytm reports them)")
     ap.add_argument("--seq", default="", help="sequencer console commands at the start, comma-separated (seq=track:1:on, "
                     "seq=demo:1, seq=lat:N, seq=quant:1, seq=show)")
+    ap.add_argument("--no-machines", action="store_true", help="the Rytm's 33 (machine snapshots) kept from the core: its tracks "
+                    "stay 'not reported yet', so a poly track on an analog track of the base stays one (seq.cpp plays_sidecar)")
     ap.add_argument("--ctl", type=int, default=0, help="a UDP control port on 127.0.0.1: sel N | cmd TEXT | stats")
     ap.add_argument("--rytm-audio", action="store_true", help="the Rytm's own output (R) to the calibration")
     ap.add_argument("--rwav", default=None, help="the Rytm's R frames at the end (implies --rytm-audio): a .npy of n x 12 int32")
@@ -407,6 +412,7 @@ def main():
     h = PolyHost(card, a.wav)
     h.msamp_on = bool(a.msamp)
     h.seq_on = bool(a.seq)
+    h.no_machines = a.no_machines
     h.seq_cmds = [c for c in a.seq.split(",") if c]
     for v in filter(None, a.msamp.split(",")):
         print(h.msamp(f"msamp=voice:{int(v)}"), flush=True)

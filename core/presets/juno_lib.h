@@ -22,6 +22,12 @@
 #pragma once
 #include "../platform.h"
 #include "../project_key.h"
+#if CORE_MSAMP
+#include "../msamp/cardq.h"
+namespace core {
+bool list_post(const char* path, const char* text, uint32_t n);   // fmt::post_queue (presets/libs.cpp)
+}
+#endif
 
 #ifdef FLASHMEM   // the Teensy's: run from flash, a section per function (inline
                   // functions in one shared section would conflict)
@@ -194,18 +200,28 @@ class Lib {
   void rekey(const char* project) { project_file(project); }
   JLIB_FLASH(load_list) void load_list(const char* project) {
     project_file(project);
-    nlist_ = 0;
+    read_list(file_, list_, &nlist_);
+    log_("juno list %s: %d slots", file_, nlist_);
+  }
+  // load_list in two parts (a card core, core/pool/pool.cpp): the file read into a copy, on that core; the copy taken in here
+  static void list_path(const char* project, char* out, int cap) {
+    char n[core::kKeyMax];
+    core::project_key(project, n, sizeof n);
+    sniprintf(out, cap, "/.rytm/juno/%s.txt", n);
+  }
+  JLIB_FLASH(read_list) static void read_list(const char* file, Patch* list, int* count) {
+    *count = 0;
     core::File f;
-    if (f.open(file_, core::kRead)) {
+    if (f.open(file, core::kRead)) {
       char line[96];
       int n = 0;
       for (;;) {
         int c = f.read();
         if (c < 0 && n == 0) break;
         if (c < 0 || c == '\n') {
-          if (nlist_ >= kMaxList) break;
+          if (*count >= kMaxList) break;
           line[n] = 0;
-          Patch& p = list_[nlist_++];
+          Patch& p = list[(*count)++];
           p.used = parse(line, &p);
           n = 0;
           if (c < 0) break;
@@ -214,8 +230,13 @@ class Lib {
         }
       }
       f.close();
-      while (nlist_ && !list_[nlist_ - 1].used) --nlist_;
+      while (*count && !list[*count - 1].used) --*count;
     }
+  }
+  JLIB_FLASH(take_list) void take_list(const char* file, const Patch* list, int count) {
+    sniprintf(file_, sizeof file_, "%s", file);
+    memcpy(list_, list, sizeof(Patch) * (size_t)count);
+    nlist_ = count;
     log_("juno list %s: %d slots", file_, nlist_);
   }
 
@@ -253,6 +274,17 @@ class Lib {
     save();
     return s;
   }
+  // Slot s = these bytes, whatever it holds (save false: the caller saves after a run of them)
+  JLIB_FLASH(set_row) void set_row(int s, const uint8_t* b, const char* name, bool save_now = true) {
+    if (s < 0 || s >= kMaxList) return;
+    Patch& p = list_[s];
+    memcpy(p.b, b, 18);
+    copy_name(p.name, name, sizeof p.name);
+    p.used = true;
+    if (s >= nlist_) nlist_ = s + 1;
+    if (save_now) save();
+  }
+  void resave() { save(); }
   JLIB_FLASH(clear) bool clear(int s) {
     if (s < 0 || s >= nlist_) return false;
     list_[s].used = false;
@@ -355,9 +387,9 @@ class Lib {
   // The patch messages of an open .syx file, from its start: F0 41 30|31 <ch>
   // <patch no> <18 bytes> F7 (any other message skipped). With want >= 0
   // stops at patch want, copying its 24 bytes to m. codes (if given, up to
-  // kMaxFiles): each patch's number, 0x80 for a 31 (manual) dump. Returns the
-  // patches counted (want + 1 when found). At most 64 KB are read.
-  JLIB_FLASH(scan) static int scan(core::File& f, int want, uint8_t* m, uint8_t* codes = nullptr) {
+  // kMaxFiles): each patch's number, 0x80 for a 31 (manual) dump; all (if given, as many): each patch's 18 bytes. Returns
+  // the patches counted (want + 1 when found). At most 64 KB are read.
+  JLIB_FLASH(scan) static int scan(core::File& f, int want, uint8_t* m, uint8_t* codes = nullptr, uint8_t (*all)[18] = nullptr) {
     uint8_t buf[512], msg[24];   // a sector a read
     int n = 0, len = -1;   // len -1: outside a message
     uint32_t total = 0;
@@ -376,6 +408,7 @@ class Lib {
         } else if (c == 0xf7) {
           if (len == 22 && msg[0] == 0x41 && (msg[1] == 0x30 || msg[1] == 0x31)) {
             if (codes && n < kMaxFiles) codes[n] = msg[1] == 0x30 ? (msg[3] & 0x7f) : 0x80;
+            if (all && n < kMaxFiles) memcpy(all[n], msg + 4, 18);
             if (n == want) {
               m[0] = 0xf0;
               memcpy(m + 1, msg, 22);
@@ -429,6 +462,21 @@ class Lib {
   }
 
   JLIB_FLASH(save) void save() {
+#if CORE_MSAMP
+    if (core::cardq::worker()) {   // (the card core: fmt's posted queue, the folder made there)
+      static char t[kMaxList * 64];
+      uint32_t k = 0;
+      for (int s = 0; s < nlist_; ++s) {
+        if (list_[s].used) {
+          for (int i = 0; i < 18; ++i) k += (uint32_t)sniprintf(t + k, sizeof t - k, "%02x", list_[s].b[i]);
+          k += (uint32_t)sniprintf(t + k, sizeof t - k, "\t%s", list_[s].name);
+        }
+        t[k++] = '\n';
+      }
+      if (!core::list_post(file_, t, k)) log_("juno list: cannot write %s", file_);
+      return;
+    }
+#endif
     sd_->mkdir("/.rytm/juno");
     core::File f;
     if (!f.open(file_, core::kWrite)) {

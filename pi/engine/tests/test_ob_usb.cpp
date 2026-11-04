@@ -7,8 +7,13 @@
 #include "fx/out.h"
 #include "ob_block.h"
 #include "ob_usb.h"
+#include "ob_follow.h"
 #include "shared.h"
+#include <circle/timer.h>
+#include <circle/usb/usbstandardhub.h>
 
+#include <circle/koptions.h>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -22,11 +27,18 @@ void CLogger::Write(const char*, int, const char* f, ...) {
   va_end(a);
   lines.push_back(b);
 }
+#include "device/a4.h"
 namespace core { namespace device {
+static bool g_a4_chosen = false;      // its hello chose it (device.cpp: audio_by_hello)
+const Profile& active() {             // (only ob_follow.cpp asks)
+  static Profile none;
+  return g_a4_chosen ? kA4 : none;
+}
 const Profile* by_usb(uint16_t vid, uint16_t pid) {   // device.cpp's list, without the engine it links
   static Profile rytm;
   rytm.audio = &out::kRytmMk2;
   if (vid == 0x1935 && pid == 0x0b48) return &rytm;
+  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen ? &kA4 : nullptr;
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
@@ -60,16 +72,19 @@ static uint8_t g_rytm[263] = {
     0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x05, 0x25, 0x01, 0x01, 0x03};
 static uint8_t g_digitakt[263];
 static const int kOutAlt3Mps = 137;   // 0x70 0x01 -> 0x58 0x00
+// The A4 MKII's differs from the Rytm's in both alt 3 sizes (OS 1.55D's table and 1.56's over an emulated USB host, byte for byte)
+static uint8_t g_a4[263];
+static const int kInAlt3Mps = 80;     // 0x70 0x01 -> 0x00 0x01
 
 struct Bus {
   CUSBDevice dev;
   CUSBHostController host;
   CUSBFunction parent{&dev, &host};
-  CObUsb* ob = nullptr;
+  CUSBFunction* ob = nullptr;
   Bus(const uint8_t* cfg, uint16_t pid) {
     dev.config = cfg;
     dev.desc = {0x1935, pid};
-    ob = (CObUsb*)RytmObDeviceCreate(&parent);
+    ob = RytmObDeviceCreate(&parent);
   }
   ~Bus() { delete ob; }
   // n IN blocks arrive, one URB each, as the device sends them; the next counter is the caller's
@@ -81,6 +96,22 @@ struct Bus {
       u->buf[0] = 0x07, u->buf[2] = ctr >> 8, u->buf[3] = (uint8_t)ctr;
       ctr += 7;
       u->SetStatus(1), u->SetResultLen(368);
+      u->fn(u, u->param, u->ctx);
+    }
+  }
+  // the A4's: a block of 256 B, a tone on MAIN L and its negative on MAIN R, the other six channels at full scale so a wrong channel shows
+  void in_a4(int n, uint16_t& ctr, long& at, double hz) {
+    for (int k = 0; k < n; ++k) {
+      CUSBRequest* u = host.in.front();
+      host.in.pop_front();
+      memset(u->buf, 0, 256);
+      u->buf[0] = 0x07, u->buf[2] = ctr >> 8, u->buf[3] = (uint8_t)ctr;
+      ctr += 7;
+      for (int f = 0; f < 7; ++f, ++at) {
+        int32_t x = (int32_t)(0.5 * 2147483647.0 * sin(2 * M_PI * hz * (double)at / 48000.0));
+        for (int c = 0; c < 8; ++c) ob::put_be32(u->buf + 32 + 4 * (8 * f + c), c == 0 ? x : c == 1 ? -x : 0x7FFFFFFF);
+      }
+      u->SetStatus(1), u->SetResultLen(256);
       u->fn(u, u->param, u->ctx);
     }
   }
@@ -198,6 +229,200 @@ int main() {
     CHECK(g_Output.Underflows() == 0);
   }
   CHECK(&core::out::device() == &core::out::kRytmMk2);   // the box gone: the Rytm's table again
+
+  // The A4 beside the Rytm
+  memcpy(g_a4, g_rytm, sizeof g_rytm);
+  CHECK(g_a4[kInAlt3Mps] == 0x70 && g_a4[kInAlt3Mps + 1] == 0x01);
+  g_a4[kInAlt3Mps] = 0x00, g_a4[kInAlt3Mps + 1] = 0x01;
+  g_a4[kOutAlt3Mps] = 0xc8, g_a4[kOutAlt3Mps + 1] = 0x00;
+  {
+    ob::Layout a;
+    CHECK(ob::find_layout(g_a4, sizeof g_a4, ob::kAlt, &a) && a.in_channels == 8 && a.out_channels == 6 && a.midi_iface == 5);
+  }
+  CKernelOptions* opt = CKernelOptions::Get();
+  {  // a4=0, the default: not claimed, Circle goes on to its interfaces
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob == nullptr);
+    a.ob = nullptr;
+  }
+  core::device::g_a4_chosen = true;
+  {  // the A4 as the box in use: CObUsb, 256 / 200, each voice on its own channel, IN widened to 12
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob && a.ob->Configure());
+    same_sequence(a.host);
+    CHECK(CObUsb::Streaming() && !CObFollow::Streaming());
+    CHECK(a.host.in.size() == 8 && a.host.in.front()->len == 256);
+    CHECK(&core::out::device() == core::device::kA4.audio);
+    CHECK(g_rytm_usb == 0);
+    int16_t fr[64][8] = {};
+    for (auto& f : fr)
+      for (int v = 0; v < 8; ++v) f[v] = (int16_t)(1000 * (v + 1));
+    g_Output.SetMode(Output::kTracks);
+    g_Output.Push(fr, 64);
+    g_Output.Push(fr, 64);
+    uint16_t c = 0;
+    long at = 0;
+    a.in_a4(1, c, at, 1000.0);
+    CHECK(a.host.out.size() == 1 && a.host.out[0]->len == 200);
+    const uint8_t* o = a.host.out[0]->buf;
+    a.out_done();
+    for (int k = 0; k < 12; ++k) {         // past the fade-in
+      a.in_a4(1, c, at, 1000.0);
+      o = a.host.out.front()->buf;
+      if (k == 11)
+        for (int ch = 0; ch < 4; ++ch) CHECK(ob::block_sample(o, 6, 6, 2 + ch) != 0);
+      CHECK(ob::block_sample(o, 6, 6, 0) == 0 && ob::block_sample(o, 6, 6, 1) == 0);
+      a.out_done();
+    }
+    CHECK(g_Output.Underflows() == 0);
+    uint8_t in[256], w[368];
+    memset(in, 0, 256);
+    for (int f = 0; f < 7; ++f)
+      for (int ch = 0; ch < 8; ++ch) ob::put_be32(in + 32 + 4 * (8 * f + ch), (f + 1) * 16 + ch);
+    memset(w, 0xAA, sizeof w);
+    CObUsb::WidenIn(in, w, 8);
+    for (int f = 0; f < 7; ++f) {
+      for (int ch = 0; ch < 6; ++ch) CHECK(ob::block_sample(w, 12, f, ch) == (f + 1) * 16 + ch);
+      for (int ch = 6; ch < 10; ++ch) CHECK(ob::block_sample(w, 12, f, ch) == 0);
+      CHECK(ob::block_sample(w, 12, f, 10) == (f + 1) * 16 + 6 && ob::block_sample(w, 12, f, 11) == (f + 1) * 16 + 7);
+    }
+  }
+  CHECK(&core::out::device() == &core::out::kRytmMk2);
+  core::device::g_a4_chosen = false;
+  {  // the Rytm alone with the A4's code in the build: OUT as ever, PRE silent
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    for (int f = 0; f < 7; ++f) CHECK(ob::block_sample(r.host.out[0]->buf, 12, f, 2) == 0 && ob::block_sample(r.host.out[0]->buf, 12, f, 3) == 0);
+  }
+  opt->num["a4"] = 1;
+  opt->num["a4att"] = 0;
+  CXHCIEndpoint::s_valid = false;
+  {  // the controller refuses the second stream: no stream, nothing left running
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob && !a.ob->Configure());
+    CHECK(a.host.in.empty() && !CObFollow::Streaming());
+  }
+  CXHCIEndpoint::s_valid = true;
+  {  // a wrong descriptor under the A4's id
+    Bus a(g_rytm, 0x0b47);
+    CHECK(a.ob && !a.ob->Configure());
+  }
+  {
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    Bus a(g_a4, 0x0b47);                  // one driver each, on one bus each here
+    CHECK(a.ob && a.ob->Configure());
+    CHECK(CObUsb::Streaming() && CObFollow::Streaming());
+    CHECK(&core::out::device() == &core::out::kRytmMk2);   // the A4 changes nothing of the Rytm's
+    {
+      Bus b(g_a4, 0x0b47);                // a second A4: no
+      CHECK(b.ob == nullptr);
+      b.ob = nullptr;
+    }
+    same_sequence(a.host);
+    CHECK(a.host.in.size() == 8 && a.host.in.front()->len == 256);
+    uint16_t cr = 0, ca = 0;
+    long at = 0;
+    double peak_l = 0, peak_r = 0, other = 0;
+    bool antiphase = true;
+    for (int b = 0; b < 8000; ++b) {
+      a.in_a4(1, ca, at, 1000.0);
+      CHECK(a.host.out.size() == 1 && a.host.out[0]->len == 200);   // its OUT: one silent block for each IN block
+      const uint8_t* o = a.host.out[0]->buf;
+      CHECK(o[0] == 0x07 && o[1] == 0xFF && (uint16_t)(o[2] << 8 | o[3]) == (uint16_t)(ca - 7));
+      for (int ch = 0; ch < 6; ++ch) CHECK(ob::block_sample(o, 6, 6, ch) == 0);
+      a.out_done();
+      r.in(1, cr);
+      const uint8_t* q = r.host.out.back()->buf;
+      for (int f = 0; f < 7; ++f) {
+        int32_t l = ob::block_sample(q, 12, f, 2), rr = ob::block_sample(q, 12, f, 3);
+        peak_l = fmax(peak_l, fabs((double)l)), peak_r = fmax(peak_r, fabs((double)rr));
+        antiphase = antiphase && fabs((double)l + (double)rr) < 1e5;
+        other = fmax(other, fabs((double)ob::block_sample(q, 12, f, 0)));   // POST stays the Rytm's
+      }
+      r.out_done();
+    }
+    CHECK(fabs(peak_l / 2147483648.0 - 0.5) < 0.01 && fabs(peak_r / 2147483648.0 - 0.5) < 0.01);   // unity at a4att=0, the tone on PRE L and R
+    CHECK(antiphase);
+    CHECK(other < 3e7);                   // what the voices left there, not the A4
+    CLogger::Get()->lines.clear();
+    CObFollow::LogStats(CLogger::Get());
+    uint16_t c2 = cr;
+    delete a.ob;                          // the A4 goes: the Rytm's stream goes on, PRE fades out
+    a.ob = nullptr;
+    CHECK(!CObFollow::Streaming() && CObUsb::Streaming());
+    for (int b = 0; b < 200; ++b) {
+      r.in(1, c2);
+      r.out_done();
+    }
+    r.in(1, c2);
+    const uint8_t* q = r.host.out.back()->buf;
+    for (int f = 0; f < 7; ++f) CHECK(ob::block_sample(q, 12, f, 2) == 0);
+  }
+  opt->num.clear();
+  {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
+    struct Port : CUSBHCIRootPort {
+      int rescans = 0;
+      boolean ReScanDevices() override { ++rescans; return TRUE; }
+    } port;
+    CTimer::s_now64 = 10000000;   // 10 s
+    auto lines = CLogger::Get()->lines.size();
+    {
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull, b.dev.root = &port;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(b.host.ctl.empty() && b.host.in.empty());   // no SET_INTERFACE, no URB
+      CHECK(CLogger::Get()->lines.size() > lines);
+      CHECK(CLogger::Get()->lines.back().find("came up at FS, Overbridge needs HS: enumerating it again in 2 s (try 1 of 3)") != std::string::npos);
+    }
+    CTimer::s_now64 = 11999000, CObUsb::PollReEnum();
+    CHECK(port.rescans == 0);
+    CTimer::s_now64 = 12000000, CObUsb::PollReEnum(), CObUsb::PollReEnum();
+    CHECK(port.rescans == 1);   // once
+    {  // the port's new reset gives high speed: streams, and the budget is back
+      Bus b(g_rytm, 0x0b48);
+      b.dev.root = &port;
+      CHECK(b.ob && b.ob->Configure());
+    }
+    CTimer::s_now64 = 30000000, CObUsb::PollReEnum();
+    CHECK(port.rescans == 1);
+    {  // behind an external hub: it could be unplugged while a retry waits, so none; the log says to replug
+      CUSBDevice hd;
+      hd.desc = {0x05e3, 0x0608};   // some hub, on a root port
+      hd.root = &port;
+      CUSBStandardHub hub(&hd);
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull, b.dev.hub = &hub;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(CLogger::Get()->lines.back().find("behind a hub, so no retry") != std::string::npos);
+      auto n = CLogger::Get()->lines.size();
+      CTimer::s_now64 = 60000000, CObUsb::PollReEnum();
+      CHECK(hub.rescans == 0 && port.rescans == 1 && CLogger::Get()->lines.size() == n);   // nothing was scheduled
+    }
+    {  // the Pi 4: every box hangs off the VL805's own hub (2109:3431 on a root port), which is retried
+      CUSBDevice hd;
+      hd.desc = {0x2109, 0x3431};
+      hd.root = &port;
+      CUSBStandardHub vl805(&hd);
+      for (int k = 0; k < 3; ++k) {
+        Bus b(g_rytm, 0x0b48);
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+        CHECK(b.ob && !b.ob->Configure());
+        CHECK(CLogger::Get()->lines.back().find("(try " + std::to_string(k + 1) + " of 3)") != std::string::npos);
+        CTimer::s_now64 += 10000000, CObUsb::PollReEnum();
+        CHECK(vl805.rescans == k + 1);
+      }
+      Bus b(g_rytm, 0x0b48);   // still at full speed after three: stays off, says so
+      b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+      CHECK(b.ob && !b.ob->Configure());
+      CHECK(CLogger::Get()->lines.back().find("still at FS after 3 tries") != std::string::npos);
+      CTimer::s_now64 += 60000000, CObUsb::PollReEnum();
+      CHECK(vl805.rescans == 3 && port.rescans == 1);
+    }
+    CTimer::s_now64 = 0;
+  }
 
   printf("test_ob_usb: ok\n");
   return 0;

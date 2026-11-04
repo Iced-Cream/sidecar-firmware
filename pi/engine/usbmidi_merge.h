@@ -20,13 +20,33 @@
 // not reading costs one 3 s stall per retry, never one per chunk or per Poll (the watchdog is 15 s), and a Rytm that was
 // only busy gets the Sidecar's own link back by itself. The bridge's queue is dropped with it, the half-sent SysEx
 // too: the rest of a broken SysEx is never sent with a hole in it. What the computer had deferred is dropped and
-// counted at a failure and at a new umidi1 (stale notes, not played seconds late).
+// counted at a failure and at a new umidi1 (stale notes, not played seconds late). The engine's records go with it, DIN's 4F note-offs too: core/midim
+// remembers those and sends them again at DropResync's word below (midim.h, "LOST ON THE WAY").
 #pragma once
 #include <stdint.h>
 #include <string.h>
 
 #include "midibridge.h"
 #include "usbmidi_pack.h"
+
+// RECORDS LOST. A record for the Rytm dropped anywhere (a failed send and the off-time after it, a full queue, before
+// umidi1) is silent: the remote UI goes on sending diffs against what the Rytm never got. DropResync says when to tell
+// it: once after a drop count change, when sending is on (an off-period's whole frame would be dropped too), at most
+// once every kGapUs (a whole frame that overflows a queue must not ask for the next).
+class DropResync {
+ public:
+  static constexpr uint32_t kGapUs = 1000000;
+  bool tick(unsigned drops, bool sending, uint32_t now_us) {
+    if (drops == seen_ || !sending || (told_ && now_us - at_ < kGapUs)) return false;
+    seen_ = drops, at_ = now_us, told_ = true;
+    return true;
+  }
+
+ private:
+  unsigned seen_ = 0;
+  uint32_t at_ = 0;
+  bool told_ = false;
+};
 
 class UsbMidiMerge {
  public:

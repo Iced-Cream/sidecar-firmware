@@ -87,7 +87,9 @@ def main():
         w.setsampwidth(2)
         w.setframerate(SR)
         w.writeframes((np.stack([L, R], 1) * 32767).astype("<i2").tobytes())
-    # the host: voice 0 primed as LIVE IN (0x78) with its knobs, and forced (livein=voice:0), a DRIVE on it
+    # the host: voice 0 primed as LIVE IN (0x78) with its knobs, and forced (livein=voice:0), a DRIVE on it. Not at the
+    # start: until the Rytm's project is loaded (0x10 at 0.4 s, its store full at 0.9 s, core/pool/pool.cpp project_fill_step)
+    # an edit is the old project's, and the switch takes it away
     card = tempfile.mkdtemp(prefix="livein-e2e-")
     os.makedirs(os.path.join(card, "Samples"))
     prime = os.path.join(a.out, "prime.hex")
@@ -100,7 +102,7 @@ def main():
     log = open(logp, "w")
     host = subprocess.Popen([sys.executable, os.path.join(HERE, "poly_live.py"), "--link", f"127.0.0.1:{port}", "--card", card,
                              "--wav", hwav, "--prime", prime, "--rwav", rnpy, "--livein", "0",
-                             "--cmd", "ins=V1:A:type:drive", "--cmd", "ins=V1:A:p1:127"], stdout=log, stderr=subprocess.STDOUT)
+                             "--at", "1.2:ins=V1:A:type:drive", "--at", "1.21:ins=V1:A:p1:127"], stdout=log, stderr=subprocess.STDOUT)
     time.sleep(1.5)
     cmd = [os.path.join(a.emu, "target/release/dtboot"), f"fw/AR173_us_{TAG}.syx", "--load", f"sections/us_{TAG}.snap",
            "--card", f"sections/us_{TAG}.img", "--instr", f"{a.instr}M", "--every", "100000M", "--usb-host",
@@ -144,7 +146,7 @@ def main():
     # the host's voice output: the click's onset there, then F_L (INPT L) with the DRIVE's harmonics, no F_R
     ho = onset(hv)
     check("the host's voice plays the input", ho >= 0, f"click at host frame {ho}")
-    hs = hv[ho + 2400: ho + 2400 + SR] if ho >= 0 else hv[:0]
+    hs = hv[ho + SR // 2: ho + SR // 2 + SR] if ho >= 0 else hv[:0]   # (the DRIVE is on from 1.2 s, the click at 0.8 s)
     f1, f3, f330 = tone(hs, F_L), tone(hs, 3 * F_L), tone(hs, F_R)
     check("INPT L: F_L there, F_R not", f1 > 0.05 and f330 < 0.01 * f1, f"F_L {f1:.3f}, F_R {f330:.5f}")
     check("the DRIVE insert's harmonics (3rd > 1 % of the fundamental)", f3 > 0.01 * f1, f"3rd / fundamental {f3 / (f1 + 1e-12):.3f}")
@@ -180,7 +182,7 @@ def main():
         rt = int(np.median(lags)) if lags else -1
         spread = (max(lags) - min(lags)) if lags else -1
         print(f"  round trip AUDIO IN -> LIVE IN -> BD's voice input -> BD's stem: {rt} frames ({rt / 48:.2f} ms) [emulator]; "
-              f"{len(lags)} clicks back, spread {spread} frames: {lags[:12]}")
+              f"{len(lags)} clicks back, spread {spread} frames: {lags}")
         check("the clicks come back on BD's stem, at one delay (the round trip)", len(lags) >= 2 and 0 < rt < 4800 and spread <= 96,
               f"{rt} frames, spread {spread}")
     else:

@@ -6,6 +6,8 @@
 #include "src/misc/lv_text_private.h"	// lv_text_get_width
 #include <string.h>
 
+extern const lv_font_t lv_font_montserrat_28;		// sidecar_font28.c
+
 // ---- the dot fonts as LVGL fonts (A8 glyphs of 0 / 255: no anti-aliasing, so the dot grid stays crisp)
 
 typedef struct { const dotfont_t *f; uint8_t s, bold; } dotlv_t;
@@ -64,6 +66,10 @@ static const dotlv_t kMicroDsc = {&dotfont_5x7, 1, 0}, kTextDsc = {&dotfont_5x9,
 static const lv_font_t kDotMicro = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 9, .base_line = 1, .dsc = &kMicroDsc};
 static const lv_font_t kDotText = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 11, .base_line = 1, .dsc = &kTextDsc};
 static const lv_font_t kDotBig = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 20, .base_line = 2, .dsc = &kBigDsc};
+// 1280x720: micro the 5x9 face (kDotText), body and title 6x11, big 6x11 bold at 2x (docs/UI-THEMES.md "Sizes")
+static const dotlv_t kText11Dsc = {&dotfont_6x11, 1, 0}, kBig11Dsc = {&dotfont_6x11, 2, 1};
+static const lv_font_t kDotText11 = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 13, .base_line = 1, .dsc = &kText11Dsc};
+static const lv_font_t kDotBig11 = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 24, .base_line = 2, .dsc = &kBig11Dsc};
 
 // ---- the themes
 
@@ -88,6 +94,7 @@ static const sidecar_theme_t kOled = {
 	.line_page = 0xC4C4C4, .key_white = 0xA0A0A0, .key_black = 0x505050, .muted = 0x909090,
 	// 5x9 the body and titles, 5x7 the micro face (the sizes of the 3x3 grid's 4x6 and 3x5)
 	.f_micro = &kDotMicro, .f_small = &kDotText, .f_body = &kDotText, .f_big = &kDotBig, .f_title = &kDotText,
+	.f_mid = &kDotText, .f_mid2 = &kDotText,
 	.radius = 0, .gap = 3, .touch = 21,
 };
 
@@ -104,6 +111,7 @@ static const sidecar_theme_t kClassic = {
 	.line_page = 0x4A4A4A, .key_white = 0x2A2A2A, .key_black = 0x161616, .muted = 0x505050,
 	.f_micro = &lv_font_montserrat_12, .f_small = &lv_font_montserrat_14, .f_body = &lv_font_montserrat_16,
 	.f_big = &lv_font_montserrat_24, .f_title = &lv_font_montserrat_20,
+	.f_mid = &lv_font_montserrat_18, .f_mid2 = &lv_font_montserrat_22,
 	.radius = 5, .gap = 4, .touch = 48,
 };
 
@@ -122,18 +130,42 @@ static const sidecar_theme_t kClassic = {
 const sidecar_theme_t *g_Theme = &kOled;
 th_fit_fn th_fit_report;
 static sidecar_theme_t s_Cur;				// the table now: the theme's, sized for the screen
-static int s_bWide;
+static int s_bWide, s_bBig;
 
 const sidecar_theme_t *sidecar_theme_get (int id) { return id == THEME_CLASSIC ? &kClassic : &kOled; }
-void sidecar_theme_screen (int pw, int ph) { s_bWide = pw >= 1024 && ph >= 600; }
+void sidecar_theme_screen (int pw, int ph) { s_bWide = pw >= 1024 && ph >= 600; s_bBig = pw >= 1280 && ph >= 720; }
 int sidecar_theme_wide (void) { return s_bWide; }
 void sidecar_theme_set (int id)
 {
 	s_Cur = *sidecar_theme_get (id);
 	if (s_bWide)						// 1024x600: the dots / pixels it has
 	{
-		s_Cur.w = 1024 / s_Cur.dot;
-		s_Cur.h = 600 / s_Cur.dot;
+		s_Cur.w = (s_bBig ? 1280 : 1024) / s_Cur.dot;
+		s_Cur.h = (s_bBig ? 720 : 600) / s_Cur.dot;
+	}
+	if (s_bBig)						// 1280x720: the base layout in LU, the faces and keys with it
+	{
+		s_Cur.big = 1;
+		s_Cur.bw = s_Cur.bw * 5 / 4;
+		s_Cur.bh = s_Cur.bh * 5 / 4;
+		s_Cur.touch = s_Cur.touch * 5 / 4;
+		s_Cur.gap = s_Cur.gap + 1;
+		if (id == THEME_OLED)
+		{
+			s_Cur.f_micro = &kDotText;
+			s_Cur.f_small = s_Cur.f_body = s_Cur.f_title = s_Cur.f_mid = s_Cur.f_mid2 = &kDotText11;
+			s_Cur.f_big = &kDotBig11;
+		}
+		else
+		{
+			s_Cur.f_micro = &lv_font_montserrat_16;
+			s_Cur.f_small = &lv_font_montserrat_18;
+			s_Cur.f_body = &lv_font_montserrat_20;
+			s_Cur.f_mid = &lv_font_montserrat_22;
+			s_Cur.f_title = s_Cur.f_mid2 = &lv_font_montserrat_24;
+			s_Cur.f_big = &lv_font_montserrat_28;
+			s_Cur.radius = 6;
+		}
 	}
 	s_Cur.dx = s_Cur.w - s_Cur.bw;
 	s_Cur.dy = s_Cur.h - s_Cur.bh;
@@ -281,7 +313,7 @@ void th_paint_knob (lv_layer_t *l, const lv_area_t *a, int v, int max, uint32_t 
 	int ang = 225 - 270 * v / max;				// 225 (min, lower left) .. -45 (max, lower right), screen y down
 	if (oled ())
 	{
-		const int n = r >= 14 ? 19 : 13;			// the finer grid: more dots on a big ring
+		const int n = TH->big && r >= 20 ? 25 : r >= 14 ? 19 : 13;			// the finer grid: more dots on a big ring
 		int lit = known ? (v * (n - 1) + max / 2) / max : -1;
 		for (int i = 0; i < n; i++)		// the scale: a ring of dots, lit up to the value
 		{
@@ -310,19 +342,19 @@ void th_paint_knob (lv_layer_t *l, const lv_area_t *a, int v, int max, uint32_t 
 	// CLASSIC: an LED ring around a dark knob cap lit from the top left (rytm-emu draw_knob)
 	const int n = 15;
 	int lit = known ? (v * (n - 1) + max / 2) / max : -1;
-	int rr = r - 3;
+	int rr = r - LU (3);
 	for (int i = 0; i < n; i++)
 	{
 		int d = 225 - 270 * i / (n - 1);
 		int x = cx + icos (d) * rr / 1024, y = cy - isin (d) * rr / 1024;
 		if (i <= lit)
 		{
-			circle (l, &c, x, y, 4, th_mix (TH->win, rgb, 90), LV_OPA_COVER);	// knobs sit in display windows
-			circle (l, &c, x, y, 2, rgb, LV_OPA_COVER);
+			circle (l, &c, x, y, LU (4), th_mix (TH->win, rgb, 90), LV_OPA_COVER);	// knobs sit in display windows
+			circle (l, &c, x, y, LU (2) + (TH->big ? 1 : 0), rgb, LV_OPA_COVER);
 		}
-		else circle (l, &c, x, y, 2, HW_LED_OFF, LV_OPA_COVER);
+		else circle (l, &c, x, y, LU (2) + (TH->big ? 1 : 0), HW_LED_OFF, LV_OPA_COVER);
 	}
-	int kr = rr - 9;
+	int kr = rr - LU (9);
 	circle (l, &c, cx + 2, cy + 3, kr, 0x000000, LV_OPA_COVER);
 	circle (l, &c, cx, cy, kr, th_mix (HW_KNOB, 0, 70), LV_OPA_COVER);
 	for (int k = 1; k <= 3; k++)
@@ -445,9 +477,10 @@ static int nav_icon (lv_layer_t *l, const lv_area_t *c, const char *name, int cx
 	for (unsigned i = 0; i < sizeof kIcon / sizeof kIcon[0]; i++)
 	{
 		if (strcmp (kIcon[i].name, name)) continue;
+		const int s = TH->big ? 2 : 1;			// 1280x720: each dot of the icon two
 		for (int r = 0; r < ICON_H; r++)
 			for (int k = 0; k < ICON_W; k++)
-				if (kIcon[i].row[r][k] == '#') th_fill (l, c, cx - ICON_W / 2 + k, y + r, cx - ICON_W / 2 + k, y + r, ink, LV_OPA_COVER, 0);
+				if (kIcon[i].row[r][k] == '#') th_fill (l, c, cx + s * (k - ICON_W / 2), y + s * r, cx + s * (k - ICON_W / 2) + s - 1, y + s * r + s - 1, ink, LV_OPA_COVER, 0);
 		return 1;
 	}
 	return 0;
@@ -481,20 +514,21 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 		else th_fill (l, &c, 0, 0, w - 1, h - 1, 0x000000, LV_OPA_COVER, 0);
 		if (k != TH_KEY_PAD || !checked) th_frame (l, &c, 0, 0, w - 1, h - 1, edge, 1, 0);
 		if (k == TH_KEY_ACCENT && !checked && !pressed)	// the main action: a double frame
-			th_frame (l, &c, 3, 3, w - 4, h - 4, DOT_DOTTED, 1, 0);
+			th_frame (l, &c, LU (3), LU (3), w - 1 - LU (3), h - 1 - LU (3), DOT_DOTTED, 1, 0);
 		if (led > 0)
 		{
 			uint32_t lc = th_led (led);
 			if (k == TH_KEY_TRIG || k == TH_KEY_NAV) th_fill (l, &c, 4, h - 4, w - 5, h - 3, lc, LV_OPA_COVER, 0);	// under the text
 			else th_fill (l, &c, w - 7, 2, w - 3, 4, lc, LV_OPA_COVER, 0);			// a corner LED
 		}
-		int tx = left ? 6 : 0, tw = left ? w - 8 : w;
+		int tx = left ? LU (6) : 0, tw = left ? w - LU (8) : w;
 		if (k == TH_KEY_NAV && text)			// an icon, its name small under it
 		{
-			int iy = (h - ICON_H - 3 - 7) / 2, dx = sub && sub[0] ? 4 : 0;
+			const int ih = ICON_H * (TH->big ? 2 : 1);
+			int iy = (h - ih - 3 - lv_font_get_line_height (TH->f_micro) + 2) / 2, dx = sub && sub[0] ? 4 : 0;
 			if (nav_icon (l, &c, text, w / 2 + dx, iy, ink))	// (clear of the corner's trig)
 			{
-				th_text (l, &c, 2 * dx + 4, iy + ICON_H + 2, w - 2 * dx - 4, TH->f_micro, ink, LV_TEXT_ALIGN_CENTER, text);	// under the icon, 2 px right for balance (user)
+				th_text (l, &c, 2 * dx + 4, iy + ih + 2, w - 2 * dx - 4, TH->f_micro, ink, LV_TEXT_ALIGN_CENTER, text);	// under the icon, 2 px right for balance (user)
 				if (sub && sub[0])			// UX review N1: its UP + T trig in the corner
 					th_text (l, &c, 2, 1, w - 4, TH->f_micro, checked || pressed ? ink : TH->faint, LV_TEXT_ALIGN_LEFT, sub);
 				return;
@@ -522,14 +556,14 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 		if (pressed) face = th_mix (face, 0, 40);
 		th_fill (l, &c, 0, 0, w - 1, h - 1, face, LV_OPA_COVER, 7);
 		th_frame (l, &c, 0, 0, w - 1, h - 1, th_mix (face, 0, 50), 1, 7);
-		th_text (l, &c, left ? 12 : 0, ty, left ? w - 16 : w, f, disabled ? HW_KEY_DIM : 0x25272A,
+		th_text (l, &c, left ? LU (12) : 0, ty, left ? w - LU (16) : w, f, disabled ? HW_KEY_DIM : 0x25272A,
 			 left ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, text);
 		if (sub && sub[0])
-			th_text (l, &c, left ? 12 : 0, ty + font_line (f), left ? w - 16 : w, TH->f_micro, 0x55585D,
+			th_text (l, &c, left ? LU (12) : 0, ty + font_line (f), left ? w - LU (16) : w, TH->f_micro, 0x55585D,
 				 left ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, sub);
 		return;
 	}
-	int big = k == TH_KEY_TRIG || h >= 56, r = big ? 6 : 5;
+	int big = k == TH_KEY_TRIG || h >= LU (56), r = big ? 6 : 5;
 	uint32_t face = k == TH_KEY_FUNC ? HW_FUNC : HW_KEY;
 	if ((kind & TH_KEY_FILL) && !disabled) face = th_mix (face, k == TH_KEY_DANGER ? TH->bad : TH->accent, 140);	// filled (T16)
 	if (pressed && !disabled) face = th_mix (face, 0xFFFFFF, 60);
@@ -541,14 +575,14 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 	else th_frame (l, &c, 0, 0, w - 1, h - 1, HW_EDGE, 1, r);
 	uint32_t ink = disabled ? th_mix (HW_KEY_DIM, face, 100) : lit ? th_mix (HW_KEY_DIM, th_mix (lc, 0xFFFFFF, 60), 230) : HW_KEY_INK;
 	if (k == TH_KEY_DANGER && !lit && !disabled) ink = (kind & TH_KEY_FILL) ? 0xFFFFFF : 0xFF8080;
-	th_text (l, &c, left ? 10 : 0, ty, left ? w - 14 : w, f, ink, left ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, text);
+	th_text (l, &c, left ? LU (10) : 0, ty, left ? w - LU (14) : w, f, ink, left ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, text);
 	if (k == TH_KEY_TRIG && text && text[0])		// the trig keys' underline
 	{
 		int tw = th_text_width (f, text);
 		th_fill (l, &c, (w - tw) / 2, ty + font_line (f) - 2, (w + tw) / 2, ty + font_line (f) - 1, ink, LV_OPA_COVER, 0);
 	}
 	if (sub && sub[0])
-		th_text (l, &c, left ? 10 : 0, ty + font_line (f), left ? w - 14 : w, TH->f_micro, disabled ? ink : 0x8E9196,
+		th_text (l, &c, left ? LU (10) : 0, ty + font_line (f), left ? w - LU (14) : w, TH->f_micro, disabled ? ink : 0x8E9196,
 			 left ? LV_TEXT_ALIGN_LEFT : LV_TEXT_ALIGN_CENTER, sub);
 }
 
@@ -863,11 +897,11 @@ static void panel_draw (lv_event_t *e)
 	if (oled ())
 	{
 		// a dotted frame, the title in a notch of its top edge
-		th_frame (l, &c, 0, 4, w - 1, h - 1, DOT_DOTTED, 1, 0);
+		th_frame (l, &c, 0, LU (4), w - 1, h - 1, DOT_DOTTED, 1, 0);
 		if (p->title[0])
 		{
 			int tw = th_text_width (TH->f_micro, p->title);
-			th_fill (l, &c, 4, 0, 4 + tw + 5, 8, 0x000000, LV_OPA_COVER, 0);
+			th_fill (l, &c, 4, 0, 4 + tw + 5, LU (8), 0x000000, LV_OPA_COVER, 0);
 			th_text (l, &c, 7, -1, tw + 2, TH->f_micro, TH->dim, LV_TEXT_ALIGN_LEFT, p->title);
 		}
 		return;
@@ -877,12 +911,12 @@ static void panel_draw (lv_event_t *e)
 		th_fill (l, &c, 2, 3, w + 1, h + 2, 0x8A8C90, LV_OPA_COVER, 8);
 		th_fill (l, &c, 0, 0, w - 1, h - 1, TH->win, LV_OPA_COVER, 8);
 		th_frame (l, &c, 0, 0, w - 1, h - 1, TH->win_edge, 1, 8);
-		if (p->title[0]) th_text (l, &c, 12, 8, w - 24, &lv_font_montserrat_12, TH->win_dim, LV_TEXT_ALIGN_LEFT, p->title);
+		if (p->title[0]) th_text (l, &c, LU (12), LU (8), w - LU (24), TH->f_micro, TH->win_dim, LV_TEXT_ALIGN_LEFT, p->title);
 		return;
 	}
 	// a printed group on the panel: a hairline frame, the title in the panel's dark print
 	th_frame (l, &c, 0, 0, w - 1, h - 1, HW_GROUP, 1, 6);
-	if (p->title[0]) th_text (l, &c, 12, 8, w - 24, &lv_font_montserrat_12, TH->ink, LV_TEXT_ALIGN_LEFT, p->title);
+	if (p->title[0]) th_text (l, &c, LU (12), LU (8), w - LU (24), TH->f_micro, TH->ink, LV_TEXT_ALIGN_LEFT, p->title);
 }
 
 lv_obj_t *th_panel (lv_obj_t *parent, int x, int y, int w, int h, const char *title, int kind)
@@ -899,7 +933,7 @@ lv_obj_t *th_panel (lv_obj_t *parent, int x, int y, int w, int h, const char *ti
 	return o;
 }
 
-int th_panel_top (void) { return oled () ? 12 : 30; }
+int th_panel_top (void) { return LU (oled () ? 12 : 30); }
 
 typedef struct { char left[48], right[48]; int16_t alert, led; } title_t;
 
@@ -916,35 +950,35 @@ static void title_draw (lv_event_t *e)
 	if (oled ())
 	{
 		th_fill (l, &c, 0, 0, w - 1, h - 1, t->alert ? DOT_ALERT : DOT_DITHER, LV_OPA_COVER, 0);
-		th_text (l, &c, 7, ty, w - 10, f, 0x000000, LV_TEXT_ALIGN_LEFT, t->left);	// a margin: the text clear of the edge
-		int rx = 16;						// the LED's notch kept: a blinking REC does not move the text
+		th_text (l, &c, LU (7), ty, w - LU (10), f, 0x000000, LV_TEXT_ALIGN_LEFT, t->left);	// a margin: the text clear of the edge
+		int rx = LU (16);					// the LED's notch kept: a blinking REC does not move the text
 		if (th_fit_report && t->right[0])
 		{
 			int need = th_text_width (f, t->left) + 8 + th_text_width (TH->f_body, t->right);
-			if (need > w - 7 - rx) th_fit_report (t->right, need, w - 7 - rx);
+			if (need > w - LU (7) - rx) th_fit_report (t->right, need, w - LU (7) - rx);
 		}
-		th_text (l, &c, 7, (h - TH->f_body->line_height) / 2, w - 7 - rx, TH->f_body, 0x000000, LV_TEXT_ALIGN_RIGHT, t->right);
+		th_text (l, &c, LU (7), (h - TH->f_body->line_height) / 2, w - LU (7) - rx, TH->f_body, 0x000000, LV_TEXT_ALIGN_RIGHT, t->right);
 		if (t->led > 0)					// a status LED at the right end: a dot block in a black notch
 		{
-			th_fill (l, &c, w - 12, 1, w - 2, h - 2, 0x000000, LV_OPA_COVER, 0);
-			th_fill (l, &c, w - 11, 2, w - 3, h - 3, th_led (t->led), LV_OPA_COVER, 0);
+			th_fill (l, &c, w - LU (12), 1, w - 2, h - 2, 0x000000, LV_OPA_COVER, 0);
+			th_fill (l, &c, w - LU (12) + 1, 2, w - 3, h - 3, th_led (t->led), LV_OPA_COVER, 0);
 		}
 		return;
 	}
 	th_fill (l, &c, 0, 0, w - 1, h - 1, t->alert ? 0x8A1A1A : TH->title_bg, LV_OPA_COVER, 0);
-	th_text (l, &c, 12, ty, w - 24, f, TH->title_ink, LV_TEXT_ALIGN_LEFT, t->left);
-	int rx = t->led > 0 ? 34 : 12;
+	th_text (l, &c, LU (12), ty, w - LU (24), f, TH->title_ink, LV_TEXT_ALIGN_LEFT, t->left);
+	int rx = LU (t->led > 0 ? 34 : 12);
 	if (th_fit_report && t->right[0])
 	{
-		int need = th_text_width (f, t->left) + 12 + th_text_width (TH->f_body, t->right);
-		if (need > w - 12 - rx) th_fit_report (t->right, need, w - 12 - rx);
+		int need = th_text_width (f, t->left) + LU (12) + th_text_width (TH->f_body, t->right);
+		if (need > w - LU (12) - rx) th_fit_report (t->right, need, w - LU (12) - rx);
 	}
-	th_text (l, &c, 12, (h - TH->f_body->line_height) / 2, w - 12 - rx, TH->f_body, t->alert ? 0xFFFFFF : TH->win_dim, LV_TEXT_ALIGN_RIGHT, t->right);
+	th_text (l, &c, LU (12), (h - TH->f_body->line_height) / 2, w - LU (12) - rx, TH->f_body, t->alert ? 0xFFFFFF : TH->win_dim, LV_TEXT_ALIGN_RIGHT, t->right);
 	if (t->led > 0)
 	{
 		uint32_t lc = th_led (t->led);
-		circle (l, &c, w - 20, h / 2, 9, th_mix (TH->title_bg, lc, 90), LV_OPA_COVER);
-		circle (l, &c, w - 20, h / 2, 6, lc, LV_OPA_COVER);
+		circle (l, &c, w - LU (20), h / 2, LU (9), th_mix (TH->title_bg, lc, 90), LV_OPA_COVER);
+		circle (l, &c, w - LU (20), h / 2, LU (6), lc, LV_OPA_COVER);
 	}
 }
 
@@ -1132,14 +1166,14 @@ static void slider_draw (lv_event_t *e)
 	int span = s->max > s->min ? s->max - s->min : 1;
 	if (oled ())
 	{
-		int kw = 5, x = (w - kw) * (s->v - s->min) / span, cy = h / 2;
+		int kw = LU (5), x = (w - kw) * (s->v - s->min) / span, cy = h / 2;
 		th_fill (l, &c, 0, cy, w - 1, cy, DOT_DOTTED, LV_OPA_COVER, 0);		// the track
 		th_fill (l, &c, 0, cy - 1, x, cy + 1, TH->ink, LV_OPA_COVER, 0);		// the value
 		th_fill (l, &c, x, 0, x + kw - 1, h - 1, s->drag ? TH->sel_bg : TH->ink, LV_OPA_COVER, 0);	// the handle
-		th_fill (l, &c, x + 2, 2, x + 2, h - 3, 0x000000, LV_OPA_COVER, 0);
+		th_fill (l, &c, x + kw / 2, 2, x + kw / 2, h - 3, 0x000000, LV_OPA_COVER, 0);
 		return;
 	}
-	int kw = 28, x = (w - kw) * (s->v - s->min) / span, gh = h / 3;
+	int kw = LU (28), x = (w - kw) * (s->v - s->min) / span, gh = h / 3;
 	th_fill (l, &c, 0, (h - gh) / 2, w - 1, (h + gh) / 2, 0x2A2C30, LV_OPA_COVER, gh / 2);
 	th_fill (l, &c, 2, (h - gh) / 2 + 2, x + kw / 2, (h + gh) / 2 - 2, TH->accent, LV_OPA_COVER, gh / 2);
 	lv_area_t k = {c.x1 + x, c.y1, c.x1 + x + kw - 1, c.y2};
@@ -1156,7 +1190,7 @@ static void slider_ev (lv_event_t *e)
 	lv_indev_get_point (lv_indev_active (), &p);
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
-	int w = lv_area_get_width (&c), kw = oled () ? 5 : 28;
+	int w = lv_area_get_width (&c), kw = LU (oled () ? 5 : 28);
 	int v = s->min + (int) ((long) (p.x - c.x1 - kw / 2) * (s->max - s->min) / (w - kw > 0 ? w - kw : 1));
 	v = v < s->min ? s->min : v > s->max ? s->max : v;
 	s->drag = code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING;

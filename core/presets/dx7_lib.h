@@ -17,13 +17,22 @@
 // machine's PAT steps through - names each voice by its bank's MD5 and its
 // position, so a moved or renamed bank is found again:
 //   /.rytm/fm/<PROJECT>.txt   a line per slot: 32 hex digits, a tab, the voice
-//                             0..31, a tab, its name; an empty line an empty slot
+//                             0..31, a tab, its name, and since 0.4.0 a tab and the
+//                             voice's own 128 bytes in hex (so a project's zip plays
+//                             on a card without its banks); an empty line an empty slot
 // Plaits' three ROM banks count as banks too (their MD5s), so a list can name
 // their voices without the files on the card. When the list is empty the
 // machine plays Plaits' 96 ROM voices instead (core/voices.cpp).
 #pragma once
 #include "../platform.h"
 #include "../project_key.h"
+#if CORE_MSAMP
+#include "../msamp/cardq.h"
+namespace core {
+bool list_post(const char* path, const char* text, uint32_t n);   // fmt::post_queue (presets/libs.cpp)
+bool list_replace(const char* path, const char* text, uint32_t n);   // fmt::write_atomic: the card core's, now
+}
+#endif
 
 #include "md5.h"
 #include "plaits/resources.h"
@@ -161,19 +170,40 @@ class Lib {
   void rekey(const char* project) { project_file(project); }
   DX7_FLASH(load_list) void load_list(const char* project) {
     project_file(project);
-    nlist_ = 0;
+    bool whole = read_list(file_, list_, &nlist_, vdata_, cached_);
+    resolve(list_, nlist_, 0, nnodes_);
+    bool old = false;
+    for (int s = 0; s < nlist_; ++s)
+      if (!cached_[s] && cache(list_, nlist_, s, vdata_[s], &cached_[s])) old = true;
+    if (old && whole) save();   // a list from before 0.4.0: its voices into the file
+    log_list();
+  }
+  // load_list in parts (a card core, core/pool/pool.cpp): the file, the banks and the voices read into a copy on that core, a
+  // bounded piece a request; the copy taken in here
+  static void list_path(const char* project, char* out, int cap) {
+    char n[core::kKeyMax];
+    core::project_key(project, n, sizeof n);
+    sniprintf(out, cap, "/.rytm/fm/%s.txt", n);
+  }
+  // false: a read error (the list as far as it came): such a list is never written back
+  DX7_FLASH(read_list) static bool read_list(const char* file, Slot* list, int* count, uint8_t (*vd)[128], bool* have) {
+    bool ok = true;
+    *count = 0;
+    memset(have, 0, sizeof(bool) * kMaxList);
     core::File f;
-    if (f.open(file_, core::kRead)) {
-      char line[80];
+    if (f.open(file, core::kRead)) {
+      char line[344];
       int n = 0;
       for (;;) {
         int c = f.read();
+        if (c < 0 && f.curPosition() < f.fileSize()) ok = false;
         if (c < 0 && n == 0) break;
         if (c < 0 || c == '\n') {
-          if (nlist_ >= kMaxList) break;
+          if (*count >= kMaxList) break;
           line[n] = 0;
-          Slot& s = list_[nlist_++];
-          s.used = parse(line, &s);
+          int at = (*count)++;
+          Slot& s = list[at];
+          s.used = parse(line, &s, vd[at], &have[at]);
           n = 0;
           if (c < 0) break;
         } else if (c != '\r' && n < (int)sizeof line - 1) {
@@ -181,13 +211,17 @@ class Lib {
         }
       }
       f.close();
-      while (nlist_ && !list_[nlist_ - 1].used) --nlist_;
+      while (*count && !list[*count - 1].used) --*count;
     }
-    resolve();
-    for (int s = 0; s < nlist_; ++s) cache(s);
-    int missing = 0;
-    for (int s = 0; s < nlist_; ++s) missing += list_[s].used && list_[s].bank == -1;
-    log_("fm list %s: %d slots, %d not on the card", file_, nlist_, missing);
+    return ok;
+  }
+  DX7_FLASH(take_list) void take_list(const char* file, const Slot* list, int count, const uint8_t (*v)[128], const bool* c) {
+    sniprintf(file_, sizeof file_, "%s", file);
+    memcpy(list_, list, sizeof(Slot) * (size_t)count);
+    memcpy(vdata_, v, 128 * (size_t)count);
+    memcpy(cached_, c, sizeof(bool) * (size_t)count);
+    nlist_ = count;
+    log_list();
   }
 
   // Slot s's 128 voice bytes into out; false: empty, or its bank not found.
@@ -195,6 +229,7 @@ class Lib {
   // so a trig that changes the voice (6-OP FM's PAT) never waits for the card
   // (a card voice took 1-2 ms to open and read: eight on one step overran the
   // Overbridge buffer).
+  bool has_voice(int s) const { return s >= 0 && s < nlist_ && cached_[s]; }   // its 128 bytes in RAM, whatever the card holds
   bool voice(int s, uint8_t* out) const {
     if (s < 0 || s >= nlist_ || !cached_[s]) return false;
     memcpy(out, vdata_[s], 128);
@@ -202,25 +237,30 @@ class Lib {
   }
 
  private:
-  // Slot s's voice into vdata_[s] (from the card for a card bank).
-  DX7_FLASH(cache) void cache(int s) {
-    cached_[s] = false;
-    if (s < 0 || s >= nlist_ || !list_[s].used || list_[s].bank == -1) return;
-    const Slot& e = list_[s];
-    uint8_t* out = vdata_[s];
-    if (e.bank <= -2) {
-      memcpy(out, rom_bank(-2 - e.bank) + 128 * e.voice, 128);
-      cached_[s] = true;
-      return;
-    }
-    Rec r;
-    core::File f;
-    if (!rec(e.bank, &r) || !f.open(r.path, core::kRead)) return;
-    cached_[s] = f.seekSet(r.offset + 128u * e.voice) && f.read(out, 128) == 128;
-    f.close();
+  DX7_FLASH(log_list) void log_list() {
+    int missing = 0;
+    for (int s = 0; s < nlist_; ++s) missing += list_[s].used && list_[s].bank == -1 && !cached_[s];
+    log_("fm list %s: %d slots, %d not on the card", file_, nlist_, missing);
   }
 
  public:
+  // Slot s's voice into out (from the card for a card bank); ok: *cached. True when it went to the card.
+  DX7_FLASH(cache) bool cache(const Slot* list, int n, int s, uint8_t* out, bool* cached) {
+    *cached = false;
+    if (s < 0 || s >= n || !list[s].used || list[s].bank == -1) return false;
+    const Slot& e = list[s];
+    if (e.bank <= -2) {
+      memcpy(out, rom_bank(-2 - e.bank) + 128 * e.voice, 128);
+      *cached = true;
+      return false;
+    }
+    Rec r;
+    core::File f;
+    if (!rec(e.bank, &r) || !f.open(r.path, core::kRead)) return true;
+    *cached = f.seekSet(r.offset + 128u * e.voice) && f.read(out, 128) == 128;
+    f.close();
+    return true;
+  }
 
   // LOAD TO PROJ on voice i of bank node k: into the first empty slot (none
   // if it is in the list already). Returns its slot, or -1.
@@ -243,21 +283,64 @@ class Lib {
     nm[10] = 0;
     voice_name((const uint8_t*)nm, e.name);
     if (s == nlist_) ++nlist_;
-    cache(s);
+    cache(list_, nlist_, s, vdata_[s], &cached_[s]);
     save();
     log_("fm list: slot %d = %s voice %d (%s)", s, r.node.name, i, e.name);
     return s;
   }
 
+  // A voice read on the card core (read_voice) into the first empty slot, no card read here (none if listed): its slot, -1.
+  // at >= 0: into that slot whatever it holds.
+  DX7_FLASH(put_voice) int put_voice(const uint8_t* md5, int i, const char* name, const uint8_t* data, int at = -1) {
+    for (int s = 0; s < nlist_; ++s)
+      if (list_[s].used && list_[s].voice == i && memcmp(list_[s].md5, md5, 16) == 0) {
+        if (!cached_[s]) {   // listed, its bank was away: it plays from here on
+          memcpy(vdata_[s], data, 128);
+          cached_[s] = true;
+          save();
+        }
+        return s;
+      }
+    int s = at;
+    if (s < 0)
+      for (s = 0; s < nlist_ && list_[s].used;) ++s;
+    if (s >= kMaxList) return -1;
+    Slot& e = list_[s];
+    memcpy(e.md5, md5, 16);
+    e.voice = (uint8_t)i, e.used = true, e.bank = -1;   // (found by its MD5 at the list's next load)
+    sniprintf(e.name, sizeof e.name, "%s", name);
+    memcpy(vdata_[s], data, 128);
+    cached_[s] = true;
+    if (s >= nlist_) nlist_ = s + 1;
+    save();
+    return s;
+  }
+  // The built-ins into an empty list, row = PAT: what the list's first add does, so that a saved PAT keeps its voice.
+  DX7_FLASH(seed_rom) void seed_rom() {
+    if (nlist_) return;
+    for (int e = 0; e < kRomVoices; ++e) {
+      Slot& d = list_[e];
+      memcpy(d.md5, rom_md5_[e / 32], 16);
+      d.voice = (uint8_t)(e % 32), d.used = true, d.bank = (int16_t)(-2 - e / 32);
+      voice_name(rom_bank(e / 32) + 128 * (e % 32) + 118, d.name);
+      memcpy(vdata_[e], rom_bank(e / 32) + 128 * (e % 32), 128);
+      cached_[e] = true;
+    }
+    nlist_ = kRomVoices;
+    save();
+  }
+  void resave() { save(); }   // a list read whole at a project's switch from before 0.4.0: its voices into the file
+
   // The list's edits (the Pi's web page, core/user/lists.cpp): each saves the list. False: no such slot.
   // Plaits' ROM voice e (0..95: its three banks in order) into the first empty slot (none if listed): its slot, -1.
-  DX7_FLASH(add_rom) int add_rom(int e) {
+  DX7_FLASH(add_rom) int add_rom(int e, int at = -1) {
     if (e < 0 || e >= kRomVoices) return -1;
     int k = e / 32, i = e % 32;
     for (int s = 0; s < nlist_; ++s)
       if (list_[s].used && list_[s].voice == i && memcmp(list_[s].md5, rom_md5_[k], 16) == 0) return s;
-    int s = 0;
-    while (s < nlist_ && list_[s].used) ++s;
+    int s = at;
+    if (s < 0)
+      for (s = 0; s < nlist_ && list_[s].used;) ++s;
     if (s >= kMaxList) return -1;
     Slot& d = list_[s];
     memcpy(d.md5, rom_md5_[k], 16);
@@ -265,8 +348,8 @@ class Lib {
     d.used = true;
     d.bank = (int16_t)(-2 - k);
     voice_name(rom_bank(k) + 128 * i + 118, d.name);
-    if (s == nlist_) ++nlist_;
-    cache(s);
+    if (s >= nlist_) nlist_ = s + 1;
+    cache(list_, nlist_, s, vdata_[s], &cached_[s]);
     save();
     return s;
   }
@@ -420,6 +503,7 @@ class Lib {
   }
 
   // An open file as a bank: r's offset, md5 and names; false if it is none.
+ public:
   DX7_FLASH(bank) static bool bank(core::File& f, Rec* r) {
     uint32_t size = f.fileSize();
     uint8_t b[512];
@@ -444,26 +528,28 @@ class Lib {
     return true;
   }
 
-  // Each used slot's bank: Plaits' ROM banks, then the card's by MD5.
-  DX7_FLASH(resolve) void resolve() {
-    for (int s = 0; s < nlist_; ++s) {
-      Slot& e = list_[s];
+  // Each used slot's bank: Plaits' ROM banks (k0 0), then the card's by MD5, nodes k0..k1.
+ public:
+  DX7_FLASH(resolve) void resolve(Slot* list, int n, int k0, int k1) {
+    for (int s = 0; k0 == 0 && s < n; ++s) {
+      Slot& e = list[s];
       e.bank = -1;
       for (int k = 0; k < 3 && e.used; ++k)
         if (memcmp(e.md5, rom_md5_[k], 16) == 0) e.bank = -2 - k;
     }
     core::File f;
     if (!nnodes_ || !f.open("/.rytm/dx7.bin", core::kRead)) return;
-    for (int k = 0; k < nnodes_; ++k) {
+    for (int k = k0; k < k1 && k < nnodes_; ++k) {
       if (!nodes_[k].bank) continue;
       uint8_t m[16];
       if (!f.seekSet(sizeof(Header) + (uint32_t)k * sizeof(Rec) + offsetof(Rec, md5)) || f.read(m, 16) != 16) break;
-      for (int s = 0; s < nlist_; ++s)
-        if (list_[s].used && list_[s].bank == -1 && memcmp(list_[s].md5, m, 16) == 0) list_[s].bank = (int16_t)k;
+      for (int s = 0; s < n; ++s)
+        if (list[s].used && list[s].bank == -1 && memcmp(list[s].md5, m, 16) == 0) list[s].bank = (int16_t)k;
     }
     f.close();
   }
 
+ private:
   DX7_FLASH(project_file) void project_file(const char* project) {
     char n[core::kKeyMax];
     core::project_key(project, n, sizeof n);
@@ -476,7 +562,7 @@ class Lib {
   }
 
   // "<32 hex>\t<voice>\t<name>"
-  DX7_FLASH(parse) static bool parse(const char* line, Slot* s) {
+  DX7_FLASH(parse) static bool parse(const char* line, Slot* s, uint8_t* vd, bool* have) {
     s->name[0] = 0;
     s->bank = -1;
     for (int i = 0; i < 16; ++i) {
@@ -487,31 +573,96 @@ class Lib {
     if (line[32] != '\t' || line[33] < '0' || line[33] > '9') return false;
     const char* p = line + 33;
     int v = 0;
-    while (*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
-    if (v > 31) return false;
+    for (; *p >= '0' && *p <= '9'; ++p)
+      if ((v = v * 10 + (*p - '0')) > 31) return false;
     s->voice = (uint8_t)v;
     if (*p == '\t') {
       strncpy(s->name, p + 1, sizeof s->name - 1);
       s->name[sizeof s->name - 1] = 0;
-      for (char* q = s->name; *q; q++)   // 0.4.0's list has a voice column after the name
-        if (*q == '\t') *q = 0;
+      if (char* t = strchr(s->name, '\t')) *t = 0;
+      if (const char* q = strchr(p + 1, '\t')) {   // 0.4.0: the voice's own bytes
+        int i = 0;
+        for (; i < 128; ++i) {
+          int a = hex(q[1 + 2 * i]), b = a < 0 ? -1 : hex(q[2 + 2 * i]);
+          if (a < 0 || b < 0) break;
+          vd[i] = (uint8_t)(a << 4 | b);
+        }
+        *have = i == 128;
+      }
     }
     return true;
   }
 
+  // The list file's text. A table, not sniprintf: 18,000 calls on the control core at 127 rows (core/tests/test_presets.cpp measures)
+  static char* hex_out(char* t, const uint8_t* b, int n) {
+    static const char d[] = "0123456789abcdef";
+    for (int i = 0; i < n; ++i) *t++ = d[b[i] >> 4], *t++ = d[b[i] & 15];
+    return t;
+  }
+ public:
+  static uint32_t text(char* t, uint32_t cap, const Slot* list, int n, const uint8_t (*vd)[128], const bool* have) {
+    char* e = t;
+    for (int s = 0; s < n && (uint32_t)(e - t) + 330 <= cap; ++s) {
+      if (list[s].used) {
+        e = hex_out(e, list[s].md5, 16);
+        e += sniprintf(e, 24, "\t%d\t%s", list[s].voice, list[s].name);
+        if (have[s]) *e++ = '\t', e = hex_out(e, vd[s], 128);
+      }
+      *e++ = '\n';
+    }
+    return (uint32_t)(e - t);
+  }
+#if CORE_MSAMP
+  // An export of a project's list not opened here since 0.4.0: its voices from their banks into the file. How many used slots
+  // still have none (their bank is not on this card); -1 not read or not written (the file as it was). The card core's.
+  DX7_FLASH(fill_file) int fill_file(const char* file) {
+    static Slot l[kMaxList];
+    static uint8_t vd[kMaxList][128];
+    static bool have[kMaxList];
+    static char t[kMaxList * 330];
+    int n = 0, missing = 0;
+    bool got = false;
+    core::File f;
+    if (!f.open(file, core::kRead)) return 0;   // (no list)
+    f.close();
+    if (!read_list(file, l, &n, vd, have)) return -1;
+    resolve(l, n, 0, nnodes_);
+    for (int s = 0; s < n; ++s) {
+      if (!l[s].used || have[s]) continue;
+      cache(l, n, s, vd[s], &have[s]);
+      got = got || have[s];
+      missing += !have[s];
+    }
+    if (got && !core::list_replace(file, t, text(t, sizeof t, l, n, vd, have))) return -1;
+    return missing;
+  }
+#endif
+ private:
   DX7_FLASH(save) void save() {
+#if CORE_MSAMP
+    if (core::cardq::worker()) {   // (the card core: fmt's posted queue, the folder made there)
+      static char t[kMaxList * 330];
+      uint32_t k = text(t, sizeof t, list_, nlist_, vdata_, cached_);
+      if (!core::list_post(file_, t, k)) log_("fm list: cannot write %s", file_);
+      return;
+    }
+#endif
     sd_->mkdir("/.rytm/fm");
     core::File f;
     if (!f.open(file_, core::kWrite)) {
       log_("fm list: cannot write %s", file_);
       return;
     }
-    char line[64];
+    char line[344];
     for (int s = 0; s < nlist_; ++s) {
       int n = 0;
       if (list_[s].used) {
         for (int i = 0; i < 16; ++i) n += sniprintf(line + n, sizeof line - n, "%02x", list_[s].md5[i]);
         n += sniprintf(line + n, sizeof line - n, "\t%d\t%s", list_[s].voice, list_[s].name);
+        if (cached_[s]) {
+          line[n++] = '\t';
+          for (int i = 0; i < 128; ++i) n += sniprintf(line + n, sizeof line - n, "%02x", vdata_[s][i]);
+        }
       }
       line[n++] = '\n';
       f.write(line, n);

@@ -16,27 +16,33 @@ this document. Date 2026-10-29. All messages are `F0 7D 52 54 <cmd> ... F7`, eve
   1. The page layout below (P1..P8 SYN, P9 ENGINE, P10 TYPE, P11 LEV on the SMPL page).
   2. Every 03 / 04 report for machine 42 carries the **MD layout tag `0x224D`** (section 2).
   3. Labels from 0x19 / 0x1A / 0x1B (section 3).
-  4. No kept sample layer: `ext_layer_kept(0x40)` returns 0. The Rytm's sample layer is silenced as for every other
-     EXT machine.
-  5. Stored DIGIDRUM sounds are converted once (section 4).
+  4. No kept sample layer for an MD sound: the Rytm's sample layer is silenced as for every other EXT machine. An old
+     DIGIDRUM sound keeps its sample, as in 0.3.0.
+  5. Stored DIGIDRUM sounds stay as they are until the user confirms (Status and decisions).
 
 ### Status and decisions (2026-10-29)
 
-- **Not in the 0.3.0 Rytm flash** (the user's decision): 0021 has 318 B of code space left (18,224 of 18,542 B in its
-  caves), the MD page needs ~1.5-3 KB. Plan for the 0.3.1 flash: move 0021 into elekloader's DDR area
-  (`--area-elek`), keeping its three fixed-address boxes readable (.usm 0x4001a23c read by 0026 / 0029, .ush
-  0x4001a3dc read by 0026, the 'JUNO' mailbox in cave12 read by 0022) - split placement in build.py, or the readers
-  through a pointer. Until then the Rytm shows DIGIDRUM's page; the host plays MD from P1 (section 4).
-- **Settled with the mods side** (they refine section 4):
-  1. A kit load converts at **the first UI tick after the load** (0021's load hook runs in the audio interrupt; sound
-     words are written on the UI task only). A trig in that window reports tag 0, which the host plays through the
-     DIGIDRUM mapping - no host change.
-  2. Conversion and the fresh FM BD set-up run **only on a confirmed machine choice** (YES, the SOUND menu's MACHINE
-     item), never while the machine list's cursor previews machine 42.
+- **Not in the 0.3.0 Rytm flash** (the user's decision): 0021 had 318 B of code space left, the MD page needed ~2 KB.
+- **Built on rytm-mods branch `mdpage` (2026-10-30), emulator only, not flashed:** 0021 with `slots=1` lives in
+  elekloader's DDR area (`--area-elek 0021-ext`), its three fixed-address boxes stay where they were as registry
+  patches (mods/0021-ext/design.md "0021 in the area"), and this document's page is implemented ("MD (machine 42)"
+  there; tests tools/emu/md_emu.py). Until that flash the Rytm shows DIGIDRUM's page; the host plays MD from P1
+  (section 4). The host needed no change.
+- **Settled** (they replace section 4's older text where they differ):
+  1. **No automatic conversion** (decided 2026-10-31 for the owner, may still change): old patterns' p-locks stay on
+     their knobs, so converting a sound could silently change a pattern (a P1 ENG lock would become control 1; TUN / FIN /
+     BR locks would become ENGINE / TYPE / LEV). A kit load converts nothing. An untagged machine-42 sound keeps playing
+     through the host's DIGIDRUM mapping and shows DIGIDRUM's page on the Rytm (ENG, its labels, stock's SMPL page, its
+     sample under the drum), as in 0.3.0. The list has one entry, MD.
+  2. **A sound becomes MD only by the user's action:** a confirmed choice from another machine (YES, the SOUND menu's
+     MACHINE step) sets FM BD up fresh; YES with no cursor move on an old sound converts it by section 4's mapping.
+     Never while the list's cursor previews. The page follows the selected sound's tag.
   3. **The converted marker is the sound's own tag word** (sound slot 47, already saved / loaded / copied by 0021):
-     tag == 0x224D means converted. No spare byte; the report's tag is 0x224D exactly when the sound is converted.
-  4. 0021's 1A / 1B handlers (us_meta_in, us_list_in) drop slot bytes above 5 today: MD's 0x40..0x42 need their own
-     path (part of the code-space need).
+     tag == 0x224D means MD. No spare byte; the report's tag is 0x224D exactly when the sound is MD.
+  4. **A second marker** against a lost tag (a save on 0.3.x or stock zeroes slot 47; a transfer may): the fraction
+     bytes of P15 and P16 hold 0x4D and 0x44 ("MD"), their integer parts 0. Marker there and tag missing: the Rytm writes
+     the tag back at the next UI tick and never converts again. The host ignores fractions.
+  5. 0021's 1A / 1B handlers (us_meta_in, us_list_in) take MD's slots 0x40..0x42 on their own path.
 
 ## 1. The parameters (the sound's P1..P16, as 03 / 04 carry them)
 
@@ -69,7 +75,7 @@ The 43-byte 04 and the 41-byte 03 end with the 14-bit sound tag, `<tag hi7> <tag
 the user slots). For machine 42 the tag is **not** the sound's stored tag:
 
 - **The new 0021** sends `hi7 = 0x44`, `lo7 = 0x4D` ("DM": `tag = 0x44 << 7 | 0x4D = 0x224D`) in every 03 / 04 for
-  machine 42 whose sound is converted (section 4: in practice every one, since conversion runs at load). This is a constant the mod writes, not a stored value.
+  machine 42 whose sound is MD (section 4). This is a constant the mod writes.
 - **The host:** machine 0x40 with tag `0x224D` is read in the layout of section 1. Anything else (tag 0, another tag,
   or a report without a tag: a 41-byte 04 or a 39-byte 03) is read in the **legacy DIGIDRUM layout** (section 4). An old 0021 and an
   old kit therefore keep playing sensibly before the flash.
@@ -201,24 +207,14 @@ The host sends these. The mod must not copy them. The full table is `plugins/mdk
     the first three are kept.
   - Values pass 1:1 (0..127). Whether they sound the same was not checked by ear.
 - **The new 0021: converting a stored DIGIDRUM sound.** The mod does this on its own, with no Sidecar needed: the
-  defaults are the table below, compiled into the mod.
-  - **What marks a sound converted:** a flag bit in a spare byte of the sound record (the mod's choice of byte). The
-    bit is set by the conversion and by a fresh MD set-up, and never otherwise.
-  - **When to convert:** whenever a sound becomes the sound of a track whose machine is 42 and its flag is clear.
-    That is:
-    1. at a kit load (every track on machine 42, all at once, before the first 03 / 04 of that kit);
-    2. when a sound is loaded or pasted into a track on machine 42 (sound pool, copy / paste, reload);
-    3. when the track's machine is switched to 42 on the SRC list. Here the record holds another machine's values:
-       set it up fresh as FM BD (P1..P8 = set 0's defaults, P9 = 0, P10 = 0, P11 = 100, P12..P16 = 0), then set the flag.
-    Nothing is converted at a trig or a knob turn.
-  - **How (cases 1 and 2):**
-    - z = (P1 * 11) >> 7, and from the mapping table: set, ENGINE value, TYPE value and keep k.
-    - New P1..Pk = old P2..P(k+1). New P(k+1)..P8 = the set's defaults below.
-    - P9 = the ENGINE value, P10 = the TYPE value, P11 = 100, P12..P16 = 0, all fraction bytes 0.
-    - Set the flag.
-  - **The tag:** a sound with the flag set is reported with the MD tag (section 2). A sound without it (an old Rytm,
-    or a conversion not yet run) is reported with tag 0, and the host then reads DIGIDRUM's layout and plays it by the
-    mapping.
+  defaults are the table below, compiled into the mod. Only on the user's confirmation (Status and decisions, 2):
+  - z = (P1 * 11) >> 7, and from the mapping table: set, ENGINE value, TYPE value and keep k.
+  - New P1..Pk = old P2..P(k+1). New P(k+1)..P8 = the set's defaults below.
+  - P9 = the ENGINE value, P10 = the TYPE value, P11 = 100, P12..P16 = 0, fraction bytes 0 but the second marker's.
+  - The tag, in the kit, the project copy and the reports.
+  A fresh set-up is the same with FM BD's defaults (set 0, P9 = 0, P10 = 0, P11 = 100).
+  A sound with no tag (an old Rytm, or a sound not converted) is reported with tag 0, and the host reads DIGIDRUM's layout
+  and plays it by the mapping.
 - **MD's defaults per set** (generated by plugins/mdkit/gen_tables.py from voices.json, mdkit's own defaults, so this
   table and the host's 1A `default` column always agree; "-" is a control the TYPE lacks: write 0, it is inert):
 

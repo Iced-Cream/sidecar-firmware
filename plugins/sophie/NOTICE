@@ -1,0 +1,14 @@
+plugins/sophie - notices for the SOPHIE package (sophie.perc, sophie.a64.rmp)
+
+SOPHIE's DSP is Sophie's (src/dsp/sophie.c, its render_voice and trigger_voice), ported to the plugin API for one
+Rytm track a state and adapted for the Sidecar (sophie.c's header lists the changes: one track instead of a 16-pad
+kit, the kick as the KICK models, two hits a state, 48 kHz, per-hit constants at the trigger).
+  Taken from:  https://github.com/mestela/schwung-sophie  commit 56822955 (2026-09-10, "Release Sophie v0.5.1")
+               by Matt Estela
+  Licence:     MIT, Copyright (c) 2026 Matt Estela (LICENSE.sophie, the upstream LICENSE at that commit, unchanged)
+Only v0.5.1's DSP is used. The later release (0.6.0: the Pipe and Boom models, Metal Decay, Feedback Mode, Tail Mode)
+is not in this port. The factory kit in tests/demo.py and README.md is Sophie's (set_factory_kit), as knob values.
+No upstream file is in this repository or the package: sophie.c is a rewrite of the per-voice DSP.
+
+The adaptation and the glue (sophie.c, sophie.h, manifest.json, the Makefile, tests/): MIT, Copyright 2026
+trigcondition and contributors (LICENSE). The package links sdk/rmp/shim (MIT).

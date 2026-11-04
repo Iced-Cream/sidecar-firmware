@@ -220,7 +220,7 @@ CORE_COLD bool save() {
   if (!g_ix) return false;
   apply_requests();
   if (g_w.busy) {
-    if (!cardq::async(&g_w.rq, cardq::kWriteReq, &g_w.f, kFile, 0, (uint8_t*)g_w.text, g_w.rq.len)) return true;
+    if (!cardq::async(&g_w.rq, cardq::kWriteReq, &g_w.f, kFile, 0, (uint8_t*)g_w.text, g_w.rq.len)) return false;   // waiting: no work of this core's
     if (g_w.rq.got < 0) log(CORE_STR("projects: cannot write %s"), kFile);
     g_w.busy = false;
   }

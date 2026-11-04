@@ -69,7 +69,7 @@ class Run:
     """One scenario: the core host (um_link.py) and dtboot on the base with key events at M instructions."""
 
     def __init__(self, name, length, events=(), removes=(), packages=STARTER, tag=None, load=None, save=None, prep=None,
-                 at0=None):
+                 at0=None, extra=(), link_args=()):
         """tag: the build (default UM_TAG); load: a snapshot of that build to start from (default its base) and at0 its
         clock (M instructions); save: the snapshot at the end; prep(card): the core's card before it starts."""
         os.makedirs(OUT, exist_ok=True)
@@ -88,7 +88,7 @@ class Run:
         self.log_path = os.path.join(OUT, f"{name}.jsonl")
         self.wav = os.path.join(OUT, f"{name}.wav")
         hc = [sys.executable, os.path.join(HERE, "um_link.py"), "--card", card, "--link", f"127.0.0.1:{port}",
-              "--log", self.log_path, "--wav", self.wav, "--secs", "900"]
+              "--log", self.log_path, "--wav", self.wav, "--secs", "900"] + list(link_args)
         for at, path in removes:
             hc += ["--remove-at", f"{frame_of(self.clock + at, self.clock)}:{path}"]
         host = subprocess.Popen(hc, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -98,6 +98,7 @@ class Run:
                "--instr", f"{length}M", "--every", "5M", "--usb-host", "--usb-midi-real", "--ob-link", f"127.0.0.1:{port}"]
         if save:
             cmd += ["--save", save]
+        cmd += list(extra)
         for at, kind, val in events:
             k, _, hold = val.partition(":")
             cmd += ["--press", f"{k}@{self.clock + at}M" + (f":{hold}" if hold else "")]
@@ -264,7 +265,7 @@ def t_missing():
           bool(before) and bool(after) and pk(before[0]) > 0.05 and max(pk(f) for f in after) == 0.0)
 
 
-def shared(tag, new):
+def shared(tag, new, old_link=False):
     """A project shared from another Sidecar (2026-10-19, slot-resolve; core/user/um.cpp, rmp_resolve.h).
     Setup: U1 = a starter machine (the slot menu), BD on U1 (the machine list: the sound tagged with its fingerprint),
     the Rytm saved as a snapshot. Then a Sidecar that has never seen this project: its card's last project is PREV,
@@ -277,8 +278,9 @@ def shared(tag, new):
     ev += [(t, "press", "YES"), (t + 300, "press", "NO"), (t + 400, "press", "NO")]
     ev2, t = walk_list(t + 600, 15)
     ev += ev2
-    snap = os.path.join(OUT, f"shared-{tag}.snap")   # git-ignored (firmware state)
-    r0 = Run(f"shared-{tag}-setup", t + 200, ev, tag=tag, save=snap)
+    label = f"{tag}-no25" if old_link else tag   # (old_link: a build with 0x25 played as one without, t_lazy)
+    snap = os.path.join(OUT, f"shared-{label}.snap")   # git-ignored (firmware state)
+    r0 = Run(f"shared-{label}-setup", t + 200, ev, tag=tag, save=snap)
     u1 = [x for x in r0.um() if x.get("t") == "slot" and x["slot"] == 1]
     pid = u1[0]["id"] if u1 else "?"
     proj = [m.decode("ascii", "replace") for _, m in r0.rx(0x10)]
@@ -295,7 +297,8 @@ def shared(tag, new):
     # (an older build sends its 10 only every ~11 s of ext voice blocks: three trigs, the last after it)
     presses = (3000, 4000, 5000) if not new else (1500, 2500)
     ev = [(p, "press", "BD") for p in presses]
-    r = Run(f"shared-{tag}", presses[-1] + 600, ev, tag=tag, load=snap, prep=prep, at0=at0)
+    r = Run(f"shared-{label}", presses[-1] + 600, ev, tag=tag, load=snap, prep=prep, at0=at0,
+            link_args=["--no-prints"] if old_link else [])
     sl = [(e["f"], [x for x in e["um"] if x.get("t") == "slot" and x["slot"] == 1]) for e in r.log if "um" in e]
     prints = r.rx(P.SLOT_PRINTS)
     tf = r.u1_trigs()
@@ -328,7 +331,10 @@ def t_shared():
 
 
 def t_lazy():
-    shared(os.environ.get("UM_TAG_OLD", "sfx1018"), False)
+    # The path for a project from a Rytm that sends no 0x25. No published build is one (0.3.0 sends it) and the old base
+    # sfx1018 is gone: the current build with its 0x25s kept from the core. UM_TAG_OLD: a real one, when a base exists.
+    old = os.environ.get("UM_TAG_OLD")
+    shared(old, False) if old else shared(os.environ.get("UM_TAG_NEW", "sfx1020"), False, old_link=True)
 
 
 def t_srcsteps():

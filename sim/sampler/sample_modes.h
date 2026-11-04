@@ -265,6 +265,12 @@ class SampleModes {
   }
 
   bool playing() const { return playing_; }
+  // where it reads, 0..1 of the sample (the render core's own state, read between its blocks); -1 not playing, or a mode with
+  // no one position (GRAIN, PLUCK, WAVE)
+  float Progress() const {
+    if (!playing_ || frames_ < 2 || mode_ == kGrain || mode_ == kPluck || mode_ == kWave) return -1.0f;
+    return (float)(pos_ / (double)frames_);
+  }
   int mode() const { return mode_; }
   Ops ops;
 

@@ -16,6 +16,8 @@
 #include "sendfx_pi.h"
 #include "bridge.h"
 #include "hooks.h"	// core::hooks.transport: the mods' PLAY / STOP arm the recorder too
+#include "ui/tap_names.h"	// tap_source_name: the stems' names, as SCOPE has them (not ui/extra.h: it pulls <new> in, which the kernel build has not)
+#include "voice_name.h"	// the voices' names for the user
 #include "lib/library.h"	// the sample library: a take indexed (not hashed: docs/LIBRARY.md)
 #include "bundle/projects.h"	// the wall clock (the web page's POST /time) and its zone: the take names, FatFs's dates
 
@@ -1099,14 +1101,13 @@ void UiFill (sidecar_rec_view_t *v)
 	v->vol_missing = !DestOk (s.root);
 	v->free_unknown = !s.free_known;
 	v->mask = s.mask;
-	// the names: the Rytm's tracks and outputs; a Sidecar voice by the track(s) that play it (core/ui/remote.cpp
-	// kTrackVoice), never its number
+	// the names: the box's outputs, its stems as SCOPE names them (the Rytm's tracks, an A4's T1..T4); a Sidecar voice
+	// by the track(s) that play it (core/voice_name.h: the Rytm's, or the box's own), never its number
 	static const char *const kIn[12] = {"MAIN L", "MAIN R", "BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB", "IN L", "IN R"};
-	static const char *const kVoice[8] = {"BD", "BT", "SD", "LT", "CH/OH", "MT/HT", "CY/CB", "RS/CP"};
 	strcpy (v->name[rec::kMaster], "MASTER");
-	for (int i = 0; i < 12; i++) strcpy (v->name[rec::kIn + i], kIn[i]);
+	for (int i = 0; i < 12; i++) strncpy (v->name[rec::kIn + i], i >= 2 && i <= 9 ? core::ui::tap_source_name (i - 1) : kIn[i], sizeof v->name[0] - 1);
 	if (rec::fxin ()) strcpy (v->name[rec::kIn + 10], "FX L"), strcpy (v->name[rec::kIn + 11], "FX R");	// the Rytm's FX return
-	for (int i = 0; i < 8; i++) strcpy (v->name[rec::kVoice + i], kVoice[i]);
+	for (int i = 0; i < 8; i++) strncpy (v->name[rec::kVoice + i], core::voice_name (i), sizeof v->name[0] - 1);
 	strcpy (v->name[rec::kFx], "FX 1");
 	strcpy (v->name[rec::kFx + 1], "FX 2");
 	// the meters: the IN channels, the voices, the FX returns' L / R

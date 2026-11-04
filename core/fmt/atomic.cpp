@@ -468,6 +468,7 @@ bool post_step() {
 #endif
   if (!g_pbusy) return false;
 #if CORE_MSAMP
+  uint32_t s0 = __atomic_load_n(&g_prq.state, __ATOMIC_ACQUIRE);
   if (!cardq::async(&g_prq, g_prm ? cardq::kRemoveReq : cardq::kAtomicReq, nullptr, g_ppath, 0, (uint8_t*)g_pdata, g_plen)) {
     // Phase 3 (2026-10-26): a write the card core has not taken after cardq's kTakeBackUs (held up: a long upload, a
     // card's own pause) stays posted. It used to be taken back and run here, but this is the control core, whose OUT
@@ -480,7 +481,7 @@ bool post_step() {
       log(CORE_STR("post: %s not taken by the card core in %u ms - kept posted (the card core held up)"), g_ppath,
           (unsigned)(cardq::kTakeBackUs / 1000));
     }
-    return true;
+    return s0 == cardq::kFree && __atomic_load_n(&g_prq.state, __ATOMIC_ACQUIRE) != cardq::kFree;   // posted just now: this pass's step
   }
   g_pok = g_prm ? g_prq.got > 0 : g_prq.got >= 0;
 #endif

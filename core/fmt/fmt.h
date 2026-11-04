@@ -207,12 +207,13 @@ bool post_queue(const char* path, const char* text, uint32_t len, uint32_t* id =
 // a file removed through the same queue, in its turn (a queued write of it replaced; CORE_MSAMP only): post_result's
 // ok when it is gone (or was not there)
 bool post_remove(const char* path, uint32_t* id = nullptr);
-bool post_step();   // true while a posted write waits for the card core
+// true only when this call posted a write. A write that only waits is no work of this core's: idle_save goes on, the streams' idle step above all
+// (a burst of N pattern writes must not leave them one pass a write). post_busy() says whether one is under way.
+bool post_step();
 bool post_busy();
 uint32_t post_held();   // posted writes the card core had not taken after cardq::kTakeBackUs (kept posted, never run here)
-// fix round 1: the slot's write is held now (posted past kTakeBackUs). idle_save then goes on to the savers and the
-// sequencer below it rather than return at post_step (that return would stop them for as long as the card core is
-// held), and the LFO / INSERT idle saves queue (post_queue) instead of waiting for the slot
+// fix round 1: the slot's write is held now (posted past kTakeBackUs): the LFO / INSERT idle saves queue (post_queue)
+// instead of waiting for the slot
 bool post_stalled();
 void post_wait(const char* path = nullptr);
 // 2026-10-26, the RAM store: a write of this file not yet on the card (queued, or posted and not finished); never waits.

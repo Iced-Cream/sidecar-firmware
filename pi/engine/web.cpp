@@ -21,10 +21,12 @@
 #include "rec_pi.h"		// TakeBusy: /fs never deletes the take being recorded
 #include "lib/library.h"
 #include "poolweb.h"
+#include "presetweb.h"
 #include "paircode.h"
 #include "paircode_pi.h"
 #include "blackbox_pi.h"
 #include "midibridge_pi.h"
+#include "sidecar_gadget.h"	// usbmidi=os: /cmd refuses link=tcp:<address> while it is on
 #include "wifi_conf.h"
 #include "hosted/web_page.h"	// build.sh: www/index.html as WebPage[] (a raw string)
 #include "hosted/web_page_gz.h"	// build.sh: the same, gzip -9n, as WebPageGz[] (what "/" sends)
@@ -592,9 +594,16 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		if (!bForm && !FormValue (pParams, "c", Cmd, sizeof Cmd)) return HTTPBadRequest;
 		// another site's page cannot post commands (its Origin is not ours); wifi= only in a POST's body (never a URL)
 		// midibridge= neither: /cmd's origin check is the lenient one, and the bridge can carry an OS upgrade, so it
-		// is turned on only from the page (POST /midibridge/set, strict) or on the serial console
+		// is turned on only from the page (POST /midibridge/set, strict) or on the serial console. usbmidi= (and its
+		// older name osupdate=) neither, for the same reason: it lets OS upgrades through the USB-C MIDI port
+		// (usbmidi_os.h); cmdline.txt or the serial console only. And while usbmidi=os: is on or emu, link=tcp:<address>
+		// neither: it would send the computer's MIDI (Transfer content, an OS image) to any host and bring that
+		// host's MIDI back as the Rytm's. link=tcp (cmdline's emuhost=) and link=usb stay allowed
+		CSidecarGadget *pSidecar = CSidecarGadget::Get ();
 		if (!FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), FALSE)
-		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0)
+		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0
+		    || strncmp (Cmd, "usbmidi=", 8) == 0 || strncmp (Cmd, "osupdate=", 9) == 0
+		    || (strncmp (Cmd, "link=tcp:", 9) == 0 && pSidecar != 0 && pSidecar->OsUpdate ()))
 		{
 			memset (Cmd, 0, sizeof Cmd);
 			return HTTPBadRequest;
@@ -816,6 +825,13 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 	else if (strcmp (pPath, "/pool") == 0)		// the Pool tab: one bank of a POOL list (poolweb.h; reads only)
 	{
 		int n = poolweb::json (pParams, (char *) pBuffer, *pLength);
+		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
+		*pLength = n;
+		*ppContentType = "application/json";
+	}
+	else if (strcmp (pPath, "/presets") == 0)		// the Pool tab's JUNO / 6-OP lists: a window of the preset index (presetweb.h; reads only)
+	{
+		int n = presetweb::json (pParams, (char *) pBuffer, *pLength);
 		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
 		*pLength = n;
 		*ppContentType = "application/json";

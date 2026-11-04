@@ -4,6 +4,7 @@
 // FUNC teal (no red); CLASSIC the same drawings at its scale in the display window.
 #include "sidecar_voice.h"
 #include "sidecar_theme.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' names
 #include "lvgl.h"
 #include <math.h>
 #include <stddef.h>
@@ -23,11 +24,11 @@ static uint32_t c_bg (void) { return oled () ? TH->bg : TH->win; }
 // the level: a bar from the bottom at the area's right, the accent past 3/4; returns the width left of it
 static int level_draw (lv_layer_t *l, const lv_area_t *c)
 {
-	int w = lv_area_get_width (c), h = lv_area_get_height (c), lw = oled () ? 7 : 14;
+	int w = lv_area_get_width (c), h = lv_area_get_height (c), lw = LU (oled () ? 7 : 14);
 	int lh = s_V.level * (h - 2) / 127, x0 = w - lw;
 	th_fill (l, c, x0, 0, w - 1, h - 1, oled () ? 0x262626 : th_mix (c_bg (), c_dim (), 40), LV_OPA_COVER, 0);
 	if (lh > 0) th_fill (l, c, x0, h - 1 - lh, w - 1, h - 1, s_V.level > 96 ? TH->accent : c_ink (), LV_OPA_COVER, 0);
-	return w - lw - (oled () ? 4 : 8);
+	return w - lw - (LU (oled () ? 4 : 8));
 }
 
 static void scope_draw (lv_event_t *e)
@@ -42,7 +43,13 @@ static void scope_draw (lv_event_t *e)
 	for (int x = 0; s_V.ncols > 0 && x < sw; x++)
 	{
 		int i = x * s_V.ncols / sw;
-		int a = mid - s_V.smax[i] * amp / 127, b = mid - s_V.smin[i] * amp / 127;
+		int smx = s_V.smax[i], smn = s_V.smin[i];
+		if (TH->big && i + 1 < s_V.ncols)		// 1280x720: more dots than columns, no steps between them
+		{
+			const int f = x * s_V.ncols % sw;
+			smx += (s_V.smax[i + 1] - smx) * f / sw, smn += (s_V.smin[i + 1] - smn) * f / sw;
+		}
+		int a = mid - smx * amp / 127, b = mid - smn * amp / 127;
 		if (a > b) { int t = a; a = b; b = t; }
 		th_fill (l, &c, x, a, x, b, c_ink (), LV_OPA_COVER, 0);
 	}
@@ -50,8 +57,8 @@ static void scope_draw (lv_event_t *e)
 
 // ---- the machines' panels (in the scope's place). Every drawing is made of filled rects: lines are runs of dots
 // (OLED) or of 2-px squares (CLASSIC), so the dot theme keeps its grid.
-static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : &lv_font_montserrat_14; }
-static const lv_font_t *f_head (void) { return oled () ? TH->f_small : &lv_font_montserrat_18; }
+static const lv_font_t *f_cap (void) { return oled () ? TH->f_micro : TH->f_small; }
+static const lv_font_t *f_head (void) { return oled () ? TH->f_small : TH->f_mid; }
 static int fh (const lv_font_t *f) { return lv_font_get_line_height (f); }
 static uint32_t c_blue (int v) { return oled () ? th_oled_secondary (v) : th_mix (TH->sub, 0xFFFFFF, 40 + v); }
 static uint32_t c_teal (void) { return oled () ? th_oled_accent (127) : TH->accent; }
@@ -87,7 +94,7 @@ static int head_row (lv_layer_t *l, const lv_area_t *c, int sw, const char *left
 	const lv_font_t *f = f_head ();
 	th_text (l, c, 0, 0, sw, f, c_ink (), LV_TEXT_ALIGN_LEFT, left);
 	if (right && *right) th_text (l, c, 0, 0, sw, f_cap (), c_dim (), LV_TEXT_ALIGN_RIGHT, right);
-	return fh (f) + (oled () ? 3 : 6);
+	return fh (f) + (LU (oled () ? 3 : 6));
 }
 
 // 6-OP FM: the algorithm as the Rytm's SRC view draws it (core/ui/page_gfx.cpp), bigger: a box per operator with its
@@ -100,12 +107,12 @@ static void fm_draw (lv_layer_t *l, const lv_area_t *c, int sw, int h)
 	int top = head_row (l, c, sw, s_V.fm_alg >= 0 ? (s_V.fm_name[0] ? s_V.fm_name : "(NO NAME)") : "NO PATCH", b);
 	if (s_V.fm_alg < 0) return;
 	const lv_font_t *fc = f_cap ();
-	int rowh = fh (fc) + (oled () ? 2 : 4), bus = h - rowh - (oled () ? 4 : 8);
+	int rowh = fh (fc) + (LU (oled () ? 2 : 4)), bus = h - rowh - (LU (oled () ? 4 : 8));
 	int ncols = s_V.fm_ncols < 1 ? 1 : s_V.fm_ncols, nlev = s_V.fm_nlev < 1 ? 1 : s_V.fm_nlev;
 	int pitch_x = sw / (ncols > 4 ? ncols : 4), bw = pitch_x * 3 / 5;
 	int pitch_y = (bus - top - 2) / nlev, bh = pitch_y * 3 / 5;
-	if (bw > (oled () ? 28 : 44)) bw = oled () ? 28 : 44;
-	if (bh > (oled () ? 19 : 34)) bh = oled () ? 19 : 34;
+	if (bw > (LU (oled () ? 28 : 44))) bw = LU (oled () ? 28 : 44);
+	if (bh > (LU (oled () ? 19 : 34))) bh = LU (oled () ? 19 : 34);
 	int x0 = (sw - (ncols - 1) * pitch_x - bw) / 2;
 	int bx[6], by[6];
 	for (int k = 0; k < 6; k++)
@@ -143,7 +150,7 @@ static void fm_draw (lv_layer_t *l, const lv_area_t *c, int sw, int h)
 	int src = s_V.fm_fb_src, dst = s_V.fm_fb_dst;
 	if (src >= 0 && dst >= 0 && src < 6 && dst < 6)	// feedback: a loop on the right of the box(es)
 	{
-		int g = oled () ? 3 : 6;
+		int g = LU (oled () ? 3 : 6);
 		int xr = (bx[src] > bx[dst] ? bx[src] : bx[dst]) + bw - 1 + g;
 		int ya = by[dst] - g, yb = by[src] + bh - 1 + g / 2;
 		if (ya < top) ya = top;
@@ -160,7 +167,7 @@ static void fm_draw (lv_layer_t *l, const lv_area_t *c, int sw, int h)
 	{
 		lv_snprintf (b, sizeof b, "%d", k + 1);
 		th_text (l, c, k * cw, ty, cw, fc, c_blue (127), LV_TEXT_ALIGN_LEFT, b);
-		th_text (l, c, k * cw + (oled () ? 8 : 12), ty, cw - (oled () ? 8 : 12), fc, c_ink (), LV_TEXT_ALIGN_LEFT, s_V.fm_freq[k]);
+		th_text (l, c, k * cw + (oled () ? LU (8) : LU (12)), ty, cw - (oled () ? LU (8) : LU (12)), fc, c_ink (), LV_TEXT_ALIGN_LEFT, s_V.fm_freq[k]);
 	}
 }
 
@@ -183,8 +190,8 @@ static void multi_draw (lv_layer_t *l, const lv_area_t *c, int sw, int h)
 	k0 = k0 / 12 * 12, k1 = k1 / 12 * 12 + 11;
 	if (k1 - k0 < 35) k1 = k0 + 35 > 127 ? 127 : k0 + 35;
 	int n = k1 - k0 + 1;
-	int envh = (h - top) * 2 / 7, kh = (h - top - envh) * 2 / 5, zh = h - top - envh - kh - (oled () ? 5 : 10);
-	int ky = top + zh + (oled () ? 2 : 4), ey = ky + kh + (oled () ? 3 : 6);
+	int envh = (h - top) * 2 / 7, kh = (h - top - envh) * 2 / 5, zh = h - top - envh - kh - (LU (oled () ? 5 : 10));
+	int ky = top + zh + (LU (oled () ? 2 : 4)), ey = ky + kh + (LU (oled () ? 3 : 6));
 	// x of key k's left and right edge. CLASSIC: keys equally wide (a sampler's keys are notes, not the piano's look).
 	// OLED: the piano's layout - seven white keys an octave, the black keys narrower over their gaps - which the finer
 	// grid draws cleanly (white keys 7-9 dots, black 4-5)
@@ -337,7 +344,7 @@ static void heat_draw (lv_event_t *e)
 	int w = lv_area_get_width (&c), h = lv_area_get_height (&c), n = s_V.steps;
 	if (n <= 0)
 	{
-		th_text (l, &c, 0, (h - (oled () ? 9 : 8)) / 2, w, oled () ? TH->f_micro : &lv_font_montserrat_14, c_dim (), LV_TEXT_ALIGN_CENTER,
+		th_text (l, &c, 0, (h - (oled () ? LU (9) : LU (8))) / 2, w, oled () ? TH->f_micro : TH->f_small, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 "NO PATTERN YET (THE RYTM'S DUMP)");
 		return;
 	}
@@ -373,39 +380,39 @@ void sidecar_voice_create (void *parent, int y0)
 	// 1024x600 (TH->dx, dy): the knobs wider apart and taller, the machine's panel (keyboard, algorithm, scope) gets most
 	// of the extra room, the heatmap the full width
 	const int dx = TH->dx, dy = TH->dy;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - 48 : TH->w, o ? TH->h : 428 + dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, o ? TH->w - LU (48) : TH->w, o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, 352 + dx, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, LU (352) + dx, LU (13));
 		th_titlebar_set (s_TitleBar, "VOICE", "", 0);
 		s_Title = 0;
 		// the finer grid: the eight knobs in one row, the machine's panel the full width under them (the MULTISAMPLE
 		// keyboard's white keys 8 dots wide, the FM algorithm's boxes and wires with room), the p-locks at the foot
-		const int kp = (352 + dx) / 8, ky = dy / 6;
-		s_Name = th_label (pg, 3, 16, TH->f_body, TH->ink, "");
-		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, k * kp, 29, kp - 1, 52 + ky, 127, TH_METER_KNOB, TH->ink);
-		s_Scope = th_box (pg, 3, 91 + ky, 349 + dx, 104 + (dy - ky) * 4 / 5);
-		s_Mode = th_box (pg, 3, 87 + ky, 349 + dx, 110 + (dy - ky) * 4 / 5);
-		s_HeatCap = th_label (pg, 3, 205 + dy, TH->f_micro, TH->dim, "P-LOCKS");
-		s_Heat = th_box (pg, 50, 202 + dy, 302 + dx, 16);
-		s_Info = th_label (pg, 3, 226 + dy, TH->f_micro, TH->dim, "");
+		const int kp = (LU (352) + dx) / 8, ky = dy / 6;
+		s_Name = th_label (pg, 3, LU (16), TH->f_body, TH->ink, "");
+		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, k * kp, LU (29), kp - 1, LU (52) + ky, 127, TH_METER_KNOB, TH->ink);
+		s_Scope = th_box (pg, 3, LU (91) + ky, LU (349) + dx, LU (104) + (dy - ky) * 4 / 5);
+		s_Mode = th_box (pg, 3, LU (87) + ky, LU (349) + dx, LU (110) + (dy - ky) * 4 / 5);
+		s_HeatCap = th_label (pg, 3, LU (205) + dy, TH->f_micro, TH->dim, "P-LOCKS");
+		s_Heat = th_box (pg, LU (50), LU (202) + dy, LU (302) + dx, LU (16));
+		s_Info = th_label (pg, 3, LU (226) + dy, TH->f_micro, TH->dim, "");
 	}
 	else
 	{
-		const int kp = 100 + dx / 16, kh = 124 + dy / 4, sx = 440 + dx / 4;
+		const int kp = LU (100) + dx / 16, kh = LU (124) + dy / 4, sx = LU (440) + dx / 4;
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, 784 + dx, 414 + dy, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, &lv_font_montserrat_18, TH->win_ink, "VOICE");
-		s_Name = th_label (pg, 24, 40, &lv_font_montserrat_24, TH->win_ink, "");
-		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, 24 + (k & 3) * kp, 84 + (k >> 2) * (kh + 6), kp - 8, kh, 127, TH_METER_KNOB, TH->win_ink);
-		s_Scope = th_box (pg, sx, 84, 336 + dx * 3 / 4, 250 + dy * 3 / 4);
-		s_Mode = th_box (pg, sx, 80, 336 + dx * 3 / 4, 258 + dy * 3 / 4);
-		s_HeatCap = th_label (pg, 24, 348 + dy, &lv_font_montserrat_14, TH->win_dim, "P-LOCKS (THE RYTM'S PATTERN)");
-		s_Heat = th_box (pg, 24, 370 + dy, 752 + dx, 30);
-		s_Info = th_label (pg, sx, 14, &lv_font_montserrat_14, TH->win_dim, "");
+		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "VOICE");
+		s_Name = th_label (pg, LU (24), LU (40), TH->f_big, TH->win_ink, "");
+		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, LU (24) + (k & 3) * kp, LU (84) + (k >> 2) * (kh + LU (6)), kp - LU (8), kh, 127, TH_METER_KNOB, TH->win_ink);
+		s_Scope = th_box (pg, sx, LU (84), LU (336) + dx * 3 / 4, LU (250) + dy * 3 / 4);
+		s_Mode = th_box (pg, sx, LU (80), LU (336) + dx * 3 / 4, LU (258) + dy * 3 / 4);
+		s_HeatCap = th_label (pg, LU (24), LU (348) + dy, TH->f_small, TH->win_dim, "P-LOCKS (THE RYTM'S PATTERN)");
+		s_Heat = th_box (pg, LU (24), LU (370) + dy, LU (752) + dx, LU (30));
+		s_Info = th_label (pg, sx, LU (14), TH->f_small, TH->win_dim, "");
 	}
-	lv_obj_set_width (s_Info, (o ? 346 : 330) + dx * 3 / 4);
+	lv_obj_set_width (s_Info, (o ? LU (346) : LU (330)) + dx * 3 / 4);
 	lv_obj_add_event_cb (s_Scope, scope_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_event_cb (s_Mode, mode_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_flag (s_Mode, LV_OBJ_FLAG_HIDDEN);
@@ -452,12 +459,14 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 		// UX review T7: the title names the track and its machine ("VOICE  RS  6-OP FM"; voice_pi puts the shared long
 		// name in v->name for a Sidecar machine), the name line the Rytm's own name
 		char t[48], r[32];
-		const char *tn = v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-";
+		const char *tn = sidecar_ui_box_names () ? (v->track >= 0 && v->track < 8 ? sidecar_ui_voice (v->track) : "-")	// a box's track: its voice
+				 : v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-";
 		if (v->valid) lv_snprintf (r, sizeof r, "%s  %s", tn, v->sidecar ? v->name : "ANALOG");
 		else lv_snprintf (r, sizeof r, "-");
 		if (s_TitleBar) th_titlebar_set (s_TitleBar, "VOICE", r, 0);
 		else { lv_snprintf (t, sizeof t, "VOICE  %s", r); th_label_set (s_Title, t); }
-		th_label_set (s_Name, v->valid ? v->name : "WAITING FOR THE RYTM");
+		lv_snprintf (t, sizeof t, "WAITING FOR THE %s", sidecar_ui_box_up ());
+		th_label_set (s_Name, v->valid ? v->name : t);
 		if (v->pattern >= 0) lv_snprintf (t, sizeof t, "PATTERN %c%02d  UP + T4: HERE", 'A' + v->pattern / 16, v->pattern % 16 + 1);
 		else lv_snprintf (t, sizeof t, "UP + T1..T8 ON THE RYTM: PAGES");
 		th_label_set (s_Info, t);

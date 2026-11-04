@@ -18,6 +18,14 @@ int main ()
 	CHECK (target_hz (1500, 1500000000, 2400000000u) == 2400000000u);
 	CHECK (target_hz (1000, 1500000000, 2400000000u) == 1500000000u);
 
+	// what the setting asks for: a Pi 5's default is its 2400, its 1200 and 1000 are the firmware's 1500; a Pi 4 as named
+	CHECK (asked_mhz (1500, 1500000000, 2400000000u) == 2400 && asked_mhz (1200, 1500000000, 2400000000u) == 1500);
+	CHECK (asked_mhz (1000, 1500000000, 2400000000u) == 1500);
+	CHECK (asked_mhz (1500, 600000000, 1500000000) == 1500 && asked_mhz (1000, 600000000, 1500000000) == 1000);
+	// measured against reported: over 5 % apart only; unknowns are not news
+	CHECK (!measured_off (2400, 2400) && !measured_off (2400, 2300) && measured_off (2400, 2200) && measured_off (1500, 2400));
+	CHECK (!measured_off (0, 2400) && !measured_off (2400, 0));
+
 	// the guard's budget: the counter is 54 MHz on the Pi 4, a 12-frame block is 13500 ticks (250 us); 25 % = 3375 ticks
 	const unsigned long long f = 54000000ull;
 	CHECK (budget_ticks (f, 25, 1500) == 3375);					// the validated figure (guard.h's default)

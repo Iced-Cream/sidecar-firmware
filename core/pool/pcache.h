@@ -12,12 +12,14 @@
 //            block, the old one kept while a pin holds it). One guard frame (ch samples) after the last.
 //   memory   one arena of the budget (pool_ram_budget(): poolram=MB, default 1 GB on 2 / 4 GB boards, 3 GB on 8 GB;
 //            the Mac CORE_POOL_RAM_MB, default 64), blocks 64-byte aligned in address order; a block that does not fit
-//            evicts the least recently used window of unpinned entries next to a hole (never a compaction). A pin
+//            evicts the least recently used window of unpinned entries next to a hole (kept blocks given back to
+//            their heads in that window: mark_kept; no other compaction). A pin
 //            (a voice / slot reading the block) keeps it; private blocks (a machine's own, e.g. MULTISAMPLE's loop
 //            parts) are counted in the budget and never evicted.
 //   loads    want() queues a whole load (wants before prefetches); step() does one card operation of it through the
 //            card core (cardq: never on the control core's own time), converting a 32 KB read a step. fill_begin /
-//            fill_end let a machine load an entry itself (MULTISAMPLE's heads).
+//            fill_end let a machine load an entry itself (MULTISAMPLE's heads, and a sample kept after its first play:
+//            docs/superpowers/specs/2026-10-30-load-on-first-play.md).
 //
 // The control core's (core 3 on the Pi), except stats() / resident(): any core (racy, for drawing). Pi / Mac only.
 #pragma once
@@ -71,6 +73,23 @@ int want(const lib::Ref& r, const char* path, bool prefetch = false);
 int fill_begin(const lib::Ref& r, uint32_t frames, uint32_t total, float rate, int16_t** dst, int* have, int ch = 1);
 void fill_end(int e, uint32_t written, bool ok);
 bool busy(int e);                       // a whole load waits or runs for the entry (queued, running, after a fill)
+bool held(int e);                       // a load writes the entry now (its whole load runs, or a machine's fill)
+// A whole entry a machine can do with less (7ad: a kept MULTISAMPLE sample): when alloc needs room, a block marked here
+// that only its one pin holds, nobody asked for in the last kShrinkGuardMs (a want answered with it, its reader not pinned
+// yet), counts as evictable: its first frames frames stay, the entry a prefix again, the block's id and pin as they are,
+// and the hook (set_give_back) gets the address. So every path that needs room gets it, and only when that makes a
+// contiguous hole. Its pin is its holder's alone (a note, or any reader, holds one of its own), so no core reads the block.
+// The window's first such block keeps its frames where they are; the others' move to the window's far end, kMoveMax bytes
+// at most an alloc (a window that needs more is not taken): measured 16 us on the Mac for 512 KB, x 34 = ~560 us on a Pi 4.
+// unmark_kept: not any more (the marker lets go; another pin may stay).
+constexpr uint32_t kShrinkGuardMs = 1000;
+constexpr uint64_t kMoveMax = 512 * 1024;
+void set_give_min_idle(uint32_t ms);    // from now on only blocks unused this long are given (0: as above)
+void mark_kept(int blk, uint32_t frames);
+void unmark_kept(int blk);
+using GiveBack = void (*)(int blk, const int16_t* pcm);
+void set_give_back(GiveBack hook);
+int pins(int blk);                      // the readers holding the block
 bool is(int e, const lib::Ref& r);      // the entry still holds this content (an id kept across steps: check it)
 // pins: a reader holds the block (not evicted, not freed while it reads); the block id from Info::blk
 void pin(int blk);
@@ -84,7 +103,8 @@ bool step();                            // one card operation of the load in pro
 
 struct Stats {
   uint64_t budget, used, priv;          // bytes: the arena, its blocks in use (entries + private), private only
-  uint32_t entries, ready, loads, fails, evictions, grows, shared_hits;
+  uint32_t entries, ready, loads, fails, evictions, grows, shared_hits, shrinks;
+  uint64_t kept;                        // bytes in blocks marked kept (each once, whoever holds them)
 };
 Stats stats();
 // tests

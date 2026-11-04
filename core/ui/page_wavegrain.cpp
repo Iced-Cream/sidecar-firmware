@@ -13,6 +13,7 @@
 #include "lib/pools.h"
 #include "lib/srclib.h"
 #include "msamp/msamp.h"
+#include "presets/preset_index.h"
 #include "wavetable/tables.h"
 #include "wavetable/wavetable.h"
 #endif
@@ -71,11 +72,22 @@ UI_ROM const Page kWtBankPage = {"TABLE", kWaveMachine, 1, kBankCells, {0, 1, 2,
                                  {"TBL", "POS", "WARP", "AMT", "UNI", "SUB", "CUT", "RES"}};
 UI_ROM const Page kMsBankPage = {"INSTRUMENT", kMultiMachine, 1, kBankCells, {0, 1, 2, 3, 4, 5, 6, 7},
                                  {"INST", "VEL", "LEV", "RTRG", "ATK", "DEC", "SUS", "REL"}};
-// rui1045: DSP SAMPLE's SMP (P11) opens it from the Rytm's SMPL page (TUN FIN MOD SMP / STA END LOP LEV)
-UI_ROM const Page kDsBankPage = {"SAMPLE", kDspSample, 1, kBankCells, {8, 9, 10, 11, 12, 13, 14, 15},
-                                 {"TUN", "FIN", "MOD", "SMP", "STA", "END", "LOP", "LEV"}};
+// DSP SAMPLE's SMP (P11, rytm-mods 7h): knob A of its SRC page, as the others (ENG is SMPL knob D)
+UI_ROM const Page kDsBankPage = {"SAMPLE", kDspSample, 1, kBankCells, {10, 1, 2, 3, 4, 5, 6, 7},
+                                 {"SMP", "STR", "BRI", "DMP", "MIX", "SEED", "TUN", "LEV"}};
+// JUNO's and 6-OP FM's PAT (0.4.0): the project's preset list as rows, the same keys (no banks); FUNC + YES the card's
+// presets, from the RAM index (core/presets/preset_index.h)
+UI_ROM const Page kJnBankPage = {"PRESETS", kJuno, 1, kBankCells, {0, 1, 2, 3, 4, 5, 6, 7},
+                                 {"PAT", "CUT", "RES", "ENV", "ATK", "DEC", "REL", "LEN"}};
+UI_ROM const Page kFmBankPage = {"PRESETS", kFm, 1, kBankCells, {0, 1, 2, 3, 4, 5, 6, 7},
+                                 {"PAT", "TIM", "MOR", "DEC", "LPG", "TUN", "LEV", "LEN"}};
 struct BankList {
   bool on = false;
+  int preset = -1;              // 0.4.0: presets::kIxJuno, kIxFm: this list is that machine's; -1 a pool's
+  int folder = 0;               // its browser's folder of the index
+  bool reading = false;         // a voice added, on its way from its bank
+  uint32_t pgen = 0;            // the index the browser's folder belongs to (a new walk: back to the root)
+  int rcur = -1, rfolder = -1;  // the preset a full list's YES asked about: the second YES replaces the list's row
   int track = -1, vi = -1, machine = -1, bank = 0, row = 0, code0 = 0, commits = 0;
   uint32_t ms = 0;              // the cursor's last move (a GRANULAR / WAVETABLE preview after kSettleMs)
   bool previewed = true;
@@ -267,6 +279,17 @@ CORE_COLD const char* bank_name(int k, int bank, int row) {
   return row_name(k, bank_entry(bank, row), b, sizeof b);
 }
 CORE_COLD uint32_t bank_key() {
+  if (bl.preset >= 0) {
+    uint32_t h = (uint32_t)(bl.row + 1) * 2654435761u ^ (uint32_t)bl.on << 31 ^ (uint32_t)presets::rows(bl.preset) << 8;
+    char b[24];
+    for (const char* q = presets::row_name(bl.preset, bl.row, b, sizeof b); *q; ++q) h = (h ^ (uint8_t)*q) * 16777619u;
+    if (bl.browse) h = (h ^ (uint32_t)(bl.cur + 1) * 69069u ^ (uint32_t)bl.folder * 4099u ^ presets::gen() ^ (uint32_t)presets::ready() << 30) * 16777619u;
+    if (bank_note_on()) {
+      h = (h ^ 0x20000000u) * 16777619u;
+      for (const char* q = bl.note; *q; ++q) h = (h ^ (uint8_t)*q) * 16777619u;
+    }
+    return h | 1;
+  }
   int k = bank_kind();
   uint32_t h = (uint32_t)(bl.bank * 128 + bl.row + 1) * 2654435761u ^ lst_gen(k) * 40503u ^ (uint32_t)bl.on << 31;
   if (bl.browse) h = (h ^ (uint32_t)(bl.cur + 1) * 69069u ^ srclib::view_gen(k)) * 16777619u ^ 0x40000000u;   // rui1040
@@ -339,7 +362,80 @@ CORE_COLD void draw_browse(Canvas& c, const Rect& r) {
   int th = n > kBankRowsShown ? (bh * kBankRowsShown / n < 3 ? 3 : bh * kBankRowsShown / n) : bh;
   c.fill(Rect{(int16_t)(bx - 1), (int16_t)(n > kBankRowsShown ? by + (bh - th) * first / (n - kBankRowsShown) : by), 3, (int16_t)th}, kOn);
 }
+// The scroll bar of the preset lists
+CORE_COLD void draw_bar(Canvas& c, const Rect& r, int y0, int n, int first) {
+  int bx = r.x + r.w - 3, by = y0 - 1, bh = kBankRowsShown * kRowH;
+  c.vline(bx, by, by + bh - 1, kDither);
+  int th = n > kBankRowsShown ? (bh * kBankRowsShown / n < 3 ? 3 : bh * kBankRowsShown / n) : bh;
+  c.fill(Rect{(int16_t)(bx - 1), (int16_t)(n > kBankRowsShown ? by + (bh - th) * first / (n - kBankRowsShown) : by), 3, (int16_t)th}, kOn);
+}
+CORE_COLD void draw_preset_head(Canvas& c, const Rect& r, const char* s) {
+  c.put_text(kSlotFree, kRSmall, r.x + 1, r.y + 1, bank_note_on() ? bl.note : s, kAlignLeft);
+  for (int b = 1; b < 8; ++b) c.put_text(kSlotFree + b, kRSmall, 0, 0, nullptr);
+  for (int i = 0; i < kRows; ++i) c.put_text(kSlotRowL + i, kRSmall, 0, 0, nullptr), c.put_text(kSlotRowR + i, kRSmall, 0, 0, nullptr);
+  c.hline(r.x, r.x + r.w - 7, r.y + 7, kDither);
+}
+CORE_COLD void preset_sync() {   // folder numbers belong to one walk
+  if (bl.pgen == presets::gen()) return;
+  bl.pgen = presets::gen(), bl.folder = bl.preset, bl.cur = 0, bl.rcur = -1;
+}
+CORE_COLD void draw_presets(Canvas& c, const Rect& r) {
+  preset_sync();
+  const int y0 = r.y + 9, wrow = r.w - 6;
+  const char* who = bl.preset == presets::kIxJuno ? "JUNO" : "FM";
+  char hd[kTextLen + 1];
+  if (bl.browse) {   // the index: no card read here
+    int n = presets::ready() ? presets::count(bl.folder) : 0;
+    if (presets::ready() && presets::full(bl.preset) && bl.folder == bl.preset) sniprintf(hd, sizeof hd, "ADD: %s FULL", who);   // (the rest left out)
+    else sniprintf(hd, sizeof hd, "ADD: %s", presets::ready() ? presets::folder_name(bl.folder) : who);
+    draw_preset_head(c, r, hd);
+    if (n <= 0) {
+      c.put_text(kSlotRowL, kRSmall, r.x + r.w / 2, y0 + 2 * kRowH, presets::ready() ? "EMPTY FOLDER" : "READING", kAlignCentre);
+      return;
+    }
+    if (bl.cur >= n) bl.cur = n - 1;
+    int first = bl.cur - 2;
+    if (first > n - kBankRowsShown) first = n - kBankRowsShown;
+    if (first < 0) first = 0;
+    for (int i = 0; i < kBankRowsShown && first + i < n; ++i) {
+      int it = first + i, y = y0 + i * kRowH;
+      bool on = it == bl.cur, dir = presets::is_dir(bl.folder, it);
+      if (on) c.fill(Rect{(int16_t)r.x, (int16_t)(y - 1), (int16_t)wrow, kRowH}, kOn);
+      const char* right = on ? (dir ? "OPEN" : bl.reading ? "READING" : "ADD") : "";
+      int rl = (int)strlen(right), rm = (wrow - 4) / kRSmall.advance - (rl ? rl + 1 : 0);
+      char left[kTextLen + 1];
+      sniprintf(left, sizeof left, "%.*s%s", rm > 2 ? rm - 1 : 1, presets::name(bl.folder, it), dir ? "/" : "");
+      uint8_t fl = on ? kTextInvert : 0;
+      c.put_text(kSlotRowL + i, kRSmall, r.x + 1, y, left, kAlignLeft | fl);
+      if (rl) c.put_text(kSlotRowR + i, kRSmall, r.x + wrow - 2, y, right, kAlignRight | fl);
+    }
+    draw_bar(c, r, y0, n, first);
+    return;
+  }
+  int n = presets::rows(bl.preset);
+  if (bl.row >= n) bl.row = n - 1;
+  if (presets::built_ins(bl.preset)) sniprintf(hd, sizeof hd, "%s BUILT-IN", who);
+  else sniprintf(hd, sizeof hd, "%s LIST %d", who, n);
+  draw_preset_head(c, r, hd);
+  int first = bl.row - 2;
+  if (first > n - kBankRowsShown) first = n - kBankRowsShown;
+  if (first < 0) first = 0;
+  for (int i = 0; i < kBankRowsShown && first + i < n; ++i) {
+    int row = first + i, y = y0 + i * kRowH;
+    bool on = row == bl.row;
+    if (on) c.fill(Rect{(int16_t)r.x, (int16_t)(y - 1), (int16_t)wrow, kRowH}, kOn);
+    char left[kTextLen + 1], nm[24];
+    int room = (wrow - 4) / kRSmall.advance;
+    sniprintf(left, sizeof left, "%03d %.*s", row, room > 4 ? room - 4 : 1, presets::row_name(bl.preset, row, nm, sizeof nm));
+    c.put_text(kSlotRowL + i, kRSmall, r.x + 1, y, left, kAlignLeft | (on ? kTextInvert : 0));
+  }
+  draw_bar(c, r, y0, n, first);
+}
 CORE_COLD void draw_bank(Canvas& c, const Rect& r) {
+  if (bl.preset >= 0) {
+    draw_presets(c, r);
+    return;
+  }
   if (bl.browse) {
     draw_browse(c, r);
     return;
@@ -593,6 +689,12 @@ CORE_COLD void src_bank_list(int t, int vi, int machine, int code, int on, int w
       browse_send(t, 0);
       return;
     }
+    if (bl.preset >= 0) {   // the card's presets (every row: an add goes to the list's first empty slot)
+      bl.browse = true, bl.cur = 0, bl.folder = bl.preset, bl.note_on = false, bl.pgen = presets::gen(), bl.rcur = -1;
+      browse_send(t, 1);
+      log(CORE_STR("rui: preset list on track %d: the card's presets"), t);
+      return;
+    }
     int k = bank_kind();
     if (!bl.row && why == 6) {   // fix1049: FUNC + YES on the SRC view (rytm-mods 0026 1049) on OFF: the bank's first free
       for (int r = 1; r < srclib::kBankRows && !bl.row; ++r)   // row (an empty pool's first file: A001 on DSP SAMPLE)
@@ -618,11 +720,19 @@ CORE_COLD void src_bank_list(int t, int vi, int machine, int code, int on, int w
   }
   if (on) {
     if (machine != kGranMachine && machine != kWaveMachine && machine != kMultiMachine && machine != kDspSample &&
-        machine != kChopMachine)
+        machine != kChopMachine && machine != kJuno && machine != kFm)
       return;
     int commits = bl.commits;
     bl = BankList();
     bl.on = true, bl.track = t, bl.vi = vi & 7, bl.machine = machine, bl.commits = commits;
+    if (machine == kJuno || machine == kFm) {
+      bl.preset = machine == kJuno ? presets::kIxJuno : presets::kIxFm;
+      int n = presets::rows(bl.preset), row = srclib::index_of(code);
+      bl.row = row >= n ? n - 1 : row;   // (as PAT plays: the last row)
+      bl.code0 = code, bl.ms = now_ms();
+      log(CORE_STR("rui: preset list on track %d: %03d"), t, bl.row);
+      return;
+    }
     bl.bank = srclib::bank_of(code), bl.row = srclib::index_of(code), bl.code0 = code, bl.ms = now_ms();
     pools::shown(bank_kind(), bl.bank);
     log(CORE_STR("rui: bank list on track %d: %c%03d"), t, 'A' + bl.bank, bl.row);
@@ -633,7 +743,7 @@ CORE_COLD void src_bank_list(int t, int vi, int machine, int code, int on, int w
   bank_closed_ms = now_ms() | 1;
   if (why == 1) {   // YES: the cursor is the new P1 (the Rytm locks it on the steps held at the YES, else the kit)
     remote_track_write(t, bl.machine == kDspSample ? 10 : 0, bl.row, srclib::lo_of(bl.bank * srclib::kBankRows), 1);   // (P11: SMP)
-    pools::seen(bank_kind(), bank_entry(bl.bank, bl.row));   // (the used set: a committed row)
+    if (bl.preset < 0) pools::seen(bank_kind(), bank_entry(bl.bank, bl.row));   // (the used set: a committed row)
     ++bl.commits;
     log(CORE_STR("rui: bank list on track %d: %c%03d chosen"), t, 'A' + bl.bank, bl.row);
   }
@@ -641,10 +751,64 @@ CORE_COLD void src_bank_list(int t, int vi, int machine, int code, int on, int w
   (void)t, (void)vi, (void)machine, (void)code, (void)on, (void)why;
 #endif
 }
+#if CORE_MSAMP
+namespace {
+CORE_COLD void preset_added(int s, bool there) {   // the add's word; the list's cursor on its row, as a file set
+  char w[24];
+  if (s == presets::kAddFull) sniprintf(w, sizeof w, "LIST FULL");
+  else if (s == presets::kAddBusy) sniprintf(w, sizeof w, "PROJECT LOADING");
+  else if (s < 0) sniprintf(w, sizeof w, "NOT READ");
+  else sniprintf(w, sizeof w, "%s %03d", there ? "IN LIST" : "ADDED", s);
+  if (s < 0) {
+    bank_note(w);
+    return;
+  }
+  ++bl.assigns;
+  bl.row = s;
+  browse_end(w);
+}
+CORE_COLD bool preset_key(int code) {
+  if (bl.browse) {   // UP / DOWN a row, RIGHT / YES into a folder, YES on a preset adds it, LEFT / NO up (at the top: the list)
+    preset_sync();
+    int n = presets::ready() ? presets::count(bl.folder) : 0;
+    bool asked = code == 0x44 && bl.rcur == bl.cur && bl.rfolder == bl.folder;
+    bl.rcur = -1;
+    if (code == 0x42 && bl.cur > 0) --bl.cur;
+    else if (code == 0x43 && bl.cur < n - 1) ++bl.cur;
+    else if ((code == 0x41 || code == 0x44) && presets::ready() && presets::is_dir(bl.folder, bl.cur)) {
+      bl.folder = presets::child(bl.folder, bl.cur), bl.cur = 0;
+    } else if (code == 0x44 && n && !bl.reading) {
+      bool there = false;
+      int s = presets::add(bl.preset, bl.folder, bl.cur, &there, asked ? bl.row : -1);
+      if (s == presets::kAddRead) bl.reading = true;
+      else if (s == presets::kAddFull && !asked) {   // no free row: the list's cursor row, once said
+        char w[24];
+        sniprintf(w, sizeof w, "REPLACE %03d? YES", bl.row);
+        bank_note(w);
+        bl.rcur = bl.cur, bl.rfolder = bl.folder;
+      } else preset_added(s, there);
+    } else if (code == 0x40 || code == 0x45) {
+      int up = presets::ready() ? presets::parent(bl.folder) : -1;
+      if (up >= 0) bl.cur = presets::row_in_parent(bl.folder), bl.folder = up;
+      else browse_end(nullptr);
+    }
+    return true;
+  }
+  if (code > 0x43) return true;
+  int n = presets::rows(bl.preset);
+  if (code == 0x42 && bl.row > 0) --bl.row;       // UP / DOWN; LEFT / RIGHT 8 rows, no banks here
+  else if (code == 0x43 && bl.row < n - 1) ++bl.row;
+  else if (code == 0x40) bl.row = bl.row < 8 ? 0 : bl.row - 8;
+  else if (code == 0x41) bl.row = bl.row + 8 >= n ? n - 1 : bl.row + 8;
+  return true;
+}
+}  // namespace
+#endif
 CORE_COLD bool src_bank_key(int code, bool down) {
 #if CORE_MSAMP
   if (!bl.on || code < 0x40 || code > 0x45) return false;
   if (!down) return true;
+  if (bl.preset >= 0) return preset_key(code);
   if (bl.browse) {   // rui1040: the files - UP / DOWN a row, RIGHT / YES into a folder, YES on a file sets the row,
     int k = bank_kind(), n = srclib::count(k);   // LEFT / NO up a folder (at the top: back to the list)
     const char* nm = "";
@@ -711,6 +875,18 @@ CORE_COLD bool src_bank_key(int code, bool down) {
 CORE_COLD bool src_bank_enc(int e, int delta, bool func) {
 #if CORE_MSAMP
   if (!bl.on || e != 0) return false;
+  delta = list_turn_long(e, delta);
+  if (!delta) return true;
+  if (bl.preset >= 0) {   // (the index, or the list's rows)
+    preset_sync();
+    int& p = bl.browse ? bl.cur : bl.row;
+    int n = bl.browse ? (presets::ready() ? presets::count(bl.folder) : 0) : presets::rows(bl.preset);
+    bl.rcur = -1;
+    p += delta * (func ? 8 : 1);
+    if (p >= n) p = n - 1;
+    if (p < 0) p = 0;
+    return true;
+  }
   if (bl.browse) {   // rui1040: knob A moves the files' cursor
     int n = srclib::count(bank_kind()), c = bl.cur + delta * (func ? 8 : 1);
     bl.cur = c >= n ? n - 1 : c;
@@ -730,6 +906,15 @@ CORE_COLD bool src_bank_enc(int e, int delta, bool func) {
 CORE_COLD const Page* src_bank_page(int t, int machine) {
 #if CORE_MSAMP
   if (!bl.on || bl.track != t || machine != bl.machine) return nullptr;
+  if (bl.preset >= 0) {
+    int s = 0;
+    bool there = false;
+    if (presets::add_poll(&s, &there) && bl.reading) {
+      bl.reading = false;
+      if (bl.browse) preset_added(s, there);
+    }
+    return bl.preset == presets::kIxJuno ? &kJnBankPage : &kFmBankPage;
+  }
   if (bl.browse && !bl.bpreviewed && now_ms() - bl.bms >= kSettleMs) {   // rui1040: a file rested on - previewed when
     bl.bpreviewed = true;                                                   // the machine's list has it (its LIBRARY
     int k = bank_kind();                                                    // window: the same browser's folder)

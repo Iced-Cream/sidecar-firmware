@@ -13,7 +13,7 @@
 //                 cores' business); the bus chains on the send FX's core (the Pi's render core 2).
 //
 // TYPE ids (stable: the card's files name them, sim/protocol.py INSERT_TYPES): 0 OFF, 1 FILTER, 2 CRUSH, 3 DRIVE,
-// 4 EQ, 5 COMP, 6 DELAY, 7 TREMOLO, 8 RINGMOD, 9 AMP. Params P1..P4 0..127 (labels: kLabels):
+// 4 EQ, 5 COMP, 6 DELAY, 7 TREMOLO, 8 RINGMOD, 9 AMP, 10 SAT. Params P1..P4 0..127 (labels: kLabels):
 //   FILTER  CUT 20 Hz x 2^(10 v) | RES Q 0.5..20 | MODE LP -> BP -> HP (a continuous morph) | DRV 0..+24 dB before it
 //           (a TPT state-variable filter: stable for any cutoff / resonance, modulated per block without zipper)
 //   CRUSH   RATE the hold 1..64 samples | BITS 16..2 | DRV 0..+18 dB before the quantizer | MIX
@@ -29,6 +29,8 @@
 //   RINGMOD FREQ 10 Hz..5 kHz | SHPE sine -> square | MOD a 0.3 Hz +-1 octave sweep | MIX
 //   AMP     MODL a NAM A2-Lite capture of /NAM/ | GAIN -18..+18 dB into it | TONE a +-6 dB tilt | LEV -36..+6 dB
 //           (core/fx/amp.h: the voice chains only, mono; a capture loads off the render core and crossfades in)
+//   SAT     CHAR TAPE | CONS | SOFT | DRV 0..+24 dB | TONE a +-6 dB tilt at 1 kHz | MIX (core/fx/sat_fx.h: 4x, DRV 0 or
+//           MIX 0 the dry signal, else 15 frames late, dry path included)
 //
 // A TYPE change never clicks: the slot's wet share crossfades to dry over kFadeFrames (5 ms), the new effect starts
 // from a clean state, then fades in (OFF is the dry end of that fade). Params are smoothed per block (3 ms).
@@ -38,19 +40,25 @@
 #include <string.h>
 
 #include "fx/amp.h"
+#include "fx/sat_fx.h"
 
 namespace core {
 namespace ins {
 
-constexpr int kVoices = 8, kSlots = 2, kParams = 4, kBuses = 3;
-constexpr int kChains = kVoices + kBuses;   // 0..7 the voices' chains (mono), 8..10 the buses' (stereo)
+constexpr int kVoices = 8, kSlots = 2, kParams = 4, kBuses = 3, kMasters = 2;
+constexpr int kChains = kVoices + kBuses + kMasters;   // 0..7 the voices' chains (mono), 8..10 the buses', 11..12 the master's (stereo)
 constexpr int kBus0 = kVoices;              // chain of bus b (0..2): kBus0 + b
-enum Type : uint8_t { kOff = 0, kFilter, kCrush, kDrive, kEq, kComp, kDelay, kTrem, kRing, kAmp, kTypes };
+constexpr int kM0 = kBus0 + kBuses;         // the master chain (core/fx/master.h): two chains in a row, four slots, the second's POST EQ
+// kTypes: what every chain takes. The master's chains also take the send FX's types as inserts (core/fx/master.h): the ids
+// after them, never stored (the card's files name a TYPE; a new one goes before kTypes and moves these)
+enum Type : uint8_t { kOff = 0, kFilter, kCrush, kDrive, kEq, kComp, kDelay, kTrem, kRing, kAmp, kSat, kTypes,
+                      kMChorus = kTypes, kMComb, kMSpace, kMRings, kMCloud, kMHalo, kAllTypes };
 constexpr int kLine = 4096;          // DELAY's line, a power of 2: 85 ms at 48 kHz (TIME's 80 ms + MOD's 4 ms)
 // a line per voice slot channel (two: a voice on OUT PRE / POST runs its chain in stereo, core/fx/out.h), two per bus slot
-constexpr int kLines = kVoices * kSlots * 2 + kBuses * kSlots * 2;
+constexpr int kLines = kVoices * kSlots * 2 + kBuses * kSlots * 2 + kMasters * kSlots * 2;
 constexpr int kFadeFrames = 240;     // a TYPE change: 5 ms out, 5 ms in
 constexpr int kChunk = 16;           // frames per parameter update (a voice block is 12)
+static_assert(kChunk == satfx::kBlock, "SAT's buffers");
 constexpr float kPi = 3.14159265f;
 
 // ins1112, the POST EQ: one more stage at the end of every chain, after both slots (AMP among them). The voices' is
@@ -68,12 +76,17 @@ inline int eq_store(int k, int knob) { return k >= 2 ? knob - 64 : knob; }
 inline int eq_knob(int k, int st) { return k >= 2 ? st + 64 : st; }
 constexpr uint8_t kEqFlat(int k) { return k >= 2 ? (uint8_t)64 : (uint8_t)0; }
 
+// The master's send TYPE slots (kMChorus..): chain c's slot s, its smoothed params p, x / r -> y0 / y1 (master.cpp; null
+// without one: the slot passes dry). As amp::run, on the render core that runs the chain.
+extern void (*send_insert)(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
+
 struct Control {
   volatile uint8_t type[kChains][kSlots];
   volatile uint8_t play[kChains][kSlots][kParams];   // 0..127 as it plays (insert.cpp: knob / lock + LFO)
   volatile uint8_t send[kVoices][kBuses];            // 0..127: voice v's send to bus b (bus 1 / 2: the send FX)
   volatile uint8_t route3;                           // bus 3: 0 PRE (host -> Rytm 2/3), 1 POST (0/1)
   volatile int8_t peq[kChains][kEqParams];           // ins1112 the POST EQ as it plays (eq_store: 0 = does nothing)
+  volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
 };
 extern Control control;
 
@@ -121,6 +134,7 @@ struct Dsp {
   float car = 0;                 // RINGMOD's carrier phase
   float dly = 0;                 // DELAY's smoothed time (samples), 0 = start at the target
   uint32_t w = 0;                // DELAY's write index
+  satfx::Ch sat{};               // SAT
   float* line = nullptr;
   void Clear() {
     float* l = line;
@@ -170,6 +184,7 @@ struct Slot {
   SvfK f;                    // FILTER
   SvfK eq[3];                // EQ: low shelf, bell, high shelf
   float c[8];
+  satfx::Coefs sat{};        // SAT
 };
 
 inline float knob01(uint8_t v) { return (float)(v > 127 ? 127 : v) * (1.0f / 127.0f); }
@@ -281,7 +296,7 @@ class Engine {
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kTypes ? k.type[c][s] : kOff;
+    const int want = k.type[c][s] < kAllTypes ? k.type[c][s] : kOff;
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
     const float step = (float)m / kFadeFrames;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
@@ -310,6 +325,8 @@ class Engine {
     o.feed0 = w0, o.feed1 = w1;
     if (o.cur == kAmp) {
       amp::run(c, s, o.sp, x, r, y[0], y[1], m);   // mono: (L + R) / 2 onto both sides
+    } else if (o.cur >= kTypes && send_insert) {
+      send_insert(c, s, o.sp, x, r, y[0], y[1], m);   // a master slot's send TYPE (core/fx/master.h)
     } else {
       Effect(o, 0, x, y[0], m, c >= kBus0 || r ? 0 : -1);
       if (r) Effect(o, 1, r, y[1], m, 1);
@@ -503,6 +520,7 @@ class Engine {
         o.c[3] = p[2];                            // the sweep's depth, octaves
         break;
       }
+      case kSat: satfx::set(o.sat, p, sr_); break;
       default: break;
     }
   }
@@ -653,6 +671,7 @@ class Engine {
         d.car = car - floorf(car), d.lfo = ph - floorf(ph);
         break;
       }
+      case kSat: satfx::run(d.sat, o.sat, x, y, m); break;
       default:
         for (int i = 0; i < m; ++i) y[i] = x[i];
         break;
@@ -688,9 +707,9 @@ void eq_lfo_offset(int c, int k, int off);   // -127..127, on the knob (core/lfo
 bool eq_on(int c);              // chain c's post EQ is off its flat defaults
 bool eq_any_on();
 void eq_value_text(int k, int v, char* b, int cap);   // "OFF" "420" "6.2K" / "FLAT" "+3.0DB" (<= 7 chars)              // kOff's: "OFF", empty labels
-const char* type_name(int type);             // "OFF" .. "RINGMOD"; "?" out of range
-int type_from_name(const char* s);           // any case, or a number 0..kTypes-1; -1 neither
-const char* chain_name(int c);               // "V1".."V8", "B1".."B3"
+const char* type_name(int type);             // "OFF" .. "RINGMOD", the master's types; "?" out of range
+int type_from_name(const char* s);           // any case, or a number 0..kAllTypes-1; -1 neither
+const char* chain_name(int c);               // "V1".."V8", "B1".."B3", "M1" "M2"
 int chain_from_name(const char* s);          // -1 none
 // The value as the Rytm / the display shows it ("1.6K", "LP>BP", "+3DB", "22MS", "1.4HZ", else the number), <= 7 chars
 void value_text(int type, int k, int v, char* b, int cap);

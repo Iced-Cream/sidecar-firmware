@@ -1,6 +1,6 @@
 # pi/engine/tests/Makefile - the Pi engine's portable parts on the Mac: make -C pi/engine/tests (shim/: the few
 # Circle headers guard.h needs). make -C pi/engine/tests content: bridge.cpp's self-test content (test_content.cpp)
-# against the core's Mac port (make -C core engines first; the core library is built here as needed). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI bridge's Mac relay (tools/tests/test_rytm_bridge.py).
+# against the core's Mac port (make -C core engines first; the core library is built here as needed). Also the build's version stamp (tools/tests/test_gen_version.sh), the Pi 5 release kernel's flags (test_pi5_flags.sh: the gadget, no test mode) and the Rytm MIDI bridge's Mac relay (tools/tests/test_rytm_bridge.py).
 $(shell ../../../tools/gen_version.sh)
 CXX ?= c++
 CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -I.. -I../../../core -Ishim -fsanitize=address,undefined -fno-sanitize-recover=all
@@ -14,15 +14,21 @@ CORE_SRC := $(addprefix $(CORE)/,engine.cpp project_key.cpp lfo.cpp hooks.cpp no
             pool/pool.cpp pool/sample_ram_pool.cpp presets/libs.cpp host/platform_host.cpp host/newlib_rand.cpp)
 .PHONY: all clean content fatfs-mac
 all: $(TESTS)
-	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
+	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; ./test_pi5_flags.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
 # the real ob_usb.cpp on a fake Circle (shim_ob/); copied, so its quoted includes find the shim's neighbours before the real ones
-build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../output.cpp ../../../teensy/libraries/RytmHost/ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(CORE)/fx/out.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
+build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h ../a4_in.cpp ../a4_in.h ../drift_src.h $(CORE)/device/a4.h ../output.cpp ../../../teensy/libraries/RytmHost/ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/device/device.h $(CORE)/fx/out.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
 	@mkdir -p build/ob_src
-	cp ../ob_usb.cpp ../ob_usb.h build/ob_src/
-	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -I../../../teensy/libraries/RytmHost -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp ../output.cpp $(CORE)/device/digitakt.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp -DOB_USB_TEST
+	cp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h build/ob_src/
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -I../../../teensy/libraries/RytmHost -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp build/ob_src/ob_follow.cpp ../a4_in.cpp ../output.cpp $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp -DOB_USB_TEST
+# core/ui/tap_names.h on its own, no system header (rec_pi.cpp's include: the kernel build has no <new>); rec_pi.cpp
+# includes it and declares tap_source_name nowhere by hand
+build/test_tap_names: test_tap_names.cpp $(CORE)/ui/tap_names.h ../rec_pi.cpp
+	@mkdir -p build
+	grep -q '^#include "ui/tap_names.h"' ../rec_pi.cpp && ! grep -n 'tap_source_name *(int' ../rec_pi.cpp
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -nostdinc -nostdinc++ -I$(CORE) -o $@ $<
 # the USB touch screen's descriptor parser and contact tracker (pi/circle/hid_digitizer.h, circle-touch.patch)
 build/test_hid_digitizer: test_hid_digitizer.cpp ../../circle/hid_digitizer.h check.h
 	@mkdir -p build
@@ -32,6 +38,14 @@ build/test_hid_digitizer: test_hid_digitizer.cpp ../../circle/hid_digitizer.h ch
 build/test_hid_reenum: test_hid_reenum.cpp ../../circle/hid_reenum.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# the DWC2 gadget's bus suspend and resume (pi/circle/gadget_wake.h, circle-gadget-wake.patch)
+build/test_gadget_wake: test_gadget_wake.cpp ../../circle/gadget_wake.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
+# a USB reset's TX FIFO flush at IRQ level (pi/circle/gadget_flush.h, circle-gadget-reset.patch)
+build/test_gadget_flush: test_gadget_flush.cpp ../../circle/gadget_flush.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # the touch screen's 4-point calibration (pi/ui/touch_cal.c, Settings > Display)
 build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal.h check.h
 	@mkdir -p build
@@ -39,7 +53,11 @@ build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal
 # the send FX's Pi part with the core's (card-free) send FX
 build/test_sendfx_pi: test_sendfx_pi.cpp ../sendfx_pi.cpp ../sendfx_pi.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/stutter_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+# the master FX: the OUT fill's crossfade, the ring to core 2 and back, bit for bit while bypassed, latency, cost
+build/test_masterfx_pi: test_masterfx_pi.cpp ../masterfx_pi.cpp ../masterfx_pi.h $(CORE)/fx/limiter.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $< ../masterfx_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the recorder (WAV writer, ring, channel lists) on a temp folder
 # (core/rec/rec_names.cpp: the parts shared with the Sidecar Mini's recorder, with the Mac's port of the core)
 build/test_recorder: test_recorder.cpp ../recorder.cpp ../recorder.h ../rec_wav.h $(CORE)/rec/rec_wav.h $(CORE)/rec/rec_names.h $(CORE)/rec/rec_names.cpp ../spsc.h check.h
@@ -83,6 +101,11 @@ build/test_poolweb: test_poolweb.cpp ../poolweb.cpp ../poolweb.h $(CORE)/lib/poo
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_poolweb.cpp ../poolweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# the web page's JUNO / 6-OP FM lists (presetweb.cpp, GET /presets) over core/presets' index on the core's Mac library
+build/test_presetweb: test_presetweb.cpp ../presetweb.cpp ../presetweb.h $(CORE)/presets/preset_index.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_presetweb.cpp ../presetweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 $(CORE)/build/libcore.dylib: $(wildcard $(CORE)/*.cpp $(CORE)/*/*.cpp $(CORE)/*.h $(CORE)/*/*.h)
 	@test -f $(CORE)/build/libengines.a || { echo "bundleweb: run 'make -C core engines' first"; exit 1; }
 	$(MAKE) -C $(CORE) lib

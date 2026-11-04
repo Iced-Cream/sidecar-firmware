@@ -9,6 +9,7 @@
 // window with the trace in its white, the meters as recessed LED ladders (green, amber, red) in rubber keys.
 #include "sidecar_scope.h"
 #include "sidecar_theme.h"
+#include "sidecar_ui.h"		// the box in use: its word, its voices' names
 #include "lvgl.h"
 #include "src/misc/lv_area_private.h"	// lv_area_intersect, l->_clip_area: a meter's strip redrawn alone
 #include <math.h>
@@ -47,24 +48,38 @@ int sidecar_scope_source (void) { return s_nSrc; }
 int sidecar_scope_timebase (void) { return s_nTb; }
 int sidecar_scope_frozen (void) { return s_bFrozen; }
 int sidecar_scope_gain (void) { return s_nGainSel; }
+// TRACK's name: the Rytm's selected track; a box with its own names: the channel shown (its track's stem)
+static const char *src_name (int s);
+static const char *track_name (int tr)
+{
+	if (sidecar_ui_box_names ()) return s_bHave ? src_name (s_V.src) : "-";
+	return tr >= 0 && tr < 12 ? kTrack[tr] : "-";
+}
+static const char *usb_words (void)	// what the page waits for, in the box's word
+{
+	static char b[64];
+	lv_snprintf (b, sizeof b, oled () ? "THE %s'S USB AUDIO: THE TRACKS, MAIN AND IN" : "the %s's USB audio: its tracks, MAIN and IN", oled () ? sidecar_ui_box_up () : sidecar_ui_box ());
+	return b;
+}
 static const char *src_name (int s)
 {
 	if (s < 0 || s >= SSC_SOURCES) return "-";
-	return s_bHave && s_V.name[s][0] ? s_V.name[s] : kDefName[s];
+	if (s_bHave && s_V.name[s][0]) return s_V.name[s];
+	return s >= 1 && s <= 8 && sidecar_ui_box_names () ? sidecar_ui_voice (s - 1) : kDefName[s];	// a box's own: voice v on IN 2 + v (core tap_source_name)
 }
 
 // ---- geometry: the 800x480 layouts plus what the screen adds (TH->dx, dy): the trace gets two thirds of the height,
 // the meters the rest, every column wider
-static int PW (void) { return oled () ? TH->w - 48 : TH->w; }
-static int area_h (void) { return oled () ? 133 + TH->dy * 2 / 3 : 196 + TH->dy * 2 / 3; }
-static int strip_y (void) { return oled () ? 18 + area_h () : 254 + TH->dy * 2 / 3; }
-static int strip_h (void) { return oled () ? 63 + TH->dy / 3 : 108 + TH->dy / 3; }
-static int strip_x (void) { return oled () ? 0 : 8; }
-static int strip_w (void) { return oled () ? PW () : PW () - 16; }
-static int col_gap (void) { return oled () ? 2 : 8; }
+static int PW (void) { return oled () ? TH->w - LU (48) : TH->w; }
+static int area_h (void) { return oled () ? LU (133) + TH->dy * 2 / 3 : LU (196) + TH->dy * 2 / 3; }
+static int strip_y (void) { return oled () ? LU (18) + area_h () : LU (254) + TH->dy * 2 / 3; }
+static int strip_h (void) { return oled () ? LU (63) + TH->dy / 3 : LU (108) + TH->dy / 3; }
+static int strip_x (void) { return oled () ? 0 : LU (8); }
+static int strip_w (void) { return oled () ? PW () : PW () - LU (16); }
+static int col_gap (void) { return oled () ? 2 : LU (8); }
 static int col_w (void) { return (strip_w () + col_gap ()) / (NCOL + 1) - col_gap (); }
 static int col_x (int k) { return k * (col_w () + col_gap ()); }		// in the strip
-static int lab_h (void) { return oled () ? 9 : 20; }				// the label under a ladder
+static int lab_h (void) { return oled () ? LU (9) : LU (20); }				// the label under a ladder
 // a column's ladder, in the strip's coordinates: x range, top, height (segments: 2 dots / 3 px tall, a gap of 1)
 static void ladder (int k, int *x0, int *x1, int *y0, int *h)
 {
@@ -120,14 +135,14 @@ static void area_draw (lv_event_t *e)
 	int O = oled (), w = lv_area_get_width (&c), h = lv_area_get_height (&c);
 	if (!O) th_fill (l, &c, 0, 0, w - 1, h - 1, TH->win, LV_OPA_COVER, 0);
 	graticule (l, &c, w, h);
-	const lv_font_t *fm = O ? TH->f_micro : &lv_font_montserrat_14;
-	int fh = lv_font_get_line_height (fm), pad = O ? 3 : 8;
+	const lv_font_t *fm = O ? TH->f_micro : TH->f_small;
+	int fh = lv_font_get_line_height (fm), pad = LU (O ? 3 : 8);
 	if (!s_bHave || !s_V.valid)
 	{
-		th_text (l, &c, 0, h / 2 - fh - 2, w, O ? TH->f_body : &lv_font_montserrat_18, c_dim (), LV_TEXT_ALIGN_CENTER,
+		th_text (l, &c, 0, h / 2 - fh - 2, w, O ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 O ? "NO OVERBRIDGE AUDIO YET" : "No Overbridge audio yet");
-		th_text (l, &c, 0, h / 2 + 4, w, fm, c_dim (), LV_TEXT_ALIGN_CENTER,
-			 O ? "THE RYTM'S USB AUDIO: THE TRACKS, MAIN AND IN" : "the Rytm's USB audio: its tracks, MAIN and IN");
+		th_text (l, &c, 0, h / 2 + LU (4), w, fm, c_dim (), LV_TEXT_ALIGN_CENTER,
+			 usb_words ());
 		return;
 	}
 	const sidecar_scope_view_t *v = &s_V;
@@ -142,6 +157,12 @@ static void area_draw (lv_event_t *e)
 		if (i >= n) break;
 		if (v->cursor >= 0 && (i == v->cursor || i == (v->cursor + 1) % SSC_COLS)) { pa = -1; continue; }	// the sweep's gap
 		long hi = (long) v->hi[i] * g, lo = (long) v->lo[i] * g;
+		if (TH->big && i + 1 < n)			// 1280x720: more pixels than columns, the steps between them drawn as a slope
+		{
+			const int f = ((x - 1) * SSC_COLS * 16 / (w - 2)) & 15;
+			hi += ((long) v->hi[i + 1] * g - hi) * f / 16;
+			lo += ((long) v->lo[i + 1] * g - lo) * f / 16;
+		}
 		int a = mid - (int) (hi * amp / 32768), b = mid - (int) (lo * amp / 32768);
 		if (a < 1) a = 1;
 		if (b > h - 2) b = h - 2;
@@ -154,9 +175,9 @@ static void area_draw (lv_event_t *e)
 	// the corners: the source (TRACK: the Rytm's), the gain; the timebase a division; the peak; FROZEN
 	char b[40];
 	int s = v->src;
-	if (s_nSrc < 0) lv_snprintf (b, sizeof b, O ? "TRACK %s" : "Track %s", v->track >= 0 && v->track < 12 ? kTrack[v->track] : "-");
+	if (s_nSrc < 0) lv_snprintf (b, sizeof b, O ? "TRACK %s" : "Track %s", track_name (v->track));
 	else lv_snprintf (b, sizeof b, "%s", src_name (s));
-	th_text (l, &c, pad, pad - 1, w / 2, O ? TH->f_body : &lv_font_montserrat_16, c_ink (), LV_TEXT_ALIGN_LEFT, b);
+	th_text (l, &c, pad, pad - 1, w / 2, O ? TH->f_body : TH->f_body, c_ink (), LV_TEXT_ALIGN_LEFT, b);
 	if (s_nGainSel) lv_snprintf (b, sizeof b, "X%d", g); else lv_snprintf (b, sizeof b, O ? "AUTO X%d" : "AUTO x%d", g);
 	th_text (l, &c, w / 2, pad, w / 2 - pad, fm, c_dim (), LV_TEXT_ALIGN_RIGHT, b);
 	int pk = peak_db10 (s);
@@ -184,7 +205,7 @@ static void area_inval_sweep (int from, int to)
 	int w = lv_area_get_width (&c), gap = (to + 2) % SSC_COLS;
 	if (from <= gap) area_inval_span (&c, w, from, gap);
 	else { area_inval_span (&c, w, from, SSC_COLS - 1); area_inval_span (&c, w, 0, gap); }
-	int fh = lv_font_get_line_height (oled () ? TH->f_micro : &lv_font_montserrat_14), pad = oled () ? 3 : 8;
+	int fh = lv_font_get_line_height (oled () ? TH->f_micro : TH->f_small), pad = LU (oled () ? 3 : 8);
 	lv_area_t pk = {c.x1 + w / 2, c.y2 - fh - pad, c.x2, c.y2};
 	lv_obj_invalidate_area (s_Area, &pk);
 }
@@ -233,7 +254,7 @@ static lv_area_t col_dyn (int k)
 {
 	int x0, x1, y0, h;
 	ladder (k, &x0, &x1, &y0, &h);
-	lv_area_t a = {x0, y0 - (oled () ? 3 : 6), x1, y0 + h - 1};
+	lv_area_t a = {x0, y0 - (LU (oled () ? 3 : 6)), x1, y0 + h - 1};
 	return a;
 }
 
@@ -245,7 +266,7 @@ static void meters_draw (lv_event_t *e)
 	lv_obj_get_coords (o, &c);
 	int O = oled (), n = nseg (), cw = col_w ();
 	const lv_area_t *clip = &l->_clip_area;
-	const lv_font_t *fl = O ? TH->f_micro : &lv_font_montserrat_14;
+	const lv_font_t *fl = O ? TH->f_micro : TH->f_small;
 	for (int k = 0; k < NCOL; k++)
 	{
 		int x = col_x (k), x0, x1, y0, h;
@@ -275,9 +296,9 @@ static void meters_draw (lv_event_t *e)
 		{
 			lv_area_t a = {c.x1 + x, c.y1, c.x1 + x + cw - 1, c.y2 - 3};
 			th_paint_key (l, &a, "", 0, fl, TH_KEY, cs.sel, cs.press, 0, 0);
-			th_fill (l, &c, x0 - 4, y0 - 8, x1 + 4, y0 + h + 2, 0x08090A, LV_OPA_COVER, 3);	// the meter's window
-			th_frame (l, &c, x0 - 4, y0 - 8, x1 + 4, y0 + h + 2, 0x3A3C40, 1, 3);
-			th_text (l, &c, x, y0 + h + 6, cw, fl, cs.sel ? 0xF0F0F0 : 0xB8BBC0, LV_TEXT_ALIGN_CENTER, src_name (k));
+			th_fill (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, 0x08090A, LV_OPA_COVER, 3);	// the meter's window
+			th_frame (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, 0x3A3C40, 1, 3);
+			th_text (l, &c, x, y0 + h + LU (6), cw, fl, cs.sel ? 0xF0F0F0 : 0xB8BBC0, LV_TEXT_ALIGN_CENTER, src_name (k));
 		}
 		// the ladders: MAIN two (L, R), the others one; the clip lamp on top
 		int bw = x1 - x0 + 1, yb = y0 + h - 1;
@@ -293,7 +314,7 @@ static void meters_draw (lv_event_t *e)
 			bar (l, &c, x0 + m, x1 - m, yb, n, cs.lit[0], cs.hold[0]);
 		}
 		if (O) th_fill (l, &c, x0, y0 - 3, x1, y0 - 2, cs.clip ? TH->accent_hi : 0x262626, LV_OPA_COVER, 0);
-		else th_fill (l, &c, x0, y0 - 6, x1, y0 - 3, cs.clip ? 0xFF3B30 : 0x3A2A2A, LV_OPA_COVER, 1);
+		else th_fill (l, &c, x0, y0 - LU (6), x1, y0 - 3, cs.clip ? 0xFF3B30 : 0x3A2A2A, LV_OPA_COVER, 1);
 	}
 }
 
@@ -358,8 +379,8 @@ static void keys_update (void)
 	else lv_snprintf (b, sizeof b, oled () ? "GAIN AUTO" : "Gain AUTO");
 	th_key_text (s_Gain, b);
 	int tr = s_bHave ? s_V.track : -1;
-	th_key_sub (s_TrackKey, tr >= 0 && tr < 12 ? kTrack[tr] : "-");
-	const char *sn = s_nSrc < 0 ? (tr >= 0 && tr < 12 ? kTrack[tr] : "-") : src_name (s_nSrc);
+	th_key_sub (s_TrackKey, track_name (tr));
+	const char *sn = s_nSrc < 0 ? track_name (tr) : src_name (s_nSrc);
 	if (oled ())
 	{
 		lv_snprintf (r, sizeof r, "%s%s  %s", s_bFrozen ? "FROZEN  " : "", sn, kTb[s_nTb]);
@@ -396,46 +417,46 @@ void sidecar_scope_create (void *parent, int y0)
 {
 	int O = oled ();
 	const int pw = PW (), dx = TH->dx;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : 428 + TH->dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->dy);
 	s_Page = pg;
 	memset (s_Drawn, 0, sizeof s_Drawn);
 	s_nTraceGen = ~0u;
 	const int sy = strip_y (), sh = strip_h ();
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		s_Title = s_Info = 0;
-		s_Area = th_box (pg, 0, 15, pw, area_h ());
-		const int ky = TH->h - 22, q = dx / 4;			// the keys: 22 dots (44 px) tall
-		s_Freeze = th_key (pg, 0, ky, 76 + q, 22, "FREEZE", TH_KEY_FUNC, key_cb, (void *) 0);
-		s_TbDn = th_key (pg, 80 + q, ky, 40, 22, LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);
-		lv_obj_t *box = th_panel (pg, 123 + q, ky, 76 + q, 22, "", TH_PANEL_BARE);
-		s_TbVal = th_label (box, 0, 6, TH->f_body, TH->ink, "");
-		lv_obj_set_width (s_TbVal, 76 + q);
+		s_Area = th_box (pg, 0, LU (15), pw, area_h ());
+		const int ky = TH->h - LU (22), q = dx / 4;			// the keys: 22 dots (44 px) tall
+		s_Freeze = th_key (pg, 0, ky, LU (76) + q, LU (22), "FREEZE", TH_KEY_FUNC, key_cb, (void *) 0);
+		s_TbDn = th_key (pg, LU (80) + q, ky, LU (40), LU (22), LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);
+		lv_obj_t *box = th_panel (pg, LU (123) + q, ky, LU (76) + q, LU (22), "", TH_PANEL_BARE);
+		s_TbVal = th_label (box, 0, LU (6), TH->f_body, TH->ink, "");
+		lv_obj_set_width (s_TbVal, LU (76) + q);
 		lv_obj_set_style_text_align (s_TbVal, LV_TEXT_ALIGN_CENTER, 0);
-		s_TbUp = th_key (pg, 202 + 2 * q, ky, 40, 22, LV_SYMBOL_RIGHT, TH_KEY, key_cb, (void *) 2);
-		s_Gain = th_key (pg, 246 + 2 * q, ky, pw - 246 - 2 * q, 22, "GAIN AUTO", TH_KEY, key_cb, (void *) 3);
+		s_TbUp = th_key (pg, LU (202) + 2 * q, ky, LU (40), LU (22), LV_SYMBOL_RIGHT, TH_KEY, key_cb, (void *) 2);
+		s_Gain = th_key (pg, LU (246) + 2 * q, ky, pw - LU (246) - 2 * q, LU (22), "GAIN AUTO", TH_KEY, key_cb, (void *) 3);
 	}
 	else
 	{
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, pw - 16, area_h () + 44, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, &lv_font_montserrat_18, TH->win_ink, "SCOPE");
-		s_Info = th_label (pg, pw / 2, 16, &lv_font_montserrat_14, TH->win_dim, "");
-		lv_obj_set_width (s_Info, pw / 2 - 24);
+		th_panel (pg, LU (8), LU (6), pw - LU (16), area_h () + LU (44), "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "SCOPE");
+		s_Info = th_label (pg, pw / 2, LU (16), TH->f_small, TH->win_dim, "");
+		lv_obj_set_width (s_Info, pw / 2 - LU (24));
 		lv_obj_set_style_text_align (s_Info, LV_TEXT_ALIGN_RIGHT, 0);
-		s_Area = th_box (pg, 24, 42, pw - 48, area_h ());
-		const int ky = 372 + TH->dy, q = dx / 4;		// the keys: 52 px
-		s_Freeze = th_key (pg, 8, ky, 150 + q, 52, "Freeze", TH_KEY_FUNC, key_cb, (void *) 0);
-		th_key_font (s_Freeze, &lv_font_montserrat_20);
-		s_TbDn = th_key (pg, 166 + q, ky, 80, 52, LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);
-		lv_obj_t *box = th_panel (pg, 254 + q, ky, 200 + q, 52, "", TH_PANEL_WINDOW);
-		s_TbVal = th_label (box, 0, 13, &lv_font_montserrat_20, TH->win_ink, "");
-		lv_obj_set_width (s_TbVal, 200 + q);
+		s_Area = th_box (pg, LU (24), LU (42), pw - LU (48), area_h ());
+		const int ky = LU (372) + TH->dy, q = dx / 4;		// the keys: 52 px
+		s_Freeze = th_key (pg, LU (8), ky, LU (150) + q, LU (52), "Freeze", TH_KEY_FUNC, key_cb, (void *) 0);
+		th_key_font (s_Freeze, TH->f_title);
+		s_TbDn = th_key (pg, LU (166) + q, ky, LU (80), LU (52), LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);
+		lv_obj_t *box = th_panel (pg, LU (254) + q, ky, LU (200) + q, LU (52), "", TH_PANEL_WINDOW);
+		s_TbVal = th_label (box, 0, LU (13), TH->f_title, TH->win_ink, "");
+		lv_obj_set_width (s_TbVal, LU (200) + q);
 		lv_obj_set_style_text_align (s_TbVal, LV_TEXT_ALIGN_CENTER, 0);
-		s_TbUp = th_key (pg, 462 + 2 * q, ky, 80, 52, LV_SYMBOL_RIGHT, TH_KEY, key_cb, (void *) 2);
-		s_Gain = th_key (pg, 550 + 2 * q, ky, pw - 8 - 550 - 2 * q, 52, "Gain AUTO", TH_KEY, key_cb, (void *) 3);
-		th_key_font (s_Gain, &lv_font_montserrat_20);
+		s_TbUp = th_key (pg, LU (462) + 2 * q, ky, LU (80), LU (52), LV_SYMBOL_RIGHT, TH_KEY, key_cb, (void *) 2);
+		s_Gain = th_key (pg, LU (550) + 2 * q, ky, pw - LU (8) - LU (550) - 2 * q, LU (52), "Gain AUTO", TH_KEY, key_cb, (void *) 3);
+		th_key_font (s_Gain, TH->f_title);
 	}
 	s_Meters = th_box (pg, strip_x (), sy, col_x (NCOL) - col_gap (), sh);
 	lv_obj_add_flag (s_Meters, LV_OBJ_FLAG_CLICKABLE);
@@ -443,7 +464,7 @@ void sidecar_scope_create (void *parent, int y0)
 	lv_obj_add_event_cb (s_Meters, meters_cb, LV_EVENT_ALL, 0);
 	s_TrackKey = th_key (pg, strip_x () + col_x (NCOL), sy, strip_w () - col_x (NCOL), O ? sh : sh - 3, O ? "TRACK" : "Track",
 			     TH_KEY_FUNC, key_cb, (void *) 4);
-	if (!O) th_key_font (s_TrackKey, &lv_font_montserrat_16);
+	if (!O) th_key_font (s_TrackKey, TH->f_body);
 	lv_obj_add_event_cb (s_Area, area_draw, LV_EVENT_DRAW_MAIN, 0);
 	keys_update ();
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);

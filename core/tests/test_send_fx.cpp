@@ -16,6 +16,9 @@
 #include "timing.h"
 #include "engine.h"
 #include "fx/send_fx.h"
+#include "host_link.h"
+#include "msamp/cardq.h"
+#include "pool/pool.h"
 
 using namespace core;
 using namespace core::fx;
@@ -240,7 +243,26 @@ int main() {
   CHECK(engine_begin());
   CHECK(control.route == kRouteMain);
   g_out.clear();
-  link(msg({0x10, 'D', 'E', 'M', 'O', ' ', '1'}));
+  // with a card core the 0x10's read is its work: nothing on the control core, the Rytm told after it. A new load while one is read: read again
+  {
+    host_card_model(true);
+    cardq::set_worker(true);
+    uint64_t c3 = host_card_us(3);
+    link(msg({0x10, 'D', 'E', 'M', 'O', ' ', '1'}));
+    CHECK(!sendfx_step() && user[1].tag == 0 && count(0x21) == 0);
+    fx::slots_load(project);
+    CHECK(!sendfx_step());
+    host_card_core(0);
+    while (cardq::service()) {}
+    host_card_core(3);
+    CHECK(!sendfx_step() && user[1].tag == 0 && count(0x21) == 0);   // that one was before the new load
+    host_card_core(0);
+    while (cardq::service()) {}
+    host_card_core(3);
+    CHECK(sendfx_step() && !sendfx_step() && host_card_us(3) == c3);
+    host_card_model(false);
+    cardq::set_worker(false);
+  }
   CHECK(user[1].tag == 0x1a2b && strcmp(user[1].name, "DUSTY") == 0 && user[0].tag == 0);
   CHECK(count(0x21) == 2 && count(0x22) == 2);
   CHECK(count(0x24) == 8);   // 9 labelled TYPEs (CHORUS COMB SPACE RINGS CLOUDSEED STUTTER CRUSH RINGMOD HALO), the Rytm keeps 8:

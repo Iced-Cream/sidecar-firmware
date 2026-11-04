@@ -37,10 +37,10 @@ REFUSED = [0]
 # the supply (power_state.cpp's json): MOCK_POWER=weak: a Pi 5 on a hub port (3 A mode, under-voltage since boot)
 POWER = ({"known": True, "throttled": 0x50000, "uvNow": False, "uvBoot": True, "throttledNow": False, "throttledBoot": True,
           "cappedNow": False, "cappedBoot": False, "maxCurrent": 3000,
-          "warn": "power supply too weak (no 5 A USB-PD: 3 A mode): use the 27 W (5 V 5 A) adapter directly"}
+          "warn": "power supply too weak (under-voltage since boot): use the 27 W (5 V 5 A) adapter directly", "note": None}
          if os.environ.get("MOCK_POWER") == "weak" else
          {"known": True, "throttled": 0, "uvNow": False, "uvBoot": False, "throttledNow": False, "throttledBoot": False,
-          "cappedNow": False, "cappedBoot": False, "maxCurrent": 5000, "warn": None})
+          "cappedNow": False, "cappedBoot": False, "maxCurrent": 5000, "warn": None, "note": None})
 LOG = []
 BOOT = {"config.txt", "config.txt.bak", "cmdline.txt", "bootcode.bin", "licence.broadcom", "issue.txt"}
 BOOTP = ("sdboot", "engine.img", "kernel", "start", "fixup", "armstub", "tryboot.txt", "bcm27")
@@ -53,6 +53,21 @@ IGNORE = os.environ.get("MOCK_IGNORE", "")   # e.g. "out,mac": those commands ar
 # IN L/R source (core::fxin, host_link.cpp): the setting and the Rytm's answer; MOCK_FXIN=old: a Rytm without 0030 (no answer)
 FXIN = {"want": 0, "rytm": -1 if os.environ.get("MOCK_FXIN") == "old" else 0}
 
+
+# /status "boxes" (pi/engine/box_list.h): MOCK_BOXES=rytm|a4|a4wait|tworytms|a4off
+RYTM_CAPS = {"tracks": 12, "voices": 8, "params": 16, "feat": 511, "state": "/.rytm"}
+A4_CAPS = {"tracks": 6, "voices": 4, "params": 16, "feat": 0, "state": "/.a4"}
+def box(key, n, name, role, caps, on=1):
+    return {"key": key, "id": int(key.split("-")[0]), "n": n, "name": name, "role": role, "on": on, **caps}
+BOXES = {
+    "rytm": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS)],
+    "a4": [box("3-1", 1, "Elektron Analog Four MKII", "host", A4_CAPS)],
+    "a4off": [box("3-0", 1, "Analog Four MKII", "host", A4_CAPS, 0)],
+    "a4wait": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS), box("3-2", 1, "Elektron Analog Four MKII", "waiting", A4_CAPS)],
+    "tworytms": [box("1-1", 1, "Elektron Analog Rytm MKII", "host", RYTM_CAPS), box("1-2", 2, "Elektron Analog Rytm MKII", "spare", RYTM_CAPS),
+                 box("3-3", 1, "Elektron Analog Four MKII", "listening", A4_CAPS), box("3-4", 2, "Elektron Analog Four MKII", "spare", A4_CAPS),
+                 box("0-5", 1, "Elektron Digitone", "other", {})],
+}
 
 def fxin_status():
     st = "on" if FXIN["rytm"] == 1 else "off" if FXIN["rytm"] == 0 else "unsupported"
@@ -470,6 +485,61 @@ LISTS = {"project": "AR PERC PATCH", "card": True, "sram": [256 << 20, 3 << 20],
          "juno": {"total": 2, "list": [{"slot": 0, "name": "Brass", "used": True}, {"slot": 1, "name": "Strings", "used": True}]},
          "fm": {"total": 96, "rom": True, "list": []},
          "voices": [{"v": v, "m": ["JUNO", "FM", "DSPS", "U1"][v] if v < 4 else "PLAITS", "pat": 1 if v < 2 else -1} for v in range(8)]}
+
+
+# the preset index (core/presets/preset_index.h, GET /presets as presetweb.cpp, preset=... as lists.cpp, a sketch): folders 0
+# JUNO and 1 DX7; FACTORY / ROM on top, banks as folders. PRESET_RES is the last add's word (msg.seq changes with each)
+PRE = {"gen": 4, "seq": 0, "text": "",
+       "f": {0: ("JUNO", -1, [("FACTORY", 2, 2), ("Pads", 2, 3), ("lead.syx", 0, -1), ("pluck.syx", 0, -1)]),
+             1: ("DX7", -1, [("ROM", 2, 4), ("mine", 2, 5)]),
+             2: ("FACTORY", 0, [("A11 Brass", 0, -1), ("A12 Brass 2", 0, -1), ("A13 Strings", 0, -1)]),
+             3: ("Pads", 0, [("warm", 0, -1), ("air", 0, -1)]),
+             4: ("ROM", 1, [("BRASS 1", 0, -1), ("E.PIANO 1", 0, -1)]),
+             5: ("mine", 1, [("VOICE %02d" % i, 0, -1) for i in range(1, 33)])}}
+
+
+def presets_json(q):
+    k = q.get("k", "juno")
+    kind = 1 if k == "fm" else 0
+    f, o, n = int(q.get("f", "-1")), int(q.get("o", "0")), min(int(q.get("n", "50")), 200)
+    base = {"gen": PRE["gen"], "k": k, "f": f, "o": o,
+            "counts": [len(LISTS["juno"]["list"]) or 128, len(LISTS["fm"]["list"]) or 96],
+            "msg": {"seq": PRE["seq"], "text": PRE["text"]}}
+    if f < 0:
+        L = LISTS[k]["list"]
+        rows = [[e["name"] if e["used"] else "", 2 if e["used"] else 0] for e in L] or \
+               [["%s %03d" % ("Juno" if kind == 0 else "ROM", i), 2] for i in range(128 if kind == 0 else 96)]
+        base.update(ready=True, total=len(rows), up=-1, title=("JUNO" if kind == 0 else "FM") + (" LIST" if L else " BUILT-IN"),
+                    builtin=not L, full=False, rows=rows[o:o + n], kids=[-1] * len(rows[o:o + n]))
+        return base
+    if f not in PRE["f"]:
+        base.update(ready=False)
+        return base
+    name, up, items = PRE["f"][f]
+    rows = items[o:o + n]
+    base.update(ready=True, total=len(items), up=up, title=name, builtin=False, full=False,
+                rows=[[nm, 1 if t == 2 else 0] for nm, t, _ in rows], kids=[kid for _, _, kid in rows])
+    return base
+
+
+def preset_cmd(c):
+    m = re.match(r"preset=(juno|fm):(add|set):(\d+):(\d+):(\d+)(?::(\d+))?$", c)
+    if not m:
+        return
+    k, op, gen, f, r, at = m.group(1), m.group(2), int(m.group(3)), int(m.group(4)), int(m.group(5)), m.group(6)
+    who = "JUNO" if k == "juno" else "FM"
+    if gen != PRE["gen"] or f not in PRE["f"] or r >= len(PRE["f"][f][2]):
+        PRE["text"] = "NOT ADDED"
+    else:
+        L = LISTS[k]["list"]
+        nm = PRE["f"][f][2][r][0]
+        slot = int(at) if op == "set" else next((i for i, e in enumerate(L) if not e["used"]), len(L))
+        while len(L) <= slot:
+            L.append({"slot": len(L), "name": "", "used": False})
+        L[slot].update(name=nm, used=True, found=True)
+        LISTS[k]["total"] = len(L)
+        PRE["text"] = "%s %03d %s" % (who, slot, "SET" if op == "set" else "ADDED")
+    PRE["seq"] += 1
 
 
 def lists_cmd(c):
@@ -1046,8 +1116,9 @@ class H(BaseHTTPRequestHandler):
         if p == "/status":
             return self.send(json.dumps({
                 "host": "sidecar", "uptime": int(time.time() - T0), "web": {"requests": 1, "maxus": 900, "commands": 0, "refused": REFUSED[0], "idle": 0, "open": 1},
+                "boxes": BOXES[os.environ.get("MOCK_BOXES", "rytm")],
                 "power": POWER,
-                "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "streaming": True,
+                "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "usbHost": True, "streaming": True,
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,
                 "machines": STATE["machines"],
                 "fx": [{"type": "PLATE", "post": 0, "send": [0, 20, 64, 127, 0, 0, 0, 90, 0, 0, 10, 0]},
@@ -1079,6 +1150,7 @@ class H(BaseHTTPRequestHandler):
             um_cmd(c)
             lists_cmd(c)
             pool_cmd(c)
+            preset_cmd(c)
             if c.startswith("rec="):
                 rec_cmd(c[4:])
             if c.startswith("stor"):
@@ -1098,6 +1170,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(json.dumps(um()), "application/json")
         if p == "/pool":
             return self.send(json.dumps(pool_json(q)), "application/json")
+        if p == "/presets":
+            return self.send(json.dumps(presets_json(q)), "application/json")
         if p == "/lists":
             return self.send(json.dumps(LISTS), "application/json")
         if p.startswith("/fs/"):

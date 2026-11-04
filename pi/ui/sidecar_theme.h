@@ -1,6 +1,6 @@
 // pi/ui/sidecar_theme.h - the Pi display's theme layer (docs/UI-THEMES.md): every colour, font, line style, spacing and
 // widget of the display's pages comes from here. Two themes:
-//   OLED (default)  the whole screen as a zoomed-in Elektron OLED: 400x240 dots on 800x480, 512x300 on 1024x600 (sidecar_dot.h), black, a
+//   OLED (default)  the whole screen as a zoomed-in Elektron OLED: 400x240 dots on 800x480, 512x300 on 1024x600, 640x360 on 1280x720 (sidecar_dot.h), black, a
 //                   pixel font of our own (sidecar_dotfont.h), dotted outlines, grey dithered title bars, inverted
 //                   selection, knobs as dot rings, colour only from the Rytm's LED palette
 //   CLASSIC         the 800x480 layout as before, its controls drawn as the Analog Rytm MKII's hardware: rubber keys
@@ -31,9 +31,10 @@ typedef struct
 	int		id;
 	const char	*name;			// "OLED", "CLASSIC" (the settings page, display.txt's uistyle=)
 	int		dot;			// physical pixels a UI pixel: SIDECAR_DOT or 1
-	int		w, h;			// the UI's size in its own pixels now: OLED 400x240 / 512x300, CLASSIC 800x480 / 1024x600
-	int		bw, bh;			// the 800x480 screen's size in them (OLED 400x240, CLASSIC 800x480)
-	int		dx, dy;			// w - bw, h - bh: what a 1024x600 screen adds (OLED 112x60 dots, CLASSIC 224x120 px), 0 on 800x480
+	int		w, h;			// the UI's size in its own pixels now: OLED 400x240 / 512x300 / 640x360, CLASSIC 800x480 / 1024x600 / 1280x720
+	int		bw, bh;			// the base layout's size in them (OLED 400x240, CLASSIC 800x480; 1280x720: LU of those)
+	int		dx, dy;			// w - bw, h - bh: what the screen adds to the base layout (1024x600: OLED 112x60 dots, CLASSIC 224x120 px; 1280x720: 140x60, 280x120; 800x480: 0)
+	int		big;			// 1280x720: LU below
 	// colours, 0xRRGGBB
 	uint32_t	bg;			// the screen
 	uint32_t	ink, dim, faint;	// text on the screen / panels: normal, secondary, disabled
@@ -50,6 +51,7 @@ typedef struct
 	uint32_t	row_in, row_out, row_root, line_step, line_beat, line_page, key_white, key_black, muted;
 	// fonts: micro (rulers, captions), small, body, big (values), title
 	const lv_font_t	*f_micro, *f_small, *f_body, *f_big, *f_title;
+	const lv_font_t	*f_mid, *f_mid2;	// CLASSIC's two sizes between those (Montserrat 18, 22)
 	// metrics in the theme's pixels
 	int		radius;			// corners (OLED: 0)
 	int		gap;			// between controls
@@ -60,10 +62,15 @@ extern const sidecar_theme_t *g_Theme;
 #define TH g_Theme
 void sidecar_theme_set (int id);		// THEME_*; the pages are rebuilt by the caller (sidecar_ui_style)
 const sidecar_theme_t *sidecar_theme_get (int id);	// the 800x480 table
-// The screen's size (physical pixels, before sidecar_theme_set): 1024x600 or more in both gives the wide layouts (TH->w,
-// h, dx, dy), anything else the 800x480 ones. The pages place what grows from TH->dx / dy (docs/UI-THEMES.md "Sizes").
+// The screen's size (physical pixels, before sidecar_theme_set): 1280x720 or more in both gives the big layouts, 1024x600
+// or more the wide ones (TH->w, h, dx, dy), anything else the 800x480 ones. The pages place what grows from TH->dx / dy
+// (docs/UI-THEMES.md "Sizes").
 void sidecar_theme_screen (int phys_w, int phys_h);
-int sidecar_theme_wide (void);			// 1: the 1024x600 layouts
+int sidecar_theme_wide (void);			// 1: the 1024x600 layouts or bigger
+// A layout size, in the theme's pixels: n, or n x 5/4 at 1280x720. The whole base layout is written in these, so it comes
+// out at 500x300 dots / 1000x600 px there, drawn at the real pixels with bigger faces and keys, and TH->dx, dy is the room
+// left on top. Not a scale of the picture: a line stays one dot wide, a grid stays in whole dots.
+#define LU(n)	(TH->big ? (n) * 5 / 4 : (n))
 
 lv_color_t th_c (uint32_t rgb);				// lv_color_hex
 uint32_t th_mix (uint32_t a, uint32_t b, int t256);	// a..b, t = 0..256

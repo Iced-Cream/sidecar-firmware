@@ -19,6 +19,8 @@ namespace lists {
 //   juno=ren:<slot>:<name>   juno=del:<slot>   juno=swap:<a>:<b>   the project's JUNO list (16 to the Rytm)
 //   juno=save:<voice 0..7>[:<name>]   the patch a JUNO voice plays now, its six knobs as they are, into the list
 //   fm=ren:<slot>:<name>   fm=del:<slot>   fm=swap:<a>:<b>   the project's FM list (17 to the Rytm)
+//   preset=juno|fm:add|set:<gen>:<folder>:<row>[:<at>]   a row of the preset index (presets::view's folders, gen its walk) into the
+//                          list: add the first empty slot, set slot <at> (REPLACE); the answer is presets::result_text
 //   fm=save:<voice 0..7>   the ROM voice an FM voice plays now (the list empty) into the list
 bool command(const char* c, char* out, int cap);
 void idle();                    // the control core: the JSON again when something in it changed (at most every 250 ms)

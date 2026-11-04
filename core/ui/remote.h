@@ -54,6 +54,7 @@ inline constexpr const char kStatusTitle[] = "SIDECAR MINI";
 
 void remote_sysex(const uint8_t* d, int len);   // a whole 0x30..0x3F message from the Rytm
 void remote_tick(uint32_t ms);                  // every pass of the platform's control loop (any ms clock)
+void remote_resync();                           // records for the Rytm were lost (no hello comes): what is owed goes again
 void remote_request(bool on);                   // the host opens / closes the page (3A 0 on)
 bool remote_open();
 int remote_caps();   // fix1049: the Rytm's last hello's caps (bit 0: 36; bit 1, rui1049: 16 send FX label tables), 0 none yet
@@ -95,6 +96,21 @@ struct RemoteWebUi {
 };
 void remote_webui(const RemoteWebUi* h);
 const RemoteWebUi* remote_webui();
+// The USER SLOTS page (page_slots.cpp): which installed user machine each slot U1..U5 plays. The platform's user
+// machines (core/user/um.cpp installs these in um::begin: the Pi, the Mac); none set (the Teensy) and the page is not
+// shown. Control side, as the console's um commands.
+struct RemoteSlots {
+  int (*machines)();   // the installed list: the box's own (loadable packages, the newest version of each id)
+  // entry i (0..machines() - 1): its name into name (the list's, as the box shows it), *id its package id; false: none
+  bool (*machine)(int i, char* name, int cap, const char** id);
+  // slot s (0..4) as the box shows it into name ("---" empty, "!NAME" missing / no room, "NAME..." loading); returns
+  // the id the slot map names ("" explicitly empty or nothing)
+  const char* (*slot)(int s, char* name, int cap);
+  // a console command (um::command: "um=assign:<1..5>:<id>", "um=clear:<1..5>"), the web page's own path; false: not one
+  bool (*command)(const char* c, char* out, int cap);
+};
+void remote_slots(const RemoteSlots* h);
+const RemoteSlots* remote_slots();
 // UX review F1 / F4: a short popup on the Rytm's own screen (the page closed: through the connect splash's 36, so every
 // key and knob stays the Rytm's; ~0.8 s; the same text again within 2 s: not shown twice). Sent only to a Rytm whose
 // hello said it understands 36. Also on the first underrun of the session (remote_status: SIDECAR AUDIO DROPOUT).
@@ -127,7 +143,7 @@ struct RemoteStats {
   uint32_t opens, closes, frames, tiles, rects, bytes, keepalives, keys, encs, edits, widgets, bad;
   uint32_t texts, echoes, split;       // 3D text slots sent, 3F echo bindings, frames sent as two commits
   uint32_t masks;                      // 1022: 37 catch masks sent
-  uint32_t hellos, splashes;           // 1023: the Rytm's 35s, connect splashes shown
+  uint32_t hellos, splashes, resyncs;  // 1023: the Rytm's 35s, connect splashes shown; remote_resync's
   uint32_t machines;                   // 1025: the Rytm's 33s (the tracks' machines)
   uint32_t leds;                       // 1026: 34s sent (the trig keys' LEDs)
   uint32_t src_views, src_vals, src_frames;   // 1027: the Rytm's 29s and 2As, SRC view frames committed
@@ -160,6 +176,9 @@ int remote_param_write(int vi, int machine, int k, int value, int lo = 0);
 bool remote_track_write(int t, int k, int value, int lo, int flags);
 int remote_track_src14(int t);
 int remote_track_src_param(int t);
+// The Rytm's mods are 0.4.0's or newer (its slot asks say 36 names, core/user/um.cpp): DSP SAMPLE's knob A is SMP (rytm-mods 7h)
+void remote_rytm_040(bool on);
+bool remote_rytm_040();
 // rui1036b (49): the page asked for on the Rytm (49 1 <code>; the Rytm: UP + T<code>). What each code is comes from the
 // device's table (ui/page_keys.h: a row with no `rytm` title is the touchscreen's alone, the rest remote.cpp opens on
 // the Rytm's own screen unless the touchscreen has the page, remote_display_owns); the request count, *page the last);

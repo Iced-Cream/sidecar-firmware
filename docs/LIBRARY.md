@@ -74,7 +74,7 @@ reader, a chain of pure vN -> vN+1 upgraders (empty in F1), a `min_reader_of`, i
 
 Registered (28): `pool` `bankpool` `picks` `slots` `slotnotes` `fxslots` `juno` `fm` `lfo` `ins` `sqp` (v4, reads
 1..4: seqx's blocks; 1..3 through the upgrade chain) `tracks` `song` | `display` `keys` `fxin` `sendfx` `wifi` `project` `projects` `sdtest` | `cardindex` (v4)
-`dx7idx` | `rmpa` (format 4: 3 with an RLB2 block, RMPA only) `bundle` | `library` `library-log` `library-state`; CHOP adds `slicemap` (v2, the chain from the
+`dx7idx` | `rmpa` (format 4: 3 with an RLB2 block; 5: a list over 16 names; RMPA only) `bundle` | `library` `library-log` `library-state`; CHOP adds `slicemap` (v2, the chain from the
 sampler's v1 slice maps: docs/CHOP.md section 2); the pools build adds `samplepool`
 `wtpool` `instpool` `poolused` (docs/POOLS.md; the old `pool`, `bankpool`, `picks` stay registered for sniffing and
 bundles, never read into the lists). Every unversioned file is v1 as it is

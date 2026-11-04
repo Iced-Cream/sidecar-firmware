@@ -61,7 +61,7 @@ int builtins(int list);                      // samples 2, wavetables 6, instrum
 int builtin_of(int list, const char* name);  // -1 none
 int input_of(const char* name);              // -1 none
 bool takes_type(int list, int type);         // which entry types a list holds
-bool accepts_file(int list, const char* path);   // by extension: samples / wavetables .wav .aif .aiff, instruments .sfz
+bool accepts_file(int list, const char* path);   // by extension: samples / wavetables .wav .aif .aiff, instruments .sfz / .elmulti
 
 struct Member {
   lib::Ref ref;

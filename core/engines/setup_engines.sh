@@ -13,7 +13,7 @@ DEST=${1:?usage: setup_engines.sh DEST}
 # remade when missing, or when this repo's own files in it (sim/plaits/fm_machine.h, the user_data.h shim) changed
 # (measured: a stale fm_machine.h failed test_content's fm)
 "$T/setup_plaits_lib.sh" --if-stale >/dev/null
-[ -d "$T/libraries/DaisySP" ] || "$T/setup_daisysp_lib.sh" >/dev/null
+cmp -s "$D/../../sim/daisysp/daisy_engine.h" "$T/libraries/DaisySP/src/daisy_engine.h" || "$T/setup_daisysp_lib.sh" >/dev/null
 "$T/setup_juno_lib.sh" >/dev/null
 "$T/setup_sampler_lib.sh" >/dev/null
 rm -rf "$DEST"; mkdir -p "$DEST"

@@ -46,6 +46,7 @@ class Host:
         self.frames = 0
         self.removes = sorted(removes)
         self.last_um = None
+        self.no_prints = False
 
     def note(self, **kw):
         if self.log:
@@ -64,6 +65,8 @@ class Host:
         return msgs
 
     def from_rytm(self, msg):
+        if self.no_prints and msg[4:5] == bytes([P.SLOT_PRINTS]):   # a Rytm build older than 0x25: see um_e2e t_lazy
+            return []
         r = P.parse(msg)
         self.note(rx=r if r else msg)
         self.core.report(msg)
@@ -79,6 +82,8 @@ class Host:
             self.note(removed=path)
             self.core.um_command("um=rescan")
         self.core.idle()
+        if os.environ.get("RUI_SEQ_TICK") == "1":   # as rui_link: the control loop's sequencer tick (its 2E)
+            self.core.lib.core_c_poly_tick()
         a = self.core.frames(n)
         if self.wav:
             self.audio.append(a.copy())
@@ -171,9 +176,11 @@ def main():
     ap.add_argument("--wav")
     ap.add_argument("--secs", type=float, default=600.0)
     ap.add_argument("--remove-at", action="append", default=[], help="FRAME:PATH")
+    ap.add_argument("--no-prints", action="store_true", help="the Rytm's 0x25 kept from the core: an older build's link")
     a = ap.parse_args()
     rem = [(int(x.split(":", 1)[0]), x.split(":", 1)[1]) for x in a.remove_at]
     h = Host(a.card, a.log, a.wav, rem)
+    h.no_prints = a.no_prints
     try:
         serve(h, a.link, a.secs)
     finally:

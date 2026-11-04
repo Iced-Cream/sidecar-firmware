@@ -11,6 +11,16 @@
 // stream that would run dry within the request. render() never touches the
 // card.
 //
+// With a card core (core/msamp/cardq.h: the Pi's core 0; 7z, 2026-10-31) the head's read, every refill and the file's
+// close are requests of the stream's own, one at a time: step() takes a finished one in, refill() posts the next, the
+// control core waits for none of them. What a request brought counts only if it is still what follows the ring (a loop
+// back or a new trig moved it on: dropped, the bytes were never live). The ring is twice the size for it: core 0's
+// latency comes out of the read-ahead, which stays above what a read on the control core had (~170 ms of 16-bit stereo
+// at unity, 85 ms before). When core 0 is held up (a blocking connect, a long upload): a request that has not started,
+// with under kRescueFrames of audio left, is taken back and read here, the neediest stream's only, one a pass (voices.cpp) - the
+// one card read left on the control core, the read every refill did before, only when the stream would go silent otherwise. MULTISAMPLE's take_back at kTakeBackUs
+// (200 ms) is no use here: this ring is empty well before that.
+//
 // PCM 16/24/32-bit, 1..2 channels (more: the first two), any rate; render()
 // plays mono (a stereo file summed), or with outr its two channels (a voice on
 // OUT PRE / POST, docs/STEREO.md; a mono file on both sides). Not here yet:
@@ -19,8 +29,12 @@
 #pragma once
 #include "../platform.h"
 #include <math.h>
+#include <string.h>
 
 #include "../pool/card_index.h"
+#if CORE_MSAMP
+#include "../msamp/cardq.h"
+#endif
 
 namespace rytm {
 
@@ -29,9 +43,19 @@ class StreamVoice {
 
  public:
   static const uint32_t kHead = 8192;    // bytes from STA, in RAM
-  static const uint32_t kRing = 16384;   // what follows, refilled from the card
   static const uint32_t kChunk = 8192;   // a read: fewer, bigger reads are far
                                          // cheaper on the card than many small
+#if CORE_MSAMP
+  static const uint32_t kRing = 32768;   // what follows, refilled from the card
+  static const uint32_t kRingBytes = kRing + kChunk;   // a read runs on past the end, copied round when it is in
+  enum Prep : uint8_t { kPrepWait, kPrepOk, kPrepFail };
+  static const uint32_t kRescueFrames = 480;           // 10 ms of output left: a request not started is taken back
+  static const uint32_t kRescueWaitUs = 3000;          // ... that has waited this long (core 0's usual pass is less)
+  static const uint32_t kHeadWaitUs = 10000;           // a head (or close) a trig waits for
+#else
+  static const uint32_t kRing = 16384;   // what follows, refilled from the card
+  static const uint32_t kRingBytes = kRing;
+#endif
 
   void attach(uint8_t* head, uint8_t* ring) {
     head_ = head;
@@ -76,10 +100,117 @@ class StreamVoice {
     return true;
   }
 
+#if CORE_MSAMP
+  // prepare() with a card core, called again until it says: the request under way ends, the file before closes, the
+  // head is read, each by the card core. urgent: a trig waits for it.
+  Prep prepare_q(const card::FileRec& r, const core::File& file, int folder, int smp, float start, bool urgent) {
+    uint32_t bpf = frame_bytes(r);
+    uint32_t frames = bpf ? r.data_len / bpf : 0;
+    uint32_t h0 = (uint32_t)(clamp01(start) * (frames ? frames - 1 : 0)) * bpf;
+    bool same = folder == folder_ && smp == smp_ && h0 == h0_;
+    urgent_ = urgent;
+    if (!rq_kind_ && same && head_res_ != kPrepWait) {   // its head's read ended
+      Prep res = head_res_;
+      head_res_ = kPrepWait;
+      return res;
+    }
+    bool head = rq_kind_ == kRqHead || (rq_kind_ == kRqPost && rq_want_ == kRqHead);   // (kRqPost: the queue refused it so far)
+    if (same && (ready_ || head)) return ready_ ? kPrepOk : kPrepWait;
+    // another sample: what is under way no longer counts (its key gone: asked for again it starts over)
+    playing_ = false;
+    ready_ = false;
+    head_res_ = kPrepWait;
+    folder_ = -1;
+    ++seq_;
+    if (f_.isOpen()) pclose_ = true;
+    step(core::now_us(), false);
+    if (rq_kind_ || pclose_) return kPrepWait;
+    if (!file.isOpen()) return kPrepFail;
+    f_ = file;
+    rec_ = r;
+    bpf_ = bpf;
+    fmt_ = r.bits == 16 && r.channels == 1 ? 1 : r.bits == 16 && r.channels == 2 ? 2
+           : r.bits == 24 && r.channels == 1 ? 3 : r.bits == 24 && r.channels == 2 ? 4 : 0;
+    frames_ = frames;
+    folder_ = folder;
+    smp_ = smp;
+    h0_ = h0;
+    ++seq_;
+    uint32_t want = umin(kHead, r.data_len - umin(h0, r.data_len));
+    want -= want % bpf_;
+    post(kRqHead, core::cardq::kReadReq, r.data_offset + h0, head_, want);   // (the queue full: step posts it)
+    hwant_ = want;
+    return kPrepWait;
+  }
+
+  // A request waiting too long, still of use: a read of where the stream is now, a head of the sample wanted.
+  bool overdue(uint32_t now) const {
+    namespace q = core::cardq;
+    uint8_t k = rq_kind_ == kRqPost ? rq_want_ : rq_kind_;
+    if (k == kRqNone || (rq_kind_ != kRqPost && q::idle(&rq_))) return false;
+    if (k == kRqRing && (rq_seq_ != seq_ || rq_off_ != rs_ + fill_ || !playing_ || ahead(kRescueFrames) >= kRescueFrames)) return false;
+    if (k == kRqHead && rq_seq_ != seq_) return false;
+    if (rq_kind_ == kRqPost) return k == kRqRing || urgent_;
+    uint32_t w = now - rq_.posted_us;
+    return w > (k == kRqRing ? kRescueWaitUs : urgent_ ? kHeadWaitUs : q::kTakeBackUs);
+  }
+  // Each pass: a finished request taken in, a close owed posted; rescue: an overdue one run here (voices.cpp: one a pass).
+  void step(uint32_t now, bool rescue = true) {
+    namespace q = core::cardq;
+    bool late = rescue && overdue(now);
+    bool stale = rq_kind_ == kRqPost ? rq_want_ != kRqClose && rq_seq_ != seq_ : false;
+    if (rq_kind_ == kRqRing || (rq_kind_ == kRqPost && rq_want_ == kRqRing)) stale = rq_seq_ != seq_ || rq_off_ != rs_ + fill_;
+    else if (rq_kind_ == kRqHead) stale = rq_seq_ != seq_;
+    if (stale) {   // of no use any more: not started, it never runs (core 0 held up, it would block this stream's next one)
+      if (rq_kind_ == kRqPost) rq_kind_ = 0;
+      else q::cancel(&rq_);
+    }
+    if (rq_kind_ == kRqPost) {   // the queue was full (held up for long: taken-back requests fill it too)
+      if (q::post(&rq_)) {
+        rq_kind_ = rq_want_;
+        return;
+      }
+      if (!late) return;
+      q::run_here(&rq_);
+      rq_kind_ = rq_want_;
+    } else if (rq_kind_ && !q::idle(&rq_)) {
+      if (!late || !q::take_back(&rq_)) return;
+    }
+    if (rq_kind_ == kRqRing) {
+      if (rq_.got == (int32_t)rq_n_ && rq_seq_ == seq_ && rq_off_ == rs_ + fill_) {   // still what follows the ring
+        uint32_t w = rq_off_ % kRing;
+        if (w + rq_n_ > kRing) memcpy(ring_, ring_ + kRing, w + rq_n_ - kRing);
+        fill_ += rq_n_;
+      }
+    } else if (rq_kind_ == kRqHead) {
+      if (rq_seq_ == seq_) {   // (else the sample moved on: nobody waits for this head)
+        bool ok = rq_.got == (int32_t)hwant_;
+        if (ok) hlen_ = hwant_, ready_ = true;
+        head_res_ = ok ? kPrepOk : kPrepFail;
+      }
+    }
+    rq_kind_ = 0;
+    rq_.state = q::kFree;
+    if (pclose_) {
+      pclose_ = false;
+      if (f_.isOpen()) post(kRqClose, q::kCloseReq, 0, nullptr, 0);
+    }
+  }
+#endif
+
   // No sample (SMP off, an empty pool slot): silent until the next prepare.
   void clear() {
     playing_ = false;
     ready_ = false;
+#if CORE_MSAMP
+    if (core::cardq::worker()) {
+      pclose_ = true;   // (by step: the request under way first)
+      head_res_ = kPrepWait;
+      folder_ = -1;
+      ++seq_;
+      return;
+    }
+#endif
     if (f_.isOpen()) f_.close();
   }
 
@@ -99,6 +230,9 @@ class StreamVoice {
   // Between render blocks: top the ring up by at most one chunk. Returns bytes
   // read.
   uint32_t refill() {
+#if CORE_MSAMP
+    if (core::cardq::worker()) return refill_q();
+#endif
     if (!playing_ || !f_.isOpen()) return 0;
     uint32_t got = 0;
     // drop what playback has passed (keep a frame behind for interpolation)
@@ -233,7 +367,11 @@ class StreamVoice {
     return o >= cap ? cap : (uint32_t)o;
   }
 
+  // The ring's output ms when full, at the last render's pitch
+  uint32_t ring_ms() const { return (uint32_t)((float)(kRing / bpf_) / (step_ > 0.01f ? step_ : 0.01f)) / 48; }
   bool playing() const { return playing_; }
+  // where it reads, 0..1 of the file; -1 not playing (render's core, between its blocks)
+  float progress() const { return playing_ && frames_ && !first_ ? (float)ip_ / (float)frames_ : -1.0f; }
   uint32_t underruns() const { return underruns_; }
   const char* name() const { return rec_.name; }
 
@@ -242,6 +380,33 @@ class StreamVoice {
   static uint32_t frame_bytes(const card::FileRec& r) {
     return (uint32_t)r.channels * (r.bits / 8);
   }
+
+#if CORE_MSAMP
+  enum : uint8_t { kRqNone, kRqRing, kRqHead, kRqClose, kRqPost };
+  void post(uint8_t kind, core::cardq::Kind k, uint64_t off, uint8_t* buf, uint32_t len) {
+    rq_.kind = k, rq_.f = &f_, rq_.off = off, rq_.buf = buf, rq_.len = len, rq_.got = -1, rq_.path[0] = 0;
+    rq_want_ = kind, rq_seq_ = seq_;
+    rq_kind_ = core::cardq::post(&rq_) ? kind : (uint8_t)kRqPost;
+  }
+  // The card core's refill: the same read as refill()'s (one contiguous one past the ring's end), posted. Returns the
+  // bytes asked for, 0 when there is nothing to post.
+  uint32_t refill_q() {
+    step(core::now_us(), false);
+    if (rq_kind_ || pclose_ || !playing_ || !f_.isOpen()) return 0;
+    uint32_t at = ip_ * bpf_;
+    if (at > rs_ + bpf_ && at - rs_ - bpf_ <= fill_) {
+      uint32_t drop = at - rs_ - bpf_;
+      rs_ += drop;
+      fill_ -= drop;
+    }
+    if (fill_ + kChunk > kRing || rs_ + fill_ >= rec_.data_len) return 0;
+    uint32_t off = rs_ + fill_, n = umin(kChunk, rec_.data_len - off);
+    if (n == kChunk) n -= (rec_.data_offset + off + n) % 512;   // end on a sector: the next read is whole sectors
+    rq_off_ = off, rq_n_ = n;
+    post(kRqRing, core::cardq::kReadReq, rec_.data_offset + off, ring_ + off % kRing, n);
+    return n;
+  }
+#endif
 
   void advance(float step) {
     fr_ += step;
@@ -392,6 +557,13 @@ class StreamVoice {
   float* outr_copy_ = nullptr;   // render's R for a mono file: L copied at the end
   bool ready_ = false, playing_ = false, first_ = false;
   uint32_t underruns_ = 0;
+#if CORE_MSAMP
+  core::cardq::Req rq_ = {};
+  uint8_t rq_kind_ = kRqNone, rq_want_ = kRqNone;   // what rq_ is doing; kRqPost: rq_want_ still to be posted
+  uint32_t rq_off_ = 0, rq_n_ = 0, rq_seq_ = 0, seq_ = 0, hwant_ = 0;
+  Prep head_res_ = kPrepWait;   // the head's read ended (prepare_q's answer)
+  bool pclose_ = false, urgent_ = false;
+#endif
 };
 
 }  // namespace rytm

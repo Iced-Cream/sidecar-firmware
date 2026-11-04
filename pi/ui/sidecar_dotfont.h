@@ -12,8 +12,8 @@ extern "C" {
 typedef struct
 {
 	uint32_t	cp;		// the codepoint (upper case only; dotfont_find maps a..z)
-	uint8_t		w;		// columns, 1..8 (rows: up to 10)
-	uint8_t		row[10];	// h rows, bit w-1 = the leftmost column
+	uint8_t		w;		// columns, 1..8 (rows: up to 11)
+	uint8_t		row[11];	// h rows, bit w-1 = the leftmost column
 } dotglyph_t;
 
 typedef struct
@@ -27,6 +27,7 @@ extern const dotfont_t dotfont_5x7;	// the text face
 extern const dotfont_t dotfont_3x5;	// the micro face
 extern const dotfont_t dotfont_4x6;	// one step below 5x7 (the 3x3 grid's body face)
 extern const dotfont_t dotfont_5x9;	// the body and title face: 5x7 stretched to 9 rows
+extern const dotfont_t dotfont_6x11;	// the body and title face at 1280x720: 5x9 a column wider, two rows taller
 
 const dotglyph_t *dotfont_find (const dotfont_t *f, uint32_t cp);	// 0: not in the font ('?' is the caller's)
 int dotfont_width (const dotfont_t *f, const char *utf8, int bold);	// the text's width in dots (scale 1)

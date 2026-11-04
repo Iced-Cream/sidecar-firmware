@@ -21,7 +21,9 @@ uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach,   // 
 bool idle_prepare();
 bool idle_save();
 void idle_stream();
-const char* idle_slowest(unsigned* us);   // the slowest idle step since the last call (core/engine.h IdleSlow)
+// the slowest idle step since the last call (core/engine.h IdleSlow), *sum all the named steps' us, *here the control core's
+// own time on the card (cardq::here_take)
+const char* idle_slowest(unsigned* us, unsigned* sum, unsigned* here);
 void idle_note(const char* name, unsigned us);
 bool take_restart();                       // another box needs its state folder (core/device/device.h): reboot
 // The control core's loop, every pass: the 13-byte 1D (user slots, all EMPTY) every 5 s, as the Teensy's loop sends
@@ -81,6 +83,11 @@ bool poly_command(const char* p, char* out, int cap);   // (and the keyboards' `
 void keys_midi(int src, uint8_t st, uint8_t d1, uint8_t d2);
 void keys_source(int src, bool present, const char* name);
 void keys_set_forward(void (*f)(uint8_t st, uint8_t d1, uint8_t d2));
+void midim_set_out(bool (*f)(int dest, const uint8_t* m, int n));   // the MIDI machine's USB destinations (core/midim/midim.h)
+void rytm_gone();                                                   // the Rytm's USB MIDI removed: the MIDI machine's USB notes off, the arpeggios end
+void rytm_resync();                                                 // records for the Rytm were lost: the remote UI sends what it owes again (remote_resync), DIN's recent note-offs too
+void rytm_link(bool up);                                            // records can reach the Rytm (core 0's word, each control pass)
+void midim_realtime(uint8_t status);                                // the Rytm's realtime bytes, the control core
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard
@@ -162,16 +169,21 @@ void reinit_voices();                  // core::voices_init and every voice back
 // defaults, note 48, a retrigger on note 55 halfway), 4000 blocks = 1 s of audio. Returns the render ticks (generic
 // timer) in total; *worst_block the longest single block; *peak (if given) voice 0's largest |sample| (a machine
 // that renders silence shows 0). Ends with the voices as at boot (reinit_voices).
-uint64_t bench(const char* machine, uint32_t* worst_block, int* peak = nullptr);
+uint64_t bench(const char* machine, uint32_t* worst_block, int* peak = nullptr, uint32_t* hash = nullptr);   // hash: FNV-1a of the output (two builds compared)
 // fx-ins (core/fx/insert.h): the INSERT chains' cost on the calling core: 8 voice chains with TYPEs a / b in their two
 // slots, 4000 12-frame blocks (1 s), an engine and values of its own (the live chains untouched). Returns the ticks in
 // total, *worst_block the longest block. ins_bench_name: "FILTER" ..
-uint64_t ins_bench(int a, int b, uint32_t* worst_block);
+uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash = nullptr);
+// SAT on every slot of the chains core 2 runs (buses, master), in stereo: the worst SAT can load it
+uint64_t ins_bus_bench(uint32_t* worst_block, uint32_t* hash = nullptr);
+// neon_bench.cpp: NEON kernel row (0..) against its C, ticks of the same work in each; its name, null past the last row
+const char* neon_bench(unsigned row, uint64_t* c_ticks, uint64_t* neon_ticks);
 int ins_json(char* out, int cap);   // "\"ins\":{...}" (core/fx/insert.h json: the /status page's)
 const char* ins_bench_name(int type);
 // INSERT AMP (core/fx/amp.h): one NAM A2-Lite instance (a synthetic capture) over 4000 12-frame blocks (1 s); ticks as
 // ins_bench
 uint64_t amp_bench(uint32_t* worst_block);
+uint64_t mfx_bench(uint32_t* worst_block);   // the master chain without AMP (core/fx/master.h bench); 0 when one is set
 unsigned poly_voices();
 int rytm_pattern(int* transport);   // UX review T1: the Rytm's pattern (-1 not known) and transport (core/seq's view)   // UX review S1: bit vi - a Rytm track on voice vi is a poly track (the Sidecar sequences it)
 uint32_t machine_gen(int voice);       // with machine_name, the guard's key: 0, or a user voice's slot + 1 and the

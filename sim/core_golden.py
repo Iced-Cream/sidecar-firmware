@@ -101,7 +101,7 @@ def daisy_p(eng):
 
 
 def dsps_p(slot):
-    #       ENG STR BRI DMP MIX FB TUN LEV   TUN FIN SMP MOD STA END LOP LEV
+    # by P (rytm-mods 7h moved the knobs, not the words): ENG STR BRI DMP MIX FB TUN LEV   TUN FIN SMP MOD STA END LOP LEV
     return [0, 64, 64, 64, 64, 64, 64, 100, 64, 64, slot, 0, 0, 120, 0, 100]
 
 

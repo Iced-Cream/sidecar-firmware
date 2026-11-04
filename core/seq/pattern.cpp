@@ -97,6 +97,7 @@ CORE_COLD int lock_of(const Step& s, int param) {
 CORE_COLD bool set_lock(Step& s, int param, int value) {
   if (param < 0 || param >= kLockParams) return false;
   value = value < 0 ? 0 : value > 16383 ? 16383 : value;
+  if (arp_lock(param) && value > lock_top(param) << 7) value = lock_top(param) << 7;
   for (int i = 0; i < s.nl && i < kLocks; ++i)
     if (s.lock[i].param == param) {
       s.lock[i].value = (uint16_t)value;
@@ -112,7 +113,7 @@ CORE_COLD bool clear_lock(Step& s, int param) {
     if (s.lock[i].param == param) {
       for (int j = i + 1; j < s.nl; ++j) s.lock[j - 1] = s.lock[j];
       --s.nl;
-      s.slide &= ~(1u << (param & 31));   // seqtop X1: its slide goes with it
+      if (param < kLockArp) s.slide &= ~(1u << param);   // seqtop X1: its slide goes with it
       return true;
     }
   return false;
@@ -358,7 +359,7 @@ namespace {
 constexpr uint8_t kVersion = 4;   // rui1040: v3 = flags bits 2..7 the trig condition (written only when a step has one)
 constexpr int kHeader = 12, kTrackHead = 11, kStepHead = 8, kNoteBytes = 5, kLockBytes = 3, kBlockHead = 4;
 // the known blocks' payloads (bytes after the head)
-constexpr int kSeedBytes = 3, kTrackSeedBytes = 5, kPolyBytes = 7;
+constexpr int kSeedBytes = 3, kTrackSeedBytes = 5, kPolyBytes = 8, kPolyBytesMin = 7;   // (8: + PAD OCT, 7g; a 7-byte block of an older build reads as OCT 0)
 constexpr int kSpeedBytes = 2;   // seqtop P2: <track> <speed id>
 constexpr int kDirBytes = 2;     // seqtop P1: <track> <direction id>
 constexpr int kOnBytes = 2;      // per pattern poly: <track> <on 0|1>
@@ -369,6 +370,7 @@ constexpr int kLockCondEntry = 3;   // seqtop V1: <track>, then per conditional 
 constexpr int kRtrgEntry = 8;       // seqtop P4 / M4: <track>, then per step <step> <cnt> <rate> <vcrv> <pcrv> <mode> <oct> <gate>
 constexpr int kSlideEntry = 2;      // seqtop X1: <track>, then per sliding lock <step> <param>
 constexpr int kFxEntry = 5;         // seqtop H1: <track>, then per step <step> <cmd 1> <val 1> <cmd 2> <val 2>
+constexpr int kArpBytes = 1;        // arp locks: <track> (the locks themselves are in the steps' lists)
 int g_unpack_err = 0, g_dropped = 0, g_unkept = 0;
 struct W {
   uint8_t* p;
@@ -410,8 +412,9 @@ CORE_COLD void known_blocks(const Pattern& p, W& w, int* count) {
     }
     if (!poly_default(t.poly)) {
       const PolyCfg& c = t.poly;
-      w.b(kBlkPoly), w.b(kBlkTrack), w.h(kPolyBytes), w.b(t.rytm), w.b(c.voices), w.b(c.alloc), w.b(c.unison),
-          w.b(c.detune), w.b(c.spread), w.b(c.group);
+      w.b(kBlkPoly), w.b(kBlkTrack), w.h(c.oct ? kPolyBytes : kPolyBytesMin), w.b(t.rytm), w.b(c.voices), w.b(c.alloc),
+          w.b(c.unison), w.b(c.detune), w.b(c.spread), w.b(c.group);
+      if (c.oct) w.b((uint8_t)c.oct);   // (7g: an OCT of 0 keeps the 7-byte block of before, byte for byte)
       ++*count;
     }
     if (t.speed) {   // seqtop P2
@@ -444,12 +447,19 @@ CORE_COLD void known_blocks(const Pattern& p, W& w, int* count) {
     }
     int nsl = 0;   // seqtop X1: the sliding locks (a bit of a param the step does not lock: nothing)
     for (int i = 0; i < kMaxSteps; ++i)
-      for (int k = 0; k < t.step[i].nl && k < kLocks; ++k) nsl += t.step[i].slide >> (t.step[i].lock[k].param & 31) & 1;
+      for (int k = 0; k < t.step[i].nl && k < kLocks; ++k) nsl += lock_slides(t.step[i], t.step[i].lock[k].param);
     if (nsl) {
       w.b(kBlkSlide), w.b(kBlkTrack | kBlkRequired | kBlkPerStep), w.h(1 + kSlideEntry * nsl), w.b(t.rytm);
       for (int i = 0; i < kMaxSteps; ++i)
         for (int k = 0; k < t.step[i].nl && k < kLocks; ++k)
-          if (t.step[i].slide >> (t.step[i].lock[k].param & 31) & 1) w.b(i), w.b(t.step[i].lock[k].param);
+          if (lock_slides(t.step[i], t.step[i].lock[k].param)) w.b(i), w.b(t.step[i].lock[k].param);
+      ++*count;
+    }
+    bool arpl = false;   // arp locks: required, so an older Sidecar never plays the steps without them or saves over them
+    for (int i = 0; i < kMaxSteps; ++i)
+      for (int k = 0; k < t.step[i].nl && k < kLocks; ++k) arpl |= arp_lock(t.step[i].lock[k].param);
+    if (arpl) {
+      w.b(kBlkArp), w.b(kBlkTrack | kBlkRequired | kBlkPerStep), w.h(kArpBytes), w.b(t.rytm);
       ++*count;
     }
     int nfx = 0;   // seqtop H1: the steps with a command (any step: a jump may sit on an empty one)
@@ -494,7 +504,7 @@ CORE_COLD int pack_bound() {
          kTracks * (4 * kBlockHead + kSpeedBytes + kDirBytes + kRndBytes + kSmodBytes) +
          kTracks * (kBlockHead + 1 + kMaxSteps * kLocks * kLockCondEntry) + kTracks * (kBlockHead + 1 + kMaxSteps * kRtrgEntry) +
          kTracks * (kBlockHead + 1 + kMaxSteps * kLocks * kSlideEntry) + kTracks * (kBlockHead + 1 + kMaxSteps * kFxEntry) +
-         kKeepBytes + 4;
+         kTracks * (kBlockHead + kArpBytes) + kKeepBytes + 4;
 }
 
 CORE_COLD int pack(const Pattern& p, uint8_t* out, int cap) {
@@ -615,6 +625,11 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
       int locks = r.b();
       for (int j = 0; j < locks && r.ok; ++j) {
         int prm = r.b(), val = ver >= 2 ? r.h() : r.b() << 7;
+        if (r.ok && arp_lock(prm) && (val & 0x3FFF) > lock_top(prm) << 7) {   // a value this build does not know: a newer Sidecar's, with or without the block
+          clear(p, index);
+          g_unpack_err = kUnpackNewer;
+          return false;
+        }
         if (prm < kLockParams && tmp.nl < kLocks) tmp.lock[tmp.nl++] = {(uint8_t)prm, 0, (uint16_t)(val & 0x3FFF)};
       }
       if (!tmp.n && !tmp.nl) continue;   // (an empty step: nothing to keep)
@@ -637,8 +652,8 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
       if ((fl & kBlkTrack) && bl && q[0] < kRytmTracks) t = track_of(p, q[0], false);
       bool known = id == kBlkSeed || id == kBlkTrackSeed || id == kBlkPoly || id == kBlkSpeed || id == kBlkDir ||
                    id == kBlkScale || id == kBlkRnd || id == kBlkSmod || id == kBlkLockCond || id == kBlkRtrg ||
-                   id == kBlkSlide || id == kBlkFx || id == kBlkOn;
-      int need = id == kBlkSeed ? kSeedBytes : id == kBlkTrackSeed ? kTrackSeedBytes : id == kBlkPoly ? kPolyBytes
+                   id == kBlkSlide || id == kBlkFx || id == kBlkOn || id == kBlkArp;
+      int need = id == kBlkSeed ? kSeedBytes : id == kBlkTrackSeed ? kTrackSeedBytes : id == kBlkPoly ? kPolyBytesMin
                : id == kBlkSpeed ? kSpeedBytes : id == kBlkDir ? kDirBytes : id == kBlkScale ? kScaleBytes
                : id == kBlkRnd ? kRndBytes : id == kBlkSmod ? kSmodBytes : id == kBlkOn ? kOnBytes : 1;
       if (known && bl < need) { r.ok = false; break; }   // (a later build may make a block longer, never shorter)
@@ -652,6 +667,7 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
           pc.voices = (uint8_t)clampi(q[1], 0, kMaxVoicesCfg), pc.alloc = (uint8_t)(q[2] < kAllocs ? q[2] : 0);
           pc.unison = (uint8_t)clampi(q[3], 0, kMaxUnison), pc.detune = (uint8_t)clampi(q[4], 0, 127);
           pc.spread = (uint8_t)clampi(q[5], 0, 127), pc.group = (uint8_t)clampi(q[6], 0, kPolyGroups);
+          pc.oct = (int8_t)(bl >= kPolyBytes ? clampi((int8_t)q[7], -kMaxPadOct, kMaxPadOct) : 0);
         }
       } else if (id == kBlkOn) {   // per pattern poly
         if (t) t->on = q[1] ? 1 : 0;
@@ -696,8 +712,9 @@ CORE_COLD bool unpack(Pattern& p, int index, const uint8_t* d, int len) {
         }
       } else if (id == kBlkSlide) {   // seqtop X1: <track> {<step> <param>}..
         for (int e = 1; e + kSlideEntry <= bl; e += kSlideEntry)
-          if (t && q[e] < kMaxSteps && q[e + 1] < kLockParams && lock_of(t->step[q[e]], q[e + 1]) >= 0)   // (a lock that is
-            t->step[q[e]].slide |= 1u << q[e + 1];                                                       // there)
+          if (t && q[e] < kMaxSteps && q[e + 1] < kLockArp && lock_of(t->step[q[e]], q[e + 1]) >= 0)   // (a lock that is there)
+            t->step[q[e]].slide |= 1u << q[e + 1];
+      } else if (id == kBlkArp) {   // arp locks: read with the steps, the block only stops an older build
       } else if (id == kBlkRtrg) {   // seqtop P4 / M4; a mode / rate / curve this build does not know: a newer Sidecar's
         for (int e = 1; e + kRtrgEntry <= bl; e += kRtrgEntry) {
           const uint8_t* x = q + e;

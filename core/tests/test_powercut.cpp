@@ -508,7 +508,7 @@ int main() {
     host_card_model(true);
     host_card_core(3);   // the control core's passes from here on: charged nothing
     at(g_us + 2 * cardq::kTakeBackUs);
-    for (int i = 0; i < 50; ++i) CHECK(fmt::post_step() && fmt::post_busy());   // still posted, pass after pass
+    for (int i = 0; i < 50; ++i) CHECK(!fmt::post_step() && fmt::post_busy());   // still posted, pass after pass: no step of this core's
     CHECK(cardq::stats().taken_back == took0 && cardq::pending() == 1);
     CHECK(fmt::post_held() == held0 + 1);   // counted once, not per pass
     CHECK(rd("/.rytm/lfo/PWR/k005.txt") == "<none>");   // not written by the control core
@@ -542,7 +542,7 @@ int main() {
     CHECK(fmt::post_queue(Q3, big.data(), (uint32_t)big.size()));
     CHECK(fmt::post_queue(Q1, "a2\n", 3));   // a newer text of a queued path: it replaces the older
     at(g_us + 10 * cardq::kTakeBackUs);
-    for (int i = 0; i < 50; ++i) CHECK(fmt::post_step() && fmt::post_busy());
+    for (int i = 0; i < 50; ++i) CHECK(!fmt::post_step() && fmt::post_busy());
     CHECK(fmt::pending(Q1) && fmt::pending(Q2) && fmt::pending(Q3));
     CHECK(fmt::post_held() == held0 + 1 && cardq::stats().taken_back == took0);
     CHECK(host_card_us(3) == 0);   // all of it: the control core touched the card not at all

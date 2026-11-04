@@ -384,10 +384,11 @@ CORE_COLD void move(int d) {
 CORE_COLD void project_enc(int e, int delta, bool func) {
   refresh();   // (the state now: a job may have started since the last frame)
   if (job_running(F.st.phase) || F.st.phase == bundle::kReady) return;
-  if (e == 0) move(delta * (func ? 5 : 1));
-  if (e == 7 && delta) {   // H: the card or a stick
-    int n = F.nvol + 1;
-    P.dest = ((P.dest + (delta > 0 ? 1 : -1)) % n + n) % n;
+  if (e == 0) move(list_turn_long(e, delta) * (func ? 5 : 1));
+  const int l = e == 7 ? list_turn(e, delta) : 0;
+  if (l) {   // H: the card or a stick
+    int n = F.nvol + 1, dest = P.dest + l;
+    P.dest = dest < 0 ? 0 : dest >= n ? n - 1 : dest;
     sniprintf(P.dest_drive, sizeof P.dest_drive, "%s", P.dest ? F.vol[P.dest - 1].drive : "");
     P.note[0] = 0;
     if (P.view == kVBundles) ask_lists();

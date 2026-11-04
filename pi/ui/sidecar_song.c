@@ -53,7 +53,7 @@ static unsigned total (void)
 	unsigned len = s_V.length > s_V.playhead ? s_V.length : s_V.playhead;
 	return len < 4 * SSG_BAR ? 4 * SSG_BAR : len;
 }
-static int lw (void) { return oled () ? 51 : 80; }	// the lanes' names (8 micro characters: "LT SRC C", T12)
+static int lw (void) { return oled () ? LU (51) : LU (80); }	// the lanes' names (8 micro characters: "LT SRC C", T12)
 static int xof (unsigned t, int w)
 {
 	long long d = (long long) t - (long long) s_nStart;
@@ -112,19 +112,19 @@ static void area_draw (lv_event_t *e)
 	int fh = lv_font_get_line_height (f);
 	if (!s_V.valid || (!s_V.name[0] && !s_V.length))
 	{
-		th_text (l, &c, 0, h / 2 - fh, w, O ? TH->f_body : &lv_font_montserrat_18, c_dim (), LV_TEXT_ALIGN_CENTER,
+		th_text (l, &c, 0, h / 2 - fh, w, O ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 s_V.valid ? "NO TAKE: ARM, THEN PLAY ON THE RYTM" : "NO SONG ENGINE");
 		return;
 	}
 	// rows
-	int rr = O ? 10 : 18, rp = O ? 14 : 26, rs = O ? 8 : 14, rf = O ? 11 : 22, rt = O ? 8 : 16, mh = O ? 3 : 5;
-	if (TH->dy) mh = O ? 4 : 7;			// 1024x600: taller mute rows
+	int rr = LU (O ? 10 : 18), rp = LU (O ? 14 : 26), rs = LU (O ? 8 : 14), rf = LU (O ? 11 : 22), rt = LU (O ? 8 : 16), mh = LU (O ? 3 : 5);
+	if (TH->dy) mh = LU (O ? 4 : 7);			// 1024x600: taller mute rows
 	int y = 0;
 	unsigned sp = span ();
 	// the ruler: bar numbers where they fit, a tick each bar
 	int px_bar = (int) ((long long) SSG_BAR * (w - lw ()) / sp);
 	int every = 1;
-	while (px_bar * every < (O ? 21 : 44)) every *= 2;
+	while (px_bar * every < (LU (O ? 21 : 44))) every *= 2;
 	unsigned b0 = s_nStart / SSG_BAR;
 	for (unsigned b = b0; ; b++)
 	{
@@ -146,7 +146,7 @@ static void area_draw (lv_event_t *e)
 	for (int k = 0; k < s_V.nmarks; k++)	// markers: a flag on the ruler
 	{
 		int x = xof (s_V.marks[k], w);
-		if (x >= lw () && x < w) th_fill (l, &c, x, 0, x + (O ? 3 : 5), O ? 3 : 6, TH->accent, LV_OPA_COVER, 0);
+		if (x >= lw () && x < w) th_fill (l, &c, x, 0, x + (O ? 3 : LU (5)), O ? 3 : LU (6), TH->accent, LV_OPA_COVER, 0);
 	}
 	y = rr + 1;
 	// PTN: the patterns as blocks, alternately shaded, named
@@ -163,7 +163,7 @@ static void area_draw (lv_event_t *e)
 		th_fill (l, &c, x0, y, x0, y + rp - 1, c_ink (), LV_OPA_COVER, 0);
 		char t[6];
 		lv_snprintf (t, sizeof t, "%c%02d", 'A' + b->v / 16, b->v % 16 + 1);
-		if (x1 - x0 > (O ? 21 : 36)) th_text (l, &c, x0 + 2, y + (rp - fh) / 2, x1 - x0 - 2, f, c_ink (), LV_TEXT_ALIGN_LEFT, t);
+		if (x1 - x0 > (LU (O ? 21 : 36))) th_text (l, &c, x0 + 2, y + (rp - fh) / 2, x1 - x0 - 2, f, c_ink (), LV_TEXT_ALIGN_LEFT, t);
 	}
 	y += rp + 1;
 	// SCN: scene blocks (teal), PRF: the PERF curve, BPM: the tempo line
@@ -193,7 +193,7 @@ static void area_draw (lv_event_t *e)
 	y += rt + 1;
 	// MUTE: 12 rows, lit while muted
 	lane_name (l, &c, y, 12 * mh, "MUTE", c_ink ());
-	th_fill (l, &c, lw (), y, w - 1, y + 12 * mh - 1, O ? 0x1C1C1C : th_mix (c_bg (), c_dim (), 25), LV_OPA_COVER, 0);
+	th_fill (l, &c, lw (), y, w - 1, y + LU (12) * mh - 1, O ? 0x1C1C1C : th_mix (c_bg (), c_dim (), 25), LV_OPA_COVER, 0);
 	for (int i = 0; i < s_V.nmutes; i++)
 	{
 		const ssg_block_t *b = &s_V.mutes[i];
@@ -205,12 +205,12 @@ static void area_draw (lv_event_t *e)
 		th_fill (l, &c, x0, yy, x1, yy + mh - (O ? 1 : 2), c_ink (), LV_OPA_COVER, 0);
 	}
 	if (!O)
-		for (int k = 0; k < 12; k += 4) th_text (l, &c, lw () - 22, y + k * mh - 2, 20, f, c_dim (), LV_TEXT_ALIGN_RIGHT, kTrk[k]);
+		for (int k = 0; k < 12; k += 4) th_text (l, &c, lw () - LU (22), y + k * mh - 2, LU (20), f, c_dim (), LV_TEXT_ALIGN_RIGHT, kTrk[k]);
 	y += 12 * mh + 2;
 	// the parameter lanes: the rest of the height, as many as fit
-	int left = h - y, n = s_V.nlanes, lh = n ? left / n : 0, minh = O ? 9 : 18;
+	int left = h - y, n = s_V.nlanes, lh = n ? left / n : 0, minh = LU (O ? 9 : 18);
 	if (lh < minh) { n = left / minh; lh = minh; }
-	if (lh > (O ? 21 : 40)) lh = O ? 21 : 40;
+	if (lh > (LU (O ? 21 : 40))) lh = LU (O ? 21 : 40);
 	for (int i = 0; i < n && i < s_V.nlanes; i++)
 	{
 		const ssg_lane_t *L = &s_V.lane[i];
@@ -365,37 +365,37 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 	s_bExplain = 0;
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the timeline gets the extra room, the keys wider, the overlay stays its size, centred
-	const int dx = TH->dx, dy = TH->dy, W = O ? TH->w - 48 : TH->w, H = O ? TH->h : 428 + dy;
+	const int dx = TH->dx, dy = TH->dy, W = O ? TH->w - LU (48) : TH->w, H = O ? TH->h : LU (428) + dy;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, W, H);
 	s_Page = pg;
 	static const char *const kKeys[8] = {"ARM", "REPLAY", "<", ">", "ZOOM -", "ZOOM +", "FOLLOW", "CFG"};	// (T12: zoom named)
 	if (O)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, W, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, W, LU (13));
 		th_titlebar_set (s_TitleBar, "SONG", "", 0);
 		s_Title = 0;
-		s_Info = th_label (pg, 2, 16, TH->f_micro, TH->ink, "");
-		s_Area = th_box (pg, 0, 28, W, 168 + dy);
-		s_Msg = th_label (pg, 2, 198 + dy, TH->f_micro, TH->dim, "");
+		s_Info = th_label (pg, 2, LU (16), TH->f_micro, TH->ink, "");
+		s_Area = th_box (pg, 0, LU (28), W, LU (168) + dy);
+		s_Msg = th_label (pg, 2, LU (198) + dy, TH->f_micro, TH->dim, "");
 		for (int k = 0; k < 8; k++)
-			s_Key[k] = th_key (pg, k * (44 + dx / 8) + (k > 3 ? 2 : 0), 209 + dy, 42 + dx / 8, 31, kKeys[k], TH_KEY | TH_KEY_SMALL, key_cb, (void *) (intptr_t) k);
-		s_Undo = th_key (pg, 2 * (44 + dx / 8), 209 + dy, 86 + dx / 4 + 2, 31, "UNDO REPLAY", TH_KEY_ACCENT | TH_KEY_SMALL, key_cb, (void *) (intptr_t) K_UNDO);
+			s_Key[k] = th_key (pg, k * (LU (44) + dx / 8) + (k > 3 ? 2 : 0), LU (209) + dy, LU (42) + dx / 8, LU (31), kKeys[k], TH_KEY | TH_KEY_SMALL, key_cb, (void *) (intptr_t) k);
+		s_Undo = th_key (pg, 2 * (LU (44) + dx / 8), LU (209) + dy, LU (86) + dx / 4 + 2, LU (31), "UNDO REPLAY", TH_KEY_ACCENT | TH_KEY_SMALL, key_cb, (void *) (intptr_t) K_UNDO);
 	}
 	else
 	{
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, 784 + dx, 352 + dy, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, &lv_font_montserrat_18, TH->win_ink, "SONG");
-		s_Info = th_label (pg, 316 + dx, 16, &lv_font_montserrat_16, TH->win_ink, "");
-		s_Area = th_box (pg, 20, 44, 760 + dx, 290 + dy);
-		s_Msg = th_label (pg, 24, 336 + dy, &lv_font_montserrat_14, TH->win_dim, "");
+		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (352) + dy, "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "SONG");
+		s_Info = th_label (pg, LU (316) + dx, LU (16), TH->f_body, TH->win_ink, "");
+		s_Area = th_box (pg, LU (20), LU (44), LU (760) + dx, LU (290) + dy);
+		s_Msg = th_label (pg, LU (24), LU (336) + dy, TH->f_small, TH->win_dim, "");
 		for (int k = 0; k < 8; k++)
-			s_Key[k] = th_key (pg, 12 + k * (97 + dx / 8), 366 + dy, 92 + dx / 8, 54, kKeys[k], k == K_REPLAY ? TH_KEY_ACCENT : TH_KEY, key_cb, (void *) (intptr_t) k);
-		s_Undo = th_key (pg, 12 + 2 * (97 + dx / 8), 366 + dy, 189 + dx / 4, 54, "UNDO REPLAY", TH_KEY_ACCENT, key_cb, (void *) (intptr_t) K_UNDO);
+			s_Key[k] = th_key (pg, LU (12) + k * (LU (97) + dx / 8), LU (366) + dy, LU (92) + dx / 8, LU (54), kKeys[k], k == K_REPLAY ? TH_KEY_ACCENT : TH_KEY, key_cb, (void *) (intptr_t) k);
+		s_Undo = th_key (pg, LU (12) + 2 * (LU (97) + dx / 8), LU (366) + dy, LU (189) + dx / 4, LU (54), "UNDO REPLAY", TH_KEY_ACCENT, key_cb, (void *) (intptr_t) K_UNDO);
 	}
-	lv_obj_set_width (s_Info, O ? 348 + dx : 460);
+	lv_obj_set_width (s_Info, O ? LU (348) + dx : LU (460));
 	if (!O) lv_obj_set_style_text_align (s_Info, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width (s_Msg, (O ? 348 : 750) + dx);
+	lv_obj_set_width (s_Msg, (O ? LU (348) : LU (750)) + dx);
 	lv_label_set_long_mode (s_Msg, LV_LABEL_LONG_MODE_DOTS);
 	lv_obj_add_event_cb (s_Area, area_draw, LV_EVENT_DRAW_MAIN, 0);
 	lv_obj_add_flag (s_Area, LV_OBJ_FLAG_CLICKABLE);
@@ -405,23 +405,23 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 	// the overlay: the confirmation / the how-to
 	if (O)
 	{
-		s_Dlg = th_box (pg, 9 + dx / 2, 20 + dy / 2, 334, 216);
+		s_Dlg = th_box (pg, LU (9) + dx / 2, LU (20) + dy / 2, LU (334), LU (216));
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
 		lv_obj_set_style_border_width (s_Dlg, 1, 0);
-		for (int i = 0; i < 10; i++) s_DlgText[i] = th_label (s_Dlg, 6, 5 + i * 16 + (i ? 2 : 0), i ? TH->f_micro : TH->f_body, TH->ink, "");
-		s_DlgYes = th_key (s_Dlg, 180, 178, 146, 32, "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);	// (filled while it overwrites: dlg_show)
-		s_DlgNo = th_key (s_Dlg, 8, 178, 146, 32, "CANCEL", TH_KEY, dlg_cb, (void *) 0);
+		for (int i = 0; i < 10; i++) s_DlgText[i] = th_label (s_Dlg, LU (6), LU (5) + i * LU (16) + (i ? 2 : 0), i ? TH->f_micro : TH->f_body, TH->ink, "");
+		s_DlgYes = th_key (s_Dlg, LU (180), LU (178), LU (146), LU (32), "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);	// (filled while it overwrites: dlg_show)
+		s_DlgNo = th_key (s_Dlg, LU (8), LU (178), LU (146), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);
 	}
 	else
 	{
-		s_Dlg = th_box (pg, 120 + dx / 2, 40 + dy / 2, 560, 330);
-		th_panel (s_Dlg, 0, 0, 560, 330, "", TH_PANEL_WINDOW);
+		s_Dlg = th_box (pg, LU (120) + dx / 2, LU (40) + dy / 2, LU (560), LU (330));
+		th_panel (s_Dlg, 0, 0, LU (560), LU (330), "", TH_PANEL_WINDOW);
 		for (int i = 0; i < 10; i++)
-			s_DlgText[i] = th_label (s_Dlg, 24, 18 + i * 26, i ? &lv_font_montserrat_16 : &lv_font_montserrat_20, i == 9 ? TH->warn : TH->win_ink, "");
-		s_DlgYes = th_key (s_Dlg, 300, 270, 236, 50, "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);
-		s_DlgNo = th_key (s_Dlg, 24, 270, 236, 50, "CANCEL", TH_KEY, dlg_cb, (void *) 0);
+			s_DlgText[i] = th_label (s_Dlg, LU (24), LU (18) + i * LU (26), i ? TH->f_body : TH->f_title, i == 9 ? TH->warn : TH->win_ink, "");
+		s_DlgYes = th_key (s_Dlg, LU (300), LU (270), LU (236), LU (50), "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);
+		s_DlgNo = th_key (s_Dlg, LU (24), LU (270), LU (236), LU (50), "CANCEL", TH_KEY, dlg_cb, (void *) 0);
 	}
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_HIDDEN);
 	keys_update ();

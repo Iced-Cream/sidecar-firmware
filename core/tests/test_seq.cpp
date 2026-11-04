@@ -1670,11 +1670,36 @@ int main() {
     fx::control.knob[0][3] = 40;
     enc(1, 1);
     CHECK(seq::view().lock_page == seq::kLpFx && seq::lock_of(bt->step[2], seq::kLockFx + 1) == 41 << 7);
-    key(0x33, true), key(0x33, false);   // FLTR: the Rytm's analog side, nothing to lock
+    key(0x34, true), key(0x34, false);   // AMP: the Rytm's analog side, nothing to lock
     enc(0, 4);
-    CHECK(seq::view().lock_page == seq::kLpFltr && bt->step[2].nl == 3);
+    CHECK(seq::view().lock_page == seq::kLpAmp && bt->step[2].nl == 3);
     for (int i = 0; i < 3; ++i) remote_tick((uint32_t)(9700 + 30 * i)), advance_ms(30);
-    CHECK(shown("LOCK FLTR") && shown("ANALOG"));
+    CHECK(shown("LOCK AMP") && shown("ANALOG"));
+    // FLTR: the arp's page of that step: A MODE B SPD C RNG D GATE E SWNG, each to its own last value, a slot like any lock, no slide
+    key(0x33, true), key(0x33, false);
+    CHECK(seq::view().lock_page == seq::kLpFltr && seq::lock_param(seq::kLpFltr, 0) == seq::kLockArp &&
+          seq::lock_param(seq::kLpFltr, 4) == seq::kLockArp + 4 && seq::lock_param(seq::kLpFltr, 5) == -1);
+    CHECK(seq::lock_base(seq::kLockArp) == 0 && seq::lock_base(seq::kLockArp + 1) == 3 << 7);   // the sound's: OFF, 1/16
+    enc(0, 1);
+    enc(1, 2);
+    CHECK(seq::lock_of(bt->step[2], seq::kLockArp) == 1 << 7 && seq::lock_of(bt->step[2], seq::kLockArp + 1) == 5 << 7);
+    enc(0, 9), enc(2, 1), enc(2, 1), enc(2, 1);
+    CHECK(seq::lock_of(bt->step[2], seq::kLockArp) == 5 << 7 && seq::lock_of(bt->step[2], seq::kLockArp + 2) == 2 << 7);
+    enc(1, 8, true);   // FUNC: stops at its end
+    CHECK(seq::lock_of(bt->step[2], seq::kLockArp + 1) == 5 << 7 && bt->step[2].nl == 6);
+    enc(5, 1);         // F: no sixth
+    CHECK(bt->step[2].nl == 6);
+    enc(1, 1);
+    for (int i = 0; i < 3; ++i) remote_tick((uint32_t)(9740 + 30 * i)), advance_ms(30);
+    CHECK(shown("LOCK ARP") && shown("MODE") && shown("SWNG") && shown("1/32") && !shown("ANALOG"));
+    png("seq_lock_arp.png");
+    key(0x80, true), key(0x70, true), key(0x70, false), key(0x80, false);   // FUNC + push: an arp lock holds, no slide
+    for (int i = 0; i < 3; ++i) remote_tick((uint32_t)(9770 + 30 * i)), advance_ms(30);
+    CHECK(shown("DO NOT SLIDE") && !bt->step[2].slide);
+    key(0x71, true), key(0x71, false);   // PUSH_B: that lock cleared
+    key(0x70, true), key(0x70, false);
+    key(0x72, true), key(0x72, false);
+    CHECK(seq::lock_of(bt->step[2], seq::kLockArp) == -1 && bt->step[2].nl == 3);
     uint8_t c[16];
     seq::leds(c);
     CHECK(c[2] == 63);   // (held: amber)
@@ -1683,6 +1708,19 @@ int main() {
     CHECK(seq::view().lock_page == -1 && bt->step[2].n == 1 && bt->step[2].nl == 3);   // no tap toggle
     seq::leds(c);
     CHECK(c[2] == 95 && c[0] == 47);
+    // copy, paste and clear of a step with arp locks: whole steps, as any lock (a page's copy / paste below uses the same Step)
+    {
+      seq::Step sv = bt->step[2];
+      seq::set_lock(sv, seq::kLockArp + 1, 5 << 7);
+      seq::Track copy = *bt;
+      seq::copy_steps(*bt, 2, copy, 7, 1);
+      CHECK(seq::lock_of(copy.step[7], seq::kLockArp + 1) == -1);
+      copy.step[2] = sv;
+      seq::copy_steps(copy, 2, copy, 7, 1);
+      CHECK(seq::lock_of(copy.step[7], seq::kLockArp + 1) == 5 << 7 && copy.step[7].nl == 4);
+      seq::clear_steps(copy, 7, 1);
+      CHECK(!copy.step[7].nl && seq::lock_of(copy.step[7], seq::kLockArp + 1) == -1);
+    }
     // a lock trig: T6 (empty) held + SRC + A
     key(5, true), key(0x31, true), key(0x31, false), enc(0, 1), key(5, false);
     CHECK(bt->step[5].n == 0 && bt->step[5].nl == 1 && seq::lock_of(bt->step[5], 0) == 11 << 7);
@@ -2066,6 +2104,24 @@ int main() {
     poly::midi(0x9D, 1, 100), poly::midi(0x8D, 1, 0);       // SD's pad: not a seq track
     CHECK(poly::stats().seq_pads == sp0 + 2);
     printf("  fix1040b: a seq track's own pad plays its voice (either order), the Rytm's own trig and SD's pad do not\n");
+    // 7g PAD OCT: a normal pad's 0x04 note enters the voice shifted (the CHRO pads' bound shift and the recording are
+    // test_poly's: the channel binds from the Rytm's own trigs there)
+    {
+      CHECK(seq::pad_oct(bvi) == 0);
+      cmd("seq=poly:1:oct=2");
+      CHECK(seq::pad_oct(bvi) == 2 && seq::poly_of(0).oct == 2);
+      // a normal pad with OCT +1: still played once (its 0x04 note enters the voice shifted; out of range: not at all)
+      uint32_t sp1 = poly::stats().seq_pads;
+      cmd("seq=poly:1:oct=1");
+      poly::midi(0x9D, 0, 100);
+      CHECK(poly::seq_pad(bvi, 60, 100));
+      poly::midi(0x8D, 0, 0);
+      advance_ms(300);
+      CHECK(poly::stats().seq_pads == sp1 + 1);
+      cmd("seq=poly:1:oct=0");
+      CHECK(seq::pad_oct(bvi) == 0);
+      printf("  7g: PAD OCT per track (seq=poly:T:oct=N), a normal pad still plays once\n");
+    }
   }
   // ---- 1042 data safety: a pattern file that does not load (a newer Sidecar's version, a bad CRC, cut short) is locked:
   // edits stay in memory, the file is never written over (before: the next save wrote an empty pattern + the edit)

@@ -10,7 +10,13 @@
 //   memory   STREAM (the default) or RAM, per instrument. STREAM: each sample's first kHeadMs (`msamp=head:MS`, 500
 //            by default) is preloaded (its "head"; a sample not much longer is held whole), and a loop that lies
 //            past the head is preloaded too (up to kLoopMax frames); the rest streams from the card into the note's
-//            ring (kRing frames) while it plays. Opening an instrument reads only the heads. RAM: every sample whole
+//            ring (kRing frames) while it plays. Opening an instrument reads only the heads. A sample that streamed
+//            once is KEPT: a background fill brings the rest of it into the pool RAM (a read at a time, only while no
+//            stream needs the card) and from then on it plays from RAM, no card, until the slot goes or the room is
+//            needed by anything (the cache gives the least recently played one back to its head; never one a note
+//            sounds). `msamp=keep:0`, or
+//            `sidecar_load=stream` for an instrument: not kept. docs/superpowers/specs/2026-10-30-load-on-first-play.md
+//            RAM: every sample whole
 //            (`<control> sidecar_load=ram` in the .sfz, or automatically for an instrument of kAutoRam bytes or
 //            less); streamed instead when it needs more than half the pool RAM. Samples are held as int16 mono at
 //            their own rate (stereo summed: the voice's channel is mono). The heads and RAM samples live in the pool
@@ -107,10 +113,13 @@ int src_entry(int vi, int v);
 bool pick(int vi, int e);             // a choice: INST written on the Rytm (48: the kit keeps it)
 bool voice_picked(int vi);            // (always false)
 bool command(const char* p, char* out, int cap);   // "msamp", "msamp=rescan", "msamp=voice:V[:off]", "msamp=list",
-                                                   // "msamp=head:MS", "msamp=ahead:MS", "msamp=streams:N",
+                                                   // "msamp=head:MS", "msamp=ahead:MS", "msamp=streams:N", "msamp=keep:0|1",
                                                    // "msamp=pick:V:ROW"
 // The SD card test's (sdtest.h): the read-ahead and the streaming notes at most
 void set_stream_limits(uint32_t ahead_ms, int max_streams);
+void set_keep(bool on);               // msamp=keep:N: played samples kept in RAM (the default) or not
+int keep_waiting();                   // samples queued or filling now
+void pace_for_tests(bool on);         // tests: fills paced as while a DSP SAMPLE stream plays
 
 struct Stats {
   int listed, resident, active, peak;
@@ -120,6 +129,13 @@ struct Stats {
   uint32_t bw_steals;                 // notes killed for bandwidth (a full stream count, a note near dry)
   uint32_t stream_reads, loops_dropped;
   uint64_t stream_bytes;
+  int kept;                           // samples kept in RAM now
+  uint64_t kept_bytes;
+  uint32_t fills, fill_reads;         // fills started, their card reads
+  uint64_t fill_bytes;
+  uint32_t ram_feeds;                 // a stream's ring filled from RAM instead of the card
+  uint32_t keep_given_back, keep_refused;   // kept samples back to their heads; samples that found no room
+  uint32_t closes_here;               // a stream's file closed on the control core (the card core held up for long)
   uint64_t arena, slot_cap;
 };
 const Stats& stats();

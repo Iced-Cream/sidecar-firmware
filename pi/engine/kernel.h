@@ -64,6 +64,8 @@ private:
 	void LoadClock (boolean bCard);				// cpumhz= (display.txt, cmdline): at boot, before the bench
 	void SetClock (unsigned nSettingMHz);			// the CPU clock option (cpuclock.h): the clock, the voice budget, the log
 	void FollowClock (void);				// the stats tick: the budget follows the ARM clock read back
+	void MeasureClock (void);				// every 10 s: the clock the firmware measures, against the one it reports
+	unsigned AskedMHz (void) const;				// the clock the setting asks for on this board (cpuclock::asked_mhz)
 	void ApplyBudget (unsigned nMHz, boolean bLog);		// the voice guard's budget for that clock (voicebudget= scaled by it)
 	void LogClockRescale (void);				// the boot bench's voices a core, rescaled to the clock now (not re-measured)
 	void ThermalStep (unsigned nTempC);			// the temperature warning (thermal.h): once a second, from LogStats
@@ -120,6 +122,9 @@ private:
 	unsigned		m_nClockSetting = 1500;
 	volatile unsigned	m_nClockMHz = 0;
 	volatile unsigned	m_nBudgetUs = 0;
+	volatile unsigned	m_nMeasuredMHz = 0;	// MeasureClock's last reading, 0: none yet
+	volatile unsigned	m_nAsleepPct[4] = {};	// the last second's share of each core in a counted wfe, and the wakes
+	volatile unsigned	m_nWakes[4] = {};
 	boolean			m_bClockCapped = FALSE;
 	unsigned		m_nThrottleAt = 0;	// CTimer::GetClockTicks () of the last CCPUThrottle::Update (main loop)
 	unsigned		m_nBenchMHz = 0;			// the clock the boot bench ran at, and its worst figure
@@ -137,10 +142,15 @@ private:
 	touch_cal_t		m_TouchCal;
 	unsigned		m_nUiStyle;		// uistyle=oled|classic: the display's theme (sidecar_theme.h), 0 OLED
 	volatile boolean	m_bSaveDisplay;		// written by core 0's loop (tmp + rename)
-	unsigned		m_nResW, m_nResH;	// res=800x480|1024x600 (display.txt / cmdline): the UI's size, 0: automatic
+	unsigned		m_nResW, m_nResH;	// res=800x480|1024x600|1280x720 (display.txt / cmdline): the UI's size, 0: automatic
 	unsigned		m_nResFileW, m_nResFileH;	// display.txt's res= alone (kept when the file is written)
 	void LoadDisplayRes (boolean bCard);
 	void LoadDisplaySettings (boolean bCard);
+#ifdef SIDECAR_PI5_TESTMODE
+	unsigned		m_nTestSecs = 0;	// testsecs= (docs/pi5.md "Engine test mode"): 0 off
+	boolean			m_bTestCard = FALSE;	// testcard=1 with testsecs=: the card in use, Sidecar's folders only (card_guard.h)
+	void UsbTestTick (void);			// core 0's loop: the log to the card, the reboot at the end
+#endif
 	void SaveDisplaySettings (void);
 	CWifi			*m_pWifi;		// wifi.h: always made (its console commands), the chip only with wifi=1|scan
 };

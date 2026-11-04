@@ -10,3 +10,6 @@ struct TToHostStub {
 inline Output g_Output;
 inline TToHostStub g_ToHost;
 inline Spsc<uint32_t, 512> g_KeysToRytm;
+inline unsigned g_nToHostFull;
+inline volatile bool g_bRytmResync;
+inline volatile bool g_bRytmOff;

@@ -36,6 +36,18 @@ implemented 2026-10-08, P1..P8 only):
   sound's stored slot 47, so index 0 is SEND FX 1/2 on every track (0x20 below).
   The wire format is unchanged.
 
+  cmd 0x44 / 0x43 (2026-10-31, backlog 7o): the MIDI machine's 0x04 / 0x03, the same bytes, voice byte plain (every value of voice byte
+  & 0x78 is taken); rytm-mods 0021, machine 50. Older hosts ignore them. In 33 its track says machine 50, vb flag 0. The host answers with
+  MIDI, not sound: core/midim/midim.h. Host -> Rytm, its DIN destination, one channel message on the Rytm's MIDI OUT (rytm-mods 0026):
+
+    F0 7D 52 54 4F 01 <status & 7F> <d1> [<d2>] F7                  C0..DF: two bytes, else three
+
+  cmd 0x45 (2026-11-01, backlog 7ae): a sound's arpeggiator code, 10 bits, both ways, the same bytes (rytm-mods 0026, 0021: stored slot 46, live +0x6d and
+  the two bits above the tag; core/arp/arp.h reads it). Rytm -> host after a hello or an open, when the active kit's sound has another code, and straight before a trig whose kit's code ext_render has not said; host -> Rytm
+  an edit (the Rytm writes the live sound and the project copy, then says it back). The hello's caps bit 3 says the Rytm keeps it. 30's page 4: the ARP page.
+
+    F0 7D 52 54 45 01 <track 0..11> <code & 7F> <code >> 7> F7      = 10 bytes
+
   cmd 0x11 NOTE_OFF: the voice's gate closed - pad released, the sequencer
   trig's LEN elapsed, or the sequencer stopped (rytm-mods 0021-ext,
   2026-10-09; older firmware never sends it):
@@ -386,9 +398,17 @@ slots 1-based in two 7-bit bytes (n >> 7, n & 0x7F), 0 = none. The hello's (35) 
     04 RELOAD ALL <kit>   the KIT menu's RELOAD set to ALL
 4D 01 <dropped hi lo> <over hi lo>: rui1052d (round 6) - key presses 0026 dropped (each with its release, its queue
     full) and its waits past a stock dump run out (2 s with the flag never clear); on a change, at most once a second.
-0x4E is the next free id.
+0x51 is the next free id above these (0x4E, 0x4F the bridge, 0x50 the mix report below); 0x45 is the arpeggiator's (above).
 """
 PRJ = 0x4B   # the project slot reports (above)
+# 0x50 (2026-11-01, sidecar-mods 0030-fx-in, the master FX's through mode): Rytm -> host <pan 0..7> <route bit 7> <route bits 0..6>:
+# each stem's PAN as it plays (p-locks, LFOs; 0..127, 64 centre; a shared voice's owning track), the route byte 0x80006466 (a
+# set bit: that voice off the main bus). On a change, at most 20 a second, and once a second; core/fx/master.h.
+MIX_REPORT = 0x50
+
+
+def mix_report(pans, route):
+    return _msg(MIX_REPORT, list(pans) + [(route >> 7) & 1, route & 0x7F])
 
 HDR = bytes([0xF0, 0x7D, 0x52, 0x54])
 AUDIO, TRIG, PARAMS, TRIG_PARAMS = 0x01, 0x02, 0x03, 0x04
@@ -769,8 +789,9 @@ SENDFX_TYPES = {0: "OFF", 1: "CHORUS", 2: "COMB", 3: "DELAY", 4: "PINGPONG", 5: 
 SENDFX_BUILT = (1, 2, 16, 17, 18, 5, 6, 8, 15)   # 1, 2, 16, 17, 18 everywhere (the Teensy's small set); 5, 6, 8, 15 the Pi
 SENDFX_BUILT_TEENSY = (1, 2, 16, 17, 18)       # (and the Mac): a Teensy build reports them MISSING
 # fx-ins (core/fx/insert.h, docs/INSERT-FX.md): the INSERT slots' TYPE ids (stable: the card's files name them), the
-# seq p-lock params 24..31 lock the track's voice's INSERT A / B P1..P4 (core/seq/seq.h kLockIns; SEQ_LOCK_INS below)
-INSERT_TYPES = {0: "OFF", 1: "FILTER", 2: "CRUSH", 3: "DRIVE", 4: "EQ", 5: "COMP", 6: "DELAY", 7: "TREMOLO", 8: "RINGMOD", 9: "AMP"}
+# seq p-lock params 24..31 lock the track's voice's INSERT A / B P1..P4 (core/seq/seq.h kLockIns; SEQ_LOCK_INS below);
+# 32..36 the arpeggiator's MODE SPD RNG GATE SWNG for that step only (kLockArp; SEQ_LOCK_ARP)
+INSERT_TYPES = {0: "OFF", 1: "FILTER", 2: "CRUSH", 3: "DRIVE", 4: "EQ", 5: "COMP", 6: "DELAY", 7: "TREMOLO", 8: "RINGMOD", 9: "AMP", 10: "SAT"}
 SENDFX_STUTTER = 15   # a master insert, not a send (core/fx/stutter_fx.h): one FX slot at a time, a second MISSING
 SENDFX_USER_FIRST, SENDFX_USER_SLOTS = 64, 4
 # track 12 pairs (words 0, 29, 38, 39, 40, 41) -> FX k's [TYPE, P1..P5] as (pair, half 0 hi / 1 lo)
@@ -1578,6 +1599,7 @@ SQP_BLK_RTRG, SQP_BLK_SLIDE, SQP_BLK_FX = 10, 11, 12
 #     where the rule for a file without it (a track holding steps is on, an empty one off) would read it otherwise
 #     (a track's on=0|1)
 SQP_BLK_ON = 13
+SQP_BLK_ARP = 14   # arp locks: <track>, its steps hold some (they are in the lock lists): required, an older Sidecar locks the file
 SEQ_FX_CMDS = ("---", "RTG", "DLY", "CUT", "CHN", "RND", "RNV", "OCT", "TRS", "JMP", "JRN", "LOP", "SKP", "DIR", "FIL")
 SEQ_RT_MODES = ("CHORD", "WALK", "UP", "DOWN", "UPDN", "RND", "PLAYED", "CONV")
 SEQ_RT_RATES = ("AUTO", "2", "1", "2/3", "1/2", "1/3", "1/4", "1/6", "1/8")
@@ -1592,7 +1614,8 @@ SEQ_DIRS = ("FWD", "REV", "PEND", "PING", "RND", "BROWN")   # P1 (core/seq/rng.h
 SEQ_SPEEDS = ("FOLLOW", "1/8", "1/4", "1/2", "3/4", "3/2", "2", "2/3", "5/4", "7/8")   # P2: Sidecar steps per Rytm step
 SQP_BLK_REQUIRED, SQP_BLK_PER_STEP, SQP_BLK_TRACK = 1, 2, 4
 SQP_ALLOCS = ("REASSIGN", "ROTATE", "RESET")   # PolyCfg.alloc (core/seq/seq.h; the Analog Four's POLY CONFIG names)
-SEQ_LOCKS, SEQ_LOCK_FX, SEQ_LOCK_INS, SEQ_LOCK_PARAMS = 12, 16, 24, 32   # fx-ins: 24..31 the INSERT params
+SEQ_LOCKS, SEQ_LOCK_FX, SEQ_LOCK_INS, SEQ_LOCK_PARAMS = 12, 16, 24, 37   # fx-ins: 24..31 the INSERT params
+SEQ_LOCK_ARP, SEQ_ARP_TOP = 32, (5, 5, 2, 2, 2)   # arp locks: 32..36 MODE SPD RNG GATE SWNG (core/arp/arp.h), their largest values
 SEQ_MAX_STEPS, SEQ_MAX_NOTES = 128, 8
 
 
@@ -1657,6 +1680,8 @@ def sqp_pack(tracks, seed=None, blocks=(), scale=None):
                       for x in st.get("locks", [])[:SEQ_LOCKS] if x[0] in st.get("slide", ()))
         if sl:
             bl.append((SQP_BLK_SLIDE, SQP_BLK_TRACK | SQP_BLK_REQUIRED | SQP_BLK_PER_STEP, bytes([t["track"]]) + sl))
+        if any(SEQ_LOCK_ARP <= x[0] < SEQ_LOCK_PARAMS for st in t.get("steps", {}).values() for x in st.get("locks", [])[:SEQ_LOCKS]):
+            bl.append((SQP_BLK_ARP, SQP_BLK_TRACK | SQP_BLK_REQUIRED | SQP_BLK_PER_STEP, bytes([t["track"]])))
         fx = b"".join(bytes([i, st["fx"][0][0], st["fx"][0][1] & 255, st["fx"][1][0], st["fx"][1][1] & 255])
                       for i, st in sorted(t.get("steps", {}).items()) if st.get("fx") and (st["fx"][0][0] or st["fx"][1][0]))
         if fx:
@@ -1759,6 +1784,8 @@ def sqp_unpack(data, extra=None):
                 for e in range(1, len(pay) - 1, 2):
                     if pay[e] in tr["steps"]:
                         tr["steps"][pay[e]].setdefault("slide", []).append(pay[e + 1])
+            elif bid == SQP_BLK_ARP and tr is not None:
+                pass   # (the locks are in the steps' lists; sqp_pack writes it again)
             elif bid == SQP_BLK_RTRG and tr is not None:
                 for e in range(1, len(pay) - 7, 8):
                     if pay[e] in tr["steps"]:

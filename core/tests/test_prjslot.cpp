@@ -75,6 +75,10 @@ static void fixture(const std::string& k, const std::string& c) {
   put("/.rytm/projects/" + k + "/samples.pool.txt", "pool " + c);
   put("/.rytm/songs/" + k + "/take-001.json", "{\"song\":\"" + c + "\"}");
 }
+static bool rmdir_all(const std::string& k) {   // a fixture's files gone
+  return system(("rm -rf '" + g_card + "/.rytm/lfo/" + k + ".txt' '" + g_card + "/.rytm/kits/" + k + "' '" + g_card + "/.rytm/ins/" + k + "' '" +
+                 g_card + "/.rytm/seq/" + k + "' '" + g_card + "/.rytm/projects/" + k + "' '" + g_card + "/.rytm/songs/" + k + "'").c_str()) == 0;
+}
 static bool has_all(const std::string& k, const std::string& c) {
   return slurp("/.rytm/lfo/" + k + ".txt") == "lfo " + c && slurp("/.rytm/ins/" + k + "/k001.txt") == "ins " + c &&
          slurp("/.rytm/seq/" + k + "/tracks.txt") == "tracks " + c &&
@@ -808,6 +812,48 @@ int main() {
     CHECK(has_none("@029") && info(newest("@029"), "why") == "gone");
     CHECK(has_none("SOLO") && has_all("@030", "solo") && projects::find("@030"));
     CHECK(has_all("TWIN", "twin") && has_none("@031") && has_none("@032"));
+    // a name key with nothing under it, or one whose slot has files: done with once, not queued again at every connect
+    {
+      projects::note("GHOST");
+      fixture("FULL", "full");
+      projects::note("FULL");
+      fixture("@034", "other");
+      projects::note("@034", "FULL");
+      auto l2 = list;
+      l2.erase(std::remove_if(l2.begin(), l2.end(), [](const std::pair<int, std::string>& p) { return p.first == 29; }), l2.end());
+      l2.push_back({33, "GHOST"}), l2.push_back({34, "FULL"});
+      send_list(l2);
+      send_list(l2);
+      settle();
+      CHECK(!projects::find("GHOST"));
+      CHECK(has_all("FULL", "full") && has_all("@034", "other"));
+      CHECK(slurp("/.rytm/prjslot.txt").find("declined=34 FULL") != std::string::npos);
+      // ... its slot emptied (a project deleted on the Rytm): the decline goes with it, FULL moves there at the next list
+      auto l3 = l2;
+      l3.erase(std::remove_if(l3.begin(), l3.end(), [](const std::pair<int, std::string>& p) { return p.first == 34; }), l3.end());
+      send_list(l3);
+      send_list(l3);
+      settle();
+      CHECK(has_none("@034"));
+      send_list(l2);
+      send_list(l2);
+      settle();
+      CHECK(has_none("FULL") && has_all("@034", "full"));
+      // a card that could not say (one look failed): the entry stays
+      projects::note("HICCUP");
+      host_fail_lookup("/.rytm/lfo/HICCUP.txt", true);
+      auto l4 = l2;
+      l4.push_back({35, "HICCUP"});
+      send_list(l4);
+      send_list(l4);
+      settle();
+      host_fail_lookup("/.rytm/lfo/HICCUP.txt", false);
+      CHECK(projects::find("HICCUP"));
+      send_list(l2);
+      send_list(l2);
+      settle();
+      projects::drop("HICCUP");
+    }
     active(31, "TWIN");
     for (int i = 0; i < 50 && !prjslot::ask(); ++i) pass();
     CHECK(prjslot::ask() == prjslot::kAskLegacy);

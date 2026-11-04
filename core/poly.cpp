@@ -1,5 +1,6 @@
 // core/poly.cpp - see poly.h. Per message and per chord: cold; render_add is the render core's.
 #include "poly.h"
+#include "arp/arp.h"
 
 #include <string.h>
 
@@ -253,7 +254,8 @@ CORE_COLD bool is_ms(int vi) {
   return false;
 #endif
 }
-CORE_COLD bool plays_live(int vi) { return v[vi & 7].fm || is_ms(vi); }
+// (the arpeggiator takes a voice's held notes whatever its machine: its pads bind, its keyboard notes come, one chord at a time)
+CORE_COLD bool plays_live(int vi) { return v[vi & 7].fm || is_ms(vi) || arp::on(vi & 7); }
 
 CORE_COLD int count_voice(int vi) {
   int k = 0;
@@ -330,6 +332,7 @@ CORE_COLD void start(int vi, int note, int vel, float gain, bool live, int ch, i
   if (a > st.peak) st.peak = a;
 }
 CORE_COLD void live_start(int vi, int note, int vel, int ch, int midi_note) {
+  if (arp::live_on(vi, note, vel, ch, midi_note)) return;
 #if CORE_MSAMP
   if (is_ms(vi)) {
     nm::live_on(vi, note, vel, ch, midi_note);
@@ -344,6 +347,7 @@ CORE_COLD void emit(uint8_t st, uint8_t d1, uint8_t d2) {
   if (sink) sink(st, d1, d2);
 }
 CORE_COLD void live_release(int vi, int ch, int midi_note) {   // msamp's live notes (the pool's: release() by slot)
+  if (arp::live_off(vi, ch, midi_note)) return;
 #if CORE_MSAMP
   if (vi >= 0 && is_ms(vi)) nm::live_off(vi, ch, midi_note);
 #else
@@ -357,7 +361,7 @@ CORE_COLD void trig_notes_off(int vi) {   // the voice's own trig notes (mono no
     return;
   }
 #endif
-  fms[vi].NoteOff();
+  if (v[vi].fm) fms[vi].NoteOff();
 }
 CORE_COLD void release(Slot& s) {
   if (!s.held) return;
@@ -389,6 +393,11 @@ CORE_COLD int chan_of_voice(int vi) {
     if (chans[c].vi == vi) return c;
   return -1;
 }
+// BACKLOG 7g PAD OCT: the semitones the seq track on this channel's voice adds to the pads' notes (12 x its OCT); a host
+// keyboard's direct channel and a voice no seq track plays: 0
+CORE_COLD int chan_oct(const Chan& c) {
+  return c.vi >= 0 && !c.direct && seq::owns_voice(c.vi) ? 12 * seq::pad_oct(c.vi) : 0;
+}
 CORE_COLD void bind(int ch, int vi, int off) {
   for (int c = 0; c < 16; ++c)
     if (c != ch && chans[c].vi == vi) chans[c].vi = -1;   // one channel a voice
@@ -401,9 +410,10 @@ CORE_COLD void bind(int ch, int vi, int off) {
   // the notes held on the channel now: from the pool (or MULTISAMPLE's live notes), the mono note the Rytm's 0x04s
   // left off
   trig_notes_off(vi);
+  int oct = chan_oct(c);   // (once: a scan of the tracks)
   for (int n = 0; n < 128; ++n)
     if (c.held[n >> 5] >> (n & 31) & 1) {
-      int note = n + off;
+      int note = n + off + oct;
       if (note >= 0 && note <= 127) live_start(vi, note, 100, ch, n);
     }
   pend[vi].on = false;
@@ -432,10 +442,11 @@ CORE_COLD void play_trig(int vi, int note, int vel, const float* p);
 CORE_COLD int chan_chord(const Chan& c, uint8_t* ns) {
   uint32_t bits[4] = {c.held[0], c.held[1], c.held[2], c.held[3]};
   for (int i = 0; i < c.n; ++i) bits[c.notes[i] >> 5 & 3] |= 1u << (c.notes[i] & 31);
-  int k = 0;
+  int k = 0, oct = chan_oct(c);   // (oct once: a scan of the tracks)
   for (int n = 0; n < 128 && k < 16; ++n)
     if (bits[n >> 5] >> (n & 31) & 1) {
-      int x = n + c.off;
+      int x = n + c.off + oct;
+      if (oct && (x < 0 || x > 127)) continue;   // 7g: a note PAD OCT pushed out of range does not sound: not in the chord
       ns[k++] = (uint8_t)(x < 0 ? 0 : x > 127 ? 127 : x);
     }
   return k;
@@ -457,11 +468,17 @@ CORE_COLD void close_window(int ch) {
   if (cnt < 2) return;
   int t = track_of(c.vi);
   if (t < 0) return;
+#if CORE_MSAMP
+  if (v[c.vi].mi) return;   // MIDI: P13..P16 are its CC numbers, no chord words (the notes went out as played)
+#endif
+  if (!v[c.vi].fm && !is_ms(c.vi)) return;   // bound for the arpeggiator: a machine without chord words
   Chord w = d.c;   // VOI written as the count (AUTO plays the same notes when it is the chord's own)
   uint8_t back[kMaxNotes];
   if (w.chd) w.voi = expand(d.root, d.c, back);
   uint8_t m[16];
-  int len = sysex_chord_write(m, t, d.root, w);
+  int root = d.root, shift = chan_oct(c);   // 7g: the Rytm's chord is the pads' own: root - 12 x OCT, within 36..84
+  if (shift) root = root - shift < 36 ? 36 : root - shift > 84 ? 84 : root - shift;
+  int len = sysex_chord_write(m, t, root, w);
   to_rytm(m, len);
   ++st.writes;
   char b[8];
@@ -608,6 +625,20 @@ CORE_COLD bool take_trig(int vi, int note, int vel, const float* p) {
   return true;
 }
 
+CORE_COLD bool live_now(int vi) {
+  if (!slots) return false;
+  int ch = chan_of_voice(vi & 7);
+  return ch >= 0 && chan_active(chans[ch], now_ms());
+}
+
+CORE_COLD bool chord_add(int vi, int note, int vel) {
+  vi &= 7;
+  if (!slots || !v[vi].fm || note < 0 || note > 127) return false;
+  start(vi, note, vel, 1.0f, false, -1, 0);
+  ++st.chords;
+  return true;
+}
+
 CORE_COLD View view(int vi) { return views[vi & 7]; }
 
 CORE_COLD int voice_notes(int vi) {
@@ -731,6 +762,9 @@ uint32_t pad_on_ms[12];               // each track's pad trigger (its note-on)
 bool pad_on[12];                      // ... not yet matched with a 0x04
 bool pad_played[12];                  // that pad started its voice's note (its release ends it)
 CORE_COLD void pad_play(int vi, int note, int vel) {
+  note += 12 * seq::pad_oct(vi);   // 7g PAD OCT: the Rytm's pad 0x04 enters the voice shifted
+  if (note < 0 || note > 127) return;
+  if (arp::trig(vi, note, vel, v[vi].p)) return;
   if (v[vi].fm) play_trig(vi, note, vel, v[vi].p);
 #if CORE_MSAMP
   else if (is_ms(vi)) nm::report(vi, note, vel, v[vi].p);   // MULTISAMPLE / WAVETABLE / GRANULAR (core/nmach.h)
@@ -743,6 +777,7 @@ CORE_COLD void pad_trigger(int t, bool on, uint32_t ms) {
   if (!on) {
     if (pad_played[t] && vi >= 0) {
       pad_played[t] = false;
+      arp::trig_off(vi);
       trig_notes_off(vi);
       note_off(vi);
       if (!v[vi & 7].fm && !is_ms(vi & 7)) voice_note_off(vi & 7);   // E0: the other machines' pad note (voice_play)
@@ -882,12 +917,16 @@ CORE_COLD void midi(uint8_t status, uint8_t d1, uint8_t d2) {
       Chord cc = chord_of(v[c.vi].p);
       if (cc.chd) {
         uint8_t ns[kMaxNotes];
-        int k = expand(note, cc, ns);
-        for (int i = 0; i < k; ++i) start(c.vi, ns[i], d2, 0.6f, true, ch, n);
+        int root = note + chan_oct(c);   // (chordkeys are direct keys: 0; the root shifts as every pad note does)
+        if (root < 0 || root > 127) return;
+        int k = expand(root, cc, ns);
+        for (int i = 0; i < k; ++i) live_start(c.vi, ns[i], d2, ch, n);
         return;
       }
     }
-    live_start(c.vi, note, d2, ch, n);
+    int sounds = note + chan_oct(c);   // 7g: PAD OCT (the swallow checks above compare the Rytm's own, unshifted note)
+    if (sounds < 0 || sounds > 127) return;
+    live_start(c.vi, sounds, d2, ch, n);
     return;
   }
   // a note-off: the Rytm's mono steal (kept, not passed on), or a real one (n and the kept notes of its gesture)
@@ -909,6 +948,9 @@ CORE_COLD void midi(uint8_t status, uint8_t d1, uint8_t d2) {
 }
 
 CORE_COLD void tick(uint32_t ms) {
+#if CORE_MSAMP
+  midim::tick(ms);  // MIDI: what the byte budget held back
+#endif
   keys::tick(ms);   // the Pi's own keyboards (core/keys.h): their chord windows, the learned selected track
   if (!slots) return;
   for (int vi = 0; vi < kVoices; ++vi) {
@@ -918,6 +960,7 @@ CORE_COLD void tick(uint32_t ms) {
       int pc = chan_of_voice(vi);   // (a pad's own 0x04 that came late is not the sequencer's: the pads' chord stays)
       if (pc < 0 || !pads_down(chans[pc], ms)) views[vi].root = pd.note, views[vi].live = false;
       if (seq::owns_voice(vi)) continue;   // a Sidecar-sequenced track's own trig makes no note (core/seq/seq.h)
+      if (arp::trig(vi, pd.note, pd.vel, v[vi].p)) continue;
       if (v[vi].fm) play_trig(vi, pd.note, pd.vel, v[vi].p);
 #if CORE_MSAMP
       else if (is_ms(vi)) nm::report(vi, pd.note, pd.vel, v[vi].p);
@@ -1009,7 +1052,7 @@ CORE_COLD Detected keys_view(int vi, const uint8_t* notes, int n) {
 
 CORE_COLD int bound_voice(int ch, int* off) {
   if (ch < 0 || ch > 15) return -1;
-  if (off) *off = chans[ch].off;
+  if (off) *off = chans[ch].off + chan_oct(chans[ch]);   // (7g: the recording takes the shifted pitch)
   return chans[ch].vi;
 }
 

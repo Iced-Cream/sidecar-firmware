@@ -133,17 +133,53 @@ CORE_COLD int PageView::draw(Canvas& c, const Page& p, const Source& s, const ch
   return drawn;
 }
 
+CORE_COLD bool is_list(const Page& p, int param) {
+  for (int i = 0; i < p.ncells; ++i)
+    if (p.cells[i].kind == kList && p.cells[i].in[0] == param) return true;
+  return false;
+}
+
 CORE_COLD int step_value(const Page& p, int param, int v, int delta, bool func) {
   for (int i = 0; i < p.ncells; ++i) {
     const Cell& c = p.cells[i];
     if (c.kind != kList || c.in[0] != param) continue;
     int n = list_count(c.names);
-    int z = eng_zone((float)v, n) + delta;
+    int z = eng_zone((float)v, n) + (delta > 0) - (delta < 0);
     z = z < 0 ? 0 : z >= n ? n - 1 : z;
     return (z * 128 + 64) / n;   // the zone's centre: eng_zone() of it is z
   }
   v += delta * (func ? 8 : 1);
   return v < 0 ? 0 : v > 127 ? 127 : v;
+}
+
+namespace {
+struct ListKnob {
+  uint32_t turn_ms = 0, step_ms = 0;   // the last report, the last step
+  int acc = 0;                         // the counts since the last step, signed as the turn
+};
+ListKnob list_knobs[9];   // A..H, DATA
+bool list_paced = true;
+}  // namespace
+
+CORE_COLD void list_pacing(bool on) { list_paced = on; }
+
+CORE_COLD int list_turn(int e, int delta) {
+  if (!delta || !list_paced) return delta;
+  const int dir = delta > 0 ? 1 : -1;
+  if (e < 0 || e > 8) return dir;
+  ListKnob& k = list_knobs[e];
+  const uint32_t ms = now_ms();
+  const bool rest = ms - k.turn_ms >= kListRestMs;
+  k.turn_ms = ms;
+  if (rest || (k.acc > 0) != (delta > 0)) k.acc = 0;
+  k.acc += delta;
+  if (!rest && ((k.acc < 0 ? -k.acc : k.acc) < kListCounts || ms - k.step_ms < kListGapMs)) return 0;
+  k.acc = 0, k.step_ms = ms;
+  return dir;
+}
+
+CORE_COLD int list_turn_long(int e, int delta) {
+  return list_turn(e, delta) * (list_paced && (delta < 0 ? -delta : delta) >= kListFastCounts ? kListFast : 1);
 }
 
 // ---- the built-in machine table's pages

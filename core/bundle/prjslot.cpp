@@ -138,6 +138,7 @@ struct S {
   bool lost;                     // a LOST since the last LIST: resync from the next
   uint16_t list_seen;            // the 16 LIST messages of the list being received (bit k: first slot 8k + 1)
   uint32_t list_hash, list_prev; // this list's fingerprint, the last complete one's (0: none since the connect)
+  bool scan_err;                 // the last scan: a look the card could not answer
   bool skip_songs;               // the job leaves the songs folder (SONG RECORD runs on it: quiet's bound)
   // the queue (a deque: a question's answer puts its job in front)
   Job q[kQueue];
@@ -240,6 +241,10 @@ bool declined(int slot, const char* key) {
     if (d.slot == slot && !strcmp(d.key, key)) return true;
   return false;
 }
+void undecline(int slot) {   // the slot emptied: what was declined for its old project no longer holds
+  for (auto& d : s.declined)
+    if (d.slot == slot) d.slot = 0, s.dirty = true;
+}
 void decline(int slot, const char* key) {
   if (declined(slot, key)) return;
   for (auto& d : s.declined)
@@ -326,6 +331,7 @@ void rekey_all(const char* from, const char* to) {
   pools::rekey(from, to);   // (the pool lists: their dirty lists saved under to)
   junolib.rekey(to);        // (the JUNO and FM lists: their next writes)
   dxlib.rekey(to);
+  project_lists_rekey(to);
   um::rekey(to);            // (the user machines' slot map)
   log(CORE_STR("prjslot: the project's modules now save under %s (was %s)"), to, from);
 }
@@ -418,11 +424,12 @@ Res quiet(const char* key, uint32_t ms) {
 }
 // scan: which candidates of key exist (bit i), one look a request
 Res scan(const char* key, uint32_t* mask) {
-  if (s.i == 0) *mask = 0;
+  if (s.i == 0) *mask = 0, s.scan_err = false;
   if (s.i >= g_ncand) return kDone;
   cand_path(s.i, key, s.tmp, sizeof s.tmp);
-  if (!req(cardq::kExistsReq, s.tmp)) return kWait;
+  if (!req(cardq::kExistsReq, s.tmp, 1)) return kWait;
   if (R.got == 1) *mask |= 1u << s.i;
+  if (R.got < 0) s.scan_err = true;   // (the card could not tell: absent for the caller, but nothing concluded from it)
   ++s.i;
   return kMore;
 }
@@ -669,6 +676,7 @@ Res step_trash(Job& j, uint32_t ms) {
         s.ph = kPhRmInfo;   // (our own info.txt and the empty folder, nothing of the user's)
         return kMore;
       }
+      if (slot_of(j.a) >= 1) undecline(slot_of(j.a));
       log(CORE_STR("trash: %s (%s, %s): %d files / folders -> %s"), j.a, j.name[0] ? j.name : name_of(j.a), j.why,
           s.nops, s.tmp);
       char b[48];
@@ -715,6 +723,8 @@ Res step_move(Job& j, uint32_t ms) {
       if (!s.mask_a) {
         if (j.mark) mark_renamed(j.mark);
         unsuspect(j.b);
+        // no files under the name key: its index entry goes (it brought this move back at every connect's list)
+        if (!s.skip_songs && !s.scan_err && strcmp(j.a, project) && !is_slot_key(j.a)) projects::drop(j.a);
         return kDone;
       }
       s.ph = kPhScanB, s.i = 0;
@@ -728,6 +738,7 @@ Res step_move(Job& j, uint32_t ms) {
         sniprintf(b, sizeof b, "NOT MOVED: %s HAS FILES", j.b);
         fail_say(b);
         suspect(j.b);
+        if (slot_of(j.b) >= 1) decline(slot_of(j.b), j.a);   // (said once: not again at every connect)
         return kDone;
       }
       s.nops = 0, s.done = 0, s.stuck = 0, s.failed = false, s.sub = 0;

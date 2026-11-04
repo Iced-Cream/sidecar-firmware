@@ -4,8 +4,8 @@ Sidecar | Expander firmware - notices
 Copyright (c) 2026 trigcondition and contributors.
 
 Unofficial software. Not affiliated with, endorsed by or supported by Elektron
-Music Machines. "Analog Rytm", "Digitakt" and "Overbridge" are trademarks of their
-owner and are used only to say what this software works with.
+Music Machines. "Analog Rytm", "Analog Four", "Digitakt" and "Overbridge" are
+trademarks of their owner and are used only to say what this software works with.
 
 Licence of this repository
 --------------------------
@@ -16,9 +16,12 @@ Exceptions in this tree, as their headers state:
   plugins/sc_*/, plugins/sc_render.py   the starter user machines: MIT
                                         (SPDX headers in each file)
   plugins/nusaw/, plugins/vox/,         user machines ported from MIT-licensed
-  plugins/hush1/, plugins/raffo/        instruments: MIT (each folder's LICENSE,
-                                        LICENSE.* and NOTICE)
+  plugins/hush1/, plugins/raffo/,       instruments: MIT (each folder's LICENSE,
+  plugins/sophie/                       LICENSE.* and NOTICE)
   plugins/mdkit/                        the MD user machine's glue: MIT (its NOTICE)
+  plugins/modele/                       the MODEL E user machine: GPL-2.0-or-later as a
+                                        whole, like ours, because it builds ModelDigi in
+                                        (its LICENSE and NOTICE)
   plugins/sc_grain/texture_data.h       the GRAIN texture sample: CC0 1.0
                                         (plugins/sc_grain/LICENSE-texture.txt)
   core/ui/fonts/                        own glyphs (core/ui/fonts/LICENSE)
@@ -37,6 +40,7 @@ Licence texts: licenses/.
 In tree (ported or adapted; notices next to the code):
   core/fx/rings_fx.h            Mutable Instruments Rings / stmlib (MIT)
   core/fx/cloudseed_fx.h        Cloud Seed, Ghost Note Audio (MIT)
+  core/fx/sat_fx.h              curves after Airwindows, Chris Johnson (MIT)
   core/fx/ (others)             see core/fx/THIRD_PARTY_LICENSES.txt
   sdk/rmp/shim/audio/           derived from PJRC Teensyduino core and Teensy
                                 Audio Library (MIT): sdk/rmp/shim/audio/NOTICE
@@ -48,6 +52,9 @@ In tree (ported or adapted; notices next to the code):
                                 unchanged at 96157fe (third_party/mdkit/VENDORED.md)
   third_party/nam/              TONE3000's NAM A2-Lite engine and .namb reader (MIT),
                                 vendored trimmed (third_party/nam/README.md)
+  plugins/modele/third_party/modeldigi/
+                                ModelDigi's oscillator bank (GPL-2.0-or-later),
+                                vendored unchanged at c412bdf (its VENDORED.md)
 
 Fetched at build time:
   Mutable Instruments eurorack  Plaits, stmlib (MIT)        sim/plaits/build.sh

@@ -41,7 +41,7 @@ is frozen and has none of it. No hardware was used. Tags:
 | **SFZ** (`.sfz` + WAV/FLAC/OGG/AIFF) | plain-text mapping: `<control> <global> <master> <group> <region>` headers, `opcode=value` | open, documented at sfzformat.com (community spec; v1 by rgc:audio, v2 by Cakewalk/ARIA) | the widest: free and commercial libraries ship it (Sonatina, VSCO 2 CE, Salamander piano, Versilian, Karoryfer, Pianobook exports), sfizz / LinuxSampler / Sforzando / ARIA play it; Elektron's Tonverk imports it | **native** |
 | **Decent Sampler** `.dspreset` (XML) + samples | `<DecentSampler><groups><group><sample path rootNote loNote hiNote loVel hiVel start end loopStart loopEnd .../>` with ADSR on groups, UI and effects elements | the format is documented by Decent Samples (the player is free, not open source) | the Pianobook community, many free instruments | **second** (same zone model: a small XML reader maps it to `Region`) |
 | **SoundFont 2** `.sf2` | one RIFF file: samples (16/24-bit) + presets/instruments/generators/modulators | open spec (E-mu/Creative SoundFont 2.04) | General MIDI sets, many old libraries | later (one file is easy to copy; the generator model is larger; streaming one big file works the same) |
-| **Tonverk** `.elmulti` | TOML: `[[key-zones]]` with `pitch`, `key-center`, `[[key-zones.velocity-layers]]` (`velocity`, `strategy` e.g. `'Forward'`), `[[...sample-slots]]` (`sample` = a WAV in the same folder) | not officially documented; known from users' files on Elektronauts; the Tonverk manual's Appendix E "SFZ Support" calls the native format the primary one and imports simple SFZ | the Tonverk factory library; community tools (Multisample Architect exports `.elmulti`; tv7 renders DX7 patches) | read-only converter later, if users ask; the zone model maps 1:1 |
+| **Tonverk** `.elmulti` | TOML: `[[key-zones]]` with `pitch`, `key-center`, `[[key-zones.velocity-layers]]` (`velocity`, `strategy` e.g. `'Forward'`), `[[...sample-slots]]` (`sample` = a WAV in the same folder) | not officially documented; known from users' files on Elektronauts; the Tonverk manual's Appendix E "SFZ Support" calls the native format the primary one and imports simple SFZ | the Tonverk factory library; community tools (Multisample Architect exports `.elmulti`; tv7 renders DX7 patches) | **read** (0.4.0, BACKLOG 7q): `core/msamp/elmulti.cpp`, into the same `Region` model - see "2b" below |
 
 How Tonverk users make multisamples [public, forums]: the Tonverk's own sampling (its file names carry the note
 number and name, an auto-sampling convention), a DAW plus a hand-written SFZ dropped in a folder on the card (the
@@ -74,6 +74,26 @@ The test instrument is ours (synthesised, CC0).
 Not supported (ignored, counted, the first one logged on load): filters (`fil_*`, `cutoff`), LFOs/EGs other than amp,
 `group`/`off_by` choke groups, CC conditions (`locc`/`hicc`), crossfades (`xf*`), `sw_*` keyswitches, `rt_decay`,
 FLAC/OGG files. The load log line names how many and the first: `... 3 opcodes ignored (first: fil_type) ...`.
+
+## 2b. Tonverk `.elmulti` (`core/msamp/elmulti.h`) [key set seen in two Tonverk-made instruments; conventions below unverified]
+
+`parse()` hands text that has a `[[key-zones]]` table to `parse_elmulti`, so the MULTISAMPLE load, the INSTRUMENTS pool
+and the bundles read it with no other change; the pools and the browser take the `.elmulti` extension beside `.sfz`.
+Written from the public, reverse-engineered description (asatamax/tonverk-elmulti-converter `docs/ELMULTI_FORMAT_SPEC.md`,
+ISC; no code copied) and the example posted on Elektronauts. Fields: `version`, `name`; per zone `pitch`, `key-center`;
+per layer `velocity` (0..1), `strategy`; per slot `sample`, `loop-mode` (`'Forward'` / `'Off'`), `loop-start`,
+`loop-end`, `loop-crossfade`, `keep-looping-on-release`, `trim-start`, `trim-end`. Decisions where the format is silent:
+- Key ranges are not stored: each `pitch` is a root, the keys between two roots go to the nearer one (the middle one of
+  an odd gap to the lower), the first zone reaches 0, the last 127. `key-center` is the sample's root (a fraction becomes
+  `tune`).
+- A layer's `velocity` x 127 (rounded) is its lower bound, the next layer's the end of it, the lowest layer takes
+  everything below; the slots of a layer are round robin.
+- `loop-mode` Forward = loop_sustain (with `keep-looping-on-release` loop_continuous), Off = no_loop, none = one_shot;
+  `loop-start` / `loop-end` are used as frames as they stand; `loop-crossfade` is ignored (counted). `trim-start` is the
+  region's `offset`, `trim-end` an exclusive end (`end` = `trim-end` - 1).
+- Seen in two real files (11 single-layer zones 6 semitones apart from C1, `velocity = 0.99607843`, loop-mode Forward, loop-crossfade 32, keep-looping-on-release true, names like `<name> F#1 V110.wav`): every key is one of the above, nothing unknown. The 32-frame (0.7 ms) crossfade is ignored: a hard loop jump, audible only if the points are not matched. A simple crossfade: a `loop_xfade` frame count in `Region`, and at the wrap blend the last N frames before `loop_end` with the N frames before `loop_start` (equal power); not built. The instrument may sit one folder deeper (`/MULTISAMPLE/elmulti/<name>/`): the browser and INST take any folder.
+- Samples are relative to the file's folder; `strategy` is ignored. Unverified: the loop-end / trim-end conventions, and
+  anything Tonverk writes that the description does not list.
 
 ## 3. The machine (`core/msamp/msamp.h`)
 
@@ -145,6 +165,13 @@ Opening an instrument = the `.sfz` text, one header read a sample, then the head
 "path frames": the frames after the head, the preloaded loop part left out, so reading and writing never alias.
 `sidecar_load=ram` / auto (whole <= 8 MB) loads every sample whole; refused with a warning, and streamed, when it does
 not fit (the pools build: the pool RAM).
+
+**Kept after the first play** (BACKLOG 7ad, docs/superpowers/specs/2026-10-30-load-on-first-play.md): a sample that
+streamed once is brought whole into the pool RAM in the background (one read at a time, only while no stream needs the
+card; the head and loop part copied, a stream's ring fed from it once it is past), and new notes play it from RAM, no
+card. The note in flight stays on its head and ring. When anything needs room in the pool RAM, the least recently played
+one no note sounds goes back to its head, if that makes the room. `msamp=keep:0`, or `sidecar_load=stream`
+for an instrument: not kept. `msamp` shows the count.
 
 **Underruns.** A note whose ring runs dry outputs silence for the missing frames with a 1 ms fade out and in, keeps its
 time (the writer skips ahead to where the note reads), and counts an underrun (note-blocks, in `msamp` and the stats

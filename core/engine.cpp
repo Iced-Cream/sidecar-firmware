@@ -16,6 +16,7 @@
 #include "bundle/projects.h"
 #include "bundle/rename.h"
 #include "msamp/msamp.h"
+#include "presets/preset_index.h"
 #include "msamp/sdtest.h"
 #include "nmach.h"
 #include "livein/livein.h"
@@ -39,6 +40,9 @@ CORE_COLD bool engine_begin() {
   sample_ram_init();
   if (card_ok) junolib.begin(&cards.sd(), log);
   if (card_ok) dxlib.begin(&cards.sd(), log);
+#if CORE_MSAMP
+  if (card_ok) presets::begin();
+#endif
   if (card_ok) project_load();
 #if CORE_MSAMP
   // the project's LFOs and inserts (core/lfo.h, core/fx/insert.h): its files into the RAM store first, by the card
@@ -80,7 +84,7 @@ CORE_COLD bool engine_begin() {
 // ---- the idle steps' cost (engine.h IdleSlow)
 namespace {
 const char* g_slow_name = "";
-uint32_t g_slow_us = 0;
+uint32_t g_slow_us = 0, g_slow_sum = 0;
 template <class F>
 CORE_COLD bool timed(const char* n, F f) {
   uint32_t t = now_us();
@@ -90,19 +94,24 @@ CORE_COLD bool timed(const char* n, F f) {
 }
 }  // namespace
 CORE_COLD void idle_note(const char* name, uint32_t us) {
+  g_slow_sum += us;
   if (us > g_slow_us) g_slow_us = us, g_slow_name = name;
 }
 CORE_COLD IdleSlow idle_slowest_take() {
-  IdleSlow r = {g_slow_name, g_slow_us};
-  g_slow_name = "", g_slow_us = 0;
+  IdleSlow r = {g_slow_name, g_slow_us, g_slow_sum};
+  g_slow_name = "", g_slow_us = 0, g_slow_sum = 0;
   return r;
 }
 #define T_(n, e) timed(n, [&]() -> bool { return (e); })
 #define TV_(n, e) timed(n, [&]() -> bool { e; return false; })
 
 CORE_COLD bool idle_prepare() {
-#if CORE_MSAMP
+  TV_("streams", streams_step());
+  TV_("lists", project_lists_step());
   TV_("closes", pool_closes_step());
+  TV_("fxslots", sendfx_step());
+#if CORE_MSAMP
+  TV_("presets", presets::step());
 #endif
   return T_("prepare", prepare_pending());
 }
@@ -122,10 +131,10 @@ CORE_COLD bool idle_save() {
   if (T_("kits", kits::tick())) return true;   // the Rytm's SAVE / RELOAD KIT: the per-kit files' saved copies (core/bundle/kits.h)
 #endif
   // 0.3.0 power-cut safety: the posted settings write first (fmt.h), so one writer owns the shared buffer at a time.
-  // A write merely held (the card core held up past kTakeBackUs, phase 3) does not stop the rest: post_begin is null
-  // while the slot is busy, so no saver below can touch its buffer, and the sequencer's loads, the SONG journal and the
-  // queued saves need no card core of their own here - returning would freeze them for as long as the hold lasts
-  if (T_("post", fmt::post_step()) && !fmt::post_stalled()) return true;
+  // A write that only waits does not stop the rest: post_begin is null while the slot is busy, so no saver below can touch
+  // its buffer, the sequencer's loads, the SONG journal and the queued saves need no card core of their own here, and
+  // true from here would keep idle_stream out for as long as the write waits (a burst of writes: DSP and MULTISAMPLE dry)
+  if (T_("post", fmt::post_step())) return true;
   if (fx::card_dirty && fmt::post_begin()) {   // (the slot or the queue busy: card_save would not post - not a step)
     TV_("fxsave", fx::card_save());
     return true;
@@ -140,6 +149,7 @@ CORE_COLD bool idle_save() {
 #endif
 #if CORE_POLY
   if (T_("keys", keys::save())) return true;
+  if (leaving) seq::save_due();
   if (T_("seq", seq::idle())) return true;   // the sequencer's pattern files: load, prefetch, save
   if (T_("song", song::idle())) return true;  // SONG RECORD: the journal, the song file, a load, a recovery (core/song/song.h)
 #endif
@@ -148,28 +158,29 @@ CORE_COLD bool idle_save() {
 #else
   bool ix = false;
 #endif
-  if (project_dirty) {
+  if (project_dirty && fmt::post_begin()) {   // (the slot or the queue busy: project_save would not post - not a step)
     TV_("project", project_save());   // (with the index: the same project change's two small files, one step)
     return true;
   }
   bool settled = !lfo::dirty() && !fx::card_dirty;
 #if CORE_POLY
-  settled = settled && !ins::settings_dirty(nullptr);
+  settled = settled && !ins::settings_dirty(nullptr) && !seq::unsaved();
 #endif
-  return device::step(settled) || ix;   // a change of state folder: the last write, behind all of the above
+  return T_("device", device::step(settled)) || ix;   // a change of state folder: the last write, behind all of the above
 }
 
-// With the sample RAM: a stream within ~85 ms of running dry first, then a load step (one open or one 8 KB read),
-// then the streams' top-ups.
-// MULTISAMPLE's streams and loads (one card job) before the streams' top-ups.
+// With the sample RAM: a stream within ~85 ms of running dry first, then MULTISAMPLE's streams and loads, then a load
+// step of the shared cache (one card request), then the streams' top-ups. (7ad: the cache's load came before
+// MULTISAMPLE; its step says true also while it waits for the card, so a whole load kept the streams from running.)
 CORE_COLD void idle_stream() {
-  if (psram) {
-    if (T_("refill", refill_neediest(4096)) || T_("psram", psram->step())) return;
-  }
+  if (psram && T_("refill", refill_neediest(4096))) return;
 #if CORE_MSAMP
   TV_("livein", livein::step());               // LIVE IN's news (a feedback mute, a measure's result) into the log: no card, no wait
   if (T_("sdtest", sdtest::step())) return;   // the SD card test while it runs (msamp/sdtest.h)
   if (msamp::step()) return;   // (timed inside, by part)
+#endif
+  if (psram && T_("psram", psram->step())) return;
+#if CORE_MSAMP
   if (T_("nm", nm::step())) return;   // WAVETABLE's and GRANULAR's loads (core/nmach.h)
 #endif
 #if CORE_POLY

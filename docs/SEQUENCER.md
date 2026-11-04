@@ -537,22 +537,47 @@ in sim/protocol.py. Emulator only: nothing was flashed. Tags as above.
    - **SRC**: A..H lock P1..P8 of the track's Sidecar machine.
    - **SMPL**: A..H lock P9..P16 (for example CHD INV SPR VOI).
    - **FX**: A..D lock FX1 P2..P5, E..H lock FX2's.
-   The page shows **LOCK SRC** (or SMPL / FX) with the machine's knobs. A locked knob is framed and its label inverted,
+   - **FLTR**: A..E lock the arpeggiator's MODE SPD RNG GATE SWNG, for that step only ("Arp locks" below).
+   The page shows **LOCK SRC** (or SMPL / FX / ARP) with the machine's knobs. A locked knob is framed and its label inverted,
    as the Rytm marks a p-locked knob. The bottom bar shows the step and the value (`S5 LEV:34 LOCK`). Turning a knob
    locks it on every held step (FUNC: x 8). **NO** clears every lock of the held steps; **an encoder's push** clears
    that knob's lock. Letting go of the trigs ends the lock page; a held step is not toggled.
    - Locking an empty step makes a **lock trig**: locks without notes, which change the sound under a ringing note.
-   - FLTR, AMP and LFO show a page explaining that the Rytm's analog side and the Sidecar's LFOs are not locked per
-     step (below).
+   - AMP and LFO show a page explaining that the Rytm's analog side and the Sidecar's LFOs are not locked per step
+     (below).
 5. **Where locks show:**
    - trig LEDs: a step with locks is magenta (a lock trig dim magenta);
    - the remote SEQ page: a tick over the step strip per lock (1..6 px), a lock trig as a hollow box;
    - the touchscreen piano roll: a lock lane over the velocity lane (a bar per locked step, brighter with more locks).
 
+### Arp locks [measured, core/tests/test_arp.cpp, test_seqx.cpp; core/arp/arp.h]
+
+On seq tracks only: a plain Rytm track's arp is 10 bits in the sound, not a Rytm parameter.
+
+- **Hold a step, press FLTR:** **LOCK ARP**, A MODE, B SPD, C RNG, D GATE, E SWNG, the sound's values until turned, each to the
+  end of its table. The bottom bar names the value (`S3 SPD:1/32 LOCK`). NO, an encoder's push and COND (a long push) as any lock.
+  FUNC + push says they do not slide. The touchscreen's **ARP** tool shows and sets them on the selected note's step, the first
+  key of each row is no lock (`seq=alock:T:S:F:V`, F 0..4; `seq=lock` params 33..37). The web lists no locks.
+- **A slot like any other:** params 32..36, in the step's 12, copied, pasted and cleared with the step, a lock trig on an empty
+  step included: that is how a chord held over several steps changes on one of them.
+- **That step only.** Other locks hold to the next trig; these end at the next step, an empty one too. A step with no arp lock, a track
+  with none: the arp as it was, bit for bit.
+- **Where:** the window is the step's place on the grid, swing and DLY left out, as the arp's grid has neither: from 2 ms before it
+  (earlier when a note's micro starts earlier) to 2 ms before the next step, so a grid point on the step takes them even when the
+  grid is another track's clock. The step's whole lock set goes at that start, its P and FX locks too, ahead of swing or DLY. A note
+  delayed past the window plays by the next step's values. A shared voice: the last step that locked it.
+- **MODE:** locked to OFF with the sound's on: the step's own notes play as without an arp, a chord held from before rests and goes on
+  after the step. Locked on with the sound's OFF: the step's notes arpeggiate with the sound's other values; a note longer than
+  the step ends with it. With no grid point left in the step (an odd step on a swung track, a slow SPD, a late note) the first note
+  plays at the note's own place. A lock with no MODE on an arp that is OFF does nothing. RNG or MODE moving under a sounding note: the note
+  keeps its pitch for its off.
+- **File:** a track with any carries `kBlkArp` = 14, required, `<track>`: version 4, so an older Sidecar locks the file (never plays it
+  without them, never saves over it). A value past a table locks it too, block or none. Without arp locks a pattern's bytes are as before.
+
 ### How the locks play [measured, core/tests/test_seq.cpp, sim/seq_e2e.py lock]
 
 - Storage: per step up to 12 locks {param, 14-bit value}. Param 0..15 is the machine's P1..P16, 16..23 is FX1 / FX2
-  P2..P5. They live in the `.sqp` file, now **version 2** (a lock is 3 bytes). Version-1 files still load: their lock
+  P2..P5, 24..31 the INSERT's, 32..36 the arp's. They live in the `.sqp` file, now **version 2** (a lock is 3 bytes). Version-1 files still load: their lock
   bytes were never written, and they are read as an integer value. A step with only locks is stored too. Copy / paste
   / clear / undo of patterns, tracks, pages and trigs carry the locks with the steps.
 - Playback: the planner pushes each step's lock set as an event on the step's frame. When notes start early (negative
@@ -696,8 +721,8 @@ The Rytm half is rytm-mods 0026 "1040" (design.md). Nothing was flashed. Tags as
     1:2, 2:2, 1:3 .. 8:8, then 1% .. 99%.
   - TRIG view, nothing held: the track's defaults for new steps, NOTE VEL LEN, and SWING (50..80).
 - **Held trig + a page key** as before: SRC / SMPL / FX the lock pages with the held step's values (locked knobs framed);
-  FLTR / AMP / LFO the page saying they are not locked per step (the Rytm's analog side; 1036 "Not built"). Release:
-  back to the view you were on.
+  FLTR the arp's (0.4.0; before it the page below); AMP / LFO the page saying they are not locked per step (the Rytm's
+  analog side; 1036 "Not built"). Release: back to the view you were on.
 - **Trig conditions** (core/seq seq.h `kCond*`, `cond_pass`): per step, evaluated by the planner at the step:
   - A:B: true on loop A of every B, loops counted per track from PLAY or a pattern switch (the step clock's absolute
     step / the track's length);
@@ -831,8 +856,15 @@ built since (rui1048, below, "E0 on the Rytm"); the RANDOM page waits for the se
   Elektronauts threads on ALLOCATION]: **VOICES** 0 AUTO / 1..8, **ALLOCATION** REASSIGN (default) / ROTATE / RESET,
   **UNISON** 1..8 with **DETUNE** (127 = +-50 cents at the stack's edges) and **SPREAD** (pan, on a voice on OUT PRE /
   POST), **GROUP** 0..4 (the data model of a poly group across tracks; not played yet - docs/POLYPHONY.md 7).
+- **PAD OCT (encoder G, `seq=poly:T:oct=-3..3`; BACKLOG 7g):** the Rytm's CHRO pads reach C2..B5 only. PAD OCT adds
+  12 x OCT to the pitch the pads (CHRO notes bound to the track's voice) and the Rytm's pad 0x04 notes make on that
+  track's voice, so the pads reach 0..119 with no firmware change. The recorded steps hold the shifted pitch (what
+  sounds); the chord the pads make is written back to the Rytm as root - 12 x OCT (clamped to 36..84). A host keyboard
+  (`poly=bind`) and the sequencer's own playback are not shifted; steps already recorded do not move when OCT changes.
+  Stored as a 8th byte of the pattern's poly block (written only when OCT is not 0, so a file without OCT stays byte for
+  byte as before) and as the 8th number of `poly=` (optional).
 - **Where it is stored (decided):** in the pattern (a v4 block per track), and as the Rytm track's **default** in
-  `tracks.txt` (`poly=T:V,A,U,D,S,G`): a track plays its pattern's config, else its default - the last one set on it in
+  `tracks.txt` (`poly=T:V,A,U,D,S,G,O`; O, the PAD OCT, is optional when read): a track plays its pattern's config, else its default - the last one set on it in
   this project. So a track keeps its voicing across patterns as an A4 keeps POLY CONFIG in its kit, a pattern may still
   differ, and nothing new is written to the card on the control core (the pattern's and the tracks' existing saves).
   Per kit was the alternative: the A4's place, but the Sidecar's seq data has no per-kit file, and a new per-kit card

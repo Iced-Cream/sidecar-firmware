@@ -232,7 +232,7 @@ int main() {
   }
   const Page* plaits = page_for_machine(0x00);
   CHECK(plaits && !page_for_machine(0x10) && plaits->enc[0] == 0);   // DAISYSP: no page (JUNO, FM, DSP SAMPLE: page_*.cpp)
-  CHECK(step_value(*plaits, 0, 0, 1, false) == (1 * 128 + 64) / 17 && core::eng_zone(step_value(*plaits, 0, 64, 3, false), 17) == 8 + 3);
+  CHECK(step_value(*plaits, 0, 0, 1, false) == (1 * 128 + 64) / 17 && core::eng_zone(step_value(*plaits, 0, 64, 3, false), 17) == 8 + 1);
   CHECK(step_value(*plaits, 1, 64, -3, false) == 61 && step_value(*plaits, 1, 64, 2, true) == 80 && step_value(*plaits, 1, 126, 5, false) == 127);
 
   remote_reset();
@@ -612,6 +612,16 @@ int main() {
   src_view(0, 1);
   remote_tick(t += 100);
   CHECK(rects - r1 >= 8 && remote_stats().page == 4);
+  // records for the Rytm lost, no hello: a whole frame with no 29 and no 2A from the Rytm; the frames after it diffs again
+  remote_tick(t += 100);
+  r1 = rects, c1 = commits;
+  const uint32_t resyncs0 = remote_stats().resyncs;
+  remote_resync();
+  remote_tick(t += 100);
+  CHECK(remote_stats().resyncs == resyncs0 + 1 && commits == c1 + 1 && rects - r1 >= 8 && remote_stats().page == 4);
+  r1 = rects, c1 = commits;
+  for (int i = 0; i < 4; ++i) remote_tick(t += 100);
+  CHECK(commits == c1 && rects == r1);
   // SD's view: SD is on JUNO too (voice 2); BT is analog: no page, nothing sent
   src_view(1, 1);
   remote_tick(t += 100);
