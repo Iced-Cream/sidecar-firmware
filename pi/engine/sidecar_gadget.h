@@ -274,7 +274,7 @@ private:
 	unsigned m_nHoldSecs;				// mirrorhold=S: the box gone this long before the Sidecar comes back
 	void MirrorSwitch (boolean bToMirror);		// task level: leave the bus
 	// the box's IN blocks for the computer (xHCI IRQ -> gadget IRQ, both core 0)
-	static const unsigned MirInDepth = 8;
+	static const unsigned MirInDepth = 64;		// 8 ms: 8 (1 ms) dropped blocks while a plugin was open (U3 run 4 [hw])
 	u8 m_MirIn[MirInDepth][384];
 	unsigned m_nMirInHead, m_nMirInTail;
 	// the forwarded class / vendor request (gadget IRQ -> core 0's loop -> the box -> xHCI IRQ)
@@ -284,7 +284,7 @@ private:
 	volatile unsigned m_nCtlSeq;
 	struct TMirStats
 	{
-		unsigned nInBlocks, nInSent, nInDrop, nOutBlocks, nOutBad, nOutExtra, nCtl, nCtlStall, nCtlAbort, nCtlLate;
+		unsigned nInBlocks, nInSent, nInDrop, nOutBlocks, nOutBad, nOutExtra, nOutAnchor, nCtl, nCtlStall, nCtlAbort, nCtlLate;
 		unsigned nPipeIn, nPipeInDrop, nPipeOut, nPipeOutDrop, nAltBad;
 	} m_MirStats;
 #endif

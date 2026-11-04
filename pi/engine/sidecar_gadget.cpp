@@ -1259,10 +1259,17 @@ void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 	m_MirStats.nOutBlocks++;
 	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
 	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
-	u16 nComp = ob::block_counter (p);
+	// The offset is set again when this block would be due in a block the Pi has already sent (the computer's stream
+	// fell behind the box's, as when IN blocks to it were dropped): counted as "anchor" in the mirror line.
+	u16 nComp = ob::block_counter (p), nPi = CObUsb::OutCounter ();
+	if (m_bExtraOff && (s16) (u16) (nComp + m_nExtraOff - nPi) < 0)
+	{
+		m_bExtraOff = FALSE;
+		m_MirStats.nOutAnchor++;
+	}
 	if (!m_bExtraOff)
 	{
-		m_nExtraOff = (u16) (CObUsb::OutCounter () - nComp + m_nExtraMargin * ob::kFramesPerBlock);
+		m_nExtraOff = (u16) (nPi - nComp + m_nExtraMargin * ob::kFramesPerBlock);
 		m_bExtraOff = TRUE;
 	}
 	if (m_MirExtra.push_block (p, (u16) (nComp + m_nExtraOff))) m_MirStats.nOutExtra++;
@@ -1409,10 +1416,10 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	unsigned nOutUnder = m_Stats.nOutUnder, nOutOver = m_Stats.nOutOver;
 	LeaveCritical ();
 	pLogger->Write (From, LogNotice,
-		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u | "
+		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
 		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u | alt bad %u | midi from %u to-mac %u to-rytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
 		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm);
 }
