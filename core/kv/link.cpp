@@ -57,6 +57,9 @@ bool from_host(const uint8_t* m, int n) {
   if (n < 8 || m[4] != kCmd) return false;
   ++s_st.in;
   if (locks::is_lock_op(m[6])) return locks::sysex(m, n);   // the control core's own: the ticks arrive here too
+  // the companion's HELLO starts its session: the sets it declared before are gone with it (it declares them again
+  // once answered). Here and not at the screen's 35, which may come after the HELLO and would wipe the new sets.
+  if (m[6] == kOpHello) locks::reset();
   if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
   return true;
 }
@@ -97,7 +100,8 @@ Stats stats() { return s_st; }
 
 #if CORE_GENERIC
 static bool store_fn(const uint8_t* d, int len) { return d[4] == kCmd && (from_host(d, len), true); }
-static void link_fn(const char* why) { if (why && !strcmp(why, "hello")) hello(); }
+// a link reset for another box: the sets go; the Rytm's 35 is not the store session's start (the HELLO is)
+static void link_fn(const char* why) { if (!why || strcmp(why, "hello")) hello(); }
 bool attach_generic() {
   gen::set_store(store_fn);
   bool ok = gen::on_link(link_fn);

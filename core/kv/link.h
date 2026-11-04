@@ -14,8 +14,10 @@ constexpr int kMsgMax = 160;   // a WRITE chunk: 8 header + 6 + 128 data + F7
 bool from_host(const uint8_t* m, int n);   // control core: a 51 message; false: not 51 / queue full (counted)
 int card_step(int max_ops);                // card core: up to max_ops queued ops run; returns how many
 int host_step(int max_msgs);               // control core: answers sent; returns how many
-void hello();                              // the Rytm's hello (35): the lock sets forgotten, the store index kept
-// The stripped engine (CORE_GENERIC): 51..53 through core::gen::set_store, the hello through gen::on_link, the locks on
+void hello();                              // the link restarted: the lock sets forgotten, the store index kept (a
+                                           // store HELLO does the same in from_host; the Rytm's 35 does not)
+// The stripped engine (CORE_GENERIC): 51..53 through core::gen::set_store, a link reset (another box, not the Rytm's
+// 35) through gen::on_link, the locks on
 // the clock and the processor slots (locks::attach). The platform then calls card_step (card core) and host_step
 // (control idle). Boot, once, after gen::begin(). False: a listener had no room.
 bool attach_generic();

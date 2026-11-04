@@ -217,7 +217,6 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     kv::link::from_host(d, len);
     return;
   }
-  if (len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54 && d[4] == 0x35) kv::link::hello();   // the lock sets again
   // F0 7D 52 54 cmd voice ...
   if (len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54 && d[4] == 0x27) {   // FXIN_STATE
     if (len >= 7 && d[5] <= 1) fxin::on_state(d[5]);

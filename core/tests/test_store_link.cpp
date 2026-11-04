@@ -1,6 +1,6 @@
 // core/tests/test_store_link.cpp - 51 STORE through the engine: host_sysex on the control side, the record store on
 // the card (core::File / Fs, fmt::write_atomic, a temp folder as the card), the answers through hooks.to_rytm; the lock
-// ops on the control side; the Rytm's hello (35) forgetting the lock sets and keeping the records.
+// ops on the control side; the companion's HELLO forgetting the lock sets and keeping the records (the Rytm's 35 leaving them).
 #include <sys/stat.h>
 #include <cstring>
 #include <vector>
@@ -61,12 +61,13 @@ int main() {
   g_out.clear();
   send({locks::kSet, 0, 12, 1, 0, 4});
   CHECK(g_out.empty() && locks::declared(0));
-  // the Rytm's hello: the lock sets go, the records stay (a fresh HELLO sees 1)
+  // the Rytm's hello (35) leaves the sets; the companion's HELLO starts a session: the lock sets go, the records stay
   std::vector<uint8_t> hello35 = {0xF0, 0x7D, 0x52, 0x54, 0x35, 0x01, 0, 0, 0, 0xF7};
   host_sysex(hello35.data(), (int)hello35.size());
-  CHECK(!locks::declared(0));
+  CHECK(locks::declared(0));
   g_out.clear();
   send({kv::kOpHello, 0, 0, 2, 0x7D, 0x6F});
+  CHECK(!locks::declared(0));
   CHECK(g_out.size() >= 1 && g_out[0][6] == kv::kOpHelloAck && ((g_out[0][8] << 7) | g_out[0][9]) == 1);
   // KEEP nothing: the record is removed from the card
   g_out.clear();
