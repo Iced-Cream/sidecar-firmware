@@ -1,9 +1,9 @@
-// core/msamp/cardq.h - one card-I/O queue (docs/SAMPLING.md "The card queue"): the streaming notes' card work
-// (MULTISAMPLE's opens and reads, msamp.h) posted by the control core, run by one card core in priority order before
-// the lower ones (the recorder's writes, then file uploads) are let at the card.
+// core/msamp/cardq.h - one card-I/O queue: the control core's card work (51 STORE's ops, the atomic writes, the RAM
+// store's fills; once the voice engine's streams too) posted by the control core, run by one card core in priority
+// order before the lower ones (file uploads) are let at the card.
 //
 // Why: Circle's EMMC driver transfers by PIO with busy-waits and FatFs holds a spin lock per volume for a whole call
-// (docs/MULTISAMPLE.md "Where it runs on Circle"). With the stream reads on core 3 and the recorder's 192 KB writes on
+// (measured in the voice engine, 2026-10). With the stream reads on core 3 and the recorder's 192 KB writes on
 // core 0, a read that came during a write spun until it ended (100-137 ms, measured on the Pi), core 3's MIDI and
 // SysEx waiting with it, and the lock's order was whoever spun first. Now:
 //   - the control core (core 3) never touches the card for a stream: it posts a request and takes the result on a

@@ -1,4 +1,4 @@
-// core/store/store.h - the RAM store (docs/superpowers/specs/2026-10-26-ram-store-design.md): one project's card
+// core/store/store.h - the RAM store (docs/pi-engine.md "The RAM store"): one project's card
 // files held in RAM as bytes keyed by path, so the control core (core 3) reads them without touching the SD card (every
 // card call there is an audible dropout). The card core fills it (put / mark); the control core reads it (get).
 //

@@ -1,5 +1,9 @@
 # The Pi engine on a Raspberry Pi 5 (first build, 2026-10-19)
 
+> **Since 2026-11-04 the engine is generic services only** (`docs/pi-engine.md`): no voices, no display, no touch.
+> The build, the SD card, the serial cable, the kernel updates and the USB device side below still apply; the
+> measurements and the checklist's voice, display and touch items are a record of the engine as it was (`3a8bf7d`).
+
 Status: **runs on a Pi 5** (*measured* 2026-10-19: Rytm, voices, remote UI, web UI over Ethernet, replug, Wi-Fi);
 the HDMI display shows the UI with touch (measured, at 1920x1080 unscaled); the 800x480 UI scaled to it is measured working (slightly soft); the DSI display (official 7" v1 and compatibles, through Circle's `addon/rp1dsi`) is built, not yet run ("DSI display"). Everything below about the hardware is *inferred* from Circle's sources,
 its README and the Pi 5 device tree, unless marked *measured*. The Pi 4 build of the `pi5` branch was unchanged (same
@@ -185,83 +189,11 @@ an empty `/Plugins`.
 dual card on either board; `[pi4]`/`[pi5]` as read by the Pi 4's `start4.elf` (0641c5bf) and the Pi 5's EEPROM;
 the Wi-Fi firmware under the Pi 5's names; `sdboot.py install` / `pi5-try` / `pi5-commit` on a Pi 5; tryboot on the
 Pi 5 at all.
-## HDMI display
+## Display
 
-*Measured* (2026-10-19, Pi 5, Waveshare HDMI LCD with its USB touch):
-
-1. Card from `make-sd-pi5.sh` (no HDMI lines): no picture ("no signal"); log `display: firmware 0 display(s): (display
-   id not answered) -> frame buffer on 0 0x0 FAILED`. The firmware saw no display at power-on, so Circle made no
-   frame buffer (and the USB touch, `WaveShare WS170120`, was never bound).
-2. With `hdmi_force_hotplug=1` (and the lines below) in `[pi5]`: picture and USB touch work, but the firmware's frame
-   buffer is **1920x1080** (`display: 1920x1080, input touch (USB)`): it ignored `framebuffer_width/height` and
-   `hdmi_cvt`. The 800x480 UI sat in the top-left corner, small (the panel downscales the 1080p signal).
-
-On the Pi 5 Circle cannot choose the HDMI mode: the firmware sets it at power-on and the kernel only gets that frame
-buffer (Circle's Pi 5 notes: "no configuration in config.txt, cannot set display resolution from application").
-No documented Pi 5 option was found that gives the firmware frame buffer a custom size: reports say `hdmi_mode`,
-`hdmi_force_mode`, `hdmi_timings` and `gpu_mem` have no effect on the Pi 5 (Raspberry Pi forum t=380434, Volumio
-forum), and here `framebuffer_width/height` and `hdmi_cvt` did not either (*measured*). `hdmi_force_hotplug=1` is
-the line that matters.
-
-So the engine scales on the Pi 5 (`pi/ui/sidecar_display.cpp`, `RASPPI >= 5` only; the Pi 4 draws as before):
-
-- LVGL draws at the **UI size**: `width=`/`height=` (or `res=800x480|1024x600`) from `cmdline.txt` if given, else when
-  the frame buffer is bigger than 1024x600 **1024x600** if the HDMI display's EDID prefers 1024x600 (a 1024x600 panel;
-  *inferred*, docs/pi-display.md "Screen sizes"), else **800x480**; else the frame buffer's size (then nothing is
-  scaled). Never bigger than the frame buffer. The pages have an 800x480 and a 1024x600 layout; a bigger UI size draws
-  the 1024x600 one centred in it.
-- Each flushed area is scaled nearest-neighbour to the whole frame buffer, per axis (800x480 on 1920x1080: x 2.40,
-  y 2.25; the panel stretches the 16:9 signal back to its 5:3). Only LVGL's dirty areas are scaled; each UI row is
-  scaled once, its repeated rows copied, 64 frame-buffer rows per DMA copy. The boot screen is drawn at the UI size
-  and scaled the same way. A full-screen redraw writes 4 MB of frame buffer (cost *not measured*: see the stats
-  line's `longest update`).
-- Touch is mapped to the UI size (the digitizer covers the panel, so this needs no calibration); a mouse's frame
-  buffer coordinates are scaled down to it.
-- With 0 displays reported the engine logs why and asks the firmware again when the UI starts (about 1.8 s later).
-
-config.txt lines for the Pi 5 (for the dual card: in `[pi5]`, or under `[all]` as on the Pi 4). Only
-`hdmi_force_hotplug=1` is known to be needed; the others did nothing on the Pi 5 here, harmless:
-
-    [pi5]
-    hdmi_force_hotplug=1
-
-cmdline.txt: nothing needed (800x480 is the default UI size, 1024x600 on a panel whose EDID prefers it). A shared card's
-Pi 4 `width=800 height=480` gives the same; `res=1024x600` the 1024x600 layout scaled. `width=1920 height=1080` draws the
-1024x600 layout unscaled, centred.
-
-Connect the LCD to **micro-HDMI 0** (next to the USB-C power) before power-on. Circle's own note (`doc/issues.txt`):
-"The WLAN connection is delicate on the Raspberry Pi 5, when a HDMI display is used at the same time": check Wi-Fi
-with the display on.
-
-Expected log:
-
-    display: UI 800x480 scaled to the frame buffer's 1920x1080 (x 2.40, y 2.25; width=/height= in cmdline.txt set the UI's size)
-    display: firmware 1 display(s): ... -> frame buffer on 0 1920x1080
-    engine: boot screen: 1920x1080 in ... us
-    display: 800x480, LVGL 9.N
-    display: touch screen bound (touch1)
-    engine: display: 800x480, input touch (USB), longest update N us      (the stats line)
-
-## DSI display
-
-Built, **not yet run** (everything here *inferred* from Circle 51.1.1's `addon/rp1dsi`, `sample/28-touchscreen` and
-`addon/lvgl/sample`). Details, log lines and fallbacks: docs/pi-display.md, "DSI on the Pi 5" and "Cabling (DSI)".
-
-- The display: the official 7" Touch Display v1 or a compatible (the OSOYOO 7" IPS DSI V4.0 is sold as one) on
-  `CAM/DISP 0` or `CAM/DISP 1`, with a 22-pin to 15-pin Pi 5 display cable; 5 V from the header.
-- The pick, at boot: a DSI display found (its regulator answers at I2C 0x45, DISP0 tried first, then DISP1) -> the UI on
-  it at 800x480, no scaling, HDMI unused; else HDMI with the scaler ("HDMI display"). `dsi=0` in cmdline.txt: HDMI only,
-  no DSI probe. `dsi_port=0|1`: one port only.
-- Upside down in the case: `dsi_rotate=180` in cmdline.txt (picture and touch together). Mirrored touch only:
-  `dsitouch_inv=1` (x), `2` (y), `3`.
-- Touch Display 2 (720x1280 portrait, mounted landscape): the 1280x720 UI (`res=1024x600`: the 1024x600 one centred), rotated in software, `dsi_rotate=270`
-  (default) or `90`; docs/pi-display.md, "Touch Display 2 on the Pi 5".
-- config.txt: nothing for DSI. The `[pi5]` HDMI lines stay (an HDMI-only setup needs `hdmi_force_hotplug=1`; with a DSI
-  display they do no harm: the HDMI frame buffer is never opened). No `vc4-kms-*` overlay, no `display_auto_detect`.
-- Build: `pi/engine/build.sh` applies `pi/circle/circle-rp1dsi-fb.patch` and `circle-rp1dsi-td2.patch` and builds
-  `addon/rp1dsi/librp1dsi.a` in the Pi 5 tree once; the engine
-  links it before `libinput` (both have a `CRPiTouchScreen`; rp1dsi's is the display, libinput's is the Pi 4's firmware
-  touch and is not linked on the Pi 5).
+The engine has no display of its own since the strip-down of 2026-11-04 (`docs/pi-engine.md`): the HDMI and DSI
+sections that were here (the Pi 5's HDMI scaling, `addon/rp1dsi`, the Touch Display 2) are in git history (`3a8bf7d`).
+The pairing code shows on the Rytm's screen and in `/sidecar-paircode.txt` on the card.
 
 ## Serial cable
 

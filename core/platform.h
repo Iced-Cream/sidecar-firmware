@@ -1,5 +1,4 @@
-// core/platform.h - what the engine core needs from a board (docs/superpowers/specs/2026-10-14-pi-engine-design.md,
-// "Layout"). The core is portable C++17: no Arduino, no Circle, no allocation in the audio path. A board puts its
+// core/platform.h - what the engine core needs from a board (docs/core.md). The core is portable C++17: no Arduino, no Circle, no allocation in the audio path. A board puts its
 // core_port.h on the include path (core/host/, pi/engine/). It defines:
 //
 //   files      class core::File - the part of SdFat's FsFile the core uses, same names and meanings:

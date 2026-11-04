@@ -1,6 +1,5 @@
 // pi/engine/paircode_pi.h - the pairing code's Pi side (the portable part is paircode.h; docs/pi-engine.md "Pairing
-// code"): the card (FatFs "SD:"), the hardware random numbers, the clock, the boot messages, /status, the STATUS page's
-// row and the Rytm's popup, and the console's `pair` commands.
+// code"): the card (FatFs "SD:"), the hardware random numbers, the clock, the boot messages, /status, the Rytm's popup, and the console's `pair` commands.
 //
 // Everything here runs on core 0 (the kernel's loop and the web and SD-file tasks, which are Circle tasks on core 0 and
 // never preempt each other): one Gate with no lock. The Rytm's popup is the exception - it is drawn by the control
@@ -17,11 +16,9 @@ namespace paircode_pi {
 
 // Once at boot, after the card is mounted and before the network starts: cmdline.txt's paircode=, the code itself and
 // the remembered devices from /.rytm/pair.txt. Logs the gate's state, never the code.
-// bDisplay: a panel came up. bWanted: cmdline.txt asked for one (display=1, the default). With no display at all the
-// code would be nowhere to read, so it goes to the card's root (paircode::kRecoursePath) - said out loud, because
-// bWanted && !bDisplay means a panel was configured and did not come up, which is a surprise, not a choice. With a
-// display, a file left by an earlier headless boot is deleted.
-void Init (const char *pCmdline, bool bDisplay, bool bWanted);
+// A random code (the gate on) also goes to the card's root (paircode::kRecoursePath), for when the Rytm cannot show it;
+// a fixed code deletes a file an earlier boot left.
+void Init (const char *pCmdline);
 paircode::Gate &Gate ();
 void Random (u8 *pOut, unsigned n);		// the hardware generator mixed with the timer (the code's, the bridge's token)
 void Save ();					// /.rytm/pair.txt, only when something changed
@@ -33,7 +30,7 @@ void Show ();					// ask for the code on the Rytm's screen (any core)
 // show it, at most once every kShowGapS. Not on GET / any more - a page load never carries the token, so a PAIRED
 // owner's every reload flashed the code over the Rytm. /pair/show is open to anyone on the network, so without the
 // gap an idle attacker could put a box over the Rytm's screen whenever the user is playing.
-// Nothing leaks either way (the code is already on the touchscreen and neither screen is visible from the network),
+// Nothing leaks either way (the code is already on the Rytm's screen, which is not visible from the network),
 // so this is about disruption, not disclosure. The gap is a fixed 10 s (paircode::ShowGap): a burst of reloads
 // collapses into one (Show() counts requests, not modals), and the page says how long is left (the answer's wait).
 constexpr unsigned kShowGapS = paircode::kShowGapS;

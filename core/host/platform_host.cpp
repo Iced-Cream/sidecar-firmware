@@ -87,7 +87,7 @@ void log(const char* fmt, ...) {
 
 
 // ---- the card model (tests): the Pi's card time per file operation [inferred from measured figures: a 32 KB read
-// ~1.5-2 ms and an open + header ~3 ms (docs/MULTISAMPLE.md), DSP SAMPLE's refill 1.2 ms a pass (docs/pi-engine.md);
+// ~1.5-2 ms and an open + header ~3 ms (measured in the voice engine), DSP SAMPLE's refill 1.2 ms a pass (docs/pi-engine.md);
 // a sector write 2 ms is a typical SD small-write latency, its worst case (a card's own pauses, 100-137 ms measured
 // inside the recorder's writes) is not modeled]. A write is FatFs's: its data sectors, the FAT and the directory entry
 // go to the card at the close (f_sync); an open for writing truncates (a FAT write).

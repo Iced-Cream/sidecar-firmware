@@ -1,8 +1,8 @@
 // pi/engine/paircode.h - the pairing code that gates the network (docs/pi-engine.md "Pairing code"): the portable part
 // (kernel.cpp and web.cpp on the Pi; pi/engine/tests/test_paircode.cpp on the Mac). No Circle, no allocation, no printf.
 //
-// WHAT IT IS. The device makes an 8-digit code at every boot and shows it on the Rytm's screen (a host-drawn popup) and
-// on the touchscreen's STATUS page. A client enters it once; it gets a session token for this run and, if it asks to be
+// WHAT IT IS. The device makes an 8-digit code at every boot and shows it on the Rytm's screen (a host-drawn popup;
+// /sidecar-paircode.txt at the card's root too). A client enters it once; it gets a session token for this run and, if it asks to be
 // remembered, a client id and a 128-bit secret it keeps. The card holds only SHA-256 of that secret, so a stolen card
 // gives no client's secret away (it does give the card, which is the whole device: see the docs).
 //
@@ -74,7 +74,7 @@ constexpr const char *kPath = "/.rytm/pair.txt";		// the remembered clients (as 
 constexpr const char *kRecoursePath = "/sidecar-paircode.txt";
 
 // cmdline.txt paircode=: absent the code is random and the gate is on; "0" the gate is off (a dev card: loud in the
-// log, in /status and on the STATUS page); 8 digits a fixed code (still gated).
+// log and in /status); 8 digits a fixed code (still gated).
 enum Mode { kOn, kOff, kFixed };
 Mode mode_from_cmdline (const char *p, char *fixed);	// fixed: kDigits+1 bytes, "" unless kFixed
 
@@ -209,8 +209,8 @@ private:
 bool ct_equal (const void *a, const void *b, unsigned n);	// n bytes, no early exit, no branch on the data
 
 // The gap between two code modals that the network asked for (POST /pair/show, open to anyone): a fixed 10 s. It
-// used to grow (30 s doubling to 10 min, review L1) and refused silently, so on a Sidecar with no touchscreen - whose
-// only screen is the Rytm's - the button stopped working (device 2026-10-29). Anyone on the network can now put the
+// used to grow (30 s doubling to 10 min, review L1) and refused silently, so on a Sidecar whose only screen is the
+// Rytm's - the button stopped working (device 2026-10-29). Anyone on the network can now put the
 // box up every 10 s: acceptable, since it only shows the code to whoever stands at the Rytm, which is physical access
 // (docs/pi-engine.md "Pairing code" > "Threat model"), and a key takes it off. reset(): a device paired, `pair=show`.
 constexpr unsigned kShowGapS = 10;

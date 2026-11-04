@@ -2,7 +2,7 @@
 
 Sidecar | Expander (Pi 4B / Pi 5, Circle 51.1.1) boots from its SD card. Besides it, it now mounts **USB drives**
 (`USB:`, `USB2:`, `USB3:`) as they are plugged in and, on the **Pi 5**, an **NVMe SSD** on the PCIe connector (`NVME:`).
-`stor=bench` measures any of them. The project bundles (docs/BUNDLES.md "USB sticks") export to and import from
+`stor=bench` measures any of them. The voice engine's project bundles (in git history since 2026-11-04) used
 the USB drives through this layer: core paths that name a drive (`USB:/SIDECAR/...`), I/O in 64 KB pieces through an
 aligned block (`pi/engine/platform_pi.cpp`), the bundle UIs' EJECT cancelling a job on the drive first. Background and options: the research report
 `STORAGE-OPTIONS.md` (2026-10-21) and `docs/pi-engine.md` (the cores), `core/msamp/cardq.h` (the SD's card queue).

@@ -220,7 +220,7 @@ AbletonOS does on Move (from its recovery image: kernel `5.15.92-rt57-v8`, SysV 
 
 Use an Overbridge host on libusb (Overwitch as the reference), and a web UI served by the Pi. Measure the
 same numbers as steps 2-3, plus boot time (target 5-8 s, behind a splash screen).
-See `docs/superpowers/specs/2026-10-11-platform-architecture-design.md`.
+(The platform architecture spec is in git history: 3a8bf7d.)
 
 ## Notes
 - Overbridge has one host at a time: the Pi and the Teensy can't both be connected as host.

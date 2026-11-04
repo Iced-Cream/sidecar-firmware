@@ -8,16 +8,14 @@
 #     K5      the Pi 5 kernel (pi/engine/kernel_2712.img, RASPPI=5 pi/engine/build.sh), as kernel_2712.img
 # Environment (optional): CIRCLE_BUILD (default pi/circle/build), OUT, CMDLINE (default "sdport=0"), CONTENT (a
 # sidecar-content-* folder: JUNO/, DX7/, MULTISAMPLE/ if present, README.txt, NOTICE.txt, copied to the card; README/NOTICE as
-# STARTER-CONTENT-*.txt), NO_DISPLAY=1 (both boards' HDMI lines commented out), HDMI_RES=800x480 (default: the
-# Waveshare 5"/7" HDMI LCDs) or 1024x600 (a 1024x600 panel such as the GeeekPi EP-0194: the HDMI mode; the engine then
-# draws its 1024x600 layouts, docs/pi-display.md "Screen sizes").
+# STARTER-CONTENT-*.txt), NO_DISPLAY=0 (both boards' HDMI lines written, not commented out: the engine draws nothing
+# since 2026-11-04, so they only matter to a card shared with another kernel), HDMI_RES=800x480 or 1024x600.
 # The two kernels must carry the same Sidecar version stamp ("0.1.0 (<commit>)"), not -dirty.
 # The Pi 4 boots exactly as the 0.1.0 Pi 4 card did (sdboot.img -> engine.img, its settings, now under [pi4]); the
 # Pi 5 boots kernel_2712.img directly ([pi5], no sdboot there yet). The Pi 5 keeps its boot firmware in its EEPROM:
 # it reads config.txt, its own .dtb files and overlays/bcm2712d0.dtbo, and ignores start4.elf/fixup4.dat/armstub.
 # The Pi 5 also gets HDMI lines of its own ([pi5]: hdmi_force_hotplug=1, the one that matters; framebuffer_width/height
 # and the 800x480 mode, ignored by the Pi 5's firmware and kept as harmless).
-# DSI displays need no config.txt line on either board (comments in the file; docs/pi-display.md).
 # Wi-Fi chip firmware for both boards in firmware/ (the same three RPi-Distro/firmware-nonfree files under each
 # board's names, as Circle's addon/wlan/firmware/Makefile), only used with Wi-Fi on. No Wi-Fi credentials.
 # Never writes a card.
@@ -90,7 +88,7 @@ EOF
 python3 -c "import sys; sys.path.insert(0, '.'); import sdboot; sys.stdout.buffer.write(sdboot.wrap(open(sys.argv[1], 'rb').read()))" "$K4" > "$SD/engine.img"
 cp "$SDB" "$SD/sdboot.img"
 cp "$K5" "$SD/kernel_2712.img"
-D=""; [ "${NO_DISPLAY:-0}" = 1 ] && D="# "
+D="# "; [ "${NO_DISPLAY:-1}" = 0 ] && D=""
 {
 cat <<CFG
 # Sidecar | Expander, one card for the Raspberry Pi 4B and the Raspberry Pi 5.
@@ -104,13 +102,8 @@ initial_turbo=0
 [pi4]
 armstub=armstub8-rpi4.bin
 max_framebuffers=2
-# A DSI display (the official 7" v1 or a compatible) needs no line: the firmware drives it and the engine prefers it
-# (docs/pi-display.md). Upside down: lcd_rotate=2 here. Never ignore_lcd=1, disable_touchscreen=1, a vc4-kms-*
-# overlay or display_auto_detect=1 (Circle has no KMS: the screen would stay dark).
-
-# The Pi 4's ${HW}x${HH} HDMI display (optional; without a display these lines do no harm). The engine draws the
-# frame buffer's size if it is 800x480 or 1024x600, else 800x480 centred. A 1024x600 panel (GeeekPi EP-0194):
-# hdmi_cvt=1024 600 60 6 0 0 0 (HDMI_RES=1024x600 when the card is made); a 800x480 one: hdmi_cvt=800 480 60 6 0 0 0.
+# HDMI (commented out unless the card was made with NO_DISPLAY=0): the engine has no display of its own since
+# 2026-11-04 (docs/pi-engine.md); these lines are kept for a card shared with another kernel.
 ${D}[pi4]
 ${D}hdmi_force_hotplug=1
 ${D}hdmi_group=2
@@ -125,14 +118,7 @@ enable_uart=1
 disable_splash=1
 boot_delay=0
 os_check=0
-# A DSI display on CAM/DISP 0 or 1 needs no line either: the engine drives it itself (Circle's addon/rp1dsi) and
-# prefers it to HDMI. Upside down: dsi_rotate=180 in cmdline.txt, 90 on a Touch Display 2 (lcd_rotate does nothing on the Pi 5); dsi=0 there:
-# HDMI only. No vc4-kms-* overlay or display_auto_detect=1 (they are for Linux).
-
-# The Pi 5's HDMI display (micro-HDMI 0, next to USB-C, on before power-on; docs/pi5.md "HDMI display"): only
-# hdmi_force_hotplug=1 matters (measured). The Pi 5's firmware picks the mode itself (1920x1080 on an 800x480 LCD) and
-# the engine scales its 800x480 UI to it (1024x600 when the display's EDID prefers 1024x600, or res=1024x600 in
-# cmdline.txt); the other five lines are ignored by the Pi 5 (measured), kept as harmless.
+# The Pi 5's HDMI lines: as the Pi 4's above.
 ${D}[pi5]
 ${D}hdmi_force_hotplug=1
 ${D}framebuffer_width=${HW}

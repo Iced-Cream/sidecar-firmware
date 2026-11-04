@@ -1,58 +1,29 @@
-# Sidecar | Expander: firmware
+# Sidecar | Expander: firmware (generic engine)
 
-> **`dev` is the development branch: unstable, not a release.** It carries the 0.4.0 line and needs matching builds of
-> both repos; flash at your own risk; keep your 0.3.1 firmware for rollback. Use `main` for a release. Pull requests go to
-> `dev` (see CONTRIBUTING.md).
-
-## What's in this snapshot (since 0.3.2)
-
-The status after each item is what has actually been tested. "Hardware" means run on a real Rytm with a Pi 5 on this code
-or the commits it came from; "host tests" means unit tests on a computer; "emulator" means the Rytm firmware in an emulator.
-
-- **MD page:** the built-in MD machine's own page on the Rytm. Hardware.
-- **MODEL E:** a three-oscillator user machine with a ladder filter (`plugins/modele`), built on its own, GPL-2.0-or-later. Run on the Pi.
-- **Load on first play:** a sample's first note streams, and the whole sample then goes into the pool RAM. Host tests; a big project on hardware is still to do.
-- **Preset browser for JUNO and 6-OP FM:** on knob A of SRC on the Rytm, on the touchscreen and on the web page's Pool tab; presets are indexed in RAM and travel in project zips. Knob A: hardware. Touchscreen and web: host tests.
-- **DSP SAMPLE:** the sample picker on knob A, MIX default 0, the playhead on the Rytm's pages. MIX and playhead: hardware. Picker: emulator.
-- **PAD OCT:** per poly track, encoder G of POLY CONFIG (Pi side only). Host tests.
-- **`.elmulti`:** MULTISAMPLE reads Tonverk's format, written from a public description. Its conventions are unverified.
-- **Longer enum lists:** list knobs of up to 36 names (`RMP_FORMAT` 5); an older Rytm build still gets 16. Host and emulator tests.
-- **MIDI machine:** machine 50 sends a track out as MIDI. DIN tested in the emulator; USB unverified on hardware.
-- **Arpeggiator:** per sound, any Sidecar machine and the MIDI machine (UP + FLTR on the Rytm). Hardware OK on FM.
-- **Pi 5 USB-C audio and MIDI:** 12 x 12 and MIDI, needs a build with `PI5_GADGET=1` and its own power supply. Pi 5 test results only (`docs/pi5.md`); the computer-sleep test is still open.
-- **Touch Display 2 at 1280x720:** the UI fills the panel, `res=1024x600` gives the older centred layout. Built and host-tested; no run of this layout on the panel is on record.
-- **Card I/O off the control core:** sample overviews, scans, lists and stream work go to the card core. 0 underruns in the Pi 5 hardware pass.
-- **NEON:** render kernels for AArch64, bit-exact against the C with clang (`core/tests/test_neon.cpp`). Measured on a Pi 4.
-- **Idle sleep:** the idle cores sleep instead of spinning, `idlewfe=0` turns it off. One Pi 5 measurement: 66 C against 79 C after 16 minutes.
-- **Device profiles:** new in 0.3.2 and carried on here; the Digitakt has run in an emulator only.
-
-Not in this snapshot: **master FX**.
+> **A development fork, not a release.** This branch strips the Sidecar's Pi engine down to generic services. It does
+> not go upstream, and nothing here is published as firmware. Keep a released card for rollback.
 
 ## About
 
-The source of the Sidecar firmware: the engine that runs on a **Raspberry Pi 4B or Pi 5** on the USB port of an Analog
-Rytm MKII and adds voices, effects and a sequencer to it. One SD card boots both boards. The Pi 4B is the main target,
-and the one the measurements are made on; the Pi 5 scales its HDMI picture.
+The source of the Sidecar engine: a bare-metal kernel for a **Raspberry Pi 4B or Pi 5** on the USB port of an Analog
+Rytm MKII (or another box with a device profile). It provides only **generic services**. No Rytm mod has a Pi-side
+counterpart of its own; a mod reaches the Pi through the host link's generic commands. The services are:
 
-> **Sidecar Mini (Teensy 4.1) is phased out.** It is frozen at 0.1.0: no new features. Its source stays in `teensy/`
-> and in the history (commit `101a3fb`) for reference, and the 0.1.0 release stays downloadable.
+- the Rytm link (Overbridge, its USB MIDI, the USB-C gadget to the computer, the device hello and profiles);
+- the Rytm's step clock and transport;
+- the remote screen as a transport (popups, the pairing code, one client);
+- record storage and Pi-side parameter locks (51 STORE, with the project's name);
+- a card browse for the Rytm's file browser;
+- the USB-A MIDI devices;
+- the audio return's processor slots (empty by default);
+- OS updates through the Sidecar and the Rytm MIDI bridge for tools;
+- the platform: storage, the network, a small web page, pairing, Wi-Fi, temperature and supply warnings.
 
-This branch is a development snapshot on top of **Sidecar 0.3.2**, a Pi-only release after 0.3.1. 0.3.2 adds super basic native support
-for the Digitakt and a starting point for other devices (device profiles, `docs/device-profiles.md`), it fixes a stop on
-the Pi 5 at the first USB MIDI message to the Rytm, and it adds the Pi 5's Touch Display 2 (with work by
-[bandersong](https://github.com/bandersong)). Digitakt support is experimental: it has run in an emulator only, never
-on a real Digitakt, and its mod is in the separate repository
-[sidecar-digitakt](https://github.com/trigcondition/sidecar-digitakt). No Rytm flash is needed and nothing changes for Rytm
-users. The 0.3 line brings poly tracks with the Sidecar's own sequencer; the machines MULTISAMPLE, WAVETABLE, GRANULAR, CHOP, LIVE IN and MD (built in); the user machines, now with NUSAW, VOX, HUSH1 and
-RAFFO; insert effects with AMP (Neural Amp Modeler captures); the SPACE echo; the recorder; projects kept by the Rytm's
-slot; and the pairing code for the web page. Release 0.3.2 works with the Rytm firmware 0.3.1; this branch needs the Rytm firmware built
-from the `dev` branch of sidecar-mods.
+The voice engine this was until 2026-11-04 (machines, FX, sequencer, sampler, recorder, pools, presets, bundles, library,
+plugins, the Teensy firmware and the local display) is in git history only: commit `3a8bf7d` is the last one with all of
+it.
 
-- Release and binaries: <https://github.com/trigcondition/sidecar-firmware/releases/tag/v0.3.2> (the Pi SD cards, the
-  user machines, the starter content); 0.1.0 and 0.2.0: <https://github.com/trigcondition/sidecar-expander/releases>
-- Documentation, the browser patcher and the web console: <https://trigcondition.github.io/sidecar-expander/>
-- The Rytm side (the OS mods the Sidecar talks to): [sidecar-mods](https://github.com/trigcondition/sidecar-mods), its
-  0.3.1 release (one elekloader module): <https://github.com/trigcondition/sidecar-mods/releases/tag/v0.3.1>
+- The Rytm side (the OS mods the Sidecar talks to): [sidecar-mods](https://github.com/trigcondition/sidecar-mods).
 
 > **Unofficial, experimental software.** Not affiliated with, endorsed by or supported by Elektron. No Elektron
 > firmware, and nothing extracted from it, is in this repository.
@@ -61,54 +32,35 @@ from the `dev` branch of sidecar-mods.
 
 | path | what |
 |---|---|
-| `core/` | the engine core: voices, machines, send FX, LFOs, presets, the remote pages' UI, the recorder, the device profiles; host tests in `core/tests` |
-| `teensy/` | Sidecar Mini, frozen at 0.1.0 (for reference): the `voiceloop` sketch, USB host to the Rytm, the plugin loader (`libraries/RytmPlugins`), the Overbridge block codec (`libraries/RytmHost`), setup scripts for the engine libraries |
-| `pi/` | Sidecar: the bare-metal engine on Circle (`pi/engine`, `pi/circle`), the display UI (`pi/ui`), Linux experiments (`pi/linux`) |
-| `plugins/` | user machine plugins (`.a64.rmp` on the Pi): the six starter machines `sc_*` (MIT), NUSAW, VOX, HUSH1, RAFFO (MIT ports), MD (`mdkit`), MODEL E (`modele`, GPL-2.0-or-later, its own licence notes), Noise Plethora packages, test plugins |
-| `third_party/` | vendored third-party sources: mdkit (CC0 1.0, the MD machine), TONE3000's NAM A2-Lite engine (MIT, the AMP insert) |
-| `sdk/` | the plugin SDK: ABI header, linker scripts, the Teensy Audio shim |
-| `sim/` | the Mac-side simulator, protocol and end-to-end tools (some need the emulator, [analog-emu](https://github.com/trigcondition/analog-emu)) |
-| `web/` | the Sidecar Mini web console (WebSerial), frozen at 0.1.0 |
-| `content/` | the starter content generator (Juno-106 and DX7 patch libraries) |
-| `tools/` | packaging, version, plugin pack/install, the portable test runner |
+| `core/` | the engine core: the host link's router and the generic services (`docs/core.md`); host tests in `core/tests` |
+| `pi/` | the bare-metal engine on Circle (`pi/engine`, `docs/pi-engine.md`), Circle's build, patches and SD card scripts (`pi/circle`), Linux experiments (`pi/linux`) |
+| `sim/` | the host link's wire spec (`sim/protocol.py`) and its tests |
+| `tools/` | the version stamp, the portable test runner, the Rytm MIDI bridge's relay |
 | `docs/` | design notes and measurements |
 
 The version is in `VERSION` (`docs/versioning.md`).
 
 ## Build
 
-Third-party engine sources (Mutable Instruments Plaits, DaisySP, Circle, LVGL, ...) are not vendored: the setup scripts
-clone each at a pinned commit into git-ignored folders; mdkit and TONE3000's NAM engine are vendored in `third_party/`, ModelDigi in `plugins/modele/third_party/`. See `NOTICE`.
+Circle is not vendored: `pi/circle/build.sh` clones it at a pinned tag into a git-ignored folder. See `NOTICE`.
 
-- Engine core on macOS: `make -C core engines && make -C core test` (the last line says `ALL CORE TESTS PASS`).
-- Sidecar (Pi 4B and Pi 5): Docker, `pi/engine/build.sh` (`docs/pi-engine.md`, `docs/pi5.md`); one SD card for both boards: `pi/circle/make-sd-dual.sh`.
-- Sidecar Mini, frozen at 0.1.0: arduino-cli with Teensyduino, `teensy/run_sketch.sh` (`docs/TEENSY-FIRST-TEST.md`); build it from commit `101a3fb`.
-- Plugins: `make -C plugins/sc_acid` and so on (`docs/plugins.md`).
-- Starter content: `content/make_content.sh`.
-
-The build scripts were written on macOS; some use BSD `sed -i ''` and macOS tool paths.
+- The engine core on the host: `make -C core test` (the last line says `ALL CORE TESTS PASS`).
+- The Pi 4B and Pi 5 kernel: `pi/engine/build.sh` (Docker, or a local aarch64 toolchain; `docs/pi-engine.md`,
+  `docs/pi5.md`); one SD card for both boards: `pi/circle/make-sd-dual.sh`.
 
 ## Tests
 
 ```
-tools/run_portable_tests.sh                  # Linux or macOS: no hardware, no firmware, no cross toolchain
-make -C core engines && make -C core test    # macOS
+tools/run_portable_tests.sh     # Linux or macOS: no hardware, no firmware, no cross toolchain
 ```
 
-Both run on every pull request (`.github/workflows/test.yml`).
+It runs on every pull request (`.github/workflows/test.yml`).
 
 ## Written offer of source
 
-The released binaries (Sidecar for Pi 4B and Pi 5, version 0.3.2; Sidecar Mini, version 0.1.0) contain GPL and LGPL code, among it Circle
-(GPL-3.0-or-later, with its `addon/rp1dsi` display driver linked into the Pi 5 kernel) and the Teensyduino core and SPI library
-(LGPL-2.1). The complete corresponding source of version 0.3.2 is this repository at tag `v0.3.2` (of Sidecar Mini 0.1.0: commit `101a3fb`), plus the third-party
-sources the build scripts fetch at the pinned commits named in `NOTICE` (Circle with `pi/circle/*.patch`). For three years
-from the release, anyone who received a binary can also ask for it on a physical medium for the cost of that medium, or for
-the materials needed to relink the Teensy firmware with a modified LGPL part: open an issue in this repository.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+A kernel built from this repository links Circle (GPL-3.0-or-later), so it is distributed under GPL version 3, which
+GPL-2.0-or-later allows. The complete corresponding source of a build is this repository at its commit, plus Circle at the
+tag `pi/circle/build.sh` pins with `pi/circle/*.patch`.
 
 ## Licence
 

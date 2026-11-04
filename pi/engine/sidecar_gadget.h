@@ -1,5 +1,5 @@
-// pi/engine/sidecar_gadget.h - P3 of the Overbridge pass-through (docs/superpowers/specs/2026-10-16-overbridge-passthrough-
-// spike.md): "Sidecar" on the Pi 4's USB-C port, one composite device of our own descriptor (Circle has no composite
+// pi/engine/sidecar_gadget.h - P3 of the Overbridge pass-through (the pass-through spike's spec, in git
+// history: 3a8bf7d): "Sidecar" on the Pi 4's USB-C port, one composite device of our own descriptor (Circle has no composite
 // framework): USB Audio Class 2 (12 in / 12 out, or 20 in with the build option SIDECAR_CH_IN=20) + USB MIDI.
 // Needs the isochronous endpoints of pi/circle/circle-gadget.patch.
 //

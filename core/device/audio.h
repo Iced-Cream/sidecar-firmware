@@ -15,7 +15,7 @@ constexpr int kVoices = 8;
 // the tracks that play each voice (a shared voice: two; -1 none) for the mute gate, the device -> host channels of its
 // AUDIO IN (`audio_in`: what LIVE IN plays, core/livein/livein.h) and its own OUT -> IN loop (`loop_frames`: host -> device
 // frames back in the device -> host stream, the converters and the device's buffers; LIVE IN's latency estimate). The only
-// device so far: the Analog Rytm MKII over Overbridge (device-specific: docs/STEREO.md "Device-specific").
+// device so far: the Analog Rytm MKII over Overbridge (device-specific).
 // `ret` is how the voices go back: per voice on their own channels, or a stereo mix on `post` (every voice POST, whatever its
 // OUT says: LEV, PAN and WID still apply; a box with two return channels, docs/device-profiles.md). A channel a device does
 // not have is kNoChannel. in_channels: device -> host channels a frame (the driver's consumers take 12).

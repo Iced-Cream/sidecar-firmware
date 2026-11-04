@@ -1,4 +1,4 @@
-// pi/engine/fsweb.h - the web page's file browser (sidecar.local, docs/user-machines-pi.md "File browser"): list,
+// pi/engine/fsweb.h - the web page's file browser (sidecar.local, docs/pi-engine.md "Web page"): list,
 // download in ranges, upload in chunks, delete, new folder, rename, free space - over a card Backend (FatFs on the
 // Pi: web.cpp; stdio in pi/engine/tests/test_fsweb.cpp). Portable (hosted flags): no Circle, no allocation.
 //

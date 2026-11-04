@@ -1,6 +1,6 @@
 // core/lib/sha256.h - the Sidecar's one SHA-256 (FIPS 180-4) and one CRC-32 (zlib's), written for this project from
-// the standards' descriptions (no third-party code). The identity of every sample in the library (core/lib/library.h,
-// docs/LIBRARY.md) and of every file in a project bundle (docs/BUNDLES.md); the CRC-32 the bundles' ZIP needs. Portable,
+// the standards' descriptions (no third-party code). The pairing code's client secrets (pi/engine/paircode.h) and the file
+// service's upload check (pi/engine/fsweb.h, the CRC-32). Portable,
 // no allocation, no globals written: safe on any core.
 #pragma once
 #include <stddef.h>

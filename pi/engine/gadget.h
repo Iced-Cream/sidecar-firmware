@@ -1,5 +1,5 @@
 // pi/engine/gadget.h - "Sidecar" on the Pi 4's USB-C port (Circle's DWC2 gadget, device mode), beside the xHCI host on
-// USB-A (the Rytm). P1 of the Overbridge pass-through (docs/superpowers/specs/2026-10-16-overbridge-passthrough-spike.md):
+// USB-A (the Rytm). P1 of the Overbridge pass-through (the pass-through spike's spec, in git history: 3a8bf7d):
 // Circle's USB MIDI gadget with our strings; the computer's MIDI is echoed back to it (a loopback for the Mac-side
 // test, pi/engine/tests/gadget_midi_test.py) and counted. cmdline/console: gadget=0 leaves the port off.
 #ifndef _gadget_h

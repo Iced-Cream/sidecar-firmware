@@ -319,7 +319,7 @@ boolean CKernel::Initialize (void)
 	UseLink (m_Options.GetAppOptionString ("link", "usb"));
 	// the pairing code (paircode.h, docs/pi-engine.md "Pairing code"): before anything on the network is served, so
 	// no request can arrive ungated. cmdline paircode=0 turns the gate off (loudly), paircode=<8 digits> fixes the code.
-	paircode_pi::Init (m_Options.GetAppOptionString ("paircode", 0), false, false);	// (no screen of its own)
+	paircode_pi::Init (m_Options.GetAppOptionString ("paircode", 0));
 	// the web page (web.h): http://sidecar.local once the Ethernet link is up; web=0 leaves it off
 	if (m_bNetOK && m_Options.GetAppOptionDecimal ("web", 1) != 0)
 	{

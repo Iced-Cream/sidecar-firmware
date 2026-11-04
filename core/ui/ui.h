@@ -1,4 +1,4 @@
-// core/ui/ui.h - the remote UI's 1-bit drawing (docs/superpowers/specs/2026-10-16-remote-ui-research.md; core/ui/README.md):
+// core/ui/ui.h - the remote UI's 1-bit drawing (core/ui/README.md):
 // a 128x64 canvas in the Rytm's framebuffer layout, so a tile of it is the 8 bytes the Rytm's panel takes and a frame
 // is sent as-is (rytm-mods 0026-remote-ui). Glass pixel (x, y from the top-left) = byte (7 - y / 8) + 8 x, bit y % 8.
 // No allocation, no floats here (the curve widgets use a few at redraw time, widgets.cpp); every function is cold

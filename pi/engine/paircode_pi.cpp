@@ -62,7 +62,6 @@ static volatile unsigned s_nShowAsked = 0, s_nShowDone = 0, s_nHideAsked = 0, s_
 static unsigned s_nShowTries = 0, s_nShowAt = 0;
 static bool s_bShowTried = false;	// TakeShow handed out the line at s_nShowAt (a try a second at most)
 static paircode::ShowGap s_ShowGap;	// the network's requests for the modal (POST /pair/show), core 0
-static bool s_bDisplay = true;
 static volatile bool s_bReady = false;	// Init has run: the mode and the code are final (StatusLine, RytmHello)
 static volatile bool s_bWebOn = true;		// what the menu asked for, served at once (web.cpp, sdfiles.cpp)
 static volatile unsigned s_nCodeGen = 1;	// a new code (StatusLine's change; 1: Init's)
@@ -82,12 +81,11 @@ void Save ()
 	else CLogger::Get ()->Write (From, LogWarning, "cannot write %s: the paired devices are this run's only", paircode::kPath);
 }
 
-void Init (const char *pCmdline, bool bDisplay, bool bWanted)
+void Init (const char *pCmdline)
 {
 	CLogger *L = CLogger::Get ();
 	char Fixed[paircode::kDigits + 1];
 	paircode::Mode m = paircode::mode_from_cmdline (pCmdline, Fixed);
-	s_bDisplay = bDisplay;
 	if (s_pRng == 0) s_pRng = new CBcmRandomNumberGenerator;
 	// The raw hardware generator, before the timer is mixed in (that would hide a dead one): sixteen words, no two
 	// alike. A failure refuses the gate outright (paircode.h, BACKLOG F4) - no weak code, no weak tokens.
@@ -130,36 +128,31 @@ void Init (const char *pCmdline, bool bDisplay, bool bWanted)
 	if (!s_bWebOn)
 		L->Write (From, LogWarning, "the web UI is OFF (the Rytm's SIDECAR MENU > WEB UI): the web page and port 7310 "
 					    "from the network refuse until it is turned on there");
-	L->Write (From, LogNotice, "the pairing code is on%s: it is on the Rytm's screen%s, and %u device(s) are already paired "
+	L->Write (From, LogNotice, "the pairing code is on%s: it is on the Rytm's screen, and %u device(s) are already paired "
 				   "(%s). Port 7310 and every request that changes something need it.",
-		  m == paircode::kFixed ? " with the fixed code from cmdline.txt (a dev card)" : "",
-		  bDisplay ? " and on the touchscreen's STATUS page" : " (no touchscreen on this one)", s_Gate.clients (),
+		  m == paircode::kFixed ? " with the fixed code from cmdline.txt (a dev card)" : "", s_Gate.clients (),
 		  paircode::kPath);
-	// The code has to be readable somewhere. With a display it is on the touchscreen (and on the Rytm's screen);
-	// with none it would be nowhere, so it goes to the card's root. Every read of the card is behind this gate, so
-	// that file is not reachable over the network - but it is readable by whoever holds the card, which is the
-	// deliberate limit of the scheme (docs/pi-engine.md "Pairing code" > "Threat model").
-	if (!bDisplay && m != paircode::kOff)
+	// The code has to be readable somewhere other than the Rytm's screen (no Rytm, an older mod without the popups), so
+	// it also goes to the card's root. Every read of the card is behind this gate, so that file is not reachable over
+	// the network - but it is readable by whoever holds the card, which is the deliberate limit of the scheme
+	// (docs/pi-engine.md "Pairing code" > "Threat model"). A unit that should never write it down takes a fixed code.
+	if (m == paircode::kOn)
 	{
 		int n = s_Gate.format_recourse (Text, sizeof Text);
 		bool bOK = n > 0 && FsWrite (paircode::kRecoursePath, Text, (unsigned) n);
-		// bWanted: cmdline.txt asked for a display and none came up. The owner thinks this unit has a screen, so
-		// say plainly that the code was written down instead of quietly doing it.
-		L->Write (From, bWanted ? LogWarning : LogNotice,
-			  "%s: this boot's pairing code is written to %s at the card's root%s. Nothing on the network can "
-			  "read it (every read of the card needs the code); whoever holds the card can. A unit that should "
-			  "never write it down takes a fixed code instead: cmdline.txt paircode=<8 digits>.",
-			  bWanted ? "A DISPLAY WAS CONFIGURED BUT DID NOT COME UP" : "no display on this unit",
+		L->Write (From, bOK ? LogNotice : LogWarning,
+			  "this boot's pairing code is written to %s at the card's root%s. Nothing on the network can read it "
+			  "(every read of the card needs the code); whoever holds the card can. A unit that should never write "
+			  "it down takes a fixed code instead: cmdline.txt paircode=<8 digits>.",
 			  paircode::kRecoursePath, bOK ? "" : " - BUT IT COULD NOT BE WRITTEN, so the code is on the Rytm's "
 							 "screen only");
 		memset (Text, 0, sizeof Text);
 	}
-	else if (FsExists (paircode::kRecoursePath))		// a display now: an earlier headless boot's file goes
+	else if (FsExists (paircode::kRecoursePath))		// a fixed code: an earlier boot's file goes
 	{
 		bool bGone = FsRemove (paircode::kRecoursePath);
-		L->Write (From, bGone ? LogNotice : LogWarning, "%s is from a boot with no display and holds an old pairing "
-			  "code: %s", paircode::kRecoursePath,
-			  bGone ? "deleted (the code is on the screens)" : "IT COULD NOT BE DELETED - delete it from the card");
+		L->Write (From, bGone ? LogNotice : LogWarning, "%s holds an old pairing code: %s", paircode::kRecoursePath,
+			  bGone ? "deleted" : "IT COULD NOT BE DELETED - delete it from the card");
 	}
 	Show ();
 	DataMemBarrier ();
@@ -222,7 +215,7 @@ void Poll ()
 		if (s_Gate.new_code ())
 		{
 			s_ShowGap.reset ();
-			if (!s_bDisplay)		// the card-root recourse file holds the code on a unit with no display
+			if (s_Gate.mode () == paircode::kOn)	// the card-root recourse file holds the code too
 			{
 				char Text[1024];
 				int n = s_Gate.format_recourse (Text, sizeof Text);
@@ -319,10 +312,8 @@ void ShowFailed ()
 	s_nShowDone = s_nShowAsked;
 	s_nShowTries = 0;
 	CLogger::Get ()->Write (From, LogWarning, "the Rytm would not show the pairing code (no Rytm, an older mod without "
-						  "the popups, or its Sidecar page is open). %s",
-				s_bDisplay ? "It is on the touchscreen's STATUS page."
-					   : "There is no touchscreen either: put a fixed code on the card "
-					     "(cmdline.txt paircode=<8 digits>) and reboot.");
+						  "the popups, or its Sidecar page is open). It is in %s at the card's root; or put a fixed "
+						  "code on the card (cmdline.txt paircode=<8 digits>) and reboot.", paircode::kRecoursePath);
 }
 
 // The console's own (core 0, as rec_pi::Command and stor_pi::Command are: CConsole::Command runs on core 0 whether
@@ -345,8 +336,7 @@ bool Command (const char *p)
 	{
 		s_ShowGap.reset ();		// the console is the owner: the network's gap starts again too
 		Show ();
-		L->Write (From, LogNotice, "pair: the code is on the Rytm's screen%s (it is never in the log)",
-			  s_bDisplay ? " and on the touchscreen's STATUS page" : "");
+		L->Write (From, LogNotice, "pair: the code is on the Rytm's screen (it is never in the log)");
 		return true;
 	}
 	if (strcmp (p, "pair=revoke") == 0)
