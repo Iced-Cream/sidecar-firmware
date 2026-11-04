@@ -1409,7 +1409,7 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	unsigned nOutUnder = m_Stats.nOutUnder, nOutOver = m_Stats.nOutOver;
 	LeaveCritical ();
 	pLogger->Write (From, LogNotice,
-		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u | "
+		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u | "
 		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u | alt bad %u | midi from %u to-mac %u to-rytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
 		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
