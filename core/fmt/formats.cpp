@@ -11,7 +11,7 @@
 
 #include "fmt.h"
 
-#if CORE_MSAMP   // (the Pi and the Mac; the frozen Teensy build copies core/ whole: an empty table there)
+#if CORE_MSAMP && !CORE_GENERIC   // (CORE_GENERIC, the stripped engine: none of these modules is wired, an empty table) (the Pi and the Mac; the frozen Teensy build copies core/ whole: an empty table there)
 #include "../lib/library.h"
 #include "../lib/pools.h"
 #include "../lib/pools_fmt.h"
