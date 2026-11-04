@@ -1,5 +1,5 @@
-// pi/engine/tests/test_generic_pi.cpp - the generic engine's Pi side (GENERIC=1, 2026-11-04), its portable parts:
-// bridge_gen.cpp (the router behind bridge::sysex, 51 STORE's answers, the console's generic commands, /status's members, the popup and the
+// pi/engine/tests/test_generic_pi.cpp - the generic engine's Pi side (2026-11-04), its portable parts:
+// bridge.cpp (the router behind bridge::sysex, 51 STORE's answers, the console's generic commands, /status's members, the popup and the
 // address queues from core 0) and audio_return.cpp (the processor slots between Overbridge IN and OUT: nothing added
 // while every slot is empty, a slot's output added and saturated, IN frames kept only while a slot is filled).
 #include <string.h>

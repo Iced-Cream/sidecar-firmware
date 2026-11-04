@@ -1,4 +1,4 @@
-// core/tests/test_generic.cpp - the stripped engine's core (core/generic, core/screen; CORE_GENERIC=1): the host link's
+// core/tests/test_generic.cpp - the stripped engine's core (core/generic, core/screen): the host link's
 // routing (4F, 10, 35, 2C / 2D, 30..3F, 51..53, everything else dropped), the link reset's listeners, the remote
 // screen's transport with and without a client: the connect splash at a hello, a page the Rytm opens closed again with
 // no client, a client's frame, keys and encoders, the pairing modal over an open page.

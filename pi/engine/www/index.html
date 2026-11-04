@@ -40,11 +40,6 @@
   .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; }
   .tile { background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:8px 10px; min-width:0; }
   /* 1025: the 12 Rytm tracks' reported SRC machine - 12 narrow cells, 6 a row at a phone's width */
-  .chips { display:grid; grid-template-columns:repeat(auto-fit, minmax(62px, 1fr)); gap:6px; }
-  .chip { border:1px solid var(--line); border-radius:var(--r); padding:5px 6px; text-align:center; min-width:0; }
-  .chip .k { font-size:10px; letter-spacing:.1em; color:var(--mut); }
-  .chip .v { font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; }
-  .chip.rytm .v { color:var(--mut); font-weight:400; }
   .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--mut); }
   /* fix1049: a card's value and its lines wrap, never cut ("8.1 / 1.7 / 10...." at a phone's 390 px); its detail one
      part a line (tileLines) */
@@ -69,7 +64,6 @@
   .seg button:focus-visible { position:relative; z-index:1; }
   .seg button[aria-checked="true"] { background:var(--acc); border-color:var(--acc); color:var(--on-acc); font-weight:600; }
   .seg button[aria-checked="true"]:hover:not(:disabled) { background:var(--acc-high); border-color:var(--acc-high); }
-  .seg.pending button { cursor:progress; }
   .seg button.pend { animation:pend .8s ease-in-out infinite alternate; }
   @keyframes pend { from { opacity:1; } to { opacity:.45; } }
   @media (prefers-reduced-motion: reduce) { .seg button.pend { animation:none; opacity:.6; } }
@@ -78,8 +72,6 @@
   button[data-rp].pend { animation:pend .8s ease-in-out infinite alternate; }
   @media (prefers-reduced-motion: reduce) { button[data-rp].pend { animation:none; opacity:.6; } }
   button:disabled { opacity:.45; cursor:not-allowed; }
-  .fb { font-size:12px; color:var(--ok); } .fb.err { color:var(--err); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
   #log { height:52vh; min-height:240px; overflow:auto; margin:0; padding:8px; background:var(--bg); border:1px solid var(--line);
          border-radius:var(--r); font:12px/1.45 var(--mono); white-space:pre-wrap; word-break:break-all; }
   #log .me { color:var(--acc); }
@@ -97,23 +89,11 @@
   .mut { color:var(--mut); }
   .ok { color:var(--ok); }
   .wn { color:var(--warn); }
-  #pl [hidden] { display:none !important; }   /* the JUNO / 6-OP lists swap the bank view (a class's display outranks the UA's [hidden]) */
-  .plbar { display:inline-block; vertical-align:middle; width:90px; } .plbar[hidden] { display:none; }
-  .badge { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid currentColor; white-space:nowrap; }
   .lnk { border:0; background:none; padding:0 2px; color:var(--acc); }
   .lnk:hover { text-decoration:underline; }
   .sm { padding:2px 8px; font-size:12px; }
-  .mem { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin:8px 0; }
-  .mem .k { font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--mut); }
-  .mem .d { font:11px var(--mono); color:var(--mut); }
   .bar { height:6px; background:var(--bg); border:1px solid var(--line); border-radius:3px; overflow:hidden; margin:3px 0; }
   .bar i { display:block; height:100%; background:var(--acc); }
-  .bar.full i { background:var(--err); }
-  .slots { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin:8px 0; }
-  .slot { border:1px solid var(--line); border-radius:var(--r); padding:6px 8px; min-width:0; }
-  .slot .n { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .slot select { width:100%; margin-top:4px; }
-  .slot .src { font-size:11px; margin-top:2px; }
   .msg { font-size:12px; margin:6px 0 0; white-space:pre-wrap; word-break:break-word; }
   .prog > div { display:flex; gap:8px; align-items:center; font-size:12px; margin:3px 0; flex-wrap:wrap; }
   .prog .nm { flex:1; min-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -127,28 +107,10 @@
   nav a.on { color:var(--fg); border-bottom-color:var(--acc); font-weight:700; }
   .tab { display:none; min-width:0; }
   .tab.on { display:grid; gap:12px; }
-  .fxs { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
-  .fxs .sends { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; align-items:end; height:60px; margin:6px 0 2px; }
-  .fxs .sends i { display:block; background:var(--acc); border-radius:2px 2px 0 0; min-height:1px; }
-  .fxs .lab { display:grid; grid-template-columns:repeat(12, 1fr); gap:3px; font-size:10px; color:var(--mut); text-align:center; }
   .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; font-size:13px; }
   .kv b { font-weight:normal; color:var(--mut); }
   .kv span { overflow-wrap:anywhere; }
   .stor-t { font-size:12px; overflow:auto; margin:8px 0 0; padding:8px; background:var(--bg); border:1px solid var(--line); }
-  .chg { margin:8px 0; }
-  .chg h3 { font-size:11px; font-weight:600; color:var(--mut); margin:0 0 4px; text-transform:uppercase; letter-spacing:.04em; }
-  .chs { display:grid; grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); gap:6px; }
-  .ch { border:1px solid var(--line); border-radius:var(--r); padding:4px 6px; display:grid; gap:3px; cursor:pointer; min-width:0; }
-  .ch.on { border-color:var(--acc); }
-  .ch span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; }
-  .ch .bar { margin:0; }
-  .ch .bar i { transition:width .2s; }
-  .ch .bar.hot i { background:var(--err); }
-  #rec-go { min-width:120px; font-weight:600; }
-  #rec-go.on { background:var(--err); border-color:var(--err); color:#fff; }
-  #rec-go.armed { border-color:var(--err); color:var(--err); }
-  #rec-time { font:600 22px var(--mono); font-variant-numeric:tabular-nums; }
-  #rec-time.on { color:var(--err); }
   #wifi .row[hidden] { display:none; }
   #wifi .row > label:first-child { min-width:110px; }
   #wf-net, #wf-ssid, #wf-psk { flex:1; min-width:0; max-width:340px; }
@@ -156,9 +118,6 @@
   .wf-check { color:var(--mut); font-size:12px; display:flex; gap:6px; align-items:center; }
   #wf-join { font-weight:600; }
   #wf-join.on:hover { background:var(--acc-high); border-color:var(--acc-high); }
-  .wf-bars { display:inline-flex; gap:1px; align-items:flex-end; height:11px; margin-right:4px; vertical-align:-1px; }
-  .wf-bars i { width:3px; background:var(--line); border-radius:1px; }
-  .wf-bars i.on { background:var(--acc); }
   @media (max-width:640px) { #wifi .row > label:first-child { min-width:0; width:100%; } #wf-net, #wf-ssid, #wf-psk { max-width:none; } }
   @media (max-width:640px) { nav a { padding:6px 8px; }  .hm { display:none; } th, td { padding:4px 3px; } .row label { min-width:0; } main { padding:10px; } }
 </style>
@@ -171,19 +130,12 @@
     <span class="dot" id="dot"></span><span id="state">connecting</span>
   </header>
   <nav id="tabs" role="tablist">
-    <a href="#status" data-tab="status">Status</a><a href="#sound" data-tab="sound">Sound</a><a href="#sendfx" data-tab="sendfx">Send FX</a><a href="#lfo" data-tab="lfo">LFO</a><a href="#record" data-tab="record">Record</a><a href="#machines" data-tab="machines">User machines</a><a href="#pool" data-tab="pool">Pool</a><a href="#library" data-tab="library">Presets</a><a href="#project" data-tab="project">Project</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
+    <a href="#status" data-tab="status">Status</a><a href="#files" data-tab="files">Files</a><a href="#log" data-tab="log">Log &amp; console</a><a href="#about" data-tab="about">About</a>
   </nav>
 
   <div class="tab" id="tab-status">
     <div class="pwarn" id="pwarn" role="alert" hidden></div>
     <div class="tiles" id="tiles"></div>
-    <section id="srcm" aria-labelledby="sm-h" hidden>
-      <h2 id="sm-h">Rytm tracks (SRC)</h2>
-      <div class="chips" id="sm-grid"></div>
-      <p class="note">The machine each track reports over the Sidecar link, as the Rytm itself names it - not what
-        Sidecar derives or what <code>wt=voice:V</code> and friends force. <b>RYTM</b> means the track is not ours: the
-        Rytm plays it with its own analog or sample voice, so nothing Sidecar does affects it.</p>
-    </section>
     <section id="wifi" aria-labelledby="wf-h">
       <h2 id="wf-h">Wi-Fi</h2>
       <div class="kv" id="wf-now"><b>Network</b><span>-</span></div>
@@ -214,8 +166,7 @@
       <div class="kv"><b>This device</b><span id="ac-this">-</span></div>
       <div class="row"><label></label><button id="ac-forget">Forget this device</button><button id="ac-all">Forget every device</button></div>
       <p class="msg" id="ac-msg" role="status" aria-live="polite"></p>
-      <p class="note">Sidecar shows an 8-digit code on the Rytm's screen and on its own screen (STATUS page,
-        <b>PAIR CODE</b>). Entering it once lets this browser change things; reading the status and the log never needs it.
+      <p class="note">Sidecar shows an 8-digit code on the Rytm's screen. Entering it once lets this browser change things; reading the status and the log never needs it.
         A remembered device keeps working after Sidecar restarts, and <b>Forget</b> makes it ask for the code again.
         <b>Forget every device</b> also ends every other browser's and <code>sdboot.py</code>'s access. The code is
         <i>not</i> encryption: this page is plain HTTP on your network, so treat the network itself as the lock.</p>
@@ -236,21 +187,9 @@
         <code>SIDECAR_BRIDGE_TOKEN=&lt;token&gt; python3 tools/rytm_bridge.py --pi <span id="mb-host">sidecar.local</span></code> and point the
         tool at <code>tcp:127.0.0.1:7321</code> (docs/HARDWARE-TESTING.md). Forgetting every device turns the bridge off.</p>
     </section>
-    <section id="sdt" aria-labelledby="sdt-h">
-      <h2 id="sdt-h">SD card speed</h2>
-      <div class="kv"><b>Verdict</b><span id="sdt-v">-</span></div>
-      <div class="kv"><b>Measured</b><span id="sdt-m">-</span></div>
-      <div class="row"><label></label><button id="sdt-run">Run test</button><button id="sdt-stop" hidden>Cancel</button>
-        <progress id="sdt-p" max="100" value="0" hidden></progress></div>
-      <p class="msg" id="sdt-msg" role="status" aria-live="polite"></p>
-      <p class="note">Checks whether this card can stream multisamples (and record at the same time): about a minute, with a
-        temporary file in <code>/.rytm</code> (up to 256 MB, removed afterwards). Run it while nothing plays: the sound may
-        drop out while it runs. The result sets the streaming read-ahead and how many notes stream at once.</p>
-    </section>
     <section id="stor" aria-labelledby="stor-h">
       <h2 id="stor-h">Storage</h2>
       <div class="kv" id="stor-vols"><b>SD card</b><span>-</span></div>
-      <div class="kv" id="lib-st"><b>Library</b><span>-</span></div>
       <div class="row"><label for="stor-vol">Bench</label><select id="stor-vol"><option>SD</option></select>
         <button id="stor-run">Run bench</button><button id="stor-stop" hidden>Cancel</button><button id="stor-ej" hidden>Eject</button>
         <progress id="stor-p" max="100" value="0" hidden></progress></div>
@@ -264,340 +203,27 @@
     </section>
   </div>
 
-  <div class="tab" id="tab-sound">
-    <section>
-      <h2>Sound</h2>
-      <div class="row"><label id="l-notes">MIDI notes</label>
-        <div class="seg" role="radiogroup" aria-labelledby="l-notes" data-key="notes"><button type="button" role="radio" aria-checked="false" data-cmd="notes=1" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="notes=0" data-val="false">Off</button></div>
-        <span class="fb" data-fb="notes" role="status" aria-live="polite"></span></div>
-      <div class="row"><label id="l-out">Output</label>
-        <div class="seg" role="radiogroup" aria-labelledby="l-out" data-key="out"><button type="button" role="radio" aria-checked="false" data-cmd="out=main" data-val="main">Main</button><button type="button" role="radio" aria-checked="false" data-cmd="out=tracks" data-val="tracks">Tracks</button></div>
-        <span class="fb" data-fb="out" role="status" aria-live="polite"></span></div>
-      <div class="row"><label id="l-fxsrc" title="what the Rytm sends on Overbridge IN L/R (channels 10/11): its AUDIO IN, or the delay + reverb return (needs the rui1024 Rytm build)">IN L/R source</label>
-        <div class="seg" role="radiogroup" aria-labelledby="l-fxsrc" data-key="fxsrc"><button type="button" role="radio" aria-checked="false" data-cmd="fxin=0" data-val="in">Inputs</button><button type="button" role="radio" aria-checked="false" data-cmd="fxin=1" data-val="fx">FX return</button></div>
-        <span class="fb" data-fb="fxsrc" role="status" aria-live="polite"></span><span id="fxin-note" class="mut"></span></div>
-      <p class="note" id="fxin-warn" hidden>Never send channels 10/11 back into the Rytm through Overbridge (computer audio, a mixer loop): that is a feedback loop.</p>
-      <div class="row"><label id="l-mac" title="the computer's USB audio OUT (USB-C) mixed into the Rytm's Overbridge inputs">Computer audio</label>
-        <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
-        <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
-      <div class="row"><label for="mvoice">Machine</label>
-        <select id="mvoice"></select>
-        <select id="mname" aria-label="machine"><option>plaits</option><option>juno</option><option>daisy</option><option>dsps</option>
-          <option>dd</option><option>fm</option></select>
-        <button id="mset">Set</button><span class="mut" id="mcur"></span>
-        <span class="fb" data-fb="mach" role="status" aria-live="polite"></span></div>
-      <div class="row"><label for="dvoice" id="l-drone">Drone</label>
-        <select id="dvoice"><option value="all">all</option></select>
-        <div class="seg" role="radiogroup" aria-labelledby="l-drone" data-key="drone">
-          <button type="button" role="radio" aria-checked="false" id="dset" data-cmd="drone=" data-val="on">On</button><button type="button" role="radio" aria-checked="false" data-cmd="drone=off" data-val="off">Off</button></div>
-        <span class="fb" data-fb="drone" role="status" aria-live="polite"></span></div>
-      <div class="row"><label for="fifo">FIFO target</label>
-        <input id="fifo" type="number" min="24" step="8" value="96" style="width:90px">
-        <button id="fifoset">Set</button><span class="mut" id="fifocur"></span>
-        <span class="fb" data-fb="fifo" role="status" aria-live="polite"></span></div>
-    </section>
-    <section id="poly-sec">
-      <h2>Poly tracks</h2>
-      <p class="note">The sequencer's poly config per seq track (docs/SEQ-IDEAS.md E0, after the Analog Four's POLY CONFIG):
-        VOICES (AUTO: the machine's own count), ALLOCATION, UNISON with its DETUNE and SPREAD. It is stored in the pattern
-        and kept as the track's default for patterns without one of their own.</p>
-      <div id="poly-rows"><p class="mut">No seq track.</p></div>
-      <p class="mut" id="poly-inst"></p>
-      <span class="fb" data-fb="poly" role="status" aria-live="polite"></span>
-    </section>
-    <section id="seqx-sec">
-      <h2>Sequencer</h2>
-      <p class="note">The Sidecar sequencer's top-8 features (docs/SEQUENCER.md "Built: seqtop"): the pattern's key, scale
-        and seed; per seq track its speed, play direction, random notes and SEED MOD; per step its ratchet or arp, its two
-        FX columns, random notes, and the condition and slide of a lock. Each Set sends console lines (seq=...).</p>
-      <div id="seqx-pat"><p class="mut">No pattern yet.</p></div>
-      <div id="seqx-rows"><p class="mut">No seq track.</p></div>
-      <div class="row"><label>Step</label>
-        <select id="sx-t" aria-label="track"></select>
-        <input id="sx-s" type="number" min="1" max="128" value="1" style="width:64px" aria-label="step">
-        <select id="sx-rm" aria-label="ratchet / arp mode"></select>
-        <input id="sx-rc" type="number" min="0" max="16" value="0" style="width:56px" aria-label="count">
-        <select id="sx-rr" aria-label="rate"></select>
-        <select id="sx-rv" aria-label="velocity curve"></select>
-        <input id="sx-rp" type="number" min="-24" max="24" value="0" style="width:56px" aria-label="pitch per repeat">
-        <input id="sx-ro" type="number" min="1" max="4" value="1" style="width:48px" aria-label="arp octaves">
-        <input id="sx-rg" type="number" min="1" max="100" value="100" style="width:56px" aria-label="gate %"></div>
-      <div class="row"><label></label>
-        <select id="sx-f1" aria-label="FX 1 command"></select><input id="sx-v1" value="" style="width:56px" aria-label="FX 1 value">
-        <select id="sx-f2" aria-label="FX 2 command"></select><input id="sx-v2" value="" style="width:56px" aria-label="FX 2 value">
-        <label class="wf-check"><input type="checkbox" id="sx-rnd"> random notes</label>
-        <input id="sx-lp" type="number" min="1" max="32" value="" placeholder="lock P" style="width:64px" aria-label="lock param">
-        <input id="sx-lc" value="" placeholder="cond" style="width:64px" aria-label="lock condition">
-        <label class="wf-check"><input type="checkbox" id="sx-sl"> slide</label>
-        <button id="sx-set">Set</button></div>
-      <span class="fb" data-fb="seqx" role="status" aria-live="polite"></span>
-    </section>
-    <section>
-      <h2>Display</h2>
-      <div class="row"><label id="l-screensaver" title="black after this long without a touch on the display; the next touch only wakes it">Screensaver</label>
-        <div class="seg" role="radiogroup" aria-labelledby="l-screensaver" data-key="screensaver"><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=0" data-val="0">Off</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=15" data-val="15">15 min</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=60" data-val="60">1 h</button><button type="button" role="radio" aria-checked="false" data-cmd="screensaver=240" data-val="240">4 h</button></div>
-        <span id="blank" class="mut"></span>
-        <span class="fb" data-fb="screensaver" role="status" aria-live="polite"></span></div>
-      <div class="row"><label>Brightness</label>
-        <input id="bright" type="range" min="5" max="100" step="5" value="100" style="width:200px"><span id="brightv" class="mut">100 %</span></div>
-      <p class="note">Brightness dims the picture, not the backlight (the panel's backlight has no software control).
-        Both are kept on the card (<code>/.rytm/display.txt</code>); <code>screensaver=</code> / <code>brightness=</code> in
-        cmdline.txt override them at boot.</p>
-    </section>
-  </div>
-
-  <div class="tab" id="tab-sendfx">
-    <section>
-      <h2>Send FX</h2>
-      <div class="fxs" id="fx"></div>
-      <div class="row"><button data-cmd="killfx">Kill tails</button><button data-cmd="sendfx">Stats to the log</button></div>
-      <p class="note">What the Rytm's kit sets: each FX's type, where it returns (PRE on 2/3, POST on 0/1) and the 12 tracks'
-        send levels.</p>
-    </section>
-    <section>
-      <h2>Master FX</h2>
-      <div id="mfx"></div>
-      <p class="note" id="mfx-gr"></p>
-      <div class="row"><button data-cmd="mfx=stats">Stats to the log</button><button data-cmd="mfx=reset">Clear the chain</button></div>
-      <p class="note" id="mfx-note"></p>
-    </section>
-  </div>
-
-  <div class="tab" id="tab-lfo">
-    <section><h2>LFOs</h2><p class="note">Eight LFOs on the Sidecar's voices (BD, BT, SD, LT, CH/OH, MT/HT, CY/CB, RS/CP: any parameter) or its send FX (FX1 / FX2
-      P2..P5), on top of the Rytm's value; the value comes back when the LFO stops. Saved per kit, as the Rytm's own LFOs (switched with the Rytm's kit); the same on the Rytm's LFO page (TRK + YES).</p></section>
-    <div id="lfo-root" class="grid"></div>
-  </div>
-
-  <div class="tab" id="tab-record">
-    <section>
-      <h2>Record</h2>
-      <div class="row"><button id="rec-go">&#9679; Record</button><span id="rec-time">0:00:00</span><span id="rec-state" class="mut"></span>
-        <span class="spacer"></span><span id="rec-free" class="mut"></span></div>
-      <div id="rec-warn" class="msg err"></div>
-      <div class="row"><label id="l-rm">Start and stop</label><div class="seg" role="radiogroup" aria-labelledby="l-rm"><button type="button" role="radio" aria-checked="false" data-rm="manual">Manual</button><button type="button" role="radio" aria-checked="false" data-rm="arm">Arm: PLAY starts, STOP ends</button></div></div>
-      <div class="row"><label id="l-rb">Bit depth</label><div class="seg" role="radiogroup" aria-labelledby="l-rb"><button type="button" role="radio" aria-checked="false" data-rb="24">24-bit</button><button type="button" role="radio" aria-checked="false" data-rb="16">16-bit</button></div>
-        <span class="fb" data-fb="bits" role="status" aria-live="polite"></span></div>
-      <div class="row"><label id="l-rv">Record to</label><div class="seg" role="radiogroup" aria-labelledby="l-rv" id="rec-vol"></div>
-        <span class="fb" data-fb="vol" role="status" aria-live="polite"></span></div>
-      <p class="note" id="rec-volnote" hidden>A USB drive: FAT32 with the MBR scheme, on a blue USB 3 port (the Rytm keeps the black one). It shares the
-        USB host with the Rytm's audio: run the storage bench on it first (Status tab, Storage, <i>Run bench</i>) and keep an eye on
-        the drive's speed and the dropped blocks below. Eject it before pulling it (not while armed or recording).</p>
-      <div class="row"><label>Take name</label><input id="rec-name" maxlength="24" value="" placeholder="the project's name" style="width:160px" autocomplete="off">
-        <span class="mut" id="rec-namehint"></span></div>
-      <div id="rec-card" class="note"></div>
-    </section>
-    <section>
-      <h2>Channels</h2>
-      <div class="row"><button id="rec-all">Select all</button><button id="rec-none">None</button><span class="spacer"></span><span id="rec-sum" class="mut"></span></div>
-      <div id="rec-ch"></div>
-      <p class="note">One WAV a channel (mono; Master and the FX returns as stereo files), all starting on the same frame and
-        the same length, so they line up in a DAW. Meters show the peak of the last second while armed or recording.</p>
-    </section>
-    <section>
-      <h2>Takes</h2>
-      <div class="row"><button id="rec-re">Refresh</button><span class="spacer"></span><span class="mut">/Recordings on the SD card (also in Files) and on each mounted drive</span></div>
-      <div class="row"><button id="play-stop" class="sm" disabled>&#9632; Stop</button><span id="play-state" class="mut">Playback: click a channel to hear it on the Rytm's MAIN (not while recording).</span></div>
-      <div class="tbl" id="rec-takes"></div>
-      <div class="prog" id="rec-prog"></div>
-      <div id="rec-msg" class="msg"></div>
-    </section>
-    <section id="smp">
-      <h2>Sample</h2>
-      <div class="row"><label for="smp-src">Source</label><select id="smp-src"><option value="in">AUDIO IN L/R</option><option value="main">MAIN (resample)</option>
-        <option value="track:1">BD</option><option value="track:2">SD</option><option value="track:3">RS/CP</option><option value="track:4">BT</option>
-        <option value="track:5">LT</option><option value="track:6">MT/HT</option><option value="track:7">CH/OH</option><option value="track:8">CY/CB</option>
-        <option value="voice:1">Sidecar voice BD</option><option value="voice:2">Sidecar voice BT</option><option value="voice:3">Sidecar voice SD</option><option value="voice:4">Sidecar voice LT</option>
-        <option value="voice:5">Sidecar voice CH/OH</option><option value="voice:6">Sidecar voice MT/HT</option><option value="voice:7">Sidecar voice CY/CB</option><option value="voice:8">Sidecar voice RS/CP</option></select>
-        <label for="smp-start">Start</label><select id="smp-start"><option value="now">now</option><option value="thr">threshold</option><option value="play">the Rytm's PLAY</option><option value="bar">its next bar</option></select></div>
-      <div class="row"><label for="smp-thr">Threshold dB</label><input id="smp-thr" type="number" min="-90" max="0" value="-30" style="width:70px">
-        <label for="smp-len">Length (bars, 0 free)</label><input id="smp-len" type="number" min="0" max="64" value="0" style="width:60px">
-        <label for="smp-sl">Slices</label><select id="smp-sl"><option value="trans">transients</option><option value="grid:16">grid 16</option><option value="grid:8">grid 8</option><option value="off">none</option></select></div>
-      <div class="row"><button id="smp-arm">&#9679; Arm / record</button><button id="smp-stop">&#9632; Stop</button><span id="smp-state" class="mut">-</span></div>
-      <p class="note">One take into /Samples/&lt;project&gt;/ (24-bit), trimmed and normalised (free takes), sliced; MULTISAMPLE lists it at once
-        (/MULTISAMPLE/&lt;project&gt;/: one zone, and its slices on keys from C1). DSP SAMPLE lists it after the next boot.</p>
-    </section>
-    <section id="asmp">
-      <h2>Auto-sampler</h2>
-      <div class="row"><label for="as-src">Source</label><input id="as-src" value="fm:0" style="width:130px" autocomplete="off" title="fm:PAT, juno:PAT, voice:V (a Sidecar voice), track:T[:CH[:chro]] (a Rytm track 1..12: BD..CB), ext[:usb|dev|rytm][:CH][:lr|l|r] (an external synth: MIDI out, AUDIO IN)">
-        <label for="as-notes">Notes</label><input id="as-notes" value="c2:c6:3" style="width:90px" autocomplete="off">
-        <label for="as-vel">Velocities</label><input id="as-vel" value="100" style="width:90px" autocomplete="off"></div>
-      <div class="row"><label for="as-hold">Hold ms</label><input id="as-hold" type="number" value="1500" style="width:70px">
-        <label for="as-tail">Release ms</label><input id="as-tail" type="number" value="2500" style="width:70px">
-        <label for="as-name">Name</label><input id="as-name" placeholder="auto" style="width:130px" autocomplete="off"></div>
-      <div class="row"><button id="as-go">Start</button><button id="as-stop">Cancel</button><progress id="as-p" max="100" value="0"></progress><span id="as-state" class="mut">-</span></div>
-    </section>
-  </div>
-
-  <div class="tab" id="tab-machines">
-  <section id="um">
-    <h2>User machines</h2>
-    <div class="row"><b>Project</b> <span id="um-proj">-</span><span class="spacer"></span><span id="um-info" class="mut"></span>
-      <button id="um-rescan">Rescan</button>
-      <button id="um-upb">Upload machine (.rmp)</button><input id="um-file" type="file" accept=".rmp" multiple hidden></div>
-    <div class="slots" id="um-slots"></div>
-    <div class="row"><span class="mut" id="um-how"></span><span class="spacer"></span>
-      <button id="um-empty" title="every slot of this project explicitly empty: nothing is inherited or filled from the sounds">Start this project empty</button>
-      <button id="um-export">Export slot list</button>
-      <button id="um-impb">Import slot list</button><input id="um-imp" type="file" accept=".json,.txt,application/json" hidden></div>
-    <div class="tbl"><table><thead><tr><th>Name</th><th class="hm">ID</th><th>Ver</th><th class="r hm">File</th><th class="hm">FP</th>
-      <th class="r hm">Code+data</th><th class="r hm">State/voice</th><th class="r">CPU/voice</th><th>Slots</th><th>Fits</th><th></th></tr></thead>
-      <tbody id="um-list"><tr><td colspan="11" class="mut">-</td></tr></tbody></table></div>
-    <div class="mem" id="um-mem"></div>
-    <div id="um-res" class="msg"></div>
-    <div class="prog" id="um-prog"></div>
-    <div id="um-msg" class="msg"></div>
-    <p class="note">Machines are the <code>.rmp</code> packages in <code>/Plugins</code>. CPU/voice is measured once the
-      machine has played: one voice's render time, in % of one Pi render core and µs per 12-frame block. Before that,
-      and below it, the package's declared figure (in % of a Teensy voice budget).</p>
-  </section>
-  </div>
-
-  <div class="tab" id="tab-pool">
-  <section id="pl">
-    <h2>Pool</h2>
-    <div class="row"><div class="seg" id="pl-lists" role="radiogroup" aria-label="POOL list">
-      <button data-pk="smp" aria-checked="true">SAMPLES</button><button data-pk="wt" aria-checked="false">WAVETABLES</button><button data-pk="inst" aria-checked="false">INSTRUMENTS</button><button data-pk="juno" aria-checked="false" title="the JUNO machine's preset list">JUNO</button><button data-pk="fm" aria-checked="false" title="the 6-OP FM machine's voice list">6-OP FM</button></div>
-      <span class="spacer"></span><span class="mut">Project</span> <b id="pl-proj">-</b></div>
-    <div class="row" data-nopre><div class="seg" id="pl-banks" role="radiogroup" aria-label="bank"></div>
-      <span class="spacer"></span><span style="white-space:nowrap"><span class="mut">RAM</span> <span id="pl-ram" title="the POOL's RAM: the samples and instruments (each file once) and the wavetables, of the budget">-</span>
-      <span class="bar plbar" id="pl-rambar" hidden><i></i></span></span></div>
-    <div id="pl-lock" class="pwarn" hidden></div>
-    <div class="row" data-nopre><button id="pl-unused" title="the rows not seen playing in this project">Select unused</button>
-      <button id="pl-none">Select none</button><button id="pl-unload" disabled>Unload selected</button>
-      <button id="pl-undo" title="the last replace or unload of this list, back">Undo</button>
-      <span class="spacer"></span><span id="pl-count" class="mut"></span><button id="pl-re">Refresh</button></div>
-    <div id="pl-warn" class="pwarn" hidden></div>
-    <div class="tbl" data-nopre><table><thead><tr><th></th><th class="r">Row</th><th>Name</th><th>State</th><th class="r">Size</th>
-      <th class="r" title="times seen playing in this project">Played</th><th class="r" title="voices on the row now">Now</th><th></th></tr></thead>
-      <tbody id="pl-rows"><tr><td colspan="8" class="mut">-</td></tr></tbody></table></div>
-    <div id="pl-pre" hidden>
-      <div class="row"><b id="pl-pre-title"></b><span class="spacer"></span><span id="pl-pre-count" class="mut"></span>
-        <button id="pl-pre-add" title="the card's presets (the index of /JUNO and /DX7, read at boot): into the list's first empty slot">Add presets</button><button id="pl-pre-re">Refresh</button></div>
-      <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Preset</th><th></th></tr></thead><tbody id="pl-pre-rows"><tr><td colspan="3" class="mut">-</td></tr></tbody></table></div>
-      <div id="pl-pre-ix" hidden>
-        <div class="row"><b id="pl-pre-what"></b><span class="spacer"></span><button id="pl-pre-up" class="sm">Up</button><button id="pl-pre-x" class="sm">Close</button></div>
-        <div class="row mut" id="pl-pre-path"></div>
-        <div id="pl-pre-list" class="tbl" style="max-height:340px;overflow:auto"></div>
-        <div class="row"><button id="pl-pre-prev" class="sm">Previous</button><span id="pl-pre-pos" class="mut"></span><button id="pl-pre-next" class="sm">Next</button></div>
-      </div>
-    </div>
-    <div id="pl-pick" hidden data-nopre>
-      <div class="row"><b id="pl-pick-what"></b><span class="spacer"></span><button id="pl-pick-up" class="sm">Up</button><button id="pl-pick-x" class="sm">Cancel</button></div>
-      <div class="row mut" id="pl-pick-dir"></div>
-      <div id="pl-pick-list" class="tbl" style="max-height:260px;overflow:auto"></div>
-    </div>
-    <div id="pl-msg" class="msg" role="status"></div>
-    <p class="note">The project's POOL: three lists (SAMPLES for GRANULAR, DSP SAMPLE and the sampler's takes;
-      WAVETABLES for WAVETABLE; INSTRUMENTS for MULTISAMPLE), each 8 banks of 128 rows, row 000 OFF. The Rytm's bank
-      list and the touchscreen show the same rows. Add files from the Files tab (+SMP / +WT / +INST, Fill bank).
-      Replacing or unloading a row in use asks first, and is refused while the Rytm plays. Select unused picks the
-      rows not seen playing in this project: a parameter lock on the Rytm that has not played yet is not known.
-      Undo takes back the last replace or unload of the list. MISSING: the file is gone from the card (the row is
-      silent); CHANGED: the file's content changed (Accept takes the new content). JUNO and 6-OP FM are the two preset
-      lists, the same rows the Rytm's knob A and the touchscreen show: Add presets browses the RAM index of /JUNO and
-      /DX7 (FACTORY and ROM on top, banks as folders; the card is not read while you scroll) and puts a preset into the
-      list's first empty slot, Replace into the slot you chose. Renaming, deleting and saving a voice's patch stay in
-      the Presets tab.</p>
-  </section>
-  </div>
-
-  <div class="tab" id="tab-library">
-  <section id="lib-juno">
-    <h2>JUNO list</h2>
-    <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Patch</th><th></th></tr></thead><tbody id="lib-juno-list"></tbody></table></div>
-    <div class="row"><label for="lib-juno-v">Save current</label><select id="lib-juno-v"></select>
-      <input id="lib-juno-n" placeholder="name" maxlength="23"><button id="lib-juno-save">Save to the list</button></div>
-    <div id="lib-juno-msg" class="msg"></div>
-    <p class="note">/.rytm/juno/&lt;project&gt;.txt. Save current stores the patch a JUNO voice plays now with its six
-      knobs (CUT RES ENV ATK DEC REL) as they are, into the first empty slot.</p>
-  </section>
-  <section id="lib-fm">
-    <h2>6-OP FM list</h2>
-    <div class="tbl"><table><thead><tr><th class="r">PAT</th><th>Voice</th><th></th></tr></thead><tbody id="lib-fm-list"></tbody></table></div>
-    <div class="row"><label for="lib-fm-v">Save current</label><select id="lib-fm-v"></select>
-      <button id="lib-fm-save">Add its ROM voice to the list</button></div>
-    <div id="lib-fm-msg" class="msg"></div>
-    <p class="note">/.rytm/fm/&lt;project&gt;.txt (a bank's MD5 and voice per slot). While the list is empty, PAT picks
-      the 96 ROM voices; once it has a voice, PAT picks from the list.</p>
-  </section>
-  <section id="lib-pre">
-    <h2>User machine presets</h2>
-    <div id="lib-pre-slots"></div>
-    <div id="lib-pre-msg" class="msg"></div>
-    <p class="note">/PRESETS/&lt;machine id&gt;/: &lt;name&gt;.txt ("P&lt;n&gt; &lt;value&gt;" lines) and the machine's own
-      preset files; the slot's PRE knob picks them in name order, as on the Teensy. Save current writes the knobs the
-      slot's last voice plays now.</p>
-  </section>
-  </div>
-
-  <div class="tab" id="tab-project">
-  <section id="pb">
-    <h2>Projects</h2>
-    <div class="row"><span class="mut">Every Sidecar project on the card. A bundle (<b>.sidecar.zip</b>) holds a project's
-      Sidecar files, every sample it uses, its song takes and machines, and the Rytm project file if you add one.</span>
-      <span class="spacer"></span><label class="mut"><input type="checkbox" id="pb-takes" checked> unused sampler takes</label>
-      <button id="pb-re">Refresh</button></div>
-    <div id="pb-projects" class="tbl"></div>
-    <div id="pb-job" class="prog"></div>
-    <div id="pb-msg" class="msg"></div>
-    <div id="pb-plan" hidden></div>
-    <h2>Bundles on the card</h2>
-    <div class="row"><button id="pb-upb">Import a bundle…</button><input id="pb-file" type="file" accept=".zip,.sidecar.zip" hidden>
-      <span class="mut">or drop a .sidecar.zip here</span></div>
-    <div id="pb-bundles" class="tbl drop"></div>
-    <div class="prog" id="pb-prog"></div>
-    <h2>USB stick</h2>
-    <div class="row"><span id="pb-usbpick"></span><span class="mut">Export to a stick is off in this version (export to the card, then copy the
-      bundle); import reads a bundle straight from the stick (its /SIDECAR or its root). Eject before you pull it.</span></div>
-    <div id="pb-usb" class="tbl"></div>
-    <h2>Trash</h2>
-    <div class="row"><span class="mut">A project's Sidecar files go here when its slot is cleared, deleted, pasted over or
-      saved over on the Rytm, or deleted here; samples are never in it. The newest 64 are kept.</span>
-      <span class="spacer"></span><button id="pb-trash-empty">Empty…</button></div>
-    <div id="pb-trash" class="tbl"></div>
-    <p class="note">Export makes the bundle on the Sidecar a piece at a time on core 0, never on the audio core: while the
-      Rytm plays it only reads, slowly (card writes wait for STOP), and while the recorder records it waits. <b>Download</b>
-      streams it to this computer; very large bundles need a secure page (https or localhost) for the streaming download,
-      otherwise the page collects it first (up to 1 GB). Importing never touches the Rytm: the summary says which Rytm
-      project to load with Elektron Transfer and the name to save it under. On a card keyed by the Rytm's project slots
-      (since 0.3.0) the import goes <b>to a slot</b> instead: pick it in the summary; the bundle holds only the Sidecar's
-      side, so the Rytm's project must be in that slot (Transfer, or SAVE TO it before you import - a SAVE TO onto it
-      afterwards moves the imported files to the trash). A slot with Sidecar files is only replaced when you tick
-      replace: its files go to the project trash, restorable. Delete removes a project's Sidecar files only;
-      its samples stay on the card.</p>
-  </section>
-  </div>
-
   <div class="tab" id="tab-files">
   <section id="fs">
     <h2>Files</h2>
     <div class="row"><span class="mut">Go to</span>
       <button class="sm" data-go="/">/</button><button class="sm" data-go="/Samples">Samples</button>
-      <button class="sm" data-go="/.rytm">.rytm</button><button class="sm" data-go="/Plugins">Plugins</button><button class="sm" data-go="/Recordings">Recordings</button>
-      <button class="sm" data-go="/GRANULAR" data-mk="1" title="GRANULAR's samples (made if missing)">GRANULAR</button><button class="sm" data-go="/WAVETABLES" data-mk="1" title="WAVETABLE's tables (made if missing)">WAVETABLES</button><button class="sm" data-go="/MULTISAMPLE" data-mk="1" title="MULTISAMPLE's instruments (made if missing)">MULTISAMPLE</button>
+      <button class="sm" data-go="/.rytm">.rytm</button>
       <span class="spacer"></span><span id="fs-free" class="mut"></span></div>
     <div class="row" id="fs-crumb"></div>
     <div class="row"><button id="fs-upd">Up</button><button id="fs-mk">New folder</button>
       <button id="fs-upb">Upload files</button><input id="fs-file" type="file" multiple hidden>
       <button id="fs-upf">Upload folder</button><input id="fs-dir" type="file" webkitdirectory multiple hidden>
       <button id="fs-re">Refresh</button>
-      <label class="mut" for="fs-bank" title="the bank +SMP / +WT / +INST add to (its first free row)">POOL bank</label><select id="fs-bank">
-        <option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option></select>
       <span class="spacer"></span><label class="mut"><input type="checkbox" id="fs-hidden"> show hidden</label></div>
     <div id="fs-list" class="tbl drop"></div>
     <div class="prog" id="fs-prog"></div>
     <div id="fs-msg" class="msg"></div>
     <p class="note">Drop files or folders on the list to upload them into this folder (folders whole, with their
       subfolders; .DS_Store and ._ files are left out). Uploads go one at a time in small pieces: the page runs on
-      core 0 with the network, USB and the card, apart from the audio (render cores 1 and 2, control core 3).
-      🔒 marks boot files and the restore backup (read-only); Samples, Plugins and .rytm themselves are kept
-      (their contents can change). WAV files uploaded into GRANULAR (and one folder level below it), WAVETABLES or
-      MULTISAMPLE are in the machines' browsers at once (rescanned after each upload). <b>+SMP</b> / <b>+WT</b> (any WAV
-      or AIFF) and <b>+INST</b> (an .sfz or Elektron .elmulti) add the file to the project's POOL (SAMPLES, WAVETABLES or INSTRUMENTS), into
-      the first free row of the POOL bank chosen above; a file already in that list keeps its row. <b>Fill bank</b>
-      puts a folder's files into a bank's empty rows. The rows are in the Pool tab, the Rytm's bank list and the
-      touchscreen; a row's audio is loaded into RAM when a voice plays it.</p>
+      core 0 with the network, USB and the card (the control core is core 3).
+      🔒 marks boot files and the restore backup (read-only); Samples and .rytm themselves are kept (their contents
+      can change). The Rytm's file browser lists <code>/Samples</code> through the card browse service (core/browse).</p>
   </section>
   </div>
 
@@ -605,7 +231,7 @@
     <section>
       <h2>Log &amp; console</h2>
       <div class="row">
-        <input id="cmd" placeholder="a console command, e.g. notemach=0:plaits, um, sendfx" autocomplete="off">
+        <input id="cmd" placeholder="a console command, e.g. gen, clock, usba" autocomplete="off">
         <button id="send">Send</button></div>
       <div class="opts">
         <label><input type="checkbox" id="hidestats" checked> hide the periodic stats lines</label>
@@ -623,17 +249,16 @@
     <section>
       <h2>About</h2>
       <div class="kv" id="about"></div>
-      <p class="note">Sidecar | Expander, a sound engine beside the drum machine. Core 0 runs the network (this page),
-        USB (Overbridge, USB-C) and the card; cores 1 and 2 render the voices and the send FX; core 3 is the control
-        core (MIDI, machines, loading). The page never waits on the audio: a request is answered from what the
-        cores last published.</p>
+      <p class="note">Sidecar | Expander, a generic engine beside the drum machine: the host link's services (the
+        screen, the clock, the store, the card browse, the USB-A MIDI devices, the processor slots on the audio return).
+        Core 0 runs the network (this page), USB (Overbridge, USB-C) and the card; core 3 is the control core. The page
+        never waits on the engine: a request is answered from what the cores last published.</p>
     </section>
   </div>
   <div id="pair-wrap" hidden>
     <div id="pair-box" role="dialog" aria-modal="true" aria-labelledby="pair-h">
       <h2 id="pair-h">Pairing code</h2>
-      <p id="pair-why">Sidecar asks for a code before this page may change anything. It is on the Rytm's screen and on
-        Sidecar's own screen (STATUS page, <b>PAIR CODE</b>), and it changes every time Sidecar restarts.</p>
+      <p id="pair-why">Sidecar asks for a code before this page may change anything. It is on the Rytm's screen, and it changes every time Sidecar restarts.</p>
       <div class="row"><label for="pair-code">Code</label>
         <input id="pair-code" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false"
                maxlength="11" placeholder="1234 5678"></div>
@@ -928,27 +553,7 @@ $("#mb-data").onchange = () => {
   mbSet({ data: on ? "1" : "0" });
 };
 $("#mb-copy").onclick = () => { try { navigator.clipboard.writeText(mbTok); say($("#mb-msg"), "token copied"); } catch (e) {} };
-// ---- the LFO tab: web/seg.js's Pending and web/lfo.js, put here by build.sh / tests/mock_web.py (shared with the Mini's page)
-/*@include web/seg.js@*/
-/*@include web/lfo.js@*/
-// 1025: the Rytm's own SRC machine per track (/status "src"). TNAME is the Rytm's track order, which is the order
-// the report uses; the voice order (VNAME) is a different thing and stays separate.
-const TNAME = ["BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"];
-$("#sm-grid").innerHTML = TNAME.map((n, t) =>
-  `<div class="chip" id="sm-${t}"><div class="k">${n}</div><div class="v">-</div></div>`).join("");
-function paintSrc(src) {
-  const any = Array.isArray(src) && src.some((x) => x && x.vb >= 0);
-  $("#srcm").hidden = !any;                        // before the Rytm has reported there is nothing to show
-  if (!any) return;
-  for (let t = 0; t < TNAME.length; t++) {
-    const e = $("#sm-" + t), x = src[t] || {};
-    if (!e) continue;
-    e.querySelector(".v").textContent = x.m || "-";
-    e.classList.toggle("rytm", x.m === "RYTM" || x.m === "?");
-    e.title = x.vb === undefined || x.vb < 0 ? "not reported yet" : `voice byte 0x${(+x.vb).toString(16).toUpperCase()}`;
-  }
-}
-const TILES = [["cpu","CPU (cores 1/2/3)"],["fifo","FIFO"],["under","Underruns"],["ob","Overbridge"],
+const TILES = [["cpu","CPU (control core)"],["under","Underruns"],["ob","Overbridge"],
   ["rytm","Rytm"],["gadget","USB-C"],["temp","Temperature"],["power","Power"],["web","This page"]];
 $("#tiles").innerHTML = TILES.map(([k,n]) => `<div class="tile" id="t-${k}"><div class="k">${n}</div><div class="v">-</div><div class="d">&nbsp;</div></div>`).join("");
 // the temperature card's detail and class (pi/engine/thermal.h): the warning on at 80 °C, off below 75 °C; clockLow,
@@ -966,7 +571,7 @@ function tile(k, v, d, cls) {
   t.querySelector(".d").textContent = tileLines(d);
   t.className = "tile" + (cls ? " " + cls : "");
 }
-// ---- tabs: #status, #sound, ... (deep links); the last one remembered
+// ---- tabs: #status, #files, ... (deep links); the last one remembered
 const TABS = [...document.querySelectorAll("#tabs a")].map((a) => a.dataset.tab);
 let tab = "status";
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
@@ -977,61 +582,15 @@ function showTab(t) {
   document.querySelectorAll(".tab").forEach((d) => d.classList.toggle("on", d.id === "tab-" + t));
   store("sidecar.tab", t);
   if (t === "status") wfPoll();
-  if (t === "sound" || t === "lfo") pollStatus();
-  if (t === "machines") pollUm(true);
-  if (t === "library") pollLib(true);
-  if (t === "pool") plPoll(true);
   if (t === "files") fsLs(fsCur);
-  if (t === "project") { pbProjects(); pbBundles(); pbPoll(); }
-  if (t === "record") recTakes();
   if (t === "log") { const l = $("#log"); if ($("#follow").checked) l.scrollTop = l.scrollHeight; }
 }
 window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
-const VNAME = ["BD", "BT", "SD", "LT", "CH/OH", "MT/HT", "CY/CB", "RS/CP"];   // a voice by the Rytm track(s) that play it; its index stays the value
-for (const v of [0, 2, 7, 1, 3, 5, 4, 6]) { $("#mvoice").add(new Option(VNAME[v], v)); $("#dvoice").add(new Option(VNAME[v], v)); }
 
 let status = null, last = {};          // last: the newest stats lines, by kind
 const STATS = /(rytmob: \d+ms IN|engine: engine: fifo|sidecar: \w+ alt|midigadget:)/;
-const PERIODIC = /^\S+ (\w+: )?(display|touch): (?!command|screensaver)/;   // the display's 10 s lines (touch diagnostics)
+const PERIODIC = /^$/;   // (no periodic lines beyond the stats)
 
-// ---- the master FX (/status "ins" "mfx", core/fx/master.h; docs/MASTER-FX.md): four slots, the switches; every control a console line
-const MFX_TYPES = ["OFF", "FILTER", "CRUSH", "DRIVE", "EQ", "COMP", "DELAY", "TREMOLO", "RINGMOD", "AMP", "CHORUS", "COMB", "SPACE", "RINGS", "CLOUD", "HALO"];
-const MFX_NOTE = {
-  ret: "SRC RET: the chain takes what the Sidecar sends back. The Rytm's own mix is not in it: the Pi can add to that mix, not replace it.",
-  mix: "SRC MIX (through mode): the Rytm's 8 stems go through the chain, panned as on the Rytm. Tracks left on ROUTE TO MAIN stay analog. The Rytm's delay and reverb stay in MAIN, outside the chain.",
-  old: "SRC MIX (through mode): these Rytm mods send no pans or routing, so all 8 stems are added, mono. Take every track off ROUTE TO MAIN on the Rytm, or you hear them twice. The Rytm's delay and reverb stay outside the chain.",
-};
-let mfxLast = "";
-function mfxHtml(m) {
-  const key = (c, t, on) => `<button type="button" data-mfx="${c}"${on ? ' class="on"' : ""}>${t}</button>`;
-  let h = `<div class="row">${key(m.byp ? "byp:0" : "byp:1", m.byp ? "Bypassed" : "On", !m.byp)}${key(m.src === "mix" ? "src:ret" : "src:mix", "SRC " + m.src.toUpperCase(), m.src === "mix")}` +
-    `<label>LEV <input type="range" min="0" max="127" value="${m.lev}" data-mfx-v="lev:"></label> ${m.lev}` +
-    `<label>STEM TRIM <input type="range" min="-24" max="0" value="${m.trim}" data-mfx-v="trim:"></label> ${m.trim} dB</div><div class="fxs">`;
-  m.s.forEach((s, i) => {
-    const n = i + 1;
-    h += `<div><label>${n} <select data-mfx-t="${n}">` + MFX_TYPES.map((t) => `<option${t === s.t ? " selected" : ""}>${t}</option>`).join("") + "</select></label>";
-    if (s.t !== "OFF") {
-      s.p.forEach((v, k) => { h += `<div><label>${s.l[k]} <input type="range" min="0" max="127" value="${v}" data-mfx-v="${n}:p${k + 1}:"></label> ${s.v[k]}</div>`; });
-      if (s.send) h += `<div><label>MIX <input type="range" min="0" max="127" value="${s.mix}" data-mfx-v="${n}:mix:"></label> ${s.mix}</div>`;
-      if (s.t === "AMP") h += "<div>" + key(`${n}:pair:${s.pair ? 0 : 1}`, s.pair ? "L/R pair" : "One on L+R", s.pair) + "</div>";
-    }
-    h += "</div>";
-  });
-  return h + "</div>";
-}
-function showMfx(m) {
-  if (!m) return;
-  $("#mfx-gr").textContent = `Limiter: ${m.gr} dB of reduction`;   // (changes all the time: outside what redraws the section)
-  const j = JSON.stringify({ ...m, gr: 0 }), box = $("#mfx");
-  if (j === mfxLast || box.contains(document.activeElement)) return;   // (not under a dragged slider)
-  mfxLast = j;
-  box.innerHTML = mfxHtml(m);
-  $("#mfx-note").textContent = (m.src === "mix" && !m.rep ? MFX_NOTE.old : MFX_NOTE[m.src] || "") +
-    (m.src === "mix" && m.onmain ? ` ${m.onmain} voices are still on main.` : "");
-  box.querySelectorAll("[data-mfx]").forEach((b) => { b.onclick = () => cmd("mfx=" + b.dataset.mfx); });
-  box.querySelectorAll("[data-mfx-v]").forEach((r) => { r.onchange = () => { cmd("mfx=" + r.dataset.mfxV + r.value); r.blur(); }; });
-  box.querySelectorAll("[data-mfx-t]").forEach((t) => { t.onchange = () => { cmd("mfx=" + t.dataset.mfxT + ":type:" + t.value); t.blur(); }; });
-}
 async function cmd(c) {
   appendLines([{ text: "> :" + c, cls: "me" }]);
   let ok = false;
@@ -1045,247 +604,7 @@ async function cmd(c) {
   setTimeout(pollStatus, 300);
   return ok;
 }
-// ---- choice groups (Sound, Display, Wi-Fi, Record): the device's CURRENT state from /status filled in, a click shows a
-// pending state until /status confirms it; no confirmation in 2 s (or a refused command) puts the old state back with a
-// short message. Pending keeps one change per key; the text is "saved ✓" or the error.
 let postDone = 0, statusAt = 0;
-const pend = {
-  m: new Map(),
-  has(k) { return this.m.has(k); },
-  want(k) { return this.m.has(k) ? this.m.get(k).want : undefined; },
-  start(k, want) {
-    this.drop(k);
-    this.m.set(k, { want: String(want), t: setTimeout(() => { this.m.delete(k); this.say(k, "no answer from Sidecar, not changed", 1); }, 2000) });
-    this.say(k, "", 0);
-  },
-  drop(k) { const q = this.m.get(k); if (q) { clearTimeout(q.t); this.m.delete(k); } },
-  report(k, actual, text) { const q = this.m.get(k); if (!q || String(actual) !== q.want) return false; this.drop(k); this.say(k, text === undefined ? "saved \u2713" : text, 0); return true; },
-  fail(k, text) { if (this.m.has(k)) { this.drop(k); this.say(k, text, 1); } },
-  say(k, text, bad) {
-    const el = document.querySelector(`[data-fb="${k}"]`);
-    if (el) { el.textContent = text; el.classList.toggle("err", !!bad); clearTimeout(el._t); if (text) el._t = setTimeout(() => { el.textContent = ""; }, bad ? 5000 : 2500); }
-    paintSeg();
-  },
-};
-const droneVal = (d) => (d < 0 ? "off" : "on:" + (d === 8 ? "all" : d));
-function chosen(k) {      // the device's value of a group as the buttons' data-val, or undefined when /status has not said
-  const st = status || {}, v = st[k];
-  if (k === "drone") return v === undefined ? undefined : v < 0 ? "off" : "on";
-  if (k === "fxsrc") return st.fxin && st.fxin.state === "on" ? "fx" : st.fxin && st.fxin.state === "off" ? "in" : undefined;   // the Rytm's confirmed state
-  return v === undefined || v === null ? undefined : String(v);
-}
-function paintSeg() {
-  document.querySelectorAll(".seg[data-key]").forEach((g) => {
-    const k = g.dataset.key, cur = chosen(k), want = (pend.want(k) || "").split(":")[0] || undefined;
-    const gone = !online || (k === "mac" && status && status.mac === null);
-    g.classList.toggle("pending", want !== undefined);
-    g.setAttribute("aria-busy", String(want !== undefined));
-    g.querySelectorAll("button").forEach((b) => {
-      b.setAttribute("aria-checked", String(cur === b.dataset.val));
-      b.classList.toggle("pend", want === b.dataset.val);
-      b.tabIndex = cur === b.dataset.val || (cur === undefined && b === g.querySelector("button")) ? 0 : -1;
-      b.disabled = gone;
-      b.title = k === "mac" && gone && online ? "not in this gadget mode" : b.title;
-    });
-  });
-  const st = status || {}, v = +$("#mvoice").value, m = st.machines && st.machines[v] ? st.machines[v].toLowerCase() : "";
-  $("#mcur").textContent = m ? "now: " + m : "";
-  $("#fifocur").textContent = st.fifoTarget !== undefined ? "now: " + st.fifoTarget + " frames" : "";
-}
-function settle() {       // /status after a change: confirm what matches
-  const st = status || {};
-  for (const k of ["notes", "out", "mac", "screensaver"]) if (st[k] !== undefined && st[k] !== null) pend.report(k, st[k]);
-  if (st.drone !== undefined) pend.report("drone", droneVal(st.drone));
-  if (chosen("fxsrc")) pend.report("fxsrc", chosen("fxsrc"));
-  if (st.machines) for (let v = 0; v < 8; v++) pend.report("mach", v + ":" + (st.machines[v] || "").toLowerCase());
-  if (pend.has("fifo") && statusAt > postDone && st.fifoTarget !== undefined)   // the device limits the target: its value is the answer
-    pend.report("fifo", pend.want("fifo"), st.fifoTarget === +pend.want("fifo") ? undefined : `set to ${st.fifoTarget} (the limit)`);
-  if (document.activeElement !== $("#fifo") && !pend.has("fifo") && st.fifoTarget !== undefined) $("#fifo").value = st.fifoTarget;
-  const mv = +$("#mvoice").value;
-  if (!pend.has("mach") && document.activeElement !== $("#mname") && st.machines && st.machines[mv]) $("#mname").value = st.machines[mv].toLowerCase();
-  if (document.activeElement !== $("#dvoice") && st.drone >= 0) $("#dvoice").value = st.drone === 8 ? "all" : String(st.drone);
-  paintSeg();
-}
-async function choose(key, want, c) {
-  pend.start(key, want);
-  if (!(await cmd(c))) pend.fail(key, "Sidecar refused the command");
-}
-document.querySelectorAll(".seg[data-key] button").forEach((b) => b.addEventListener("click", () => {
-  const k = b.closest(".seg").dataset.key;
-  const on = k === "drone" && b.dataset.val === "on";
-  choose(k, on ? "on:" + $("#dvoice").value : b.dataset.val, b.dataset.cmd + (on ? $("#dvoice").value : ""));
-}));
-document.querySelectorAll(".seg").forEach((g) => g.addEventListener("keydown", (e) => {   // radio group: arrows move and choose
-  const bs = [...g.querySelectorAll("button:not(:disabled)")], i = bs.indexOf(document.activeElement);
-  const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-  if (i < 0 || !d) return;
-  e.preventDefault();
-  const n = bs[(i + d + bs.length) % bs.length];
-  n.focus(); n.click();
-}));
-document.querySelectorAll("[data-cmd]").forEach((b) => { if (!b.closest(".seg")) b.addEventListener("click", () => cmd(b.dataset.cmd)); });
-$("#mvoice").onchange = () => { const m = status && status.machines && status.machines[+$("#mvoice").value]; if (m) $("#mname").value = m.toLowerCase(); paintSeg(); };
-// ---- E0: the poly tracks (/status "poly" and "inst"): one row per seq track, Set sends one seq=poly line
-const POLY_ALLOC = ["reassign", "rotate", "reset"];
-function polyLine(t, f) {   // the console line for track t (1..12) from the row's fields
-  const v = Math.max(0, Math.min(8, f.v | 0)), u = Math.max(1, Math.min(8, f.u | 0));
-  const d = Math.max(0, Math.min(127, f.d | 0)), s = Math.max(0, Math.min(127, f.s | 0));
-  return "seq=poly:" + t + ":voices=" + v + ",alloc=" + (POLY_ALLOC[f.a | 0] || "reassign") + ",unison=" + u + ",detune=" + d + ",spread=" + s;
-}
-function polyRow(p) {
-  const opt = (vals, cur, names) => vals.map((x, i) => '<option value="' + x + '"' + (x === cur ? " selected" : "") + ">" + (names ? names[i] : x) + "</option>").join("");
-  return '<div class="row" data-t="' + p.t + '"><label>T' + p.t + "</label>" +
-    '<select data-f="v" aria-label="voices">' + opt([0, 1, 2, 3, 4, 5, 6, 7, 8], p.v, ["AUTO", 1, 2, 3, 4, 5, 6, 7, 8]) + "</select>" +
-    '<select data-f="a" aria-label="allocation">' + opt([0, 1, 2], p.a, ["REASSIGN", "ROTATE", "RESET"]) + "</select>" +
-    '<select data-f="u" aria-label="unison">' + opt([1, 2, 3, 4, 5, 6, 7, 8], Math.max(1, p.u), ["OFF", 2, 3, 4, 5, 6, 7, 8]) + "</select>" +
-    '<input data-f="d" type="number" min="0" max="127" value="' + p.d + '" style="width:64px" aria-label="detune">' +
-    '<input data-f="s" type="number" min="0" max="127" value="' + p.s + '" style="width:64px" aria-label="spread">' +
-    '<button data-poly="' + p.t + '">Set</button><span class="mut">' + (p.info || "") + (p.own ? "" : " (the track's default)") + "</span></div>";
-}
-let polySig = "";
-function showPoly(st) {
-  if (!st.poly) return;
-  const sig = JSON.stringify(st.poly);
-  if (sig !== polySig && !document.activeElement?.closest?.("#poly-rows")) {   // (not while a field is being edited)
-    polySig = sig;
-    $("#poly-rows").innerHTML = st.poly.length ? st.poly.map(polyRow).join("") : '<p class="mut">No seq track.</p>';
-  }
-  const i = st.inst;
-  if (i) {
-    const used = i.v.reduce((a, x) => a + (x.path === "inst" ? x.on : 0), 0);
-    $("#poly-inst").textContent = "Instances " + used + " of " + i.total + ", " + Math.round(i.bytes / 1024) + " KB each" +
-      (i.noroom ? ", " + i.noroom + " notes found no free instance" : "");
-  }
-}
-$("#poly-rows").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-poly]");
-  if (!b) return;
-  const row = b.closest(".row"), f = {};
-  row.querySelectorAll("[data-f]").forEach((x) => { f[x.dataset.f] = +x.value; });
-  polySig = "";   // the answer's /status redraws the rows
-  cmd(polyLine(b.dataset.poly, f));
-});
-// ---- seqtop: the pattern's key / scale / seed, the seq tracks' seqtop settings, a step's extras (/status "seqx")
-const SX_KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const SX_SCALES = ["CHR", "MAJ", "MIN", "DOR", "PENT", "PHR", "LYD", "MIX", "LOC", "HMIN", "MMIN", "PMAJ", "BLUES", "WHOLE"];
-const SX_QNT = ["off", "edit", "play"];
-const SX_SPD = ["follow", "1/8", "1/4", "1/2", "3/4", "3/2", "2", "2/3", "5/4", "7/8"];
-const SX_DIR = ["fwd", "rev", "pend", "ping", "rnd", "brown"];
-const SX_RND = ["off", "steps", "track"], SX_W = ["flat", "root", "chord", "low", "high", "step"];
-const SX_SQ = ["step", "loop", "bar"], SX_AFF = ["notes", "chance", "order", "all"];
-const SX_RT = ["chord", "walk", "up", "down", "updn", "rnd", "played", "conv"];
-const SX_RATE = ["auto", "2", "1", "2/3", "1/2", "1/3", "1/4", "1/6", "1/8"], SX_VC = ["flat", "up", "down", "updn"];
-const SX_FX = ["---", "RTG", "DLY", "CUT", "CHN", "RND", "RNV", "OCT", "TRS", "JMP", "JRN", "LOP", "SKP", "DIR", "FIL"];
-const sxClamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
-function seqxPatLines(f) {   // the pattern's row -> console lines
-  const l = ["seq=key:" + SX_KEYS[sxClamp(f.key, 0, 11)] + ":" + SX_SCALES[sxClamp(f.scale, 0, 13)] + ":" + SX_QNT[sxClamp(f.qnt, 0, 2)]];
-  l.push(f.free ? "seq=seed:free" : "seq=seed:" + sxClamp(f.seed, 0, 9999));
-  return l;
-}
-function seqxTrackLines(t, f) {   // a track's row -> console lines (t 1..12)
-  return ["seq=spd:" + t + ":" + SX_SPD[sxClamp(f.spd, 0, 9)], "seq=dir:" + t + ":" + SX_DIR[sxClamp(f.dir, 0, 5)],
-    "seq=rnd:" + t + ":mode=" + SX_RND[sxClamp(f.rm, 0, 2)] + ",low=" + sxClamp(f.rl, 0, 127) + ",oct=" + sxClamp(f.ro, 1, 4) + ",wght=" + SX_W[sxClamp(f.rw, 0, 5)],
-    "seq=smod:" + t + ":src=" + sxClamp(f.ms, 0, 16) + ",range=" + sxClamp(f.mr, 2, 64) + ",quant=" + SX_SQ[sxClamp(f.mq, 0, 2)] + ",aff=" + SX_AFF[sxClamp(f.ma, 0, 3)]];
-}
-// a lock's COND code (core/seq) as seq=lcond takes it; an FX value as seq=fx takes it (DIR by name, LOP NxX)
-function sxCondText(c) {
-  if (c >= 44) return (c - 43) + "%";
-  if (c >= 9) { let i = c - 9, b = 2; while (i >= b) { i -= b; b++; } return (i + 1) + ":" + b; }
-  return ["---", "fill", "!fill", "pre", "!pre", "nei", "!nei", "1st", "!1st"][c] || "---";
-}
-function sxFxText(c, v) { return c === 13 ? SX_DIR[v] || "fwd" : c === 11 ? ((v & 15) + 1) + "x" + ((v >> 4) + 1) : String(v); }
-function seqxStepLines(t, s, f, was) {   // the step editor -> console lines (t 1..12, s 1..128; was: the step as loaded -
-                                         // a lock's condition and slide sent only when changed)
-  const p = "seq=", ts = t + ":" + sxClamp(s, 1, 128) + ":", l = [];
-  if ((f.rm | 0) < 0) l.push(p + "rtrg:" + ts + "off");
-  else l.push(p + "rtrg:" + ts + "cnt=" + sxClamp(f.rc, 0, 16) + ",rate=" + SX_RATE[sxClamp(f.rr, 0, 8)] + ",vcrv=" + SX_VC[sxClamp(f.rv, 0, 3)] +
-    ",pcrv=" + sxClamp(f.rp, -24, 24) + ",mode=" + SX_RT[sxClamp(f.rm, 0, 7)] + ",oct=" + sxClamp(f.ro, 1, 4) + ",gate=" + sxClamp(f.rg, 1, 100));
-  for (const c of [1, 2]) {
-    const cmdn = SX_FX[sxClamp(f["f" + c], 0, 14)], v = String(f["v" + c] ?? "").trim();
-    l.push(p + "fx:" + ts + c + ":" + (cmdn === "---" ? "off" : cmdn + ":" + (v || "0")));
-  }
-  l.push(p + "rndstep:" + ts + (f.rnd ? 1 : 0));
-  const same = was && (was.lp | 0) === (f.lp | 0);
-  if ((f.lp | 0) >= 1 && !(same && String(was.lc) === String(f.lc ?? "").trim()))
-    l.push(p + "lcond:" + ts + sxClamp(f.lp, 1, 32) + ":" + (String(f.lc ?? "").trim() || "---"));
-  if ((f.lp | 0) >= 1 && !(same && !!was.sl === !!f.sl)) l.push(p + "slide:" + ts + sxClamp(f.lp, 1, 32) + ":" + (f.sl ? 1 : 0));
-  return l;
-}
-const sxOpt = (names, cur) => names.map((x, i) => '<option value="' + i + '"' + (i === cur ? " selected" : "") + ">" + String(x).toUpperCase() + "</option>").join("");
-function seqxPatRow(x) {
-  return '<div class="row"><label>Pattern</label><select data-f="key" aria-label="key">' + sxOpt(SX_KEYS, x.key) + "</select>" +
-    '<select data-f="scale" aria-label="scale">' + sxOpt(SX_SCALES, x.scale) + "</select>" +
-    '<select data-f="qnt" aria-label="QNT">' + sxOpt(SX_QNT, x.qnt) + "</select>" +
-    '<input data-f="seed" type="number" min="0" max="9999" value="' + x.seed + '" style="width:72px" aria-label="seed">' +
-    '<label class="wf-check"><input type="checkbox" data-f="free"' + (x.fixed ? "" : " checked") + "> FREE</label>" +
-    '<button data-sxpat="1">Set</button></div>';
-}
-function seqxRow(t) {
-  const num = (f, v, lo, hi, w, lab) => '<input data-f="' + f + '" type="number" min="' + lo + '" max="' + hi + '" value="' + v + '" style="width:' + w + 'px" aria-label="' + lab + '">';
-  return '<div class="row" data-t="' + t.t + '"><label>T' + t.t + "</label>" +
-    '<select data-f="spd" aria-label="speed">' + sxOpt(SX_SPD, t.spd) + "</select>" +
-    '<select data-f="dir" aria-label="direction">' + sxOpt(SX_DIR, t.dir) + "</select>" +
-    '<select data-f="rm" aria-label="random notes">' + sxOpt(SX_RND, t.rnd[0]) + "</select>" +
-    num("rl", t.rnd[1], 0, 127, 56, "random low note") + num("ro", t.rnd[2], 1, 4, 44, "random octaves") +
-    '<select data-f="rw" aria-label="weight">' + sxOpt(SX_W, t.rnd[3]) + "</select>" +
-    num("ms", t.smod[0], 0, 16, 48, "SEED MOD source P") + num("mr", t.smod[1], 2, 64, 48, "SEED MOD range") +
-    '<select data-f="mq" aria-label="SEED QUANT">' + sxOpt(SX_SQ, t.smod[2]) + "</select>" +
-    '<select data-f="ma" aria-label="SEED AFFECTS">' + sxOpt(SX_AFF, t.smod[3]) + "</select>" +
-    '<button data-sxt="' + t.t + '">Set</button><span class="mut">' + (t.smod[0] ? "seed +" + t.off : "") + "</span></div>";
-}
-let seqxSig = "", seqxLast = null, seqxWas = null;
-function showSeqx(st) {
-  const x = st.seqx;
-  if (!x) return;
-  seqxLast = x;
-  const sig = JSON.stringify([x.key, x.scale, x.qnt, x.seed, x.fixed, x.t.map((t) => [t.t, t.spd, t.dir, t.rnd, t.smod, t.off])]);
-  if (sig !== seqxSig && !document.activeElement?.closest?.("#seqx-sec")) {   // (not while a field is being edited)
-    seqxSig = sig;
-    $("#seqx-pat").innerHTML = seqxPatRow(x);
-    $("#seqx-rows").innerHTML = x.t.length ? x.t.map(seqxRow).join("") : '<p class="mut">No seq track.</p>';
-    const cur = $("#sx-t").value;
-    $("#sx-t").innerHTML = x.t.map((t) => '<option value="' + t.t + '"' + (String(t.t) === cur ? " selected" : "") + ">T" + t.t + "</option>").join("");
-    seqxFillStep();
-  }
-}
-function seqxFillStep() {   // the step editor from the last /status (a step without extras: the defaults)
-  const x = seqxLast, t = +$("#sx-t").value, s = +$("#sx-s").value;
-  const tr = x && x.t.find((q) => q.t === t), e = tr && tr.x.find((q) => q.s === s);
-  const rt = e ? e.rt : [0, 0, 0, 0, 0, 0, 0], on = rt[0] >= 2 || rt[4] >= 2;
-  $("#sx-rm").value = on ? rt[4] : -1, $("#sx-rc").value = rt[0], $("#sx-rr").value = rt[1], $("#sx-rv").value = rt[2];
-  $("#sx-rp").value = rt[3], $("#sx-ro").value = rt[5] || 1, $("#sx-rg").value = rt[6] || 100;
-  const fx = e ? e.fx : [[0, 0], [0, 0]];
-  $("#sx-f1").value = fx[0][0], $("#sx-v1").value = fx[0][0] ? sxFxText(fx[0][0], fx[0][1]) : "";
-  $("#sx-f2").value = fx[1][0], $("#sx-v2").value = fx[1][0] ? sxFxText(fx[1][0], fx[1][1]) : "";
-  $("#sx-rnd").checked = !!(e && e.r);
-  const lp = e && e.lc.length ? e.lc[0][0] : e && e.sl.length ? e.sl[0] : "";
-  const lc = e && e.lc.find((q) => q[0] === lp);
-  $("#sx-lp").value = lp, $("#sx-lc").value = lc ? sxCondText(lc[1]) : "";
-  $("#sx-sl").checked = !!(e && e.sl.includes(lp));
-  seqxWas = { lp: lp === "" ? 0 : lp, lc: $("#sx-lc").value, sl: $("#sx-sl").checked };
-}
-$("#sx-rm").innerHTML = '<option value="-1">OFF</option>' + sxOpt(SX_RT, -1);
-$("#sx-rr").innerHTML = sxOpt(SX_RATE, 0), $("#sx-rv").innerHTML = sxOpt(SX_VC, 0);
-$("#sx-f1").innerHTML = sxOpt(SX_FX, 0), $("#sx-f2").innerHTML = sxOpt(SX_FX, 0);
-$("#sx-t").onchange = seqxFillStep, $("#sx-s").onchange = seqxFillStep;
-async function sxSend(lines) { for (const l of lines) await cmd(l); seqxSig = ""; }
-$("#seqx-sec").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-sxpat],button[data-sxt]");
-  if (!b) return;
-  const row = b.closest(".row"), f = {};
-  row.querySelectorAll("[data-f]").forEach((q) => { f[q.dataset.f] = q.type === "checkbox" ? q.checked : +q.value; });
-  sxSend(b.dataset.sxpat ? seqxPatLines(f) : seqxTrackLines(b.dataset.sxt, f));
-});
-$("#sx-set").onclick = () => {
-  const f = { rm: +$("#sx-rm").value, rc: +$("#sx-rc").value, rr: +$("#sx-rr").value, rv: +$("#sx-rv").value, rp: +$("#sx-rp").value,
-    ro: +$("#sx-ro").value, rg: +$("#sx-rg").value, f1: +$("#sx-f1").value, v1: $("#sx-v1").value, f2: +$("#sx-f2").value,
-    v2: $("#sx-v2").value, rnd: $("#sx-rnd").checked, lp: +$("#sx-lp").value, lc: $("#sx-lc").value, sl: $("#sx-sl").checked };
-  sxSend(seqxStepLines(+$("#sx-t").value, +$("#sx-s").value, f, seqxWas));
-};
-$("#mset").onclick = () => { const v = $("#mvoice").value, n = $("#mname").value; choose("mach", v + ":" + n, "notemach=" + v + ":" + n); };
-$("#fifoset").onclick = () => { const n = $("#fifo").value | 0; pend.start("fifo", n); cmd("fifo=" + n).then((ok) => { if (!ok) pend.fail("fifo", "Sidecar refused the command"); }); };
-$("#bright").oninput = () => { $("#brightv").textContent = $("#bright").value + " %"; };
-$("#bright").onchange = () => cmd("brightness=" + $("#bright").value);
 $("#send").onclick = () => { const c = $("#cmd").value.trim().replace(/^:/, ""); if (c) cmd(c); $("#cmd").value = ""; };
 $("#cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#send").click(); });
 $("#clear").onclick = () => { $("#log").textContent = ""; };
@@ -1314,7 +633,6 @@ function applyHide() {
 $("#hidestats").onchange = applyHide;
 
 let since = 0, partial = "", online = false;
-const lfoUi = initLfo({ root: $("#lfo-root"), send: (c) => cmd(c), Pending, isOn: () => online });
 async function pollLog() {
   if (qBusy || wifiBusy) { setTimeout(pollLog, 800); return; }    // paused while uploads or a Wi-Fi join run (the Pi's 4 connections)
   // /log is open even while unpaired, but the dialog covers this page's view of it, so nothing is fetched: this
@@ -1332,7 +650,6 @@ async function pollLog() {
     partial = parts.pop();
     const out = [];
     for (const p of parts) {
-      if (since0) logMatch(p);   // an answer a command waits for (never from the first, whole read)
       const m = p.match(STATS);
       if (m) last[m[1].split(":")[0]] = p;
       const per = !!m || PERIODIC.test(p);
@@ -1359,12 +676,7 @@ async function pollStatus() {
     status = await r.json();
     statusAt = t0;
     renderStats();
-    if (status.rec) recRender(status.rec);
-    if (status.sdtest) sdtRender(status.sdtest);
     if (status.stor) storRender(status.stor);
-    if (status.library) $("#lib-st span").textContent = libText(status.library);
-    if (status.play) playRender(status.play);
-    if (status.samp) smpRender(status.samp, status.asamp);
     if (status.midibridge) mbRender(status.midibridge);
     setOnline(true);
   } catch (e) { setOnline(false); }
@@ -1373,7 +685,6 @@ async function pollStatus() {
 setInterval(pollStatus, 1000);
 function setOnline(on, why) {
   online = on;
-  paintSeg();
   $("#dot").className = "dot" + (on ? " on" : "");
   if (!on) { $("#state").textContent = why || "not reachable"; return; }
   if (status) {
@@ -1384,13 +695,9 @@ function setOnline(on, why) {
 const num = (re, s, i = 1) => { const m = s && s.match(re); return m ? m[i] : null; };
 function renderStats() {
   const e = last["engine"], ob = last["rytmob"], sc = last["sidecar"], st = status || {};
-  paintSrc(st.src);
   if (e) {
-    const c = e.match(/cpu c1 ([\d.]+) c2 ([\d.]+) c3 ([\d.]+)/);
-    if (c) tile("cpu", `${c[1]} / ${c[2]} / ${c[3]} %`, "block max " + num(/max (\d+) us \|/, e) + " us · pass max " + num(/pass max (\d+)/, e) + " us"
-      + (st.cpu && st.cpu.mhz ? ` · ${st.cpu.mhz} MHz, voice budget ${st.cpu.budgetUs} us` : ""));
-    const f = e.match(/fifo min (\d+) max (\d+) target (\d+) under (\d+)(?: \(restart (\d+), streams (\d+)\))?/);
-    if (f) tile("fifo", `${f[1]}..${f[2]}`, `target ${f[3]} frames`, +f[1] === 0 ? "bad" : "");
+    const c = e.match(/cpu c3 ([\d.]+)/);   // "engine: generic | cpu c3 X.Y % | pass max N us | ..." (kernel.cpp)
+    if (c) tile("cpu", `${c[1]} %`, "pass max " + num(/pass max (\d+)/, e) + " us" + (st.cpu && st.cpu.mhz ? ` · ${st.cpu.mhz} MHz` : ""));
   }
   if (st.underruns !== undefined) tile("under", String(st.underruns), (st.restartUnderruns !== undefined ? `restart ${st.restartUnderruns} · streams ${st.streams} · ` : "") + "glitches while playing", st.underruns ? "bad" : "good");
   if (st.streaming) {
@@ -1416,18 +723,6 @@ function renderStats() {
     if (bad) $("#pwarn").textContent = "⚠ " + p.warn.charAt(0).toUpperCase() + p.warn.slice(1) + " (Wi-Fi and the web page suffer first).";
   }
   if (st.web) tile("web", st.web.requests + " req", `max ${st.web.maxus} us · ${st.web.commands} commands` + (st.web.refused ? ` · ${st.web.refused} busy` : ""));
-  settle();
-  if (st.fxin) fxinShow(st.fxin);
-  if (st.lfo) lfoUi.show(st.lfo);   // the LFO tab (/status "lfo": core/lfo.cpp json)
-  showPoly(st);                       // E0: the poly tracks (/status "poly", "inst": core/seq, core/inst.h)
-  showMfx(st.ins && st.ins.mfx);      // the master FX (/status "ins" "mfx": core/fx/master.h)
-  showSeqx(st);                       // seqtop: the sequencer's top-8 settings (/status "seqx": core/seq)
-  if (st.brightness && document.activeElement !== $("#bright")) { $("#bright").value = st.brightness; $("#brightv").textContent = st.brightness + " %"; }
-  if (st.display !== undefined) $("#blank").textContent = !st.display ? "no display attached" : st.blank ? "the screen is black now (a touch wakes it)" : "";
-  if (st.fx && tab === "sendfx") $("#fx").innerHTML = st.fx.map((f, i) => `<div><b>FX ${i + 1}</b> · ${esc(f.type || "OFF")}
-    <span class="mut">· returns ${f.post ? "POST on 0/1" : "PRE on 2/3"}</span>
-    <div class="sends">${f.send.map((v) => `<i style="height:${(v / 127 * 100).toFixed(0)}%" title="${v}"></i>`).join("")}</div>
-    <div class="lab">${f.send.map((v, k) => `<span title="send ${v}">${k + 1}</span>`).join("")}</div></div>`).join("");
   if (tab === "about") {
     const up = st.uptime || 0;
     const kv = [["Version", st.version ? `${st.version} (${st.commit}${st.dirty ? "-dirty" : ""})` : "-"], ["Host", (st.host || "sidecar") + ".local"], ["Address", st.ip], ["Uptime", Math.floor(up / 3600) + " h " + Math.floor(up / 60) % 60 + " min"],
@@ -1437,7 +732,7 @@ function renderStats() {
   }
 }
 
-// ---- shared helpers for the user machines and the file browser
+// ---- shared helpers for the file browser
 const E = encodeURIComponent;
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
 function hb(n) {
@@ -1448,38 +743,6 @@ function hb(n) {
   return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + " " + u[i];
 }
 const join = (dir, name) => (dir === "/" ? "" : dir) + "/" + name;
-// ---- the SD card test (/status "sdtest", the console's sdtest= commands; core/msamp/sdtest.h)
-function sdtRender(t) {
-  const run = t.state === "running";
-  $("#sdt-run").hidden = run; $("#sdt-stop").hidden = !run; $("#sdt-p").hidden = !run; $("#sdt-p").value = t.progress;
-  $("#sdt-v").textContent = run ? `testing: ${t.phase}, ${t.progress} %` : t.have ? t.verdict : "not tested yet";
-  $("#sdt-v").className = !run && t.have ? (t.level === 2 ? "ok" : t.level === 1 ? "warn" : "err") : "";
-  $("#sdt-m").textContent = t.have ? `write ${t.writeMBps} MB/s, read ${t.readMBps} MB/s, 32 KB reads ${t.rand32Iops}/s ` +
-    `(99 % within ${t.rand32P99Ms} ms, worst ${t.rand32MaxMs} ms; ${t.mixedMaxMs} ms while writing), read-ahead ${t.aheadMs} ms` : "-";
-  if (t.state === "failed" || t.state === "cancelled") say($("#sdt-msg"), t.phase, t.state === "failed");
-}
-$("#sdt-run").onclick = async () => {
-  if (!confirm("Run the SD card test now? About a minute; the sound may drop out meanwhile.")) return;
-  say($("#sdt-msg"), "starting...");
-  await cmd("sdtest=start!");
-};
-$("#sdt-stop").onclick = () => cmd("sdtest=cancel");
-// ---- the sample library (/status "library", core/lib/library.h; docs/LIBRARY.md): one line on the Status tab
-function libText(l) {
-  const n = (x) => Number(x || 0).toLocaleString("en-US");
-  if (l.state === "OFF") return "off (no card)";
-  if (l.state === "FAILED") return "failed (see the log)";
-  if (l.state === "LOADING") return "loading the index";
-  let t = l.state === "WALKING" ? `${n(l.files)} files, looking at the card`
-    : `${n(l.files)} files (${hb(l.bytes)}), ` + (l.state === "HASHING" ? `${l.pct} % hashed, ${n(l.pending)} pending` : "all hashed");
-  if (l.dups) t += `, ${n(l.dups)} duplicates (${hb(l.dupBytes)})`;
-  if (l.missing) t += `, ${n(l.missing)} missing`;
-  if (l.unreadable) t += `, ${n(l.unreadable)} unreadable`;
-  if (l.recordings) t += `, ${n(l.recordings)} recordings indexed`;
-  if (l.readOnly) t += " · its index is a newer Sidecar's: read-only here";
-  if (l.waiting) t += ` · waiting: ${l.waiting.toLowerCase()}`;
-  return t;
-}
 // ---- the volumes and the storage bench (/status "stor", the console's stor= commands; pi/engine/stor_pi.h)
 const STOR_CAP = { SD: "SD card", USB: "USB drive", USB2: "USB drive 2", USB3: "USB drive 3", NVME: "NVMe SSD" };
 function storVolText(v) {
@@ -1519,30 +782,6 @@ $("#stor-run").onclick = async () => {
 };
 $("#stor-stop").onclick = () => cmd("stor=cancel");
 $("#stor-ej").onclick = () => cmd("stor=eject:" + $("#stor-vol").value);
-// ---- the sampler and the auto-sampler (/status "samp", "asamp"; the console's samp= / asamp=; core/samp)
-const SMP_STATES = ["idle", "armed", "recording", "captured", "writing", "done", "failed"];
-const AS_STATES = ["idle", "taking", "writing", "done", "failed", "cancelled"];
-function smpRender(s, a) {
-  const t = SMP_STATES[s.state] || "?";
-  $("#smp-state").textContent = `${t}${s.state === 2 ? " " + (s.ms / 1000).toFixed(1) + " s" : ""}${s.bpm ? " · " + s.bpm + " bpm" : ""}` +
-    (s.wav ? ` · last ${s.wav} (${s.nSlices} slices)` : "") + (s.error ? " · " + s.error : "");
-  if (!a) return;
-  $("#as-p").value = a.total ? Math.round(100 * a.done / a.total) : 0;
-  $("#as-state").textContent = `${AS_STATES[a.state] || "?"}${a.state === 1 || a.state === 2 ? " " + a.label : ""}` +
-    (a.sfz ? ` · ${a.sfz} (${a.written} samples, ${a.loops} loops)` : "") + (a.error ? " · " + a.error : "");
-}
-$("#smp-arm").onclick = async () => {
-  const st = $("#smp-start").value;
-  for (const c of ["samp=src:" + $("#smp-src").value, "samp=start:" + (st === "thr" ? "thr:" + Math.abs($("#smp-thr").value | 0) : st),
-                   "samp=len:" + ($("#smp-len").value | 0), "samp=slices:" + $("#smp-sl").value, "samp=arm"]) await cmd(c);
-};
-$("#smp-stop").onclick = () => cmd("samp=stop");
-$("#as-go").onclick = async () => {
-  const n = $("#as-name").value.trim();
-  for (const c of ["asamp=src:" + $("#as-src").value.trim(), "asamp=notes:" + $("#as-notes").value.trim(), "asamp=vel:" + $("#as-vel").value.trim(),
-                   "asamp=hold:" + ($("#as-hold").value | 0), "asamp=tail:" + ($("#as-tail").value | 0), "asamp=name:" + (n || "auto"), "asamp=start"]) await cmd(c);
-};
-$("#as-stop").onclick = () => cmd("asamp=cancel");
 function say(el, text, bad) { el.textContent = text || ""; el.className = "msg" + (bad ? " err" : ""); }
 async function fsPost(url, body, ac) {       // every /fs/* POST answers "<code> <message>" as text
   const r = await fetch(url, { method: "POST", body: body || "", signal: ac && ac.signal });
@@ -1667,554 +906,6 @@ async function uploadRetry(it) {
   }
 }
 
-// ---- project bundles (the Project tab: /bundle/*, pi/engine/bundleweb.h, docs/BUNDLES.md)
-const PB = { projects: [], st: null, served: "", planShown: "", timer: 0, vol: "" };
-function pbPhase(st) {                       // "HASH 45 % · 12 MB of 26 MB · WAITING (PLAYING)"
-  if (!st || st.phase === "IDLE") return "";
-  const f = st.total ? Math.floor(100 * st.done / st.total) : null;
-  let t = st.phase + (f != null && st.phase !== "SERVE" ? ` ${f} %` : "");
-  if (st.total > 4096 && st.phase !== "COMMIT" && st.phase !== "COLLECT") t += ` · ${hb(st.done)} of ${hb(st.total)}`;
-  if (st.waiting) t += ` · WAITING (${st.waiting})`;
-  return t;
-}
-function pbRows(list, usb) {                 // the projects' table: the current one first, then the last used (usb: a stick mounted)
-  const l = list.slice().sort((a, b) => (b.current - a.current) || (b.used - a.used) || a.key.localeCompare(b.key));
-  return l.map((p) => `<tr data-key="${esc(p.key)}"><td>${esc(p.rytm)}${p.current ? " <b>*</b>" : ""}${p.imported ? ' <span class="mut">imp.</span>' : ""}` +
-    `${p.rytm !== p.key ? ` <span class="mut">(${esc(p.key)})</span>` : ""}</td><td>${p.files}</td><td>${hb(p.bytes)}</td>` +
-    `<td class="mut">${esc(p.date ? p.date.slice(0, 16).replace("T", " ") : p.used ? "#" + p.used : "-")}</td>` +
-    `<td><button class="sm" data-act="dl">Download</button><button class="sm" data-act="card">To card</button>` +
-    `${""}` +   // 0.3.0: no export to a stick (core/bundle/export.cpp BUNDLE_USB_EXPORT)
-    `<label class="sm"><input type="file" data-act="rytm" hidden><span class="btn">Rytm file…</span></label>` +
-    `${p.current ? "" : '<button class="sm" data-act="del">Delete</button>'}</td></tr>`).join("");
-}
-function pbVolHtml(u, sel) {                // the USB stick picker (/usb/status): its sticks with their free space, Eject
-  if (!u || !u.present || !u.vols.length) return '<span class="mut">no USB stick (FAT32, in a blue port)</span>';
-  return `<select id="pb-vol">` + u.vols.map((v) => `<option value="${esc(v.drive)}"${v.drive === sel ? " selected" : ""}>` +
-    `${esc(v.name)} · ${v.free_known ? hb(v.free) + " free" : "free not counted"}</option>`).join("") +
-    `</select> <button class="sm" id="pb-eject">Eject</button>`;
-}
-function pbBundleRows(l, src) {              // the bundles on the card or a stick: each by its path
-  if (!l.length) return `<p class="mut">${src === "usb" ? "none on the stick (it looks in /SIDECAR and its root)" : "none yet"}</p>`;
-  return `<table><tr><th>Bundle</th><th>Size</th><th>Date</th><th></th></tr>` + l.map((b) =>
-    `<tr data-name="${esc(b.name)}" data-path="${esc(b.path || "/Bundles/" + b.name)}"><td>${esc(b.name)}${b.incomplete ? ' <span class="mut">(incomplete)</span>' : ""}</td><td>${hb(b.size)}</td>` +
-    `<td class="mut">${esc(b.date)}</td><td>${b.incomplete ? "" : '<button class="sm" data-act="imp">Import</button>'}` +
-    `<button class="sm" data-act="rm">Delete</button></td></tr>`).join("") + "</table>";
-}
-function pbSkip(machines, unticked) {        // the slots whose machine the user left out: bit (slot - 1)
-  let b = 0;
-  for (const m of machines) if (m.slot && unticked.includes(m.slot)) b |= 1 << (m.slot - 1);
-  return b;
-}
-// slot mode (2026-10-29: a card keyed by the Rytm's slots): the slot picker's rows and the Rytm's step for a slot (as
-// core/bundle/import.cpp's step_text: the bundle holds the Sidecar's side, the Rytm's project goes into that slot)
-const pbN3 = (n) => String(n).padStart(3, "0");
-function pbSameName(rytm, bundle) {
-  const a = String(rytm || "").replace(/ +$/, ""), b = String(bundle || "").replace(/ +$/, "").slice(0, 15).replace(/ +$/, "");
-  return !!a && !!b && a.toUpperCase() === b.toUpperCase();
-}
-function pbSlotStep(p, n) {
-  const x = p.slots[n - 1] || ["", 0, 0], s = pbN3(n), bn = p.from.rytm_name || p.from.key;
-  if (p.rytm) return `Send ${p.rytm.file.replace(/^rytm\//, "")} to the Rytm's slot ${s} with Elektron Transfer, then load slot ${s} on the Rytm.`;
-  if (pbSameName(x[0], bn)) return `This bundle holds only the Sidecar's side, no Rytm project file. Slot ${s} on the Rytm holds ${x[0]}: load it on the Rytm.`;
-  return `This bundle holds only the Sidecar's side, no Rytm project file: put the Rytm project into slot ${s} yourself ` +
-    `(Elektron Transfer, or SAVE TO ${s}) before you import, then load it. A SAVE TO onto ${s} after the import moves these files to the trash.`;
-}
-function pbSlotOpts(p) {                     // (slot 0: every slot taken, none by default - the user picks one)
-  return (p.slot ? "" : '<option value="" selected disabled>pick a slot</option>') + p.slots.map((x, i) => `<option value="${i + 1}"${i + 1 === p.slot ? " selected" : ""}${x[2] ? " disabled" : ""}>` +
-    `${pbN3(i + 1)} ${esc(x[0] || (p.rytm_list ? "(empty)" : "-"))}${x[1] ? ` · ${x[1]} Sidecar files` : ""}` +
-    `${x[2] ? " · the Rytm's current project" : ""}</option>`).join("");
-}
-function pbPlanHtml(p) {                     // the import's summary (READY) or its done screen (DONE)
-  const ms = p.machines.map((m) => `<label><input type="checkbox" data-slot="${m.slot}" ${m.action === "left out" ? "" : "checked"}` +
-    `${m.action === "install" || m.action === "side-by-side" || m.action === "left out" ? "" : " disabled"}> U${m.slot} ${esc(m.name || m.id)} ` +
-    `${esc(m.ver)} <span class="mut">${esc(m.action)}</span></label>`).join("<br>");
-  const done = p.phase === "DONE", slots = Array.isArray(p.slots), cur = slots ? p.slots[p.slot - 1] || ["", 0, 0] : null;
-  const named = slots && !!cur[0];           // (a slot the Rytm names: the import takes its name)
-  return `<h2>${done ? "Imported" : "Import"} ${esc(p.from.rytm_name || p.from.key)}</h2>` +
-    `<div class="kv">` +
-    (slots ? `<span>to slot</span><span>${done ? pbN3(p.slot) : `<select id="pb-slot">${pbSlotOpts(p)}</select>`}` +
-             ` <span class="mut" id="pb-slot-note">${cur[1] ? `(${cur[1]} Sidecar files there)` : ""}</span></span>` : "") +
-    `<span>as</span><span>${done ? esc(p.name) : `<input id="pb-name" maxlength="23" value="${esc(p.name)}"${named ? " disabled" : ""}>`}` +
-    `${p.clash && !slots ? ` <span class="mut">(a project ${esc(p.from.key)} is on the card)</span>` : ""}` +
-    `${slots && !done ? ` <span class="mut" id="pb-name-note">${named ? "(the Rytm's name for that slot)" : ""}</span>` : ""}</span>` +
-    `<span>new on the card</span><span>${hb(p.new_bytes)} (${p.files.write} files)</span>` +
-    `<span>already on the card</span><span>${hb(p.reused_bytes)} (${p.files.reuse} files)</span>` +
-    `<span>moved</span><span>${p.files.relocated} files under /Samples/Projects</span>` +
-    `<span>contents</span><span>${p.totals.samples} samples, ${p.totals.songs} songs, ${p.totals.patterns} patterns</span>` +
-    (p.machines.length ? `<span>machines (code)</span><span>${ms}</span>` : "") +
-    (p.missing.length ? `<span>missing</span><span>${p.missing.map(esc).join(", ")}</span>` : "") +
-    (p.warnings.length ? `<span>note</span><span>${p.warnings.map(esc).join("<br>")}</span>` : "") +
-    `<span>the Rytm</span><span><b id="pb-step">${esc(p.step)}</b>${p.rytm && done ? ` <button class="sm" id="pb-rytm">download it</button>` : ""}</span></div>` +
-    (done ? `<div class="row"><button id="pb-ok">OK</button></div>`
-          : `<div class="row">${slots ? `<label id="pb-replace-l"${cur[1] ? "" : " hidden"}><input type="checkbox" id="pb-replace"> replace its Sidecar files (they go to the project trash, restorable)</label>`
-                                      : p.clash ? '<label><input type="checkbox" id="pb-replace"> replace the one on the card (it is backed up first)</label>' : ""}` +
-            `<button id="pb-go">Import</button><button id="pb-no">Cancel</button></div>`);
-}
-// the project trash (core/bundle/prjslot.h: GET /bundle/trash, the newest first)
-function pbTrashRows(l) {
-  if (!l.length) return '<p class="mut">empty</p>';
-  return `<table><tr><th>Project</th><th>Was</th><th>Why</th><th>Files</th><th>Date</th><th></th></tr>` + l.map((t) =>
-    `<tr data-id="${t.id}" data-key="${esc(t.key)}"><td>${esc(t.name || t.key)}</td><td>${esc(t.key)}</td><td>${esc(t.why)}</td>` +
-    `<td>${t.items}</td><td>${esc((t.date || "").replace("T", " ").slice(0, 16))}</td>` +
-    `<td><button class="sm" data-act="restore">Restore</button> <button class="sm" data-act="rm">Remove…</button></td></tr>`).join("") +
-    "</table>";
-}
-async function pbJson(url, form) {
-  const r = await fetch(url, form == null ? { cache: "no-store" } : { method: "POST", body: new URLSearchParams(form) });
-  return r.json();
-}
-async function pbProjects() {
-  try { PB.projects = await pbJson("/bundle/projects"); } catch (e) { return say($("#pb-msg"), "the projects: " + e, true); }
-  $("#pb-projects").innerHTML = `<table><tr><th>Project</th><th>Files</th><th>Size</th><th>Last used</th><th></th></tr>${pbRows(PB.projects, PB.vol)}</table>`;
-  pbTrash();
-}
-async function pbTrash() {
-  let l;
-  try { l = await pbJson("/bundle/trash"); } catch (e) { return; }
-  $("#pb-trash").innerHTML = pbTrashRows(Array.isArray(l) ? l : []);
-}
-async function pbTrashDone(what) {   // the control core runs it at its next ticks: its outcome, a moment later
-  await new Promise((r) => setTimeout(r, 1200));
-  let st = {};
-  try { st = await pbJson("/bundle/prjslot"); } catch (e) {}
-  say($("#pb-msg"), `${what}: ${st.last || "queued"}`);
-  pbProjects();
-}
-async function pbBundles() {
-  let l;
-  try { l = await pbJson("/bundle/list?src=card"); } catch (e) { return; }
-  $("#pb-bundles").innerHTML = pbBundleRows(l, "card");
-  let u = { present: false, vols: [] };
-  try { u = await pbJson("/usb/status"); } catch (e) {}
-  if (!u.vols.some((v) => v.drive === PB.vol)) PB.vol = u.vols.length ? u.vols[0].drive : "";
-  $("#pb-usbpick").innerHTML = pbVolHtml(u, PB.vol);
-  $("#pb-usb").innerHTML = "";
-  if (PB.vol) try {
-    const ul = await pbJson(`/bundle/list?src=usb&vol=${E(PB.vol)}`);
-    $("#pb-usb").innerHTML = Array.isArray(ul) ? pbBundleRows(ul, "usb") : `<p class="mut">${esc(ul.error || "")}</p>`;
-  } catch (e) {}
-  if ($("#pb-vol")) $("#pb-vol").onchange = (e) => { PB.vol = e.target.value; pbBundles(); };
-  if ($("#pb-eject")) $("#pb-eject").onclick = async () => {
-    const r = await pbJson("/usb/eject", { vol: PB.vol });
-    say($("#pb-msg"), r.ok ? `${PB.vol} ejected: safe to remove` : r.error, !r.ok);
-    PB.vol = ""; pbBundles(); pbPoll();
-  };
-  $("#pb-projects").innerHTML = `<table><tr><th>Project</th><th>Files</th><th>Size</th><th>Last used</th><th></th></tr>${pbRows(PB.projects, PB.vol)}</table>`;
-}
-async function pbDownload(name, size) {      // a constant-memory stream through our service worker, else a Blob
-  if (window.isSecureContext && navigator.serviceWorker) {
-    const reg = await navigator.serviceWorker.register("/bundle-sw.js", { scope: "/bundle-dl/" });
-    await navigator.serviceWorker.ready;
-    // /bundle/zip is gated and the worker has none of this page's headers: hand it this run's token (not the code,
-    // not the stored secret), again each time, because a reload or a re-pair makes a new one
-    const sw = reg.active || (await navigator.serviceWorker.ready).active;
-    if (sw) sw.postMessage({ sidecarAuth: PAIR.tok });
-    const f = document.createElement("iframe");
-    f.hidden = true;
-    f.src = `/bundle-dl/${E(name)}?size=${size}`;
-    document.body.appendChild(f);
-    setTimeout(() => f.remove(), 60000);
-    return;
-  }
-  if (size > 1 << 30) return say($("#pb-msg"), `${hb(size)}: too big to collect in this page (1 GB at most on plain http). Use "To card", then copy it from the SD card.`, true);
-  const parts = [];
-  for (let off = 0; off < size;) {
-    const r = await fetch(`/bundle/zip?off=${off}&len=65536`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`the download stopped at ${hb(off)} (export again)`);
-    const b = new Uint8Array(await r.arrayBuffer());
-    if (!b.length) { await sleep(500); continue; }   // paused: the recorder records
-    parts.push(b);
-    off += b.length;
-    say($("#pb-msg"), `downloading ${name}: ${Math.floor(100 * off / size)} %`);
-  }
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob(parts, { type: "application/zip" }));
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-}
-async function pbPoll() {
-  clearTimeout(PB.timer);
-  if (pairBlocked()) { PB.timer = setTimeout(pbPoll, 5000); return; }
-  let st;
-  try { st = await pbJson("/bundle/status"); } catch (e) { PB.timer = setTimeout(pbPoll, 2000); return; }
-  PB.st = st;
-  const box = $("#pb-job");
-  box.innerHTML = st.phase === "IDLE" ? "" : `<div><span class="nm">${esc(st.job)} ${esc(st.key)}</span><span class="bar"><i style="width:${st.total ? (100 * st.done / st.total).toFixed(1) : 0}%"></i></span>` +
-    `<span class="st mut">${esc(pbPhase(st))}</span>${["DONE", "FAILED", "CANCELLED", "SERVE", "READY"].includes(st.phase) ? "" : '<button class="sm" id="pb-cancel">Cancel</button>'}</div>`;
-  if ($("#pb-cancel")) $("#pb-cancel").onclick = () => pbJson("/bundle/cancel", { x: 1 }).then(pbPoll);
-  const crumb = st.phase === "IDLE" && /^the last run stopped in/.test(st.msg || "");   // recover()'s at boot (a reset)
-  say($("#pb-msg"), st.phase === "IDLE" && !crumb ? "" : st.msg, st.phase === "FAILED" || crumb);
-  if (st.phase === "SERVE" && PB.served !== st.name + st.seq) {
-    PB.served = st.name + st.seq;
-    pbDownload(st.name, st.bytes).catch((e) => say($("#pb-msg"), String(e.message || e), true));
-  }
-  if ((st.phase === "READY" || (st.phase === "DONE" && st.job === "import")) && PB.planShown !== st.phase + st.seq) {
-    PB.planShown = st.phase + st.seq;
-    pbShowPlan(await pbJson("/bundle/plan"));
-  }
-  if (st.phase === "DONE" && st.job !== "import") { pbProjects(); pbBundles(); }
-  const going = !["IDLE", "DONE", "FAILED", "CANCELLED", "SERVE", "READY"].includes(st.phase);
-  if (going || tab === "project") PB.timer = setTimeout(pbPoll, going ? 500 : 3000);
-}
-function pbShowPlan(p) {
-  const el = $("#pb-plan");
-  el.hidden = false;
-  el.innerHTML = pbPlanHtml(p);
-  if ($("#pb-rytm")) $("#pb-rytm").onclick = () => download(p.rytm.to, p.rytm.size, $("#pb-prog"));
-  if ($("#pb-ok")) $("#pb-ok").onclick = () => { el.hidden = true; pbJson("/bundle/finish", { x: 1 }).then(() => { pbProjects(); pbPoll(); }); };
-  if ($("#pb-no")) $("#pb-no").onclick = () => { el.hidden = true; pbJson("/bundle/cancel", { x: 1 }).then(() => pbJson("/bundle/finish", { x: 1 })).then(pbPoll); };
-  if ($("#pb-slot")) $("#pb-slot").onchange = () => {   // slot mode: the slot's name, its files (replace), the Rytm's step
-    const n = +$("#pb-slot").value, x = p.slots[n - 1] || ["", 0, 0], nm = $("#pb-name");
-    nm.disabled = !!x[0];
-    nm.value = x[0] || (nm.dataset.typed || p.from.rytm_name || p.from.key);
-    $("#pb-name-note").textContent = x[0] ? "(the Rytm's name for that slot)" : "";
-    $("#pb-slot-note").textContent = x[1] ? `(${x[1]} Sidecar files there)` : "";
-    $("#pb-replace-l").hidden = !x[1];
-    if (!x[1]) $("#pb-replace").checked = false;
-    $("#pb-step").textContent = pbSlotStep(p, n);
-  };
-  if ($("#pb-slot")) $("#pb-name").oninput = (e) => { e.target.dataset.typed = e.target.value; };
-  if ($("#pb-go")) $("#pb-go").onclick = async () => {
-    const off = [...el.querySelectorAll("input[data-slot]")].filter((c) => !c.checked).map((c) => +c.dataset.slot);
-    const f = { name: $("#pb-name").disabled ? "" : $("#pb-name").value.trim(), mode: $("#pb-replace") && $("#pb-replace").checked ? "replace" : "new", packages: 1, skip: pbSkip(p.machines, off) };
-    if ($("#pb-slot")) f.slot = $("#pb-slot").value;
-    if ($("#pb-slot") && !f.slot) return say($("#pb-msg"), "pick the slot it goes to", true);
-    const r = await pbJson("/bundle/import", f);
-    if (!r.ok) say($("#pb-msg"), r.msg || r.error, true);
-    el.hidden = true;
-    pbPoll();
-  };
-}
-async function pbVerify(path) {
-  const r = await pbJson("/bundle/verify", { path });
-  if (!r.ok) say($("#pb-msg"), r.msg || r.error, true);
-  pbPoll();
-}
-function pbUpload(file) {                    // the safe upload (/fs/put) into /Bundles/incoming, then VERIFY
-  if (!/\.zip$/i.test(file.name)) return say($("#pb-msg"), "a bundle is a .sidecar.zip", true);
-  const name = /\.sidecar\.zip$/i.test(file.name) ? file.name : file.name.replace(/\.zip$/i, ".sidecar.zip");
-  fsRetry(`/fs/mkdir?path=${E("/Bundles/incoming")}&p=1`).then(() => {
-    enqueue(new File([file], name), "/Bundles/incoming", $("#pb-prog"), (it, res) => { if (res.ok) pbVerify(it.path); pbBundles(); });
-  });
-}
-$("#pb-re").onclick = () => { pbProjects(); pbBundles(); pbPoll(); };
-$("#pb-upb").onclick = () => $("#pb-file").click();
-$("#pb-file").onchange = (e) => { for (const f of e.target.files) pbUpload(f); e.target.value = ""; };
-$("#pb-bundles").addEventListener("dragover", (e) => e.preventDefault());
-$("#pb-bundles").addEventListener("drop", (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) pbUpload(f); });
-$("#pb-bundles").addEventListener("click", async (e) => {
-  const b = e.target.closest("button"), tr = e.target.closest("tr");
-  if (!b || !tr) return;
-  const path = tr.dataset.path;
-  if (b.dataset.act === "imp") pbVerify(path);
-  if (b.dataset.act === "rm") pbRemove(path, tr.dataset.name, "the card");
-});
-async function pbRemove(path, name, where) {   // a bundle file, or an interrupted export's .part (/bundle/remove)
-  if (!confirm(`Delete ${name} from ${where}?`)) return;
-  let r = {};
-  try { r = await pbJson("/bundle/remove", { path }); } catch (e) { r = { error: String(e) }; }
-  say($("#pb-msg"), r.ok ? `${name} deleted` : `not deleted: ${r.error || "?"}`, !r.ok);
-  pbBundles();
-}
-$("#pb-usb").addEventListener("click", async (e) => {   // a stick's bundle: imported straight from the stick
-  const b = e.target.closest("button"), tr = e.target.closest("tr");
-  if (!b || !tr) return;
-  if (b.dataset.act === "imp") pbVerify(tr.dataset.path);
-  if (b.dataset.act === "rm") pbRemove(tr.dataset.path, tr.dataset.name, PB.vol || "the stick");
-});
-$("#pb-projects").addEventListener("click", async (e) => {
-  const b = e.target.closest("button"), tr = e.target.closest("tr");
-  if (!b || !tr) return;
-  const key = tr.dataset.key, p = PB.projects.find((x) => x.key === key);
-  if (b.dataset.act === "dl" || b.dataset.act === "card" || b.dataset.act === "usb") {
-    const dest = b.dataset.act === "dl" ? "browser" : b.dataset.act;
-    const r = await pbJson("/bundle/export", { key, dest, vol: PB.vol, takes: $("#pb-takes").checked ? 1 : 0 });
-    if (!r.ok) say($("#pb-msg"), r.msg, true);
-    pbPoll();
-  }
-  if (b.dataset.act === "del" && confirm(`Move the Sidecar files of ${p ? p.rytm : key} (${p ? p.files : "?"} files) to the trash?\nIts samples stay on the card; restore it from the trash below.`)) {
-    const r = await pbJson("/bundle/delete", { key, confirm: key });
-    if (!r.ok) say($("#pb-msg"), r.msg, true);
-    pbPoll();
-  }
-});
-$("#pb-trash").addEventListener("click", async (e) => {
-  const b = e.target.closest("button"), tr = e.target.closest("tr");
-  if (!b || !tr) return;
-  const id = tr.dataset.id;
-  if (b.dataset.act === "restore") {
-    const to = prompt(`Restore ${tr.dataset.key} to (blank: where it was; or a slot 1..128):`, "");
-    if (to === null) return;
-    const form = { id };
-    if (to.trim()) form.to = "@" + String(parseInt(to, 10)).padStart(3, "0");
-    if (confirm("If that slot has Sidecar files, move them to the trash first?\n(Cancel: refuse instead)")) form.replace = 1;
-    const r = await pbJson("/bundle/trash/restore", form);
-    if (!r.ok) return say($("#pb-msg"), r.error || r.msg, true);
-    pbTrashDone("restore");
-  }
-  if (b.dataset.act === "rm" && confirm(`Remove trash entry ${id} (${tr.dataset.key}) for good? This cannot be undone.`)) {
-    const r = await pbJson("/bundle/trash/remove", { id, confirm: id });
-    if (!r.ok) return say($("#pb-msg"), r.error || r.msg, true);
-    pbTrashDone("remove");
-  }
-});
-$("#pb-trash-empty").onclick = async () => {
-  if (!confirm("Empty the trash: every entry removed for good. This cannot be undone.")) return;
-  const r = await pbJson("/bundle/trash/empty", { confirm: "EMPTY" });
-  if (!r.ok) return say($("#pb-msg"), r.error || r.msg, true);
-  pbTrashDone("empty");
-};
-$("#pb-projects").addEventListener("change", (e) => {   // the Rytm project file (Transfer's export) for a project: /Bundles/Rytm/<key>.<ext>
-  const i = e.target, tr = i.closest("tr");
-  if (i.dataset.act !== "rytm" || !i.files.length || !tr) return;
-  const f = i.files[0], ext = (f.name.match(/\.[^./]+$/) || [""])[0];
-  fsRetry(`/fs/mkdir?path=${E("/Bundles/Rytm")}&p=1`).then(() =>
-    enqueue(new File([f], tr.dataset.key + ext), "/Bundles/Rytm", $("#pb-prog"), () => say($("#pb-msg"), `the Rytm file goes into ${tr.dataset.key}'s next export`)));
-  i.value = "";
-});
-// the Pi has no clock: the page's, with its zone (minutes east of UTC: the take folders' names and the files' dates are
-// local time). POST /time is gated, so it goes again as soon as this page is paired
-const timeForm = (now, offMin) => ({ epoch: Math.floor(now / 1000), tz: -offMin });
-function sendTime() {
-  if (pairBlocked()) return;
-  fetch("/time", { method: "POST", body: new URLSearchParams(timeForm(Date.now(), new Date().getTimezoneOffset())) }).catch(() => {});
-}
-sendTime();
-// ---- end project bundles
-// ---- user machines (GET /um)
-const umEl = $("#um");
-let umLast = "", umPlugins = [], umBlockNs = 250000;
-let umBusy = false;
-async function pollUm(force) {
-  if (umBusy) return;
-  umBusy = true;
-  try { await pollUm1(force); } finally { umBusy = false; }
-}
-async function pollUm1(force) {
-  try {
-    const r = await fetch("/um", { cache: "no-store", signal: AbortSignal.timeout(4000) }), t = await r.text();
-    if (t === umLast && !force) return;
-    const busy = umEl.contains(document.activeElement) && document.activeElement.tagName === "SELECT";
-    if (busy) return;                          // do not rebuild a select the user has open
-    umLast = t;
-    renderUm(JSON.parse(t));
-  } catch (e) { $("#um-info").textContent = "no answer"; }
-}
-setInterval(() => { if (!document.hidden && tab === "machines" && !qBusy && !pairBlocked()) pollUm(); }, 2000);
-const SLOTBAD = { MISSING: 1, BAD: 1, NO_ROOM: 1 };
-function cpuCell(p) {     // measured once it played (% of one Pi core, us per block); the declared figure as well
-  const decl = p.cpu != null ? `~${(p.cpu / 10).toFixed(1)} % decl.` : "";
-  if (!p.blocks || !p.ns) return `<span class="mut" title="the package's own figure, in % of one Teensy voice budget">${decl}</span>`;
-  return `${(100 * p.ns / umBlockNs).toFixed(2)} %<div class="mut" style="font-size:11px" title="measured: one voice's render call (12 frames), mean over ${p.blocks} blocks; declared: the package's own figure (Teensy budget)">${(p.ns / 1000).toFixed(1)} µs/block · ${decl}</div>`;
-}
-function renderUm(a) {
-  const P = a.filter((x) => x.t === "plugin"), S = {}, M = a.filter((x) => x.t === "mem");
-  const info = a.find((x) => x.t === "plugins") || {};
-  a.filter((x) => x.t === "slot").forEach((x) => { S[x.slot] = x; });
-  umPlugins = P;
-  if (info.block_ns) umBlockNs = info.block_ns;
-  $("#um-proj").textContent = info.project || "-";
-  $("#um-info").textContent = info.n !== undefined ? `${info.n} package${info.n === 1 ? "" : "s"} in ${info.dir || "/Plugins"}`
-    + (info.scanning ? " · scanning" : "") : "";
-  $("#um-list").innerHTML = P.length ? P.map((p, i) => {
-    const code = (p.image || 0) + (p.bss || 0), why = p.why || (p.status !== "ok" ? p.status : "");
-    return `<tr><td>${esc(p.name || p.id)}</td><td class="hm">${esc(p.id)}</td><td>${esc(p.ver)}</td><td class="r hm">${hb(p.size)}</td>
-      <td class="hm">${esc(p.fp)}</td><td class="r hm">${hb(code)}</td><td class="r hm">${hb(p.state)}</td>
-      <td class="r">${cpuCell(p)}</td><td>${(p.slots || []).map((s) => "U" + s).join(" ") || "-"}</td>
-      <td class="w">${p.fit ? `<span class="badge ok">fits</span>` : `<span class="badge err">no</span> <span class="err">${esc(why)}</span>`}
-        <span class="mut hm">${esc(p.target || "")}</span></td>
-      <td><button class="sm" data-del="${i}">Delete</button></td></tr>`;
-  }).join("") : `<tr><td colspan="11" class="mut">no machines in /Plugins: upload a .rmp</td></tr>`;
-  let slots = "";
-  for (let n = 1; n <= 5; n++) {
-    const s = S[n] || { state: "EMPTY", id: "" }, st = s.state || "EMPTY";
-    let nm = s.name || s.id || "", cls = SLOTBAD[st] ? "err" : st === "READY" ? "" : "mut";
-    if (st === "MISSING") nm = "!" + (s.name || s.id);
-    if (st === "EMPTY") nm = "(empty)";
-    let opts = `<option value="">(empty)</option>`, have = !s.id;
-    for (const p of P) if (p.fit) { const sel = p.id === s.id; have = have || sel; opts += `<option value="${esc(p.id)}"${sel ? " selected" : ""}>${esc(p.name || p.id)} ${esc(p.ver)}</option>`; }
-    if (!have) opts += `<option value="${esc(s.id)}" selected>!${esc(s.name || s.id)}</option>`;
-    const meas = s.blocks && s.ns ? ` · ${(100 * s.ns / umBlockNs).toFixed(2)} %/voice` : "";
-    const src = slotSrc(s);
-    slots += `<div class="slot"><div class="mut">U${n} · <span class="${cls}">${esc(st)}</span>${s.ver ? " · " + esc(s.ver) : ""}${meas}</div>
-      <div class="n ${cls}" title="${esc(s.id)}">${esc(nm)}</div><select data-slot="${n}" aria-label="assign U${n}">${opts}</select>
-      <div class="src ${src.cls}" data-src="${n}">${esc(src.text)}</div></div>`;
-  }
-  $("#um-slots").innerHTML = slots;
-  umSlots = S; umInfo = info;
-  $("#um-how").textContent = info.prints === "rytm" ? "slots resolved from the Rytm's report of the project's sounds"
-    : info.prints === "waiting" ? "waiting for the Rytm's report of the project's sounds"
-    : "older Rytm firmware: slots fill from the sounds' tags as they play";
-  const names = { code: "Code", data: "Data", state: "Voice state", sd: "SD card" };
-  let over = [];
-  $("#um-mem").innerHTML = M.map((m) => {
-    const f = m.size ? m.used / m.size : 0, full = m.used > m.size;
-    if (full) over.push(names[m.k] || m.k);
-    return `<div><div class="k">${esc(names[m.k] || m.k)}</div><div class="bar${full || f > 0.95 ? " full" : ""}"><i style="width:${Math.min(100, f * 100).toFixed(1)}%"></i></div>
-      <div class="d">${hb(m.used)} / ${hb(m.size)}</div></div>`;
-  }).join("");
-  const bad = [];
-  for (let n = 1; n <= 5; n++) if (S[n] && SLOTBAD[S[n].state]) bad.push("U" + n + " " + S[n].state);
-  const parts = M.map((m) => `${names[m.k] || m.k} ${hb(m.used)}/${hb(m.size)}`);
-  if (info.state_limit) parts.push("state limit " + hb(info.state_limit) + " per voice");
-  const ok = !over.length && !bad.length;
-  say($("#um-res"), (parts.join(" · ") || "-") + " — " + (ok ? "everything fits" : "does not fit: " + over.concat(bad).join(", ")), !ok);
-  if (ok) $("#um-res").classList.add("ok");
-}
-$("#um-slots").addEventListener("change", (e) => {
-  const s = e.target.dataset.slot;
-  if (!s) return;
-  cmd(e.target.value ? `um=assign:${s}:${e.target.value}` : `um=clear:${s}`);
-  e.target.blur();
-  setTimeout(() => pollUm(true), 300);
-});
-// ---- where a slot's machine came from; the slot list as a file (export / import), shared with the Teensy console's
-// web/slotlist.js (same format: {"format":"sidecar-slots","version":1,"project","slots":[{slot,id,ver,name,fp}|{slot,empty}]})
-let umSlots = {}, umInfo = {};
-const SRCTXT = { saved: "saved with the project", sounds: "from the project's sounds", inherited: "inherited from the previous project",
-  imported: "from an imported slot list", empty: "empty (cleared)", none: "" };
-function slotSrc(s) {
-  const fp = s.want_fp, nm = s.want_name ? ` (${s.want_name})` : "";
-  if (s.collision) return { text: `fingerprint ${fp} matches several machines: pick one`, cls: "err" };
-  if (s.unknown && s.src !== "empty") return { text: `needs a machine with fingerprint ${fp}${nm}`, cls: "err" };
-  if (s.state === "MISSING") return { text: `missing: install ${s.name || s.id}${s.ver ? " " + s.ver : ""}`, cls: "err" };
-  let t = SRCTXT[s.src || "none"] || "";
-  if (s.updated) t = "updated from the project's sounds";
-  if (s.src === "empty" && fp) t += ` · its sounds use fingerprint ${fp}${nm}`;
-  if (s.mixed) t += " · its sounds use more than one machine";
-  return { text: t || "-", cls: s.updated ? "ok" : "mut" };
-}
-function slotListExport(project, S) {
-  const slots = [];
-  for (let n = 1; n <= 5; n++) {
-    const s = S[n] || {};
-    if (s.id) slots.push({ slot: n, id: s.id, ver: s.ver || "", name: s.name || s.want_name || "", fp: s.fp || s.want_fp || 0 });
-    else if (s.src === "empty") slots.push({ slot: n, empty: true });
-  }
-  return { format: "sidecar-slots", version: 1, project: project || "", slots };
-}
-function slotListParse(text) {      // -> {project, slots} or throws; also "U<n> <id> <a.b.c>" lines (a slot map file)
-  let j;
-  try { j = JSON.parse(text); } catch (e) {
-    const slots = [];
-    for (const l of text.split(/\r?\n/)) {
-      const m = l.trim().match(/^U([1-5])\s+(\S+)\s+(\d+\.\d+\.\d+)$/);
-      if (m) slots.push({ slot: +m[1], id: m[2], ver: m[3] });
-      else if (l.trim()) throw new Error("not a slot list: " + l.trim().slice(0, 40));
-    }
-    return { project: "", slots };
-  }
-  if (!j || j.format !== "sidecar-slots" || !Array.isArray(j.slots)) throw new Error("not a Sidecar slot list");
-  const slots = j.slots.filter((x) => x && x.slot >= 1 && x.slot <= 5 && (x.empty || (typeof x.id === "string" && /^\S{1,31}$/.test(x.id))))
-    .map((x) => x.empty ? { slot: x.slot, empty: true } : { slot: x.slot, id: x.id, ver: /^\d+\.\d+\.\d+$/.test(x.ver || "") ? x.ver : "0.0.0",
-      name: String(x.name || "").replace(/[^\x20-\x7e]/g, "_").replace(/:/g, "_").slice(0, 10), fp: x.fp | 0 });
-  return { project: String(j.project || ""), slots };
-}
-function slotListCmds(list) {       // the console lines that apply it (um=put:...)
-  return list.slots.map((x) => x.empty ? `um=put:${x.slot}:-:0.0.0` : `um=put:${x.slot}:${x.id}:${x.ver}${x.name ? ":" + x.name : ""}`);
-}
-function slotListMissing(list, P) { // entries whose package is not installed here, by name
-  const have = new Set(P.filter((p) => p.fit).map((p) => p.id));
-  return list.slots.filter((x) => !x.empty && !have.has(x.id)).map((x) => `U${x.slot} ${x.name || x.id} ${x.ver} (${x.id})`);
-}
-$("#um-export").onclick = () => {
-  const l = slotListExport(umInfo.project, umSlots);
-  saveBlob(new Blob([JSON.stringify(l, null, 1) + "\n"], { type: "application/json" }), `${l.project || "project"}.slots.json`);
-};
-$("#um-impb").onclick = () => $("#um-imp").click();
-$("#um-imp").onchange = async (e) => {
-  const f = e.target.files[0];
-  e.target.value = "";
-  if (!f) return;
-  let l;
-  try { l = slotListParse(await f.text()); } catch (err) { say($("#um-msg"), "import: " + err.message, true); return; }
-  const other = l.project && umInfo.project && l.project !== umInfo.project;
-  if (other && !confirm(`This slot list is for project ${l.project}. Apply it to ${umInfo.project}?`)) return;
-  for (const c of slotListCmds(l)) await cmd(c);
-  const miss = slotListMissing(l, umPlugins);
-  say($("#um-msg"), `imported ${l.slots.length} slot${l.slots.length === 1 ? "" : "s"}` +
-    (miss.length ? " - not installed: " + miss.join(", ") : " - every machine is installed"), miss.length > 0);
-  setTimeout(() => pollUm(true), 300);
-};
-$("#um-empty").onclick = () => {
-  if (!confirm("Start this project with U1..U5 empty? Nothing is inherited or filled from the project's sounds.")) return;
-  cmd("um=empty");
-  setTimeout(() => pollUm(true), 300);
-};
-function umRescan() { cmd("um=rescan"); setTimeout(() => pollUm(true), 400); setTimeout(() => pollUm(true), 2000); }
-$("#um-rescan").onclick = umRescan;
-$("#um-list").addEventListener("click", async (e) => {
-  const p = umPlugins[e.target.dataset.del];
-  if (!p || !confirm(`Delete ${p.file}?`)) return;
-  const r = await fsPost("/fs/del?path=" + E(p.file));
-  say($("#um-msg"), `delete ${p.file}: ${r.code} ${r.msg}`, r.code !== 200);
-  umRescan();
-  if (fsCur === "/Plugins") fsLs(fsCur);
-});
-$("#um-upb").onclick = () => $("#um-file").click();
-$("#um-file").onchange = (e) => {
-  for (const f of e.target.files) enqueue(f, "/Plugins", $("#um-prog"), umAfter);
-  e.target.value = "";
-};
-function umAfter(it, res) {
-  say($("#um-msg"), (res.ok ? "uploaded " : "") + it.path + ": " + res.msg, !res.ok);
-  umRescan();
-  if (fsCur === "/Plugins") fsLs(fsCur);
-}
-
-// ---- IN L/R source (/status "fxin": the setting and the Rytm's confirmed state; core/host_link.h, 26 / 27)
-function fxinShow(f) {
-  const on = f.state === "on";
-  $("#fxin-warn").hidden = !on;
-  $("#fxin-note").textContent = on ? "FX return on IN L/R (channels 10/11)" : f.state === "off" ? (f.want ? "asked, the Rytm still shows inputs" : "")
-    : f.state === "unsupported" ? "not supported by this Rytm build" : f.want ? "waiting for the Rytm" : "";
-  document.querySelectorAll("[data-nm]").forEach((l) => { l.lastChild.textContent = " " + (on ? l.dataset.fx : l.dataset.nm); });
-}
-
-// ---- record (/status "rec", the console's rec= commands, the takes through /fs)
-const REC = [["Master",[[0,"MASTER (stereo)"]]],
-  ["Drum machine inputs",[[1,"MAIN L"],[2,"MAIN R"],[3,"BD"],[4,"SD"],[5,"RS/CP"],[6,"BT"],[7,"LT"],[8,"MT/HT"],[9,"CH/OH"],[10,"CY/CB"],[11,"AUDIO IN L"],[12,"AUDIO IN R"]]],
-  ["Sidecar voices",[0, 2, 7, 1, 3, 5, 4, 6].map((v) => [13 + v, VNAME[v]])],
-  ["Send FX returns",[[21,"FX1 (stereo)"],[22,"FX2 (stereo)"]]],
-  // docs/STEREO.md: the PRE / POST voices' pairs as sent (a voice on PRE / POST records its own file in stereo)
-  ["OUT route pairs",[[23,"PRE (stereo)"],[24,"POST (stereo)"]]]];
-const STEREO = { 0: 1, 21: 1, 22: 1, 23: 1, 24: 1 };
-let recSel = new Set([0]), recMode = "manual", recBits = 24, recVol = "SD", recLast = null, recPrevState = -1, recSynced = false;
-try { const j = JSON.parse(store("sidecar.rec") || "null");
-  if (j) { recSel = new Set(j.ch || [0]); recMode = j.mode === "arm" ? "arm" : "manual"; recBits = j.bits === 16 ? 16 : 24; $("#rec-name").value = j.name && j.name !== "take" ? j.name : ""; }
-} catch (e) {}
-// the destinations (rec=vol:, pi/engine/rec_pi.cpp): the SD, each mounted drive (/status "stor" vols), and the chosen
-// one even while it is not mounted (start / arm are refused then: "USB drive not mounted", never the SD instead).
-// The destination is the Pi's: the page shows /status "rec" "vol" and sends rec=vol: only when it is clicked here
-// (never on opening: another browser, the console or the touchscreen may have chosen it)
-function recVolChoices(vols, cur) {
-  const up = (n) => n === "SD" || (vols || []).some((v) => v.name === n && v.state === "mounted");
-  const names = ["SD", ...(vols || []).filter((v) => v.name !== "SD" && v.state === "mounted").map((v) => v.name)];
-  if (!names.includes(cur)) names.push(cur);
-  return names.map((n) => ({ n, ok: up(n) }));
-}
-// where the takes are listed from: the SD's /Recordings and each mounted drive's (/USB/Recordings: fsweb.h)
-function recTakeRoots(vols) {
-  return [["SD", "/Recordings", ""], ...(vols || []).filter((v) => v.name !== "SD" && v.state === "mounted").map((v) => [v.name, `/${v.name}/Recordings`, v.name + ":"])];
-}
-$("#rec-ch").innerHTML = REC.map(([g, chs]) => `<div class="chg"><h3>${g}</h3><div class="chs">` +
-  chs.map(([id, n]) => `<label class="ch" data-ch="${id}"><span${id === 11 || id === 12 ? ` data-nm="${n}" data-fx="FX RETURN ${id === 11 ? "L" : "R"}"` : ""}><input type="checkbox" data-ci="${id}"> ${n}</span><div class="bar"><i style="width:0"></i></div></label>`).join("") +
-  `</div></div>`).join("");
-const recIds = () => [...recSel].sort((a, b) => a - b).join(",") || "none";
-// 5d: the warning before a take - the selection needs more than 70 % of the destination's write speed (/status rec
-// speedKBps: stor=bench's, else a default for the kind of volume): its load in %, 0 when it fits (or no speed known)
-function recLoad(needKBps, speedKBps) { return speedKBps > 0 ? Math.round(needKBps * 100 / speedKBps) : 0; }
-function recWarn(needKBps, speedKBps, pct = 70) { return speedKBps > 0 && needKBps * 100 > speedKBps * pct ? recLoad(needKBps, speedKBps) : 0; }
-function recWarnText(pct, needKBps, r) {
-  const mb = (k) => (k / 1024).toFixed(1) + " MB/s", where = r.vol && r.vol !== "SD" ? `the ${r.vol} drive` : "the SD card";
-  return `This take needs ${mb(needKBps)}: ${pct} % of ${where}'s ${mb(r.speedKBps)} (${r.speedMeasured ? "measured by the storage bench" : "not measured: an estimate - Status, Storage, Run bench"}).\n\n` +
-    `The card may fall behind: the blocks it misses are written as silence. Fewer channels or 16-bit need less.\n\nRecord anyway?`;
-}
-// the take folders' names (recorder.h): "<name>_<date>_<time>" with this page's clock, "<name>_take-001" without
-function recNameHint(name, vol) {
-  return `${name || "<project>"}_2026-10-27_1432 (_2, _3 ... in the same minute) in ${vol === "SD" ? "/Recordings" : vol + ":/Recordings"}`;
-}
 // 5d: a listing's order - by name ("n") or date ("t": "YYYY-MM-DD HH:MM", none sorts as the oldest); dir 1 up, -1 down;
 // a tie by name the same way. nm / tm: an entry's name and date (the files' n / t by default)
 // names compare as text, their runs of digits as numbers ("_2" before "_10", take-009 before take-010)
@@ -2239,260 +930,6 @@ const SORT0 = { k: "t", d: -1 };   // newest first
 function sortNext(cur, k) { return cur.k === k ? { k, d: -cur.d } : { k, d: k === "t" ? -1 : 1 }; }
 function sortLoad(name) { try { const j = JSON.parse(store(name) || "null"); return j && (j.k === "n" || j.k === "t") && (j.d === 1 || j.d === -1) ? j : SORT0; } catch (e) { return SORT0; } }
 const sortTh = (cur, k, label, attr) => `<button type="button" class="lnk" ${attr}="${k}" title="sort by ${k === "t" ? "date" : "name"}">${label}${cur.k === k ? (cur.d < 0 ? " ▾" : " ▴") : ""}</button>`;
-const recSamples = () => [...recSel].reduce((a, id) => a + (STEREO[id] ? 2 : 1), 0);
-const hms = (s) => `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-function recSave() { store("sidecar.rec", JSON.stringify({ ch: [...recSel], mode: recMode, bits: recBits, name: $("#rec-name").value })); }
-function recBusy() { return recLast && recLast.state !== 0; }
-async function recPush(what) {   // the device's settings from the page's (idle only)
-  if (recBusy()) return;
-  if (!what || what === "ch") await cmd("rec=ch:" + recIds());
-  if (!what || what === "bits") await cmd("rec=bits:" + recBits);
-  if (!what || what === "name") { const n = $("#rec-name").value; if (/^[A-Za-z0-9_-]{0,24}$/.test(n)) await cmd("rec=name:" + n); }   // "": the project's
-  if (what === "vol") { if (!(await cmd("rec=vol:" + recVol))) pend.fail("vol", "Sidecar refused it"); }   // a click only
-}
-function recView() {
-  document.querySelectorAll("#rec-ch .ch").forEach((el) => { const id = +el.dataset.ch, on = recSel.has(id);
-    el.classList.toggle("on", on); el.querySelector("input").checked = on; el.querySelector("input").disabled = recBusy(); });
-  document.querySelectorAll("[data-rm]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.rm === recMode)));
-  document.querySelectorAll("[data-rb]").forEach((b) => { b.setAttribute("aria-checked", String(+b.dataset.rb === recBits)); b.classList.toggle("pend", pend.want("bits") === b.dataset.rb); });
-  const bps = recSamples() * recBits / 8 * 48000, files = recSel.size, sp = recLast ? recLast.speedKBps : 0, ld = recLoad(bps / 1024, sp);
-  $("#rec-sum").textContent = `${files} file${files === 1 ? "" : "s"} · ${(bps / 1048576).toFixed(2)} MB/s` +
-    (sp ? ` · ${ld} % of ${recLast.vol && recLast.vol !== "SD" ? recLast.vol : "the card"}'s ${(sp / 1024).toFixed(1)} MB/s${recLast.speedMeasured ? "" : " (estimated)"}` : "");
-  $("#rec-sum").classList.toggle("err", !!recWarn(bps / 1024, sp));
-  const free = recLast ? recLast.freeMB * 1048576 : 0, on = recLast && recLast.vol && recLast.vol !== "SD" ? ` on ${recLast.vol}` : "";
-  $("#rec-free").textContent = recLast && recLast.vol && recLast.vol !== "SD" && recLast.volOk === 0 ? `${recLast.vol} not mounted`
-    : recLast && recLast.freeKnown === 0 ? `free space on ${recLast.vol} not counted (stor=free:${recLast.vol})`
-    : recLast && recLast.totalMB ? `${hb(free)} free${on} · ${bps ? hms(free / bps) : "-"} left at this selection` : "";
-  $("#rec-name").disabled = recBusy();
-  const vb = $("#rec-vol"), vs = recVolChoices(status && status.stor ? status.stor.vols : [], recVol), vk = vs.map((v) => v.n + v.ok).join();
-  if (vb.dataset.k !== vk) {
-    vb.dataset.k = vk;
-    vb.innerHTML = vs.map((v) => `<button type="button" role="radio" aria-checked="false" data-rv="${v.n}">${esc(STOR_CAP[v.n] || v.n)}${v.ok ? "" : " (not mounted)"}</button>`).join("");
-  }
-  vb.querySelectorAll("[data-rv]").forEach((b) => { b.setAttribute("aria-checked", String(b.dataset.rv === recVol)); b.classList.toggle("pend", pend.want("vol") === b.dataset.rv); b.disabled = recBusy(); });
-  $("#rec-volnote").hidden = recVol === "SD";
-  $("#rec-namehint").textContent = recNameHint($("#rec-name").value, recVol);
-}
-$("#rec-vol").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-rv]"); if (!b || recBusy() || b.dataset.rv === recVol) return;
-  recVol = b.dataset.rv; recSave(); pend.start("vol", recVol); recView(); recPush("vol");
-});
-$("#rec-ch").addEventListener("change", (e) => {
-  const id = e.target.dataset.ci; if (id === undefined) return;
-  e.target.checked ? recSel.add(+id) : recSel.delete(+id); recSave(); recView(); recPush("ch");
-});
-$("#rec-all").onclick = () => { if (recBusy()) return; recSel = new Set(REC.flatMap(([, c]) => c.map(([id]) => id))); recSave(); recView(); recPush("ch"); };
-$("#rec-none").onclick = () => { if (recBusy()) return; recSel = new Set(); recSave(); recView(); recPush("ch"); };
-document.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { if (recBusy()) return; recMode = b.dataset.rm; recSave(); recView(); });
-document.querySelectorAll("[data-rb]").forEach((b) => b.onclick = () => { if (recBusy()) return; recBits = +b.dataset.rb; recSave(); pend.start("bits", recBits); recView(); recPush("bits"); });
-$("#rec-name").onchange = () => { const ok = /^[A-Za-z0-9_-]{0,24}$/.test($("#rec-name").value);
-  say($("#rec-msg"), ok ? "" : "take name: up to 24 of A-Z a-z 0-9 _ - (empty: the project's name)", !ok); if (ok) { recSave(); recPush("name"); recView(); } };
-$("#rec-go").onclick = async () => {
-  if (recBusy()) { await cmd("rec=stop"); return; }
-  if (!recSel.size) return say($("#rec-msg"), "select a channel first", true);
-  const need = recSamples() * recBits / 8 * 48000 / 1024, w = recLast ? recWarn(need, recLast.speedKBps) : 0;
-  if (w && !confirm(recWarnText(w, need, recLast))) return;
-  await recPush();
-  await cmd(recMode === "arm" ? "rec=arm" : "rec=start");
-};
-function recRender(r) {
-  recLast = r;
-  if (pend.has("bits") && r.bits === +pend.want("bits")) { pend.report("bits", r.bits); recView(); }
-  if (pend.has("vol") && r.vol === pend.want("vol")) { pend.report("vol", r.vol); recView(); }
-  if (!recSynced && r.state === 0) {   // the page's remembered settings to the device, once
-    recSynced = true;
-    if (r.ch.join(",") !== [...recSel].sort((a, b) => a - b).join(",") || r.bits !== recBits || r.prefix !== $("#rec-name").value) recPush();
-  }
-  if (r.vol && !pend.has("vol")) recVol = r.vol;   // the Pi's destination, always
-  if (r.state !== 0) { recSel = new Set(r.ch); recBits = r.bits; recMode = r.arm ? "arm" : recMode; $("#rec-name").value = r.prefix; }
-  const secs = r.frames / 48000, b = $("#rec-go"), st = r.state;
-  b.className = st === 2 || st === 3 ? "on" : st === 1 ? "armed" : "";
-  b.innerHTML = st === 0 ? (recMode === "arm" ? "&#9679; Arm" : "&#9679; Record") : st === 1 ? "&#9632; Disarm" : "&#9632; Stop";
-  $("#rec-time").textContent = hms(st === 1 ? 0 : secs);
-  $("#rec-time").className = st === 2 ? "on" : "";
-  $("#rec-state").textContent = !r.ready ? "recording is off (cmdline recbuf=0, or no card)" : st === 1 ? "armed: waiting for PLAY" + (r.take ? ` (last: ${r.take})` : "")
-    : st === 2 ? r.take : st === 3 ? r.take + ": closing the files" : r.take ? "last take: " + r.take : "";
-  const w = [];
-  const drv = r.vol && r.vol !== "SD", dn = drv ? "the drive" : "the card";
-  if (drv && st === 0 && r.volOk === 0)
-    w.push(`${STOR_CAP[r.vol] || r.vol} not mounted: plug it in, or record to the SD card`);
-  if (r.drops) w.push(`${dn} fell behind: ${r.drops} blocks dropped (${(r.silence / 48).toFixed(0)} ms written as silence)`);
-  if (r.outShort) w.push(`${r.outShort} Sidecar frames missing (written as silence)`);
-  if (r.error) w.push(r.error);
-  if (r.abandoned) w.push("the drive stopped answering: the take's files were left as they were (plugged in again, their lengths are fixed)");
-  $("#rec-warn").textContent = w.join(" · ");
-  $("#rec-card").textContent = r.writes ? `${drv ? r.vol + " drive" : "Card"}: ${(r.cardKBps / 1024).toFixed(1)} MB/s while writing (needs ${(r.needKBps / 1024).toFixed(2)}), ` +
-    `worst write ${r.worstWriteMs} ms, buffer ${(r.ringMs / 1000).toFixed(1)} s (most used ${r.ringSlots ? Math.round(100 * r.ringMax / r.ringSlots) : 0} %), ${hb(r.bytes * 1024)} written.` : r.ready ? `Buffer: ${(r.ringMs / 1000).toFixed(1)} s at the device's selection.` : "";
-  document.querySelectorAll("#rec-ch .ch").forEach((el) => { const id = +el.dataset.ch, p = r.peak[id] || 0, bar = el.querySelector(".bar");
-    bar.querySelector("i").style.width = (recSel.has(id) && st ? Math.min(100, p / 10) : 0) + "%"; bar.classList.toggle("hot", p >= 990); });
-  const dk = recTakeRoots(status && status.stor ? status.stor.vols : []).map((x) => x[0]).join();   // a drive came or went
-  if (tab === "record" && ((recPrevState > 0 && st === 0) || dk !== recDrives)) recTakes();
-  recDrives = dk;
-  recPrevState = st;
-  recView();
-}
-let recList = [], recDrives = "SD";   // recDrives: the volumes the takes were last listed from (none known yet: the SD)
-async function lsJson(p) { const r = await getRetry("/fs/ls?path=" + E(p)), t = (await r.text()).trim(); return t[0] === "{" ? JSON.parse(t) : null; }
-// ---- presets (core/user/lists.h's /lists: the JUNO / FM lists; /um's slots; the presets' folders through /fs)
-let libLast = "", libData = null, libUm = [];
-async function pollLib(force) {
-  try {
-    const [r, u] = await Promise.all([fetch("/lists", { cache: "no-store", signal: AbortSignal.timeout(4000) }),
-                                      fetch("/um", { cache: "no-store", signal: AbortSignal.timeout(4000) })]);
-    const t = await r.text(), ut = await u.text();
-    if (t + ut === libLast && !force) return;
-    if ($("#tab-library").contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName)) return;
-    libLast = t + ut;
-    libData = JSON.parse(t);
-    libUm = JSON.parse(ut).filter((x) => x.t === "slot");
-    renderLib();
-  } catch (e) { say($("#lib-juno-msg"), "no answer from Sidecar", true); }
-}
-setInterval(() => { if (!document.hidden && tab === "library" && !qBusy && !pairBlocked()) pollLib(); }, 2000);
-function libVoices(sel, m) {
-  const was = sel.value, vs = (libData.voices || []).filter((v) => v.m === m);
-  sel.innerHTML = vs.length ? vs.map((v) => `<option value="${v.v}">voice ${v.v} (PAT ${v.pat})</option>`).join("")
-    : `<option value="">no voice plays ${m}</option>`;
-  if (vs.some((v) => String(v.v) === was)) sel.value = was;
-}
-function libList(L, kind) {
-  const rows = (L.list || []).map((e) => `<tr><td class="r">${e.slot}</td><td class="w${e.used ? (e.found === false ? " err" : "") : " mut"}">${e.used ? esc(e.name) : "(empty)"}</td>
-    <td class="r">${e.used ? `<button class="sm" data-lact="ren" data-k="${kind}" data-s="${e.slot}" data-n="${esc(e.name)}">Rename</button> ` : ""}
-    ${e.slot ? `<button class="sm" data-lact="up" data-k="${kind}" data-s="${e.slot}" title="swap with the slot above">Up</button> ` : ""}
-    ${e.used ? `<button class="sm" data-lact="del" data-k="${kind}" data-s="${e.slot}">Delete</button>` : ""}</td></tr>`);
-  return rows.join("") || `<tr><td colspan="3" class="mut">${kind === "fm" ? "empty: PAT picks the 96 ROM voices" : "empty: PAT picks the factory patches"}</td></tr>`;
-}
-function renderLib() {
-  const d = libData;
-  $("#lib-juno-list").innerHTML = libList(d.juno || {}, "juno");
-  $("#lib-fm-list").innerHTML = libList(d.fm || {}, "fm");
-  libVoices($("#lib-juno-v"), "JUNO");
-  libVoices($("#lib-fm-v"), "FM");
-  libPresets();
-}
-async function libCmd(c, box) {
-  say(box, c);
-  await cmd(c);
-  setTimeout(() => pollLib(true), 400);
-}
-$("#lib-juno-save").onclick = () => { const v = $("#lib-juno-v").value, n = $("#lib-juno-n").value.trim().replace(/[:\t]/g, " ");
-  if (v !== "") libCmd("juno=save:" + v + (n ? ":" + n : ""), $("#lib-juno-msg")); };
-$("#lib-fm-save").onclick = () => { const v = $("#lib-fm-v").value; if (v !== "") libCmd("fm=save:" + v, $("#lib-fm-msg")); };
-$("#tab-library").addEventListener("click", async (e) => {
-  const b = e.target.closest("button");
-  if (!b) return;
-  const D = b.dataset;
-  if (D.lact) {
-    const box = $("#lib-" + D.k + "-msg"), s = +D.s;
-    if (D.lact === "del" && confirm(`Delete ${D.k.toUpperCase()} slot ${s}?`)) return libCmd(`${D.k}=del:${s}`, box);
-    if (D.lact === "up") return libCmd(`${D.k}=swap:${s - 1}:${s}`, box);
-    if (D.lact === "ren") { const n = prompt("New name", D.n || ""); if (n && n.trim()) return libCmd(`${D.k}=ren:${s}:${n.trim().replace(/[:\t]/g, " ")}`, box); }
-    return;
-  }
-  if (D.prs) {   // a user machine's preset: rename / delete in /PRESETS/<id>/ (then the lists again), save current
-    const box = $("#lib-pre-msg"), dir = "/PRESETS/" + D.id;
-    if (D.prs === "save") {
-      const n = (prompt(`Save U${D.u}'s current sound as`, "") || "").trim();
-      if (n) return libCmd(`um=save:${D.u}:${n}`, box);
-      return;
-    }
-    if (D.prs === "del" && confirm("Delete preset " + D.f + "?")) { const r = await fsPost("/fs/del?path=" + E(dir + "/" + D.f)); say(box, r.msg, r.code !== 200); }
-    if (D.prs === "ren") {
-      const ext = D.f.replace(/^.*?(\.[^.]*)?$/, "$1"), n = (prompt("New name", D.f.slice(0, D.f.length - ext.length)) || "").trim();
-      if (!n || n.includes("/")) return;
-      const r = await fsPost("/fs/mv?path=" + E(dir + "/" + D.f) + "&to=" + E(dir + "/" + n + ext));
-      say(box, r.msg, r.code !== 200);
-    }
-    cmd("um=presets");
-    setTimeout(() => pollLib(true), 400);
-  }
-});
-async function libPresets() {
-  const box = $("#lib-pre-slots"), S = libUm.filter((s) => s.id);
-  if (!S.length) { box.innerHTML = `<p class="mut">no user slot assigned in this project</p>`; return; }
-  const parts = await Promise.all(S.map(async (s) => {
-    const j = await lsJson("/PRESETS/" + s.id), ext = (s.pre_ext || "").toLowerCase();
-    const files = (j && j.entries || []).filter((x) => !x.d && x.n[0] !== "." && (/\.txt$/i.test(x.n) || (ext && x.n.toLowerCase().endsWith("." + ext))))
-      .sort((a, b) => (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
-    return `<div class="slot" style="margin:6px 0"><div class="row"><b>U${s.slot}</b> ${esc(s.name || s.id)} <span class="mut">${esc(s.id)}</span>
-      <span class="spacer"></span><span class="mut">${s.pre_ok ? s.presets + " in the PRE list" : "scanning"}</span>
-      <button class="sm" data-prs="save" data-u="${s.slot}" data-id="${esc(s.id)}"${s.state === "READY" ? "" : " disabled"}>Save current</button></div>
-      <table><tbody>${files.map((x) => `<tr><td class="w">${esc(x.n)}</td><td class="r mut">${hb(x.s)}</td><td class="r">
-        <button class="sm" data-prs="ren" data-id="${esc(s.id)}" data-f="${esc(x.n)}">Rename</button>
-        <button class="sm" data-prs="del" data-id="${esc(s.id)}" data-f="${esc(x.n)}">Delete</button></td></tr>`).join("")
-        || `<tr><td class="mut">no presets (/PRESETS/${esc(s.id)}/)</td></tr>`}</tbody></table></div>`;
-  }));
-  box.innerHTML = parts.join("");
-}
-async function recTakes() {
-  const box = $("#rec-takes");
-  try {
-    // t: the take's id (the player's, rec=del:'s: "take_004", "USB:take_004"), dir: its folder through /fs
-    const list = [];
-    for (const [vol, base, pre] of recTakeRoots(status && status.stor ? status.stor.vols : [])) {
-      const j = await lsJson(base);
-      if (!j) continue;
-      const takes = (j.entries || []).filter((x) => x.d && x.n[0] !== ".").sort(byKey("t", -1)).slice(0, 50);   // the newest 50
-      for (const e of takes) {
-        const t = e.n, k = await lsJson(base + "/" + t), fs = k ? (k.entries || []).filter((x) => !x.d && /\.wav$/i.test(x.n)).sort((a, b) => a.n < b.n ? -1 : 1) : [];
-        list.push({ t: pre + t, name: t, date: e.t || "", vol, dir: base + "/" + t, files: fs, size: fs.reduce((a, x) => a + x.s, 0) });
-      }
-    }
-    recList = list;
-    recShow();
-  } catch (e) { say($("#rec-msg"), "takes: " + e, true); }
-}
-let recSort = sortLoad("sidecar.recsort");
-function recShow() {   // the takes of every volume in one list, by date (newest first) or name
-  const box = $("#rec-takes");
-  recList.sort(byKey(recSort.k, recSort.d, (x) => x.name, (x) => x.date));
-  {
-    box.innerHTML = recList.length ? `<table><thead><tr><th>${sortTh(recSort, "n", "Take", "data-rsort")}</th><th>${sortTh(recSort, "t", "Date", "data-rsort")}</th><th class="r">Files</th><th class="r">Size</th><th class="hm">Channels</th><th></th></tr></thead><tbody>` +
-      recList.map((x, i) => `<tr><td>${esc(x.name)}${x.vol !== "SD" ? ` <span class="mut">· ${esc(x.vol)}</span>` : ""}</td><td class="mut">${esc(x.date) || "-"}</td><td class="r">${x.files.length}</td><td class="r">${hb(x.size)}</td>
-        <td class="w hm">${x.files.map((f) => /^\d\d_/.test(f.n) ? `<button class="sm" type="button" aria-pressed="false" data-rp="${i}" data-nn="${+f.n.slice(0, 2)}" data-t="${esc(x.t)}" data-c="${esc(f.n.replace(/^\d+_|\.wav$/gi, ""))}" title="play on the Rytm's MAIN">&#9654; ${esc(f.n.replace(/^\d+_|\.wav$/gi, ""))}</button>` : "").join(" ")}</td>
-        <td class="r"><button class="sm" data-rt="get" data-i="${i}">Download</button> <button class="sm" data-rt="del" data-i="${i}">Delete</button></td></tr>`).join("") +
-      `</tbody></table>` : `<p class="mut">No takes yet.</p>`;
-  }
-}
-$("#rec-re").onclick = recTakes;
-let playPend = null;   // the play button clicked, until /status confirms it (or 2 s)
-function playRender(p) {   // /status "play" (rec_play.h): the take's channel playing into the Rytm's MAIN
-  const on = p.state === 2 || p.state === 3, t = (ms) => hms(ms / 1000);
-  document.querySelectorAll("button[data-rp]").forEach((b) => {
-    const it = on && b.dataset.t === p.take && b.dataset.c === p.ch;
-    b.setAttribute("aria-pressed", it ? "true" : "false");
-    if (it && b === playPend) playPend = null;
-    b.classList.toggle("pend", b === playPend);
-  });
-  $("#play-stop").disabled = !on;
-  $("#play-state").textContent = on ? `Playing ${p.take} · ${p.ch} · ${t(p.posMs)} / ${t(p.lenMs)} · level ${p.level}` + (p.error ? " · " + p.error : "")
-    : p.error ? "Playback: " + p.error : "Playback: click a channel to hear it on the Rytm's MAIN (not while recording).";
-}
-$("#play-stop").onclick = () => cmd("play=stop");
-$("#rec-takes").addEventListener("click", async (e) => {
-  const so = e.target.closest("[data-rsort]");
-  if (so) { recSort = sortNext(recSort, so.dataset.rsort); store("sidecar.recsort", JSON.stringify(recSort)); recShow(); if (status && status.play) playRender(status.play); return; }
-  const pb = e.target.closest("[data-rp]");
-  if (pb) {
-    if (recBusy() && (recLast.state === 2 || recLast.state === 3)) return say($("#rec-msg"), "a take is recording: no playback now", true);
-    playPend = pb; pb.classList.add("pend");
-    setTimeout(() => { if (playPend === pb) { playPend = null; pb.classList.remove("pend"); } }, 2000);
-    return cmd(`play=start:${recList[pb.dataset.rp].t}/${pb.dataset.nn}`);
-  }
-  const b = e.target.closest("[data-rt]"); if (!b) return;
-  const x = recList[b.dataset.i], m = $("#rec-msg");
-  // only a take being written (2 recording, 3 finishing) is busy: armed (1) waits for the next PLAY, and its take
-  // name is still the last take's, which is done
-  if ((recLast?.state === 2 || recLast?.state === 3) && recLast.take === x.t) return say(m, x.t + " is recording: stop it first", true);
-  if (b.dataset.rt === "get") { for (const f of x.files) await download(`${x.dir}/${f.n}`, f.s, $("#rec-prog")); return; }
-  if (!confirm(`Delete the take ${x.t} (${x.files.length} files, ${hb(x.size)})${x.vol !== "SD" ? " from the " + (STOR_CAP[x.vol] || x.vol) : ""}?`)) return;
-  for (const f of x.files) { const r = await fsPost("/fs/del?path=" + E(`${x.dir}/${f.n}`)); if (r.code !== 200) return say(m, `${f.n}: ${r.code} ${r.msg}`, true); }
-  const r = await fsPost("/fs/del?path=" + E(x.dir));
-  say(m, `delete ${x.t}: ${r.code} ${r.msg}`, r.code !== 200);
-  recTakes();
-});
-recView();
-
 // ---- files (GET /fs/ls: each entry's name, size and date "t")
 let fsCur = "/", fsEnt = [], fsSort = sortLoad("sidecar.fssort");
 async function fsLs(path) {
@@ -2512,7 +949,7 @@ async function fsLs(path) {
     $("#fs-crumb").innerHTML = cr;
     $("#fs-list").innerHTML = `<table><thead><tr><th>${sortTh(fsSort, "n", "Name", "data-fsort")}</th><th class="hm">${sortTh(fsSort, "t", "Date", "data-fsort")}</th><th class="r">Size</th><th></th></tr></thead><tbody>` +
       (fsEnt.length ? fsEnt.map((x, i) => `<tr><td class="w">${x.d ? `<button class="lnk" data-open="${i}">${esc(x.n)}/</button>` : esc(x.n)}${x.ro === 1 ? ` <span title="boot file or restore backup: read-only">🔒</span>` : x.ro === 2 ? ` <span class="mut" title="the Sidecar's own folder: kept (its contents can change)">kept</span>` : ""}</td>
-        <td class="hm mut">${esc(x.t || "")}</td><td class="r">${x.d ? "" : hb(x.s)}</td><td class="r">${poolBtns(x, i)}${bankBtn(x, i)}${x.d ? "" : `<button class="sm" data-act="get" data-i="${i}">Download</button> `}${x.ro ? "" :
+        <td class="hm mut">${esc(x.t || "")}</td><td class="r">${x.d ? "" : hb(x.s)}</td><td class="r">${x.d ? "" : `<button class="sm" data-act="get" data-i="${i}">Download</button> `}${x.ro ? "" :
         `<button class="sm" data-act="mv" data-i="${i}">Rename</button> <button class="sm" data-act="del" data-i="${i}">Delete</button>`}</td></tr>`).join("")
         : `<tr><td colspan="4" class="mut">empty folder</td></tr>`) +
       (nHidden ? `<tr><td colspan="4" class="mut">${nHidden} hidden (dot-file${nHidden === 1 ? "" : "s"}): tick "show hidden"</td></tr>` : "") +
@@ -2528,10 +965,8 @@ document.addEventListener("click", async (e) => {
 $("#fs-upd").onclick = () => fsLs(fsCur.replace(/\/[^/]*$/, "") || "/");
 $("#fs-re").onclick = () => fsLs(fsCur);
 $("#fs-hidden").checked = store("sidecar.hidden") === "1";
-$("#fs-bank").value = /^[A-H]$/.test(store("sidecar.fsbank") || "") ? store("sidecar.fsbank") : "A";
-$("#fs-bank").onchange = (e) => store("sidecar.fsbank", e.target.value);
 $("#fs-hidden").onchange = (e) => { store("sidecar.hidden", e.target.checked ? "1" : "0"); fsLs(fsCur); };
-const fsChanged = () => { fsLs(fsCur); if (fsCur === "/Plugins") umRescan(); };
+const fsChanged = () => fsLs(fsCur);
 $("#fs-mk").onclick = async () => {
   const n = prompt("New folder in " + fsCur);
   if (!n) return;
@@ -2540,37 +975,6 @@ $("#fs-mk").onclick = async () => {
   say($("#fs-msg"), `new folder ${n}: ${r.code} ${r.msg}`, r.code !== 200);
   fsLs(fsCur);
 };
-// The POOL (core/lib/pools.h): a WAV / AIFF into SAMPLES or WAVETABLES, an .sfz into INSTRUMENTS, into the first free
-// row of the bank chosen in the toolbar (pool=K:add:B:PATH); a folder's files into a bank's empty rows (pool=K:fill:B:DIR)
-const POOLS = { smp: "SAMPLES", wt: "WAVETABLES", inst: "INSTRUMENTS" };
-function poolBtns(x, i) {
-  if (x.d || x.n[0] === ".") return "";
-  const k = /\.(wav|aif|aiff)$/i.test(x.n) ? ["smp", "wt"] : /\.(sfz|elmulti)$/i.test(x.n) ? ["inst"] : [];
-  return k.map((m) => `<button class="sm" data-act="pool" data-k="${m}" data-i="${i}" title="Add to the POOL's ${POOLS[m]} (the first free row of the POOL bank)">+${m.toUpperCase()}</button> `).join("");
-}
-function bankBtn(x, i) {
-  if (!x.d || x.n[0] === ".") return "";
-  return `<button class="sm" data-act="fill" data-i="${i}" title="Fill a POOL bank (SAMPLES or WAVETABLES, A..H) with this folder's files">Fill bank</button> `;
-}
-// "smp c" / "WT H" / "inst a" -> ["smp", "C"] (null: not a list and a bank A..H)
-function bankOf(t) {
-  const m = /^\s*(smp|wt|inst)\s+([a-h])\s*$/i.exec(t || "");
-  return m ? [m[1].toLowerCase(), m[2].toUpperCase()] : null;
-}
-// the answers to +SMP / +WT / +INST and Fill bank (poolAns objects; null: none in time) as [text, bad]
-function addSay(a, name, k, bank) {
-  if (!a) return [`${name}: sent, no answer yet (see Log & console)`, true];
-  if (a.res === "SET") return [`${name} -> ${POOLS[k]} ${a.row}`, false];
-  if (a.res === "IN POOL") return [`${name}: already in ${a.row}`, false];
-  if (a.res === "READING") return [`${name}: reading the .sfz, then into ${POOLS[k]} bank ${bank} (the Pool tab shows its row)`, false];
-  if (a.res === "BANK FULL") return [`${POOLS[k]} bank ${bank} is full: choose another POOL bank`, true];
-  return [`${name}: ${a.res || a.text}`, true];
-}
-function fillSay(a, dir, k, bank) {
-  if (!a) return [`${dir}: sent, no answer yet (see Log & console)`, true];
-  if (/cannot fill/.test(a.text)) return [`${POOLS[k]} bank ${bank}: cannot fill from ${dir} (not a folder, or the list is locked)`, true];
-  return [`${POOLS[k]} bank ${bank}: filling from ${dir} (empty rows only, in name order; the Pool tab shows them)`, false];
-}
 $("#fs-list").addEventListener("click", async (e) => {
   const so = e.target.closest("[data-fsort]");
   if (so) { fsSort = sortNext(fsSort, so.dataset.fsort); store("sidecar.fssort", JSON.stringify(fsSort)); return fsLs(fsCur); }
@@ -2580,21 +984,6 @@ $("#fs-list").addEventListener("click", async (e) => {
   if (!b) return;
   const x = fsEnt[b.dataset.i], p = join(fsCur, x.n), m = $("#fs-msg");
   if (b.dataset.act === "get") return download(p, x.s);
-  if (b.dataset.act === "fill") {
-    const kb = bankOf(prompt(`Fill which POOL bank with ${p}'s files? A list (smp, wt or inst) and a bank A..H, e.g. "smp C"`, `smp ${$("#fs-bank").value}`));
-    if (!kb) return say(m, 'a list (smp, wt or inst) and a bank A..H, e.g. "smp C"', true);
-    if (kb[0] === "inst") return say(m, "INSTRUMENTS are not filled from a folder: add each .sfz / .elmulti with +INST", true);
-    if (p.length > 159) return say(m, "the path is too long for the POOL (159 characters at most)", true);
-    const [t, bad] = fillSay(await poolSend(`pool=${kb[0]}:fill:${kb[1]}:${p}`, kb[0]), p, kb[0], kb[1]);
-    return say(m, t, bad);
-  }
-  if (b.dataset.act === "pool") {
-    const k = b.dataset.k, bank = $("#fs-bank").value;
-    if (p.length > 159) return say(m, "the path is too long for the POOL (159 characters at most)", true);
-    say(m, `${x.n}: into ${POOLS[k]} bank ${bank} ...`);
-    const [t, bad] = addSay(await poolSend(`pool=${k}:add:${bank}:${p}`, k), x.n, k, bank);
-    return say(m, t, bad);
-  }
   if (b.dataset.act === "del") {
     if (!confirm(`Delete ${p}?` + (x.d ? " (a folder: only when empty)" : ""))) return;
     const r = await fsPost("/fs/del?path=" + E(p));
@@ -2609,350 +998,6 @@ $("#fs-list").addEventListener("click", async (e) => {
     fsChanged();
   }
 });
-// ---- the Pool tab (GET /pool: pi/engine/poolweb.h; the edits are the console's pool=smp|wt|inst:... lines,
-// core/lib/pools.h, whose one-line answers come back through the log)
-const POOL_BANKS = "ABCDEFGH";
-// pools.cpp result_text (the ones with a ": " in them first)
-const POOL_RES = ["IN USE: REPLACE?", "PLAYING: STOP FIRST", "NOT FOR THIS POOL", "POOL LOCKED", "NO SUCH FILE", "NO SUCH ROW",
-  "000 IS OFF", "BUILT-IN", "BANK FULL", "IN POOL", "READING", "BUSY", "EMPTY", "SET"];
-const rowText = (c) => POOL_BANKS[(c >> 7) & 7] + String(c & 127).padStart(3, "0");
-// one bank_json row: [row, type, name, state, path, used_count, users, size, members, channels, always_ram]
-const plRow = (a) => ({ row: a[0], type: a[1], name: a[2], state: a[3], path: a[4], used: a[5], users: a[6], size: a[7], members: a[8],
-  ch: a[9] || 0, ram: !!a[10] });
-// docs/STEREO.md: a sample's ST / M tag (its channels, once a machine has read it), RAM when it is always held in RAM
-const plTags = (e) => (e.ch >= 2 ? " · ST" : e.ch === 1 ? " · M" : "") + (e.ram ? " · RAM" : "");
-const inUse = (e) => !!e && (e.used > 0 || e.users > 0);
-// a log line with list k's answer (cores.cpp logs pools::command's): "pool: smp C004 /x.wav: IN POOL",
-// "pool: smp: 2 unloaded, refused: IN USE: REPLACE?", "pool: smp: undone", "pool: smp bank C: filling from /x" ->
-// {row, res, n (rows unloaded, -1: not an unload), text}; null: not one
-function poolAns(line, k) {
-  const m = new RegExp("\\bpool: " + k + "([ :].*)$").exec(line || "");
-  if (!m) return null;
-  const t = m[1], res = POOL_RES.find((r) => t.endsWith(": " + r)) || "";
-  const r = /^ ([A-H]\d{3}|-) /.exec(t), u = /^: (\d+) unloaded/.exec(t);
-  return { row: r && r[1] !== "-" ? r[1] : "", res, n: u ? +u[1] : -1, text: t.replace(/^:?\s*/, "") };
-}
-// P3 (docs/UX-REVIEW-2026-10-22.md): what a row in use asks before it is replaced or unloaded
-function p3Ask(row, e, verb) {
-  if (e && e.users > 0) return `ROW ${row} USED BY ${e.users} SOUND${e.users === 1 ? "" : "S"} - ${verb}?`;
-  return `ROW ${row} PLAYED IN THIS PROJECT${e && e.used ? ` (${e.used}x)` : ""} - ${verb}?`;
-}
-function plRam(r) {
-  if (!r || !r.budget) return "-";
-  return `${hb(r.used + r.tables)} of ${hb(r.budget)} (${r.pct} %)`;
-}
-// the rows to unload as console lines of at most 190 characters (TCmd's 192); rows in yes go with :yes (P3, confirmed)
-function unloadCmds(k, rows, yes) {
-  const head = `pool=${k}:unload:`, out = [];
-  let cur = "";
-  for (const r of rows) {
-    const t = r + (yes.has(r) ? ":yes" : "");
-    if (cur && head.length + cur.length + 1 + t.length > 190) { out.push(head + cur); cur = ""; }
-    cur += (cur ? "," : "") + t;
-  }
-  if (cur) out.push(head + cur);
-  return out;
-}
-const PL_ST = { EXACT: "ok", MOVED: "ok", MISSING: "err", CHANGED: "wn", PENDING: "mut", UNVERIFIED: "mut", INPUT: "mut", "BUILT-IN": "mut" };
-// one bank (bank_json) as the table's rows: row 000 OFF first; sel: the selected rows; locked: no edits
-function plRowsHtml(d, sel, locked) {
-  const B = POOL_BANKS[d.bank & 7], dis = locked ? " disabled" : "", rows = (d.rows || []).map(plRow);
-  return `<tr class="mut"><td></td><td class="r">${B}000</td><td colspan="6">OFF</td></tr>` + rows.map((e) => {
-    const row = B + String(e.row).padStart(3, "0"), file = e.type === "sample" || e.type === "instrument";
-    return `<tr data-row="${row}"><td><input type="checkbox" data-sel="${row}" aria-label="select ${row}"${sel.has(row) ? " checked" : ""}${dis}></td>
-      <td class="r">${row}</td><td class="w"${e.path ? ` title="${esc(e.path)}"` : ""}>${esc(e.name || "-")}${e.state === "MISSING" && e.path ? ` <span class="mut">${esc(e.path)}</span>` : ""}</td>
-      <td><span class="badge ${PL_ST[e.state] || ""}">${esc(e.state)}</span></td>
-      <td class="r">${file && e.size ? hb(e.size) : file ? "-" : ""}${e.type === "instrument" ? ` · ${e.members} samples` : ""}${file ? plTags(e) : ""}</td>
-      <td class="r">${e.used || ""}</td><td class="r">${e.users || ""}</td>
-      <td class="r w">${e.state === "CHANGED" ? `<button class="sm" data-pa="accept" data-row="${row}"${dis} title="take the file's new content">Accept</button> ` : ""}${file ? `<button class="sm" data-pa="replace" data-row="${row}"${dis}>Replace</button> ` : ""}<button class="sm" data-pa="unload" data-row="${row}"${dis}>Unload</button></td></tr>`;
-  }).join("") + (rows.length ? "" : `<tr><td colspan="8" class="mut">bank ${B} is empty: add files from the Files tab (+SMP / +WT / +INST, Fill bank)</td></tr>`);
-}
-// a row's replace (path) or unload with P3: a row in use asks first and is sent with :yes; one found in use only by
-// the console asks then; while the Rytm plays a row in use is refused. io: {send(line) -> poolAns | null, ask(q) -> bool}.
-// Returns [text, bad].
-async function poolEdit(io, k, op, row, e, path) {
-  const verb = op === "replace" ? "REPLACE" : "UNLOAD", line = op === "replace" ? `pool=${k}:replace:${row}:${path}` : `pool=${k}:unload:${row}`;
-  const yes = inUse(e);
-  if (yes && !(await io.ask(p3Ask(row, e, verb)))) return [`${row}: not changed`, false];
-  let a = await io.send(line + (yes ? ":yes" : ""));
-  if (a && a.res === "IN USE: REPLACE?" && !yes) {   // in use since the list was read
-    if (!(await io.ask(p3Ask(row, e, verb)))) return [`${row}: not changed`, false];
-    a = await io.send(line + ":yes");
-  }
-  const name = (path || "").split("/").pop();
-  if (!a) return [`${row}: sent, no answer yet (see Log & console)`, true];
-  if (a.res === "PLAYING: STOP FIRST") return [`${row} is in use: not changed while the Rytm plays (stop it first)`, true];
-  if (op === "unload") return a.n > 0 ? [`${row} unloaded (Undo takes it back)`, false] : [`${row}: ${a.res || a.text}`, true];
-  if (a.res === "SET") return [`${row} = ${name} (Undo takes it back)`, false];
-  if (a.res === "IN POOL") return [`${name} is in ${a.row} already: one row per file`, true];
-  if (a.res === "READING") return [`${row}: reading the .sfz (the row shows it when done)`, false];
-  return [`${row}: ${a.res || a.text}`, true];
-}
-// ---- the Pool tab's wiring
-const logWaits = [];
-// the next log line match(line) answers (FIFO); null after ms
-function logAnswer(match, ms = 6000) {
-  const w = { match };
-  w.p = new Promise((ok) => { w.ok = ok; });
-  w.done = (a) => { const i = logWaits.indexOf(w); if (i >= 0) logWaits.splice(i, 1); clearTimeout(w.t); w.ok(a); };
-  w.t = setTimeout(() => w.done(null), ms);
-  logWaits.push(w);
-  return w;
-}
-function logMatch(line) {
-  for (const w of logWaits) { const a = w.match(line); if (a) { w.done(a); return; } }
-}
-// a pool= line to the control core and its answer from the log (null: refused, or none in time)
-async function poolSend(c, k) {
-  const w = logAnswer((line) => poolAns(line, k));
-  if (!(await cmd(c))) { w.done(null); return null; }
-  return w.p;
-}
-let plK = store("sidecar.pool") || "smp", plB = +(store("sidecar.poolbank") || 0) & 7, plLast = "", plData = null, plBusy = false;
-let plSel = new Set(), plWarn = "", plPickAt = null, plPickDir = "/Samples";
-if (!POOLS[plK] && plK !== "juno" && plK !== "fm") plK = "smp";
-$("#pl-banks").innerHTML = [...POOL_BANKS].map((b, i) => `<button data-pb="${i}" aria-checked="${i === plB}">${b}</button>`).join("");
-const plIo = (k) => ({ send: (c) => poolSend(c, k), ask: async (q) => confirm(q) });
-const plEntry = (row) => { const d = plData && plData.bank; return d ? (d.rows || []).map(plRow).find((e) => POOL_BANKS[d.bank] + String(e.row).padStart(3, "0") === row) : null; };
-async function plPoll(force) {
-  if (plK === "juno" || plK === "fm") return prPoll(force);
-  try {
-    const r = await getRetry(`/pool?l=${plK}&b=${plB}`), t = await r.text();
-    if (t === plLast && !force) return;
-    plLast = t;
-    plData = JSON.parse(t);
-    plRender();
-  } catch (e) { $("#pl-count").textContent = "no answer from Sidecar"; }
-}
-setInterval(() => { if (!document.hidden && tab === "pool" && !qBusy && !plBusy && !pairBlocked()) plPoll(); }, 2000);
-function plRender() {
-  const d = plData || {}, st = d.st || {}, L = st[plK] || {}, bk = d.bank, locked = !!(L.locked || (bk && bk.locked));
-  $("#pl-proj").textContent = st.project || "-";
-  $("#pl-ram").textContent = plRam(d.ram);
-  $("#pl-rambar").hidden = !(d.ram && d.ram.budget);
-  $("#pl-rambar").classList.toggle("full", !!(d.ram && d.ram.pct >= 95));
-  $("#pl-rambar i").style.width = (d.ram && d.ram.pct || 0) + "%";
-  document.querySelectorAll("#pl-lists button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.pk === plK)));
-  document.querySelectorAll("#pl-banks button").forEach((b) => b.setAttribute("aria-checked", String(+b.dataset.pb === plB)));
-  $("#pl-lock").hidden = !(L.locked || L.ro);
-  $("#pl-lock").textContent = L.locked ? `${POOLS[plK]} is locked: ${L.why || "its file could not be read"} (nothing is changed or written)`
-    : L.ro ? `${POOLS[plK]} is read-only here: ${L.why || "a newer Sidecar's file"} (edits are not written to the card)` : "";
-  $("#pl-count").textContent = st.ready === false ? "loading" : L.n !== undefined ? `${L.n} row${L.n === 1 ? "" : "s"} in ${POOLS[plK]}` : "";
-  $("#pl-rows").innerHTML = bk ? plRowsHtml(bk, plSel, locked)
-    : `<tr><td colspan="8" class="mut">${st.ready === false ? "loading the project's POOL" : "no POOL yet (no card, or the lists are still loading)"}</td></tr>`;
-  $("#pl-unload").disabled = !plSel.size || locked;
-  $("#pl-unload").textContent = plSel.size ? `Unload selected (${plSel.size})` : "Unload selected";
-  $("#pl-unused").disabled = $("#pl-undo").disabled = locked || !bk;
-  $("#pl-warn").hidden = !plWarn;
-  $("#pl-warn").textContent = plWarn;
-}
-async function plAct(fn) {   // one edit at a time, then the bank again
-  if (plBusy) return;
-  plBusy = true;
-  try { await fn(); } finally { plBusy = false; plPoll(true); }
-}
-$("#pl-lists").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-pk]");
-  if (!b || b.dataset.pk === plK) return;
-  plK = b.dataset.pk;
-  store("sidecar.pool", plK);
-  plSel.clear(); plWarn = ""; plPickAt = null; $("#pl-pick").hidden = true; say($("#pl-msg"), "");
-  prShow();
-  if (plK === "juno" || plK === "fm") { prIx = null; return prPoll(true); }
-  cmd(`pool=${plK}:shown:${POOL_BANKS[plB]}`);   // the bank a view shows: the sampler's takes go there
-  plPoll(true);
-});
-$("#pl-banks").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-pb]");
-  if (!b || +b.dataset.pb === plB) return;
-  plB = +b.dataset.pb;
-  store("sidecar.poolbank", String(plB));
-  cmd(`pool=${plK}:shown:${POOL_BANKS[plB]}`);
-  plPoll(true);
-});
-$("#pl-rows").addEventListener("change", (e) => {
-  const r = e.target.dataset.sel;
-  if (!r) return;
-  if (e.target.checked) plSel.add(r); else plSel.delete(r);
-  $("#pl-unload").disabled = !plSel.size;
-  $("#pl-unload").textContent = plSel.size ? `Unload selected (${plSel.size})` : "Unload selected";
-});
-$("#pl-rows").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-pa]");
-  if (!b) return;
-  const row = b.dataset.row, k = plK, ent = plEntry(row), box = $("#pl-msg");
-  if (b.dataset.pa === "accept") return plAct(async () => {
-    const a = await poolSend(`pool=${k}:accept:${row}`, k);
-    say(box, a ? `${row}: the file's new content accepted (now ${a.text.replace(/^\S+ /, "").replace(/: SET$/, "")})` : `${row}: sent, no answer yet`, !a);
-  });
-  if (b.dataset.pa === "unload") return plAct(async () => { const [t, bad] = await poolEdit(plIo(k), k, "unload", row, ent); say(box, t, bad); });
-  if (b.dataset.pa === "replace") {
-    plPickAt = { k, row, e: ent };
-    const dir = ent && ent.path && ent.path.lastIndexOf("/") > 0 ? ent.path.slice(0, ent.path.lastIndexOf("/"))
-      : { smp: "/Samples", wt: "/WAVETABLES", inst: "/MULTISAMPLE" }[k];
-    plPick(dir);
-  }
-});
-// the small file browser REPLACE picks from: folders and the files the list takes
-async function plPick(dir) {
-  if (!plPickAt) return;
-  const j = await lsJson(dir) || (dir !== "/" ? await lsJson("/") : null);
-  if (!j) return say($("#pl-msg"), dir + ": not readable", true);
-  plPickDir = j.path || dir;
-  const want = plPickAt.k === "inst" ? /\.(sfz|elmulti)$/i : /\.(wav|aif|aiff)$/i;
-  const ents = (j.entries || []).filter((x) => x.n[0] !== "." && (x.d || want.test(x.n)))
-    .sort((a, b) => (b.d - a.d) || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
-  $("#pl-pick").hidden = false;
-  $("#pl-pick-what").textContent = `Replace ${POOLS[plPickAt.k]} ${plPickAt.row}${plPickAt.e ? " (" + plPickAt.e.name + ")" : ""} with:`;
-  $("#pl-pick-dir").textContent = plPickDir;
-  $("#pl-pick-list").innerHTML = `<table><tbody>${ents.map((x) => `<tr><td class="w">${x.d ? `<button class="lnk" data-pdir="${esc(join(plPickDir, x.n))}">${esc(x.n)}/</button>`
-    : `<button class="lnk" data-pfile="${esc(join(plPickDir, x.n))}">${esc(x.n)}</button>`}</td><td class="r mut">${x.d ? "" : hb(x.s)}</td></tr>`).join("")
-    || `<tr><td class="mut">no ${plPickAt.k === "inst" ? ".sfz / .elmulti" : "WAV / AIFF"} files here</td></tr>`}</tbody></table>`;
-}
-$("#pl-pick-list").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b || !plPickAt) return;
-  if (b.dataset.pdir) return plPick(b.dataset.pdir);
-  const p = b.dataset.pfile, at = plPickAt;
-  if (!p) return;
-  if (p.length > 159) return say($("#pl-msg"), "the path is too long for the POOL (159 characters at most)", true);
-  plAct(async () => {
-    const [t, bad] = await poolEdit(plIo(at.k), at.k, "replace", at.row, at.e, p);
-    say($("#pl-msg"), t, bad);
-    if (!bad) { plPickAt = null; $("#pl-pick").hidden = true; }
-  });
-});
-$("#pl-pick-up").onclick = () => plPick(plPickDir.replace(/\/[^/]*$/, "") || "/");
-$("#pl-pick-x").onclick = () => { plPickAt = null; $("#pl-pick").hidden = true; };
-$("#pl-unused").onclick = () => plAct(async () => {
-  const r = await getRetry(`/pool?l=${plK}&b=${plB}&u=1`), j = JSON.parse(await r.text()), rows = (j.unused || []).map(rowText);
-  plSel = new Set(rows);
-  const banks = [...new Set(rows.map((x) => x[0]))].join(" ");
-  plWarn = rows.length ? `${rows.length} row${rows.length === 1 ? "" : "s"} of ${POOLS[plK]} selected (bank${banks.length > 1 ? "s" : ""} ${banks}): ${j.warn}` : "";
-  say($("#pl-msg"), rows.length ? "" : `every row of ${POOLS[plK]} was seen playing in this project`);
-});
-$("#pl-none").onclick = () => { plSel.clear(); plWarn = ""; plRender(); };
-$("#pl-unload").onclick = () => plAct(async () => {
-  const k = plK, rows = [...plSel].sort(), used = rows.filter((r) => inUse(plEntry(r)));
-  const q = `UNLOAD ${rows.length} ROW${rows.length === 1 ? "" : "S"} OF ${POOLS[k]}?` + (used.length ? "\n" + used.map((r) => p3Ask(r, plEntry(r), "UNLOAD")).join("\n") : "")
-    + (plWarn ? "\n" + plWarn.replace(/^.*: /, "") : "") + "\n(Undo takes back only the last one.)";
-  if (!rows.length || !confirm(q)) return;
-  let done = 0, refused = "";
-  for (const c of unloadCmds(k, rows, new Set(used))) {
-    const a = await poolSend(c, k);
-    if (!a) { refused = "no answer (see Log & console)"; break; }
-    done += Math.max(a.n, 0);
-    if (a.res) refused = a.res === "PLAYING: STOP FIRST" ? "rows in use are not unloaded while the Rytm plays" : a.res;
-  }
-  plSel.clear(); plWarn = "";
-  say($("#pl-msg"), `${done} of ${rows.length} unloaded` + (refused ? `; refused: ${refused}` : ""), !!refused);
-});
-$("#pl-undo").onclick = () => plAct(async () => {
-  const a = await poolSend(`pool=${plK}:undo`, plK);
-  say($("#pl-msg"), a ? `${POOLS[plK]}: ${a.text}` : "sent, no answer yet", !a || a.text !== "undone");
-});
-$("#pl-re").onclick = () => plPoll(true);
-// ---- the Pool tab's JUNO / 6-OP FM lists (GET /presets: pi/engine/presetweb.h; an add is the console's
-// preset=juno|fm:add|set:<gen>:<folder>:<row>[:<slot>], core/user/lists.h): the project's list as the Rytm's PAT picks it,
-// and the RAM index of /JUNO and /DX7 to add from. The index is the control core's; this page keeps its own folder.
-const PRE_NAMES = { juno: "JUNO", fm: "6-OP FM" }, PRE_PAGE = 50;
-// the project's list: PAT, the preset ("-" an empty slot), Replace; the built-ins (nothing listed) say so
-const preListHtml = (d) => (d.rows || []).map((r, i) => {
-  const at = (d.o || 0) + i, used = r[1] & 2;
-  return `<tr><td class="r">${at}</td><td>${used ? esc(r[0]) : '<span class="mut">-</span>'}${d.builtin ? ' <span class="mut">built-in</span>' : ""}</td>` +
-    `<td class="r"><button class="sm" data-pre="rep" data-at="${at}" title="Replace slot ${at}: choose a preset from the index">Replace</button></td></tr>`;
-}).join("") || '<tr><td colspan="3" class="mut">-</td></tr>';
-// the index: a folder opens, a preset is added (or set, when a slot was chosen)
-const preIxHtml = (d, at) => (d.rows || []).map((r, i) => (r[1] & 1)
-  ? `<tr><td class="w"><button class="lnk" data-pre="dir" data-kid="${(d.kids || [])[i]}">${esc(r[0])}/</button></td><td class="r"></td></tr>`
-  : `<tr><td class="w">${esc(r[0])}</td><td class="r"><button class="sm" data-pre="add" data-row="${(d.o || 0) + i}">${at >= 0 ? "Set slot " + at : "Add"}</button></td></tr>`).join("")
-  || `<tr><td class="mut">${d.ready === false ? "reading the card" : "empty folder"}</td></tr>`;
-let prIx = null, prLast = "", prBusy = false, prSeq = null, prKind = "";   // prIx: {f, o, at, gen} while the index is open
-function prShow() {
-  const pre = plK === "juno" || plK === "fm";
-  document.querySelectorAll("#pl [data-nopre]").forEach((x) => { x.hidden = pre; });
-  $("#pl-pre").hidden = !pre;
-  document.querySelectorAll("#pl-lists button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.pk === plK)));
-  if (pre) $("#pl-pre-title").textContent = `${PRE_NAMES[plK]} list`;
-}
-async function prGet(f, o, n) {
-  const r = await getRetry(`/presets?k=${plK}&f=${f}&o=${o}&n=${n}`);
-  return JSON.parse(await r.text());
-}
-async function prPoll(force) {
-  if (prBusy) return;
-  try {
-    const l = await prGet(-1, 0, 200), x = prIx ? await prGet(prIx.f, prIx.o, PRE_PAGE) : null;
-    const t = JSON.stringify([l, x]);
-    if (t === prLast && !force) return;
-    prLast = t;
-    prRender(l, x);
-  } catch (e) { $("#pl-pre-count").textContent = "no answer from Sidecar"; }
-}
-function prRender(l, x) {
-  if (prKind !== plK) { prKind = plK; prSeq = l.msg ? l.msg.seq : 0; }
-  if (l.msg && l.msg.seq !== prSeq) { prSeq = l.msg.seq; say($("#pl-msg"), l.msg.text, /FULL|LOADING|NOT/.test(l.msg.text)); }
-  $("#pl-pre-count").textContent = `${(l.rows || []).length} slot${(l.rows || []).length === 1 ? "" : "s"}${l.builtin ? " (the built-ins: the first add makes the list)" : ""}`;
-  $("#pl-pre-rows").innerHTML = preListHtml(l);
-  const ix = $("#pl-pre-ix");
-  ix.hidden = !prIx;
-  if (!prIx || !x) return;
-  if (x.ready && prIx.gen && x.gen !== prIx.gen) {   // the card changed and the index was walked again: its folder numbers are new
-    prIx.f = plK === "fm" ? 1 : 0; prIx.o = 0; prIx.gen = 0;
-    say($("#pl-msg"), "the card changed: the index is new, opened again at its top");
-    return prPoll(true);
-  }
-  if (x.ready) prIx.gen = x.gen;
-  $("#pl-pre-what").textContent = prIx.at >= 0 ? `Replace ${PRE_NAMES[plK]} slot ${prIx.at} with:` : `Add to the first empty ${PRE_NAMES[plK]} slot:`;
-  $("#pl-pre-path").textContent = x.ready ? (x.title || PRE_NAMES[plK]) + (x.full ? " (the index is full: the rest is left out)" : "") : "reading the card";
-  $("#pl-pre-up").disabled = !(x.ready && x.up >= 0);
-  $("#pl-pre-list").innerHTML = `<table><tbody>${preIxHtml(x, prIx.at)}</tbody></table>`;
-  const tot = x.total || 0;
-  $("#pl-pre-pos").textContent = tot ? `${x.o + 1}-${Math.min(x.o + (x.rows || []).length, tot)} of ${tot}` : "";
-  $("#pl-pre-prev").disabled = !(x.o > 0);
-  $("#pl-pre-next").disabled = !(x.o + PRE_PAGE < tot);
-}
-async function prAdd(row) {   // a preset into the list; the answer is the next /presets' msg (the voice of a bank is read first)
-  if (!prIx || !prIx.gen) return;
-  const at = prIx.at, c = `preset=${plK}:${at >= 0 ? "set" : "add"}:${prIx.gen}:${prIx.f}:${row}` + (at >= 0 ? `:${at}` : "");
-  const before = prSeq;
-  prBusy = true;
-  try {
-    if (!(await cmd(c))) return say($("#pl-msg"), "refused", true);
-    say($("#pl-msg"), "sent");
-    for (let i = 0; i < 12; i++) {
-      await new Promise((r) => setTimeout(r, 400));
-      const l = await prGet(-1, 0, 200);
-      if (l.msg && l.msg.seq !== before) { prSeq = l.msg.seq; say($("#pl-msg"), l.msg.text, /FULL|LOADING|NOT/.test(l.msg.text)); break; }
-    }
-    if (at >= 0) prIx = null;   // a slot named: back to the list
-  } finally { prBusy = false; prPoll(true); }
-}
-$("#pl-pre-add").onclick = () => { prIx = { f: plK === "fm" ? 1 : 0, o: 0, at: -1, gen: 0 }; prPoll(true); };
-$("#pl-pre-re").onclick = () => prPoll(true);
-$("#pl-pre-rows").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-pre=rep]");
-  if (!b) return;
-  prIx = { f: plK === "fm" ? 1 : 0, o: 0, at: +b.dataset.at, gen: 0 };
-  prPoll(true);
-});
-$("#pl-pre-list").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-pre]");
-  if (!b || !prIx) return;
-  if (b.dataset.pre === "dir") { prIx.f = +b.dataset.kid; prIx.o = 0; prPoll(true); }
-  else prAdd(+b.dataset.row);
-});
-$("#pl-pre-up").onclick = async () => {
-  if (!prIx) return;
-  const x = await prGet(prIx.f, prIx.o, 1);
-  if (x.ready && x.up >= 0) { prIx.f = x.up; prIx.o = 0; prPoll(true); }
-};
-$("#pl-pre-x").onclick = () => { prIx = null; prPoll(true); };
-$("#pl-pre-prev").onclick = () => { if (prIx) { prIx.o = Math.max(0, prIx.o - PRE_PAGE); prPoll(true); } };
-$("#pl-pre-next").onclick = () => { if (prIx) { prIx.o += PRE_PAGE; prPoll(true); } };
-prShow();
-if (plK === "juno" || plK === "fm") prPoll(true);
-// ---- end the Pool tab
 async function download(path, size, box) {
   const it = progRow(box || $("#fs-prog"), "download " + path), parts = [], t0 = performance.now();
   let off = 0, stop = false;
@@ -2985,7 +1030,6 @@ function fsUpload(files, dir = fsCur) {
     enqueue(f, dir, $("#fs-prog"), (it, res) => {
       if (!res.ok) say($("#fs-msg"), it.path + ": " + res.msg, true);
       if (fsCur === dir) fsLs(dir);
-      if (dir === "/Plugins") umAfter(it, res);
     });
   }
 }
@@ -3075,7 +1119,6 @@ function uploadTree(tree, base) {
       it.el.insertBefore(b, it.btn);
     }
     if (fsCur === dir) fsLs(dir);
-    if (dir === "/Plugins" || dir.startsWith("/Plugins/")) umRescan();
   };
   Q.push(it);
   runQ();
@@ -3196,6 +1239,14 @@ document.querySelectorAll("[data-wf]").forEach((b) => b.addEventListener("click"
   wfSay(r.ok ? (on === "1" ? "Wi-Fi on: Refresh scans for networks. " : "Wi-Fi off from the next start. ") +
     (wifi && wifi.net === "wifi" && on === "0" ? "Sidecar stays on Wi-Fi until it restarts." : "") : r.error, !r.ok);
   wfPoll();
+}));
+document.querySelectorAll(".seg").forEach((g) => g.addEventListener("keydown", (e) => {   // radio group: arrows move and choose
+  const bs = [...g.querySelectorAll("button:not(:disabled)")], i = bs.indexOf(document.activeElement);
+  const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  if (i < 0 || !d) return;
+  e.preventDefault();
+  const n = bs[(i + d + bs.length) % bs.length];
+  n.focus(); n.click();
 }));
 $("#wf-forget").onclick = async () => {
   const r = await wfPost("/wifi/forget", {});

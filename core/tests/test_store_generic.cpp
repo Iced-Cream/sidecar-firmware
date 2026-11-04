@@ -1,4 +1,4 @@
-// core/tests/test_store_generic.cpp - 51 STORE in the stripped engine (CORE_GENERIC=1): kv::link::attach_generic()
+// core/tests/test_store_generic.cpp - 51 STORE in the generic engine: kv::link::attach_generic()
 // registers with core/generic; a HELLO / WRITE / READ through gen::sysex reach the record store on the card (a temp
 // folder) and answer through hooks.to_rytm; a lock set fed by a 2C tick reaches a core/proc slot; the companion's
 // HELLO forgets the lock sets, the Rytm's hello (35) does not.

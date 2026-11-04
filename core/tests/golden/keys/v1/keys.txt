@@ -1,3 +1,0 @@
-mode=selected
-auto=10
-mac=1

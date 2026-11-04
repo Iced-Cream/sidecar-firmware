@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "../fmt/fmt.h"
-#if CORE_GENERIC   // the stripped engine: no sampler; every level of a path made here, on the card's Fs
 namespace core {
 namespace samp {
 static bool mkdirs(const char* path) {
@@ -24,9 +23,6 @@ static bool mkdirs(const char* path) {
 }
 }  // namespace samp
 }  // namespace core
-#else
-#include "../samp/out.h"
-#endif
 
 namespace core {
 namespace cardq {

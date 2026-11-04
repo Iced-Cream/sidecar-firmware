@@ -181,9 +181,7 @@ int card_step() {
 }
 
 int host_step(int max_msgs) {
-#if CORE_MSAMP
   if (!cardq::worker()) card_step();   // no card core (the Mac's tests): the reading runs here
-#endif
   if (!ready()) return 0;
   if (g_answer_req != __atomic_load_n(&g_req, __ATOMIC_ACQUIRE)) {   // asked again since: this answer is stale
     ++g_st.superseded;

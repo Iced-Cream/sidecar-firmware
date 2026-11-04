@@ -1,4 +1,0 @@
-# make package / make check / make demo output: not committed
-out/
-build/
-*.elf

@@ -1,2 +1,0 @@
-# INSERT FX
-ins 0 type=2 p=10,20,30

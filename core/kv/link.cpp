@@ -4,16 +4,12 @@
 #include <string.h>
 
 #include "../hooks.h"
-#if CORE_MSAMP
 #include "../msamp/cardq.h"
-#endif
 #include "../locks/locks.h"
 #include "kv.h"
 #include "kv_card.h"
-#if CORE_GENERIC
 #include <string.h>
 #include "../generic/generic.h"
-#endif
 
 namespace core {
 namespace kv {
@@ -78,11 +74,7 @@ int card_step(int max_ops) {
 }
 
 int host_step(int max_msgs) {
-#if CORE_MSAMP
   if (!cardq::worker()) card_step(4);   // no card core (the Mac core, tests): the ops run here
-#else
-  card_step(4);
-#endif
   int k = 0;
   while (k < max_msgs) {
     Msg* m = s_out.front();
@@ -98,7 +90,6 @@ int host_step(int max_msgs) {
 void hello() { locks::reset(); }
 Stats stats() { return s_st; }
 
-#if CORE_GENERIC
 static bool store_fn(const uint8_t* d, int len) { return d[4] == kCmd && (from_host(d, len), true); }
 // a link reset for another box: the sets go; the Rytm's 35 is not the store session's start (the HELLO is)
 static void link_fn(const char* why) { if (!why || strcmp(why, "hello")) hello(); }
@@ -107,9 +98,6 @@ bool attach_generic() {
   bool ok = gen::on_link(link_fn);
   return locks::attach() && ok;
 }
-#else
-bool attach_generic() { return false; }
-#endif
 #else
 bool from_host(const uint8_t*, int) { return false; }
 int card_step(int) { return 0; }

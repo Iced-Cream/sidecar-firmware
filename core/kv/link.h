@@ -16,7 +16,7 @@ int card_step(int max_ops);                // card core: up to max_ops queued op
 int host_step(int max_msgs);               // control core: answers sent; returns how many
 void hello();                              // the link restarted: the lock sets forgotten, the store index kept (a
                                            // store HELLO does the same in from_host; the Rytm's 35 does not)
-// The stripped engine (CORE_GENERIC): 51..53 through core::gen::set_store, a link reset (another box, not the Rytm's
+// The generic engine: 51..53 through core::gen::set_store, a link reset (another box, not the Rytm's
 // 35) through gen::on_link, the locks on
 // the clock and the processor slots (locks::attach). The platform then calls card_step (card core) and host_step
 // (control idle). Boot, once, after gen::begin(). False: a listener had no room.

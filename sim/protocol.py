@@ -1299,6 +1299,9 @@ def decode_fxin_state(payload):
 #                 master counter runs a 24-PPQN tick ahead [measured, seqmod]); step 0..63 the Rytm track's own step firing now (a 2x track
 #                 sends two per 1x step); len 1..64 the track's length (+0x2c5); speed 0..6 = 2x 3/2x 1x 3/4x 1/2x
 #                 1/4x 1/8x (SEQ_SPEEDS). A full queue on the Rytm drops ticks and counts them (2D 09).
+#                 The companion's step clock (sidecar-mods 0032 clock.c, the Storage phase 2026-11-04) sends the same with a
+#                 fifth byte a tick, <flags>: bit 0 the step holds a note trig, bit 1 a trigless lock trig; all 13 tracks
+#                 (12 the FX track), while its store link is open. A tick's size is the message's length: 4 or 5.
 #                 2D 01 <kind> <args>   state and events:
 #                    01 TRANSPORT <state 0 stop / 1 play / 2 pause> <blk4>   (play after pause = continue)
 #                    02 PATTERN <now 0..127> <next 0..127 | 7F>   next: the pattern after this one (0x412f3e91; 7F the
@@ -1469,10 +1472,11 @@ def decode_seq(cmd, payload):
         return None
     b = payload[1:]
     if cmd == SEQ_TICK:
-        if len(b) < 5 or len(b) != 5 + 4 * b[4] or b[4] < 1:
+        if len(b) < 5 or b[4] < 1 or (len(b) - 5) % b[4] or (len(b) - 5) // b[4] not in (4, 5):
             return None
-        ticks = [tuple(b[5 + 4 * i:9 + 4 * i]) for i in range(b[4])]
-        if any(t[0] > 11 or t[3] > 6 for t in ticks):
+        rec = (len(b) - 5) // b[4]   # 5: the companion's, with the trig flags
+        ticks = [tuple(b[5 + rec * i:5 + rec * (i + 1)]) for i in range(b[4])]
+        if any(t[0] > 12 or t[3] > 6 for t in ticks):
             return None
         return dict(kind="tick", blk=unblk4(b), ticks=ticks)
     if cmd == SEQ_STATE and b:

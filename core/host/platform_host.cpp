@@ -92,7 +92,6 @@ uint32_t sample_ram_total() {
 }
 void* sample_ram_alloc(uint32_t bytes) { return malloc(bytes); }
 void sample_ram_free(void* p) { free(p); }
-#if CORE_MSAMP
 uint64_t msamp_ram_total() {
   const char* e = getenv("CORE_MSAMP_RAM_MB");
   return (uint64_t)(e ? atoi(e) : 64) << 20;
@@ -107,7 +106,6 @@ uint64_t card_free_bytes() {
   if (statvfs(g_card.c_str(), &s) != 0) return 0;
   return (uint64_t)s.f_bavail * s.f_frsize;
 }
-#endif
 
 // ---- the card model (tests): the Pi's card time per file operation [inferred from measured figures: a 32 KB read
 // ~1.5-2 ms and an open + header ~3 ms (docs/MULTISAMPLE.md), DSP SAMPLE's refill 1.2 ms a pass (docs/pi-engine.md);

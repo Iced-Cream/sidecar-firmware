@@ -15,7 +15,6 @@
 #include <circle/types.h>
 #include <circle/usb/usbhcidevice.h>
 #include <fatfs/ff.h>
-#include "../ui/sidecar_status.h"
 
 // stor_diskio.cpp (FatFs's disk layer): the USB drives' bounce block (64 KB, 64 KB-aligned; set by Init), and how
 // many transfers it split / pieces it bounced since boot (the `stor` listing)
@@ -32,7 +31,6 @@ void Poll (boolean bPlugAndPlay);	// core 0's loop: hot-plug (on a change, and o
 // stor=last
 boolean Command (const char *pCmd);
 void Status (CString *pOut);		// ,"stor":{"exfat":..,"vols":[...],"bench":{...}}
-void UiFill (sidecar_status_view_t *pView);	// the STATUS page's USB / NVME rows
 void NoteLoop (unsigned nUs);		// core 0's loop: one MsSleep (1)'s wake time (the bench's busy phases)
 void Transport (u8 nStatus);		// the Rytm's realtime messages (core 3): playing or not (the bench's refusal)
 boolean Mounted (int nVol);		// stor::Vol

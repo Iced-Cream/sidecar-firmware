@@ -15,7 +15,7 @@ namespace cpuclock {
 enum : unsigned { kRefMHz = 1500, kN = 3 };
 static const unsigned kOptions[kN] = {1500, 1200, 1000};
 
-// cmdline / display.txt value to a setting: anything but 1200 and 1000 is the default
+// cmdline / cpu.txt value to a setting: anything but 1200 and 1000 is the default
 inline unsigned normalize (unsigned nMHz)
 {
 	for (unsigned i = 0; i < kN; i++) if (kOptions[i] == nMHz) return nMHz;

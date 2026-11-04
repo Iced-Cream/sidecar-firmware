@@ -31,7 +31,6 @@ uint32_t bytes();   // total bytes held (for /status and the memory test)
 int entries();      // entries held, in any state
 int present();      // entries held as kPresent (the files there)
 
-#if CORE_MSAMP
 // The fill (the Pi and the Mac core; the Teensy has no card queue): the control core registers the paths it wants and
 // drives the fill from its idle pass; every open / read / exists is a cardq::async request the card core runs, so the
 // control core never waits on the card. Folder by folder: each wanted path's folder listed once (cardq kListReq);
@@ -45,7 +44,6 @@ void want(const char* path);   // a path the coming fill reads (repeats ignored)
 void fill_begin();
 bool fill_step();   // one bounded step (at most one cardq::async call); true when the fill is complete
 bool ready();       // the last fill_begin()'s fill is complete (false after clear(), before any fill_begin())
-#endif
 
 }  // namespace store
 }  // namespace core

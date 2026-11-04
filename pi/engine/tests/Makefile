@@ -1,28 +1,27 @@
-# pi/engine/tests/Makefile - the Pi engine's portable parts on the Mac: make -C pi/engine/tests (shim/: the few
-# Circle headers guard.h needs). make -C pi/engine/tests content: bridge.cpp's self-test content (test_content.cpp)
-# against the core's Mac port (make -C core engines first; the core library is built here as needed). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI bridge's Mac relay (tools/tests/test_rytm_bridge.py).
+# pi/engine/tests/Makefile - the Pi engine's portable parts on the host: make -C pi/engine/tests (shim/: the few
+# Circle headers guard.h needs). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI
+# bridge's relay (tools/tests/test_rytm_bridge.py).
 $(shell ../../../tools/gen_version.sh)
 CXX ?= c++
 CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -I.. -I../../../core -Ishim -fsanitize=address,undefined -fno-sanitize-recover=all
-SRC := ../output.cpp ../midi_in.cpp ../emu_proto.cpp ../../../core/fx/out_measure.cpp
-TESTS := $(patsubst %.cpp,build/%,$(filter-out test_content.cpp,$(wildcard test_*.cpp))) build/test_stor_fatfs_exfat build/test_stor_fatfs_lfn3
-RMPSRC := ../../../teensy/libraries/RytmPlugins/src
+SRC := ../midi_in.cpp ../emu_proto.cpp
+TESTS := $(patsubst %.cpp,build/%,$(wildcard test_*.cpp)) build/test_stor_fatfs_exfat build/test_stor_fatfs_lfn3
 CORE := ../../../core
-ENG := $(CORE)/build/engines
-include $(CORE)/engines/engines.mk
-CORE_SRC := $(addprefix $(CORE)/,engine.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp sysex.cpp host_link.cpp slots.cpp pool/card_index.cpp \
-            pool/pool.cpp pool/sample_ram_pool.cpp presets/libs.cpp host/platform_host.cpp host/newlib_rand.cpp)
-.PHONY: all clean content fatfs-mac
+.PHONY: all clean fatfs-mac
 all: $(TESTS)
 	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
-build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
+build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
 # the real ob_usb.cpp on a fake Circle (shim_ob/); copied, so its quoted includes find the shim's neighbours before the real ones
-build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../output.cpp ../../../teensy/libraries/RytmHost/ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(CORE)/fx/out.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
+build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(CORE)/device/audio.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
 	@mkdir -p build/ob_src
 	cp ../ob_usb.cpp ../ob_usb.h build/ob_src/
-	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -I../../../teensy/libraries/RytmHost -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp ../output.cpp $(CORE)/device/digitakt.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp -DOB_USB_TEST
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp $(CORE)/device/digitakt.cpp -DOB_USB_TEST
+# the Overbridge block's layout and parser (ob_block.h)
+build/test_ob_block: test_ob_block.cpp ../ob_block.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # the USB touch screen's descriptor parser and contact tracker (pi/circle/hid_digitizer.h, circle-touch.patch)
 build/test_hid_digitizer: test_hid_digitizer.cpp ../../circle/hid_digitizer.h check.h
 	@mkdir -p build
@@ -40,40 +39,19 @@ build/test_gadget_wake: test_gadget_wake.cpp ../../circle/gadget_wake.h check.h
 build/test_gadget_flush: test_gadget_flush.cpp ../../circle/gadget_flush.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
-# the touch screen's 4-point calibration (pi/ui/touch_cal.c, Settings > Display)
-build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal.h check.h
+# the web file browser (fsweb.cpp) on a temp folder
+build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(CORE)/lib/sha256.cpp check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $<
-# the send FX's Pi part with the core's (card-free) send FX
-build/test_sendfx_pi: test_sendfx_pi.cpp ../sendfx_pi.cpp ../sendfx_pi.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/stutter_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
-# the master FX: the OUT fill's crossfade, the ring to core 2 and back, bit for bit while bypassed, latency, cost
-build/test_masterfx_pi: test_masterfx_pi.cpp ../masterfx_pi.cpp ../masterfx_pi.h $(CORE)/fx/limiter.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../masterfx_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
-# the recorder (WAV writer, ring, channel lists) on a temp folder
-# (core/rec/rec_names.cpp: the parts shared with the Sidecar Mini's recorder, with the Mac's port of the core)
-build/test_recorder: test_recorder.cpp ../recorder.cpp ../recorder.h ../rec_wav.h $(CORE)/rec/rec_wav.h $(CORE)/rec/rec_names.h $(CORE)/rec/rec_names.cpp ../spsc.h check.h
-	@mkdir -p build
-	$(CXX) -I$(CORE)/host $(CXXFLAGS) -DREC_HOST -o $@ $< ../recorder.cpp $(CORE)/rec/rec_names.cpp
-# the takes' playback (WAV reader, ring, fades) on a temp folder
-build/test_rec_play: test_rec_play.cpp ../rec_play.cpp ../rec_play.h $(CORE)/rec/rec_wav.h ../spsc.h check.h
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -DREC_HOST -o $@ $< ../rec_play.cpp
-# the web file browser (fsweb.cpp) on a temp folder, with the plugin loader's header/CRC check
-build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(RMPSRC)/rmp_loader.cpp $(CORE)/lib/sha256.cpp check.h
-	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -DFSWEB_HOST -I$(RMPSRC) -o $@ $< ../fsweb.cpp $(RMPSRC)/rmp_loader.cpp $(CORE)/lib/sha256.cpp
-# the generic engine's Pi side (GENERIC=1): bridge_gen.cpp and the audio return over the generic core (core/generic)
+	$(CXX) $(CXXFLAGS) -DFSWEB_HOST -o $@ $< ../fsweb.cpp $(CORE)/lib/sha256.cpp
+# the generic engine's Pi side: bridge.cpp and the audio return over the generic core (core/generic)
 GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
-                store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp) $(wildcard $(CORE)/fmt/*.cpp) \
-                $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/browse/browse.cpp $(CORE)/devmidi/devmidi.cpp
-build/test_generic_pi: test_generic_pi.cpp ../bridge_gen.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
+                device/digitakt.cpp store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp lib/sha256.cpp \
+                host/platform_host.cpp browse/browse.cpp devmidi/devmidi.cpp) \
+                $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp)
+build/test_generic_pi: test_generic_pi.cpp ../bridge.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
 	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_GENERIC=1 -DCORE_MSAMP=1 -DCORE_POLY=1 -I$(CORE)/host -I$(CORE) -I.. \
-	  -I$(RMPSRC) -I../../../sdk -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ $< ../bridge_gen.cpp \
-	  ../audio_return.cpp $(GENERIC_CORE)
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ $< ../bridge.cpp ../audio_return.cpp $(GENERIC_CORE)
 # the power supply's state (power_state.cpp): get_throttled and the Pi 5's max_current to the warning and /status
 build/test_power_state: test_power_state.cpp ../power_state.cpp ../power_state.h check.h
 	@mkdir -p build
@@ -90,32 +68,6 @@ build/test_midibridge: test_midibridge.cpp ../midibridge.h ../usbmidi_merge.h ..
 build/test_paircode: test_paircode.cpp ../paircode.cpp ../paircode.h ../wifi_conf.cpp ../wifi_conf.h $(CORE)/lib/sha256.cpp check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< ../paircode.cpp ../wifi_conf.cpp $(CORE)/lib/sha256.cpp
-# the web page's bundle endpoints (bundleweb.cpp) over core/bundle: linked with the core's Mac library (make -C core
-# engines lib), its service worker (www/bundle-sw.js) built in as build.sh does
-build/hosted/bundle_sw.h: ../www/bundle-sw.js
-	@mkdir -p build/hosted
-	perl -e 'local $$/; my $$s = <STDIN>; print "static const char BundleSw[] = R\"SIDECARSW($$s)SIDECARSW\";\n"' < $< > $@
-build/test_bundleweb: test_bundleweb.cpp ../bundleweb.cpp ../bundleweb.h build/hosted/bundle_sw.h $(wildcard $(CORE)/bundle/*.h) check.h $(CORE)/build/libcore.dylib
-	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. -Ibuild -I$(RMPSRC) \
-	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_bundleweb.cpp ../bundleweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
-# the web page's Pool tab JSON (poolweb.cpp, GET /pool) over core/lib/pools on the core's Mac library
-build/test_poolweb: test_poolweb.cpp ../poolweb.cpp ../poolweb.h $(CORE)/lib/pools.h check.h $(CORE)/build/libcore.dylib
-	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
-	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_poolweb.cpp ../poolweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
-# the web page's JUNO / 6-OP FM lists (presetweb.cpp, GET /presets) over core/presets' index on the core's Mac library
-build/test_presetweb: test_presetweb.cpp ../presetweb.cpp ../presetweb.h $(CORE)/presets/preset_index.h check.h $(CORE)/build/libcore.dylib
-	@mkdir -p build
-	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
-	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_presetweb.cpp ../presetweb.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
-$(CORE)/build/libcore.dylib: $(wildcard $(CORE)/*.cpp $(CORE)/*/*.cpp $(CORE)/*.h $(CORE)/*/*.h)
-	@test -f $(CORE)/build/libengines.a || { echo "bundleweb: run 'make -C core engines' first"; exit 1; }
-	$(MAKE) -C $(CORE) lib
-# touch2: the SCOPE page's provider (scope_pi.cpp) against a stand-in tap and selected track (the test's own)
-build/test_scope_pi: test_scope_pi.cpp ../scope_pi.cpp ../scope_pi.h ../../ui/sidecar_scope.h check.h
-	@mkdir -p build
-	$(CXX) -I$(CORE)/host $(CXXFLAGS) -Wno-unused-parameter -o $@ $< ../scope_pi.cpp
 # the storage layer (docs/STORAGE.md): the volumes' state machine and rules, the bench on a simulated drive and a temp folder
 build/test_stor_vol: test_stor_vol.cpp ../stor_vol.cpp ../stor_vol.h ../stor_out.h check.h
 	@mkdir -p build
@@ -160,15 +112,5 @@ fatfs-mac: build/test_stor_fatfs build/test_stor_fatfs_exfat
 	hdiutil create -quiet -size 64m -fs ExFAT -layout MBRSPUD -volname SIDECAR -o $(MACIMG)/exfat-mbr.dmg
 	hdiutil create -quiet -size 64m -fs ExFAT -layout GPTSPUD -volname SIDECAR -o $(MACIMG)/exfat-gpt.dmg
 	./build/test_stor_fatfs $(MACIMG) && ./build/test_stor_fatfs_exfat $(MACIMG); s=$$?; rm -rf $(MACIMG); exit $$s
-content: build/test_content
-	./build/test_content
-# Linked with the core's Mac library (make -C core lib, as test_bundleweb), compiled with its feature flags: a list of
-# core sources and flags of its own here drifted from core/Makefile's (CORE_POLY, CORE_MSAMP and every new .cpp) and the
-# target stopped building. The engines' headers too (core/build/engines: make -C core engines copies them).
-CONTENT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=fast -DCORE_POLY=1 -DCORE_MSAMP=1 \
-  -I$(CORE) -I$(CORE)/host -I$(RMPSRC) $(ENG_INC) $(ENG_FLAGS)
-build/test_content: test_content.cpp ../bridge.cpp ../bridge.h check.h $(CORE)/build/libcore.dylib
-	@mkdir -p build
-	$(CXX) $(CONTENT_FLAGS) -o $@ $< ../bridge.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 clean:
 	rm -rf build

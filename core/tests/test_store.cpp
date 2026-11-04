@@ -1,21 +1,16 @@
 // core/tests/test_store.cpp - the RAM store (core/store/store.h): put/get round trip, replace, mark frees, unknown path,
 // the entry cap, and that clear() gives every byte back; the fill (want / fill_begin / fill_step / ready): present,
-// absent and locked paths, every card operation on the card core, and a refill that abandons the one before; a project
-// load (0x10) through the engine: the store filled by the idle pass before the LFOs and inserts are applied, a kit
-// change while it fills, the old project's edits into its own files, a switch while it fills, a pending write.
+// absent and locked paths, every card operation on the card core, and a refill that abandons the one before. (The full
+// engine's project load through the store - its LFO, insert and sequencer files - was cut in the strip-down.)
 #include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <vector>
 
 #include "check.h"
-#include "../core.h"
 #include "../fmt/fmt.h"
-#include "../fx/insert.h"
 #include "../host/core_port.h"
-#include "../lfo.h"
 #include "../msamp/cardq.h"
-#include "../seq/seq.h"
 #include "../store/store.h"
 
 using namespace core::store;
@@ -344,6 +339,7 @@ static void fill_listing_errors_ask_per_path() {
   want("/.rytm/lfo/PF/k001.txt");
   fill_begin();
   CHECK(run_fill() && get("/.rytm/lfo/PF/k001.txt", &d, &n) == kAbsent);
+#ifdef __APPLE__   // (the host card is a folder: only the Mac's file system ignores case, as FAT does)
   // FAT names have no case: a P000.SQP copied onto the card by hand is p000.sqp's file
   card_file("/.rytm/seq/CASE/P000.SQP", "upper");
   clear();
@@ -356,289 +352,9 @@ static void fill_listing_errors_ask_per_path() {
   CHECK(get("/.rytm/seq/CASE/p000.sqp", &d, &n) == kPresent && n == 5 && get("/.rytm/seq/CASE/p001.sqp", &d, &n) == kAbsent);
   CHECK(ops(a, b, cardq::kListReq) == 1 && ops(a, b, cardq::kOpenReq) == 1 && ops(a, b, cardq::kExistsReq) == 0);
   printf("store: the listing matches names without case (P000.SQP)\n");
+#endif
   cardq::reset();
   clear();
-}
-
-// ---- the project load (Task 4): through engine_sysex's 0x10 and the idle pass, a card core taking its turn after each
-static uint64_t g_us = 1000000;
-static void at(uint64_t us) { g_us = us, core::host_fake_time(true, g_us); }
-static void card_turn();
-// 10 <name>, then the idle passes until the switch is made: core/bundle/rename.h looks at the card first (through
-// the card core) - every project here has a file of its own, so it asks nothing - and makes the switch from idle_save
-static void project(const char* n) {
-  uint8_t m[40] = {0xF0, 0x7D, 0x52, 0x54, 0x10};
-  int k = 5;
-  for (const char* c = n; *c; ++c) m[k++] = (uint8_t)*c;
-  m[k++] = 0xF7;
-  core::engine_sysex(m, k);
-  for (int i = 0; i < 200 && strcmp(core::project, n); ++i) core::idle_save(), card_turn();
-  CHECK(!strcmp(core::project, n));
-}
-static void kit(int k) {
-  const uint8_t m[8] = {0xF0, 0x7D, 0x52, 0x54, 0x3B, 1, (uint8_t)k, 0xF7};
-  core::engine_sysex(m, 8);
-}
-static void card_turn() {
-  core::host_card_core(0);
-  while (cardq::service()) {
-  }
-  core::host_card_core(3);
-}
-// idle passes (each followed by the card core's turn) until the project is loaded; the last pass's requests are left
-// on the card core (not yet run)
-static bool loaded() {
-  for (int i = 0; i < 20000; ++i) {
-    core::idle_save();
-    if (!core::project_loading()) return true;
-    card_turn();
-  }
-  return false;
-}
-static void settle() {   // every write landed
-  auto owed = [] { return core::fmt::post_busy() || core::lfo::dirty() || core::ins::settings_dirty(nullptr); };
-  for (int i = 0; i < 2000 && owed(); ++i) at(g_us + 2000), core::idle_save(), card_turn();
-  card_turn();
-  CHECK(!owed());
-}
-static std::string rd(const char* path) {
-  std::string s;
-  FILE* f = fopen((g_card + path).c_str(), "rb");
-  if (!f) return s;
-  char b[512];
-  for (size_t n; (n = fread(b, 1, sizeof b, f)) > 0;) s.append(b, n);
-  fclose(f);
-  return s;
-}
-static void lfo_set(const char* kv) {
-  char o[160];
-  CHECK(core::lfo::command(kv, o, sizeof o) && !strstr(o, "cannot"));
-}
-static bool held(const char* path, const char* has) {   // the store holds path's bytes and they contain has
-  const uint8_t* d;
-  uint32_t n;
-  return get(path, &d, &n) == kPresent && std::string((const char*)d, n).find(has) != std::string::npos;
-}
-
-// (every project here has a file of its own: a name without any would be core/bundle/rename.h's question first)
-static void kit_change_during_fill() {
-  card_file("/.rytm/lfo/KA/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 10 0\n");
-  project("KA");
-  CHECK(core::project_loading() && !ready());
-  core::host_card_model(true);
-  uint64_t ctl = core::host_card_us(3);
-  int lk = core::lfo::kit(), ik = core::ins::kit();
-  kit(8);   // kit 9, before the store is full: only noted
-  CHECK(core::lfo::kit() == lk && core::ins::kit() == ik);
-  CHECK(loaded() && ready());
-  CHECK(core::host_card_us(3) == ctl);   // the fill and the kit change: no card time on the control core
-  CHECK(core::lfo::kit() == 8 && core::ins::kit() == 8);   // the kit applied once the store is full
-  CHECK(core::lfo::get(0).target == core::lfo::kTVoice + 2 && core::lfo::get(0).depth == 10);
-  CHECK(held("/.rytm/lfo/KA/k009.txt", " 10 "));
-  core::host_card_model(false);
-  card_turn();
-  printf("store: a kit change while the project's store fills is applied once it is full (no card time)\n");
-}
-
-// an unsaved LFO edit in project A, then B: A's file on the card gets it, B's store does not
-static void save_during_switch() {
-  card_file("/.rytm/lfo/SA/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 1 0\n");
-  card_file("/.rytm/lfo/SB/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 2 0\n");
-  project("SA");
-  CHECK(loaded());
-  lfo_set("lfo=1:dep:-7");
-  CHECK(core::lfo::dirty());
-  project("SB");
-  CHECK(loaded());
-  settle();
-  CHECK(rd("/.rytm/lfo/SA/k009.txt").find(" -7 ") != std::string::npos);
-  const uint8_t* d;
-  uint32_t n;
-  CHECK(get("/.rytm/lfo/SA/k009.txt", &d, &n) == kUnknown);   // not B's
-  CHECK(held("/.rytm/lfo/SB/k009.txt", " 2 ") && !held("/.rytm/lfo/SB/k009.txt", " -7 "));
-  CHECK(core::lfo::get(0).depth == 2);
-  printf("store: the old project's unsaved edit goes to its own file, not into the new project's store\n");
-}
-
-// an edit while B's store fills is A's (A is still the one loaded): into A's file, never B's store
-static void edit_during_fill() {
-  card_file("/.rytm/lfo/EA/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 3 0\n");
-  card_file("/.rytm/lfo/EB/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 4 0\n");
-  project("EA");
-  CHECK(loaded());
-  project("EB");
-  CHECK(core::project_loading());
-  lfo_set("lfo=1:dep:-11");
-  core::ins::set_type(1, 0, core::ins::kEq);   // the inserts' edit too
-  at(g_us + 1100000);
-  for (int i = 0; i < 6; ++i) core::idle_save(), card_turn();   // A's save, during the fill
-  CHECK(core::project_loading());
-  CHECK(loaded());
-  settle();
-  CHECK(rd("/.rytm/lfo/EA/k009.txt").find(" -11 ") != std::string::npos);
-  CHECK(rd("/.rytm/lfo/EB/k009.txt").find(" -11 ") == std::string::npos);
-  const uint8_t* d;
-  uint32_t n;
-  CHECK(get("/.rytm/lfo/EA/k009.txt", &d, &n) == kUnknown);
-  CHECK(held("/.rytm/lfo/EB/k009.txt", " 4 ") && !held("/.rytm/lfo/EB/k009.txt", " -11 "));
-  CHECK(core::lfo::get(0).depth == 4);
-  CHECK(rd("/.rytm/ins/EA/k009.txt").find("V2 A EQ") != std::string::npos);
-  CHECK(rd("/.rytm/ins/EB/k009.txt").find("EQ") == std::string::npos);
-  CHECK(get("/.rytm/ins/EA/k009.txt", &d, &n) == kUnknown && get("/.rytm/ins/EB/k009.txt", &d, &n) == kAbsent);
-  CHECK(core::ins::control.type[1][0] != core::ins::kEq);   // EB's inserts (none)
-  printf("store: an edit while the next project's store fills goes to the loaded project's file\n");
-}
-
-// A, then B before A's fill is ready: B loaded, only B's files in the store
-static void switch_during_fill() {
-  card_file("/.rytm/lfo/WA/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 30 0\n");
-  card_file("/.rytm/lfo/WB/k009.txt", "# Sidecar LFOs\n1 V5 2 1 64 0 0 20 0\n");
-  project("WA");
-  for (int i = 0; i < 9; ++i) core::idle_save(), card_turn();
-  CHECK(core::project_loading());
-  project("WB");
-  CHECK(loaded());
-  card_turn();
-  CHECK(core::lfo::get(0).target == core::lfo::kTVoice + 4 && core::lfo::get(0).depth == 20);
-  CHECK(held("/.rytm/lfo/WB/k009.txt", " 20 "));
-  const uint8_t* d;
-  uint32_t n;
-  CHECK(get("/.rytm/lfo/WA/k009.txt", &d, &n) == kUnknown && get("/.rytm/lfo/WA.txt", &d, &n) == kUnknown);
-  // B's LFO and INSERT files (the project's own and 128 kits' each) and its sequencer's (tracks.txt, 128 patterns and
-  // their saved states), SONG's .backups.txt (UNDO REPLAY's backup slots), and its kits' saved and kept-aside
-  // records (core/bundle/kits.h)
-  CHECK(entries() == 2 * 129 + 1 + 2 * 128 + 1 + 2 * 128);
-  printf("store: a switch while a fill runs: only the new project's files\n");
-}
-
-// A's edit queued (behind other writes) when the Sidecar goes to B and straight back to A: the fill waits for it,
-// never holding A's old card bytes
-static void fill_waits_for_a_pending_write() {
-  card_file("/.rytm/lfo/PA/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 40 0\n");
-  card_file("/.rytm/lfo/PB/k009.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 5 0\n");
-  project("PA");
-  CHECK(loaded());
-  settle();
-  CHECK(core::lfo::get(0).depth == 40);
-  lfo_set("lfo=1:dep:-13");
-  char* t = core::fmt::post_begin();   // the post slot busy, and writes queued ahead (as many kit changes' saves)
-  CHECK(t);
-  memcpy(t, "x\n", 2);
-  CHECK(core::fmt::post_end("/.rytm/q/slot.txt", 2));
-  for (int i = 0; i < 100; ++i) {
-    char p[40];
-    sniprintf(p, sizeof p, "/.rytm/q/f%02d.txt", i);
-    CHECK(core::fmt::post_queue(p, "y\n", 2));
-  }
-  kit(9);   // the store A's: the edit into it and queued behind those
-  CHECK(core::fmt::pending("/.rytm/lfo/PA/k009.txt") && !core::fmt::pending("/.rytm/lfo/PA/k010.txt"));
-  project("PB");
-  project("PA");   // straight back: the store filled anew from the card, with the edit still queued
-  CHECK(core::fmt::pending("/.rytm/lfo/PA/k009.txt"));
-  CHECK(loaded());
-  CHECK(held("/.rytm/lfo/PA/k009.txt", " -13 ") && !held("/.rytm/lfo/PA/k009.txt", " 40 "));
-  settle();
-  kit(8);
-  CHECK(core::lfo::get(0).depth == -13);
-  CHECK(rd("/.rytm/lfo/PA/k009.txt").find(" -13 ") != std::string::npos);
-  printf("store: the fill waits for a path's pending write (never the old card bytes)\n");
-}
-
-// the boot: an edit before its fill is complete is the named project's (/.rytm/project), never the unnamed one's
-static void edit_during_boot_fill() {
-  CHECK(!strcmp(core::project, "BOOT") && core::project_loading());
-  CHECK(!core::seq::any_tracks() && core::seq::pattern_locked(0) == 3);   // (phase 2) nothing of it loaded yet: A01 not written
-  {   // fix round 1: an edit of the loading project's tracks is refused at once, with that reason (never taken, then lost)
-    char o[200];
-    uint32_t r0 = core::seq::stats().loading_refused;
-    CHECK(core::seq::command("seq=track:2:on", o, sizeof o) && strstr(o, "still loading"));
-    CHECK(!core::seq::owns_track(1) && core::seq::stats().loading_refused == r0 + 1 && core::seq::view().loading);
-    // round 3: the SEQ page's latency knob, refused the same way - the latency kept and not marked as set by hand
-    // (that would keep the automatic calibration off for the project once it is loaded)
-    int lat0 = core::seq::view().latency;
-    static char st[2000];
-    CHECK(core::seq::command("seq", st, sizeof st) && strstr(st, " fr, lat ") && !strstr(st, "(set)"));
-    core::seq::ui_enc(5, 1, false, true);
-    CHECK(core::seq::view().latency == lat0 && core::seq::stats().loading_refused == r0 + 2);
-    CHECK(core::seq::command("seq", st, sizeof st) && !strstr(st, "(set)"));
-  }
-  lfo_set("lfo=1:dep:-5");
-  core::ins::set_type(1, 0, core::ins::kEq);
-  at(g_us + 1100000);
-  for (int i = 0; i < 6; ++i) core::idle_save(), card_turn();   // both saved, the fill still running
-  CHECK(core::project_loading());
-  CHECK(loaded());
-  card_turn();
-  CHECK(core::lfo::get(0).depth == -5 && core::ins::control.type[1][0] == core::ins::kEq);   // kept: the store has them
-  CHECK(core::seq::any_tracks() && core::seq::owns_track(0) && !core::seq::pattern_locked(0));   // its A01, from the store
-  CHECK(!core::seq::owns_track(1) && !core::seq::view().loading);   // the refused edit: not there, nothing else lost
-  settle();
-  CHECK(rd("/.rytm/lfo/BOOT.txt").find(" -5 ") != std::string::npos);
-  CHECK(rd("/.rytm/ins/BOOT.txt").find("V2 A EQ") != std::string::npos);
-  CHECK(held("/.rytm/lfo/BOOT.txt", " -5 ") && held("/.rytm/ins/BOOT.txt", "V2 A EQ"));
-  core::ins::set_type(1, 0, 0);
-  settle();
-  printf("store: an edit during the boot's fill goes to the named project's files and stays\n");
-}
-
-// ruling 2's count: the card operations of a whole fill of a project shaped as test_polymake's WIDE (its tracks.txt
-// alone: every LFO, INSERT, pattern and saved-state path absent), each by kind - every path once, five folders listed
-static void wide_fill_card_ops() {
-  card_file("/.rytm/seq/WIDE/tracks.txt", "mask=0x737\n");
-  project("WIDE");
-  CHECK(loaded());
-  settle();
-  Ops a = ops_now();
-  core::project_fill_begin();
-  CHECK(loaded());
-  card_turn();
-  Ops b = ops_now();
-  uint32_t fill = ops(a, b, cardq::kListReq) + ops(a, b, cardq::kOpenReq) + ops(a, b, cardq::kReadReq) +
-                  ops(a, b, cardq::kCloseReq) + ops(a, b, cardq::kExistsReq);
-  printf("store: WIDE's fill, %d paths: %u card operations (list %u, open %u, read %u, close %u, exists %u)\n",
-         entries(), fill, ops(a, b, cardq::kListReq), ops(a, b, cardq::kOpenReq), ops(a, b, cardq::kReadReq),
-         ops(a, b, cardq::kCloseReq), ops(a, b, cardq::kExistsReq));
-  CHECK(entries() == 771 + 1 && present() == 1 && held("/.rytm/seq/WIDE/tracks.txt", "mask=0x737"));
-  // /.rytm/lfo, /.rytm/lfo/WIDE, /.rytm/ins, /.rytm/ins/WIDE, /.rytm/seq/WIDE, /.rytm/songs/WIDE, /.rytm/kits/WIDE
-  CHECK(ops(a, b, cardq::kListReq) == 7);
-  CHECK(ops(a, b, cardq::kOpenReq) == 1 && ops(a, b, cardq::kReadReq) == 1 && ops(a, b, cardq::kCloseReq) == 1);
-  CHECK(ops(a, b, cardq::kExistsReq) == 0 && fill == 10);
-}
-
-static void noop_out(const uint8_t*, int) {}
-static void project_load() {
-  cardq::reset();
-  clear();
-  core::hooks.to_rytm = noop_out;
-  at(g_us);
-  CHECK(system(("mkdir -p '" + g_card + "/Samples'").c_str()) == 0);
-  card_file("/.rytm/project", "BOOT");
-  card_file("/.rytm/lfo/BOOT.txt", "# Sidecar LFOs\n1 V3 2 1 64 0 0 6 0\n");
-  card_file("/.rytm/seq/BOOT/tracks.txt", "mask=0x001\n");
-  {   // per pattern poly: BD a poly track in A01 (its pattern file: a slot holding a step, on by the old-file rule)
-    static core::seq::Pattern bp;
-    core::seq::clear(bp, 0);
-    core::seq::add_note(core::seq::track_of(bp, 0, true)->step[0], {60, 100, 24, 0, 0});
-    core::seq::track_of(bp, 0, true)->on = 1;
-    static uint8_t b[4096];
-    int n = core::seq::pack(bp, b, sizeof b);
-    CHECK(n > 0);
-    std::string p = g_card + "/.rytm/seq/BOOT/p000.sqp";
-    FILE* f = fopen(p.c_str(), "wb");
-    CHECK(f && fwrite(b, 1, (size_t)n, f) == (size_t)n);
-    fclose(f);
-  }
-  CHECK(core::engine_begin());
-  cardq::set_worker(true);
-  edit_during_boot_fill();
-  kit_change_during_fill();
-  save_during_switch();
-  edit_during_fill();
-  switch_during_fill();
-  fill_waits_for_a_pending_write();
-  wide_fill_card_ops();
-  cardq::set_worker(false);
-  cardq::reset();
 }
 
 int main() {
@@ -726,7 +442,6 @@ int main() {
   fill_lists_around_a_pending_write();
   fill_waiting_says_why();
   fill_listing_errors_ask_per_path();
-  project_load();
   system(("rm -rf '" + g_card + "'").c_str());
 
   printf("test_store: ok\n");

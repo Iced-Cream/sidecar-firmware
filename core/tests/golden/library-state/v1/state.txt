@@ -1,3 +1,0 @@
-format=library-state/1
-tree=0123456789abcdef
-files=0

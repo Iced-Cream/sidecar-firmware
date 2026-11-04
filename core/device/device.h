@@ -59,7 +59,8 @@ enum Feature : uint32_t {
 //                 of the box's values do what (the Digitakt mk1).
 enum Bracket : uint8_t { kBracketFull = 0, kBracketMix = 1 };
 
-// A box's physical controls: which of the Sidecar's voice stages each value of its controls report reaches (strip.h).
+// A box's physical controls: which of the Sidecar's voice stages each value of its controls report reaches (the full
+// engine's strip.cpp played them on the voices; the generic engine keeps the table only).
 enum Control : uint8_t {
   kCtlNone = 0,
   kCtlFreq, kCtlReso, kCtlType, kCtlFltEnv,        // the filter: cutoff, resonance (a bell's gain), type, envelope depth
@@ -99,7 +100,7 @@ struct Profile {
   // and names each voice's machine in the voice byte. For 03 / 04 / 11 the voice must be under `voices`.
   uint32_t in_allow[4];
   Bracket bracket;
-  const out::Device* audio;   // its Overbridge stream (core/fx/out.h): channels each way, return channels, a stereo mix or per
+  const out::Device* audio;   // its Overbridge stream (core/device/audio.h): channels each way, return channels, a stereo mix or per
                               // voice, what the Pi's driver opens. Null: no audio, the driver leaves the USB id alone
   const Controls* controls;   // null: no controls report
 };
@@ -142,11 +143,6 @@ inline bool foreign(const Link& l = g_link) { return l.box != nullptr; }
 // A whole message from a box: d and len are what host_sysex goes on with (the translation, in m; or the message itself
 // when it is a 35 that gave the Rytm back); false: nothing more to do.
 bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m);
-// The control loop, every pass: a box with Controls runs its envelopes (strip.h). Nothing else: one test.
-void strip_tick(uint32_t us);
-inline void tick(uint32_t us) {
-  if (g_link.box && g_link.box->controls) strip_tick(us);
-}
 
 }  // namespace device
 }  // namespace core

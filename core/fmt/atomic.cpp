@@ -3,9 +3,7 @@
 #include <string.h>
 
 #include "fmt.h"
-#if CORE_MSAMP
 #include "../msamp/cardq.h"
-#endif
 
 namespace core {
 namespace fmt {
@@ -95,7 +93,6 @@ void recover(const char* path) {
   if (fs.exists(tmp)) fs.remove(tmp);   // a write that did not finish
 }
 
-#if CORE_MSAMP
 namespace {
 constexpr int kSweepMax = 64, kSweepDepth = 8;
 struct Sweep {
@@ -165,7 +162,6 @@ int sweep(const char* root) {
   return fixed;
 }
 int sweep_boot() { return sweep("/.rytm") + sweep("/CHOP") + sweep("/Samples"); }
-#endif
 
 void AtomicWriter::begin(const char* path, const uint8_t* data, uint32_t len, uint32_t piece) {
   cancel();
@@ -271,7 +267,6 @@ uint32_t g_nheld = 0;
 // owned by the slot until its write is done
 const char* g_pdata = g_ptext;
 char* g_pown = nullptr;
-#if CORE_MSAMP
 cardq::Req g_prq;
 // post_queue's writes (2026-10-26): each its own copy of the text, so nothing the caller does after (a kit change's load,
 // a refill of the RAM store) can change or lose it. A heap list with no cap and no wait: one entry per path (a newer
@@ -301,7 +296,6 @@ Queued* queued(const char* path) {   // the oldest queued write (path null), or 
     if (!path || !strcmp(q->path, path)) return q;
   return nullptr;
 }
-#endif
 void post_done() {
   g_pbusy = false;
   delete[] g_pown;
@@ -318,11 +312,8 @@ void take_slot(const char* path, uint32_t len, uint32_t id) {
   g_pdata = g_ptext;
   g_plen = len, g_pstart = g_pat = now_us();
   g_pbusy = true, g_pok = true, g_pheld = false;
-#if CORE_MSAMP
   g_prq.state = cardq::kFree;
-#endif
 }
-#if CORE_MSAMP
 // the slot free: the oldest queued write into it
 void take_queued() {
   Queued* q = g_qh;
@@ -355,26 +346,18 @@ void finish_here() {
   g_pok = g_prm ? g_prq.got > 0 : g_prq.got >= 0;   // (a remove: 0 is the card's refusal)
   post_done();
 }
-#endif
 }  // namespace
 
 // (null while a queued write waits too: a newer save of a queued file must never land before it)
 char* post_begin() {
-#if CORE_MSAMP
   if (g_nq) return nullptr;
-#endif
   return g_pbusy ? nullptr : g_ptext;
 }
 
 bool post_end(const char* path, uint32_t len) {
   if (g_pbusy || !path || path[0] != '/' || len > kPostMax || strlen(path) >= sizeof g_ppath) return false;
   take_slot(path, len, next_id());
-#if CORE_MSAMP
   post_step();   // posted (no card core: written now)
-#else
-  g_pok = write_atomic(g_ppath, g_ptext, g_plen);
-  post_done();
-#endif
   return true;
 }
 
@@ -387,7 +370,6 @@ bool post_queue(const char* path, const char* text, uint32_t len, uint32_t* id) 
       if (id) *id = g_pid;   // (the slot's: post_end gave it one, written or not by now)
       return true;
     }
-#if CORE_MSAMP
   // never a wait here: this runs on the control core at a kit change (a wait is a card write on it - the 40 ms stall)
   // (plain new: 0 on the Pi when the heap is out - then the edit is lost to the card, kept in the RAM store only)
   char* c = new char[len ? len : 1];
@@ -429,15 +411,11 @@ bool post_queue(const char* path, const char* text, uint32_t len, uint32_t* id) 
   note_oldest();
   if (len > kPostMax && !g_pbusy) post_step();   // over kPostMax, the slot free: posted now (no card core: written now)
   return true;
-#else
-  return false;   // (no card core: the slot is never busy, post_begin above always took it; over kPostMax: refused)
-#endif
 }
 
 bool post_remove(const char* path, uint32_t* id) {
   if (id) *id = 0;
   if (!path || path[0] != '/' || strlen(path) >= sizeof g_ppath) return false;
-#if CORE_MSAMP
   Queued* q = queued(path);
   if (q) {
     delete[] q->text;
@@ -457,17 +435,11 @@ bool post_remove(const char* path, uint32_t* id) {
   note_oldest();
   if (!g_pbusy) post_step();
   return true;
-#else
-  return false;
-#endif
 }
 
 bool post_step() {
-#if CORE_MSAMP
   if (!g_pbusy && g_nq) take_queued();
-#endif
   if (!g_pbusy) return false;
-#if CORE_MSAMP
   uint32_t s0 = __atomic_load_n(&g_prq.state, __ATOMIC_ACQUIRE);
   if (!cardq::async(&g_prq, g_prm ? cardq::kRemoveReq : cardq::kAtomicReq, nullptr, g_ppath, 0, (uint8_t*)g_pdata, g_plen)) {
     // Phase 3 (2026-10-26): a write the card core has not taken after cardq's kTakeBackUs (held up: a long upload, a
@@ -484,7 +456,6 @@ bool post_step() {
     return s0 == cardq::kFree && __atomic_load_n(&g_prq.state, __ATOMIC_ACQUIRE) != cardq::kFree;   // posted just now: this pass's step
   }
   g_pok = g_prm ? g_prq.got > 0 : g_prq.got >= 0;
-#endif
   post_done();
   return false;
 }
@@ -493,14 +464,11 @@ uint32_t post_held() { return g_nheld; }
 bool post_stalled() { return g_pbusy && g_pheld; }
 
 bool post_busy() {
-#if CORE_MSAMP
   if (g_nq) return true;
-#endif
   return g_pbusy;
 }
 
 void post_wait(const char* path) {
-#if CORE_MSAMP
   // (as seq's cw_wait); the queue in its order up to the path's own write (no path: all of it)
   for (;;) {
     if (!g_pbusy) {
@@ -510,15 +478,12 @@ void post_wait(const char* path) {
     if (path && strcmp(path, g_ppath) && !queued(path)) return;   // not in this reader's way
     finish_here();
   }
-#endif
 }
 
 bool pending(const char* path) {
   if (!path) return false;
   if (g_pbusy && !strcmp(g_ppath, path)) return true;   // in the slot: posted, or on the card core now
-#if CORE_MSAMP
   if (queued(path)) return true;
-#endif
   return false;
 }
 
@@ -527,17 +492,11 @@ uint32_t unwritten(uint32_t* oldest_ms) {
   // there). Only scalars (no list walk), read from another core: torn at worst.
   uint32_t n = 0, now = now_us(), age = 0;
   if (g_pbusy) {
-#if CORE_MSAMP
     if (__atomic_load_n(&g_prq.state, __ATOMIC_ACQUIRE) != cardq::kPosted) ++n;
-#else
-    ++n;
-#endif
     age = now - g_pat;
   }
-#if CORE_MSAMP
   uint32_t nq = (uint32_t)g_nq;
   if (nq) n += nq, age = now - g_qoldest > age ? now - g_qoldest : age;
-#endif
   if (oldest_ms) *oldest_ms = age / 1000;
   return n;
 }
@@ -546,10 +505,8 @@ bool post_ok() { return g_pok; }
 PostResult post_result(uint32_t id) {
   if (!id) return kPostUnknown;
   if (g_pbusy && g_pid == id) return kPostPending;
-#if CORE_MSAMP
   for (const Queued* q = g_qh; q; q = q->next)
     if (q->id == id) return kPostPending;
-#endif
   for (uint32_t k = 0; k < (uint32_t)kPostResults && k < g_ndone; ++k)
     if (g_done[k].id == id) return g_done[k].ok ? kPostOk : kPostFailed;
   return kPostUnknown;
@@ -561,7 +518,6 @@ void reset_for_tests() {
   delete[] g_pown;
   g_pown = nullptr;
   g_pdata = g_ptext;
-#if CORE_MSAMP
   memset(&g_prq, 0, sizeof g_prq);
   while (g_qh) {
     Queued* q = g_qh;
@@ -570,7 +526,6 @@ void reset_for_tests() {
     delete q;
   }
   g_qt = nullptr, g_nq = 0, g_qoldest = 0;
-#endif
 }
 
 }  // namespace fmt

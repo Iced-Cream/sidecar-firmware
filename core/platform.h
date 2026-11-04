@@ -51,7 +51,6 @@ uint32_t random_seed();
 uint32_t sample_ram_total();
 void* sample_ram_alloc(uint32_t bytes);   // nullptr if the board cannot give it
 void sample_ram_free(void* p);
-#if CORE_MSAMP
 // The board's big memory (the Pi's high heap; the Mac's malloc): msamp_ram_alloc gives the pool RAM's arena, WAVETABLE's
 // tables and GRANULAR's live rings, once at boot. msamp_ram_total (msampram=MB; Mac CORE_MSAMP_RAM_MB) is no longer used
 // for MULTISAMPLE's own arena (the pools build: its samples are in the pool RAM).
@@ -62,6 +61,5 @@ uint64_t card_free_bytes();   // the card's free space (the SD card test, msamp/
 // Pi: poolram=MB in cmdline.txt, default 1024 on 2 / 4 GB boards and 3072 on 8 GB, at most what the heap has then less
 // 64 MB; Mac: CORE_POOL_RAM_MB (default 64).
 uint64_t pool_ram_budget();
-#endif
 
 }  // namespace core

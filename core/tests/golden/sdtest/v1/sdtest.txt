@@ -1,2 +1,0 @@
-ahead=120
-streams=24

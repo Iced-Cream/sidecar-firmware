@@ -22,11 +22,7 @@ inline volatile unsigned &count() { static volatile unsigned n; return n; }
 inline volatile unsigned &bootCount() { static volatile unsigned n; return n; }
 inline volatile unsigned &bootStream() { static volatile unsigned n; return n; }
 inline void Note(unsigned id, unsigned at, unsigned dur, unsigned min_us) {
-#if SIDECAR_GENERIC
   unsigned st = g_nStreams;
-#else
-  unsigned st = g_Output.Streams();
-#endif
   if (st && at < kBootFrames && dur >= min_us) {
     if (bootStream() != st) bootStream() = st, bootCount() = 0;   // a new stream: record its start-up afresh
     if (bootCount() < kB) {
@@ -45,11 +41,7 @@ class Scope {
   // min_us: the boot ring's threshold (0: every call)
   explicit Scope(unsigned id, unsigned min_us = 0) : id_(id), min_(min_us), was_(crumb::Enter(id)) {
     asm volatile("isb; mrs %0, cntpct_el0" : "=r"(t0_)::"memory");
-#if SIDECAR_GENERIC
     at_ = g_nFramesSinceReset;
-#else
-    at_ = g_Output.FramesSinceReset();
-#endif
   }
   ~Scope() {
     unsigned long long t1, f;

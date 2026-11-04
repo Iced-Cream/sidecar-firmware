@@ -6,7 +6,6 @@
 
 namespace core {
 namespace kv {
-#if CORE_MSAMP   // folder listing needs File::nextEntry (the Pi, the Mac core)
 
 bool CardBackend::write_atomic(const char* path, const uint8_t* d, uint32_t n) {
   static const uint8_t kEmpty = 0;
@@ -43,11 +42,5 @@ bool CardBackend::list(const char* dir, void (*each)(const char* name, void* ctx
   return ok;
 }
 
-#else
-bool CardBackend::write_atomic(const char*, const uint8_t*, uint32_t) { return false; }
-int CardBackend::read(const char*, uint8_t*, uint32_t) { return -1; }
-bool CardBackend::remove(const char*) { return false; }
-bool CardBackend::list(const char*, void (*)(const char*, void*), void*) { return false; }
-#endif
 }  // namespace kv
 }  // namespace core

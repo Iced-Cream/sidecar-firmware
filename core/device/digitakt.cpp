@@ -6,7 +6,7 @@
 // INPUT L R), 2 / 88 B host -> Digitakt (MAIN L R, after everything: stock routes USB to the main output only).
 #include "device/digitakt.h"
 
-#include "fx/out.h"
+#include "device/audio.h"
 
 
 namespace core {

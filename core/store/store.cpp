@@ -3,10 +3,8 @@
 
 #include "../platform.h"
 #include "store.h"
-#if CORE_MSAMP
 #include "../fmt/fmt.h"
 #include "../msamp/cardq.h"
-#endif
 
 namespace core {
 namespace store {
@@ -65,18 +63,14 @@ bool adopt(const char* path, uint8_t* p, uint32_t n) {
   e->state = kPresent;
   return true;
 }
-#if CORE_MSAMP
 int g_nw = 0, g_nf = 0;   // the fill's wanted paths and their folders (below)
 void abandon();
-#endif
 }  // namespace
 
 CORE_COLD void clear() {
-#if CORE_MSAMP
   abandon();
   g_nw = 0;
   g_nf = 0;
-#endif
   drop_all();
 }
 
@@ -133,7 +127,6 @@ int present() {
   return k;
 }
 
-#if CORE_MSAMP
 // ---- the fill: one path at a time, each card operation a cardq::async request (the card core runs it; without one,
 // at once). The read buffer is the fill's until its bytes are adopted by the store (no second copy).
 //
@@ -434,7 +427,6 @@ CORE_COLD bool fill_step() {
 }
 
 bool ready() { return g_f.done; }
-#endif
 
 }  // namespace store
 }  // namespace core

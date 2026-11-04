@@ -2,22 +2,18 @@
 // download in ranges, upload in chunks, delete, new folder, rename, free space - over a card Backend (FatFs on the
 // Pi: web.cpp; stdio in pi/engine/tests/test_fsweb.cpp). Portable (hosted flags): no Circle, no allocation.
 //
-// WHAT IT CAN REACH: the content folders only (reachable(), below) - /Samples, /Plugins, /Recordings, /Bundles,
-// /MULTISAMPLE, /WAVETABLES, /GRANULAR, /PRESETS, /MACHINES, /NAM, /CHOP, /JUNO, /DX7 - for reads as well as writes.
+// WHAT IT CAN REACH: the content folders only (reachable(), below) - /Samples, the card browse's root - for reads as
+// well as writes.
 // The boot files and /.rytm are not reachable here at all, whoever is asking.
-// The USB drives' (and the NVMe SSD's) recordings too, as /USB/Recordings, /USB2/Recordings, /USB3/Recordings,
-// /NVME/Recordings (the recorder's destination, docs/STORAGE.md): listed, downloaded and deleted - nothing else of a
-// drive, and nothing written there (put, mkdir, mv refused). The backend maps them with volume_path().
+// The USB drives and the NVMe SSD (/USB, /USB2, /USB3, /NVME) are not reachable: no content folder is on one.
 //
 // The safe write path (as sdfiles' PUT): an upload goes to <path>.part, chunk by chunk, each chunk read back and
 // compared, a running CRC-32 kept; the last chunk's CRC must equal the client's, then <path>.part replaces <path>.
 // A failure leaves <path> as it was. Boot files (config.txt, cmdline.txt, sdboot*, engine.img*, kernel*.img,
 // start*.elf, fixup*.dat, bootcode.bin, armstub*, tryboot.txt*, *.dtb, overlays/) are read-only here: listed with
-// "ro":1, never written, deleted or renamed (sdfiles on TCP 7310 installs them). A package for /Plugins (*.rmp) is
-// checked before it goes in place (header, size, CRC, ABI version, target): a bad one is refused with the reason.
+// "ro":1, never written, deleted or renamed (sdfiles on TCP 7310 installs them).
 // Chunks are written in 4 KB pieces with the backend's yield() between them, so one request never holds the card
-// (or core 0's scheduler) for long. Each chunk also goes into the upload's sha256 (core/lib/sha256.h): a finished
-// upload is reported to the library with its hash (Backend::stored).
+// (or core 0's scheduler) for long.
 #ifndef _pi_engine_fsweb_h
 #define _pi_engine_fsweb_h
 #include <stdint.h>
@@ -39,16 +35,7 @@ struct Backend {
   bool (*mkdir)(const char* path);
   bool (*space)(uint64_t* free, uint64_t* total);
   void (*yield)();                    // between 4 KB pieces (Circle: the scheduler)
-  void (*changed)(const char* path);  // a file under /Plugins changed (the engine's rescan); may be null
-  // the sample library (core/lib/library.h; each may be null): an upload in place with the sha256 and CRC-32 made
-  // from its chunks as they came (no second read), a file or folder removed, renamed
-  void (*stored)(const char* path, const uint8_t sha[32], uint32_t crc);
-  void (*removed)(const char* path);
-  void (*renamed)(const char* from, const char* to);
-  // optional: the path is the take being recorded, inside it or one of its folders (rec_pi::TakeBusy): never deleted
-  // or renamed then - FatFs keeps no table of open files (FF_FS_LOCK 0), so an unlink under the recorder's open
-  // file would free clusters it goes on writing
-  bool (*busy)(const char* path);
+  void (*changed)(const char* path);  // a file changed (put, remove, mv); may be null
 };
 
 struct Result { int status; char msg[160]; };   // status: an HTTP code (200 ok)
@@ -60,19 +47,14 @@ bool path_ok(const char* p);          // absolute, printable ASCII, no "..", "//
 // TCP 7310 (sdfiles.h) is firmware, /.rytm is neither. See the list in fsweb.cpp and docs/pi-engine.md.
 bool reachable(const char* p);
 bool read_only(const char* p);        // a boot file (or the root): see above
-bool is_package(const char* p);       // /Plugins/<name>.rmp
-// The Sidecar's own folders (/.rytm, /Samples, /Plugins, /Bundles): never deleted or renamed here (their contents may be);
+// The Sidecar's own folders (/.rytm, /Samples): never deleted or renamed here (their contents may be);
 // listed with "ro":2. config.txt.bak (the restore backup) is a boot file (config.txt.prev stays writable).
 bool kept_dir(const char* p);
 // A drive path ("/USB/...", "/USB2/...", "/USB3/...", "/NVME/..."): 1..4 (stor_vol.h's order), *rest its path on that
-// volume ("/Recordings/..."); 0 the SD card's path (*rest = p).
+// volume; 0 the SD card's path (*rest = p).
 int drive_of(const char* p, const char** rest = nullptr);
-// FatFs's path: "SD:/Samples/a.wav", "USB:/Recordings/take_004/00_MASTER.wav"; false when it does not fit
+// FatFs's path: "SD:/Samples/a.wav", "USB:/x/y.wav"; false when it does not fit
 bool volume_path(const char* p, char* out, int cap);
-// The take being recorded (its id: "take_004" on the SD, "USB:take_004" on a drive) and this API's path: the take's
-// folder, anything in it, a folder above it, or its volume's /Recordings/.recording (its crash recovery) - any case,
-// as FatFs. rec_pi::TakeBusy (Backend::busy) asks this while a take records or closes.
-bool live_take(const char* path, const char* take_id);
 
 // The JSON of a folder: {"path":..,"free":..,"total":..,"more":0|1,"entries":[{"n":..,"d":0|1,"s":..,"t":..,"ro":0|1}]}
 // (t: its date and time, "YYYY-MM-DD HH:MM" local, "" when none was written - no clock when it was made)
@@ -89,9 +71,6 @@ void mkdir(const Backend& b, const char* path, Result* r);
 // is in the way.
 void mkdirs(const Backend& b, const char* path, Result* r);
 void rename(const Backend& b, const char* from, const char* to, Result* r);
-// A package's check (the last chunk of an upload to /Plugins, and the tests): its .part file through b.read;
-// nullptr when good, else the reason.
-const char* check_package(const Backend& b, const char* path, uint64_t size);
 uint32_t crc32(uint32_t crc, const uint8_t* p, uint32_t n);   // zlib's (start 0)
 
 }  // namespace fsweb

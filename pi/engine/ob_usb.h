@@ -22,7 +22,7 @@
 #include <circle/usb/usbrequest.h>
 #include <circle/logger.h>
 #include <circle/types.h>
-#include "fx/out.h"
+#include "device/audio.h"
 
 class CObUsb : public CUSBFunction
 {

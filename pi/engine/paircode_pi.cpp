@@ -267,17 +267,6 @@ void WarnTick ()
 							  "not change at a boot");
 }
 
-void UiFill (sidecar_status_view_t *v)
-{
-	char g[16];
-	if (s_Gate.mode () == paircode::kOff) { strcpy (v->pair, "OFF (cmdline)"); v->pair_warn = 1; return; }
-	if (!s_Gate.rng_ok ()) { strcpy (v->pair, "RNG FAILED"); v->pair_warn = 1; return; }
-	s_Gate.grouped (g, sizeof g);
-	strcpy (v->pair, g);
-	if (s_Gate.mode () == paircode::kFixed) strcat (v->pair, " FIXED");
-	v->pair_warn = s_Gate.mode () == paircode::kFixed ? 1 : 0;
-}
-
 void Show () { s_nShowAsked++; s_nShowTries = 0; s_bShowTried = false; }
 
 bool ShowUnpaired (unsigned *pWait)

@@ -12,7 +12,6 @@
 #include <circle/types.h>
 
 #include "paircode.h"
-#include "../ui/sidecar_status.h"
 
 namespace paircode_pi {
 
@@ -28,7 +27,6 @@ void Random (u8 *pOut, unsigned n);		// the hardware generator mixed with the ti
 void Save ();					// /.rytm/pair.txt, only when something changed
 void Status (CString *pOut);			// /status's ",\"pair\":{...}" - the code is never in it
 void WarnTick ();				// once a minute: the loud line while the gate is off
-void UiFill (sidecar_status_view_t *v);		// the STATUS page's PAIR CODE row
 bool Command (const char *p);			// `pair`, `pair=show`, `pair=revoke` (false: not one of ours)
 void Show ();					// ask for the code on the Rytm's screen (any core)
 // An unpaired page asked for the code (POST /pair/show: the dialog opening with no usable saved pairing, or its button):

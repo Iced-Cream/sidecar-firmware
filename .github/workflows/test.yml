@@ -1,5 +1,5 @@
 # The required status check "test": the tests that need no hardware, no firmware and no cross toolchain
-# (tools/run_portable_tests.sh), on a Linux runner. The engine core's tests are in core.yml.
+# (tools/run_portable_tests.sh: the generic core, the Pi engine's portable parts, the web page), on a Linux runner.
 name: test
 on:
   push:

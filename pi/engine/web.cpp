@@ -13,19 +13,10 @@
 #include <fatfs/ff.h>
 
 #include "bridge.h"
-#if !SIDECAR_GENERIC
-#include "bundleweb.h"
-#endif
 #include "console.h"
 #include "crumb.h"		// the crash breadcrumb: the log's tail and the request being served (2026-10-29)
-#include "core_port.h"	// core::File: a drive's reads (platform_pi.cpp)
+#include "core_port.h"
 #include "fsweb.h"
-#if !SIDECAR_GENERIC
-#include "rec_pi.h"		// TakeBusy: /fs never deletes the take being recorded
-#include "lib/library.h"
-#include "poolweb.h"
-#include "presetweb.h"
-#endif
 #include "paircode.h"
 #include "paircode_pi.h"
 #include "blackbox_pi.h"
@@ -33,10 +24,6 @@
 #include "wifi_conf.h"
 #include "hosted/web_page.h"	// build.sh: www/index.html as WebPage[] (a raw string)
 #include "hosted/web_page_gz.h"	// build.sh: the same, gzip -9n, as WebPageGz[] (what "/" sends)
-#if !SIDECAR_GENERIC
-#include "user/lists.h"
-#include "user/um.h"
-#endif
 
 static const char From[] = "web";
 
@@ -208,10 +195,8 @@ static boolean FormValue (const char *pForm, const char *pName, char *pOut, unsi
 	return FALSE;
 }
 
-// ---- the file browser's card (fsweb.h's Backend) on FatFs: "SD:" + the path, or a drive's recordings
-// (/USB/Recordings/... -> "USB:/Recordings/...", fsweb::volume_path: listed, read, deleted - fsweb refuses the writes).
-// A drive's file is read through core::File (platform_pi.cpp: its FIL in an aligned slot, 64 KB pieces through an
-// aligned block: the xHCI TRB rule, docs/STORAGE.md). One upload's .part stays open between its 4 KB pieces (closed
+// ---- the file browser's card (fsweb.h's Backend) on FatFs: "SD:" + the path (fsweb::volume_path; fsweb reaches no
+// drive). One upload's .part stays open between its 4 KB pieces (closed
 // before anything else touches a file); everything here runs in core 0's web tasks.
 static CConsole *s_pConsole = 0;
 static FIL s_File;
@@ -283,16 +268,6 @@ static bool BRead (const char *p, u64 nOff, void *pBuf, u32 n, u32 *pGot)
 	FileClose ();
 	char sd[fsweb::kPath + 8];
 	SdPath (sd, p);
-	if (fsweb::drive_of (p))		// a drive's: in 64 KB pieces through the aligned block
-	{
-		core::File df;
-		if (!df.open (sd, core::kRead)) return false;
-		int r = nOff >= df.fileSize () ? 0 : df.seekSet (nOff) ? df.read (pBuf, n) : -1;
-		df.close ();
-		if (r < 0) return false;
-		*pGot = (u32) r;
-		return true;
-	}
 	FIL f;
 	if (f_open (&f, sd, FA_READ) != FR_OK) return false;
 	UINT got = 0;
@@ -342,39 +317,9 @@ static bool BSpace (u64 *pFree, u64 *pTotal)
 	return true;
 }
 static void BYield (void) { CScheduler::Get ()->Yield (); }
-#if SIDECAR_GENERIC
-// The generic engine: nothing of its own follows the card's folders (the machines, the pools and the library are unwired)
+// Nothing in the generic engine follows the card's folders
 static void BChanged (const char *) {}
-static void BStored (const char *, const u8 *, u32) {}
-static void BRemoved (const char *) {}
-static void BRenamed (const char *, const char *) {}
-static bool BBusy (const char *) { return false; }
-#else
-static void BChanged (const char *p)
-{
-	if (fsweb::drive_of (p)) return;	// a drive's recordings: nothing of the engine's
-	if (strncasecmp (p, "/Plugins", 8) == 0 && s_pConsole) s_pConsole->Command ("um=rescan");	// the control core's
-	if (strncasecmp (p, "/PRESETS", 8) == 0 && s_pConsole) s_pConsole->Command ("um=presets");	// the PRE lists again
-	if (strncasecmp (p, "/MULTISAMPLE", 12) == 0 && s_pConsole) s_pConsole->Command ("msamp=rescan");	// the instruments again
-	if (strncasecmp (p, "/WAVETABLES", 11) == 0 && s_pConsole) s_pConsole->Command ("wt=rescan");	// WAVETABLE's tables again
-	if ((strncasecmp (p, "/GRANULAR", 9) == 0 || strncasecmp (p, "/Samples", 8) == 0) && s_pConsole)
-		s_pConsole->Command ("gr=rescan");	// GRANULAR's samples again (its TAKES / POOL are under /Samples)
-	if (s_pConsole && p[0] == '/' && strlen (p) < 160)	// the machines' LIBRARY browsers: that folder listed again
-	{
-		CString c;
-		c.Format ("lib=changed:%s", p);
-		s_pConsole->Command (c);
-	}
-}
-// the sample library (core/lib/library.h; the web task runs on core 0, the library's core): an upload with its hash,
-// a delete, a rename
-static void BStored (const char *p, const u8 *pSha, u32 nCrc) { core::lib::touched (p, pSha, nCrc); }
-static void BRemoved (const char *p) { if (!fsweb::drive_of (p)) core::lib::touched (p, 0, 0); }	// (the library: the SD's)
-static void BRenamed (const char *a, const char *b) { core::lib::moved (a, b); }
-static bool BBusy (const char *p) { return rec_pi::TakeBusy (p); }	// the take being recorded: no delete, no rename
-#endif
-static const fsweb::Backend s_Card = {BStat, BList, BRead, BWrite, BRemove, BRename, BMkdir, BSpace, BYield, BChanged,
-				      BStored, BRemoved, BRenamed, BBusy};
+static const fsweb::Backend s_Card = {BStat, BList, BRead, BWrite, BRemove, BRename, BMkdir, BSpace, BYield, BChanged};
 
 // The Wi-Fi settings' changes come from this page only (wifi_conf.h's same_origin; pi/circle/circle-http-origin.patch
 // keeps the headers): the Host one of the Pi's names (sidecar.local, its IP), the Origin (else the Referer) that host.
@@ -396,14 +341,12 @@ static boolean FromPage (CNetSubSystem *pNet, const char *pHost, const char *pOr
 // changes something; the same-origin check above still runs behind it, so a page on another site is refused even with a
 // token it somehow got. /status, /log, the page itself and the read-only JSON are deliberately NOT gated: monitoring and
 // diagnostics must work with no code at all.
-static const char kNotPaired[] = "not paired: enter the pairing code shown on the Rytm's screen and on the Sidecar's screen";
+static const char kNotPaired[] = "not paired: enter the pairing code shown on the Rytm's screen";
 
 // THE OPEN SET, and nothing else. Everything not named here needs the pairing code, so a new endpoint is gated unless
 // someone deliberately adds it (the old list was the other way round, and a read that nobody thought about - /fs/get -
 // served the Wi-Fi key and, worse, the pairing code itself).
 //   "/", "/index.html"  the page, so someone can load sidecar.local and see the dialog at all
-//   "/bundle-sw.js"     the download's service worker: the browser fetches it on its own, without the page's header,
-//                       and it is a built-in static script with nothing of the device in it
 //   "/health"           alive, the build, uptime, temperature, the links, the supply, underruns - no names, no
 //                       settings, no counts of anything private: enough to tell whether a unit is working
 //   "/status"           the whole status, open by the user's decision (2026-10-26: "open as specified" - see a device
@@ -417,7 +360,7 @@ static const char kNotPaired[] = "not paired: enter the pairing code shown on th
 //   "/pair/show"        the dialog asks for the code on the Rytm's screen (rate-limited: paircode_pi::kShowGapS)
 static boolean Open (const char *pPath)
 {
-	static const char *const kOpen[] = {"/", "/index.html", "/bundle-sw.js", "/health", "/status", "/log", "/pair",
+	static const char *const kOpen[] = {"/", "/index.html", "/health", "/status", "/log", "/pair",
 					    "/pair/status", "/pair/resume", "/pair/show"};
 	for (unsigned i = 0; i < sizeof kOpen / sizeof kOpen[0]; i++) if (strcmp (pPath, kOpen[i]) == 0) return TRUE;
 	return FALSE;
@@ -809,54 +752,6 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		}
 		else return HTTPNotFound;
 	}
-#if !SIDECAR_GENERIC
-	else if (strcmp (pPath, "/um") == 0)		// the user machines (core/user/um.h's JSON) and the card's space
-	{
-		int n = um::json_copy ((char *) pBuffer, *pLength - 128);
-		if (n <= 0) { memcpy (pBuffer, "[]", 2); n = 2; }
-		u64 nFree = 0, nTotal = 0;
-		if (n > 2 && BSpace (&nFree, &nTotal))
-		{
-			CString s;
-			s.Format (",{\"t\":\"mem\",\"k\":\"sd\",\"size\":%lu,\"used\":%lu}]", (unsigned long) nTotal,
-				  (unsigned long) (nTotal - nFree));
-			memcpy (pBuffer + n - 1, (const char *) s, s.GetLength ());	// over the closing ']'
-			n += s.GetLength () - 1;
-		}
-		*pLength = n;
-		*ppContentType = "application/json";
-	}
-	else if (strcmp (pPath, "/lists") == 0)		// the JUNO / FM lists (and the old DSP SAMPLE pool) (core/user/lists.h's JSON)
-	{
-		int n = lists::json_copy ((char *) pBuffer, *pLength);
-		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
-		*pLength = n;
-		*ppContentType = "application/json";
-	}
-	else if (strcmp (pPath, "/pool") == 0)		// the Pool tab: one bank of a POOL list (poolweb.h; reads only)
-	{
-		int n = poolweb::json (pParams, (char *) pBuffer, *pLength);
-		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
-		*pLength = n;
-		*ppContentType = "application/json";
-	}
-	else if (strcmp (pPath, "/presets") == 0)		// the Pool tab's JUNO / 6-OP lists: a window of the preset index (presetweb.h; reads only)
-	{
-		int n = presetweb::json (pParams, (char *) pBuffer, *pLength);
-		if (n <= 0) { memcpy (pBuffer, "{}", 2); n = 2; }
-		*pLength = n;
-		*ppContentType = "application/json";
-	}
-	else if (strncmp (pPath, "/bundle", 7) == 0 || strcmp (pPath, "/time") == 0 || strncmp (pPath, "/usb/", 5) == 0)
-	{						// project bundles (bundleweb.h): every POST from this page only
-		bundleweb::Reply r;
-		boolean bPage = FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), TRUE);
-		if (!bundleweb::handle (pPath, pParams, pFormData, bPage, pBuffer, *pLength, &r)) return HTTPNotFound;
-		if (r.status == 404 && strcmp (pPath, "/bundle/zip") == 0) return HTTPNotFound;	// (the download's end)
-		*pLength = r.len;	// other refusals: HTTP 200 with {"ok":false,...} (Circle's error pages carry no message)
-		*ppContentType = r.type;
-	}
-#endif
 	else if (strncmp (pPath, "/fs/", 4) == 0)		// the file browser (fsweb.h)
 	{
 		// /fs/* is the one group that never had a second layer: before the pairing code it had no origin check

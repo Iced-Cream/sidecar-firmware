@@ -19,9 +19,6 @@
 
 #include "bridge.h"
 #include "ob_usb.h"
-#if !SIDECAR_GENERIC
-#include "rec_pi.h"
-#endif
 #include "shared.h"
 
 static const char From[] = "stor";
@@ -196,11 +193,7 @@ u64 BRawSize (int nVol)
 }
 u32 BNow (void) { return Now (); }
 bool BStreaming (void) { return CObUsb::Streaming (); }
-#if SIDECAR_GENERIC
 u32 BUnder (void) { return 0; }		// (no output stage: nothing of the engine's own can underrun)
-#else
-u32 BUnder (void) { return g_Output.Underflows (); }
-#endif
 void BLoopReset (void) { s_nLoopMax = s_nLoopSum = s_nLoopN = 0; }
 void BLoopRead (u32 *pMax, u32 *pAvg) { *pMax = s_nLoopMax, *pAvg = s_nLoopN ? s_nLoopSum / s_nLoopN : 0; }
 bool BHold (void) { return storbench::vol () == stor::kSD && bridge::card_busy (); }	// the SD's streams first
@@ -312,9 +305,6 @@ void Poll (boolean bPlugAndPlay)
 	{
 		s_nPollAt = t;
 		unsigned nFree = 0, nTotal = 0;
-#if !SIDECAR_GENERIC
-		rec_pi::CardSpace (&nFree, &nTotal);		// the card as the recorder reads it (every 10 s)
-#endif
 		if (nTotal) stor::set_sd ((u64) nTotal << 20, (u64) nFree << 20);
 		else if (t - s_nSdAt >= 10000000 || !s_nSdAt)	// no recorder (recbuf=0): our own count, as often
 		{
@@ -343,13 +333,7 @@ void Poll (boolean bPlugAndPlay)
 			int v = storbench::vol ();
 			{	// the streaming budget of that volume (core/pool/stream_budget.h): its 64 KB reads' rate and p99
 				const storbench::Results &r = storbench::results ();
-#if !SIDECAR_GENERIC
-				bridge::stream_bench (v, storbench::mbps_x100 (r.seq[0].rbytes, r.seq[0].rus), r.rnd64.p99);
-				// the recorder's warning before a take: the 64 KB writes' rate (its own write size), in KB/s
-				rec_pi::BenchDone (v, (unsigned) ((uint64_t) storbench::mbps_x100 (r.seq[0].wbytes, r.seq[0].wus) * 1024 / 100));
-#else
 				(void) r;
-#endif
 			}
 			if (v != stor::kSD) CountFree (v);	// after the test file went (known now: FatFs keeps it from here)
 			if (s_nHeldBack) CLogger::Get ()->Write (From, LogNotice, "bench: %u steps waited for the SD's streams", s_nHeldBack);
@@ -379,16 +363,10 @@ boolean Command (const char *p)
 		storbench::Cond c;
 		unsigned nSecs;
 		c.mounted = stor::mounted (Args.vol);
-#if SIDECAR_GENERIC
 		(void) nSecs;
 		c.playing = s_bPlaying;
 		c.recording = FALSE;
 		c.sdtest = FALSE;
-#else
-		c.playing = s_bPlaying || g_Play.active ();
-		c.recording = rec_pi::UiState (&nSecs) != 0;	// armed too: a take may start any moment
-		c.sdtest = bridge::sdtest_running ();
-#endif
 		c.running = storbench::state () == storbench::kRunning;
 		const char *pWhy = s_pBlock ? storbench::refuse (Args, c) : "no memory for the volumes";
 		if (!pWhy && !stor::status (Args.vol).free_known) CountFree (Args.vol);
@@ -489,33 +467,6 @@ void Status (CString *pOut)
 	storbench::json (b, sizeof b);
 	pOut->Append (b);
 	pOut->Append ("}");
-}
-
-void UiFill (sidecar_status_view_t *v)
-{
-	v->usb_state = 0, v->usb_more = 0, v->usb_fs[0] = v->usb_link[0] = 0, v->usb_free_mb = v->usb_total_mb = 0;
-	int shown = -1;
-	for (int k = stor::kUSB; k <= stor::kUSB3; k++)
-	{
-		const stor::Status &st = stor::status (k);
-		if (st.state == stor::kAbsent) continue;
-		if (shown < 0 || (st.state == stor::kMounted && stor::status (shown).state != stor::kMounted)) shown = k;
-	}
-	for (int k = stor::kUSB; k <= stor::kUSB3; k++) if (k != shown && stor::mounted (k)) v->usb_more++;
-	if (shown >= 0)
-	{
-		const stor::Status &st = stor::status (shown);
-		v->usb_state = st.state;
-		strncpy (v->usb_fs, stor::fs_name (st.fs), sizeof v->usb_fs - 1);
-		strncpy (v->usb_link, st.link == stor::kUsbSuper ? "USB 3" : st.link == stor::kUsbHigh ? "USB 2" : st.link ? "USB 1" : "",
-			 sizeof v->usb_link - 1);
-		v->usb_free_mb = st.free_known ? (unsigned) (st.free >> 20) : ~0u, v->usb_total_mb = (unsigned) (st.total >> 20);
-	}
-	const stor::Status &n = stor::status (stor::kNVME);
-	v->nvme_state = n.state;
-	v->nvme_fs[0] = 0;
-	strncpy (v->nvme_fs, stor::fs_name (n.fs), sizeof v->nvme_fs - 1);
-	v->nvme_free_mb = n.free_known ? (unsigned) (n.free >> 20) : ~0u, v->nvme_total_mb = (unsigned) (n.total >> 20);
 }
 
 void NoteLoop (unsigned nUs)

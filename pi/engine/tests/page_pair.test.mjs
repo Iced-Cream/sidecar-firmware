@@ -19,7 +19,6 @@ const MOCK = join(HERE, "mock_web.py");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const WEB_CPP = readFileSync(join(HERE, "..", "web.cpp"), "utf8");
-const BUNDLE_H = readFileSync(join(HERE, "..", "bundleweb.h"), "utf8");
 const MOCK_PY = readFileSync(MOCK, "utf8");
 
 // The open set, read out of web.cpp's Open() rather than copied here: the previous version of this test listed the
@@ -34,7 +33,7 @@ function listIn(text, marker) {
 const OPEN = listIn(WEB_CPP, "kOpen[] = {");
 
 // Every concrete path the engine answers, dug out of the sources: the top-level ones web.cpp compares, the sub-ops of
-// /wifi/ and /fs/, and the /bundle, /usb and /time endpoints bundleweb.h documents. Anything here that is not in OPEN
+// /wifi/, /fs/ and /pair. Anything here that is not in OPEN
 // must refuse a client with no pairing code - that is the check the old test could not make.
 function routes() {
   const body = WEB_CPP.slice(WEB_CPP.indexOf("THTTPStatus CWebServer::GetContent"));
@@ -49,31 +48,22 @@ function routes() {
   sub('strncmp (pPath, "/wifi/", 6)', "/wifi/");
   sub('strncmp (pPath, "/fs/", 4)', "/fs/");
   sub('strncmp (pPath, "/pair", 5)', "/pair/");
-  for (const l of BUNDLE_H.split("\n")) {                       // its header comment lists every /bundle, /usb, /time
-    if (!/^\/\/\s+(GET|POST)\s/.test(l)) continue;
-    for (const m of l.matchAll(/(\/[A-Za-z0-9/._-]+)/g))          // its own namespaces, not the example paths
-      if (/^\/(bundle|usb)\//.test(m[1]) || m[1] === "/time" || m[1] === "/bundle-sw.js") out.add(m[1]);
-  }
-  // the prefixes themselves are not endpoints, and /bundle-dl/* never reaches the engine (the service worker)
-  for (const p of ["/wifi/", "/fs/", "/pair", "/bundle", "/usb/"]) out.delete(p);
-  return [...out].filter((p) => p.startsWith("/") && !p.includes("-dl/")).sort();
+  for (const p of ["/wifi/", "/fs/", "/pair"]) out.delete(p);   // the prefixes themselves are not endpoints
+  return [...out].filter((p) => p.startsWith("/")).sort();
 }
 const ROUTES = routes();
 const MUST_REFUSE = ROUTES.filter((p) => !OPEN.includes(p));
 
 // what each one needs to be asked properly (a body where it wants one); everything else is a bare GET
 const BODY = {
-  "/cmd": { c: "notes=1" }, "/wifi/power": { on: "1" }, "/wifi/forget": {},
+  "/cmd": { c: "gen" }, "/wifi/power": { on: "1" }, "/wifi/forget": {},
   "/wifi/join": { ssid: "Fake-Studio", psk: "not-a-real-pass" },
-  "/fs/put": {}, "/fs/del": {}, "/fs/mkdir": {}, "/fs/mv": {}, "/usb/eject": {}, "/time": { epoch: "1790000000" },
-  "/bundle/export": { key: "DEMO PERC" }, "/bundle/import": {}, "/bundle/verify": { path: "/x.zip" },
-  "/bundle/delete": { key: "A_B", confirm: "A_B" }, "/bundle/cancel": {}, "/bundle/finish": {},
+  "/fs/put": {}, "/fs/del": {}, "/fs/mkdir": {}, "/fs/mv": {},
   "/pair/forget": {}, "/pair/revoke": {}, "/midibridge/set": { on: "1" },
 };
 const QUERY = {
   "/fs/ls": "?path=/", "/fs/get": "?path=/.rytm/wifi.txt", "/fs/del": "?path=/Samples/Kit/kick.wav",
-  "/fs/mkdir": "?path=/Bundles", "/fs/mv": "?path=/Samples/Kit/tom.wav&to=/Samples/Kit/tom2.wav", "/fs/put": "?path=/x.bin&off=0&total=1&crc=0",
-  "/bundle/zip": "?off=0&len=64", "/bundle/list": "?src=card",
+  "/fs/mkdir": "?path=/Samples/New", "/fs/mv": "?path=/Samples/Kit/tom.wav&to=/Samples/Kit/tom2.wav", "/fs/put": "?path=/x.bin&off=0&total=1&crc=0",
 };
 
 let nextPort = 19800 + Math.floor(Math.random() * 300);
@@ -150,14 +140,14 @@ function refusal(text) {
 // implementations of it agree. This fails if anyone widens the open set without saying so here.
 test("the open set is exactly these, in web.cpp and in the mock", () => {
   assert.deepEqual([...OPEN].sort(),
-    ["/", "/bundle-sw.js", "/health", "/index.html", "/log", "/pair", "/pair/resume", "/pair/show", "/pair/status",
+    ["/", "/health", "/index.html", "/log", "/pair", "/pair/resume", "/pair/show", "/pair/status",
      "/status"],
-    "web.cpp's Open(): the page and its service worker, the health view, /status (open by the user's decision, " +
+    "web.cpp's Open(): the page, the health view, /status (open by the user's decision, " +
     "2026-10-26), the log, and pairing itself");
   const mockOpen = [...MOCK_PY.slice(MOCK_PY.indexOf("PAIR_OPEN = {"), MOCK_PY.indexOf("}", MOCK_PY.indexOf("PAIR_OPEN = {")))
     .matchAll(/"([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(mockOpen.sort(), [...OPEN].sort(), "mock_web.py mirrors web.cpp's open set");
-  assert.ok(ROUTES.length >= 35, `the route list came out at ${ROUTES.length}: the extraction broke, fix it`);
+  assert.ok(ROUTES.length >= 20, `the route list came out at ${ROUTES.length}: the extraction broke, fix it`);
   assert.ok(MUST_REFUSE.includes("/fs/get") && MUST_REFUSE.includes("/wifi/status"));
 });
 
@@ -178,7 +168,7 @@ test("the Rytm MIDI bridge's routes are paired and same-origin only", () => {
   assert.match(branch, /FormValue \(pFormData, "on"/, "on= from the body only");
   assert.doesNotMatch(branch, /FormValue \(pParams/, "never from the URL");
   // /cmd refuses midibridge= (its origin check is the lenient one)
-  assert.match(body, /strncmp \(Cmd, "midibridge=", 11\) == 0\)/);
+  assert.match(body, /strncmp \(Cmd, "midibridge=", 11\) == 0/);
 });
 
 test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
@@ -224,7 +214,7 @@ test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   }
   // and nothing happened: the file the /fs/del above named is still there (once we are paired we can look)
   // ---- what stays open, with no code at all: the page, its worker, the health view, the log, pairing
-  for (const path of ["/", "/index.html", "/bundle-sw.js", "/health", "/status", "/log?since=0", "/pair/status"]) {
+  for (const path of ["/", "/index.html", "/health", "/status", "/log?since=0", "/pair/status"]) {
     const { r } = await pi.get(path);
     assert.equal(r.status, 200, path);
     assert.equal(r.headers.get("x-sidecar-pair"), null, path);
@@ -232,7 +222,7 @@ test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   // the health view: enough to tell whether a unit is working, and nothing of the unit's contents
   const health = await pi.json("/health");
   assert.equal(health.alive, true);
-  for (const k of ["version", "commit", "uptime", "temp", "streaming", "rytmMidi", "display", "underruns", "power"])
+  for (const k of ["version", "commit", "uptime", "temp", "streaming", "rytmMidi", "underruns", "power"])
     assert.ok(k in health, `/health has ${k}`);
   assert.equal(health.pair, "on");
   const hs = JSON.stringify(health);
@@ -325,7 +315,7 @@ test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   // the card's root lists the content folders only
   const root = await pi.json("/fs/ls?path=/", undefined, { tok });
   const names = root.entries.map((e) => e.n);
-  assert.ok(names.includes("Samples") && names.includes("Plugins"), names.join(","));
+  assert.ok(names.includes("Samples") && !names.includes("Plugins"), names.join(","));
   for (const hid of ["config.txt", "cmdline.txt", ".rytm", "overlays", "sidecar-paircode.txt", "kernel8-rpi4.img"])
     assert.ok(!names.includes(hid), `the root must not list ${hid}`);
 
@@ -336,11 +326,11 @@ test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   const ok2 = await pi.post("/cmd", { c: "notes=0", tok });
   assert.equal(ok2.text.trim(), "ok", "a tool can put the token in the body");
   assert.equal((await pi.json("/wifi/power", { on: "1" }, { tok })).ok, true);
-  const mk = await pi.post("/fs/mkdir?path=/Bundles/incoming&p=1", {}, { tok });
+  const mk = await pi.post("/fs/mkdir?path=/Samples/incoming&p=1", {}, { tok });
   assert.equal(refusal(mk.text).code, 200, mk.text);
 
   // never in the query string (BACKLOG F7): a URL ends up in history, proxy logs and Referer headers
-  const q = await pi.post(`/fs/mkdir?path=${encodeURIComponent("/Bundles/q")}&tok=${tok}`, {});
+  const q = await pi.post(`/fs/mkdir?path=${encodeURIComponent("/Samples/q")}&tok=${tok}`, {});
   assert.equal(refusal(q.text).code, 401, "a token in the URL is not a token");
   const qg = await pi.get(`/fs/ls?path=/Samples&tok=${tok}`);
   assert.equal(refusal(qg.text).code, 401, "nor on a GET");

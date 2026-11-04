@@ -1,4 +1,4 @@
-// core/tests/test_store_link.cpp - 51 STORE through the engine: host_sysex on the control side, the record store on
+// core/tests/test_store_link.cpp - 51 STORE through the engine: gen::sysex on the control side, the record store on
 // the card (core::File / Fs, fmt::write_atomic, a temp folder as the card), the answers through hooks.to_rytm; the lock
 // ops on the control side; the companion's HELLO forgetting the lock sets and keeping the records (the Rytm's 35 leaving them).
 #include <sys/stat.h>
@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "check.h"
-#include "host_link.h"
+#include "generic/generic.h"
 #include "hooks.h"
 #include "kv/kv.h"
 #include "kv/link.h"
@@ -21,7 +21,7 @@ static void send(std::vector<uint8_t> body) {
   std::vector<uint8_t> m = {0xF0, 0x7D, 0x52, 0x54, kv::kCmd, kv::kVer};
   m.insert(m.end(), body.begin(), body.end());
   m.push_back(0xF7);
-  host_sysex(m.data(), (int)m.size());
+  gen::sysex(m.data(), (int)m.size());
   for (int i = 0; i < 64 && kv::link::host_step(8); ++i) {}   // (no card core here: host_step runs the card ops)
 }
 static int h3(const uint8_t* b) { return b[0] << 14 | b[1] << 7 | b[2]; }
@@ -33,6 +33,7 @@ int main() {
   Fs fs;
   CHECK(fs.begin());
   hooks.to_rytm = out;
+  CHECK(kv::link::attach_generic());
 
   // HELLO project 0x0000BEEF
   send({kv::kOpHello, 0, 0, 2, 0x7D, 0x6F});
@@ -63,7 +64,7 @@ int main() {
   CHECK(g_out.empty() && locks::declared(0));
   // the Rytm's hello (35) leaves the sets; the companion's HELLO starts a session: the lock sets go, the records stay
   std::vector<uint8_t> hello35 = {0xF0, 0x7D, 0x52, 0x54, 0x35, 0x01, 0, 0, 0, 0xF7};
-  host_sysex(hello35.data(), (int)hello35.size());
+  gen::sysex(hello35.data(), (int)hello35.size());
   CHECK(locks::declared(0));
   g_out.clear();
   send({kv::kOpHello, 0, 0, 2, 0x7D, 0x6F});

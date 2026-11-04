@@ -25,19 +25,13 @@
 #include "sidecar_gadget.h"
 #include "guard.h"
 #include "ob_usb.h"
-#if !SIDECAR_GENERIC
-#include "selftest.h"
-#endif
 #include "tcp_link.h"
 #include "web.h"
 #include "power_state.h"
 #include "thermal.h"
 #include "cpuclock.h"
-#include "touch_cal.h"		// pi/ui: the touch calibration (touchcal=)
-#include "sidecar_ui.h"
 
 class CWifi;				// wifi.h: Wi-Fi (off by default)
-class CSidecarDisplay;			// pi/ui/sidecar_display.h: the HDMI display (docs/pi-display.md)
 
 class CKernel
 {
@@ -63,7 +57,7 @@ private:
 	void LogBench (void);
 	void SetSelfTest (boolean bOn, const char *pWhy);
 	void LogStats (void);
-	void LoadClock (boolean bCard);				// cpumhz= (display.txt, cmdline): at boot, before the bench
+	void LoadClock (boolean bCard);				// cpumhz= (/.rytm/cpu.txt, cmdline): at boot, before the bench
 	void SetClock (unsigned nSettingMHz);			// the CPU clock option (cpuclock.h): the clock, the voice budget, the log
 	void FollowClock (void);				// the stats tick: the budget follows the ARM clock read back
 	void MeasureClock (void);				// every 10 s: the clock the firmware measures, against the one it reports
@@ -72,10 +66,8 @@ private:
 	void LogClockRescale (void);				// the boot bench's voices a core, rescaled to the clock now (not re-measured)
 	void ThermalStep (unsigned nTempC);			// the temperature warning (thermal.h): once a second, from LogStats
 	void ReadPower (boolean bLog);				// the supply (power_state.h): at boot, every 10 s, logged on a change and once a minute
-	void PushUi (void);					// the display's state, read back from the engine (docs/pi-display.md)
-	static void UiCommand (const char *pCmd, void *pParam);	// a display control: the console's parser, then a re-read
 	void StopAndReboot (const char *pWhy, boolean bTryboot = FALSE);
-	void BootStep (unsigned nStep);			// the boot screen's bar (1..CSidecarDisplay::SplashSteps)	// bTryboot: the firmware reads tryboot.txt once
+	void BootStep (unsigned nStep);			// a boot stage (the watchdog fed; bTryboot above: the firmware reads tryboot.txt once)
 	void UseLink (const char *pSpec);			// usb | tcp | tcp:IP:PORT
 	static void WebStatus (CString *pOut, void *pParam);
 	static void WebHealth (CString *pOut, void *pParam);	// GET /health: the open one (paircode.h's open set)	// the web page's /status (web.h)
@@ -103,9 +95,6 @@ private:
 	CObUsbTransport		m_Usb;
 	CTcpTransport		m_Tcp;
 	CBcmWatchdog		m_Watchdog;
-#if !SIDECAR_GENERIC
-	CSelfTest		m_SelfTest;
-#endif
 	CTransport		*m_pTransport;
 	CUSBMIDIDevice *volatile m_pMIDI;
 	CSidecarGadget		*m_pSidecar;		// USB-C: "Sidecar", UAC2 + MIDI (sidecar_gadget.h), gadget=sidecar
@@ -113,7 +102,6 @@ private:
 	unsigned		m_nLastStats;
 	const char		*m_pGadgetMode;		// gadget= (sidecar, midi, 0)
 	boolean			m_bNetOK;		// m_Net.Initialize succeeded: link=tcp refused without it
-	CSidecarDisplay		*m_pDisplay;		// display=1 (default) and a frame buffer; else 0
 	powerstate::State	m_Power;		// the supply as the firmware reports it (ReadPower)
 	// the SoC temperature: LogStats reads it once a second (a mailbox call) and everything else uses that reading
 	// (the STATUS page, /status, the warning); thermal.h's warning, and the Rytm's popup owed until it was shown
@@ -133,29 +121,14 @@ private:
 	unsigned		m_nThrottleAt = 0;	// CTimer::GetClockTicks () of the last CCPUThrottle::Update (main loop)
 	unsigned		m_nBenchMHz = 0;			// the clock the boot bench ran at, and its worst figure
 	unsigned		m_nBenchBp[CEngineCores::BenchMachines];	// per machine (1/100 % of a core a voice), for the rescale
-	sidecar_ui_status_t	m_Ui;			// what the display shows (LogStats: the load and counters; PushUi: the rest)
-	boolean			m_bUiPending;		// a display command was sent: re-read at m_nUiAt (us, m_Timer.GetClockTicks)
-	unsigned		m_nUiAt;
 	boolean			m_bWeb;			// web=1 and the network is up
-	// the display's screensaver and brightness (docs/pi-display.md): /.rytm/display.txt, cmdline screensaver= /
-	// brightness= override it at boot; screensaver=MIN and brightness=PCT on the console (web page, display) change it
-	unsigned		m_nSaverMin;
-	unsigned		m_nBright;
-	volatile boolean	m_bTouchHidden;		// touchtest=0: the home page's touch test is hidden
-	boolean			m_bTouchCal;		// touchcal=X0,X1,Y0,Y1,SWAP (pi/ui/touch_cal.h): the 4-point calibration
-	touch_cal_t		m_TouchCal;
-	unsigned		m_nUiStyle;		// uistyle=oled|classic: the display's theme (sidecar_theme.h), 0 OLED
-	volatile boolean	m_bSaveDisplay;		// written by core 0's loop (tmp + rename)
-	unsigned		m_nResW, m_nResH;	// res=800x480|1024x600|1280x720 (display.txt / cmdline): the UI's size, 0: automatic
-	unsigned		m_nResFileW, m_nResFileH;	// display.txt's res= alone (kept when the file is written)
-	void LoadDisplayRes (boolean bCard);
-	void LoadDisplaySettings (boolean bCard);
+	volatile boolean	m_bSaveClock;		// cpumhz= changed: /.rytm/cpu.txt written by core 0's loop (tmp + rename)
+	void SaveClock (void);
 #if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
 	unsigned		m_nTestSecs = 0;	// testsecs= (docs/pi5.md "Engine test mode"): 0 off
 	boolean			m_bTestCard = FALSE;	// testcard=1 with testsecs=: the card in use, Sidecar's folders only (card_guard.h)
 	void UsbTestTick (void);			// core 0's loop: the log to the card, the reboot at the end
 #endif
-	void SaveDisplaySettings (void);
 	CWifi			*m_pWifi;		// wifi.h: always made (its console commands), the chip only with wifi=1|scan
 };
 
