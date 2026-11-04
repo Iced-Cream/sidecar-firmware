@@ -1,5 +1,9 @@
 # Sidecar | Expander: firmware
 
+> **`dev` is the development branch: unstable, not a release.** It carries work after Sidecar 0.4.0 and can need matching
+> builds of both repos; flash at your own risk; keep your 0.4.0 firmware for rollback. Use `main` for a release. Pull
+> requests go to `dev` (see CONTRIBUTING.md).
+
 The source of the Sidecar firmware: the engine that runs on a **Raspberry Pi 4B or Pi 5** on the USB port of an Analog
 Rytm MKII, or of an Analog Four MKII, and adds voices, effects and a sequencer to it. One SD card boots both boards. The
 Pi 4B is the main target, and the one the measurements are made on; the Pi 5 scales its HDMI picture.
