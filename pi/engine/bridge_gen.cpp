@@ -11,6 +11,7 @@
 #include "fmt/fmt.h"
 #include "generic/generic.h"
 #include "hooks.h"
+#include "kv/link.h"
 #include "msamp/cardq.h"
 #include "platform.h"
 #include "proc/proc.h"
@@ -33,10 +34,14 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   core::hooks.to_rytm = to_host;
   core::hooks.device_restart = device_restart;
   s_card = core::gen::begin();
+  core::kv::link::attach_generic();   // 51 STORE records (the card core) and the Pi-side locks (core/kv, core/locks)
   return s_card;
 }
 void sysex(const uint8_t* d, int len) { core::gen::sysex(d, len); }
-bool idle_save() { return core::gen::idle_save(); }
+bool idle_save() {
+  core::kv::link::host_step(8);   // the record store's answers to the Rytm (this core sends to it)
+  return core::gen::idle_save();
+}
 
 // Popups for the Rytm's screen from core 0 (the stats tick's temperature warning): queued here, shown by the control
 // core's tick(), which owns the screen. One producer, one consumer; a full queue drops the newest (offered again).
@@ -87,6 +92,7 @@ void card_worker(bool on) { core::cardq::set_worker(on); }
 int card_service(int n) {
   int k = 0;
   while (k < n && core::cardq::service()) ++k;
+  if (k < n) k += core::kv::link::card_step(n - k);   // 51 STORE ops on the card (core/kv, this core's own)
   return k;
 }
 bool card_busy() { return core::cardq::busy(); }

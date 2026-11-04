@@ -93,6 +93,7 @@ ifeq ($(GENERIC),1)
 CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
             msamp/cardq.cpp lib/sha256.cpp host/newlib_rand.cpp)
 CORE_SRC += $(CORE)/device/device.cpp $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp)   # (device/strip: the Digitakt's, unwired)
+CORE_SRC += $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp)   # 51 STORE records and the Pi-side locks
 RMPSRC := ../../teensy/libraries/RytmPlugins/src
 RMP_SRC := rmp_loader.cpp   # fsweb's check of an uploaded plugin's header (the plugins themselves: unwired)
 PORT_SRC := midi_in.cpp bridge_gen.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \

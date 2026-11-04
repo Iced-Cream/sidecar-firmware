@@ -1,5 +1,5 @@
 // pi/engine/tests/test_generic_pi.cpp - the generic engine's Pi side (GENERIC=1, 2026-11-04), its portable parts:
-// bridge_gen.cpp (the router behind bridge::sysex, the console's generic commands, /status's members, the popup and the
+// bridge_gen.cpp (the router behind bridge::sysex, 51 STORE's answers, the console's generic commands, /status's members, the popup and the
 // address queues from core 0) and audio_return.cpp (the processor slots between Overbridge IN and OUT: nothing added
 // while every slot is empty, a slot's output added and saturated, IN frames kept only while a slot is filled).
 #include <string.h>
@@ -58,6 +58,11 @@ int main() {
   char out[400];
   CHECK(bridge::generic_command("gen", out, sizeof out));
   CHECK(strstr(out, "project \"KIT\"") && strstr(out, "dropped 1 (last 01)"));
+  // 51 STORE (core/kv, wired by bridge::begin): the companion's HELLO is answered at the next idle_save
+  g_out.clear();
+  in({0x51, 1, 0x00, 0, 0, 0, 1, 2});
+  bridge::idle_save();
+  CHECK(sent(0x51) == 1 && g_out.back()[6] == 0x40);
   CHECK(bridge::generic_command("clock", out, sizeof out) && strstr(out, "transport 1"));
   CHECK(!bridge::generic_command("notemach=0:juno", out, sizeof out));
 
