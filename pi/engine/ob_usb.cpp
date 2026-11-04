@@ -253,6 +253,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	memset ((void *) m_Pipe, 0, sizeof m_Pipe);	// usb=mirror
 	m_nPipes = 0;
 	m_bMirror = FALSE;
+	m_bAttachDue = FALSE;
 	m_pCtlBuf = 0;
 	m_bCtlBusy = FALSE;
 
@@ -383,7 +384,8 @@ boolean CObUsb::Configure (void)
 	}
 
 #ifdef CIRCLE_GADGET_MIRROR
-	if (CSidecarGadget::Get () != 0 && CSidecarGadget::Get ()->Mirror ()) MirrorAttach ();
+	if (CSidecarGadget::Get () != 0) { if (CSidecarGadget::Get ()->Mirror ()) MirrorAttach (); }
+	else m_bAttachDue = TRUE;			// the box came up before the gadget (at boot): MirrorAttachLate
 #endif
 
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
@@ -430,6 +432,17 @@ boolean CObUsb::Configure (void)
 
 // ---- usb=mirror: the box's side (docs/usb-mirror.md, sidecar_gadget.h) -------------------------------------------
 #ifdef CIRCLE_GADGET_MIRROR
+
+// core 0's loop (the gadget's MirrorPoll): a box configured before the gadget existed is attached now
+void CObUsb::MirrorAttachLate (void)
+{
+	CObUsb *p = s_pThis;
+	if (p == 0 || !p->m_bAttachDue || CSidecarGadget::Get () == 0) return;
+	p->m_bAttachDue = FALSE;
+	if (!CSidecarGadget::Get ()->Mirror ()) return;
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget: read now");
+	p->MirrorAttach ();
+}
 
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
@@ -617,6 +630,7 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
+void CObUsb::MirrorAttachLate (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 
 #endif

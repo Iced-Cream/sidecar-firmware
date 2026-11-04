@@ -1329,6 +1329,7 @@ void CSidecarGadget::MirrorPoll (void)
 	// which device the computer should see: the box once it has been read; the Sidecar after the box has been gone for
 	// mirrorhold seconds (a box that reboots, as after an OS update, comes back as itself)
 	u64 nNow = Now ();
+	if (!m_bSwitching) CObUsb::MirrorAttachLate ();	// a box that came up before this gadget did (the boot order)
 	if (m_bSwitching)
 	{
 		if (nNow - m_nSwitchAt < m_nCntFrq * 3 / 10) return;

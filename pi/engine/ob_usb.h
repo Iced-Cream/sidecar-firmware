@@ -75,6 +75,7 @@ public:
 	// FALSE: no box (or busy): the caller drops or STALLs.
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
+	static void MirrorAttachLate (void);		// core 0's loop: the box was configured before the gadget existed
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
@@ -129,6 +130,7 @@ private:
 	} m_Pipe[MaxPipes];
 	unsigned m_nPipes;
 	boolean m_bMirror;
+	volatile boolean m_bAttachDue;			// configured while CSidecarGadget::Get () was 0
 	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data
 	volatile boolean m_bCtlBusy;
 
