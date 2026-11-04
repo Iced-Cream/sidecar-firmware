@@ -9,7 +9,7 @@ TESTS := $(patsubst %.cpp,build/%,$(wildcard test_*.cpp)) build/test_stor_fatfs_
 CORE := ../../../core
 .PHONY: all clean fatfs-mac
 all: $(TESTS)
-	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; echo "ALL PI PORTABLE TESTS PASS"
+	@set -e; for t in $(TESTS); do ./$$t; done; ../../../tools/tests/test_gen_version.sh; python3 ../../../tools/tests/test_rytm_bridge.py -q; python3 test_sdboot.py -q; python3 test_bootimg.py -q; echo "ALL PI PORTABLE TESTS PASS"
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
