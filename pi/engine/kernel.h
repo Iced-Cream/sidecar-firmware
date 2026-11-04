@@ -25,7 +25,9 @@
 #include "sidecar_gadget.h"
 #include "guard.h"
 #include "ob_usb.h"
+#if !SIDECAR_GENERIC
 #include "selftest.h"
+#endif
 #include "tcp_link.h"
 #include "web.h"
 #include "power_state.h"
@@ -101,7 +103,9 @@ private:
 	CObUsbTransport		m_Usb;
 	CTcpTransport		m_Tcp;
 	CBcmWatchdog		m_Watchdog;
+#if !SIDECAR_GENERIC
 	CSelfTest		m_SelfTest;
+#endif
 	CTransport		*m_pTransport;
 	CUSBMIDIDevice *volatile m_pMIDI;
 	CSidecarGadget		*m_pSidecar;		// USB-C: "Sidecar", UAC2 + MIDI (sidecar_gadget.h), gadget=sidecar

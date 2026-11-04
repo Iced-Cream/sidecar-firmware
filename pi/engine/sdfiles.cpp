@@ -2,7 +2,9 @@
 #include "sdfiles.h"
 #include "bridge.h"
 #include "paircode_pi.h"
+#if !SIDECAR_GENERIC
 #include "lib/library.h"
+#endif
 
 #include <circle/bcmpropertytags.h>
 #include <circle/logger.h>
@@ -498,7 +500,9 @@ void CSdFiles::Put (const char *pName, unsigned nSize, u32 nCRC)
 	}
 	r = f_rename (PNew, P + 3);
 	if (r != FR_OK) { Reply ("ERR rename %d (the new file is %s.new)", r, pName); return; }
+#if !SIDECAR_GENERIC
 	core::lib::touched (P + 3, 0, 0);	// the sample library (a library type only: the boot files are not)
+#endif
 	L->Write (From, LogNotice, "%s: %u bytes, crc %08x, written and checked%s%s%s", pName, nSize, nCRC,
 		  *pKept ? " (the old one: " : "", *pKept ? pName : "", *pKept ? (pKept[1] == 'b' ? ".bak)" : ".prev)") : "");
 	Reply ("OK %u %08x%s%s", nSize, nCRC, *pKept ? " kept " : "", pKept);

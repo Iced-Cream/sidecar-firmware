@@ -19,7 +19,9 @@
 
 #include "bridge.h"
 #include "ob_usb.h"
+#if !SIDECAR_GENERIC
 #include "rec_pi.h"
+#endif
 #include "shared.h"
 
 static const char From[] = "stor";
@@ -194,7 +196,11 @@ u64 BRawSize (int nVol)
 }
 u32 BNow (void) { return Now (); }
 bool BStreaming (void) { return CObUsb::Streaming (); }
+#if SIDECAR_GENERIC
+u32 BUnder (void) { return 0; }		// (no output stage: nothing of the engine's own can underrun)
+#else
 u32 BUnder (void) { return g_Output.Underflows (); }
+#endif
 void BLoopReset (void) { s_nLoopMax = s_nLoopSum = s_nLoopN = 0; }
 void BLoopRead (u32 *pMax, u32 *pAvg) { *pMax = s_nLoopMax, *pAvg = s_nLoopN ? s_nLoopSum / s_nLoopN : 0; }
 bool BHold (void) { return storbench::vol () == stor::kSD && bridge::card_busy (); }	// the SD's streams first
@@ -305,8 +311,10 @@ void Poll (boolean bPlugAndPlay)
 	if (bPlugAndPlay || t - s_nPollAt >= 1000000)
 	{
 		s_nPollAt = t;
-		unsigned nFree, nTotal;
+		unsigned nFree = 0, nTotal = 0;
+#if !SIDECAR_GENERIC
 		rec_pi::CardSpace (&nFree, &nTotal);		// the card as the recorder reads it (every 10 s)
+#endif
 		if (nTotal) stor::set_sd ((u64) nTotal << 20, (u64) nFree << 20);
 		else if (t - s_nSdAt >= 10000000 || !s_nSdAt)	// no recorder (recbuf=0): our own count, as often
 		{
@@ -335,9 +343,13 @@ void Poll (boolean bPlugAndPlay)
 			int v = storbench::vol ();
 			{	// the streaming budget of that volume (core/pool/stream_budget.h): its 64 KB reads' rate and p99
 				const storbench::Results &r = storbench::results ();
+#if !SIDECAR_GENERIC
 				bridge::stream_bench (v, storbench::mbps_x100 (r.seq[0].rbytes, r.seq[0].rus), r.rnd64.p99);
 				// the recorder's warning before a take: the 64 KB writes' rate (its own write size), in KB/s
 				rec_pi::BenchDone (v, (unsigned) ((uint64_t) storbench::mbps_x100 (r.seq[0].wbytes, r.seq[0].wus) * 1024 / 100));
+#else
+				(void) r;
+#endif
 			}
 			if (v != stor::kSD) CountFree (v);	// after the test file went (known now: FatFs keeps it from here)
 			if (s_nHeldBack) CLogger::Get ()->Write (From, LogNotice, "bench: %u steps waited for the SD's streams", s_nHeldBack);
@@ -367,10 +379,17 @@ boolean Command (const char *p)
 		storbench::Cond c;
 		unsigned nSecs;
 		c.mounted = stor::mounted (Args.vol);
+#if SIDECAR_GENERIC
+		(void) nSecs;
+		c.playing = s_bPlaying;
+		c.recording = FALSE;
+		c.sdtest = FALSE;
+#else
 		c.playing = s_bPlaying || g_Play.active ();
 		c.recording = rec_pi::UiState (&nSecs) != 0;	// armed too: a take may start any moment
-		c.running = storbench::state () == storbench::kRunning;
 		c.sdtest = bridge::sdtest_running ();
+#endif
+		c.running = storbench::state () == storbench::kRunning;
 		const char *pWhy = s_pBlock ? storbench::refuse (Args, c) : "no memory for the volumes";
 		if (!pWhy && !stor::status (Args.vol).free_known) CountFree (Args.vol);
 		if (!pWhy && !s_pBench && (s_pBench = Aligned64K (2 * storbench::kBufBytes)) != 0)

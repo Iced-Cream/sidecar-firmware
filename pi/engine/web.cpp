@@ -13,15 +13,19 @@
 #include <fatfs/ff.h>
 
 #include "bridge.h"
+#if !SIDECAR_GENERIC
 #include "bundleweb.h"
+#endif
 #include "console.h"
 #include "crumb.h"		// the crash breadcrumb: the log's tail and the request being served (2026-10-29)
 #include "core_port.h"	// core::File: a drive's reads (platform_pi.cpp)
 #include "fsweb.h"
+#if !SIDECAR_GENERIC
 #include "rec_pi.h"		// TakeBusy: /fs never deletes the take being recorded
 #include "lib/library.h"
 #include "poolweb.h"
 #include "presetweb.h"
+#endif
 #include "paircode.h"
 #include "paircode_pi.h"
 #include "blackbox_pi.h"
@@ -29,8 +33,10 @@
 #include "wifi_conf.h"
 #include "hosted/web_page.h"	// build.sh: www/index.html as WebPage[] (a raw string)
 #include "hosted/web_page_gz.h"	// build.sh: the same, gzip -9n, as WebPageGz[] (what "/" sends)
+#if !SIDECAR_GENERIC
 #include "user/lists.h"
 #include "user/um.h"
+#endif
 
 static const char From[] = "web";
 
@@ -336,6 +342,14 @@ static bool BSpace (u64 *pFree, u64 *pTotal)
 	return true;
 }
 static void BYield (void) { CScheduler::Get ()->Yield (); }
+#if SIDECAR_GENERIC
+// The generic engine: nothing of its own follows the card's folders (the machines, the pools and the library are unwired)
+static void BChanged (const char *) {}
+static void BStored (const char *, const u8 *, u32) {}
+static void BRemoved (const char *) {}
+static void BRenamed (const char *, const char *) {}
+static bool BBusy (const char *) { return false; }
+#else
 static void BChanged (const char *p)
 {
 	if (fsweb::drive_of (p)) return;	// a drive's recordings: nothing of the engine's
@@ -358,6 +372,7 @@ static void BStored (const char *p, const u8 *pSha, u32 nCrc) { core::lib::touch
 static void BRemoved (const char *p) { if (!fsweb::drive_of (p)) core::lib::touched (p, 0, 0); }	// (the library: the SD's)
 static void BRenamed (const char *a, const char *b) { core::lib::moved (a, b); }
 static bool BBusy (const char *p) { return rec_pi::TakeBusy (p); }	// the take being recorded: no delete, no rename
+#endif
 static const fsweb::Backend s_Card = {BStat, BList, BRead, BWrite, BRemove, BRename, BMkdir, BSpace, BYield, BChanged,
 				      BStored, BRemoved, BRenamed, BBusy};
 
@@ -794,6 +809,7 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		}
 		else return HTTPNotFound;
 	}
+#if !SIDECAR_GENERIC
 	else if (strcmp (pPath, "/um") == 0)		// the user machines (core/user/um.h's JSON) and the card's space
 	{
 		int n = um::json_copy ((char *) pBuffer, *pLength - 128);
@@ -840,6 +856,7 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		*pLength = r.len;	// other refusals: HTTP 200 with {"ok":false,...} (Circle's error pages carry no message)
 		*ppContentType = r.type;
 	}
+#endif
 	else if (strncmp (pPath, "/fs/", 4) == 0)		// the file browser (fsweb.h)
 	{
 		// /fs/* is the one group that never had a second layer: before the pairing code it had no origin check

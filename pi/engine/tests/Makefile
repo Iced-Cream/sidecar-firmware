@@ -65,6 +65,14 @@ build/test_rec_play: test_rec_play.cpp ../rec_play.cpp ../rec_play.h $(CORE)/rec
 build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(RMPSRC)/rmp_loader.cpp $(CORE)/lib/sha256.cpp check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -DFSWEB_HOST -I$(RMPSRC) -o $@ $< ../fsweb.cpp $(RMPSRC)/rmp_loader.cpp $(CORE)/lib/sha256.cpp
+# the generic engine's Pi side (GENERIC=1): bridge_gen.cpp and the audio return over the generic core (core/generic)
+GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
+                store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp) $(wildcard $(CORE)/fmt/*.cpp)
+build/test_generic_pi: test_generic_pi.cpp ../bridge_gen.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_GENERIC=1 -DCORE_MSAMP=1 -DCORE_POLY=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -I$(RMPSRC) -I../../../sdk -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ $< ../bridge_gen.cpp \
+	  ../audio_return.cpp $(GENERIC_CORE)
 # the power supply's state (power_state.cpp): get_throttled and the Pi 5's max_current to the warning and /status
 build/test_power_state: test_power_state.cpp ../power_state.cpp ../power_state.h check.h
 	@mkdir -p build

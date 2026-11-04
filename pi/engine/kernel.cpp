@@ -9,10 +9,13 @@
 #include "crumb.h"		// the crash breadcrumb (2026-10-29): kept over a watchdog reset, reported here at the next boot
 
 static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last read it (once a second); /status and the UI show this
-#include "um_pi.h"
-#include "user/um.h"
 #include "sidecar_display.h"
 #include "sidecar_splash.h"	// the boot screen's look (uistyle= on the cmdline)
+#include "../ui/sidecar_dot.h"		// sidecar_dot_look (UX review L1)
+#include "../ui/sidecar_status.h"
+#if !SIDECAR_GENERIC
+#include "um_pi.h"
+#include "user/um.h"
 #include "sidecar_seqed.h"
 #include "wgview_pi.h"		// the display's WAVETABLE / GRANULAR view
 #include "preset_pi.h"		// the display's JUNO / 6-OP FM preset pages
@@ -23,9 +26,8 @@ static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last
 #include "scope_pi.h"		// touch2: the display's SCOPE page (UP + T9)
 #include "status_pi.h"		// touch2: the display's SIDECAR STATUS page (UP + T10)
 #include "../ui/sidecar_scope.h"
-#include "../ui/sidecar_dot.h"		// sidecar_dot_look (UX review L1)
-#include "../ui/sidecar_status.h"
 #include "../ui/sidecar_project.h"
+#endif
 #if SIDECAR_SEQED
 #include "seqed_pi.h"
 #include "rytmpat_pi.h"		// the Rytm pattern view (its SysEx dump)
@@ -49,18 +51,29 @@ static int s_nRytmPatIndex = -1;
 #include <fatfs/ff.h>
 
 #include "bridge.h"
+#if SIDECAR_GENERIC
+#include "audio_return.h"	// /status "aret"
+#include "fmt/fmt.h"
+// A small card file written whole (core 0): core/fmt's atomic write (um_pi.h's, which this build does not have)
+static boolean SdWriteWhole (const char *pPath, const char *pData, unsigned n)
+{
+	return core::fmt::write_atomic (pPath, pData, n) ? TRUE : FALSE;
+}
+#endif
 #include "shared.h"
 #include "midiout_q.h"	// the MIDI machine's USB-A queues
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "card_pass.h"	// MIDI between the card requests
-#include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
 #include "sdfiles.h"
 #include "wifi.h"
+#if !SIDECAR_GENERIC
+#include "sendfx_pi.h"
 #include "rec_pi.h"
 #include "bundle_pi.h"		// project bundles (core/bundle, docs/BUNDLES.md)
 #include "lib_pi.h"		// the sample library (core/lib, docs/LIBRARY.md)
+#endif
 #include "fmt/fmt.h"		// the format registry: display.txt keeps the keys this build does not read (class S)
 #include "stor_pi.h"
 #include "version.h"
@@ -93,12 +106,14 @@ static const char RebootMagic[] = "RYTM-REBOOT";
 static volatile boolean s_bRebootRequested = FALSE;
 static void RebootRequest (void) { s_bRebootRequested = TRUE; }   // UART IRQ: core 0's loop stops cleanly first
 static unsigned s_nMidiInLost;		// the Rytm's USB MIDI bytes lost: a full g_MidiIn (the stats line's "lost")
+#if !SIDECAR_GENERIC
 // the bundle job's rescans (console commands, as the web page's uploads send them; core 0)
 static CConsole *s_pBundleConsole = 0;
 static void BundleCommand (const char *pCmd)
 {
 	if (s_pBundleConsole != 0) s_pBundleConsole->Command (pCmd);
 }
+#endif
 
 static unsigned s_nLoopMax, s_nLoopN, s_nLoopSum;	// core 0's loop: its MsSleep (1) in us (/status "core0", reset when read)
 
@@ -195,6 +210,7 @@ void CKernel::ToHost (const u8 *pData, int nLength)
 	for (int i = 0; i < nLength; i++) g_MidiOut.push (pData[i]);
 }
 
+#if !SIDECAR_GENERIC
 // One boot-time reservation (CKernel::Initialize): 64-byte aligned (a cache line), from Circle's heap; a failure is
 // logged and halts the boot, nothing runs without its buffers.
 static void *BootAlloc (size_t nBytes, const char *pWhat)
@@ -204,6 +220,7 @@ static void *BootAlloc (size_t nBytes, const char *pWhat)
 	if (p == 0) CLogger::Get ()->Write (From, LogPanic, "boot: no memory for %s (%u KB)", pWhat, (unsigned) (nBytes >> 10));
 	return p;
 }
+#endif
 
 static void CrumbPanic (void) { crumb::Why ("a panic (the log's last line says which)"); }
 static u32 s_nPmRsts;			// PM_RSTS as this boot found it (crumb.h's report)
@@ -282,6 +299,14 @@ boolean CKernel::Initialize (void)
 	}
 	if (!m_EMMC.Initialize ()) m_Logger.Write (From, LogError, "SD: no card");
 	BootStep (1);
+#if SIDECAR_GENERIC
+	BootStep (2);
+	unsigned t0 = m_Timer.GetClockTicks ();
+	boolean bCard = bridge::begin (ToHost);	// the generic engine's core (core/generic): the card's state, the Rytm's profile
+	m_Logger.Write (From, LogNotice, "engine: generic services, begin %s in %u ms (heap %u KB free)",
+			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,
+			(unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_ANY) >> 10));
+#else
 	// the big fixed buffers, reserved once here from Circle's heap (cached normal memory, as .bss) rather than in .bss,
 	// which counts toward KERNEL_MAX_SIZE: the send FX's 4.8 MB, the core's (bridge::heap_bytes). Never freed, never
 	// allocated after this; a failure halts the boot. Built or zeroed here, before cores 1-3 start.
@@ -310,15 +335,23 @@ boolean CKernel::Initialize (void)
 	s_pBundleConsole = &m_Console;
 	bundle_pi::init (BundleCommand);	// project bundles: the job on this core's loop (bridge::begin ran the boot recovery)
 	lib_pi::begin (bCard);			// the sample library: its index read and the card walked, a piece a pass (lib_pi.h)
+#endif
 	// the card queue (core/msamp/cardq.h): the streams' reads on this core, before the recorder's writes; cardq=0: on
 	// core 3, as before
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
 	BootStep (3);
 	m_Usb.SetSend (m_Options.GetAppOptionDecimal ("tohost", 1) != 0);	// tohost=0: the replies dropped, as before
+#if !SIDECAR_GENERIC
 	boolean bBench = m_Options.GetAppOptionDecimal ("bench", 1) != 0;
+#else
+	const boolean bBench = FALSE;		// (no machine to bench)
+#endif
 	LoadClock (bCard);				// the CPU clock option, before the bench: the bench measures the clock the engine plays at
+#if !SIDECAR_GENERIC
 	if (bBench) CEngineCores::BenchCore (0);		// cores 1-3 bench as they start (LogBench)
 	SelfCheck ();
+#endif
+#if !SIDECAR_GENERIC
 	// boot defaults (the user's decision, 2026-10-16): out=tracks, the voices on their tracks' inputs, through the
 	// Rytm's filters and FX (the mod build); MIDI notes off (notes=on is for a stock Rytm, with out=main); no drone
 	// (only :drone=). cmdline.txt or the console override them.
@@ -331,6 +364,7 @@ boolean CKernel::Initialize (void)
 	// (docs/STEREO.md "Measurements"); the console's stereo=trim:pre|post:DB10 for the session
 	bridge::stereo_trim (0, atoi (m_Options.GetAppOptionString ("trimpre", "0")));
 	bridge::stereo_trim (1, atoi (m_Options.GetAppOptionString ("trimpost", "0")));
+#endif
 	// fifo=: the target for every link; without it each link's own (UseLink: FifoUsb, FifoTcp). split= 4 is the
 	// plan's default (docs/pi-engine.md "Measurements")
 	if (m_Options.GetAppOptionString ("fifo", 0) != 0) CEngineCores::FixFifoTarget ();
@@ -345,7 +379,9 @@ boolean CKernel::Initialize (void)
 	CEngineCores::BenchStart (bBench);
 	if (!m_Cores.Initialize ()) return FALSE;		// cores 1-3 start (cores.cpp)
 	BootStep (5);
+#if !SIDECAR_GENERIC
 	if (bBench) LogBench ();
+#endif
 	BootStep (6);
 	if (!m_USBHCI.Initialize ()) return FALSE;		// the Rytm is enumerated by plug-and-play in Run
 	// the volumes besides the card (stor_pi.h, docs/STORAGE.md): USB drives as they come (core 0's loop); the Pi 5's
@@ -362,7 +398,9 @@ boolean CKernel::Initialize (void)
 		if (m_pDisplay->Initialize ())
 		{
 			m_pDisplay->SetCommandHandler (UiCommand, this);
+#if !SIDECAR_GENERIC
 			voice_pi::OwnPages ();		// UP + T7: the touchscreen's REC page (and the signal that a panel is up)
+#endif
 		}
 		else m_pDisplay = 0;			// no frame buffer: left alone (no destructor)
 	}
@@ -474,7 +512,12 @@ void CKernel::WebHealth (CString *pOut, void *pParam)
 		  "\"temp\":%u,\"streaming\":%s,\"rytmMidi\":%s,\"display\":%s,\"underruns\":%u,\"pair\":\"%s\"",
 		  SIDECAR_DIRTY ? "true" : "false", CTimer::Get ()->GetUptime (), (unsigned) s_nTempC,
 		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
-		  k->m_pDisplay != 0 ? "true" : "false", g_Output.Underflows (),
+		  k->m_pDisplay != 0 ? "true" : "false",
+#if SIDECAR_GENERIC
+		  0u,					// (no output stage of its own: nothing to underrun)
+#else
+		  g_Output.Underflows (),
+#endif
 		  paircode_pi::Gate ().mode () == paircode::kOff ? "off"
 		  : !paircode_pi::Gate ().rng_ok () ? "rng-failed"	// refusing everything: paircode.h
 		  : paircode_pi::Gate ().mode () == paircode::kFixed ? "fixed" : "on");
@@ -485,6 +528,95 @@ void CKernel::WebHealth (CString *pOut, void *pParam)
 	pOut->Append (Power);
 }
 
+#if SIDECAR_GENERIC
+// /status's members (core 0: a web task), the generic engine's. Plain reads of state other cores write: a stale value at worst.
+void CKernel::WebStatus (CString *pOut, void *pParam)
+{
+	CKernel *k = (CKernel *) pParam;
+	CString s;
+	unsigned nTempWeb = s_nTempC;
+	const CEngineCores::TStall ST = CEngineCores::Stall ();
+	u8 IP[4];
+	memcpy (IP, k->m_IP, sizeof IP);
+	if (k->m_bNetOK) k->m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);	// DHCP on Wi-Fi: the lease's
+	s.Format ("\"engine\":\"generic\",\"ip\":\"%u.%u.%u.%u\",\"link\":\"%s\",\"gadget\":\"%s\",\"sidecar\":%s,\"mac\":%s,"
+		  "\"streaming\":%s,\"rytmMidi\":%s,\"temp\":%u,\"tempWarn\":%s,\"clockLow\":%d,\"fifoTarget\":%u,"
+		  "\"stall\":{\"gapUs\":%u,\"over2ms\":%u,\"midi\":%u,\"cmds\":%u,\"tick\":%u,\"idle\":%u}",
+		  IP[0], IP[1], IP[2], IP[3], k->m_pTransport->Name (), k->m_pGadgetMode,
+		  k->m_pSidecar ? "true" : "false", k->m_pSidecar ? (k->m_pSidecar->MacOn () ? "true" : "false") : "null",
+		  CObUsb::Streaming () ? "true" : "false", k->m_pMIDI != 0 ? "true" : "false",
+		  nTempWeb, k->m_Thermal.warn ? "true" : "false",
+		  thermal::clock_low_mhz ((int) k->m_nClockMHz, (int) k->AskedMHz (), (int) nTempWeb), CEngineCores::FifoTarget (),
+		  ST.gap_us, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[2], ST.sec_us[3], ST.sec_us[5]);
+	pOut->Append (s);
+	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s}",
+		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off", k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false");
+	pOut->Append (s);
+	{	// the SysEx messages that took core 3 over 1 ms
+		CEngineCores::TSlowSx Sx[CEngineCores::kSlowSx];
+		unsigned nSx = CEngineCores::SlowSysex (Sx);
+		pOut->Append (CEngineCores::WaitPolled () ? ",\"ctlwait\":\"poll\",\"slowSx\":[" : ",\"ctlwait\":\"wfe\",\"slowSx\":[");
+		for (unsigned i = 0; i < nSx; i++)
+		{
+			s.Format ("%s[%u,%u,%u,%u]", i ? "," : "", Sx[i].cmd, Sx[i].arg, Sx[i].len, Sx[i].us);
+			pOut->Append (s);
+		}
+		pOut->Append ("]");
+	}
+	{	// the firmware calls core 0 made recently (mbtrace.h)
+		unsigned n = mbtrace::count (), k2 = n < mbtrace::kN ? n : mbtrace::kN;
+		pOut->Append (",\"mb\":[");
+		for (unsigned i = 0; i < k2; i++)
+		{
+			const mbtrace::Rec &r = mbtrace::ring ()[(n - k2 + i) % mbtrace::kN];
+			s.Format ("%s[%u,%u,%u]", i ? "," : "", r.id, r.at, r.dur_us);
+			pOut->Append (s);
+		}
+		pOut->Append ("]");
+	}
+	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s}",
+		  k->m_nClockSetting, k->m_nClockMHz, k->AskedMHz (), k->m_CPUThrottle.GetMaxClockRate () / 1000000,
+		  k->m_CPUThrottle.GetMinClockRate () / 1000000, k->m_nMeasuredMHz, k->m_Options.GetSoCMaxTemp (),
+		  k->m_bClockCapped ? "true" : "false");
+	pOut->Append (s);
+	s.Format (",\"idle\":{\"wfe\":%s,\"asleepPct\":[%u,%u,%u,%u],\"wakes\":[%u,%u,%u,%u]}", CEngineCores::IdleWfe () ? "true" : "false",
+		  k->m_nAsleepPct[0], k->m_nAsleepPct[1], k->m_nAsleepPct[2], k->m_nAsleepPct[3],
+		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
+	pOut->Append (s);
+	{
+		static char Gen[640];		// the host link's router, the Rytm's clock, the processor slots, the remote screen
+		if (bridge::generic_json (Gen, sizeof Gen) > 0) { pOut->Append (","); pOut->Append (Gen); }
+		char Store[240];		// the RAM store and the writes still on their way to the card
+		unsigned long nHeapFree = (unsigned long) CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW);
+		if (bridge::store_json (Store, sizeof Store, nHeapFree) > 0) { pOut->Append (","); pOut->Append (Store); }
+	}
+	s.Format (",\"aret\":{\"inDropped\":%u,\"inMissing\":%u}", aret::InDropped (), aret::InMissing ());
+	pOut->Append (s);
+	s.Format (",\"version\":\"" SIDECAR_VERSION "\",\"commit\":\"" SIDECAR_COMMIT "\",\"dirty\":%s,\"build\":\"%s %s\",\"circle\":\"%s %s\",\"screensaver\":%u,\"brightness\":%u,\"touchtest\":%u,\"display\":%s,\"blank\":%s",
+		  SIDECAR_DIRTY ? "true" : "false", __DATE__, __TIME__, CIRCLE_NAME, CIRCLE_VERSION_STRING, k->m_nSaverMin, k->m_nBright, k->m_bTouchHidden ? 0u : 1u,
+		  k->m_pDisplay != 0 ? "true" : "false", k->m_pDisplay != 0 && k->m_pDisplay->IsBlank () ? "true" : "false");
+	pOut->Append (s);
+	{
+		char Power[400];
+		powerstate::json (k->m_Power, Power, sizeof Power);
+		pOut->Append (",");
+		pOut->Append (Power);
+	}
+	if (k->m_pWifi != 0) { pOut->Append (",\"wifi\":"); k->m_pWifi->Status (pOut); }
+	{
+		char Bb[128];
+		blackbox_pi::Status (Bb, sizeof Bb);
+		pOut->Append (",\"blackbox\":");
+		pOut->Append (Bb);
+	}
+	stor_pi::Status (pOut);
+	s.Format (",\"core0\":{\"sleep1msAvgUs\":%u,\"sleep1msMaxUs\":%u,\"loops\":%u}", s_nLoopN ? s_nLoopSum / s_nLoopN : 0,
+		  s_nLoopMax, s_nLoopN);
+	s_nLoopMax = s_nLoopN = s_nLoopSum = 0;
+	pOut->Append (s);
+}
+
+#else
 // /status's members (core 0: a web task). Plain reads of state other cores write: a stale value at worst.
 void CKernel::WebStatus (CString *pOut, void *pParam)
 {
@@ -698,6 +830,8 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	pOut->Append (s);
 }
 
+#endif
+
 // "usb", "tcp" or "tcp:IP:PORT" (default emuhost= from cmdline, else NET_DEFAULT_EMUHOST): the engine's host. One at a
 // time: in tcp the USB stream (a real Rytm, if attached) gets silence and its MIDI is dropped.
 // The switch relies on the xHCI interrupt staying on core 0, this loop's core: FillOut (g_Output's consumer with
@@ -714,7 +848,9 @@ void CKernel::UseLink (const char *pSpec)
 					m_pTransport->Name ());
 			return;
 		}
+#if !SIDECAR_GENERIC
 		if (m_pTransport == &m_SelfTest) SetSelfTest (FALSE, "link=tcp");	// one consumer of g_Output
+#endif
 		u8 IP[4];
 		u16 nPort = 7301;
 		const char *pHost = pSpec[3] == ':' ? pSpec + 4 : m_Options.GetAppOptionString ("emuhost", NET_DEFAULT_EMUHOST);
@@ -741,7 +877,11 @@ void CKernel::UseLink (const char *pSpec)
 		// tcp -> usb: the frames the TCP link left go, and the USB stream (already running: no new-stream Reset in
 		// ob_usb.cpp) fades in again instead of a click. No consumer meanwhile: the TCP link stopped, FillOut leaves
 		// g_Output alone until SetActive (TRUE).
+#if SIDECAR_GENERIC
+		aret::Reset ();
+#else
 		g_Output.Reset ();
+#endif
 	}
 	CObUsb::SetActive (TRUE);
 	if (m_pTransport == &m_Tcp) m_pTransport = &m_Usb;
@@ -749,6 +889,7 @@ void CKernel::UseLink (const char *pSpec)
 	m_Logger.Write (From, LogNotice, "link: %s", m_pTransport->Name ());
 }
 
+#if !SIDECAR_GENERIC
 // Task 7's boot bench (cores.h): each machine on one voice for 1 s of audio, on cores 0-3 (the cores share the
 // clock but not their L1 caches; the render cores are 1 and 2). Per core and machine: the mean cost of one voice in
 // % of a core in real time, the longest 12-frame block in % of a block (the guard mutes a voice at voicebudget=
@@ -904,6 +1045,7 @@ void CKernel::SetSelfTest (boolean bOn, const char *pWhy)
 	m_Console.SetSelfTest (bOn);
 }
 
+#endif
 static int s_nUiLook;			// UX review L1: the OLED look (0 studio, 1 stage), /.rytm/display.txt's uilook=
 
 boolean CKernel::Core0Command (const char *pCmd, void *pParam)
@@ -974,11 +1116,13 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 				       pThis->m_nClockMHz, pThis->m_nBudgetUs);
 		return TRUE;
 	}
+#if !SIDECAR_GENERIC
 	if (strncmp (pCmd, "voicepick=", 10) == 0)				// a HOME tile: VOICE shows that track (UX review T3)
 	{
 		voice_pi::Pick (atoi (pCmd + 10));
 		return TRUE;
 	}
+#endif
 	if (strncmp (pCmd, "touchcal", 8) == 0 && (pCmd[8] == 0 || pCmd[8] == '='))	// Settings > Display > Calibrate
 	{
 		if (pCmd[8] == '=')
@@ -1298,6 +1442,7 @@ static void AsampMidiSend (CSidecarGadget *pSidecar)
 
 // The computer's packet (gadget IRQ): its notes, sustain and all-notes-off go to core::keys (which plays them here or
 // passes them on to the Rytm); everything else to the Rytm as before
+#if !SIDECAR_GENERIC
 static boolean KeysTap (const u8 *p)
 {
 	u8 cin = p[0] & 0x0F;
@@ -1306,6 +1451,7 @@ static boolean KeysTap (const u8 *p)
 	KeysPush (4u << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3]);
 	return TRUE;
 }
+#endif
 static TUsbBox BoxOf (CDevice *p)
 {
 	return usb_box (p->GetProperty (CDevice::PropertyVendor), p->GetProperty (CDevice::PropertyProduct));
@@ -1319,7 +1465,9 @@ void CKernel::UpdateMIDI (void)
 	unsigned nNow = m_Timer.GetClockTicks ();
 	if (m_pMIDI != 0 && nNow - s_nScanAt < 250000) return;
 	s_nScanAt = nNow;
+#if !SIDECAR_GENERIC
 	g_pSidecarKeysTap = KeysTap;
+#endif
 	// umidiN in Circle's numbering: the gadget's own MIDI device (USB-C, gadget.h) takes a number too
 	for (unsigned n = 1; n <= 8; n++)
 	{
@@ -1355,6 +1503,15 @@ void CKernel::UpdateMIDI (void)
 					m_Options.GetAppOptionDecimal ("tohost", 1) != 0 ? "go to it (host link)" : "are dropped (tohost=0)");
 			continue;
 		}
+#if SIDECAR_GENERIC
+		{	// the generic engine: the Pi's own keyboards (core/keys.h) are unwired; such a device is left alone
+			static u32 s_nSaidKeys;
+			if (!(s_nSaidKeys & 1u << n))
+				m_Logger.Write (From, LogNotice, "midi: %s is not the Rytm: not used (the generic engine has no keyboards)", (const char *) Name);
+			s_nSaidKeys |= 1u << n;
+			continue;
+		}
+#endif
 		unsigned i = 0;
 		while (i < MaxKeyboards && s_pKeyboard[i] != 0) i++;
 		static CDevice *s_pRefused;
@@ -1378,6 +1535,50 @@ void CKernel::UpdateMIDI (void)
 	}
 }
 
+#if SIDECAR_GENERIC
+// The display's state (the generic engine's status page, sidecar_ui_generic.c), read the way /status reads it. Once a
+// second (LogStats) and shortly after a display command.
+void CKernel::PushUi (void)
+{
+	sidecar_ui_status_t &u = m_Ui;
+	u.rytm = CObUsb::Streaming () || m_pMIDI != 0;
+	u.underruns = 0;
+	u.note = m_pTransport == &m_Tcp ? "link: tcp" : "link: usb";
+	if (powerstate::short_warning (m_Power) != 0) u.note = powerstate::short_warning (m_Power);	// red on the display
+	u.mac = m_pSidecar != 0 ? (m_pSidecar->MacOn () ? 1 : 0) : -1;
+	u.screensaver = (int) m_nSaverMin;
+	u.brightness = (int) m_nBright;
+	u.touch_hidden = m_bTouchHidden;
+	u.ui_style = (int) m_nUiStyle;
+	u.ui_look = s_nUiLook;
+	u.temp_c = (int) m_nTempC;
+	u.temp_warn = m_Thermal.warn ? 1 : 0;
+	u.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) AskedMHz (), (int) m_nTempC);
+	u.cpu_mhz = (int) m_nClockSetting;
+	u.drone = -1;
+	u.fifo = CEngineCores::FifoTarget ();
+	u.web = m_bWeb;
+	u.pattern = -1;
+	strncpy (u.project, bridge::project (), sizeof u.project - 1);	// (a plain read of core 3's name: stale at worst)
+	CString Text;
+	u8 IP[4] = {m_IP[0], m_IP[1], m_IP[2], m_IP[3]};
+	if (m_bNetOK) m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);
+	Text.Format ("%u.%u.%u.%u", IP[0], IP[1], IP[2], IP[3]);
+	strncpy (u.ip, (const char *) Text, sizeof u.ip - 1);
+	if (CWebStart::Hostname ()[0])
+	{
+		Text.Format ("%s.local", CWebStart::Hostname ());
+		strncpy (u.host, (const char *) Text, sizeof u.host - 1);
+	}
+	strncpy (u.link, m_pTransport->Name (), sizeof u.link - 1);
+	strncpy (u.gadget, m_pGadgetMode, sizeof u.gadget - 1);
+	strncpy (u.build, SIDECAR_VERSION_FULL, sizeof u.build - 1);
+	Text.Format ("%s %s", CIRCLE_NAME, CIRCLE_VERSION_STRING);
+	strncpy (u.circle, (const char *) Text, sizeof u.circle - 1);
+	m_pDisplay->SetStatus (u);
+}
+
+#else
 // The display's state, read the way /status reads it (plain reads of what other cores write: a stale value at worst), so
 // a change from the web page, the serial console or the display shows on all of them. Once a second (LogStats) and
 // shortly after a display command.
@@ -1449,6 +1650,8 @@ void CKernel::PushUi (void)
 	m_pDisplay->SetStatus (u);
 }
 
+#endif
+
 // A display control (core 0, inside the display's Update): the serial console's parser, as the web page does. The
 // commands only queue (core 3 applies them), so this returns at once; the state is re-read 150 ms later.
 void CKernel::UiCommand (const char *pCmd, void *pParam)
@@ -1461,6 +1664,72 @@ void CKernel::UiCommand (const char *pCmd, void *pParam)
 	k->m_bUiPending = TRUE;
 }
 
+#if SIDECAR_GENERIC
+// The stats line, once a second (the generic engine's)
+void CKernel::LogStats (void)
+{
+	m_pTransport->LogStats (&m_Logger);
+	CEngineCores::TStats s;
+	CEngineCores::TakeStats (&s);
+	unsigned nTemp;		// the one reading a second (a mailbox call, traced): stats line, /status, the warning
+	{ mbtrace::Scope Mb (3); nTemp = m_CPUThrottle.GetTemperature (); }
+	s_nTempC = m_nTempC = nTemp;
+	ThermalStep (nTemp);
+	FollowClock ();
+	auto pct = [&] (u64 t) { return (unsigned) (t * 1000 / s.nTicks); };	// tenths of a percent
+	for (int c = 0; c < 4; c++)
+	{
+		m_nAsleepPct[c] = (pct (s.nSleep[c]) + 5) / 10;
+		m_nWakes[c] = s.nWakes[c];
+	}
+	unsigned c3 = pct (s.nBusy[3]);
+	{	// the connect splash's address line on the Rytm's screen (core/screen), when it changes
+		static u8 s_SaidIP[4];
+		static boolean s_bSaid = FALSE;
+		u8 IP[4] = {0, 0, 0, 0};
+		if (m_bNetOK && m_Net.IsRunning ()) m_Net.GetConfig ()->GetIPAddress ()->CopyTo (IP);
+		if (!s_bSaid || memcmp (IP, s_SaidIP, 4) != 0)
+		{
+			s_bSaid = TRUE;
+			memcpy (s_SaidIP, IP, 4);
+			CString a;
+			if (IP[0]) a.Format ("%u.%u.%u.%u", IP[0], IP[1], IP[2], IP[3]);
+			bridge::screen_address ((const char *) a);
+		}
+	}
+	if (m_pDisplay != 0)
+	{
+		m_Ui.load[0] = -1;
+		m_Ui.load[1] = m_Ui.load[2] = 0;
+		m_Ui.load[3] = (int) (c3 + 5) / 10;
+		PushUi ();
+		static unsigned s_nDisplayLog;
+		if (++s_nDisplayLog % 10 == 0)
+			m_Logger.Write (From, LogNotice, "display: %ux%u, input %s, longest update %u us%s%s", m_pDisplay->GetWidth (),
+					m_pDisplay->GetHeight (), m_pDisplay->GetInput (), m_pDisplay->TakeMaxUpdateUs (),
+					m_pDisplay->TakeRotateDiag (), m_pDisplay->TakeTouchDiag ());
+	}
+	m_Logger.Write (From, LogNotice,
+		"engine: generic | cpu c3 %u.%u %% | pass max %u us | midi %u B (lost %u) sysex %u notes %u | to-host sent %u B %u msgs fail %u dropped %u | %u C",
+		c3 / 10, c3 % 10, s.nMaxPassUs, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes,
+		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
+		m_Usb.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), nTemp);
+	static unsigned s_nPowerTick;
+	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }
+	if (s_nPowerTick % 10 == 5)
+	{
+		MeasureClock ();
+		m_Logger.Write (From, LogNotice, "idle: asleep %u %u %u %u %%, wakes %u %u %u %u a second (cores 0-3), wfe %s, ARM clock %u MHz, measured %u, SoC %u C",
+				m_nAsleepPct[0], m_nAsleepPct[1], m_nAsleepPct[2], m_nAsleepPct[3], m_nWakes[0], m_nWakes[1], m_nWakes[2], m_nWakes[3],
+				CEngineCores::IdleWfe () ? "on" : "off", m_nClockMHz, m_nMeasuredMHz, nTemp);
+	}
+	if (s_nPowerTick % 60 == 0 && m_bWeb) CWebServer::LogStats (&m_Logger);
+	if (s_nPowerTick % 60 == 0) paircode_pi::WarnTick ();
+	if (m_pGadget != 0) m_pGadget->LogStats (&m_Logger);
+	if (m_pSidecar != 0) m_pSidecar->LogStats (&m_Logger);
+}
+
+#else
 // touch2: the STATUS page's numbers: LogStats' second (the loads, the longest block and pass, the FIFO), the rest when
 // the page is filled (kernel's state, status_pi's core part)
 static sidecar_status_view_t s_StatusView;
@@ -1585,6 +1854,8 @@ void CKernel::LogStats (void)
 	}
 }
 
+#endif
+
 // The supply (power_state.h): get_throttled read without clearing (request value 0 keeps the sticky bits), and on the
 // Pi 5 the firmware's /chosen/power/max_current (read once: the PD negotiation is done before the kernel starts).
 // Logged at boot, at once when the flags change (a warning while a problem shows), and once a minute.
@@ -1703,6 +1974,11 @@ void CKernel::SetClock (unsigned nSettingMHz)
 // is the one test-on-pi.sh expects.
 void CKernel::ApplyBudget (unsigned nMHz, boolean bLog)
 {
+#if SIDECAR_GENERIC
+	(void) nMHz, (void) bLog;		// no voices: no budget to scale
+	m_nBudgetUs = 0;
+	return;
+#endif
 	u64 nCntFrq;
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (nCntFrq));
 	unsigned nPct = m_Options.GetAppOptionDecimal ("voicebudget", 50);
@@ -1724,6 +2000,9 @@ void CKernel::ApplyBudget (unsigned nMHz, boolean bLog)
 // now (a linear estimate: the memory-bound parts scale less, and it is not re-measured: the bench loads every core).
 void CKernel::LogClockRescale (void)
 {
+#if SIDECAR_GENERIC
+	return;					// (the generic engine benches nothing)
+#endif
 	if (m_nBenchMHz == 0 || m_nClockMHz == 0) return;
 	CString Line;
 	for (unsigned m = 0; m < CEngineCores::BenchMachines; m++)
@@ -1851,7 +2130,9 @@ void CKernel::Run (void)
 	m_Logger.Write (From, LogNotice, "boot timestamp %u us; waiting for the Rytm (1935:0b48, OVERBRIDGE mode)",
 			m_Timer.GetClockTicks ());
 	m_nLastStats = m_Timer.GetTicks ();
+#if !SIDECAR_GENERIC
 	if (m_Options.GetAppOptionDecimal ("selftest", 0) == 1) SetSelfTest (TRUE, "cmdline");
+#endif
 	m_Watchdog.Start (15);
 	CEngineCores::EventStream ();		// core 0's wfe at the loop's end: 152 us at most (idlewait.h)
 	m_Logger.Write (From, LogNotice, "idle: wfe %s (idlewfe=0 turns it off)", CEngineCores::IdleWfe () ? "on" : "off");
@@ -1869,7 +2150,11 @@ void CKernel::Run (void)
 			u64 t, f;
 			asm volatile ("isb; mrs %0, cntpct_el0" : "=r" (t));
 			asm volatile ("mrs %0, cntfrq_el0" : "=r" (f));
+#if SIDECAR_GENERIC
+			if (nLoopT) mbtrace::Note (30, 0, (unsigned) ((t - nLoopT) * 1000000 / f), 1000);
+#else
 			if (nLoopT) mbtrace::Note (30, g_Output.FramesSinceReset (), (unsigned) ((t - nLoopT) * 1000000 / f), 1000);
+#endif
 			nLoopT = t;
 		}
 		m_Watchdog.Start (15);	// fed: a hang of this loop reboots in 15 s (the BCM watchdog's maximum: a TCP connect may block for seconds)
@@ -1888,11 +2173,15 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
+#if !SIDECAR_GENERIC
 		if (m_pTransport == &m_SelfTest && CObUsb::Streaming ()) SetSelfTest (FALSE, "the Rytm streams");
 		if (m_pTransport == &m_SelfTest && m_pMIDI != 0) SetSelfTest (FALSE, "the Rytm's USB MIDI is up");
 		int nSelfTest = m_Console.TakeSelfTest ();
 		if (nSelfTest >= 0) SetSelfTest (nSelfTest == 1, "console");
 		m_SelfTest.SetQuiet (m_Console.Dumping ());
+#else
+		if (m_Console.TakeSelfTest () >= 0) m_Logger.Write (From, LogWarning, "selftest: none in the generic engine (no voices)");
+#endif
 		// (a capped clock is held: Update would raise it again when cool.) CCPUThrottle::Update acts once every 4 s
 		// and is a no-op in between; it is called on that cadence here (4 s + 10 ms since our last call, so its own
 		// 4 s gate is open every time) so that the clock it may just have changed is read back at once and the voice
@@ -1918,6 +2207,7 @@ void CKernel::Run (void)
 				   });
 		};
 		CardPass ();								// the streams' card requests first (core/msamp/cardq.h)
+#if !SIDECAR_GENERIC
 		{ mbtrace::Scope Mb (17, 200); rec_pi::Poll (); }			// the recorder's ring to the card: one 64 KB piece a pass at most
 		CardPass ();
 		{					// a project bundle's step: one piece, only while the card queue is idle
@@ -1932,15 +2222,19 @@ void CKernel::Run (void)
 			}
 		}
 		CardPass ();
+#endif
 		{ mbtrace::Scope Mb (19, 200); stor_pi::Poll (bPlugAndPlay); }		// USB drives in and out, the bench's step (stor_pi.h)
 #if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
 		if (m_nTestSecs == 0 || m_bTestCard)
 #endif
 		blackbox_pi::Poll ();						// the log to /.rytm/blackbox.log (its own crumb section, 42)
+#if !SIDECAR_GENERIC
 		{ mbtrace::Scope Mb (20, 200); bridge::samp_poll (); }			// SAMPLING / the AUTO-SAMPLER: a take's step (core/samp)
+#endif
 		if (m_pDisplay != 0)
 		{
 			crumb::Section Cs (23);
+#if !SIDECAR_GENERIC
 #if SIDECAR_SEQED
 			{					// the SEQ page: core 3's published view (when new) and the play head
 				static sidecar_seq_view_t s_SeqView;
@@ -2179,6 +2473,7 @@ void CKernel::Run (void)
 					sidecar_chop_set (&s_ChopView);
 				}
 			}
+#endif
 			m_pDisplay->Update (bPlugAndPlay);	// a redraw at most every 10 ms, dirty areas only
 			if (m_bUiPending && (int) (m_Timer.GetClockTicks () - m_nUiAt) >= 0)
 			{
@@ -2208,8 +2503,10 @@ void CKernel::Run (void)
 		asm volatile ("dsb sy; sev");			// core 3's heartbeat: the drone and card work run without traffic
 		// the self-test's pacer: 7 frames are 146 us. A busy wait never yields, so the network's tasks starve while
 		// it runs - fine only because the self-test is refused under link=tcp (SetSelfTest)
+#if !SIDECAR_GENERIC
 		if (m_SelfTest.Running ()) m_Timer.usDelay (20);
 		else
+#endif
 		{
 			unsigned t = m_Timer.GetClockTicks ();
 			{
