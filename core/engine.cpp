@@ -20,11 +20,14 @@
 #include "msamp/sdtest.h"
 #include "nmach.h"
 #include "livein/livein.h"
+#include "kv/link.h"
+#include "locks/locks.h"
 #endif
 
 namespace core {
 
 CORE_COLD bool engine_begin() {
+  locks::attach();   // the lock service on the step clock and the processor slots (core/locks)
   // Plaits' scratch (128 KB, before the voices take it) sorts an index rebuild
 #if CORE_MSAMP
   {   // an import cut by a power loss: finished or undone before anything reads the card (core/bundle/bundle.h)
@@ -110,6 +113,7 @@ CORE_COLD bool idle_prepare() {
   TV_("lists", project_lists_step());
   TV_("closes", pool_closes_step());
   TV_("fxslots", sendfx_step());
+  TV_("store", kv::link::host_step(8));   // 51 STORE's answers from the card core to the Rytm (core/kv/link.h)
 #if CORE_MSAMP
   TV_("presets", presets::step());
 #endif

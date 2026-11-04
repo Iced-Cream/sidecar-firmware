@@ -191,6 +191,7 @@ void card_worker(bool on) { core::cardq::set_worker(on); }
 int card_service(int n) {
   int k = 0;
   while (k < n && core::cardq::service()) ++k;
+  if (k < n) k += core::kv::link::card_step(n - k);   // 51 STORE's ops, the card core's (core/kv/link.h)
   return k;
 }
 bool card_busy() { return core::cardq::busy(); }

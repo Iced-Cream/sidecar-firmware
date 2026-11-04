@@ -1,0 +1,24 @@
+// core/kv/link.h - 51 STORE in the engine: the host link's messages arrive on the control core (the Pi's core 3),
+// the records live on the card, which only the card core (core 0) touches. from_host() queues a store op to the card
+// core and runs a lock op (core/locks) at once; card_step() runs queued store ops against the card (core 0's loop,
+// beside cardq::service); host_step() sends the answers to the Rytm (the control core's idle, core::to_rytm).
+// Without a card core (the Mac core, a test) card_step() is called from the same loop. Portable.
+#pragma once
+#include <stdint.h>
+
+namespace core {
+namespace kv {
+namespace link {
+
+constexpr int kMsgMax = 160;   // a WRITE chunk: 8 header + 6 + 128 data + F7
+bool from_host(const uint8_t* m, int n);   // control core: a 51 message; false: not 51 / queue full (counted)
+int card_step(int max_ops);                // card core: up to max_ops queued ops run; returns how many
+int host_step(int max_msgs);               // control core: answers sent; returns how many
+void hello();                              // the Rytm's hello (35): the lock sets forgotten, the store index kept
+
+struct Stats { uint32_t in, out, dropped_in, dropped_out, ops; };
+Stats stats();
+
+}  // namespace link
+}  // namespace kv
+}  // namespace core

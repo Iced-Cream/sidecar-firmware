@@ -22,6 +22,8 @@
 #include "ui/remote.h"
 #include "poly.h"
 #include "seq/seq.h"
+#include "kv/kv.h"
+#include "kv/link.h"
 
 namespace core {
 
@@ -211,6 +213,11 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     device::hello(device::g_link, d, len);
     return;
   }
+  if (len >= 8 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54 && d[4] == kv::kCmd) {   // 51 STORE: records and locks (core/kv)
+    kv::link::from_host(d, len);
+    return;
+  }
+  if (len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54 && d[4] == 0x35) kv::link::hello();   // the lock sets again
   // F0 7D 52 54 cmd voice ...
   if (len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54 && d[4] == 0x27) {   // FXIN_STATE
     if (len >= 7 && d[5] <= 1) fxin::on_state(d[5]);

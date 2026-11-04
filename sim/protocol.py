@@ -398,13 +398,32 @@ slots 1-based in two 7-bit bytes (n >> 7, n & 0x7F), 0 = none. The hello's (35) 
     04 RELOAD ALL <kit>   the KIT menu's RELOAD set to ALL
 4D 01 <dropped hi lo> <over hi lo>: rui1052d (round 6) - key presses 0026 dropped (each with its release, its queue
     full) and its waits past a stock dump run out (2 s with the flag never clear); on a change, at most once a second.
-0x51 is the next free id above these (0x4E, 0x4F the bridge, 0x50 the mix report below); 0x45 is the arpeggiator's (above).
+0x54 is the next free id above these (0x51 STORE, 0x52-0x53 reserved for it, below) (0x4E, 0x4F the bridge, 0x50 the mix report below); 0x45 is the arpeggiator's (above).
 """
 PRJ = 0x4B   # the project slot reports (above)
 # 0x50 (2026-11-01, sidecar-mods 0030-fx-in, the master FX's through mode): Rytm -> host <pan 0..7> <route bit 7> <route bits 0..6>:
 # each stem's PAN as it plays (p-locks, LFOs; 0..127, 64 centre; a shared voice's owning track), the route byte 0x80006466 (a
 # set bit: that voice off the main bus). On a change, at most 20 a second, and once a second; core/fx/master.h.
 MIX_REPORT = 0x50
+
+# 0x51 STORE (2026-11-04, the Storage phase: core/kv/kv.h, core/locks/locks.h; sidecar-mods 0032's store client). 0x52,
+# 0x53 reserved for it. Generic: the Pi keeps records and lock tables for any Rytm mod and knows nothing of their
+# meaning. Every message F0 7D 52 54 51 01 <op> <body> F7. A handle is 3 bytes (h >> 14, h >> 7 & 7F, h & 7F), a project
+# 5 (32 bits, 4 + 4 x 7), lengths and offsets 2 (14 bits), data 7-in-8 (a byte of high bits, then up to 7 bytes).
+#   records (the card core's, /.rytm/store/<project 8 hex>/<scope>-<handle 4 hex>.bin, atomic writes):
+#   Rytm -> host  00 HELLO <project 5> | 01 READ <seq> <scope> <handle 3> | 02 WRITE <seq> <scope> <total 2> <offset 2> <data>
+#                 03 KEEP <seq> <final> <n> {<scope> <handle 3>} x n   (final: every record of the project not listed goes)
+#   host -> Rytm  40 HELLO <version> <records 2> | 41 DATA <seq> <scope> <handle 3> <total 2> <offset 2> <data>
+#                 42 WRITTEN <seq> <scope> <new handle 3> | 43 KEPT <seq> <removed 2> | 7F STATUS <seq | 7F> <code>
+#                 codes: 0 ok 1 missing 2 no project 3 full 4 card error 5 bad 6 too big. Handles are versions: a WRITE
+#                 is always a new record under a new handle.
+#   locks (the control core's; played on 2C ticks, a tick's fifth byte bit 0 = the step holds a trig; values to the
+#   processor slots, core/proc set_param):
+#   Rytm -> host  10 SET <set 0..7> <track 0..12> <slot> <first param> <n 1..16> | 11 BASE <set> <first> <n> {<hi> <lo>} x n
+#                 12 LOCK <set> <step> <param> <hi> <lo> | 13 CLEAR <set> <step|7F> <param|7F>
+#                 14 TABLE <set> <n> {<step> <mask 3> {<hi> <lo>} x popcount} | 15 DROP <set>
+#                 A hello (35) forgets every set: the Rytm declares them again.
+STORE = 0x51
 
 
 def mix_report(pans, route):
