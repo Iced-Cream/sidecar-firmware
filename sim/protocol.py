@@ -413,6 +413,8 @@ MIX_REPORT = 0x50
 #   records (the card core's, /.rytm/store/<project 8 hex>/<scope>-<handle 4 hex>.bin, atomic writes):
 #   Rytm -> host  00 HELLO <project 5> | 01 READ <seq> <scope> <handle 3> | 02 WRITE <seq> <scope> <total 2> <offset 2> <data>
 #                 03 KEEP <seq> <final> <n> {<scope> <handle 3>} x n   (final: every record of the project not listed goes)
+#                 04 NAME <project 5> <len> <name, up to 16>   the project's name, after each HELLO's answer and on a
+#                    change (no answer; the Pi keeps it for its log, /status and web page; replaces 10 on this link)
 #   host -> Rytm  40 HELLO <version> <records 2> | 41 DATA <seq> <scope> <handle 3> <total 2> <offset 2> <data>
 #                 42 WRITTEN <seq> <scope> <new handle 3> | 43 KEPT <seq> <removed 2> | 7F STATUS <seq | 7F> <code>
 #                 codes: 0 ok 1 missing 2 no project 3 full 4 card error 5 bad 6 too big. Handles are versions: a WRITE

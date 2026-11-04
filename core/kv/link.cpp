@@ -49,10 +49,45 @@ void out(const uint8_t* m, int n) {
 Service s_svc(&s_store, out);
 }  // namespace
 
+namespace {
+char s_name[kNameMax + 1];
+uint32_t s_name_project;
+NameFn s_name_fn[2];
+
+// 04 NAME <project 5> <len> <name>: kept if well formed (7-bit, len <= 16, printable; a NUL ends it early)
+bool name(const uint8_t* m, int n) {
+  const uint8_t* b = m + 7;
+  int bn = n - 8;
+  if (bn < 6 || b[0] > 0x0F || b[5] > kNameMax || bn != 6 + b[5] || m[n - 1] != 0xF7) return false;
+  for (int i = 0; i < bn; ++i) if (b[i] & 0x80) return false;
+  char nm[kNameMax + 1];
+  int k = 0;
+  for (int i = 0; i < b[5] && b[6 + i]; ++i) nm[k++] = b[6 + i] >= 0x20 ? (char)b[6 + i] : '?';
+  nm[k] = 0;
+  uint32_t p = (uint32_t)b[0] << 28 | (uint32_t)b[1] << 21 | (uint32_t)b[2] << 14 | (uint32_t)b[3] << 7 | b[4];
+  ++s_st.names;
+  if (p == s_name_project && !strcmp(nm, s_name)) return true;
+  memcpy(s_name, nm, (size_t)k + 1);
+  s_name_project = p;
+  for (NameFn f : s_name_fn) if (f) f(s_name, p);
+  return true;
+}
+}  // namespace
+
+const char* project_name(uint32_t* project) {
+  if (project) *project = s_name_project;
+  return s_name;
+}
+bool on_name(NameFn f) {
+  for (NameFn& g : s_name_fn) if (!g || g == f) { g = f; return true; }
+  return false;
+}
+
 bool from_host(const uint8_t* m, int n) {
   if (n < 8 || m[4] != kCmd) return false;
   ++s_st.in;
   if (locks::is_lock_op(m[6])) return locks::sysex(m, n);   // the control core's own: the ticks arrive here too
+  if (m[6] == kOpName) return name(m, n);                    // the control core's too: nothing on the card
   // the companion's HELLO starts its session: the sets it declared before are gone with it (it declares them again
   // once answered). Here and not at the screen's 35, which may come after the HELLO and would wipe the new sets.
   if (m[6] == kOpHello) locks::reset();
@@ -105,6 +140,8 @@ int host_step(int) { return 0; }
 void hello() {}
 Stats stats() { return Stats{}; }
 bool attach_generic() { return false; }
+const char* project_name(uint32_t* project) { if (project) *project = 0; return ""; }
+bool on_name(NameFn) { return false; }
 #endif
 
 }  // namespace link
