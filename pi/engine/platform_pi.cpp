@@ -1,5 +1,5 @@
 // pi/engine/platform_pi.cpp - core/platform.h on Circle (Circle's flags): FatFs files, the ARM generic timer
-// (CNTPCT, 54 MHz on the Pi 4) for the clock and cycles, Circle's logger, the heap for the sample RAM, and the
+// (CNTPCT, 54 MHz on the Pi 4) for the clock and cycles, Circle's logger, and the
 // few C library pieces the core's hosted code needs that Circle does not have (printf to a buffer, strrchr).
 #include <circle/alloc.h>
 #include <circle/koptions.h>
@@ -233,11 +233,7 @@ extern "C" int core_snprintf(char* out, size_t n, const char* fmt, ...) {
   return k;
 }
 
-// The calling core (0..3): the voices' shared render state is per core (RYTM_RENDER_CORES=4 in the hosted build: the
-// 6-OP FM reload stage and bank, GRAIN's budget, stmlib's Random, rand()), since cores 1 and 2 render at once.
-extern "C" int rytm_render_core() { return (int)CMultiCoreSupport::ThisCore(); }
-
-// memchr: the plugin loader's (teensy/libraries/RytmPlugins/src, hosted: core/user/um.cpp)
+// memchr (wifi_conf.cpp's)
 extern "C" void* memchr(const void* p, int c, size_t n) {
   const unsigned char* s = (const unsigned char*)p;
   for (; n--; ++s)
@@ -264,7 +260,6 @@ uint32_t now_us() { return (uint32_t)scale(ticks(), 1000000); }
 uint32_t now_ms() { return (uint32_t)scale(ticks(), 1000); }
 uint32_t cycles() { return (uint32_t)ticks(); }
 uint32_t cycles_per_second() { return (uint32_t)freq(); }
-uint32_t random_seed() { return (uint32_t)ticks(); }
 
 void log(const char* fmt, ...) {
   if (g_bQuietLog) {   // a capture is dumping (console.h)
@@ -279,55 +274,6 @@ void log(const char* fmt, ...) {
   CLogger::Get()->Write("core", LogNotice, "%s", b);
 }
 
-// The sample RAM: sampleram=MB in cmdline.txt (default 256; 0 off), from the low heap (malloc's). At most what
-// that heap has free less 128 MB for USB and the rest: an allocation past its end is Circle's "Out of memory" panic.
-uint32_t sample_ram_total() {
-  size_t mb = CKernelOptions::Get()->GetAppOptionDecimal("sampleram", 256);
-  size_t room = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_LOW) >> 20;
-  room = room > 128 ? room - 128 : 0;
-  if (mb > room) mb = room;
-  if (mb > 1024) mb = 1024;
-  return (uint32_t)(mb << 20);
-}
-// The core allocates its arena once at boot (pool/sample_ram_pool.cpp). Circle does not reuse a freed block over
-// its largest bucket (512 KB): freeing and allocating the arena again would leak it.
-void* sample_ram_alloc(uint32_t bytes) { return malloc(bytes); }
-void sample_ram_free(void* p) { free(p); }
-// MULTISAMPLE's instruments: msampram=MB (default 512), from the high heap (above 1 GB: the Pi 4/5 with 2 GB or more)
-// less 64 MB, else the low heap less 192 MB. One block at boot (never freed: see sample_ram_alloc).
-uint64_t msamp_ram_total() {
-  uint64_t mb = CKernelOptions::Get()->GetAppOptionDecimal("msampram", 512);
-  uint64_t hi = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_HIGH) >> 20;
-  uint64_t room = hi > 64 ? hi - 64 : 0;
-  if (!room) {
-    uint64_t lo = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_LOW) >> 20;
-    room = lo > 192 ? lo - 192 : 0;
-  }
-  if (mb > room) mb = room;
-  return mb << 20;
-}
-void* msamp_ram_alloc(uint64_t bytes) { return CMemorySystem::HeapAllocate(bytes, HEAP_ANY); }
-// The pool RAM (core/pool/pcache.h): poolram=MB, default 1024 MB (a 2 / 4 GB board) or 3072 MB (8 GB), at most the
-// high heap's free space (else the low heap's) less 64 MB at the time it is taken (after the machines' own buffers).
-uint64_t pool_ram_budget() {
-  uint64_t total = CMemorySystem::Get()->GetMemSize() >> 20;
-  uint64_t def = total >= 6000 ? 3072 : 1024;
-  uint64_t mb = CKernelOptions::Get()->GetAppOptionDecimal("poolram", (unsigned)def);
-  uint64_t hi = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_HIGH) >> 20;
-  uint64_t room = hi > 64 ? hi - 64 : 0;
-  if (!room) {
-    uint64_t lo = CMemorySystem::Get()->GetHeapFreeSpace(HEAP_LOW) >> 20;
-    room = lo > 192 ? lo - 192 : 0;
-  }
-  if (mb > room) mb = room;
-  return mb << 20;
-}
-uint64_t card_free_bytes() {   // f_getfree walks the FAT once (cached by FatFs after that)
-  DWORD nFree;
-  FATFS* pFs;
-  if (f_getfree("SD:", &nFree, &pFs) != FR_OK) return 0;
-  return (uint64_t)nFree * pFs->csize * 512;
-}
 
 // ---- files
 static Impl& I(unsigned char* p) { return *reinterpret_cast<Impl*>(p); }
@@ -412,8 +358,8 @@ File& File::operator=(const File& o) {
 // A file call on the control core waits for FatFs's volume lock, so for whatever core 0 is doing on the card: its time goes to
 // the slow-pass record (core/msamp/cardq.h here_take). The rest of the card's calls run on the card core, none is meant for this one.
 struct CardHere {
-  uint32_t t = rytm_render_core() == 3 ? core::now_us() : 0;
-  ~CardHere() { if (rytm_render_core() == 3) core::cardq::here_note(core::now_us() - t); }
+  uint32_t t = CMultiCoreSupport::ThisCore() == 3 ? core::now_us() : 0;
+  ~CardHere() { if (CMultiCoreSupport::ThisCore() == 3) core::cardq::here_note(core::now_us() - t); }
 };
 
 bool File::open(const char* path, int mode) {

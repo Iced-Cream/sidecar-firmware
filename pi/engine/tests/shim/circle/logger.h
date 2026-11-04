@@ -1,3 +1,3 @@
-// pi/engine/tests/shim/circle/logger.h - guard.h only names CLogger (LogNews lives in guard.cpp, not tested here).
+// pi/engine/tests/shim/circle/logger.h - the CLogger name for the headers the gadget and HID tests include.
 #pragma once
 class CLogger;

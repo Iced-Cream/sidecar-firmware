@@ -54,16 +54,12 @@ private:
 	static boolean Core0Command (const char *pCmd, void *pParam);	// the console's, for the Sidecar
 	static void ToHost (const u8 *pData, int nLength);	// the engine's SysEx for the host (control core)
 	void SelfCheck (void);
-	void LogBench (void);
-	void SetSelfTest (boolean bOn, const char *pWhy);
 	void LogStats (void);
-	void LoadClock (boolean bCard);				// cpumhz= (/.rytm/cpu.txt, cmdline): at boot, before the bench
-	void SetClock (unsigned nSettingMHz);			// the CPU clock option (cpuclock.h): the clock, the voice budget, the log
-	void FollowClock (void);				// the stats tick: the budget follows the ARM clock read back
+	void LoadClock (boolean bCard);				// cpumhz= (/.rytm/cpu.txt, cmdline): at boot
+	void SetClock (unsigned nSettingMHz);			// the CPU clock option (cpuclock.h): the clock and the log
+	void FollowClock (void);				// the stats tick: the ARM clock read back
 	void MeasureClock (void);				// every 10 s: the clock the firmware measures, against the one it reports
 	unsigned AskedMHz (void) const;				// the clock the setting asks for on this board (cpuclock::asked_mhz)
-	void ApplyBudget (unsigned nMHz, boolean bLog);		// the voice guard's budget for that clock (voicebudget= scaled by it)
-	void LogClockRescale (void);				// the boot bench's voices a core, rescaled to the clock now (not re-measured)
 	void ThermalStep (unsigned nTempC);			// the temperature warning (thermal.h): once a second, from LogStats
 	void ReadPower (boolean bLog);				// the supply (power_state.h): at boot, every 10 s, logged on a change and once a minute
 	void StopAndReboot (const char *pWhy, boolean bTryboot = FALSE);
@@ -109,18 +105,15 @@ private:
 	volatile unsigned	m_nTempC = 0;		// the last reading, 0: none yet (plain reads from the web task)
 	thermal::Popup		m_ThermalPopup;
 	// the CPU clock option (cpuclock.h): the setting (1500 = the board's full clock), the clock the cores run at (read back
-	// when it was set, then after each CCPUThrottle::Update and once a second: FollowClock), and the voice budget for it; capped: below the full clock, so Circle's Update does not run (it
+	// when it was set, then after each CCPUThrottle::Update and once a second: FollowClock); capped: below the full clock, so Circle's Update does not run (it
 	// would raise the clock again when the SoC is cool)
 	unsigned		m_nClockSetting = 1500;
 	volatile unsigned	m_nClockMHz = 0;
-	volatile unsigned	m_nBudgetUs = 0;
 	volatile unsigned	m_nMeasuredMHz = 0;	// MeasureClock's last reading, 0: none yet
 	volatile unsigned	m_nAsleepPct[4] = {};	// the last second's share of each core in a counted wfe, and the wakes
 	volatile unsigned	m_nWakes[4] = {};
 	boolean			m_bClockCapped = FALSE;
 	unsigned		m_nThrottleAt = 0;	// CTimer::GetClockTicks () of the last CCPUThrottle::Update (main loop)
-	unsigned		m_nBenchMHz = 0;			// the clock the boot bench ran at, and its worst figure
-	unsigned		m_nBenchBp[CEngineCores::BenchMachines];	// per machine (1/100 % of a core a voice), for the rescale
 	boolean			m_bWeb;			// web=1 and the network is up
 	volatile boolean	m_bSaveClock;		// cpumhz= changed: /.rytm/cpu.txt written by core 0's loop (tmp + rename)
 	void SaveClock (void);

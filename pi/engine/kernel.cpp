@@ -1,7 +1,6 @@
 // pi/engine/kernel.cpp - the Pi engine (docs/pi-engine.md). Core 0: USB (the Rytm's Overbridge stream in the xHCI
-// interrupt, its USB MIDI read-only), the network (Circle's scheduler; the TCP link to rytm-emu, tcp_link.h, with
-// link=tcp), the console, the stats, the clean stop before a reboot; without a Rytm, the self-test transport
-// (selftest.h). Cores 1-3: cores.cpp.
+// interrupt, its USB MIDI, the USB-A MIDI devices), the network (Circle's scheduler; the TCP link to rytm-emu, tcp_link.h,
+// with link=tcp), the console, the stats, the card queue, the clean stop before a reboot. Cores 1-3: cores.cpp.
 #include "kernel.h"
 #include "idlewait.h"
 #include "mbtrace.h"
@@ -33,7 +32,6 @@ static boolean SdWriteWhole (const char *pPath, const char *pData, unsigned n)
 	return core::fmt::write_atomic (pPath, pData, n) ? TRUE : FALSE;
 }
 #include "shared.h"
-#include "midiout_q.h"	// the MIDI machine's USB-A queues
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "card_pass.h"	// MIDI between the card requests
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
@@ -230,20 +228,13 @@ boolean CKernel::Initialize (void)
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
 	BootStep (3);
 	m_Usb.SetSend (m_Options.GetAppOptionDecimal ("tohost", 1) != 0);	// tohost=0: the replies dropped, as before
-	const boolean bBench = FALSE;		// (no machine to bench)
-	LoadClock (bCard);				// the CPU clock option, before the bench: the bench measures the clock the engine plays at
-	// fifo=: the target for every link; without it each link's own (UseLink: FifoUsb, FifoTcp). split= 4 is the
-	// plan's default (docs/pi-engine.md "Measurements")
+	LoadClock (bCard);				// the CPU clock option (cpumhz=)
+	// fifo=: the target for every link; without it each link's own (UseLink: FifoUsb, FifoTcp)
 	if (m_Options.GetAppOptionString ("fifo", 0) != 0) CEngineCores::FixFifoTarget ();
-	CEngineCores::Configure (m_Options.GetAppOptionDecimal ("fifo", FifoUsb),
-				 strcmp (m_Options.GetAppOptionString ("notes", "off"), "on") == 0
-				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
-	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
+	CEngineCores::Configure (m_Options.GetAppOptionDecimal ("fifo", FifoUsb));
 	CEngineCores::SetIdleWfe (m_Options.GetAppOptionDecimal ("idlewfe", 1) != 0);	// docs/pi-engine.md "Idle sleep"
-	ApplyBudget (m_nClockMHz, TRUE);			// the voice guard's budget, for the clock the engine runs at
 	m_Console.Initialize ();
 	BootStep (4);
-	CEngineCores::BenchStart (bBench);
 	if (!m_Cores.Initialize ()) return FALSE;		// cores 1-3 start (cores.cpp)
 	BootStep (5);
 	BootStep (6);
@@ -525,8 +516,8 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 			pThis->SetClock (n);
 			pThis->m_bSaveClock = TRUE;	// into /.rytm/cpu.txt (audit 2026-10-26: it was never saved)
 		}
-		pThis->m_Logger.Write (From, LogNotice, "cpu: setting %u MHz, ARM clock %u MHz, voice budget %u us", pThis->m_nClockSetting,
-				       pThis->m_nClockMHz, pThis->m_nBudgetUs);
+		pThis->m_Logger.Write (From, LogNotice, "cpu: setting %u MHz, ARM clock %u MHz", pThis->m_nClockSetting,
+				       pThis->m_nClockMHz);
 		return TRUE;
 	}
 	return pThis->m_pSidecar != 0 && pThis->m_pSidecar->Command (pCmd);
@@ -560,12 +551,11 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
 {
 	((CKernel *) pContext)->m_pMIDI = 0;
-	g_bRytmGone = true;				// the MIDI machine's USB notes: no hello will end them (the control core's)
+	g_bRytmGone = true;				// the link reset (the control core's)
 }
 
-// The Pi's own keyboards (core/keys.h): every other USB MIDI device in the USB-A ports, up to four, as sources 0..3 (in
-// plug order), their channel messages to the control core (g_KeysIn); and the computer's notes from the Sidecar gadget
-// (source 4). Gone on unplug (Circle's removed handler, from UpdatePlugAndPlay on core 0's loop: IRQs masked for the
+// The USB-A MIDI devices (core/devmidi.h): every other USB MIDI device in the USB-A ports, up to four, as sources 0..3
+// (in plug order), their channel and realtime messages to the control core (g_KeysIn). Gone on unplug (Circle's removed handler, from UpdatePlugAndPlay on core 0's loop: IRQs masked for the
 // queue, whose other producers are the IRQs).
 static const unsigned MaxKeyboards = 4;
 static CDevice *volatile s_pKeyboard[MaxKeyboards];
@@ -582,9 +572,6 @@ static void KeysPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength, u
 	u8 s = pPacket[0];
 	if (s >= 0xF0 ? !(s == 0xF8 || s == 0xFA || s == 0xFB || s == 0xFC) : nLength < 2) return;	// channel messages, realtime
 	KeysPush ((u32) i << 24 | (u32) s << 16 | (u32) (nLength > 1 ? pPacket[1] : 0) << 8 | (nLength > 2 ? pPacket[2] : 0));
-	return;
-	if (nLength < 2 || pPacket[0] < 0x80 || pPacket[0] >= 0xF0 || i >= MaxKeyboards) return;	// channel messages only
-	KeysPush ((u32) i << 24 | (u32) pPacket[0] << 16 | (u32) pPacket[1] << 8 | (nLength > 2 ? pPacket[2] : 0));
 }
 static void KeysRemoved (CDevice *pDevice, void *pContext)
 {
@@ -595,67 +582,13 @@ static void KeysRemoved (CDevice *pDevice, void *pContext)
 	KeysPush ((u32) i << 24 | 0xF4u << 16);
 	LeaveCritical ();
 }
-// The auto-sampler's notes for an external synth and the MIDI machine's (g_AsampMidi, shared.h): port 1 the computer's (the
-// Sidecar gadget's MIDI IN), 2 the first USB-A device's (a synth or an interface there), 3 every USB-A device's (the MIDI machine,
-// core/midim/midim.h); none there: dropped. USB-A never waits: each device has a queue (midiout_q.h) and one transfer in flight
-// (circle-midi-async.patch), so a device that does not drain costs only its own queue; what it cannot take is shed, note-offs last.
-// A failed transfer's note-offs go again, 100 ms later.
-static MidiOutQ s_OutQ[MaxKeyboards];
-static void AsampMidiSend (CSidecarGadget *pSidecar)
-{
-	u32 w;
-	while (g_AsampMidi.pop (&w))
-	{
-		unsigned nPort = (w >> 4) & 0x0F;
-		w &= ~0xF0u;				// cable 0
-		if (nPort == 1)
-		{
-			if (pSidecar != 0) pSidecar->MIDIToComputer (w);
-		}
-		else if (nPort == 2 || nPort == 3)
-			for (unsigned i = 0; i < MaxKeyboards; i++)
-			{
-				if (s_pKeyboard[i] == 0) continue;
-				s_OutQ[i].push (w);
-				if (nPort == 2) break;
-			}
-	}
-	for (unsigned i = 0; i < MaxKeyboards; i++)
-	{
-		CUSBMIDIDevice *p = (CUSBMIDIDevice *) s_pKeyboard[i];
-		if (p == 0)
-		{
-			s_OutQ[i].clear ();
-			continue;
-		}
-		unsigned nState = p->GetSendState ();
-		if (nState == 1) continue;
-		unsigned nNow = CTimer::GetClockTicks ();	// (1 MHz)
-		if (nState == 2)
-		{
-			s_OutQ[i].failed ();
-			s_OutQ[i].hold (nNow);
-		}
-		if (s_OutQ[i].held (nNow)) continue;
-		u32 Batch[MidiOutQ::kBatch];
-		unsigned n = s_OutQ[i].pop (Batch);
-		if (n != 0 && !p->SendEventPacketsAsync ((const u8 *) Batch, n * 4))
-		{
-			s_OutQ[i].failed ();
-			s_OutQ[i].hold (nNow);
-		}
-	}
-}
-
-// The computer's packet (gadget IRQ): its notes, sustain and all-notes-off go to core::keys (which plays them here or
-// passes them on to the Rytm); everything else to the Rytm as before
 static TUsbBox BoxOf (CDevice *p)
 {
 	return usb_box (p->GetProperty (CDevice::PropertyVendor), p->GetProperty (CDevice::PropertyProduct));
 }
 
-// The Rytm's USB MIDI interface (Circle's umidiN) once enumerated: read only. Another Elektron box: left alone (usb_box.h). Every other USB MIDI device: a keyboard.
-// While the Rytm is missing every pass, else four times a second (a keyboard plugged in).
+// The Rytm's USB MIDI interface (Circle's umidiN) once enumerated: read only. Another Elektron box: left alone (usb_box.h). Every other USB MIDI device: a USB-A MIDI
+// device (core/devmidi.h). While the Rytm is missing every pass, else four times a second (a device plugged in).
 void CKernel::UpdateMIDI (void)
 {
 	static unsigned s_nScanAt;
@@ -702,7 +635,7 @@ void CKernel::UpdateMIDI (void)
 		static CDevice *s_pRefused;
 		if (i == MaxKeyboards)
 		{
-			if (s_pRefused != p) m_Logger.Write (From, LogWarning, "keys: %s not used (%u keyboards at most)", (const char *) Name, MaxKeyboards);
+			if (s_pRefused != p) m_Logger.Write (From, LogWarning, "usba: %s not used (%u MIDI devices at most)", (const char *) Name, MaxKeyboards);
 			s_pRefused = p;
 			continue;
 		}
@@ -848,8 +781,7 @@ unsigned CKernel::AskedMHz (void) const
 // only knows its minimum and maximum), and CCPUThrottle::Update is no longer called: it would put the maximum back
 // whenever the SoC is cool. The firmware's own limits (80 C soft, 85 C hard) stay. Back at 1500: CCPUThrottle's SetSpeed
 // (maximum) and its Update again. One mailbox call to set it and one to read it back, on core 0, when the setting changes:
-// a tap during playback can be heard once. The voice budget follows (ApplyBudget): raised before the clock drops, lowered
-// after it rises, so a voice is never judged against a budget for the wrong clock.
+// a tap during playback can be heard once.
 void CKernel::SetClock (unsigned nSettingMHz)
 {
 	nSettingMHz = cpuclock::normalize (nSettingMHz);
@@ -861,7 +793,6 @@ void CKernel::SetClock (unsigned nSettingMHz)
 	}
 	const unsigned nHz = cpuclock::target_hz (nSettingMHz, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
 	const boolean bFull = nHz >= m_CPUThrottle.GetMaxClockRate ();
-	if (m_nClockMHz != 0 && nHz / 1000000 < m_nClockMHz) ApplyBudget (nHz / 1000000, FALSE);	// lowering: the budget first
 	if (bFull)
 	{
 		m_CPUThrottle.SetSpeed (CPUSpeedMaximum, FALSE);
@@ -881,56 +812,7 @@ void CKernel::SetClock (unsigned nSettingMHz)
 	CTimer::SimpleusDelay (355);				// (the clock's transition: Circle waits as long)
 	m_nClockMHz = (m_CPUThrottle.GetClockRate () + 500000) / 1000000;
 	if (m_nClockMHz == 0) m_nClockMHz = nHz / 1000000;
-	ApplyBudget (m_nClockMHz, TRUE);
-	LogClockRescale ();
-}
-
-// The guard's budget (guard.h): voicebudget= (50 % of a 12-frame block by default, the share measured at 1500 MHz) scaled
-// by 1500 / the clock (cpuclock.h budget_ticks), so the same work is allowed at any clock. At the full 1500 MHz the line
-// is the one test-on-pi.sh expects.
-void CKernel::ApplyBudget (unsigned nMHz, boolean bLog)
-{
-	(void) nMHz, (void) bLog;		// no voices: no budget to scale
-	m_nBudgetUs = 0;
-	return;
-	u64 nCntFrq;
-	asm volatile ("mrs %0, cntfrq_el0" : "=r" (nCntFrq));
-	unsigned nPct = m_Options.GetAppOptionDecimal ("voicebudget", 50);
-	nPct = nPct < 5 ? 5 : nPct > 100 ? 100 : nPct;
-	const unsigned nTicks = cpuclock::budget_ticks (nCntFrq, nPct, nMHz);
-	g_Guard.SetBudget (nTicks);
-	g_Guard.SetBlock ((unsigned) (nCntFrq * 12 / 48000));
-	m_nBudgetUs = (unsigned) (nTicks / (nCntFrq / 1000000));
-	if (!bLog) return;
-	const unsigned nBlock = (unsigned) (nCntFrq * 12 / 48000);
-	if (nTicks == cpuclock::budget_ticks (nCntFrq, nPct, cpuclock::kRefMHz))
-		m_Logger.Write (From, LogNotice, "guard: voice budget %u us (%u %% of a 12-frame block)", m_nBudgetUs, nPct);
-	else
-		m_Logger.Write (From, LogNotice, "guard: voice budget %u us (%u %% of a 12-frame block: voicebudget %u %% scaled for %u MHz)",
-				m_nBudgetUs, (unsigned) ((u64) nTicks * 100 / nBlock), nPct, nMHz);
-}
-
-// The boot bench ran at m_nBenchMHz; the figures scale with the clock, so a change of the setting says what they come to
-// now (a linear estimate: the memory-bound parts scale less, and it is not re-measured: the bench loads every core).
-void CKernel::LogClockRescale (void)
-{
-	return;					// (the generic engine benches nothing)
-	if (m_nBenchMHz == 0 || m_nClockMHz == 0) return;
-	CString Line;
-	for (unsigned m = 0; m < CEngineCores::BenchMachines; m++)
-	{
-		unsigned nVoices = m_nBenchBp[m] ? 8000 / m_nBenchBp[m] : 999;
-		CString One;
-		One.Format (" %s %u->%u", CEngineCores::BenchMachine[m], nVoices, cpuclock::voices_at (nVoices, m_nBenchMHz, m_nClockMHz));
-		Line.Append (One);
-		if (m == CEngineCores::BenchMachines / 2 - 1 || m == CEngineCores::BenchMachines - 1)
-		{
-			m_Logger.Write (From, LogNotice, "bench rescaled: voices a core at 80 %% (%u -> %u MHz, linear, not re-measured):%s",
-					m_nBenchMHz, m_nClockMHz, (const char *) Line);
-			m_Timer.MsDelay (2);
-			Line = "";
-		}
-	}
+	m_Logger.Write (From, LogNotice, "cpu: ARM clock %u MHz (setting %u)", m_nClockMHz, m_nClockSetting);
 }
 
 // The temperature warning (thermal.h): on at 80 C, off below 75 C, from the second's one reading. Logged once per
@@ -955,27 +837,24 @@ void CKernel::ThermalStep (unsigned nTempC)
 	}
 }
 
-// The voice budget follows the ARM clock the cores really run at, read back once a second here (one mailbox call, as
-// the temperature above). The setting is not enough: at 1500 Circle's CCPUThrottle::Update (the main loop) drops the
-// clock to its minimum - 600 MHz on the Pi 4 - when the SoC passes its enforced temperature and raises it again 3 C
-// below, and nothing told the budget, so every voice was judged against the 1500 MHz budget at 600 and the guard muted
-// voices that were only slow because the clock was. Called right after each CCPUThrottle::Update that can act (the main
-// loop) and once a second here, so the budget follows a throttle at once and anything else within a second.
+// The ARM clock the cores really run at, read back once a second here (one mailbox call, as the temperature above) and
+// right after each CCPUThrottle::Update that can act (the main loop): at 1500 Circle's Update drops the clock to its
+// minimum - 600 MHz on the Pi 4 - when the SoC passes its enforced temperature and raises it again 3 C below. Logged
+// when it moves; /status and the thermal popup's text read it.
 void CKernel::FollowClock (void)
 {
 	unsigned nHz;
 	{ mbtrace::Scope Mb (4); nHz = m_CPUThrottle.GetClockRate (); }
 	const unsigned nMHz = cpuclock::follow_mhz (m_nClockMHz, nHz);
 	if (nMHz == 0) return;
-	m_Logger.Write (From, LogWarning, "cpu: ARM clock %u MHz (was %u, setting %u, SoC %u C): the voice budget follows",
-			nMHz, m_nClockMHz, m_nClockSetting, m_nTempC);
+	m_Logger.Write (From, LogWarning, "cpu: ARM clock %u MHz (was %u, setting %u, SoC %u C)", nMHz, m_nClockMHz,
+			m_nClockSetting, m_nTempC);
 	m_nClockMHz = nMHz;
-	ApplyBudget (nMHz, TRUE);
 }
 
 // What the firmware measures, not what it says it set: GET_CLOCK_RATE repeats the rate asked for, so the firmware's own
 // throttle (80 C soft, 85 C hard, undervoltage) is invisible to FollowClock. One mailbox call, every 10 s, not per /status
-// request; logged when the two part and when they agree again. Only reported: the voice budget stays on FollowClock's.
+// request; logged when the two part and when they agree again. Only reported.
 void CKernel::MeasureClock (void)
 {
 	static boolean s_bOff = FALSE;
@@ -1076,13 +955,9 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
-		g_bComputerMidi = m_pSidecar != 0;
-		AsampMidiSend (m_pSidecar);
-		if (m_Console.TakeSelfTest () >= 0) m_Logger.Write (From, LogWarning, "selftest: none in the generic engine (no voices)");
 		// (a capped clock is held: Update would raise it again when cool.) CCPUThrottle::Update acts once every 4 s
 		// and is a no-op in between; it is called on that cadence here (4 s + 10 ms since our last call, so its own
-		// 4 s gate is open every time) so that the clock it may just have changed is read back at once and the voice
-		// budget follows within microseconds instead of at the next stats tick (FollowClock, also there)
+		// 4 s gate is open every time) so that the clock it may just have changed is read back at once (FollowClock)
 		if (!m_bClockCapped && m_Timer.GetClockTicks () - m_nThrottleAt >= 4 * CLOCKHZ + CLOCKHZ / 100)
 		{
 			m_nThrottleAt = m_Timer.GetClockTicks ();
@@ -1099,7 +974,6 @@ void CKernel::Run (void)
 			card_pass (8, [] { mbtrace::Scope Mb (16, 200); return bridge::card_service (1); },
 				   [this]
 				   {
-					AsampMidiSend (m_pSidecar);
 					if (m_pTransport == &m_Usb) { mbtrace::Scope Mb (14, 200); m_Usb.Poll (); }
 				   });
 		};
@@ -1128,9 +1002,7 @@ void CKernel::Run (void)
 			crumb::Section Cs (24);
 			LogStats ();
 		}
-		asm volatile ("dsb sy; sev");			// core 3's heartbeat: the drone and card work run without traffic
-		// the self-test's pacer: 7 frames are 146 us. A busy wait never yields, so the network's tasks starve while
-		// it runs - fine only because the self-test is refused under link=tcp (SetSelfTest)
+		asm volatile ("dsb sy; sev");			// core 3's heartbeat: its tick and card work run without traffic
 		{
 			unsigned t = m_Timer.GetClockTicks ();
 			{

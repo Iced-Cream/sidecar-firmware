@@ -1,7 +1,6 @@
-// pi/engine/cores.h - the engine's cores (spec "The Pi engine at run time"): cores 1 and 2 render voices 0-3 and
-// 4-7 of each block (cmdline split=N moves the boundary); core 3 runs the control loop - the host's MIDI bytes and the console's commands into the
-// engine core, blocks while the output FIFO is below its target, card work (DSP SAMPLE, the project) otherwise.
-// Core 0 is the kernel's: USB, the console, the stats.
+// pi/engine/cores.h - the engine's cores: cores 1 and 2 idle (in wfe); core 3 runs the control loop - the Rytm's MIDI
+// bytes into the host link's router (bridge.h), the USB-A MIDI devices, the console's commands, the generic tick and
+// the card's idle saves. Core 0 is the kernel's: USB, the OUT fill, the network, the console, the stats, the card queue.
 #ifndef _cores_h
 #define _cores_h
 #include <circle/memory.h>
@@ -17,32 +16,11 @@ public:
 		u64 nBusy[4];			// ticks working, per core
 		u64 nSleep[4];			// ticks asleep in a counted wfe, per core
 		unsigned nWakes[4];		// how many of those wfe returned
-		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)
-		u64 nVoice[8];			// touch2: render ticks per voice (the display's STATUS page)
-		unsigned nBlocks, nMaxBlockUs, nMaxPassUs, nFifoMin, nFifoMax, nMidiBytes, nSysEx, nNotes, nNoteChans;
-	};
-
-	// The boot bench (bridge::bench, docs/pi-engine.md "Measurements"): each machine on one voice, on every core
-	// in turn - core 0 in the kernel's Initialize (BenchCore (0)), then cores 1, 2 and 3 as each starts, before
-	// its loop (one core at a time: the engine core is not re-entrant).
-	static const unsigned BenchMachines = 10;
-	static const char *const BenchMachine[BenchMachines];	// plaits juno fm daisy dsps wt gr livein chop md
-	struct TBench
-	{
-		u64 nTicks;		// render ticks for 1 s of audio (4000 blocks)
-		u32 nWorst;		// the longest block's ticks
-		int nPeak;		// voice 0's largest |sample| (0: the machine rendered silence)
-		u32 nHash;		// its output's FNV-1a: two kernels' benches compared bit for bit
+		unsigned nMaxPassUs, nMidiBytes, nSysEx, nNotes;
 	};
 
 	CEngineCores (CMemorySystem *pMemorySystem) : CMultiCoreSupport (pMemorySystem) {}
-	static void Configure (unsigned nFifoTarget, boolean bNotes);
-	static void SetSplit (unsigned nVoicesCore1);	// cmdline split=N: voices 0..N-1 on core 1, N..7 on core 2
-	static void BenchCore (unsigned nCore);		// this core's bench (core 0 calls it; Run does for 1-3)
-	static void BenchStart (boolean bOn);		// core 0, before Initialize: cores 1-3 bench in turn (or not)
-	static boolean BenchWait (unsigned nMs);	// core 0: every core benched (FALSE: timed out)
-	static unsigned BenchTurn (void);		// the core benching now (4: all done)
-	static const TBench &BenchResult (unsigned nCore, unsigned nMachine);
+	static void Configure (unsigned nFifoTarget);	// the links' FIFO target (fifo=), kept for /status and the TCP link
 	void Run (unsigned nCore) override;
 	static void TakeStats (TStats *pStats);		// core 0
 	static unsigned FifoTarget (void);
@@ -74,8 +52,6 @@ public:
 	static boolean IdleWfe (void);
 	static void EventStream (void);			// the calling core: a wfe sleeps 152 us at most
 	static void Sleep (void);			// core 0: one counted sleep (idlewait::nap)
-	static boolean NotesOn (void);			// notes=, for the web page (read only)
-	static int DroneVoice (void);			// -1 off, 0..7 one voice, 8 all
 	// The transport's default FIFO target (kernel.cpp UseLink: usb FifoUsb, tcp FifoTcp), unless a fifo= (the
 	// cmdline's, or the console's at any time) set it: that one stays until the next fifo=.
 	static void LinkFifoTarget (unsigned nFrames);
@@ -84,7 +60,6 @@ public:
 private:
 	void Worker (unsigned nCore);
 	void Control (void);
-	void RenderBlock (void);
 	void Command (const char *pText);
 };
 

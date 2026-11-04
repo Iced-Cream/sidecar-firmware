@@ -117,9 +117,9 @@ void CConsole::Poll (void)
 			{
 				L->Write (From, LogWarning, "capture: busy, 'w' ignored");
 			}
-			else if (!CObUsb::CaptureStart (m_bSelfTest))
+			else if (!CObUsb::CaptureStart ())
 			{
-				L->Write (From, LogError, "capture: no Overbridge stream and no self-test (or no buffer)");
+				L->Write (From, LogError, "capture: no Overbridge stream (or no buffer)");
 				L->Write (From, LogError, "WAV-ERROR no-stream");
 			}
 			else
@@ -150,7 +150,7 @@ void CConsole::Poll (void)
 	}
 }
 
-// One command line (without the ':'): core 0's own (wdtest, link=, selftest=, the Sidecar's) here, the rest queued for
+// One command line (without the ':'): core 0's own (wdtest, link=, the Sidecar's) here, the rest queued for
 // the control core (cores.cpp). Core 0 only: the serial console and the web page (web.cpp, a task on core 0).
 void CConsole::Command (const char *pText)
 {
@@ -186,14 +186,6 @@ void CConsole::Command (const char *pText)
 		strncpy (m_Link, Cmd.text + 5, sizeof m_Link - 1);
 		m_Link[sizeof m_Link - 1] = 0;
 		m_bLink = TRUE;
-		return;
-	}
-	if (strncmp (Cmd.text, "selftest=", 9) == 0)		// core 0's (kernel.cpp)
-	{
-		const char *v = Cmd.text + 9;
-		m_nSelfTest = strcmp (v, "on") == 0 || strcmp (v, "1") == 0 ? 1
-			    : strcmp (v, "off") == 0 || strcmp (v, "0") == 0 ? 0 : -1;
-		if (m_nSelfTest < 0) L->Write (From, LogWarning, "selftest=on|off, not \"%s\"", v);
 		return;
 	}
 	if (m_pCore0 != 0 && (*m_pCore0) (Cmd.text, m_pCore0Param)) return;	// core 0's (kernel.cpp)

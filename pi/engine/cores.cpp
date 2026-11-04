@@ -1,6 +1,5 @@
-// pi/engine/cores.cpp - cores.h (the engine strip-down 2026-11-04). Nothing renders: cores 1 and 2 start and sleep;
-// core 3 runs the control loop - the Rytm's MIDI bytes into the host link's router (core/generic: the hello, the
-// project, the clock, the screen, STORE, the card browse), the USB-A MIDI devices (core/devmidi), the console's
+// pi/engine/cores.cpp - cores.h. Nothing renders: cores 1 and 2 start and sleep; core 3 runs the control loop - the
+// Rytm's MIDI bytes into the host link's router (core/generic: the hello, the clock, the screen, STORE, the card browse), the USB-A MIDI devices (core/devmidi), the console's
 // commands, the generic tick (the remote screen), the pairing code's popup and the card's idle saves. The audio
 // return's processor slots run on core 0 in the OUT fill (audio_return.h).
 #include "cores.h"
@@ -36,15 +35,11 @@ static volatile u64 s_nBusy[4];
 static volatile u64 s_nSleep[4];
 static volatile unsigned s_nWakes[4];
 static volatile boolean s_bIdleWfe = TRUE;
-static volatile unsigned s_nMaxPass, s_nMidiBytes, s_nNotes, s_nNoteChans;
+static volatile unsigned s_nMaxPass, s_nMidiBytes, s_nNotes;
 static u64 s_nLastTake;
 static unsigned s_nTarget = 96;			// the links' FIFO target: kept for /status (no FIFO is filled here)
 static volatile boolean s_bTargetFixed = FALSE;
 static volatile boolean s_bPoll;
-
-// The generic engine benches nothing (no machine is wired); the names stay for the kernel's tables
-const char *const CEngineCores::BenchMachine[BenchMachines] = {"plaits", "juno", "fm", "daisy", "dsps", "wt", "gr", "livein", "chop", "md"};
-static CEngineCores::TBench s_Bench[4][CEngineCores::BenchMachines];
 
 // The SysEx messages from the Rytm that took core 3 over 1 ms
 static volatile unsigned s_SlowSx[CEngineCores::kSlowSx][4], s_nSlowSx;
@@ -74,7 +69,7 @@ static void FromRytm (const u8 *pData, int nLength)
 // The Rytm's channel messages: counted for the stats line (nothing in this engine plays them)
 static void OnChannel (u8 s, u8 a, u8 b)
 {
-	if ((s & 0xF0) == 0x90 && b) { s_nNotes++; s_nNoteChans |= 1u << (s & 0x0F); }
+	if ((s & 0xF0) == 0x90 && b) s_nNotes++;
 }
 // The Rytm's realtime bytes: playing or not, for the storage bench's refusal (stor_pi.h)
 static void OnRealtime (uint8_t s, uint16_t) { stor_pi::Transport (s); }
@@ -133,9 +128,7 @@ void CEngineCores::EventStream (void)
 }
 
 static unsigned ClampTarget (unsigned n) { return n < 24 ? 24 : n > 1024 ? 1024 : n; }
-boolean CEngineCores::NotesOn (void) { return FALSE; }
-int CEngineCores::DroneVoice (void) { return -1; }
-void CEngineCores::Configure (unsigned nFifoTarget, boolean)
+void CEngineCores::Configure (unsigned nFifoTarget)
 {
 	s_nTarget = ClampTarget (nFifoTarget);
 	if (s_nLastTake == 0) s_nLastTake = Ticks ();
@@ -143,15 +136,6 @@ void CEngineCores::Configure (unsigned nFifoTarget, boolean)
 unsigned CEngineCores::FifoTarget (void) { return s_nTarget; }
 void CEngineCores::LinkFifoTarget (unsigned n) { if (!s_bTargetFixed) s_nTarget = ClampTarget (n); }
 void CEngineCores::FixFifoTarget (void) { s_bTargetFixed = TRUE; }
-void CEngineCores::SetSplit (unsigned) {}
-void CEngineCores::BenchCore (unsigned) {}
-void CEngineCores::BenchStart (boolean) {}
-boolean CEngineCores::BenchWait (unsigned) { return TRUE; }
-unsigned CEngineCores::BenchTurn (void) { return 4; }
-const CEngineCores::TBench &CEngineCores::BenchResult (unsigned nCore, unsigned nMachine)
-{
-	return s_Bench[nCore & 3][nMachine % BenchMachines];
-}
 
 void CEngineCores::Run (unsigned nCore)
 {
@@ -170,8 +154,6 @@ void CEngineCores::Worker (unsigned nCore)
 		Wfe (nCore);
 	}
 }
-
-void CEngineCores::RenderBlock (void) {}
 
 void CEngineCores::Control (void)
 {
@@ -263,7 +245,7 @@ void CEngineCores::Command (const char *p)
 	if (bridge::generic_command (p, Out, sizeof Out)) L->Write (From, LogNotice, "%s", Out);
 	else if (strncmp (p, "fifo=", 5) == 0)
 	{
-		Configure (atoi (p + 5), FALSE);
+		Configure (atoi (p + 5));
 		s_bTargetFixed = TRUE;
 		L->Write (From, LogNotice, "fifo target %u frames (the TCP link's pacing)", s_nTarget);
 	}
@@ -277,7 +259,7 @@ void CEngineCores::Command (const char *p)
 		s_bIdleWfe = p[8] != '0';
 		L->Write (From, LogNotice, "idle wfe %s", s_bIdleWfe ? "on" : "off");
 	}
-	else L->Write (From, LogWarning, "unknown command \"%s\" (the generic engine: gen, clock, proc, rui, rui=on|off, fifo=, ctlwait=, idlewfe=)", p);
+	else L->Write (From, LogWarning, "unknown command \"%s\" (gen, clock, proc, rui, rui=on|off, usba, usba=thru|off, browse, fifo=, ctlwait=, idlewfe=)", p);
 }
 
 void CEngineCores::TakeStats (TStats *s)
@@ -296,5 +278,4 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nMidiBytes = s_nMidiBytes; s_nMidiBytes = 0;
 	s->nSysEx = s_Midi.SysExCount ();
 	s->nNotes = s_nNotes; s_nNotes = 0;
-	s->nNoteChans = s_nNoteChans; s_nNoteChans = 0;
 }

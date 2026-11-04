@@ -1,5 +1,5 @@
 # pi/engine/tests/Makefile - the Pi engine's portable parts on the host: make -C pi/engine/tests (shim/: the few
-# Circle headers guard.h needs). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI
+# Circle headers the gadget and HID tests need). Also the build's version stamp (tools/tests/test_gen_version.sh) and the Rytm MIDI
 # bridge's relay (tools/tests/test_rytm_bridge.py).
 $(shell ../../../tools/gen_version.sh)
 CXX ?= c++

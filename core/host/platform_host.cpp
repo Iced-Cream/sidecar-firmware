@@ -73,7 +73,6 @@ uint32_t now_us() { return g_fake ? (uint32_t)g_fake_us : (uint32_t)(ns() / 1000
 uint32_t now_ms() { return g_fake ? (uint32_t)(g_fake_us / 1000) : (uint32_t)(ns() / 1000000); }
 uint32_t cycles() { return (uint32_t)ns(); }
 uint32_t cycles_per_second() { return 1000000000u; }
-uint32_t random_seed() { return 1; }
 
 void log(const char* fmt, ...) {
   char b[200];
@@ -86,26 +85,6 @@ void log(const char* fmt, ...) {
   else fprintf(stderr, "core: %.*s\n", n, b);
 }
 
-uint32_t sample_ram_total() {
-  const char* e = getenv("CORE_SAMPLE_RAM_MB");   // tests: 0 or unset = none (as a Teensy without PSRAM)
-  return e ? (uint32_t)atoi(e) << 20 : 0;
-}
-void* sample_ram_alloc(uint32_t bytes) { return malloc(bytes); }
-void sample_ram_free(void* p) { free(p); }
-uint64_t msamp_ram_total() {
-  const char* e = getenv("CORE_MSAMP_RAM_MB");
-  return (uint64_t)(e ? atoi(e) : 64) << 20;
-}
-void* msamp_ram_alloc(uint64_t bytes) { return malloc(bytes); }
-uint64_t pool_ram_budget() {
-  const char* e = getenv("CORE_POOL_RAM_MB");
-  return (uint64_t)(e ? atoi(e) : 64) << 20;
-}
-uint64_t card_free_bytes() {
-  struct statvfs s;
-  if (statvfs(g_card.c_str(), &s) != 0) return 0;
-  return (uint64_t)s.f_bavail * s.f_frsize;
-}
 
 // ---- the card model (tests): the Pi's card time per file operation [inferred from measured figures: a 32 KB read
 // ~1.5-2 ms and an open + header ~3 ms (docs/MULTISAMPLE.md), DSP SAMPLE's refill 1.2 ms a pass (docs/pi-engine.md);

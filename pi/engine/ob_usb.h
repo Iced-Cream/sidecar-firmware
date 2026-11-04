@@ -59,8 +59,7 @@ public:
 	static const s32 CaptureMarkerMIDI = 0x10000000, CaptureMarkerTrig = 0x20000000;
 	static void CaptureMarkMIDI (void);
 	static boolean CaptureAlloc (void);
-	static boolean CaptureStart (boolean bSelfTest = FALSE);	// FALSE: no buffer, no stream, or busy
-	static void CaptureFeed (const s32 *pOutL, unsigned nFrames);	// the self-test's OUT MAIN L (no stream)
+	static boolean CaptureStart (void);	// FALSE: no buffer, no stream, or busy
 	static void CaptureStop (void);			// abandon a capture (stream gone)
 	static boolean CaptureActive (void)	{ return s_bCapOn; }
 	static boolean CaptureFull (void)	{ return s_bCapFull; }

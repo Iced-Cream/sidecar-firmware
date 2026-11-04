@@ -131,11 +131,11 @@ boolean CObUsb::CaptureAlloc (void)
 	return s_pCapBuf != 0;
 }
 
-boolean CObUsb::CaptureStart (boolean bSelfTest)
+boolean CObUsb::CaptureStart (void)
 {
 	CObUsb *p = s_pThis;
 	if (s_pCapBuf == 0 || s_bCapOn) return FALSE;
-	if (!bSelfTest && (p == 0 || !p->m_bStreaming)) return FALSE;
+	if (p == 0 || !p->m_bStreaming) return FALSE;
 
 	for (unsigned i = 0; i < CaptureFrames; i++) s_pCapBuf[i * CaptureChannels + 3] = 0;	// markers
 
@@ -163,26 +163,6 @@ void CObUsb::CaptureMarkMIDI (void)
 void CObUsb::CaptureStop (void)
 {
 	s_bCapOn = FALSE;
-}
-
-// The Rytm-less self-test (selftest.cpp, core 0 task level; never while the Rytm streams): OUT MAIN L as pulled
-// from the output stage into channel 2, the IN channels 0 and 1 silent, channel 3's markers kept.
-void CObUsb::CaptureFeed (const s32 *pOutL, unsigned nFrames)
-{
-	if (!s_bCapOn) return;
-	unsigned pos = s_nCapPos;
-	for (unsigned f = 0; f < nFrames && pos < CaptureFrames; f++, pos++)
-	{
-		s32 *pOut = s_pCapBuf + pos * CaptureChannels;
-		pOut[0] = pOut[1] = 0;
-		pOut[2] = pOutL[f];
-	}
-	s_nCapPos = s_nCapOutPos = pos;
-	if (pos >= CaptureFrames)
-	{
-		s_bCapOn = FALSE;
-		s_bCapFull = TRUE;
-	}
 }
 
 CObUsb::TEvStats CObUsb::s_EvIn, CObUsb::s_EvOut;
