@@ -12,6 +12,7 @@
 #include "generic/generic.h"
 #include "hooks.h"
 #include "kv/link.h"
+#include "locks/locks.h"
 #include "msamp/cardq.h"
 #include "platform.h"
 #include "proc/proc.h"
@@ -129,7 +130,8 @@ const char* machine_name(int) { return "-"; }
 uint32_t machine_gen(int) { return 0; }
 uint32_t to_host_dropped() { return core::to_rytm_dropped(); }
 
-// /status's generic members: the router's counts, the Rytm's clock, the processor slots, the remote screen
+// /status's generic members: the router's counts, the Rytm's clock, the record store (kv) and the locks, the processor
+// slots, the remote screen
 int generic_json(char* out, int cap) {
   const core::gen::Stats g = core::gen::stats();
   const core::clock::Stats c = core::clock::stats();
@@ -137,6 +139,9 @@ int generic_json(char* out, int cap) {
   const core::screen::Stats s = core::screen::stats();
   const core::browse::Stats bs = core::browse::stats();
   const core::devmidi::Stats ds = core::devmidi::stats();
+  const core::kv::link::Stats ls = core::kv::link::stats();
+  const core::kv::link::StoreStats ks = core::kv::link::store_stats();
+  const core::locks::Stats lk = core::locks::stats();
   uint32_t pid = 0;
   char pname[core::kv::link::kNameMax + 1];
   json_name(pname, sizeof pname, core::kv::link::project_name(&pid));
@@ -180,7 +185,18 @@ int generic_json(char* out, int cap) {
                     (unsigned long)s.bad, devs, core::devmidi::thru() ? "true" : "false", (unsigned long)ds.messages,
                     (unsigned long)ds.forwarded, (unsigned long)ds.to_slots, (unsigned long)bs.asks,
                     (unsigned long)bs.listings, bs.folders, (unsigned long)bs.left_out, (unsigned long)bs.errors);
-  return n > 0 && n < cap ? n : 0;
+  if (n <= 0 || n >= cap) return 0;
+  int m = sniprintf(out + n, cap - n,
+                    ",\"kv\":{\"project\":%lu,\"records\":%d,\"hellos\":%lu,\"reads\":%lu,\"writes\":%lu,"
+                    "\"keeps\":%lu,\"refused\":%lu,\"lastRefused\":%d,\"in\":%lu,\"out\":%lu,\"names\":%lu,"
+                    "\"droppedIn\":%lu,\"droppedOut\":%lu},"
+                    "\"locks\":{\"sets\":%d,\"ops\":%lu,\"bad\":%lu,\"values\":%lu}",
+                    (unsigned long)ks.project, ks.records, (unsigned long)ks.hellos, (unsigned long)ks.reads,
+                    (unsigned long)ks.writes, (unsigned long)ks.keeps, (unsigned long)ks.refused, ks.last_refused,
+                    (unsigned long)ls.in, (unsigned long)ls.out, (unsigned long)ls.names, (unsigned long)ls.dropped_in,
+                    (unsigned long)ls.dropped_out, lk.sets, (unsigned long)lk.ops, (unsigned long)lk.bad,
+                    (unsigned long)lk.values);
+  return m > 0 && m < cap - n ? n + m : 0;
 }
 
 // The console's generic commands (core 3): gen (the router), clock (the Rytm's clock), proc (the slots), rui (the
@@ -198,6 +214,16 @@ bool generic_command(const char* p, char* out, int cap) {
               (int)core::clock::transport(), (int)core::clock::pattern(), (int)core::clock::queued(),
               (int)core::clock::bpm(), (int)(core::clock::bpm() * 10.0) % 10, (unsigned long)c.ticks,
               (unsigned long)c.states, (unsigned long)c.bad);
+    return true;
+  }
+  if (!strcmp(p, "kv")) {
+    const core::kv::link::StoreStats k = core::kv::link::store_stats();
+    const core::locks::Stats l = core::locks::stats();
+    sniprintf(out, cap, "kv: project %08lx, %d records, hellos %lu reads %lu writes %lu keeps %lu refused %lu (last %d); "
+              "locks: %d sets, ops %lu bad %lu values %lu", (unsigned long)k.project, k.records,
+              (unsigned long)k.hellos, (unsigned long)k.reads, (unsigned long)k.writes, (unsigned long)k.keeps,
+              (unsigned long)k.refused, k.last_refused, l.sets, (unsigned long)l.ops, (unsigned long)l.bad,
+              (unsigned long)l.values);
     return true;
   }
   if (!strcmp(p, "proc")) {

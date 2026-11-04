@@ -259,7 +259,7 @@ void CEngineCores::Command (const char *p)
 		s_bIdleWfe = p[8] != '0';
 		L->Write (From, LogNotice, "idle wfe %s", s_bIdleWfe ? "on" : "off");
 	}
-	else L->Write (From, LogWarning, "unknown command \"%s\" (gen, clock, proc, rui, rui=on|off, usba, usba=thru|off, browse, fifo=, ctlwait=, idlewfe=)", p);
+	else L->Write (From, LogWarning, "unknown command \"%s\" (gen, clock, kv, proc, rui, rui=on|off, usba, usba=thru|off, browse, fifo=, ctlwait=, idlewfe=)", p);
 }
 
 void CEngineCores::TakeStats (TStats *s)

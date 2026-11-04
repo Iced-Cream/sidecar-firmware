@@ -32,6 +32,7 @@ int main() {
   CHECK(!send({kSet, 1, 13, 1, 0, 4}));   // track 13: no such track
   CHECK(!send({kSet, 1, 0, 1, 60, 8}));   // past parameter 63
   CHECK(!declared(1));
+  CHECK(stats().ops == 1 && stats().bad == 2 && stats().sets == 1);
 
   // base values: each reaches the sink at once, at slot 1, parameter first + i
   CHECK(send({kBase, 0, 0, 8, 0, 10, 0, 11, 0, 12, 0, 13, 0, 14, 0, 15, 0, 16, 0, 17}));

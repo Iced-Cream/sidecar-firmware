@@ -58,6 +58,12 @@ int main() {
   CHECK(g_out.size() == 1 && g_out[0][6] == kv::kOpData);
   uint8_t back[16];
   CHECK(kv::unpack7(&g_out[0][16], (int)g_out[0].size() - 17, back) == 8 && memcmp(back, data, 8) == 0);
+  // the counts /status shows (kv): the project open, one record, one of each answer
+  {
+    const kv::link::StoreStats k = kv::link::store_stats();
+    CHECK(k.project == 0xBEEF && k.records == 1 && k.hellos == 1 && k.writes == 1 && k.reads == 1 && k.refused == 0 &&
+          k.last_refused == -1);
+  }
   // a lock op is the control side's, answered by nobody
   g_out.clear();
   send({locks::kSet, 0, 12, 1, 0, 4});

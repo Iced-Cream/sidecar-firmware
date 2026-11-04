@@ -175,6 +175,8 @@ void Service::send(const uint8_t* body, int n) {
 
 void Service::status(uint8_t seq, uint8_t code) {
   uint8_t b[3] = {kOpStatus, seq, code};
+  ++c_.refused;
+  c_.last_refused = code;
   send(b, 3);
 }
 
@@ -194,6 +196,7 @@ void Service::sysex(const uint8_t* m, int n) {
       if (s != kOk) { status(0x7F, s); return; }
       uint8_t r[4] = {kOpHelloAck, kVer};
       put_14(r + 2, (uint32_t)s_->records());
+      ++c_.hellos;
       send(r, 4);
       return;
     }
@@ -207,6 +210,7 @@ void Service::sysex(const uint8_t* m, int n) {
       if (s != kOk) { status(seq, s); wscope_ = -1; return; }
       // wbuf_ is borrowed for the answer: a WRITE in progress is abandoned (the companion sends one at a time)
       wscope_ = -1;
+      ++c_.reads;
       uint32_t off = 0;
       do {
         uint32_t c = len - off < (uint32_t)kChunk ? len - off : (uint32_t)kChunk;
@@ -237,6 +241,7 @@ void Service::sysex(const uint8_t* m, int n) {
       Status s = s_->write(scope, wbuf_, wtotal_, &h);
       wscope_ = -1;
       if (s != kOk) { status(seq, s); return; }
+      ++c_.writes;
       uint8_t r[6] = {kOpWritten, seq, scope};
       put_h(r + 3, h);
       send(r, 6);
@@ -259,6 +264,7 @@ void Service::sysex(const uint8_t* m, int n) {
       Status s = s_->keep(kscope_, khandle_, kn_, &removed);
       kn_ = 0;
       if (s != kOk) { status(seq, s); return; }
+      ++c_.keeps;
       uint8_t r[4] = {kOpKept, seq};
       put_14(r + 2, (uint32_t)removed);
       send(r, 4);

@@ -124,6 +124,11 @@ int host_step(int max_msgs) {
 
 void hello() { locks::reset(); }
 Stats stats() { return s_st; }
+StoreStats store_stats() {
+  const Service::Counts c = s_svc.counts();
+  return StoreStats{s_store.project(), s_store.records(), c.hellos, c.reads, c.writes, c.keeps, c.refused,
+                    c.refused ? (int)c.last_refused : -1};
+}
 
 static bool store_fn(const uint8_t* d, int len) { return d[4] == kCmd && (from_host(d, len), true); }
 // a link reset for another box: the sets go; the Rytm's 35 is not the store session's start (the HELLO is)
@@ -139,6 +144,7 @@ int card_step(int) { return 0; }
 int host_step(int) { return 0; }
 void hello() {}
 Stats stats() { return Stats{}; }
+StoreStats store_stats() { return StoreStats{0, 0, 0, 0, 0, 0, 0, -1}; }
 bool attach_generic() { return false; }
 const char* project_name(uint32_t* project) { if (project) *project = 0; return ""; }
 bool on_name(NameFn) { return false; }

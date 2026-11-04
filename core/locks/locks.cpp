@@ -19,6 +19,7 @@ struct Set {
 };
 static Set s_sets[kSets];
 static Sink s_sink = nullptr;
+static uint32_t s_ops, s_bad, s_values;
 
 void set_sink(Sink s) { s_sink = s; }
 bool is_lock_op(uint8_t op) { return op >= kSet && op <= kDrop; }
@@ -38,6 +39,7 @@ static const bool s_init = [] { reset(); return true; }();
 static void emit(Set& s, int p, uint16_t v) {
   if (s.sent[p] == v) return;
   s.sent[p] = v;
+  ++s_values;
   if (s_sink) s_sink(s.slot, s.first + p, v);
 }
 
@@ -62,7 +64,14 @@ void tick(int track, int step, bool trig) {
 
 static uint16_t v14(const uint8_t* b) { return (uint16_t)(b[0] << 7 | b[1]); }
 
+static bool take(const uint8_t* m, int n);
 bool sysex(const uint8_t* m, int n) {
+  bool ok = take(m, n);
+  ++(ok ? s_ops : s_bad);
+  return ok;
+}
+
+static bool take(const uint8_t* m, int n) {
   if (n < 9 || m[0] != 0xF0 || m[1] != 0x7D || m[2] != 0x52 || m[3] != 0x54 || m[4] != 0x51 || m[5] != 1 || m[n - 1] != 0xF7)
     return false;
   const uint8_t* b = m + 7;
@@ -137,6 +146,11 @@ bool sysex(const uint8_t* m, int n) {
 }
 
 bool declared(int set) { return set >= 0 && set < kSets && s_sets[set].on; }
+Stats stats() {
+  int on = 0;
+  for (const auto& s : s_sets) on += s.on;
+  return Stats{s_ops, s_bad, s_values, on};
+}
 uint16_t value(int set, int param) { return set >= 0 && set < kSets && param >= 0 && param < kParams ? s_sets[set].sent[param] : kNone; }
 uint16_t lock_at(int set, int step, int param) {
   return set >= 0 && set < kSets && step >= 0 && step < kSteps && param >= 0 && param < kParams ? s_sets[set].lock[step][param] : kNone;
@@ -151,6 +165,7 @@ bool sysex(const uint8_t*, int) { return false; }
 bool declared(int) { return false; }
 uint16_t value(int, int) { return kNone; }
 uint16_t lock_at(int, int, int) { return kNone; }
+Stats stats() { return Stats{}; }
 #endif
 
 }  // namespace locks

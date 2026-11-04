@@ -86,6 +86,9 @@ class Service {
  public:
   Service(Store* s, void (*out)(const uint8_t* m, int n)) : s_(s), out_(out) {}
   void sysex(const uint8_t* m, int n);
+  // what it answered, for /status (the card core writes them, others only read)
+  struct Counts { uint32_t hellos, reads, writes, keeps, refused; uint8_t last_refused; };
+  Counts counts() const { return c_; }
 
  private:
   void send(const uint8_t* body, int n);
@@ -99,6 +102,7 @@ class Service {
   uint16_t khandle_[kMaxRecords];
   int kn_ = 0;
   bool kbad_ = false;
+  Counts c_ = {};
 };
 
 }  // namespace kv

@@ -1,7 +1,7 @@
 // pi/engine/console.h - the serial console (921600 baud): 'w' a 10 s capture (spike3's: IN MAIN L/R, OUT MAIN L,
 // note-on markers; dumped as base64 for pi/circle/capture.py), 's' the stats now, ':<command>\n' a command: core 0's own
 // here (wdtest, link=, version, sdf, Wi-Fi's, storage's, pair's, midibridge's, the Sidecar gadget's, cpumhz=), the rest
-// for the control core (cores.cpp: gen, clock, proc, rui, usba, browse, fifo=, ctlwait=, idlewfe=).
+// for the control core (cores.cpp: gen, clock, kv, proc, rui, usba, browse, fifo=, ctlwait=, idlewfe=).
 #ifndef _console_h
 #define _console_h
 #include <circle/logger.h>

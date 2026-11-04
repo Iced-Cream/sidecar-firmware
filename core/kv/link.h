@@ -31,6 +31,9 @@ bool on_name(NameFn f);
 
 struct Stats { uint32_t in, out, dropped_in, dropped_out, ops, names; };
 Stats stats();
+// The store's side (the card core's, read from any core): the open project, its records, what the service answered
+struct StoreStats { uint32_t project; int records; uint32_t hellos, reads, writes, keeps, refused; int last_refused; };
+StoreStats store_stats();
 
 }  // namespace link
 }  // namespace kv

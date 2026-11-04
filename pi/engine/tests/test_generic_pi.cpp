@@ -64,16 +64,22 @@ int main() {
   in({0x51, 1, 0x00, 0, 0, 0, 1, 2});
   bridge::idle_save();
   CHECK(sent(0x51) == 1 && g_out.back()[6] == 0x40);
+  in({0x51, 1, 0x10, 0, 0, 0, 0, 1});   // a lock set declared (51 10 SET: set 0, track 0, slot 0, param 0, 1 param)
+  in({0x51, 1, 0x10, 9, 0, 0, 0, 1});   // refused: set 9
+  CHECK(bridge::generic_command("kv", out, sizeof out));
+  CHECK(strstr(out, "kv: project 00000082, 0 records, hellos 1 ") && strstr(out, "locks: 1 sets, ops 1 bad 1"));
   CHECK(bridge::generic_command("clock", out, sizeof out) && strstr(out, "transport 1"));
   CHECK(!bridge::generic_command("notemach=0:juno", out, sizeof out));
 
   // ---- /status's members: one JSON object's members, no client on the screen, no slot filled
-  char js[700];
+  char js[1024];
   int n = bridge::generic_json(js, sizeof js);
   CHECK(n > 0 && n < (int)sizeof js);
   CHECK(strstr(js, "\"generic\":{\"project\":\"KIT\",\"projectId\":48879,"));
   CHECK(strstr(js, "\"slots\":[null,null,null,null]"));
   CHECK(strstr(js, "\"client\":null"));
+  CHECK(strstr(js, ",\"kv\":{\"project\":130,\"records\":0,\"hellos\":1,\"reads\":0,\"writes\":0,"));
+  CHECK(strstr(js, ",\"locks\":{\"sets\":1,\"ops\":1,\"bad\":1,\"values\":"));
 
   // ---- core 0's popup and address, handed to the screen at the control core's tick
   in({0x35, 1, 0, 80, 1});    // (version 1) the Rytm's hello: up 4 s (50 ms ticks), caps 1 (it understands 36)

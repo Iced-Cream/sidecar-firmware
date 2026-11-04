@@ -45,6 +45,8 @@ void reset();
 bool declared(int set);
 uint16_t value(int set, int param);   // the value last handed to the sink (kNone: never)
 uint16_t lock_at(int set, int step, int param);
+struct Stats { uint32_t ops, bad, values; int sets; };   // lock ops taken / refused, values handed to the sink, sets on
+Stats stats();
 
 }  // namespace locks
 }  // namespace core
