@@ -22,7 +22,14 @@ void hello();                              // the link restarted: the lock sets 
 // (control idle). Boot, once, after gen::begin(). False: a listener had no room.
 bool attach_generic();
 
-struct Stats { uint32_t in, out, dropped_in, dropped_out, ops; };
+// The project's name as the companion last sent it (04 NAME, control core): "" before one; *project its ID (may be 0).
+// on_name: called (control core) each time it changes; false: no room (2 listeners).
+constexpr int kNameMax = 16;
+const char* project_name(uint32_t* project = nullptr);
+using NameFn = void (*)(const char* name, uint32_t project);
+bool on_name(NameFn f);
+
+struct Stats { uint32_t in, out, dropped_in, dropped_out, ops, names; };
 Stats stats();
 
 }  // namespace link

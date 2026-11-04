@@ -65,12 +65,14 @@ class Store {
 //               01 READ <seq> <scope> <handle 3>
 //               02 WRITE <seq> <scope> <total 2> <offset 2> <data>   chunks in order; the last completes the record
 //               03 KEEP <seq> <final 0/1> <n> {<scope> <handle 3>} x n   repeated until final = 1
+//               04 NAME <project 5> <len> <name, len bytes>   the project's name (up to 16, 7-bit): after each HELLO's
+//                  answer and on a change; no answer. The control core keeps it (link.h), for the log, /status, the web
 //   Pi -> Rytm  40 HELLO <service version> <records 2>
 //               41 DATA <seq> <scope> <handle 3> <total 2> <offset 2> <data>
 //               42 WRITTEN <seq> <scope> <handle 3>
 //               43 KEPT <seq> <removed 2>
 //               7F STATUS <seq> <code>   anything refused (kv::Status); seq 7F when there was none
-enum Op : uint8_t { kOpHello = 0x00, kOpRead = 0x01, kOpWrite = 0x02, kOpKeep = 0x03,
+enum Op : uint8_t { kOpHello = 0x00, kOpRead = 0x01, kOpWrite = 0x02, kOpKeep = 0x03, kOpName = 0x04,
                     kOpHelloAck = 0x40, kOpData = 0x41, kOpWritten = 0x42, kOpKept = 0x43, kOpStatus = 0x7F };
 constexpr uint8_t kCmd = 0x51, kVer = 1;
 constexpr int kChunk = 112;   // raw bytes a DATA / WRITE message carries (128 on the wire)

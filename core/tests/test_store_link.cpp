@@ -74,6 +74,20 @@ int main() {
   send({kv::kOpKeep, 3, 1, 0});
   CHECK(g_out.size() == 1 && g_out[0][6] == kv::kOpKept && g_out[0][9] == 1);
   CHECK(stat(path, &st) != 0);
+  // 04 NAME: kept on the control side (no answer), a listener told once per change; a malformed one changes nothing
+  static int names = 0;
+  CHECK(kv::link::on_name([](const char*, uint32_t) { ++names; }));
+  g_out.clear();
+  send({kv::kOpName, 0, 0, 2, 0x7D, 0x6F, 5, 'D', 'R', 'U', 'M', 'S'});
+  send({kv::kOpName, 0, 0, 2, 0x7D, 0x6F, 5, 'D', 'R', 'U', 'M', 'S'});
+  uint32_t pid = 0;
+  CHECK(!strcmp(kv::link::project_name(&pid), "DRUMS") && pid == (2u << 14 | 0x7Du << 7 | 0x6F) && names == 1);
+  CHECK(g_out.empty());
+  send({kv::kOpName, 0, 0, 2, 0x7D, 0x6F, 6, 'X', 'Y'});   // len says 6, 2 bytes
+  send({kv::kOpName, 0, 0, 2, 0x7D, 0x6F, 17, 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A'});
+  CHECK(!strcmp(kv::link::project_name(), "DRUMS") && names == 1);
+  send({kv::kOpName, 0, 0, 0, 0, 9, 16, 'L', 'O', 'N', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});   // the stock 16 bytes, NUL-ended
+  CHECK(!strcmp(kv::link::project_name(&pid), "LONG") && pid == 9 && names == 2);
   printf("test_store_link: PASS\n");
   return 0;
 }
