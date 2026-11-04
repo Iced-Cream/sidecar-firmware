@@ -13,9 +13,13 @@ on in a public card or build default.
 
 ## How it works
 
+- **Which device the computer sees.** The Sidecar device (1209:0004) at boot and whenever no box is there. The box once
+  it has been read. The Sidecar device again after the box has been gone for `mirrorhold=` seconds (default 10, up to 600),
+  so a box that reboots, as after an OS update, comes back as itself. Each switch is a replug: the gadget leaves the bus
+  (`SoftDisconnect`), waits 300 ms, and comes back with the other descriptors and endpoints (`SoftConnect`). A box with
+  other descriptors while one is shown switches the same way.
 - **Descriptors.** When the box is configured on the USB-A side (`ob_usb.cpp`), its device and configuration descriptors,
-  plus every string descriptor they name, are read into RAM (`MirrorAttach`). The USB-C gadget connects only then, and
-  serves them unchanged. None of the box's bytes are in the repo: the unit test's descriptor is made up (`tests/test_mirror_desc.cpp`).
+  plus every string descriptor they name, are read into RAM (`MirrorAttach`). They are served unchanged. None of the box's bytes are in the repo: the unit test's descriptor is made up (`tests/test_mirror_desc.cpp`).
 - **Endpoints** (`mirror_desc.h`). Each endpoint address the configuration names gets one gadget endpoint, sized to the
   largest `wMaxPacketSize` of any alternate setting. Packets of a smaller alternate are short packets, so nothing is
   resized at SET_INTERFACE. Roles:
@@ -35,14 +39,17 @@ on in a public card or build default.
 ## Circle change
 
 `pi/circle/circle-gadget-mirror.patch` (applied by `pi/engine/build.sh` after `circle-gadget-reset.patch`; it defines
-`CIRCLE_GADGET_MIRROR`) makes two changes:
+`CIRCLE_GADGET_MIRROR`) makes two changes, and `circle-gadget-softconnect.patch` adds a third:
 
 1. **IN and OUT endpoints can share a number** (`0x83` + `0x03`). Circle kept one endpoint object per number. An OUT endpoint now goes to a second table when an IN endpoint already has its number. A gadget without shared numbers (the default Sidecar) never uses that table.
 2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
+3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
 
 ## Known limits of the prototype
 
-- **Box gone.** The gadget stays connected when the box goes away, and requests are then STALLed. There's no soft disconnect yet. A box with other descriptors needs a Pi reboot.
+- **Box gone, inside mirrorhold.** The box is still shown and its requests are STALLed until the switch.
+- **A switch mid-update.** An OS update whose box takes longer than `mirrorhold` to come back sees the Sidecar device meanwhile.
+- **IRQs during a switch.** SoftConnect's core reset (about 25 ms) runs at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
 - **No forwarding of the computer's alt or interface choices.** Alternate settings stay on the gadget side, so a vendor request that only works at another box alternate is not handled. Requests that change the box's stream state also reach the box and may disturb the Pi's own stream.
 - **One control request at a time.** A second one while the first is in flight is STALLed.
 - **Untested on hardware [I].** Interrupt endpoints on Circle's DWC2 gadget, the RX FIFO headroom for 368 + 512 + 512 B OUT, and the latency (about one block each way) are all unmeasured.

@@ -194,8 +194,9 @@ public:
 
 	// usb=mirror (cmdline; docs/usb-mirror.md): the computer sees the attached box itself - its device, configuration and
 	// string descriptors, read from it at run time (ob_usb.cpp) - and its audio, async channel (pipes), MIDI and class /
-	// vendor requests are relayed. The gadget connects once the box has been read. Built only with
-	// pi/circle/circle-gadget-mirror.patch (CIRCLE_GADGET_MIRROR); without it usb=mirror is ignored.
+	// vendor requests are relayed. Until the box has been read, and after it has been gone for mirrorhold= seconds (10),
+	// the computer sees the Sidecar device; each switch is a replug (SoftDisconnect, 300 ms, SoftConnect). Built only with
+	// pi/circle/circle-gadget-mirror.patch and -softconnect.patch (CIRCLE_GADGET_MIRROR); without them usb=mirror is ignored.
 	boolean Mirror (void) const			{ return m_bMirror; }
 #ifdef CIRCLE_GADGET_MIRROR
 	// the box's side (ob_usb.cpp): task level unless said
@@ -257,7 +258,13 @@ private:
 	CMirrorEP *m_pMirEP[mirror::kMaxEps];
 	u8 m_MirAlt[mirror::kMaxIfaces];
 	unsigned m_nMirInCh, m_nMirOutCh;		// channels of the computer's current alternate (0: no stream)
-	volatile boolean m_bMirHave, m_bMirBoxUp, m_bStarted;
+	volatile boolean m_bMirHave, m_bMirBoxUp;
+	// which device the computer sees: the box (m_bShowMirror) or the Sidecar; a switch leaves the bus, waits, comes back
+	volatile boolean m_bShowMirror;
+	boolean m_bSwitching, m_bSwitchTo, m_bMirKeep;
+	u64 m_nSwitchAt, m_nBoxGoneAt;
+	unsigned m_nHoldSecs;				// mirrorhold=S: the box gone this long before the Sidecar comes back
+	void MirrorSwitch (boolean bToMirror);		// task level: leave the bus
 	// the box's IN blocks for the computer (xHCI IRQ -> gadget IRQ, both core 0)
 	static const unsigned MirInDepth = 8;
 	u8 m_MirIn[MirInDepth][384];

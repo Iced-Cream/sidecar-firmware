@@ -115,6 +115,9 @@ elif [ "$R" = 4 ]; then	# Pi 5 without PI5_GADGET: no gadget (docs/pi5.md)
   # one number (0x83 + 0x03), and a class or vendor request answered later (forwarded to the box); a gadget that uses
   # neither runs as before. Its own file and marker, as -reenum2; idempotent
   grep -q circle-gadget-mirror lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-mirror.patch
+  # then leaving the bus and coming back as a replug (pi/circle/circle-gadget-softconnect.patch): usb=mirror switches
+  # between the box and the Sidecar device when the box comes and goes; its own file and marker; idempotent
+  grep -q circle-gadget-softconnect lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-softconnect.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi
 # f_expand in FatFs (pi/circle/circle-fatfs-expand.patch: FF_USE_EXPAND 1 - the recorder reserves the space of each
