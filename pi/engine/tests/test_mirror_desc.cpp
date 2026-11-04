@@ -122,7 +122,7 @@ int main ()
 
 	// the Overbridge name: shown with the suffix, stored without it
 	{
-		const char *suf = " via Sidecar";
+		const char *suf = " (SC)";
 		uint8_t nm[kNameLen] = {};
 		memcpy (nm, "Test Box", 8);
 		name_show (nm, kNameLen, suf);

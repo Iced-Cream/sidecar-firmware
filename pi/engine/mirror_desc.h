@@ -155,7 +155,7 @@ inline unsigned string_indexes (const uint8_t *dev, const uint8_t *cfg, unsigned
 
 // Overbridge's device name (vendor request 1 to the device, wValue 0, wIndex 0: IN reads it, OUT sets it; 32 bytes,
 // NUL-padded), which Elektron's software shows the unit by and keys nothing on (the unit ID is request 0's). The mirror
-// shows the computer the box's name with a suffix ("Analog Rytm MKII via Sidecar") and takes the suffix off a name the
+// shows the computer the box's name with a suffix ("Analog Rytm MKII (SC)") and takes the suffix off a name the
 // computer sets, so the box stores its plain name. Only for an Elektron box (kNameVendor): request 1 is another
 // vendor's own.
 constexpr uint16_t kNameVendor = 0x1935;

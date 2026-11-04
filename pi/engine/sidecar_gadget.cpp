@@ -320,9 +320,9 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nHoldSecs = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorhold", 10);	// seconds; 0..600
 	if (m_nHoldSecs > 600) m_nHoldSecs = 600;
 	{
-		// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " via Sidecar"
+		// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " (SC)"
 		const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
-		if (pName == 0) strcpy (m_MirName, " via Sidecar");
+		if (pName == 0) strcpy (m_MirName, " (SC)");
 		else if (strcmp (pName, "off") == 0) m_MirName[0] = 0;
 		else
 		{
