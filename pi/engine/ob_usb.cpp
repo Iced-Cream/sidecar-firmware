@@ -305,6 +305,13 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	memset (&s_EvIn, 0, sizeof s_EvIn);
 	memset (&s_EvOut, 0, sizeof s_EvOut);
 
+	memset ((void *) m_Pipe, 0, sizeof m_Pipe);	// usb=mirror
+	m_nPipes = 0;
+	m_bMirror = FALSE;
+	m_bAttachDue = FALSE;
+	m_pCtlBuf = 0;
+	m_bCtlBusy = FALSE;
+
 	s_pThis = this;
 }
 
@@ -313,6 +320,14 @@ CObUsb::~CObUsb (void)
 	s_pThis = 0;
 	m_bStreaming = FALSE;
 	core::out::set_device (0);
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror && CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorBoxUp (FALSE);
+	for (unsigned i = 0; i < m_nPipes; i++)		// a URB in flight is leaked, as below
+	{
+		if (!m_Pipe[i].bBusy) delete m_Pipe[i].pURB;
+		delete m_Pipe[i].pEP;
+	}
+#endif
 	if (m_pAudio == &core::out::kRytmMk2) core::device::rytm_on_usb (false);
 	// URBs still queued on the (gone) endpoint are leaked, not freed under the controller
 	for (unsigned i = 0; i < MaxURBs; i++)
@@ -454,6 +469,11 @@ boolean CObUsb::Configure (void)
 		m_pOutURB[i]->SetCompletionRoutine (OutStub, (void *) (uintptr) i, this);
 	}
 
+#ifdef CIRCLE_GADGET_MIRROR
+	if (CSidecarGadget::Get () != 0) { if (CSidecarGadget::Get ()->Mirror ()) MirrorAttach (); }
+	else m_bAttachDue = TRUE;			// the box came up before the gadget (at boot): MirrorAttachLate
+#endif
+
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
 	CLogger::Get ()->Write (From, LogNotice, "alt 3 selected: %u URBs x %u blocks (%u B) per endpoint, "
 				"OUT %s (delay %u blk), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
@@ -498,6 +518,211 @@ boolean CObUsb::Configure (void)
 	return TRUE;
 }
 
+// ---- usb=mirror: the box's side (docs/usb-mirror.md, sidecar_gadget.h) -------------------------------------------
+#ifdef CIRCLE_GADGET_MIRROR
+
+// core 0's loop (the gadget's MirrorPoll): a box configured before the gadget existed is attached now
+void CObUsb::MirrorAttachLate (void)
+{
+	CObUsb *p = s_pThis;
+	if (p == 0 || !p->m_bAttachDue || CSidecarGadget::Get () == 0) return;
+	p->m_bAttachDue = FALSE;
+	if (!CSidecarGadget::Get ()->Mirror ()) return;
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget: read now");
+	p->MirrorAttach ();
+}
+
+// Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
+void CObUsb::MirrorAttach (void)
+{
+	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	const TUSBDeviceDescriptor *pDev = GetDevice ()->GetDeviceDescriptor ();
+	const TUSBConfigurationDescriptor *pCfg = GetDevice ()->GetConfigurationDescriptor ();
+	if (pDev == 0 || pCfg == 0) return;
+	const u8 *pC = (const u8 *) pCfg;
+	unsigned nCfg = pCfg->wTotalLength;
+	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
+	m_bMirror = TRUE;
+
+	if (m_pCtlBuf == 0) m_pCtlBuf = AllocDmaBuf ();
+	CUSBHostController *pHost = GetHost ();
+	u8 *pBuf = m_pCtlBuf;
+	u16 nLang = 0x0409;
+	int n = pHost->GetDescriptor (GetEndpoint0 (), DESCRIPTOR_STRING, 0, pBuf, 255, REQUEST_IN, 0);
+	if (n >= 4 && pBuf[1] == DESCRIPTOR_STRING)
+	{
+		pGadget->MirrorSetString (0, pBuf, n);
+		nLang = (u16) (pBuf[2] | pBuf[3] << 8);
+	}
+	u8 Index[mirror::kMaxStrings];
+	unsigned nIdx = mirror::string_indexes ((const u8 *) pDev, pC, nCfg, Index, mirror::kMaxStrings - 1);
+	unsigned nGot = 0;
+	for (unsigned k = 0; k < nIdx; k++)
+	{
+		n = pHost->GetDescriptor (GetEndpoint0 (), DESCRIPTOR_STRING, Index[k], pBuf, 255, REQUEST_IN, nLang);
+		if (n >= 2 && pBuf[1] == DESCRIPTOR_STRING && pBuf[0] <= n) { pGadget->MirrorSetString (Index[k], pBuf, pBuf[0]); nGot++; }
+	}
+
+	// the pipes: vendor-class endpoints other than the audio stream's, at the alternate they are in (SET_INTERFACE when
+	// that is not 0)
+	mirror::Layout l;
+	mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l);
+	for (unsigned k = 0; k < l.n && m_nPipes < MaxPipes; k++)
+	{
+		const mirror::Ep &e = l.ep[k];
+		if (e.role != mirror::kPipeIn && e.role != mirror::kPipeOut) continue;
+		const TUSBEndpointDescriptor *pDesc = 0;
+		int iface = -1, alt = -1;
+		for (unsigned o = 0; o + 2 <= nCfg && pC[o] >= 2 && o + pC[o] <= nCfg && pDesc == 0; o += pC[o])
+		{
+			if (pC[o + 1] == DESCRIPTOR_INTERFACE) iface = pC[o + 2], alt = pC[o + 3];
+			else if (pC[o + 1] == DESCRIPTOR_ENDPOINT && pC[o + 2] == e.addr) pDesc = (const TUSBEndpointDescriptor *) (pC + o);
+		}
+		if (pDesc == 0) continue;
+		if (alt > 0 && pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, alt, iface, 0, 0) < 0)
+		{
+			CLogger::Get ()->Write (From, LogWarning, "usb=mirror: SET_INTERFACE %d alt %d for pipe 0x%02x failed", iface, alt, e.addr);
+			continue;
+		}
+		TPipe &p = m_Pipe[m_nPipes];
+		p.uchAddr = e.addr;
+		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
+		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
+		p.pBuf = AllocDmaBuf ();
+		p.bBusy = p.bStopped = FALSE;
+		p.pURB = 0;
+		if (e.addr & 0x80)
+		{
+			p.pURB = new CUSBRequest (p.pEP, p.pBuf, p.nMps);
+			p.pURB->SetCompletionRoutine (PipeInStub, (void *) (uintptr) m_nPipes, this);
+		}
+		m_nPipes++;
+	}
+	EnterCritical (IRQ_LEVEL);
+	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
+	pGadget->MirrorBoxUp (TRUE);
+}
+
+boolean CObUsb::SubmitPipeIn (unsigned i)
+{
+	TPipe &p = m_Pipe[i];
+	p.pURB->SetStatus (0);
+	p.pURB->SetResultLen (0);
+	p.bBusy = TRUE;
+	if (GetHost ()->SubmitAsyncRequest (p.pURB)) return TRUE;
+	p.bBusy = FALSE;
+	p.bStopped = TRUE;
+	p.nErrors++;
+	return FALSE;
+}
+
+// xHCI IRQ: the box's packet to the computer; the next request goes out when the computer has it (MirrorPipeInNext)
+void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
+{
+	CObUsb *pThis = (CObUsb *) pContext;
+	if (pThis != s_pThis) return;
+	TPipe &p = pThis->m_Pipe[(unsigned) (uintptr) pParam];
+	p.bBusy = FALSE;
+	if (pURB->GetStatus () == 0) { p.nErrors++; p.bStopped = TRUE; return; }	// a halted endpoint: not resubmitted
+	unsigned n = pURB->GetResultLength ();
+	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
+	p.nPackets++;
+	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn ((unsigned) (uintptr) pParam);
+}
+
+void CObUsb::MirrorPipeInNext (u8 uchAddr)
+{
+	CObUsb *pThis = s_pThis;
+	if (pThis == 0) return;
+	for (unsigned i = 0; i < pThis->m_nPipes; i++)
+		if (pThis->m_Pipe[i].uchAddr == uchAddr && !pThis->m_Pipe[i].bBusy && !pThis->m_Pipe[i].bStopped) pThis->SubmitPipeIn (i);
+}
+
+boolean CObUsb::MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
+{
+	CObUsb *pThis = s_pThis;
+	if (pThis == 0 || nLength > 512) return FALSE;
+	for (unsigned i = 0; i < pThis->m_nPipes; i++)
+	{
+		TPipe &p = pThis->m_Pipe[i];
+		if (p.uchAddr != uchAddr) continue;
+		if (p.bBusy) return FALSE;
+		if (nLength) memcpy (p.pBuf, pData, nLength);
+		CleanAndInvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
+		CUSBRequest *pURB = new CUSBRequest (p.pEP, p.pBuf, nLength);	// its length is this packet's (IRQ-safe heap)
+		pURB->SetCompletionRoutine (PipeOutStub, (void *) (uintptr) i, pThis);
+		p.bBusy = TRUE;
+		if (pThis->GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
+		p.bBusy = FALSE;
+		p.nErrors++;
+		delete pURB;
+		return FALSE;
+	}
+	return FALSE;
+}
+
+void CObUsb::PipeOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
+{
+	CObUsb *pThis = (CObUsb *) pContext;
+	if (pThis == s_pThis)
+	{
+		TPipe &p = pThis->m_Pipe[(unsigned) (uintptr) pParam];
+		p.bBusy = FALSE;
+		if (pURB->GetStatus () == 0) p.nErrors++;
+		else p.nPackets++;
+		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorPipeOutDone (p.uchAddr);	// the computer's next
+	}
+	delete pURB;
+}
+
+// core 0's loop: one class / vendor request of the computer to the box, as it came (setup and data); the answer in the
+// completion. FALSE: no box, or one still in flight.
+boolean CObUsb::MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq)
+{
+	CObUsb *pThis = s_pThis;
+	if (pThis == 0 || !pThis->m_bMirror || pThis->m_bCtlBusy || pSetup->wLength > 512) return FALSE;
+	if ((pSetup->bmRequestType & REQUEST_IN) && pSetup->wLength == 0) return FALSE;	// no data stage to read into: STALL
+	TSetupData *pS = new TSetupData;
+	memcpy (pS, pSetup, sizeof *pS);
+	if (!(pSetup->bmRequestType & REQUEST_IN) && pSetup->wLength) memcpy (pThis->m_pCtlBuf, pOutData, pSetup->wLength);
+	CleanAndInvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
+	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pThis->m_pCtlBuf, pSetup->wLength, pS);
+	pURB->SetCompletionRoutine (MirrorCtlStub, (void *) (uintptr) nSeq, pThis);
+	pThis->m_bCtlBusy = TRUE;
+	if (pThis->GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
+	pThis->m_bCtlBusy = FALSE;
+	delete pURB;
+	delete pS;
+	return FALSE;
+}
+
+void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
+{
+	CObUsb *pThis = (CObUsb *) pContext;
+	TSetupData *pS = pURB->GetSetupData ();
+	if (pThis == s_pThis)
+	{
+		pThis->m_bCtlBusy = FALSE;
+		int n = pURB->GetStatus () ? (int) pURB->GetResultLength () : -1;
+		InvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
+		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorControlDone ((unsigned) (uintptr) pParam, pThis->m_pCtlBuf, n);
+	}
+	delete pURB;
+	delete pS;
+}
+
+#else	// a gadget without circle-gadget-mirror.patch (the Pi 5, the host tests): no mirror
+
+boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
+boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
+void CObUsb::MirrorAttachLate (void)					{}
+void CObUsb::MirrorPipeInNext (u8)					{}
+
+#endif
+
 // host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels from the output stage
 // (output.h: the voices mapped, faded in, limited; silence when its FIFO is empty). Capture channel 2: OUT MAIN L
 // as sent. The control core is woken to refill the FIFO (sev).
@@ -507,6 +732,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 	{
 		u8 *pBlock = pBuf + b * m_nOutBlk;
 		ob::write_header (pBlock, m_nOutCounter);
+		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
 		m_nOutCounter += ob::kFramesPerBlock;
 
 		s32 F[ob::kFramesPerBlock][ob::kChannels];
