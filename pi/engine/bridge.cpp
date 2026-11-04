@@ -168,7 +168,7 @@ int generic_json(char* out, int cap) {
   }
   int n = sniprintf(out, cap,
                     "\"generic\":{\"project\":\"%s\",\"projectId\":%lu,\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu},"
-                    "\"clock\":{\"transport\":%d,\"pattern\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
+                    "\"clock\":{\"transport\":%d,\"pattern\":%d,\"queued\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
                     "\"proc\":{\"slots\":[%s],\"params\":%lu,\"dropped\":%lu,\"blocks\":%lu},"
                     "\"screen\":{\"open\":%s,\"client\":%s%s%s,\"caps\":%d,\"hellos\":%lu,\"opens\":%lu,\"frames\":%lu,"
                     "\"popups\":%lu,\"bad\":%lu},"
@@ -176,7 +176,7 @@ int generic_json(char* out, int cap) {
                     "\"browse\":{\"asks\":%lu,\"listings\":%lu,\"folders\":%d,\"leftOut\":%lu,\"errors\":%lu}",
                     pname, (unsigned long)pid, (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
                     (unsigned long)g.hellos, (int)core::clock::transport(), (int)core::clock::pattern(),
-                    (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
+                    (int)core::clock::queued(), (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
                     (unsigned long)c.bad, slots, (unsigned long)p.params, (unsigned long)p.dropped,
                     (unsigned long)p.blocks, core::screen::open() ? "true" : "false",
                     core::screen::client() ? "\"" : "", core::screen::client() ? core::screen::client()->name : "null",

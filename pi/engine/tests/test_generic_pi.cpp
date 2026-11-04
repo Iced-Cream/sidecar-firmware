@@ -80,6 +80,7 @@ int main() {
   CHECK(strstr(js, "\"client\":null"));
   CHECK(strstr(js, ",\"kv\":{\"project\":130,\"records\":0,\"hellos\":1,\"reads\":0,\"writes\":0,"));
   CHECK(strstr(js, ",\"locks\":{\"sets\":1,\"ops\":1,\"bad\":1,\"values\":"));
+  CHECK(strstr(js, ",\"queued\":-1,\"bpm10\":"));
 
   // ---- core 0's popup and address, handed to the screen at the control core's tick
   in({0x35, 1, 0, 80, 1});    // (version 1) the Rytm's hello: up 4 s (50 ms ticks), caps 1 (it understands 36)
