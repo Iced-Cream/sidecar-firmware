@@ -4,6 +4,28 @@
 
 Spec: `docs/superpowers/specs/2026-10-14-pi-engine-design.md`. Plan: `docs/superpowers/plans/2026-10-14-pi-engine-usb.md`. Spike: `docs/pi-circle-spike.md`.
 
+## Generic engine (GENERIC=1, the default since 2026-11-04)
+
+The engine now builds as generic services only, with no Pi-side counterpart for any Rytm mod. `GENERIC=0 pi/engine/build.sh` still builds the full engine described in the rest of this page; its code stays in the tree, unwired in the default build. The generic kernel is about 3.5 MB (the full one: 12.1 MB).
+
+What runs:
+
+- The Rytm link and its transports: the Overbridge host (`ob_usb.cpp`), the USB-C Sidecar gadget, the TCP emulator link (`link=tcp`), the Rytm's USB MIDI, the 4F device hello (`core/device`).
+- OS updates through the Sidecar (`usbmidi=os:`), the Rytm MIDI bridge (TCP 7330), the USB-C reboot, the hub re-link fix.
+- Storage: `core/fmt`'s atomic writes and boot sweep, `core/store`, the card queue (`core/msamp/cardq`), USB drives and NVMe (`stor_pi`), the file service (`fsweb`, `/fs/*`), the SD file port 7310, the black box.
+- The platform: the web page and `/status` (its generic members), Wi-Fi, the pairing code, the console, the supply and temperature warnings, the CPU clock, crumbs.
+- The host link's generic commands (`core/generic`): 10 (the project's name), 35 (the Rytm's hello: the link reset and its listeners), 2C / 2D (the Rytm's step clock, `core/clock`), 30-3F (the remote screen as a transport, `core/screen`: the connect splash, popups, the pairing code's modal, one client; no pages of its own), 51-53 reserved for STORE (`core::gen::set_store`). Every other command is counted and dropped (`/status` "generic").
+- The audio return (`audio_return.h`, `core/proc`): what Overbridge OUT carries is the computer's audio from the USB-C gadget plus whatever the four processor slots add. Every slot is empty by default, so OUT is a pass-through. For now the slots run on core 0 in the OUT fill; moving them onto a render core comes with the first processor that needs it.
+- The local display: the boot screen, then one status page (`pi/ui/sidecar_ui_generic.c`).
+
+| core | does (generic) |
+|---|---|
+| 0 | as above: USB, the OUT fill (and the processor slots), the network, the console, the stats, the card queue |
+| 1, 2 | idle (no voices) |
+| 3 | the Rytm's MIDI bytes into `core/generic`, console commands, the screen's tick, the pairing popup, the card's idle saves |
+
+Console (core 3): `:gen`, `:clock`, `:proc`, `:rui`, `:rui=on|off`, `:fifo=`, `:ctlwait=`, `:idlewfe=`. Unwired in this build: the machines and voices, plugins, insert / AMP / master / send FX, the limiter, the sequencer, song, arp, the LFOs, poly, the Pi's own keyboards, the sampler, the recorder, scope and pattern views, pools, presets, bundles, the library, the 0023 listing (0D / 0F), FX return 26 / 27, report 50, and every remote and local page. The web page still has its tabs for them; their endpoints are not served.
+
 ## Build and run
 
 - Once: `pi/circle/build.sh`, which builds the Circle checkout with spike2's two xHCI patches. Then `pi/engine/build.sh`, which builds:

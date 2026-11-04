@@ -1,7 +1,11 @@
 // pi/engine/shared.cpp - see shared.h.
 #include "shared.h"
 
+#if !SIDECAR_GENERIC
 Output g_Output;
+#else
+volatile unsigned g_nStreams, g_nFramesSinceReset;
+#endif
 Spsc<uint8_t, 8192> g_MidiIn;
 Spsc<uint8_t, kMidiOutBytes> g_MidiOut;
 RecordReader<Spsc<uint8_t, kMidiOutBytes>> g_ToHost (&g_MidiOut);

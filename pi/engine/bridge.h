@@ -200,4 +200,10 @@ int card_folders();
 const char* project();
 int pool_slots();
 uint32_t to_host_dropped();
+// The generic engine's (GENERIC=1, bridge_gen.cpp; only the calls above that the Circle side makes in that build are
+// defined there): /status's "generic", "clock", "proc" and "screen" members; the console's gen, clock, proc, rui and
+// rui=on|off (the control core; false: not one of them); the network's address for the connect splash (core 0, queued)
+int generic_json(char* out, int cap);
+bool generic_command(const char* p, char* out, int cap);
+void screen_address(const char* ip);
 }  // namespace bridge

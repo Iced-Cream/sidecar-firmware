@@ -9,10 +9,23 @@ CORE := ../../core
 ENG  := engines
 include $(CORE)/engines/engines.mk
 
+# GENERIC=1 (the default since the engine strip-down, 2026-11-04; docs/pi-engine.md "Generic engine"): the engine as
+# generic services only - the Rytm link and its transports, OS updates, the MIDI bridge, storage, the platform, the
+# identity events, the Rytm's clock (core/clock), the audio return's processor slots (core/proc, audio_return.h) and
+# the remote screen's transport (core/screen). The voices, FX, sequencer, sampler, recorder, pools, bundles, library,
+# plugins and every page stay in the tree, unwired: GENERIC=0 builds the full engine as it was.
+GENERIC ?= 1
 # MULTISAMPLE (core/msamp): the Circle side's platform_pi.cpp defines its arena (core/platform.h)
 DEFINE += -DCORE_MSAMP=1
+ifeq ($(GENERIC),1)
+DEFINE += -DSIDECAR_GENERIC=1 -DCORE_GENERIC=1
+endif
 # Circle-side objects: Circle's flags and headers (Rules.mk's %.o: %.cpp)
+ifeq ($(GENERIC),1)
+OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o cores_gen.o console.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o wifi.o
+else
 OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o cores.o console.o selftest.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o um_pi.o wifi.o rec_pi.o
+endif
 OBJS += paircode_pi.o          # the pairing code's Pi side (paircode_pi.h; the portable paircode.cpp is in PORT_SRC)
 OBJS += midibridge_pi.o        # the Rytm MIDI bridge (midibridge_pi.h; the portable part is the header midibridge.h)
 # the volumes besides the card and the storage bench (docs/STORAGE.md): Circle's side; the logic is hosted (PORT_SRC)
@@ -39,6 +52,11 @@ LDFLAGS += --wrap=f_open --wrap=f_unlink --wrap=f_rename --wrap=f_mkdir
 endif
 endif
 # the display (docs/pi-display.md; HDMI, DSI): pi/ui, LVGL from the tree's addon/lvgl (build.sh adds it)
+ifeq ($(GENERIC),1)
+# the generic engine's display: the boot screen, then one status page (sidecar_ui_generic.c), the touch calibration
+OBJS += ../ui/sidecar_display.o ../ui/sidecar_ui_generic.o ../ui/sidecar_splash.o ../ui/sidecar_wordmark.o
+OBJS += ../ui/sidecar_theme.o ../ui/sidecar_dot.o ../ui/sidecar_dotfont.o ../ui/sidecar_font28.o ../ui/touch_cal.o
+else
 OBJS += ../ui/sidecar_display.o ../ui/sidecar_ui.o ../ui/sidecar_splash.o ../ui/sidecar_wordmark.o
 # the pattern pages (docs/TOUCH-EDITOR.md): the SEQ editor and the Rytm pattern view, LVGL only
 OBJS += ../ui/sidecar_seqed.o ../ui/sidecar_rytmpat.o ../ui/rytm_pattern.o ../ui/sidecar_theme.o ../ui/sidecar_dot.o ../ui/sidecar_dotfont.o
@@ -63,10 +81,26 @@ OBJS += ../ui/sidecar_rec.o
 OBJS += ../ui/sidecar_scope.o ../ui/sidecar_status.o
 # bundles phase 3: the PROJECT page (pi/ui/sidecar_project.h; its view from core/bundle/feed via bundle_pi.cpp)
 OBJS += ../ui/sidecar_project.o
+endif
 
 # Hosted objects: the toolchain's C++ headers and newlib's libm, not Circle's (as spike3's Plaits): the core,
 # the engines and the engine's portable parts. Named *.cpp.o / *.cc.o / *.c.o under hosted/.
 # core/host/newlib_rand.cpp: DAISYSP's rand() with newlib's sequence, without newlib's libc (the one host file here).
+ifeq ($(GENERIC),1)
+# the generic engine's core (core/generic/generic.h): the host link's router, the remote screen's transport, the
+# Rytm's clock, the processor slots, the Rytm's device profile, the card's atomic writes and the RAM store, the card
+# queue; sha256 for the pairing code and the file service
+CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
+            msamp/cardq.cpp lib/sha256.cpp host/newlib_rand.cpp)
+CORE_SRC += $(CORE)/device/device.cpp $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp)   # (device/strip: the Digitakt's, unwired)
+RMPSRC := ../../teensy/libraries/RytmPlugins/src
+RMP_SRC := rmp_loader.cpp   # fsweb's check of an uploaded plugin's header (the plugins themselves: unwired)
+PORT_SRC := midi_in.cpp bridge_gen.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
+            stor_vol.cpp stor_bench.cpp audio_return.cpp
+SEQED :=
+ENG_SRC :=
+ENG_C_SRC :=
+else
 CORE_SRC := $(addprefix $(CORE)/,md/md.cpp project_key.cpp lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp engine.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp \
             ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp \
             pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp wavetable/tables.cpp wavetable/wavetable.cpp granular/granular.cpp livein/livein.cpp midim/midim.cpp arp/arp.cpp chop/chop.cpp chop/slicemap.cpp host/newlib_rand.cpp user/um.cpp user/lists.cpp)
@@ -91,6 +125,7 @@ SEQED := $(if $(wildcard $(CORE)/seq/seq.cpp),1,)
 ifeq ($(SEQED),1)
 PORT_SRC += seqed_pi.cpp rytmpat_pi.cpp   # rytmpat_pi: the Rytm pattern view's data (core/seq/rytm_dump.h)
 DEFINE += -DSIDECAR_SEQED=1
+endif
 endif
 HOSTED_OBJS := $(patsubst $(CORE)/%,hosted/core/%.o,$(CORE_SRC)) $(patsubst %,hosted/%.o,$(PORT_SRC)) \
                $(patsubst %,hosted/rmp/%.o,$(RMP_SRC)) $(if $(SEQED),hosted/ui/seq_touch.cpp.o,) \
@@ -122,7 +157,7 @@ include $(CIRCLEHOME)/Rules.mk
 # RYTM_RENDER_CORES=4: the render state voices share is per core (cores 1 and 2 render at once; rytm_render_core() in
 # platform_pi.cpp): a 6-OP FM reload's stage and bank pointer, GRAIN's budget, stmlib's Random and rand(). Every
 # hosted object needs the same value (the per-core arrays are inline functions' statics).
-HOSTED_FLAGS = $(ARCH) -DRYTM_RENDER_CORES=4 -DCORE_POLY=1 -DCORE_MSAMP=1 -O2 -std=gnu++17 -fsigned-char -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+HOSTED_FLAGS = $(ARCH) -DRYTM_RENDER_CORES=4 -DCORE_POLY=1 -DCORE_MSAMP=1 $(if $(filter 1,$(GENERIC)),-DCORE_GENERIC=1,) -O2 -std=gnu++17 -fsigned-char -fno-exceptions -fno-rtti -fno-threadsafe-statics \
 	-fno-math-errno -ffp-contract=fast -ffunction-sections -fdata-sections -g -MMD -MP -I. -I$(CORE) -I$(RMPSRC) -DRMP_HOST_A64 $(ENG_INC) $(ENG_FLAGS) \
 	$(if $(SEQED),-DSIDECAR_SEQED=1,)
 HOSTED_CFLAGS = $(ARCH) -O2 -std=c99 -fno-math-errno -ffp-contract=fast -g -MMD -MP -w $(ENG_INC)

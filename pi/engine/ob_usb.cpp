@@ -56,12 +56,16 @@
 #include <assert.h>
 
 #include "ob_block.h"
+#if SIDECAR_GENERIC
+#include "audio_return.h"		// the generic engine's OUT: the computer's audio and the processor slots
+#else
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "rec_pi.h"
+#include "fx/out_measure.h"		// stereo=measure's read-back (MAIN L/R)
+#endif
 #include "bridge.h"
 #include "device/device.h"
-#include "fx/out_measure.h"		// stereo=measure's read-back (MAIN L/R)
 #include "shared.h"
 
 static const char From[] = "rytmob";
@@ -235,7 +239,9 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 void CObUsb::SetActive (boolean bActive)
 {
 	s_bActive = bActive;
+#if !SIDECAR_GENERIC
 	core::out::set_device (bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// the TCP link's host is 12 channels, the Rytm's
+#endif
 }
 
 CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
@@ -272,7 +278,9 @@ CObUsb::~CObUsb (void)
 {
 	s_pThis = 0;
 	m_bStreaming = FALSE;
+#if !SIDECAR_GENERIC
 	core::out::set_device (0);
+#endif
 	if (m_pAudio == &core::out::kRytmMk2) core::device::rytm_on_usb (false);
 	// URBs still queued on the (gone) endpoint are leaked, not freed under the controller
 	for (unsigned i = 0; i < MaxURBs; i++)
@@ -395,12 +403,18 @@ boolean CObUsb::Configure (void)
 					m_pAudio->ret == core::out::kStereoMix ? "the voices as one stereo mix" : "per voice");
 	}
 
+#if !SIDECAR_GENERIC
 	if (s_bActive) core::out::set_device (m_pAudio);	// the voices' channels and routes follow the box; not while the TCP link owns g_Output
+#endif
 
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
+#if SIDECAR_GENERIC
+	if (s_bActive) aret::Reset (), g_nStreams = g_nStreams + 1, g_nFramesSinceReset = 0;	// a new stream: the processors' IN frames start over
+#else
 	if (s_bActive) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
 	if (s_bActive) masterfx_pi::Reset ();
+#endif
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_bStreaming = TRUE;
@@ -439,6 +453,17 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		ob::write_header (pBlock, m_nOutCounter);
 		m_nOutCounter += ob::kFramesPerBlock;
 
+#if SIDECAR_GENERIC
+		// the generic engine: no voices of its own. OUT is the computer's audio (the USB-C Sidecar's UAC2 OUT 1-12)
+		// and what the processor slots add (audio_return.h: nothing while every slot is empty)
+		s32 F[ob::kFramesPerBlock][ob::kChannels];
+		s16 V[ob::kFramesPerBlock][ob::kVoices];
+		memset (F, 0, sizeof F);
+		memset (V, 0, sizeof V);
+		if (CSidecarGadget::Get () != 0)
+			CSidecarGadget::Get ()->ToRytm (F, V, ob::kFramesPerBlock, FALSE);
+		if (s_bActive) aret::Fill (F, ob::kFramesPerBlock), g_nFramesSinceReset = g_nFramesSinceReset + ob::kFramesPerBlock;
+#else
 		s32 F[ob::kFramesPerBlock][ob::kChannels];
 		s16 V[ob::kFramesPerBlock][ob::kVoices];
 		s16 LR[ob::kFramesPerBlock][2 * ob::kVoices];		// the voices' L and R planes (core/fx/out.h: PRE / POST in stereo)
@@ -469,6 +494,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		}
 		if (g_Rec.wants_side ()) g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);	// the voices as rendered, the FX, the pairs
 		if (bridge::samp_wants_voices ()) bridge::samp_voices (V, ob::kFramesPerBlock, LR, X);	// the sampler's Sidecar voice (X: its FX, CHOP)
+#endif
 		for (int f = 0; f < ob::kFramesPerBlock; f++)
 		{
 			core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
@@ -587,6 +613,15 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nInBlocks++;
 			good++;
 			if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->FromRytmBlock (pBlk);	// UAC2 IN 1-12
+#if SIDECAR_GENERIC
+			if (s_bActive && aret::Wanted ())	// the processor slots' input (audio_return.h): only while one is filled
+			{
+				s32 I[ob::kFramesPerBlock][ob::kChannels];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (int c = 0; c < ob::kChannels; c++) I[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
+				aret::In (I, ob::kFramesPerBlock);
+			}
+#else
 			boolean bRecIn = g_Rec.wants_in (), bSampIn = bridge::samp_wants_in ();
 			if (bRecIn || bSampIn)		// the recorder: the selected channels into its ring (rec_pi.h); the sampler's (core/samp)
 			{
@@ -642,6 +677,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
 				masterfx_pi::Stems (S, ob::kFramesPerBlock);
 			}
+#endif
 
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
 			if (s < 0) s = -s;

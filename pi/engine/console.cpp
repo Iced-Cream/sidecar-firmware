@@ -1,9 +1,11 @@
 // pi/engine/console.cpp - see console.h. The capture's dump is spike3's (kernel.cpp: CRC32, base64 lines, between
 // which log lines may fall), unchanged.
+#if !SIDECAR_GENERIC
 #include "rec_pi.h"
-#include "stor_pi.h"
 #include "bundle_pi.h"
 #include "lib_pi.h"
+#endif
+#include "stor_pi.h"
 #include "console.h"
 #include "wifi.h"
 #include "paircode_pi.h"
@@ -159,12 +161,18 @@ void CConsole::Command (const char *pText)
 {
 	CLogger *L = CLogger::Get ();
 	if (CWifi::Get () != 0 && CWifi::Get ()->Command (pText)) return;	// core 0's (wifi.h): before the length check, join is long
+#if !SIDECAR_GENERIC
 	if (rec_pi::Command (pText)) return;				// core 0's (rec_pi.h): rec=ch: lists are long too
+#endif
 	if (stor_pi::Command (pText)) return;				// core 0's (stor_pi.h): the volumes, the bench
+#if !SIDECAR_GENERIC
 	if (bundle_pi::command (pText)) return;				// core 0's (bundle_pi.h): bundle=... (the PROJECT pages)
+#endif
 	if (paircode_pi::Command (pText)) return;			// core 0's (paircode_pi.h): pair, pair=show, pair=revoke
 	if (midibridge_pi::Command (pText)) return;			// core 0's (midibridge_pi.h): midibridge, midibridge=on|off|os:on|os:off
+#if !SIDECAR_GENERIC
 	if (lib_pi::command (pText)) return;				// core 0's (lib_pi.h): lib=status|rescan|verify|bench (srclib's browse= / lib=changed:, pool= below)
+#endif
 	if (strlen (pText) >= sizeof (TCmd::text))
 	{
 		L->Write (From, LogWarning, "command too long (max %u characters): dropped", (unsigned) sizeof (TCmd::text) - 1);

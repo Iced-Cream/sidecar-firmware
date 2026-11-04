@@ -7,7 +7,9 @@
 #define _shared_h
 #include <stdint.h>
 
+#if !SIDECAR_GENERIC
 #include "output.h"
+#endif
 #include "records.h"
 #include "spsc.h"
 
@@ -16,7 +18,13 @@ const unsigned kMidiOutBytes = 32768;
 
 struct TCmd { char text[192]; };   // pool=S:<a path under /Samples> is the longest
 
+#if !SIDECAR_GENERIC
 extern Output g_Output;
+#else
+// The generic engine has no output stage (audio_return.h): the streams and the frames sent since the last one started,
+// as g_Output counted them (mbtrace.h's records; core 0's transports write, any core reads)
+extern volatile unsigned g_nStreams, g_nFramesSinceReset;
+#endif
 extern Spsc<uint8_t, 8192> g_MidiIn;
 extern Spsc<uint8_t, kMidiOutBytes> g_MidiOut;
 extern RecordReader<Spsc<uint8_t, kMidiOutBytes>> g_ToHost;	// g_MidiOut's only reader: every consumer takes whole records

@@ -4,7 +4,9 @@
 // the firmware's DSI display preferred and its touch (CRPiTouchScreen) as a second touch source; on the Pi 5 the DSI
 // display driven by Circle's addon/rp1dsi instead (docs/pi-display.md, docs/pi5.md).
 #include "sidecar_display.h"
+#if !SIDECAR_GENERIC
 #include "sidecar_seqed.h"		// the second finger: the SEQ page's pinch
+#endif
 #include "sidecar_splash.h"
 #include "sidecar_dot.h"		// the OLED theme's dot expansion (Flush)
 #include "dsi_rotate.h"			// a portrait DSI panel mounted landscape
@@ -895,7 +897,9 @@ void CSidecarDisplay::Update (boolean bPlugAndPlayUpdated)
 		u32 q = m_nPointer2;
 		int x2 = (int) (q & 0x7FFF), y2 = (int) ((q >> 16) & 0x7FFF);
 		sidecar_ui_to_ui (&x2, &y2);
+#if !SIDECAR_GENERIC
 		sidecar_seqed_touch2 ((q >> 31) && (m_nPointer >> 31), x2, y2);
+#endif
 	}
 	lv_timer_handler ();
 	unsigned nUs = CTimer::GetClockTicks () - nNow;
