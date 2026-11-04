@@ -4,7 +4,29 @@
 #include <string.h>
 
 #include "../fmt/fmt.h"
+#if CORE_GENERIC   // the stripped engine: no sampler; every level of a path made here, on the card's Fs
+namespace core {
+namespace samp {
+static bool mkdirs(const char* path) {
+  char p[200];
+  int n = (int)strlen(path);
+  if (n >= (int)sizeof p) return false;
+  memcpy(p, path, n + 1);
+  Fs fs;
+  for (int i = 1; i <= n; ++i)
+    if (p[i] == '/' || p[i] == 0) {
+      char c = p[i];
+      p[i] = 0;
+      if (!fs.exists(p)) fs.mkdir(p);
+      p[i] = c;
+    }
+  return fs.exists(path);
+}
+}  // namespace samp
+}  // namespace core
+#else
 #include "../samp/out.h"
+#endif
 
 namespace core {
 namespace cardq {

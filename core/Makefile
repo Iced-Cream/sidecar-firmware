@@ -19,7 +19,7 @@ CFLAGS   := -std=c99 -O2 -g -ffp-contract=fast -fPIC -w $(ENG_INC)
 # The core's own sources (grows task by task) and the Mac port.
 CORE_SRC := engine.cpp project_key.cpp md/md.cpp $(wildcard device/*.cpp) $(wildcard bundle/*.cpp) lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp $(wildcard ui/page_*.cpp) $(wildcard seq/*.cpp) $(wildcard song/*.cpp) $(wildcard rec/*.cpp) pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp msamp/cardq.cpp $(wildcard samp/*.cpp) $(wildcard wavetable/*.cpp) $(wildcard granular/*.cpp) livein/livein.cpp midim/midim.cpp arp/arp.cpp $(wildcard chop/*.cpp) $(wildcard lib/*.cpp) $(wildcard fmt/*.cpp) $(wildcard store/*.cpp) $(wildcard clock/*.cpp) $(wildcard proc/*.cpp) host/platform_host.cpp host/newlib_rand.cpp \
             user/um.cpp user/lists.cpp host/um_host.cpp $(addprefix $(RMPSRC)/,rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp)
-TESTS    := $(patsubst tests/%.cpp,$(B)/%,$(wildcard tests/test_*.cpp))
+TESTS    := $(patsubst tests/%.cpp,$(B)/%,$(filter-out tests/test_generic.cpp,$(wildcard tests/test_*.cpp)))
 ENG_OBJ  := $(patsubst $(ENG)/%,$(B)/eng-obj/%.o,$(ENG_SRC) $(ENG_C_SRC))
 DEPS_H   := $(filter-out version.h,$(wildcard *.h */*.h host/*.h tests/*.h))
 # Two render cores at once (the Pi engine's split) and a control core: engines and core built with RYTM_RENDER_CORES=3
@@ -170,6 +170,16 @@ test: teensy-cfg $(patsubst %,%.run,$(filter-out $(TIMING_TESTS),$(ALL_TESTS))) 
 test-serial: $(ALL_TESTS)
 	@set -e; for t in $(ALL_TESTS); do ./$$t; done; echo "ALL CORE TESTS PASS"
 .PHONY: test-serial
+# The stripped engine's core (core/generic, CORE_GENERIC=1: the Pi's build, 2026-11-04): its own small set of sources,
+# none of the machines; tests/test_generic.cpp and test_clock_proc.cpp against exactly that set
+GENERIC_SRC := generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp $(wildcard fmt/*.cpp) \
+               store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp
+GENERIC_FLAGS := -std=c++17 -O1 -g -Wall -Wno-unused-parameter -DCORE_GENERIC=1 -DCORE_MSAMP=1 -DCORE_POLY=1 -I. -Ihost -I$(RMPSRC) -I../sdk
+test-generic:
+	@mkdir -p $(B)/generic
+	@set -e; for t in test_generic test_clock_proc; do $(CXX) $(GENERIC_FLAGS) -o $(B)/generic/$$t tests/$$t.cpp $(GENERIC_SRC); ./$(B)/generic/$$t; done
+	@echo "GENERIC CORE TESTS PASS"
+.PHONY: test-generic
 
 $(B)/obj/_up/%.o: ../%.cpp $(DEPS_H) | $(B)/libengines.a
 	@mkdir -p $(dir $@)

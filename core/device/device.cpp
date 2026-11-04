@@ -1,13 +1,21 @@
 // core/device/device.cpp - see device.h. Per message, never per sample: cold.
 #include "device/device.h"
+#if !CORE_GENERIC
 #include "device/digitakt.h"
+#endif
 #include "device/strip.h"
 
 #include <string.h>
 
 #include "fmt/fmt.h"
 #include "fx/out.h"
+#if CORE_GENERIC   // the stripped engine (core/generic): its link reset; the Rytm's voice count without the machines
+#include "hooks.h"
+#include "machines.h"
+namespace core { void link_reset(const char* why); }
+#else
 #include "host_link.h"
+#endif
 #include "platform.h"
 
 namespace core {
@@ -27,8 +35,13 @@ static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
+#if CORE_GENERIC   // the generic engine (2026-11-04): no voices for another box to play, so the Rytm's profile alone
+static const Profile* s_list[kMax] = {&kRytm};
+static int s_n = 1;
+#else
 static const Profile* s_list[kMax] = {&kRytm, &kDigitakt};
 static int s_n = 2;
+#endif
 Link g_link = {};
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
@@ -50,7 +63,9 @@ CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid) {
   return nullptr;
 }
 
+#if !CORE_GENERIC   // (the generic engine: no profile has controls, the strip is not linked)
 void strip_tick(uint32_t us) { strip::tick(*g_link.box->controls, us); }
+#endif
 
 static inline bool is_sidecar(const uint8_t* d, int len) { return len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54; }
 
@@ -148,7 +163,9 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
 
 CORE_COLD void reset() {
   select(g_link, nullptr);
+#if !CORE_GENERIC
   strip::reset();
+#endif
   s_rytm_usb = s_said = s_by_usb = s_settle = false;
   g_link.state = nullptr;   // (a board restart, for the tests: the choice is made once a boot)
 }
@@ -225,17 +242,21 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
     select(l, nullptr);
     return true;
   }
+#if !CORE_GENERIC
   if (is_sidecar(d, len) && d[4] == kCmdControls && l.box->controls) {
     const Controls& c = *l.box->controls;
     if (len != 7 + 2 * c.n || d[5] >= l.box->voices) return ++l.dropped, false;
     strip::report(c, d[5], d + 6);
     return false;
   }
+#endif
   if (is_sidecar(d, len) && (l.box->in_allow[(d[4] & 0x7f) >> 5] >> (d[4] & 31) & 1)) {
     bool voiced = d[4] == 0x03 || d[4] == 0x04 || d[4] == 0x11;
     if (voiced && (d[5] & 7) >= l.box->voices) return ++l.dropped, false;
+#if !CORE_GENERIC
     if (l.box->controls && d[4] == 0x04) strip::trig(d[5] & 7);
     if (l.box->controls && d[4] == 0x11) strip::off(d[5] & 7);
+#endif
     return true;
   }
   int n = l.box->translate ? l.box->translate(*l.box, d, len, m) : table(*l.box, d, len, m);
