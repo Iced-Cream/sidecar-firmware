@@ -25,7 +25,10 @@ class Messages(unittest.TestCase):
         self.assertEqual(len(m), 4 + 2 + 4 + 1 + 8 + 1)
         d = P.decode_seq(*body(m))
         self.assertEqual(d, dict(kind="tick", blk=0x0ABCDEF, ticks=[(0, 3, 16, 2), (4, 63, 64, 0)]))
-        self.assertIsNone(P.decode_seq(P.SEQ_TICK, bytes([1, 0, 0, 0, 0, 1, 12, 0, 16, 2])))   # track 12: no
+        self.assertIsNone(P.decode_seq(P.SEQ_TICK, bytes([1, 0, 0, 0, 0, 1, 13, 0, 16, 2])))   # track 13: no
+        # the companion's (0032 clock.c): 5 bytes a tick (the trig flags), the FX track 12 too
+        d = P.decode_seq(P.SEQ_TICK, bytes([1, 0, 0, 0, 0, 2, 12, 3, 16, 2, 1, 0, 3, 16, 2, 2]))
+        self.assertEqual(d["ticks"], [(12, 3, 16, 2, 1), (0, 3, 16, 2, 2)])
         self.assertIsNone(P.decode_seq(P.SEQ_TICK, bytes([1, 0, 0, 0, 0, 2, 0, 0, 16, 2])))    # n 2, one tick
 
     def test_blk_wrap(self):
