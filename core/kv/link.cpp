@@ -10,6 +10,10 @@
 #include "../locks/locks.h"
 #include "kv.h"
 #include "kv_card.h"
+#if CORE_GENERIC
+#include <string.h>
+#include "../generic/generic.h"
+#endif
 
 namespace core {
 namespace kv {
@@ -90,12 +94,25 @@ int host_step(int max_msgs) {
 
 void hello() { locks::reset(); }
 Stats stats() { return s_st; }
+
+#if CORE_GENERIC
+static bool store_fn(const uint8_t* d, int len) { return d[4] == kCmd && (from_host(d, len), true); }
+static void link_fn(const char* why) { if (why && !strcmp(why, "hello")) hello(); }
+bool attach_generic() {
+  gen::set_store(store_fn);
+  bool ok = gen::on_link(link_fn);
+  return locks::attach() && ok;
+}
+#else
+bool attach_generic() { return false; }
+#endif
 #else
 bool from_host(const uint8_t*, int) { return false; }
 int card_step(int) { return 0; }
 int host_step(int) { return 0; }
 void hello() {}
 Stats stats() { return Stats{}; }
+bool attach_generic() { return false; }
 #endif
 
 }  // namespace link

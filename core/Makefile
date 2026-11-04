@@ -173,11 +173,12 @@ test-serial: $(ALL_TESTS)
 # The stripped engine's core (core/generic, CORE_GENERIC=1: the Pi's build, 2026-11-04): its own small set of sources,
 # none of the machines; tests/test_generic.cpp and test_clock_proc.cpp against exactly that set
 GENERIC_SRC := generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp $(wildcard fmt/*.cpp) \
-               store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp
+               store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp \
+               $(wildcard kv/*.cpp) $(wildcard locks/*.cpp)
 GENERIC_FLAGS := -std=c++17 -O1 -g -Wall -Wno-unused-parameter -DCORE_GENERIC=1 -DCORE_MSAMP=1 -DCORE_POLY=1 -I. -Ihost -I$(RMPSRC) -I../sdk
 test-generic:
 	@mkdir -p $(B)/generic
-	@set -e; for t in test_generic test_clock_proc; do $(CXX) $(GENERIC_FLAGS) -o $(B)/generic/$$t tests/$$t.cpp $(GENERIC_SRC); ./$(B)/generic/$$t; done
+	@set -e; for t in test_generic test_clock_proc test_store_generic; do $(CXX) $(GENERIC_FLAGS) -o $(B)/generic/$$t tests/$$t.cpp $(GENERIC_SRC); ./$(B)/generic/$$t; done
 	@echo "GENERIC CORE TESTS PASS"
 .PHONY: test-generic
 
