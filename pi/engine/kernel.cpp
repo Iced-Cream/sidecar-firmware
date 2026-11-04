@@ -264,8 +264,11 @@ boolean CKernel::Initialize (void)
 	{
 		CSidecarGadget *pSidecar = new CSidecarGadget (&m_Interrupt);
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
-		m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
-				m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
+		if (m_pSidecar != 0 && m_pSidecar->Mirror ())	// usb=mirror (docs/usb-mirror.md): up once the box has been read
+			m_Logger.Write (From, LogWarning, "gadget: usb=mirror: USB-C waits for the box, then shows the computer the box itself");
+		else
+			m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
+					m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
 		if (m_pSidecar != 0 && m_pSidecar->OsUpdate ())
 			m_Logger.Write (From, LogWarning, "gadget: usbmidi=os:%s: Elektron OS upgrades from the computer pass to %s",
 					m_pSidecar->OsUpdateName (), m_pSidecar->OsPass () ? "the Rytm on USB too" : "the emulator only");

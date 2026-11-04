@@ -7,6 +7,7 @@
 #include <circle/koptions.h>
 
 #include "ob_block.h"
+#include "ob_usb.h"
 
 void sidecar_tone_table (int period, double amp, int32_t *out);	// tones.cpp (hosted: libm)
 
@@ -103,6 +104,34 @@ const void *CSidecarGadget::String (const char *p, size_t *pLength)
 const void *CSidecarGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength)
 {
 	unsigned i = wValue & 0xFF;
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror)				// the box's own, as read from it (ob_usb.cpp)
+	{
+		switch (wValue >> 8)
+		{
+		case DESCRIPTOR_DEVICE:
+			if (i) return nullptr;
+			*pLength = sizeof m_MirDev;
+			return m_MirDev;
+		case DESCRIPTOR_CONFIGURATION:
+			if (i) return nullptr;
+			*pLength = m_nMirCfg;
+			return m_MirCfg;
+		case DESCRIPTOR_STRING:
+			for (unsigned k = 0; k < m_nMirStr; k++)
+				if (m_MirStr[k].uchIndex == i) { *pLength = m_MirStr[k].nLength; return m_MirStr[k].Data; }
+			if (i == 0)
+			{
+				static const u8 Lang[] = {4, DESCRIPTOR_STRING, 0x09, 0x04};
+				*pLength = sizeof Lang;
+				return Lang;
+			}
+			return nullptr;
+		default:
+			return nullptr;
+		}
+	}
+#endif
 	switch (wValue >> 8)
 	{
 	case DESCRIPTOR_DEVICE:
@@ -262,6 +291,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
+	m_bMirror (FALSE),
 	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE), m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
@@ -276,6 +306,22 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nOsUpdate = ModeFrom (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
 							   CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
+#ifdef CIRCLE_GADGET_MIRROR
+	m_bMirror = strcmp (CKernelOptions::Get ()->GetAppOptionString ("usb", "sidecar"), "mirror") == 0;
+	memset (m_MirDev, 0, sizeof m_MirDev);
+	m_nMirCfg = 0;
+	memset (&m_MirLayout, 0, sizeof m_MirLayout);
+	m_nMirStr = 0;
+	for (unsigned k = 0; k < mirror::kMaxEps; k++) m_pMirEP[k] = 0;
+	memset (m_MirAlt, 0, sizeof m_MirAlt);
+	m_nMirInCh = m_nMirOutCh = 0;
+	m_bMirHave = m_bMirBoxUp = m_bStarted = FALSE;
+	m_nMirInHead = m_nMirInTail = 0;
+	memset (&m_CtlSetup, 0, sizeof m_CtlSetup);
+	m_bCtlPending = FALSE;
+	m_nCtlSeq = 0;
+	memset (&m_MirStats, 0, sizeof m_MirStats);
+#endif
 	UpdateOsPass ();
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
@@ -300,9 +346,15 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 
 boolean CSidecarGadget::Start (void)
 {
-	if (!Initialize ()) return FALSE;
 	m_nLastStamp = Now ();
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) return TRUE;			// usb=mirror: Initialize once the box has been read (MirrorPoll)
+	if (!Initialize ()) return FALSE;
+	m_bStarted = TRUE;
 	return TRUE;
+#else
+	return Initialize ();
+#endif
 }
 
 u64 CSidecarGadget::Now (void)
@@ -319,6 +371,9 @@ u64 CSidecarGadget::TimerQ16 (void)
 
 void CSidecarGadget::AddEndpoints (void)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) { MirrorAddEndpoints (); return; }
+#endif
 	m_pIso[EPOut] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffOut], this, CSidecarIsoEP::RoleOut);
 	m_pIso[EPFeedback] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffFb], this,
 					       CSidecarIsoEP::RoleFeedback);
@@ -340,10 +395,20 @@ void CSidecarGadget::OnSuspend (void)
 	delete m_pMIDIOut;
 	delete m_pMIDIIn;
 	m_pMIDIOut = m_pMIDIIn = 0;
+#ifdef CIRCLE_GADGET_MIRROR
+	for (unsigned k = 0; k < mirror::kMaxEps; k++)
+	{
+		delete m_pMirEP[k];
+		m_pMirEP[k] = 0;
+	}
+#endif
 }
 
 int CSidecarGadget::OnClassOrVendorRequest (const TSetupData *pSetup, u8 *pData)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) return -1;			// every one was deferred (OnControlRequest); this is a leftover: STALL
+#endif
 	if (!(pSetup->bmRequestType & REQUEST_IN)) return 0;		// SET CUR: one fixed rate, accepted
 	unsigned n = 0;
 	if ((pSetup->wIndex & 0xFF) == 0 && (pSetup->wIndex >> 8) == 0x10)
@@ -373,6 +438,9 @@ void CSidecarGadget::OutReset (void)
 
 boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) return MirrorSetInterface (uchInterface, uchAlt);
+#endif
 	if (uchInterface == 0 || uchInterface == 3 || uchInterface == 4) return uchAlt == 0;
 	if (uchAlt > 1) return FALSE;
 	if (uchInterface == 1)
@@ -404,6 +472,9 @@ boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 
 int CSidecarGadget::OnGetInterface (u8 uchInterface)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) return uchInterface < m_MirLayout.ifaces ? m_MirAlt[uchInterface] : -1;
+#endif
 	if (uchInterface == 1) return m_uchOutAlt;
 	if (uchInterface == 2) return m_uchInAlt;
 	return uchInterface <= 4 ? 0 : -1;
@@ -424,6 +495,9 @@ void CSidecarGadget::InPush (const s32 *pFrame)
 
 void CSidecarGadget::FromRytmBlock (const u8 *pBlock)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) { MirrorAudioIn (pBlock); return; }
+#endif
 	for (int f = 0; f < ob::kFramesPerBlock; f++)
 	{
 		s32 Frame[12];
@@ -437,6 +511,7 @@ void CSidecarGadget::FromRytmBlock (const u8 *pBlock)
 
 void CSidecarGadget::FromEngine (const s32 (*pFrames)[12], unsigned n)
 {
+	if (m_bMirror) return;				// usb=mirror: the box's own blocks, or nothing
 	EnterCritical ();
 	if (Now () - m_nSrcTick > m_nCntFrq / 50 || !m_bSrcRytm)	// the Rytm, when it streams, wins
 	{
@@ -787,6 +862,13 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 
 void CSidecarGadget::Poll (void)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror)
+	{
+		MirrorPoll ();
+		if (!m_bStarted) return;
+	}
+#endif
 	UpdatePlugAndPlay ();
 	if (OsUpdate () && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
 	{
@@ -850,6 +932,9 @@ boolean CSidecarGadget::Command (const char *p)
 
 void CSidecarGadget::LogStats (CLogger *pLogger)
 {
+#ifdef CIRCLE_GADGET_MIRROR
+	if (m_bMirror) { MirrorLogStats (pLogger); return; }
+#endif
 	unsigned nIRQs;
 	u64 nTicks, nNow = Now ();
 	GetIRQStats (&nIRQs, &nTicks);
@@ -909,3 +994,336 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 	}
 #endif
 }
+
+// ---- usb=mirror (docs/usb-mirror.md) ---------------------------------------------------------------------------
+#ifdef CIRCLE_GADGET_MIRROR
+
+CMirrorEP::CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget)
+:	CDWUSBGadgetEndpoint ((const TUSBEndpointDescriptor *) rEp.desc, pGadget),
+	m_pSidecar (pGadget), m_Role (rEp.role), m_uchAddr (rEp.addr), m_nMps (rEp.mps > 512 ? 512 : rEp.mps),
+	m_bActive (FALSE), m_bBusy (FALSE)
+{
+}
+
+void CMirrorEP::OnActivate (void)
+{
+	m_bActive = TRUE;
+	m_bBusy = FALSE;
+	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
+	else Kick ();
+}
+
+void CMirrorEP::OnDeactivate (void)
+{
+	boolean bHeld = m_bBusy;
+	m_bActive = FALSE;
+	m_bBusy = FALSE;
+	CancelTransfer ();
+	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
+}
+
+// OUT: the next packet (whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer)
+void CMirrorEP::Rearm (void)
+{
+	if (!m_bActive) return;
+	m_bBusy = FALSE;
+	BeginTransfer (TransferDataOut, m_Buffer, (m_nMps + 3) & ~3u);
+}
+
+boolean CMirrorEP::Send (const u8 *pData, unsigned nLength)
+{
+	if (!m_bActive || m_bBusy || nLength > sizeof m_Buffer) return FALSE;
+	m_bBusy = TRUE;
+	if (nLength) memcpy (m_Buffer, pData, nLength);
+	BeginTransfer (TransferDataIn, nLength ? m_Buffer : nullptr, nLength);	// a zero-length packet too
+	return TRUE;
+}
+
+void CMirrorEP::Kick (void)
+{
+	if (!m_bActive || m_bBusy) return;
+	if (m_Role == mirror::kAudioIn)
+	{
+		unsigned n = m_pSidecar->MirrorFillIn (m_Buffer);
+		if (n == 0) return;
+		m_bBusy = TRUE;
+		BeginTransfer (TransferDataIn, m_Buffer, n);
+	}
+}
+
+void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
+{
+	switch (m_Role)
+	{
+	case mirror::kAudioIn:
+		m_bBusy = FALSE;
+		m_pSidecar->m_MirStats.nInSent++;
+		Kick ();
+		break;
+	case mirror::kAudioOut:
+		m_pSidecar->MirrorAudioOut (m_Buffer, nLength);
+		Rearm ();
+		break;
+	case mirror::kPipeOut:
+		m_bBusy = TRUE;					// NAKed until the box took it (MirrorPipeOutDone)
+		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
+		break;
+	case mirror::kPipeIn:
+		m_bBusy = FALSE;
+		m_pSidecar->MirrorPipeInSent (m_uchAddr);
+		break;
+	default:
+		break;
+	}
+}
+
+CMirrorEP *CSidecarGadget::MirrorEP (u8 uchAddr)
+{
+	for (unsigned k = 0; k < mirror::kMaxEps; k++)
+		if (m_pMirEP[k] != 0 && m_pMirEP[k]->Address () == uchAddr) return m_pMirEP[k];
+	return 0;
+}
+
+// ob_usb.cpp, at the box's configuration (task level). Once the gadget is up, the computer has these: a box with other
+// descriptors after that is refused (the computer would need a replug the gadget cannot do yet: reboot the Pi).
+boolean CSidecarGadget::MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg)
+{
+	mirror::Layout l;
+	if (pDev[0] != sizeof m_MirDev || pDev[1] != DESCRIPTOR_DEVICE || pDev[7] != 64
+	    || !mirror::parse (pCfg, nCfg, ob::kInEp, ob::kOutEp, &l))
+	{
+		CLogger::Get ()->Write (From, LogError, "usb=mirror: the box's descriptors are not ones the USB-C side can carry");
+		return FALSE;
+	}
+	if (m_bStarted)
+	{
+		if (nCfg != m_nMirCfg || memcmp (pCfg, m_MirCfg, nCfg) != 0 || memcmp (pDev, m_MirDev, sizeof m_MirDev) != 0)
+		{
+			CLogger::Get ()->Write (From, LogError, "usb=mirror: another box than the computer saw: reboot the Pi");
+			return FALSE;
+		}
+		return TRUE;
+	}
+	memcpy (m_MirDev, pDev, sizeof m_MirDev);
+	memcpy (m_MirCfg, pCfg, nCfg);
+	m_nMirCfg = nCfg;
+	m_MirLayout = l;
+	m_nMirStr = 0;
+	unsigned nRoles[7] = {0};
+	for (unsigned k = 0; k < l.n; k++) nRoles[l.ep[k].role]++;
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %04x:%04x, %u B configuration, %u interfaces: audio %u/%u, pipes %u/%u, "
+				"midi %u/%u, other %u", (unsigned) (pDev[8] | pDev[9] << 8), (unsigned) (pDev[10] | pDev[11] << 8),
+				nCfg, l.ifaces, nRoles[mirror::kAudioIn], nRoles[mirror::kAudioOut], nRoles[mirror::kPipeIn],
+				nRoles[mirror::kPipeOut], nRoles[mirror::kMidiIn], nRoles[mirror::kMidiOut], nRoles[mirror::kNone]);
+	return TRUE;
+}
+
+void CSidecarGadget::MirrorSetString (u8 uchIndex, const u8 *pDesc, unsigned nLength)
+{
+	if (m_bStarted || m_nMirStr == mirror::kMaxStrings || nLength < 2 || nLength > sizeof m_MirStr[0].Data) return;
+	m_MirStr[m_nMirStr].uchIndex = uchIndex;
+	m_MirStr[m_nMirStr].nLength = (u8) nLength;
+	memcpy (m_MirStr[m_nMirStr].Data, pDesc, nLength);
+	m_nMirStr++;
+}
+
+void CSidecarGadget::MirrorBoxUp (boolean bUp)
+{
+	if (bUp && m_nMirCfg != 0) m_bMirHave = TRUE;
+	EnterCritical ();
+	m_bMirBoxUp = bUp && m_bMirHave;
+	m_nMirInHead = m_nMirInTail = 0;
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: box %s", m_bMirBoxUp ? "up" : "gone (requests are STALLed)");
+}
+
+void CSidecarGadget::MirrorAddEndpoints (void)
+{
+	for (unsigned k = 0; k < m_MirLayout.n; k++)
+	{
+		const mirror::Ep &e = m_MirLayout.ep[k];
+		switch (e.role)
+		{
+		case mirror::kMidiOut:
+			if (m_pMIDIOut == 0) m_pMIDIOut = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) e.desc, this);
+			break;
+		case mirror::kMidiIn:
+			if (m_pMIDIIn == 0) m_pMIDIIn = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) e.desc, this);
+			break;
+		case mirror::kNone:
+			break;					// an interface of another class: its endpoint NAKs
+		default:
+			m_pMirEP[k] = new CMirrorEP (e, this);
+			break;
+		}
+	}
+}
+
+// SET_INTERFACE (gadget IRQ): the computer's choice, kept here; the box stays at the alternate the engine opened
+// (ob_usb.cpp, alt 3). The audio endpoints' channels follow the alternate's size (ob::block_bytes).
+boolean CSidecarGadget::MirrorSetInterface (u8 uchInterface, u8 uchAlt)
+{
+	if (!mirror::has_alt (m_MirCfg, m_nMirCfg, uchInterface, uchAlt)) return FALSE;
+	m_MirAlt[uchInterface] = uchAlt;
+	auto Channels = [this] (u8 uchIface, u8 uchAltSet, u8 uchAddr) -> unsigned
+	{
+		unsigned m = mirror::alt_mps (m_MirCfg, m_nMirCfg, uchIface, uchAltSet, uchAddr);
+		if (m < (unsigned) ob::kHeaderBytes) return 0;
+		unsigned d = m - ob::kHeaderBytes, f = ob::kFramesPerBlock * 4;
+		if (d % f != 0 || d / f > (unsigned) ob::kChannels) { m_MirStats.nAltBad++; return 0; }
+		return d / f;
+	};
+	if (m_MirLayout.audio_in >= 0 && m_MirLayout.ep[m_MirLayout.audio_in].iface == uchInterface)
+	{
+		m_uchInAlt = uchAlt;
+		m_nMirInCh = Channels (uchInterface, uchAlt, ob::kInEp);
+		m_nMirInHead = m_nMirInTail = 0;
+	}
+	if (m_MirLayout.audio_out >= 0 && m_MirLayout.ep[m_MirLayout.audio_out].iface == uchInterface)
+	{
+		m_nMirOutCh = Channels (uchInterface, uchAlt, ob::kOutEp);
+		m_uchOutAlt = m_nMirOutCh ? uchAlt : 0;
+		OutReset ();
+	}
+	return TRUE;
+}
+
+// xHCI IRQ: a 12-channel IN block of the box, queued for the computer (cut to its alternate's channels)
+void CSidecarGadget::MirrorAudioIn (const u8 *pBlock)
+{
+	m_MirStats.nInBlocks++;
+	if (!m_nMirInCh) return;
+	if (m_nMirInHead - m_nMirInTail >= MirInDepth) { m_nMirInTail++; m_MirStats.nInDrop++; }
+	u8 *d = m_MirIn[m_nMirInHead % MirInDepth];
+	if (m_nMirInCh == (unsigned) ob::kChannels) memcpy (d, pBlock, ob::block_bytes (ob::kChannels));
+	else
+	{
+		memcpy (d, pBlock, ob::kHeaderBytes);
+		for (int f = 0; f < ob::kFramesPerBlock; f++)
+			memcpy (d + ob::kHeaderBytes + 4 * m_nMirInCh * f, pBlock + ob::kHeaderBytes + 4 * ob::kChannels * f, 4 * m_nMirInCh);
+	}
+	m_nMirInHead++;
+	CMirrorEP *pEP = m_MirLayout.audio_in >= 0 ? m_pMirEP[m_MirLayout.audio_in] : 0;
+	if (pEP) pEP->Kick ();
+}
+
+unsigned CSidecarGadget::MirrorFillIn (u8 *pBuffer)
+{
+	if (m_nMirInHead == m_nMirInTail || !m_nMirInCh) return 0;
+	unsigned n = ob::block_bytes (m_nMirInCh);
+	memcpy (pBuffer, m_MirIn[m_nMirInTail++ % MirInDepth], n);
+	return n;
+}
+
+// gadget IRQ: the computer's OUT block, its frames into the OUT ring that ToRytm adds to what the engine sends
+void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
+{
+	unsigned ch = m_nMirOutCh;
+	if (ch == 0 || nLength != (unsigned) ob::block_bytes (ch)) { m_MirStats.nOutBad++; return; }
+	m_MirStats.nOutBlocks++;
+	for (int f = 0; f < ob::kFramesPerBlock; f++)
+	{
+		if (m_nOutHead - m_nOutTail >= Ring) { m_Stats.nOutOver++; continue; }
+		s32 *pFrame = m_OutRing[m_nOutHead % Ring];
+		for (unsigned c = 0; c < ChOut; c++) pFrame[c] = c < ch ? ob::block_sample (p, ch, f, c) >> 8 : 0;	// 24-bit
+		m_nOutHead++;
+	}
+}
+
+void CSidecarGadget::MirrorPipeOut (CMirrorEP *pEP, const u8 *pData, unsigned nLength)
+{
+	if (m_bMirBoxUp && CObUsb::MirrorPipeOut (pEP->Address (), pData, nLength)) { m_MirStats.nPipeOut++; return; }
+	m_MirStats.nPipeOutDrop++;
+	pEP->Rearm ();
+}
+
+void CSidecarGadget::MirrorPipeOutDone (u8 uchAddr)
+{
+	CMirrorEP *pEP = MirrorEP (uchAddr);
+	if (pEP) pEP->Rearm ();
+}
+
+boolean CSidecarGadget::MirrorPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength)
+{
+	CMirrorEP *pEP = MirrorEP (uchAddr);
+	if (pEP == 0 || !pEP->Active () || nLength > 512) { m_MirStats.nPipeInDrop++; return FALSE; }
+	if (!pEP->Send (pData, nLength)) { m_MirStats.nPipeInDrop++; return FALSE; }
+	m_MirStats.nPipeIn++;
+	return TRUE;
+}
+
+void CSidecarGadget::MirrorPipeInSent (u8 uchAddr)
+{
+	CObUsb::MirrorPipeInNext (uchAddr);
+}
+
+// EP0 (gadget IRQ): every class and vendor request goes to the box; the answer comes back in MirrorControlDone
+int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutData)
+{
+	if (!m_bMirror) return ControlNotHandled;
+	if (m_bCtlPending) { m_MirStats.nCtlStall++; return ControlNotHandled; }	// one at a time: this one is STALLed
+	memcpy (&m_CtlSetup, pSetup, sizeof m_CtlSetup);
+	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
+	m_nCtlSeq++;
+	m_bCtlPending = TRUE;
+	m_MirStats.nCtl++;
+	return ControlDeferred;
+}
+
+void CSidecarGadget::OnControlAborted (void)
+{
+	m_nCtlSeq++;					// an answer still on its way is for nobody
+	m_bCtlPending = FALSE;
+	m_MirStats.nCtlAbort++;
+}
+
+void CSidecarGadget::MirrorControlDone (unsigned nSeq, const u8 *pData, int nLength)
+{
+	if (nSeq != m_nCtlSeq) { m_MirStats.nCtlLate++; return; }
+	if (nLength < 0) m_MirStats.nCtlStall++;
+	CompleteControl (pData, nLength);
+}
+
+void CSidecarGadget::MirrorPoll (void)
+{
+	if (!m_bStarted && m_bMirHave)
+	{
+		boolean bOK = Initialize ();
+		m_bStarted = TRUE;			// tried once: a failure is logged, not retried
+		CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "usb=mirror: USB-C %s as %04x:%04x", bOK ? "up" : "failed to start",
+					(unsigned) (m_MirDev[8] | m_MirDev[9] << 8), (unsigned) (m_MirDev[10] | m_MirDev[11] << 8));
+	}
+	if (!m_bCtlPending) return;
+	TSetupData Setup;
+	u8 Data[sizeof m_CtlData];
+	EnterCritical ();
+	unsigned nSeq = m_nCtlSeq;
+	boolean bTake = m_bCtlPending;
+	m_bCtlPending = FALSE;
+	memcpy (&Setup, &m_CtlSetup, sizeof Setup);
+	memcpy (Data, m_CtlData, sizeof Data);
+	LeaveCritical ();
+	if (!bTake) return;
+	if (m_bMirBoxUp && CObUsb::MirrorControl (&Setup, Data, nSeq)) return;
+	EnterCritical ();				// no box: STALL (unless the host gave up meanwhile)
+	if (nSeq == m_nCtlSeq) { m_MirStats.nCtlStall++; CompleteControl (0, -1); }
+	LeaveCritical ();
+}
+
+void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
+{
+	EnterCritical ();
+	TMirStats s = m_MirStats;
+	unsigned nOutUnder = m_Stats.nOutUnder, nOutOver = m_Stats.nOutOver;
+	LeaveCritical ();
+	pLogger->Write (From, LogNotice,
+		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u | "
+		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u | alt bad %u | midi from %u to-mac %u to-rytm %u",
+		m_bStarted ? "up" : "waiting", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
+		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nAltBad,
+		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm);
+}
+
+#endif	// CIRCLE_GADGET_MIRROR
+

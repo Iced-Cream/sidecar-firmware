@@ -9,3 +9,4 @@ struct __attribute__((packed)) TUSBConfigurationDescriptor { u8 bLength, bDescri
 struct __attribute__((packed)) TUSBInterfaceDescriptor { u8 bLength, bDescriptorType, bInterfaceNumber, bAlternateSetting, bNumEndpoints, bInterfaceClass, bInterfaceSubClass, bInterfaceProtocol, iInterface; };
 struct __attribute__((packed)) TUSBEndpointDescriptor { u8 bLength, bDescriptorType, bEndpointAddress, bmAttributes; u16 wMaxPacketSize; u8 bInterval; };
 struct TUSBDeviceDescriptor { u16 idVendor, idProduct; };
+struct __attribute__((packed)) TSetupData { u8 bmRequestType, bRequest; u16 wValue, wIndex, wLength; };	// usb=mirror's declarations

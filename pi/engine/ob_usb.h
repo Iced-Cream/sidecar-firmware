@@ -20,6 +20,7 @@
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
+#include <circle/usb/usb.h>
 #include <circle/logger.h>
 #include <circle/types.h>
 #include "device/audio.h"
@@ -69,6 +70,13 @@ public:
 	static unsigned CaptureLost (void)	{ return s_nCapLost; }
 	static const u8 *CaptureData (void)	{ return (const u8 *) s_pCapBuf; }
 
+	// usb=mirror (docs/usb-mirror.md, sidecar_gadget.h): the box's side. At Configure the box's device, configuration and
+	// string descriptors go to the gadget, and the other vendor-class endpoints (pipes: the async channel) are opened.
+	// FALSE: no box (or busy): the caller drops or STALLs.
+	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
+	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
+	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
+
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
 
@@ -100,6 +108,29 @@ private:
 	void Log (CLogger *pLogger);
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
+
+	// usb=mirror
+	void MirrorAttach (void);
+	boolean SubmitPipeIn (unsigned i);
+	static void MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext);
+	static void PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext);
+	static void PipeOutStub (CUSBRequest *pURB, void *pParam, void *pContext);
+	static const unsigned MaxPipes = 6;
+	struct TPipe
+	{
+		u8 uchAddr;
+		unsigned nMps;
+		CUSBEndpoint *pEP;
+		CUSBRequest *pURB;			// IN: the one in flight (OUT: a new one each packet)
+		u8 *pBuf;				// DMA, 512 B
+		volatile boolean bBusy;
+		volatile boolean bStopped;		// IN: an error; not resubmitted
+		volatile unsigned nPackets, nErrors;
+	} m_Pipe[MaxPipes];
+	unsigned m_nPipes;
+	boolean m_bMirror;
+	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data
+	volatile boolean m_bCtlBusy;
 
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called

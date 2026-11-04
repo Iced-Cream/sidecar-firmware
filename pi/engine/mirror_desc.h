@@ -1,0 +1,158 @@
+// pi/engine/mirror_desc.h - usb=mirror (docs/usb-mirror.md): what the Sidecar's USB-C side needs to know about the
+// attached box's configuration descriptor, which it serves to the computer unchanged. Portable (no Circle), tested on
+// the build host by tests/test_mirror_desc.cpp with a made-up descriptor of the same shape.
+//
+// The descriptors are read from the box at run time (ob_usb.cpp) and kept in RAM only: no box's bytes are in the repo.
+//
+// Endpoint roles, by interface class and address (generic: any box whose device profile has an audio row):
+//   vendor class (0xFF), ob::kInEp / ob::kOutEp     the audio stream: IN relayed block for block, OUT decoded and added
+//                                                   to what the engine sends (sidecar_gadget.cpp)
+//   vendor class, any other endpoint                a pipe: relayed packet for packet to the same endpoint of the box
+//                                                   (the Overbridge async channel: Transfer, Total Recall, the plugins)
+//   audio class (0x01), MIDI streaming (0x03)       USB MIDI, through the Sidecar's filters as in the default mode
+// The gadget creates one endpoint per address, with the largest wMaxPacketSize of any alternate setting (a smaller
+// alternate's packets are then short packets), so no endpoint is resized at SET_INTERFACE.
+#ifndef _mirror_desc_h
+#define _mirror_desc_h
+
+#include <stdint.h>
+#include <string.h>
+
+namespace mirror {
+
+constexpr unsigned kMaxConfig = 512;		// bytes of configuration descriptor (EP0's buffer in Circle's gadget)
+constexpr unsigned kMaxEps = 14;		// DWC2: 7 IN + 7 OUT besides EP0
+constexpr unsigned kMaxIfaces = 16;
+constexpr unsigned kMaxStrings = 24;		// string descriptors kept (index 0, the languages, included)
+
+enum Role : uint8_t { kNone, kAudioIn, kAudioOut, kPipeIn, kPipeOut, kMidiIn, kMidiOut };
+
+struct Ep
+{
+	uint8_t addr;				// bEndpointAddress
+	uint8_t attr;				// bmAttributes (transfer type in bits 0-1)
+	uint8_t interval;			// bInterval (the first alternate's)
+	uint16_t mps;				// the largest wMaxPacketSize & 0x7FF across alternates
+	uint8_t iface;				// bInterfaceNumber
+	Role role;
+	uint8_t desc[7];			// the endpoint descriptor the gadget creates the endpoint from (mps above)
+};
+
+struct Layout
+{
+	Ep ep[kMaxEps];
+	unsigned n;
+	unsigned ifaces;			// highest interface number + 1
+	uint8_t max_alt[kMaxIfaces];		// highest alternate setting of each interface
+	int audio_in, audio_out;		// index into ep[], or -1
+};
+
+inline uint16_t le16 (const uint8_t *p) { return (uint16_t) (p[0] | p[1] << 8); }
+
+// Walks the configuration descriptor; FALSE when it is malformed, too big, or has more endpoints or interfaces than the
+// gadget can carry. in_ep / out_ep: the audio stream's endpoint addresses (ob::kInEp, ob::kOutEp).
+inline bool parse (const uint8_t *cfg, unsigned len, uint8_t in_ep, uint8_t out_ep, Layout *l)
+{
+	memset (l, 0, sizeof *l);
+	l->audio_in = l->audio_out = -1;
+	if (len < 9 || len > kMaxConfig || cfg[1] != 2 || le16 (cfg + 2) != len) return false;
+	int iface = -1;
+	uint8_t cls = 0, sub = 0;
+	for (unsigned o = 0; o < len;)
+	{
+		unsigned dl = cfg[o];
+		if (dl < 2 || o + dl > len) return false;
+		const uint8_t *d = cfg + o;
+		if (d[1] == 4 && dl >= 9)			// interface
+		{
+			iface = d[2];
+			if (iface >= (int) kMaxIfaces) return false;
+			if ((unsigned) iface + 1 > l->ifaces) l->ifaces = iface + 1;
+			if (d[3] > l->max_alt[iface]) l->max_alt[iface] = d[3];
+			cls = d[5], sub = d[6];
+		}
+		else if (d[1] == 5 && dl >= 7)			// endpoint
+		{
+			if (iface < 0) return false;
+			uint8_t a = d[2];
+			uint16_t m = le16 (d + 4) & 0x7FF;
+			unsigned i = 0;
+			while (i < l->n && l->ep[i].addr != a) i++;
+			if (i == l->n)
+			{
+				if (l->n == kMaxEps || (a & 0x0F) == 0 || (a & 0x0F) > 7) return false;
+				Ep &e = l->ep[l->n++];
+				e.addr = a, e.attr = d[3] & 0x03, e.interval = d[6], e.iface = (uint8_t) iface;
+				if (cls == 0xFF) e.role = a == in_ep ? kAudioIn : a == out_ep ? kAudioOut : (a & 0x80) ? kPipeIn : kPipeOut;
+				else if (cls == 0x01 && sub == 0x03) e.role = (a & 0x80) ? kMidiIn : kMidiOut;
+				else e.role = kNone;
+				if (e.role == kAudioIn) l->audio_in = (int) i;
+				if (e.role == kAudioOut) l->audio_out = (int) i;
+			}
+			else if (l->ep[i].iface != iface) return false;	// one address, one interface
+			if (m > l->ep[i].mps) l->ep[i].mps = m;
+		}
+		o += dl;
+	}
+	for (unsigned i = 0; i < l->n; i++)
+	{
+		Ep &e = l->ep[i];
+		const uint8_t d[7] = {7, 5, e.addr, e.attr, (uint8_t) (e.mps & 0xFF), (uint8_t) (e.mps >> 8), e.interval};
+		memcpy (e.desc, d, 7);
+	}
+	return l->n > 0;
+}
+
+// wMaxPacketSize & 0x7FF of endpoint `addr` at interface `iface`, alternate `alt` (0: not there)
+inline unsigned alt_mps (const uint8_t *cfg, unsigned len, uint8_t iface, uint8_t alt, uint8_t addr)
+{
+	int cur = -1, cur_alt = -1;
+	for (unsigned o = 0; o + 2 <= len && cfg[o] >= 2 && o + cfg[o] <= len; o += cfg[o])
+	{
+		const uint8_t *d = cfg + o;
+		if (d[1] == 4 && d[0] >= 9) cur = d[2], cur_alt = d[3];
+		else if (d[1] == 5 && d[0] >= 7 && cur == iface && cur_alt == alt && d[2] == addr) return le16 (d + 4) & 0x7FF;
+	}
+	return 0;
+}
+
+// Is there an interface `iface` with alternate setting `alt`?
+inline bool has_alt (const uint8_t *cfg, unsigned len, uint8_t iface, uint8_t alt)
+{
+	for (unsigned o = 0; o + 2 <= len && cfg[o] >= 2 && o + cfg[o] <= len; o += cfg[o])
+		if (cfg[o + 1] == 4 && cfg[o] >= 9 && cfg[o + 2] == iface && cfg[o + 3] == alt) return true;
+	return false;
+}
+
+// The string indexes the device and configuration descriptors name (iManufacturer, iProduct, iSerialNumber,
+// iConfiguration, each IAD's iFunction, each interface's iInterface, a MIDI jack's iJack), each once, in order of
+// first use; returns how many (at most max)
+inline unsigned string_indexes (const uint8_t *dev, const uint8_t *cfg, unsigned len, uint8_t *out, unsigned max)
+{
+	unsigned n = 0;
+	auto add = [&] (uint8_t i)
+	{
+		if (i == 0 || n == max) return;
+		for (unsigned k = 0; k < n; k++) if (out[k] == i) return;
+		out[n++] = i;
+	};
+	add (dev[14]), add (dev[15]), add (dev[16]);
+	if (len >= 9) add (cfg[6]);
+	uint8_t cls = 0, sub = 0;
+	for (unsigned o = 0; o + 2 <= len && cfg[o] >= 2 && o + cfg[o] <= len; o += cfg[o])
+	{
+		const uint8_t *d = cfg + o;
+		if (d[1] == 11 && d[0] >= 8) add (d[7]);			// IAD
+		else if (d[1] == 4 && d[0] >= 9) cls = d[5], sub = d[6], add (d[8]);
+		else if (d[1] == 0x24 && cls == 0x01 && sub == 0x03 && d[0] >= 6)	// MIDI streaming, class-specific
+		{
+			if (d[2] == 0x02 && d[0] >= 6) add (d[5]);		// IN jack
+			else if (d[2] == 0x03 && d[0] >= 7) add (d[d[0] - 1]);	// OUT jack: iJack is the last byte
+		}
+	}
+	return n;
+}
+
+} // namespace mirror
+
+#endif
