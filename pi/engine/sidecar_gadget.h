@@ -1,11 +1,10 @@
 // pi/engine/sidecar_gadget.h - P3 of the Overbridge pass-through (the pass-through spike's spec, in git
 // history: 3a8bf7d): "Sidecar" on the Pi 4's USB-C port, one composite device of our own descriptor (Circle has no composite
-// framework): USB Audio Class 2 (12 in / 12 out, or 20 in with the build option SIDECAR_CH_IN=20) + USB MIDI.
+// framework): USB Audio Class 2 (12 in / 12 out) + USB MIDI.
 // Needs the isochronous endpoints of pi/circle/circle-gadget.patch.
 //
 // Channel map (the Teensy T3/T4's, so DAW templates work for both):
-//   IN  (to the computer)   1-2 the Rytm's MAIN L/R, 3-10 its tracks BD SD RS BT LT MT CH CY, 11-12 its AUDIO IN L/R,
-//                           13-20 (20-in build) the Pi's 8 voices as rendered (voice 0..7)
+//   IN  (to the computer)   1-2 the Rytm's MAIN L/R, 3-10 its tracks BD SD RS BT LT MT CH CY, 11-12 its AUDIO IN L/R
 //   OUT (from the computer) 1-2 the Rytm's MAIN L/R input, 3-4 MAIN FX L/R, 5-12 the tracks' inputs BD..CY: added
 //                           (saturating) to what the engine sends on the same Overbridge OUT channels; :mac=off drops it
 //
@@ -33,7 +32,6 @@
 #include <circle/interrupt.h>
 #include <circle/logger.h>
 #include <circle/types.h>
-inline boolean (*g_pSidecarKeysTap) (const u8 *pPacket) = 0;	// (no gadget: never called)
 
 class CSidecarGadget
 {
@@ -48,7 +46,7 @@ public:
 	boolean Command (const char *)			{ return FALSE; }
 	void FromRytmBlock (const u8 *)			{}
 	void FromEngine (const s32 (*)[12], unsigned)	{}
-	void ToRytm (s32 (*)[12], const s16 (*)[8], unsigned, boolean) {}
+	void ToRytm (s32 (*)[12], unsigned, boolean) {}
 	void FromRytmMIDI (const u8 *)			{}
 	void MIDIToComputer (u32)			{}
 	boolean ForRytm (u32 *)				{ return FALSE; }
@@ -75,10 +73,7 @@ public:
 #include "tohost_q.h"
 
 #if __has_include("hosted/sidecar_config.h")
-#include "hosted/sidecar_config.h"			// build.sh: SIDECAR_CH_IN=20 pi/engine/build.sh
-#endif
-#ifndef SIDECAR_CH_IN
-#define SIDECAR_CH_IN	12
+#include "hosted/sidecar_config.h"			// pi/engine/build.sh: SIDECAR_NAME
 #endif
 #ifndef SIDECAR_NAME
 #define SIDECAR_NAME	"Sidecar | Expander (Pi)"	// the product, its audio and MIDI functions (the Teensy: "Sidecar | Expander (Mini)";
@@ -132,9 +127,9 @@ private:
 class CSidecarGadget : public CDWUSBGadget
 {
 public:
-	static const unsigned ChIn = SIDECAR_CH_IN, ChOut = 12, Voices = 8, Subslot = 3;
+	static const unsigned ChIn = 12, ChOut = 12, Subslot = 3;
 	static const unsigned Nominal = 12;				// frames per 250 us packet
-	static const unsigned MaxIn = (Nominal + 1) * ChIn * Subslot;	// 468 / 780
+	static const unsigned MaxIn = (Nominal + 1) * ChIn * Subslot;	// 468
 	static const unsigned MaxOut = (Nominal + 1) * ChOut * Subslot;	// 468
 	static const unsigned Ring = 512, InTarget = 40, OutTarget = 48;
 	static const unsigned MIDIQueue = 2048;			// event packets each way
@@ -151,7 +146,7 @@ public:
 	// the engine's side (core 0)
 	void FromRytmBlock (const u8 *pBlock);		// xHCI IRQ: one Overbridge IN block (7 frames x 12 ch)
 	void FromEngine (const s32 (*pFrames)[12], unsigned nFrames);	// task: the self-test's output as the stand-in IN
-	void ToRytm (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames, boolean bTask);
+	void ToRytm (s32 (*pFrames)[12], unsigned nFrames, boolean bTask);
 	void FromRytmMIDI (const u8 *pPacket);		// xHCI IRQ: one event packet from the Rytm
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
@@ -214,17 +209,15 @@ private:
 	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
 	static unsigned ModeFrom (unsigned nMode);	// usbmidi_os::Mode -> OsUpdateOff|Emu|Rytm
 
-	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
+	// IN (to the computer): the Rytm's 12 channels
 	s32 m_InRing[Ring][12];
 	unsigned m_nInHead, m_nInTail;
-	s16 m_VoiceRing[Ring][8];
-	unsigned m_nVoiceHead, m_nVoiceTail;
 	u64 m_nSrcFrames;				// the source's frames (the Rytm's, or the stand-in's)
 	u64 m_nSrcTick;					// the generic timer at the last ones
 	boolean m_bSrcRytm;				// the last source was the Rytm (else the stand-in)
 	u64 m_nInPos;					// test source / no source: device frames consumed by IN
-	unsigned m_nPhase[20];				// test tones' positions
-	s32 *m_pTone[20];
+	unsigned m_nPhase[ChIn];				// test tones' positions
+	s32 *m_pTone[ChIn];
 	boolean m_bInPrimed;
 	boolean m_bInRunning;				// the computer has read an IN packet of this stream
 
@@ -254,7 +247,7 @@ private:
 	struct TStats
 	{
 		unsigned nOutPkts, nOutFrames, nOutHist[3], nOutBad, nOutOver, nOutUnder;
-		unsigned nInPkts, nInFrames, nInHist[3], nInUnder, nInOver, nVoiceUnder;
+		unsigned nInPkts, nInFrames, nInHist[3], nInUnder, nInOver;
 		unsigned nRingMin, nRingMax, nInMin, nInMax;
 		unsigned nFbSent, nFb, nMacPeak;		// nMacPeak: the computer's largest |sample| mixed (24-bit)
 		unsigned nReq, nBadReq;
@@ -270,10 +263,6 @@ private:
 	u64 m_nLastTicks, m_nLastStamp;
 	u8 m_StringBuffer[80];
 };
-
-// The computer's MIDI for the Rytm passes this tap first (gadget IRQ, one event packet): TRUE when it took the packet
-// (kernel.cpp: the notes for the Pi's own keyboard path, core/keys.h), else it goes to the Rytm as before. 0: none.
-extern boolean (*g_pSidecarKeysTap) (const u8 *pPacket);
 
 #endif	// SIDECAR_NO_GADGET
 

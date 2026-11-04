@@ -410,9 +410,8 @@ boolean CObUsb::Configure (void)
 	return TRUE;
 }
 
-// host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels from the output stage
-// (output.h: the voices mapped, faded in, limited; silence when its FIFO is empty). Capture channel 2: OUT MAIN L
-// as sent. The control core is woken to refill the FIFO (sev).
+// host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels: the computer's audio and
+// the processor slots' (below). Capture channel 2: OUT MAIN L as sent. The control core is woken to refill the FIFO (sev).
 void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 {
 	for (unsigned b = 0; b < nBlocks; b++)
@@ -424,11 +423,9 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		// the generic engine: no voices of its own. OUT is the computer's audio (the USB-C Sidecar's UAC2 OUT 1-12)
 		// and what the processor slots add (audio_return.h: nothing while every slot is empty)
 		s32 F[ob::kFramesPerBlock][ob::kChannels];
-		s16 V[ob::kFramesPerBlock][ob::kVoices];
 		memset (F, 0, sizeof F);
-		memset (V, 0, sizeof V);
 		if (CSidecarGadget::Get () != 0)
-			CSidecarGadget::Get ()->ToRytm (F, V, ob::kFramesPerBlock, FALSE);
+			CSidecarGadget::Get ()->ToRytm (F, ob::kFramesPerBlock, FALSE);
 		if (s_bActive) aret::Fill (F, ob::kFramesPerBlock), g_nFramesSinceReset = g_nFramesSinceReset + ob::kFramesPerBlock;
 		for (int f = 0; f < ob::kFramesPerBlock; f++)
 		{

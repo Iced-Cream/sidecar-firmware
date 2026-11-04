@@ -8,8 +8,7 @@
 # PI_IP, PI_NETMASK, EMUHOST (default 192.168.77.2, 255.255.255.0, 192.168.77.1:7301): the kernel's defaults for
 # cmdline.txt's ip=, netmask=, emuhost= (hosted/net_defaults.h, rewritten only when it changes; cmdline.txt wins).
 # GADGET (default sidecar): the USB-C gadget when cmdline.txt has no gadget= (sidecar, midi: P1's echo, 0: off).
-# SIDECAR_CH_IN (default 12): the Sidecar's UAC2 IN channels, 12 (20 was the full engine's, with its voices). SIDECAR_NAME (default
-# "Sidecar | Expander (Pi)"): its USB product name.
+# SIDECAR_NAME (default "Sidecar | Expander (Pi)"): the Sidecar's USB product name.
 # RASPPI (default 4): 5 builds for the Pi 5 (docs/pi5.md) in its own Circle tree, pi/circle/build/circle-engine-pi5
 # (made from pi/circle/build/circle as circle-engine is; the host-side patches, no gadget patch), -> kernel_2712.img,
 # the USB-C gadget compiled out. PI5_UART (default 0): the Pi 5's console UART, 0 = GPIO14/15 (pins 8/10, the Pi 4's
@@ -46,7 +45,7 @@ echo "$STAMP" > hosted/.board
 NETH=$(printf '#define NET_DEFAULT_IP\t\t"%s"\n#define NET_DEFAULT_NETMASK\t"%s"\n#define NET_DEFAULT_EMUHOST\t"%s"\n#define GADGET_DEFAULT\t\t"%s"\n' \
   "${PI_IP:-192.168.77.2}" "${PI_NETMASK:-255.255.255.0}" "${EMUHOST:-192.168.77.1:7301}" "${GADGET:-$( [ "$R" = 5 ] && echo 0 || echo sidecar)}")
 [ "$(cat hosted/net_defaults.h 2>/dev/null)" = "$NETH" ] || printf '%s\n' "$NETH" > hosted/net_defaults.h
-SCH=$(printf '#define SIDECAR_CH_IN\t%s\n#define SIDECAR_NAME\t"%s"\n' "${SIDECAR_CH_IN:-12}" "${SIDECAR_NAME:-Sidecar | Expander (Pi)}")	# IN 12; the device's name
+SCH=$(printf '#define SIDECAR_NAME\t"%s"\n' "${SIDECAR_NAME:-Sidecar | Expander (Pi)}")	# the device's name
 [ "$(cat hosted/sidecar_config.h 2>/dev/null)" = "$SCH" ] || printf '%s\n' "$SCH" > hosted/sidecar_config.h
 # the web page (web.h): www/index.html built in as a raw string (rewritten only when it changes), each
 # /*@include path@*/ line replaced by that file of the repo, its exports dropped
