@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """The Sidecar | Expander (Pi) with the Rytm on its USB-A (pi/engine/sidecar_gadget.h): what the Rytm sends reaches the
-Mac. Records every IN channel for SECS with OUT silent (or, with --tone, a 1009 Hz sine at -40 dBFS on OUT 1/2 for
+Mac (macOS: coreaudio_pick.py). Records every IN channel for SECS with OUT silent (or, with --tone, a 1009 Hz sine at -40 dBFS on OUT 1/2 for
 the middle 2 s (--tone-db=DB: another level; under a loud pattern -40 can drown), which must come back in the Rytm's MAIN mix on IN 1/2: Overbridge audio only), and listens to the
 Pi's MIDI port at the same time (read-only: nothing is ever sent to the Rytm's MIDI).
 
 Checks: PortAudio flags 0; no dropout on IN 1-12 (a run of >= 3 frames with all 12 exactly zero: the Rytm's noise
-floors make one impossible otherwise, as in T3); per channel rms and peak; 20-in build: IN 13-20 (the Pi's voices)
-reported; MIDI: messages by kind, and none of the host link (F0 7D 52 54) or MIDI-CI reach the Mac.
+floors make one impossible otherwise, as in T3); per channel rms and peak; MIDI: messages by kind, and none of the host link (F0 7D 52 54) or MIDI-CI reach the Mac.
 
     uv run --with sounddevice --with numpy --with python-rtmidi python -I pi/engine/tests/sidecar_rytm_test.py SECS [--tone]
 """
@@ -18,15 +17,14 @@ import numpy as np
 import rtmidi
 import sounddevice as sd
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "teensy", "uac2"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from coreaudio_pick import devices, midi_pick, pick  # noqa: E402
 
 NAME = os.environ.get("UAC2_NAME", "Sidecar | Expander (Pi)")
 FS, FULL = 48000, 8388607
 SECS = float(sys.argv[1]) if len(sys.argv) > 1 else 30
 TONE = any(a.startswith("--tone") for a in sys.argv)
-CH = ["MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO L", "AUDIO R"] + \
-     [f"VOICE {v}" for v in range(1, 9)]
+CH = ["MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO L", "AUDIO R"]
 
 dev = pick(NAME)
 assert dev is not None, devices()

@@ -7,12 +7,9 @@ back unchanged and in order; the host link (F0 7D 52 54), MIDI-CI (F0 7E|7F xx 0
 
     uv run --with python-rtmidi --with sounddevice python -I pi/engine/tests/sidecar_midi_test.py [SECS]
 
-The port: the one named "Sidecar | Expander (Pi)" (teensy/uac2/coreaudio_pick.py; the Teensy is "... (Mini)"), or
-SIDECAR_NAME.
+The port (macOS): the one named "Sidecar | Expander (Pi)" (coreaudio_pick.py, next to this file), or SIDECAR_NAME.
 Nothing here ever reaches a Rytm: with the Rytm's MIDI connected the Pi sends these to it instead, so run it only
 with the Rytm unplugged from the Pi (the script refuses when the Pi's log is not at hand: check :midifake first).
-The computer's notes go to the keys path, not to the Rytm (core/keys.h): set :keys=mac:off on the Pi's console first, or
-every note-on is missing here. Without a card this lasts for the boot.
 """
 import os
 import random
@@ -21,7 +18,7 @@ import time
 
 import rtmidi
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "teensy", "uac2"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from coreaudio_pick import midi_pick, midi_ports  # noqa: E402
 
 NAME = os.environ.get("SIDECAR_NAME", "Sidecar | Expander (Pi)")
