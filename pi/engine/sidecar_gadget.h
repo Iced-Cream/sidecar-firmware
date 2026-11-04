@@ -246,6 +246,7 @@ private:
 	void MirrorPipeOut (CMirrorEP *pEP, const u8 *pData, unsigned nLength);	// gadget IRQ
 	void MirrorPipeInSent (u8 uchAddr);		// gadget IRQ
 	void MirrorPoll (void);				// core 0's loop: the connect, the forwarded request
+	boolean IsNameRequest (const TSetupData *pSetup, u8 uchType) const;
 	void MirrorLogStats (CLogger *pLogger);
 	CMirrorEP *MirrorEP (u8 uchAddr);
 
@@ -263,6 +264,7 @@ private:
 	volatile boolean m_bShowMirror;
 	boolean m_bSwitching, m_bSwitchTo, m_bMirKeep;
 	u64 m_nSwitchAt, m_nBoxGoneAt;
+	char m_MirName[mirror::kNameLen];		// mirrorname=: the suffix on the box's Overbridge name (empty: off)
 	unsigned m_nHoldSecs;				// mirrorhold=S: the box gone this long before the Sidecar comes back
 	void MirrorSwitch (boolean bToMirror);		// task level: leave the bus
 	// the box's IN blocks for the computer (xHCI IRQ -> gadget IRQ, both core 0)

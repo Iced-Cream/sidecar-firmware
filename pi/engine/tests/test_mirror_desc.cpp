@@ -7,6 +7,7 @@
 #include "check.h"
 
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 static std::vector<uint8_t> Cfg;
@@ -118,6 +119,35 @@ int main ()
 	bad.assign (kMaxConfig + 1, 0);
 	bad[0] = 9, bad[1] = 2, bad[2] = (kMaxConfig + 1) & 0xFF, bad[3] = (kMaxConfig + 1) >> 8;
 	CHECK (!parse (bad.data (), (unsigned) bad.size (), ob::kInEp, ob::kOutEp, &l));
+
+	// the Overbridge name: shown with the suffix, stored without it
+	{
+		const char *suf = " via Sidecar";
+		uint8_t nm[kNameLen] = {};
+		memcpy (nm, "Test Box", 8);
+		name_show (nm, kNameLen, suf);
+		CHECK (strcmp ((const char *) nm, "Test Box via Sidecar") == 0);
+		name_show (nm, kNameLen, suf);					// not twice
+		CHECK (strcmp ((const char *) nm, "Test Box via Sidecar") == 0);
+		name_store (nm, kNameLen, suf);
+		CHECK (strcmp ((const char *) nm, "Test Box") == 0);
+		for (unsigned i = 8; i < kNameLen; i++) CHECK (nm[i] == 0);
+		name_store (nm, kNameLen, suf);					// a plain name stays
+		CHECK (strcmp ((const char *) nm, "Test Box") == 0);
+		memset (nm, 'x', kNameLen);					// 32 bytes, no NUL: cut so that suffix and NUL fit
+		name_show (nm, kNameLen, suf);
+		CHECK (nm[kNameLen - 1] == 0 && strlen ((const char *) nm) == kNameLen - 1);
+		CHECK (memcmp (nm + kNameLen - 1 - strlen (suf), suf, strlen (suf)) == 0);
+		memset (nm, 0, kNameLen);
+		memcpy (nm, "Pad   ", 6);					// trailing spaces go
+		name_show (nm, kNameLen, suf);
+		CHECK (strcmp ((const char *) nm, "Pad via Sidecar") == 0);
+		uint8_t sh[8] = {'A', 'B', 0};					// a reply shorter than the suffix: kept
+		name_show (sh, sizeof sh, suf);
+		CHECK (strcmp ((const char *) sh, "AB") == 0);
+		name_show (nm, kNameLen, "");					// off
+		CHECK (strcmp ((const char *) nm, "Pad via Sidecar") == 0);
+	}
 
 	printf ("test_mirror_desc: ok\n");
 	return 0;

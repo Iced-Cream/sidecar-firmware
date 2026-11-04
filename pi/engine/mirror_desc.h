@@ -153,6 +153,49 @@ inline unsigned string_indexes (const uint8_t *dev, const uint8_t *cfg, unsigned
 	return n;
 }
 
+// Overbridge's device name (vendor request 1 to the device, wValue 0, wIndex 0: IN reads it, OUT sets it; 32 bytes,
+// NUL-padded), which Elektron's software shows the unit by and keys nothing on (the unit ID is request 0's). The mirror
+// shows the computer the box's name with a suffix ("Analog Rytm MKII via Sidecar") and takes the suffix off a name the
+// computer sets, so the box stores its plain name. Only for an Elektron box (kNameVendor): request 1 is another
+// vendor's own.
+constexpr uint16_t kNameVendor = 0x1935;
+constexpr uint8_t kNameRequest = 1;
+constexpr unsigned kNameLen = 32;
+
+inline unsigned name_len (const uint8_t *n, unsigned len)
+{
+	unsigned l = 0;
+	while (l < len && n[l] != 0) l++;
+	return l;
+}
+
+inline bool name_ends_with (const uint8_t *n, unsigned l, const char *suffix)
+{
+	unsigned s = (unsigned) strlen (suffix);
+	return s > 0 && l >= s && memcmp (n + l - s, suffix, s) == 0;
+}
+
+// the name the computer is shown: the box's own (cut so that the suffix and a NUL fit), then the suffix, NUL-padded
+inline void name_show (uint8_t *n, unsigned len, const char *suffix)
+{
+	unsigned s = (unsigned) strlen (suffix);
+	unsigned l = name_len (n, len);
+	if (s == 0 || s + 1 > len || name_ends_with (n, l, suffix)) return;
+	while (l > 0 && n[l - 1] == ' ') l--;
+	if (l > len - 1 - s) l = len - 1 - s;
+	memcpy (n + l, suffix, s);
+	memset (n + l + s, 0, len - l - s);
+}
+
+// the name the box stores, from the one the computer sets: the suffix taken off its end when it is there
+inline void name_store (uint8_t *n, unsigned len, const char *suffix)
+{
+	unsigned l = name_len (n, len);
+	if (!name_ends_with (n, l, suffix)) return;
+	l -= (unsigned) strlen (suffix);
+	memset (n + l, 0, len - l);
+}
+
 } // namespace mirror
 
 #endif

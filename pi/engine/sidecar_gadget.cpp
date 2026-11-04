@@ -319,6 +319,19 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nSwitchAt = m_nBoxGoneAt = 0;
 	m_nHoldSecs = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorhold", 10);	// seconds; 0..600
 	if (m_nHoldSecs > 600) m_nHoldSecs = 600;
+	{
+		// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " via Sidecar"
+		const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
+		if (pName == 0) strcpy (m_MirName, " via Sidecar");
+		else if (strcmp (pName, "off") == 0) m_MirName[0] = 0;
+		else
+		{
+			unsigned n = 0;
+			m_MirName[n++] = ' ';
+			for (; *pName && n < sizeof m_MirName / 2; pName++) m_MirName[n++] = *pName == '_' ? ' ' : *pName;
+			m_MirName[n] = 0;
+		}
+	}
 	m_nMirInHead = m_nMirInTail = 0;
 	memset (&m_CtlSetup, 0, sizeof m_CtlSetup);
 	m_bCtlPending = FALSE;
@@ -1272,6 +1285,8 @@ int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutDa
 	if (m_bCtlPending) { m_MirStats.nCtlStall++; return ControlNotHandled; }	// one at a time: this one is STALLed
 	memcpy (&m_CtlSetup, pSetup, sizeof m_CtlSetup);
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
+	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
+		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
 	m_nCtlSeq++;
 	m_bCtlPending = TRUE;
 	m_MirStats.nCtl++;
@@ -1289,7 +1304,24 @@ void CSidecarGadget::MirrorControlDone (unsigned nSeq, const u8 *pData, int nLen
 {
 	if (nSeq != m_nCtlSeq) { m_MirStats.nCtlLate++; return; }
 	if (nLength < 0) m_MirStats.nCtlStall++;
+	if (nLength > 0 && IsNameRequest (&m_CtlSetup, 0xC0))
+	{
+		u8 Name[mirror::kNameLen];			// the computer sees the name with the suffix
+		unsigned n = (unsigned) nLength < sizeof Name ? (unsigned) nLength : sizeof Name;
+		memset (Name, 0, sizeof Name);
+		memcpy (Name, pData, n);
+		mirror::name_show (Name, n, m_MirName);
+		CompleteControl (Name, (int) n);
+		return;
+	}
 	CompleteControl (pData, nLength);
+}
+
+// Overbridge's name request (mirror_desc.h), from an Elektron box, with the suffix on
+boolean CSidecarGadget::IsNameRequest (const TSetupData *pSetup, u8 uchType) const
+{
+	return m_MirName[0] != 0 && mirror::le16 (m_MirDev + 8) == mirror::kNameVendor && pSetup->bmRequestType == uchType
+		&& pSetup->bRequest == mirror::kNameRequest && pSetup->wValue == 0 && pSetup->wIndex == 0;
 }
 
 void CSidecarGadget::MirrorPoll (void)

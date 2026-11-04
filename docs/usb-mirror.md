@@ -35,6 +35,13 @@ on in a public card or build default.
   and `usbmidi=os:` still decides whether OS upgrades pass.
 - **Class and vendor requests.** Each one is forwarded to the box (`CObUsb::MirrorControl`). EP0 NAKs until the box
   answers, then returns the answer, or a STALL if the box stalls or is gone. One request is in flight at a time.
+- **The name Overbridge shows.** For an Elektron box (vendor 1935), the answer to vendor request 1 (IN, the 32-byte device
+  name Overbridge shows in its Devices tab and plugin picker) gets a suffix, " via Sidecar" by default, so the unit reads
+  "Analog Rytm MKII via Sidecar". A name the computer sets (OUT request 1) reaches the box without the suffix. Overbridge
+  keys the unit on its PID and the unit ID of request 0, which pass unchanged, so plugins stay paired with the unit
+  whether it is direct or through the Sidecar [I, read from Overbridge 2.26.10]. `mirrorname=off` turns it off;
+  `mirrorname=TEXT` sets the suffix (an underscore for a space, a space put in front). The USB product string is left
+  as the box's, since the computer names the MIDI and audio ports from it.
 
 ## Circle change
 
