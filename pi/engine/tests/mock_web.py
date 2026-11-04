@@ -217,10 +217,8 @@ def fs_reachable(p):
         return False
     if p == "/":
         return True
-    m = re.match(r"^/(USB|USB2|USB3|NVME)(/.*)?$", p)   # a drive: its /Recordings only (fsweb.cpp drive_of)
-    if m:
-        r = (m.group(2) or "/").lower()
-        return r == "/recordings" or r.startswith("/recordings/")
+    if re.match(r"^/(USB|USB2|USB3|NVME)(/.*)?$", p):   # a drive: none is served (fsweb.cpp drive_of)
+        return False
     low = p.lower()
     return any(low == c.lower() or low.startswith(c.lower() + "/") for c in FS_CONTENT)
 
@@ -440,8 +438,6 @@ class H(BaseHTTPRequestHandler):
     def code(self, st, msg):
         self.send("%d %s\n" % (st, msg))
 
-    # ---- project bundles (bundleweb.cpp): a sketch for trying the Project tab, not its reference (test_bundleweb is).
-    # An export walks HASH -> DONE in a few seconds; an import of anything shows a fixed summary.
     def do_GET(self):
         self.route()
 

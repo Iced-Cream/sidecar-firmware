@@ -5,7 +5,6 @@
 
 namespace core {
 
-bool user_report_internal = false;
 Hooks hooks = {};
 static uint32_t g_dropped = 0;
 

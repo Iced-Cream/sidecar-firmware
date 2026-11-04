@@ -1,8 +1,6 @@
 // core/generic/generic.cpp - see generic.h.
 #include "generic/generic.h"
 
-#include <string.h>
-
 #include "browse/browse.h"
 #include "clock/clock.h"
 #include "core_port.h"
@@ -20,10 +18,8 @@ void link_reset(const char* why);
 namespace gen {
 namespace {
 constexpr int kListeners = 4;
-ProjectFn g_proj_fn[kListeners];
 LinkFn g_link_fn[kListeners];
 StoreFn g_store;
-char g_project[24];
 Stats g_st;
 uint32_t g_reset_ms;
 bool g_reset_any;
@@ -32,17 +28,6 @@ template <class F> bool add(F* tab, F f) {
   for (int i = 0; i < kListeners; ++i) if (tab[i] == f) return true;
   for (int i = 0; i < kListeners; ++i) if (!tab[i]) { tab[i] = f; return true; }
   return false;
-}
-void set_project(const uint8_t* d, int len) {
-  char n[sizeof g_project];
-  int k = 0;
-  for (int i = 0; i < len && k < (int)sizeof n - 1 && d[i] != 0xF7 && d[i]; ++i) n[k++] = (char)(d[i] & 0x7F);
-  n[k] = 0;
-  ++g_st.projects;
-  if (!strcmp(n, g_project)) return;
-  memcpy(g_project, n, sizeof n);
-  log("project: \"%s\"", g_project);
-  for (ProjectFn f : g_proj_fn) if (f) f(g_project);
 }
 }  // namespace
 
@@ -66,7 +51,6 @@ void sysex(const uint8_t* d, int len) {
   }
   uint8_t cmd = d[4];
   if (cmd == device::kCmdHello) { device::hello(device::g_link, d, len); return; }
-  if (cmd == 0x10) { set_project(d + 5, len - 5); return; }
   if (cmd == browse::kCmdList && browse::sysex(d, len)) return;
   if (cmd == 0x35) {
     ++g_st.hellos;
@@ -87,8 +71,6 @@ bool idle_save() {
   return device::step(true);
 }
 
-const char* project() { return g_project; }
-bool on_project(ProjectFn f) { return add(g_proj_fn, f); }
 bool on_link(LinkFn f) { return add(g_link_fn, f); }
 void set_store(StoreFn f) { g_store = f; }
 Stats stats() { return g_st; }

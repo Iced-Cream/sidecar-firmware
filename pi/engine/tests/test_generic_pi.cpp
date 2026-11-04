@@ -49,8 +49,9 @@ int main() {
   core::host_fake_time(true, g_us);
   bridge::begin(out_fn);   // (no card on the host: the router runs without one)
 
-  // ---- the router behind bridge::sysex: a project, the clock's transport, a dropped command
-  in({0x10, 'K', 'I', 'T', 0});
+  // ---- the router behind bridge::sysex: the project's name (51 STORE's 04 NAME), the clock's transport, a dropped
+  // command
+  in({0x51, 1, 0x04, 0, 0, 2, 0x7D, 0x6F, 3, 'K', 'I', 'T'});
   CHECK(!strcmp(bridge::project(), "KIT"));
   in({0x2D, 1, 1, 1, 0, 0, 0, 5});   // (version 1) transport PLAY at block 5
   CHECK(core::clock::transport() == core::clock::kPlay);
@@ -70,7 +71,7 @@ int main() {
   char js[700];
   int n = bridge::generic_json(js, sizeof js);
   CHECK(n > 0 && n < (int)sizeof js);
-  CHECK(strstr(js, "\"generic\":{\"project\":\"KIT\""));
+  CHECK(strstr(js, "\"generic\":{\"project\":\"KIT\",\"projectId\":48879,"));
   CHECK(strstr(js, "\"slots\":[null,null,null,null]"));
   CHECK(strstr(js, "\"client\":null"));
 

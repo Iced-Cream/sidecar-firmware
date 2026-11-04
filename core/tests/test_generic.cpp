@@ -36,9 +36,7 @@ static void run(uint32_t ms) {
   for (uint32_t t = 0; t < ms; t += 5) g_us += 5000, host_fake_time(true, g_us), gen::tick((uint32_t)(g_us / 1000));
 }
 
-static std::vector<const char*> g_projects;
 static int g_links = 0;
-static void proj_fn(const char* n) { g_projects.push_back(n); }
 static void link_fn(const char*) { ++g_links; }
 static int g_keys = 0, g_encs = 0, g_draws = 0, g_opens = 0;
 static void c_draw(ui::Canvas& c, uint32_t) { ++g_draws; c.put_text(0, ui::kRSmall, 2, 1, "CLIENT"); c.hline(0, 127, 20); }
@@ -52,22 +50,20 @@ static bool store_fn(const uint8_t* d, int) { g_store_seen = d[4] == 0x51; retur
 int main() {
   host_fake_time(true, g_us);
   hooks.to_rytm = out_fn;
-  CHECK(gen::on_project(proj_fn) && gen::on_link(link_fn));
-  // 10: the project's name, once per change
-  in({0x10, 'T', 'E', 'S', 'T'});
-  in({0x10, 'T', 'E', 'S', 'T'});
-  CHECK(!strcmp(gen::project(), "TEST") && g_projects.size() == 1);
-  // a machine report, a send FX message: dropped, nothing sent back
+  CHECK(gen::on_link(link_fn));
+  // the old 10 (the project's name: now 51 STORE's 04 NAME), a machine report, a send FX message: dropped, nothing
+  // sent back
   uint32_t dropped = gen::stats().dropped;
+  in({0x10, 'T', 'E', 'S', 'T'});
   in({0x04, 0, 60, 100});
   in({0x20, 1, 2});
-  CHECK(gen::stats().dropped == dropped + 2 && g_out.empty());
+  CHECK(gen::stats().dropped == dropped + 3 && gen::stats().last_dropped == 0x20 && g_out.empty());
   // 51 STORE: to the handler once one is set
   in({0x51, 1});
-  CHECK(gen::stats().dropped == dropped + 3);
+  CHECK(gen::stats().dropped == dropped + 4);
   gen::set_store(store_fn);
   in({0x51, 1});
-  CHECK(g_store_seen && gen::stats().dropped == dropped + 3);
+  CHECK(g_store_seen && gen::stats().dropped == dropped + 4);
   // 2C: to the clock
   in({0x2C, 1, 0, 0, 0, 9, 1, 3, 4, 16, 2});
   int st, ln, sp;

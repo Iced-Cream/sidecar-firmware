@@ -29,12 +29,14 @@ static volatile bool s_restart;
 static void device_restart() { s_restart = true; }
 bool take_restart() { bool r = s_restart; s_restart = false; return r; }
 
+static void name_changed(const char* name, uint32_t id);
 static bool s_card;
 bool begin(void (*to_host)(const uint8_t*, int)) {
   core::hooks.to_rytm = to_host;
   core::hooks.device_restart = device_restart;
   s_card = core::gen::begin();
   core::kv::link::attach_generic();   // 51 STORE records (the card core) and the Pi-side locks (core/kv, core/locks)
+  core::kv::link::on_name(name_changed);
   return s_card;
 }
 void sysex(const uint8_t* d, int len) { core::gen::sysex(d, len); }
@@ -113,7 +115,15 @@ int store_json(char* out, int cap, unsigned long heap_free) {
                     (unsigned long)core::fmt::post_held(), heap_free);
   return n > 0 && n < cap ? n : 0;
 }
-const char* project() { return core::gen::project(); }
+// The project's name and ID as the companion sends them (51 STORE's 04 NAME, core/kv), logged as they change
+const char* project() { return core::kv::link::project_name(); }
+static void name_changed(const char* name, uint32_t id) { core::log("project: \"%s\" (id %08lx)", name, (unsigned long)id); }
+// A name for JSON: quotes, backslashes and control characters as '?'
+static void json_name(char* q, int cap, const char* s) {
+  int j = 0;
+  for (; s && *s && j < cap - 1; ++s) q[j++] = (*s == '"' || *s == '\\' || *s < 32) ? '?' : *s;
+  q[j] = 0;
+}
 // The guard's fault and overrun lines name a voice's machine: none renders in this engine
 const char* machine_name(int) { return "-"; }
 uint32_t machine_gen(int) { return 0; }
@@ -127,15 +137,16 @@ int generic_json(char* out, int cap) {
   const core::screen::Stats s = core::screen::stats();
   const core::browse::Stats bs = core::browse::stats();
   const core::devmidi::Stats ds = core::devmidi::stats();
+  uint32_t pid = 0;
+  char pname[core::kv::link::kNameMax + 1];
+  json_name(pname, sizeof pname, core::kv::link::project_name(&pid));
   char devs[160];
   int dk = 0;
   devs[0] = 0;
   for (int i = 0; i < core::devmidi::kSrcs; ++i) {
     const char* nm = core::devmidi::present(i) ? core::devmidi::name(i) : nullptr;
     char q[core::devmidi::kNameLen + 1];
-    int j = 0;
-    for (const char* c = nm; c && *c && j < (int)sizeof q - 1; ++c) q[j++] = (*c == '"' || *c == '\\' || *c < 32) ? '?' : *c;
-    q[j] = 0;
+    json_name(q, sizeof q, nm);
     int w = sniprintf(devs + dk, sizeof devs - dk, "%s%s%s%s", i ? "," : "", nm ? "\"" : "", nm ? q : "null", nm ? "\"" : "");
     if (w < 0 || w >= (int)sizeof devs - dk) break;
     dk += w;
@@ -151,14 +162,14 @@ int generic_json(char* out, int cap) {
     k += w;
   }
   int n = sniprintf(out, cap,
-                    "\"generic\":{\"project\":\"%s\",\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu},"
+                    "\"generic\":{\"project\":\"%s\",\"projectId\":%lu,\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu},"
                     "\"clock\":{\"transport\":%d,\"pattern\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
                     "\"proc\":{\"slots\":[%s],\"params\":%lu,\"dropped\":%lu,\"blocks\":%lu},"
                     "\"screen\":{\"open\":%s,\"client\":%s%s%s,\"caps\":%d,\"hellos\":%lu,\"opens\":%lu,\"frames\":%lu,"
                     "\"popups\":%lu,\"bad\":%lu},"
                     "\"devmidi\":{\"devices\":[%s],\"thru\":%s,\"messages\":%lu,\"forwarded\":%lu,\"toSlots\":%lu},"
                     "\"browse\":{\"asks\":%lu,\"listings\":%lu,\"folders\":%d,\"leftOut\":%lu,\"errors\":%lu}",
-                    core::gen::project(), (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
+                    pname, (unsigned long)pid, (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
                     (unsigned long)g.hellos, (int)core::clock::transport(), (int)core::clock::pattern(),
                     (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
                     (unsigned long)c.bad, slots, (unsigned long)p.params, (unsigned long)p.dropped,
@@ -177,7 +188,7 @@ int generic_json(char* out, int cap) {
 bool generic_command(const char* p, char* out, int cap) {
   if (!strcmp(p, "gen")) {
     const core::gen::Stats g = core::gen::stats();
-    sniprintf(out, cap, "gen: project \"%s\", messages %lu, dropped %lu (last %02x), hellos %lu", core::gen::project(),
+    sniprintf(out, cap, "gen: project \"%s\", messages %lu, dropped %lu (last %02x), hellos %lu", project(),
               (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped, (unsigned long)g.hellos);
     return true;
   }

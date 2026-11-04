@@ -16,7 +16,6 @@
 #include "fmt/fmt.h"
 #include "generic/generic.h"
 #include "hooks.h"
-#include "machines.h"
 #include "platform.h"
 
 using namespace core;
@@ -39,7 +38,7 @@ static const device::Profile kBox = {
     {0x7D, 'T', 'B'},
     0x61, 0x62, 0x63,
     0,
-    kPlaits, 0,
+    0x00, 0,   // the voice byte's machine (0: the old engine's PLAITS)
     {-1, 2, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
     {12, 0, 0, 33, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100},
     {1u << 0x15},   // of the engine's messages it takes only 15
@@ -88,7 +87,7 @@ int main() {
     int len = (int)t.size();
     uint8_t m[device::kMaxMessage];
     CHECK(device::translate(device::g_link, d, len, m) && d == m && len == 43);
-    CHECK(m[4] == 0x04 && m[5] == (kPlaits | 1) && m[6] == 48 && m[7] == 127);
+    CHECK(m[4] == 0x04 && m[5] == 1 && m[6] == 48 && m[7] == 127);
     CHECK(m[8] == 12 && m[10] == 30 && m[11] == 0 && m[12] == 10 && m[14] == 33);
     std::vector<uint8_t> off = box({0x63, 1});
     d = off.data(), len = (int)off.size();
@@ -105,15 +104,9 @@ int main() {
   to_rytm(juno, 8);
   to_rytm(other, 8);
   CHECK(g_out.size() == 1 && g_out[0][4] == 0x15 && device::dropped() == d1 + 1);
-  // the box does not move the Rytm's project
-  send(sidecar({0x10, 'X', 'Y'}));
-  CHECK(strcmp(gen::project(), "XY"));
-
   // a Rytm plugged in: its hello 35 gives it back; the output is the platform's again
   send(sidecar({0x35, 1, 0, 100, 3}));
   CHECK(!device::foreign() && hooks.to_rytm == ::out && device::active().id == device::kIdRytm);
-  send(sidecar({0x10, 'C', 'D'}));
-  CHECK(!strcmp(gen::project(), "CD"));
 
   // reset() from a box
   send(hello(kBoxId));
