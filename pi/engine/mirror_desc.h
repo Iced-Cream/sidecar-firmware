@@ -207,7 +207,8 @@ constexpr unsigned kExtraFirst = 4, kExtraBytes = 28;
 
 struct ExtraRing
 {
-	static constexpr unsigned kSlots = 8;
+	static constexpr unsigned kSlots = 128;		// the margin plus a burst of the computer's blocks (with a plugin open
+						// about every third block carries bytes, 2026-11-04 [hw])
 	uint8_t d[kSlots][kExtraBytes];
 	uint16_t due[kSlots];
 	volatile unsigned head, tail;
