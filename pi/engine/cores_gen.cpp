@@ -79,6 +79,22 @@ static void OnChannel (u8 s, u8 a, u8 b)
 // The Rytm's realtime bytes: playing or not, for the storage bench's refusal (stor_pi.h)
 static void OnRealtime (uint8_t s, uint16_t) { stor_pi::Transport (s); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
+// The USB-A MIDI devices (core/devmidi.h): their messages from g_KeysIn (source, status, data; F4 a plug or unplug, its
+// name in g_KeyNames), what goes on to the Rytm one USB MIDI event packet each into g_KeysToRytm (core 0's transport
+// sends them between whole messages; a full queue drops it)
+static volatile unsigned s_nToRytmLost;
+static void DevToRytm (u8 s, u8 a, u8 b)
+{
+	u32 w = (u32) (s >> 4) | (u32) s << 8 | (u32) a << 16 | (u32) b << 24;
+	if (!g_KeysToRytm.push (w)) s_nToRytmLost++;
+}
+static void DevIn (u32 w)
+{
+	int src = (int) (w >> 24);
+	u8 s = (u8) (w >> 16), a = (u8) (w >> 8), b = (u8) w;
+	if (s == 0xF4) bridge::devmidi_plugged (src, a != 0, src < 4 ? g_KeyNames[src] : "");
+	else bridge::devmidi (src, s, a, b);
+}
 
 static volatile CEngineCores::TStall s_Stall;
 CEngineCores::TStall CEngineCores::Stall (void)
@@ -161,6 +177,7 @@ void CEngineCores::Control (void)
 {
 	EventStream ();		// the wfe below never sleeps longer than 152 us
 	CLogger::Get ()->Write (From, LogNotice, "core 3 up: control (the host link's generic services)");
+	bridge::devmidi_set_forward (DevToRytm);
 	u64 nPrevT0 = 0;
 	unsigned nSec[6] = {};
 	for (;;)
@@ -191,7 +208,11 @@ void CEngineCores::Control (void)
 		}
 		Mark (0);
 		u32 nKey;
-		while (g_KeysIn.pop (&nKey)) {}	// (the Pi's own keyboards: unwired in this engine)
+		while (g_KeysIn.pop (&nKey))
+		{
+			DevIn (nKey);
+			bWorked = TRUE;
+		}
 		Mark (1);
 		TCmd Cmd;
 		while (g_Cmds.pop (&Cmd))

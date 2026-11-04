@@ -68,7 +68,7 @@ build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(RMPSRC)/rmp_loader.cp
 # the generic engine's Pi side (GENERIC=1): bridge_gen.cpp and the audio return over the generic core (core/generic)
 GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
                 store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp host/platform_host.cpp) $(wildcard $(CORE)/fmt/*.cpp) \
-                $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp)
+                $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/browse/browse.cpp $(CORE)/devmidi/devmidi.cpp
 build/test_generic_pi: test_generic_pi.cpp ../bridge_gen.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_GENERIC=1 -DCORE_MSAMP=1 -DCORE_POLY=1 -I$(CORE)/host -I$(CORE) -I.. \

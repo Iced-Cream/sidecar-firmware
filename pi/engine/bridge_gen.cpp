@@ -6,7 +6,9 @@
 
 #include <string.h>
 
+#include "browse/browse.h"
 #include "clock/clock.h"
+#include "devmidi/devmidi.h"
 #include "device/device.h"
 #include "fmt/fmt.h"
 #include "generic/generic.h"
@@ -93,9 +95,14 @@ int card_service(int n) {
   int k = 0;
   while (k < n && core::cardq::service()) ++k;
   if (k < n) k += core::kv::link::card_step(n - k);   // 51 STORE ops on the card (core/kv, this core's own)
+  if (k < n) k += core::browse::card_step();           // a folder's listing for the Rytm (core/browse)
   return k;
 }
 bool card_busy() { return core::cardq::busy(); }
+
+void devmidi_plugged(int src, bool on, const char* name) { core::devmidi::plugged(src, on, name); }
+void devmidi(int src, uint8_t st, uint8_t d1, uint8_t d2) { core::devmidi::midi(src, st, d1, d2); }
+void devmidi_set_forward(void (*f)(uint8_t, uint8_t, uint8_t)) { core::devmidi::set_forward(f); }
 
 int store_json(char* out, int cap, unsigned long heap_free) {
   uint32_t fo = 0, fn = core::fmt::unwritten(&fo), co = core::cardq::oldest_ms();
@@ -120,6 +127,21 @@ int generic_json(char* out, int cap) {
   const core::clock::Stats c = core::clock::stats();
   const core::proc::Stats p = core::proc::stats();
   const core::screen::Stats s = core::screen::stats();
+  const core::browse::Stats bs = core::browse::stats();
+  const core::devmidi::Stats ds = core::devmidi::stats();
+  char devs[160];
+  int dk = 0;
+  devs[0] = 0;
+  for (int i = 0; i < core::devmidi::kSrcs; ++i) {
+    const char* nm = core::devmidi::present(i) ? core::devmidi::name(i) : nullptr;
+    char q[core::devmidi::kNameLen + 1];
+    int j = 0;
+    for (const char* c = nm; c && *c && j < (int)sizeof q - 1; ++c) q[j++] = (*c == '"' || *c == '\\' || *c < 32) ? '?' : *c;
+    q[j] = 0;
+    int w = sniprintf(devs + dk, sizeof devs - dk, "%s%s%s%s", i ? "," : "", nm ? "\"" : "", nm ? q : "null", nm ? "\"" : "");
+    if (w < 0 || w >= (int)sizeof devs - dk) break;
+    dk += w;
+  }
   char slots[96];
   int k = 0;
   slots[0] = 0;
@@ -135,7 +157,9 @@ int generic_json(char* out, int cap) {
                     "\"clock\":{\"transport\":%d,\"pattern\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
                     "\"proc\":{\"slots\":[%s],\"params\":%lu,\"dropped\":%lu,\"blocks\":%lu},"
                     "\"screen\":{\"open\":%s,\"client\":%s%s%s,\"caps\":%d,\"hellos\":%lu,\"opens\":%lu,\"frames\":%lu,"
-                    "\"popups\":%lu,\"bad\":%lu}",
+                    "\"popups\":%lu,\"bad\":%lu},"
+                    "\"devmidi\":{\"devices\":[%s],\"thru\":%s,\"messages\":%lu,\"forwarded\":%lu,\"toSlots\":%lu},"
+                    "\"browse\":{\"asks\":%lu,\"listings\":%lu,\"folders\":%d,\"leftOut\":%lu,\"errors\":%lu}",
                     core::gen::project(), (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
                     (unsigned long)g.hellos, (int)core::clock::transport(), (int)core::clock::pattern(),
                     (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
@@ -144,7 +168,9 @@ int generic_json(char* out, int cap) {
                     core::screen::client() ? "\"" : "", core::screen::client() ? core::screen::client()->name : "null",
                     core::screen::client() ? "\"" : "", core::screen::caps(), (unsigned long)core::screen::hellos(),
                     (unsigned long)s.opens, (unsigned long)s.frames, (unsigned long)core::screen::popups(),
-                    (unsigned long)s.bad);
+                    (unsigned long)s.bad, devs, core::devmidi::thru() ? "true" : "false", (unsigned long)ds.messages,
+                    (unsigned long)ds.forwarded, (unsigned long)ds.to_slots, (unsigned long)bs.asks,
+                    (unsigned long)bs.listings, bs.folders, (unsigned long)bs.left_out, (unsigned long)bs.errors);
   return n > 0 && n < cap ? n : 0;
 }
 
@@ -175,6 +201,31 @@ bool generic_command(const char* p, char* out, int cap) {
       if (w < 0) break;
       n += w;
     }
+    return true;
+  }
+  if (!strcmp(p, "usba=thru") || !strcmp(p, "usba=off")) {
+    core::devmidi::set_thru(p[5] == 't');
+    sniprintf(out, cap, "usba: thru %s", core::devmidi::thru() ? "on" : "off");
+    return true;
+  }
+  if (!strcmp(p, "usba")) {
+    const core::devmidi::Stats d = core::devmidi::stats();
+    int n = sniprintf(out, cap, "usba: thru %s, messages %lu forwarded %lu to slots %lu released %lu ignored %lu, devices",
+                      core::devmidi::thru() ? "on" : "off", (unsigned long)d.messages, (unsigned long)d.forwarded,
+                      (unsigned long)d.to_slots, (unsigned long)d.released, (unsigned long)d.ignored);
+    for (int i = 0; i < core::devmidi::kSrcs && n > 0 && n < cap; ++i) {
+      int w = sniprintf(out + n, cap - n, " %d:%s", i + 1, core::devmidi::present(i) ? core::devmidi::name(i) : "-");
+      if (w < 0) break;
+      n += w;
+    }
+    return true;
+  }
+  if (!strcmp(p, "browse")) {
+    const core::browse::Stats b = core::browse::stats();
+    sniprintf(out, cap, "browse: asks %lu, listings %lu (%lu entries, %lu messages), superseded %lu, folders %d, left out "
+              "%lu, errors %lu", (unsigned long)b.asks, (unsigned long)b.listings, (unsigned long)b.entries,
+              (unsigned long)b.messages, (unsigned long)b.superseded, b.folders, (unsigned long)b.left_out,
+              (unsigned long)b.errors);
     return true;
   }
   if (!strcmp(p, "rui=on") || !strcmp(p, "rui=off")) {

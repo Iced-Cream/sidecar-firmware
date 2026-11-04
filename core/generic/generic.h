@@ -1,6 +1,7 @@
 // core/generic/generic.h - the stripped engine's core (2026-11-04, docs/pi-engine.md "Generic engine"): the Rytm's
 // host-link SysEx routed to the generic services and nothing else. What it keeps of the engine core:
 //   4F        the device hello (core/device: the Rytm's profile; its state folder)
+//   0D        a folder of the card for the Rytm's file browser (core/browse: 0E answers; rytm-mods 0023)
 //   10        the project's name: the identity storage keys on (project(), on_project)
 //   35        the Rytm's hello: the link reset (on_link) and the remote screen (core/screen)
 //   2C / 2D   the Rytm's step clock (core/clock)

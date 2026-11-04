@@ -1376,6 +1376,13 @@ static void KeysPush (u32 w)
 static void KeysPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength, unsigned nDevice, void *pParam)
 {
 	unsigned i = (unsigned) (uintptr) pParam;
+#if SIDECAR_GENERIC
+	if (i >= MaxKeyboards || nLength < 1 || pPacket[0] < 0x80) return;
+	u8 s = pPacket[0];
+	if (s >= 0xF0 ? !(s == 0xF8 || s == 0xFA || s == 0xFB || s == 0xFC) : nLength < 2) return;	// channel messages, realtime
+	KeysPush ((u32) i << 24 | (u32) s << 16 | (u32) (nLength > 1 ? pPacket[1] : 0) << 8 | (nLength > 2 ? pPacket[2] : 0));
+	return;
+#endif
 	if (nLength < 2 || pPacket[0] < 0x80 || pPacket[0] >= 0xF0 || i >= MaxKeyboards) return;	// channel messages only
 	KeysPush ((u32) i << 24 | (u32) pPacket[0] << 16 | (u32) pPacket[1] << 8 | (nLength > 2 ? pPacket[2] : 0));
 }
@@ -1503,15 +1510,6 @@ void CKernel::UpdateMIDI (void)
 					m_Options.GetAppOptionDecimal ("tohost", 1) != 0 ? "go to it (host link)" : "are dropped (tohost=0)");
 			continue;
 		}
-#if SIDECAR_GENERIC
-		{	// the generic engine: the Pi's own keyboards (core/keys.h) are unwired; such a device is left alone
-			static u32 s_nSaidKeys;
-			if (!(s_nSaidKeys & 1u << n))
-				m_Logger.Write (From, LogNotice, "midi: %s is not the Rytm: not used (the generic engine has no keyboards)", (const char *) Name);
-			s_nSaidKeys |= 1u << n;
-			continue;
-		}
-#endif
 		unsigned i = 0;
 		while (i < MaxKeyboards && s_pKeyboard[i] != 0) i++;
 		static CDevice *s_pRefused;
@@ -1530,8 +1528,12 @@ void CKernel::UpdateMIDI (void)
 		EnterCritical ();
 		KeysPush ((u32) i << 24 | 0xF4u << 16 | 1u << 8);
 		LeaveCritical ();
+#if SIDECAR_GENERIC
+		m_Logger.Write (From, LogNotice, "usba: MIDI device %u: %s (%s) (core/devmidi.h)", i + 1, g_KeyNames[i], (const char *) Name);
+#else
 		m_Logger.Write (From, LogNotice, "keys: keyboard %u: %s (%s), its notes play the %s", i + 1, g_KeyNames[i],
 				(const char *) Name, "Rytm's selected track (core/keys.h)");
+#endif
 	}
 }
 

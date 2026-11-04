@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "browse/browse.h"
 #include "clock/clock.h"
 #include "core_port.h"
 #include "device/device.h"
@@ -47,7 +48,9 @@ void set_project(const uint8_t* d, int len) {
 
 bool begin() {
   Fs fs;
-  if (!fs.begin()) return false;
+  bool card = fs.begin();
+  browse::begin(card);
+  if (!card) return false;
   device::boot();      // first: every read below is of this box's state folder (core/device/device.h)
   fmt::sweep_boot();   // every atomic write's .prev / .tmp left by a power cut
   return true;
@@ -64,6 +67,7 @@ void sysex(const uint8_t* d, int len) {
   uint8_t cmd = d[4];
   if (cmd == device::kCmdHello) { device::hello(device::g_link, d, len); return; }
   if (cmd == 0x10) { set_project(d + 5, len - 5); return; }
+  if (cmd == browse::kCmdList && browse::sysex(d, len)) return;
   if (cmd == 0x35) {
     ++g_st.hellos;
     link_reset("hello");
@@ -78,6 +82,7 @@ void sysex(const uint8_t* d, int len) {
 void tick(uint32_t ms) { screen::tick(ms); }
 
 bool idle_save() {
+  if (browse::host_step(8)) return true;   // a folder's listing for the Rytm (read on the card core)
   if (fmt::post_step()) return true;
   return device::step(true);
 }

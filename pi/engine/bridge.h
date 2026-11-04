@@ -203,6 +203,10 @@ uint32_t to_host_dropped();
 // The generic engine's (GENERIC=1, bridge_gen.cpp; only the calls above that the Circle side makes in that build are
 // defined there): /status's "generic", "clock", "proc" and "screen" members; the console's gen, clock, proc, rui and
 // rui=on|off (the control core; false: not one of them); the network's address for the connect splash (core 0, queued)
+// The USB-A MIDI devices (core/devmidi.h), from the control core: a plug / unplug, a message, the way to the Rytm
+void devmidi_plugged(int src, bool on, const char* name);
+void devmidi(int src, uint8_t st, uint8_t d1, uint8_t d2);
+void devmidi_set_forward(void (*f)(uint8_t, uint8_t, uint8_t));
 int generic_json(char* out, int cap);
 bool generic_command(const char* p, char* out, int cap);
 void screen_address(const char* ip);

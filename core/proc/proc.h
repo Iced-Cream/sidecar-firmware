@@ -8,7 +8,7 @@
 // Pi-side lock service and the host link feed it, never knowing what a slot holds. Values are 14 bits (0..16383, as the
 // host link's two 7-bit bytes); params 0..kParams-1. A value for an empty slot, or past kParams, is dropped.
 //
-// Threads: register_slot / clear_slot / set_param on the control side (the Pi's core 3, one producer). process() on the
+// Threads: register_slot / clear_slot / set_param / midi on the control side (the Pi's core 3, one producer). process() on the
 // render side (one consumer): it drains the parameter queue first, then runs each filled slot in order. Portable.
 #pragma once
 #include <stdint.h>
@@ -34,6 +34,8 @@ class Proc {
   virtual void process(const Block& b) = 0;            // render side
   virtual void set_param(int param, int value14) = 0;  // render side, from the queue, before process()
   virtual void link_reset() {}                         // the Rytm's link went down / came up: tails cleared
+  // a message from a USB-A MIDI device (core/devmidi; src its number), render side, from the queue, before process()
+  virtual void midi(int src, uint8_t status, uint8_t d1, uint8_t d2) {}
   virtual const char* name() const = 0;
 };
 
@@ -43,10 +45,11 @@ Proc* slot(int slot);                    // what is registered, null for empty
 bool any();                              // a slot is filled: process() has work
 bool set_param(int slot, int param, int value14);   // queued; false: dropped (empty slot, range, queue full)
 void link_reset();                       // every filled slot's link_reset(), on the render side (queued)
+bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2);   // to every filled slot (queued); false: none, queue full
 
 void process(const Block& b);            // render side
 
-struct Stats { uint32_t params, dropped, blocks; };
+struct Stats { uint32_t params, dropped, blocks, midi; };
 Stats stats();
 }  // namespace proc
 }  // namespace core

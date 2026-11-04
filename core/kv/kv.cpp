@@ -1,8 +1,9 @@
 // core/kv/kv.cpp - see kv.h.
 #include "kv.h"
 
-#include <stdio.h>
 #include <string.h>
+
+#include "platform.h"   // sniprintf (newlib's integer printf on the Pi: no snprintf there)
 
 namespace core {
 namespace kv {
@@ -21,12 +22,12 @@ const char* status_name(int s) {
 }
 
 static const char* dir_of(uint32_t project, char* out, int cap) {
-  int n = snprintf(out, cap, "/.rytm/store/%08lx", (unsigned long)project);
+  int n = sniprintf(out, cap, "/.rytm/store/%08lx", (unsigned long)project);
   return n > 0 && n < cap ? out : nullptr;
 }
 
 const char* Store::path(uint32_t project, int scope, uint16_t handle, char* out, int cap) {
-  int n = snprintf(out, cap, "/.rytm/store/%08lx/%d-%04x.bin", (unsigned long)project, scope, handle);
+  int n = sniprintf(out, cap, "/.rytm/store/%08lx/%d-%04x.bin", (unsigned long)project, scope, handle);
   return n > 0 && n < cap ? out : nullptr;
 }
 
