@@ -108,6 +108,7 @@ Measured 2026-10-16 (Pi 4 4GB, the card in the Pi, the Rytm attached, no Etherne
 | `gadget=sidecar\|midi\|0` | the build's | the USB-C gadget: the Sidecar (UAC2 + MIDI), P1's MIDI echo, or none |
 | `usbmidi=os:off\|os:emu\|os:on` | os:off | OS updates through the USB-C MIDI port ("OS upgrades" below) |
 | `usbreboot=1` | 0 | the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi |
+| `usb=mirror` | sidecar | prototype, Pi 4, own use only: the USB-C side shows the computer the attached box itself (its descriptors, audio, async channel, MIDI and requests relayed; `docs/usb-mirror.md`) instead of the Sidecar device, which comes back when the box has been gone `mirrorhold=S` seconds (10); Overbridge shows the unit's name with `mirrorname=` (default " (SC)"). Never a public default |
 | `uac2test=1` `midifake=1` | 0 | the gadget's test tones and fake MIDI (`sidecar_gadget.h`) |
 | `nvme=0` | 1 | skips the Pi 5's NVMe SSD (`docs/STORAGE.md`) |
 | `wifi=` | (wifi.txt) | Wi-Fi's mode (`wifi.h`, "Wi-Fi settings" below) |
