@@ -196,6 +196,58 @@ inline void name_store (uint8_t *n, unsigned len, const char *suffix)
 	memset (n + l, 0, len - l);
 }
 
+// The computer's per-block bytes on the audio OUT stream. Overbridge's driver writes byte 1 as the index (0-27) of the
+// first non-zero byte of 4-31, or 0xFF when they are all zero, and bytes 4-31 from the Engine; the Engine's latency
+// check puts a marker there and counts the samples until the box's pulse comes back on IN, five times, and wants the
+// same count each time. The Pi sends the box its own blocks, so a computer block whose bytes 4-31 are not all zero is
+// queued here (gadget IRQ) under the Pi's block counter it is due in, and copied into that block (ob_usb.cpp FillOut).
+// The due counter is the computer's block counter plus an offset fixed at the stream's first block: both streams run
+// on the box's clock, so the delay the Pi adds is the same every time. One producer, one consumer.
+constexpr unsigned kExtraFirst = 4, kExtraBytes = 28;
+
+struct ExtraRing
+{
+	static constexpr unsigned kSlots = 8;
+	uint8_t d[kSlots][kExtraBytes];
+	uint16_t due[kSlots];
+	volatile unsigned head, tail;
+	unsigned dropped, late;
+
+	void clear () { head = tail = 0; dropped = late = 0; }
+	// the block's bytes queued for the Pi's block `at` when any is set; FALSE when all are zero or the ring is full
+	bool push_block (const uint8_t *blk, uint16_t at)
+	{
+		const uint8_t *x = blk + kExtraFirst;
+		unsigned i = 0;
+		while (i < kExtraBytes && x[i] == 0) i++;
+		if (i == kExtraBytes) return false;
+		if (head - tail >= kSlots) { dropped++; return false; }
+		memcpy (d[head % kSlots], x, kExtraBytes);
+		due[head % kSlots] = at;
+		head = head + 1;
+		return true;
+	}
+	// into the Pi's block with counter `at`: the bytes due in it, and byte 1 as Overbridge's driver writes it; bytes
+	// due earlier are dropped (late: the offset was too small). FALSE when none are due.
+	bool pop_into (uint8_t *blk, uint16_t at)
+	{
+		while (tail != head)
+		{
+			unsigned k = tail % kSlots;
+			int16_t diff = (int16_t) (uint16_t) (due[k] - at);
+			if (diff > 0) return false;
+			if (diff < 0) { late++; tail = tail + 1; continue; }
+			memcpy (blk + kExtraFirst, d[k], kExtraBytes);
+			unsigned i = 0;
+			while (i < kExtraBytes && d[k][i] == 0) i++;
+			blk[1] = i < kExtraBytes ? (uint8_t) i : 0xFF;
+			tail = tail + 1;
+			return true;
+		}
+		return false;
+	}
+};
+
 } // namespace mirror
 
 #endif

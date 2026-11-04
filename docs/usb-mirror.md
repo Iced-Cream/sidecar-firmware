@@ -35,6 +35,11 @@ on in a public card or build default.
   and `usbmidi=os:` still decides whether OS upgrades pass.
 - **Class and vendor requests.** Each one is forwarded to the box (`CObUsb::MirrorControl`). EP0 NAKs until the box
   answers, then returns the answer, or a STALL if the box stalls or is gone. One request is in flight at a time.
+- **Overbridge's per-block bytes.** Bytes 4-31 of each OUT block (byte 1 = the first non-zero one's index, or 0xFF)
+  carry data from the Engine, such as its latency-check marker; the box answers the marker with a pulse on IN. A
+  computer block with any of them set has them copied into the Pi's own OUT block a fixed distance away
+  (`mirrormargin=` blocks, 8, past where the Pi's OUT stood at the stream's first block), so the Engine measures the
+  same latency on every try. The mirror line counts them (extra, lost, late).
 - **The name Overbridge shows.** For an Elektron box (vendor 1935), the answer to vendor request 1 (IN, the 32-byte device
   name Overbridge shows in its Devices tab and plugin picker) gets a suffix, " (SC)" by default, so the unit reads
   "Analog Rytm MKII (SC)". A name the computer sets (OUT request 1) reaches the box without the suffix. Overbridge

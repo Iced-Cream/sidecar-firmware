@@ -333,6 +333,14 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 		}
 	}
 	m_nMirInHead = m_nMirInTail = 0;
+	m_MirExtra.clear ();
+	m_nExtraOff = 0;
+	m_bExtraOff = FALSE;
+	// blocks between where the Pi's OUT stands and where the computer's per-block bytes go: about the OUT ring's
+	// target (OutTarget, 48 frames), so the latency Overbridge measures matches the audio's; "late" in the mirror
+	// line counts bytes that came too late for it
+	m_nExtraMargin = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrormargin", 8);
+	if (m_nExtraMargin < 1 || m_nExtraMargin > 256) m_nExtraMargin = 8;
 	memset (&m_CtlSetup, 0, sizeof m_CtlSetup);
 	m_bCtlPending = FALSE;
 	m_nCtlSeq = 0;
@@ -1203,6 +1211,7 @@ boolean CSidecarGadget::MirrorSetInterface (u8 uchInterface, u8 uchAlt)
 	if (m_MirLayout.audio_out >= 0 && m_MirLayout.ep[m_MirLayout.audio_out].iface == uchInterface)
 	{
 		m_nMirOutCh = Channels (uchInterface, uchAlt, ob::kOutEp);
+		m_bExtraOff = FALSE;			// a new stream: its own offset
 		m_uchOutAlt = m_nMirOutCh ? uchAlt : 0;
 		OutReset ();
 	}
@@ -1236,12 +1245,27 @@ unsigned CSidecarGadget::MirrorFillIn (u8 *pBuffer)
 	return n;
 }
 
+// ob_usb FillOut (xHCI IRQ or task): the computer's queued per-block bytes into the block the Pi sends the box
+boolean CSidecarGadget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
+{
+	return m_bShowMirror && m_MirExtra.pop_into (pBlock, nCounter);
+}
+
 // gadget IRQ: the computer's OUT block, its frames into the OUT ring that ToRytm adds to what the engine sends
 void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 {
 	unsigned ch = m_nMirOutCh;
 	if (ch == 0 || nLength != (unsigned) ob::block_bytes (ch)) { m_MirStats.nOutBad++; return; }
 	m_MirStats.nOutBlocks++;
+	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
+	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
+	u16 nComp = ob::block_counter (p);
+	if (!m_bExtraOff)
+	{
+		m_nExtraOff = (u16) (CObUsb::OutCounter () - nComp + m_nExtraMargin * ob::kFramesPerBlock);
+		m_bExtraOff = TRUE;
+	}
+	if (m_MirExtra.push_block (p, (u16) (nComp + m_nExtraOff))) m_MirStats.nOutExtra++;
 	for (int f = 0; f < ob::kFramesPerBlock; f++)
 	{
 		if (m_nOutHead - m_nOutTail >= Ring) { m_Stats.nOutOver++; continue; }
@@ -1340,6 +1364,8 @@ void CSidecarGadget::MirrorPoll (void)
 		memset (m_MirAlt, 0, sizeof m_MirAlt);
 		m_nMirInCh = m_nMirOutCh = 0;
 		m_nMirInHead = m_nMirInTail = 0;
+		m_MirExtra.clear ();
+		m_bExtraOff = FALSE;
 		m_bCtlPending = FALSE;
 		m_nCtlSeq++;
 		LeaveCritical ();
@@ -1383,10 +1409,10 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	unsigned nOutUnder = m_Stats.nOutUnder, nOutOver = m_Stats.nOutOver;
 	LeaveCritical ();
 	pLogger->Write (From, LogNotice,
-		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u | "
+		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u | "
 		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u | alt bad %u | midi from %u to-mac %u to-rytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
 		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm);
 }

@@ -47,6 +47,7 @@ public:
 	void FromRytmBlock (const u8 *)			{}
 	void FromEngine (const s32 (*)[12], unsigned)	{}
 	void ToRytm (s32 (*)[12], unsigned, boolean) {}
+	boolean MirrorOutExtra (u8 *, u16) { return FALSE; }
 	void FromRytmMIDI (const u8 *)			{}
 	void MIDIToComputer (u32)			{}
 	boolean ForRytm (u32 *)				{ return FALSE; }
@@ -177,6 +178,7 @@ public:
 	void FromRytmBlock (const u8 *pBlock);		// xHCI IRQ: one Overbridge IN block (7 frames x 12 ch)
 	void FromEngine (const s32 (*pFrames)[12], unsigned nFrames);	// task: the self-test's output as the stand-in IN
 	void ToRytm (s32 (*pFrames)[12], unsigned nFrames, boolean bTask);
+	boolean MirrorOutExtra (u8 *pBlock, u16 nCounter);	// ob_usb FillOut: the computer's per-block bytes into the box's block
 	void FromRytmMIDI (const u8 *pPacket);		// xHCI IRQ: one event packet from the Rytm
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
@@ -264,6 +266,10 @@ private:
 	volatile boolean m_bShowMirror;
 	boolean m_bSwitching, m_bSwitchTo, m_bMirKeep;
 	u64 m_nSwitchAt, m_nBoxGoneAt;
+	mirror::ExtraRing m_MirExtra;
+	unsigned m_nExtraMargin;			// mirrormargin=N blocks (8)
+	u16 m_nExtraOff;				// the Pi's OUT counter minus the computer's, plus the margin
+	volatile boolean m_bExtraOff;			// set at the computer's first OUT block of a stream			// the computer's per-block OUT bytes, for the box (MirrorOutExtra)
 	char m_MirName[mirror::kNameLen];		// mirrorname=: the suffix on the box's Overbridge name (empty: off)
 	unsigned m_nHoldSecs;				// mirrorhold=S: the box gone this long before the Sidecar comes back
 	void MirrorSwitch (boolean bToMirror);		// task level: leave the bus
@@ -278,7 +284,7 @@ private:
 	volatile unsigned m_nCtlSeq;
 	struct TMirStats
 	{
-		unsigned nInBlocks, nInSent, nInDrop, nOutBlocks, nOutBad, nCtl, nCtlStall, nCtlAbort, nCtlLate;
+		unsigned nInBlocks, nInSent, nInDrop, nOutBlocks, nOutBad, nOutExtra, nCtl, nCtlStall, nCtlAbort, nCtlLate;
 		unsigned nPipeIn, nPipeInDrop, nPipeOut, nPipeOutDrop, nAltBad;
 	} m_MirStats;
 #endif

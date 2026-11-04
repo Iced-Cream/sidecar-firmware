@@ -643,6 +643,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 	{
 		u8 *pBlock = pBuf + b * m_nOutBlk;
 		ob::write_header (pBlock, m_nOutCounter);
+		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
 		m_nOutCounter += ob::kFramesPerBlock;
 
 		// the generic engine: no voices of its own. OUT is the computer's audio (the USB-C Sidecar's UAC2 OUT 1-12)

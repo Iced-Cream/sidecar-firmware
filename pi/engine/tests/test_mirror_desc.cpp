@@ -126,9 +126,9 @@ int main ()
 		uint8_t nm[kNameLen] = {};
 		memcpy (nm, "Test Box", 8);
 		name_show (nm, kNameLen, suf);
-		CHECK (strcmp ((const char *) nm, "Test Box via Sidecar") == 0);
+		CHECK (strcmp ((const char *) nm, "Test Box (SC)") == 0);
 		name_show (nm, kNameLen, suf);					// not twice
-		CHECK (strcmp ((const char *) nm, "Test Box via Sidecar") == 0);
+		CHECK (strcmp ((const char *) nm, "Test Box (SC)") == 0);
 		name_store (nm, kNameLen, suf);
 		CHECK (strcmp ((const char *) nm, "Test Box") == 0);
 		for (unsigned i = 8; i < kNameLen; i++) CHECK (nm[i] == 0);
@@ -141,12 +141,36 @@ int main ()
 		memset (nm, 0, kNameLen);
 		memcpy (nm, "Pad   ", 6);					// trailing spaces go
 		name_show (nm, kNameLen, suf);
-		CHECK (strcmp ((const char *) nm, "Pad via Sidecar") == 0);
-		uint8_t sh[8] = {'A', 'B', 0};					// a reply shorter than the suffix: kept
+		CHECK (strcmp ((const char *) nm, "Pad (SC)") == 0);
+		uint8_t sh[4] = {'A', 'B', 0, 0};					// a reply shorter than the suffix: kept
 		name_show (sh, sizeof sh, suf);
 		CHECK (strcmp ((const char *) sh, "AB") == 0);
 		name_show (nm, kNameLen, "");					// off
-		CHECK (strcmp ((const char *) nm, "Pad via Sidecar") == 0);
+		CHECK (strcmp ((const char *) nm, "Pad (SC)") == 0);
+	}
+
+	// the computer's per-block bytes: queued only when set, each into the Pi block it is due in, byte 1 as the driver's
+	{
+		static ExtraRing r;
+		r.clear ();
+		uint8_t blk[368] = {}, out[368];
+		CHECK (!r.push_block (blk, 70));				// all zero: nothing
+		blk[4] = 0xEC, blk[5] = 0x40;
+		CHECK (r.push_block (blk, 70));
+		blk[4] = 0, blk[5] = 0, blk[31] = 0x22;
+		CHECK (r.push_block (blk, 77));
+		memset (out, 0xAA, sizeof out);
+		CHECK (!r.pop_into (out, 63) && out[1] == 0xAA);		// not due yet
+		CHECK (r.pop_into (out, 70));
+		CHECK (out[1] == 0 && out[3] == 0xAA && out[4] == 0xEC && out[5] == 0x40 && out[6] == 0 && out[31] == 0 && out[32] == 0xAA);
+		CHECK (r.pop_into (out, 77) && out[1] == 27 && out[4] == 0 && out[31] == 0x22);
+		CHECK (!r.pop_into (out, 84));
+		blk[31] = 0, blk[4] = 1;
+		r.push_block (blk, 65530);					// late ones are dropped, across the wrap
+		r.push_block (blk, 3);
+		CHECK (r.pop_into (out, 3) && r.late == 1 && r.head == r.tail);
+		for (unsigned i = 0; i < ExtraRing::kSlots + 2; i++) r.push_block (blk, (uint16_t) (100 + 7 * i));
+		CHECK (r.dropped == 2 && r.head - r.tail == ExtraRing::kSlots);
 	}
 
 	printf ("test_mirror_desc: ok\n");
