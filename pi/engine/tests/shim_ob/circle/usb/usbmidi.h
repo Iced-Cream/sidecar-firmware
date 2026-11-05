@@ -8,7 +8,8 @@ class CUSBMIDIDevice {
     if (halted) return FALSE;
     return ++sent, TRUE;
   }
-  boolean ResetOutHalted() {   // circle-midi-reset.patch
+  boolean OutHalted() { return halted; }   // circle-midi-reset2.patch
+  boolean ResetOutHalted() {   // circle-midi-reset.patch (v2: FALSE when the state after it is still halted)
     if (!halted) return FALSE;
     ++resets;
     if (!reset_ok) return FALSE;

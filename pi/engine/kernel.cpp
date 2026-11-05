@@ -692,7 +692,8 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		CString Halt;
 		Halt.Format (",\"usbhalt\":{\"ob_in\":%u,\"ob_out\":%u,\"a4_in\":%u,\"a4_out\":%u,\"midi_out\":%u,\"refused\":%u}",
 			     CObUsb::HaltResets (TRUE), CObUsb::HaltResets (FALSE), CObFollow::HaltResets (TRUE),
-			     CObFollow::HaltResets (FALSE), k->m_Usb.MIDIOutResets (), CObUsb::HaltRefused () + CObFollow::HaltRefused ());
+			     CObFollow::HaltResets (FALSE), k->m_Usb.MIDIOutResets (),
+			     CObUsb::HaltRefused () + CObFollow::HaltRefused () + k->m_Usb.MIDIOutRefused ());
 		pOut->Append (Halt);
 	}
 	{
@@ -1987,7 +1988,7 @@ void CKernel::Run (void)
 		boolean bPlugAndPlay;
 		{ mbtrace::Scope Mb (10, 200); bPlugAndPlay = m_USBHCI.UpdatePlugAndPlay (); }
 		CObUsb::PollReEnum ();		// a box that came up below high speed (ob_speed.h)
-		CObUsb::PollHalt ();		// the Overbridge OUT endpoint halted by a transfer error: reset, OUT goes on
+		{ mbtrace::Scope Mb (18, 200); CObUsb::PollHalt (); }	// an Overbridge endpoint (IN / OUT, the A4's too) halted or quiet: reset (ep_halt.h)
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }

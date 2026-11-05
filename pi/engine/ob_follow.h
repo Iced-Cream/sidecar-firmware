@@ -42,7 +42,7 @@ public:
 	static void Stop (void);			// task level: alt 0, as CObUsb::Stop
 	static void EmergencyStop (void);		// exception context: no more resubmits
 	// main loop, task level (CObUsb::PollHalt): an IN or OUT endpoint halted by a transfer error reset (ep_halt.h)
-	static void PollHalt (void);
+	static boolean PollHalt (void);			// TRUE: a reset was sent (the pass's one)
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }	// since boot
 	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
 
@@ -52,7 +52,7 @@ private:
 	void InDone (unsigned i, CUSBRequest *pURB);
 	void OutDone (unsigned i, CUSBRequest *pURB);
 	void PumpOut (void);
-	void Recover (boolean bIn, unsigned nNowUs);
+	boolean Recover (boolean bIn, unsigned nNowUs);
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
@@ -68,6 +68,7 @@ private:
 	boolean m_bHaveIn;
 	volatile unsigned m_nInBlocks, m_nInGaps, m_nInLost, m_nInBad, m_nInErrors, m_nOutErrors, m_nSubmitFail;
 	unsigned m_nPrevIn, m_nSecs;
+	volatile unsigned m_nLastInUs, m_nLastOutUs;	// the last completion of each (CTimer::GetClockTicks): the stall check
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
 	static unsigned s_nHaltResets[2], s_nHaltRefused;
 

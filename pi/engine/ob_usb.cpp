@@ -36,8 +36,8 @@
 //     microframe late, so a 2-deep queue has under 125 us to be refilled.
 //   * A transfer error is logged by xhciendpoint.cpp per event (flooding risk on a bad link).
 //   * Buffers must be cache-line aligned DMA memory above MEM_KERNEL_END: heap blocks.
-//   * ResetFromHalted() exists in CXHCIEndpoint (no CLEAR_FEATURE(HALT) recovery here yet; the
-//     endpoint state is printed so a halt shows).
+//   * A transfer error halts the endpoint: PollHalt clears it on the box and resets it on the host (ep_halt.h);
+//     the endpoint state is printed so a halt shows.
 //
 #include "ob_usb.h"
 #include "simd.h"
@@ -274,41 +274,59 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 
 unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused;
 
+boolean CObUsb::s_bResetDone;
+
+// At most one endpoint is reset a main-loop pass, the Rytm MIDI's included (CObUsbTransport::Poll asks ResetDone): its
+// waits are Circle's, 3 s at most each (EP0's CLEAR_FEATURE, Reset Endpoint, Set TR Dequeue), so one pass stays well under
+// the 15 s watchdog.
 void CObUsb::PollHalt (void)
 {
-	CObFollow::PollHalt ();				// an A4's stream beside it (ob_follow.h)
+	s_bResetDone = FALSE;
 	CObUsb *p = s_pThis;
-	if (p == 0 || !p->m_bStreaming) return;
-	unsigned now = CTimer::GetClockTicks ();
-	p->Recover (TRUE, now);
-	p->Recover (FALSE, now);
+	if (p != 0 && p->m_bStreaming)
+	{
+		unsigned now = CTimer::GetClockTicks ();
+		p->Recover (TRUE, now) || p->Recover (FALSE, now);
+	}
+	if (!s_bResetDone) s_bResetDone = CObFollow::PollHalt ();	// an A4's stream beside it (ob_follow.h)
 }
 
-void CObUsb::Recover (boolean bIn, unsigned nNowUs)
+// TRUE: a reset was sent (the pass's one)
+boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 {
 	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
 	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
 	const char *pDir = bIn ? "IN" : "OUT";
+	EnterCritical (IRQ_LEVEL);			// gone quiet with no error: URBs pending, none completed for 50 ms
+	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
+	    && nNowUs - (bIn ? m_nLastInUs : m_nLastOutUs) > EpHalt<CXHCIEndpoint>::kStallUs) h.Stall ();
+	LeaveCritical ();
+	if (!h.Due (nNowUs)) return FALSE;
+	if (m_bMirror && m_bCtlBusy) return FALSE;	// usb=mirror: the computer's request holds EP0 (the clear would queue behind it)
 	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
 	int r = h.Reset (pX, nNowUs, [this, uchAddr] {
 		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT,
 					    uchAddr, 0, 0);
 	});
-	if (r == 0) return;
+	if (r == 0) return FALSE;
+	s_bResetDone = r != 2;
 	if (r < 0)
 	{
 		s_nHaltRefused++;
-		CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused, "
-					"again in 1 s", pDir, h.state, pX->GetLastErrorCode ());
-		return;
+		if (h.Log (nNowUs))
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused "
+						"(%u in a row; %u lines left out), again in %u ms", pDir, h.state, pX->GetLastErrorCode (),
+						h.fails, h.TakeQuiet (), EpHalt<CXHCIEndpoint>::Wait (h.fails) / 1000);
+		return TRUE;
 	}
-	s_nHaltResets[bIn ? 0 : 1]++;
+	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;
 	EnterCritical (IRQ_LEVEL);
 	if (h.Finish (pX))				// every TD still on the ring was skipped: its URB never completes
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) (bIn ? m_bInBusy : m_bOutBusy)[i] = FALSE;
 		(bIn ? m_nInPending : m_nOutPending) = 0;
 	}
+	(bIn ? m_nLastInUs : m_nLastOutUs) = nNowUs;	// (the stall clock starts again)
 	if (bIn)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
@@ -319,8 +337,18 @@ void CObUsb::Recover (boolean bIn, unsigned nNowUs)
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (s_OutBuf[i], m_nBlocks), SubmitOut (i);
 	}
 	LeaveCritical ();
-	CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
-				"%u URBs dropped, %s goes on", pDir, h.state, pX->GetLastErrorCode (), h.resets, h.dropped, pDir);
+	if (h.Log (nNowUs))
+	{
+		if (r == 2)
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
+						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
+						h.TakeQuiet ());
+		else
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
+						"%u URBs dropped, %s goes on (%u in a row; %u lines left out)", pDir, h.state,
+						pX->GetLastErrorCode (), h.resets, h.dropped, pDir, h.fails, h.TakeQuiet ());
+	}
+	return s_bResetDone;
 }
 
 void CObUsb::SetActive (boolean bActive)
@@ -546,6 +574,7 @@ boolean CObUsb::Configure (void)
 	if (s_bActive) masterfx_pi::Reset ();
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
+	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
 	m_bStreaming = TRUE;
 	boolean bOK = TRUE;
 	for (unsigned i = 0; i < m_nURBs && bOK; i++)
@@ -990,6 +1019,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	}
 	else
 	{
+		m_InHalt.Ok ();
 		if (len % m_nInBlk != 0) m_nInShort++;
 		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
@@ -1133,6 +1163,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 
 	if (pURB->GetStatus () != 0)
 	{
+		m_OutHalt.Ok ();
 		m_nOutBlocks += pURB->GetResultLength () / m_nOutBlk;
 		if (m_nOut16Us == 0 && m_nOutBlocks >= 16) m_nOut16Us = now - m_nStartUs + 1;
 	}
@@ -1327,17 +1358,33 @@ void CObUsbTransport::Poll (void)
 	unsigned nNow = CTimer::GetClockTicks ();
 	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), nNow);
 	unsigned nFail = m_Merge.failures () + m_Merge.mac_failed () + m_Merge.bridge_failed ();
-	if (nFail != m_nFailSeen)			// a send failed (its message dropped, counted): a halted endpoint is reset
+	if (m_Merge.msgs () != m_nMsgsSeen) m_nMsgsSeen = m_Merge.msgs (), m_nMidiInRow = 0;	// a good send: the run ends
+	// a send failed (its message dropped, counted): a halted endpoint is reset, one reset a main-loop pass in all
+	// (CObUsb::PollHalt's first); not halted (a Rytm only slow): the merge's back-off stays
+	if (nFail != m_nFailSeen && m_pMIDI != 0 && !CObUsb::ResetDone () && m_pMIDI->OutHalted ())
 	{
 		m_nFailSeen = nFail;
-		if (m_pMIDI != 0 && m_pMIDI->ResetOutHalted ())	// (FALSE: not halted, a Rytm only slow: the back-off stays)
+		m_nMidiInRow++;
+		if (m_pMIDI->ResetOutHalted ())
 		{
 			m_nMidiResets++;
-			m_Merge.rytm_new ();		// sending again from the next Poll
-			CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint was halted by a "
-						"transfer error: reset %u, sending again", m_nMidiResets);
+			// sending again from the next Poll, unless it keeps failing: from the third reset in a row with no
+			// good send between, the merge's back-off (5 s, doubling to 60 s) paces it
+			if (m_nMidiInRow < 3) m_Merge.rytm_new ();
+			if (m_nMidiInRow <= 3)
+				CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint was halted by a "
+							"transfer error: reset %u (%u in a row), %s", m_nMidiResets, m_nMidiInRow,
+							m_nMidiInRow < 3 ? "sending again" : "sending after the back-off");
+		}
+		else
+		{
+			m_nMidiRefused++;
+			if (m_nMidiInRow <= 3)
+				CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint is halted: the "
+							"reset was refused (%u in a row), tried at the next failed send", m_nMidiInRow);
 		}
 	}
+	else if (nFail != m_nFailSeen && !CObUsb::ResetDone ()) m_nFailSeen = nFail;	// not halted: nothing to reset
 	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
 	{
 		m_nMacFailedSeen = m_Merge.mac_failed ();

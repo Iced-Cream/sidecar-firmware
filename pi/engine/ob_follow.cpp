@@ -50,7 +50,7 @@ CObFollow::CObFollow (CUSBFunction *pFunction)
 	m_pInDesc (0), m_pOutDesc (0), m_pIn (0), m_pOut (0), m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE), m_nCredit (0), m_nOutCounter (0), m_nExpectIn (0), m_bHaveIn (FALSE),
 	m_nInBlocks (0), m_nInGaps (0), m_nInLost (0), m_nInBad (0), m_nInErrors (0), m_nOutErrors (0), m_nSubmitFail (0),
-	m_nPrevIn (0), m_nSecs (0)
+	m_nPrevIn (0), m_nSecs (0), m_nLastInUs (0), m_nLastOutUs (0)
 {
 	s_pThis = this;
 }
@@ -145,6 +145,8 @@ boolean CObFollow::Configure (void)
 
 	EnterCritical (IRQ_LEVEL);
 	s_bOn = TRUE;
+	m_nLastInUs = m_nLastOutUs = CTimer::GetClockTicks ();
+	m_InHalt.halted = m_OutHalt.halted = false;
 	m_bStreaming = TRUE;
 	boolean bOK = TRUE;
 	for (unsigned i = 0; i < URBs && bOK; i++) bOK = SubmitIn (i);
@@ -201,12 +203,14 @@ void CObFollow::OutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 // The xHCI interrupt, core 0.
 void CObFollow::InDone (unsigned i, CUSBRequest *pURB)
 {
+	m_nLastInUs = CTimer::GetClockTicks ();
 	m_bInBusy[i] = FALSE;
 	m_nInPending--;
 	const u8 *pBlk = s_InBuf[i];
 	boolean bOK = pURB->GetStatus () != 0;
 	unsigned nLen = bOK ? pURB->GetResultLength () : 0;
 	InvalidateDataCacheRange ((uintptr) pBlk, kBuf);
+	if (bOK) m_InHalt.Ok ();
 	if (!bOK) m_nInErrors++, m_InHalt.Fail ();	// the endpoint halts on an error: no resubmit until PollHalt
 	else if (nLen < kInBlk || !ob::block_from_device (pBlk)) m_nInBad++;
 	else
@@ -229,6 +233,7 @@ void CObFollow::InDone (unsigned i, CUSBRequest *pURB)
 
 void CObFollow::OutDone (unsigned i, CUSBRequest *pURB)
 {
+	m_nLastOutUs = CTimer::GetClockTicks ();
 	m_bOutBusy[i] = FALSE;
 	m_nOutPending--;
 	if (pURB->GetStatus () == 0)
@@ -237,6 +242,7 @@ void CObFollow::OutDone (unsigned i, CUSBRequest *pURB)
 		m_OutHalt.Fail ();
 		return;
 	}
+	m_OutHalt.Ok ();
 	PumpOut ();
 }
 
@@ -279,49 +285,65 @@ void CObFollow::LogStats (CLogger *pLogger)
 
 unsigned CObFollow::s_nHaltResets[2], CObFollow::s_nHaltRefused;
 
-void CObFollow::PollHalt (void)
+boolean CObFollow::PollHalt (void)
 {
 	CObFollow *p = s_pThis;
-	if (p == 0 || !p->m_bStreaming) return;
+	if (p == 0 || !p->m_bStreaming) return FALSE;
 	unsigned now = CTimer::GetClockTicks ();
-	p->Recover (TRUE, now);
-	p->Recover (FALSE, now);
+	return p->Recover (TRUE, now) || p->Recover (FALSE, now);
 }
 
-// as CObUsb::Recover
-void CObFollow::Recover (boolean bIn, unsigned nNowUs)
+// as CObUsb::Recover (no mirror here); TRUE: a reset was sent
+boolean CObFollow::Recover (boolean bIn, unsigned nNowUs)
 {
 	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
 	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
 	const char *pDir = bIn ? "IN" : "OUT";
+	EnterCritical (IRQ_LEVEL);
+	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
+	    && nNowUs - (bIn ? m_nLastInUs : m_nLastOutUs) > EpHalt<CXHCIEndpoint>::kStallUs) h.Stall ();
+	LeaveCritical ();
 	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
 	int r = h.Reset (pX, nNowUs, [this, uchAddr] {
 		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT,
 					    uchAddr, 0, 0);
 	});
-	if (r == 0) return;
+	if (r == 0) return FALSE;
 	if (r < 0)
 	{
 		s_nHaltRefused++;
-		CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused, "
-					"again in 1 s", pDir, h.state, pX->GetLastErrorCode ());
-		return;
+		if (h.Log (nNowUs))
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused "
+						"(%u in a row; %u lines left out), again in %u ms", pDir, h.state, pX->GetLastErrorCode (),
+						h.fails, h.TakeQuiet (), EpHalt<CXHCIEndpoint>::Wait (h.fails) / 1000);
+		return TRUE;
 	}
-	s_nHaltResets[bIn ? 0 : 1]++;
+	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;
 	EnterCritical (IRQ_LEVEL);
 	if (h.Finish (pX))
 	{
 		for (unsigned i = 0; i < URBs; i++) (bIn ? m_bInBusy : m_bOutBusy)[i] = FALSE;
 		(bIn ? m_nInPending : m_nOutPending) = 0;
 	}
+	(bIn ? m_nLastInUs : m_nLastOutUs) = nNowUs;
 	if (bIn)
 	{
 		for (unsigned i = 0; i < URBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
 	}
 	else PumpOut ();
 	LeaveCritical ();
-	CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
-				"%u URBs dropped, %s goes on", pDir, h.state, pX->GetLastErrorCode (), h.resets, h.dropped, pDir);
+	if (h.Log (nNowUs))
+	{
+		if (r == 2)
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
+						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
+						h.TakeQuiet ());
+		else
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
+						"%u URBs dropped, %s goes on (%u in a row; %u lines left out)", pDir, h.state,
+						pX->GetLastErrorCode (), h.resets, h.dropped, pDir, h.fails, h.TakeQuiet ());
+	}
+	return r != 2;
 }
 
 void CObFollow::Stop (void)

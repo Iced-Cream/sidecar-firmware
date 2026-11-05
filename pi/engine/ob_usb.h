@@ -48,10 +48,12 @@ public:
 	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
 	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
 	static void PollReEnum (void);
-	// main loop, task level (core 0): an IN or OUT transfer error halts that xHCI endpoint (a USB transaction error, code
-	// 4: the box did not answer three tries) and the URBs behind it never complete; reset it, drop the URBs the reset
-	// skipped and the stream goes on (ep_halt.h). A reset the controller refuses is tried again a second later.
+	// main loop, task level (core 0): an IN or OUT transfer error halts that xHCI endpoint (code 4, a USB transaction
+	// error: the box did not answer three tries; 6, a STALL), or it goes quiet (URBs pending, none completed for 50 ms),
+	// and the URBs behind it never complete; reset it, drop the URBs the reset skipped and the stream goes on, with a
+	// back-off while it keeps failing (ep_halt.h). Also the A4 follower's. At most one endpoint reset a pass.
 	static void PollHalt (void);
+	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
 	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
@@ -125,7 +127,7 @@ private:
 	void PumpOut (void);
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
-	void Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint
+	boolean Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint: TRUE a reset was sent
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
@@ -192,6 +194,7 @@ private:
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
 	static unsigned s_nHaltResets[2], s_nHaltRefused;
+	static boolean s_bResetDone;
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
 
@@ -239,6 +242,7 @@ public:
 	// a failed send on a halted bulk OUT (a transfer error: every later send fails too) reset it (circle-midi-reset.patch)
 	// and the sending went on at once instead of after the back-off; since boot
 	unsigned MIDIOutResets (void) const		{ return m_nMidiResets; }
+	unsigned MIDIOutRefused (void) const		{ return m_nMidiRefused; }	// resets the controller refused
 
 private:
 	// the order, the pacing and the failure rule: usbmidi_merge.h (portable, Mac-tested); Poll is its Circle side
@@ -248,7 +252,7 @@ private:
 	CUSBMIDIDevice *m_pMIDI = 0;
 	boolean m_bSend = TRUE;
 	unsigned m_nFailSeen = 0;			// the merge's failed sends (engine, keys / computer, bridge) seen
-	unsigned m_nMidiResets = 0;
+	unsigned m_nMidiResets = 0, m_nMidiRefused = 0, m_nMidiInRow = 0, m_nMsgsSeen = 0;
 };
 
 #endif

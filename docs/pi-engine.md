@@ -169,6 +169,16 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
 - `thermal: ...` lines come once per crossing of the temperature warning (below), not per second; the stats line's last field is the temperature.
 - With `link=tcp`, the `tcp:` line (every 10 s) ends `wanted max W, poll gap max G us`: the most frames the emulator had asked for at once, and core 0's longest gap between two polls of the link.
 - With the Rytm, spike3's `rytmob:` line follows: IN/OUT blocks a second, `gap`, `lost`, and so on.
+  - `err` and `rs` (IN and OUT): transfer errors, and the endpoint resets after a halt (`pi/engine/ep_halt.h`). A non-isochronous
+    transfer error (4, a USB transaction error; 6, a STALL) halts the xHCI endpoint, and the URBs behind it never complete. Before
+    0.4.1 that stopped the Sidecar voices for good, with the CPU at 0 and no underrun. Now the main loop sends CLEAR_FEATURE(ENDPOINT_HALT)
+    to the box, resets the endpoint, drops the skipped URBs and submits again. An endpoint with URBs pending and no completion for
+    50 ms counts as halted too. While it keeps failing the resets back off: 0, 10 ms, 100 ms, then 1 s. One endpoint is reset per
+    main-loop pass. The log gets the first 3 lines of a run, then one every 10 s with the number left out. The `a4ob:` line has
+    the same `rs` fields.
+  - `/status` `"usbhalt":{"ob_in","ob_out","a4_in","a4_out","midi_out","refused"}`: resets since boot (the Rytm's Overbridge IN
+    and OUT, an A4's, the Rytm's USB MIDI OUT), and the resets that did not take (the endpoint still halted afterwards; tried again
+    after the back-off).
 - `engine: muted !PLAITS(6) ...` lists the muted voices. Each new mute is also logged once with its reason.
 
 ### Underruns and the start-up stall (2026-10-25)
