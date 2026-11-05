@@ -84,6 +84,8 @@ public:
 	static void MirrorAttachLate (void);
 	static u16 OutCounter (void)		{ return s_pThis != 0 ? s_pThis->m_nOutCounter : 0; }	// the next block's		// core 0's loop: the box was configured before the gadget existed
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
+	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
+	static unsigned MirrorPipeResets (void);	// those clears so far (the mirror line)
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
@@ -132,14 +134,18 @@ private:
 		CUSBRequest *pURB;			// IN: the one in flight (OUT: a new one each packet)
 		u8 *pBuf;				// DMA, 512 B
 		volatile boolean bBusy;
-		volatile boolean bStopped;		// IN: an error; not resubmitted
+		volatile boolean bStopped;		// an error: halted until MirrorPipePoll clears it (IN: then resubmitted)
 		volatile unsigned nPackets, nErrors;
+		unsigned nTries;			// clears in a row that did not bring it back (slows the retries down)
+		unsigned nLastTry;			// CTimer ticks
 	} m_Pipe[MaxPipes];
 	unsigned m_nPipes;
 	boolean m_bMirror;
 	volatile boolean m_bAttachDue;			// configured while CSidecarGadget::Get () was 0
 	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data
 	volatile boolean m_bCtlBusy;
+	unsigned m_nGen;				// this box's attach: a completion of an earlier one is ignored
+	static unsigned s_nGen, s_nPipeResets;
 
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called
