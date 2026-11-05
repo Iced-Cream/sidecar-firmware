@@ -34,11 +34,11 @@ const Profile& active() {             // (only ob_follow.cpp asks)
   static Profile none;
   return g_a4_chosen ? kA4 : none;
 }
-const Profile* by_usb(uint16_t vid, uint16_t pid) {   // device.cpp's list, without the engine it links
+const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {   // device.cpp's list, without the engine it links
   static Profile rytm;
   rytm.audio = &out::kRytmMk2;
   if (vid == 0x1935 && pid == 0x0b48) return &rytm;
-  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen ? &kA4 : nullptr;
+  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen || without_hello ? &kA4 : nullptr;
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
