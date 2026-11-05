@@ -132,6 +132,13 @@ elif [ "$R" = 4 ]; then	# the Pi 4 (a Pi 5 with PI5_GADGET=0: no gadget, docs/pi
   # then the reset at IRQ level without 1 ms waits (circle-gadget-reset.patch, gadget_flush.h; idempotent)
   cmp -s /repo/pi/circle/gadget_flush.h include/circle/usb/gadget/gadgetflush.h || cp /repo/pi/circle/gadget_flush.h include/circle/usb/gadget/gadgetflush.h
   grep -q circle-gadget-reset lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-reset.patch
+  # then the two gadget changes of usb=mirror (pi/circle/circle-gadget-mirror.patch, docs/usb-mirror.md): an IN and an OUT EP of
+  # one number (0x83 + 0x03), and a class or vendor request answered later (forwarded to the box); a gadget that uses
+  # neither runs as before. Its own file and marker, as -reenum2; idempotent
+  grep -q circle-gadget-mirror lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-mirror.patch
+  # then leaving the bus and coming back as a replug (pi/circle/circle-gadget-softconnect.patch): usb=mirror switches
+  # between the box and the Sidecar device when the box comes and goes; its own file and marker; idempotent
+  grep -q circle-gadget-softconnect lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-softconnect.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi
 # f_expand in FatFs (pi/circle/circle-fatfs-expand.patch: FF_USE_EXPAND 1 - the recorder reserves the space of each
