@@ -1,6 +1,36 @@
+--- a/include/circle/usb/usbstandardhub.h	2026-11-05 22:00:00.000000000 +0000
++++ b/include/circle/usb/usbstandardhub.h	2026-11-05 22:00:00.000000000 +0000
+@@ -75,6 +75,7 @@
+ 	CUSBDevice *m_pDevice[USB_HUB_MAX_PORTS];
+ 	TUSBPortStatus *m_pStatus[USB_HUB_MAX_PORTS];
+ 	boolean m_bPortConfigured[USB_HUB_MAX_PORTS];
++	boolean m_bPortGivenUp[USB_HUB_MAX_PORTS];	// circle-address-retry.patch: skipped until a connection change
+ 
+ #if RASPPI >= 4
+ 	TUSBHubInfo *m_pHubInfo;
 --- a/lib/usb/usbstandardhub.cpp	2026-11-05 22:00:00.000000000 +0000
 +++ b/lib/usb/usbstandardhub.cpp	2026-11-05 22:00:00.000000000 +0000
-@@ -370,6 +370,8 @@
+@@ -50,6 +50,7 @@
+ 		m_pDevice[nPort] = 0;
+ 		m_pStatus[nPort] = 0;
+ 		m_bPortConfigured[nPort] = FALSE;
++		m_bPortGivenUp[nPort] = FALSE;
+ 	}
+ }
+ 
+@@ -361,6 +362,11 @@
+ 		{
+ 			m_pDevice[nPort]->ReScanDevices ();
+ 
++			continue;
++		}
++
++		if (m_bPortGivenUp[nPort])	// circle-address-retry.patch: not again before a replug (a
++		{				// rescan of the hub would block 2 s on it each time)
+ 			continue;
+ 		}
+ 
+@@ -370,6 +376,8 @@
  			assert (m_pStatus[nPort] != 0);
  		}
  
@@ -9,7 +39,7 @@
  		if (pHost->ControlMessage (pEndpoint0,
  			REQUEST_IN | REQUEST_CLASS | REQUEST_TO_OTHER,
  			GET_STATUS, 0, nPort+1, m_pStatus[nPort], 4) != 4)
-@@ -449,11 +451,34 @@
+@@ -449,11 +457,35 @@
  #endif
  		assert (m_pDevice[nPort] != 0);
  
@@ -19,7 +49,7 @@
 -			delete m_pDevice[nPort];
 +			delete m_pDevice[nPort];	// its slot disabled: the next try gets a fresh one
  			m_pDevice[nPort] = 0;
- 
++
 +			// circle-address-retry.patch: a failed enumeration ("Cannot set device address (4)", a
 +			// transaction error, e.g. a device plugged in again just after a pull) is tried again,
 +			// twice, each with a fresh port reset and slot after 200 ms (as Linux hub_port_init), the
@@ -31,20 +61,30 @@
 +							"Port %u: enumeration failed, trying again (%u)",
 +							nPort+1, nAddressTry);
 +				CTimer::Get ()->MsDelay (200);
-+
+ 
 +				goto address_retry;
 +			}
 +
 +			// given up: the port is disabled (as Linux), so a device left at the default
-+			// address 0 cannot answer another port's enumeration; a replug (a connection
-+			// change) enables and enumerates it again
++			// address 0 cannot answer another port's enumeration, and skipped by any rescan
++			// until its connection changes (a replug: HandlePortStatusChange)
 +			CLogger::Get ()->Write (FromHub, LogWarning,
 +						"Port %u: enumeration failed, port disabled until a replug", nPort+1);
 +			DisablePort (nPort);
++			m_bPortGivenUp[nPort] = TRUE;
 +
  			continue;
  		}
  	}
+@@ -673,6 +705,8 @@
+ 							nPort+1);
+ 			}
+ 
++			m_bPortGivenUp[nPort] = FALSE;	// circle-address-retry.patch: a replug, tried again
++
+ 			if (m_pStatus[nPort]->wPortStatus & PORT_CONNECTION__MASK)
+ 			{
+ 				//CLogger::Get ()->Write (FromHub, LogDebug,
 --- a/lib/usb/xhcirootport.cpp	2026-11-05 22:00:00.000000000 +0000
 +++ b/lib/usb/xhcirootport.cpp	2026-11-05 22:00:00.000000000 +0000
 @@ -45,6 +45,8 @@

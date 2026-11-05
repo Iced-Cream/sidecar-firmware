@@ -199,8 +199,13 @@ grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /re
 grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
 # then a failed enumeration tried again (pi/circle/circle-address-retry.patch: Cannot set device address after a pull and
 # replug left the port dead until a reboot; twice more, each with a port reset, a fresh slot and 200 ms, only after a fast
-# failure; a hub port given up on is disabled until a replug; hub and xHCI root port; after circle-replug, idempotent)
-grep -q circle-address-retry lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-address-retry.patch
+# failure; a hub port given up on is disabled and skipped by rescans until a replug; hub and xHCI root port; after
+# circle-replug, idempotent). A tree patched by its first build (ba8a58d, no m_bPortGivenUp) cannot take it: stop and say so
+if ! grep -q circle-address-retry lib/usb/usbstandardhub.cpp; then
+  patch -p1 < /repo/pi/circle/circle-address-retry.patch
+elif ! grep -q m_bPortGivenUp lib/usb/usbstandardhub.cpp; then
+  echo "$T: an unreleased circle-address-retry (ba8a58d) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1
+fi
 # the queued URBs of a halted xHCI endpoint dropped after its reset (pi/circle/circle-xhci-dropurbs.patch: CObUsb::PollHalt, the
 # Overbridge OUT after a transfer error); idempotent
 grep -q circle-xhci-dropurbs include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-dropurbs.patch
