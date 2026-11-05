@@ -180,7 +180,8 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
   - A pulled cable fails every endpoint of the box at once. So a lone failed endpoint is reset 5 ms after its error (time for
     another to follow), and when two or more endpoints of one box (the Rytm's IN, OUT and USB MIDI OUT; an A4's IN and OUT) fail
     within 5 ms of each other, nothing is sent to the box for up to 500 ms, time for the hub to report the disconnect. A box
-    still there after that is reset as above. One log line says so (`a likely unplug, their resets held`).
+    still there after that is reset as above. One log line says so (`a likely unplug, their resets held`). A Rytm on USB MIDI
+    alone (no Overbridge stream) has no such check: its MIDI OUT is reset at once, as before.
   - `/status` `"usbhalt":{"ob_in","ob_out","a4_in","a4_out","midi_out","refused","held"}`: resets since boot (the Rytm's Overbridge IN
     and OUT, an A4's, the Rytm's USB MIDI OUT), the resets that did not take (the endpoint still halted afterwards; tried again
     after the back-off), and the times a box's resets were held because its endpoints failed together.

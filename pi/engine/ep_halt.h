@@ -88,13 +88,24 @@ struct EpHalt {
 };
 
 // The endpoints of a box that failed (EpHalt::erred, or the USB MIDI OUT seen halted) and wait for their reset: Add each.
+// An endpoint whose reset was refused stays failed with its old time: so "together" is any two within the window, not
+// the whole range (a stale one must not make a pull look spread out).
 struct EpFails {
-  unsigned n = 0, first_us = 0, last_us = 0;
+  static constexpr unsigned kMax = 4;
+  unsigned n = 0, last_us = 0, at[kMax] = {};
   void Add(bool erred, unsigned at_us) {
-    if (!erred) return;
-    if (n == 0 || (int)(at_us - first_us) < 0) first_us = at_us;
+    if (!erred || n == kMax) return;
     if (n == 0 || (int)(at_us - last_us) > 0) last_us = at_us;
-    ++n;
+    at[n++] = at_us;
+  }
+  // two failed within within_us of each other: true, *first_us the earlier of the first such pair (signed: the clock wraps)
+  bool Together(unsigned within_us, unsigned* first_us) const {
+    for (unsigned i = 0; i < n; ++i)
+      for (unsigned j = i + 1; j < n; ++j) {
+        int d = (int)(at[j] - at[i]);
+        if ((d < 0 ? -d : d) <= (int)within_us) return *first_us = d < 0 ? at[j] : at[i], true;
+      }
+    return false;
   }
 };
 
@@ -103,7 +114,8 @@ struct EpFails {
 // (the 0.4.1 candidate, Pi 4: IN, OUT and both MIDI endpoints in the same 10 ms, the hub's disconnect 190 ms later), and
 // the CLEAR_FEATURE and Reset Endpoint commands sent to the departing box meanwhile (four of them) are the likely cause
 // of the replug that then failed "Cannot set device address" until a reboot. So:
-//   - one endpoint failed alone: its reset waits until kTogetherUs after the error, for another to follow. 5 ms: at a
+//   - one endpoint failed alone (none other within kTogetherUs of it): the resets wait until kTogetherUs after the
+//     newest error, for another to follow. 5 ms: at a
 //     pull every endpoint with a transfer pending fails within one or two 1 ms frames (three tries without a handshake
 //     take microseconds); and it is 5 ms more on a lone error (the tester's OUT) whose audio is broken already;
 //   - two or more failed within kTogetherUs of each other: a likely unplug. Every reset of the box is held, up to kGraceUs
@@ -126,11 +138,12 @@ struct EpBox {
       return 0;
     }
     if (f.n == 0) return spent = false, 0;
-    if (!spent && f.n >= 2 && f.last_us - f.first_us <= kTogetherUs) {
-      holding = true, since_us = f.first_us, ++held;
+    unsigned first = 0;
+    if (!spent && f.Together(kTogetherUs, &first)) {
+      holding = true, since_us = first, ++held;
       return 3;
     }
-    return f.n == 1 && (int)(now_us - f.first_us) < (int)kTogetherUs ? 1 : 0;
+    return (int)(now_us - f.last_us) < (int)kTogetherUs ? 1 : 0;
   }
 
   // a line for this hold? (as EpHalt::Log)

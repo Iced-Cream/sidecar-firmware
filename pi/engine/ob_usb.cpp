@@ -297,18 +297,20 @@ void CObUsb::PollHalt (void)
 boolean CObUsb::BoxWait (unsigned nNowUs)
 {
 	EpFails f;
-	f.Add (m_InHalt.erred, m_InHalt.fail_us);
-	f.Add (m_OutHalt.erred, m_OutHalt.fail_us);
+	EnterCritical (IRQ_LEVEL);			// the IRQ writes erred and fail_us: both read as one
+	boolean bIn = m_InHalt.erred, bOut = m_OutHalt.erred;
+	f.Add (bIn, m_InHalt.fail_us);
+	f.Add (bOut, m_OutHalt.fail_us);
+	LeaveCritical ();
 	f.Add (m_bMidiErred, m_nMidiFailUs);
 	int w = m_Box.Wait (nNowUs, f);
 	if (w == 3)
 	{
 		s_nHaltHeld++;
 		if (m_Box.Log (nNowUs))
-			CLogger::Get ()->Write (From, LogWarning, "%u endpoints failed within %u us (IN %u, OUT %u, MIDI OUT %u): "
-						"a likely unplug, their resets held up to %u ms for the hub (held %u; %u lines "
-						"left out)", f.n, f.last_us - f.first_us, (unsigned) m_InHalt.erred,
-						(unsigned) m_OutHalt.erred, (unsigned) m_bMidiErred, EpBox::kGraceUs / 1000,
+			CLogger::Get ()->Write (From, LogWarning, "endpoints failed together (IN %u, OUT %u, MIDI OUT %u): a likely "
+						"unplug, their resets held up to %u ms for the hub (held %u; %u lines left out)",
+						(unsigned) bIn, (unsigned) bOut, (unsigned) m_bMidiErred, EpBox::kGraceUs / 1000,
 						m_Box.held, m_Box.TakeQuiet ());
 	}
 	return w != 0;
@@ -1376,7 +1378,14 @@ struct TCircleIo : UsbMidiMerge::Io
 {
 	CUSBMIDIDevice *pMIDI;
 	CSidecarGadget *pSidecar;
-	bool send (const u8 *p, unsigned n) override		{ return pMIDI != 0 && pMIDI->SendEventPackets (p, n); }
+	bool bFailed = false;				// a send failed in this Poll, first at nFailUs (EpBox: the MIDI OUT's error time)
+	unsigned nFailUs = 0;
+	bool send (const u8 *p, unsigned n) override
+	{
+		bool ok = pMIDI != 0 && pMIDI->SendEventPackets (p, n);
+		if (!ok && !bFailed) bFailed = true, nFailUs = CTimer::GetClockTicks ();
+		return ok;
+	}
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
 	bool has_computer (void) override			{ return pSidecar != 0; }
 	void computer_connected (bool bUp) override		{ pSidecar->RytmMIDIConnected (bUp); }
@@ -1402,9 +1411,10 @@ void CObUsbTransport::Poll (void)
 	// (CObUsb::PollHalt's first); not halted (a Rytm only slow): the merge's back-off stays
 	// a failed send on a halted endpoint is the Rytm box's third endpoint (EpBox, ep_halt.h): its reset waits a moment
 	// for another to fail, and is held with the Overbridge ones when they failed together (a likely unplug); the
-	// failure stays unseen until then, so a later pass resets it
+	// failure stays unseen until then, so a later pass resets it. Only while the Rytm streams Overbridge (its EpBox): a
+	// Rytm on USB MIDI alone has no box, and its MIDI OUT is reset at once, as before (one endpoint: never together)
 	boolean bHalted = nFail != m_nFailSeen && m_pMIDI != 0 && m_pMIDI->OutHalted ();
-	if (nFail != m_nFailSeen) CObUsb::MidiHalted (bHalted, nNow);
+	if (nFail != m_nFailSeen) CObUsb::MidiHalted (bHalted, Io.bFailed ? Io.nFailUs : nNow);	// (the send's time)
 	boolean bWait = bHalted && CObUsb::BoxWaits (nNow);
 	if (bHalted && !CObUsb::ResetDone () && !bWait)
 	{
