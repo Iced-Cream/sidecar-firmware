@@ -387,6 +387,8 @@ int main() {
     CObUsb::PollHalt();
     CHECK(x->resets == 1);
     CHECK(CLogger::Get()->lines.back().find("OUT endpoint halted") != std::string::npos);
+    CHECK(r.host.ctl.back().req == CLEAR_FEATURE && r.host.ctl.back().value == ENDPOINT_HALT && r.host.ctl.back().index == 0x03 &&
+          r.host.ctl.back().type == (REQUEST_OUT | REQUEST_TO_ENDPOINT));   // the Rytm's toggle follows the host's
     int16_t fr[64][8] = {};
     g_Output.Push(fr, 64);
     unsigned lvl = g_Output.Level();
@@ -434,6 +436,7 @@ int main() {
     CHECK(r.host.in.size() == 7);   // not resubmitted: the 7 behind it stuck
     CObUsb::PollHalt();
     CHECK(xi->resets == 1 && CObUsb::HaltResets(TRUE) == before + 1);
+    CHECK(r.host.ctl.back().req == CLEAR_FEATURE && r.host.ctl.back().index == 0x83);
     CHECK(CLogger::Get()->lines.back().find("IN endpoint halted (state 2, transfer error 4): reset 1, 7 URBs dropped, IN goes on") != std::string::npos);
     CHECK(r.host.in.size() == 8);
     c += 7 * 8;   // (the blocks lost meanwhile: a counter gap)
@@ -500,6 +503,7 @@ int main() {
     CHECK(a.host.in.size() == 7);
     CObUsb::PollHalt();   // (the follower's too)
     CHECK(xi->resets == 1 && CObFollow::HaltResets(TRUE) == bi + 1 && a.host.in.size() == 8);
+    CHECK(a.host.ctl.back().req == CLEAR_FEATURE && a.host.ctl.back().index == 0x83);
     CHECK(CLogger::Get()->lines.back().find("IN endpoint halted") != std::string::npos);
     a.in_a4(1, ca, at, 1000.0);
     CHECK(a.host.out.size() == 1);

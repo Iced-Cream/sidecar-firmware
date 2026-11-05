@@ -87,7 +87,7 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  	}
  
  	return StartRequest ();
-@@ -246,6 +250,29 @@
+@@ -246,6 +250,37 @@
  	}
  
  	return TRUE;
@@ -105,7 +105,15 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
 +		return FALSE;
 +	}
 +	CXHCIEndpoint *pXHCI = pThis->m_pEndpointOut->GetXHCIEndpoint ();
-+	if (pXHCI == 0 || pXHCI->GetEPState () < 2 || !pXHCI->ResetFromHalted ())	// 2 halted, 3 stopped, 4 error
++	if (pXHCI == 0 || pXHCI->GetEPState () < 2)		// 2 halted, 3 stopped, 4 error
++	{
++		return FALSE;
++	}
++	// the device's side first: the reset sets the host's data toggle to DATA0, the device's must follow (or it drops
++	// the next packet as a repeat); its answer does not matter
++	pThis->GetHost ()->ControlMessage (pThis->GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE,
++					   ENDPOINT_HALT, pThis->m_pEndpointOut->GetNumber (), 0, 0);
++	if (!pXHCI->ResetFromHalted ())
 +	{
 +		return FALSE;
 +	}

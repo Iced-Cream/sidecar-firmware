@@ -294,7 +294,11 @@ void CObFollow::Recover (boolean bIn, unsigned nNowUs)
 	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
 	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
 	const char *pDir = bIn ? "IN" : "OUT";
-	int r = h.Reset (pX, nNowUs);
+	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
+	int r = h.Reset (pX, nNowUs, [this, uchAddr] {
+		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT,
+					    uchAddr, 0, 0);
+	});
 	if (r == 0) return;
 	if (r < 0)
 	{
