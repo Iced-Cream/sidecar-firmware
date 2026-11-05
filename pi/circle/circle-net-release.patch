@@ -1,0 +1,63 @@
+diff -ru a/include/circle/net/netconnection.h b/include/circle/net/netconnection.h
+--- a/include/circle/net/netconnection.h
++++ b/include/circle/net/netconnection.h
+@@ -95,6 +95,18 @@
+ 	};
+ 	virtual TStatus GetStatus (void) const = 0;
+ 
++	// circle-net-release.patch: the owner of this connection's handle (a CSocket) gave it up
++	// (CTransportLayer::Disconnect). Only then may the transport layer delete the connection once it
++	// has terminated: before, a connection reset by its peer was deleted at once and its slot reused by
++	// the next Listen/Connect, while the owner still held the old handle - its later Send, Receive or
++	// Disconnect then hit the new connection (a listening one closed this way asserted m_bValid in
++	// CIPAddress::operator!= on the next segment to its port).
++	void Release (void)		{ m_bReleased = TRUE; }
++	boolean IsReleased (void) const	{ return m_bReleased; }
++
++private:
++	volatile boolean m_bReleased = FALSE;
++
+ protected:
+ 	CNetConfig    *m_pNetConfig;
+ 	CNetworkLayer *m_pNetworkLayer;
+diff -ru a/lib/net/socket.cpp b/lib/net/socket.cpp
+--- a/lib/net/socket.cpp
++++ b/lib/net/socket.cpp
+@@ -235,6 +235,11 @@
+ 		pNewSocket = new CSocket (*this, hConnection);
+ 		assert (pNewSocket != 0);
+ 	}
++	else
++	{
++		// circle-net-release.patch: replaced below and owned by nobody: given up, so it is deleted
++		m_pTransportLayer->Disconnect (hConnection);
++	}
+ 
+ 	// replace the returned connection with a new listening one
+ 	m_hListenConnection[nIndex] = m_pTransportLayer->Listen (m_nOwnPort, m_nProtocol);
+diff -ru a/lib/net/transportlayer.cpp b/lib/net/transportlayer.cpp
+--- a/lib/net/transportlayer.cpp
++++ b/lib/net/transportlayer.cpp
+@@ -120,7 +120,7 @@
+ 			{			
+ 				((CNetConnection *) m_pConnection[i])->Process ();
+ 			}
+-			else
++			else if (((CNetConnection *) m_pConnection[i])->IsReleased ())	// circle-net-release.patch
+ 			{
+ 				delete (CNetConnection *) m_pConnection[i];
+ 				m_pConnection[i] = 0;
+@@ -336,7 +336,12 @@
+ 		return -NET_ERROR_INVALID_VALUE;
+ 	}
+ 
+-	return ((CNetConnection *) m_pConnection[hConnection])->Close ();
++	// circle-net-release.patch: closed and given up by its owner: deleted once it has terminated
++	CNetConnection *pConnection = (CNetConnection *) m_pConnection[hConnection];
++	int nResult = pConnection->Close ();
++	pConnection->Release ();
++
++	return nResult;
+ }
+ 
+ int CTransportLayer::Send (CNetBuffer *pNetBuffer, int nFlags, int hConnection)
