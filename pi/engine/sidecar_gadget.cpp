@@ -345,8 +345,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_nExtraMargin = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrormargin", 8);
 	if (m_nExtraMargin < 1 || m_nExtraMargin > 256) m_nExtraMargin = 8;
 	memset (&m_CtlSetup, 0, sizeof m_CtlSetup);
-	m_bCtlPending = m_bCtlAtBox = FALSE;
-	m_nCtlSeq = 0;
+	m_Ctl = mirror::Ctl ();
 	memset (&m_MirStats, 0, sizeof m_MirStats);
 #endif
 	ApplyGate (m_ToRytmPath, m_Gate, FALSE);		// no IRQ yet
@@ -375,9 +374,9 @@ boolean CSidecarGadget::Start (void)
 {
 	m_nLastStamp = Now ();
 #ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror && m_Gate.On ())			// docs/usb-mirror.md, "What the filters cover"
-		CLogger::Get ()->Write (From, LogWarning, "usb=mirror with usbmidi=os:%s: the OS-update filter covers MIDI only; "
-					"the box's vendor requests and async channel are relayed unfiltered", OsUpdateName ());
+	if (m_bMirror)					// docs/usb-mirror.md, "What the filters cover"
+		CLogger::Get ()->Write (From, LogWarning, "usb=mirror (usbmidi=os:%s): the box's vendor requests and async channel "
+					"are relayed unfiltered; the OS-update filter covers MIDI only", OsUpdateName ());
 #endif
 	return Initialize ();				// usb=mirror too: the Sidecar device until the box has been read
 }
@@ -1224,19 +1223,9 @@ void CSidecarGadget::MirrorBoxUp (boolean bUp)
 // A box that comes back starts from a clean state; its pipe IN requests are new (ob_usb.cpp MirrorAttach).
 void CSidecarGadget::MirrorBoxGone (void)
 {
-	for (unsigned k = 0; k < mirror::kMaxEps; k++)
+	m_MirStats.nBoxGoneDrop += mirror::drop_pipe_outs (m_pMirEP, mirror::kMaxEps);
+	if (m_Ctl.box_gone ())				// a late answer from the old box is for nobody
 	{
-		CMirrorEP *pEP = m_pMirEP[k];
-		if (pEP != 0 && pEP->Role () == mirror::kPipeOut && pEP->Active () && pEP->Busy ())
-		{
-			m_MirStats.nBoxGoneDrop++;
-			pEP->Rearm ();
-		}
-	}
-	if (m_bCtlAtBox)
-	{
-		m_bCtlAtBox = FALSE;
-		m_nCtlSeq++;				// a late answer from the old box is for nobody
 		m_MirStats.nCtlStall++;
 		CompleteControl (0, -1);
 	}
@@ -1398,28 +1387,25 @@ void CSidecarGadget::MirrorPipeInSent (u8 uchAddr)
 int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutData)
 {
 	if (!m_bShowMirror) return ControlNotHandled;
-	if (m_bCtlPending) { m_MirStats.nCtlStall++; return ControlNotHandled; }	// one at a time: this one is STALLed
+	if (m_Ctl.pending) { m_MirStats.nCtlStall++; return ControlNotHandled; }	// one at a time: this one is STALLed
 	memcpy (&m_CtlSetup, pSetup, sizeof m_CtlSetup);
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
 	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
 		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
-	m_nCtlSeq++;
-	m_bCtlPending = TRUE;
+	m_Ctl.request ();
 	m_MirStats.nCtl++;
 	return ControlDeferred;
 }
 
 void CSidecarGadget::OnControlAborted (void)
 {
-	m_nCtlSeq++;					// an answer still on its way is for nobody
-	m_bCtlPending = m_bCtlAtBox = FALSE;
+	m_Ctl.end ();					// an answer still on its way is for nobody
 	m_MirStats.nCtlAbort++;
 }
 
 void CSidecarGadget::MirrorControlDone (unsigned nSeq, const u8 *pData, int nLength)
 {
-	if (nSeq != m_nCtlSeq) { m_MirStats.nCtlLate++; return; }
-	m_bCtlAtBox = FALSE;
+	if (!m_Ctl.answer (nSeq)) { m_MirStats.nCtlLate++; return; }
 	if (nLength < 0) m_MirStats.nCtlStall++;
 	if (nLength > 0 && IsNameRequest (&m_CtlSetup, 0xC0))
 	{
@@ -1460,8 +1446,7 @@ void CSidecarGadget::MirrorPoll (void)
 		m_nMirInHead = m_nMirInTail = 0;
 		m_MirExtra.clear ();
 		m_bExtraOff = FALSE;
-		m_bCtlPending = m_bCtlAtBox = FALSE;
-		m_nCtlSeq++;
+		m_Ctl.end ();
 		LeaveCritical ();
 		boolean bOK = SoftConnect ();
 		m_bSwitching = FALSE;
@@ -1479,24 +1464,22 @@ void CSidecarGadget::MirrorPoll (void)
 		return;
 	}
 	if (!m_bShowMirror) return;
-	if (!m_bCtlPending) return;
+	if (!m_Ctl.pending) return;
 	TSetupData Setup;
 	u8 Data[sizeof m_CtlData];
 	EnterCritical ();
-	unsigned nSeq = m_nCtlSeq;
-	boolean bTake = m_bCtlPending;
-	m_bCtlPending = FALSE;
+	unsigned nSeq;
+	boolean bTake = m_Ctl.take (&nSeq);
 	memcpy (&Setup, &m_CtlSetup, sizeof Setup);
 	memcpy (Data, m_CtlData, sizeof Data);
 	LeaveCritical ();
 	if (!bTake) return;
 	EnterCritical ();
-	m_bCtlAtBox = m_bMirBoxUp && nSeq == m_nCtlSeq;	// before the submit: the answer can come in the xHCI IRQ at once
+	boolean bForward = m_Ctl.forward (m_bMirBoxUp, nSeq);	// before the submit: the answer can come in the xHCI IRQ at once
 	LeaveCritical ();
-	if (m_bCtlAtBox && CObUsb::MirrorControl (&Setup, Data, nSeq)) return;
+	if (bForward && CObUsb::MirrorControl (&Setup, Data, nSeq)) return;
 	EnterCritical ();				// no box: STALL (unless the host gave up meanwhile)
-	m_bCtlAtBox = FALSE;
-	if (nSeq == m_nCtlSeq) { m_MirStats.nCtlStall++; CompleteControl (0, -1); }
+	if (m_Ctl.not_forwarded (nSeq)) { m_MirStats.nCtlStall++; CompleteControl (0, -1); }
 	LeaveCritical ();
 }
 

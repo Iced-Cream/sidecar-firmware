@@ -81,6 +81,7 @@ public:
 #include "spsc.h"
 #include "tohost_q.h"
 #include "mirror_desc.h"
+#include "mirror_ctl.h"
 
 #if __has_include("hosted/sidecar_config.h")
 #include "hosted/sidecar_config.h"			// build.sh: SIDECAR_CH_IN=20 pi/engine/build.sh
@@ -299,9 +300,7 @@ private:
 	// the forwarded class / vendor request (gadget IRQ -> core 0's loop -> the box -> xHCI IRQ)
 	TSetupData m_CtlSetup;
 	u8 m_CtlData[512];
-	volatile boolean m_bCtlPending;
-	volatile boolean m_bCtlAtBox;			// forwarded to the box, its answer not back yet
-	volatile unsigned m_nCtlSeq;
+	mirror::Ctl m_Ctl;				// pending, at the box, its sequence number (mirror_ctl.h)
 	void MirrorBoxGone (void);			// IRQs masked: the box's half of every exchange ends (pipes, EP0)
 	struct TMirStats
 	{
