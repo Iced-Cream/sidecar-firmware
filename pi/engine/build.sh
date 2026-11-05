@@ -197,6 +197,19 @@ grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /re
 # a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
 # enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
 grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
+# the queued URBs of a halted xHCI endpoint dropped after its reset (pi/circle/circle-xhci-dropurbs.patch: CObUsb::PollHalt, the
+# Overbridge OUT after a transfer error); idempotent
+grep -q circle-xhci-dropurbs include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-dropurbs.patch
+# then the USB MIDI bulk OUT of the Rytm reset when a transfer error halted it (pi/circle/circle-midi-reset.patch: CUSBMIDIDevice
+# ResetOutHalted, after circle-midi-async.patch and the dropurbs one; CObUsbTransport::Poll); idempotent
+grep -q circle-midi-reset include/circle/usb/usbmidi.h || patch -p1 < /repo/pi/circle/circle-midi-reset.patch
+# then v2 (pi/circle/circle-midi-reset2.patch: CLEAR_FEATURE(ENDPOINT_HALT) to the Rytm before the reset, the state read after it,
+# OutHalted). A tree patched by the unreleased 8f5c3ab build of circle-midi-reset (ENDPOINT_HALT already in usbmidihost.cpp, no v2
+# marker) cannot take it: stop and say so. Idempotent
+if ! grep -q circle-midi-reset2 include/circle/usb/usbmidi.h; then
+  if grep -q ENDPOINT_HALT lib/usb/usbmidihost.cpp; then echo "$T: an unreleased circle-midi-reset (8f5c3ab) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1; fi
+  patch -p1 < /repo/pi/circle/circle-midi-reset2.patch
+fi
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

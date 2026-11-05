@@ -4,6 +4,7 @@
 // (selftest.h). Cores 1-3: cores.cpp.
 #include "kernel.h"
 #include "idlewait.h"
+#include "ob_follow.h"	// CObFollow::HaltResets (/status "usbhalt")
 #include "mbtrace.h"
 #include "blackbox_pi.h"	// the black box (2026-10-30): the whole log appended to /.rytm/blackbox.log
 #include "crumb.h"		// the crash breadcrumb (2026-10-29): kept over a watchdog reset, reported here at the next boot
@@ -685,6 +686,15 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		blackbox_pi::Status (Bb, sizeof Bb);
 		pOut->Append (",\"blackbox\":");
 		pOut->Append (Bb);
+	}
+	{	// the USB endpoints a transfer error halted and the engine reset since boot (ep_halt.h, circle-midi-reset.patch): the Rytm's
+		// Overbridge IN / OUT, an A4's, the Rytm's USB MIDI OUT; refused: resets the controller refused (tried again 1 s later)
+		CString Halt;
+		Halt.Format (",\"usbhalt\":{\"ob_in\":%u,\"ob_out\":%u,\"a4_in\":%u,\"a4_out\":%u,\"midi_out\":%u,\"refused\":%u}",
+			     CObUsb::HaltResets (TRUE), CObUsb::HaltResets (FALSE), CObFollow::HaltResets (TRUE),
+			     CObFollow::HaltResets (FALSE), k->m_Usb.MIDIOutResets (),
+			     CObUsb::HaltRefused () + CObFollow::HaltRefused () + k->m_Usb.MIDIOutRefused ());
+		pOut->Append (Halt);
 	}
 	{
 		static char Poly[3072];		// E0: the seq tracks' poly configs and the instances (core/seq, core/inst.h; plain reads)
@@ -1978,6 +1988,7 @@ void CKernel::Run (void)
 		boolean bPlugAndPlay;
 		{ mbtrace::Scope Mb (10, 200); bPlugAndPlay = m_USBHCI.UpdatePlugAndPlay (); }
 		CObUsb::PollReEnum ();		// a box that came up below high speed (ob_speed.h)
+		{ mbtrace::Scope Mb (18, 200); CObUsb::PollHalt (); }	// an Overbridge endpoint (IN / OUT, the A4's too) halted or quiet: reset (ep_halt.h)
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
