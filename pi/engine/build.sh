@@ -210,6 +210,15 @@ if ! grep -q circle-midi-reset2 include/circle/usb/usbmidi.h; then
   if grep -q ENDPOINT_HALT lib/usb/usbmidihost.cpp; then echo "$T: an unreleased circle-midi-reset (8f5c3ab) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1; fi
   patch -p1 < /repo/pi/circle/circle-midi-reset2.patch
 fi
+# the hub'"'"'s status-change request is armed again after an error (pi/circle/circle-hub-rearm.patch: Circle dropped it on
+# any xHCI error, and the hub reported no port change until a reboot - a Rytm restarting after an OS update was never
+# seen again; the xHCI endpoint is reset and the request re-armed from a timer, nothing is sent to the hub; after
+# circle-replug, idempotent)
+grep -q circle-hub-rearm lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm.patch
+# a hub that is deleted drops the port-status events it queued, and its recovery timer is cancelled with IRQs off
+# (pi/circle/circle-hub-rearm2.patch: the recovery of an unplugged hub could otherwise leave an event for freed memory;
+# after circle-hub-rearm, idempotent)
+grep -q circle-hub-rearm2 lib/usb/usbhostcontroller.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
