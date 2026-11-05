@@ -1,6 +1,6 @@
 # usb=mirror: the box itself on the USB-C side
 
-Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74 (see Tested below). Pi 4 only: the Pi 5
+Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below). Pi 4 only: the Pi 5
 builds without it.
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
@@ -105,7 +105,14 @@ On a Pi 4 with an Analog Rytm MKII on OS 1.74, the computer on Windows [hw]:
 In the emulator (rytm-emu over TCP): the default mode unchanged, and with `usb=mirror` and no box the Sidecar device
 stays up.
 
-Not yet run on a unit: the review changes of 2026-11-05 (the box going away, a halted pipe, the audio interfaces
-left alone at attach).
+The review changes of 2026-11-05 on the same unit [hw]:
+
+- with the plugin streaming and the transfer tool browsing, the Rytm unplugged and replugged about 2 s later: the async
+  IN pipe halted and was cleared and resumed, a request that came while the box was gone was STALLed, the computer never
+  saw the Sidecar device, and Overbridge and the transfer tool carried on;
+- unplugged past `mirrorhold`: every request STALLed while the box was away, the Sidecar device back after 60 s, the
+  Rytm back with " (SC)" on replug;
+- an OS update (stock 1.74) with elkflash over the mirrored MIDI port: 0 resends, the box back 0.3 s after its reboot
+  dropped it, inside `mirrorhold`.
 
 The Pi log's `mirror` line counts every path.
