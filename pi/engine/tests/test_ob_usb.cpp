@@ -812,10 +812,23 @@ int main() {
     CHECK(b.Wait(2000 + EpBox::kGraceUs + 1, two) == 0 && b.held == 1);   // spent: not held again
     CHECK(b.Wait(2000 + EpBox::kGraceUs + 2, none) == 0);   // all reset: the next burst may hold again
     apart.Add(true, 0xFFFFF000u), apart.Add(true, 0xFFFFF000u + EpBox::kTogetherUs + 1);   // (across the clock's wrap)
-    CHECK(b.Wait(0xFFFFF000u + EpBox::kTogetherUs + 1, apart) == 0 && b.held == 1);
+    CHECK(b.Wait(0xFFFFF000u + EpBox::kTogetherUs + 1, apart) == 1 && b.held == 1);   // the newest: its moment
+    CHECK(b.Wait(0xFFFFF000u + 2 * EpBox::kTogetherUs + 1, apart) == 0 && b.held == 1);
+    CHECK(b.Wait(0, none) == 0);
     EpFails w;
-    w.Add(true, 0xFFFFFF00u), w.Add(true, 0x100);   // 512 us apart across the wrap: together
-    CHECK(w.first_us == 0xFFFFFF00u && w.last_us == 0x100 && b.Wait(0x200, w) == 3 && b.held == 2);
+    unsigned first = 0;
+    w.Add(true, 0x100), w.Add(true, 0xFFFFFF00u);   // 512 us apart across the wrap: together, the earlier first
+    CHECK(w.Together(EpBox::kTogetherUs, &first) && first == 0xFFFFFF00u && w.last_us == 0x100);
+    CHECK(b.Wait(0x200, w) == 3 && b.held == 2 && b.Wait(0x300, none) == 2);
+    EpBox c;                                         // M1: a stale failure (a refused reset, 2 s old) then a pull: held
+    EpFails st;
+    st.Add(true, 100000), st.Add(true, 2100000), st.Add(true, 2100300);
+    CHECK(st.Together(EpBox::kTogetherUs, &first) && first == 2100000);
+    CHECK(c.Wait(2100300, st) == 3 && c.since_us == 2100000);
+    EpFails lone;                                    // the stale one and a new lone one: the new one waits its moment
+    lone.Add(true, 100000), lone.Add(true, 3000000);
+    EpBox d;
+    CHECK(d.Wait(3000000, lone) == 1 && d.Wait(3000000 + EpBox::kTogetherUs, lone) == 0 && d.held == 0);
   }
   auto fail_one = [](std::deque<CUSBRequest*>& q, CXHCIEndpoint* x) {   // the front URB fails (code 4), the endpoint halted
     CUSBRequest* u = q.front();
@@ -867,6 +880,44 @@ int main() {
     CObUsb::PollHalt();
     CHECK(xo->resets == 1 && CObUsb::HaltResets(FALSE) == bo + 1 && CObUsb::HaltHeld() == held + 1);
     xo->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // M1: OUT halted and its reset refused (it stays failed, its time old); 2 s later a pull fails IN and OUT: still held
+    CTimer::s_now = 9000000;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* xi = r.host.in.front()->ep->GetXHCIEndpoint();
+    CXHCIEndpoint* xo = r.host.out.front()->ep->GetXHCIEndpoint();
+    xi->ring = &r.host.in, xo->ring = &r.host.out;
+    unsigned held = CObUsb::HaltHeld();
+    xo->reset_ok = false;
+    fail_one(r.host.out, xo);
+    CTimer::s_now += EpBox::kTogetherUs;
+    CObUsb::PollHalt();
+    CHECK(xo->resets == 1 && xo->state == 2);   // refused: OUT stays failed
+    CTimer::s_now += 300;                      // within OUT's back-off (10 ms): no retry yet
+    size_t c0 = r.host.ctl.size();
+    fail_one(r.host.in, xi);                   // a pull: IN fails, and OUT's next retry would go to a departing box
+    CTimer::s_now += 200;
+    xo->reset_ok = true;
+    CObUsb::PollHalt();                        // OUT alone is stale; IN alone is new: it waits its moment
+    CHECK(CObUsb::HaltHeld() == held && r.host.ctl.size() == c0);
+    // the MIDI OUT fails with IN (same ms): two together, the stale OUT does not spread them apart
+    CObUsbTransport t;
+    CUSBMIDIDevice m;
+    t.SetMIDI(&m);
+    const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(CObUsb::HaltHeld() == held + 1 && m.resets == 0);
+    for (int ms = 0; ms < 400; ++ms) CTimer::s_now += 1000, CObUsb::PollHalt(), t.Poll();
+    CHECK(r.host.ctl.size() == c0 && xi->resets == 0 && xo->resets == 1 && m.resets == 0);   // nothing sent meanwhile
+    g_ToHost.q.clear();
+    t.SetMIDI(nullptr);
+    xi->ring = xo->ring = nullptr;
     CTimer::s_now = 0;
   }
   {  // P2: IN and OUT fail together but the box stays (an error burst): held for the grace, then recovered as before, IN
@@ -959,7 +1010,7 @@ int main() {
     fail_one(a.host.in, xi);
     fail_one(a.host.out, xo);
     CObFollow::PollHalt();
-    CHECK(CObFollow::HaltHeld() == held + 1 && count_lines("IN and OUT failed within 0 us: a likely unplug", l0) == 1);
+    CHECK(CObFollow::HaltHeld() == held + 1 && count_lines("IN and OUT failed together: a likely unplug", l0) == 1);
     CTimer::s_now = t0 + EpBox::kGraceUs - 1;
     CHECK(!CObFollow::PollHalt() && xi->resets == 0 && xo->resets == 0);
     CTimer::s_now = t0 + EpBox::kGraceUs;

@@ -291,15 +291,17 @@ boolean CObFollow::PollHalt (void)
 	if (p == 0 || !p->m_bStreaming) return FALSE;
 	unsigned now = CTimer::GetClockTicks ();
 	EpFails f;					// IN and OUT failed together: a likely unplug, held (EpBox, as CObUsb::BoxWait)
+	EnterCritical (IRQ_LEVEL);			// the IRQ writes erred and fail_us: both read as one
 	f.Add (p->m_InHalt.erred, p->m_InHalt.fail_us);
 	f.Add (p->m_OutHalt.erred, p->m_OutHalt.fail_us);
+	LeaveCritical ();
 	int w = p->m_Box.Wait (now, f);
 	if (w == 3)
 	{
 		s_nHaltHeld++;
 		if (p->m_Box.Log (now))
-			CLogger::Get ()->Write (From, LogWarning, "IN and OUT failed within %u us: a likely unplug, their resets "
-						"held up to %u ms for the hub (held %u; %u lines left out)", f.last_us - f.first_us,
+			CLogger::Get ()->Write (From, LogWarning, "IN and OUT failed together: a likely unplug, their resets "
+						"held up to %u ms for the hub (held %u; %u lines left out)",
 						EpBox::kGraceUs / 1000, p->m_Box.held, p->m_Box.TakeQuiet ());
 	}
 	if (w != 0) return FALSE;
