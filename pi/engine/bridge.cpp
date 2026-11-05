@@ -168,7 +168,7 @@ int generic_json(char* out, int cap) {
     k += w;
   }
   int n = sniprintf(out, cap,
-                    "\"generic\":{\"project\":\"%s\",\"projectId\":%lu,\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu},"
+                    "\"generic\":{\"project\":\"%s\",\"projectId\":%lu,\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu,\"foreign\":%lu},"
                     "\"clock\":{\"transport\":%d,\"pattern\":%d,\"queued\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
                     "\"proc\":{\"slots\":[%s],\"params\":%lu,\"dropped\":%lu,\"blocks\":%lu},"
                     "\"screen\":{\"open\":%s,\"client\":%s%s%s,\"caps\":%d,\"hellos\":%lu,\"opens\":%lu,\"frames\":%lu,"
@@ -176,7 +176,7 @@ int generic_json(char* out, int cap) {
                     "\"devmidi\":{\"devices\":[%s],\"thru\":%s,\"messages\":%lu,\"forwarded\":%lu,\"toSlots\":%lu},"
                     "\"browse\":{\"asks\":%lu,\"listings\":%lu,\"folders\":%d,\"leftOut\":%lu,\"errors\":%lu}",
                     pname, (unsigned long)pid, (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
-                    (unsigned long)g.hellos, (int)core::clock::transport(), (int)core::clock::pattern(),
+                    (unsigned long)g.hellos, (unsigned long)g.foreign, (int)core::clock::transport(), (int)core::clock::pattern(),
                     (int)core::clock::queued(), (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
                     (unsigned long)c.bad, slots, (unsigned long)p.params, (unsigned long)p.dropped,
                     (unsigned long)p.blocks, core::screen::open() ? "true" : "false",
@@ -228,8 +228,9 @@ int generic_json(char* out, int cap) {
 bool generic_command(const char* p, char* out, int cap) {
   if (!strcmp(p, "gen")) {
     const core::gen::Stats g = core::gen::stats();
-    sniprintf(out, cap, "gen: project \"%s\", messages %lu, dropped %lu (last %02x), hellos %lu", project(),
-              (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped, (unsigned long)g.hellos);
+    sniprintf(out, cap, "gen: project \"%s\", messages %lu, dropped %lu (last %02x), hellos %lu, foreign %lu",
+              project(), (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
+              (unsigned long)g.hellos, (unsigned long)g.foreign);
     return true;
   }
   if (!strcmp(p, "clock")) {

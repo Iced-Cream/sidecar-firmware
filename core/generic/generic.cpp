@@ -46,7 +46,7 @@ void sysex(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];
   if (device::foreign() && !device::translate(device::g_link, d, len, box)) return;
   if (len < 6 || d[0] != 0xF0 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) {
-    ++g_st.dropped;
+    ++g_st.foreign;   // (T118 [hw]: 6239 of these, counted as dropped then, were the Rytm's answers to elkbench)
     return;
   }
   uint8_t cmd = d[4];

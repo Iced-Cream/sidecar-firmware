@@ -58,6 +58,13 @@ int main() {
   in({0x04, 0, 60, 100});
   in({0x20, 1, 2});
   CHECK(gen::stats().dropped == dropped + 3 && gen::stats().last_dropped == 0x20 && g_out.empty());
+  // another maker's SysEx (the Rytm's own answers to a computer, passed on by the router): foreign, not dropped
+  {
+    uint32_t fo = gen::stats().foreign;
+    const uint8_t elk[] = {0xF0, 0x00, 0x20, 0x3C, 0x07, 0x00, 0x01, 0xF7};
+    gen::sysex(elk, (int)sizeof elk);
+    CHECK(gen::stats().foreign == fo + 1 && gen::stats().dropped == dropped + 3);
+  }
   // 51 STORE: to the handler once one is set
   in({0x51, 1});
   CHECK(gen::stats().dropped == dropped + 4);

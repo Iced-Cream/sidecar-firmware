@@ -29,7 +29,9 @@ constexpr uint8_t kStoreFirst = 0x51, kStoreLast = 0x53;
 using StoreFn = bool (*)(const uint8_t* d, int len);
 void set_store(StoreFn f);               // 51..53's handler (core/kv's attach_generic; null: dropped)
 
-struct Stats { uint32_t messages, dropped, hellos; uint8_t last_dropped; };
+// dropped: Sidecar messages (F0 7D 52 54) no service took; foreign: other SysEx the Rytm sent (its own replies to a
+// computer's requests, which the router passes on to the computer): not for the engine, so not dropped
+struct Stats { uint32_t messages, dropped, hellos; uint8_t last_dropped; uint32_t foreign; };
 Stats stats();
 }  // namespace gen
 }  // namespace core
