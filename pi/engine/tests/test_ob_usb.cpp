@@ -362,6 +362,61 @@ int main() {
     for (int f = 0; f < 7; ++f) CHECK(ob::block_sample(q, 12, f, 2) == 0);
   }
   opt->num.clear();
+  {  // an OUT transfer error (the tester's "xhciep: Transfer error 4 on endpoint 6", Pi 5, 0.4.0): the xHC halts the
+     // endpoint, the URBs behind the failed one never complete. The main loop's PollHalt resets it, drops what the reset
+     // skipped and the stream goes on: OUT pulls the voices again (before: OUT stopped for good, the output FIFO stayed
+     // full, the render cores idle at 0 %, no underrun counted)
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CHECK(r.host.out.size() == 1);
+    CXHCIEndpoint* x = r.host.out.front()->ep->GetXHCIEndpoint();
+    x->ring = &r.host.out;
+    for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();   // streaming: one OUT per IN
+    r.in(4, c);
+    CHECK(r.host.out.size() == 5);
+    {  // the front one fails: code 4, the endpoint halted, the other four stay on the stopped ring
+      CUSBRequest* u = r.host.out.front();
+      r.host.out.pop_front();
+      x->state = 2;
+      u->SetStatus(0), u->SetResultLen(0);
+      u->fn(u, u->param, u->ctx);
+    }
+    r.in(20, c);   // IN goes on; nothing on OUT completes while halted
+    CObUsb::PollHalt();
+    CHECK(x->resets == 1);
+    CHECK(CLogger::Get()->lines.back().find("OUT endpoint halted") != std::string::npos);
+    int16_t fr[64][8] = {};
+    g_Output.Push(fr, 64);
+    unsigned lvl = g_Output.Level();
+    for (int k = 0; k < 8; ++k) {   // OUT again, from the next IN on: every new URB completes, the FIFO is pulled
+      r.in(1, c);
+      CHECK(!r.host.out.empty());
+      while (!r.host.out.empty()) r.out_done();
+    }
+    CHECK(g_Output.Level() < lvl);
+    CObUsb::PollHalt();
+    CHECK(x->resets == 1);   // nothing to do while it runs
+    {  // a reset the controller refuses: tried again later, not in a loop
+      r.in(1, c);
+      CUSBRequest* u = r.host.out.front();
+      r.host.out.pop_front();
+      x->state = 2, x->reset_ok = false;
+      u->SetStatus(0), u->SetResultLen(0);
+      u->fn(u, u->param, u->ctx);
+      CObUsb::PollHalt(), CObUsb::PollHalt();
+      CHECK(x->resets == 2);
+      CTimer::s_now += 1000000;
+      x->reset_ok = true;
+      CObUsb::PollHalt();
+      CHECK(x->resets == 3 && x->state == 3);
+      r.in(1, c);
+      CHECK(r.host.out.size() == 1);
+      CTimer::s_now = 0;
+    }
+    x->ring = nullptr;
+  }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
     struct Port : CUSBHCIRootPort {
       int rescans = 0;

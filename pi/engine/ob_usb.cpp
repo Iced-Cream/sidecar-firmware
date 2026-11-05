@@ -271,6 +271,38 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 	}
 }
 
+void CObUsb::PollHalt (void)
+{
+	CObUsb *p = s_pThis;
+	if (p == 0 || !p->m_bStreaming || !p->m_bOutHalt) return;
+	unsigned now = CTimer::GetClockTicks ();
+	if (p->m_bResetRefused && now - p->m_nLastResetUs < 1000000) return;	// after a refused reset: once a second
+	p->m_nLastResetUs = now;
+	CXHCIEndpoint *pX = p->m_pOut->GetXHCIEndpoint ();
+	unsigned nState = pX->GetEPState ();
+	p->m_nOutResets++;
+	p->m_bResetRefused = nState >= 2 && !pX->ResetFromHalted ();	// (waits for the command's event: IRQs on)
+	if (p->m_bResetRefused)
+	{
+		CLogger::Get ()->Write (From, LogWarning, "OUT endpoint halted (state %u, transfer error %u): reset refused, "
+					"again in 1 s", nState, pX->GetLastErrorCode ());
+		return;
+	}
+	EnterCritical (IRQ_LEVEL);
+	unsigned nDropped = 0;
+	if (nState >= 2)				// every TD still on the ring was skipped: its URB never completes
+	{
+		nDropped = pX->DropURBs ();
+		for (unsigned i = 0; i < p->m_nURBs; i++) p->m_bOutBusy[i] = FALSE;
+		p->m_nOutPending = 0;
+	}
+	p->m_bOutHalt = FALSE;
+	if (p->m_OutMode == OutPaced) p->PumpOut ();
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, LogWarning, "OUT endpoint halted (state %u, transfer error %u): reset %u, "
+				"%u URBs dropped, OUT goes on", nState, pX->GetLastErrorCode (), p->m_nOutResets, nDropped);
+}
+
 void CObUsb::SetActive (boolean bActive)
 {
 	s_bActive = bActive;
@@ -289,6 +321,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
 	m_nInOddGap (0), m_nInErrors (0), m_nInSubmitFail (0),
 	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0),
+	m_bOutHalt (FALSE), m_bResetRefused (FALSE), m_nOutResets (0), m_nLastResetUs (0),
 	m_nInPeak (0), m_nInMaxDt (0),
 	m_nStartUs (0), m_nLastInUs (0), m_nLastOutUs (0), m_nFirstInUs (0), m_nFirstOutUs (0), m_nOut16Us (0), m_nLastLogUs (0),
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
@@ -791,6 +824,8 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	else
 	{
 		m_nOutErrors++;
+		m_bOutHalt = TRUE;		// the endpoint halts on an error: no resubmit until PollHalt reset it
+		return;
 	}
 
 	if (!m_bStreaming) return;
@@ -814,7 +849,7 @@ void CObUsb::PumpOut (void)
 		m_nCreditDrops += m_nCredit - cap;
 		m_nCredit = cap;
 	}
-	while (m_bStreaming && m_nCredit >= m_nBlocks)
+	while (m_bStreaming && !m_bOutHalt && m_nCredit >= m_nBlocks)
 	{
 		unsigned i = 0;
 		while (i < m_nURBs && m_bOutBusy[i]) i++;
@@ -889,18 +924,18 @@ void CObUsb::Log (CLogger *pLogger)
 	}
 
 	// one line: IN rate/total, gaps (blocks lost, largest), longest IN gap in time, peak;
-	// OUT rate/total, errors, ms since the last OUT completion, credit; URBs pending
+	// OUT rate/total, errors, endpoint resets (PollHalt), ms since the last OUT completion, credit; URBs pending
 	// (driver/xHCI FIFO), endpoint states (1 running, 2 halted, 4 error); xHCI events per
 	// endpoint: success/short/missed-service/other(last code)/orphan
 	pLogger->Write (From, LogNotice,
 			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u dt %uus pk %d"
-			" | OUT %u/s %u err %u age %ums cr %u drop %u"
+			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
 			" | evI %u ok %u sh %u ms %u x %u(%u) o %u evO %u ok %u ms %u x %u(%u) o %u",
 			(now - m_nStartUs) / 1000, (nIn - m_nPrevIn) * 1000 / nMs, nIn, (unsigned) m_nInGaps, (unsigned) m_nInLost,
 			(unsigned) m_nInMaxGap, (unsigned) m_nInOddGap, (unsigned) m_nInShort,
 			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, nInMaxDt, nPeak,
-			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, nOutAge, nCredit,
+			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_nOutResets, nOutAge, nCredit,
 			(unsigned) m_nCreditDrops,
 			nInPend, nOutPend, nQIn, nQOut, nStIn, nStOut, nRequeued,
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,

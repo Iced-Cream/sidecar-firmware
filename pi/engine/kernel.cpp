@@ -1975,6 +1975,7 @@ void CKernel::Run (void)
 		boolean bPlugAndPlay;
 		{ mbtrace::Scope Mb (10, 200); bPlugAndPlay = m_USBHCI.UpdatePlugAndPlay (); }
 		CObUsb::PollReEnum ();		// a box that came up below high speed (ob_speed.h)
+		CObUsb::PollHalt ();		// the Overbridge OUT endpoint halted by a transfer error: reset, OUT goes on
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
