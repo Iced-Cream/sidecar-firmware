@@ -1,4 +1,4 @@
-// pi/engine/usb_mode.h - what the Pi 4's USB-C side shows the computer, read in one place. Today the cmdline's usb=
+// pi/engine/usb_mode.h - what the Pi's USB-C side (Pi 4, Pi 5 with PI5_GADGET=1) shows the computer, read in one place. Today the cmdline's usb=
 // (sidecar | mirror, docs/usb-mirror.md); a stored Sidecar setting can take over here without touching its users.
 #ifndef _usb_mode_h
 #define _usb_mode_h

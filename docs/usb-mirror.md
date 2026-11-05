@@ -1,7 +1,7 @@
 # usb=mirror: the box itself on the USB-C side
 
-Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below). Pi 4 only: the Pi 5
-builds without it.
+Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below).
+Pi 5: built in (`PI5_GADGET=1`, the default), in testing: not yet run with a box (see "The Pi 5" below).
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
 (1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
@@ -83,10 +83,28 @@ start.
 
 - **Box gone, inside mirrorhold.** The box is still shown and its requests are STALLed until the switch.
 - **A switch mid-update.** An OS update whose box takes longer than `mirrorhold` to come back sees the Sidecar device meanwhile.
-- **IRQs during a switch.** SoftConnect's core reset (about 25 ms) runs at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
+- **IRQs during a switch.** SoftConnect's core reset and setup (some 125 ms on the Pi 4, 150 ms on the Pi 5: a 100 ms wait after the soft reset) run at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
 - **No forwarding of the computer's alt or interface choices.** Alternate settings stay on the gadget side, so a vendor request that only works at another box alternate is not handled. Requests that change the box's stream state also reach the box and may disturb the Pi's own stream.
 - **One control request at a time.** A second one while the first is in flight is STALLed.
 - **Which box.** The one the Pi's Overbridge driver claims. A box whose profile streams only after its Sidecar mod's hello (the Analog Four MKII) is not claimed without it, so a stock one is not mirrored.
+
+## The Pi 5
+
+The Pi 5's USB-C gadget is the same DWC2 core as the Pi 4's (same core version, 7 IN + 7 OUT endpoints besides EP0,
+dedicated FIFOs, 4080 FIFO words) and the same Circle driver with `circle-pi5-gadget.patch` on it, so `pi/engine/build.sh`
+puts `circle-gadget-mirror.patch` and `circle-gadget-softconnect.patch` on the Pi 5's tree (`circle-engine-pi5usb`)
+unchanged, after `circle-gadget-reset.patch` as on the Pi 4; `tests/test_pi5_flags.sh` checks the order and that the
+whole stack applies. What differs:
+
+- **FIFOs.** The Pi 5 sizes them as Linux does: RX 558 words, TX 512 words for IN endpoints 1-5 and 256 (1024 bytes)
+  for 6-7, against 384 each on the Pi 4. A mirrored endpoint is at most 512 bytes (`CMirrorEP`), so it fits either way.
+- **SoftConnect.** The core comes back through the Pi 5's own setup (`InitCorePi5`, `usbinit=`, default 4: a soft
+  reset, the PHY fields, DCTL as Linux), as at boot: some 150 ms at task level with the gadget's interrupts off (the
+  Pi 4: some 125 ms). It connects before EP0 is made, as at boot; the host's reset waits until the interrupts are on.
+- **The box's side.** The Rytm is on the RP1's xHCI on a root port, not behind the Pi 4's VL805 hub: the same Circle
+  xHCI driver, so the pipes, the forwarded requests and the halt recovery are the same code.
+- **USB-C is also the power input**: the computer reaches it through a powered hub or dock (docs/pi5.md "USB device
+  side"); each switch is a replug on that hub's port.
 
 ## Tested
 

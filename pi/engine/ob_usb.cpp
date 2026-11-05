@@ -777,7 +777,7 @@ unsigned CObUsb::MirrorPipeResets (void)
 	return s_nPipeResets;
 }
 
-#else	// a gadget without circle-gadget-mirror.patch (the Pi 5, the host tests): no mirror
+#else	// a gadget without circle-gadget-mirror.patch (a Pi 5 built with PI5_GADGET=0, the host tests): no mirror
 
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
