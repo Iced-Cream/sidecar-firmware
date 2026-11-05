@@ -193,6 +193,9 @@ grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/
 # the queued URBs of a halted xHCI endpoint dropped after its reset (pi/circle/circle-xhci-dropurbs.patch: CObUsb::PollHalt, the
 # Overbridge OUT after a transfer error); idempotent
 grep -q circle-xhci-dropurbs include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-dropurbs.patch
+# then the USB MIDI bulk OUT of the Rytm reset when a transfer error halted it (pi/circle/circle-midi-reset.patch: CUSBMIDIDevice
+# ResetOutHalted, after circle-midi-async.patch and the dropurbs one; CObUsbTransport::Poll); idempotent
+grep -q circle-midi-reset include/circle/usb/usbmidi.h || patch -p1 < /repo/pi/circle/circle-midi-reset.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

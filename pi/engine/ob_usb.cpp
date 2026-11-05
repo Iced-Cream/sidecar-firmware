@@ -271,36 +271,51 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 	}
 }
 
+unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused;
+
 void CObUsb::PollHalt (void)
 {
+	CObFollow::PollHalt ();				// an A4's stream beside it (ob_follow.h)
 	CObUsb *p = s_pThis;
-	if (p == 0 || !p->m_bStreaming || !p->m_bOutHalt) return;
+	if (p == 0 || !p->m_bStreaming) return;
 	unsigned now = CTimer::GetClockTicks ();
-	if (p->m_bResetRefused && now - p->m_nLastResetUs < 1000000) return;	// after a refused reset: once a second
-	p->m_nLastResetUs = now;
-	CXHCIEndpoint *pX = p->m_pOut->GetXHCIEndpoint ();
-	unsigned nState = pX->GetEPState ();
-	p->m_nOutResets++;
-	p->m_bResetRefused = nState >= 2 && !pX->ResetFromHalted ();	// (waits for the command's event: IRQs on)
-	if (p->m_bResetRefused)
+	p->Recover (TRUE, now);
+	p->Recover (FALSE, now);
+}
+
+void CObUsb::Recover (boolean bIn, unsigned nNowUs)
+{
+	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
+	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
+	const char *pDir = bIn ? "IN" : "OUT";
+	int r = h.Reset (pX, nNowUs);
+	if (r == 0) return;
+	if (r < 0)
 	{
-		CLogger::Get ()->Write (From, LogWarning, "OUT endpoint halted (state %u, transfer error %u): reset refused, "
-					"again in 1 s", nState, pX->GetLastErrorCode ());
+		s_nHaltRefused++;
+		CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused, "
+					"again in 1 s", pDir, h.state, pX->GetLastErrorCode ());
 		return;
 	}
+	s_nHaltResets[bIn ? 0 : 1]++;
 	EnterCritical (IRQ_LEVEL);
-	unsigned nDropped = 0;
-	if (nState >= 2)				// every TD still on the ring was skipped: its URB never completes
+	if (h.Finish (pX))				// every TD still on the ring was skipped: its URB never completes
 	{
-		nDropped = pX->DropURBs ();
-		for (unsigned i = 0; i < p->m_nURBs; i++) p->m_bOutBusy[i] = FALSE;
-		p->m_nOutPending = 0;
+		for (unsigned i = 0; i < m_nURBs; i++) (bIn ? m_bInBusy : m_bOutBusy)[i] = FALSE;
+		(bIn ? m_nInPending : m_nOutPending) = 0;
 	}
-	p->m_bOutHalt = FALSE;
-	if (p->m_OutMode == OutPaced) p->PumpOut ();
+	if (bIn)
+	{
+		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
+	}
+	else if (m_OutMode == OutPaced) PumpOut ();
+	else if (m_OutMode == OutFree)
+	{
+		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (s_OutBuf[i], m_nBlocks), SubmitOut (i);
+	}
 	LeaveCritical ();
-	CLogger::Get ()->Write (From, LogWarning, "OUT endpoint halted (state %u, transfer error %u): reset %u, "
-				"%u URBs dropped, OUT goes on", nState, pX->GetLastErrorCode (), p->m_nOutResets, nDropped);
+	CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
+				"%u URBs dropped, %s goes on", pDir, h.state, pX->GetLastErrorCode (), h.resets, h.dropped, pDir);
 }
 
 void CObUsb::SetActive (boolean bActive)
@@ -321,7 +336,6 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
 	m_nInOddGap (0), m_nInErrors (0), m_nInSubmitFail (0),
 	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0),
-	m_bOutHalt (FALSE), m_bResetRefused (FALSE), m_nOutResets (0), m_nLastResetUs (0),
 	m_nInPeak (0), m_nInMaxDt (0),
 	m_nStartUs (0), m_nLastInUs (0), m_nLastOutUs (0), m_nFirstInUs (0), m_nFirstOutUs (0), m_nOut16Us (0), m_nLastLogUs (0),
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
@@ -672,7 +686,11 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	InvalidateDataCacheRange ((uintptr) pBuf, kBufSize);	// the CPU must not see stale cache lines
 
 	unsigned good = 0;
-	if (!ok) m_nInErrors++;
+	if (!ok)
+	{
+		m_nInErrors++;
+		m_InHalt.Fail ();		// the endpoint halts on an error: no resubmit until PollHalt reset it
+	}
 	else
 	{
 		if (len % m_nInBlk != 0) m_nInShort++;
@@ -798,7 +816,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 		}
 	}
 
-	if (m_bStreaming) SubmitIn (i);
+	if (m_bStreaming && !m_InHalt.halted) SubmitIn (i);
 
 	if (m_OutMode == OutPaced && m_nInBlocks > m_nOutDelay)
 	{
@@ -824,7 +842,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	else
 	{
 		m_nOutErrors++;
-		m_bOutHalt = TRUE;		// the endpoint halts on an error: no resubmit until PollHalt reset it
+		m_OutHalt.Fail ();		// the endpoint halts on an error: no resubmit until PollHalt reset it
 		return;
 	}
 
@@ -849,7 +867,7 @@ void CObUsb::PumpOut (void)
 		m_nCreditDrops += m_nCredit - cap;
 		m_nCredit = cap;
 	}
-	while (m_bStreaming && !m_bOutHalt && m_nCredit >= m_nBlocks)
+	while (m_bStreaming && !m_OutHalt.halted && m_nCredit >= m_nBlocks)
 	{
 		unsigned i = 0;
 		while (i < m_nURBs && m_bOutBusy[i]) i++;
@@ -882,14 +900,14 @@ void CObUsb::Log (CLogger *pLogger)
 	unsigned nRequeued = 0;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
-		if (!m_bInBusy[i] && SubmitIn (i)) nRequeued++;
+		if (!m_InHalt.halted && !m_bInBusy[i] && SubmitIn (i)) nRequeued++;
 	}
 	if (m_OutMode == OutPaced) PumpOut ();
 	else if (m_OutMode == OutFree)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++)
 		{
-			if (!m_bOutBusy[i])
+			if (!m_OutHalt.halted && !m_bOutBusy[i])
 			{
 				FillOut (s_OutBuf[i], m_nBlocks);
 				if (SubmitOut (i)) nRequeued++;
@@ -928,14 +946,14 @@ void CObUsb::Log (CLogger *pLogger)
 	// (driver/xHCI FIFO), endpoint states (1 running, 2 halted, 4 error); xHCI events per
 	// endpoint: success/short/missed-service/other(last code)/orphan
 	pLogger->Write (From, LogNotice,
-			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u dt %uus pk %d"
+			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u rs %u dt %uus pk %d"
 			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
 			" | evI %u ok %u sh %u ms %u x %u(%u) o %u evO %u ok %u ms %u x %u(%u) o %u",
 			(now - m_nStartUs) / 1000, (nIn - m_nPrevIn) * 1000 / nMs, nIn, (unsigned) m_nInGaps, (unsigned) m_nInLost,
 			(unsigned) m_nInMaxGap, (unsigned) m_nInOddGap, (unsigned) m_nInShort,
-			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, nInMaxDt, nPeak,
-			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_nOutResets, nOutAge, nCredit,
+			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, m_InHalt.resets, nInMaxDt, nPeak,
+			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_OutHalt.resets, nOutAge, nCredit,
 			(unsigned) m_nCreditDrops,
 			nInPend, nOutPend, nQIn, nQOut, nStIn, nStOut, nRequeued,
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
@@ -1011,6 +1029,18 @@ void CObUsbTransport::Poll (void)
 	Io.pSidecar = CSidecarGadget::Get ();
 	unsigned nNow = CTimer::GetClockTicks ();
 	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), nNow);
+	unsigned nFail = m_Merge.failures () + m_Merge.mac_failed () + m_Merge.bridge_failed ();
+	if (nFail != m_nFailSeen)			// a send failed (its message dropped, counted): a halted endpoint is reset
+	{
+		m_nFailSeen = nFail;
+		if (m_pMIDI != 0 && m_pMIDI->ResetOutHalted ())	// (FALSE: not halted, a Rytm only slow: the back-off stays)
+		{
+			m_nMidiResets++;
+			m_Merge.rytm_new ();		// sending again from the next Poll
+			CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint was halted by a "
+						"transfer error: reset %u, sending again", m_nMidiResets);
+		}
+	}
 	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
 	{
 		m_nMacFailedSeen = m_Merge.mac_failed ();

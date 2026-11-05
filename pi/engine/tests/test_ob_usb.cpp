@@ -417,6 +417,150 @@ int main() {
     }
     x->ring = nullptr;
   }
+  {  // OB IN fails once (DCI 7): IN halts, so does OUT (paced by IN); PollHalt resets it, the 7 queued IN URBs dropped, all 8 again
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    r.out_done();
+    CXHCIEndpoint* xi = r.host.in.front()->ep->GetXHCIEndpoint();
+    xi->ring = &r.host.in;
+    unsigned before = CObUsb::HaltResets(TRUE);
+    CUSBRequest* u = r.host.in.front();
+    r.host.in.pop_front();
+    xi->state = 2;
+    u->SetStatus(0), u->SetResultLen(0);
+    u->fn(u, u->param, u->ctx);
+    CHECK(r.host.in.size() == 7);   // not resubmitted: the 7 behind it stuck
+    CObUsb::PollHalt();
+    CHECK(xi->resets == 1 && CObUsb::HaltResets(TRUE) == before + 1);
+    CHECK(CLogger::Get()->lines.back().find("IN endpoint halted (state 2, transfer error 4): reset 1, 7 URBs dropped, IN goes on") != std::string::npos);
+    CHECK(r.host.in.size() == 8);
+    c += 7 * 8;   // (the blocks lost meanwhile: a counter gap)
+    for (int k = 0; k < 4; ++k) {
+      r.in(1, c);
+      CHECK(r.host.out.size() == 1);   // OUT follows IN again
+      r.out_done();
+    }
+    xi->ring = nullptr;
+  }
+  {  // OB OUT fails twice in a row: the first reset, then the first new URB fails again: a second reset at once (no wait)
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* x = r.host.out.front()->ep->GetXHCIEndpoint();
+    x->ring = &r.host.out;
+    unsigned before = CObUsb::HaltResets(FALSE);
+    auto fail_front = [&] {
+      CUSBRequest* u = r.host.out.front();
+      r.host.out.pop_front();
+      x->state = 2;
+      u->SetStatus(0), u->SetResultLen(0);
+      u->fn(u, u->param, u->ctx);
+    };
+    r.in(3, c);
+    fail_front();
+    CObUsb::PollHalt();
+    r.in(1, c);
+    CHECK(r.host.out.size() == 1);
+    fail_front();
+    r.in(2, c);
+    CHECK(r.host.out.empty());   // none while halted
+    CObUsb::PollHalt();
+    CHECK(x->resets == 2 && CObUsb::HaltResets(FALSE) == before + 2);
+    for (int k = 0; k < 4; ++k) {
+      r.in(1, c);
+      CHECK(!r.host.out.empty());
+      while (!r.host.out.empty()) r.out_done();
+    }
+    x->ring = nullptr;
+  }
+  {  // the A4 follower: IN fails once, then OUT twice in a row; each reset, both streams go on
+    opt->num["a4"] = 1;
+    opt->num["a4att"] = 0;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob && a.ob->Configure() && CObFollow::Streaming());
+    uint16_t ca = 0;
+    long at = 0;
+    a.in_a4(1, ca, at, 1000.0);
+    a.out_done();
+    CXHCIEndpoint* xi = a.host.in.front()->ep->GetXHCIEndpoint();
+    xi->ring = &a.host.in;
+    unsigned bi = CObFollow::HaltResets(TRUE), bo = CObFollow::HaltResets(FALSE);
+    {
+      CUSBRequest* u = a.host.in.front();
+      a.host.in.pop_front();
+      xi->state = 2;
+      u->SetStatus(0), u->SetResultLen(0);
+      u->fn(u, u->param, u->ctx);
+    }
+    CHECK(a.host.in.size() == 7);
+    CObUsb::PollHalt();   // (the follower's too)
+    CHECK(xi->resets == 1 && CObFollow::HaltResets(TRUE) == bi + 1 && a.host.in.size() == 8);
+    CHECK(CLogger::Get()->lines.back().find("IN endpoint halted") != std::string::npos);
+    a.in_a4(1, ca, at, 1000.0);
+    CHECK(a.host.out.size() == 1);
+    CXHCIEndpoint* xo = a.host.out.front()->ep->GetXHCIEndpoint();
+    xo->ring = &a.host.out;
+    for (int t = 0; t < 2; ++t) {   // twice in a row
+      CUSBRequest* u = a.host.out.front();
+      a.host.out.pop_front();
+      xo->state = 2;
+      u->SetStatus(0), u->SetResultLen(0);
+      u->fn(u, u->param, u->ctx);
+      a.in_a4(1, ca, at, 1000.0);
+      CHECK(a.host.out.empty());   // none while halted
+      CObFollow::PollHalt();
+      CHECK(a.host.out.size() >= 1);
+    }
+    CHECK(xo->resets == 2 && CObFollow::HaltResets(FALSE) == bo + 2);
+    for (int k = 0; k < 4; ++k) {
+      a.in_a4(1, ca, at, 1000.0);
+      while (!a.host.out.empty()) a.out_done();
+    }
+    xi->ring = xo->ring = nullptr;
+    opt->num.clear();
+  }
+  {  // the Rytm's USB MIDI bulk OUT (DCI 2): a send fails on a halted endpoint: reset, its record dropped, the next goes at
+     // once; twice in a row too. A send that fails on an endpoint not halted (a Rytm only slow) keeps the back-off.
+    CObUsbTransport t;
+    CUSBMIDIDevice m;
+    t.SetMIDI(&m);
+    const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.resets == 1 && t.MIDIOutResets() == 1 && t.MIDIOutFailed() == 1 && m.sent == 0);
+    CHECK(CLogger::Get()->lines.back().find("USB MIDI OUT endpoint was halted by a transfer error: reset 1") != std::string::npos);
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.sent >= 1);   // sending again with no back-off
+    m.fail = 2;           // twice in a row: each failed send resets it
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.resets == 2);
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.resets == 3 && t.MIDIOutResets() == 3);
+    unsigned sent = m.sent;
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.sent > sent);
+    m.reset_ok = false;   // a reset refused: the merge's back-off (5 s), nothing sent meanwhile
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.resets == 4 && t.MIDIOutResets() == 3);
+    sent = m.sent;
+    g_ToHost.q.push_back(rec);
+    t.Poll();
+    CHECK(m.sent == sent);
+    g_ToHost.q.clear();
+    t.SetMIDI(nullptr);
+  }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
     struct Port : CUSBHCIRootPort {
       int rescans = 0;

@@ -17,6 +17,8 @@
 #ifndef _ob_usb_h
 #define _ob_usb_h
 
+#include "ep_halt.h"
+#include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
@@ -45,11 +47,13 @@ public:
 	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
 	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
 	static void PollReEnum (void);
-	// main loop, task level (core 0): an OUT transfer error halts the xHCI endpoint (a USB transaction error, code 4:
-	// the box did not answer three tries) and the URBs behind it never complete; reset it (Reset Endpoint, Set TR
-	// Dequeue), drop the URBs the reset skipped (circle-xhci-dropurbs.patch) and OUT goes on with the next IN block.
-	// A reset the controller refuses is tried again a second later.
+	// main loop, task level (core 0): an IN or OUT transfer error halts that xHCI endpoint (a USB transaction error, code
+	// 4: the box did not answer three tries) and the URBs behind it never complete; reset it, drop the URBs the reset
+	// skipped and the stream goes on (ep_halt.h). A reset the controller refuses is tried again a second later.
 	static void PollHalt (void);
+	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
+	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
+	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
 
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
@@ -109,6 +113,7 @@ private:
 	void PumpOut (void);
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
+	void Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
@@ -145,9 +150,8 @@ private:
 	volatile unsigned m_nInBlocks, m_nInShort, m_nInBadMagic, m_nInGaps, m_nInLost, m_nInMaxGap,
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
-	volatile boolean m_bOutHalt;			// an OUT URB failed: no OUT until PollHalt has reset the endpoint
-	boolean m_bResetRefused;			// the last reset failed: the next one a second later
-	unsigned m_nOutResets, m_nLastResetUs;
+	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
+	static unsigned s_nHaltResets[2], s_nHaltRefused;
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
 
@@ -192,6 +196,9 @@ public:
 	unsigned MIDIOutMessages (void) const		{ return m_Merge.msgs (); }
 	unsigned MIDIOutFailed (void) const		{ return m_Merge.failures (); }
 	unsigned MacMIDIFailed (void) const		{ return m_Merge.mac_failed (); }	// the computer's, for the Rytm
+	// a failed send on a halted bulk OUT (a transfer error: every later send fails too) reset it (circle-midi-reset.patch)
+	// and the sending went on at once instead of after the back-off; since boot
+	unsigned MIDIOutResets (void) const		{ return m_nMidiResets; }
 
 private:
 	// the order, the pacing and the failure rule: usbmidi_merge.h (portable, Mac-tested); Poll is its Circle side
@@ -200,6 +207,8 @@ private:
 	unsigned m_nMacFailedSeen = 0;			// m_Merge.mac_failed () told to the Sidecar gadget (usbmidi=os:)
 	CUSBMIDIDevice *m_pMIDI = 0;
 	boolean m_bSend = TRUE;
+	unsigned m_nFailSeen = 0;			// the merge's failed sends (engine, keys / computer, bridge) seen
+	unsigned m_nMidiResets = 0;
 };
 
 #endif
