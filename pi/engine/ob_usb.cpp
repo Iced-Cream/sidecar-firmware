@@ -299,7 +299,7 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	const char *pDir = bIn ? "IN" : "OUT";
 	EnterCritical (IRQ_LEVEL);			// gone quiet with no error: URBs pending, none completed for 50 ms
 	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
-	    && nNowUs - (bIn ? m_nLastInUs : m_nLastOutUs) > EpHalt<CXHCIEndpoint>::kStallUs) h.Stall ();
+	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall ();
 	LeaveCritical ();
 	if (!h.Due (nNowUs)) return FALSE;
 	if (m_bMirror && m_bCtlBusy) return FALSE;	// usb=mirror: the computer's request holds EP0 (the clear would queue behind it)
@@ -315,8 +315,8 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 		s_nHaltRefused++;
 		if (h.Log (nNowUs))
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused "
-						"(%u in a row; %u lines left out), again in %u ms", pDir, h.state, pX->GetLastErrorCode (),
-						h.fails, h.TakeQuiet (), EpHalt<CXHCIEndpoint>::Wait (h.fails) / 1000);
+						"(%u in a row; %u lines left out)", pDir, h.state, pX->GetLastErrorCode (),
+						h.fails, h.TakeQuiet ());
 		return TRUE;
 	}
 	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;

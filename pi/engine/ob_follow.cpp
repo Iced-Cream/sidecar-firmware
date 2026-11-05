@@ -301,7 +301,7 @@ boolean CObFollow::Recover (boolean bIn, unsigned nNowUs)
 	const char *pDir = bIn ? "IN" : "OUT";
 	EnterCritical (IRQ_LEVEL);
 	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
-	    && nNowUs - (bIn ? m_nLastInUs : m_nLastOutUs) > EpHalt<CXHCIEndpoint>::kStallUs) h.Stall ();
+	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall ();
 	LeaveCritical ();
 	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
 	int r = h.Reset (pX, nNowUs, [this, uchAddr] {
@@ -314,8 +314,8 @@ boolean CObFollow::Recover (boolean bIn, unsigned nNowUs)
 		s_nHaltRefused++;
 		if (h.Log (nNowUs))
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused "
-						"(%u in a row; %u lines left out), again in %u ms", pDir, h.state, pX->GetLastErrorCode (),
-						h.fails, h.TakeQuiet (), EpHalt<CXHCIEndpoint>::Wait (h.fails) / 1000);
+						"(%u in a row; %u lines left out)", pDir, h.state, pX->GetLastErrorCode (),
+						h.fails, h.TakeQuiet ());
 		return TRUE;
 	}
 	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;
