@@ -19,6 +19,7 @@
 // of the caller's are free and it submits them again. On 2 the endpoint was not halted on the xHC (state 1): nothing was
 // reset or dropped, and the caller only resubmits what is free (not counted as a reset). Log: at most kLogFirst lines in
 // a kLogEveryUs window, whatever came between; the first line of the next window tells the number left out. X: CXHCIEndpoint (GetEPState, ResetFromHalted, DropURBs).
+// Before any of a box's resets, its EpBox (below) may hold them: a pull of the cable fails every endpoint at once.
 // Portable: tests/test_ob_usb.cpp.
 #pragma once
 
@@ -26,11 +27,16 @@ template <class X>
 struct EpHalt {
   static constexpr unsigned kStallUs = 50000, kLogFirst = 3, kLogEveryUs = 10000000, kMaxPerSec = 5;
   volatile bool halted = false;
+  volatile bool erred = false;     // halted by a failed URB (not a stall), not reset yet: EpBox counts it
+  volatile unsigned fail_us = 0;   // when (the first failed URB since the last reset)
   volatile unsigned fails = 0;   // resets in a row with no good completion between them
   unsigned resets = 0, refusals = 0, stalls = 0, quiet = 0, state = 0, dropped = 0, last_us = 0;
   unsigned log_start_us = 0, log_lines = 0, rate_start_us = 0, rate_n = 0;   // the log's and the rate cap's windows
 
-  void Fail() { halted = true; }   // a failed URB's completion (IRQ)
+  void Fail(unsigned now_us) {     // a failed URB's completion (IRQ)
+    if (!erred) fail_us = now_us, erred = true;
+    halted = true;
+  }
   void Ok() { fails = 0; }         // a good one (IRQ)
   void Stall() { halted = true, ++stalls; }   // task level: URBs pending, none completed for kStallUs
 
@@ -63,11 +69,71 @@ struct EpHalt {
   bool Finish(X* x) {
     bool all = state >= 2;
     dropped = all ? x->DropURBs() : 0;
-    halted = false;
+    halted = erred = false;
     return all;
   }
 
   // a line for this reset? (false: counted in quiet, told with the next line)
+  bool Log(unsigned now_us) {
+    if (log_lines == 0 || now_us - log_start_us >= kLogEveryUs) log_start_us = now_us, log_lines = 0;
+    if (log_lines < kLogFirst) return ++log_lines, true;
+    ++quiet;
+    return false;
+  }
+  unsigned TakeQuiet() {
+    unsigned q = quiet;
+    quiet = 0;
+    return q;
+  }
+};
+
+// The endpoints of a box that failed (EpHalt::erred, or the USB MIDI OUT seen halted) and wait for their reset: Add each.
+struct EpFails {
+  unsigned n = 0, first_us = 0, last_us = 0;
+  void Add(bool erred, unsigned at_us) {
+    if (!erred) return;
+    if (n == 0 || (int)(at_us - first_us) < 0) first_us = at_us;
+    if (n == 0 || (int)(at_us - last_us) > 0) last_us = at_us;
+    ++n;
+  }
+};
+
+// EpBox: the endpoints of one box (the Rytm's Overbridge IN and OUT and its USB MIDI OUT; an A4's IN and OUT), asked
+// at task level before any of its resets. A pull of the cable fails every endpoint with a transfer pending at once
+// (the 0.4.1 candidate, Pi 4: IN, OUT and both MIDI endpoints in the same 10 ms, the hub's disconnect 190 ms later), and
+// the CLEAR_FEATURE and Reset Endpoint commands sent to the departing box meanwhile (four of them) are the likely cause
+// of the replug that then failed "Cannot set device address" until a reboot. So:
+//   - one endpoint failed alone: its reset waits until kTogetherUs after the error, for another to follow. 5 ms: at a
+//     pull every endpoint with a transfer pending fails within one or two 1 ms frames (three tries without a handshake
+//     take microseconds); and it is 5 ms more on a lone error (the tester's OUT) whose audio is broken already;
+//   - two or more failed within kTogetherUs of each other: a likely unplug. Every reset of the box is held, up to kGraceUs
+//     after the first error, for the hub to report the disconnect: its status-change endpoint is polled at most every
+//     256 ms (a high-speed hub's longest interval), the disconnect came 190 ms after the errors, and the main loop
+//     handles it a pass later: 500 ms is twice the longest poll. The box removed meanwhile, its driver goes with this
+//     (Circle's removal runs in the same main loop, before PollHalt) and nothing was sent. Still there after it, the
+//     resets go as before; held once an episode (not again until no endpoint of it is failed): an error burst on a
+//     box that stays costs 0.5 s of its audio once, not a hold on every retry.
+// Wait: 0 go on (the due resets), 1 wait (one failed: a moment for another), 2 held, 3 held from now (count it, Log).
+struct EpBox {
+  static constexpr unsigned kTogetherUs = 5000, kGraceUs = 500000, kLogFirst = 3, kLogEveryUs = 10000000;
+  bool holding = false, spent = false;
+  unsigned since_us = 0, held = 0, log_start_us = 0, log_lines = 0, quiet = 0;
+
+  int Wait(unsigned now_us, const EpFails& f) {
+    if (holding) {
+      if ((int)(now_us - since_us) < (int)kGraceUs) return 2;
+      holding = false, spent = true;   // still there: recover as before
+      return 0;
+    }
+    if (f.n == 0) return spent = false, 0;
+    if (!spent && f.n >= 2 && f.last_us - f.first_us <= kTogetherUs) {
+      holding = true, since_us = f.first_us, ++held;
+      return 3;
+    }
+    return f.n == 1 && (int)(now_us - f.first_us) < (int)kTogetherUs ? 1 : 0;
+  }
+
+  // a line for this hold? (as EpHalt::Log)
   bool Log(unsigned now_us) {
     if (log_lines == 0 || now_us - log_start_us >= kLogEveryUs) log_start_us = now_us, log_lines = 0;
     if (log_lines < kLogFirst) return ++log_lines, true;

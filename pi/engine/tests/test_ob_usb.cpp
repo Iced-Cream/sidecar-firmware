@@ -385,6 +385,9 @@ int main() {
     }
     r.in(20, c);   // IN goes on; nothing on OUT completes while halted
     CObUsb::PollHalt();
+    CHECK(x->resets == 0);   // alone so far: a moment for another endpoint to fail (EpBox)
+    CTimer::s_now += EpBox::kTogetherUs;
+    CObUsb::PollHalt();
     CHECK(x->resets == 1);
     CHECK(CLogger::Get()->lines.back().find("OUT endpoint halted") != std::string::npos);
     CHECK(r.host.ctl.back().req == CLEAR_FEATURE && r.host.ctl.back().value == ENDPOINT_HALT && r.host.ctl.back().index == 0x03 &&
@@ -407,6 +410,7 @@ int main() {
       x->state = 2, x->reset_ok = false;
       u->SetStatus(0), u->SetResultLen(0);
       u->fn(u, u->param, u->ctx);
+      CTimer::s_now += EpBox::kTogetherUs;
       CObUsb::PollHalt(), CObUsb::PollHalt();
       CHECK(x->resets == 2);
       CTimer::s_now += 1000000;
@@ -434,6 +438,7 @@ int main() {
     u->SetStatus(0), u->SetResultLen(0);
     u->fn(u, u->param, u->ctx);
     CHECK(r.host.in.size() == 7);   // not resubmitted: the 7 behind it stuck
+    CTimer::s_now += EpBox::kTogetherUs;
     CObUsb::PollHalt();
     CHECK(xi->resets == 1 && CObUsb::HaltResets(TRUE) == before + 1);
     CHECK(r.host.ctl.back().req == CLEAR_FEATURE && r.host.ctl.back().index == 0x83);
@@ -465,6 +470,7 @@ int main() {
     };
     r.in(3, c);
     fail_front();
+    CTimer::s_now += EpBox::kTogetherUs;
     CObUsb::PollHalt();
     r.in(1, c);
     CHECK(r.host.out.size() == 1);
@@ -506,6 +512,7 @@ int main() {
       u->fn(u, u->param, u->ctx);
     }
     CHECK(a.host.in.size() == 7);
+    CTimer::s_now += EpBox::kTogetherUs;
     CObUsb::PollHalt();   // (the follower's too)
     CHECK(xi->resets == 1 && CObFollow::HaltResets(TRUE) == bi + 1 && a.host.in.size() == 8);
     CHECK(a.host.ctl.back().req == CLEAR_FEATURE && a.host.ctl.back().index == 0x83);
@@ -706,6 +713,7 @@ int main() {
     x->state = 2, x->reset_ok = false;
     u->SetStatus(0), u->SetResultLen(0);
     u->fn(u, u->param, u->ctx);
+    CTimer::s_now += EpBox::kTogetherUs;
     CObUsb::PollHalt();
     CHECK(x->resets == 1 && x->state == 2 && CObUsb::HaltRefused() == refused + 1 && CObUsb::HaltResets(FALSE) == before);
     CHECK(CLogger::Get()->lines.back().find("reset refused") != std::string::npos);
@@ -720,7 +728,7 @@ int main() {
     x->ring = nullptr;
     CTimer::s_now = 0;
   }
-  {  // B3: IN and OUT halted in the same pass: one reset a pass, the other at the next
+  {  // B3: IN and OUT halted in the same pass (failed 6 ms apart: not together, EpBox): one reset a pass, the other at the next
     Bus r(g_rytm, 0x0b48);
     CHECK(r.ob && r.ob->Configure());
     uint16_t c = 0;
@@ -734,6 +742,7 @@ int main() {
       (q == &r.host.in ? xi : xo)->state = 2;
       u->SetStatus(0), u->SetResultLen(0);
       u->fn(u, u->param, u->ctx);
+      CTimer::s_now += EpBox::kTogetherUs + 1000;
     }
     CObUsb::PollHalt();
     CHECK(xi->resets == 1 && xo->resets == 0 && CObUsb::ResetDone());
@@ -742,6 +751,7 @@ int main() {
     CObUsb::PollHalt();
     CHECK(!CObUsb::ResetDone());
     xi->ring = xo->ring = nullptr;
+    CTimer::s_now = 0;
   }
   {  // B3: the MIDI reset waits when PollHalt reset an Overbridge endpoint in the same pass; B1: a MIDI OUT that keeps
      // failing for 5 s gets a few resets (two at once, then the merge's back-off paces them), and three log lines
@@ -763,10 +773,12 @@ int main() {
       u->SetStatus(0), u->SetResultLen(0);
       u->fn(u, u->param, u->ctx);
     }
+    CTimer::s_now += EpBox::kTogetherUs;   // (the MIDI send fails after the OUT's wait: not together)
     m.fail = 1;
     g_ToHost.q.push_back(rec);
     pass();
     CHECK(x->resets == 1 && m.resets == 0);   // the Overbridge reset took this pass
+    CTimer::s_now += EpBox::kTogetherUs;   // the MIDI OUT's own wait (alone)
     pass();
     CHECK(m.resets == 1 && t.MIDIOutResets() == 1);
     while (!r.host.out.empty()) r.out_done();
@@ -784,6 +796,186 @@ int main() {
     g_ToHost.q.clear();
     t.SetMIDI(nullptr);
     x->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // EpBox alone: a lone failure waits kTogetherUs; two within it hold for kGraceUs from the first error, then go
+     // (once: not again until none is failed); two failed further apart go at once
+    EpBox b;
+    EpFails one, two, apart, none;
+    one.Add(true, 1000), one.Add(false, 1200);
+    CHECK(one.n == 1 && b.Wait(1000, one) == 1 && b.Wait(1000 + EpBox::kTogetherUs - 1, one) == 1);
+    CHECK(b.Wait(1000 + EpBox::kTogetherUs, one) == 0 && b.held == 0);
+    two.Add(true, 2000), two.Add(true, 2000 + EpBox::kTogetherUs);
+    CHECK(b.Wait(2000 + EpBox::kTogetherUs, two) == 3 && b.held == 1);
+    CHECK(b.Wait(2000 + EpBox::kGraceUs - 1, none) == 2);   // held whatever comes meanwhile
+    CHECK(b.Wait(2000 + EpBox::kGraceUs, two) == 0);        // still there: as before
+    CHECK(b.Wait(2000 + EpBox::kGraceUs + 1, two) == 0 && b.held == 1);   // spent: not held again
+    CHECK(b.Wait(2000 + EpBox::kGraceUs + 2, none) == 0);   // all reset: the next burst may hold again
+    apart.Add(true, 0xFFFFF000u), apart.Add(true, 0xFFFFF000u + EpBox::kTogetherUs + 1);   // (across the clock's wrap)
+    CHECK(b.Wait(0xFFFFF000u + EpBox::kTogetherUs + 1, apart) == 0 && b.held == 1);
+    EpFails w;
+    w.Add(true, 0xFFFFFF00u), w.Add(true, 0x100);   // 512 us apart across the wrap: together
+    CHECK(w.first_us == 0xFFFFFF00u && w.last_us == 0x100 && b.Wait(0x200, w) == 3 && b.held == 2);
+  }
+  auto fail_one = [](std::deque<CUSBRequest*>& q, CXHCIEndpoint* x) {   // the front URB fails (code 4), the endpoint halted
+    CUSBRequest* u = q.front();
+    q.pop_front();
+    x->state = 2;
+    u->SetStatus(0), u->SetResultLen(0);
+    u->fn(u, u->param, u->ctx);
+  };
+  {  // P1: a pull: IN and OUT fail in the same ms. No CLEAR_FEATURE and no reset for the grace (500 ms), one log line,
+     // usbhalt held + 1; the hub then reports the disconnect and the box is removed: nothing more, nothing touches the
+     // removed driver's endpoints; a box plugged in again starts afresh (a lone error waits only kTogetherUs)
+    CTimer::s_now = 7000000;
+    unsigned held = CObUsb::HaltHeld(), bi = CObUsb::HaltResets(TRUE), bo = CObUsb::HaltResets(FALSE);
+    size_t l0 = CLogger::Get()->lines.size();
+    {
+      Bus r(g_rytm, 0x0b48);
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c);
+      CXHCIEndpoint* xi = r.host.in.front()->ep->GetXHCIEndpoint();
+      CXHCIEndpoint* xo = r.host.out.front()->ep->GetXHCIEndpoint();
+      xi->ring = &r.host.in, xo->ring = &r.host.out;
+      size_t c0 = r.host.ctl.size();
+      fail_one(r.host.in, xi);
+      CTimer::s_now += 300;
+      fail_one(r.host.out, xo);
+      for (int ms = 0; ms < 300; ++ms) {   // the main loop passing every 1 ms; the hub says nothing for 300 ms
+        CTimer::s_now += 1000;
+        CObUsb::PollHalt();
+      }
+      CHECK(xi->resets == 0 && xo->resets == 0 && r.host.ctl.size() == c0);   // nothing sent to the departing box
+      CHECK(CObUsb::HaltHeld() == held + 1);
+      CHECK(count_lines("a likely unplug, their resets held up to 500 ms", l0) == 1);
+      xi->ring = xo->ring = nullptr;
+      delete r.ob;                        // the hub's disconnect: Circle removes the device (main loop, before PollHalt)
+      r.ob = nullptr;
+      CHECK(!CObUsb::Streaming());
+      for (int ms = 0; ms < 600; ++ms) CTimer::s_now += 1000, CObUsb::PollHalt();   // past the grace: nothing
+      CHECK(CObUsb::HaltResets(TRUE) == bi && CObUsb::HaltResets(FALSE) == bo);
+    }
+    Bus r(g_rytm, 0x0b48);               // plugged in again
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* xo = r.host.out.front()->ep->GetXHCIEndpoint();
+    xo->ring = &r.host.out;
+    fail_one(r.host.out, xo);
+    CTimer::s_now += EpBox::kTogetherUs;
+    CObUsb::PollHalt();
+    CHECK(xo->resets == 1 && CObUsb::HaltResets(FALSE) == bo + 1 && CObUsb::HaltHeld() == held + 1);
+    xo->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // P2: IN and OUT fail together but the box stays (an error burst): held for the grace, then recovered as before, IN
+     // then OUT (one a pass), each with its CLEAR_FEATURE; both streams go on
+    CTimer::s_now = 5000000;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* xi = r.host.in.front()->ep->GetXHCIEndpoint();
+    CXHCIEndpoint* xo = r.host.out.front()->ep->GetXHCIEndpoint();
+    xi->ring = &r.host.in, xo->ring = &r.host.out;
+    unsigned held = CObUsb::HaltHeld();
+    size_t c0 = r.host.ctl.size();
+    unsigned t0 = CTimer::s_now;
+    fail_one(r.host.out, xo);
+    fail_one(r.host.in, xi);
+    while (CTimer::s_now - t0 < EpBox::kGraceUs - 1000) {
+      CTimer::s_now += 1000;
+      CObUsb::PollHalt();
+    }
+    CHECK(xi->resets == 0 && xo->resets == 0 && CObUsb::HaltHeld() == held + 1);
+    CTimer::s_now = t0 + EpBox::kGraceUs;
+    CObUsb::PollHalt();
+    CHECK(xi->resets == 1 && xo->resets == 0);
+    CObUsb::PollHalt();
+    CHECK(xi->resets == 1 && xo->resets == 1 && r.host.ctl.size() == c0 + 2);
+    CHECK(r.host.ctl[c0].req == CLEAR_FEATURE && r.host.ctl[c0].index == 0x83 && r.host.ctl[c0 + 1].index == 0x03);
+    CHECK(r.host.in.size() == 8 && CObUsb::HaltHeld() == held + 1);
+    c += 7 * 8;
+    for (int k = 0; k < 4; ++k) {
+      CTimer::s_now += 1000;
+      r.in(1, c);
+      CHECK(r.host.out.size() == 1);   // OUT follows IN again
+      r.out_done();
+      CObUsb::PollHalt();
+    }
+    xi->ring = xo->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // P3: the Rytm's OB OUT and its USB MIDI OUT fail together: the MIDI reset is held with the Overbridge one, and goes
+     // after the grace (the failed send stays unseen until then)
+    CTimer::s_now = 3000000;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* xo = r.host.out.front()->ep->GetXHCIEndpoint();
+    xo->ring = &r.host.out;
+    CObUsbTransport t;
+    CUSBMIDIDevice m;
+    t.SetMIDI(&m);
+    auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
+    const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
+    unsigned held = CObUsb::HaltHeld(), t0 = CTimer::s_now;
+    fail_one(r.host.out, xo);
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    pass();                               // the MIDI send fails in the same ms
+    CHECK(m.resets == 0 && xo->resets == 0 && CObUsb::HaltHeld() == held + 1);
+    while (CTimer::s_now - t0 < EpBox::kGraceUs - 1000) CTimer::s_now += 1000, pass();
+    CHECK(m.resets == 0 && xo->resets == 0);
+    CTimer::s_now = t0 + EpBox::kGraceUs;
+    pass();
+    CHECK(xo->resets == 1 && m.resets == 0);   // one reset a pass: the Overbridge one first
+    pass();
+    CHECK(m.resets == 1 && t.MIDIOutResets() >= 1);
+    g_ToHost.q.clear();
+    t.SetMIDI(nullptr);
+    xo->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // P4: the A4 follower: IN and OUT together held for the grace (usbhalt held), then each reset; one alone after kTogetherUs
+    opt->num["a4"] = 1;
+    opt->num["a4att"] = 0;
+    CTimer::s_now = 2000000;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    Bus a(g_a4, 0x0b47);
+    CHECK(a.ob && a.ob->Configure() && CObFollow::Streaming());
+    uint16_t ca = 0;
+    long at = 0;
+    a.in_a4(1, ca, at, 1000.0);
+    CHECK(a.host.out.size() == 1);
+    CXHCIEndpoint* xi = a.host.in.front()->ep->GetXHCIEndpoint();
+    CXHCIEndpoint* xo = a.host.out.front()->ep->GetXHCIEndpoint();
+    xi->ring = &a.host.in, xo->ring = &a.host.out;
+    unsigned held = CObFollow::HaltHeld(), t0 = CTimer::s_now;
+    size_t l0 = CLogger::Get()->lines.size();
+    fail_one(a.host.in, xi);
+    fail_one(a.host.out, xo);
+    CObFollow::PollHalt();
+    CHECK(CObFollow::HaltHeld() == held + 1 && count_lines("IN and OUT failed within 0 us: a likely unplug", l0) == 1);
+    CTimer::s_now = t0 + EpBox::kGraceUs - 1;
+    CHECK(!CObFollow::PollHalt() && xi->resets == 0 && xo->resets == 0);
+    CTimer::s_now = t0 + EpBox::kGraceUs;
+    CHECK(CObFollow::PollHalt() && xi->resets == 1);
+    CHECK(CObFollow::PollHalt() && xo->resets == 1);
+    a.in_a4(1, ca, at, 1000.0);
+    while (!a.host.out.empty()) a.out_done();
+    a.in_a4(1, ca, at, 1000.0);
+    fail_one(a.host.out, xo);             // alone: after kTogetherUs, not held
+    CObFollow::PollHalt();
+    CHECK(xo->resets == 1);
+    CTimer::s_now += EpBox::kTogetherUs;
+    CObFollow::PollHalt();
+    CHECK(xo->resets == 2 && CObFollow::HaltHeld() == held + 1);
+    xi->ring = xo->ring = nullptr;
+    opt->num.clear();
     CTimer::s_now = 0;
   }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again

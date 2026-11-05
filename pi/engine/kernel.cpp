@@ -688,12 +688,14 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		pOut->Append (Bb);
 	}
 	{	// the USB endpoints a transfer error halted and the engine reset since boot (ep_halt.h, circle-midi-reset.patch): the Rytm's
-		// Overbridge IN / OUT, an A4's, the Rytm's USB MIDI OUT; refused: resets the controller refused (tried again 1 s later)
+		// Overbridge IN / OUT, an A4's, the Rytm's USB MIDI OUT; refused: resets the controller refused (tried again 1 s later);
+		// held: a box's endpoints failed together, a likely unplug, its resets held for the hub's disconnect (EpBox)
 		CString Halt;
-		Halt.Format (",\"usbhalt\":{\"ob_in\":%u,\"ob_out\":%u,\"a4_in\":%u,\"a4_out\":%u,\"midi_out\":%u,\"refused\":%u}",
+		Halt.Format (",\"usbhalt\":{\"ob_in\":%u,\"ob_out\":%u,\"a4_in\":%u,\"a4_out\":%u,\"midi_out\":%u,\"refused\":%u,\"held\":%u}",
 			     CObUsb::HaltResets (TRUE), CObUsb::HaltResets (FALSE), CObFollow::HaltResets (TRUE),
 			     CObFollow::HaltResets (FALSE), k->m_Usb.MIDIOutResets (),
-			     CObUsb::HaltRefused () + CObFollow::HaltRefused () + k->m_Usb.MIDIOutRefused ());
+			     CObUsb::HaltRefused () + CObFollow::HaltRefused () + k->m_Usb.MIDIOutRefused (),
+			     CObUsb::HaltHeld () + CObFollow::HaltHeld ());
 		pOut->Append (Halt);
 	}
 	{
