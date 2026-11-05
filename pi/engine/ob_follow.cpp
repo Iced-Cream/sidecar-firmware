@@ -211,7 +211,7 @@ void CObFollow::InDone (unsigned i, CUSBRequest *pURB)
 	unsigned nLen = bOK ? pURB->GetResultLength () : 0;
 	InvalidateDataCacheRange ((uintptr) pBlk, kBuf);
 	if (bOK) m_InHalt.Ok ();
-	if (!bOK) m_nInErrors++, m_InHalt.Fail ();	// the endpoint halts on an error: no resubmit until PollHalt
+	if (!bOK) m_nInErrors++, m_InHalt.Fail (m_nLastInUs);	// the endpoint halts on an error: no resubmit until PollHalt
 	else if (nLen < kInBlk || !ob::block_from_device (pBlk)) m_nInBad++;
 	else
 	{
@@ -239,7 +239,7 @@ void CObFollow::OutDone (unsigned i, CUSBRequest *pURB)
 	if (pURB->GetStatus () == 0)
 	{
 		m_nOutErrors++;
-		m_OutHalt.Fail ();
+		m_OutHalt.Fail (m_nLastOutUs);
 		return;
 	}
 	m_OutHalt.Ok ();
@@ -283,13 +283,26 @@ void CObFollow::LogStats (CLogger *pLogger)
 	p->m_nSecs = 0;
 }
 
-unsigned CObFollow::s_nHaltResets[2], CObFollow::s_nHaltRefused;
+unsigned CObFollow::s_nHaltResets[2], CObFollow::s_nHaltRefused, CObFollow::s_nHaltHeld;
 
 boolean CObFollow::PollHalt (void)
 {
 	CObFollow *p = s_pThis;
 	if (p == 0 || !p->m_bStreaming) return FALSE;
 	unsigned now = CTimer::GetClockTicks ();
+	EpFails f;					// IN and OUT failed together: a likely unplug, held (EpBox, as CObUsb::BoxWait)
+	f.Add (p->m_InHalt.erred, p->m_InHalt.fail_us);
+	f.Add (p->m_OutHalt.erred, p->m_OutHalt.fail_us);
+	int w = p->m_Box.Wait (now, f);
+	if (w == 3)
+	{
+		s_nHaltHeld++;
+		if (p->m_Box.Log (now))
+			CLogger::Get ()->Write (From, LogWarning, "IN and OUT failed within %u us: a likely unplug, their resets "
+						"held up to %u ms for the hub (held %u; %u lines left out)", f.last_us - f.first_us,
+						EpBox::kGraceUs / 1000, p->m_Box.held, p->m_Box.TakeQuiet ());
+	}
+	if (w != 0) return FALSE;
 	return p->Recover (TRUE, now) || p->Recover (FALSE, now);
 }
 

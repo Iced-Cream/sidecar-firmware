@@ -272,7 +272,7 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 	}
 }
 
-unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused;
+unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused, CObUsb::s_nHaltHeld;
 
 boolean CObUsb::s_bResetDone;
 
@@ -286,9 +286,46 @@ void CObUsb::PollHalt (void)
 	if (p != 0 && p->m_bStreaming)
 	{
 		unsigned now = CTimer::GetClockTicks ();
-		p->Recover (TRUE, now) || p->Recover (FALSE, now);
+		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
 	}
 	if (!s_bResetDone) s_bResetDone = CObFollow::PollHalt ();	// an A4's stream beside it (ob_follow.h)
+}
+
+// TRUE: none of the Rytm's endpoints is reset now: one failed a moment ago (another may follow), or several failed
+// together, a likely unplug, held for the hub's disconnect (EpBox, ep_halt.h). Removed meanwhile, this object is gone
+// with its state (Circle's removal runs in the main loop before PollHalt: s_pThis 0), and nothing was sent
+boolean CObUsb::BoxWait (unsigned nNowUs)
+{
+	EpFails f;
+	f.Add (m_InHalt.erred, m_InHalt.fail_us);
+	f.Add (m_OutHalt.erred, m_OutHalt.fail_us);
+	f.Add (m_bMidiErred, m_nMidiFailUs);
+	int w = m_Box.Wait (nNowUs, f);
+	if (w == 3)
+	{
+		s_nHaltHeld++;
+		if (m_Box.Log (nNowUs))
+			CLogger::Get ()->Write (From, LogWarning, "%u endpoints failed within %u us (IN %u, OUT %u, MIDI OUT %u): "
+						"a likely unplug, their resets held up to %u ms for the hub (held %u; %u lines "
+						"left out)", f.n, f.last_us - f.first_us, (unsigned) m_InHalt.erred,
+						(unsigned) m_OutHalt.erred, (unsigned) m_bMidiErred, EpBox::kGraceUs / 1000,
+						m_Box.held, m_Box.TakeQuiet ());
+	}
+	return w != 0;
+}
+
+void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
+{
+	CObUsb *p = s_pThis;
+	if (p == 0) return;
+	if (bHalted && !p->m_bMidiErred) p->m_nMidiFailUs = nNowUs;
+	p->m_bMidiErred = bHalted;
+}
+
+boolean CObUsb::BoxWaits (unsigned nNowUs)
+{
+	CObUsb *p = s_pThis;
+	return p != 0 && p->m_bStreaming && p->BoxWait (nNowUs);
 }
 
 // TRUE: a reset was sent (the pass's one)
@@ -389,6 +426,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nPipes = 0;
 	m_bMirror = FALSE;
 	m_bAttachDue = FALSE;
+	m_bMidiErred = FALSE;
+	m_nMidiFailUs = 0;
 	m_pCtlBuf = 0;
 	m_bCtlBusy = FALSE;
 	m_nGen = ++s_nGen;
@@ -1015,7 +1054,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (!ok)
 	{
 		m_nInErrors++;
-		m_InHalt.Fail ();		// the endpoint halts on an error: no resubmit until PollHalt reset it
+		m_InHalt.Fail (now);		// the endpoint halts on an error: no resubmit until PollHalt reset it
 	}
 	else
 	{
@@ -1170,7 +1209,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	else
 	{
 		m_nOutErrors++;
-		m_OutHalt.Fail ();		// the endpoint halts on an error: no resubmit until PollHalt reset it
+		m_OutHalt.Fail (now);		// the endpoint halts on an error: no resubmit until PollHalt reset it
 		return;
 	}
 
@@ -1361,12 +1400,19 @@ void CObUsbTransport::Poll (void)
 	if (m_Merge.msgs () != m_nMsgsSeen) m_nMsgsSeen = m_Merge.msgs (), m_nMidiInRow = 0;	// a good send: the run ends
 	// a send failed (its message dropped, counted): a halted endpoint is reset, one reset a main-loop pass in all
 	// (CObUsb::PollHalt's first); not halted (a Rytm only slow): the merge's back-off stays
-	if (nFail != m_nFailSeen && m_pMIDI != 0 && !CObUsb::ResetDone () && m_pMIDI->OutHalted ())
+	// a failed send on a halted endpoint is the Rytm box's third endpoint (EpBox, ep_halt.h): its reset waits a moment
+	// for another to fail, and is held with the Overbridge ones when they failed together (a likely unplug); the
+	// failure stays unseen until then, so a later pass resets it
+	boolean bHalted = nFail != m_nFailSeen && m_pMIDI != 0 && m_pMIDI->OutHalted ();
+	if (nFail != m_nFailSeen) CObUsb::MidiHalted (bHalted, nNow);
+	boolean bWait = bHalted && CObUsb::BoxWaits (nNow);
+	if (bHalted && !CObUsb::ResetDone () && !bWait)
 	{
 		m_nFailSeen = nFail;
 		m_nMidiInRow++;
 		if (m_pMIDI->ResetOutHalted ())
 		{
+			CObUsb::MidiHalted (FALSE, nNow);
 			m_nMidiResets++;
 			// sending again from the next Poll, unless it keeps failing: from the third reset in a row with no
 			// good send between, the merge's back-off (5 s, doubling to 60 s) paces it
@@ -1384,7 +1430,7 @@ void CObUsbTransport::Poll (void)
 							"reset was refused (%u in a row), tried at the next failed send", m_nMidiInRow);
 		}
 	}
-	else if (nFail != m_nFailSeen && !CObUsb::ResetDone ()) m_nFailSeen = nFail;	// not halted: nothing to reset
+	else if (nFail != m_nFailSeen && !CObUsb::ResetDone () && !bWait) m_nFailSeen = nFail;	// not halted: nothing to reset
 	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
 	{
 		m_nMacFailedSeen = m_Merge.mac_failed ();

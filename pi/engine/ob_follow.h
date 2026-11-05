@@ -45,6 +45,7 @@ public:
 	static boolean PollHalt (void);			// TRUE: a reset was sent (the pass's one)
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }	// since boot
 	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
+	static unsigned HaltHeld (void)			{ return s_nHaltHeld; }	// resets held: IN and OUT failed together
 
 private:
 	boolean SubmitIn (unsigned i);
@@ -70,7 +71,8 @@ private:
 	unsigned m_nPrevIn, m_nSecs;
 	volatile unsigned m_nLastInUs, m_nLastOutUs;	// the last completion of each (CTimer::GetClockTicks): the stall check
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
-	static unsigned s_nHaltResets[2], s_nHaltRefused;
+	EpBox m_Box;					// both failed together: a likely unplug (ep_halt.h)
+	static unsigned s_nHaltResets[2], s_nHaltRefused, s_nHaltHeld;
 
 	static CObFollow *s_pThis;
 	static volatile boolean s_bOn;			// a4=1 and an A4 met this boot; stays on: the ring fades out by itself when the box goes

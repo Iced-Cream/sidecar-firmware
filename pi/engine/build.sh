@@ -197,6 +197,10 @@ grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /re
 # a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
 # enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
 grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
+# then a failed enumeration tried again (pi/circle/circle-address-retry.patch: Cannot set device address after a pull and
+# replug left the port dead until a reboot; twice more, each with a port reset, a fresh slot and 200 ms, only after a fast
+# failure; a hub port given up on is disabled until a replug; hub and xHCI root port; after circle-replug, idempotent)
+grep -q circle-address-retry lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-address-retry.patch
 # the queued URBs of a halted xHCI endpoint dropped after its reset (pi/circle/circle-xhci-dropurbs.patch: CObUsb::PollHalt, the
 # Overbridge OUT after a transfer error); idempotent
 grep -q circle-xhci-dropurbs include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-dropurbs.patch

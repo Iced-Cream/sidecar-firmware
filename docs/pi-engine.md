@@ -177,9 +177,13 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
     an endpoint gets at most 5 resets in any second, and one endpoint is reset per main-loop pass. The log gets at most 3 lines
     in 10 s; the first line of the next 10 s gives the number left out. The `a4ob:` line has
     the same `rs` fields.
-  - `/status` `"usbhalt":{"ob_in","ob_out","a4_in","a4_out","midi_out","refused"}`: resets since boot (the Rytm's Overbridge IN
-    and OUT, an A4's, the Rytm's USB MIDI OUT), and the resets that did not take (the endpoint still halted afterwards; tried again
-    after the back-off).
+  - A pulled cable fails every endpoint of the box at once. So a lone failed endpoint is reset 5 ms after its error (time for
+    another to follow), and when two or more endpoints of one box (the Rytm's IN, OUT and USB MIDI OUT; an A4's IN and OUT) fail
+    within 5 ms of each other, nothing is sent to the box for up to 500 ms, time for the hub to report the disconnect. A box
+    still there after that is reset as above. One log line says so (`a likely unplug, their resets held`).
+  - `/status` `"usbhalt":{"ob_in","ob_out","a4_in","a4_out","midi_out","refused","held"}`: resets since boot (the Rytm's Overbridge IN
+    and OUT, an A4's, the Rytm's USB MIDI OUT), the resets that did not take (the endpoint still halted afterwards; tried again
+    after the back-off), and the times a box's resets were held because its endpoints failed together.
 - `engine: muted !PLAITS(6) ...` lists the muted voices. Each new mute is also logged once with its reason.
 
 ### Underruns and the start-up stall (2026-10-25)

@@ -57,6 +57,10 @@ public:
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
 	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
+	static unsigned HaltHeld (void)			{ return s_nHaltHeld; }	// resets held: endpoints failed together (EpBox)
+	// the transport's USB MIDI OUT, the Rytm's third endpoint in its EpBox: seen halted after a failed send (or not)
+	static void MidiHalted (boolean bHalted, unsigned nNowUs);
+	static boolean BoxWaits (unsigned nNowUs);	// TRUE: the Rytm's resets wait (EpBox::Wait), the MIDI OUT's too
 
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
@@ -128,6 +132,7 @@ private:
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
 	boolean Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint: TRUE a reset was sent
+	boolean BoxWait (unsigned nNowUs);		// EpBox::Wait over IN, OUT and the MIDI OUT: TRUE no reset now
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
@@ -193,7 +198,10 @@ private:
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
-	static unsigned s_nHaltResets[2], s_nHaltRefused;
+	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
+	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
+	unsigned m_nMidiFailUs;
+	static unsigned s_nHaltResets[2], s_nHaltRefused, s_nHaltHeld;
 	static boolean s_bResetDone;
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
