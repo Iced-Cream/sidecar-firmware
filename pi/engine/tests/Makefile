@@ -18,6 +18,10 @@ all: $(TESTS)
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
+# usb=mirror's descriptor and per-block helpers (mirror_desc.h) with the Overbridge block layout (ob_block.h)
+build/test_mirror_desc: test_mirror_desc.cpp ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<
 # the real ob_usb.cpp on a fake Circle (shim_ob/); copied, so its quoted includes find the shim's neighbours before the real ones
 build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h ../a4_in.cpp ../a4_in.h ../drift_src.h $(CORE)/device/a4.h ../output.cpp ../../../teensy/libraries/RytmHost/ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/device/device.h $(CORE)/fx/out.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
 	@mkdir -p build/ob_src
