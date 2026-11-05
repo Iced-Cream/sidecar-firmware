@@ -425,7 +425,19 @@ MIX_REPORT = 0x50
 #                 12 LOCK <set> <step> <param> <hi> <lo> | 13 CLEAR <set> <step|7F> <param|7F>
 #                 14 TABLE <set> <n> {<step> <mask 3> {<hi> <lo>} x popcount} | 15 DROP <set>
 #                 A hello (35) forgets every set: the Rytm declares them again.
+#   the audio route (the control core's, core/route/route.h; the audio route phase 2026-11-04): a patch point adds one
+#   Overbridge IN channel (2-9 the voice stems BD SD RS/CP BT LT MT/HT CH/OH CY/CB, 10-11 AUDIO IN; MAIN 0-1 never) onto
+#   one OUT channel (0-1 MAIN, 2-3 MAIN FX, 4-11 the voice inputs) at a gain (14 bits, 8192 unity, 16383 +6 dB; 5 ms
+#   ramps). The Pi hands out the point (0..15) and keeps its owner (any 7-bit id the mod picks); a lock set on target 4
+#   reaches the gains (param = point). The companion's HELLO closes every point.
+#   Rytm -> host  20 ROUTE <seq> <owner> <src> <dst> <gain hi> <lo> | 21 MOVE <seq> <owner> <point> <src> <dst>
+#                 22 UNROUTE <owner> <point | 7F every point of owner> | 23 GAIN <owner> <point> <hi> <lo>
+#   host -> Rytm  60 ROUTED <seq> <owner> <point> (ROUTE, MOVE) | 61 REFUSED <seq> <owner> <code>: 3 full, 5 bad (MAIN as a source, a
+#                 channel out of range, not the owner), 7 loop (a voice stem back into its own input, or a cycle through
+#                 other voices' inputs)
 STORE = 0x51
+ROUTE, MOVE, UNROUTE, ROUTE_GAIN, ROUTED, ROUTE_REFUSED = 0x20, 0x21, 0x22, 0x23, 0x60, 0x61
+ROUTE_FULL, ROUTE_BAD, ROUTE_LOOP = 3, 5, 7
 
 
 def mix_report(pans, route):

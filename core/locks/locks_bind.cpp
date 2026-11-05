@@ -4,13 +4,23 @@
 // where the host link and the ticks arrive).
 #include "../clock/clock.h"
 #include "../proc/proc.h"
+#include "../route/route.h"
 #include "locks.h"
 
 namespace core {
 namespace locks {
 
-static void on_tick(const clock::Tick& t) { tick(t.track, t.step, t.extra & 1); }
-static void to_proc(int slot, int param, int v) { proc::set_param(slot, param, v); }
+// the tick's values to the route's gains land by the tick's block (core/route stamp); processor slots take them at once
+static void on_tick(const clock::Tick& t) {
+  route::stamp(t.block);
+  tick(t.track, t.step, t.extra & 1);
+  route::stamp(-1);
+}
+// target route::kTarget (4) is the audio route's gains: param = the point (core/route)
+static void to_proc(int slot, int param, int v) {
+  if (slot == route::kTarget) route::set_gain(param, v);
+  else proc::set_param(slot, param, v);
+}
 
 bool attach() {
 #ifndef ARDUINO

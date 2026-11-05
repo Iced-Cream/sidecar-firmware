@@ -7,6 +7,7 @@
 #include "clock/clock.h"
 #include "locks/locks.h"
 #include "proc/proc.h"
+#include "route/route.h"
 
 using namespace core;
 
@@ -58,6 +59,16 @@ int main() {
   CHECK(clock::sysex(t.data(), (int)t.size()));
   run();
   CHECK(pr.v[8] == 90);
+  // target 4 (the route's gains): a tick's values are stamped with its block, nothing after the tick is
+  auto r = msg(0x51, {route::kRoute, 1, 6, 3, 0, 0, 0});
+  CHECK(route::sysex(r.data(), (int)r.size()) && route::point(0).open);
+  CHECK(lk({locks::kSet, 1, 1, route::kTarget, 0, 1}));
+  CHECK(lk({locks::kLock, 1, 0, 0, 8192 >> 7, 8192 & 0x7F}));
+  uint32_t timed = route::stats().timed;
+  t = msg(0x2C, {0, 0, 8, 0, 1, 1, 0, 16, 2, 1});
+  CHECK(clock::sysex(t.data(), (int)t.size()));
+  CHECK(route::point(0).gain == 8192 && route::stats().timed == timed + 1);
+  CHECK(route::set_gain(0, 0) && route::stats().timed == timed + 1);
   printf("test_locks_bind: PASS\n");
   return 0;
 }

@@ -135,6 +135,29 @@ int main() {
   core::proc::clear_slot(1);
   CHECK(!aret::Wanted());
 
+  // the route (core/route): 51 ROUTE BD stem (IN 2) -> MAIN L (OUT 0) at unity; answered 60 with point 0; after the ramp
+  // OUT 0 carries BD's IN (1 << 30) on top of what was there; UNROUTE fades it out and nothing is kept again
+  g_out.clear();
+  in({0x51, 0x01, 0x20, 0x05, 0x06, 0x02, 0x00, 0x40, 0x00});
+  bridge::idle_save();   // the answer goes out with the store's, at the control core's idle
+  CHECK(sent(0x51) == 1);
+  for (auto& m : g_out) if (m.size() > 4 && m[4] == 0x51) CHECK(m[6] == 0x60 && m[7] == 0x05 && m[8] == 0x06 && m[9] == 0x00);
+  CHECK(aret::Wanted());
+  aret::Reset();
+  for (int k = 0; k < 40; ++k) {
+    for (int f = 0; f < 8; ++f) for (int c = 0; c < aret::kChannels; ++c) O[f][c] = 1000 * c;
+    aret::In(I, 8);
+    aret::Fill(O, 8);
+  }
+  CHECK(O[7][0] == (1 << 30));
+  for (int c = 1; c < aret::kChannels; ++c) CHECK(O[7][c] == 1000 * c);
+  CHECK(bridge::generic_command("route", out, sizeof out) && strstr(out, "1 open") && strstr(out, "0 BD>MAIN L gain 8192 (owner 6)"));
+  n = bridge::generic_json(js, sizeof js);
+  CHECK(n > 0 && strstr(js, "\"route\":{\"open\":1,") && strstr(js, "\"points\":[[0,6,2,0,8192]]"));
+  in({0x51, 0x01, 0x22, 0x06, 0x7F});
+  for (int k = 0; k < 40; ++k) aret::In(I, 8), aret::Fill(O, 8);
+  CHECK(!aret::Wanted());
+
   printf("test_generic_pi: ok\n");
   return 0;
 }

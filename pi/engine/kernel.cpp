@@ -24,6 +24,7 @@ static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last
 #include <fatfs/ff.h>
 
 #include "bridge.h"
+#include "route/route.h"
 #include "audio_return.h"	// /status "aret"
 #include "fmt/fmt.h"
 // A small card file written whole (core 0): core/fmt's atomic write (um_pi.h's, which this build does not have)
@@ -226,6 +227,8 @@ boolean CKernel::Initialize (void)
 	// the card queue (core/msamp/cardq.h): the streams' reads on this core, before the recorder's writes; cardq=0: on
 	// core 3, as before
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
+	// locklead=N: frames a stamped route gain lands after the earliest tick of its block (core/route/route.h; 0..4800)
+	core::route::set_lead ((int) m_Options.GetAppOptionDecimal ("locklead", core::route::kLead));
 	BootStep (3);
 	m_Usb.SetSend (m_Options.GetAppOptionDecimal ("tohost", 1) != 0);	// tohost=0: the replies dropped, as before
 	LoadClock (bCard);				// the CPU clock option (cpumhz=)
@@ -415,7 +418,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
 	pOut->Append (s);
 	{
-		static char Gen[1024];		// the host link's router, the Rytm's clock, kv and locks, the processor slots, the remote screen
+		static char Gen[1536];		// the host link's router, the Rytm's clock, kv and locks, the route, the processor slots, the remote screen
 		if (bridge::generic_json (Gen, sizeof Gen) > 0) { pOut->Append (","); pOut->Append (Gen); }
 		char Store[240];		// the RAM store and the writes still on their way to the card
 		unsigned long nHeapFree = (unsigned long) CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW);

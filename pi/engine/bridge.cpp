@@ -16,6 +16,7 @@
 #include "msamp/cardq.h"
 #include "platform.h"
 #include "proc/proc.h"
+#include "route/route.h"
 #include "screen/screen.h"
 #include "spsc.h"
 #include "store/store.h"
@@ -196,10 +197,33 @@ int generic_json(char* out, int cap) {
                     (unsigned long)ls.in, (unsigned long)ls.out, (unsigned long)ls.names, (unsigned long)ls.dropped_in,
                     (unsigned long)ls.dropped_out, lk.sets, (unsigned long)lk.ops, (unsigned long)lk.bad,
                     (unsigned long)lk.values);
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  // the route (core/route): counts, then each open point as [point, owner, src, dst, gain]
+  const core::route::Stats rs = core::route::stats();
+  m = sniprintf(out + n, cap - n, ",\"route\":{\"open\":%d,\"routed\":%lu,\"moved\":%lu,\"closed\":%lu,\"refused\":%lu,"
+                "\"lastRefused\":%d,\"gains\":%lu,\"bad\":%lu,\"timed\":%lu,\"late\":%lu,\"resyncs\":%lu,"
+                "\"lead\":%d,\"spread\":%d,\"points\":[", rs.open, (unsigned long)rs.routed,
+                (unsigned long)rs.moved, (unsigned long)rs.closed, (unsigned long)rs.refused,
+                rs.refused ? rs.last_refused : -1, (unsigned long)rs.gains, (unsigned long)rs.ops_bad,
+                (unsigned long)rs.timed, (unsigned long)rs.late, (unsigned long)rs.resyncs, rs.lead, rs.spread);
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  bool first = true;
+  for (int i = 0; i < core::route::kPoints; ++i) {
+    const core::route::Point p = core::route::point(i);
+    if (!p.open) continue;
+    m = sniprintf(out + n, cap - n, "%s[%d,%u,%u,%u,%u]", first ? "" : ",", i, (unsigned)p.owner, (unsigned)p.src,
+                  (unsigned)p.dst, (unsigned)p.gain);
+    if (m <= 0 || m >= cap - n) return 0;
+    n += m;
+    first = false;
+  }
+  m = sniprintf(out + n, cap - n, "]}");
   return m > 0 && m < cap - n ? n + m : 0;
 }
 
-// The console's generic commands (core 3): gen (the router), clock (the Rytm's clock), proc (the slots), rui (the
+// The console's generic commands (core 3): gen (the router), clock (the Rytm's clock), route (the audio route), proc (the slots), rui (the
 // screen; rui=on|off asks the Rytm to open / close the page)
 bool generic_command(const char* p, char* out, int cap) {
   if (!strcmp(p, "gen")) {
@@ -224,6 +248,22 @@ bool generic_command(const char* p, char* out, int cap) {
               (unsigned long)k.hellos, (unsigned long)k.reads, (unsigned long)k.writes, (unsigned long)k.keeps,
               (unsigned long)k.refused, k.last_refused, l.sets, (unsigned long)l.ops, (unsigned long)l.bad,
               (unsigned long)l.values);
+    return true;
+  }
+  if (!strcmp(p, "route")) {   // the route's points: "3 SD>MAIN L 0 dB (owner 6)"
+    const core::route::Stats r = core::route::stats();
+    int n = sniprintf(out, cap, "route: %d open, routed %lu moved %lu closed %lu refused %lu (last %d) gains %lu bad %lu",
+                      r.open, (unsigned long)r.routed, (unsigned long)r.moved, (unsigned long)r.closed,
+                      (unsigned long)r.refused, r.refused ? r.last_refused : -1, (unsigned long)r.gains,
+                      (unsigned long)r.ops_bad);
+    for (int i = 0; i < core::route::kPoints && n > 0 && n < cap; ++i) {
+      const core::route::Point q = core::route::point(i);
+      if (!q.open) continue;
+      int w = sniprintf(out + n, cap - n, "; %d %s>%s gain %u (owner %u)", i, core::route::in_name(q.src),
+                        core::route::out_name(q.dst), (unsigned)q.gain, (unsigned)q.owner);
+      if (w < 0) break;
+      n += w;
+    }
     return true;
   }
   if (!strcmp(p, "proc")) {

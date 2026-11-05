@@ -2,6 +2,7 @@
 #include "audio_return.h"
 
 #include "proc/proc.h"
+#include "route/route.h"
 #include "spsc.h"
 
 namespace aret {
@@ -11,6 +12,8 @@ struct Frame { int32_t c[kChannels]; uint32_t gen; };
 Spsc<Frame, 1024> s_In;
 volatile uint32_t s_nGen;
 uint32_t s_nDropped, s_nMissing;
+// a slot is filled or a route point is open (or still fading out): the IN frames are needed
+inline bool active() { return core::proc::any() || core::route::any(); }
 inline int32_t sat(float x) {
   float v = x * 2147483648.0f;
   if (v >= 2147483647.0f) return 2147483647;
@@ -19,11 +22,11 @@ inline int32_t sat(float x) {
 }
 }  // namespace
 
-bool Wanted() { return core::proc::any(); }
+bool Wanted() { return active(); }
 void Reset() { s_nGen = s_nGen + 1; }
 
 void In(const int32_t (*in)[kChannels], int n) {
-  if (!core::proc::any()) return;
+  if (!active()) return;
   for (int f = 0; f < n; ++f) {
     Frame x;
     x.gen = s_nGen;
@@ -34,8 +37,8 @@ void In(const int32_t (*in)[kChannels], int n) {
 
 void Fill(int32_t (*out)[kChannels], int n) {
   Frame x;
-  if (!core::proc::any()) {
-    while (s_In.pop(&x)) {}   // (a slot emptied: nothing kept for it)
+  if (!active()) {
+    while (s_In.pop(&x)) {}   // (a slot emptied, the last point closed: nothing kept for it)
     return;
   }
   if (n > kMaxFrames) n = kMaxFrames;
@@ -52,6 +55,7 @@ void Fill(int32_t (*out)[kChannels], int n) {
   core::proc::Block b;
   for (int c = 0; c < kChannels; ++c) b.in[c] = I[c], b.out[c] = O[c];
   b.frames = n;
+  core::route::process(b.in, b.out, n);   // the route's points first (core/route), then the processor slots
   core::proc::process(b);
   for (int f = 0; f < n; ++f)
     for (int c = 0; c < kChannels; ++c) {

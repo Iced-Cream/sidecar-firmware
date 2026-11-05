@@ -4,6 +4,9 @@
 // engine's default: no processor is built in) the fill below adds nothing and costs one test a block, so OUT is the
 // pass-through it was.
 //
+// The route (core/route, the audio route phase 2026-11-04) runs first: its open points add Rytm IN channels onto OUT
+// channels at their gains; then the slots. With no point open and no slot filled, nothing is kept or added.
+//
 // Where the processors run, for now: core 0, in the OUT fill (the xHCI interrupt or the paced pump), on the IN frames
 // the IN completion handed over. A processor there has the fill's time only; moving the slots onto a render core (a
 // ring each way, as the master FX had) comes with the first processor that needs more. Hosted (no Circle headers).
