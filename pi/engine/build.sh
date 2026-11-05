@@ -195,6 +195,10 @@ grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/
 # seen again; the xHCI endpoint is reset and the request re-armed from a timer, nothing is sent to the hub; after
 # circle-replug, idempotent)
 grep -q circle-hub-rearm lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm.patch
+# a hub that is deleted drops the port-status events it queued, and its recovery timer is cancelled with IRQs off
+# (pi/circle/circle-hub-rearm2.patch: the recovery of an unplugged hub could otherwise leave an event for freed memory;
+# after circle-hub-rearm, idempotent)
+grep -q circle-hub-rearm2 lib/usb/usbhostcontroller.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
