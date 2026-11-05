@@ -16,7 +16,7 @@
 namespace core {
 namespace locks {
 
-constexpr int kSets = 8, kParams = 16, kSteps = 64, kTracks = 13;
+constexpr int kSets = 32, kParams = 16, kSteps = 64, kTracks = 13;   // kSets 8 until the send FX phase (2026-11-05)
 constexpr uint16_t kNone = 0xFFFF;   // no lock on that step
 
 using Sink = void (*)(int slot, int param, int value14);
@@ -25,7 +25,7 @@ void set_sink(Sink s);   // null: values are resolved and dropped (the tests' de
 bool attach();
 
 // 51 01 1x ...: the lock ops (the same message shape as core/kv; seq-less, the Rytm resends a set on the Pi's HELLO)
-//   10 SET   <set 0..7> <track 0..12> <slot> <first param 0..63> <n 1..16>   declares (or redeclares: cleared) a set
+//   10 SET   <set 0..31> <track 0..12> <slot> <first param 0..63> <n 1..16>   declares (or redeclares: cleared) a set
 //   11 BASE  <set> <first> <n> {<hi> <lo>} x n                              base values, 14 bits
 //   12 LOCK  <set> <step 0..63> <param> <hi> <lo>                          one lock (a knob turned with a trig held)
 //   13 CLEAR <set> <step | 7F every step> <param | 7F every param>

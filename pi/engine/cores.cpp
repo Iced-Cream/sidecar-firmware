@@ -241,7 +241,7 @@ void CEngineCores::Control (void)
 void CEngineCores::Command (const char *p)
 {
 	CLogger *L = CLogger::Get ();
-	char Out[240];
+	char Out[480];			// the longest: route's points, dsp? (the library)
 	if (bridge::generic_command (p, Out, sizeof Out)) L->Write (From, LogNotice, "%s", Out);
 	else if (strncmp (p, "fifo=", 5) == 0)
 	{

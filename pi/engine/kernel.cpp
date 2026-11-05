@@ -418,7 +418,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
 	pOut->Append (s);
 	{
-		static char Gen[1536];		// the host link's router, the Rytm's clock, kv and locks, the route, the processor slots, the remote screen
+		static char Gen[4096];		// the host link's router, the Rytm's clock, kv and locks, the route (64 points), the slots, dsp, the remote screen
 		if (bridge::generic_json (Gen, sizeof Gen) > 0) { pOut->Append (","); pOut->Append (Gen); }
 		char Store[240];		// the RAM store and the writes still on their way to the card
 		unsigned long nHeapFree = (unsigned long) CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW);

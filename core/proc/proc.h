@@ -16,17 +16,23 @@
 namespace core {
 namespace proc {
 
-constexpr int kSlots = 4;
+constexpr int kSlots = 16;          // 4 until the send FX phase (2026-11-05): graphs of library blocks (core/dsp)
 constexpr int kParams = 64;
 constexpr int kChannels = 12;       // Overbridge: 12 IN, 12 OUT
 constexpr int kMaxFrames = 256;     // frames a process() call may carry
 
+constexpr int kSlotIO = 2;          // each slot's own input and output channels (L, R): the route's slot channels
 // One block: in[c][i] the Rytm's IN channel c (read only), out[c][i] what goes back on OUT channel c. A processor adds to
-// out (others may have written there before it); it never clears it.
+// out (others may have written there before it); it never clears it. sin[k] is this slot's own input channel k (what
+// the route's points to the slot summed; read only), sout[k] its own output channel k (zeroed before the slot runs;
+// the route's points from the slot take it on to OUT, core/route). process() sets sin / sout for each slot in turn;
+// both null when the engine has no slot channels.
 struct Block {
   const float* in[kChannels];
   float* out[kChannels];
   int frames;
+  const float* sin[kSlotIO];
+  float* sout[kSlotIO];
 };
 class Proc {
  public:
@@ -47,7 +53,17 @@ bool set_param(int slot, int param, int value14);   // queued; false: dropped (e
 void link_reset();                       // every filled slot's link_reset(), on the render side (queued)
 bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2);   // to every filled slot (queued); false: none, queue full
 
-void process(const Block& b);            // render side
+// Render side, once a block: begin() drains the parameter queue, run() runs one slot (if filled) with its own channels
+// (slot_in / slot_out: kSlots x kSlotIO buffers, slot s channel k at [kSlotIO s + k], route.h's slot channel
+// numbering; null: none), end() closes the block. The engine calls run() in the route's graph order (core/route order).
+void begin();
+void run(int slot, const Block& b, float* const* slot_in, float* const* slot_out);
+void end();
+// all three, every slot in slot order
+void process(const Block& b, float* const* slot_in = nullptr, float* const* slot_out = nullptr);
+// control side, after clear_slot(s): the render side can no longer be inside s's Proc (it is between blocks, or began
+// one after the clear); false: ask again later. What a cleared Proc's memory may be reused after.
+bool released(int slot);
 
 struct Stats { uint32_t params, dropped, blocks, midi; };
 Stats stats();

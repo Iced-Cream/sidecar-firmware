@@ -7,11 +7,18 @@
 // Channels (Overbridge, 0-based):
 //   IN  (Rytm -> Pi)  0-1 MAIN L/R, 2-9 the voice stems BD SD RS/CP BT LT MT/HT CH/OH CY/CB, 10-11 AUDIO IN L/R
 //   OUT (Pi -> Rytm)  0-1 MAIN L/R, 2-3 MAIN FX L/R, 4-11 the voice inputs in the same voice order
-// Refused (61 REFUSED codes, sim/protocol.py): MAIN as a source (it already holds what the Pi returns), and a voice-to-voice
-// point that closes a loop (a stem back into its own input, or a cycle through other voices' inputs).
+// Processor slots (core/proc; graphs, the send FX phase 2026-11-05): 12 + 2 s + k is slot s's channel k (s 0..15,
+//   k 0 L / 1 R): as a destination, the slot's input (what the processor reads, b.sin); as a source, its output
+//   (b.sout). A slot's output may feed OUT or another slot's input (a chain): a graph of library blocks.
+// Order in one block: the points from IN channels (process_in), then each slot in graph order (order(): a slot runs
+// after every slot that feeds it), each followed by the points from its outputs (process_slot), then end_block.
+// Refused (61 REFUSED codes, sim/protocol.py): MAIN as a source (it already holds what the Pi returns), and a point
+// that closes a loop: a stem back into its own input, or a cycle through other voices' inputs or processor slots (a
+// slot counts as one node from its input to its output: SD stem -> slot 0, slot 0 -> SD input is a loop; slot 0 ->
+// slot 1 -> slot 0 too). Feedback lives inside a block (core/dsp), never in the graph.
 //
 // Host link (51 STORE, version 1; the control core's, as the lock ops):
-//   Rytm -> Pi  20 ROUTE   <seq> <owner> <src 2..11> <dst 0..11> <gain hi> <lo>   a new point; answer 60 or 61
+//   Rytm -> Pi  20 ROUTE   <seq> <owner> <src 2..43> <dst 0..43> <gain hi> <lo>   a new point; answer 60 or 61
 //               21 MOVE    <seq> <owner> <point> <src> <dst>                      re-aim an owned point; answer 60 or 61
 //               22 UNROUTE <owner> <point | 7F every point of owner>              no answer
 //               23 GAIN    <owner> <point> <hi> <lo>                              no answer (a lock does the same)
@@ -37,9 +44,13 @@
 namespace core {
 namespace route {
 
-constexpr int kPoints = 16;
-constexpr int kTarget = 4;        // the lock target (slot number past core/proc's four processor slots)
-constexpr int kChannels = 12;
+constexpr int kPoints = 64;       // 16 until the send FX phase (2026-11-05): sends, chains and returns of two graphs
+constexpr int kTarget = 64;       // the lock target of the gains (4 until 2026-11-05, when 4 became a processor slot)
+constexpr int kChannels = 12;     // Overbridge IN / OUT
+constexpr int kSlots = 16;        // processor slots (core/proc kSlots)
+constexpr int kSlotChans = 2 * kSlots;   // their channels (L, R)
+constexpr int kNodes = kChannels + kSlotChans;   // a point's src / dst numbers: 0..19
+constexpr int slot_chan(int slot, int k) { return kChannels + 2 * slot + k; }
 constexpr int kRamp = 240;        // frames a gain change takes (5 ms at 48 kHz)
 constexpr int kUnity = 8192;
 constexpr int kBlockFrames = 32;  // the Rytm's audio block (core/clock's blk4 counts these)
@@ -60,8 +71,25 @@ int64_t frames();                        // frames process() has rendered (the s
 void reset();                            // every point closed (fades out)
 bool any();                              // a point is open or still fading: the IN frames are needed
 
-// Render side: in[c] the Rytm's IN channel c, out[c] OUT channel c; the routed audio is added to out
+// Render side, once a block, in this order:
+//   process_in    in[c] the Rytm's IN channel c, out[c] OUT channel c, sin[2 s + k] slot s's input channel k: the points
+//                 from IN channels added onto OUT and the slots' inputs; drains the control side's changes
+//   order         the 16 slots in graph order into slots[] (a slot after every slot that feeds it; a cycle left by a
+//                 fade, never one the control side allowed, falls back to slot order: one block late for that edge)
+//   for each slot s in that order: the slot's processor, then process_slot(s): the points from s's outputs
+//                 (sout[2 s + k]) added onto OUT and other slots' inputs
+//   end_block     the frame count moves on
+// sin / sout null: points to / from slots are skipped.
+void process_in(const float* const* in, float* const* out, float* const* sin, int frames);
+void order(uint8_t* slots);
+void process_slot(int s, const float* const* sout, float* const* out, float* const* sin, int frames);
+void end_block(int frames);
+// all of it with no slot channels (a build without processors, the tests)
 void process(const float* const* in, float* const* out, int frames);
+// control side: every open point to or from slot s closes (fades out), whoever owns it (core/dsp's FREE)
+void close_slot(int s);
+// control side: no point to or from slot s is open or still fading (its processor can go without a click)
+bool slot_quiet(int s);
 
 // tests / /status / console
 struct Point { bool open; uint8_t owner, src, dst; uint16_t gain; };
@@ -72,7 +100,7 @@ struct Stats {
   int lead, spread;                // locklead; the ticks' arrival jitter (frames, latest window)
 };
 Stats stats();
-// "SRC>DST@GAIN" names for the console: "SD>MAIN L" etc.
+// "SRC>DST@GAIN" names for the console: "SD>MAIN L", "SD>S0 L", "S0 L>FX L" etc. (c 0..19)
 const char* in_name(int c);
 const char* out_name(int c);
 

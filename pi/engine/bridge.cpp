@@ -8,6 +8,7 @@
 #include "clock/clock.h"
 #include "devmidi/devmidi.h"
 #include "device/device.h"
+#include "dsp/dsp.h"
 #include "fmt/fmt.h"
 #include "generic/generic.h"
 #include "hooks.h"
@@ -39,6 +40,12 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   s_card = core::gen::begin();
   core::kv::link::attach_generic();   // 51 STORE records (the card core) and the Pi-side locks (core/kv, core/locks)
   core::kv::link::on_name(name_changed);
+  // the DSP library's slots (core/dsp): one arena from the heap at boot, a fixed MB per slot, so PLACE never allocates
+  const size_t n = (size_t)core::dsp::kSlots * core::dsp::kSlotBytes;
+  uint8_t* a = new uint8_t[n + 64];
+  bool dsp_ok = core::dsp::begin((void*)(((uintptr_t)a + 63) & ~(uintptr_t)63), n);
+  core::log("dsp: %d blocks in the library, %d slots x %u KB %s", core::dsp::library_size(), core::dsp::kSlots,
+            (unsigned)(core::dsp::kSlotBytes >> 10), dsp_ok ? "ready" : "NOT ready");
   return s_card;
 }
 void sysex(const uint8_t* d, int len) { core::gen::sysex(d, len); }
@@ -157,7 +164,7 @@ int generic_json(char* out, int cap) {
     if (w < 0 || w >= (int)sizeof devs - dk) break;
     dk += w;
   }
-  char slots[96];
+  char slots[256];
   int k = 0;
   slots[0] = 0;
   for (int i = 0; i < core::proc::kSlots; ++i) {
@@ -220,11 +227,32 @@ int generic_json(char* out, int cap) {
     first = false;
   }
   m = sniprintf(out + n, cap - n, "]}");
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  // the DSP library's slots (core/dsp): counts, then each used slot as [slot, owner, "block", state]
+  const core::dsp::Stats ds2 = core::dsp::stats();
+  m = sniprintf(out + n, cap - n, ",\"dsp\":{\"used\":%d,\"placed\":%lu,\"freed\":%lu,\"refused\":%lu,"
+                "\"lastRefused\":%d,\"infos\":%lu,\"bad\":%lu,\"slots\":[", ds2.used, (unsigned long)ds2.placed,
+                (unsigned long)ds2.freed, (unsigned long)ds2.refused, ds2.refused ? ds2.last_refused : -1,
+                (unsigned long)ds2.infos, (unsigned long)ds2.ops_bad);
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  first = true;
+  for (int i = 0; i < core::dsp::kSlots; ++i) {
+    const core::dsp::SlotView v = core::dsp::slot(i);
+    if (v.state == core::dsp::kEmpty) continue;
+    m = sniprintf(out + n, cap - n, "%s[%d,%u,\"%s\",%d]", first ? "" : ",", i, (unsigned)v.owner, v.block, (int)v.state);
+    if (m <= 0 || m >= cap - n) return 0;
+    n += m;
+    first = false;
+  }
+  m = sniprintf(out + n, cap - n, "]}");
   return m > 0 && m < cap - n ? n + m : 0;
 }
 
-// The console's generic commands (core 3): gen (the router), clock (the Rytm's clock), route (the audio route), proc (the slots), rui (the
-// screen; rui=on|off asks the Rytm to open / close the page)
+// The console's generic commands (core 3): gen (the router), clock (the Rytm's clock), route (the audio route), proc (the
+// slots), dsp / dsp? (the DSP library's slots / the library), rui (the screen; rui=on|off asks the Rytm to open / close
+// the page)
 bool generic_command(const char* p, char* out, int cap) {
   if (!strcmp(p, "gen")) {
     const core::gen::Stats g = core::gen::stats();
@@ -274,6 +302,33 @@ bool generic_command(const char* p, char* out, int cap) {
     for (int i = 0; i < core::proc::kSlots && n > 0 && n < cap; ++i) {
       const core::proc::Proc* q = core::proc::slot(i);
       int w = sniprintf(out + n, cap - n, " %d:%s", i, q ? q->name() : "-");
+      if (w < 0) break;
+      n += w;
+    }
+    return true;
+  }
+  if (!strcmp(p, "dsp")) {   // the DSP library's slots: "0 DELAY (owner 6)", a fading one "3 FILTER (owner 6, fading)"
+    const core::dsp::Stats d = core::dsp::stats();
+    int n = sniprintf(out, cap, "dsp: %d used, placed %lu freed %lu refused %lu (last %d) infos %lu bad %lu",
+                      d.used, (unsigned long)d.placed, (unsigned long)d.freed, (unsigned long)d.refused,
+                      d.refused ? d.last_refused : -1, (unsigned long)d.infos, (unsigned long)d.ops_bad);
+    static const char* const kState[] = {"", "", ", fading", ", releasing"};
+    for (int i = 0; i < core::dsp::kSlots && n > 0 && n < cap; ++i) {
+      const core::dsp::SlotView v = core::dsp::slot(i);
+      if (v.state == core::dsp::kEmpty) continue;
+      int w = sniprintf(out + n, cap - n, "; %d %s (owner %u%s)", i, v.block, (unsigned)v.owner, kState[v.state & 3]);
+      if (w < 0) break;
+      n += w;
+    }
+    return true;
+  }
+  if (!strcmp(p, "dsp?")) {   // the library: each block and its params
+    int n = sniprintf(out, cap, "dsp library:");
+    for (int i = 0; i < core::dsp::library_size() && n > 0 && n < cap; ++i) {
+      const core::dsp::BlockInfo* b = core::dsp::library(i);
+      int w = sniprintf(out + n, cap - n, "%s %s", i ? ";" : "", b->name);
+      for (int k = 0; k < b->nparams && w >= 0 && n + w < cap; ++k)
+        w += sniprintf(out + n + w, cap - n - w, " %d:%s", k, b->params[k].name);
       if (w < 0) break;
       n += w;
     }

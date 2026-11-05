@@ -6,6 +6,7 @@
 #include "../hooks.h"
 #include "../msamp/cardq.h"
 #include "../locks/locks.h"
+#include "../dsp/dsp.h"
 #include "../route/route.h"
 #include "kv.h"
 #include "kv_card.h"
@@ -89,10 +90,11 @@ bool from_host(const uint8_t* m, int n) {
   ++s_st.in;
   if (locks::is_lock_op(m[6])) return locks::sysex(m, n);   // the control core's own: the ticks arrive here too
   if (route::is_route_op(m[6])) return route::sysex(m, n);   // the control core's too: answers go out in host_step
+  if (dsp::is_dsp_op(m[6])) return dsp::sysex(m, n);         // the graphs' blocks (core/dsp): the control core's too
   if (m[6] == kOpName) return name(m, n);                    // the control core's too: nothing on the card
   // the companion's HELLO starts its session: the sets it declared before are gone with it (it declares them again
   // once answered). Here and not at the screen's 35, which may come after the HELLO and would wipe the new sets.
-  if (m[6] == kOpHello) locks::reset(), route::reset();   // the route points go with the session too
+  if (m[6] == kOpHello) locks::reset(), route::reset(), dsp::reset();   // the route points and graphs go with it too
   if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
   return true;
 }
@@ -113,8 +115,10 @@ int card_step(int max_ops) {
 int host_step(int max_msgs) {
   if (!cardq::worker()) card_step(4);   // no card core (the Mac core, tests): the ops run here
   int k = 0;
-  uint8_t a[16];
+  uint8_t a[32];
+  dsp::poll();   // FREEs move on: fade, release, destroy
   for (int an; k < max_msgs && (an = route::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
+  for (int an; k < max_msgs && (an = dsp::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
   while (k < max_msgs) {
     Msg* m = s_out.front();
     if (!m) break;
@@ -126,7 +130,7 @@ int host_step(int max_msgs) {
   return k;
 }
 
-void hello() { locks::reset(); route::reset(); }
+void hello() { locks::reset(); route::reset(); dsp::reset(); }
 Stats stats() { return s_st; }
 StoreStats store_stats() {
   const Service::Counts c = s_svc.counts();

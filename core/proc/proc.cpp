@@ -11,6 +11,9 @@ Msg g_q[kQ];
 alignas(64) uint32_t g_wr = 0;
 alignas(64) uint32_t g_rd = 0;
 Stats g_st;
+alignas(64) uint32_t g_busy;        // render side: 1 inside a block (begin .. end)
+uint32_t g_cleared[kSlots];         // control side: the block count when the slot was cleared while a block ran
+bool g_wait[kSlots];
 
 bool push(const Msg& m) {
   uint32_t w = __atomic_load_n(&g_wr, __ATOMIC_RELAXED), r = __atomic_load_n(&g_rd, __ATOMIC_ACQUIRE);
@@ -34,7 +37,17 @@ bool register_slot(int s, Proc* p) {
   return true;
 }
 void clear_slot(int s) {
-  if (s >= 0 && s < kSlots) __atomic_store_n(&g_slot[s], (Proc*)nullptr, __ATOMIC_RELEASE);
+  if (s < 0 || s >= kSlots) return;
+  __atomic_store_n(&g_slot[s], (Proc*)nullptr, __ATOMIC_SEQ_CST);
+  // a block under way may have read the pointer already: released() waits for it to end
+  g_wait[s] = __atomic_load_n(&g_busy, __ATOMIC_SEQ_CST) != 0;
+  g_cleared[s] = __atomic_load_n(&g_st.blocks, __ATOMIC_ACQUIRE);
+}
+bool released(int s) {
+  if (s < 0 || s >= kSlots || slot(s)) return false;
+  if (!g_wait[s]) return true;
+  if (!__atomic_load_n(&g_busy, __ATOMIC_SEQ_CST) || __atomic_load_n(&g_st.blocks, __ATOMIC_ACQUIRE) - g_cleared[s] >= 2) g_wait[s] = false;
+  return !g_wait[s];
 }
 Proc* slot(int s) { return s >= 0 && s < kSlots ? __atomic_load_n(&g_slot[s], __ATOMIC_ACQUIRE) : nullptr; }
 bool any() {
@@ -62,7 +75,8 @@ bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2) {
   return true;
 }
 
-void process(const Block& b) {
+void begin() {
+  __atomic_store_n(&g_busy, 1u, __ATOMIC_SEQ_CST);
   Msg m;
   while (pop(&m)) {
     if (m.slot == -2) {
@@ -73,9 +87,26 @@ void process(const Block& b) {
       p->set_param(m.param, m.value);
     }
   }
-  if (b.frames <= 0 || b.frames > kMaxFrames) return;
-  ++g_st.blocks;
-  for (int s = 0; s < kSlots; ++s) if (Proc* p = slot(s)) p->process(b);
+}
+void run(int s, const Block& b0, float* const* slot_in, float* const* slot_out) {
+  Proc* p = slot(s);
+  if (!p || b0.frames <= 0 || b0.frames > kMaxFrames) return;
+  Block b = b0;
+  for (int k = 0; k < kSlotIO; ++k) {
+    b.sin[k] = slot_in ? slot_in[kSlotIO * s + k] : nullptr;
+    b.sout[k] = slot_out ? slot_out[kSlotIO * s + k] : nullptr;
+  }
+  p->process(b);
+}
+void end() {
+  __atomic_fetch_add(&g_st.blocks, 1u, __ATOMIC_ACQ_REL);
+  __atomic_store_n(&g_busy, 0u, __ATOMIC_SEQ_CST);
+}
+void process(const Block& b, float* const* slot_in, float* const* slot_out) {
+  begin();
+  if (b.frames > 0 && b.frames <= kMaxFrames)
+    for (int s = 0; s < kSlots; ++s) run(s, b, slot_in, slot_out);
+  end();
 }
 Stats stats() { return g_st; }
 }  // namespace proc

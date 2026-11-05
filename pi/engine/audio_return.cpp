@@ -13,6 +13,8 @@ Spsc<Frame, 1024> s_In;
 volatile uint32_t s_nGen;
 uint32_t s_nDropped, s_nMissing;
 // a slot is filled or a route point is open (or still fading out): the IN frames are needed
+static_assert(core::route::kSlots == core::proc::kSlots && core::route::kSlotChans == core::proc::kSlots * core::proc::kSlotIO,
+              "the route's slot channels are the processor slots'");
 inline bool active() { return core::proc::any() || core::route::any(); }
 inline int32_t sat(float x) {
   float v = x * 2147483648.0f;
@@ -43,6 +45,13 @@ void Fill(int32_t (*out)[kChannels], int n) {
   }
   if (n > kMaxFrames) n = kMaxFrames;
   static float I[kChannels][kMaxFrames], O[kChannels][kMaxFrames];
+  // the processor slots' own channels (core/route slot channels 12..43): inputs summed by the route, outputs the slots write
+  static float SI[core::route::kSlotChans][kMaxFrames], SO[core::route::kSlotChans][kMaxFrames];
+  static float* si[core::route::kSlotChans];
+  static float* so[core::route::kSlotChans];
+  if (!si[0]) for (int k = 0; k < core::route::kSlotChans; ++k) si[k] = SI[k], so[k] = SO[k];
+  for (int k = 0; k < core::route::kSlotChans; ++k)
+    for (int f = 0; f < n; ++f) SI[k][f] = SO[k][f] = 0.0f;
   for (int f = 0; f < n; ++f) {
     bool got;
     while ((got = s_In.pop(&x)) && x.gen != s_nGen) {}   // (an earlier stream's: dropped)
@@ -55,8 +64,19 @@ void Fill(int32_t (*out)[kChannels], int n) {
   core::proc::Block b;
   for (int c = 0; c < kChannels; ++c) b.in[c] = I[c], b.out[c] = O[c];
   b.frames = n;
-  core::route::process(b.in, b.out, n);   // the route's points first (core/route), then the processor slots
-  core::proc::process(b);
+  // the route's points from IN first (onto OUT and the slots' inputs), then each slot in graph order followed by the
+  // points from its outputs (core/route), then the block's end
+  for (int k = 0; k < core::proc::kSlotIO; ++k) b.sin[k] = nullptr, b.sout[k] = nullptr;   // (run() sets them a slot at a time)
+  core::route::process_in(b.in, b.out, si, n);
+  core::proc::begin();
+  uint8_t order[core::route::kSlots];
+  core::route::order(order);
+  for (int i = 0; i < core::route::kSlots; ++i) {
+    core::proc::run(order[i], b, si, so);
+    core::route::process_slot(order[i], so, b.out, si, n);
+  }
+  core::proc::end();
+  core::route::end_block(n);
   for (int f = 0; f < n; ++f)
     for (int c = 0; c < kChannels; ++c) {
       if (O[c][f] == 0.0f) continue;

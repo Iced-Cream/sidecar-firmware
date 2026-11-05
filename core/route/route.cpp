@@ -46,25 +46,28 @@ int count_open() {
   return n;
 }
 
-// a voice channel: IN 2..9 / OUT 4..11 -> voice 0..7; -1 otherwise
-int in_voice(int c) { return c >= 2 && c <= 9 ? c - 2 : -1; }
-int out_voice(int c) { return c >= 4 && c <= 11 ? c - 4 : -1; }
-// does voice `from` feed voice `to` through open points (skipping point `skip`)?
+// loop nodes: the voices 0..7 (IN 2..9 / OUT 4..11) and the processor slots 8..11 (a slot's input and output are one
+// node: the processor joins them); -1 for a channel that cannot be part of a loop (MAIN, MAIN FX, AUDIO IN)
+bool is_slot(int c) { return c >= kChannels && c < kNodes; }
+int slot_of(int c) { return (c - kChannels) / 2; }
+int src_node(int c) { return c >= 2 && c <= 9 ? c - 2 : is_slot(c) ? 8 + slot_of(c) : -1; }
+int dst_node(int c) { return c >= 4 && c <= 11 ? c - 4 : is_slot(c) ? 8 + slot_of(c) : -1; }
+// does node `from` feed node `to` through open points (skipping point `skip`)?
 bool reaches(int from, int to, int skip, int depth = 0) {
   if (from == to) return true;
   if (depth > kPoints) return false;
   for (int i = 0; i < kPoints; ++i) {
     const Point& p = s_pt[i];
     if (!p.open || i == skip) continue;
-    int a = in_voice(p.src), b = out_voice(p.dst);
+    int a = src_node(p.src), b = dst_node(p.dst);
     if (a == from && b >= 0 && reaches(b, to, skip, depth + 1)) return true;
   }
   return false;
 }
 // 0: fine; else the refusal code for src -> dst (point `skip` left out of the loop check: the one being re-aimed)
 int check(int src, int dst, int skip) {
-  if (src < 2 || src > 11 || dst < 0 || dst > 11) return kBad;   // MAIN (IN 0-1) is never a source
-  int a = in_voice(src), b = out_voice(dst);
+  if (src < 2 || src >= kNodes || dst < 0 || dst >= kNodes) return kBad;   // MAIN (IN 0-1) is never a source
+  int a = src_node(src), b = dst_node(dst);
   if (a >= 0 && b >= 0 && reaches(b, a, skip)) return kLoop;   // the new edge a -> b closes a cycle back to a
   return 0;
 }
@@ -108,7 +111,10 @@ struct Live {
   int left;
   int64_t gat;      // a stamped gain waiting: it starts its ramp at gat - kRamp and lands at gat (-1: none)
   float gwant;
+  uint32_t blk;     // the block it was last run in (a point re-aimed mid-block to another source waits a block)
 };
+uint32_t s_blk;     // render side: blocks begun (process_in)
+uint32_t s_live_slots;   // render side: bit s, a live point (on or fading) touches slot s; read by slot_quiet()
 uint32_t s_late;   // render side: stamped gains that came too late for a whole ramp
 Live s_live[kPoints];
 int s_live_n;   // points on (render side), read by any()
@@ -297,25 +303,129 @@ bool any() {
   return __atomic_load_n(&s_open_n, __ATOMIC_ACQUIRE) > 0 || __atomic_load_n(&s_live_n, __ATOMIC_ACQUIRE) > 0;
 }
 
-void process(const float* const* in, float* const* out, int frames) {
+namespace {
+const float* src_buf(int c, const float* const* in, const float* const* sout) {
+  if (c < kChannels) return in ? in[c] : nullptr;
+  return sout ? sout[c - kChannels] : nullptr;
+}
+float* dst_buf(int c, float* const* out, float* const* sin) {
+  if (c < kChannels) return out ? out[c] : nullptr;
+  return sin ? sin[c - kChannels] : nullptr;
+}
+// one point's frames from the buffers this stage has (null: not here); a re-aim mid-block takes effect at its frame
+struct Bufs { const float* const* in; const float* const* sout; float* const* out; float* const* sin; };
+void run(Live& l, const Bufs& b, int64_t now, int frames) {
+  const float* src = src_buf(l.src, b.in, b.sout);
+  float* dst = dst_buf(l.dst, b.out, b.sin);
+  for (int f = 0; f < frames; ++f) {
+    if (l.gat >= 0 && now + f >= l.gat - kRamp) { l.gat = -1; land(l, l.gwant, kRamp); }
+    if (l.left > 0) {
+      l.cur += l.inc;
+      if (--l.left == 0) {
+        l.cur = l.goal;
+        arrived(l);
+        if (!l.on) return;
+        src = src_buf(l.src, b.in, b.sout);   // (re-aimed: a source of the other stage reads nothing here)
+        dst = dst_buf(l.dst, b.out, b.sin);
+      }
+    }
+    if (l.cur != 0.0f && src && dst) dst[f] += l.cur * src[f];
+  }
+}
+void count_live() {
+  int on = 0;
+  uint32_t touch = 0;
+  for (const Live& l : s_live) {
+    if (!l.on) continue;
+    ++on;
+    if (is_slot(l.src)) touch |= 1u << slot_of(l.src);
+    if (is_slot(l.dst)) touch |= 1u << slot_of(l.dst);
+    if (l.pend && is_slot(l.psrc)) touch |= 1u << slot_of(l.psrc);
+    if (l.pend && is_slot(l.pdst)) touch |= 1u << slot_of(l.pdst);
+  }
+  __atomic_store_n(&s_live_slots, touch, __ATOMIC_RELEASE);
+  __atomic_store_n(&s_live_n, on, __ATOMIC_RELEASE);
+}
+}  // namespace
+
+void process_in(const float* const* in, float* const* out, float* const* sin, int frames) {
   int64_t now = __atomic_load_n(&s_frames, __ATOMIC_RELAXED);
   Cmd c;
   while (pop(&c)) apply(c, now);
-  int on = 0;
+  ++s_blk;
   for (Live& l : s_live) {
-    if (!l.on) continue;
-    for (int f = 0; f < frames; ++f) {
-      if (l.gat >= 0 && now + f >= l.gat - kRamp) { l.gat = -1; land(l, l.gwant, kRamp); }
-      if (l.left > 0) {
-        l.cur += l.inc;
-        if (--l.left == 0) { l.cur = l.goal; arrived(l); if (!l.on) break; }
-      }
-      if (l.cur != 0.0f) out[l.dst][f] += l.cur * in[l.src][f];
-    }
-    on += l.on;
+    if (!l.on || is_slot(l.src)) continue;
+    l.blk = s_blk;
+    run(l, Bufs{in, nullptr, out, sin}, now, frames);
   }
-  __atomic_store_n(&s_live_n, on, __ATOMIC_RELEASE);
+}
+
+void order(uint8_t* slots) {
+  // Kahn's algorithm over the live points between slots; whatever a (fading) cycle leaves goes last, in slot order
+  int indeg[kSlots] = {};
+  for (const Live& l : s_live)
+    if (l.on && is_slot(l.src) && is_slot(l.dst) && slot_of(l.src) != slot_of(l.dst)) ++indeg[slot_of(l.dst)];
+  bool done[kSlots] = {};
+  int n = 0;
+  for (bool progress = true; progress && n < kSlots;) {
+    progress = false;
+    for (int s = 0; s < kSlots; ++s) {
+      if (done[s] || indeg[s]) continue;
+      done[s] = true;
+      slots[n++] = (uint8_t)s;
+      progress = true;
+      for (const Live& l : s_live)
+        if (l.on && is_slot(l.src) && is_slot(l.dst) && slot_of(l.src) == s && slot_of(l.dst) != s) --indeg[slot_of(l.dst)];
+    }
+  }
+  for (int s = 0; s < kSlots; ++s) if (!done[s]) slots[n++] = (uint8_t)s;
+}
+
+void process_slot(int s, const float* const* sout, float* const* out, float* const* sin, int frames) {
+  int64_t now = __atomic_load_n(&s_frames, __ATOMIC_RELAXED);
+  for (Live& l : s_live) {
+    if (!l.on || !is_slot(l.src) || slot_of(l.src) != s || l.blk == s_blk) continue;
+    l.blk = s_blk;
+    run(l, Bufs{nullptr, sout, out, sin}, now, frames);
+  }
+}
+
+void end_block(int frames) {
+  int64_t now = __atomic_load_n(&s_frames, __ATOMIC_RELAXED);
+  // points from slots that did not run this block (no sout given): their ramps still move on
+  for (Live& l : s_live) {
+    if (!l.on || l.blk == s_blk) continue;
+    l.blk = s_blk;
+    run(l, Bufs{nullptr, nullptr, nullptr, nullptr}, now, frames);
+  }
+  count_live();
   __atomic_store_n(&s_frames, now + frames, __ATOMIC_RELEASE);
+}
+
+void process(const float* const* in, float* const* out, int frames) {
+  process_in(in, out, nullptr, frames);
+  end_block(frames);
+}
+
+void close_slot(int s) {
+  if (s < 0 || s >= kSlots) return;
+  for (int i = 0; i < kPoints; ++i) {
+    Point& p = s_pt[i];
+    if (!p.open || !((is_slot(p.src) && slot_of(p.src) == s) || (is_slot(p.dst) && slot_of(p.dst) == s))) continue;
+    if (!push({kClose, (uint8_t)i, 0, 0, 0, -1})) break;
+    p.open = false;
+    ++s_st.closed;
+  }
+  set_open_n(count_open());
+}
+
+bool slot_quiet(int s) {
+  if (s < 0 || s >= kSlots) return true;
+  for (const Point& p : s_pt)
+    if (p.open && ((is_slot(p.src) && slot_of(p.src) == s) || (is_slot(p.dst) && slot_of(p.dst) == s))) return false;
+  // the render side has taken every queued change and no live point touches it
+  return __atomic_load_n(&s_rd, __ATOMIC_ACQUIRE) == __atomic_load_n(&s_wr, __ATOMIC_ACQUIRE) &&
+         !(__atomic_load_n(&s_live_slots, __ATOMIC_ACQUIRE) & (1u << s));
 }
 
 Point point(int p) { return p >= 0 && p < kPoints ? s_pt[p] : Point{}; }
@@ -326,15 +436,29 @@ Stats stats() {
   return s;
 }
 
+static const char* slot_name(int c) {
+  static char names[kSlotChans][8];
+  char* n = names[c - kChannels];
+  if (!n[0]) {   // "S0 L" .. "S15 R"
+    int s = slot_of(c), i = 0;
+    n[i++] = 'S';
+    if (s >= 10) n[i++] = (char)('0' + s / 10);
+    n[i++] = (char)('0' + s % 10);
+    n[i++] = ' ';
+    n[i++] = (c - kChannels) & 1 ? 'R' : 'L';
+    n[i] = 0;
+  }
+  return n;
+}
 const char* in_name(int c) {
   static const char* const n[kChannels] = {"MAIN L", "MAIN R", "BD", "SD", "RS/CP", "BT", "LT", "MT/HT", "CH/OH", "CY/CB",
                                            "IN L", "IN R"};
-  return c >= 0 && c < kChannels ? n[c] : "?";
+  return c >= 0 && c < kChannels ? n[c] : is_slot(c) ? slot_name(c) : "?";
 }
 const char* out_name(int c) {
   static const char* const n[kChannels] = {"MAIN L", "MAIN R", "FX L", "FX R", "BD", "SD", "RS/CP", "BT", "LT", "MT/HT",
                                            "CH/OH", "CY/CB"};
-  return c >= 0 && c < kChannels ? n[c] : "?";
+  return c >= 0 && c < kChannels ? n[c] : is_slot(c) ? slot_name(c) : "?";
 }
 
 }  // namespace route
