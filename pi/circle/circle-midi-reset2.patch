@@ -64,10 +64,10 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  	}
  
  	return StartRequest ();
-@@ -254,6 +255,19 @@
+@@ -252,6 +253,19 @@
+ 	return TRUE;
+ }
  
- // circle-midi-reset.patch: a transfer error halts a non-isochronous xHCI endpoint, and every later send on it fails (or
- // times out): reset it. Not while an asynchronous send is in flight (its URB is the completion's to free).
 +// circle-midi-reset2: is the OUT endpoint halted on the xHC (state 2, 3 or 4)?
 +boolean CUSBMIDIHostDevice::OutHaltedHandler (void *pParam)
 +{
@@ -81,9 +81,9 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
 +#endif
 +}
 +
+ // circle-midi-reset.patch: a transfer error halts a non-isochronous xHCI endpoint, and every later send on it fails (or
+ // times out): reset it. Not while an asynchronous send is in flight (its URB is the completion's to free).
  boolean CUSBMIDIHostDevice::ResetOutHandler (void *pParam)
- {
- 	CUSBMIDIHostDevice *pThis = static_cast<CUSBMIDIHostDevice *> (pParam);
 @@ -264,7 +278,16 @@
  		return FALSE;
  	}

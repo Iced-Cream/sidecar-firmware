@@ -610,6 +610,55 @@ int main() {
     x->ring = nullptr;
     CTimer::s_now = 0;
   }
+  {  // R1: a completion the IRQ timed just after PollHalt read its clock (last = now + 5 us) is not a 4e9 us stall
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    CTimer::s_now = 1000000;
+    r.in(1, c);
+    r.in(1, c);                         // two OUT URBs pending
+    CHECK(r.host.out.size() == 2);
+    CXHCIEndpoint* x = r.host.out.front()->ep->GetXHCIEndpoint();
+    unsigned before = CObUsb::HaltResets(FALSE);
+    size_t l0 = CLogger::Get()->lines.size();
+    CTimer::s_now = 1000005;
+    r.out_done();                       // OUT's last completion: now + 5, one still pending
+    CTimer::s_now = 1000000;
+    CObUsb::PollHalt();
+    CHECK(count_lines("quiet", l0) == 0 && count_lines("halted", l0) == 0 && x->resets == 0);
+    CHECK(CObUsb::HaltResets(FALSE) == before);
+    CTimer::s_now = 0;
+  }
+  {  // R2: a marginal link, an OUT error every 3 ms with good transfers between, for 3 s: the good ones clear the
+     // back-off each time, but the resets stay within kMaxPerSec (5) a second and the log within 3 lines in 10 s
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* x = r.host.out.front()->ep->GetXHCIEndpoint();
+    x->ring = &r.host.out;
+    size_t l0 = CLogger::Get()->lines.size();
+    for (int ms = 0; ms < 3000; ++ms) {
+      CTimer::s_now += 1000;
+      r.in(1, c);
+      if (!r.host.out.empty() && x->state != 2) {
+        if (ms % 3 == 0) {               // the error
+          CUSBRequest* u = r.host.out.front();
+          r.host.out.pop_front();
+          x->state = 2;
+          u->SetStatus(0), u->SetResultLen(0);
+          u->fn(u, u->param, u->ctx);
+        } else {
+          while (!r.host.out.empty()) r.out_done();   // good transfers between
+        }
+      }
+      CObUsb::PollHalt();
+    }
+    CHECK(x->resets >= 3 && x->resets <= 3 * 5 + 1);
+    CHECK(count_lines("OUT endpoint halted", l0) <= 3);
+    x->ring = nullptr;
+    CTimer::s_now = 0;
+  }
   {  // B2: an endpoint that goes quiet with no error completion (halted, the event lost): URBs pending, none completed
      // for 50 ms: a stall, reset as a halt; and one quiet but running (state 1): resubmitted only, no reset counted
     Bus r(g_rytm, 0x0b48);
