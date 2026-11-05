@@ -122,7 +122,8 @@ inline const char* short_name(const Profile& p) { return p.short_name ? p.short_
 const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use
 const Profile* by_id(uint16_t id);        // the known box with this id; null none
-const Profile* by_usb(uint16_t vid, uint16_t pid);   // the known box with this USB id and an audio row (the Pi's driver); null none
+const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello = false);   // the known box with this USB id and an audio row (the Pi's driver); null none.
+                                       // without_hello: a box that streams only after its mod's hello is taken as it is too (usb=mirror relays it)
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
 // What one connected box has chosen: its profile, its state folder, its output, its counts. There is one link today, g_link
 // (docs/device-profiles.md, "Several devices"): a second one is a second Link and a way to tell whose message it is.

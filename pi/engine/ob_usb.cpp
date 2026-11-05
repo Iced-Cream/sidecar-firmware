@@ -213,7 +213,10 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
 	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
-	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct);
+	// usb=mirror relays the box itself to the computer, so a stock box that has not said its mod's hello (an A4 without the
+	// Sidecar mod) is claimed too; without the mirror such a box waits for its hello (core/device/device.cpp)
+	boolean bMirror = strcmp (CKernelOptions::Get ()->GetAppOptionString ("usb", "sidecar"), "mirror") == 0;
+	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct, bMirror);
 	if (p == 0) return 0;
 	const core::out::Device *pAudio = p->audio;
 	boolean bRytm = pAudio == &core::out::kRytmMk2;
