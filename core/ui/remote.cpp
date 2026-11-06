@@ -1652,6 +1652,9 @@ CORE_COLD const char* remote_pair_code_now() { return pair_code; }
 const RemoteWebUi* webui_hooks = nullptr;
 CORE_COLD void remote_webui(const RemoteWebUi* h) { webui_hooks = h; }
 CORE_COLD const RemoteWebUi* remote_webui() { return webui_hooks; }
+const RemoteUsb* usb_hooks = nullptr;
+CORE_COLD void remote_usb(const RemoteUsb* h) { usb_hooks = h; }
+CORE_COLD const RemoteUsb* remote_usb() { return usb_hooks; }
 CORE_COLD bool remote_popup(const char* l1, const char* l2, uint32_t hold_ms, bool over) {
   // caps36 and legacy are what the Rytm can do, and no policy changes that: an older mod cannot draw this at all.
   // `open` and `splash` are policy - deferring to a Sidecar page is right for a status popup and wrong for the
