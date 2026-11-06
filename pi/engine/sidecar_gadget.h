@@ -74,6 +74,7 @@ public:
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
 #include <circle/usb/gadget/dwusbgadgetendpoint.h>
+#include <circle/usb/gadget/dwusbgadgetendpoint0.h>	// circle-gadget-stray: GetSetupAbortCount ()
 #include <circle/interrupt.h>
 #include <circle/logger.h>
 #include <circle/synchronize.h>

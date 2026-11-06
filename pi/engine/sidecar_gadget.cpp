@@ -1554,6 +1554,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	u8 Last[MidiFilter::kHead];
 	int nLast = m_ToRytmFilter.LastDropped (Last);
 	LeaveCritical ();
+#ifdef CIRCLE_GADGET_STRAY				// circle-gadget-stray.patch: EP0 / EP completions no state waited for
+	unsigned nStray = CDWUSBGadgetEndpoint::GetStrayCount (), nSetupAborts = CDWUSBGadgetEndpoint0::GetSetupAbortCount ();
+#else
+	unsigned nStray = 0, nSetupAborts = 0;
+#endif
 	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
 	for (int i = 0; i < nLast; i++)
 	{
@@ -1563,10 +1568,10 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	}
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
-		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
+		"ctl %u stall %u abort %u (setup %u) late %u stray %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
 		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, nSetupAborts, s.nCtlLate, nStray,
 		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm);

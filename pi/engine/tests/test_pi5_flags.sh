@@ -49,7 +49,7 @@ grep -q -- "-DSIDECAR_NO_GADGET" <<<"$M" || fail "PI5_GADGET=0 with the gadget: 
 python3 pi5_flags_src.py "$ENG"
 
 P5=$(grep -E '^ *(P=[^;]*; )?PP=' "$ENG/build.sh" | grep -o 'circle-[a-z0-9-]*\.patch' | tr '\n' ' ')
-[ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch " ] \
+[ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
   || fail "the Pi 5 gadget patches in build.sh: $P5"
 P4=$(grep -o 'patch -p1 < /repo/pi/circle/circle-gadget[a-z-]*\.patch' "$ENG/build.sh" | sed 's,.*/,,' | tr '\n' ' ')
 [ "$P4" = "circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch " ] \

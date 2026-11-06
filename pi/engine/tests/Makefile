@@ -149,6 +149,24 @@ build/fatfs-%/ff.h: $(FATFS_SRC)/ff.c $(FATFS_SRC)/ffconf.h
 	cp $(FATFS_SRC)/ff.c $(FATFS_SRC)/ff.h $(FATFS_SRC)/diskio.h $(FATFS_SRC)/ffunicode.c $(dir $@)
 	sed $(FATFS_HOST) $(if $(filter exfat,$*),$(STOR_EXFAT_SED),) $(FATFS_SRC)/ffconf.h > $(dir $@)ffconf.h
 FATFS_DEPS = test_stor_fatfs.cpp ../stor_vol.cpp ../stor_vol.h check.h
+# the DWC2 gadget's EP0 and endpoint cancel (test_gadget_ep0.cpp): Circle's dwusbgadgetendpoint*.cpp with the Pi 4
+# gadget patch stack (pi/engine/build.sh's order, up to circle-gadget-stray.patch), copied into build/dwc and patched
+# there, on a fake register file (shim_dwc/)
+DWC_ROOT := $(if $(filter %/circle,$(CIRCLE_BUILD)),$(CIRCLE_BUILD),$(CIRCLE_BUILD)/circle)
+DWC_PATCHES := $(addprefix ../../circle/,circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch \
+	       circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch)
+build/dwc/.patched: $(DWC_PATCHES) ../../circle/gadget_wake.h ../../circle/gadget_flush.h
+	@test -f $(DWC_ROOT)/lib/usb/gadget/dwusbgadgetendpoint0.cpp || { echo "test_gadget_ep0: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
+	@rm -rf build/dwc && mkdir -p build/dwc/lib/usb
+	@cp -R $(DWC_ROOT)/include build/dwc/ && cp -R $(DWC_ROOT)/lib/usb/gadget build/dwc/lib/usb/
+	@cp ../../circle/gadget_wake.h build/dwc/include/circle/usb/gadget/gadgetwake.h
+	@cp ../../circle/gadget_flush.h build/dwc/include/circle/usb/gadget/gadgetflush.h
+	@cd build/dwc && for p in $(DWC_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
+	@touch $@
+build/test_gadget_ep0: test_gadget_ep0.cpp build/dwc/.patched $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
+	  -Ishim_dwc -Ibuild/dwc/include -I. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
+	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp
 build/test_stor_fatfs: build/fatfs-fat/ff.h $(FATFS_DEPS)
 	cc -O1 -g -w -c -o build/fatfs-fat/ff.o build/fatfs-fat/ff.c && cc -O1 -g -w -c -o build/fatfs-fat/ffunicode.o build/fatfs-fat/ffunicode.c
 	$(CXX) $(CXXFLAGS) -Ibuild/fatfs-fat -o $@ test_stor_fatfs.cpp ../stor_vol.cpp build/fatfs-fat/ff.o build/fatfs-fat/ffunicode.o
