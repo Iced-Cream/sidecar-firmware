@@ -1,7 +1,7 @@
 # usb=mirror: the box itself on the USB-C side
 
-Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below).
-Pi 5: built in (`PI5_GADGET=1`, the default), in testing: not yet run with a box (see "The Pi 5" below).
+Current state (2026-11-06): run on a Pi 4 and a Pi 5 with an Analog Rytm MKII on OS 1.74, the review changes included,
+with Windows (Pi 4) and macOS (Pi 4 and Pi 5); see Tested below.
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
 (1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
@@ -41,14 +41,18 @@ default. The box's own descriptors are read from it and relayed at run time; non
   for an earlier attach is ignored (each attach has its own generation).
 - **A halted pipe.** A failed transfer halts the endpoint on the xHC and on the box. `CObUsb::MirrorPipePoll` (core 0's
   loop) sends the box CLEAR_FEATURE(ENDPOINT_HALT), resets the host endpoint, and resubmits an IN pipe: every 100 ms for
-  the first five tries, then once a second. The mirror line counts these (`reset`).
+  the first five tries, then once a second. The mirror line counts these (`reset`). Circle reports a refused Reset
+  Endpoint as success, so the endpoint's state is read after it: still halted (or in error), the pipe stays stopped and
+  is tried again after the backoff (`halted: the host refused its reset`), and `cleared, running again` is logged only
+  once a reset took.
 - **Interfaces of the audio stream.** `MirrorAttach` never sends SET_INTERFACE to them, so the Pi's own stream stays at
   alt 3. A pipe on such an interface is relayed only if it is at alt 3.
 - **Overbridge's per-block bytes.** Bytes 4-31 of each OUT block (byte 1 = the first non-zero one's index, or 0xFF)
   carry data from the Engine, such as its latency-check marker; the box answers the marker with a pulse on IN. A
   computer block with any of them set has them copied into the Pi's own OUT block a fixed distance away
-  (`mirrormargin=` blocks, 8, past where the Pi's OUT stood at the stream's first block), so the Engine measures the
-  same latency on every try. The mirror line counts them (extra, lost, late).
+  (`mirrormargin=` blocks, 8, up to 256, past where the Pi's OUT stood at the stream's first block), so the Engine
+  measures the same latency on every try. The mirror line counts them (`extra`, `lost`, `late`, `anchor`; see the
+  counters below).
 - **The name Overbridge shows.** For an Elektron box (vendor 1935), the answer to vendor request 1 (IN, the 32-byte device
   name Overbridge shows in its Devices tab and plugin picker) gets a suffix, " (SC)" by default, so the unit reads
   "Analog Rytm MKII (SC)". A name the computer sets (OUT request 1) reaches the box without the suffix. Overbridge
@@ -67,8 +71,8 @@ unfiltered:
 
 So `usbmidi=os:off` does not stop a tool that updates the box over a vendor request or a pipe. The OS updates tested
 through the mirror (the transfer tool and a SysEx flasher) went over USB MIDI: the mirror line's MIDI counters carried
-the whole update to the box [hw]. With `usb=mirror` and any `usbmidi=os:` other than off, the engine logs a warning at
-start.
+the whole update to the box [hw]. Whenever `usb=mirror` is on, whatever `usbmidi=os:` is, the engine logs a warning at
+start that the vendor requests and the pipes are relayed unfiltered.
 
 ## Circle change
 
@@ -193,6 +197,13 @@ On a Pi 4 with an Analog Rytm MKII on OS 1.74, the computer on Windows [hw]:
 - the transfer tool browses, elkflash `info` works through the mirrored MIDI port, and OS updates went through with
   `mirrorhold=60`, from the transfer tool and from a SysEx flasher.
 
+On macOS with Overbridge Engine 2.26.10, 2026-11-06 [hw], on a Pi 4 and on a Pi 5 (with the Pi 5 mirror changes, not
+in this build yet): Overbridge through the mirror, and the Rytm's USB-A cable pulled for a short and for a long time;
+`lost 0`, `late 0` on both.
+
+The new offset after a replug, on the Pi 4 [hw]: a replug with the plugin streaming gave `lost 1126`, `late 128` before
+it, and 0 and 0 after it.
+
 In the emulator (rytm-emu over TCP): the default mode unchanged, and with `usb=mirror` and no box the Sidecar device
 stays up.
 
@@ -206,4 +217,22 @@ The review changes of 2026-11-05 on the same unit [hw]:
 - an OS update (stock 1.74) with elkflash over the mirrored MIDI port: 0 resends, the box back 0.3 s after its reboot
   dropped it, inside `mirrorhold`.
 
-The Pi log's `mirror` line counts every path.
+The Pi log's `mirror` line counts every path. The counters most often asked about:
+
+- `in ... drop`: the box's IN blocks dropped because the queue to the computer (64 blocks, about 9 ms) was full, so the
+  computer took fewer blocks than the box sent for that long. Counted in blocks of 7 frames.
+- `out ... over` and `under`: the computer's OUT audio when the ring the Pi adds to its own stream (512 frames) was full,
+  or empty when the Pi needed a frame. Counted in frames, not blocks.
+- `ctl ... stall`: requests the computer was answered with a STALL. That covers a request while the box is gone, the box
+  going away with a request at it, a second request while one is in flight, and the box's own STALLs.
+- `pipe ... reset`: CLEAR_FEATURE(ENDPOINT_HALT) sent to the box for a halted pipe, every try counted. A box that is
+  unplugged and plugged back in shows a few.
+- `out ... extra`, `lost`, `late`, `anchor`: Overbridge's per-block bytes. `extra` counts the computer's blocks that
+  carried any. `lost`: dropped because the queue toward the box (128 entries) was full. `late`: dropped because the
+  Pi's block they were due in had already gone (the offset was too small). `anchor`: how often the offset was set
+  again after the first time, because the computer's stream fell behind the Pi's or the Pi's counter went back. A
+  steady stream shows `lost 0`, `late 0` and `anchor` not climbing (it does climb while the box is away inside
+  `mirrorhold` and the computer keeps streaming).
+- `midi ... filtered N/M (last …)`: SysEx messages (N) and USB MIDI packets (M) the filters dropped toward the box, and
+  the head of the last message dropped, in hex (up to 13 bytes, `-` when none yet). The head tells which rule took it:
+  `f0 f7` is the empty SysEx, and `f0 00 20 3c …` with `usbmidi=os:off` an OS update held back.

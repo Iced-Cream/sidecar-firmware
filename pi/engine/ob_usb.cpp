@@ -758,6 +758,7 @@ void CObUsb::MirrorAttach (void)
 		p.pBuf = AllocDmaBuf ();
 		p.bBusy = p.bStopped = FALSE;
 		p.nPackets = p.nErrors = p.nTries = p.nLastTry = 0;
+		p.bRefused = FALSE;
 		p.pURB = 0;
 		if (e.addr & 0x80)
 		{
@@ -887,6 +888,10 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 // core 0's loop: a pipe whose transfer failed (the box STALLed it, or the bus had an error) halts on the xHC and on
 // the box. Both are cleared - CLEAR_FEATURE(ENDPOINT_HALT) to the box, Reset Endpoint on the host - and an IN pipe is
 // resubmitted. Every 100 ms for the first tries, then once a second, so a box that keeps failing costs little.
+// Circle's ResetFromHalted gives TRUE for a refused command too (it returns the completion code as a boolean), and a
+// reset that took leaves the endpoint Stopped (3): so a state of 2 or 4 after it is a refusal (as ep_halt.h reads it),
+// and the pipe stays stopped for the next try. Resubmitted into a ring still halted, the URB would never complete and
+// the pipe would stay busy for good.
 void CObUsb::MirrorPipePoll (void)
 {
 	CObUsb *pThis = s_pThis;
@@ -905,15 +910,27 @@ void CObUsb::MirrorPipePoll (void)
 						   ENDPOINT_HALT, p.uchAddr, 0, 0);
 #if RASPPI >= 4
 		CXHCIEndpoint *pXHCI = p.pEP->GetXHCIEndpoint ();
-		if (pXHCI->GetEPState () >= 2 && !pXHCI->ResetFromHalted ()) continue;	// halted, stopped or error
+		if (pXHCI->GetEPState () >= 2)		// halted, stopped or error
+		{
+			unsigned nAfter = pXHCI->ResetFromHalted () ? pXHCI->GetEPState () : 4;
+			if (nAfter == 2 || nAfter == 4)
+			{
+				if (!p.bRefused)
+					CLogger::Get ()->Write (From, LogWarning, "usb=mirror: pipe 0x%02x halted: the host refused its "
+								"reset (state %u), trying again", p.uchAddr, nAfter);
+				p.bRefused = TRUE;
+				continue;
+			}
+		}
 #endif
 		EnterCritical (IRQ_LEVEL);
 		p.bStopped = FALSE;
 		if (p.uchAddr & 0x80) pThis->SubmitPipeIn (i);
 		LeaveCritical ();
-		if (p.nTries == 1)
+		if (p.nTries == 1 || p.bRefused)
 			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x halted: cleared, %s", p.uchAddr,
 						p.bStopped ? "cannot resubmit" : "running again");
+		p.bRefused = FALSE;
 	}
 }
 
