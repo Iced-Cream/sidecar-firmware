@@ -1142,6 +1142,7 @@ CMirrorEP::CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget)
 
 void CMirrorEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
 	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
@@ -1153,7 +1154,7 @@ void CMirrorEP::OnDeactivate (void)
 	boolean bHeld = m_bBusy;
 	m_bActive = FALSE;
 	m_bBusy = FALSE;
-	CancelTransfer ();
+	mirror::cancel (*this);				// isochronous: stopped and waited for (mirror_ep.h)
 	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
 }
 

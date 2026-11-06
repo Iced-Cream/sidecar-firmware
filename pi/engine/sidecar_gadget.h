@@ -88,6 +88,7 @@ public:
 #include "tohost_q.h"
 #include "mirror_desc.h"
 #include "mirror_ctl.h"
+#include "mirror_ep.h"
 
 #if __has_include("hosted/sidecar_config.h")
 #include "hosted/sidecar_config.h"			// build.sh: SIDECAR_CH_IN=20 pi/engine/build.sh
@@ -153,7 +154,8 @@ public:
 	CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
-	void OnSuspend (void) override			{ OnDeactivate (); }
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// a resume without a reset
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: send the next packet if idle (IRQ level, or IRQs masked)
 	void Rearm (void);				// OUT: take the computer's next packet (the box took this one)
@@ -162,8 +164,12 @@ public:
 	u8 Address (void) const				{ return m_uchAddr; }
 	boolean Active (void) const			{ return m_bActive; }
 	boolean Busy (void) const			{ return m_bBusy; }
+	boolean Iso (void) const			{ return GetType () == TypeIsochronous; }	// mirror::cancel ()
+	void StopIso (void)				{ StopIsoTransfer (); }
+	void Cancel (void)				{ CancelTransfer (); }
 
 private:
+	mirror::EpWake m_Wake;
 	CSidecarGadget *m_pSidecar;
 	mirror::Role m_Role;
 	u8 m_uchAddr;

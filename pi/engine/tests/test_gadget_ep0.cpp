@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "check.h"
+#include "mirror_ep.h"
 
 // ---- the fake core: the endpoints live in one arena, bus addresses are offsets into it (DMA arithmetic holds)
 alignas (64) static u8 g_Arena[64 * 1024];
@@ -164,7 +165,15 @@ static int In (unsigned ep = 0, std::string *pData = nullptr)
 static bool Out (unsigned ep, const void *pData, unsigned n)
 {
 	u32 &c = g_Reg[DWHCI_DEV_OUT_EP_CTRL (ep)];
-	if (!(c & Ena)) return false;
+	if (!(c & Ena))				// NAKed; an isochronous EP waiting for the host's token takes it
+	{
+		if (ep != 0)
+		{
+			g_Reg[DWHCI_DEV_OUT_EP_INT (ep)] |= DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED;
+			OutIrq (ep);
+		}
+		return false;
+	}
 	u32 &t = g_Reg[DWHCI_DEV_OUT_EP_XFER_SIZ (ep)];
 	CHECK (n <= (t & 0x7FFFF));
 	u32 &d = g_Reg[DWHCI_DEV_OUT_EP_DMA_ADDR (ep)];
@@ -192,6 +201,29 @@ static void Answer (const char *pAnswer)
 static const TUSBEndpointDescriptor DescBulkIn = {7, DESCRIPTOR_ENDPOINT, 0x81, 2, 64, 0};
 static const TUSBEndpointDescriptor DescBulkOut = {7, DESCRIPTOR_ENDPOINT, 0x02, 2, 64, 0};	// (the shim keeps one EP a number)
 static const TUSBEndpointDescriptor DescIsoIn = {7, DESCRIPTOR_ENDPOINT, 0x83, 5, 64, 1};
+// usb=mirror: one of the box's endpoints on the computer's side with CMirrorEP's shape (OUT: armed at activation and
+// after each packet) and its suspend / resume / cancel (mirror_ep.h, the code CMirrorEP runs); bRc6: rc6's instead
+// (OnSuspend = OnDeactivate with CancelTransfer, no OnResume)
+static const TUSBEndpointDescriptor DescIsoOut = {7, DESCRIPTOR_ENDPOINT, 0x04, 5, 64, 1};
+struct CMirrorTestEP : CDWUSBGadgetEndpoint
+{
+	CMirrorTestEP (bool b) : CDWUSBGadgetEndpoint (&DescIsoOut, &g_Gadget), bRc6 (b) {}
+	void OnActivate (void) override { w.activated (); active = true; Rearm (); }
+	void OnDeactivate (void) override { active = false; if (bRc6) CancelTransfer (); else mirror::cancel (*this); }
+	void OnSuspend (void) override { if (bRc6) OnDeactivate (); else w.suspend (*this); }
+	void OnResume (void) override { if (!bRc6) w.wake (*this); }
+	void OnTransferComplete (boolean, size_t) override { ++done; Rearm (); }
+	void Rearm (void) { if (active) BeginTransfer (TransferDataOut, m_Buf, 64); }
+	boolean Active (void) const { return active; }
+	boolean Iso (void) const { return GetType () == TypeIsochronous; }
+	void StopIso (void) { StopIsoTransfer (); }
+	void Cancel (void) { CancelTransfer (); }
+	mirror::EpWake w;
+	bool bRc6, active = false;
+	int done = 0;
+	DMA_BUFFER (u8, m_Buf, 64);
+};
+
 struct CTestEP : CDWUSBGadgetEndpoint
 {
 	CTestEP (const TUSBEndpointDescriptor *p) : CDWUSBGadgetEndpoint (p, &g_Gadget) {}
@@ -319,6 +351,39 @@ int main (void)
 		CHECK (In (3) == 48 && pIso->done == 1);
 		pIso->Send (48);			// the next one follows on
 		CHECK (In (3) == 48 && pIso->done == 2);
+	}
+	{	// usb=mirror: the box's isochronous OUT across a bus suspend and a resume without a reset (macOS idles the
+		// device some 10 s after the switch; rc6 on the Pi 4: the async channel and audio dead after it, "EP3: OUT
+		// completion with no transfer armed")
+		for (bool bRc6 : {true, false})
+		{
+			g_Reg[DWHCI_DEV_OUT_EP_CTRL (4)] = 0, g_Reg[DWHCI_DEV_OUT_EP_INT (4)] = 0;
+			CMirrorTestEP *p = new (Alloc (sizeof (CMirrorTestEP))) CMirrorTestEP (bRc6);
+			p->OnUSBReset ();
+			p->OnActivate ();			// SET_CONFIGURATION
+			CHECK (!Out (4, "a", 1));		// armed at the host's token
+			CHECK (Out (4, "a", 1) && p->done == 1);
+			CHECK (g_Reg[DWHCI_DEV_OUT_EP_CTRL (4)] & Ena);	// the next one armed
+			unsigned s = CDWUSBGadgetEndpoint::GetStrayCount ();
+			p->OnSuspend ();			// bus suspend
+			if (bRc6)
+			{
+				// the cancel did not wait: the core finishes the transfer later, with nothing armed
+				g_Reg[DWHCI_DEV_OUT_EP_INT (4)] |= DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE;
+				OutIrq (4);
+				CHECK (CDWUSBGadgetEndpoint::GetStrayCount () == s + 1);
+			}
+			else
+			{
+				CHECK (!(g_Reg[DWHCI_DEV_OUT_EP_CTRL (4)] & Ena) && g_Reg[DWHCI_DEV_OUT_EP_INT (4)] == 0);
+			}
+			p->OnResume ();				// resume, no reset: no SET_CONFIGURATION follows
+			bool bFlows = false;
+			for (int i = 0; i < 3 && !bFlows; i++) bFlows = Out (4, "b", 1);
+			if (bRc6) CHECK (!bFlows && p->done == 1);	// dead for good: what the Pi 4 showed
+			else CHECK (bFlows && p->done == 2 && CDWUSBGadgetEndpoint::GetStrayCount () == s);
+			g_Gadget.m_pEP[4] = nullptr;
+		}
 	}
 	CHECK (g_nPanics == 0);
 	puts ("test_gadget_ep0: ok");
