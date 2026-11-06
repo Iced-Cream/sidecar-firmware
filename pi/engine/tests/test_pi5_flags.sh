@@ -47,6 +47,7 @@ grep -q -- "-DSIDECAR_NO_GADGET" <<<"$M" || fail "PI5_GADGET=0 with the gadget: 
 ! mf PI5_GADGET=0 PI5_TESTMODE=1 >/dev/null 2>&1 || fail "the Makefile took PI5_TESTMODE=1 without the gadget"
 
 python3 pi5_flags_src.py "$ENG"
+bash -n "$ENG/build.sh" || fail "build.sh does not parse (an apostrophe in a comment inside its quoted Docker block?)"
 
 P5=$(grep -E '^ *(P=[^;]*; )?PP=' "$ENG/build.sh" | grep -o 'circle-[a-z0-9-]*\.patch' | tr '\n' ' ')
 [ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
