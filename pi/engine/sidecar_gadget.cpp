@@ -1398,7 +1398,7 @@ int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutDa
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
 	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
 		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
-	m_Ctl.request ();
+	(void) m_Ctl.request ();			// true: pending was checked above (the setup is copied before it is published)
 	m_MirStats.nCtl++;
 	return ControlDeferred;
 }
