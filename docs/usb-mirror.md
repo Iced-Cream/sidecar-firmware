@@ -67,8 +67,8 @@ unfiltered:
 
 So `usbmidi=os:off` does not stop a tool that updates the box over a vendor request or a pipe. The OS updates tested
 through the mirror (the transfer tool and a SysEx flasher) went over USB MIDI: the mirror line's MIDI counters carried
-the whole update to the box [hw]. With `usb=mirror` and any `usbmidi=os:` other than off, the engine logs a warning at
-start.
+the whole update to the box [hw]. Whenever `usb=mirror` is on, whatever `usbmidi=os:` is, the engine logs a warning at
+start that the vendor requests and the pipes are relayed unfiltered.
 
 ## Circle change
 
@@ -115,4 +115,13 @@ The review changes of 2026-11-05 on the same unit [hw]:
 - an OS update (stock 1.74) with elkflash over the mirrored MIDI port: 0 resends, the box back 0.3 s after its reboot
   dropped it, inside `mirrorhold`.
 
-The Pi log's `mirror` line counts every path.
+The Pi log's `mirror` line counts every path. The counters most often asked about:
+
+- `in ... drop`: the box's IN blocks dropped because the queue to the computer (64 blocks, about 9 ms) was full, so the
+  computer took fewer blocks than the box sent for that long. Counted in blocks of 7 frames.
+- `out ... over` and `under`: the computer's OUT audio when the ring the Pi adds to its own stream (512 frames) was full,
+  or empty when the Pi needed a frame. Counted in frames, not blocks.
+- `ctl ... stall`: requests the computer was answered with a STALL. That covers a request while the box is gone, the box
+  going away with a request at it, a second request while one is in flight, and the box's own STALLs.
+- `pipe ... reset`: CLEAR_FEATURE(ENDPOINT_HALT) sent to the box for a halted pipe, every try counted. A box that is
+  unplugged and plugged back in shows a few.

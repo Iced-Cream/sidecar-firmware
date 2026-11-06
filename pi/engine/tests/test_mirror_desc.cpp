@@ -171,6 +171,17 @@ int main ()
 		CHECK (r.pop_into (out, 3) && r.late == 1 && r.head == r.tail);
 		for (unsigned i = 0; i < ExtraRing::kSlots + 2; i++) r.push_block (blk, (uint16_t) (100 + 7 * i));
 		CHECK (r.dropped == 2 && r.head - r.tail == ExtraRing::kSlots);
+		// the box's stream starts again: the queue is dropped, uncounted, and takes the new stream's bytes
+		r.flush ();
+		CHECK (r.head == r.tail && r.dropped == 2 && r.late == 1);
+		CHECK (r.push_block (blk, 7) && r.pop_into (out, 7));
+		// when the offset is set again: due in a block already sent, or further ahead than the ring holds (the Pi's
+		// counter went back to 0 under an offset set for a counter near 40000); a margin's distance is kept
+		CHECK (!ExtraRing::stale (56, 0) && !ExtraRing::stale (0, 0));
+		CHECK (ExtraRing::stale (65530, 3));				// behind, across the wrap
+		CHECK (!ExtraRing::stale (3 + ExtraRing::kSlots * 7, 3));
+		CHECK (ExtraRing::stale (4 + ExtraRing::kSlots * 7, 3));
+		CHECK (ExtraRing::stale ((uint16_t) (40000 + 56), 14));
 	}
 
 	printf ("test_mirror_desc: ok\n");
