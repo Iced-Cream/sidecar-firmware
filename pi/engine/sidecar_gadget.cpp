@@ -396,11 +396,9 @@ void CSidecarGadget::SetMirror (boolean bOn)
 	if (bOn)
 	{
 		m_bMirUsed = TRUE;
-		CObUsb::MirrorPark ();			// the Sidecar device is shown until the replug: the pipes wait for the box's EPs
 		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
 		return;
 	}
-	CObUsb::MirrorPark ();			// a read box's pipes parked: nothing of them while CLASS COMPLIANT runs
 	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
 	else if (m_bShowMirror)
 	{
@@ -1146,7 +1144,6 @@ void CMirrorEP::OnActivate (void)
 {
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
-	CObUsb::MirrorResume ();			// the computer configured the box's endpoints: its pipes run (once a switch)
 	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
 	else Kick ();
 }
@@ -1513,7 +1510,6 @@ void CSidecarGadget::MirrorPoll (void)
 		m_bExtraOff = FALSE;
 		m_Ctl.end ();
 		LeaveCritical ();
-		if (!m_bShowMirror) CObUsb::MirrorPark ();	// back as the Sidecar device: the pipes wait (MirrorResume)
 		boolean bOK = SoftConnect ();
 		m_bSwitching = FALSE;
 		CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "usb=mirror: USB-C %s as %s", bOK ? "back" : "failed to come back",

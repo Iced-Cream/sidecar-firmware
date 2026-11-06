@@ -223,51 +223,6 @@ int main ()
 		CHECK (pushed == 1000 && popped == 934 && r.head - r.tail == 66);	// the last 200 blocks: 66 not due yet
 	}
 
-	// PipeGate (CObUsb::MirrorPark / MirrorResume): the box's pipes reach the computer only while it has the box's
-	// endpoints. A model of the call sites - SetMirror (either way: MirrorPark), MirrorPoll's switch completion (back as
-	// the Sidecar device: MirrorPark), CMirrorEP::OnActivate (MirrorResume) - and of PipeInStub / MirrorPipePoll. Parked,
-	// a packet is drained (counted, its request renewed) and never reaches the gadget (no gadget drop: the review's M3,
-	// N1), no halt is cleared on EP0; and no packet is left waiting in the box to reach the computer first at the resume
-	// (the rc2 regression: tests/test_ob_mirror.cpp replays the hardware order)
-	{
-		PipeGate g;
-		unsigned delivered = 0, gadget_drops = 0, drained = 0, clears = 0;
-		bool active = false;					// a box endpoint active on the computer's side
-		auto packet = [&] {
-			if (!g.take_in ()) { ++drained; return; }	// parked: renewed at once, nothing to the gadget
-			if (active) ++delivered;
-			else ++gadget_drops;			// PipeInStub renews at once when the gadget drops it
-		};
-		auto idle = [&] { if (g.clear_halts ()) ++clears; };
-		auto set_mirror = [&] (bool) { g.mode_changed (); };	// SetMirror: MirrorPark either way
-		auto switched = [&] (bool shown) { if (!shown) g.shown_sidecar (); active = false; };	// MirrorPoll after the 300 ms
-		auto ep_active = [&] { active = true; return g.box_active (); };	// OnActivate: MirrorResume
-		// OVERBRIDGE at boot: parked until the computer configured the box (packets drained meanwhile)
-		set_mirror (true);
-		for (int i = 0; i < 100; i++) { packet (); idle (); }
-		CHECK (gadget_drops == 0 && delivered == 0 && clears == 0 && drained == 100 && g.parked == 100);
-		switched (true);
-		CHECK (ep_active () && g.clear_halts ());
-		for (int i = 0; i < 10; i++) packet ();
-		CHECK (delivered == 10 && gadget_drops == 0 && drained == 100);
-		// CLASS COMPLIANT (M3): nothing of the pipes reaches the gadget, nothing on EP0
-		set_mirror (false);
-		for (int i = 0; i < 1000; i++) { packet (); idle (); }
-		switched (false);
-		for (int i = 0; i < 1000; i++) { packet (); idle (); }
-		CHECK (gadget_drops == 0 && clears == 0 && delivered == 10);
-		// OVERBRIDGE again (N1): the Sidecar device still shown until the replug and the host's SET_CONFIGURATION
-		set_mirror (true);
-		for (int i = 0; i < 1000; i++) { packet (); idle (); }
-		switched (true);					// on the bus as the box, not configured yet
-		for (int i = 0; i < 1000; i++) { packet (); idle (); }
-		CHECK (gadget_drops == 0 && clears == 0 && g.parked == 4100 && drained == 4100);
-		CHECK (ep_active ());
-		packet ();
-		CHECK (delivered == 11 && gadget_drops == 0);
-		CHECK (!ep_active ());					// another of its endpoints: resumed already
-	}
-
 	printf ("test_mirror_desc: ok\n");
 	return 0;
 }

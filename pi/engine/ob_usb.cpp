@@ -661,30 +661,13 @@ void CObUsb::MirrorAttachLate (void)
 	p->MirrorAttach ();
 }
 
-static mirror::PipeGate s_PipeGate;		// CLASS COMPLIANT after OVERBRIDGE: the pipes parked (mirror_desc.h)
+static volatile unsigned s_nParked;		// the box's pipe IN packets while the computer saw the Sidecar device
 
-// task level (SetMirror, MirrorPoll): the box's pipes parked until its endpoints are up on the computer's side
-void CObUsb::MirrorPark (void)
-{
-	s_PipeGate.mode_changed ();
-}
-
-// gadget IRQ (CMirrorEP::OnActivate): the computer configured the box's endpoints: the pipes run (an idle IN one renewed:
-// parked pipes are drained, so their requests are normally in flight already)
-void CObUsb::MirrorResume (void)
-{
-	if (!s_PipeGate.box_active ()) return;
-	CObUsb *p = s_pThis;
-	if (p == 0 || !p->m_bMirror) return;
-	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < p->m_nPipes; i++)
-		if ((p->m_Pipe[i].uchAddr & 0x80) && !p->m_Pipe[i].bBusy && !p->m_Pipe[i].bStopped) p->SubmitPipeIn (i);
-	LeaveCritical ();
-}
-
+// the mirror line's "parked": pipe IN packets of the box that came while the computer saw the Sidecar device (CLASS
+// COMPLIANT, or the time until the switch to the box): drained, as no endpoint of the box is there to take them
 unsigned CObUsb::MirrorParked (void)
 {
-	return s_PipeGate.parked;
+	return s_nParked;
 }
 
 // core 0's loop (the gadget's SetMirror): the USB-C mode set to OVERBRIDGE at run time. A box that streams and was not read
@@ -779,7 +762,7 @@ void CObUsb::MirrorAttach (void)
 		m_nPipes++;
 	}
 	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);	// parked too: drained (PipeGate)
+	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
 	LeaveCritical ();
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
 	pGadget->MirrorBoxUp (TRUE);
@@ -809,9 +792,14 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	p.nTries = 0;
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-	if (!s_PipeGate.take_in ()) { pThis->SubmitPipeIn (ParamIndex (pParam)); return; }	// parked: drained (counted there)
-	p.nPackets++;
 	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	if (pGadget != 0 && !pGadget->MirrorShown ())	// the Sidecar device is shown: drained, not a drop (always renewed,
+	{						// so no packet of the box waits in it for the computer)
+		s_nParked++;
+		pThis->SubmitPipeIn (ParamIndex (pParam));
+		return;
+	}
+	p.nPackets++;
 	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn (ParamIndex (pParam));
 }
 
@@ -906,7 +894,8 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 void CObUsb::MirrorPipePoll (void)
 {
 	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || !pThis->m_bMirror || !s_PipeGate.clear_halts ()) return;	// parked: no EP0 traffic in CLASS COMPLIANT
+	if (pThis == 0 || !pThis->m_bMirror) return;
+	if (CSidecarGadget::Get () == 0 || !CSidecarGadget::Get ()->MirrorShown ()) return;	// the Sidecar device shown: no EP0 traffic
 	const unsigned nNow = CTimer::Get ()->GetTicks ();
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 	{
@@ -955,8 +944,6 @@ unsigned CObUsb::MirrorPipeResets (void)
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
-void CObUsb::MirrorPark (void)						{}
-void CObUsb::MirrorResume (void)					{}
 unsigned CObUsb::MirrorParked (void)					{ return 0; }
 void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}

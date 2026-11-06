@@ -270,16 +270,15 @@ int main() {
     delete in;
   }
 
-  {  // The Pi 5 hardware order at a boot with usb=mirror and the box plugged in (rc2 regression, 2026-11-06):
-     // SetMirror (TRUE) before the gadget's Start parks the pipes (MirrorPark); the box is configured and read
-     // (MirrorAttach); the gadget leaves the bus and comes back as the box (MirrorPoll: shown, no park); the computer's
-     // SET_CONFIGURATION activates the box's endpoints (CMirrorEP::OnActivate: m_bActive, then MirrorResume); only then
-     // does the computer's Overbridge driver start its handshake (vendor requests, then the async channel).
-     // The box has an async IN packet waiting from before the computer was there (the Rytm queues one once the Pi's own
-     // attach has set it up). 428907d had its IN request out from the attach: that packet came early and the gadget
-     // dropped it ("pipe in 1058 drop 1"). 4ecee9a submitted nothing while parked, so the packet stayed in the box and
-     // was the computer's FIRST async packet, ahead of its own handshake: "pipe in 1 drop 216", the engine never
-     // streamed. Parked, the pipe must still be drained (counted as parked, not as gadget traffic).
+  {  // The Pi 5 hardware order at a boot with usb=mirror and the box plugged in: the box is configured and read while
+     // the computer still sees the Sidecar device (MirrorAttach), the gadget leaves the bus and comes back as the box
+     // (MirrorPoll: shown), the computer's SET_CONFIGURATION activates the box's endpoints, and only then does the
+     // computer's Overbridge driver start its handshake on the async channel. The box has an async IN packet waiting from
+     // the Pi's own attach. Its IN request must be out from the attach and that packet drained while the Sidecar device
+     // is shown ("parked", as 428907d dropped it: "drop 1"); left in the box, it is the computer's first async packet,
+     // ahead of its own handshake (4ecee9a: "pipe in 1"). And nothing may hold the pipe once the box is shown: 3b80b2f's
+     // latched gate waited for CMirrorEP::OnActivate, which the hardware logs cannot show fired (rc3: parked 1, pipe in 0);
+     // whether the box's packets reach the gadget now follows only what the computer sees.
     g_gadget.mirror = true;
     g_gadget.hold_pipe_in = false;
     auto packet = [&](Box& b, unsigned n) {    // the box answers the pipe IN request in flight, if any
@@ -289,22 +288,29 @@ int main() {
       return true;
     };
     const unsigned kStale = 33, kReply = 12;
-    CObUsb::MirrorPark();                      // SetMirror (TRUE) at boot, before the gadget's Start
+    g_gadget.shown = false;                    // the Sidecar device until the box has been read and the switch made
     size_t nPkt = g_gadget.pipe_in.size();
     unsigned nParked = CObUsb::MirrorParked();
     Box b;                                     // the box configured and read (MirrorAttach)
-    bool bStaleWaits = !packet(b, kStale);     // its waiting packet: taken now, or left in the box
-    CHECK(g_gadget.pipe_in.size() == nPkt);    // nothing to the gadget while parked
-    // the switch (SoftDisconnect, 300 ms, SoftConnect): nothing on the box's side; the hub and the computer's
-    // enumeration take a while, then SET_CONFIGURATION: the box's endpoints active, MirrorResume
-    CObUsb::MirrorResume();
-    if (bStaleWaits) packet(b, kStale);        // what was left in the box goes out the moment its IN request does
-    // the computer's driver: its handshake on the async channel; the box's reply
-    CHECK(packet(b, kReply));
+    CHECK(packet(b, kStale));                  // its request is out: the waiting packet comes now
+    CHECK(g_gadget.pipe_in.size() == nPkt);    // not to the gadget
+    CHECK(CObUsb::MirrorParked() == nParked + 1 && b.pipe(0x82) != nullptr);   // drained, renewed
+    poll_at(50000);                            // nothing on EP0 while the Sidecar device is shown
+    CHECK(b.clears(0x82) == 0);
+    // the switch (SoftDisconnect, 300 ms, SoftConnect), the hub and the computer's enumeration, SET_CONFIGURATION
+    g_gadget.shown = true;
+    CHECK(packet(b, kReply));                  // the computer's handshake: the box's reply
     CHECK(g_gadget.pipe_in.size() == nPkt + 1);
     CHECK(g_gadget.pipe_in[nPkt].n == kReply); // the computer's first async packet is the box's reply, not the stale one
-    CHECK(CObUsb::MirrorParked() == nParked + 1);   // the stale one drained while parked, counted there
-    CHECK(b.pipe(0x82) != nullptr);            // and the pipe goes on
+    CHECK(b.pipe(0x82) != nullptr);            // and the pipe goes on (the gadget did not keep it: renewed)
+    for (int i = 0; i < 100; i++) CHECK(packet(b, 20));
+    CHECK(g_gadget.pipe_in.size() == nPkt + 101 && CObUsb::MirrorParked() == nParked + 1);
+    // CLASS COMPLIANT (back as the Sidecar device): drained again, counted as parked, never stuck
+    g_gadget.shown = false;
+    for (int i = 0; i < 50; i++) CHECK(packet(b, 20));
+    CHECK(g_gadget.pipe_in.size() == nPkt + 101 && CObUsb::MirrorParked() == nParked + 51);
+    g_gadget.shown = true;
+    CHECK(packet(b, kReply) && g_gadget.pipe_in.size() == nPkt + 102);
   }
 
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget

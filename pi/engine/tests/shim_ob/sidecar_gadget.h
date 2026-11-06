@@ -27,6 +27,7 @@ class CSidecarGadget {
   bool ForRytmInSysEx() { return false; }
   void ComputerSendFailed() {}
   boolean Mirror() { return mirror; }
+  boolean MirrorShown() const { return shown; }   // the computer sees the box (else the Sidecar device)
   boolean MirrorSetDescriptors(const u8*, const u8*, unsigned) { return TRUE; }
   void MirrorSetString(u8, const u8*, unsigned) { ++strings; }
   void MirrorBoxUp(boolean b) { box.push_back(b); }
@@ -35,7 +36,7 @@ class CSidecarGadget {
   void MirrorPipeOutDone(u8 a) { pipe_out_done.push_back(a); }
   struct Done { unsigned seq; int n; };
   struct Pkt { u8 addr; unsigned n; };
-  bool mirror = true, hold_pipe_in = false;
+  bool mirror = true, shown = true, hold_pipe_in = false;
   int strings = 0;
   std::vector<int> box;
   std::vector<Done> done;
