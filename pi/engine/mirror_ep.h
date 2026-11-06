@@ -28,6 +28,20 @@ struct EpWake
 	void activated (void)				{ resume = false; }	// a reset and SET_CONFIGURATION came instead
 };
 
+// OutGate: an OUT endpoint of the box (audio, pipe) is armed only while it is active, nothing is armed on it already,
+// and the box does not own its last packet (a pipe OUT packet, from its completion until the box has taken it,
+// MirrorPipeOutDone, or the box went away). That ownership outlives a deactivation: a suspend and resume, or a reset
+// and SET_CONFIGURATION, while the box still has the packet must not arm the endpoint, or the box's done would arm it a
+// second time (BeginTransfer asserts on a transfer already armed).
+// EP: Active (), Armed (), ArmOut ()
+struct OutGate
+{
+	bool box = false;			// the box owns the last packet
+	template <class EP> void arm (EP &e)	{ if (e.Active () && !box && !e.Armed ()) e.ArmOut (); }
+	void taken (void)			{ box = true; }
+	template <class EP> void done (EP &e)	{ box = false; arm (e); }	// the box took it, or it was dropped
+};
+
 // EP: Iso (), StopIso (), Cancel ()
 template <class EP>
 void cancel (EP &e)

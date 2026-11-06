@@ -224,6 +224,36 @@ struct CMirrorTestEP : CDWUSBGadgetEndpoint
 	DMA_BUFFER (u8, m_Buf, 64);
 };
 
+// CMirrorEP's pipe OUT (mirror_ep.h OutGate: armed when active, nothing armed, the box owns no packet) and
+// CSidecarMIDIEP's OUT (re-armed after each packet), each with mirror_ep.h EpWake across a suspend
+static const TUSBEndpointDescriptor DescPipeOut = {7, DESCRIPTOR_ENDPOINT, 0x05, 2, 64, 0};
+static const TUSBEndpointDescriptor DescMidiOut = {7, DESCRIPTOR_ENDPOINT, 0x06, 2, 64, 0};
+struct CPipeOutEP : CDWUSBGadgetEndpoint
+{
+	CPipeOutEP (const TUSBEndpointDescriptor *p, bool bBox) : CDWUSBGadgetEndpoint (p, &g_Gadget), bBoxPipe (bBox) {}
+	void OnActivate (void) override { w.activated (); active = true; if (bBoxPipe) out.arm (*this); else ArmOut (); }
+	void OnDeactivate (void) override { active = false; CancelTransfer (); }
+	void OnSuspend (void) override { w.suspend (*this); }
+	void OnResume (void) override { w.wake (*this); }
+	void OnTransferComplete (boolean, size_t) override { ++done; if (bBoxPipe) out.taken (); else if (active) ArmOut (); }
+	void BoxDone (void) { out.done (*this); }		// MirrorPipeOutDone
+	boolean Active (void) const { return active; }
+	boolean Armed (void) const { return IsTransferActive (); }
+	void ArmOut (void) { BeginTransfer (TransferDataOut, m_Buf, 64); }
+	mirror::EpWake w;
+	mirror::OutGate out;
+	bool bBoxPipe, active = false;
+	int done = 0;
+	DMA_BUFFER (u8, m_Buf, 64);
+};
+// the bus suspend as the gadget handles it (dwusbgadget.cpp HandleUSBSuspend, circle-gadget-wake.patch): each EP's
+// OnSuspend, and its interrupts acknowledged unprocessed while suspended
+static void Suspend (CDWUSBGadgetEndpoint *p, unsigned ep)
+{
+	p->OnSuspend ();
+	g_Reg[DWHCI_DEV_OUT_EP_INT (ep)] = 0, g_Reg[DWHCI_DEV_IN_EP_INT (ep)] = 0;
+}
+
 struct CTestEP : CDWUSBGadgetEndpoint
 {
 	CTestEP (const TUSBEndpointDescriptor *p) : CDWUSBGadgetEndpoint (p, &g_Gadget) {}
@@ -384,6 +414,51 @@ int main (void)
 			else CHECK (bFlows && p->done == 2 && CDWUSBGadgetEndpoint::GetStrayCount () == s);
 			g_Gadget.m_pEP[4] = nullptr;
 		}
+	}
+	{	// the box's pipe OUT across a suspend and a resume while the box still has the computer's last packet: not
+		// armed again until the box took it (then once: a second arm would assert in BeginTransfer)
+		CPipeOutEP *p = new (Alloc (sizeof (CPipeOutEP))) CPipeOutEP (&DescPipeOut, true);
+		p->OnUSBReset ();
+		p->OnActivate ();
+		CHECK (Out (5, "a", 1) && p->done == 1 && p->out.box);
+		CHECK (!(g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena));	// NAKed: the box has it
+		Suspend (p, 5);
+		p->OnResume ();
+		CHECK (p->active && !(g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena));	// back, still not armed
+		p->BoxDone ();
+		CHECK (g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena);
+		CHECK (Out (5, "b", 1) && p->done == 2);
+		p->BoxDone ();
+		// the box takes it while the endpoint is suspended: armed at the resume
+		CHECK (Out (5, "c", 1) && p->done == 3);
+		Suspend (p, 5);
+		p->BoxDone ();
+		CHECK (!(g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena));
+		p->OnResume ();
+		CHECK (Out (5, "d", 1) && p->done == 4);
+		// a reset after a suspend: nothing until SET_CONFIGURATION, then armed once (and a late OnResume adds nothing)
+		p->BoxDone ();
+		Suspend (p, 5);
+		g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] = 0;	// the core's USB reset clears the EP's state
+		p->OnUSBReset ();
+		CHECK (!(g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena) && !p->active);
+		p->OnActivate ();
+		CHECK (g_Reg[DWHCI_DEV_OUT_EP_CTRL (5)] & Ena);
+		p->OnResume ();				// (no wake follows a reset; were one late, it changes nothing)
+		CHECK (Out (5, "e", 1) && p->done == 5);
+		g_Gadget.m_pEP[5] = nullptr;
+	}
+	{	// the Sidecar's MIDI OUT (CSidecarMIDIEP) across a suspend and a resume without a reset: armed again
+		CPipeOutEP *p = new (Alloc (sizeof (CPipeOutEP))) CPipeOutEP (&DescMidiOut, false);
+		p->OnUSBReset ();
+		p->OnActivate ();
+		CHECK (Out (6, "m", 1) && p->done == 1);
+		Suspend (p, 6);
+		CHECK (!Out (6, "n", 1));			// suspended: not armed
+		g_Reg[DWHCI_DEV_OUT_EP_INT (6)] = 0;
+		p->OnResume ();
+		CHECK (Out (6, "n", 1) && p->done == 2);
+		g_Gadget.m_pEP[6] = nullptr;
 	}
 	CHECK (g_nPanics == 0);
 	puts ("test_gadget_ep0: ok");
