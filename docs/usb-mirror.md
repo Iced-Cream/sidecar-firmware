@@ -3,9 +3,8 @@
 Current state (2026-11-06): run on a Pi 4 and a Pi 5 with an Analog Rytm MKII on OS 1.74, the review changes included,
 with Windows (Pi 4) and macOS (Pi 4 and Pi 5); see Tested below.
 
-**Overbridge passthrough: Pi 4 since 0.4.1; Pi 5 in testing for 0.4.2.** The Pi 5 kernel is built with it again (0.4.1's
-was not). A Pi 5 that uses its USB-C for data gets about 1.5 A from a computer or hub port, so on a hub port it is
-power-starved and resets when Overbridge starts, and a direct Apple Silicon port did not enumerate it: for full power it
+**Overbridge passthrough: Pi 4 since 0.4.1; Pi 5 since 0.4.2.** The Pi 5 kernel is built with it again (0.4.1's
+was not). A Pi 5 that uses its USB-C for data gets about 1.5 A from a computer or hub port: on a powered hub port (about 1.5 A) the 0.4.2 test unit ran without under-voltage, while an earlier setup on a hub port was power-starved and reset when Overbridge started, and a direct Apple Silicon port did not enumerate it; for full power it
 needs a USB-C power + data splitter with USB-PD pass-through. See "The Pi 5" below.
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
@@ -118,7 +117,7 @@ widens what reaches the box; `class` and `cmdline` keep `/cmd`'s usual check):
   warning whenever it is under the cursor or set. It is drawn by the Pi (rytm-mods 0026's remote UI): no Rytm update.
 
 A mode this unit cannot run is greyed (web, touchscreen) or says NOT IN BUILD (Rytm): OVERBRIDGE without the mirror's
-Circle patches (`CIRCLE_GADGET_MIRROR`: the Pi 4 build and, in testing for 0.4.2, the Pi 5 build have them; the Pi 5
+Circle patches (`CIRCLE_GADGET_MIRROR`: the Pi 4 build and, since 0.4.2, the Pi 5 build have them; the Pi 5
 build of 0.4.1 did not, its `/status` `usbMode.modes` was `["class"]`), both without the Sidecar gadget. The console
 refuses it too, with "not here (no circle-gadget-mirror.patch)" (also logged at boot for `usb=mirror` or a stored
 `usbmode=overbridge`: "not in this build", CLASS COMPLIANT runs).
@@ -176,9 +175,8 @@ logs it when the setting turns OVERBRIDGE on with `usbmidi=os:` not off.
 
 ## The Pi 5
 
-**In testing for 0.4.2** (0.4.1 left it out). The Pi 5's USB-C is also its power input. A Pi 5 that uses its USB-C
-for data gets about 1.5 A from a computer or hub port: on a hub port it is power-starved and resets when Overbridge
-starts, and a direct Apple Silicon port did not enumerate it. Full power and data together need a USB-C power + data
+**Since 0.4.2** (0.4.1 left it out). The Pi 5's USB-C is also its power input. A Pi 5 that uses its USB-C
+for data gets about 1.5 A from a computer or hub port: on a powered hub port (about 1.5 A) the 0.4.2 test unit ran without under-voltage, while an earlier setup on a hub port was power-starved and reset when Overbridge started, and a direct Apple Silicon port did not enumerate it. Full power and data together need a USB-C power + data
 splitter with USB-PD pass-through. `pi/engine/build.sh` puts the mirror patches on the Pi 5's tree
 (`circle-engine-pi5usb`) as on the Pi 4: `CIRCLE_GADGET_MIRROR` is defined there, OVERBRIDGE can be picked on the web
 page, the touchscreen and the Rytm, and `usb=mirror` / `usbmode=overbridge` run it. A tree built by 0.4.1 (without
@@ -219,6 +217,10 @@ On a Pi 4 with an Analog Rytm MKII on OS 1.74, the computer on Windows [hw]:
 On macOS with Overbridge Engine 2.26.10, 2026-11-06 [hw], on a Pi 4 and on a Pi 5 (a test build with the mirror patches; not
 in 0.4.1): Overbridge through the mirror, and the Rytm's USB-A cable pulled for a short and for a long time;
 `lost 0`, `late 0` on both.
+
+The 0.4.2 build on a Pi 5, macOS, the USB-C on a powered hub port (about 1.5 A, no under-voltage) [hw]: 4 of 4 live
+CLASS COMPLIANT <-> OVERBRIDGE switches with the Overbridge Analog Rytm app: 12 channels, the async channel streaming,
+no reset, 0 underruns; the Mac's log had no "Audio callbacks have ceased" and no kIOReturnError.
 
 The new offset after a replug, on the Pi 4 [hw]: a replug with the plugin streaming gave `lost 1126`, `late 128` before
 it, and 0 and 0 after it.
