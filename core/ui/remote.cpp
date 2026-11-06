@@ -387,6 +387,11 @@ struct State {
   int16_t src14[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1's last 14 bits by 2A or our 48 (song)
   int16_t wr_pat[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // P1 our 48 wrote, its answer owed (presetpick)
   uint16_t src_known[12] = {};
+  // rc5 (page-2 defaults): the Rytm's machine list on top (2B), each track's voice byte when it opened, the tracks a
+  // one-track 33 moved while it was open
+  bool mlist = false;
+  uint8_t mlist_vb[12] = {};
+  uint16_t mlist_moved = 0;
   RemoteStats stats = {};
 };
 
@@ -1165,6 +1170,52 @@ CORE_COLD void display_remote_page(int page) {
   remote_show_page(t);
 }
 
+// rc5 (0.4.1, the owner on hardware: a DSP SAMPLE voice silent, its TUN / STA / END left by the machine before): a
+// machine chosen in the Rytm's machine list gets its SRC knobs' (P1..P8) defaults from stock's set_machine, which leaves
+// page 2 (P9..P16, the stock sample words 17..24) as the sound had them (rytm-mods 0026 design "1034", "1051"; measured
+// in rytm-emu gate040: LIVE IN -> DSP SAMPLE kept LIVE IN's 77 0 0 0 0 0 0 0, i.e. TUN +13, END 0, LEV 0). 0026 writes
+// page 2's defaults itself for LIVE IN, CHOP and MIDI, 0021 for MD and the user slots; for the machines below the Pi
+// does it, as 0026's cu_defs_tick does: once the list has closed (2B: MachineListView no longer on top), for a track
+// whose machine the list changed, P9..P16 written as knob turns (48). A kit, sound or project load is no list choice:
+// its words stay. Values: the records' defaults (DSP SAMPLE's are copies of stock's sample records, as PLAITS's and
+// DAISYSP's page 2 rely on: 0021 ext.c; MULTISAMPLE / WAVETABLE / GRANULAR / 6-OP FM's E..H: 0026's cu_p2k, cu_wtp2k,
+// cu_grp2k, CU_CHORD).
+constexpr uint32_t kMachineListVt = 0x401E5BF4u;   // MachineListView's vtable (0026's cu_prep / cu_defs_tick)
+struct PageTwo {
+  uint8_t machine, mask, v[8];
+};
+UI_ROM const PageTwo kPageTwo[] = {
+    {kDspSample, 0xFF, {64, 64, 0, 0, 0, 120, 0, 100}},   // TUN FIN SMP MOD STA END LOP LEV
+    {kPlaits, 0xFF, {64, 64, 0, 0, 0, 120, 0, 100}},
+    {kDaisy, 0xFF, {64, 64, 0, 0, 0, 120, 0, 100}},
+    {kMultiMachine, 0xFF, {64, 64, 0, 0, 0, 0, 0, 0}},     // TUNE FINE STRT LOOP / CHD INV SPR VOI
+    {kWaveMachine, 0xFF, {0, 64, 100, 64, 0, 0, 0, 0}},    // ATK DEC SUS ENV / CHD INV SPR VOI
+    {kGranMachine, 0xFF, {10, 60, 0, 0, 0, 0, 0, 0}},      // ATK REL HOLD ANIM / CHD INV SPR VOI
+    {kFm, 0xF0, {0, 0, 0, 0, 0, 0, 0, 0}},                 // E..H: CHD INV SPR VOI (A..D are FM's own)
+};
+CORE_COLD const PageTwo* page_two(int m) {
+  for (const PageTwo& p : kPageTwo)
+    if (p.machine == m) return &p;
+  return nullptr;
+}
+CORE_COLD void machine_list(bool on) {
+  if (on && !s.mlist) memcpy(s.mlist_vb, track_vb, sizeof s.mlist_vb), s.mlist_moved = 0;
+  if (!on && s.mlist && have_tracks) {
+    for (int t = 0; t < 12; ++t) {
+      if (!(s.mlist_moved >> t & 1) || track_vb[t] == kNotOurs) continue;
+      int m = machine_of(track_vb[t]);
+      if (s.mlist_vb[t] != kNotOurs && machine_of(s.mlist_vb[t]) == m) continue;   // NO, or back to the same machine
+      const PageTwo* p = page_two(m);
+      if (!p) continue;
+      for (int k = 0; k < 8; ++k)
+        if (p->mask >> k & 1) remote_track_write(t, 8 + k, p->v[k], 0, 0);
+      core::log("rui: track %s chose %s in the machine list: P9..P16 its defaults", kTrackName[t], machine_long(m));
+    }
+  }
+  if (!on) s.mlist_moved = 0;
+  s.mlist = on;
+}
+
 }  // namespace
 
 CORE_COLD void remote_sysex(const uint8_t* d, int len) {
@@ -1323,6 +1374,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         if ((b[3] & 0x78) == kJuno) send_juno_names();
         else if ((b[3] & 0x78) == kFm) send_fm_names();
       }
+      if (s.mlist) s.mlist_moved = b[1] == 1 ? (uint16_t)(s.mlist_moved | 1u << b[0]) : 0;   // rc5: a snapshot is no choice
       for (int i = 0; i < b[1]; ++i)
         track_vb[b[0] + i] = track_vb_of(b[0] + i, b[3 + 2 * i], b[2 + 2 * i]), tracks_known |= (uint16_t)(1u << (b[0] + i));
       have_tracks = true;
@@ -1369,6 +1421,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (n < 8) break;
       static uint32_t last = 0xFFFFFFFFu;
       uint32_t vt = (uint32_t)b[2] << 28 | (uint32_t)b[3] << 21 | (uint32_t)b[4] << 14 | (uint32_t)b[5] << 7 | b[6];
+      machine_list(vt == kMachineListVt);   // rc5: the list's choice gets page 2's defaults once it closes
       uint32_t key = (uint32_t)b[0] << 24 ^ vt ^ (uint32_t)b[1] << 16;
       if (key == last && !src_log) return;
       last = key;
@@ -1480,6 +1533,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       lfo::kit_changed(b[0]);
       if (b[0] != kit_said) {  // (a 3B also comes with every page open and hello: the same kit is no change)
         kit_said = b[0];
+        s.mlist_moved = 0;     // rc5: a kit loaded while the machine list was open: its machines are the kit's
 #if CORE_MSAMP
         midim::kit_switched(); // MIDI: its held notes off; the new kit's PRG and the rest go out at its reports
 #endif
@@ -1496,6 +1550,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       return;
     case kHello: {   // 1023: <uptime >> 7> <uptime & 0x7F> <caps>: the splash when the Rytm was up before the link
       s.presets_told = false;
+      s.mlist = false, s.mlist_moved = 0;   // rc5: a new link: no list choice owed
       if (n < 3) break;
       s.stats.hellos++;
       int up = b[0] << 7 | b[1];
