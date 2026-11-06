@@ -77,11 +77,12 @@ start that the vendor requests and the pipes are relayed unfiltered.
 ## Circle change
 
 `pi/circle/circle-gadget-mirror.patch` (applied by `pi/engine/build.sh` after `circle-gadget-reset.patch`; it defines
-`CIRCLE_GADGET_MIRROR`) makes two changes, and `circle-gadget-softconnect.patch` adds a third:
+`CIRCLE_GADGET_MIRROR`) makes two changes, `circle-gadget-softconnect.patch` adds a third and `circle-gadget-stray.patch` a fourth:
 
 1. **IN and OUT endpoints can share a number** (`0x83` + `0x03`). Circle kept one endpoint object per number. An OUT endpoint now goes to a second table when an IN endpoint already has its number. A gadget without shared numbers (the default Sidecar) never uses that table.
 2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
 3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
+4. **A completion with no transfer armed is ignored, not asserted.** While EP0 waits for a deferred answer nothing is armed on it, and a SETUP the host sends meanwhile (it gave up on the request) raised a SETUP-done interrupt that Circle's `FinishTransfer()` asserted on: the Pi 4 reset at a live switch to OVERBRIDGE when the Overbridge app started (2026-11-06, caught on serial: `dwusbgadgetendpoint.cpp(550)`). Now such a SETUP is dropped (the host sends it again), the deferred request is aborted and SETUP reception is armed again; a stray IN or OUT completion is ignored, and a cancel acknowledges a completion already latched. Each is counted and logged the first time and at powers of two (`EP%u: ... with no transfer armed: ignored`).
 
 ## The setting: USB-C mode
 
