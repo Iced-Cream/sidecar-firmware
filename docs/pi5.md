@@ -339,8 +339,9 @@ What replaces it for now:
   `circle-pi5-gadget.patch` + `circle-gadget-reset.patch` + the `usb=mirror` patches `circle-gadget-mirror.patch` and
   `circle-gadget-softconnect.patch`).
 - **`usb=mirror` (in testing).** The mirror (docs/usb-mirror.md: the computer sees the attached box itself) is built in
-  as on the Pi 4, off unless `usb=mirror` is in `cmdline.txt`; the default mode is unchanged. Not yet run on a Pi 5
-  with a box (docs/usb-mirror.md "The Pi 5").
+  as on the Pi 4, off unless chosen: the USB-C mode setting (OVERBRIDGE: web Sound tab, Settings > Sound, the Rytm's
+  SIDECAR MENU > USB-C; docs/usb-mirror.md "The setting") or `usb=mirror` in `cmdline.txt`; the default mode is
+  unchanged. Not yet run on a Pi 5 with a box (docs/usb-mirror.md "The Pi 5").
 - **On by default (0.4.0, in testing).** The Pi 5's `GADGET` default is `sidecar`, as on the Pi 4: UAC2 12 in / 12 out
   and USB MIDI on USB-C, the web page's Sound tab and the touchscreen's Settings > Sound offer computer audio as on the
   Pi 4 (both go by `/status` "sidecar" / "mac": the Sidecar device is up). `gadget=0` in `cmdline.txt` turns it off,

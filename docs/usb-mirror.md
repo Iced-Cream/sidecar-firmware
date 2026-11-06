@@ -1,15 +1,72 @@
-# usb=mirror: the box itself on the USB-C side
+# OVERBRIDGE (usb=mirror): the box itself on the USB-C side
 
 Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below).
 Pi 5: built in (`PI5_GADGET=1`, the default), in testing: not yet run with a box (see "The Pi 5" below).
 
-`usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
-(1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
-the box maker's own software (the Overbridge engine and plugins, the transfer tool) works through the Sidecar, while the
-Pi keeps its own Overbridge stream with the box and adds to it.
+The USB-C mode **OVERBRIDGE** (the Sidecar setting below; `usb=mirror` on the card's cmdline.txt before it, still read)
+replaces the Sidecar's own USB-C device (1209:0004, UAC2 12x12 + MIDI: the mode **CLASS COMPLIANT**) with the attached box
+as the computer would see it plugged in directly. It needs `gadget=sidecar` (the default). The aim is that the box
+maker's own software (the Overbridge engine and plugins, the transfer tool) works through the Sidecar, while the Pi keeps
+its own Overbridge stream with the box and adds to it.
 
-The mode presents the box maker's USB IDs to the computer, so it is for the owner's own use. It stays opt-in and is never
-on in a public card or build default.
+The mode presents the box maker's USB IDs to the computer, so it is for the owner's own use. It stays opt-in: CLASS
+COMPLIANT is the default of every card and build, and OVERBRIDGE runs only once chosen on the unit (or in cmdline.txt).
+
+## The setting: USB-C mode
+
+Like the Rytm's own USB CONFIG, the Sidecar's USB-C port is one thing at a time, picked on the Sidecar:
+
+| mode | word | the computer sees |
+|---|---|---|
+| CLASS COMPLIANT (default) | `class` | the Sidecar device: UAC2 audio 12 in / 12 out and USB MIDI (`docs/usb-audio-midi.md`) |
+| OVERBRIDGE | `overbridge` | the attached box itself, passed through (this page), the Sidecar device while no box is read |
+
+MIDI only and off are still cmdline.txt's `gadget=midi` / `gadget=0` (another gadget, chosen at boot): with either the
+setting has nothing to apply to, and the three places below say so ("not here"). They would be further modes of the same
+setting (`pi/engine/usb_mode.h`: its `Mode`, words and `modes()`); not done yet.
+
+**Where it is set.** All three send the console's `usbmode=` (`POST /cmd`, the pairing code's `X-Sidecar-Auth` as every
+setting's write):
+
+- the web page, Sound tab, **USB-C mode: Class compliant / Overbridge**, with what USB-C is now beside it (the Sidecar
+  device, the Rytm itself, replugging; "(cmdline.txt usb=)" when the mode comes from there) and, while OVERBRIDGE is set,
+  the warning below;
+- the touchscreen, Settings > **Sound**, USB-C MODE (CLASS / OVERBRIDGE), the same line under it;
+- the Rytm, **SIDECAR MENU > USB-C** (YES on the SIDECAR page, UP + YES, then the USB-C row): UP / DOWN or knob A pick CLASS
+  COMPLIANT or OVERBRIDGE, YES sets it, NO goes back. The page shows which one is SET, NOW (SIDECAR DEVICE, THE BOX,
+  REPLUG...), and OVERBRIDGE's short warning whenever it is under the cursor or set. It is drawn by the Pi (rytm-mods
+  0026's remote UI): no Rytm update.
+
+A mode this unit cannot run is greyed (web, touchscreen) or says NOT IN BUILD (Rytm): OVERBRIDGE without the mirror's
+Circle patches (`CIRCLE_GADGET_MIRROR`: both the Pi 4 and the Pi 5 builds have them now), both without the Sidecar
+gadget. The console refuses it too.
+
+**Stored, and which wins.** The choice is kept on the card as `usbmode=class|overbridge` in `/.rytm/display.txt` (written
+only once one is chosen). Where the mode comes from, first match wins:
+
+1. `usbmode=` in `/.rytm/display.txt` (chosen on the Sidecar);
+2. cmdline.txt's `usb=` (`mirror`: OVERBRIDGE, anything else: CLASS COMPLIANT), as before the setting;
+3. CLASS COMPLIANT.
+
+So a card with `usb=mirror` in cmdline.txt and nothing stored stays OVERBRIDGE, and a choice made on the Sidecar wins over
+cmdline.txt (unlike the display's keys, where cmdline wins: the Sidecar's own control has to work on a card someone set
+up by hand). `usbmode=cmdline` on the console drops the stored choice, so cmdline.txt (or the default) holds again;
+deleting the line from display.txt does the same at the next boot. `/status` says which: `"usbMode":{"set":"class|overbridge",
+"from":"card|cmdline|default","runs":...,"modes":["class","overbridge"],"shown":"sidecar|box|switching|none","boxUp":bool}`
+(`runs`: what runs, CLASS COMPLIANT where the unit cannot run the one set; `modes`: what it can run, `[]` without the
+Sidecar gadget; `shown`: what the computer sees now; `boxUp`: the box has been read and is up). The console's `usbmode`
+alone logs the same.
+
+**Applied at once.** A change switches USB-C live, with the same replug the mirror makes when the box comes and goes
+(below): to CLASS COMPLIANT while the box is shown, USB-C leaves the bus (`SoftDisconnect`), waits 300 ms and comes back
+as the Sidecar device; to OVERBRIDGE, a box that is up is read now (as one that came up before the gadget at boot,
+`CObUsb::MirrorWanted` -> `MirrorAttachLate`) and USB-C replugs as the box once it is. Nothing else changes: the Pi's own
+Overbridge stream with the box runs on, and no restart is needed. The computer sees an unplug and a plug-in, so its audio
+and MIDI apps lose the device for that moment: change it with the computer's DAW stopped.
+
+**The warning** (short on the touchscreen and the Rytm, in full on the web page and here): in OVERBRIDGE the box's
+vendor requests and Overbridge's async channel reach the box unfiltered, so an OS update from the computer (the transfer
+tool, Overbridge) can reach the box. `usbmidi=os:` filters MIDI only ("What the filters cover" below).
 
 ## How it works
 
@@ -67,8 +124,8 @@ unfiltered:
 
 So `usbmidi=os:off` does not stop a tool that updates the box over a vendor request or a pipe. The OS updates tested
 through the mirror (the transfer tool and a SysEx flasher) went over USB MIDI: the mirror line's MIDI counters carried
-the whole update to the box [hw]. With `usb=mirror` and any `usbmidi=os:` other than off, the engine logs a warning at
-start.
+the whole update to the box [hw]. With OVERBRIDGE (`usb=mirror` or the setting) and any `usbmidi=os:` other than off, the
+engine logs a warning at start and when the setting turns it on.
 
 ## Circle change
 
@@ -132,5 +189,9 @@ The review changes of 2026-11-05 on the same unit [hw]:
   Rytm back with " (SC)" on replug;
 - an OS update (stock 1.74) with elkflash over the mirrored MIDI port: 0 resends, the box back 0.3 s after its reboot
   dropped it, inside `mirrorhold`.
+
+The setting (2026-11-06): the unit tests (`pi/engine/tests/test_usb_mode.cpp`, `core/tests/test_ui.cpp`'s SIDECAR
+MENU > USB-C, `pi/engine/tests/page_seg.test.mjs`, the touchscreen's `pi/ui/host/shot.c`) and an object-only build for
+both boards; not yet run on hardware (the live switch both ways, the runtime read of a box that is up).
 
 The Pi log's `mirror` line counts every path.
