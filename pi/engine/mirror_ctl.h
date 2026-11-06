@@ -13,7 +13,8 @@
 // Each request has its sequence number; end () and box_gone () move it on, so an answer still on its way is dropped.
 //
 // drop_pipe_outs (): the other half of the box going away, on the pipes. A pipe OUT packet the computer sent and the
-// box never took leaves its gadget endpoint busy (it would NAK for good): each one is dropped and re-armed.
+// box never took leaves its gadget endpoint busy (it would NAK for good): each one is dropped and re-armed (re-armed
+// when active; an inactive one, as across a bus suspend, keeps no packet of the box and arms at its activation).
 #ifndef _mirror_ctl_h
 #define _mirror_ctl_h
 
@@ -36,7 +37,7 @@ struct Ctl
 	bool box_gone (void)			{ if (!at_box) return false; at_box = false; seq = seq + 1; return true; }
 };
 
-// EP: Role (), Active (), Busy (), Rearm () (sidecar_gadget.h CMirrorEP). The packets dropped.
+// EP: Role (), Busy (), Rearm () (sidecar_gadget.h CMirrorEP). The packets dropped.
 template <class EP>
 unsigned drop_pipe_outs (EP *const *ppEP, unsigned n)
 {
@@ -44,7 +45,7 @@ unsigned drop_pipe_outs (EP *const *ppEP, unsigned n)
 	for (unsigned k = 0; k < n; k++)
 	{
 		EP *p = ppEP[k];
-		if (p != 0 && p->Role () == kPipeOut && p->Active () && p->Busy ())
+		if (p != 0 && p->Role () == kPipeOut && p->Busy ())
 		{
 			nDropped++;
 			p->Rearm ();

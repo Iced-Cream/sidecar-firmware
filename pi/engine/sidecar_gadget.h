@@ -132,6 +132,9 @@ public:
 	CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h: back at the resume
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// (a resume without a reset)
+	boolean Active (void) const			{ return m_bActive; }
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
@@ -140,6 +143,7 @@ public:
 
 private:
 	CSidecarGadget *m_pSidecar;
+	mirror::EpWake m_Wake;				// a bus suspend and a resume without a reset (mirror_ep.h)
 	boolean m_bActive, m_bBusy;
 	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
 	DMA_BUFFER (u8, m_Buffer, BufSize);
@@ -163,13 +167,16 @@ public:
 	mirror::Role Role (void) const			{ return m_Role; }
 	u8 Address (void) const				{ return m_uchAddr; }
 	boolean Active (void) const			{ return m_bActive; }
-	boolean Busy (void) const			{ return m_bBusy; }
+	boolean Busy (void) const			{ return m_Role == mirror::kPipeOut ? m_Out.box : m_bBusy; }
+	boolean Armed (void) const			{ return IsTransferActive (); }	// mirror::OutGate
+	void ArmOut (void);
 	boolean Iso (void) const			{ return GetType () == TypeIsochronous; }	// mirror::cancel ()
 	void StopIso (void)				{ StopIsoTransfer (); }
 	void Cancel (void)				{ CancelTransfer (); }
 
 private:
 	mirror::EpWake m_Wake;
+	mirror::OutGate m_Out;				// audio and pipe OUT
 	CSidecarGadget *m_pSidecar;
 	mirror::Role m_Role;
 	u8 m_uchAddr;

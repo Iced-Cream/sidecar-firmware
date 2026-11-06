@@ -237,6 +237,7 @@ CSidecarMIDIEP::CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGad
 
 void CSidecarMIDIEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
 	m_bHeld = FALSE;
@@ -1144,8 +1145,8 @@ void CMirrorEP::OnActivate (void)
 {
 	m_Wake.activated ();
 	m_bActive = TRUE;
-	m_bBusy = FALSE;
-	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
+	m_bBusy = FALSE;				// (IN: the held packet went back to the box at the deactivation)
+	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) m_Out.arm (*this);	// not while the box owns one
 	else Kick ();
 }
 
@@ -1153,16 +1154,20 @@ void CMirrorEP::OnDeactivate (void)
 {
 	boolean bHeld = m_bBusy;
 	m_bActive = FALSE;
-	m_bBusy = FALSE;
+	m_bBusy = FALSE;				// pipe OUT: the box's ownership stays (m_Out)
 	mirror::cancel (*this);				// isochronous: stopped and waited for (mirror_ep.h)
 	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
 }
 
-// OUT: the next packet (whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer)
+// OUT: the box took the last packet (or it was dropped): the next one, when active (mirror_ep.h OutGate)
 void CMirrorEP::Rearm (void)
 {
-	if (!m_bActive) return;
-	m_bBusy = FALSE;
+	m_Out.done (*this);
+}
+
+// whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer
+void CMirrorEP::ArmOut (void)
+{
 	BeginTransfer (TransferDataOut, m_Buffer, (m_nMps + 3) & ~3u);
 }
 
@@ -1201,7 +1206,7 @@ void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
 		Rearm ();
 		break;
 	case mirror::kPipeOut:
-		m_bBusy = TRUE;					// NAKed until the box took it (MirrorPipeOutDone)
+		m_Out.taken ();					// NAKed until the box took it (MirrorPipeOutDone)
 		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
 		break;
 	case mirror::kPipeIn:
