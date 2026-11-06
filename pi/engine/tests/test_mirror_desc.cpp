@@ -173,6 +173,34 @@ int main ()
 		CHECK (r.dropped == 2 && r.head - r.tail == ExtraRing::kSlots);
 	}
 
+	// PipeGate (CObUsb::MirrorPause): CLASS COMPLIANT after an OVERBRIDGE session parks the box's pipes. A model of
+	// PipeInStub / MirrorPipeInNext / MirrorPipePoll: in CLASS no packet reaches the gadget (which has no endpoint for
+	// it: its pipe-in drop counter would climb), no IN request is renewed, no halt is cleared on EP0
+	{
+		PipeGate g;
+		unsigned delivered = 0, gadget_drops = 0, renewals = 0, clears = 0;
+		bool shown = true;					// OVERBRIDGE: the gadget has the pipe endpoint
+		auto packet = [&] {
+			if (!g.take_in ()) return;			// parked: no renewal either
+			if (shown) ++delivered;
+			else ++gadget_drops, ++renewals;		// (PipeInStub renews at once when the gadget drops it)
+		};
+		for (int i = 0; i < 10; i++) packet ();
+		CHECK (delivered == 10 && gadget_drops == 0 && g.renew () && g.clear_halts ());
+		g.paused = true, shown = false;				// CLASS COMPLIANT (SetMirror (FALSE))
+		for (int i = 0; i < 1000; i++) { packet (); if (g.renew ()) ++renewals; if (g.clear_halts ()) ++clears; }
+		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0 && g.parked == 1000 && delivered == 10);
+		g.paused = false, shown = true;				// OVERBRIDGE again: renewed, delivered
+		CHECK (g.renew () && g.clear_halts ());
+		packet ();
+		CHECK (delivered == 11 && gadget_drops == 0);
+		// without the gate (the review's M3): every packet in CLASS was a gadget drop and an immediate renewal
+		PipeGate open;
+		unsigned d2 = 0;
+		for (int i = 0; i < 1000; i++) if (open.take_in ()) ++d2;
+		CHECK (d2 == 1000);
+	}
+
 	printf ("test_mirror_desc: ok\n");
 	return 0;
 }

@@ -397,9 +397,11 @@ void CSidecarGadget::SetMirror (boolean bOn)
 	if (bOn)
 	{
 		m_bMirUsed = TRUE;
-		CObUsb::MirrorWanted ();		// a box up now is read; MirrorPoll shows it once it is (MirrorBoxUp)
+		CObUsb::MirrorPause (FALSE);		// a box read before: its pipes renewed
+		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
 		return;
 	}
+	CObUsb::MirrorPause (TRUE);			// a read box's pipes parked: nothing of them while CLASS COMPLIANT runs
 	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
 	else if (m_bShowMirror)
 	{

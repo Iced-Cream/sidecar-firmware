@@ -540,6 +540,21 @@ void CObUsb::MirrorAttachLate (void)
 	p->MirrorAttach ();
 }
 
+static mirror::PipeGate s_PipeGate;		// CLASS COMPLIANT after OVERBRIDGE: the pipes parked (mirror_desc.h)
+
+// core 0's loop (the gadget's SetMirror): the pipes of a box read in OVERBRIDGE parked while CLASS COMPLIANT runs, and
+// renewed when OVERBRIDGE comes back (the box is shown again by MirrorPoll: still read and up)
+void CObUsb::MirrorPause (boolean bPause)
+{
+	s_PipeGate.paused = bPause;
+	CObUsb *p = s_pThis;
+	if (bPause || p == 0 || !p->m_bMirror) return;
+	EnterCritical (IRQ_LEVEL);
+	for (unsigned i = 0; i < p->m_nPipes; i++)
+		if ((p->m_Pipe[i].uchAddr & 0x80) && !p->m_Pipe[i].bBusy && !p->m_Pipe[i].bStopped) p->SubmitPipeIn (i);
+	LeaveCritical ();
+}
+
 // core 0's loop (the gadget's SetMirror): the USB-C mode set to OVERBRIDGE at run time. A box that streams and was not read
 // (the mode was CLASS COMPLIANT at its Configure) is read by the next MirrorAttachLate, as one configured before the gadget
 void CObUsb::MirrorWanted (void)
@@ -662,6 +677,7 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
 	p.nPackets++;
+	if (!s_PipeGate.take_in ()) return;		// CLASS COMPLIANT: parked until OVERBRIDGE (MirrorPause)
 	CSidecarGadget *pGadget = CSidecarGadget::Get ();
 	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn (ParamIndex (pParam));
 }
@@ -669,7 +685,7 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 void CObUsb::MirrorPipeInNext (u8 uchAddr)
 {
 	CObUsb *pThis = s_pThis;
-	if (pThis == 0) return;
+	if (pThis == 0 || !s_PipeGate.renew ()) return;
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 		if (pThis->m_Pipe[i].uchAddr == uchAddr && !pThis->m_Pipe[i].bBusy && !pThis->m_Pipe[i].bStopped) pThis->SubmitPipeIn (i);
 }
@@ -753,7 +769,7 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 void CObUsb::MirrorPipePoll (void)
 {
 	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || !pThis->m_bMirror) return;
+	if (pThis == 0 || !pThis->m_bMirror || !s_PipeGate.clear_halts ()) return;	// parked: no EP0 traffic in CLASS COMPLIANT
 	const unsigned nNow = CTimer::Get ()->GetTicks ();
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 	{
@@ -790,6 +806,7 @@ unsigned CObUsb::MirrorPipeResets (void)
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
+void CObUsb::MirrorPause (boolean)					{}
 void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}
