@@ -542,17 +542,27 @@ void CObUsb::MirrorAttachLate (void)
 
 static mirror::PipeGate s_PipeGate;		// CLASS COMPLIANT after OVERBRIDGE: the pipes parked (mirror_desc.h)
 
-// core 0's loop (the gadget's SetMirror): the pipes of a box read in OVERBRIDGE parked while CLASS COMPLIANT runs, and
-// renewed when OVERBRIDGE comes back (the box is shown again by MirrorPoll: still read and up)
-void CObUsb::MirrorPause (boolean bPause)
+// task level (SetMirror, MirrorPoll): the box's pipes parked until its endpoints are up on the computer's side
+void CObUsb::MirrorPark (void)
 {
-	s_PipeGate.paused = bPause;
+	s_PipeGate.mode_changed ();
+}
+
+// gadget IRQ (CMirrorEP::OnActivate): the computer configured the box's endpoints: the pipes run, the idle IN ones renewed
+void CObUsb::MirrorResume (void)
+{
+	if (!s_PipeGate.box_active ()) return;
 	CObUsb *p = s_pThis;
-	if (bPause || p == 0 || !p->m_bMirror) return;
+	if (p == 0 || !p->m_bMirror) return;
 	EnterCritical (IRQ_LEVEL);
 	for (unsigned i = 0; i < p->m_nPipes; i++)
 		if ((p->m_Pipe[i].uchAddr & 0x80) && !p->m_Pipe[i].bBusy && !p->m_Pipe[i].bStopped) p->SubmitPipeIn (i);
 	LeaveCritical ();
+}
+
+unsigned CObUsb::MirrorParked (void)
+{
+	return s_PipeGate.parked;
 }
 
 // core 0's loop (the gadget's SetMirror): the USB-C mode set to OVERBRIDGE at run time. A box that streams and was not read
@@ -646,7 +656,7 @@ void CObUsb::MirrorAttach (void)
 		m_nPipes++;
 	}
 	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
+	for (unsigned i = 0; i < m_nPipes; i++) if ((m_Pipe[i].uchAddr & 0x80) && s_PipeGate.renew ()) SubmitPipeIn (i);	// parked: at MirrorResume
 	LeaveCritical ();
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
 	pGadget->MirrorBoxUp (TRUE);
@@ -676,8 +686,8 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	p.nTries = 0;
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
+	if (!s_PipeGate.take_in ()) return;		// parked (counted there, not as traffic) until MirrorResume
 	p.nPackets++;
-	if (!s_PipeGate.take_in ()) return;		// CLASS COMPLIANT: parked until OVERBRIDGE (MirrorPause)
 	CSidecarGadget *pGadget = CSidecarGadget::Get ();
 	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn (ParamIndex (pParam));
 }
@@ -806,7 +816,9 @@ unsigned CObUsb::MirrorPipeResets (void)
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
-void CObUsb::MirrorPause (boolean)					{}
+void CObUsb::MirrorPark (void)						{}
+void CObUsb::MirrorResume (void)					{}
+unsigned CObUsb::MirrorParked (void)					{ return 0; }
 void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}

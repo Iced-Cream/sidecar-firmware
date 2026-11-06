@@ -397,11 +397,11 @@ void CSidecarGadget::SetMirror (boolean bOn)
 	if (bOn)
 	{
 		m_bMirUsed = TRUE;
-		CObUsb::MirrorPause (FALSE);		// a box read before: its pipes renewed
+		CObUsb::MirrorPark ();			// the Sidecar device is shown until the replug: the pipes wait for the box's EPs
 		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
 		return;
 	}
-	CObUsb::MirrorPause (TRUE);			// a read box's pipes parked: nothing of them while CLASS COMPLIANT runs
+	CObUsb::MirrorPark ();			// a read box's pipes parked: nothing of them while CLASS COMPLIANT runs
 	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
 	else if (m_bShowMirror)
 	{
@@ -1147,6 +1147,7 @@ void CMirrorEP::OnActivate (void)
 {
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
+	CObUsb::MirrorResume ();			// the computer configured the box's endpoints: its pipes run (once a switch)
 	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
 	else Kick ();
 }
@@ -1521,6 +1522,7 @@ void CSidecarGadget::MirrorPoll (void)
 		m_bCtlPending = m_bCtlAtBox = FALSE;
 		m_nCtlSeq++;
 		LeaveCritical ();
+		if (!m_bShowMirror) CObUsb::MirrorPark ();	// back as the Sidecar device: the pipes wait (MirrorResume)
 		boolean bOK = SoftConnect ();
 		m_bSwitching = FALSE;
 		CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "usb=mirror: USB-C %s as %s", bOK ? "back" : "failed to come back",
@@ -1567,11 +1569,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	LeaveCritical ();
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
-		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u | alt bad %u | "
+		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
 		"midi from %u to-mac %u to-rytm %u filtered %u/%u full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
 		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
-		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), s.nAltBad,
+		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
 }
