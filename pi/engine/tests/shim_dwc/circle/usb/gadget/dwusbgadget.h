@@ -17,7 +17,7 @@ public:
   boolean SetConfiguration (u8) { ++set_config; return TRUE; }
   boolean OnSetInterface (u8, u8) { ++set_interface; return TRUE; }
   int OnGetInterface (u8) { return 0; }
-  int OnClassOrVendorRequest (const TSetupData *, u8 *) { return -1; }
+  int OnClassOrVendorRequest (const TSetupData *pSetup, u8 *) { ++class_requests; return pSetup->bmRequestType & REQUEST_IN ? -1 : 0; }
   int OnControlRequest (const TSetupData *pSetup, const u8 *pOutData) {
     requests.push_back (*pSetup);
     if (pOutData && pSetup->wLength) out_data.assign (pOutData, pOutData + pSetup->wLength);
@@ -31,7 +31,7 @@ public:
   CDWUSBGadgetEndpoint *m_pEP[NumberOfEPs + 1] = {};
   u8 m_Desc[18] = {18, 1};
   bool defer = true;
-  int aborted = 0, set_interface = 0, set_address = 0, set_config = 0;
+  int aborted = 0, set_interface = 0, set_address = 0, set_config = 0, class_requests = 0;
   std::vector<TSetupData> requests;
   std::vector<u8> out_data;
 };
