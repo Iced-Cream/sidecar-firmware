@@ -46,7 +46,7 @@ static bool IsInt (u32 a)
 	return false;
 }
 
-u32 FakeRead (u32 a) { return g_Reg[a]; }
+u32 FakeRead (u32 a) { return a == DWHCI_CORE_RESET ? g_Reg[a] | DWHCI_CORE_RESET_AHB_IDLE : g_Reg[a]; }
 
 void FakeWrite (u32 a, u32 v)
 {
@@ -58,6 +58,10 @@ void FakeWrite (u32 a, u32 v)
 				| DWHCI_DEV_EP_CTRL_SETDPID_D0 | DWHCI_DEV_EP_CTRL_SETDPID_D1 | DWHCI_DEV_EP_CTRL_EP_ENABLE;
 		u32 old = g_Reg[a];
 		u32 now = (v & ~Act) | (old & DWHCI_DEV_EP_CTRL_EP_ENABLE) | (v & DWHCI_DEV_EP_CTRL_EP_ENABLE);
+		if (bIn && (v & DWHCI_DEV_EP_CTRL_SET_NAK))	// the NAK takes effect at once here
+		{
+			g_Reg[DWHCI_DEV_IN_EP_INT (ep)] |= DWHCI_DEV_IN_EP_INT_IN_EP_NAK_EFF;
+		}
 		if ((v & DWHCI_DEV_EP_CTRL_EP_DISABLE) && (old & DWHCI_DEV_EP_CTRL_EP_ENABLE) && !(ep == 0 && !bIn))
 		{
 			now &= ~DWHCI_DEV_EP_CTRL_EP_ENABLE;
@@ -98,8 +102,9 @@ static const u32 Ena = DWHCI_DEV_EP_CTRL_EP_ENABLE;
 static void OutIrq (unsigned ep) { g_Gadget.OutIrq (ep); }
 static void InIrq (unsigned ep) { g_Gadget.InIrq (ep); }
 
-// a SETUP: ACKed whatever EP0 OUT's state, written where DOEPDMA0 points (stale or not), SETUP done raised
-static void Setup (u8 uchType, u8 uchRequest, u16 wValue, u16 wIndex, u16 wLength)
+// a SETUP: ACKed whatever EP0 OUT's state, written where DOEPDMA0 points (stale or not), the SETUP count down by one,
+// SETUP done raised; its IRQ handled at once, or (bIrq false) still to come
+static void Setup (u8 uchType, u8 uchRequest, u16 wValue, u16 wIndex, u16 wLength, bool bIrq = true)
 {
 	u8 s[8] = {uchType, uchRequest, (u8) wValue, (u8) (wValue >> 8), (u8) wIndex, (u8) (wIndex >> 8), (u8) wLength,
 		   (u8) (wLength >> 8)};
@@ -109,10 +114,12 @@ static void Setup (u8 uchType, u8 uchRequest, u16 wValue, u16 wIndex, u16 wLengt
 	g_Reg[DWHCI_DEV_OUT_EP_DMA_ADDR (0)] += 8;
 	u32 &t = g_Reg[DWHCI_DEV_OUT_EP_XFER_SIZ (0)];
 	t = (t & ~0x7Fu) | ((t & 0x7F) >= 8 ? (t & 0x7F) - 8 : 0);	// the transfer size counts it
+	unsigned nSup = (t >> 29) & 3;
+	t = (t & ~(3u << 29)) | (nSup ? nSup - 1 : 0) << 29;		// and the SETUP count
 	g_Reg[DWHCI_DEV_OUT_EP_CTRL (0)] &= ~(Ena | DWHCI_DEV_EP_CTRL_STALL);
 	g_Reg[DWHCI_DEV_IN_EP_CTRL (0)] &= ~DWHCI_DEV_EP_CTRL_STALL;
 	g_Reg[DWHCI_DEV_OUT_EP_INT (0)] |= DWHCI_DEV_OUT_EP_INT_SETUP_DONE;
-	OutIrq (0);
+	if (bIrq) OutIrq (0);
 }
 
 enum { NAK = -1, STALL = -2 };
@@ -274,6 +281,46 @@ int main (void)
 		CHECK (p->done == 1);
 		delete p;
 	}
+	{	// the box's answer comes as the host's next SETUP is in but its IRQ not handled yet (SETUP done pending, the
+		// SETUP count down): not armed, or the new request's first IN token would get the old answer
+		Setup (VendorIn, 12, 0, 0, 16);
+		int nAborted = g_Gadget.aborted;
+		Setup (VendorIn, 13, 0, 0, 16, false);
+		CHECK (g_pEP0->CompleteDeferred ("stale", 5));
+		CHECK (In () == NAK);
+		OutIrq (0);				// now the SETUP's IRQ: the old request aborted, the new one deferred
+		CHECK (g_Gadget.aborted == nAborted + 1 && g_Gadget.requests.back ().bRequest == 13 && In () == NAK);
+		Answer ("fresh");
+		// the count alone (SETUP done already acknowledged elsewhere is not a case; the count is what the core keeps)
+		Setup (VendorIn, 14, 0, 0, 16);
+		u32 &t = g_Reg[DWHCI_DEV_OUT_EP_XFER_SIZ (0)];
+		t &= ~(3u << 29);
+		CHECK (g_pEP0->CompleteDeferred ("stale", 5) && In () == NAK);
+		Setup (VendorIn, 15, 0, 0, 16);
+		Answer ("fresh");
+	}
+	{	// an answer shorter than asked that ends on a packet boundary: a zero-length packet closes the data stage
+		static char Big[129];
+		memset (Big, 'x', 128);
+		for (unsigned n : {64u, 128u})
+		{
+			Setup (VendorIn, 16, 0, 0, 512);
+			CHECK (g_pEP0->CompleteDeferred (Big, (int) n));
+			for (unsigned k = 0; k < n / 64; k++) CHECK (In () == 64);
+			CHECK (In () == 0);		// the zero-length packet
+			CHECK (In () == NAK);
+			CHECK (Out (nullptr, 0));	// the status stage
+		}
+		Setup (VendorIn, 17, 0, 0, 64);		// all that was asked: no zero-length packet
+		CHECK (g_pEP0->CompleteDeferred (Big, 64));
+		CHECK (In () == 64 && In () == NAK);
+		CHECK (Out (nullptr, 0));
+		Setup (VendorIn, 18, 0, 0, 512);	// shorter, not on a boundary: none either
+		CHECK (g_pEP0->CompleteDeferred (Big, 70));
+		CHECK (In () == 64 && In () == 6 && In () == NAK);
+		CHECK (Out (nullptr, 0));
+	}
+	CHECK (CDWUSBGadgetEndpoint::GetWaitTimeouts () == 0);
 	CHECK (g_nPanics == 0);
 	puts ("test_gadget_ep0: ok");
 	return 0;
