@@ -415,9 +415,9 @@ CORE_COLD bool usb_key(int code) {
   }
   if (code != kYes || !h) return false;
   const unsigned modes = h->modes ? h->modes() : 0;
-  if (!modes) web_note("USB-C: CMDLINE GADGET=");
-  else if (!(modes & 1u << M.ucur)) web_note("NOT IN THIS BUILD");
-  else if (h->mode && h->mode() == M.ucur) web_note(M.ucur == kObRow ? "OVERBRIDGE ALREADY" : "CLASS ALREADY");
+  if (!modes) M.uconfirm = false, web_note("USB-C: CMDLINE GADGET=");
+  else if (!(modes & 1u << M.ucur)) M.uconfirm = false, web_note("NOT IN THIS BUILD");
+  else if (h->mode && h->mode() == M.ucur) M.uconfirm = false, web_note(M.ucur == kObRow ? "OVERBRIDGE ALREADY" : "CLASS ALREADY");
   else if (M.ucur == kObRow && !M.uconfirm) M.uconfirm = true;   // the box's requests unfiltered: asked once more
   else {
     M.uconfirm = false;
