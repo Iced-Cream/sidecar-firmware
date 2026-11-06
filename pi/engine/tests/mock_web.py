@@ -48,7 +48,7 @@ KEPT = {"/.rytm", "/samples", "/plugins"}
 UP = {}
 BUNDLE = {"job": "none", "phase": "IDLE", "done": 0, "total": 0, "msg": "", "key": "", "t": 0}
 STATE = {"screensaver": 60, "brightness": 100, "notes": False, "out": "main", "mac": True, "drone": -1, "fifo": 96,
-         "machines": ["PLAITS"] * 8}
+         "machines": ["PLAITS"] * 8, "usbmode": "class", "usbfrom": "default"}
 IGNORE = os.environ.get("MOCK_IGNORE", "")   # e.g. "out,mac": those commands are accepted but change nothing
 # IN L/R source (core::fxin, host_link.cpp): the setting and the Rytm's answer; MOCK_FXIN=old: a Rytm without 0030 (no answer)
 FXIN = {"want": 0, "rytm": -1 if os.environ.get("MOCK_FXIN") == "old" else 0}
@@ -150,6 +150,8 @@ def state_cmd(c):
         STATE["out"] = "tracks" if v == "tracks" else "main"
     elif k == "mac":
         STATE["mac"] = v == "on"
+    elif k == "usbmode" and v in ("class", "overbridge", "cmdline"):   # kernel.cpp UsbCommand (no cmdline usb= here)
+        STATE["usbmode"], STATE["usbfrom"] = ("class", "default") if v == "cmdline" else (v, "card")
     elif k == "drone":
         STATE["drone"] = 8 if v == "all" else -1 if v == "off" else int(v) if v.isdigit() and int(v) < 8 else -1
     elif k == "fifo" and v.isdigit():
@@ -1121,6 +1123,8 @@ class H(BaseHTTPRequestHandler):
                 "ip": "169.254.61.60", "link": "usb", "gadget": "sidecar", "sidecar": True, "mac": STATE["mac"], "usbHost": True, "streaming": True,
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,
                 "machines": STATE["machines"],
+                "usbMode": {"set": STATE["usbmode"], "from": STATE["usbfrom"], "runs": STATE["usbmode"], "modes": ["class", "overbridge"],
+                            "shown": "box" if STATE["usbmode"] == "overbridge" else "sidecar", "boxUp": True},
                 "fx": [{"type": "PLATE", "post": 0, "send": [0, 20, 64, 127, 0, 0, 0, 90, 0, 0, 10, 0]},
                        {"type": "OFF", "post": 1, "send": [0] * 12}],
                 "version": "0.1.0", "commit": "abc1234", "dirty": False, "build": "Oct 17 2026 12:00:00", "circle": "Circle 50.0", "screensaver": STATE["screensaver"],
