@@ -163,9 +163,9 @@ build/dwc/.patched: $(DWC_PATCHES) ../../circle/gadget_wake.h ../../circle/gadge
 	@cp ../../circle/gadget_flush.h build/dwc/include/circle/usb/gadget/gadgetflush.h
 	@cd build/dwc && for p in $(DWC_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
 	@touch $@
-build/test_gadget_ep0: test_gadget_ep0.cpp build/dwc/.patched $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
+build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
-	  -Ishim_dwc -Ibuild/dwc/include -I. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
+	  -Ishim_dwc -Ibuild/dwc/include -I. -I.. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
 	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp
 build/test_stor_fatfs: build/fatfs-fat/ff.h $(FATFS_DEPS)
 	cc -O1 -g -w -c -o build/fatfs-fat/ff.o build/fatfs-fat/ff.c && cc -O1 -g -w -c -o build/fatfs-fat/ffunicode.o build/fatfs-fat/ffunicode.c
