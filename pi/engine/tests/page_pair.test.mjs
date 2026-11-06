@@ -206,6 +206,27 @@ test("/cmd refuses usbmidi= and osupdate=", () => {
   assert.match(gadget, /strncmp \(p, "usbmidi=", 8\) == 0 \|\| strncmp \(p, "osupdate=", 9\) == 0/);
 });
 
+// usbmode=overbridge (the box's requests and async channel unfiltered): /cmd takes it only with the strict same-origin
+// check (usb_mode.h raises), as POST /midibridge/set; class / cmdline lower the exposure and stay lenient
+test("/cmd takes usbmode=overbridge only from this page (strict)", async (t) => {
+  const body = WEB_CPP.slice(WEB_CPP.indexOf("THTTPStatus CWebServer::GetContent"));
+  assert.match(cmdRefusal(body), /\(usb_mode::raises \(Cmd\) && !FromPage \(m_pNet, GetRequestHost \(\), GetRequestOrigin \(\), GetRequestReferer \(\), TRUE\)\)/);
+  const hdr = readFileSync(join(HERE, "..", "usb_mode.h"), "utf8");
+  assert.match(hdr, /strcmp \(v, "class"\) != 0 && strcmp \(v, "sidecar"\) != 0 && strcmp \(v, "cmdline"\) != 0/);
+  // mock_web plays the same rule: no Origin / Referer (a tool) is enough for class, not for overbridge
+  const card = mkdtempSync(join(tmpdir(), "sidecar-usbmode-"));
+  const pi = await start(t, card, { MOCK_PAIR: "0" });
+  const raw = (c, headers) => fetch(pi.base + "/cmd", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
+    body: "c=" + encodeURIComponent(c) });
+  assert.equal((await raw("usbmode=overbridge", {})).status, 400);
+  assert.equal((await pi.json("/status")).usbMode.set, "class");
+  assert.equal((await raw("usbmode=overbridge", { Origin: "http://evil.example" })).status, 400);
+  assert.equal((await raw("usbmode=overbridge", { Origin: pi.base })).status, 200);
+  assert.equal((await pi.json("/status")).usbMode.set, "overbridge");
+  assert.equal((await raw("usbmode=class", {})).status, 200);
+  assert.equal((await pi.json("/status")).usbMode.set, "class");
+});
+
 test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   const card = mkdtempSync(join(tmpdir(), "sidecar-pair-"));
   const pi = await start(t, card, { MOCK_PAIR_LOCK: "2", MOCK_PAIR_GAP: "0.2" });

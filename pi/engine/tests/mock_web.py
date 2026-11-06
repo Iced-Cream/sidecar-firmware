@@ -1150,6 +1150,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(("%d %d\n" % (since, since + len(data))).encode() + data)
         if p == "/cmd":
             c = parse_qs(body.decode()).get("c", [q.get("c", "")])[0]
+            # web.cpp: usbmode= raising the exposure (anything but class / sidecar / cmdline) only same-origin (strict)
+            if c.startswith("usbmode=") and c[8:] not in ("class", "sidecar", "cmdline") and not same_origin(self.headers):
+                return self.send_error(400)
             log("web: command :%s" % c)
             um_cmd(c)
             lists_cmd(c)

@@ -58,6 +58,11 @@ int main ()
 	CHECK (effective (kMirror, 1u) == kSidecar && effective (kMirror, 0u) == kSidecar);	// no mirror in the build: the Sidecar device
 	CHECK (kModes == 2);
 
+	// /cmd (web.cpp): a line that raises USB-C's exposure needs the strict same-origin check, as midibridge=
+	CHECK (raises ("usbmode=overbridge") && raises ("usbmode=mirror") && raises ("usbmode=") && raises ("usbmode=junk"));
+	CHECK (!raises ("usbmode=class") && !raises ("usbmode=sidecar") && !raises ("usbmode=cmdline") && !raises ("usbmode"));
+	CHECK (!raises ("notes=1") && !raises ("usbmidi=os:on"));		// (usbmidi= is refused on /cmd outright)
+
 	puts ("usb_mode: PASS");
 	return 0;
 }

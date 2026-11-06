@@ -50,6 +50,15 @@ inline bool from_text (const char *pText, Mode *pMode, bool *pFound)
 	return p != 0 && parse_line (p + 8, pMode);
 }
 
+// A console line that may raise USB-C's exposure (usbmode= anything but class, sidecar or cmdline: OVERBRIDGE passes the
+// box's requests through unfiltered): web.cpp's /cmd takes it only with the strict same-origin check, as midibridge=
+inline bool raises (const char *pCmd)
+{
+	if (strncmp (pCmd, "usbmode=", 8) != 0) return false;
+	const char *v = pCmd + 8;
+	return strcmp (v, "class") != 0 && strcmp (v, "sidecar") != 0 && strcmp (v, "cmdline") != 0;
+}
+
 inline const char *name (Mode m)		{ return m == kMirror ? "overbridge" : "class"; }	// the setting's word
 inline const char *from_name (From f)		{ return f == kCard ? "card" : f == kCmdline ? "cmdline" : "default"; }
 

@@ -61,7 +61,8 @@ test("mock_web: commands change /status (machines per voice, fifo limit), MOCK_I
   for (let i = 0; i < 50 && !s; i++) { try { s = await (await fetch(base + "/status")).json(); } catch { await new Promise((r) => setTimeout(r, 100)); } }
   assert.ok(s, "mock_web answers");
   assert.equal(s.machines.length, 8); assert.equal(s.machines[0], "PLAITS");
-  const cmd = (c) => fetch(base + "/cmd", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "c=" + encodeURIComponent(c) });
+  const cmd = (c) => fetch(base + "/cmd", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: base },   // (as the page: usbmode=overbridge needs it)
+    body: "c=" + encodeURIComponent(c) });
   for (const c of ["notes=1", "out=tracks", "mac=off", "drone=2", "fifo=8", "notemach=3:juno"]) await cmd(c);
   s = await (await fetch(base + "/status")).json();
   assert.equal(s.notes, true); assert.equal(s.out, "tracks"); assert.equal(s.mac, true);
@@ -100,6 +101,14 @@ test("USB-C mode: chosen, disabled where it cannot run, what USB-C is now, the w
   paint({ gadget: "sidecar", usbMode: { set: "overbridge", from: "card", runs: "class", modes: ["class"], shown: "sidecar", boxUp: false } });
   assert.equal(bs[1].disabled, true); assert.match(bs[1].title, /not in this build/);
   assert.equal(el["#usbnow"].textContent, "now: the Sidecar device; not in this build: class compliant runs");
+
+  // the warning before it is set: while Overbridge is pending (the click confirmed), and a confirm() before the click
+  const pendOb = { want: (k) => (k === "usbmode" ? "overbridge" : undefined) };
+  run(docU, (q) => el[q], pendOb, true, { gadget: "sidecar", usbMode: { set: "class", from: "default", runs: "class", modes: ["class", "overbridge"], shown: "sidecar", boxUp: true } });
+  assert.equal(el["#usb-warn"].hidden, false);
+  assert.match(page, /k === "usbmode" && b\.dataset\.val === "overbridge" && chosen\(k\) !== "overbridge" && !confirm\(USB_OB_WARN\)\) return;/);
+  const w = page.slice(page.indexOf("const USB_OB_WARN"), page.indexOf("const USB_OB_WARN") + 400);
+  assert.match(w, /unfiltered/); assert.match(w, /usbmidi=os:/); assert.match(w, /not during a transfer or an OS update/);
 
   paint({ gadget: "midi", usbMode: { set: "class", from: "default", runs: "class", modes: [], shown: "none", boxUp: false } });
   assert.equal(bs[0].disabled, true); assert.equal(bs[1].disabled, true);
