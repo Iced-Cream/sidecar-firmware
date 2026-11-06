@@ -223,32 +223,53 @@ int main ()
 		CHECK (pushed == 1000 && popped == 934 && r.head - r.tail == 66);	// the last 200 blocks: 66 not due yet
 	}
 
-	// PipeGate (CObUsb::MirrorPause): CLASS COMPLIANT after an OVERBRIDGE session parks the box's pipes. A model of
-	// PipeInStub / MirrorPipeInNext / MirrorPipePoll: in CLASS no packet reaches the gadget (which has no endpoint for
-	// it: its pipe-in drop counter would climb), no IN request is renewed, no halt is cleared on EP0
+	// PipeGate (CObUsb::MirrorPark / MirrorResume): the box's pipes run only while the computer has the box's endpoints.
+	// A model of the call sites - SetMirror (either way: MirrorPark), MirrorPoll's switch completion (back as the Sidecar
+	// device: MirrorPark), CMirrorEP::OnActivate (MirrorResume) - and of PipeInStub / MirrorPipeInNext / MirrorPipePoll.
+	// A packet while no box endpoint is active would be a gadget drop and an immediate renewal in the xHCI IRQ (the
+	// review's M3 loop; N1: also in the gap after SetMirror (TRUE), the Sidecar device still shown until the replug and
+	// the host's enumeration)
 	{
 		PipeGate g;
 		unsigned delivered = 0, gadget_drops = 0, renewals = 0, clears = 0;
-		bool shown = true;					// OVERBRIDGE: the gadget has the pipe endpoint
+		bool active = false;					// a box endpoint active on the computer's side
 		auto packet = [&] {
-			if (!g.take_in ()) return;			// parked: no renewal either
-			if (shown) ++delivered;
-			else ++gadget_drops, ++renewals;		// (PipeInStub renews at once when the gadget drops it)
+			if (!g.take_in ()) return;			// parked: not delivered, not renewed
+			if (active) ++delivered;
+			else ++gadget_drops, ++renewals;		// PipeInStub renews at once when the gadget drops it
 		};
+		auto idle = [&] { if (g.renew ()) ++renewals; if (g.clear_halts ()) ++clears; };
+		auto set_mirror = [&] (bool) { g.mode_changed (); };	// SetMirror: MirrorPark either way
+		auto switched = [&] (bool shown) { if (!shown) g.shown_sidecar (); active = false; };	// MirrorPoll after the 300 ms
+		auto ep_active = [&] { active = true; if (g.box_active ()) ++renewals; };		// OnActivate: MirrorResume
+		// OVERBRIDGE at boot: parked until the computer configured the box (the attach submits nothing meanwhile)
+		set_mirror (true);
+		for (int i = 0; i < 100; i++) { packet (); idle (); }
+		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0);
+		switched (true), ep_active ();
+		CHECK (renewals == 1 && g.renew () && g.clear_halts ());
 		for (int i = 0; i < 10; i++) packet ();
-		CHECK (delivered == 10 && gadget_drops == 0 && g.renew () && g.clear_halts ());
-		g.paused = true, shown = false;				// CLASS COMPLIANT (SetMirror (FALSE))
-		for (int i = 0; i < 1000; i++) { packet (); if (g.renew ()) ++renewals; if (g.clear_halts ()) ++clears; }
-		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0 && g.parked == 1000 && delivered == 10);
-		g.paused = false, shown = true;				// OVERBRIDGE again: renewed, delivered
-		CHECK (g.renew () && g.clear_halts ());
+		CHECK (delivered == 10 && gadget_drops == 0);
+		// CLASS COMPLIANT (M3): nothing of the pipes
+		renewals = 0;
+		set_mirror (false);
+		for (int i = 0; i < 1000; i++) { packet (); idle (); }
+		switched (false);
+		for (int i = 0; i < 1000; i++) { packet (); idle (); }
+		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0 && delivered == 10);
+		// OVERBRIDGE again (N1): the Sidecar device still shown until the replug and the host's SET_CONFIGURATION
+		set_mirror (true);
+		for (int i = 0; i < 1000; i++) { packet (); idle (); }
+		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0);
+		switched (true);					// on the bus as the box, not configured yet
+		for (int i = 0; i < 1000; i++) { packet (); idle (); }
+		CHECK (gadget_drops == 0 && renewals == 0 && clears == 0 && g.parked == 4100);
+		ep_active ();
+		CHECK (renewals == 1);
 		packet ();
 		CHECK (delivered == 11 && gadget_drops == 0);
-		// without the gate (the review's M3): every packet in CLASS was a gadget drop and an immediate renewal
-		PipeGate open;
-		unsigned d2 = 0;
-		for (int i = 0; i < 1000; i++) if (open.take_in ()) ++d2;
-		CHECK (d2 == 1000);
+		ep_active ();						// another of its endpoints: no second renewal
+		CHECK (renewals == 1);
 	}
 
 	printf ("test_mirror_desc: ok\n");

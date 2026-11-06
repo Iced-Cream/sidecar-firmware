@@ -264,13 +264,23 @@ struct ExtraRing
 	}
 };
 
-// The box's pipes while the USB-C mode is CLASS COMPLIANT after an OVERBRIDGE session (CObUsb::MirrorPause): the box was
-// read and its pipes stay open, but parked - an IN packet goes neither to the gadget (it has no endpoint for it, so it
-// would be a drop) nor gets its request renewed, and MirrorPipePoll sends no CLEAR_FEATURE on EP0. Back on OVERBRIDGE
-// each idle IN pipe is renewed. The IN request in flight at the pause completes at most once more: parked counts those.
+// The box's pipes run only while the computer sees the box with its endpoints up (CObUsb::MirrorPark, MirrorResume). Parked - an IN
+// packet goes neither to the gadget (it has no active endpoint for it, so it would be a drop, and PipeInStub would renew
+// the request at once in the xHCI IRQ) nor gets its request renewed, and MirrorPipePoll sends no CLEAR_FEATURE on EP0 -
+// from any change of the USB-C mode (SetMirror, either way: to OVERBRIDGE the Sidecar device is still shown until the
+// replug and the host's enumeration) and from a switch back to the Sidecar device, until the first of the box's
+// endpoints is activated on the computer's side (CMirrorEP::OnActivate: its SET_CONFIGURATION), which renews each idle
+// IN pipe. The IN request in flight at a pause completes at most once more: parked counts those (the mirror line).
 struct PipeGate {
   volatile bool paused = false;
   volatile unsigned parked = 0;
+  void mode_changed() { paused = true; }        // SetMirror, either way
+  void shown_sidecar() { paused = true; }       // a switch came back as the Sidecar device
+  bool box_active() {                            // a box endpoint activated: true when this resumed the pipes
+    const bool was = paused;
+    paused = false;
+    return was;
+  }
   bool take_in() {                     // xHCI IRQ: an IN packet; true: to the gadget (it renews the request)
     if (paused) { parked = parked + 1; return false; }
     return true;
