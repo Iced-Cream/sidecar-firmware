@@ -1,15 +1,15 @@
 # usb=mirror: the box itself on the USB-C side
 
-Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below). Pi 4 only: the Pi 5
-builds without it.
+Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below).
+Pi 5: built in (`PI5_GADGET=1`, the default), in testing: not yet run with a box (see "The Pi 5" below).
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
 (1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
 the box maker's own software (the Overbridge engine and plugins, the transfer tool) works through the Sidecar, while the
 Pi keeps its own Overbridge stream with the box and adds to it.
 
-The mode presents the box maker's USB IDs to the computer, so it is for the owner's own use. It stays opt-in and is never
-on in a public card or build default.
+The mode presents the box maker's USB IDs to the computer. It stays opt-in and is never on in a public card or build
+default. The box's own descriptors are read from it and relayed at run time; none are stored in the repo or the build.
 
 ## How it works
 
@@ -79,14 +79,105 @@ start.
 2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
 3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
 
+## The setting: USB-C mode
+
+Like the Rytm's own USB CONFIG, the Sidecar's USB-C port is one thing at a time, picked on the Sidecar. OVERBRIDGE is
+opt-in, never a default:
+
+| mode | word | the computer sees |
+|---|---|---|
+| CLASS COMPLIANT (default) | `class` | the Sidecar device: UAC2 audio 12 in / 12 out and USB MIDI (`docs/usb-audio-midi.md`) |
+| OVERBRIDGE | `overbridge` | the attached box itself, passed through (this page), the Sidecar device while no box is read |
+
+MIDI only and off are still cmdline.txt's `gadget=midi` / `gadget=0` (another gadget, chosen at boot): with either the
+setting has nothing to apply to, and the three places below say so ("not here"). They would be further modes of the same
+setting (`pi/engine/usb_mode.h`: its `Mode`, words and `modes()`); not done yet.
+
+**Where it is set.** All three send the console's `usbmode=` (`POST /cmd` with the pairing code's `X-Sidecar-Auth`, as
+every setting's write; `usbmode=overbridge` only with the strict same-origin check, as `POST /midibridge/set`, since it
+widens what reaches the box; `class` and `cmdline` keep `/cmd`'s usual check):
+
+- the web page, Sound tab, **USB-C mode: Class compliant / Overbridge**, with what USB-C is now beside it (the Sidecar
+  device, the Rytm itself, replugging; "(cmdline.txt usb=)" when the mode comes from there). Overbridge asks first
+  (a confirm with the warning below); the warning stays under the row while it is set;
+- the touchscreen, Settings > **Sound**, USB-C MODE (CLASS / OVERBRIDGE), with what USB-C is now and OVERBRIDGE's short
+  warning under it, before and after it is picked;
+- the Rytm, **SIDECAR MENU > USB-C** (YES on the SIDECAR page, UP + YES, then the USB-C row): UP / DOWN or knob A pick CLASS
+  COMPLIANT or OVERBRIDGE, YES sets CLASS COMPLIANT, OVERBRIDGE takes YES twice (as FORGET DEVICES on WEB UI; NO keeps),
+  NO goes back. The page shows which one is SET, NOW (SIDECAR DEVICE, THE BOX, REPLUG...), and OVERBRIDGE's short
+  warning whenever it is under the cursor or set. It is drawn by the Pi (rytm-mods 0026's remote UI): no Rytm update.
+
+A mode this unit cannot run is greyed (web, touchscreen) or says NOT IN BUILD (Rytm): OVERBRIDGE without the mirror's
+Circle patches (`CIRCLE_GADGET_MIRROR`: both the Pi 4 and the Pi 5 builds have them now), both without the Sidecar
+gadget. The console refuses it too.
+
+**Stored, and which wins.** The choice is kept on the card as `usbmode=class|overbridge` in `/.rytm/display.txt` (written
+only once one is chosen). Where the mode comes from, first match wins:
+
+1. `usbmode=` in `/.rytm/display.txt` (chosen on the Sidecar);
+2. cmdline.txt's `usb=` (`mirror`: OVERBRIDGE, anything else: CLASS COMPLIANT), as before the setting;
+3. CLASS COMPLIANT.
+
+So a card with `usb=mirror` in cmdline.txt and nothing stored stays OVERBRIDGE, and a choice made on the Sidecar wins over
+cmdline.txt (unlike the display's keys, where cmdline wins: the Sidecar's own control has to work on a card someone set
+up by hand). `usbmode=cmdline` on the console drops the stored choice, so cmdline.txt (or the default) holds again;
+deleting the line from display.txt does the same at the next boot. `/status` says which: `"usbMode":{"set":"class|overbridge",
+"from":"card|cmdline|default","runs":...,"modes":["class","overbridge"],"shown":"sidecar|box|switching|none","boxUp":bool}`
+(`runs`: what runs, CLASS COMPLIANT where the unit cannot run the one set; `modes`: what it can run, `[]` without the
+Sidecar gadget; `shown`: what the computer sees now; `boxUp`: the box has been read and is up). The console's `usbmode`
+alone logs the same.
+
+**Applied at once.** A change switches USB-C live, with no restart; the switch itself runs at one point of the engine's
+main loop, whichever place asked for it. To CLASS COMPLIANT while the box is shown: the replug the mirror makes when the
+box goes (below), USB-C leaves the bus (`SoftDisconnect`), waits 300 ms and comes back as the Sidecar device; the box's
+async pipes stay open but are parked (no packet relayed, no request renewed, no halt cleared on EP0) until OVERBRIDGE
+comes back. To OVERBRIDGE: a box read before is shown again; a box that is up and not read yet is read now
+(`CObUsb::MirrorWanted` -> `MirrorAttachLate` -> `MirrorAttach`: its strings on EP0, its pipe endpoints made on the xHC,
+a SET_INTERFACE for a pipe interface at alt > 0) **while the Pi's own Overbridge stream with the box runs**. That is new:
+until the setting, the box was always read inside its Configure, before the stream started. It is not yet run on
+hardware. Then USB-C replugs as the box. The computer sees an unplug and a plug-in, so its audio and MIDI apps lose the
+device for that moment: change it with the computer's DAW stopped, and **never during a transfer or an OS update**
+through the mirror (the replug cuts it).
+
+**Older builds.** A build from before the setting ignores `usbmode=` (the line is kept), so after a downgrade cmdline
+`usb=` decides again, and the stored choice comes back after the next upgrade.
+
+**Tested** (2026-11-06): unit tests only (`pi/engine/tests/test_usb_mode.cpp`, `test_mirror_desc.cpp`'s pipe gate,
+`core/tests/test_ui.cpp`'s SIDECAR MENU > USB-C, `pi/engine/tests/page_seg.test.mjs` and `page_pair.test.mjs`, the
+touchscreen's `pi/ui/host/shot.c`) and an object-only build for both boards. Not yet on hardware: the switch both ways
+while streaming, the read of a box at run time, CLASS COMPLIANT after an OVERBRIDGE session.
+
+**The warning** (short on the touchscreen and the Rytm, in full on the web page and here): in OVERBRIDGE the box's
+vendor requests and Overbridge's async channel reach the box unfiltered, so an OS update from the computer (the transfer
+tool, Overbridge) can reach the box. `usbmidi=os:` filters MIDI only ("What the filters cover" above); the engine also
+logs it when the setting turns OVERBRIDGE on with `usbmidi=os:` not off.
+
 ## Known limits
 
 - **Box gone, inside mirrorhold.** The box is still shown and its requests are STALLed until the switch.
 - **A switch mid-update.** An OS update whose box takes longer than `mirrorhold` to come back sees the Sidecar device meanwhile.
-- **IRQs during a switch.** SoftConnect's core reset (about 25 ms) runs at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
+- **IRQs during a switch.** SoftConnect's core reset and setup (some 125 ms on the Pi 4, 150 ms on the Pi 5: a 100 ms wait after the soft reset) run at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
 - **No forwarding of the computer's alt or interface choices.** Alternate settings stay on the gadget side, so a vendor request that only works at another box alternate is not handled. Requests that change the box's stream state also reach the box and may disturb the Pi's own stream.
 - **One control request at a time.** A second one while the first is in flight is STALLed.
 - **Which box.** The one the Pi's Overbridge driver claims. A box whose profile streams only after its Sidecar mod's hello (the Analog Four MKII) is not claimed without it, so a stock one is not mirrored.
+
+## The Pi 5
+
+The Pi 5's USB-C gadget is the same DWC2 core as the Pi 4's (same core version, 7 IN + 7 OUT endpoints besides EP0,
+dedicated FIFOs, 4080 FIFO words) and the same Circle driver with `circle-pi5-gadget.patch` on it, so `pi/engine/build.sh`
+puts `circle-gadget-mirror.patch` and `circle-gadget-softconnect.patch` on the Pi 5's tree (`circle-engine-pi5usb`)
+unchanged, after `circle-gadget-reset.patch` as on the Pi 4; `tests/test_pi5_flags.sh` checks the order and that the
+whole stack applies. What differs:
+
+- **FIFOs.** The Pi 5 sizes them as Linux does: RX 558 words, TX 512 words for IN endpoints 1-5 and 256 (1024 bytes)
+  for 6-7, against 384 each on the Pi 4. A mirrored endpoint is at most 512 bytes (`CMirrorEP`), so it fits either way.
+- **SoftConnect.** The core comes back through the Pi 5's own setup (`InitCorePi5`, `usbinit=`, default 4: a soft
+  reset, the PHY fields, DCTL as Linux), as at boot: some 150 ms at task level with the gadget's interrupts off (the
+  Pi 4: some 125 ms). It connects before EP0 is made, as at boot; the host's reset waits until the interrupts are on.
+- **The box's side.** The Rytm is on the RP1's xHCI on a root port, not behind the Pi 4's VL805 hub: the same Circle
+  xHCI driver, so the pipes, the forwarded requests and the halt recovery are the same code.
+- **USB-C is also the power input**: the computer reaches it through a powered hub or dock (docs/pi5.md "USB device
+  side"); each switch is a replug on that hub's port.
 
 ## Tested
 

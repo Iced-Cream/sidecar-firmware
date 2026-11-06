@@ -1,6 +1,7 @@
 // pi/engine/web.cpp - see web.h.
 #include "web.h"
 #include "wifi.h"
+#include "usb_mode.h"	// usbmode=overbridge: /cmd takes it from this page only (strict)
 
 #include <circle/logger.h>
 #include <circle/net/in.h>
@@ -598,9 +599,12 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 		// older name osupdate=) neither, for the same reason: it lets OS upgrades through the USB-C MIDI port
 		// (usbmidi_os.h); cmdline.txt or the serial console only. And while usbmidi=os: is on or emu, link=tcp:<address>
 		// neither: it would send the computer's MIDI (Transfer content, an OS image) to any host and bring that
-		// host's MIDI back as the Rytm's. link=tcp (cmdline's emuhost=) and link=usb stay allowed
+		// host's MIDI back as the Rytm's. link=tcp (cmdline's emuhost=) and link=usb stay allowed. usbmode=overbridge
+		// (usb_mode.h raises: the box's requests and async channel then pass unfiltered) only with the strict
+		// same-origin check, as POST /midibridge/set; usbmode=class / cmdline lower the exposure and stay lenient
 		CSidecarGadget *pSidecar = CSidecarGadget::Get ();
 		if (!FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), FALSE)
+		    || (usb_mode::raises (Cmd) && !FromPage (m_pNet, GetRequestHost (), GetRequestOrigin (), GetRequestReferer (), TRUE))
 		    || (!bForm && strncmp (Cmd, "wifi=", 5) == 0) || strncmp (Cmd, "midibridge=", 11) == 0
 		    || strncmp (Cmd, "usbmidi=", 8) == 0 || strncmp (Cmd, "osupdate=", 9) == 0
 		    || (strncmp (Cmd, "link=tcp:", 9) == 0 && pSidecar != 0 && pSidecar->OsUpdate ()))

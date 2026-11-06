@@ -16,7 +16,8 @@
 # PI5_GADGET) removes them first, so the next build is a full one.
 # PI5_GADGET (RASPPI=5 only, default 1): 1 the USB-C gadget compiled in (docs/pi5.md "USB device side"), in a Circle tree
 # of its own, pi/circle/build/circle-engine-pi5usb (circle-gadget.patch, circle-gadget-wake.patch, circle-pi5-gadget.patch,
-# circle-gadget-reset.patch; a changed patch is put in again). The first run also stops at the hostap clone, as for any
+# circle-gadget-reset.patch, then the usb=mirror patches circle-gadget-mirror.patch and circle-gadget-softconnect.patch;
+# a changed patch is put in again). The first run also stops at the hostap clone, as for any
 # new tree: run it twice. On at run time as on the Pi 4 (GADGET default sidecar; gadget=0 in cmdline.txt turns it off).
 # 0: the gadget compiled out, in pi/circle/build/circle-engine-pi5 (the host-side patches only), as before 0.4.0.
 # PI5_TESTMODE=1 (needs PI5_GADGET=1, default 0): the engine test mode for tryboots of Raspberry Pi OS (docs/pi5.md "Engine
@@ -114,8 +115,11 @@ grep -q circle-midi-async $T/include/circle/usb/usbmidi.h || (cd $T && patch -p1
 # the USB-C gadget (pi/circle/circle-gadget.patch: IRQ stats, the MIDI device accessor, isochronous endpoints;
 # idempotent, also on a tree made before it), then its library (up to date: nothing to do)
 cd $T
-if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: both patches, again when either changed (the patched files back from the clean tree first)
-  P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
+if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: all the patches, again when one changed (the patched files back from the clean tree first)
+  # usb=mirror (docs/usb-mirror.md): the Pi 5 gadget is the same DWC2 core and driver as the Pi 4 one, so the two mirror
+  # patches go on unchanged, after circle-gadget-reset.patch as on the Pi 4 (they apply to the same lines either way)
+  P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"
+  PP="$PP $P/circle-gadget-mirror.patch $P/circle-gadget-softconnect.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
   if [ "$(cat .pi5-gadget-sum 2>/dev/null)" != "$S" ]; then
     for f in $(cat $PP | sed -n "s,^+++ b/,,p" | sort -u); do cp /repo/pi/circle/build/circle/$f $f; done
     cp $P/gadget_wake.h include/circle/usb/gadget/gadgetwake.h

@@ -249,6 +249,21 @@ struct ExtraRing
 	}
 };
 
+// The box's pipes while the USB-C mode is CLASS COMPLIANT after an OVERBRIDGE session (CObUsb::MirrorPause): the box was
+// read and its pipes stay open, but parked - an IN packet goes neither to the gadget (it has no endpoint for it, so it
+// would be a drop) nor gets its request renewed, and MirrorPipePoll sends no CLEAR_FEATURE on EP0. Back on OVERBRIDGE
+// each idle IN pipe is renewed. The IN request in flight at the pause completes at most once more: parked counts those.
+struct PipeGate {
+  volatile bool paused = false;
+  volatile unsigned parked = 0;
+  bool take_in() {                     // xHCI IRQ: an IN packet; true: to the gadget (it renews the request)
+    if (paused) { parked = parked + 1; return false; }
+    return true;
+  }
+  bool renew() const { return !paused; }        // an IN request may go out
+  bool clear_halts() const { return !paused; }  // MirrorPipePoll may use EP0
+};
+
 } // namespace mirror
 
 #endif

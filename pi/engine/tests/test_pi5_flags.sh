@@ -7,6 +7,9 @@
 #      SIDECAR_NO_GADGET nor SIDECAR_PI5_TESTMODE, links the gadget and not card_guard.o, no --wrap; the test build all of it.
 #   3. the sources (pi5_flags_src.py): with the release build's macros no line that the compiler sees names the test
 #      mode (testsecs, /usbtest.log, TestLog, the card gate), and the gadget is started; with SIDECAR_PI5_TESTMODE it is there.
+#   4. usb=mirror on the Pi 5 (docs/usb-mirror.md): build.sh puts the Pi 4's gadget patches on the pi5usb tree too, the two
+#      mirror patches last as on the Pi 4; with a Circle checkout at hand (CIRCLE_BUILD or pi/circle/build), the whole
+#      Pi 5 stack applied to a copy of it leaves CIRCLE_GADGET_MIRROR and CIRCLE_GADGET_SOFTCONNECT in the gadget header.
 set -euo pipefail
 cd "$(dirname "$0")"
 ENG=$PWD/..
@@ -44,4 +47,21 @@ grep -q -- "-DSIDECAR_NO_GADGET" <<<"$M" || fail "PI5_GADGET=0 with the gadget: 
 ! mf PI5_GADGET=0 PI5_TESTMODE=1 >/dev/null 2>&1 || fail "the Makefile took PI5_TESTMODE=1 without the gadget"
 
 python3 pi5_flags_src.py "$ENG"
+
+P5=$(grep -E '^ *(P=[^;]*; )?PP=' "$ENG/build.sh" | grep -o 'circle-[a-z0-9-]*\.patch' | tr '\n' ' ')
+[ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
+  || fail "the Pi 5 gadget patches in build.sh: $P5"
+P4=$(grep -o 'patch -p1 < /repo/pi/circle/circle-gadget[a-z-]*\.patch' "$ENG/build.sh" | sed 's,.*/,,' | tr '\n' ' ')
+[ "$P4" = "circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
+  || fail "the Pi 4 gadget patches in build.sh: $P4"
+C=${CIRCLE_BUILD:-$ENG/../circle/build}/circle
+if [ -f "$C/include/circle/usb/gadget/dwusbgadget.h" ]; then
+  cp -R "$C/include" "$C/lib" "$T/"
+  for f in $P5; do (cd "$T" && patch -s -p1 < "$ENG/../circle/$f") || fail "$f does not apply to the Pi 5 stack"; done
+  for m in CIRCLE_GADGET_MIRROR CIRCLE_GADGET_SOFTCONNECT; do
+    grep -q "#define $m" "$T/include/circle/usb/gadget/dwusbgadget.h" || fail "the Pi 5 stack without $m"
+  done
+else
+  echo "test_pi5_flags: no Circle checkout at $C: the Pi 5 patch stack not applied (the order checked)"
+fi
 echo "test_pi5_flags: ok"

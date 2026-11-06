@@ -289,6 +289,11 @@
       <div class="row"><label id="l-mac" title="the computer's USB audio OUT (USB-C) mixed into the Rytm's Overbridge inputs">Computer audio</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
         <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
+      <div class="row"><label id="l-usbmode" title="what USB-C is to the computer, one mode at a time: the Sidecar's own audio (12 in / 12 out) and MIDI device, or the Rytm itself passed through for Overbridge; stored on the card, applied at once (USB-C replugs as the new device: not during a transfer or an OS update)">USB-C mode</label>
+        <div class="seg" role="radiogroup" aria-labelledby="l-usbmode" data-key="usbmode"><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=class" data-val="class">Class compliant</button><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=overbridge" data-val="overbridge">Overbridge</button></div>
+        <span id="usbnow" class="mut"></span>
+        <span class="fb" data-fb="usbmode" role="status" aria-live="polite"></span></div>
+      <p class="note" id="usb-warn" hidden>Overbridge passes the Rytm through: its vendor requests and the Overbridge async channel reach it unfiltered, so an OS update from the computer (Transfer, Overbridge) can reach the Rytm. <code>usbmidi=os:</code> filters MIDI only (docs/usb-mirror.md).</p>
       <div class="row"><label for="mvoice">Machine</label>
         <select id="mvoice"></select>
         <select id="mname" aria-label="machine"><option>plaits</option><option>juno</option><option>daisy</option><option>dsps</option>
@@ -1146,6 +1151,7 @@ function chosen(k) {      // the device's value of a group as the buttons' data-
   const st = status || {}, v = st[k];
   if (k === "drone") return v === undefined ? undefined : v < 0 ? "off" : "on";
   if (k === "fxsrc") return st.fxin && st.fxin.state === "on" ? "fx" : st.fxin && st.fxin.state === "off" ? "in" : undefined;   // the Rytm's confirmed state
+  if (k === "usbmode") return st.usbMode ? st.usbMode.set : undefined;   // the USB-C mode set (pi/engine/usb_mode.h)
   return v === undefined || v === null ? undefined : String(v);
 }
 function paintSeg() {
@@ -1158,19 +1164,28 @@ function paintSeg() {
       b.setAttribute("aria-checked", String(cur === b.dataset.val));
       b.classList.toggle("pend", want === b.dataset.val);
       b.tabIndex = cur === b.dataset.val || (cur === undefined && b === g.querySelector("button")) ? 0 : -1;
-      b.disabled = gone;
-      b.title = k === "mac" && gone && online ? "not in this gadget mode" : b.title;
+      const noUsb = k === "usbmode" && !!status && !!status.usbMode && !(status.usbMode.modes || []).includes(b.dataset.val);
+      b.disabled = gone || noUsb;
+      b.title = k === "mac" && gone && online ? "not in this gadget mode"
+        : noUsb ? ((status.usbMode.modes || []).length ? "not in this build (no circle-gadget-mirror.patch)" : "USB-C is not the Sidecar's device here (cmdline.txt gadget=)") : b.title;
     });
   });
   const st = status || {}, v = +$("#mvoice").value, m = st.machines && st.machines[v] ? st.machines[v].toLowerCase() : "";
   $("#mcur").textContent = m ? "now: " + m : "";
   $("#fifocur").textContent = st.fifoTarget !== undefined ? "now: " + st.fifoTarget + " frames" : "";
+  const u = st.usbMode;   // the USB-C mode: what the computer sees now, and where the setting came from
+  $("#usbnow").textContent = !u ? "" : !(u.modes || []).length ? "not here: cmdline.txt gadget=" + (st.gadget || "")
+    : (u.shown === "box" ? "now: the Rytm itself" : u.shown === "switching" ? "now: replugging" : "now: the Sidecar device"
+      + (u.set === "overbridge" && u.runs === "overbridge" ? " (no box read yet)" : ""))
+      + (u.set !== u.runs ? "; not in this build: class compliant runs" : "") + (u.from === "cmdline" ? " (cmdline.txt usb=)" : "");
+  $("#usb-warn").hidden = !u || (u.set !== "overbridge" && pend.want("usbmode") !== "overbridge");   // set, or being set
 }
 function settle() {       // /status after a change: confirm what matches
   const st = status || {};
   for (const k of ["notes", "out", "mac", "screensaver"]) if (st[k] !== undefined && st[k] !== null) pend.report(k, st[k]);
   if (st.drone !== undefined) pend.report("drone", droneVal(st.drone));
   if (chosen("fxsrc")) pend.report("fxsrc", chosen("fxsrc"));
+  if (chosen("usbmode")) pend.report("usbmode", chosen("usbmode"));
   if (st.machines) for (let v = 0; v < 8; v++) pend.report("mach", v + ":" + (st.machines[v] || "").toLowerCase());
   if (pend.has("fifo") && statusAt > postDone && st.fifoTarget !== undefined)   // the device limits the target: its value is the answer
     pend.report("fifo", pend.want("fifo"), st.fifoTarget === +pend.want("fifo") ? undefined : `set to ${st.fifoTarget} (the limit)`);
@@ -1184,8 +1199,12 @@ async function choose(key, want, c) {
   pend.start(key, want);
   if (!(await cmd(c))) pend.fail(key, "Sidecar refused the command");
 }
+const USB_OB_WARN = "Switch USB-C to Overbridge? The computer then talks to the Rytm itself: its vendor requests and the "
+  + "Overbridge async channel reach it unfiltered, so an OS update from the computer (Transfer, Overbridge) can reach the Rytm "
+  + "(usbmidi=os: filters MIDI only). USB-C replugs now: not during a transfer or an OS update.";
 document.querySelectorAll(".seg[data-key] button").forEach((b) => b.addEventListener("click", () => {
   const k = b.closest(".seg").dataset.key;
+  if (k === "usbmode" && b.dataset.val === "overbridge" && chosen(k) !== "overbridge" && !confirm(USB_OB_WARN)) return;
   const on = k === "drone" && b.dataset.val === "on";
   choose(k, on ? "on:" + $("#dvoice").value : b.dataset.val, b.dataset.cmd + (on ? $("#dvoice").value : ""));
 }));
