@@ -67,8 +67,17 @@ unfiltered:
 
 So `usbmidi=os:off` does not stop a tool that updates the box over a vendor request or a pipe. The OS updates tested
 through the mirror (the transfer tool and a SysEx flasher) went over USB MIDI: the mirror line's MIDI counters carried
-the whole update to the box [hw]. With OVERBRIDGE (`usb=mirror` or the setting) and any `usbmidi=os:` other than off, the
-engine logs a warning at start and when the setting turns it on.
+the whole update to the box [hw]. With `usb=mirror` and any `usbmidi=os:` other than off, the engine logs a warning at
+start.
+
+## Circle change
+
+`pi/circle/circle-gadget-mirror.patch` (applied by `pi/engine/build.sh` after `circle-gadget-reset.patch`; it defines
+`CIRCLE_GADGET_MIRROR`) makes two changes, and `circle-gadget-softconnect.patch` adds a third:
+
+1. **IN and OUT endpoints can share a number** (`0x83` + `0x03`). Circle kept one endpoint object per number. An OUT endpoint now goes to a second table when an IN endpoint already has its number. A gadget without shared numbers (the default Sidecar) never uses that table.
+2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
+3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
 
 ## The setting: USB-C mode
 
@@ -140,16 +149,8 @@ while streaming, the read of a box at run time, CLASS COMPLIANT after an OVERBRI
 
 **The warning** (short on the touchscreen and the Rytm, in full on the web page and here): in OVERBRIDGE the box's
 vendor requests and Overbridge's async channel reach the box unfiltered, so an OS update from the computer (the transfer
-tool, Overbridge) can reach the box. `usbmidi=os:` filters MIDI only ("What the filters cover" below).
-
-## Circle change
-
-`pi/circle/circle-gadget-mirror.patch` (applied by `pi/engine/build.sh` after `circle-gadget-reset.patch`; it defines
-`CIRCLE_GADGET_MIRROR`) makes two changes, and `circle-gadget-softconnect.patch` adds a third:
-
-1. **IN and OUT endpoints can share a number** (`0x83` + `0x03`). Circle kept one endpoint object per number. An OUT endpoint now goes to a second table when an IN endpoint already has its number. A gadget without shared numbers (the default Sidecar) never uses that table.
-2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
-3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
+tool, Overbridge) can reach the box. `usbmidi=os:` filters MIDI only ("What the filters cover" above); the engine also
+logs it when the setting turns OVERBRIDGE on with `usbmidi=os:` not off.
 
 ## Known limits
 
