@@ -669,7 +669,8 @@ void CObUsb::MirrorPark (void)
 	s_PipeGate.mode_changed ();
 }
 
-// gadget IRQ (CMirrorEP::OnActivate): the computer configured the box's endpoints: the pipes run, the idle IN ones renewed
+// gadget IRQ (CMirrorEP::OnActivate): the computer configured the box's endpoints: the pipes run (an idle IN one renewed:
+// parked pipes are drained, so their requests are normally in flight already)
 void CObUsb::MirrorResume (void)
 {
 	if (!s_PipeGate.box_active ()) return;
@@ -778,7 +779,7 @@ void CObUsb::MirrorAttach (void)
 		m_nPipes++;
 	}
 	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < m_nPipes; i++) if ((m_Pipe[i].uchAddr & 0x80) && s_PipeGate.renew ()) SubmitPipeIn (i);	// parked: at MirrorResume
+	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);	// parked too: drained (PipeGate)
 	LeaveCritical ();
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
 	pGadget->MirrorBoxUp (TRUE);
@@ -808,7 +809,7 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	p.nTries = 0;
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-	if (!s_PipeGate.take_in ()) return;		// parked (counted there, not as traffic) until MirrorResume
+	if (!s_PipeGate.take_in ()) { pThis->SubmitPipeIn (ParamIndex (pParam)); return; }	// parked: drained (counted there)
 	p.nPackets++;
 	CSidecarGadget *pGadget = CSidecarGadget::Get ();
 	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn (ParamIndex (pParam));
@@ -817,7 +818,7 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 void CObUsb::MirrorPipeInNext (u8 uchAddr)
 {
 	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || !s_PipeGate.renew ()) return;
+	if (pThis == 0) return;
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 		if (pThis->m_Pipe[i].uchAddr == uchAddr && !pThis->m_Pipe[i].bBusy && !pThis->m_Pipe[i].bStopped) pThis->SubmitPipeIn (i);
 }

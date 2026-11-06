@@ -134,8 +134,8 @@ alone logs the same.
 **Applied at once.** A change switches USB-C live, with no restart; the switch itself runs at one point of the engine's
 main loop, whichever place asked for it. To CLASS COMPLIANT while the box is shown: the replug the mirror makes when the
 box goes (below), USB-C leaves the bus (`SoftDisconnect`), waits 300 ms and comes back as the Sidecar device; the box's
-async pipes stay open but are parked (no packet relayed, no request renewed, no halt cleared on EP0; the mirror line's
-`parked`) until OVERBRIDGE is back and the computer has configured the box's endpoints. To OVERBRIDGE: a box read before is shown again; a box that is up and not read yet is read now
+async pipes stay open but are parked (no packet relayed, no halt cleared on EP0; the box's IN packets are drained and
+counted in the mirror line's `parked`, so none waits in the box to reach the computer later, ahead of its own handshake) until OVERBRIDGE is back and the computer has configured the box's endpoints. To OVERBRIDGE: a box read before is shown again; a box that is up and not read yet is read now
 (`CObUsb::MirrorWanted` -> `MirrorAttachLate` -> `MirrorAttach`: its strings on EP0, its pipe endpoints made on the xHC,
 a SET_INTERFACE for a pipe interface at alt > 0) **while the Pi's own Overbridge stream with the box runs**. That is new:
 until the setting, the box was always read inside its Configure, before the stream started. It is not yet run on

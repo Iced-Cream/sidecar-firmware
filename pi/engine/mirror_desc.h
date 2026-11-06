@@ -264,13 +264,16 @@ struct ExtraRing
 	}
 };
 
-// The box's pipes run only while the computer sees the box with its endpoints up (CObUsb::MirrorPark, MirrorResume). Parked - an IN
-// packet goes neither to the gadget (it has no active endpoint for it, so it would be a drop, and PipeInStub would renew
-// the request at once in the xHCI IRQ) nor gets its request renewed, and MirrorPipePoll sends no CLEAR_FEATURE on EP0 -
-// from any change of the USB-C mode (SetMirror, either way: to OVERBRIDGE the Sidecar device is still shown until the
-// replug and the host's enumeration) and from a switch back to the Sidecar device, until the first of the box's
-// endpoints is activated on the computer's side (CMirrorEP::OnActivate: its SET_CONFIGURATION), which renews each idle
-// IN pipe. The IN request in flight at a pause completes at most once more: parked counts those (the mirror line).
+// The box's pipes reach the computer only while it sees the box with its endpoints up (CObUsb::MirrorPark, MirrorResume).
+// Parked - from any change of the USB-C mode (SetMirror, either way: to OVERBRIDGE the Sidecar device is still shown until
+// the replug and the host's enumeration) and from a switch back to the Sidecar device, until the first of the box's
+// endpoints is activated on the computer's side (CMirrorEP::OnActivate: its SET_CONFIGURATION) - an IN packet does not go
+// to the gadget (no drop counted there) and MirrorPipePoll sends no CLEAR_FEATURE on EP0. The IN request is still renewed:
+// parked packets are DRAINED (counted as parked, the mirror line), as the gadget dropped them before the gate. A request
+// left idle instead keeps the box's packet in the box, and it goes out the moment the pipe resumes: the computer's first
+// async packet is then a stale one from before it was there, ahead of its own handshake, and Overbridge never starts
+// (0.4.1 rc2 on the Pi 5, 2026-11-06: "pipe in 1 drop 216", in ch 0; tests/test_ob_mirror.cpp replays it). The box's
+// interrupt IN completes only when it has a packet, so the drain costs one xHCI IRQ per box message.
 struct PipeGate {
   volatile bool paused = false;
   volatile unsigned parked = 0;
@@ -281,11 +284,10 @@ struct PipeGate {
     paused = false;
     return was;
   }
-  bool take_in() {                     // xHCI IRQ: an IN packet; true: to the gadget (it renews the request)
+  bool take_in() {                     // xHCI IRQ: an IN packet; true: to the gadget; false: drained (renew at once)
     if (paused) { parked = parked + 1; return false; }
     return true;
   }
-  bool renew() const { return !paused; }        // an IN request may go out
   bool clear_halts() const { return !paused; }  // MirrorPipePoll may use EP0
 };
 

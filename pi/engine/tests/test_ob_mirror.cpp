@@ -270,6 +270,43 @@ int main() {
     delete in;
   }
 
+  {  // The Pi 5 hardware order at a boot with usb=mirror and the box plugged in (rc2 regression, 2026-11-06):
+     // SetMirror (TRUE) before the gadget's Start parks the pipes (MirrorPark); the box is configured and read
+     // (MirrorAttach); the gadget leaves the bus and comes back as the box (MirrorPoll: shown, no park); the computer's
+     // SET_CONFIGURATION activates the box's endpoints (CMirrorEP::OnActivate: m_bActive, then MirrorResume); only then
+     // does the computer's Overbridge driver start its handshake (vendor requests, then the async channel).
+     // The box has an async IN packet waiting from before the computer was there (the Rytm queues one once the Pi's own
+     // attach has set it up). 428907d had its IN request out from the attach: that packet came early and the gadget
+     // dropped it ("pipe in 1058 drop 1"). 4ecee9a submitted nothing while parked, so the packet stayed in the box and
+     // was the computer's FIRST async packet, ahead of its own handshake: "pipe in 1 drop 216", the engine never
+     // streamed. Parked, the pipe must still be drained (counted as parked, not as gadget traffic).
+    g_gadget.mirror = true;
+    g_gadget.hold_pipe_in = false;
+    auto packet = [&](Box& b, unsigned n) {    // the box answers the pipe IN request in flight, if any
+      CUSBRequest* u = b.pipe(0x82);
+      if (u == nullptr) return false;
+      b.complete(u, true, n);
+      return true;
+    };
+    const unsigned kStale = 33, kReply = 12;
+    CObUsb::MirrorPark();                      // SetMirror (TRUE) at boot, before the gadget's Start
+    size_t nPkt = g_gadget.pipe_in.size();
+    unsigned nParked = CObUsb::MirrorParked();
+    Box b;                                     // the box configured and read (MirrorAttach)
+    bool bStaleWaits = !packet(b, kStale);     // its waiting packet: taken now, or left in the box
+    CHECK(g_gadget.pipe_in.size() == nPkt);    // nothing to the gadget while parked
+    // the switch (SoftDisconnect, 300 ms, SoftConnect): nothing on the box's side; the hub and the computer's
+    // enumeration take a while, then SET_CONFIGURATION: the box's endpoints active, MirrorResume
+    CObUsb::MirrorResume();
+    if (bStaleWaits) packet(b, kStale);        // what was left in the box goes out the moment its IN request does
+    // the computer's driver: its handshake on the async channel; the box's reply
+    CHECK(packet(b, kReply));
+    CHECK(g_gadget.pipe_in.size() == nPkt + 1);
+    CHECK(g_gadget.pipe_in[nPkt].n == kReply); // the computer's first async packet is the box's reply, not the stale one
+    CHECK(CObUsb::MirrorParked() == nParked + 1);   // the stale one drained while parked, counted there
+    CHECK(b.pipe(0x82) != nullptr);            // and the pipe goes on
+  }
+
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget
     g_gadget.mirror = false;
     size_t nBox = g_gadget.box.size();

@@ -97,8 +97,8 @@ public:
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
 	static void MirrorAttachLate (void);
-	// mirror::PipeGate: SetMirror and a switch back to the Sidecar device park the read box's pipes (task level); the first
-	// box endpoint the computer activates resumes them and renews the idle IN pipes (gadget IRQ)
+	// mirror::PipeGate: SetMirror and a switch back to the Sidecar device park the read box's pipes (task level: their IN
+	// packets drained, not relayed); the first box endpoint the computer activates resumes them (gadget IRQ)
 	static void MirrorPark (void);
 	static void MirrorResume (void);
 	static unsigned MirrorParked (void);		// IN packets that came while parked (the mirror line)
