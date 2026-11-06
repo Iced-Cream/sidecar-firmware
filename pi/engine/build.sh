@@ -145,10 +145,15 @@ elif [ "$R" = 4 ]; then	# the Pi 4 (a Pi 5 with PI5_GADGET=0: no gadget, docs/pi
   # then leaving the bus and coming back as a replug (pi/circle/circle-gadget-softconnect.patch): usb=mirror switches
   # between the box and the Sidecar device when the box comes and goes; its own file and marker; idempotent
   grep -q circle-gadget-softconnect lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-softconnect.patch
-  # then EP0 keeps a SETUP armed while a deferred request waits and its IN / OUT are armed apart, a class / vendor request
-  # never goes to a standard one of its number, a cancel waits for the disable, and a completion nothing waits for is
-  # counted, not asserted (pi/circle/circle-gadget-stray.patch: a SETUP while EP0 waited for a deferred answer crashed the
-  # Pi 4 at a live switch, 2026-11-06; tests/test_gadget_ep0.cpp); its own marker; idempotent
+  # then a SETUP that comes while EP0 waits for a deferred answer (nothing armed) is read back from where the core
+  # wrote it instead of asserted, and a completion with no transfer armed is counted and ignored; nothing else of
+  # the EP0 or endpoint flow of Circle changes (pi/circle/circle-gadget-stray.patch: the Pi 4 crashed so at a live switch,
+  # 2026-11-06; tests/test_gadget_ep0.cpp); its own marker; idempotent
+  # (a tree patched with an earlier version of it - the one of 0.4.1 rc5, which broke the data endpoints - is refused: the marker
+  # would keep it; build from a fresh Circle copy)
+  if grep -q circle-gadget-stray lib/usb/gadget/dwusbgadgetendpoint.cpp && ! grep -q FindStraySetup lib/usb/gadget/dwusbgadgetendpoint0.cpp; then
+    echo "circle-gadget-stray.patch: this Circle tree has an earlier version (0.4.1 rc5): build from a fresh Circle copy"; exit 1
+  fi
   grep -q circle-gadget-stray lib/usb/gadget/dwusbgadgetendpoint.cpp || patch -p1 < /repo/pi/circle/circle-gadget-stray.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi

@@ -1,385 +1,151 @@
 --- a/include/circle/usb/gadget/dwusbgadgetendpoint.h
 +++ b/include/circle/usb/gadget/dwusbgadgetendpoint.h
-@@ -68,6 +68,14 @@
+@@ -68,6 +68,12 @@
  	/// \brief The bus woke from that suspend without a reset (IRQ level)
  	virtual void OnResume (void) {}
  
-+	/// \brief circle-gadget-stray: completions acknowledged and ignored since boot, as no transfer (or no state, EP0)
-+	///	   waited for them; before, FinishTransfer() asserted on them
++	/// \brief circle-gadget-stray: completions that came for an EP with no transfer armed since boot (a SETUP for EP0
++	///	   while it waited for a deferred answer, recovered or dropped; or an IN / OUT completion, ignored); before,
++	///	   FinishTransfer() asserted on them
 +#define CIRCLE_GADGET_STRAY	1
 +	static unsigned GetStrayCount (void)	{ return s_nStray; }
-+	/// \brief circle-gadget-stray: bounded waits on the core (NAK effective, EP disabled, AHB idle, TX FIFO flush,
-+	///	   global OUT NAK) that ran out (since boot)
-+	static unsigned GetWaitTimeouts (void)	{ return s_nWaitTimeouts; }
 +
  	/// \brief Set the maximum packet size of this EP (e.g. after speed negotiation)
  	/// \param nMaxPacketSize New maximum packet size in bytes
  	void SetMaxPacketSize (size_t nMaxPacketSize);
-@@ -173,6 +181,14 @@
+@@ -173,6 +179,11 @@
  
  	static void HandleUSBReset (void);
  
-+	void NoteStray (const char *pWhat);		// circle-gadget-stray
++	// circle-gadget-stray: a SETUP done while no transfer is armed (EP0 waiting for a deferred answer, IRQ level)
++	virtual void OnStraySetup (void) {}
++	void NoteStray (const char *pWhat);
 +	static volatile unsigned s_nStray;
-+	// circle-gadget-stray: IN EP nEP: SNAK, NAK effective, EPDis, EP disabled, AHB idle, its TX FIFO flushed (each wait
-+	// bounded; a wait that runs out is counted and logged at powers of two)
-+	static void DisableIn (unsigned nEP);
-+	static boolean WaitFor (u32 nAddress, u32 nMask, boolean bSet, const char *pWhat);
-+	static volatile unsigned s_nWaitTimeouts;
 +
  	friend class CDWUSBGadget;
  	friend class CDWUSBGadgetEndpoint0;
  
 --- a/include/circle/usb/gadget/dwusbgadgetendpoint0.h
 +++ b/include/circle/usb/gadget/dwusbgadgetendpoint0.h
-@@ -40,7 +40,35 @@
+@@ -40,7 +40,15 @@
  
  	boolean CompleteDeferred (const void *pData, int nLength);	// circle-gadget-mirror
  
-+	void OnUSBReset (void) override;		// circle-gadget-stray: the two directions' slots too
-+
-+	// circle-gadget-stray: EP0's IN and OUT are armed apart (EP0 OUT stays armed for a SETUP, as the Linux dwc2 driver
-+	// keeps it); completions that fit no state are counted with the other EPs' (GetStrayCount ()), and the SETUPs
-+	// that ended a deferred request here
++	// circle-gadget-stray: deferred requests the host's next SETUP ended
 +	static unsigned GetSetupAbortCount (void)	{ return s_nSetupAborts; }
 +
  private:
-+	void HandleOutInterrupt (void) override;	// circle-gadget-stray
-+	void HandleInInterrupt (void) override;
-+
-+	void ArmSetup (void);			// OUT: the next SETUP, or the status stage's empty OUT, into m_SetupBuffer
-+	void ArmOut (void *pBuffer, size_t nLength);	// OUT: a data stage packet
-+	void ArmIn (const void *pBuffer, size_t nLength);	// IN: a data stage packet or the empty status packet
-+	void StopIn (void);			// IN disabled (if armed) and its TX FIFO flushed
-+	void StartIn (size_t nLength);		// the IN data stage from m_InBuffer (a closing zero-length packet when due)
-+	boolean SetupPending (void);		// a SETUP is in, its IRQ still to come
-+	void Stray (const char *pWhat);
-+
-+	enum TOutSlot { OutNone, OutSetup, OutData };
-+	TOutSlot m_OutSlot;
-+	size_t m_nOutLength;
-+	void *m_pOutBuf;
-+	boolean m_bInArmed;
-+	size_t m_nInLength;
-+	boolean m_bZlpDue;			// the IN data stage ends with a zero-length packet
-+
++	void OnStraySetup (void) override;		// circle-gadget-stray
++	const u8 *FindStraySetup (void);
 +	static volatile unsigned s_nSetupAborts;
 +
++private:
  	enum TState
  	{
  		StateDisconnect,
-@@ -61,6 +89,7 @@
- 	static const size_t BufferSize = 512;
- 	DMA_BUFFER (u8, m_OutBuffer, BufferSize);
- 	DMA_BUFFER (u8, m_InBuffer, BufferSize);
-+	DMA_BUFFER (u8, m_SetupBuffer, 8 * 3);	// circle-gadget-stray: SETUPs only (DOEPDMA0 never into the data buffers)
- 
- 	TSetupData m_SetupData;
- 	boolean m_bForwarded;			// circle-gadget-mirror: the deferred OUT request is answered
 --- a/lib/usb/gadget/dwusbgadgetendpoint.cpp
 +++ b/lib/usb/gadget/dwusbgadgetendpoint.cpp
-@@ -416,34 +416,7 @@
- {
- 	if (m_Direction == DirectionIn)
- 	{
--		CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (m_nEP));
--		if (InEPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
--		{
--			InEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
--					| DWHCI_DEV_EP_CTRL_SETDPID_D1));
--			InEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK | DWHCI_DEV_EP_CTRL_EP_DISABLE);
--			InEPCtrl.Write ();
--
--			CDWHCIRegister InEPInt (DWHCI_DEV_IN_EP_INT (m_nEP));
--			for (unsigned i = 0; i < 5000 && !(InEPInt.Read () & DWHCI_DEV_IN_EP_INT_EP_DISABLED); i++)
--			{
--			}
--		}
--
--		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP),   DWHCI_DEV_IN_EP_INT_EP_DISABLED
--									| DWHCI_DEV_IN_EP_INT_XFER_COMPLETE);
--		InEPIntAck.Write ();
--
--		// its TX FIFO flushed, polled here: CDWUSBGadget::FlushTxFIFO waits in 1 ms steps (MsDelay), which at IRQ
--		// level stalled core 0's other interrupts for 1 ms (measured: the xHCI host lost Overbridge blocks)
--		CDWHCIRegister Reset (DWHCI_CORE_RESET, 0);
--		Reset.Or (DWHCI_CORE_RESET_TX_FIFO_FLUSH);
--		Reset.Or (m_nEP << DWHCI_CORE_RESET_TX_FIFO_NUM__SHIFT);
--		Reset.Write ();
--		for (unsigned i = 0; i < 5000 && (Reset.Read () & DWHCI_CORE_RESET_TX_FIFO_FLUSH); i++)
--		{
--		}
--		CTimer::SimpleusDelay (1);		// 3 PHY clocks
-+		DisableIn (m_nEP);		// circle-gadget-stray: NAK effective first, AHB idle before the flush
- 	}
- 	else
- 	{
-@@ -456,11 +429,7 @@
- 			DeviceCtrl.Or (DWHCI_DEV_CTRL_SET_GLOBAL_OUT_NAK);
- 			DeviceCtrl.Write ();
+@@ -544,7 +544,21 @@
  
--			CDWHCIRegister IntStatus (DWHCI_CORE_INT_STAT);
--			for (unsigned i = 0;    i < 5000
--					     && !(IntStatus.Read () & DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF); i++)
--			{
--			}
-+			WaitFor (DWHCI_CORE_INT_STAT, DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF, TRUE, "global OUT NAK");
- 
- 			OutEPCtrl.Read ();
- 			OutEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
-@@ -468,10 +437,7 @@
- 			OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK | DWHCI_DEV_EP_CTRL_EP_DISABLE);
- 			OutEPCtrl.Write ();
- 
--			CDWHCIRegister OutEPInt (DWHCI_DEV_OUT_EP_INT (m_nEP));
--			for (unsigned i = 0; i < 5000 && !(OutEPInt.Read () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED); i++)
--			{
--			}
-+			WaitFor (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_EP_DISABLED, TRUE, "OUT EP disabled");
- 
- 			DeviceCtrl.Read ();
- 			DeviceCtrl.And (~DWHCI_DEV_CTRL_SET_GLOBAL_OUT_NAK);
-@@ -523,28 +489,98 @@
- 
- void CDWUSBGadgetEndpoint::CancelTransfer (void)
- {
--	if (m_TransferMode == TransferDataIn)
--	{
--		CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (m_nEP), 0);
--		InEPCtrl.Read ();
--		InEPCtrl.And (~DWHCI_DEV_EP_CTRL_EP_ENABLE);
--		InEPCtrl.And (~DWHCI_DEV_EP_CTRL_CLEAR_NAK);
--		InEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_DISABLE);
--		InEPCtrl.Write ();
--	}
--	else if (m_TransferMode != TransferUnknown)
-+	// circle-gadget-stray: disabled and waited for (IN: NAK effective, its TX FIFO flushed; OUT: under the global OUT
-+	// NAK), and the EP disabled and transfer complete interrupts acknowledged: no completion of the cancelled transfer
-+	// arrives for the next one, and no "EP disabled" reaches the handler of a non-isochronous EP (LOGPANIC). Not for
-+	// EP0 (dwusbgadgetendpoint0.cpp: its own StopIn (); EP0 OUT cannot be disabled).
-+	if (m_TransferMode != TransferUnknown && m_nEP != 0)
- 	{
--		CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (m_nEP));
--		OutEPCtrl.Read ();
--		OutEPCtrl.And (~DWHCI_DEV_EP_CTRL_EP_ENABLE);
--		OutEPCtrl.And (~DWHCI_DEV_EP_CTRL_CLEAR_NAK);
--		OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_DISABLE);
--		OutEPCtrl.Write ();
-+		DisableEndpoint ();
- 	}
- 
-+	if (m_Type == TypeIsochronous)
-+	{
-+		SetIsoPending (FALSE);
-+		m_bIsoContinue = FALSE;
-+	}
-+
  	InitTransfer ();
-+}
+ }
 +
-+// circle-gadget-stray (IRQ level): a completion for this EP while no transfer is armed on it (TransferUnknown):
-+// acknowledged by the caller, ignored, counted; logged the first time and then at powers of two. (EP0 has handlers of
-+// its own, dwusbgadgetendpoint0.cpp.)
++// circle-gadget-stray (IRQ level): a completion for this EP while no transfer is armed on it (TransferUnknown),
++// acknowledged by the caller: counted, logged the first time and then at powers of two
 +volatile unsigned CDWUSBGadgetEndpoint::s_nStray = 0;
-+
+ 
 +void CDWUSBGadgetEndpoint::NoteStray (const char *pWhat)
 +{
 +	unsigned n = s_nStray + 1;
 +	s_nStray = n;
 +	if ((n & (n - 1)) == 0)
 +	{
-+		LOGWARN ("EP%u: %s with no transfer armed: ignored (%u so far)", m_nEP, pWhat, n);
++		LOGWARN ("EP%u: %s with no transfer armed (%u so far)", m_nEP, pWhat, n);
 +	}
-+}
-+
-+volatile unsigned CDWUSBGadgetEndpoint::s_nWaitTimeouts = 0;
-+
-+boolean CDWUSBGadgetEndpoint::WaitFor (u32 nAddress, u32 nMask, boolean bSet, const char *pWhat)
-+{
-+	CDWHCIRegister Reg (nAddress);
-+	for (unsigned i = 0; i < 5000; i++)
-+	{
-+		if (!!(Reg.Read () & nMask) == !!bSet)
-+		{
-+			return TRUE;
-+		}
-+	}
-+
-+	unsigned n = s_nWaitTimeouts + 1;
-+	s_nWaitTimeouts = n;
-+	if ((n & (n - 1)) == 0)
-+	{
-+		LOGWARN ("%s: no answer from the core (%u waits ran out so far)", pWhat, n);
-+	}
-+
-+	return FALSE;
- }
- 
-+void CDWUSBGadgetEndpoint::DisableIn (unsigned nEP)
-+{
-+	CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (nEP));
-+	if (InEPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
-+	{
-+		InEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
-+				| DWHCI_DEV_EP_CTRL_SETDPID_D1));
-+		InEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK);
-+		InEPCtrl.Write ();
-+		WaitFor (DWHCI_DEV_IN_EP_INT (nEP), DWHCI_DEV_IN_EP_INT_IN_EP_NAK_EFF, TRUE, "IN NAK effective");
-+
-+		InEPCtrl.Read ();
-+		InEPCtrl.And (~(  DWHCI_DEV_EP_CTRL_CLEAR_NAK | DWHCI_DEV_EP_CTRL_SETDPID_D0
-+				| DWHCI_DEV_EP_CTRL_SETDPID_D1));
-+		InEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK | DWHCI_DEV_EP_CTRL_EP_DISABLE);
-+		InEPCtrl.Write ();
-+		WaitFor (DWHCI_DEV_IN_EP_INT (nEP), DWHCI_DEV_IN_EP_INT_EP_DISABLED, TRUE, "IN EP disabled");
-+	}
-+
-+	CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (nEP),   DWHCI_DEV_IN_EP_INT_EP_DISABLED
-+							      | DWHCI_DEV_IN_EP_INT_XFER_COMPLETE
-+							      | DWHCI_DEV_IN_EP_INT_IN_EP_NAK_EFF);
-+	InEPIntAck.Write ();
-+
-+	// its TX FIFO flushed, polled here: CDWUSBGadget::FlushTxFIFO waits in 1 ms steps (MsDelay), which at IRQ
-+	// level stalled core 0's other interrupts for 1 ms (measured: the xHCI host lost Overbridge blocks); the AHB
-+	// idle first, as the databook asks
-+	WaitFor (DWHCI_CORE_RESET, DWHCI_CORE_RESET_AHB_IDLE, TRUE, "AHB idle");
-+	CDWHCIRegister Reset (DWHCI_CORE_RESET, 0);
-+	Reset.Or (DWHCI_CORE_RESET_TX_FIFO_FLUSH);
-+	Reset.Or (nEP << DWHCI_CORE_RESET_TX_FIFO_NUM__SHIFT);
-+	Reset.Write ();
-+	WaitFor (DWHCI_CORE_RESET, DWHCI_CORE_RESET_TX_FIFO_FLUSH, FALSE, "TX FIFO flush");
-+	CTimer::SimpleusDelay (1);		// 3 PHY clocks
 +}
 +
  size_t CDWUSBGadgetEndpoint::FinishTransfer (void)
  {
  	assert (m_TransferMode < TransferUnknown);
-@@ -657,14 +693,21 @@
+@@ -633,6 +647,16 @@
+ 		OutEPIntAck.Set (DWHCI_DEV_OUT_EP_INT_SETUP_DONE);
+ 		OutEPIntAck.Write ();
+ 
++		if (m_TransferMode == TransferUnknown)		// circle-gadget-stray: EP0 waited for a deferred answer
++		{
++			CDWHCIRegister XferAck (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
++			XferAck.Write ();
++			NoteStray ("SETUP");
++			OnStraySetup ();
++			OutEPInt.And (~DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
++		}
++		else
++		{
+ 		size_t nLength = FinishTransfer ();
+ 		if (nLength == sizeof (TSetupData))
+ 		{
+@@ -649,6 +673,7 @@
+ 		}
+ 
+ 		OutEPInt.And (~DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
++		}
+ 	}
+ 
+ 	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE)
+@@ -657,6 +682,12 @@
  		OutEPIntAck.Set (DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
  		OutEPIntAck.Write ();
  
--		size_t nLength = FinishTransfer ();
--
--		if (m_Type == TypeIsochronous)
-+		if (m_TransferMode == TransferUnknown)		// circle-gadget-stray
- 		{
--			m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
++		if (m_TransferMode == TransferUnknown)		// circle-gadget-stray: ignored (it asserted)
++		{
 +			NoteStray ("OUT completion");
- 		}
++		}
 +		else
 +		{
-+			size_t nLength = FinishTransfer ();
+ 		size_t nLength = FinishTransfer ();
  
--		OnTransferComplete (FALSE, nLength);
-+			if (m_Type == TypeIsochronous)
-+			{
-+				m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
-+			}
-+
-+			OnTransferComplete (FALSE, nLength);
+ 		if (m_Type == TypeIsochronous)
+@@ -665,6 +696,7 @@
+ 		}
+ 
+ 		OnTransferComplete (FALSE, nLength);
 +		}
  	}
  
  	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_OUT_TOKEN_EP_DISABLED)
-@@ -710,14 +753,21 @@
+@@ -710,6 +742,12 @@
  		InEPIntAck.Set (DWHCI_DEV_IN_EP_INT_XFER_COMPLETE);
  		InEPIntAck.Write ();
  
--		size_t nLength = FinishTransfer ();
--
--		if (m_Type == TypeIsochronous)
-+		if (m_TransferMode == TransferUnknown)		// circle-gadget-stray
- 		{
--			m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
++		if (m_TransferMode == TransferUnknown)		// circle-gadget-stray: ignored (it asserted)
++		{
 +			NoteStray ("IN completion");
- 		}
++		}
 +		else
 +		{
-+			size_t nLength = FinishTransfer ();
+ 		size_t nLength = FinishTransfer ();
  
--		OnTransferComplete (TRUE, nLength);
-+			if (m_Type == TypeIsochronous)
-+			{
-+				m_bIsoContinue = TRUE;		// the next BeginTransfer() follows on
-+			}
-+
-+			OnTransferComplete (TRUE, nLength);
+ 		if (m_Type == TypeIsochronous)
+@@ -718,6 +756,7 @@
+ 		}
+ 
+ 		OnTransferComplete (TRUE, nLength);
 +		}
  	}
  
  	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_NAK)
 --- a/lib/usb/gadget/dwusbgadgetendpoint0.cpp
 +++ b/lib/usb/gadget/dwusbgadgetendpoint0.cpp
-@@ -20,6 +20,9 @@
+@@ -20,6 +20,8 @@
  #include <circle/usb/gadget/dwusbgadgetendpoint0.h>
  #include <circle/usb/gadget/dwusbgadget.h>
  #include <circle/usb/dwhci.h>
 +#include <circle/usb/dwhciregister.h>
 +#include <circle/synchronize.h>
-+#include <circle/timer.h>
  #include <circle/util.h>
  #include <circle/logger.h>
  #include <assert.h>
-@@ -32,11 +35,19 @@
- 
- CDWUSBGadgetEndpoint0::CDWUSBGadgetEndpoint0 (size_t nMaxPacketSize, CDWUSBGadget *pGadget)
- :	CDWUSBGadgetEndpoint (nMaxPacketSize, pGadget),
-+	m_OutSlot (OutNone),
-+	m_nOutLength (0),
-+	m_pOutBuf (nullptr),
-+	m_bInArmed (FALSE),
-+	m_nInLength (0),
-+	m_bZlpDue (FALSE),
- 	m_State (StateDisconnect),
- 	m_bForwarded (FALSE)
- {
- }
- 
-+volatile unsigned CDWUSBGadgetEndpoint0::s_nSetupAborts = 0;
-+
- CDWUSBGadgetEndpoint0::~CDWUSBGadgetEndpoint0 (void)
- {
- }
-@@ -52,11 +63,9 @@
- 	m_bForwarded = FALSE;
- 
- 	// SETUP reception may already have been armed in HandleUSBReset() (see
--	// there). Do not arm it twice.
--	if (!IsTransferActive ())
--	{
--		BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
--	}
-+	// there). Do not arm it twice (ArmSetup() leaves an armed SETUP as it is).
-+	StopIn ();
-+	ArmSetup ();
- }
- 
- void CDWUSBGadgetEndpoint0::OnDeactivate (void)
-@@ -68,14 +77,21 @@
- 
- 	m_State = StateDisconnect;
- 
--	CancelTransfer ();
-+	// circle-gadget-stray: IN disabled and flushed; EP0 OUT cannot be disabled (the core ignores EPDis on it), its
-+	// arm is forgotten and made again at the next activation
-+	StopIn ();
-+	CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (0));
-+	OutEPCtrl.Read ();
-+	OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_SET_NAK);
-+	OutEPCtrl.Write ();
-+	m_OutSlot = OutNone;
- }
- 
- void CDWUSBGadgetEndpoint0::OnControlMessage (void)
- {
- 	assert (m_pGadget);
- 
--	const TSetupData *pSetupData = reinterpret_cast<TSetupData *> (m_OutBuffer);
-+	const TSetupData *pSetupData = reinterpret_cast<TSetupData *> (m_SetupBuffer);	// circle-gadget-stray
- 
- 	// copy setup packet to be used in OnTransferComplete()
- 	memcpy (&m_SetupData, pSetupData, sizeof m_SetupData);
-@@ -85,6 +101,7 @@
+@@ -85,6 +87,7 @@
  	{
  		m_pGadget->OnControlAborted ();
  		m_State = StateIdle;
@@ -387,295 +153,30 @@
  	}
  	m_bForwarded = FALSE;
  
-@@ -96,7 +113,8 @@
- 	    && pSetupData->wLength <= BufferSize
- 	    && m_pGadget->OnControlRequest (pSetupData, 0) == CDWUSBGadget::ControlDeferred)
- 	{
--		m_State = StateDeferred;	// nothing armed: the data (or status) stage is NAKed
-+		m_State = StateDeferred;	// the data (or status) stage is NAKed (IN not armed)
-+		ArmSetup ();			// circle-gadget-stray: the host's next SETUP, when it gives up on this one
- 
- 		return;
- 	}
-@@ -109,9 +127,14 @@
- 				(unsigned) pSetupData->wValue,
- 				(unsigned) pSetupData->wLength);
- 
-+	// circle-gadget-stray: a class or vendor request is never one of the standard ones of its number (a vendor OUT
-+	// request 5 with data was SET_ADDRESS, 9 SET_CONFIGURATION, 11 SET_INTERFACE): it goes to the default branch
-+	const unsigned bRequest =   pSetupData->bmRequestType & (REQUEST_CLASS | REQUEST_VENDOR)
-+				  ? 0x100 : pSetupData->bRequest;
-+
- 	if (pSetupData->bmRequestType & REQUEST_IN)
- 	{
--		switch (pSetupData->bRequest)
-+		switch (bRequest)
- 		{
- 		case GET_DESCRIPTOR: {
- 			size_t nLength;
-@@ -122,7 +145,7 @@
- 			{
- 				Stall (TRUE);
- 
--				BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+				ArmSetup ();
- 
- 				return;
- 			}
-@@ -135,16 +158,9 @@
- 				nLength = pSetupData->wLength;
- 			}
- 
--			m_State = StateInDataPhase;
--
- 			// EP0 can transfer only up to 127 bytes at once. Therefore we split greater
- 			// descriptors into multiple transfers, with up to max. packet size each.
--			m_nBytesLeft = nLength;
--			m_pBufPtr = m_InBuffer;
--
--			BeginTransfer (TransferDataIn, m_pBufPtr,
--				         m_nBytesLeft <= m_nMaxPacketSize
--				       ? m_nBytesLeft : m_nMaxPacketSize);
-+			StartIn (nLength);
- 			} break;
- 
- 		case GET_INTERFACE:
-@@ -156,17 +172,13 @@
- 				{
- 					m_InBuffer[0] = (u8) nAlt;
- 
--					m_State = StateInDataPhase;
--
--					m_nBytesLeft = 1;
--					m_pBufPtr = m_InBuffer;
--					BeginTransfer (TransferDataIn, m_pBufPtr, m_nBytesLeft);
-+					StartIn (1);
- 					break;
- 				}
- 			}
- 
- 			Stall (TRUE);
--			BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+			ArmSetup ();
- 			break;
- 
- 		case GET_STATUS:
-@@ -174,7 +186,7 @@
- 			{
- 				Stall (TRUE);
- 
--				BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+				ArmSetup ();
- 
- 				return;
- 			}
-@@ -182,11 +194,7 @@
- 			m_InBuffer[0] = 0;
- 			m_InBuffer[1] = 0;
- 
--			m_State = StateInDataPhase;
--
--			m_nBytesLeft = 2;
--			m_pBufPtr = m_InBuffer;
--			BeginTransfer (TransferDataIn, m_pBufPtr, m_nBytesLeft);
-+			StartIn (2);
- 			break;
- 
- 		default:
-@@ -198,36 +206,29 @@
- 				int nLen = m_pGadget->OnClassOrVendorRequest (pSetupData, m_InBuffer);
- 				if (nLen > 0)
- 				{
--					m_State = StateInDataPhase;
--
- 					// EP0 can transfer only up to 127 bytes at once. Therefore
- 					// we split greater transfers into multiple transfers, with
- 					// up to max. packet size each.
--					m_nBytesLeft = nLen;
--					m_pBufPtr = m_InBuffer;
--
--					BeginTransfer (TransferDataIn, m_pBufPtr,
--							 m_nBytesLeft <= m_nMaxPacketSize
--						       ? m_nBytesLeft : m_nMaxPacketSize);
-+					StartIn (nLen);
- 					break;
- 				}
- 			}
- 
- 			Stall (TRUE);
--			BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+			ArmSetup ();
- 			break;
- 		}
- 	}
- 	else
- 	{
--		switch (pSetupData->bRequest)
-+		switch (bRequest)
- 		{
- 		case SET_ADDRESS:
- 			m_pGadget->SetDeviceAddress (pSetupData->wValue & 0xFF);
- 
- 			m_State = StateInStatusPhase;
- 
--			BeginTransfer (TransferDataIn, nullptr, 0);
-+			ArmIn (nullptr, 0);
- 			break;
- 
- 		case SET_CONFIGURATION:
-@@ -235,14 +236,14 @@
- 			{
- 				Stall (TRUE);
- 
--				BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+				ArmSetup ();
- 
- 				return;
- 			}
- 
- 			m_State = StateInStatusPhase;
- 
--			BeginTransfer (TransferDataIn, nullptr, 0);
-+			ArmIn (nullptr, 0);
- 			break;
- 
- 		case SET_INTERFACE:
-@@ -253,14 +254,14 @@
- 			{
- 				Stall (TRUE);
- 
--				BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+				ArmSetup ();
- 
- 				return;
- 			}
- 
- 			m_State = StateInStatusPhase;
- 
--			BeginTransfer (TransferDataIn, nullptr, 0);
-+			ArmIn (nullptr, 0);
- 			break;
- 
- 		default:
-@@ -274,8 +275,7 @@
- 				{
- 					Stall (FALSE);
- 
--					BeginTransfer (TransferSetupOut, m_OutBuffer,
--						       sizeof (TSetupData));
-+					ArmSetup ();
- 
- 					return;
- 				}
-@@ -285,7 +285,7 @@
- 
- 				m_State = StateOutDataPhase;
- 
--				BeginTransfer (TransferDataOut, m_pBufPtr,
-+				ArmOut (m_pBufPtr,
- 						 m_nBytesLeft <= m_nMaxPacketSize
- 					       ? m_nBytesLeft : m_nMaxPacketSize);
- 			}
-@@ -293,7 +293,7 @@
- 			{
- 				m_State = StateInStatusPhase;
- 
--				BeginTransfer (TransferDataIn, nullptr, 0);
-+				ArmIn (nullptr, 0);
- 			}
- 			break;
- 		}
-@@ -302,8 +302,16 @@
- 
- void CDWUSBGadgetEndpoint0::OnTransferComplete (boolean bIn, size_t nLength)
- {
--	switch (m_State)
-+	// circle-gadget-stray: a completion of the direction the state does not wait for goes to the default
-+	TState State = m_State;
-+	if (   ((State == StateInDataPhase || State == StateInStatusPhase) && !bIn)
-+	    || (State == StateOutDataPhase && bIn))
- 	{
-+		State = StateStall;
-+	}
-+
-+	switch (State)
-+	{
- 	case StateInDataPhase:
- 		assert (m_nBytesLeft >= nLength);
- 		m_nBytesLeft -= nLength;
-@@ -311,15 +319,23 @@
- 		{
- 			m_pBufPtr += nLength;
- 
--			BeginTransfer (TransferDataIn, m_pBufPtr,
-+			ArmIn (m_pBufPtr,
- 				         m_nBytesLeft <= m_nMaxPacketSize
- 				       ? m_nBytesLeft : m_nMaxPacketSize);
- 
- 			break;
- 		}
- 
-+		if (m_bZlpDue)		// circle-gadget-stray: shorter than asked, a multiple of the packet size
-+		{
-+			m_bZlpDue = FALSE;
-+			ArmIn (nullptr, 0);
-+
-+			break;
-+		}
-+
- 		m_State = StateOutStatusPhase;
--		BeginTransfer (TransferDataOut, nullptr, 0);
-+		ArmSetup ();		// circle-gadget-stray: the status stage lands in the SETUP arm
- 		break;
- 
- 	case StateOutDataPhase:
-@@ -329,7 +345,7 @@
- 		{
- 			m_pBufPtr += nLength;
- 
--			BeginTransfer (TransferDataOut, m_pBufPtr,
-+			ArmOut (m_pBufPtr,
- 				         m_nBytesLeft <= m_nMaxPacketSize
- 				       ? m_nBytesLeft : m_nMaxPacketSize);
- 
-@@ -341,12 +357,13 @@
- 		    && m_pGadget->OnControlRequest (&m_SetupData, m_OutBuffer) == CDWUSBGadget::ControlDeferred)
- 		{
- 			m_State = StateDeferred;	// the status stage is NAKed
-+			ArmSetup ();			// circle-gadget-stray: as above
- 
- 			break;
- 		}
- 
- 		m_State = StateInStatusPhase;
--		BeginTransfer (TransferDataIn, nullptr, 0);
-+		ArmIn (nullptr, 0);
- 		break;
- 
- 	case StateInStatusPhase:
-@@ -361,11 +378,14 @@
- 
- 	case StateOutStatusPhase:
- 		m_State = StateIdle;
--		BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+		ArmSetup ();
+@@ -364,8 +367,13 @@
+ 		BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
  		break;
  
 -	default:
 -		assert (0);
 +	default:				// circle-gadget-stray: a completion no state waits for (it asserted)
-+		Stray (bIn ? "IN completion" : "OUT completion");
-+		StopIn ();
++		NoteStray (bIn ? "IN completion in no stage" : "OUT completion in no stage");
 +		m_State = StateIdle;
-+		ArmSetup ();
++		if (!IsTransferActive ())
++		{
++			BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
++		}
  		break;
  	}
  }
-@@ -378,12 +398,17 @@
+@@ -378,6 +386,14 @@
  		return FALSE;
  	}
  
-+	if (SetupPending ())		// circle-gadget-stray: the host has moved on; its SETUP's IRQ aborts this one
++	// circle-gadget-stray: the host's next SETUP is in, its IRQ still to come (it ends this request): nothing armed
++	// now, or the old answer would go to the new request's first IN token
++	CDWHCIRegister OutEPInt (DWHCI_DEV_OUT_EP_INT (0));
++	if (OutEPInt.Read () & DWHCI_DEV_OUT_EP_INT_SETUP_DONE)
 +	{
 +		return TRUE;
 +	}
@@ -683,319 +184,70 @@
  	if (nLength < 0)
  	{
  		m_State = StateIdle;
+@@ -422,3 +438,66 @@
  
- 		Stall (TRUE);
--		BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
-+		ArmSetup ();
- 
- 		return TRUE;
- 	}
-@@ -392,7 +417,7 @@
- 	{
- 		m_bForwarded = TRUE;
- 		m_State = StateInStatusPhase;
--		BeginTransfer (TransferDataIn, nullptr, 0);
-+		ArmIn (nullptr, 0);
- 
- 		return TRUE;
- 	}
-@@ -411,14 +436,293 @@
- 		memcpy (m_InBuffer, pData, nLen);
- 	}
- 
--	m_State = StateInDataPhase;
-+	StartIn (nLen);
- 
--	m_nBytesLeft = nLen;
-+	return TRUE;
-+}
-+
-+// ---- circle-gadget-stray: EP0's two directions, armed apart (IRQ level, or IRQs masked) ----------------------------
-+//
-+// Linux's dwc2 keeps EP0 OUT armed for a SETUP whenever no OUT data stage is armed. Here too: a SETUP the host sends
-+// while a request waits for its deferred answer (circle-gadget-mirror), or while the IN data stage of the request
-+// before it is still armed, lands in m_SetupBuffer as a normal SETUP done. Before, nothing was armed then, the SETUP
-+// went to whatever DOEPDMA0 last pointed at and FinishTransfer() asserted on the SETUP done (the Pi 4 at a live
-+// switch to the mirror, 2026-11-06). EP0 OUT is never disabled (the core ignores EPDis on it); EP0 IN is, at every
-+// SETUP, so the answer to an older request is never sent as the data of a newer one.
-+
-+void CDWUSBGadgetEndpoint0::Stray (const char *pWhat)
-+{
-+	unsigned n = CDWUSBGadgetEndpoint::s_nStray + 1;
-+	CDWUSBGadgetEndpoint::s_nStray = n;
-+	if ((n & (n - 1)) == 0)
-+	{
-+		CLogger::Get ()->Write (FromEP0, LogWarning, "%s in state %u: ignored (%u so far)", pWhat, (unsigned) m_State, n);
-+	}
-+}
-+
-+// The IN data stage of the request in m_SetupData, nLength bytes from m_InBuffer: in packets of up to the max. packet
-+// size, and a zero-length packet after them when the answer is shorter than asked and ends on a packet boundary (the
-+// host would wait for more), as Linux's dwc2 does (send_zlp)
-+void CDWUSBGadgetEndpoint0::StartIn (size_t nLength)
-+{
-+	m_State = StateInDataPhase;
-+	m_nBytesLeft = nLength;
- 	m_pBufPtr = m_InBuffer;
-+	m_bZlpDue = nLength && nLength < m_SetupData.wLength && nLength % m_nMaxPacketSize == 0;
- 
--	BeginTransfer (TransferDataIn, nLen ? m_pBufPtr : nullptr,
--		         m_nBytesLeft <= m_nMaxPacketSize
--		       ? m_nBytesLeft : m_nMaxPacketSize);
-+	ArmIn (nLength ? m_pBufPtr : nullptr, nLength <= m_nMaxPacketSize ? nLength : m_nMaxPacketSize);
-+}
- 
--	return TRUE;
-+// A SETUP received while EP0 OUT was armed for it, its IRQ not handled yet: SETUP done pending, or the core's SETUP
-+// count below the armed one. An IN stage armed now would answer the new request's first IN token (the CNAK clears the
-+// NAK the core set at the SETUP) with the old request's data.
-+boolean CDWUSBGadgetEndpoint0::SetupPending (void)
-+{
-+	if (m_OutSlot != OutSetup)
-+	{
-+		return FALSE;
-+	}
-+
-+	CDWHCIRegister OutEPInt (DWHCI_DEV_OUT_EP_INT (0));
-+	if (OutEPInt.Read () & DWHCI_DEV_OUT_EP_INT_SETUP_DONE)
-+	{
-+		return TRUE;
-+	}
-+
-+	CDWHCIRegister OutEPXferSize (DWHCI_DEV_OUT_EP_XFER_SIZ (0));
-+	return    ((OutEPXferSize.Read () & DWHCI_DEV_EP0_XFER_SIZ_SETUP_PKT_CNT__MASK)
-+		   >> DWHCI_DEV_EP0_XFER_SIZ_SETUP_PKT_CNT__SHIFT) < 1;
-+}
-+
-+void CDWUSBGadgetEndpoint0::OnUSBReset (void)
-+{
-+	CDWUSBGadgetEndpoint::OnUSBReset ();
-+	m_OutSlot = OutNone;
-+	m_bInArmed = FALSE;
-+}
-+
-+void CDWUSBGadgetEndpoint0::ArmSetup (void)
-+{
-+	if (m_OutSlot == OutSetup)
-+	{
-+		return;
-+	}
-+	m_OutSlot = OutSetup;
-+	m_nOutLength = sizeof (TSetupData);
-+	m_pOutBuf = m_SetupBuffer;
-+
-+	CleanAndInvalidateDataCacheRange ((uintptr) m_SetupBuffer, sizeof m_SetupBuffer);
-+
-+	CDWHCIRegister OutEPXferSize (DWHCI_DEV_OUT_EP_XFER_SIZ (0), 0);
-+	OutEPXferSize.Or (1 << DWHCI_DEV_EP0_XFER_SIZ_SETUP_PKT_CNT__SHIFT);
-+	OutEPXferSize.Or (1 << DWHCI_DEV_EP0_XFER_SIZ_PKT_CNT__SHIFT);
-+	OutEPXferSize.Or (sizeof (TSetupData) << DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__SHIFT);
-+	OutEPXferSize.Write ();
-+
-+	CDWHCIRegister OutEPDMAAddress (DWHCI_DEV_OUT_EP_DMA_ADDR (0), BUS_ADDRESS ((uintptr) m_SetupBuffer));
-+	OutEPDMAAddress.Write ();
-+
-+	CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (0));
-+	OutEPCtrl.Read ();
-+	OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_ENABLE);
-+	OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_CLEAR_NAK);
-+	OutEPCtrl.Write ();
+ 	return TRUE;
  }
 +
-+void CDWUSBGadgetEndpoint0::ArmOut (void *pBuffer, size_t nLength)
++// ---- circle-gadget-stray ----------------------------------------------------------------------------------------
++//
++// While a request waits for its deferred answer (circle-gadget-mirror) nothing is armed on EP0. A SETUP the host sends
++// then (it gave up on the request) is still taken by the core: in buffer DMA mode it is written where DOEPDMA0 points,
++// just past the last OUT transfer (the SETUP before, or an OUT data stage), and SETUP done is raised. FinishTransfer()
++// asserted on it (the Pi 4 at a live switch to the mirror, 2026-11-06, serial: dwusbgadgetendpoint.cpp(550)). The
++// SETUP is read back from there when that lies in one of EP0's buffers, and handled as any (it ends the deferred
++// request, OnControlMessage); else it is dropped, the deferred request aborted and SETUP reception armed again.
++// Nothing else of EP0's flow changes: Circle's single transfer, as before.
++
++volatile unsigned CDWUSBGadgetEndpoint0::s_nSetupAborts = 0;
++
++const u8 *CDWUSBGadgetEndpoint0::FindStraySetup (void)
 +{
-+	assert (nLength && nLength <= DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__MAX);
-+	m_OutSlot = OutData;
-+	m_nOutLength = nLength;
-+	m_pOutBuf = pBuffer;
-+
-+	CleanAndInvalidateDataCacheRange ((uintptr) pBuffer, nLength);
-+
-+	unsigned nPacketCount = (nLength + m_nMaxPacketSize - 1) / m_nMaxPacketSize;
-+	CDWHCIRegister OutEPXferSize (DWHCI_DEV_OUT_EP_XFER_SIZ (0), 0);
-+	OutEPXferSize.Or (nPacketCount << DWHCI_DEV_EP0_XFER_SIZ_PKT_CNT__SHIFT);
-+	OutEPXferSize.Or (nLength << DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__SHIFT);
-+	OutEPXferSize.Write ();
-+
-+	CDWHCIRegister OutEPDMAAddress (DWHCI_DEV_OUT_EP_DMA_ADDR (0), BUS_ADDRESS ((uintptr) pBuffer));
-+	OutEPDMAAddress.Write ();
-+
-+	CDWHCIRegister OutEPCtrl (DWHCI_DEV_OUT_EP_CTRL (0));
-+	OutEPCtrl.Read ();
-+	OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_ENABLE);
-+	OutEPCtrl.Or (DWHCI_DEV_EP_CTRL_CLEAR_NAK);
-+	OutEPCtrl.Write ();
-+}
-+
-+void CDWUSBGadgetEndpoint0::ArmIn (const void *pBuffer, size_t nLength)
-+{
-+	assert (nLength <= DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__MAX);
-+	if (m_OutSlot == OutNone)
++	CDWHCIRegister OutEPDMAAddress (DWHCI_DEV_OUT_EP_DMA_ADDR (0));
++	u32 nEnd = OutEPDMAAddress.Read ();		// just past the SETUP the core wrote
++	const struct { const u8 *p; size_t n; } Buf[] =
 +	{
-+		ArmSetup ();		// the status stage after an IN data stage, or the next SETUP
-+	}
-+
-+	StopIn ();			// (nothing armed normally: one packet at a time)
-+	m_bInArmed = TRUE;
-+	m_nInLength = nLength;
-+
-+	if (nLength)
++		{m_OutBuffer, sizeof m_OutBuffer},
++		{m_InBuffer, sizeof m_InBuffer},
++		{(const u8 *) m_DummyBuffer, sizeof m_DummyBuffer}
++	};
++	for (const auto &b : Buf)
 +	{
-+		CleanAndInvalidateDataCacheRange ((uintptr) pBuffer, nLength);
-+	}
-+	else
-+	{
-+		pBuffer = m_DummyBuffer;
-+	}
-+
-+	unsigned nPacketCount = nLength ? (nLength + m_nMaxPacketSize - 1) / m_nMaxPacketSize : 1;
-+	CDWHCIRegister InEPXferSize (DWHCI_DEV_IN_EP_XFER_SIZ (0), 0);
-+	InEPXferSize.Or (nPacketCount << DWHCI_DEV_EP0_XFER_SIZ_PKT_CNT__SHIFT);
-+	InEPXferSize.Or (nLength << DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__SHIFT);
-+	InEPXferSize.Write ();
-+
-+	CDWHCIRegister InEPDMAAddress (DWHCI_DEV_IN_EP_DMA_ADDR (0), BUS_ADDRESS ((uintptr) pBuffer));
-+	InEPDMAAddress.Write ();
-+
-+	CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (0));
-+	InEPCtrl.Read ();
-+	InEPCtrl.And (~DWHCI_DEV_IN_EP_CTRL_NEXT_EP__MASK);
-+	InEPCtrl.Or (s_NextEPSeq[0] << DWHCI_DEV_IN_EP_CTRL_NEXT_EP__SHIFT);
-+	InEPCtrl.Or (DWHCI_DEV_EP_CTRL_EP_ENABLE);
-+	InEPCtrl.Or (DWHCI_DEV_EP_CTRL_CLEAR_NAK);
-+	InEPCtrl.Write ();
-+}
-+
-+void CDWUSBGadgetEndpoint0::StopIn (void)
-+{
-+	CDWHCIRegister InEPCtrl (DWHCI_DEV_IN_EP_CTRL (0));
-+	if (InEPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE)
-+	{
-+		DisableIn (0);			// NAK effective, disabled, TX FIFO 0 flushed (bounded waits)
-+	}
-+
-+	CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (0),   DWHCI_DEV_IN_EP_INT_EP_DISABLED
-+							    | DWHCI_DEV_IN_EP_INT_XFER_COMPLETE
-+							    | DWHCI_DEV_IN_EP_INT_IN_EP_NAK_EFF);
-+	InEPIntAck.Write ();
-+	m_bInArmed = FALSE;
-+}
-+
-+void CDWUSBGadgetEndpoint0::HandleOutInterrupt (void)
-+{
-+	CDWHCIRegister OutEPCommonIntMask (DWHCI_DEV_OUT_EP_COMMON_INT_MASK);
-+	CDWHCIRegister OutEPInt (DWHCI_DEV_OUT_EP_INT (0));
-+	OutEPCommonIntMask.Read ();
-+	u32 nInt = OutEPInt.Read () & OutEPCommonIntMask.Get ();
-+
-+	CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (0), nInt);	// all of them at once
-+	OutEPIntAck.Write ();
-+
-+	if (nInt & DWHCI_DEV_OUT_EP_INT_AHB_ERROR)
-+	{
-+		CLogger::Get ()->Write (FromEP0, LogPanic, "AHB error");
-+	}
-+
-+	if (nInt & DWHCI_DEV_OUT_EP_INT_SETUP_DONE)
-+	{
-+		const TOutSlot Slot = m_OutSlot;
-+		m_OutSlot = OutNone;		// the core disabled EP0 OUT with it
-+		StopIn ();			// an older request's IN stage (a late deferred answer) is not sent now
-+
-+		if (Slot != OutSetup)		// a SETUP into an OUT data stage: its bytes are not where we can find them
++		u32 nStart = (u32) BUS_ADDRESS ((uintptr) b.p);
++		if (nEnd >= nStart + sizeof (TSetupData) && nEnd <= nStart + b.n)
 +		{
-+			Stray ("SETUP during an OUT data stage");
-+			if (m_State == StateDeferred)
-+			{
-+				m_pGadget->OnControlAborted ();
-+			}
-+			m_State = StateIdle;
-+			ArmSetup ();
++			const u8 *p = b.p + (nEnd - nStart - sizeof (TSetupData));
++			InvalidateDataCacheRange ((uintptr) p, sizeof (TSetupData));
 +
-+			return;
++			return p;
 +		}
++	}
 +
-+		InvalidateDataCacheRange ((uintptr) m_SetupBuffer, sizeof m_SetupBuffer);
++	return nullptr;
++}
++
++void CDWUSBGadgetEndpoint0::OnStraySetup (void)
++{
++	const u8 *p = FindStraySetup ();
++	if (p != nullptr)
++	{
++		u8 Setup[sizeof (TSetupData)];
++		memcpy (Setup, p, sizeof Setup);
++		memcpy (m_OutBuffer, Setup, sizeof Setup);	// where OnControlMessage() reads it
++		CleanAndInvalidateDataCacheRange ((uintptr) m_OutBuffer, sizeof Setup);
 +		OnControlMessage ();
 +
 +		return;
 +	}
 +
-+	if (nInt & DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE)
++	CLogger::Get ()->Write (FromEP0, LogWarning, "SETUP with nothing armed, not found (DMA past our buffers): dropped");
++	if (m_State == StateDeferred)
 +	{
-+		CDWHCIRegister OutEPXferSize (DWHCI_DEV_OUT_EP_XFER_SIZ (0));
-+		size_t nLeft = (OutEPXferSize.Read () & DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__MASK)
-+			       >> DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__SHIFT;
-+		const TOutSlot Slot = m_OutSlot;
-+		m_OutSlot = OutNone;
-+		size_t nLength = nLeft <= m_nOutLength ? m_nOutLength - nLeft : 0;
-+
-+		switch (Slot)
-+		{
-+		case OutData:
-+			InvalidateDataCacheRange ((uintptr) m_pOutBuf, m_nOutLength);
-+			if (m_State == StateOutDataPhase)
-+			{
-+				OnTransferComplete (FALSE, nLength);
-+			}
-+			else
-+			{
-+				Stray ("OUT data");
-+				m_State = StateIdle;
-+				ArmSetup ();
-+			}
-+			break;
-+
-+		case OutSetup:		// the empty status packet after an IN data stage (or an early one)
-+			if (   (m_State == StateOutStatusPhase || m_State == StateInDataPhase)
-+			    && nLength == 0)
-+			{
-+				StopIn ();
-+				m_State = StateIdle;
-+			}
-+			else
-+			{
-+				Stray ("OUT packet");
-+			}
-+			ArmSetup ();
-+			break;
-+
-+		default:
-+			Stray ("OUT completion with nothing armed");
-+			ArmSetup ();
-+			break;
-+		}
++		m_pGadget->OnControlAborted ();
 +	}
-+}
-+
-+void CDWUSBGadgetEndpoint0::HandleInInterrupt (void)
-+{
-+	CDWHCIRegister InEPCommonIntMask (DWHCI_DEV_IN_EP_COMMON_INT_MASK);
-+	CDWHCIRegister InEPInt (DWHCI_DEV_IN_EP_INT (0));
-+	InEPCommonIntMask.Read ();
-+	u32 nInt = InEPInt.Read () & InEPCommonIntMask.Get ();
-+
-+	CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (0), nInt);
-+	InEPIntAck.Write ();
-+
-+	if (nInt & DWHCI_DEV_IN_EP_INT_AHB_ERROR)
++	m_State = StateIdle;
++	if (!IsTransferActive ())
 +	{
-+		CLogger::Get ()->Write (FromEP0, LogPanic, "AHB error");
-+	}
-+
-+	if (nInt & DWHCI_DEV_IN_EP_INT_XFER_COMPLETE)
-+	{
-+		if (!m_bInArmed)
-+		{
-+			Stray ("IN completion with nothing armed");
-+
-+			return;
-+		}
-+		m_bInArmed = FALSE;
-+
-+		CDWHCIRegister InEPXferSize (DWHCI_DEV_IN_EP_XFER_SIZ (0));
-+		size_t nLeft = (InEPXferSize.Read () & DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__MASK)
-+			       >> DWHCI_DEV_EP0_XFER_SIZ_XFER_SIZ__SHIFT;
-+		OnTransferComplete (TRUE, nLeft <= m_nInLength ? m_nInLength - nLeft : 0);
++		BeginTransfer (TransferSetupOut, m_OutBuffer, sizeof (TSetupData));
 +	}
 +}
