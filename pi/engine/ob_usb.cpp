@@ -536,8 +536,16 @@ void CObUsb::MirrorAttachLate (void)
 	if (p == 0 || !p->m_bAttachDue || CSidecarGadget::Get () == 0) return;
 	p->m_bAttachDue = FALSE;
 	if (!CSidecarGadget::Get ()->Mirror ()) return;
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget: read now");
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget or the mode: read now");
 	p->MirrorAttach ();
+}
+
+// core 0's loop (the gadget's SetMirror): the USB-C mode set to OVERBRIDGE at run time. A box that streams and was not read
+// (the mode was CLASS COMPLIANT at its Configure) is read by the next MirrorAttachLate, as one configured before the gadget
+void CObUsb::MirrorWanted (void)
+{
+	CObUsb *p = s_pThis;
+	if (p != 0 && p->m_bStreaming && !p->m_bMirror) p->m_bAttachDue = TRUE;
 }
 
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
@@ -782,6 +790,7 @@ unsigned CObUsb::MirrorPipeResets (void)
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
+void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}
 unsigned CObUsb::MirrorPipeResets (void)				{ return 0; }

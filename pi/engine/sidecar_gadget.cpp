@@ -1,6 +1,5 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
-#include "usb_mode.h"
 
 #include <circle/string.h>
 #include <circle/usb/usb.h>
@@ -294,7 +293,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_bMirror (FALSE),
+	m_bMirror (FALSE), m_bMirUsed (FALSE),
 	m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
@@ -310,7 +309,6 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 #ifdef CIRCLE_GADGET_MIRROR
-	m_bMirror = usb_mode::get () == usb_mode::kMirror;
 	memset (m_MirDev, 0, sizeof m_MirDev);
 	m_nMirCfg = 0;
 	memset (&m_MirLayout, 0, sizeof m_MirLayout);
@@ -380,6 +378,64 @@ boolean CSidecarGadget::Start (void)
 					"the box's vendor requests and async channel are relayed unfiltered", OsUpdateName ());
 #endif
 	return Initialize ();				// usb=mirror too: the Sidecar device until the box has been read
+}
+
+boolean CSidecarGadget::MirrorBuilt (void)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+void CSidecarGadget::SetMirror (boolean bOn)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	if (bOn == m_bMirror) return;
+	m_bMirror = bOn;
+	if (bOn)
+	{
+		m_bMirUsed = TRUE;
+		CObUsb::MirrorWanted ();		// a box up now is read; MirrorPoll shows it once it is (MirrorBoxUp)
+		return;
+	}
+	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
+	else if (m_bShowMirror)
+	{
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the mode is CLASS COMPLIANT: USB-C leaves the bus, back as the Sidecar device");
+		MirrorSwitch (FALSE);
+	}
+#else
+	(void) bOn;
+#endif
+}
+
+boolean CSidecarGadget::MirrorShown (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bShowMirror;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorBoxThere (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bMirBoxUp;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorSwitching (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bSwitching;
+#else
+	return FALSE;
+#endif
 }
 
 u64 CSidecarGadget::Now (void)
@@ -936,7 +992,7 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 #ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror) MirrorPoll ();
+	if (m_bMirUsed) MirrorPoll ();
 #endif
 	UpdatePlugAndPlay ();
 	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
@@ -1452,7 +1508,7 @@ void CSidecarGadget::MirrorPoll (void)
 	{
 		if (nNow - m_nSwitchAt < m_nCntFrq * 3 / 10) return;
 		EnterCritical ();
-		m_bShowMirror = m_bSwitchTo && m_bMirHave;
+		m_bShowMirror = m_bSwitchTo && m_bMirHave && m_bMirror;
 		m_uchOutAlt = m_uchInAlt = 0;
 		OutReset ();
 		memset (m_MirAlt, 0, sizeof m_MirAlt);
@@ -1470,7 +1526,8 @@ void CSidecarGadget::MirrorPoll (void)
 		return;
 	}
 	boolean bWant = m_bShowMirror;
-	if (m_bMirBoxUp) bWant = TRUE;
+	if (!m_bMirror) bWant = FALSE;			// the mode is CLASS COMPLIANT (SetMirror switched already: a leftover)
+	else if (m_bMirBoxUp) bWant = TRUE;
 	else if (m_bShowMirror && nNow - m_nBoxGoneAt >= (u64) m_nHoldSecs * m_nCntFrq) bWant = FALSE;
 	if (bWant != m_bShowMirror)
 	{

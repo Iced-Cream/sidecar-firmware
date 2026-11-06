@@ -58,6 +58,7 @@ static int s_nRytmPatIndex = -1;
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
+#include "usbc_pi.h"		// the USB-C mode for the SIDECAR MENU > USB-C (usb_mode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
 #include "sdfiles.h"
 #include "wifi.h"
@@ -394,9 +395,15 @@ boolean CKernel::Initialize (void)
 #endif
 	{
 		CSidecarGadget *pSidecar = new CSidecarGadget (&m_Interrupt);
+		m_nUsbModes = usb_mode::modes (CSidecarGadget::MirrorBuilt (), true);
+		ApplyUsbMode ();				// the USB-C mode (usb_mode.h): display.txt's usbmode=, else usb=
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
-		if (m_pSidecar != 0 && m_pSidecar->Mirror ())	// usb=mirror (docs/usb-mirror.md)
-			m_Logger.Write (From, LogWarning, "gadget: usb=mirror: USB-C is the Sidecar device until the box has been read, "
+		else m_nUsbModes = 0;
+		m_Logger.Write (From, LogNotice, "gadget: USB-C mode %s (%s)%s", m_UsbMode == usb_mode::kMirror ? "OVERBRIDGE" : "CLASS COMPLIANT",
+				usb_mode::from_name (m_UsbFrom), m_UsbMode == usb_mode::kMirror && !CSidecarGadget::MirrorBuilt ()
+				? ": not in this build (no circle-gadget-mirror.patch), CLASS COMPLIANT runs" : "");
+		if (m_pSidecar != 0 && m_pSidecar->Mirror ())	// OVERBRIDGE, usb=mirror (docs/usb-mirror.md)
+			m_Logger.Write (From, LogWarning, "gadget: OVERBRIDGE (usb=mirror): USB-C is the Sidecar device until the box has been read, "
 					"then the box itself (the Sidecar device again after the box has been gone mirrorhold s)");
 		m_Logger.Write (From, m_pSidecar ? LogNotice : LogError, "gadget: USB-C Sidecar %s (%u in / %u out, 48 kHz, 24-bit, + MIDI)",
 					m_pSidecar ? "up" : "failed to start", CSidecarGadget::ChIn, CSidecarGadget::ChOut);
@@ -416,6 +423,7 @@ boolean CKernel::Initialize (void)
 #ifndef SIDECAR_NO_GADGET
 	else m_Logger.Write (From, LogNotice, "gadget: off");
 #endif
+	if (m_pSidecar == 0) ApplyUsbMode ();		// no Sidecar gadget: the setting read (/status, the pages), none runs
 #ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0)
 	{
@@ -543,6 +551,19 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
 	pOut->Append (s);
+	{	// the USB-C mode (usb_mode.h): set (chosen), from (card, cmdline, default), runs (set, or class where the unit cannot
+		// show it), modes (what this unit can show; [] no Sidecar gadget), shown (what the computer sees now: sidecar, box,
+		// switching, none) and boxUp (the box has been read and is up: shown, or about to be)
+		static const char *const Shown[] = {"none", "sidecar", "box", "switching"};
+		const usb_mode::Mode Runs = usb_mode::effective (k->m_UsbMode, k->m_nUsbModes);
+		s.Format (",\"usbMode\":{\"set\":\"%s\",\"from\":\"%s\",\"runs\":\"%s\",\"modes\":[%s%s%s],\"shown\":\"%s\",\"boxUp\":%s}",
+			  usb_mode::name (k->m_UsbMode), usb_mode::from_name (k->m_UsbFrom), usb_mode::name (Runs),
+			  k->m_nUsbModes & 1u << usb_mode::kSidecar ? "\"class\"" : "",
+			  (k->m_nUsbModes & 1u << usb_mode::kSidecar) && (k->m_nUsbModes & 1u << usb_mode::kMirror) ? "," : "",
+			  k->m_nUsbModes & 1u << usb_mode::kMirror ? "\"overbridge\"" : "", Shown[k->UsbShown () + 1],
+			  k->m_pSidecar != 0 && k->m_pSidecar->MirrorBoxThere () ? "true" : "false");
+		pOut->Append (s);
+	}
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
@@ -949,6 +970,7 @@ static int s_nUiLook;			// UX review L1: the OLED look (0 studio, 1 stage), /.ry
 boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 {
 	CKernel *pThis = (CKernel *) pParam;
+	if (pThis->UsbCommand (pCmd)) return TRUE;			// usbmode= (the USB-C mode)
 	boolean bSaver = strncmp (pCmd, "screensaver", 11) == 0 && (pCmd[11] == 0 || pCmd[11] == '=');
 	boolean bBright = strncmp (pCmd, "brightness", 10) == 0 && (pCmd[10] == 0 || pCmd[10] == '=');
 	if (strncmp (pCmd, "uistyle", 7) == 0 && (pCmd[7] == 0 || pCmd[7] == '='))	// the display's theme
@@ -1148,7 +1170,8 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 			f_close (&f);
 		}
 		Text[n] = 0;
-		static const char *const Known[] = {"screensaver", "brightness", "touchtest", "uistyle", "uilook", "res", "touchcal", "cpumhz", 0};
+		static const char *const Known[] = {"screensaver", "brightness", "touchtest", "uistyle", "uilook", "res", "touchcal", "cpumhz",
+						    "usbmode", 0};
 		core::fmt::kv_keep (Text, n, Known, &s_DisplayKeep);
 	}
 	auto Value = [&] (const char *pKey, unsigned nNow, unsigned nMin, unsigned nMax) -> unsigned
@@ -1200,6 +1223,13 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 		m_Ui.touch_cal = m_bTouchCal;
 		if (m_pDisplay != 0 && m_bTouchCal) m_pDisplay->SetTouchCal (&m_TouchCal);
 	}
+	{
+		// the USB-C mode (usb_mode.h): stored, it wins over cmdline.txt's usb= (ApplyUsbMode); a word it does not know is
+		// dropped at the next write, with a warning now
+		bool bFound;
+		m_bUsbStored = usb_mode::from_text (Text, &m_UsbStored, &bFound);
+		if (bFound && !m_bUsbStored) m_Logger.Write (From, LogWarning, "usb: usbmode= in /.rytm/display.txt: class or overbridge");
+	}
 	if (m_pDisplay != 0) m_pDisplay->SetScreensaver (m_nSaverMin);
 	m_Logger.Write (From, LogNotice, "display: screensaver %u min, brightness %u %%, UI style %s (%s)", m_nSaverMin, m_nBright,
 			m_nUiStyle ? "classic" : "oled", Text[0] ? "/.rytm/display.txt" : "defaults");
@@ -1223,6 +1253,12 @@ void CKernel::SaveDisplaySettings (void)
 	{
 		CString c;
 		c.Format ("cpumhz=%u\n", m_nClockSetting);
+		s.Append (c);
+	}
+	if (m_bUsbStored)					// the USB-C mode (usb_mode.h): only once chosen, so cmdline usb= holds until then
+	{
+		CString c;
+		c.Format ("usbmode=%s\n", usb_mode::name (m_UsbStored));
 		s.Append (c);
 	}
 	if (m_nResFileW)					// the file's res= kept (set by hand: docs/pi-display.md)
@@ -1506,6 +1542,9 @@ void CKernel::PushUi (void)
 	u.temp_warn = m_Thermal.warn ? 1 : 0;
 	u.clock_low_mhz = thermal::clock_low_mhz ((int) m_nClockMHz, (int) AskedMHz (), (int) m_nTempC);	// Circle's throttle
 	u.cpu_mhz = (int) m_nClockSetting;
+	u.usb_mode = (int) m_UsbMode;		// the USB-C mode (usb_mode.h): Settings > Sound
+	u.usb_modes = (int) m_nUsbModes;
+	u.usb_shown = UsbShown ();
 	u.drone = CEngineCores::DroneVoice ();
 	u.fifo = CEngineCores::FifoTarget ();
 	u.web = m_bWeb;
@@ -1553,6 +1592,85 @@ void CKernel::UiCommand (const char *pCmd, void *pParam)
 	k->m_Console.Command (pCmd);
 	k->m_nUiAt = k->m_Timer.GetClockTicks () + 150000;
 	k->m_bUiPending = TRUE;
+}
+
+// ---- the USB-C mode (usb_mode.h; docs/usb-mirror.md "The setting")
+
+// The mode chosen (display.txt's usbmode=, else cmdline usb=, else CLASS COMPLIANT) on the gadget: before its Start at
+// boot, live after (CSidecarGadget::SetMirror: a replug of USB-C when what the computer sees changes)
+void CKernel::ApplyUsbMode (void)
+{
+	m_UsbMode = usb_mode::resolve (m_bUsbStored, m_UsbStored, m_Options.GetAppOptionString ("usb", 0), &m_UsbFrom);
+	CSidecarGadget *p = CSidecarGadget::Get ();		// (made, if not yet started, at boot)
+	if (p != 0) p->SetMirror (usb_mode::effective (m_UsbMode, m_nUsbModes) == usb_mode::kMirror);
+}
+
+int CKernel::UsbShown (void) const
+{
+	if (m_pSidecar == 0) return -1;
+	if (m_pSidecar->MirrorSwitching ()) return 2;
+	return m_pSidecar->MirrorShown () ? 1 : 0;
+}
+
+void CKernel::PublishUsb (void)
+{
+	const int nShown = UsbShown ();
+	const int nKey = (int) m_UsbMode | (int) m_nUsbModes << 4 | (nShown + 1) << 8;
+	if (nKey == m_nUsbPub) return;
+	m_nUsbPub = nKey;
+	usbc_pi::Publish ((int) m_UsbMode, m_nUsbModes, nShown);
+	if (m_pDisplay != 0 && !m_bUiPending)			// the touchscreen's Settings > Sound shows it soon
+	{
+		m_nUiAt = m_Timer.GetClockTicks () + 50000;
+		m_bUiPending = TRUE;
+	}
+}
+
+// usbmode: the state; usbmode=class|overbridge: stored in display.txt (it then wins over cmdline usb=) and applied at
+// once; usbmode=cmdline: the stored one dropped, cmdline usb= (or the default) again. A mode this unit cannot show is
+// refused (the build has no mirror, or USB-C is not the Sidecar gadget: cmdline gadget=midi / 0)
+boolean CKernel::UsbCommand (const char *pCmd)
+{
+	if (strncmp (pCmd, "usbmode", 7) != 0 || (pCmd[7] != 0 && pCmd[7] != '=')) return FALSE;
+	if (pCmd[7] == '=')
+	{
+		const char *v = pCmd + 8;
+		usb_mode::Mode m = usb_mode::kSidecar;
+		if (strcmp (v, "cmdline") == 0)
+		{
+			if (m_bUsbStored) m_bSaveDisplay = TRUE;
+			m_bUsbStored = FALSE;
+		}
+		else if (!usb_mode::parse (v, &m))
+		{
+			m_Logger.Write (From, LogWarning, "usbmode=class|overbridge|cmdline");
+			return TRUE;
+		}
+		else if (!(m_nUsbModes & 1u << m))
+		{
+			m_Logger.Write (From, LogWarning, "usbmode=%s: not here (%s)", usb_mode::name (m),
+					m_nUsbModes == 0 ? "USB-C is not the Sidecar gadget: cmdline gadget=" : "this build has no circle-gadget-mirror.patch");
+			return TRUE;
+		}
+		else
+		{
+			if (!m_bUsbStored || m_UsbStored != m) m_bSaveDisplay = TRUE;
+			m_bUsbStored = TRUE;
+			m_UsbStored = m;
+		}
+		const usb_mode::Mode Was = m_UsbMode;
+		ApplyUsbMode ();
+		if (m_UsbMode == usb_mode::kMirror && Was != usb_mode::kMirror && m_pSidecar != 0 && m_pSidecar->OsUpdate ())
+			m_Logger.Write (From, LogWarning, "usb: OVERBRIDGE with usbmidi=os:%s: the OS-update filter covers MIDI only; the box's "
+					"vendor requests and async channel are relayed unfiltered (docs/usb-mirror.md)", m_pSidecar->OsUpdateName ());
+		PublishUsb ();
+	}
+	static const char *const Shown[] = {"no Sidecar gadget", "the Sidecar device", "the box", "off the bus (a replug)"};
+	m_Logger.Write (From, LogNotice, "usb: USB-C mode %s (%s; cmdline usb= %s), the computer sees %s%s",
+			m_UsbMode == usb_mode::kMirror ? "OVERBRIDGE" : "CLASS COMPLIANT", usb_mode::from_name (m_UsbFrom),
+			m_bUsbStored ? "ignored while one is stored" : "used", Shown[UsbShown () + 1],
+			m_UsbMode == usb_mode::kMirror ? ": the box's requests and async channel pass unfiltered" : "");
+	return TRUE;
 }
 
 // touch2: the STATUS page's numbers: LogStats' second (the loads, the longest block and pass, the FIFO), the rest when
@@ -2283,6 +2401,11 @@ void CKernel::Run (void)
 		}
 		if (m_bSaveDisplay) SaveDisplaySettings ();
 		paircode_pi::Poll ();			// the Rytm's SIDECAR MENU > WEB UI asks: a new code, forget, web on / off
+		{
+			int nUsbAsk = usbc_pi::TakeAsk ();	// the Rytm's SIDECAR MENU > USB-C asks: as the console's usbmode=
+			if (nUsbAsk >= 0) UsbCommand (nUsbAsk == usb_mode::kMirror ? "usbmode=overbridge" : "usbmode=class");
+			PublishUsb ();
+		}
 		char Link[40];
 		if (m_Console.TakeLink (Link, sizeof Link)) UseLink (Link);
 		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// usbmidi=os:emu follows the host

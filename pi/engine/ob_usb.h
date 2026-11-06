@@ -82,6 +82,7 @@ public:
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
 	static void MirrorAttachLate (void);
+	static void MirrorWanted (void);		// core 0's loop: the USB-C mode turned to OVERBRIDGE: a box up and not yet read is read (MirrorAttachLate)
 	static u16 OutCounter (void)		{ return s_pThis != 0 ? s_pThis->m_nOutCounter : 0; }	// the next block's		// core 0's loop: the box was configured before the gadget existed
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
