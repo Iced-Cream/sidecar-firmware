@@ -60,7 +60,7 @@ case "$MP" in "circle-gadget-mirror.patch circle-gadget-softconnect.patch "*) ;;
   *) fail "the Pi 5 tree's mirror files restored in build.sh: $MP";; esac
 grep -q 'cat $PP $MP | sed -n' "$ENG/build.sh" || fail "build.sh does not restore the mirror patches' files on the Pi 5 tree"
 P4=$(grep -o 'patch -p1 < /repo/pi/circle/circle-gadget[a-z-]*\.patch' "$ENG/build.sh" | sed 's,.*/,,' | tr '\n' ' ')
-[ "$P4" = "circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
+[ "$P4" = "circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch " ] \
   || fail "the Pi 4 gadget patches in build.sh: $P4"
 C=${CIRCLE_BUILD:-$ENG/../circle/build}/circle
 if [ -f "$C/include/circle/usb/gadget/dwusbgadget.h" ]; then
