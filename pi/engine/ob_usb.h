@@ -138,6 +138,7 @@ private:
 		volatile unsigned nPackets, nErrors;
 		unsigned nTries;			// clears in a row that did not bring it back (slows the retries down)
 		unsigned nLastTry;			// CTimer ticks
+		boolean bRefused;			// the host refused the last reset: the next one that takes is logged
 	} m_Pipe[MaxPipes];
 	unsigned m_nPipes;
 	boolean m_bMirror;

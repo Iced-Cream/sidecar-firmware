@@ -150,13 +150,14 @@ int main() {
     CHECK(b.clears(0x82) == 0 && CObUsb::MirrorPipeResets() == 0);
 
     // the IN pipe halts (the box STALLed it): not resubmitted until MirrorPipePoll has cleared it on the box and on the
-    // xHC (Reset Endpoint, as the endpoint context is Halted); then running again, logged once
+    // xHC (Reset Endpoint, as the endpoint context is Halted: Stopped after it, as on Circle); then running again,
+    // logged once
     in = b.pipe(0x82);
     in->ep->GetXHCIEndpoint()->state = 2;
     b.complete(in, false);
     CHECK(b.pipe(0x82) == nullptr && g_gadget.pipe_in.size() == 1);
     poll_at(2000);
-    CHECK(b.clears(0x82) == 1 && in->ep->GetXHCIEndpoint()->resets == 1 && in->ep->GetXHCIEndpoint()->state == 1);
+    CHECK(b.clears(0x82) == 1 && in->ep->GetXHCIEndpoint()->resets == 1 && in->ep->GetXHCIEndpoint()->state == 3);
     CHECK(b.pipe(0x82) != nullptr && CObUsb::MirrorPipeResets() == 1);
     CHECK(logged("usb=mirror: pipe 0x82 halted: cleared, running again"));
 
@@ -177,11 +178,17 @@ int main() {
     b.complete(b.pipe(0x82), true, 1);
     in = b.pipe(0x82);
     CXHCIEndpoint* x = in->ep->GetXHCIEndpoint();
-    x->state = 2, x->reset_ok = false;            // Reset Endpoint fails: the pipe stays stopped
+    // Reset Endpoint refused: Circle's ResetFromHalted still says TRUE and the context stays Halted (2). The pipe stays
+    // stopped (nothing submitted into the halted ring, where it would never complete and leave the pipe busy for good),
+    // logged once as refused, never as running again, and tried again after the backoff
+    x->state = 2, x->reset_ok = false;
     b.complete(in, false);
+    size_t nRunning = std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                                    [](const std::string& l) { return l.find("running again") != std::string::npos; });
     unsigned t = 3000;
     poll_at(t);
-    CHECK(b.clears(0x82) == 2);
+    CHECK(b.clears(0x82) == 2 && x->resets == 2 && x->state == 2 && b.pipe(0x82) == nullptr);
+    CHECK(logged("usb=mirror: pipe 0x82 halted: the host refused its reset (state 2), trying again"));
     for (int k = 2; k <= 5; ++k) {
       poll_at(t + 9);                             // too soon
       CHECK(b.clears(0x82) == k);
@@ -194,7 +201,9 @@ int main() {
     CHECK(b.clears(0x82) == 6);
     t += 100;
     poll_at(t);
-    CHECK(b.clears(0x82) == 7 && b.pipe(0x82) == nullptr);
+    CHECK(b.clears(0x82) == 7 && b.pipe(0x82) == nullptr && x->resets == 7 && x->state == 2);
+    CHECK(std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                        [](const std::string& l) { return l.find("running again") != std::string::npos; }) == (long) nRunning);
 
     // a forwarded request holds EP0: MirrorPipePoll waits for its answer before it clears anything
     x->reset_ok = true;
@@ -208,7 +217,9 @@ int main() {
     b.complete(b.host.ep0[0], true, 5);
     CHECK(g_gadget.done.size() == 1 && g_gadget.done[0].seq == 41 && g_gadget.done[0].n == 5);
     poll_at(t);
-    CHECK(b.clears(0x82) == 8 && b.pipe(0x82) != nullptr);
+    CHECK(b.clears(0x82) == 8 && b.pipe(0x82) != nullptr && x->state == 3);   // the reset took: running again, logged
+    CHECK(std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                        [](const std::string& l) { return l.find("running again") != std::string::npos; }) == (long) nRunning + 1);
 
     // the box STALLs a forwarded request: the gadget is told (< 0), and STALLs it to the computer
     CHECK(CObUsb::MirrorControl(&s, nullptr, 43));
