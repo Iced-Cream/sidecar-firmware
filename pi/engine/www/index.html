@@ -668,6 +668,9 @@
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
+// what a refused change says (cmd, cmdFail; the fetch wrapper and pairLost for the first)
+const CMD_NOT_PAIRED = "not paired: pair this browser first (the code is on the Rytm's screen)";
+const CMD_NOT_PAGE = "refused: not from this page (the same-origin check): open the page at the Sidecar's own address";
 // ---- the pairing code (pi/engine/paircode.h, docs/pi-engine.md "Pairing code"). The code is entered once; what this
 // browser keeps is a client id and a secret in localStorage (not the code), and it trades those for a session token at
 // every load. The token rides in the X-Sidecar-Auth header of every request - a header another site's page cannot set,
@@ -711,9 +714,14 @@ const pairStore = {
   window.fetch = async (url, opt) => {
     const gen = PAIR.gen;                           // the pairing this request belongs to
     if (PAIR.tok && typeof url === "string" && !/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith("//")) {
+      // A plain object, never a Headers: Chrome sends a Headers object's names in lower case ("content-type"), and
+      // Circle's HTTP daemon matched Content-Type case-sensitively, so every paired form POST lost its body and /cmd
+      // refused it (400, nothing logged; hardware 2026-11-06). The names keep their case this way (circle-http-case.patch
+      // fixes the daemon too)
       opt = { ...(opt || {}) };
-      const h = new Headers(opt.headers || {});     // a Headers or a plain object, both
-      h.set("X-Sidecar-Auth", PAIR.tok);
+      const h = opt.headers instanceof Headers ? Object.fromEntries(opt.headers) : { ...(opt.headers || {}) };
+      for (const k of Object.keys(h)) if (k.toLowerCase() === "x-sidecar-auth") delete h[k];
+      h["X-Sidecar-Auth"] = PAIR.tok;
       opt.headers = h;
     }
     for (let i = 0; ; i++) {
@@ -721,7 +729,7 @@ const pairStore = {
       let r;
       try { r = await raw(url, opt); } finally { give(); }
       if (r.status !== 503 || i >= 3 || (opt && opt.signal && opt.signal.aborted)) {
-        if (r.headers.get("X-Sidecar-Pair") && gen === PAIR.gen) pairLost();
+        if (r.headers.get("X-Sidecar-Pair") && gen === PAIR.gen) pairLost(CMD_NOT_PAIRED);
         return r;
       }
       await new Promise((ok) => setTimeout(ok, 300 << i));
@@ -776,12 +784,18 @@ function pairDone(tok) {                // a pairing transition: nothing from be
 }
 // The Sidecar refused a request this page thought was authenticated: the session went (a reboot, a revoke, an hour
 // idle). The generation guard in the wrapper means this is only ever reached for a refusal of the *current* pairing,
-// so a stale one cannot undo a code that has just been accepted.
+// so a stale one cannot undo a code that has just been accepted. The Sidecar has just said this page is not paired, so
+// the dialog goes up whatever /pair/status said before (not answered yet, or the gate off: a stale token from an
+// earlier boot or kernel left the page inert, every change "refused", on hardware 2026-11-06), and pairBoot then
+// resumes a saved pairing (the dialog goes again) or drops a stale one and asks for the code.
 function pairLost(why) {
   PAIR.gen++;
   PAIR.tok = "";
+  PAIR.ready = true;
+  if (PAIR.gate === "off") PAIR.gate = "on";
   pairAsk(why);
   pairShow();
+  pairBoot();
 }
 async function pairJson(url, form) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1111,14 +1125,23 @@ function showMfx(m) {
   box.querySelectorAll("[data-mfx-v]").forEach((r) => { r.onchange = () => { cmd("mfx=" + r.dataset.mfxV + r.value); r.blur(); }; });
   box.querySelectorAll("[data-mfx-t]").forEach((t) => { t.onchange = () => { cmd("mfx=" + t.dataset.mfxT + ":type:" + t.value); t.blur(); }; });
 }
+// Why the last cmd() was refused, for the control that sent it (cmdFail): not paired (web.cpp PairRefused: HTTP 200 with
+// X-Sidecar-Pair, or a 401; the fetch wrapper has opened the pairing dialog), the same-origin check (a 403, or /cmd's 400
+// for usbmode=overbridge, the strict one), or anything else
+let cmdWhy = "";
+const cmdFail = () => cmdWhy || "Sidecar refused the command (its log says why: \"web: /cmd refused\")";
 async function cmd(c) {
   appendLines([{ text: "> :" + c, cls: "me" }]);
   let ok = false;
+  cmdWhy = "";
   try {
     const r = await fetch("/cmd", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "c=" + encodeURIComponent(c) });
-    ok = r.ok;
-    if (!r.ok) appendLines([{ text: "! " + r.status + " " + r.statusText, cls: "bad" }]);
+    const unpaired = !!r.headers.get("X-Sidecar-Pair") || r.status === 401;
+    if (r.status === 401 && !r.headers.get("X-Sidecar-Pair")) pairLost(CMD_NOT_PAIRED);   // (the wrapper did it for the header)
+    ok = r.ok && !unpaired;
+    cmdWhy = unpaired ? CMD_NOT_PAIRED : r.status === 403 || (r.status === 400 && /^usbmode=overbridge$/.test(c)) ? CMD_NOT_PAGE : "";
+    if (!ok) appendLines([{ text: "! " + (unpaired ? CMD_NOT_PAIRED : r.status + " " + r.statusText), cls: "bad" }]);
   } catch (e) { appendLines([{ text: "! " + e, cls: "bad" }]); }
   postDone = Date.now();
   setTimeout(pollStatus, 300);
@@ -1197,7 +1220,7 @@ function settle() {       // /status after a change: confirm what matches
 }
 async function choose(key, want, c) {
   pend.start(key, want);
-  if (!(await cmd(c))) pend.fail(key, "Sidecar refused the command");
+  if (!(await cmd(c))) pend.fail(key, cmdFail());
 }
 const USB_OB_WARN = "Switch USB-C to Overbridge? The computer then talks to the Rytm itself: its vendor requests and the "
   + "Overbridge async channel reach it unfiltered, so an OS update from the computer (Transfer, Overbridge) can reach the Rytm "
@@ -1376,7 +1399,7 @@ $("#sx-set").onclick = () => {
   sxSend(seqxStepLines(+$("#sx-t").value, +$("#sx-s").value, f, seqxWas));
 };
 $("#mset").onclick = () => { const v = $("#mvoice").value, n = $("#mname").value; choose("mach", v + ":" + n, "notemach=" + v + ":" + n); };
-$("#fifoset").onclick = () => { const n = $("#fifo").value | 0; pend.start("fifo", n); cmd("fifo=" + n).then((ok) => { if (!ok) pend.fail("fifo", "Sidecar refused the command"); }); };
+$("#fifoset").onclick = () => { const n = $("#fifo").value | 0; pend.start("fifo", n); cmd("fifo=" + n).then((ok) => { if (!ok) pend.fail("fifo", cmdFail()); }); };
 $("#bright").oninput = () => { $("#brightv").textContent = $("#bright").value + " %"; };
 $("#bright").onchange = () => cmd("brightness=" + $("#bright").value);
 $("#send").onclick = () => { const c = $("#cmd").value.trim().replace(/^:/, ""); if (c) cmd(c); $("#cmd").value = ""; };

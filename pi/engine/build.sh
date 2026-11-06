@@ -163,6 +163,10 @@ grep -q circle-http-origin include/circle/net/httpdaemon.h || patch -p1 < /repo/
 # and the X-Sidecar-Auth header (pi/circle/circle-http-auth.patch: the pairing code'"'"'s session token, paircode.h; after
 # circle-http-origin.patch, idempotent). web.cpp calls GetRequestAuth(), so a tree without this patch does not build.
 grep -q circle-http-auth include/circle/net/httpdaemon.h || patch -p1 < /repo/pi/circle/circle-http-auth.patch
+# then the header names case-insensitive (pi/circle/circle-http-case.patch: Content-Type and Content-Length; Chrome sends
+# "content-type" for a fetch() with a Headers object, and the form was then not read: /cmd refused every paired change;
+# after circle-http-auth.patch, idempotent)
+grep -q circle-http-case lib/net/httpdaemon.cpp || patch -p1 < /repo/pi/circle/circle-http-case.patch
 make -C lib/net -j$J >/dev/null
 # the HID endpoint recovery and diagnostics (pi/circle/circle-hid.patch: a halted xHCI interrupt endpoint is reset
 # and resubmitted from the main loop; counters for the display log line; idempotent), then lib/usb
