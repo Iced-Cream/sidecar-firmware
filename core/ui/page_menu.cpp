@@ -12,7 +12,7 @@
 // USB-C from MENU (where the platform has one: remote_usb, the Pi): what USB-C is to the computer, one mode at a time -
 //        CLASS COMPLIANT (the Sidecar's audio + MIDI device) or OVERBRIDGE (the box itself, passed through: its requests
 //        unfiltered, so an OS update from the computer can reach it; docs/usb-mirror.md). UP / DOWN or knob A pick a
-//        row, YES sets it (stored on the card, applied at once: USB-C replugs as the new device), NOW: what the
+//        row, YES sets it - OVERBRIDGE YES twice - (stored on the card, applied at once: USB-C replugs), NOW: what the
 //        computer sees. MIDI only / off stay cmdline.txt's gadget= (USB-C is then not the Sidecar's device: NOT HERE).
 // Every shortcut comes from the device's table (ui/page_keys.h). Both stay off the LEFT / RIGHT ring (ExtraPage::off_ring).
 #include <string.h>
@@ -105,6 +105,7 @@ struct State {
   uint32_t wnote_ms;
   bool usb_on;           // USB-C shown
   int ucur;              // its cursor: the mode row (0 CLASS COMPLIANT, 1 OVERBRIDGE)
+  bool uconfirm;         // OVERBRIDGE asked once: YES again sets it (as FORGET DEVICES)
   char note[26];
   uint32_t note_ms;
 };
@@ -246,7 +247,7 @@ CORE_COLD bool menu_key(int code) {
     else if (!strcmp(e.page, "WEB UI")) M.web_on = true, M.wcur = 0, M.wconfirm = false, remote_show_page("WEB UI");
     else if (!strcmp(e.page, "USB-C")) {
       const RemoteUsb* u = remote_usb();
-      M.usb_on = true, M.ucur = u && u->mode && u->mode() == 1 ? 1 : 0;   // on the mode set
+      M.usb_on = true, M.uconfirm = false, M.ucur = u && u->mode && u->mode() == 1 ? 1 : 0;   // on the mode set
       remote_show_page("USB-C");
     }
     else remote_show_page(!strcmp(e.page, "SIDECAR") ? kStatusTitle : e.page);
@@ -388,12 +389,14 @@ CORE_COLD void usb_draw(Canvas& c, int page, int npages, uint32_t ms) {
   const char* d[3] = {"AUDIO 12 IN/OUT + MIDI", "THE SIDECAR'S OWN DEVICE", nullptr};
   if (ob) d[0] = "OB: THE BOX ITSELF", d[1] = "ITS REQUESTS UNFILTERED", d[2] = "OS UPDATES CAN REACH IT";
   for (int i = 0; i < 3; ++i) c.put_text(kSlotFree + 2 * kUsbRows + i, kRSmall, 2, kRowY + (kUsbRows + i) * kRowH, d[i]);
-  if (M.wnote_new || (M.wnote_ms && ms - M.wnote_ms < 2000)) footer(c, M.note);
+  if (M.uconfirm) footer(c, "YES: OVERBRIDGE  NO: KEEP");
+  else if (M.wnote_new || (M.wnote_ms && ms - M.wnote_ms < 2000)) footer(c, M.note);
   else footer(c, "YES: SET  NO: BACK");
   if (M.wnote_new) M.wnote_new = false, M.wnote_ms = ms | 1;
 }
 CORE_COLD void usb_enc(int e, int delta, bool) {
   const int l = e == 0 ? list_turn(e, delta) : 0;
+  if (l) M.uconfirm = false;
   M.ucur += l;
   if (M.ucur < 0) M.ucur = 0;
   if (M.ucur > kObRow) M.ucur = kObRow;
@@ -401,11 +404,12 @@ CORE_COLD void usb_enc(int e, int delta, bool) {
 CORE_COLD bool usb_key(int code) {
   const RemoteUsb* h = remote_usb();
   if (code == kUp || code == kDown) {
-    M.ucur += code == kUp ? -1 : 1;
+    M.ucur += code == kUp ? -1 : 1, M.uconfirm = false;
     usb_enc(0, 0, false);
     return true;
   }
   if (code == kNo) {
+    if (M.uconfirm) { M.uconfirm = false; web_note("KEPT"); return true; }
     M.usb_on = false;
     return false;   // (remote.cpp: NO goes to SIDECAR)
   }
@@ -414,7 +418,9 @@ CORE_COLD bool usb_key(int code) {
   if (!modes) web_note("USB-C: CMDLINE GADGET=");
   else if (!(modes & 1u << M.ucur)) web_note("NOT IN THIS BUILD");
   else if (h->mode && h->mode() == M.ucur) web_note(M.ucur == kObRow ? "OVERBRIDGE ALREADY" : "CLASS ALREADY");
+  else if (M.ucur == kObRow && !M.uconfirm) M.uconfirm = true;   // the box's requests unfiltered: asked once more
   else {
+    M.uconfirm = false;
     if (h->set_mode) h->set_mode(M.ucur);
     web_note(M.ucur == kObRow ? "OVERBRIDGE: REPLUGS" : "CLASS: REPLUGS");
   }

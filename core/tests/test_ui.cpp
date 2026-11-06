@@ -1382,12 +1382,19 @@ int main() {
       CHECK(fu.sets == 0 && shown_text("CLASS ALREADY"));
       key(0x43);                                 // DOWN: OVERBRIDGE, its warning before it is set
       CHECK(fu.sets == 0 && shown_text("ITS REQUESTS UNFILTERED") && shown_text("OS UPDATES CAN REACH IT"));
-      key(0x44);                                 // YES: asked for
+      key(0x44);                                 // YES: asked once more (the box's requests unfiltered)
+      CHECK(fu.sets == 0 && shown_text("YES: OVERBRIDGE  NO: KEEP") && shown_text("ITS REQUESTS UNFILTERED"));
+      png("usb_2_confirm.png");
+      key(0x45);                                 // NO: kept, still on the page
+      CHECK(fu.sets == 0 && is("USB-C") && shown_text("KEPT"));
+      key(0x44), key(0x43);                      // YES then DOWN (a move): the question is off
+      CHECK(fu.sets == 0 && !shown_text("YES: OVERBRIDGE  NO: KEEP"));
+      key(0x44), key(0x44);                      // YES, YES: asked for
       CHECK(fu.sets == 1 && fu.mode == 1 && shown_text("OVERBRIDGE: REPLUGS") && shown_text("REPLUG..."));
       fu.shown = 1;
       remote_tick(t += 3000);
       CHECK(shown_text("THE BOX") && shown_text("ITS REQUESTS UNFILTERED") && shown_text("YES: SET  NO: BACK"));
-      png("usb_2_overbridge.png");
+      png("usb_3_overbridge.png");
       key(0x42);                                 // UP: CLASS COMPLIANT; OVERBRIDGE set: the warning stays
       CHECK(shown_text("ITS REQUESTS UNFILTERED"));
       key(0x44);
@@ -1401,7 +1408,7 @@ int main() {
       fu.modes = 0, fu.shown = -1;               // USB-C is not the Sidecar's device (cmdline gadget=midi / 0)
       key(0x42), key(0x44);
       CHECK(fu.sets == 2 && shown_text("NO SIDECAR USB") && shown_text("USB-C: CMDLINE GADGET="));
-      png("usb_3_nogadget.png");
+      png("usb_4_nogadget.png");
       key(0x45);                                 // NO: SIDECAR
       CHECK(!is("USB-C") && remote_stats().page == 0);
       fu = Fake{};

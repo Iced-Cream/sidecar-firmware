@@ -289,7 +289,7 @@
       <div class="row"><label id="l-mac" title="the computer's USB audio OUT (USB-C) mixed into the Rytm's Overbridge inputs">Computer audio</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-mac" data-key="mac"><button type="button" role="radio" aria-checked="false" data-cmd="mac=on" data-val="true">On</button><button type="button" role="radio" aria-checked="false" data-cmd="mac=off" data-val="false">Off</button></div>
         <span class="fb" data-fb="mac" role="status" aria-live="polite"></span></div>
-      <div class="row"><label id="l-usbmode" title="what USB-C is to the computer, one mode at a time: the Sidecar's own audio (12 in / 12 out) and MIDI device, or the Rytm itself passed through for Overbridge; stored on the card, applied at once (USB-C replugs as the new device)">USB-C mode</label>
+      <div class="row"><label id="l-usbmode" title="what USB-C is to the computer, one mode at a time: the Sidecar's own audio (12 in / 12 out) and MIDI device, or the Rytm itself passed through for Overbridge; stored on the card, applied at once (USB-C replugs as the new device: not during a transfer or an OS update)">USB-C mode</label>
         <div class="seg" role="radiogroup" aria-labelledby="l-usbmode" data-key="usbmode"><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=class" data-val="class">Class compliant</button><button type="button" role="radio" aria-checked="false" data-cmd="usbmode=overbridge" data-val="overbridge">Overbridge</button></div>
         <span id="usbnow" class="mut"></span>
         <span class="fb" data-fb="usbmode" role="status" aria-live="polite"></span></div>
@@ -1178,7 +1178,7 @@ function paintSeg() {
     : (u.shown === "box" ? "now: the Rytm itself" : u.shown === "switching" ? "now: replugging" : "now: the Sidecar device"
       + (u.set === "overbridge" && u.runs === "overbridge" ? " (no box read yet)" : ""))
       + (u.set !== u.runs ? "; not in this build: class compliant runs" : "") + (u.from === "cmdline" ? " (cmdline.txt usb=)" : "");
-  $("#usb-warn").hidden = !u || u.set !== "overbridge";
+  $("#usb-warn").hidden = !u || (u.set !== "overbridge" && pend.want("usbmode") !== "overbridge");   // set, or being set
 }
 function settle() {       // /status after a change: confirm what matches
   const st = status || {};
@@ -1199,8 +1199,12 @@ async function choose(key, want, c) {
   pend.start(key, want);
   if (!(await cmd(c))) pend.fail(key, "Sidecar refused the command");
 }
+const USB_OB_WARN = "Switch USB-C to Overbridge? The computer then talks to the Rytm itself: its vendor requests and the "
+  + "Overbridge async channel reach it unfiltered, so an OS update from the computer (Transfer, Overbridge) can reach the Rytm "
+  + "(usbmidi=os: filters MIDI only). USB-C replugs now: not during a transfer or an OS update.";
 document.querySelectorAll(".seg[data-key] button").forEach((b) => b.addEventListener("click", () => {
   const k = b.closest(".seg").dataset.key;
+  if (k === "usbmode" && b.dataset.val === "overbridge" && chosen(k) !== "overbridge" && !confirm(USB_OB_WARN)) return;
   const on = k === "drone" && b.dataset.val === "on";
   choose(k, on ? "on:" + $("#dvoice").value : b.dataset.val, b.dataset.cmd + (on ? $("#dvoice").value : ""));
 }));

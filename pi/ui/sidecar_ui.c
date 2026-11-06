@@ -1702,7 +1702,7 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		seg_set (SEG_CLOCK, k);
 	}
 	{	// the USB-C mode (Settings > Sound): the mode set; a mode this unit cannot run is greyed; what USB-C is now, and
-		// OVERBRIDGE's warning while it is set (docs/usb-mirror.md "What the filters cover")
+		// OVERBRIDGE's warning wherever it can be picked, set or not (docs/usb-mirror.md "What the filters cover")
 		const int ok = s->usb_modes != 0, ob = s->usb_mode == 1, O = oled ();
 		const char *box = O ? sidecar_ui_box_up () : sidecar_ui_box ();
 		char u[200];
@@ -1714,12 +1714,14 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		else if (s->usb_shown == 1) lv_snprintf (u, sizeof u, O ? "NOW: THE %s ITSELF." : "Now: the %s itself.", box);
 		else if (s->usb_shown == 2) lv_snprintf (u, sizeof u, "%s", O ? "NOW: REPLUGGING..." : "Now: replugging...");
 		else if (ob) lv_snprintf (u, sizeof u, O ? "NOW: SIDECAR DEVICE (NO %s YET)." : "Now: the Sidecar device (no %s read yet).", box);
-		else lv_snprintf (u, sizeof u, "%s", O ? "NOW: SIDECAR AUDIO 12/12 + MIDI." : "Now: the Sidecar's audio, 12 in / 12 out, and MIDI.");
-		if (ok && ob && (s->usb_modes & 2))
+		else lv_snprintf (u, sizeof u, "%s", O ? "NOW: SIDECAR AUDIO + MIDI." : "Now: the Sidecar's audio and MIDI.");
+		if (ok && (s->usb_modes & 2))	// set, or before it is picked (the review's L3)
 		{
 			size_t n = strlen (u);
-			lv_snprintf (u + n, sizeof u - n, "%s", O ? "\nITS REQUESTS PASS UNFILTERED:\nOS UPDATES CAN REACH IT."
-								  : " Its requests pass unfiltered: an OS update from the computer can reach it.");
+			if (ob) lv_snprintf (u + n, sizeof u - n, "%s", O ? "\nITS REQUESTS PASS UNFILTERED:\nOS UPDATES CAN REACH IT."
+									  : " Its requests pass unfiltered: an OS update from the computer can reach it.");
+			else lv_snprintf (u + n, sizeof u - n, "%s", O ? "\nOVERBRIDGE IS UNFILTERED:\nOS UPDATES CAN REACH THE BOX."
+									 : " Overbridge: the box's requests unfiltered, OS updates can reach it.");
 		}
 		set_text (s_UsbInfo, u);
 	}
