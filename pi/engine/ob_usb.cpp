@@ -36,8 +36,8 @@
 //     microframe late, so a 2-deep queue has under 125 us to be refilled.
 //   * A transfer error is logged by xhciendpoint.cpp per event (flooding risk on a bad link).
 //   * Buffers must be cache-line aligned DMA memory above MEM_KERNEL_END: heap blocks.
-//   * ResetFromHalted() exists in CXHCIEndpoint (no CLEAR_FEATURE(HALT) recovery here yet; the
-//     endpoint state is printed so a halt shows).
+//   * A transfer error halts the endpoint: PollHalt clears it on the box and resets it on the host (ep_halt.h);
+//     the endpoint state is printed so a halt shows.
 //
 #include "ob_usb.h"
 #include "simd.h"
@@ -272,6 +272,124 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 	}
 }
 
+unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused, CObUsb::s_nHaltHeld;
+
+boolean CObUsb::s_bResetDone;
+
+// At most one endpoint is reset a main-loop pass, the Rytm MIDI's included (CObUsbTransport::Poll asks ResetDone): its
+// waits are Circle's, 3 s at most each (EP0's CLEAR_FEATURE, Reset Endpoint, Set TR Dequeue), so one pass stays well under
+// the 15 s watchdog.
+void CObUsb::PollHalt (void)
+{
+	s_bResetDone = FALSE;
+	CObUsb *p = s_pThis;
+	if (p != 0 && p->m_bStreaming)
+	{
+		unsigned now = CTimer::GetClockTicks ();
+		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
+	}
+	if (!s_bResetDone) s_bResetDone = CObFollow::PollHalt ();	// an A4's stream beside it (ob_follow.h)
+}
+
+// TRUE: none of the Rytm's endpoints is reset now: one failed a moment ago (another may follow), or several failed
+// together, a likely unplug, held for the hub's disconnect (EpBox, ep_halt.h). Removed meanwhile, this object is gone
+// with its state (Circle's removal runs in the main loop before PollHalt: s_pThis 0), and nothing was sent
+boolean CObUsb::BoxWait (unsigned nNowUs)
+{
+	EpFails f;
+	EnterCritical (IRQ_LEVEL);			// the IRQ writes erred and fail_us: both read as one
+	boolean bIn = m_InHalt.erred, bOut = m_OutHalt.erred;
+	f.Add (bIn, m_InHalt.fail_us);
+	f.Add (bOut, m_OutHalt.fail_us);
+	LeaveCritical ();
+	f.Add (m_bMidiErred, m_nMidiFailUs);
+	int w = m_Box.Wait (nNowUs, f);
+	if (w == 3)
+	{
+		s_nHaltHeld++;
+		if (m_Box.Log (nNowUs))
+			CLogger::Get ()->Write (From, LogWarning, "endpoints failed together (IN %u, OUT %u, MIDI OUT %u): a likely "
+						"unplug, their resets held up to %u ms for the hub (held %u; %u lines left out)",
+						(unsigned) bIn, (unsigned) bOut, (unsigned) m_bMidiErred, EpBox::kGraceUs / 1000,
+						m_Box.held, m_Box.TakeQuiet ());
+	}
+	return w != 0;
+}
+
+void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
+{
+	CObUsb *p = s_pThis;
+	if (p == 0) return;
+	if (bHalted && !p->m_bMidiErred) p->m_nMidiFailUs = nNowUs;
+	p->m_bMidiErred = bHalted;
+}
+
+boolean CObUsb::BoxWaits (unsigned nNowUs)
+{
+	CObUsb *p = s_pThis;
+	return p != 0 && p->m_bStreaming && p->BoxWait (nNowUs);
+}
+
+// TRUE: a reset was sent (the pass's one)
+boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
+{
+	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
+	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
+	const char *pDir = bIn ? "IN" : "OUT";
+	EnterCritical (IRQ_LEVEL);			// gone quiet with no error: URBs pending, none completed for 50 ms
+	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
+	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall ();
+	LeaveCritical ();
+	if (!h.Due (nNowUs)) return FALSE;
+	if (m_bMirror && m_bCtlBusy) return FALSE;	// usb=mirror: the computer's request holds EP0 (the clear would queue behind it)
+	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
+	int r = h.Reset (pX, nNowUs, [this, uchAddr] {
+		GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT,
+					    uchAddr, 0, 0);
+	});
+	if (r == 0) return FALSE;
+	s_bResetDone = r != 2;
+	if (r < 0)
+	{
+		s_nHaltRefused++;
+		if (h.Log (nNowUs))
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset refused "
+						"(%u in a row; %u lines left out)", pDir, h.state, pX->GetLastErrorCode (),
+						h.fails, h.TakeQuiet ());
+		return TRUE;
+	}
+	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;
+	EnterCritical (IRQ_LEVEL);
+	if (h.Finish (pX))				// every TD still on the ring was skipped: its URB never completes
+	{
+		for (unsigned i = 0; i < m_nURBs; i++) (bIn ? m_bInBusy : m_bOutBusy)[i] = FALSE;
+		(bIn ? m_nInPending : m_nOutPending) = 0;
+	}
+	(bIn ? m_nLastInUs : m_nLastOutUs) = nNowUs;	// (the stall clock starts again)
+	if (bIn)
+	{
+		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
+	}
+	else if (m_OutMode == OutPaced) PumpOut ();
+	else if (m_OutMode == OutFree)
+	{
+		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (s_OutBuf[i], m_nBlocks), SubmitOut (i);
+	}
+	LeaveCritical ();
+	if (h.Log (nNowUs))
+	{
+		if (r == 2)
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
+						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
+						h.TakeQuiet ());
+		else
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
+						"%u URBs dropped, %s goes on (%u in a row; %u lines left out)", pDir, h.state,
+						pX->GetLastErrorCode (), h.resets, h.dropped, pDir, h.fails, h.TakeQuiet ());
+	}
+	return s_bResetDone;
+}
+
 void CObUsb::SetActive (boolean bActive)
 {
 	s_bActive = bActive;
@@ -310,6 +428,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nPipes = 0;
 	m_bMirror = FALSE;
 	m_bAttachDue = FALSE;
+	m_bMidiErred = FALSE;
+	m_nMidiFailUs = 0;
 	m_pCtlBuf = 0;
 	m_bCtlBusy = FALSE;
 	m_nGen = ++s_nGen;
@@ -495,6 +615,7 @@ boolean CObUsb::Configure (void)
 	if (s_bActive) masterfx_pi::Reset ();
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
+	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
 	m_bStreaming = TRUE;
 	boolean bOK = TRUE;
 	for (unsigned i = 0; i < m_nURBs && bOK; i++)
@@ -536,8 +657,25 @@ void CObUsb::MirrorAttachLate (void)
 	if (p == 0 || !p->m_bAttachDue || CSidecarGadget::Get () == 0) return;
 	p->m_bAttachDue = FALSE;
 	if (!CSidecarGadget::Get ()->Mirror ()) return;
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget: read now");
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget or the mode: read now");
 	p->MirrorAttach ();
+}
+
+static volatile unsigned s_nParked;		// the box's pipe IN packets while the computer saw the Sidecar device
+
+// the mirror line's "parked": pipe IN packets of the box that came while the computer saw the Sidecar device (CLASS
+// COMPLIANT, or the time until the switch to the box): drained, as no endpoint of the box is there to take them
+unsigned CObUsb::MirrorParked (void)
+{
+	return s_nParked;
+}
+
+// core 0's loop (the gadget's SetMirror): the USB-C mode set to OVERBRIDGE at run time. A box that streams and was not read
+// (the mode was CLASS COMPLIANT at its Configure) is read by the next MirrorAttachLate, as one configured before the gadget
+void CObUsb::MirrorWanted (void)
+{
+	CObUsb *p = s_pThis;
+	if (p != 0 && p->m_bStreaming && !p->m_bMirror) p->m_bAttachDue = TRUE;
 }
 
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
@@ -614,6 +752,7 @@ void CObUsb::MirrorAttach (void)
 		p.pBuf = AllocDmaBuf ();
 		p.bBusy = p.bStopped = FALSE;
 		p.nPackets = p.nErrors = p.nTries = p.nLastTry = 0;
+		p.bRefused = FALSE;
 		p.pURB = 0;
 		if (e.addr & 0x80)
 		{
@@ -653,8 +792,14 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	p.nTries = 0;
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-	p.nPackets++;
 	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	if (pGadget != 0 && !pGadget->MirrorShown ())	// the Sidecar device is shown: drained, not a drop (always renewed,
+	{						// so no packet of the box waits in it for the computer)
+		s_nParked++;
+		pThis->SubmitPipeIn (ParamIndex (pParam));
+		return;
+	}
+	p.nPackets++;
 	if (pGadget == 0 || !pGadget->MirrorPipeIn (p.uchAddr, p.pBuf, n)) pThis->SubmitPipeIn (ParamIndex (pParam));
 }
 
@@ -742,10 +887,15 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 // core 0's loop: a pipe whose transfer failed (the box STALLed it, or the bus had an error) halts on the xHC and on
 // the box. Both are cleared - CLEAR_FEATURE(ENDPOINT_HALT) to the box, Reset Endpoint on the host - and an IN pipe is
 // resubmitted. Every 100 ms for the first tries, then once a second, so a box that keeps failing costs little.
+// Circle's ResetFromHalted gives TRUE for a refused command too (it returns the completion code as a boolean), and a
+// reset that took leaves the endpoint Stopped (3): so a state of 2 or 4 after it is a refusal (as ep_halt.h reads it),
+// and the pipe stays stopped for the next try. Resubmitted into a ring still halted, the URB would never complete and
+// the pipe would stay busy for good.
 void CObUsb::MirrorPipePoll (void)
 {
 	CObUsb *pThis = s_pThis;
 	if (pThis == 0 || !pThis->m_bMirror) return;
+	if (CSidecarGadget::Get () == 0 || !CSidecarGadget::Get ()->MirrorShown ()) return;	// the Sidecar device shown: no EP0 traffic
 	const unsigned nNow = CTimer::Get ()->GetTicks ();
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 	{
@@ -760,15 +910,27 @@ void CObUsb::MirrorPipePoll (void)
 						   ENDPOINT_HALT, p.uchAddr, 0, 0);
 #if RASPPI >= 4
 		CXHCIEndpoint *pXHCI = p.pEP->GetXHCIEndpoint ();
-		if (pXHCI->GetEPState () >= 2 && !pXHCI->ResetFromHalted ()) continue;	// halted, stopped or error
+		if (pXHCI->GetEPState () >= 2)		// halted, stopped or error
+		{
+			unsigned nAfter = pXHCI->ResetFromHalted () ? pXHCI->GetEPState () : 4;
+			if (nAfter == 2 || nAfter == 4)
+			{
+				if (!p.bRefused)
+					CLogger::Get ()->Write (From, LogWarning, "usb=mirror: pipe 0x%02x halted: the host refused its "
+								"reset (state %u), trying again", p.uchAddr, nAfter);
+				p.bRefused = TRUE;
+				continue;
+			}
+		}
 #endif
 		EnterCritical (IRQ_LEVEL);
 		p.bStopped = FALSE;
 		if (p.uchAddr & 0x80) pThis->SubmitPipeIn (i);
 		LeaveCritical ();
-		if (p.nTries == 1)
+		if (p.nTries == 1 || p.bRefused)
 			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x halted: cleared, %s", p.uchAddr,
 						p.bStopped ? "cannot resubmit" : "running again");
+		p.bRefused = FALSE;
 	}
 }
 
@@ -777,11 +939,20 @@ unsigned CObUsb::MirrorPipeResets (void)
 	return s_nPipeResets;
 }
 
-#else	// a gadget without circle-gadget-mirror.patch (the Pi 5, the host tests): no mirror
+boolean CObUsb::MirrorCtlBusy (void)
+{
+	CObUsb *p = s_pThis;
+	return p != 0 && p->m_bMirror && p->m_bCtlBusy;
+}
+
+#else	// a gadget without circle-gadget-mirror.patch (a Pi 5 built with PI5_GADGET=0, the host tests): no mirror
 
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
+unsigned CObUsb::MirrorParked (void)					{ return 0; }
+boolean CObUsb::MirrorCtlBusy (void)					{ return FALSE; }
+void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}
 unsigned CObUsb::MirrorPipeResets (void)				{ return 0; }
@@ -932,9 +1103,14 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	InvalidateDataCacheRange ((uintptr) pBuf, kBufSize);	// the CPU must not see stale cache lines
 
 	unsigned good = 0;
-	if (!ok) m_nInErrors++;
+	if (!ok)
+	{
+		m_nInErrors++;
+		m_InHalt.Fail (now);		// the endpoint halts on an error: no resubmit until PollHalt reset it
+	}
 	else
 	{
+		m_InHalt.Ok ();
 		if (len % m_nInBlk != 0) m_nInShort++;
 		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
@@ -1058,7 +1234,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 		}
 	}
 
-	if (m_bStreaming) SubmitIn (i);
+	if (m_bStreaming && !m_InHalt.halted) SubmitIn (i);
 
 	if (m_OutMode == OutPaced && m_nInBlocks > m_nOutDelay)
 	{
@@ -1078,12 +1254,15 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 
 	if (pURB->GetStatus () != 0)
 	{
+		m_OutHalt.Ok ();
 		m_nOutBlocks += pURB->GetResultLength () / m_nOutBlk;
 		if (m_nOut16Us == 0 && m_nOutBlocks >= 16) m_nOut16Us = now - m_nStartUs + 1;
 	}
 	else
 	{
 		m_nOutErrors++;
+		m_OutHalt.Fail (now);		// the endpoint halts on an error: no resubmit until PollHalt reset it
+		return;
 	}
 
 	if (!m_bStreaming) return;
@@ -1107,7 +1286,7 @@ void CObUsb::PumpOut (void)
 		m_nCreditDrops += m_nCredit - cap;
 		m_nCredit = cap;
 	}
-	while (m_bStreaming && m_nCredit >= m_nBlocks)
+	while (m_bStreaming && !m_OutHalt.halted && m_nCredit >= m_nBlocks)
 	{
 		unsigned i = 0;
 		while (i < m_nURBs && m_bOutBusy[i]) i++;
@@ -1140,14 +1319,14 @@ void CObUsb::Log (CLogger *pLogger)
 	unsigned nRequeued = 0;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
-		if (!m_bInBusy[i] && SubmitIn (i)) nRequeued++;
+		if (!m_InHalt.halted && !m_bInBusy[i] && SubmitIn (i)) nRequeued++;
 	}
 	if (m_OutMode == OutPaced) PumpOut ();
 	else if (m_OutMode == OutFree)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++)
 		{
-			if (!m_bOutBusy[i])
+			if (!m_OutHalt.halted && !m_bOutBusy[i])
 			{
 				FillOut (s_OutBuf[i], m_nBlocks);
 				if (SubmitOut (i)) nRequeued++;
@@ -1182,18 +1361,18 @@ void CObUsb::Log (CLogger *pLogger)
 	}
 
 	// one line: IN rate/total, gaps (blocks lost, largest), longest IN gap in time, peak;
-	// OUT rate/total, errors, ms since the last OUT completion, credit; URBs pending
+	// OUT rate/total, errors, endpoint resets (PollHalt), ms since the last OUT completion, credit; URBs pending
 	// (driver/xHCI FIFO), endpoint states (1 running, 2 halted, 4 error); xHCI events per
 	// endpoint: success/short/missed-service/other(last code)/orphan
 	pLogger->Write (From, LogNotice,
-			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u dt %uus pk %d"
-			" | OUT %u/s %u err %u age %ums cr %u drop %u"
+			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u rs %u dt %uus pk %d"
+			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
 			" | evI %u ok %u sh %u ms %u x %u(%u) o %u evO %u ok %u ms %u x %u(%u) o %u",
 			(now - m_nStartUs) / 1000, (nIn - m_nPrevIn) * 1000 / nMs, nIn, (unsigned) m_nInGaps, (unsigned) m_nInLost,
 			(unsigned) m_nInMaxGap, (unsigned) m_nInOddGap, (unsigned) m_nInShort,
-			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, nInMaxDt, nPeak,
-			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, nOutAge, nCredit,
+			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, m_InHalt.resets, nInMaxDt, nPeak,
+			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_OutHalt.resets, nOutAge, nCredit,
 			(unsigned) m_nCreditDrops,
 			nInPend, nOutPend, nQIn, nQOut, nStIn, nStOut, nRequeued,
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
@@ -1249,7 +1428,14 @@ struct TCircleIo : UsbMidiMerge::Io
 {
 	CUSBMIDIDevice *pMIDI;
 	CSidecarGadget *pSidecar;
-	bool send (const u8 *p, unsigned n) override		{ return pMIDI != 0 && pMIDI->SendEventPackets (p, n); }
+	bool bFailed = false;				// a send failed in this Poll, first at nFailUs (EpBox: the MIDI OUT's error time)
+	unsigned nFailUs = 0;
+	bool send (const u8 *p, unsigned n) override
+	{
+		bool ok = pMIDI != 0 && pMIDI->SendEventPackets (p, n);
+		if (!ok && !bFailed) bFailed = true, nFailUs = CTimer::GetClockTicks ();
+		return ok;
+	}
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
 	bool has_computer (void) override			{ return pSidecar != 0; }
 	void computer_connected (bool bUp) override		{ pSidecar->RytmMIDIConnected (bUp); }
@@ -1269,6 +1455,45 @@ void CObUsbTransport::Poll (void)
 	Io.pSidecar = CSidecarGadget::Get ();
 	unsigned nNow = CTimer::GetClockTicks ();
 	m_Merge.poll (Io, m_pMIDI != 0, m_bSend, midibridge_pi::Queue (), midibridge_pi::Pace (), nNow);
+	unsigned nFail = m_Merge.failures () + m_Merge.mac_failed () + m_Merge.bridge_failed ();
+	if (m_Merge.msgs () != m_nMsgsSeen) m_nMsgsSeen = m_Merge.msgs (), m_nMidiInRow = 0;	// a good send: the run ends
+	// a send failed (its message dropped, counted): a halted endpoint is reset, one reset a main-loop pass in all
+	// (CObUsb::PollHalt's first); not halted (a Rytm only slow): the merge's back-off stays
+	// a failed send on a halted endpoint is the Rytm box's third endpoint (EpBox, ep_halt.h): its reset waits a moment
+	// for another to fail, and is held with the Overbridge ones when they failed together (a likely unplug); the
+	// failure stays unseen until then, so a later pass resets it. Only while the Rytm streams Overbridge (its EpBox): a
+	// Rytm on USB MIDI alone has no box, and its MIDI OUT is reset at once, as before (one endpoint: never together)
+	boolean bHalted = nFail != m_nFailSeen && m_pMIDI != 0 && m_pMIDI->OutHalted ();
+	if (nFail != m_nFailSeen) CObUsb::MidiHalted (bHalted, Io.bFailed ? Io.nFailUs : nNow);	// (the send's time)
+	// usb=mirror: a forwarded request on the box's EP0 (the Rytm's MIDI is the box's own interfaces): the reset's synchronous
+	// CLEAR_FEATURE would queue behind it, and a request the box never answers would leave it on the ring after Circle's
+	// 3 s timeout, to complete later into a dead stack URB (xHCI IRQ). The failure stays unseen: a later Poll resets it.
+	boolean bWait = bHalted && (CObUsb::BoxWaits (nNow) || CObUsb::MirrorCtlBusy ());
+	if (bHalted && !CObUsb::ResetDone () && !bWait)
+	{
+		m_nFailSeen = nFail;
+		m_nMidiInRow++;
+		if (m_pMIDI->ResetOutHalted ())
+		{
+			CObUsb::MidiHalted (FALSE, nNow);
+			m_nMidiResets++;
+			// sending again from the next Poll, unless it keeps failing: from the third reset in a row with no
+			// good send between, the merge's back-off (5 s, doubling to 60 s) paces it
+			if (m_nMidiInRow < 3) m_Merge.rytm_new ();
+			if (m_nMidiInRow <= 3)
+				CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint was halted by a "
+							"transfer error: reset %u (%u in a row), %s", m_nMidiResets, m_nMidiInRow,
+							m_nMidiInRow < 3 ? "sending again" : "sending after the back-off");
+		}
+		else
+		{
+			m_nMidiRefused++;
+			if (m_nMidiInRow <= 3)
+				CLogger::Get ()->Write (From, LogWarning, "to-host: the Rytm's USB MIDI OUT endpoint is halted: the "
+							"reset was refused (%u in a row), tried at the next failed send", m_nMidiInRow);
+		}
+	}
+	else if (nFail != m_nFailSeen && !CObUsb::ResetDone () && !bWait) m_nFailSeen = nFail;	// not halted: nothing to reset
 	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
 	{
 		m_nMacFailedSeen = m_Merge.mac_failed ();

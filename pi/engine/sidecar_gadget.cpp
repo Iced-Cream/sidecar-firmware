@@ -1,6 +1,5 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
-#include "usb_mode.h"
 
 #include <circle/string.h>
 #include <circle/usb/usb.h>
@@ -238,6 +237,7 @@ CSidecarMIDIEP::CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGad
 
 void CSidecarMIDIEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
 	m_bHeld = FALSE;
@@ -294,7 +294,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_bMirror (FALSE),
+	m_bMirror (FALSE), m_bMirUsed (FALSE),
 	m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
@@ -310,7 +310,6 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 #ifdef CIRCLE_GADGET_MIRROR
-	m_bMirror = usb_mode::get () == usb_mode::kMirror;
 	memset (m_MirDev, 0, sizeof m_MirDev);
 	m_nMirCfg = 0;
 	memset (&m_MirLayout, 0, sizeof m_MirLayout);
@@ -379,6 +378,64 @@ boolean CSidecarGadget::Start (void)
 					"are relayed unfiltered; the OS-update filter covers MIDI only", OsUpdateName ());
 #endif
 	return Initialize ();				// usb=mirror too: the Sidecar device until the box has been read
+}
+
+boolean CSidecarGadget::MirrorBuilt (void)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+void CSidecarGadget::SetMirror (boolean bOn)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	if (bOn == m_bMirror) return;
+	m_bMirror = bOn;
+	if (bOn)
+	{
+		m_bMirUsed = TRUE;
+		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
+		return;
+	}
+	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
+	else if (m_bShowMirror)
+	{
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the mode is CLASS COMPLIANT: USB-C leaves the bus, back as the Sidecar device");
+		MirrorSwitch (FALSE);
+	}
+#else
+	(void) bOn;
+#endif
+}
+
+boolean CSidecarGadget::MirrorShown (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bShowMirror;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorBoxThere (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bMirBoxUp;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorSwitching (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bSwitching;
+#else
+	return FALSE;
+#endif
 }
 
 u64 CSidecarGadget::Now (void)
@@ -935,7 +992,7 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 #ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror) MirrorPoll ();
+	if (m_bMirUsed) MirrorPoll ();
 #endif
 	UpdatePlugAndPlay ();
 	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
@@ -1086,9 +1143,10 @@ CMirrorEP::CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget)
 
 void CMirrorEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
-	m_bBusy = FALSE;
-	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
+	m_bBusy = FALSE;				// (IN: the held packet went back to the box at the deactivation)
+	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) m_Out.arm (*this);	// not while the box owns one
 	else Kick ();
 }
 
@@ -1096,16 +1154,20 @@ void CMirrorEP::OnDeactivate (void)
 {
 	boolean bHeld = m_bBusy;
 	m_bActive = FALSE;
-	m_bBusy = FALSE;
-	CancelTransfer ();
+	m_bBusy = FALSE;				// pipe OUT: the box's ownership stays (m_Out)
+	mirror::cancel (*this);				// isochronous: stopped and waited for (mirror_ep.h)
 	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
 }
 
-// OUT: the next packet (whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer)
+// OUT: the box took the last packet (or it was dropped): the next one, when active (mirror_ep.h OutGate)
 void CMirrorEP::Rearm (void)
 {
-	if (!m_bActive) return;
-	m_bBusy = FALSE;
+	m_Out.done (*this);
+}
+
+// whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer
+void CMirrorEP::ArmOut (void)
+{
 	BeginTransfer (TransferDataOut, m_Buffer, (m_nMps + 3) & ~3u);
 }
 
@@ -1144,7 +1206,7 @@ void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
 		Rearm ();
 		break;
 	case mirror::kPipeOut:
-		m_bBusy = TRUE;					// NAKed until the box took it (MirrorPipeOutDone)
+		m_Out.taken ();					// NAKed until the box took it (MirrorPipeOutDone)
 		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
 		break;
 	case mirror::kPipeIn:
@@ -1336,12 +1398,12 @@ void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
 	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
 	// The offset is set again when this block would be due in a block the Pi has already sent (the computer's stream
-	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the queue holds (the Pi's
-	// counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
+	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the margin plus the queue
+	// (the Pi's counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
 	// from counter 0, so MirrorBoxUp sets it again too: kept, the old offset left the computer's bytes due up to a
 	// whole counter wrap (about 1.4 s) ahead, and they were lost (T141 [hw]: lost 1126, late 128 after a replug).
 	u16 nComp = ob::block_counter (p), nPi = CObUsb::OutCounter ();
-	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi))
+	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi, m_nExtraMargin))
 	{
 		if ((s16) (u16) (nComp + m_nExtraOff - nPi) > 0) m_MirExtra.flush ();	// queued under a counter that went back
 		m_bExtraOff = FALSE;
@@ -1398,7 +1460,7 @@ int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutDa
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
 	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
 		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
-	m_Ctl.request ();
+	(void) m_Ctl.request ();			// true: pending was checked above (the setup is copied before it is published)
 	m_MirStats.nCtl++;
 	return ControlDeferred;
 }
@@ -1444,7 +1506,7 @@ void CSidecarGadget::MirrorPoll (void)
 	{
 		if (nNow - m_nSwitchAt < m_nCntFrq * 3 / 10) return;
 		EnterCritical ();
-		m_bShowMirror = m_bSwitchTo && m_bMirHave;
+		m_bShowMirror = m_bSwitchTo && m_bMirHave && m_bMirror;
 		m_uchOutAlt = m_uchInAlt = 0;
 		OutReset ();
 		memset (m_MirAlt, 0, sizeof m_MirAlt);
@@ -1461,7 +1523,8 @@ void CSidecarGadget::MirrorPoll (void)
 		return;
 	}
 	boolean bWant = m_bShowMirror;
-	if (m_bMirBoxUp) bWant = TRUE;
+	if (!m_bMirror) bWant = FALSE;			// the mode is CLASS COMPLIANT (SetMirror switched already: a leftover)
+	else if (m_bMirBoxUp) bWant = TRUE;
 	else if (m_bShowMirror && nNow - m_nBoxGoneAt >= (u64) m_nHoldSecs * m_nCntFrq) bWant = FALSE;
 	if (bWant != m_bShowMirror)
 	{
@@ -1497,6 +1560,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	u8 Last[MidiFilter::kHead];
 	int nLast = m_ToRytmFilter.LastDropped (Last);
 	LeaveCritical ();
+#ifdef CIRCLE_GADGET_STRAY				// circle-gadget-stray.patch: completions with no transfer armed
+	unsigned nStray = CDWUSBGadgetEndpoint::GetStrayCount (), nSetupAborts = CDWUSBGadgetEndpoint0::GetSetupAbortCount ();
+#else
+	unsigned nStray = 0, nSetupAborts = 0;
+#endif
 	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
 	for (int i = 0; i < nLast; i++)
 	{
@@ -1506,11 +1574,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	}
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
-		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u | alt bad %u | "
+		"ctl %u stall %u abort %u (setup %u) late %u stray %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
 		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
-		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), s.nAltBad,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, nSetupAborts, s.nCtlLate, nStray,
+		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
 }

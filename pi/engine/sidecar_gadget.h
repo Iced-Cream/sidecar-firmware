@@ -65,10 +65,16 @@ public:
 	boolean TakeReboot (void)			{ return FALSE; }
 	boolean UsbReboot (void) const			{ return FALSE; }
 	boolean Mirror (void) const			{ return FALSE; }
+	static boolean MirrorBuilt (void)		{ return FALSE; }
+	void SetMirror (boolean)			{}
+	boolean MirrorShown (void) const		{ return FALSE; }
+	boolean MirrorBoxThere (void) const		{ return FALSE; }
+	boolean MirrorSwitching (void) const		{ return FALSE; }
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
 #include <circle/usb/gadget/dwusbgadgetendpoint.h>
+#include <circle/usb/gadget/dwusbgadgetendpoint0.h>	// circle-gadget-stray: GetSetupAbortCount ()
 #include <circle/interrupt.h>
 #include <circle/logger.h>
 #include <circle/synchronize.h>
@@ -82,6 +88,7 @@ public:
 #include "tohost_q.h"
 #include "mirror_desc.h"
 #include "mirror_ctl.h"
+#include "mirror_ep.h"
 
 #if __has_include("hosted/sidecar_config.h")
 #include "hosted/sidecar_config.h"			// build.sh: SIDECAR_CH_IN=20 pi/engine/build.sh
@@ -125,6 +132,9 @@ public:
 	CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h: back at the resume
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// (a resume without a reset)
+	boolean Active (void) const			{ return m_bActive; }
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
@@ -133,6 +143,7 @@ public:
 
 private:
 	CSidecarGadget *m_pSidecar;
+	mirror::EpWake m_Wake;				// a bus suspend and a resume without a reset (mirror_ep.h)
 	boolean m_bActive, m_bBusy;
 	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
 	DMA_BUFFER (u8, m_Buffer, BufSize);
@@ -147,7 +158,8 @@ public:
 	CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
-	void OnSuspend (void) override			{ OnDeactivate (); }
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// a resume without a reset
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: send the next packet if idle (IRQ level, or IRQs masked)
 	void Rearm (void);				// OUT: take the computer's next packet (the box took this one)
@@ -155,9 +167,16 @@ public:
 	mirror::Role Role (void) const			{ return m_Role; }
 	u8 Address (void) const				{ return m_uchAddr; }
 	boolean Active (void) const			{ return m_bActive; }
-	boolean Busy (void) const			{ return m_bBusy; }
+	boolean Busy (void) const			{ return m_Role == mirror::kPipeOut ? m_Out.box : m_bBusy; }
+	boolean Armed (void) const			{ return IsTransferActive (); }	// mirror::OutGate
+	void ArmOut (void);
+	boolean Iso (void) const			{ return GetType () == TypeIsochronous; }	// mirror::cancel ()
+	void StopIso (void)				{ StopIsoTransfer (); }
+	void Cancel (void)				{ CancelTransfer (); }
 
 private:
+	mirror::EpWake m_Wake;
+	mirror::OutGate m_Out;				// audio and pipe OUT
 	CSidecarGadget *m_pSidecar;
 	mirror::Role m_Role;
 	u8 m_uchAddr;
@@ -213,12 +232,21 @@ public:
 	boolean UsbReboot (void) const			{ return m_bUsbReboot; }
 	boolean TakeReboot (void);			// core 0's loop: the computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 
-	// usb=mirror (cmdline; docs/usb-mirror.md): the computer sees the attached box itself - its device, configuration and
-	// string descriptors, read from it at run time (ob_usb.cpp) - and its audio, async channel (pipes), MIDI and class /
-	// vendor requests are relayed. Until the box has been read, and after it has been gone for mirrorhold= seconds (10),
-	// the computer sees the Sidecar device; each switch is a replug (SoftDisconnect, 300 ms, SoftConnect). Built only with
-	// pi/circle/circle-gadget-mirror.patch and -softconnect.patch (CIRCLE_GADGET_MIRROR); without them usb=mirror is ignored.
+	// usb=mirror, the USB-C mode OVERBRIDGE (usb_mode.h; docs/usb-mirror.md): the computer sees the attached box itself -
+	// its device, configuration and string descriptors, read from it at run time (ob_usb.cpp) - and its audio, async
+	// channel (pipes), MIDI and class / vendor requests are relayed. Until the box has been read, and after it has been
+	// gone for mirrorhold= seconds (10), the computer sees the Sidecar device; each switch is a replug (SoftDisconnect,
+	// 300 ms, SoftConnect). Built only with pi/circle/circle-gadget-mirror.patch and -softconnect.patch
+	// (CIRCLE_GADGET_MIRROR); without them the mode is CLASS COMPLIANT whatever is set.
+	static boolean MirrorBuilt (void);
+	// core 0, task level: the mode set (kernel.cpp, before Start and at run time). At run time OFF while the box is shown
+	// is a replug back as the Sidecar device; ON reads a box that is up (CObUsb::MirrorWanted) and MirrorPoll switches
+	// to it as at a plug-in. Nothing else changes: the Pi's own stream with the box runs on.
+	void SetMirror (boolean bOn);
 	boolean Mirror (void) const			{ return m_bMirror; }
+	boolean MirrorShown (void) const;		// the computer sees the box now
+	boolean MirrorBoxThere (void) const;		// the box has been read and is up (it is shown, or will be)
+	boolean MirrorSwitching (void) const;		// off the bus between the two
 #ifdef CIRCLE_GADGET_MIRROR
 	// the box's side (ob_usb.cpp): task level unless said
 	boolean MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg);	// FALSE: not one the gadget can carry
@@ -325,7 +353,8 @@ private:
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
 	OsGate m_Gate;					// usbmidi=os: the setting and the host (usbmidi_os_path.h)
-	boolean m_bMirror;				// usb=mirror
+	boolean m_bMirror;				// usb=mirror: the USB-C mode is OVERBRIDGE (SetMirror)
+	boolean m_bMirUsed;				// it has been on this boot: MirrorPoll runs (a switch back, the box's pipes)
 	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
 	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
 	void UpdateOsPass (boolean bCut, const char *pWhy);	// the filter's pass from m_Gate; bCut: drop what is on its
