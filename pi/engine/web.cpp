@@ -717,8 +717,11 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 			if (r != paircode::kOk && g.take_report (&nSince))
 				CLogger::Get ()->Write (From, LogWarning, "%u pairing attempt(s) refused (the last: %s)", nSince,
 							paircode::err_text (r));
+			// stale: the page drops its saved pairing (a device this Sidecar does not know, or the gate off); any other
+			// refusal (kNoRandom) keeps it for the next try
 			if (r == paircode::kOk) s.Format ("{\"ok\":true,\"token\":\"%s\"}", Token2);
-			else s.Format ("{\"ok\":false,\"code\":403,\"wait\":%u,\"error\":\"%s\"}", g.lock_left_s (m_nPeer),
+			else s.Format ("{\"ok\":false,\"code\":403,\"stale\":%s,\"wait\":%u,\"error\":\"%s\"}",
+					r == paircode::kNoDevice || r == paircode::kOffGate ? "true" : "false", g.lock_left_s (m_nPeer),
 					paircode::err_text (r));
 		}
 		else if (strcmp (op, "forget") == 0 || strcmp (op, "revoke") == 0)	// from the page, and paired

@@ -438,6 +438,8 @@ test("unpaired, wrong codes, pairing, and what stays open", async (t) => {
   await sleep(250);
   rs = await pi2.json("/pair/resume", { client: "deadbeef", secret });
   assert.equal(rs.ok, false);
+  assert.equal(rs.stale, true, "an unknown device: stale, the page drops its saved pairing");
+  assert.match(WEB_CPP, /r == paircode::kNoDevice \|\| r == paircode::kOffGate \? "true" : "false"/, "web.cpp says stale the same way");
 
   // ---- revoking: this device, then every device
   assert.equal((await pi2.json("/pair/revoke", {}, { tok: tok2 })).ok, true);
@@ -699,33 +701,75 @@ test("the page's command feedback: not paired, the same-origin check, refused", 
   assert.deepEqual(r, { ok: true, why: "" });
 });
 
+// The page's own pairing block and cmd(), run against mock_web with stand-ins for the DOM and localStorage only: the
+// saved pairing (shapes right, unknown to the mock unless replaced), the stale session token, and the /pair/status
+// requests counted (each is one pairBoot)
+function pageEnv(pi, { failResume = false } = {}) {
+  const page = readFileSync(join(HERE, "..", "www", "index.html"), "utf8");
+  const p0 = page.indexOf("const CMD_NOT_PAIRED"), p1 = page.indexOf('$("#pair-showrytm").onclick');
+  const c0 = page.indexOf("let cmdWhy"), c1 = page.indexOf("// ---- choice groups");
+  assert.ok(p0 > 0 && p1 > p0 && c0 > p1 && c1 > c0, "the pairing block and cmd() in index.html");
+  const els = {};
+  const $ = (q) => (els[q] ||= { hidden: true, textContent: "", className: "", disabled: false, checked: false, value: "", focus() {} });
+  const store = { scPairClient: "0123abcd", scPairSecret: "0123456789abcdef0123456789abcdef" };
+  const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+  const count = { status: 0, resume: 0 };
+  const win = { fetch: (u, o = {}) => {
+    if (u === "/pair/status") count.status++;
+    if (u === "/pair/resume") { count.resume++; if (failResume) return Promise.reject(new TypeError("network")); }
+    return fetch(pi.base + u, { ...o, headers: { ...(o.headers || {}), Origin: pi.base } });
+  } };
+  const say = (el, text) => { el.textContent = text; };
+  const timers = [];   // the page's retries recorded, not run (the test ends; nothing keeps node alive)
+  const env = new Function("window", "fetch", "$", "say", "localStorage", "location", "navigator", "setInterval", "setTimeout", "pollStatus", "appendLines",
+    `let postDone = 0; ${page.slice(p0, p1)} ${page.slice(c0, c1)};
+     return { PAIR, cmd, cmdFail, pairLost, CMD_NOT_PAIRED };`)(win, (...x) => win.fetch(...x), $, say, localStorage, { origin: pi.base },
+    { platform: "test" }, () => 0, (f, ms) => { timers.push(ms); return 0; }, () => {}, () => {});
+  Object.assign(env.PAIR, { tok: "f".repeat(32), ready: true, gate: "on" });   // the stale session token
+  return { env, $, store, count, timers };
+}
+const until = async (f) => { for (let i = 0; i < 60 && !f(); i++) await sleep(50); };
+
 // A stale pairing (hardware 2026-11-06: a token from an earlier boot the Pi no longer took, and a saved pairing it no
 // longer knew): the page showed no dialog and every change said "refused". Now the first not-paired answer drops the
 // token, puts the dialog up with the friendly text, and pairBoot drops the stale saved pairing. The page's own pairing
 // block and cmd() run here against mock_web, with stand-ins for the DOM and localStorage only.
 test("a stale pairing: the first refused change opens the dialog and drops the saved pairing", async (t) => {
-  const page = readFileSync(join(HERE, "..", "www", "index.html"), "utf8");
-  const p0 = page.indexOf("const CMD_NOT_PAIRED"), p1 = page.indexOf('$("#pair-showrytm").onclick');
-  const c0 = page.indexOf("let cmdWhy"), c1 = page.indexOf("// ---- choice groups");
-  assert.ok(p0 > 0 && p1 > p0 && c0 > p1 && c1 > c0, "the pairing block and cmd() in index.html");
   const pi = await start(t, mkdtempSync(join(tmpdir(), "sidecar-stale-")), {});
-  const els = {};
-  const $ = (q) => (els[q] ||= { hidden: true, textContent: "", className: "", disabled: false, checked: false, value: "", focus() {} });
-  const store = { scPairClient: "0123abcd", scPairSecret: "0123456789abcdef0123456789abcdef" };   // shapes right, unknown
-  const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
-  const win = { fetch: (u, o = {}) => fetch(pi.base + u, { ...o, headers: { ...(o.headers || {}), Origin: pi.base } }) };
-  const say = (el, text) => { el.textContent = text; };
-  const env = new Function("window", "fetch", "$", "say", "localStorage", "location", "navigator", "setInterval", "pollStatus", "appendLines",
-    `let postDone = 0; ${page.slice(p0, p1)} ${page.slice(c0, c1)};
-     return { PAIR, cmd, cmdFail, CMD_NOT_PAIRED };`)(win, (...x) => win.fetch(...x), $, say, localStorage, { origin: pi.base },
-    { platform: "test" }, () => 0, () => {}, () => {});
-  Object.assign(env.PAIR, { tok: "f".repeat(32), ready: true, gate: "on" });   // the stale session token
+  const { env, $, store } = pageEnv(pi);
   assert.equal(await env.cmd("usbmode=class"), false);
   assert.equal(env.cmdFail(), env.CMD_NOT_PAIRED);
   assert.equal(env.PAIR.tok, "", "the token is dropped");
   assert.equal($("#pair-wrap").hidden, false, "the pairing dialog is up");
-  for (let i = 0; i < 50 && "scPairSecret" in store; i++) await sleep(50);   // pairBoot: the resume fails
+  await until(() => !("scPairSecret" in store));   // pairBoot: the resume says stale
   assert.ok(!("scPairSecret" in store) && !("scPairClient" in store), "the stale saved pairing is dropped");
   assert.equal($("#pair-wrap").hidden, false, "and the dialog stays up for the code");
   assert.match($("#pair-msg").textContent, /no longer valid/);
+});
+
+// The saved pairing goes only when the Sidecar says stale: a refusal for another reason (no random numbers this boot)
+// and a resume with no answer keep it; and pairLost starts at most one pairBoot per 5 s (no tight loop)
+test("the saved pairing is kept unless stale; pairLost is throttled", async (t) => {
+  const norng = await start(t, mkdtempSync(join(tmpdir(), "sidecar-norng-")), { MOCK_RESUME_NORNG: "1" });
+  let e = pageEnv(norng);
+  e.env.pairLost(e.env.CMD_NOT_PAIRED);
+  await until(() => e.count.resume > 0 && /random number/.test(e.$("#pair-msg").textContent));
+  assert.equal(e.count.resume, 1);
+  assert.ok("scPairSecret" in e.store && "scPairClient" in e.store, "not stale: kept");
+  assert.match(e.$("#pair-msg").textContent, /random number/);
+  assert.equal(e.$("#pair-wrap").hidden, false);
+
+  const pi = await start(t, mkdtempSync(join(tmpdir(), "sidecar-noans-")), {});
+  e = pageEnv(pi, { failResume: true });
+  e.env.pairLost(e.env.CMD_NOT_PAIRED);
+  await until(() => e.count.resume > 0);
+  await sleep(100);
+  assert.ok("scPairSecret" in e.store, "no answer: kept");
+  assert.ok(e.timers.includes(2000), "and asked again in 2 s");
+
+  e = pageEnv(pi);
+  for (let i = 0; i < 5; i++) e.env.pairLost(e.env.CMD_NOT_PAIRED);    // a server refusing every token it hands out
+  await sleep(300);
+  assert.equal(e.count.status, 1, "one pairBoot for five losses within 5 s");
+  assert.equal(e.env.PAIR.tok, "");
 });

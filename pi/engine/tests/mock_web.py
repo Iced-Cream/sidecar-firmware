@@ -896,9 +896,14 @@ def pair_do(op, form, tok, peer=""):
         # Deliberately outside the code's lockout, in both directions (paircode.h): a 128-bit secret is not
         # guessable, so rate-limiting it protects nothing, and counting it let a browser with a stale entry lock
         # its own owner out - and out of `sdboot.py install`, which shares the limiter.
+        # stale (web.cpp): true for a device it does not know or the gate off - the page drops its saved pairing then
+        # only. MOCK_RESUME_NORNG=1 is a boot whose RNG failed its self-test (paircode.h kNoRandom): refused, not stale
         if g["mode"] == "off":
-            return {"ok": False, "code": 403, "wait": 0, "error": "the pairing code is off on this card (cmdline.txt paircode=0)"}
-        stale = {"ok": False, "code": 403, "wait": 0,
+            return {"ok": False, "code": 403, "stale": True, "wait": 0, "error": "the pairing code is off on this card (cmdline.txt paircode=0)"}
+        if os.environ.get("MOCK_RESUME_NORNG"):
+            return {"ok": False, "code": 403, "stale": False, "wait": 0,
+                    "error": "the Sidecar's random number generator failed its self-test, so it refuses to pair"}
+        stale = {"ok": False, "code": 403, "stale": True, "wait": 0,
                  "error": "the saved pairing is no longer valid on this Sidecar: the code is needed again"}
         cid, sec = form.get("client", ""), form.get("secret", "")
         if not re.fullmatch(r"[0-9a-fA-F]{8}", cid) or not re.fullmatch(r"[0-9a-fA-F]{32}", sec):

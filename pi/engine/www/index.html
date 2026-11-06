@@ -680,7 +680,7 @@ const CMD_NOT_PAGE = "refused: not from this page (the same-origin check): open 
 // the token that just worked and reopen the dialog, which is what happened on the device (2026-10-25: "it confirms
 // it is correct and saved, but the dialog stays on top"). The wrapper remembers the gen it sent with and only acts
 // on a refusal that still belongs to the current one.
-const PAIR = { tok: "", gen: 0, gate: "on", clients: 0, ready: false, mine: false, hdr: true, host: "", build: "", asked: false };
+const PAIR = { lostAt: -1e9, tok: "", gen: 0, gate: "on", clients: 0, ready: false, mine: false, hdr: true, host: "", build: "", asked: false };
 // Both ends are checked for shape. A junk entry here - `undefined` written as a string when a field was missing, or
 // anything left by an older build - used to be sent to the Sidecar on every load: it answered "the pairing code is
 // 8 digits", which reads as a complaint about a code the user typed correctly, and until 0.3.0 each one also burned
@@ -788,6 +788,8 @@ function pairDone(tok) {                // a pairing transition: nothing from be
 // the dialog goes up whatever /pair/status said before (not answered yet, or the gate off: a stale token from an
 // earlier boot or kernel left the page inert, every change "refused", on hardware 2026-11-06), and pairBoot then
 // resumes a saved pairing (the dialog goes again) or drops a stale one and asks for the code.
+// At most one pairBoot from here per 5 s (PAIR.lostAt): a Sidecar that hands out a token and then refuses it cannot
+// make a tight loop of resume and refusal; the 5 s tick goes on asking while the page is unpaired.
 function pairLost(why) {
   PAIR.gen++;
   PAIR.tok = "";
@@ -795,6 +797,9 @@ function pairLost(why) {
   if (PAIR.gate === "off") PAIR.gate = "on";
   pairAsk(why);
   pairShow();
+  const now = Date.now();
+  if (now - PAIR.lostAt < 5000) return;
+  PAIR.lostAt = now;
   pairBoot();
 }
 async function pairJson(url, form) {
@@ -856,10 +861,15 @@ async function pairBoot() {
   }
   const k = pairStore.get();
   if (k.c && k.s) {
-    const r = await pairJson("/pair/resume", { client: k.c, secret: k.s });
+    let r;
+    try { r = await pairJson("/pair/resume", { client: k.c, secret: k.s }); }
+    catch (e) { setTimeout(pairBoot, 2000); return; }   // no answer, or not JSON: the saved pairing is kept, asked again
     if (gen !== PAIR.gen) return;
     if (r.ok) { PAIR.mine = true; pairDone(r.token); return; }
-    pairStore.clear();                  // Sidecar does not know this device any more (revoked, or a new card)
+    // dropped only when the Sidecar says it does not know this device (revoked, a new card) or the gate is off
+    // (web.cpp "stale"); any other refusal (no random numbers this boot, a lockout) keeps it for the next try
+    if (!r.stale) { pairAsk(r.error || "Sidecar did not resume this browser's pairing; it is kept for the next try."); pairShow(); return; }
+    pairStore.clear();
     pairShowCode();
     pairAsk("This browser's saved pairing is no longer valid on this Sidecar, so it is asking for the code again.");
     pairShow();
