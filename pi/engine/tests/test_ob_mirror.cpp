@@ -12,6 +12,7 @@
 #include "shared.h"
 #include "sidecar_gadget.h"
 #include <circle/timer.h>
+#include <circle/usb/usbmidi.h>
 #include <circle/usb/usbstandardhub.h>
 
 #include <circle/koptions.h>
@@ -311,6 +312,35 @@ int main() {
     CHECK(g_gadget.pipe_in.size() == nPkt + 101 && CObUsb::MirrorParked() == nParked + 51);
     g_gadget.shown = true;
     CHECK(packet(b, kReply) && g_gadget.pipe_in.size() == nPkt + 102);
+  }
+
+  {  // The Rytm's USB MIDI OUT halts while a forwarded request of the computer is at the box (its EP0, async): the MIDI
+     // reset (circle-midi-reset2: a synchronous CLEAR_FEATURE on the same EP0) waits until the request is answered. Sent
+     // meanwhile, it would queue behind the forwarded URB, and if the box never answers, Circle's 3 s timeout drops the
+     // forwarded URB's slot and leaves the caller's stack URB on the ring, to complete later into a dead object.
+    g_gadget.mirror = true, g_gadget.shown = true;
+    CTimer::s_now = 1000;
+    Box b;
+    CObUsbTransport t;
+    CUSBMIDIDevice m;
+    t.SetMIDI(&m);
+    TSetupData s = {0xC0, 0x01, 0, 0, 16};
+    CHECK(CObUsb::MirrorControl(&s, nullptr, 60) && CObUsb::MirrorCtlBusy());
+    const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
+    pass();                                    // the send fails: the MIDI OUT is halted
+    CHECK(m.halted && m.resets == 0);
+    for (int k = 0; k < 10; ++k) CTimer::s_now += 1000, pass();   // past EpBox's moment (kTogetherUs): due, but EP0 is busy
+    CHECK(m.resets == 0 && b.host.ep0.size() == 1);
+    b.complete(b.host.ep0[0], true, 4);        // the box answers: EP0 free
+    CHECK(!CObUsb::MirrorCtlBusy() && g_gadget.done.back().seq == 60);
+    pass();
+    CHECK(m.resets == 1 && !m.halted && t.MIDIOutResets() == 1);   // then reset, on the next Poll
+    g_ToHost.q.clear();
+    t.SetMIDI(nullptr);
+    CTimer::s_now = 0;
   }
 
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget

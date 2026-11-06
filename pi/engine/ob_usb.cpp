@@ -939,12 +939,19 @@ unsigned CObUsb::MirrorPipeResets (void)
 	return s_nPipeResets;
 }
 
+boolean CObUsb::MirrorCtlBusy (void)
+{
+	CObUsb *p = s_pThis;
+	return p != 0 && p->m_bMirror && p->m_bCtlBusy;
+}
+
 #else	// a gadget without circle-gadget-mirror.patch (a Pi 5 built with PI5_GADGET=0, the host tests): no mirror
 
 boolean CObUsb::MirrorControl (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
 boolean CObUsb::MirrorPipeOut (u8, const u8 *, unsigned)		{ return FALSE; }
 void CObUsb::MirrorAttachLate (void)					{}
 unsigned CObUsb::MirrorParked (void)					{ return 0; }
+boolean CObUsb::MirrorCtlBusy (void)					{ return FALSE; }
 void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}
@@ -1458,7 +1465,10 @@ void CObUsbTransport::Poll (void)
 	// Rytm on USB MIDI alone has no box, and its MIDI OUT is reset at once, as before (one endpoint: never together)
 	boolean bHalted = nFail != m_nFailSeen && m_pMIDI != 0 && m_pMIDI->OutHalted ();
 	if (nFail != m_nFailSeen) CObUsb::MidiHalted (bHalted, Io.bFailed ? Io.nFailUs : nNow);	// (the send's time)
-	boolean bWait = bHalted && CObUsb::BoxWaits (nNow);
+	// usb=mirror: a forwarded request on the box's EP0 (the Rytm's MIDI is the box's own interfaces): the reset's synchronous
+	// CLEAR_FEATURE would queue behind it, and a request the box never answers would leave it on the ring after Circle's
+	// 3 s timeout, to complete later into a dead stack URB (xHCI IRQ). The failure stays unseen: a later Poll resets it.
+	boolean bWait = bHalted && (CObUsb::BoxWaits (nNow) || CObUsb::MirrorCtlBusy ());
 	if (bHalted && !CObUsb::ResetDone () && !bWait)
 	{
 		m_nFailSeen = nFail;

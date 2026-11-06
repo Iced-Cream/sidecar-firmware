@@ -103,6 +103,9 @@ public:
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
 	static unsigned MirrorPipeResets (void);	// those clears so far (the mirror line)
+	// a forwarded request of the computer's is on the box's EP0 (async, its answer not back): no synchronous EP0 transfer to
+	// the box meanwhile (Circle's 3 s timeout would drop the forwarded URB's slot and leave the caller's on the ring)
+	static boolean MirrorCtlBusy (void);
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
