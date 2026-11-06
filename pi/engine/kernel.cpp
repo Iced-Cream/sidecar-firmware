@@ -74,7 +74,7 @@ static int s_nRytmPatIndex = -1;
 // why OVERBRIDGE is not in this build (the boot line for usb=mirror, usbmode=overbridge refused): 0.4.1 builds the
 // mirror for the Pi 4 only (pi/engine/build.sh)
 #if RASPPI >= 5
-static const char NoMirrorWhy[] = "Overbridge passthrough on the Pi 5 comes in 0.5.0";
+static const char NoMirrorWhy[] = "Overbridge passthrough on the Pi 5 comes in 0.4.2";
 #else
 static const char NoMirrorWhy[] = "no circle-gadget-mirror.patch";
 #endif
@@ -564,7 +564,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	{	// the USB-C mode (usb_mode.h): set (chosen), from (card, cmdline, default), runs (set, or class where the unit cannot
 		// show it), modes (what this unit can show; [] no Sidecar gadget), shown (what the computer sees now: sidecar, box,
 		// switching, none), boxUp (the box has been read and is up: shown, or about to be) and board (4, 5: the page names
-		// why OVERBRIDGE is not there on a Pi 5, which gets it in 0.5.0)
+		// why OVERBRIDGE is not there on a Pi 5, which gets it in 0.4.2)
 		static const char *const Shown[] = {"none", "sidecar", "box", "switching"};
 		const usb_mode::Mode Runs = usb_mode::effective (k->m_UsbMode, k->m_nUsbModes);
 		s.Format (",\"usbMode\":{\"set\":\"%s\",\"from\":\"%s\",\"runs\":\"%s\",\"modes\":[%s%s%s],\"shown\":\"%s\",\"boxUp\":%s,\"board\":%d}",
@@ -1567,7 +1567,7 @@ void CKernel::PushUi (void)
 	u.usb_mode = (int) m_UsbMode;		// the USB-C mode (usb_mode.h): Settings > Sound
 	u.usb_modes = (int) m_nUsbModes;
 	u.usb_shown = UsbShown ();
-	u.usb_ob_later = RASPPI >= 5;		// OVERBRIDGE not in this build: the Pi 5 gets it in 0.5.0
+	u.usb_ob_later = RASPPI >= 5;		// OVERBRIDGE not in this build: the Pi 5 gets it in 0.4.2
 	u.drone = CEngineCores::DroneVoice ();
 	u.fifo = CEngineCores::FifoTarget ();
 	u.web = m_bWeb;

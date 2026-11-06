@@ -17,7 +17,7 @@
 # PI5_GADGET (RASPPI=5 only, default 1): 1 the USB-C gadget compiled in (docs/pi5.md "USB device side"), in a Circle tree
 # of its own, pi/circle/build/circle-engine-pi5usb (circle-gadget.patch, circle-gadget-wake.patch, circle-pi5-gadget.patch,
 # circle-gadget-reset.patch; a changed patch is put in again). Not the usb=mirror patches in 0.4.1 (Overbridge passthrough
-# is the Pi 4 only; the Pi 5 gets it in 0.5.0, docs/usb-mirror.md). The first run also stops at the hostap clone, as for any
+# is the Pi 4 only; the Pi 5 gets it in 0.4.2, docs/usb-mirror.md). The first run also stops at the hostap clone, as for any
 # new tree: run it twice. On at run time as on the Pi 4 (GADGET default sidecar; gadget=0 in cmdline.txt turns it off).
 # 0: the gadget compiled out, in pi/circle/build/circle-engine-pi5 (the host-side patches only), as before 0.4.0.
 # PI5_TESTMODE=1 (needs PI5_GADGET=1, default 0): the engine test mode for tryboots of Raspberry Pi OS (docs/pi5.md "Engine
@@ -118,7 +118,7 @@ cd $T
 if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: all the patches, again when one changed (the patched files back from the clean tree first)
   # usb=mirror (docs/usb-mirror.md) is the Pi 4 only in 0.4.1: a Pi 5 that uses its USB-C for data needs full power and
   # data together (on a hub port it resets when Overbridge starts), so circle-gadget-mirror.patch and -softconnect.patch
-  # stay off this tree until 0.5.0 (they apply to it unchanged, after circle-gadget-reset.patch) and CIRCLE_GADGET_MIRROR
+  # stay off this tree until 0.4.2 (they apply to it unchanged, after circle-gadget-reset.patch) and CIRCLE_GADGET_MIRROR
   # is undefined here. A tree patched with them (0.4.1 rc2) gets their files back clean too (MP), as the sum changed
   P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"
   MP="$P/circle-gadget-mirror.patch $P/circle-gadget-softconnect.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)

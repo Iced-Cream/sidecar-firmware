@@ -7,11 +7,11 @@
 #      SIDECAR_NO_GADGET nor SIDECAR_PI5_TESTMODE, links the gadget and not card_guard.o, no --wrap; the test build all of it.
 #   3. the sources (pi5_flags_src.py): with the release build's macros no line that the compiler sees names the test
 #      mode (testsecs, /usbtest.log, TestLog, the card gate), and the gadget is started; with SIDECAR_PI5_TESTMODE it is there.
-#   4. usb=mirror is the Pi 4 only in 0.4.1 (docs/usb-mirror.md; the Pi 5 in 0.5.0): build.sh puts the Pi 4's gadget
+#   4. usb=mirror is the Pi 4 only in 0.4.1 (docs/usb-mirror.md; the Pi 5 in 0.4.2): build.sh puts the Pi 4's gadget
 #      patches on the pi5usb tree but not the two mirror patches, which it lists apart (MP) so that a tree patched with
 #      them gets their files back clean; with a Circle checkout at hand (CIRCLE_BUILD or pi/circle/build), the Pi 5 stack
 #      applied to a copy of it leaves no CIRCLE_GADGET_MIRROR nor CIRCLE_GADGET_SOFTCONNECT in the gadget header, and the
-#      mirror patches still go on top of it (for 0.5.0) and define both.
+#      mirror patches still go on top of it (for 0.4.2) and define both.
 set -euo pipefail
 cd "$(dirname "$0")"
 ENG=$PWD/..
