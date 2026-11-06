@@ -1494,16 +1494,25 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	EnterCritical ();
 	TMirStats s = m_MirStats;
 	unsigned nOutUnder = m_Stats.nOutUnder, nOutOver = m_Stats.nOutOver;
+	u8 Last[MidiFilter::kHead];
+	int nLast = m_ToRytmFilter.LastDropped (Last);
 	LeaveCritical ();
+	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
+	for (int i = 0; i < nLast; i++)
+	{
+		static const char Hex[] = "0123456789abcdef";
+		LastHex[3 * i] = Hex[Last[i] >> 4], LastHex[3 * i + 1] = Hex[Last[i] & 15];
+		LastHex[3 * i + 2] = i + 1 < nLast ? ' ' : 0;
+	}
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
 		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u | alt bad %u | "
-		"midi from %u to-mac %u to-rytm %u filtered %u/%u full %u norytm %u",
+		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
 		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
 		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
-		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
+		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
 }
 
 #endif	// CIRCLE_GADGET_MIRROR
