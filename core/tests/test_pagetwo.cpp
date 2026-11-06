@@ -155,6 +155,34 @@ int main() {
     machine(0, 45, kDspSample);
     settle();
     CHECK(page_two(0) == kDspsP2);
+    // the list opened again within the settle wait, the cursor on another machine at the wait's end: nothing for the
+    // preview; that list's YES writes the final choice's defaults, its NO the first choice's
+    snapshot(48, kLiveMachine);
+    g_out.clear();
+    list_open();
+    machine(0, 45, kDspSample);
+    list_close();
+    tick(60);
+    list_open();
+    machine(0, 46, kWaveMachine);   // (a preview)
+    tick(200), tick(100);
+    CHECK(writes() == 0);
+    machine(0, 47, kGranMachine);
+    list_close();
+    settle();
+    CHECK(page_two(0) == std::vector<int>({10, 60, 0, 0, 0, 0, 0, 0}));
+    snapshot(48, kLiveMachine);
+    g_out.clear();
+    list_open();
+    machine(0, 45, kDspSample);
+    list_close();
+    tick(60);
+    list_open();
+    machine(0, 46, kWaveMachine);
+    machine(0, 45, kDspSample);   // NO: back to DSP SAMPLE, the first list's choice
+    list_close();
+    settle();
+    CHECK(page_two(0) == kDspsP2);
     // the track moved on between the groups: the rest not sent
     snapshot(48, kLiveMachine);
     g_out.clear();

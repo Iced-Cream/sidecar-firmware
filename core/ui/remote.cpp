@@ -1211,7 +1211,14 @@ CORE_COLD const PageTwo* page_two(int m) {
 }
 CORE_COLD void page_two_cancel() { s.p2_due = 0, s.mlist_moved = 0; }
 CORE_COLD void machine_list(bool on) {
-  if (on && !s.mlist) memcpy(s.mlist_vb, track_vb, sizeof s.mlist_vb), s.mlist_moved = 0;
+  if (on && !s.mlist) {
+    memcpy(s.mlist_vb, track_vb, sizeof s.mlist_vb), s.mlist_moved = 0;
+    // re-opened within a choice's settle wait: that choice goes on in this list (its machine at the first open, so a NO
+    // here still gets the first choice's defaults), nothing written for a machine this list's cursor only previews
+    for (int t = 0; t < 12; ++t)
+      if ((s.p2_due >> t & 1) && s.p2_stage[t] == 0)
+        s.p2_due &= (uint16_t)~(1u << t), s.mlist_vb[t] = s.p2_from[t], s.mlist_moved |= (uint16_t)(1u << t);
+  }
   if (!on && s.mlist && have_tracks)
     for (int t = 0; t < 12; ++t)
       if (s.mlist_moved >> t & 1)
@@ -1223,7 +1230,7 @@ CORE_COLD void machine_list(bool on) {
 CORE_COLD void page_two_group(int t, int first) {
   const PageTwo* p = page_two(machine_of(s.p2_vb[t]));
   for (int k = first; k < first + 4 && p; ++k)
-    if (s.p2_want[t] >> k & 1) remote_track_write(t, 8 + k, p->v[k], 0, 0), s.p2_ans[t] |= (uint8_t)(1u << k);
+    if ((s.p2_want[t] >> k & 1) && remote_track_write(t, 8 + k, p->v[k], 0, 0)) s.p2_ans[t] |= (uint8_t)(1u << k);
   s.p2_want[t] &= (uint8_t)~(0x0Fu << first);
 }
 CORE_COLD void page_two_tick(uint32_t ms) {
@@ -1236,7 +1243,7 @@ CORE_COLD void page_two_tick(uint32_t ms) {
       continue;
     }
     if (s.p2_stage[t] == 0) {
-      if (dt < kSettleMs) continue;
+      if (dt < kSettleMs || s.mlist) continue;   // (the list open again: machine_list took the choice back)
       uint8_t vb = track_vb[t], from = s.p2_from[t];
       const PageTwo* p = vb == kNotOurs ? nullptr : page_two(machine_of(vb));
       // NO, or back to the machine it had (its words are its own), or a machine whose page 2 the Rytm sets / has none
@@ -1568,7 +1575,8 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     }
     case kWrite:   // rui1036: 48 <track> <param> <status>: the Rytm's answer to our write (logged when refused)
       if (n < 3) break;
-      if (b[0] < 12 && b[1] >= 8 && b[1] < 16) s.p2_ans[b[0]] &= (uint8_t)~(1u << (b[1] - 8));   // rc5: page 2's answered
+      if (b[0] < 12 && b[1] >= 8 && b[1] < 16 && (s.p2_due >> b[0] & 1) && s.p2_stage[b[0]])   // rc5: page 2's answered
+        s.p2_ans[b[0]] &= (uint8_t)~(1u << (b[1] - 8));
       if (b[2] == 4) core::log("rui: 48 write track %d P%d locked on the steps held", b[0] + 1, b[1] + 1);   // (1038)
       else if (b[2]) core::log("rui: 48 write track %d P%d refused (status %d)", b[0] + 1, b[1] + 1, b[2]);
       if (b[0] < 12 && b[1] == 0 && s.wr_pat[b[0]] >= 0) {   // presetpick: PAT written into a JUNO track's sound (not a
