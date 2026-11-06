@@ -268,12 +268,12 @@ static void test_origin ()
 	// 2026-11-06), the page opened at the address and at sidecar.local: both checks pass (the 0.4.1 rc refusals were
 	// the daemon's case-sensitive Content-Type, pi/circle/circle-http-case.patch, not these)
 	{
-		const char *const ip[] = {"sidecar.local", "169.254.20.230"};
-		CHECK (same_origin ("169.254.20.230", "http://169.254.20.230", "http://169.254.20.230/", ip, 2));
-		CHECK (not_cross_site ("169.254.20.230", "http://169.254.20.230", "http://169.254.20.230/", ip, 2));
+		const char *const ip[] = {"sidecar.local", "169.254.61.60"};
+		CHECK (same_origin ("169.254.61.60", "http://169.254.61.60", "http://169.254.61.60/", ip, 2));
+		CHECK (not_cross_site ("169.254.61.60", "http://169.254.61.60", "http://169.254.61.60/", ip, 2));
 		CHECK (same_origin ("sidecar.local", "http://sidecar.local", "http://sidecar.local/", ip, 2));
 		CHECK (not_cross_site ("sidecar.local", "http://sidecar.local", "http://sidecar.local/#sound", ip, 2));
-		CHECK (same_origin ("169.254.20.230", "http://169.254.20.230", 0, ip, 2));	// Referrer-Policy no-referrer
+		CHECK (same_origin ("169.254.61.60", "http://169.254.61.60", 0, ip, 2));	// Referrer-Policy no-referrer
 	}
 	CHECK (!not_cross_site ("sidecar.local", "http://evil.example", 0, names, 2));
 }
