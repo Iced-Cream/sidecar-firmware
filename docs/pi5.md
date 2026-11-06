@@ -336,18 +336,21 @@ What replaces it for now:
 - **Circle: not by default.** `lib/usb/gadget/Makefile` builds the DWC2 gadget only for `RASPPI != 5`, and `bcm2712.h`
   has no `ARM_USB_BASE`. `RASPPI=5 pi/engine/build.sh` builds it (`PI5_GADGET=1`, the default since 0.4.0), in a Circle
   tree of its own (`circle-engine-pi5usb`, the host-side patches + `circle-gadget.patch` + `circle-gadget-wake.patch` +
-  `circle-pi5-gadget.patch` + `circle-gadget-reset.patch` + the `usb=mirror` patches `circle-gadget-mirror.patch` and
-  `circle-gadget-softconnect.patch`).
-- **`usb=mirror` (in testing).** The mirror (docs/usb-mirror.md: the computer sees the attached box itself) is built in
-  as on the Pi 4, off unless chosen: the USB-C mode setting (OVERBRIDGE: web Sound tab, Settings > Sound, the Rytm's
-  SIDECAR MENU > USB-C; docs/usb-mirror.md "The setting") or `usb=mirror` in `cmdline.txt`; the default mode is
-  unchanged. Not yet run on a Pi 5 with a box (docs/usb-mirror.md "The Pi 5").
+  `circle-pi5-gadget.patch` + `circle-gadget-reset.patch`; not the `usb=mirror` patches in 0.4.1, see below).
+- **Overbridge passthrough (`usb=mirror`): Pi 4 in 0.4.1; Pi 5 in 0.5.0.** The mirror (docs/usb-mirror.md: the
+  computer sees the attached box itself) is not in the Pi 5's 0.4.1 kernel: a Pi 5 that uses its USB-C for data gets about 1.5 A from a computer or hub port, so on a hub port it is power-starved and resets when Overbridge starts, and a direct Apple Silicon port did not enumerate it. It is to be
+  tested with a USB-C power+data splitter with PD pass-through first. The OVERBRIDGE mode is greyed on the web page's
+  Sound tab and on Settings > Sound, the Rytm's SIDECAR MENU > USB-C says NOT IN BUILD, `/status` `usbMode.modes` is
+  `["class"]`, and `usb=mirror` in `cmdline.txt` or `usbmode=overbridge` logs "Overbridge passthrough on the Pi 5 comes
+  in 0.5.0" and runs CLASS COMPLIANT (docs/usb-mirror.md "The Pi 5").
 - **On by default (0.4.0, in testing).** The Pi 5's `GADGET` default is `sidecar`, as on the Pi 4: UAC2 12 in / 12 out
   and USB MIDI on USB-C, the web page's Sound tab and the touchscreen's Settings > Sound offer computer audio as on the
   Pi 4 (both go by `/status` "sidecar" / "mac": the Sidecar device is up). `gadget=0` in `cmdline.txt` turns it off,
   `gadget=midi` gives P1's MIDI echo. The USB-C port is also the Pi 5's power input, so the computer reaches it through a
   **powered USB-C hub or dock that passes data and powers the Pi** (for example a dock with USB-PD pass-through that
-  can give 5 A; a Mac port alone gives 3 A at most, and the Pi 5 then limits its USB-A ports to 600 mA). Measured so far
+  can give 5 A; a Mac port alone gives 3 A at most, and the Pi 5 then limits its USB-A ports to 600 mA). A Pi 5 that
+  uses its USB-C for data gets about 1.5 A from a computer or hub port; full power needs a USB-C power+data splitter
+  with USB-PD pass-through. Measured so far
   through an Overhub II at 480 Mb/s (the bring-up kernel and the engine's test kernels, "Engine test mode"); the release
   kernel with a computer on USB-C has not yet run on hardware. Kernels before 0.4.0 that had the gadget compiled in
   (`PI5_GADGET=1`, run on a Pi 5 in 2026-11) defaulted to `gadget=0`; they ran on the official 27 W supply with no boot,

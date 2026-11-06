@@ -7,9 +7,11 @@
 #      SIDECAR_NO_GADGET nor SIDECAR_PI5_TESTMODE, links the gadget and not card_guard.o, no --wrap; the test build all of it.
 #   3. the sources (pi5_flags_src.py): with the release build's macros no line that the compiler sees names the test
 #      mode (testsecs, /usbtest.log, TestLog, the card gate), and the gadget is started; with SIDECAR_PI5_TESTMODE it is there.
-#   4. usb=mirror on the Pi 5 (docs/usb-mirror.md): build.sh puts the Pi 4's gadget patches on the pi5usb tree too, the two
-#      mirror patches last as on the Pi 4; with a Circle checkout at hand (CIRCLE_BUILD or pi/circle/build), the whole
-#      Pi 5 stack applied to a copy of it leaves CIRCLE_GADGET_MIRROR and CIRCLE_GADGET_SOFTCONNECT in the gadget header.
+#   4. usb=mirror is the Pi 4 only in 0.4.1 (docs/usb-mirror.md; the Pi 5 in 0.5.0): build.sh puts the Pi 4's gadget
+#      patches on the pi5usb tree but not the two mirror patches, which it lists apart (MP) so that a tree patched with
+#      them gets their files back clean; with a Circle checkout at hand (CIRCLE_BUILD or pi/circle/build), the Pi 5 stack
+#      applied to a copy of it leaves no CIRCLE_GADGET_MIRROR nor CIRCLE_GADGET_SOFTCONNECT in the gadget header, and the
+#      mirror patches still go on top of it (for 0.5.0) and define both.
 set -euo pipefail
 cd "$(dirname "$0")"
 ENG=$PWD/..
@@ -49,8 +51,11 @@ grep -q -- "-DSIDECAR_NO_GADGET" <<<"$M" || fail "PI5_GADGET=0 with the gadget: 
 python3 pi5_flags_src.py "$ENG"
 
 P5=$(grep -E '^ *(P=[^;]*; )?PP=' "$ENG/build.sh" | grep -o 'circle-[a-z0-9-]*\.patch' | tr '\n' ' ')
-[ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
+[ "$P5" = "circle-gadget.patch circle-gadget-wake.patch circle-pi5-gadget.patch circle-gadget-reset.patch " ] \
   || fail "the Pi 5 gadget patches in build.sh: $P5"
+MP=$(grep -E '^ *MP=' "$ENG/build.sh" | grep -o 'circle-[a-z0-9-]*\.patch' | tr '\n' ' ')
+[ "$MP" = "circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] || fail "the Pi 5 tree's mirror files restored in build.sh: $MP"
+grep -q 'cat $PP $MP | sed -n' "$ENG/build.sh" || fail "build.sh does not restore the mirror patches' files on the Pi 5 tree"
 P4=$(grep -o 'patch -p1 < /repo/pi/circle/circle-gadget[a-z-]*\.patch' "$ENG/build.sh" | sed 's,.*/,,' | tr '\n' ' ')
 [ "$P4" = "circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch circle-gadget-mirror.patch circle-gadget-softconnect.patch " ] \
   || fail "the Pi 4 gadget patches in build.sh: $P4"
@@ -59,7 +64,11 @@ if [ -f "$C/include/circle/usb/gadget/dwusbgadget.h" ]; then
   cp -R "$C/include" "$C/lib" "$T/"
   for f in $P5; do (cd "$T" && patch -s -p1 < "$ENG/../circle/$f") || fail "$f does not apply to the Pi 5 stack"; done
   for m in CIRCLE_GADGET_MIRROR CIRCLE_GADGET_SOFTCONNECT; do
-    grep -q "#define $m" "$T/include/circle/usb/gadget/dwusbgadget.h" || fail "the Pi 5 stack without $m"
+    ! grep -q "#define $m" "$T/include/circle/usb/gadget/dwusbgadget.h" || fail "the Pi 5 stack (0.4.1) with $m"
+  done
+  for f in $MP; do (cd "$T" && patch -s -p1 < "$ENG/../circle/$f") || fail "$f does not apply to the Pi 5 stack"; done
+  for m in CIRCLE_GADGET_MIRROR CIRCLE_GADGET_SOFTCONNECT; do
+    grep -q "#define $m" "$T/include/circle/usb/gadget/dwusbgadget.h" || fail "the Pi 5 stack with the mirror patches without $m"
   done
 else
   echo "test_pi5_flags: no Circle checkout at $C: the Pi 5 patch stack not applied (the order checked)"

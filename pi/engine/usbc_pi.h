@@ -15,6 +15,7 @@ unsigned Modes ();
 int Shown ();
 void Ask (int nMode);			// any core: core 0 sets it (TakeAsk)
 int TakeAsk ();				// core 0's loop: the mode asked for since the last call, -1 none
+const char *NoOb ();			// why OVERBRIDGE is not in this build, for the page: "PI5: IN 0.5.0" on a Pi 5, else 0
 
 }
 

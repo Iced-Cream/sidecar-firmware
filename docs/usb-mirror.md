@@ -3,6 +3,9 @@
 Current state (2026-11-06): run on a Pi 4 and a Pi 5 with an Analog Rytm MKII on OS 1.74, the review changes included,
 with Windows (Pi 4) and macOS (Pi 4 and Pi 5); see Tested below.
 
+**Overbridge passthrough: Pi 4 in 0.4.1; Pi 5 in 0.5.0.** The Pi 5's 0.4.1 kernel is built without it: a Pi 5 that uses its USB-C for data gets about 1.5 A from a computer or hub port, so on a hub port it is power-starved and resets when Overbridge starts, and a direct Apple Silicon port did not enumerate it
+(to be tested with a USB-C power+data splitter with PD pass-through). See "The Pi 5" below.
+
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
 (1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
 the box maker's own software (the Overbridge engine and plugins, the transfer tool) works through the Sidecar, while the
@@ -112,8 +115,9 @@ widens what reaches the box; `class` and `cmdline` keep `/cmd`'s usual check):
   warning whenever it is under the cursor or set. It is drawn by the Pi (rytm-mods 0026's remote UI): no Rytm update.
 
 A mode this unit cannot run is greyed (web, touchscreen) or says NOT IN BUILD (Rytm): OVERBRIDGE without the mirror's
-Circle patches (`CIRCLE_GADGET_MIRROR`: both the Pi 4 and the Pi 5 builds have them now), both without the Sidecar
-gadget. The console refuses it too.
+Circle patches (`CIRCLE_GADGET_MIRROR`: the Pi 4 build has them; the Pi 5 build of 0.4.1 does not, its `/status`
+`usbMode.modes` is `["class"]`), both without the Sidecar gadget. The console refuses it too, with "Overbridge
+passthrough on the Pi 5 comes in 0.5.0" on a Pi 5 (also logged at boot for `usb=mirror` or a stored `usbmode=overbridge`).
 
 **Stored, and which wins.** The choice is kept on the card as `usbmode=class|overbridge` in `/.rytm/display.txt` (written
 only once one is chosen). Where the mode comes from, first match wins:
@@ -126,9 +130,10 @@ So a card with `usb=mirror` in cmdline.txt and nothing stored stays OVERBRIDGE, 
 cmdline.txt (unlike the display's keys, where cmdline wins: the Sidecar's own control has to work on a card someone set
 up by hand). `usbmode=cmdline` on the console drops the stored choice, so cmdline.txt (or the default) holds again;
 deleting the line from display.txt does the same at the next boot. `/status` says which: `"usbMode":{"set":"class|overbridge",
-"from":"card|cmdline|default","runs":...,"modes":["class","overbridge"],"shown":"sidecar|box|switching|none","boxUp":bool}`
+"from":"card|cmdline|default","runs":...,"modes":["class","overbridge"],"shown":"sidecar|box|switching|none","boxUp":bool,"board":4|5}`
 (`runs`: what runs, CLASS COMPLIANT where the unit cannot run the one set; `modes`: what it can run, `[]` without the
-Sidecar gadget; `shown`: what the computer sees now; `boxUp`: the box has been read and is up). The console's `usbmode`
+Sidecar gadget; `shown`: what the computer sees now; `boxUp`: the box has been read and is up; `board`: 4 or 5, so the page can say that OVERBRIDGE comes to the Pi 5 in
+0.5.0 rather than "not in this build"; the touchscreen and the Rytm's USB-C page say the same, PI5: IN 0.5.0 on the Rytm). The console's `usbmode`
 alone logs the same.
 
 **Applied at once.** A change switches USB-C live, with no restart; the switch itself runs at one point of the engine's
@@ -168,11 +173,20 @@ logs it when the setting turns OVERBRIDGE on with `usbmidi=os:` not off.
 
 ## The Pi 5
 
-The Pi 5's USB-C gadget is the same DWC2 core as the Pi 4's (same core version, 7 IN + 7 OUT endpoints besides EP0,
-dedicated FIFOs, 4080 FIFO words) and the same Circle driver with `circle-pi5-gadget.patch` on it, so `pi/engine/build.sh`
-puts `circle-gadget-mirror.patch` and `circle-gadget-softconnect.patch` on the Pi 5's tree (`circle-engine-pi5usb`)
-unchanged, after `circle-gadget-reset.patch` as on the Pi 4; `tests/test_pi5_flags.sh` checks the order and that the
-whole stack applies. What differs:
+**Not in 0.4.1; the Pi 5 gets it in 0.5.0.** The Pi 5's USB-C is also its power input. A Pi 5 that uses its USB-C
+for data gets about 1.5 A from a computer or hub port: on a hub port it is power-starved and resets when Overbridge
+starts, and a direct Apple Silicon port did not enumerate it. Full power and data together need a USB-C power+data
+splitter with USB-PD pass-through, which is still to be tested. So `pi/engine/build.sh` leaves the two mirror patches
+off the Pi 5's tree (`circle-engine-pi5usb`) in 0.4.1: `CIRCLE_GADGET_MIRROR` is undefined there, OVERBRIDGE is greyed
+(web, touchscreen) or NOT IN BUILD (Rytm), and `usb=mirror` / `usbmode=overbridge` log "Overbridge passthrough on the
+Pi 5 comes in 0.5.0" and run CLASS COMPLIANT. A tree patched with them before (0.4.1 rc2) gets their files back clean at
+the next build (the patch list's checksum, `.pi5-gadget-sum`, changed).
+
+What 0.5.0 builds on: the Pi 5's USB-C gadget is the same DWC2 core as the Pi 4's (same core version, 7 IN + 7 OUT
+endpoints besides EP0, dedicated FIFOs, 4080 FIFO words) and the same Circle driver with `circle-pi5-gadget.patch` on
+it, so `circle-gadget-mirror.patch` and `circle-gadget-softconnect.patch` go on the Pi 5's tree unchanged, after
+`circle-gadget-reset.patch` as on the Pi 4; `tests/test_pi5_flags.sh` checks that 0.4.1 leaves them off and that they
+still apply on top of the Pi 5 stack. What differs:
 
 - **FIFOs.** The Pi 5 sizes them as Linux does: RX 558 words, TX 512 words for IN endpoints 1-5 and 256 (1024 bytes)
   for 6-7, against 384 each on the Pi 4. A mirrored endpoint is at most 512 bytes (`CMirrorEP`), so it fits either way.
@@ -182,7 +196,8 @@ whole stack applies. What differs:
 - **The box's side.** The Rytm is on the RP1's xHCI on a root port, not behind the Pi 4's VL805 hub: the same Circle
   xHCI driver, so the pipes, the forwarded requests and the halt recovery are the same code.
 - **USB-C is also the power input**: the computer reaches it through a powered hub or dock (docs/pi5.md "USB device
-  side"); each switch is a replug on that hub's port.
+  side"); each switch is a replug on that hub's port. A computer or hub port gives a Pi 5 that uses USB-C for data
+  about 1.5 A; full power needs a USB-C power+data splitter with USB-PD pass-through.
 
 ## Tested
 
@@ -198,8 +213,8 @@ On a Pi 4 with an Analog Rytm MKII on OS 1.74, the computer on Windows [hw]:
 - the transfer tool browses, elkflash `info` works through the mirrored MIDI port, and OS updates went through with
   `mirrorhold=60`, from the transfer tool and from a SysEx flasher.
 
-On macOS with Overbridge Engine 2.26.10, 2026-11-06 [hw], on a Pi 4 and on a Pi 5 (with the Pi 5 mirror changes, not
-in this build yet): Overbridge through the mirror, and the Rytm's USB-A cable pulled for a short and for a long time;
+On macOS with Overbridge Engine 2.26.10, 2026-11-06 [hw], on a Pi 4 and on a Pi 5 (a test build with the mirror patches; not
+in 0.4.1): Overbridge through the mirror, and the Rytm's USB-A cable pulled for a short and for a long time;
 `lost 0`, `late 0` on both.
 
 The new offset after a replug, on the Pi 4 [hw]: a replug with the plugin streaming gave `lost 1126`, `late 128` before

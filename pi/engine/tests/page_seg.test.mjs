@@ -67,7 +67,7 @@ test("mock_web: commands change /status (machines per voice, fifo limit), MOCK_I
   s = await (await fetch(base + "/status")).json();
   assert.equal(s.notes, true); assert.equal(s.out, "tracks"); assert.equal(s.mac, true);
   assert.equal(s.drone, 2); assert.equal(s.fifoTarget, 24); assert.equal(s.machines[3], "JUNO");
-  assert.deepEqual(s.usbMode, { set: "class", from: "default", runs: "class", modes: ["class", "overbridge"], shown: "sidecar", boxUp: true });
+  assert.deepEqual(s.usbMode, { set: "class", from: "default", runs: "class", modes: ["class", "overbridge"], shown: "sidecar", boxUp: true, board: 4 });
   await cmd("usbmode=overbridge");
   s = await (await fetch(base + "/status")).json();
   assert.equal(s.usbMode.set, "overbridge"); assert.equal(s.usbMode.from, "card"); assert.equal(s.usbMode.shown, "box");
@@ -101,6 +101,10 @@ test("USB-C mode: chosen, disabled where it cannot run, what USB-C is now, the w
   paint({ gadget: "sidecar", usbMode: { set: "overbridge", from: "card", runs: "class", modes: ["class"], shown: "sidecar", boxUp: false } });
   assert.equal(bs[1].disabled, true); assert.match(bs[1].title, /not in this build/);
   assert.equal(el["#usbnow"].textContent, "now: the Sidecar device; not in this build: class compliant runs");
+  // a Pi 5 in 0.4.1 (board 5, no mirror): the page says when it comes
+  paint({ gadget: "sidecar", usbMode: { set: "overbridge", from: "card", runs: "class", modes: ["class"], shown: "sidecar", boxUp: false, board: 5 } });
+  assert.equal(bs[1].disabled, true); assert.equal(bs[1].title, "Overbridge on the Pi 5 comes in 0.5.0");
+  assert.equal(el["#usbnow"].textContent, "now: the Sidecar device; Overbridge on the Pi 5 comes in 0.5.0: class compliant runs");
 
   // the warning before it is set: while Overbridge is pending (the click confirmed), and a confirm() before the click
   const pendOb = { want: (k) => (k === "usbmode" ? "overbridge" : undefined) };

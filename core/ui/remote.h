@@ -105,6 +105,9 @@ struct RemoteUsb {
   unsigned (*modes)();        // bit m: mode m can run here (0: USB-C is not the Sidecar's device: cmdline gadget=)
   int (*shown)();             // what the computer sees now: 0 the Sidecar device, 1 the box, 2 off the bus (a replug), -1 none
   void (*set_mode)(int mode);
+  // why OVERBRIDGE cannot run here, the row's short word (13 characters at most: "PI5: IN 0.5.0", a Pi 5 in 0.4.1) and
+  // YES's note; none set, or it returns nullptr: NOT IN BUILD / NOT IN THIS BUILD
+  const char* (*no_ob)();
 };
 void remote_usb(const RemoteUsb* h);
 const RemoteUsb* remote_usb();

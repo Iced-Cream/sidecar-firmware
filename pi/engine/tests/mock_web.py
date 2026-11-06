@@ -1124,7 +1124,7 @@ class H(BaseHTTPRequestHandler):
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,
                 "machines": STATE["machines"],
                 "usbMode": {"set": STATE["usbmode"], "from": STATE["usbfrom"], "runs": STATE["usbmode"], "modes": ["class", "overbridge"],
-                            "shown": "box" if STATE["usbmode"] == "overbridge" else "sidecar", "boxUp": True},
+                            "shown": "box" if STATE["usbmode"] == "overbridge" else "sidecar", "boxUp": True, "board": 4},
                 "fx": [{"type": "PLATE", "post": 0, "send": [0, 20, 64, 127, 0, 0, 0, 90, 0, 0, 10, 0]},
                        {"type": "OFF", "post": 1, "send": [0] * 12}],
                 "version": "0.1.0", "commit": "abc1234", "dirty": False, "build": "Oct 17 2026 12:00:00", "circle": "Circle 50.0", "screensaver": STATE["screensaver"],
