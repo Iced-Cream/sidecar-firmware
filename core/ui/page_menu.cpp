@@ -370,12 +370,13 @@ CORE_COLD void usb_draw(Canvas& c, int page, int npages, uint32_t ms) {
   const int mode = h->mode ? h->mode() : -1;
   const unsigned modes = h->modes ? h->modes() : 0;
   const int shown = h->shown ? h->shown() : -1;
+  const char* const no_ob = h->no_ob ? h->no_ob() : nullptr;
   static const char* const kShown[] = {"NO SIDECAR USB", "SIDECAR DEVICE", "THE BOX", "REPLUG..."};
   for (int i = 0; i < kUsbRows; ++i) {
     const char* name = i == kClassRow ? "CLASS COMPLIANT" : i == kObRow ? "OVERBRIDGE" : "NOW";
     const char* v = nullptr;
     if (i == kNowRow) v = kShown[shown < -1 || shown > 2 ? 0 : shown + 1];
-    else if (!(modes & 1u << i)) v = modes ? "NOT IN BUILD" : "-";
+    else if (!(modes & 1u << i)) v = !modes ? "-" : i == kObRow && no_ob ? no_ob : "NOT IN BUILD";
     else if (mode == i) v = "SET";
     bool on = i == M.ucur;
     int y = kRowY + i * kRowH;
@@ -416,7 +417,10 @@ CORE_COLD bool usb_key(int code) {
   if (code != kYes || !h) return false;
   const unsigned modes = h->modes ? h->modes() : 0;
   if (!modes) M.uconfirm = false, web_note("USB-C: CMDLINE GADGET=");
-  else if (!(modes & 1u << M.ucur)) M.uconfirm = false, web_note("NOT IN THIS BUILD");
+  else if (!(modes & 1u << M.ucur)) {
+    const char* no_ob = M.ucur == kObRow && h->no_ob ? h->no_ob() : nullptr;
+    M.uconfirm = false, web_note(no_ob ? no_ob : "NOT IN THIS BUILD");
+  }
   else if (h->mode && h->mode() == M.ucur) M.uconfirm = false, web_note(M.ucur == kObRow ? "OVERBRIDGE ALREADY" : "CLASS ALREADY");
   else if (M.ucur == kObRow && !M.uconfirm) M.uconfirm = true;   // the box's requests unfiltered: asked once more
   else {

@@ -896,9 +896,14 @@ def pair_do(op, form, tok, peer=""):
         # Deliberately outside the code's lockout, in both directions (paircode.h): a 128-bit secret is not
         # guessable, so rate-limiting it protects nothing, and counting it let a browser with a stale entry lock
         # its own owner out - and out of `sdboot.py install`, which shares the limiter.
+        # stale (web.cpp): true for a device it does not know or the gate off - the page drops its saved pairing then
+        # only. MOCK_RESUME_NORNG=1 is a boot whose RNG failed its self-test (paircode.h kNoRandom): refused, not stale
         if g["mode"] == "off":
-            return {"ok": False, "code": 403, "wait": 0, "error": "the pairing code is off on this card (cmdline.txt paircode=0)"}
-        stale = {"ok": False, "code": 403, "wait": 0,
+            return {"ok": False, "code": 403, "stale": True, "wait": 0, "error": "the pairing code is off on this card (cmdline.txt paircode=0)"}
+        if os.environ.get("MOCK_RESUME_NORNG"):
+            return {"ok": False, "code": 403, "stale": False, "wait": 0,
+                    "error": "the Sidecar's random number generator failed its self-test, so it refuses to pair"}
+        stale = {"ok": False, "code": 403, "stale": True, "wait": 0,
                  "error": "the saved pairing is no longer valid on this Sidecar: the code is needed again"}
         cid, sec = form.get("client", ""), form.get("secret", "")
         if not re.fullmatch(r"[0-9a-fA-F]{8}", cid) or not re.fullmatch(r"[0-9a-fA-F]{32}", sec):
@@ -1124,7 +1129,7 @@ class H(BaseHTTPRequestHandler):
                 "rytmMidi": True, "temp": 57, "out": STATE["out"], "notes": STATE["notes"], "drone": STATE["drone"], "fifoTarget": STATE["fifo"], "underruns": 0,
                 "machines": STATE["machines"],
                 "usbMode": {"set": STATE["usbmode"], "from": STATE["usbfrom"], "runs": STATE["usbmode"], "modes": ["class", "overbridge"],
-                            "shown": "box" if STATE["usbmode"] == "overbridge" else "sidecar", "boxUp": True},
+                            "shown": "box" if STATE["usbmode"] == "overbridge" else "sidecar", "boxUp": True, "board": 4},
                 "fx": [{"type": "PLATE", "post": 0, "send": [0, 20, 64, 127, 0, 0, 0, 90, 0, 0, 10, 0]},
                        {"type": "OFF", "post": 1, "send": [0] * 12}],
                 "version": "0.1.0", "commit": "abc1234", "dirty": False, "build": "Oct 17 2026 12:00:00", "circle": "Circle 50.0", "screensaver": STATE["screensaver"],
@@ -1152,6 +1157,9 @@ class H(BaseHTTPRequestHandler):
             c = parse_qs(body.decode()).get("c", [q.get("c", "")])[0]
             # web.cpp: usbmode= raising the exposure (anything but class / sidecar / cmdline) only same-origin (strict)
             if c.startswith("usbmode=") and c[8:] not in ("class", "sidecar", "cmdline") and not same_origin(self.headers):
+                return self.send_error(400)
+            # and never from /cmd: midibridge= / usbmidi= / osupdate= (the page's own strict paths or the console), wdtest, none
+            if not c or c == "wdtest" or c.startswith(("midibridge=", "usbmidi=", "osupdate=")):
                 return self.send_error(400)
             log("web: command :%s" % c)
             um_cmd(c)

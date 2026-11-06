@@ -71,6 +71,14 @@ static int s_nRytmPatIndex = -1;
 #include "version.h"
 #include <circle/new.h>
 
+// why OVERBRIDGE is not in this build (the boot line for usb=mirror, usbmode=overbridge refused): 0.4.1 builds the
+// mirror for the Pi 4 only (pi/engine/build.sh)
+#if RASPPI >= 5
+static const char NoMirrorWhy[] = "Overbridge passthrough on the Pi 5 comes in 0.4.2";
+#else
+static const char NoMirrorWhy[] = "no circle-gadget-mirror.patch";
+#endif
+
 // The Pi 5 engine test mode (PI5_TESTMODE=1 builds only; docs/pi5.md "Engine test mode"): testsecs=, its watchdog and
 // reboot, /usbtest.log, testcard=1. A plain PI5_GADGET=1 build has the gadget and none of this, so a release card takes it.
 #ifdef SIDECAR_PI5_TESTMODE
@@ -400,9 +408,10 @@ boolean CKernel::Initialize (void)
 		ApplyUsbMode ();				// the USB-C mode (usb_mode.h): display.txt's usbmode=, else usb=
 		if (pSidecar->Start ()) m_pSidecar = pSidecar;
 		else m_nUsbModes = 0;
-		m_Logger.Write (From, LogNotice, "gadget: USB-C mode %s (%s)%s", m_UsbMode == usb_mode::kMirror ? "OVERBRIDGE" : "CLASS COMPLIANT",
-				usb_mode::from_name (m_UsbFrom), m_UsbMode == usb_mode::kMirror && !CSidecarGadget::MirrorBuilt ()
-				? ": not in this build (no circle-gadget-mirror.patch), CLASS COMPLIANT runs" : "");
+		const boolean bNoMirror = m_UsbMode == usb_mode::kMirror && !CSidecarGadget::MirrorBuilt ();
+		m_Logger.Write (From, LogNotice, "gadget: USB-C mode %s (%s)%s%s%s", m_UsbMode == usb_mode::kMirror ? "OVERBRIDGE" : "CLASS COMPLIANT",
+				usb_mode::from_name (m_UsbFrom), bNoMirror ? ": not in this build (" : "", bNoMirror ? NoMirrorWhy : "",
+				bNoMirror ? "), CLASS COMPLIANT runs" : "");
 		if (m_pSidecar != 0 && m_pSidecar->Mirror ())	// OVERBRIDGE, usb=mirror (docs/usb-mirror.md)
 			m_Logger.Write (From, LogWarning, "gadget: OVERBRIDGE (usb=mirror): USB-C is the Sidecar device until the box has been read, "
 					"then the box itself (the Sidecar device again after the box has been gone mirrorhold s)");
@@ -554,15 +563,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	pOut->Append (s);
 	{	// the USB-C mode (usb_mode.h): set (chosen), from (card, cmdline, default), runs (set, or class where the unit cannot
 		// show it), modes (what this unit can show; [] no Sidecar gadget), shown (what the computer sees now: sidecar, box,
-		// switching, none) and boxUp (the box has been read and is up: shown, or about to be)
+		// switching, none), boxUp (the box has been read and is up: shown, or about to be) and board (4, 5: the page names
+		// why OVERBRIDGE is not there on a Pi 5, which gets it in 0.4.2)
 		static const char *const Shown[] = {"none", "sidecar", "box", "switching"};
 		const usb_mode::Mode Runs = usb_mode::effective (k->m_UsbMode, k->m_nUsbModes);
-		s.Format (",\"usbMode\":{\"set\":\"%s\",\"from\":\"%s\",\"runs\":\"%s\",\"modes\":[%s%s%s],\"shown\":\"%s\",\"boxUp\":%s}",
+		s.Format (",\"usbMode\":{\"set\":\"%s\",\"from\":\"%s\",\"runs\":\"%s\",\"modes\":[%s%s%s],\"shown\":\"%s\",\"boxUp\":%s,\"board\":%d}",
 			  usb_mode::name (k->m_UsbMode), usb_mode::from_name (k->m_UsbFrom), usb_mode::name (Runs),
 			  k->m_nUsbModes & 1u << usb_mode::kSidecar ? "\"class\"" : "",
 			  (k->m_nUsbModes & 1u << usb_mode::kSidecar) && (k->m_nUsbModes & 1u << usb_mode::kMirror) ? "," : "",
 			  k->m_nUsbModes & 1u << usb_mode::kMirror ? "\"overbridge\"" : "", Shown[k->UsbShown () + 1],
-			  k->m_pSidecar != 0 && k->m_pSidecar->MirrorBoxThere () ? "true" : "false");
+			  k->m_pSidecar != 0 && k->m_pSidecar->MirrorBoxThere () ? "true" : "false", RASPPI >= 5 ? 5 : 4);
 		pOut->Append (s);
 	}
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
@@ -1557,6 +1567,7 @@ void CKernel::PushUi (void)
 	u.usb_mode = (int) m_UsbMode;		// the USB-C mode (usb_mode.h): Settings > Sound
 	u.usb_modes = (int) m_nUsbModes;
 	u.usb_shown = UsbShown ();
+	u.usb_ob_later = RASPPI >= 5;		// OVERBRIDGE not in this build: the Pi 5 gets it in 0.4.2
 	u.drone = CEngineCores::DroneVoice ();
 	u.fifo = CEngineCores::FifoTarget ();
 	u.web = m_bWeb;
@@ -1661,7 +1672,7 @@ boolean CKernel::UsbCommand (const char *pCmd)
 		else if (!(m_nUsbModes & 1u << m))
 		{
 			m_Logger.Write (From, LogWarning, "usbmode=%s: not here (%s)", usb_mode::name (m),
-					m_nUsbModes == 0 ? "USB-C is not the Sidecar gadget: cmdline gadget=" : "this build has no circle-gadget-mirror.patch");
+					m_nUsbModes == 0 ? "USB-C is not the Sidecar gadget: cmdline gadget=" : NoMirrorWhy);
 			return TRUE;
 		}
 		else

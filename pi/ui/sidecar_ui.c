@@ -1710,11 +1710,17 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		th_seg_enable (s_Seg[SEG_USB], 0, ok && (s->usb_modes & 1));
 		th_seg_enable (s_Seg[SEG_USB], 1, ok && (s->usb_modes & 2));
 		if (!ok) lv_snprintf (u, sizeof u, "%s", O ? "NOT HERE: USB-C IS CMDLINE GADGET=" : "Not here: USB-C is cmdline.txt's gadget= (MIDI only or off).");
+		else if (ob && !(s->usb_modes & 2) && s->usb_ob_later) lv_snprintf (u, sizeof u, "%s", O ? "PI 5: OVERBRIDGE IN 0.4.2.\nCLASS RUNS." : "Overbridge on the Pi 5 comes in 0.4.2: class compliant runs.");
 		else if (ob && !(s->usb_modes & 2)) lv_snprintf (u, sizeof u, "%s", O ? "NOT IN THIS BUILD: CLASS RUNS." : "Overbridge is not in this build: class compliant runs.");
 		else if (s->usb_shown == 1) lv_snprintf (u, sizeof u, O ? "NOW: THE %s ITSELF." : "Now: the %s itself.", box);
 		else if (s->usb_shown == 2) lv_snprintf (u, sizeof u, "%s", O ? "NOW: REPLUGGING..." : "Now: replugging...");
 		else if (ob) lv_snprintf (u, sizeof u, O ? "NOW: SIDECAR DEVICE (NO %s YET)." : "Now: the Sidecar device (no %s read yet).", box);
 		else lv_snprintf (u, sizeof u, "%s", O ? "NOW: SIDECAR AUDIO + MIDI." : "Now: the Sidecar's audio and MIDI.");
+		if (ok && !ob && !(s->usb_modes & 2) && s->usb_ob_later)	// why OVERBRIDGE is greyed
+		{
+			size_t n = strlen (u);
+			lv_snprintf (u + n, sizeof u - n, "%s", O ? "\nPI 5: OVERBRIDGE IN 0.4.2." : " Overbridge on the Pi 5 comes in 0.4.2.");
+		}
 		if (ok && (s->usb_modes & 2))	// set, or before it is picked (the review's L3)
 		{
 			size_t n = strlen (u);

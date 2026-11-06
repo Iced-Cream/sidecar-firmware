@@ -1022,6 +1022,8 @@ static void theme_run (int style, const char *pre)
 	// the USB-C mode: OVERBRIDGE set with the box shown (its warning), not in this build (greyed), no Sidecar gadget
 	s_St.usb_mode = 1, s_St.usb_shown = 1; sidecar_ui_status (&s_St); run (2); shot ("sound-overbridge");
 	s_St.usb_modes = 1, s_St.usb_shown = 0; sidecar_ui_status (&s_St); run (2); shot ("sound-overbridge-nobuild");
+	s_St.usb_ob_later = 1; sidecar_ui_status (&s_St); run (2); shot ("sound-overbridge-pi5");	// a Pi 5 in 0.4.1
+	s_St.usb_ob_later = 0;
 	s_St.usb_modes = 0, s_St.usb_shown = -1; sidecar_ui_status (&s_St); run (2); shot ("sound-usb-nogadget");
 	s_St.usb_mode = 0, s_St.usb_modes = 3, s_St.usb_shown = 0; sidecar_ui_status (&s_St); run (2);
 	sidecar_ui_show (2); shot ("fx");
