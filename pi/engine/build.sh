@@ -209,6 +209,10 @@ grep -q circle-hub-rearm2 include/circle/usb/usbstandardhub.h || patch -p1 < /re
 # port at once, synchronously, and a failed port read is a LogPanic - likely the Pi reboots of v6.3/v6.4; 250 ms first;
 # its own file and marker; idempotent)
 grep -q circle-hub-rearm3 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm3.patch
+# then no halt on a failed request to the hub (circle-hub-noportpanic.patch: a port read or a change clear that fails
+# while a device restarts was a LogPanic - core 0 halted, the 15 s watchdog rebooted the Pi, the panic line lost; now
+# logged, and the hub status-change request armed again from the recovery timer, so the latched change is read again; idempotent)
+grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-noportpanic.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
