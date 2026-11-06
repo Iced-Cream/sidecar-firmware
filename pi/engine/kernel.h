@@ -134,6 +134,7 @@ private:
 	usb_mode::Mode		m_UsbMode = usb_mode::kSidecar;
 	usb_mode::From		m_UsbFrom = usb_mode::kDefault;
 	unsigned		m_nUsbModes = 0;
+	volatile boolean	m_bUsbApply = FALSE;	// a usbmode= changed the mode: Run applies it (ApplyUsbMode) at one point of its loop
 	int			m_nUsbPub = -2;		// PublishUsb's last (mode, modes, shown) as one number
 	volatile unsigned	m_nClockMHz = 0;
 	volatile unsigned	m_nBudgetUs = 0;

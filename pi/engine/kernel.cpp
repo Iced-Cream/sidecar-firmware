@@ -1627,7 +1627,7 @@ void CKernel::PublishUsb (void)
 }
 
 // usbmode: the state; usbmode=class|overbridge: stored in display.txt (it then wins over cmdline usb=) and applied at
-// once; usbmode=cmdline: the stored one dropped, cmdline usb= (or the default) again. A mode this unit cannot show is
+// once by Run's loop (m_bUsbApply); usbmode=cmdline: the stored one dropped, cmdline usb= (or the default) again. A mode this unit cannot show is
 // refused (the build has no mirror, or USB-C is not the Sidecar gadget: cmdline gadget=midi / 0)
 boolean CKernel::UsbCommand (const char *pCmd)
 {
@@ -1658,17 +1658,19 @@ boolean CKernel::UsbCommand (const char *pCmd)
 			m_bUsbStored = TRUE;
 			m_UsbStored = m;
 		}
+		// the state now (/status, the pages); the switch itself (a replug of USB-C) is Run's, at one point of its loop
+		// (ApplyUsbMode), whichever task asked: the web server, the display, the serial console or the Rytm's page
 		const usb_mode::Mode Was = m_UsbMode;
-		ApplyUsbMode ();
+		m_UsbMode = usb_mode::resolve (m_bUsbStored, m_UsbStored, m_Options.GetAppOptionString ("usb", 0), &m_UsbFrom);
+		m_bUsbApply = TRUE;
 		if (m_UsbMode == usb_mode::kMirror && Was != usb_mode::kMirror && m_pSidecar != 0 && m_pSidecar->OsUpdate ())
 			m_Logger.Write (From, LogWarning, "usb: OVERBRIDGE with usbmidi=os:%s: the OS-update filter covers MIDI only; the box's "
 					"vendor requests and async channel are relayed unfiltered (docs/usb-mirror.md)", m_pSidecar->OsUpdateName ());
-		PublishUsb ();
 	}
 	static const char *const Shown[] = {"no Sidecar gadget", "the Sidecar device", "the box", "off the bus (a replug)"};
-	m_Logger.Write (From, LogNotice, "usb: USB-C mode %s (%s; cmdline usb= %s), the computer sees %s%s",
+	m_Logger.Write (From, LogNotice, "usb: USB-C mode %s (%s; cmdline usb= %s), the computer sees %s%s%s",
 			m_UsbMode == usb_mode::kMirror ? "OVERBRIDGE" : "CLASS COMPLIANT", usb_mode::from_name (m_UsbFrom),
-			m_bUsbStored ? "ignored while one is stored" : "used", Shown[UsbShown () + 1],
+			m_bUsbStored ? "ignored while one is stored" : "used", Shown[UsbShown () + 1], m_bUsbApply ? " (a switch is due)" : "",
 			m_UsbMode == usb_mode::kMirror ? ": the box's requests and async channel pass unfiltered" : "");
 	return TRUE;
 }
@@ -2404,6 +2406,11 @@ void CKernel::Run (void)
 		{
 			int nUsbAsk = usbc_pi::TakeAsk ();	// the Rytm's SIDECAR MENU > USB-C asks: as the console's usbmode=
 			if (nUsbAsk >= 0) UsbCommand (nUsbAsk == usb_mode::kMirror ? "usbmode=overbridge" : "usbmode=class");
+			if (m_bUsbApply)			// a usbmode= from any task: the switch happens here
+			{
+				m_bUsbApply = FALSE;
+				ApplyUsbMode ();
+			}
 			PublishUsb ();
 		}
 		char Link[40];

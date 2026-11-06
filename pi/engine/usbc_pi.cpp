@@ -15,12 +15,10 @@ void Publish (int nMode, unsigned nModes, int nShown)
 int Mode () { return s_nMode; }
 unsigned Modes () { return s_nModes; }
 int Shown () { return s_nShown; }
-void Ask (int nMode) { s_nAsk = nMode; }
+void Ask (int nMode) { __atomic_store_n (&s_nAsk, nMode, __ATOMIC_RELEASE); }
 int TakeAsk ()
 {
-	int n = s_nAsk;
-	if (n >= 0) s_nAsk = -1;
-	return n;
+	return __atomic_exchange_n (&s_nAsk, -1, __ATOMIC_ACQ_REL);	// read and clear in one: an Ask between them is not lost
 }
 
 }
