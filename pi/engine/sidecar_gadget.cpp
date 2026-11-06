@@ -1210,6 +1210,8 @@ void CSidecarGadget::MirrorBoxUp (boolean bUp)
 	EnterCritical ();
 	m_bMirBoxUp = bUp && m_bMirHave;
 	m_nMirInHead = m_nMirInTail = 0;
+	m_bExtraOff = FALSE;				// the box's stream starts again (its OUT counter from 0): a new offset
+	m_MirExtra.flush ();
 	if (!m_bMirBoxUp) MirrorBoxGone ();
 	LeaveCritical ();
 	if (!m_bMirBoxUp) m_nBoxGoneAt = Now ();
@@ -1334,10 +1336,14 @@ void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
 	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
 	// The offset is set again when this block would be due in a block the Pi has already sent (the computer's stream
-	// fell behind the box's, as when IN blocks to it were dropped): counted as "anchor" in the mirror line.
+	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the queue holds (the Pi's
+	// counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
+	// from counter 0, so MirrorBoxUp sets it again too: kept, the old offset left the computer's bytes due up to a
+	// whole counter wrap (about 1.4 s) ahead, and they were lost (T141 [hw]: lost 1126, late 128 after a replug).
 	u16 nComp = ob::block_counter (p), nPi = CObUsb::OutCounter ();
-	if (m_bExtraOff && (s16) (u16) (nComp + m_nExtraOff - nPi) < 0)
+	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi))
 	{
+		if ((s16) (u16) (nComp + m_nExtraOff - nPi) > 0) m_MirExtra.flush ();	// queued under a counter that went back
 		m_bExtraOff = FALSE;
 		m_MirStats.nOutAnchor++;
 	}

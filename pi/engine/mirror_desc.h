@@ -215,6 +215,18 @@ struct ExtraRing
 	unsigned dropped, late;
 
 	void clear () { head = tail = 0; dropped = late = 0; }
+	// the box's stream started again (the box went away, or came back): what is queued is due under the old stream's
+	// counter, so it is dropped. Not counted. IRQs masked, or the consumer's own IRQ (both run on core 0).
+	void flush () { tail = head; }
+	static constexpr unsigned kStep = 7;	// the block counter's step (ob::kFramesPerBlock)
+	// an offset that no longer fits (the computer's block due at `due`, the Pi's OUT counter at `pi`): due in a block
+	// the Pi has already sent (the computer fell behind), or further ahead than the ring could ever hold (the Pi's
+	// counter went back, as when the box's stream starts again). The gadget then sets the offset again.
+	static bool stale (uint16_t due, uint16_t pi)
+	{
+		const int16_t d = (int16_t) (uint16_t) (due - pi);
+		return d < 0 || d > (int) (kSlots * kStep);
+	}
 	// the block's bytes queued for the Pi's block `at` when any is set; FALSE when all are zero or the ring is full
 	bool push_block (const uint8_t *blk, uint16_t at)
 	{
