@@ -41,6 +41,7 @@ static boolean SdWriteWhole (const char *pPath, const char *pData, unsigned n)
 #include "wifi.h"
 #include "fmt/fmt.h"		// write_atomic (SdWriteWhole)
 #include "stor_pi.h"
+#include "code_mmu.h"		// shipped code: the code arena's pages
 #include "version.h"
 #include <circle/new.h>
 
@@ -224,6 +225,7 @@ boolean CKernel::Initialize (void)
 	BootStep (1);
 	BootStep (2);
 	unsigned t0 = m_Timer.GetClockTicks ();
+	bridge::set_code_board (code_mmu_board ());	// shipped code (core/code): the code arena's pages
 	boolean bCard = bridge::begin (ToHost);	// the generic engine's core (core/generic): the card's state, the Rytm's profile
 	m_Logger.Write (From, LogNotice, "engine: generic services, begin %s in %u ms (heap %u KB free)",
 			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,

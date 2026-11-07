@@ -7,6 +7,7 @@
 #include "../msamp/cardq.h"
 #include "../locks/locks.h"
 #include "../dsp/dsp.h"
+#include "../code/code.h"
 #include "../route/route.h"
 #include "kv.h"
 #include "kv_card.h"
@@ -91,10 +92,16 @@ bool from_host(const uint8_t* m, int n) {
   if (locks::is_lock_op(m[6])) return locks::sysex(m, n);   // the control core's own: the ticks arrive here too
   if (route::is_route_op(m[6])) return route::sysex(m, n);   // the control core's too: answers go out in host_step
   if (dsp::is_dsp_op(m[6])) return dsp::sysex(m, n);         // the graphs' blocks (core/dsp): the control core's too
+  if (code::is_code_op(m[6])) {                              // shipped code (core/code): the card core's but the fast path
+    int r = code::from_host(m, n);
+    if (r != 1) return r == 0;
+    if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
+    return true;
+  }
   if (m[6] == kOpName) return name(m, n);                    // the control core's too: nothing on the card
   // the companion's HELLO starts its session: the sets it declared before are gone with it (it declares them again
   // once answered). Here and not at the screen's 35, which may come after the HELLO and would wipe the new sets.
-  if (m[6] == kOpHello) locks::reset(), route::reset(), dsp::reset();   // the route points and graphs go with it too
+  if (m[6] == kOpHello) locks::reset(), route::reset(), dsp::reset(), code::hello();   // route points, graphs, code owners too
   if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
   return true;
 }
@@ -104,11 +111,18 @@ int card_step(int max_ops) {
   while (k < max_ops) {
     Msg* m = s_in.front();
     if (!m) break;
-    s_svc.sysex(m->d, m->n);
+    if (code::is_code_op(m->d[6])) {
+      if (!code::card_can_take(m->d, m->n)) break;   // the load buffer is still the control core's: next time
+      code::card_op(m->d, m->n);
+    } else {
+      if (m->d[6] == kOpHello) code::card_hello();   // a transfer under way goes with the session
+      s_svc.sysex(m->d, m->n);
+    }
     s_in.pop();
     ++k;
     ++s_st.ops;
   }
+  code::card_poll();
   return k;
 }
 
@@ -117,8 +131,10 @@ int host_step(int max_msgs) {
   int k = 0;
   uint8_t a[32];
   dsp::poll();   // FREEs move on: fade, release, destroy
+  code::poll();  // blobs the card core read are loaded; drops, crash marks
   for (int an; k < max_msgs && (an = route::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
   for (int an; k < max_msgs && (an = dsp::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
+  for (int an; k < max_msgs && (an = code::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
   while (k < max_msgs) {
     Msg* m = s_out.front();
     if (!m) break;
@@ -130,7 +146,7 @@ int host_step(int max_msgs) {
   return k;
 }
 
-void hello() { locks::reset(); route::reset(); dsp::reset(); }
+void hello() { locks::reset(); route::reset(); dsp::reset(); code::hello(); }
 Stats stats() { return s_st; }
 StoreStats store_stats() {
   const Service::Counts c = s_svc.counts();

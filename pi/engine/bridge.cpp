@@ -6,6 +6,8 @@
 
 #include "browse/browse.h"
 #include "clock/clock.h"
+#include "code/code.h"
+#include "lib/sha256.h"
 #include "devmidi/devmidi.h"
 #include "device/device.h"
 #include "dsp/dsp.h"
@@ -34,6 +36,8 @@ bool take_restart() { bool r = s_restart; s_restart = false; return r; }
 
 static void name_changed(const char* name, uint32_t id);
 static bool s_card;
+static const core::code::Board* s_code_board;
+void set_code_board(const core::code::Board* b) { s_code_board = b; }
 bool begin(void (*to_host)(const uint8_t*, int)) {
   core::hooks.to_rytm = to_host;
   core::hooks.device_restart = device_restart;
@@ -46,6 +50,15 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   bool dsp_ok = core::dsp::begin((void*)(((uintptr_t)a + 63) & ~(uintptr_t)63), n);
   core::log("dsp: %d blocks in the library, %d slots x %u KB %s", core::dsp::library_size(), core::dsp::kSlots,
             (unsigned)(core::dsp::kSlotBytes >> 10), dsp_ok ? "ready" : "NOT ready");
+  // shipped code (core/code): the code arena (64 KB pages, the board makes them executable per blob) and the card
+  // core's two blob buffers, from the heap at boot
+  const size_t ca = core::code::kArenaBytes, u = core::code::kUnit;
+  uint8_t* c = new uint8_t[ca + u];
+  uint8_t* ba = new uint8_t[core::code::kMaxBlob];
+  uint8_t* bb = new uint8_t[core::code::kMaxBlob];
+  bool code_ok = c && ba && bb &&
+                 core::code::begin((void*)(((uintptr_t)c + u - 1) & ~(uintptr_t)(u - 1)), ca, ba, bb, s_code_board);
+  core::log("code: %u KB arena %s", (unsigned)(ca >> 10), code_ok ? "ready" : "NOT ready (no shipped code)");
   return s_card;
 }
 void sysex(const uint8_t* d, int len) { core::gen::sysex(d, len); }
@@ -247,6 +260,27 @@ int generic_json(char* out, int cap) {
     first = false;
   }
   m = sniprintf(out + n, cap - n, "]}");
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  // shipped code (core/code): counts, the card cache, then each loaded blob as ["NAME", "sha prefix", owner, users, bytes]
+  const core::code::Stats cs = core::code::stats();
+  m = sniprintf(out + n, cap - n, ",\"code\":{\"offers\":%lu,\"fast\":%lu,\"loaded\":%lu,\"unloaded\":%lu,"
+                "\"refused\":%lu,\"lastRefused\":%d,\"cardBlobs\":%lu,\"cardBytes\":%lu,\"blobs\":[",
+                (unsigned long)cs.offers, (unsigned long)cs.fast, (unsigned long)cs.loaded, (unsigned long)cs.unloaded,
+                (unsigned long)cs.refused, cs.refused ? cs.last_refused : -1, (unsigned long)cs.card_blobs,
+                (unsigned long)cs.card_bytes);
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  core::code::BlobView bv;
+  for (int i = 0; core::code::blob(i, &bv); ++i) {
+    char hx[17];
+    core::lib::hex(bv.hash, 8, hx);
+    m = sniprintf(out + n, cap - n, "%s[\"%s\",\"%s\",%d,%d,%lu]", i ? "," : "", bv.name, hx, bv.owner, bv.users,
+                  (unsigned long)bv.bytes);
+    if (m <= 0 || m >= cap - n) return 0;
+    n += m;
+  }
+  m = sniprintf(out + n, cap - n, "]}");
   return m > 0 && m < cap - n ? n + m : 0;
 }
 
@@ -317,6 +351,21 @@ bool generic_command(const char* p, char* out, int cap) {
       const core::dsp::SlotView v = core::dsp::slot(i);
       if (v.state == core::dsp::kEmpty) continue;
       int w = sniprintf(out + n, cap - n, "; %d %s (owner %u%s)", i, v.block, (unsigned)v.owner, kState[v.state & 3]);
+      if (w < 0) break;
+      n += w;
+    }
+    return true;
+  }
+  if (!strcmp(p, "code")) {   // shipped code: "code: 1 loaded ...; TGAIN 47005289 (owner 9, 1 slot)"
+    const core::code::Stats c = core::code::stats();
+    int n = sniprintf(out, cap, "code: %d loaded, offers %lu fast %lu refused %lu (last %d), card %lu blobs %lu KB",
+                      core::code::loaded(), (unsigned long)c.offers, (unsigned long)c.fast, (unsigned long)c.refused,
+                      c.refused ? c.last_refused : -1, (unsigned long)c.card_blobs, (unsigned long)(c.card_bytes >> 10));
+    core::code::BlobView bv;
+    for (int i = 0; n > 0 && n < cap && core::code::blob(i, &bv); ++i) {
+      char hx[9];
+      core::lib::hex(bv.hash, 4, hx);
+      int w = sniprintf(out + n, cap - n, "; %s %s (owner %d, %d slots)", bv.name, hx, bv.owner, bv.users);
       if (w < 0) break;
       n += w;
     }

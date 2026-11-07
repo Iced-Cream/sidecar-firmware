@@ -4,7 +4,11 @@
 #pragma once
 #include <stdint.h>
 
+namespace core { namespace code { struct Board; } }
+
 namespace bridge {
+// shipped code's board (code_mmu.h on the Pi; null in host tests): before begin(), which carves the code arena
+void set_code_board(const core::code::Board* b);
 bool begin(void (*to_host)(const uint8_t* m, int n));   // core::hooks.to_rytm = to_host; the card's state (false: no card)
 void sysex(const uint8_t* d, int len);                  // a whole F0 .. F7 from the Rytm (core::gen::sysex)
 bool idle_save();                                       // one step of the card's writes and the answers owed (true: work)
@@ -45,8 +49,8 @@ uint32_t to_host_dropped();
 // The guard's fault and overrun lines name a voice's machine: none renders in this engine ("-", 0)
 const char* machine_name(int voice);
 uint32_t machine_gen(int voice);
-// /status's generic members ("generic", "clock", "proc", "screen", "devmidi", "browse"); the console's gen, clock,
-// proc, rui, rui=on|off, usba, usba=thru|off, browse (the control core; false: not one of them)
+// /status's generic members ("generic", "clock", "proc", "screen", "devmidi", "browse", "dsp", "code"); the console's
+// gen, clock, proc, dsp, dsp?, code, rui, rui=on|off, usba, usba=thru|off, browse (the control core; false: not one of them)
 int generic_json(char* out, int cap);
 bool generic_command(const char* p, char* out, int cap);
 }  // namespace bridge

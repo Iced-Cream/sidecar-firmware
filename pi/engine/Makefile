@@ -31,6 +31,7 @@ else
 # the test kernels' testcard=1 (card_guard.h, docs/pi5.md "Engine test mode"): FatFs's calls that change a name go
 # through card_guard.cpp, the libraries' too. Nothing here in a kernel that can be released.
 OBJS += card_guard.o
+OBJS += code_mmu.o            # shipped code: the code arena's pages (code_mmu.h, core/code)
 LDFLAGS += --wrap=f_open --wrap=f_unlink --wrap=f_rename --wrap=f_mkdir
 endif
 endif
@@ -41,7 +42,7 @@ endif
 # and the Pi-side locks, the card browse, the USB-A MIDI devices; sha256 for the pairing code and the file service.
 CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
             msamp/cardq.cpp lib/sha256.cpp device/device.cpp device/digitakt.cpp browse/browse.cpp devmidi/devmidi.cpp)
-CORE_SRC += $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp
+CORE_SRC += $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp $(CORE)/code/loader.cpp $(CORE)/code/code.cpp
 PORT_SRC := midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
             stor_vol.cpp stor_bench.cpp audio_return.cpp
 HOSTED_OBJS := $(patsubst $(CORE)/%,hosted/core/%.o,$(CORE_SRC)) $(patsubst %,hosted/%.o,$(PORT_SRC))
