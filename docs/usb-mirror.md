@@ -1,7 +1,7 @@
-# usb=mirror: the box itself on the USB-C side (prototype)
+# usb=mirror: the box itself on the USB-C side
 
-Current state (2026-11-04): code only. It builds for the Pi 4 and its descriptor parser passes the portable tests. It has
-not run in the emulator or on a unit. Pi 4 only (the Pi 5 builds without it).
+Current state (2026-11-05): run on a Pi 4 with an Analog Rytm MKII on OS 1.74, the review changes included (see Tested below). Pi 4 only: the Pi 5
+builds without it.
 
 `usb=mirror` on the card's cmdline.txt (with `gadget=sidecar`, the default) replaces the Sidecar's own USB-C device
 (1209:0004, UAC2 12x12 + MIDI) with the attached box as the computer would see it plugged in directly. The aim is that
@@ -32,9 +32,18 @@ on in a public card or build default.
 - **Pipes.** Each packet is relayed to the same endpoint on the box. An OUT packet is NAKed to the computer until the box
   has taken it. The box's IN request is renewed only once the computer has the last packet.
 - **MIDI.** Same path and filters as the default mode (`midi_filter.h`): the host link stays between the Pi and the box,
-  and `usbmidi=os:` still decides whether OS upgrades pass.
+  and `usbmidi=os:` still decides whether OS upgrades pass. See "What the filters cover" below.
 - **Class and vendor requests.** Each one is forwarded to the box (`CObUsb::MirrorControl`). EP0 NAKs until the box
   answers, then returns the answer, or a STALL if the box stalls or is gone. One request is in flight at a time.
+- **The box going away.** Its URBs in flight never complete, so when it goes (`MirrorBoxGone`) a pipe OUT packet the
+  computer sent is dropped and the endpoint takes the next one, and a request forwarded to the box is STALLed. A box
+  that comes back inside `mirrorhold` (a reboot after an OS update) starts from a clean state. A completion that arrives
+  for an earlier attach is ignored (each attach has its own generation).
+- **A halted pipe.** A failed transfer halts the endpoint on the xHC and on the box. `CObUsb::MirrorPipePoll` (core 0's
+  loop) sends the box CLEAR_FEATURE(ENDPOINT_HALT), resets the host endpoint, and resubmits an IN pipe: every 100 ms for
+  the first five tries, then once a second. The mirror line counts these (`reset`).
+- **Interfaces of the audio stream.** `MirrorAttach` never sends SET_INTERFACE to them, so the Pi's own stream stays at
+  alt 3. A pipe on such an interface is relayed only if it is at alt 3.
 - **Overbridge's per-block bytes.** Bytes 4-31 of each OUT block (byte 1 = the first non-zero one's index, or 0xFF)
   carry data from the Engine, such as its latency-check marker; the box answers the marker with a pulse on IN. A
   computer block with any of them set has them copied into the Pi's own OUT block a fixed distance away
@@ -48,6 +57,19 @@ on in a public card or build default.
   `mirrorname=TEXT` sets the suffix (an underscore for a space, a space put in front). The USB product string is left
   as the box's, since the computer names the MIDI and audio ports from it.
 
+## What the filters cover
+
+`usbmidi=os:` (`usbmidi_os.h`) filters MIDI only. In mirror mode two more paths reach the box, and both are relayed
+unfiltered:
+
+- the class and vendor requests on EP0 (Overbridge's name, unit ID, version and stream requests among them);
+- the async channel (the vendor-class pipes).
+
+So `usbmidi=os:off` does not stop a tool that updates the box over a vendor request or a pipe. The OS updates tested
+through the mirror (the transfer tool and a SysEx flasher) went over USB MIDI: the mirror line's MIDI counters carried
+the whole update to the box [hw]. Whenever `usb=mirror` is on, whatever `usbmidi=os:` is, the engine logs a warning at
+start that the vendor requests and the pipes are relayed unfiltered.
+
 ## Circle change
 
 `pi/circle/circle-gadget-mirror.patch` (applied by `pi/engine/build.sh` after `circle-gadget-reset.patch`; it defines
@@ -57,23 +79,49 @@ on in a public card or build default.
 2. **A class or vendor request can be answered later.** The new hook is `OnControlRequest() -> ControlDeferred`, completed by `CompleteControl()`, with `OnControlAborted()` called when the host moves on. The default returns `ControlNotHandled`, so other gadgets take the old path unchanged.
 3. **A replug without a cable.** `SoftDisconnect()` sets the controller's soft-disconnect bit and deactivates the endpoints. `SoftConnect()` sets the core up again, has the gadget remake its endpoints from its current descriptors, and clears the bit.
 
-## Known limits of the prototype
+## Known limits
 
 - **Box gone, inside mirrorhold.** The box is still shown and its requests are STALLed until the switch.
 - **A switch mid-update.** An OS update whose box takes longer than `mirrorhold` to come back sees the Sidecar device meanwhile.
 - **IRQs during a switch.** SoftConnect's core reset (about 25 ms) runs at task level with the gadget's interrupts off; the Overbridge stream on USB-A keeps running [I].
 - **No forwarding of the computer's alt or interface choices.** Alternate settings stay on the gadget side, so a vendor request that only works at another box alternate is not handled. Requests that change the box's stream state also reach the box and may disturb the Pi's own stream.
 - **One control request at a time.** A second one while the first is in flight is STALLed.
-- **Untested on hardware [I].** Interrupt endpoints on Circle's DWC2 gadget, the RX FIFO headroom for 368 + 512 + 512 B OUT, and the latency (about one block each way) are all unmeasured.
+- **Which box.** The one the Pi's Overbridge driver claims. A box whose profile streams only after its Sidecar mod's hello (the Analog Four MKII) is not claimed without it, so a stock one is not mirrored.
 
-## Test plan (needs a go)
+## Tested
 
-1. **Emulator gate.** Boot the engine with `usb=mirror` and `link=tcp`. Check that it does not start the gadget without a box, and that the default mode is unchanged.
-2. **Unit run.** Pi on `usb=mirror`, the Rytm on stock 1.74, the PC on USB-C. Pass when all of these hold:
-   - the PC sees 1935:0B48;
-   - the Overbridge engine finds the Rytm and the plugin syncs;
-   - 12 channels play both ways;
-   - the transfer tool lists files;
-   - elkflash `info` works through the mirrored MIDI port.
+On a Pi 4 with an Analog Rytm MKII on OS 1.74, the computer on Windows [hw]:
 
-   The Pi log's `mirror` line counts every path.
+- the default mode is unchanged (the Sidecar device, 12 in / 12 out plus MIDI, no underruns);
+- the computer sees 1935:0B48 with the box maker's driver;
+- Overbridge passes its latency check and the plugin syncs both ways; over 30 minutes no per-block bytes were lost or
+  late, with no control stalls;
+- per-track audio IN, and OUT to the Rytm;
+- unplugging brings the Sidecar device back after `mirrorhold`; replugging brings the Rytm back in about 0.6 s, its name
+  with " (SC)" and the plugin still paired;
+- the transfer tool browses, elkflash `info` works through the mirrored MIDI port, and OS updates went through with
+  `mirrorhold=60`, from the transfer tool and from a SysEx flasher.
+
+In the emulator (rytm-emu over TCP): the default mode unchanged, and with `usb=mirror` and no box the Sidecar device
+stays up.
+
+The review changes of 2026-11-05 on the same unit [hw]:
+
+- with the plugin streaming and the transfer tool browsing, the Rytm unplugged and replugged about 2 s later: the async
+  IN pipe halted and was cleared and resumed, a request that came while the box was gone was STALLed, the computer never
+  saw the Sidecar device, and Overbridge and the transfer tool carried on;
+- unplugged past `mirrorhold`: every request STALLed while the box was away, the Sidecar device back after 60 s, the
+  Rytm back with " (SC)" on replug;
+- an OS update (stock 1.74) with elkflash over the mirrored MIDI port: 0 resends, the box back 0.3 s after its reboot
+  dropped it, inside `mirrorhold`.
+
+The Pi log's `mirror` line counts every path. The counters most often asked about:
+
+- `in ... drop`: the box's IN blocks dropped because the queue to the computer (64 blocks, about 9 ms) was full, so the
+  computer took fewer blocks than the box sent for that long. Counted in blocks of 7 frames.
+- `out ... over` and `under`: the computer's OUT audio when the ring the Pi adds to its own stream (512 frames) was full,
+  or empty when the Pi needed a frame. Counted in frames, not blocks.
+- `ctl ... stall`: requests the computer was answered with a STALL. That covers a request while the box is gone, the box
+  going away with a request at it, a second request while one is in flight, and the box's own STALLs.
+- `pipe ... reset`: CLEAR_FEATURE(ENDPOINT_HALT) sent to the box for a halted pipe, every try counted. A box that is
+  unplugged and plugged back in shows a few.

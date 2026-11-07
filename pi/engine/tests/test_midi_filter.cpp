@@ -1,5 +1,6 @@
 // pi/engine/tests/test_midi_filter.cpp - midi_filter.h: what passes, what is dropped, order kept.
 #include <stdio.h>
+#include <string.h>
 
 #include <vector>
 
@@ -69,6 +70,24 @@ int main() {
     CHECK(out == want);
     CHECK(f.DroppedMessages() == 3);
     CHECK(!f.InSysEx());
+    // the last one dropped, for the log: the empty SysEx's two bytes
+    uint8_t last[MidiFilter::kHead];
+    CHECK(f.LastDropped(last) == 2 && last[0] == 0xF0 && last[1] == 0xF7);
+  }
+  {  // the head kept is the dropped message's, at most kHead bytes; none before the first drop
+    MidiFilter f(true);
+    f.SetPassOsUpdate(true);
+    uint8_t last[MidiFilter::kHead];
+    CHECK(f.LastDropped(last) == 0);
+    Run(f, Pack(kit));
+    CHECK(f.LastDropped(last) == 0);
+    Run(f, Pack(link));                  // (this line's OS rule drops only device byte 0C's shape, so the host link here)
+    {
+      int k = (int)link.size() < MidiFilter::kHead ? (int)link.size() : MidiFilter::kHead;
+      CHECK(f.LastDropped(last) == k && memcmp(last, link.data(), k) == 0);
+    }
+    Run(f, Pack(ci));
+    CHECK(f.LastDropped(last) == MidiFilter::kHead && memcmp(last, ci.data(), MidiFilter::kHead) == 0);
   }
   // to the computer: the OS-update shape passes (the Rytm never sends one; only the Rytm-bound side blocks it)
   {

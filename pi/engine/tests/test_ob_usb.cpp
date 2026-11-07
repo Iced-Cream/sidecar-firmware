@@ -70,7 +70,7 @@ struct Bus {
   CObUsb* ob = nullptr;
   Bus(const uint8_t* cfg, uint16_t pid) {
     dev.config = cfg;
-    dev.desc = {0x1935, pid};
+    dev.desc.idVendor = 0x1935, dev.desc.idProduct = pid;
     ob = (CObUsb*)RytmObDeviceCreate(&parent);
   }
   ~Bus() { delete ob; }

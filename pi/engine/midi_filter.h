@@ -67,6 +67,7 @@ class MidiFilter {
     if (Drop(head_, head_n_)) {
       dropped_ += held_;
       dropped_msgs_++;
+      NoteDropped();
       state_ = ends ? kIdle : kDropping;
     } else {
       for (int i = 0; i < held_; i++) emit(hold_[i]);
@@ -78,6 +79,12 @@ class MidiFilter {
   uint32_t DroppedPackets() const { return dropped_; }
   uint32_t DroppedMessages() const { return dropped_msgs_; }
   bool InSysEx() const { return state_ != kIdle; }
+  // the head (up to kHead bytes, F0 first) of the last SysEx dropped by a rule, for the log: which rule it was is read
+  // off its bytes (sidecar_gadget's mirror line). 0 when none yet. Not for a Cut (that one was not dropped by a rule).
+  int LastDropped(uint8_t* out) const {
+    memcpy(out, last_, last_n_);
+    return last_n_;
+  }
 
   // The predicates (public: the tests use them).
   static bool HostLink(const uint8_t* h, int n) { return n >= 4 && h[1] == 0x7D && h[2] == 0x52 && h[3] == 0x54; }
@@ -94,6 +101,10 @@ class MidiFilter {
   bool Drop(const uint8_t* h, int n) const {
     return HostLink(h, n) || MidiCi(h, n) || (to_rytm_ && ((!pass_os_update_ && OsUpdate(h, n)) || Empty(h, n)));
   }
+  void NoteDropped() {
+    memcpy(last_, head_, head_n_);
+    last_n_ = head_n_;
+  }
   // A held SysEx cut short by a status byte or a new F0: its packets go through (undecided: a short one).
   template <class Emit>
   void Abort(Emit emit) {
@@ -101,6 +112,7 @@ class MidiFilter {
       if (Drop(head_, head_n_)) {
         dropped_ += held_;
         dropped_msgs_++;
+        NoteDropped();
       } else {
         for (int i = 0; i < held_; i++) emit(hold_[i]);
       }
@@ -116,5 +128,7 @@ class MidiFilter {
   int held_ = 0;
   uint8_t head_[kHead];
   int head_n_ = 0;
+  uint8_t last_[kHead];
+  int last_n_ = 0;
   uint32_t dropped_ = 0, dropped_msgs_ = 0;
 };

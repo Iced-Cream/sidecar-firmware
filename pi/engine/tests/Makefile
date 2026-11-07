@@ -18,6 +18,16 @@ build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_block.h $(COR
 	@mkdir -p build/ob_src
 	cp ../ob_usb.cpp ../ob_usb.h build/ob_src/
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp $(CORE)/device/digitakt.cpp -DOB_USB_TEST
+# usb=mirror's box side: the same, built with CIRCLE_GADGET_MIRROR and RASPPI=4 (the xHC's Reset Endpoint), against the
+# recording gadget of shim_ob/sidecar_gadget.h
+build/test_ob_mirror: test_ob_mirror.cpp ../ob_usb.cpp ../ob_usb.h ../mirror_desc.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
+	@mkdir -p build/ob_mirror_src
+	cp ../ob_usb.cpp ../ob_usb.h build/ob_mirror_src/
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_mirror_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_mirror.cpp build/ob_mirror_src/ob_usb.cpp $(CORE)/device/digitakt.cpp -DOB_USB_TEST -DCIRCLE_GADGET_MIRROR -DRASPPI=4
+# usb=mirror's forwarded request and the box going away (mirror_ctl.h), as sidecar_gadget.cpp drives them
+build/test_mirror_ctl: test_mirror_ctl.cpp ../mirror_ctl.h ../mirror_desc.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # the Overbridge block's layout and parser (ob_block.h)
 build/test_ob_block: test_ob_block.cpp ../ob_block.h check.h
 	@mkdir -p build
@@ -47,7 +57,7 @@ build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(CORE)/lib/sha256.cpp 
 GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
                 device/digitakt.cpp store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp lib/sha256.cpp \
                 host/platform_host.cpp browse/browse.cpp devmidi/devmidi.cpp) \
-                $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp
+                $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp
 build/test_generic_pi: test_generic_pi.cpp ../bridge.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I$(CORE)/host -I$(CORE) -I.. \

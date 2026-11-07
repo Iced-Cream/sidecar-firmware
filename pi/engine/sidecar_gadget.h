@@ -74,6 +74,7 @@ public:
 #include "spsc.h"
 #include "tohost_q.h"
 #include "mirror_desc.h"
+#include "mirror_ctl.h"
 
 #if __has_include("hosted/sidecar_config.h")
 #include "hosted/sidecar_config.h"			// pi/engine/build.sh: SIDECAR_NAME
@@ -144,6 +145,7 @@ public:
 	mirror::Role Role (void) const			{ return m_Role; }
 	u8 Address (void) const				{ return m_uchAddr; }
 	boolean Active (void) const			{ return m_bActive; }
+	boolean Busy (void) const			{ return m_bBusy; }
 
 private:
 	CSidecarGadget *m_pSidecar;
@@ -178,7 +180,9 @@ public:
 	void FromRytmBlock (const u8 *pBlock);		// xHCI IRQ: one Overbridge IN block (7 frames x 12 ch)
 	void FromEngine (const s32 (*pFrames)[12], unsigned nFrames);	// task: the self-test's output as the stand-in IN
 	void ToRytm (s32 (*pFrames)[12], unsigned nFrames, boolean bTask);
+#ifdef CIRCLE_GADGET_MIRROR
 	boolean MirrorOutExtra (u8 *pBlock, u16 nCounter);	// ob_usb FillOut: the computer's per-block bytes into the box's block
+#endif
 	void FromRytmMIDI (const u8 *pPacket);		// xHCI IRQ: one event packet from the Rytm
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
@@ -280,12 +284,12 @@ private:
 	// the forwarded class / vendor request (gadget IRQ -> core 0's loop -> the box -> xHCI IRQ)
 	TSetupData m_CtlSetup;
 	u8 m_CtlData[512];
-	volatile boolean m_bCtlPending;
-	volatile unsigned m_nCtlSeq;
+	mirror::Ctl m_Ctl;				// pending, at the box, its sequence number (mirror_ctl.h)
+	void MirrorBoxGone (void);			// IRQs masked: the box's half of every exchange ends (pipes, EP0)
 	struct TMirStats
 	{
 		unsigned nInBlocks, nInSent, nInDrop, nOutBlocks, nOutBad, nOutExtra, nOutAnchor, nCtl, nCtlStall, nCtlAbort, nCtlLate;
-		unsigned nPipeIn, nPipeInDrop, nPipeOut, nPipeOutDrop, nAltBad;
+		unsigned nPipeIn, nPipeInDrop, nPipeOut, nPipeOutDrop, nAltBad, nBoxGoneDrop;
 	} m_MirStats;
 #endif
 
