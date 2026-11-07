@@ -17,6 +17,7 @@ OBJS += blackbox_pi.o          # the black box: the log to /.rytm/blackbox.log (
 # FatFs's disk layer in place of Circle's addon/fatfs/diskio.cpp (linked before libfatfs.a, so the archive's diskio.o
 # is never pulled in): the USB drives' transfers kept to the 64 KB TRB rule below FatFs (stor_diskio.cpp)
 OBJS += stor_diskio.o
+OBJS += code_mmu.o            # shipped code: the code arena's pages (code_mmu.h, core/code)
 GADGET_OBJS = gadget.o sidecar_gadget.o
 ifeq ($(strip $(RASPPI)),5)
 # Pi 5: Circle builds its DWC2 gadget for the Pi <= 4 only (lib/usb/gadget/Makefile; docs/pi5.md), so the USB-C Sidecar and
@@ -31,7 +32,6 @@ else
 # the test kernels' testcard=1 (card_guard.h, docs/pi5.md "Engine test mode"): FatFs's calls that change a name go
 # through card_guard.cpp, the libraries' too. Nothing here in a kernel that can be released.
 OBJS += card_guard.o
-OBJS += code_mmu.o            # shipped code: the code arena's pages (code_mmu.h, core/code)
 LDFLAGS += --wrap=f_open --wrap=f_unlink --wrap=f_rename --wrap=f_mkdir
 endif
 endif
