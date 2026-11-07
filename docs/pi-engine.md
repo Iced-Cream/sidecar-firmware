@@ -14,7 +14,7 @@ The engine was stripped to this on 2026-11-04. The voice engine it was before (t
   - 0D, a folder of the card's `/Samples` for the Rytm's file browser (`core/browse`, answered with 0E; rytm-mods 0023);
   - 35, the Rytm's hello: the link reset and its listeners;
   - 2C / 2D, the Rytm's step clock and transport (`core/clock`);
-  - 30-3F, the remote screen as a transport (`core/screen`: the connect splash, popups, the pairing code's modal, one client; no pages of its own);
+  - 30-3F, the remote screen as a transport (`core/screen`: the connect splash, popups, the pairing code's modal, one client) with one page of the engine's own, the status page (`core/screen/status_page`, 2026-11-07: project, clock, store and locks, route and DSP, network, uptime; read-only, NO closes it, every other key and knob stays the Rytm's; TRK + YES on the Rytm opens it);
   - 51-53, STORE (`core/kv`: records on the card, the Pi-side parameter locks, 04 NAME the project's name and ID).
   Every other command is counted and dropped (`/status` `generic`). The old 10 (the project's name) is one of them: the name comes from 51's 04 NAME.
 - **The USB-A MIDI devices** (`core/devmidi`): up to four MIDI devices on the USB-A ports, their channel and realtime messages on to the Rytm (thru, on by default), to the processor slots and to listeners.
@@ -180,7 +180,7 @@ An unknown command logs `unknown command "..."`. A long line is dropped whole.
 
 ## Tests
 
-- `make -C core test`: the core's services on the host (generic, screen, clock, proc, device, browse, devmidi, kv, locks, route, store, fmt).
+- `make -C core test`: the core's services on the host (generic, screen and its status page, clock, proc, device, browse, devmidi, kv, locks, route, store, fmt).
 - `make -C pi/engine/tests` (on the Mac or Linux; `CIRCLE_BUILD=` for the FatFs tests): the engine's portable parts - the router and the audio return (`test_generic_pi`), the Overbridge host on a fake Circle (`test_ob_usb`, `test_ob_block`), the gadget's HID and wake paths, the file service (`test_fsweb`), the pairing code, Wi-Fi's settings, the MIDI bridge and its merge, OS update parsing, the supply, the temperature warning, the CPU clock, the idle sleep, the storage layer and its bench, the black box, the breadcrumb, the emulator link's protocol, the build's version stamp, `tools/rytm_bridge.py`.
 - `node --test pi/engine/tests/page_*.test.mjs`: the web page against `pi/engine/tests/mock_web.py` (the tiles, pairing, Wi-Fi, the network rules, storage).
 - `tools/run_portable_tests.sh`: all of the above in one run (`CXX=clang++ CC=clang` too).

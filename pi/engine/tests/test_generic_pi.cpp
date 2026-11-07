@@ -65,19 +65,19 @@ int main() {
   bridge::idle_save();
   CHECK(sent(0x51) == 1 && g_out.back()[6] == 0x40);
   in({0x51, 1, 0x10, 0, 0, 0, 0, 1});   // a lock set declared (51 10 SET: set 0, track 0, slot 0, param 0, 1 param)
-  in({0x51, 1, 0x10, 9, 0, 0, 0, 1});   // refused: set 9
+  in({0x51, 1, 0x10, 40, 0, 0, 0, 1});  // refused: set 40 (kSets 32)
   CHECK(bridge::generic_command("kv", out, sizeof out));
   CHECK(strstr(out, "kv: project 00000082, 0 records, hellos 1 ") && strstr(out, "locks: 1 sets, ops 1 bad 1"));
   CHECK(bridge::generic_command("clock", out, sizeof out) && strstr(out, "transport 1"));
   CHECK(!bridge::generic_command("notemach=0:juno", out, sizeof out));
 
-  // ---- /status's members: one JSON object's members, no client on the screen, no slot filled
-  char js[1024];
+  // ---- /status's members: one JSON object's members, the status page the screen's client, no slot filled
+  char js[4096];
   int n = bridge::generic_json(js, sizeof js);
   CHECK(n > 0 && n < (int)sizeof js);
   CHECK(strstr(js, "\"generic\":{\"project\":\"KIT\",\"projectId\":48879,"));
-  CHECK(strstr(js, "\"slots\":[null,null,null,null]"));
-  CHECK(strstr(js, "\"client\":null"));
+  CHECK(strstr(js, "\"proc\":{\"slots\":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]"));
+  CHECK(strstr(js, "\"client\":\"status\""));
   CHECK(strstr(js, ",\"kv\":{\"project\":130,\"records\":0,\"hellos\":1,\"reads\":0,\"writes\":0,"));
   CHECK(strstr(js, ",\"locks\":{\"sets\":1,\"ops\":1,\"bad\":1,\"values\":"));
   CHECK(strstr(js, ",\"queued\":-1,\"bpm10\":"));
@@ -131,7 +131,7 @@ int main() {
   CHECK(add.resets == resets + 1);
   CHECK(bridge::generic_command("proc", out, sizeof out) && strstr(out, "1:ADD"));
   n = bridge::generic_json(js, sizeof js);
-  CHECK(n > 0 && strstr(js, "\"slots\":[null,\"ADD\",null,null]"));
+  CHECK(n > 0 && strstr(js, "\"proc\":{\"slots\":[null,\"ADD\",null,null,null,null,null,null,null,null,null,null,null,null,null,null]"));
   core::proc::clear_slot(1);
   CHECK(!aret::Wanted());
 

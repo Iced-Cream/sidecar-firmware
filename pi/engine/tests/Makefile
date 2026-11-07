@@ -54,7 +54,7 @@ build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(CORE)/lib/sha256.cpp 
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -DFSWEB_HOST -o $@ $< ../fsweb.cpp $(CORE)/lib/sha256.cpp
 # the generic engine's Pi side: bridge.cpp and the audio return over the generic core (core/generic)
-GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
+GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp screen/status_page.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
                 device/digitakt.cpp store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp lib/sha256.cpp \
                 host/platform_host.cpp browse/browse.cpp devmidi/devmidi.cpp) \
                 $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp

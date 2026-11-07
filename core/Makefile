@@ -7,7 +7,7 @@ $(shell ../tools/gen_version.sh)
 CXX      ?= c++
 B        := build
 CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I. -Ihost
-CORE_SRC := generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp device/digitakt.cpp hooks.cpp ui/canvas.cpp \
+CORE_SRC := generic/generic.cpp screen/screen.cpp screen/status_page.cpp clock/clock.cpp proc/proc.cpp device/device.cpp device/digitakt.cpp hooks.cpp ui/canvas.cpp \
             msamp/cardq.cpp lib/sha256.cpp browse/browse.cpp devmidi/devmidi.cpp host/platform_host.cpp \
             $(wildcard fmt/*.cpp) $(wildcard store/*.cpp) $(wildcard kv/*.cpp) $(wildcard locks/*.cpp) route/route.cpp dsp/dsp.cpp
 CORE_OBJ := $(patsubst %.cpp,$(B)/obj/%.o,$(CORE_SRC))
