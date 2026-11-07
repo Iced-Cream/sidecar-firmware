@@ -19,6 +19,7 @@
 #include "proc/proc.h"
 #include "route/route.h"
 #include "screen/screen.h"
+#include "screen/status_page.h"
 #include "spsc.h"
 #include "store/store.h"
 
@@ -38,6 +39,7 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   core::hooks.to_rytm = to_host;
   core::hooks.device_restart = device_restart;
   s_card = core::gen::begin();
+  core::screen::set_client(core::screen::status_page::client());   // the engine's own page: status (TRK + YES on the Rytm)
   core::kv::link::attach_generic();   // 51 STORE records (the card core) and the Pi-side locks (core/kv, core/locks)
   core::kv::link::on_name(name_changed);
   // the DSP library's slots (core/dsp): one arena from the heap at boot, a fixed MB per slot, so PLACE never allocates
@@ -86,8 +88,10 @@ void tick() {
   AddrMsg a;
   bool have = false;
   while (g_addr_q.pop(&a)) have = true;   // the newest counts
-  if (have) core::screen::set_address(a.ip);
-  core::gen::tick(core::now_ms());
+  if (have) core::screen::set_address(a.ip), core::screen::status_page::set_address(a.ip);
+  const uint32_t ms = core::now_ms();
+  core::screen::status_page::tick(ms);
+  core::gen::tick(ms);
 }
 
 // The pairing code on the Rytm's screen: 30 s, over an open page (a client's) as well

@@ -2,7 +2,7 @@
 // panel driven over 30..3F (rytm-mods 0026's screen part, unchanged on the wire; sim/protocol.py, core/ui/README.md),
 // with no page of its own. What the engine itself shows is the connect splash at the Rytm's hello and short popups
 // (the pairing code); everything else is a client's: one Client draws a frame into a ui::Canvas and takes the keys and
-// encoders while the page is open. With no client, a page the Rytm opens is closed again at once (3A 0 0: stock).
+// encoders while the page is open. The engine's own client is the status page (status_page.h, 2026-11-07). With no client, a page the Rytm opens is closed again at once (3A 0 0: stock).
 // core/ui/remote.cpp's pages stay in the tree, unwired.
 //
 // Wire (the 0026 subset this uses):

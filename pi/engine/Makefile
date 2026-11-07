@@ -39,7 +39,7 @@ endif
 # under hosted/. The core (core/generic/generic.h): the host link's router, the remote screen's transport, the Rytm's
 # clock, the processor slots, the device hello, the card's atomic writes and the RAM store, the card queue, 51 STORE
 # and the Pi-side locks, the card browse, the USB-A MIDI devices; sha256 for the pairing code and the file service.
-CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
+CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp screen/status_page.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
             msamp/cardq.cpp lib/sha256.cpp device/device.cpp device/digitakt.cpp browse/browse.cpp devmidi/devmidi.cpp)
 CORE_SRC += $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp
 PORT_SRC := midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
