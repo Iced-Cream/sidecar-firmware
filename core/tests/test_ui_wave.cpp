@@ -17,7 +17,6 @@
 #include "ui/remote.h"
 #include "pool/pcache.h"
 #include "lib/library.h"
-#include "core_port.h"   // host_fake_time
 #include "engine.h"
 #include "voices.h"
 #include "wav.h"

@@ -222,15 +222,22 @@ uint32_t draw_key(const Cell& c, const Source& s);   // what it shows besides it
 // 0.4.3 (rytm-lag): a picture that moves by itself (WAVETABLE's POS, DSP SAMPLE's and CHOP's playheads) changes its key
 // at most every kLiveMs: every new key is a redraw and a commit, and each commit costs the Rytm its whole stock redraw
 // (rytm-mods 0026). `id` (what it shows: the table, the sample, the map) changes it at once; `live` (the moving part)
-// at most every kLiveMs, the latest value always follows. One per picture and voice.
+// at most every kLiveMs, the latest value always follows. A change held in the window gives a new key when the window
+// ends even if the value came back meanwhile (`pend`): the cell may have been redrawn in between by something this key
+// does not see (an input, an invalidate), with the value of that moment. One per picture and voice: it assumes one
+// live view per voice (only the remote's PageView, remote.cpp `view`, draws these keys).
 constexpr uint32_t kLiveMs = 100;
 struct LiveKey {
-  uint32_t ms = 0, id = 0, live = 0;
-  bool set = false;
+  uint32_t ms = 0, id = 0, live = 0, gen = 0;
+  bool set = false, pend = false;
   uint32_t get(uint32_t i, uint32_t l, uint32_t now) {
-    if (!set || i != id) set = true, id = i, live = l, ms = now;
-    else if (l != live && now - ms >= kLiveMs) live = l, ms = now;
-    return (id ^ live * 2654435761u) | 1;
+    if (!set || i != id) {
+      set = true, id = i, live = l, ms = now, pend = false, ++gen;
+    } else if (l != live || pend) {
+      if (now - ms >= kLiveMs) live = l, ms = now, pend = false, ++gen;
+      else pend = true;
+    }
+    return (id ^ gen * 2654435761u) | 1;
   }
 };
 void draw_custom(Canvas& cv, const Rect& r, const Cell& c, const Source& s, int slot);   // slot: its text item

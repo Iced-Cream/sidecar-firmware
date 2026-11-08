@@ -262,6 +262,35 @@ int main() {
     printf("wt picture: TBL %d entry %d -> %d (of %d)\n", (int)m[0], e0, wt::voice_entry(1), wt::entries());
     CHECK(wt::voice_entry(1) != e0);
     CHECK(pv.draw(cv, *pg, src, "", 0, 1) > 0);
+    // review: a change held in the window, the cell redrawn meanwhile by an input (WARP) with the POS of that moment,
+    // the POS back to the window's value: one redraw still follows when the window ends, the picture the current one
+    auto same_as_fresh = [&]() {
+      PageView fresh;
+      Canvas c2;
+      fresh.draw(c2, *pg, src, "", 0, 1);
+      uint8_t a[kBytes], b[kBytes];
+      preview(cv, a), preview(c2, b);
+      return !memcmp(a, b, kBytes);
+    };
+    m[1] = 40, wg::params(kWaveMachine, 1, m), play(1, 0.3, false);
+    pv.draw(cv, *pg, src, "", 0, 1);
+    play(1, 0.15, false);
+    pv.draw(cv, *pg, src, "", 0, 1);
+    CHECK(pv.draw(cv, *pg, src, "", 0, 1) == 0);   // settled
+    m[1] = 100, wg::params(kWaveMachine, 1, m), play(1, 0.01, false);
+    CHECK(pv.draw(cv, *pg, src, "", 0, 1) > 0);    // a change after a quiet spell: at once; the window starts
+    m[1] = 20, wg::params(kWaveMachine, 1, m), play(1, 0.01, false);
+    CHECK(pv.draw(cv, *pg, src, "", 0, 1) == 0);   // held
+    src.v[2] += 10;                                // WARP (an input of the cell): redrawn with POS 20 now
+    CHECK(pv.draw(cv, *pg, src, "", 0, 1) > 0);
+    m[1] = 100, wg::params(kWaveMachine, 1, m), play(1, 0.03, false);   // back to the window's POS
+    CHECK(pv.draw(cv, *pg, src, "", 0, 1) == 0 && !same_as_fresh());   // the screen still shows POS 20
+    int after = 0;
+    for (int k = 0; k < 6 && !after; ++k) play(1, 0.025, false), after = pv.draw(cv, *pg, src, "", 0, 1) > 0 ? k + 1 : 0;
+    printf("wt picture: a held change undone after an input redraw: redrawn %d ticks later\n", after);
+    CHECK(after >= 1 && after <= 3);               // within kLiveMs + one tick of the window's start
+    CHECK(same_as_fresh());
+    src.v[2] -= 10;
     wg::params(kWaveMachine, 1, w), play(1, 0.3, false);
   }
   w[0] = 4;
