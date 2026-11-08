@@ -488,8 +488,9 @@ CORE_COLD uint32_t draw_key(const Cell& c, const Source& s) {
     h = (uint32_t)(w ? (uintptr_t)w : 1) ^ (uint32_t)st << 8 ^ (uint32_t)(prog / 16) << 12 ^ (uint32_t)(mode_of(vi, (float)s.param(11)) + 1) << 20 ^
         (uint32_t)(smp_slot(s) < 1) << 28;
     if (c.arg == kDrawSample) {   // the playhead moves the picture: 2 px steps of the ~100 (a tile or two a frame)
+      static LiveKey keys[8];     // 0.4.3: at most every kLiveMs
       int ph = core::dsp_playhead(vi);
-      h = (h ^ (uint32_t)(ph < 0 ? 0 : 1 + ph / 1311)) * 16777619u;
+      h = keys[vi & 7].get(h, (uint32_t)(ph < 0 ? 0 : 1 + ph / 1311), now_ms());
     }
   } else if (c.arg == kDrawGran || c.arg == kDrawWt || c.arg == kDrawGrList || c.arg == kDrawWtList || c.arg == kDrawMsList ||
              c.arg == kDrawBankList) {

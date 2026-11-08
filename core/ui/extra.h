@@ -219,6 +219,20 @@ enum DrawId : uint8_t {
   kDrawChop,       // CHOP's sample with its slices, SLC's inverted, the playheads (page_chop.cpp): in SRC SLC MRPH
 };
 uint32_t draw_key(const Cell& c, const Source& s);   // what it shows besides its inputs (PageView redraws on a change)
+// 0.4.3 (rytm-lag): a picture that moves by itself (WAVETABLE's POS, DSP SAMPLE's and CHOP's playheads) changes its key
+// at most every kLiveMs: every new key is a redraw and a commit, and each commit costs the Rytm its whole stock redraw
+// (rytm-mods 0026). `id` (what it shows: the table, the sample, the map) changes it at once; `live` (the moving part)
+// at most every kLiveMs, the latest value always follows. One per picture and voice.
+constexpr uint32_t kLiveMs = 100;
+struct LiveKey {
+  uint32_t ms = 0, id = 0, live = 0;
+  bool set = false;
+  uint32_t get(uint32_t i, uint32_t l, uint32_t now) {
+    if (!set || i != id) set = true, id = i, live = l, ms = now;
+    else if (l != live && now - ms >= kLiveMs) live = l, ms = now;
+    return (id ^ live * 2654435761u) | 1;
+  }
+};
 void draw_custom(Canvas& cv, const Rect& r, const Cell& c, const Source& s, int slot);   // slot: its text item
 // The machine pages declared here (page_for_machine's fallback: DSP SAMPLE), and a voice's page: GRAIN for a DSP SAMPLE
 // voice whose MOD is in GRAIN's zone (with the sample RAM), else page_for_machine (remote.cpp's page list).
