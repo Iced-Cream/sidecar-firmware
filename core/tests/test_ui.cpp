@@ -1405,13 +1405,12 @@ int main() {
       fu.modes = 1;                              // a build without the mirror: OVERBRIDGE refused here
       key(0x43), key(0x44);
       CHECK(fu.sets == 2 && fu.mode == 0 && shown_text("NOT IN BUILD") && shown_text("NOT IN THIS BUILD"));
-      // a Pi 5 in 0.4.1 (no_ob): the row and the note say when it comes instead
-      static const RemoteUsb hooks5 = {hooks.mode, hooks.modes, hooks.shown, hooks.set_mode, [] { return "PI5: IN 0.4.2"; }};
+      // a platform's own word for why OVERBRIDGE cannot run (no_ob): on the row and in the note instead
+      static const RemoteUsb hooks5 = {hooks.mode, hooks.modes, hooks.shown, hooks.set_mode, [] { return "NO MIRROR"; }};
       remote_usb(&hooks5);
       remote_tick(t += 3000);
       key(0x44);
-      CHECK(fu.sets == 2 && fu.mode == 0 && shown_text("PI5: IN 0.4.2") && !shown_text("NOT IN BUILD"));
-      png("usb_5_pi5.png");
+      CHECK(fu.sets == 2 && fu.mode == 0 && shown_text("NO MIRROR") && !shown_text("NOT IN BUILD"));
       remote_usb(&hooks);
       fu.modes = 0, fu.shown = -1;               // USB-C is not the Sidecar's device (cmdline gadget=midi / 0)
       key(0x42), key(0x44);
