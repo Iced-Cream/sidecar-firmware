@@ -12,6 +12,7 @@
 #include "rui_png.h"
 #include "lib/pools.h"
 #include "seq/rytm_dump.h"
+#include "seq/seq.h"
 #include "engine.h"
 #include "version.h"
 #include "fx/send_fx.h"
@@ -637,6 +638,40 @@ int main() {
     src_vals(0, 1, 1, back);
     remote_tick(t += 10);
     CHECK(shown_prefix("BD CUT:") && !strcmp(shown_prefix("BD CUT:"), "BD CUT:77"));
+    // the same through the real path: the Rytm's TRANSPORT (2D 01) into seq, seq::tick sets the playing flag
+    auto transport = [&](uint8_t st) {   // F0 7D 52 54 2D 01 <01 kTransport> <state> <blk 4> F7
+      const uint8_t m[13] = {0xF0, 0x7D, 0x52, 0x54, 0x2D, 1, 1, st, 0, 0, 0, 0, 0xF7};
+      core::engine_sysex(m, 13);
+      core::seq::tick(t);
+    };
+    transport(1);   // PLAY
+    CHECK(core::rytm_dump::is_playing());
+    c1 = commits;
+    uint8_t v = 30;
+    for (int i = 0; i < 2000; i += 5) {   // 2 s, a 2A every 50 ms, seq ticked as the Pi's loop does
+      if (i % 50 == 0) {
+        const uint8_t c[1] = {v++};
+        src_vals(0, 1, 1, c);
+      }
+      remote_tick(t += 5);
+      core::seq::tick(t);
+    }
+    CHECK(commits - c1 <= 2 * 5 + 1 && commits - c1 >= 2 * 4);
+    c1 = commits;
+    for (int i = 0; i < 300 && commits == c1; ++i) remote_tick(t += 1), core::seq::tick(t);   // just after a commit
+    CHECK(commits == c1 + 1);
+    c1 = commits;
+    const uint8_t held[1] = {99};
+    src_vals(0, 1, 1, held);
+    remote_tick(t += 10);
+    CHECK(commits == c1 && strcmp(shown_prefix("BD CUT:"), "BD CUT:99"));   // held while playing
+    transport(0);   // STOP
+    CHECK(!core::rytm_dump::is_playing());
+    remote_tick(t += 25);   // one tick after STOP: the held change goes
+    CHECK(commits == c1 + 1 && !strcmp(shown_prefix("BD CUT:"), "BD CUT:99") && texts_equal());
+    src_vals(0, 1, 1, back);
+    remote_tick(t += 25);
+    CHECK(!strcmp(shown_prefix("BD CUT:"), "BD CUT:77"));
     c1 = commits;
   }
   // TRK + YES opens the remote page: the view waits, the page's own frames and mask; closed: the view's whole frame

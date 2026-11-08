@@ -92,8 +92,9 @@ constexpr uint32_t kTickMs = 25, kInputMs = 8, kAliveMs = 250;
 // sets ctrl + 0x20), bounded by its 156 250 baud panel link. While the Rytm's transport plays, a page that redraws by
 // itself (the SRC view's values, SCOPE, a playhead) commits at most every kPlayCommitMs (5 a second, as the SEQ page's
 // playhead already does; docs/SONG.md "Traffic to the Rytm"). What waits is not lost: the next commit diffs against
-// what the Rytm has, so it carries the latest frame. A key or a turn of the user's own (31 / 32), another page and a
-// whole frame go at once, as when stopped. Stopped: unchanged.
+// what the Rytm has, so it carries the latest frame. On an open remote page a key or a turn of the user's own (31 / 32)
+// goes at once, as when stopped; the SRC view gets the plain cap (the user's own knobs there come as 2A, which this
+// file cannot tell from other value changes). Another page and a whole frame go at once. Stopped: unchanged.
 constexpr uint32_t kPlayCommitMs = 200;
 constexpr uint8_t kEchoNone = 0x7F;
 // 1023: the connect splash (rytm-mods 0026 1023): the Rytm's hello (35) carries its uptime in 50 ms ticks; when it has
@@ -797,7 +798,8 @@ CORE_COLD bool rytm_plays() {
 #endif
 }
 // 0.4.3: a page's changed frame waits (kPlayCommitMs) - only while playing; never a whole frame, another page than the
-// last commit's (a page switch: UP's map, a page shown) or the user's own input
+// last commit's (a page switch: UP's map, a page shown) or a 31 / 32 of the user's on an open page (the SRC view's 2A
+// values are capped too)
 CORE_COLD int page_key() { return s.open ? s.voice : 1000 + s.src_track; }
 CORE_COLD bool commit_held(uint32_t ms) {
   return !s.legacy && s.sent_valid && !s.user && page_key() == s.commit_page && rytm_plays() &&
