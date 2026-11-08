@@ -2104,6 +2104,46 @@ int main() {
     poly::midi(0x9D, 1, 100), poly::midi(0x8D, 1, 0);       // SD's pad: not a seq track
     CHECK(poly::stats().seq_pads == sp0 + 2);
     printf("  fix1040b: a seq track's own pad plays its voice (either order), the Rytm's own trig and SD's pad do not\n");
+    // junopads (owner, 0.4.3 on the Pi 5: "JUNO on the LT track, poly mode doesn't play notes on the pads; OP6FM does"):
+    // a seq track on JUNO (E0: the instance pool for the sequencer's notes) - its CHRO pad (a note on the auto channel,
+    // >= 12) and the voice's 0x04 for it play the voice's machine, either order, as fix1040b's normal-mode pad does
+    {
+      auto trig04 = [](int vb, int note, int vel) {
+        std::vector<uint8_t> m = {0xF0, 0x7D, 0x52, 0x54, 0x04, (uint8_t)vb, (uint8_t)note, (uint8_t)vel};
+        const int p[8] = {0, 64, 64, 64, 64, 64, 64, 64};
+        for (int k = 0; k < 16; ++k) m.push_back((uint8_t)(k < 8 ? p[k] : 0)), m.push_back(0);
+        m.push_back(0xF7);
+        engine_sysex(m.data(), (int)m.size());
+      };
+      report(kJuno | bvi, {0, 64, 64, 64, 64, 64, 64, 64});   // BD's voice to JUNO (still a seq track)
+      CHECK(v[bvi].juno && !v[bvi].fm && seq::owns_voice(bvi));
+      poly::selected_voice(-1);
+      poly::selected_voice(bvi);                               // BD selected (49 02), CHRO on
+      advance_ms(300);
+      uint32_t jp0 = poly::stats().seq_pads;
+      v[bvi].live = false;
+      poly::midi(0x9D, 40, 100);                               // a CHRO pad, then its 0x04 (note 64 = 40 + 24)
+      trig04(kJuno | bvi, 64, 100);
+      CHECK(v[bvi].live);
+      CHECK(poly::stats().seq_pads == jp0 + 1);
+      poly::midi(0x8D, 40, 0);
+      advance_ms(300);
+      v[bvi].live = false;
+      trig04(kJuno | bvi, 66, 100);                            // the 0x04 first, then the CHRO pad
+      poly::midi(0x9D, 42, 100);
+      CHECK(v[bvi].live);
+      CHECK(poly::stats().seq_pads == jp0 + 2);
+      poly::midi(0x8D, 42, 0);
+      advance_ms(300);
+      v[bvi].live = false;
+      trig04(kJuno | bvi, 64, 100);                            // the Rytm's own trig (no pad): no note, as before
+      advance_ms(300);
+      CHECK(!v[bvi].live && poly::stats().seq_pads == jp0 + 2);
+      poly::selected_voice(-1);
+      report(kFm | bvi, {0, 64, 64, 127, 64, 64, 100, 127});  // BD back on 6-OP FM
+      advance_ms(300);
+      printf("  junopads: a JUNO seq track's CHRO pad plays its voice (either order), its own trig does not\n");
+    }
     // padbind: selecting a seq track (49 02) binds the auto channel to its voice at once (offset 24, the CHRO pads'
     // measured 0x04 - MIDI note), so its first CHRO pad plays; before, the first hits were silent until two pads voted
     {

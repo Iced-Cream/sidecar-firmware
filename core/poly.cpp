@@ -519,6 +519,7 @@ CORE_COLD void init() {
 // machine changed, after the selection). Left alone: an auto channel that is a keyboard's poly=bind channel, a voice a
 // poly=bind channel plays (bind() would take it), and a channel already bound to the voice (its learned offset kept).
 int sel_vi = -1;   // the Rytm's selected track's voice (-1 none or not known)
+int16_t chro_n[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // junopads: each track's pad's last CHRO note
 CORE_COLD void pad_bind(int vi) {
   int a = keys::auto_channel() - 1;
   if (vi < 0 || a < 0 || a >= 16 || chans[a].direct || chans[a].vi == vi) return;
@@ -545,6 +546,7 @@ CORE_COLD void selected_voice(int vi) {
 CORE_COLD void reset() {
   trk_held = false;
   sel_vi = -1;
+  memset(chro_n, 0xFF, sizeof chro_n);
   memset(trk_sw, 0, sizeof trk_sw);
   if (slots)
     for (int i = 0; i < kTotal; ++i) slots[i].owner = -1, slots[i].held = false;
@@ -813,6 +815,21 @@ CORE_COLD void pad_trigger(int t, bool on, uint32_t ms) {
     pad_play(vi & 7, q.note, q.vel);
   }
 }
+// junopads (owner, 0.4.3: JUNO on a seq track, the CHRO pads silent; 6-OP FM played): a CHRO note-on / off on the
+// unbound auto channel while the selected track is a seq track whose voice takes no live binding (JUNO, PLAITS,
+// DAISYSP, MD, the user machines: not plays_live) is that track's pad, as fix1040b's normal-mode pad: it meets the
+// voice's 0x04 within kBindMs (seq_pad / pad_trigger) and the voice's own machine plays the 0x04's note. The pads are
+// mono: only the off of the last CHRO note ends it (the Rytm's steal sends the previous pad's off after the next on).
+CORE_COLD void chro_pad(int n, bool on, uint32_t ms) {
+  if (sel_vi < 0 || plays_live(sel_vi) || !seq::owns_voice(sel_vi)) return;
+  for (int t = 0; t < 12; ++t)
+    if (ui::remote_track_voice(t) == sel_vi && seq::owns_track(t)) {
+      if (!on && chro_n[t] != n) return;   // a steal's off (another pad sounds now)
+      chro_n[t] = on ? (int16_t)n : -1;
+      pad_trigger(t, on, ms);
+      return;
+    }
+}
 }  // namespace
 
 CORE_COLD bool seq_pad(int vi, int note, int vel) {
@@ -890,6 +907,7 @@ CORE_COLD void midi(uint8_t status, uint8_t d1, uint8_t d2) {
   }
   if (c.vi >= 0 && !c.direct && !plays_live(c.vi)) c.vi = -1, st.bound[ch] = -1;   // the voice left FM / MULTISAMPLE
   if (kind == 0x90 && d2 && c.vi < 0 && !c.direct && ch == keys::auto_channel() - 1) pad_bind(sel_vi);   // padbind
+  if (c.vi < 0 && !c.direct && ch == keys::auto_channel() - 1) chro_pad(n, kind == 0x90 && d2, ms);    // junopads
   if (kind == 0x90 && d2) {
     // the Rytm's mono pads (poly.h kStealMs): the gesture, the note this one displaces
     if (silent(c) || ms - c.last_ms > kGestureMs) c.g0 = ms, c.since = 0;
