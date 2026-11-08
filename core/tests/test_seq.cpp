@@ -31,6 +31,7 @@
 #include "ui/extra.h"
 #include "ui/remote.h"
 #include "voices.h"
+#include "core_port.h"
 
 using namespace core;
 using namespace core::ui;
@@ -2139,6 +2140,28 @@ int main() {
       trig04(kJuno | bvi, 64, 100);                            // the Rytm's own trig (no pad): no note, as before
       advance_ms(300);
       CHECK(!v[bvi].live && poly::stats().seq_pads == jp0 + 2);
+      // 7g PAD OCT on JUNO: the pad first or its 0x04 first, the same shifted pitch (before, the pad first played the
+      // 0x04's note unshifted: voices.cpp took seq_pad's yes without pad_play's shift) - a normal-mode pad and a CHRO one
+      static int juno_note;
+      host_set_log_sink([](const char* s, int) {
+        const char* p = strstr(s, " JUNO ");
+        const char* q = p ? strstr(p, " note ") : nullptr;
+        if (q && strncmp(s, "trig voice", 10) == 0) juno_note = atoi(q + 6);
+      });
+      CHECK(cmd("seq=poly:1:oct=1").size() > 0 && seq::pad_oct(bvi) == 1);
+      const int pads[2] = {0, 40};                              // BD's normal-mode trigger, a CHRO note
+      for (int pn : pads)
+        for (int first04 = 0; first04 < 2; ++first04) {
+          juno_note = -1;
+          if (first04) trig04(kJuno | bvi, 64, 100), poly::midi(0x9D, (uint8_t)pn, 100);
+          else poly::midi(0x9D, (uint8_t)pn, 100), trig04(kJuno | bvi, 64, 100);
+          CHECK(juno_note == 76);
+          poly::midi(0x8D, (uint8_t)pn, 0);
+          advance_ms(300);
+        }
+      cmd("seq=poly:1:oct=0");
+      host_set_log_sink(nullptr);
+      printf("  junopads: PAD OCT shifts a JUNO pad's note the same, the pad first or its 0x04 (normal and CHRO)\n");
       poly::selected_voice(-1);
       report(kFm | bvi, {0, 64, 64, 127, 64, 64, 100, 127});  // BD back on 6-OP FM
       advance_ms(300);
