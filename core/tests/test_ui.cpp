@@ -11,6 +11,7 @@
 #include "check.h"
 #include "rui_png.h"
 #include "lib/pools.h"
+#include "seq/rytm_dump.h"
 #include "engine.h"
 #include "version.h"
 #include "fx/send_fx.h"
@@ -597,6 +598,47 @@ int main() {
   c1 = commits;
   for (int i = 0; i < 12; ++i) remote_tick(t += 30);
   CHECK(commits == c1 && alive >= 1);
+  // 0.4.3 (rytm-lag): the Rytm playing, its values moving at its 20 Hz UI tick (a 2A every 50 ms): the view commits at
+  // most 5 times a second, the last value still arrives; stopped, every change at once as before
+  {
+    auto stream = [&](int ms, uint8_t from) {   // 2A every 50 ms (CUT from, from + 1, ...), remote_tick every 5 ms
+      uint8_t v = from;
+      for (int i = 0; i < ms; i += 5) {
+        if (i % 50 == 0) {
+          const uint8_t c[1] = {v};
+          src_vals(0, 1, 1, c);
+          v = (uint8_t)(v + 1);
+        }
+        remote_tick(t += 5);
+      }
+      return (uint8_t)(v - 1);
+    };
+    core::rytm_dump::set_playing(true);
+    c1 = commits;
+    uint8_t last = stream(4000, 10);   // 80 changes in 4 s
+    int played = commits - c1;
+    char want[16];
+    snprintf(want, sizeof want, "BD CUT:%d", last);
+    const char* fp = shown_prefix("BD CUT:");
+    CHECK(fp && strcmp(fp, want));     // the last change waits (its commit within kPlayCommitMs)
+    for (int i = 0; i < 50; ++i) remote_tick(t += 5);   // 250 ms with nothing new
+    fp = shown_prefix("BD CUT:");
+    CHECK(fp && !strcmp(fp, want) && texts_equal());   // the final value on the Rytm
+    CHECK(commits - c1 == played + 1);
+    printf("SRC view, playing: %d commits in 4 s for 80 changes, the last value shown\n", played);
+    CHECK(played <= 4 * 5 + 1 && played >= 4 * 4);
+    core::rytm_dump::set_playing(false);
+    c1 = commits;
+    last = stream(2000, 20);   // stopped: every change committed (20 a second)
+    snprintf(want, sizeof want, "BD CUT:%d", last);
+    fp = shown_prefix("BD CUT:");
+    CHECK(commits - c1 == 40 && fp && !strcmp(fp, want));
+    const uint8_t back[1] = {77};
+    src_vals(0, 1, 1, back);
+    remote_tick(t += 10);
+    CHECK(shown_prefix("BD CUT:") && !strcmp(shown_prefix("BD CUT:"), "BD CUT:77"));
+    c1 = commits;
+  }
   // TRK + YES opens the remote page: the view waits, the page's own frames and mask; closed: the view's whole frame
   from_rytm(0x30, 0, 1, 0);
   remote_tick(t += 100);
