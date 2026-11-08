@@ -11,8 +11,10 @@ Pi 4B is the main target, and the one the measurements are made on; the Pi 5 sca
 > **Sidecar Mini (Teensy 4.1) is phased out.** It is frozen at 0.1.0: no new features. Its source stays in `teensy/`
 > and in the history (commit `101a3fb`) for reference, and the 0.1.0 release stays downloadable.
 
-This repository holds the source of **Sidecar 0.4.3**: Sidecar 0.4.2 with one fix: a selected poly track's CHRO pads
-play from the first hit (0.4.2 needed a first note on the track before they played). 0.4.2 added **Overbridge
+This repository holds the source of **Sidecar 0.4.3**: Sidecar 0.4.2 with fixes to the CHRO pads on poly tracks: on a
+selected poly track they play from the first hit (0.4.2 needed a first note on the track before they played), on a
+poly track with JUNO, PLAITS, DAISYSP, MD or a user machine they play at all (silent in 0.4.2), and PAD OCT shifts a
+pad's note the same every time. 0.4.2 added **Overbridge
 passthrough on the Pi 5**: the computer sees the Rytm through the Sidecar (from PR 19 and PR 20 by [Iced-Cream](https://github.com/Iced-Cream)),
 chosen with the USB-C mode switch (CLASS COMPLIANT / OVERBRIDGE) on the web page, the Rytm's SIDECAR menu and the
 touchscreen, now on the Pi 4 and the Pi 5. A Pi 5 that uses its USB-C for data gets about 1.5 A from a computer or hub
