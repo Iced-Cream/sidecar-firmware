@@ -2155,15 +2155,79 @@ int main() {
           juno_note = -1;
           if (first04) trig04(kJuno | bvi, 64, 100), poly::midi(0x9D, (uint8_t)pn, 100);
           else poly::midi(0x9D, (uint8_t)pn, 100), trig04(kJuno | bvi, 64, 100);
+          CHECK(juno_note != -1);
           CHECK(juno_note == 76);
           poly::midi(0x8D, (uint8_t)pn, 0);
           advance_ms(300);
         }
       cmd("seq=poly:1:oct=0");
-      host_set_log_sink(nullptr);
       printf("  junopads: PAD OCT shifts a JUNO pad's note the same, the pad first or its 0x04 (normal and CHRO)\n");
+      char kb[160];                                            // (an earlier part's keyboard on ch 1 plays bvi: freed
+      poly::command("poly=bind:1:off", kb, sizeof kb);         //  here, bound again at the end)
+      // the CHRO pad's off ends the JUNO note
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      CHECK(poly::pad_sounding(bvi));
+      poly::midi(0x8D, 40, 0);
+      CHECK(!poly::pad_sounding(bvi));
+      advance_ms(300);
+      // legato (the Rytm's mono pads): A on, B on, A's off (a steal: B sounds on), B's off (ended)
+      juno_note = -1;
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      advance_ms(50);
+      poly::midi(0x9D, 42, 100), trig04(kJuno | bvi, 66, 100);
+      poly::midi(0x8D, 40, 0);
+      CHECK(poly::pad_sounding(bvi) && juno_note == 66);
+      poly::midi(0x8D, 42, 0);
+      CHECK(!poly::pad_sounding(bvi));
+      advance_ms(300);
+      // legato, B's 0x04 missing: A ends at B's on all the same (A's own off comes as a steal)
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      advance_ms(50);
+      poly::midi(0x9D, 42, 100);
+      CHECK(!poly::pad_sounding(bvi));
+      poly::midi(0x8D, 40, 0), poly::midi(0x8D, 42, 0);
+      advance_ms(300);
+      // the selection moves while the pad is held: its off still ends it
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      CHECK(poly::pad_sounding(bvi));
       poly::selected_voice(-1);
+      poly::midi(0x8D, 40, 0);
+      CHECK(!poly::pad_sounding(bvi));
+      advance_ms(300);
+      // reset() while a pad is held: nothing held or sounding, and the next pad plays
+      poly::selected_voice(bvi);
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      CHECK(poly::pad_sounding(bvi));
+      poly::reset();
+      CHECK(!poly::pad_sounding(bvi));
+      poly::midi(0x8D, 40, 0);
+      advance_ms(300);
+      poly::selected_voice(bvi);
+      poly::midi(0x9D, 42, 100), trig04(kJuno | bvi, 66, 100);
+      CHECK(poly::pad_sounding(bvi));
+      poly::midi(0x8D, 42, 0);
+      CHECK(!poly::pad_sounding(bvi));
+      advance_ms(300);
+      // the machine changes while the pad is held (JUNO -> 6-OP FM): its off still ends it
+      poly::midi(0x9D, 40, 100), trig04(kJuno | bvi, 64, 100);
+      CHECK(poly::pad_sounding(bvi));
+      host_set_log_sink(nullptr);
       report(kFm | bvi, {0, 64, 64, 127, 64, 64, 100, 127});  // BD back on 6-OP FM
+      poly::midi(0x8D, 40, 0);
+      CHECK(!poly::pad_sounding(bvi));
+      advance_ms(300);
+      // 6-OP FM: the CHRO pad goes through the binding (padbind), not the pad pairing
+      poly::selected_voice(-1);
+      poly::selected_voice(bvi);
+      uint32_t fsp = poly::stats().seq_pads, fl = poly::stats().live_notes;
+      poly::midi(0x9D, 44, 100);
+      CHECK(poly::stats().bound[13] == bvi && poly::stats().live_notes == fl + 1 && poly::stats().seq_pads == fsp);
+      CHECK(!poly::pad_sounding(bvi));
+      poly::midi(0x8D, 44, 0);
+      advance_ms(300);
+      poly::selected_voice(-1);
+      poly::command(("poly=bind:1:" + std::to_string(bvi)).c_str(), kb, sizeof kb);
+      printf("  junopads: a JUNO pad's off ends it (legato, a selection, a machine change, reset); 6-OP FM via the binding\n");
       advance_ms(300);
       printf("  junopads: a JUNO seq track's CHRO pad plays its voice (either order), its own trig does not\n");
     }
