@@ -41,10 +41,14 @@ static void Put (const u8 *p, unsigned n)	{ memcpy (s_Config + s_nConfig, p, n);
 #define U32(v)	(u8) ((v) & 0xFF), (u8) (((v) >> 8) & 0xFF), (u8) (((v) >> 16) & 0xFF), (u8) (((v) >> 24) & 0xFF)
 
 // UAC2 (Audio Device Class 2.0 4.7-4.10, the Teensy T1 layout): interfaces 0 AC, 1 AS OUT (EP 0x01, feedback 0x82),
-// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); raw
-// channels (bmChannelConfig 0) named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
-static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut)
+// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); channels
+// named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
+// bmChannelConfig of both clusters (nMask): 0x3 = channels 1-2 front left / right, the rest non-predefined (UAC2 4.1).
+// With 0 (all raw) Windows' shared-mode engine mixed the 12 channels to 2 with L == R and 3-12 at zero, while exclusive
+// mode had all 12 [hw, T191]. uac2lr=0 (cmdline) serves the old 0.
+static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut, u32 nMask)
 {
+	const u32 nMaskIn = nIn >= 2 ? nMask : 0, nMaskOut = nOut >= 2 ? nMask : 0;
 	const unsigned Clock = 0x10, AcCs = 9 + 8 + 17 + 12 + 17 + 12, MsCs = 7 + 6 + 6 + 9 + 9 + 9 + 5 + 9 + 5;
 	s_nConfig = 0;
 	D (9, DESCRIPTOR_CONFIGURATION, 0, 0, 5, 1, 0, 0x80, 250);
@@ -52,13 +56,13 @@ static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned 
 	D (9, DESCRIPTOR_INTERFACE, 0, 0, 0, 0x01, 0x01, 0x20, 0);
 	D (9, 0x24, 0x01, U16 (0x0200), 0x08, U16 (AcCs), 0x00);
 	D (8, 0x24, 0x0A, Clock, 0x01, 0x05, 0, 0);
-	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (u8) nOut, U32 (0), StrOutCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (u8) nOut, U32 (nMaskOut), StrOutCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x02, U16 (0x0301), 0, 0x01, Clock, U16 (0), 0);
-	D (17, 0x24, 0x02, 0x03, U16 (0x0201), 0, Clock, (u8) nIn, U32 (0), StrInCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x03, U16 (0x0201), 0, Clock, (u8) nIn, U32 (nMaskIn), StrInCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x04, U16 (0x0101), 0, 0x03, Clock, U16 (0), 0);
 	D (9, DESCRIPTOR_INTERFACE, 1, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, DESCRIPTOR_INTERFACE, 1, 1, 2, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (u8) nOut, U32 (0), StrOutCh);
+	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (u8) nOut, U32 (nMaskOut), StrOutCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	s_nOffOut = s_nConfig;
 	D (7, DESCRIPTOR_ENDPOINT, 0x01, 0x05, U16 (nMaxOut), 2);
@@ -67,7 +71,7 @@ static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned 
 	D (7, DESCRIPTOR_ENDPOINT, 0x82, 0x11, U16 (4), 4);
 	D (9, DESCRIPTOR_INTERFACE, 2, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, DESCRIPTOR_INTERFACE, 2, 1, 1, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) nIn, U32 (0), StrInCh);
+	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) nIn, U32 (nMaskIn), StrInCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	s_nOffIn = s_nConfig;
 	D (7, DESCRIPTOR_ENDPOINT, 0x83, 0x05, U16 (nMaxIn), 2);
@@ -355,7 +359,8 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (m_nCntFrq));
 	asm volatile ("mrs %0, cntpct_el0" : "=r" (m_nT0));
 	s_Device.idVendor = USB_GADGET_VENDOR_ID;
-	BuildConfig (ChIn, ChOut, MaxIn, MaxOut);
+	BuildConfig (ChIn, ChOut, MaxIn, MaxOut,
+		     CKernelOptions::Get ()->GetAppOptionDecimal ("uac2lr", 1) == 0 ? 0 : 0x3);	// FL | FR
 	for (unsigned c = 0; c < ChIn; c++)
 	{
 		m_nPhase[c] = 0;

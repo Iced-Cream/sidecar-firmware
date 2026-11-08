@@ -112,6 +112,7 @@ Measured 2026-10-16 (Pi 4 4GB, the card in the Pi, the Rytm attached, no Etherne
 | `usbreboot=1` | 0 | the computer's `F0 7D 52 54 7E "REBOOT" F7` on the USB-C MIDI port reboots the Pi |
 | `usb=mirror` | sidecar | Pi 4, own use only: the USB-C side shows the computer the attached box itself (its descriptors, audio, async channel, MIDI and requests relayed; `docs/usb-mirror.md`) instead of the Sidecar device, which comes back when the box has been gone `mirrorhold=S` seconds (10); Overbridge shows the unit's name with `mirrorname=` (default " (SC)"). Never a public default |
 | `uac2test=1` `midifake=1` | 0 | the gadget's test tones and fake MIDI (`sidecar_gadget.h`) |
+| `uac2lr=0\|1` | 1 | the Sidecar device's channels 1-2 marked front left / right (bmChannelConfig 0x3), so Windows' shared mode mixes a real stereo pair; 0: all 12 raw, as before (T191 [hw]: shared mode gave L == R) |
 | `nvme=0` | 1 | skips the Pi 5's NVMe SSD (`docs/STORAGE.md`) |
 | `wifi=` | (wifi.txt) | Wi-Fi's mode (`wifi.h`, "Wi-Fi settings" below) |
 | `capch=N` | markers | the 4th channel of the `w` capture: IN channel N (0..11), or the MIDI note-on markers (12 or more) |
