@@ -436,6 +436,12 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	}
 	s.Format (",\"aret\":{\"inDropped\":%u,\"inMissing\":%u}", aret::InDropped (), aret::InMissing ());
 	pOut->Append (s);
+	// Circle's CUSBRequest instances (every driver's; the limit is the allocator's, a LogPanic past it) and the Rytm's
+	// detaches with the URBs in flight freed then (ob_usb.h): live stays flat over Rytm restarts (2026-11-09)
+	s.Format (",\"usbreq\":{\"live\":%u,\"peak\":%u,\"limit\":%u,\"detaches\":%u,\"freedInFlight\":%u,\"keptInFlight\":%u}",
+		  CObUsb::UsbRequests (), CObUsb::UsbRequestsPeak (), CObUsb::UsbRequestsLimit (), CObUsb::Detaches (),
+		  CObUsb::FreedInFlight (), CObUsb::KeptInFlight ());
+	pOut->Append (s);
 	s.Format (",\"version\":\"" SIDECAR_VERSION "\",\"commit\":\"" SIDECAR_COMMIT "\",\"dirty\":%s,\"build\":\"%s %s\",\"circle\":\"%s %s\"",
 		  SIDECAR_DIRTY ? "true" : "false", __DATE__, __TIME__, CIRCLE_NAME, CIRCLE_VERSION_STRING);
 	pOut->Append (s);

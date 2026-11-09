@@ -192,6 +192,11 @@ grep -q circle-hub-rearm3 include/circle/usb/usbstandardhub.h || patch -p1 < /re
 # while a device restarts was a LogPanic - core 0 halted, the 15 s watchdog rebooted the Pi, the panic line lost; now
 # logged, and the hub status-change request armed again from the recovery timer, so the latched change is read again; idempotent)
 grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-noportpanic.patch
+# then no USB request leaked when a device leaves (pi/circle/circle-usb-urb-free.patch: the USB MIDI host'"'"'s IN and OUT
+# URBs in flight are freed with the device, as ob_usb.cpp now frees its own; and CUSBRequest counts its instances for
+# /status, usbreq: Circle'"'"'s allocator holds 256 and its LogPanic past that rebooted the Pi after ~15 Rytm restarts on
+# one boot - 2026-11-09; after circle-midi-async, idempotent)
+grep -q circle-usb-urb-free include/circle/usb/usbrequest.h || patch -p1 < /repo/pi/circle/circle-usb-urb-free.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
