@@ -11,6 +11,7 @@
 #include "check.h"
 #include "dsp/blocks.h"
 #include "dsp/dsp.h"
+#include "dsp/gen.h"
 #include "hooks.h"
 #include "kv/link.h"
 #include "locks/locks.h"
@@ -288,10 +289,162 @@ static void test_trig() {
   dsp::remove_block(&kRecInfo);
 }
 
+// OSC, NOISE, ENV (core/dsp/gen.h) on their own
+static void test_gen() {
+  // OSC: note 69 is 440 Hz (a sine, WAV 0): ~880 zero crossings a second; a saw and a pulse stay bounded
+  {
+    dsp::Osc o;
+    o.set_param(1, 0);
+    o.midi(proc::kSrcRytm, 0x90, 69, 100);
+    std::vector<float> y = run_block(o, std::vector<float>(48000, 0.0f));
+    int z = 0;
+    for (size_t i = 1; i < y.size(); ++i) z += (y[i - 1] < 0.0f) != (y[i] < 0.0f);
+    CHECK(std::abs(z - 880) <= 4 && peak(y) > 0.9f && peak(y) < 1.1f);
+    o.set_param(1, 85 * 64);
+    CHECK(peak(run_block(o, std::vector<float>(4800, 0.0f))) < 1.3f);
+    o.set_param(1, 127 * 64);
+    o.set_param(6, 127 * 64);   // SUB
+    CHECK(peak(run_block(o, std::vector<float>(4800, 0.0f))) < 2.4f);
+    // TUN +12: an octave up
+    o.set_param(1, 0); o.set_param(6, 0); o.set_param(2, 76 * 64);
+    y = run_block(o, std::vector<float>(48000, 0.0f));
+    z = 0;
+    for (size_t i = 1; i < y.size(); ++i) z += (y[i - 1] < 0.0f) != (y[i] < 0.0f);
+    CHECK(std::abs(z - 1760) <= 6);
+    // LEV 0, THRU 127: the input as it is
+    o.set_param(0, 0); o.set_param(7, 127 * 64);
+    std::vector<float> x = sine(1000.0f, 960);
+    y = run_block(o, x);
+    float d = 0.0f;
+    for (size_t i = 0; i < x.size(); ++i) d = std::fmax(d, std::fabs(y[i] - x[i]));
+    CHECK(d < 1e-3f);
+  }
+  // NOISE: white is loud, dark has less high end than white; THRU passes the input
+  {
+    dsp::Noise n;
+    n.set_param(2, 0);
+    std::vector<float> w = run_block(n, std::vector<float>(48000, 0.0f));
+    CHECK(rms(w, 0, w.size()) > 0.3f && peak(w) <= 1.01f);
+    auto hf = [](const std::vector<float>& y) { double s = 0; for (size_t i = 1; i < y.size(); ++i) s += std::fabs(y[i] - y[i - 1]); return s; };
+    n.set_param(1, 0);
+    std::vector<float> dk = run_block(n, std::vector<float>(48000, 0.0f));
+    CHECK(hf(dk) < 0.2 * hf(w) && peak(dk) < 4.0f);
+    n.set_param(0, 0); n.set_param(2, 127 * 64);
+    std::vector<float> x = sine(500.0f, 960);
+    std::vector<float> y = run_block(n, x);
+    float d = 0.0f;
+    for (size_t i = 0; i < x.size(); ++i) d = std::fmax(d, std::fabs(y[i] - x[i]));
+    CHECK(d < 1e-3f);
+  }
+  // ENV: silent before a note (VCA all), a hit rises to the input's level and falls; ctl(0) follows
+  {
+    dsp::Env e;
+    std::vector<float> one(4800, 0.5f);
+    CHECK(peak(run_block(e, one)) < 1e-6f && e.ctl(0) == 0.0f);
+    e.midi(proc::kSrcRytm, 0x90, 60, 127);
+    std::vector<float> y = run_block(e, std::vector<float>(64, 0.5f));
+    CHECK(peak(y) > 0.45f && e.ctl(0) > 0.5f);
+    y = run_block(e, std::vector<float>(96000, 0.5f));
+    CHECK(y.back() < 1e-3f && e.ctl(0) < 1e-3f);
+    // ADSR: held at SUS until the note off, then released
+    e.set_param(4, 1 * 64); e.set_param(2, 64 * 64); e.set_param(1, 0);
+    e.midi(proc::kSrcRytm, 0x90, 60, 127);
+    y = run_block(e, std::vector<float>(48000, 1.0f));
+    CHECK(std::fabs(y.back() - 64.0f / 127.0f) < 0.01f);
+    e.midi(proc::kSrcRytm, 0x80, 60, 0);
+    y = run_block(e, std::vector<float>(96000, 1.0f));
+    CHECK(y.back() < 1e-3f);
+    // VEL all: a soft note's hit is lower
+    e.set_param(4, 0); e.set_param(6, 127 * 64);
+    e.midi(proc::kSrcRytm, 0x90, 60, 32);
+    run_block(e, std::vector<float>(64, 1.0f));
+    CHECK(e.ctl(0) > 0.1f && e.ctl(0) < 0.3f);
+    // VCA 0: the input passes, the envelope is only ctl
+    e.set_param(5, 0);
+    y = run_block(e, std::vector<float>(64, 0.5f));
+    CHECK(std::fabs(y.back() - 0.5f) < 1e-6f);
+  }
+  // MOD: its oscillator as ctl(0) / ctl(1), within -1..1, moving
+  {
+    dsp::Modulator m;
+    m.set_param(1, 6000);   // ~5 Hz
+    float lo = 2.0f, hi = -2.0f;
+    for (int i = 0; i < 400; ++i) { run_block(m, std::vector<float>(64, 0.0f)); lo = std::fmin(lo, m.ctl(0)); hi = std::fmax(hi, m.ctl(0)); }
+    CHECK(lo < -0.9f && hi > 0.9f && lo >= -1.0f && hi <= 1.0f);
+  }
+}
+
+// mod points (route op 24 MOD, core/proc): ENV's ctl onto a FILTER's cutoff, the loop check, the graph order, depth,
+// UNROUTE, FREE
+static int mod(int seq, int owner, int src, int ctl, int dst, int param, int depth) {
+  send({0x24, (uint8_t)seq, (uint8_t)owner, (uint8_t)src, (uint8_t)ctl, (uint8_t)dst, (uint8_t)param, (uint8_t)(depth >> 7),
+        (uint8_t)(depth & 0x7F)});
+  auto a = answers();
+  CHECK(a.size() == 1);
+  return a.size() == 1 && a[0][6] == 0x60 ? a[0][9] : a.size() == 1 ? -a[0][9] : -99;
+}
+static void test_mods() {
+  CHECK(place(70, 7, 3, "ENV") == 3);
+  CHECK(place(71, 7, 2, "FILTER") == 2);
+  dsp::Block* flt = static_cast<dsp::Block*>(proc::slot(2));
+  CHECK(send({0x38, 7, 2, 1, 1, 4000 >> 7, 4000 & 0x7F}));   // CUTOFF 4000
+  block(64);
+  CHECK(flt->param(1) == 4000);
+  int mp = mod(73, 7, 3, 0, 2, 1, 16383);
+  CHECK(mp == route::kPoints && route::mod_point(0).open && route::mod_point(0).dst == 2);
+  CHECK(mod(74, 7, 2, 0, 3, 0, 8192) == -route::kLoop);   // the FILTER feeds the ENV's: a loop
+  CHECK(mod(75, 7, 3, 0, 3, 0, 8192) == -route::kLoop);   // onto itself
+  CHECK(rt(76, 7, route::slot_chan(2, 0), route::slot_chan(3, 0), 8192) == -route::kLoop);   // audio back the other way
+  CHECK(mod(77, 7, 3, 9, 2, 1, 8192) == -route::kBad);    // no ctl 9
+  block(64);
+  uint8_t ord[route::kSlots];
+  route::order(ord);
+  int at2 = -1, at3 = -1;
+  for (int i = 0; i < route::kSlots; ++i) { if (ord[i] == 2) at2 = i; if (ord[i] == 3) at3 = i; }
+  CHECK(at3 >= 0 && at3 < at2);   // the ENV runs before the FILTER it moves
+  CHECK(flt->param(1) == 4000);   // no note yet: the envelope is 0
+  CHECK(send({0x37, 7, 3, 0, 60, 127, 0, 0, 0, 0}));
+  block(64);
+  block(64);
+  CHECK(flt->param(1) > 12000);   // 4000 + ~1 x 16383, clamped
+  // GAIN on the mod point: its depth; 8192 none
+  CHECK(send({0x23, 7, (uint8_t)mp, 8192 >> 7, 0}));
+  block(64);
+  CHECK(flt->param(1) == 4000);
+  CHECK(send({0x23, 7, (uint8_t)mp, 0, 0}));     // -1: down
+  CHECK(send({0x37, 7, 3, 0, 60, 127, 0, 0, 0, 0}));
+  block(64);
+  block(64);
+  CHECK(flt->param(1) < 1000);
+  // a PARAM while modulated moves the base (the offset stays)
+  int before = flt->param(1);
+  CHECK(send({0x38, 7, 2, 1, 1, 16383 >> 7, 16383 & 0x7F}));
+  block(64);
+  CHECK(flt->param(1) < 16383 && flt->param(1) > before);
+  // UNROUTE: back to the base
+  CHECK(send({0x22, 7, (uint8_t)mp}));
+  CHECK(!route::mod_point(0).open);
+  block(64);
+  CHECK(flt->param(1) == 16383);
+  // FREE of the ENV closes a mod point from it; the HELLO every one
+  CHECK(mod(78, 7, 3, 0, 2, 1, 12000) == route::kPoints);
+  CHECK(send({0x31, 7, 3}));
+  CHECK(!route::mod_point(0).open);
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  CHECK(place(79, 7, 3, "MOD") == 3);
+  CHECK(mod(80, 7, 3, 0, 2, 1, 12000) == route::kPoints);
+  send({0x00, 0, 0, 0, 0, 1});
+  answers();
+  CHECK(!route::mod_point(0).open);
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  CHECK(dsp::stats().used == 0);
+}
+
 int main() {
   hooks.to_rytm = capture;
   CHECK(kv::link::attach_generic());
   test_primitives();
+  test_gen();
 
   // the arena: 16 x 1 MiB, 64-byte aligned
   void* arena = std::aligned_alloc(64, (size_t)dsp::kSlots * dsp::kSlotBytes);
@@ -372,6 +525,7 @@ int main() {
   CHECK(dsp::stats().used == 0);
 
   test_trig();
+  test_mods();
 
   printf("test_dsp: OK (%lu placed, %lu freed, %lu refused)\n", (unsigned long)dsp::stats().placed,
          (unsigned long)dsp::stats().freed, (unsigned long)dsp::stats().refused);

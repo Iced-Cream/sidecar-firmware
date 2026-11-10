@@ -21,6 +21,8 @@ constexpr int kParams = 64;
 constexpr int kChannels = 12;       // Overbridge: 12 IN, 12 OUT
 constexpr int kMaxFrames = 256;     // frames a process() call may carry
 
+constexpr int kCtls = 4;            // control outputs a processor may give (mod points, 2026-11-10)
+constexpr int kMods = 32;           // mod points (core/route's op 24 MOD places them)
 constexpr int kSlotIO = 2;          // each slot's own input and output channels (L, R): the route's slot channels
 // One block: in[c][i] the Rytm's IN channel c (read only), out[c][i] what goes back on OUT channel c. A processor adds to
 // out (others may have written there before it); it never clears it. sin[k] is this slot's own input channel k (what
@@ -43,6 +45,9 @@ class Proc {
   // a message from a USB-A MIDI device (core/devmidi; src its number), render side, from the queue, before process()
   virtual void midi(int src, uint8_t status, uint8_t d1, uint8_t d2) {}
   virtual const char* name() const = 0;
+  // control output k (0..kCtls-1), -1..1, as this block's process() left it (an envelope, an LFO): what a mod point
+  // carries onto another slot's param. Render side. 0 for a processor that has none.
+  virtual float ctl(int k) const { return 0.0f; }
 };
 
 bool register_slot(int slot, Proc* p);   // false: slot out of range or taken
@@ -57,6 +62,18 @@ bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2);   // to every filled
 constexpr int kSrcRytm = 0x7F;      // midi()'s src for the Rytm's own trigs (devmidi's device numbers stay below it)
 bool note(int slot, uint8_t status, uint8_t d1, uint8_t d2);
 
+// Mod points (2026-11-10, Connor's pick for the voice graphs: "mod points in the route"): mod point id (0..kMods-1)
+// carries slot src's control output ctl onto slot dst's param, at a depth (14 bits, 8192 none, 0 = -1, 16383 = +1 x
+// the param's whole range). Before dst runs, each of its modulated params is set to its base (the last set_param, or
+// the block's default from set_default) plus the sum of its points' ctl x depth, clamped; when the last point on a
+// param goes, the base again. core/route places them (loop refusal, graph order: src runs before dst); queued as the
+// params. False: range, queue full.
+bool set_mod(int id, int src, int ctl, int dst, int param, int depth14);
+bool set_mod_depth(int id, int depth14);
+bool clear_mod(int id);
+// a param's base before any set_param (core/dsp's PLACE: the block's defaults), not sent to the block
+bool set_default(int slot, int param, int value14);
+
 // Render side, once a block: begin() drains the parameter queue, run() runs one slot (if filled) with its own channels
 // (slot_in / slot_out: kSlots x kSlotIO buffers, slot s channel k at [kSlotIO s + k], route.h's slot channel
 // numbering; null: none), end() closes the block. The engine calls run() in the route's graph order (core/route order).
@@ -69,7 +86,7 @@ void process(const Block& b, float* const* slot_in = nullptr, float* const* slot
 // one after the clear); false: ask again later. What a cleared Proc's memory may be reused after.
 bool released(int slot);
 
-struct Stats { uint32_t params, dropped, blocks, midi, notes; };
+struct Stats { uint32_t params, dropped, blocks, midi, notes, mods; };
 Stats stats();
 }  // namespace proc
 }  // namespace core

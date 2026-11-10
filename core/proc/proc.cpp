@@ -6,7 +6,8 @@ namespace proc {
 namespace {
 Proc* volatile g_slot[kSlots];
 struct Msg { int8_t slot; uint8_t param; uint16_t value; uint8_t m[3]; };   // slot -1: link_reset; -2: MIDI (param: src);
-                                                                          // slot >= 0: set_param, or with m[0] (a status) a note
+    // -3 a mod point (m[0] id, m[1] src << 4 | dst, m[2] ctl, param, value depth); -4 its depth; -5 its end;
+    // slot >= 0: set_param, with m[0] (a status) a note, with m[1] = 1 a default
 constexpr uint32_t kQ = 256;
 Msg g_q[kQ];
 alignas(64) uint32_t g_wr = 0;
@@ -15,6 +16,13 @@ Stats g_st;
 alignas(64) uint32_t g_busy;        // render side: 1 inside a block (begin .. end)
 uint32_t g_cleared[kSlots];         // control side: the block count when the slot was cleared while a block ran
 bool g_wait[kSlots];
+// render side: the mod points, each slot's params' bases and what was last given, and which params a point moved
+struct Mod { bool on; uint8_t src, dst, ctl, param; float depth; };
+Mod g_mod[kMods];
+uint16_t g_base[kSlots][kParams];
+uint16_t g_given[kSlots][kParams];
+uint64_t g_moved[kSlots];
+int g_mods_on;
 
 bool push(const Msg& m) {
   uint32_t w = __atomic_load_n(&g_wr, __ATOMIC_RELAXED), r = __atomic_load_n(&g_rd, __ATOMIC_ACQUIRE);
@@ -63,6 +71,31 @@ bool set_param(int s, int param, int value14) {
   ++g_st.params;
   return true;
 }
+bool set_default(int s, int param, int value14) {
+  if (!slot(s) || param < 0 || param >= kParams || value14 < 0 || value14 > 16383) return false;
+  return push({(int8_t)s, (uint8_t)param, (uint16_t)value14, {0, 1, 0}});
+}
+bool set_mod(int id, int src, int ctl, int dst, int param, int depth14) {
+  if (id < 0 || id >= kMods || src < 0 || src >= kSlots || dst < 0 || dst >= kSlots || ctl < 0 || ctl >= kCtls ||
+      param < 0 || param >= kParams || depth14 < 0 || depth14 > 16383 ||
+      !push({-3, (uint8_t)param, (uint16_t)depth14, {(uint8_t)id, (uint8_t)(src << 4 | dst), (uint8_t)ctl}})) {
+    ++g_st.dropped;
+    return false;
+  }
+  ++g_st.mods;
+  return true;
+}
+bool set_mod_depth(int id, int depth14) {
+  if (id < 0 || id >= kMods || depth14 < 0 || depth14 > 16383 || !push({-4, 0, (uint16_t)depth14, {(uint8_t)id, 0, 0}})) {
+    ++g_st.dropped;
+    return false;
+  }
+  return true;
+}
+bool clear_mod(int id) {
+  if (id < 0 || id >= kMods || !push({-5, 0, 0, {(uint8_t)id, 0, 0}})) { ++g_st.dropped; return false; }
+  return true;
+}
 void link_reset() {
   if (!push({-1, 0, 0, {0, 0, 0}})) ++g_st.dropped;
 }
@@ -89,19 +122,52 @@ void begin() {
   __atomic_store_n(&g_busy, 1u, __ATOMIC_SEQ_CST);
   Msg m;
   while (pop(&m)) {
-    if (m.slot == -2) {
+    if (m.slot <= -3) {
+      Mod& d = g_mod[m.m[0] % kMods];
+      if (m.slot == -3) g_mods_on += !d.on, d = Mod{true, (uint8_t)(m.m[1] >> 4), (uint8_t)(m.m[1] & 15), m.m[2], m.param, 0.0f};
+      if (m.slot == -5) g_mods_on -= d.on, d.on = false;
+      else d.depth = ((float)m.value - 8192.0f) / 8192.0f;
+    } else if (m.slot == -2) {
       for (int s = 0; s < kSlots; ++s) if (Proc* p = slot(s)) p->midi(m.param, m.m[0], m.m[1], m.m[2]);
     } else if (m.slot < 0) {
       for (int s = 0; s < kSlots; ++s) if (Proc* p = slot(s)) p->link_reset();
     } else if (Proc* p = slot(m.slot)) {
       if (m.m[0]) p->midi(kSrcRytm, m.m[0], m.m[1], m.m[2]);   // a note event (set_param's have m[0] = 0)
-      else p->set_param(m.param, m.value);
+      else {
+        g_base[m.slot][m.param] = g_given[m.slot][m.param] = m.value;
+        if (!m.m[1]) p->set_param(m.param, m.value);           // (a default: the block has it already)
+      }
     }
   }
 }
+namespace {
+// slot s's modulated params, before it runs: base + the sum of its points' ctl x depth (see proc.h)
+void modulate(int s, Proc* p) {
+  float off[kParams];
+  uint64_t now = 0;
+  for (const Mod& d : g_mod) {
+    if (!d.on || d.dst != s) continue;
+    Proc* src = slot(d.src);
+    float c = src ? src->ctl(d.ctl) : 0.0f;
+    uint64_t bit = 1ull << d.param;
+    if (!(now & bit)) off[d.param] = 0.0f, now |= bit;
+    off[d.param] += c * d.depth * 16383.0f;
+  }
+  uint64_t all = now | g_moved[s];
+  for (int k = 0; all; ++k, all >>= 1) {
+    if (!(all & 1)) continue;
+    int v = g_base[s][k] + ((now >> k & 1) ? (int)(off[k] + (off[k] < 0 ? -0.5f : 0.5f)) : 0);
+    v = v < 0 ? 0 : v > 16383 ? 16383 : v;
+    if (v != g_given[s][k]) { g_given[s][k] = (uint16_t)v; p->set_param(k, v); }
+  }
+  g_moved[s] = now;
+}
+}  // namespace
+
 void run(int s, const Block& b0, float* const* slot_in, float* const* slot_out) {
   Proc* p = slot(s);
   if (!p || b0.frames <= 0 || b0.frames > kMaxFrames) return;
+  if (g_mods_on || g_moved[s]) modulate(s, p);
   Block b = b0;
   for (int k = 0; k < kSlotIO; ++k) {
     b.sin[k] = slot_in ? slot_in[kSlotIO * s + k] : nullptr;

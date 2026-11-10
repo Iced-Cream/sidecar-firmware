@@ -22,6 +22,12 @@
 //               21 MOVE    <seq> <owner> <point> <src> <dst>                      re-aim an owned point; answer 60 or 61
 //               22 UNROUTE <owner> <point | 7F every point of owner>              no answer
 //               23 GAIN    <owner> <point> <hi> <lo>                              no answer (a lock does the same)
+//               24 MOD     <seq> <owner> <src slot> <ctl> <dst slot> <param> <depth hi> <lo>   a mod point; 60 / 61
+//   Mod points (2026-11-10, Connor's pick for the voice graphs): slot src's control output ctl (0..3: an envelope, an
+//   LFO; core/proc ctl()) onto slot dst's param, at a depth (8192 none; core/proc set_mod). Their point numbers are
+//   kPoints.. (64..95): UNROUTE closes one (7F: every point and mod point of the owner), GAIN sets its depth, FREE
+//   of either slot and HELLO close it. A mod point is an edge for the loop check and the graph order, as a point
+//   from src's output to dst's input is: refused (7) when dst feeds src, or src = dst.
 //   Pi -> Rytm  60 ROUTED  <seq> <owner> <point>     61 REFUSED <seq> <owner> <code> (3 full, 5 bad, 7 loop)
 //               (not 7F STATUS: the store's requests keep their own seq; owner + seq name the asker)
 // Gains: 14 bits, 8192 = unity (0 dB), 16383 = +6 dB, 0 silent; a change ramps over kRamp frames (5 ms) so a lock on a
@@ -56,7 +62,8 @@ constexpr int kUnity = 8192;
 constexpr int kBlockFrames = 32;  // the Rytm's audio block (core/clock's blk4 counts these)
 constexpr int kLead = 144;        // locklead= default: 3 ms (T118 [hw]: ticks reached the Pi ~4 ms before the hit)
 constexpr int kMinRamp = 48;      // 1 ms
-enum Op : uint8_t { kRoute = 0x20, kMove = 0x21, kUnroute = 0x22, kGain = 0x23, kRouted = 0x60, kRefused = 0x61 };
+enum Op : uint8_t { kRoute = 0x20, kMove = 0x21, kUnroute = 0x22, kGain = 0x23, kMod = 0x24, kRouted = 0x60, kRefused = 0x61 };
+constexpr int kMods = 32;         // mod points (core/proc kMods); numbered kPoints..kPoints+kMods-1
 enum Code : uint8_t { kFull = 3, kBad = 5, kLoop = 7 };
 
 bool is_route_op(uint8_t op);
@@ -94,6 +101,8 @@ bool slot_quiet(int s);
 // tests / /status / console
 struct Point { bool open; uint8_t owner, src, dst; uint16_t gain; };
 Point point(int p);   // the control side's view
+struct ModPoint { bool open; uint8_t owner, src, ctl, dst, param; uint16_t depth; };
+ModPoint mod_point(int i);   // i 0..kMods-1 (point number kPoints + i)
 struct Stats {
   uint32_t routed, moved, closed, refused, gains, ops_bad; int open; int last_refused;
   uint32_t timed, late, resyncs;   // stamped gains; those too late for a whole ramp; stamp estimates started again

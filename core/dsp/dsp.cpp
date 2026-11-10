@@ -7,6 +7,7 @@
 
 #include "../route/route.h"
 #include "blocks.h"
+#include "gen.h"
 #include "sample.h"
 
 namespace core {
@@ -26,6 +27,11 @@ const ParamInfo kWidthP[] = {{"WIDTH", 8192}, {"BALANCE", 8192}, {"GAIN", 8192}}
 const ParamInfo kSampleP[] = {{"LEV", 100 * 64}, {"SMP", 0}, {"TUN", 64 * 64}, {"STA", 0},
                               {"END", 16383},    {"LOOP", 0}, {"FIN", 64 * 64}, {"VEL", 0}};
 
+const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}, {"FIN", 64 * 64},
+                           {"PW", 64 * 64},   {"FM", 0},       {"SUB", 0},       {"THRU", 0}};
+const ParamInfo kNoiseP[] = {{"LEV", 100 * 64}, {"COL", 64 * 64}, {"THRU", 127 * 64}};
+const ParamInfo kEnvP[] = {{"ATK", 0}, {"DEC", 64 * 64}, {"SUS", 0}, {"REL", 32 * 64}, {"MODE", 0}, {"VCA", 127 * 64}, {"VEL", 0}};
+
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
     {"FILTER", 4, kFilterP, sizeof(Filter), make<Filter>},
@@ -33,6 +39,9 @@ const BlockInfo kLibrary[] = {
     {"MOD", 5, kModP, sizeof(Modulator), make<Modulator>},
     {"WIDTH", 3, kWidthP, sizeof(Width), make<Width>},
     {"SAMPLE", 8, kSampleP, sizeof(Sample), make<Sample>},
+    {"OSC", 8, kOscP, sizeof(Osc), make<Osc>},
+    {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
+    {"ENV", 7, kEnvP, sizeof(Env), make<Env>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order
@@ -182,6 +191,8 @@ bool sysex(const uint8_t* m, int n) {
       if (!p) return refuse(seq, owner, kBad);
       if (!proc::register_slot(slot, p)) { p->~Proc(); return refuse(seq, owner, kFull); }
       s = Slot{kPlacedState, (uint8_t)owner, info, p};
+      // the params' bases for mod points (core/proc): the block's defaults, until a set
+      for (int k = 0; k < info->nparams && k < proc::kParams; ++k) proc::set_default(slot, k, info->params ? info->params[k].def : 0);
       ++s_st.placed;
       s_st.used = count_used();
       const uint8_t a[] = {kPlaced, (uint8_t)seq, (uint8_t)owner, (uint8_t)slot};

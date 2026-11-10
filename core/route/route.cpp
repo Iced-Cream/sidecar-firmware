@@ -3,12 +3,16 @@
 
 #include <string.h>
 
+#include "../proc/proc.h"
+
 namespace core {
 namespace route {
 
 namespace {
 // ---- the control side (one core: the host link's and the lock sink's) ----
 Point s_pt[kPoints];
+ModPoint s_mp[kMods];
+static_assert(kMods == proc::kMods && kSlots == proc::kSlots, "route and proc agree");
 Stats s_st;
 int s_open_n;            // written by the control core, read by any() from the render side
 struct Answer { uint8_t n; uint8_t d[12]; };
@@ -17,7 +21,7 @@ Answer s_ans[kAnswers];
 int s_ans_rd, s_ans_wr;
 
 // ---- control -> render: a single-producer single-consumer ring ----
-enum Kind : uint8_t { kAim = 0, kSetGain = 1, kClose = 2, kCloseAll = 3 };
+enum Kind : uint8_t { kAim = 0, kSetGain = 1, kClose = 2, kCloseAll = 3, kModOn = 4, kModOff = 5 };
 struct Cmd { uint8_t kind, pt, src, dst; uint16_t gain; int64_t at; };   // at: the frame a stamped gain lands by, -1 now
 constexpr uint32_t kQ = 128;
 Cmd s_q[kQ];
@@ -62,6 +66,8 @@ bool reaches(int from, int to, int skip, int depth = 0) {
     int a = src_node(p.src), b = dst_node(p.dst);
     if (a == from && b >= 0 && reaches(b, to, skip, depth + 1)) return true;
   }
+  for (const ModPoint& m : s_mp)   // mod points: slot src's node feeds slot dst's
+    if (m.open && 8 + m.src == from && reaches(8 + m.dst, to, skip, depth + 1)) return true;
   return false;
 }
 // 0: fine; else the refusal code for src -> dst (point `skip` left out of the loop check: the one being re-aimed)
@@ -117,6 +123,8 @@ uint32_t s_blk;     // render side: blocks begun (process_in)
 uint32_t s_live_slots;   // render side: bit s, a live point (on or fading) touches slot s; read by slot_quiet()
 uint32_t s_late;   // render side: stamped gains that came too late for a whole ramp
 Live s_live[kPoints];
+struct ModEdge { bool on; uint8_t src, dst; };
+ModEdge s_medge[kMods];   // render side: the mod points' edges, for order()
 int s_live_n;   // points on (render side), read by any()
 
 void ramp_to(Live& l, float goal, int len = kRamp) {
@@ -147,6 +155,11 @@ void land(Live& l, float want, int len) {
 void apply(const Cmd& c, int64_t now) {
   if (c.kind == kCloseAll) {
     for (Live& l : s_live) if (l.on) { l.closing = true; retarget(l); }
+    for (ModEdge& e : s_medge) e.on = false;
+    return;
+  }
+  if (c.kind == kModOn || c.kind == kModOff) {
+    if (c.pt < kMods) s_medge[c.pt] = ModEdge{c.kind == kModOn, c.src, c.dst};
     return;
   }
   if (c.pt >= kPoints) return;
@@ -186,14 +199,25 @@ void apply(const Cmd& c, int64_t now) {
 }
 }  // namespace
 
-bool is_route_op(uint8_t op) { return op >= kRoute && op <= kGain; }
+bool is_route_op(uint8_t op) { return op >= kRoute && op <= kMod; }
+
+namespace {
+// close mod point i (control side): the render side's edge and proc's point
+bool close_mod(int i) {
+  if (!s_mp[i].open || !push({kModOff, (uint8_t)i, 0, 0, 0, -1})) return false;
+  proc::clear_mod(i);
+  s_mp[i].open = false;
+  ++s_st.closed;
+  return true;
+}
+}  // namespace
 
 bool sysex(const uint8_t* m, int n) {
   if (n < 8 || m[0] != 0xF0 || m[4] != 0x51 || m[n - 1] != 0xF7 || !is_route_op(m[6])) { ++s_st.ops_bad; return false; }
   const uint8_t* b = m + 7;
   int bn = n - 8;
   for (int i = 0; i < bn; ++i) if (b[i] & 0x80) { ++s_st.ops_bad; return false; }
-  bool asks = m[6] == kRoute || m[6] == kMove;   // these two are answered, refusals too (when seq and owner came)
+  bool asks = m[6] == kRoute || m[6] == kMove || m[6] == kMod;   // these two are answered, refusals too (when seq and owner came)
   if (m[5] != 1) { ++s_st.ops_bad; return asks && bn >= 2 ? refuse(b[0], b[1], kBad) : false; }
   switch (m[6]) {
     case kRoute: {   // <seq> <owner> <src> <dst> <hi> <lo>
@@ -224,9 +248,27 @@ bool sysex(const uint8_t* m, int n) {
       routed(seq, b[1], pt);
       return true;
     }
+    case kMod: {     // <seq> <owner> <src slot> <ctl> <dst slot> <param> <hi> <lo>
+      if (bn != 8) { ++s_st.ops_bad; return bn >= 2 ? refuse(b[0], b[1], kBad) : false; }
+      int seq = b[0], src = b[2], ctl = b[3], dst = b[4], param = b[5];
+      if (src >= kSlots || dst >= kSlots || ctl >= proc::kCtls || param >= proc::kParams) return refuse(seq, b[1], kBad);
+      if (reaches(8 + dst, 8 + src, -1)) return refuse(seq, b[1], kLoop);   // (src = dst too)
+      int i = -1;
+      for (int k = 0; k < kMods && i < 0; ++k) if (!s_mp[k].open) i = k;
+      if (i < 0) return refuse(seq, b[1], kFull);
+      uint16_t d = v14(b + 6);
+      if (!push({kModOn, (uint8_t)i, (uint8_t)src, (uint8_t)dst, 0, -1})) return refuse(seq, b[1], kFull);
+      if (!proc::set_mod(i, src, ctl, dst, param, d)) { push({kModOff, (uint8_t)i, 0, 0, 0, -1}); return refuse(seq, b[1], kFull); }
+      s_mp[i] = ModPoint{true, b[1], (uint8_t)src, (uint8_t)ctl, (uint8_t)dst, (uint8_t)param, d};
+      ++s_st.routed;
+      routed(seq, b[1], kPoints + i);
+      return true;
+    }
     case kUnroute: { // <owner> <point | 7F>
       if (bn != 2) { ++s_st.ops_bad; return false; }
       bool any_closed = false;
+      for (int i = 0; i < kMods; ++i)
+        if (s_mp[i].open && s_mp[i].owner == b[0] && (b[1] == 0x7F || b[1] == kPoints + i)) any_closed |= close_mod(i);
       for (int i = 0; i < kPoints; ++i) {
         Point& p = s_pt[i];
         if (!p.open || p.owner != b[0] || (b[1] != 0x7F && b[1] != i)) continue;
@@ -240,6 +282,12 @@ bool sysex(const uint8_t* m, int n) {
       return any_closed;
     }
     case kGain: {    // <owner> <point> <hi> <lo>
+      if (bn == 4 && b[1] >= kPoints && b[1] < kPoints + kMods) {   // a mod point's depth
+        ModPoint& mp = s_mp[b[1] - kPoints];
+        if (!mp.open || mp.owner != b[0] || !proc::set_mod_depth(b[1] - kPoints, v14(b + 2))) { ++s_st.ops_bad; return false; }
+        mp.depth = v14(b + 2);
+        return true;
+      }
       if (bn != 4 || b[1] >= kPoints || !s_pt[b[1]].open || s_pt[b[1]].owner != b[0]) { ++s_st.ops_bad; return false; }
       int64_t t = s_target;
       s_target = -1;   // GAIN itself is never stamped
@@ -272,6 +320,7 @@ bool set_gain(int pt, int v) {
 void reset() {
   bool had = count_open() > 0;
   for (Point& p : s_pt) p.open = false;
+  for (int i = 0; i < kMods; ++i) if (s_mp[i].open) { proc::clear_mod(i); s_mp[i].open = false; had = true; }
   set_open_n(0);
   if (had || __atomic_load_n(&s_live_n, __ATOMIC_ACQUIRE)) push({kCloseAll, 0, 0, 0, 0, -1});
   s_have = false;   // the next stream's ticks start the stamp's estimate again
@@ -365,6 +414,7 @@ void order(uint8_t* slots) {
   int indeg[kSlots] = {};
   for (const Live& l : s_live)
     if (l.on && is_slot(l.src) && is_slot(l.dst) && slot_of(l.src) != slot_of(l.dst)) ++indeg[slot_of(l.dst)];
+  for (const ModEdge& e : s_medge) if (e.on && e.src != e.dst) ++indeg[e.dst];
   bool done[kSlots] = {};
   int n = 0;
   for (bool progress = true; progress && n < kSlots;) {
@@ -376,6 +426,7 @@ void order(uint8_t* slots) {
       progress = true;
       for (const Live& l : s_live)
         if (l.on && is_slot(l.src) && is_slot(l.dst) && slot_of(l.src) == s && slot_of(l.dst) != s) --indeg[slot_of(l.dst)];
+      for (const ModEdge& e : s_medge) if (e.on && e.src == s && e.dst != s) --indeg[e.dst];
     }
   }
   for (int s = 0; s < kSlots; ++s) if (!done[s]) slots[n++] = (uint8_t)s;
@@ -416,6 +467,8 @@ void close_slot(int s) {
     p.open = false;
     ++s_st.closed;
   }
+  for (int i = 0; i < kMods; ++i)
+    if (s_mp[i].open && (s_mp[i].src == s || s_mp[i].dst == s)) close_mod(i);
   set_open_n(count_open());
 }
 
@@ -429,6 +482,7 @@ bool slot_quiet(int s) {
 }
 
 Point point(int p) { return p >= 0 && p < kPoints ? s_pt[p] : Point{}; }
+ModPoint mod_point(int i) { return i >= 0 && i < kMods ? s_mp[i] : ModPoint{}; }
 Stats stats() {
   Stats s = s_st;
   s.late = __atomic_load_n(&s_late, __ATOMIC_RELAXED);

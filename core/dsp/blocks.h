@@ -237,12 +237,15 @@ class Modulator : public Block {
         float x = in(b, c, f);
         float y = mode == 0 ? x * (1.0f - depth + depth * o) : x * (1.0f - depth * (0.5f - 0.5f * o));
         out(b, c, f, y);
+        last_[c] = o;
       }
     }
   }
+  // ctl(0) / ctl(1): the left / right oscillator (-1..1) at the end of the block: an LFO for mod points (2026-11-10)
+  float ctl(int k) const override { return k == 0 || k == 1 ? last_[k] : 0.0f; }
 
  private:
-  float phase_ = 0.0f;
+  float phase_ = 0.0f, last_[2] = {};
   static float osc(float ph, float shape) {
     float s = sinf(2.0f * kPi * ph);
     float t = ph < 0.25f ? 4.0f * ph : ph < 0.75f ? 2.0f - 4.0f * ph : 4.0f * ph - 4.0f;
