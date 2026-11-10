@@ -9,6 +9,7 @@
 #include "../dsp/dsp.h"
 #include "../code/code.h"
 #include "../route/route.h"
+#include "../samples/samples.h"
 #include "kv.h"
 #include "kv_card.h"
 #include <string.h>
@@ -72,6 +73,7 @@ bool name(const uint8_t* m, int n) {
   if (p == s_name_project && !strcmp(nm, s_name)) return true;
   memcpy(s_name, nm, (size_t)k + 1);
   s_name_project = p;
+  samples::on_project(p);   // the project's sample pool (core/samples), read on the card core
   for (NameFn f : s_name_fn) if (f) f(s_name, p);
   return true;
 }
@@ -98,6 +100,10 @@ bool from_host(const uint8_t* m, int n) {
     if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
     return true;
   }
+  if (samples::is_samples_op(m[6])) {                        // the sample pool (core/samples): the card core's
+    if (!s_in.push(m, n)) { ++s_st.dropped_in; return false; }
+    return true;
+  }
   if (m[6] == kOpName) return name(m, n);                    // the control core's too: nothing on the card
   // the companion's HELLO starts its session: the sets it declared before are gone with it (it declares them again
   // once answered). Here and not at the screen's 35, which may come after the HELLO and would wipe the new sets.
@@ -114,6 +120,8 @@ int card_step(int max_ops) {
     if (code::is_code_op(m->d[6])) {
       if (!code::card_can_take(m->d, m->n)) break;   // the load buffer is still the control core's: next time
       code::card_op(m->d, m->n);
+    } else if (samples::is_samples_op(m->d[6])) {
+      samples::card_op(m->d, m->n);
     } else {
       if (m->d[6] == kOpHello) code::card_hello();   // a transfer under way goes with the session
       s_svc.sysex(m->d, m->n);
@@ -123,6 +131,7 @@ int card_step(int max_ops) {
     ++s_st.ops;
   }
   code::card_poll();
+  samples::card_poll();
   return k;
 }
 
@@ -135,6 +144,10 @@ int host_step(int max_msgs) {
   for (int an; k < max_msgs && (an = route::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
   for (int an; k < max_msgs && (an = dsp::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
   for (int an; k < max_msgs && (an = code::take_answer(a, sizeof a)) > 0; ++k, ++s_st.out) core::to_rytm(a, an);
+  {
+    uint8_t sa[48];
+    for (int an; k < max_msgs && (an = samples::take_answer(sa, sizeof sa)) > 0; ++k, ++s_st.out) core::to_rytm(sa, an);
+  }
   while (k < max_msgs) {
     Msg* m = s_out.front();
     if (!m) break;

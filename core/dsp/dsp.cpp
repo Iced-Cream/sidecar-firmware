@@ -7,6 +7,7 @@
 
 #include "../route/route.h"
 #include "blocks.h"
+#include "sample.h"
 
 namespace core {
 namespace dsp {
@@ -22,6 +23,8 @@ const ParamInfo kFilterP[] = {{"MODE", 0}, {"CUTOFF", 16383}, {"RESO", 2000}, {"
 const ParamInfo kShaperP[] = {{"MODE", 0}, {"DRIVE", 0}, {"BITS", 16383}, {"RATE", 16383}, {"LEVEL", 8192}};
 const ParamInfo kModP[] = {{"MODE", 0}, {"RATE", 9000}, {"DEPTH", 16383}, {"SHAPE", 0}, {"PHASE", 0}};
 const ParamInfo kWidthP[] = {{"WIDTH", 8192}, {"BALANCE", 8192}, {"GAIN", 8192}};
+const ParamInfo kSampleP[] = {{"LEV", 100 * 64}, {"SMP", 0}, {"TUN", 64 * 64}, {"STA", 0},
+                              {"END", 16383},    {"LOOP", 0}, {"FIN", 64 * 64}};
 
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
@@ -29,6 +32,7 @@ const BlockInfo kLibrary[] = {
     {"SHAPER", 5, kShaperP, sizeof(Shaper), make<Shaper>},
     {"MOD", 5, kModP, sizeof(Modulator), make<Modulator>},
     {"WIDTH", 3, kWidthP, sizeof(Width), make<Width>},
+    {"SAMPLE", 7, kSampleP, sizeof(Sample), make<Sample>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order

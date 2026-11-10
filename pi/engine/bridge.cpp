@@ -7,6 +7,7 @@
 #include "browse/browse.h"
 #include "clock/clock.h"
 #include "code/code.h"
+#include "samples/samples.h"
 #include "lib/sha256.h"
 #include "devmidi/devmidi.h"
 #include "device/device.h"
@@ -59,6 +60,11 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   bool code_ok = c && ba && bb &&
                  core::code::begin((void*)(((uintptr_t)c + u - 1) & ~(uintptr_t)(u - 1)), ca, ba, bb, s_code_board);
   core::log("code: %u KB arena %s", (unsigned)(ca >> 10), code_ok ? "ready" : "NOT ready (no shipped code)");
+  // the sample service (core/samples): the project's pool in RAM, one arena from the heap at boot
+  constexpr size_t kSampleBytes = 96u << 20;
+  uint8_t* sa = new uint8_t[kSampleBytes];
+  bool samples_ok = sa && core::samples::begin(sa, kSampleBytes);
+  core::log("samples: %u MB %s", (unsigned)(kSampleBytes >> 20), samples_ok ? "ready" : "NOT ready (no sample pool)");
   return s_card;
 }
 void sysex(const uint8_t* d, int len) { core::gen::sysex(d, len); }
@@ -281,6 +287,13 @@ int generic_json(char* out, int cap) {
     n += m;
   }
   m = sniprintf(out + n, cap - n, "]}");
+  if (m <= 0 || m >= cap - n) return 0;
+  n += m;
+  // the sample service (core/samples)
+  const core::samples::Stats ss = core::samples::stats();
+  m = sniprintf(out + n, cap - n, ",\"samples\":{\"listed\":%d,\"ready\":%d,\"loads\":%lu,\"fails\":%lu,\"usedKB\":%lu,"
+                "\"totalKB\":%lu}", ss.listed, ss.ready, (unsigned long)ss.loads, (unsigned long)ss.fails,
+                (unsigned long)(ss.bytes_used >> 10), (unsigned long)(ss.bytes_total >> 10));
   return m > 0 && m < cap - n ? n + m : 0;
 }
 
@@ -367,6 +380,21 @@ bool generic_command(const char* p, char* out, int cap) {
       char hx[9];
       core::lib::hex(bv.hash, 4, hx);
       int w = sniprintf(out + n, cap - n, "; %s %s (owner %d, %d slots)", bv.name, hx, bv.owner, bv.users);
+      if (w < 0) break;
+      n += w;
+    }
+    return true;
+  }
+  if (!strcmp(p, "samples")) {   // the sample pool: "samples: 3 listed, 2 ready ...; 0 R /Samples/kick.wav"
+    const core::samples::Stats ss = core::samples::stats();
+    int n = sniprintf(out, cap, "samples: %d listed, %d ready, %lu loads, %lu fails, %lu / %lu KB", ss.listed, ss.ready,
+                      (unsigned long)ss.loads, (unsigned long)ss.fails, (unsigned long)(ss.bytes_used >> 10),
+                      (unsigned long)(ss.bytes_total >> 10));
+    static const char kSt[] = "-LoRFB";
+    for (int i = 0; n > 0 && n < cap && i < core::samples::kEntries; ++i) {
+      core::samples::State st = core::samples::state(i);
+      if (st == core::samples::kEmpty) continue;
+      int w = sniprintf(out + n, cap - n, "; %d %c %s", i, kSt[st], core::samples::path(i));
       if (w < 0) break;
       n += w;
     }
