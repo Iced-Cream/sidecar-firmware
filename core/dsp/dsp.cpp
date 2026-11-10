@@ -596,11 +596,13 @@ bool wt_poll() {
     }
     if (b < 0) return false;   // every slot in use: it waits
     WtSlot& s = s_wts[b];
-    if (!s.data) s.data = new (std::nothrow) float[(size_t)wt::kMaxFrames * wt::kFrameFloats];
+    // plain new as the rest of core (the Pi's kernel has no std::nothrow: core/store/store.cpp); on the Pi an
+    // allocation past the heap's reserve halts before new returns 0, so the check below is the host's
+    if (!s.data) s.data = new float[(size_t)wt::kMaxFrames * wt::kFrameFloats];
     if (!j.x) {
-      j.x = new (std::nothrow) float[kWtMaxFs];
-      j.c = new (std::nothrow) float[wt::kSpec];
-      j.scratch = new (std::nothrow) float[4 * kWtMaxFs];
+      j.x = new float[kWtMaxFs];
+      j.c = new float[wt::kSpec];
+      j.scratch = new float[4 * kWtMaxFs];
     }
     if (!s.data || !j.x || !j.c || !j.scratch) return false;
     wt_unpublish(s);
