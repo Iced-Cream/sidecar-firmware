@@ -91,6 +91,36 @@ void midi(int src, uint8_t s, uint8_t a, uint8_t b) {
 
 bool present(int src) { return src >= 0 && src < kSrcs && g_src[src].on; }
 const char* name(int src) { return present(src) ? g_src[src].name : ""; }
-Stats stats() { return g_st; }
+namespace {
+constexpr uint32_t kOutQ = 256;
+uint32_t s_out[kOutQ];
+alignas(64) uint32_t s_out_wr = 0;
+alignas(64) uint32_t s_out_rd = 0;
+uint32_t s_out_n, s_out_dropped;   // (the producer's)
+}  // namespace
+bool out(int dst, uint8_t status, uint8_t d1, uint8_t d2) {
+  if (dst < 0 || dst > kSrcs || status < 0x80 || status >= 0xF0) { ++s_out_dropped; return false; }
+  uint32_t w = __atomic_load_n(&s_out_wr, __ATOMIC_RELAXED), r = __atomic_load_n(&s_out_rd, __ATOMIC_ACQUIRE);
+  if (w - r >= kOutQ) { ++s_out_dropped; return false; }
+  uint32_t cin = status >> 4;
+  s_out[w & (kOutQ - 1)] = cin | (uint32_t)dst << 4 | (uint32_t)status << 8 | (uint32_t)(d1 & 0x7F) << 16 | (uint32_t)(d2 & 0x7F) << 24;
+  __atomic_store_n(&s_out_wr, w + 1, __ATOMIC_RELEASE);
+  ++s_out_n;
+  return true;
+}
+bool take_out(uint32_t* v) {
+  uint32_t r = __atomic_load_n(&s_out_rd, __ATOMIC_RELAXED), w = __atomic_load_n(&s_out_wr, __ATOMIC_ACQUIRE);
+  if (r == w) return false;
+  *v = s_out[r & (kOutQ - 1)];
+  __atomic_store_n(&s_out_rd, r + 1, __ATOMIC_RELEASE);
+  return true;
+}
+Stats stats() {
+  Stats s = g_st;
+  s.out = s_out_n;
+  s.out_dropped = s_out_dropped;
+  return s;
+}
+
 }  // namespace devmidi
 }  // namespace core

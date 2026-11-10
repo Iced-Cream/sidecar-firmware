@@ -42,6 +42,8 @@ static boolean SdWriteWhole (const char *pPath, const char *pData, unsigned n)
 #include "fmt/fmt.h"		// write_atomic (SdWriteWhole)
 #include "stor_pi.h"
 #include "code_mmu.h"		// shipped code: the code arena's pages
+#include "devmidi/devmidi.h"	// MIDIOUT's messages for the USB-A devices (DevMidiSend)
+#include "midiout_q.h"		// their queues
 #include "version.h"
 #include <circle/new.h>
 
@@ -597,6 +599,49 @@ static void KeysRemoved (CDevice *pDevice, void *pContext)
 	KeysPush ((u32) i << 24 | 0xF4u << 16);
 	LeaveCritical ();
 }
+// The library's MIDIOUT (core/dsp/midiout.h) queues channel messages for the USB-A devices on the render side
+// (core/devmidi out: dst 0 every device, n device n). Sent from here (core 0) as upstream's AsampMidiSend sends the MIDI
+// machine's: USB-A never waits, each device has a queue (midiout_q.h) and one transfer in flight (circle-midi-async.patch),
+// so a device that does not drain costs only its own queue; what it cannot take is shed, note-offs last. A failed
+// transfer's note-offs go again, 100 ms later. (2026-11-10; not built in the cloud: no Circle tree there [I].)
+static MidiOutQ s_OutQ[MaxKeyboards];
+static void DevMidiSend (void)
+{
+	u32 w;
+	while (core::devmidi::take_out (&w))
+	{
+		unsigned nDst = (w >> 4) & 0x0F;
+		w &= ~0xF0u;				// cable 0
+		for (unsigned i = 0; i < MaxKeyboards; i++)
+			if (s_pKeyboard[i] != 0 && (nDst == 0 || nDst == i + 1)) s_OutQ[i].push (w);
+	}
+	for (unsigned i = 0; i < MaxKeyboards; i++)
+	{
+		CUSBMIDIDevice *p = (CUSBMIDIDevice *) s_pKeyboard[i];
+		if (p == 0)
+		{
+			s_OutQ[i].clear ();
+			continue;
+		}
+		unsigned nState = p->GetSendState ();
+		if (nState == 1) continue;
+		unsigned nNow = CTimer::GetClockTicks ();	// (1 MHz)
+		if (nState == 2)
+		{
+			s_OutQ[i].failed ();
+			s_OutQ[i].hold (nNow);
+		}
+		if (s_OutQ[i].held (nNow)) continue;
+		u32 Batch[MidiOutQ::kBatch];
+		unsigned n = s_OutQ[i].pop (Batch);
+		if (n != 0 && !p->SendEventPacketsAsync ((const u8 *) Batch, n * 4))
+		{
+			s_OutQ[i].failed ();
+			s_OutQ[i].hold (nNow);
+		}
+	}
+}
+
 static TUsbBox BoxOf (CDevice *p)
 {
 	return usb_box (p->GetProperty (CDevice::PropertyVendor), p->GetProperty (CDevice::PropertyProduct));
@@ -970,6 +1015,7 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (11, 200); if (m_pGadget != 0) m_pGadget->Poll (); }
 		{ mbtrace::Scope Mb (12, 200); if (m_pSidecar != 0) m_pSidecar->Poll (); }
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
+		DevMidiSend ();							// MIDIOUT's messages to the USB-A devices
 		// (a capped clock is held: Update would raise it again when cool.) CCPUThrottle::Update acts once every 4 s
 		// and is a no-op in between; it is called on that cadence here (4 s + 10 ms since our last call, so its own
 		// 4 s gate is open every time) so that the clock it may just have changed is read back at once (FollowClock)

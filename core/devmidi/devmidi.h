@@ -31,7 +31,14 @@ void midi(int src, uint8_t status, uint8_t d1, uint8_t d2);    // one message fr
 
 bool present(int src);
 const char* name(int src);       // "" when none
-struct Stats { uint32_t messages, forwarded, to_slots, released, ignored; };
+// Out to the devices (2026-11-10, MIDIOUT on the library): the render side queues channel messages for the USB-A
+// devices (one producer: the render side; one consumer: the platform's USB loop, core 0 on the Pi, which sends them
+// without waiting: pi/engine/midiout_q.h). dst 0 every device, 1..kSrcs device dst. False: the queue is full (dropped,
+// counted). take_out: the next as a USB MIDI event packet word (little-endian: CIN in the low nibble, the dst in the
+// cable nibble, the bytes above; the platform sends it on cable 0).
+bool out(int dst, uint8_t status, uint8_t d1, uint8_t d2);
+bool take_out(uint32_t* w);
+struct Stats { uint32_t messages, forwarded, to_slots, released, ignored, out, out_dropped; };
 Stats stats();
 }  // namespace devmidi
 }  // namespace core

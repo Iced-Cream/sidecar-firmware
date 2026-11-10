@@ -14,6 +14,8 @@
 #include "dsp/gen.h"
 #include "dsp/grain.h"
 #include "dsp/wtosc.h"
+#include "dsp/midiout.h"
+#include "devmidi/devmidi.h"
 #include <chrono>
 #include "hooks.h"
 #include "kv/link.h"
@@ -416,6 +418,44 @@ static void test_gen() {
     o.midi(proc::kSrcRytm, 0x90, 127, 100);
     o.set_param(3, 100 * 64);
     CHECK(peak(run_block(o, std::vector<float>(2400, 0.0f))) < 1.05f);
+  }
+  // MIDIOUT: values on change, a note (transposed) on its channel, its note-off after LEN, a new DST
+  {
+    uint32_t w;
+    while (devmidi::take_out(&w)) {}
+    auto taken = [] { std::vector<uint32_t> v; uint32_t x; while (devmidi::take_out(&x)) v.push_back(x); return v; };
+    auto word = [](int dst, uint8_t st, uint8_t d1, uint8_t d2) {
+      return (uint32_t)(st >> 4) | (uint32_t)dst << 4 | (uint32_t)st << 8 | (uint32_t)d1 << 16 | (uint32_t)d2 << 24;
+    };
+    static dsp::MidiOut m;
+    m.set_param(1, 1 * 64);        // channel 2
+    m.set_param(9, 75 * 64);       // SEL1: CC 74
+    m.set_param(8, 100 * 64);      // VAL1
+    m.set_param(3, 66 * 64);       // +2
+    m.set_param(2, 1 * 64);        // LEN 10 ms
+    run_block(m, std::vector<float>(64, 0.0f));
+    std::vector<uint32_t> o = taken();
+    CHECK(o.size() == 1 && o[0] == word(0, 0xB1, 74, 100));
+    run_block(m, std::vector<float>(64, 0.0f));
+    CHECK(taken().empty());        // unchanged: nothing
+    m.midi(proc::kSrcRytm, 0x90, 60, 90);
+    std::vector<float> x = sine(100.0f, 64);
+    std::vector<float> y = run_block(m, x);
+    o = taken();
+    CHECK(o.size() == 1 && o[0] == word(0, 0x91, 62, 90) && y[10] == x[10]);   // (the input passes)
+    run_block(m, std::vector<float>(640, 0.0f));
+    o = taken();
+    CHECK(o.size() == 1 && o[0] == word(0, 0x81, 62, 0));
+    // DST device 2: the values again there; a held note ends where it played
+    m.set_param(2, 0);
+    m.midi(proc::kSrcRytm, 0x90, 64, 100);
+    run_block(m, std::vector<float>(64, 0.0f));
+    taken();
+    m.set_param(0, 3 * 64);
+    run_block(m, std::vector<float>(64, 0.0f));
+    o = taken();
+    CHECK(o.size() == 2 && o[0] == word(0, 0x81, 66, 0) && o[1] == word(2, 0xB1, 74, 100));
+    CHECK(devmidi::stats().out >= 5);
   }
   // MOD: its oscillator as ctl(0) / ctl(1), within -1..1, moving
   {

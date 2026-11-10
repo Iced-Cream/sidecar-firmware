@@ -10,6 +10,7 @@
 #include "gen.h"
 #include "grain.h"
 #include "wtosc.h"
+#include "midiout.h"
 #include "sample.h"
 
 namespace core {
@@ -42,6 +43,10 @@ const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},   
 const ParamInfo kWtOscP[] = {{"LEV", 100 * 64}, {"TBL", 0},   {"POS", 0},   {"TUN", 64 * 64},
                              {"FIN", 64 * 64},  {"FM", 0},    {"SUB", 0},   {"THRU", 0}};
 
+const ParamInfo kMidiOutP[] = {{"DST", 1 * 64}, {"CHN", 0},  {"LEN", 0},  {"TRN", 64 * 64}, {"PROG", 0}, {"PB", 0},
+                               {"AT", 0},      {"MW", 0},   {"VAL1", 0}, {"SEL1", 0},      {"VAL2", 0}, {"SEL2", 0},
+                               {"VAL3", 0},    {"SEL3", 0}, {"VAL4", 0}, {"SEL4", 0}};
+
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
     {"FILTER", 4, kFilterP, sizeof(Filter), make<Filter>},
@@ -54,6 +59,7 @@ const BlockInfo kLibrary[] = {
     {"ENV", 7, kEnvP, sizeof(Env), make<Env>},
     {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
     {"WTOSC", 8, kWtOscP, sizeof(WtOsc), make<WtOsc>},
+    {"MIDIOUT", 16, kMidiOutP, sizeof(MidiOut), make<MidiOut>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order
