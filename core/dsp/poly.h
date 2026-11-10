@@ -103,7 +103,8 @@ class Poly : public proc::Proc {
   // the slot memory a spec takes (POLY, then its copies)
   static size_t bytes(const Spec& s) {
     size_t n = align(sizeof(Poly));
-    for (int b = 0; b < s.nb; ++b) n += (size_t)s.notes * align(s.blk[b]->bytes);
+    for (int b = 0; b < s.nb; ++b)
+      n += align(s.blk[b]->bytes) + (size_t)(s.notes - 1) * align(s.blk[b]->bytes - s.blk[b]->shared);
     return n;
   }
   // built at mem (bytes(s) of it); ok() false: a block refused to build (the copies built so far are gone again)
@@ -112,8 +113,9 @@ class Poly : public proc::Proc {
     for (int k = 0; k < s_.notes && ok_; ++k)
       for (int b = 0; b < s_.nb && ok_; ++b) {
         c_[k][b] = s_.blk[b]->make(at, s_.blk[b]->ctx);
-        at += align(s_.blk[b]->bytes);
+        at += align(k ? s_.blk[b]->bytes - s_.blk[b]->shared : s_.blk[b]->bytes);
         if (!c_[k][b]) ok_ = false;
+        else if (k) c_[k][b]->share(c_[0][b]);
       }
     for (int m = 0; m < kMods; ++m) depth_[m] = 8192;
     for (int p = 0; p < kOwn; ++p) base_[p] = 0;
@@ -171,6 +173,7 @@ class Poly : public proc::Proc {
     const int nf = b.frames;
     float* acc[2] = {acc_[0], acc_[1]};
     memset(acc_, 0, sizeof acc_);
+    for (int i = 0; i < s_.nb; ++i) c_[0][i]->voice(b, last_);   // the voice-wide work, before the notes
     float e = 0.0f;
     bool any = false;
     for (int k = 0; k < s_.notes; ++k) {
@@ -207,7 +210,9 @@ class Poly : public proc::Proc {
       float g = any ? g0 + dg * (float)(f + 1) : 0.0f;
       if (b.sout[0]) b.sout[0][f] = acc[0][f] * g;
       if (b.sout[1]) b.sout[1][f] = acc[1][f] * g;
+      last_[f] = acc[0][f] * g;
     }
+    for (int f = nf; f < proc::kMaxFrames; ++f) last_[f] = 0.0f;
   }
   bool done() const override {
     for (int k = 0; k < s_.notes; ++k) if (n_[k].on) return false;
@@ -235,6 +240,7 @@ class Poly : public proc::Proc {
   bool ok_ = true;
   float buf_[2][2][proc::kMaxFrames];
   float acc_[2][proc::kMaxFrames];
+  float last_[proc::kMaxFrames] = {};   // its output's L, the last block (a block's feedback: GRAIN's ring)
 
   void destroy() {
     for (int k = 0; k < kNotes; ++k)

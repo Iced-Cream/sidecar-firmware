@@ -51,6 +51,13 @@ class Proc {
   // a note it played has ended and it is silent until the next (an envelope at rest, a one-shot past its end): a host
   // of notes (core/dsp's POLY) frees the note's chain. Render side. False for a processor that cannot tell.
   virtual bool done() const { return false; }
+  // A host of notes (core/dsp's POLY) builds one copy of a block a note. share(first): this copy is not the first, and
+  // first (the first copy of the same block) holds what the copies share (a live input's ring); voice(b, last): the
+  // first copy, once every block before any note's copy runs (sounding or not), with the host's input in b.sin and
+  // its own output of the last block (L; null: none) - the voice-wide work (recording that ring). Neither is called
+  // outside a host: such a block does its voice-wide work in process(). Control side / render side.
+  virtual void share(Proc* first) {}
+  virtual void voice(const Block& b, const float* last) {}
 };
 
 bool register_slot(int slot, Proc* p);   // false: slot out of range or taken

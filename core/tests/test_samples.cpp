@@ -306,10 +306,11 @@ int main() {
   // GRAIN on a pool entry (SMP 1, the ramp): silent before a note; a note's cloud reads around POS (0.5: the ramp's
   // middle, ~0.5), its level even (1 / sqrt(overlap))
   {
-    static dsp::Grain g;
+    alignas(64) static uint8_t gm[dsp::kSlotBytes];
+    dsp::Grain& g = *(dsp::Grain*)dsp::find("GRAIN")->make(gm, nullptr);
     g.set_param(1, 1 * 64);
     g.set_param(2, 64 * 64);
-    g.set_param(9, 119 * 64);   // the playhead still
+    g.set_param(11, 119 * 64);   // the playhead still
     render_any(g, 2048);
     CHECK(peak(g_l, 0, 2048) == 0.0f);
     g.midi(proc::kSrcRytm, 0x90, 60, 100);

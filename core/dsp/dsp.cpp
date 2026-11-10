@@ -40,7 +40,8 @@ const ParamInfo kSvfP[] = {{"CUT", 64 * 64}, {"RES", 0}, {"KEY", 64 * 64}, {"DRV
 
 const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},       {"SPRY", 0},
                              {"SIZE", 64 * 64}, {"DENS", 64 * 64}, {"PRND", 0},      {"REV", 0},
-                             {"WIN", 0},        {"HOLD", 0},       {"TUN", 64 * 64}, {"FIN", 64 * 64}};
+                             {"WIN", 0},        {"ATK", 0},        {"REL", 64 * 64}, {"HOLD", 0},
+                             {"TUN", 64 * 64},  {"FIN", 64 * 64},  {"HOFS", 8192},   {"LOFS", 0}};
 
 const ParamInfo kWtOscP[] = {{"LEV", 100 * 64}, {"TBL", 0},       {"POS", 0}, {"WARP", 0},  {"AMT", 0},  {"UNI", 0},
                              {"SUB", 0},        {"TUN", 64 * 64}, {"FIN", 64 * 64}, {"PM", 0}, {"THRU", 0}, {"POSM", 8192}, {"PCV", 8192}};
@@ -72,7 +73,7 @@ const BlockInfo kLibrary[] = {
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 9, kEnvP, sizeof(Env), make<Env>},
     {"SVF", 4, kSvfP, sizeof(Svf), make<Svf>},
-    {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
+    {"GRAIN", 16, kGrainP, Grain::bytes(), make<Grain>, nullptr, -1, Grain::kShared},
     {"WTOSC", 13, kWtOscP, sizeof(WtOsc), make<WtOsc>},
     {"MIDIOUT", 16, kMidiOutP, sizeof(MidiOut), make<MidiOut>},
     {"POLY", Poly::kParamCount, kPolyNames.p, sizeof(Poly), nullptr},   // CHAIN only (a PLACE is refused)
@@ -200,6 +201,7 @@ bool begin(void* arena, size_t bytes) {
   if (!arena || bytes < (size_t)kSlots * kSlotBytes || ((uintptr_t)arena & 63)) return false;
   s_arena = (uint8_t*)arena;
   wt_build();   // WTOSC's tables at boot (tens of ms), not at a PLACE mid-session
+  grain_build();
   return true;
 }
 
@@ -236,6 +238,7 @@ bool sysex(const uint8_t* m, int n) {
         slot = want;
       }
       Slot& s = s_slot[slot];
+      memset(s_arena + (size_t)slot * kSlotBytes, 0, info->bytes);   // a block's memory starts zeroed
       proc::Proc* p = info->make(s_arena + (size_t)slot * kSlotBytes, info->ctx);
       if (!p) return refuse(seq, owner, kBad);
       if (!proc::register_slot(slot, p)) { p->~Proc(); return refuse(seq, owner, kFull); }
@@ -280,6 +283,7 @@ bool sysex(const uint8_t* m, int n) {
       int slot = free_slot(want);
       if (slot < 0) return refuse(seq, owner, slot == -2 ? kBad : kFull);
       uint8_t* mem = s_arena + (size_t)slot * kSlotBytes;
+      memset(mem, 0, Poly::bytes(sp));
       Poly* p = new (mem) Poly(sp, mem);
       if (!p->ok()) { p->~Poly(); return refuse(seq, owner, kBad); }
       if (!proc::register_slot(slot, p)) { p->~Poly(); return refuse(seq, owner, kFull); }
@@ -389,6 +393,67 @@ SlotView slot(int i) {
 }
 Stats stats() { return s_st; }
 
+
+// GRAIN's built-in sources (upstream granular.cpp gen_builtin, as is) and windows
+int16_t s_gr_src[2][kGrainBuiltinFrames];
+float s_gr_win[kGrainWins][kGrainWin + 1];
+bool s_gr_built;
+const int16_t* grain_builtin(int b) { return s_gr_built && b >= 0 && b < 2 ? s_gr_src[b] : nullptr; }
+const float* grain_window(int w) { return s_gr_win[w < 0 ? 0 : w >= kGrainWins ? kGrainWins - 1 : w]; }
+void grain_build() {
+  if (s_gr_built) return;
+  static float d[kGrainBuiltinFrames];
+  const float f0 = 261.6256f, sr = 48000.0f, tw = 6.2831853f;
+  for (int b = 0; b < 2; ++b) {
+    for (uint32_t i = 0; i < kGrainBuiltinFrames; ++i) d[i] = 0;
+    if (b == 0) {   // PAD: two detuned band-limited saws, their brightness swelling and falling over the 4 s
+      const int kH = 24;
+      float xr[2][kH], xi[2][kH], cr[2][kH], ci[2][kH];
+      for (int c = 0; c < 2; ++c)
+        for (int h = 0; h < kH; ++h) {
+          float w = tw * f0 * (c ? 1.004f : 0.996f) * (h + 1) / sr;
+          xr[c][h] = 1, xi[c][h] = 0, cr[c][h] = cosf(w), ci[c][h] = sinf(w);
+        }
+      for (uint32_t i0 = 0; i0 < kGrainBuiltinFrames; i0 += 64) {
+        float bright = 0.5f - 0.5f * cosf(tw * (float)i0 / sr / 4.0f);
+        float a[kH];
+        for (int h = 0; h < kH; ++h) a[h] = expf(-(float)h / (2.0f + 10.0f * bright)) / (h + 1);
+        for (int c = 0; c < 2; ++c)
+          for (int h = 0; h < kH; ++h) {
+            float r = xr[c][h], q = xi[c][h];
+            for (uint32_t i = i0; i < i0 + 64 && i < kGrainBuiltinFrames; ++i) {
+              d[i] += a[h] * q;
+              float nr = r * cr[c][h] - q * ci[c][h];
+              q = r * ci[c][h] + q * cr[c][h], r = nr;
+            }
+            float m = 1.0f / sqrtf(r * r + q * q);
+            xr[c][h] = r * m, xi[c][h] = q * m;
+          }
+      }
+    } else {   // BELLS: eight strikes of a bell's inharmonic partials, each ringing out
+      const float kRatio[5] = {1.0f, 2.756f, 5.404f, 8.933f, 13.34f}, kAmp[5] = {1.0f, 0.6f, 0.4f, 0.25f, 0.15f};
+      for (uint32_t i = 0; i < kGrainBuiltinFrames; ++i) {
+        float t = (float)i / sr, ts = fmodf(t, 0.5f);
+        for (int k = 0; k < 5; ++k) d[i] += kAmp[k] * expf(-ts * (1.5f + 2.0f * k)) * sinf(tw * f0 * kRatio[k] * t);
+      }
+    }
+    float pk = 0;
+    for (uint32_t i = 0; i < kGrainBuiltinFrames; ++i) pk = fabsf(d[i]) > pk ? fabsf(d[i]) : pk;
+    float g = pk > 0 ? 0.9f * 32767.0f / pk : 0.0f;
+    for (uint32_t i = 0; i < kGrainBuiltinFrames; ++i) s_gr_src[b][i] = (int16_t)(d[i] * g);
+  }
+  for (int w = 0; w < kGrainWins; ++w)
+    for (int i = 0; i <= kGrainWin; ++i) {
+      float x = (float)i / kGrainWin, y;
+      if (w == 0) y = 0.5f - 0.5f * cosf(6.2831853f * x);
+      else if (w == 1) y = 1.0f - fabsf(2 * x - 1);
+      else if (w == 2) y = x < 0.25f ? 0.5f - 0.5f * cosf(6.2831853f * 2 * x)
+                         : x > 0.75f ? 0.5f - 0.5f * cosf(6.2831853f * 2 * (1 - x)) : 1.0f;
+      else y = x < 0.05f ? 0.5f - 0.5f * cosf(3.14159265f * x / 0.05f) : expf(-5.0f * (x - 0.05f) / 0.95f);
+      s_gr_win[w][i] = i == kGrainWin ? 0 : y;
+    }
+  s_gr_built = true;
+}
 
 const float* wt_table(int b) { return s_wt_built && b >= 0 && b < wt::kBuiltins ? &s_wt[b][0][0] : nullptr; }
 void wt_build() {

@@ -54,7 +54,7 @@ namespace dsp {
 
 constexpr int kSlots = proc::kSlots;
 constexpr int kNameMax = 8;
-constexpr size_t kSlotBytes = 1u << 20;   // a slot's memory: the largest block (DELAY, ~776 KB) fits
+constexpr size_t kSlotBytes = 2u << 20;   // a slot's memory (1 MB until POLY: GRAIN's 1 MB ring and its copies)
 enum Op : uint8_t { kPlace = 0x30, kFree = 0x31, kInfo = 0x32, kChainOp = 0x39, kTrig = 0x37, kParam = 0x38, kPlaced = 0x70, kRefused = 0x71, kText = 0x72 };
 enum Code : uint8_t { kFull = 3, kBad = 5, kUnknown = 9 };
 
@@ -68,6 +68,7 @@ struct BlockInfo {
   proc::Proc* (*make)(void* mem, const void* ctx);   // built into mem (kSlotBytes, 64-byte aligned); null: refused
   const void* ctx = nullptr;   // make's own (a shipped block: its loaded blob, core/code)
   int owner = -1;              // -1 any owner may PLACE it; -2 none; else only this owner (a shipped block's offerer)
+  size_t shared = 0;           // of bytes, what a POLY's copies after the first leave out (proc.h share: the first's)
 };
 int library_size();                       // the built-ins, then the shipped blocks loaded now (core/code)
 const BlockInfo* library(int i);          // null past the end

@@ -370,22 +370,36 @@ static void test_gen() {
     y = run_block(e, std::vector<float>(64, 0.5f));
     CHECK(std::fabs(y.back() - 0.5f) < 1e-6f);
   }
-  // GRAIN on its input: a cloud of the input while it plays; silence a while after it stops (POS 0: the newest); FREEZE
-  // keeps the last audio sounding
+  // GRAIN (upstream GRANULAR's note) on its input: a held note plays a cloud of the input; released, it ends (done)
+  // and is silent; FREEZE keeps the last audio sounding; a pool-less PAD plays without any input
   {
-    static dsp::Grain g;   // (its ring: 512 KB)
-    std::vector<float> y = run_block(g, sine(440.0f, 48000));
-    CHECK(rms(y, 24000, 48000) > 0.05f && peak(y) < 2.0f);
-    y = run_block(g, std::vector<float>(48000, 0.0f));
-    CHECK(rms(y, 24000, 48000) < 1e-4f);
-    run_block(g, sine(440.0f, 24000));
-    g.set_param(9, 127 * 64);   // FREEZE
-    y = run_block(g, std::vector<float>(48000, 0.0f));
+    alignas(64) static uint8_t gm[dsp::kSlotBytes];
+    memset(gm, 0, sizeof gm);
+    auto* g = (dsp::Grain*)dsp::find("GRAIN")->make(gm, nullptr);
+    CHECK(dsp::find("GRAIN")->bytes == dsp::Grain::bytes() && dsp::Grain::bytes() <= dsp::kSlotBytes);
+    std::vector<float> y = run_block(*g, sine(440.0f, 48000));
+    CHECK(peak(y) == 0.0f && g->done());   // no note: nothing
+    g->midi(proc::kSrcRytm, 0x90, 60, 100);
+    y = run_block(*g, sine(440.0f, 48000));
+    CHECK(rms(y, 24000, 48000) > 0.05f && peak(y) < 2.0f && g->grains() > 0 && g->ctl(0) > 0.99f);
+    g->set_param(11, 127 * 64);   // FREEZE: the ring keeps the sine
+    y = run_block(*g, std::vector<float>(48000, 0.0f));
     CHECK(rms(y, 24000, 48000) > 0.05f);
-    g.set_param(9, 0);
-    g.set_param(6, 127 * 64); g.set_param(7, 127 * 64); g.set_param(3, 127 * 64); g.set_param(8, 3 * 64 * 64 / 3);
-    y = run_block(g, noise(48000));
-    CHECK(peak(y) < 4.0f);
+    g->set_param(11, 0);
+    y = run_block(*g, std::vector<float>(48000, 0.0f));   // thawed: the ring fills with silence
+    CHECK(rms(y, 40000, 48000) < 1e-4f);
+    g->midi(proc::kSrcRytm, 0x80, 60, 0);
+    g->set_param(10, 20 * 64);   // REL ~4 ms
+    run_block(*g, std::vector<float>(4800, 0.0f));
+    CHECK(g->done() && g->grains() == 0);
+    g->set_param(1, 126 * 64);   // PAD
+    g->midi(proc::kSrcRytm, 0x90, 60, 100);
+    y = run_block(*g, std::vector<float>(48000, 0.0f));
+    CHECK(rms(y, 12000, 48000) > 0.05f && peak(y) < 2.0f);
+    g->set_param(6, 127 * 64); g->set_param(7, 127 * 64); g->set_param(3, 127 * 64); g->set_param(8, 127 * 64);
+    y = run_block(*g, std::vector<float>(48000, 0.0f));
+    CHECK(peak(y) < 4.0f && rms(y, 12000, 48000) > 0.01f);
+    g->~Proc();
   }
   // WTOSC (upstream's tables): built once; 375 Hz (C4 + 6.2318 semitones) repeats every 128 samples; every table
   // bounded; POS changes the wave; a high note stays finite and bounded (the mip levels)
@@ -764,6 +778,40 @@ static void test_poly() {
     CHECK(pk2 > 0.05f && d < (warp < 0 ? 1e-3f : 1e-6f));
     send({0x31, 7, 3});
     for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  }
+  // GRANULAR on the library: POLY {GRAIN}, a chord on BELLS; the notes' grains count against one cap; the copies share
+  // the first's ring (the input recorded once, fed back with the voice's output)
+  {
+    CHECK(chain(101, 7, 3, 6, 0x00, {"GRAIN"}, {}) == 3);
+    p = (dsp::Poly*)proc::slot(3);
+    pset(7, 3, 1, {127 * 64});
+    pset(7, 3, 5, {127 * 64});   // DENS full: the cap
+    pset(7, 3, 64, {1 * 64});
+    pset(7, 3, 72, {64});
+    trig(7, 3, 0, 60, 100);
+    float pk3 = 0.0f;
+    int most = 0;
+    for (int i = 0; i < 100; ++i) {
+      block(128);
+      int n = 0;
+      for (int k = 0; k < 6; ++k) n += ((dsp::Grain*)p->copy(k, 0))->grains();
+      most = std::max(most, n);
+      for (int f = 0; f < 128; ++f) pk3 = std::fmax(pk3, std::fabs(g_so[2 * 3][f]));
+    }
+    CHECK(p->sounding() == 3 && most <= dsp::Grain::kGrains + 1 && most > 32 && pk3 > 0.05f && pk3 < 4.0f);
+    CHECK(std::fabs(p->headroom() - 1.0f / std::sqrt(3.0f)) < 0.01f);
+    trig(7, 3, 1, 60, 0);
+    for (int i = 0; i < 400 && p->sounding(); ++i) block(128);
+    CHECK(p->sounding() == 0);
+    // the input: one ring, written by the first copy only
+    pset(7, 3, 1, {0});
+    for (int c = 0; c < 2; ++c) for (int f = 0; f < 128; ++f) g_in[2 + c][f] = 0.0f;
+    for (int i = 0; i < 4; ++i) block(128);
+    CHECK(((dsp::Grain*)p->copy(0, 0))->ring_frames() >= 3 * 128 && ((dsp::Grain*)p->copy(5, 0))->ring_frames() ==
+          ((dsp::Grain*)p->copy(0, 0))->ring_frames());
+    send({0x31, 7, 3});
+    for (int i = 0; i < 4; ++i) { block(128); answers(); }
+    CHECK(dsp::slot(3).state == dsp::kEmpty);
   }
   printf("test_dsp: POLY ok\n");
 }
