@@ -12,6 +12,7 @@
 #include "dsp/blocks.h"
 #include "dsp/dsp.h"
 #include "dsp/gen.h"
+#include "dsp/grain.h"
 #include "hooks.h"
 #include "kv/link.h"
 #include "locks/locks.h"
@@ -363,6 +364,23 @@ static void test_gen() {
     e.set_param(5, 0);
     y = run_block(e, std::vector<float>(64, 0.5f));
     CHECK(std::fabs(y.back() - 0.5f) < 1e-6f);
+  }
+  // GRAIN on its input: a cloud of the input while it plays; silence a while after it stops (POS 0: the newest); FREEZE
+  // keeps the last audio sounding
+  {
+    static dsp::Grain g;   // (its ring: 512 KB)
+    std::vector<float> y = run_block(g, sine(440.0f, 48000));
+    CHECK(rms(y, 24000, 48000) > 0.05f && peak(y) < 2.0f);
+    y = run_block(g, std::vector<float>(48000, 0.0f));
+    CHECK(rms(y, 24000, 48000) < 1e-4f);
+    run_block(g, sine(440.0f, 24000));
+    g.set_param(9, 127 * 64);   // FREEZE
+    y = run_block(g, std::vector<float>(48000, 0.0f));
+    CHECK(rms(y, 24000, 48000) > 0.05f);
+    g.set_param(9, 0);
+    g.set_param(6, 127 * 64); g.set_param(7, 127 * 64); g.set_param(3, 127 * 64); g.set_param(8, 3 * 64 * 64 / 3);
+    y = run_block(g, noise(48000));
+    CHECK(peak(y) < 4.0f);
   }
   // MOD: its oscillator as ctl(0) / ctl(1), within -1..1, moving
   {

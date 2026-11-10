@@ -8,6 +8,7 @@
 #include "../route/route.h"
 #include "blocks.h"
 #include "gen.h"
+#include "grain.h"
 #include "sample.h"
 
 namespace core {
@@ -33,6 +34,10 @@ const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}
 const ParamInfo kNoiseP[] = {{"LEV", 100 * 64}, {"COL", 64 * 64}, {"THRU", 127 * 64}};
 const ParamInfo kEnvP[] = {{"ATK", 0}, {"DEC", 64 * 64}, {"SUS", 0}, {"REL", 32 * 64}, {"MODE", 0}, {"VCA", 127 * 64}, {"VEL", 0}};
 
+const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},       {"SPRY", 0},
+                             {"SIZE", 64 * 64}, {"DENS", 64 * 64}, {"PRND", 0},      {"REV", 0},
+                             {"WIN", 0},        {"HOLD", 0},       {"TUN", 64 * 64}, {"FIN", 64 * 64}};
+
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
     {"FILTER", 4, kFilterP, sizeof(Filter), make<Filter>},
@@ -43,6 +48,7 @@ const BlockInfo kLibrary[] = {
     {"OSC", 8, kOscP, sizeof(Osc), make<Osc>},
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 7, kEnvP, sizeof(Env), make<Env>},
+    {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order

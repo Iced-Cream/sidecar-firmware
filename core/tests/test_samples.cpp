@@ -14,6 +14,7 @@
 #include "check.h"
 #include "dsp/dsp.h"
 #include "dsp/sample.h"
+#include "dsp/grain.h"
 #include "generic/generic.h"
 #include "hooks.h"
 #include "kv/kv.h"
@@ -97,6 +98,15 @@ static float g_l[4096], g_r[4096];
 static void render(dsp::Sample& s, int n) {
   proc::Block b{};
   b.frames = 0;
+  for (int done = 0; done < n; done += 32) {
+    b.sout[0] = g_l + done;
+    b.sout[1] = g_r + done;
+    b.frames = 32;
+    s.process(b);
+  }
+}
+static void render_any(proc::Proc& s, int n) {
+  proc::Block b{};
   for (int done = 0; done < n; done += 32) {
     b.sout[0] = g_l + done;
     b.sout[1] = g_r + done;
@@ -292,6 +302,19 @@ int main() {
     render(s, 1024);
     CHECK(fabsf(g_l[100] - 0.25f) < 0.003f && peak(g_l, 510, 1024) == 0.0f);
     CHECK(samples::stats().listed >= 3);
+  }
+  // GRAIN on a pool entry (SMP 1, the ramp): silent before a note; a note's cloud reads around POS (0.5: the ramp's
+  // middle, ~0.5), its level even (1 / sqrt(overlap))
+  {
+    static dsp::Grain g;
+    g.set_param(1, 1 * 64);
+    g.set_param(2, 64 * 64);
+    g.set_param(9, 119 * 64);   // the playhead still
+    render_any(g, 2048);
+    CHECK(peak(g_l, 0, 2048) == 0.0f);
+    g.midi(proc::kSrcRytm, 0x90, 60, 100);
+    render_any(g, 4096);
+    CHECK(peak(g_l, 0, 4096) > 0.1f && peak(g_l, 0, 4096) < 2.0f && g_l[3000] == g_r[3000]);
   }
   // the library's own entry
   CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 10);
