@@ -51,6 +51,12 @@ static std::vector<uint8_t> add(uint8_t seq, const char* path) {
   for (auto& m : g_out) if (m.size() > 10 && m[6] == samples::kIndex && m[7] == seq) return {m[9], m[10]};
   return {};
 }
+static std::vector<uint8_t> add_ref(uint8_t seq, int folder, int file) {   // 3D SADDB: a file as core/browse listed it
+  g_out.clear();
+  send({samples::kAddRef, seq, 0x45, (uint8_t)(folder >> 7), (uint8_t)(folder & 0x7F), (uint8_t)(file >> 7), (uint8_t)(file & 0x7F)});
+  for (auto& m : g_out) if (m.size() > 10 && m[6] == samples::kIndex && m[7] == seq) return {m[9], m[10]};
+  return {};
+}
 
 // a WAV on the test card
 static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int k = 0; k < 4; ++k) v.push_back((uint8_t)(x >> 8 * k)); }
@@ -144,6 +150,20 @@ int main() {
   CHECK((add(7, "/Samples/none.wav") == std::vector<uint8_t>{0x7F, samples::kMissing}));
   CHECK((add(8, "Samples/ramp.wav") == std::vector<uint8_t>{0x7F, samples::kBad}));
   CHECK((add(9, "/Samples/../x.wav") == std::vector<uint8_t>{0x7F, samples::kBad}));
+  // SADDB: the root's files as a listing numbers them (folders first, then files by name, case ignored): Kick (a
+  // folder), b8, flt, junk, a long name a listing cuts (found whole), ramp, st24
+  {
+    char p[200];
+    snprintf(p, sizeof p, "%s/Samples/Kick", g_card);
+    mkdir(p, 0755);
+  }
+  wav("long name past twenty-three chars.wav", 1, 16, 1, 48000, b8);
+  CHECK((add_ref(20, 0, 4) == std::vector<uint8_t>{0, samples::kOk}));   // ramp: already entry 0
+  CHECK((add_ref(21, 0, 3) == std::vector<uint8_t>{5, samples::kOk}));
+  CHECK(!strcmp(samples::path(5), "/Samples/long name past twenty-three chars.wav"));
+  CHECK((add_ref(22, 0, 7) == std::vector<uint8_t>{0x7F, samples::kMissing}));    // no 8th file
+  CHECK((add_ref(23, 900, 0) == std::vector<uint8_t>{0x7F, samples::kMissing}));  // a folder never listed
+  send({samples::kDrop, 0x45, 5});
   settle();
   CHECK(samples::state(0) == samples::kReady && samples::state(1) == samples::kReady && samples::state(2) == samples::kReady);
   CHECK(samples::state(3) == samples::kReady && samples::state(4) == samples::kFailed);

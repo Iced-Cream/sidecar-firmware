@@ -205,6 +205,56 @@ int host_step(int max_msgs) {
   return k;
 }
 
+bool file_path(int f, int file, char* out, int cap) {
+  if (f < 0 || f >= g_ndirs || file < 0 || !out || cap < 2) return false;
+  char p[512];
+  int len = path(f, p, sizeof p);
+  if (len >= (int)sizeof p) return false;
+  // the listing's pass: the same entries kept (and in the same read order), the same cut names, the same stable sort;
+  // a file's place among the files is its id. Each file remembers its read ordinal to find its whole name again.
+  struct Key { char name[kName + 1]; uint16_t ord; uint8_t kind; };
+  static Key keys[kMaxEntries];
+  File d;
+  if (!d.open(p, kRead) || !d.isDir()) { d.close(); return false; }
+  char name[256];
+  bool dir;
+  uint64_t size;
+  uint16_t fd, ft;
+  int n = 0, ord = 0;
+  for (;; ++ord) {
+    if (!d.nextEntry(name, sizeof name, &dir, &size, &fd, &ft)) break;
+    if (name[0] == '.' || n >= kMaxEntries) continue;
+    if (dir && (strlen(name) >= (size_t)kPathName || find_or_add(f, name) < 0)) continue;
+    Key& k = keys[n++];
+    k.kind = dir ? 1 : 0;
+    k.ord = (uint16_t)ord;
+    int l = 0;
+    for (const char* q = name; *q && l < kName; ++q) k.name[l++] = (*q >= 32 && *q < 127) ? *q : '?';
+    k.name[l] = 0;
+  }
+  d.close();
+  for (int i = 1; i < n; ++i) {
+    Key t = keys[i];
+    int j = i;
+    while (j > 0 && (t.kind != keys[j - 1].kind ? t.kind > keys[j - 1].kind : strcasecmp(t.name, keys[j - 1].name) < 0))
+      keys[j] = keys[j - 1], --j;
+    keys[j] = t;
+  }
+  int want = -1, at = 0;
+  for (int i = 0; i < n && want < 0; ++i)
+    if (!keys[i].kind && at++ == file) want = keys[i].ord;
+  if (want < 0) return false;
+  if (!d.open(p, kRead)) return false;
+  bool got = false;
+  for (int o = 0; o <= want; ++o)
+    if (!d.nextEntry(name, sizeof name, &dir, &size, &fd, &ft)) break;
+    else if (o == want) got = !dir;
+  d.close();
+  if (!got) return false;
+  int nl = sniprintf(out, cap, "%s/%s", p, name);
+  return nl > 0 && nl < cap;
+}
+
 Stats stats() {
   Stats s = g_st;
   if (s.folders < 1) s.folders = 1;

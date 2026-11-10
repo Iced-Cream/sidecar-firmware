@@ -6,6 +6,7 @@
 
 #include <atomic>
 
+#include "../browse/browse.h"
 #include "../fmt/fmt.h"
 #include "../platform.h"
 
@@ -244,9 +245,36 @@ int find_path(const char* p) {
     if (s_e[i].state.load(std::memory_order_relaxed) != kEmpty && !strcmp(s_e[i].path, p)) return i;
   return -1;
 }
+
+// SADD's and SADDB's common end: p listed (or found), answered 76; p null: bad path
+void add(uint8_t seq, uint8_t owner, const char* p) {
+  uint8_t body[5] = {kIndex, seq, owner, 0x7F, kBad};
+  if (!p || strstr(p, "/..")) { answer(body, 5); return; }
+  int i = find_path(p);
+  if (i < 0) {
+    File f;
+    if (!f.open(p, kRead) || f.isDir()) {
+      f.close();
+      body[4] = kMissing;
+      answer(body, 5);
+      return;
+    }
+    f.close();
+    for (int k = 0; k < kEntries && i < 0; ++k)
+      if (s_e[k].state.load(std::memory_order_relaxed) == kEmpty) i = k;
+    if (i < 0) { body[4] = kFull; answer(body, 5); return; }
+    strcpy(s_e[i].path, p);
+    s_e[i].state.store(kListed, std::memory_order_release);
+    ++s_st.adds;
+    save_list();
+  }
+  body[3] = (uint8_t)i;
+  body[4] = kOk;
+  answer(body, 5);
+}
 }  // namespace
 
-bool is_samples_op(uint8_t op) { return op == kAdd || op == kDrop || op == kInfo; }
+bool is_samples_op(uint8_t op) { return op == kAdd || op == kDrop || op == kInfo || op == kAddRef; }
 
 bool begin(void* arena, size_t bytes, const char* lists) {
   uintptr_t a = ((uintptr_t)arena + 63) & ~(uintptr_t)63;
@@ -272,37 +300,29 @@ bool card_op(const uint8_t* m, int n) {
     if (n < 11) return false;
     uint8_t seq = m[7], owner = m[8];
     int pl = n - 10;
-    uint8_t body[5] = {kIndex, seq, owner, 0x7F, kBad};
     char p[kPathMax + 1];
-    if (!s_ok || pl < 2 || pl > kPathMax || m[9] != '/') { answer(body, 5); return true; }
+    if (!s_ok || pl < 2 || pl > kPathMax || m[9] != '/') return add(seq, owner, nullptr), true;
     for (int k = 0; k < pl; ++k) {
       char c = (char)m[9 + k];
-      if (c < 0x20 || c == 0x7F) { answer(body, 5); return true; }
+      if (c < 0x20 || c == 0x7F) return add(seq, owner, nullptr), true;
       p[k] = c;
     }
     p[pl] = 0;
-    if (strstr(p, "/..")) { answer(body, 5); return true; }
-    int i = find_path(p);
-    if (i < 0) {
-      File f;
-      if (!f.open(p, kRead) || f.isDir()) {
-        f.close();
-        body[4] = kMissing;
-        answer(body, 5);
-        return true;
-      }
-      f.close();
-      for (int k = 0; k < kEntries && i < 0; ++k)
-        if (s_e[k].state.load(std::memory_order_relaxed) == kEmpty) i = k;
-      if (i < 0) { body[4] = kFull; answer(body, 5); return true; }
-      strcpy(s_e[i].path, p);
-      s_e[i].state.store(kListed, std::memory_order_release);
-      ++s_st.adds;
-      save_list();
+    add(seq, owner, p);
+    return true;
+  }
+  if (op == kAddRef) {   // 3D SADDB <seq> <owner> <folder hi lo> <file hi lo>: a file core/browse listed
+    if (n < 14) return false;
+    uint8_t seq = m[7], owner = m[8];
+    int folder = (m[9] & 0x7F) << 7 | (m[10] & 0x7F), file = (m[11] & 0x7F) << 7 | (m[12] & 0x7F);
+    char p[512];
+    if (!s_ok) return add(seq, owner, nullptr), true;
+    if (!browse::file_path(folder, file, p, sizeof p)) {
+      uint8_t body[5] = {kIndex, seq, owner, 0x7F, kMissing};
+      answer(body, 5);
+      return true;
     }
-    body[3] = (uint8_t)i;
-    body[4] = kOk;
-    answer(body, 5);
+    add(seq, owner, strlen(p) <= (size_t)kPathMax ? p : nullptr);   // longer than a pool entry keeps: bad path
     return true;
   }
   if (op == kDrop) {

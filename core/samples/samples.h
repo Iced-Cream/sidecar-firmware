@@ -16,6 +16,9 @@
 //   Rytm -> Pi  3A SADD  <seq> <owner> <path: 7-bit ASCII, 1..kPathMax, from the card's root>  answer 76
 //               3B SDROP <owner> <index>                                                    no answer
 //               3C SINFO <seq> <owner> <index>                                              answer 77
+//               3D SADDB <seq> <owner> <folder hi lo> <file hi lo>                          answer 76
+//                    a file as core/browse's listing (0E) named it: the Pi finds its whole path (names in a listing
+//                    are cut); code 9 if the folder or file is not there (any more), 5 if the path is past kPathMax
 //   Pi -> Rytm  76 SINDEX <seq> <owner> <index | 7F> <code>   code: 0 added (or already listed: its index), 3 the pool
 //                                                              is full, 5 bad path, 9 no such file
 //               77 SNAME  <seq> <owner> <index> <state> <frames: 4 x 7 bits> <name: up to 16 chars, the file's name>
@@ -36,7 +39,7 @@ constexpr int kEntries = 128;
 constexpr int kPathMax = 96;
 constexpr uint32_t kMaxFrames = 8u << 20;   // a sample's frames in RAM at most (175 s at 48 kHz)
 constexpr uint32_t kRetireMs = 50;          // an unpublished entry's memory is reused no sooner than this
-enum Op : uint8_t { kAdd = 0x3A, kDrop = 0x3B, kInfo = 0x3C, kIndex = 0x76, kName = 0x77 };
+enum Op : uint8_t { kAdd = 0x3A, kDrop = 0x3B, kInfo = 0x3C, kAddRef = 0x3D, kIndex = 0x76, kName = 0x77 };
 enum Code : uint8_t { kOk = 0, kFull = 3, kBad = 5, kMissing = 9 };
 enum State : uint8_t { kEmpty = 0, kListed, kLoading, kReady, kFailed, kTooBig };
 

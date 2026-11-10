@@ -37,6 +37,11 @@ void set_root(const char* path);           // before the first ask (default "/Sa
 bool sysex(const uint8_t* d, int len);     // 0D taken (true); anything else false
 int card_step();                           // card core: entries read this call
 int host_step(int max_msgs);               // control: messages sent
+// card core: the full card path of a listing's file (folder number, file id as the listing gave them), its name read
+// again from the card whole (a listing cuts names to kName); false: an unknown folder, no such file, or a path longer
+// than cap - 1. The ids are the listing's: the folder is read and sorted as a listing is, so a folder that has not
+// changed on the card gives the same file. (2026-11-10, for core/samples' SADDB: the Rytm names a browsed file.)
+bool file_path(int folder, int file, char* out, int cap);
 
 struct Stats { uint32_t asks, listings, entries, messages, superseded, errors, left_out; int folders; };
 Stats stats();
