@@ -10,6 +10,7 @@
 //   P4 END   where it ends, 0..127 over the length (127.98: the last frame); END before STA plays backwards
 //   P5 LOOP  0 one shot; 1 and up (value >= 1): loop STA..END
 //   P6 FIN   cents from 64 x 64 (+-100 over the range)
+//   P7 VEL   how much the note's velocity sets the level: 0 none, 127 all (velocity 127 is unity either way)
 // A note starts the sample at STA, with a 1 ms fade-in; a new note while it plays starts over (the old one is cut,
 // faded over 1 ms). A note off does nothing (the Rytm's amp and the mod decide the length). Output: the sample's L and R
 // (a mono file on both), linear interpolation, read where core/samples published it (lock-free; an entry that is not
@@ -24,13 +25,14 @@ namespace dsp {
 class Sample : public Block {
  public:
   Sample() {
-    p_[0] = 100 * 64; p_[1] = 0; p_[2] = 64 * 64; p_[3] = 0; p_[4] = 16383; p_[5] = 0; p_[6] = 64 * 64;
+    p_[0] = 100 * 64; p_[1] = 0; p_[2] = 64 * 64; p_[3] = 0; p_[4] = 16383; p_[5] = 0; p_[6] = 64 * 64; p_[7] = 0;
   }
   const char* name() const override { return "SAMPLE"; }
   void link_reset() override { play_ = false; }
   void midi(int src, uint8_t status, uint8_t d1, uint8_t d2) override {
     if ((status & 0xF0) != 0x90 || !d2) return;
     note_ = d1;
+    vel_ = d2;
     pending_ = true;
   }
   void process(const proc::Block& b) override {
@@ -48,7 +50,8 @@ class Sample : public Block {
       }
     }
     if (!have || smp != entry_) play_ = false;   // OFF, another entry or gone: silence until the next note
-    const float gain = (float)p_[0] / (64.0f * 100.0f);
+    const float vamt = (float)p_[7] / 16383.0f;
+    const float gain = (float)p_[0] / (64.0f * 100.0f) * (1.0f - vamt * (1.0f - (float)vel_ / 127.0f));
     const float semis = (float)note_ - 60.0f + ((float)p_[2] / 64.0f - 64.0f) + ((float)p_[6] / 64.0f - 64.0f) / 64.0f;
     const float step = have ? exp2f(semis / 12.0f) * v.rate / kRate : 0.0f;
     for (int f = 0; f < b.frames; ++f) {
@@ -80,7 +83,7 @@ class Sample : public Block {
  private:
   static constexpr int kFade = 48;   // 1 ms
   bool pending_ = false, play_ = false, loop_ = false;
-  int note_ = 60, entry_ = 0, fade_in_ = 0, fade_out_ = 0;
+  int note_ = 60, vel_ = 127, entry_ = 0, fade_in_ = 0, fade_out_ = 0;
   float pos_ = 0.0f, lo_ = 0.0f, hi_ = 0.0f, dir_ = 1.0f, old_pos_ = -1.0f, old_dir_ = 1.0f;
 
   void start(const samples::View& v) {

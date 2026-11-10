@@ -227,9 +227,14 @@ int main() {
     s.midi(proc::kSrcRytm, 0x90, 60, 100);
     render(s, 512);
     CHECK(fabsf(g_l[300] - 0.25f) < 0.01f && fabsf(g_r[300] + 0.125f) < 0.01f);
+    // VEL 127: velocity 64 about halves it; VEL 0 (above) ignores velocity
+    s.set_param(7, 16383);
+    s.midi(proc::kSrcRytm, 0x90, 60, 64);
+    render(s, 512);
+    CHECK(fabsf(g_l[300] - 0.25f * 64.0f / 127.0f) < 0.01f);
   }
   // the library's own entry
-  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 7);
+  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 8);
 
   // the list on the card; another project has none; back, the entries come again by index
   char lp[200];
