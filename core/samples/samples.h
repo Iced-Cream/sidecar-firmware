@@ -12,6 +12,12 @@
 // board gives (begin). Entries take the arena in order; a dropped entry's room comes back only with the next project
 // (or a full reload). A file that does not fit is FULL.
 //
+// Instruments (2026-11-10, MULTISAMPLE and CHOP's slice maps on the library; parsed by upstream's core/msamp/sfz):
+// an entry whose path ends .sfz or .elmulti is an instrument, not a sample. Loading it reads the file, lists each
+// sample it names as a pool entry of its own (found by path, as SADD does; they load as any entry and stay listed),
+// and keeps up to kZones zones (SFZ regions: key and velocity ranges, key centre, tuning, level, offset / end, loops,
+// round robin). A reader asks zone() for a note: the entry that plays it and how. Its SNAME frames = its zones.
+//
 // Host link (51 STORE, version 1; the card core's, as kv's ops):
 //   Rytm -> Pi  3A SADD  <seq> <owner> <path: 7-bit ASCII, 1..kPathMax, from the card's root>  answer 76
 //               3B SDROP <owner> <index>                                                    no answer
@@ -67,6 +73,21 @@ struct View {
   float rate;
 };
 bool get(int i, View* v);
+// render side: entry i is a READY instrument and one of its zones plays (note, vel): which entry (a sample's: get()
+// it), and how. Round robin (seq_length) moves on each call that matched. False: not an instrument, no zone.
+constexpr int kInstruments = 16;
+constexpr int kZones = 128;
+struct Zone {
+  uint8_t entry, keycenter, loop;   // loop: 1 loops loop_start..loop_end (SFZ loop_continuous / loop_sustain)
+  float cents;                      // transpose x 100 + tune
+  float keytrack;                   // semitones a key (pitch_keytrack / 100)
+  float gain;                       // amplitude x volume
+  float veltrack;                   // 0..1 (amp_veltrack / 100)
+  uint32_t offset, end, loop_start, loop_end;   // frames; end / loops kNone: the sample's own
+};
+constexpr uint32_t kNone = 0xFFFFFFFFu;
+bool zone(int i, int note, int vel, Zone* z);
+bool instrument(int i);
 
 // diagnostics (/status, tests)
 struct Stats {

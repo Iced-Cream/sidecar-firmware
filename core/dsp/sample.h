@@ -14,6 +14,9 @@
 //   P8 SLN   slices (2026-11-10, CHOP on the library): 0 off; n (1..64) cuts STA..END into n equal slices, and a note
 //            plays slice SLC + (note - 60), modulo n, at TUN / FIN only (the note picks the slice, not the pitch)
 //   P9 SLC   the slice a note 60 (a plain trig) plays, 0..63 (p-lockable: a slice a step)
+// An instrument entry (core/samples: an .sfz / .elmulti; MULTISAMPLE, CHOP's slice maps): a note plays the zone it
+// falls in (key, velocity, round robin), at the zone's pitch, level and velocity tracking (times LEV / VEL / TUN /
+// FIN), over the zone's offset..end (STA / END within it), looping the zone's loop. Slices are not used on one.
 // A note starts the sample at STA, with a 1 ms fade-in; a new note while it plays starts over (the old one is cut,
 // faded over 1 ms). A note off does nothing (the Rytm's amp and the mod decide the length). Output: the sample's L and R
 // (a mono file on both), linear interpolation, read where core/samples published it (lock-free; an entry that is not
@@ -40,25 +43,38 @@ class Sample : public Block {
     pending_ = true;
   }
   void process(const proc::Block& b) override {
-    samples::View v;
+    samples::View v, ov;
     const int smp = p_[1] / 64;
-    const bool have = smp > 0 && samples::get(smp - 1, &v) && v.frames > 1;
-    if (pending_) {
+    if (pending_) {   // a note: the entry it plays (an instrument's zone, or SMP's sample)
       pending_ = false;
-      if (have) {
-        if (play_) fade_out_ = kFade;
+      samples::Zone z;
+      const bool zoned = smp > 0 && samples::zone(smp - 1, note_, vel_, &z);
+      const int src = zoned ? z.entry : smp - 1;
+      if (smp > 0 && samples::get(src, &v) && v.frames > 1) {
+        if (play_) { fade_out_ = kFade; old_src_ = src_; }
         play_ = true;
         entry_ = smp;
+        src_ = src;
+        zoned_ = zoned;
+        if (zoned) z_ = z;
         start(v);
         fade_in_ = 0;
       }
     }
-    if (!have || smp != entry_) play_ = false;   // OFF, another entry or gone: silence until the next note
-    const float vamt = (float)p_[7] / 16383.0f;
-    const float gain = (float)p_[0] / (64.0f * 100.0f) * (1.0f - vamt * (1.0f - (float)vel_ / 127.0f));
-    const float semis = (slices() ? 0.0f : (float)note_ - 60.0f) + ((float)p_[2] / 64.0f - 64.0f) +
-                        ((float)p_[6] / 64.0f - 64.0f) / 64.0f;
+    const bool have = smp > 0 && smp == entry_ && samples::get(src_, &v) && v.frames > 1;
+    if (!have) play_ = false;   // OFF, another entry or gone: silence until the next note
+    const bool ohave = fade_out_ > 0 && samples::get(old_src_, &ov) && ov.frames > 1;
+    const float vamt = (float)p_[7] / 16383.0f, vel = (float)vel_ / 127.0f;
+    float gain = (float)p_[0] / (64.0f * 100.0f) * (1.0f - vamt * (1.0f - vel));
+    float semis = ((float)p_[2] / 64.0f - 64.0f) + ((float)p_[6] / 64.0f - 64.0f) / 64.0f;
+    if (zoned_) {
+      gain *= z_.gain * (1.0f - z_.veltrack * (1.0f - vel));
+      semis += ((float)note_ - (float)z_.keycenter) * z_.keytrack + z_.cents / 100.0f;
+    } else if (!slices()) {
+      semis += (float)note_ - 60.0f;
+    }
     const float step = have ? exp2f(semis / 12.0f) * v.rate / kRate : 0.0f;
+    const float ostep = ohave ? exp2f(semis / 12.0f) * ov.rate / kRate : 0.0f;
     for (int f = 0; f < b.frames; ++f) {
       float l = 0.0f, r = 0.0f;
       if (play_) {
@@ -67,18 +83,17 @@ class Sample : public Block {
         l *= g;
         r *= g;
         pos_ += dir_ * step;
-        if ((dir_ > 0 && pos_ >= hi_) || (dir_ < 0 && pos_ <= lo_)) {
-          if (loop_ && hi_ - lo_ >= 2.0f) pos_ = dir_ > 0 ? lo_ + (pos_ - hi_) : hi_ - (lo_ - pos_);
-          else play_ = false;
-        }
+        if (dir_ > 0 && loop_ && pos_ >= lhi_ && lhi_ - llo_ >= 2.0f) pos_ = llo_ + (pos_ - lhi_);
+        else if (dir_ < 0 && loop_ && pos_ <= llo_ && lhi_ - llo_ >= 2.0f) pos_ = lhi_ - (llo_ - pos_);
+        else if ((dir_ > 0 && pos_ >= hi_) || (dir_ < 0 && pos_ <= lo_)) play_ = false;
       }
       if (fade_out_ > 0) {   // the cut note's last frames, faded
         float ol = 0.0f, orr = 0.0f;
-        if (have && old_pos_ >= 0.0f && old_pos_ < (float)(v.frames - 1)) read(v, old_pos_, &ol, &orr);
+        if (ohave && old_pos_ >= 0.0f && old_pos_ < (float)(ov.frames - 1)) read(ov, old_pos_, &ol, &orr);
         float g = (float)fade_out_-- / kFade;
         l += ol * g;
         r += orr * g;
-        old_pos_ += old_dir_ * step;
+        old_pos_ += old_dir_ * ostep;
       }
       out(b, 0, f, l * gain);
       out(b, 1, f, r * gain);
@@ -87,17 +102,24 @@ class Sample : public Block {
 
  private:
   static constexpr int kFade = 48;   // 1 ms
-  bool pending_ = false, play_ = false, loop_ = false;
-  int note_ = 60, vel_ = 127, entry_ = 0, fade_in_ = 0, fade_out_ = 0;
-  float pos_ = 0.0f, lo_ = 0.0f, hi_ = 0.0f, dir_ = 1.0f, old_pos_ = -1.0f, old_dir_ = 1.0f;
+  bool pending_ = false, play_ = false, loop_ = false, zoned_ = false;
+  int note_ = 60, vel_ = 127, entry_ = 0, src_ = -1, old_src_ = -1, fade_in_ = 0, fade_out_ = 0;
+  float pos_ = 0.0f, lo_ = 0.0f, hi_ = 0.0f, llo_ = 0.0f, lhi_ = 0.0f, dir_ = 1.0f, old_pos_ = -1.0f, old_dir_ = 1.0f;
+  samples::Zone z_{};
 
   int slices() const { int n = p_[8] / 64; return n > 64 ? 64 : n; }
+  // the note's range: a zone's offset..end (STA / END within it), or STA..END of the sample (a slice of it); its loop
   void start(const samples::View& v) {
     old_pos_ = pos_;
     old_dir_ = dir_;
     const float last = (float)(v.frames - 1);
-    float s = (float)p_[3] / 16383.0f * last, e = (float)p_[4] / 16383.0f * last;
-    if (int n = slices()) {   // slice k of n of s..e (in the play direction)
+    float a0 = 0.0f, a1 = last;
+    if (zoned_) {
+      a0 = z_.offset < v.frames ? (float)z_.offset : 0.0f;
+      a1 = z_.end != samples::kNone && z_.end < v.frames ? (float)z_.end : last;
+    }
+    float s = a0 + (float)p_[3] / 16383.0f * (a1 - a0), e = a0 + (float)p_[4] / 16383.0f * (a1 - a0);
+    if (int n = zoned_ ? 0 : slices()) {   // slice k of n of s..e (in the play direction)
       int k = (p_[9] / 64 + note_ - 60) % n;
       if (k < 0) k += n;
       float a = s + (e - s) * (float)k / (float)n, z = s + (e - s) * (float)(k + 1) / (float)n;
@@ -107,7 +129,14 @@ class Sample : public Block {
     dir_ = e >= s ? 1.0f : -1.0f;
     lo_ = s < e ? s : e;
     hi_ = s < e ? e : s;
+    llo_ = lo_;
+    lhi_ = hi_;
     loop_ = p_[5] >= 64;
+    if (zoned_ && z_.loop) {   // the zone's loop (its loop_start..loop_end, or the zone's range)
+      loop_ = true;
+      if (z_.loop_start != samples::kNone && (float)z_.loop_start < hi_) llo_ = (float)z_.loop_start;
+      if (z_.loop_end != samples::kNone && (float)z_.loop_end > llo_ && (float)z_.loop_end <= last) lhi_ = (float)z_.loop_end;
+    }
     pos_ = s;
   }
   static void read(const samples::View& v, float pos, float* l, float* r) {

@@ -1,12 +1,14 @@
 // core/samples/samples.cpp - see samples.h.
 #include "samples.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <atomic>
 
 #include "../browse/browse.h"
+#include "../msamp/sfz.h"
 #include "../fmt/fmt.h"
 #include "../platform.h"
 
@@ -15,7 +17,8 @@ namespace samples {
 
 namespace {
 struct Entry {
-  std::atomic<uint8_t> state{kEmpty};   // READY publishes pcm..rate to the render side
+  std::atomic<uint8_t> state{kEmpty};   // READY publishes pcm..rate (or inst) to the render side
+  int8_t inst = -1;                     // an instrument's table (s_in), -1 a sample
   char path[kPathMax + 1];
   int16_t* pcm;
   uint32_t frames;
@@ -23,6 +26,10 @@ struct Entry {
   float rate;
 };
 Entry s_e[kEntries];
+// the instruments' zones (card core writes one before its entry is READY; the render side reads)
+struct ZoneRec { Zone z; uint8_t lokey, hikey, lovel, hivel; uint16_t seq_length, seq_position; };
+struct Inst { bool used; int n; ZoneRec r[kZones]; uint32_t rr; };
+Inst s_in[kInstruments];
 uint8_t* s_arena;
 size_t s_bytes, s_used;
 const char* s_lists = "/.rytm/samples";
@@ -89,7 +96,8 @@ void save_list() {
 // every entry unpublished, the arena to be reused once kRetireMs has passed
 void retire_all() {
   if (s_ld.i >= 0) { s_ld.f.close(); s_ld.i = -1; }
-  for (Entry& e : s_e) { e.state.store(kEmpty, std::memory_order_release); e.path[0] = 0; e.pcm = nullptr; }
+  for (Entry& e : s_e) { e.state.store(kEmpty, std::memory_order_release); e.path[0] = 0; e.pcm = nullptr; e.inst = -1; }
+  for (Inst& n : s_in) n.used = false;   // (their zones are read only through a READY entry)
   if (s_used) {   // memory the render side may have read: reused once its last read is surely over
     s_retiring = true;
     s_retire_at = now_ms() + kRetireMs;
@@ -186,6 +194,96 @@ inline int16_t sample16(const uint8_t* p, int bits, int fmt) {
   }
 }
 
+int find_path(const char* p);
+
+bool is_inst_path(const char* p) {
+  size_t n = strlen(p);
+  auto ends = [&](const char* x) {
+    size_t k = strlen(x);
+    if (n < k) return false;
+    for (size_t i = 0; i < k; ++i) {
+      char c = p[n - k + i];
+      if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+      if (c != x[i]) return false;
+    }
+    return true;
+  };
+  return ends(".sfz") || ends(".elmulti");
+}
+
+// entry i, an instrument: its file parsed, its samples listed, its zones kept; false (FAILED) for one that does not
+bool load_inst(int i) {
+  Entry& e = s_e[i];
+  static char text[65536];
+  static msamp::Region regs[kZones];
+  static char paths[kZones][msamp::kPath];
+  int t = -1;
+  for (int k = 0; k < kInstruments && t < 0; ++k) if (!s_in[k].used) t = k;
+  if (t < 0) return false;
+  File f;
+  if (!f.open(e.path, kRead)) return false;
+  uint64_t size = f.fileSize();
+  if (size >= sizeof text) { f.close(); return false; }
+  int got = f.read(text, (size_t)size);
+  f.close();
+  if (got <= 0) return false;
+  char dir[kPathMax + 1];
+  strcpy(dir, e.path);
+  char* slash = strrchr(dir, '/');
+  if (slash == dir) dir[1] = 0; else if (slash) *slash = 0;
+  msamp::Desc d{};
+  d.regions = regs;
+  d.max_regions = kZones;
+  d.samples = paths;
+  d.max_samples = kZones;
+  if (!msamp::parse(text, got, slash == dir ? "" : dir, &d)) return false;
+  int ent[kZones];
+  for (int k = 0; k < d.nsamples; ++k) {   // each sample a pool entry (found, or listed now)
+    ent[k] = -1;
+    if (strlen(paths[k]) > (size_t)kPathMax || strstr(paths[k], "/..")) continue;
+    int j = find_path(paths[k]);
+    for (int q = 0; q < kEntries && j < 0; ++q)
+      if (s_e[q].state.load(std::memory_order_relaxed) == kEmpty) {
+        j = q;
+        strcpy(s_e[q].path, paths[k]);
+        s_e[q].inst = -1;
+        s_e[q].state.store(kListed, std::memory_order_release);
+        s_list_dirty = true;
+      }
+    ent[k] = j;
+  }
+  Inst& in = s_in[t];
+  in.n = 0;
+  in.rr = 0;
+  for (int k = 0; k < d.nregions && in.n < kZones; ++k) {
+    const msamp::Region& r = regs[k];
+    if (r.sample < 0 || r.sample >= d.nsamples || ent[r.sample] < 0 || r.trigger != msamp::kTrigAttack) continue;
+    ZoneRec& z = in.r[in.n++];
+    z.lokey = r.lokey; z.hikey = r.hikey; z.lovel = r.lovel; z.hivel = r.hivel;
+    z.seq_length = r.seq_length ? r.seq_length : 1;
+    z.seq_position = r.seq_position ? r.seq_position : 1;
+    z.z.entry = (uint8_t)ent[r.sample];
+    z.z.keycenter = r.keycenter;
+    z.z.loop = r.loop_mode == msamp::kLoopContinuous || r.loop_mode == msamp::kLoopSustain;
+    z.z.cents = (float)r.transpose * 100.0f + r.tune;
+    z.z.keytrack = (float)r.pitch_keytrack / 100.0f;
+    z.z.gain = r.amplitude / 100.0f * powf(10.0f, r.volume / 20.0f);
+    z.z.veltrack = r.amp_veltrack / 100.0f;
+    z.z.offset = r.offset;
+    z.z.end = r.end == msamp::kUnset ? kNone : r.end;
+    z.z.loop_start = r.loop_start == msamp::kUnset ? kNone : r.loop_start;
+    z.z.loop_end = r.loop_end == msamp::kUnset ? kNone : r.loop_end;
+  }
+  if (!in.n) return false;
+  in.used = true;
+  e.inst = (int8_t)t;
+  e.pcm = nullptr;
+  e.frames = (uint32_t)in.n;
+  e.ch = 0;
+  e.rate = 0.0f;
+  return true;
+}
+
 // one step of the load under way, or the next entry's start
 bool load_step() {
   Load& L = s_ld;
@@ -193,6 +291,13 @@ bool load_step() {
     for (int i = 0; i < kEntries; ++i) {
       if (s_e[i].state.load(std::memory_order_relaxed) != kListed) continue;
       s_e[i].state.store(kLoading, std::memory_order_relaxed);
+      if (is_inst_path(s_e[i].path)) {   // an instrument: in one step (its samples load after it, as entries)
+        bool ok = load_inst(i);
+        s_e[i].state.store(ok ? kReady : kFailed, std::memory_order_release);
+        if (ok) ++s_st.loads; else ++s_st.fails;
+        if (s_list_dirty) save_list();
+        return true;
+      }
       L.i = i;
       if (!open_wav(i)) {
         L.f.close();
@@ -331,6 +436,7 @@ bool card_op(const uint8_t* m, int n) {
       if (s_ld.i == i) { s_ld.f.close(); s_ld.i = -1; }
       s_e[i].state.store(kEmpty, std::memory_order_release);
       s_e[i].path[0] = 0;
+      s_e[i].inst = -1;   // (its zone table stays taken until the next project: the render side may be reading it)
       ++s_st.drops;
       save_list();
     }
@@ -388,10 +494,34 @@ int take_answer(uint8_t* out, int cap) {
   return n;
 }
 
+bool instrument(int i) {
+  return i >= 0 && i < kEntries && s_e[i].state.load(std::memory_order_acquire) == kReady && s_e[i].inst >= 0;
+}
+bool zone(int i, int note, int vel, Zone* z) {
+  if (!instrument(i)) return false;
+  Inst& in = s_in[s_e[i].inst];
+  const ZoneRec* any = nullptr;
+  bool rr_used = false;
+  for (int k = 0; k < in.n; ++k) {
+    const ZoneRec& r = in.r[k];
+    if (note < r.lokey || note > r.hikey || vel < r.lovel || vel > r.hivel) continue;
+    if (r.seq_length > 1) {
+      rr_used = true;
+      if ((int)(in.rr % r.seq_length) + 1 != r.seq_position) continue;
+    }
+    any = &r;
+    break;
+  }
+  if (rr_used) ++in.rr;
+  if (!any) return false;
+  *z = any->z;
+  return true;
+}
+
 bool get(int i, View* v) {
   if (i < 0 || i >= kEntries) return false;
   const Entry& e = s_e[i];
-  if (e.state.load(std::memory_order_acquire) != kReady) return false;
+  if (e.state.load(std::memory_order_acquire) != kReady || e.inst >= 0) return false;
   v->pcm = e.pcm;
   v->frames = e.frames;
   v->ch = e.ch;
@@ -416,7 +546,8 @@ const char* path(int i) { return i < 0 || i >= kEntries ? "" : s_e[i].path; }
 
 void reset_for_tests() {
   if (s_ld.i >= 0) { s_ld.f.close(); s_ld.i = -1; }
-  for (Entry& e : s_e) { e.state.store(kEmpty); e.path[0] = 0; e.pcm = nullptr; }
+  for (Entry& e : s_e) { e.state.store(kEmpty); e.path[0] = 0; e.pcm = nullptr; e.inst = -1; }
+  for (Inst& n : s_in) n.used = false;
   s_used = 0;
   s_project = 0;
   s_retiring = false;

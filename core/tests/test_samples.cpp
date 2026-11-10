@@ -253,6 +253,46 @@ int main() {
     render(s, 2048);
     CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 100 / 2000.0f)) < 0.003f);
   }
+  // an instrument (an .sfz, upstream's parser): its samples listed as entries of their own (ramp.wav found as entry 0),
+  // zones by key and velocity, the key centre's pitch, volume, round robin; SAMPLE plays the zone a note falls in
+  {
+    std::vector<float> hi(1000, 0.5f), rr(800, 0.25f);
+    wav("hi.wav", 1, 16, 1, 48000, hi);
+    wav("rr.wav", 1, 16, 1, 48000, rr);
+    char p[200];
+    snprintf(p, sizeof p, "%s/Samples/keys.sfz", g_card);
+    FILE* o = fopen(p, "wb");
+    fputs("// a test instrument\n<group> loop_mode=one_shot\n"
+          "<region> sample=ramp.wav lokey=0 hikey=59 pitch_keycenter=48\n"
+          "<region> sample=hi.wav lokey=60 hikey=99 pitch_keycenter=60 volume=-6.0206\n"
+          "<region> sample=hi.wav key=100 seq_length=2 seq_position=1\n"
+          "<region> sample=rr.wav key=100 seq_length=2 seq_position=2\n", o);
+    fclose(o);
+    std::vector<uint8_t> a = add(30, "/Samples/keys.sfz");
+    CHECK(a.size() == 2 && a[1] == samples::kOk);
+    int in = a.size() == 2 ? a[0] : 0;
+    settle();
+    CHECK(samples::instrument(in) && samples::state(in) == samples::kReady);
+    samples::View v;
+    CHECK(!samples::get(in, &v));   // not a sample
+    samples::Zone z;
+    CHECK(samples::zone(in, 50, 100, &z) && z.entry == 0 && z.keycenter == 48);
+    CHECK(samples::zone(in, 70, 100, &z) && !strcmp(samples::path(z.entry), "/Samples/hi.wav") && fabsf(z.gain - 0.5f) < 0.001f);
+    int hi_e = z.entry;
+    CHECK(samples::state(hi_e) == samples::kReady);
+    CHECK(samples::zone(in, 100, 100, &z) && z.entry == hi_e);
+    CHECK(samples::zone(in, 100, 100, &z) && !strcmp(samples::path(z.entry), "/Samples/rr.wav"));   // round robin
+    CHECK(samples::zone(in, 100, 100, &z) && z.entry == hi_e);
+    dsp::Sample s;
+    s.set_param(1, (in + 1) * 64);
+    s.midi(proc::kSrcRytm, 0x90, 48, 127);   // the ramp at its key centre: frame for frame
+    render(s, 2048);
+    CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 100 / 2000.0f)) < 0.003f && peak(g_l, 2010, 2048) == 0.0f);
+    s.midi(proc::kSrcRytm, 0x90, 72, 127);   // hi.wav an octave up, at half its level: done by ~500
+    render(s, 1024);
+    CHECK(fabsf(g_l[100] - 0.25f) < 0.003f && peak(g_l, 510, 1024) == 0.0f);
+    CHECK(samples::stats().listed >= 3);
+  }
   // the library's own entry
   CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 10);
 
