@@ -13,6 +13,8 @@
 #include "dsp/dsp.h"
 #include "dsp/gen.h"
 #include "dsp/grain.h"
+#include "dsp/wtosc.h"
+#include <chrono>
 #include "hooks.h"
 #include "kv/link.h"
 #include "locks/locks.h"
@@ -381,6 +383,39 @@ static void test_gen() {
     g.set_param(6, 127 * 64); g.set_param(7, 127 * 64); g.set_param(3, 127 * 64); g.set_param(8, 3 * 64 * 64 / 3);
     y = run_block(g, noise(48000));
     CHECK(peak(y) < 4.0f);
+  }
+  // WTOSC (upstream's tables): built once; 375 Hz (C4 + 6.2318 semitones) repeats every 128 samples; every table
+  // bounded; POS changes the wave; a high note stays finite and bounded (the mip levels)
+  {
+    auto t0 = std::chrono::steady_clock::now();
+    static dsp::WtOsc o;
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    printf("test_dsp: WTOSC tables built in %.0f ms\n", ms);
+    CHECK(dsp::wt_table(0) && dsp::wt_table(5) && !dsp::wt_table(6));
+    o.set_param(3, 70 * 64);
+    o.set_param(4, (int)std::lround((64.0 + 0.2318 * 64.0) * 64.0));
+    std::vector<float> y = run_block(o, std::vector<float>(4800, 0.0f));
+    float d = 0.0f;
+    for (size_t i = 1000; i + 128 < y.size(); ++i) d = std::fmax(d, std::fabs(y[i] - y[i + 128]));
+    CHECK(d < 0.02f && peak(y) > 0.3f);
+    for (int tb = 0; tb < 6; ++tb) {
+      o.set_param(1, tb * 64);
+      for (int pos : {0, 64, 127}) {
+        o.set_param(2, pos * 64);
+        CHECK(peak(run_block(o, std::vector<float>(2400, 0.0f)), 1200) < 1.05f);
+      }
+    }
+    o.set_param(1, 0);
+    o.set_param(2, 0);
+    std::vector<float> a0 = run_block(o, std::vector<float>(4800, 0.0f));
+    o.set_param(2, 127 * 64);
+    std::vector<float> a1 = run_block(o, std::vector<float>(4800, 0.0f));
+    float diff = 0.0f;
+    for (size_t i = 3000; i < 4800; ++i) diff = std::fmax(diff, std::fabs(a0[i] - a1[i]));
+    CHECK(diff > 0.1f);
+    o.midi(proc::kSrcRytm, 0x90, 127, 100);
+    o.set_param(3, 100 * 64);
+    CHECK(peak(run_block(o, std::vector<float>(2400, 0.0f))) < 1.05f);
   }
   // MOD: its oscillator as ctl(0) / ctl(1), within -1..1, moving
   {

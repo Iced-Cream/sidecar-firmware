@@ -9,6 +9,7 @@
 #include "blocks.h"
 #include "gen.h"
 #include "grain.h"
+#include "wtosc.h"
 #include "sample.h"
 
 namespace core {
@@ -38,6 +39,9 @@ const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},   
                              {"SIZE", 64 * 64}, {"DENS", 64 * 64}, {"PRND", 0},      {"REV", 0},
                              {"WIN", 0},        {"HOLD", 0},       {"TUN", 64 * 64}, {"FIN", 64 * 64}};
 
+const ParamInfo kWtOscP[] = {{"LEV", 100 * 64}, {"TBL", 0},   {"POS", 0},   {"TUN", 64 * 64},
+                             {"FIN", 64 * 64},  {"FM", 0},    {"SUB", 0},   {"THRU", 0}};
+
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
     {"FILTER", 4, kFilterP, sizeof(Filter), make<Filter>},
@@ -49,6 +53,7 @@ const BlockInfo kLibrary[] = {
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 7, kEnvP, sizeof(Env), make<Env>},
     {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
+    {"WTOSC", 8, kWtOscP, sizeof(WtOsc), make<WtOsc>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order
@@ -119,6 +124,9 @@ int text(uint8_t* b, const char* name) {
   b[0] = (uint8_t)n;
   return 1 + n;
 }
+// WTOSC's built-in tables (upstream's core/wavetable/tables): 6 x 64 frames, generated once (11 MB, static)
+float s_wt[wt::kBuiltins][wt::kBuiltinFrames][wt::kFrameFloats];
+bool s_wt_built;
 }  // namespace
 
 int library_size() { return kLibSize + s_nship; }
@@ -159,6 +167,7 @@ bool begin(void* arena, size_t bytes) {
   for (const BlockInfo& b : kLibrary) if (b.bytes > kSlotBytes) return false;
   if (!arena || bytes < (size_t)kSlots * kSlotBytes || ((uintptr_t)arena & 63)) return false;
   s_arena = (uint8_t*)arena;
+  wt_build();   // WTOSC's tables at boot (tens of ms), not at a PLACE mid-session
   return true;
 }
 
@@ -299,6 +308,26 @@ SlotView slot(int i) {
   return SlotView{s.state, s.owner, s.info ? s.info->name : ""};
 }
 Stats stats() { return s_st; }
+
+
+const float* wt_table(int b) { return s_wt_built && b >= 0 && b < wt::kBuiltins ? &s_wt[b][0][0] : nullptr; }
+void wt_build() {
+  if (s_wt_built) return;
+  static float c[wt::kSpec], scratch[4 * wt::kFrame];
+  for (int b = 0; b < wt::kBuiltins; ++b) {
+    float peak = 0.0f;
+    for (int f = 0; f < wt::kBuiltinFrames; ++f) {
+      wt::builtin_frame(b, f, c, scratch);
+      wt::synth_frame(c, s_wt[b][f], scratch);
+      float pk = wt::frame_peak(s_wt[b][f]);
+      peak = pk > peak ? pk : peak;
+    }
+    float g = peak > 1e-6f ? 0.95f / peak : 1.0f;   // (as upstream: the table's loudest frame at 0.95)
+    for (int f = 0; f < wt::kBuiltinFrames; ++f)
+      for (int i = 0; i < wt::kFrameFloats; ++i) s_wt[b][f][i] *= g;
+  }
+  s_wt_built = true;
+}
 
 }  // namespace dsp
 }  // namespace core
