@@ -22,7 +22,7 @@ static_assert(offsetof(scx_io, in) == offsetof(proc::Block, in) && offsetof(scx_
                   offsetof(scx_io, sin) == offsetof(proc::Block, sin) &&
                   offsetof(scx_io, sout) == offsetof(proc::Block, sout),
               "scx_io = proc::Block");
-static_assert(SCX_CHANNELS == proc::kChannels && SCX_SLOT_IO == proc::kSlotIO && SCX_PARAMS_MAX == proc::kParams, "ABI");
+static_assert(SCX_CHANNELS == proc::kChannels && SCX_SLOT_IO == proc::kSlotIO && SCX_PARAMS_MAX <= proc::kParams, "ABI");   // a blob keeps 64 params; a slot takes 128 (POLY)
 static_assert(kBlobs == dsp::kShipped, "one library entry a loaded blob");
 static_assert(sizeof(scx_header) == 64, "SCX header");
 

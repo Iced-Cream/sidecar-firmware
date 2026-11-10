@@ -11,6 +11,7 @@
 #include "check.h"
 #include "dsp/blocks.h"
 #include "dsp/dsp.h"
+#include "dsp/poly.h"
 #include "dsp/gen.h"
 #include "dsp/grain.h"
 #include "dsp/wtosc.h"
@@ -533,6 +534,114 @@ static void test_mods() {
   CHECK(dsp::stats().used == 0);
 }
 
+// POLY (CHAIN op 39): chains of library blocks, one copy a note; chords; steals; internal mod points; live notes
+static int chain(int seq, int owner, int slot, int notes, int weight, std::vector<const char*> blocks,
+                 std::vector<std::pair<int, int>> mods) {
+  std::vector<uint8_t> b = {0x39, (uint8_t)seq, (uint8_t)owner, (uint8_t)slot, (uint8_t)notes, (uint8_t)weight,
+                            (uint8_t)blocks.size()};
+  for (const char* n : blocks) {
+    b.push_back((uint8_t)strlen(n));
+    for (const char* p = n; *p; ++p) b.push_back((uint8_t)*p);
+  }
+  b.push_back((uint8_t)mods.size());
+  for (auto& m : mods) b.push_back((uint8_t)m.first), b.push_back((uint8_t)m.second);
+  send(b);
+  auto a = answers();
+  CHECK(a.size() == 1 && a[0].size() == 11);
+  if (a[0][6] == 0x70) return a[0][9];
+  CHECK(a[0][6] == 0x71);
+  return -a[0][9];
+}
+static void pset(int owner, int slot, int first, std::vector<int> v) {
+  std::vector<uint8_t> b = {0x38, (uint8_t)owner, (uint8_t)slot, (uint8_t)first, (uint8_t)v.size()};
+  for (int x : v) b.push_back((uint8_t)(x >> 7)), b.push_back((uint8_t)(x & 0x7F));
+  CHECK(send(b));
+}
+static void trig(int owner, int slot, int kind, int note, int vel) {
+  CHECK(send({0x37, (uint8_t)owner, (uint8_t)slot, (uint8_t)kind, (uint8_t)note, (uint8_t)vel, 0, 0, 0, 0}));
+}
+static void test_poly() {
+  CHECK(chain(90, 7, 3, 4, 0x10, {"OSC", "NOPE"}, {}) == -dsp::kUnknown);
+  CHECK(chain(91, 7, 3, 4, 0x10, {"OSC", "POLY"}, {}) == -dsp::kBad);
+  CHECK(chain(92, 7, 3, 0, 0x10, {"OSC"}, {}) == -dsp::kBad);
+  CHECK(chain(93, 7, 3, 4, 0x20, {"OSC", "ENV"}, {}) == -dsp::kBad);           // weight from a block it has not
+  CHECK(chain(94, 7, 3, 4, 0x10, {"OSC", "ENV"}, {{0x10, 0x0F}}) == -dsp::kBad);   // OSC has no param 15
+  CHECK(place(95, 7, 3, "POLY") == -dsp::kBad);
+  CHECK(chain(96, 7, 3, 4, 0x10, {"OSC", "ENV"}, {}) == 3);
+  CHECK(dsp::slot(3).state == dsp::kPlacedState && !strcmp(dsp::slot(3).block, "POLY"));
+  CHECK(rt(97, 7, route::slot_chan(3, 0), 0, route::kUnity) >= 0);
+  auto* p = (dsp::Poly*)proc::slot(3);
+  // ENV: ADSR, SUS full, REL short; OSC a sine. CHD MAJ.
+  pset(7, 3, 16 + 2, {127 * 64, 2 * 64, 1 * 64});   // SUS REL MODE
+  pset(7, 3, 1, {0});
+  pset(7, 3, 64, {1 * 64});
+  trig(7, 3, 0, 60, 100);
+  quiet_in();
+  float pk = 0.0f;
+  for (int i = 0; i < 40; ++i) { block(128); answers(); for (int f = 0; f < 128; ++f) pk = std::fmax(pk, std::fabs(g_o[0][f])); }
+  CHECK(p->sounding() == 3 && p->held() == 3);
+  bool keys[128] = {};
+  for (int k = 0; k < 4; ++k) if (p->key(k) >= 0) keys[p->key(k)] = true;
+  CHECK(keys[60] && keys[64] && keys[67]);
+  CHECK(std::fabs(p->headroom() - 1.0f / std::sqrt(3.0f)) < 0.01f);   // three notes at full envelope
+  CHECK(pk > 0.5f && pk < 2.0f);
+  // the release: each note's ENV comes to rest, its copy is free again
+  trig(7, 3, 1, 60, 0);
+  for (int i = 0; i < 40; ++i) { block(128); answers(); }
+  CHECK(p->sounding() == 0);
+  float tail = 0.0f;
+  for (int f = 0; f < 128; ++f) tail = std::fmax(tail, std::fabs(g_o[0][f]));
+  CHECK(tail == 0.0f && std::fabs(p->headroom() - 1.0f) < 0.01f);
+  // a new trig releases the earlier trig notes (their tails go on); CHD OFF: one note
+  pset(7, 3, 64, {0});
+  trig(7, 3, 0, 60, 100);
+  block(128);
+  trig(7, 3, 0, 72, 100);
+  block(128);
+  CHECK(p->sounding() == 2 && p->held() == 1);
+  // a live note (a USB-A device's) is left alone by trigs, released by its own note off
+  CHECK(proc::midi(1, 0x90, 50, 90));
+  block(128);
+  trig(7, 3, 0, 74, 100);
+  for (int i = 0; i < 40; ++i) { block(128); answers(); }
+  CHECK(p->held() == 2);
+  CHECK(proc::midi(1, 0x80, 50, 0));
+  for (int i = 0; i < 40; ++i) { block(128); answers(); }
+  CHECK(p->held() == 1 && p->sounding() == 1);
+  send({0x31, 7, 3});
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  CHECK(dsp::slot(3).state == dsp::kEmpty);
+
+  // steals: 2 notes, a MAJ chord - the third note takes the oldest's copy
+  CHECK(chain(98, 7, 3, 2, 0x7F, {"OSC", "ENV"}, {}) == 3);
+  p = (dsp::Poly*)proc::slot(3);
+  pset(7, 3, 16 + 2, {127 * 64, 2 * 64, 1 * 64});
+  pset(7, 3, 64, {1 * 64});
+  trig(7, 3, 0, 60, 100);
+  block(128);
+  CHECK(p->sounding() == 2 && p->key(0) + p->key(1) == 64 + 67);
+  send({0x31, 7, 3});
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+
+  // an internal mod point: each note's ENV (ctl 0) onto its own OSC's TUN, at full depth up: an AD envelope's peak
+  // moves TUN by the whole range; the base (64) comes back once it has decayed
+  CHECK(chain(99, 7, 3, 2, 0x10, {"OSC", "ENV"}, {{0x10, 0x02}}) == 3);
+  p = (dsp::Poly*)proc::slot(3);
+  pset(7, 3, 16 + 1, {50 * 64});   // DEC ~40 ms
+  pset(7, 3, 68, {16383});
+  trig(7, 3, 0, 60, 127);
+  int top = 0;
+  for (int i = 0; i < 4; ++i) { block(128); top = std::max(top, ((dsp::Block*)p->copy(0, 0))->param(2)); }
+  CHECK(top > 16000);
+  for (int i = 0; i < 400 && p->sounding(); ++i) block(128);
+  block(128);
+  CHECK(p->sounding() == 0);
+  send({0x31, 7, 3});
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  CHECK(dsp::slot(3).state == dsp::kEmpty);
+  printf("test_dsp: POLY ok\n");
+}
+
 int main() {
   hooks.to_rytm = capture;
   CHECK(kv::link::attach_generic());
@@ -619,6 +728,7 @@ int main() {
 
   test_trig();
   test_mods();
+  test_poly();
 
   printf("test_dsp: OK (%lu placed, %lu freed, %lu refused)\n", (unsigned long)dsp::stats().placed,
          (unsigned long)dsp::stats().freed, (unsigned long)dsp::stats().refused);

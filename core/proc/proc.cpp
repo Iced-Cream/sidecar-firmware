@@ -19,9 +19,11 @@ bool g_wait[kSlots];
 // render side: the mod points, each slot's params' bases and what was last given, and which params a point moved
 struct Mod { bool on; uint8_t src, dst, ctl, param; float depth; };
 Mod g_mod[kMods];
+constexpr int kMask = kParams / 64;
+static_assert(kMask == 2, "g_moved's two words");
 uint16_t g_base[kSlots][kParams];
 uint16_t g_given[kSlots][kParams];
-uint64_t g_moved[kSlots];
+uint64_t g_moved[kSlots][kMask];   // the params a mod point moved last block (bits)
 int g_mods_on;
 
 bool push(const Msg& m) {
@@ -144,30 +146,34 @@ namespace {
 // slot s's modulated params, before it runs: base + the sum of its points' ctl x depth (see proc.h)
 void modulate(int s, Proc* p) {
   float off[kParams];
-  uint64_t now = 0;
+  uint64_t now[kMask] = {};
   for (const Mod& d : g_mod) {
     if (!d.on || d.dst != s) continue;
     Proc* src = slot(d.src);
     float c = src ? src->ctl(d.ctl) : 0.0f;
-    uint64_t bit = 1ull << d.param;
-    if (!(now & bit)) off[d.param] = 0.0f, now |= bit;
+    uint64_t bit = 1ull << (d.param & 63);
+    uint64_t& w = now[d.param >> 6];
+    if (!(w & bit)) off[d.param] = 0.0f, w |= bit;
     off[d.param] += c * d.depth * 16383.0f;
   }
-  uint64_t all = now | g_moved[s];
-  for (int k = 0; all; ++k, all >>= 1) {
-    if (!(all & 1)) continue;
-    int v = g_base[s][k] + ((now >> k & 1) ? (int)(off[k] + (off[k] < 0 ? -0.5f : 0.5f)) : 0);
-    v = v < 0 ? 0 : v > 16383 ? 16383 : v;
-    if (v != g_given[s][k]) { g_given[s][k] = (uint16_t)v; p->set_param(k, v); }
+  for (int m = 0; m < kMask; ++m) {
+    uint64_t all = now[m] | g_moved[s][m];
+    for (int j = 0; all; ++j, all >>= 1) {
+      if (!(all & 1)) continue;
+      int k = 64 * m + j;
+      int v = g_base[s][k] + ((now[m] >> j & 1) ? (int)(off[k] + (off[k] < 0 ? -0.5f : 0.5f)) : 0);
+      v = v < 0 ? 0 : v > 16383 ? 16383 : v;
+      if (v != g_given[s][k]) { g_given[s][k] = (uint16_t)v; p->set_param(k, v); }
+    }
+    g_moved[s][m] = now[m];
   }
-  g_moved[s] = now;
 }
 }  // namespace
 
 void run(int s, const Block& b0, float* const* slot_in, float* const* slot_out) {
   Proc* p = slot(s);
   if (!p || b0.frames <= 0 || b0.frames > kMaxFrames) return;
-  if (g_mods_on || g_moved[s]) modulate(s, p);
+  if (g_mods_on || g_moved[s][0] || g_moved[s][1]) modulate(s, p);
   Block b = b0;
   for (int k = 0; k < kSlotIO; ++k) {
     b.sin[k] = slot_in ? slot_in[kSlotIO * s + k] : nullptr;

@@ -18,6 +18,13 @@
 //               32 INFO  <seq> <what> <a> <b>                                          answer 72
 //                        what 0: library block a (a 0..): its name and param count; past the end: an empty name
 //                        what 1: block a's param b: its name and default (hi, lo)
+//               39 CHAIN <seq> <owner> <slot 0..15 | 7F> <notes 1..8> <weight> <nb 1..4> {<len> <name>} x nb <nm 0..4>
+//                        {<src> <dst>} x nm                                           answer 70 or 71
+//                        (2026-11-10) a POLY (poly.h) into the slot: nb library blocks chained, built once a note;
+//                        weight b << 4 | ctl, the block whose control output weighs a note in the headroom (7F: 1 a
+//                        note); the internal mod points src b << 4 | ctl onto dst b << 4 | param, their depths POLY's
+//                        params 68..71. Refused 5 (bad, a name POLY), 9 (unknown name), 3 (no slot, or too big for
+//                        a slot's memory). Then the slot is as a PLACEd one: its params 16 b + p, 64.., TRIG, FREE.
 //               37 TRIG  <owner> <slot> <kind> <note> <vel> <blk4> [<first> <n> {<hi> <lo>} x n]   no answer
 //                        (2026-11-10, Pi voices, option B): a Rytm voice machine's trig, to the block in that slot
 //                        (placed by owner) as its midi() with src proc::kSrcRytm: kind 0 a trig = note on (vel 0 sent
@@ -48,7 +55,7 @@ namespace dsp {
 constexpr int kSlots = proc::kSlots;
 constexpr int kNameMax = 8;
 constexpr size_t kSlotBytes = 1u << 20;   // a slot's memory: the largest block (DELAY, ~776 KB) fits
-enum Op : uint8_t { kPlace = 0x30, kFree = 0x31, kInfo = 0x32, kTrig = 0x37, kParam = 0x38, kPlaced = 0x70, kRefused = 0x71, kText = 0x72 };
+enum Op : uint8_t { kPlace = 0x30, kFree = 0x31, kInfo = 0x32, kChainOp = 0x39, kTrig = 0x37, kParam = 0x38, kPlaced = 0x70, kRefused = 0x71, kText = 0x72 };
 enum Code : uint8_t { kFull = 3, kBad = 5, kUnknown = 9 };
 
 // the library

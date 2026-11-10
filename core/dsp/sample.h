@@ -36,6 +36,7 @@ class Sample : public Block {
   }
   const char* name() const override { return "SAMPLE"; }
   void link_reset() override { play_ = false; }
+  bool done() const override { return !pending_ && !play_ && fade_out_ <= 0; }
   void midi(int src, uint8_t status, uint8_t d1, uint8_t d2) override {
     if ((status & 0xF0) != 0x90 || !d2) return;
     note_ = d1;

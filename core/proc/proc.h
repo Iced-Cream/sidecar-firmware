@@ -17,7 +17,7 @@ namespace core {
 namespace proc {
 
 constexpr int kSlots = 16;          // 4 until the send FX phase (2026-11-05): graphs of library blocks (core/dsp)
-constexpr int kParams = 64;
+constexpr int kParams = 128;      // 64 until 2026-11-10 (POLY: four blocks of 16 per note, and its own)
 constexpr int kChannels = 12;       // Overbridge: 12 IN, 12 OUT
 constexpr int kMaxFrames = 256;     // frames a process() call may carry
 
@@ -48,6 +48,9 @@ class Proc {
   // control output k (0..kCtls-1), -1..1, as this block's process() left it (an envelope, an LFO): what a mod point
   // carries onto another slot's param. Render side. 0 for a processor that has none.
   virtual float ctl(int k) const { return 0.0f; }
+  // a note it played has ended and it is silent until the next (an envelope at rest, a one-shot past its end): a host
+  // of notes (core/dsp's POLY) frees the note's chain. Render side. False for a processor that cannot tell.
+  virtual bool done() const { return false; }
 };
 
 bool register_slot(int slot, Proc* p);   // false: slot out of range or taken

@@ -11,6 +11,7 @@
 #include "grain.h"
 #include "wtosc.h"
 #include "midiout.h"
+#include "poly.h"
 #include "sample.h"
 
 namespace core {
@@ -47,6 +48,17 @@ const ParamInfo kMidiOutP[] = {{"DST", 1 * 64}, {"CHN", 0},  {"LEN", 0},  {"TRN"
                                {"AT", 0},      {"MW", 0},   {"VAL1", 0}, {"SEL1", 0},      {"VAL2", 0}, {"SEL2", 0},
                                {"VAL3", 0},    {"SEL3", 0}, {"VAL4", 0}, {"SEL4", 0}};
 
+// POLY's params: the copies' (16 b + p, named by the chain's blocks, INFO says "CHAIN"), then its own (poly.h)
+struct PolyNames {
+  ParamInfo p[Poly::kParamCount];
+  PolyNames() {
+    static const char* const own[] = {"CHD", "INV", "SPR", "VOI", "MOD1", "MOD2", "MOD3", "MOD4"};
+    for (int i = 0; i < Poly::kOwn; ++i) p[i] = {"CHAIN", 0};
+    for (int i = 0; i < Poly::kParamCount - Poly::kOwn; ++i) p[Poly::kOwn + i] = {own[i], (uint16_t)(i < 4 ? 0 : 8192)};
+  }
+};
+const PolyNames kPolyNames;
+
 const BlockInfo kLibrary[] = {
     {"DELAY", 8, kDelayP, sizeof(Delay), make<Delay>},
     {"FILTER", 4, kFilterP, sizeof(Filter), make<Filter>},
@@ -60,6 +72,7 @@ const BlockInfo kLibrary[] = {
     {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
     {"WTOSC", 8, kWtOscP, sizeof(WtOsc), make<WtOsc>},
     {"MIDIOUT", 16, kMidiOutP, sizeof(MidiOut), make<MidiOut>},
+    {"POLY", Poly::kParamCount, kPolyNames.p, sizeof(Poly), nullptr},   // CHAIN only (a PLACE is refused)
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
 // the shipped blocks (core/code), in load order
@@ -103,6 +116,16 @@ int count_used() {
   int n = 0;
   for (const Slot& s : s_slot) n += s.state != kEmpty;
   return n;
+}
+
+// PLACE / CHAIN's slot: want (0..15) if empty, 7F the first empty; -1 none free, -2 out of range
+int free_slot(int want) {
+  if (want == 0x7F) {
+    for (int i = 0; i < kSlots; ++i) if (s_slot[i].state == kEmpty) return i;
+    return -1;
+  }
+  if (want >= kSlots) return -2;
+  return s_slot[want].state == kEmpty ? want : -1;
 }
 
 // FREE: the slot's points fade out first (route close_slot), so its block goes without a click
@@ -177,7 +200,7 @@ bool begin(void* arena, size_t bytes) {
   return true;
 }
 
-bool is_dsp_op(uint8_t op) { return (op >= kPlace && op <= kInfo) || op == kTrig || op == kParam; }
+bool is_dsp_op(uint8_t op) { return (op >= kPlace && op <= kInfo) || op == kTrig || op == kParam || op == kChainOp; }
 
 bool sysex(const uint8_t* m, int n) {
   if (n < 8 || m[0] != 0xF0 || m[4] != 0x51 || m[n - 1] != 0xF7 || !is_dsp_op(m[6])) { ++s_st.ops_bad; return false; }
@@ -186,7 +209,7 @@ bool sysex(const uint8_t* m, int n) {
   for (int i = 0; i < bn; ++i) if (b[i] & 0x80) { ++s_st.ops_bad; return false; }
   if (m[5] != 1) {
     ++s_st.ops_bad;
-    return m[6] == kPlace && bn >= 2 ? refuse(b[0], b[1], kBad) : false;
+    return (m[6] == kPlace || m[6] == kChainOp) && bn >= 2 ? refuse(b[0], b[1], kBad) : false;
   }
   switch (m[6]) {
     case kPlace: {   // <seq> <owner> <slot | 7F> <name 1..8>
@@ -198,6 +221,7 @@ bool sysex(const uint8_t* m, int n) {
       name[k] = 0;
       const BlockInfo* info = find(name);
       if (!info || (info->owner != -1 && info->owner != owner)) return refuse(seq, owner, kUnknown);
+      if (!info->make) return refuse(seq, owner, kBad);   // POLY: CHAIN only
       if (!s_arena) return refuse(seq, owner, kFull);
       int slot = -1;
       if (want == 0x7F) {
@@ -215,6 +239,53 @@ bool sysex(const uint8_t* m, int n) {
       s = Slot{kPlacedState, (uint8_t)owner, info, p};
       // the params' bases for mod points (core/proc): the block's defaults, until a set
       for (int k = 0; k < info->nparams && k < proc::kParams; ++k) proc::set_default(slot, k, info->params ? info->params[k].def : 0);
+      ++s_st.placed;
+      s_st.used = count_used();
+      const uint8_t a[] = {kPlaced, (uint8_t)seq, (uint8_t)owner, (uint8_t)slot};
+      answer(a, 4);
+      return true;
+    }
+    case kChainOp: {   // <seq> <owner> <slot | 7F> <notes> <weight> <nb> {<len> <name>} x nb <nm> {<src> <dst>} x nm
+      if (bn < 6) { ++s_st.ops_bad; return bn >= 2 ? refuse(b[0], b[1], kBad) : false; }
+      int seq = b[0], owner = b[1], want = b[2];
+      Poly::Spec sp{};
+      sp.notes = b[3], sp.weight = b[4], sp.nb = b[5];
+      if (sp.notes < 1 || sp.notes > Poly::kNotes || sp.nb < 1 || sp.nb > Poly::kChain) return refuse(seq, owner, kBad);
+      int i = 6;
+      for (int k = 0; k < sp.nb; ++k) {
+        if (i >= bn || b[i] < 1 || b[i] > kNameMax || i + 1 + b[i] > bn) return refuse(seq, owner, kBad);
+        char name[kNameMax + 1];
+        memcpy(name, b + i + 1, b[i]);
+        name[b[i]] = 0;
+        i += 1 + b[i];
+        const BlockInfo* info = find(name);
+        if (!info || (info->owner != -1 && info->owner != owner)) return refuse(seq, owner, kUnknown);
+        if (!info->make) return refuse(seq, owner, kBad);   // POLY in POLY
+        sp.blk[k] = info;
+      }
+      if (i >= bn) return refuse(seq, owner, kBad);
+      sp.nm = b[i++];
+      if (sp.nm > Poly::kMods || i + 2 * sp.nm != bn) return refuse(seq, owner, kBad);
+      for (int k = 0; k < sp.nm; ++k, i += 2) {
+        sp.mods[k][0] = b[i], sp.mods[k][1] = b[i + 1];
+        if ((b[i] >> 4) >= sp.nb || (b[i] & 15) >= proc::kCtls || (b[i + 1] >> 4) >= sp.nb ||
+            (b[i + 1] & 15) >= sp.blk[b[i + 1] >> 4]->nparams) return refuse(seq, owner, kBad);
+      }
+      if (sp.weight != Poly::kNoWeight && ((sp.weight >> 4) >= sp.nb || (sp.weight & 15) >= proc::kCtls)) return refuse(seq, owner, kBad);
+      if (Poly::bytes(sp) > kSlotBytes) return refuse(seq, owner, kFull);
+      if (!s_arena) return refuse(seq, owner, kFull);
+      int slot = free_slot(want);
+      if (slot < 0) return refuse(seq, owner, slot == -2 ? kBad : kFull);
+      uint8_t* mem = s_arena + (size_t)slot * kSlotBytes;
+      Poly* p = new (mem) Poly(sp, mem);
+      if (!p->ok()) { p->~Poly(); return refuse(seq, owner, kBad); }
+      if (!proc::register_slot(slot, p)) { p->~Poly(); return refuse(seq, owner, kFull); }
+      const BlockInfo* pinfo = find("POLY");
+      s_slot[slot] = Slot{kPlacedState, (uint8_t)owner, pinfo, p};
+      for (int k = 0; k < sp.nb; ++k)   // the chain's blocks' defaults (each copy has them already), POLY's own
+        for (int q = 0; q < sp.blk[k]->nparams && q < 16; ++q)
+          proc::set_default(slot, 16 * k + q, sp.blk[k]->params ? sp.blk[k]->params[q].def : 0);
+      for (int q = Poly::kOwn; q < Poly::kParamCount; ++q) proc::set_default(slot, q, pinfo->params[q].def);
       ++s_st.placed;
       s_st.used = count_used();
       const uint8_t a[] = {kPlaced, (uint8_t)seq, (uint8_t)owner, (uint8_t)slot};

@@ -157,6 +157,7 @@ class Env : public Block {
     ctl_ = e_ * h;
   }
   float ctl(int k) const override { return k == 0 ? ctl_ : 0.0f; }
+  bool done() const override { return stage_ == kOff; }
 
  private:
   enum Stage : uint8_t { kOff, kAtk, kDec, kSus, kRel };
