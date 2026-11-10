@@ -7,6 +7,7 @@
 
 #include "../route/route.h"
 #include "blocks.h"
+#include "clfo.h"
 #include "gen.h"
 #include "grain.h"
 #include "wtosc.h"
@@ -36,6 +37,7 @@ const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}
                            {"PW", 64 * 64},   {"FM", 0},       {"SUB", 0},       {"THRU", 0}};
 const ParamInfo kNoiseP[] = {{"LEV", 100 * 64}, {"COL", 64 * 64}, {"THRU", 127 * 64}};
 const ParamInfo kEnvP[] = {{"ATK", 0}, {"DEC", 64 * 64}, {"SUS", 0}, {"REL", 32 * 64}, {"MODE", 0}, {"VCA", 127 * 64}, {"VEL", 0}, {"SHAPE", 0}, {"OUT", 0}};
+const ParamInfo kClfoP[] = {{"CYC", 0}, {"H1", 1 * 64}, {"H2", 2 * 64}, {"H3", 3 * 64}, {"PH1", 0}, {"PH2", 3390}, {"PH3", 1043}};
 const ParamInfo kSvfP[] = {{"CUT", 64 * 64}, {"RES", 0}, {"KEY", 64 * 64}, {"DRV", 0}};
 
 const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},       {"SPRY", 0},
@@ -73,6 +75,7 @@ const BlockInfo kLibrary[] = {
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 9, kEnvP, sizeof(Env), make<Env>},
     {"SVF", 4, kSvfP, sizeof(Svf), make<Svf>},
+    {"CLFO", 7, kClfoP, sizeof(Clfo), make<Clfo>},
     {"GRAIN", 16, kGrainP, Grain::bytes(), make<Grain>, nullptr, -1, Grain::kShared},
     {"WTOSC", 13, kWtOscP, sizeof(WtOsc), make<WtOsc>},
     {"MIDIOUT", 16, kMidiOutP, sizeof(MidiOut), make<MidiOut>},

@@ -57,6 +57,16 @@ int queued();               // -1 none
 double bpm();               // 0 unknown
 bool step_of(int track, int* step, int* len, int* speed);   // the track's last tick; false if none since reset
 
+// The Rytm's MIDI clock (2026-11-10, for clock-synced blocks: core/dsp's CLFO; upstream's lfo.cpp clock, as is): the
+// realtime bytes F8 / FA / FB / FC and F2 (spp in 16ths) as the platform reads them from the Rytm's USB MIDI, with the
+// time (now_us). Control side. position(): the song position in 24 ppqn ticks mod kWrap while the Rytm plays and its
+// clock ticks (the latest tick's position plus the time since, at the measured tick length, under one tick); false
+// otherwise (stopped, no clock for 250 ms), when a reader runs on at tick_us() (the last tempo; 120 BPM until one is
+// measured). Any core (racy reads of words: a block late at worst).
+constexpr float kWrap = 2304.0f;   // 2^8 x 9 ticks: every synced cycle divides it
+void realtime(uint8_t status, uint16_t spp, uint32_t us);
+bool position(uint32_t us, float* ticks);
+float tick_us();
 struct Stats { uint32_t ticks, states, bad; };
 Stats stats();
 }  // namespace clock

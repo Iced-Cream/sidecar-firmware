@@ -27,7 +27,43 @@ template <class F, class A> bool add(F* tab, F f) {
   for (int i = 0; i < kListeners; ++i) if (!tab[i]) { tab[i] = f; return true; }
   return false;
 }
+// the MIDI clock (upstream lfo.cpp's Clock)
+volatile bool g_run = false, g_ticking = false;
+volatile int32_t g_pos = -1;          // the latest tick's song position (24 ppqn) since Start, -1 none yet
+volatile uint32_t g_last_us = 0;      // when the latest tick came
+volatile float g_tick_us = 20833.3f;  // the tempo: 120 BPM until measured
 }  // namespace
+
+void realtime(uint8_t status, uint16_t spp, uint32_t now) {
+  switch (status) {
+    case 0xF8: {
+      if (g_ticking) {
+        uint32_t d = now - g_last_us;
+        if (d > 1000 && d < 250000) g_tick_us = g_tick_us + (g_tick_us > 0 ? ((float)d - g_tick_us) * 0.25f : (float)d);
+      }
+      g_ticking = true;
+      g_last_us = now;
+      if (g_run) g_pos = g_pos + 1;
+      break;
+    }
+    case 0xFA: g_run = true, g_pos = -1; break;
+    case 0xFB: g_run = true; break;
+    case 0xFC: g_run = false; break;
+    case 0xF2: g_pos = (int32_t)spp * 6 - 1; break;
+    default: break;
+  }
+}
+bool position(uint32_t us, float* ticks) {
+  uint32_t since = us - g_last_us;
+  bool locked = g_run && g_ticking && since < 250000;
+  if (!locked) return false;
+  int32_t pos = g_pos;
+  if (pos < 0) { *ticks = 0.0f; return true; }
+  float f = (float)since / g_tick_us;
+  *ticks = (float)(pos % (int32_t)kWrap) + (f < 0.0f ? 0.0f : f > 0.999f ? 0.999f : f);
+  return true;
+}
+float tick_us() { return g_tick_us; }
 
 bool on_tick(TickFn f) { return f && add<TickFn, Tick>(g_tick, f); }
 bool on_state(StateFn f) { return f && add<StateFn, State>(g_state, f); }

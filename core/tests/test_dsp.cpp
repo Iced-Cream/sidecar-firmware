@@ -12,6 +12,9 @@
 #include "dsp/blocks.h"
 #include "dsp/dsp.h"
 #include "dsp/poly.h"
+#include "dsp/clfo.h"
+#include "clock/clock.h"
+#include "core_port.h"
 #include "dsp/gen.h"
 #include "dsp/grain.h"
 #include "dsp/wtosc.h"
@@ -816,11 +819,39 @@ static void test_poly() {
   printf("test_dsp: POLY ok\n");
 }
 
+// CLFO on the Rytm's MIDI clock: locked to the song position while it plays (ANIM's waves), on at the tempo when stopped
+static void test_clfo() {
+  uint64_t us = 5000000;
+  host_fake_time(true, us);
+  clock::realtime(0xFA, 0, (uint32_t)us);
+  for (int i = 0; i < 30; ++i) { us += 20833; host_fake_time(true, us); clock::realtime(0xF8, 0, (uint32_t)us); }
+  us += 10000;
+  host_fake_time(true, us);
+  float tp = 0.0f;
+  CHECK(clock::position((uint32_t)us, &tp) && std::fabs(tp - (29.0f + 10000.0f / 20833.0f)) < 0.02f);
+  dsp::Clfo c;
+  c.set_param(0, 80 * 64);   // 1/4: a beat, 24 ticks
+  run_block(c, std::vector<float>(32, 0.0f));
+  float ph = std::fmod(tp, 24.0f) / 24.0f * 6.2831853f;
+  CHECK(std::fabs(c.ctl(0) - std::sin(ph)) < 0.01f && std::fabs(c.ctl(1) - std::sin(2 * ph + 1.3f)) < 0.01f &&
+        std::fabs(c.ctl(2) - std::sin(3 * ph + 0.4f)) < 0.01f && c.ctl(3) == 1.0f);
+  clock::realtime(0xFC, 0, (uint32_t)us);   // stopped: on at the measured tempo
+  float t0 = c.ticks();
+  run_block(c, std::vector<float>(4800, 0.0f));   // 100 ms = 4.8 ticks at 120 BPM
+  CHECK(std::fabs(c.ticks() - t0 - 4.8f) < 0.05f);
+  c.set_param(0, 0);
+  run_block(c, std::vector<float>(32, 0.0f));
+  CHECK(c.ctl(0) == 0.0f && c.ctl(3) == 0.0f);
+  host_fake_time(false, 0);
+  printf("test_dsp: CLFO ok\n");
+}
+
 int main() {
   hooks.to_rytm = capture;
   CHECK(kv::link::attach_generic());
   test_primitives();
   test_gen();
+  test_clfo();
 
   // the arena: 16 x 1 MiB, 64-byte aligned
   void* arena = std::aligned_alloc(64, (size_t)dsp::kSlots * dsp::kSlotBytes);
