@@ -60,7 +60,7 @@ struct OnePole {
 // the base of every block: the param store and the stereo I/O
 class Block : public proc::Proc {
  public:
-  static constexpr int kMaxParams = 8;
+  static constexpr int kMaxParams = 16;   // 8 until 2026-11-10 (SAMPLE's slices)
   void set_param(int param, int value14) override {
     if (param >= 0 && param < kMaxParams) p_[param] = (uint16_t)(value14 < 0 ? 0 : value14 > 16383 ? 16383 : value14);
   }

@@ -25,7 +25,8 @@ const ParamInfo kShaperP[] = {{"MODE", 0}, {"DRIVE", 0}, {"BITS", 16383}, {"RATE
 const ParamInfo kModP[] = {{"MODE", 0}, {"RATE", 9000}, {"DEPTH", 16383}, {"SHAPE", 0}, {"PHASE", 0}};
 const ParamInfo kWidthP[] = {{"WIDTH", 8192}, {"BALANCE", 8192}, {"GAIN", 8192}};
 const ParamInfo kSampleP[] = {{"LEV", 100 * 64}, {"SMP", 0}, {"TUN", 64 * 64}, {"STA", 0},
-                              {"END", 16383},    {"LOOP", 0}, {"FIN", 64 * 64}, {"VEL", 0}};
+                              {"END", 16383},    {"LOOP", 0}, {"FIN", 64 * 64}, {"VEL", 0},
+                              {"SLN", 0},        {"SLC", 0}};
 
 const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}, {"FIN", 64 * 64},
                            {"PW", 64 * 64},   {"FM", 0},       {"SUB", 0},       {"THRU", 0}};
@@ -38,7 +39,7 @@ const BlockInfo kLibrary[] = {
     {"SHAPER", 5, kShaperP, sizeof(Shaper), make<Shaper>},
     {"MOD", 5, kModP, sizeof(Modulator), make<Modulator>},
     {"WIDTH", 3, kWidthP, sizeof(Width), make<Width>},
-    {"SAMPLE", 8, kSampleP, sizeof(Sample), make<Sample>},
+    {"SAMPLE", 10, kSampleP, sizeof(Sample), make<Sample>},
     {"OSC", 8, kOscP, sizeof(Osc), make<Osc>},
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 7, kEnvP, sizeof(Env), make<Env>},

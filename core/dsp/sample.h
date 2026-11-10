@@ -11,6 +11,9 @@
 //   P5 LOOP  0 one shot; 1 and up (value >= 1): loop STA..END
 //   P6 FIN   cents from 64 x 64 (+-100 over the range)
 //   P7 VEL   how much the note's velocity sets the level: 0 none, 127 all (velocity 127 is unity either way)
+//   P8 SLN   slices (2026-11-10, CHOP on the library): 0 off; n (1..64) cuts STA..END into n equal slices, and a note
+//            plays slice SLC + (note - 60), modulo n, at TUN / FIN only (the note picks the slice, not the pitch)
+//   P9 SLC   the slice a note 60 (a plain trig) plays, 0..63 (p-lockable: a slice a step)
 // A note starts the sample at STA, with a 1 ms fade-in; a new note while it plays starts over (the old one is cut,
 // faded over 1 ms). A note off does nothing (the Rytm's amp and the mod decide the length). Output: the sample's L and R
 // (a mono file on both), linear interpolation, read where core/samples published it (lock-free; an entry that is not
@@ -26,6 +29,7 @@ class Sample : public Block {
  public:
   Sample() {
     p_[0] = 100 * 64; p_[1] = 0; p_[2] = 64 * 64; p_[3] = 0; p_[4] = 16383; p_[5] = 0; p_[6] = 64 * 64; p_[7] = 0;
+    p_[8] = 0; p_[9] = 0;
   }
   const char* name() const override { return "SAMPLE"; }
   void link_reset() override { play_ = false; }
@@ -52,7 +56,8 @@ class Sample : public Block {
     if (!have || smp != entry_) play_ = false;   // OFF, another entry or gone: silence until the next note
     const float vamt = (float)p_[7] / 16383.0f;
     const float gain = (float)p_[0] / (64.0f * 100.0f) * (1.0f - vamt * (1.0f - (float)vel_ / 127.0f));
-    const float semis = (float)note_ - 60.0f + ((float)p_[2] / 64.0f - 64.0f) + ((float)p_[6] / 64.0f - 64.0f) / 64.0f;
+    const float semis = (slices() ? 0.0f : (float)note_ - 60.0f) + ((float)p_[2] / 64.0f - 64.0f) +
+                        ((float)p_[6] / 64.0f - 64.0f) / 64.0f;
     const float step = have ? exp2f(semis / 12.0f) * v.rate / kRate : 0.0f;
     for (int f = 0; f < b.frames; ++f) {
       float l = 0.0f, r = 0.0f;
@@ -86,11 +91,19 @@ class Sample : public Block {
   int note_ = 60, vel_ = 127, entry_ = 0, fade_in_ = 0, fade_out_ = 0;
   float pos_ = 0.0f, lo_ = 0.0f, hi_ = 0.0f, dir_ = 1.0f, old_pos_ = -1.0f, old_dir_ = 1.0f;
 
+  int slices() const { int n = p_[8] / 64; return n > 64 ? 64 : n; }
   void start(const samples::View& v) {
     old_pos_ = pos_;
     old_dir_ = dir_;
     const float last = (float)(v.frames - 1);
     float s = (float)p_[3] / 16383.0f * last, e = (float)p_[4] / 16383.0f * last;
+    if (int n = slices()) {   // slice k of n of s..e (in the play direction)
+      int k = (p_[9] / 64 + note_ - 60) % n;
+      if (k < 0) k += n;
+      float a = s + (e - s) * (float)k / (float)n, z = s + (e - s) * (float)(k + 1) / (float)n;
+      s = a;
+      e = z;
+    }
     dir_ = e >= s ? 1.0f : -1.0f;
     lo_ = s < e ? s : e;
     hi_ = s < e ? e : s;

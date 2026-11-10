@@ -233,8 +233,28 @@ int main() {
     render(s, 512);
     CHECK(fabsf(g_l[300] - 0.25f * 64.0f / 127.0f) < 0.01f);
   }
+  // slices (SLN, SLC): the ramp in 4; a note picks the slice, not the pitch
+  {
+    dsp::Sample s;
+    s.set_param(1, 1 * 64);
+    s.set_param(8, 4 * 64);
+    s.set_param(9, 1 * 64);
+    s.midi(proc::kSrcRytm, 0x90, 60, 127);   // slice 1: frames 500..1000
+    render(s, 1024);
+    CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 600 / 2000.0f)) < 0.003f && peak(g_l, 520, 1024) == 0.0f);
+    s.midi(proc::kSrcRytm, 0x90, 62, 127);   // slice 3, at the same speed
+    render(s, 1024);
+    CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 1600 / 2000.0f)) < 0.003f && peak(g_l, 520, 1024) == 0.0f);
+    s.midi(proc::kSrcRytm, 0x90, 57, 127);   // 1 - 3 = slice 2 (modulo)
+    render(s, 1024);
+    CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 1100 / 2000.0f)) < 0.003f);
+    s.set_param(8, 0);                         // off: the whole ramp at the note's pitch again
+    s.midi(proc::kSrcRytm, 0x90, 60, 127);
+    render(s, 2048);
+    CHECK(fabsf(g_l[100] - (0.25f + 0.5f * 100 / 2000.0f)) < 0.003f);
+  }
   // the library's own entry
-  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 8);
+  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 10);
 
   // the list on the card; another project has none; back, the entries come again by index
   char lp[200];
