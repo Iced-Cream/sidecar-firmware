@@ -535,6 +535,27 @@ static void test_voice_blob(const Bytes& vb) {
     CHECK(ok && pk < 4.0f);
     if (!ok || pk >= 4.0f) printf("test_code: PLAITS zone %d: finite %d peak %f\n", z, (int)ok, pk);
   }
+  // page 2 (params 8..14: TMD MMD FM AUX FIN VEL GLD) at their ends: still sounds, finite; VEL 127 follows velocity
+  {
+    auto pk_after = [&](uint8_t vel) {
+      CHECK(send({0x37, 0x44, (uint8_t)slot, 0, 60, vel, 0, 0, 0, 3}));
+      float pk = 0.0f;
+      bool ok = true;
+      for (int i = 0; i < 40; ++i) {
+        block(128);
+        for (int f = 0; f < 128; ++f) ok = ok && std::isfinite(g_o[4][f]);
+        pk = std::fmax(pk, peak_of(4, 0, 128));
+      }
+      CHECK(ok);
+      return pk;
+    };
+    CHECK(send({0x38, 0x44, (uint8_t)slot, 1, 1, 40 * 64 >> 7, 0}));   // ENG back to VA
+    CHECK(send({0x38, 0x44, (uint8_t)slot, 8, 7, 127, 0, 0, 0, 127, 0, 64, 0, 0, 0, 127, 0, 127, 0}));
+    float loud = pk_after(127), soft = pk_after(16);
+    CHECK(loud > 0.02f && loud < 4.0f && soft < loud * 0.5f);
+    if (!(soft < loud * 0.5f)) printf("test_code: PLAITS page 2: loud %f soft %f\n", loud, soft);
+    CHECK(send({0x38, 0x44, (uint8_t)slot, 8, 7, 64, 0, 64, 0, 64, 0, 0, 0, 64, 0, 0, 0, 0, 0}));
+  }
   printf("test_code: PLAITS loaded, placed, trigged (peak %.3f, after 1 s %.3f; %zu bytes)\n", early, late, vb.size());
 }
 #endif
@@ -586,6 +607,16 @@ static void test_daisysp_blob(const Bytes& vb) {
     float pk = run(e, 3, true);
     printf("test_code: DAISYSP %s from BD's stem: %.3f\n", e == 0 ? "MODAL" : e == 1 ? "STRING" : "RESON", pk);
     CHECK(pk > 0.01f && p[e][2] < 1e-4f);
+  }
+  // page 2 (params 8..10: XTN XDC XMX): NOISE into RESON, dark and long, the burst mixed in: finite, louder with XMX
+  {
+    CHECK(send({0x38, 0x51, (uint8_t)slot, 8, 3, 0, 0, 127, 0, 0, 0}));
+    float plain = run(2, 2, false);
+    CHECK(send({0x38, 0x51, (uint8_t)slot, 10, 1, 127, 0}));
+    float mixed = run(2, 2, false);
+    printf("test_code: DAISYSP page 2: dark long NOISE %.3f, burst mixed in %.3f\n", plain, mixed);
+    CHECK(plain > 1e-3f && plain < 4.0f && mixed > plain && mixed < 4.0f);
+    CHECK(send({0x38, 0x51, (uint8_t)slot, 8, 3, 127, 0, 64, 0, 0, 0}));
   }
   printf("test_code: DAISYSP loaded, placed, trigged (%zu bytes)\n", vb.size());
 }
