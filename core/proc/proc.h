@@ -58,6 +58,9 @@ class Proc {
   // outside a host: such a block does its voice-wide work in process(). Control side / render side.
   virtual void share(Proc* first) {}
   virtual void voice(const Block& b, const float* last) {}
+  // A host of notes releases this copy's note because a new trig came (not a note off): its tail goes on, nothing a
+  // note off would start (SAMPLE's release regions). Render side. By default the Rytm's note off (src kSrcRytm).
+  virtual void cut(uint8_t key) { midi(0x7F, 0x80, key, 0); }
 };
 
 bool register_slot(int slot, Proc* p);   // false: slot out of range or taken

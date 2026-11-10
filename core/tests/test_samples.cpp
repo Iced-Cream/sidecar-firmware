@@ -16,6 +16,7 @@
 #include "dsp/sample.h"
 #include "dsp/grain.h"
 #include "dsp/wtosc.h"
+#include "dsp/poly.h"
 #include "wavetable/tables.h"
 #include "generic/generic.h"
 #include "hooks.h"
@@ -131,6 +132,159 @@ static float peak(const float* x, int a, int b) {
   for (int i = a; i < b; ++i) m = fmaxf(m, fabsf(x[i]));
   return m;
 }
+
+// upstream MULTISAMPLE (core/msamp/msamp.cpp on trigcondition/sidecar-firmware dev: start_region, play_key,
+// release_voice, trig, render_impl's mono path, RAM only) for one voice: POLY {SAMPLE} with HKEY must match
+namespace msref {
+struct Note {
+  bool on, held, relq, rel, sounded, one_shot;
+  uint8_t key, entry, mode, stage;
+  uint32_t end, loop_s, loop_e, att, hold, n, order;
+  double pos;
+  float inc, gain, dcoef, sus, rcoef, lvl;
+};
+constexpr int kPerVoice = 16, kLayers = 4;
+Note notes[kPerVoice];
+float p[16], head_g = 1.0f;
+uint8_t key_vel[128];
+uint32_t order_n = 0;
+int inst = 0;
+float tscale(float v) { return exp2f((v - 64.0f) / 16.0f); }
+float coef(float secs) { float n = secs * 48000.0f; return n < 48 ? expf(-6.9078f / 48.0f) : expf(-6.9078f / n); }
+int pick() {
+  int b = -1;
+  for (int k = 0; k < kPerVoice; ++k) if (!notes[k].on) return k;
+  for (int k = 0; k < kPerVoice; ++k) if (!notes[k].held && (b < 0 || (int32_t)(notes[k].order - notes[b].order) < 0)) b = k;
+  if (b < 0) for (int k = 0; k < kPerVoice; ++k) if (b < 0 || (int32_t)(notes[k].order - notes[b].order) < 0) b = k;
+  return b;
+}
+void start_region(const samples::Layer& r, int key, int vel, float cg, bool rtrig) {
+  samples::View m;
+  if (!samples::get(r.entry, &m)) return;
+  Note& x = notes[pick()];
+  x = Note{};
+  uint32_t e = r.end == samples::kNone || r.end + 1 > m.frames ? m.frames : r.end + 1;
+  uint32_t off = r.offset < e ? r.offset : e - 1;
+  float strt = p[10] < 0 ? 0 : p[10] > 127 ? 127 : p[10];
+  x.pos = off + (double)(e - off) * (strt / 128.0);
+  x.end = e;
+  bool hl = m.has_loop || (r.iloop && r.iloop_e < m.frames);
+  uint32_t mls = m.has_loop ? m.loop_s : r.iloop_s, mle = m.has_loop ? m.loop_e : r.iloop_e;
+  uint32_t ls = r.loop_start != samples::kNone ? r.loop_start : hl ? mls : off;
+  uint32_t le = r.loop_end != samples::kNone ? r.loop_end + 1 : hl ? mle + 1 : e;
+  if (le > e) le = e;
+  bool can_loop = le > ls + 1;
+  int lz = dsp::vzone((int)(p[11] * 64), 3);
+  uint8_t mode = r.loop_mode;
+  if (mode == samples::kLoopAuto) mode = (hl || r.loop_start != samples::kNone || r.loop_end != samples::kNone) ? samples::kLoopContinuous : samples::kNoLoop;
+  x.one_shot = mode == samples::kOneShot;
+  if (lz == 1) mode = samples::kNoLoop;
+  else if (lz == 2 && mode != samples::kLoopSustain) mode = samples::kLoopContinuous;
+  x.mode = !can_loop ? 0 : mode == samples::kLoopContinuous ? 1 : mode == samples::kLoopSustain ? 2 : 0;
+  x.loop_s = ls, x.loop_e = le;
+  float semis = (key - r.keycenter) * r.pitch_keytrack / 100.0f + r.transpose + r.tune / 100.0f + (p[8] - 64) + (p[9] - 64) / 64.0f;
+  x.inc = m.rate / 48000.0f * exp2f(semis / 12.0f);
+  float vt = r.amp_veltrack / 100.0f * (p[1] < 0 ? 0 : p[1] > 127 ? 1 : p[1] / 127.0f);
+  if (vt < 0) vt = 0;
+  float v = (vel < 1 ? 1 : vel) / 127.0f;
+  float vg = 1 - vt + vt * v * v;
+  x.gain = powf(10.0f, r.volume / 20.0f) * r.amplitude / 100.0f * vg * (p[2] < 0 ? 0 : p[2] / 100.0f) * cg;
+  float att = r.attack * tscale(p[4]), hold = r.hold, dec = r.decay * tscale(p[5]), rel = r.release * tscale(p[7]);
+  float sus = r.sustain / 100.0f, sv = p[6];
+  sus = sv <= 64 ? sus * sv / 64.0f : sus + (1 - sus) * (sv - 64) / 63.0f;
+  x.att = (uint32_t)(att > 30 ? 30 * 48000 : att * 48000);
+  x.hold = (uint32_t)(hold > 30 ? 30 * 48000 : hold * 48000);
+  x.dcoef = dec <= 0 ? 0 : coef(dec);
+  x.sus = sus < 0 ? 0 : sus > 1 ? 1 : sus;
+  x.rcoef = coef(rel);
+  x.on = true, x.held = !x.one_shot && !rtrig, x.key = (uint8_t)key, x.entry = r.entry, x.order = ++order_n;
+}
+void play_key(int key, int vel, int trig) {
+  samples::Layer rs[kLayers];
+  int n = samples::layers(inst, key, vel, trig, 0.5f, rs, kLayers);
+  for (int i = 0; i < n; ++i) start_region(rs[i], key, vel, 1.0f, trig == 1);
+}
+void release_voice(bool rtrig) {
+  uint8_t keys[kPerVoice];
+  int nk = 0;
+  for (Note& n : notes) {
+    if (!n.held || !n.on) { n.held = false; continue; }
+    n.held = false, n.relq = true;
+    bool seen = false;
+    for (int j = 0; j < nk; ++j) seen = seen || keys[j] == n.key;
+    if (!seen) keys[nk++] = n.key;
+  }
+  if (rtrig) for (int j = 0; j < nk; ++j) play_key(keys[j], key_vel[keys[j]], 1);
+}
+void trig(int note, int vel) {
+  release_voice(false);
+  dsp::chord::Chord c{(int)p[12], (int)p[13], (int)p[14], (int)p[15]};
+  uint8_t ks[8];
+  int nk = dsp::chord::expand(note, c, ks);
+  for (int i = 0; i < nk; ++i) { key_vel[ks[i]] = (uint8_t)vel; play_key(ks[i], vel, 0); }
+}
+float herm(float xm1, float x0, float x1, float x2, float t) {
+  float c = (x1 - xm1) * 0.5f, w = x0 - x1, a = c + w + w + (x2 - x0) * 0.5f, b = c + w + a;
+  return ((a * t - b) * t + c) * t + x0;
+}
+void render(float* dst, int nfr) {
+  float acc[256] = {0}, wk[kPerVoice];
+  uint8_t kk[kPerVoice];
+  int nw = 0;
+  for (Note& n : notes) {
+    if (!n.on) continue;
+    samples::View m;
+    samples::get(n.entry, &m);
+    if (!n.rel && !n.one_shot && n.sounded && n.relq) n.rel = true, n.stage = 4;
+    const int ch = m.ch == 2 ? 2 : 1;
+    int64_t end = n.end;
+    bool fin = false;
+    for (int s = 0; s < nfr; ++s) {
+      bool looping = n.mode == 1 || (n.mode == 2 && !n.rel);
+      int64_t i = (int64_t)n.pos;
+      float t = (float)(n.pos - (double)i);
+      int64_t len = (int64_t)n.loop_e - n.loop_s;
+      float x[4];
+      for (int j = 0; j < 4; ++j) {
+        int64_t f = i - 1 + j;
+        if (looping && f >= n.loop_e) f -= len;
+        f = f < 0 ? 0 : f >= end ? end - 1 : f;
+        const int16_t* q = m.pcm + (size_t)f * ch;
+        x[j] = ch == 2 ? (float)(((int32_t)q[0] + (int32_t)q[1]) >> 1) : q[0];
+      }
+      switch (n.stage) {
+        case 0: if (n.n >= n.att) { n.stage = 1, n.n = 0, n.lvl = 1; } else { n.lvl = (float)(n.n + 1) / (float)n.att; ++n.n; } break;
+        case 1: if (n.n >= n.hold) n.stage = n.dcoef > 0 ? 2 : 3, n.lvl = n.dcoef > 0 ? 1 : n.sus; else ++n.n; break;
+        case 2: n.lvl = n.sus + (n.lvl - n.sus) * n.dcoef; if (n.lvl - n.sus < 1e-4f) n.stage = 3, n.lvl = n.sus; break;
+        case 3: n.lvl = n.sus; break;
+        default: n.lvl *= n.rcoef; if (n.lvl < 1e-4f) fin = true; break;
+      }
+      if (fin) break;
+      n.sounded = true;
+      acc[s] += herm(x[0], x[1], x[2], x[3], t) * (1.0f / 32768.0f) * n.lvl * n.gain;
+      n.pos += n.inc;
+      if (looping && n.pos >= n.loop_e) n.pos -= (double)len;
+      else if (n.pos >= (double)end) { fin = true; break; }
+    }
+    if (!fin) {
+      int j = 0;
+      while (j < nw && kk[j] != n.key) ++j;
+      if (j == nw) kk[nw] = n.key, wk[nw++] = 0;
+      if (n.lvl > wk[j]) wk[j] = n.lvl;
+    }
+    if (fin) n.on = false;
+  }
+  float e = 0;
+  for (int j = 0; j < nw; ++j) e += wk[j];
+  const float atk = 1.0f - expf(-1000.0f * nfr / (48000.0f * 3.0f)), rel = 1.0f - expf(-1000.0f * nfr / (48000.0f * 15.0f));
+  float g0 = head_g, target = e > 1.0f ? 1.0f / sqrtf(e) : 1.0f;
+  float g1 = g0 + (target - g0) * (target < g0 ? atk : rel);
+  if (fabsf(g1 - target) < 1e-5f) g1 = target;
+  head_g = g1;
+  float dg = (g1 - g0) / (float)nfr;
+  for (int s = 0; s < nfr; ++s) dst[s] = nw ? acc[s] * (g0 + dg * (float)(s + 1)) : 0.0f;
+}
+}  // namespace msref
 
 int main() {
   snprintf(g_card, sizeof g_card, "/tmp/core-samples-XXXXXX");
@@ -297,14 +451,16 @@ int main() {
     CHECK(samples::instrument(in) && samples::state(in) == samples::kReady);
     samples::View v;
     CHECK(!samples::get(in, &v));   // not a sample
-    samples::Zone z;
-    CHECK(samples::zone(in, 50, 100, &z) && z.entry == 0 && z.keycenter == 48);
-    CHECK(samples::zone(in, 70, 100, &z) && !strcmp(samples::path(z.entry), "/Samples/hi.wav") && fabsf(z.gain - 0.5f) < 0.001f);
-    int hi_e = z.entry;
+    samples::Layer z[4];
+    CHECK(samples::layers(in, 50, 100, 0, 0.5f, z, 4) == 1 && z[0].entry == 0 && z[0].keycenter == 48);
+    CHECK(samples::layers(in, 70, 100, 0, 0.5f, z, 4) == 1 && !strcmp(samples::path(z[0].entry), "/Samples/hi.wav") &&
+          fabsf(z[0].volume + 6.0206f) < 0.001f && z[0].loop_mode == samples::kOneShot);
+    int hi_e = z[0].entry;
     CHECK(samples::state(hi_e) == samples::kReady);
-    CHECK(samples::zone(in, 100, 100, &z) && z.entry == hi_e);
-    CHECK(samples::zone(in, 100, 100, &z) && !strcmp(samples::path(z.entry), "/Samples/rr.wav"));   // round robin
-    CHECK(samples::zone(in, 100, 100, &z) && z.entry == hi_e);
+    CHECK(samples::layers(in, 100, 100, 0, 0.5f, z, 4) == 1 && z[0].entry == hi_e);
+    CHECK(samples::layers(in, 100, 100, 0, 0.5f, z, 4) == 1 && !strcmp(samples::path(z[0].entry), "/Samples/rr.wav"));
+    CHECK(samples::layers(in, 100, 100, 0, 0.5f, z, 4) == 1 && z[0].entry == hi_e);
+    CHECK(samples::layers(in, 100, 100, 1, 0.5f, z, 4) == 0);   // no release regions
     dsp::Sample s;
     s.set_param(1, (in + 1) * 64);
     s.midi(proc::kSrcRytm, 0x90, 48, 127);   // the ramp at its key centre: frame for frame
@@ -314,6 +470,96 @@ int main() {
     render(s, 1024);
     CHECK(fabsf(g_l[100] - 0.25f) < 0.003f && peak(g_l, 510, 1024) == 0.0f);
     CHECK(samples::stats().listed >= 3);
+  }
+  // MULTISAMPLE on the library: POLY {SAMPLE} (HKEY 1) against upstream's machine (msref): two velocity layers on a
+  // key (one a 44.1 kHz stereo sample with a smpl loop, one mono with a region loop and its own ampeg), release regions,
+  // a chord, a retrig (tails), a note off with RTRG, knobs off 64
+  {
+    std::vector<float> a, b2, c;
+    for (int i = 0; i < 30000; ++i) {
+      float x = sinf(2.0f * 3.14159265f * 220.0f * (float)i / 44100.0f) * (0.6f - 0.4f * (float)i / 30000.0f);
+      a.push_back(x), a.push_back(0.3f * sinf(2.0f * 3.14159265f * 331.0f * (float)i / 44100.0f));
+    }
+    for (int i = 0; i < 9000; ++i) b2.push_back(0.4f * sinf(2.0f * 3.14159265f * (float)i / 37.0f) + 0.1f * ((i * 7919) % 200 - 100) / 100.0f);
+    for (int i = 0; i < 6000; ++i) c.push_back(0.5f * expf(-(float)i / 900.0f) * ((i / 13) % 2 ? 1.0f : -1.0f));
+    wav("la.wav", 1, 24, 2, 44100, a);
+    // a smpl chunk on la.wav: loop 12000..19999 (frames)
+    {
+      char pth[200];
+      snprintf(pth, sizeof pth, "%s/Samples/la.wav", g_card);
+      FILE* o = fopen(pth, "ab");
+      std::vector<uint8_t> sm = {'s', 'm', 'p', 'l'};
+      put32(sm, 60);
+      for (int k = 0; k < 7; ++k) put32(sm, 0);
+      put32(sm, 1); put32(sm, 0);   // one loop
+      put32(sm, 0); put32(sm, 0); put32(sm, 12000); put32(sm, 19999); put32(sm, 0); put32(sm, 0);
+      fwrite(sm.data(), 1, sm.size(), o);
+      fclose(o);
+      // the RIFF size
+      FILE* f = fopen(pth, "r+b");
+      fseek(f, 0, SEEK_END);
+      long sz = ftell(f);
+      fseek(f, 4, SEEK_SET);
+      uint8_t r4[4] = {(uint8_t)(sz - 8), (uint8_t)((sz - 8) >> 8), (uint8_t)((sz - 8) >> 16), (uint8_t)((sz - 8) >> 24)};
+      fwrite(r4, 1, 4, f);
+      fclose(f);
+    }
+    wav("lb.wav", 1, 16, 1, 48000, b2);
+    wav("rel.wav", 1, 16, 1, 48000, c);
+    char pth[200];
+    snprintf(pth, sizeof pth, "%s/Samples/ms.sfz", g_card);
+    FILE* o = fopen(pth, "wb");
+    fputs("<global> ampeg_attack=0.01 ampeg_decay=0.2 ampeg_sustain=60 ampeg_release=0.15\n"
+          "<region> sample=la.wav lokey=40 hikey=90 pitch_keycenter=57 amp_veltrack=80 volume=-3\n"
+          "<region> sample=lb.wav lokey=40 hikey=90 pitch_keycenter=60 loop_mode=loop_sustain loop_start=1000 loop_end=4999"
+          " tune=-20 amplitude=70 ampeg_hold=0.05 ampeg_release=0.4 offset=200\n"
+          "<region> sample=rel.wav lokey=40 hikey=90 pitch_keycenter=64 trigger=release volume=-6\n", o);
+    fclose(o);
+    std::vector<uint8_t> r = add(40, "/Samples/ms.sfz");
+    CHECK(r.size() == 2 && r[1] == samples::kOk);
+    settle();
+    const int in = r[0];
+    CHECK(samples::instrument(in));
+    samples::Layer ly[4];
+    CHECK(samples::layers(in, 60, 100, 0, 0.5f, ly, 4) == 2);
+    {
+      samples::View lv;
+      CHECK(samples::get(ly[0].entry, &lv) && lv.has_loop && lv.loop_s == 12000 && lv.loop_e == 19999 && lv.ch == 2 && lv.rate == 44100.0f);
+    }
+    // the upstream knobs: INST VEL LEV RTRG ATK DEC SUS REL TUNE FINE STRT LOOP CHD INV SPR VOI
+    const float up[16] = {0, 100, 90, 100, 70, 58, 80, 60, 64.5f, 70, 6, 0, 1, 0, 0, 0};
+    for (int k = 0; k < 16; ++k) msref::p[k] = up[k];
+    msref::inst = in;
+    alignas(64) static uint8_t mem[1 << 20];
+    dsp::Poly::Spec sp{};
+    sp.notes = 8, sp.nb = 1, sp.nm = 0, sp.blk[0] = dsp::find("SAMPLE"), sp.weight = 0x00;
+    CHECK(dsp::Poly::bytes(sp) <= sizeof mem);
+    dsp::Poly& py = *new (mem) dsp::Poly(sp, mem);
+    auto w = [](float v) { return (int)lrintf(v * 64.0f); };
+    py.set_param(0, w(up[2])); py.set_param(1, (in + 1) * 64); py.set_param(2, w(up[8])); py.set_param(3, w(up[10]));
+    py.set_param(5, w(up[11])); py.set_param(6, w(up[9])); py.set_param(7, w(up[1])); py.set_param(10, w(up[3]));
+    for (int k = 0; k < 4; ++k) py.set_param(11 + k, w(up[4 + k]));
+    for (int k = 0; k < 4; ++k) py.set_param(64 + k, (int)up[12 + k] * 64);
+    py.set_param(72, 0); py.set_param(73, 100 * 64); py.set_param(75, 64);
+    static float ours[20000], theirs[20000];
+    float d = 0.0f, pk = 0.0f;
+    for (int f = 0; f < 20000; f += 32) {
+      if (f == 0) { py.midi(proc::kSrcRytm, 0x90, 60, 100); msref::trig(60, 100); }
+      if (f == 4000) { py.midi(proc::kSrcRytm, 0x90, 62, 80); msref::trig(62, 80); }
+      if (f == 9024) { py.midi(proc::kSrcRytm, 0x80, 62, 0); msref::release_voice(true); }
+      render_any(py, 32);
+      memcpy(ours + f, g_l, 32 * sizeof(float));
+      msref::render(theirs + f, 32);
+    }
+    // (upstream MULTISAMPLE leaves out the block in which its last note ends: under 1e-4 of the region's level, there)
+    float dl = 0.0f;
+    for (int f = 0; f < 20000; ++f) {
+      d = fmaxf(d, fabsf(ours[f] - theirs[f])), pk = fmaxf(pk, fabsf(theirs[f]));
+      if (f < 16000) dl = fmaxf(dl, fabsf(ours[f] - theirs[f]));
+    }
+    printf("test_samples: MULTISAMPLE peak %.3f, the library off upstream by %.2g (%.2g before the last note's end)\n", pk, d, dl);
+    CHECK(pk > 0.1f && dl < 1e-6f && d < 1e-4f && py.sounding() == 0);
+    CHECK(fabsf(theirs[9100]) > 0.0f);
   }
   // GRAIN on a pool entry (SMP 1, the ramp): silent before a note; a note's cloud reads around POS (0.5: the ramp's
   // middle, ~0.5), its level even (1 / sqrt(overlap))
@@ -390,7 +636,7 @@ int main() {
     (void)br;
   }
   // the library's own entry
-  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 10);
+  CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 16);
 
   // the list on the card; another project has none; back, the entries come again by index
   char lp[200];

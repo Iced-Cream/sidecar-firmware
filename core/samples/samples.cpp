@@ -25,11 +25,13 @@ struct Entry {
   uint8_t ch;
   float rate;
   uint32_t clm;   // a 'clm ' chunk's frame size (Serum's wavetables: "<!>2048"), 0 none
+  bool has_loop;  // a smpl chunk's first loop (inclusive)
+  uint32_t loop_s, loop_e;
 };
 Entry s_e[kEntries];
 // the instruments' zones (card core writes one before its entry is READY; the render side reads)
-struct ZoneRec { Zone z; uint8_t lokey, hikey, lovel, hivel; uint16_t seq_length, seq_position; };
-struct Inst { bool used; int n; ZoneRec r[kZones]; uint32_t rr; };
+struct ZoneRec { Layer z; uint8_t lokey, hikey, lovel, hivel; uint16_t seq_length, seq_position; float lorand, hirand; };
+struct Inst { bool used; int n; ZoneRec r[kZones]; uint16_t seq[kZones]; };   // seq: each region's round robin count
 Inst s_in[kInstruments];
 uint8_t* s_arena;
 size_t s_bytes, s_used;
@@ -137,6 +139,22 @@ uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32
 uint16_t le16(const uint8_t* p) { return (uint16_t)(p[0] | p[1] << 8); }
 
 // opens entry i's WAV and finds its data: false (FAILED) for anything it does not read
+// a smpl chunk of len bytes at the file's position (upstream msamp's audio_parse: 36 bytes, then the loops; the first
+// loop's start and end, a loop when end > start); the file left after the chunk
+bool read_smpl(Entry& e, File& f, uint32_t len) {
+  const uint32_t at = f.curPosition();
+  if (len >= 36 + 24) {
+    uint8_t d[60];
+    if (f.read(d, 60) != 60) return false;
+    if (le32(d + 28) >= 1) {
+      e.loop_s = le32(d + 36 + 8), e.loop_e = le32(d + 36 + 12);
+      e.has_loop = e.loop_e > e.loop_s;
+    }
+  }
+  f.seekSet(at + len + (len & 1));
+  return true;
+}
+
 bool open_wav(int i) {
   Entry& e = s_e[i];
   Load& L = s_ld;
@@ -146,6 +164,7 @@ bool open_wav(int i) {
   bool have_fmt = false;
   float rate = 48000.0f;
   e.clm = 0;
+  e.has_loop = false;
   for (;;) {
     uint8_t c[8];
     if (L.f.read(c, 8) != 8) return false;
@@ -174,7 +193,21 @@ bool open_wav(int i) {
       L.done = 0;
       e.ch = (uint8_t)L.ch;
       e.rate = rate;
+      // the chunks after the data (a smpl chunk is mostly there), then back to the data
+      const uint32_t at = L.f.curPosition();
+      L.f.seekSet(at + len + (len & 1));
+      for (int g = 0; g < 64; ++g) {
+        uint8_t c2[8];
+        if (L.f.read(c2, 8) != 8) break;
+        uint32_t l2 = le32(c2 + 4);
+        if (!memcmp(c2, "smpl", 4)) { if (!read_smpl(e, L.f, l2)) break; }
+        else L.f.seekSet(L.f.curPosition() + l2 + (l2 & 1));
+      }
+      if (e.has_loop && e.loop_e >= L.frames) e.has_loop = false;
+      L.f.seekSet(at);
       return true;
+    } else if (!memcmp(c, "smpl", 4)) {
+      if (!read_smpl(e, L.f, len)) return false;
     } else if (!memcmp(c, "clm ", 4)) {   // upstream wav_read's clm_size: the number after "<!>"
       uint8_t t[64];
       uint32_t k = len < sizeof t ? len : sizeof t;
@@ -193,19 +226,30 @@ bool open_wav(int i) {
   }
 }
 
+// upstream msamp's convert (sample16): 24 / 32-bit rounded, float x 32767 clamped
 inline int16_t sample16(const uint8_t* p, int bits, int fmt) {
-  if (fmt == 3) {
-    float x;
-    memcpy(&x, p, 4);
-    x = x > 1.0f ? 1.0f : x < -1.0f ? -1.0f : x;
-    return (int16_t)(x * 32767.0f);
-  }
+  int32_t x;
   switch (bits) {
-    case 8: return (int16_t)((p[0] - 128) << 8);
-    case 16: return (int16_t)le16(p);
-    case 24: return (int16_t)(p[1] | p[2] << 8);
-    default: return (int16_t)(p[2] | p[3] << 8);
+    case 8: x = ((int32_t)p[0] - 128) << 8; break;
+    case 16: x = (int16_t)le16(p); break;
+    case 24: {
+      int32_t y = (int32_t)((uint32_t)p[2] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[0] << 8);
+      x = (y >> 16) + ((y >> 15) & 1);
+      break;
+    }
+    default: {
+      uint32_t u = le32(p);
+      if (fmt == 3) {
+        float f;
+        memcpy(&f, &u, 4);
+        float y = f * 32767.0f;
+        x = (int32_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
+      } else {
+        x = ((int32_t)u >> 16) + (((int32_t)u >> 15) & 1);
+      }
+    }
   }
+  return (int16_t)(x > 32767 ? 32767 : x < -32768 ? -32768 : x);
 }
 
 int find_path(const char* p);
@@ -266,27 +310,44 @@ bool load_inst(int i) {
       }
     ent[k] = j;
   }
+  // each sample's loop when its file has none: the first region on it with a loop_end (upstream plan_sample)
+  static bool il[kZones];
+  static uint32_t ils[kZones], ile[kZones];
+  for (int k = 0; k < d.nsamples; ++k) {
+    il[k] = false;
+    for (int r = 0; r < d.nregions; ++r) {
+      const msamp::Region& g = regs[r];
+      if (g.sample != k || g.loop_end == msamp::kUnset) continue;
+      ils[k] = g.loop_start == msamp::kUnset ? g.offset : g.loop_start, ile[k] = g.loop_end;
+      il[k] = ile[k] > ils[k];
+      break;
+    }
+  }
   Inst& in = s_in[t];
   in.n = 0;
-  in.rr = 0;
   for (int k = 0; k < d.nregions && in.n < kZones; ++k) {
     const msamp::Region& r = regs[k];
-    if (r.sample < 0 || r.sample >= d.nsamples || ent[r.sample] < 0 || r.trigger != msamp::kTrigAttack) continue;
+    if (r.sample < 0 || r.sample >= d.nsamples || ent[r.sample] < 0) continue;
+    in.seq[in.n] = 0;
     ZoneRec& z = in.r[in.n++];
     z.lokey = r.lokey; z.hikey = r.hikey; z.lovel = r.lovel; z.hivel = r.hivel;
-    z.seq_length = r.seq_length ? r.seq_length : 1;
-    z.seq_position = r.seq_position ? r.seq_position : 1;
-    z.z.entry = (uint8_t)ent[r.sample];
-    z.z.keycenter = r.keycenter;
-    z.z.loop = r.loop_mode == msamp::kLoopContinuous || r.loop_mode == msamp::kLoopSustain;
-    z.z.cents = (float)r.transpose * 100.0f + r.tune;
-    z.z.keytrack = (float)r.pitch_keytrack / 100.0f;
-    z.z.gain = r.amplitude / 100.0f * powf(10.0f, r.volume / 20.0f);
-    z.z.veltrack = r.amp_veltrack / 100.0f;
-    z.z.offset = r.offset;
-    z.z.end = r.end == msamp::kUnset ? kNone : r.end;
-    z.z.loop_start = r.loop_start == msamp::kUnset ? kNone : r.loop_start;
-    z.z.loop_end = r.loop_end == msamp::kUnset ? kNone : r.loop_end;
+    z.seq_length = r.seq_length;
+    z.seq_position = r.seq_position;
+    z.lorand = r.lorand, z.hirand = r.hirand;
+    Layer& y = z.z;
+    y.entry = (uint8_t)ent[r.sample];
+    y.keycenter = r.keycenter;
+    y.trigger = r.trigger;
+    y.loop_mode = r.loop_mode;
+    y.transpose = r.transpose, y.pitch_keytrack = r.pitch_keytrack;
+    y.tune = r.tune, y.volume = r.volume, y.amplitude = r.amplitude;
+    y.pan = r.pan, y.width = r.width, y.position = r.position, y.amp_veltrack = r.amp_veltrack;
+    y.offset = r.offset;
+    y.end = r.end == msamp::kUnset ? kNone : r.end;
+    y.loop_start = r.loop_start == msamp::kUnset ? kNone : r.loop_start;
+    y.loop_end = r.loop_end == msamp::kUnset ? kNone : r.loop_end;
+    y.attack = r.attack, y.hold = r.hold, y.decay = r.decay, y.sustain = r.sustain, y.release = r.release;
+    y.iloop = il[r.sample], y.iloop_s = ils[r.sample], y.iloop_e = ile[r.sample];
   }
   if (!in.n) return false;
   in.used = true;
@@ -511,25 +572,19 @@ int take_answer(uint8_t* out, int cap) {
 bool instrument(int i) {
   return i >= 0 && i < kEntries && s_e[i].state.load(std::memory_order_acquire) == kReady && s_e[i].inst >= 0;
 }
-bool zone(int i, int note, int vel, Zone* z) {
-  if (!instrument(i)) return false;
+int layers(int i, int key, int vel, int trigger, float r01, Layer* out, int max) {
+  if (!instrument(i)) return 0;
   Inst& in = s_in[s_e[i].inst];
-  const ZoneRec* any = nullptr;
-  bool rr_used = false;
-  for (int k = 0; k < in.n; ++k) {
+  int n = 0;
+  for (int k = 0; k < in.n && n < max; ++k) {   // upstream play_key
     const ZoneRec& r = in.r[k];
-    if (note < r.lokey || note > r.hikey || vel < r.lovel || vel > r.hivel) continue;
-    if (r.seq_length > 1) {
-      rr_used = true;
-      if ((int)(in.rr % r.seq_length) + 1 != r.seq_position) continue;
-    }
-    any = &r;
-    break;
+    if (r.z.trigger != trigger || key < r.lokey || key > r.hikey || vel < r.lovel || vel > r.hivel) continue;
+    uint16_t c = ++in.seq[k];
+    if (r.seq_length > 1 && (c - 1) % r.seq_length != (uint32_t)(r.seq_position - 1) % r.seq_length) continue;
+    if (r01 < r.lorand || r01 >= r.hirand) continue;
+    out[n++] = r.z;
   }
-  if (rr_used) ++in.rr;
-  if (!any) return false;
-  *z = any->z;
-  return true;
+  return n;
 }
 
 bool get(int i, View* v) {
@@ -541,6 +596,8 @@ bool get(int i, View* v) {
   v->ch = e.ch;
   v->rate = e.rate;
   v->clm = e.clm;
+  v->has_loop = e.has_loop;
+  v->loop_s = e.loop_s, v->loop_e = e.loop_e;
   return true;
 }
 

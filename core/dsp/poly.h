@@ -16,6 +16,7 @@
 //   72 VCRV  each note's velocity gain: 0 none (unity), 1 upstream's 0.25 + 0.75 v^2 (WAVETABLE, GRANULAR)
 //   73 NLEV  each note's level, value / 100 (100 unity; upstream WAVETABLE's 50)
 //   74 LLEV  a live note's level on top, value / 100 (100 unity; upstream's 60)
+//   75 HKEY  the headroom's weights: 0 one a note, 1 one a key (its notes' loudest; upstream MULTISAMPLE)
 // Internal mod points: a copy's block a's control output (ctl c) onto the same copy's block b's param: per note (a
 // note's own envelope moving its own oscillator's position), applied before the copy's chain runs, from the ctl as the
 // block left it (one block behind the source within the block's chain order, as the route's mod points).
@@ -91,7 +92,7 @@ class Poly : public proc::Proc {
  public:
   static constexpr int kNotes = 8, kChain = 4, kMods = 4;
   static constexpr int kOwn = 64;                  // the first of POLY's own params
-  static constexpr int kParamCount = kOwn + 4 + kMods + 3;
+  static constexpr int kParamCount = kOwn + 4 + kMods + 4;
   static constexpr uint8_t kNoWeight = 0x7F;
   struct Spec {
     int notes, nb, nm;
@@ -150,7 +151,7 @@ class Poly : public proc::Proc {
     const uint8_t st = status & 0xF0;
     const bool on = st == 0x90 && d2, off = st == 0x80 || (st == 0x90 && !d2);
     if (src == proc::kSrcRytm && on) {
-      for (int k = 0; k < s_.notes; ++k) if (!n_[k].live) release(k);
+      for (int k = 0; k < s_.notes; ++k) if (!n_[k].live) release(k, true);
       chord::Chord c{chord::idx(own_[0], chord::kChords), chord::idx(own_[1], chord::kInvs),
                      chord::idx(own_[2], chord::kSprs), chord::idx(own_[3], chord::kVoiMax + 1)};
       uint8_t ks[chord::kVoiMax];
@@ -162,7 +163,7 @@ class Poly : public proc::Proc {
       start(d1, d2, true, (uint8_t)(src << 4 | (status & 15)));
     } else if (off) {
       for (int k = 0; k < s_.notes; ++k)
-        if (n_[k].live && n_[k].key == d1 && n_[k].tag == (uint8_t)(src << 4 | (status & 15))) release(k);
+        if (n_[k].live && n_[k].key == d1 && n_[k].tag == (uint8_t)(src << 4 | (status & 15))) release(k, false, d2);
     } else {
       for (int k = 0; k < s_.notes; ++k)
         for (int b = 0; b < s_.nb; ++b) c_[k][b]->midi(src, status, d1, d2);
@@ -174,7 +175,10 @@ class Poly : public proc::Proc {
     float* acc[2] = {acc_[0], acc_[1]};
     memset(acc_, 0, sizeof acc_);
     for (int i = 0; i < s_.nb; ++i) c_[0][i]->voice(b, last_);   // the voice-wide work, before the notes
-    float e = 0.0f;
+    float e = 0.0f, wk[kNotes];
+    uint8_t kk[kNotes];
+    int nw = 0;
+    const bool by_key = gain_[3] / 64 >= 1;
     bool any = false;
     for (int k = 0; k < s_.notes; ++k) {
       Note& n = n_[k];
@@ -196,8 +200,14 @@ class Poly : public proc::Proc {
       if (s_.weight != kNoWeight) fin = c_[k][s_.weight >> 4 & 3]->done();
       else for (int i = 0; i < s_.nb; ++i) fin = fin || c_[k][i]->done();
       if (fin) { n = Note{}; continue; }
-      e += s_.weight == kNoWeight ? 1.0f : c_[k][s_.weight >> 4 & 3]->ctl(s_.weight & 15);
+      const float w = s_.weight == kNoWeight ? 1.0f : c_[k][s_.weight >> 4 & 3]->ctl(s_.weight & 15);
+      if (!by_key) { e += w; continue; }
+      int j = 0;   // HKEY: a key's notes count once, the loudest (upstream MULTISAMPLE's layers)
+      while (j < nw && kk[j] != n.key) ++j;
+      if (j == nw) kk[nw] = n.key, wk[nw++] = 0.0f;
+      if (w > wk[j]) wk[j] = w;
     }
+    for (int j = 0; j < nw; ++j) e += wk[j];
     // the headroom (upstream: 1 / sqrt of the notes' weights, one pole per block, ramped over it)
     const float atk = 1.0f - expf(-1000.0f * (float)nf / (kRate * 3.0f));
     const float rel = 1.0f - expf(-1000.0f * (float)nf / (kRate * 15.0f));
@@ -234,7 +244,7 @@ class Poly : public proc::Proc {
   uint16_t base_[kOwn];
   uint16_t depth_[kMods];
   int own_[4] = {};
-  int gain_[3] = {0, 100 * 64, 100 * 64};   // VCRV NLEV LLEV
+  int gain_[4] = {0, 100 * 64, 100 * 64, 0};   // VCRV NLEV LLEV HKEY
   uint32_t order_ = 0;
   float head_ = 1.0f;
   bool ok_ = true;
@@ -270,10 +280,12 @@ class Poly : public proc::Proc {
     n_[k] = Note{true, true, live, key, tag, ++order_, g};
     to_copy(k, 0x90, key, vel ? vel : 1);
   }
-  void release(int k) {
+  // a note's release: a new trig's (cut: its tail only), else a note off (with its velocity)
+  void release(int k, bool cut = false, uint8_t vel = 0) {
     if (!n_[k].on || !n_[k].held) return;
     n_[k].held = false;
-    to_copy(k, 0x80, n_[k].key, 0);
+    if (cut) for (int b = 0; b < s_.nb; ++b) c_[k][b]->cut(n_[k].key);
+    else to_copy(k, 0x80, n_[k].key, vel);
   }
   void apply_mods(int k) {   // the copy's modulated params: base + the sum of their points' ctl x depth
     float off[kMods];

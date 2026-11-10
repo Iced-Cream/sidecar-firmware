@@ -33,7 +33,8 @@ const ParamInfo kModP[] = {{"MODE", 0}, {"RATE", 9000}, {"DEPTH", 16383}, {"SHAP
 const ParamInfo kWidthP[] = {{"WIDTH", 8192}, {"BALANCE", 8192}, {"GAIN", 8192}};
 const ParamInfo kSampleP[] = {{"LEV", 100 * 64}, {"SMP", 0}, {"TUN", 64 * 64}, {"STA", 0},
                               {"END", 16383},    {"LOOP", 0}, {"FIN", 64 * 64}, {"VEL", 0},
-                              {"SLN", 0},        {"SLC", 0}};
+                              {"SLN", 0},        {"SLC", 0},       {"RTRG", 0},      {"ATK", 64 * 64},
+                              {"DEC", 64 * 64},  {"SUS", 64 * 64}, {"REL", 64 * 64}, {"OUT", 0}};
 
 const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}, {"FIN", 64 * 64},
                            {"PW", 64 * 64},   {"FM", 0},       {"SUB", 0},       {"THRU", 0}};
@@ -58,8 +59,8 @@ const ParamInfo kMidiOutP[] = {{"DST", 1 * 64}, {"CHN", 0},  {"LEN", 0},  {"TRN"
 struct PolyNames {
   ParamInfo p[Poly::kParamCount];
   PolyNames() {
-    static const char* const own[] = {"CHD", "INV", "SPR", "VOI", "MOD1", "MOD2", "MOD3", "MOD4", "VCRV", "NLEV", "LLEV"};
-    static const uint16_t def[] = {0, 0, 0, 0, 8192, 8192, 8192, 8192, 0, 100 * 64, 100 * 64};
+    static const char* const own[] = {"CHD", "INV", "SPR", "VOI", "MOD1", "MOD2", "MOD3", "MOD4", "VCRV", "NLEV", "LLEV", "HKEY"};
+    static const uint16_t def[] = {0, 0, 0, 0, 8192, 8192, 8192, 8192, 0, 100 * 64, 100 * 64, 0};
     for (int i = 0; i < Poly::kOwn; ++i) p[i] = {"CHAIN", 0};
     for (int i = 0; i < Poly::kParamCount - Poly::kOwn; ++i) p[Poly::kOwn + i] = {own[i], def[i]};
   }
@@ -72,7 +73,7 @@ const BlockInfo kLibrary[] = {
     {"SHAPER", 5, kShaperP, sizeof(Shaper), make<Shaper>},
     {"MOD", 5, kModP, sizeof(Modulator), make<Modulator>},
     {"WIDTH", 3, kWidthP, sizeof(Width), make<Width>},
-    {"SAMPLE", 10, kSampleP, sizeof(Sample), make<Sample>},
+    {"SAMPLE", 16, kSampleP, sizeof(Sample), make<Sample>},
     {"OSC", 8, kOscP, sizeof(Osc), make<Osc>},
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
     {"ENV", 9, kEnvP, sizeof(Env), make<Env>},

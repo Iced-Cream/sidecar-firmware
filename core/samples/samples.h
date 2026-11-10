@@ -15,8 +15,9 @@
 // Instruments (2026-11-10, MULTISAMPLE and CHOP's slice maps on the library; parsed by upstream's core/msamp/sfz):
 // an entry whose path ends .sfz or .elmulti is an instrument, not a sample. Loading it reads the file, lists each
 // sample it names as a pool entry of its own (found by path, as SADD does; they load as any entry and stay listed),
-// and keeps up to kZones zones (SFZ regions: key and velocity ranges, key centre, tuning, level, offset / end, loops,
-// round robin). A reader asks zone() for a note: the entry that plays it and how. Its SNAME frames = its zones.
+// and keeps up to kZones regions (all of an SFZ region: key and velocity ranges, triggers, round robin and random, key
+// centre, tuning, level, pan, offset / end, loops, ampeg). A reader asks layers() for a note: the regions that play it.
+// Its SNAME frames = its regions.
 //
 // Host link (51 STORE, version 1; the card core's, as kv's ops):
 //   Rytm -> Pi  3A SADD  <seq> <owner> <path: 7-bit ASCII, 1..kPathMax, from the card's root>  answer 76
@@ -72,22 +73,36 @@ struct View {
   uint8_t ch;
   float rate;
   uint32_t clm;   // a 'clm ' chunk's frame size (a wavetable's, Serum's "<!>2048"), 0 none
+  bool has_loop;  // the file's loop (a WAV's smpl chunk, its first): loop_s..loop_e inclusive, inside the frames
+  uint32_t loop_s, loop_e;
 };
 bool get(int i, View* v);
-// render side: entry i is a READY instrument and one of its zones plays (note, vel): which entry (a sample's: get()
-// it), and how. Round robin (seq_length) moves on each call that matched. False: not an instrument, no zone.
+// An instrument's region (upstream msamp's Region, its sample a pool entry: get() it). A reader plays it as upstream's
+// MULTISAMPLE start_region does.
 constexpr int kInstruments = 16;
 constexpr int kZones = 128;
-struct Zone {
-  uint8_t entry, keycenter, loop;   // loop: 1 loops loop_start..loop_end (SFZ loop_continuous / loop_sustain)
-  float cents;                      // transpose x 100 + tune
-  float keytrack;                   // semitones a key (pitch_keytrack / 100)
-  float gain;                       // amplitude x volume
-  float veltrack;                   // 0..1 (amp_veltrack / 100)
-  uint32_t offset, end, loop_start, loop_end;   // frames; end / loops kNone: the sample's own
-};
 constexpr uint32_t kNone = 0xFFFFFFFFu;
-bool zone(int i, int note, int vel, Zone* z);
+enum LoopMode : uint8_t { kLoopAuto = 0, kNoLoop, kOneShot, kLoopContinuous, kLoopSustain };   // SFZ's
+struct Layer {
+  uint8_t entry, keycenter;
+  uint8_t trigger;                 // 0 attack, 1 release (a note off's region)
+  uint8_t loop_mode;               // LoopMode
+  int16_t transpose;               // semitones
+  int16_t pitch_keytrack;          // cents a key
+  float tune, volume, amplitude;   // cents, dB, %
+  float pan, width, position;      // -100..100
+  float amp_veltrack;              // %
+  uint32_t offset, end;            // frames (end inclusive, kNone: the sample's last)
+  uint32_t loop_start, loop_end;   // inclusive, kNone: the sample's loop
+  float attack, hold, decay, sustain, release;   // ampeg_*: s, s, s, %, s
+  // the sample's own loop when its file has none (upstream plan_sample: the first region on it with a loop_end)
+  bool iloop;
+  uint32_t iloop_s, iloop_e;
+};
+// render side: entry i is a READY instrument; the regions a key / velocity / trigger plays (upstream play_key: up to
+// max, round robin counted per region, r01 the call's random 0..1 against lorand / hirand). The count; 0 none (or not
+// an instrument).
+int layers(int i, int key, int vel, int trigger, float r01, Layer* out, int max);
 bool instrument(int i);
 
 // diagnostics (/status, tests)
