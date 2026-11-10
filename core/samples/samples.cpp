@@ -70,7 +70,7 @@ const char* base_name(const char* p) {
   return b ? b + 1 : p;
 }
 
-void list_path(char* out, size_t cap, uint32_t project) { snprintf(out, cap, "%s/%08lx.lst", s_lists, (unsigned long)project); }
+void list_path(char* out, size_t cap, uint32_t project) { sniprintf(out, cap, "%s/%08lx.lst", s_lists, (unsigned long)project); }
 
 void save_list() {
   if (!s_project) return;
@@ -78,7 +78,7 @@ void save_list() {
   size_t n = 0;
   for (int i = 0; i < kEntries; ++i) {
     if (s_e[i].state.load(std::memory_order_relaxed) == kEmpty) continue;
-    n += (size_t)snprintf(buf + n, sizeof buf - n, "%d %s\n", i, s_e[i].path);
+    n += (size_t)sniprintf(buf + n, sizeof buf - n, "%d %s\n", i, s_e[i].path);
   }
   char p[64];
   list_path(p, sizeof p, s_project);
