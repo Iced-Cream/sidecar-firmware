@@ -24,6 +24,8 @@ constexpr uint32_t kMaxBlob = 1u << 20;            // a blob file: 1 MB (PLAITS 
 int check(const uint8_t* f, uint32_t n, scx_header* h);
 // bytes the blob takes in memory: image + bss
 inline uint32_t mem_bytes(const scx_header& h) { return h.image_size + h.bss_size; }
+// where its read + execute part ends once loaded: data_off with SCX_F_DATA, else the whole of it
+inline uint32_t rx_bytes(const scx_header& h) { return (h.flags & SCX_F_DATA) ? h.data_off : mem_bytes(h); }
 // Places a checked file at mem (cap bytes, at least mem_bytes): copies the image, zeroes the bss, applies the
 // relocations and fills the imports. kOk, or kFull / kBad.
 int place(const uint8_t* f, uint32_t n, uint8_t* mem, uint32_t cap);
