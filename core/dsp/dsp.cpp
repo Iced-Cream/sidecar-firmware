@@ -83,6 +83,16 @@ void start_free(int i) {
   ++s_st.freed;
 }
 
+// TRIG's / PARAM's <first> <n> {<hi> <lo>} x n for slot s: checked whole first (false: nothing set), then queued
+bool params_ok(const Slot& s, const uint8_t* p, int pn) {
+  if (pn < 2 || pn != 2 + 2 * p[1] || p[1] < 1) return false;
+  int top = s.info ? s.info->nparams : 0;
+  return p[0] + p[1] <= (top < proc::kParams ? top : proc::kParams);
+}
+void params_set(int slot, const uint8_t* p) {
+  for (int i = 0; i < p[1]; ++i) proc::set_param(slot, p[0] + i, p[2 + 2 * i] << 7 | p[3 + 2 * i]);
+}
+
 int text(uint8_t* b, const char* name) {
   int n = 0;
   while (name[n] && n < 16) { b[1 + n] = (uint8_t)(name[n] & 0x7F); ++n; }
@@ -132,7 +142,7 @@ bool begin(void* arena, size_t bytes) {
   return true;
 }
 
-bool is_dsp_op(uint8_t op) { return (op >= kPlace && op <= kInfo) || op == kTrig; }
+bool is_dsp_op(uint8_t op) { return (op >= kPlace && op <= kInfo) || op == kTrig || op == kParam; }
 
 bool sysex(const uint8_t* m, int n) {
   if (n < 8 || m[0] != 0xF0 || m[4] != 0x51 || m[n - 1] != 0xF7 || !is_dsp_op(m[6])) { ++s_st.ops_bad; return false; }
@@ -187,15 +197,24 @@ bool sysex(const uint8_t* m, int n) {
       poll();
       return any;
     }
-    case kTrig: {    // <owner> <slot> <kind> <note> <vel> <blk4>
-      if (bn != 9 || b[1] >= kSlots || b[2] > 1) { ++s_st.ops_bad; return false; }
+    case kTrig: {    // <owner> <slot> <kind> <note> <vel> <blk4> [<first> <n> {<hi> <lo>} x n]
+      if (bn < 9 || b[1] >= kSlots || b[2] > 1) { ++s_st.ops_bad; return false; }
       const Slot& s = s_slot[b[1]];
-      if (s.state != kPlacedState || s.owner != b[0]) { ++s_st.ops_bad; return false; }
+      if (s.state != kPlacedState || s.owner != b[0] || (bn > 9 && !params_ok(s, b + 9, bn - 9))) { ++s_st.ops_bad; return false; }
+      if (bn > 9) params_set(b[1], b + 9);
       uint8_t vel = b[4] ? b[4] : 1;
       bool ok = b[2] == 0 ? proc::note(b[1], 0x90, b[3], vel) : proc::note(b[1], 0x80, b[3], 0);
       if (!ok) { ++s_st.ops_bad; return false; }
       ++s_st.trigs;
       s_st.last_blk = (uint32_t)b[5] << 21 | (uint32_t)b[6] << 14 | (uint32_t)b[7] << 7 | b[8];
+      return true;
+    }
+    case kParam: {   // <owner> <slot> <first> <n> {<hi> <lo>} x n
+      if (bn < 4 || b[1] >= kSlots) { ++s_st.ops_bad; return false; }
+      const Slot& s = s_slot[b[1]];
+      if (s.state != kPlacedState || s.owner != b[0] || !params_ok(s, b + 2, bn - 2)) { ++s_st.ops_bad; return false; }
+      params_set(b[1], b + 2);
+      ++s_st.params;
       return true;
     }
     case kInfo: {    // <seq> <what> <a> <b>

@@ -229,12 +229,13 @@ static void test_primitives() {
 struct NoteRec : proc::Proc {
   std::vector<std::vector<int>> got;
   void process(const proc::Block&) override {}
-  void set_param(int, int) override {}
+  void set_param(int k, int v) override { got.push_back({-1, k, v}); }
   void midi(int src, uint8_t st, uint8_t d1, uint8_t d2) override { got.push_back({src, st, d1, d2}); }
   const char* name() const override { return "NOTEREC"; }
 };
 static proc::Proc* make_rec(void* mem, const void*) { return new (mem) NoteRec(); }
-static const dsp::BlockInfo kRecInfo{"NOTEREC", 0, nullptr, sizeof(NoteRec), make_rec};
+static const dsp::ParamInfo kRecP[] = {{"A", 0}, {"B", 0}, {"C", 0}, {"D", 0}};
+static const dsp::BlockInfo kRecInfo{"NOTEREC", 4, kRecP, sizeof(NoteRec), make_rec};
 
 static void test_trig() {
   CHECK(dsp::add_block(&kRecInfo));
@@ -262,6 +263,25 @@ static void test_trig() {
   CHECK(!send({0x37, 7, 3, 0, 60, 100}));
   block(64);
   CHECK(r3->got.size() == 3 && dsp::stats().ops_bad == bad0 + 4 && dsp::stats().trigs == t0 + 3);
+  // a trig with its knob values (params 1..2 = 300, 16383): set before the note, in the same block
+  r3->got.clear();
+  CHECK(send({0x37, 7, 3, 0, 48, 90, 0, 0, 0, 3, 1, 2, 300 >> 7, 300 & 0x7F, 0x7F, 0x7F}));
+  // PARAM: params 0..3 straight to the block
+  CHECK(send({0x38, 7, 3, 0, 4, 0, 1, 0, 2, 0, 3, 0, 4}));
+  block(64);
+  CHECK(r3->got.size() == 7);
+  CHECK((r3->got[0] == std::vector<int>{-1, 1, 300}) && (r3->got[1] == std::vector<int>{-1, 2, 16383}));
+  CHECK((r3->got[2] == std::vector<int>{proc::kSrcRytm, 0x90, 48, 90}));
+  CHECK((r3->got[3] == std::vector<int>{-1, 0, 1}) && (r3->got[6] == std::vector<int>{-1, 3, 4}));
+  CHECK(dsp::stats().params == 1);
+  // dropped whole: params past the block's 4, a tail with the wrong length, another owner's PARAM
+  bad0 = dsp::stats().ops_bad;
+  CHECK(!send({0x37, 7, 3, 0, 48, 90, 0, 0, 0, 3, 3, 2, 0, 1, 0, 1}));
+  CHECK(!send({0x37, 7, 3, 0, 48, 90, 0, 0, 0, 3, 0, 2, 0, 1}));
+  CHECK(!send({0x38, 8, 3, 0, 1, 0, 1}));
+  CHECK(!send({0x38, 7, 3, 2, 3, 0, 1, 0, 1, 0, 1}));
+  block(64);
+  CHECK(r3->got.size() == 7 && dsp::stats().ops_bad == bad0 + 4);
   send({0x31, 7, 0x7F});
   for (int i = 0; i < 4; ++i) { block(128); answers(); }
   CHECK(dsp::stats().used == 0);

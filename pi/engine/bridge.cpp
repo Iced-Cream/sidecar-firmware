@@ -245,9 +245,9 @@ int generic_json(char* out, int cap) {
   // the DSP library's slots (core/dsp): counts, then each used slot as [slot, owner, "block", state]
   const core::dsp::Stats ds2 = core::dsp::stats();
   m = sniprintf(out + n, cap - n, ",\"dsp\":{\"used\":%d,\"placed\":%lu,\"freed\":%lu,\"refused\":%lu,"
-                "\"lastRefused\":%d,\"infos\":%lu,\"bad\":%lu,\"trigs\":%lu,\"slots\":[", ds2.used, (unsigned long)ds2.placed,
+                "\"lastRefused\":%d,\"infos\":%lu,\"bad\":%lu,\"trigs\":%lu,\"params\":%lu,\"slots\":[", ds2.used, (unsigned long)ds2.placed,
                 (unsigned long)ds2.freed, (unsigned long)ds2.refused, ds2.refused ? ds2.last_refused : -1,
-                (unsigned long)ds2.infos, (unsigned long)ds2.ops_bad, (unsigned long)ds2.trigs);
+                (unsigned long)ds2.infos, (unsigned long)ds2.ops_bad, (unsigned long)ds2.trigs, (unsigned long)ds2.params);
   if (m <= 0 || m >= cap - n) return 0;
   n += m;
   first = true;
@@ -343,10 +343,10 @@ bool generic_command(const char* p, char* out, int cap) {
   }
   if (!strcmp(p, "dsp")) {   // the DSP library's slots: "0 DELAY (owner 6)", a fading one "3 FILTER (owner 6, fading)"
     const core::dsp::Stats d = core::dsp::stats();
-    int n = sniprintf(out, cap, "dsp: %d used, placed %lu freed %lu refused %lu (last %d) infos %lu bad %lu trigs %lu",
+    int n = sniprintf(out, cap, "dsp: %d used, placed %lu freed %lu refused %lu (last %d) infos %lu bad %lu trigs %lu params %lu",
                       d.used, (unsigned long)d.placed, (unsigned long)d.freed, (unsigned long)d.refused,
                       d.refused ? d.last_refused : -1, (unsigned long)d.infos, (unsigned long)d.ops_bad,
-                      (unsigned long)d.trigs);
+                      (unsigned long)d.trigs, (unsigned long)d.params);
     static const char* const kState[] = {"", "", ", fading", ", releasing"};
     for (int i = 0; i < core::dsp::kSlots && n > 0 && n < cap; ++i) {
       const core::dsp::SlotView v = core::dsp::slot(i);
