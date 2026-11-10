@@ -175,7 +175,7 @@ int main() {
     CHECK(peak(g_l, 2000, 2048) == 0.0f);             // one shot: done
     // loop STA 0 .. END 64 (half the ramp): still sounding after the length
     s.set_param(4, 64 * 64);
-    s.set_param(5, 16383);
+    s.set_param(5, 1 * 64);
     s.midi(proc::kSrcRytm, 0x90, 60, 100);
     render(s, 4096);
     CHECK(peak(g_l, 3000, 4096) > 0.25f && peak(g_l, 3000, 4096) < 0.51f);

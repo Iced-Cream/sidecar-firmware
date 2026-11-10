@@ -8,7 +8,7 @@
 //   P2 TUN   semitones from 64 (fractions included), added to the note's distance from 60 (C4 plays at the file's rate)
 //   P3 STA   where it starts, 0..127 over the sample's length
 //   P4 END   where it ends, 0..127 over the length (127.98: the last frame); END before STA plays backwards
-//   P5 LOOP  two zones: 0 one shot, 1 loop STA..END
+//   P5 LOOP  0 one shot; 1 and up (value >= 1): loop STA..END
 //   P6 FIN   cents from 64 x 64 (+-100 over the range)
 // A note starts the sample at STA, with a 1 ms fade-in; a new note while it plays starts over (the old one is cut,
 // faded over 1 ms). A note off does nothing (the Rytm's amp and the mod decide the length). Output: the sample's L and R
@@ -91,7 +91,7 @@ class Sample : public Block {
     dir_ = e >= s ? 1.0f : -1.0f;
     lo_ = s < e ? s : e;
     hi_ = s < e ? e : s;
-    loop_ = zone(p_[5], 2) == 1;
+    loop_ = p_[5] >= 64;
     pos_ = s;
   }
   static void read(const samples::View& v, float pos, float* l, float* r) {
