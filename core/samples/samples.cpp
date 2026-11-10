@@ -24,6 +24,7 @@ struct Entry {
   uint32_t frames;
   uint8_t ch;
   float rate;
+  uint32_t clm;   // a 'clm ' chunk's frame size (Serum's wavetables: "<!>2048"), 0 none
 };
 Entry s_e[kEntries];
 // the instruments' zones (card core writes one before its entry is READY; the render side reads)
@@ -144,6 +145,7 @@ bool open_wav(int i) {
   if (L.f.read(h, 12) != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4)) return false;
   bool have_fmt = false;
   float rate = 48000.0f;
+  e.clm = 0;
   for (;;) {
     uint8_t c[8];
     if (L.f.read(c, 8) != 8) return false;
@@ -173,6 +175,18 @@ bool open_wav(int i) {
       e.ch = (uint8_t)L.ch;
       e.rate = rate;
       return true;
+    } else if (!memcmp(c, "clm ", 4)) {   // upstream wav_read's clm_size: the number after "<!>"
+      uint8_t t[64];
+      uint32_t k = len < sizeof t ? len : sizeof t;
+      if (L.f.read(t, k) != (int)k) return false;
+      for (uint32_t q = 0; q + 3 < k; ++q) {
+        if (t[q] != '<' || t[q + 1] != '!' || t[q + 2] != '>') continue;
+        uint32_t v = 0, j = q + 3;
+        while (j < k && t[j] >= '0' && t[j] <= '9' && v < 100000) v = v * 10 + (uint32_t)(t[j++] - '0');
+        e.clm = v;
+        break;
+      }
+      L.f.seekSet(L.f.curPosition() + (len - k) + (len & 1));
     } else {
       L.f.seekSet(L.f.curPosition() + len + (len & 1));
     }
@@ -526,6 +540,7 @@ bool get(int i, View* v) {
   v->frames = e.frames;
   v->ch = e.ch;
   v->rate = e.rate;
+  v->clm = e.clm;
   return true;
 }
 

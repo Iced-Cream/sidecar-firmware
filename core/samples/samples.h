@@ -71,6 +71,7 @@ struct View {
   uint32_t frames;
   uint8_t ch;
   float rate;
+  uint32_t clm;   // a 'clm ' chunk's frame size (a wavetable's, Serum's "<!>2048"), 0 none
 };
 bool get(int i, View* v);
 // render side: entry i is a READY instrument and one of its zones plays (note, vel): which entry (a sample's: get()

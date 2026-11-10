@@ -3,12 +3,15 @@
 // extensions that are not specific to a mod). A band-limited wavetable read at the note's pitch, the frame position
 // morphing between neighbours, a warp (SYNC, PWM, FM), unison up to 7 oscillators, a sine sub an octave down. The
 // tables are upstream's (core/wavetable/tables.*, vendored): the built-ins BASIC PWM VOCAL ORGAN FM SYNC, 64 frames
-// each, mip levels an octave apart, generated once at dsp::begin. Tables from the sample pool: not yet. In a POLY
+// each, mip levels an octave apart, generated once at dsp::begin; and tables from the sample pool (TBL). In a POLY
 // (poly.h) with SVF and ENV it is upstream's WAVETABLE voice; on its own, one note at a time.
 //
 // Params (the voice blocks' scale, value 0..127.98):
 //   P0 LEV  level, value / 100 (unity at 100)
-//   P1 TBL  the table: 0 BASIC, 1 PWM, 2 VOCAL, 3 ORGAN, 4 FM, 5 SYNC (value; above: SYNC)
+//   P1 TBL  the table: 0 BASIC, 1 PWM, 2 VOCAL, 3 ORGAN, 4 FM, 5 SYNC; 6.. the sample pool's entry TBL - 6 (a WAV of
+//           single cycles, upstream's WAVETABLES pool: its frames as upstream reads them, 'clm ' hint and all; up to
+//           256 frames, kept 4 at a time). While a pool table builds (a frame a control step) the table that played
+//           before plays on (upstream: the trig waits for it, kLateMs)
 //   P2 POS  the frame: 0 the first .. 127 the last, morphed; smoothed (upstream's one pole, 0.12 a block, ramped)
 //   P3 WARP zones: OFF SYNC PWM FM        P4 AMT  the warp's amount
 //   P5 UNI  unison: 0 one oscillator; up, pairs fade in (3, 5, 7) and the detune opens (to 60 cents)
@@ -31,6 +34,12 @@ namespace dsp {
 
 const float* wt_table(int b);   // built-in table b's 64 frames (kFrameFloats each); null before wt_build
 void wt_build();                // control core: the built-ins generated, once
+// render side: pool entry e's table if resident (frames: its count, up to wt::kMaxFrames), and e marked wanted (the
+// control core builds it, a frame a call, in wt_poll); null: not yet (or not a table: a failed entry stays null)
+const float* wt_pool(int e, uint32_t* frames);
+bool wt_poll();                 // control core (dsp::poll): one step of the pool tables' work; false if idle
+struct WtStats { uint32_t loads, fails; int resident; bool building; };
+WtStats wt_stats();
 
 class WtOsc : public Block {
  public:
@@ -54,9 +63,18 @@ class WtOsc : public Block {
   }
   void process(const proc::Block& b) override {
     const int nfr = b.frames;
-    int tb = p_[1] / 64;
-    const float* data = wt_table(tb >= wt::kBuiltins ? wt::kBuiltins - 1 : tb);
-    const uint32_t nf = data ? wt::kBuiltinFrames : 0;
+    // the table: a built-in, or a pool entry's (while it builds, the table that played before goes on; at first BASIC)
+    const int tb = p_[1] / 64;
+    const float* data = nullptr;
+    uint32_t nf = 0;
+    if (tb >= wt::kBuiltins) {
+      data = wt_pool(tb - wt::kBuiltins, &nf);
+      if (data) playing_ = tb;
+      else if (playing_ >= wt::kBuiltins && !(data = wt_pool(playing_ - wt::kBuiltins, &nf))) playing_ = 0;
+    } else {
+      playing_ = tb;
+    }
+    if (!data) data = wt_table(playing_ < wt::kBuiltins ? playing_ : 0), nf = data ? wt::kBuiltinFrames : 0;
     const float kpos = clamp01(v(p_[2]) / 127.0f);
     const int warp = vzone(p_[3], 4);
     const float amt = clamp01(v(p_[4]) / 127.0f), uni = clamp01(v(p_[5]) / 127.0f), sub = clamp01(v(p_[6]) / 127.0f);
@@ -159,7 +177,7 @@ class WtOsc : public Block {
   uint32_t ph_[kUni], fm_ph_[kUni], sub_ph_ = 0, seed_ = 0x9e3779b9u;
   float dc_x_ = 0.0f, dc_y_ = 0.0f, pos_s_ = 0.0f;
   bool began_ = false;
-  int note_ = 60;
+  int note_ = 60, playing_ = 0;
   float sine_[kSine + 1];
 
   void start() {   // a note's start (upstream's): the first phase 0, the unison's at random, the sub 0, the DC blocker

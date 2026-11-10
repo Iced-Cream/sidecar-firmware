@@ -6,6 +6,8 @@
 #include <new>
 
 #include "../route/route.h"
+#include "../platform.h"
+#include "../samples/samples.h"
 #include "blocks.h"
 #include "clfo.h"
 #include "gen.h"
@@ -370,6 +372,7 @@ int take_answer(uint8_t* out, int cap) {
 }
 
 void poll() {
+  wt_poll();
   for (int i = 0; i < kSlots; ++i) {
     Slot& s = s_slot[i];
     if (s.state == kFading && route::slot_quiet(i)) {
@@ -475,6 +478,144 @@ void wt_build() {
       for (int i = 0; i < wt::kFrameFloats; ++i) s_wt[b][f][i] *= g;
   }
   s_wt_built = true;
+}
+
+// ---- WTOSC's tables from the sample pool (upstream WAVETABLE's card slots: kWtSlots resident, least recently used
+// replaced; a pool entry's frames as upstream's load: detect_frame_size with the 'clm ' hint, frame_count / source_frame,
+// the first two channels halved, every frame's levels, the table's loudest frame at 0.95). The control core builds one
+// frame a wt_poll (dsp::poll); the render side finds a table by one word (entry << 16 | frames, 0 none) and marks the
+// entry wanted. A slot's memory is rewritten only kRetireMs after it was unpublished and only when its entry was not
+// wanted for kKeepMs (a WTOSC asks again every block).
+namespace {
+constexpr int kWtSlots = 4;
+constexpr uint32_t kWtKeepMs = 250, kWtRetireMs = 50, kWtWantMs = 1000;
+constexpr int kWtMaxFs = 16384;   // a 'clm ' frame at most (detect_frame_size)
+struct WtSlot {
+  uint32_t pub;             // entry << 16 | frames; 0: none (render reads, acquire)
+  int entry;                // control side: what it holds or is building (-1 none)
+  const int16_t* pcm;       // the pool entry it was built from (a dropped / reloaded entry: rebuilt)
+  float* data;              // wt::kMaxFrames x kFrameFloats, on first use
+  uint32_t used_ms, retired_ms;
+};
+WtSlot s_wts[kWtSlots] = {{0, -1, nullptr, nullptr, 0, 0}, {0, -1, nullptr, nullptr, 0, 0},
+                          {0, -1, nullptr, nullptr, 0, 0}, {0, -1, nullptr, nullptr, 0, 0}};
+uint32_t s_wt_want[samples::kEntries];          // render: now_ms() | 1 when a WTOSC asked for the entry
+const int16_t* s_wt_bad[samples::kEntries];     // an entry's pcm that gave no table (not tried again)
+struct WtJob {
+  int slot = -1, entry, fs, frames, frame;
+  bool norm;
+  float peak;
+  samples::View v;
+  float *x, *c, *scratch;
+} s_wtj;
+WtStats s_wtst;
+
+bool wt_source(int e, samples::View* v) { return samples::get(e, v) && v->frames > 0 && v->ch >= 1; }
+void wt_unpublish(WtSlot& s) {
+  if (__atomic_load_n(&s.pub, __ATOMIC_RELAXED)) s.retired_ms = now_ms();
+  __atomic_store_n(&s.pub, 0u, __ATOMIC_RELEASE);
+}
+}  // namespace
+
+const float* wt_pool(int e, uint32_t* frames) {
+  if (e < 0 || e >= samples::kEntries) return nullptr;
+  __atomic_store_n(&s_wt_want[e], now_ms() | 1u, __ATOMIC_RELAXED);
+  for (WtSlot& s : s_wts) {
+    uint32_t p = __atomic_load_n(&s.pub, __ATOMIC_ACQUIRE);
+    if (p && (int)(p >> 16) == e) {
+      *frames = p & 0xFFFF;
+      return s.data;
+    }
+  }
+  return nullptr;
+}
+
+bool wt_poll() {
+  const uint32_t now = now_ms();
+  // the resident tables still the pool's: a dropped or reloaded entry's table goes
+  for (int k = 0; k < kWtSlots; ++k) {
+    WtSlot& s = s_wts[k];
+    samples::View v;
+    if (s.entry < 0 || k == s_wtj.slot) continue;
+    if (!wt_source(s.entry, &v) || v.pcm != s.pcm) wt_unpublish(s), s.entry = -1;
+    else if (now - (__atomic_load_n(&s_wt_want[s.entry], __ATOMIC_RELAXED) & ~1u) < kWtKeepMs) s.used_ms = now;
+  }
+  WtJob& j = s_wtj;
+  if (j.slot >= 0) {
+    WtSlot& s = s_wts[j.slot];
+    samples::View v;
+    if (!wt_source(j.entry, &v) || v.pcm != j.v.pcm) {   // its entry went while it was built
+      s.entry = -1, j.slot = -1;
+      return true;
+    }
+    if (now - s.retired_ms < kWtRetireMs) return true;   // a render call may still read the old table
+    float* fr = s.data + (size_t)j.frame * wt::kFrameFloats;
+    if (!j.norm) {
+      uint32_t sf = wt::source_frame(v.frames, j.fs, j.frame);
+      const int16_t* in = v.pcm + (size_t)sf * j.fs * v.ch;
+      for (int i = 0; i < j.fs; ++i)
+        j.x[i] = v.ch > 1 ? 0.5f * ((float)in[i * v.ch] * (1.0f / 32768.0f) + (float)in[i * v.ch + 1] * (1.0f / 32768.0f))
+                          : (float)in[i] * (1.0f / 32768.0f);
+      wt::analyze(j.x, j.fs, j.c, j.scratch);
+      wt::synth_frame(j.c, fr, j.scratch);
+      float pk = wt::frame_peak(fr);
+      if (pk > j.peak) j.peak = pk;
+      if (++j.frame >= j.frames) j.frame = 0, j.norm = true;
+      return true;
+    }
+    float g = j.peak > 1e-6f ? 0.95f / j.peak : 1.0f;
+    for (int i = 0; i < wt::kFrameFloats; ++i) fr[i] *= g;
+    if (++j.frame < j.frames) return true;
+    s.used_ms = now;
+    __atomic_store_n(&s.pub, (uint32_t)j.entry << 16 | (uint32_t)j.frames, __ATOMIC_RELEASE);
+    ++s_wtst.loads;
+    j.slot = -1;
+    return true;
+  }
+  // a wanted entry not resident: into a free slot, else the least recently used one not wanted now
+  for (int e = 0; e < samples::kEntries; ++e) {
+    uint32_t w = __atomic_load_n(&s_wt_want[e], __ATOMIC_RELAXED);
+    if (!w || now - (w & ~1u) > kWtWantMs) continue;
+    bool have = false;
+    for (const WtSlot& s : s_wts) have |= s.entry == e;
+    samples::View v;
+    if (have || !wt_source(e, &v) || s_wt_bad[e] == v.pcm) continue;
+    int fs = wt::detect_frame_size(v.frames, v.clm), nf = fs <= kWtMaxFs ? wt::frame_count(v.frames, fs) : 0;
+    if (nf < 1) {
+      s_wt_bad[e] = v.pcm, ++s_wtst.fails;
+      continue;
+    }
+    int b = -1;
+    for (int k = 0; k < kWtSlots; ++k) {
+      const WtSlot& s = s_wts[k];
+      if (s.entry >= 0 && now - (__atomic_load_n(&s_wt_want[s.entry], __ATOMIC_RELAXED) & ~1u) < kWtKeepMs) continue;
+      if (b < 0 || (s.entry < 0 && s_wts[b].entry >= 0) ||
+          ((s.entry >= 0) == (s_wts[b].entry >= 0) && (int32_t)(s.used_ms - s_wts[b].used_ms) < 0))
+        b = k;
+    }
+    if (b < 0) return false;   // every slot in use: it waits
+    WtSlot& s = s_wts[b];
+    if (!s.data) s.data = new (std::nothrow) float[(size_t)wt::kMaxFrames * wt::kFrameFloats];
+    if (!j.x) {
+      j.x = new (std::nothrow) float[kWtMaxFs];
+      j.c = new (std::nothrow) float[wt::kSpec];
+      j.scratch = new (std::nothrow) float[4 * kWtMaxFs];
+    }
+    if (!s.data || !j.x || !j.c || !j.scratch) return false;
+    wt_unpublish(s);
+    s.entry = e, s.pcm = v.pcm;
+    j.slot = b, j.entry = e, j.fs = fs, j.frames = nf, j.frame = 0, j.norm = false, j.peak = 0.0f, j.v = v;
+    return true;
+  }
+  return false;
+}
+
+WtStats wt_stats() {
+  WtStats r = s_wtst;
+  r.resident = 0;
+  for (const WtSlot& s : s_wts) r.resident += __atomic_load_n(&s.pub, __ATOMIC_RELAXED) != 0;
+  r.building = s_wtj.slot >= 0;
+  return r;
 }
 
 }  // namespace dsp

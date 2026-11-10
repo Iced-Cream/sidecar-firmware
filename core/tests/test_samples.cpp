@@ -15,6 +15,8 @@
 #include "dsp/dsp.h"
 #include "dsp/sample.h"
 #include "dsp/grain.h"
+#include "dsp/wtosc.h"
+#include "wavetable/tables.h"
 #include "generic/generic.h"
 #include "hooks.h"
 #include "kv/kv.h"
@@ -62,7 +64,8 @@ static std::vector<uint8_t> add_ref(uint8_t seq, int folder, int file) {   // 3D
 // a WAV on the test card
 static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int k = 0; k < 4; ++k) v.push_back((uint8_t)(x >> 8 * k)); }
 static void put16(std::vector<uint8_t>& v, uint16_t x) { v.push_back((uint8_t)x); v.push_back((uint8_t)(x >> 8)); }
-static void wav(const char* name, int fmt, int bits, int ch, uint32_t rate, const std::vector<float>& frames_lr) {
+static void wav(const char* name, int fmt, int bits, int ch, uint32_t rate, const std::vector<float>& frames_lr,
+                const char* clm = nullptr) {
   std::vector<uint8_t> d;
   for (float x : frames_lr) {
     if (fmt == 3) { uint32_t u; memcpy(&u, &x, 4); put32(d, u); continue; }
@@ -81,6 +84,15 @@ static void wav(const char* name, int fmt, int bits, int ch, uint32_t rate, cons
   f.insert(f.end(), {'L', 'I', 'S', 'T'});   // a chunk to step over
   put32(f, 4);
   f.insert(f.end(), {'I', 'N', 'F', 'O'});
+  if (clm) {   // Serum's: "<!>2048 ..." (padded to even)
+    uint32_t n = (uint32_t)strlen(clm);
+    f.insert(f.end(), {'c', 'l', 'm', ' '});
+    put32(f, n);
+    f.insert(f.end(), clm, clm + n);
+    if (n & 1) f.push_back(0);
+    uint32_t riff = (uint32_t)f.size() - 8 + 8 + (uint32_t)d.size();
+    for (int k = 0; k < 4; ++k) f[4 + k] = (uint8_t)(riff >> 8 * k);
+  }
   f.insert(f.end(), {'d', 'a', 't', 'a'});
   put32(f, (uint32_t)d.size());
   f.insert(f.end(), d.begin(), d.end());
@@ -316,6 +328,66 @@ int main() {
     g.midi(proc::kSrcRytm, 0x90, 60, 100);
     render_any(g, 4096);
     CHECK(peak(g_l, 0, 4096) > 0.1f && peak(g_l, 0, 4096) < 2.0f && g_l[3000] == g_r[3000]);
+  }
+  // WTOSC on pool tables (TBL 6 + entry): a WAV of 4 frames of 2048 (sines, harmonics 1..4, rising level) and one of
+  // 3 frames of 600 found by its 'clm ' chunk (stereo: L and R halved). Before its table is built the note plays BASIC;
+  // built (wt_poll, a frame a step), the frames' levels are the sines with the table's loudest at 0.95.
+  {
+    std::vector<float> t4, t3;
+    for (int f = 0; f < 4; ++f)
+      for (int i = 0; i < 2048; ++i) t4.push_back(0.2f * (float)(f + 1) * sinf(2.0f * 3.14159265f * (float)((f + 1) * i) / 2048.0f));
+    for (int f = 0; f < 3; ++f)
+      for (int i = 0; i < 600; ++i) {
+        float x = 0.5f * sinf(2.0f * 3.14159265f * (float)i / 600.0f);
+        t3.push_back(x), t3.push_back(f == 1 ? -x : x);   // frame 1: L and R cancel
+      }
+    wav("t4.wav", 1, 16, 1, 48000, t4);
+    wav("t3.wav", 1, 16, 2, 48000, t3, "<!>600 10000000 wavetable (www.xferrecords.com)");
+    std::vector<uint8_t> a4 = add(30, "/Samples/t4.wav"), a3 = add(31, "/Samples/t3.wav");
+    CHECK(a4.size() == 2 && a4[1] == samples::kOk && a3.size() == 2 && a3[1] == samples::kOk);
+    settle();
+    CHECK(samples::get(a3[0], &v) && v.clm == 600 && v.frames == 1800 && samples::get(a4[0], &v) && v.clm == 0);
+    alignas(64) static uint8_t wm[sizeof(dsp::WtOsc) + 64];
+    dsp::WtOsc& w = *new (wm) dsp::WtOsc();
+    w.set_param(1, (6 + a4[0]) * 64);
+    w.midi(proc::kSrcRytm, 0x90, 69, 100);
+    alignas(64) static uint8_t wb[sizeof(dsp::WtOsc) + 64];
+    dsp::WtOsc& basic = *new (wb) dsp::WtOsc();
+    basic.midi(proc::kSrcRytm, 0x90, 69, 100);
+    static float bl[4096], br[4096];
+    render_any(w, 256);
+    memcpy(bl, g_l, sizeof(float) * 256);
+    render_any(basic, 256);
+    CHECK(!memcmp(bl, g_l, sizeof(float) * 256));   // not built yet: BASIC
+    uint32_t nf = 0;
+    CHECK(!dsp::wt_pool(a4[0], &nf));
+    int steps = 0;
+    while (dsp::wt_poll() && steps < 1000) { ++steps; usleep(1000); render_any(w, 32); }
+    const float* t = dsp::wt_pool(a4[0], &nf);
+    CHECK(t && nf == 4 && dsp::wt_stats().loads == 1 && dsp::wt_stats().resident == 1);
+    for (int f = 0; f < 4; ++f) {   // level 0 (2048 samples): the frame's sine, 0.2 (f + 1) / 0.8 x 0.95
+      const float* l0 = wt::level(t + (size_t)f * wt::kFrameFloats, 0);
+      float e = 0.0f;
+      for (int i = 0; i < 2048; ++i)
+        e = fmaxf(e, fabsf(l0[i] - 0.95f * (float)(f + 1) / 4.0f * sinf(2.0f * 3.14159265f * (float)((f + 1) * i) / 2048.0f)));
+      CHECK(e < 2e-3f);
+    }
+    render_any(w, 1024);   // POS 0: frame 0, the sine at 0.2375, A4
+    CHECK(fabsf(peak(g_l, 200, 1024) - 0.2375f) < 0.01f);
+    // the 'clm ' one: 3 frames of 600; frame 1 silent (L + R cancel), the others the sine at 0.95
+    w.set_param(1, (6 + a3[0]) * 64);
+    render_any(w, 32);   // asks for it; the old table plays on
+    CHECK(fabsf(peak(g_l, 0, 32)) > 0.01f);
+    steps = 0;
+    while (dsp::wt_poll() && steps < 1000) { ++steps; usleep(1000); render_any(w, 32); }
+    t = dsp::wt_pool(a3[0], &nf);
+    CHECK(t && nf == 3 && dsp::wt_stats().resident == 2);
+    CHECK(fabsf(wt::frame_peak(t) - 0.95f) < 1e-3f && wt::frame_peak(t + wt::kFrameFloats) < 1e-3f);
+    // dropped: its table goes at the next step
+    send({samples::kDrop, 0x45, a4[0]});
+    dsp::wt_poll();
+    CHECK(!dsp::wt_pool(a4[0], &nf) && dsp::wt_stats().resident == 1);
+    (void)br;
   }
   // the library's own entry
   CHECK(dsp::find("SAMPLE") && dsp::find("SAMPLE")->nparams == 10);
