@@ -35,7 +35,7 @@ A64_OBJ := $(patsubst %.cpp,$(A64)/obj/%.o,$(CORE_SRC))
 A64_TESTS := $(patsubst tests/%.cpp,$(A64)/%,$(wildcard tests/test_*.cpp))
 test-aarch64: $(A64_TESTS)
 	@test -n "$(SCX_TGAIN)" || { echo "SCX_TGAIN=<tgain.scx> is needed"; exit 1; }
-	@set -e; for t in $(A64_TESTS); do SCX_TGAIN=$(abspath $(SCX_TGAIN)) $(if $(SCX_VOICE),SCX_VOICE=$(abspath $(SCX_VOICE))) $(if $(SCX_DAISYSP),SCX_DAISYSP=$(abspath $(SCX_DAISYSP))) $(QEMU) ./$$t; done; echo "ALL CORE TESTS PASS (AArch64, qemu)"
+	@set -e; for t in $(A64_TESTS); do SCX_TGAIN=$(abspath $(SCX_TGAIN)) $(if $(SCX_VOICE),SCX_VOICE=$(abspath $(SCX_VOICE))) $(if $(SCX_DAISYSP),SCX_DAISYSP=$(abspath $(SCX_DAISYSP))) $(foreach v,SCX_JUNO SCX_MD SCX_FM,$(if $($(v)),$(v)=$(abspath $($(v))))) $(QEMU) ./$$t; done; echo "ALL CORE TESTS PASS (AArch64, qemu)"
 .PHONY: test-aarch64
 $(A64)/obj/%.o: %.cpp $(DEPS_H)
 	@mkdir -p $(dir $@)

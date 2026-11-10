@@ -589,6 +589,123 @@ static void test_daisysp_blob(const Bytes& vb) {
   }
   printf("test_code: DAISYSP loaded, placed, trigged (%zu bytes)\n", vb.size());
 }
+// ---- the upstream voices' blobs (sidecar-mods 0036 JUNO, 0037 MD, 0038 6-OP FM): SCX_JUNO / SCX_MD / SCX_FM ----
+// a knob value 0..127 as PARAM / TRIG's two bytes (the companion's word >> 2: value x 64)
+static void put14(Bytes& b, int v) { b.push_back((uint8_t)(v * 64 >> 7)); b.push_back((uint8_t)(v * 64 & 127)); }
+static void params_to(int owner, int slot, int first, const std::vector<int>& v) {
+  Bytes b = {0x38, (uint8_t)owner, (uint8_t)slot, (uint8_t)first, (uint8_t)v.size()};
+  for (int x : v) put14(b, x);
+  CHECK(send(b));
+}
+// a trig with the knobs as its tail (as the companion sends them), then `blocks` blocks of 128 on channel ch: the peak
+// over the first `early` blocks and over the last 10; the release (kind 1) after `release` blocks (-1 none); all finite
+struct Run { float early, late; bool finite; };
+static Run trig_run(int owner, int slot, int ch, const std::vector<int>& knobs, int note, int vel, int blocks,
+                    int early_n = 20, int release = -1) {
+  Bytes b = {0x37, (uint8_t)owner, (uint8_t)slot, 0, (uint8_t)note, (uint8_t)vel, 0, 0, 0, 1, 0, (uint8_t)knobs.size()};
+  for (int x : knobs) put14(b, x);
+  CHECK(send(b));
+  Run r = {0.0f, 0.0f, true};
+  for (int i = 0; i < blocks; ++i) {
+    if (i == release) CHECK(send({0x37, (uint8_t)owner, (uint8_t)slot, 1, (uint8_t)note, 0, 0, 0, 0, 1}));
+    block(128);
+    for (int f = 0; f < 128; ++f) r.finite = r.finite && std::isfinite(g_o[ch][f]);
+    if (i < early_n) r.early = std::fmax(r.early, peak_of(ch, 0, 128));
+    if (i >= blocks - 10) r.late = std::fmax(r.late, peak_of(ch, 0, 128));
+  }
+  return r;
+}
+static int place_voice(int seq, int owner, const Bytes& vb, const char* name, int ch) {
+  Ans r = ship(seq, owner, vb, name);
+  CHECK(r.op == code::kLoaded && r.name == name);
+  int slot = place(seq + 1, owner, 0x7F, name);
+  CHECK(slot >= 0);
+  if (slot < 0) return -1;
+  CHECK(rt(seq + 2, owner, route::slot_chan(slot, 0), ch, 8192) >= 0);
+  settle();
+  memset(g_in, 0, sizeof g_in);
+  block(128);
+  CHECK(peak_of(ch, 0, 128) < 1e-4f);   // silent before a trig
+  return slot;
+}
+
+// JUNO (0036): knobs LEN PAT CUT RES ENV ATK DEC REL; every factory patch sounds on a trig; a held note (LEN 127) sustains
+// until the release and dies after it
+static void test_juno_blob(const Bytes& vb) {
+  const int ch = 7;
+  int slot = place_voice(70, 0x41, vb, "JUNO", ch);
+  if (slot < 0) return;
+  int quiet = 0;
+  float lo = 1e9f, hi = 0.0f;
+  for (int pat = 0; pat < 128; ++pat) {
+    Run r = trig_run(0x41, slot, ch, {40, pat, 64, 64, 64, 64, 64, 64}, 60, 100, 50);
+    CHECK(r.finite && r.early < 4.0f);
+    if (r.early < 0.01f) ++quiet, printf("test_code: JUNO patch %d: peak %f\n", pat, r.early);
+    lo = std::fmin(lo, r.early), hi = std::fmax(hi, r.early);
+  }
+  CHECK(quiet == 0);
+  for (int i = 0; i < 400; ++i) block(128);
+  // A14 Flutes (3) held: sustains for 0.5 s, then its release; 2 s after it nothing is left
+  Run h = trig_run(0x41, slot, ch, {127, 3, 64, 64, 64, 64, 64, 64}, 60, 127, 940, 190, 190);
+  printf("test_code: JUNO held %.3f, 2 s after its release %.5f\n", h.early, h.late);
+  CHECK(h.finite && h.early > 0.01f && h.late < h.early * 0.01f);
+  printf("test_code: JUNO loaded, placed, trigged: 128 factory patches, peaks %.3f..%.3f (%zu bytes)\n", lo, hi, vb.size());
+}
+
+// MD (0037): knobs LEV TYP C1..C6, page 2 C7 C8; each of the 30 TYPEs sounds on a trig with its controls at 64 and dies
+// out on its own; a TYPE p-locked on the trig (the trig's tail) plays at once, the old voice's tail under it
+static void test_md_blob(const Bytes& vb) {
+  const int ch = 8;
+  int slot = place_voice(80, 0x42, vb, "MD", ch);
+  if (slot < 0) return;
+  static const char* const kNames[30] = {"FM BD", "FM SD", "FM XT", "FM CP", "FM RS", "FM CB", "FM HH", "FM CY",
+    "PI BD", "PI SD", "PI MT", "PI ML", "PI MA", "PI RS", "PI RC", "PI CC", "PI HH", "TRX BD", "TRX SD", "TRX XT",
+    "TRX CP", "TRX RS", "TRX CB", "TRX CH", "TRX OH", "TRX CY", "TRX MA", "TRX CL", "TRX XC", "TRX B2"};
+  int quiet = 0;
+  float lo = 1e9f, hi = 0.0f;
+  for (int z = 0; z < 30; ++z) {
+    int v = (z * 128 + 29) / 30;   // zone z's lowest value
+    params_to(0x42, slot, 0, {100, v, 64, 64, 64, 64, 64, 64, 64, 64});
+    for (int i = 0; i < 2; ++i) block(128);
+    Run r = trig_run(0x42, slot, ch, {100, v}, 60, 127, 750, 40);   // 2 s
+    CHECK(r.finite && r.early < 4.0f);
+    printf("test_code: MD %-6s peak %.3f, after 2 s %.4f\n", kNames[z], r.early, r.late);
+    if (r.early < 0.01f) ++quiet;
+    lo = std::fmin(lo, r.early), hi = std::fmax(hi, r.early);
+  }
+  CHECK(quiet == 0);
+  // a TYPE p-locked on the trig: FM BD rings, then a trig with TRX CH in its tail sounds at once
+  trig_run(0x42, slot, ch, {100, 0}, 60, 127, 4);
+  Run r = trig_run(0x42, slot, ch, {100, (23 * 128 + 29) / 30}, 60, 127, 20, 2);
+  CHECK(r.finite && r.early > 0.01f);
+  printf("test_code: MD loaded, placed, trigged: 30 TYPEs, peaks %.3f..%.3f (%zu bytes)\n", lo, hi, vb.size());
+}
+
+// 6-OP FM (0038): knobs LEV PAT TIM MOR DEC LPG TUN LEN; every ROM voice sounds on a trig; LEN 127 holds until the
+// release, then the voice's own release; a short LEN closes by itself
+static void test_fm_blob(const Bytes& vb) {
+  const int ch = 6;
+  int slot = place_voice(60, 0x40, vb, "FM", ch);
+  if (slot < 0) return;
+  int quiet = 0;
+  float lo = 1e9f, hi = 0.0f;
+  for (int pat = 0; pat < 96; ++pat) {
+    Run r = trig_run(0x40, slot, ch, {127, pat, 64, 64, 127, 64, 64, 30}, 60, 100, 60);
+    CHECK(r.finite && r.early < 2.0f);
+    if (r.early < 0.01f) ++quiet, printf("test_code: FM voice %d: peak %f\n", pat, r.early);
+    lo = std::fmin(lo, r.early), hi = std::fmax(hi, r.early);
+  }
+  CHECK(quiet == 0);
+  // voice 0 held (LEN 127, DEC 127: its own envelopes), released after 0.5 s: sounding before, gone 1.5 s after
+  for (int i = 0; i < 200; ++i) block(128);
+  Run h = trig_run(0x40, slot, ch, {127, 0, 64, 64, 127, 64, 64, 127}, 60, 127, 750, 190, 190);
+  printf("test_code: FM held %.3f, 1.5 s after its release %.4f\n", h.early, h.late);
+  CHECK(h.finite && h.early > 0.01f && h.late < h.early * 0.05f);
+  // PAT moved between trigs takes effect at the next trig, not mid-note: a param alone changes nothing audible here
+  params_to(0x40, slot, 1, {50});
+  for (int i = 0; i < 4; ++i) block(128);
+  printf("test_code: 6-OP FM loaded, placed, trigged: 96 ROM voices, peaks %.3f..%.3f (%zu bytes)\n", lo, hi, vb.size());
+}
 #endif
 
 int main() {
@@ -646,6 +763,20 @@ int main() {
   } else {
     printf("test_code: no DAISYSP blob (SCX_DAISYSP=<daisysp.scx> runs it)\n");
   }
+  auto load = [&](const char* env, const char* what, void (*test)(const Bytes&)) {
+    const char* path = getenv(env);
+    if (!path) { printf("test_code: no %s blob (%s=<file> runs it)\n", what, env); return; }
+    FILE* g = fopen(path, "rb");
+    CHECK(g);
+    Bytes vb;
+    size_t n;
+    while (g && (n = fread(buf, 1, sizeof buf, g)) > 0) vb.insert(vb.end(), buf, buf + n);
+    if (g) fclose(g);
+    test(vb);
+  };
+  load("SCX_JUNO", "JUNO", test_juno_blob);
+  load("SCX_MD", "MD", test_md_blob);
+  load("SCX_FM", "6-OP FM", test_fm_blob);
 #else
   printf("test_code: blob code not run (not AArch64; make -C core test-aarch64 runs it)\n");
 #endif
