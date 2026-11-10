@@ -61,7 +61,7 @@ class Grain : public Block {
     const float lev = val(p_[0]) / 100.0f, pos = val(p_[2]) / 127.0f, spry = val(p_[3]) / 127.0f;
     const float size = 0.005f * powf(200.0f, val(p_[4]) / 127.0f), dens = powf(200.0f, val(p_[5]) / 127.0f);
     const float prnd = val(p_[6]) / 127.0f * 12.0f, rev = val(p_[7]) / 127.0f;
-    const int win = zone(p_[8], 4);
+    const int win = vzone(p_[8], 4);
     const float hold = val(p_[9]);
     const bool freeze = hold >= 120.0f;
     const float semis = (float)note_ - 60.0f + (val(p_[10]) - 64.0f) + (val(p_[11]) - 64.0f) / 64.0f;

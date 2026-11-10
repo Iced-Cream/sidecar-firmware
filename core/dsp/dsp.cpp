@@ -35,14 +35,15 @@ const ParamInfo kSampleP[] = {{"LEV", 100 * 64}, {"SMP", 0}, {"TUN", 64 * 64}, {
 const ParamInfo kOscP[] = {{"LEV", 100 * 64}, {"WAV", 85 * 64}, {"TUN", 64 * 64}, {"FIN", 64 * 64},
                            {"PW", 64 * 64},   {"FM", 0},       {"SUB", 0},       {"THRU", 0}};
 const ParamInfo kNoiseP[] = {{"LEV", 100 * 64}, {"COL", 64 * 64}, {"THRU", 127 * 64}};
-const ParamInfo kEnvP[] = {{"ATK", 0}, {"DEC", 64 * 64}, {"SUS", 0}, {"REL", 32 * 64}, {"MODE", 0}, {"VCA", 127 * 64}, {"VEL", 0}};
+const ParamInfo kEnvP[] = {{"ATK", 0}, {"DEC", 64 * 64}, {"SUS", 0}, {"REL", 32 * 64}, {"MODE", 0}, {"VCA", 127 * 64}, {"VEL", 0}, {"SHAPE", 0}, {"OUT", 0}};
+const ParamInfo kSvfP[] = {{"CUT", 64 * 64}, {"RES", 0}, {"KEY", 64 * 64}, {"DRV", 0}};
 
 const ParamInfo kGrainP[] = {{"LEV", 100 * 64}, {"SMP", 0},       {"POS", 0},       {"SPRY", 0},
                              {"SIZE", 64 * 64}, {"DENS", 64 * 64}, {"PRND", 0},      {"REV", 0},
                              {"WIN", 0},        {"HOLD", 0},       {"TUN", 64 * 64}, {"FIN", 64 * 64}};
 
-const ParamInfo kWtOscP[] = {{"LEV", 100 * 64}, {"TBL", 0},   {"POS", 0},   {"TUN", 64 * 64},
-                             {"FIN", 64 * 64},  {"FM", 0},    {"SUB", 0},   {"THRU", 0}};
+const ParamInfo kWtOscP[] = {{"LEV", 100 * 64}, {"TBL", 0},       {"POS", 0}, {"WARP", 0},  {"AMT", 0},  {"UNI", 0},
+                             {"SUB", 0},        {"TUN", 64 * 64}, {"FIN", 64 * 64}, {"PM", 0}, {"THRU", 0}, {"POSM", 8192}, {"PCV", 8192}};
 
 const ParamInfo kMidiOutP[] = {{"DST", 1 * 64}, {"CHN", 0},  {"LEN", 0},  {"TRN", 64 * 64}, {"PROG", 0}, {"PB", 0},
                                {"AT", 0},      {"MW", 0},   {"VAL1", 0}, {"SEL1", 0},      {"VAL2", 0}, {"SEL2", 0},
@@ -52,9 +53,10 @@ const ParamInfo kMidiOutP[] = {{"DST", 1 * 64}, {"CHN", 0},  {"LEN", 0},  {"TRN"
 struct PolyNames {
   ParamInfo p[Poly::kParamCount];
   PolyNames() {
-    static const char* const own[] = {"CHD", "INV", "SPR", "VOI", "MOD1", "MOD2", "MOD3", "MOD4"};
+    static const char* const own[] = {"CHD", "INV", "SPR", "VOI", "MOD1", "MOD2", "MOD3", "MOD4", "VCRV", "NLEV", "LLEV"};
+    static const uint16_t def[] = {0, 0, 0, 0, 8192, 8192, 8192, 8192, 0, 100 * 64, 100 * 64};
     for (int i = 0; i < Poly::kOwn; ++i) p[i] = {"CHAIN", 0};
-    for (int i = 0; i < Poly::kParamCount - Poly::kOwn; ++i) p[Poly::kOwn + i] = {own[i], (uint16_t)(i < 4 ? 0 : 8192)};
+    for (int i = 0; i < Poly::kParamCount - Poly::kOwn; ++i) p[Poly::kOwn + i] = {own[i], def[i]};
   }
 };
 const PolyNames kPolyNames;
@@ -68,9 +70,10 @@ const BlockInfo kLibrary[] = {
     {"SAMPLE", 10, kSampleP, sizeof(Sample), make<Sample>},
     {"OSC", 8, kOscP, sizeof(Osc), make<Osc>},
     {"NOISE", 3, kNoiseP, sizeof(Noise), make<Noise>},
-    {"ENV", 7, kEnvP, sizeof(Env), make<Env>},
+    {"ENV", 9, kEnvP, sizeof(Env), make<Env>},
+    {"SVF", 4, kSvfP, sizeof(Svf), make<Svf>},
     {"GRAIN", 12, kGrainP, sizeof(Grain), make<Grain>},
-    {"WTOSC", 8, kWtOscP, sizeof(WtOsc), make<WtOsc>},
+    {"WTOSC", 13, kWtOscP, sizeof(WtOsc), make<WtOsc>},
     {"MIDIOUT", 16, kMidiOutP, sizeof(MidiOut), make<MidiOut>},
     {"POLY", Poly::kParamCount, kPolyNames.p, sizeof(Poly), nullptr},   // CHAIN only (a PLACE is refused)
 };

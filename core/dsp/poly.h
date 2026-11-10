@@ -13,6 +13,9 @@
 //            expansion: CHD 0 OFF 1 MAJ 2 MIN 3 SUS2 4 SUS4 5 7 6 MAJ7 7 MIN7 8 DIM 9 AUG 10 6 11 MIN6 12 9 13 ADD9
 //            14 MIN9 15 5; INV 0..3; SPR 0..2; VOI 0 AUTO, 1..6 notes)
 //   68..71   internal mod point k's depth (8192 none, 0 = -1, 16383 = +1 x the param's whole range)
+//   72 VCRV  each note's velocity gain: 0 none (unity), 1 upstream's 0.25 + 0.75 v^2 (WAVETABLE, GRANULAR)
+//   73 NLEV  each note's level, value / 100 (100 unity; upstream WAVETABLE's 50)
+//   74 LLEV  a live note's level on top, value / 100 (100 unity; upstream's 60)
 // Internal mod points: a copy's block a's control output (ctl c) onto the same copy's block b's param: per note (a
 // note's own envelope moving its own oscillator's position), applied before the copy's chain runs, from the ctl as the
 // block left it (one block behind the source within the block's chain order, as the route's mod points).
@@ -22,7 +25,8 @@
 // note on / off (another src) starts / releases one note per key and channel (a live note, left alone by trigs).
 // Another message goes to every copy's blocks. A note's copy: a free one, else the oldest released, else the oldest
 // (a steal: its blocks' link_reset(), then the note). Release: a note off to the copy's blocks. A copy is free again
-// when one of its blocks is done() (proc.h: an ENV at rest, a one-shot SAMPLE past its end).
+// when its weight source's block is done() (proc.h: an ENV at rest), or with none, any of its blocks (a one-shot
+// SAMPLE past its end). A note's gain: NLEV, LLEV for a live one, VCRV's velocity law.
 // Headroom (upstream's msamp / WAVETABLE / poly FM): the sum times 1 / sqrt(max(1, E)), E the sounding notes' weights
 // (the weight source's ctl as the note's block left it, or 1 a note with none), smoothed one pole per block (3 ms
 // down, 15 ms up) and ramped over the block. One note plays at unity.
@@ -87,7 +91,7 @@ class Poly : public proc::Proc {
  public:
   static constexpr int kNotes = 8, kChain = 4, kMods = 4;
   static constexpr int kOwn = 64;                  // the first of POLY's own params
-  static constexpr int kParamCount = kOwn + 4 + kMods;
+  static constexpr int kParamCount = kOwn + 4 + kMods + 3;
   static constexpr uint8_t kNoWeight = 0x7F;
   struct Spec {
     int notes, nb, nm;
@@ -130,8 +134,10 @@ class Poly : public proc::Proc {
       for (int k = 0; k < s_.notes; ++k) c_[k][b]->set_param(p, v);
     } else if (param >= kOwn && param < kOwn + 4) {
       own_[param - kOwn] = v / 64;
-    } else if (param >= kOwn + 4 && param < kParamCount) {
+    } else if (param >= kOwn + 4 && param < kOwn + 4 + kMods) {
       depth_[param - kOwn - 4] = (uint16_t)v;
+    } else if (param >= kOwn + 4 + kMods && param < kParamCount) {
+      gain_[param - kOwn - 4 - kMods] = v;
     }
   }
   void link_reset() override {
@@ -181,10 +187,11 @@ class Poly : public proc::Proc {
         c_[k][i]->process(cb);
         in[0] = o; in[1] = buf_[i & 1][1];
       }
-      for (int f = 0; f < nf; ++f) { acc[0][f] += in[0][f]; acc[1][f] += in[1][f]; }
+      for (int f = 0; f < nf; ++f) { acc[0][f] += in[0][f] * n.gain; acc[1][f] += in[1][f] * n.gain; }
       any = true;
-      bool fin = false;
-      for (int i = 0; i < s_.nb; ++i) fin = fin || c_[k][i]->done();
+      bool fin = false;   // the weight's block at rest (a mod envelope's end leaves the note on), else any block
+      if (s_.weight != kNoWeight) fin = c_[k][s_.weight >> 4 & 3]->done();
+      else for (int i = 0; i < s_.nb; ++i) fin = fin || c_[k][i]->done();
       if (fin) { n = Note{}; continue; }
       e += s_.weight == kNoWeight ? 1.0f : c_[k][s_.weight >> 4 & 3]->ctl(s_.weight & 15);
     }
@@ -215,13 +222,14 @@ class Poly : public proc::Proc {
   int key(int k) const { return n_[k].on ? n_[k].key : -1; }
 
  private:
-  struct Note { bool on, held, live; uint8_t key, tag; uint32_t order; };
+  struct Note { bool on, held, live; uint8_t key, tag; uint32_t order; float gain; };
   Spec s_;
   proc::Proc* c_[kNotes][kChain] = {};
   Note n_[kNotes] = {};
   uint16_t base_[kOwn];
   uint16_t depth_[kMods];
   int own_[4] = {};
+  int gain_[3] = {0, 100 * 64, 100 * 64};   // VCRV NLEV LLEV
   uint32_t order_ = 0;
   float head_ = 1.0f;
   bool ok_ = true;
@@ -250,7 +258,10 @@ class Poly : public proc::Proc {
   void start(uint8_t key, uint8_t vel, bool live, uint8_t tag) {
     int k = pick();
     if (n_[k].on) reset_copy(k);   // a steal
-    n_[k] = Note{true, true, live, key, tag, ++order_};
+    float v = (vel < 1 ? 1 : vel) / 127.0f, g = gain_[1] / 64 / 100.0f;
+    if (gain_[0] / 64 >= 1) g *= 0.25f + 0.75f * v * v;
+    if (live) g *= gain_[2] / 64 / 100.0f;
+    n_[k] = Note{true, true, live, key, tag, ++order_, g};
     to_copy(k, 0x90, key, vel ? vel : 1);
   }
   void release(int k) {

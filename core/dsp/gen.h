@@ -115,10 +115,16 @@ class Noise : public Block {
 //         at SUS until the note off)
 // P5 VCA  how much the envelope sets the input's level: 0 not at all (the input passes) .. 127 all of it
 // P6 VEL  how much the note's velocity sets the envelope's height: 0 none .. 127 all (velocity 127 is unity either way)
+// P7 SHAPE 0 analogue (above: an attack toward past the top, exponential stages, times as above); 1 upstream's digital
+//         envelope (WAVETABLE's and GRANULAR's, core/wavetable/wavetable.cpp): ATK DEC REL 1 ms .. 10 s (10^(4 v/127)
+//         ms), a linear attack, the decay toward SUS and the release each -60 dB over its time, held in the decay while
+//         ADSR, at rest under 1e-4
+// P8 OUT  0 VCA (the input at the envelope, VCA's share); 1 CV: the envelope itself (with VEL) on L and R, the input
+//         left out - a control signal at audio rate for the next block in a chain (WTOSC's PCV), sample by sample
 // ctl(0): the envelope (0..1, with VEL), as of the end of the block: the mod points' source.
 class Env : public Block {
  public:
-  Env() { p_[0] = 0; p_[1] = 64 * 64; p_[2] = 0; p_[3] = 32 * 64; p_[4] = 0; p_[5] = 127 * 64; p_[6] = 0; }
+  Env() { p_[0] = 0; p_[1] = 64 * 64; p_[2] = 0; p_[3] = 32 * 64; p_[4] = 0; p_[5] = 127 * 64; p_[6] = 0; p_[7] = 0; p_[8] = 0; }
   const char* name() const override { return "ENV"; }
   void link_reset() override { stage_ = kOff; e_ = 0.0f; }
   void midi(int, uint8_t status, uint8_t d1, uint8_t d2) override {
@@ -128,11 +134,13 @@ class Env : public Block {
     else if ((s == 0x80 || s == 0x90) && stage_ != kOff && val(p_[4]) >= 1.0f) stage_ = kRel;
   }
   void process(const proc::Block& b) override {
+    if (val(p_[7]) >= 1.0f) { digital(b); return; }
     const float ka = coef(vtime(p_[0], 0.0005f, 5.0f)), kd = coef(vtime(p_[1], 0.001f, 10.0f));
     const float kr = coef(vtime(p_[3], 0.001f, 10.0f)), sus = val(p_[2]) / 127.0f;
     const bool adsr = val(p_[4]) >= 1.0f;
     const float vca = val(p_[5]) / 127.0f, vamt = val(p_[6]) / 127.0f;
     const float h = 1.0f - vamt * (1.0f - (float)vel_ / 127.0f);
+    const bool cv = val(p_[8]) >= 1.0f;
     for (int f = 0; f < b.frames; ++f) {
       switch (stage_) {
         case kAtk:
@@ -150,6 +158,7 @@ class Env : public Block {
           break;
         case kOff: break;
       }
+      if (cv) { out(b, 0, f, e_ * h); out(b, 1, f, e_ * h); continue; }
       float g = 1.0f - vca + vca * e_ * h;
       out(b, 0, f, in(b, 0, f) * g);
       out(b, 1, f, in(b, 1, f) * g);
@@ -165,6 +174,91 @@ class Env : public Block {
   float e_ = 0.0f, ctl_ = 0.0f;
   uint8_t vel_ = 127;
   static float coef(float sec) { return 1.0f - expf(-1.0f / (sec * kRate)); }
+  static float tsec(int v) {   // upstream's: 0..127 -> 1 ms .. 10 s
+    float x = val(v);
+    x = x < 0.0f ? 0.0f : x > 127.0f ? 127.0f : x;
+    return 0.001f * powf(10.0f, x / 127.0f * 4.0f);
+  }
+  // SHAPE 1: upstream's (wavetable.cpp render_add's amp and mod envelopes)
+  void digital(const proc::Block& b) {
+    const float a_inc = 1.0f / (tsec(p_[0]) * kRate);
+    const float dcoef = expf(-6.9078f / (tsec(p_[1]) * kRate));   // -60 dB after DEC
+    const float rcoef = expf(-6.9078f / (tsec(p_[3]) * kRate));
+    const float sus = val(p_[2]) / 127.0f > 1.0f ? 1.0f : val(p_[2]) / 127.0f;
+    const bool adsr = val(p_[4]) >= 1.0f;
+    const float vca = val(p_[5]) / 127.0f, vamt = val(p_[6]) / 127.0f;
+    const float h = 1.0f - vamt * (1.0f - (float)vel_ / 127.0f);
+    const bool cv = val(p_[8]) >= 1.0f;
+    for (int f = 0; f < b.frames; ++f) {
+      switch (stage_) {
+        case kAtk:
+          e_ += a_inc;
+          if (e_ >= 1.0f) e_ = 1.0f, stage_ = kDec;
+          break;
+        case kDec:
+          e_ = sus + (e_ - sus) * dcoef;
+          if (!adsr && e_ - sus < 1e-4f) stage_ = kRel;
+          break;
+        case kSus: stage_ = kDec; break;
+        case kRel:
+          e_ *= rcoef;
+          if (e_ < 1e-4f) e_ = 0.0f, stage_ = kOff;
+          break;
+        case kOff: break;
+      }
+      if (cv) { out(b, 0, f, e_ * h); out(b, 1, f, e_ * h); continue; }
+      float g = 1.0f - vca + vca * e_ * h;
+      out(b, 0, f, in(b, 0, f) * g);
+      out(b, 1, f, in(b, 1, f) * g);
+    }
+    ctl_ = e_ * h;
+  }
+};
+
+// ---- SVF: a DJ-style state-variable filter (upstream WAVETABLE's, core/wavetable/wavetable.cpp) -----------------------
+// P0 CUT  0..63 low-pass 20 Hz .. 20 kHz, 64 open, 65..127 high-pass 20 Hz .. 8 kHz (exponential)
+// P1 RES  resonance 0 .. 127
+// P2 KEY  key tracking: 0 none .. 64 half (upstream's) .. 128 full (value / 128), about note 60
+// P3 DRV  drive into the filter: 0 none .. 127 (x 4 into a soft clip; upstream ties it to RES: DRV = RES)
+// Simper's SVF (the trapezoidal one), stereo; LP open with no resonance is a bypass (as upstream).
+class Svf : public Block {
+ public:
+  Svf() { p_[0] = 64 * 64; p_[1] = 0; p_[2] = 64 * 64; p_[3] = 0; }
+  const char* name() const override { return "SVF"; }
+  void link_reset() override { memset(ic_, 0, sizeof ic_); }
+  void midi(int, uint8_t status, uint8_t d1, uint8_t d2) override {
+    if ((status & 0xF0) == 0x90 && d2) { note_ = d1; memset(ic_, 0, sizeof ic_); }
+  }
+  void process(const proc::Block& b) override {
+    float cut = val(p_[0]);
+    cut = cut < 0.0f ? 0.0f : cut > 127.99f ? 127.99f : cut;
+    const float res = clamp1(val(p_[1]) / 127.0f), key = val(p_[2]) / 128.0f;   // 64: half
+    const bool hp = cut > 64.0f;
+    float fc = hp ? 20.0f * powf(400.0f, (cut - 64.0f) / 64.0f) : 20.0f * powf(1000.0f, cut / 64.0f);
+    const bool bypass = res < 0.01f && (hp ? cut < 65.0f : cut > 62.5f);
+    fc *= exp2f(((float)note_ - 60.0f) / 12.0f * key);
+    if (fc > 0.45f * kRate) fc = 0.45f * kRate;
+    const float g = tanf(kPi * fc / kRate), kq = 2.0f - 1.96f * res;
+    const float a1 = 1.0f / (1.0f + g * (g + kq)), a2 = g * a1, a3 = g * a2;
+    const float drive = clamp1(val(p_[3]) / 127.0f) * 3.0f, dnorm = 1.0f / sqrtf(1.0f + drive);
+    for (int f = 0; f < b.frames; ++f)
+      for (int c = 0; c < 2; ++c) {
+        float y = in(b, c, f);
+        if (!bypass) {
+          float x0 = drive > 0.01f ? soft(y * (1.0f + drive)) * dnorm * 1.3f : y;
+          float* ic = ic_[c];
+          float v3 = x0 - ic[1], v1 = a1 * ic[0] + a2 * v3, v2 = ic[1] + a2 * ic[0] + a3 * v3;
+          ic[0] = undenormal(2.0f * v1 - ic[0]), ic[1] = undenormal(2.0f * v2 - ic[1]);
+          y = hp ? x0 - kq * v1 - v2 : v2;
+        }
+        out(b, c, f, y);
+      }
+  }
+
+ private:
+  float ic_[2][2] = {};
+  int note_ = 60;
+  static float clamp1(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 };
 
 }  // namespace dsp

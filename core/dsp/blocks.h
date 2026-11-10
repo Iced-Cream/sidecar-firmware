@@ -32,6 +32,14 @@ inline int zone(int v, int n) {
   int z = (int)(unit(v) * (float)n);
   return z >= n ? n - 1 : z;
 }
+// a voice block's param (the Rytm knob's value x 64, 0..8191) in n zones: upstream's eng_zone (core/machines.h), the
+// value's integer part v, zone (v n) >> 7
+inline int vzone(int word, int n) {
+  int v = word / 64;
+  v = v < 0 ? 0 : v > 127 ? 127 : v;
+  int z = (v * n) >> 7;
+  return z >= n ? n - 1 : z;
+}
 // keeps a feedback path out of denormals (a tail decaying for minutes would otherwise slow the core)
 inline float undenormal(float x) { return fabsf(x) < 1e-20f ? 0.0f : x; }
 // a soft clip that is the identity near 0 and saturates at +-1

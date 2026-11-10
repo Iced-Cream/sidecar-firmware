@@ -395,8 +395,8 @@ static void test_gen() {
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     printf("test_dsp: WTOSC tables built in %.0f ms\n", ms);
     CHECK(dsp::wt_table(0) && dsp::wt_table(5) && !dsp::wt_table(6));
-    o.set_param(3, 70 * 64);
-    o.set_param(4, (int)std::lround((64.0 + 0.2318 * 64.0) * 64.0));
+    o.set_param(7, 70 * 64);
+    o.set_param(8, (int)std::lround((64.0 + 0.2318 * 64.0) * 64.0));
     std::vector<float> y = run_block(o, std::vector<float>(4800, 0.0f));
     float d = 0.0f;
     for (size_t i = 1000; i + 128 < y.size(); ++i) d = std::fmax(d, std::fabs(y[i] - y[i + 128]));
@@ -417,7 +417,7 @@ static void test_gen() {
     for (size_t i = 3000; i < 4800; ++i) diff = std::fmax(diff, std::fabs(a0[i] - a1[i]));
     CHECK(diff > 0.1f);
     o.midi(proc::kSrcRytm, 0x90, 127, 100);
-    o.set_param(3, 100 * 64);
+    o.set_param(7, 100 * 64);
     CHECK(peak(run_block(o, std::vector<float>(2400, 0.0f))) < 1.05f);
   }
   // MIDIOUT: values on change, a note (transposed) on its channel, its note-off after LEN, a new DST
@@ -560,6 +560,103 @@ static void pset(int owner, int slot, int first, std::vector<int> v) {
 static void trig(int owner, int slot, int kind, int note, int vel) {
   CHECK(send({0x37, (uint8_t)owner, (uint8_t)slot, (uint8_t)kind, (uint8_t)note, (uint8_t)vel, 0, 0, 0, 0}));
 }
+// upstream WAVETABLE's render_add (core/wavetable/wavetable.cpp, trigcondition/sidecar-firmware dev) for one note,
+// unison off (its random phases aside), POS settled: the reference POLY {WTOSC, SVF, ENV, ENV} must match
+namespace wtref {
+struct K { float pos, amt, uni, sub, cut, res, atk, dec, sus, env; int warp; };
+static float tsec(float v) { v = v < 0 ? 0 : v > 127 ? 127 : v; return 0.001f * powf(10.0f, v / 127.0f * 4.0f); }
+static float sine[1025];
+static float sin01(float p) { float x = p * 1024; int i = (int)x; i &= 1023; float t = x - (float)(int)x; return sine[i] + (sine[i + 1] - sine[i]) * t; }
+static float herm(const float* x, float t) {
+  float xm1 = x[-1], x0 = x[0], x1 = x[1], x2 = x[2];
+  float c = (x1 - xm1) * 0.5f, w = x0 - x1, a = c + w + w + (x2 - x0) * 0.5f, b = c + w + a;
+  return ((a * t - b) * t + c) * t + x0;
+}
+static float softr(float x) { x = x < -3 ? -3 : x > 3 ? 3 : x; float x2 = x * x; return x * (27 + x2) / (27 + 9 * x2); }
+// n frames in blocks of 32 of key at vel, released at rel (frame)
+static std::vector<float> render(const float* p, int key, int vel, int n, int rel) {
+  for (int i = 0; i <= 1024; ++i) sine[i] = sinf(2.0f * 3.14159265358979f * (float)i / 1024.0f);
+  auto c01 = [](float x) { return x < 0 ? 0.0f : x > 1 ? 1.0f : x; };
+  K k;
+  k.pos = c01(p[1] / 127.0f); k.warp = dsp::vzone((int)(p[2] * 64), 4); k.amt = c01(p[3] / 127.0f); k.uni = 0;
+  k.sub = c01(p[5] / 127.0f); k.cut = p[6]; k.res = c01(p[7] / 127.0f); k.atk = tsec(p[8]); k.dec = tsec(p[9]);
+  k.sus = c01(p[10] / 127.0f); float e = (p[11] - 64.0f) / 63.0f; k.env = e < -1 ? -1 : e > 1 ? 1 : e;
+  const float* data = dsp::wt_table(0);
+  const uint32_t nf = wt::kBuiltinFrames;
+  float v = vel / 127.0f, gain = (0.25f + 0.75f * v * v) * 0.5f;
+  uint32_t ph = 0, sub_ph = 0;
+  float env = 0, menv = 0, ic1 = 0, ic2 = 0, dcx = 0, dcy = 0;
+  int stage = 0, mstage = 0;
+  bool fin = false;
+  uint32_t fm_ph = 0;
+  std::vector<float> out(n, 0.0f);
+  const float sr = 48000.0f;
+  for (int at = 0; at < n && !fin; at += 32) {
+    float wfac = 1, sync_r = 1, pw_w = 0.5f, fm_i = 0;
+    if (k.warp == 1) sync_r = 1 + 7 * k.amt, wfac = sync_r;
+    else if (k.warp == 2) pw_w = 0.5f - 0.46f * k.amt, wfac = 0.5f / pw_w;
+    else if (k.warp == 3) fm_i = 5.0f * k.amt * k.amt, wfac = 1 + fm_i;
+    float a_inc = 1.0f / (k.atk * sr), dcoef = expf(-6.9078f / (k.dec * sr));
+    if (at >= rel && stage < 2) stage = 2;
+    float inc0 = 440.0f / sr * exp2f(((float)key - 69.0f) / 12.0f);
+    uint32_t iu = (uint32_t)(inc0 * 4294967296.0f);
+    int lv = wt::pick_level(inc0 * wfac);
+    uint32_t sub_inc = (uint32_t)(inc0 * 0.5f * 4294967296.0f);
+    int lsz = lv < wt::kLevels ? wt::kLevelSize[lv] : 0, loff = lv < wt::kLevels ? wt::level_off(lv) : 0;
+    float kt = exp2f(((float)key - 60.0f) / 24.0f);
+    bool hp = k.cut > 64.0f;
+    float fc = hp ? 20.0f * powf(400.0f, (k.cut - 64.0f) / 64.0f) : 20.0f * powf(1000.0f, k.cut / 64.0f);
+    bool bypass = k.res < 0.01f && (hp ? k.cut < 65.0f : k.cut > 62.5f);
+    fc *= kt;
+    if (fc > 0.45f * sr) fc = 0.45f * sr;
+    float g = tanf(3.14159265f * fc / sr), kq = 2.0f - 1.96f * k.res;
+    float a1 = 1.0f / (1.0f + g * (g + kq)), a2 = g * a1, a3 = g * a2;
+    float drive = k.res * 3.0f, dnorm = 1.0f / sqrtf(1.0f + drive);
+    for (int s = 0; s < 32 && at + s < n; ++s) {
+      switch (stage) {
+        case 0: env += a_inc; if (env >= 1) env = 1, stage = 1; break;
+        case 1: env = k.sus + (env - k.sus) * dcoef; break;
+        default: env *= dcoef; if (env < 1e-4f) fin = true; break;
+      }
+      if (fin) break;
+      if (mstage == 0) { menv += a_inc; if (menv >= 1) menv = 1, mstage = 1; } else menv *= dcoef;
+      float y = 0;
+      {
+        float pos = k.pos + k.env * menv;
+        pos = pos < 0 ? 0 : pos > 1 ? 1 : pos;
+        float fp = pos * (float)(nf - 1);
+        uint32_t fa = (uint32_t)fp; if (fa > nf - 1) fa = nf - 1;
+        uint32_t fb = fa + 1 < nf ? fa + 1 : fa;
+        float ft = fp - (float)fa;
+        const float* A = data + (size_t)fa * wt::kFrameFloats + loff;
+        const float* B = data + (size_t)fb * wt::kFrameFloats + loff;
+        uint32_t p0 = ph; ph = p0 + iu;
+        float pf = (float)(p0 >> 8) * (1.0f / 16777216.0f);
+        switch (k.warp) {
+          case 1: pf = pf * sync_r, pf -= (float)(int)pf; break;
+          case 2: pf = pf < pw_w ? pf * 0.5f / pw_w : 0.5f + (pf - pw_w) * 0.5f / (1.0f - pw_w); break;
+          case 3: { uint32_t mp = fm_ph; fm_ph = mp + iu; pf += fm_i * 0.159155f * sin01((float)(mp >> 8) * (1.0f / 16777216.0f)); pf -= floorf(pf); break; }
+          default: break;
+        }
+        float x = pf * (float)lsz; int i = (int)x; float tt = x - (float)i; i &= lsz - 1;
+        float a = herm(A + i, tt);
+        y = a + (herm(B + i, tt) - a) * ft;
+        float d = y - dcx + 0.9995f * dcy; dcx = y, dcy = d, y = d;
+      }
+      if (k.sub > 0) { y += k.sub * 0.8f * sin01((float)(sub_ph >> 8) * (1.0f / 16777216.0f)); sub_ph += sub_inc; }
+      if (!bypass) {
+        float x0 = drive > 0.01f ? softr(y * (1 + drive)) * dnorm * 1.3f : y;
+        float v3 = x0 - ic2, v1 = a1 * ic1 + a2 * v3, v2 = ic2 + a2 * ic1 + a3 * v3;
+        ic1 = 2 * v1 - ic1, ic2 = 2 * v2 - ic2;
+        y = hp ? x0 - kq * v1 - v2 : v2;
+      }
+      out[at + s] = y * env * gain;
+    }
+  }
+  return out;
+}
+}  // namespace wtref
+
 static void test_poly() {
   CHECK(chain(90, 7, 3, 4, 0x10, {"OSC", "NOPE"}, {}) == -dsp::kUnknown);
   CHECK(chain(91, 7, 3, 4, 0x10, {"OSC", "POLY"}, {}) == -dsp::kBad);
@@ -639,6 +736,35 @@ static void test_poly() {
   send({0x31, 7, 3});
   for (int i = 0; i < 4; ++i) { block(128); answers(); }
   CHECK(dsp::slot(3).state == dsp::kEmpty);
+  // WAVETABLE on the library: POLY {WTOSC, SVF, ENV amp, ENV mod} against upstream's render, each warp
+  // (and the mod envelope onto POS: an ENV as CV into WTOSC's PCV)
+  for (int warp : {0, 40, 80, 120, -1}) {
+    const float kp[16] = {0, 40, (float)(warp < 0 ? 0 : warp), 70, 0, 50, 40, 60, 10, 60, 90, warp < 0 ? 110.0f : 64.0f, 0, 0, 0, 0};
+    CHECK(chain(100, 7, 3, 8, 0x30, {"ENV", "WTOSC", "SVF", "ENV"}, {}) == 3);
+    auto k = [&](int i) { return (int)(kp[i] * 64); };
+    pset(7, 3, 0, {k(8), k(9), 0, k(9), 0, 0, 0, 64, 64});   // the mod envelope, as CV
+    pset(7, 3, 17, {0, k(1), k(2), k(3), 0, k(5)});
+    pset(7, 3, 28, {8192 + (int)((kp[11] - 64.0f) / 63.0f * 8192.0f)});
+    pset(7, 3, 32, {k(6), k(7), 64 * 64, k(7)});
+    pset(7, 3, 48, {k(8), k(9), k(10), k(9), 64, 127 * 64, 0, 64});
+    pset(7, 3, 72, {64, 50 * 64});
+    quiet_in();
+    block(32);
+    trig(7, 3, 0, 57, 100);
+    std::vector<float> y;
+    for (int at = 0; at < 9600; at += 32) {
+      if (at == 4800) trig(7, 3, 1, 57, 0);
+      block(32);
+      for (int f = 0; f < 32; ++f) y.push_back(g_so[2 * 3][f]);
+    }
+    std::vector<float> r = wtref::render(kp, 57, 100, 9600, 4800);
+    float d = 0.0f, pk2 = 0.0f;
+    for (int i = 0; i < 9600; ++i) d = std::fmax(d, std::fabs(y[i] - r[i])), pk2 = std::fmax(pk2, std::fabs(r[i]));
+    printf("test_dsp: WAVETABLE warp %d: peak %.3f, the library off upstream by %.2g\n", warp, pk2, d);
+    CHECK(pk2 > 0.05f && d < (warp < 0 ? 1e-3f : 1e-6f));
+    send({0x31, 7, 3});
+    for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  }
   printf("test_dsp: POLY ok\n");
 }
 
