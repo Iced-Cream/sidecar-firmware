@@ -538,6 +538,58 @@ static void test_voice_blob(const Bytes& vb) {
   printf("test_code: PLAITS loaded, placed, trigged (peak %.3f, after 1 s %.3f; %zu bytes)\n", early, late, vb.size());
 }
 #endif
+#if defined(__aarch64__)
+// DAISYSP (sidecar-mods 0034): its own exciter on each model, a noise burst, and a Rytm voice's stem as the exciter
+static void test_daisysp_blob(const Bytes& vb) {
+  Ans r = ship(50, 0x51, vb, "DAISYSP");
+  CHECK(r.op == code::kLoaded && r.name == "DAISYSP");
+  int slot = place(51, 0x51, 0x7F, "DAISYSP");
+  CHECK(slot >= 0);
+  if (slot < 0) return;
+  CHECK(rt(52, 0x51, route::slot_chan(slot, 0), 11, 8192) >= 0);  // onto CY/CB's Overbridge input
+  settle();
+  memset(g_in, 0, sizeof g_in);
+  block(128);
+  CHECK(peak_of(11, 0, 128) < 1e-4f);                             // silent before a trig
+  // one ENG / INP pair: the knobs (LEV 100, STR BRI DMP 64, EXC 64, TUN 64), a trig, ~0.3 s; the peak, all finite
+  auto run = [&](int eng, int inp, bool stem) {
+    uint8_t ev = (uint8_t)(((eng * 128 + 64) / 3) * 64 >> 7), iv = (uint8_t)(((inp * 128 + 64) / 11) * 64 >> 7);
+    CHECK(send({0x38, 0x51, (uint8_t)slot, 0, 8, 100 * 64 >> 7, 0, ev, 0, 64 * 64 >> 7, 0, 64 * 64 >> 7, 0,
+                64 * 64 >> 7, 0, iv, 0, 64 * 64 >> 7, 0, 64 * 64 >> 7, 0}));
+    for (int i = 0; i < 40; ++i) block(128);                       // the last ring dies down
+    CHECK(send({0x37, 0x51, (uint8_t)slot, 0, 60, 100, 0, 0, 0, 3}));
+    float pk = 0.0f;
+    bool ok = true;
+    for (int i = 0; i < 110; ++i) {
+      if (stem) for (int f = 0; f < 128; ++f) g_in[2][f] = i == 0 && f < 48 ? (f & 1 ? 0.8f : -0.8f) : 0.0f;
+      block(128);
+      for (int f = 0; f < 128; ++f) ok = ok && std::isfinite(g_o[11][f]);
+      pk = std::fmax(pk, peak_of(11, 0, 128));
+    }
+    memset(g_in, 0, sizeof g_in);
+    CHECK(ok && pk < 1.01f);
+    return ok ? pk : -1.0f;
+  };
+  float p[3][3];
+  for (int e = 0; e < 3; ++e) {
+    p[e][0] = run(e, 0, false);                                      // INT
+    p[e][1] = run(e, 2, false);                                      // NOISE
+    p[e][2] = run(e, 3, true);                                       // BD's stem (the route gives it the block's input)
+    printf("test_code: DAISYSP %s: INT %.3f NOISE %.3f BD %.3f\n", e == 0 ? "MODAL" : e == 1 ? "STRING" : "RESON",
+           p[e][0], p[e][1], p[e][2]);
+    CHECK(p[e][0] > 0.01f && p[e][1] > 0.01f);
+  }
+  // BD's stem reaches the block only once routed: route it, and every model rings from it
+  CHECK(rt(53, 0x51, 2, route::slot_chan(slot, 0), 8192) >= 0);
+  settle();
+  for (int e = 0; e < 3; ++e) {
+    float pk = run(e, 3, true);
+    printf("test_code: DAISYSP %s from BD's stem: %.3f\n", e == 0 ? "MODAL" : e == 1 ? "STRING" : "RESON", pk);
+    CHECK(pk > 0.01f && p[e][2] < 1e-4f);
+  }
+  printf("test_code: DAISYSP loaded, placed, trigged (%zu bytes)\n", vb.size());
+}
+#endif
 
 int main() {
   char tmpl[] = "/tmp/core-code-XXXXXX";
@@ -583,6 +635,16 @@ int main() {
     test_voice_blob(vb);
   } else {
     printf("test_code: no voice blob (SCX_VOICE=<plaits.scx> runs one)\n");
+  }
+  if (const char* dp = getenv("SCX_DAISYSP")) {
+    FILE* g = fopen(dp, "rb");
+    CHECK(g);
+    Bytes db;
+    while (g && (k = fread(buf, 1, sizeof buf, g)) > 0) db.insert(db.end(), buf, buf + k);
+    if (g) fclose(g);
+    test_daisysp_blob(db);
+  } else {
+    printf("test_code: no DAISYSP blob (SCX_DAISYSP=<daisysp.scx> runs it)\n");
   }
 #else
   printf("test_code: blob code not run (not AArch64; make -C core test-aarch64 runs it)\n");
