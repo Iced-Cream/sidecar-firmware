@@ -1,10 +1,11 @@
 // core/tests/test_dsp.cpp - the DSP library and its graphs (core/dsp): PLACE / FREE / INFO through the host link, the
 // refusals, graphs of blocks joined by route points and run in graph order (as pi/engine/audio_return.cpp runs them),
-// params through the lock service (target = the slot), FREE's fade and release, the HELLO, and each primitive's
+// params through the lock service (target = the slot), TRIG to one slot's block, FREE's fade and release, the HELLO, and each primitive's
 // behaviour: identity at its defaults where it has one, delay times, feedback that stays bounded, filters, no NaN.
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <vector>
 
 #include "check.h"
@@ -224,6 +225,49 @@ static void test_primitives() {
   }
 }
 
+// TRIG's receiver: a block that keeps the note events it is given (added to the library as a shipped block is)
+struct NoteRec : proc::Proc {
+  std::vector<std::vector<int>> got;
+  void process(const proc::Block&) override {}
+  void set_param(int, int) override {}
+  void midi(int src, uint8_t st, uint8_t d1, uint8_t d2) override { got.push_back({src, st, d1, d2}); }
+  const char* name() const override { return "NOTEREC"; }
+};
+static proc::Proc* make_rec(void* mem, const void*) { return new (mem) NoteRec(); }
+static const dsp::BlockInfo kRecInfo{"NOTEREC", 0, nullptr, sizeof(NoteRec), make_rec};
+
+static void test_trig() {
+  CHECK(dsp::add_block(&kRecInfo));
+  CHECK(place(60, 7, 3, "NOTEREC") == 3);
+  CHECK(place(61, 7, 4, "NOTEREC") == 4);
+  NoteRec* r3 = static_cast<NoteRec*>(proc::slot(3));
+  NoteRec* r4 = static_cast<NoteRec*>(proc::slot(4));
+  uint32_t t0 = dsp::stats().trigs, bad0 = dsp::stats().ops_bad;
+  // a trig (note 60, vel 100, block 0x12345) and a release to slot 3; a vel 0 trig arrives as 1
+  CHECK(send({0x37, 7, 3, 0, 60, 100, 0x00, 0x04, 0x46, 0x45}));
+  CHECK(send({0x37, 7, 3, 1, 60, 0, 0, 0, 0, 1}));
+  CHECK(send({0x37, 7, 3, 0, 62, 0, 0, 0, 0, 2}));
+  CHECK(answers().empty());                      // no answer
+  CHECK(r3->got.empty());                         // render side: on the next block
+  block(64);
+  CHECK(r3->got.size() == 3 && r4->got.empty());
+  CHECK((r3->got[0] == std::vector<int>{proc::kSrcRytm, 0x90, 60, 100}));
+  CHECK((r3->got[1] == std::vector<int>{proc::kSrcRytm, 0x80, 60, 0}));
+  CHECK((r3->got[2] == std::vector<int>{proc::kSrcRytm, 0x90, 62, 1}));
+  CHECK(dsp::stats().trigs == t0 + 3 && dsp::stats().last_blk == 2);
+  // dropped: another owner's slot, an empty slot, a bad kind, a short message
+  CHECK(!send({0x37, 8, 3, 0, 60, 100, 0, 0, 0, 0}));
+  CHECK(!send({0x37, 7, 9, 0, 60, 100, 0, 0, 0, 0}));
+  CHECK(!send({0x37, 7, 3, 2, 60, 100, 0, 0, 0, 0}));
+  CHECK(!send({0x37, 7, 3, 0, 60, 100}));
+  block(64);
+  CHECK(r3->got.size() == 3 && dsp::stats().ops_bad == bad0 + 4 && dsp::stats().trigs == t0 + 3);
+  send({0x31, 7, 0x7F});
+  for (int i = 0; i < 4; ++i) { block(128); answers(); }
+  CHECK(dsp::stats().used == 0);
+  dsp::remove_block(&kRecInfo);
+}
+
 int main() {
   hooks.to_rytm = capture;
   CHECK(kv::link::attach_generic());
@@ -306,6 +350,8 @@ int main() {
   send({0x31, 7, 0x7F});
   for (int i = 0; i < 4; ++i) { block(128); answers(); }
   CHECK(dsp::stats().used == 0);
+
+  test_trig();
 
   printf("test_dsp: OK (%lu placed, %lu freed, %lu refused)\n", (unsigned long)dsp::stats().placed,
          (unsigned long)dsp::stats().freed, (unsigned long)dsp::stats().refused);

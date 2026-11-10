@@ -18,6 +18,12 @@
 //               32 INFO  <seq> <what> <a> <b>                                          answer 72
 //                        what 0: library block a (a 0..): its name and param count; past the end: an empty name
 //                        what 1: block a's param b: its name and default (hi, lo)
+//               37 TRIG  <owner> <slot> <kind> <note> <vel> <blk4>                     no answer (2026-11-10, Pi voices,
+//                        option B): a Rytm voice machine's trig, to the block in that slot (placed by owner) as its
+//                        midi() with src proc::kSrcRytm: kind 0 a trig = note on (vel 0 sent as 1), 1 a release =
+//                        note off. blk4: the Rytm's audio block (1500 a second, 4 x 7 bits, MSB first) the trig
+//                        started in; carried for sequenced trigs sent ahead, not used yet. A slot not placed or not
+//                        the owner's: dropped (ops_bad)
 //   Pi -> Rytm  70 PLACED <seq> <owner> <slot>      71 REFUSED <seq> <owner> <code> (3 full, 5 bad, 9 unknown block)
 //               72 TEXT <seq> <what> <a> <b> <n> <n bytes>  (what 0: name, then <nparams>; what 1: name, then <hi> <lo>)
 // Lifecycle: the companion's HELLO frees every slot (the route closes every point with it), as for the lock sets.
@@ -37,7 +43,7 @@ namespace dsp {
 constexpr int kSlots = proc::kSlots;
 constexpr int kNameMax = 8;
 constexpr size_t kSlotBytes = 1u << 20;   // a slot's memory: the largest block (DELAY, ~776 KB) fits
-enum Op : uint8_t { kPlace = 0x30, kFree = 0x31, kInfo = 0x32, kPlaced = 0x70, kRefused = 0x71, kText = 0x72 };
+enum Op : uint8_t { kPlace = 0x30, kFree = 0x31, kInfo = 0x32, kTrig = 0x37, kPlaced = 0x70, kRefused = 0x71, kText = 0x72 };
 enum Code : uint8_t { kFull = 3, kBad = 5, kUnknown = 9 };
 
 // the library
@@ -75,7 +81,7 @@ void reset();                             // the companion's HELLO: every slot f
 enum State : uint8_t { kEmpty = 0, kPlacedState = 1, kFading = 2, kReleasing = 3 };
 struct SlotView { State state; uint8_t owner; const char* block; };
 SlotView slot(int s);
-struct Stats { uint32_t placed, freed, refused, infos, ops_bad; int last_refused; int used; };
+struct Stats { uint32_t placed, freed, refused, infos, ops_bad, trigs; int last_refused; int used; uint32_t last_blk; };
 Stats stats();
 
 }  // namespace dsp

@@ -132,7 +132,7 @@ bool begin(void* arena, size_t bytes) {
   return true;
 }
 
-bool is_dsp_op(uint8_t op) { return op >= kPlace && op <= kInfo; }
+bool is_dsp_op(uint8_t op) { return (op >= kPlace && op <= kInfo) || op == kTrig; }
 
 bool sysex(const uint8_t* m, int n) {
   if (n < 8 || m[0] != 0xF0 || m[4] != 0x51 || m[n - 1] != 0xF7 || !is_dsp_op(m[6])) { ++s_st.ops_bad; return false; }
@@ -186,6 +186,17 @@ bool sysex(const uint8_t* m, int n) {
       if (!any) ++s_st.ops_bad;
       poll();
       return any;
+    }
+    case kTrig: {    // <owner> <slot> <kind> <note> <vel> <blk4>
+      if (bn != 9 || b[1] >= kSlots || b[2] > 1) { ++s_st.ops_bad; return false; }
+      const Slot& s = s_slot[b[1]];
+      if (s.state != kPlacedState || s.owner != b[0]) { ++s_st.ops_bad; return false; }
+      uint8_t vel = b[4] ? b[4] : 1;
+      bool ok = b[2] == 0 ? proc::note(b[1], 0x90, b[3], vel) : proc::note(b[1], 0x80, b[3], 0);
+      if (!ok) { ++s_st.ops_bad; return false; }
+      ++s_st.trigs;
+      s_st.last_blk = (uint32_t)b[5] << 21 | (uint32_t)b[6] << 14 | (uint32_t)b[7] << 7 | b[8];
+      return true;
     }
     case kInfo: {    // <seq> <what> <a> <b>
       if (bn != 4) { ++s_st.ops_bad; return false; }

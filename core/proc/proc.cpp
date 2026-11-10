@@ -5,7 +5,8 @@ namespace core {
 namespace proc {
 namespace {
 Proc* volatile g_slot[kSlots];
-struct Msg { int8_t slot; uint8_t param; uint16_t value; uint8_t m[3]; };   // slot -1: link_reset; -2: MIDI (param: src)
+struct Msg { int8_t slot; uint8_t param; uint16_t value; uint8_t m[3]; };   // slot -1: link_reset; -2: MIDI (param: src);
+                                                                          // slot >= 0: set_param, or with m[0] (a status) a note
 constexpr uint32_t kQ = 256;
 Msg g_q[kQ];
 alignas(64) uint32_t g_wr = 0;
@@ -75,6 +76,15 @@ bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2) {
   return true;
 }
 
+bool note(int s, uint8_t status, uint8_t d1, uint8_t d2) {
+  if (!slot(s) || !(status & 0x80) || !push({(int8_t)s, 0, 0, {status, (uint8_t)(d1 & 0x7F), (uint8_t)(d2 & 0x7F)}})) {
+    ++g_st.dropped;
+    return false;
+  }
+  ++g_st.notes;
+  return true;
+}
+
 void begin() {
   __atomic_store_n(&g_busy, 1u, __ATOMIC_SEQ_CST);
   Msg m;
@@ -84,7 +94,8 @@ void begin() {
     } else if (m.slot < 0) {
       for (int s = 0; s < kSlots; ++s) if (Proc* p = slot(s)) p->link_reset();
     } else if (Proc* p = slot(m.slot)) {
-      p->set_param(m.param, m.value);
+      if (m.m[0]) p->midi(kSrcRytm, m.m[0], m.m[1], m.m[2]);   // a note event (set_param's have m[0] = 0)
+      else p->set_param(m.param, m.value);
     }
   }
 }

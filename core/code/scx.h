@@ -86,7 +86,9 @@ struct scx_block {
   void* (*make)(void* mem);
   void (*process)(void* state, const struct scx_io* io);           /* render side */
   void (*set_param)(void* state, int param, int value14);          /* render side, before process */
-  void (*midi)(void* state, int src, int status, int d1, int d2);  /* render side, may be null */
+  /* render side, may be null: a USB-A MIDI device's message (src its number), or src 0x7F: the Rytm's own trig for this
+     slot (core/dsp's TRIG op: 0x90 note vel on a trig, 0x80 note 0 on a release) */
+  void (*midi)(void* state, int src, int status, int d1, int d2);
   void (*link_reset)(void* state);                                 /* render side, may be null */
 };
 

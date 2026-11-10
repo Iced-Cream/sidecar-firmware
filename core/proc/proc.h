@@ -52,6 +52,10 @@ bool any();                              // a slot is filled: process() has work
 bool set_param(int slot, int param, int value14);   // queued; false: dropped (empty slot, range, queue full)
 void link_reset();                       // every filled slot's link_reset(), on the render side (queued)
 bool midi(int src, uint8_t status, uint8_t d1, uint8_t d2);   // to every filled slot (queued); false: none, queue full
+// One slot's own note event (core/dsp's TRIG op: a Rytm voice machine's trig, 2026-11-10): the slot's midi() with src
+// kSrcRytm, render side, from the same queue, before process(). False: empty slot, queue full.
+constexpr int kSrcRytm = 0x7F;      // midi()'s src for the Rytm's own trigs (devmidi's device numbers stay below it)
+bool note(int slot, uint8_t status, uint8_t d1, uint8_t d2);
 
 // Render side, once a block: begin() drains the parameter queue, run() runs one slot (if filled) with its own channels
 // (slot_in / slot_out: kSlots x kSlotIO buffers, slot s channel k at [kSlotIO s + k], route.h's slot channel
@@ -65,7 +69,7 @@ void process(const Block& b, float* const* slot_in = nullptr, float* const* slot
 // one after the clear); false: ask again later. What a cleared Proc's memory may be reused after.
 bool released(int slot);
 
-struct Stats { uint32_t params, dropped, blocks, midi; };
+struct Stats { uint32_t params, dropped, blocks, midi, notes; };
 Stats stats();
 }  // namespace proc
 }  // namespace core
