@@ -30,7 +30,7 @@ struct Row {
   bool poly;                   // a CORE_POLY kind (the Sidecar Mini has kV and kFx only)
 };
 const char* const kSndP[] = {"F1", "F2"};
-const char* const kInsP[] = {"A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "E1", "E2", "E3", "E4"};
+const char* const kInsP[] = {"A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "E1", "E2", "E3", "E4", "S1", "S2", "S3", "S4", "S5", "S6"};
 const char* const kIsndP[] = {"B1", "B2", "B3"};
 // LEV, the master's slots' MIX, then (0.5.0) the bus slots' send TYPE MIX: B1A = bus 1 slot A's (master::slot_index + 1)
 const char* const kMfxP[] = {"LEV", "MIX1", "MIX2", "MIX3", "MIX4", "B1A", "B1B", "B2A", "B2B", "B3A", "B3B"};
@@ -55,7 +55,7 @@ const Row kRows[kKinds] = {
     {"V", 8, 16, nullptr, 1, false},       // kV (core/voices.h kVoices)
     {"FX", 2, 4, nullptr, 2, false},       // kFx
     {"S", 12, 2, kSndP, 0, true},          // kSnd (core/fx/send_fx.h kTracks)
-    {"I", 13, 12, kInsP, 0, true},         // kIns (core/fx/insert.h kChains, kParams x kSlots + kEqParams)
+    {"I", 13, 18, kInsP, 0, true},         // kIns (core/fx/insert.h kChains, kParams x kSlots + kEqParams + sc::kParams)
     {"X", 8, 3, kIsndP, 0, true},          // kIsnd (ins::kBuses)
     {"MFX", 1, 11, kMfxP, 0, true},        // kMfx (1 + master::kAllSlots)
     {"O", 8, 3, kOutP, 0, true},           // kOut
@@ -247,6 +247,7 @@ CORE_COLD float knob_now(Tid t) {
   switch (kind_of(t)) {
 #if CORE_POLY
     case kIns:   // the step lock when there is one (insert.cpp applies the offset on it), else the knob
+      if (p >= 12) return (float)ins::sc_param(i, p - 12);   // 0.5.0 SIDECHAIN: S1..S6
       if (p >= 8) return (float)ins::eq_param(i, (p - 8) & 3);
       {
         int l = ins::locked(i, (p >> 2) & 1, p & 3);
@@ -266,8 +267,9 @@ CORE_COLD void put(Tid t, float val) {
     case kV: v[i & 7].p[p & 15] = val; break;
     case kFx: fx::control.knob[i & 1][2 + (p & 3)] = (uint8_t)val; break;
 #if CORE_POLY
-    case kIns:   // fx-ins: params 0..7 slot A / B P1..P4, 8..11 the chain's POST EQ (ins1112)
-      if (p >= 8) ins::eq_mod_offset(i, (p - 8) & 3, (int)val);
+    case kIns:   // fx-ins: params 0..7 slot A / B P1..P4, 8..11 the chain's POST EQ (ins1112), 12..17 its SIDECHAIN (S1..S6)
+      if (p >= 12) ins::sc_mod_offset(i, p - 12, (int)val);
+      else if (p >= 8) ins::eq_mod_offset(i, (p - 8) & 3, (int)val);
       else ins::mod_offset(i, (p >> 2) & 1, p & 3, (int)val);
       break;
     case kOut: out::mod_offset(i, p % 3, (int)val); break;

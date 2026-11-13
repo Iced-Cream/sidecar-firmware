@@ -41,6 +41,7 @@
 
 #include "fx/amp.h"
 #include "fx/sat_fx.h"
+#include "fx/sidechain.h"
 
 namespace core {
 namespace ins {
@@ -87,6 +88,10 @@ struct Control {
   volatile uint8_t route3;                           // bus 3: 0 PRE (host -> Rytm 2/3), 1 POST (0/1)
   volatile int8_t peq[kChains][kEqParams];           // ins1112 the POST EQ as it plays (eq_store: 0 = does nothing)
   volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
+  // 0.5.0 SIDECHAIN (sidechain.h): each chain's stage between its slots and its POST EQ. mode 0 = off (zeroed: no stage)
+  volatile uint8_t scmode[kChains];                  // sc::Mode
+  volatile uint8_t scsrc[kChains];                   // sc::Src
+  volatile uint8_t scp[kChains][sc::kParams];        // the knobs as they play (the knob + the LFO's offset), 0..127
 };
 extern Control control;
 
@@ -123,6 +128,18 @@ inline float fast_exp2(float p) {   // error ~1e-4 relative
   memcpy(&r, &i, 4);
   return r;
 }
+
+// COMP's pieces, shared with the SIDECHAIN stage's DUCK (it is the same compressor, keyed by the source): the gain reduction
+// in dB for a level lv dB against thr with slope = 1 - 1/ratio (a 6 dB soft knee), and the detector's times (seconds) for a knob 0..1
+inline float comp_gr_db(float lv, float thr, float slope) {
+  const float over = lv - thr;
+  if (over <= -3.0f) return 0.0f;
+  if (over < 3.0f) return slope * (over + 3.0f) * (over + 3.0f) * (1.0f / 12.0f);
+  return slope * over;
+}
+inline float comp_slope(float p) { return 1.0f - 1.0f / (1.0f + 19.0f * p * p); }   // RAT
+inline float comp_att_s(float p) { return 0.0003f + 0.03f * p * p; }
+inline float comp_rel_s(float p) { return 0.04f + 0.6f * p; }
 
 // One channel of one slot: every type's state (small) side by side, DELAY's line placed (null: DELAY plays dry).
 struct Dsp {
@@ -218,9 +235,41 @@ inline bool peq_set(const Control& k, int c) {
   return false;
 }
 
+// 0.5.0 SIDECHAIN: one chain's stage state (the DSP is Engine::RunSc)
+struct ScCh {   // one channel's key filter / follower
+  float hp1 = 0, hp2 = 0;
+};
+struct Sc {
+  float wet = 0.0f;               // 0 dry .. 1 the stage: the engage / release fade (kFadeFrames, as the POST EQ's)
+  bool idle = true, fresh = true;
+  uint8_t mode = 0;               // the mode last run (a release fades with it)
+  float sd = 0.0f;                // PUMP's depth, smoothed (3 ms a chunk)
+  uint8_t pv[sc::kParams] = {255, 255, 255, 255, 255, 255};   // the knobs the coefficients below are for
+  uint8_t pvm = 255;
+  float c[6] = {};                // coefficients: PUMP attN holdN relN shape e, onset thr; DUCK att rel thr slope
+  SvfK khp;                       // DUCK's key high pass
+  SvfK ohp;                       // the onset detector's (80 Hz)
+  uint32_t last_w = 0, since = 0;       // the key ring's counter last seen, the reader's frames since it moved
+  uint32_t last_trig = 0;
+  bool trig_seen = false;               // last_trig is current (the first look after an engage only takes the counter)
+  // DUCK
+  float env = 0.0f;                     // COMP's detector, on the key
+  ScCh key;                             // the key HPF (one: the key is one signal for both sides)
+  // PUMP
+  float gain = 1.0f, g0 = 1.0f;         // the gain now; the gain when the envelope began (a retrigger is continuous)
+  int32_t j = -1;                       // frames since the trig frame, -1 idle
+  // the onset detector (a source with no trigs: AUDIO IN)
+  float oenv = 0.0f, ohp1 = 0.0f, ohp2 = 0.0f;
+  bool oarm = true;
+  int32_t olock = 0;
+  void Clear() { *this = Sc(); }
+};
+
 class Engine {
  public:
-  explicit Engine(float sample_rate = 48000.0f) : sr_(sample_rate) {}
+  explicit Engine(float sample_rate = 48000.0f) : sr_(sample_rate) {
+    for (int c = 0; c < kChains; ++c) ScClear(sc_[c]);
+  }
   // The DELAY lines: kLines x kLine floats (zeroed), or null (DELAY plays dry). Before any Process.
   void Place(float (*lines)[kLine]) {
     int k = 0;
@@ -238,20 +287,21 @@ class Engine {
         x.d[0].line = l0, x.d[1].line = l1;
         x.d[0].ClearLine(), x.d[1].ClearLine();
       }
-    for (int c = 0; c < kChains; ++c) peq_[c].Clear(), peq_[c].idle = true;
+    for (int c = 0; c < kChains; ++c) peq_[c].Clear(), peq_[c].idle = true, ScClear(sc_[c]);
     faults_ = 0;
   }
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
       if (k.type[c][s] || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
-    return peq_set(k, c) || !peq_[c].idle;   // ins1112
+    return peq_set(k, c) || !peq_[c].idle || k.scmode[c] || !sc_[c].idle;   // ins1112; 0.5.0 SIDECHAIN
   }
   // A voice's chain, mono, in place (n any; processed in kChunk pieces)
   void ProcessMono(int c, float* x, int n, const Control& k) {
     for (int i = 0; i < n; i += kChunk) {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int s = 0; s < kSlots; ++s) Run(c, s, x + i, nullptr, m, k);
+      RunSc(c, x + i, nullptr, m, k);   // 0.5.0: the SIDECHAIN stage, after both slots
       RunEq(c, x + i, nullptr, m, k);   // ins1112: the POST EQ, after both slots (AMP among them)
     }
   }
@@ -273,6 +323,7 @@ class Engine {
     for (int i = 0; i < n; i += kChunk) {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int s = 0; s < kSlots; ++s) Run(c, s, x + i, r + i, m, k);
+      RunSc(c, x + i, r + i, m, k);
       RunEq(c, x + i, r + i, m, k);
     }
   }
@@ -284,6 +335,7 @@ class Engine {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int j = 0; j < m; ++j) l[j] = y[i + j][0], r[j] = y[i + j][1];
       for (int s = 0; s < kSlots; ++s) Run(c, s, l, r, m, k);
+      RunSc(c, l, r, m, k);   // 0.5.0: the SIDECHAIN stage
       RunEq(c, l, r, m, k);   // ins1112: bus 1 / 2 = send FX 1 / 2's return filter
       for (int j = 0; j < m; ++j) y[i + j][0] = l[j], y[i + j][1] = r[j];
     }
@@ -352,6 +404,166 @@ class Engine {
       wv += dw;
       x[i] += wv * (y[0][i] - x[i]);
       if (r) r[i] += wv * (y[1][i] - r[i]);
+    }
+  }
+
+  // 0.5.0 SIDECHAIN: the stage over m <= kChunk frames, after both slots, before the POST EQ. L in x, R in r (null: mono).
+  // Off and faded out: nothing at all (the samples untouched, bit for bit). Engaging and releasing crossfade over kFadeFrames.
+  // The key is the source's newest m frames (sidechain.h): a missing source reads as silence and gives no trigs, so the
+  // stage does nothing. PUMP: a trig (the source's, or AUDIO IN's level onset) starts the envelope on its own frame.
+  // DUCK: COMP's detector and gain computer on the key (through its high pass), applied to the chain.
+  void RunSc(int c, float* x, float* r, int m, const Control& k) {
+    Sc& o = sc_[c];
+    const int mode = k.scmode[c] < sc::kModes ? k.scmode[c] : 0;
+    const bool want = mode != sc::kOff;
+    if (!want && o.wet <= 0.0f) {
+      if (!o.idle) ScClear(o);
+      return;
+    }
+    if (o.idle) ScClear(o), o.idle = false;
+    if (want) o.mode = (uint8_t)mode;
+    const int md = o.mode;
+    const float step = (float)m / kFadeFrames;
+    const float w0 = o.wet, w1 = clampf(want ? w0 + step : w0 - step, 0.0f, 1.0f);
+    o.wet = w1;
+    const uint8_t* kn = (const uint8_t*)k.scp[c];
+    // the coefficients, when a knob or the mode changed
+    bool moved = md != o.pvm;
+    for (int j = 0; j < sc::kParams; ++j) moved = moved || kn[j] != o.pv[j];
+    if (moved) {
+      for (int j = 0; j < sc::kParams; ++j) o.pv[j] = kn[j];
+      o.pvm = (uint8_t)md;
+      ScCoefs(o, kn, md);
+    }
+    // the key
+    const int src = k.scsrc[c], key = sc::key_of(src);
+    float kb[kChunk];
+    bool live = false;
+    if (key >= 0) {
+      live = sc::read(key, kb, m, &o.last_w, &o.since);
+      if (live && src == sc::kAinLR) {   // L + R: the mean (the R ring's own freshness is not asked: L's is)
+        float kr[kChunk];
+        uint32_t lw = 0, sn = 0;
+        if (sc::read(key + 1, kr, m, &lw, &sn))
+          for (int i = 0; i < m; ++i) kb[i] = 0.5f * (kb[i] + kr[i]);
+      }
+    }
+    if (!live)
+      for (int i = 0; i < m; ++i) kb[i] = 0.0f;
+    float y[2][kChunk];
+    if (md == sc::kPump) {
+      // depth smoothed per chunk (3 ms), at once when fresh
+      const float tgt = (float)kn[0] / 127.0f, b = (float)m / ((float)m + 0.003f * sr_);
+      o.sd = o.fresh ? tgt : o.sd + (tgt - o.sd) * b;
+      if (fabsf(o.sd - tgt) < 1e-4f) o.sd = tgt;
+      o.fresh = false;
+      const float gmin = 1.0f - o.sd;
+      const int32_t A = (int32_t)o.c[0], H = (int32_t)o.c[1], R = (int32_t)o.c[2];
+      const float invR = 1.0f / (float)R;
+      const int tg = sc::trig_of(src);
+      int fire = -1;   // the frame a trig starts on (a source's trig: this chunk's first; AUDIO IN's onset: the frame itself)
+      if (tg >= 0) {
+        const uint32_t cnt = __atomic_load_n(&sc::bus().trig[tg], __ATOMIC_ACQUIRE);
+        if (!o.trig_seen) o.last_trig = cnt, o.trig_seen = true;   // what came before the stage engaged is not a trig
+        else if (cnt != o.last_trig) {
+          o.last_trig = cnt;
+          if (live) fire = 0;
+        }
+      }
+      const bool onset = tg < 0 && live;
+      for (int i = 0; i < m; ++i) {
+        if (onset) {
+          float bp, lp;
+          svf(o.ohp, kb[i], o.ohp1, o.ohp2, bp, lp);
+          const float hp = kb[i] - o.ohp.k * bp - lp, a = fabsf(hp);
+          o.oenv += (a > o.oenv ? 0.04f : 0.0004f) * (a - o.oenv);   // 0.5 ms up, 50 ms down at 48 kHz
+          if (o.olock > 0) --o.olock;
+          if (!o.oarm && o.oenv < 0.5f * o.c[5]) o.oarm = true;
+          if (o.oarm && o.olock <= 0 && o.oenv > o.c[5]) fire = i, o.oarm = false, o.olock = (int32_t)(0.02f * sr_);
+        }
+        if (fire == i) o.g0 = o.gain, o.j = 0, fire = -1;
+        float g = 1.0f;
+        if (o.j >= 0) {
+          const int32_t j = o.j++;
+          if (j < A) g = o.g0 - (o.g0 - gmin) * (float)(j + 1) / (float)A;
+          else if (j < A + H) g = gmin;
+          else {
+            const float u = (float)(j - A - H + 1) * invR;
+            if (u >= 1.0f) g = 1.0f, o.j = -1;
+            else g = gmin + (1.0f - gmin) * (o.c[3] == 1.0f ? u : fast_exp2(o.c[3] * fast_log2(u)));
+          }
+        }
+        o.gain = g;
+        y[0][i] = x[i] * g;
+        if (r) y[1][i] = r[i] * g;
+      }
+    } else {   // DUCK
+      const float thr = o.c[2], slope = o.c[3], att = o.c[0], rel = o.c[1];
+      const bool hpf = o.pv[4] != 0;
+      float env = o.env, s1 = o.key.hp1, s2 = o.key.hp2;
+      if (!live && env < 1e-7f) {   // nothing keyed and nothing left of it: the signal as it is
+        o.env = 0.0f;
+        for (int i = 0; i < m; ++i) y[0][i] = x[i], y[1][i] = r ? r[i] : 0.0f;
+      } else {
+        for (int i = 0; i < m; ++i) {
+          float v = kb[i];
+          if (hpf) {
+            float bp, lp;
+            svf(o.khp, v, s1, s2, bp, lp);
+            v = v - o.khp.k * bp - lp;
+          }
+          const float a = fabsf(v);
+          env += (a > env ? att : rel) * (a - env);
+          const float gr = comp_gr_db(6.0206f * fast_log2(env + 1e-9f), thr, slope);
+          const float g = gr > 0.0f ? fast_exp2(-gr * (1.0f / 6.0206f)) : 1.0f;
+          y[0][i] = x[i] * g;
+          if (r) y[1][i] = r[i] * g;
+        }
+        o.env = flush(env), o.key.hp1 = flush(s1), o.key.hp2 = flush(s2);
+      }
+    }
+    float chk = 0.0f;   // NaN or a runaway: the stage cleared, the chain passes dry until it fades in again
+    for (int i = 0; i < m; ++i) chk += fabsf(y[0][i]) + (r ? fabsf(y[1][i]) : 0.0f);
+    if (!(chk < 1e5f)) {
+      ++faults_;
+      ScClear(o), o.idle = false;
+      return;
+    }
+    if (w0 >= 1.0f && w1 >= 1.0f) {   // fully in: the stage's signal as it is
+      for (int i = 0; i < m; ++i) x[i] = y[0][i];
+      if (r)
+        for (int i = 0; i < m; ++i) r[i] = y[1][i];
+      return;
+    }
+    const float dw = (w1 - w0) / (float)m;
+    float wv = w0;
+    for (int i = 0; i < m; ++i) {
+      wv += dw;
+      x[i] += wv * (y[0][i] - x[i]);
+      if (r) r[i] += wv * (y[1][i] - r[i]);
+    }
+  }
+  void ScClear(Sc& o) {
+    o.Clear();
+    o.ohp.set(tanf(kPi * 80.0f / sr_), 1.41421356f);
+  }
+  // the knobs as the stage reads them (kn 0..127 each): PUMP c = attN holdN relN shape-e onset-thr; DUCK c = att rel thr slope
+  void ScCoefs(Sc& o, const uint8_t* kn, int md) {
+    if (md == sc::kPump) {
+      auto q = [&](int j) { return (float)kn[j] / 127.0f; };
+      o.c[0] = floorf(0.03f * q(1) * q(1) * sr_ + 0.5f);
+      o.c[1] = floorf(0.25f * q(2) * q(2) * sr_ + 0.5f);
+      o.c[2] = floorf((0.01f + 1.49f * q(3) * q(3)) * sr_ + 0.5f);
+      if (o.c[2] < 1.0f) o.c[2] = 1.0f;
+      o.c[3] = kn[4] == 64 ? 1.0f : fast_exp2(((float)kn[4] - 64.0f) * (1.0f / 32.0f));
+      o.c[5] = fast_exp2((-60.0f + 60.0f * q(5)) * (1.0f / 6.0206f));
+    } else {
+      auto q = [&](int j) { return (float)kn[j] / 127.0f; };
+      o.c[0] = 1.0f - expf(-1.0f / (comp_att_s(q(2)) * sr_));
+      o.c[1] = 1.0f - expf(-1.0f / (comp_rel_s(q(3)) * sr_));
+      o.c[2] = -40.0f * q(0);
+      o.c[3] = comp_slope(q(1));
+      if (kn[4]) o.khp.set(tanf(kPi * fminf(40.0f * exp2f(6.0f * q(4)), 0.45f * sr_) / sr_), 1.41421356f);
     }
   }
 
@@ -492,8 +704,8 @@ class Engine {
       }
       case kComp: {
         o.c[0] = -40.0f * p[0];                       // threshold dB
-        o.c[1] = 1.0f - 1.0f / (1.0f + 19.0f * p[1] * p[1]);   // 1 - 1/ratio
-        float att = 0.0003f + 0.03f * p[2] * p[2], rel = 0.04f + 0.6f * p[2];
+        o.c[1] = comp_slope(p[1]);   // 1 - 1/ratio
+        float att = comp_att_s(p[2]), rel = comp_rel_s(p[2]);
         o.c[2] = 1.0f - expf(-1.0f / (att * sr_)), o.c[3] = 1.0f - expf(-1.0f / (rel * sr_));
         o.c[4] = 24.0f * p[3];                        // makeup dB
         break;
@@ -599,10 +811,7 @@ class Engine {
           float a = fabsf(x[i]);
           env += (a > env ? att : rel) * (a - env);
           float lv = 6.0206f * fast_log2(env + 1e-9f);   // dB
-          float over = lv - thr, gr;
-          if (over <= -3.0f) gr = 0.0f;
-          else if (over < 3.0f) gr = slope * (over + 3.0f) * (over + 3.0f) * (1.0f / 12.0f);   // the 6 dB knee
-          else gr = slope * over;
+          const float gr = comp_gr_db(lv, thr, slope);   // (the 6 dB knee)
           y[i] = x[i] * fast_exp2((mk - gr) * (1.0f / 6.0206f));
         }
         d.env = flush(env);
@@ -680,6 +889,7 @@ class Engine {
 
   Slot slot_[kChains][kSlots];
   Peq peq_[kChains];        // ins1112: each chain's POST EQ
+  Sc sc_[kChains];          // 0.5.0: each chain's SIDECHAIN stage
   bool st_[kChains] = {};   // a voice chain ran in stereo last
   float sr_;
   uint32_t faults_ = 0;
@@ -713,6 +923,22 @@ bool eq_on(int c);              // chain c's post EQ is off its flat defaults
 void set_eq_bw(int c, int base, int width);
 void eq_bw(int c, int* base, int* width);
 bool eq_any_on();
+// 0.5.0 SIDECHAIN (fx/sidechain.h): chain c's stage, mode (sc::Mode), source (sc::Src), the six knobs (k 0..5; sc::label names
+// them by mode). set_sc_mode loads the mode's defaults into the knobs unless keep; every set marks the card file, and the
+// key bus is told which sources a chain reads (sc::wanted), so a source nobody asks for costs its writer nothing.
+void set_sc_mode(int c, int mode, bool keep = false);
+void set_sc_src(int c, int src);
+void set_sc_param(int c, int k, int v);
+int sc_mode(int c);
+int sc_src(int c);
+int sc_param(int c, int k);     // the knob as set
+int sc_playing(int c, int k);   // the knob as it plays (the LFO's offset on top)
+void sc_mod_offset(int c, int k, int off);   // -127..127 (core/mod kIns params 12..17: S1..S6)
+bool sc_on(int c);              // mode is not OFF
+bool sc_any_on();
+// the page's / the web's word for the stage: "OK", or why it does nothing ("NO STEMS", "NO AUDIO IN"); true when OK / off
+bool sc_status(int c, char* why, int cap);
+void sc_value_text(int mode, int k, int v, char* b, int cap);   // knob k of `mode` as the page shows it: "-12DB", "4.0MS", "OFF" (<= 7 chars)
 void eq_value_text(int k, int v, char* b, int cap);   // "OFF" "420" "6.2K" / "FLAT" "+3.0DB" (<= 7 chars)              // kOff's: "OFF", empty labels
 const char* type_name(int type);             // "OFF" .. "RINGMOD", the master's types; "?" out of range
 int type_from_name(const char* s);           // any case, or a number 0..kAllTypes-1; -1 neither

@@ -363,6 +363,10 @@ void rytm_byte(uint8_t b) {
 void tap_in(const int32_t* f, int n, int stride) { core::ui::tap_in(f, n, stride); }
 bool livein_on() { return core::livein::wanted(); }
 void livein_in(const int32_t* f, int n, int stride) { core::livein::in_block(f, n, stride); }
+bool sidechain_on() { return core::sc::wants_in(); }
+void sidechain_in(const int32_t* f, int n, int stride) {
+  core::sc::in_block(f, n, stride, 2, core::out::device().audio_in);   // the stems are IN 2..9 (core/fx/sidechain.h)
+}
 void livein_fifo(unsigned frames) { core::livein::set_fifo((int)frames); }
 int livein_status(int vi, char* b, int cap) {
   if (!core::v[vi & 7].li) return 0;
