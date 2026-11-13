@@ -8,6 +8,10 @@
 #include <vector>
 
 #include "check.h"
+#include "core.h"
+#include "hooks.h"
+#include "mod/rytm_out.h"
+#include "song/song.h"
 #include "loop/loop.h"
 #include "loop/loop_ring.h"
 
@@ -84,6 +88,7 @@ static uint16_t g_muted = 0;
 static uint64_t g_fed = 0;
 static int32_t (*g_sig)(uint64_t) = nullptr;   // the source's L at ring index k (null: the ramp k + 1)                      // ring indices written so far
 static uint32_t g_us = 1000000;
+static uint64_t g_fake = 10000000;   // core's now_us / now_ms (the Rytm-out sender's spacing)
 static std::vector<uint8_t> g_store;
 static int32_t* g_ring = nullptr;
 static bool env_beat(double* o, double* p, int* l) {
@@ -112,11 +117,14 @@ static void fresh(uint64_t store_bytes = 48u << 20) {
   g_store.assign(store_bytes, 0);
   loop::init(g_ring, kRingFrames, g_store.data(), store_bytes);
   loop::reset();
+  host_fake_time(true, g_fake);
   g_sig = nullptr, g_now = 0, g_fed = 0, g_us = 1000000, g_origin = 10000, g_per16 = 6000, g_lat = 384, g_beats = true, g_muted = 0;
 }
 static void to(uint64_t h) {   // the clock to host frame h, a tick a ms on the way
   while (g_now + 48 <= h) {
-    g_now += 48, g_us += 1000;
+    g_now += 48, g_us += 1000, g_fake += 1000;
+    host_fake_time(true, g_fake);
+    mod::rytm_out_tick(now_ms());
     feed();
     loop::tick(g_us);
   }
@@ -406,11 +414,153 @@ static void test_playback() {
 }
 
 
+// ---- Task 22: resample, stop / fade back, auto-mute, LIVE VIA
+using Msg = std::vector<uint8_t>;
+static std::vector<Msg> g_wire;
+static void wire(const uint8_t* m, int n) { g_wire.emplace_back(m, m + n); }
+static int wires(const Msg& m) {
+  int n = 0;
+  for (const Msg& o : g_wire) n += o == m;
+  return n;
+}
+static void test_resample_stop_mute() {
+  hooks.to_rytm = wire;
+  // resample_instant_in_phase: a grab while a loop plays takes the last N bars at once, replaces the loop at the next
+  // bar line (a 64-frame crossfade), and its start is a whole number of loops after the old one's
+  fresh();
+  uint32_t len;
+  started(loop::k1, &len);
+  uint64_t old_start, s0 = (uint64_t)(g_origin + 41 * bar());
+  uint32_t old_len;
+  CHECK(loop::playing_info(&old_start, &old_len) && old_start == s0 && old_len == len);
+  played_at(s0 + 1000);   // (the audio thread runs: it has the first loop)
+  const int32_t* first_pcm = loop::grab_at(0)->pcm;   // (the store's copy stays where it is as newer grabs shift the list)
+  to((uint64_t)(line(43) + bar() / 4));
+  CHECK(loop::state() == loop::kPlaying);
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::grabs() == 2 && loop::stats().resamples == 1);
+  const loop::Grab* g2 = loop::grab_at(0);
+  CHECK(g2->start == (uint64_t)line(42));   // the last bar, as the ring has it (loop + live), taken at once
+  uint64_t ns;
+  uint32_t nl;
+  CHECK(loop::playing_info(&ns, &nl) && ns == (uint64_t)(g_origin + 44 * bar()) && (ns - old_start) % len == 0);
+  CHECK(played_at(ns - 200) == first_pcm[2 * ((ns - 200 - old_start) % len)]);   // still the old loop until the bar line
+  CHECK(played_at(ns + 100) == g2->pcm[2 * 100]);                              // the new one after the crossfade
+
+  // stop_fade_and_cut (the FADE setting): quantised to the next bar line, a FADE of 1 bar lasts a bar; FUNC (now) at once
+  fresh();
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  loop::set_fade(loop::kFade1);
+  to(s0 + 20000);
+  loop::stop(false, false);
+  uint64_t line42 = (uint64_t)(g_origin + 42 * bar());
+  const int32_t* pcm = loop::grab_at(0)->pcm;
+  CHECK(played_at(line42 - 200) == pcm[2 * ((line42 - 200 - s0) % len)]);   // full level until the line
+  int32_t mid = played_at(line42 + len / 2);
+  double gm = (double)mid / pcm[2 * ((line42 + len / 2 - s0) % len)];
+  CHECK(gm > 0.45 && gm < 0.55);                                            // halfway down halfway through the bar
+  CHECK(played_at(line42 + len + 100) == 0);
+  to(line42 + len + 100);
+  CHECK(loop::state() == loop::kRing);
+  // a stop before the loop has started: it never starts
+  fresh();
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  loop::stop(true, false);   // (the start is the next bar line, so is the stop's)
+  CHECK(loop::state() == loop::kRing);
+
+  // automute_default_off / live_via_default_off: a fresh state sends nothing
+  fresh();
+  g_wire.clear();
+  g_muted = 0x005;
+  started(loop::k1, &len);
+  run_ms(12);
+  CHECK(g_wire.empty());
+
+  // automute_mutes_only_unmuted: tracks 1 and 3 muted before: one MUTE op sets the other ten; the fade back unmutes those
+  fresh();
+  mod::rytm_out_reset();
+  mod::rytm_host_cmd(true);
+  loop::set_auto_mute(true);
+  g_muted = 0x005;
+  g_wire.clear();
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(g_wire.empty());   // (not before the loop starts)
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  to(s0 + 500);
+  CHECK(g_wire.size() == 1 && g_wire[0] == Msg({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 1, 0x7A, 0x1F, 0, 0, 0xF7}));   // set 0xFFA
+  g_muted = 0xFFF;   // the Rytm reports them muted
+  to(s0 + 20000);
+  g_wire.clear();
+  loop::stop(true, false);
+  to((uint64_t)(g_origin + 42 * bar()) - 100);
+  CHECK(g_wire.empty());
+  to((uint64_t)(g_origin + 42 * bar()) + 100);
+  CHECK(g_wire.size() == 1 && g_wire[0] == Msg({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 1, 0, 0, 0x7A, 0x1F, 0xF7}));   // clr 0xFFA
+  // with the caps off: CC 94 on each track's channel instead
+  fresh();
+  mod::rytm_out_reset();
+  loop::set_auto_mute(true);
+  g_muted = 0x005;
+  g_wire.clear();
+  started(loop::k1, &len);
+  CHECK(g_wire.size() == 10 && wires({0xB1, 94, 1}) == 1 && wires({0xB2, 94, 1}) == 0 && wires({0xB0 | 11, 94, 1}) == 1);
+
+  // user_mute_during_loop_kept: the user unmutes track 4 meanwhile: the looper no longer owns it
+  fresh();
+  mod::rytm_out_reset();
+  mod::rytm_host_cmd(true);
+  loop::set_auto_mute(true);
+  g_muted = 0x005;
+  started(loop::k1, &len);
+  g_muted = 0xFFF;
+  run_ms(10);
+  g_muted = 0xFF7;   // track 4 (bit 3) unmuted by hand
+  run_ms(10);
+  g_wire.clear();
+  loop::stop(true, true);
+  run_ms(10);
+  CHECK(g_wire.size() == 1 && g_wire[0] == Msg({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 1, 0, 0, 0x72, 0x1F, 0xF7}));   // clr 0xFF2
+
+  // live_via_perf: BAL 64: 127, 96: 63, 127: 0 on the macro asked for; nothing before it is asked for
+  fresh();
+  mod::rytm_out_reset();
+  mod::rytm_host_cmd(true);
+  loop::set_live_via(3);
+  CHECK(loop::live_perf(64) == 127 && loop::live_perf(96) == 63 && loop::live_perf(127) == 0 && loop::live_perf(0) == 127);
+  g_wire.clear();
+  started(loop::k1, &len);
+  run_ms(12);
+  CHECK(wires({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 3, 3, 127, 0xF7}) == 1);
+  loop::set_bal(96);
+  run_ms(10);
+  run_ms(12);
+  CHECK(wires({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 3, 3, 63, 0xF7}) == 1);
+  loop::set_bal(127);
+  run_ms(10);
+  run_ms(12);
+  CHECK(wires({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 3, 3, 0, 0xF7}) == 1);
+  loop::stop(true, true);   // the live comes back with the loop's end
+  run_ms(30);
+  run_ms(12);
+  CHECK(wires({0xF0, 0x7D, 0x52, 0x54, mod::kHostCmd, 1, 3, 3, 127, 0xF7}) == 2);
+  hooks.to_rytm = nullptr;
+  host_fake_time(false, 0);
+  printf("  resample, stop, auto-mute, live via ok\n");
+}
+
+
 int main() {
   test_ring();
   test_grabs();
   test_store();
   test_playback();
+  test_resample_stop_mute();
   printf("test_loop: OK\n");
   return 0;
 }

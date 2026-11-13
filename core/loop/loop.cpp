@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "lfo.h"
+#include "mod/rytm_out.h"
 #include "platform.h"
 #include "seq/seq.h"
 
@@ -148,6 +149,15 @@ CORE_COLD void retarget() {
   snap_.lp = {snap_.lp.at_h(now), lg, now};
   if (on_) publish();
 }
+
+// auto-mute (spec 3.7): the tracks the looper muted at the loop's start; `seen`: those the Rytm has reported muted since, so
+// a later report without one is the user's doing and the track is theirs
+struct AutoMute {
+  bool on;
+  uint16_t set, seen;
+} am_;
+bool via_on_ = false;   // LIVE VIA has set a macro that is not back at full yet
+int via_macro_ = 0;
 
 // ------------------------------------------------------------------------------------------------ the store
 CORE_COLD bool protected_id(uint32_t id) { return lp_.on && lp_.grab_id == id; }
@@ -342,7 +352,7 @@ CORE_COLD void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_
 }
 
 CORE_COLD void reset() {
-  ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo();
+  ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
   snap_ = Snap();
   bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
   if (on_) publish();
@@ -409,6 +419,33 @@ CORE_COLD const char* err_text(int err, int half_bars, char* b, int cap) {
   return b;
 }
 
+// auto-mute and LIVE VIA follow the loop: on at its start, off at the start of its fade back (or cut)
+CORE_COLD void live_and_mutes(uint64_t now) {
+  bool audible = lp_.on && now >= lp_.start && !(lp_.stop_at && now >= lp_.stop_at);
+  if (audible && auto_mute_ && !am_.on) {
+    uint16_t before = muted_now();
+    am_ = {true, (uint16_t)(~before & 0xFFF), 0};
+    if (am_.set) mod::rytm_mute(am_.set, 0);
+  }
+  if (am_.on) {
+    uint16_t cur = muted_now();
+    am_.seen |= am_.set & cur;
+    uint16_t dropped = am_.seen & ~cur;   // a mute we made and the Rytm showed, now gone: the user's
+    am_.set &= ~dropped, am_.seen &= ~dropped;
+    if (!audible) {
+      if (am_.set) mod::rytm_mute(0, am_.set);
+      am_ = AutoMute();
+    }
+  }
+  if (live_via_ && audible) {
+    via_macro_ = live_via_, via_on_ = true;
+    mod::rytm_perf(live_via_, live_perf(bal_now()));
+  } else if (via_on_ && !audible) {   // the loop is leaving: the live comes back at once
+    mod::rytm_perf(via_macro_, 127);
+    via_on_ = false;
+  }
+}
+
 CORE_COLD void tick(uint32_t us) {
   (void)us;
   if (!on_) return;
@@ -416,8 +453,29 @@ CORE_COLD void tick(uint32_t us) {
   pump_pending(now);
   pump_copy();
   if (lp_.on && lp_.stop_at && now >= lp_.stop_end) lp_.on = false;   // faded out: the ring alone
+  live_and_mutes(now);
 }
 
+CORE_COLD int playing() {
+  if (!lp_.on) return -1;
+  int i = find_id(lp_.grab_id);
+  return i;
+}
+CORE_COLD bool playing_info(uint64_t* start, uint32_t* len) {
+  if (!lp_.on) return false;
+  *start = lp_.start, *len = lp_.len;
+  return true;
+}
+CORE_COLD bool bar_position(float* bar, float* of_bars) {
+  uint64_t now = frames_now();
+  if (!lp_.on || now < lp_.start || lp_.len == 0) return false;
+  Map m;
+  double b = lp_.half_bars / 2.0;
+  *of_bars = (float)b;
+  *bar = (float)(((now - lp_.start) % lp_.len) / (double)lp_.len * b);
+  (void)m;
+  return true;
+}
 CORE_COLD int grabs() { return ng_; }
 CORE_COLD const Grab* grab_at(int i) { return i >= 0 && i < ng_ ? &g_[i] : nullptr; }
 CORE_COLD bool pending() { return pend_.on; }

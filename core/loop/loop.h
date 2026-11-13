@@ -60,6 +60,7 @@ int grabs();
 const Grab* grab_at(int i);                 // 0 newest
 State state();
 int playing();                              // the grab playing (0 newest), -1 none / the loop is gone from the store
+bool playing_info(uint64_t* start, uint32_t* len);   // the loop's sample 0 (host render frame) and length now; false: none
 bool pending();                             // a grab is waiting for its bar's audio
 int ring_seconds();                         // how much the ring holds now (s, up to its size)
 bool bar_position(float* bar, float* of_bars);   // the loop's position in bars and its length in bars, false: none
