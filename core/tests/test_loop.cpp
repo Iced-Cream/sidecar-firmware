@@ -650,6 +650,7 @@ static void test_cal_console() {
   CHECK(loop::keep_take(&job) && job.frames == loop::grab_at(0)->frames);
   CHECK(!loop::grab_at(0)->kept);
   loop::keep_finished(job.id, true, "take_001");
+  loop::tick(g_us);   // core 3 applies it
   CHECK(loop::grab_at(0)->kept && std::string(loop::last_message()) == "KEPT take_001");
   CHECK(cmd("loop=keep:0").find("ALREADY KEPT") != std::string::npos);
   CHECK(cmd("loop=keep:7").find("NO GRAB") != std::string::npos);

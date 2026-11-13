@@ -193,6 +193,7 @@ static void grab_leds() {
   loop::KeepJob job;
   CHECK(loop::keep_take(&job));
   loop::keep_finished(job.id, true, "take");
+  loop::tick(0);
   tick(2);
   CHECK(g_led[8] == 47 && g_led[9] == 31);   // kept: blue (not while it plays)
   printf("  grab_leds: playing green, kept blue, held dim, empty off, T8 red while a loop is on\n");
@@ -208,6 +209,7 @@ static void keep_on_yes() {
   CHECK(loop::keep_take(&job) && job.frames == loop::grab_at(0)->frames);
   CHECK(shows("KEEPING") || shows("T1-6"));   // (the loop's message while it writes)
   loop::keep_finished(job.id, true, "demo_take");
+  loop::tick(0);
   tick(1);
   CHECK(loop::grab_at(0)->kept && shows("KEPT DEMO_TAKE"));
   tap(0x44);

@@ -71,6 +71,7 @@ int main() {
   loop::KeepJob job;
   CHECK(loop::keep_take(&job));
   loop::keep_finished(job.id, true, "take_9");
+  loop::tick(0);   // core 3 applies it
   loopview_pi::FillView(&b, 0);
   CHECK(b.g[0].kept && !strcmp(b.msg, "KEPT take_9") && b.gen != a.gen);
   // a selection past the grabs is held to the last

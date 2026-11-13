@@ -128,10 +128,9 @@ CORE_COLD bool get_map(Map* m, uint64_t now) {
     return false;
   }
   if (!run || tick_us < 1000.0f) return false;
-  double per_tick = (double)tick_us * 0.048;
+  double per_tick = (double)tick_us * 0.048;   // frames of one 24 ppqn tick
   m->per16 = 6.0 * per_tick;
-  m->origin = (double)now - (double)ticks * per_tick - m->lat;   // (no latency early: the Rytm's own time)
-  m->origin += m->lat;
+  m->origin = (double)now - (double)ticks * per_tick;   // bar line 0 at the clock's position 0 (the MIDI clock's own time, no `lat` early)
   m->midi = true;
   return true;
 }
@@ -167,6 +166,7 @@ CORE_COLD void say(const char* t) { sniprintf(msg_, sizeof msg_, "%s", t), ++msg
 // KEEP: 0 none, 1 asked, 2 core 0 is writing it
 uint8_t keep_state_ = 0;
 uint32_t keep_id_ = 0;
+KeepJob keep_job_;   // what core 0 is told (written before keep_state_ goes to 1: the grab list may move under core 3 meanwhile)
 // calibration (spec 3.4): kCalN clicks kCalGap frames apart from kCalAt; core 0 renders them and listens
 constexpr int kCalN = 3, kCalGap = 9600, kCalClick = 24, kCalWindow = 4800;
 uint64_t cal_at_ = 0;      // the first click's render frame (0: none)
@@ -197,15 +197,12 @@ CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
   for (;;) {
     uint64_t pos = 0;
     for (;;) {
-      uint64_t best = ~0ull;   // the nearest grab start at or after pos
       uint64_t end_of_overlap = pos;
       bool clash = false;
       for (int i = 0; i < ng_; ++i) {
         uint64_t a = g_off_[i], b = a + (uint64_t)(g_[i].frames + kPre) * 8;
         if (a < pos + bytes && b > pos) clash = true, end_of_overlap = b > end_of_overlap ? b : end_of_overlap;
-        if (a >= pos && a < best) best = a;
       }
-      (void)best;
       if (!clash) {
         if (pos + bytes <= store_bytes_) {
           *off = pos;
@@ -470,6 +467,7 @@ CORE_COLD void live_and_mutes(uint64_t now) {
 
 namespace {
 CORE_COLD void cal_tick(uint64_t now);
+CORE_COLD void keep_tick();
 }
 CORE_COLD void tick(uint32_t us) {
   (void)us;
@@ -481,6 +479,7 @@ CORE_COLD void tick(uint32_t us) {
   if (lp_.on && lp_.stop_at && now >= lp_.stop_end) lp_.on = false;   // faded out: the ring alone
   live_and_mutes(now);
   cal_tick(now);
+  keep_tick();
 }
 
 CORE_COLD bool play(int g) {
@@ -506,11 +505,9 @@ CORE_COLD bool playing_info(uint64_t* start, uint32_t* len) {
 CORE_COLD bool bar_position(float* bar, float* of_bars) {
   uint64_t now = frames_now();
   if (!lp_.on || now < lp_.start || lp_.len == 0) return false;
-  Map m;
   double b = lp_.half_bars / 2.0;
   *of_bars = (float)b;
   *bar = (float)(((now - lp_.start) % lp_.len) / (double)lp_.len * b);
-  (void)m;
   return true;
 }
 CORE_COLD int grabs() { return ng_; }
@@ -641,30 +638,41 @@ CORE_COLD bool keep(int g, char* msg, int cap) {
     sniprintf(msg, cap, "KEEP BUSY");
     return false;
   }
-  keep_id_ = gr->id, keep_state_ = 1;
+  keep_id_ = gr->id;
+  keep_job_ = KeepJob{gr->id, gr->frames, gr->pcm, gr->bpm, gr->half_bars, gr->start};
+  __atomic_store_n(&keep_state_, 1, __ATOMIC_RELEASE);
   sniprintf(msg, cap, "KEEPING");
   return true;
 }
 CORE_COLD bool keep_take(KeepJob* j) {   // (core 0)
   if (__atomic_load_n(&keep_state_, __ATOMIC_ACQUIRE) != 1) return false;
-  int i = find_id(keep_id_);
-  if (i < 0 || !g_[i].copied) {
-    keep_state_ = 0;
-    return false;
-  }
-  *j = KeepJob{g_[i].id, g_[i].frames, g_[i].pcm, g_[i].bpm, g_[i].half_bars, g_[i].start};
+  *j = keep_job_;
   __atomic_store_n(&keep_state_, 2, __ATOMIC_RELEASE);
   return true;
 }
-CORE_COLD void keep_finished(uint32_t id, bool ok, const char* name) {
-  int i = find_id(id);
-  if (ok && i >= 0) g_[i].kept = 1, ++stats_.kept;
-  char b[40];
-  if (ok) sniprintf(b, sizeof b, "KEPT %s", name ? name : "");
+// core 0 reports through a slot; core 3's tick applies it (the grab list is core 3's)
+struct KeepRes {
+  uint32_t id;
+  bool ok;
+  char name[32];
+} keep_res_;
+CORE_COLD void keep_finished(uint32_t id, bool ok, const char* name) {   // (core 0)
+  keep_res_.id = id, keep_res_.ok = ok;
+  sniprintf(keep_res_.name, sizeof keep_res_.name, "%s", name ? name : "");
+  __atomic_store_n(&keep_state_, 3, __ATOMIC_RELEASE);
+}
+namespace {
+CORE_COLD void keep_tick() {
+  if (__atomic_load_n(&keep_state_, __ATOMIC_ACQUIRE) != 3) return;
+  int i = find_id(keep_res_.id);
+  if (keep_res_.ok && i >= 0) g_[i].kept = 1, ++stats_.kept;
+  char b[48];
+  if (keep_res_.ok) sniprintf(b, sizeof b, "KEPT %s", keep_res_.name);
   else sniprintf(b, sizeof b, "KEEP FAILED");
   say(b);
   __atomic_store_n(&keep_state_, 0, __ATOMIC_RELEASE);
 }
+}  // namespace
 
 // ------------------------------------------------------------------------------------------------ the card (loop.txt)
 namespace {
@@ -958,7 +966,6 @@ inline bool vat(const Voice& v, uint64_t h, float* l, float* r) {
 void core0_reset() {
   cur_ = Voice(), old_ = Voice(), ramp_own_ = Ramp(), ramp_loop_ = Ramp(), seen_seq_ = 0;
 }
-inline int32_t sat(float x) { return x >= 2147483520.0f ? 2147483647 : x <= -2147483648.0f ? INT32_MIN : (int32_t)x; }
 inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
