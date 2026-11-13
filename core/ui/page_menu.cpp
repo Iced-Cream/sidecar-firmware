@@ -40,7 +40,7 @@ struct Entry {
 // tests hold the list to that rule (test_ui)
 UI_ROM const Entry kEntries[] = {
     {"POLY CONFIG", "POLY"}, {"ARP", "ARP"},         {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
-    {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"MORPH", "MORPH"},
+    {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"MORPH", "MORPH"},   {"LOOP", "LOOP"},   // 0.5.0 (core/ui/page_loop.cpp): no UP shortcut (it would need the Rytm mod)
 #if CORE_POLY && CORE_MSAMP
     {"SAMPLE EDIT", "SAMPLE EDIT"},   // the selected track's sample (page_sedit.cpp), or the edit open
 #endif
