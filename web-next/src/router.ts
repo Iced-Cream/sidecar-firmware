@@ -43,6 +43,7 @@ export const routes: RouteRecordRaw[] = [
     { path: "sidechain", title: "Sidechain", component: () => import("./pages/mix/SidechainTab.vue") },
   ]),
   { path: "/morph", name: "morph", component: () => import("./pages/Morph.vue"), meta: { title: "Morph" } },
+  { path: "/loop", name: "loop", component: () => import("./pages/Loop.vue"), meta: { title: "Loop" } },
   { path: "/seq", name: "seq", component: () => import("./pages/Seq.vue"), meta: { title: "Seq" } },
   sections("/rec", "rec", "Rec", [
     { path: "recorder", title: "Recorder", component: () => import("./pages/rec/RecorderCard.vue") },
