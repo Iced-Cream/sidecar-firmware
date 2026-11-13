@@ -24,9 +24,12 @@ struct Route {
 
 // a channel message from port (0 the Rytm, 1..4 a USB-A device): true when a route (or the armed learn) took it
 bool midi(int port, uint8_t st, uint8_t d1, uint8_t d2);
-bool arm(const char* what);          // "fader", "a", "b", a target name with ":DEPTH" (default 32); false: no such
+bool arm(const char* what, bool only = false);   // "fader", "a", "b", a target name with ":DEPTH" (default 32);
+                                     // false: no such. only: the learned route replaces every route of its What (the MIDI
+                                     // page's LEARN rows: one fader, one A, one B)
 void disarm();
 int armed();                         // -1 none, else the What it waits for
+int last();                          // the index of the route the last learn made or replaced, -1 none
 void tick();                         // mod::tick: the target routes' offsets
 int routes(const Route** out);       // the routes in use (*out: the table, n of them first)
 bool clear(int i);                   // route i (0-based) dropped

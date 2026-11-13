@@ -5,13 +5,17 @@
 //                                        selected track, or channel N plays track N (1..12)
 //   AUTO CHANNEL    1..16                the Rytm's auto channel as set on the Rytm (its MIDI CONFIG > CHANNELS)
 //   COMPUTER NOTES  ON / OFF             the computer's notes (USB-C) routed here, or straight to the Rytm
-//   MIDI LEARN      N ROUTES / NONE      core/mod/learn.h: YES twice clears them all (WAITING: a learn armed - YES stops
-//                                        it; LOCKED: learn.txt has lines of a newer build, nothing is cleared)
+//   LEARN FADER     CC7 CH1 / - / MOVE IT   core/mod/learn.h: YES arms a learn, the next CC heard (the Rytm's MIDI or a
+//   LEARN SCENE A                        USB-A device, e.g. a crossfader) drives the morph fader / picks scene A / B;
+//   LEARN SCENE B                        learning again replaces it (one route each); YES or NO while waiting stops it
+//   MIDI LEARN      N ROUTES / NONE      all the routes (the console's target routes too): YES twice clears them all
+//                                        (WAITING: a learn armed - YES stops it; LOCKED: learn.txt has lines of a newer
+//                                        build, nothing is cleared)
 //   USB-A           the devices in the Pi's USB-A ports (the first by name, +N more); read only
 //   LAST            the last key's way ("MPKMINI > SD POLY", keys::line); read only
 // Knob A or UP / DOWN pick a row, YES or knob B change it. Each change is the console's own command (keys=...), takes
-// effect at once and is saved by idle_save (/.rytm/keys.txt, /.rytm/learn.txt). Arming a learn stays the console's
-// (learn=fader|a|b|NAME[:DEPTH]): its targets are a long list.
+// effect at once and is saved by idle_save (/.rytm/keys.txt, /.rytm/learn.txt). Six rows a screen, the rest scroll in
+// (as the MENU). A learn for a modulation target stays the console's (learn=NAME[:DEPTH]): its targets are a long list.
 #if CORE_POLY
 #include <stdio.h>
 #include <string.h>
@@ -28,12 +32,14 @@ namespace ui {
 namespace {
 
 enum : int { kYes = 0x44, kNo = 0x45, kUp = 0x42, kDown = 0x43 };
-enum : int { kRoute, kAuto, kMac, kLearn, kUsbA, kLast, kRows };
-constexpr int kRowY = 11, kRowH = 7;
+enum : int { kRoute, kAuto, kMac, kLFader, kLA, kLB, kLearn, kUsbA, kLast, kRows };
+constexpr int kRowY = 11, kRowH = 7, kVisible = 6;
 
 struct MidiPage {
   bool on;            // shown (the MENU's row) and not left
   int cur;            // the row under the cursor
+  int top;            // the first row shown
+  int arming = -1;    // the What a LEARN row armed, -1 none: when its CC comes, the older route of that What goes
   bool confirm;       // MIDI LEARN's YES asked once: YES again clears
   bool note_new;      // a note set by a key or a turn: timed from the next frame (the frame's clock)
   uint32_t note_ms;
@@ -52,6 +58,39 @@ CORE_COLD void keys_cmd(const char* c) {
 CORE_COLD int learn_routes() {
   const learn::Route* r = nullptr;
   return learn::routes(&r);
+}
+CORE_COLD int row_what(int row) { return row == kLFader ? learn::kFader : row == kLA ? learn::kA : learn::kB; }
+CORE_COLD bool learn_row(int row) { return row == kLFader || row == kLA || row == kLB; }
+// the route of a What as "CC7 CH1"; false: none
+CORE_COLD bool route_text(int what, char* v, int cap) {
+  const learn::Route* r = nullptr;
+  const int n = learn::routes(&r);
+  for (int i = n - 1; i >= 0; --i)
+    if (r[i].what == what) return sniprintf(v, cap, "CC%d CH%d", r[i].cc, r[i].ch + 1), true;
+  return false;
+}
+// a LEARN row's CC came (learn::midi took it and dropped the older route of that What): say so
+CORE_COLD void learned() {
+  if (P.arming < 0 || learn::armed() >= 0) return;
+  const int what = P.arming;
+  P.arming = -1;
+  const learn::Route* r = nullptr;
+  const int keep = learn::last(), n = learn::routes(&r);
+  if (keep < 0 || keep >= n || r[keep].what != what) { note("NOT LEARNED: NO ROOM"); return; }
+  char b[26], c[16];
+  route_text(what, c, sizeof c);
+  sniprintf(b, sizeof b, "LEARNED %s", c);
+  note(b);
+}
+CORE_COLD void learn_row_yes(int row) {
+  const int what = row_what(row);
+  if (learn::armed() == what) {
+    learn::disarm();
+    P.arming = -1;
+    note("LEARN STOPPED");
+    return;
+  }
+  if (learn::arm(what == learn::kFader ? "fader" : what == learn::kA ? "a" : "b", true)) P.arming = what;
 }
 
 // a change of the row's setting: dir +1 / -1 (knob B, clamped), 0 the next value (YES, wrapping)
@@ -87,7 +126,7 @@ CORE_COLD void learn_yes() {
     return;
   }
   const int n = learn_routes();
-  if (!n) { P.confirm = false; note("ARM IT: CONSOLE LEARN="); return; }   // (the routes went meanwhile: no question left)
+  if (!n) { P.confirm = false; note("LEARN ON THE ROWS ABOVE"); return; }   // (the routes went meanwhile: no question left)
   if (learn::locked()) { P.confirm = false; note("LEARN FILE IS NEWER"); return; }
   if (!P.confirm) { P.confirm = true; return; }
   P.confirm = false;
@@ -104,6 +143,13 @@ CORE_COLD void row_text(int i, const char** name, char* v, int cap) {
       break;
     case kAuto: *name = "AUTO CHANNEL"; sniprintf(v, cap, "%d", keys::auto_channel()); break;
     case kMac: *name = "COMPUTER NOTES"; sniprintf(v, cap, "%s", keys::computer_on() ? "ON" : "OFF"); break;
+    case kLFader:
+    case kLA:
+    case kLB:
+      *name = i == kLFader ? "LEARN FADER" : i == kLA ? "LEARN SCENE A" : "LEARN SCENE B";
+      if (learn::armed() == row_what(i)) sniprintf(v, cap, "MOVE IT");
+      else if (!route_text(row_what(i), v, cap)) sniprintf(v, cap, "-");
+      break;
     case kLearn: {
       *name = "MIDI LEARN";
       const int n = learn_routes();
@@ -136,22 +182,27 @@ CORE_COLD void row_text(int i, const char** name, char* v, int cap) {
 CORE_COLD void midi_draw(Canvas& c, int page, int npages, uint32_t ms) {
   c.clear();
   header(c, "MIDI", page, npages, nullptr);
+  learned();   // (a LEARN row's CC came since the last frame)
   if (P.cur < 0) P.cur = 0;
   if (P.cur >= kRows) P.cur = kRows - 1;
-  for (int i = 0; i < kRows; ++i) {
+  if (P.cur < P.top) P.top = P.cur;
+  if (P.cur >= P.top + kVisible) P.top = P.cur - kVisible + 1;
+  for (int k = 0; k < kVisible && P.top + k < kRows; ++k) {
+    const int i = P.top + k;
     const char* name = "";
     char v[24];
     row_text(i, &name, v, sizeof v);
     const bool on = i == P.cur;
-    const int y = kRowY + i * kRowH;
+    const int y = kRowY + k * kRowH;
     if (on) c.fill(Rect{0, (int16_t)(y - 1), 128, kRowH}, kOn);
     const uint8_t inv = on ? kTextInvert : 0;
-    c.put_text(kSlotFree + 2 * i, kRSmall, 2, y, name, (uint8_t)(kAlignLeft | inv));
-    c.put_text(kSlotFree + 2 * i + 1, kRSmall, 126, y, v[0] ? v : nullptr, (uint8_t)(kAlignRight | inv));
+    c.put_text(kSlotFree + 2 * k, kRSmall, 2, y, name, (uint8_t)(kAlignLeft | inv));
+    c.put_text(kSlotFree + 2 * k + 1, kRSmall, 126, y, v[0] ? v : nullptr, (uint8_t)(kAlignRight | inv));
   }
   if (P.confirm) footer(c, "YES: CLEAR ALL  NO: KEEP");
   else if (P.note_new || (P.note_ms && ms - P.note_ms < 2000)) footer(c, P.note);
   else if (P.cur <= kMac) footer(c, "YES / B: SET  NO: BACK");
+  else if (learn_row(P.cur)) footer(c, learn::armed() == row_what(P.cur) ? "MOVE A CONTROL  YES: STOP" : "YES: LEARN  NO: BACK");
   else if (P.cur == kLearn && learn::armed() >= 0) footer(c, "YES: STOP LEARN  NO: BACK");
   else if (P.cur == kLearn && learn_routes() && !learn::locked()) footer(c, "YES TWICE: CLEAR ALL");
   else footer(c, "NO: BACK");
@@ -173,11 +224,14 @@ CORE_COLD bool midi_key(int code) {
   if (code == kUp || code == kDown) { move(code == kUp ? -1 : 1); return true; }
   if (code == kNo) {
     if (P.confirm) { P.confirm = false; note("KEPT"); return true; }
+    if (P.arming >= 0 && learn::armed() == P.arming) learn::disarm();   // leaving stops a LEARN row's learn
+    P.arming = -1;
     P.on = false;
     return false;   // (remote.cpp: NO goes to SIDECAR)
   }
   if (code != kYes) return false;
   if (P.cur == kLearn) learn_yes();
+  else if (learn_row(P.cur)) learn_row_yes(P.cur);
   else change(0);
   return true;
 }
@@ -189,7 +243,7 @@ UI_ROM const ExtraPage kMidiPage = {"MIDI", midi_shown, midi_draw, midi_enc, mid
                                     nullptr, true, nullptr, nullptr, true};
 
 CORE_COLD void midi_page_open() {
-  P.on = true, P.cur = 0, P.confirm = false, P.note_new = false, P.note_ms = 0;
+  P.on = true, P.cur = 0, P.top = 0, P.arming = -1, P.confirm = false, P.note_new = false, P.note_ms = 0;
   remote_show_page("MIDI");
 }
 CORE_COLD void midi_page_reset() { P = MidiPage(); }
