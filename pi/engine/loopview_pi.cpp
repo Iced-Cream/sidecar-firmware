@@ -44,7 +44,7 @@ void FillView(sidecar_loop_view_t* o, int sel) {
     static uint32_t s_gen = 0, s_ms = 0;
     uint32_t mg = lp::message_gen(), ms = core::now_ms();
     if (mg != s_gen) s_gen = mg, s_ms = ms;
-    if (mg && ms - s_ms < 3000) snprintf(v.msg, sizeof v.msg, "%s", lp::last_message());
+    if (mg && ms - s_ms < 3000) strncpy(v.msg, lp::last_message(), sizeof v.msg - 1), v.msg[sizeof v.msg - 1] = 0;
   }
   v.sel = (signed char)(sel < 0 ? 0 : sel >= v.ngrabs ? (v.ngrabs ? v.ngrabs - 1 : 0) : sel);
   uint32_t h = 2166136261u;

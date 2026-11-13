@@ -4,15 +4,16 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "platform.h"   // sniprintf (newlib's integer printf; the Pi has no snprintf)
 #include "rec/rec_wav.h"
 
 namespace loop_pi {
 
 bool Keep::fail(const char* why) {
-  snprintf(err_, sizeof err_, "%s", why);
+  sniprintf(err_, sizeof err_, "%s", why);
   if (b_ && b_->log) {
     char l[96];
-    snprintf(l, sizeof l, "loop keep: %s", why);
+    sniprintf(l, sizeof l, "loop keep: %s", why);
     b_->log(l);
   }
   finish(false);
@@ -39,7 +40,7 @@ bool Keep::begin(const core::loop::KeepJob& j) {
   char pn[48] = "";
   if (b_->project) b_->project(pn, sizeof pn);
   rec::slug(pn, sl, sizeof sl);
-  if (!sl[0]) snprintf(sl, sizeof sl, "sidecar");
+  if (!sl[0]) sniprintf(sl, sizeof sl, "sidecar");
   uint32_t local = 0;
   bool clock = b_->clock && b_->clock(&local);
   if (clock) rec::stamp_name(base, sizeof base, sl, local);
@@ -56,7 +57,7 @@ bool Keep::begin(const core::loop::KeepJob& j) {
     made = m > 0;
   }
   if (!made) return fail("cannot make the take's folder"), false;
-  snprintf(path_, sizeof path_, "%s/00_LOOP.wav", rel);
+  sniprintf(path_, sizeof path_, "%s/00_LOOP.wav", rel);
   h_ = b_->open(path_);
   if (h_ < 0) return fail("cannot open the file"), false;
   uint8_t hdr[recwav::kHeader];
@@ -93,15 +94,16 @@ bool Keep::poll() {
   h_ = -1;
   char rel[100], txt[160];
   rec::take_dir(rel, sizeof rel, take_);
-  snprintf(path_, sizeof path_, "%s/loop.txt", rel);
-  int n = snprintf(txt, sizeof txt, "bpm=%.1f\nbars=", (double)job_.bpm);
-  if (job_.half_bars & 1) n += snprintf(txt + n, sizeof txt - n, "%d.5\n", job_.half_bars / 2);
-  else n += snprintf(txt + n, sizeof txt - n, "%d\n", job_.half_bars / 2);
+  sniprintf(path_, sizeof path_, "%s/loop.txt", rel);
+  const int b10 = (int)(job_.bpm * 10.0f + 0.5f);   // (integer printf: the tempo in tenths)
+  int n = sniprintf(txt, sizeof txt, "bpm=%d.%d\nbars=", b10 / 10, b10 % 10);
+  if (job_.half_bars & 1) n += sniprintf(txt + n, sizeof txt - n, "%d.5\n", job_.half_bars / 2);
+  else n += sniprintf(txt + n, sizeof txt - n, "%d\n", job_.half_bars / 2);
   uint32_t local = 0;
   if (b_->clock && b_->clock(&local)) {
     char dt[24];
     rec::date_time(local, dt, sizeof dt);
-    n += snprintf(txt + n, sizeof txt - n, "grabbed=%s\n", dt);
+    n += sniprintf(txt + n, sizeof txt - n, "grabbed=%s\n", dt);
   }
   int t = b_->open(path_);
   if (t < 0 || !b_->write(t, txt, (uint32_t)n)) return (t >= 0 ? (void)b_->close(t) : (void)0), fail("cannot write loop.txt"), false;
