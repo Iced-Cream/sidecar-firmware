@@ -14,6 +14,10 @@
 #include "fx/insert.h"
 #include "lfo.h"
 #include "mod/target.h"
+#include "ui/extra.h"
+#include "ui/page.h"
+#include "ui/remote.h"
+#include "ui/ui.h"
 
 using namespace core;
 using ins::Engine;
@@ -348,6 +352,47 @@ int main() {
     CHECK(!strcmp(pl, "STHR"));
     printf("mod: I3:S1..S6 (kIns 12..17) are targets, offsets on the knob, labels follow the mode\n");
     ins::reset();
+  }
+
+  // ---- the Rytm's pages: DOWN on the INSERT page's EQ view (and the MASTER FX page's) opens the SIDECHAIN view
+  {
+    ins::reset();
+    int ki = -1, km = -1;
+    for (int i = 0; i < ui::extra_pages(); ++i) {
+      if (!strcmp(ui::extra_page(i).title, "INSERT")) ki = i;
+      if (!strcmp(ui::extra_page(i).title, "MASTER")) km = i;
+    }
+    CHECK(ki >= 0 && km >= 0);
+    ui::ins_page_set(false, 0, 0, 0);
+    ui::Canvas c;
+    CHECK(ui::extra_page(ki).key(0x41));          // RIGHT: the EQ view
+    CHECK(ui::extra_page(ki).key(0x43));          // DOWN: the SIDECHAIN view
+    ui::extra_page(ki).enc(0, 1, false);          // A MODE: OFF -> PUMP
+    CHECK(ins::sc_mode(0) == sc::kPump);
+    ui::extra_page(ki).enc(1, 3, false);          // B SRC: BD -> a few along
+    CHECK(ins::sc_src(0) > 0);
+    ui::extra_page(ki).enc(2, 10, false);         // C DPTH
+    CHECK(ins::sc_param(0, 0) == sc::def(sc::kPump, 0) + 10);
+    ui::extra_page(ki).enc(7, 5, true);           // H THR, FUNC: by 8
+    CHECK(ins::sc_param(0, 5) == sc::def(sc::kPump, 5) + 40);
+    CHECK(ui::remote_render(6 + ki, 0, nullptr, c));   // renders; the text-fit check (check.h) covers the strings
+    CHECK(ui::extra_page(ki).key(0x44));          // YES: bus 1
+    ui::extra_page(ki).enc(0, 2, false);          // DUCK on B1
+    CHECK(ins::sc_mode(ins::kBus0) == sc::kDuck);
+    CHECK(ui::remote_render(6 + ki, 0, nullptr, c));
+    CHECK(ui::extra_page(ki).key(0x40));          // LEFT: the EQ view again
+    CHECK(ui::extra_page(ki).key(0x45));          // NO: the track view
+    ui::mfx_page_set(0, true);
+    CHECK(ui::extra_page(km).key(0x43));
+    ui::extra_page(km).enc(0, 1, false);
+    CHECK(ins::sc_mode(ins::kM0) == sc::kPump);
+    CHECK(ui::extra_page(km).key(0x44));          // YES: M2
+    ui::extra_page(km).enc(0, 2, false);
+    CHECK(ins::sc_mode(ins::kM0 + 1) == sc::kDuck);
+    CHECK(ui::remote_render(6 + km, 0, nullptr, c));
+    CHECK(ui::extra_page(km).key(0x45));
+    ins::reset();
+    printf("pages: the SIDECHAIN view on the INSERT and MASTER pages (DOWN on the EQ view)\n");
   }
 
   // ---- the cost: a stereo bus chain, 16-frame chunks (what the bus and master chains see), and a mono voice chain
