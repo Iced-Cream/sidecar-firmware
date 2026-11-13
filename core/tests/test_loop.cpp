@@ -1,5 +1,6 @@
 // core/tests/test_loop.cpp - the master looper (core/loop, spec-050 section 3): the MAIN ring and its frame map (Task 19),
 // the grabs (20), playback (21), resample / stop / auto-mute / LIVE VIA (22), calibration and console (25).
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <unistd.h>
@@ -71,6 +72,23 @@ static void test_ring() {
   CHECK(mem3[2 * 692] == 693 && mem3[2 * 693] == 0 && mem3[2 * 762] == 0);   // zeros at 693..762
   CHECK(mem3[2 * 763] == 764 && mem3[2 * 1000] == 1001);                     // linear again, the same map
   CHECK(g.gap_in(100 + 650, 200) && !g.gap_in(100 + 100, 100) && !g.gap_in(100 + 900, 200));
+  // stream_restart_keeps_map_linear: the Rytm's stream stops for 3 s (the host's frames go on) and comes back
+  loop::Ring q;
+  static int32_t mem4[2 * (1 << 18)];
+  q.init(mem4, 1 << 18);
+  blocks(q, 0, 7000, 0, 500);                 // index k arrives at 500 + k + 6 (offset 500)
+  uint64_t before = q.written();
+  {
+    uint64_t k = before;
+    for (; k < before + 7000; k += 7) {       // ... then the next block arrives 144000 frames later
+      int32_t b[14];
+      for (int i = 0; i < 7; ++i) b[2 * i] = (int32_t)(k + 144000 + i + 1), b[2 * i + 1] = 0;
+      q.write(b, 7, 500 + k + 144000 + 6, 0);
+    }
+  }
+  CHECK(q.frame_at(500 + 3000, &idx) && mem4[2 * idx] == 3001);                // before the pause: as it was
+  CHECK(q.frame_at(500 + before + 144000 + 70, &idx) && mem4[2 * idx] == (int32_t)(before + 144000 + 71));   // after: the same line
+  CHECK(q.gap_in(500 + before + 100, 100) && !q.gap_in(500 + 3000, 100));
   // records_during_playback: no pause exists: writes always advance
   uint64_t w0 = g.written();
   blocks(g, w0, w0 + 700, 0, 100);
@@ -693,6 +711,33 @@ static void test_cal_console() {
 }
 
 
+// ---- the hooks' cost (spec 3.11: well under 1 us a 7-frame block on the Pi 4); here on the Mac, idle and with a loop playing
+static void test_cost() {
+  fresh();
+  started(loop::k1);
+  using clk = std::chrono::steady_clock;
+  int32_t b[14] = {};
+  int32_t F[7][12] = {};
+  const int N = 1000000;
+  auto t0 = clk::now();
+  uint64_t arr = g_fed + kD;
+  for (int i = 0; i < N; ++i) loop::in_block(b, 7, arr += 7, 0);
+  double in_ns = std::chrono::duration<double, std::nano>(clk::now() - t0).count() / N;
+  uint64_t s0 = (uint64_t)(g_origin + 41 * bar());
+  t0 = clk::now();
+  for (int i = 0; i < N; ++i) loop::out_mix(F, 7, s0 + 5000 + 7 * (uint64_t)(i % 10000));
+  double play_ns = std::chrono::duration<double, std::nano>(clk::now() - t0).count() / N;
+  CHECK(F[3][0] != 0);   // (the loop was really playing)
+  loop::stop(true, true);
+  to(g_now + 20000);
+  t0 = clk::now();
+  for (int i = 0; i < N; ++i) loop::out_mix(F, 7, s0 + 5000 + 7 * (uint64_t)(i % 10000));
+  double idle_ns = std::chrono::duration<double, std::nano>(clk::now() - t0).count() / N;
+  printf("  hook cost per 7-frame block (Mac): IN %.0f ns, OUT playing %.0f ns, OUT idle %.0f ns\n", in_ns, play_ns, idle_ns);
+  CHECK(in_ns < 1000 && idle_ns < 200 && play_ns < 5000);   // generous: the Mac; the Pi 4 is a few times slower
+}
+
+
 int main() {
   test_ring();
   test_grabs();
@@ -700,6 +745,7 @@ int main() {
   test_playback();
   test_resample_stop_mute();
   test_cal_console();
+  test_cost();
   printf("test_loop: OK\n");
   return 0;
 }

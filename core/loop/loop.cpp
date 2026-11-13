@@ -368,11 +368,15 @@ CORE_COLD void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_
   reset();
 }
 
+namespace {
+void core0_reset();   // (the audio side's voices: defined with them)
+}
 CORE_COLD void reset() {
   ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
   snap_ = Snap();
   bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
   dirty_ = false, post_lat_ = 0, keep_state_ = 0, cal_state_ = 0, cal_at_ = 0, msg_[0] = 0, msg_gen_ = 0, keep_lines_.n = 0;
+  core0_reset();
   if (on_) publish();
   if (ring_.ready()) ring_.init(ring_.data(), ring_.capacity());
 }
@@ -950,6 +954,9 @@ inline bool vat(const Voice& v, uint64_t h, float* l, float* r) {
   }
   *l = a * g, *r = b * g;
   return true;
+}
+void core0_reset() {
+  cur_ = Voice(), old_ = Voice(), ramp_own_ = Ramp(), ramp_loop_ = Ramp(), seen_seq_ = 0;
 }
 inline int32_t sat(float x) { return x >= 2147483520.0f ? 2147483647 : x <= -2147483648.0f ? INT32_MIN : (int32_t)x; }
 inline int32_t add(int32_t a, float x) {

@@ -295,6 +295,9 @@ int mod_json(char* out, int cap) { return core::mod::json(out, cap); }
 bool scene_command(const char* p, char* out, int cap) { return core::scene::command(p, out, cap); }
 bool xy_command(const char* p, char* out, int cap) { return core::xypad::command(p, out, cap); }
 int scene_json(char* out, int cap) { return core::scene::json(out, cap); }
+bool loop_command(const char* p, char* out, int cap) { return core::loop::command(p, out, cap); }
+int loop_json(char* out, int cap) { return core::loop::json(out, cap); }
+uint64_t render_frames() { return core::seq::frames(); }
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {

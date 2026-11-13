@@ -15,6 +15,7 @@ namespace loop {
 class Ring {
  public:
   static constexpr int kWindow = 24;
+  static constexpr int64_t kRestart = 48000;   // frames: a jump of the arrival offset past this is a pause, not jitter
   void init(int32_t* mem, uint32_t frames) {
     mem_ = mem, cap_ = frames, w_ = 0, n_ = 0, k_ = 0, have_ = false, gap0_ = gap1_ = 0;
     off_ = 0;
@@ -33,6 +34,16 @@ class Ring {
     }
     // the block's offset: host frame - index, the same for each of its frames (arrival of frame i = arrival - (n - 1 - i))
     int64_t d = (int64_t)arrival - (int64_t)(n - 1) - (int64_t)w;
+    // a stream that stopped and came back (the Rytm re-plugged, a re-enumeration): the host's frames went on while nothing
+    // was written. Its pause is written as silence too (past kRestart: a late burst is never that long), so the map stays
+    // one line and a grab across it carries the gap
+    if (have_ && d > off_ + kRestart) {
+      uint64_t extra = (uint64_t)(d - off_), keep = extra < cap_ ? extra : cap_;
+      gap0_ = w, gap1_ = w + extra;
+      for (uint64_t i = extra - keep; i < extra; ++i) put(w + i, 0, 0);
+      w += extra;
+      d -= (int64_t)extra;
+    }
     win_[k_] = d;
     k_ = (k_ + 1) % kWindow;
     if (n_ < kWindow) ++n_;
