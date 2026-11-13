@@ -146,6 +146,11 @@ build/test_morph_pi: test_morph_pi.cpp ../morph_pi.cpp ../morph_pi.h ../../ui/si
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_morph_pi.cpp ../morph_pi.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# 0.5.0: the display's LOOP page view (loopview_pi.cpp) from the looper (core/loop/loop.h) on the core's Mac library
+build/test_loopview_pi: test_loopview_pi.cpp ../loopview_pi.cpp ../loopview_pi.h ../../ui/sidecar_loop.h $(CORE)/loop/loop.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_loopview_pi.cpp ../loopview_pi.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 # 0.5.0: the display's XY page view (xypad_pi.cpp) from the XY pad (core/mod/xypad.h) on the core's Mac library
 build/test_xypad_pi: test_xypad_pi.cpp ../xypad_pi.cpp ../xypad_pi.h ../../ui/sidecar_xy.h $(CORE)/mod/xypad.h check.h $(CORE)/build/libcore.dylib
 	@mkdir -p build
@@ -229,7 +234,7 @@ CONTENT_FLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -ffp-cont
   -I$(CORE) -I$(CORE)/host -I$(RMPSRC) $(ENG_INC) $(ENG_FLAGS)
 # (bridge::tick calls the display's MORPH / XY / SONG pages' Tick: their portable halves linked too; test_content has
 # its own song_pi::Tick)
-BRIDGE_SRC := ../bridge.cpp ../morph_pi.cpp ../xypad_pi.cpp ../song_pi.cpp
+BRIDGE_SRC := ../bridge.cpp ../morph_pi.cpp ../loopview_pi.cpp ../xypad_pi.cpp ../song_pi.cpp
 build/test_content: test_content.cpp $(BRIDGE_SRC) ../bridge.h check.h $(CORE)/build/libcore.dylib
 	@mkdir -p build
 	$(CXX) $(CONTENT_FLAGS) -o $@ $< $(filter-out ../song_pi.cpp,$(BRIDGE_SRC)) $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)

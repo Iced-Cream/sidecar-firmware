@@ -23,6 +23,7 @@
 #include "sidecar_insfx.h"		// page 9: INSERT FX, a voice's inserts and sends (fx-ins)
 #include "sidecar_mfx.h"		// MASTER FX
 #include "sidecar_morph.h"		// page 20: MORPH (0.5.0 scenes: the pads, a scene's locks, the crossfader)
+#include "sidecar_loop.h"		// page 24: LOOP (0.5.0 the master looper: grabs, STOP, KEEP, BAL / LEV; core/loop)
 #include "sidecar_xy.h"		// page 22: XY PAD (0.5.0: the touchscreen as an XY controller, core/mod/xypad.h)
 #include "sidecar_song.h"		// page 10: SONG, SONG RECORD's timeline (core/song)
 #include "sidecar_rec.h"		// page 11: REC, the Overbridge multitrack recorder (UP + T7, the home page's REC status)
@@ -39,7 +40,7 @@
 
 enum { SEG_TAB, SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_N };
 enum { PG_HOME, PG_SOUND, PG_FX, PG_ABOUT, PG_SEQ, PG_RYTM, PG_DISPLAY, PG_MACH, PG_VOICE, PG_INS, PG_SONG, PG_REC, PG_SCOPE, PG_STATUS, PG_PROJECT, PG_POOL,
-       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
+       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_LOOP, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
 
 // the settings tabs; Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
 #define N_TABS 7
@@ -143,7 +144,7 @@ static void map_cols (int mixed, char *c1, char *c2, int cap)	// c1: the title a
 static lv_obj_t *s_Home, *s_Pages, *s_Pg[PG_N], *s_Nav[NAV_N], *s_SetTitle;
 static lv_obj_t *s_PageName;			// SIDECAR's header from 1024x600: the page's name in the dot font
 static const char *const kPageName[PG_N] = {"HOME", "SOUND", "SEND FX", "ABOUT", "SEQ", "PAT", "DISPLAY", "MACHINE", "VOICE",
-	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI"};
+	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI", "LOOP"};
 static lv_obj_t *s_UsbInfo;			// Settings > Sound: what USB-C is now, OVERBRIDGE's warning
 static lv_obj_t *s_KeysAuto, *s_KeysIn, *s_KeysLast, *s_LearnInfo;	// Settings > MIDI
 static int s_nAutoLocal;				// the auto channel the - / + keys asked for (0: none waits)
@@ -422,6 +423,7 @@ static void show_page (int page)
 	sidecar_mfx_show (page == PG_MFX);
 	sidecar_morph_show (page == PG_MORPH);
 	sidecar_xy_show (page == PG_XY);
+	sidecar_loop_show (page == PG_LOOP);
 	sidecar_song_show (page == PG_SONG);
 	sidecar_rec_show (page == PG_REC);
 	sidecar_scope_show (page == PG_SCOPE);
@@ -443,7 +445,7 @@ static void show_page (int page)
 	// machine view, SCOPE: VOICE; POOL: SET); never SET for a page that is not a setting
 	int nav = page == PG_HOME || page == PG_PROJECT || page == PG_STATUS ? NAV_HOME : page == PG_SEQ ? NAV_SEQ
 		: page == PG_RYTM ? NAV_PAT : page == PG_VOICE || page == PG_MACH || page == PG_SCOPE || page == PG_CHOP || page == PG_SEDIT ? NAV_VOICE
-		: page == PG_INS || page == PG_MFX || page == PG_MORPH || page == PG_XY ? NAV_FX : page == PG_SONG ? NAV_SONG : page == PG_REC ? NAV_REC : set || page == PG_POOL || page == PG_PRESET ? NAV_SET : -1;
+		: page == PG_INS || page == PG_MFX || page == PG_MORPH || page == PG_XY || page == PG_LOOP ? NAV_FX : page == PG_SONG ? NAV_SONG : page == PG_REC ? NAV_REC : set || page == PG_POOL || page == PG_PRESET ? NAV_SET : -1;
 	s_nNavLit = nav;
 	for (int i = 0; i < NAV_N; i++) if (s_Nav[i]) th_key_check (s_Nav[i], i == nav);
 	if (s_PageName) set_text (s_PageName, kPageName[page]);
@@ -569,6 +571,7 @@ static void ins_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) u
 static void mfx_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MFX); }
 static void morph_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MORPH); }
 static void xy_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_XY); }
+static void loop_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_LOOP); }
 static void nav_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
@@ -854,12 +857,12 @@ static void oled_fx (lv_obj_t *pg)
 		}
 		label (p, x + bw - LU (5), LU (160) + dy, TH->f_micro, TH->dim, kSendName[t]);
 	}
-	// the other FX pages: one row of four keys as tall as KILL TAILS (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
+	// the other FX pages: one row of five keys as tall as KILL TAILS (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad, the looper)
 	{
-		static const char *const kName[4] = {"INSERTS", "MASTER", "MORPH", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		const int kw = (OW - LU (12) - 3 * LU (6)) / 4;
-		for (int i = 0; i < 4; i++)
+		static const char *const kName[5] = {"INSERTS", "MASTER", "MORPH", "XY", "LOOP"};
+		static const th_cb_t kCb[5] = {ins_cb, mfx_cb, morph_cb, xy_cb, loop_cb};
+		const int kw = (OW - LU (12) - 4 * LU (6)) / 5;
+		for (int i = 0; i < 5; i++)
 			th_key (p, LU (6) + i * (kw + LU (6)), LU (172) + dy, kw, LU (24), kName[i], TH_KEY | TH_KEY_SMALL, kCb[i], 0);
 	}
 }
@@ -939,6 +942,8 @@ static void oled_build (lv_obj_t *scr)
 	sidecar_morph_set_command (command);
 	sidecar_xy_create (scr, 0);
 	sidecar_xy_set_command (command);
+	sidecar_loop_create (scr, 0);
+	sidecar_loop_set_command (command);
 	sidecar_song_create (scr, 0, song_cmd);
 	sidecar_rec_create (scr, 0, rec_cmd);
 	sidecar_scope_create (scr, 0);
@@ -1055,12 +1060,12 @@ static void sc_fx (lv_obj_t *pg)
 	s_Kill = th_key (p, LU (614) + dx, LU (26), LU (150), LU (52), "Kill tails", TH_KEY_DANGER, kill_cb, 0);
 	th_key_font (s_Kill, TH->f_title);
 	th_key_led (s_Kill, LED_RED + 15);
-	// the other FX pages: one row of four keys as tall as Kill tails (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
+	// the other FX pages: one row of five keys as tall as Kill tails (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad, the looper)
 	{
-		static const char *const kName[4] = {"Inserts", "Master", "Morph", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		const int kw = (LU (760) + dx - 3 * LU (8)) / 4;
-		for (int i = 0; i < 4; i++)
+		static const char *const kName[5] = {"Inserts", "Master", "Morph", "XY", "Loop"};
+		static const th_cb_t kCb[5] = {ins_cb, mfx_cb, morph_cb, xy_cb, loop_cb};
+		const int kw = (LU (760) + dx - 4 * LU (8)) / 5;
+		for (int i = 0; i < 5; i++)
 			th_key_font (th_key (p, LU (8) + i * (kw + LU (8)), LU (88), kw, LU (52), kName[i], TH_KEY, kCb[i], 0), TH->f_title);
 	}
 	lv_obj_t *w = th_panel (p, LU (8), LU (148), LU (760) + dx, LU (148) + dy, "", TH_PANEL_WINDOW);
@@ -1280,6 +1285,8 @@ static void sc_build (lv_obj_t *scr)
 	sidecar_morph_set_command (command);
 	sidecar_xy_create (scr, LU (52));
 	sidecar_xy_set_command (command);
+	sidecar_loop_create (scr, LU (52));
+	sidecar_loop_set_command (command);
 	sidecar_song_create (scr, LU (52), song_cmd);
 	sidecar_rec_create (scr, LU (52), rec_cmd);
 	sidecar_scope_create (scr, LU (52));

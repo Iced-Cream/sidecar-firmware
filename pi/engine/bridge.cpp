@@ -12,6 +12,7 @@
 #include "mod/learn.h"
 #include "mod/scene.h"
 #include "loop/loop.h"
+#include "loopview_pi.h"
 #include "mod/xypad.h"
 #include "device/device.h"
 #include "fx/insert.h"
@@ -183,6 +184,7 @@ void tick() {
   timed_tick("seq", [] { core::seq::tick(core::now_ms()); });        // the Sidecar sequencer: its LEDs, its 2E (core/seq/seq.h)
   timed_tick("song", [] { core::song::tick(core::now_ms()); });      // SONG RECORD (core/song/song.h)
   timed_tick("songview", [] { song_pi::Tick(); });                   // its view for the display's SONG page
+  timed_tick("loopview", [] { loopview_pi::Tick(); });                 // 0.5.0: the display's LOOP page (the looper)
   timed_tick("morphview", [] { morph_pi::Tick(); });                 // 0.5.0: the display's MORPH page (scenes)
   timed_tick("xyview", [] { xypad_pi::Tick(); });                    // 0.5.0: the display's XY page (the XY pad)
 #if SIDECAR_SEQED

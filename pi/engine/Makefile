@@ -78,6 +78,8 @@ OBJS += ../ui/sidecar_insfx.o
 OBJS += ../ui/sidecar_mfx.o
 # 0.5.0: the MORPH page (pi/ui/sidecar_morph.h, core/mod/scene.h), its view built on core 3 by morph_pi.cpp
 OBJS += ../ui/sidecar_morph.o
+# 0.5.0: the LOOP page (pi/ui/sidecar_loop.h, core/loop/loop.h), its view built on core 3 by loopview_pi.cpp
+OBJS += ../ui/sidecar_loop.o
 # 0.5.0: the XY page (pi/ui/sidecar_xy.h, core/mod/xypad.h), its view built on core 3 by xypad_pi.cpp
 OBJS += ../ui/sidecar_xy.o
 # the REC page (pi/ui/sidecar_rec.h, the Overbridge recorder), filled by rec_pi.cpp
@@ -108,7 +110,7 @@ CORE_SRC += $(CORE)/msamp/cardq.cpp $(wildcard $(CORE)/samp/*.cpp)   # the card 
 # messages, the slot map), hosted: user machines on the Pi (core/user/um.cpp, docs/user-machines-pi.md)
 RMPSRC := ../../teensy/libraries/RytmPlugins/src
 RMP_SRC := rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp
-PORT_SRC := neon_bench.cpp loop_keep.cpp output.cpp a4_in.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp spectrum_pi.cpp masterfx_pi.cpp fsweb.cpp update.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp seditview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp morph_pi.cpp xypad_pi.cpp \
+PORT_SRC := neon_bench.cpp loop_keep.cpp output.cpp a4_in.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp spectrum_pi.cpp masterfx_pi.cpp fsweb.cpp update.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp seditview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp morph_pi.cpp loopview_pi.cpp xypad_pi.cpp \
             scope_pi.cpp status_pi.cpp stor_vol.cpp stor_bench.cpp lib_pi.cpp
 # the SEQ page's engine side (seqed_pi.cpp, ../ui/seq_touch.cpp): only with the sequencer's engine in the tree
 # (core/seq/seq.cpp, the seq-mvp branch); without it the page says there is no sequencer
