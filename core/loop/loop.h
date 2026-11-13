@@ -1,0 +1,111 @@
+// core/loop/loop.h - the master looper (spec-050 section 3): the Rytm's MAIN L / R is kept in a ring, always (loop_ring.h,
+// written by core 0 in the Overbridge IN completion); one press (grab) takes the last 1/2 .. 16 bars ending on the last
+// bar line and plays them as a loop on the Rytm's MAIN after its FX (the POST return), from the next bar line. The ring
+// never stops: a loop plays with the live Rytm under it, the ring hears both, so a grab while a loop plays is a resample.
+// No overdub. Up to 8 grabs stay in a per-board store, the oldest dropped; KEEP writes one to the card as a take.
+//
+// Threads: the state machine, the grabs and the store are core 3's (tick, from the control loop). Core 0 has the two
+// audio hooks, in_block (the IN completion: the ring) and out_mix (FillOut: the loop's frames onto MAIN, after the master
+// FX); core 3 hands core 0 what to play through one published command (a generation counter; core 0 takes it at the next
+// block). Times are the host's render frames (seq::frames()); a bar's time is seq::beat_map's, `lat` early.
+#pragma once
+#include <stdint.h>
+
+#include "loop/loop_ring.h"
+
+namespace core {
+namespace loop {
+
+enum Len { kHalf = 1, k1 = 2, k2 = 4, k4 = 8, k8 = 16, k16 = 32 };   // a grab's length in half bars
+enum Err { kOk = 0, kErrStopped = 1, kErrTooLong, kErrNoRoom, kErrOff, kErrBadArg };
+enum State { kRing = 0, kWait, kPlaying, kFading };   // no loop / its start is ahead / playing / stop scheduled or fading
+constexpr int kMaxGrabs = 8;
+constexpr uint32_t kPieceBytes = 256 * 1024;   // one tick's copy at most
+constexpr int kSeam = 64;                      // frames: the loop seam, a swap, a start
+constexpr int kCutFrames = 480;                // 10 ms
+constexpr int kPre = kSeam;                    // frames kept before a grab's first (the seam's other side)
+
+struct Grab {
+  uint32_t id;       // counts up, never reused
+  uint32_t frames;   // the loop's length (pre not counted)
+  uint8_t half_bars;
+  float bpm;
+  uint64_t start;    // the host render frame of its first sample's source (arrival frame of the grab's start)
+  uint8_t kept, gap; // KEEP wrote it; the ring had a gap in it
+  uint8_t copied;    // the copy into the store is done (until then it plays from the ring)
+  int32_t* pcm;      // the store's copy (frame 0; kPre frames before it), null while not copied
+};
+
+// the time and the Rytm as the looper sees them (the sequencer's, by default; tests put theirs in)
+struct Env {
+  bool (*beat_map)(double* origin, double* per16, int* lat) = nullptr;
+  uint64_t (*frames)() = nullptr;
+  uint16_t (*muted)() = nullptr;
+  bool (*clock)(float* ticks, float* tick_us, bool* run) = nullptr;   // the MIDI clock's, the fallback for the bars
+};
+void set_env(const Env* e);                 // null: the defaults
+void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes);   // null ring: the looper is off
+void reset();                               // tests: everything stopped, the settings default
+bool on();
+
+// ---- the controls (core 3)
+int grab(int half_bars);                    // Err; a grab while a loop plays is a resample (swapped in at the next bar line)
+bool play(int g);                           // grab g (0 newest) from the next bar line; false: none, or no bar lines
+void stop(bool cut, bool now);              // cut 10 ms / the FADE time; at the next bar line unless now
+bool keep(int g, char* msg, int cap);       // ask core 0 to write grab g as a take (the Pi: loop_pi); false: none / off
+void tick(uint32_t us);                     // the control loop's every pass
+const char* err_text(int err, int half_bars, char* b, int cap);   // "PLAY FIRST", "16 BARS NEEDS 47 BPM", "NO ROOM"
+
+int grabs();
+const Grab* grab_at(int i);                 // 0 newest
+State state();
+int playing();                              // the grab playing (0 newest), -1 none / the loop is gone from the store
+bool pending();                             // a grab is waiting for its bar's audio
+int ring_seconds();                         // how much the ring holds now (s, up to its size)
+bool bar_position(float* bar, float* of_bars);   // the loop's position in bars and its length in bars, false: none
+
+// ---- settings
+enum { kFadeQuarter = 0, kFadeHalf, kFade1, kFade2, kFade4, kFades };   // FADE: 1/4 .. 4 bars
+void set_bal(int v);                        // 0..127 (64: both full)
+void set_lev(int v);                        // 0..127 (100 unity)
+void set_fade(int f);
+void set_auto_mute(bool on);
+void set_live_via(int perf);                // 0 off, 1..12
+int bal();
+int lev();
+int fade();
+bool auto_mute();
+int live_via();
+// the modulation layer's writers (LOOP:BAL, LOOP:LEV): a value replaces the knob until released (-1)
+void set_bal_mod(int v);
+void set_lev_mod(int v);
+int bal_eff();
+int lev_eff();
+float own_gain(int bal);                    // the Sidecar's own output at BAL (spec 3.8)
+float loop_gain(int bal);                   // the loop's
+int live_perf(int bal);                     // LIVE VIA's macro value: 127 down to 0 over BAL 64..127
+
+// ---- the audio hooks (core 0)
+void in_block(const int32_t* lr, int n, uint64_t arrival, unsigned lost);   // MAIN L / R of an IN block (interleaved)
+void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // the loop onto F[f][0..1], the rest by BAL
+bool wants_in();                            // the ring exists
+bool wants_out();                           // a loop is on its way or plays (out_mix does something)
+
+// ---- POST latency calibration (loop=cal): the click on POST 0 / 1, found in MAIN IN
+void cal_start();
+bool cal_wanted();                          // a click is on its way (the OUT hook renders it, the IN hook listens)
+int post_lat();                             // frames beyond the voice path's latency (0 default)
+void set_post_lat(int f);
+
+// ---- the console and /status
+bool command(const char* p, char* out, int cap);   // "loop", "loop=grab:L", ... (spec 3.12)
+int json(char* out, int cap);               // "\"loop\":{...}"
+struct Stats { uint32_t grabs, refused, resamples, copies, abandoned, dropped, cal_ok; uint32_t worst_copy_bytes; };
+const Stats& stats();
+// the keep request core 0 serves: the grab's frames (the store's copy), -1 none. loop_pi writes it in pieces.
+int keep_request(const Grab** g);           // the grab asked to be kept (0 newest index at the time), else -1
+void keep_done(uint32_t id);                // core 0 wrote it: its kept flag, the take's name
+void keep_text(const char* name);
+
+}  // namespace loop
+}  // namespace core

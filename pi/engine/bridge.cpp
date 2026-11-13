@@ -11,6 +11,7 @@
 #include "mod/rytm_param.h"
 #include "mod/learn.h"
 #include "mod/scene.h"
+#include "loop/loop.h"
 #include "mod/xypad.h"
 #include "device/device.h"
 #include "fx/insert.h"
@@ -176,6 +177,7 @@ void tick() {
     core::idle_note("remote", us > w ? us - w : 0);
   }
   timed_tick("mod", [] { core::mod::tick(core::now_us()); });        // the modulation layer (core/mod/mod.h): the LFOs, once a millisecond at most
+  timed_tick("loop", [] { core::loop::tick(core::now_us()); });      // 0.5.0: the master looper's grabs, copies and state (core/loop/loop.h)
   timed_tick("device", [] { core::device::tick(core::now_us()); });  // a box's envelopes (core/device/strip.h): the Rytm has none
   timed_tick("poly", [] { core::poly::tick(core::now_ms()); });      // poly FM: a held trig's time, a live chord's window (core/poly.h)
   timed_tick("seq", [] { core::seq::tick(core::now_ms()); });        // the Sidecar sequencer: its LEDs, its 2E (core/seq/seq.h)

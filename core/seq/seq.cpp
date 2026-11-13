@@ -2865,6 +2865,7 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 CORE_COLD void set_clock_tracks(int user, uint16_t m) {
   if (user >= 0 && user < kClockUsers) clock_users[user] = (uint16_t)(m & 0xFFF);
 }
+CORE_COLD uint16_t muted() { return mutes; }
 CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins = (uint16_t)(pins & 0xFFF), arp_clock = clock; }
 CORE_COLD double tempo() { return bpm; }
 CORE_COLD bool beat_map(double* origin, double* per16, int* lat) {
