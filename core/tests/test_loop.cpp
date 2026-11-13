@@ -1,6 +1,7 @@
 // core/tests/test_loop.cpp - the master looper (core/loop, spec-050 section 3): the MAIN ring and its frame map (Task 19),
 // the grabs (20), playback (21), resample / stop / auto-mute / LIVE VIA (22), calibration and console (25).
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -80,7 +81,8 @@ static double g_origin = 10000, g_per16 = 6000;   // 120 BPM
 static int g_lat = 384;
 static bool g_beats = true;
 static uint16_t g_muted = 0;
-static uint64_t g_fed = 0;                      // ring indices written so far
+static uint64_t g_fed = 0;
+static int32_t (*g_sig)(uint64_t) = nullptr;   // the source's L at ring index k (null: the ramp k + 1)                      // ring indices written so far
 static uint32_t g_us = 1000000;
 static std::vector<uint8_t> g_store;
 static int32_t* g_ring = nullptr;
@@ -97,7 +99,7 @@ static double line(double k, double g = 0) { return g_origin + g_lat + k * (g ? 
 static void feed() {   // the ring up to host frame g_now: block b's last frame (index k + 6) arrives at k + 6 + kD
   while ((int64_t)(g_fed + 6 + kD) <= (int64_t)g_now) {
     int32_t b[14];
-    for (int i = 0; i < 7; ++i) b[2 * i] = (int32_t)(g_fed + i + 1), b[2 * i + 1] = -(int32_t)(g_fed + i + 1);
+    for (int i = 0; i < 7; ++i) b[2 * i] = g_sig ? g_sig(g_fed + i) : (int32_t)(g_fed + i + 1), b[2 * i + 1] = -b[2 * i];
     loop::in_block(b, 7, g_fed + 6 + kD, 0);
     g_fed += 7;
   }
@@ -110,7 +112,7 @@ static void fresh(uint64_t store_bytes = 48u << 20) {
   g_store.assign(store_bytes, 0);
   loop::init(g_ring, kRingFrames, g_store.data(), store_bytes);
   loop::reset();
-  g_now = 0, g_fed = 0, g_us = 1000000, g_origin = 10000, g_per16 = 6000, g_lat = 384, g_beats = true, g_muted = 0;
+  g_sig = nullptr, g_now = 0, g_fed = 0, g_us = 1000000, g_origin = 10000, g_per16 = 6000, g_lat = 384, g_beats = true, g_muted = 0;
 }
 static void to(uint64_t h) {   // the clock to host frame h, a tick a ms on the way
   while (g_now + 48 <= h) {
@@ -307,10 +309,108 @@ static void test_store() {
   printf("  store: drops, budget, pieces, ring-until-copied, overtaken ok\n");
 }
 
+// ---- Task 21: playback
+static int32_t sine997(uint64_t k) { return (int32_t)(1e9 * sin(2 * M_PI * 997.0 * (double)k / 48000.0)); }
+static void started(int hb = loop::k1, uint32_t* len = nullptr) {   // a grab pressed a third into bar 40, playing from bar 41's line
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(hb) == loop::kOk);
+  run_ms(60);
+  if (len) *len = loop::grab_at(0)->frames;
+  to((uint64_t)(g_origin + 41 * bar()) + 500);
+}
+static void test_playback() {
+  // seam_crossfaded: a 997 Hz sine does not fit the loop's length; across the end / start the step stays within the
+  // signal's own slope (1.3e8 a frame) plus the crossfade's (2A / 64 = 3.1e7), where a plain wrap would jump up to 2e9
+  fresh();
+  g_sig = sine997;
+  uint32_t len;
+  started(loop::k1, &len);
+  uint64_t s0 = (uint64_t)(g_origin + 41 * bar());
+  double worst = 0;
+  int32_t prev = played_at(s0 + len - 200);
+  for (uint64_t h = s0 + len - 199; h < s0 + len + 200; ++h) {
+    int32_t x = played_at(h);
+    worst = fmax(worst, fabs((double)x - prev));
+    prev = x;
+  }
+  CHECK(worst < 1.7e8);
+  // (the loop's own frames away from the seam are the source's)
+  CHECK(std::abs(played_at(s0 + 3000) - loop::grab_at(0)->pcm[2 * 3000]) <= 128);   // (float: 24 bits of mantissa)
+
+  // lev_unity_at_100: LEV 100 is the source as it is; 50 half; 0 nothing; 127 1.27
+  fresh();
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  const int32_t* pcm = loop::grab_at(0)->pcm;
+  loop::set_lev(100);
+  CHECK(played_at(s0 + 5000) == pcm[2 * 5000]);
+  loop::set_lev(50);
+  run_ms(20);   // (a level change slews over 10 ms)
+  CHECK(std::abs(played_at(s0 + 30000) - pcm[2 * 30000] / 2) <= 2);
+  loop::set_lev(0);
+  run_ms(20);
+  CHECK(played_at(s0 + 40000) == 0);
+  loop::set_lev(127);
+  run_ms(20);
+  CHECK(std::abs((double)played_at(s0 + 50000) - 1.27 * pcm[2 * 50000]) < 2000);
+
+  // bal_curve (spec 3.8): 0: loop 0, own 1; 64: both 1; 127: loop 1, own 0; equal power at 32 / 96
+  CHECK(fabs(loop::loop_gain(0)) < 1e-6 && fabs(loop::own_gain(0) - 1) < 1e-6);
+  CHECK(fabs(loop::loop_gain(64) - 1) < 1e-6 && fabs(loop::own_gain(64) - 1) < 1e-6);
+  CHECK(fabs(loop::loop_gain(127) - 1) < 1e-6 && fabs(loop::own_gain(127)) < 1e-6);
+  CHECK(fabs(loop::loop_gain(32) * loop::loop_gain(32) + 0.5 - 1) < 0.01 && fabs(loop::own_gain(32) - 1) < 1e-6);   // (the loop: 1/2 power, own full)
+  CHECK(fabs(loop::own_gain(96) * loop::own_gain(96) - 0.5) < 0.03 && fabs(loop::loop_gain(96) - 1) < 1e-6);
+  // ... and in the mix: the Sidecar's own output (every channel of F) falls with BAL while the loop plays
+  fresh();
+  g_sig = nullptr;
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  pcm = loop::grab_at(0)->pcm;
+  loop::set_bal(127);
+  run_ms(30);
+  int32_t F[12][12];
+  for (auto& r : F)
+    for (int& c : r) c = 100000000;
+  loop::out_mix(F, 12, s0 + 60000);
+  CHECK(F[11][5] == 0 && F[11][2] == 0);                              // the own channels silent at BAL 127
+  CHECK(F[11][0] == pcm[2 * (60000 + 11)] && F[11][1] == pcm[2 * (60000 + 11) + 1]);   // the loop alone (its own was 0)
+  loop::set_bal(0);
+  run_ms(30);
+  for (auto& r : F)
+    for (int& c : r) c = 100000000;
+  loop::out_mix(F, 12, s0 + 61000);
+  CHECK(F[11][5] == 100000000 && F[11][0] == 100000000);              // BAL 0: no loop
+
+  // cut_fades_10ms: a CUT at once fades the loop over 480 frames, then nothing; the state goes back to the ring
+  fresh();
+  g_sig = nullptr;
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  pcm = loop::grab_at(0)->pcm;
+  uint64_t t = g_now;
+  loop::stop(true, true);
+  CHECK(loop::state() == loop::kFading);
+  uint64_t at = t + 96;   // the margin the audio thread needs
+  CHECK(played_at(at - 1) == pcm[2 * (at - 1 - s0)]);
+  double prevv = 1;
+  for (int i = 0; i < 480; i += 40) {
+    int32_t x = played_at(at + i);
+    double gain = (double)x / pcm[2 * (at + i - s0)];
+    CHECK(gain <= prevv + 1e-6 && gain > -1e-6);
+    prevv = gain;
+  }
+  CHECK(played_at(at + 480) == 0 && played_at(at + 2000) == 0);
+  to(at + 600);
+  CHECK(loop::state() == loop::kRing);
+  printf("  playback: seam, LEV, BAL, cut ok\n");
+}
+
+
 int main() {
   test_ring();
   test_grabs();
   test_store();
+  test_playback();
   printf("test_loop: OK\n");
   return 0;
 }

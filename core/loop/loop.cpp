@@ -56,6 +56,17 @@ struct Copy {
 } cp_;
 int need_bpm_ = 47;
 
+// a level that moves linearly over kRampFrames from where it was when core 3 set it (core 0 evaluates it at its frame)
+constexpr int kRampFrames = 480;
+struct Ramp {
+  float from = 1, to = 1;
+  uint64_t at = 0;
+  float at_h(uint64_t h) const {
+    if (h <= at) return from;
+    uint64_t d = h - at;
+    return d >= (uint64_t)kRampFrames ? to : from + (to - from) * (float)d / (float)kRampFrames;
+  }
+};
 // what core 0 plays: a snapshot, rewritten whole (core 3), taken under a seqlock (core 0)
 struct Snap {
   uint32_t loop_id;     // a new id is a new loop (a swap in at `start`, a crossfade when `replace`)
@@ -66,6 +77,7 @@ struct Snap {
   uint64_t start;       // the host render frame of sample 0
   uint64_t stop_at;     // 0: none
   uint32_t stop_len;    // frames of the fade
+  Ramp own, lp;         // the Sidecar's own output's gain (BAL), the loop's (LEV x BAL)
 };
 Snap snap_;             // core 3's working copy
 Snap pub_;
@@ -122,6 +134,20 @@ CORE_COLD bool get_map(Map* m, uint64_t now) {
 }
 // when bar line / grid line k's audio arrives in the ring
 CORE_COLD double arrival(const Map& m, double k, double grid) { return m.origin + m.lat + k * grid; }
+
+// ------------------------------------------------------------------------------------------------ the settings
+int bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = -1, mod_lev_ = -1;
+bool auto_mute_ = false;
+CORE_COLD int bal_now() { return mod_bal_ >= 0 ? mod_bal_ : bal_; }
+CORE_COLD int lev_now() { return mod_lev_ >= 0 ? mod_lev_ : lev_; }
+// the levels as they play: core 3 moves each from where it is to the new value over 10 ms
+CORE_COLD void retarget() {
+  uint64_t now = frames_now();
+  float og = own_gain(bal_now()), lg = loop_gain(bal_now()) * (float)lev_now() / 100.0f;
+  snap_.own = {snap_.own.at_h(now), og, now};
+  snap_.lp = {snap_.lp.at_h(now), lg, now};
+  if (on_) publish();
+}
 
 // ------------------------------------------------------------------------------------------------ the store
 CORE_COLD bool protected_id(uint32_t id) { return lp_.on && lp_.grab_id == id; }
@@ -318,6 +344,7 @@ CORE_COLD void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_
 CORE_COLD void reset() {
   ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo();
   snap_ = Snap();
+  bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
   if (on_) publish();
   if (ring_.ready()) ring_.init(ring_.data(), ring_.capacity());
 }
@@ -388,6 +415,7 @@ CORE_COLD void tick(uint32_t us) {
   uint64_t now = frames_now();
   pump_pending(now);
   pump_copy();
+  if (lp_.on && lp_.stop_at && now >= lp_.stop_end) lp_.on = false;   // faded out: the ring alone
 }
 
 CORE_COLD int grabs() { return ng_; }
@@ -400,6 +428,55 @@ CORE_COLD State state() {
   uint64_t now = frames_now();
   if (lp_.stop_at) return now >= lp_.stop_end ? kRing : kFading;
   return now < lp_.start ? kWait : kPlaying;
+}
+
+// ------------------------------------------------------------------------------------------------ settings, levels, stop
+CORE_COLD int clamp127(int v) { return v < 0 ? 0 : v > 127 ? 127 : v; }
+CORE_COLD void set_bal(int v) { bal_ = clamp127(v), retarget(); }
+CORE_COLD void set_lev(int v) { lev_ = clamp127(v), retarget(); }
+CORE_COLD void set_fade(int f) { fade_ = f < 0 ? 0 : f >= kFades ? kFades - 1 : f; }
+CORE_COLD void set_auto_mute(bool on) { auto_mute_ = on; }
+CORE_COLD void set_live_via(int perf) { live_via_ = perf < 0 ? 0 : perf > 12 ? 12 : perf; }
+CORE_COLD int bal() { return bal_; }
+CORE_COLD int lev() { return lev_; }
+CORE_COLD int fade() { return fade_; }
+CORE_COLD bool auto_mute() { return auto_mute_; }
+CORE_COLD int live_via() { return live_via_; }
+CORE_COLD void set_bal_mod(int v) { mod_bal_ = v < 0 ? -1 : clamp127(v), retarget(); }
+CORE_COLD void set_lev_mod(int v) { mod_lev_ = v < 0 ? -1 : clamp127(v), retarget(); }
+CORE_COLD int bal_eff() { return bal_now(); }
+CORE_COLD int lev_eff() { return lev_now(); }
+
+// spec 3.8: 0..64 the loop rises from 0 to full (equal power: sin), 64..127 the Sidecar's own output falls from full
+// to 0 (cos); the other side full
+CORE_COLD float loop_gain(int b) { return b >= 64 ? 1.0f : sinf(1.5707963f * (float)b / 64.0f); }
+CORE_COLD float own_gain(int b) { return b <= 64 ? 1.0f : b >= 127 ? 0.0f : cosf(1.5707963f * (float)(b - 64) / 63.0f); }
+CORE_COLD int live_perf(int b) { return b <= 64 ? 127 : 127 - (b - 64) * 127 / 63; }
+
+// the FADE setting in bars: 1/4 1/2 1 2 4
+CORE_COLD double fade_bars() {
+  static const double kB[kFades] = {0.25, 0.5, 1, 2, 4};
+  return kB[fade_];
+}
+
+CORE_COLD void stop(bool cut, bool now) {
+  if (!on_ || !lp_.on) return;
+  uint64_t t = frames_now();
+  Map m;
+  bool have = get_map(&m, t);
+  uint64_t at = t + 96;   // (far enough ahead for the audio thread to take it)
+  if (!now && have) at = next_line(m, 16.0 * m.per16, t);
+  uint32_t len = cut || !have ? (uint32_t)kCutFrames : (uint32_t)(fade_bars() * 16.0 * m.per16 + 0.5);
+  if (len < (uint32_t)kCutFrames) len = kCutFrames;
+  if (at <= lp_.start) {   // the loop has not started: it never will
+    snap_.active = false;
+    publish();
+    lp_.on = false;
+    return;
+  }
+  snap_.stop_at = at, snap_.stop_len = len;
+  lp_.stop_at = at, lp_.stop_end = at + len;
+  publish();
 }
 
 // ------------------------------------------------------------------------------------------------ core 0
@@ -420,6 +497,7 @@ struct Voice {
   bool fade_in;
 };
 Voice cur_, old_;
+Ramp ramp_own_, ramp_loop_;
 uint32_t seen_seq_ = 0;
 
 inline void vframe(const Voice& v, int64_t k, float* l, float* r) {
@@ -465,6 +543,7 @@ void take_snapshot(uint64_t h0) {
   __atomic_thread_fence(__ATOMIC_ACQUIRE);
   if (__atomic_load_n(&pub_seq_, __ATOMIC_RELAXED) != s0) return;   // rewritten meanwhile: the next block
   seen_seq_ = s0;
+  ramp_own_ = s.own, ramp_loop_ = s.lp;
   if (!s.active) {   // gone (an abandoned copy): a cut from here
     if (cur_.active && !(cur_.stop_at && cur_.stop_at <= h0)) cur_.stop_at = h0, cur_.stop_len = kCutFrames;
     return;
@@ -492,10 +571,8 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
     float l = 0, r = 0, a, b;
     bool any = false;
     if (vat(cur_, h, &a, &b)) {
-      float w = 1.0f;
-      if (h - cur_.start < (uint64_t)kSeam) w = (float)(h - cur_.start + 1) / kSeam;   // a start fades in; a swap crossfades
-      if (cur_.fade_in || h - cur_.start >= (uint64_t)kSeam || !old_.active) l += a * w, r += b * w;
-      else l += a * w, r += b * w;
+      float w = h - cur_.start < (uint64_t)kSeam ? (float)(h - cur_.start + 1) / kSeam : 1.0f;   // a start fades in; a swap crossfades
+      l += a * w, r += b * w;
       any = true;
     }
     if (old_.active) {
@@ -509,7 +586,20 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       }
     }
     if (!any) continue;
-    F[f][0] = add(F[f][0], l), F[f][1] = add(F[f][1], r);
+    // BAL: the Sidecar's own output (every channel of F so far) falls toward `own` as the loop is heard (spec 3.8)
+    float og = ramp_own_.at_h(h);
+    if (og < 0.99999f) {
+      float e = h >= cur_.start ? (float)(h - cur_.start + 1) / kRampFrames : 0.0f;
+      if (e > 1.0f) e = 1.0f;
+      if (cur_.stop_at && h >= cur_.stop_at) {
+        float d = (float)(h - cur_.stop_at + 1) / (float)cur_.stop_len;
+        e *= d >= 1.0f ? 0.0f : 1.0f - d;
+      }
+      float m = 1.0f + (og - 1.0f) * e;
+      for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
+    }
+    float lg = ramp_loop_.at_h(h);
+    F[f][0] = add(F[f][0], l * lg), F[f][1] = add(F[f][1], r * lg);
   }
   // a stopped voice that has faded out is gone (its stop's end passed)
   if (cur_.active && cur_.stop_at && render_frame + (uint64_t)n >= cur_.stop_at + cur_.stop_len) cur_.active = false;
