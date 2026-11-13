@@ -5,7 +5,9 @@
 #include <math.h>
 #include <string.h>
 
+#include "fmt/fmt.h"
 #include "lfo.h"
+#include "mod/mod.h"
 #include "mod/rytm_out.h"
 #include "platform.h"
 #include "seq/seq.h"
@@ -156,11 +158,26 @@ struct AutoMute {
   bool on;
   uint16_t set, seen;
 } am_;
+bool dirty_ = false;     // a setting changed (loop.txt)
+int post_lat_ = 0;
+fmt::KvKeep keep_lines_;   // the lines of loop.txt this build does not know, written back as they were
+char msg_[40];
+uint32_t msg_gen_ = 0;
+CORE_COLD void say(const char* t) { sniprintf(msg_, sizeof msg_, "%s", t), ++msg_gen_; }
+// KEEP: 0 none, 1 asked, 2 core 0 is writing it
+uint8_t keep_state_ = 0;
+uint32_t keep_id_ = 0;
+// calibration (spec 3.4): kCalN clicks kCalGap frames apart from kCalAt; core 0 renders them and listens
+constexpr int kCalN = 3, kCalGap = 9600, kCalClick = 24, kCalWindow = 4800;
+uint64_t cal_at_ = 0;      // the first click's render frame (0: none)
+int32_t cal_found_[kCalN];   // the round trip found for each click (frames), -1 not yet
+int32_t cal_floor_ = 0;
+uint8_t cal_state_ = 0;    // 0 idle, 1 clicks on their way
 bool via_on_ = false;   // LIVE VIA has set a macro that is not back at full yet
 int via_macro_ = 0;
 
 // ------------------------------------------------------------------------------------------------ the store
-CORE_COLD bool protected_id(uint32_t id) { return lp_.on && lp_.grab_id == id; }
+CORE_COLD bool protected_id(uint32_t id) { return (lp_.on && lp_.grab_id == id) || (keep_state_ && keep_id_ == id); }
 CORE_COLD void drop_at(int i) {
   if (cp_.on && cp_.id == g_[i].id) cp_.on = false;
   for (int j = i; j + 1 < ng_; ++j) g_[j] = g_[j + 1], g_off_[j] = g_off_[j + 1], g_k0_[j] = g_k0_[j + 1];
@@ -355,6 +372,7 @@ CORE_COLD void reset() {
   ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
   snap_ = Snap();
   bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
+  dirty_ = false, post_lat_ = 0, keep_state_ = 0, cal_state_ = 0, cal_at_ = 0, msg_[0] = 0, msg_gen_ = 0, keep_lines_.n = 0;
   if (on_) publish();
   if (ring_.ready()) ring_.init(ring_.data(), ring_.capacity());
 }
@@ -446,16 +464,31 @@ CORE_COLD void live_and_mutes(uint64_t now) {
   }
 }
 
+namespace {
+CORE_COLD void cal_tick(uint64_t now);
+}
 CORE_COLD void tick(uint32_t us) {
   (void)us;
   if (!on_) return;
+  seq::set_clock_tracks(seq::kClockLoop, 1);   // (seq::init in engine_begin resets the users: asked again each pass, a store)
   uint64_t now = frames_now();
   pump_pending(now);
   pump_copy();
   if (lp_.on && lp_.stop_at && now >= lp_.stop_end) lp_.on = false;   // faded out: the ring alone
   live_and_mutes(now);
+  cal_tick(now);
 }
 
+CORE_COLD bool play(int g) {
+  if (!on_ || g < 0 || g >= ng_) return false;
+  uint64_t now = frames_now();
+  Map m;
+  if (!get_map(&m, now)) return false;
+  double grid = g_[g].half_bars == kHalf ? 8 * m.per16 : 16 * m.per16;
+  bool replace = lp_.on && (lp_.stop_at == 0 || now < lp_.stop_end);
+  make_loop(g, next_line(m, grid, now), replace);
+  return true;
+}
 CORE_COLD int playing() {
   if (!lp_.on) return -1;
   int i = find_id(lp_.grab_id);
@@ -490,11 +523,11 @@ CORE_COLD State state() {
 
 // ------------------------------------------------------------------------------------------------ settings, levels, stop
 CORE_COLD int clamp127(int v) { return v < 0 ? 0 : v > 127 ? 127 : v; }
-CORE_COLD void set_bal(int v) { bal_ = clamp127(v), retarget(); }
-CORE_COLD void set_lev(int v) { lev_ = clamp127(v), retarget(); }
-CORE_COLD void set_fade(int f) { fade_ = f < 0 ? 0 : f >= kFades ? kFades - 1 : f; }
-CORE_COLD void set_auto_mute(bool on) { auto_mute_ = on; }
-CORE_COLD void set_live_via(int perf) { live_via_ = perf < 0 ? 0 : perf > 12 ? 12 : perf; }
+CORE_COLD void set_bal(int v) { bal_ = clamp127(v), dirty_ = true, retarget(); }
+CORE_COLD void set_lev(int v) { lev_ = clamp127(v), dirty_ = true, retarget(); }
+CORE_COLD void set_fade(int f) { fade_ = f < 0 ? 0 : f >= kFades ? kFades - 1 : f, dirty_ = true; }
+CORE_COLD void set_auto_mute(bool on) { auto_mute_ = on, dirty_ = true; }
+CORE_COLD void set_live_via(int perf) { live_via_ = perf < 0 ? 0 : perf > 12 ? 12 : perf, dirty_ = true; }
 CORE_COLD int bal() { return bal_; }
 CORE_COLD int lev() { return lev_; }
 CORE_COLD int fade() { return fade_; }
@@ -537,9 +570,339 @@ CORE_COLD void stop(bool cut, bool now) {
   publish();
 }
 
+// ------------------------------------------------------------------------------------------------ calibration
+CORE_COLD void cal_start() {
+  if (!on_) return;
+  for (int i = 0; i < kCalN; ++i) cal_found_[i] = -1;
+  cal_floor_ = 0;
+  cal_state_ = 1;
+  __atomic_store_n(&cal_at_, frames_now() + 14400, __ATOMIC_RELEASE);   // 300 ms: the floor is measured first
+}
+CORE_COLD bool cal_wanted() { return cal_state_ == 1; }
+CORE_COLD bool cal_info(uint64_t* first, int* n, uint32_t* gap) {
+  uint64_t a = __atomic_load_n(&cal_at_, __ATOMIC_ACQUIRE);
+  if (!a) return false;
+  *first = a, *n = kCalN, *gap = kCalGap;
+  return true;
+}
+CORE_COLD int post_lat() { return post_lat_; }
+CORE_COLD void set_post_lat(int f) { post_lat_ = f, dirty_ = true; }
+namespace {
+CORE_COLD void cal_tick(uint64_t now) {
+  if (cal_state_ != 1) return;
+  uint64_t a = __atomic_load_n(&cal_at_, __ATOMIC_ACQUIRE);
+  if (now < a + (uint64_t)kCalN * kCalGap + kCalWindow) return;
+  int v[kCalN], n = 0;
+  for (int i = 0; i < kCalN; ++i) {
+    int32_t f = __atomic_load_n(&cal_found_[i], __ATOMIC_ACQUIRE);
+    if (f >= 0) v[n++] = f;
+  }
+  cal_state_ = 0;
+  __atomic_store_n(&cal_at_, 0, __ATOMIC_RELEASE);
+  if (n < 2) {
+    ++stats_.cal_fail;
+    say("CAL: NO CLICK HEARD");
+    return;
+  }
+  for (int i = 1; i < n; ++i)   // the median
+    for (int j = i; j > 0 && v[j] < v[j - 1]; --j) { int t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+  double o, p16;
+  int lat = 0;
+  beat_map(&o, &p16, &lat);
+  post_lat_ = v[n / 2] - lat;
+  dirty_ = true;
+  ++stats_.cal_ok;
+  char b[40];
+  sniprintf(b, sizeof b, "POST LAT %d", post_lat_);
+  say(b);
+}
+}  // namespace
+
+// ------------------------------------------------------------------------------------------------ KEEP
+CORE_COLD bool keep(int g, char* msg, int cap) {
+  const Grab* gr = grab_at(g);
+  if (!on_ || !gr) {
+    sniprintf(msg, cap, "NO GRAB");
+    return false;
+  }
+  if (gr->kept) {
+    sniprintf(msg, cap, "ALREADY KEPT");
+    return false;
+  }
+  if (!gr->copied) {
+    sniprintf(msg, cap, "COPYING: WAIT");
+    return false;
+  }
+  if (keep_state_) {
+    sniprintf(msg, cap, "KEEP BUSY");
+    return false;
+  }
+  keep_id_ = gr->id, keep_state_ = 1;
+  sniprintf(msg, cap, "KEEPING");
+  return true;
+}
+CORE_COLD bool keep_take(KeepJob* j) {   // (core 0)
+  if (__atomic_load_n(&keep_state_, __ATOMIC_ACQUIRE) != 1) return false;
+  int i = find_id(keep_id_);
+  if (i < 0 || !g_[i].copied) {
+    keep_state_ = 0;
+    return false;
+  }
+  *j = KeepJob{g_[i].id, g_[i].frames, g_[i].pcm, g_[i].bpm, g_[i].half_bars, g_[i].start};
+  __atomic_store_n(&keep_state_, 2, __ATOMIC_RELEASE);
+  return true;
+}
+CORE_COLD void keep_finished(uint32_t id, bool ok, const char* name) {
+  int i = find_id(id);
+  if (ok && i >= 0) g_[i].kept = 1, ++stats_.kept;
+  char b[40];
+  if (ok) sniprintf(b, sizeof b, "KEPT %s", name ? name : "");
+  else sniprintf(b, sizeof b, "KEEP FAILED");
+  say(b);
+  __atomic_store_n(&keep_state_, 0, __ATOMIC_RELEASE);
+}
+
+// ------------------------------------------------------------------------------------------------ the card (loop.txt)
+namespace {
+const char kFile[] = "/.rytm/loop.txt";
+}
+CORE_COLD bool dirty() { return dirty_; }
+CORE_COLD void load() {
+  keep_lines_.n = 0;
+  fmt::post_wait(kFile);
+  fmt::recover(kFile);
+  File f;
+  if (!f.open(kFile, kRead)) return;
+  static char b[512];
+  memset(b, 0, sizeof b);
+  int got = f.read(b, sizeof b - 1);
+  f.close();
+  static const char* const kKnown[] = {"bal", "lev", "fade", "mute", "live", "postlat", nullptr};
+  if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &keep_lines_);
+  auto num = [&](const char* key, int* out) {   // parsed by hand: the Pi's bare-metal build has no strtol
+    size_t kl = strlen(key);
+    for (const char* l = b; l && *l; l = strchr(l, '\n'), l = l ? l + 1 : nullptr) {
+      if (strncmp(l, key, kl) || l[kl] != '=') continue;
+      const char* e = l + kl + 1;
+      bool neg = *e == '-';
+      if (neg) e++;
+      const char* d = e;
+      int v = 0;
+      while (*e >= '0' && *e <= '9' && v < 100000) v = v * 10 + (*e++ - '0');
+      if (e != d && (*e == 0 || *e == '\n' || *e == '\r')) {
+        *out = neg ? -v : v;
+        return true;
+      }
+    }
+    return false;
+  };
+  int v;
+  if (num("bal", &v)) bal_ = clamp127(v);
+  if (num("lev", &v)) lev_ = clamp127(v);
+  if (num("fade", &v)) fade_ = v < 0 ? 0 : v >= kFades ? kFades - 1 : v;
+  if (num("mute", &v)) auto_mute_ = v != 0;
+  if (num("live", &v)) live_via_ = v < 0 ? 0 : v > 12 ? 12 : v;
+  if (num("postlat", &v)) post_lat_ = v < -9999 ? -9999 : v > 9999 ? 9999 : v;
+  dirty_ = false;
+  retarget();
+}
+CORE_COLD bool save() {
+  if (!dirty_) return false;
+  char* t = fmt::post_begin();
+  if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
+  uint32_t n = (uint32_t)sniprintf(t, 128, CORE_STR("bal=%d\nlev=%d\nfade=%d\nmute=%d\nlive=%d\npostlat=%d\n"), bal_, lev_, fade_,
+                                   auto_mute_ ? 1 : 0, live_via_, post_lat_);
+  n = fmt::kv_append(keep_lines_, t, n, fmt::kPostMax);
+  if (!fmt::post_end(kFile, n)) return false;
+  dirty_ = false;
+  return true;
+}
+
+// ------------------------------------------------------------------------------------------------ console and status
+CORE_COLD const char* last_message() { return msg_; }
+CORE_COLD uint32_t message_gen() { return msg_gen_; }
+CORE_COLD int ring_seconds() {
+  uint64_t w = ring_.written();
+  uint64_t f = w < ring_.capacity() ? w : ring_.capacity();
+  return (int)(f / 48000);
+}
+namespace {
+const char* const kStateName[] = {"ring", "wait", "playing", "fading"};
+const char* const kFadeName[kFades] = {"1/4", "1/2", "1", "2", "4"};
+CORE_COLD const char* len_name(int hb, char* b, int cap) {
+  if (hb == 1) sniprintf(b, cap, "1/2");
+  else sniprintf(b, cap, "%d", hb / 2);
+  return b;
+}
+CORE_COLD int parse_len(const char* s) {   // "0.5" "1/2" "1" .. "16" -> half bars (0 bad)
+  if (!strcmp(s, "0.5") || !strcmp(s, "1/2")) return kHalf;
+  int v = 0;
+  const char* e = s;
+  while (*e >= '0' && *e <= '9') v = v * 10 + (*e++ - '0');
+  if (*e || e == s) return 0;
+  return v == 1 || v == 2 || v == 4 || v == 8 || v == 16 ? v * 2 : 0;
+}
+CORE_COLD bool parse_int(const char* s, int* v) {
+  bool neg = *s == '-';
+  if (neg) ++s;
+  const char* d = s;
+  int x = 0;
+  while (*s >= '0' && *s <= '9' && x < 100000) x = x * 10 + (*s++ - '0');
+  if (s == d || *s) return false;
+  *v = neg ? -x : x;
+  return true;
+}
+}  // namespace
+
+CORE_COLD bool command(const char* p, char* o, int cap) {
+  if (strncmp(p, "loop", 4) != 0 || (p[4] && p[4] != '=')) return false;
+  if (cap <= 0) return true;
+  o[0] = 0;
+  if (!on_) {
+    sniprintf(o, cap, "loop: off (loopram=0, or no RAM for it)");
+    return true;
+  }
+  if (!p[4]) {
+    char gl[96] = "";
+    int n = 0;
+    for (int i = 0; i < ng_ && n < (int)sizeof gl - 16; ++i) {
+      char l[8];
+      n += sniprintf(gl + n, sizeof gl - n, "%s%s%s%s", i ? " " : "", len_name(g_[i].half_bars, l, sizeof l), g_[i].kept ? "k" : "", g_[i].copied ? "" : "~");
+    }
+    float bar, of;
+    char pos[24] = "";
+    if (bar_position(&bar, &of)) sniprintf(pos, sizeof pos, " pos %.2f/%.0f", bar, of);
+    sniprintf(o, cap, "loop: %s, ring %d s, %d grabs [%s]%s, bal %d lev %d fade %s mute %s live %s postlat %d", kStateName[state()],
+              ring_seconds(), ng_, gl, pos, bal_, lev_, kFadeName[fade_], auto_mute_ ? "on" : "off",
+              live_via_ ? "perf" : "off", post_lat_);
+    if (live_via_) {
+      int k = (int)strlen(o);
+      sniprintf(o + k - 3, cap - k + 3, "perf%d postlat %d", live_via_, post_lat_);
+    }
+    return true;
+  }
+  const char* a = p + 5;
+  char b[48];
+  int v;
+  if (!strncmp(a, "grab:", 5)) {
+    int hb = parse_len(a + 5);
+    if (!hb) sniprintf(o, cap, "loop=grab:L (L 0.5 1 2 4 8 16 bars)");
+    else {
+      int e = grab(hb);
+      if (e) say(err_text(e, hb, b, sizeof b)), sniprintf(o, cap, "loop: %s", b);
+      else sniprintf(o, cap, "loop: grab %s bars%s", len_name(hb, b, sizeof b), pend_.on ? " (waiting for the bar line's audio)" : "");
+    }
+  } else if (!strncmp(a, "play:", 5)) {
+    int g;
+    if (!parse_int(a + 5, &g) || !play(g)) say("NO GRAB / PLAY FIRST"), sniprintf(o, cap, "loop: no grab %s, or the transport is stopped", a + 5);
+    else sniprintf(o, cap, "loop: play grab %d from the next bar line", g);
+  } else if (!strncmp(a, "stop", 4)) {
+    bool cut = false, now = false;
+    for (const char* w = a + 4; *w == ':';) {
+      ++w;
+      if (!strncmp(w, "cut", 3)) cut = true, w += 3;
+      else if (!strncmp(w, "fade", 4)) cut = false, w += 4;
+      else if (!strncmp(w, "now", 3)) now = true, w += 3;
+      else break;
+    }
+    stop(cut, now);
+    sniprintf(o, cap, "loop: stop (%s, %s)", cut ? "cut" : "fade", now ? "at once" : "at the next bar line");
+  } else if (!strncmp(a, "keep:", 5)) {
+    int g;
+    if (!parse_int(a + 5, &g)) sniprintf(o, cap, "loop=keep:N (N 0 newest)");
+    else {
+      keep(g, b, sizeof b);
+      say(b);
+      sniprintf(o, cap, "loop: %s", b);
+    }
+  } else if (!strncmp(a, "bal:", 4) || !strncmp(a, "lev:", 4)) {
+    if (!parse_int(a + 4, &v)) sniprintf(o, cap, "loop=%.3s:0..127", a);
+    else {
+      bool isbal = a[0] == 'b';
+      v = clamp127(v);
+      mod::manual(mod::tid(mod::kLoop, 0, isbal ? 0 : 1), (float)v);
+      if (isbal) set_bal(v);
+      else set_lev(v);
+      sniprintf(o, cap, "loop: %s %d", isbal ? "bal" : "lev", v);
+    }
+  } else if (!strncmp(a, "fade:", 5)) {
+    int f = -1;
+    for (int i = 0; i < kFades; ++i)
+      if (!strcmp(a + 5, kFadeName[i])) f = i;
+    if (!strcmp(a + 5, "0.25")) f = 0;
+    if (!strcmp(a + 5, "0.5")) f = 1;
+    if (f < 0) sniprintf(o, cap, "loop=fade:1/4|1/2|1|2|4 (bars)");
+    else set_fade(f), sniprintf(o, cap, "loop: fade %s bars", kFadeName[f]);
+  } else if (!strncmp(a, "mute:", 5)) {
+    if (!strcmp(a + 5, "on") || !strcmp(a + 5, "off")) set_auto_mute(a[5 + 1] == 'n'), sniprintf(o, cap, "loop: auto-mute %s", auto_mute_ ? "on" : "off");
+    else sniprintf(o, cap, "loop=mute:on|off");
+  } else if (!strncmp(a, "live:", 5)) {
+    int m = -1;
+    if (!strcmp(a + 5, "off")) m = 0;
+    else if (!strncmp(a + 5, "perf", 4) && parse_int(a + 9, &v) && v >= 1 && v <= 12) m = v;
+    if (m < 0) sniprintf(o, cap, "loop=live:off|perf1..perf12");
+    else set_live_via(m), sniprintf(o, cap, "loop: live via %s", m ? "PERF" : "off");
+    if (m > 0) sniprintf(o + strlen(o), cap - (int)strlen(o), " %d", m);
+  } else if (!strcmp(a, "cal")) {
+    cal_start();
+    sniprintf(o, cap, "loop: calibrating POST latency (3 clicks on POST 0 / 1, the Rytm playing or not)");
+  } else {
+    sniprintf(o, cap, "loop: grab:L play:N stop[:cut|fade][:now] keep:N bal:V lev:V fade:B mute:on|off live:off|perfN cal");
+  }
+  return true;
+}
+
+CORE_COLD int json(char* o, int cap) {
+  if (cap <= 0) return 0;
+  int n = sniprintf(o, cap, "\"loop\":{\"on\":%d", on_ ? 1 : 0);
+  if (!on_) return n + sniprintf(o + n, cap - n, "}");
+  float bar, of;
+  bool pos = bar_position(&bar, &of);
+  n += sniprintf(o + n, cap - n,
+                 ",\"state\":\"%s\",\"ring_s\":%d,\"bal\":%d,\"lev\":%d,\"fade\":%d,\"mute\":%d,\"live\":%d,\"post_lat\":%d,\"pending\":%d,\"cal\":%d",
+                 kStateName[state()], ring_seconds(), bal_, lev_, fade_, auto_mute_ ? 1 : 0, live_via_, post_lat_, pend_.on ? 1 : 0,
+                 cal_state_ == 1 ? 1 : 0);
+  if (pos) n += sniprintf(o + n, cap - n, ",\"bar\":%.3f,\"bars\":%.1f", bar, of);
+  n += sniprintf(o + n, cap - n, ",\"msg\":\"%s\",\"msg_n\":%u,\"grabs\":[", msg_, (unsigned)msg_gen_);
+  int pi = playing();
+  for (int i = 0; i < ng_ && n < cap - 120; ++i)
+    n += sniprintf(o + n, cap - n, "%s{\"id\":%u,\"hb\":%d,\"bpm\":%.1f,\"kept\":%d,\"gap\":%d,\"copied\":%d,\"playing\":%d}", i ? "," : "",
+                   (unsigned)g_[i].id, g_[i].half_bars, (double)g_[i].bpm, g_[i].kept, g_[i].gap, g_[i].copied, i == pi ? 1 : 0);
+  n += sniprintf(o + n, cap - n, "]}");
+  return n < cap ? n : 0;
+}
+
 // ------------------------------------------------------------------------------------------------ core 0
 void in_block(const int32_t* lr, int n, uint64_t arrival_frame, unsigned lost) {
-  if (ring_.ready()) ring_.write(lr, n, arrival_frame, lost);
+  if (!ring_.ready()) return;
+  ring_.write(lr, n, arrival_frame, lost);
+  uint64_t c0 = __atomic_load_n(&cal_at_, __ATOMIC_ACQUIRE);
+  if (!c0) return;
+  // the calibration's listening (spec 3.4): the stream's own level before the first click, then each click's window
+  uint64_t first = arrival_frame - (uint64_t)(n - 1);
+  int32_t fl = cal_floor_;
+  if (first < c0) {
+    for (int i = 0; i < n; ++i) {
+      int32_t a = lr[2 * i] < 0 ? -lr[2 * i] : lr[2 * i];
+      if (a > fl) fl = a;
+    }
+    cal_floor_ = fl;
+    return;
+  }
+  int32_t thr = fl > 0x7FFFFFFF / 8 ? 0x7FFFFFFF / 2 : 4 * fl;
+  if (thr < (1 << 21)) thr = 1 << 21;   // -60 dBFS at least
+  for (int c = 0; c < kCalN; ++c) {
+    uint64_t t = c0 + (uint64_t)c * kCalGap;
+    if (arrival_frame < t || first >= t + kCalWindow || cal_found_[c] >= 0) continue;
+    for (int i = 0; i < n; ++i) {
+      uint64_t h = first + (uint64_t)i;
+      int32_t a = lr[2 * i] < 0 ? -lr[2 * i] : lr[2 * i];
+      if (h >= t && h < t + kCalWindow && a > thr) {
+        __atomic_store_n(&cal_found_[c], (int32_t)(h - t), __ATOMIC_RELEASE);
+        break;
+      }
+    }
+  }
 }
 
 namespace {
@@ -623,6 +986,15 @@ bool wants_out() { return on_; }
 void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
   if (!on_) return;
   take_snapshot(render_frame);
+  uint64_t c0 = __atomic_load_n(&cal_at_, __ATOMIC_ACQUIRE);
+  if (c0) {   // loop=cal: a click (a short half-sine burst) onto POST 0 / 1, each kCalGap
+    for (int f = 0; f < n; ++f) {
+      uint64_t h = render_frame + (uint64_t)f;
+      if (h < c0 || (h - c0) / kCalGap >= (uint64_t)kCalN || (h - c0) % kCalGap >= (uint64_t)kCalClick) continue;
+      int32_t x = (int32_t)(8.0e8f * sinf(3.14159265f * (float)((h - c0) % kCalGap + 1) / (kCalClick + 1)));
+      F[f][0] = add(F[f][0], (float)x), F[f][1] = add(F[f][1], (float)x);
+    }
+  }
   if (!cur_.active && !old_.active) return;
   for (int f = 0; f < n; ++f) {
     uint64_t h = render_frame + (uint64_t)f;

@@ -101,7 +101,9 @@ CORE_COLD void restore(Entry& e) {
     put(e.t, 0);
   } else if (k == kFx || k == kSnd) {
     put(e.t, e.base);
-  }   // (kSeq kArp kLoop kRytm: nothing to put back - their writers take a value, not a state; Phases 3, 4)
+  } else if (k == kLoop) {
+    put(e.t, -1.0f);   // the knob plays again
+  }   // (kSeq kArp kRytm: nothing to put back - their writers take a value, not a state; Phases 3, 4)
 #if CORE_POLY
   if (k == kRytm) rytm_out_forget(param_of(e.t));   // the Rytm may change it meanwhile: the next lock's value goes out
   if (is_remote(k)) rp_release(e.t), rp_morph_off(e.t);   // (its offset went to 0 above: put; now a release)

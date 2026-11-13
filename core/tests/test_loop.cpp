@@ -2,6 +2,7 @@
 // the grabs (20), playback (21), resample / stop / auto-mute / LIVE VIA (22), calibration and console (25).
 #include <cmath>
 #include <cstdlib>
+#include <unistd.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -10,7 +11,11 @@
 #include "check.h"
 #include "core.h"
 #include "hooks.h"
+#include "mod/mod.h"
 #include "mod/rytm_out.h"
+#include "mod/target.h"
+#include "fmt/fmt.h"
+#include "msamp/cardq.h"
 #include "song/song.h"
 #include "loop/loop.h"
 #include "loop/loop_ring.h"
@@ -555,12 +560,146 @@ static void test_resample_stop_mute() {
 }
 
 
+// ---- Task 25: calibration, console, targets, settings
+static uint64_t g_click_c0 = 0;
+static int g_rtt = 0;
+static int32_t click_sig(uint64_t k) {   // the clicks as the Rytm hands them back: g_rtt frames after they were rendered
+  for (int c = 0; c < 3; ++c) {
+    int64_t kc = (int64_t)(g_click_c0 + (uint64_t)c * 9600 + (uint64_t)g_rtt) - kD;
+    if ((int64_t)k >= kc && (int64_t)k < kc + 24) return 6000000;
+  }
+  return 0;
+}
+static std::string cmd(const char* c) {
+  char o[600];
+  CHECK(loop::command(c, o, sizeof o));
+  return o;
+}
+static void test_cal_console() {
+  hooks.to_rytm = wire;
+  // cal_finds_click: a simulated round trip of 282 + 30 frames against the sequencer's latency (g_lat = 282): post_lat 30
+  fresh();
+  g_lat = 282;
+  g_rtt = 282 + 30;
+  g_sig = click_sig;
+  to((uint64_t)line(10));
+  loop::cal_start();
+  CHECK(loop::cal_wanted());
+  uint64_t first;
+  int n;
+  uint32_t gap;
+  CHECK(loop::cal_info(&first, &n, &gap) && n == 3);
+  g_click_c0 = first;
+  // the OUT hook renders the clicks on POST 0 / 1 (and only there) at their frames
+  int32_t F[12][12] = {};
+  loop::out_mix(F, 12, first - 4);
+  CHECK(F[3][0] == 0 && F[4][0] != 0 && F[4][1] == F[4][0] && F[4][2] == 0);
+  // ... and the IN hook finds them: run the clock past the last click
+  to(first + 3 * 9600 + 6000);
+  CHECK(!loop::cal_wanted() && loop::post_lat() == 30 && loop::stats().cal_ok == 1);
+  CHECK(std::string(loop::last_message()) == "POST LAT 30");
+  // no click heard: refused, post_lat kept
+  fresh();
+  g_sig = nullptr;
+  to((uint64_t)line(10));
+  loop::set_post_lat(5);
+  loop::cal_start();
+  to(g_now + 14400 + 3 * 9600 + 6000);
+  CHECK(loop::post_lat() == 5 && loop::stats().cal_fail == 1 && std::string(loop::last_message()) == "CAL: NO CLICK HEARD");
+
+  // console_lines (spec 3.12)
+  fresh();
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(cmd("loop").find("loop: ring,") == 0 && cmd("loop").find("0 grabs") != std::string::npos);
+  CHECK(cmd("loop=grab:1").find("grab 1 bars") != std::string::npos);
+  run_ms(60);
+  CHECK(loop::grabs() == 1);
+  CHECK(cmd("loop=grab:0.5").find("grab 1/2 bars") != std::string::npos);
+  run_ms(60);
+  CHECK(loop::grabs() == 2 && loop::grab_at(0)->half_bars == 1);
+  CHECK(cmd("loop=grab:3").find("loop=grab:L") != std::string::npos);
+  CHECK(cmd("loop=play:1").find("play grab 1") != std::string::npos);
+  CHECK(cmd("loop=bal:90").find("bal 90") != std::string::npos && loop::bal() == 90);
+  CHECK(cmd("loop=lev:80").find("lev 80") != std::string::npos && loop::lev() == 80);
+  CHECK(cmd("loop=fade:2").find("fade 2 bars") != std::string::npos && loop::fade() == loop::kFade2);
+  CHECK(cmd("loop=fade:1/4").find("fade 1/4 bars") != std::string::npos && loop::fade() == loop::kFadeQuarter);
+  CHECK(cmd("loop=mute:on").find("auto-mute on") != std::string::npos && loop::auto_mute());
+  CHECK(cmd("loop=mute:off").find("off") != std::string::npos && !loop::auto_mute());
+  CHECK(cmd("loop=live:perf5").find("PERF 5") != std::string::npos && loop::live_via() == 5);
+  CHECK(cmd("loop=live:off").find("off") != std::string::npos && loop::live_via() == 0);
+  CHECK(cmd("loop=keep:0").find("COPYING") == std::string::npos);   // (copied by now)
+  loop::KeepJob job;
+  CHECK(loop::keep_take(&job) && job.frames == loop::grab_at(0)->frames);
+  CHECK(!loop::grab_at(0)->kept);
+  loop::keep_finished(job.id, true, "take_001");
+  CHECK(loop::grab_at(0)->kept && std::string(loop::last_message()) == "KEPT take_001");
+  CHECK(cmd("loop=keep:0").find("ALREADY KEPT") != std::string::npos);
+  CHECK(cmd("loop=keep:7").find("NO GRAB") != std::string::npos);
+  CHECK(cmd("loop=stop:cut:now").find("cut, at once") != std::string::npos);
+  CHECK(cmd("loop=stop").find("fade, at the next bar line") != std::string::npos);
+  CHECK(cmd("loop=cal").find("calibrating") != std::string::npos && loop::cal_wanted());
+  g_beats = false;
+  CHECK(cmd("loop=grab:1").find("PLAY FIRST") != std::string::npos);
+  CHECK(std::string(loop::last_message()) == "PLAY FIRST");
+  char js[1200];
+  CHECK(loop::json(js, sizeof js) > 0 && strstr(js, "\"loop\":{\"on\":1") && strstr(js, "\"grabs\":[{") && strstr(js, "\"kept\":1"));
+  CHECK(!loop::command("looper", js, sizeof js) && !loop::command("lo", js, sizeof js));
+
+  // bal_is_a_target: LOOP:BAL / LOOP:LEV are modulation targets; a value replaces the knob, a release gives it back
+  fresh();
+  mod::Tid tb = 0, tl = 0;
+  CHECK(mod::parse("LOOP:BAL", &tb) && mod::parse("LOOP:LEV", &tl) && mod::valid(tb) && mod::valid(tl));
+  mod::Range r = mod::range(tb);
+  CHECK(r.lo == 0 && r.hi == 127);
+  mod::reset();
+  loop::set_bal(40);
+  loop::set_lev(100);
+  mod::offset(0, tb, 1.0f, 30.0f);   // an LFO's offset of +30 around the knob
+  mod::end_tick();
+  CHECK(loop::bal_eff() == 70 && loop::bal() == 40);
+  mod::begin_tick();
+  mod::end_tick();   // nothing refers to it any more: released
+  CHECK(loop::bal_eff() == 40);
+  CHECK(loop::own_gain(loop::bal_eff()) == 1.0f);
+
+  // settings_persist: the card's loop.txt carries them; a line from elsewhere is kept
+  fresh();
+  loop::set_bal(96), loop::set_lev(77), loop::set_fade(loop::kFade4), loop::set_auto_mute(true), loop::set_live_via(7), loop::set_post_lat(-12);
+  CHECK(loop::dirty());
+  char tmpl[] = "/tmp/core_loop_XXXXXX";
+  CHECK(mkdtemp(tmpl));
+  host_set_card(tmpl);
+  card_ok = true;
+  system((std::string("mkdir -p ") + tmpl + "/.rytm; printf 'other=1\\nbal=1\\n' > " + tmpl + "/.rytm/loop.txt").c_str());
+  loop::load();   // (an older file with other keys: bal=1 read, our dirty state replaced by the file's)
+  CHECK(loop::bal() == 1 && !loop::dirty());
+  loop::set_bal(96), loop::set_lev(77), loop::set_fade(loop::kFade4), loop::set_auto_mute(true), loop::set_live_via(7), loop::set_post_lat(-12);
+  CHECK(loop::save());
+  for (int i = 0; i < 2000 && fmt::post_busy(); ++i) {
+    fmt::post_step();
+    host_card_core(0);
+    while (cardq::service()) {
+    }
+    host_card_core(3);
+  }
+  loop::reset();
+  CHECK(loop::bal() == 64 && !loop::auto_mute());
+  loop::load();
+  CHECK(loop::bal() == 96 && loop::lev() == 77 && loop::fade() == loop::kFade4 && loop::auto_mute() && loop::live_via() == 7 && loop::post_lat() == -12);
+  CHECK(!loop::save());   // nothing changed: nothing written
+  hooks.to_rytm = nullptr;
+  host_fake_time(false, 0);
+  printf("  calibration, console, targets, settings ok\n");
+}
+
+
 int main() {
   test_ring();
   test_grabs();
   test_store();
   test_playback();
   test_resample_stop_mute();
+  test_cal_console();
   printf("test_loop: OK\n");
   return 0;
 }

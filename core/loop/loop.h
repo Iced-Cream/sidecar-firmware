@@ -92,21 +92,38 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // th
 bool wants_in();                            // the ring exists
 bool wants_out();                           // a loop is on its way or plays (out_mix does something)
 
-// ---- POST latency calibration (loop=cal): the click on POST 0 / 1, found in MAIN IN
+// ---- POST latency calibration (loop=cal): clicks on POST 0 / 1 (the OUT hook), found again in MAIN IN (the IN hook)
 void cal_start();
-bool cal_wanted();                          // a click is on its way (the OUT hook renders it, the IN hook listens)
-int post_lat();                             // frames beyond the voice path's latency (0 default)
+bool cal_wanted();                          // clicks are on their way
+bool cal_info(uint64_t* first_click, int* n, uint32_t* gap);   // the render frames of the clicks (tests, the OUT hook)
+int post_lat();                             // frames the POST path takes beyond the voice path's latency (0 default)
 void set_post_lat(int f);
 
-// ---- the console and /status
-bool command(const char* p, char* out, int cap);   // "loop", "loop=grab:L", ... (spec 3.12)
+// ---- settings on the card (/.rytm/loop.txt, a box setting) and the console / status
+void load();
+bool save();                                // true: a posted write was queued
+bool dirty();
+bool command(const char* p, char* out, int cap);   // "loop", "loop=grab:L", ... (spec 3.12): false when not "loop..."
 int json(char* out, int cap);               // "\"loop\":{...}"
-struct Stats { uint32_t grabs, refused, resamples, copies, abandoned, dropped, cal_ok; uint32_t worst_copy_bytes; };
+const char* last_message();                 // the last refusal / result text the pages show ("PLAY FIRST"), "" none
+uint32_t message_gen();                     // counts up with each one
+
+// ---- KEEP: core 3 asks, core 0 (loop_pi, its idle loop) takes the job, writes the grab's store copy as a take in pieces and
+// says when it is done. The grab stays in the store until then.
+struct KeepJob {
+  uint32_t id, frames;
+  const int32_t* pcm;   // the store's copy, L R interleaved
+  float bpm;
+  int half_bars;
+  uint64_t start;       // the grab's first frame's host render frame
+};
+bool keep_take(KeepJob* j);                 // core 0: the next job (false: none)
+void keep_finished(uint32_t id, bool ok, const char* take_name);
+struct Stats {
+  uint32_t grabs, refused, resamples, copies, abandoned, dropped, cal_ok, cal_fail, kept;
+  uint32_t worst_copy_bytes;
+};
 const Stats& stats();
-// the keep request core 0 serves: the grab's frames (the store's copy), -1 none. loop_pi writes it in pieces.
-int keep_request(const Grab** g);           // the grab asked to be kept (0 newest index at the time), else -1
-void keep_done(uint32_t id);                // core 0 wrote it: its kept flag, the take's name
-void keep_text(const char* name);
 
 }  // namespace loop
 }  // namespace core
