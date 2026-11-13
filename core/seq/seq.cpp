@@ -326,7 +326,7 @@ bool fill = false;
 uint32_t pat_changed_ms = 0;    // a pattern change (02 / 03): the SCALE reports that follow are the new pattern's
 uint16_t pin_extra = 0;
 bool pin_seq = true;
-uint16_t clock_extra = 0;       // core/song's clock-only tracks (2E bytes 3 / 4)
+uint16_t clock_users[kClockUsers] = {};   // the clock-only tracks core/song and core/loop asked for (OR-ed: 2E bytes 3 / 4)
 uint16_t arp_pins = 0;          // the arpeggiator's tracks: pinned as a seq track is (its notes are the host's)
 bool arp_clock = false;         // ... BD's ticks asked for, its grid
 int clock_sent = -1;
@@ -2809,7 +2809,7 @@ CORE_COLD void reset() {
   for (int r = 0; r < kRytmTracks; ++r) sc_len[r] = sc_spd[r] = -1, heard_ms[r] = 0, pred_abs[r] = -1, pred_planned[r] = 0,
                                         restart_skip[r] = 0;
   pat_len = pat_spd = pat_mode = pat_chg = -1, fill = false;
-  pin_extra = 0, pin_seq = true, pin_sent = -1, silent_sent = 0xFFFF, clock_extra = 0, clock_sent = -1;
+  pin_extra = 0, pin_seq = true, pin_sent = -1, silent_sent = 0xFFFF, clock_sent = -1, clock_users[kClockSong] = clock_users[kClockLoop] = 0;
   arp_pins = 0, arp_clock = false;
   cal.state = 0, cal.vi = -1, cal.track = -1, cal.n = 0, cal.found = -1, cal.auto_done = false, cal.manual = false;
   cal.fed_ms = 0;
@@ -2862,7 +2862,9 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
   return true;
 }
 
-CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra = (uint16_t)(m & 0xFFF); }
+CORE_COLD void set_clock_tracks(int user, uint16_t m) {
+  if (user >= 0 && user < kClockUsers) clock_users[user] = (uint16_t)(m & 0xFFF);
+}
 CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins = (uint16_t)(pins & 0xFFF), arp_clock = clock; }
 CORE_COLD double tempo() { return bpm; }
 CORE_COLD bool beat_map(double* origin, double* per16, int* lat) {
@@ -4131,7 +4133,7 @@ CORE_COLD void tick(uint32_t ms) {
   // (or the step plays with the old one). With a pattern queued (prefetched in nxt) its new seq tracks are clocked (the
   // 2E's clock part: their ticks, nothing else - the prediction plans their first steps); kSwitchLead + the latency
   // before the predicted switch its mask goes out whole. A miss drops the prediction: the current mask again.
-  uint16_t wm = mask, ck = (uint16_t)(clock_extra | (arp_clock ? 1 : 0));
+  uint16_t wm = mask, ck = (uint16_t)(clock_users[kClockSong] | clock_users[kClockLoop] | (arp_clock ? 1 : 0));
   if (transport == kPlay && pat_queued >= 0 && pat_queued != cur->index && nxt->index == pat_queued) {
     uint16_t nm = mask_of(*nxt);
     if (pred_to == pat_queued && fol.valid &&

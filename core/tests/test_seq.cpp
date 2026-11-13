@@ -1289,6 +1289,23 @@ int main() {
     g_out.clear();
     seq::tick(now_ms());
     CHECK(sent(0x46).empty());   // only changes
+    // 0.5.0 looper: clock-only tracks per user (SONG, LOOP), OR-ed: BD stays clocked until both let go
+    {
+      auto ck = [&]() {
+        g_out.clear();
+        seq::tick(now_ms());
+        auto e = sent(0x2E);
+        return e.empty() ? -1 : e[0].size() >= 12 ? (e[0][9] | e[0][10] << 7) : 0;
+      };
+      seq::set_clock_tracks(seq::kClockSong, 1);
+      CHECK(ck() == 1);
+      seq::set_clock_tracks(seq::kClockLoop, 1);
+      CHECK(ck() == -1);   // OR-ed: no change on the wire
+      seq::set_clock_tracks(seq::kClockSong, 0);
+      CHECK(ck() == -1);   // LOOP still wants BD
+      seq::set_clock_tracks(seq::kClockLoop, 0);
+      CHECK(ck() == 0);
+    }
     // fix1052: a seq track's own pad plays its voice's own machine (pad_play: JUNO, PLAITS, DD, DAISY - not the pool),
     // which the silence did not count, so the VCA stayed closed under a sounding note [measured 2026-10-26, B07's SD
     // on JUNO: the Pi's output peak 250/1000 for a 2 s hold, nothing heard; the sequencer's notes on the same voice
