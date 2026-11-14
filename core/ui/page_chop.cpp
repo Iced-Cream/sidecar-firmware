@@ -167,7 +167,7 @@ CORE_COLD uint32_t src_key(const Cell& cell, const Source& s) {
   uint32_t l = 2166136261u;
   for (int i = 0; i < np; ++i) l = (l ^ (uint32_t)(ph[i] >> 10)) * 16777619u;   // (moving playheads: ~5 px steps)
   (void)cell;
-  static LiveKey keys[8];   // 0.4.3: the playheads at most every kLiveMs
+  static LiveKey keys[kVoices];   // 0.4.3: the playheads at most every kLiveMs
   return keys[vi].get(h, l, now_ms());
 }
 CORE_COLD void src_draw(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot) {

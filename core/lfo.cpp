@@ -95,7 +95,7 @@ constexpr int kMaxT = 2 * kLfos;
 Tgt g_t[kMaxT];
 uint32_t g_last_us = 0;
 bool g_started = false;
-uint8_t g_vdirty = 0;
+uint32_t g_vdirty = 0;   // bit vi (the rollback path)
 uint32_t g_user_ms[kVoices];
 #endif
 
@@ -354,7 +354,7 @@ CORE_COLD void restore(Tgt& e) {
   if (is_voice(e.target)) {
     int vi = e.target - kTVoice;
     v[vi].p[e.param & 15] = e.base;
-    g_vdirty |= (uint8_t)(1u << vi);
+    g_vdirty |= 1u << vi;
   } else if (is_fx(e.target)) {
     fx::control.knob[e.target - kTFx][2 + (e.param & 3)] = (uint8_t)e.base;
   }
@@ -479,16 +479,16 @@ static CORE_COLD bool sidecar_on(int t, bool unknown_is_yes) {   // track t play
 }
 // A voice-shared pair (RS/CP, MT/HT, CH/OH, CY/CB) shows its voice under ONE track of the pair: the first that plays a
 // Sidecar machine (not yet known counts as one). A pair with no Sidecar track has no owner: its first track.
-static CORE_COLD int voice_owner(int v) {
+static CORE_COLD int voice_owner(int v) {   // v: the project's voice (the base box's); the tracks name engine voices
   for (int t = 0; t < kTrN; ++t)
-    if (ui::remote_track_voice(t) == v && sidecar_on(t, true)) return t;
+    if (ui::remote_track_voice(t) == device::base_voice(v) && sidecar_on(t, true)) return t;
   return -1;
 }
 static CORE_COLD int track_of_voice(int v) {   // the track a stored voice target is shown under (lfo.h)
   const int o = voice_owner(v);
   if (o >= 0) return o;
   for (int t = 0; t < kTrN; ++t)
-    if (ui::remote_track_voice(t) == v) return t;
+    if (ui::remote_track_voice(t) == device::base_voice(v)) return t;
   return 0;
 }
 #endif
@@ -540,7 +540,7 @@ static CORE_COLD uint32_t voice_params(int t, int keep) {
   uint32_t m = 0;
   for (int p = 0; p < 16; ++p) {
     char b[8];
-    if (ui::voice_label(t - kTVoice, p, b, sizeof b)[0]) m |= 1u << p;
+    if (ui::voice_label(device::base_voice(t - kTVoice), p, b, sizeof b)[0]) m |= 1u << p;
   }
   if (!m) return 0xFFFF;
   return keep >= 0 && keep < 16 ? m | 1u << keep : m;
@@ -614,7 +614,7 @@ CORE_COLD int params_of(int t) {
 CORE_COLD const char* param_name(int t, int p, char* b, int cap) {
   b[0] = 0;
   if (is_voice(t)) {
-    ui::voice_label(t - kTVoice, p & 15, b, cap);
+    ui::voice_label(device::base_voice(t - kTVoice), p & 15, b, cap);
     if (!b[0]) sniprintf(b, cap, "-");   // a P the voice's machine leaves unused
   } else if (is_fx(t)) {
     const fx::KnobLabels* l = fx::labels(fx::control.knob[t - kTFx][0]);
@@ -919,7 +919,7 @@ CORE_COLD void tick(uint32_t us) {
         if (fabsf(val - e.applied) >= 1.0f / 256.0f) {
           v[vi].p[e.param & 15] = val;
           e.applied = val;
-          g_vdirty |= (uint8_t)(1u << vi);
+          g_vdirty |= 1u << vi;
           ++g_stats.voice_sets;
         }
 #if CORE_POLY
@@ -958,7 +958,7 @@ CORE_COLD void tick(uint32_t us) {
       g_user_ms[vi] = ms;
       ++g_stats.user_calls;
     }
-    g_vdirty &= (uint8_t)~(1u << vi);
+    g_vdirty &= ~(1u << vi);
     voice_params_changed(vi);
   }
 }

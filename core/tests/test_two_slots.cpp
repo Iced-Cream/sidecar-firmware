@@ -104,6 +104,25 @@ int main() {
   send(0, trig(kPlaits, 3, 62));
   CHECK(v[11].juno && !v[3].juno);
 
+  // a note-off (0x11) on one slot is that slot's: JUNO on both voice 3s, the A4's gate closes, its voice 11 releases while
+  // the Rytm's voice 3 holds
+  voices_init();
+  send(0, trig(kJuno, 3, 60));
+  send(1, trig(kJuno, 3, 60));
+  CHECK(v[3].juno && v[11].juno);
+  render(100);
+  auto late = [](int vi) {   // the last quarter of the ring
+    double e = 0;
+    for (int i = 3 * kRows / 4; i < kRows; ++i) e += (double)ring[i][vi] * ring[i][vi];
+    return std::sqrt(e / (kRows / 4));
+  };
+  send(1, sidecar({0x11, 3}));
+  memset(ring, 0, sizeof ring);
+  render();
+  printf("  JUNO after the A4's 0x11: voice 3 %.1f, voice 11 %.1f (the last quarter)\n", late(3), late(11));
+  CHECK(late(3) > 100 && late(11) < 0.25 * late(3));
+  send(0, sidecar({0x11, 3}));
+
   // the A4's voice 4 does not exist (4 voices): dropped, nothing plays on 12
   send(1, trig(kPlaits, 4, 60));
   CHECK(!v[12].live);

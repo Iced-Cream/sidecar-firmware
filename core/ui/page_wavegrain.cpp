@@ -213,8 +213,8 @@ constexpr uint32_t kFrameMs = 83;   // GRANULAR's picture: a new one ~12 times a
 struct GrKey {
   uint32_t ms = 0, key = 0;
 };
-GrKey gr_keys[8];
-LiveKey wt_keys[8];   // WAVETABLE's picture (0.4.3: its POS at most every kLiveMs)
+GrKey gr_keys[kVoices];
+LiveKey wt_keys[kVoices];   // WAVETABLE's picture (0.4.3: its POS at most every kLiveMs)
 
 CORE_COLD uint32_t mixk(uint32_t h, uint32_t v) { return (h ^ v) * 16777619u; }
 

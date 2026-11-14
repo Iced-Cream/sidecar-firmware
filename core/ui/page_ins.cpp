@@ -69,9 +69,9 @@ CORE_COLD int track_now() {
   if (ip.track < 0) ip.track = 0;
   return ip.track;
 }
-CORE_COLD int voice_now() {
+CORE_COLD int voice_now() {   // the track's voice's chain: its box voice (V1..V8)
   int vi = remote_track_voice(track_now());
-  return vi >= 0 && vi < ins::kVoices ? vi : 0;
+  return vi >= 0 ? box_voice(vi) : 0;
 }
 CORE_COLD int chain_now() { return ip.bus ? ins::kBus0 + ip.busel : voice_now(); }
 // 0.5.0: the BUS view's slot holds a send TYPE: G is its MIX

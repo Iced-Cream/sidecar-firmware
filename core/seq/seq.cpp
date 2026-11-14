@@ -556,11 +556,11 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
     for (int j = 0; j < 8; ++j) {
       if (iwant >> j & 1) {
         ilk_owner[vi][j] = (int8_t)r;
-        ins::lock(vi, j / 4, j % 4, iv[j]);
+        ins::lock(box_voice(vi), j / 4, j % 4, iv[j]);   // (its box voice's chain)
         ++st.locks_applied;
       } else if (ilk_owner[vi][j] == r) {
         ilk_owner[vi][j] = -1;
-        ins::lock(vi, j / 4, j % 4, -1);
+        ins::lock(box_voice(vi), j / 4, j % 4, -1);
       }
     }
   }
@@ -2357,7 +2357,7 @@ CORE_COLD int base_value(int r, int param) {
   }
   if (param >= kLockIns && param < kLockIns + 8) {   // fx-ins: the insert's knob (core/fx/insert.h)
     int vi = voice_of(r);
-    return vi >= 0 && vi < kVoices ? ins::param(vi, (param - kLockIns) / 4, (param - kLockIns) % 4) << 7 : 0;
+    return vi >= 0 && vi < kVoices ? ins::param(box_voice(vi), (param - kLockIns) / 4, (param - kLockIns) % 4) << 7 : 0;
   }
   int j = param - kLockFx, sl = j / 4, k = 2 + j % 4;
   if (sl >= fx::kSlots) return 0;

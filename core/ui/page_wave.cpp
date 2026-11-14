@@ -539,7 +539,7 @@ CORE_COLD uint32_t draw_key(const Cell& c, const Source& s) {
         (uint32_t)(smp_slot(s) < 1) << 28 ^ (uint32_t)smpl << 29 ^
         (uint32_t)(core::dsps_play_zone(smpl, (float)s.param(11)) + 1) << 24;   // (REV / FLP: the same engine mode as FWD)
     if (c.arg == kDrawSample) {   // the playhead moves the picture: 2 px steps of the ~100 (a tile or two a frame)
-      static LiveKey keys[8];     // 0.4.3: at most every kLiveMs
+      static LiveKey keys[kVoices];     // 0.4.3: at most every kLiveMs
       int ph = core::dsp_playhead(vi);
       h = keys[vi].get(h, (uint32_t)(ph < 0 ? 0 : 1 + ph / 1311), now_ms());
     }

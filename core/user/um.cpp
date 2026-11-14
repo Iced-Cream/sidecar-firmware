@@ -277,7 +277,7 @@ uint32_t g_job_off = 0, g_job_len = 0, g_job_crc = 0;
 // ---- voices
 uint8_t* g_vstate[core::kVoices];
 int8_t g_cur[core::kVoices];       // the slot whose voice_init the voice's state had; -1 none
-uint8_t g_mis = 0;                 // sound-tag mismatch, bit vi
+uint32_t g_mis = 0;                // sound-tag mismatch, bit vi
 // E0 (core/inst.h): the instances' states, one per instance of the pool (core::inst::kTotal, placed at boot), each the
 // state of the slot g_icur[i] (-1 none) for voice g_ivi[i]
 constexpr int kInst = 32;   // = core::inst::kTotal (static_assert below)
@@ -634,12 +634,12 @@ enum : uint8_t { kLjOpen, kLjRead, kLjClose, kLjDone };
 PreJob g_lj = {-1, 0, 0, 0, kLjDone, false, false, 0, -1, 0};   // the one load in flight (vi -1: none)
 #endif
 uint8_t g_pre_page[kSlots];                // name pages asked for (19 what 2): bit p
-uint8_t g_pv_new = 0, g_pv_wait = 0, g_last_trig = 0, g_pv_resync = 0;   // bit vi
+uint32_t g_pv_new = 0, g_pv_wait = 0, g_last_trig = 0, g_pv_resync = 0;   // bit vi
 struct PreLoad { bool on; int8_t s; uint8_t gen; int16_t entry; bool sync; float p[16]; uint8_t seq; };   // seq: moves with each new decision
 PreLoad g_pl[core::kVoices][2];            // [0] the sound's own preset (written back), [1] a p-lock's play
 struct HeldNote { uint8_t note, vel; bool held; uint32_t t; };
 HeldNote g_hn[core::kVoices];              // a trig's note_on held until its preset load ran
-uint8_t g_note_wait = 0;                   // bit vi: silent meanwhile
+uint32_t g_note_wait = 0;                  // bit vi: silent meanwhile
 constexpr uint32_t kNoteHoldUs = 2000;     // a held note plays by then, loaded or not
 uint32_t g_pre_again_ms = 0;               // a preset written (core 0 writes it later): every list scanned again then
 bool g_pre_again = false;
@@ -1050,8 +1050,8 @@ void send_presets(int s, int page) {
 }
 // The voice's preset decision for its latest report (the Teensy's plug_pv_decide): a load runs from idle().
 void pv_decide(int vi, int s, bool is_trig, const float* p) {
-  uint8_t bit = (uint8_t)(1u << vi);
-  g_pv_wait &= (uint8_t)~bit;
+  uint32_t bit = 1u << vi;
+  g_pv_wait &= ~bit;
   int pre = pre_knob(s);
   if (pre < 0 || pre > 15) return;
   const rmp_preset_index& ix = g_pix[s];
@@ -1061,13 +1061,13 @@ void pv_decide(int vi, int s, bool is_trig, const float* p) {
     return;
   }
   if (g_pv_resync & bit) {   // a write-back the list change dropped: decided again first, as a non-trig
-    g_pv_resync &= (uint8_t)~bit;
+    g_pv_resync &= ~bit;
     if (is_trig) pv_decide(vi, s, false, g_pl[vi][0].p);
   }
   rmp_pv_check(&g_pv[vi], ix.gen);
   bool sync = false;
   int e = rmp_pv_decide(&g_pv[vi], pre, ix.n, is_trig, (g_pv_new & bit) != 0, p, &sync);
-  g_pv_new &= (uint8_t)~bit;
+  g_pv_new &= ~bit;
   PreLoad* P = g_pl[vi];
   bool takeover = false;
   if (is_trig && P[0].on && P[0].gen == ix.gen && ix.n > 0) {   // the sound's new preset not loaded yet
@@ -1093,16 +1093,16 @@ void pv_params(int vi, int s, bool is_trig, float* q) {   // what params() gets:
   rmp_pv_effective(&g_pv[vi], &g_knobs[s], q);
 }
 void pv_reset(int vi) {   // the voice starts (or leaves) a slot: presets afresh
-  uint8_t bit = (uint8_t)(1u << vi);
+  uint32_t bit = 1u << vi;
   rmp_pv_reset(&g_pv[vi]);
   g_pl[vi][0].on = g_pl[vi][1].on = false;
-  g_pv_wait &= (uint8_t)~bit;
-  g_note_wait &= (uint8_t)~bit;
-  g_pv_resync &= (uint8_t)~bit;
+  g_pv_wait &= ~bit;
+  g_note_wait &= ~bit;
+  g_pv_resync &= ~bit;
 }
 void note_fire(int vi) {   // a trig's held note_on, now
   if (!(g_note_wait >> vi & 1)) return;
-  g_note_wait &= (uint8_t)~(1u << vi);
+  g_note_wait &= ~(1u << vi);
   int s = core::v[vi].user;
   if (s < 0 || g_cur[vi] != s || g_slot[s].st != RMP_SLOT_READY || !g_slot[s].p) return;
   const HeldNote& n = g_hn[vi];
@@ -1123,9 +1123,9 @@ bool pre_stale(int vi, PreLoad& L) {
   const Slot& sl = g_slot[s];
   if (core::v[vi].user != s || g_cur[vi] != s || sl.st != RMP_SLOT_READY || !sl.p) return true;   // moved on
   if (!rmp_preset_index_ok(&ix) || ix.gen != L.gen || L.entry >= ix.n) {   // the list changed meanwhile: decided again
-    if (L.sync || g_pl[vi][0].on) g_pv_resync |= (uint8_t)(1u << vi);
+    if (L.sync || g_pl[vi][0].on) g_pv_resync |= (1u << vi);
     g_pl[vi][0].on = g_pl[vi][1].on = false;
-    g_pv_wait |= (uint8_t)(1u << vi);
+    g_pv_wait |= (1u << vi);
     return true;
   }
   return false;
@@ -1245,7 +1245,7 @@ bool pre_pass() {
   for (int vi = 0; vi < core::kVoices; ++vi) {
     if (!(g_pv_wait >> vi & 1)) continue;
     int s = core::v[vi].user;
-    if (s < 0 || g_cur[vi] != s) { g_pv_wait &= (uint8_t)~(1u << vi); continue; }
+    if (s < 0 || g_cur[vi] != s) { g_pv_wait &= ~(1u << vi); continue; }
     if (rmp_preset_index_ok(&g_pix[s])) {
       pv_decide(vi, s, g_last_trig >> vi & 1, core::v[vi].p);
       if (!g_pl[vi][0].on && !g_pl[vi][1].on) note_fire(vi);
@@ -1361,7 +1361,7 @@ bool pre_save(int s, const char* raw, char* out, int cap) {
 // ---- voices
 void voice_leave(int vi) {
   int s = g_cur[vi];
-  g_mis &= (uint8_t)~(1u << vi);
+  g_mis &= ~(1u << vi);
   if (s < 0) return;
   g_cur[vi] = -1;
   pv_reset(vi);
@@ -1420,7 +1420,7 @@ void on_report(int vi, int s, int was, int note, int vel, int tag) {
     x.live = false;
     return;
   }
-  uint8_t bit = (uint8_t)(1u << vi);
+  uint32_t bit = 1u << vi;
   if (note >= 0) {
     if (tag && tag != sl.fp) {   // the sound was made for another machine: silent until a matching trig
       if (g_mis & bit) return;
@@ -1431,7 +1431,7 @@ void on_report(int vi, int s, int was, int note, int vel, int tag) {
       core::log("um: trig voice %d U%d: sound tag %d, the slot's %d - silent", vi, s + 1, tag, (int)sl.fp);
       return;
     }
-    g_mis &= (uint8_t)~bit;
+    g_mis &= ~bit;
   } else if (g_mis & bit) {
     return;
   }
@@ -1450,7 +1450,7 @@ void on_report(int vi, int s, int was, int note, int vel, int tag) {
   }
   // presets (rmp_pv): what this report means for the voice's preset; a load runs from idle()
   if (note >= 0) g_last_trig |= bit;
-  else g_last_trig &= (uint8_t)~bit;
+  else g_last_trig &= ~bit;
   // its knobs moved (the Rytm's report, not an LFO or a step lock: core::user_report_internal): the labels follow it
   if (note < 0 && !core::user_report_internal && g_lbl_vi[s] != vi) g_lbl_vi[s] = (int8_t)vi, g_mp = true;
   pv_decide(vi, s, note >= 0, x.p);
