@@ -432,7 +432,13 @@ boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
 // xHCI IRQ: an IN block of the box (12-channel layout), cut to the computer's alternate and sent on link 0x02
 void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 {
-	if (m_bTest && !m_bTestFeeding) return;
+	if (m_bTest) return;				// relaytest: a real box's blocks never reach the computer (TestPoll uses SendBoxBlock)
+	SendBoxBlock (pBlock);
+}
+
+// FromBoxBlock's work; relaytest's TestPoll calls it directly (a shared "feeding" flag let a few real blocks through, TR1i)
+void CTeensyTarget::SendBoxBlock (const u8 *pBlock)
+{
 	if (!MirrorShown ()) return;
 	unsigned k = 0;
 	while (k < AudioOutBufs && m_bAudioOutBusy[k]) k++;
@@ -886,7 +892,7 @@ void CTeensyTarget::TestPoll (void)
 		m_bTestFeeding = FALSE;
 		return;
 	}
-	m_bTestFeeding = FALSE;				// (set again around each FromBoxBlock below)
+	m_bTestFeeding = FALSE;
 	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; return; }
 	u64 nNow = NowTicks ();
 	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; Step ("relaytest: the computer took alt 3, stream starts"); }
@@ -901,12 +907,10 @@ void CTeensyTarget::TestPoll (void)
 		memcpy (Blk, Want, ob::kHeaderBytes);
 		for (int f = 0; f < ob::kFramesPerBlock; f++)
 			memcpy (Blk + ob::kHeaderBytes + 4 * 12 * f, Want + ob::kHeaderBytes + 4 * 8 * f, 4 * 8);
-		// the flag only inside the critical section: a real box's block (xHCI IRQ) between two of these must not pass
-		// FromBoxBlock's test-mode gate (TR1h: ~5 % of the computer's blocks were a real box's audio, rytmob2 on this Pi)
+		// not through FromBoxBlock: in test mode it drops the real box's blocks (TR1h: ~5 % of the computer's blocks
+		// were the A4's audio, rytmob2 on this Pi; a flag set around this call still let a few through, TR1i)
 		EnterCritical (IRQ_LEVEL);
-		m_bTestFeeding = TRUE;
-		FromBoxBlock (Blk);
-		m_bTestFeeding = FALSE;
+		SendBoxBlock (Blk);
 		LeaveCritical ();
 		m_nTestSent++;
 	}

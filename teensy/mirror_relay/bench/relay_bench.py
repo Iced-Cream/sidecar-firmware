@@ -245,6 +245,15 @@ class Bench:
                                       kind=classify_bad(c, self.a_pc.next), hex=c.hex()))
             self.a_pc.see(s)
 
+    def on_pipe_pc(self, b):
+        """An echo the computer has not sent yet in this stage is the previous stage's, left in the relay when the bench
+        closed the device (TR1i: one such packet made every later echo count as a duplicate): counted as stale."""
+        seq = check_block(b, len(b))
+        if seq is not None and seq >= self.s_ppc["sent"]:
+            self.p_stale = getattr(self, "p_stale", 0) + 1
+            return
+        self.p_pc.see(seq)
+
     # ---- the "Pi"
     def on_event(self, b):
         typ, a, bb, c, t_us = struct.unpack_from("<BBBBI", b)
@@ -338,7 +347,7 @@ class Bench:
                 # to the computer: the "Pi" writes channel 0 OUT, the "computer" reads 0x82
                 self.s_ppi = self._out_stream(link, CH_OUT(0), 4, lambda k: block(k, 64 + (k % 400)), PIPE_HZ, "bulk")
             # (relaytest: the Pi echoes 0x02 on 0x82, so the computer reads its own packets back)
-            self._in(mirr, 0x82, 512, 4, lambda b: self.p_pc.see(check_block(b, len(b))), "bulk")
+            self._in(mirr, 0x82, 512, 4, self.on_pipe_pc, "bulk")
         workers = [self.pi_ctl_worker, self.pi_credit_worker] if pi else []
         if "ctl" in paths:
             workers.append(self.comp_ctl_worker)
@@ -461,7 +470,7 @@ def computer_stage(ctx, paths, seconds, opts=None):
     b.dump = [] if o.get("dump") else None
     b.run(paths)
     rtt = sorted(b.ctl_rtt)
-    res = dict(paths=list(paths), reader=dict(blocks=b.rd_blocks, depth=b.rd_depth),
+    res = dict(paths=list(paths), reader=dict(blocks=b.rd_blocks, depth=b.rd_depth), pipe_stale=getattr(b, "p_stale", 0),
                audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(), bad_lengths=b.bad_lens,
                sent={"%s 0x%02x" % (s["who"], s["ep"]): s["sent"] for s in b.streams},
                ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,

@@ -70,6 +70,7 @@ private:
 	// relaytest=1 (cmdline; docs/teensy-mirror.md "Pi bench"): no box; a made-up one (pid.codes 1209:0003, the bench's shape)
 	// with a synthetic IN stream at the box rate, pipe packets echoed, vendor requests answered with a pattern
 	void TestPoll (void);
+	void SendBoxBlock (const u8 *pBlock);	// FromBoxBlock's work (xHCI IRQ or TestPoll in a critical section)
 	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
 	void TestOutBlock (const u8 *pBlock, unsigned nLength);
 	boolean TestExtras (void);		// the made-up box's BOS + MS OS 2.0 set (WinUSB on the bench computer)
