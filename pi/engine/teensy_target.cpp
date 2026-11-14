@@ -9,7 +9,6 @@
 #include <circle/timer.h>
 #include <circle/koptions.h>
 #include <circle/util.h>
-#include <initializer_list>
 
 static const char From[] = "teensy";
 
@@ -729,14 +728,23 @@ static const u8 kTestDev[18] = {18, 1, 0x10, 0x02, 0, 0, 0, 64, 0x09, 0x12, 0x03
 static unsigned TestConfig (u8 *c)
 {
 	unsigned n = 0;
-	auto put = [&] (std::initializer_list<int> b) { for (int x : b) c[n++] = (u8) x; };
-	put ({9, 2, 0, 0, 1, 1, 0, 0xC0, 0});
-	static const int Mps[4] = {0, 32, 88, 256};
-	for (int alt = 0; alt < 4; alt++)
+	auto put = [&] (const u8 *b, unsigned len) { memcpy (c + n, b, len); n += len; };
+	static const u8 Cfg[9] = {9, 2, 0, 0, 1, 1, 0, 0xC0, 0};
+	put (Cfg, sizeof Cfg);
+	static const unsigned Mps[4] = {0, 32, 88, 256};
+	static const u8 Pipes[4] = {0x02, 0x82, 0x01, 0x81};
+	for (unsigned alt = 0; alt < 4; alt++)
 	{
-		put ({9, 4, 0, alt, alt ? 6 : 4, 0xFF, 0, 0, 0});
-		for (int a : {0x02, 0x82, 0x01, 0x81}) put ({7, 5, a, 2, 0x00, 0x02, 0});
-		if (alt) put ({7, 5, 0x83, 3, Mps[alt] & 0xFF, Mps[alt] >> 8, 1, 7, 5, 0x03, 3, Mps[alt] & 0xFF, Mps[alt] >> 8, 1});
+		const u8 If[9] = {9, 4, 0, (u8) alt, (u8) (alt ? 6 : 4), 0xFF, 0, 0, 0};
+		put (If, sizeof If);
+		for (unsigned k = 0; k < 4; k++) { const u8 E[7] = {7, 5, Pipes[k], 2, 0x00, 0x02, 0}; put (E, 7); }
+		if (alt)
+		{
+			const u8 In[7] = {7, 5, 0x83, 3, (u8) (Mps[alt] & 0xFF), (u8) (Mps[alt] >> 8), 1};
+			const u8 Out[7] = {7, 5, 0x03, 3, (u8) (Mps[alt] & 0xFF), (u8) (Mps[alt] >> 8), 1};
+			put (In, 7);
+			put (Out, 7);
+		}
 	}
 	c[2] = (u8) n, c[3] = (u8) (n >> 8);
 	return n;
