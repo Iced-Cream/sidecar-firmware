@@ -2,6 +2,7 @@
 #include "teensy_target.h"
 #include "ob_usb.h"
 #include "sidecar_gadget.h"
+#include "link1.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
 #include <circle/synchronize.h>
@@ -37,7 +38,8 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 :	CUSBFunction (pFunction),
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
-	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_nTakenDue (0), m_nLastLog (0)
+	m_nBoxGoneAt (0), m_ToBoxFilter (true), m_nMidiInHead (0), m_nMidiInTail (0), m_CtlState (CtlIdle), m_CtlSeq (0),
+	m_nCtlAnswer (0), m_nTakenDue (0), m_nLastLog (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -46,6 +48,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 		m_bChanOutBusy[c] = FALSE;
 		m_nCreditDue[c] = 0;
 		m_nAtBox[c] = 0;
+		m_nMidiHeld[c] = 0;
 		for (unsigned k = 0; k < ChanInURBs; k++) { m_pChanInBuf[c][k] = 0; m_pChanInURB[c][k] = 0; }
 	}
 	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
@@ -55,6 +58,10 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	memset (&m_Stats, 0, sizeof m_Stats);
 	m_Stream.init (CKernelOptions::Get ()->GetAppOptionDecimal ("mirrormargin", 8));
 	m_nHoldSecs = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorhold", 10);
+	// OS updates to the box over the relay's MIDI pass only with usbmidi=os:on (the gadget's default lets them pass for
+	// the Rytm; here the box is the second one, so the safer default)
+	const char *pMidi = CKernelOptions::Get ()->GetAppOptionString ("usbmidi", "");
+	m_ToBoxFilter.SetPassOsUpdate (strstr (pMidi, "os:on") != 0);
 	// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " (SC)", as the gadget's
 	const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
 	if (pName == 0) strcpy (m_Name, " (SC)");
@@ -73,6 +80,7 @@ CTeensyTarget::~CTeensyTarget (void)
 	if (s_pThis == this)
 	{
 		CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), 0);
+		link1::SetTap (0);
 		s_pThis = 0;			// completions still on their way see it gone (they test s_pThis)
 		CLogger::Get ()->Write (From, LogNotice, "the mirror relay went away: the box it showed is not shown");
 	}
@@ -160,6 +168,7 @@ boolean CTeensyTarget::Configure (void)
 		}
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed: the box %s mirrors through it", m_nVersion >> 8,
 				m_nVersion & 0xFF, CObUsb::GadgetSlot () == 0 ? "in slot 1 (not the Rytm)" : "in slot 0 (the Rytm)");
+	if (CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
 	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// SetBox comes from there
 	return TRUE;
 }
@@ -440,7 +449,21 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		InvalidateDataCacheRange ((uintptr) p->m_pChanInBuf[c][k], kDmaSize);
 		const mirror::Ep &ep = p->m_Map.l.ep[p->m_Map.ep_of_out[c]];
 		CObUsb *pBox = p->m_pBox;
-		if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
+		if (ep.role == mirror::kMidiOut && link1::Device () != 0)
+		{
+			const u8 *q = p->m_pChanInBuf[c][k];
+			unsigned n = pURB->GetResultLength () / 4;
+			for (unsigned i = 0; i < n; i++, q += 4)
+				p->m_ToBoxFilter.Feed (q, [p] (const uint8_t *e)
+				{
+					if (link1::FromComputer (e)) p->m_Stats.nMidiToBox++;
+					else p->m_Stats.nMidiToBoxFull++;
+				});
+			// the next packet from the computer once a whole one (128 event packets) fits; else MirrorPoll grants it
+			if (link1::FromComputerRoom () >= 128) p->m_nCreditDue[c]++;
+			else p->m_nMidiHeld[c]++;
+		}
+		else if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
 		    && pBox->PipeOut (ep.addr, p->m_pChanInBuf[c][k], pURB->GetResultLength ()))
 		{
 			p->m_Stats.nPipeOut++;			// its credit comes back with MirrorPipeOutDone
@@ -448,8 +471,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		}
 		else
 		{
-			// dropped: no box, a halted pipe, or USB MIDI (not relayed yet: docs/teensy-mirror.md "Gaps"); the
-			// computer may send the next one
+			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1); the computer may send the next one
 			if (ep.role == mirror::kMidiOut) p->m_Stats.nChanInMidi++;
 			else p->m_Stats.nChanInDrop++;
 			p->m_nCreditDue[c]++;
@@ -461,8 +483,50 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 void CTeensyTarget::ChanOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
-	if (p == s_pThis) p->m_bChanOutBusy[(unsigned) (uintptr) pParam] = FALSE;
+	if (p == s_pThis)
+	{
+		p->m_bChanOutBusy[(unsigned) (uintptr) pParam] = FALSE;
+		if ((unsigned) (uintptr) pParam == p->MidiInChan ()) p->FlushMidiIn ();
+	}
 	delete pURB;
+}
+
+void CTeensyTarget::MidiTap (const u8 *pEventPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	if (p == 0 || !p->MirrorShown ()) return;
+	if (p->m_nMidiInHead - p->m_nMidiInTail >= MidiInRing) { p->m_Stats.nMidiToPcDrop++; return; }
+	u32 w;
+	memcpy (&w, pEventPacket, 4);
+	p->m_MidiIn[p->m_nMidiInHead % MidiInRing] = w;
+	p->m_nMidiInHead = p->m_nMidiInHead + 1;
+	p->FlushMidiIn ();
+}
+
+unsigned CTeensyTarget::MidiInChan (void) const
+{
+	for (unsigned c = 0; c < m_Map.n_in; c++) if (m_Map.l.ep[m_Map.ep_of_in[c]].role == mirror::kMidiIn) return c;
+	return kChannels;
+}
+
+void CTeensyTarget::FlushMidiIn (void)
+{
+	unsigned c = MidiInChan ();
+	if (c >= kChannels || m_bChanOutBusy[c] || m_nMidiInHead == m_nMidiInTail) return;
+	unsigned mps = m_Map.l.ep[m_Map.ep_of_in[c]].mps;
+	unsigned n = 0;
+	while (m_nMidiInTail != m_nMidiInHead && n + 4 <= mps)
+	{
+		memcpy (m_pChanOutBuf[c] + n, &m_MidiIn[m_nMidiInTail % MidiInRing], 4);
+		m_nMidiInTail = m_nMidiInTail + 1;
+		n += 4;
+	}
+	CleanAndInvalidateDataCacheRange ((uintptr) m_pChanOutBuf[c], kDmaSize);
+	CUSBRequest *pURB = new CUSBRequest (m_pChanOut[c], m_pChanOutBuf[c], n);
+	pURB->SetCompletionRoutine (ChanOutStub, (void *) (uintptr) c, this);
+	m_bChanOutBusy[c] = TRUE;
+	if (!GetHost ()->SubmitAsyncRequest (pURB)) { m_bChanOutBusy[c] = FALSE; delete pURB; m_Stats.nMidiToPcDrop += n / 4; return; }
+	m_Stats.nMidiToPc += n / 4;
 }
 
 unsigned CTeensyTarget::ChanOfOut (u8 uchAddr) const
@@ -562,6 +626,14 @@ void CTeensyTarget::MirrorPoll (void)
 	if (!m_bConnected) return;
 	ControlPoll ();
 	for (unsigned c = 0; c < m_Map.n_out; c++)
+		if (m_nMidiHeld[c] && link1::FromComputerRoom () >= 128)
+		{
+			EnterCritical ();
+			m_nCreditDue[c] += m_nMidiHeld[c];
+			m_nMidiHeld[c] = 0;
+			LeaveCritical ();
+		}
+	for (unsigned c = 0; c < m_Map.n_out; c++)
 	{
 		unsigned n = m_nCreditDue[c];
 		if (n == 0) continue;
@@ -591,12 +663,13 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 	const mirror::StreamStats &a = p->m_Stream.st;
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
-			"pipe in %u drop %u out %u drop %u credits %u midi %u | ev %u vendor fail %u connects %u",
+			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u vendor fail %u connects %u",
 			p->m_bConnected ? "shown" : "off", p->m_bBoxUp ? "up" : "none", p->m_bPcConfigured ? "configured" : "-",
 			p->m_Stream.in_ch, a.in_blocks, a.in_sent, s.nAudioOutDrop, p->m_Stream.out_ch, a.out_blocks, a.out_bad,
 			a.out_under, a.out_over, a.out_extra, p->m_Stream.extra.dropped, p->m_Stream.extra.late, a.anchor,
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
-			s.nCredits, s.nChanInMidi, s.nEvents, s.nVendorFail, s.nConnects);
+			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
+			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects);
 }
 
 #endif	// CIRCLE_GADGET_MIRROR

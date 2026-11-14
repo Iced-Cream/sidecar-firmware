@@ -20,6 +20,7 @@
 #include "mirror_target.h"
 #include "mirror_stream.h"
 #include "relay_proto.h"
+#include "midi_filter.h"
 
 class CObUsb;
 
@@ -64,6 +65,9 @@ private:
 	unsigned ChanOfOut (u8 uchAddr) const;	// the link channel a mirrored OUT endpoint rides (kChannels: none)
 	unsigned ChanOfIn (u8 uchAddr) const;
 	void Resubmit (CUSBRequest *pURB);
+	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
+	void FlushMidiIn (void);			// xHCI IRQ: queued box MIDI out to the Teensy when its channel is free
+	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
 
 	static CTeensyTarget *s_pThis;
 
@@ -110,11 +114,17 @@ private:
 	int m_nCtlAnswer;			// the box's answer length (< 0: STALL)
 
 	volatile unsigned m_nCreditDue[relay::kChannels];
+	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back while link1's queue to the box is full
+	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)
+	static const unsigned MidiInRing = 512;
+	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
+	volatile unsigned m_nMidiInHead, m_nMidiInTail;
 	volatile unsigned m_nTakenDue;
 
 	struct TStats {
 		unsigned nEvents, nSetups, nAborts, nAnswers, nStalls, nLate, nAudioOutDrop, nChanInDrop, nChanInMidi;
 		unsigned nPipeOut, nPipeIn, nPipeInDrop, nCredits, nVendorFail, nConnects;
+		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop;
 	} m_Stats;
 	u64 m_nLastLog;
 };
