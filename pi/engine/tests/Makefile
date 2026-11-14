@@ -19,6 +19,10 @@ all: $(TESTS)
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
+# usb=mirror's audio for a second port (mirror_stream.h, docs/teensy-mirror.md)
+build/test_mirror_stream: test_mirror_stream.cpp ../mirror_stream.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<
 # usb=mirror through a Teensy: the link's channel map and control slot (relay_proto.h, docs/teensy-mirror.md)
 build/test_relay_proto: test_relay_proto.cpp ../relay_proto.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
