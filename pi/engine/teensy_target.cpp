@@ -694,6 +694,20 @@ void CTeensyTarget::MirrorPoll (void)
 	{
 		m_nLastLog = nNow;
 		LogStats (CLogger::Get ());
+		// the Teensy's own counters: how long the box's blocks waited there for the computer (the margin is 8 blocks,
+		// about 1.2 ms), and its drops
+		Stats ts;
+		if (Vendor (TRUE, kReqStats, 0, 0, 0, sizeof ts) == (int) sizeof ts)
+		{
+			memcpy (&ts, m_pCtlBuf, sizeof ts);
+			unsigned over1ms = 0, total = 0;
+			for (unsigned i = 0; i < kHistBins; i++) { total += ts.hist_to_pc[i]; if (i >= 8) over1ms += ts.hist_to_pc[i]; }
+			CLogger::Get ()->Write (From, LogNotice, "relay teensy: to-pc %u drop %u empty %u qmax %u worst %u us, >=1 ms %u of %u "
+						"| to-pi %u drop %u worst %u us | ctl fwd %u ans %u late %u abort %u | resets pc %u link %u",
+						ts.audio_to_pc, ts.audio_to_pc_drop, ts.audio_to_pc_empty, ts.q_to_pc_max, ts.worst_to_pc_us,
+						over1ms, total, ts.audio_to_pi, ts.audio_to_pi_drop, ts.worst_to_pi_us, ts.ctl_forwarded,
+						ts.ctl_answered, ts.ctl_late, ts.ctl_aborted, ts.pc_resets, ts.link_resets);
+		}
 	}
 }
 
