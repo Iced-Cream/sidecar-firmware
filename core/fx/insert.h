@@ -47,7 +47,8 @@ namespace core {
 namespace ins {
 
 // The chains are one box's (its voices V1..V8, its buses and master): kVoices here is kBoxVoices. An engine voice plays
-// through its box voice's chain (voice_out: box_voice(vi)); slot 1 gets chains of its own with its output stage.
+// through its box voice's chain (voice_out: box_voice(vi)) in its own slot's set: slot 0's (control, engine(0)) or slot
+// 1's (control1, engine(1)), alone or beside a Rytm.
 constexpr int kVoices = kBoxVoices, kSlots = 2, kParams = 4, kBuses = 3, kMasters = 2;
 constexpr int kChains = kVoices + kBuses + kMasters;   // 0..7 the voices' chains (mono), 8..10 the buses', 11..12 the master's (stereo)
 constexpr int kBus0 = kVoices;              // chain of bus b (0..2): kBus0 + b
@@ -92,6 +93,13 @@ struct Control {
   volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
 };
 extern Control control;
+// Slot 1's: its voices 8..15 play through chains of their own, alone or beside a Rytm (every chain OFF until slot 1's
+// settings are loaded into it); `control` is slot 0's (the Rytm's). Its voice chains only: the buses and the master are
+// slot 0's (the send FX and the master chain are the primary stream's). control_of(slot of a voice).
+extern Control control1;
+inline Control& control_of(int slot) { return slot ? control1 : control; }
+// AMP plays on the base box's voice chains (out::g_base_slot: AMP's state is keyed by chain, one box's at a time); the
+// other slot's AMP slots play dry.
 
 // ---- small DSP helpers (no tables; the Pi's hosted side has libm)
 inline float flush(float x) { return (x > -1e-20f && x < 1e-20f) ? 0.0f : x; }
@@ -224,6 +232,7 @@ inline bool peq_set(const Control& k, int c) {
 class Engine {
  public:
   explicit Engine(float sample_rate = 48000.0f) : sr_(sample_rate) {}
+  void SetAmp(bool on) { amp_ = on; }   // AMP plays on these chains (else an AMP slot is dry)
   // The DELAY lines: kLines x kLine floats (zeroed), or null (DELAY plays dry). Before any Process.
   void Place(float (*lines)[kLine]) {
     int k = 0;
@@ -247,7 +256,7 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if (k.type[c][s] || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp)) || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
   }
   // A voice's chain, mono, in place (n any; processed in kChunk pieces)
@@ -299,7 +308,7 @@ class Engine {
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kAllTypes ? k.type[c][s] : kOff;
+    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) ? k.type[c][s] : kOff;   // (no AMP: dry)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
     const float step = (float)m / kFadeFrames;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
@@ -685,6 +694,7 @@ class Engine {
   Peq peq_[kChains];        // ins1112: each chain's POST EQ
   bool st_[kChains] = {};   // a voice chain ran in stereo last
   float sr_;
+  bool amp_ = true;         // AMP plays (SetAmp: the chains of the slot that is not out::g_base_slot play it dry)
   uint32_t faults_ = 0;
 };
 
@@ -752,7 +762,9 @@ void touch();                                // the settings changed (the card f
 // column vi (the engine's block, core::kVoices wide) through its box voice's chain (box_voice(vi)) (int16 in, float inside, the poly voices' soft limiter at the end); nothing when the
 // chain is off. ring_r: the voice renders a stereo pair (OUT PRE / POST): its R in ring_r's column, the chain in
 // stereo. The render core that renders vi.
-void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices] = nullptr);
+// slot: the voice's (slot_of_voice), whose chains it plays through (engine(slot), control_of(slot))
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices] = nullptr,
+               int slot = 0);
 // The voices' sends into the buses (the Pi's OUT fill, core 0: the voices as rendered, after their chains): out[i][b]
 // = sum over v of V[i][v] x send[v][b]^2 (ramped per block), full scale 1.0
 void voice_sends(const int16_t (*v)[kVoices], int n, float (*out)[kBuses]);
@@ -762,8 +774,8 @@ bool sends_on();                             // a voice sends to a bus (else voi
 // mono (optional): the chain's output, (L + R) / 2, before the limit (the Pi's spectrum); untouched while it is off
 void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono = nullptr);
 bool bus3_on();
-Engine& engine();
-// The DELAY lines: on CORE_HEAP_BUFFERS ports placed by heap_buffers_place (voices.cpp), else a static array.
+Engine& engine(int slot = 0);   // slot 0's chains (with the buses and the master), or slot 1's
+// The DELAY lines (slot 1's after slot 0's): on CORE_HEAP_BUFFERS ports placed by heap_buffers_place (voices.cpp), else a static array.
 unsigned long heap_bytes();
 void heap_place(void* mem);
 

@@ -96,6 +96,13 @@ inline void defaults(Control& c) {
   for (int v = 0; v < kVoices; ++v) c.route[v] = kTrk, c.lev[v] = 100, c.pan[v] = 64, c.wid[v] = 64, c.dec[v] = 0, c.open[v] = 1;
   c.trim10[0] = c.trim10[1] = 0, c.trk10 = 0;
 }
+// Slot 1's (its voices 8..15, alone or beside a Rytm: a box's OUT settings are its own): the defaults until slot 1's
+// settings are loaded into it; no mute gate from the Rytm. `control` is slot 0's (the Rytm's). control_of(slot of a voice).
+extern Control control1;
+inline Control& control_of(int slot) { return slot ? control1 : control; }
+// The base box's slot (core/device sets it as the base changes: 1 for a box alone, else 0): the slot whose settings the
+// base box's output stage plays, the console's stereo=trim:trk sets, and whose voice chains play AMP (core/fx/insert.h)
+extern volatile int8_t g_base_slot;
 
 inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }

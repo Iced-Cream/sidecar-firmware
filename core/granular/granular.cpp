@@ -1021,7 +1021,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   // a stereo voice's pan spread: SPRY x WID (out.h; WID 64 = SPRY's own)
   float pan_amt = 0.0f;
   if (outr) {
-    float w = out::control.wid[box_voice(vi)] * (1.0f / 64.0f);
+    float w = out::control_of(slot_of_voice(vi)).wid[box_voice(vi)] * (1.0f / 64.0f);
     pan_amt = clamp01(k.spr * w);
   }
   const float* ring = rings + (size_t)vi * kRing;
