@@ -15,6 +15,7 @@
 #include <circle/util.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include "sidecar_gadget.h"	// CIRCLE_GADGET_MIRROR (circle-gadget-mirror.patch), as teensy_target.cpp
 #ifdef CIRCLE_GADGET_MIRROR
 #include "teensy_target.h"
 #endif
@@ -97,7 +98,7 @@ Parser s_Parser;
 volatile TState s_State = Idle;
 uint64_t s_nTotal, s_nNext;
 uint32_t s_nCrc;
-lib::Sha256 s_Sha;
+core::lib::Sha256 s_Sha;
 char s_ShaHex[65];
 uint32_t s_nBlocks, s_nSent, s_nBlock, s_nRetries;
 char s_Expect[24], s_Build[24], s_Error[160];
@@ -319,7 +320,7 @@ void Put (uint64_t nOff, uint64_t nTotal, uint32_t nCrc, const uint8_t *pData, u
 	if (s_State != Uploading || nTotal != s_nTotal) { Res (r, 409, "expected off=0 (a new upload)"); return; }
 	if (nOff != s_nNext) { Res (r, 409, "expected %llu", (unsigned long long) s_nNext); return; }
 	if (nOff + nData > nTotal) { Res (r, 400, "the chunk runs past total="); s_State = Idle; return; }
-	s_nCrc = lib::crc32 (s_nCrc, pData, nData);
+	s_nCrc = core::lib::crc32 (s_nCrc, pData, nData);
 	s_Sha.update (pData, nData);
 	s_nNext += nData;
 	if (!s_Parser.feed ((const char *) pData, nData))
@@ -338,7 +339,7 @@ void Put (uint64_t nOff, uint64_t nTotal, uint32_t nCrc, const uint8_t *pData, u
 	}
 	u8 Sum[32];
 	s_Sha.final (Sum);
-	lib::hex (Sum, 32, s_ShaHex);
+	core::lib::hex (Sum, 32, s_ShaHex);
 	s_nBlocks = s_Parser.count ();
 	s_State = Ready;
 	CLogger::Get ()->Write (From, LogNotice, "program uploaded: %llu bytes of hex, sha256 %s, %u blocks", (unsigned long long) nTotal, s_ShaHex, s_nBlocks);
