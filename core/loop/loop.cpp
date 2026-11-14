@@ -71,15 +71,19 @@ struct Ramp {
   }
 };
 // what core 0 plays: a snapshot, rewritten whole (core 3), taken under a seqlock (core 0)
-struct Snap {
-  uint32_t loop_id;     // a new id is a new loop (a swap in at `start`, a crossfade when `replace`)
-  bool active, replace, from_ring;
+struct LpSnap {
+  uint32_t id;          // a new id is a new loop
+  bool active, from_ring;
   const int32_t* pcm;   // frame 0 of the store's copy (kPre frames before it)
   uint64_t idx0;        // from_ring: frame 0's absolute ring index
   uint32_t len;
   uint64_t start;       // the host render frame of sample 0
   uint64_t stop_at;     // 0: none
   uint32_t stop_len;    // frames of the fade
+};
+struct Snap {
+  LpSnap cur;           // the loop that starts (or plays) now
+  LpSnap prev;          // the loop it replaces while that is still heard (a resample's wait: until cur.start + kSeam)
   Ramp own, lp;         // the Sidecar's own output's gain (BAL), the loop's (LEV x BAL)
 };
 Snap snap_;             // core 3's working copy
@@ -93,7 +97,7 @@ struct LoopInfo {
   uint32_t len;
   uint64_t stop_at, stop_end;
   uint8_t half_bars;
-} lp_;
+} lp_, lpp_;   // lpp_: the loop still heard under lp_ until lp_ starts (spec 3.6's swap)
 
 CORE_COLD void publish() {
   __atomic_store_n(&pub_seq_, pub_seq_ + 1, __ATOMIC_RELAXED);
@@ -177,7 +181,7 @@ bool via_on_ = false;   // LIVE VIA has set a macro that is not back at full yet
 int via_macro_ = 0;
 
 // ------------------------------------------------------------------------------------------------ the store
-CORE_COLD bool protected_id(uint32_t id) { return (lp_.on && lp_.grab_id == id) || (keep_state_ && keep_id_ == id); }
+CORE_COLD bool protected_id(uint32_t id) { return (lp_.on && lp_.grab_id == id) || (lpp_.on && lpp_.grab_id == id) || (keep_state_ && keep_id_ == id); }
 CORE_COLD void drop_at(int i) {
   if (cp_.on && cp_.id == g_[i].id) cp_.on = false;
   for (int j = i; j + 1 < ng_; ++j) g_[j] = g_[j + 1], g_off_[j] = g_off_[j + 1], g_k0_[j] = g_k0_[j + 1];
@@ -219,14 +223,17 @@ CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
 // ------------------------------------------------------------------------------------------------ the grabs
 CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   const Grab& g = g_[gi];
-  snap_.loop_id = ++loop_ids_;
-  snap_.active = true, snap_.replace = replace;
-  snap_.from_ring = !g.copied;
-  snap_.pcm = g.copied ? g.pcm : nullptr;
-  snap_.idx0 = g_k0_[gi];
-  snap_.len = g.frames;
-  snap_.start = start;
-  snap_.stop_at = 0, snap_.stop_len = 0;
+  uint64_t now = frames_now();
+  // what keeps sounding until the new loop starts: the loop playing now, or - the new one has not started yet (a second
+  // grab or a tap in the wait) - the one that has been playing under it all along
+  if (replace && lp_.on && lp_.start > now && lpp_.on) {
+    // lpp_ and snap_.prev stay
+  } else if (replace && lp_.on) {
+    lpp_ = lp_, snap_.prev = snap_.cur;
+  } else {
+    lpp_ = LoopInfo(), snap_.prev = LpSnap();
+  }
+  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0};
   lp_ = {true, g.id, start, g.frames, 0, 0, g.half_bars};
   publish();
 }
@@ -325,7 +332,7 @@ CORE_COLD void pump_copy() {
     bool was_playing = protected_id(cp_.id);
     cp_.on = false;
     if (was_playing) {
-      snap_.active = false;
+      snap_.cur.active = false;
       publish();
       lp_.on = false;
     }
@@ -344,9 +351,9 @@ CORE_COLD void pump_copy() {
     g.copied = 1;
     cp_.on = false;
     ++stats_.copies;
-    if (protected_id(g.id) && snap_.from_ring && snap_.active) {   // the loop goes on from the store, the same frames
-      snap_.from_ring = false;
-      snap_.pcm = g.pcm;
+    if (lp_.on && lp_.grab_id == g.id && snap_.cur.from_ring && snap_.cur.active) {   // the loop goes on from the store, the same frames
+      snap_.cur.from_ring = false;
+      snap_.cur.pcm = g.pcm;
       publish();
     }
   }
@@ -369,7 +376,7 @@ namespace {
 void core0_reset();   // (the audio side's voices: defined with them)
 }
 CORE_COLD void reset() {
-  ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
+  ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), lpp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
   snap_ = Snap();
   bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
   dirty_ = false, post_lat_ = 0, keep_state_ = 0, cal_state_ = 0, cal_at_ = 0, msg_[0] = 0, msg_gen_ = 0, keep_lines_.n = 0;
@@ -440,7 +447,8 @@ CORE_COLD const char* err_text(int err, int half_bars, char* b, int cap) {
 
 // auto-mute and LIVE VIA follow the loop: on at its start, off at the start of its fade back (or cut)
 CORE_COLD void live_and_mutes(uint64_t now) {
-  bool audible = lp_.on && now >= lp_.start && !(lp_.stop_at && now >= lp_.stop_at);
+  auto heard = [&](const LoopInfo& x) { return x.on && now >= x.start && !(x.stop_at && now >= x.stop_at); };
+  bool audible = heard(lp_) || heard(lpp_);   // (a resample's wait: the old loop is still heard)
   if (audible && auto_mute_ && !am_.on) {
     uint16_t before = muted_now();
     am_ = {true, (uint16_t)(~before & 0xFFF), 0};
@@ -477,6 +485,7 @@ CORE_COLD void tick(uint32_t us) {
   pump_pending(now);
   pump_copy();
   if (lp_.on && lp_.stop_at && now >= lp_.stop_end) lp_.on = false;   // faded out: the ring alone
+  if (lpp_.on && (!lp_.on || now >= lp_.start + (uint64_t)kSeam)) lpp_ = LoopInfo(), snap_.prev = LpSnap();   // the swap is done
   live_and_mutes(now);
   cal_tick(now);
   keep_tick();
@@ -554,19 +563,26 @@ CORE_COLD double fade_bars() {
 CORE_COLD void stop(bool cut, bool now) {
   if (!on_ || !lp_.on) return;
   uint64_t t = frames_now();
+  // a resample waiting for its bar line: what is heard is the old loop; the new one is dropped and the stop is the old one's
+  if (lp_.start > t && lpp_.on) {
+    lp_ = lpp_, snap_.cur = snap_.prev;
+    lpp_ = LoopInfo(), snap_.prev = LpSnap();
+  }
   Map m;
   bool have = get_map(&m, t);
   uint64_t at = t + 96;   // (far enough ahead for the audio thread to take it)
   if (!now && have) at = next_line(m, 16.0 * m.per16, t);
   uint32_t len = cut || !have ? (uint32_t)kCutFrames : (uint32_t)(fade_bars() * 16.0 * m.per16 + 0.5);
   if (len < (uint32_t)kCutFrames) len = kCutFrames;
-  if (at <= lp_.start) {   // the loop has not started: it never will
-    snap_.active = false;
+  if (at <= lp_.start) {   // the loop has not started (and nothing is under it): it never will
+    snap_.cur.active = false;
+    snap_.prev.active = false;
     publish();
     lp_.on = false;
+    lpp_ = LoopInfo();
     return;
   }
-  snap_.stop_at = at, snap_.stop_len = len;
+  snap_.cur.stop_at = at, snap_.cur.stop_len = len;
   lp_.stop_at = at, lp_.stop_end = at + len;
   publish();
 }
@@ -971,6 +987,20 @@ inline int32_t add(int32_t a, float x) {
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
 }
 
+Voice voice_of(const LpSnap& s, bool fade_in) {
+  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in};
+}
+// a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
+float env_of(const Voice& v, uint64_t h) {
+  if (!v.active || h < v.start) return 0.0f;
+  float e = (float)(h - v.start + 1) / kRampFrames;
+  if (e > 1.0f) e = 1.0f;
+  if (v.stop_at && h >= v.stop_at) {
+    float d = (float)(h - v.stop_at + 1) / (float)v.stop_len;
+    e *= d >= 1.0f ? 0.0f : 1.0f - d;
+  }
+  return e;
+}
 void take_snapshot(uint64_t h0) {
   uint32_t s0 = __atomic_load_n(&pub_seq_, __ATOMIC_ACQUIRE);
   if (s0 == seen_seq_ || (s0 & 1)) return;
@@ -979,19 +1009,17 @@ void take_snapshot(uint64_t h0) {
   if (__atomic_load_n(&pub_seq_, __ATOMIC_RELAXED) != s0) return;   // rewritten meanwhile: the next block
   seen_seq_ = s0;
   ramp_own_ = s.own, ramp_loop_ = s.lp;
-  if (!s.active) {   // gone (an abandoned copy): a cut from here
+  if (!s.cur.active && !s.prev.active) {   // gone (an abandoned copy, a stop before the start): a cut from here
     if (cur_.active && !(cur_.stop_at && cur_.stop_at <= h0)) cur_.stop_at = h0, cur_.stop_len = kCutFrames;
+    if (old_.active && !(old_.stop_at && old_.stop_at <= h0)) old_.stop_at = h0, old_.stop_len = kCutFrames;
     return;
   }
-  if (s.loop_id != cur_.id) {   // a new loop
-    bool xf = s.replace && cur_.active;
-    if (xf) old_ = cur_;
-    else old_.active = false;
-    cur_ = Voice{true, s.loop_id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, !xf};
-  } else {   // the same loop: its source (the store's copy now) and its stop
-    cur_.from_ring = s.from_ring, cur_.pcm = s.pcm;
-    cur_.stop_at = s.stop_at, cur_.stop_len = s.stop_len;
-  }
+  // the snapshot is the whole truth: what plays, and what it replaces while that is heard
+  if (s.prev.active) old_ = voice_of(s.prev, false);
+  else if (s.cur.id != cur_.id) old_.active = false;
+  Voice c = voice_of(s.cur, !s.prev.active);
+  if (s.cur.id == cur_.id) c.fade_in = cur_.fade_in;
+  cur_ = c;
 }
 }  // namespace
 
@@ -1021,24 +1049,19 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
     }
     if (old_.active) {
       float c, d;
-      if (h < cur_.start + kSeam && vat(old_, h, &c, &d)) {
-        float w = h < cur_.start ? 1.0f : 1.0f - (float)(h - cur_.start + 1) / kSeam;
+      bool xf = cur_.active && h >= cur_.start;   // past the new loop's start: the 64-frame crossfade, then it is gone
+      if (xf && h >= cur_.start + kSeam) old_.active = false;
+      else if (vat(old_, h, &c, &d)) {
+        float w = xf ? 1.0f - (float)(h - cur_.start + 1) / kSeam : 1.0f;
         l += c * w, r += d * w;
         any = true;
-      } else if (h >= cur_.start + kSeam) {
-        old_.active = false;
       }
     }
     if (!any) continue;
     // BAL: the Sidecar's own output (every channel of F so far) falls toward `own` as the loop is heard (spec 3.8)
     float og = ramp_own_.at_h(h);
     if (og < 0.99999f) {
-      float e = h >= cur_.start ? (float)(h - cur_.start + 1) / kRampFrames : 0.0f;
-      if (e > 1.0f) e = 1.0f;
-      if (cur_.stop_at && h >= cur_.stop_at) {
-        float d = (float)(h - cur_.stop_at + 1) / (float)cur_.stop_len;
-        e *= d >= 1.0f ? 0.0f : 1.0f - d;
-      }
+      float e = fmaxf(env_of(cur_, h), env_of(old_, h));   // whichever loop is heard: a resample's wait keeps the old one's
       float m = 1.0f + (og - 1.0f) * e;
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }

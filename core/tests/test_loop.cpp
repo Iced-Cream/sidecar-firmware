@@ -739,6 +739,89 @@ static void test_cost() {
 }
 
 
+// ---- fix round 1: the resample's wait (a new loop scheduled while the old one is heard)
+static void test_resample_wait() {
+  hooks.to_rytm = wire;
+  // H2: a second grab, and a tap, during the wait do not cut the audible loop (a click, then silence)
+  fresh();
+  uint32_t len;
+  started(loop::k1, &len);
+  uint64_t s0 = (uint64_t)(g_origin + 41 * bar());
+  played_at(s0 + 1000);   // (the audio thread runs: it has loop A)
+  const int32_t* a_pcm = loop::grab_at(0)->pcm;
+  to((uint64_t)(line(43) + bar() / 4));
+  played_at(g_now);
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  played_at(g_now);
+  CHECK(loop::grab(loop::k1) == loop::kOk);   // a third grab in the same wait
+  run_ms(60);
+  CHECK(loop::grabs() == 3);
+  CHECK(loop::play(2));                        // and a tap on A's own pad
+  uint64_t ns;
+  uint32_t nl;
+  CHECK(loop::playing_info(&ns, &nl) && ns == (uint64_t)(g_origin + 44 * bar()));
+  uint64_t h = ns - 3000;
+  CHECK(played_at(h) == a_pcm[2 * ((h - s0) % len)] && a_pcm[2 * ((h - s0) % len)] != 0);   // A is still heard until the bar line
+  CHECK(loop::grab_at(2)->copied);   // (A is the oldest of three and still held: protected while heard)
+
+  // H3: BAL 127: the Sidecar's own output stays down through the wait
+  fresh();
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  loop::set_bal(127);
+  run_ms(30);
+  int32_t F[12][12];
+  auto own = [&](uint64_t hh) {
+    for (auto& r : F)
+      for (int& c : r) c = 100000000;
+    loop::out_mix(F, 12, hh);
+    return F[11][5];
+  };
+  CHECK(own(s0 + 20000) == 0);
+  to((uint64_t)(line(43) + bar() / 4));
+  own(g_now);
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::playing_info(&ns, &nl));
+  CHECK(own(g_now) == 0 && own(ns - 20000) == 0 && own(ns - 100) == 0);   // (it jumped back to full here)
+
+  // H4: auto-mute and LIVE VIA hold through the wait; M1: a stop in the wait stops what is heard
+  fresh();
+  mod::rytm_out_reset();
+  mod::rytm_host_cmd(true);
+  loop::set_auto_mute(true);
+  loop::set_live_via(3);
+  g_muted = 0x005;
+  g_wire.clear();
+  started(loop::k1, &len);
+  s0 = (uint64_t)(g_origin + 41 * bar());
+  g_muted = 0xFFF;
+  run_ms(20);
+  size_t before = g_wire.size();
+  played_at(g_now);
+  to((uint64_t)(line(43) + bar() / 4));
+  played_at(g_now);
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(100);
+  CHECK(g_wire.size() == before);   // no unmute, no PERF back to 127: the Rytm stays muted under the resample's wait
+  CHECK(loop::playing_info(&ns, &nl));
+  played_at(g_now);
+  const int32_t* a2 = loop::grab_at(1)->pcm;
+  uint64_t t = g_now;
+  loop::stop(true, true);   // FUNC + T8 in the wait
+  CHECK(loop::state() == loop::kFading);
+  uint64_t at = t + 96;
+  uint64_t hb = at - 2;
+  CHECK(played_at(hb) == a2[2 * ((hb - s0) % len)]);   // A plays to the cut
+  CHECK(played_at(at + 480) == 0 && played_at(at + 3000) == 0 && played_at(ns + 100) == 0);   // then nothing: not B at its start
+  to(at + 600);
+  CHECK(loop::state() == loop::kRing && g_wire.size() > before);   // and the mutes are given back
+  hooks.to_rytm = nullptr;
+  printf("  resample wait: a second grab / a tap, BAL, auto-mute, LIVE VIA and stop hold up\n");
+}
+
+
 int main() {
   test_ring();
   test_grabs();
@@ -746,6 +829,7 @@ int main() {
   test_playback();
   test_resample_stop_mute();
   test_cal_console();
+  test_resample_wait();
   test_cost();
   printf("test_loop: OK\n");
   return 0;
