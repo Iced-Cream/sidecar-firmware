@@ -216,6 +216,16 @@ inline int base_box_voice(int vi) {   // engine voice vi -> its number in the ba
   const int k = vi - base_voice_base();
   return k >= 0 && k < kBoxVoices ? k : -1;
 }
+// The slot whose voices sound beside the base box's, through an output stage of their own (its own OUT settings and
+// INSERT chains, core/fx/out.h control_side and core/fx/insert.h control_side; on the Pi its own FIFO and render pace,
+// paced by its own box's stream): 1 while slot 1 has a box and the base is slot 0 (a box beside a Rytm), else -1 (one
+// box: the base box's stage carries it, as it always did). Any core reads it (two aligned loads).
+inline int side_slot() {
+  if (kVoiceSlots < 2) return -1;
+  const Link* b = __atomic_load_n(&g_base, __ATOMIC_RELAXED);
+  return b == &g_links[0] && __atomic_load_n(&g_links[1].box, __ATOMIC_RELAXED) ? 1 : -1;
+}
+inline bool on_side(int vi) { return slot_of_voice(vi) == side_slot(); }   // engine voice vi plays through the side stage
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
 // the control core may set the box. Null: the Rytm, or a box without a Screen.
 inline const Screen* box_screen(const Link& l = cur()) {
