@@ -26,7 +26,12 @@
 #include <circle/logger.h>
 #include <circle/types.h>
 #include "fx/out.h"
+#include "mirror_target.h"
 
+// One CObUsb per box streaming (two at most): the Rytm's (slot 0) and another box's (slot 1, its profile's audio row). The
+// primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
+// device follow, as the one stream did; the other streams in step with its own box (its own clock), its OUT silent until the
+// engine renders voices of its own for it. Each box's usb=mirror goes to its own target (mirror_target.h).
 class CObUsb : public CUSBFunction
 {
 public:
@@ -40,7 +45,16 @@ public:
 
 	// called once a second from the main loop (counters are updated in IRQ context)
 	static void LogAllStats (CLogger *pLogger);
-	static boolean Streaming (void)		{ return s_pThis != 0 && s_pThis->m_bStreaming; }
+	static boolean Streaming (void)		{ return s_pThis != 0 && s_pThis->m_bStreaming; }	// the primary stream
+	static const unsigned Slots = 2;
+	static CObUsb *Box (unsigned nSlot)	{ return nSlot < Slots ? s_pBox[nSlot] : 0; }
+	static boolean Streaming (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bStreaming; }
+	unsigned Slot (void) const		{ return m_nSlot; }
+	boolean Primary (void) const		{ return this == s_pThis; }
+	const core::out::Device *Audio (void) const	{ return m_pAudio; }
+	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
+	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
+	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 #if RASPPI >= 5
@@ -117,18 +131,30 @@ public:
 	// usb=mirror (docs/usb-mirror.md, sidecar_gadget.h): the box's side. At Configure the box's device, configuration and
 	// string descriptors go to the gadget, and the other vendor-class endpoints (pipes: the async channel) are opened.
 	// FALSE: no box (or busy): the caller drops or STALLs.
+	// The statics are the USB-C gadget's: they act on the box it mirrors (GadgetSlot). A target of its own (mirror_target.h)
+	// calls the members on its box instead.
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
 	static void MirrorAttachLate (void);
 	static unsigned MirrorParked (void);		// pipe IN packets drained while the Sidecar device was shown (the mirror line)
 	static void MirrorWanted (void);		// core 0's loop: the USB-C mode turned to OVERBRIDGE: a box up and not yet read is read (MirrorAttachLate)
-	static u16 OutCounter (void)		{ return s_pThis != 0 ? s_pThis->m_nOutCounter : 0; }	// the next block's		// core 0's loop: the box was configured before the gadget existed
+	static u16 OutCounter (void);			// the next block's of the gadget's box
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
 	static unsigned MirrorPipeResets (void);	// those clears so far (the mirror line)
 	// a forwarded request of the computer's is on the box's EP0 (async, its answer not back): no synchronous EP0 transfer to
 	// the box meanwhile (Circle's 3 s timeout would drop the forwarded URB's slot and leave the caller's on the ring)
 	static boolean MirrorCtlBusy (void);
+	// the same, on this box (a target's own calls)
+	boolean Control (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);
+	boolean PipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);
+	void PipeInNext (u8 uchAddr);
+	void PipePoll (void);
+	void AttachLate (void);
+	void Wanted (void);
+	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
+	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
+	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
@@ -147,7 +173,8 @@ public:
 		unsigned nOrphan;		// no URB pending when the event came
 	};
 
-	static CObUsb *s_pThis;
+	static CObUsb *s_pThis;				// the primary stream: s_pBox[0], else s_pBox[1]
+	static CObUsb *s_pBox[Slots];
 	static volatile boolean s_bActive;
 #if RASPPI >= 5
 	static volatile boolean s_bFading;
@@ -167,6 +194,12 @@ private:
 	boolean BoxWait (unsigned nNowUs);		// EpBox::Wait over IN, OUT and the MIDI OUT: TRUE no reset now
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
+
+	static boolean Live (const void *p)	{ return p != 0 && (p == s_pBox[0] || p == s_pBox[1]); }	// a completion of a box still here
+	static void Rebind (void);			// s_pThis from s_pBox
+	IMirrorTarget *Target (void);			// this box's mirror target now (the gadget's adapter, a slot's own, or 0)
+	unsigned m_nSlot;
+	u8 **m_pInBuf, **m_pOutBuf;			// this slot's DMA buffers (AllocBufs)
 
 	// usb=mirror
 	void MirrorAttach (void);

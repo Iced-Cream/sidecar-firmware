@@ -2496,6 +2496,7 @@ void CKernel::Run (void)
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
 		link1::Send ();				// the engine's replies to the second box (link1.h)
+		CObUsb::PollTargets ();			// each box's own mirror target besides the gadget (mirror_target.h)
 		if (m_pTransport == &m_SelfTest && CObUsb::Streaming ()) SetSelfTest (FALSE, "the Rytm streams");
 		if (m_pTransport == &m_SelfTest && m_pMIDI != 0) SetSelfTest (FALSE, "the Rytm's USB MIDI is up");
 		int nSelfTest = m_Console.TakeSelfTest ();
