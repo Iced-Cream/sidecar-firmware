@@ -152,6 +152,7 @@ public:
 	void PipePoll (void);
 	void AttachLate (void);
 	void Wanted (void);
+	void Reattach (void);				// a new mirror target for this box (SetMirrorTarget): read again at AttachLate
 	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
 	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
 	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
