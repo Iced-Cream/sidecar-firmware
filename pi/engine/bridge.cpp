@@ -131,6 +131,7 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
   return core::engine_begin();
 }
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
+void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach, int16_t (*block_r)[kVoices], uint8_t* st) {
   return core::render_voices(block, kBlock, 0, v0, v1, mach, block_r, st);
 }

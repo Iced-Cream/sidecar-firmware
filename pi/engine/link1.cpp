@@ -3,8 +3,8 @@
 
 #include <circle/usb/usbmidi.h>
 
+#include "bridge.h"
 #include "device/device.h"
-#include "engine.h"
 #include "usbmidi_pack.h"
 
 namespace link1 {
@@ -84,7 +84,7 @@ void Poll (void)
 		unsigned n = s_Asm.feed (b);
 		if (n == 0) continue;
 		s_Stats.nSysEx++;
-		core::engine_sysex_link (1, s_Asm.data (), (int) n);
+		bridge::sysex_link (1, s_Asm.data (), (int) n);
 	}
 	s_Stats.nBadSysEx = s_Asm.bad ();
 }

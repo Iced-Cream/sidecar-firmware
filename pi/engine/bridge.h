@@ -16,6 +16,7 @@ unsigned long heap_bytes();
 void heap_place(void* mem);
 bool begin(void (*to_host)(const uint8_t* m, int n));   // core::hooks.to_rytm = to_host; core::engine_begin()
 void sysex(const uint8_t* d, int len);                  // core::engine_sysex
+void sysex_link(int link, const uint8_t* d, int len);    // core::engine_sysex_link: the second box's (link1.h)
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach,   // one block of voices v0..v1-1
                 int16_t (*block_r)[kVoices] = nullptr, uint8_t* st = nullptr);  // (R, real-stereo bytes: core/voices.h)
 bool idle_prepare();
