@@ -369,6 +369,12 @@ boolean CTeensyTarget::Upload (void)
 {
 	if (m_nVariant == 5) { Step ("variant 5: no link request at all (URBs only)"); m_bUploadDue = FALSE; return TRUE; }
 	Step ("upload: %u B configuration, %u strings", m_nCfg, m_nStr);
+	for (unsigned i = 0; i < m_Map.l.n; i++)		// the box's endpoints as the Teensy shows them (TR2: the A4's shape)
+	{
+		const mirror::Ep &e = m_Map.l.ep[i];
+		CLogger::Get ()->Write (From, LogNotice, "relay ep 0x%02x iface %u role %u type %u mps %u interval %u desc %02x %02x %02x",
+					e.addr, e.iface, e.role, e.attr & 3, e.mps, e.interval, e.desc[4], e.desc[5], e.desc[6]);
+	}
 	if (Vendor (FALSE, kReqConnect, 0, 0, 0, 0) < 0) return FALSE;
 	if (Vendor (FALSE, kReqSetDevice, 0, 0, m_Dev, 18) < 0) return FALSE;
 	if (Vendor (FALSE, kReqSetConfig, 0, 0, m_Cfg, m_nCfg) < 0) return FALSE;
