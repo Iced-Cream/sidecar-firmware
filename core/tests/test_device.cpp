@@ -371,8 +371,8 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    send(hello(device::kA4.id));                       // its hello again: the A4's trim, nothing else
-    CHECK(out::control.trk10 == 180);
+    send(hello(device::kA4.id));                       // its hello again: the A4's trim on slot 1, nothing else
+    CHECK(out::control1.trk10 == 180 && out::control.trk10 == 0);
     device::reset();
   }
 
