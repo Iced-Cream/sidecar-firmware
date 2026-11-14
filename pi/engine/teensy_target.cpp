@@ -43,7 +43,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -123,6 +123,7 @@ boolean CTeensyTarget::Configure (void)
 	}
 	m_bDebug = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydebug", 0) != 0;
 	m_nDelay = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydelay", 0);
+	m_nVariant = CKernelOptions::Get ()->GetAppOptionDecimal ("relayvariant", 1);
 	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
 	s_pThis = this;
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,
@@ -179,6 +180,12 @@ boolean CTeensyTarget::Start (void)
 		for (unsigned k = 0; k < ChanInURBs; k++) m_pChanInBuf[c][k] = DmaBuf ();
 	}
 	s_pThis = this;
+	if (m_nVariant == 2)
+	{
+		Step ("variant 2: a link request before any URB");
+		int n = Vendor (TRUE, kReqStats, 0, 0, 0, sizeof (Stats));
+		Step ("variant 2: returned %d", n);
+	}
 	Step ("start: URBs");
 	// the IN URBs: a fixed pool, resubmitted from their completions (no allocation while streaming, as ob_usb.cpp's)
 	for (unsigned k = 0; k < EvURBs; k++)
@@ -201,6 +208,12 @@ boolean CTeensyTarget::Start (void)
 			Resubmit (m_pChanInURB[c][k]);
 		}
 	Step ("start: URBs submitted");
+	if (m_nVariant == 3)
+	{
+		Step ("variant 3: GET_DESCRIPTOR device through the same sync path");
+		int n = GetHost ()->GetDescriptor (GetEndpoint0 (), DESCRIPTOR_DEVICE, DESCRIPTOR_INDEX_DEFAULT, m_pCtlBuf, 18, REQUEST_IN);
+		Step ("variant 3: returned %d", n);
+	}
 	if (!m_bTest && CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
 	m_bStarted = TRUE;
 	Step ("started");
@@ -219,14 +232,52 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 	if (nLength > kDmaSize || m_pCtlBuf == 0) return -1;	// (not started yet: no EP0 buffer)
 	if (!bIn && nLength) memcpy (m_pCtlBuf, pData, nLength);
 	if (m_nDebugVendor < 40) Step ("vendor %s %02x value %04x index %04x length %u: sent", bIn ? "IN" : "OUT", uchRequest, wValue, wIndex, nLength);
-	int n = GetHost ()->ControlMessage (GetEndpoint0 (), (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR, uchRequest,
-					    wValue, wIndex, m_pCtlBuf, (u16) nLength);
+	int n;
+	if (m_nVariant == 4)		// as CObUsb::Control: the request as an async URB on EP0, waited for here (1 s)
+	{
+		TSetupData *pS = new TSetupData;
+		pS->bmRequestType = (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR;
+		pS->bRequest = uchRequest, pS->wValue = wValue, pS->wIndex = wIndex, pS->wLength = (u16) nLength;
+		CleanAndInvalidateDataCacheRange ((uintptr) m_pCtlBuf, kDmaSize);
+		CUSBRequest *pURB = new CUSBRequest (GetEndpoint0 (), m_pCtlBuf, nLength, pS);
+		pURB->SetCompletionRoutine (CtlStub, 0, this);
+		m_bCtlDone = FALSE;
+		n = -1;
+		if (GetHost ()->SubmitAsyncRequest (pURB))
+		{
+			unsigned t0 = CTimer::Get ()->GetTicks ();
+			while (!m_bCtlDone && CTimer::Get ()->GetTicks () - t0 < HZ) {}
+			if (m_bCtlDone)
+			{
+				n = m_nCtlResult;
+				InvalidateDataCacheRange ((uintptr) m_pCtlBuf, kDmaSize);
+			}
+			// (not done in 1 s: the URB stays with the controller; a debug variant only)
+		}
+		else { delete pURB; delete pS; }
+	}
+	else
+		n = GetHost ()->ControlMessage (GetEndpoint0 (), (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR, uchRequest,
+						wValue, wIndex, m_pCtlBuf, (u16) nLength);
 	if (m_nDebugVendor < 40) { m_nDebugVendor++; Step ("vendor %02x: returned %d", uchRequest, n); }
 	if (n < 0) m_Stats.nVendorFail++;
 	return n;
 }
 
 // ---- IMirrorTarget: the box's side ---------------------------------------------------------------------------------
+
+void CTeensyTarget::CtlStub (CUSBRequest *pURB, void *, void *pContext)
+{
+	CTeensyTarget *p = (CTeensyTarget *) pContext;
+	TSetupData *pS = pURB->GetSetupData ();
+	if (p == s_pThis)
+	{
+		p->m_nCtlResult = pURB->GetStatus () ? (int) pURB->GetResultLength () : -1;
+		p->m_bCtlDone = TRUE;
+	}
+	delete pURB;
+	delete pS;
+}
 
 void CTeensyTarget::SetBox (CObUsb *pBox)
 {
@@ -310,6 +361,7 @@ void CTeensyTarget::MirrorBoxUp (boolean bUp)
 
 boolean CTeensyTarget::Upload (void)
 {
+	if (m_nVariant == 5) { Step ("variant 5: no link request at all (URBs only)"); m_bUploadDue = FALSE; return TRUE; }
 	Step ("upload: %u B configuration, %u strings", m_nCfg, m_nStr);
 	if (Vendor (FALSE, kReqConnect, 0, 0, 0, 0) < 0) return FALSE;
 	if (Vendor (FALSE, kReqSetDevice, 0, 0, m_Dev, 18) < 0) return FALSE;

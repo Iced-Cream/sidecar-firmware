@@ -142,6 +142,11 @@ private:
 	boolean m_bStarted, m_bDebug;
 	unsigned m_nDelay;
 	unsigned m_nDebugVendor;
+	unsigned m_nVariant;			// relayvariant= (TR1g bisect): 2 a link request before the URBs, 3 a standard request after
+					// them, 4 link requests as async URBs waited for
+	volatile boolean m_bCtlDone;
+	volatile int m_nCtlResult;
+	static void CtlStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	const TUSBEndpointDescriptor *m_pEpDesc[16];
 	unsigned m_nEpDesc;			// TestPoll is the caller (a real box of the slot is ignored in test mode)
 };
