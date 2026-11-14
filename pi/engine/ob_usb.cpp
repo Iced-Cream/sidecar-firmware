@@ -841,6 +841,11 @@ static char s_PipeInfo[2][192];
 
 const char *CObUsb::PipeInfo (unsigned nSlot) { return nSlot < 2 ? s_PipeInfo[nSlot] : ""; }
 
+static u8 s_BoxCfg[2][512];
+static unsigned s_nBoxCfg[2];
+
+const u8 *CObUsb::BoxConfig (unsigned nSlot, unsigned *pLen) { *pLen = nSlot < 2 ? s_nBoxCfg[nSlot] : 0; return nSlot < 2 ? s_BoxCfg[nSlot] : 0; }
+
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
@@ -851,6 +856,11 @@ void CObUsb::MirrorAttach (void)
 	if (pDev == 0 || pCfg == 0) return;
 	const u8 *pC = (const u8 *) pCfg;
 	unsigned nCfg = pCfg->wTotalLength;
+	if (m_nSlot < 2)
+	{
+		s_nBoxCfg[m_nSlot] = nCfg < sizeof s_BoxCfg[0] ? nCfg : sizeof s_BoxCfg[0];
+		memcpy (s_BoxCfg[m_nSlot], pC, s_nBoxCfg[m_nSlot]);
+	}
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
 	const boolean bPipesOpen = m_bMirror;		// read before (Reattach: a new target): its pipes run already
 	m_bMirror = TRUE;

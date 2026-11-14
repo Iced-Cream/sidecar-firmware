@@ -44,7 +44,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -416,7 +416,12 @@ void CTeensyTarget::MirrorControlDone (unsigned nSeq, const u8 *pData, int nLeng
 // xHCI IRQ: one IN packet of a box pipe for the computer
 boolean CTeensyTarget::MirrorPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength)
 {
-	if (m_bTest) { m_Stats.nPipeInDrop++; return FALSE; }	// relaytest: the real box's packets (relayboxpipes=1); its request goes again
+	if (m_bTest)		// relaytest (relayboxpipes=1): the real box's packet dropped and held as the real path holds it until the
+	{			// computer took it; MirrorPoll asks for the next one 1 ms later (T331: "not taken" re-requested at once: a storm)
+		m_Stats.nPipeInDrop++;
+		m_uchTestParked = uchAddr;
+		return TRUE;
+	}
 	return SendPipeIn (uchAddr, pData, nLength);
 }
 
@@ -802,6 +807,17 @@ void CTeensyTarget::MirrorPoll (void)
 	}
 	if (m_bTest) TestPoll ();
 	CObUsb *pBox = m_pBox;
+	if (m_uchTestParked != 0 && pBox != 0)
+	{
+		u64 nNow = NowTicks ();
+		if (m_nTestParkedAt == 0) m_nTestParkedAt = nNow;
+		else if (nNow - m_nTestParkedAt >= 1000)
+		{
+			u8 a = m_uchTestParked;
+			m_uchTestParked = 0, m_nTestParkedAt = 0;
+			pBox->PipeInNext (a);
+		}
+	}
 	if (pBox != 0 && !m_bHave && Mirror ())		// the box was up before the relay or the mode: read it now
 	{
 		pBox->Wanted ();
@@ -901,6 +917,20 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 		}
 		pLogger->Write (From, LogNotice, "relay box pipes: slot 0 (%s) slot 1 (%s)%s", CObUsb::PipeInfo (0),
 				CObUsb::PipeInfo (1), p->m_bBoxPipes ? ", relayboxpipes=1" : "");
+		unsigned nCfg = 0;
+		const u8 *pCfg = CObUsb::BoxConfig (1 - CObUsb::GadgetSlot (), &nCfg);
+		for (unsigned o = 0; pCfg != 0 && o < nCfg; o += 64)	// the relay's box's configuration descriptor, 64 B a line
+		{
+			char Hex[129];
+			unsigned n = nCfg - o < 64 ? nCfg - o : 64;
+			for (unsigned i = 0; i < n; i++)
+			{
+				static const char D[] = "0123456789abcdef";
+				Hex[2 * i] = D[pCfg[o + i] >> 4], Hex[2 * i + 1] = D[pCfg[o + i] & 15];
+			}
+			Hex[2 * n] = 0;
+			pLogger->Write (From, LogNotice, "relay box cfg %03u: %s", o, Hex);
+		}
 	}
 	pLogger->Write (From, LogNotice, "relay link 0x02: done %u err %u (usb %u) max %u us, hist <125 %u <250 %u <500 %u <1ms %u "
 			"<2ms %u <4ms %u <8ms %u more %u | busy max %u, drops in a row max %u",

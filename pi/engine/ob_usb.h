@@ -55,7 +55,8 @@ public:
 	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
 	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
 	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
-	static const char *PipeInfo (unsigned nSlot);	// the pipes MirrorAttach opened: address, type, wMaxPacketSize, bInterval
+	static const char *PipeInfo (unsigned nSlot);
+	static const u8 *BoxConfig (unsigned nSlot, unsigned *pLen);	// the configuration descriptor MirrorAttach read	// the pipes MirrorAttach opened: address, type, wMaxPacketSize, bInterval
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 #if RASPPI >= 5
