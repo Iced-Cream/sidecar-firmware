@@ -12,6 +12,8 @@
 #include "device/a4.h"
 #include "device/device.h"
 #include "engine.h"
+#include "fx/insert.h"
+#include "fx/out.h"
 #include "host_link.h"
 #include "pool/pool.h"
 #include "ui/remote.h"
@@ -150,17 +152,63 @@ int main() {
   for (int i = kRows / 2; i < kRows; ++i) tail += std::fabs((double)ring[i][3]);
   CHECK(tail == 0);
 
+  // the side stage (device.h side_slot): beside the Rytm, slot 1's voices play through INSERT chains and OUT settings of
+  // their own. The same trig on voice 3 and 11 with a TREMOLO on the base box's chain 3: voice 3 only; on the side
+  // stage's chain 3: voice 11 only; AMP on the side stage plays dry
+  CHECK(device::side_slot() == 1 && device::on_side(11) && !device::on_side(3));
+  CHECK(&out::control_of(true) == &out::control_side && out::control_side.route[3] == out::kTrk && out::control_side.lev[3] == 100);
+  auto same_3_11 = [] {
+    voices_init();
+    send(0, trig(kPlaits, 3, 60));
+    send(1, trig(kPlaits, 3, 60));
+    memset(ring, 0, sizeof ring);
+    render();
+    CHECK(rms(3) > 100 && rms(11) > 100);
+    for (int i = 0; i < kRows; ++i)
+      if (ring[i][3] != ring[i][11]) return false;
+    return true;
+  };
+  auto trem = [](ins::Control& k) {   // chain 3's slot 0: TREMOLO, full depth, as insert.cpp's settings would play it
+    k.type[3][0] = ins::kTrem;
+    for (int p = 0; p < ins::kParams; ++p) k.play[3][0][p] = 127;
+  };
+  ins::reset();
+  CHECK(same_3_11());   // both stages' chains off
+  ins::set_type(3, 0, ins::kTrem);
+  ins::set_param(3, 0, 1, 127);
+  ins::set_param(3, 0, 0, 127);
+  CHECK(!same_3_11());
+  double base_on_3 = rms(3), plain_11 = rms(11);
+  ins::reset();
+  trem(ins::control_side);
+  CHECK(!same_3_11());
+  printf("  side stage: base TREMOLO voice 3 %.1f (plain %.1f); side TREMOLO voice 11 %.1f, voice 3 %.1f
+", base_on_3,
+         plain_11, rms(11), rms(3));
+  CHECK(std::fabs(rms(3) - plain_11) < 1e-6 && ins::control.type[3][0] == ins::kOff);
+  ins::reset();
+  ins::control_side.type[3][0] = ins::kAmp;   // AMP is the base box's chains' only: dry on the side stage
+  CHECK(same_3_11());
+  ins::reset();
+
   // the A4 alone (no Rytm on USB): the base box is slot 1's, its tracks the pages' voices 8..15
   device::rytm_on_usb(false);
   device::step();
   CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices);
   CHECK(device::base_voice(2) == 10 && device::base_box_voice(10) == 2 && device::base_box_voice(2) == -1);
   CHECK(ui::remote_track_voice(0) == kBoxVoices + 0);   // track 1 (BD's place): the base box's voice 0
+  CHECK(device::side_slot() == -1);   // alone: its voices through the base box's chains, as before
+  ins::set_type(3, 0, ins::kTrem);
+  ins::set_param(3, 0, 1, 127);
+  ins::set_param(3, 0, 0, 127);
+  CHECK(!same_3_11() && std::fabs(rms(3) - plain_11) < 1e-6);   // voice 11 (the base box's 3) through it, voice 3 not
+  ins::reset();
   device::rytm_on_usb(true);
   device::step();
   CHECK(device::base_voice_base() == 0 && ui::remote_track_voice(0) == 0);
 
   printf("test_two_slots: PASS (slot 0 on 0..7, slot 1 on 8..15: the same report the same samples, machines, "
-         "note-offs and link resets each slot's own, the base box's voices follow g_base)\n");
+         "note-offs and link resets each slot's own, the base box's voices follow g_base, slot 1's INSERT chains its own beside "
+         "a Rytm)\n");
   return 0;
 }
