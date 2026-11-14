@@ -643,13 +643,14 @@ int track_src_json(char* out, int cap) {
 // The RAM store (core/store/store.h) and what is still on its way to the card: unwritten = the card queue's pending requests
 // plus fmt's writes the queue does not hold (queued, and the slot's once the card core has taken it: running or held); oldestMs the oldest of those. An edit still inside
 // its 1 s settle has not been posted yet and is not counted.
+// (slot 0's store: the base Rytm's project, as before; core 0 names the slot)
 int store_json(char* out, int cap, unsigned long heap_free) {
   uint32_t fo = 0, fn = core::fmt::unwritten(&fo), co = core::cardq::oldest_ms();
   int cn = core::cardq::pending();
   int n = sniprintf(out, cap,
                     "\"store\":{\"files\":%d,\"bytes\":%lu,\"ready\":%s,\"unwritten\":%lu,\"oldestMs\":%lu,\"held\":%lu,"
                     "\"heapFree\":%lu}",
-                    core::store::present(), (unsigned long)core::store::bytes(), core::store::ready() ? "true" : "false",
+                    core::store::present(0), (unsigned long)core::store::bytes(0), core::store::ready(0) ? "true" : "false",
                     (unsigned long)((cn > 0 ? (uint32_t)cn : 0) + fn), (unsigned long)(fo > co ? fo : co),
                     (unsigned long)core::fmt::post_held(), heap_free);
   return n > 0 && n < cap ? n : 0;

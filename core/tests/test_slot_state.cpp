@@ -16,6 +16,7 @@
 #include "lib/pools.h"
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
+#include "store/store.h"
 #include "wavetable/wavetable.h"
 
 using namespace core;
@@ -48,7 +49,12 @@ static void settle() {
     idle_prepare();
     idle_save();
     idle_stream();
-    if (i > 50 && idle_settled() && !project_loading()) break;
+    bool loading = project_loading();
+    for (int k = 1; k < kVoiceSlots; ++k) {   // (every slot's fill: project_loading is the slot in hand's)
+      device::Scope in(device::g_links[k]);
+      loading = loading || project_loading();
+    }
+    if (i > 50 && idle_settled() && !loading) break;
   }
   idle_flush(false);
 }
@@ -86,7 +92,8 @@ int main() {
   host_set_card(tmpl);
   Fs fs;
   CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4"));
-  CHECK(fs.mkdir("/.rytm/juno") && fs.mkdir("/.a4/juno"));
+  CHECK(fs.mkdir("/.rytm/juno") && fs.mkdir("/.a4/juno") && fs.mkdir("/.a4/lfo"));
+  put("/.a4/lfo/A4P.txt", "the A4's own LFO file");   // (slot 1's store holds it; slot 0's modules never see it)
   // each box's JUNO list in its own folder (the A4's project B4: one row; the Rytm's NEW: two)
   put("/.a4/juno/B4.txt", "000102030405060708090a0b0c0d0e0f1011\tA4 ROW\n");
   put("/.rytm/juno/NEW.txt", "000102030405060708090a0b0c0d0e0f1012\tRYTM ONE\n000102030405060708090a0b0c0d0e0f1013\tRYTM TWO\n");
@@ -110,6 +117,21 @@ int main() {
   {
     device::Scope in(device::g_links[1]);   // the A4's own messages see its own project
     CHECK(!strcmp(prj().key, "A4P"));
+  }
+  // its RAM store: filled from its own folder at its hello, apart from slot 0's
+  {
+    const uint8_t* d;
+    uint32_t n;
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(store::ready() && !project_loading());
+      CHECK(store::get("/.rytm/lfo/A4P.txt", &d, &n) == store::kPresent && n == 21 && !memcmp(d, "the A4's", 8));
+    }
+    {
+      device::Scope in(device::g_links[0]);   // (the lone A4 is the base box now: outside a Scope the slot in hand is 1)
+      CHECK(store::ready(0) && store::get("/.rytm/lfo/A4P.txt", &d, &n) == store::kUnknown);   // (slot 0's: not its path)
+    }
+    printf("  stores: slot 0 %d files, slot 1 %d files\n", store::present(0), store::present(1));
   }
 
   // the Rytm on USB beside it: each keeps its own

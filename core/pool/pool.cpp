@@ -586,10 +586,16 @@ CORE_COLD void project_switch_named(const char* key, const char* name, bool relo
 }
 
 #if CORE_MSAMP
-static bool g_loading = false;   // a fill begun whose project the LFOs and inserts are not switched to yet
+// One RAM store per voice slot (core/store/store.h): each box's project's files in its own, filled from its own folder
+// in its Scope. A fill begun whose project the modules are not switched to yet: g_loading of its slot.
+static bool g_loading[kVoiceSlots];
 
-// (a fill still running is abandoned by fill_begin: a switch while one runs reads only the new project's files)
+// The slot in hand's project's files (a fill of that slot still running is abandoned by fill_begin: a switch while one
+// runs reads only the new project's files). The modules (LFO, inserts, scenes, XY, sequencer, song, kits) are one set
+// still, slot 0's: their files are wanted for every slot (each module's paths for the slot in hand's key), but only slot 0's
+// fill switches them; slot 1's store is filled and held for the modules' own per-slot copies (3(c) steps 4-7).
 CORE_COLD void project_fill_begin() {
+  const int s = prj_slot();
   store::clear();
   lfo::want_files();
   kits::want_files();   // (every kit's saved and kept-aside record: core/bundle/kits.h)
@@ -599,30 +605,40 @@ CORE_COLD void project_fill_begin() {
   xypad::want_files();   // (the XY pad: core/mod/xypad.h)
   seq::want_files();   // (phase 2: tracks.txt, the patterns, their saved states)
   song::want_files();  // (UNDO REPLAY's backup slots: .backups.txt)
-  seq::loading_begin();   // (its edits refused until project_changed: they would be lost to the load)
+  if (s == 0) seq::loading_begin();   // (its edits refused until project_changed: they would be lost to the load)
 #endif
   store::fill_begin();
-  g_loading = true;
+  g_loading[s] = true;
 }
 
 CORE_COLD bool project_fill_step() {
-  if (!g_loading || !store::fill_step()) return false;
-  g_loading = false;
-  // the old project's unsaved edits into its own files (each project_changed saves before it loads), then the
-  // project's, from the store; a kit the Rytm named while it filled (kit_changed: noted only) is the one loaded
-  lfo::project_changed();
+  for (int s = 0; s < kVoiceSlots; ++s) {
+    if (!g_loading[s]) continue;
+    device::Scope in(device::g_links[s]);   // (its requests: the slot's own folder; its store)
+    if (!store::fill_step()) {
+      if (s == 0) return false;   // (one slot's step a pass; slot 0's first)
+      continue;
+    }
+    g_loading[s] = false;
+    if (s == 0) {
+      // the old project's unsaved edits into its own files (each project_changed saves before it loads), then the
+      // project's, from the store; a kit the Rytm named while it filled (kit_changed: noted only) is the one loaded
+      lfo::project_changed();
 #if CORE_POLY
-  ins::project_changed();
-  xypad::project_changed();   // (before the scenes: its release puts the fader back first)
-  scene::project_changed();
-  seq::project_changed();   // (the boot's too: seq::init leaves its tracks and A01 to this)
+      ins::project_changed();
+      xypad::project_changed();   // (before the scenes: its release puts the fader back first)
+      scene::project_changed();
+      seq::project_changed();   // (the boot's too: seq::init leaves its tracks and A01 to this)
 #endif
-  log(CORE_STR("store: %s loaded: %d files of %d paths, %u bytes"), prj().key, store::present(), store::entries(),
-      (unsigned)store::bytes());
-  return true;
+    }
+    log(CORE_STR("store: slot %d: %s loaded: %d files of %d paths, %u bytes"), s, prj().key, store::present(),
+        store::entries(), (unsigned)store::bytes());
+    return true;
+  }
+  return false;
 }
 
-bool project_loading() { return g_loading; }
+bool project_loading() { return g_loading[prj_slot()]; }   // the slot in hand's
 #endif
 
 #if CORE_MSAMP
@@ -654,6 +670,8 @@ CORE_COLD bool project_attach_step(int s) {
   j.next[0] = 0, j.dirty = false, j.seen = false, ++j.gen;
   log(CORE_STR("project: slot %d (%s): %s"), s, l.state, j.key[0] ? j.key : "(none yet)");
   pool_load();
+  if (cardq::worker()) lists_begin();   // its JUNO / FM lists, read from its folder (one reader: in turn)
+  project_fill_begin();                 // its RAM store, from its folder
   return true;
 }
 #else
