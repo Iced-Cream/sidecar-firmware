@@ -86,6 +86,7 @@ void ci_init (ci_dev *d, uintptr_t base, ci_qh *qh)
 	USBCMD |= USB_USBCMD_RST;
 	uint32_t c = ARM_DWT_CYCCNT;
 	while ((USBCMD & USB_USBCMD_RST) && ARM_DWT_CYCCNT - c < 60000000u) ;	// 100 ms
+	USBCMD = 0;					// ITC 0: interrupt at once (the reset leaves 8 microframes, 1 ms of batching)
 	BURSTSIZE = 0x0404;
 	USBMODE = USB_USBMODE_CM (2) | USB_USBMODE_SLOM;
 	memset (d->qh, 0, sizeof (ci_qh) * 16);
