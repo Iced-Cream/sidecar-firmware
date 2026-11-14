@@ -27,6 +27,10 @@ build/test_mirror_stream: test_mirror_stream.cpp ../mirror_stream.h ../mirror_de
 build/test_relay_proto: test_relay_proto.cpp ../relay_proto.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<
+# the Teensy relay's program for its bootloader (teensy_hex.h, docs/teensy-flash.md)
+build/test_teensy_hex: test_teensy_hex.cpp ../teensy_hex.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # usb=mirror's descriptor and per-block helpers (mirror_desc.h) with the Overbridge block layout (ob_block.h)
 build/test_mirror_desc: test_mirror_desc.cpp ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build

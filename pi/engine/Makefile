@@ -17,6 +17,7 @@ OBJS += web_ws.o               # /ws, the WebSocket (web_ws.h, docs/web-ws.md; t
 OBJS += paircode_pi.o          # the pairing code's Pi side (paircode_pi.h; the portable paircode.cpp is in PORT_SRC)
 OBJS += link1.o                # the second box's USB MIDI, the engine's slot 1 (link1.h; the portable part is sysex_asm.h)
 OBJS += teensy_target.o        # usb=mirror through a Teensy relay (teensy_target.h; portable: relay_proto.h, mirror_stream.h)
+OBJS += teensy_flash.o         # the Pi writes the Teensy relay's program (teensy_flash.h; the portable part is teensy_hex.h)
 OBJS += midibridge_pi.o        # the Rytm MIDI bridge (midibridge_pi.h; the portable part is the header midibridge.h)
 OBJS += usbnet_pi.o            # the USB-C network (usbnet_pi.h; the portable parts are ncm_ntb.h, dhcpd_lite.h, usbnet_cfg.h)
 OBJS += usbc_pi.o              # the USB-C mode for the SIDECAR MENU > USB-C on the Rytm (usbc_pi.h; the portable part is usb_mode.h)

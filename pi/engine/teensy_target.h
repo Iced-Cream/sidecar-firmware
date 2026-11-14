@@ -33,6 +33,12 @@ public:
 
 	static CTeensyTarget *Get (void)	{ return s_pThis; }
 	static void LogStats (CLogger *pLogger);
+	// teensy_flash.h (docs/teensy-flash.md): requests MirrorPoll carries out on the link's EP0, once started.
+	// RequestLog: the Teensy's log since its last read into a 2 KB buffer (LogReads counts the reads done; Log copies it)
+	static void RequestBootloader (void);
+	static void RequestLog (void);
+	static unsigned LogReads (void);
+	static unsigned Log (char *pOut, unsigned nCap);
 
 	// IMirrorTarget
 	void SetBox (CObUsb *pBox) override;
@@ -80,6 +86,10 @@ private:
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
 
 	static CTeensyTarget *s_pThis;
+	static volatile boolean s_bBootDue, s_bLogDue;
+	static volatile unsigned s_nLogReads;
+	static char s_Log[2048];
+	static unsigned s_nLog;
 
 	CUSBEndpoint *m_pEv, *m_pAudioIn, *m_pAudioOut;
 	CUSBEndpoint *m_pChanIn[relay::kChannels], *m_pChanOut[relay::kChannels];
