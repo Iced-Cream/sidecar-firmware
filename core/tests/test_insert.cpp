@@ -1254,6 +1254,27 @@ int main() {
       CHECK(n == sizeof bad - 1 && !memcmp(got, bad, n));
       printf("card: 1042: an unreadable line locks its file (not written over)\n");
     }
+    // L5: a hand-written "SC V1 OFF" line is read (an OFF stage), it does not lock the kit's file
+    {
+      const char hand[] = "V1 A EQ 64 64 100\nSC V1 OFF\n";
+      std::string fn = std::string(tmpl) + "/.rytm/ins/INS/k015.txt";
+      FILE* fp = fopen(fn.c_str(), "wb");
+      fwrite(hand, 1, sizeof hand - 1, fp);
+      fclose(fp);
+      project_fill_begin();
+      loaded();
+      ins::kit_changed(14);   // kit 15: that file
+      ins::set_type(3, 0, ins::kRing);
+      host_fake_time(true, us += 1100000);
+      for (int i = 0; i < 64; ++i) idle_save();
+      char got[400] = {};
+      fp = fopen(fn.c_str(), "rb");
+      size_t n = fp ? fread(got, 1, sizeof got - 1, fp) : 0;
+      if (fp) fclose(fp);
+      CHECK(n > 0 && n != sizeof hand - 1 && strstr(got, "V4 A RING"));
+      printf("card: L5: a hand-written SC OFF line does not lock the file\n");
+      ins::reset();
+    }
     // ins1112: the post EQ in the kit's file ("PEQ V1 40 0 64 70"), read back; a flat chain no line
     {
       ins::kit_changed(11);   // kit 12: a file of its own

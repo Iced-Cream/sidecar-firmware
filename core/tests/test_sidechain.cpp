@@ -244,7 +244,13 @@ int main() {
   {
     Engine e = fresh();
     setsc(0, sc::kPump, 0, {127, 0, 20, 20, 64, 50});
-    auto y = pump(e, 6000, {960, 2000, 3000}, false);   // trigs, but the stem is not there
+    // M1: PUMP keyed by a Rytm track fires from the track's MIDI trigs with no stem ring live (MIDI-only, no Overbridge)
+    auto y = pump(e, 6000, {960}, false);
+    CHECK(y[959] == 0.5f && std::fabs(y[960]) < 1e-6f);
+    // PUMP from AUDIO IN has no trigs: a missing ring is silence, nothing happens
+    e = fresh();
+    setsc(0, sc::kPump, sc::kAinL, {127, 0, 20, 20, 64, 50});
+    y = pump(e, 6000, {960, 2000, 3000}, false);
     for (float v : y) CHECK(v == 0.5f);
     e = fresh();
     setsc(0, sc::kDuck, 0, {0, 127, 0, 0, 0, 0});   // THR 0 dB.. a key never written
@@ -276,13 +282,16 @@ int main() {
     ins::set_sc_param(3, 0, 70);
     ins::set_sc_mode(3, sc::kDuck, true);   // keep: the knobs stay
     CHECK(ins::sc_param(3, 0) == 70 && ins::sc_mode(3) == sc::kDuck);
-    ins::set_sc_mode(3, sc::kDuck);          // a plain choice loads the defaults
-    ins::set_sc_mode(3, sc::kPump);
+    ins::set_sc_mode(3, sc::kDuck);          // H1: the mode it is already in: nothing reloaded, the knobs stay
+    CHECK(ins::sc_param(3, 0) == 70 && ins::sc_mode(3) == sc::kDuck);
+    ins::set_sc_mode(3, sc::kPump);          // a real change loads the defaults
     CHECK(ins::sc_param(3, 0) == sc::def(sc::kPump, 0));
     ins::set_sc_mode(3, sc::kOff);
     CHECK(sc::bus().wanted == 0u && !ins::sc_on(3) && !ins::sc_any_on());
     // the status: why it does nothing
     char why[16];
+    ins::set_sc_mode(2, sc::kPump);   // M1: PUMP on a track runs on its MIDI trigs: no stems needed
+    CHECK(ins::sc_status(2, why, sizeof why) && !strcmp(why, "OK"));
     ins::set_sc_mode(2, sc::kDuck);
     CHECK(!ins::sc_status(2, why, sizeof why) && !strcmp(why, "NO STEMS"));
     ins::set_sc_src(2, sc::kAinL);
@@ -292,6 +301,14 @@ int main() {
     CHECK(ins::sc_status(2, why, sizeof why) && !strcmp(why, "OK"));
     ins::set_sc_src(2, sc::kV0 + 1);
     CHECK(ins::sc_status(2, why, sizeof why));
+    // B1 / B2 run inside send FX 1 / 2's return: with that send FX OFF the stage does nothing, and says so
+    fx::control.knob[0][0] = fx::kOff;
+    ins::set_sc_mode(ins::kBus0, sc::kDuck);
+    CHECK(!ins::sc_status(ins::kBus0, why, sizeof why) && !strcmp(why, "SEND FX OFF"));
+    fx::control.knob[0][0] = fx::kChorus;
+    ins::set_sc_src(ins::kBus0, sc::kV0);
+    CHECK(ins::sc_status(ins::kBus0, why, sizeof why));
+    ins::set_sc_mode(ins::kBus0, sc::kOff);
     ins::set_sc_mode(2, sc::kOff);
     CHECK(ins::sc_status(2, why, sizeof why) && !strcmp(why, "OFF"));
     // names and texts
@@ -310,6 +327,7 @@ int main() {
     CHECK(ins::command("ins=V2:sc:mode:pump", o, sizeof o) && ins::sc_mode(1) == sc::kPump);
     CHECK(ins::command("ins=V2:sc:src:ch", o, sizeof o) && ins::sc_src(1) == 8);
     CHECK(ins::command("ins=V2:sc:p1:77", o, sizeof o) && ins::sc_param(1, 0) == 77);
+    CHECK(ins::command("ins=V2:sc:mode:pump", o, sizeof o) && ins::sc_param(1, 0) == 77);   // H1: the same mode again
     CHECK(ins::command("ins=b3:sc:mode:duck", o, sizeof o) && ins::sc_mode(ins::kBus0 + 2) == sc::kDuck);
     CHECK(ins::command("ins=M2:sc:src:ain", o, sizeof o) && ins::sc_src(ins::kM0 + 1) == sc::kAinLR);
     static char js[16384];
@@ -393,6 +411,122 @@ int main() {
     CHECK(ui::extra_page(km).key(0x45));
     ins::reset();
     printf("pages: the SIDECHAIN view on the INSERT and MASTER pages (DOWN on the EQ view)\n");
+  }
+
+  // ---- M2: a mode or source change is a gain ramp, not a step; a source change fires no spurious trig
+  {
+    // PUMP in its hold at gmin = 0 (0.5 -> 0), then DUCK with no key (gain 1): the gain comes back over a few ms, no step
+    Engine e = fresh();
+    setsc(0, sc::kPump, 0, {127, 0, 127, 20, 64, 50});
+    std::vector<float> y(4800, 0.5f);
+    float z[kB] = {};
+    for (int i = 0; i < 4800; i += kB) {
+      sc::write(0, z, kB);
+      if (i == 480) sc::trig_track(0);
+      if (i == 2400) ins::control.scmode[0] = sc::kDuck, ins::control.scp[0][0] = 0;
+      e.ProcessMono(0, &y[i], kB, ins::control);
+    }
+    CHECK(std::fabs(y[2399]) < 1e-6f);   // ducked by the PUMP when the mode changed
+    float step = 0.0f;
+    for (int i = 2400; i < 2700; ++i) step = std::max(step, std::fabs(y[i] - y[i - 1]));
+    printf("PUMP -> DUCK: the largest step %.4f (a 0.5 jump without the ramp)\n", step);
+    CHECK(step < 0.02f);
+    CHECK(std::fabs(y[4799] - 0.5f) < 1e-5f);
+    // a source change: the new track's counter was already ahead; no trig fires
+    e = fresh();
+    setsc(0, sc::kPump, 0, {127, 0, 127, 20, 64, 50});
+    for (int i = 0; i < 9; ++i) sc::trig_track(1);
+    std::vector<float> w(4800, 0.5f);
+    for (int i = 0; i < 4800; i += kB) {
+      sc::write(0, z, kB);
+      if (i == 960) ins::control.scsrc[0] = 1;
+      e.ProcessMono(0, &w[i], kB, ins::control);
+    }
+    for (float v : w) CHECK(v == 0.5f);
+    printf("source change: no spurious trig from the new source's counter\n");
+  }
+
+  // ---- H1 on the Rytm view / L4: a mode knob nudge that does not change the mode keeps the knobs; DUCK's unused knob H does nothing
+  {
+    ins::reset();
+    int ki = -1;
+    for (int i = 0; i < ui::extra_pages(); ++i)
+      if (!strcmp(ui::extra_page(i).title, "INSERT")) ki = i;
+    ui::ins_page_set(false, 0, 0, 0);
+    CHECK(ui::extra_page(ki).key(0x41) && ui::extra_page(ki).key(0x43));
+    ui::extra_page(ki).enc(0, 2, false);          // DUCK
+    CHECK(ins::sc_mode(0) == sc::kDuck);
+    ui::extra_page(ki).enc(2, 9, false);          // C THR
+    const int thr = ins::sc_param(0, 0);
+    ui::extra_page(ki).enc(0, 1, false);          // A: at the end of the list: still DUCK
+    ui::extra_page(ki).enc(0, 0, false);
+    CHECK(ins::sc_mode(0) == sc::kDuck && ins::sc_param(0, 0) == thr);
+    const int h = ins::sc_param(0, 5);
+    ui::extra_page(ki).enc(7, 5, false);          // H: DUCK has no sixth knob
+    CHECK(ins::sc_param(0, 5) == h);
+    ins::reset();
+  }
+
+  // ---- M3: the /status "ins" json at its worst: all 13 chains, every slot, every field as long as it gets
+  {
+    ins::reset();
+    for (int c = 0; c < ins::kChains; ++c) {
+      for (int s = 0; s < ins::kSlots; ++s)   // the longest a chain takes (a send TYPE needs room: the first that is taken)
+        for (int t = ins::kAllTypes - 1; t > 0 && ins::control.type[c][s] != t; --t) ins::set_type(c, s, t);
+      ins::set_sc_mode(c, sc::kDuck);
+      ins::set_sc_src(c, sc::kAinLR);
+      for (int k = 0; k < sc::kParams; ++k) ins::set_sc_param(c, k, 127);
+      for (int k = 0; k < ins::kEqParams; ++k) ins::set_eq(c, k, 127);
+      for (int k = 0; k < sc::kParams; ++k) ins::control.scp[c][k] = 127;
+    }
+    static char big[65536], small[ins::kInsJsonCap];
+    const int n = ins::json(big, sizeof big);
+    printf("ins json worst case: %d bytes of %d (the /status buffer; the stream budget is added after it)\n", n, ins::kInsJsonCap);
+    CHECK(n > 0 && n < (int)sizeof big);
+    int nduck = 0, nslot = 0, noff = 0;
+    for (const char* q = big; (q = strstr(q, "\"m\":\"DUCK\"")); ++q) ++nduck;
+    for (const char* q = big; (q = strstr(q, "{\"t\":\"")); ++q) ++nslot;
+    for (const char* q = big; (q = strstr(q, "{\"t\":\"OFF\"")); ++q) ++noff;
+    printf("worst case: %d SC stages on, %d slots, %d of them OFF\n", nduck, nslot, noff);
+    CHECK(nduck == ins::kChains && noff == 0);
+    CHECK(n + 700 <= ins::kInsJsonCap);   // room for bridge's "stream":{...}
+    const int m = ins::json(small, sizeof small);
+    CHECK(m == n && !strcmp(small, big));
+    // valid: balanced braces / brackets outside strings
+    int depth = 0;
+    bool str = false;
+    for (int i = 0; i < n; ++i) {
+      char ch = big[i];
+      if (ch == '"') str = !str;
+      else if (!str && (ch == '{' || ch == '[')) ++depth;
+      else if (!str && (ch == '}' || ch == ']')) --depth;
+      CHECK(depth >= 0);
+    }
+    CHECK(depth == 0 && !str);
+    ins::reset();
+  }
+
+  // ---- L1: a ring written once and then stale does not count as live on the first read after an engage
+  {
+    Engine e = fresh();
+    setsc(0, sc::kDuck, 0, {127, 127, 0, 0, 0, 0});
+    std::vector<float> loud(kB, 0.9f), y(kB, 0.3f);
+    sc::write(0, loud.data(), kB);   // an old write; nothing moves it any more
+    e.ProcessMono(0, y.data(), kB, ins::control);
+    for (float v : y) CHECK(v == 0.3f);
+  }
+
+  // ---- L2: a call longer than one chunk reads each chunk's own key frames
+  {
+    Engine e = fresh();
+    setsc(0, sc::kDuck, 0, {127, 127, 0, 0, 0, 0});
+    std::vector<float> key(48, 0.0f), y(48, 0.3f), w2(kB, 0.3f);
+    sc::write(0, key.data(), kB);   // the ring is moving
+    e.ProcessMono(0, w2.data(), kB, ins::control);
+    for (int i = 0; i < kB; ++i) key[i] = 0.9f;   // loud in the first chunk of the call only
+    sc::write(0, key.data(), 48);
+    e.ProcessMono(0, y.data(), 48, ins::control);
+    CHECK(y[10] < 0.3f);
   }
 
   // ---- the cost: a stereo bus chain, 16-frame chunks (what the bus and master chains see), and a mono voice chain

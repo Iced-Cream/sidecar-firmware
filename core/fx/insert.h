@@ -48,6 +48,7 @@ namespace ins {
 
 constexpr int kVoices = 8, kSlots = 2, kParams = 4, kBuses = 3, kMasters = 2;
 constexpr int kChains = kVoices + kBuses + kMasters;   // 0..7 the voices' chains (mono), 8..10 the buses', 11..12 the master's (stereo)
+constexpr int kInsJsonCap = 12288;           // the /status "ins" buffer (pi/engine/bridge.h): json()'s worst case + the stream budget must fit
 constexpr int kBus0 = kVoices;              // chain of bus b (0..2): kBus0 + b
 constexpr int kM0 = kBus0 + kBuses;         // the master chain (core/fx/master.h): two chains in a row, four slots, the second's POST EQ
 // kTypes: what every chain takes. The master's chains also take the send FX's types as inserts (core/fx/master.h): the ids
@@ -249,8 +250,11 @@ struct Sc {
   float c[6] = {};                // coefficients: PUMP attN holdN relN shape e, onset thr; DUCK att rel thr slope
   SvfK khp;                       // DUCK's key high pass
   SvfK ohp;                       // the onset detector's (80 Hz)
-  uint32_t last_w = 0, since = 0;       // the key ring's counter last seen, the reader's frames since it moved
+  uint32_t last_w = ~0u, since = (uint32_t)sc::kStale;   // the key ring's counter last seen (~0: none yet), the reader's frames since it moved
   uint32_t last_trig = 0;
+  uint8_t cs = 255;                     // the source last run (a change: ScSwitch)
+  float ga = 1.0f;                      // the gain applied last (a mode / source change slews from it)
+  int32_t xf = 0;                       // frames of the slew left
   bool trig_seen = false;               // last_trig is current (the first look after an engage only takes the counter)
   // DUCK
   float env = 0.0f;                     // COMP's detector, on the key
@@ -301,7 +305,7 @@ class Engine {
     for (int i = 0; i < n; i += kChunk) {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int s = 0; s < kSlots; ++s) Run(c, s, x + i, nullptr, m, k);
-      RunSc(c, x + i, nullptr, m, k);   // 0.5.0: the SIDECHAIN stage, after both slots
+      RunSc(c, x + i, nullptr, m, k, n - i - m);   // 0.5.0: the SIDECHAIN stage, after both slots
       RunEq(c, x + i, nullptr, m, k);   // ins1112: the POST EQ, after both slots (AMP among them)
     }
   }
@@ -323,7 +327,7 @@ class Engine {
     for (int i = 0; i < n; i += kChunk) {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int s = 0; s < kSlots; ++s) Run(c, s, x + i, r + i, m, k);
-      RunSc(c, x + i, r + i, m, k);
+      RunSc(c, x + i, r + i, m, k, n - i - m);
       RunEq(c, x + i, r + i, m, k);
     }
   }
@@ -335,7 +339,7 @@ class Engine {
       int m = n - i < kChunk ? n - i : kChunk;
       for (int j = 0; j < m; ++j) l[j] = y[i + j][0], r[j] = y[i + j][1];
       for (int s = 0; s < kSlots; ++s) Run(c, s, l, r, m, k);
-      RunSc(c, l, r, m, k);   // 0.5.0: the SIDECHAIN stage
+      RunSc(c, l, r, m, k, n - i - m);   // 0.5.0: the SIDECHAIN stage
       RunEq(c, l, r, m, k);   // ins1112: bus 1 / 2 = send FX 1 / 2's return filter
       for (int j = 0; j < m; ++j) y[i + j][0] = l[j], y[i + j][1] = r[j];
     }
@@ -412,7 +416,8 @@ class Engine {
   // The key is the source's newest m frames (sidechain.h): a missing source reads as silence and gives no trigs, so the
   // stage does nothing. PUMP: a trig (the source's, or AUDIO IN's level onset) starts the envelope on its own frame.
   // DUCK: COMP's detector and gain computer on the key (through its high pass), applied to the chain.
-  void RunSc(int c, float* x, float* r, int m, const Control& k) {
+  // `late`: the frames of this call after this chunk (the key's frames are the newest m before those).
+  void RunSc(int c, float* x, float* r, int m, const Control& k, int late = 0) {
     Sc& o = sc_[c];
     const int mode = k.scmode[c] < sc::kModes ? k.scmode[c] : 0;
     const bool want = mode != sc::kOff;
@@ -421,12 +426,16 @@ class Engine {
       return;
     }
     if (o.idle) ScClear(o), o.idle = false;
-    if (want) o.mode = (uint8_t)mode;
+    if (want) {
+      if (mode != o.mode || k.scsrc[c] != o.cs) ScSwitch(o, mode, k.scsrc[c], o.wet > 0.0f);
+      o.mode = (uint8_t)mode;
+    }
     const int md = o.mode;
     const float step = (float)m / kFadeFrames;
     const float w0 = o.wet, w1 = clampf(want ? w0 + step : w0 - step, 0.0f, 1.0f);
     o.wet = w1;
-    const uint8_t* kn = (const uint8_t*)k.scp[c];
+    uint8_t kn[sc::kParams];   // the knobs, read once (a move mid-call cannot make the values and the coefficients disagree)
+    for (int j = 0; j < sc::kParams; ++j) kn[j] = k.scp[c][j];
     // the coefficients, when a knob or the mode changed
     bool moved = md != o.pvm;
     for (int j = 0; j < sc::kParams; ++j) moved = moved || kn[j] != o.pv[j];
@@ -440,17 +449,24 @@ class Engine {
     float kb[kChunk];
     bool live = false;
     if (key >= 0) {
-      live = sc::read(key, kb, m, &o.last_w, &o.since);
+      live = sc::read(key, kb, m, &o.last_w, &o.since, late < 224 ? late : 224);
       if (live && src == sc::kAinLR) {   // L + R: the mean (the R ring's own freshness is not asked: L's is)
         float kr[kChunk];
         uint32_t lw = 0, sn = 0;
-        if (sc::read(key + 1, kr, m, &lw, &sn))
+        if (sc::read(key + 1, kr, m, &lw, &sn, late < 224 ? late : 224))
           for (int i = 0; i < m; ++i) kb[i] = 0.5f * (kb[i] + kr[i]);
       }
     }
     if (!live)
       for (int i = 0; i < m; ++i) kb[i] = 0.0f;
     float y[2][kChunk];
+    // a mode or source change (o.xf frames): the gain slews to its new value over ~5 ms, never a step
+    const float sl = 1.0f / (0.004f * sr_);
+    auto slew = [&](float g) {
+      if (o.xf > 0) --o.xf, g = o.ga + clampf(g - o.ga, -sl, sl);
+      o.ga = g;
+      return g;
+    };
     if (md == sc::kPump) {
       // depth smoothed per chunk (3 ms), at once when fresh
       const float tgt = (float)kn[0] / 127.0f, b = (float)m / ((float)m + 0.003f * sr_);
@@ -467,7 +483,7 @@ class Engine {
         if (!o.trig_seen) o.last_trig = cnt, o.trig_seen = true;   // what came before the stage engaged is not a trig
         else if (cnt != o.last_trig) {
           o.last_trig = cnt;
-          if (live) fire = 0;
+          fire = 0;   // a track's / voice's trig counts with or without its key ring (MIDI-only: no stems)
         }
       }
       const bool onset = tg < 0 && live;
@@ -494,6 +510,7 @@ class Engine {
           }
         }
         o.gain = g;
+        g = slew(g);
         y[0][i] = x[i] * g;
         if (r) y[1][i] = r[i] * g;
       }
@@ -501,8 +518,8 @@ class Engine {
       const float thr = o.c[2], slope = o.c[3], att = o.c[0], rel = o.c[1];
       const bool hpf = o.pv[4] != 0;
       float env = o.env, s1 = o.key.hp1, s2 = o.key.hp2;
-      if (!live && env < 1e-7f) {   // nothing keyed and nothing left of it: the signal as it is
-        o.env = 0.0f;
+      if (!live && env < 1e-7f && o.xf <= 0) {   // nothing keyed and nothing left of it: the signal as it is
+        o.env = 0.0f, o.ga = 1.0f;
         for (int i = 0; i < m; ++i) y[0][i] = x[i], y[1][i] = r ? r[i] : 0.0f;
       } else {
         for (int i = 0; i < m; ++i) {
@@ -515,7 +532,7 @@ class Engine {
           const float a = fabsf(v);
           env += (a > env ? att : rel) * (a - env);
           const float gr = comp_gr_db(6.0206f * fast_log2(env + 1e-9f), thr, slope);
-          const float g = gr > 0.0f ? fast_exp2(-gr * (1.0f / 6.0206f)) : 1.0f;
+          const float g = slew(gr > 0.0f ? fast_exp2(-gr * (1.0f / 6.0206f)) : 1.0f);
           y[0][i] = x[i] * g;
           if (r) y[1][i] = r[i] * g;
         }
@@ -541,6 +558,17 @@ class Engine {
       wv += dw;
       x[i] += wv * (y[0][i] - x[i]);
       if (r) r[i] += wv * (y[1][i] - r[i]);
+    }
+  }
+  // the stage's mode or source changed while it ran: the gain slews (ramp), the trig counter is the new source's now, and a
+  // new mode starts from rest (PUMP's envelope idle, DUCK's detector empty)
+  void ScSwitch(Sc& o, int mode, int src, bool ramp) {
+    if (ramp) o.xf = (int32_t)(0.005f * sr_);
+    o.cs = (uint8_t)src, o.trig_seen = false, o.last_w = ~0u, o.since = (uint32_t)sc::kStale;
+    if (mode != o.mode) {
+      o.env = 0.0f, o.key.hp1 = 0.0f, o.key.hp2 = 0.0f;
+      o.gain = o.g0 = 1.0f, o.j = -1, o.fresh = true;
+      o.oenv = 0.0f, o.ohp1 = 0.0f, o.ohp2 = 0.0f, o.oarm = true, o.olock = 0;
     }
   }
   void ScClear(Sc& o) {

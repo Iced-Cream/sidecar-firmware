@@ -1,6 +1,6 @@
 <!-- web-next/src/pages/mix/SidechainTab.vue - Mix > Sidechain: a gain stage on any insert chain (a voice, a bus, the master), after its two
      slots and before its POST EQ. PUMP is a trig-driven gain envelope; DUCK is the insert COMP keyed by a source. The source is a
-     Rytm track's stem, the audio in, or a Sidecar voice. Stems exist only in Overbridge mode: without them the stage does nothing,
+     Rytm track's stem, the audio in, or a Sidecar voice. Stems exist only in Overbridge mode: without them DUCK does nothing (PUMP on a track runs on its MIDI trigs),
      and the page says so. -->
 <script setup lang="ts">
 import { computed, ref } from "vue";
@@ -23,6 +23,7 @@ const why = computed(() => {
   const st = cur.value.status;
   if (st === "NO STEMS") return "No stems: the Rytm's tracks reach the Sidecar only over Overbridge (the stem layout), so this stage does nothing until they arrive.";
   if (st === "NO AUDIO IN") return "No audio in: it comes from the Rytm over Overbridge, so this stage does nothing until it arrives.";
+  if (st === "SEND FX OFF") return "Send FX off: this bus's chain runs inside its send FX's return, so this stage does nothing while that send FX is OFF.";
   return `Does nothing now: ${st}.`;
 });
 const hint = computed(() =>

@@ -576,6 +576,7 @@ uint64_t amp_bench(uint32_t* worst_block) { return core::amp::bench(worst_block)
 uint64_t mfx_bench(uint32_t* worst_block) { return core::master::bench(worst_block); }
 uint64_t sfxins_bench(int set, uint32_t* worst_block) { return core::master::sfx_bench(set, worst_block); }
 const char* sfxins_bench_name(int set) { return core::master::sfx_bench_name(set); }
+static_assert(kInsJsonCap == core::ins::kInsJsonCap, "bridge.h's buffer size is the core's");
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);
   if (n > 0 && n < cap - 2) {
@@ -584,6 +585,8 @@ int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{
     int k = core::sbudget::json(out + n, cap - n);
     if (k > 0 && k < cap - n) n += k;
     else out[--n] = 0;
+  } else {   // cut off by the buffer: never a truncated json in /status, a short valid one instead
+    n = sniprintf(out, cap > 0 ? cap : 0, "\"ins\":{\"err\":\"too long\"}");
   }
   return n;
 }

@@ -277,9 +277,13 @@ default: the stage is skipped, bit for bit, and costs nothing.
 | DUCK | THR RAT ATT REL HPF (-) |
 
 **SRC.** A Rytm track BD..CB (its Overbridge stem; RS/CP, MT/HT, CH/OH and CY/CB share one stem each, but each track has its
-own trig), AUDIO IN L, R or L+R, or a Sidecar voice V1..V8 (its sound before its own chain, so a voice never ducks itself).
-Stems and AUDIO IN exist only in Overbridge mode: when the source is not there the stage does nothing, and the page
-says why (`NO STEMS`, `NO AUDIO IN`).
+own trig), AUDIO IN L, R or L+R, or a Sidecar voice V1..V8 (its sound before its own chain: a voice keyed by itself is a COMP on its own pre-chain signal, there is no loop).
+Stems and AUDIO IN exist only in Overbridge mode: when the source is not there DUCK does nothing, and the page says why
+(`NO STEMS`, `NO AUDIO IN`). PUMP keyed by a Rytm track needs no stem: it runs on the track's MIDI trigs, with or
+without Overbridge (AUDIO IN has no trigs: its onset needs the audio). B1 and B2 run inside send FX 1 / 2's return, so
+with that send FX OFF their sidechain does nothing too (`SEND FX OFF`). Choosing the mode a chain is already in changes
+nothing (the knobs stay); a different mode loads that mode's defaults. A mode or source change ramps the gain over
+about 5 ms, never a step, and a new source's trig counter is taken as it is (no trig from an old count).
 
 **PUMP** is a trig-driven gain envelope, sample-exact from the frame it starts on (`j` = frames since the trig frame):
 attack `g0 -> 1 - DPTH` linear over ATT (ATT 0: the trig's own frame is already down; `g0` is the gain when the trig

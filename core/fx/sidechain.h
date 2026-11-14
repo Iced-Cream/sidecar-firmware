@@ -88,10 +88,12 @@ inline void trig_voice(int vi) {
 inline bool wants_in() { return bus().wanted & ((1u << (kStems + 2)) - 1u); }
 inline bool wants_voice(int vi) { return bus().wanted >> (kStems + 2 + (vi & 7)) & 1u; }
 // The reader (the stage): the newest m frames of ring `key` into out. False (and zeros) when the ring is missing: no write
-// for kStale frames of the reader's own time (*since counts them, *last_w is the counter last seen)
-inline bool read(int key, float* out, int m, uint32_t* last_w, uint32_t* since) {
+// for kStale frames of the reader's own time (*since counts them, *last_w is the counter last seen, ~0 before the first
+// look). `late`: frames the stage is behind the ring's newest (a call longer than one chunk; m + late <= 240)
+inline bool read(int key, float* out, int m, uint32_t* last_w, uint32_t* since, int late = 0) {
   Bus& b = bus();
   const uint32_t w = __atomic_load_n(&b.w[key], __ATOMIC_ACQUIRE);
+  if (*last_w == ~0u) *last_w = w, *since = (uint32_t)kStale;   // the first look: a ring that is not seen moving is stale
   if (w != *last_w) *last_w = w, *since = 0;
   else if (*since < 0x40000000u) *since += (uint32_t)m;
   if (w == 0 || *since >= (uint32_t)kStale) {
@@ -99,7 +101,7 @@ inline bool read(int key, float* out, int m, uint32_t* last_w, uint32_t* since) 
     return false;
   }
   const float* r = b.ring[key];
-  for (int i = 0; i < m; ++i) out[i] = r[(w - (uint32_t)m + (uint32_t)i) & (kRing - 1)];
+  for (int i = 0; i < m; ++i) out[i] = r[(w - (uint32_t)late - (uint32_t)m + (uint32_t)i) & (kRing - 1)];
   return true;
 }
 

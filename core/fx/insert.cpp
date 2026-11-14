@@ -508,7 +508,7 @@ void sc_clear() {
 void sc_value_text(int mode, int k, int v, char* b, int cap) { sc_vt(mode, k, v, b, cap); }
 void set_sc_mode(int c, int m, bool keep) {
   if (!sc_valid(c) || m < 0 || m >= sc::kModes) return;
-  if (control.scmode[c] == m && keep) return;
+  if (control.scmode[c] == m) return;   // the mode it is in: nothing reloaded, the knobs stay
   if (!keep)
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = sc::def(m, k);
   control.scmode[c] = (uint8_t)m;
@@ -550,8 +550,11 @@ bool sc_any_on() {
 bool sc_status(int c, char* why, int cap) {
   sniprintf(why, cap, "OK");
   if (!sc_on(c)) return sniprintf(why, cap, "OFF"), true;
+  if (c >= kBus0 && c < kBus0 + 2 && fx::control.knob[c - kBus0][0] == fx::kOff)   // bus 1 / 2's chain runs inside its send FX's return
+    return sniprintf(why, cap, "SEND FX OFF"), false;
   const int key = sc::key_of(control.scsrc[c]);
   if (key < 0) return sniprintf(why, cap, "NO SRC"), false;
+  if (control.scmode[c] == sc::kPump && sc::trig_of(control.scsrc[c]) >= 0) return true;   // PUMP on a track runs on its MIDI trigs
   if (key < sc::kStems + 2) {   // the Overbridge IN side's: stems, AUDIO IN. A voice's ring is written by its own render
     const sc::Bus& b = sc::bus();
     if (!b.w[key] || now_ms() - b.ms[key] > 300) return sniprintf(why, cap, key < sc::kStems ? "NO STEMS" : "NO AUDIO IN"), false;

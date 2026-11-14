@@ -276,7 +276,7 @@ CORE_COLD void sc_view_enc(int ch, int e, int d, bool func, int l) {
   if (e == 0) ins::set_sc_mode(ch, clampi(ins::sc_mode(ch) + l, 0, sc::kModes - 1));
   else if (e == 1) {
     if (ins::sc_on(ch)) ins::set_sc_src(ch, clampi(ins::sc_src(ch) + l, 0, sc::kSrcs - 1));
-  } else if (ins::sc_on(ch)) {
+  } else if (ins::sc_on(ch) && sc::label(ins::sc_mode(ch), e - 2)[0] != '-') {   // (DUCK's sixth knob is unused)
     ins::set_sc_param(ch, e - 2, ins::sc_param(ch, e - 2) + d * (func ? 8 : 1));
     mod::manual_knob(mod::tid(mod::kIns, ch, 12 + e - 2));
   }

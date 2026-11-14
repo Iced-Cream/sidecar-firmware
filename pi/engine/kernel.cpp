@@ -865,7 +865,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		}
 	}
 	{
-		static char Ins[8192];		// fx-ins (+ INSERT AMP's slots): the INSERT chains, sends, bus 3's route, the OUT routes (core/fx/insert.h, out.h), the streaming budget
+		static char Ins[bridge::kInsJsonCap];		// fx-ins (+ INSERT AMP's slots): the INSERT chains, sends, bus 3's route, the OUT routes (core/fx/insert.h, out.h), the streaming budget
 		bridge::ins_json (Ins, sizeof Ins);
 		pOut->Append (",");
 		pOut->Append (Ins);

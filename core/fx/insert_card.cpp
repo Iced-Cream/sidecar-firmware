@@ -113,6 +113,12 @@ bool from_line(const char* b) {
     }
     return true;
   }
+  if (n >= 3 && same_ci(w[0], "SC") && sc::mode_from_name(w[2]) == sc::kOff) {   // SC V1 OFF (a hand-written line: the stage off)
+    int c = chain_from_name(w[1]);
+    if (c < 0) return false;
+    set_sc_mode(c, sc::kOff);
+    return true;
+  }
   if (n >= 4 && same_ci(w[0], "SC")) {   // 0.5.0 SIDECHAIN: SC V1 PUMP BD 90 0 20 60 40 50 (MODE SRC P1..P6; a missing P keeps the mode's default)
     int c = chain_from_name(w[1]), m = sc::mode_from_name(w[2]), sr = sc::src_from_name(w[3]);
     if (c < 0 || m <= 0 || sr < 0) return false;
