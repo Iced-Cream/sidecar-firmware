@@ -11,7 +11,11 @@
 #include "device/a4.h"
 #include "device/device.h"
 #include "engine.h"
+#include "granular/granular.h"
+#include "lib/library.h"
+#include "lib/pools.h"
 #include "pool/pool.h"
+#include "wavetable/wavetable.h"
 
 using namespace core;
 
@@ -48,6 +52,17 @@ static void settle() {
   idle_flush(false);
 }
 
+static void put_wav(const char* path, int frames) {   // 16-bit mono 48 kHz, a ramp
+  FILE* f = fopen(host_path(path).c_str(), "wb");
+  CHECK(f);
+  auto u32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
+  auto u16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
+  fwrite("RIFF", 1, 4, f), u32(36 + frames * 2), fwrite("WAVEfmt ", 1, 8, f), u32(16), u16(1), u16(1), u32(48000),
+      u32(96000), u16(2), u16(16), fwrite("data", 1, 4, f), u32(frames * 2);
+  for (int i = 0; i < frames; ++i) u16((uint16_t)(i * 64));
+  fclose(f);
+}
+
 static void hello_a4() {
   const uint8_t h[] = {0xf0, 0x7d, 0x52, 0x54, device::kCmdHello, 1, (uint8_t)(device::kIdA4 >> 7),
                        (uint8_t)(device::kIdA4 & 0x7f), 1, 0xf7};
@@ -72,6 +87,8 @@ int main() {
   CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4"));
   put("/.rytm/project", "RYP");
   put("/.a4/project", "A4P");
+  put_wav("/Samples/a.wav", 4800);
+  put_wav("/Samples/b.wav", 9600);
   hooks.to_rytm = out0;
   CHECK(engine_begin());
   device::set_out(1, out1);
@@ -95,6 +112,40 @@ int main() {
   settle();
   CHECK(device::g_base == &device::g_links[0]);
   CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));
+
+  // each box's POOL lists and the machines' copies of them (option A: nothing shared): the same row holds another file
+  // in each slot; GRANULAR / WAVETABLE compose each slot's own list, and the views read the slot in hand's
+  {
+    lib::rescan();
+    settle();
+    const int b7 = pools::code(1, 7);
+    char o[256];
+    CHECK(pools::command("pool=smp:set:B007:/Samples/a.wav", o, sizeof o) && strstr(o, "B007"));
+    CHECK(pools::command("pool=wt:set:B007:/Samples/a.wav", o, sizeof o) && strstr(o, "B007"));
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(pools::command("pool=smp:set:B007:/Samples/b.wav", o, sizeof o) && strstr(o, "B007"));
+      CHECK(pools::command("pool=wt:set:B007:/Samples/b.wav", o, sizeof o) && strstr(o, "B007"));
+    }
+    settle();
+    printf("  B007: slot 0 %s / %s, slot 1 %s / %s\n", pools::at(0, pools::kSamples, b7).path,
+           pools::at(0, pools::kTables, b7).path, pools::at(1, pools::kSamples, b7).path, pools::at(1, pools::kTables, b7).path);
+    CHECK(!strcmp(pools::at(0, pools::kSamples, b7).path, "/Samples/a.wav"));
+    CHECK(!strcmp(pools::at(1, pools::kSamples, b7).path, "/Samples/b.wav"));
+    CHECK(!strcmp(gr::entry_path(b7), "/Samples/a.wav") && !strcmp(wt::entry_path(b7), "/Samples/a.wav"));
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(!strcmp(gr::entry_path(b7), "/Samples/b.wav") && !strcmp(wt::entry_path(b7), "/Samples/b.wav"));
+      CHECK(pools::find_hash(pools::kSamples, pools::at(0, pools::kSamples, b7).ref) < 0);   // slot 1's list: no a.wav
+    }
+    CHECK(gr::entry_state_in(0, b7) == gr::kStateCard && gr::entry_state_in(1, b7) == gr::kStateCard);
+    // a voice resolves through its own box's list: voice 0 the Rytm's, voice kBoxVoices the A4's
+    CHECK(gr::pick(0, b7) && gr::pick(kBoxVoices, b7));
+    CHECK(gr::src_entry(0, b7) == b7 && gr::src_entry(kBoxVoices, b7) == b7);
+    // a row seen playing on the A4's voice is in the A4's used set only
+    pools::seen_in(slot_of_voice(kBoxVoices), pools::kSamples, b7);
+    CHECK(pools::used(1, pools::kSamples, b7) && !pools::used(0, pools::kSamples, b7));
+  }
 
   // the Rytm names another project: slot 0's alone, written into /.rytm; /.a4's untouched
   name_project(0, "NEW");

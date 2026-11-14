@@ -976,22 +976,32 @@ static CORE_COLD bool slot_step() {
 bool ready() { return S().ready; }
 bool saving() { return J.io == kIoWrite || any_dirty(); }
 const char* project() { return S().key[0] == 1 ? "" : S().key; }
+const char* project(int s) { return s < 0 || s >= kVoiceSlots || g_sl[s].key[0] == 1 ? "" : g_sl[s].key; }
 CORE_COLD void rekey(const char* from, const char* to) {
   if (S().key[0] != 1 && !strcmp(S().key, from)) sniprintf(S().key, sizeof S().key, "%s", to);
 }
-uint32_t sig(int l) { return l >= 0 && l < kLists && began ? __atomic_load_n(&S().L[l].sig, __ATOMIC_ACQUIRE) : 0; }
-const Entry& at(int l, int c) {
+inline bool slot_ok(int s) { return s >= 0 && s < kVoiceSlots; }
+uint32_t sig(int s, int l) {
+  return l >= 0 && l < kLists && began && slot_ok(s) ? __atomic_load_n(&g_sl[s].L[l].sig, __ATOMIC_ACQUIRE) : 0;
+}
+uint32_t sig(int l) { return sig(prj_slot(), l); }
+const Entry& at(int s, int l, int c) {
   static Entry none = {};
-  if (!began || l < 0 || l >= kLists || c < 0 || c >= kCodes) return none;
-  return S().L[l].e[c];
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists || c < 0 || c >= kCodes) return none;
+  return g_sl[s].L[l].e[c];
 }
-const Member* members(int l, int c, int* n) {
+const Entry& at(int l, int c) { return at(prj_slot(), l, c); }
+const Member* members(int s, int l, int c, int* n) {
   *n = 0;
-  if (!began || l != kInstr || c < 0 || c >= kCodes || S().L[l].e[c].type != kInstrument) return nullptr;
-  *n = S().L[l].e[c].nm;
-  return S().L[l].m + S().L[l].e[c].m0;
+  if (!began || !slot_ok(s) || l != kInstr || c < 0 || c >= kCodes) return nullptr;
+  const Lst& x = g_sl[s].L[l];
+  if (x.e[c].type != kInstrument) return nullptr;
+  *n = x.e[c].nm;
+  return x.m + x.e[c].m0;
 }
-bool locked(int l) { return began && l >= 0 && l < kLists && S().L[l].locked; }
+const Member* members(int l, int c, int* n) { return members(prj_slot(), l, c, n); }
+bool locked(int s, int l) { return began && slot_ok(s) && l >= 0 && l < kLists && g_sl[s].L[l].locked; }
+bool locked(int l) { return locked(prj_slot(), l); }
 CORE_COLD void set_ram(int l, int c, bool on) {
   if (!began || l < 0 || l >= kLists) return;
   if (c < 0) S().L[l].ram_all = on;
@@ -999,34 +1009,40 @@ CORE_COLD void set_ram(int l, int c, bool on) {
   S().U.dirty = true, S().U.dirty_ms = now_ms();
 }
 CORE_COLD bool ram_all(int l) { return began && l >= 0 && l < kLists && S().L[l].ram_all; }
-CORE_COLD bool always_ram(int l, int c) {
-  if (!began || l < 0 || l >= kLists) return false;
-  return S().L[l].ram_all || (c >= 0 && c < kCodes && S().L[l].e && S().L[l].e[c].ram);
+CORE_COLD bool always_ram(int s, int l, int c) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists) return false;
+  const Lst& x = g_sl[s].L[l];
+  return x.ram_all || (c >= 0 && c < kCodes && x.e && x.e[c].ram);
 }
+CORE_COLD bool always_ram(int l, int c) { return always_ram(prj_slot(), l, c); }
 bool read_only(int l) { return began && l >= 0 && l < kLists && S().L[l].ro; }
-const char* lock_why(int l) { return began && l >= 0 && l < kLists ? S().L[l].why : ""; }
-int count(int l) {
-  if (!began || l < 0 || l >= kLists) return 0;
+const char* lock_why(int s, int l) { return began && slot_ok(s) && l >= 0 && l < kLists ? g_sl[s].L[l].why : ""; }
+const char* lock_why(int l) { return lock_why(prj_slot(), l); }
+int count(int s, int l) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists) return 0;
   int n = 0;
-  for (int c = 0; c < kCodes; ++c) n += S().L[l].e[c].type != kEmpty && S().L[l].e[c].type != kOff;
+  const Entry* e = g_sl[s].L[l].e;
+  for (int c = 0; c < kCodes; ++c) n += e[c].type != kEmpty && e[c].type != kOff;
   return n;
 }
+int count(int l) { return count(prj_slot(), l); }
 int first_free(int l, int bank) {
   if (!began || l < 0 || l >= kLists || bank < 0 || bank >= kBanks) return -1;
   for (int r = 1; r < kRows; ++r)
     if (S().L[l].e[code(bank, r)].type == kEmpty) return code(bank, r);
   return -1;
 }
-int find_hash(int l, const lib::Ref& r) {
-  if (!began || l < 0 || l >= kLists) return -1;
+int find_hash(int s, int l, const lib::Ref& r) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists) return -1;
   for (int c = 0; c < kCodes; ++c) {
-    const Entry& e = S().L[l].e[c];
+    const Entry& e = g_sl[s].L[l].e[c];
     if (!has_file(e)) continue;
     if (same_ref(e.ref, r)) return c;
     if (!r.has_sha && e.path[0] && !strcasecmp(e.path, r.hint)) return c;
   }
   return -1;
 }
+int find_hash(int l, const lib::Ref& r) { return find_hash(prj_slot(), l, r); }
 
 // ---- edits
 const char* result_text(int r) {
@@ -1172,9 +1188,10 @@ int last_result(int* out) {
   if (out) *out = S().SJ.out;
   return S().SJ.on || S().npq ? (int)kPending : S().SJ.result;
 }
-CORE_COLD void note_info(int l, int c, uint32_t frames, uint8_t ch, uint32_t rate) {
-  if (!began || l < 0 || l >= kLists || c < 0 || c >= kCodes) return;
-  Entry& e = S().L[l].e[c];
+CORE_COLD void note_info(int l, int c, uint32_t frames, uint8_t ch, uint32_t rate) { note_info(prj_slot(), l, c, frames, ch, rate); }
+CORE_COLD void note_info(int s, int l, int c, uint32_t frames, uint8_t ch, uint32_t rate) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists || c < 0 || c >= kCodes) return;
+  Entry& e = g_sl[s].L[l].e[c];
   if (e.type != kSample || (e.frames == frames && e.ch == ch && e.rate == rate)) return;
   e.frames = frames, e.ch = ch, e.rate = rate;   // (no sig change: the machines' lists do not show them; written
                                                  // with the list's next save, no write of its own)
@@ -1193,13 +1210,18 @@ CORE_COLD void accept_changed(int l, int c) {
 }
 
 // ---- used
-CORE_COLD void seen(int l, int c) {
-  if (!began || l < 0 || l >= kLists || c < 0 || c >= kCodes || !row_of(c)) return;
-  uint32_t& k = S().U.n[l * kCodes + c];
-  if (!k) S().U.dirty = true, S().U.dirty_ms = now_ms();   // a new code: written a second later (a count alone waits for it)
+CORE_COLD void seen(int l, int c) { seen_in(prj_slot(), l, c); }
+CORE_COLD void seen_in(int s, int l, int c) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists || c < 0 || c >= kCodes || !row_of(c)) return;
+  UsedSet& u = g_sl[s].U;
+  uint32_t& k = u.n[l * kCodes + c];
+  if (!k) u.dirty = true, u.dirty_ms = now_ms();   // a new code: written a second later (a count alone waits for it)
   if (k < 0xFFFFFFF0u) ++k;
 }
-bool used(int l, int c) { return began && l >= 0 && l < kLists && c >= 0 && c < kCodes && S().U.n[l * kCodes + c]; }
+bool used(int s, int l, int c) {
+  return began && slot_ok(s) && l >= 0 && l < kLists && c >= 0 && c < kCodes && g_sl[s].U.n[l * kCodes + c];
+}
+bool used(int l, int c) { return used(prj_slot(), l, c); }
 uint32_t used_count(int l, int c) { return used(l, c) ? S().U.n[l * kCodes + c] : 0; }
 CORE_COLD void voice_on(int l, int vi, int c) {
   ensure();
@@ -1209,35 +1231,39 @@ CORE_COLD void voice_on(int l, int vi, int c) {
     if (k != l && x.L[k].voice[vi] >= 0 && c >= 0) x.L[k].voice[vi] = -1;   // a voice plays one machine at a time
   x.L[l].voice[vi] = (int16_t)c;
 }
-int users(int l, int c) {
-  if (!began || l < 0 || l >= kLists) return 0;
+int users(int s, int l, int c) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists) return 0;
   int n = 0;
-  const int v0 = prj_slot() * kBoxVoices, v1 = kVoiceSlots > 1 ? v0 + kBoxVoices : kVoicesMax;   // (this slot's voices)
+  const int v0 = s * kBoxVoices, v1 = kVoiceSlots > 1 ? v0 + kBoxVoices : kVoicesMax;   // (this slot's voices)
   for (int vi = v0; vi < v1; ++vi) {   // (a voice that plays another machine now holds no row of this list)
     const V& x = v[vi];
     bool on = l == kSamples ? x.gr || x.cp : l == kTables ? x.wt : x.ms;
-    n += on && S().L[l].voice[vi] == c;
+    n += on && g_sl[s].L[l].voice[vi] == c;
   }
   return n;
 }
-bool in_use(int l, int c) { return users(l, c) > 0 || used(l, c); }
+int users(int l, int c) { return users(prj_slot(), l, c); }
+bool in_use(int s, int l, int c) { return users(s, l, c) > 0 || used(s, l, c); }
+bool in_use(int l, int c) { return in_use(prj_slot(), l, c); }
 void set_playing_fn(bool (*fn)()) { play_fn = fn; }
 bool playing() { return play_fn && play_fn(); }
-CORE_COLD int select_unused(int l, int16_t* out, int max) {
-  if (!began || l < 0 || l >= kLists) return 0;
+CORE_COLD int select_unused(int s, int l, int16_t* out, int max) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists) return 0;
   int n = 0;
   for (int c = 0; c < kCodes && n < max; ++c) {
-    const Entry& e = S().L[l].e[c];
-    if (!has_file(e) || in_use(l, c)) continue;   // (inputs / built-ins hold no RAM: never "unused")
+    const Entry& e = g_sl[s].L[l].e[c];
+    if (!has_file(e) || in_use(s, l, c)) continue;   // (inputs / built-ins hold no RAM: never "unused")
     out[n++] = (int16_t)c;
   }
   return n;
 }
+CORE_COLD int select_unused(int l, int16_t* out, int max) { return select_unused(prj_slot(), l, out, max); }
 
 // ---- refs (any core)
-CORE_COLD int refs(int l, RefFn fn, void* ctx) {
-  if (!began || l < 0 || l >= kLists || !fn) return 0;
-  Lst& x = S().L[l];
+CORE_COLD int refs(int l, RefFn fn, void* ctx) { return refs(prj_slot(), l, fn, ctx); }
+CORE_COLD int refs(int s, int l, RefFn fn, void* ctx) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists || !fn) return 0;
+  Lst& x = g_sl[s].L[l];
   static lib::Ref mem[kMembersPer];   // an instrument's members, copied in the same window as its entry (core 0's)
   int n = 0;
   bool all = true;
@@ -1526,17 +1552,18 @@ CORE_COLD Ram ram() {
   r.pct = r.budget ? (uint8_t)((r.used + r.tables) * 100 / r.budget) : 0;
   return r;
 }
-CORE_COLD bool resident(int l, int c) {
-  if (!began || l < 0 || l >= kLists || c < 0 || c >= kCodes) return false;
-  const Entry& e = S().L[l].e[c];
+CORE_COLD bool resident(int s, int l, int c) {
+  if (!began || !slot_ok(s) || l < 0 || l >= kLists || c < 0 || c >= kCodes) return false;
+  const Entry& e = g_sl[s].L[l].e[c];
   switch (l) {
     case kSamples:
       if (e.type == kInput || e.type == kBuiltin) return true;
       return e.type == kSample && pcache::find(e.ref, pcache::kWhole) >= 0;
-    case kTables: return e.type == kBuiltin || (e.type == kSample && wt::entry_state(c) == 3);
-    default: return e.type == kInstrument && msamp::entry_state(c) == 3;
+    case kTables: return e.type == kBuiltin || (e.type == kSample && wt::entry_state_in(s, c) == 3);
+    default: return e.type == kInstrument && msamp::entry_state_in(s, c) == 3;
   }
 }
+CORE_COLD bool resident(int l, int c) { return resident(prj_slot(), l, c); }
 
 const Stats& stats() { return st; }
 CORE_COLD void compact_for_tests(int l) {

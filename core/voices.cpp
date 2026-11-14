@@ -1038,7 +1038,7 @@ __attribute__((noinline)) CORE_COLD void voice_report_at(int vi, int cmd, const 
   if (x.dsps && np >= 16) prepare_stream(vi);
 #if CORE_MSAMP
   if (x.dsps && np >= 16 && srclib::index_of(srclib::code_of(x.p[10])))   // the used set: SMP's row (rui1045: its bank)
-    pools::seen(pools::kSamples, srclib::code_of(x.p[10]));
+    pools::seen_in(slot_of_voice(vi), pools::kSamples, srclib::code_of(x.p[10]));   // (its box's)
 #endif
   if (note >= 0 && x.fm) {
 #if CORE_POLY
