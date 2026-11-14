@@ -15,6 +15,7 @@
 #include "lib/library.h"
 #include "lib/pools.h"
 #include "pool/pool.h"
+#include "presets/juno_lib.h"
 #include "wavetable/wavetable.h"
 
 using namespace core;
@@ -85,6 +86,10 @@ int main() {
   host_set_card(tmpl);
   Fs fs;
   CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4"));
+  CHECK(fs.mkdir("/.rytm/juno") && fs.mkdir("/.a4/juno"));
+  // each box's JUNO list in its own folder (the A4's project B4: one row; the Rytm's NEW: two)
+  put("/.a4/juno/B4.txt", "000102030405060708090a0b0c0d0e0f1011\tA4 ROW\n");
+  put("/.rytm/juno/NEW.txt", "000102030405060708090a0b0c0d0e0f1012\tRYTM ONE\n000102030405060708090a0b0c0d0e0f1013\tRYTM TWO\n");
   put("/.rytm/project", "RYP");
   put("/.a4/project", "A4P");
   put_wav("/Samples/a.wav", 4800);
@@ -162,6 +167,15 @@ int main() {
   settle();
   CHECK(!strcmp(prj(0).key, "NEW") && !strcmp(prj(1).key, "B4"));
   CHECK(get("/.rytm/project") == "NEW" && get("/.a4/project") == "B4");
+  // the JUNO lists: each slot's read from its own folder at its project change, the other's left as it was
+  printf("  JUNO lists: slot 0 %d rows (%s), slot 1 %d rows (%s)\n", junolib.listed(0), junolib.slot(0, 0).name,
+         junolib.listed(1), junolib.slot(1, 0).name);
+  CHECK(junolib.listed(0) == 2 && !strcmp(junolib.slot(0, 1).name, "RYTM TWO"));
+  CHECK(junolib.listed(1) == 1 && !strcmp(junolib.slot(1, 0).name, "A4 ROW"));
+  {
+    device::Scope in(device::g_links[1]);
+    CHECK(junolib.listed() == 1);   // the slot in hand's
+  }
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4
   device::set_out(1, nullptr);

@@ -256,7 +256,8 @@ int fm_pat[kVoices];
 __attribute__((noinline)) CORE_COLD void fm_select(int vi, int pat) {
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
   fm_pat[vi] = pat;
-  int nl = dxlib.listed(), total = nl ? nl : dx7::kRomVoices;
+  const int ls = slot_of_voice(vi);   // (its own box's FM list)
+  int nl = dxlib.listed(ls), total = nl ? nl : dx7::kRomVoices;
   int e = pat >= total ? total - 1 : pat;
   int key = fm_gen << 8 | e;
   if (key == fm_key[vi]) return;
@@ -264,27 +265,28 @@ __attribute__((noinline)) CORE_COLD void fm_select(int vi, int pat) {
   uint8_t b[128];
   const uint8_t* bytes = nullptr;
   if (!nl) bytes = dx7::rom_bank(e / 32) + 128 * (e % 32);
-  else if (dxlib.voice(e, b)) bytes = b;
+  else if (dxlib.voice(ls, e, b)) bytes = b;
   fms[vi].SetVoice(bytes);
 #if CORE_POLY
   poly::set_voice(vi, bytes);   // the voice's chord notes play it too
 #endif
   if (!bytes) {   // an empty slot, or its bank not on the card: silent
-    log(CORE_STR("voice %d: FM slot %d %s"), vi, e, dxlib.slot(e).used ? "not on the card" : "empty");
+    log(CORE_STR("voice %d: FM slot %d %s"), vi, e, dxlib.slot(ls, e).used ? "not on the card" : "empty");
   }
 }
 
 // The DX7 voice entry e of the effective FM list into b (false: an empty slot / not on the card).
-CORE_COLD bool fm_bytes(int pat, uint8_t* b) {
+CORE_COLD bool fm_bytes_in(int ls, int pat, uint8_t* b) {   // voice slot ls's list
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
-  int nl = dxlib.listed(), total = nl ? nl : dx7::kRomVoices;
+  int nl = dxlib.listed(ls), total = nl ? nl : dx7::kRomVoices;
   int e = pat >= total ? total - 1 : pat;
   if (!nl) {
     memcpy(b, dx7::rom_bank(e / 32) + 128 * (e % 32), 128);
     return true;
   }
-  return dxlib.voice(e, b);
+  return dxlib.voice(ls, e, b);
 }
+CORE_COLD bool fm_bytes(int pat, uint8_t* b) { return fm_bytes_in(prj_slot(), pat, b); }
 
 // The FM list changed: FM voices play what their PAT now picks.
 CORE_COLD void fm_relist() {
@@ -319,20 +321,21 @@ bool juno_holding[kVoices];
 
 // The patch PAT picks: the project's JUNO list's slot min(PAT, total - 1),
 // else factory patch PAT. Returns its key; the bytes and name in b and name.
-int juno_pick(int pat, const uint8_t** b, const char** name) {
-  int nl = junolib.listed();
+int juno_pick(int pat, const uint8_t** b, const char** name) { return juno_pick_in(prj_slot(), pat, b, name); }
+int juno_pick_in(int ls, int pat, const uint8_t** b, const char** name) {   // voice slot ls's list
+  int nl = junolib.listed(ls);
   if (!nl) {
     *b = juno::kPatches[pat & 127].b;
     *name = juno::kPatches[pat & 127].name;
     return pat & 127;
   }
-  if (pat == 127 && nl == jlib::kMaxList && !memcmp(junolib.slot(126).b, juno::kPatches[126].b, 18)) {
+  if (pat == 127 && nl == jlib::kMaxList && !memcmp(junolib.slot(ls, 126).b, juno::kPatches[126].b, 18)) {
     *b = juno::kPatches[127].b;   // a list seeded with the factory's rows (presets::seed): 127 slots, PAT 127 is still B88
     *name = juno::kPatches[127].name;
     return 127;
   }
   int slot = pat >= nl ? nl - 1 : pat;
-  const jlib::Patch& jp = junolib.slot(slot);
+  const jlib::Patch& jp = junolib.slot(ls, slot);
   *b = jp.used ? jp.b : kQuiet;
   *name = jp.used ? jp.name : "(empty)";
   return 128 + slot;
@@ -345,9 +348,10 @@ __attribute__((noinline)) CORE_COLD void juno_select(int vi, int pat, bool sync,
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
   const uint8_t* b;
   const char* name;
-  int key = juno_pick(pat, &b, &name);
+  const int ls = slot_of_voice(vi);   // (its own box's JUNO list)
+  int key = juno_pick_in(ls, pat, &b, &name);
   // (a row that is its PAT's factory patch plays as the factory's: the same level, its gain; the list's own rows gain 1)
-  junos[vi].UsePatch(junolib.listed() && memcmp(b, juno::kPatches[pat & 127].b, 18) ? b : nullptr, name);
+  junos[vi].UsePatch(junolib.listed(ls) && memcmp(b, juno::kPatches[pat & 127].b, 18) ? b : nullptr, name);
   if (sync) {
     juno_pat[vi] = pat;
     if (force || key != juno_key[vi] || memcmp(b, juno_kb[vi], 18) != 0) {
@@ -1519,7 +1523,7 @@ CORE_COLD bool voice_sound(int vi, VoiceSound* o) {
   for (int k = 0; k < 16; ++k) o->p[k] = x.p[k];
   if (x.fm) {
     o->machine = kFm;
-    o->has_dx7 = fm_bytes((int)x.p[0], o->dx7);
+    o->has_dx7 = fm_bytes_in(slot_of_voice(vi), (int)x.p[0], o->dx7);
     memcpy(o->name, o->dx7 + 118, 10);   // the DX7 voice's name (packed bytes 118..127)
     return true;
   }
@@ -1527,9 +1531,9 @@ CORE_COLD bool voice_sound(int vi, VoiceSound* o) {
     o->machine = kJuno;
     const uint8_t* b;
     const char* name;
-    juno_pick((int)x.p[0], &b, &name);
+    juno_pick_in(slot_of_voice(vi), (int)x.p[0], &b, &name);
     memcpy(o->juno, b, 18);
-    o->juno_ext = junolib.listed() > 0 && memcmp(b, juno::kPatches[(int)x.p[0] & 127].b, 18);
+    o->juno_ext = junolib.listed(slot_of_voice(vi)) > 0 && memcmp(b, juno::kPatches[(int)x.p[0] & 127].b, 18);
     strncpy(o->name, name ? name : "", sizeof o->name - 1);
     return true;
   }

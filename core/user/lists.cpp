@@ -17,6 +17,7 @@ extern "C" void* um_heap(uint32_t bytes);   // the board's heap at boot (core/us
 
 namespace core {
 int juno_pick(int pat, const uint8_t** b, const char** name);   // voices.cpp: the patch PAT picks
+int juno_pick_in(int ls, int pat, const uint8_t** b, const char** name);   // ... in voice slot ls's list
 }
 
 namespace lists {
@@ -247,7 +248,7 @@ bool cmd_list(bool juno, const char* a, char* out, int cap) {
       if (!x.juno) { sniprintf(out, cap, "voice %d does not play JUNO", vi); return true; }
       const uint8_t* b;
       const char* nm;
-      core::juno_pick(core::juno_pat[vi] < 0 ? 0 : core::juno_pat[vi], &b, &nm);
+      core::juno_pick_in(core::slot_of_voice(vi), core::juno_pat[vi] < 0 ? 0 : core::juno_pat[vi], &b, &nm);
       uint8_t pb[18];
       memcpy(pb, b, 18);
       for (int k = 0; k < 6; ++k) {

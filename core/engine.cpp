@@ -43,6 +43,7 @@ CORE_COLD bool engine_begin() {
 #endif
   card_ok = cards.begin(log, shared, sizeof shared[0] * kVoices);   // (a pointer on CORE_HEAP_BUFFERS)
   sample_ram_init();
+  junolib.selector(prj_slot), dxlib.selector(prj_slot);   // their project lists: the slot in hand's (core/pool/pool.h)
   if (card_ok) junolib.begin(&cards.sd(), log);
   if (card_ok) dxlib.begin(&cards.sd(), log);
 #if CORE_MSAMP
