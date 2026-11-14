@@ -126,7 +126,7 @@ CORE_COLD void change(int dir) {
     char o[48];
     scene::command(b, o, sizeof o);
     note(n == scene::kQpOff ? "THE KNOB: PERF ONLY" : n == scene::kQpAlways ? "THE KNOB IS THE FADER"
-                                                                            : "MUTED: THE KNOB IS FADER");
+         : remote_caps2() & kCaps2QpMute ? "MUTED: THE KNOB IS FADER" : "OLD RYTM MOD: ACTS AS OFF");
   }
 }
 
@@ -219,6 +219,7 @@ CORE_COLD void midi_draw(Canvas& c, int page, int npages, uint32_t ms) {
   }
   if (P.confirm) footer(c, "YES: CLEAR ALL  NO: KEEP");
   else if (P.note_new || (P.note_ms && ms - P.note_ms < 2000)) footer(c, P.note);
+  else if (P.cur == kQp && learn::locked()) footer(c, "LEARN FILE IS NEWER");   // (review L4: not saved)
   else if (P.cur == kQp && scene::qp_mode() == scene::kQpMutedOnly && !(remote_caps2() & kCaps2QpMute))
     footer(c, "OLD RYTM MOD: ACTS AS OFF");
   else if (P.cur <= kMac || P.cur == kQp) footer(c, "YES / B: SET  NO: BACK");

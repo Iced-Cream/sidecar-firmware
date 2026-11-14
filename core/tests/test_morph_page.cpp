@@ -605,6 +605,9 @@ static void qperf_tick_when_knob_differs() {
   CHECK(lit(kx2, 33));
   scene::set_qp_mode(scene::kQpOff);   // OFF: the knob is not the fader's
   CHECK(!lit(kx2, 33));
+  scene::set_qp_mode(scene::kQpMutedOnly);   // MUTED ONLY from a mod without the mute report acts as OFF (review L5)
+  hello_caps2(0);
+  CHECK(!lit(kx2, 33));
   printf("  qperf_tick_when_knob_differs: a tick under the bar where the QPERF knob is, when the fader is elsewhere\n");
 }
 static void hint_turn_quick_perf() {
@@ -692,12 +695,21 @@ static void no_removes_then_undo() {
   CHECK(scene::lock(0, T("RT12:FTYP"), 3 * 128) && scene::lock(0, T("MFX:LEV"), 64 * 128));
   down(0x00), tick(10);
   tap(0x45);   // NO: RT12:FTYP goes, the undo offered
-  CHECK(scene::state().s[0].n == 1 && lock_v(0, T("RT12:FTYP")) < 0 && shows("REMOVED RT12:FTYP NO:UNDO"));
+  CHECK(scene::state().s[0].n == 1 && lock_v(0, T("RT12:FTYP")) < 0 && shows("RT12:FTYP GONE NO:UNDO"));
   png("morph_undo.png");
   tap(0x45);   // NO again: back
-  CHECK(scene::state().s[0].n == 2 && lock_v(0, T("RT12:FTYP")) == 3 * 128 && !shows("REMOVED"));
+  CHECK(scene::state().s[0].n == 2 && lock_v(0, T("RT12:FTYP")) == 3 * 128 && !shows("GONE NO:UNDO"));
+  // review L3: a kit change inside the 2 s drops the undo (the scene is another kit's now)
+  tap(0x45);
+  CHECK(scene::state().s[0].n == 1 && shows("GONE NO:UNDO"));
+  const uint8_t kit[8] = {0xF0, 0x7D, 0x52, 0x54, 0x3B, 1, 20, 0xF7};
+  engine_sysex(kit, 8);
+  CHECK(!shows("GONE NO:UNDO"));
+  int n = scene::state().s[0].n;
+  tap(0x45);   // NO now removes (or does nothing on an empty list): it never writes the old kit's lock
+  CHECK(lock_v(0, T("RT12:FTYP")) < 0 && scene::state().s[0].n <= n);
   up(0x00);
-  printf("  no_removes_then_undo: NO removes with REMOVED <name> NO:UNDO; NO again restores\n");
+  printf("  no_removes_then_undo: NO removes with <name> GONE NO:UNDO; NO again restores; a kit change drops it\n");
 }
 static void undo_expires_2s() {
   open_page();
@@ -706,7 +718,7 @@ static void undo_expires_2s() {
   tap(0x45);
   CHECK(scene::state().s[0].n == 1);
   at(g_us + 2100000);
-  CHECK(!shows("REMOVED"));
+  CHECK(!shows("GONE NO:UNDO"));
   tap(0x45);   // past 2 s: NO removes the next row, it does not restore
   CHECK(scene::state().s[0].n == 0 && lock_v(0, T("MFX:LEV")) < 0);
   up(0x00);
@@ -715,6 +727,21 @@ static void undo_expires_2s() {
   down(0x00), tick(10), tap(0x45), up(0x00), down(0x00), tick(10), tap(0x45), up(0x00);
   CHECK(scene::state().s[0].n == 0);
   printf("  undo_expires_2s: after 2 s (or the key let go) NO removes, it does not restore\n");
+}
+// review M1: PAGE held while the page closes: no stuck PAGE, so T15 alone later is a trig, not EDIT A
+static void page_held_across_close() {
+  voice_page();
+  scene::set_ab(2, 6);
+  page(true), tick();
+  CHECK(g_mask_trigs & 0x4000);
+  from_rytm(0x30, 0, 0, 0), tick();   // the page closes (its PAGE release goes to the Rytm, not here)
+  from_rytm(0x30, 0, 1, 0), tick();
+  tap(0x41), tap(0x41), tick();
+  CHECK(ui::remote_stats().voice == 0 && !(g_mask_trigs & 0xC000));
+  down(0x0E), tick();
+  CHECK(scene::edit_side() < 0);
+  up(0x0E);
+  printf("  page_held_across_close: a PAGE held across a close leaves no stuck PAGE (T15 alone is no EDIT)\n");
 }
 static void stale_target_marked() {
   voice_page();   // V1 PLAITS (all 16 Ps used); V2 a machine that leaves a P unused
@@ -788,6 +815,7 @@ int main() {
   no_removes_then_undo();
   undo_expires_2s();
   stale_target_marked();
+  page_held_across_close();
   scene::reset();
   ui::remote_reset();
   printf("test_morph_page: ok\n");

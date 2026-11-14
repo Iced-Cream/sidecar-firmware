@@ -1671,6 +1671,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         s.shortcut = false, s.via = -1, s.sedit_back = kNoPage;
         keys_map_drop(), s.map_over = false;   // (UP's map goes with the page)
         release_held();                        // 0.5.0: and every key a page holds
+        s.page_down = s.page_owed = false;     // (v2 review M1: a PAGE held across the close sends no release here)
 #if CORE_POLY
         seq::page_closed();   // seq-ux: a prompt, TRK + TRIG's view end with the page
         poly_page_closed();   // rui1048
@@ -2008,6 +2009,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         s.sent_valid = false, s.mask_valid = false, s.echo_valid = false, s.leds_on = false, s.clock_set = false;
         release_held();   // 0.5.0: a key held across the new link sends no release
         s.caps36 = (b[2] & 1) != 0, s.caps = b[2], s.caps2 = n >= 4 ? b[3] : 0;
+        s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
         mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
         fill_claim();
 #if CORE_POLY
@@ -2023,6 +2025,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       s.src_track = -1, s.src_told = -1, s.splash = false, s.clock_set = false;
       tap_enable(false);
       s.caps36 = (b[2] & 1) != 0, s.caps = b[2], s.caps2 = n >= 4 ? b[3] : 0;
+      s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
       mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
       fill_claim();
 #if CORE_POLY

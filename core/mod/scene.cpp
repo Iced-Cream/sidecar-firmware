@@ -286,6 +286,7 @@ CORE_COLD QpView qperf_view() { return g_qv; }
 CORE_COLD bool qp_wants_knob() {
   return g_qp_mode == kQpAlways || (g_qp_mode == kQpMutedOnly && (ui::remote_caps2() & ui::kCaps2QpMute));
 }
+CORE_COLD int rytm_kit() { return g_rytm_kit; }
 CORE_COLD int kit_note(uint32_t now) { return g_kit_ms && now - g_kit_ms < 2000 && g_rytm_kit >= 0 ? g_rytm_kit : -1; }
 CORE_COLD void rytm_scene_seen(int n) { g_rscn = n >= 0 && n <= kScenes ? n : 0; }
 CORE_COLD int rytm_scene() { return g_rscn; }

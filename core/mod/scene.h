@@ -103,6 +103,7 @@ void rekey(const char* name);               // the scenes in memory are now name
 #endif
 void load();                                // the kit's file, else the project's, else none (the store only)
 bool save();                                // idle_save: true if it wrote (or settled a locked file)
+int rytm_kit();                             // the Rytm's active kit 0..127 as it last said (kit_changed), -1 none
 int kit_note(uint32_t now_ms);              // the Rytm's kit 0..127 when it changed in the last 2 s (the MORPH header), -1
 void kit_changed(int kit);                  // the Rytm's active kit (0..127): the old kit's edits saved, the new loaded;
                                             // a held EDIT ends

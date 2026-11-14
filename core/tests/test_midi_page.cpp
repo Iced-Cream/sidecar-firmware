@@ -316,6 +316,17 @@ static void qperf_row_cycles_and_saves() {
   CHECK(scene::qp_mode() == scene::kQpMutedOnly);
   flush();
   CHECK(rd("/.rytm/learn.txt").find("QP") == std::string::npos);
+  // review L4: a learn.txt a newer build wrote: the change is not saved, the row's footer says so
+  {
+    FILE* f = fopen((g_card + "/.rytm/learn.txt").c_str(), "wb");
+    CHECK(f);
+    fputs("#sidecar learn 1\nQP loud\n", f);
+    fclose(f);
+  }
+  learn::load();
+  at(g_us + 2100000);   // (past the last turn's note)
+  CHECK(learn::locked() && shows("LEARN FILE IS NEWER"));
+  learn::reset();
   printf("  qperf_row_cycles_and_saves: QPERF FADER MUTED ONLY / OFF / ALWAYS, saved in learn.txt\n");
 }
 

@@ -55,6 +55,7 @@ struct MorphPage {
   mod::Tid undo_t = 0;
   uint16_t undo_v = 0;
   uint32_t undo_ms = 0;
+  int undo_kit = -1;
   uint32_t now = 0;
 };
 CORE_RAM2 MorphPage mp;
@@ -138,12 +139,14 @@ CORE_COLD const char* row_name(mod::Tid t, char* b, int cap) {   // "V1:HRM", a 
   sniprintf(b, cap, "%s?", mod::name(t, n, sizeof n)[0] ? n : "?");
   return b;
 }
-CORE_COLD bool undo_shown(uint32_t now) { return mp.undo_ms && mp.held == mp.undo_n && now - mp.undo_ms < kUndoMs; }
+CORE_COLD bool undo_shown(uint32_t now) {   // (review L3: a kit change since makes the scene another's: no undo)
+  return mp.undo_ms && mp.held == mp.undo_n && mp.undo_kit == scene::rytm_kit() && now - mp.undo_ms < kUndoMs;
+}
 CORE_COLD bool undo_footer(Canvas& c) {
   if (!undo_shown(mp.now)) return false;
   char nm[16], f[kTextLen + 1];
   row_name(mp.undo_t, nm, sizeof nm);
-  sniprintf(f, sizeof f, "REMOVED %s NO:UNDO", nm);
+  sniprintf(f, sizeof f, "%s GONE NO:UNDO", nm);   // (a stale name 10: 23 of 25)
   footer(c, f);
   return true;
 }
@@ -223,7 +226,7 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   int at = kBarX + 2 + st.fader * (inner - 1) / scene::kFaderMax;
   c.vline(at, kBarY - 1, kBarY + kBarH, kOn);
   const scene::QpView q = scene::qperf_view();   // the QPERF knob's own position, when the fader is elsewhere
-  if (q.pos >= 0 && scene::qp_mode() != scene::kQpOff) {
+  if (q.pos >= 0 && scene::qp_wants_knob()) {   // (review L5: not while MUTED ONLY acts as OFF)
     int kx = kBarX + 2 + q.pos * scene::kFaderMax / 255 * (inner - 1) / scene::kFaderMax;
     if (kx - at > 1 || at - kx > 1) c.vline(kx, kBarY + kBarH + 1, kBarY + kBarH + 2, kOn);
   }
@@ -426,7 +429,7 @@ CORE_COLD bool morph_key(int code) {
   if (code >= 0 && code < 16) return true;   // T13 / T14: nothing
   if (code == 0x44) {   // YES
     if (mp.confirm >= 0) {
-      scene::clear(mp.confirm), mp.confirm = -1, mp.top = 0;
+      scene::clear(mp.confirm), mp.confirm = -1, mp.top = 0, mp.undo_ms = 0;   // (review L3: nothing to undo into)
       return true;
     }
     if (mp.held >= 0 && add_on_top()) {   // the ADD row: the target at E's value
@@ -459,6 +462,7 @@ CORE_COLD bool morph_key(int code) {
       const scene::Scene& s = sc(mp.held);
       if (mp.top >= s.n) return true;   // (the ADD row: nothing to remove)
       mp.undo_n = mp.held, mp.undo_t = s.l[mp.top].t, mp.undo_v = s.l[mp.top].v, mp.undo_ms = now_ms() | 1;
+      mp.undo_kit = scene::rytm_kit();
       scene::unlock(mp.held, mp.undo_t);
       if (mp.top > 0 && mp.top >= sc(mp.held).n) --mp.top;
       return true;
