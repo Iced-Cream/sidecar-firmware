@@ -952,7 +952,9 @@ void CObUsb::MirrorAttach (void)
 		}
 		m_nPipes++;
 	}
-	if (!bPipesOpen)
+	// mirrorpipepoll=0 (TR2d, a test): the pipes opened, but no IN request kept on them, so the box's interrupt IN pipe
+	// is not polled every microframe beside the relay's link (with it the link ran at ~1 block/ms, T329/T330)
+	if (!bPipesOpen && CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipepoll", 1) != 0)
 	{
 		EnterCritical (IRQ_LEVEL);
 		for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
