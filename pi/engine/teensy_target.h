@@ -65,6 +65,8 @@ private:
 	unsigned ChanOfOut (u8 uchAddr) const;	// the link channel a mirrored OUT endpoint rides (kChannels: none)
 	unsigned ChanOfIn (u8 uchAddr) const;
 	void Resubmit (CUSBRequest *pURB);
+	boolean Start (void);			// endpoints, buffers, URBs (MirrorPoll, relaydelay= s after boot)
+	void Step (const char *pFormat, ...);	// relaydebug=1: a log line, written to the black box at once
 	// relaytest=1 (cmdline; docs/teensy-mirror.md "Pi bench"): no box; a made-up one (pid.codes 1209:0003, the bench's shape)
 	// with a synthetic IN stream at the box rate, pipe packets echoed, vendor requests answered with a pattern
 	void TestPoll (void);
@@ -136,7 +138,11 @@ private:
 	u64 m_nTestStart;
 	u32 m_nTestSent, m_nTestOutNext, m_nTestOutLost, m_nTestOutDup, m_nTestOutBad, m_nTestOut, m_nTestEcho, m_nTestEchoDrop;
 	boolean m_bTestOutSeen;
-	boolean m_bTestFeeding;			// TestPoll is the caller (a real box of the slot is ignored in test mode)
+	boolean m_bTestFeeding;
+	boolean m_bStarted, m_bDebug;
+	unsigned m_nDelay;
+	const TUSBEndpointDescriptor *m_pEpDesc[16];
+	unsigned m_nEpDesc;			// TestPoll is the caller (a real box of the slot is ignored in test mode)
 };
 
 #endif

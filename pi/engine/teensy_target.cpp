@@ -3,12 +3,15 @@
 #include "ob_usb.h"
 #include "sidecar_gadget.h"
 #include "link1.h"
+#include "blackbox_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/koptions.h>
 #include <circle/util.h>
+#include <circle/string.h>
+#include <stdarg.h>
 
 static const char From[] = "teensy";
 
@@ -40,7 +43,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -115,18 +118,48 @@ boolean CTeensyTarget::Configure (void)
 	{
 		if (p[1] == DESCRIPTOR_INTERFACE && p[0] >= 9)
 			bIface = p[2] == 0 && p[3] == 0 && p[5] == kIfaceClass && p[6] == kIfaceSub && p[7] == kIfaceProto;
-		else if (p[1] == DESCRIPTOR_ENDPOINT && p[0] >= 7 && bIface)
-		{
-			const TUSBEndpointDescriptor *e = (const TUSBEndpointDescriptor *) p;
-			u8 a = e->bEndpointAddress;
-			CUSBEndpoint *pEP = new CUSBEndpoint (GetDevice (), e);
-			if (a == kEvEp) m_pEv = pEP;
-			else if (a == kAudioToPiEp) m_pAudioIn = pEP;
-			else if (a == kAudioFromPiEp) m_pAudioOut = pEP;
-			else if ((a & 0x7F) >= kChanFirstEp && (a & 0x7F) < kChanFirstEp + kChannels)
-				((a & 0x80) ? m_pChanIn : m_pChanOut)[(a & 0x7F) - kChanFirstEp] = pEP;
-			else delete pEP;
-		}
+		else if (p[1] == DESCRIPTOR_ENDPOINT && p[0] >= 7 && bIface && m_nEpDesc < 16)
+			m_pEpDesc[m_nEpDesc++] = (const TUSBEndpointDescriptor *) p;
+	}
+	m_bDebug = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydebug", 0) != 0;
+	m_nDelay = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydelay", 0);
+	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
+	s_pThis = this;
+	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,
+				m_nVersion & 0xFF, m_nEpDesc, m_nDelay, m_bTest ? ", relaytest=1" : "");
+	Step ("configured; registering as a mirror target");
+	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// its MirrorPoll starts the relay (Start)
+	Step ("registered");
+	return TRUE;
+}
+
+void CTeensyTarget::Step (const char *pFormat, ...)
+{
+	if (!m_bDebug) return;
+	va_list v;
+	va_start (v, pFormat);
+	CString s;
+	s.FormatV (pFormat, v);
+	va_end (v);
+	CLogger::Get ()->Write (From, LogNotice, "relaydebug: %s", (const char *) s);
+	blackbox_pi::Flush ();
+}
+
+boolean CTeensyTarget::Start (void)
+{
+	Step ("start: endpoints");
+	for (unsigned i = 0; i < m_nEpDesc; i++)
+	{
+		const TUSBEndpointDescriptor *e = m_pEpDesc[i];
+		u8 a = e->bEndpointAddress;
+		CUSBEndpoint *pEP = new CUSBEndpoint (GetDevice (), e);
+		if (a == kEvEp) m_pEv = pEP;
+		else if (a == kAudioToPiEp) m_pAudioIn = pEP;
+		else if (a == kAudioFromPiEp) m_pAudioOut = pEP;
+		else if ((a & 0x7F) >= kChanFirstEp && (a & 0x7F) < kChanFirstEp + kChannels)
+			((a & 0x80) ? m_pChanIn : m_pChanOut)[(a & 0x7F) - kChanFirstEp] = pEP;
+		else delete pEP;
+		Step ("endpoint 0x%02x made", a);
 	}
 	boolean bAll = m_pEv && m_pAudioIn && m_pAudioOut;
 	for (unsigned c = 0; c < kChannels; c++) bAll = bAll && m_pChanIn[c] && m_pChanOut[c];
@@ -135,9 +168,7 @@ boolean CTeensyTarget::Configure (void)
 		CLogger::Get ()->Write (From, LogError, "the mirror relay's interface is not the link relay_proto.h describes");
 		return FALSE;
 	}
-	// no CUSBFunction::Configure (): this is the device's own function (ven1209-2), with no interface descriptor;
-	// the base asserts on one (TR1 2026-11-14: the Pi reset every 37 s with the relay plugged in), as CObUsb does not call it
-
+	Step ("start: buffers");
 	m_pCtlBuf = DmaBuf ();
 	for (unsigned k = 0; k < EvURBs; k++) m_pEvBuf[k] = DmaBuf ();
 	for (unsigned k = 0; k < AudioInURBs; k++) m_pAudioInBuf[k] = DmaBuf ();
@@ -148,6 +179,7 @@ boolean CTeensyTarget::Configure (void)
 		for (unsigned k = 0; k < ChanInURBs; k++) m_pChanInBuf[c][k] = DmaBuf ();
 	}
 	s_pThis = this;
+	Step ("start: URBs");
 	// the IN URBs: a fixed pool, resubmitted from their completions (no allocation while streaming, as ob_usb.cpp's)
 	for (unsigned k = 0; k < EvURBs; k++)
 	{
@@ -168,19 +200,10 @@ boolean CTeensyTarget::Configure (void)
 			m_pChanInURB[c][k]->SetCompletionRoutine (ChanInStub, (void *) (uintptr) (c * ChanInURBs + k), this);
 			Resubmit (m_pChanInURB[c][k]);
 		}
-	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed: the box %s mirrors through it", m_nVersion >> 8,
-				m_nVersion & 0xFF, CObUsb::GadgetSlot () == 0 ? "in slot 1 (not the Rytm)" : "in slot 0 (the Rytm)");
-	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
-	if (m_bTest)
-	{
-		CLogger::Get ()->Write (From, LogWarning, "relaytest=1: the relay shows a made-up box (1209:0003) with a synthetic stream, "
-					"not a box of this Pi");
-		s_pThis = this;
-		CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// for its MirrorPoll; a real box there is ignored
-		return TRUE;
-	}
-	if (CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
-	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// SetBox comes from there
+	Step ("start: URBs submitted");
+	if (!m_bTest && CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
+	m_bStarted = TRUE;
+	Step ("started");
 	return TRUE;
 }
 
@@ -193,7 +216,7 @@ void CTeensyTarget::Resubmit (CUSBRequest *pURB)
 
 int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, const void *pData, unsigned nLength)
 {
-	if (nLength > kDmaSize) return -1;
+	if (nLength > kDmaSize || m_pCtlBuf == 0) return -1;	// (not started yet: no EP0 buffer)
 	if (!bIn && nLength) memcpy (m_pCtlBuf, pData, nLength);
 	int n = GetHost ()->ControlMessage (GetEndpoint0 (), (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR, uchRequest,
 					    wValue, wIndex, m_pCtlBuf, (u16) nLength);
@@ -285,6 +308,7 @@ void CTeensyTarget::MirrorBoxUp (boolean bUp)
 
 boolean CTeensyTarget::Upload (void)
 {
+	Step ("upload: %u B configuration, %u strings", m_nCfg, m_nStr);
 	if (Vendor (FALSE, kReqConnect, 0, 0, 0, 0) < 0) return FALSE;
 	if (Vendor (FALSE, kReqSetDevice, 0, 0, m_Dev, 18) < 0) return FALSE;
 	if (Vendor (FALSE, kReqSetConfig, 0, 0, m_Cfg, m_nCfg) < 0) return FALSE;
@@ -295,6 +319,7 @@ boolean CTeensyTarget::Upload (void)
 	if (Vendor (FALSE, kReqConnect, 1, 0, 0, 0) < 0) return FALSE;
 	m_bConnected = TRUE;
 	m_Stats.nConnects++;
+	Step ("upload: connected");
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the relay shows the box to its computer (%u strings)", m_nStr);
 	return TRUE;
 }
@@ -409,6 +434,7 @@ void CTeensyTarget::OnEvent (const Event &e)
 		break;
 	case kEvConfig:
 		m_bPcConfigured = e.a != 0;
+		if (m_bDebug) CLogger::Get ()->Write (From, LogNotice, "relaydebug: the computer configured %u", e.a);
 		m_Stream.in_ch = m_Stream.out_ch = 0;
 		for (unsigned c = 0; c < m_Map.n_out; c++)	// each OUT pipe takes one packet at a time; MIDI a few
 		{
@@ -652,6 +678,11 @@ void CTeensyTarget::ControlPoll (void)
 
 void CTeensyTarget::MirrorPoll (void)
 {
+	if (!m_bStarted)
+	{
+		if (CTimer::Get ()->GetUptime () < m_nDelay) return;
+		if (!Start ()) { m_nDelay = 0xFFFFFFFF; return; }	// not the link: stays idle
+	}
 	if (m_bTest) TestPoll ();
 	CObUsb *pBox = m_pBox;
 	if (pBox != 0 && !m_bHave && Mirror ())		// the box was up before the relay or the mode: read it now
@@ -798,7 +829,7 @@ void CTeensyTarget::TestPoll (void)
 	}
 	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; m_bTestFeeding = FALSE; return; }
 	u64 nNow = NowTicks ();
-	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; }
+	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; Step ("relaytest: the computer took alt 3, stream starts"); }
 	u64 nDue = (nNow - m_nTestStart) * 48000 / 7 / CLOCKHZ;
 	unsigned nBurst = 0;
 	while (m_nTestSent < nDue && nBurst++ < 16)
