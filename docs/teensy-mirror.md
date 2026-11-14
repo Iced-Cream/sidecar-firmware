@@ -84,3 +84,13 @@ which wait while the computer's SysEx is part way out. Only the slot-1 box (`mir
    then check 3 of two-boxes.md (the Pi forwards a box to the relay; jitter against the 8-block margin).
 2. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
    two-links branch changes that file.
+
+## Next (handed over 2026-11-14)
+
+1. Pi -> computer audio: dump the bad blocks on the bench (other blocks' data, shifted, or half-written?); suspects are the
+   Pi's 16-buffer pool in `FromBoxBlock`, the Teensy's `aq_pc` ring when it drops the oldest, and the reused
+   `m_pAudioOutURB[k]`.
+2. The same burst pattern (up to 16 blocks back to back, as relaytest's feed) from a PC playing the Pi, to see whether the
+   Teensy alone corrupts.
+3. A faster reader than the Python bench, to tell its limit from the relay's.
+4. Then a real A4 on the Pi's other USB-A port with Overbridge on the computer.
