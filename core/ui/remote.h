@@ -62,6 +62,9 @@ int remote_caps();   // fix1049: the Rytm's last hello's caps (bit 0: 36; bit 1,
 // requests 49 1 1 kPageGenerator / kPageFill once claimed (remote.cpp fill_claim: 4A 7E 1 after each hello).
 int remote_caps2();
 constexpr int kCaps2Arrows = 1;
+// 0.5.0 v2 Task 6: the mod's QPERF report (2D 01 0E) carries the macros' mute in flags bit 2 (FUNC + QPER); the host
+// trusts that bit only from a mod whose hello has this (scene::qperf: QPERF FADER MUTED ONLY acts as OFF without it)
+constexpr int kCaps2QpMute = 2;
 // FILL's claim dropped (4A 7E 0: the Rytm's UP + LEFT / RIGHT stock's again) - fill-keys review L1: a claim left on a
 // Rytm whose host stopped answering. remote_fill_keys(false) (fill=keys:off): dropped, no claim after a hello until
 // remote_fill_keys(true) claims again; control core. remote_going_down(): a planned reboot or power-off (the Pi's

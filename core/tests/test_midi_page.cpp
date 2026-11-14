@@ -15,6 +15,7 @@
 #include "core.h"
 #include "keys.h"
 #include "mod/learn.h"
+#include "mod/scene.h"
 #include "rui_png.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -36,7 +37,7 @@ static void tick(int n = 2) {
 static void tap(int code) { from_rytm(0x31, 0, (uint8_t)code, 1), from_rytm(0x31, 0, (uint8_t)code, 0), tick(); }
 static void turn(int e, int delta) { from_rytm(0x32, (uint8_t)e, (uint8_t)(64 + delta), 0), tick(); }
 enum { kUp = 0x42, kDown = 0x43, kYes = 0x44, kNo = 0x45 };
-enum { kRoute, kAuto, kMac, kLFader, kLA, kLB, kLearn, kUsbA, kLast };
+enum { kRoute, kAuto, kMac, kLFader, kLA, kLB, kQp, kLearn, kUsbA, kLast };
 
 static ui::Canvas g_c;
 static void draw() { ui::kMidiPage.draw(g_c, 0, 1, now_ms() | 1); }
@@ -286,6 +287,38 @@ static void status_rows() {
   printf("  status_rows: the USB-A devices by name (+N more), the last key's way; read only\n");
 }
 
+// 0.5.0 v2 Task 6: QPERF FADER  MUTED ONLY / OFF / ALWAYS (YES wraps, knob B clamps), kept in learn.txt; without the new
+// mod (no caps2 bit) MUTED ONLY acts as OFF and the footer says so
+static void qperf_row_cycles_and_saves() {
+  scene::set_qp_mode(scene::kQpMutedOnly);
+  open_page();
+  for (int i = 0; i < kQp; ++i) tap(kDown);
+  CHECK(shows("QPERF FADER") && shows("MUTED ONLY") && shows("OLD RYTM MOD: ACTS AS OFF"));
+  png("midi_8_qperf.png");
+  tap(kYes);
+  CHECK(scene::qp_mode() == scene::kQpOff && shows("OFF"));
+  tap(kYes);
+  CHECK(scene::qp_mode() == scene::kQpAlways && shows("ALWAYS"));
+  tap(kYes);
+  CHECK(scene::qp_mode() == scene::kQpMutedOnly);
+  turn(1, 1);
+  CHECK(scene::qp_mode() == scene::kQpOff);
+  turn(1, 1), turn(1, 1);   // (clamped: no wrap)
+  CHECK(scene::qp_mode() == scene::kQpAlways && shows("ALWAYS") && shows("THE KNOB IS THE FADER"));
+  at(g_us + 2100000);   // (the note's 2 s)
+  CHECK(shows("YES / B: SET  NO: BACK"));
+  flush();
+  CHECK(rd("/.rytm/learn.txt").find("QP always\n") != std::string::npos);
+  scene::set_qp_mode(scene::kQpMutedOnly);
+  learn::reset(), learn::load();   // a boot: read back
+  CHECK(scene::qp_mode() == scene::kQpAlways && shows("ALWAYS"));
+  turn(1, -1), turn(1, -1);
+  CHECK(scene::qp_mode() == scene::kQpMutedOnly);
+  flush();
+  CHECK(rd("/.rytm/learn.txt").find("QP") == std::string::npos);
+  printf("  qperf_row_cycles_and_saves: QPERF FADER MUTED ONLY / OFF / ALWAYS, saved in learn.txt\n");
+}
+
 static void reset_both() {   // the defaults, two devices in, the forward set
   keys::reset();
   keys::set_forward(fwd);
@@ -314,6 +347,8 @@ int main() {
   learn_rows_arm_and_replace();
   reset_both();
   status_rows();
+  reset_both();
+  qperf_row_cycles_and_saves();
   ui::remote_reset();
   system(("rm -rf '" + g_card + "'").c_str());
   printf("test_midi_page: PASS\n");

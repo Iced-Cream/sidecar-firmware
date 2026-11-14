@@ -419,6 +419,7 @@ static void qp(int pos, int mask, int flags) {
 }
 static void qperf_sets_fader() {
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   qp(0, 0, 2);     // the first report: a baseline (M2)
   qp(255, 0, 2);
   CHECK(scene::state().fader == 16383);
@@ -432,6 +433,7 @@ static void qperf_sets_fader() {
 }
 static void qperf_ignored_until_moved() {
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   fader_to(9000);
   qp(0, 0, 0);   // the hello's: the knob has not sent since the Rytm booted
   qp(77, 0, 0);
@@ -444,6 +446,7 @@ static void qperf_ignored_until_moved() {
 }
 static void qperf_smoothing_follows_interval() {
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   qp(0, 0, 2);
   run_ms(200);
   // reports 16 ms apart, 4 positions each (257 fader counts): the played fader never jumps by a report's change,
@@ -475,9 +478,11 @@ static void qperf_smoothing_follows_interval() {
   }
   printf("scene: QPERF reports 40 ms apart: %d flat ms\n", flat);
   CHECK(flat <= 5);
-  // a page move after: the 20 ms of spec 2.4 again
+  // a console move after: a source change, so the 200 ms handover glide (v2 Task 6), not a jump
   scene::set_fader(0, scene::kConsole);
   run_ms(21);
+  CHECK(scene::fader_played() > 0);
+  run_ms(180);
   CHECK(scene::fader_played() == 0);
   printf("scene: the QPERF fader is smoothed over the reports' interval (at least 20 ms)\n");
 }
@@ -488,6 +493,7 @@ static void hello35() {
 }
 static void qperf_baseline_after_hello() {
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   scene::set_fader(3000, scene::kPage);   // (a kit file's F does the same: the fader set, the knob not its source)
   hello35();
   qp(200, 0, 2);   // the hello's report: the knob at 200 since the Rytm booted, bit 1 set
@@ -510,6 +516,7 @@ static void qperf_baseline_after_hello() {
 // once the knob has the fader it follows every step
 static void qperf_jitter_deadband() {
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   qp(100, 0, 2);   // baseline
   scene::set_fader(4000, scene::kPage);
   for (int k = 0; k < 50; ++k) qp(k & 1 ? 101 : 100, 0, 2), run_ms(8);
@@ -526,6 +533,7 @@ static void qperf_jitter_deadband() {
 
   // a held manual edit (the knob the fader's source): a flicker does not let it go, 2 steps do
   scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);   // (Task 47's rules: the knob always the fader)
   report_p1(0x03, 0, 3);
   v[0].p[1] = 40;
   lock_ab(T("V1:P2"), 20, 100);
@@ -545,6 +553,135 @@ static void qperf_jitter_deadband() {
   CHECK(mod::find(T("V1:P2"))->held == 0 && scene::state().fader == 130 * 16383 / 255);
   close_page();
   printf("scene: a 1-step QPERF flicker does not let a held edit go; 2 steps do\n");
+}
+// ---- 0.5.0 v2 Task 6: QPERF FADER (MUTED ONLY by default / OFF / ALWAYS), the mute edge, the handover glide
+static void hello_caps2(int c2) {   // a hello whose caps2 is c2 (kCaps2QpMute: the mod reports the macros' mute, bit 2)
+  const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 1, (uint8_t)c2, 0xF7};
+  engine_sysex(m, (int)sizeof m);
+}
+static uint16_t qf(int pos) { return (uint16_t)(pos * 16383 / 255); }
+static void qp_muted_only_ignores_unmuted() {
+  scene_reset_with_base(40);
+  CHECK(scene::qp_mode() == scene::kQpMutedOnly);   // the default
+  hello_caps2(ui::kCaps2QpMute);
+  scene::set_fader(3000, scene::kPage);
+  qp(100, 0, 2), qp(200, 0, 2), qp(10, 0, 2), qp(250, 0, 3);
+  CHECK(scene::state().fader == 3000 && scene::fader_source() == scene::kPage);
+  printf("scene: QPERF FADER MUTED ONLY: the knob with the macros playing never moves the fader\n");
+}
+static void qp_muted_only_takes_when_muted() {
+  scene_reset_with_base(40);
+  hello_caps2(ui::kCaps2QpMute);
+  scene::set_fader(3000, scene::kPage);
+  qp(100, 0, 2 | 4);   // muted: the first position a baseline
+  CHECK(scene::state().fader == 3000);
+  qp(150, 0, 2 | 4);
+  CHECK(scene::state().fader == qf(150) && scene::fader_source() == scene::kQperf);
+  qp(151, 0, 2 | 4);   // then every step
+  CHECK(scene::state().fader == qf(151));
+  printf("scene: QPERF FADER MUTED ONLY: muted, the knob is the fader\n");
+}
+static void qp_mute_edge_is_baseline() {
+  scene_reset_with_base(40);
+  hello_caps2(ui::kCaps2QpMute);
+  qp(100, 0, 6), qp(120, 0, 6);
+  CHECK(scene::state().fader == qf(120));
+  qp(200, 0, 2);   // unmuted: the macros again, the fader stays
+  CHECK(scene::state().fader == qf(120));
+  qp(200, 0, 6);   // muted again at 200: a baseline, no jump to 200
+  CHECK(scene::state().fader == qf(120));
+  qp(203, 0, 6);
+  CHECK(scene::state().fader == qf(203));
+  // ALWAYS: the mute edge is a baseline as well (the knob's position under a mute toggle is no move)
+  scene::set_qp_mode(scene::kQpAlways);
+  qp(60, 0, 2);   // (unmuted after muted: an edge too, a baseline)
+  CHECK(scene::state().fader == qf(203));
+  qp(62, 0, 2);
+  CHECK(scene::state().fader == qf(62));
+  qp(90, 0, 6);   // the edge: a baseline only
+  CHECK(scene::state().fader == qf(62));
+  qp(92, 0, 6);
+  CHECK(scene::state().fader == qf(92));
+  printf("scene: a QPERF mute edge makes the next position a baseline\n");
+}
+static void qp_off_never_moves() {
+  scene_reset_with_base(40);
+  hello_caps2(ui::kCaps2QpMute);
+  char o[200];
+  CHECK(scene::command("scene=qperf:off", o, sizeof o) && strstr(o, "qperf off"));
+  CHECK(scene::qp_mode() == scene::kQpOff);
+  scene::set_fader(3000, scene::kPage);
+  for (int k = 0; k < 10; ++k) qp(k * 25, 0, k & 1 ? 6 : 2);
+  CHECK(scene::state().fader == 3000 && scene::fader_source() == scene::kPage);
+  CHECK(scene::command("scene=qperf:always", o, sizeof o) && scene::qp_mode() == scene::kQpAlways);
+  CHECK(scene::command("scene=qperf:muted", o, sizeof o) && scene::qp_mode() == scene::kQpMutedOnly);
+  CHECK(scene::command("scene=qperf:loud", o, sizeof o) && strstr(o, "cannot") && scene::qp_mode() == scene::kQpMutedOnly);
+  printf("scene: QPERF FADER OFF: the knob never moves the fader; scene=qperf:muted|off|always\n");
+}
+static void qp_always_as_before() {
+  scene_reset_with_base(40);
+  hello_caps2(0);
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_fader(3000, scene::kPage);
+  qp(100, 0, 2);
+  CHECK(scene::state().fader == 3000);
+  qp(150, 0, 2);
+  CHECK(scene::state().fader == qf(150) && scene::fader_source() == scene::kQperf);
+  qp(170, 0, 6);   // (no caps2: bit 2 means nothing, no edge)
+  CHECK(scene::state().fader == qf(170));
+  printf("scene: QPERF FADER ALWAYS: the knob is the fader whatever the macros (Task 47's rules)\n");
+}
+static void qp_muted_only_without_caps_is_off() {
+  scene_reset_with_base(40);
+  hello_caps2(0);   // an older mod: no mute report, bit 2 not to be trusted
+  scene::set_fader(3000, scene::kPage);
+  for (int k = 0; k < 10; ++k) qp(k * 25, 0, 2 | 4);
+  CHECK(scene::state().fader == 3000 && scene::fader_source() == scene::kPage);
+  printf("scene: MUTED ONLY with a mod without the mute report acts as OFF\n");
+}
+// a source change glides over kHandoverMs: linear, no step above a 200th of the travel (+1)
+static int glide_max_step(int ms, int* last) {
+  int mx = 0;
+  for (int k = 0; k < ms; ++k) {
+    run_ms(1);
+    int p = scene::fader_played(), d = p > *last ? p - *last : *last - p;
+    mx = d > mx ? d : mx;
+    *last = p;
+  }
+  return mx;
+}
+static void handover_glides_200ms() {
+  scene_reset_with_base(40);
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_fader(1000, scene::kLearn);
+  run_ms(30);
+  qp(10, 0, 2);    // baseline
+  qp(250, 0, 2);   // the knob takes it from learn: 1000 -> 16061 over 200 ms
+  int last = scene::fader_played();
+  int mx = glide_max_step(100, &last);
+  int mid = scene::fader_played();
+  printf("scene: learn -> QPERF: at 100 ms %d (from 1000 to %d), largest 1 ms step %d\n", mid, qf(250), mx);
+  CHECK(mx <= 16383 / 200 + 1 && std::abs(mid - (1000 + qf(250)) / 2) <= 100);
+  glide_max_step(101, &last);
+  CHECK(scene::fader_played() == qf(250));
+  // QPERF -> page: the same
+  scene::set_fader(0, scene::kPage);
+  mx = glide_max_step(100, &last);
+  CHECK(mx <= 16383 / 200 + 1 && scene::fader_played() > 0);
+  glide_max_step(101, &last);
+  CHECK(scene::fader_played() == 0);
+  printf("scene: a change of the fader's source glides over 200 ms\n");
+}
+static void same_source_keeps_20ms() {
+  scene_reset_with_base(40);
+  scene::set_fader(1000, scene::kPage);
+  run_ms(25);
+  scene::set_fader(9000, scene::kPage);
+  run_ms(10);
+  CHECK(scene::fader_played() > 1000 && scene::fader_played() < 9000);
+  run_ms(11);
+  CHECK(scene::fader_played() == 9000);
+  printf("scene: the same source keeps the 20 ms smoothing\n");
 }
 static std::vector<std::vector<uint8_t>> g_rytm;
 static void rytm_cap(const uint8_t* m, int n) { g_rytm.emplace_back(m, m + n); }
@@ -626,6 +763,14 @@ int main() {
   qperf_smoothing_follows_interval();
   qperf_baseline_after_hello();
   qperf_jitter_deadband();
+  qp_muted_only_ignores_unmuted();
+  qp_muted_only_takes_when_muted();
+  qp_mute_edge_is_baseline();
+  qp_off_never_moves();
+  qp_always_as_before();
+  qp_muted_only_without_caps_is_off();
+  handover_glides_200ms();
+  same_source_keeps_20ms();
   rytm_targets_refused();
   rytm_targets_still_learnable();
   scene_report_shown();

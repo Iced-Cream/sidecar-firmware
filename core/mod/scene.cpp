@@ -32,6 +32,8 @@ int g_src = 0;                      // the fader's last source (Source), 0 none
 int g_qp_pos = -1;
 bool g_qp_seen = false;
 uint32_t g_qp_ms = 0;
+uint8_t g_qp_mode = kQpMutedOnly;   // QPERF FADER (v2 Task 6): a box setting, kept in learn.txt
+bool g_qp_muted = false;            // the macros' mute as last reported (only from a mod with kCaps2QpMute)
 int g_rscn = -1;                    // the Rytm's own scene as reported (2D 01 0F), -1 none
 int g_side = -1;                    // EDIT (v2): the side held, 0 A (PAGE + T15), 1 B (PAGE + T16), -1 none
 bool g_upper = false;            // the stepped targets' side: B's (true) or A's; switched with 1/64 hysteresis
@@ -231,6 +233,7 @@ namespace {
 CORE_COLD void move_fader(uint16_t v, int source, uint32_t smooth_ms) {   // whichever moved last wins
   if (v > kFaderMax) v = kFaderMax;
   if (v == g_st.fader) return;
+  if (g_src && source != g_src) smooth_ms = kHandoverMs;   // a handover glides, it does not jump (UX 2b)
   g_from = g_played, g_set_ms = now_ms(), g_smooth_ms = smooth_ms;
   g_st.fader = v;
   g_src = source;
@@ -243,9 +246,20 @@ CORE_COLD void set_fader(uint16_t v, int source) { move_fader(v, source, kSmooth
 CORE_COLD uint16_t fader_played() { return (uint16_t)g_played; }
 CORE_COLD int fader_source() { return g_src; }
 
+CORE_COLD void set_qp_mode(int m) { g_qp_mode = (uint8_t)(m == kQpOff || m == kQpAlways ? m : kQpMutedOnly); }
+CORE_COLD int qp_mode() { return g_qp_mode; }
+CORE_COLD const char* qp_mode_name(int m) { return m == kQpOff ? "off" : m == kQpAlways ? "always" : "muted"; }
+
 CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {
   (void)mask;
   if (!(flags & kQpMoved) || pos < 0 || pos > 255) return;   // the hello's report before the knob ever sent: no position
+  // QPERF FADER (v2 Task 6): bit 2 only from a mod that reports the mute; its edge makes this position a baseline
+  const bool muted = (ui::remote_caps2() & ui::kCaps2QpMute) && (flags & kQpMuted);
+  if (muted != g_qp_muted) g_qp_muted = muted, qperf_rebase();
+  if (g_qp_mode == kQpOff || (g_qp_mode == kQpMutedOnly && !muted)) {   // not the fader now: the next allowed one a baseline
+    qperf_rebase();
+    return;
+  }
   if (g_qp_pos < 0) {   // the first report since the link came up: a baseline only, the knob takes on a change (M2)
     g_qp_pos = pos;
     return;
@@ -256,7 +270,9 @@ CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {
   if ((g_src != kQperf || mod::held_any()) && d < kQpTakeSteps) return;
   uint16_t v = (uint16_t)(pos * kFaderMax / 255);
   uint32_t ms = now_ms(), gap = ms - g_qp_ms;
-  uint32_t sm = g_qp_seen && gap <= kQpSmoothMaxMs ? (gap > kSmoothMs ? gap : kSmoothMs) : kSmoothMs;
+  // the first take after a baseline catches up over kHandoverMs (the 2-step guard's start jump, UX 2b); then the
+  // reports' interval
+  uint32_t sm = !g_qp_seen ? kHandoverMs : gap <= kQpSmoothMaxMs ? (gap > kSmoothMs ? gap : kSmoothMs) : kSmoothMs;
   g_qp_seen = true, g_qp_pos = pos, g_qp_ms = ms;
   move_fader(v, kQperf, sm);
 }
@@ -325,6 +341,7 @@ CORE_COLD void reset() {
   g_set_ms = now_ms(), g_now_ms = g_set_ms;
   g_smooth_ms = kSmoothMs, g_src = 0;
   g_qp_pos = -1, g_qp_seen = false, g_qp_ms = 0;
+  g_qp_mode = kQpMutedOnly, g_qp_muted = false;
   g_rscn = -1;
   g_upper = false;
   g_last_a = g_last_b = -1;
@@ -409,6 +426,15 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     int x = field(&q, a, sizeof a) ? dec(a, 0, kScenes) : -1, y = field(&q, b, sizeof b) ? dec(b, 0, kScenes) : -1;
     ok = x >= 0 && y >= 0 && !q;
     if (ok) set_ab(x - 1, y - 1);
+  } else if (!strcmp(k, "qperf")) {
+    int m = !field(&q, a, sizeof a) || q ? -1 : !strcmp(a, "muted") ? kQpMutedOnly : !strcmp(a, "off") ? kQpOff
+                                                : !strcmp(a, "always") ? kQpAlways : -1;
+    ok = m >= 0;
+    if (ok) {
+      set_qp_mode(m);
+      sniprintf(o, cap, CORE_STR("scene: qperf %s"), qp_mode_name(m));
+      return true;
+    }
   } else if (!strcmp(k, "fader")) {
     int x = field(&q, a, sizeof a) ? dec(a, 0, kFaderMax) : -1;
     ok = x >= 0 && !q;
@@ -443,7 +469,7 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
   else if (refused) sniprintf(o, cap, CORE_STR("scene: NOT A SCENE TARGET (%s)"), p);
   else if (!ok)
     sniprintf(o, cap, CORE_STR("scene: cannot \"%s\" (scene=ab:A:B | fader:V | sel:N | lock:N:NAME:V | unlock:N:NAME | "
-                               "clear:N | copy:N:M)"), p);
+                               "clear:N | copy:N:M | qperf:muted|off|always)"), p);
   else state_line(o, cap);
   return true;
 }

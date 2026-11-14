@@ -17,6 +17,7 @@ namespace scene {
 constexpr int kScenes = 12, kLocks = 64;
 constexpr uint16_t kFaderMax = 16383;
 constexpr uint32_t kSmoothMs = 20;   // the played fader reaches a new value in this long (linear)
+constexpr uint32_t kHandoverMs = 200;   // ... and in this long when the fader's source changes (v2 Task 6, UX 2b)
 struct Lock {
   mod::Tid t;
   uint16_t v;   // the value x 128 (0..16383): 0021's encoding, as the sequencer's locks
@@ -42,7 +43,8 @@ void clear(int n);
 void copy(int from, int to);
 void set_ab(int a, int b);                  // -1 none; the fader does not move
 void set_sel(int n);
-void set_fader(uint16_t v, int source);     // 0..16383, absolute; a change frees every held target (mod::fader_moved)
+void set_fader(uint16_t v, int source);     // 0..16383, absolute; a change frees every held target (mod::fader_moved);
+                                            // a source other than the last one glides over kHandoverMs
 uint16_t fader_played();
 int fader_source();                         // the source that set the fader last (Source), 0 none since the reset
 
@@ -57,6 +59,14 @@ int fader_source();                         // the source that set the fader las
 constexpr uint8_t kQpFunc = 1, kQpMoved = 2, kQpMuted = 4;   // flags: FUNC held, moved since boot, macros muted
 constexpr uint32_t kQpSmoothMaxMs = 100;
 constexpr int kQpTakeSteps = 2;
+// QPERF FADER (0.5.0 v2 Task 6, the MIDI page's row, learn.txt's "QP" line): MUTED ONLY (the default) takes the
+// knob's position only while the Rytm's macros are muted (FUNC + QPER: flags bit 2), OFF never, ALWAYS as above. Bit 2
+// is trusted only from a mod whose hello's caps2 has ui::kCaps2QpMute; without it MUTED ONLY acts as OFF. A change of
+// bit 2 (a mute edge) makes the next position a baseline; the first take after a baseline glides over kHandoverMs.
+enum QpMode : uint8_t { kQpMutedOnly, kQpOff, kQpAlways };
+void set_qp_mode(int m);                    // QpMode; anything else: MUTED ONLY
+int qp_mode();
+const char* qp_mode_name(int m);            // "muted", "off", "always"
 void qperf(int pos, uint16_t mask, uint8_t flags);   // pos 0..255, mask the PERF macros on the knob (bit m - 1)
 void qperf_rebase();                        // the link came up (host_link's link_reset): the next position a baseline
 // the Rytm's own scene as the mod reports it (2D 01 0F, on any change: its pads, CC 92, the host command, a kit load):
@@ -101,7 +111,8 @@ int side_scene(int side);                   // A's (0) or B's (1) scene 0..11, -
 bool lock_side(int side, mod::Tid t, uint16_t v);   // lock() into that side's scene; false also when the side has none
 // ---- the console and /status (spec-050 2.10): "scene" (the state), "scene=ab:A:B" (1..12, 0 none), "scene=fader:V"
 // (0..16383), "scene=sel:N", "scene=lock:N:NAME:V" (V the target's value, 0..127.99, kept x 128), "scene=unlock:N:NAME",
-// "scene=clear:N", "scene=copy:N:M"; each edit answers with the state. False: not "scene..."
+// "scene=clear:N", "scene=copy:N:M"; each edit answers with the state. "scene=qperf:muted|off|always" (QPERF FADER)
+// answers "scene: qperf MODE". False: not "scene..."
 bool command(const char* p, char* out, int cap);
 // "\"scene\":{\"a\":A,\"b\":B,\"fader\":F,\"played\":P,\"sel\":S,\"locked\":0|1,\"edit\":0|1|2,\"s\":[{\"n\":N,\"l\":[[\"V1:P3\",6400],...]},...],\"src\":SRC,\"rscn\":R}"
 // (edit: 0 none, 1 A held, 2 B held; SRC the fader's last source, 0 none; R the Rytm's own scene 1..12, 0 none, -1 not

@@ -51,6 +51,7 @@ static void reset_all(float base) {
   mod::reset();
   scene::reset();
   learn::reset();
+  scene::set_qp_mode(scene::kQpAlways);   // (the sweeps drive the knob as the fader: v2 Task 6's ALWAYS)
   v[0].p[0] = base;
   at(g_us + 1000), mod::tick(now_us());
 }
@@ -378,25 +379,44 @@ static void midway_events() {
 }
 static void qperf_specifics() {
   printf("-- the QPERF knob\n");
-  // a slow turn from rest, one position per report: the first positions
+  // a slow turn from rest, one position per report: the take-over (2 positions, the jitter guard) glides over 200 ms
+  // (v2 Task 6), so no 1 ms step of the played fader is above 1/32 of the travel
   reset_all(40);
   scene::lock(0, T("FX1:P3"), 0), scene::lock(1, T("FX1:P3"), 127 * 128), scene::set_ab(0, 1);
+  scene::set_fader(4000, scene::kConsole), run_ms(40);   // another source has it
   qp(0, 0, 2), run_ms(40);
-  int first_move = -1;
+  int first_move = -1, last = scene::fader_played(), max_step = 0;
   for (int pos = 1; pos <= 20; ++pos) {
-    qp(pos, 0, 2), run_ms(30);
-    if (first_move < 0 && scene::state().fader != 0) first_move = pos;
+    qp(pos, 0, 2);
+    for (int ms = 0; ms < 30; ++ms) {
+      run_ms(1);
+      int p = scene::fader_played(), d = p > last ? p - last : last - p;
+      max_step = d > max_step ? d : max_step, last = p;
+    }
+    if (first_move < 0 && scene::fader_source() == scene::kQperf) first_move = pos;
   }
-  check_line("a slow turn from rest: the fader starts at position", first_move == 1,
-             "  [first position that moved the fader: %.0f (1 = no dead zone); fader then %.0f]", first_move,
-             scene::state().fader);
-  // flags bit 2 (macros muted) and FUNC (bit 0): the host takes the position all the same
+  check_line("a slow turn from rest: no 1 ms step above 1/32 of the travel at the take-over",
+             first_move == 2 && max_step <= 16383 / 32, "  [the knob took at position %.0f; largest 1 ms step %.0f]",
+             first_move, max_step);
+  // flags bit 2 (macros muted) and FUNC (bit 0): ALWAYS takes the position all the same
   reset_all(40);
-  qp(0, 0, 2), qp(100, 0, 2 | 4), run_ms(40);
+  qp(0, 0, 2), qp(100, 0, 2), run_ms(40);
   double f1 = scene::state().fader;
-  qp(180, 0, 2 | 4 | 1), run_ms(40);
-  check_line("the report with the 'macros muted' flag (bit 2) still moves the fader", f1 == 100 * 16383 / 255 &&
+  qp(180, 0, 2 | 1), run_ms(40);
+  check_line("ALWAYS: FUNC held still moves the fader", f1 == 100 * 16383 / 255 &&
              scene::state().fader == 180 * 16383 / 255, "  [fader %.0f then %.0f]", f1, scene::state().fader);
+  // MUTED ONLY with the new mod (caps2 kCaps2QpMute): the macros playing, no move; muted, the knob is the fader
+  reset_all(40);
+  scene::set_qp_mode(scene::kQpMutedOnly);
+  const uint8_t hello[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 1, (uint8_t)ui::kCaps2QpMute, 0xF7};
+  engine_sysex(hello, (int)sizeof hello);
+  qp(0, 0, 2), qp(100, 0, 2), qp(140, 0, 2), run_ms(40);
+  double u = scene::state().fader;
+  qp(140, 0, 2 | 4), qp(180, 0, 2 | 4), run_ms(40);   // the mute edge a baseline, then the knob
+  check_line("MUTED ONLY: the knob moves the fader only with the macros muted", u == 0 &&
+             scene::state().fader == 180 * 16383 / 255, "  [unmuted %.0f, muted %.0f]", u, scene::state().fader);
+  const uint8_t hello0[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 1, 0, 0xF7};
+  engine_sysex(hello0, (int)sizeof hello0);
 }
 // 0.5.0 v2 (S7): the Rytm's own scene and PERF macros are no scene targets: nothing to sweep, the lock is refused
 static void rytm_refused() {
@@ -412,7 +432,6 @@ int main(int argc, char** argv) {
   g_known_run = getenv("KNOWN") != nullptr;
   // the known failures (findings of the diagnosis round); see notes/reports/morph-check-report.md
   g_known_tags.clear();
-  g_known_tags.push_back("a slow turn from rest");                       // the 2-position take-over: no dead zone is wanted
   // (case tag prefixes, "<target>/<source>[/Aonly|/Bonly]")
   char tmpl[] = "/tmp/core_morphsweep_XXXXXX";
   CHECK(mkdtemp(tmpl));
