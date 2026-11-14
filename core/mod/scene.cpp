@@ -34,6 +34,8 @@ bool g_qp_seen = false;
 uint32_t g_qp_ms = 0;
 uint8_t g_qp_mode = kQpMutedOnly;   // QPERF FADER (v2 Task 6): a box setting, kept in learn.txt
 bool g_qp_muted = false;            // the macros' mute as last reported (only from a mod with kCaps2QpMute)
+QpView g_qv = {-1, false, false, 0};   // the screens' readout (v2 Task 7)
+uint32_t g_kit_ms = 0;              // when the Rytm's kit last changed (the MORPH header's note), 0 never
 int g_rscn = -1;                    // the Rytm's own scene as reported (2D 01 0F), -1 none
 int g_side = -1;                    // EDIT (v2): the side held, 0 A (PAGE + T15), 1 B (PAGE + T16), -1 none
 bool g_upper = false;            // the stepped targets' side: B's (true) or A's; switched with 1/64 hysteresis
@@ -256,7 +258,10 @@ CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {
   // QPERF FADER (v2 Task 6): bit 2 only from a mod that reports the mute; its edge makes this position a baseline
   const bool muted = (ui::remote_caps2() & ui::kCaps2QpMute) && (flags & kQpMuted);
   if (muted != g_qp_muted) g_qp_muted = muted, qperf_rebase();
+  const int was = g_qv.pos;
+  g_qv.pos = pos, g_qv.moved = true, g_qv.muted = muted;
   if (g_qp_mode == kQpOff || (g_qp_mode == kQpMutedOnly && !muted)) {   // not the fader now: the next allowed one a baseline
+    if (g_qp_mode == kQpMutedOnly && pos != was) g_qv.ignored_ms = now_ms() | 1;   // (the page's FUNC+QPER hint)
     qperf_rebase();
     return;
   }
@@ -277,6 +282,11 @@ CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {
   move_fader(v, kQperf, sm);
 }
 CORE_COLD void qperf_rebase() { g_qp_pos = -1, g_qp_seen = false; }
+CORE_COLD QpView qperf_view() { return g_qv; }
+CORE_COLD bool qp_wants_knob() {
+  return g_qp_mode == kQpAlways || (g_qp_mode == kQpMutedOnly && (ui::remote_caps2() & ui::kCaps2QpMute));
+}
+CORE_COLD int kit_note(uint32_t now) { return g_kit_ms && now - g_kit_ms < 2000 && g_rytm_kit >= 0 ? g_rytm_kit : -1; }
 CORE_COLD void rytm_scene_seen(int n) { g_rscn = n >= 0 && n <= kScenes ? n : 0; }
 CORE_COLD int rytm_scene() { return g_rscn; }
 
@@ -341,7 +351,7 @@ CORE_COLD void reset() {
   g_set_ms = now_ms(), g_now_ms = g_set_ms;
   g_smooth_ms = kSmoothMs, g_src = 0;
   g_qp_pos = -1, g_qp_seen = false, g_qp_ms = 0;
-  g_qp_mode = kQpMutedOnly, g_qp_muted = false;
+  g_qp_mode = kQpMutedOnly, g_qp_muted = false, g_qv = QpView{-1, false, false, 0}, g_kit_ms = 0;
   g_rscn = -1;
   g_upper = false;
   g_last_a = g_last_b = -1;
@@ -534,6 +544,21 @@ CORE_COLD int json(char* o, int cap) {
       ok = put(CORE_STR("%s%s\"%s\"%s"), vi && !k ? "," : "", k ? "," : "[", lb, k == 15 ? "]" : "");
     }
   ok = ok && put("%s%s%s%s", "]", "", "", "");
+  // v2 Task 7 (UX 17): "gone" the locked targets that no longer resolve (ui::morph_stale), once each
+  ok = ok && put("%s%s%s%s", ",\"gone\":[", "", "", "");
+  bool first_g = true;
+  for (int i = 0; ok && i < kScenes; ++i)
+    for (int j = 0; ok && j < g_st.s[i].n; ++j) {
+      mod::Tid t = g_st.s[i].l[j].t;
+      if (!core::ui::morph_stale(t)) continue;
+      bool seen = false;   // (a gone target is rare: the earlier locks searched only for those)
+      for (int i2 = 0; i2 <= i && !seen; ++i2)
+        for (int j2 = 0; j2 < (i2 < i ? g_st.s[i2].n : j) && !seen; ++j2) seen = g_st.s[i2].l[j2].t == t;
+      if (seen) continue;
+      char nm[16];
+      ok = put(CORE_STR("%s\"%s\"%s%s"), first_g ? "" : ",", mod::name(t, nm, sizeof nm), "", ""), first_g = false;
+    }
+  ok = ok && put("%s%s%s%s", "]", "", "", "");
   if (!ok) n = at;   // (no room: the old fields only)
 #endif
   if (n >= cap) return cap;
@@ -644,7 +669,7 @@ CORE_COLD void project_changed() {
 
 CORE_COLD void kit_changed(int kit) {
   if (kit < 0 || kit > 127) return;
-  if (kit != g_rytm_kit) g_side = -1;   // v2: a held EDIT ends with the kit (its scenes go)
+  if (kit != g_rytm_kit) g_side = -1, g_kit_ms = now_ms() | 1;   // v2: a held EDIT ends with the kit (its scenes go)
   g_rytm_kit = kit;
   // a project's store still filling: its load takes this kit; a rename moving the files: the switch after it does
   if (!store::ready() || rename::moving()) return;
@@ -655,7 +680,7 @@ CORE_COLD void load() {}
 CORE_COLD bool save() { return false; }
 CORE_COLD void project_changed() {}
 CORE_COLD void kit_changed(int kit) {
-  if (kit != g_rytm_kit) g_side = -1;
+  if (kit != g_rytm_kit) g_side = -1, g_kit_ms = now_ms() | 1;
   g_rytm_kit = kit;
 }
 #endif

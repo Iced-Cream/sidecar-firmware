@@ -9,10 +9,18 @@
 // again clears), its last row ADD (v2 Task 5): scrolled to the top, B the track (RT1..RT12, RFX, V1..V8), C its page,
 // D the param, E the value (from the target's base when the Sidecar knows it, else 64); YES adds it. EDIT on the other
 // Sidecar pages is PAGE + T15 / T16 held (remote.cpp; 0.5.0 v2, momentary).
-// LEDs: A blue, B orange, the selected scene white, a scene with locks dim white, T15 / T16 their colours.
+// LEDs: A blue, B orange, the selected scene white (blinking slowly when it is A or B too), a scene with locks dim white,
+// T15 / T16 their colours.
+// v2 Task 7: the header's right names the fader's source (KNOB, MIDI, PAGE, TCH, WEB; EDIT A / B while held; for 2 s
+// after a kit change KIT n LOADED / KIT n: NO SCENES); A and B framed in the scene row; the bar hollow while A or B is
+// unset; a tick under the bar where the QPERF knob is when the fader is elsewhere; hints in the footer; NO in the list
+// removes with an undo (NO again within 2 s); a lock whose target is gone (an unused P, an RT word a Sidecar machine's
+// track does not have) shows its name with "?".
 #include <string.h>
 
+#include "platform.h"
 #include "mod/mod.h"
+#include "mod/rytm_param.h"
 #include "mod/scene.h"
 #include "mod/target.h"
 #include "ui/extra.h"
@@ -30,6 +38,7 @@ constexpr int kBoxW = 10, kBox0 = 4, kRowY = 11;   // the scene row
 constexpr int kBarX = 18, kBarW = 92, kBarY = 23, kBarH = 9;   // the fader
 constexpr int kLabY = 37;           // FADER / LOCKS labels (values 6 below)
 constexpr uint8_t kLedWhite = 111, kLedWhiteDim = 107;   // 34's white ramp (96..111), dim as kLedBlueDim is to kLedBlue
+constexpr uint32_t kUndoMs = 2000;  // NO again within this restores the lock NO removed
 
 struct MorphPage {
   int held = -1;          // the scene key held (0..11), -1 none
@@ -42,6 +51,10 @@ struct MorphPage {
   int touched = -1;       // the encoder turned last (main view: 0; the list: 1..7)
   int add_tr = 0, add_pg = 0, add_pr = 0, add_v = 64;   // the ADD row: track, page, param (indices), value 0..127
   const char* note = nullptr;   // a one-shot footer ("SCENE FULL")
+  int undo_n = -1;        // the lock NO removed last: its scene, target, value, when (kUndoMs)
+  mod::Tid undo_t = 0;
+  uint16_t undo_v = 0;
+  uint32_t undo_ms = 0;
   uint32_t now = 0;
 };
 CORE_RAM2 MorphPage mp;
@@ -109,7 +122,45 @@ CORE_COLD void add_value_from_base() {   // E starts at the param's base when th
 }
 CORE_COLD bool add_on_top() { return mp.held >= 0 && mp.top >= scene::state().s[mp.held].n; }
 
+// a lock whose target is gone (v2 Task 7, UX 17): a voice's P its machine leaves unused, an RT word the track's machine
+// does not have (a Sidecar machine's track: its V targets do that job); the Rytm's own only while its link says so
+CORE_COLD bool stale_target(mod::Tid t) {
+  if (!mod::valid(t)) return true;
+  const mod::Kind k = mod::kind_of(t);
+  char b[16];
+  if (k == mod::kV) return !strcmp(mod::param_label(t, b, sizeof b), "-");
+  int tr, w;
+  return mod::is_remote(k) && mod::rp_on() && mod::rytm_word(t, &tr, &w) && !mod::rp_word_active(tr, w);
+}
+CORE_COLD const char* row_name(mod::Tid t, char* b, int cap) {   // "V1:HRM", a gone one "V1:P16?"
+  if (!stale_target(t)) return mod::label(t, b, cap);
+  char n[16];
+  sniprintf(b, cap, "%s?", mod::name(t, n, sizeof n)[0] ? n : "?");
+  return b;
+}
+CORE_COLD bool undo_shown(uint32_t now) { return mp.undo_ms && mp.held == mp.undo_n && now - mp.undo_ms < kUndoMs; }
+CORE_COLD bool undo_footer(Canvas& c) {
+  if (!undo_shown(mp.now)) return false;
+  char nm[16], f[kTextLen + 1];
+  row_name(mp.undo_t, nm, sizeof nm);
+  sniprintf(f, sizeof f, "REMOVED %s NO:UNDO", nm);
+  footer(c, f);
+  return true;
+}
+CORE_COLD const char* src_tag(int src) {
+  switch (src) {
+    case scene::kQperf: return "KNOB";
+    case scene::kLearn: return "MIDI";
+    case scene::kPage: return "PAGE";
+    case scene::kTouch: return "TCH";
+    case scene::kWeb: return "WEB";
+    default: return nullptr;
+  }
+}
+
 }  // namespace
+
+CORE_COLD bool morph_stale(uint16_t t) { return stale_target(t); }
 
 // the value as its page shows it: whole units, one decimal when not whole
 CORE_COLD void morph_value_text(uint16_t t, uint16_t v, char* b, int cap) {
@@ -136,13 +187,28 @@ CORE_COLD void scene_box(Canvas& c, int i) {
   sniprintf(t, sizeof t, "%d", i + 1);
   bool sel = i == st.sel;
   if (sel) c.fill(Rect{(int16_t)x, (int16_t)(kRowY - 1), (int16_t)(kBoxW - 1), 8}, kOn);
+  if (i == st.a || i == st.b) c.rect(Rect{(int16_t)(x - 1), (int16_t)(kRowY - 2), (int16_t)(kBoxW + 1), 10}, kOn);   // A / B framed
   c.put_text(kSlotFree + i, kRSmall, x + kBoxW / 2 - 1, kRowY, t, kAlignCentre | (sel ? kTextInvert : 0));
   if (sc(i).n) c.fill(Rect{(int16_t)(x + kBoxW / 2 - 2), (int16_t)(kRowY + 8), 2, 1}, kOn);   // locks: a dot under it
 }
 
 CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   const scene::State& st = scene::state();
-  header(c, "MORPH", page, npages, scene::locked() ? "LOCKED" : nullptr);
+  // the header's right: LOCKED, a kit change's note (2 s), EDIT A / B while held, else the fader's source
+  char hr[20];
+  const char* right = src_tag(scene::fader_source());
+  const int kn = scene::kit_note(mp.now);
+  if (scene::locked()) {
+    right = "LOCKED";
+  } else if (kn >= 0) {
+    bool any = false;
+    for (int i = 0; i < scene::kScenes; ++i) any |= sc(i).n > 0;
+    sniprintf(hr, sizeof hr, any ? "KIT %d LOADED" : "KIT %d: NO SCENES", kn + 1);
+    right = hr;
+  } else if (scene::edit()) {
+    right = scene::edit_side() ? "EDIT B" : "EDIT A";
+  }
+  header(c, "MORPH", page, npages, right);
   for (int i = 0; i < scene::kScenes; ++i) scene_box(c, i);
   // the fader: A's scene left, B's right, the bar filled to where the morph plays, a notch where it is set
   char a[4] = "A-", b[4] = "B-";
@@ -152,9 +218,15 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   c.put_text(kSlotFree + 13, kRSmall, kW - 1, kBarY + 2, b, kAlignRight);
   c.rect(Rect{kBarX, kBarY, kBarW, kBarH}, kOn);
   int inner = kBarW - 4, played = scene::fader_played() * inner / scene::kFaderMax;
-  c.fill(Rect{(int16_t)(kBarX + 2), (int16_t)(kBarY + 2), (int16_t)played, (int16_t)(kBarH - 4)}, kDither);
+  if (st.a >= 0 && st.b >= 0)   // (A or B unset: hollow, the fader morphs nothing)
+    c.fill(Rect{(int16_t)(kBarX + 2), (int16_t)(kBarY + 2), (int16_t)played, (int16_t)(kBarH - 4)}, kDither);
   int at = kBarX + 2 + st.fader * (inner - 1) / scene::kFaderMax;
   c.vline(at, kBarY - 1, kBarY + kBarH, kOn);
+  const scene::QpView q = scene::qperf_view();   // the QPERF knob's own position, when the fader is elsewhere
+  if (q.pos >= 0 && scene::qp_mode() != scene::kQpOff) {
+    int kx = kBarX + 2 + q.pos * scene::kFaderMax / 255 * (inner - 1) / scene::kFaderMax;
+    if (kx - at > 1 || at - kx > 1) c.vline(kx, kBarY + kBarH + 1, kBarY + kBarH + 2, kOn);
+  }
   // FADER (A), LOCKS (the selected scene's)
   static UI_ROM const char kLab[2][6] = {"FADER", "LOCKS"};
   char val[2][8];
@@ -176,6 +248,15 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   } else if (mp.touched == 0) {
     sniprintf(f, sizeof f, "FADER:%d", st.fader);
     footer(c, f, st.fader >> 7);
+  } else if (scene::qp_mode() == scene::kQpMutedOnly && scene::qp_wants_knob() && !q.muted && q.ignored_ms &&
+             mp.now - q.ignored_ms < 2000) {
+    footer(c, "FUNC+QPER: MUTE FOR FADER");   // the knob turned with the macros playing: it is not the fader now
+  } else if (st.a < 0 || st.b < 0) {
+    footer(c, "T15/16 + T1-12: SET A / B");
+  } else if (!sc(st.a).n && !sc(st.b).n) {
+    footer(c, "PAGE+T15/16+TURN: LOCK");
+  } else if (scene::qp_wants_knob() && !q.moved && !scene::fader_source()) {
+    footer(c, "TURN QUICK PERF");   // (the knob reads 0 until it has sent since the Rytm booted)
   } else {
     footer(c, "HOLD T1-12: LOCKS");
   }
@@ -209,7 +290,7 @@ CORE_COLD void add_draw(Canvas& c, int page, int npages) {   // the ADD row on t
     char f[kTextLen + 1];
     sniprintf(f, sizeof f, "CLEAR S%d? YES AGAIN", mp.confirm + 1);
     footer(c, f);
-  } else {
+  } else if (mp.note || !undo_footer(c)) {
     footer(c, mp.note ? mp.note : at ? "YES: ADD  LEFT: LOCKS" : "NOTHING TO ADD HERE");
   }
 }
@@ -235,7 +316,7 @@ CORE_COLD void list_draw(Canvas& c, int page, int npages) {
       continue;
     }
     char e[2] = {(char)('B' + i), 0}, nm[16], v[8];
-    mod::label(s.l[k].t, nm, sizeof nm);   // "V1:HRM": the param as the machine names it
+    row_name(s.l[k].t, nm, sizeof nm);   // "V1:HRM": the param as the machine names it ("V1:P16?": gone)
     value_text(s.l[k].t, s.l[k].v, v, sizeof v);
     uint8_t fl = i == 0 ? kTextInvert : 0;   // B's row: the one NO removes
     if (i == 0) c.fill(Rect{0, (int16_t)(y - 1), kW, 7}, kOn);
@@ -250,9 +331,10 @@ CORE_COLD void list_draw(Canvas& c, int page, int npages) {
     footer(c, f);
   } else if (mp.note) {
     footer(c, mp.note);
+  } else if (undo_footer(c)) {
   } else if (mp.touched >= 1 && k < s.n) {
     char nm[16], v[8];
-    mod::label(s.l[k].t, nm, sizeof nm);   // "V1:HRM": the param as the machine names it
+    row_name(s.l[k].t, nm, sizeof nm);   // "V1:HRM": the param as the machine names it
     value_text(s.l[k].t, s.l[k].v, v, sizeof v);
     sniprintf(f, sizeof f, "%s:%s", nm, v);
     footer(c, f, s.l[k].v >> 7);
@@ -369,9 +451,15 @@ CORE_COLD bool morph_key(int code) {
     }
     if (mp.held >= 0) {
       mp.held_used = true;
+      if (undo_shown(now_ms())) {   // NO again within 2 s: the removed lock back (at the list's end)
+        lock_or_note(mp.undo_n, mp.undo_t, mp.undo_v);
+        mp.undo_ms = 0;
+        return true;
+      }
       const scene::Scene& s = sc(mp.held);
-      if (mp.top < s.n) scene::unlock(mp.held, s.l[mp.top].t);
-      else return true;   // (the ADD row: nothing to remove)
+      if (mp.top >= s.n) return true;   // (the ADD row: nothing to remove)
+      mp.undo_n = mp.held, mp.undo_t = s.l[mp.top].t, mp.undo_v = s.l[mp.top].v, mp.undo_ms = now_ms() | 1;
+      scene::unlock(mp.held, mp.undo_t);
       if (mp.top > 0 && mp.top >= sc(mp.held).n) --mp.top;
       return true;
     }
@@ -392,7 +480,7 @@ CORE_COLD bool morph_key(int code) {
 
 CORE_COLD bool morph_key_up(int code) {
   if (code == 0x80) mp.func = false;
-  else if (code == mp.held) mp.held = -1, mp.touched = -1;
+  else if (code == mp.held) mp.held = -1, mp.touched = -1, mp.undo_ms = 0;
   else if (code == 0x0E) mp.ab_a = false;
   else if (code == 0x0F) mp.ab_b = false;
   return true;
@@ -403,8 +491,10 @@ CORE_COLD uint16_t morph_trigs() { return 0xFFFF; }
 CORE_COLD bool morph_leds(uint8_t c[16]) {
   const scene::State& st = scene::state();
   memset(c, kLedOff, 16);
+  const bool blink = now_ms() / 500 & 1;   // the selected scene, when it is A or B too: its colour and white, slowly
   for (int k = 0; k < scene::kScenes; ++k)
-    c[k] = k == st.a ? kLedA : k == st.b ? kLedB : k == st.sel || k == mp.held ? kLedWhite : sc(k).n ? kLedWhiteDim : kLedOff;
+    c[k] = k == st.sel && blink && (k == st.a || k == st.b) ? kLedWhite
+           : k == st.a ? kLedA : k == st.b ? kLedB : k == st.sel || k == mp.held ? kLedWhite : sc(k).n ? kLedWhiteDim : kLedOff;
   c[14] = kLedA, c[15] = kLedB;
   return true;
 }

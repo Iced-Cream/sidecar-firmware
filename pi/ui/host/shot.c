@@ -324,9 +324,9 @@ static sidecar_mfx_view_t s_Mv;
 static sidecar_morph_view_t s_Mo;
 static void morph_fake (int n, int top)
 {
-	static const char *const kN[] = {"V1:P3", "RYTM:PERF12", "MFX:LEV", "I8:A4", "RYTM:SCN", "X8:B3", "O8:WID", "V8:P16"};
-	static const char *const kL[] = {"V1:TIM", "RYTM:PERF12", "MFX:LEV", "I8:ASHPE", "RYTM:SCN", "X8:B3", "O8:WID", "V8:SEED"};	// as morph_pi labels them
-	static const char *const kV[] = {"64", "127", "100.5", "127.9", "12", "0", "64", "OFF"};
+	static const char *const kN[] = {"V1:P3", "RT12:FTYP", "MFX:LEV", "I8:A4", "RFX:RDEC", "X8:B3", "O8:WID", "V8:P16"};
+	static const char *const kL[] = {"V1:TIM", "RT12:FTYP", "MFX:LEV", "I8:ASHPE", "RFX:RDEC", "X8:B3", "O8:WID", "V8:SEED"};	// as morph_pi labels them
+	static const char *const kV[] = {"64", "7", "100.5", "127.9", "12", "0", "64", "127"};
 	memset (&s_Mo, 0, sizeof s_Mo);
 	s_Mo.valid = 1, s_Mo.fader = 9000, s_Mo.a = 0, s_Mo.b = 2, s_Mo.sel = 2, s_Mo.top = (unsigned char) top;
 	for (int k = 0; k < SMO_SCENES; k++) s_Mo.nlocks[k] = (unsigned char) (k == 2 ? n : k == 0 ? 5 : k == 11 ? 64 : 0);
@@ -336,7 +336,7 @@ static void morph_fake (int n, int top)
 		snprintf (r->name, sizeof r->name, "%s", kN[i % 8]);
 		snprintf (r->label, sizeof r->label, "%s", kL[i % 8]);
 		snprintf (r->value, sizeof r->value, "%s", kV[i % 8]);
-		r->lo = 0, r->hi = i % 8 == 4 ? 12 : 127, r->v = (unsigned char) (i * 13 % 128);
+		r->lo = 0, r->hi = i % 8 == 1 ? 7 : 127, r->v = (unsigned char) (i * 13 % 128);
 	}
 	s_Mo.gen = (unsigned) (n * 1000 + top + 1);
 }
@@ -1469,6 +1469,16 @@ static void theme_run (int style, const char *pre)
 		EXPECT (!strcmp (sidecar_morph_add_name (), "V1:P9"));
 		sidecar_morph_add (0);
 		EXPECT (!sidecar_morph_add_name ()[0]);
+		// v2 Task 7: a lock whose target is gone (faint, "?"); DEL offers UNDO, which locks it back at its value
+		morph_fake (5, 0); s_Mo.row[2].stale = 1; s_Mo.gen++; sidecar_morph_set (&s_Mo); run (2);
+		shot ("morph-stale");
+		sidecar_morph_del (0); run (2);
+		EXPECT_CMD ("scene=unlock:3:V1:P3");
+		EXPECT (sidecar_morph_undo_shown ());
+		shot ("morph-undo");
+		sidecar_morph_undo ();
+		EXPECT_CMD ("scene=lock:3:V1:P3:64");
+		EXPECT (!sidecar_morph_undo_shown ());
 		sidecar_ui_show (pg);
 		EXPECT (!sidecar_morph_shown ());
 	}

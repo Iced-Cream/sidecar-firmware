@@ -174,7 +174,7 @@ static void no_removes_row() {
   down(0x00);
   tap(0x45);                   // NO: B's row (V1:P1) goes
   CHECK(scene::state().s[0].n == 2 && lock_v(0, T("V1:P1")) < 0 && lock_v(0, T("MFX:LEV")) == 64 * 128);
-  tap(0x45), tap(0x45), tap(0x45);   // NO on an empty list: nothing, the page stays
+  for (int k = 0; k < 3; ++k) at(g_us + 2100000), tap(0x45);   // (past the undo's 2 s) NO on an empty list: nothing
   CHECK(scene::state().s[0].n == 0 && !strcmp(ui::remote_page_title(), "MORPH") && shows("S1 ADD"));
   up(0x00);
   int closes = g_closes;
@@ -554,6 +554,201 @@ static void not_lockable_note() {
   printf("  not_lockable_note: a knob with no target under a held scene key says NOT LOCKABLE\n");
 }
 
+// ---- v2 Task 7: the screen and safety items
+static bool text_is(const char* s) {   // a text item exactly s (the header's right slot, a cell)
+  draw();
+  for (const ui::TextItem& t : g_c.txt)
+    if (!strcmp(t.s, s)) return true;
+  return false;
+}
+static bool lit(int x, int y) {
+  uint8_t fb[ui::kBytes];
+  draw();
+  ui::preview(g_c, fb);
+  return fb[(7 - y / 8) + 8 * x] >> (y % 8) & 1;
+}
+static int bar_x(int f) { return 18 + 2 + f * 87 / 16383; }   // (kBarX + 2, inner - 1 = 87)
+static void hello_caps2(int c2) {
+  const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 1, (uint8_t)c2, 0xF7};
+  engine_sysex(m, (int)sizeof m);
+}
+static void header_shows_source_tag() {
+  open_page();
+  scene::set_ab(0, 1);
+  CHECK(!text_is("PAGE") && !text_is("KNOB"));   // nobody moved it yet
+  turn(0, 1);
+  CHECK(text_is("PAGE"));
+  scene::set_fader(100, scene::kTouch);
+  CHECK(text_is("TCH"));
+  scene::set_fader(200, scene::kWeb);
+  CHECK(text_is("WEB"));
+  scene::set_fader(300, scene::kLearn);
+  CHECK(text_is("MIDI"));
+  scene::set_fader(400, scene::kQperf);
+  CHECK(text_is("KNOB"));
+  png("morph_source_tag.png");
+  printf("  header_shows_source_tag: the header names the fader's source (PAGE TCH WEB MIDI KNOB)\n");
+}
+static void qperf_tick_when_knob_differs() {
+  open_page();
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_ab(0, 1);
+  scene::qperf(200, 0, 2);   // a baseline: the knob at 200, the fader still at 0
+  const int kx = bar_x(200 * 16383 / 255);
+  CHECK(lit(kx, 33) && lit(kx, 34) && !lit(kx + 3, 33));
+  png("morph_qperf_tick.png");
+  scene::qperf(202, 0, 2);   // the knob takes it: no tick of its own
+  tick(10);
+  const int kx2 = bar_x(202 * 16383 / 255);
+  CHECK(!lit(kx2, 33) && !lit(kx2, 34));
+  scene::set_fader(0, scene::kPage), tick(10);
+  CHECK(lit(kx2, 33));
+  scene::set_qp_mode(scene::kQpOff);   // OFF: the knob is not the fader's
+  CHECK(!lit(kx2, 33));
+  printf("  qperf_tick_when_knob_differs: a tick under the bar where the QPERF knob is, when the fader is elsewhere\n");
+}
+static void hint_turn_quick_perf() {
+  open_page();
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_ab(0, 1);
+  CHECK(scene::lock(0, T("V1:P1"), 128));
+  CHECK(shows("TURN QUICK PERF"));   // the knob has not sent since the Rytm booted
+  scene::qperf(10, 0, 2);
+  CHECK(!shows("TURN QUICK PERF") && shows("HOLD T1-12: LOCKS"));
+  // MUTED ONLY from a mod that reports the mute: a turn with the macros playing says how
+  hello_caps2(ui::kCaps2QpMute);
+  scene::set_qp_mode(scene::kQpMutedOnly);
+  scene::qperf(40, 0, 2);
+  CHECK(shows("FUNC+QPER: MUTE FOR FADER"));
+  png("morph_hint_mute.png");
+  at(g_us + 2100000);
+  CHECK(!shows("FUNC+QPER"));
+  scene::qperf(41, 0, 6), scene::qperf(60, 0, 6);   // muted: a baseline, then the knob
+  CHECK(!shows("FUNC+QPER") && scene::state().fader == 60 * 16383 / 255);
+  hello_caps2(0);
+  printf("  hint_turn_quick_perf: TURN QUICK PERF until the knob sent; FUNC+QPER: MUTE FOR FADER in MUTED ONLY\n");
+}
+static void edit_tag_on_morph_page() {
+  open_page();
+  scene::set_ab(0, 1);
+  scene::set_edit_side(1);
+  CHECK(text_is("EDIT B"));
+  scene::set_edit_side(0);
+  CHECK(text_is("EDIT A"));
+  scene::set_edit_side(-1);
+  CHECK(!text_is("EDIT A"));
+  printf("  edit_tag_on_morph_page: EDIT A / B in the MORPH header while held\n");
+}
+static void ab_boxed_in_row() {
+  open_page();
+  scene::set_ab(2, 5);   // boxes at x 4 + 10 n: a frame one column out
+  CHECK(lit(23, 13) && lit(33, 13) && lit(53, 13) && lit(63, 13) && !lit(43, 13));
+  scene::set_ab(7, 7);   // A = B: one box framed
+  CHECK(lit(73, 13) && lit(83, 13) && !lit(23, 13));
+  png("morph_ab_boxes.png");
+  // the selected scene that is A too: its LED blinks between A's colour and white
+  scene::set_ab(2, 5);
+  tap(0x02);
+  bool seen_a = false, seen_w = false;
+  for (int k = 0; k < 40; ++k) {
+    tick(1);
+    seen_a |= g_led[2] == ui::kLedA, seen_w |= g_led[2] == 111;
+  }
+  CHECK(seen_a && seen_w && g_led[5] == ui::kLedB);
+  printf("  ab_boxed_in_row: A and B framed in the scene row (A = B one); the selected A blinks\n");
+}
+static void hollow_bar_without_ab() {
+  open_page();
+  scene::set_fader(16383, scene::kConsole);
+  for (int k = 0; k < 10; ++k) at(g_us + 5000), mod::tick(now_us());   // (the played fader: the layer's tick)
+  CHECK(scene::fader_played() == 16383);
+  scene::set_ab(0, -1);
+  int on = 0;
+  for (int x = 21; x < 100; ++x)
+    for (int y = 25; y <= 29; ++y) on += lit(x, y);
+  CHECK(on == 0 && shows("T15/16 + T1-12: SET A / B"));
+  png("morph_hollow.png");
+  scene::set_ab(0, 1);
+  on = 0;
+  for (int x = 21; x < 100; x += 3) on += lit(x, 26) + lit(x + 1, 26) + lit(x, 27) + lit(x + 1, 27);
+  CHECK(on > 0 && shows("PAGE+T15/16+TURN: LOCK"));   // both set, both empty: how to lock
+  printf("  hollow_bar_without_ab: A or B unset, the bar hollow and SET A / B; both empty: PAGE + T15 / 16\n");
+}
+static void kit_change_header_note() {
+  open_page();
+  const uint8_t kit[8] = {0xF0, 0x7D, 0x52, 0x54, 0x3B, 1, 11, 0xF7};
+  engine_sysex(kit, 8);
+  tick();
+  CHECK(text_is("KIT 12: NO SCENES"));
+  CHECK(scene::lock(0, T("V1:P1"), 128));
+  CHECK(text_is("KIT 12 LOADED"));
+  png("morph_kit_note.png");
+  at(g_us + 2100000);
+  CHECK(!text_is("KIT 12 LOADED") && !text_is("KIT 12: NO SCENES"));
+  printf("  kit_change_header_note: KIT n LOADED / KIT n: NO SCENES in the header for 2 s\n");
+}
+static void no_removes_then_undo() {
+  open_page();
+  CHECK(scene::lock(0, T("RT12:FTYP"), 3 * 128) && scene::lock(0, T("MFX:LEV"), 64 * 128));
+  down(0x00), tick(10);
+  tap(0x45);   // NO: RT12:FTYP goes, the undo offered
+  CHECK(scene::state().s[0].n == 1 && lock_v(0, T("RT12:FTYP")) < 0 && shows("REMOVED RT12:FTYP NO:UNDO"));
+  png("morph_undo.png");
+  tap(0x45);   // NO again: back
+  CHECK(scene::state().s[0].n == 2 && lock_v(0, T("RT12:FTYP")) == 3 * 128 && !shows("REMOVED"));
+  up(0x00);
+  printf("  no_removes_then_undo: NO removes with REMOVED <name> NO:UNDO; NO again restores\n");
+}
+static void undo_expires_2s() {
+  open_page();
+  CHECK(scene::lock(0, T("MFX:LEV"), 64 * 128) && scene::lock(0, T("V2:P2"), 256));
+  down(0x00), tick(10);
+  tap(0x45);
+  CHECK(scene::state().s[0].n == 1);
+  at(g_us + 2100000);
+  CHECK(!shows("REMOVED"));
+  tap(0x45);   // past 2 s: NO removes the next row, it does not restore
+  CHECK(scene::state().s[0].n == 0 && lock_v(0, T("MFX:LEV")) < 0);
+  up(0x00);
+  // a released key drops the undo
+  CHECK(scene::lock(0, T("MFX:LEV"), 64 * 128));
+  down(0x00), tick(10), tap(0x45), up(0x00), down(0x00), tick(10), tap(0x45), up(0x00);
+  CHECK(scene::state().s[0].n == 0);
+  printf("  undo_expires_2s: after 2 s (or the key let go) NO removes, it does not restore\n");
+}
+static void stale_target_marked() {
+  voice_page();   // V1 PLAITS (all 16 Ps used); V2 a machine that leaves a P unused
+  int p = -1;
+  char b[16];
+  static const int kMach[] = {kJuno, kDaisy, kDspSample, kFm};
+  for (int mi = 0; mi < 4 && p < 0; ++mi) {
+    uint8_t m[39] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(kMach[mi] | 1)};
+    for (int k = 0; k < 16; ++k) m[6 + 2 * k] = 40, m[7 + 2 * k] = 0;
+    m[38] = 0xF7;
+    engine_sysex(m, 39);
+    for (int k = 15; k >= 0 && p < 0; --k)
+      if (!strcmp(mod::param_label(mod::tid(mod::kV, 1, k), b, sizeof b), "-")) p = k;
+  }
+  CHECK(p >= 0);
+  const Tid t = mod::tid(mod::kV, 1, p);
+  CHECK(scene::lock(0, T("V1:P1"), 128) && scene::lock(0, t, 128));
+  CHECK(ui::morph_stale(t) && !ui::morph_stale(T("V1:P1")) && !ui::morph_stale(T("MFX:LEV")));
+  ui::remote_show_page("MORPH");
+  tick();
+  down(0x00), tick(10);
+  char want[16];
+  snprintf(want, sizeof want, "V2:P%d?", p + 1);
+  CHECK(shows(want) && shows("V1:ENG") && !shows("V1:ENG?"));
+  png("morph_stale.png");
+  up(0x00);
+  static char js[60000];
+  CHECK(scene::json(js, sizeof js) > 0);
+  char g[32];
+  snprintf(g, sizeof g, "\"gone\":[\"V2:P%d\"]", p + 1);
+  CHECK(strstr(js, g));
+  printf("  stale_target_marked: a lock on a P the machine leaves unused shows V2:P%d? (and the JSON's gone)\n", p + 1);
+}
+
 int main() {
   hooks.to_rytm = out;
   at(g_us);
@@ -583,6 +778,16 @@ int main() {
   seq_mode_edit_lock();
   release_while_seq_shown();
   not_lockable_note();
+  header_shows_source_tag();
+  qperf_tick_when_knob_differs();
+  hint_turn_quick_perf();
+  edit_tag_on_morph_page();
+  ab_boxed_in_row();
+  hollow_bar_without_ab();
+  kit_change_header_note();
+  no_removes_then_undo();
+  undo_expires_2s();
+  stale_target_marked();
   scene::reset();
   ui::remote_reset();
   printf("test_morph_page: ok\n");

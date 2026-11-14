@@ -11,7 +11,7 @@ import { coalescer } from "../lib/coalesce";
 import { confirmAsk } from "../lib/confirm";
 import { useSidecar } from "../lib/useSidecar";
 import {
-  ADD_TRACKS, FADER_MAX, LOCKS, SCENES, SOURCES, abLine, addPages, addParams, clearLine, copyLine, faderLine, lockLabel, lockLine, morphed,
+  ADD_TRACKS, FADER_MAX, LOCKS, SCENES, SOURCES, abLine, abSet, addPages, addParams, clearLine, copyLine, faderLine, lockLabel, lockLine, morphed,
   sceneView, selLine, unlockLine, valueText,
 } from "../lib/scene";
 
@@ -48,8 +48,8 @@ const pct = (f: number) => `${Math.round((f / FADER_MAX) * 100)} %`;
 // the pads
 const sel = computed(() => sc.value?.sel ?? 0);
 const pads = computed(() => Array.from({ length: SCENES }, (_, i) => ({ n: i, locks: sc.value?.locks[i].length ?? 0, a: sc.value?.a === i, b: sc.value?.b === i })));
-const setA = () => sc.value && send(abLine(sel.value, sc.value.b === sel.value ? -1 : sc.value.b));
-const setB = () => sc.value && send(abLine(sc.value.a === sel.value ? -1 : sc.value.a, sel.value));
+const setA = () => sc.value && send(abSet(sc.value, "a", sel.value)); // (A = B kept, v2)
+const setB = () => sc.value && send(abSet(sc.value, "b", sel.value));
 const unset = (side: "a" | "b") => sc.value && send(abLine(side === "a" ? -1 : sc.value.a, side === "b" ? -1 : sc.value.b));
 
 // the selected scene's locks: each one's value as a fader (0..127.99, stored x 128)
@@ -96,7 +96,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
 
 <template>
   <h1 class="visually-hidden" tabindex="-1">Morph</h1>
-  <Card v-if="!sc" label="Scenes">
+  <Card v-if="!sc" label="Morph scenes">
     <p>Morph scenes come with Sidecar 0.5.0. This Sidecar does not report them.</p>
   </Card>
   <template v-else>
@@ -105,7 +105,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
         <span class="end"><span class="label">A</span> <b class="num">{{ sc.a >= 0 ? sc.a + 1 : "–" }}</b></span>
         <div class="fader">
           <Fader
-            label="Morph fader, A to B"
+            label="Fader"
             hide-label
             :model-value="fader"
             :min="0"
@@ -126,7 +126,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
       <p v-if="sc.locked" class="small warm">This kit's scene file has lines this build cannot read: changes are not saved this session.</p>
     </Card>
 
-    <Card label="Scenes">
+    <Card label="Morph scenes">
       <div class="pads" role="radiogroup" aria-label="Scene">
         <button
           v-for="p in pads"
@@ -156,7 +156,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
     <Card :label="`Scene ${sel + 1} · ${locks.length} of ${LOCKS} locks`">
       <p v-if="!locks.length">No locks yet. Add one below, or on the Rytm hold PAGE + T15 (A) or PAGE + T16 (B) and turn a knob.</p>
       <ul v-else class="locks">
-        <li v-for="l in locks" :key="l.name">
+        <li v-for="l in locks" :key="l.name" :class="{ gone: sc.gone.includes(l.name) }">
           <Fader
             :label="lockLabel(sc, l.name)"
             :model-value="+(l.v / 128).toFixed(2)"
@@ -167,7 +167,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
             @update:model-value="(v: number) => setLock(l.name, v)"
             @commit="(v: number) => setLock(l.name, v)"
           />
-          <span class="small plays">{{ playing(l.name, l.v) !== null ? `plays ${playing(l.name, l.v)}` : "" }}</span>
+          <span class="small plays">{{ sc.gone.includes(l.name) ? "no longer exists" : playing(l.name, l.v) !== null ? `plays ${playing(l.name, l.v)}` : "" }}</span>
           <button type="button" :aria-label="`Remove ${lockLabel(sc, l.name)}`" :disabled="!paired" @click="send(unlockLine(sel, l.name))">Remove</button>
         </li>
       </ul>
@@ -210,6 +210,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
 .check input { min-width: 1.25rem; min-height: 1.25rem; }
 .locks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .locks li { display: grid; grid-template-columns: 1fr 7rem auto; align-items: center; gap: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+.locks li.gone { opacity: 0.55; } /* v2: the target no longer resolves */
 .val { flex: 1 1 12rem; }
 .danger { border-color: var(--warm); color: var(--warm); }
 @media (max-width: 40rem) {

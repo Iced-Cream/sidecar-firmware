@@ -175,6 +175,7 @@ bool fill_batch(int t, int kind, int* first, int* last);
 void morph_page_reset();   // the page's own state (holds, the question) cleared (tests)
 int morph_page_held();     // the scene key held on it (0..11), -1 none
 void morph_value_text(uint16_t tid, uint16_t v, char* b, int cap);   // a lock's value (x 128) as the page shows it
+bool morph_stale(uint16_t tid);   // a lock's target no longer resolves (an unused P, an RT word the track lacks; v2 Task 7)
 #if CORE_POLY
 extern const ExtraPage kSeqPage;   // the Sidecar sequencer's page (page_seq.cpp, core/seq/seq.h)
 // fix1028: NOTE EDIT's roll (page_seq.cpp) gives each pitch its lane and, when the page has more pitches than lanes

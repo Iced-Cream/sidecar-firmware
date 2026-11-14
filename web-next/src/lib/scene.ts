@@ -10,6 +10,7 @@ export interface SceneStatus {
   src?: number; rscn?: number;
   pl?: Record<string, string>; // 2026-11: a locked param's name as the screens show it ("V1:P2" -> "V1:HRM")
   vl?: string[][]; // every voice's P1..P16 as its machine labels them ("" unused)
+  gone?: string[]; // v2 Task 7: locked targets that no longer resolve (an unused P, an RT word the track lacks)
 }
 export interface Lock { name: string; v: number } // v: the value x 128 (0..16383)
 export interface SceneView {
@@ -18,6 +19,7 @@ export interface SceneView {
   locks: Lock[][]; // [scene 0..11]
   src: number; rscn: number;
   labels: Record<string, string>; vl: string[][];
+  gone: string[];
 }
 
 /** The state from /status (1-based A / B / sel there, 0 none; here 0-based, -1 none); null: this build has no scenes. */
@@ -28,7 +30,7 @@ export function sceneView(st: Record<string, unknown> | null | undefined): Scene
   for (const sc of s.s ?? []) if (sc.n >= 1 && sc.n <= SCENES) locks[sc.n - 1] = sc.l.map(([name, v]) => ({ name, v }));
   return {
     a: s.a - 1, b: s.b - 1, fader: s.fader, played: s.played ?? s.fader, sel: Math.max(0, s.sel - 1), locked: !!s.locked, edit: !!s.edit, side: (s.edit ?? 0) - 1,
-    locks, src: s.src ?? 0, rscn: s.rscn ?? -1, labels: s.pl ?? {}, vl: s.vl ?? [],
+    locks, src: s.src ?? 0, rscn: s.rscn ?? -1, labels: s.pl ?? {}, vl: s.vl ?? [], gone: s.gone ?? [],
   };
 }
 
@@ -37,6 +39,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, M
 export const valueText = (v128: number) => String(+(clamp(v128, 0, FADER_MAX) / 128).toFixed(2));
 
 export const abLine = (a: number, b: number) => `scene=ab:${clamp(a, -1, 11) + 1}:${clamp(b, -1, 11) + 1}`;
+/** Scene n on one end, the other end kept (v2 Task 7: A = B allowed, as on the Rytm and the touchscreen). */
+export const abSet = (v: { a: number; b: number }, side: "a" | "b", n: number) => abLine(side === "a" ? n : v.a, side === "b" ? n : v.b);
 export const faderLine = (f: number) => `scene=fader:${clamp(f, 0, FADER_MAX)}`;
 export const selLine = (n: number) => `scene=sel:${clamp(n, 0, 11) + 1}`;
 export const clearLine = (n: number) => `scene=clear:${clamp(n, 0, 11) + 1}`;

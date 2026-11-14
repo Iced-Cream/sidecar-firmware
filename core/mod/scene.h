@@ -69,6 +69,16 @@ int qp_mode();
 const char* qp_mode_name(int m);            // "muted", "off", "always"
 void qperf(int pos, uint16_t mask, uint8_t flags);   // pos 0..255, mask the PERF macros on the knob (bit m - 1)
 void qperf_rebase();                        // the link came up (host_link's link_reset): the next position a baseline
+// the screens' QPERF readout (v2 Task 7): the knob's last position 0..255 (-1 none since the reset), whether it has sent
+// since the Rytm booted, the macros' mute (trusted: kCaps2QpMute), when a move was last ignored for the macros playing
+// (MUTED ONLY; 0 never); qp_wants_knob: ALWAYS, or MUTED ONLY from a mod that reports the mute
+struct QpView {
+  int pos;
+  bool moved, muted;
+  uint32_t ignored_ms;
+};
+QpView qperf_view();
+bool qp_wants_knob();
 // the Rytm's own scene as the mod reports it (2D 01 0F, on any change: its pads, CC 92, the host command, a kit load):
 void rytm_scene_seen(int n);                // 1..12, 0 none
 int rytm_scene();                           // the last one seen, -1 none since the reset (an older mod: never)
@@ -93,6 +103,7 @@ void rekey(const char* name);               // the scenes in memory are now name
 #endif
 void load();                                // the kit's file, else the project's, else none (the store only)
 bool save();                                // idle_save: true if it wrote (or settled a locked file)
+int kit_note(uint32_t now_ms);              // the Rytm's kit 0..127 when it changed in the last 2 s (the MORPH header), -1
 void kit_changed(int kit);                  // the Rytm's active kit (0..127): the old kit's edits saved, the new loaded;
                                             // a held EDIT ends
 void project_changed();                     // the old project's (kit's) edits saved (queued), the new loaded
@@ -116,7 +127,7 @@ bool lock_side(int side, mod::Tid t, uint16_t v);   // lock() into that side's s
 bool command(const char* p, char* out, int cap);
 // "\"scene\":{\"a\":A,\"b\":B,\"fader\":F,\"played\":P,\"sel\":S,\"locked\":0|1,\"edit\":0|1|2,\"s\":[{\"n\":N,\"l\":[[\"V1:P3\",6400],...]},...],\"src\":SRC,\"rscn\":R}"
 // (edit: 0 none, 1 A held, 2 B held; SRC the fader's last source, 0 none; R the Rytm's own scene 1..12, 0 none, -1 not
-// reported)
+// reported; on the Pi also "pl", "vl" and "gone": the locked targets that no longer resolve, v2 Task 7)
 // (A, B, S, N 1-based, 0 none; only the scenes with locks): its length, cap when it did not fit (a 768-lock state fits 16 KB)
 int json(char* out, int cap);
 

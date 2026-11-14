@@ -1,6 +1,6 @@
 // web-next/src/lib/scene.test.ts
 import { describe, expect, it } from "vitest";
-import { ADD_TRACKS, SUGGEST, abLine, addPages, addParams, clearLine, copyLine, faderLine, lockLabel, lockLine, morphed, sceneView, selLine, suggest, targetName, unlockLine, valueText } from "./scene";
+import { ADD_TRACKS, SUGGEST, abLine, abSet, addPages, addParams, clearLine, copyLine, faderLine, lockLabel, lockLine, morphed, sceneView, selLine, suggest, targetName, unlockLine, valueText } from "./scene";
 
 describe("scene", () => {
   it("reads /status's scene (1-based there)", () => {
@@ -54,5 +54,15 @@ describe("scene", () => {
     expect(addParams("V1", "P1-8", [["ENG", "HRM", "", ...Array(13).fill("")]])).toEqual([
       { value: "V1:P1", label: "P1 ENG" }, { value: "V1:P2", label: "P2 HRM" }]);
     expect(addParams("V2", "P9-16").map((o) => o.value)[0]).toBe("V2:P9");
+  });
+  it("ab_same_scene_kept: A = B is allowed, the other end is never cleared (v2)", () => {
+    expect(abSet({ a: 2, b: 5 }, "a", 5)).toBe("scene=ab:6:6");
+    expect(abSet({ a: 2, b: 5 }, "b", 2)).toBe("scene=ab:3:3");
+    expect(abSet({ a: -1, b: 5 }, "a", 0)).toBe("scene=ab:1:6");
+  });
+  it("reads the gone targets (v2)", () => {
+    const v = sceneView({ scene: { a: 1, b: 2, fader: 0, played: 0, sel: 1, locked: 0, edit: 0, s: [], gone: ["V2:P16"] } });
+    expect(v?.gone).toEqual(["V2:P16"]);
+    expect(sceneView({ scene: { a: 1, b: 2, fader: 0, played: 0, sel: 1, locked: 0, edit: 0, s: [] } })?.gone).toEqual([]);
   });
 });

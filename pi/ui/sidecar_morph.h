@@ -21,6 +21,7 @@ typedef struct
 	char		value[8];		// as the Rytm's MORPH page shows it: "64", "50.5", "OFF"
 	unsigned char	v;			// the slider's 0..127 over lo..hi
 	short		lo, hi;			// the target's range in whole units (RYTM:SCN 0..12, a voice's P 0..127)
+	unsigned char	stale;			// the target no longer resolves (an unused P, ...): shown "V2:P16?", faint
 } sidecar_morph_row_t;
 
 typedef struct
@@ -51,6 +52,10 @@ void sidecar_morph_add_step (int field, int d);
 void sidecar_morph_add_value (int v);
 void sidecar_morph_add_go (void);
 const char *sidecar_morph_add_name (void);
+// a row's DEL as its key does, and the UNDO it offers for 2 s (v2 Task 7: scene=lock:N:NAME:V back; also host/shot.c)
+void sidecar_morph_del (int row);
+void sidecar_morph_undo (void);
+int sidecar_morph_undo_shown (void);
 
 #ifdef __cplusplus
 }

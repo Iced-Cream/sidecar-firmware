@@ -15,6 +15,10 @@ static lv_obj_t *s_Page, *s_TitleBar, *s_Title, *s_A, *s_B, *s_Pad[SMO_SCENES], 
 	*s_Sl[SMO_ROWS], *s_Val[SMO_ROWS], *s_Del[SMO_ROWS], *s_FadA, *s_FadB, *s_Fader, *s_Info;
 static lv_obj_t *s_AddK, *s_Add, *s_AddT, *s_AddL[3], *s_AddV, *s_AddS, *s_AddGo;
 static int s_bAdd, s_nAddTr, s_nAddPg, s_nAddPr, s_nAddV = 64;
+static lv_obj_t *s_Undo;	// DEL's undo (v2 Task 7): the removed lock, for 2 s
+static char s_UndoName[16], s_UndoLabel[16], s_UndoVal[8];
+static int s_nUndoScene = -1;
+static uint32_t s_nUndoMs;
 static char s_AddName[16];
 static sidecar_morph_view_t s_V;
 static unsigned s_nGen = ~0u;
@@ -145,15 +149,42 @@ static void scroll_cb (lv_obj_t *o, int i, void *ud)
 	s_nTop += d * s_nRows;
 	s_nTop = s_nTop < 0 ? 0 : s_nTop > max ? max : s_nTop;
 }
+static void refresh (void);
+static void undo_show (int on)
+{
+	if (!s_Undo) return;
+	if (on) lv_obj_remove_flag (s_Undo, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Undo, LV_OBJ_FLAG_HIDDEN);
+}
 static void del_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
 	int r = (int) (intptr_t) ud;
 	if (r >= s_V.nrows || s_V.sel < 0) return;
+	const sidecar_morph_row_t *x = &s_V.row[r];
+	lv_snprintf (s_UndoName, sizeof s_UndoName, "%s", x->name);
+	lv_snprintf (s_UndoLabel, sizeof s_UndoLabel, "%s", x->label[0] ? x->label : x->name);
+	lv_snprintf (s_UndoVal, sizeof s_UndoVal, "%s", x->value);
+	s_nUndoScene = s_V.sel, s_nUndoMs = lv_tick_get () | 1;
 	char c[48];
-	lv_snprintf (c, sizeof c, "scene=unlock:%d:%s", s_V.sel + 1, s_V.row[r].name);
+	lv_snprintf (c, sizeof c, "scene=unlock:%d:%s", s_V.sel + 1, x->name);
 	cmd (c);
+	undo_show (1);
+	refresh ();
 }
+static void undo_cb (lv_obj_t *o, int i, void *ud)
+{
+	(void) o; (void) i; (void) ud;
+	if (!s_nUndoMs || s_nUndoScene < 0) return;
+	char c[48];
+	lv_snprintf (c, sizeof c, "scene=lock:%d:%s:%s", s_nUndoScene + 1, s_UndoName, s_UndoVal);
+	s_nUndoMs = 0;
+	undo_show (0);
+	cmd (c);
+	refresh ();
+}
+void sidecar_morph_del (int row) { if (row >= 0 && row < s_nRows) del_cb (0, 0, (void *) (intptr_t) row); }
+void sidecar_morph_undo (void) { undo_cb (0, 0, 0); }
+int sidecar_morph_undo_shown (void) { return s_nUndoMs != 0; }
 static void row_cb (lv_obj_t *o, int v, void *ud)
 {
 	(void) o;
@@ -184,6 +215,7 @@ void sidecar_morph_create (void *parent, int y0)
 	const int o = oled ();
 	s_nGen = ~0u, s_nTop = 0, s_nAssign = 0, s_nSel = -2, s_bAdd = 0, s_Add = 0;
 	s_nAddTr = s_nAddPg = s_nAddPr = 0, s_nAddV = 64;
+	s_nUndoMs = 0, s_nUndoScene = -1, s_Undo = 0;
 	memset (&s_V, 0, sizeof s_V);
 	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
@@ -277,6 +309,9 @@ void sidecar_morph_create (void *parent, int y0)
 	s_Fader = th_slider (pg, x0 + lab + gap, fy, w - 2 * (lab + gap), fh, 0, 16383, fader_cb, 0);
 	s_Info = th_label (pg, x0, ph - foot - (o ? 0 : 8) + (o ? 4 : 10), f, o ? TH->faint : dim, "");
 	lv_obj_set_width (s_Info, w);
+	const int uw = o ? 36 : 88, uh = o ? 15 : 34;	// UNDO at the hint line's right end, while offered
+	s_Undo = th_key (pg, x0 + w - uw, ph - foot - (o ? 0 : 8) + (o ? 2 : 4), uw, uh, "UNDO", kind, undo_cb, 0);
+	lv_obj_add_flag (s_Undo, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -333,7 +368,13 @@ static void refresh (void)
 	for (int i = 0; i < s_nRows && !s_bAdd; i++)
 	{
 		int on = i < v->nrows;
-		th_label_set (s_Name[i], on ? (v->row[i].label[0] ? v->row[i].label : v->row[i].name) : "");
+		if (on && v->row[i].stale)	// the target no longer resolves: its name with "?", faint (as the Rytm's "?")
+		{
+			lv_snprintf (t, sizeof t, "%s?", v->row[i].name);
+			th_label_set (s_Name[i], t);
+		}
+		else th_label_set (s_Name[i], on ? (v->row[i].label[0] ? v->row[i].label : v->row[i].name) : "");
+		th_label_color (s_Name[i], on && v->row[i].stale ? TH->faint : oled () ? TH->ink : TH->win_ink);
 		th_label_set (s_Val[i], on ? v->row[i].value : "");
 		th_slider_set (s_Sl[i], on ? v->row[i].v : 0);
 		if (on) lv_obj_remove_flag (s_Sl[i], LV_OBJ_FLAG_HIDDEN), lv_obj_remove_flag (s_Del[i], LV_OBJ_FLAG_HIDDEN);
@@ -345,7 +386,8 @@ static void refresh (void)
 	th_label_set (s_FadB, t);
 	if (!th_slider_dragging (s_Fader)) th_slider_set (s_Fader, v->fader);
 	if (s_bAdd) add_refresh ();
-	th_label_set (s_Info, !v->valid ? "WAITING FOR THE ENGINE"
+	if (s_nUndoMs) lv_snprintf (t, sizeof t, "REMOVED %s", s_UndoLabel);
+	th_label_set (s_Info, s_nUndoMs ? t : !v->valid ? "WAITING FOR THE ENGINE"
 		: v->locked ? "SCENES LOCKED: THE FILE IS FROM A NEWER BUILD, NOT SAVED"
 		: !n ? "NO LOCKS: ADD ONE, OR HOLD PAGE + T15 / T16 AND TURN A KNOB"
 		: "TAP A OR B, THEN A PAD: THAT END OF THE FADER");
@@ -353,6 +395,12 @@ static void refresh (void)
 
 void sidecar_morph_set (const sidecar_morph_view_t *v)
 {
+	if (s_nUndoMs && lv_tick_elaps (s_nUndoMs) >= 2000)	// the undo's 2 s are over
+	{
+		s_nUndoMs = 0;
+		undo_show (0);
+		if (s_Page) refresh ();
+	}
 	if (!s_Page || v->gen == s_nGen) return;
 	s_V = *v;
 	s_nGen = v->gen;
