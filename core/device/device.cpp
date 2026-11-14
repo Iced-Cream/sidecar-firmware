@@ -70,11 +70,18 @@ uint32_t dropped() { return cur().dropped; }
 void rytm_on_usb(bool on) { s_rytm_usb = on; }
 
 // g_base: slot 1 while a box has it and no Rytm is on USB, else slot 0 (device.h). The control core's; the web follows it.
+// Each output stage's TRK trim from its own box (out::Control::trk10): the base box's on the base stage, slot 1's on the
+// side stage (side_slot). A live stereo=trim:trk lasts until a box or the base changes.
+static CORE_COLD void retrim() {
+  out::set_trim(2, g_base->box ? g_base->box->trk10 : 0);
+  out::control_side.trk10 = g_links[1].box ? g_links[1].box->trk10 : 0;
+}
 static CORE_COLD void rebase() {
   Link* b = g_links[1].box && !s_rytm_usb ? &g_links[1] : &g_links[0];
   if (b == g_base) return;
   g_base = b, g_web_link = (int8_t)b->index;
   if (!g_depth) g_cur = b;
+  retrim();
 }
 
 CORE_COLD const Profile* by_id(uint16_t id) {
@@ -157,7 +164,7 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm 
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
-  out::set_trim(2, p ? p->trk10 : g_links[1].box ? g_links[1].box->trk10 : 0);   // a live stereo=trim:trk lasts until the box changes
+  retrim();
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, p ? p->name : l.index ? "none" : kRytm.name, l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
 }
