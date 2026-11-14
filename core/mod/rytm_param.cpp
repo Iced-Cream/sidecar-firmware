@@ -65,6 +65,7 @@ RpStats g_st;
 uint16_t g_fad = 0;
 int32_t g_fad_sent = -1;
 uint32_t g_fad_ms = 0, g_fad_chg_ms = 0, g_fad_gap = 0, g_fad_us = 0, g_mph_us = 0;
+bool g_morph_ok = false;   // the hello's caps2 has ui::kCaps2Morph (latched at rp_hello; review L5)
 // rp_saturated: a backlog of changed offsets at the grid's slots since g_bl_ms (g_bl), the last slot that found it kSatMs
 // on end (g_sat_ms), the tick's time
 bool g_bl = false, g_sat = false;
@@ -123,7 +124,7 @@ CORE_COLD void compose(E& e) {
 CORE_COLD bool active(const E& e) { return rp_word_active(e.t, e.w); }
 CORE_COLD int want_off(const E& e) { return active(e) ? off64(e.off) : 0; }
 CORE_COLD int want_mix(const E& e) { return active(e) ? e.mix : 0; }
-CORE_COLD int want_mfl(const E& e) { return e.morph && e.rm && active(e) ? e.mfl : 0; }
+CORE_COLD int want_mfl(const E& e) { return g_morph_ok && e.morph && e.rm && active(e) ? e.mfl : 0; }
 // a word the Rytm-side morph holds (a part wanted, or one on the Rytm not yet removed): no 05 for it (the part wins)
 CORE_COLD bool by_part(const E& e) { return want_mfl(e) || e.mfl_sent > 0; }
 CORE_COLD void maybe_free(E& e) {
@@ -351,7 +352,7 @@ CORE_COLD void send_morph(uint32_t us, uint32_t ms) {
       ++g_st.faders;
     }
   }
-  if (us - g_mph_us < kGridUs) return;
+  if (us - g_mph_us < kGridUs || g_fad_sent < 0) return;   // (review L6: the fader first, after a hello / kit too)
   const bool rel_only = g_credit < 0;
   E* r[kRpMaxMorphs];
   int n = choose(r, kRpMaxMorphs, [ms, rel_only](const E& e) {
@@ -359,7 +360,7 @@ CORE_COLD void send_morph(uint32_t us, uint32_t ms) {
     return rel_only && p != 1 ? 0 : p;
   }, &E::m_ms, 3, nullptr);
   if (!n) return;
-  uint8_t b[2 + 7 * kRpMaxMorphs] = {kOpMorphSet, (uint8_t)g_kit, (uint8_t)n};
+  uint8_t b[3 + 7 * kRpMaxMorphs] = {kOpMorphSet, (uint8_t)g_kit, (uint8_t)n};
   for (int i = 0; i < n; ++i) {
     const E& e = *r[i];
     int fl = want_mfl(e);
@@ -373,7 +374,9 @@ CORE_COLD void send_morph(uint32_t us, uint32_t ms) {
   for (int i = 0; i < n; ++i) {
     E& e = *r[i];
     int fl = want_mfl(e);
-    if (!fl && e.mfl_sent > 0) e.mix_sent = 0, e.ovr_sent = -1;   // removed: the Rytm's override goes out with it
+    // removed: the Rytm's override goes out with it; a p-lock that came meanwhile (held back: the part carried the word)
+    // comes back on the grid's ramp as a change, never as a jump at this moment (review LM4)
+    if (!fl && e.mfl_sent > 0) e.mix_sent = 0, e.ovr_sent = -1, e.due = false;
     e.mfl_sent = (int8_t)fl, e.ma_sent = e.ma, e.mb_sent = e.mb, e.m_ms = ms;
   }
   g_st.morphs += (uint32_t)n;
@@ -523,6 +526,7 @@ CORE_COLD void rp_morph_off(Tid t) {
 
 CORE_COLD void rp_hello(int caps) {
   g_caps = caps, g_link = true, g_clear = 0;
+  g_morph_ok = (ui::remote_caps2() & ui::kCaps2Morph) != 0;   // (remote.cpp sets caps2 before it calls this)
   forget_sent();   // the Rytm cleared every entry at its hello
 }
 CORE_COLD void rp_kit(int kit) {
@@ -745,6 +749,7 @@ CORE_COLD void rp_reset() {
   g_bl = g_sat = false, g_bl_ms = g_sat_ms = g_now_ms = g_ms_rem = 0;
   g_st = RpStats();
   g_fad = 0, g_fad_sent = -1, g_fad_ms = g_fad_chg_ms = g_fad_gap = g_fad_us = g_mph_us = 0;
+  g_morph_ok = false;
 }
 
 }  // namespace mod

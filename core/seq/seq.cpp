@@ -2165,8 +2165,10 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
       return;
     case kHostAck:   // 2D 01 10 <op> <status>: the mod command done (0) or refused (core/mod/rytm_out.h)
       if (n < 3) break;
-      // 0.5.0: ops 04..07 are the Rytm's params' (core/mod/rytm_param.h): counted there, never the CC fallback
-      if (a[1] >= mod::kOpOffset && a[1] <= mod::kOpStatus) mod::rp_ack(a[1], a[2]);
+      // 0.5.0: ops 04..07 (and P3's 09 / 0A) are the Rytm's params' (core/mod/rytm_param.h): counted there, never the
+      // CC fallback (review MH2: the "slots full" notice for a 09 turned the scenes / PERF / mutes to CCs)
+      if ((a[1] >= mod::kOpOffset && a[1] <= mod::kOpStatus) || a[1] == mod::kOpMorphSet || a[1] == mod::kOpFader)
+        mod::rp_ack(a[1], a[2]);
       else mod::rytm_ack(a[1], a[2]);
       return;
     case kPmStatus:  // 2D 01 11 <slots> <ring drops hi> <lo> <kit drops hi> <lo> <timeouts> <flags>: op 07's answer

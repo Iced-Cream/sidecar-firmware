@@ -764,6 +764,17 @@ static void p3_release_sends_remove() {
   run_ms(60);
   CHECK(records09(0, 30, 0, from) == 1 && records09(0, 31, 0, from) == 1 && records09(0, 25, 0, from) == 1);
   CHECK(records05(0, 31, from) >= 1);
+  // review LM4: the lock changed under the part (the part carried it): it comes back on the grid's ramp, never a
+  // jump at an arbitrary time (the first 05 record of RES: ramp > 0, no jump flag)
+  for (size_t i = from; i < g_pm.size(); ++i) {
+    if (g_pm[i][6] != 5) continue;
+    int j = 0;
+    while (j < g_pm[i][9] && !(g_pm[i][10 + 5 * j] == 0 && (g_pm[i][11 + 5 * j] & 0x3F) == 31)) ++j;
+    if (j == g_pm[i][9]) continue;
+    if (!(g_pm[i][8] > 0 && !(g_pm[i][11 + 5 * j] & 0x40))) printf("  RES back: ramp %d, w byte %#x\n", g_pm[i][8], g_pm[i][11 + 5 * j]);
+    CHECK(g_pm[i][8] > 0 && !(g_pm[i][11 + 5 * j] & 0x40));
+    break;
+  }
   CHECK(std::fabs(g_fake.eff(0, 31) - 30) < 0.01 && std::fabs(g_fake.eff(0, 30) - 64) < 0.01 &&
         std::fabs(g_fake.eff(0, 25) - 64) < 0.01 && g_fake.morphs() == 0);
   mod::rp_unlock(0, 31, 0);
@@ -774,6 +785,87 @@ static void p3_release_sends_remove() {
   run_ms(300);
   CHECK(count_op(10, from) == 0 && count_op(9, from) == 0);
   printf("rytm params P3: a p-lock re-sends a one-sided part; the release sends remove records, the lock back on 05\n");
+}
+
+// ---- the review of the P3 diff (morph v2 P3): H1, MH2, L5, L6 (LM4: in p3_release_sends_remove)
+// H1: 21 continuous locks: the first 09 carries kRpMaxMorphs (20) records, the 20th intact (the buffer held 3 + 7 x 20
+// bytes; the 21st part goes on the next grid). An ASan build of this test caught the 1-byte overflow.
+static void p3_twenty_parts() {
+  fresh(127, 4, ui::kCaps2Morph);
+  scene::clear(0), scene::clear(1);   // (kit 4's scenes from the tests before: the project keeps them)
+  for (int i = 0; i < 21; ++i) {
+    mod::Tid t = mod::rytm_tid(i < 12 ? i : i - 12, i < 12 ? 30 : 31);
+    CHECK(scene::lock(0, t, (10 + i) << 7) && scene::lock(1, t, (90 - i) << 7));
+  }
+  scene::set_ab(0, 1);
+  scene::set_fader(8192, scene::kConsole);
+  run_ms(60);
+  const Msg* m = nullptr;
+  for (size_t i = 0; i < g_pm.size() && !m; ++i)
+    if (g_pm[i][6] == 9) m = &g_pm[i];
+  CHECK(m && (*m)[8] == mod::kRpMaxMorphs && (int)m->size() == 9 + 7 * mod::kRpMaxMorphs + 1);
+  int seen = 0;
+  for (int i = 0; i < 21; ++i) {
+    int a = -1, b = -1;
+    if (records09(i < 12 ? i : i - 12, i < 12 ? 30 : 31, 3, 0, &a, &b) && a == (10 + i) << 7 && b == (90 - i) << 7) ++seen;
+  }
+  if (seen != 21 || g_fake.morphs() != 21) printf("  seen %d, the fake's parts %d, bad %u\n", seen, g_fake.morphs(), mod::rp_stats().bad);
+  CHECK(seen == 21 && g_fake.morphs() == 21 && mod::rp_stats().bad == 0);
+  printf("rytm params P3 review H1: 21 parts: a full 09 of 20 records, the 21st on the next grid\n");
+  p3_end();
+}
+// MH2: the Rytm's "slots full" / a refusal for 09 / 0A is pm's (rp_ack), never the mod command's CC fallback
+static void p3_ack_09_0a() {
+  fresh(127, 4, ui::kCaps2Morph);
+  mod::rytm_host_cmd(true);
+  uint32_t full = mod::rp_stats().full, refused = mod::rp_stats().refused;
+  rx({0x2D, 1, 0x10, 9, 2});    // 2D 01 10 09 2: no slot left for a part
+  rx({0x2D, 1, 0x10, 10, 1});   // a 0A refused
+  CHECK(mod::rp_stats().full == full + 1 && mod::rp_stats().refused == refused + 1);
+  CHECK(mod::rytm_out_stats().refused == 0);
+  mod::rytm_perf(3, 50);
+  CHECK(!g_other.empty() && g_other.back()[4] == mod::kHostCmd && g_other.back()[6] == mod::kOpPerf);
+  mod::rytm_host_cmd(false);
+  printf("rytm params P3 review MH2: 2D 01 10 09 / 0A count as pm's, the mod command stays\n");
+}
+// L5: a hello without caps2 bit 3 (an older mod) while parts live: rp_tick sends no 09 (the old mod would take it
+// for a 05), whatever the order of the layer's tick and rp_tick
+static void p3_hello_without_morph() {
+  fresh(127, 4, ui::kCaps2Morph);
+  p3_setup();
+  run_ms(60);
+  CHECK(g_fake.morphs() == 3);
+  size_t from = g_pm.size();
+  hello(127, ui::kCaps2Capture);
+  at(g_us + 6000), mod::rp_tick(now_us());   // (rp_tick alone: before the layer re-routes the words to 05)
+  CHECK(count_op(9, from) == 0 && count_op(10, from) == 0);
+  run_ms(60);
+  CHECK(count_op(9, from) == 0 && count_op(10, from) == 0 && h10_values(0.25));
+  printf("rytm params P3 review L5: a hello without caps2 bit 3 stops 09 / 0A at once\n");
+  p3_end();
+}
+// L6: a 0A out just before a hello: after it the fader (0A) still goes before the parts (09)
+static void p3_hello_0a_first() {
+  fresh(127, 4, ui::kCaps2Morph);
+  p3_setup();
+  run_ms(60);
+  scene::set_fader(6000, scene::kConsole);
+  size_t n0 = g_pm.size();
+  for (int i = 0; i < 40 && count_op(10, n0) == 0; ++i) at(g_us + 250), mod::tick(now_us());
+  CHECK(count_op(10, n0) == 1);
+  g_fake.free_all();
+  size_t from = g_pm.size();
+  hello(127, ui::kCaps2Morph);
+  run_ms(60);
+  size_t i9 = 0, i10 = 0;
+  for (size_t i = from; i < g_pm.size(); ++i) {
+    if (g_pm[i][6] == 9 && !i9) i9 = i + 1;
+    if (g_pm[i][6] == 10 && !i10) i10 = i + 1;
+  }
+  if (!(i10 && i9 && i10 < i9)) printf("  after the hello: first 0A #%zu, first 09 #%zu\n", i10, i9);
+  CHECK(i10 && i9 && i10 < i9);
+  printf("rytm params P3 review L6: a 0A just before a hello: after it 0A again before the 09 parts\n");
+  p3_end();
 }
 
 // ---- the review of 2d6220d (rytm-pmod-host-review.md findings 1..8, 13)
@@ -1537,6 +1629,10 @@ int main() {
   p3_kit_change_resends_09();
   p3_refresh_0a_every_100ms();
   p3_release_sends_remove();
+  p3_twenty_parts();
+  p3_ack_09_0a();
+  p3_hello_without_morph();
+  p3_hello_0a_first();
   h11_velocity();
   h12_target_order();
   h12b_kept_row();
