@@ -125,8 +125,8 @@ const Profile* by_id(uint16_t id);        // the known box with this id; null no
 const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello = false);   // the known box with this USB id and an audio row (the Pi's driver); null none.
                                        // without_hello: a box that streams only after its mod's hello is taken as it is too (usb=mirror relays it)
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
-// What one connected box has chosen: its profile, its state folder, its output, its counts. There is one link today, g_link
-// (docs/device-profiles.md, "Several devices"): a second one is a second Link and a way to tell whose message it is.
+// What one connected box has chosen: its profile, its state folder, its output, its counts. One Link per box on USB, kLinks
+// at most (docs/device-profiles.md, "Several devices"). Link 0 is the one a single box has always had.
 struct Link {
   const Profile* box;                     // the box in use; null: the Rytm
   const char* state;                      // the state folder when it is not /.rytm; null: /.rytm
@@ -135,8 +135,37 @@ struct Link {
   const Profile* next;                    // a change of folder asked: the box it is for
   bool saving, posted;
   uint32_t post_id;                       // its write to /.rytm/device
+  uint8_t index;                          // its place in g_links
 };
-extern Link g_link;
+constexpr int kLinks = 2;
+extern Link g_links[kLinks];
+// The control core's link in hand: whose message is being handled, whose state is being saved. Link 0 outside any Scope, so
+// everything that never names a link (a lone box, every code path before two links) is what it always was.
+extern Link* g_cur;
+inline Link& cur() { return *g_cur; }
+struct Scope {   // the control core only; nests
+  Link* was;
+  explicit Scope(Link& l) : was(g_cur) { g_cur = &l; }
+  ~Scope() { g_cur = was; }
+  Scope(const Scope&) = delete;
+  Scope& operator=(const Scope&) = delete;
+};
+// Which link a file call is for (state_path). On the control core: g_cur. On the card core: the link its request was
+// queued for (CardScope, set around each request it runs), else g_web_link (the web's own calls: the box its page serves).
+// hooks.control_core says which core calls; null (the host, one thread): always the control core's answer.
+int path_link();
+extern volatile int8_t g_web_link;
+struct CardScope {   // around one card request, on whichever core runs it
+  int8_t was;
+  Link* was_cur;
+  explicit CardScope(int link);
+  ~CardScope();
+  CardScope(const CardScope&) = delete;
+  CardScope& operator=(const CardScope&) = delete;
+};
+// The platform's sender for link 1.. (its box's USB MIDI), null when it goes. Link 0's is hooks.to_rytm as ever. While only link 0
+// is up and it is a Rytm, hooks.to_rytm stays the platform's own; otherwise it sends to the link in hand (Scope).
+void set_out(int link, void (*out)(const uint8_t*, int));
 void hello(Link& l, const uint8_t* d, int len);   // a whole 4F
 void reset();                          // back to the Rytm and /.rytm, as a fresh boot (tests)
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered
@@ -156,14 +185,18 @@ void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;
 constexpr uint32_t kChordMs = 20;   // from a chord's last note to its next; the A4's mod keeps a mono track's trigs apart by the same time (a4_report.c CHORD_GAP)
 constexpr int kChordNotes = 4;      // the A4's most on a trig [read in OS 1.56]
-const char* state_path_box(const char* path, char* buf, int cap);
-// path as the card has it: path itself, or in buf. Every file call passes here, so the Rytm's cost is the one test.
-// The file layer has no link to ask: this is g_link's folder.
-inline const char* state_path(const char* path, char* buf, int cap) { return g_link.state ? state_path_box(path, buf, cap) : path; }
-inline bool foreign(const Link& l = g_link) { return l.box != nullptr; }
+const char* state_path_box(const char* state, const char* path, char* buf, int cap);
+// path as the card has it: path itself, or in buf. Every file call passes here: with no box on any link (a lone Rytm) the cost
+// is the one test it always was.
+inline const char* state_path(const char* path, char* buf, int cap) {
+  if (!g_links[0].state && !g_links[1].state) return path;
+  const char* s = g_links[path_link()].state;
+  return s ? state_path_box(s, path, buf, cap) : path;
+}
+inline bool foreign(const Link& l = cur()) { return l.box != nullptr; }
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
 // the control core may set the box. Null: the Rytm, or a box without a Screen.
-inline const Screen* box_screen(const Link& l = g_link) {
+inline const Screen* box_screen(const Link& l = cur()) {
   const Profile* p = __atomic_load_n(&l.box, __ATOMIC_RELAXED);
   return p ? p->screen : nullptr;
 }
@@ -173,7 +206,7 @@ bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m);
 // The control loop, every pass: a box with Controls runs its envelopes (strip.h). Nothing else: one test.
 void strip_tick(uint32_t us);
 inline void tick(uint32_t us) {
-  if (g_link.box && g_link.box->controls) strip_tick(us);
+  if (g_links[0].box && g_links[0].box->controls) strip_tick(us);
 }
 
 }  // namespace device

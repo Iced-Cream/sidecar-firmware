@@ -34,7 +34,29 @@ static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 static constexpr int kMax = 8;
 static const Profile* s_list[kMax] = {&kRytm, &kDigitakt, &kA4};
 static int s_n = 3;
-Link g_link = {};
+Link g_links[kLinks] = {{}, {}};
+Link* g_cur = &g_links[0];
+volatile int8_t g_web_link = 0;
+static volatile int8_t s_card_link = -1;   // the card core's request in hand: its link (CardScope)
+static struct LinkIndex { LinkIndex() { for (int k = 0; k < kLinks; ++k) g_links[k].index = (uint8_t)k; } } s_link_index;
+
+static inline bool on_control() { return !hooks.control_core || hooks.control_core(); }
+
+int path_link() {
+  if (on_control()) return g_cur->index;
+  int c = __atomic_load_n(&s_card_link, __ATOMIC_RELAXED);
+  return c >= 0 && c < kLinks ? c : g_web_link >= 0 && g_web_link < kLinks ? g_web_link : 0;
+}
+
+CardScope::CardScope(int link) : was(s_card_link), was_cur(g_cur) {
+  if (link < 0 || link >= kLinks) link = 0;
+  if (on_control()) g_cur = &g_links[link];
+  else __atomic_store_n(&s_card_link, (int8_t)link, __ATOMIC_RELAXED);
+}
+CardScope::~CardScope() {
+  if (on_control()) g_cur = was_cur;
+  else __atomic_store_n(&s_card_link, was, __ATOMIC_RELAXED);
+}
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
 static bool s_by_usb;                     // this change of folder comes from the Rytm's USB id
@@ -45,8 +67,8 @@ static constexpr char kDeviceFile[] = "/.rytm/device";   // the last box's id, d
 static const char* const kMachine[] = {"wifi", "pair", "display", "prevboot", "blackbox", "device", "recspeed", "storbench", "wpa.conf"};
 
 const Profile& rytm() { return kRytm; }
-const Profile& active() { return g_link.box ? *g_link.box : kRytm; }
-uint32_t dropped() { return g_link.dropped; }
+const Profile& active() { return cur().box ? *cur().box : kRytm; }
+uint32_t dropped() { return cur().dropped; }
 void rytm_on_usb(bool on) { s_rytm_usb = on; }
 
 CORE_COLD const Profile* by_id(uint16_t id) {
@@ -58,30 +80,51 @@ CORE_COLD const Profile* by_id(uint16_t id) {
 CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {
   for (int k = 0; k < s_n; ++k)
     if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio &&
-        (without_hello || !s_list[k]->audio_by_hello || g_link.box == s_list[k])) return s_list[k];
+        (without_hello || !s_list[k]->audio_by_hello || g_links[0].box == s_list[k] || g_links[1].box == s_list[k])) return s_list[k];
   return nullptr;
 }
 
-void strip_tick(uint32_t us) { strip::tick(*g_link.box->controls, us); }
+void strip_tick(uint32_t us) { strip::tick(*g_links[0].box->controls, us); }
 
 static inline bool is_sidecar(const uint8_t* d, int len) { return len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54; }
 
+// The engine's output while a box is in use or a second link is up: to the link in hand (Scope), the box whose message this
+// answers, else link 0. A box gets only what its out_allow lists; a Rytm everything.
 static CORE_COLD void filtered_out(const uint8_t* m, int n) {
   int c = n > 4 ? m[4] & 0x7f : 0;
-  Link& l = g_link;   // (the hook has no link to pass)
-  if (l.box && (l.box->out_allow[c >> 5] >> (c & 31) & 1)) {
+  Link& l = cur();
+  if (!l.box) {
+    if (l.out) l.out(m, n);
+    else ++l.dropped;
+  } else if (l.box->out_allow[c >> 5] >> (c & 31) & 1) {
     if (l.out) l.out(m, n);
   } else {
     ++l.dropped;
   }
 }
 
-CORE_COLD const char* state_path_box(const char* path, char* buf, int cap) {
+// hooks.to_rytm from the links: link 0's own sender while it is a Rytm alone (the Rytm's path as it always was: no test, no
+// filter), else filtered_out. Link 0's sender is the platform's to_rytm, taken the first time it is not already ours.
+static CORE_COLD void rewire() {
+  if (!g_links[0].out && hooks.to_rytm && hooks.to_rytm != filtered_out) g_links[0].out = hooks.to_rytm;
+  bool alone = !g_links[0].box;
+  for (int k = 1; k < kLinks; ++k) alone = alone && !g_links[k].box && !g_links[k].out;
+  hooks.to_rytm = alone ? g_links[0].out : filtered_out;
+}
+
+CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
+  if (link <= 0 || link >= kLinks) return;   // (link 0's is the platform's to_rytm)
+  rewire();   // link 0's sender taken first, while hooks.to_rytm is still the platform's
+  g_links[link].out = out;
+  rewire();
+}
+
+CORE_COLD const char* state_path_box(const char* state, const char* path, char* buf, int cap) {
   if (strncmp(path, "/.rytm", 6) || (path[6] && path[6] != '/')) return path;
   if (path[6])
     for (const char* k : kMachine)
       if (!strncmp(path + 7, k, strlen(k))) return path;
-  sniprintf(buf, cap, "%s%s", g_link.state, path + 6);
+  sniprintf(buf, cap, "%s%s", state, path + 6);
   return buf;
 }
 
@@ -104,12 +147,11 @@ CORE_COLD void boot() {
   for (int k = 0; k < got && b[k] >= '0' && b[k] <= '9'; ++k) id = id * 10 + b[k] - '0';
   for (int k = 1; k < s_n; ++k) {
     if (s_list[k]->id != id) continue;
-    Link& l = g_link;
+    Link& l = g_links[0];
     l.state = s_list[k]->state_dir;
     if (l.state) Fs().mkdir(l.state);
-    l.out = hooks.to_rytm;
-    hooks.to_rytm = filtered_out;
     l.box = s_list[k];
+    rewire();
     out::set_trim(2, l.box->trk10);   // (its hello finds it selected: this is the usual way in)
     log(CORE_STR("device: %s, state in %s"), l.box->name, l.state ? l.state : "/.rytm");
   }
@@ -121,10 +163,10 @@ static CORE_COLD void change_folder(Link& l, const Profile* p) {
   log(CORE_STR("device: %s wants its own state folder: the Sidecar restarts once the saves are done"), p ? p->name : kRytm.name);
 }
 
-CORE_COLD bool leaving() { return g_link.saving; }
+CORE_COLD bool leaving() { return g_links[0].saving; }
 
 CORE_COLD bool step(bool settled) {
-  Link& l = g_link;
+  Link& l = g_links[0];
   if (s_rytm_usb && !s_said && !s_by_usb && !l.saving && hooks.device_restart && other_folder(l, nullptr)) {
     s_by_usb = true;
     change_folder(l, nullptr);
@@ -156,19 +198,22 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
   if (p == l.box) return;
   memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
   memset(s_chord, 0, sizeof s_chord);
-  if (!l.box) l.out = hooks.to_rytm;
-  hooks.to_rytm = p ? filtered_out : l.out;
+  if (!l.box) rewire();   // (link 0's sender taken while it is still the platform's)
   l.box = p;
+  rewire();
   out::set_trim(2, active().trk10);   // a live stereo=trim:trk lasts until the box changes
   log(CORE_STR("device: %s"), active().name);
   link_reset("device");   // the box before it: its notes and transport unknown
 }
 
 CORE_COLD void reset() {
-  select(g_link, nullptr);
+  g_cur = &g_links[0], s_card_link = -1, g_web_link = 0;
+  for (Link& l : g_links) select(l, nullptr), l.state = nullptr;
+  for (int k = 1; k < kLinks; ++k) g_links[k].out = nullptr;
+  rewire();                      // hooks.to_rytm back to link 0's sender, the platform's
+  g_links[0].out = nullptr;      // (taken again from hooks.to_rytm: a test may set another)
   strip::reset();
   s_rytm_usb = s_said = s_by_usb = s_settle = false;
-  g_link.state = nullptr;   // (a board restart, for the tests: the choice is made once a boot)
 }
 
 CORE_COLD bool add(const Profile* p) {
@@ -197,7 +242,7 @@ CORE_COLD void hello(Link& l, const uint8_t* d, int len) {
   } else if (st == kOk) select(l, to), s_said = to != nullptr;
   if (st != kOk && st != kRestart && st != kWait) log(CORE_STR("device: hello from id %d proto %d: %s"), id, d[8], p ? "another protocol" : "no profile");
   const uint8_t a[10] = {0xF0, 0x7D, 0x52, 0x54, kCmdHello, 1, d[6], d[7], st, 0xF7};
-  void (*out)(const uint8_t*, int) = l.box ? l.out : hooks.to_rytm;   // the answer is never filtered
+  void (*out)(const uint8_t*, int) = l.out ? l.out : l.index == 0 ? hooks.to_rytm : nullptr;   // the answer is never filtered
   if (out) out(a, (int)sizeof a);
 }
 
@@ -244,7 +289,7 @@ static CORE_COLD bool is_echo(int vi, uint8_t note) {
 }
 
 CORE_COLD void box_note(int vi, int note, int vel) {
-  const Profile* p = g_link.box;
+  const Profile* p = cur().box;
   if (!p || !p->note_out || vi < 0 || vi >= p->voices || note > 127) return;
   const uint8_t off = (uint8_t)(0x80 | vi);
   if (note < 0) {   // inst::seq_off's -1: every note of the voice
@@ -335,4 +380,11 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
 }
 
 }  // namespace device
+
+CORE_COLD void engine_sysex_link(int link, const uint8_t* d, int len) {
+  if (link <= 0 || link >= device::kLinks) return host_sysex(d, len);
+  device::Scope s(device::g_links[link]);
+  host_sysex(d, len);
+}
+
 }  // namespace core

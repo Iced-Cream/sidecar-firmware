@@ -71,7 +71,7 @@ int main() {
   CHECK(restarts == 1);
   device::reset();
   device::boot();
-  CHECK(!strcmp(device::g_link.state, "/.digitakt") && device::active().id == device::kIdDigitakt);
+  CHECK(!strcmp(device::cur().state, "/.digitakt") && device::active().id == device::kIdDigitakt);
   g_out.clear();
 
   int hellos = 0, trigs = 0, reports = 0, controls = 0, offs = 0;

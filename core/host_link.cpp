@@ -316,9 +316,9 @@ CORE_COLD void link_lost() {
 
 __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never
-  if (device::foreign() && !device::translate(device::g_link, d, len, box)) return;
+  if (device::foreign() && !device::translate(device::cur(), d, len, box)) return;
   if (len >= 6 && d[4] == device::kCmdHello && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {   // a box says what it is
-    device::hello(device::g_link, d, len);
+    device::hello(device::cur(), d, len);
     return;
   }
   // F0 7D 52 54 cmd voice ...

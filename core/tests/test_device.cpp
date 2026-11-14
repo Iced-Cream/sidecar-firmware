@@ -202,7 +202,7 @@ int main() {
   hooks.device_restart = [] { ++g_restarts; };
   g_out.clear();
   send(hello(kBoxId + 1));
-  CHECK(g_out.size() == 1 && g_out[0][8] == device::kRestart && !device::foreign() && !device::g_link.state);
+  CHECK(g_out.size() == 1 && g_out[0][8] == device::kRestart && !device::foreign() && !device::cur().state);
   send(hello(kBoxId + 1));   // its repeat before the restart: the same answer, one request
   for (int k = 0; k < 100 && !g_restarts; ++k) {
     device::step();
@@ -212,7 +212,7 @@ int main() {
   // the next boot: the box's folder from the first file on; the Rytm's folder not touched, the Pi's files stay
   device::reset();
   device::boot();
-  CHECK(device::foreign() && device::active().id == kBoxId + 1 && !strcmp(device::g_link.state, "/.boxtest"));
+  CHECK(device::foreign() && device::active().id == kBoxId + 1 && !strcmp(device::cur().state, "/.boxtest"));
   {
     File f;
     CHECK(fs.mkdir("/.rytm/pools") && f.open("/.rytm/pools/P.txt", kWrite) && f.write("x", 1) == 1);
@@ -237,7 +237,7 @@ int main() {
   CHECK(g_restarts == 2);
   device::reset();
   device::boot();
-  CHECK(!device::foreign() && !device::g_link.state && hooks.to_rytm == ::out);
+  CHECK(!device::foreign() && !device::cur().state && hooks.to_rytm == ::out);
   {
     char b[64];
     const char* p = "/.rytm/pools/P.txt";
@@ -260,7 +260,7 @@ int main() {
       send(sidecar({device::kCmdHello, 1, (uint8_t)(id >> 7), (uint8_t)(id & 0x7f), 1, 'D', 'T'}));
       return (int)g_out.back()[8];
     };
-    auto folder = [] { return device::g_link.state ? device::g_link.state : "/.rytm"; };
+    auto folder = [] { return device::cur().state ? device::cur().state : "/.rytm"; };
     uint64_t t = 1000000000;
     host_fake_time(true, t);
     g_restarts = 0;
@@ -335,7 +335,7 @@ int main() {
     device::reset();
     g_out.clear();
     device::boot();
-    CHECK(device::active().id == kIdA4 && !strcmp(device::g_link.state, "/.a4"));
+    CHECK(device::active().id == kIdA4 && !strcmp(device::cur().state, "/.a4"));
     CHECK(!strcmp(ui::tap_source_name(1), "T1") && !strcmp(ui::tap_source_name(4), "T4") && !strcmp(ui::tap_source_name(9), "IN L"));   // the box's own words on SCOPE, its voices on their channels
     CHECK(ui::tap_channel_of_voice(1) == 3 && ui::tap_channel_of_voice(3) == 5);
     CHECK(!strcmp(device::kA4.screen->keys, "UP + YES: PAGES"));
@@ -352,7 +352,7 @@ int main() {
     auto passes = [&](std::vector<uint8_t> m) {
       const uint8_t* d = m.data();
       int len = (int)m.size();
-      return device::translate(device::g_link, d, len, buf);
+      return device::translate(device::cur(), d, len, buf);
     };
     std::vector<uint8_t> tr = {0x04, 0x03 | 0x08, 60, 100};   // JUNO on voice 3
     for (int k = 0; k < 2 * 16 + 2; ++k) tr.push_back(k % 2 ? 0 : 64);
@@ -456,7 +456,7 @@ int main() {
     CHECK(out::control.trk10 == 0);
     CHECK(device::rytm().trk10 == 0 && device::kDigitakt.trk10 == 0 && device::kA4.trk10 == 180);
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
-    device::g_link.state = "/.a4";                     // the folder chosen at boot: this hello is accepted
+    device::cur().state = "/.a4";                     // the folder chosen at boot: this hello is accepted
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
     CHECK(out::control.trk10 == 180);
@@ -500,7 +500,7 @@ int main() {
     auto off = [](int vi) { return sidecar({0x11, (uint8_t)vi}); };
     auto notes = [](int vi) { return inst::voice_notes(vi) + poly::voice_notes(vi); };
     auto quiet = [&](int vi) { send(off(vi)); voice_silence(vi); usleep(25000); };
-    device::g_link.state = "/.a4";
+    device::cur().state = "/.a4";
     send(hello(device::kA4.id));
     CHECK(device::kA4.chords && !device::rytm().chords && !device::kDigitakt.chords);
 
@@ -599,12 +599,12 @@ int main() {
         auto m = trig(kPlaits | 0, n);
         d = m.data();
         int len = (int)m.size();
-        CHECK(!device::translate(device::g_link, d, len, buf));
+        CHECK(!device::translate(device::cur(), d, len, buf));
       }
       auto m = trig(kPlaits | 0, 67);          // once only
       d = m.data();
       int len = (int)m.size();
-      CHECK(device::translate(device::g_link, d, len, buf));
+      CHECK(device::translate(device::cur(), d, len, buf));
       device::box_note(0, -1, 0);
       keys::set_forward(nullptr);
       CHECK(inst::voice_notes(0) == before);
@@ -684,7 +684,7 @@ int main() {
     }
     {   // the Rytm: the same bytes are what they always were, no chord
       device::reset();
-      device::g_link.state = nullptr;
+      device::cur().state = nullptr;
       send(trig(kPlaits | 1, 60));
       send(trig(kPlaits | 1, 64));
       send(trig(kPlaits | 1, 67));
@@ -696,7 +696,7 @@ int main() {
 
   {  // the A4's screen: the pages' messages alone, their text in the pixels, its hello never the Rytm's 35, the Rytm's pages hidden
     device::reset();
-    device::g_link.state = "/.a4";
+    device::cur().state = "/.a4";
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
     ui::remote_reset();
@@ -736,7 +736,7 @@ int main() {
   {  // the Digitakt's screen and slots (mod 0.3): the pages as the A4's, eight tracks T1..T8; a slot's 19 answered with its 1A, a 1D let
      // through; the Rytm's other messages still filtered
     device::reset();
-    device::g_link.state = "/.digitakt";
+    device::cur().state = "/.digitakt";
     send(hello(device::kIdDigitakt));
     CHECK(device::foreign() && device::active().id == device::kIdDigitakt);
     CHECK((device::kDigitakt.features & (device::kRemoteUi | device::kUserSlots)) == (device::kRemoteUi | device::kUserSlots));

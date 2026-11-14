@@ -18,6 +18,8 @@ namespace core {
 // play, DSP SAMPLE and the lists stay silent / empty.
 bool engine_begin();
 inline void engine_sysex(const uint8_t* d, int len) { host_sysex(d, len); }
+// A whole SysEx from the box on link `link` (core/device/device.h): handled, and answered, as that box's. Link 0: engine_sysex.
+void engine_sysex_link(int link, const uint8_t* d, int len);
 bool idle_prepare();   // a voice's DSP SAMPLE prepare (a waiting trig's first): true if one ran
 bool idle_save();      // the project's name to /.rytm/project after a change: true if it wrote
 void idle_stream();    // the streams' top-ups (the neediest first) and the sample RAM's loading

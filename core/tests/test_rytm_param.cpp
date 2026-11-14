@@ -1294,14 +1294,14 @@ static void h13_target_walks() {
   static device::Screen sc = {{"A", "B", "C", "D", "E", "F", "G", "H"}, ""};
   static device::Profile pf;
   pf.screen = &sc;
-  device::g_link.box = &pf;
+  device::cur().box = &pf;
   walk_all("foreign box");
   lfo::Settings f;
   lfo::defaults(&f);
   f.target = 0;
   lfo::target_step(&f, 1);
   CHECK(f.target == lfo::kTVoice && f.param == 1 && lfo::target_pos(lfo::kTRt) < 0);
-  device::g_link.box = nullptr;
+  device::cur().box = nullptr;
   printf("rytm param: the LFO target walks\n");
 }
 
