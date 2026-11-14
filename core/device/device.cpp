@@ -83,10 +83,12 @@ CORE_COLD const Profile* by_id(uint16_t id) {
   return nullptr;
 }
 
-CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {
+// A box's stream is claimed when it enumerates, its hello or not: each slot has its own stream (pi/engine/ob_usb.h), so a
+// stock A4 beside a Rytm no longer stands in the Rytm's way, and its hello always comes after enumeration now that no restart
+// brings it back already chosen (audio_by_hello used to wait for that restart). Its MIDI still waits for the hello (hello_gate.h).
+CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid, bool) {
   for (int k = 0; k < s_n; ++k)
-    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio &&
-        (without_hello || !s_list[k]->audio_by_hello || g_links[0].box == s_list[k] || g_links[1].box == s_list[k])) return s_list[k];
+    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio) return s_list[k];
   return nullptr;
 }
 

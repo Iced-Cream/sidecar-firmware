@@ -270,7 +270,7 @@ int main() {
     };
     g_restarts = 0;
     device::reset();
-    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);   // a stock A4 beside a Rytm: nothing
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == &device::kA4);   // a stock A4 beside a Rytm: its own slot's stream, claimed at enumeration
     CHECK(device::by_usb(device::kA4Vid, device::kA4Pid, true) == &device::kA4);   // usb=mirror: the stock A4 as it is
     CHECK(hello() == device::kOk);   // its folder from its hello on: no restart
     steps();

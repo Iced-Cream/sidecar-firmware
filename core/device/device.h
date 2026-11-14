@@ -109,7 +109,7 @@ struct Profile {
                               // voice, what the Pi's driver opens. Null: no audio, the driver leaves the USB id alone
   const Controls* controls;   // null: no controls report
   bool note_out;              // the engine's own notes (the sequencer's) go to the box as MIDI, channel = voice: its voice's amp must open for the Sidecar's voice to sound
-  bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
+  bool audio_by_hello;        // (no longer read: by_usb claims every box's stream at enumeration, one stream a slot) its stream was claimed only once it was the box in use
   int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
   bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (one report a note: the A4, on any track)
   const Screen* screen;       // with kRemoteUi; null: the Rytm's words
@@ -122,7 +122,7 @@ const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use
 const Profile* by_id(uint16_t id);        // the known box with this id; null none
 const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello = false);   // the known box with this USB id and an audio row (the Pi's driver); null none.
-                                       // without_hello: a box that streams only after its mod's hello is taken as it is too (usb=mirror relays it)
+                                       // without_hello: no longer changes the answer (every box's stream is claimed at enumeration)
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
 // What one connected box has chosen: its profile, its state folder, its output, its counts. One Link per box on USB, kLinks
 // at most (docs/device-profiles.md, "Several devices"). Link 0 is the one a single box has always had.
