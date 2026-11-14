@@ -32,8 +32,8 @@ watch(() => lp.value?.msgN, (n, was) => {
   if (n && n !== was && m) (/^(KEPT|POST LAT)/.test(m) ? notify.ok : notify.warn)(m);
 });
 
-const sel = ref(0); // the grab shown (0 newest)
-watch(() => lp.value?.grabs.length ?? 0, (n) => { if (sel.value >= n) sel.value = Math.max(0, n - 1); });
+const selId = ref(0); // the grab shown, by id: a newer grab landing moves the list, not the choice (0: the newest)
+const sel = computed(() => Math.max(0, lp.value?.grabs.findIndex((g) => g.id === selId.value) ?? 0));
 const grab = computed(() => lp.value?.grabs[sel.value]);
 const playingNow = computed(() => lp.value?.state === "playing" || lp.value?.state === "wait" || lp.value?.state === "fading");
 const stateText = computed(() => {
@@ -43,9 +43,9 @@ const stateText = computed(() => {
   const p = positionText(v);
   return `${STATES[v.state] ?? v.state}${p ? " · " + p : ""}`;
 });
-function pick(i: number) {
-  sel.value = i;
-  void send(playLine(i));
+function pick(id: number) {
+  selId.value = id;
+  void send(playLine(id));
 }
 const bal = computed(() => lp.value?.bal ?? 64);
 const gains = computed(() => balGains(bal.value));
@@ -89,7 +89,7 @@ watch(() => lp.value?.live, (m) => { if (m) livePerf.value = m; }, { immediate: 
           :aria-checked="i === sel"
           :aria-label="`Grab ${i + 1}: ${g.label} ${g.label === '1' ? 'bar' : 'bars'} at ${Math.round(g.bpm)} BPM${g.kept ? ', kept' : ''}${g.playing ? ', playing' : ''}`"
           :disabled="!paired"
-          @click="pick(i)"
+          @click="pick(g.id)"
         >
           <span class="num pn">{{ g.label }}</span>
           <span class="small">{{ Math.round(g.bpm) }} BPM</span>
@@ -97,7 +97,7 @@ watch(() => lp.value?.live, (m) => { if (m) livePerf.value = m; }, { immediate: 
         </button>
       </div>
       <div class="row">
-        <button type="button" :disabled="!paired || !grab || grab.kept || !grab.copied" @click="send(keepLine(sel))">
+        <button type="button" :disabled="!paired || !grab || grab.kept || !grab.copied" @click="grab && send(keepLine(grab.id))">
           Keep grab {{ sel + 1 }} on the card
         </button>
         <span v-if="grab?.kept" class="small">Kept: it is in Rec › Takes.</span>

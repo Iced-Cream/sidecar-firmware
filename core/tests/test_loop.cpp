@@ -42,6 +42,27 @@ static void blocks(loop::Ring& r, uint64_t from, uint64_t to, int jit, uint64_t 
   }
 }
 
+static void test_ring_gap_cost() {
+  // H1: a stream that comes back after hours writes no silence: a pause longer than the ring touches no memory but the block
+  loop::Ring r;
+  std::vector<int32_t> mem(2 * (size_t)kCap, 0x55555555);
+  r.init(mem.data(), kCap);
+  int32_t b[14] = {};
+  for (int i = 0; i < 7; ++i) b[2 * i] = 1000 + i, b[2 * i + 1] = 1000 + i;
+  r.write(b, 7, 6 + 500, 0);
+  uint64_t w0 = r.written();
+  r.write(b, 7, 6 + 500 + 7 + 10 * 3600 * 48000ull, 0);   // ten hours later
+  size_t touched = 0;
+  for (int32_t x : mem)
+    if (x != 0x55555555) ++touched;
+  CHECK(touched <= 2 * 14 + 2);   // the two blocks, nothing else (the old code wrote the whole ring)
+  CHECK(r.written() > w0 + 7 + (uint64_t)kCap);
+  std::vector<int32_t> c(2 * 70);
+  uint64_t end = r.written();
+  CHECK(r.copy_idx(end - 70, 70, c.data()) == 70 && c[0] == 0 && c[2 * 62] == 0 && c[2 * 63] == 1000);
+  printf("  ring: a pause of ten hours costs no stores\n");
+}
+
 static void test_ring() {
   static int32_t mem[2 * kCap];
   loop::Ring r;
@@ -69,8 +90,17 @@ static void test_ring() {
   g.init(mem3, kCap);
   blocks(g, 0, 1400, 0, 100, 693, 70);   // 70 frames lost before the block at 693 + 70 = 763
   CHECK(g.written() == 1400 + 70 - 70 + 0 || g.written() >= 1400);
-  CHECK(mem3[2 * 692] == 693 && mem3[2 * 693] == 0 && mem3[2 * 762] == 0);   // zeros at 693..762
-  CHECK(mem3[2 * 763] == 764 && mem3[2 * 1000] == 1001);                     // linear again, the same map
+  {   // zeros at 693..762 for every reader (not written: stale memory sits there), linear again after, the same map
+    std::vector<int32_t> c(2 * 80);
+    CHECK(g.copy_idx(690, 80, c.data()) == 80);
+    CHECK(c[2 * 2] == 693 && c[2 * 3] == 0 && c[2 * 72] == 0 && c[2 * 73] == 764);
+    CHECK(g.copy_idx(763, 10, c.data()) == 10 && c[0] == 764);
+    int32_t l, r;
+    g.frame(700, &l, &r);
+    CHECK(l == 0 && r == 0);
+    g.frame(1000, &l, &r);
+    CHECK(l == 1001);
+  }
   CHECK(g.gap_in(100 + 650, 200) && !g.gap_in(100 + 100, 100) && !g.gap_in(100 + 900, 200));
   // stream_restart_keeps_map_linear: the Rytm's stream stops for 3 s (the host's frames go on) and comes back
   loop::Ring q;
@@ -89,6 +119,10 @@ static void test_ring() {
   CHECK(q.frame_at(500 + 3000, &idx) && mem4[2 * idx] == 3001);                // before the pause: as it was
   CHECK(q.frame_at(500 + before + 144000 + 70, &idx) && mem4[2 * idx] == (int32_t)(before + 144000 + 71));   // after: the same line
   CHECK(q.gap_in(500 + before + 100, 100) && !q.gap_in(500 + 3000, 100));
+  {   // H1: the 144000-frame pause was not written (bounded work in the completion): stale memory there, zeros for readers
+    std::vector<int32_t> c(2 * 64);
+    CHECK(q.copy_idx(before + 1000, 64, c.data()) == 64 && c[0] == 0 && c[2 * 63] == 0);
+  }
   // records_during_playback: no pause exists: writes always advance
   uint64_t w0 = g.written();
   blocks(g, w0, w0 + 700, 0, 100);
@@ -650,6 +684,12 @@ static void test_cal_console() {
   CHECK(loop::grabs() == 2 && loop::grab_at(0)->half_bars == 1);
   CHECK(cmd("loop=grab:3").find("loop=grab:L") != std::string::npos);
   CHECK(cmd("loop=play:1").find("play grab 1") != std::string::npos);
+  {   // by id: a grab landing meanwhile does not move what is meant (L6)
+    uint32_t id1 = loop::grab_at(1)->id;
+    CHECK(cmd(("loop=play:#" + std::to_string(id1)).c_str()).find("play grab 1") != std::string::npos);
+    CHECK(cmd("loop=play:#9999").find("no grab") != std::string::npos);
+    CHECK(cmd("loop=keep:#9999").find("NO GRAB") != std::string::npos);
+  }
   CHECK(cmd("loop=bal:90").find("bal 90") != std::string::npos && loop::bal() == 90);
   CHECK(cmd("loop=lev:80").find("lev 80") != std::string::npos && loop::lev() == 80);
   CHECK(cmd("loop=fade:2").find("fade 2 bars") != std::string::npos && loop::fade() == loop::kFade2);
@@ -835,14 +875,35 @@ static void test_resample_wait() {
 }
 
 
+// ---- M4: a grab that cannot fit even with every droppable grab gone drops none
+static void test_room_without_drops() {
+  fresh(4u << 20);   // 4 MB: four 1-bar grabs (768 KB each) fill it
+  to((uint64_t)line(10));
+  for (int i = 0; i < 4; ++i) {
+    CHECK(loop::grab(loop::k1) == loop::kOk);
+    run_ms(40);
+    to((uint64_t)(g_origin + (11 + i) * bar() + bar() / 2 + g_lat));
+  }
+  CHECK(loop::grabs() == 4);
+  CHECK(loop::play(2));   // the second grab made plays: it sits in the middle of the store, protected
+  uint32_t played_id = loop::grab_at(2)->id;
+  CHECK(loop::grab(loop::k4) == loop::kOk);   // 3 MB: fits the store's size, not any gap around the playing grab
+  run_ms(60);
+  CHECK(loop::grabs() == 4 && loop::stats().dropped == 0 && loop::grab_at(2)->id == played_id);
+  printf("  room: a grab that cannot fit drops nothing\n");
+}
+
+
 int main() {
   test_ring();
+  test_ring_gap_cost();
   test_grabs();
   test_store();
   test_playback();
   test_resample_stop_mute();
   test_cal_console();
   test_resample_wait();
+  test_room_without_drops();
   test_cost();
   printf("test_loop: OK\n");
   return 0;

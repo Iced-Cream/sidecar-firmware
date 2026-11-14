@@ -41,10 +41,11 @@ export function loopView(st: Record<string, unknown> | null | undefined): LoopVi
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v || 0)));
 export const grabLine = (hb: number) => `loop=grab:${(LENGTHS.find((l) => l.hb === hb) ?? LENGTHS[1]).arg}`;
-export const playLine = (i: number) => `loop=play:${clamp(i, 0, MAX_GRABS - 1)}`;
+/** a grab is named by its id (stable while newer grabs land), not its place in the list */
+export const playLine = (id: number) => `loop=play:#${Math.max(0, Math.round(id || 0))}`;
 /** STOP: a fade over the FADE time at the next bar line; a cut: 10 ms, at once */
 export const stopLine = (cut = false) => (cut ? "loop=stop:cut:now" : "loop=stop");
-export const keepLine = (i: number) => `loop=keep:${clamp(i, 0, MAX_GRABS - 1)}`;
+export const keepLine = (id: number) => `loop=keep:#${Math.max(0, Math.round(id || 0))}`;
 export const balLine = (v: number) => `loop=bal:${clamp(v, 0, 127)}`;
 export const levLine = (v: number) => `loop=lev:${clamp(v, 0, 127)}`;
 export const fadeLine = (i: number) => `loop=fade:${FADES[clamp(i, 0, FADES.length - 1)]}`;

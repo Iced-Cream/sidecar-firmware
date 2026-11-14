@@ -28,7 +28,8 @@ constexpr uint32_t kNoteMs = 2500;   // a refusal / result shows this long
 constexpr uint8_t kLedWhiteDim = 107, kLedGreen = 31, kLedRed = 15;
 
 struct LoopPage {
-  int sel = 0;              // the grab shown (0 newest)
+  int sel = 0;              // the grab shown (0 newest; follows sel_id: a grab landing meanwhile moves the list, not the choice)
+  uint32_t sel_id = 0;      // its id (0: none chosen yet)
   bool func = false;
   int touched = -1;         // the encoder turned last (0..5)
   uint32_t msg_gen = 0;     // the loop's last message seen
@@ -65,8 +66,20 @@ CORE_COLD void grab_box(Canvas& c, int i) {
   if (i == loop::playing()) c.fill(Rect{(int16_t)x, (int16_t)(kGrabY + 10), (int16_t)(kBoxW - 1), 1}, kOn);   // a bar: it plays
 }
 
+CORE_COLD void sync_sel() {   // the shown grab stays the same grab as newer ones land
+  int i = lp.sel_id ? loop::grab_index(lp.sel_id) : -1;
+  if (lp.sel_id && i < 0) lp.sel_id = 0;   // that grab is gone: the newest again
+  lp.sel = lp.sel_id ? i : 0;   // (no grab chosen yet: the newest, whatever lands)
+  if (lp.sel < 0) lp.sel = 0;
+}
+CORE_COLD void remember_sel() {
+  const loop::Grab* g = loop::grab_at(lp.sel);
+  lp.sel_id = g ? g->id : 0;
+}
+
 CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   lp.now = ms;
+  sync_sel();
   c.clear();
   char r[12], st[32], pos[16] = "";
   if (!is_on()) {
@@ -150,7 +163,7 @@ CORE_COLD void loop_enc(int e, int d, bool func) {
       if ((l = list_turn(e, d))) loop::set_live_via(clampi(loop::live_via() + l, 0, 12));
       break;
     case 5:
-      if ((l = list_turn(e, d))) lp.sel = clampi(lp.sel + l, 0, loop::grabs() ? loop::grabs() - 1 : 0);
+      if ((l = list_turn(e, d))) sync_sel(), lp.sel = clampi(lp.sel + l, 0, loop::grabs() ? loop::grabs() - 1 : 0), remember_sel();
       break;
     default: return;
   }
@@ -181,7 +194,7 @@ CORE_COLD bool loop_key(int code) {
   if (code >= 8 && code <= 15) {   // T9..T16: the grabs, newest first: shown and played from the next bar line
     int g = code - 8;
     if (g < loop::grabs()) {
-      lp.sel = g;
+      lp.sel = g, remember_sel();
       if (!loop::play(g)) lp.note = "PLAY FIRST";
     }
     return true;
@@ -189,6 +202,7 @@ CORE_COLD bool loop_key(int code) {
   if (code >= 0 && code < 16) return true;   // T7: nothing
   if (code == 0x44) {   // YES: KEEP the grab shown
     static char t[32];
+    sync_sel();
     if (!loop::keep(lp.sel, t, sizeof t)) lp.note = t;
     return true;
   }

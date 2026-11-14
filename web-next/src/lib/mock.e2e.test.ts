@@ -82,7 +82,7 @@ describe("against the mock server", () => {
     }));
     // the looper: a grab, KEEP, BAL and the stop come back on /status "loop"
     await c.command("loop=grab:8");
-    await c.command("loop=keep:0");
+    await c.command("loop=keep:#3");
     await c.command("loop=bal:96");
     await until(() => seen.some((s) => {
       const lp = (s as Record<string, any>).loop;

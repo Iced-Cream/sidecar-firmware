@@ -196,6 +196,31 @@ CORE_COLD bool drop_oldest() {   // the oldest that is not playing or copying
     }
   return false;
 }
+CORE_COLD bool keeps_extent(int i) { return protected_id(g_[i].id) || (cp_.on && cp_.id == g_[i].id); }
+// first fit among the grabs' extents (only those that cannot be dropped when `fixed`); the place in *off
+CORE_COLD bool first_fit(uint64_t bytes, uint64_t* off, bool fixed) {
+  uint64_t pos = 0;
+  for (;;) {
+    uint64_t end_of_overlap = pos;
+    bool clash = false;
+    for (int i = 0; i < ng_; ++i) {
+      if (fixed && !keeps_extent(i)) continue;
+      uint64_t a = g_off_[i], b = a + (uint64_t)(g_[i].frames + kPre) * 8;
+      if (a < pos + bytes && b > pos) clash = true, end_of_overlap = b > end_of_overlap ? b : end_of_overlap;
+    }
+    if (!clash) {
+      if (pos + bytes > store_bytes_) return false;
+      *off = pos;
+      return true;
+    }
+    pos = (end_of_overlap + 15) & ~15ull;
+  }
+}
+// whether the grab fits once every droppable grab is gone (checked before dropping any)
+CORE_COLD bool room_possible(uint64_t bytes) {
+  uint64_t o;
+  return first_fit(bytes, &o, true);
+}
 CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
   // first fit among the grabs' extents (by offset); false: no gap
   for (;;) {
@@ -265,6 +290,12 @@ CORE_COLD void finalize(uint64_t now) {
   }
   uint64_t bytes = (uint64_t)(len + kPre) * 8;
   uint64_t off;
+  if (!room_possible(bytes)) {   // not even with the others gone: none is dropped for it
+    pend_.on = false;
+    ++stats_.refused;
+    say("NO ROOM");
+    return;
+  }
   if (ng_ >= kMaxGrabs && !drop_oldest()) {
     pend_.on = false;
     ++stats_.refused;
@@ -325,7 +356,7 @@ CORE_COLD void pump_copy() {
   uint32_t n = cp_.total - cp_.done;
   if (n > kPieceBytes / 8) n = kPieceBytes / 8;
   uint64_t w = ring_.written();
-  bool lost = cp_.k >= w || w - cp_.k + n > ring_.capacity();   // the writer would be on the frames we copy
+  bool lost = cp_.k >= w || w - cp_.k + 8 > ring_.capacity();   // the writer would be on the frames we copy (the press rule's margin leaves room for the rest)
   int32_t* dst = (int32_t*)(store_ + g_off_[gi]) + 2 * (size_t)cp_.done;
   uint32_t got = lost ? 0 : ring_.copy_idx(cp_.k, n, dst);
   if (got != n) {   // overtaken: abandoned, the grab refused; a loop playing from it goes (cut)
@@ -521,6 +552,7 @@ CORE_COLD bool bar_position(float* bar, float* of_bars) {
   return true;
 }
 CORE_COLD int grabs() { return ng_; }
+CORE_COLD int grab_index(uint32_t id) { return find_id(id); }
 CORE_COLD const Grab* grab_at(int i) { return i >= 0 && i < ng_ ? &g_[i] : nullptr; }
 CORE_COLD bool pending() { return pend_.on; }
 CORE_COLD const Stats& stats() { return stats_; }
@@ -805,13 +837,10 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     float bar, of;
     char pos[24] = "";
     if (bar_position(&bar, &of)) sniprintf(pos, sizeof pos, " pos %.2f/%.0f", bar, of);
+    char lv[10] = "off";
+    if (live_via_) sniprintf(lv, sizeof lv, "perf%d", live_via_);
     sniprintf(o, cap, "loop: %s, ring %d s, %d grabs [%s]%s, bal %d lev %d fade %s mute %s live %s postlat %d", kStateName[state()],
-              ring_seconds(), ng_, gl, pos, bal_, lev_, kFadeName[fade_], auto_mute_ ? "on" : "off",
-              live_via_ ? "perf" : "off", post_lat_);
-    if (live_via_) {
-      int k = (int)strlen(o);
-      sniprintf(o + k - 3, cap - k + 3, "perf%d postlat %d", live_via_, post_lat_);
-    }
+              ring_seconds(), ng_, gl, pos, bal_, lev_, kFadeName[fade_], auto_mute_ ? "on" : "off", lv, post_lat_);
     return true;
   }
   const char* a = p + 5;
@@ -827,7 +856,13 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     }
   } else if (!strncmp(a, "play:", 5)) {
     int g;
-    if (!parse_int(a + 5, &g) || !play(g)) say("NO GRAB / PLAY FIRST"), sniprintf(o, cap, "loop: no grab %s, or the transport is stopped", a + 5);
+    if (a[5] == '#') {   // by the grab's id (a view that was drawn before a newer grab landed still means the same one)
+      int id = 0;
+      g = parse_int(a + 6, &id) ? find_id((uint32_t)id) : -1;
+    } else if (!parse_int(a + 5, &g)) {
+      g = -1;
+    }
+    if (g < 0 || !play(g)) say("NO GRAB / PLAY FIRST"), sniprintf(o, cap, "loop: no grab %s, or the transport is stopped", a + 5);
     else sniprintf(o, cap, "loop: play grab %d from the next bar line", g);
   } else if (!strncmp(a, "stop", 4)) {
     bool cut = false, now = false;
@@ -842,7 +877,12 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     sniprintf(o, cap, "loop: stop (%s, %s)", cut ? "cut" : "fade", now ? "at once" : "at the next bar line");
   } else if (!strncmp(a, "keep:", 5)) {
     int g;
-    if (!parse_int(a + 5, &g)) sniprintf(o, cap, "loop=keep:N (N 0 newest)");
+    if (a[5] == '#') {
+      int id = 0;
+      g = parse_int(a + 6, &id) ? find_id((uint32_t)id) : -1;
+      if (g < 0) g = 99;   // (no such grab: keep() says NO GRAB)
+    } else if (!parse_int(a + 5, &g)) g = -1;
+    if (g < 0) sniprintf(o, cap, "loop=keep:N (N 0 newest) or #ID");
     else {
       keep(g, b, sizeof b);
       say(b);

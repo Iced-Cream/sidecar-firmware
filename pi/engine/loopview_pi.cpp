@@ -38,6 +38,7 @@ void FillView(sidecar_loop_view_t* o, int sel) {
     for (int i = 0; i < lp::grabs() && i < SLP_GRABS; ++i) {
       const lp::Grab* g = lp::grab_at(i);
       v.g[i].hb = g->half_bars, v.g[i].kept = g->kept, v.g[i].gap = g->gap, v.g[i].copied = g->copied;
+      v.g[i].id = g->id;
       v.g[i].bpm10 = (unsigned short)(g->bpm * 10.0f + 0.5f);
     }
     // the message shows for a few seconds after it came

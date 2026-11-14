@@ -15,7 +15,8 @@ static lv_obj_t *s_Page, *s_TitleBar, *s_Title, *s_Len[6], *s_Stop, *s_Cut, *s_P
 static sidecar_loop_view_t s_V;
 static unsigned s_nGen = ~0u;
 static sidecar_loop_command_t s_Cmd;
-static int s_nSel;		// the grab shown (0 newest)
+static int s_nSel;		// the grab shown (0 newest), from s_nSelId
+static unsigned s_nSelId;	// its id: a grab landing meanwhile moves the list, not what the finger meant
 
 static const char *const kLen[6] = {"1/2", "1", "2", "4", "8", "16"};
 static const char *const kFadeT[5] = {"1/4", "1/2", "1", "2", "4"};
@@ -40,9 +41,9 @@ static void pad_cb (lv_obj_t *o, int i, void *ud)
 	(void) o; (void) i;
 	int n = (int) (intptr_t) ud;
 	if (n >= s_V.ngrabs) return;
-	s_nSel = n;
+	s_nSel = n, s_nSelId = s_V.g[n].id;
 	char c[24];
-	lv_snprintf (c, sizeof c, "loop=play:%d", n);	// shown, and played from the next bar line
+	lv_snprintf (c, sizeof c, "loop=play:#%u", s_V.g[n].id);	// shown, and played from the next bar line
 	cmd (c);
 	s_nGen = ~0u;	// redraw with the new selection
 }
@@ -51,7 +52,7 @@ static void keep_cb (lv_obj_t *o, int i, void *ud)
 	(void) o; (void) i; (void) ud;
 	char c[24];
 	if (s_nSel >= s_V.ngrabs) return;
-	lv_snprintf (c, sizeof c, "loop=keep:%d", s_nSel);
+	lv_snprintf (c, sizeof c, "loop=keep:#%u", s_V.g[s_nSel].id);
 	cmd (c);
 }
 static void level_cb (lv_obj_t *o, int v, void *ud)
@@ -91,7 +92,7 @@ static void live_cb (lv_obj_t *o, int i, void *ud)
 void sidecar_loop_create (void *parent, int y0)
 {
 	const int o = oled ();
-	s_nGen = ~0u, s_nSel = 0;
+	s_nGen = ~0u, s_nSel = 0, s_nSelId = 0;
 	memset (&s_V, 0, sizeof s_V);
 	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
@@ -166,7 +167,14 @@ static void refresh (void)
 	const sidecar_loop_view_t *v = &s_V;
 	char t[64], r[32], l[8];
 	static const char *const kState[4] = {"RING", "STARTS AT THE NEXT BAR", "PLAYING", "FADING BACK"};
-	if (s_nSel >= v->ngrabs) s_nSel = v->ngrabs ? v->ngrabs - 1 : 0;
+	if (s_nSelId)
+	{
+		int f = -1;
+		for (int i = 0; i < v->ngrabs; i++) if (v->g[i].id == s_nSelId) f = i;
+		if (f < 0) s_nSelId = 0;
+		s_nSel = f < 0 ? 0 : f;
+	}
+	else s_nSel = 0;
 	if (v->on) lv_snprintf (r, sizeof r, "RING %ds", v->ring_s);
 	else lv_snprintf (r, sizeof r, "OFF");
 	if (s_TitleBar) th_titlebar_set (s_TitleBar, "LOOP", r, 0);

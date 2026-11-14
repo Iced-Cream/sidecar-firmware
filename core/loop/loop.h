@@ -58,6 +58,7 @@ const char* err_text(int err, int half_bars, char* b, int cap);   // "PLAY FIRST
 
 int grabs();
 const Grab* grab_at(int i);                 // 0 newest
+int grab_index(uint32_t id);                // the index of the grab with that id (it moves as newer ones land), -1 none
 State state();
 int playing();                              // the grab playing (0 newest), -1 none / the loop is gone from the store
 bool playing_info(uint64_t* start, uint32_t* len);   // the loop's sample 0 (host render frame) and length now; false: none

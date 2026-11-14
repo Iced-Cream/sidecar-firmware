@@ -495,10 +495,10 @@ function loopCommand(l, c) {
     l.playing = l.playing >= 0 ? l.playing + 1 : -1;
     if (l.playing >= 8) l.playing = -1;
     if (l.state === "ring") l.state = "wait";
-  } else if ((m = /^loop=play:(\d)$/.exec(c))) { if (l.grabs[+m[1]]) { l.playing = +m[1]; l.state = "wait"; } else say("NO GRAB / PLAY FIRST"); }
+  } else if ((m = /^loop=play:#(\d+)$/.exec(c))) { const i = l.grabs.findIndex((g) => g.id === +m[1]); if (i >= 0) { l.playing = i; l.state = "wait"; } else say("NO GRAB / PLAY FIRST"); }
   else if (/^loop=stop(:cut)?(:now)?$|^loop=stop:fade$/.test(c)) { l.state = "ring"; l.playing = -1; }
-  else if ((m = /^loop=keep:(\d)$/.exec(c))) {
-    const g = l.grabs[+m[1]];
+  else if ((m = /^loop=keep:#(\d+)$/.exec(c))) {
+    const g = l.grabs.find((x) => x.id === +m[1]);
     if (!g) say("NO GRAB"); else if (g.kept) say("ALREADY KEPT"); else { g.kept = 1; say("KEPT sidecar_2026-11-13_1200"); }
   } else if ((m = /^loop=bal:(\d+)$/.exec(c))) l.bal = Math.min(127, +m[1]);
   else if ((m = /^loop=lev:(\d+)$/.exec(c))) l.lev = Math.min(127, +m[1]);

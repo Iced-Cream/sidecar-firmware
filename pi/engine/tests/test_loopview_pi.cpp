@@ -52,7 +52,7 @@ int main() {
   run_to(g_now + 4800);
   loopview_pi::FillView(&b, 0);
   CHECK(b.gen != a.gen && b.ngrabs == 1 && b.g[0].hb == 4 && b.g[0].bpm10 == 1200 && b.g[0].copied && !b.g[0].kept && b.state == 1);
-  CHECK(b.playing == 0 && b.sel == 0);
+  CHECK(b.playing == 0 && b.sel == 0 && b.g[0].id == loop::grab_at(0)->id && b.g[0].id != 0);   // the id the commands name
   run_to(g_now + 200000);   // the loop's start passed
   loopview_pi::FillView(&a, 0);
   CHECK(a.state == 2 && a.gen != b.gen && a.bars10 == 20);

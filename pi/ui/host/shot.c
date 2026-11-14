@@ -352,7 +352,7 @@ static void loop_fake (int n, int state)
 	if (state) s_Lo.pos10 = 27, s_Lo.bars10 = 40;
 	for (int i = 0; i < n; i++)
 	{
-		s_Lo.g[i].hb = kHb[i], s_Lo.g[i].kept = i == 1, s_Lo.g[i].gap = i == 3, s_Lo.g[i].copied = 1, s_Lo.g[i].bpm10 = (unsigned short) (1200 + i * 87);
+		s_Lo.g[i].hb = kHb[i], s_Lo.g[i].kept = i == 1, s_Lo.g[i].gap = i == 3, s_Lo.g[i].copied = 1, s_Lo.g[i].bpm10 = (unsigned short) (1200 + i * 87), s_Lo.g[i].id = (unsigned) (100 + i);
 	}
 	if (n) snprintf (s_Lo.msg, sizeof s_Lo.msg, "KEPT SIDECAR_2026-11-13_1200");
 	s_Lo.gen = (unsigned) (n * 10 + state + 1);
@@ -1490,8 +1490,8 @@ static void theme_run (int style, const char *pre)
 			EXPECT (sidecar_loop_key (5, &x, &y)); tap (x, y); EXPECT_CMD ("loop=grab:16");
 			EXPECT (sidecar_loop_key (6, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop");
 			EXPECT (sidecar_loop_key (7, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop:cut:now");
-			EXPECT (sidecar_loop_key (10, &x, &y)); tap (x, y); EXPECT_CMD ("loop=play:2"); EXPECT (sidecar_loop_sel () == 2);
-			EXPECT (sidecar_loop_key (16, &x, &y)); tap (x, y); EXPECT_CMD ("loop=keep:2");
+			EXPECT (sidecar_loop_key (10, &x, &y)); tap (x, y); EXPECT_CMD ("loop=play:#102"); EXPECT (sidecar_loop_sel () == 2);
+			EXPECT (sidecar_loop_key (16, &x, &y)); tap (x, y); EXPECT_CMD ("loop=keep:#102");
 			EXPECT (sidecar_loop_key (17, &x, &y)); tap (x, y); EXPECT_CMD ("loop=fade:2");	// FADE 1 -> 2 (the fake: index 2 = 1 bar, next 2)
 			EXPECT (sidecar_loop_key (18, &x, &y)); tap (x, y); EXPECT_CMD ("loop=mute:off");	// (the fake has it on)
 			EXPECT (sidecar_loop_key (19, &x, &y)); tap (x, y); EXPECT_CMD ("loop=live:off");	// (the fake has PERF 12: past it is off)

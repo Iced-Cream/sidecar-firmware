@@ -19,6 +19,7 @@ typedef struct
 	unsigned char	hb;			// length in half bars: 1 (1/2 bar), 2, 4 .. 32
 	unsigned char	kept, gap, copied;	// on the card / the ring had a gap in it / the copy into the store is done
 	unsigned short	bpm10;			// the tempo it was grabbed at, x 10
+	unsigned	id;			// the grab's id (stable while newer ones land; the commands name it: loop=play:#ID)
 } sidecar_loop_grab_t;
 
 typedef struct
