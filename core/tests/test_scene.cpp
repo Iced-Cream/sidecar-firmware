@@ -377,9 +377,8 @@ static void console_round_trip() {
   CHECK(say("scene=unlock:5:V1:P3").find("S5 1 lock") != std::string::npos && scene::state().s[4].n == 1);
   say("scene=clear:5");
   CHECK(scene::state().s[4].n == 0);
-  CHECK(say("scene=edit:on").find("edit on") != std::string::npos && scene::edit());
-  say("scene=edit:off");
-  CHECK(!scene::edit());
+  // v2: EDIT is the held gesture (PAGE + T15 / T16), never latched: no console line for it
+  CHECK(say("scene=edit:on").find("cannot") != std::string::npos && !scene::edit());
   for (const char* bad : {"scene=ab:13:1", "scene=lock:1:ZZ1:Q:3", "scene=fader:20000", "scene=lock:1:V1:P1:200",
                           "scene=sel:0", "scene=unlock:9:V1:P1", "scene=edit:maybe", "scene=what"})
     CHECK(say(bad).find("cannot") != std::string::npos);

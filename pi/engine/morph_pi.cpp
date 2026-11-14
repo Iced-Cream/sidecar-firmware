@@ -29,7 +29,7 @@ void FillView(sidecar_morph_view_t* o, int top) {
   memset(&v, 0, sizeof v);
   v.valid = 1;
   v.fader = st.fader, v.a = st.a, v.b = st.b, v.sel = st.sel;
-  v.edit = sc::edit(), v.locked = sc::locked();
+  v.edit = (unsigned char)(sc::edit_side() + 1), v.locked = sc::locked();   // 0 none, 1 A, 2 B (v2)
   for (int k = 0; k < sc::kScenes && k < SMO_SCENES; ++k) v.nlocks[k] = st.s[k].n;
   const sc::Scene& s = st.s[st.sel >= 0 && st.sel < sc::kScenes ? st.sel : 0];
   top = top < 0 ? 0 : top >= s.n ? (s.n > 0 ? s.n - 1 : 0) : top;

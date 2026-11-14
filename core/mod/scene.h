@@ -83,22 +83,29 @@ void rekey(const char* name);               // the scenes in memory are now name
 #endif
 void load();                                // the kit's file, else the project's, else none (the store only)
 bool save();                                // idle_save: true if it wrote (or settled a locked file)
-void kit_changed(int kit);                  // the Rytm's active kit (0..127): the old kit's edits saved, the new loaded
+void kit_changed(int kit);                  // the Rytm's active kit (0..127): the old kit's edits saved, the new loaded;
+                                            // a held EDIT ends
 void project_changed();                     // the old project's (kit's) edits saved (queued), the new loaded
 void save_due();                            // the unsaved edits due now (a rename's flush, a restart)
 bool dirty();
 bool locked();
 int kit();                                  // the kit the scenes are of, -1 none named
 
-// ---- the MORPH page's EDIT (spec-050 2.6: hold a scene key and turn a knob on any Sidecar page locks it; Phase 6)
-void set_edit(bool on);
-bool edit();
+// ---- EDIT (0.5.0 v2, the owner 2026-11-14: momentary, Octatrack-style): PAGE + T15 held = scene A, PAGE + T16 = scene
+// B; while that trig is held a knob turned on a Sidecar page locks into that side's scene, and T1..T12 make scene n that
+// side. The host's key handling (ui/remote.cpp) sets it; the trig's release, a hello or a kit change ends it.
+void set_edit_side(int side);               // 0 A, 1 B, -1 none
+int edit_side();
+inline bool edit() { return edit_side() >= 0; }
+int side_scene(int side);                   // A's (0) or B's (1) scene 0..11, -1 none
+bool lock_side(int side, mod::Tid t, uint16_t v);   // lock() into that side's scene; false also when the side has none
 // ---- the console and /status (spec-050 2.10): "scene" (the state), "scene=ab:A:B" (1..12, 0 none), "scene=fader:V"
 // (0..16383), "scene=sel:N", "scene=lock:N:NAME:V" (V the target's value, 0..127.99, kept x 128), "scene=unlock:N:NAME",
-// "scene=clear:N", "scene=copy:N:M", "scene=edit:on|off"; each edit answers with the state. False: not "scene..."
+// "scene=clear:N", "scene=copy:N:M"; each edit answers with the state. False: not "scene..."
 bool command(const char* p, char* out, int cap);
-// "\"scene\":{\"a\":A,\"b\":B,\"fader\":F,\"played\":P,\"sel\":S,\"locked\":0|1,\"edit\":0|1,\"s\":[{\"n\":N,\"l\":[[\"V1:P3\",6400],...]},...],\"src\":SRC,\"rscn\":R}"
-// (SRC the fader's last source, 0 none; R the Rytm's own scene 1..12, 0 none, -1 not reported)
+// "\"scene\":{\"a\":A,\"b\":B,\"fader\":F,\"played\":P,\"sel\":S,\"locked\":0|1,\"edit\":0|1|2,\"s\":[{\"n\":N,\"l\":[[\"V1:P3\",6400],...]},...],\"src\":SRC,\"rscn\":R}"
+// (edit: 0 none, 1 A held, 2 B held; SRC the fader's last source, 0 none; R the Rytm's own scene 1..12, 0 none, -1 not
+// reported)
 // (A, B, S, N 1-based, 0 none; only the scenes with locks): its length, cap when it did not fit (a 768-lock state fits 16 KB)
 int json(char* out, int cap);
 

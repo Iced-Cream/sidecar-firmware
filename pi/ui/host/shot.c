@@ -1454,6 +1454,21 @@ static void theme_run (int style, const char *pre)
 		morph_fake (0, 0); sidecar_morph_set (&s_Mo); run (2); shot ("morph-empty");
 		morph_fake (24, 0); sidecar_morph_set (&s_Mo); run (2); shot ("morph-locks");
 		morph_fake (24, 16); s_Mo.edit = 1; s_Mo.gen++; sidecar_morph_set (&s_Mo); run (2); shot ("morph-edit");
+		// v2 Task 5: ADD - RT1 FLTR FRQ at 87 into the selected scene (3); RFX REVERB RDEC; BACK closes
+		morph_fake (5, 0); sidecar_morph_set (&s_Mo); run (2);
+		sidecar_morph_add (1);
+		EXPECT (!strcmp (sidecar_morph_add_name (), "RT1:P1"));
+		sidecar_morph_add_step (1, 2); sidecar_morph_add_step (2, 5); sidecar_morph_add_value (87); run (2);
+		shot ("morph-add");
+		sidecar_morph_add_go ();
+		EXPECT_CMD ("scene=lock:3:RT1:FRQ:87");
+		sidecar_morph_add_step (0, -9); sidecar_morph_add_step (1, 1); sidecar_morph_add_step (2, 1); sidecar_morph_add_value (100);
+		sidecar_morph_add_go ();
+		EXPECT_CMD ("scene=lock:3:RFX:RDEC:100");
+		sidecar_morph_add_step (0, 1); sidecar_morph_add_step (1, 1);
+		EXPECT (!strcmp (sidecar_morph_add_name (), "V1:P9"));
+		sidecar_morph_add (0);
+		EXPECT (!sidecar_morph_add_name ()[0]);
 		sidecar_ui_show (pg);
 		EXPECT (!sidecar_morph_shown ());
 	}

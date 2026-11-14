@@ -33,6 +33,7 @@ int g_qp_pos = -1;
 bool g_qp_seen = false;
 uint32_t g_qp_ms = 0;
 int g_rscn = -1;                    // the Rytm's own scene as reported (2D 01 0F), -1 none
+int g_side = -1;                    // EDIT (v2): the side held, 0 A (PAGE + T15), 1 B (PAGE + T16), -1 none
 bool g_upper = false;            // the stepped targets' side: B's (true) or A's; switched with 1/64 hysteresis
 int g_last_a = -1, g_last_b = -1;   // the A / B the layer's entries are of (an A / B change releases the old ones)
 // A's and B's locks merged: each target once, with its A value and its B value (-1: that side does not lock it)
@@ -329,6 +330,7 @@ CORE_COLD void reset() {
   g_last_a = g_last_b = -1;
   g_mn = 0, g_stale = true;
   g_dirty = g_locked = false, g_kit = g_rytm_kit = -1;
+  g_side = -1;
 }
 
 // ---------------------------------------------------------------------------------------------------- the card
@@ -339,7 +341,6 @@ CORE_COLD bool locked() { return g_locked; }
 // ---------------------------------------------------------------------------------------------------- console, JSON
 
 namespace {
-bool g_edit = false;
 // the next ':'-separated field of *pp into f (at most cap - 1 chars); false: none left
 CORE_COLD bool field(const char** pp, char* f, int cap) {
   const char* p = *pp;
@@ -374,7 +375,7 @@ CORE_COLD int value128(const char* s) {   // "50", "50.5", "127.99": x 128, roun
 }
 CORE_COLD int state_line(char* o, int cap) {
   int n = sniprintf(o, cap, CORE_STR("scene: A %d B %d fader %u (%d played) sel %d edit %s"), g_st.a + 1, g_st.b + 1,
-                    (unsigned)g_st.fader, g_played, g_st.sel + 1, g_edit ? "on" : "off");
+                    (unsigned)g_st.fader, g_played, g_st.sel + 1, g_side == 0 ? "A" : g_side == 1 ? "B" : "off");
   bool first = true;
   for (int i = 0; i < kScenes && n > 0 && n < cap; ++i) {
     if (!g_st.s[i].n) continue;
@@ -386,8 +387,13 @@ CORE_COLD int state_line(char* o, int cap) {
 }
 }  // namespace
 
-CORE_COLD void set_edit(bool on) { g_edit = on; }
-CORE_COLD bool edit() { return g_edit; }
+CORE_COLD void set_edit_side(int side) { g_side = side == 0 || side == 1 ? side : -1; }
+CORE_COLD int edit_side() { return g_side; }
+CORE_COLD int side_scene(int side) { return side == 0 ? g_st.a : side == 1 ? g_st.b : -1; }
+CORE_COLD bool lock_side(int side, mod::Tid t, uint16_t v) {
+  int n = side_scene(side);
+  return n >= 0 && lock(n, t, v);
+}
 
 CORE_COLD bool command(const char* p, char* o, int cap) {
   if (strncmp(p, "scene", 5) != 0 || (p[5] && p[5] != '=')) return false;
@@ -430,9 +436,6 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     } else if (ok) {
       ok = !q && unlock(x - 1, t);
     }
-  } else if (!strcmp(k, "edit")) {
-    ok = field(&q, a, sizeof a) && !q && (!strcmp(a, "on") || !strcmp(a, "off"));
-    if (ok) set_edit(a[1] == 'n');
   } else {
     ok = false;
   }
@@ -440,7 +443,7 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
   else if (refused) sniprintf(o, cap, CORE_STR("scene: NOT A SCENE TARGET (%s)"), p);
   else if (!ok)
     sniprintf(o, cap, CORE_STR("scene: cannot \"%s\" (scene=ab:A:B | fader:V | sel:N | lock:N:NAME:V | unlock:N:NAME | "
-                               "clear:N | copy:N:M | edit:on|off)"), p);
+                               "clear:N | copy:N:M)"), p);
   else state_line(o, cap);
   return true;
 }
@@ -448,7 +451,7 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
 CORE_COLD int json(char* o, int cap) {
   int n = sniprintf(o, cap, CORE_STR("\"scene\":{\"a\":%d,\"b\":%d,\"fader\":%u,\"played\":%d,\"sel\":%d,\"locked\":%d,"
                                      "\"edit\":%d,\"s\":["), g_st.a + 1, g_st.b + 1, (unsigned)g_st.fader, g_played,
-                    g_st.sel + 1, g_locked ? 1 : 0, g_edit ? 1 : 0);
+                    g_st.sel + 1, g_locked ? 1 : 0, g_side + 1);
   bool first = true;
   for (int i = 0; i < kScenes; ++i) {
     const Scene& s = g_st.s[i];
@@ -615,6 +618,7 @@ CORE_COLD void project_changed() {
 
 CORE_COLD void kit_changed(int kit) {
   if (kit < 0 || kit > 127) return;
+  if (kit != g_rytm_kit) g_side = -1;   // v2: a held EDIT ends with the kit (its scenes go)
   g_rytm_kit = kit;
   // a project's store still filling: its load takes this kit; a rename moving the files: the switch after it does
   if (!store::ready() || rename::moving()) return;
@@ -624,7 +628,10 @@ CORE_COLD void kit_changed(int kit) {
 CORE_COLD void load() {}
 CORE_COLD bool save() { return false; }
 CORE_COLD void project_changed() {}
-CORE_COLD void kit_changed(int kit) { g_rytm_kit = kit; }
+CORE_COLD void kit_changed(int kit) {
+  if (kit != g_rytm_kit) g_side = -1;
+  g_rytm_kit = kit;
+}
 #endif
 
 }  // namespace scene

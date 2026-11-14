@@ -1,7 +1,8 @@
 // core/tests/test_morph_page.cpp - the MORPH page (core/ui/page_morph.cpp, spec-050 2.6) through the remote host, as
 // test_lfo.cpp's page part: the scene keys (tap selects, T15 / T16 held + Tn A / B, Tn held its lock list), the fader
 // on encoder A, the list's edits (B..H, LEFT / RIGHT, NO removes, YES twice clears), no SCN / PERF cells (v2),
-// FUNC + YES EDIT, the trig LEDs, and every text on the Rytm's screen fits (check.h's TEXT-FIT).
+// the ADD row (v2 Task 5), the trig LEDs, and every text on the Rytm's screen fits (check.h's TEXT-FIT); on the other
+// Sidecar pages the momentary EDIT (v2): PAGE + T15 / T16 held = scene A / B, a turn locks into it, + T1..T12 picks it.
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -153,7 +154,7 @@ static void hold_shows_lock_list_and_edits() {
   CHECK(lock_v(2, T("V1:P1")) == 11 * 128 && shows("V1:ENG:11"));
   turn(3, 2, true);            // D: row 3 + 16 (FUNC x 8)
   CHECK(lock_v(2, T("V1:P3")) == 28 * 128);
-  tap(0x41), tap(0x41), tap(0x41);   // RIGHT x 3: scrolls to the end (rows 3..9)
+  tap(0x41), tap(0x41);        // RIGHT x 2: rows 3..9 (a third: the ADD row on top, v2)
   CHECK(shows("3-9/9") && shows("V1:FM") && !shows("V1:HRM"));
   turn(7, -1);                 // H: row 9
   CHECK(lock_v(2, T("V1:P9")) == 17 * 128);
@@ -170,11 +171,11 @@ static void hold_shows_lock_list_and_edits() {
 static void no_removes_row() {
   open_page();
   CHECK(scene::lock(0, T("V1:P1"), 128) && scene::lock(0, T("MFX:LEV"), 64 * 128) && scene::lock(0, T("V2:P2"), 256));
-  down(0x00), tap(0x41);       // RIGHT: no scroll with 3 rows (the list fits)
+  down(0x00);
   tap(0x45);                   // NO: B's row (V1:P1) goes
   CHECK(scene::state().s[0].n == 2 && lock_v(0, T("V1:P1")) < 0 && lock_v(0, T("MFX:LEV")) == 64 * 128);
   tap(0x45), tap(0x45), tap(0x45);   // NO on an empty list: nothing, the page stays
-  CHECK(scene::state().s[0].n == 0 && !strcmp(ui::remote_page_title(), "MORPH") && shows("NO LOCKS IN THIS SCENE"));
+  CHECK(scene::state().s[0].n == 0 && !strcmp(ui::remote_page_title(), "MORPH") && shows("S1 ADD"));
   up(0x00);
   int closes = g_closes;
   tap(0x45);                   // NO with no scene key held: back (nav044: a shortcut's page asks itself closed)
@@ -207,16 +208,62 @@ static void no_scn_perf_cells() {
   printf("  no_scn_perf_cells: G / H do nothing, no SCN / PERF cells\n");
 }
 
-static void func_yes_edit() {
+// ---- v2 Task 5: the ADD row, the last of a held scene's list (on top: B track, C page, D param, E value, YES adds)
+static void hold_add(int key) {   // the scene key held, scrolled until ADD is the top row
+  down(key), tick(10);
+  for (int i = 0; i < 70; ++i) tap(0x41);
+  CHECK(shows(" ADD"));
+}
+static void add_row_rt() {
   open_page();
-  CHECK(!scene::edit());
-  down(0x80), tap(0x44), up(0x80);
-  CHECK(scene::edit() && shows("EDIT ON"));
-  tap(0x44);                   // YES alone: nothing
-  CHECK(scene::edit());
-  down(0x80), tap(0x44), up(0x80);
-  CHECK(!scene::edit());
-  printf("  func_yes_edit: FUNC + YES toggles EDIT\n");
+  hold_add(0x02);
+  CHECK(shows("S3 ADD") && shows("RT1") && shows("SRC"));
+  turn(2, 2);                  // C: SRC SMPL FLTR
+  turn(3, 5);                  // D: FENV FATK FDEC FSUS FREL FRQ
+  turn(4, 23);                 // E: 64 (the Rytm's own: no base here) + 23
+  CHECK(shows("FLTR") && shows("FRQ") && shows("87"));
+  tap(0x44);                   // YES adds
+  CHECK(lock_v(2, T("RT1:FRQ")) == 87 * 128 && scene::state().s[2].n == 1);
+  up(0x02);
+  printf("  add_row_rt: hold T3, ADD: RT1 FLTR FRQ 87, YES -> scene 3 has RT1:FRQ 87\n");
+}
+static void add_row_rfx() {
+  open_page();
+  hold_add(0x04);
+  turn(1, 12);                 // B: RT1..RT12, RFX
+  turn(2, 1);                  // C: DELAY REVERB
+  turn(3, 1);                  // D: PRE RDEC
+  turn(4, 36);
+  CHECK(shows("RFX") && shows("REVERB") && shows("RDEC"));
+  tap(0x44);
+  CHECK(lock_v(4, T("RFX:RDEC")) == 100 * 128);
+  up(0x04);
+  printf("  add_row_rfx: ADD RFX REVERB RDEC 100\n");
+}
+static void add_row_voice() {
+  open_page();
+  uint8_t m[39] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(kPlaits | 0)};   // V1 PLAITS, its knobs at 40
+  for (int k = 0; k < 16; ++k) m[6 + 2 * k] = 40, m[7 + 2 * k] = 0;
+  m[38] = 0xF7;
+  engine_sysex(m, 39);
+  tick();
+  hold_add(0x00);
+  turn(1, 13);                 // B: .. RFX, V1
+  CHECK(shows("V1") && shows("ENG"));
+  turn(4, 5);                  // E: from the base (40) + 5
+  tap(0x44);
+  CHECK(lock_v(0, T("V1:P1")) == 45 * 128);
+  up(0x00);
+  printf("  add_row_voice: ADD V1 ENG (its machine's name) from the base 40 + 5\n");
+}
+static void add_row_full_refused() {
+  open_page();
+  for (int k = 0; k < 64; ++k) CHECK(scene::lock(3, mod::tid(mod::kV, k / 16, k % 16), 128));
+  hold_add(0x03);
+  tap(0x44);
+  CHECK(scene::state().s[3].n == 64 && lock_v(3, T("RT1:P1")) < 0 && shows("SCENE FULL"));
+  up(0x03);
+  printf("  add_row_full_refused: a 65th lock by ADD: SCENE FULL\n");
 }
 
 static void leds() {
@@ -243,6 +290,9 @@ static void text_fit() {
   CHECK(!scene::lock(11, T("FX1:P2"), 0) && scene::state().s[11].n == 64);   // the 65th: SCENE FULL
   scene::set_ab(10, 11), scene::set_fader(16383, scene::kConsole);
   tap(0x0B), turn(0, 1), draw();
+  hold_add(0x0B), tap(0x44);   // ADD on a full scene
+  CHECK(shows("SCENE FULL"));
+  up(0x0B);
   png("morph_full.png");
   down(0x0B), tick(10);
   png("morph_list.png");
@@ -251,7 +301,6 @@ static void text_fit() {
   png("morph_clear.png");
   up(0x0B), draw();
   tap(0x45), draw();
-  scene::set_edit(true), draw();
   printf("  text_fit: every state drawn with S12, 64 locks, the longest names (TEXT-FIT checks at exit)\n");
 }
 
@@ -283,56 +332,139 @@ static int enc_param(int e) {   // the voice page's encoder e: its P (0..15)
   return p->enc[e] & 15;
 }
 
-static void held_scene_key_turn_locks() {
+static void page(bool down_) { from_rytm(0x31, 0x84 >> 7, 0x84 & 0x7F, down_ ? 1 : 0), tick(1); }
+static void side(int key) { page(true), tick(), down(key), tick(); }   // PAGE + T15 / T16 held (PAGE still down)
+
+static void page_t15_turn_locks_a() {
   voice_page();
-  scene::set_edit(true);
+  scene::set_ab(2, 6);
   tick();
-  CHECK((g_mask_trigs & 0x0FFF) == 0x0FFF && !(g_mask_trigs & 0xF000));   // T1..T12 the page's while EDIT is on
+  CHECK(!(g_mask_trigs & 0xFFFF));          // nothing held: the trig keys are the Rytm's
+  page(true), tick();
+  CHECK((g_mask_trigs & 0xFFFF) == 0xC000); // PAGE held: T15 / T16 the host's
+  down(0x0E), tick();
+  CHECK((g_mask_trigs & 0xFFFF) == 0xCFFF && scene::edit_side() == 0);   // EDIT A: T1..T12 too
   int k = enc_param(1);
   uint32_t edits = ui::remote_stats().edits;
   float before = v[0].p[k];
-  down(0x02), turn(1, 3);                   // T3 held + B: scene 3 locks V1's P, from the base (40) + 3
+  turn(1, 3);                               // scene A (3) locks V1's P, from the base (40) + 3
   CHECK(lock_v(2, mod::tid(mod::kV, 0, k)) == 43 * 128);
-  turn(1, 1);                               // again: from the scene's lock
+  page(false), page(true), page(false);     // PAGE let go first (and again): EDIT stays while T15 is held
+  turn(1, 1);
   CHECK(lock_v(2, mod::tid(mod::kV, 0, k)) == 44 * 128);
-  CHECK(ui::remote_stats().edits == edits && v[0].p[k] == before);   // no set_param, the voice as it was
-  up(0x02);
-  turn(1, 1);                               // no scene key held: the page's own edit, as always
+  CHECK(ui::remote_stats().edits == edits && v[0].p[k] == before && ui::remote_stats().voice == 0);   // no page step
+  up(0x0E), tick();
+  CHECK(scene::edit_side() < 0 && !(g_mask_trigs & 0xFFFF));
+  turn(1, 1);                               // nothing held: the page's own edit, as always
   CHECK(ui::remote_stats().edits == edits + 1 && lock_v(2, mod::tid(mod::kV, 0, k)) == 44 * 128);
-  // MASTER: its LEV (H) while T1 is held: scene 1 locks MFX:LEV, the master's knob stays
+  // MASTER: its LEV (H) under PAGE + T15: scene A (3) locks MFX:LEV, the master's knob stays
   core::ins::set_type(core::master::chain(0), core::master::slot(0), core::ins::kComp);   // a master slot: MASTER shown
   ui::mfx_page_set(0, true);   // its EQ view: H the master's LEV
   ui::remote_show_page("MASTER");
   tick();
-  CHECK(ui::remote_page_title() && !strcmp(ui::remote_page_title(), "MASTER") && (g_mask_trigs & 0x0FFF) == 0x0FFF);
+  CHECK(ui::remote_page_title() && !strcmp(ui::remote_page_title(), "MASTER"));
   int lev = core::master::control.lev;
-  down(0x00), turn(7, 2);
-  CHECK(lock_v(0, mod::tid(mod::kMfx, 0, 0)) == (lev + 2) * 128 && core::master::control.lev == lev);
-  up(0x00);
+  side(0x0E), turn(7, 2);
+  CHECK(lock_v(2, mod::tid(mod::kMfx, 0, 0)) == (lev + 2) * 128 && core::master::control.lev == lev);
+  up(0x0E), page(false);
+  CHECK(!strcmp(ui::remote_page_title(), "MASTER"));
   core::ins::set_type(core::master::chain(0), core::master::slot(0), 0);
-  scene::set_edit(false);
-  printf("  held_scene_key_turn_locks: EDIT on, T3 held + a voice knob locks scene 3 (no set_param); MASTER's LEV\n");
+  printf("  page_t15_turn_locks_a: PAGE + T15 held + a voice knob locks scene A (no set_param, no page step); MASTER's LEV\n");
+}
+
+static void page_t16_turn_locks_b() {
+  voice_page();
+  scene::set_ab(2, 6);
+  side(0x0F);
+  int k = enc_param(1);
+  turn(1, 2);
+  CHECK(lock_v(6, mod::tid(mod::kV, 0, k)) == 42 * 128 && scene::state().s[2].n == 0 && scene::edit_side() == 1);
+  up(0x0F), page(false);
+  printf("  page_t16_turn_locks_b: PAGE + T16 locks scene B\n");
+}
+
+static void t15_without_a_refused() {
+  voice_page();
+  side(0x0E);
+  uint32_t edits = ui::remote_stats().edits;
+  turn(1, 2);
+  tick();
+  CHECK(sent_has("SET A: T1-12") && ui::remote_stats().edits == edits);
+  for (int n = 0; n < scene::kScenes; ++n) CHECK(scene::state().s[n].n == 0);
+  up(0x0E), page(false);
+  printf("  t15_without_a_refused: no A: the turn is refused, SET A: T1-12\n");
+}
+
+static void page_t15_plus_t3_sets_a_on_voice_page() {
+  voice_page();
+  scene::set_ab(0, 6), scene::set_fader(5000, scene::kConsole);
+  side(0x0E);
+  tap(0x02);                                // T3: scene 3 becomes A; the fader stays
+  CHECK(scene::state().a == 2 && scene::state().b == 6 && scene::state().fader == 5000);
+  turn(1, 1);
+  CHECK(scene::state().s[2].n == 1);
+  up(0x0E), page(false);
+  side(0x0F), tap(0x04), up(0x0F), page(false);   // PAGE + T16 + T5: B = 5
+  CHECK(scene::state().a == 2 && scene::state().b == 4 && ui::remote_stats().voice == 0);
+  printf("  page_t15_plus_t3_sets_a_on_voice_page: PAGE + T15 + T3: A = 3; PAGE + T16 + T5: B = 5\n");
+}
+
+static void t1_alone_not_a_scene_key() {
+  voice_page();
+  scene::set_ab(0, 1);
+  int k = enc_param(1);
+  uint32_t edits = ui::remote_stats().edits;
+  down(0x00), turn(1, 1), up(0x00);         // (a T1 the Rytm keeps: no EDIT)
+  down(0x0E), turn(1, 1), up(0x0E);         // T15 without PAGE: the Rytm's too
+  CHECK(scene::state().s[0].n == 0 && scene::state().a == 0 && ui::remote_stats().edits == edits + 2);
+  (void)k;
+  printf("  t1_alone_not_a_scene_key: T1 / T15 alone are the Rytm's, a turn edits the voice\n");
+}
+
+static void page_alone_still_steps() {
+  voice_page();
+  page(true), tick();
+  CHECK(ui::remote_stats().voice == 0);     // held back while it may start the gesture
+  page(false), tick();
+  CHECK(ui::remote_stats().voice != 0);     // let go alone: PAGE's own step, as always
+  printf("  page_alone_still_steps: PAGE alone steps the page at its release\n");
+}
+
+static void edit_released_on_kit_change() {
+  voice_page();
+  scene::set_ab(2, 6);
+  side(0x0E);
+  CHECK(scene::edit_side() == 0);
+  const uint8_t kit[8] = {0xF0, 0x7D, 0x52, 0x54, 0x3B, 1, 4, 0xF7};
+  engine_sysex(kit, 8);
+  tick();
+  CHECK(scene::edit_side() < 0);
+  uint32_t edits = ui::remote_stats().edits;
+  turn(1, 1);                               // the gesture let go: an edit, no lock
+  CHECK(ui::remote_stats().edits == edits + 1);
+  up(0x0E), page(false);
+  printf("  edit_released_on_kit_change: a kit change ends the held EDIT\n");
 }
 
 static void edit_off_trigs_stock() {
   voice_page();
-  CHECK(!(g_mask_trigs & 0xFFFF));          // EDIT off: the trig keys are the Rytm's on a voice page
+  CHECK(!(g_mask_trigs & 0xFFFF));          // nothing held: the trig keys are the Rytm's on a voice page
   int k = enc_param(1);
   uint32_t edits = ui::remote_stats().edits;
   down(0x02), turn(1, 1), up(0x02);         // (a T3 the Rytm would keep: nothing locks)
   CHECK(scene::state().s[2].n == 0 && ui::remote_stats().edits == edits + 1);
   (void)k;
-  printf("  edit_off_trigs_stock: EDIT off - no trig keys caught, a turn edits the voice\n");
+  printf("  edit_off_trigs_stock: no PAGE + T15 / T16 - no trig keys caught, a turn edits the voice\n");
 }
 
 static void locked_value_shown_while_held() {
   voice_page();
-  scene::set_edit(true);
+  scene::set_ab(2, 6);
   tick();
-  CHECK(sent_has("EDIT"));                  // every Sidecar page's header says EDIT while it is on
-  down(0x02);
+  CHECK(!sent_has("EDIT"));
+  side(0x0E);
   tick();
-  CHECK(sent_has("EDIT S3"));
+  CHECK(sent_has("BD EDIT A"));             // the header keeps the voice (its track: UX 7's "V1 EDIT A")
   turn(1, 5);
   tick();
   char want[32], nm[16];
@@ -340,13 +472,10 @@ static void locked_value_shown_while_held() {
   CHECK(strncmp(nm, "V1:P", 4) != 0);
   snprintf(want, sizeof want, "S3 %s:45", nm);
   CHECK(sent_has(want));                    // the bottom bar: the scene's locked value
-  up(0x02);
+  up(0x0E), page(false);
   tick();
-  CHECK(!sent_has(want) && sent_has("EDIT") && !sent_has("EDIT S3"));
-  scene::set_edit(false);
-  tick();
-  CHECK(!sent_has("EDIT"));
-  printf("  locked_value_shown_while_held: EDIT / EDIT S3 in the header, the locked value in the bottom bar\n");
+  CHECK(!sent_has(want) && !sent_has("EDIT"));
+  printf("  locked_value_shown_while_held: BD EDIT A (the voice kept) in the header, the locked value in the bottom bar\n");
 }
 
 // ---- review: seq mode (a Sidecar seq track selected: 2D 01 08 1 t) sends every key and turn to the sequencer first
@@ -376,15 +505,13 @@ static void seq_mode_edit_lock() {
   ui::remote_show_page("SIDECAR");
   tick(), tap(0x41), tap(0x41), tick();
   CHECK(ui::remote_stats().voice == 0);
-  scene::set_edit(true);
-  tick();
+  scene::set_ab(2, 6);
   int k = enc_param(1);
-  down(0x02), turn(1, 2);
+  side(0x0E), turn(1, 2);
   CHECK(lock_v(2, mod::tid(mod::kV, 0, k)) == 42 * 128);
-  up(0x02);
-  scene::set_edit(false);
+  up(0x0E), page(false);
   seq_mode(false);
-  printf("  seq_mode_edit_lock: in seq mode a held scene key + a voice knob still locks\n");
+  printf("  seq_mode_edit_lock: in seq mode PAGE + T15 + a voice knob still locks\n");
 }
 
 static void release_while_seq_shown() {
@@ -397,36 +524,33 @@ static void release_while_seq_shown() {
   up(0x03);                                 // released with SEQ shown: still MORPH's release
   CHECK(ui::morph_page_held() == -1);
   voice_page();
-  scene::set_edit(true);
-  tick();
-  down(0x02);
+  scene::set_ab(2, 6);
+  side(0x0E);
   ui::remote_show_page("SEQ");
   tick();
-  up(0x02);                                 // EDIT's scene key let go on SEQ
+  up(0x0E), page(false);                    // EDIT's key let go on SEQ
   tick();
-  CHECK(!sent_has("EDIT S3"));
+  CHECK(scene::edit_side() < 0 && !sent_has("EDIT A"));
   ui::remote_show_page("SIDECAR");
   tick(), tap(0x41), tap(0x41), tick();
   uint32_t edits = ui::remote_stats().edits;
   turn(1, 1);                               // no scene key held any more: an edit, no lock
   CHECK(ui::remote_stats().edits == edits + 1 && scene::state().s[2].n == 0);
-  scene::set_edit(false);
   printf("  release_while_seq_shown: a held key's release reaches its page even with SEQ shown\n");
 }
 
 static void not_lockable_note() {
   voice_page();
-  scene::set_edit(true);
+  scene::set_ab(0, 1);
   core::ins::set_type(core::master::chain(0), core::master::slot(0), core::ins::kComp);
   ui::mfx_page_set(0, false);
   ui::remote_show_page("MASTER");
   tick();
-  down(0x00), turn(4, 1);                   // E: the slot (a list, no target)
+  side(0x0E), turn(4, 1);                   // E: the slot (a list, no target)
   tick();
   CHECK(sent_has("NOT LOCKABLE") && scene::state().s[0].n == 0);
-  up(0x00);
+  up(0x0E), page(false);
   core::ins::set_type(core::master::chain(0), core::master::slot(0), 0);
-  scene::set_edit(false);
   printf("  not_lockable_note: a knob with no target under a held scene key says NOT LOCKABLE\n");
 }
 
@@ -440,10 +564,19 @@ int main() {
   no_removes_row();
   yes_clears_after_confirm();
   no_scn_perf_cells();
-  func_yes_edit();
+  add_row_rt();
+  add_row_rfx();
+  add_row_voice();
+  add_row_full_refused();
   leds();
   text_fit();
-  held_scene_key_turn_locks();
+  page_t15_turn_locks_a();
+  page_t16_turn_locks_b();
+  t15_without_a_refused();
+  page_t15_plus_t3_sets_a_on_voice_page();
+  t1_alone_not_a_scene_key();
+  page_alone_still_steps();
+  edit_released_on_kit_change();
   edit_off_trigs_stock();
   locked_value_shown_while_held();
   seq_mode_morph_knobs();

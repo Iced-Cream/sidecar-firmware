@@ -62,10 +62,10 @@ int main() {
   char n[12];
   mod::name(scene::state().s[3].l[10].t, n, sizeof n);
   CHECK(!strcmp(b.row[0].name, n));
-  scene::set_edit(true);
+  scene::set_edit_side(0);
   morph_pi::FillView(&a, 10);
-  CHECK(a.edit && a.gen != b.gen);
-  scene::set_edit(false);
+  CHECK(a.edit == 1 && a.gen != b.gen);
+  scene::set_edit_side(-1);
   // core 3 publishes while wanted (every 50 ms at most), core 0 takes the newest once
   unsigned seen = 0;
   morph_pi::Tick();

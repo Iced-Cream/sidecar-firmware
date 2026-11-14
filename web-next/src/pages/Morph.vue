@@ -11,8 +11,8 @@ import { coalescer } from "../lib/coalesce";
 import { confirmAsk } from "../lib/confirm";
 import { useSidecar } from "../lib/useSidecar";
 import {
-  FADER_MAX, LOCKS, SCENES, SOURCES, abLine, clearLine, copyLine, editLine, faderLine, lockLabel, lockLine, morphed, sceneView, selLine,
-  suggest, targetName, unlockLine, valueText,
+  ADD_TRACKS, FADER_MAX, LOCKS, SCENES, SOURCES, abLine, addPages, addParams, clearLine, copyLine, faderLine, lockLabel, lockLine, morphed,
+  sceneView, selLine, unlockLine, valueText,
 } from "../lib/scene";
 
 const { status, cmd, paired } = useSidecar();
@@ -54,7 +54,6 @@ const unset = (side: "a" | "b") => sc.value && send(abLine(side === "a" ? -1 : s
 
 // the selected scene's locks: each one's value as a fader (0..127.99, stored x 128)
 const locks = computed(() => sc.value?.locks[sel.value] ?? []);
-const targets = computed(() => suggest(sc.value?.vl));
 // the same target's value in the other end's scene, so what the morph plays now can be shown
 const other = computed(() => {
   const s = sc.value;
@@ -71,14 +70,16 @@ function playing(name: string, v: number): string | null {
   return m === null ? null : valueText(m);
 }
 const setLock = (name: string, v: number) => void live(lockLine(sel.value, name, v * 128));
-const addName = ref("");
-const addValue = ref(64);
-const addOk = computed(() => !!targetName(addName.value));
+// the ADD picker (v2: as the MORPH page's ADD row): a track, its page, a param, the value
+const addTrack = ref("RT1"), addPage = ref("SRC"), addParam = ref(""), addValue = ref(64);
+const pages = computed(() => addPages(addTrack.value));
+const params = computed(() => addParams(addTrack.value, addPage.value, sc.value?.vl));
+watch(addTrack, () => { addPage.value = pages.value[0]; });
+watch(params, (ps) => { if (!ps.some((p) => p.value === addParam.value)) addParam.value = ps[0]?.value ?? ""; }, { immediate: true });
 async function add() {
-  const n = targetName(addName.value);
-  if (!n) return;
-  if (await send(lockLine(sel.value, n, addValue.value * 128))) addName.value = "";
+  if (addParam.value) await send(lockLine(sel.value, addParam.value, addValue.value * 128));
 }
+const sideNote = computed(() => (sc.value?.side === 0 ? "A" : sc.value?.side === 1 ? "B" : ""));
 const copyTo = ref(1);
 async function copy() {
   const to = copyTo.value, n = sc.value?.locks[to].length ?? 0;
@@ -147,12 +148,13 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
       <div class="row">
         <button type="button" :disabled="!paired" @click="sc.a === sel ? unset('a') : setA()">{{ sc.a === sel ? `Take ${sel + 1} off A` : `Scene ${sel + 1} on A` }}</button>
         <button type="button" :disabled="!paired" @click="sc.b === sel ? unset('b') : setB()">{{ sc.b === sel ? `Take ${sel + 1} off B` : `Scene ${sel + 1} on B` }}</button>
-        <label class="check"><input type="checkbox" :checked="sc.edit" :disabled="!paired" @change="send(editLine(($event.target as HTMLInputElement).checked))" /> EDIT: knob turns on the Sidecar's pages lock into the held scene</label>
       </div>
+      <p class="small">EDIT on the Rytm: hold PAGE + T15 (scene A) or PAGE + T16 (scene B) and turn a knob on a Sidecar page;
+        T1–T12 while holding picks that side's scene.<template v-if="sideNote"> EDIT {{ sideNote }} is held now.</template></p>
     </Card>
 
     <Card :label="`Scene ${sel + 1} · ${locks.length} of ${LOCKS} locks`">
-      <p v-if="!locks.length">No locks yet. Add one below, or hold the scene's key on the Rytm with EDIT on and turn a knob.</p>
+      <p v-if="!locks.length">No locks yet. Add one below, or on the Rytm hold PAGE + T15 (A) or PAGE + T16 (B) and turn a knob.</p>
       <ul v-else class="locks">
         <li v-for="l in locks" :key="l.name">
           <Fader
@@ -170,13 +172,16 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
         </li>
       </ul>
       <form class="row" @submit.prevent="add">
-        <label for="tgt" class="label">Target</label>
-        <input id="tgt" v-model="addName" list="targets" autocomplete="off" spellcheck="false" placeholder="V1:P3" class="tgt" :disabled="!paired || locks.length >= LOCKS" />
-        <datalist id="targets"><option v-for="t in targets" :key="t.value" :value="t.value" :label="t.label" /></datalist>
+        <label for="addtr" class="label">Track</label>
+        <select id="addtr" v-model="addTrack" :disabled="!paired"><option v-for="t in ADD_TRACKS" :key="t" :value="t">{{ t }}</option></select>
+        <label for="addpg" class="label">Page</label>
+        <select id="addpg" v-model="addPage" :disabled="!paired"><option v-for="p in pages" :key="p" :value="p">{{ p }}</option></select>
+        <label for="addpr" class="label">Param</label>
+        <select id="addpr" v-model="addParam" :disabled="!paired || !params.length"><option v-for="p in params" :key="p.value" :value="p.value">{{ p.label }}</option></select>
         <div class="val"><Fader v-model="addValue" label="Value" :min="0" :max="127" :disabled="!paired" /></div>
-        <button type="submit" :disabled="!paired || !addOk || locks.length >= LOCKS">Add the lock</button>
+        <button type="submit" :disabled="!paired || !addParam || locks.length >= LOCKS">Add the lock</button>
       </form>
-      <p class="small">A target is a name like V3:P5 (voice 3's P5; the list shows what its machine calls it), O4:PAN, MFX:LEV, FX1:P2 or RT1:FRQ (the Rytm's own scene and PERF macros are not scene targets).</p>
+      <p class="small">RT1–RT12 and RFX are the Rytm's own tracks and FX track, V1–V8 the Sidecar's voices (a voice's params by its machine's names). The Rytm's own scene and PERF macros are not scene targets.</p>
       <div class="row">
         <label for="copyto" class="label">Copy to</label>
         <select id="copyto" v-model.number="copyTo" :disabled="!paired">
@@ -205,7 +210,6 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
 .check input { min-width: 1.25rem; min-height: 1.25rem; }
 .locks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .locks li { display: grid; grid-template-columns: 1fr 7rem auto; align-items: center; gap: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
-.tgt { width: 9rem; text-transform: uppercase; }
 .val { flex: 1 1 12rem; }
 .danger { border-color: var(--warm); color: var(--warm); }
 @media (max-width: 40rem) {

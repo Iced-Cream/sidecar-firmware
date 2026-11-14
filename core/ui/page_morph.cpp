@@ -6,10 +6,13 @@
 // relative: no jump after a scene switch). (0.5.0 v2, S7: the Rytm's own scene and PERF macros are no scene targets.)
 // Trig keys (all 16 taken): T1..T12 select; T15 / T16 held + Tn: Tn becomes A / B (the fader stays); Tn held: its lock
 // list (7 rows, B..H edit their values, LEFT / RIGHT scroll, NO removes B's row, YES asks to clear the scene, YES
-// again clears). FUNC + YES: EDIT on / off (hold a scene key and turn a knob on any Sidecar page: remote.cpp).
+// again clears), its last row ADD (v2 Task 5): scrolled to the top, B the track (RT1..RT12, RFX, V1..V8), C its page,
+// D the param, E the value (from the target's base when the Sidecar knows it, else 64); YES adds it. EDIT on the other
+// Sidecar pages is PAGE + T15 / T16 held (remote.cpp; 0.5.0 v2, momentary).
 // LEDs: A blue, B orange, the selected scene white, a scene with locks dim white, T15 / T16 their colours.
 #include <string.h>
 
+#include "mod/mod.h"
 #include "mod/scene.h"
 #include "mod/target.h"
 #include "ui/extra.h"
@@ -36,7 +39,8 @@ struct MorphPage {
   bool ab_a = false, ab_b = false;   // T15 / T16 held
   bool func = false;      // FUNC held (the page's mask names it: both sides')
   int confirm = -1;       // CLEAR S<n>? asked (YES again clears)
-  int touched = -1;       // the encoder turned last (main view: 0, 6, 7; the list: 1..7)
+  int touched = -1;       // the encoder turned last (main view: 0; the list: 1..7)
+  int add_tr = 0, add_pg = 0, add_pr = 0, add_v = 64;   // the ADD row: track, page, param (indices), value 0..127
   const char* note = nullptr;   // a one-shot footer ("SCENE FULL")
   uint32_t now = 0;
 };
@@ -45,6 +49,65 @@ CORE_RAM2 MorphPage mp;
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 CORE_COLD const scene::Scene& sc(int n) { return scene::state().s[n]; }
 CORE_COLD bool list_shown() { return mp.held >= 0 && (mp.held_used || mp.now - mp.held_ms >= kHoldMs); }
+
+// ---- the ADD row (v2 Task 5): a target by track, page and param, as the Rytm's and the Sidecar's pages group them
+struct AddPage {
+  const char* name;
+  uint8_t kind, lo, hi;   // the kind's params lo..hi (mod::tid)
+};
+constexpr int kAddRytm = 12, kAddFx = 12, kAddV0 = 13, kAddTracks = 21;   // RT1..RT12, RFX, V1..V8
+UI_ROM const AddPage kAddRt[] = {{"SRC", mod::kRs, 9, 16}, {"SMPL", mod::kRs, 17, 24}, {"FLTR", mod::kRa, 0, 7},
+                                 {"AMP", mod::kRa, 8, 16}, {"LFO", mod::kRs, 1, 8}};
+UI_ROM const AddPage kAddRfx[] = {{"DELAY", mod::kRfx, 0, 8}, {"REVERB", mod::kRfx, 10, 16}, {"DIST", mod::kRfx, 18, 19},
+                                  {"COMP", mod::kRfx, 21, 28}, {"LFO", mod::kRfx, 29, 31}};
+UI_ROM const AddPage kAddVp[] = {{"P1-8", mod::kV, 0, 7}, {"P9-16", mod::kV, 8, 15}};
+CORE_COLD const AddPage* add_pages(int tr, int* n) {
+  if (tr < kAddRytm) return *n = 5, kAddRt;
+  if (tr == kAddFx) return *n = 5, kAddRfx;
+  return *n = 2, kAddVp;
+}
+CORE_COLD int add_index(int tr) { return tr < kAddRytm ? tr : tr == kAddFx ? 0 : tr - kAddV0; }
+// the targets of a track's page this build has (a voice's: the Ps its machine uses), at most 16
+CORE_COLD int add_list(int tr, int pg, mod::Tid* out) {
+  int np = 0, n = 0;
+  const AddPage* p = add_pages(tr, &np);
+  if (pg < 0 || pg >= np) return 0;
+  for (int k = p[pg].lo; k <= p[pg].hi && n < 16; ++k) {
+    mod::Tid t = mod::tid((mod::Kind)p[pg].kind, add_index(tr), k);
+    char b[16];
+    if (!mod::valid(t) || !mod::name(t, b, sizeof b)[0]) continue;
+    if (p[pg].kind == mod::kV && !strcmp(mod::param_label(t, b, sizeof b), "-")) continue;   // unused on its machine
+    out[n++] = t;
+  }
+  return n;
+}
+CORE_COLD bool add_track_ok(int tr) {
+  int np = 0;
+  add_pages(tr, &np);
+  mod::Tid l[16];
+  for (int pg = 0; pg < np; ++pg)
+    if (add_list(tr, pg, l)) return true;
+  return false;
+}
+CORE_COLD mod::Tid add_tid() {
+  mod::Tid l[16];
+  int n = add_list(mp.add_tr, mp.add_pg, l);
+  return n ? l[mp.add_pr < n ? mp.add_pr : n - 1] : 0;
+}
+CORE_COLD void add_range(mod::Tid t, int* lo, int* hi) {
+  mod::Range r = mod::range(t);
+  bool off = mod::is_offset(mod::kind_of(t));
+  *lo = off || r.lo < 0 ? 0 : (int)r.lo, *hi = off || r.hi > 127 ? 127 : (int)r.hi;
+}
+CORE_COLD void add_value_from_base() {   // E starts at the param's base when the Sidecar knows it, else 64
+  mod::Tid t = add_tid();
+  if (!t) return;
+  int lo, hi;
+  add_range(t, &lo, &hi);
+  int v = mod::is_remote(mod::kind_of(t)) ? 64 : (int)(mod::base(t) + 0.5f);
+  mp.add_v = v < lo ? lo : v > hi ? hi : v;
+}
+CORE_COLD bool add_on_top() { return mp.held >= 0 && mp.top >= scene::state().s[mp.held].n; }
 
 }  // namespace
 
@@ -114,11 +177,45 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
     sniprintf(f, sizeof f, "FADER:%d", st.fader);
     footer(c, f, st.fader >> 7);
   } else {
-    footer(c, scene::edit() ? "EDIT ON  FUNC+YES: OFF" : "HOLD T1-12: LOCKS");
+    footer(c, "HOLD T1-12: LOCKS");
+  }
+}
+
+CORE_COLD void add_draw(Canvas& c, int page, int npages) {   // the ADD row on top: its fields on B..E
+  char t[12];
+  sniprintf(t, sizeof t, "S%d ADD", mp.held + 1);
+  header(c, t, page, npages, nullptr);
+  int np = 0;
+  const AddPage* pg = add_pages(mp.add_tr, &np);
+  char tr[8], pr[16] = "-", v[8];
+  if (mp.add_tr < kAddRytm) sniprintf(tr, sizeof tr, "RT%d", mp.add_tr + 1);
+  else if (mp.add_tr == kAddFx) sniprintf(tr, sizeof tr, "RFX");
+  else sniprintf(tr, sizeof tr, "V%d", mp.add_tr - kAddV0 + 1);
+  mod::Tid at = add_tid();
+  if (at) mod::param_label(at, pr, sizeof pr);
+  sniprintf(v, sizeof v, "%d", mp.add_v);
+  static UI_ROM const char kF[4][7] = {"TRACK", "PAGE", "PARAM", "VALUE"};
+  const char* val[4] = {tr, pg[mp.add_pg < np ? mp.add_pg : 0].name, pr, v};
+  for (int i = 0; i < 4; ++i) {
+    int y = kRowY + 6 * i;
+    char e[2] = {(char)('B' + i), 0};
+    c.put_text(kSlotFree + 3 * i, kRSmall, 2, y, e);
+    c.put_text(kSlotFree + 3 * i + 1, kRSmall, 10, y, kF[i]);
+    c.put_text(kSlotFree + 3 * i + 2, kRSmall, kW - 2, y, val[i], kAlignRight);
+  }
+  for (int i = 4; i < kRows; ++i)
+    for (int j = 0; j < 3; ++j) c.put_text(kSlotFree + 3 * i + j, kRSmall, 0, 0, nullptr);
+  if (mp.confirm >= 0) {
+    char f[kTextLen + 1];
+    sniprintf(f, sizeof f, "CLEAR S%d? YES AGAIN", mp.confirm + 1);
+    footer(c, f);
+  } else {
+    footer(c, mp.note ? mp.note : at ? "YES: ADD  LEFT: LOCKS" : "NOTHING TO ADD HERE");
   }
 }
 
 CORE_COLD void list_draw(Canvas& c, int page, int npages) {
+  if (add_on_top()) return add_draw(c, page, npages);
   const scene::Scene& s = sc(mp.held);
   char t[12], r[12];
   sniprintf(t, sizeof t, "S%d LOCKS", mp.held + 1);
@@ -127,7 +224,13 @@ CORE_COLD void list_draw(Canvas& c, int page, int npages) {
   header(c, t, page, npages, r);
   for (int i = 0; i < kRows; ++i) {
     int k = mp.top + i, y = kRowY + 6 * i;
-    if (k >= s.n) {
+    if (k == s.n) {   // the last row: ADD (RIGHT brings it to the top)
+      c.put_text(kSlotFree + 3 * i, kRSmall, 0, 0, nullptr);
+      c.put_text(kSlotFree + 3 * i + 1, kRSmall, 10, y, "ADD...");
+      c.put_text(kSlotFree + 3 * i + 2, kRSmall, 0, 0, nullptr);
+      continue;
+    }
+    if (k > s.n) {
       for (int j = 0; j < 3; ++j) c.put_text(kSlotFree + 3 * i + j, kRSmall, 0, 0, nullptr);
       continue;
     }
@@ -147,8 +250,6 @@ CORE_COLD void list_draw(Canvas& c, int page, int npages) {
     footer(c, f);
   } else if (mp.note) {
     footer(c, mp.note);
-  } else if (!s.n) {
-    footer(c, "NO LOCKS IN THIS SCENE");
   } else if (mp.touched >= 1 && k < s.n) {
     char nm[16], v[8];
     mod::label(s.l[k].t, nm, sizeof nm);   // "V1:HRM": the param as the machine names it
@@ -174,6 +275,34 @@ CORE_COLD void morph_enc(int e, int d, bool func) {
   if (e == 0) {   // the fader: relative, 128 a detent, FUNC 16
     mp.touched = 0;
     scene::set_fader((uint16_t)clampi(st.fader + d * (func ? 16 : 128), 0, scene::kFaderMax), scene::kPage);
+    return;
+  }
+  if (mp.held >= 0 && add_on_top()) {   // the ADD row: B track, C page, D param, E value
+    mp.held_used = true, mp.touched = e;
+    int np = 0;
+    if (e == 1) {
+      int tr = mp.add_tr;
+      for (int i = 0; i < (d < 0 ? -d : d); ++i) {
+        int nx = tr + (d < 0 ? -1 : 1);
+        while (nx >= 0 && nx < kAddTracks && !add_track_ok(nx)) nx += d < 0 ? -1 : 1;
+        if (nx < 0 || nx >= kAddTracks) break;
+        tr = nx;
+      }
+      if (tr != mp.add_tr) mp.add_tr = tr, mp.add_pg = 0, mp.add_pr = 0, add_value_from_base();
+    } else if (e == 2) {
+      add_pages(mp.add_tr, &np);
+      int pg = clampi(mp.add_pg + d, 0, np - 1);
+      if (pg != mp.add_pg) mp.add_pg = pg, mp.add_pr = 0, add_value_from_base();
+    } else if (e == 3) {
+      mod::Tid l[16];
+      int n = add_list(mp.add_tr, mp.add_pg, l);
+      int pr = clampi(mp.add_pr + d, 0, n > 0 ? n - 1 : 0);
+      if (pr != mp.add_pr) mp.add_pr = pr, add_value_from_base();
+    } else if (e == 4) {
+      int lo = 0, hi = 127;
+      if (mod::Tid t = add_tid()) add_range(t, &lo, &hi);
+      mp.add_v = clampi(mp.add_v + d * (func ? 8 : 1), lo, hi);
+    }
     return;
   }
   if (mp.held >= 0) {   // B..H: the list's rows
@@ -204,6 +333,8 @@ CORE_COLD bool morph_key(int code) {
     }
     scene::set_sel(code);
     mp.held = code, mp.held_ms = mp.now, mp.held_used = false, mp.top = 0, mp.touched = -1;
+    if (!add_track_ok(mp.add_tr)) mp.add_tr = kAddV0;   // (the Sidecar Mini: its voices only)
+    add_value_from_base();
     return true;
   }
   if (code == 0x0E || code == 0x0F) {
@@ -216,8 +347,13 @@ CORE_COLD bool morph_key(int code) {
       scene::clear(mp.confirm), mp.confirm = -1, mp.top = 0;
       return true;
     }
-    if (mp.func) {
-      scene::set_edit(!scene::edit());
+    if (mp.held >= 0 && add_on_top()) {   // the ADD row: the target at E's value
+      mp.held_used = true;
+      if (mod::Tid t = add_tid()) {
+        int n = sc(mp.held).n;
+        lock_or_note(mp.held, t, (uint16_t)(mp.add_v * 128));
+        if (sc(mp.held).n > n) mp.top = sc(mp.held).n;   // (ADD stays on top for the next one)
+      }
       return true;
     }
     if (mp.held >= 0) {
@@ -235,6 +371,7 @@ CORE_COLD bool morph_key(int code) {
       mp.held_used = true;
       const scene::Scene& s = sc(mp.held);
       if (mp.top < s.n) scene::unlock(mp.held, s.l[mp.top].t);
+      else return true;   // (the ADD row: nothing to remove)
       if (mp.top > 0 && mp.top >= sc(mp.held).n) --mp.top;
       return true;
     }
@@ -244,7 +381,7 @@ CORE_COLD bool morph_key(int code) {
     int d = code == 0x41 ? 1 : -1;
     if (mp.held >= 0) {
       mp.held_used = true;
-      mp.top = clampi(mp.top + d, 0, sc(mp.held).n > kRows ? sc(mp.held).n - kRows : 0);
+      mp.top = clampi(mp.top + d, 0, sc(mp.held).n);   // (v2: on to the ADD row)
     } else {
       scene::set_sel(clampi(st.sel + d, 0, scene::kScenes - 1));
     }
