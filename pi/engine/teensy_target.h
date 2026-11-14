@@ -63,7 +63,7 @@ private:
 	boolean IsNameRequest (const u8 *pSetup, u8 uchType) const;
 	unsigned ChanOfOut (u8 uchAddr) const;	// the link channel a mirrored OUT endpoint rides (kChannels: none)
 	unsigned ChanOfIn (u8 uchAddr) const;
-	void SubmitChanIn (unsigned nChan, unsigned k);
+	void Resubmit (CUSBRequest *pURB);
 
 	static CTeensyTarget *s_pThis;
 
@@ -71,6 +71,10 @@ private:
 	CUSBEndpoint *m_pChanIn[relay::kChannels], *m_pChanOut[relay::kChannels];
 	static const unsigned EvURBs = 2, AudioInURBs = 4, AudioOutBufs = 16, ChanInURBs = 2;
 	u8 *m_pEvBuf[EvURBs];
+	CUSBRequest *m_pEvURB[EvURBs], *m_pAudioInURB[AudioInURBs], *m_pChanInURB[relay::kChannels][ChanInURBs];
+	CUSBRequest *m_pAudioOutURB[AudioOutBufs];	// kept while its length (the computer's channels) stays
+	unsigned m_nAudioOutLen[AudioOutBufs];
+	volatile unsigned m_nAtBox[relay::kChannels];	// computer packets at the box, not yet taken (a box that goes: credited back)
 	u8 *m_pAudioInBuf[AudioInURBs];
 	u8 *m_pAudioOutBuf[AudioOutBufs];
 	volatile boolean m_bAudioOutBusy[AudioOutBufs];
