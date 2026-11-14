@@ -72,6 +72,7 @@ private:
 	void TestPoll (void);
 	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
 	void TestOutBlock (const u8 *pBlock, unsigned nLength);
+	boolean TestExtras (void);		// the made-up box's BOS + MS OS 2.0 set (WinUSB on the bench computer)
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	void FlushMidiIn (void);			// xHCI IRQ: queued box MIDI out to the Teensy when its channel is free
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)

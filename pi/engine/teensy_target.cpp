@@ -370,6 +370,7 @@ boolean CTeensyTarget::Upload (void)
 	if (Vendor (FALSE, kReqSetConfig, 0, 0, m_Cfg, m_nCfg) < 0) return FALSE;
 	for (unsigned k = 0; k < m_nStr; k++)
 		if (Vendor (FALSE, kReqSetString, m_Str[k].uchIndex, 0, m_Str[k].Data, m_Str[k].nLength) < 0) return FALSE;
+	if (m_bTest && !TestExtras ()) return FALSE;
 	m_Stream.in_ch = m_Stream.out_ch = 0;
 	m_bPcConfigured = FALSE;
 	if (Vendor (FALSE, kReqConnect, 1, 0, 0, 0) < 0) return FALSE;
@@ -947,5 +948,37 @@ void CTeensyTarget::TestOutBlock (const u8 *b, unsigned n)
 	}
 	m_bTestOutSeen = TRUE;
 	m_nTestOutNext = seq + 1;
+}
+#endif
+
+#ifdef CIRCLE_GADGET_MIRROR
+// relaytest: the made-up box's BOS and MS OS 2.0 set (relay_bench.py made_up_device: its bcdUSB 2.10 says a BOS is there),
+// so the bench computer binds WinUSB to it with no INF; a real box has neither and gets none
+boolean CTeensyTarget::TestExtras (void)
+{
+	static const char Guid[] = "{9E3D51A7-0B2C-4F86-A1D4-7C5E2B90F163}";
+	static const char Name[] = "DeviceInterfaceGUIDs";
+	u8 M[256];
+	unsigned n = 10;
+	memset (M, 0, sizeof M);
+	M[0] = 10; M[4] = 0x00; M[5] = 0x00; M[6] = 0x03; M[7] = 0x06;	// set header, Windows 8.1+
+	const u8 Compat[20] = {20, 0, 3, 0, 'W', 'I', 'N', 'U', 'S', 'B', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	memcpy (M + n, Compat, 20); n += 20;
+	unsigned start = n; n += 2;
+	M[n++] = 4; M[n++] = 0; M[n++] = 7; M[n++] = 0;			// registry property, REG_MULTI_SZ
+	unsigned nl = 2 * (sizeof Name);				// UTF-16 with one NUL
+	M[n++] = (u8) nl; M[n++] = 0;
+	for (unsigned i = 0; i < sizeof Name; i++) { M[n++] = (u8) Name[i]; M[n++] = 0; }
+	unsigned dl = 2 * (sizeof Guid) + 2;				// UTF-16 with two NULs
+	M[n++] = (u8) dl; M[n++] = 0;
+	for (unsigned i = 0; i < sizeof Guid; i++) { M[n++] = (u8) Guid[i]; M[n++] = 0; }
+	M[n++] = 0; M[n++] = 0;
+	M[start] = (u8) (n - start); M[start + 1] = (u8) ((n - start) >> 8);
+	M[8] = (u8) n; M[9] = (u8) (n >> 8);
+	const u8 kCode = 0x22;
+	const u8 Bos[33] = {5, 0x0F, 33, 0, 1, 28, 0x10, 5, 0, 0xDF, 0x60, 0xDD, 0xD8, 0x89, 0x45, 0xC7, 0x4C, 0x9C, 0xD2, 0x65,
+			    0x9D, 0x9E, 0x64, 0x8A, 0x9F, 0, 0, 3, 6, (u8) n, (u8) (n >> 8), kCode, 0};
+	if (Vendor (FALSE, kReqSetExtra, 15, 0, Bos, sizeof Bos) < 0) return FALSE;
+	return Vendor (FALSE, kReqSetExtra, 0xEE, kCode, M, n) >= 0;
 }
 #endif
