@@ -16,6 +16,7 @@ namespace loop {
 class Ring {
  public:
   static constexpr int kWindow = 24;
+  static constexpr uint32_t kInFlight = 64;   // frames a write has in flight (a block is 7): more than any block
   static constexpr int64_t kRestart = 48000;   // frames: a jump of the arrival offset past this is a pause, not jitter
   void init(int32_t* mem, uint32_t frames) {
     mem_ = mem, cap_ = frames, w_ = 0, n_ = 0, k_ = 0, have_ = false, gn_ = 0, gseq_ = 0;
@@ -87,13 +88,15 @@ class Ring {
   }
   uint32_t copy_idx(uint64_t k, uint32_t n, int32_t* out) const {
     uint64_t w = written();
-    if (k >= w || w - k > cap_ || n == 0) return 0;
+    if (k >= w || w - k + kInFlight > cap_ || n == 0) return 0;
     if (k + n > w) n = (uint32_t)(w - k);
     uint32_t i = (uint32_t)(k % cap_), first = cap_ - i < n ? cap_ - i : n;
     memcpy(out, mem_ + 2 * (size_t)i, 8u * first);
     if (first < n) memcpy(out + 2 * (size_t)first, mem_, 8u * (n - first));
     __atomic_thread_fence(__ATOMIC_ACQUIRE);   // the copy's loads before the lap check (the seqlock's read order)
-    if (written() - k > cap_) return 0;         // the writer lapped the first frame meanwhile: not a copy
+    // the writer puts a block's frames before it publishes the count: up to kInFlight frames past written() are already
+    // overwritten, so the lap check keeps that much room (and the first test above too)
+    if (written() - k + kInFlight > cap_) return 0;   // the writer lapped (or is lapping) the first frame meanwhile: not a copy
     Gap g[kGaps];
     int ng = gaps(g);
     for (int j = 0; j < ng; ++j) {   // the stretches that never arrived read as silence
@@ -112,14 +115,18 @@ class Ring {
       if (k0 < g[j].b && k0 + n > g[j].a) return true;
     return false;
   }
-  void frame(uint64_t k, int32_t* l, int32_t* r) const {   // frame k (it must be in the ring)
+  void frame(uint64_t k, int32_t* l, int32_t* r) const {   // frame k (it must be in the ring); core 0's playback calls it per frame
     uint32_t i = (uint32_t)(k % cap_);
     *l = mem_[2 * (size_t)i], *r = mem_[2 * (size_t)i + 1];
-    Gap g[kGaps];
-    int ng = gaps(g);
-    for (int j = 0; j < ng; ++j)
-      if (k >= g[j].a && k < g[j].b) *l = *r = 0;
+    uint32_t n = __atomic_load_n(&gn_, __ATOMIC_ACQUIRE);   // (scanned in place, no copy: a torn entry misreads one frame at worst)
+    if (n > (uint32_t)kGaps) n = kGaps;
+    for (uint32_t j = 0; j < n; ++j)
+      if (k >= gl_[j].a && k < gl_[j].b) {
+        *l = *r = 0;
+        break;
+      }
   }
+
 
  private:
   struct Gap { uint64_t a, b; };
@@ -132,8 +139,8 @@ class Ring {
     ++gn_;
     __atomic_store_n(&gseq_, sq + 2, __ATOMIC_RELEASE);
   }
-  int gaps(Gap* out) const {   // a whole copy of the list (a seqlock read)
-    for (int t = 0; t < 8; ++t) {
+  int gaps(Gap* out) const {   // a whole copy of the list (a seqlock read: it waits out the writer's short odd window, however long a
+    for (;;) {                  // preempted test thread sits in it; on the Pi the writer is core 0 and never waits)
       uint32_t s0 = __atomic_load_n(&gseq_, __ATOMIC_ACQUIRE);
       if (s0 & 1) continue;
       uint32_t n = gn_;
@@ -142,7 +149,6 @@ class Ring {
       __atomic_thread_fence(__ATOMIC_ACQUIRE);
       if (__atomic_load_n(&gseq_, __ATOMIC_RELAXED) == s0) return c;
     }
-    return 0;
   }
   void put(uint64_t k, int32_t l, int32_t r) {
     uint32_t i = (uint32_t)(k % cap_);

@@ -1038,7 +1038,7 @@ Voice voice_of(const LpSnap& s, bool fade_in) {
 // a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
 float env_of(const Voice& v, uint64_t h) {
   if (!v.active || h < v.start) return 0.0f;
-  float e = (float)(h - v.start + 1) / kRampFrames;
+  float e = v.fade_in ? (float)(h - v.start + 1) / kRampFrames : 1.0f;   // (a swap in: the loop it replaces was already down)
   if (e > 1.0f) e = 1.0f;
   if (v.stop_at && h >= v.stop_at) {
     float d = (float)(h - v.stop_at + 1) / (float)v.stop_len;
@@ -1106,7 +1106,8 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
     // BAL: the Sidecar's own output (every channel of F so far) falls toward `own` as the loop is heard (spec 3.8)
     float og = ramp_own_.at_h(h);
     if (og < 0.99999f) {
-      float e = fmaxf(env_of(cur_, h), env_of(old_, h));   // whichever loop is heard: a resample's wait keeps the old one's
+      float ow = cur_.active && h >= cur_.start ? 1.0f - (float)(h - cur_.start + 1) / kSeam : 1.0f;   // the old loop's crossfade weight
+      float e = fmaxf(env_of(cur_, h), env_of(old_, h) * (ow < 0 ? 0 : ow));   // whichever loop is heard: a resample's wait keeps the old one's
       float m = 1.0f + (og - 1.0f) * e;
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }

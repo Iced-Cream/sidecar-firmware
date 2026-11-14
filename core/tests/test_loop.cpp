@@ -838,6 +838,7 @@ static void test_resample_wait() {
   run_ms(60);
   CHECK(loop::playing_info(&ns, &nl));
   CHECK(own(g_now) == 0 && own(ns - 20000) == 0 && own(ns - 100) == 0);   // (it jumped back to full here)
+  for (uint64_t hh = ns - 20; hh < ns + 200; ++hh) CHECK(own(hh) == 0);       // N1: and through the swap (a click 64 frames in)
 
   // H4: auto-mute and LIVE VIA hold through the wait; M1: a stop in the wait stops what is heard
   fresh();
