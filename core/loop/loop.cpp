@@ -1095,6 +1095,20 @@ void take_snapshot(uint64_t h0) {
 }
 }  // namespace
 
+uint32_t out_gain_bits_ = 0x3F800000u;   // 1.0f, as bits (the __atomic builtins take integers)
+void set_out_gain(float g) {
+  if (!(g > 0.0f && g < 16.0f)) g = 1.0f;
+  uint32_t b;
+  memcpy(&b, &g, 4);
+  __atomic_store_n(&out_gain_bits_, b, __ATOMIC_RELAXED);
+}
+float out_gain() {
+  uint32_t b = __atomic_load_n(&out_gain_bits_, __ATOMIC_RELAXED);
+  float g;
+  memcpy(&g, &b, 4);
+  return g;
+}
+
 bool wants_out() { return on_; }
 
 void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
@@ -1110,6 +1124,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
     }
   }
   if (!cur_.active && !old_.active) return;
+  const float mk = out_gain();   // the USB return's make-up (set_out_gain)
   for (int f = 0; f < n; ++f) {
     uint64_t h = render_frame + (uint64_t)f;
     float l = 0, r = 0, a, b;
@@ -1138,7 +1153,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       float m = 1.0f + (og - 1.0f) * e;
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }
-    float lg = ramp_loop_.at_h(h);
+    float lg = ramp_loop_.at_h(h) * mk;
     F[f][0] = add(F[f][0], l * lg), F[f][1] = add(F[f][1], r * lg);
   }
   // a stopped voice that has faded out is gone (its stop's end passed)

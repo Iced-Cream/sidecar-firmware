@@ -223,6 +223,13 @@ static void test_grabs() {
   CHECK(loop::state() == loop::kWait);
   for (uint64_t h = s0 - 24; h < s0; h += 12) CHECK(played_at(h) == 0);
   CHECK(played_at(s0 + 63) == g->pcm[2 * 63]);   // (a start fades in over 64 frames: unity from the 64th)
+  // out_gain_scales_playback: the USB return's make-up (the Pi's 3.508, POST 10.9 dB down) multiplies what plays; 1 again after
+  loop::set_out_gain(3.508f);
+  { int64_t want = (int64_t)(3.508f * (float)g->pcm[2 * 63]), got = played_at(s0 + 63);
+    CHECK(got - want <= 2 && want - got <= 2); }
+  loop::set_out_gain(-1.0f);   // out of range: unity
+  CHECK(loop::out_gain() == 1.0f && played_at(s0 + 63) == g->pcm[2 * 63]);
+  loop::set_out_gain(1.0f);
   to(s0 + 200);
   CHECK(loop::state() == loop::kPlaying);
 
