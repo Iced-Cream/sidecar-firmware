@@ -134,6 +134,7 @@ void CObUsb::SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget)
 	if (nSlot >= Slots) return;
 	s_pTarget[nSlot] = pTarget;
 	if (pTarget != 0) pTarget->SetBox (s_pBox[nSlot]);
+	if (pTarget != 0 && s_pBox[nSlot] != 0) s_pBox[nSlot]->Reattach ();	// a target that came while its box streams
 }
 
 // The USB-C gadget as a mirror target (mirror_target.h): the CSidecarGadget calls as they were.
@@ -828,6 +829,13 @@ void CObUsb::Wanted (void)
 	if (m_bStreaming && !m_bMirror) m_bAttachDue = TRUE;
 }
 
+// SetMirrorTarget: a new target for a box that already streams (a Teensy relay plugged in or replugged while the box is
+// up) gets its descriptors and strings at the next AttachLate; pipes already open stay as they are (MirrorAttach)
+void CObUsb::Reattach (void)
+{
+	if (m_bStreaming) m_bAttachDue = TRUE;
+}
+
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
@@ -839,6 +847,7 @@ void CObUsb::MirrorAttach (void)
 	const u8 *pC = (const u8 *) pCfg;
 	unsigned nCfg = pCfg->wTotalLength;
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
+	const boolean bPipesOpen = m_bMirror;		// read before (Reattach: a new target): its pipes run already
 	m_bMirror = TRUE;
 
 	if (s_pCtlBuf[m_nSlot] == 0) s_pCtlBuf[m_nSlot] = AllocDmaBuf ();
@@ -865,7 +874,8 @@ void CObUsb::MirrorAttach (void)
 	// that is not 0). Never on an interface of the audio stream: the Pi's own stream stays at the alternate the engine
 	// opened (ob::kAlt), so a pipe there is taken only at that alternate.
 	mirror::Layout l;
-	if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
+	if (bPipesOpen) l.n = 0;
+	else if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
 	{
 		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: the box's configuration does not parse: no pipes");
 		l.n = 0;
@@ -914,9 +924,12 @@ void CObUsb::MirrorAttach (void)
 		}
 		m_nPipes++;
 	}
-	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
-	LeaveCritical ();
+	if (!bPipesOpen)
+	{
+		EnterCritical (IRQ_LEVEL);
+		for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
+		LeaveCritical ();
+	}
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
 	pGadget->MirrorBoxUp (TRUE);
 }
@@ -1145,6 +1158,7 @@ void CObUsb::PipeInNext (u8)						{}
 void CObUsb::PipePoll (void)						{}
 void CObUsb::AttachLate (void)						{}
 void CObUsb::Wanted (void)						{}
+void CObUsb::Reattach (void)						{}
 
 #endif
 
