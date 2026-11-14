@@ -914,6 +914,8 @@ boolean CTeensyTarget::TestControl (const u8 *s, const u8 *pData, int *pAnswer)
 {
 	u16 wValue = (u16) mirror::le16 (s + 2), wLength = (u16) mirror::le16 (s + 6);
 	*pAnswer = 0;
+	if (s[0] == 0x40 && s[1] == 0x7D)		// the Teensy's counters from zero (the bench, after its warm-up)
+		return Vendor (FALSE, kReqStatsReset, 0, 0, 0, 0) >= 0;
 	if (s[0] == 0xC0 && s[1] == 0x7E)		// the Teensy's own counters (relay::Stats), for a computer with no Pi network
 	{
 		int n = Vendor (TRUE, kReqStats, 0, 0, 0, sizeof (Stats) < wLength ? sizeof (Stats) : wLength);
@@ -940,6 +942,7 @@ void CTeensyTarget::TestOutBlock (const u8 *b, unsigned n)
 	memcpy (&seq, b, 4);
 	if (b[4] != (u8) (seq + 4) || b[255] != (u8) (seq + 255)) { m_nTestOutBad++; return; }
 	m_nTestOut++;
+	if (m_bTestOutSeen && seq < 16 && m_nTestOutNext > 1000) m_bTestOutSeen = FALSE;	// the computer's stream started again
 	if (m_bTestOutSeen)
 	{
 		s32 d = (s32) (seq - m_nTestOutNext);

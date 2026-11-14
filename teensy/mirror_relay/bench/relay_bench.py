@@ -153,6 +153,9 @@ class Bench:
         self.xfers = []
         self.cred_q = queue.Queue()
         self.streams = []
+        self.t_start = time.time()
+        self.bad_lens = {}
+        self.reset_due = False
 
     # ---- async helpers
     def _in(self, h, ep, size, depth, cb, kind=None):
@@ -206,6 +209,18 @@ class Bench:
                 t.setBuffer(s["gen"](s["sent"]))
                 s["sent"] += 1
                 t.submit()
+
+    def on_audio_pc(self, b):
+        if getattr(self, "warmup", 0) and time.time() < self.t_start + self.warmup:
+            return
+        if getattr(self, "warmup", 0) and not getattr(self, "warm_done", False):
+            self.warm_done = True
+            self.reset_due = True
+        for i in range(0, len(b), BLOCK):
+            c = b[i:i + BLOCK]
+            if len(c) != BLOCK:
+                self.bad_lens[len(c)] = self.bad_lens.get(len(c), 0) + 1
+            self.a_pc.see(check_block(c))
 
     # ---- the "Pi"
     def on_event(self, b):
@@ -286,8 +301,7 @@ class Bench:
         if "audio_pc" in paths:		# the "Pi" sends blocks at the box's rate, the "computer" reads 0x83
             if pi:
                 self.s_apc = self._out_stream(link, A_FROM_PI, 16, block, BLOCK_HZ)
-            self._in(mirr, 0x83, BLOCK * 8, 8, lambda b: [self.a_pc.see(check_block(b[i:i + BLOCK]))
-                                                         for i in range(0, len(b), BLOCK)], "int")
+            self._in(mirr, 0x83, BLOCK * 8, 8, self.on_audio_pc, "int")
         if "audio_pi" in paths:		# the "computer" sends blocks on 0x03 at the same rate, the "Pi" reads link 0x82
             self.s_api = self._out_stream(mirr, 0x03, 16, block, BLOCK_HZ)
             if pi:
@@ -312,6 +326,12 @@ class Bench:
         while time.time() < t_end:
             self.ctx.handleEventsTimeout(0.0005)
             self.pump()
+            if self.reset_due and self.link is None:
+                self.reset_due = False
+                try:
+                    self.mirr.controlWrite(0x40, 0x7D, 0, 0, b"", timeout=1000)
+                except usb1.USBError as e:
+                    print("teensy counters reset:", e)
             if time.time() - last >= 5:
                 last = time.time()
                 print("t+%2.0f a_pc %s a_pi %s pipe>pi %s pipe>pc %s ctl %d bad %d ev %s" % (
@@ -412,9 +432,10 @@ def computer_stage(ctx, paths, seconds):
     mirr.claimInterface(0)
     mirr.setInterfaceAltSetting(0, 3)
     b = Bench(ctx, None, mirr, seconds)
-    b.run(paths)
+    b.warmup = 1.0 if "audio_pc" in paths else 0	# relaytest: blocks queued before this stage are skipped, then the Teensy's
+    b.run(paths)					# counters start from zero (0x40 0x7D)
     rtt = sorted(b.ctl_rtt)
-    res = dict(paths=list(paths), audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(),
+    res = dict(paths=list(paths), audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(), bad_lengths=b.bad_lens,
                sent={"%s 0x%02x" % (s["who"], s["ep"]): s["sent"] for s in b.streams},
                ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,
                         rtt_us_max=rtt[-1] if rtt else None))
