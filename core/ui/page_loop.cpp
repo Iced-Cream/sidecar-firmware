@@ -22,8 +22,10 @@ namespace ui {
 
 namespace {
 
-constexpr int kBoxW = 15, kBox0 = 4, kRowY = 11, kGrabY = 21;
-constexpr int kCols = 6, kColW = kW / kCols, kLabY = 36;
+// t050-d (the owner: "this also looks messy"): the grabs in 16 px boxes, the six knobs on the stock grid's four columns
+// (A..D over E..F, as the encoders sit), the ring's length once (the header)
+constexpr int kBoxW = 16, kBox0 = 0, kRowY = 11, kGrabY = 19;
+constexpr int kCols = 6, kLabY = 30, kRowDy = 13;
 constexpr uint32_t kNoteMs = 2500;   // a refusal / result shows this long
 constexpr uint8_t kLedWhiteDim = 107, kLedGreen = 31, kLedRed = 15;
 
@@ -41,7 +43,7 @@ CORE_RAM2 LoopPage lp;
 
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 CORE_COLD const char* len_text(int hb, char* b, int cap) {
-  if (hb == 1) sniprintf(b, cap, "1/2");
+  if (hb == 1) sniprintf(b, cap, ".5");   // (3 characters do not fit a 16 px box)
   else sniprintf(b, cap, "%d", hb / 2);
   return b;
 }
@@ -57,13 +59,13 @@ CORE_COLD void grab_box(Canvas& c, int i) {
   int x = kBox0 + i * kBoxW;
   const loop::Grab* g = loop::grab_at(i);
   bool sel = i == lp.sel && g;
-  if (sel) c.fill(Rect{(int16_t)x, (int16_t)(kGrabY - 1), (int16_t)(kBoxW - 1), 8}, kOn);
+  if (sel) c.fill(Rect{(int16_t)(x + 1), (int16_t)(kGrabY - 1), (int16_t)(kBoxW - 2), 7}, kOn);
   char t[8] = "";
   if (g) len_text(g->half_bars, t, sizeof t);
-  c.put_text(kSlotFree + i, kRSmall, x + kBoxW / 2 - 1, kGrabY, t, kAlignCentre | (sel ? kTextInvert : 0));
+  c.put_text(kSlotFree + i, kRSmall, x + kBoxW / 2, kGrabY, t, kAlignCentre | (sel ? kTextInvert : 0));
   if (!g) return;
-  if (g->kept) c.fill(Rect{(int16_t)(x + kBoxW / 2 - 2), (int16_t)(kGrabY + 8), 2, 1}, kOn);   // a dot: on the card
-  if (i == loop::playing()) c.fill(Rect{(int16_t)x, (int16_t)(kGrabY + 10), (int16_t)(kBoxW - 1), 1}, kOn);   // a bar: it plays
+  if (g->kept) c.fill(Rect{(int16_t)(x + kBoxW / 2 - 1), (int16_t)(kGrabY + 7), 2, 1}, kOn);   // a dot: on the card
+  if (i == loop::playing()) c.fill(Rect{(int16_t)(x + 2), (int16_t)(kGrabY + 9), (int16_t)(kBoxW - 4), 1}, kOn);   // a bar: it plays
 }
 
 CORE_COLD void sync_sel() {   // the shown grab stays the same grab as newer ones land
@@ -95,7 +97,7 @@ CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   else if (s == loop::kWait) strcpy(st, "STARTS AT BAR");
   else if (s == loop::kPlaying) strcpy(st, "PLAYING");
   else if (s == loop::kFading) strcpy(st, "FADING");
-  else sniprintf(st, sizeof st, "RING %ds", loop::ring_seconds());
+  else strcpy(st, loop::grabs() ? "T9-16 PLAY" : "READY");   // (the ring's length: the header)
   float bar, of;
   if (s != loop::kRing && loop::bar_position(&bar, &of)) {
     int b10 = (int)(bar * 10.0f);
@@ -118,9 +120,9 @@ CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   if (loop::grab_at(lp.sel)) sniprintf(val[5], 8, "%d/%d", lp.sel + 1, loop::grabs());
   else strcpy(val[5], "-");
   for (int k = 0; k < kCols; ++k) {
-    int x = k * kColW + kColW / 2;
-    c.put_text(kSlotLabels + k, kRSmall, x, kLabY, kLab[k], kAlignCentre);
-    c.put_text(kSlotCells + k, kRSmall, x, kLabY + 6, val[k], kAlignCentre);
+    int x = (k % 4) * kCellW + kCellW / 2, y = kLabY + (k / 4) * kRowDy;
+    c.put_text(kSlotLabels + k, kRSmall, x, y, kLab[k], kAlignCentre);
+    c.put_text(kSlotCells + k, kRSmall, x, y + 6, val[k], kAlignCentre);
   }
   char f[kTextLen + 1];
   const char* m = lp.note ? lp.note : message();

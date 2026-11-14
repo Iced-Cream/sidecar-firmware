@@ -126,7 +126,7 @@ static void open_page() {
 static void grab_keys() {
   open_page();
   CHECK(g_mask_trigs == 0xFFFF && g_mask_encs == 0x3F && g_mask_func);   // all 16 trig keys, A..F, FUNC
-  CHECK(shows("LOOP") && shows("RING") && shows("T1-6 GRAB"));
+  CHECK(shows("LOOP") && shows("READY") && !shows("RING") && shows("T1-6 GRAB"));
   tap(0x01);   // T2: 1 bar
   bars(0.1);
   CHECK(loop::grabs() == 1 && loop::grab_at(0)->half_bars == loop::k1);
@@ -142,7 +142,7 @@ static void grab_keys() {
   tap(0x03);   // T4: 4 bars: fits
   bars(0.1);
   CHECK(loop::grabs() == 3 && loop::grab_at(0)->half_bars == loop::k4);
-  CHECK(shows("1/2") && shows("4") && shows("PLAYING") == (loop::state() == loop::kPlaying));
+  CHECK(shows(".5") && shows("4") && shows("PLAYING") == (loop::state() == loop::kPlaying));
   png("loop_main.png");
   g_beats = false;   // the transport stopped
   tap(0x01);
