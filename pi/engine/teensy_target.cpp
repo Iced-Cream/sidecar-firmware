@@ -135,7 +135,8 @@ boolean CTeensyTarget::Configure (void)
 		CLogger::Get ()->Write (From, LogError, "the mirror relay's interface is not the link relay_proto.h describes");
 		return FALSE;
 	}
-	if (!CUSBFunction::Configure ()) return FALSE;
+	// no CUSBFunction::Configure (): this is the device's own function (ven1209-2), with no interface descriptor;
+	// the base asserts on one (TR1 2026-11-14: the Pi reset every 37 s with the relay plugged in), as CObUsb does not call it
 
 	m_pCtlBuf = DmaBuf ();
 	for (unsigned k = 0; k < EvURBs; k++) m_pEvBuf[k] = DmaBuf ();
