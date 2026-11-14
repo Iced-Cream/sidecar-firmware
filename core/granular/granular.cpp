@@ -8,6 +8,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "../device/device.h"   // on_side: the voice's stage
 #include "../fx/out.h"
 #include "../lfo.h"
 #include "../lib/pools.h"
@@ -970,7 +971,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   // a stereo voice's pan spread: SPRY x WID (out.h; WID 64 = SPRY's own)
   float pan_amt = 0.0f;
   if (outr) {
-    float w = out::control.wid[box_voice(vi)] * (1.0f / 64.0f);
+    float w = out::control_of(device::on_side(vi)).wid[box_voice(vi)] * (1.0f / 64.0f);
     pan_amt = clamp01(k.spr * w);
   }
   const float* ring = rings + (size_t)vi * kRing;

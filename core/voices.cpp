@@ -1279,9 +1279,10 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
   plaits::Voice::Frame f[kBlock];
   bool stv[kVoices] = {};   // the voice renders a stereo pair this block (OUT PRE / POST)
   bool ustv[kVoices] = {};  // ... and its user machine wrote R itself (Plugin API 3, out_channels 2)
+  const int side = device::side_slot();   // a voice of this slot plays through the side stage's OUT and INSERT settings
 #if CORE_POLY
   if (ring_r)
-    for (int i = v0; i < v1; ++i) stv[i] = out::stereo(i);
+    for (int i = v0; i < v1; ++i) stv[i] = out::control_of(slot_of_voice(i) == side).route[box_voice(i)] != out::kTrk;
 #else
   (void)ring_r;
 #endif
@@ -1417,7 +1418,7 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
         if (of != r_env_off[i]) r_env_off[i] = of, r_env_rel[i] = true;
         float g = r_env_g[i];
 #if CORE_POLY
-        const float dk = out::dec_coef(out::control.dec[box_voice(i)]);
+        const float dk = out::dec_coef(out::control_of(slot_of_voice(i) == side).dec[box_voice(i)]);
 #else
         const float dk = 1.0f;
 #endif
@@ -1474,7 +1475,8 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
     else soft_out(ring, row, i, l);
     mach[mach_of(v[i])] += cycles() - t1;
   }
-  for (int i = v0; i < v1; ++i) ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr);   // the voice's INSERT chain (core/fx/insert.h)
+  for (int i = v0; i < v1; ++i)   // the voice's INSERT chain (core/fx/insert.h), in its stage's engine
+    ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr, slot_of_voice(i) == side);
 #if CORE_MSAMP
   for (int i = v0; i < v1; ++i)   // LIVE IN after its chain: the limiter, the feedback guard, the measure's clicks
     if (v[i].li && v[i].live) livein::post(i, ring, stv[i] ? ring_r : nullptr, row, kBlock);

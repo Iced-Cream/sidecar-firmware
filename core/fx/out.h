@@ -96,6 +96,10 @@ inline void defaults(Control& c) {
   for (int v = 0; v < kVoices; ++v) c.route[v] = kTrk, c.lev[v] = 100, c.pan[v] = 64, c.wid[v] = 64, c.dec[v] = 0, c.open[v] = 1;
   c.trim10[0] = c.trim10[1] = 0, c.trk10 = 0;
 }
+// The side output stage's (core/device/device.h side_slot: a box beside a Rytm): slot 1's voices, their own OUT settings
+// (the defaults until slot 1's settings are loaded into it; no mute gate from the Rytm). The Pi's second Output follows it.
+extern Control control_side;
+inline Control& control_of(bool side) { return side ? control_side : control; }
 
 inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }
