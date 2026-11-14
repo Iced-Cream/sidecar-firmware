@@ -153,7 +153,9 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm 
   if (!l.box) rewire();   // (link 0's sender taken while it is still the platform's)
   l.box = p;
   const char* was = l.state;
-  l.state = p ? p->state_dir : nullptr;   // its own folder from its hello on: nothing restarts
+  // its own folder from its hello on: nothing restarts. A box gone keeps its slot's folder until the next box's hello: a write
+  // queued for it before it left (a card job carries its slot, not the folder) still lands in its own folder, never in /.rytm
+  if (p || !l.index) l.state = p ? p->state_dir : nullptr;
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
