@@ -141,6 +141,7 @@ private:
 	boolean m_bTestFeeding;
 	boolean m_bStarted, m_bDebug;
 	unsigned m_nDelay;
+	unsigned m_nDebugVendor;
 	const TUSBEndpointDescriptor *m_pEpDesc[16];
 	unsigned m_nEpDesc;			// TestPoll is the caller (a real box of the slot is ignored in test mode)
 };
