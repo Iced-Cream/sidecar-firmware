@@ -57,6 +57,7 @@
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
+#include <circle/string.h>
 #include <circle/new.h>
 #include <assert.h>
 
@@ -836,6 +837,10 @@ void CObUsb::Reattach (void)
 	if (m_bStreaming) m_bAttachDue = TRUE;
 }
 
+static char s_PipeInfo[2][192];
+
+const char *CObUsb::PipeInfo (unsigned nSlot) { return nSlot < 2 ? s_PipeInfo[nSlot] : ""; }
+
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
@@ -875,6 +880,7 @@ void CObUsb::MirrorAttach (void)
 	// opened (ob::kAlt), so a pipe there is taken only at that alternate.
 	mirror::Layout l;
 	if (bPipesOpen) l.n = 0;
+	else if (m_nSlot < 2) s_PipeInfo[m_nSlot][0] = 0;
 	else if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
 	{
 		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: the box's configuration does not parse: no pipes");
@@ -907,6 +913,18 @@ void CObUsb::MirrorAttach (void)
 			CLogger::Get ()->Write (From, LogWarning, "usb=mirror: SET_INTERFACE %d alt %d for pipe 0x%02x failed", iface, alt, e.addr);
 			continue;
 		}
+		if (m_nSlot < 2)			// TR2c: the pipes open beside the relay's link (its throughput fell to ~1 block/ms)
+		{
+			char *s = s_PipeInfo[m_nSlot];
+			unsigned len = strlen (s);
+			if (len + 40 < sizeof s_PipeInfo[0])
+			{
+				CString t;
+				t.Format ("%s0x%02x t%u mps 0x%04x iv %u", len ? ", " : "", (unsigned) e.addr, (unsigned) (pDesc->bmAttributes & 3),
+					  (unsigned) pDesc->wMaxPacketSize, (unsigned) pDesc->bInterval);
+				strcpy (s + len, (const char *) t);
+			}
+		}
 		TPipe &p = m_Pipe[m_nPipes];
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
@@ -930,7 +948,8 @@ void CObUsb::MirrorAttach (void)
 		for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
 		LeaveCritical ();
 	}
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes (%s)", nGot, (unsigned) nLang, m_nPipes,
+				m_nSlot < 2 ? s_PipeInfo[m_nSlot] : "");
 	pGadget->MirrorBoxUp (TRUE);
 }
 

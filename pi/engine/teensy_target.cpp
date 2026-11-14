@@ -44,7 +44,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -129,6 +129,7 @@ boolean CTeensyTarget::Configure (void)
 	{
 		const char *pFeed = CKernelOptions::Get ()->GetAppOptionString ("relayfeed", "loop");
 		m_bFeedIrq = m_bTest && strcmp (pFeed, "irq") == 0;
+		m_bBoxPipes = m_bTest && CKernelOptions::Get ()->GetAppOptionDecimal ("relayboxpipes", 0) != 0;
 	}
 	s_pThis = this;
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,
@@ -307,7 +308,9 @@ boolean CTeensyTarget::MirrorShown (void) const { return m_bConnected && m_bPcCo
 
 boolean CTeensyTarget::MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg)
 {
-	if (m_bTest && !m_bTestFeeding) return FALSE;	// relaytest: not a box of this Pi
+	// relaytest: not a box of this Pi; relayboxpipes=1 lets its MirrorAttach go on (its pipes opened, polled, their
+	// packets dropped below) so the bus carries what it does without relaytest (TR2c: the link ran at ~1 block/ms then)
+	if (m_bTest && !m_bTestFeeding) return m_bBoxPipes;
 	Map m;
 	if (pDev[0] != 18 || pDev[1] != DESCRIPTOR_DEVICE || pDev[7] != 64 || !make_map (pCfg, nCfg, ob::kInEp, ob::kOutEp, &m))
 	{
@@ -412,6 +415,12 @@ void CTeensyTarget::MirrorControlDone (unsigned nSeq, const u8 *pData, int nLeng
 
 // xHCI IRQ: one IN packet of a box pipe for the computer
 boolean CTeensyTarget::MirrorPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength)
+{
+	if (m_bTest) { m_Stats.nPipeInDrop++; return FALSE; }	// relaytest: the real box's packets (relayboxpipes=1); its request goes again
+	return SendPipeIn (uchAddr, pData, nLength);
+}
+
+boolean CTeensyTarget::SendPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength)
 {
 	unsigned c = ChanOfIn (uchAddr);
 	if (c >= kChannels || !MirrorShown () || nLength > kLinkMps || m_bChanOutBusy[c]) { m_Stats.nPipeInDrop++; return FALSE; }
@@ -607,7 +616,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		{
 			// the made-up box echoes a pipe packet on its IN pipe of the same number (0x02 -> 0x82); the computer's
 			// next packet once the echo is out (its credit), as a box that took it
-			if (p->MirrorPipeIn ((u8) (ep.addr | 0x80), p->m_pChanInBuf[c][k], pURB->GetResultLength ())) p->m_nTestEcho++;
+			if (p->SendPipeIn ((u8) (ep.addr | 0x80), p->m_pChanInBuf[c][k], pURB->GetResultLength ())) p->m_nTestEcho++;
 			else p->m_nTestEchoDrop++;
 			p->m_nCreditDue[c]++;
 		}
@@ -881,6 +890,18 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
 			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
 			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects);
+	if (p->m_nInfoLines < 12)		// the first ~2 minutes: what the link shares the bus with (the log ring holds ~1 min)
+	{
+		p->m_nInfoLines++;
+		for (unsigned i = 0; i < p->m_Map.l.n; i++)
+		{
+			const mirror::Ep &e = p->m_Map.l.ep[i];
+			pLogger->Write (From, LogNotice, "relay ep 0x%02x iface %u role %u type %u mps %u interval %u",
+					e.addr, e.iface, e.role, e.attr & 3, e.mps, e.interval);
+		}
+		pLogger->Write (From, LogNotice, "relay box pipes: slot 0 (%s) slot 1 (%s)%s", CObUsb::PipeInfo (0),
+				CObUsb::PipeInfo (1), p->m_bBoxPipes ? ", relayboxpipes=1" : "");
+	}
 	pLogger->Write (From, LogNotice, "relay link 0x02: done %u err %u (usb %u) max %u us, hist <125 %u <250 %u <500 %u <1ms %u "
 			"<2ms %u <4ms %u <8ms %u more %u | busy max %u, drops in a row max %u",
 			s.nLinkDone, s.nLinkErr, s.nLinkErrStatus, s.nLinkMaxUs, s.nLinkHist[0], s.nLinkHist[1], s.nLinkHist[2],
