@@ -15,6 +15,7 @@ namespace core {
 namespace ins {
 
 Control control;
+Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
 void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
@@ -68,10 +69,22 @@ bool g_dirty = false;
 uint32_t g_dirty_ms = 0;
 
 Engine g_engine(48000.0f);
+#if CORE_VOICES > 8
+// slot 1's chains (its voices 8..15)
+Engine g_engine1(48000.0f);
+#endif
 #ifndef CORE_HEAP_BUFFERS
 float g_lines[kLines][kLine];
+#if CORE_VOICES > 8
+float g_lines1[kLines][kLine];
+#endif
 struct Placer {
-  Placer() { g_engine.Place(g_lines); }
+  Placer() {
+    g_engine.Place(g_lines);
+#if CORE_VOICES > 8
+    g_engine1.Place(g_lines1);
+#endif
+  }
 } g_placer;
 #endif
 
@@ -417,7 +430,14 @@ bool any_on() {
 
 // ---------------------------------------------------------------------------------------------------- the DSP hooks
 
-Engine& engine() { return g_engine; }
+Engine& engine(int slot) {
+#if CORE_VOICES > 8
+  if (slot) return g_engine1;
+#else
+  (void)slot;
+#endif
+  return g_engine;
+}
 
 // the poly voices' soft limiter (voices.h kSoftKnee / kSoftCeil): an EQ boost or a DRIVE never hard-clips
 static inline int16_t knee16(float y) {
@@ -430,21 +450,25 @@ static inline int16_t knee16(float y) {
   float q = y * 32767.0f;
   return (int16_t)(q > 32767.0f ? 32767 : q < -32768.0f ? -32768 : q);
 }
-void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices]) {
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices], int slot) {
   if (vi < 0 || vi >= core::kVoices) return;
-  const int c = box_voice(vi);   // its box voice's chain (one box's chains until slot 1 has its own)
-  amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now
-  if (!ring_r) g_engine.MarkMono(c);
-  if (!g_engine.Active(c, control)) return;
+  const int c = box_voice(vi);   // its box voice's chain, in its slot's engine
+  Engine& e = engine(slot);
+  const Control& k = control_of(slot);
+  const bool amp = slot == out::g_base_slot;
+  e.SetAmp(amp);
+  if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
+  if (!ring_r) e.MarkMono(c);
+  if (!e.Active(c, k)) return;
   float x[64], r[64];
   if (n > 64) n = 64;
   for (int i = 0; i < n; ++i) x[i] = ring[row[i]][vi] * (1.0f / 32768.0f);
   if (ring_r) {
     for (int i = 0; i < n; ++i) r[i] = ring_r[row[i]][vi] * (1.0f / 32768.0f);
-    g_engine.ProcessVoiceStereo(c, x, r, n, control);
+    e.ProcessVoiceStereo(c, x, r, n, k);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]), ring_r[row[i]][vi] = knee16(r[i]);
   } else {
-    g_engine.ProcessMono(c, x, n, control);
+    e.ProcessMono(c, x, n, k);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]);
   }
   __atomic_fetch_add(&g_stats.voice_blocks, 1u, __ATOMIC_RELAXED);
@@ -510,12 +534,18 @@ static struct BusHook {
 } g_bus_hook;
 
 // the DELAY lines, then AMP's engine pool (amp.h; on the Mac: its own static memory)
-unsigned long heap_bytes() { return sizeof(float) * kLines * kLine + amp::heap_bytes() + master::heap_bytes(); }
+// (and on 16 voices slot 1's DELAY lines right after slot 0's: both line arrays at their alignment)
+static const unsigned long kLinesBytes = sizeof(float) * kLines * kLine;
+static const unsigned long kSideBytes = kVoiceSlots > 1 ? kLinesBytes : 0;
+unsigned long heap_bytes() { return kLinesBytes + kSideBytes + amp::heap_bytes() + master::heap_bytes(); }
 void heap_place(void* mem) {
   memset(mem, 0, heap_bytes());
   g_engine.Place((float(*)[kLine])mem);
-  amp::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine);
-  master::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine + amp::heap_bytes());
+#if CORE_VOICES > 8
+  g_engine1.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes));
+#endif
+  amp::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes);
+  master::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes + amp::heap_bytes());
 }
 
 // ---------------------------------------------------------------------------------------------------- the card's hooks
@@ -761,6 +791,10 @@ void reset() {
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f, g_send_off[v][b] = 0, send_refresh(v, b);
   g_engine.Reset();
+#if CORE_VOICES > 8
+  memset((void*)&control1, 0, sizeof control1);
+  g_engine1.Reset();
+#endif
   amp::reset();
   master::reset();
   g_stats = Stats();

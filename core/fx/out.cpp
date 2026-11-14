@@ -17,6 +17,8 @@ namespace core {
 namespace out {
 
 Control control;
+volatile int8_t g_base_slot = 0;
+Control control1 = [] { Control c; defaults(c); return c; }();
 void (*on_change)() = nullptr;
 
 namespace {
@@ -158,7 +160,7 @@ bool any_stereo() {
   return false;
 }
 void set_trim(int pair, int db10) {
-  if (pair == 2) control.trk10 = (int16_t)clampi(db10, -240, 240);
+  if (pair == 2) control_of(g_base_slot).trk10 = (int16_t)clampi(db10, -240, 240);   // the base box's
   if (pair < 0 || pair > 1) return;
   control.trim10[pair] = (int16_t)clampi(db10, -240, 120);
 }
@@ -318,6 +320,7 @@ const Stats& stats() { return g_stats; }
 
 void reset() {
   defaults(control);
+  defaults(control1);
   g_device = &kRytmMk2;
   for (int v = 0; v < kVoices; ++v) {
     g_knob[v][0] = 100, g_knob[v][1] = 64, g_knob[v][2] = 64, g_knob[v][3] = 0;

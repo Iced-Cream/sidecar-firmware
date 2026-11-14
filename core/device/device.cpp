@@ -75,6 +75,7 @@ static CORE_COLD void rebase() {
   if (b == g_base) return;
   g_base = b, g_web_link = (int8_t)b->index;
   if (!g_depth) g_cur = b;
+  out::g_base_slot = (int8_t)slot_of_voice(voice_base(*b));   // the base box's settings: its stage, the console's trim, AMP
 }
 
 CORE_COLD const Profile* by_id(uint16_t id) {
@@ -157,7 +158,8 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm 
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
-  out::set_trim(2, p ? p->trk10 : g_links[1].box ? g_links[1].box->trk10 : 0);   // a live stereo=trim:trk lasts until the box changes
+  // slot 1's TRK trim, its box's (slot 0's: the Rytm's, 0). On 8 voices a box plays slot 0's settings: there
+  out::control_of(slot_of_voice(voice_base(g_links[1]))).trk10 = g_links[1].box ? g_links[1].box->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, p ? p->name : l.index ? "none" : kRytm.name, l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
 }
@@ -208,7 +210,7 @@ CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
 }
 
 CORE_COLD void reset() {
-  g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0;
+  g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0, out::g_base_slot = 0;
   for (Link& l : g_links) select(l, nullptr), l.state = nullptr;
   for (int k = 1; k < kLinks; ++k) g_links[k].out = nullptr;
   s_route[0] = 0, s_route[1] = 1, s_tx[0] = s_tx[1] = nullptr;

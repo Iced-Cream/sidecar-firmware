@@ -373,9 +373,14 @@ boolean CKernel::Initialize (void)
 	// boot defaults (the user's decision, 2026-10-16): out=tracks, the voices on their tracks' inputs, through the
 	// Rytm's filters and FX (the mod build); MIDI notes off (notes=on is for a stock Rytm, with out=main); no drone
 	// (only :drone=). cmdline.txt or the console override them.
-	g_Output.SetMode (strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
-											      : Output::kTracks);
-	g_Output.SetOutControl (&core::out::control);	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md)
+	const Output::Mode OutMode = strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
+												      : Output::kTracks;
+	g_Output.SetMode (OutMode);
+	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md): each slot's own; the base box's stage follows the base box
+	g_Output.FollowControl ([] () -> const core::out::Control * { return &core::out::control_of (core::slot_of_voice (core::device::base_voice_base ())); });
+	g_OutputSide.SetMode (OutMode);			// slot 1's voices beside a Rytm (side_out.h): slot 1's OUT routes,
+	g_OutputSide.SetOutControl (&core::out::control1);	// their box's channels (set by its stream), no stereo=measure
+	g_OutputSide.SetMeasured (false);
 	// poolmono=1: stereo files summed at load (half the pool RAM for them; PRE / POST voices then play them centred)
 	bridge::pool_mono (m_Options.GetAppOptionDecimal ("poolmono", 0) != 0);
 	// trimpre= / trimpost= (tenths of a dB, may be negative): the PRE / POST pairs' calibration from stereo=measure
@@ -643,6 +648,11 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  (int) D.restart_last, (int) D.under_first, (int) D.under_last, D.since_reset,
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
+	pOut->Append (s);
+	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
+	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
+		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
+		  g_OutputSide.Streams ());
 	pOut->Append (s);
 	usbnet_pi::Status (pOut, k->m_pSidecar != 0 && k->m_pSidecar->NetInDevice (), k->m_pSidecar != 0 && k->m_pSidecar->NetUp (),
 			   k->m_pSidecar != 0 && k->m_pSidecar->NetLate ());	// late: reboot to use the cable

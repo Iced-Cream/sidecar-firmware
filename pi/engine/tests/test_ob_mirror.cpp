@@ -119,6 +119,8 @@ static bool logged(const char* s) {
   return false;
 }
 
+Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
+
 int main() {
   CSidecarGadget::s_pThis = &g_gadget;
   CTimer::s_ticks = 1000;
