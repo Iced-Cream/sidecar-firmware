@@ -116,6 +116,25 @@ def check_block(b, n=BLOCK):
     return seq if b[4] == (seq + 4) & 0xFF and b[-1] == (seq + n - 1) & 0xFF else None
 
 
+def classify_bad(b, want, n=BLOCK):
+    """What a corrupt block is made of: for each byte, which block's pattern it fits (byte i of block s is
+    (s + i) & 0xFF for i >= 4), as runs of (first, last, seq offset from WANT or None). Shows a block half-written,
+    mixed from two blocks, shifted, or all zero."""
+    if want is None:
+        want = struct.unpack_from("<I", b)[0]
+    runs = []
+    for i in range(4, len(b)):
+        off = (b[i] - i - want) & 0xFF		# this byte fits block want + off (mod 256)
+        off = off - 256 if off >= 128 else off
+        if runs and runs[-1][2] == off and runs[-1][1] == i - 1:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i, off])
+    head = struct.unpack_from("<I", b)[0]
+    return dict(head_seq=head, head_off=(head - want) if want is not None else None, zero=not any(b),
+                runs=[r for r in runs if r[1] - r[0] >= 3][:12], nruns=len(runs))
+
+
 class Seq:
     def __init__(self):
         self.n = self.lost = self.dup = self.bad = 0
@@ -220,7 +239,11 @@ class Bench:
             c = b[i:i + BLOCK]
             if len(c) != BLOCK:
                 self.bad_lens[len(c)] = self.bad_lens.get(len(c), 0) + 1
-            self.a_pc.see(check_block(c))
+            s = check_block(c)
+            if s is None and getattr(self, "dump", None) is not None and len(self.dump) < 200:
+                self.dump.append(dict(after=self.a_pc.next, xfer_off=i, xfer_len=len(b), t=round(time.time() - self.t_start, 4),
+                                      kind=classify_bad(c, self.a_pc.next), hex=c.hex()))
+            self.a_pc.see(s)
 
     # ---- the "Pi"
     def on_event(self, b):
@@ -301,7 +324,7 @@ class Bench:
         if "audio_pc" in paths:		# the "Pi" sends blocks at the box's rate, the "computer" reads 0x83
             if pi:
                 self.s_apc = self._out_stream(link, A_FROM_PI, 16, block, BLOCK_HZ)
-            self._in(mirr, 0x83, BLOCK * 8, 8, self.on_audio_pc, "int")
+            self._in(mirr, 0x83, BLOCK * getattr(self, "rd_blocks", 8), getattr(self, "rd_depth", 8), self.on_audio_pc, "int")
         if "audio_pi" in paths:		# the "computer" sends blocks on 0x03 at the same rate, the "Pi" reads link 0x82
             self.s_api = self._out_stream(mirr, 0x03, 16, block, BLOCK_HZ)
             if pi:
@@ -420,7 +443,7 @@ def one_stage(ctx, link, paths, seconds):
     return res
 
 
-def computer_stage(ctx, paths, seconds):
+def computer_stage(ctx, paths, seconds, opts=None):
     """--computer-only: the link is on a Pi running relaytest=1 (teensy_target.cpp), which plays the box: a synthetic IN
     stream at the box's rate, pipe packets echoed (0x02 -> 0x82), the control pattern answered. Only the computer's side
     is checked here; the Pi's own counters are in its log ("relaytest:" line, every 10 s)."""
@@ -433,9 +456,13 @@ def computer_stage(ctx, paths, seconds):
     mirr.setInterfaceAltSetting(0, 3)
     b = Bench(ctx, None, mirr, seconds)
     b.warmup = 1.0 if "audio_pc" in paths else 0	# relaytest: blocks queued before this stage are skipped, then the Teensy's
-    b.run(paths)					# counters start from zero (0x40 0x7D)
+    o = opts or {}					# counters start from zero (0x40 0x7D)
+    b.rd_blocks, b.rd_depth = o.get("read_blocks", 8), o.get("read_depth", 8)
+    b.dump = [] if o.get("dump") else None
+    b.run(paths)
     rtt = sorted(b.ctl_rtt)
-    res = dict(paths=list(paths), audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(), bad_lengths=b.bad_lens,
+    res = dict(paths=list(paths), reader=dict(blocks=b.rd_blocks, depth=b.rd_depth),
+               audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(), bad_lengths=b.bad_lens,
                sent={"%s 0x%02x" % (s["who"], s["ep"]): s["sent"] for s in b.streams},
                ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,
                         rtt_us_max=rtt[-1] if rtt else None))
@@ -461,6 +488,17 @@ def computer_stage(ctx, paths, seconds):
         errs.append("the Teensy's counters not read (0x7E): %s" % e)
     res["verdict"] = "PASS" if not errs else "FAIL: " + ", ".join(errs)
     print(json.dumps({k: v for k, v in res.items() if k != "teensy"}, indent=1))
+    if b.dump is not None:
+        res["bad_dump"] = b.dump			# the first 200 corrupt blocks (classify_bad + bytes)
+        kinds = {}
+        for d in b.dump:
+            k = d["kind"]
+            key = "zero" if k["zero"] else "runs=%d head_off=%s offs=%s" % (
+                k["nruns"], k["head_off"], ",".join(str(r[2]) for r in k["runs"][:4]))
+            kinds[key] = kinds.get(key, 0) + 1
+        print("bad block shapes (first %d):" % len(b.dump))
+        for k, v in sorted(kinds.items(), key=lambda x: -x[1])[:15]:
+            print("  %4d  %s" % (v, k))
     mirr.close()
     return res
 
@@ -473,11 +511,15 @@ def main():
     ap.add_argument("--info", action="store_true")
     ap.add_argument("--bootloader", action="store_true", help="reboot the Teensy into its bootloader (to reflash)")
     ap.add_argument("--computer-only", action="store_true", help="the link is on a Pi with relaytest=1: check USB2 only")
+    ap.add_argument("--read-blocks", type=int, default=8, help="--computer-only: blocks per 0x83 read")
+    ap.add_argument("--read-depth", type=int, default=8, help="--computer-only: 0x83 reads kept queued")
+    ap.add_argument("--dump", action="store_true", help="--computer-only: keep the first 200 corrupt blocks in the JSON")
     a = ap.parse_args()
     ctx = usb1.USBContext()
     if a.computer_only:
         stages = [tuple(a.paths.split(","))] if a.paths else STAGES
-        results = [computer_stage(ctx, s, a.seconds) for s in stages]
+        opts = dict(read_blocks=a.read_blocks, read_depth=a.read_depth, dump=a.dump)
+        results = [computer_stage(ctx, s, a.seconds, opts) for s in stages]
         print(chr(10).join("%-32s %s" % ("+".join(r["paths"]), r["verdict"]) for r in results))
         if a.json:
             with open(a.json, "w") as f:
