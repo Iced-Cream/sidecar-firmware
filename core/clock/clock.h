@@ -12,7 +12,8 @@
 //   2D 01 0A <op> <src> ...       EDIT: the stock edit function the Rytm ran (copy / paste / clear / undo ...), raw
 //   2D 01 0B ...                  DIRTY, raw
 //   other 2D kinds                passed on raw (State::kind, bytes)
-// Tracks are 0..kTracks-1: the Rytm's 12, and room for a 13th (the Storage phase's track 12 extension). A tick may carry
+// Tracks are 0..tracks()-1: the Rytm's 12 and room for a 13th (the Storage phase's track 12 extension), kTracks; another box
+// its profile's count (the A4's 6), so a tick on a track the box does not have reaches no listener. A tick may carry
 // one byte more per tick than the four above in later senders; a tick record's size is taken from the message length.
 //
 // Threads: sysex() and the listeners on the control side (the Pi's core 3), from host_sysex. Portable.
@@ -56,8 +57,9 @@ int pattern();              // the active pattern 0..127, -1 unknown
 int queued();               // -1 none
 double bpm();               // 0 unknown
 bool step_of(int track, int* step, int* len, int* speed);   // the track's last tick; false if none since reset
+int tracks();               // the tracks the box on the link has: kTracks for the Rytm, its profile's (<= kTracks) for another
 
-struct Stats { uint32_t ticks, states, bad; };
+struct Stats { uint32_t ticks, states, bad, off_track; };   // off_track: ticks on a track >= tracks()
 Stats stats();
 }  // namespace clock
 }  // namespace core

@@ -5,7 +5,8 @@
 // one stays until a KEEP (the full handle set a saved project still uses) drops the rest of that project.
 //
 // Layout on the card: /.rytm/store/<project id, 8 hex>/<scope>-<handle, 4 hex>.bin, written through the backend's
-// atomic write (core/fmt write_atomic on the Pi's card core). Portable (Pi, Mac core, Linux tests): no card call here,
+// atomic write (core/fmt write_atomic on the Pi's card core). Another box's store is in its own state folder (an A4's
+// /.a4/store/...): the card's path function maps /.rytm through device::state_path, as for every file. Portable (Pi, Mac core, Linux tests): no card call here,
 // only the Backend's. Not thread-safe: one core drives it (the Pi's core 0, from the host-link queue).
 #pragma once
 #include <stdint.h>
