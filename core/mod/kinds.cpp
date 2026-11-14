@@ -234,7 +234,7 @@ CORE_COLD bool parse(const char* s, Tid* out) {
 CORE_COLD float base_now(Tid t) {
   int i = index_of(t), p = param_of(t);
   switch (kind_of(t)) {
-    case kV: return v[device::base_voice(i)].p[p & 15];   // the project's voice i: the base box's
+    case kV: return v[device::voice_in((uint8_t)i)].p[p & 15];   // the slot in hand's voice i (3(c): each slot's layer its own box's)
     case kFx: return fx::control.knob[i & 1][2 + (p & 3)];
 #if CORE_POLY
     case kSnd: return fx::control.send[i % fx::kTracks][p & 1];
@@ -264,7 +264,7 @@ CORE_COLD float knob_now(Tid t) {
 CORE_COLD void put(Tid t, float val) {
   int i = index_of(t), p = param_of(t);
   switch (kind_of(t)) {
-    case kV: v[device::base_voice(i)].p[p & 15] = val; break;
+    case kV: v[device::voice_in((uint8_t)i)].p[p & 15] = val; break;
     case kFx: fx::control.knob[i & 1][2 + (p & 3)] = (uint8_t)val; break;
 #if CORE_POLY
     case kIns:   // fx-ins: params 0..7 slot A / B P1..P4, 8..11 the chain's POST EQ (ins1112)

@@ -13,10 +13,13 @@
 #include "engine.h"
 #include "granular/granular.h"
 #include "lib/library.h"
+#include "lfo.h"
 #include "lib/pools.h"
+#include "mod/mod.h"
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
 #include "store/store.h"
+#include "voices.h"
 #include "wavetable/wavetable.h"
 
 using namespace core;
@@ -93,7 +96,9 @@ int main() {
   Fs fs;
   CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4"));
   CHECK(fs.mkdir("/.rytm/juno") && fs.mkdir("/.a4/juno") && fs.mkdir("/.a4/lfo"));
-  put("/.a4/lfo/A4P.txt", "the A4's own LFO file");   // (slot 1's store holds it; slot 0's modules never see it)
+  // the A4's own LFO file: its T1A on its V2's P4 (slot 1's store holds it, slot 1's LFOs load it; slot 0's never see it)
+  static const char kA4Lfo[] = "# the A4's\nT1A V2 3 0 100 0 0 20 64\n";
+  put("/.a4/lfo/A4P.txt", kA4Lfo);
   // each box's JUNO list in its own folder (the A4's project B4: one row; the Rytm's NEW: two)
   put("/.a4/juno/B4.txt", "000102030405060708090a0b0c0d0e0f1011\tA4 ROW\n");
   put("/.rytm/juno/NEW.txt", "000102030405060708090a0b0c0d0e0f1012\tRYTM ONE\n000102030405060708090a0b0c0d0e0f1013\tRYTM TWO\n");
@@ -125,7 +130,7 @@ int main() {
     {
       device::Scope in(device::g_links[1]);
       CHECK(store::ready() && !project_loading());
-      CHECK(store::get("/.rytm/lfo/A4P.txt", &d, &n) == store::kPresent && n == 21 && !memcmp(d, "the A4's", 8));
+      CHECK(store::get("/.rytm/lfo/A4P.txt", &d, &n) == store::kPresent && n == strlen(kA4Lfo) && !memcmp(d, kA4Lfo, n));
     }
     {
       device::Scope in(device::g_links[0]);   // (the lone A4 is the base box now: outside a Scope the slot in hand is 1)
@@ -133,12 +138,55 @@ int main() {
     }
     printf("  stores: slot 0 %d files, slot 1 %d files\n", store::present(0), store::present(1));
   }
+  // its LFOs: loaded from its store when the fill ended; the slot in hand outside a Scope is the lone A4's
+  CHECK(lfo::get(0).target == lfo::kTVoice + 1 && lfo::get(0).param == 3 && lfo::get(0).depth == 20);
+  {
+    device::Scope in(device::g_links[0]);
+    CHECK(lfo::get(0).target == 0);   // (the Rytm's project has no LFO file)
+  }
 
   // the Rytm on USB beside it: each keeps its own
   device::rytm_on_usb(true);
   settle();
   CHECK(device::g_base == &device::g_links[0]);
   CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));
+
+  // each slot's LFOs on its own box's voices: the A4's T1A (V2 P4) moves engine voice kBoxVoices + 1 only, never the
+  // Rytm's voice 1 (the same V2 in slot 0's numbering)
+  {
+    const int va = kBoxVoices + 1;
+    v[1].p[3] = 50.0f, v[va].p[3] = 50.0f;
+    uint32_t us = 5000000;
+    float lo = 50, hi = 50;
+    for (int i = 0; i < 400; ++i, us += 2000) {
+      mod::tick(us);
+      lo = v[va].p[3] < lo ? v[va].p[3] : lo, hi = v[va].p[3] > hi ? v[va].p[3] : hi;
+      CHECK(v[1].p[3] == 50.0f);
+    }
+    printf("  slot 1's T1A on V2 P4: engine voice %d %.2f..%.2f, voice 1 %.2f\n", va, lo, hi, v[1].p[3]);
+    CHECK(hi - lo > 10.0f);
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(mod::find(mod::tid(mod::kV, 1, 3)) != nullptr);   // slot 1's layer has it
+    }
+    {
+      device::Scope in(device::g_links[0]);
+      CHECK(mod::find(mod::tid(mod::kV, 1, 3)) == nullptr);   // slot 0's has not
+    }
+    // a report of the A4's voice moves slot 1's base (the voice's own slot), the value stays modulated around it
+    float p[16] = {};
+    p[3] = 70.0f;
+    mod::voice_params(va, p, 16);
+    CHECK(mod::base_of(va, 3, 0) == 70.0f && mod::base_of(1, 3, -1) == -1.0f);
+    // slot 1 takes its own voices only for now: an FX target is refused in its layer
+    {
+      device::Scope in(device::g_links[1]);
+      mod::begin_tick();
+      mod::offset(0, mod::tid(mod::kFx, 0, 1), 10.0f, 1.0f);
+      CHECK(mod::find(mod::tid(mod::kFx, 0, 1)) == nullptr);
+      mod::end_tick();   // (the offset-less tick restores T1A's voice: not live)
+    }
+  }
 
   // each box's POOL lists and the machines' copies of them (option A: nothing shared): the same row holds another file
   // in each slot; GRANULAR / WAVETABLE compose each slot's own list, and the views read the slot in hand's
@@ -197,6 +245,37 @@ int main() {
   {
     device::Scope in(device::g_links[1]);
     CHECK(junolib.listed() == 1);   // the slot in hand's
+  }
+
+  // each slot's LFOs at its own project change: the A4's B4 has no LFO file (the defaults); the Rytm's untouched
+  {
+    device::Scope in(device::g_links[1]);
+    CHECK(lfo::get(0).target == 0);
+  }
+  // both slots on the same project name: each edit lands in its own folder's file, never the other's
+  put("/.a4/lfo/NEW.txt", "# the A4's NEW\n");   // (a project with files of its own: no rename ask, as at slot 0)
+  {
+    device::Scope in(device::g_links[1]);
+    const uint8_t n[] = {'N', 'E', 'W', 0xf7};
+    set_project(n, 4);
+  }
+  settle();
+  CHECK(!strcmp(prj(0).key, "NEW") && !strcmp(prj(1).key, "NEW"));
+  {
+    char o[256];
+    CHECK(lfo::command("lfo=T2A:dep:11", o, sizeof o));
+    device::Scope in(device::g_links[1]);
+    CHECK(lfo::command("lfo=T2A:dep:-22", o, sizeof o));
+  }
+  settle();
+  {
+    const std::string r = get("/.rytm/lfo/NEW.txt"), a = get("/.a4/lfo/NEW.txt");
+    printf("  NEW's LFO files: /.rytm %d bytes, /.a4 %d bytes\n", (int)r.size(), (int)a.size());
+    CHECK(strstr(r.c_str(), "\nT2A OFF 0 0 64 0 0 11 ") && !strstr(r.c_str(), " -22 "));
+    CHECK(strstr(a.c_str(), "\nT2A OFF 0 0 64 0 0 -22 ") && !strstr(a.c_str(), " 11 "));
+    CHECK(lfo::get(lfo::lfo_of(1, 0)).depth == 11 && !lfo::dirty_any());
+    device::Scope in(device::g_links[1]);
+    CHECK(lfo::get(lfo::lfo_of(1, 0)).depth == -22);
   }
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4

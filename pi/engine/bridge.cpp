@@ -295,7 +295,10 @@ void lfo_midi(uint8_t st, uint8_t d1, uint8_t d2) {
 }
 bool learn_command(const char* p, char* out, int cap) { return core::learn::command(p, out, cap); }
 bool lfo_command(const char* p, char* out, int cap) { return core::lfo::command(p, out, cap); }
-int lfo_json(char* out, int cap) { return core::lfo::json(out, cap); }
+int lfo_json(char* out, int cap) {   // the base box's LFOs (core 0: names the slot, never the control core's slot in hand)
+  const core::device::Link* b = __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED);
+  return core::lfo::json(out, cap, b ? b->index : 0);
+}
 bool lfo_link_full() { return core::lfo::link_full(); }
 bool mod_command(const char* p, char* out, int cap) { return core::mod::command(p, out, cap); }
 int mod_json(char* out, int cap) { return core::mod::json(out, cap); }

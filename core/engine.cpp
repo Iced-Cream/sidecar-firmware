@@ -158,7 +158,10 @@ CORE_COLD bool idle_save() {
   if (T_("fxin", fxin::save())) return true;
   bool leaving = device::leaving() || g_flush;   // a restart or a power-off is coming: what waits for its edits to settle goes now
   if (leaving) lfo::save_due();
-  if (T_("lfo", lfo::save())) return true;
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's LFOs, into its own folder (3(c))
+    device::Scope in(device::g_links[k]);
+    if (T_("lfo", lfo::save())) return true;
+  }
 #if CORE_POLY
   if (leaving) ins::settings_due();
   if (T_("ins", ins::save())) return true;
@@ -190,7 +193,7 @@ CORE_COLD bool idle_save() {
     TV_("project", project_save());   // (with the index: the same project change's two small files, one step)
     return true;
   }
-  bool settled = !lfo::dirty() && !fx::card_dirty;
+  bool settled = !lfo::dirty_any() && !fx::card_dirty;
 #if CORE_POLY
   settled = settled && !ins::settings_dirty(nullptr) && !seq::unsaved() && !scene::dirty() && !xypad::dirty();
 #endif
@@ -198,7 +201,7 @@ CORE_COLD bool idle_save() {
 }
 
 CORE_COLD bool idle_settled() {
-  bool s = !lfo::dirty() && !fx::card_dirty && !fmt::post_busy() && fmt::unwritten(nullptr) == 0;
+  bool s = !lfo::dirty_any() && !fx::card_dirty && !fmt::post_busy() && fmt::unwritten(nullptr) == 0;
 #if CORE_POLY
   s = s && !ins::settings_dirty(nullptr) && !seq::unsaved();
 #endif

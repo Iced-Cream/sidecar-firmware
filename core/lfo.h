@@ -17,6 +17,10 @@
 // without its own file starts from the project's /.rytm/lfo/<project>.txt (the pre-1026 per-project file), which is
 // also what is used while the Rytm has not named a kit (a build without the kit report).
 // Everything runs on the control side (where engine_sysex runs), between blocks: tick() from the platform's loop.
+// 3(c) (option A, decided 2026-11-14): every voice slot has LFOs of its own - settings, runs, its project's and kit's
+// files in its own folder - and V1..V8 are its own box's voices. Everything below without a slot is the slot in hand's
+// (device::cur(), prj_slot()); voice_params is the voice's slot's; midi_in (the Rytm's notes) slot 0's. The clock is
+// one (the Sidecar's MIDI clock input). Each slot's LFOs tick in their slot's pass of mod::tick.
 #pragma once
 #include <stdint.h>
 
@@ -181,6 +185,7 @@ bool command(const char* p, char* out, int cap);
 // "\"lfo\":{\"n\":26,\"pt\":1,\"kit\":K,\"full\":0,\"trk\":T,\"l\":[...]}" (K 1..128, 0 unknown; pt 1: two a track, l[i] track
 // i / 2's A or B; full: link_full; trk: the Rytm's selected track 0..12 (12 FX), -1 none named - the web follows it)
 int json(char* out, int cap);
+int json(char* out, int cap, int slot);   // slot's (/status on the Pi's core 0: names the slot, never the slot in hand)
 // The /status buffer json() writes into on the Pi (pi/engine/kernel.cpp): every LFO with its params' 16 names ("pns"),
 // sized for 26 LFOs (the owner, 2026-11: 2 per Rytm track T1..T12 and 2 for the FX track; test_param_names checks it)
 constexpr int kJsonCap = 12288;
@@ -190,7 +195,8 @@ const Stats& stats();
 void reset();                        // tests: defaults, no targets, the clock forgotten
 
 // core/bundle/rename (UX review B1): the unsaved edits due now (the next save() writes them), and whether any wait
-void save_due();
-bool dirty();
+void save_due();   // every slot's
+bool dirty();      // the slot in hand's
+bool dirty_any();  // any slot's (the idle pass's settled)
 }  // namespace lfo
 }  // namespace core

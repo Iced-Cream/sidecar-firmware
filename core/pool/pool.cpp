@@ -591,9 +591,9 @@ CORE_COLD void project_switch_named(const char* key, const char* name, bool relo
 static bool g_loading[kVoiceSlots];
 
 // The slot in hand's project's files (a fill of that slot still running is abandoned by fill_begin: a switch while one
-// runs reads only the new project's files). The modules (LFO, inserts, scenes, XY, sequencer, song, kits) are one set
-// still, slot 0's: their files are wanted for every slot (each module's paths for the slot in hand's key), but only slot 0's
-// fill switches them; slot 1's store is filled and held for the modules' own per-slot copies (3(c) steps 4-7).
+// runs reads only the new project's files). Per slot so far: the LFOs (each slot's fill switches its own). The other
+// modules (inserts, scenes, XY, sequencer, song, kits) are one set still, slot 0's: their files are wanted for every
+// slot (each module's paths for the slot in hand's key), but only slot 0's fill switches them (3(c) steps 5-7).
 CORE_COLD void project_fill_begin() {
   const int s = prj_slot();
   store::clear();
@@ -630,6 +630,8 @@ CORE_COLD bool project_fill_step() {
       scene::project_changed();
       seq::project_changed();   // (the boot's too: seq::init leaves its tracks and A01 to this)
 #endif
+    } else {
+      lfo::project_changed();   // 3(c): slot s's own LFOs, from its store (in its Scope)
     }
     log(CORE_STR("store: slot %d: %s loaded: %d files of %d paths, %u bytes"), s, prj().key, store::present(),
         store::entries(), (unsigned)store::bytes());
