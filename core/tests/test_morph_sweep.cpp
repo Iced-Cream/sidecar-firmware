@@ -33,6 +33,10 @@
 #include "mod/target.h"
 #include "ui/page.h"
 #include "ui/remote.h"
+#if __has_include("loop/loop.h")   // the looper (feature/looper-050): LOOP:BAL is checked at the looper itself
+#include "loop/loop.h"
+#define HAVE_LOOPER 1
+#endif
 
 using namespace core;
 using mod::Tid;
@@ -103,16 +107,27 @@ static double obs(Tid t) {
   if (k == mod::kV) return v[i].p[p];
   if (k == mod::kFx) return fx::control.knob[i & 1][2 + (p & 3)];
   if (k == mod::kSnd) return fx::control.send[i][p & 1];
+#if HAVE_LOOPER
+  // what the looper plays (its BAL / LEV with the layer's value in), not the layer's e->applied: a looper that ignored
+  // the scene's value would still show the morph there
+  if (k == mod::kLoop) return p ? loop::lev_eff() : loop::bal_eff();
+#endif
   if (!e) return NAN;
   if (mod::is_offset(k)) return mod::knob_now(t) + e->applied;
   return e->applied;
 }
+static int g_parts_seen = 0;   // P3: samples read from a 09 part (the sweeps below must run on that path)
 static double obs_remote(Tid t) {
   int tr, w;
   if (!mod::rytm_word(t, &tr, &w)) return NAN;
   mod::RpView r;
   if (!mod::rp_view(tr, w, &r) || !r.morph) return NAN;
-  return r.ovr / 128.0;
+  if (r.pfl == 3) {   // P3: a 09 part - the Rytm's own arithmetic (pm_fake.h / rytm-mods "pm morph") on the 0A fader
+    double f = (double)scene::fader_played() / 16383.0;
+    ++g_parts_seen;
+    return (r.pa + (r.pb - r.pa) * f) / 128.0;
+  }
+  return r.pfl ? NAN : r.ovr / 128.0;   // (a one-sided part: not a value alone)
 }
 static double observe(Tid t) { return mod::is_remote(mod::kind_of(t)) ? obs_remote(t) : obs(t); }
 
@@ -252,10 +267,25 @@ static void kinds_two_sided() {
   for_sources("kMfx MFX:LEV", "MFX:LEV", 60, 120, false, 1.2, NAN, prep_mfx);
   for_sources("kOut O1:LEV", "O1:LEV", 40, 110, false, 1.2, NAN);
   for_sources("kSeq T1:SWG (cont)", "T1:SWG", 52, 78, false, 0.8, NAN);
+#if HAVE_LOOPER
   for_sources("kLoop LOOP:BAL", "LOOP:BAL", 10, 100, false, 0.8, NAN);
+#else
+  printf("kLoop LOOP:BAL: skipped (no looper in this build: core/loop)\n");
+#endif
   for_sources("kRa RT1:FRQ (Rytm own)", "RT1:FRQ", 100, 20, false, 0.2, NAN);
   for_sources("kRs RT1:P1 (Rytm own)", "RT1:P1", 10, 90, false, 0.2, NAN);
   for_sources("kRfx RFX:TIM", "RFX:TIM", 10, 90, false, 0.2, NAN);
+  // P3: a mod with the Rytm-side morph (caps2 kCaps2Morph): the same sweeps as 09 parts on the 0A fader, the values the
+  // 05 path's within 1/128 (the tolerance above); a hello without it after
+  const uint8_t h8[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, mod::kCapsParamMod, (uint8_t)ui::kCaps2Morph, 0xF7};
+  engine_sysex(h8, (int)sizeof h8);
+  CHECK(g_parts_seen == 0);
+  for_sources("kRa RT1:FRQ (09/0A)", "RT1:FRQ", 100, 20, false, 0.2, NAN);
+  for_sources("kRs RT1:P1 (09/0A)", "RT1:P1", 10, 90, false, 0.2, NAN);
+  for_sources("kRfx RFX:TIM (09/0A)", "RFX:TIM", 10, 90, false, 0.2, NAN);
+  CHECK(g_parts_seen > 0);   // (no kit from the Rytm: nothing goes; the parts are what the sender holds)
+  const uint8_t h0[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 1, 0, 0xF7};
+  engine_sysex(h0, (int)sizeof h0);
 }
 static void kinds_stepped() {
   printf("-- the stepped kinds: one switch per direction, at halfway (by design: scene.h)\n");
