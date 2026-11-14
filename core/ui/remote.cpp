@@ -1441,6 +1441,13 @@ CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims t
   g_fill_claimed = true;
 #endif
 }
+// 0.5.0 v2 P2: the scene edit on the Rytm's own pages armed after every hello (the Rytm clears it at each); an older
+// mod (no kCaps2Capture) counts 5A 01 0B as a refused command: never sent to it
+CORE_COLD void edit_arm() {
+#if CORE_POLY
+  if (s.caps2 & kCaps2Capture) mod::rytm_edit_arm(true);
+#endif
+}
 CORE_COLD void fill_unclaim() {
   if (!g_fill_claimed) return;
   g_fill_claimed = false;
@@ -2012,6 +2019,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
         mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
         fill_claim();
+        edit_arm();
 #if CORE_POLY
         mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
@@ -2028,6 +2036,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
       mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
       fill_claim();
+      edit_arm();
 #if CORE_POLY
       mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif

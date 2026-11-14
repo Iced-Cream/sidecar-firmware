@@ -2172,6 +2172,16 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
     case kPmStatus:  // 2D 01 11 <slots> <ring drops hi> <lo> <kit drops hi> <lo> <timeouts> <flags>: op 07's answer
       mod::rp_status(a + 1, n - 1);
       return;
+    case kCapture: {   // 2D 01 12 <side> <t> <w> <delta s7> <func> <base hi7> <lo7>: a turn under PAGE + T15 / T16
+      if (n < 8) break;
+      int d = a[4] & 0x40 ? (int)a[4] - 128 : (int)a[4];
+      scene::capture(a[1], a[2], a[3], d, a[5] != 0, (uint16_t)(a[6] << 7 | a[7]));
+      return;
+    }
+    case kEditKey:   // 2D 01 13 <ev 1 held / 0 let go / 2 picked> <side> <n 0..11, 7F>
+      if (n < 4) break;
+      scene::stock_edit(a[1], a[2], a[3]);
+      return;
     case kTempo: {
       if (n < 4) break;
       int t = a[1] << 14 | a[2] << 7 | a[3];

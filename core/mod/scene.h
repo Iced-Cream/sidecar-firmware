@@ -121,6 +121,17 @@ int edit_side();
 inline bool edit() { return edit_side() >= 0; }
 int side_scene(int side);                   // A's (0) or B's (1) scene 0..11, -1 none
 bool lock_side(int side, mod::Tid t, uint16_t v);   // lock() into that side's scene; false also when the side has none
+// ---- EDIT on the Rytm's own pages (0.5.0 v2 P2, rytm-mods 0026 "ms", the hello's caps2 ui::kCaps2Capture): the mod
+// catches PAGE + T15 / T16 there and reports the gesture (2D 01 13: stock_edit) and each turn of a lockable parameter
+// under it (2D 01 12: capture) instead of writing the kit. stock_edit: ev 1 the side (0 A, 1 B) held, 0 let go, 2 scene
+// n (0..11) picked for it; each answers with a readout on the Rytm's screen (mod::rytm_readout). capture: track 0..11
+// (12 the FX track), the Rytm's sound word 1..41, delta in detents (FUNC: fine), base the kit's value x 128 (0..16383).
+// The target: RTn / RFX (mod::rytm_tid), a Sidecar machine's words 9..24 its voice's P1..P16 (kV). The side's lock moves
+// from its value, else from base: delta x 128 (FUNC x 8), a stepped target one entry a detent. Refused (a readout, no
+// lock) while the side is not held (a kit change ended it), its scene unset (SET A FIRST), or the scene full. True: locked.
+enum : uint8_t { kEditLetGo = 0, kEditHeld = 1, kEditPicked = 2 };
+void stock_edit(int ev, int side, int n);
+bool capture(int side, int track, int word, int delta, bool func, uint16_t base);
 // ---- the console and /status (spec-050 2.10): "scene" (the state), "scene=ab:A:B" (1..12, 0 none), "scene=fader:V"
 // (0..16383), "scene=sel:N", "scene=lock:N:NAME:V" (V the target's value, 0..127.99, kept x 128), "scene=unlock:N:NAME",
 // "scene=clear:N", "scene=copy:N:M"; each edit answers with the state. "scene=qperf:muted|off|always" (QPERF FADER)

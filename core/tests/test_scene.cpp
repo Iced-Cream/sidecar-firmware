@@ -21,6 +21,7 @@
 #include "machines.h"
 #include "mod/learn.h"
 #include "mod/mod.h"
+#include "mod/rytm_out.h"
 #include "mod/scene.h"
 #include "mod/target.h"
 #include "ui/page.h"
@@ -728,6 +729,175 @@ static void scene_report_shown() {
   printf("scene: the Rytm's scene (2D 01 0F) kept and in the JSON\n");
 }
 
+// ---- 0.5.0 v2 P2 Task 10: EDIT on the Rytm's own pages (rytm-mods 0026 "ms"): 2D 01 13 the gesture, 2D 01 12 a turn
+static void edit19(int ev, int side, int n) {
+  const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x2D, 1, 0x13, (uint8_t)ev, (uint8_t)side, (uint8_t)n, 0xF7};
+  engine_sysex(m, (int)sizeof m);
+}
+static void cap18(int side, int t, int w, int d, int func, int base) {
+  const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x2D, 1, 0x12, (uint8_t)side, (uint8_t)t, (uint8_t)w, (uint8_t)(d & 0x7F),
+                       (uint8_t)func, (uint8_t)(base >> 7 & 0x7F), (uint8_t)(base & 0x7F), 0xF7};
+  engine_sysex(m, (int)sizeof m);
+}
+static std::string readout() {   // the last 5A 01 08 <n> <text> sent to the Rytm, "" none
+  std::string r;
+  for (const auto& o : g_rytm)
+    if (o.size() >= 10 && o[4] == 0x5A && o[6] == 8 && o.size() == (size_t)o[7] + 9) r.assign(o.begin() + 8, o.end() - 1);
+  return r;
+}
+static int lock_of(int n, Tid t) {   // scene n's lock of t (x 128), -1 none
+  const scene::Scene& sc = scene::state().s[n];
+  for (int i = 0; i < sc.n; ++i)
+    if (sc.l[i].t == t) return sc.l[i].v;
+  return -1;
+}
+static void edit_start(int a, int b) {
+  scene_reset_with_base(40);
+  hooks.to_rytm = rytm_cap;
+  g_rytm.clear();
+  scene::set_ab(a, b);
+}
+static void capture_first_turn_from_base() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  CHECK(scene::edit_side() == 0 && readout() == "EDIT A: SCENE 3");
+  const Tid frq = mod::rytm_tid(0, 30);   // BD FLTR FRQ (word 30)
+  CHECK(frq != 0);
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  CHECK(lock_of(2, frq) == 67 * 128);
+  CHECK(readout() == "A FRQ 67 >64");
+  hooks.to_rytm = nullptr;
+  printf("scene: a turn under PAGE + T15 on a Rytm page locks A from the kit's value (2D 01 12), the readout\n");
+}
+static void capture_second_turn_from_lock() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  const Tid frq = mod::rytm_tid(0, 30);
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  cap18(0, 0, 30, -5, 0, 64 * 128);   // from the lock (67), not the base
+  CHECK(lock_of(2, frq) == 62 * 128 && readout() == "A FRQ 62 <64");
+  cap18(0, 0, 30, 2, 1, 64 * 128);    // FUNC: fine (8 a detent, 1/16 of a step)
+  CHECK(lock_of(2, frq) == 62 * 128 + 16);
+  cap18(0, 0, 30, 63, 0, 64 * 128), cap18(0, 0, 30, 63, 0, 64 * 128);   // clamped at the top
+  CHECK(lock_of(2, frq) == 16383);
+  hooks.to_rytm = nullptr;
+  printf("scene: later turns move the lock from its value; FUNC fine; clamped\n");
+}
+static void capture_b_side() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 1, 0x7F);
+  CHECK(scene::edit_side() == 1 && readout() == "EDIT B: SCENE 6");
+  cap18(1, 3, 30, 1, 0, 10 * 128);
+  CHECK(lock_of(5, mod::rytm_tid(3, 30)) == 11 * 128 && lock_of(2, mod::rytm_tid(3, 30)) < 0);
+  CHECK(readout() == "B FRQ 11 >10");
+  edit19(scene::kEditLetGo, 1, 0x7F);
+  CHECK(scene::edit_side() < 0);
+  hooks.to_rytm = nullptr;
+  printf("scene: PAGE + T16 locks into B; its release ends EDIT\n");
+}
+static void capture_without_a_refused() {
+  edit_start(-1, -1);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  CHECK(readout() == "SET A: T1-12");
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  CHECK(scene::state().s[0].n == 0 && readout() == "SET A FIRST");
+  edit19(scene::kEditPicked, 0, 7);   // T8 under the side: scene 8 is A
+  CHECK(scene::state().a == 7 && scene::state().b < 0 && readout() == "EDIT A: SCENE 8");
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  CHECK(lock_of(7, mod::rytm_tid(0, 30)) == 67 * 128);
+  hooks.to_rytm = nullptr;
+  printf("scene: no A: refused (SET A FIRST); T<n> under the side picks the scene\n");
+}
+static void capture_sidecar_machine_to_kv() {
+  edit_start(2, 5);
+  const uint8_t m33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 40, (uint8_t)kPlaits, 0xF7};   // BD on a Sidecar machine
+  engine_sysex(m33, (int)sizeof m33);
+  CHECK(ui::remote_track_machine(0) >= 0 && ui::remote_track_machine(0) != 0x7F && ui::remote_track_voice(0) >= 0);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  cap18(0, 0, 9 + 2, 4, 0, 50 * 128);   // SRC word 11: its voice's P3
+  CHECK(lock_of(2, mod::tid(mod::kV, ui::remote_track_voice(0), 2)) == 54 * 128);
+  CHECK(lock_of(2, mod::rytm_tid(0, 11)) < 0);
+  cap18(0, 0, 30, 1, 0, 0);             // FLTR stays the Rytm's own
+  CHECK(lock_of(2, mod::rytm_tid(0, 30)) == 128);
+  const uint8_t r33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 0, 0x7F, 0xF7};   // (back to a Rytm machine)
+  engine_sysex(r33, (int)sizeof r33);
+  hooks.to_rytm = nullptr;
+  printf("scene: a Sidecar machine's SRC words lock its voice's P (V<n>:P<k>)\n");
+}
+static void capture_fx_track_rfx() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  cap18(0, 12, 9, 2, 0, 30 * 128);      // FX track, DELAY TIME (word 9)
+  CHECK(lock_of(2, mod::tid(mod::kRfx, 0, 0)) == 32 * 128);
+  cap18(0, 12, 4, 2, 0, 0);             // word 4 (LFO DST) is no target
+  CHECK(scene::state().s[2].n == 1 && readout() == "NOT LOCKABLE");
+  hooks.to_rytm = nullptr;
+  printf("scene: the FX track's words lock RFX; a word with no target is refused\n");
+}
+static void capture_stepped_word_steps() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  const Tid mul = mod::rytm_tid(0, 1);  // LFO MUL: a list
+  CHECK(mod::range(mul).mode == mod::kStep);
+  cap18(0, 0, 1, 5, 0, 3 * 128);        // five detents of a fast turn: one entry
+  CHECK(lock_of(2, mul) == 4 * 128);
+  cap18(0, 0, 1, -1, 1, 3 * 128);
+  CHECK(lock_of(2, mul) == 3 * 128);
+  hooks.to_rytm = nullptr;
+  printf("scene: a stepped word steps one entry a report\n");
+}
+static void capture_after_kit_change_refused() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  scene::kit_changed(scene::rytm_kit() == 9 ? 10 : 9);   // the gesture's scenes are gone with the kit
+  int before = 0;
+  for (int i = 0; i < scene::kScenes; ++i) before += scene::state().s[i].n;
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  int after = 0;
+  for (int i = 0; i < scene::kScenes; ++i) after += scene::state().s[i].n;
+  CHECK(after == before && readout() == "EDIT ENDED");
+  hooks.to_rytm = nullptr;
+  printf("scene: a turn after a kit change ended the gesture is refused (EDIT ENDED)\n");
+}
+static void readout_wire_format() {
+  hooks.to_rytm = rytm_cap;
+  g_rytm.clear();
+  mod::rytm_readout("a frq 1~");
+  CHECK(!g_rytm.empty());
+  const std::vector<uint8_t> want = {0xF0, 0x7D, 0x52, 0x54, 0x5A, 1, 8, 8, 'A', ' ', 'F', 'R', 'Q', ' ', '1', '?', 0xF7};
+  CHECK(g_rytm.back() == want);
+  g_rytm.clear();
+  mod::rytm_readout("12345678901234567890");   // 16 at most
+  CHECK(g_rytm.size() == 1 && g_rytm[0][7] == 16 && g_rytm[0].size() == 25);
+  hooks.to_rytm = nullptr;
+  printf("scene: the readout's wire format (5A 01 08 <n> <ASCII 20..5F>, 16 at most)\n");
+}
+static void hello_arms_edit() {
+  hooks.to_rytm = rytm_cap;
+  auto armed = [] {
+    int k = 0;
+    for (const auto& o : g_rytm) k += o == std::vector<uint8_t>({0xF0, 0x7D, 0x52, 0x54, 0x5A, 1, 0x0B, 1, 0xF7});
+    return k;
+  };
+  g_rytm.clear();
+  hello_caps2(ui::kCaps2QpMute | ui::kCaps2Capture);
+  CHECK(armed() == 1);
+  g_rytm.clear();
+  hello_caps2(ui::kCaps2QpMute);   // an older mod: never armed (it would refuse the op)
+  CHECK(armed() == 0);
+  // the mod's answer to 08 / 0B, even a refusal, is never "CCs from now on": a mute still goes as the mod command
+  hello_caps2(ui::kCaps2Capture);
+  const uint8_t hello[] = {0xF0, 0x7D, 0x52, 0x54, 0x35, 1, 0, 40, 16, ui::kCaps2Capture, 0xF7};   // caps: the mod command
+  engine_sysex(hello, (int)sizeof hello);
+  const uint8_t ack[] = {0xF0, 0x7D, 0x52, 0x54, 0x2D, 1, 0x10, 8, 1, 0xF7};
+  engine_sysex(ack, (int)sizeof ack);
+  g_rytm.clear();
+  mod::rytm_mute(1, 0);
+  CHECK(!g_rytm.empty() && g_rytm.back()[4] == 0x5A && g_rytm.back()[6] == mod::kOpMute);
+  hooks.to_rytm = nullptr;
+  printf("scene: a hello with kCaps2Capture arms the Rytm's edit (5A 01 0B 1); 08 / 0B answers keep the mod command\n");
+}
+
 static void loaded() {
   for (int i = 0; i < 100000 && project_loading(); ++i) idle_save();
   CHECK(!project_loading());
@@ -774,6 +944,16 @@ int main() {
   rytm_targets_refused();
   rytm_targets_still_learnable();
   scene_report_shown();
+  capture_first_turn_from_base();
+  capture_second_turn_from_lock();
+  capture_b_side();
+  capture_without_a_refused();
+  capture_sidecar_machine_to_kv();
+  capture_fx_track_rfx();
+  capture_stepped_word_steps();
+  capture_after_kit_change_refused();
+  readout_wire_format();
+  hello_arms_edit();
   printf("test_scene: PASS\n");
   return 0;
 }

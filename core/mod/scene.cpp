@@ -6,6 +6,7 @@
 
 #include "fmt/fmt.h"
 #include "mod/mod.h"
+#include "mod/rytm_out.h"
 #include "platform.h"
 #include "pool/pool.h"
 #include "project_key.h"
@@ -421,6 +422,74 @@ CORE_COLD int side_scene(int side) { return side == 0 ? g_st.a : side == 1 ? g_s
 CORE_COLD bool lock_side(int side, mod::Tid t, uint16_t v) {
   int n = side_scene(side);
   return n >= 0 && lock(n, t, v);
+}
+
+CORE_COLD void stock_edit(int ev, int side, int n) {
+  if (side != 0 && side != 1) return;
+  char t[mod::kReadoutMax + 1];
+  const char sd = side ? 'B' : 'A';
+  if (ev == kEditLetGo) {
+    if (g_side == side) g_side = -1;
+    return;
+  }
+  if (ev == kEditPicked && n >= 0 && n < kScenes) set_ab(side == 0 ? n : g_st.a, side == 1 ? n : g_st.b);
+  else if (ev != kEditHeld) return;
+  g_side = side;
+  const int sn = side_scene(side);
+  if (sn < 0) sniprintf(t, sizeof t, CORE_STR("SET %c: T1-12"), sd);
+  else sniprintf(t, sizeof t, CORE_STR("EDIT %c: SCENE %d"), sd, sn + 1);
+  mod::rytm_readout(t);
+}
+CORE_COLD bool capture(int side, int track, int word, int delta, bool func, uint16_t base) {
+  char t[mod::kReadoutMax + 1];
+  const char sd = side ? 'B' : 'A';
+  if ((side != 0 && side != 1) || g_side != side) {   // the gesture ended here (a kit change) before its turns came
+    mod::rytm_readout("EDIT ENDED");
+    return false;
+  }
+  const int n = side_scene(side);
+  if (n < 0) {
+    sniprintf(t, sizeof t, CORE_STR("SET %c FIRST"), sd);
+    mod::rytm_readout(t);
+    return false;
+  }
+  mod::Tid tg = 0;
+  const int vi = ui::remote_track_voice(track), m = ui::remote_track_machine(track);
+  if (track >= 0 && track < 12 && word >= 9 && word <= 24 && vi >= 0 && m >= 0 && m != 0x7F)
+    tg = mod::tid(mod::kV, vi, word - 9);   // a Sidecar machine: its voice's P1..P16
+  else
+    tg = mod::rytm_tid(track, word);
+  if (!tg || !mod::valid(tg)) {
+    mod::rytm_readout("NOT LOCKABLE");
+    return false;
+  }
+  const Scene& sc = g_st.s[n];
+  int cur = -1;
+  for (int i = 0; i < sc.n; ++i)
+    if (sc.l[i].t == tg) cur = sc.l[i].v;
+  const mod::Range r = mod::range(tg);
+  const bool off = mod::is_offset(mod::kind_of(tg));
+  const int lo = off || r.lo < 0 ? 0 : (int)r.lo, hi = off || r.hi > 127 ? 127 : (int)r.hi;
+  const int from = cur >= 0 ? cur : base > 16383 ? 16383 : base;
+  int v;
+  if (r.mode == mod::kStep) {   // a list: one entry a detent
+    int u = (from + 64) / 128 + (delta > 0 ? 1 : delta < 0 ? -1 : 0);
+    v = (u < lo ? lo : u > hi ? hi : u) * 128;
+  } else {
+    v = from + delta * (func ? 8 : 128);
+    v = v < lo * 128 ? lo * 128 : v > hi * 128 + 127 ? hi * 128 + 127 : v;
+    if (v > 16383) v = 16383;
+  }
+  if (!lock(n, tg, (uint16_t)v)) {
+    mod::rytm_readout("SCENE FULL");
+    return false;
+  }
+  char pl[8];
+  mod::param_label(tg, pl, sizeof pl);
+  const int sv = (v + 64) / 128, kv = (base + 64) / 128;
+  sniprintf(t, sizeof t, CORE_STR("%c %s %d %c%d"), sd, pl, sv, sv > kv ? '>' : sv < kv ? '<' : '=', kv);
+  mod::rytm_readout(t);
+  return true;
 }
 
 CORE_COLD bool command(const char* p, char* o, int cap) {
