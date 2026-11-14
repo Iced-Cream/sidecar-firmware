@@ -1546,6 +1546,7 @@ static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box
 static HelloGate s_HelloGate;
 static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 {
+	link1::Tap (pPacket - 1);			// usb=mirror through a Teensy relay: the event packet to its computer too
 	for (unsigned i = 0; i < nLength; i++)
 		if (s_HelloGate.feed (pPacket[i]) != 0) s_bHelloHeard = TRUE;
 	if (!CObUsb::Active ()) return;			// the TCP link is the host: a real box's MIDI is not the engine's
