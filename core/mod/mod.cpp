@@ -15,6 +15,7 @@
 #include "mod/scene.h"
 #include "mod/xypad.h"
 #include "platform.h"
+#include "ui/remote.h"
 #include "voices.h"
 
 namespace core {
@@ -161,7 +162,13 @@ CORE_COLD void morph_parts(Tid t, bool has_a, float a, bool has_b, float b, floa
     return;
   }
   e->live = 1, e->morph_on = 1, e->morph = has_b ? b : a;
-  rp_morph(t, has_a, a, has_b, b, f, step, upper);
+  if (!step && (ui::remote_caps2() & ui::kCaps2Morph)) {   // P3: the Rytm morphs a continuous word itself (09 / 0A)
+    float x = f < 0 ? 0 : f > 1 ? 1 : f;
+    rp_fader((uint16_t)(x * 16383.0f + 0.5f));
+    rp_morph_set(t, has_a, a, has_b, b);
+  } else {
+    rp_morph(t, has_a, a, has_b, b, f, step, upper);
+  }
   ++g_stats.scene_sets;
 }
 #endif

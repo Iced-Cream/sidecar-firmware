@@ -68,6 +68,9 @@ constexpr int kCaps2QpMute = 2;
 // 0.5.0 v2 P2: kCaps2Capture - PAGE + T15 / T16 on the Rytm's own pages is the MORPH scene edit, once armed (5A 01 0B 1,
 // sent after every hello: core/mod/rytm_out.h kOpEditArm); its reports 2D 01 12 / 13 (core/mod/scene.h capture)
 constexpr int kCaps2Capture = 4;
+// 0.5.0 v2 P3: kCaps2Morph - the Rytm morphs its own params itself: 5A 01 09 MORPH-SET (each lock's A / B once) and
+// 0A FADER (core/mod/rytm_param.h rp_morph_set / rp_fader); without it the morph goes as 05 overrides
+constexpr int kCaps2Morph = 8;
 // FILL's claim dropped (4A 7E 0: the Rytm's UP + LEFT / RIGHT stock's again) - fill-keys review L1: a claim left on a
 // Rytm whose host stopped answering. remote_fill_keys(false) (fill=keys:off): dropped, no claim after a hello until
 // remote_fill_keys(true) claims again; control core. remote_going_down(): a planned reboot or power-off (the Pi's

@@ -1385,10 +1385,15 @@ def host_mute(set_mask, clr_mask) -> bytes:
 # at 127> <flags>. t 0..12 (12 the FX track), w 1..41 the sound words, 48..51
 # VM1..4, 52..55 AT1..4 (offsets only), 56 VEL; ramp in Rytm blocks (32 frames). A refusal: 2D 01 HOST_ACK <op> <1
 # refused, 2 the slots full>. The hello's caps bit HOST_PM_CAPS says the mod has them. The Rytm's arithmetic: pm_model.py.
+# 0.5.0 v2 P3 (the hello's caps2 RUI_CAPS2_MORPH): 09 MORPH-SET <kit> <n 1..20> {<t> <w> <flags: 1 A, 2 B; 0 removes>
+# <a hi7> <lo7> <b hi7> <lo7>} (1/128 step: the Rytm interpolates each part itself), 0A FADER <kit> <f hi7> <lo7> <ramp>
+# (f 0..16383); 07's answer has one more byte: the morph parts in use.
 HOST_PM_OFFSET, HOST_PM_OVERRIDE, HOST_PM_CLEAR, HOST_PM_STATUS = 4, 5, 6, 7
+HOST_PM_MORPH_SET, HOST_PM_FADER = 9, 10
 HOST_PM_CAPS = 64
+RUI_CAPS2_MORPH = 8
 PM_STATUS = 0x11
-PM_MAX_OFFSETS, PM_MAX_OVERRIDES = 28, 22
+PM_MAX_OFFSETS, PM_MAX_OVERRIDES, PM_MAX_MORPHS = 28, 22, 20
 
 
 def pm_offset(kit, ramp, recs) -> bytes:
@@ -1419,11 +1424,26 @@ def pm_status() -> bytes:
     return host_cmd(HOST_PM_STATUS)
 
 
+def pm_morph_set(kit, recs) -> bytes:
+    """09: recs [(t, w, flags, a, b)] with a, b in 1/128 steps (0..16383); flags 1 has A, 2 has B, 0 removes."""
+    assert 1 <= len(recs) <= PM_MAX_MORPHS
+    b = [kit, len(recs)]
+    for t, w, fl, a, v in recs:
+        b += [t, w, fl, (a >> 7) & 0x7F, a & 0x7F, (v >> 7) & 0x7F, v & 0x7F]
+    return host_cmd(HOST_PM_MORPH_SET, *b)
+
+
+def pm_fader(kit, f, ramp) -> bytes:
+    """0A: the fader f 0..16383, ramped over `ramp` blocks."""
+    return host_cmd(HOST_PM_FADER, kit, (f >> 7) & 0x7F, f & 0x7F, ramp)
+
+
 def decode_pm_status(b):
     """2D 01 11's bytes after the kind -> dict, else None."""
-    if len(b) != 7:
+    if len(b) not in (7, 8):   # (8: P3's morph parts)
         return None
-    return dict(slots=b[0], ring_drops=b[1] << 7 | b[2], kit_drops=b[3] << 7 | b[4], timeouts=b[5], flags=b[6])
+    return dict(slots=b[0], ring_drops=b[1] << 7 | b[2], kit_drops=b[3] << 7 | b[4], timeouts=b[5], flags=b[6],
+                morph_parts=b[7] if len(b) > 7 else None)
 
 
 def decode_qperf(b):
