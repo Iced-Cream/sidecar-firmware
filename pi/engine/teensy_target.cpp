@@ -38,8 +38,8 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 :	CUSBFunction (pFunction),
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
-	m_nBoxGoneAt (0), m_ToBoxFilter (true), m_nMidiInHead (0), m_nMidiInTail (0), m_CtlState (CtlIdle), m_CtlSeq (0),
-	m_nCtlAnswer (0), m_nTakenDue (0), m_nLastLog (0)
+	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
+	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
