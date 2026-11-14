@@ -314,7 +314,10 @@ CORE_COLD void link_lost() {
 #endif
 }
 
-__attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
+// Transport 0's (the host link's) whole SysEx: its slot (a box's hello moves it to slot 1), then handled as that slot's.
+CORE_COLD void host_sysex(const uint8_t* d, int len) { engine_sysex_link(0, d, len); }
+
+__attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never
   if (device::foreign() && !device::translate(device::cur(), d, len, box)) return;
   if (len >= 6 && d[4] == device::kCmdHello && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {   // a box says what it is

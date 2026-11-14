@@ -36,6 +36,8 @@ static const Profile* s_list[kMax] = {&kRytm, &kDigitakt, &kA4};
 static int s_n = 3;
 Link g_links[kLinks] = {{}, {}};
 Link* g_cur = &g_links[0];
+Link* g_base = &g_links[0];
+int g_depth = 0;
 volatile int8_t g_web_link = 0;
 static volatile int8_t s_card_link = -1;   // the card core's request in hand: its link (CardScope)
 static struct LinkIndex { LinkIndex() { for (int k = 0; k < kLinks; ++k) g_links[k].index = (uint8_t)k; } } s_link_index;
@@ -50,19 +52,15 @@ int path_link() {
 
 CardScope::CardScope(int link) : was(s_card_link), was_cur(g_cur) {
   if (link < 0 || link >= kLinks) link = 0;
-  if (on_control()) g_cur = &g_links[link];
+  if (on_control()) ++g_depth, g_cur = &g_links[link];
   else __atomic_store_n(&s_card_link, (int8_t)link, __ATOMIC_RELAXED);
 }
 CardScope::~CardScope() {
-  if (on_control()) g_cur = was_cur;
+  if (on_control()) g_cur = --g_depth ? was_cur : g_base;
   else __atomic_store_n(&s_card_link, was, __ATOMIC_RELAXED);
 }
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
-static bool s_by_usb;                     // this change of folder comes from the Rytm's USB id
-static bool s_settle;                     // this boot came from one
-static uint32_t s_boot_ms;
-static constexpr char kDeviceFile[] = "/.rytm/device";   // the last box's id, decimal; none: the Rytm
 // The Pi's own files, the same for every box: the network, the pairing, the screen, the black box, this choice.
 static const char* const kMachine[] = {"wifi", "pair", "display", "prevboot", "blackbox", "device", "recspeed", "storbench", "wpa.conf"};
 
@@ -70,6 +68,14 @@ const Profile& rytm() { return kRytm; }
 const Profile& active() { return cur().box ? *cur().box : kRytm; }
 uint32_t dropped() { return cur().dropped; }
 void rytm_on_usb(bool on) { s_rytm_usb = on; }
+
+// g_base: slot 1 while a box has it and no Rytm is on USB, else slot 0 (device.h). The control core's; the web follows it.
+static CORE_COLD void rebase() {
+  Link* b = g_links[1].box && !s_rytm_usb ? &g_links[1] : &g_links[0];
+  if (b == g_base) return;
+  g_base = b, g_web_link = (int8_t)b->index;
+  if (!g_depth) g_cur = b;
+}
 
 CORE_COLD const Profile* by_id(uint16_t id) {
   for (int k = 0; k < s_n; ++k)
@@ -112,12 +118,6 @@ static CORE_COLD void rewire() {
   hooks.to_rytm = alone ? g_links[0].out : filtered_out;
 }
 
-CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
-  if (link <= 0 || link >= kLinks) return;   // (link 0's is the platform's to_rytm)
-  rewire();   // link 0's sender taken first, while hooks.to_rytm is still the platform's
-  g_links[link].out = out;
-  rewire();
-}
 
 CORE_COLD const char* state_path_box(const char* state, const char* path, char* buf, int cap) {
   if (strncmp(path, "/.rytm", 6) || (path[6] && path[6] != '/')) return path;
@@ -128,92 +128,89 @@ CORE_COLD const char* state_path_box(const char* state, const char* path, char* 
   return buf;
 }
 
-// The folder p wants is another than the one this boot runs on.
-static inline bool other_folder(const Link& l, const Profile* p) {
-  const char* w = p ? p->state_dir : nullptr;
-  return w != l.state && (!w || !l.state || strcmp(w, l.state));
-}
+// Boot: nothing to choose. Slot 0 is the Rytm's, in /.rytm, from the first file on; a box takes slot 1 at its hello, in its own
+// folder (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two
+// slots) is left as it is and never read.
+CORE_COLD void boot() {}
 
-// Boot, no voices yet: the box of the last run, its folder, its output filter (select's without the reset).
-CORE_COLD void boot() {
-  fmt::recover(kDeviceFile);
-  File f;
-  if (!f.open(kDeviceFile, kRead)) return;
-  char b[8] = {0};
-  int got = f.read(b, sizeof b - 1);
-  f.close();
-  s_settle = strstr(b, "usb") != nullptr, s_boot_ms = now_ms();
-  int id = 0;
-  for (int k = 0; k < got && b[k] >= '0' && b[k] <= '9'; ++k) id = id * 10 + b[k] - '0';
-  for (int k = 1; k < s_n; ++k) {
-    if (s_list[k]->id != id) continue;
-    Link& l = g_links[0];
-    l.state = s_list[k]->state_dir;
-    if (l.state) Fs().mkdir(l.state);
-    l.box = s_list[k];
-    rewire();
-    out::set_trim(2, l.box->trk10);   // (its hello finds it selected: this is the usual way in)
-    log(CORE_STR("device: %s, state in %s"), l.box->name, l.state ? l.state : "/.rytm");
-  }
-}
-
-static CORE_COLD void change_folder(Link& l, const Profile* p) {
-  if (l.saving) return;
-  l.next = p, l.saving = true, l.posted = false;
-  log(CORE_STR("device: %s wants its own state folder: the Sidecar restarts once the saves are done"), p ? p->name : kRytm.name);
-}
-
-CORE_COLD bool leaving() { return g_links[0].saving; }
-
-CORE_COLD bool step(bool settled) {
-  Link& l = g_links[0];
-  if (s_rytm_usb && !s_said && !s_by_usb && !l.saving && hooks.device_restart && other_folder(l, nullptr)) {
-    s_by_usb = true;
-    change_folder(l, nullptr);
-  }
-  if (!l.saving || !settled) return false;
-  if (!l.posted) {
-    char t[16];
-    uint32_t n = (uint32_t)sniprintf(t, sizeof t, s_by_usb ? "%u usb\n" : "%u\n", (unsigned)(l.next ? l.next->id : kIdRytm));
-    l.posted = fmt::post_queue(kDeviceFile, t, n, &l.post_id);
-    if (l.posted) return true;   // (refused: below, as a failed write)
-  } else {
-    fmt::PostResult r = fmt::post_result(l.post_id);
-    if (r == fmt::kPostPending) return false;
-    if (r == fmt::kPostOk) {
-      l.saving = false;
-      if (hooks.device_restart) hooks.device_restart();
-      return false;
-    }
-  }
-  // Not saved: no restart, it would only come back to the old folder and be asked again. A box's next hello tries again.
-  l.saving = false, l.posted = false;
-  log(CORE_STR("device: the choice of state folder was not saved: no restart"));
+CORE_COLD bool leaving() { return false; }   // (no change of folder waits any more: no restart)
+CORE_COLD bool step(bool) {   // (each idle pass: a Rytm's USB id seen or gone moves the base)
+  rebase();
   return false;
 }
 
 static uint32_t s_held[kVoices][4];   // box_note's
 static struct { uint8_t n, vb, notes[kChordNotes]; uint32_t at; } s_chord[kVoices];   // chord_note's: the notes so far, the machine, the newest note's time
-static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
+static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm (slot 0), or no box (slot 1)
   if (p == l.box) return;
   memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
   memset(s_chord, 0, sizeof s_chord);
   if (!l.box) rewire();   // (link 0's sender taken while it is still the platform's)
   l.box = p;
+  const char* was = l.state;
+  l.state = p ? p->state_dir : nullptr;   // its own folder from its hello on: nothing restarts
+  if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
-  out::set_trim(2, active().trk10);   // a live stereo=trim:trk lasts until the box changes
-  log(CORE_STR("device: %s"), active().name);
+  rebase();
+  out::set_trim(2, p ? p->trk10 : g_links[1].box ? g_links[1].box->trk10 : 0);   // a live stereo=trim:trk lasts until the box changes
+  log(CORE_STR("device: slot %d: %s, state in %s"), l.index, p ? p->name : l.index ? "none" : kRytm.name, l.state ? l.state : "/.rytm");
   link_reset("device");   // the box before it: its notes and transport unknown
 }
 
+// Which slot each transport's messages are (in): transport 0 is the platform's host link (the Rytm's USB MIDI, or the
+// emulator's TCP link), transport 1 the second Elektron box's USB MIDI (pi/engine/link1.h). A box's hello on either takes
+// slot 1; a Rytm's 35 there gives its transport back to slot 0.
+static int8_t s_route[kLinks] = {0, 1};
+static void (*s_tx[kLinks])(const uint8_t*, int);   // each transport's sender: 0 the platform's to_rytm, 1 set_out(1)
+
+static CORE_COLD void route(int t, int slot) {
+  for (int k = 0; k < kLinks; ++k)
+    if (k != t && s_route[k] == slot) s_route[k] = (int8_t)s_route[t];   // (the other transport: the slot left over)
+  s_route[t] = (int8_t)slot;
+  for (int k = 0; k < kLinks; ++k) g_links[s_route[k]].out = s_tx[k];
+  rewire();
+}
+
+CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
+  if (link <= 0 || link >= kLinks) return;   // (transport 0's is the platform's to_rytm)
+  rewire();   // transport 0's sender taken first, while hooks.to_rytm is still the platform's
+  if (!s_tx[0]) s_tx[0] = g_links[0].out;
+  s_tx[link] = out;
+  Link& l = g_links[s_route[link]];
+  l.out = out;
+  if (!out && l.index != 0) select(l, nullptr);   // its box went: slot 1 free again
+  rewire();
+}
+
+// The slot the bytes of transport t are for; a box's hello moves t to slot 1 (an answer kWait while another transport's box has it).
+CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
+  if (t < 0 || t >= kLinks) t = 0;
+  if (len < 6 || (d[4] != kCmdHello && d[4] != 0x35)) return s_route[t];   // (a Rytm's every other message: two compares)
+  if (!s_tx[0] && hooks.to_rytm && hooks.to_rytm != filtered_out) s_tx[0] = hooks.to_rytm;
+  if (!is_sidecar(d, len)) return s_route[t];
+  if (d[4] == kCmdHello && len >= 10) {
+    const Profile* p = by_id((uint16_t)(d[6] << 7 | d[7]));
+    if (p && p != &kRytm && s_route[t] == 0) {
+      int u = 1 - t;   // the other transport
+      if (s_route[u] == 1 && g_links[1].box && g_links[1].box != p) return -1;   // slot 1 is another box's: kWait
+      route(t, 1);
+    }
+  } else if (d[4] == 0x35 && s_route[t] == 1 && !(g_links[1].box && (g_links[1].box->features & kRemoteUi))) {
+    select(g_links[1], nullptr);   // a Rytm on this transport now: slot 1 has no box
+    route(t, 0);
+  }
+  return s_route[t];
+}
+
 CORE_COLD void reset() {
-  g_cur = &g_links[0], s_card_link = -1, g_web_link = 0;
+  g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0;
   for (Link& l : g_links) select(l, nullptr), l.state = nullptr;
   for (int k = 1; k < kLinks; ++k) g_links[k].out = nullptr;
+  s_route[0] = 0, s_route[1] = 1, s_tx[0] = s_tx[1] = nullptr;
   rewire();                      // hooks.to_rytm back to link 0's sender, the platform's
   g_links[0].out = nullptr;      // (taken again from hooks.to_rytm: a test may set another)
   strip::reset();
-  s_rytm_usb = s_said = s_by_usb = s_settle = false;
+  s_rytm_usb = s_said = false;
 }
 
 CORE_COLD bool add(const Profile* p) {
@@ -226,21 +223,17 @@ CORE_COLD bool add(const Profile* p) {
   return true;
 }
 
+void (*tx(int t))(const uint8_t*, int) { return t >= 0 && t < kLinks ? (t == 0 && !s_tx[0] ? hooks.to_rytm : s_tx[t]) : nullptr; }
+
 CORE_COLD void hello(Link& l, const uint8_t* d, int len) {
   if (len < 10 || d[5] != 1) return;
   int id = d[6] << 7 | d[7];
-  const Profile* p = nullptr;
-  for (int k = 0; k < s_n; ++k)
-    if (s_list[k]->id == id) p = s_list[k];
+  const Profile* p = by_id((uint16_t)id);
   uint8_t st = !p ? kUnknown : d[8] != kProto ? kBadProto : kOk;
   const Profile* to = p == &kRytm ? nullptr : p;
-  if (st == kOk && other_folder(l, to) && !hooks.device_restart) st = kUnknown;   // (a board that cannot restart: stays)
-  else if (st == kOk && other_folder(l, to) && to && (s_rytm_usb || (s_settle && now_ms() - s_boot_ms < kSettleMs))) st = kWait;
-  else if (st == kOk && other_folder(l, to)) {
-    st = kRestart;
-    change_folder(l, to);
-  } else if (st == kOk) select(l, to), s_said = to != nullptr;
-  if (st != kOk && st != kRestart && st != kWait) log(CORE_STR("device: hello from id %d proto %d: %s"), id, d[8], p ? "another protocol" : "no profile");
+  if (st == kOk && (to != nullptr) != (l.index != 0)) st = kUnknown;   // the Rytm's slot is 0, a box's 1 (slot_of routes it)
+  if (st == kOk) select(l, to), s_said = to != nullptr;
+  if (st != kOk) log(CORE_STR("device: hello from id %d proto %d: %s"), id, d[8], p ? "another protocol or slot" : "no profile");
   const uint8_t a[10] = {0xF0, 0x7D, 0x52, 0x54, kCmdHello, 1, d[6], d[7], st, 0xF7};
   void (*out)(const uint8_t*, int) = l.out ? l.out : l.index == 0 ? hooks.to_rytm : nullptr;   // the answer is never filtered
   if (out) out(a, (int)sizeof a);
@@ -349,14 +342,7 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
     d = m;
     return true;
   }
-  if (is_sidecar(d, len) && d[4] == 0x35) {   // a Rytm's USB port came up
-    if (other_folder(l, nullptr)) {
-      if (hooks.device_restart) change_folder(l, nullptr);
-      return ++l.dropped, false;
-    }
-    select(l, nullptr);
-    return true;
-  }
+  if (is_sidecar(d, len) && d[4] == 0x35) return ++l.dropped, false;   // (a Rytm's: slot_of gave its transport slot 0 first)
   if (is_sidecar(d, len) && d[4] == kCmdControls && l.box->controls) {
     const Controls& c = *l.box->controls;
     if (len != 7 + 2 * c.n || d[5] >= l.box->voices) return ++l.dropped, false;
@@ -381,10 +367,15 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
 
 }  // namespace device
 
-CORE_COLD void engine_sysex_link(int link, const uint8_t* d, int len) {
-  if (link <= 0 || link >= device::kLinks) return host_sysex(d, len);
-  device::Scope s(device::g_links[link]);
-  host_sysex(d, len);
+CORE_COLD void engine_sysex_link(int t, const uint8_t* d, int len) {
+  int slot = device::slot_of(t, d, len);
+  if (slot < 0) {   // a box's hello while slot 1 is another box's: it waits
+    const uint8_t a[10] = {0xF0, 0x7D, 0x52, 0x54, device::kCmdHello, 1, d[6], d[7], device::kWait, 0xF7};
+    if (auto* out = device::tx(t)) out(a, (int)sizeof a);
+    return;
+  }
+  device::Scope s(device::g_links[slot]);
+  host_sysex_slot(d, len);
 }
 
 }  // namespace core

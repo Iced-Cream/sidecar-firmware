@@ -61,6 +61,7 @@ static int s_nRytmPatIndex = -1;
 #include "midiout_q.h"	// the MIDI machine's USB-A queues
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "hello_gate.h"
+#include "link1.h"
 #include "box_list.h"
 #include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
@@ -1538,27 +1539,23 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	asm volatile ("dsb sy; sev");
 }
 
-// An A4's USB MIDI before it is the box in use: its hello reaches the engine while no Rytm has the link, nothing else does, and nothing goes back (usb_box.h).
+// The second Elektron box's USB MIDI (an A4, or a second box with a profile beside the host link's): link1.h, transport 1. Its hello
+// takes the engine's slot 1 (core/device/device.h); everything it sends reaches the engine as that slot's, the replies go back to it.
 static CDevice *volatile s_pHelloBox;
-static volatile boolean s_bHelloHeard;				// it has the mod: its hello came, taken or not (box_list.h)
-static volatile boolean s_bLinkUp;				// a host link is up
+static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box_list.h)
 static HelloGate s_HelloGate;
 static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 {
 	for (unsigned i = 0; i < nLength; i++)
-	{
-		unsigned n = s_HelloGate.feed (pPacket[i]);
-		if (n != 0) s_bHelloHeard = TRUE;
-		if (n == 0 || s_bLinkUp || !CObUsb::Active ()) continue;
-		for (unsigned k = 0; k < n; k++)
-			if (!g_MidiIn.push (s_HelloGate.data ()[k])) s_nMidiInLost++;
-		asm volatile ("dsb sy; sev");
-	}
+		if (s_HelloGate.feed (pPacket[i]) != 0) s_bHelloHeard = TRUE;
+	if (!CObUsb::Active ()) return;			// the TCP link is the host: a real box's MIDI is not the engine's
+	link1::Packet (nCable, pPacket, nLength);
 }
 static void HelloRemoved (CDevice *pDevice, void *pContext)
 {
 	s_pHelloBox = 0;
 	s_bHelloHeard = FALSE;
+	link1::SetDevice (0);
 }
 
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
@@ -1670,7 +1667,6 @@ void CKernel::UpdateMIDI (void)
 	if (m_pMIDI != 0 && nNow - s_nScanAt < 250000) return;
 	s_nScanAt = nNow;
 	g_pSidecarKeysTap = KeysTap;
-	s_bLinkUp = m_pMIDI != 0;
 	// umidiN in Circle's numbering: the gadget's own MIDI device (USB-C, gadget.h) takes a number too
 	for (unsigned n = 1; n <= 8; n++)
 	{
@@ -1682,18 +1678,16 @@ void CKernel::UpdateMIDI (void)
 		for (unsigned i = 0; i < MaxKeyboards; i++) bKnown |= s_pKeyboard[i] == p;
 		if (bKnown) continue;
 		TUsbBox Box = BoxOf (p);
-		if (Box == UsbBoxHello)
+		if (Box == UsbBoxHello || (Box == UsbBoxHost && m_pMIDI != 0))	// an A4, or a second box beside the host link's
 		{
-			if (core::device::active ().id == core::device::kIdA4) Box = UsbBoxHost;	// it chose this boot's folder: it is the box in use
-			else if (s_pHelloBox != 0) continue;		// one is heard at a time: a second A4 waits for that one to go
-			else
-			{
-				s_pHelloBox = p;
-				((CUSBMIDIDevice *) p)->RegisterRemovedHandler (HelloRemoved, this);
-				((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
-				m_Logger.Write (From, LogNotice, "midi: an Analog Four MKII (%s): nothing goes to it, listening for its mod's hello", (const char *) Name);
-				continue;
-			}
+			if (s_pHelloBox != 0) continue;			// one second box at a time: another waits for that one to go
+			s_pHelloBox = p;
+			((CUSBMIDIDevice *) p)->RegisterRemovedHandler (HelloRemoved, this);
+			((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
+			link1::SetDevice ((CUSBMIDIDevice *) p);
+			const char *pBox = p->GetProperty (CDevice::PropertyProduct);
+			m_Logger.Write (From, LogNotice, "midi: %s (%s): the second box's link, its hello takes slot 1", pBox != 0 && *pBox ? pBox : "an Elektron box", (const char *) Name);
+			continue;
 		}
 		if (Box == UsbBoxOther)
 		{
@@ -2501,6 +2495,7 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
+		link1::Send ();				// the engine's replies to the second box (link1.h)
 		if (m_pTransport == &m_SelfTest && CObUsb::Streaming ()) SetSelfTest (FALSE, "the Rytm streams");
 		if (m_pTransport == &m_SelfTest && m_pMIDI != 0) SetSelfTest (FALSE, "the Rytm's USB MIDI is up");
 		int nSelfTest = m_Console.TakeSelfTest ();

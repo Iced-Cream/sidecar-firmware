@@ -550,7 +550,6 @@ static void test_um(bool a4) {
     sx({0x10, 'U', 'S', 'L'});   // the project "USL"
   } else {   // the A4's hello (its folder chosen already: no restart), its screen's 36; no project from it
     remove(host_path("/Plugins/a.rmp").c_str()), remove(host_path("/Plugins/b.rmp").c_str());
-    device::cur().state = "/.a4";
     sx({0x4F, 1, (uint8_t)(device::kIdA4 >> 7), (uint8_t)(device::kIdA4 & 0x7F), 1});
     CHECK(device::foreign() && device::active().id == device::kIdA4 && device::active().voices == 4);
     CHECK(!(device::active().features & device::kProject) && extra_for_box("USER SLOTS") && !extra_for_box("PROJECT"));

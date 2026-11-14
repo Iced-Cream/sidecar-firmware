@@ -58,19 +58,17 @@ int main() {
   voices_init();
   CHECK(device::active().id == device::kIdRytm);
 
-  // its first hello: a state folder of its own, so one restart; the capture plays on the boot after it
+  // its first hello: slot 1, its own state folder at once, no restart; the capture plays from there
   static int restarts = 0;
   hooks.device_restart = [] { ++restarts; };
   const uint8_t hello[] = {0xf0, 0x7d, 0x52, 0x54, device::kCmdHello, 1, 0, device::kIdDigitakt, 1, 0xf7};
   host_sysex(hello, (int)sizeof hello);
-  CHECK(g_out.size() == 1 && g_out[0][8] == device::kRestart && !device::foreign());
-  for (int k = 0; k < 100 && !restarts; ++k) {
+  CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk && device::foreign());
+  for (int k = 0; k < 100; ++k) {
     device::step();
     fmt::post_step();
   }
-  CHECK(restarts == 1);
-  device::reset();
-  device::boot();
+  CHECK(restarts == 0);
   CHECK(!strcmp(device::cur().state, "/.digitakt") && device::active().id == device::kIdDigitakt);
   g_out.clear();
 
