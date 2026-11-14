@@ -532,18 +532,18 @@ static struct BusHook {
 } g_bus_hook;
 
 // the DELAY lines, then AMP's engine pool (amp.h; on the Mac: its own static memory)
-// (and on 16 voices the side stage's DELAY lines after them)
+// (and on 16 voices the side stage's DELAY lines right after the base box's: both line arrays at their alignment)
 static const unsigned long kLinesBytes = sizeof(float) * kLines * kLine;
 static const unsigned long kSideBytes = kVoiceSlots > 1 ? kLinesBytes : 0;
-unsigned long heap_bytes() { return kLinesBytes + amp::heap_bytes() + master::heap_bytes() + kSideBytes; }
+unsigned long heap_bytes() { return kLinesBytes + kSideBytes + amp::heap_bytes() + master::heap_bytes(); }
 void heap_place(void* mem) {
   memset(mem, 0, heap_bytes());
   g_engine.Place((float(*)[kLine])mem);
-  amp::heap_place((uint8_t*)mem + kLinesBytes);
-  master::heap_place((uint8_t*)mem + kLinesBytes + amp::heap_bytes());
 #if CORE_VOICES > 8
-  g_engine_side.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes + amp::heap_bytes() + master::heap_bytes()));
+  g_engine_side.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes));
 #endif
+  amp::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes);
+  master::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes + amp::heap_bytes());
 }
 
 // ---------------------------------------------------------------------------------------------------- the card's hooks
