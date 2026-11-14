@@ -9,6 +9,7 @@
 #include <circle/timer.h>
 #include <circle/koptions.h>
 #include <circle/util.h>
+#include <initializer_list>
 
 static const char From[] = "teensy";
 
@@ -39,7 +40,8 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
-	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0)
+	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -168,6 +170,15 @@ boolean CTeensyTarget::Configure (void)
 		}
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed: the box %s mirrors through it", m_nVersion >> 8,
 				m_nVersion & 0xFF, CObUsb::GadgetSlot () == 0 ? "in slot 1 (not the Rytm)" : "in slot 0 (the Rytm)");
+	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
+	if (m_bTest)
+	{
+		CLogger::Get ()->Write (From, LogWarning, "relaytest=1: the relay shows a made-up box (1209:0003) with a synthetic stream, "
+					"not a box of this Pi");
+		s_pThis = this;
+		CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// for its MirrorPoll; a real box there is ignored
+		return TRUE;
+	}
 	if (CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
 	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// SetBox comes from there
 	return TRUE;
@@ -194,12 +205,14 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 
 void CTeensyTarget::SetBox (CObUsb *pBox)
 {
+	if (m_bTest) return;
 	m_pBox = pBox;
 	if (pBox == 0 && m_bBoxUp) MirrorBoxUp (FALSE);
 }
 
 boolean CTeensyTarget::Mirror (void) const
 {
+	if (m_bTest) return TRUE;
 	// opt-in as the gadget's: the USB-C mode OVERBRIDGE (or usb=mirror on the card) shows a box maker's IDs; a relay
 	// alone does not turn it on
 	CSidecarGadget *g = CSidecarGadget::Get ();
@@ -211,6 +224,7 @@ boolean CTeensyTarget::MirrorShown (void) const { return m_bConnected && m_bPcCo
 
 boolean CTeensyTarget::MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg)
 {
+	if (m_bTest && !m_bTestFeeding) return FALSE;	// relaytest: not a box of this Pi
 	Map m;
 	if (pDev[0] != 18 || pDev[1] != DESCRIPTOR_DEVICE || pDev[7] != 64 || !make_map (pCfg, nCfg, ob::kInEp, ob::kOutEp, &m))
 	{
@@ -234,6 +248,7 @@ boolean CTeensyTarget::MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, uns
 
 void CTeensyTarget::MirrorSetString (u8 uchIndex, const u8 *pDesc, unsigned nLength)
 {
+	if (m_bTest && !m_bTestFeeding) return;
 	if (m_bKeep || m_nStr == mirror::kMaxStrings || nLength < 2 || nLength > sizeof m_Str[0].Data) return;
 	m_Str[m_nStr].uchIndex = uchIndex;
 	m_Str[m_nStr].nLength = (u8) nLength;
@@ -243,6 +258,7 @@ void CTeensyTarget::MirrorSetString (u8 uchIndex, const u8 *pDesc, unsigned nLen
 
 void CTeensyTarget::MirrorBoxUp (boolean bUp)
 {
+	if (m_bTest && !m_bTestFeeding) return;
 	EnterCritical ();
 	m_bBoxUp = bUp && m_nCfg != 0;
 	m_Stream.box_restart ();
@@ -327,12 +343,14 @@ void CTeensyTarget::MirrorPipeOutDone (u8 uchAddr)
 
 boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
 {
+	if (m_bTest) return FALSE;
 	return MirrorShown () && m_Stream.out_extra (pBlock, nCounter);
 }
 
 // xHCI IRQ: an IN block of the box (12-channel layout), cut to the computer's alternate and sent on link 0x02
 void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 {
+	if (m_bTest && !m_bTestFeeding) return;
 	if (!MirrorShown ()) return;
 	unsigned k = 0;
 	while (k < AudioOutBufs && m_bAudioOutBusy[k]) k++;
@@ -356,6 +374,7 @@ void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 
 void CTeensyTarget::ToBox (s32 (*pFrames)[12], const s16 (*)[8], unsigned nFrames)
 {
+	if (m_bTest) return;
 	if (MirrorShown ()) m_Stream.to_box (pFrames, nFrames);
 }
 
@@ -427,7 +446,8 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pAudioInBuf[k], kDmaSize);
 		CObUsb *pBox = p->m_pBox;
-		if (pBox != 0 && p->MirrorShown ()) p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
+		if (p->m_bTest) p->TestOutBlock (p->m_pAudioInBuf[k], pURB->GetResultLength ());
+		else if (pBox != 0 && p->MirrorShown ()) p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
 	}
 	p->Resubmit (pURB);
 }
@@ -449,7 +469,15 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		InvalidateDataCacheRange ((uintptr) p->m_pChanInBuf[c][k], kDmaSize);
 		const mirror::Ep &ep = p->m_Map.l.ep[p->m_Map.ep_of_out[c]];
 		CObUsb *pBox = p->m_pBox;
-		if (ep.role == mirror::kMidiOut && link1::Device () != 0)
+		if (p->m_bTest && ep.role == mirror::kPipeOut)
+		{
+			// the made-up box echoes a pipe packet on its IN pipe of the same number (0x02 -> 0x82); the computer's
+			// next packet once the echo is out (its credit), as a box that took it
+			if (p->MirrorPipeIn ((u8) (ep.addr | 0x80), p->m_pChanInBuf[c][k], pURB->GetResultLength ())) p->m_nTestEcho++;
+			else p->m_nTestEchoDrop++;
+			p->m_nCreditDue[c]++;
+		}
+		else if (ep.role == mirror::kMidiOut && link1::Device () != 0)
 		{
 			const u8 *q = p->m_pChanInBuf[c][k];
 			unsigned n = pURB->GetResultLength () / 4;
@@ -560,7 +588,7 @@ void CTeensyTarget::ControlPoll (void)
 		LeaveCritical ();
 		u16 wLength = (u16) mirror::le16 (Setup + 6);
 		u8 Data[512];
-		boolean bOK = m_pBox != 0 && m_bBoxUp && wLength <= sizeof Data;
+		boolean bOK = (m_pBox != 0 || m_bTest) && m_bBoxUp && wLength <= sizeof Data;
 		if (bOK && !(Setup[0] & 0x80) && wLength)
 		{
 			int n = Vendor (TRUE, kReqCtlData, nSeq, 0, 0, wLength);
@@ -573,14 +601,28 @@ void CTeensyTarget::ControlPoll (void)
 		if (m_CtlState != CtlNew || m_CtlSeq != nSeq) bOK = FALSE;	// aborted meanwhile, or a newer one
 		else if (bOK) m_CtlState = CtlAtBox;	// before the submit: the answer can come in the xHCI IRQ at once
 		LeaveCritical ();
-		if (bOK)
+		if (bOK && m_bTest)
+		{
+			int nAnswer;
+			boolean bAns = TestControl (Setup, Data, &nAnswer);
+			EnterCritical ();
+			if (m_CtlState == CtlAtBox && m_CtlSeq == nSeq)
+			{
+				m_nCtlAnswer = bAns ? nAnswer : -1;
+				if (nAnswer > 0) memcpy (m_CtlData, Data, (unsigned) nAnswer);
+				m_CtlState = CtlAnswered;
+			}
+			LeaveCritical ();
+		}
+		else if (bOK)
 		{
 			TSetupData S;
 			memcpy (&S, Setup, sizeof S);
 			if (m_pBox->Control (&S, Data, nSeq)) return;
 		}
 		EnterCritical ();
-		if (m_CtlSeq == nSeq && (m_CtlState == CtlNew || m_CtlState == CtlAtBox)) { m_nCtlAnswer = -1; m_CtlState = CtlAnswered; }
+		if (!m_bTest && m_CtlSeq == nSeq && (m_CtlState == CtlNew || m_CtlState == CtlAtBox)) { m_nCtlAnswer = -1; m_CtlState = CtlAnswered; }
+		else if (m_bTest && !bOK && m_CtlSeq == nSeq && m_CtlState == CtlNew) { m_nCtlAnswer = -1; m_CtlState = CtlAnswered; }
 		LeaveCritical ();
 	}
 	if (m_CtlState == CtlAnswered)
@@ -610,6 +652,7 @@ void CTeensyTarget::ControlPoll (void)
 
 void CTeensyTarget::MirrorPoll (void)
 {
+	if (m_bTest) TestPoll ();
 	CObUsb *pBox = m_pBox;
 	if (pBox != 0 && !m_bHave && Mirror ())		// the box was up before the relay or the mode: read it now
 	{
@@ -661,6 +704,10 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 	if (p == 0) return;
 	const TStats &s = p->m_Stats;
 	const mirror::StreamStats &a = p->m_Stream.st;
+	if (p->m_bTest)
+		pLogger->Write (From, LogNotice, "relaytest: in sent %u | out from computer %u lost %u dup %u bad %u | pipe echo %u drop %u",
+				p->m_nTestSent, p->m_nTestOut, p->m_nTestOutLost, p->m_nTestOutDup, p->m_nTestOutBad, p->m_nTestEcho,
+				p->m_nTestEchoDrop);
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
 			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u vendor fail %u connects %u",
@@ -673,3 +720,112 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 }
 
 #endif	// CIRCLE_GADGET_MIRROR
+
+#ifdef CIRCLE_GADGET_MIRROR
+// ---- relaytest=1 -------------------------------------------------------------------------------------------------
+
+static const u8 kTestDev[18] = {18, 1, 0x10, 0x02, 0, 0, 0, 64, 0x09, 0x12, 0x03, 0x00, 0x00, 0x01, 1, 2, 0, 1};
+
+static unsigned TestConfig (u8 *c)
+{
+	unsigned n = 0;
+	auto put = [&] (std::initializer_list<int> b) { for (int x : b) c[n++] = (u8) x; };
+	put ({9, 2, 0, 0, 1, 1, 0, 0xC0, 0});
+	static const int Mps[4] = {0, 32, 88, 256};
+	for (int alt = 0; alt < 4; alt++)
+	{
+		put ({9, 4, 0, alt, alt ? 6 : 4, 0xFF, 0, 0, 0});
+		for (int a : {0x02, 0x82, 0x01, 0x81}) put ({7, 5, a, 2, 0x00, 0x02, 0});
+		if (alt) put ({7, 5, 0x83, 3, Mps[alt] & 0xFF, Mps[alt] >> 8, 1, 7, 5, 0x03, 3, Mps[alt] & 0xFF, Mps[alt] >> 8, 1});
+	}
+	c[2] = (u8) n, c[3] = (u8) (n >> 8);
+	return n;
+}
+
+static unsigned TestString (u8 *b, const char *s)
+{
+	unsigned n = 2;
+	for (; *s; s++) { b[n++] = (u8) *s; b[n++] = 0; }
+	b[0] = (u8) n, b[1] = 3;
+	return n;
+}
+
+// the bench's block (relay_bench.py block()): u32 seq, then bytes (seq + i) & 0xFF, 256 bytes in all
+static void TestPattern (u8 *b, u32 seq, unsigned n)
+{
+	memcpy (b, &seq, 4);
+	for (unsigned i = 4; i < n; i++) b[i] = (u8) (seq + i);
+}
+
+void CTeensyTarget::TestPoll (void)
+{
+	m_bTestFeeding = TRUE;
+	if (!m_bHave)
+	{
+		u8 Cfg[mirror::kMaxConfig], Str[64];
+		unsigned n = TestConfig (Cfg);
+		if (!MirrorSetDescriptors (kTestDev, Cfg, n)) { m_bTestFeeding = FALSE; return; }
+		static const u8 Lang[4] = {4, 3, 0x09, 0x04};
+		MirrorSetString (0, Lang, 4);
+		n = TestString (Str, "Sidecar bench"); MirrorSetString (1, Str, n);
+		n = TestString (Str, "Relay bench box"); MirrorSetString (2, Str, n);
+		MirrorBoxUp (TRUE);
+		m_bTestFeeding = FALSE;
+		return;
+	}
+	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; m_bTestFeeding = FALSE; return; }
+	u64 nNow = NowTicks ();
+	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; }
+	u64 nDue = (nNow - m_nTestStart) * 48000 / 7 / CLOCKHZ;
+	unsigned nBurst = 0;
+	while (m_nTestSent < nDue && nBurst++ < 16)
+	{
+		// the 8-channel block the computer should get, spread into the 12-channel layout FromBoxBlock cuts from
+		u8 Want[256], Blk[ob::block_bytes (12)];
+		TestPattern (Want, m_nTestSent, sizeof Want);
+		memset (Blk, 0, sizeof Blk);
+		memcpy (Blk, Want, ob::kHeaderBytes);
+		for (int f = 0; f < ob::kFramesPerBlock; f++)
+			memcpy (Blk + ob::kHeaderBytes + 4 * 12 * f, Want + ob::kHeaderBytes + 4 * 8 * f, 4 * 8);
+		EnterCritical (IRQ_LEVEL);
+		FromBoxBlock (Blk);
+		LeaveCritical ();
+		m_nTestSent++;
+	}
+	if (m_nTestSent + 64 < nDue) m_nTestSent = (u32) nDue;	// the loop was held: skip, the computer counts it as lost
+	m_bTestFeeding = FALSE;
+}
+
+// the bench's control pattern: IN answers (wValue + i), OUT data must be (wValue * 3 + i)
+boolean CTeensyTarget::TestControl (const u8 *s, const u8 *pData, int *pAnswer)
+{
+	u16 wValue = (u16) mirror::le16 (s + 2), wLength = (u16) mirror::le16 (s + 6);
+	*pAnswer = 0;
+	if (s[0] & 0x80)
+	{
+		u8 *a = (u8 *) pData;			// ControlPoll's Data buffer, copied into m_CtlData by the caller
+		for (unsigned i = 0; i < wLength; i++) a[i] = (u8) (wValue + i);
+		*pAnswer = wLength;
+		return TRUE;
+	}
+	for (unsigned i = 0; i < wLength; i++) if (pData[i] != (u8) (wValue * 3 + i)) return FALSE;
+	return TRUE;
+}
+
+void CTeensyTarget::TestOutBlock (const u8 *b, unsigned n)
+{
+	if (n != 256) { m_nTestOutBad++; return; }
+	u32 seq;
+	memcpy (&seq, b, 4);
+	if (b[4] != (u8) (seq + 4) || b[255] != (u8) (seq + 255)) { m_nTestOutBad++; return; }
+	m_nTestOut++;
+	if (m_bTestOutSeen)
+	{
+		s32 d = (s32) (seq - m_nTestOutNext);
+		if (d < 0) { m_nTestOutDup++; return; }
+		m_nTestOutLost += (u32) d;
+	}
+	m_bTestOutSeen = TRUE;
+	m_nTestOutNext = seq + 1;
+}
+#endif

@@ -65,6 +65,11 @@ private:
 	unsigned ChanOfOut (u8 uchAddr) const;	// the link channel a mirrored OUT endpoint rides (kChannels: none)
 	unsigned ChanOfIn (u8 uchAddr) const;
 	void Resubmit (CUSBRequest *pURB);
+	// relaytest=1 (cmdline; docs/teensy-mirror.md "Pi bench"): no box; a made-up one (pid.codes 1209:0003, the bench's shape)
+	// with a synthetic IN stream at the box rate, pipe packets echoed, vendor requests answered with a pattern
+	void TestPoll (void);
+	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
+	void TestOutBlock (const u8 *pBlock, unsigned nLength);
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	void FlushMidiIn (void);			// xHCI IRQ: queued box MIDI out to the Teensy when its channel is free
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
@@ -127,6 +132,11 @@ private:
 		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop;
 	} m_Stats;
 	u64 m_nLastLog;
+	boolean m_bTest;
+	u64 m_nTestStart;
+	u32 m_nTestSent, m_nTestOutNext, m_nTestOutLost, m_nTestOutDup, m_nTestOutBad, m_nTestOut, m_nTestEcho, m_nTestEchoDrop;
+	boolean m_bTestOutSeen;
+	boolean m_bTestFeeding;			// TestPoll is the caller (a real box of the slot is ignored in test mode)
 };
 
 #endif
