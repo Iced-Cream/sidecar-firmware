@@ -81,12 +81,16 @@ CORE_COLD void ix_del(Layer& l, Entry& e) {
     if (!stays) l.ix[i] = l.ix[j], l.ix[j] = 0, i = j;
   }
 }
-// 3(c): the kinds a slot's layer may have. Slot 0's: all of them. Another slot's: its own voices (kV) only, until the
-// targets with one instance get a slot's own (the send FX, the Rytm's sends, the master, the buses and the master
-// chains are slot 0's - 3(b); the INSERT voice chains and the OUT routes per slot come with control_of, 3(c) step 5;
-// the Rytm's own params, scene and the sequencer are the Rytm's). Refused at the source's call (offset / morph): an LFO
+// 3(c): the kinds a slot's layer may have. Slot 0's: all of them. Another slot's: its own voices (kV), their INSERT
+// chains, OUT routes and sends (its own control_of: the settings are the slot in hand's, core/fx/insert.h), never the
+// targets with one instance (the send FX, the Rytm's sends, the master, the buses and the master chains are slot 0's -
+// 3(b); the Rytm's own params, scene and the sequencer are the Rytm's). Refused at the source's call (offset / morph): an LFO
 // file naming one still loads and saves as it was.
-CORE_COLD bool slot_has(Tid t) { return prj_slot() == 0 || kind_of(t) == kV; }
+CORE_COLD bool slot_has(Tid t) {
+  if (prj_slot() == 0) return true;
+  const Kind k = kind_of(t);
+  return k == kV || k == kOut || k == kIsnd || (k == kIns && index_of(t) < kBoxVoices);   // (its voice chains: step 5)
+}
 // a new entry for t: the first free one (the order 0.4.0's table filled in, so the writes come in its order); its
 // base what plays now. Null: the table is full
 CORE_COLD Entry* alloc(Tid t) {

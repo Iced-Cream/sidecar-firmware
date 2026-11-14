@@ -635,7 +635,8 @@ CORE_COLD const char* param_name(int t, int p, char* b, int cap) {
   } else if ((is_ins(t) || is_mchain(t)) && p >= 8) {   // ins1112: the chain's POST EQ, "QHPF" (Q: after the slots)
     sniprintf(b, cap, CORE_STR("Q%.3s"), ins::eq_labels().label[(p - 8) & 3]);
   } else if (is_ins(t) || is_mchain(t)) {   // "ACUT": the slot's letter and the TYPE's label of the param
-    int ty = ins::control.type[is_ins(t) ? t - kTIns : ins::kM0 + t - kTMaster][(p >> 2) & 1];
+    const int ch = is_ins(t) ? t - kTIns : ins::kM0 + t - kTMaster;
+    int ty = ins::ctl(ch).type[ch][(p >> 2) & 1];   // (a voice chain: the slot in hand's)
     const char* l = ins::labels(ty).label[p & 3];
     if (ty && l[0]) sniprintf(b, cap, CORE_STR("%c%.4s"), 'A' + ((p >> 2) & 1), l);
     else sniprintf(b, cap, CORE_STR("%c-"), 'A' + ((p >> 2) & 1));   // the slot OFF (or a knob its TYPE leaves unused)

@@ -103,6 +103,11 @@ inline Control& control_of(int slot) { return slot ? control1 : control; }
 // The base box's slot (core/device sets it as the base changes: 1 for a box alone, else 0): the slot whose settings the
 // base box's output stage plays, the console's stereo=trim:trk sets, and whose voice chains play AMP (core/fx/insert.h)
 extern volatile int8_t g_base_slot;
+// 3(c): the settings below (set_route .. mod_offset, line, clear, the console) are the slot in hand's, in its own
+// control_of: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0). The mute gate and the PRE / POST trims
+// are slot 0's. ctl(): what the slot in hand's voices play (the pages).
+extern int (*slot_fn)();
+const Control& ctl();
 
 inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }

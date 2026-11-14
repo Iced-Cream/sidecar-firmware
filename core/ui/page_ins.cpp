@@ -75,13 +75,13 @@ CORE_COLD int voice_now() {   // the track's voice's chain: its box voice (V1..V
 }
 CORE_COLD int chain_now() { return ip.bus ? ins::kBus0 + ip.busel : voice_now(); }
 // 0.5.0: the BUS view's slot holds a send TYPE: G is its MIX
-CORE_COLD bool mix_on_g(int ch) { return ip.bus && master::send_type(ins::control.type[ch][ip.slot]); }
+CORE_COLD bool mix_on_g(int ch) { return ip.bus && master::send_type(ins::ctl(ch).type[ch][ip.slot]); }
 
 CORE_COLD void strip(Canvas& c, int ch) {
   // [A TYPE] > [B TYPE] > the sends (TRACK) / the return (BUS)
   for (int s = 0; s < ins::kSlots; ++s) {
     Rect r{(int16_t)(s * 41), (int16_t)kStripY, 38, (int16_t)kStripH};
-    int t = ins::control.type[ch][s];
+    int t = ins::ctl(ch).type[ch][s];
     bool sel = s == ip.slot;
     if (sel) c.fill(r, kOn);
     else c.rect(r, kOn);
@@ -97,7 +97,7 @@ CORE_COLD void strip(Canvas& c, int ch) {
   if (!ip.bus) {   // the OUT box
     Rect r{83, (int16_t)kStripY, 45, (int16_t)kStripH};
     c.rect(r, kOn);
-    sniprintf(b, sizeof b, CORE_STR("OUT %s"), out::route_name(out::control.route[ch & 7]));
+    sniprintf(b, sizeof b, CORE_STR("OUT %s"), out::route_name(out::ctl().route[ch & 7]));
     c.put_text(kSlotFree + 2, kRSmall, r.x + 22, kStripY + 4, b, kAlignCentre);
     return;
   } else if (ip.busel < 2) {
@@ -115,7 +115,7 @@ CORE_COLD bool dsp_sample_now() { return machine_of(remote_track_machine(track_n
 CORE_COLD void out_draw(Canvas& c, int page, int npages) {
   int vi = voice_now();
   header(c, "INSERT OUT", page, npages, voice_name(vi));
-  int r = out::control.route[vi];
+  int r = out::ctl().route[vi];
   c.put_text(kSlotFree, kRSmall, 64, kStripY + 4, r == out::kTrk ? "THROUGH THE RYTM'S TRACK" : "RYTM FLTR AMP DEL REV OFF",
              kAlignCentre);
   bool dec = dsp_sample_now();
@@ -150,7 +150,7 @@ CORE_COLD void out_draw(Canvas& c, int page, int npages) {
 CORE_COLD void eq_strip(Canvas& c, int ch) {
   for (int s = 0; s < ins::kSlots; ++s) {
     Rect r{(int16_t)(s * 17), (int16_t)kStripY, 14, (int16_t)kStripH};
-    bool set = ins::control.type[ch][s] != 0;
+    bool set = ins::ctl(ch).type[ch][s] != 0;
     if (set) c.fill(r, kOn);
     else c.rect(r, kOn);
     char b[4];
@@ -168,7 +168,7 @@ CORE_COLD void eq_strip(Canvas& c, int ch) {
   if (ch < ins::kVoices) {
     Rect r{82, (int16_t)kStripY, 46, (int16_t)kStripH};
     c.rect(r, kOn);
-    sniprintf(b, sizeof b, CORE_STR("OUT %s"), out::route_name(out::control.route[ch & 7]));
+    sniprintf(b, sizeof b, CORE_STR("OUT %s"), out::route_name(out::ctl().route[ch & 7]));
     c.put_text(kSlotFree + 3, kRSmall, r.x + 23, kStripY + 4, b, kAlignCentre);
     return;
   }
@@ -222,7 +222,7 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
   c.clear();
   if (ip.eq) return eq_draw(c, page, npages);   // ins1112 (RIGHT)
   if (ip.out) return out_draw(c, page, npages);
-  int ch = chain_now(), t = ins::control.type[ch][ip.slot];
+  int ch = chain_now(), t = ins::ctl(ch).type[ch][ip.slot];
   const ins::Labels& L = ins::labels(t);
   char right[16];
   int tr = track_now();
@@ -304,14 +304,14 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
   }
   if (ip.out) {   // A OUT, B LEV, C PAN, D WID, E DEC (DSP SAMPLE)
     int vi = voice_now();
-    if (e == 0) out::set_route(vi, clampi(out::control.route[vi] + l, 0, out::kRoutes - 1));
+    if (e == 0) out::set_route(vi, clampi(out::ctl().route[vi] + l, 0, out::kRoutes - 1));
     else if (e <= 3 || (e == 4 && dsp_sample_now())) {
       out::set_param(vi, e - 1, out::param(vi, e - 1) + d * (func ? 8 : 1));
       if (e <= 3) mod::manual_knob(mod::tid(mod::kOut, vi, e - 1));
     }
     return;
   }
-  int ch = chain_now(), t = ins::control.type[ch][ip.slot];
+  int ch = chain_now(), t = ins::ctl(ch).type[ch][ip.slot];
   if (e < 4) {
     if (t) ins::set_param(ch, ip.slot, e, ins::param(ch, ip.slot, e) + d * (func ? 8 : 1)), mod::manual_knob(mod::tid(mod::kIns, ch, ip.slot * 4 + e));
     return;
@@ -363,7 +363,7 @@ CORE_COLD uint16_t ins_enc_tid(int e) {
   if (ip.eq) return e < ins::kEqParams ? mod::tid(mod::kIns, chain_now(), 8 + e) : 0;
   if (ip.out) return e >= 1 && e <= 3 ? mod::tid(mod::kOut, voice_now(), e - 1) : 0;
   int ch = chain_now();
-  if (e < 4) return ins::control.type[ch][ip.slot] ? mod::tid(mod::kIns, ch, ip.slot * 4 + e) : 0;
+  if (e < 4) return ins::ctl(ch).type[ch][ip.slot] ? mod::tid(mod::kIns, ch, ip.slot * 4 + e) : 0;
   if (e == 7 && !ip.bus) return mod::tid(mod::kIsnd, ch, ip.busel);
   return 0;
 }

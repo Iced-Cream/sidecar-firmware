@@ -98,6 +98,14 @@ extern Control control;
 // slot 0's (the send FX and the master chain are the primary stream's). control_of(slot of a voice).
 extern Control control1;
 inline Control& control_of(int slot) { return slot ? control1 : control; }
+// 3(c): the settings (set_type .. mod_offset, the card, the console) are the slot in hand's for a voice chain (its own
+// control_of), slot 0's for the buses and the master. slot_fn names the slot in hand (core/pool/pool.cpp sets it to
+// prj_slot; null: 0, the DSP benches). ctl(c): what chain c of the slot in hand plays (the pages).
+extern int (*slot_fn)();
+inline const Control& ctl(int c) {
+  int sl = c < kVoices && slot_fn ? slot_fn() : 0;
+  return control_of(sl > 0 && sl < kVoiceSlots ? sl : 0);
+}
 // AMP plays on the base box's voice chains (out::g_base_slot: AMP's state is keyed by chain, one box's at a time); the
 // other slot's AMP slots play dry.
 
@@ -796,9 +804,14 @@ void rekey(const char* name);   // as lfo::rekey: the settings in memory are nam
 #endif
 // insert.cpp's side for the card half: the edits since the last save (since: the last one's ms), saved, due now; every
 // chain off, no sends, no locks; card_forget: the card half's kit forgotten (tests)
-bool settings_dirty(uint32_t* since);
+bool settings_dirty(uint32_t* since);   // the slot in hand's
+bool settings_dirty_any();              // any slot's (the idle pass's settled)
 void settings_clean();
-void settings_due();
+void settings_due();                    // every slot's
+// an AMP slot's capture by name (the INSERT file's AMP line): the AMP engine's while the slot in hand is
+// out::g_base_slot (or the master's chains), else kept for the file only (AMP plays dry there: amp.h)
+void want_amp(int c, int s, const char* file);
+const char* amp_file(int c, int s);
 void set_kit(int kit);
 void clear();
 void card_forget();

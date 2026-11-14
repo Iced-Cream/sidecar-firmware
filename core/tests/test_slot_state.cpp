@@ -13,6 +13,8 @@
 #include "engine.h"
 #include "granular/granular.h"
 #include "lib/library.h"
+#include "fx/insert.h"
+#include "fx/out.h"
 #include "lfo.h"
 #include "lib/pools.h"
 #include "mod/mod.h"
@@ -99,6 +101,9 @@ int main() {
   // the A4's own LFO file: its T1A on its V2's P4 (slot 1's store holds it, slot 1's LFOs load it; slot 0's never see it)
   static const char kA4Lfo[] = "# the A4's\nT1A V2 3 0 100 0 0 20 64\n";
   put("/.a4/lfo/A4P.txt", kA4Lfo);
+  // its INSERT / OUT file: V2's slot A FILTER, V2 on POST at LEV 90 (slot 1's chains and OUT, control1)
+  CHECK(fs.mkdir("/.a4/ins"));
+  put("/.a4/ins/A4P.txt", "V2 A FILTER 80 20 0 0\nOUT V2 POST 90 64 64 0\n");
   // each box's JUNO list in its own folder (the A4's project B4: one row; the Rytm's NEW: two)
   put("/.a4/juno/B4.txt", "000102030405060708090a0b0c0d0e0f1011\tA4 ROW\n");
   put("/.rytm/juno/NEW.txt", "000102030405060708090a0b0c0d0e0f1012\tRYTM ONE\n000102030405060708090a0b0c0d0e0f1013\tRYTM TWO\n");
@@ -138,6 +143,10 @@ int main() {
     }
     printf("  stores: slot 0 %d files, slot 1 %d files\n", store::present(0), store::present(1));
   }
+  // its inserts and OUT: in its own chains (control1), slot 0's untouched
+  CHECK(ins::control1.type[1][0] == ins::kFilter && ins::control.type[1][0] == ins::kOff);
+  CHECK(out::control1.route[1] == out::kPost && out::control1.lev[1] == 90 && out::control.route[1] == out::kTrk);
+  CHECK(ins::param(1, 0, 0) == 80);   // (the slot in hand: the lone A4's)
   // its LFOs: loaded from its store when the fill ended; the slot in hand outside a Scope is the lone A4's
   CHECK(lfo::get(0).target == lfo::kTVoice + 1 && lfo::get(0).param == 3 && lfo::get(0).depth == 20);
   {
@@ -178,13 +187,22 @@ int main() {
     p[3] = 70.0f;
     mod::voice_params(va, p, 16);
     CHECK(mod::base_of(va, 3, 0) == 70.0f && mod::base_of(1, 3, -1) == -1.0f);
-    // slot 1 takes its own voices only for now: an FX target is refused in its layer
+    // slot 1 takes its own voices, chains and OUT: an FX target (one send FX: slot 0's) is refused in its layer; its
+    // I2 offset lands on its own chain (control1), never slot 0's
     {
       device::Scope in(device::g_links[1]);
       mod::begin_tick();
       mod::offset(0, mod::tid(mod::kFx, 0, 1), 10.0f, 1.0f);
+      mod::offset(0, mod::tid(mod::kIns, 1, 0), 10.0f, 1.0f);
       CHECK(mod::find(mod::tid(mod::kFx, 0, 1)) == nullptr);
-      mod::end_tick();   // (the offset-less tick restores T1A's voice: not live)
+      CHECK(mod::find(mod::tid(mod::kIns, 8, 0)) == nullptr);   // (bus 1: slot 0's)
+      mod::offset(0, mod::tid(mod::kIns, 8, 0), 10.0f, 1.0f);
+      CHECK(mod::find(mod::tid(mod::kIns, 8, 0)) == nullptr);
+      mod::end_tick();   // (T1A's voice restored: not live this tick)
+      CHECK(ins::control1.play[1][0][0] == 90 && ins::control.play[1][0][0] == 0);
+      mod::begin_tick();
+      mod::end_tick();   // (I2 restored)
+      CHECK(ins::control1.play[1][0][0] == 80);
     }
   }
 
@@ -264,8 +282,10 @@ int main() {
   {
     char o[256];
     CHECK(lfo::command("lfo=T2A:dep:11", o, sizeof o));
+    CHECK(ins::command("ins=V1:A:type:DRIVE", o, sizeof o) && ins::command("ins=B1:A:type:FILTER", o, sizeof o));
     device::Scope in(device::g_links[1]);
     CHECK(lfo::command("lfo=T2A:dep:-22", o, sizeof o));
+    CHECK(ins::command("ins=V1:A:type:CRUSH", o, sizeof o) && out::command("out=V1:lev:77", o, sizeof o));
   }
   settle();
   {
@@ -276,6 +296,15 @@ int main() {
     CHECK(lfo::get(lfo::lfo_of(1, 0)).depth == 11 && !lfo::dirty_any());
     device::Scope in(device::g_links[1]);
     CHECK(lfo::get(lfo::lfo_of(1, 0)).depth == -22);
+  }
+  {
+    const std::string r = get("/.rytm/ins/NEW.txt"), a = get("/.a4/ins/NEW.txt");
+    printf("  NEW's INSERT files: /.rytm %d bytes, /.a4 %d bytes\n", (int)r.size(), (int)a.size());
+    CHECK(strstr(r.c_str(), "\nV1 A DRIVE ") && strstr(r.c_str(), "\nB1 A FILTER ") && !strstr(r.c_str(), "CRUSH"));
+    CHECK(strstr(a.c_str(), "\nV1 A CRUSH ") && strstr(a.c_str(), "\nOUT V1 TRK 77 ") && !strstr(a.c_str(), "DRIVE") &&
+          !strstr(a.c_str(), "\nB1 ") && !ins::settings_dirty_any());
+    CHECK(ins::control.type[0][0] == ins::kDrive && ins::control1.type[0][0] == ins::kCrush);
+    CHECK(out::control1.lev[0] == 77 && out::control.lev[0] == 100);
   }
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4

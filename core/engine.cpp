@@ -164,7 +164,10 @@ CORE_COLD bool idle_save() {
   }
 #if CORE_POLY
   if (leaving) ins::settings_due();
-  if (T_("ins", ins::save())) return true;
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's inserts and OUT, into its own folder (3(c))
+    device::Scope in(device::g_links[k]);
+    if (T_("ins", ins::save())) return true;
+  }
   if (leaving) scene::save_due();
   if (T_("scene", scene::save())) return true;
   if (leaving) xypad::save_due();
@@ -195,7 +198,7 @@ CORE_COLD bool idle_save() {
   }
   bool settled = !lfo::dirty_any() && !fx::card_dirty;
 #if CORE_POLY
-  settled = settled && !ins::settings_dirty(nullptr) && !seq::unsaved() && !scene::dirty() && !xypad::dirty();
+  settled = settled && !ins::settings_dirty_any() && !seq::unsaved() && !scene::dirty() && !xypad::dirty();
 #endif
   return T_("device", device::step(settled)) || ix;   // a change of state folder: the last write, behind all of the above
 }
@@ -203,7 +206,7 @@ CORE_COLD bool idle_save() {
 CORE_COLD bool idle_settled() {
   bool s = !lfo::dirty_any() && !fx::card_dirty && !fmt::post_busy() && fmt::unwritten(nullptr) == 0;
 #if CORE_POLY
-  s = s && !ins::settings_dirty(nullptr) && !seq::unsaved();
+  s = s && !ins::settings_dirty_any() && !seq::unsaved();
 #endif
 #if CORE_MSAMP
   s = s && cardq::pending() == 0;

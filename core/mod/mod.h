@@ -12,8 +12,8 @@
 // 3(c) (option A): a layer per voice slot - its entries, its dirty voices - ticked in that slot's Scope (slot 0 always,
 // another while a box's folder is on its link); kV is the slot's own box voice. Everything without a voice or a slot
 // below is the slot in hand's (device::cur()); voice_params / base_of the voice's slot's; fx_knob / fx_send /
-// knob_base / send_base slot 0's (the send FX and the Rytm's sends are one). A slot other than 0 takes kV targets only
-// for now (offset / morph refuse the rest: 3(b) owns the single-instance outputs; INSERT / OUT per slot: step 5).
+// knob_base / send_base slot 0's (the send FX and the Rytm's sends are one). A slot other than 0 takes its voices, their
+// INSERT chains, OUT routes and sends only (offset / morph refuse the rest: 3(b) owns the single-instance outputs).
 #pragma once
 #include <stdint.h>
 

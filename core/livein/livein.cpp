@@ -347,7 +347,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     sniprintf(out, cap,
               "livein: measuring voice %d's round trip: 5 clicks over 3 s on the voice (its own sound muted meanwhile); "
               "the device's main out must reach its AUDIO IN (a cable)%s; `livein` shows the result",
-              vi, out::control.route[box_voice(vi)] == out::kTrk ? " - TRK: the track's AMP must be open (OUT POST is simpler)" : "");
+              vi, out::control_of(slot_of_voice(vi)).route[box_voice(vi)] == out::kTrk ? " - TRK: the track's AMP must be open (OUT POST is simpler)" : "");
     return true;
   }
   if (a[0]) {

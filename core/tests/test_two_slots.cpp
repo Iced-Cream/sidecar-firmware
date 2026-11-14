@@ -202,10 +202,20 @@ int main() {
   trem(ins::control1);
   CHECK(!same_3_11() && std::fabs(rms(11) - slot1_trem) < 1e-6 && std::fabs(rms(3) - plain) < 1e-6);
   ins::reset();
+  {
+    device::Scope in(device::g_links[0]);   // (3(c): the settings are the slot in hand's: slot 0's here)
+    ins::set_type(3, 0, ins::kTrem);
+    ins::set_param(3, 0, 1, 127);
+    ins::set_param(3, 0, 0, 127);
+  }
+  CHECK(!same_3_11() && std::fabs(rms(11) - plain) < 1e-6);
+  ins::reset();
+  // outside a Scope the slot in hand is the lone A4's: its settings go into its own chains (control1)
   ins::set_type(3, 0, ins::kTrem);
   ins::set_param(3, 0, 1, 127);
   ins::set_param(3, 0, 0, 127);
-  CHECK(!same_3_11() && std::fabs(rms(11) - plain) < 1e-6);
+  CHECK(ins::control1.type[3][0] == ins::kTrem && ins::control.type[3][0] == ins::kOff);
+  CHECK(!same_3_11() && std::fabs(rms(11) - plain) > 100 && std::fabs(rms(3) - plain) < 1e-6);
   ins::reset();
   device::rytm_on_usb(true);
   device::step();
