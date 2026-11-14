@@ -137,7 +137,7 @@ CORE_COLD uint32_t xorshift(uint32_t& s) {
 }
 CORE_COLD float rnd(uint32_t& s) { return (float)(xorshift(s) >> 8) * (2.0f / 16777216.0f) - 1.0f; }
 
-CORE_COLD bool is_voice(int t) { return t >= kTVoice && t < kTVoice + kVoices; }
+CORE_COLD bool is_voice(int t) { return t >= kTVoice && t < kTVoice + kBoxVoices; }   // the project's voices V1..V8
 CORE_COLD bool is_fx(int t) { return t == kTFx || t == kTFx + 1; }
 // MFX's params: LEV, the master's 4 slots' MIX, the 6 bus slots' (core/fx/master.h slot_index + 1 = core/mod's kMfx param)
 constexpr int kMfxMaster = 4, kMfxParams = 11;
@@ -181,7 +181,7 @@ CORE_COLD Tgt* find(int target, int param) {
 }
 
 CORE_COLD float current(int target, int param) {   // a new target's base: what plays now
-  if (is_voice(target)) return v[target - kTVoice].p[param & 15];
+  if (is_voice(target)) return v[device::base_voice(target - kTVoice)].p[param & 15];
   if (is_ins(target) || is_out(target)) return 0;   // an insert's / OUT's LFO is an offset (mod_offset), its base the knob
   return fx::control.knob[target - kTFx][2 + (param & 3)];
 }

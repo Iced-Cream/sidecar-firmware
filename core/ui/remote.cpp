@@ -164,6 +164,9 @@ uint8_t track_rm[12];   // 0.5.0: 33's machine byte as it came (core/mod/rytm_pa
 // HT CB) takes it over at its trig. 0026's 33 puts its own table's voice in vb (BD 0, SD 1, RS/CP 2 ...), right only
 // for BD and MT / HT, so its voice bits are replaced by this one's and only its machine flag is kept.
 UI_ROM const uint8_t kTrackVoice[12] = {0, 2, 7, 7, 1, 3, 5, 5, 4, 4, 6, 6};
+// Track t's engine voice: its box voice in the base box's range (the project and these pages are the base box's; slot 1's
+// voices 8..15 when a box is alone). kTrackVoice stays the box's own number, the voice byte's low bits.
+static inline int tv(int t) { return device::base_voice(kTrackVoice[t]); }
 // 0x40 is MD (machines.h kMd): ours where the build has it (CORE_MD); on a build without, not ours (as analog)
 // machine: 33's machine byte; MIDI has no flag (machines.h): 0x80 and the voice here, machine_of reads it
 CORE_COLD uint8_t track_vb_of(int t, uint8_t vb, int machine) {
@@ -194,10 +197,11 @@ CORE_COLD bool juno_partner(int t) {
   return false;
 }
 CORE_COLD int machine_of_voice(int vi) {
-  vi &= 7;
-  if (have_tracks) {
+  vi = voice_wrap(vi);
+  const int k = device::base_box_voice(vi);   // the tracks are the base box's: another box's voice goes by its state
+  if (have_tracks && k >= 0) {
     for (int t = 0; t < 12; ++t)   // the first track on this voice with a Sidecar machine (CP after RS, OH after CH...)
-      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == vi) return machine_of(track_vb[t]);
+      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == k) return machine_of(track_vb[t]);
     return kNoMachine;
   }
   return reported[vi] && (CORE_MD || !v[vi].md) ? machine_of_state(vi) : kNoMachine;   // (MD without CORE_MD: none)
@@ -205,10 +209,11 @@ CORE_COLD int machine_of_voice(int vi) {
 CORE_COLD const char* short_name(int m) { return m == kNoMachine ? "-" : machine_short(m); }   // (core/machines.h)
 // SAMPLER on voice vi: its first Sidecar track's 33 once one came (as machine_of_voice), else its reports' tag
 CORE_COLD bool voice_smpl(int vi) {
-  vi &= 7;
-  if (have_tracks) {
+  vi = voice_wrap(vi);
+  const int k = device::base_box_voice(vi);
+  if (have_tracks && k >= 0) {
     for (int t = 0; t < 12; ++t)
-      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == vi) return track_smpl[t] && machine_of(track_vb[t]) == kDspSample;
+      if (track_vb[t] != kNotOurs && (track_vb[t] & 7) == k) return track_smpl[t] && machine_of(track_vb[t]) == kDspSample;
     return false;
   }
   return v[vi].smpl && v[vi].dsps && !v[vi].grain;
@@ -217,7 +222,7 @@ CORE_COLD bool voice_smpl(int vi) {
 CORE_COLD int named_machine(int m, int vi) { return m == kDspSample && voice_smpl(vi) ? kSmplMachine : m; }
 
 CORE_COLD int v_param(int vi, int k) {
-  int x = (int)v[vi & 7].p[k & 15];
+  int x = (int)v[voice_wrap(vi)].p[k & 15];
   return x < 0 ? 0 : x > 127 ? 127 : x;
 }
 
@@ -227,7 +232,7 @@ class TrackSource : public Source {
  public:
   int t = 0;
   CORE_COLD int param(int k) const override;
-  CORE_COLD int voice() const override { return kTrackVoice[t]; }
+  CORE_COLD int voice() const override { return tv(t); }
   CORE_COLD int code(int k) const override;   // rui1038: the 2A's 14 bits (the bank in its fraction)
 };
 
@@ -265,8 +270,8 @@ struct StatusView {
     // the 22 px after it (the Rytm draws "PLAITS" 24 px wide [measured, rytm-emu rui1021])
     static UI_ROM const uint8_t kShownOrder[8] = {0, 2, 7, 1, 3, 5, 4, 6};
     const bool box = device::foreign();
-    for (int n = 0; n < (box ? device::active().voices : kVoices); ++n) {
-      int vi = box ? n : kShownOrder[n];
+    for (int n = 0; n < (box ? device::active().voices : kBoxVoices); ++n) {
+      int vi = device::base_voice(box ? n : kShownOrder[n]);
       int x = 32 * (n & 3), y = 13 + 11 * (n >> 2);
       c.fill(Rect{(int16_t)x, (int16_t)(y - 1), 10, 7}, kOn);
       sniprintf(b, sizeof b, "%.2s", voice_name(vi));
@@ -359,7 +364,7 @@ constexpr uint8_t kPageArp = 4;      // 7ae: UP + FLTR, the ARP page (page_arp.c
 constexpr uint8_t kPagePoly = 0x20;  // rui1048: 0x20 + t (32..43) POLY CONFIG of track t (the Rytm's track menu, FUNC + CHRO; page_poly.cpp); an older host reads it as the SIDECAR page
 constexpr int kExtra0 = -10;   // s.voice of extra page k (extra.h: SCOPE, REC): kExtra0 - k
 constexpr int kNoPage = 1000;   // no page id (voices 0.., -1 SIDECAR, -2 SYSTEM, extra pages kExtra0 - k)
-constexpr int kMaxIds = 2 + kVoices + 16;
+constexpr int kMaxIds = 2 + kBoxVoices + 16;   // (a page for each of the base box's voices)
 
 struct State {
   bool open = false;
@@ -487,7 +492,7 @@ const char* want_title = nullptr;   // remote_show_page: the page to show at the
 
 CORE_COLD int TrackSource::param(int k) const {
   k &= 15;
-  return s.src_known[t] >> k & 1 ? s.srcv[t][k] : v_param(kTrackVoice[t], k);
+  return s.src_known[t] >> k & 1 ? s.srcv[t][k] : v_param(tv(t), k);
 }
 CORE_COLD int TrackSource::code(int k) const {
   k &= 15;
@@ -583,7 +588,7 @@ CORE_COLD void shortcut_over(int from) {   // a page shown by a shortcut over `f
 CORE_COLD int page_ids(int* ids) {
   int n = 0;
   ids[n++] = -1, ids[n++] = -2;
-  for (int vi = 0; vi < kVoices && !src_capable; ++vi)
+  for (int vi = device::base_voice(0); vi < device::base_voice(0) + kBoxVoices && !src_capable; ++vi)
     if (page_for_voice(named_machine(machine_of_voice(vi), vi), vi)) ids[n++] = vi;
   for (int k = 0; k < extra_pages() && n < kMaxIds; ++k) {
     // R3: MENU / KEYS only while shown; rui1051: the pages only their keys open too (page_keys.h sc_shortcut_only)
@@ -642,7 +647,7 @@ CORE_COLD void set_param(int vi, int k, int nv) {
   s.held[vi] |= (uint16_t)(1u << k);
   s.held_v[vi][k] = (uint8_t)nv;
   // a 0x03 PARAMS for the voice, its machine and every P (the edited one whole, the others as they are)
-  uint8_t r[41] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(m | vi)};
+  uint8_t r[41] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(m | box_voice(vi))};
   int n = 6;
   uint32_t t0 = now_us();
   for (int i = 0; i < 16; ++i) {
@@ -656,14 +661,14 @@ CORE_COLD void set_param(int vi, int k, int nv) {
   // SAMPLER stays SAMPLER: the track the edit is for (the Rytm's selected one, when it plays this voice: a shared voice's
   // pair may be one of each) says, else the voice (its last report, or its page's track)
   const int t = disp.sel;
-  bool smpl = have_tracks && t >= 0 && t < 12 && kTrackVoice[t] == vi && track_vb[t] != kNotOurs
+  bool smpl = have_tracks && t >= 0 && t < 12 && tv(t) == vi && track_vb[t] != kNotOurs
                   ? track_smpl[t] && machine_of(track_vb[t]) == kDspSample
                   : x.smpl || voice_smpl(vi);
   if (m == kDspSample && smpl) r[n++] = (uint8_t)(kSmplTag >> 7 & 0x7F), r[n++] = (uint8_t)(kSmplTag & 0x7F);
   r[n++] = 0xF7;
   mod::note_lookup(now_us() - t0);
   s.self = true;
-  voice_report(0x03, r, n);
+  voice_report_at(vi, 0x03, r, n);
   s.self = false;
   s.stats.edits++;
 }
@@ -1113,24 +1118,24 @@ CORE_COLD void frame(uint32_t ms) {
 CORE_COLD int track_machine(int t) {
 #if CORE_MSAMP
   // msamp=voice:V (the fallback until the Rytm reports 0x30 itself): a Sidecar track on V shows MULTISAMPLE
-  if (nm::forced(kTrackVoice[t]) && (!have_tracks || (track_vb[t] != kNotOurs && user_slot_of(track_vb[t] & 0x78) < 0)))
-    return nm::forced(kTrackVoice[t]);   // (wt= / gr=voice:V the same way)
-  if (livein::forced(kTrackVoice[t]) && (!have_tracks || (track_vb[t] != kNotOurs && user_slot_of(track_vb[t] & 0x78) < 0)))
+  if (nm::forced(tv(t)) && (!have_tracks || (track_vb[t] != kNotOurs && user_slot_of(track_vb[t] & 0x78) < 0)))
+    return nm::forced(tv(t));   // (wt= / gr=voice:V the same way)
+  if (livein::forced(tv(t)) && (!have_tracks || (track_vb[t] != kNotOurs && user_slot_of(track_vb[t] & 0x78) < 0)))
     return kLiveMachine;   // livein=voice:V: the LIVE IN page on a Sidecar track of V
 #endif
   if (have_tracks) return track_vb[t] == kNotOurs ? kNoMachine : machine_of(track_vb[t]);
-  return machine_of_voice(kTrackVoice[t]);
+  return machine_of_voice(tv(t));
 }
 // track_machine, with SAMPLER's own number (machines.h kSmplMachine) for its pages and lists: 33's machine byte 43
 CORE_COLD int track_named(int t) {
   int m = track_machine(t);
-  return m == kDspSample && (have_tracks ? track_smpl[t] : voice_smpl(kTrackVoice[t])) ? kSmplMachine : m;
+  return m == kDspSample && (have_tracks ? track_smpl[t] : voice_smpl(tv(t))) ? kSmplMachine : m;
 }
 CORE_COLD const Page* track_page(int t) {   // DSP SAMPLE's GRAIN view by the Rytm's MOD (P12) once it came
   tsrc.t = t;   // test-1031: 6-OP FM / MULTISAMPLE with a chord on show it (the Rytm's CHD..VOI, poly::view)
   const int m = track_named(t);
   if (const Page* bp = src_bank_page(t, m)) return bp;   // rui1038: the bank list open on this track
-  return src_list_page(chord_view_page(src_view_page(page_for_voice(m, kTrackVoice[t], s.src_known[t] >> 11 & 1 ? s.srcv[t][11] : -1)), tsrc), tsrc);
+  return src_list_page(chord_view_page(src_view_page(page_for_voice(m, tv(t), s.src_known[t] >> 11 & 1 ? s.srcv[t][11] : -1)), tsrc), tsrc);
 }
 
 CORE_COLD void src_draws(bool page) {
@@ -1219,7 +1224,7 @@ CORE_COLD void splash_draw(Canvas& c, uint32_t t) {
       if (row >> x & 1) c.pixel(kIconX - dx + x, kIconY + y);
   }
   c.put_text(kSlotFree, kRBold, 54, 19, "CONNECTED");
-  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), bx ? device::active().voices : kVoices, fx::kSlots);
+  sniprintf(b, sizeof b, CORE_STR("%d VOICES  %d FX"), bx ? device::active().voices : kBoxVoices, fx::kSlots);
   c.put_text(kSlotFree + 1, kRSmall, 54, 33, b);
   const uint8_t* ip = ssrc.st.ip;
   if ((ssrc.st.eth == 2 || ssrc.st.wifi == 2) && (ip[0] | ip[1] | ip[2] | ip[3]))
@@ -1728,18 +1733,18 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         track_vb[b[0] + i] = track_vb_of(b[0] + i, b[3 + 2 * i], b[2 + 2 * i]), tracks_known |= (uint16_t)(1u << (b[0] + i)),
         track_smpl[b[0] + i] = b[2 + 2 * i] == kRytmSampler, track_rm[b[0] + i] = b[2 + 2 * i];
       have_tracks = true;
-      for (int vi = 0; vi < kVoices; ++vi) {   // polyuser-4 F-b1: a voice with no report yet takes its tracks' machine
+      for (int vi = device::base_voice(0); vi < device::base_voice(0) + kBoxVoices; ++vi) {   // polyuser-4 F-b1: a voice with no report yet takes its tracks' machine
         int m = -1;
         for (int t = 0; t < 12; ++t)
-          if (kTrackVoice[t] == vi && track_vb[t] != kNotOurs && !(track_vb[t] & kMidiMachine))
+          if (tv(t) == vi && track_vb[t] != kNotOurs && !(track_vb[t] & kMidiMachine))
             m = m < 0 || m == machine_of(track_vb[t]) ? machine_of(track_vb[t]) : -2;   // (-2: the pair disagrees)
-        if (m >= 0) voice_machine_hint(vi, (uint8_t)(m | vi));
+        if (m >= 0) voice_machine_hint(vi, (uint8_t)(m | box_voice(vi)));
       }
 #if CORE_MSAMP
-      for (int vi = 0; vi < kVoices; ++vi) {
+      for (int vi = device::base_voice(0); vi < device::base_voice(0) + kBoxVoices; ++vi) {
         bool any = false, other = false;
         for (int t = 0; t < 12; ++t)
-          if (kTrackVoice[t] == vi && track_vb[t] != kNotOurs) (track_vb[t] & kMidiMachine ? any : other) = true;
+          if (tv(t) == vi && track_vb[t] != kNotOurs) (track_vb[t] & kMidiMachine ? any : other) = true;
         const V& x = v[vi];
         if (x.mi && !any) v[vi].mi = false, midim::leave(vi);   // no track on the voice plays it any more (ext_render's 0x11 stopped with it)
         // The machine known before the voice's first report (a Pi restart, BD on MIDI: a note from a key or the sequencer would play PLAITS). Only a
@@ -1756,7 +1761,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     case kBankList: {   // rui1038: <track> <on> <hi> <lo> <why>
       if (n < 5 || b[0] >= 12 || (b[1] > 1 && b[1] != 3)) break;   // rui1040: on 3 FUNC + YES (the files for the row)
       int t = b[0];
-      src_bank_list(t, kTrackVoice[t], track_named(t), srclib::code_of14(b[2] << 7 | b[3]), b[1], b[4]);
+      src_bank_list(t, tv(t), track_named(t), srclib::code_of14(b[2] << 7 | b[3]), b[1], b[4]);
       s.input = true;
       return;
     }
@@ -1815,7 +1820,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (!held && have_tracks && track_vb[t] != kNotOurs && (track_vb[t] & kMidiMachine) && s.src_known[t] == 0xFFFF) {
         float w[16];   // MIDI: a knob sends with the voice idle too (its 0x03s only come while it plays)
         for (int k = 0; k < 16; ++k) w[k] = s.srcv[t][k] + s.srcl[t][k] / 128.0f;
-        midim::report(kTrackVoice[t], -1, 0, w);
+        midim::report(tv(t), -1, 0, w);
       }
 #endif
       if (b[2] == 1) s.src_last = (int8_t)b[1];
@@ -1913,7 +1918,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         // its CUT..REL would be overwritten. So no sync then (as before presetpick: the next 0x03 carrying the PAT syncs).
         // With the partner not JUNO, a JUNO voice (x.juno, juno_sound_pat) can only be this track's.
         if (!b[2] && have_tracks && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kJuno && !juno_partner(t))
-          core::juno_sound_pat(kTrackVoice[t], pat);
+          core::juno_sound_pat(tv(t), pat);
       }
       return;
     case kKit:   // 1026: the Rytm's active kit: the LFOs are per kit (core/lfo.h)
@@ -2162,7 +2167,7 @@ CORE_COLD void remote_legacy(bool on) { s.legacy = on; }
 CORE_COLD void remote_src_log(bool on) { src_log = on; }
 
 CORE_COLD void remote_params(int vi, int m, float* p, int np) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   reported[vi] = true;
   if (s.self) return;
   if (s.held_m[vi] != m) s.held[vi] = 0, s.held_m[vi] = (uint8_t)m;   // another machine: its edits go
@@ -2204,9 +2209,9 @@ PageView render_view;
 
 const Page* page_of(int which, int voice, const Source** src) {
   if (which == 1) {
-    vsrc.vi = voice & 7;
+    vsrc.vi = voice_wrap(voice);
     *src = &vsrc;
-    return src_list_page(page_for_voice(named_machine(machine_of_state(voice & 7), voice & 7), voice & 7), vsrc);
+    return src_list_page(page_for_voice(named_machine(machine_of_state(voice_wrap(voice)), voice_wrap(voice)), voice_wrap(voice)), vsrc);
   }
   if (which == 2 || which == 3) { *src = &demo; return &kDemoPages[which - 2]; }
   return nullptr;
@@ -2218,7 +2223,7 @@ CORE_COLD bool remote_render(int which, int voice, const uint8_t* vals, Canvas& 
   if (which == 5) { splash_draw(c, vals ? vals[0] * 25u : 1000u); return true; }   // the splash at vals[0] x 25 ms
   if (which >= 6) {   // 6 + k: extra page k (extra.h: LFO, REC, SCOPE), its live part as it is now
     if (which - 6 >= extra_pages()) return false;
-    extra_page(which - 6).draw(c, 2 + kVoices + (which - 6), 2 + kVoices + extra_pages(), now_ms() | 1);
+    extra_page(which - 6).draw(c, 2 + kBoxVoices + (which - 6), 2 + kBoxVoices + extra_pages(), now_ms() | 1);
     return true;
   }
   if (which == 0 || which == 4) { ssrc.draw(c, which ? 1 : 0, which ? 1 : 0, 2); return true; }
@@ -2232,7 +2237,7 @@ CORE_COLD bool remote_render(int which, int voice, const uint8_t* vals, Canvas& 
   if (which == 1) {   // the bottom bar as the host draws it on that page (encoder A)
     Canvas keep = work;
     work = c;
-    voice_footer(*p, voice_label(voice & 7), *src, 0);
+    voice_footer(*p, voice_label(voice_wrap(voice)), *src, 0);
     c = work;
     work = keep;
   }
@@ -2272,7 +2277,7 @@ CORE_COLD void remote_bench(int which, int voice, int n, float* full_us, float* 
   int k = p->enc[0] == kNone ? 0 : p->enc[0];
   for (int i = 0; i < n; ++i) {
     if (which >= 2) demo.v[k] = (uint8_t)((demo.v[k] + 1) & 0x7F);
-    else if (which == 1) v[voice & 7].p[k] = (float)(((int)v[voice & 7].p[k] + 1) & 0x7F);
+    else if (which == 1) v[voice_wrap(voice)].p[k] = (float)(((int)v[voice_wrap(voice)].p[k] + 1) & 0x7F);
     render_view.draw(a, *p, *src, "V1", 1, 2);
     a.diff_tiles(b, m);
     a.diff_text(b, &tm);
@@ -2311,7 +2316,7 @@ CORE_COLD bool remote_track_smpl(int t) {
   return remote_track_machine(t) >= 0 && (track_vb[t] & 0x78) == kDspSample && track_smpl[t];
 }
 CORE_COLD bool remote_voice_smpl(int vi) { return voice_smpl(vi); }
-CORE_COLD int remote_track_voice(int t) { return t >= 0 && t < 12 ? kTrackVoice[t] : -1; }
+CORE_COLD int remote_track_voice(int t) { return t >= 0 && t < 12 ? tv(t) : -1; }   // the engine voice (the base box's)
 CORE_COLD int remote_src_track() { return s.src_track; }
 CORE_COLD void remote_display_owns(uint16_t pages) { disp_owned = pages; }
 CORE_COLD bool remote_display_owned(int page) { return page >= 0 && page < 16 && (disp_owned >> page & 1); }
@@ -2330,8 +2335,8 @@ CORE_COLD int remote_lfo_track(uint32_t* gen) {
 }
 // The machine voice vi plays by name (machine_of_voice, before any report its state's), for its parameters' labels
 CORE_COLD int remote_voice_machine(int vi) {
-  int m = machine_of_voice(vi & 7);
-  return named_machine(m == kNoMachine ? machine_of_state(vi & 7) : m, vi & 7);
+  int m = machine_of_voice(voice_wrap(vi));
+  return named_machine(m == kNoMachine ? machine_of_state(voice_wrap(vi)) : m, voice_wrap(vi));
 }
 CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], uint8_t val[8], char label[8][5]) {
   if (track) *track = disp.sel;
@@ -2344,7 +2349,7 @@ CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], ui
 CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) {
   int n = 0;
   for (int t = 0; t < 12; ++t) {
-    if (kTrackVoice[t] != (vi & 7) || !have_tracks || track_vb[t] == kNotOurs || machine_of(track_vb[t]) != machine) continue;
+    if (tv(t) != voice_wrap(vi) || !have_tracks || track_vb[t] == kNotOurs || machine_of(track_vb[t]) != machine) continue;
     uint8_t b[4] = {(uint8_t)t, (uint8_t)(k & 15), (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), (uint8_t)(lo & 0x7f)};
     send_short(kWrite, b, lo > 0 ? 4 : 3);   // rui1038: the fraction byte (a bank) only when there is one: older builds too
     if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);

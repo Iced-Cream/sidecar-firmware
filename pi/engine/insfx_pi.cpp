@@ -22,7 +22,7 @@ void Fill(sidecar_insfx_view_t* o, const float (*peaks)[2]) {
   int t = core::ui::remote_selected_track(nullptr);
   v.track = t;
   int vi = t >= 0 ? core::ui::remote_track_voice(t) : -1;
-  v.voice = vi >= 0 && vi < kVoices ? vi : -1;
+  v.voice = vi >= 0 ? core::box_voice(vi) : -1;   // the track's voice's chain (its box's V1..V8)
   for (int c = 0; c < kChains && c < SIF_CHAINS; ++c)
     for (int s = 0; s < kSlots; ++s) {
       sidecar_insfx_slot_t& x = v.slot[c][s];

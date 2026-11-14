@@ -530,10 +530,10 @@ CORE_COLD bool step() {
   return false;
 }
 
-CORE_COLD bool forced(int vi) { return force[vi & 7]; }
+CORE_COLD bool forced(int vi) { return force[voice_wrap(vi)]; }
 
 CORE_COLD void report(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job) return;
   for (int k = 0; k < 16; ++k) vp[vi][k] = p[k];
   set_knobs(vi);
@@ -551,7 +551,7 @@ CORE_COLD void report(int vi, int note, int vel, const float* p) {
 }
 
 CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || key < 0 || key > 127) return;
   if (__atomic_load_n(&sel[vi], __ATOMIC_SEQ_CST) >= (uint32_t)kTables) select(vi);
   cur_live = {true, (int8_t)ch, (uint8_t)mnote};
@@ -561,7 +561,7 @@ CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
 }
 
 CORE_COLD void live_off(int vi, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   for (int k = 0; k < kPerVoice; ++k) {
     Note& n = notes[vi][k];
     if (!n.live || n.ch != ch || (mnote >= 0 && n.mnote != mnote)) continue;
@@ -572,19 +572,19 @@ CORE_COLD void live_off(int vi, int ch, int mnote) {
 
 CORE_COLD int voice_notes(int vi) {
   int a = 0;
-  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[vi & 7][k]);
+  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[voice_wrap(vi)][k]);
   return a;
 }
 
 CORE_COLD void note_off(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   for (int k = 0; k < kPerVoice; ++k)
     if (!notes[vi][k].live) release_note(notes[vi][k]);
 }
 
 CORE_COLD void silence(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   for (int k = 0; k < kPerVoice; ++k) {
     Note& n = notes[vi][k];
@@ -632,7 +632,7 @@ uint32_t list_gen() { return __atomic_load_n(&g_list_gen, __ATOMIC_ACQUIRE); }
 CORE_COLD int src_entry(int vi, int v) { return !list || nlist <= 0 ? -1 : v < 0 ? 0 : v >= nlist ? nlist - 1 : v; }
 CORE_COLD bool voice_picked(int) { return false; }   // (no picks over TBL: a choice writes TBL)
 CORE_COLD bool pick(int vi, int e) {   // the touchscreen's choice: TBL written on the Rytm (48: the kit keeps it)
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || !list || e < 0 || e >= nlist) return false;
   ui::remote_param_write(vi, kWaveMachine, 0, e & 127, srclib::lo_of(e));
   vp[vi][0] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
@@ -641,7 +641,7 @@ CORE_COLD bool pick(int vi, int e) {   // the touchscreen's choice: TBL written 
   return true;
 }
 CORE_COLD void preview(int vi, int e) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || !list || !(v[vi].wt || force[vi])) return;
   if (e >= 0) {
     if (e >= nlist || !srclib::playable(list[e])) return;
@@ -674,7 +674,7 @@ const float kSpread[kUni] = {0, -0.33f, 0.33f, -0.66f, 0.66f, -1.0f, 1.0f};
 constexpr float kDetuneCents = 60.0f;
 }  // namespace
 
-static float head_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};
+static PerVoice<float> head_g(1.0f);
 static float pos_s[kVoices];   // the render core's smoothed POS (0..1)
 
 void render_add(int vi, float* out, int nfr) {
@@ -868,7 +868,7 @@ void render_add(int vi, float* out, int nfr) {
   for (int s = 0; s < nfr; ++s) out[s] += acc[s] * (g0 + dg * (float)(s + 1));
 }
 
-CORE_COLD float headroom(int vi) { return head_g[vi & 7]; }
+CORE_COLD float headroom(int vi) { return head_g[voice_wrap(vi)]; }
 
 CORE_COLD bool parse_num(const char** p, int* v) {
   const char* q = *p;
@@ -941,9 +941,9 @@ const Stats& stats() {
   return st;
 }
 int voice_entry(int vi) {
-  uint32_t t = __atomic_load_n(&sel[vi & 7], __ATOMIC_SEQ_CST);
+  uint32_t t = __atomic_load_n(&sel[voice_wrap(vi)], __ATOMIC_SEQ_CST);
   if (t >= (uint32_t)kTables) return -1;
-  int e = want[vi & 7];
+  int e = want[voice_wrap(vi)];
   if (t >= (uint32_t)kBuiltins && e >= 0 && resident(e) == (int)t) return e;
   if (t >= (uint32_t)kBuiltins) return slots[t - kBuiltins].entry;
   if (fixed_tab(e) == (int)t) return e;
@@ -973,7 +973,7 @@ const float* table_frame(int e, int f) {
 }
 // The display's (racy, drawing only): POS as the voice plays it, the table's frames
 CORE_COLD float viz_pos(int vi, int* frames) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   int e = voice_entry(vi);
   *frames = e >= 0 ? table_frames(e) : 0;
   return pos_s[vi] < 0 ? 0.0f : pos_s[vi] > 1 ? 1.0f : pos_s[vi];
@@ -981,7 +981,7 @@ CORE_COLD float viz_pos(int vi, int* frames) {
 CORE_COLD int viz_frame(int vi, float pos, int cols, float* y) {
   int nf = 0;
   viz_pos(vi, &nf);
-  int e = voice_entry(vi & 7);
+  int e = voice_entry(voice_wrap(vi));
   if (nf <= 0 || cols <= 0) return 0;
   float fp = (pos < 0 ? 0 : pos > 1 ? 1 : pos) * (float)(nf - 1);
   int f0 = (int)fp, f1 = f0 + 1 < nf ? f0 + 1 : f0;

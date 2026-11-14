@@ -160,7 +160,7 @@ CORE_COLD void draw_wave(Canvas& c, const Rect& r, int vi, const chop::Map& m, i
 
 // ---- the SRC view's picture (kDrawChop)
 CORE_COLD uint32_t src_key(const Cell& cell, const Source& s) {
-  int vi = s.voice() < 0 ? 0 : s.voice() & 7;
+  int vi = s.voice() < 0 ? 0 : voice_wrap(s.voice());
   int32_t ph[chop::kPerVoice];
   int np = chop::playheads(vi, ph, chop::kPerVoice);
   uint32_t h = chop::map_gen(vi) * 2654435761u ^ (uint32_t)s.param(1) << 3 ^ (uint32_t)chop::sample_ready(vi) << 1;
@@ -172,7 +172,7 @@ CORE_COLD uint32_t src_key(const Cell& cell, const Source& s) {
 }
 CORE_COLD void src_draw(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot) {
   (void)cell;
-  int vi = s.voice() < 0 ? 0 : s.voice() & 7;
+  int vi = s.voice() < 0 ? 0 : voice_wrap(s.voice());
   const chop::Map* m = chop::map_of(vi);
   Rect w = {r.x, (int16_t)(r.y + 7), r.w, 10};   // (the labels under it from r.y + 17: kLabelDy)
   if (!m || !chop::sample_ready(vi) || !m->n) {

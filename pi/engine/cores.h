@@ -18,7 +18,7 @@ public:
 		u64 nSleep[4];			// ticks asleep in a counted wfe, per core
 		unsigned nWakes[4];		// how many of those wfe returned
 		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)
-		u64 nVoice[8];			// touch2: render ticks per voice (the display's STATUS page)
+		u64 nVoice[16];			// touch2: render ticks per engine voice (bridge::kVoices; the STATUS page shows the base box's)
 		unsigned nBlocks, nMaxBlockUs, nMaxPassUs, nFifoMin, nFifoMax, nMidiBytes, nSysEx, nNotes, nNoteChans;
 	};
 

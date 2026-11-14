@@ -237,9 +237,7 @@ A second device at the same time would need:
 
 - **A clock master.** One box leads, the others follow: MIDI clock from the leader, or the Sidecar's. The sequencer, the LFOs
   and the recorder each take one clock today, and two boxes' transports must not fight over it.
-- **Voice ownership.** Eight voices shared out: which link owns which voice, what happens when a box asks for one it does not
-  own, and how a box's `track` maps to a voice other than its own index. The translation is the place for it. `link_reset`
-  silences every voice today and would have to touch only the link's own.
+- **Voice ownership.** Done on the Pi and the Mac: see "Voices on two links" below.
 - **Separate project state.** Today there is one loaded project in RAM (pools, LFOs, inserts, the sequencer) and one folder,
   chosen once a boot. Two folders at once mean per-link state in all of those, and every file call knowing its link. This is
   the largest part. The boot-time choice and the restart would go. The restart is not acceptable while another box plays.
@@ -252,6 +250,27 @@ no voices. The Rytm's stream stays the clock and the A4's is resampled to it (`p
 
 Also: a way to tell the links apart (each USB MIDI device calls its own handler; the Rytm path's message has no port on it
 yet), and a remote UI that belongs to one link.
+
+### Voices on two links
+
+The Pi and the Mac (`CORE_MSAMP` builds) render 16 engine voices (`core::kVoices`); the Teensy renders 8, and
+`-DCORE_VOICES=8` builds that engine anywhere. A box names 8 (`kBoxVoices`: the voice byte's low 3 bits, a project's
+tracks). Slot 0 (the Rytm) plays engine voices 0..7 and slot 1 (any other box) 8..15, alone or paired. Each box keeps its own
+voice count (an A4's 4, a Digitakt's 8). The wire never changes: `device::voice_in` turns a report's voice byte into the link's
+engine voice where the message is handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
+
+- **Engine state** (machines, render arrays, the stream and sample-RAM state, MULTISAMPLE, WAVETABLE, GRANULAR, CHOP,
+  LIVE IN, MIDI, user machines, poly FM, the sequencer's instances, the arpeggiator) is sized `kVoices` and indexed by
+  engine voice. `render_voices` takes the 16-wide ring. The Pi splits each slot's eight as one box's always were (`split=4`:
+  0-3 and 8-11 on core 1, 4-7 and 12-15 on core 2), and slot 1's only while a box has it, so a lone Rytm costs what it did.
+- **Per-box state** stays 8 wide and is indexed by the box's own voice: the INSERT chains (`ins::kVoices`, chains V1..V8),
+  OUT's knobs and a profile's `out::Device` rows, the output stage (`pi/engine/output.*`), the recorder and the meters, a
+  project's files. Until slot 1 has its own, these are the base box's (`device::g_base`): the output stage takes the base
+  box's eight columns (`bridge::out_base`), the pages, the sequencer's tracks and the modulation targets map a track to
+  `device::base_voice(k)`, and slot 1's voices play through the same chains as slot 0's while both boxes are on.
+- **Resets:** `link_reset(why, slot)` silences that slot's eight only; a box's hello leaves the Rytm's voices playing.
+
+Still one per Sidecar: the output stage and its pace, the send FX and the master, and the loaded project's per-voice state.
 
 ## Remote UI on a box
 

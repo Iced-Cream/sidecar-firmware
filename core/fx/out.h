@@ -38,7 +38,7 @@
 namespace core {
 namespace out {
 
-constexpr int kVoices = 8;
+constexpr int kVoices = 8;   // one box's voices (machines.h kBoxVoices): the OUT knobs and a Device's rows are per box
 enum Route : uint8_t { kTrk = 0, kPre = 1, kPost = 2, kRoutes };
 constexpr int kXfadeFrames = 384;    // 8 ms: an OUT change (the send FX route's kPanFrames)
 constexpr int kGateFrames = 240;     // 5 ms: the mute gate

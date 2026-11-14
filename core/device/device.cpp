@@ -28,7 +28,7 @@ static constexpr Profile kRytm = {
     kRemoteUi | kProject | kKits | kPatterns | kSendFx | kUserSlots | kSrcView | kFxIn | kPools,
     0, 0, {}, {}, {}, nullptr, nullptr, {},
     kBracketFull, &out::kRytmMk2, nullptr, false, false, 0, false, nullptr, "Rytm"};
-static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
+static_assert(kRytm.voices == kBoxVoices, "the Rytm's voices are one box's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
@@ -144,8 +144,8 @@ CORE_COLD bool step(bool) {   // (each idle pass: a Rytm's USB id seen or gone m
   return false;
 }
 
-static uint32_t s_held[kVoices][4];   // box_note's
-static struct { uint8_t n, vb, notes[kChordNotes]; uint32_t at; } s_chord[kVoices];   // chord_note's: the notes so far, the machine, the newest note's time
+static uint32_t s_held[kBoxVoices][4];   // box_note's
+static struct { uint8_t n, vb, notes[kChordNotes]; uint32_t at; } s_chord[kBoxVoices];   // chord_note's: the notes so far, the machine, the newest note's time
 static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm (slot 0), or no box (slot 1)
   if (p == l.box) return;
   memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
@@ -159,7 +159,7 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm 
   rebase();
   out::set_trim(2, p ? p->trk10 : g_links[1].box ? g_links[1].box->trk10 : 0);   // a live stereo=trim:trk lasts until the box changes
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, p ? p->name : l.index ? "none" : kRytm.name, l.state ? l.state : "/.rytm");
-  link_reset("device");   // the box before it: its notes and transport unknown
+  link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
 }
 
 // Which slot each transport's messages are (in): transport 0 is the platform's host link (the Rytm's USB MIDI, or the
@@ -219,7 +219,7 @@ CORE_COLD void reset() {
 }
 
 CORE_COLD bool add(const Profile* p) {
-  if (!p || p->voices < 1 || p->voices > kVoices || p->params > kMaxParams || s_n >= kMax) return false;
+  if (!p || p->voices < 1 || p->voices > kBoxVoices || p->params > kMaxParams || s_n >= kMax) return false;
   for (int k = 0; k < kMaxParams; ++k)
     if (p->map[k] >= p->params) return false;
   for (int k = 0; k < s_n; ++k)
@@ -276,8 +276,8 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
 }
 
 // What the sequencer sent the box: its echoes, the mod's report of each note it plays, a chord's as well; and what is held there, so that an all-off is an off for each
-static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices][kChordNotes];
-static uint8_t s_sent_w[kVoices];
+static struct { uint8_t note; bool on; uint32_t at; } s_sent[kBoxVoices][kChordNotes];
+static uint8_t s_sent_w[kBoxVoices];
 
 static CORE_COLD bool is_echo(int vi, uint8_t note) {
   uint32_t ms = now_ms();
@@ -286,9 +286,13 @@ static CORE_COLD bool is_echo(int vi, uint8_t note) {
   return false;
 }
 
-CORE_COLD void box_note(int vi, int note, int vel) {
-  const Profile* p = cur().box;
-  if (!p || !p->note_out || vi < 0 || vi >= p->voices || note > 127) return;
+CORE_COLD void box_note(int ev, int note, int vel) {
+  // ev: the engine voice; the box that owns it (its slot's, on 16 voices; the link in hand on 8) and its own voice vi
+  Link& l = kVoiceSlots > 1 ? g_links[slot_of_voice(voice_wrap(ev))] : cur();
+  const int vi = box_voice(ev);
+  const Profile* p = l.box;
+  if (!p || !p->note_out || ev < 0 || vi >= p->voices || note > 127) return;
+  Scope sc(l);   // keys::forward_note sends to the link in hand
   const uint8_t off = (uint8_t)(0x80 | vi);
   if (note < 0) {   // inst::seq_off's -1: every note of the voice
     for (int n = 0; n < 128; ++n)
@@ -310,9 +314,10 @@ CORE_COLD void box_note(int vi, int note, int vel) {
 
 // A box's trig on a voice, with Profile::chords: true when it joined the voice's chord, so the message goes no further. The first
 // note is the 0x04 it always was, on the voice's own machine: nothing waits, and a lone trig never comes here for more.
+// vi: the engine voice (inst's); the chord state by the box's own voice k (box_voice)
 static CORE_COLD bool chord_note(int vi, uint8_t vb, uint8_t note, uint8_t vel) {
 #if CORE_POLY
-  auto& c = s_chord[vi];
+  auto& c = s_chord[box_voice(vi)];
   uint32_t ms = now_ms();
   bool near = c.n && c.vb == vb && ms - c.at < kChordMs;
   if (near)
@@ -333,9 +338,9 @@ static CORE_COLD bool chord_note(int vi, uint8_t vb, uint8_t note, uint8_t vel) 
 
 static CORE_COLD void chord_end(int vi) {
 #if CORE_POLY
-  if (s_chord[vi].n > 1) inst::chord_off(vi);
+  if (s_chord[box_voice(vi)].n > 1) inst::chord_off(vi);
 #endif
-  s_chord[vi].n = 0;
+  s_chord[box_voice(vi)].n = 0;
 }
 
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
@@ -358,8 +363,8 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
     bool voiced = d[4] == 0x03 || d[4] == 0x04 || d[4] == 0x11;
     if (voiced && (d[5] & 7) >= l.box->voices) return ++l.dropped, false;
     if (d[4] == 0x04 && len > 7 && is_echo(d[5] & 7, d[6])) return false;
-    if (l.box->chords && d[4] == 0x04 && len > 7 && chord_note(d[5] & 7, d[5] & 0x78, d[6], d[7])) return false;
-    if (l.box->chords && d[4] == 0x11) chord_end(d[5] & 7);
+    if (l.box->chords && d[4] == 0x04 && len > 7 && chord_note(voice_in(d[5], l), d[5] & 0x78, d[6], d[7])) return false;
+    if (l.box->chords && d[4] == 0x11) chord_end(voice_in(d[5], l));
     if (l.box->controls && d[4] == 0x04) strip::trig(d[5] & 7);
     if (l.box->controls && d[4] == 0x11) strip::off(d[5] & 7);
     return true;

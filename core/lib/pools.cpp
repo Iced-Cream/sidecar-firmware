@@ -37,7 +37,7 @@ constexpr int kResolvePer = 128;           // refs resolved a step
 constexpr uint32_t kPieceRead = 65536;     // a read request's bytes (cardq::kPiece)
 constexpr uint32_t kSfzMax = 1u << 20;     // an .sfz's bytes at most
 constexpr int kSfzRegions = 4096;
-constexpr int kVoicesMax = 8;
+constexpr int kVoicesMax = kVoices;   // the engine's voices (a row each)
 
 struct Lst {
   Entry* e;              // [kCodes]

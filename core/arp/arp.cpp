@@ -316,7 +316,7 @@ CORE_COLD bool live_off(int vi, int ch, int key) {
   return release(vi, ch, key, -1) > 0;
 }
 CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!on(vi)) return false;
   drop(vi, kLiveTrig, -1, -1);   // mono on the voice, as a trig is
   if (!vo[vi].n) vo[vi].seq_cfg = false;

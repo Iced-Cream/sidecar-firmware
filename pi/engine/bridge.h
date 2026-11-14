@@ -5,7 +5,12 @@
 #include <stdint.h>
 
 namespace bridge {
-const int kVoices = 8, kBlock = 12, kMachines = 7;   // core::kVoices, kBlock, kMachines (bridge.cpp checks)
+const int kVoices = 16, kBlock = 12, kMachines = 7;   // core::kVoices, kBlock, kMachines (bridge.cpp checks)
+// Two boxes' voices: slot 0's (the Rytm's) 0..7, slot 1's 8..15 (core/machines.h). The output stage carries one box's
+// eight (kBoxVoices), the base box's: out_base() is its first engine voice.
+const int kBoxVoices = 8, kVoiceSlots = kVoices / kBoxVoices;
+int out_base();              // the base box's first engine voice (core/device/device.h base_voice_base), any core
+bool slot_renders(int slot);  // the slot's voices render: slot 0 always (a lone Rytm as ever), slot 1 while a box has it
 // Before begin(): /Samples/pi-test/sine440.wav (2 s, 440 Hz, 16-bit mono, 48 kHz) and, if the project's pool file
 // is missing, /.rytm/pools/_default.txt naming it as slot 1; nothing that exists is touched. False: no card.
 bool selftest_content();
@@ -132,7 +137,7 @@ void samp_transport(uint8_t st);
 bool samp_wants_in();
 void samp_in(const int32_t* f, int n, int stride);
 bool samp_wants_voices();
-void samp_voices(const int16_t (*v)[kVoices], int n, const int16_t (*lr)[2 * kVoices] = nullptr, const float (*fx)[4] = nullptr);   // fx: the send FX returns (CHOP RESAMPLE)
+void samp_voices(const int16_t (*v)[kBoxVoices], int n, const int16_t (*lr)[2 * kBoxVoices] = nullptr, const float (*fx)[4] = nullptr);   // fx: the send FX returns (CHOP RESAMPLE)
 void pool_mono(bool on);   // poolmono=1 (cmdline): stereo files summed at load (core/pool/pcache.h set_mono)
 void stereo_trim(int pair, int db10);   // trimpre= / trimpost= (cmdline): the OUT route's pair trims (core/fx/out.h)
 // the storage bench's result for volume vol (stor_pi.cpp): its 64 KB sequential reads (MB/s x 100) and 64 KB random

@@ -227,7 +227,7 @@ CORE_COLD void pool_sync(bool force, bool send) {
   if (!force && !changed && npool == n) return;
   npool = n;
   if (rd) log(CORE_STR("pool %s: DSP SAMPLE: %d samples (%d outside /Samples: RAM only)"), project[0] ? project : "_default", used, outside);
-  for (int i = 0; i < 8; ++i) prepared[i][0] = -2;   // voices: prepare again
+  for (int i = 0; i < kVoices; ++i) prepared[i][0] = -2;   // voices: prepare again
   if (hooks.pool_changed) hooks.pool_changed(-1);   // plugin voices too
   if (send) send_pool();
 }
@@ -311,7 +311,7 @@ CORE_COLD void pool_load() {
   } else {
     log(CORE_STR("pool %s: empty"), fn);
   }
-  for (int i = 0; i < 8; ++i) prepared[i][0] = -2;   // voices: prepare again
+  for (int i = 0; i < kVoices; ++i) prepared[i][0] = -2;   // voices: prepare again
   if (hooks.pool_changed) hooks.pool_changed(-1);   // plugin voices too
   if (psram) {   // the new project's samples into free PSRAM, in slot order
     for (int i = 0; i < 8; ++i)
@@ -682,7 +682,7 @@ CORE_COLD void pool_set(int line, int folder, int file, const card::FileRec& r) 
   e.file = file;
   strncpy(e.name, r.name, card::kName);
   pool_save();
-  for (int i = 0; i < 8; ++i) prepared[i][0] = -2;   // voices: prepare again
+  for (int i = 0; i < kVoices; ++i) prepared[i][0] = -2;   // voices: prepare again
   if (hooks.pool_changed) hooks.pool_changed(line);   // plugin voices reading this slot (or refused it) too
 #if CORE_MSAMP
   gr::rescan();   // GRANULAR lists the pool's files (POOL)

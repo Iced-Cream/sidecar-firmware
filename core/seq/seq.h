@@ -41,6 +41,8 @@
 #pragma once
 #include <stdint.h>
 
+#include "machines.h"
+
 namespace core {
 namespace seq {
 
@@ -467,7 +469,7 @@ bool command(const char* p, char* out, int cap);   // the console's "seq", "seq=
 // render_voices, after its voices v0..v1-1 of the block pre_block just counted: the click into its rows (hot: one
 // compare when idle). cal_audio: the 8 voice stems of the Rytm -> host stream in its channel order (BD SD RS/CP BT LT
 // MT/HT CH/OH CY/CB, frame f's at s + f * stride, full scale 2^31), n frames that arrived just now (frames() = arrival).
-void cal_render(int16_t (*ring)[8], const int* rows, int v0, int v1);
+void cal_render(int16_t (*ring)[kVoices], const int* rows, int v0, int v1);
 void cal_audio(const int32_t* s, int n, int stride, int64_t arrival);
 bool cal_wanted();
 

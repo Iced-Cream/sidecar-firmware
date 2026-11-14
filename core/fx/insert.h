@@ -40,12 +40,15 @@
 #include <string.h>
 
 #include "fx/amp.h"
+#include "machines.h"
 #include "fx/sat_fx.h"
 
 namespace core {
 namespace ins {
 
-constexpr int kVoices = 8, kSlots = 2, kParams = 4, kBuses = 3, kMasters = 2;
+// The chains are one box's (its voices V1..V8, its buses and master): kVoices here is kBoxVoices. An engine voice plays
+// through its box voice's chain (voice_out: box_voice(vi)); slot 1 gets chains of its own with its output stage.
+constexpr int kVoices = kBoxVoices, kSlots = 2, kParams = 4, kBuses = 3, kMasters = 2;
 constexpr int kChains = kVoices + kBuses + kMasters;   // 0..7 the voices' chains (mono), 8..10 the buses', 11..12 the master's (stereo)
 constexpr int kBus0 = kVoices;              // chain of bus b (0..2): kBus0 + b
 constexpr int kM0 = kBus0 + kBuses;         // the master chain (core/fx/master.h): two chains in a row, four slots, the second's POST EQ
@@ -745,11 +748,11 @@ bool any_on();                               // a chain has a TYPE
 void touch();                                // the settings changed (the card file written a second later): OUT's
 
 // ---- the DSP hooks
-// render_voices (voices.cpp), after voice vi's own sound, before the CC 120 ramp: rows row[0..n-1] of ring column vi
-// through the voice's chain (int16 in, float inside, the poly voices' soft limiter at the end); nothing when the
+// render_voices (voices.cpp), after engine voice vi's own sound, before the CC 120 ramp: rows row[0..n-1] of ring
+// column vi (the engine's block, core::kVoices wide) through its box voice's chain (box_voice(vi)) (int16 in, float inside, the poly voices' soft limiter at the end); nothing when the
 // chain is off. ring_r: the voice renders a stereo pair (OUT PRE / POST): its R in ring_r's column, the chain in
 // stereo. The render core that renders vi.
-void voice_out(int vi, int16_t (*ring)[kVoices], const int* row, int n, int16_t (*ring_r)[kVoices] = nullptr);
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices] = nullptr);
 // The voices' sends into the buses (the Pi's OUT fill, core 0: the voices as rendered, after their chains): out[i][b]
 // = sum over v of V[i][v] x send[v][b]^2 (ramped per block), full scale 1.0
 void voice_sends(const int16_t (*v)[kVoices], int n, float (*out)[kBuses]);

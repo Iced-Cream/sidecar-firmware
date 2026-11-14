@@ -306,7 +306,7 @@ int core_c_rui_render(int which, int voice, const uint8_t* vals, uint8_t* fb) {
   return 1;
 }
 void core_c_rui_bench(int which, int voice, int n, float* out2) { core::ui::remote_bench(which, voice, n, out2, out2 + 1); }
-float core_c_voice_param(int vi, int k) { return core::v[vi & 7].p[k & 15]; }
+float core_c_voice_param(int vi, int k) { return core::v[voice_wrap(vi)].p[k & 15]; }
 // The remote UI's input tap (core/ui/extra.h) as the platform's IN path feeds it: n frames of `stride` int32 channels
 // (the Rytm's 12 first); tap_on: a page reads it now.
 void core_c_tap_in(const int32_t* f, int n, int stride) { core::ui::tap_in(f, n, stride); }

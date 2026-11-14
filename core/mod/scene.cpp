@@ -6,6 +6,7 @@
 
 #include "fmt/fmt.h"
 #include "mod/mod.h"
+#include "device/device.h"
 #include "platform.h"
 #include "pool/pool.h"
 #include "project_key.h"
@@ -507,7 +508,7 @@ CORE_COLD int json(char* o, int cap) {
   for (int vi = 0; ok && vi < 8; ++vi)
     for (int k = 0; ok && k < 16; ++k) {
       char lb[8];
-      core::ui::voice_label(vi, k, lb, sizeof lb);
+      core::ui::voice_label(device::base_voice(vi), k, lb, sizeof lb);   // the project's voice vi
       ok = put(CORE_STR("%s%s\"%s\"%s"), vi && !k ? "," : "", k ? "," : "[", lb, k == 15 ? "]" : "");
     }
   ok = ok && put("%s%s%s%s", "]", "", "", "");

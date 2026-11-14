@@ -727,10 +727,10 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  k->m_nAsleepPct[0], k->m_nAsleepPct[1], k->m_nAsleepPct[2], k->m_nAsleepPct[3],
 		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
 	pOut->Append (s);
-	pOut->Append (",\"machines\":[");			// each voice's machine (the Sound tab shows the current one)
+	pOut->Append (",\"machines\":[");			// each voice's machine (the Sound tab shows the current one): the base box's
 	for (unsigned v = 0; v < 8; v++)
 	{
-		s.Format ("%s\"%s\"", v ? "," : "", bridge::machine_name (v));
+		s.Format ("%s\"%s\"", v ? "," : "", bridge::machine_name (bridge::out_base () + (int) v));
 		pOut->Append (s);
 	}
 	pOut->Append ("]");
@@ -1769,7 +1769,7 @@ void CKernel::PushUi (void)
 	sidecar_ui_status_t &u = m_Ui;
 	u.rytm = CObUsb::Streaming () || m_pMIDI != 0;
 	u.underruns = g_Output.Underflows ();
-	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (v);
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (bridge::out_base () + v);	// the base box's voices
 	const core::device::Profile &Box = core::device::active ();	// the box in use: its word and its voices' names
 	u.box = core::device::short_name (Box);
 	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.voice[v] = Box.screen ? Box.screen->names[v] : 0;
@@ -2021,8 +2021,9 @@ void CKernel::LogStats (void)
 		sv.valid = 1;
 		for (int v = 0; v < SST_VOICES; v++)
 		{
-			sv.vload[v] = (int) (s.nVoice[v] * 1000 / s.nTicks);	// tenths of a percent of one render core
-			sv.muted[v] = g_Guard.Muted ((unsigned) v) ? 1 : 0;
+			const int ev = bridge::out_base () + v;			// the base box's voice v
+			sv.vload[v] = (int) (s.nVoice[ev] * 1000 / s.nTicks);	// tenths of a percent of one render core
+			sv.muted[v] = g_Guard.Muted ((unsigned) ev) ? 1 : 0;
 		}
 		for (int c = 0; c < SST_CORES; c++) sv.load[c] = m_Ui.load[c];
 		sv.block_max_us = s.nMaxBlockUs, sv.block_budget_us = bridge::kBlock * 1000000 / 48000;

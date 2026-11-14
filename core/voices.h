@@ -64,8 +64,8 @@ extern uint8_t (*stream_rings_a)[rytm::StreamVoice::kRingBytes];
 extern uint8_t (*stream_rings_b)[rytm::StreamVoice::kRingBytes];
 #else
 extern uint8_t stream_heads[kVoices][rytm::StreamVoice::kHead];
-extern uint8_t stream_rings_a[4][rytm::StreamVoice::kRingBytes];
-extern uint8_t stream_rings_b[4][rytm::StreamVoice::kRingBytes];
+extern uint8_t stream_rings_a[kVoices / 2][rytm::StreamVoice::kRingBytes];
+extern uint8_t stream_rings_b[kVoices / 2][rytm::StreamVoice::kRingBytes];
 #endif
 extern int prepared[kVoices][3];   // folder, file, STA
 extern float trig_note[kVoices];
@@ -140,7 +140,8 @@ bool dsp_streams_playing();           // a DSP SAMPLE stream plays now (it reads
 extern uint32_t ram_late;             // trigs of a RAM-only mode whose sample came too late (voices.cpp kRamLateMs)
 void voices_init();
 // A 0x04 / 0x03 report (d: the whole F0..F7, len bytes) and a 0x11 note-off.
-void voice_report(int cmd, const uint8_t* d, int len);
+void voice_report(int cmd, const uint8_t* d, int len);   // the voice: d[5] & 7 of the link in hand (device::voice_in)
+void voice_report_at(int vi, int cmd, const uint8_t* d, int len);   // engine voice vi (d[5]'s low bits not read)
 // polyuser-4 F-b1: a 33 names voice vi's Sidecar machine (vb): the voice takes it while no 0x03 / 0x04 has come yet
 void voice_machine_hint(int vi, uint8_t vb);
 void voice_note_off(int vi);

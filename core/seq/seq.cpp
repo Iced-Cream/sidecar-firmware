@@ -4244,7 +4244,7 @@ CORE_COLD bool idle() {
 // ---- the calibration click (render side) and its return (the platform's stream side; on the Pi an interrupt: only
 // the volatile words of `cal` are touched)
 static const int kStem[8] = {0, 3, 1, 4, 6, 5, 7, 2};   // physical voice -> the stream's voice channel (BD SD RS/CP ..)
-void cal_render(int16_t (*ring)[8], const int* rows, int v0, int v1) {
+void cal_render(int16_t (*ring)[kVoices], const int* rows, int v0, int v1) {
   if (cal.state != 1 && cal.state != 3) return;
   int vi = cal.vi;
   if (vi < v0 || vi >= v1) return;

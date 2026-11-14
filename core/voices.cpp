@@ -9,6 +9,7 @@
 
 #include "md/md.h"   // MD on 0x40 (CORE_MD: Pi, Mac)
 #include "sysex.h"
+#include "device/device.h"   // voice_in: a report's voice of the link in hand
 #include "ui/remote.h"
 #include "lfo.h"
 #include "mod/mod.h"
@@ -75,7 +76,7 @@ void apply(V& x) {
 
 // DSP SAMPLE voices stream their sample from the card (stream_voice.h): a head
 // read when the sample is chosen, a ring refilled from the main loop.
-rytm::StreamVoice streams[8];
+rytm::StreamVoice streams[kVoices];
 uint16_t g_dsp_head[kVoices];   // 0 none, else 1 + the read position in 1/65534 of the file (the render core's last block)
 
 #ifdef CORE_HEAP_BUFFERS   // heap_buffers_place
@@ -84,8 +85,8 @@ uint8_t (*stream_rings_a)[rytm::StreamVoice::kRingBytes] = nullptr;
 uint8_t (*stream_rings_b)[rytm::StreamVoice::kRingBytes] = nullptr;
 
 static size_t up64(size_t n) { return (n + 63) & ~(size_t)63; }
-static const size_t kSharedB = up64(sizeof(char[kVoices][16384])), kHeadsB = up64(sizeof(uint8_t[8][rytm::StreamVoice::kHead])),
-                    kRingsB = up64(sizeof(uint8_t[4][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolLines]));
+static const size_t kSharedB = up64(sizeof(char[kVoices][16384])), kHeadsB = up64(sizeof(uint8_t[kVoices][rytm::StreamVoice::kHead])),
+                    kRingsB = up64(sizeof(uint8_t[kVoices / 2][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolLines]));
 
 #if CORE_POLY
 static const size_t kInsB = up64(ins::heap_bytes());   // the INSERT chains' DELAY lines (core/fx/insert.h)
@@ -108,28 +109,28 @@ CORE_COLD void heap_buffers_place(void* mem) {
   card::heap_place(p);
 }
 #else
-CORE_RAM2 uint8_t stream_heads[8][rytm::StreamVoice::kHead];   // 64 KB, RAM2
+CORE_RAM2 uint8_t stream_heads[kVoices][rytm::StreamVoice::kHead];   // 64 KB, RAM2 (8 voices)
 
-uint8_t stream_rings_a[4][rytm::StreamVoice::kRingBytes];        // 64 KB, RAM1
+uint8_t stream_rings_a[kVoices / 2][rytm::StreamVoice::kRingBytes];        // 64 KB, RAM1 (8 voices): the first half's
 
-CORE_RAM2 uint8_t stream_rings_b[4][rytm::StreamVoice::kRingBytes]; // 64 KB, RAM2
+CORE_RAM2 uint8_t stream_rings_b[kVoices / 2][rytm::StreamVoice::kRingBytes]; // 64 KB, RAM2 (8 voices): the second half's
 #endif
 
-int prepared[8][3];                                          // folder, file, STA (+ kRevKey: reverse from it)
+int prepared[kVoices][3];                                          // folder, file, STA (+ kRevKey: reverse from it)
 static constexpr int kRevKey = 1000;   // a stream's start key (prepared, want_prep): STA 0..127, + this when it plays backwards
 
-float trig_note[8];
+float trig_note[kVoices];
 
 // With PSRAM (core/pool/sample_ram_pool.h, docs/psram.md): the pool's samples whole in RAM and
 // DSP SAMPLE's playback modes (MOD, word 20) on them; without, none of this
 // runs (psram null) and the voices stream as before.
 rytm::SampleRamPool* psram = nullptr;   // itself in PSRAM
 
-rytm::SampleModes* engines = nullptr;   // 8, from the heap (RAM2) when there is PSRAM
+rytm::SampleModes* engines = nullptr;   // kVoices, from the heap (RAM2) when there is PSRAM
 
-bool from_ram[8];       // the voice's note plays from RAM (engines), not the stream
+bool from_ram[kVoices];       // the voice's note plays from RAM (engines), not the stream
 
-int ram_pin[8][2];      // the sample the voice holds pinned (folder, file; -1 none)
+int ram_pin[kVoices][2];      // the sample the voice holds pinned (folder, file; -1 none)
 
 // SAMPLER's PLAY (voices.h; x.smpl), DSP SAMPLE's MOD otherwise
 int dsps_play_zone(bool smpl, float play) { return smpl ? rytm::SampleModes::Zone(play, kDspsPlays) : -1; }
@@ -231,14 +232,14 @@ CORE_COLD int ram_key(int slot, int* smp) {
 // (prepare_pending), and a trig that arrives before it is ready starts when
 // it is (a sample per step on eight voices: 8 prepares on one step overran
 // the Overbridge buffer when done inline).
-int want_prep[8][4];          // folder, file, STA, pool line wanted
+int want_prep[kVoices][4];          // folder, file, STA, pool line wanted
 
-bool prep_pending[8], trig_pending[8];
-bool prep_deferred[8];   // loadstall: a prepare left out (the sample RAM plays it): trigger_stream's, if it streams
+bool prep_pending[kVoices], trig_pending[kVoices];
+bool prep_deferred[kVoices];   // loadstall: a prepare left out (the sample RAM plays it): trigger_stream's, if it streams
 
-float pending_note[8];
+float pending_note[kVoices];
 
-uint32_t trig_wait_t[8], max_trig_wait_us = 0;
+uint32_t trig_wait_t[kVoices], max_trig_wait_us = 0;
 
 // 6-OP FM: the voice PAT picks, entry min(PAT, total - 1) of the effective
 // FM list; read (from the card, for a card bank) only when PAT or the list
@@ -375,7 +376,7 @@ __attribute__((noinline)) CORE_COLD void juno_select(int vi, int pat, bool sync,
 // carrying it. The Rytm reports a voice only while it sounds, so after a pick on a silent voice the next trig's 0x04 was
 // the first to carry the new PAT, and a trig's PAT may be a p-lock: the knobs were never synced (presetpick).
 CORE_COLD void juno_sound_pat(int vi, int pat) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   V& x = v[vi];
   if (!x.juno || pat < 0 || pat > 127) return;
   x.p[0] = (float)pat;   // (the next report brings it too; until then JUNO's SetKnobs reads PAT from here)
@@ -729,7 +730,7 @@ static CORE_COLD bool prepare_one(int vi) {
   return true;
 }
 bool prepare_waiting() {
-  for (int i = 0; i < 8; ++i)
+  for (int i = 0; i < kVoices; ++i)
     if (prep_pending[i]) return true;
   return false;
 }
@@ -737,7 +738,7 @@ bool prepare_waiting() {
 CORE_COLD bool prepare_pending() {
   ram_wait_step();
   for (int pass = 0; pass < 2; ++pass)
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < kVoices; ++i)
       if (prep_pending[i] && trig_pending[i] == (pass == 0) && prepare_one(i)) return true;
   return false;
 }
@@ -750,8 +751,8 @@ uint32_t refills = 0, refill_kb = 0, max_refill_us = 0;   // refill_neediest's, 
 // play. Boot only (cold); after the card.
 CORE_COLD void sample_ram_init() {
   if (card_ok) psram = rytm::SampleRamPool::create(&cards, log);
-  if (psram) engines = new rytm::SampleModes[8];
-  for (int i = 0; i < 8; ++i) {
+  if (psram) engines = new rytm::SampleModes[kVoices];
+  for (int i = 0; i < kVoices; ++i) {
     if (engines) engines[i].Init(i + 1), engines[i].AttachPluck(psram->pluck_line(i));
     from_ram[i] = false;
     ram_pin[i][0] = ram_pin[i][1] = -1;
@@ -767,7 +768,7 @@ CORE_COLD void voices_init() {
 #if CORE_POLY
   arp::reset();
 #endif
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < kVoices; ++i) {
     junos[i].Init(48000.0f);
     juno_pat[i] = -1;
     fms[i].Init();
@@ -777,7 +778,7 @@ CORE_COLD void voices_init() {
     fm_key[i] = -1;
     fm_pat[i] = 0;
     juno_holding[i] = false;
-    streams[i].attach(stream_heads[i], i < 4 ? stream_rings_a[i] : stream_rings_b[i - 4]);
+    streams[i].attach(stream_heads[i], i < kVoices / 2 ? stream_rings_a[i] : stream_rings_b[i - kVoices / 2]);
     prepared[i][0] = -1;
     trig_note[i] = 60;
   }
@@ -812,32 +813,32 @@ CORE_COLD void voices_init() {
 // 0x11 NOTE_OFF: the voice's gate closed (plain voice, no flags).
 // All Sound Off (CC 120) for a voice: the gate closed, and its output ramped to zero in 5 ms whatever the machine,
 // held there until the next trig (voice_report 0x04). The ramp runs at the end of render_voices.
-static float silence_gain[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};   // the render core's: 1 sounding .. 0 silent
+static PerVoice<float> silence_gain(1.0f);   // the render core's: 1 sounding .. 0 silent
 // A note the Sidecar sequencer starts on vi: its output back after a CC 120 / link reset (as a trig brings it back),
 // and the voice rendering (an empty Rytm track never sends the 0x04 that does both).
 CORE_COLD void voice_wake(int vi) {
-  silenced[vi & 7] = false;
-  v[vi & 7].live = !v[vi & 7].md || CORE_MD;   // (no MD on this build: 0x40 stays silent)
+  silenced[voice_wrap(vi)] = false;
+  v[voice_wrap(vi)].live = !v[voice_wrap(vi)].md || CORE_MD;   // (no MD on this build: 0x40 stays silent)
 #if CORE_MSAMP
-  if (v[vi & 7].mi) v[vi & 7].live = false;    // MIDI: nothing to render
+  if (v[voice_wrap(vi)].mi) v[voice_wrap(vi)].live = false;    // MIDI: nothing to render
 #endif
 }
 
 CORE_COLD void voice_silence(int vi) {
   voice_note_off(vi);
 #if CORE_POLY
-  arp::end(vi & 7);
-  poly::silence(vi & 7);
-  inst::silence(vi & 7);     // E0: the sequencer's instances
+  arp::end(voice_wrap(vi));
+  poly::silence(voice_wrap(vi));
+  inst::silence(voice_wrap(vi));     // E0: the sequencer's instances
 #endif
 #if CORE_MSAMP
-  nm::silence_all(vi & 7);   // MULTISAMPLE, WAVETABLE, GRANULAR
-  if (v[vi & 7].li) {   // LIVE IN: a live input, not a sound that rings on - its envelope cut, the input passes on (an
-    livein::silence(vi & 7);   // effects lane on PRE / POST has no trig to bring it back after a link reset)
+  nm::silence_all(voice_wrap(vi));   // MULTISAMPLE, WAVETABLE, GRANULAR
+  if (v[voice_wrap(vi)].li) {   // LIVE IN: a live input, not a sound that rings on - its envelope cut, the input passes on (an
+    livein::silence(voice_wrap(vi));   // effects lane on PRE / POST has no trig to bring it back after a link reset)
     return;
   }
 #endif
-  silenced[vi & 7] = true;
+  silenced[voice_wrap(vi)] = true;
 }
 
 CORE_COLD void voice_note_off(int vi) {
@@ -867,12 +868,13 @@ static inline int engine_sig(const V& x) {   // E0: which engine a voice plays (
   return s;
 }
 
-// A 0x04 TRIG+PARAMS or 0x03 PARAMS report for voice d[5] & 7: the machine (voice byte & 0x78, exactly; only
+// A 0x04 TRIG+PARAMS or 0x03 PARAMS report for engine voice vi (the wire's voice d[5] & 7 of the link in hand: voice_report): the machine (voice byte & 0x78, exactly; only
 // the voice's current engine renders), P1..P16, and on a trig the note. Per message, never per sample: cold.
 static bool reported[kVoices];   // a 0x03 / 0x04 came for the voice (voice_machine_hint's own does not count)
 static bool hinting = false;
-__attribute__((noinline)) CORE_COLD void voice_report(int cmd, const uint8_t* d, int len) {
-  int vi = d[5] & 7;
+CORE_COLD void voice_report(int cmd, const uint8_t* d, int len) { voice_report_at(device::voice_in(d[5]), cmd, d, len); }
+__attribute__((noinline)) CORE_COLD void voice_report_at(int vi, int cmd, const uint8_t* d, int len) {
+  vi = voice_wrap(vi);
   // F-b1: the first real report after a 33's hint is the engine's entry all the same (JUNO's knobs to the Rytm, 6-OP's
   // PAT); the hint itself sends the Rytm nothing
   const bool first = !hinting && !reported[vi];
@@ -1067,7 +1069,7 @@ CORE_COLD void voice_machine_hint(int vi, uint8_t vb) {
   else if (m == kDaisy) same = x.daisy && !x.dsps;
   else return;
   if (same && x.user < 0) return;
-  uint8_t r[23] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(m | vi)};
+  uint8_t r[23] = {0xF0, 0x7D, 0x52, 0x54, 0x03, (uint8_t)(m | box_voice(vi))};
   int n = 6;
   for (int i = 0; i < 8; ++i) {
     float p = mod::base_of(vi, i, x.p[i]);
@@ -1080,7 +1082,7 @@ CORE_COLD void voice_machine_hint(int vi, uint8_t vb) {
   r[n++] = 0xF7;
   log(CORE_STR("voice %d: machine 0x%02x from the 33 (no report yet)"), vi, m);
   hinting = true;
-  voice_report(0x03, r, n);
+  voice_report_at(vi, 0x03, r, n);
   hinting = false;
 }
 
@@ -1130,7 +1132,7 @@ static CORE_COLD void play_mono(int vi, int note, int vel) {
 
 // E0: the sequencer's mono note (voices.h): the voice's own machine plays it as a Rytm trig would (and wakes it)
 CORE_COLD void voice_play(int vi, int note, int vel) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   V& x = v[vi];
   silenced[vi] = false;
   if (x.md) {   // MD: the sequencer's note is a hit (pitch none: PTCH is its own knob)
@@ -1176,30 +1178,30 @@ CORE_COLD void fm_note_on(int vi, int note, int vel) {
 // The control side changed x.p between reports (core/lfo.h): the machine takes the new values as a 0x03 would, without
 // the report's selections (FM's PAT at a trig, JUNO's list, DSP SAMPLE's prepare); a user machine gets a parameter call.
 CORE_COLD void voice_params_changed(int vi) {
-  V& x = v[vi & 7];
+  V& x = v[voice_wrap(vi)];
   if (x.user >= 0) {
     user_report_internal = true;
-    if (hooks.user_report) hooks.user_report(vi & 7, x.user, x.user, -1, 0, 0);
+    if (hooks.user_report) hooks.user_report(voice_wrap(vi), x.user, x.user, -1, 0, 0);
     user_report_internal = false;
 #if CORE_POLY
-    inst::knobs(vi & 7);
+    inst::knobs(voice_wrap(vi));
 #endif
     return;
   }
   apply(x);
 #if CORE_MD
-  if (x.md) md::params(vi & 7, x.p);
+  if (x.md) md::params(voice_wrap(vi), x.p);
 #endif
 #if CORE_MSAMP
-  if (x.ms || x.wt || x.gr || x.cp || x.mi) nm::report(vi & 7, -1, 0, x.p);
+  if (x.ms || x.wt || x.gr || x.cp || x.mi) nm::report(voice_wrap(vi), -1, 0, x.p);
 #endif
-  if (x.fm) fms[vi & 7].SetKnobs(x.p);
+  if (x.fm) fms[voice_wrap(vi)].SetKnobs(x.p);
 #if CORE_POLY
-  if (x.fm) poly::knobs(vi & 7, x.p);
+  if (x.fm) poly::knobs(voice_wrap(vi), x.p);
 #endif
-  if (x.juno) junos[vi & 7].SetKnobs(x.p);
+  if (x.juno) junos[voice_wrap(vi)].SetKnobs(x.p);
 #if CORE_POLY
-  inst::knobs(vi & 7);   // E0: the sequencer's instances (JUNO's knobs; PLAITS / DAISYSP read x.p as they render)
+  inst::knobs(voice_wrap(vi));   // E0: the sequencer's instances (JUNO's knobs; PLAITS / DAISYSP read x.p as they render)
 #endif
 }
 
@@ -1207,10 +1209,10 @@ static inline int16_t clip16(float y) { return (int16_t)(y > 32767 ? 32767 : y <
 // DSP SAMPLE's envelope on PRE / POST: the control core's counters, the render core's state
 static volatile uint32_t g_env_trig[kVoices], g_env_off[kVoices];
 static uint32_t r_env_trig[kVoices], r_env_off[kVoices];
-static float r_env_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};
+static PerVoice<float> r_env_g(1.0f);
 static bool r_env_rel[kVoices];
-CORE_COLD void dsps_env_trig(int vi) { __atomic_fetch_add(&g_env_trig[vi & 7], 1u, __ATOMIC_RELEASE); }
-CORE_COLD void dsps_env_off(int vi) { __atomic_fetch_add(&g_env_off[vi & 7], 1u, __ATOMIC_RELEASE); }
+CORE_COLD void dsps_env_trig(int vi) { __atomic_fetch_add(&g_env_trig[voice_wrap(vi)], 1u, __ATOMIC_RELEASE); }
+CORE_COLD void dsps_env_off(int vi) { __atomic_fetch_add(&g_env_off[voice_wrap(vi)], 1u, __ATOMIC_RELEASE); }
 #if CORE_POLY
 static volatile uint32_t g_limited[kVoices];
 // o (-1..1 before the 0.7 headroom) into the ring through the soft limiter (voices.h kSoftKnee): a compare a sample,
@@ -1232,7 +1234,7 @@ static inline void soft_out(int16_t (*ring)[kVoices], const int* row, int i, con
   }
   if (over) __atomic_fetch_add(&g_limited[i], 1u, __ATOMIC_RELAXED);
 }
-uint32_t voice_limited(int vi) { return __atomic_load_n(&g_limited[vi & 7], __ATOMIC_RELAXED); }
+uint32_t voice_limited(int vi) { return __atomic_load_n(&g_limited[voice_wrap(vi)], __ATOMIC_RELAXED); }
 // soft_out for a stereo pair: L into ring, R into ring_r
 static inline void soft_out2(int16_t (*ring)[kVoices], int16_t (*ring_r)[kVoices], const int* row, int i, const float* o,
                              const float* r) {
@@ -1260,7 +1262,7 @@ static inline void soft_out2(int16_t (*ring)[kVoices], int16_t (*ring_r)[kVoices
 uint32_t voice_limited(int) { return 0; }
 #endif
 int dsp_playhead(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   int h = __atomic_load_n(&g_dsp_head[vi], __ATOMIC_RELAXED);
   return h && v[vi].dsps && v[vi].live ? h - 1 : -1;
 }
@@ -1415,7 +1417,7 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
         if (of != r_env_off[i]) r_env_off[i] = of, r_env_rel[i] = true;
         float g = r_env_g[i];
 #if CORE_POLY
-        const float dk = out::dec_coef(out::control.dec[i]);
+        const float dk = out::dec_coef(out::control.dec[box_voice(i)]);
 #else
         const float dk = 1.0f;
 #endif
@@ -1509,7 +1511,7 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
 }
 
 CORE_COLD bool voice_sound(int vi, VoiceSound* o) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   memset(o, 0, sizeof *o);
   const V& x = v[vi];
   for (int k = 0; k < 16; ++k) o->p[k] = x.p[k];
