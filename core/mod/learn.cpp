@@ -151,7 +151,7 @@ CORE_COLD bool midi(int port, uint8_t st, uint8_t d1, uint8_t d2) {
     // a 14-bit route's MSB with the last LSB when it stays, else the LSB end nearest the old value (up 0, down 127: no
     // overshoot past the LSB that follows, review L1); the LSB refines it
     const int lsb = d2 == g_msb[i] ? g_lsb[i] : d2 > g_msb[i] ? 0 : 127;
-    g_msb[i] = d2;
+    g_msb[i] = d2, g_lsb[i] = (uint8_t)lsb;   // (a repeated MSB before its LSB: the same value again)
     apply(i, g_14[i] ? (float)(d2 << 7 | lsb) / 128.0f : (float)d2);
     return true;
   }

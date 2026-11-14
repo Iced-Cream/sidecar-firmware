@@ -179,6 +179,7 @@ static void msb_keeps_last_lsb() {
   CHECK(learn::midi(0, 0xB0, 1, 63) && scene::state().fader == (63 << 7 | 120));
   // up past an MSB boundary: 64 / 0 until the LSB, never 64 / 120 (no overshoot, review L1)
   CHECK(learn::midi(0, 0xB0, 1, 64) && scene::state().fader == (64 << 7));
+  CHECK(learn::midi(0, 0xB0, 1, 64) && scene::state().fader == (64 << 7));   // the MSB again before its LSB
   CHECK(learn::midi(0, 0xB0, 33, 2) && scene::state().fader == (64 << 7 | 2));
   // down past one: 63 / 127, never 63 / 2
   CHECK(learn::midi(0, 0xB0, 1, 63) && scene::state().fader == (63 << 7 | 127));
