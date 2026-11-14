@@ -51,7 +51,7 @@ int main() {
   CHECK(f[3][4] == 0 && g_OutputSide.Level() == 12);
   // the side box's own device row: its voice 0 on channel 9 (a made-up box), the base box's table untouched
   core::out::Device dev = core::out::kRytmMk2;
-  dev.voice[0] = 9;
+  dev.voice[0] = 9, dev.voice[5] = 4;   // (voices 0 and 5 swapped)
   side_out::Pull(1, &dev, f, 7);
   CHECK(g_OutputSide.Streams() == 1 && f[0][9] == 0);   // the queued frames went with the Reset: an empty FIFO
   for (int k = 0; k < 1400; ++k) {                      // past the 200 ms fade, the FIFO never empty

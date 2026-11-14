@@ -9,7 +9,9 @@
 #include <string.h>
 
 #include "device/device.h"
-#include "shared.h"
+#include "output.h"
+
+extern Output g_OutputSide;   // shared.h (declared here too: the transport's tests have their own shared.h)
 
 namespace side_out {
 

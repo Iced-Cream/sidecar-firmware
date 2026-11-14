@@ -133,6 +133,8 @@ static void same_sequence(const CUSBHostController& h) {
 // the driver holds its URBs and endpoints for the life of the device; on the Pi nothing frees them
 extern "C" const char *__asan_default_options () { return "detect_leaks=0"; }
 
+Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
+
 int main() {
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);
   CHECK(g_rytm[kOutAlt3Mps] == 0x70 && g_rytm[kOutAlt3Mps + 1] == 0x01);
