@@ -182,8 +182,7 @@ int main() {
   ins::reset();
   trem(ins::control_side);
   CHECK(!same_3_11());
-  printf("  side stage: base TREMOLO voice 3 %.1f (plain %.1f); side TREMOLO voice 11 %.1f, voice 3 %.1f
-", base_on_3,
+  printf("  side stage: base TREMOLO voice 3 %.1f (plain %.1f); side TREMOLO voice 11 %.1f, voice 3 %.1f\n", base_on_3,
          plain_11, rms(11), rms(3));
   CHECK(std::fabs(rms(3) - plain_11) < 1e-6 && ins::control.type[3][0] == ins::kOff);
   ins::reset();
