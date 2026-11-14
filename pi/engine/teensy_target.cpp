@@ -43,7 +43,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -218,8 +218,10 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 {
 	if (nLength > kDmaSize || m_pCtlBuf == 0) return -1;	// (not started yet: no EP0 buffer)
 	if (!bIn && nLength) memcpy (m_pCtlBuf, pData, nLength);
+	if (m_nDebugVendor < 40) Step ("vendor %s %02x value %04x index %04x length %u: sent", bIn ? "IN" : "OUT", uchRequest, wValue, wIndex, nLength);
 	int n = GetHost ()->ControlMessage (GetEndpoint0 (), (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR, uchRequest,
 					    wValue, wIndex, m_pCtlBuf, (u16) nLength);
+	if (m_nDebugVendor < 40) { m_nDebugVendor++; Step ("vendor %02x: returned %d", uchRequest, n); }
 	if (n < 0) m_Stats.nVendorFail++;
 	return n;
 }
@@ -410,6 +412,8 @@ void CTeensyTarget::EvStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
 	unsigned k = (unsigned) (uintptr) pParam;
 	if (p != s_pThis) return;			// the relay went: Circle frees its URBs with the device
+	if (p->m_bDebug && p->m_Stats.nEvents < 8)	// (IRQ: logged only, the black box writes it with the next step)
+		CLogger::Get ()->Write (From, LogNotice, "relaydebug: event URB status %d length %u", pURB->GetStatus (), pURB->GetResultLength ());
 	if (pURB->GetStatus () && pURB->GetResultLength () >= sizeof (Event))
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pEvBuf[k], kDmaSize);
