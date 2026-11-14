@@ -19,6 +19,10 @@ all: $(TESTS)
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
+# usb=mirror through a Teensy: the link's channel map and control slot (relay_proto.h, docs/teensy-mirror.md)
+build/test_relay_proto: test_relay_proto.cpp ../relay_proto.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<
 # usb=mirror's descriptor and per-block helpers (mirror_desc.h) with the Overbridge block layout (ob_block.h)
 build/test_mirror_desc: test_mirror_desc.cpp ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
