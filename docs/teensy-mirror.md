@@ -1,7 +1,9 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
 Current state (2026-11-14): Teensy firmware and link protocol run on the bench (Teensy alone on a PC, the PC playing both
-ends). The Pi side (teensy_target.cpp) is written and syntax-checked only: no kernel build, no Pi run, no unit run yet.
+ends): audio both ways and the pipes pass; forwarded control requests are not measured yet (see below). The Pi side
+(teensy_target.cpp, the link1 MIDI tap, per-slot mirror buffers, CObUsb::Reattach) is written, host-tested where portable
+and syntax-checked against Circle: no kernel build, no Pi run, no unit run yet.
 
 The Pi's USB-C port is one USB device, so `usb=mirror` (docs/usb-mirror.md) shows one box. A Teensy 4.1 adds a second
 device port: the Pi stays the host of both boxes and keeps all of the mirror's logic, and the Teensy only relays.
@@ -45,21 +47,27 @@ same opt-in as today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a rel
 
 - The link enumerates at high speed (WinUSB from MS OS 2.0), the made-up box on USB2 at high speed.
 - Audio both ways plus both pipes together for 20 s: no duplicated, reordered or corrupt block, pipes lossless both ways
-  (6000 packets each), every pipe IN packet answered by `kEvInTaken`. The computer->Pi residency on the Teensy was under
-  250 us for 99.98 % of blocks (worst 1.26 ms). Pi->computer drops (about 1 %) and the residency spread follow the
-  Windows-side reader (Python, URB boundaries), not the Teensy (its queue stayed full).
+  (5999 packets each), every pipe IN packet answered by `kEvInTaken`. Pi->computer ran at the box's rate (6,845 blocks/s
+  of 6,857, 0.14 % dropped by the Teensy's 16-block queue when the Windows reader lagged at URB boundaries). The
+  computer->Pi stream ran at about 4,400 blocks/s, not 6,857: the Python sender is the limit; on the Teensy its blocks
+  waited under 250 us (worst 267 us).
 - Fixed on the way: the controller's interrupt threshold (ITC) left at its reset value of 8 microframes held completions
   back to one batch per millisecond (2000 blocks/s); `ci_init` now sets it to 0.
 - Forwarded control requests: not measured yet. With both Teensy ports on this PC, Windows does not send the link any
   control transfer while the other port's request is open (seen in the firmware log: the request never arrives), so the
   "Pi" cannot answer. The link has to be on another host controller for the bench (on the real setup it is on the Pi).
 
+## USB MIDI
+
+The box's MIDI function is relayed like a pipe pair. On the Pi, `link1::SetTap` gives the target every event packet the
+slot-1 box sends (besides the engine), batched to the Teensy; the computer's packets go through a `MidiFilter` (OS updates
+to the box only with `usbmidi=os:on`) into `link1::FromComputer`, sent from link1's `Send` ahead of the engine's records,
+which wait while the computer's SysEx is part way out. Only the slot-1 box (`mirror=rytm`, the default): with
+`mirror=a4` the relay shows the Rytm, whose MIDI is the host link, and its MIDI is not relayed.
+
 ## Gaps (named, not done)
 
-1. **USB MIDI through the relay.** The A4's MIDI endpoints are relayed by the Teensy, but the Pi side drops them
-   (counted as `midi` in the relay line): link1 (pi/engine/link1.*) needs a tap so the computer's MIDI reaches the A4 and
-   the A4's MIDI reaches the computer as well as the engine.
-2. **Pi build and run:** the kernel with `teensy_target.o` and `circle-usbdevicefactory3.patch` is not built yet;
+1. **Pi build and run:** the kernel with `teensy_target.o` and `circle-usbdevicefactory3.patch` is not built yet;
    then check 3 of two-boxes.md (the Pi forwards a box to the relay; jitter against the 8-block margin).
-3. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
+2. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
    two-links branch changes that file.
