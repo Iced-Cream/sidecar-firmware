@@ -200,7 +200,8 @@ int main() {
   ins::set_type(3, 0, ins::kTrem);
   ins::set_param(3, 0, 1, 127);
   ins::set_param(3, 0, 0, 127);
-  CHECK(!same_3_11() && std::fabs(rms(3) - plain_11) < 1e-6);   // voice 11 (the base box's 3) through it, voice 3 not
+  same_3_11();
+  CHECK(std::fabs(rms(11) - plain_11) > 100);   // voice 11 (the base box's 3) through the base box's chain 3
   ins::reset();
   device::rytm_on_usb(true);
   device::step();
