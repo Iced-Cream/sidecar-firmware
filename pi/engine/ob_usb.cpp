@@ -72,6 +72,7 @@
 #include "fx/out_measure.h"		// stereo=measure's read-back (MAIN L/R)
 #include "samp/preview.h"		// the sample browser's preview (POST)
 #include "shared.h"
+#include "side_out.h"		// a box beside the Rytm: its own voices (slot 1)
 
 static const char From[] = "rytmob";
 
@@ -750,7 +751,8 @@ boolean CObUsb::Configure (void)
 	// TRB order on each ring is the submit order and the counters stay consistent
 	if (s_bActive && Primary ()) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
 	if (s_bActive && Primary ()) masterfx_pi::Reset ();
-	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, OUT silent for now", m_pAudio->name,
+	if (!Primary ()) side_out::Restart ();	// its own voices fade in again (side_out.h)
+	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, its own voices", m_pAudio->name,
 						s_pThis != 0 ? s_pThis->m_pAudio->name : "?");
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
@@ -1166,10 +1168,11 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		ob::write_header (pBlock, m_nOutCounter);
 		if (pTarget != 0) pTarget->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
 		m_nOutCounter += ob::kFramesPerBlock;
-		if (!Primary ())				// a box beside the primary stream: no voices of its own yet
+		if (!Primary ())				// a box beside the primary stream: its own voices (side_out.h), no FX
 		{
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
-			const s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
+			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
+			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			for (int f = 0; f < ob::kFramesPerBlock; f++)
 				core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
