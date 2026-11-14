@@ -1,6 +1,8 @@
 // core/clock/clock.cpp - see clock.h.
 #include "clock.h"
 
+#include "../device/device.h"
+
 namespace core {
 namespace clock {
 namespace {
@@ -44,12 +46,13 @@ static void ticks(const uint8_t* b, int n) {
   if (cnt < 1 || (rec != 4 && rec != 5) || 5 + rec * cnt != n) { ++g_st.bad; return; }
   Tick t;
   t.block = unwrap(b);
+  const int n_tracks = tracks();
   if (g_transport != kPlay) g_transport = kPlay;   // ticks before the TRANSPORT (or a lost one): playing
   for (int i = 0; i < cnt; ++i) {
     const uint8_t* p = b + 5 + rec * i;
     t.track = p[0], t.step = p[1], t.len = p[2], t.speed = p[3], t.extra = rec == 5 ? p[4] : 0;
     ++g_st.ticks;
-    if (t.track >= kTracks) continue;
+    if (t.track >= n_tracks) { ++g_st.off_track; continue; }
     g_last[t.track] = {true, t.step, t.len, t.speed};
     for (TickFn f : g_tick) if (f) f(t);
   }
@@ -105,8 +108,14 @@ uint8_t transport() { return g_transport; }
 int pattern() { return g_pattern; }
 int queued() { return g_queued; }
 double bpm() { return g_bpm; }
+int tracks() {
+  if (!device::foreign()) return kTracks;   // the Rytm: its 12 and the Storage phase's 13th
+  int n = device::active().tracks;
+  return n < kTracks ? n : kTracks;
+}
+
 bool step_of(int track, int* step, int* len, int* speed) {
-  if (track < 0 || track >= kTracks || !g_last[track].on) return false;
+  if (track < 0 || track >= tracks() || !g_last[track].on) return false;
   *step = g_last[track].step, *len = g_last[track].len, *speed = g_last[track].speed;
   return true;
 }

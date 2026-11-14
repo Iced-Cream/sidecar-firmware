@@ -176,7 +176,7 @@ int generic_json(char* out, int cap) {
   }
   int n = sniprintf(out, cap,
                     "\"generic\":{\"project\":\"%s\",\"projectId\":%lu,\"messages\":%lu,\"dropped\":%lu,\"lastDropped\":%u,\"hellos\":%lu,\"foreign\":%lu},"
-                    "\"clock\":{\"transport\":%d,\"pattern\":%d,\"queued\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu},"
+                    "\"clock\":{\"transport\":%d,\"pattern\":%d,\"queued\":%d,\"bpm10\":%d,\"ticks\":%lu,\"states\":%lu,\"bad\":%lu,\"tracks\":%d,\"offTrack\":%lu},"
                     "\"proc\":{\"slots\":[%s],\"params\":%lu,\"dropped\":%lu,\"blocks\":%lu},"
                     "\"screen\":{\"open\":%s,\"client\":%s%s%s,\"caps\":%d,\"hellos\":%lu,\"opens\":%lu,\"frames\":%lu,"
                     "\"popups\":%lu,\"bad\":%lu},"
@@ -185,7 +185,7 @@ int generic_json(char* out, int cap) {
                     pname, (unsigned long)pid, (unsigned long)g.messages, (unsigned long)g.dropped, (unsigned)g.last_dropped,
                     (unsigned long)g.hellos, (unsigned long)g.foreign, (int)core::clock::transport(), (int)core::clock::pattern(),
                     (int)core::clock::queued(), (int)(core::clock::bpm() * 10.0 + 0.5), (unsigned long)c.ticks, (unsigned long)c.states,
-                    (unsigned long)c.bad, slots, (unsigned long)p.params, (unsigned long)p.dropped,
+                    (unsigned long)c.bad, core::clock::tracks(), (unsigned long)c.off_track, slots, (unsigned long)p.params, (unsigned long)p.dropped,
                     (unsigned long)p.blocks, core::screen::open() ? "true" : "false",
                     core::screen::client() ? "\"" : "", core::screen::client() ? core::screen::client()->name : "null",
                     core::screen::client() ? "\"" : "", core::screen::caps(), (unsigned long)core::screen::hellos(),
@@ -263,10 +263,10 @@ bool generic_command(const char* p, char* out, int cap) {
   }
   if (!strcmp(p, "clock")) {
     const core::clock::Stats c = core::clock::stats();
-    sniprintf(out, cap, "clock: transport %d, pattern %d (queued %d), %d.%d BPM, ticks %lu states %lu bad %lu",
+    sniprintf(out, cap, "clock: transport %d, pattern %d (queued %d), %d.%d BPM, ticks %lu states %lu bad %lu, %d tracks (off %lu)",
               (int)core::clock::transport(), (int)core::clock::pattern(), (int)core::clock::queued(),
               (int)core::clock::bpm(), (int)(core::clock::bpm() * 10.0) % 10, (unsigned long)c.ticks,
-              (unsigned long)c.states, (unsigned long)c.bad);
+              (unsigned long)c.states, (unsigned long)c.bad, core::clock::tracks(), (unsigned long)c.off_track);
     return true;
   }
   if (!strcmp(p, "kv")) {

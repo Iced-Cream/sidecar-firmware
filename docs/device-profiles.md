@@ -33,7 +33,7 @@ All bytes after `F0` are 7-bit. `<value>` is 0..127, `<fraction>` is in 1/128 st
 F0 7D 52 54 4F 01 <id hi> <id lo> 01 [name bytes] F7
 ```
 
-`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `0x3F00` and up for private experiments. Ask for a number when a
+`id` is 14 bits: `1` the Rytm, `2` the Digitakt mk1, `3` the Analog Four MKII, `0x3F00` and up for private experiments. Ask for a number when a
 port is public. The Sidecar answers once per hello:
 
 ```
@@ -185,6 +185,15 @@ state folder follows its hello, so a stock Digitakt gets the stereo mix and what
 engine, read for facts only; no code of it is here. [The community Digitakt port](https://github.com/soejrd/digitakt-sidecar)'s measurements on a real unit (descriptors, 88 B OUT, host channels 0 / 1 on MAIN L / R,
 47,999.5 frames/s, 4 minutes without a gap). The firmware itself in an emulator, for the descriptor bytes, 2 channels and the FILTER and AMP values.
 
+## The Analog Four MKII on the generic engine
+
+`core/device/a4.*`, built in (id 3, state in `/.a4`), for an A4 Sidecar mod that speaks the Rytm companion's protocol: the
+hello, 51 STORE and the step clock's 2C / 2D come in, 51 goes back. The step clock takes its `tracks` (6: synth 1..4, FX,
+CV): a tick on a track the box does not have reaches no listener and is counted (`offTrack` in `/status`'s `clock`). The
+Rytm's clock keeps 13 (its 12 and the Storage phase's 13th). No audio row on this line: the Pi's driver takes 12 device ->
+host channels and the A4 sends 8, so its stream and the stock-A4 mirror are on the full engine's line until the driver
+widens a block as that line's does. Host tests only, never on an A4.
+
 ## State folders
 
 A box with `state_dir` set (`/.digitakt` for the Digitakt) keeps its projects, settings and pools there, and the Rytm keeps
@@ -192,6 +201,9 @@ its own in `/.rytm`, so they never mix. Shared content stays shared: `/Samples`,
 the card's top level. The engine's own code keeps saying `/.rytm/...`. Every file call passes through one path function per
 port (`full` in `pi/engine/platform_pi.cpp`, `host_path` in `core/host/platform_host.cpp`), and those call
 `device::state_path`, which swaps the folder. With the Rytm it returns the same pointer after one test.
+The record store (51 STORE, `core/kv`) is one of them: its `/.rytm/store/<project>/` is a box's `<state_dir>/store/<project>/`,
+so an A4's records sit beside its other state in `/.a4` and a Rytm's and an A4's never share a folder by project id
+(`core/tests/test_a4_generic.cpp`).
 
 The Pi's own files stay in `/.rytm` whatever the box: the network, the pairing, the screen, the black box
 (`kMachine` in `core/device/device.cpp`). A folder of its own also means its own copy of what is derived from the card,

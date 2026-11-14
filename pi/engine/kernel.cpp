@@ -34,6 +34,8 @@ static boolean SdWriteWhole (const char *pPath, const char *pData, unsigned n)
 }
 #include "shared.h"
 #include "usb_box.h"	// which USB MIDI device is the host link
+#include "hello_gate.h"	// an A4's hello before it is the host link
+#include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
@@ -567,6 +569,26 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	asm volatile ("dsb sy; sev");
 }
 
+// An A4's USB MIDI before it is the box in use: its hello reaches the engine while no Rytm has the link, nothing else does, and nothing goes back (usb_box.h)
+static CDevice *volatile s_pHelloBox;
+static volatile boolean s_bLinkUp;				// a host link is up
+static HelloGate s_HelloGate;
+static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
+{
+	for (unsigned i = 0; i < nLength; i++)
+	{
+		unsigned n = s_HelloGate.feed (pPacket[i]);
+		if (n == 0 || s_bLinkUp || !CObUsb::Active ()) continue;
+		for (unsigned k = 0; k < n; k++)
+			if (!g_MidiIn.push (s_HelloGate.data ()[k])) s_nMidiInLost++;
+		asm volatile ("dsb sy; sev");
+	}
+}
+static void HelloRemoved (CDevice *pDevice, void *pContext)
+{
+	s_pHelloBox = 0;
+}
+
 void CKernel::MIDIRemoved (CDevice *pDevice, void *pContext)
 {
 	((CKernel *) pContext)->m_pMIDI = 0;
@@ -614,6 +636,7 @@ void CKernel::UpdateMIDI (void)
 	unsigned nNow = m_Timer.GetClockTicks ();
 	if (m_pMIDI != 0 && nNow - s_nScanAt < 250000) return;
 	s_nScanAt = nNow;
+	s_bLinkUp = m_pMIDI != 0;
 	// umidiN in Circle's numbering: the gadget's own MIDI device (USB-C, gadget.h) takes a number too
 	for (unsigned n = 1; n <= 8; n++)
 	{
@@ -625,6 +648,19 @@ void CKernel::UpdateMIDI (void)
 		for (unsigned i = 0; i < MaxKeyboards; i++) bKnown |= s_pKeyboard[i] == p;
 		if (bKnown) continue;
 		TUsbBox Box = BoxOf (p);
+		if (Box == UsbBoxHello)
+		{
+			if (core::device::active ().id == core::device::kIdA4) Box = UsbBoxHost;	// it chose this boot's folder: it is the box in use
+			else if (s_pHelloBox != 0) continue;		// one is heard at a time: a second A4 waits for that one to go
+			else
+			{
+				s_pHelloBox = p;
+				((CUSBMIDIDevice *) p)->RegisterRemovedHandler (HelloRemoved, this);
+				((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
+				m_Logger.Write (From, LogNotice, "midi: an Analog Four MKII (%s): nothing goes to it, listening for its mod's hello", (const char *) Name);
+				continue;
+			}
+		}
 		if (Box == UsbBoxOther)
 		{
 			static u32 s_nSaid;				// umidiN already logged

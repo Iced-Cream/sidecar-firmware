@@ -9,6 +9,7 @@ enum TUsbBox {
   UsbBoxHost,       // the host link
   UsbBoxKeyboard,   // somebody's keyboard or interface: notes play the Rytm's selected track, the MIDI machine reaches it
   UsbBoxOther,      // an Elektron box that is neither: left alone
+  UsbBoxHello,      // an Analog Four MKII: nothing goes to it, its hello is heard (hello_gate.h); once it is the box in use, the host link
 };
 
 inline TUsbBox usb_box(const char* vendor, const char* product) {
@@ -16,6 +17,7 @@ inline TUsbBox usb_box(const char* vendor, const char* product) {
   if (!has_v && !has_p) return UsbBoxHost;   // a device without strings: taken for the Rytm, as ever
   if (has_p && strstr(product, "Rytm") != 0) return UsbBoxHost;
   if (has_p && strstr(product, "Digitakt") != 0 && strstr(product, "Digitakt II") == 0) return UsbBoxHost;
+  if (has_p && strstr(product, "Analog Four MKII") != 0) return UsbBoxHello;
   bool elektron = (has_v && strstr(vendor, "Elektron") != 0) || (has_p && strstr(product, "Elektron") != 0);
   return elektron ? UsbBoxOther : UsbBoxKeyboard;
 }

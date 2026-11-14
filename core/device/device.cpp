@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "fmt/fmt.h"
+#include "device/a4.h"
 #include "device/audio.h"
 #include "hooks.h"
 #include "machines.h"
@@ -27,8 +28,8 @@ static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
-static const Profile* s_list[kMax] = {&kRytm};
-static int s_n = 1;
+static const Profile* s_list[kMax] = {&kRytm, &kA4};   // the built-in boxes (the Digitakt: device::add, tests only)
+static int s_n = 2;
 Link g_link = {};
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
