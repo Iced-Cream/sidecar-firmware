@@ -43,7 +43,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -55,7 +55,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 		m_nMidiHeld[c] = 0;
 		for (unsigned k = 0; k < ChanInURBs; k++) { m_pChanInBuf[c][k] = 0; m_pChanInURB[c][k] = 0; }
 	}
-	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
+	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_nAudioOutAt[k] = 0; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
 	for (unsigned k = 0; k < EvURBs; k++) m_pEvURB[k] = 0;
 	for (unsigned k = 0; k < AudioInURBs; k++) m_pAudioInURB[k] = 0;
 	memset (&m_Map, 0, sizeof m_Map);
@@ -125,9 +125,13 @@ boolean CTeensyTarget::Configure (void)
 	m_nDelay = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydelay", 0);
 	m_nVariant = CKernelOptions::Get ()->GetAppOptionDecimal ("relayvariant", 1);
 	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
+	{
+		const char *pFeed = CKernelOptions::Get ()->GetAppOptionString ("relayfeed", "loop");
+		m_bFeedIrq = m_bTest && strcmp (pFeed, "irq") == 0;
+	}
 	s_pThis = this;
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,
-				m_nVersion & 0xFF, m_nEpDesc, m_nDelay, m_bTest ? ", relaytest=1" : "");
+				m_nVersion & 0xFF, m_nEpDesc, m_nDelay, m_bFeedIrq ? ", relaytest=1 relayfeed=irq" : m_bTest ? ", relaytest=1" : "");
 	Step ("configured; registering as a mirror target");
 	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// its MirrorPoll starts the relay (Start)
 	Step ("registered");
@@ -432,7 +436,18 @@ boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
 // xHCI IRQ: an IN block of the box (12-channel layout), cut to the computer's alternate and sent on link 0x02
 void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 {
-	if (m_bTest) return;				// relaytest: a real box's blocks never reach the computer (TestPoll uses SendBoxBlock)
+	if (m_bTest)					// relaytest: a real box's blocks never reach the computer (TestPoll uses SendBoxBlock)
+	{
+		// relayfeed=irq: the box's block only paces the test stream: a test block goes out in its place, from the same
+		// xHCI completion, so the link sees a real box's timing (TR2: ~2-3 blocks per completion, every ~380 us)
+		if (m_bFeedIrq && MirrorShown () && m_Stream.in_ch == 8 && m_nTestStart != 0)
+		{
+			u8 Blk[ob::block_bytes (12)];
+			TestBlock (Blk, m_nTestSent++);
+			SendBoxBlock (Blk);
+		}
+		return;
+	}
 	SendBoxBlock (pBlock);
 }
 
@@ -440,9 +455,20 @@ void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 void CTeensyTarget::SendBoxBlock (const u8 *pBlock)
 {
 	if (!MirrorShown ()) return;
-	unsigned k = 0;
-	while (k < AudioOutBufs && m_bAudioOutBusy[k]) k++;
-	if (k == AudioOutBufs) { m_Stats.nAudioOutDrop++; return; }	// the link is behind by 16 blocks (2.3 ms)
+	unsigned k = AudioOutBufs, nBusy = 0;
+	for (unsigned i = 0; i < AudioOutBufs; i++)
+	{
+		if (m_bAudioOutBusy[i]) nBusy++;
+		else if (k == AudioOutBufs) k = i;
+	}
+	if (nBusy > m_Stats.nBusyMax) m_Stats.nBusyMax = nBusy;
+	if (k == AudioOutBufs)				// the link is behind by 16 blocks (2.3 ms)
+	{
+		m_Stats.nAudioOutDrop++;
+		if (++m_Stats.nDropRun > m_Stats.nDropRunMax) m_Stats.nDropRunMax = m_Stats.nDropRun;
+		return;
+	}
+	m_Stats.nDropRun = 0;
 	unsigned n = m_Stream.in_block (pBlock, m_pAudioOutBuf[k]);
 	if (n == 0) return;
 	CleanAndInvalidateDataCacheRange ((uintptr) m_pAudioOutBuf[k], kDmaSize);
@@ -454,6 +480,7 @@ void CTeensyTarget::SendBoxBlock (const u8 *pBlock)
 		m_nAudioOutLen[k] = n;
 	}
 	m_bAudioOutBusy[k] = TRUE;
+	m_nAudioOutAt[k] = NowTicks ();
 	CUSBRequest *pURB = m_pAudioOutURB[k];
 	pURB->SetStatus (0);
 	pURB->SetResultLen (0);
@@ -546,8 +573,17 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 void CTeensyTarget::AudioOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
-	if (p == s_pThis) p->m_bAudioOutBusy[(unsigned) (uintptr) pParam] = FALSE;	// its URB kept for the next block
-	(void) pURB;
+	if (p != s_pThis) return;
+	unsigned k = (unsigned) (uintptr) pParam;
+	TStats &s = p->m_Stats;
+	u64 us = NowTicks () - p->m_nAudioOutAt[k];
+	if (us > s.nLinkMaxUs) s.nLinkMaxUs = (unsigned) us;
+	unsigned b = 0;
+	for (u64 lim = 125; b < 7 && us >= lim; lim <<= 1) b++;
+	s.nLinkHist[b]++;
+	s.nLinkDone++;
+	if (pURB->GetStatus () == 0) { s.nLinkErr++; s.nLinkErrStatus = (unsigned) pURB->GetUSBError (); }
+	p->m_bAudioOutBusy[k] = FALSE;			// its URB kept for the next block
 }
 
 void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
@@ -827,6 +863,10 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
 			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
 			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects);
+	pLogger->Write (From, LogNotice, "relay link 0x02: done %u err %u (usb %u) max %u us, hist <125 %u <250 %u <500 %u <1ms %u "
+			"<2ms %u <4ms %u <8ms %u more %u | busy max %u, drops in a row max %u",
+			s.nLinkDone, s.nLinkErr, s.nLinkErrStatus, s.nLinkMaxUs, s.nLinkHist[0], s.nLinkHist[1], s.nLinkHist[2],
+			s.nLinkHist[3], s.nLinkHist[4], s.nLinkHist[5], s.nLinkHist[6], s.nLinkHist[7], s.nBusyMax, s.nDropRunMax);
 }
 
 #endif	// CIRCLE_GADGET_MIRROR
@@ -876,6 +916,17 @@ static void TestPattern (u8 *b, u32 seq, unsigned n)
 	for (unsigned i = 4; i < n; i++) b[i] = (u8) (seq + i);
 }
 
+// the 8-channel block the computer should get (seq nSeq), spread into the 12-channel layout FromBoxBlock cuts from
+void CTeensyTarget::TestBlock (u8 *pBlk, u32 nSeq)
+{
+	u8 Want[256];
+	TestPattern (Want, nSeq, sizeof Want);
+	memset (pBlk, 0, ob::block_bytes (12));
+	memcpy (pBlk, Want, ob::kHeaderBytes);
+	for (int f = 0; f < ob::kFramesPerBlock; f++)
+		memcpy (pBlk + ob::kHeaderBytes + 4 * 12 * f, Want + ob::kHeaderBytes + 4 * 8 * f, 4 * 8);
+}
+
 void CTeensyTarget::TestPoll (void)
 {
 	m_bTestFeeding = TRUE;
@@ -896,17 +947,13 @@ void CTeensyTarget::TestPoll (void)
 	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; return; }
 	u64 nNow = NowTicks ();
 	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; Step ("relaytest: the computer took alt 3, stream starts"); }
+	if (m_bFeedIrq) return;				// relayfeed=irq: FromBoxBlock sends them
 	u64 nDue = (nNow - m_nTestStart) * 48000 / 7 / CLOCKHZ;
 	unsigned nBurst = 0;
 	while (m_nTestSent < nDue && nBurst++ < 16)
 	{
-		// the 8-channel block the computer should get, spread into the 12-channel layout FromBoxBlock cuts from
-		u8 Want[256], Blk[ob::block_bytes (12)];
-		TestPattern (Want, m_nTestSent, sizeof Want);
-		memset (Blk, 0, sizeof Blk);
-		memcpy (Blk, Want, ob::kHeaderBytes);
-		for (int f = 0; f < ob::kFramesPerBlock; f++)
-			memcpy (Blk + ob::kHeaderBytes + 4 * 12 * f, Want + ob::kHeaderBytes + 4 * 8 * f, 4 * 8);
+		u8 Blk[ob::block_bytes (12)];
+		TestBlock (Blk, m_nTestSent);
 		// not through FromBoxBlock: in test mode it drops the real box's blocks (TR1h: ~5 % of the computer's blocks
 		// were the A4's audio, rytmob2 on this Pi; a flag set around this call still let a few through, TR1i)
 		EnterCritical (IRQ_LEVEL);

@@ -70,6 +70,7 @@ private:
 	// relaytest=1 (cmdline; docs/teensy-mirror.md "Pi bench"): no box; a made-up one (pid.codes 1209:0003, the bench's shape)
 	// with a synthetic IN stream at the box rate, pipe packets echoed, vendor requests answered with a pattern
 	void TestPoll (void);
+	void TestBlock (u8 *pBlk, u32 nSeq);	// the made-up box's block nSeq in the 12-channel layout
 	void SendBoxBlock (const u8 *pBlock);	// FromBoxBlock's work (xHCI IRQ or TestPoll in a critical section)
 	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
 	void TestOutBlock (const u8 *pBlock, unsigned nLength);
@@ -91,6 +92,7 @@ private:
 	u8 *m_pAudioInBuf[AudioInURBs];
 	u8 *m_pAudioOutBuf[AudioOutBufs];
 	volatile boolean m_bAudioOutBusy[AudioOutBufs];
+	volatile u64 m_nAudioOutAt[AudioOutBufs];	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];
 	u8 *m_pChanOutBuf[relay::kChannels];
 	volatile boolean m_bChanOutBusy[relay::kChannels];
@@ -134,6 +136,9 @@ private:
 		unsigned nEvents, nSetups, nAborts, nAnswers, nStalls, nLate, nAudioOutDrop, nChanInDrop, nChanInMidi;
 		unsigned nPipeOut, nPipeIn, nPipeInDrop, nCredits, nVendorFail, nConnects;
 		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop;
+		// link 0x02 (IN blocks to the Teensy, TR2: the link carried ~18 %): each URB's submit -> completion time
+		unsigned nLinkErr, nLinkDone, nLinkMaxUs, nLinkHist[8];	// < 125, 250, 500 us, 1, 2, 4, 8 ms, more
+		unsigned nDropRun, nDropRunMax, nBusyMax, nLinkErrStatus;	// drops in a row; most URBs busy at a submit
 	} m_Stats;
 	u64 m_nLastLog;
 	boolean m_bTest;
@@ -141,6 +146,8 @@ private:
 	u32 m_nTestSent, m_nTestOutNext, m_nTestOutLost, m_nTestOutDup, m_nTestOutBad, m_nTestOut, m_nTestEcho, m_nTestEchoDrop;
 	boolean m_bTestOutSeen;
 	boolean m_bTestFeeding;
+	boolean m_bFeedIrq;			// relayfeed=irq (relaytest): the test blocks go out from the real box's IN
+					// completions (xHCI IRQ, its pace), as a box's own blocks do, not from TestPoll's loop
 	boolean m_bStarted, m_bDebug;
 	unsigned m_nDelay;
 	unsigned m_nDebugVendor;

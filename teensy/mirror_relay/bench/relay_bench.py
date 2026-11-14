@@ -11,6 +11,7 @@ pair 0x82/0x02 and a second pair 0x81/0x01, all bulk 512), plus a BOS / MS OS 2.
     python relay_bench.py --seconds 15 --json run.json   # staged: ctl, each stream alone, then all at once
     python relay_bench.py --paths audio_pc --seconds 60
     python relay_bench.py --bootloader        # reboot the Teensy into its bootloader for the next flash
+    python relay_bench.py --computer-only --paths engine --late 2 --seconds 30   # the Overbridge Engine's pattern (TR2)
 
 What runs at once:
   audio to the computer   "Pi" sends seq-numbered 256 B blocks on link 0x02, paced at 48000/7 a second; the
@@ -20,6 +21,8 @@ What runs at once:
   pipe to the computer    the "Pi" writes link channel 0 OUT; the "computer" reads 0x82; kEvInTaken events counted
   control                 the "computer" sends vendor IN and OUT requests; the "Pi" answers from the events;
                           the round trip is timed and the answer checked
+  engine (--computer-only) as the Overbridge Engine did in TR2 (T327): alt 3 taken, then --late s before the first
+                          0x83 read; every IN block read is answered by one OUT block on 0x03 (no OUT clock of its own)
 The Teensy's own counters (residency histograms, drops) are read at the end.
 """
 import argparse
@@ -219,6 +222,14 @@ class Bench:
 
     def pump(self):
         now = time.perf_counter()
+        ls = getattr(self, "lockstep", None)
+        if ls is not None:			# engine: one OUT block per IN block read, as soon as a transfer is idle
+            while ls["idle"] and ls["sent"] < ls["due"] and not self.stop:
+                t = ls["idle"].pop()
+                t.setBuffer(block(ls["sent"]))
+                ls["sent"] += 1
+                t.submit()
+            ls["backlog_max"] = max(ls["backlog_max"], ls["due"] - ls["sent"])
         for s in self.streams:
             if s["t0"] is None:
                 s["t0"] = now
@@ -230,6 +241,8 @@ class Bench:
                 t.submit()
 
     def on_audio_pc(self, b):
+        if getattr(self, "lockstep", None) is not None:	# the engine answers every block it reads, warm-up or not
+            self.lockstep["due"] += len(b) // BLOCK
         if getattr(self, "warmup", 0) and time.time() < self.t_start + self.warmup:
             return
         if getattr(self, "warmup", 0) and not getattr(self, "warm_done", False):
@@ -333,6 +346,24 @@ class Bench:
         if "audio_pc" in paths:		# the "Pi" sends blocks at the box's rate, the "computer" reads 0x83
             if pi:
                 self.s_apc = self._out_stream(link, A_FROM_PI, 16, block, BLOCK_HZ)
+            self._in(mirr, 0x83, BLOCK * getattr(self, "rd_blocks", 8), getattr(self, "rd_depth", 8), self.on_audio_pc, "int")
+        if "engine" in paths:		# the Overbridge Engine's pattern (TR2): reads start late, OUT follows IN block for block
+            ls = self.lockstep = dict(idle=[], sent=0, due=0, backlog_max=0, err=0)
+
+            def done(t):
+                if t.getStatus() != usb1.TRANSFER_COMPLETED and not self.stop:
+                    ls["err"] += 1
+                ls["idle"].append(t)
+            for _ in range(16):
+                t = mirr.getTransfer()
+                t.setInterrupt(0x03, b"", callback=done, timeout=0)
+                ls["idle"].append(t)
+                self.xfers.append(t)
+            late = getattr(self, "late", 0)
+            if late:
+                print("engine: alt 3 taken, first read in %.1f s" % late)
+                time.sleep(late)
+                self.t_start = time.time()		# the warm-up counts from the first read
             self._in(mirr, 0x83, BLOCK * getattr(self, "rd_blocks", 8), getattr(self, "rd_depth", 8), self.on_audio_pc, "int")
         if "audio_pi" in paths:		# the "computer" sends blocks on 0x03 at the same rate, the "Pi" reads link 0x82
             self.s_api = self._out_stream(mirr, 0x03, 16, block, BLOCK_HZ)
@@ -464,11 +495,14 @@ def computer_stage(ctx, paths, seconds, opts=None):
     mirr.claimInterface(0)
     mirr.setInterfaceAltSetting(0, 3)
     b = Bench(ctx, None, mirr, seconds)
-    b.warmup = 1.0 if "audio_pc" in paths else 0	# relaytest: blocks queued before this stage are skipped, then the Teensy's
+    b.warmup = 1.0 if ("audio_pc" in paths or "engine" in paths) else 0	# relaytest: blocks queued before this stage are skipped, then the Teensy's
     o = opts or {}					# counters start from zero (0x40 0x7D)
     b.rd_blocks, b.rd_depth = o.get("read_blocks", 8), o.get("read_depth", 8)
     b.dump = [] if o.get("dump") else None
+    b.late = o.get("late", 0)
+    t_run = time.time()
     b.run(paths)
+    t_run = time.time() - t_run - b.late
     rtt = sorted(b.ctl_rtt)
     res = dict(paths=list(paths), reader=dict(blocks=b.rd_blocks, depth=b.rd_depth), pipe_stale=getattr(b, "p_stale", 0),
                audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(), bad_lengths=b.bad_lens,
@@ -476,6 +510,17 @@ def computer_stage(ctx, paths, seconds, opts=None):
                ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,
                         rtt_us_max=rtt[-1] if rtt else None))
     errs = []
+    ls = getattr(b, "lockstep", None)
+    if ls is not None:
+        rate = b.a_pc.n / max(t_run - b.warmup, 0.1)
+        res["engine"] = dict(late_s=b.late, in_blocks=b.a_pc.n, in_rate=round(rate), out_sent=ls["sent"],
+                             out_backlog_max=ls["backlog_max"], out_err=ls["err"])
+        print("engine: IN %d blocks (%.0f/s of %.0f), OUT %d sent, backlog max %d" % (
+            b.a_pc.n, rate, BLOCK_HZ, ls["sent"], ls["backlog_max"]))
+        if rate < 0.98 * BLOCK_HZ:
+            errs.append("IN ran at %.0f blocks/s, not the box's %.0f" % (rate, BLOCK_HZ))
+        if b.a_pc.lost or b.a_pc.dup or b.a_pc.bad:
+            errs.append("audio to the computer lost/dup/bad %d/%d/%d" % (b.a_pc.lost, b.a_pc.dup, b.a_pc.bad))
     if "audio_pc" in paths and (b.a_pc.n == 0 or b.a_pc.dup or b.a_pc.bad):
         errs.append("audio to the computer none/dup/bad")
     if "pipes" in paths and (b.p_pc.n == 0 or b.p_pc.dup or b.p_pc.bad or b.p_pc.lost):
@@ -491,7 +536,7 @@ def computer_stage(ctx, paths, seconds, opts=None):
             st["audio_to_pc"], st["audio_to_pc_drop"], st["q_to_pc_max"], st["worst_to_pc_us"], st["audio_to_pi"],
             st["audio_to_pi_drop"], st["worst_to_pi_us"]))
         print("hist to pc (125 us bins):", [st["hist_to_pc%d" % i] for i in range(16)])
-        if "audio_pc" in paths and st["worst_to_pc_us"] >= 1200:
+        if ("audio_pc" in paths or "engine" in paths) and st["worst_to_pc_us"] >= 1200:
             errs.append("a block waited %d us on the Teensy (margin ~1200 us)" % st["worst_to_pc_us"])
     except usb1.USBError as e:
         errs.append("the Teensy's counters not read (0x7E): %s" % e)
@@ -523,11 +568,12 @@ def main():
     ap.add_argument("--read-blocks", type=int, default=8, help="--computer-only: blocks per 0x83 read")
     ap.add_argument("--read-depth", type=int, default=8, help="--computer-only: 0x83 reads kept queued")
     ap.add_argument("--dump", action="store_true", help="--computer-only: keep the first 200 corrupt blocks in the JSON")
+    ap.add_argument("--late", type=float, default=0, help="--computer-only engine: seconds between alt 3 and the first read")
     a = ap.parse_args()
     ctx = usb1.USBContext()
     if a.computer_only:
         stages = [tuple(a.paths.split(","))] if a.paths else STAGES
-        opts = dict(read_blocks=a.read_blocks, read_depth=a.read_depth, dump=a.dump)
+        opts = dict(read_blocks=a.read_blocks, read_depth=a.read_depth, dump=a.dump, late=a.late)
         results = [computer_stage(ctx, s, a.seconds, opts) for s in stages]
         print(chr(10).join("%-32s %s" % ("+".join(r["paths"]), r["verdict"]) for r in results))
         if a.json:
