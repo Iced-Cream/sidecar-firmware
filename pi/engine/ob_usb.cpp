@@ -1665,7 +1665,7 @@ struct TCircleIo : UsbMidiMerge::Io
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
 	bool has_computer (void) override			{ return pSidecar != 0; }
 	void computer_connected (bool bUp) override		{ pSidecar->RytmMIDIConnected (bUp); }
-	bool computer (u32 *w) override				{ return pSidecar->ForRytm (w); }
+	bool computer (u32 *w) override				{ return !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && pSidecar->ForRytm (w); }
 	bool computer_in_sysex (void) override			{ return pSidecar != 0 && pSidecar->ForRytmInSysEx (); }
 	const u8 *engine_next (int *pLen) override		{ return g_ToHost.Next (pLen); }
 	unsigned engine_drain (void) override			{ return g_ToHost.Drain (); }

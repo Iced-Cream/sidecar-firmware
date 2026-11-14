@@ -1530,7 +1530,9 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
 	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	if (pSidecar != 0 && (!pSidecar->OsUpdate () || CObUsb::Active ())) pSidecar->FromRytmMIDI (pPacket - 1);
+	// (mirror=a4: the computer talks to the A4, through link 1's tap below; the Rytm has no computer then)
+	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
+		pSidecar->FromRytmMIDI (pPacket - 1);
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();
@@ -1544,6 +1546,14 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 static CDevice *volatile s_pHelloBox;
 static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box_list.h)
 static HelloGate s_HelloGate;
+// usb=mirror with mirror=a4 (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
+// Rytm's is otherwise (xHCI IRQ, through link1's tap); the computer's MIDI goes to it from core 0's loop (link1::FromComputer)
+static void GadgetTap (const uint8_t *pEventPacket)
+{
+	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
+	if (pSidecar != 0 && pSidecar->Mirror () && (!pSidecar->OsUpdate () || CObUsb::Active ()))
+		pSidecar->FromRytmMIDI (pEventPacket);
+}
 static void HelloPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 {
 	link1::Tap (pPacket - 1);			// usb=mirror through a Teensy relay: the event packet to its computer too
@@ -2496,6 +2506,14 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
+		if (CObUsb::GadgetSlot () == 1)		// mirror=a4: the computer's MIDI to the A4, not the Rytm (GadgetTap above)
+		{
+			static boolean s_bTap;
+			if (!s_bTap) s_bTap = TRUE, link1::SetTap (GadgetTap);
+			u32 w;
+			if (m_pSidecar != 0 && m_pSidecar->Mirror ())
+				while (link1::FromComputerRoom () != 0 && m_pSidecar->ForRytm (&w)) link1::FromComputer ((const u8 *) &w);
+		}
 		link1::Send ();				// the engine's replies to the second box (link1.h)
 		CObUsb::PollTargets ();			// each box's own mirror target besides the gadget (mirror_target.h)
 		if (m_pTransport == &m_SelfTest && CObUsb::Streaming ()) SetSelfTest (FALSE, "the Rytm streams");
