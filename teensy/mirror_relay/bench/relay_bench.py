@@ -280,23 +280,29 @@ class Bench:
 
     def run(self, paths):
         link, mirr = self.link, self.mirr
-        self._in(link, EV_EP, 64, 8, self.on_event, "int")
+        pi = link is not None			# False: the Pi itself is at the link's end (relaytest=1)
+        if pi:
+            self._in(link, EV_EP, 64, 8, self.on_event, "int")
         if "audio_pc" in paths:		# the "Pi" sends blocks at the box's rate, the "computer" reads 0x83
-            self.s_apc = self._out_stream(link, A_FROM_PI, 16, block, BLOCK_HZ)
+            if pi:
+                self.s_apc = self._out_stream(link, A_FROM_PI, 16, block, BLOCK_HZ)
             self._in(mirr, 0x83, BLOCK * 8, 8, lambda b: [self.a_pc.see(check_block(b[i:i + BLOCK]))
                                                          for i in range(0, len(b), BLOCK)], "int")
         if "audio_pi" in paths:		# the "computer" sends blocks on 0x03 at the same rate, the "Pi" reads link 0x82
             self.s_api = self._out_stream(mirr, 0x03, 16, block, BLOCK_HZ)
-            self._in(link, A_TO_PI, 512, 32, lambda b: self.a_pi.see(check_block(b)), "int")
+            if pi:
+                self._in(link, A_TO_PI, 512, 32, lambda b: self.a_pi.see(check_block(b)), "int")
         if "pipes" in paths:
             # to the box: the "computer" writes 0x02, the "Pi" reads channel 0 IN and grants a credit per packet
-            self.link.controlWrite(0x40, REQ["Credit"], 0x02, 1, b"", timeout=1000)
             self.s_ppc = self._out_stream(mirr, 0x02, 4, lambda k: block(k, 64 + (k % 400)), PIPE_HZ, "bulk")
-            self._in(link, CH_IN(0), 512, 4, self.on_pipe_to_pi, "bulk")
-            # to the computer: the "Pi" writes channel 0 OUT, the "computer" reads 0x82
-            self.s_ppi = self._out_stream(link, CH_OUT(0), 4, lambda k: block(k, 64 + (k % 400)), PIPE_HZ, "bulk")
+            if pi:
+                self.link.controlWrite(0x40, REQ["Credit"], 0x02, 1, b"", timeout=1000)
+                self._in(link, CH_IN(0), 512, 4, self.on_pipe_to_pi, "bulk")
+                # to the computer: the "Pi" writes channel 0 OUT, the "computer" reads 0x82
+                self.s_ppi = self._out_stream(link, CH_OUT(0), 4, lambda k: block(k, 64 + (k % 400)), PIPE_HZ, "bulk")
+            # (relaytest: the Pi echoes 0x02 on 0x82, so the computer reads its own packets back)
             self._in(mirr, 0x82, 512, 4, lambda b: self.p_pc.see(check_block(b, len(b))), "bulk")
-        workers = [self.pi_ctl_worker, self.pi_credit_worker]
+        workers = [self.pi_ctl_worker, self.pi_credit_worker] if pi else []
         if "ctl" in paths:
             workers.append(self.comp_ctl_worker)
         for f in workers:
@@ -336,6 +342,8 @@ STAGES = [("ctl",), ("audio_pc",), ("audio_pi",), ("pipes",), ("ctl", "audio_pc"
 
 
 def one_stage(ctx, link, paths, seconds):
+    if link is None:
+        return computer_stage(ctx, paths, seconds)
     dev, cfg, strings, bos, msos, code = made_up_device()
     link.controlWrite(0x40, REQ["Connect"], 0, 0, b"", timeout=1000)
     time.sleep(0.3)
@@ -392,6 +400,37 @@ def one_stage(ctx, link, paths, seconds):
     return res
 
 
+def computer_stage(ctx, paths, seconds):
+    """--computer-only: the link is on a Pi running relaytest=1 (teensy_target.cpp), which plays the box: a synthetic IN
+    stream at the box's rate, pipe packets echoed (0x02 -> 0x82), the control pattern answered. Only the computer's side
+    is checked here; the Pi's own counters are in its log ("relaytest:" line, every 10 s)."""
+    t0 = time.time()
+    mirr = open_dev(ctx, MIRR, 30)
+    if not mirr:
+        return dict(paths=list(paths), verdict="FAIL: the made-up box 1209:0003 did not come up (Pi on relaytest=1?)")
+    print("== %s (computer only): device open after %.2f s" % ("+".join(paths), time.time() - t0))
+    mirr.claimInterface(0)
+    mirr.setInterfaceAltSetting(0, 3)
+    b = Bench(ctx, None, mirr, seconds)
+    b.run(paths)
+    rtt = sorted(b.ctl_rtt)
+    res = dict(paths=list(paths), audio_to_pc=b.a_pc.d(), pipe_echo=b.p_pc.d(),
+               sent={"%s 0x%02x" % (s["who"], s["ep"]): s["sent"] for s in b.streams},
+               ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,
+                        rtt_us_max=rtt[-1] if rtt else None))
+    errs = []
+    if "audio_pc" in paths and (b.a_pc.n == 0 or b.a_pc.dup or b.a_pc.bad):
+        errs.append("audio to the computer none/dup/bad")
+    if "pipes" in paths and (b.p_pc.n == 0 or b.p_pc.dup or b.p_pc.bad or b.p_pc.lost):
+        errs.append("pipe echo none/dup/bad/lost")
+    if "ctl" in paths and (b.ctl_bad or b.ctl_n == 0):
+        errs.append("control answers wrong or none")
+    res["verdict"] = "PASS" if not errs else "FAIL: " + ", ".join(errs)
+    print(json.dumps(res, indent=1))
+    mirr.close()
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seconds", type=float, default=15, help="per stage")
@@ -399,8 +438,17 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--info", action="store_true")
     ap.add_argument("--bootloader", action="store_true", help="reboot the Teensy into its bootloader (to reflash)")
+    ap.add_argument("--computer-only", action="store_true", help="the link is on a Pi with relaytest=1: check USB2 only")
     a = ap.parse_args()
     ctx = usb1.USBContext()
+    if a.computer_only:
+        stages = [tuple(a.paths.split(","))] if a.paths else STAGES
+        results = [computer_stage(ctx, s, a.seconds) for s in stages]
+        print(chr(10).join("%-32s %s" % ("+".join(r["paths"]), r["verdict"]) for r in results))
+        if a.json:
+            with open(a.json, "w") as f:
+                json.dump(results, f, indent=1)
+        sys.exit(0 if all(r["verdict"] == "PASS" for r in results) else 1)
     link = open_dev(ctx, LINK)
     if not link:
         sys.exit("no link device 1209:0002 (USB1 on the PC, relay firmware running?)")
