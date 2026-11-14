@@ -625,6 +625,19 @@ static void test_cal_console() {
   to(g_now + 14400 + 3 * 9600 + 6000);
   CHECK(loop::post_lat() == 5 && loop::stats().cal_fail == 1 && std::string(loop::last_message()) == "CAL: NO CLICK HEARD");
 
+  // cal with the transport stopped: refused, post_lat kept (the sequencer's latency is not there to compare with)
+  fresh();
+  g_sig = click_sig;
+  g_lat = 282, g_rtt = 312;
+  to((uint64_t)line(10));
+  loop::set_post_lat(7);
+  loop::cal_start();
+  CHECK(loop::cal_info(&first, &n, &gap));
+  g_click_c0 = first;
+  g_beats = false;
+  to(first + 3 * 9600 + 6000);
+  CHECK(loop::post_lat() == 7 && std::string(loop::last_message()) == "CAL: PLAY FIRST");
+
   // console_lines (spec 3.12)
   fresh();
   to((uint64_t)(line(40) + bar() / 3));

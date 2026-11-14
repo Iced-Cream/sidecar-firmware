@@ -60,6 +60,7 @@ static void deliver(int64_t h) {
 static const double kPeriod = 48000.0 * 60.0 / 127.0 / 4.0;   // a 16th at 127 BPM (5669.29 frames)
 static const int64_t kT0 = 48000;                              // the first tick, Rytm frame
 static const int kTickDelay = 700;                             // a tick's USB arrival (the sequencer follows the fastest)
+static int g_post = 0;                                          // the POST path's extra delay beyond the voice path (frames)
 static int g_tick_jit = 96;                                    // + 0..jit frames of jitter (a scenario's)
 static const int kX = 300, kDIn = 700, kAudioJit = 12;         // host render -> Rytm hears: kX; Rytm -> host IN: kDIn (+ jitter)
 static const int kRtt = kX + kDIn;                              // the round trip the sequencer's latency stands for
@@ -104,7 +105,7 @@ static void block() {
   for (int f = 0; f < 12; ++f) {
     int64_t hin = h + f, r = hin - kDIn;
     double live = kick_at(r);
-    int64_t ho = r - kX;   // the host frame whose loop output the Rytm hears at r
+    int64_t ho = r - kX - g_post;   // the host frame whose loop output the Rytm hears at r
     double lp = ho >= 0 && ho < (int64_t)g_ret.size() && ho < h ? (double)g_ret[(size_t)ho] : 0;
     if (r >= 0) g_live[(size_t)r] = (float)live, g_loopret[(size_t)r] = (float)lp;
     int32_t v = (int32_t)(live + lp);
@@ -141,8 +142,9 @@ static double worst_offset(int64_t from, int64_t to, int* count) {
 
 // one run with a tick jitter of `jit` frames (0 .. jit, arriving after the fastest): the limit the loop's kicks may be from the
 // live ones, in frames (48 = 1 ms)
-static void scenario(int jit, double limit) {
+static void scenario(int jit, double limit, int post = 0, int applied = 0) {
   g_tick_jit = jit;
+  g_post = post;
   seq::reset();
   g_wire.clear(), g_next_k = 0, g_rng = 1;
   printf("  -- tick jitter 0..%d frames (%.1f ms), limit %.0f frames\n", jit, jit / 48.0, limit);
@@ -151,6 +153,7 @@ static void scenario(int jit, double limit) {
   g_store.assign(48u << 20, 0);
   loop::init(g_ring.data(), 1u << 21, g_store.data(), g_store.size());   // (the real clock: seq::beat_map, seq::frames)
   loop::reset();
+  loop::set_post_lat(applied);
   seq::set_latency(kRtt);
   {   // 2D 07: the tempo the Rytm reports (BPM x 120, three 7-bit bytes), as test_seq's
     int v = 127 * 120;
@@ -230,6 +233,7 @@ int main() {
   engine_sysex(proj, sizeof proj);
   for (int i = 0; i < 200000 && project_loading(); ++i) idle_save();
   scenario(96, 48);    // the USB path's jitter as measured on the Pi (a few ms at worst): within 1 ms
+  scenario(96, 48, 300, 300);   // a POST path 300 frames slower than the voice path, its post_lat (loop=cal) applied: on the beat
   scenario(400, 48);   // test_seq's heavy jitter (8 ms uniform): the bar line itself is ~1 ms off there, the loop's return still not
   hooks.to_rytm = nullptr;
   host_fake_time(false, 0);

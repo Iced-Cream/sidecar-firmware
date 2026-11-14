@@ -240,8 +240,9 @@ CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
 
 // the render frame of the first grid line after `now` that is far enough ahead for the audio thread to take the command
 CORE_COLD uint64_t next_line(const Map& m, double grid, uint64_t now) {
-  double k = floor(((double)now + 96.0 - m.origin) / grid) + 1.0;
-  return (uint64_t)(m.origin + k * grid);
+  // (rendered post_lat frames early: a POST path slower than the voice path's still reaches the Rytm's output on the beat)
+  double k = floor(((double)now + 96.0 + (double)post_lat_ - m.origin) / grid) + 1.0;
+  return (uint64_t)(m.origin + k * grid - (double)post_lat_);
 }
 
 CORE_COLD void finalize(uint64_t now) {
@@ -625,7 +626,11 @@ CORE_COLD void cal_tick(uint64_t now) {
     for (int j = i; j > 0 && v[j] < v[j - 1]; --j) { int t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
   double o, p16;
   int lat = 0;
-  beat_map(&o, &p16, &lat);
+  if (!beat_map(&o, &p16, &lat)) {   // no transport: its latency is not the voice path's to compare with
+    ++stats_.cal_fail;
+    say("CAL: PLAY FIRST");
+    return;
+  }
   post_lat_ = v[n / 2] - lat;
   dirty_ = true;
   ++stats_.cal_ok;
