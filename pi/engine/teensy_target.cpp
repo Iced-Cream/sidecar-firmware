@@ -886,7 +886,8 @@ void CTeensyTarget::TestPoll (void)
 		m_bTestFeeding = FALSE;
 		return;
 	}
-	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; m_bTestFeeding = FALSE; return; }
+	m_bTestFeeding = FALSE;				// (set again around each FromBoxBlock below)
+	if (!MirrorShown () || m_Stream.in_ch != 8) { m_nTestStart = 0; return; }
 	u64 nNow = NowTicks ();
 	if (m_nTestStart == 0) { m_nTestStart = nNow; m_nTestSent = 0; Step ("relaytest: the computer took alt 3, stream starts"); }
 	u64 nDue = (nNow - m_nTestStart) * 48000 / 7 / CLOCKHZ;
@@ -900,8 +901,12 @@ void CTeensyTarget::TestPoll (void)
 		memcpy (Blk, Want, ob::kHeaderBytes);
 		for (int f = 0; f < ob::kFramesPerBlock; f++)
 			memcpy (Blk + ob::kHeaderBytes + 4 * 12 * f, Want + ob::kHeaderBytes + 4 * 8 * f, 4 * 8);
+		// the flag only inside the critical section: a real box's block (xHCI IRQ) between two of these must not pass
+		// FromBoxBlock's test-mode gate (TR1h: ~5 % of the computer's blocks were a real box's audio, rytmob2 on this Pi)
 		EnterCritical (IRQ_LEVEL);
+		m_bTestFeeding = TRUE;
 		FromBoxBlock (Blk);
+		m_bTestFeeding = FALSE;
 		LeaveCritical ();
 		m_nTestSent++;
 	}
