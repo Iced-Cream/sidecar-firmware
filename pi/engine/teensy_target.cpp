@@ -824,6 +824,14 @@ boolean CTeensyTarget::TestControl (const u8 *s, const u8 *pData, int *pAnswer)
 {
 	u16 wValue = (u16) mirror::le16 (s + 2), wLength = (u16) mirror::le16 (s + 6);
 	*pAnswer = 0;
+	if (s[0] == 0xC0 && s[1] == 0x7E)		// the Teensy's own counters (relay::Stats), for a computer with no Pi network
+	{
+		int n = Vendor (TRUE, kReqStats, 0, 0, 0, sizeof (Stats) < wLength ? sizeof (Stats) : wLength);
+		if (n <= 0) return FALSE;
+		memcpy ((u8 *) pData, m_pCtlBuf, (unsigned) n);
+		*pAnswer = n;
+		return TRUE;
+	}
 	if (s[0] & 0x80)
 	{
 		u8 *a = (u8 *) pData;			// ControlPoll's Data buffer, copied into m_CtlData by the caller
