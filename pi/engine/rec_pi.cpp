@@ -255,7 +255,7 @@ bool BPatch (const char *p, uint64_t nOff, const void *pBuf, uint32_t n)
 void BLog (const char *pLine) { CLogger::Get ()->Write (From, LogNotice, "%s", pLine + (strncmp (pLine, "rec: ", 5) ? 0 : 5)); }
 bool BCardBusy (void) { return bridge::card_busy (); }	// the streams need the card (core/msamp/cardq.h)
 // the take's name (recorder.h): the wall clock's local time, the Rytm project's name. ProjectName is the one place
-// that knows where the core keeps the current project (core::project, the Rytm's 10 name, written by the control core:
+// that knows where the core keeps the current project (core::prj().key, the Rytm's 10 name, written by the control core:
 // copied a byte at a time up to its NUL, 23 characters at most)
 bool BClock (uint32_t *pLocal) { int nSrc; return core::projects::clock_local (pLocal, &nSrc); }
 void ProjectName (char *pOut, unsigned nCap)

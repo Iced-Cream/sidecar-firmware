@@ -659,7 +659,7 @@ CORE_COLD void slide_tick() {
 // 2026-10-26, the RAM store (phase 2): the project the sequencer's state is of - its files are this one's. Not pool.h's
 // project: that is the new name from a switch on, while the new project's store fills and the old project is still the
 // one loaded here (its edits go to its own folder until project_changed, from the fill's end, loads the new one).
-char g_proj[sizeof project] = "";
+char g_proj[sizeof Project::key] = "";
 CORE_COLD void folder_of(const char* proj, char* fn, int cap) {
   char n[kKeyMax];
   project_key(proj, n, sizeof n);
@@ -702,7 +702,7 @@ CORE_COLD void tracks_keep() {
 }
 CORE_COLD void refused_log(const char* what) {
   ++st.loading_refused;
-  log(CORE_STR("seq: %s refused: project %s is still loading (try again once it is)"), what, project);
+  log(CORE_STR("seq: %s refused: project %s is still loading (try again once it is)"), what, prj().key);
 }
 CORE_COLD bool tracks_refused() {
   if (!g_loading) return false;
@@ -726,7 +726,7 @@ CORE_COLD bool tracks_refused() {
 // the device), a save a copy into RAM and the queue. The store's fill never reads a path whose write is still queued.
 #if CORE_MSAMP
 // the store is this project's (the one a load filled, or is filling): the sequencer's writes go into it too
-CORE_COLD bool store_ours() { return !strcmp(g_proj, project); }
+CORE_COLD bool store_ours() { return !strcmp(g_proj, prj().key); }
 // a file's bytes to the card (fmt::post_queue: queued behind the writes ahead, never waited for), into the store first
 CORE_COLD bool post_file(const char* fn, const uint8_t* d, uint32_t n) {
   if (store_ours()) store::put(fn, d, n);   // (an old project's file saved while the next one's fills: not in it)
@@ -750,7 +750,7 @@ CORE_COLD bool load_into(Pattern& p, int index) {
     if (index < 128) pat_lock[index] = loading ? kLockLoading : 2;
     if (loading) {   // (not a failed load: the project's own files come at the fill's end)
       log(CORE_STR("seq: pattern %c%02d: not editable until project %s is loaded"), 'A' + index / 16 % 8,
-          index % 16 + 1, project);
+          index % 16 + 1, prj().key);
       return false;
     }
     ++st.load_fails;
@@ -1811,7 +1811,7 @@ CORE_COLD bool load_saved(int index) {   // pNNN.sqs into saved_p: false when th
   uint32_t len;
   store::State sst = store::get(fn, &buf, &len);
   if (sst == store::kUnknown)   // (not "no saved state": the store does not have this folder now)
-    log(CORE_STR("seq: %s not in the store (project %s %s): nothing reloaded"), fn, project,
+    log(CORE_STR("seq: %s not in the store (project %s %s): nothing reloaded"), fn, prj().key,
         g_loading ? "still loading" : "not loaded");
   if (sst != store::kPresent) return false;
   int n = (int)len;
@@ -1889,7 +1889,7 @@ CORE_COLD void on_edit_op(const uint8_t* a) {
   if (op == kPCopy && ok && lock_of(cur->index) == kLockLoading) {
     copy_due = cur->index;
     log(CORE_STR("seq: pattern %c%02d copied while project %s loads: taken once it is loaded"), 'A' + copy_due / 16 % 8,
-        copy_due % 16 + 1, project);
+        copy_due % 16 + 1, prj().key);
     return;
   }
   // round 2: a copy of a loading pattern (its empty stand-in) is refused: a later paste would wipe the target's tracks
@@ -2782,9 +2782,9 @@ CORE_COLD void init() {
   poly::set_note_sink(midi);
   if (fx::knob_filter != fx_filter) fx_prev = fx::knob_filter, fx::knob_filter = fx_filter;   // seq-ux: FX locks, the LFOs after
   reset();
-  if (card_ok && project[0]) {   // the last project (/.rytm/project): its seq tracks and A01 until the Rytm says more
+  if (card_ok && prj().key[0]) {   // the last project (/.rytm/project): its seq tracks and A01 until the Rytm says more
     named = true;
-    sniprintf(g_proj, sizeof g_proj, "%s", project);
+    sniprintf(g_proj, sizeof g_proj, "%s", prj().key);
 #if CORE_MSAMP
     // the RAM store (phase 2): its tracks and A01 once the boot's fill is done (core/pool/pool.h project_fill_step ->
     // project_changed); until then none of its files is loaded here, so none is written over (1042)
@@ -2904,16 +2904,16 @@ CORE_COLD int pattern_locked(int index) { return lock_of(index); }
 #if CORE_MSAMP
 CORE_COLD void want_files() {
   char d[64], fn[96];
-  folder_of(project, d, sizeof d);
+  folder_of(prj().key, d, sizeof d);
   sniprintf(fn, sizeof fn, CORE_STR("%s/tracks.txt"), d);
   store::want(fn);
-  for (int i = 0; i < 128; ++i) file_ext_of(project, fn, sizeof fn, i, "sqp"), store::want(fn);
-  for (int i = 0; i < 128; ++i) file_ext_of(project, fn, sizeof fn, i, "sqs"), store::want(fn);   // 1042's saved states
+  for (int i = 0; i < 128; ++i) file_ext_of(prj().key, fn, sizeof fn, i, "sqp"), store::want(fn);
+  for (int i = 0; i < 128; ++i) file_ext_of(prj().key, fn, sizeof fn, i, "sqs"), store::want(fn);   // 1042's saved states
   sniprintf(fn, sizeof fn, CORE_STR("%s/clip.sqp"), d), store::want(fn);   // F-a1: the COPY PAT clipboard
 }
 CORE_COLD void rekey(const char* name) { sniprintf(g_proj, sizeof g_proj, "%s", name ? name : ""); }
 CORE_COLD void loading_begin() {
-  if (!project[0]) return;   // (the boot with no project named: nothing of one to keep apart)
+  if (!prj().key[0]) return;   // (the boot with no project named: nothing of one to keep apart)
   if (!cur) reset();
   g_loading = true;
   if (copy_due >= 0)  // (F-a2: a copy queued in an earlier load is that project's; review L3: said)
@@ -2943,10 +2943,10 @@ CORE_COLD void project_changed() {
   g_loading = false;   // (the store is full: the project's files are here now)
   bool was_named = named;
   if (!named) {   // the first project the Rytm names: what was set before (the boot's "", a console) is this one's
-    if (!project[0]) return;   // (the boot's fill with no project named: nothing named yet)
+    if (!prj().key[0]) return;   // (the boot's fill with no project named: nothing named yet)
     named = true;
     memset(pat_lock, 0, sizeof pat_lock);   // 1042: another folder's files
-    sniprintf(g_proj, sizeof g_proj, "%s", project);
+    sniprintf(g_proj, sizeof g_proj, "%s", prj().key);
     char d[64], fn[96];
     folder(d, sizeof d);
     sniprintf(fn, sizeof fn, CORE_STR("%s/tracks.txt"), d);
@@ -2962,7 +2962,7 @@ CORE_COLD void project_changed() {
     if (!has && (legacy_mask || dirty)) {
       tracks_touch();
       if (dirty) dirty_ms = now_ms();
-      log(CORE_STR("seq: the tracks set before the project was named kept for %s"), project);
+      log(CORE_STR("seq: the tracks set before the project was named kept for %s"), prj().key);
       take_copy_due();
       return;
     }
@@ -2978,8 +2978,8 @@ CORE_COLD void project_changed() {
   disarm_undo(-1);   // (round 2: an undo of another project's pattern, or of a refused edit, never lands on this one's)
   // review L2: the clipboard is the project's, as its clip.sqp (F-a1): another project starts with none in RAM (a
   // paste reads that project's clip.sqp); the same project loaded again keeps it
-  if (strcmp(g_proj, project)) clear(*clip_p, -1);
-  sniprintf(g_proj, sizeof g_proj, "%s", project);   // the sequencer's files are this project's from here
+  if (strcmp(g_proj, prj().key)) clear(*clip_p, -1);
+  sniprintf(g_proj, sizeof g_proj, "%s", prj().key);   // the sequencer's files are this project's from here
   release(-1);
   load_tracks();
   mask_sent = -1;
@@ -4865,14 +4865,14 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     bool on = !strcmp(q + 1, "on");
     if (g_loading && on != slot_on(r))
       return set_seq(r, on), sniprintf(out, cap, CORE_STR("seq: track %d not changed: project %s is still loading"),
-                                       r + 1, project), true;
+                                       r + 1, prj().key), true;
     set_seq(r, on);
     return sniprintf(out, cap, CORE_STR("seq: track %d %s, mask 0x%03x"), r + 1, on ? "sequenced" : "stock", mask), true;
   }
   if (!strncmp(p, "seq=lat:", 8)) {
     set_latency(atoi(p + 8));
     if (!tracks_touch())   // (round 2: and not marked as set by hand)
-      return sniprintf(out, cap, CORE_STR("seq: latency not changed: project %s is still loading"), project), true;
+      return sniprintf(out, cap, CORE_STR("seq: latency not changed: project %s is still loading"), prj().key), true;
     cal.manual = true;
     return sniprintf(out, cap, CORE_STR("seq: notes start %d frames early"), latency), true;
   }
@@ -4891,13 +4891,13 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     if (r < 0 || r >= kRytmTracks || !q) return sniprintf(out, cap, CORE_STR("seq=pin:T:on|off (T 1..12)")), true;
     pin_extra = (uint16_t)(!strcmp(q + 1, "on") ? pin_extra | 1u << r : pin_extra & ~(1u << r));
     if (!tracks_touch())
-      return sniprintf(out, cap, CORE_STR("seq: pin not changed: project %s is still loading"), project), true;
+      return sniprintf(out, cap, CORE_STR("seq: pin not changed: project %s is still loading"), prj().key), true;
     return sniprintf(out, cap, CORE_STR("seq: pinned 0x%03x (seq tracks %s)"), pinned(), pin_seq ? "pinned" : "not pinned"), true;
   }
   if (!strncmp(p, "seq=pinseq:", 11)) {   // the seq tracks' pin (on by default)
     pin_seq = strcmp(p + 11, "off") != 0;
     if (!tracks_touch())
-      return sniprintf(out, cap, CORE_STR("seq: pin not changed: project %s is still loading"), project), true;
+      return sniprintf(out, cap, CORE_STR("seq: pin not changed: project %s is still loading"), prj().key), true;
     return sniprintf(out, cap, CORE_STR("seq: seq tracks %s, pinned 0x%03x"), pin_seq ? "pinned" : "not pinned", pinned()), true;
   }
   if (!strncmp(p, "seq=swing:", 10)) {   // seq=swing:T:N (50..80; 50 straight)
@@ -4975,13 +4975,13 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
   if (!strncmp(p, "seq=quant:", 10)) {
     quant = atoi(p + 10) ? 1 : 0;
     if (!tracks_touch())
-      return sniprintf(out, cap, CORE_STR("seq: quantise not changed: project %s is still loading"), project), true;
+      return sniprintf(out, cap, CORE_STR("seq: quantise not changed: project %s is still loading"), prj().key), true;
     return sniprintf(out, cap, CORE_STR("seq: record quantise %s"), quant ? "1/16" : "OFF (micro kept)"), true;
   }
   if (!strncmp(p, "seq=demo:", 9)) {
     int r = atoi(p + 9) - 1;
     if (r < 0 || r >= kRytmTracks) return sniprintf(out, cap, CORE_STR("seq=demo:T (T 1..12)")), true;
-    if (g_loading) return demo(r), sniprintf(out, cap, CORE_STR("seq: no demo: project %s is still loading"), project), true;
+    if (g_loading) return demo(r), sniprintf(out, cap, CORE_STR("seq: no demo: project %s is still loading"), prj().key), true;
     demo(r);
     return sniprintf(out, cap, CORE_STR("seq: demo pattern (broken chords) on track %d"), r + 1), true;
   }
@@ -5082,7 +5082,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       t->poly = c, poly_def[r] = c;
       if (!tracks_touch()) {   // (round 2: the pattern's copy put back with the default)
         t->poly = was;
-        return sniprintf(out, cap, CORE_STR("seq: poly config not changed: project %s is still loading"), project), true;
+        return sniprintf(out, cap, CORE_STR("seq: poly config not changed: project %s is still loading"), prj().key), true;
       }
       mark_dirty();
     }

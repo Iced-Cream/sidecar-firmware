@@ -53,7 +53,7 @@ constexpr int kScanPass = 16;
 const char kNone[] = "#none\n";   // a section: the kit had no file of its own (it inherits the project's default file)
 constexpr uint32_t kNoneLen = sizeof kNone - 1;
 
-CORE_COLD void key_now(char* k) { project_key(project, k, kKeyMax); }
+CORE_COLD void key_now(char* k) { project_key(prj().key, k, kKeyMax); }
 CORE_COLD void rec_path(const char* key, int kit, const char* ext, char* out, int cap) {
   sniprintf(out, cap, CORE_STR("/.rytm/kits/%s/k%03d.%s"), key, kit + 1, ext);
 }
@@ -311,7 +311,7 @@ CORE_COLD bool tick() {
   if (e.gen != g_gen) {
     ++g_st.stale;
     log(CORE_STR("kits: op %d of kit %03d came before the Rytm changed projects: dropped (not applied to %s)"), e.op,
-        e.kit + 1, project);
+        e.kit + 1, prj().key);
     return true;
   }
   switch (e.op) {

@@ -147,14 +147,14 @@ bool g_locked = false;
 void rekey(const char* name) { sniprintf(g_proj, sizeof g_proj, "%s", name ? name : ""); }
 void want_files() {
   char fn[80];
-  for (int k = -1; k < 128; ++k) name_of(project, fn, sizeof fn, k), store::want(fn);
+  for (int k = -1; k < 128; ++k) name_of(prj().key, fn, sizeof fn, k), store::want(fn);
 }
 #endif
 
 void load() {
   g_locked = false;
   clear();
-  strncpy(g_proj, project, sizeof g_proj - 1);
+  strncpy(g_proj, prj().key, sizeof g_proj - 1);
   g_proj[sizeof g_proj - 1] = 0;
   g_kit = g_rytm_kit;
   set_kit(g_kit);
@@ -294,7 +294,7 @@ static bool save_text(bool queue) {
 #if CORE_MSAMP
   // the store is the project's now named (filled, or filling: the fill keeps this newer text); an old project's file
   // saved while the next one's store fills is not put in it
-  if (!strcmp(g_proj, project)) store::put(fn, (const uint8_t*)t, len);
+  if (!strcmp(g_proj, prj().key)) store::put(fn, (const uint8_t*)t, len);
   // (a held slot, phase 3: queued too, so the edit is on its way rather than dirty for the whole hold)
   if (queue || fmt::post_stalled()) {
     if (!fmt::post_queue(fn, t, len)) log(CORE_STR("ins: %s not written to the card (refused or out of memory: in RAM only)"), fn);

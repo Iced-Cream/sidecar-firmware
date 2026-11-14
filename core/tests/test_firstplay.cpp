@@ -405,7 +405,7 @@ int main() {
     bool w = cardq::worker();
     cardq::set_worker(false);
     for (int i = 0; i < 3000 && pools::saving(); ++i) pu::steps(1), g_us += 1000, host_fake_time(true, g_us);
-    snprintf(core::project, sizeof core::project, "%s", "ELSEWHERE");
+    snprintf(core::prj().key, sizeof core::prj().key, "%s", "ELSEWHERE");
     for (int i = 0; i < 4000 && (strcmp(pools::project(), "ELSEWHERE") || !pools::ready()); ++i) pu::steps(1), g_us += 1000, host_fake_time(true, g_us);
     CHECK(!strcmp(pools::project(), "ELSEWHERE"));
     cardq::set_worker(w);
@@ -413,7 +413,7 @@ int main() {
     CHECK(msamp::keep_waiting() == 0 && msamp::voice_slot(0) < 0);
     CHECK(whole("fp", 0) && !whole("fp", 1));   // the whole one stays, the fill's is gone
     cardq::set_worker(false);
-    snprintf(core::project, sizeof core::project, "%s", "");
+    snprintf(core::prj().key, sizeof core::prj().key, "%s", "");
     for (int i = 0; i < 4000 && (strcmp(pools::project(), "_default") || !pools::ready()); ++i) pu::steps(1), g_us += 1000, host_fake_time(true, g_us);
     cardq::set_worker(w);
     settle();

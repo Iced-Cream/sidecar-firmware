@@ -108,7 +108,7 @@ int main() {
   CHECK(device::rytm().voices == kBoxVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
   CHECK(device::rytm().usb_vid == 0x1935 && device::rytm().usb_pid == 0x0b48);
   send(sidecar({0x10, 'A', 'B'}));
-  CHECK(!strcmp(project, "AB") && count(0x14) == 1);
+  CHECK(!strcmp(prj().key, "AB") && count(0x14) == 1);
   std::vector<uint8_t> trig = sidecar({0x04, 0, 60, 100});
   for (int k = 0; k < 16; ++k) trig.insert(trig.end() - 1, {64, 0});
   send(trig);
@@ -160,7 +160,7 @@ int main() {
   CHECK(!v[b + 2].live);
   send(box({0x62, 1, 40, 0}));
   send(sidecar({0x10, 'X', 'Y'}));
-  CHECK(!strcmp(project, "AB"));   // the box does not move the Rytm's project
+  CHECK(!strcmp(prj(0).key, "AB"));   // the box does not move the Rytm's project
   send(trig);                      // a Rytm report's bytes: not this box's
   send(sidecar({0x23}));           // SENDFX ASK
   send(sidecar({0x30, 1, 0, 1, 0}));
@@ -184,7 +184,7 @@ int main() {
   CHECK(!device::foreign() && hooks.to_rytm == ::out && device::active().id == device::kIdRytm);
   CHECK(ui::remote_caps() == 3);
   send(sidecar({0x10, 'C', 'D'}));
-  CHECK(!strcmp(project, "CD"));
+  CHECK(!strcmp(prj().key, "CD"));
   send(trig);
   CHECK(v[0].live);
 

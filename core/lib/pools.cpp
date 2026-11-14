@@ -879,7 +879,7 @@ CORE_COLD bool fill_step() {
 }
 CORE_COLD void project_now(char* key, int cap) {
   char p[24];
-  memcpy(p, (const char*)core::project, sizeof p);
+  memcpy(p, (const char*)core::prj().key, sizeof p);
   p[23] = 0;
   project_key(p, key, cap);
   sniprintf(cur_name, sizeof cur_name, "%s", p);

@@ -375,13 +375,13 @@ CORE_COLD void save_due() {
 CORE_COLD void rekey(const char* name) { sniprintf(g_proj, sizeof g_proj, "%s", name ? name : ""); }
 CORE_COLD void want_files() {
   char fn[96];
-  for (int k = -1; k < 128; ++k) name_of(project, fn, sizeof fn, k), store::want(fn);
+  for (int k = -1; k < 128; ++k) name_of(prj().key, fn, sizeof fn, k), store::want(fn);
 }
 
 CORE_COLD void load() {
   clear_cfg();
   g_locked = g_dirty = g_said = false;
-  strcpy(g_proj, project);   // the setup is this project's and the Rytm's kit's from now on
+  strcpy(g_proj, prj().key);   // the setup is this project's and the Rytm's kit's from now on
   g_kit = g_rytm_kit;
   char fn[96], b[96];
   name_of(g_proj, fn, sizeof fn, g_kit);
@@ -430,7 +430,7 @@ static CORE_COLD bool save_text(bool queue) {
     g_dirty = false;
     return true;
   }
-  if (!strcmp(g_proj, project)) store::put(fn, (const uint8_t*)g_text, n);
+  if (!strcmp(g_proj, prj().key)) store::put(fn, (const uint8_t*)g_text, n);
   if (queue || fmt::post_stalled()) {
     if (!fmt::post_queue(fn, g_text, n)) log(CORE_STR("xy: %s not written to the card (refused or out of memory: in RAM only)"), fn);
   } else {
@@ -446,7 +446,7 @@ CORE_COLD bool save() { return save_text(false); }
 
 CORE_COLD void project_changed() {
   // SAVE / RELOAD KIT of the live kit (kits' modules_again) is no change: the finger and a held state stay
-  bool same = !strcmp(g_proj, project) && g_kit == g_rytm_kit;
+  bool same = !strcmp(g_proj, prj().key) && g_kit == g_rytm_kit;
   if (!same) switch_release();
   if (g_dirty) g_dirty_ms = now_ms() - 1000, save_text(true);   // the old one's edits first, into its own file
   load();

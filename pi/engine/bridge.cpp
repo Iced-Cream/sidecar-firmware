@@ -659,8 +659,8 @@ const char* stat_name(int k) {
   return k >= 0 && k < kMachines ? n[k] : "?";
 }
 int card_folders() { return core::card_ok ? core::cards.folders() : 0; }
-const char* project() { return core::project; }
-int pool_slots() { return core::npool; }
+const char* project() { return core::prj().key; }
+int pool_slots() { return core::prj().npool; }
 uint32_t to_host_dropped() { return core::to_rytm_dropped(); }
 
 }  // namespace bridge

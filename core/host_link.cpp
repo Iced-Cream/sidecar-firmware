@@ -168,9 +168,9 @@ static char fx_project[24] = "\x01";   // the project whose fxslots file is load
 static bool fx_owed = false;           // the Rytm is told the slots' names when the card core has read them
 
 CORE_COLD void sendfx_project() {
-  if (strcmp(fx_project, project) == 0) return;
-  strcpy(fx_project, project);
-  fx::slots_load(project);
+  if (strcmp(fx_project, prj().key) == 0) return;
+  strcpy(fx_project, prj().key);
+  fx::slots_load(prj().key);
   fx_owed = true;
   sendfx_step();
 }

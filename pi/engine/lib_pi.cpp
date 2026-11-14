@@ -53,7 +53,7 @@ void begin(bool card_ok) {
 
 bool poll() {
   char p[24];
-  memcpy(p, (const char*)core::project, sizeof p);
+  memcpy(p, (const char*)core::prj().key, sizeof p);
   p[23] = 0;
   if (strcmp(p, s_Project)) {   // another project: its references first
     memcpy(s_Project, p, sizeof s_Project);

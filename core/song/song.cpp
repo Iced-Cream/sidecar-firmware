@@ -31,11 +31,11 @@ static uint8_t g_mig = 0;
 void folder(char* b, int cap) {
   static char s_done[kKeyMax + 1] = {1, 0};   // the project the migration was checked for (none yet)
   char k[kKeyMax], o[kKeyMax];
-  project_key(project, k, sizeof k);
+  project_key(prj().key, k, sizeof k);
   sniprintf(b, cap, "/.rytm/songs/%s", k);
-  if (!card_ok || !strcmp(s_done, project)) return;
-  sniprintf(s_done, sizeof s_done, "%s", project);
-  project_key_song_v0(project, o, sizeof o);
+  if (!card_ok || !strcmp(s_done, prj().key)) return;
+  sniprintf(s_done, sizeof s_done, "%s", prj().key);
+  project_key_song_v0(prj().key, o, sizeof o);
   if (!strcmp(o, k)) return;
   sniprintf(g_mig_old, sizeof g_mig_old, "/.rytm/songs/%s", o);
   sniprintf(g_mig_new, sizeof g_mig_new, "%s", b);
@@ -609,7 +609,7 @@ int set_written(int s) {
 void set_entry(Take& t, int pattern) {
   Engine& e = eng();
   t.clear();
-  sniprintf(t.project, sizeof t.project, "%s", project);
+  sniprintf(t.project, sizeof t.project, "%s", prj().key);
   t.cfg = e.cfg;
   t.pattern = pattern;
 }
@@ -903,8 +903,8 @@ void arm() {
   if (e.state != kOff) { set_msg("busy (%s): not armed", state_name(e.state)); return; }
   // 0.5.0 fix round M1: a FILL (core/seq/patwrite.h) mid-job: the take's dump would hold a pattern half written
   if (patwrite::busy()) { set_msg("a FILL is writing the pattern: not armed"); return; }
-  if (e.list_due || e.ls || strcmp(e.project_seen, project)) {   // the folder's walk first: the new take's number
-    if (strcmp(e.project_seen, project)) e.list_due = true;
+  if (e.list_due || e.ls || strcmp(e.project_seen, prj().key)) {   // the folder's walk first: the new take's number
+    if (strcmp(e.project_seen, prj().key)) e.list_due = true;
     e.arm_due = true;
     return;
   }
@@ -921,7 +921,7 @@ void arm_go() {
   ++e.take_gen;
   e.take.clear();
   e.take_valid = true;
-  sniprintf(e.take.project, sizeof e.take.project, "%s", project);
+  sniprintf(e.take.project, sizeof e.take.project, "%s", prj().key);
   sniprintf(e.take.name, sizeof e.take.name, "take-%03d", e.an_n);
   e.rec.arm(&e.take);
   e.rec.pattern = e.pattern;
@@ -1079,7 +1079,7 @@ void undo() {
   Engine& e = eng();
   if (!e.undo) { set_msg("no replay to undo"); return; }
   // a project loading: refused, as the sequencer's edits are (kLockLoading) - the undo kept
-  if (project_loading()) { set_msg("project %s still loading: not undone", project); return; }
+  if (project_loading()) { set_msg("project %s still loading: not undone", prj().key); return; }
   if (e.state != kOff && e.state != kReplayReady) { set_msg("busy (%s): not undone", state_name(e.state)); return; }
   if (e.transport != 0) { set_msg("stop the Rytm first: not undone"); return; }
   if (patwrite::busy()) { set_msg("a FILL is writing the pattern: not undone"); return; }
@@ -1349,8 +1349,8 @@ CORE_COLD void tick(uint32_t ms) {
     e.inited = true;
     poll_sidecar(false);
   }
-  if (strcmp(e.project_seen, project)) {   // a project named: its takes, its journals recovered
-    sniprintf(e.project_seen, sizeof e.project_seen, "%s", project);
+  if (strcmp(e.project_seen, prj().key)) {   // a project named: its takes, its journals recovered
+    sniprintf(e.project_seen, sizeof e.project_seen, "%s", prj().key);
     e.list_due = e.recover_scan_due = true;
     e.take_hi = 0;
     undo_end("another project");
@@ -1482,7 +1482,7 @@ CORE_COLD Status status() {
   s.undo = undo_ok();
   s.undo_t5 = s.undo || (e.undo_was && e.ms_now - e.undo_gone < kGraceMs);
   sniprintf(s.name, sizeof s.name, "%s", e.take_valid ? e.take.name : "");
-  sniprintf(s.project, sizeof s.project, "%s", project);
+  sniprintf(s.project, sizeof s.project, "%s", prj().key);
   sniprintf(s.msg, sizeof s.msg, "%s", e.msg);
   return s;
 }

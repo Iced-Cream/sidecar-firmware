@@ -536,7 +536,7 @@ CORE_COLD void save_due() {
 CORE_COLD void rekey(const char* name) { sniprintf(g_proj, sizeof g_proj, "%s", name ? name : ""); }
 CORE_COLD void want_files() {
   char fn[96];
-  for (int k = -1; k < 128; ++k) name_of(project, fn, sizeof fn, k), store::want(fn);
+  for (int k = -1; k < 128; ++k) name_of(prj().key, fn, sizeof fn, k), store::want(fn);
 }
 
 CORE_COLD void load() {
@@ -545,7 +545,7 @@ CORE_COLD void load() {
   const uint16_t was = g_st.fader;
   g_file_fader = -1, g_said = false;
   g_locked = g_dirty = false;
-  strcpy(g_proj, project);   // the scenes are this project's and the Rytm's kit's from now on
+  strcpy(g_proj, prj().key);   // the scenes are this project's and the Rytm's kit's from now on
   g_kit = g_rytm_kit;
   char fn[96], b[96];
   name_of(g_proj, fn, sizeof fn, g_kit);
@@ -599,7 +599,7 @@ static CORE_COLD bool save_text(bool queue) {
     return true;
   }
   // the store is the project's now named; an old project's file saved while the next one's store fills is not put in it
-  if (!strcmp(g_proj, project)) store::put(fn, (const uint8_t*)g_text, n);
+  if (!strcmp(g_proj, prj().key)) store::put(fn, (const uint8_t*)g_text, n);
   if (queue || n > fmt::kPostMax || fmt::post_stalled()) {
     if (!fmt::post_queue(fn, g_text, n)) log(CORE_STR("scene: %s not written to the card (refused or out of memory: in RAM only)"), fn);
   } else {

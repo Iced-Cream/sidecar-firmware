@@ -86,7 +86,7 @@ uint8_t (*stream_rings_b)[rytm::StreamVoice::kRingBytes] = nullptr;
 
 static size_t up64(size_t n) { return (n + 63) & ~(size_t)63; }
 static const size_t kSharedB = up64(sizeof(char[kVoices][16384])), kHeadsB = up64(sizeof(uint8_t[kVoices][rytm::StreamVoice::kHead])),
-                    kRingsB = up64(sizeof(uint8_t[kVoices / 2][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolLines]));
+                    kRingsB = up64(sizeof(uint8_t[kVoices / 2][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolAll]));
 
 #if CORE_POLY
 static const size_t kInsB = up64(ins::heap_bytes());   // the INSERT chains' DELAY lines (core/fx/insert.h)
@@ -102,7 +102,7 @@ CORE_COLD void heap_buffers_place(void* mem) {
   stream_heads = (uint8_t(*)[rytm::StreamVoice::kHead])p, p += kHeadsB;
   stream_rings_a = (uint8_t(*)[rytm::StreamVoice::kRingBytes])p, p += kRingsB;
   stream_rings_b = (uint8_t(*)[rytm::StreamVoice::kRingBytes])p, p += kRingsB;
-  pool_files = new (p) File[kPoolLines], p += kFilesB;
+  pool_files = new (p) File[kPoolAll], p += kFilesB;
 #if CORE_POLY
   ins::heap_place(p), p += kInsB;
 #endif
@@ -214,13 +214,14 @@ void ram_release(int vi) {
 }
 // The sample RAM's key of SMP slot (1..npool, pool_slot: rui1045 every SAMPLES bank): the card index's folder / file (under /Samples), or, on the Pi and the
 // Mac, a sample outside /Samples (the pools design 3.6: RAM only, no stream) as folder rytm::kSlotKey - line; -1 none.
-CORE_COLD int ram_key(int slot, int* smp) {
+CORE_COLD int ram_key(int vi, int slot, int* smp) {
   *smp = 0;
-  if (slot < 1 || slot > npool) return -1;
-  const PoolEntry& e = pool[slot - 1];
+  const int s = slot_of_voice(vi);
+  if (slot < 1 || slot > prj(s).npool) return -1;
+  const PoolEntry& e = pool[pool_line(s, slot)];
   if (e.folder >= 0) return *smp = e.file, e.folder;
 #if CORE_MSAMP
-  if (e.path[0] == '/') return rytm::SampleRamPool::kSlotKey - (slot - 1);
+  if (e.path[0] == '/') return rytm::SampleRamPool::kSlotKey - pool_line(s, slot);
 #endif
   return -1;
 }
@@ -462,21 +463,22 @@ CORE_COLD void prepare_stream(int vi) {   // (per report: cold, as when it was i
     return;
   }
 #endif
-  if (slot < 1 || slot > npool || pool[slot - 1].folder < 0) {
+  const int ps = slot_of_voice(vi);   // (the voice's own box's pool)
+  if (slot < 1 || slot > prj(ps).npool || pool[pool_line(ps, slot)].folder < 0) {
     if (prepared[vi][0] != -1) streams[vi].clear();
     prepared[vi][0] = -1;
     prep_pending[vi] = trig_pending[vi] = false;
-    int smp, f = ram_key(slot, &smp);
+    int smp, f = ram_key(vi, slot, &smp);
     if (psram && f != -1) psram->want(f, smp, false);   // outside /Samples: from RAM only
     else ram_release(vi);   // no sample: silent, as the stream
     return;
   }
-  int f = pool[slot - 1].folder, smp = pool[slot - 1].file;
+  int f = pool[pool_line(ps, slot)].folder, smp = pool[pool_line(ps, slot)].file;
   if (psram) psram->want(f, smp, false);   // into RAM if not there (loop() loads it)
   want_prep[vi][0] = f;
   want_prep[vi][1] = smp;
   want_prep[vi][2] = sta;
-  want_prep[vi][3] = slot - 1;
+  want_prep[vi][3] = pool_line(ps, slot);
   prep_pending[vi] = !(prepared[vi][0] == f && prepared[vi][1] == smp && prepared[vi][2] == sta);
   prep_deferred[vi] = false;
   if (prep_pending[vi] && psram) {   // loadstall: no stream prepare (an open and a head read on the card) the voice will
@@ -560,7 +562,7 @@ CORE_COLD void trigger_stream(int vi, int note) {
       from_ram[vi] = false;
       return;
     }
-    int smp, f = ram_key(slot, &smp);
+    int smp, f = ram_key(vi, slot, &smp);
     const int16_t* pcm = nullptr;
     uint32_t frames = 0;
     float rate = 48000.0f;

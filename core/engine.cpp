@@ -55,11 +55,11 @@ CORE_COLD bool engine_begin() {
   if (card_ok) {
     // the project named now, not "" until the fill ends: an edit before it is saved into this project's files (and
     // put into its store, which the fill keeps)
-    lfo::rekey(project);
+    lfo::rekey(prj().key);
 #if CORE_POLY
-    ins::rekey(project);
-    scene::rekey(project);
-    xypad::rekey(project);
+    ins::rekey(prj().key);
+    scene::rekey(prj().key);
+    xypad::rekey(prj().key);
 #endif
     project_fill_begin();
   }
@@ -148,6 +148,8 @@ CORE_COLD bool idle_save() {
   // its buffer, the sequencer's loads, the SONG journal and the queued saves need no card core of their own here, and
   // true from here would keep idle_stream out for as long as the write waits (a burst of writes: DSP and MULTISAMPLE dry)
   if (T_("post", fmt::post_step())) return true;
+  for (int k = 1; k < kVoiceSlots; ++k)   // a box's project from its own folder, once it has said hello
+    if (T_("attach", project_attach_step(k))) return true;
   if (fx::card_dirty && fmt::post_begin()) {   // (the slot or the queue busy: card_save would not post - not a step)
     TV_("fxsave", fx::card_save());
     return true;
@@ -181,7 +183,9 @@ CORE_COLD bool idle_save() {
 #else
   bool ix = false;
 #endif
-  if (project_dirty && fmt::post_begin()) {   // (the slot or the queue busy: project_save would not post - not a step)
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's project name, into its own folder
+    if (!prj(k).dirty || !fmt::post_begin()) continue;   // (the slot or the queue busy: project_save would not post - not a step)
+    device::Scope in(device::g_links[k]);
     TV_("project", project_save());   // (with the index: the same project change's two small files, one step)
     return true;
   }
@@ -193,13 +197,14 @@ CORE_COLD bool idle_save() {
 }
 
 CORE_COLD bool idle_settled() {
-  bool s = !lfo::dirty() && !fx::card_dirty && !project_dirty && !fmt::post_busy() && fmt::unwritten(nullptr) == 0;
+  bool s = !lfo::dirty() && !fx::card_dirty && !fmt::post_busy() && fmt::unwritten(nullptr) == 0;
 #if CORE_POLY
   s = s && !ins::settings_dirty(nullptr) && !seq::unsaved();
 #endif
 #if CORE_MSAMP
   s = s && cardq::pending() == 0;
 #endif
+  for (int k = 0; k < kVoiceSlots; ++k) s = s && !prj(k).dirty;
   return s;
 }
 

@@ -427,7 +427,7 @@ void core_c_livein_fifo(int frames) { core::livein::set_fifo(frames); }
 // project index save. Returns the job's phase.
 static void bundle_current(char* out, int cap) {
   char p[24];
-  memcpy(p, (const char*)core::project, sizeof p);
+  memcpy(p, (const char*)core::prj().key, sizeof p);
   p[23] = 0;
   snprintf(out, cap, "%s", p);
 }

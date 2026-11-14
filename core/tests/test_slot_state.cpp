@@ -1,7 +1,6 @@
 // core/tests/test_slot_state.cpp - each slot's project state in its own folder (docs/device-profiles.md "Several devices"):
-// the project in RAM is the base box's, loaded from the base box's folder and saved there. A lone A4 boots on /.rytm (no box
-// has said hello yet); its hello makes it the base, so the Rytm's project goes back to /.rytm with its edits and the A4's own
-// project comes in from /.a4. Nothing of one box's state is ever written into the other's folder.
+// slot 0 (the Rytm) and slot 1 (another box) each have their own project, read from and saved into their own state folder,
+// alone or side by side. Nothing of one box's project is the other's, and nothing of one is written into the other's folder.
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -12,7 +11,6 @@
 #include "device/a4.h"
 #include "device/device.h"
 #include "engine.h"
-#include "lfo.h"
 #include "pool/pool.h"
 
 using namespace core;
@@ -36,9 +34,8 @@ static std::string get(const char* path) {
   fclose(f);
   return s;
 }
-static bool exists(const char* path) { return fopen(host_path(path).c_str(), "rb") != nullptr; }
 
-// the idle passes until nothing waits: the store's fill, the saves (idle_flush: no second's wait for an edit to settle)
+// the idle passes until nothing waits: a box's project read, the saves (idle_flush: no second's wait for an edit to settle)
 static void settle() {
   idle_flush(true);
   for (int i = 0; i < 4000; ++i) {
@@ -56,10 +53,16 @@ static void hello_a4() {
                        (uint8_t)(device::kIdA4 & 0x7f), 1, 0xf7};
   engine_sysex_link(1, h, (int)sizeof h);
 }
+static void name_project(int transport, const char* n) {   // a box's 0x10
+  std::vector<uint8_t> m = {0xf0, 0x7d, 0x52, 0x54, 0x10};
+  for (const char* c = n; *c; ++c) m.push_back((uint8_t)*c);
+  m.push_back(0xf7);
+  engine_sysex_link(transport, m.data(), (int)m.size());
+}
 
 int main() {
   if (kVoiceSlots < 2) {
-    printf("test_slot_state: PASS (an 8-voice engine: one link, nothing to test)\n");
+    printf("test_slot_state: PASS (an 8-voice engine: one slot, nothing to test)\n");
     return 0;
   }
   char tmpl[] = "/tmp/core-slotstate-XXXXXX";
@@ -73,38 +76,41 @@ int main() {
   CHECK(engine_begin());
   device::set_out(1, out1);
   settle();
-  CHECK(!strcmp(project, "RYP"));   // boot: slot 0's folder, no box yet
+  CHECK(!strcmp(prj(0).key, "RYP"));   // boot: slot 0's folder; slot 1 has no box yet
 
-  // a lone A4 (no Rytm on USB): its hello makes slot 1 the base, and the project in RAM becomes /.a4's
+  // a lone A4 (no Rytm on USB): its own project, from /.a4; the Rytm's stays slot 0's
   device::rytm_on_usb(false);
-  lfo::Settings s = lfo::get(0);
-  s.depth = 21;
-  CHECK(lfo::set(0, s));   // an edit of the Rytm's project before the A4 says hello
   hello_a4();
   settle();
   CHECK(device::g_links[1].box == &device::kA4 && device::g_base == &device::g_links[1]);
-  printf("  after the A4's hello: project %s\n", project);
-  CHECK(!strcmp(project, "A4P"));
-  CHECK(get("/.rytm/project") == "RYP" && get("/.a4/project") == "A4P");
-  CHECK(lfo::get(0).depth != 21);               // the A4's own LFOs, not the Rytm's edit
-  CHECK(get("/.rytm/lfo/RYP.txt").size() > 0);  // the Rytm's edit saved in its own folder on the way out
-  CHECK(!exists("/.a4/lfo/RYP.txt"));           // ... and never in the A4's
+  printf("  after the A4's hello: slot 0 %s, slot 1 %s\n", prj(0).key, prj(1).key);
+  CHECK(!strcmp(prj(1).key, "A4P") && !strcmp(prj(0).key, "RYP"));
+  {
+    device::Scope in(device::g_links[1]);   // the A4's own messages see its own project
+    CHECK(!strcmp(prj().key, "A4P"));
+  }
 
-  // an edit of the A4's project lands in /.a4
-  s = lfo::get(0);
-  s.depth = 33;
-  CHECK(lfo::set(0, s));
-  settle();
-  CHECK(get("/.a4/lfo/A4P.txt").size() > 0);
-  CHECK(get("/.rytm/lfo/RYP.txt").find("33") == std::string::npos || !exists("/.rytm/lfo/A4P.txt"));
-  CHECK(!exists("/.rytm/lfo/A4P.txt"));
-
-  // the Rytm comes back on USB: the base is slot 0 again and its project, with the edit, is back in RAM; the A4's edit stays in /.a4
+  // the Rytm on USB beside it: each keeps its own
   device::rytm_on_usb(true);
   settle();
   CHECK(device::g_base == &device::g_links[0]);
-  CHECK(!strcmp(project, "RYP") && lfo::get(0).depth == 21);
-  CHECK(!exists("/.rytm/lfo/A4P.txt"));
+  CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));
+
+  // the Rytm names another project: slot 0's alone, written into /.rytm; /.a4's untouched
+  name_project(0, "NEW");
+  settle();
+  CHECK(!strcmp(prj(0).key, "NEW") && !strcmp(prj(1).key, "A4P"));
+  CHECK(get("/.rytm/project") == "NEW" && get("/.a4/project") == "A4P");
+
+  // a project name from the A4's transport is the A4's: slot 1's alone, written into /.a4
+  {
+    device::Scope in(device::g_links[1]);
+    const uint8_t n[] = {'B', '4', 0xf7};
+    set_project(n, 3);
+  }
+  settle();
+  CHECK(!strcmp(prj(0).key, "NEW") && !strcmp(prj(1).key, "B4"));
+  CHECK(get("/.rytm/project") == "NEW" && get("/.a4/project") == "B4");
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4
   device::set_out(1, nullptr);

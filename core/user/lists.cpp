@@ -61,11 +61,13 @@ uint32_t fnv(uint32_t h, const void* p, size_t n) {
 }
 // What the JSON says, as a number: it is published again when this moves.
 uint32_t state_hash() {
-  uint32_t h = fnv(2166136261u, core::project, strlen(core::project));
-  h = fnv(h, &core::npool, sizeof core::npool);
-  for (int i = 0; i < core::npool && i < core::kPool; ++i) {   // (rui1045: bank A, the slots this JSON has always meant)
-    h = fnv(h, core::pool[i].path, strlen(core::pool[i].path));
-    h = fnv(h, &core::pool[i].folder, sizeof core::pool[i].folder);
+  const core::Project& pj = core::prj();   // (the base box's: the page's)
+  const core::PoolEntry* pool = core::pool + core::pool_line(core::prj_slot(), 1);
+  uint32_t h = fnv(2166136261u, pj.key, strlen(pj.key));
+  h = fnv(h, &pj.npool, sizeof pj.npool);
+  for (int i = 0; i < pj.npool && i < core::kPool; ++i) {   // (rui1045: bank A, the slots this JSON has always meant)
+    h = fnv(h, pool[i].path, strlen(pool[i].path));
+    h = fnv(h, &pool[i].folder, sizeof pool[i].folder);
   }
   int nj = core::junolib.listed(), nf = core::dxlib.listed();
   h = fnv(h, &nj, sizeof nj);
@@ -92,7 +94,7 @@ void publish() {
   int w = (int)((seq / 2 + 1) & 1);
   Js j{g_js[w], kJson, 0};
   j.put("{\"project\":");
-  j.str(core::project[0] ? core::project : "_default");
+  j.str(core::prj().key[0] ? core::prj().key : "_default");
   j.put(",\"card\":");
   j.put(core::card_ok ? "true" : "false");
   char t[64];
@@ -101,8 +103,10 @@ void publish() {
   j.put(t);
   j.put(",\"pool\":[");
   bool first = true;
-  for (int i = 0; i < core::npool && i < core::kPool; ++i) {   // rui1045: bank A only (the page's slots 1..127; kJson's size)
-    const core::PoolEntry& e = core::pool[i];
+  const int npool = core::prj().npool;
+  const core::PoolEntry* pool = core::pool + core::pool_line(core::prj_slot(), 1);   // (the base box's: the page's)
+  for (int i = 0; i < npool && i < core::kPool; ++i) {   // rui1045: bank A only (the page's slots 1..127; kJson's size)
+    const core::PoolEntry& e = pool[i];
     if (!e.path[0]) continue;
     j.put(first ? "{" : ",{");
     first = false;
@@ -112,7 +116,7 @@ void publish() {
     j.put(",\"ok\":"); j.put(e.folder >= 0 ? "true" : "false");
     j.put("}");
   }
-  j.put("],"); j.num("npool", core::npool < core::kPool ? core::npool : core::kPool);
+  j.put("],"); j.num("npool", npool < core::kPool ? npool : core::kPool);
   int nj = core::junolib.listed();
   j.put(",\"juno\":{"); j.num("total", nj); j.put(",\"list\":[");
   for (int i = 0; i < nj; ++i) {
@@ -179,16 +183,16 @@ bool cmd_pool(const char* a, char* out, int cap) {
 bool pool_clear(int slot) {
   int line = slot - 1;
   if (line < 0 || line >= core::kPool) return false;
-  if (line < core::npool) {
+  if (line < core::prj().npool) {
     core::pool_forget(line);
     core::pool[line].path[0] = 0;
     core::pool[line].name[0] = 0;
     core::pool[line].folder = -1;
-    while (core::npool && !core::pool[core::npool - 1].path[0]) --core::npool;
+    while (core::prj().npool && !core::pool[core::prj().npool - 1].path[0]) --core::prj().npool;
     core::pool_save();
     for (int i = 0; i < core::kVoices; ++i) core::prepared[i][0] = -2;   // voices: prepare again
     if (core::hooks.pool_changed) core::hooks.pool_changed(line);
-    core::log("pool %s: slot %d emptied", core::project[0] ? core::project : "_default", slot);
+    core::log("pool %s: slot %d emptied", core::prj().key[0] ? core::prj().key : "_default", slot);
   }
   core::send_pool();
   return true;

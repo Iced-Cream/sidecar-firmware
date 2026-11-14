@@ -841,7 +841,9 @@ void upool_drop(int vi) {   // the voice's pin and entry go
 }
 int32_t h_pool_info(int32_t slot, rmp_pool_info* info) {
   int vi = g_vnow[this_core()];
-  if (vi < 0 || !info || slot < 1 || slot > core::npool || core::pool[slot - 1].folder < 0) return RMP_POOL_EMPTY;
+  if (vi < 0 || !info || slot < 1 || slot > core::prj(core::slot_of_voice(vi)).npool ||
+      core::pool[core::pool_line(core::slot_of_voice(vi), slot)].folder < 0)
+    return RMP_POOL_EMPTY;
   UPool& u = g_up[vi];
   if (u.slot == slot && u.pcm) {
     info->frames = u.frames, info->channels = 1, info->rate = u.rate;
@@ -871,8 +873,9 @@ bool upool_pass() {
     int slot = u.want;
     if (!slot) continue;
     if (g_cur[vi] < 0 || !core::psram) { u.want = 0; continue; }
-    const core::PoolEntry& e = core::pool[slot - 1];
-    if (slot > core::npool || e.folder < 0) { u.want = 0; u.bad = slot; continue; }
+    const int ps = core::slot_of_voice(vi);   // (the voice's own box's pool)
+    const core::PoolEntry& e = core::pool[core::pool_line(ps, slot)];
+    if (slot > core::prj(ps).npool || e.folder < 0) { u.want = 0; u.bad = slot; continue; }
     const int16_t* pcm;
     uint32_t frames;
     float rate;
@@ -1661,7 +1664,7 @@ void map_step() {
       copy(g_fx_file, g_mr_fx, sizeof g_fx_file);
       map_take(g_mr_b[0], g_mr_n[0], g_mr_b[1], g_mr_n[1]);
       fx_take(g_mr_fxb, g_mr_n[2]);
-      core::log("um: project %s, map %s%s", core::project, g_map_file, g_fresh ? " (none: fresh)" : "");
+      core::log("um: project %s, map %s%s", core::prj().key, g_map_file, g_fresh ? " (none: fresh)" : "");
     }
   }
 }
@@ -1695,7 +1698,7 @@ void map_read() {
   int f = read_small(g_fx_file, fb, sizeof fb);
   map_take(b, n, nb, k);
   fx_take(fb, f);
-  core::log("um: project %s, map %s%s", core::project, g_map_file, g_fresh ? " (none: fresh)" : "");
+  core::log("um: project %s, map %s%s", core::prj().key, g_map_file, g_fresh ? " (none: fresh)" : "");
 }
 #endif
 // 0.3.0 power-cut safety: core::fmt::write_atomic, not the tmp-remove-rename this did before. The slot map says which
@@ -1809,7 +1812,7 @@ void prints_apply() {
   int n = pkg_refs(r);
   resolved(rmp_resolve_prints(&g_map, &g_notes, &g_prints, r, n), "from the project's sounds");
   core::log("um: slot prints (seq %d, %d entr%s) for %s", (int)g_prints.seq, (int)g_prints.n, g_prints.n == 1 ? "y" : "ies",
-            core::project[0] ? core::project : "_default");
+            core::prj().key[0] ? core::prj().key : "_default");
   inherit_now();
 }
 void project_reload() {
@@ -3243,7 +3246,7 @@ void publish() {
   j.put(",\"prints\":"); j.str(g_prints_have ? "rytm" : g_prints_rytm ? "waiting" : "trigs");
   j.put(","); j.num("resolves", g_resolve_n);
   j.put(",\"fresh\":"); j.put(g_fresh ? "true" : "false");
-  j.put(",\"project\":"); j.str(core::project[0] ? core::project : "_default");
+  j.put(",\"project\":"); j.str(core::prj().key[0] ? core::prj().key : "_default");
   char t[96];
   sniprintf(t, sizeof t, ",\"arena\":[%u,%u],", (unsigned)(ex ? ex->total : 0), (unsigned)g_arena_used);
   j.put(t);
@@ -3267,7 +3270,7 @@ void publish() {
   j.put("{\"t\":\"mem_end\"}]");
   g_jlen[w] = j.n;
   UiView& u = g_ui[w];   // the display's view, in the same buffer half
-  copy(u.project, core::project[0] ? core::project : "_default", sizeof u.project);
+  copy(u.project, core::prj().key[0] ? core::prj().key : "_default", sizeof u.project);
   for (int s = 0; s < kSlots; ++s) {
     u.slot[s].state = (uint8_t)g_slot[s].st;
     slot_shown(s, u.slot[s].name, sizeof u.slot[s].name);
@@ -3643,7 +3646,7 @@ bool command(const char* c, char* out, int cap) {
     for (int s = 0; s < kSlots; ++s)
       core::log("um: U%d %s %s (%s, sounds' fingerprint %u)", s + 1, g_map.slot[s].id[0] ? g_map.slot[s].id : "-",
                 state_name(g_slot[s].st), rmp_src_name(g_notes.slot[s].src), (unsigned)g_notes.slot[s].fp);
-    sniprintf(out, cap, "%d packages, project %s, code %u/%u B", g_npkg, core::project[0] ? core::project : "_default",
+    sniprintf(out, cap, "%d packages, project %s, code %u/%u B", g_npkg, core::prj().key[0] ? core::prj().key : "_default",
               (unsigned)g_arena_used, (unsigned)(ex ? ex->total : 0));
     return true;
   }
@@ -3721,7 +3724,7 @@ bool command(const char* c, char* out, int cap) {
     g_need = (1u << kSlots) - 1;
     g_pub = g_mp = true;
     if (!map_save()) core::log("um: %s not written", g_map_file);
-    sniprintf(out, cap, "project %s starts empty", core::project[0] ? core::project : "_default");
+    sniprintf(out, cap, "project %s starts empty", core::prj().key[0] ? core::prj().key : "_default");
     return true;
   }
   if (strncmp(c, "um=put:", 7) == 0) {   // an imported slot list's entry: um=put:<1..5>:<id|->:<a.b.c>[:<name>]
