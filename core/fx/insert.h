@@ -253,7 +253,7 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if (k.type[c][s] || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp)) || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
   }
   // A voice's chain, mono, in place (n any; processed in kChunk pieces)
