@@ -35,7 +35,8 @@ struct State {
 enum Source : uint8_t { kPage = 1, kTouch, kWeb, kLearn, kQperf, kConsole };
 
 const State& state();
-bool lock(int n, mod::Tid t, uint16_t v);   // scene n (0..11) locks t at v (replaces its lock); false: full, or bad
+bool lock(int n, mod::Tid t, uint16_t v);   // scene n (0..11) locks t at v (replaces its lock); false: full, or bad, or
+                                            // kRytm (0.5.0 v2, S7: the Rytm's scene / PERF are no scene targets)
 bool unlock(int n, mod::Tid t);             // false: no such lock
 void clear(int n);
 void copy(int from, int to);
@@ -58,8 +59,6 @@ constexpr uint32_t kQpSmoothMaxMs = 100;
 constexpr int kQpTakeSteps = 2;
 void qperf(int pos, uint16_t mask, uint8_t flags);   // pos 0..255, mask the PERF macros on the knob (bit m - 1)
 void qperf_rebase();                        // the link came up (host_link's link_reset): the next position a baseline
-uint16_t qperf_mask();                      // those macros while the knob is the fader's source (PERF follow skips
-                                            // them: the Rytm moves them itself, spec 2.7), else 0
 // the Rytm's own scene as the mod reports it (2D 01 0F, on any change: its pads, CC 92, the host command, a kit load):
 void rytm_scene_seen(int n);                // 1..12, 0 none
 int rytm_scene();                           // the last one seen, -1 none since the reset (an older mod: never)
@@ -71,7 +70,7 @@ void reset();                               // tests: no locks, no A / B, the fa
 // kit; the A4's only one: its state folder makes it /.a4/scene/<project>.txt). Read from the RAM store only (never the
 // card on the control core), written by idle_save a second after the last edit as one posted atomic write (queued when
 // over fmt::kPostMax). Text, one item a line, '#' comments:
-//   #sidecar scene 1
+//   #sidecar scene 2 (0.5.0 v2: a v1 file, without RYTM: locks since, reads as a newer one: loaded, locked)
 //   AB 3 7          A, B (1..12, 0 none)
 //   F 8192          the fader (its last position, written with the next edit's save: a fader move alone is no edit)
 //   S 3             the selected scene

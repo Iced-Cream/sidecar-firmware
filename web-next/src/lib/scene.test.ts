@@ -43,5 +43,6 @@ describe("scene", () => {
     expect(t.find((o) => o.value === "V1:P3")).toBeUndefined(); // unused on its machine: not offered
     expect(suggest().filter((o) => o.value[0] === "V").length).toBe(64); // an older Pi: P1..P8 by number
     expect(SUGGEST).not.toContain("FX1:P1"); // send FX params are P2..P5
+    expect(SUGGEST.some((t) => t.startsWith("RYTM:"))).toBe(false); // 0.5.0 v2: no scene target
   });
 });

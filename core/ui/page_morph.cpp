@@ -2,9 +2,8 @@
 // Teensy). Off the LEFT / RIGHT ring: the SIDECAR MENU's row and UP + T14 (page_keys.h) replace the Rytm's screen.
 //
 // Main view: the scene row 1..12 (the selected one inverted, a dot under a scene with locks), the fader as a bar with
-// A's scene boxed on its left and B's on its right, then FADER / LOCKS / SCN / PERF. Encoder A the fader (128 a detent,
-// FUNC 16; relative: no jump after a scene switch), G the selected scene's Rytm scene lock (RYTM:SCN, OFF / 1..12), H
-// its PERF lock (RYTM:PERFm at 127, at 0 on the A scene: A and B with the same m crossfade the macro; OFF / 1..12).
+// A's scene boxed on its left and B's on its right, then FADER / LOCKS. Encoder A the fader (128 a detent, FUNC 16;
+// relative: no jump after a scene switch). (0.5.0 v2, S7: the Rytm's own scene and PERF macros are no scene targets.)
 // Trig keys (all 16 taken): T1..T12 select; T15 / T16 held + Tn: Tn becomes A / B (the fader stays); Tn held: its lock
 // list (7 rows, B..H edit their values, LEFT / RIGHT scroll, NO removes B's row, YES asks to clear the scene, YES
 // again clears). FUNC + YES: EDIT on / off (hold a scene key and turn a knob on any Sidecar page: remote.cpp).
@@ -26,7 +25,7 @@ constexpr uint32_t kHoldMs = 250;   // a scene key held this long shows its lock
 constexpr int kRows = 7;            // the lock list's rows: B..H
 constexpr int kBoxW = 10, kBox0 = 4, kRowY = 11;   // the scene row
 constexpr int kBarX = 18, kBarW = 92, kBarY = 23, kBarH = 9;   // the fader
-constexpr int kLabY = 37;           // FADER / LOCKS / SCN / PERF labels (values 6 below)
+constexpr int kLabY = 37;           // FADER / LOCKS labels (values 6 below)
 constexpr uint8_t kLedWhite = 111, kLedWhiteDim = 107;   // 34's white ramp (96..111), dim as kLedBlueDim is to kLedBlue
 
 struct MorphPage {
@@ -49,13 +48,10 @@ CORE_COLD bool list_shown() { return mp.held >= 0 && (mp.held_used || mp.now - m
 
 }  // namespace
 
-// the value as its page shows it: a scene number (RYTM:SCN 0 = OFF), else whole units, one decimal when not whole
+// the value as its page shows it: whole units, one decimal when not whole
 CORE_COLD void morph_value_text(uint16_t t, uint16_t v, char* b, int cap) {
-  if (mod::kind_of(t) == mod::kRytm && mod::param_of(t) == 0) {
-    int n = (v + 64) / 128;
-    if (n) sniprintf(b, cap, "%d", n);
-    else sniprintf(b, cap, "OFF");
-  } else if (v % 128) {
+  (void)t;
+  if (v % 128) {
     int d = v * 10 / 128;   // (cut, not rounded: 16383 shows 127.9, not 128.0)
     sniprintf(b, cap, "%d.%d", d / 10, d % 10);
   } else {
@@ -65,29 +61,6 @@ CORE_COLD void morph_value_text(uint16_t t, uint16_t v, char* b, int cap) {
 
 namespace {
 CORE_COLD void value_text(mod::Tid t, uint16_t v, char* b, int cap) { morph_value_text(t, v, b, cap); }
-
-// the scene's RYTM:SCN lock (1..12, 0 none) and its first RYTM:PERFm lock (m 1..12, 0 none)
-CORE_COLD int scn_of(int n) {
-  const scene::Scene& s = sc(n);
-  for (int i = 0; i < s.n; ++i)
-    if (s.l[i].t == mod::tid(mod::kRytm, 0, 0)) return clampi((s.l[i].v + 64) / 128, 0, 12);
-  return 0;
-}
-CORE_COLD int perf_of(int n) {
-  const scene::Scene& s = sc(n);
-  int m = 0;
-  for (int i = 0; i < s.n; ++i)
-    if (mod::kind_of(s.l[i].t) == mod::kRytm && mod::param_of(s.l[i].t) >= 1 && (!m || mod::param_of(s.l[i].t) < m))
-      m = mod::param_of(s.l[i].t);
-  return m;
-}
-
-CORE_COLD int perf_value(int n, int m) {
-  const scene::Scene& s = sc(n);
-  for (int i = 0; i < s.n; ++i)
-    if (s.l[i].t == mod::tid(mod::kRytm, 0, m)) return (s.l[i].v + 64) / 128;
-  return 0;
-}
 
 CORE_COLD void lock_or_note(int n, mod::Tid t, uint16_t v) {
   if (!scene::lock(n, t, v)) mp.note = "SCENE FULL";
@@ -119,17 +92,12 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   c.fill(Rect{(int16_t)(kBarX + 2), (int16_t)(kBarY + 2), (int16_t)played, (int16_t)(kBarH - 4)}, kDither);
   int at = kBarX + 2 + st.fader * (inner - 1) / scene::kFaderMax;
   c.vline(at, kBarY - 1, kBarY + kBarH, kOn);
-  // FADER (A), LOCKS (the selected scene's), SCN (G), PERF (H)
-  static UI_ROM const char kLab[4][6] = {"FADER", "LOCKS", "SCN", "PERF"};
-  char val[4][8];
+  // FADER (A), LOCKS (the selected scene's)
+  static UI_ROM const char kLab[2][6] = {"FADER", "LOCKS"};
+  char val[2][8];
   sniprintf(val[0], 8, "%d%%", (st.fader * 100 + scene::kFaderMax / 2) / scene::kFaderMax);
   sniprintf(val[1], 8, "%d", sc(st.sel).n);
-  int scn = scn_of(st.sel), perf = perf_of(st.sel);
-  if (scn) sniprintf(val[2], 8, "%d", scn);
-  else strcpy(val[2], "OFF");
-  if (perf) sniprintf(val[3], 8, "%d", perf);
-  else strcpy(val[3], "OFF");
-  for (int k = 0; k < 4; ++k) {
+  for (int k = 0; k < 2; ++k) {
     int x = k * kCellW + kCellW / 2;
     c.put_text(kSlotLabels + k, kRSmall, x, kLabY, kLab[k], kAlignCentre);
     c.put_text(kSlotCells + k, kRSmall, x, kLabY + 6, val[k], kAlignCentre);
@@ -145,13 +113,6 @@ CORE_COLD void main_draw(Canvas& c, int page, int npages) {
   } else if (mp.touched == 0) {
     sniprintf(f, sizeof f, "FADER:%d", st.fader);
     footer(c, f, st.fader >> 7);
-  } else if (mp.touched == 6) {
-    sniprintf(f, sizeof f, "S%d RYTM SCENE:%s", st.sel + 1, val[2]);
-    footer(c, f);
-  } else if (mp.touched == 7) {
-    if (perf) sniprintf(f, sizeof f, "S%d PERF %d AT %d", st.sel + 1, perf, perf_value(st.sel, perf));
-    else sniprintf(f, sizeof f, "S%d PERF:OFF", st.sel + 1);
-    footer(c, f);
   } else {
     footer(c, scene::edit() ? "EDIT ON  FUNC+YES: OFF" : "HOLD T1-12: LOCKS");
   }
@@ -225,20 +186,6 @@ CORE_COLD void morph_enc(int e, int d, bool func) {
     int lo = mod::is_offset(mod::kind_of(t)) || r.lo < 0 ? 0 : (int)(r.lo * 128.0f + 0.5f);
     int hi = mod::is_offset(mod::kind_of(t)) || r.hi > 127 ? scene::kFaderMax : (int)(r.hi * 128.0f + 0.5f);
     lock_or_note(mp.held, t, (uint16_t)clampi(s.l[k].v + d * (func ? 8 : 1) * 128, lo, hi));
-    return;
-  }
-  const int l = list_turn(e, d);
-  if (!l) return;
-  mp.touched = e;
-  if (e == 6) {   // G: the Rytm scene lock, OFF / 1..12
-    int n = clampi(scn_of(st.sel) + l, 0, 12);
-    if (n) lock_or_note(st.sel, mod::tid(mod::kRytm, 0, 0), (uint16_t)(n * 128));
-    else scene::unlock(st.sel, mod::tid(mod::kRytm, 0, 0));
-  } else if (e == 7) {   // H: the PERF lock, OFF / 1..12
-    int was = perf_of(st.sel), m = clampi(was + l, 0, 12);
-    if (m == was) return;
-    if (was) scene::unlock(st.sel, mod::tid(mod::kRytm, 0, was));
-    if (m) lock_or_note(st.sel, mod::tid(mod::kRytm, 0, m), st.sel == st.a ? 0 : 127 * 128);
   }
 }
 

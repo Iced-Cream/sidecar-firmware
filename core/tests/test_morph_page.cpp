@@ -1,7 +1,7 @@
 // core/tests/test_morph_page.cpp - the MORPH page (core/ui/page_morph.cpp, spec-050 2.6) through the remote host, as
 // test_lfo.cpp's page part: the scene keys (tap selects, T15 / T16 held + Tn A / B, Tn held its lock list), the fader
-// on encoder A, the list's edits (B..H, LEFT / RIGHT, NO removes, YES twice clears), G / H the Rytm scene and PERF
-// locks, FUNC + YES EDIT, the trig LEDs, and every text on the Rytm's screen fits (check.h's TEXT-FIT).
+// on encoder A, the list's edits (B..H, LEFT / RIGHT, NO removes, YES twice clears), no SCN / PERF cells (v2),
+// FUNC + YES EDIT, the trig LEDs, and every text on the Rytm's screen fits (check.h's TEXT-FIT).
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -113,7 +113,7 @@ static void select_and_ab_by_holds() {
   CHECK(scene::state().sel == 4 && !strcmp(ui::remote_page_title(), "MORPH"));
   tap(0x40);
   CHECK(scene::state().sel == 3);
-  CHECK(scene::lock(2, T("V1:P3"), 6400) && scene::lock(6, T("RYTM:SCN"), 640));
+  CHECK(scene::lock(2, T("V1:P3"), 6400) && scene::lock(6, T("V2:P1"), 640));
   scene::set_fader(8192, scene::kConsole);
   CHECK(shows("A5") && shows("B7") && shows("MORPH"));
   png("morph_main.png");
@@ -159,10 +159,10 @@ static void hold_shows_lock_list_and_edits() {
   CHECK(lock_v(2, T("V1:P9")) == 17 * 128);
   up(0x02);
   CHECK(!shows("S3 LOCKS") && shows("MORPH"));
-  // a value never past its range: RYTM:SCN 0..12
-  CHECK(scene::lock(5, T("RYTM:SCN"), 11 * 128));
+  // a value never past its range: T1:DIR 0..5
+  CHECK(scene::lock(5, T("T1:DIR"), 3 * 128));
   down(0x05), turn(1, 5);
-  CHECK(lock_v(5, T("RYTM:SCN")) == 12 * 128);
+  CHECK(lock_v(5, T("T1:DIR")) == 5 * 128);
   up(0x05);
   printf("  hold_shows_lock_list_and_edits: held 250 ms the list, B..H edit (FUNC x 8), LEFT / RIGHT scroll\n");
 }
@@ -196,23 +196,15 @@ static void yes_clears_after_confirm() {
   printf("  yes_clears_after_confirm: hold + YES asks, NO keeps, YES again clears\n");
 }
 
-static void g_and_h_lock_the_rytm() {
+// 0.5.0 v2 (S7): no SCN / PERF cells: G and H do nothing on the main view
+static void no_scn_perf_cells() {
   open_page();
   scene::set_ab(0, 1);
-  tap(0x01);                   // S2 (B)
-  turn(6, 1);                  // G: RYTM:SCN 1
-  CHECK(lock_v(1, T("RYTM:SCN")) == 128);
-  turn(6, 1), turn(6, 1);
-  CHECK(lock_v(1, T("RYTM:SCN")) == 3 * 128 && shows("S2 RYTM SCENE:3"));
-  turn(6, -1), turn(6, -1), turn(6, -1);   // OFF: the lock removed
-  CHECK(lock_v(1, T("RYTM:SCN")) < 0);
-  turn(7, 1);                  // H: PERF 1 at 127 (not the A scene)
-  CHECK(lock_v(1, T("RYTM:PERF1")) == 127 * 128);
-  turn(7, 1);                  // PERF 2: the PERF 1 lock moves to 2
-  CHECK(lock_v(1, T("RYTM:PERF1")) < 0 && lock_v(1, T("RYTM:PERF2")) == 127 * 128 && shows("S2 PERF 2 AT 127"));
-  tap(0x00), turn(7, 2);       // S1 is A: PERF 2 at 0, so A and B crossfade the macro
-  CHECK(lock_v(0, T("RYTM:PERF2")) == 0);
-  printf("  g_and_h_lock_the_rytm: G RYTM:SCN OFF / 1..12, H RYTM:PERFm (0 on A, 127 else)\n");
+  tap(0x01);
+  turn(6, 1), turn(7, 1), turn(6, -3), turn(7, -2);
+  CHECK(scene::state().s[1].n == 0 && scene::state().s[0].n == 0);
+  CHECK(!shows("SCN") && !shows("PERF") && shows("FADER") && shows("LOCKS"));
+  printf("  no_scn_perf_cells: G / H do nothing, no SCN / PERF cells\n");
 }
 
 static void func_yes_edit() {
@@ -240,9 +232,9 @@ static void leds() {
 }
 
 static void text_fit() {
-  open_page();   // the longest texts: S12, 64 locks with the longest names, RYTM:PERF12, every footer
+  open_page();   // the longest texts: S12, 64 locks with the longest names, every footer
   for (int k = 0; k < 64; ++k) {
-    static const char* const kN[] = {"RYTM:PERF12", "I8:A4", "MFX:MIX4", "X8:B3", "O8:WID", "V8:P16", "FX2:P5", "S12:F2"};
+    static const char* const kN[] = {"RT12:FTYP", "I8:A4", "MFX:MIX4", "X8:B3", "O8:WID", "V8:P16", "FX2:P5", "S12:F2"};
     Tid t = T(kN[k % 8]);
     if (k >= 8) t = mod::tid(mod::kV, k % 8, k / 8);
     scene::lock(11, t, (uint16_t)(k % 2 ? 16383 : 127 * 128 + 64));
@@ -250,9 +242,7 @@ static void text_fit() {
   CHECK(scene::state().s[11].n == 64);
   CHECK(!scene::lock(11, T("FX1:P2"), 0) && scene::state().s[11].n == 64);   // the 65th: SCENE FULL
   scene::set_ab(10, 11), scene::set_fader(16383, scene::kConsole);
-  tap(0x0B), turn(0, 1), turn(7, -1), turn(7, 1), draw();
-  turn(6, 12);
-  CHECK(shows("SCENE FULL"));
+  tap(0x0B), turn(0, 1), draw();
   png("morph_full.png");
   down(0x0B), tick(10);
   png("morph_list.png");
@@ -371,15 +361,13 @@ static void seq_mode_morph_knobs() {
   turn(0, 2);                               // A: the fader, not the sequencer's
   CHECK(scene::state().fader == 256);
   tap(0x01);
-  turn(6, 1);                               // G: S2's Rytm scene lock
-  CHECK(lock_v(1, T("RYTM:SCN")) == 128);
   CHECK(scene::lock(1, T("V1:P1"), 10 * 128));
-  down(0x01), turn(2, 1);                   // the list: C edits row 2 (V1:P1, after RYTM:SCN)
+  down(0x01), turn(1, 1);                   // the list: B edits row 1 (V1:P1)
   CHECK(lock_v(1, T("V1:P1")) == 11 * 128);
   up(0x01);
   CHECK(ui::morph_page_held() == -1);
   seq_mode(false);
-  printf("  seq_mode_morph_knobs: in seq mode A, G and the list's knobs are MORPH's\n");
+  printf("  seq_mode_morph_knobs: in seq mode A and the list's knobs are MORPH's\n");
 }
 
 static void seq_mode_edit_lock() {
@@ -451,7 +439,7 @@ int main() {
   hold_shows_lock_list_and_edits();
   no_removes_row();
   yes_clears_after_confirm();
-  g_and_h_lock_the_rytm();
+  no_scn_perf_cells();
   func_yes_edit();
   leds();
   text_fit();

@@ -19,6 +19,7 @@
 #include "fx/send_fx.h"
 #include "hooks.h"
 #include "machines.h"
+#include "mod/learn.h"
 #include "mod/mod.h"
 #include "mod/scene.h"
 #include "mod/target.h"
@@ -366,7 +367,7 @@ static void console_round_trip() {
   CHECK(scene::state().s[2].n == 1 && scene::state().s[2].l[0].t == T("V1:P3") && scene::state().s[2].l[0].v == 6400);
   say("scene=lock:3:MFX:LEV:100.5");
   CHECK(scene::state().s[2].l[1].t == T("MFX:LEV") && scene::state().s[2].l[1].v == 12864);
-  say("scene=lock:7:RYTM:SCN:5");
+  say("scene=lock:7:V2:P1:5");
   std::string s = say("scene=ab:3:7");
   CHECK(s.find("A 3 B 7") != std::string::npos && scene::state().a == 2 && scene::state().b == 6);
   CHECK(say("scene=fader:8192").find("fader 8192") != std::string::npos && scene::state().fader == 8192);
@@ -395,10 +396,10 @@ static void console_round_trip() {
   CHECK(j.find("\"scene\":{\"a\":3,\"b\":7,\"fader\":8192,") == 0 && j.find("\"sel\":7,\"locked\":0,\"edit\":0,\"s\":[") != std::string::npos);
   CHECK(j.find("{\"n\":3,\"l\":[[\"V1:P3\",6400],[\"MFX:LEV\",12864]]}") != std::string::npos && j.find("{\"n\":5,") == std::string::npos);
   CHECK(j.compare(j.size() - 11, 11, ",\"rscn\":-1}") == 0 && j.find("],\"src\":") != std::string::npos);   // Task 47
-  for (int sc = 0; sc < scene::kScenes; ++sc) {   // 768 distinct locks, the longest names: RYTM:PERF.., MFX:MIX.., S1x:Fn
+  for (int sc = 0; sc < scene::kScenes; ++sc) {   // 768 distinct locks, the longest names: RT1x:SFRQ.., MFX:MIX.., S1x:Fn
     scene::clear(sc);
     for (int k = 0; k < scene::kLocks; ++k) {
-      Tid t = k < 13 ? mod::tid(mod::kRytm, 0, k) : k < 18 ? mod::tid(mod::kMfx, 0, k - 13) : k < 42 ? mod::tid(mod::kSnd, (k - 18) / 2, k % 2)
+      Tid t = k < 13 ? mod::rytm_tid(10 + k % 2, 25 + k) : k < 18 ? mod::tid(mod::kMfx, 0, k - 13) : k < 42 ? mod::tid(mod::kSnd, (k - 18) / 2, k % 2)
                                                                                                : mod::tid(mod::kIsnd, (k - 42) / 3, (k - 42) % 3);
       CHECK(scene::lock(sc, t, 16383));
     }
@@ -553,22 +554,28 @@ static int ccs(uint8_t c) {
   for (const auto& o : g_rytm) k += o.size() == 3 && (o[0] & 0xF0) == 0xB0 && o[1] == c;
   return k;
 }
-static void perf_follow_skips_knob_macros() {
+// 0.5.0 v2 (S7): the Rytm's own scene and PERF macros are no scene targets (XY and MIDI learn keep them)
+static void rytm_targets_refused() {
   scene_reset_with_base(40);
+  CHECK(scene::lock(2, T("V1:P1"), 128));
+  CHECK(!scene::lock(2, T("RYTM:SCN"), 5 * 128) && !scene::lock(2, T("RYTM:PERF3"), 127 * 128));
+  CHECK(scene::state().s[2].n == 1 && scene::state().s[2].l[0].t == T("V1:P1"));
+  CHECK(say("scene=lock:3:RYTM:PERF3:127").find("NOT A SCENE TARGET") != std::string::npos && scene::state().s[2].n == 1);
+  printf("scene: RYTM:SCN / RYTM:PERFn are refused as locks (NOT A SCENE TARGET)\n");
+}
+static void rytm_targets_still_learnable() {
+  scene_reset_with_base(40);
+  learn::reset();
   hooks.to_rytm = rytm_cap;
-  lock_ab(T("RYTM:PERF1"), 0, 127);   // macro 1: on the knob (the mask's bit 0), the Rytm moves it itself
-  lock_ab(T("RYTM:PERF2"), 0, 127);   // macro 2: not on the knob, the Sidecar follows
-  qp(0, 0x001, 2);
-  run_ms(10);
+  char o[400];
+  CHECK(learn::command("learn=RYTM:PERF3:63", o, sizeof o) && !strstr(o, "cannot"));
   g_rytm.clear();
-  for (int pos = 0; pos <= 255; pos += 5) qp(pos, 0x001, 2), run_ms(17);
-  printf("scene: a QPERF sweep with PERF1 on the knob: CC 35 x %d, CC 36 x %d\n", ccs(35), ccs(36));
-  CHECK(ccs(35) == 0 && ccs(36) > 5);
-  scene::set_fader(0, scene::kConsole);   // another source: PERF1 followed again
+  CHECK(learn::midi(1, 0xB0, 21, 127));
   run_ms(30);
-  CHECK(ccs(35) >= 1);
+  CHECK(mod::find(T("RYTM:PERF3")) != nullptr && ccs(37) >= 1);   // PERF3 = CC 37 to the Rytm
   hooks.to_rytm = nullptr;
-  printf("scene: PERF follow skips the macros the QPERF knob moves while it is the fader\n");
+  learn::reset();
+  printf("scene: a learn route to RYTM:PERF3 still plays (S7)\n");
 }
 static void scene_report_shown() {
   scene::reset();
@@ -620,7 +627,8 @@ int main() {
   qperf_smoothing_follows_interval();
   qperf_baseline_after_hello();
   qperf_jitter_deadband();
-  perf_follow_skips_knob_macros();
+  rytm_targets_refused();
+  rytm_targets_still_learnable();
   scene_report_shown();
   printf("test_scene: PASS\n");
   return 0;

@@ -63,7 +63,7 @@ export const lockLabel = (v: SceneView | null | undefined, name: string) => v?.l
 export const SUGGEST: string[] = [
   ...Array.from({ length: 8 }, (_, v) => Array.from({ length: 8 }, (_, p) => `V${v + 1}:P${p + 1}`)).flat(),
   ...Array.from({ length: 8 }, (_, v) => [`O${v + 1}:LEV`, `O${v + 1}:PAN`]).flat(),
-  "MFX:LEV", "FX1:P2", "FX1:P3", "FX2:P2", "FX2:P3", "RYTM:PERF1", "RYTM:PERF2", "RYTM:PERF3", "RYTM:PERF4",
+  "MFX:LEV", "FX1:P2", "FX1:P3", "FX2:P2", "FX2:P3", // (0.5.0 v2: the Rytm's own scene and PERF macros are no scene target)
   // 0.5.0: the Rytm's own sound parameters (docs/RYTM-PARAMS.md; a Rytm without its 0.5 mod ignores them)
   "RT1:FRQ", "RT1:RES", "RT1:DEC", "RT2:FRQ", "RT2:DEC", "RFX:TIM", "RFX:FDB", "RFX:RDEC",
 ];

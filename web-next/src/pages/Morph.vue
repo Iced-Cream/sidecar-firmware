@@ -176,7 +176,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
         <div class="val"><Fader v-model="addValue" label="Value" :min="0" :max="127" :disabled="!paired" /></div>
         <button type="submit" :disabled="!paired || !addOk || locks.length >= LOCKS">Add the lock</button>
       </form>
-      <p class="small">A target is a name like V3:P5 (voice 3's P5; the list shows what its machine calls it), O4:PAN, MFX:LEV, FX1:P2 or RYTM:PERF3.</p>
+      <p class="small">A target is a name like V3:P5 (voice 3's P5; the list shows what its machine calls it), O4:PAN, MFX:LEV, FX1:P2 or RT1:FRQ (the Rytm's own scene and PERF macros are not scene targets).</p>
       <div class="row">
         <label for="copyto" class="label">Copy to</label>
         <select id="copyto" v-model.number="copyTo" :disabled="!paired">

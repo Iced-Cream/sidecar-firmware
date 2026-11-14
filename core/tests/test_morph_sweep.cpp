@@ -252,7 +252,6 @@ static void kinds_two_sided() {
   for_sources("kOut O1:LEV", "O1:LEV", 40, 110, false, 1.2, NAN);
   for_sources("kSeq T1:SWG (cont)", "T1:SWG", 52, 78, false, 0.8, NAN);
   for_sources("kLoop LOOP:BAL", "LOOP:BAL", 10, 100, false, 0.8, NAN);
-  for_sources("kRytm RYTM:PERF3", "RYTM:PERF3", 10, 120, false, 0.8, NAN);
   for_sources("kRa RT1:FRQ (Rytm own)", "RT1:FRQ", 100, 20, false, 0.2, NAN);
   for_sources("kRs RT1:P1 (Rytm own)", "RT1:P1", 10, 90, false, 0.2, NAN);
   for_sources("kRfx RFX:TIM", "RFX:TIM", 10, 90, false, 0.2, NAN);
@@ -273,7 +272,6 @@ static void kinds_stepped() {
   for_sources("kSeq T1:SPD (step)", "T1:SPD", 1, 6, true, 0.01, NAN);
   for_sources("kSeq T1:DIR (step)", "T1:DIR", 0, 4, true, 0.01, NAN);
   for_sources("kArp R1:MODE (step)", "R1:MODE", 0, 5, true, 0.01, NAN);
-  for_sources("kRytm RYTM:SCN (scene)", "RYTM:SCN", 2, 9, true, 0.01, NAN);
   for_sources("kRa RT1:FTYP (Rytm list word)", "RT1:FTYP", 1, 5, true, 0.01, NAN);
   for_sources("kRs RT1:WAV (Rytm list word)", "RT1:WAV", 2, 6, true, 0.01, NAN);
 }
@@ -399,33 +397,14 @@ static void qperf_specifics() {
   qp(180, 0, 2 | 4 | 1), run_ms(40);
   check_line("the report with the 'macros muted' flag (bit 2) still moves the fader", f1 == 100 * 16383 / 255 &&
              scene::state().fader == 180 * 16383 / 255, "  [fader %.0f then %.0f]", f1, scene::state().fader);
-  // PERF macros on the knob (mask), muted: neither the Rytm (muted) nor the morph moves them
-  reset_all(40);
-  scene::lock(0, T("RYTM:PERF3"), 10 * 128), scene::lock(1, T("RYTM:PERF3"), 120 * 128), scene::set_ab(0, 1);
-  qp(0, 1 << 2, 2), run_ms(40);
-  qp(255, 1 << 2, 2), run_ms(60);
-  const mod::Entry* e = mod::find(T("RYTM:PERF3"));
-  check_line("PERF3 on the knob's mask: the morph leaves it to the Rytm (by design, spec 2.7)", !e,
-             "  [entry %.0f (0 = none, the Sidecar sends nothing); fader %.0f]", e ? 1 : 0, scene::state().fader);
-  // the host cannot tell muted from live: flags 4 is not read anywhere
-  qp(255, 1 << 2, 2 | 4), run_ms(60);
-  e = mod::find(T("RYTM:PERF3"));
-  check_line("... and the same with the muted flag set (the host ignores bit 2: no fallback to the Sidecar's own morph)",
-             e != nullptr, "  [entry %.0f; fader %.0f]", e ? 1 : 0, scene::state().fader);
 }
-static void rytm_one_sided() {
-  printf("-- a one-sided Rytm lock (PERF / SCN): acts on its own half only\n");
-  for (int s = 0; s < kSrcN; ++s) {
-    reset_all(40);
-    scene::lock(0, T("RYTM:PERF3"), 10 * 128), scene::lock(1, T("FX2:P5"), 5 * 128), scene::set_ab(0, 1);
-    src_init((Src)s);
-    double lo = NAN, hi = NAN;
-    src_move((Src)s, 0.25), lo = observe(T("RYTM:PERF3"));
-    src_move((Src)s, 0.75), hi = observe(T("RYTM:PERF3"));
-    check_line(std::string("A-only PERF3 lock: the macro is driven in the upper half / ") + kSrcName[s], !std::isnan(hi),
-               "  [lower half %.1f, upper half %.1f (nan: nothing sent: the Rytm keeps its last value)]", lo, hi);
-    scene::clear(0), scene::clear(1), run_ms(5);
-  }
+// 0.5.0 v2 (S7): the Rytm's own scene and PERF macros are no scene targets: nothing to sweep, the lock is refused
+static void rytm_refused() {
+  printf("-- kRytm (RYTM:SCN, RYTM:PERFn): no scene target\n");
+  reset_all(40);
+  bool ok = !scene::lock(0, T("RYTM:PERF3"), 10 * 128) && !scene::lock(1, T("RYTM:SCN"), 2 * 128) &&
+            !scene::state().s[0].n && !scene::state().s[1].n;
+  verdict("kRytm RYTM:PERF3 / RYTM:SCN refused as scene locks", ok, "");
 }
 
 int main(int argc, char** argv) {
@@ -434,8 +413,6 @@ int main(int argc, char** argv) {
   // the known failures (findings of the diagnosis round); see notes/reports/morph-check-report.md
   g_known_tags.clear();
   g_known_tags.push_back("a slow turn from rest");                       // the 2-position take-over: no dead zone is wanted
-  g_known_tags.push_back("... and the same with the muted flag");        // PERF on the knob, macros muted: nobody moves it
-  g_known_tags.push_back("A-only PERF3 lock");                           // one-sided Rytm lock: nothing sent in the other half
   // (case tag prefixes, "<target>/<source>[/Aonly|/Bonly]")
   char tmpl[] = "/tmp/core_morphsweep_XXXXXX";
   CHECK(mkdtemp(tmpl));
@@ -452,7 +429,7 @@ int main(int argc, char** argv) {
   kinds_one_sided();
   midway_events();
   qperf_specifics();
-  rytm_one_sided();
+  rytm_refused();
   printf("test_morph_sweep: %d cases, %d failing, %d known-failing (KNOWN=1 counts those too)\n", g_run, g_fail, g_known);
   if (g_fail) return 1;
   printf("test_morph_sweep: PASS\n");
