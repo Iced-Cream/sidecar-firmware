@@ -13,7 +13,7 @@
 #include <circle/logger.h>
 #include <circle/timer.h>
 #include <circle/util.h>
-#include <stdio.h>
+#include "core_port.h"	// sniprintf: platform_pi.cpp's integer printf (no libc printf here)
 #include <stdarg.h>
 #include "sidecar_gadget.h"	// CIRCLE_GADGET_MIRROR (circle-gadget-mirror.patch), as teensy_target.cpp
 #ifdef CIRCLE_GADGET_MIRROR
@@ -113,7 +113,7 @@ u64 NowMs (void) { return CTimer::GetClockTicks64 () / (CLOCKHZ / 1000); }
 
 void Fail (const char *pFormat, const char *pArg = "")
 {
-	snprintf (s_Error, sizeof s_Error, pFormat, pArg);
+	sniprintf (s_Error, sizeof s_Error, pFormat, pArg);
 	s_State = Failed;
 	s_nDoneAt = NowMs ();
 	CLogger::Get ()->Write (From, LogError, "teensyflash failed: %s", s_Error);
@@ -180,7 +180,7 @@ void Step (void)
 				{
 					s_nDma = (s_nDma + 1) % kDmaBufs;
 					char b[16];
-					snprintf (b, sizeof b, "%u", s_nBlock);
+					sniprintf (b, sizeof b, "%u", s_nBlock);
 					Fail ("block %s was not answered in time (press the program button, then flash again)", b);
 				}
 				break;
@@ -193,7 +193,7 @@ void Step (void)
 				if (now >= s_nBlockDeadline)
 				{
 					char b[16];
-					snprintf (b, sizeof b, "%u", s_nBlock);
+					sniprintf (b, sizeof b, "%u", s_nBlock);
 					Fail ("block %s was refused until its time ran out", b);
 				}
 				break;
@@ -248,7 +248,7 @@ void Step (void)
 			if (s_Expect[0] && strcmp (s_Build, s_Expect) != 0)
 			{
 				char b[64];
-				snprintf (b, sizeof b, "%s, expected %s", s_Build, s_Expect);
+				sniprintf (b, sizeof b, "%s, expected %s", s_Build, s_Expect);
 				Fail ("the relay is back with build %s", b);
 				break;
 			}
@@ -290,7 +290,7 @@ void Res (fsweb::Result *r, int nStatus, const char *pFormat, ...)
 	va_list ap;
 	va_start (ap, pFormat);
 	r->status = nStatus;
-	vsnprintf (r->msg, sizeof r->msg, pFormat, ap);
+	vsniprintf (r->msg, sizeof r->msg, pFormat, ap);
 	va_end (ap);
 }
 
@@ -386,7 +386,7 @@ int StateJson (char *pOut, unsigned nCap)
 	unsigned q = 0;
 	for (const char *c = s_Error; *c && q < sizeof Err - 2; c++) Err[q++] = (*c == '"' || *c == '\\') ? '\'' : *c;
 	Err[q] = 0;
-	int n = snprintf (pOut, nCap,
+	int n = sniprintf (pOut, nCap,
 		"{\"state\":\"%s\",\"hex\":{\"bytes\":%llu,\"received\":%llu,\"sha256\":\"%s\",\"blocks\":%u},"
 		"\"sent\":%u,\"retries\":%u,\"ms\":%llu,\"expect\":\"%s\",\"build\":\"%s\",\"error\":\"%s\","
 		"\"bootloader\":%s,\"relay\":%s}",
