@@ -23,6 +23,8 @@
 #pragma once
 #include <stdint.h>
 
+#include "machines.h"   // kVoices, kBoxVoices
+
 namespace core {
 namespace out { struct Device; }
 namespace device {
@@ -197,6 +199,23 @@ inline const char* state_path(const char* path, char* buf, int cap) {
   return s ? state_path_box(s, path, buf, cap) : path;
 }
 inline bool foreign(const Link& l = cur()) { return l.box != nullptr; }
+// The engine voices of a link: its box's voice k (the wire's voice byte & 7, a project's track) is engine voice
+// voice_base(l) + k. Slot 0's (the Rytm's) are 0..7 and slot 1's 8..15, alone or paired; on an 8-voice engine (the
+// Teensy) every link's are 0..7.
+inline int voice_base(const Link& l) { return kVoiceSlots > 1 ? l.index * kBoxVoices : 0; }
+inline int voice_base() { return voice_base(cur()); }
+inline int voice_in(uint8_t vb, const Link& l = cur()) { return voice_base(l) + (vb & (kBoxVoices - 1)); }   // a voice byte -> engine voice
+// The first engine voice of the box the engine's own work is for (g_base): the voices the one output stage carries, the
+// project's tracks, the pages (until each slot has its own). Any core reads it (one aligned byte load).
+inline int base_voice_base() {
+  const Link* b = __atomic_load_n(&g_base, __ATOMIC_RELAXED);
+  return b ? voice_base(*b) : 0;
+}
+inline int base_voice(int k) { return base_voice_base() + (k & (kBoxVoices - 1)); }   // the base box's voice k -> engine voice
+inline int base_box_voice(int vi) {   // engine voice vi -> its number in the base box, -1 another box's
+  const int k = vi - base_voice_base();
+  return k >= 0 && k < kBoxVoices ? k : -1;
+}
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
 // the control core may set the box. Null: the Rytm, or a box without a Screen.
 inline const Screen* box_screen(const Link& l = cur()) {

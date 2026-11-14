@@ -37,7 +37,7 @@
 namespace core {
 namespace amp {
 
-constexpr int kVoices = 8, kSlots = 2;
+constexpr int kVoices = 8, kSlots = 2;   // one box's voice chains (ins::kVoices, machines.h kBoxVoices)
 constexpr int kMaxRunning = 6;              // AMP slots playing at once (the CPU cap; fix1049: 8 -> 6)
 constexpr int kMaxMaster = 2;               // the master chain's own, outside that cap: one L/R pair, or two slots
 constexpr int kInstances = kMaxRunning + kMaxMaster + 1; // + one for a capture change's crossfade

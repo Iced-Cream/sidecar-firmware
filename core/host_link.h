@@ -30,10 +30,11 @@ void host_sysex(const uint8_t* d, int len);        // transport 0's message: eng
 void host_sysex_slot(const uint8_t* d, int len);   // a message of the slot in hand (device::Scope)
 void engine_sysex_link(int transport, const uint8_t* d, int len);   // (engine.h)
 // The link to the Rytm went down or came up (the Rytm's hello 35, its USB MIDI attached or gone, the Overbridge
-// stream started or stopped): every voice silenced (CC 120's ramp, until its next trig) and the send FX's tails
-// cleared, as a double STOP does - a note-on whose note-off (or a STOP) was lost across the gap must not hang.
-// why: for the log. Rate-limited with all_sound_off (100 ms): an attach's several edges clear once.
-void link_reset(const char* why);
+// stream started or stopped): the link's voices silenced (CC 120's ramp, until its next trig; slot: that slot's, -1 the
+// link in hand's; on 8 voices every voice) and the send FX's tails cleared, as a double STOP does - a note-on whose
+// note-off (or a STOP) was lost across the gap must not hang. why: for the log. Rate-limited with all_sound_off
+// (100 ms): an attach's several edges clear once.
+void link_reset(const char* why, int slot = -1);
 void link_lost();   // the Rytm's USB MIDI gone (the platform's edge): what is sent only to a Rytm that listens stops
 void sendfx_project();   // the send FX's user-FX slot map for `project` (boot, 0x10); read on the card core, the Rytm told after it
 bool sendfx_step();      // each idle pass: that read in, the Rytm told; true when it was

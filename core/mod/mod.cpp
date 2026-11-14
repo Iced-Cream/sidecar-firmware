@@ -16,6 +16,7 @@
 #include "mod/xypad.h"
 #include "platform.h"
 #include "voices.h"
+#include "device/device.h"
 
 namespace core {
 namespace mod {
@@ -35,7 +36,7 @@ struct Used {
 Used used() { return {g_e, g_e + g_hi}; }
 uint32_t g_last_us = 0;
 bool g_started = false;
-uint8_t g_vdirty = 0;   // voices whose v[vi].p moved: their machines take them (flush_voices)
+uint8_t g_vdirty = 0;   // the project's voices (the base box's 0..7) whose v[].p moved: their machines take them (flush_voices)
 uint32_t g_user_ms[kVoices];
 Stats g_stats;
 void (*g_source)(uint32_t us, uint32_t dus) = nullptr;
@@ -259,14 +260,15 @@ CORE_COLD void flush_voices() {
 static CORE_COLD void flush_body() {
   // the voices whose parameters moved: their machines take them (a user machine at most every kUserMs)
   uint32_t ms = now_ms();
-  for (int vi = 0; vi < kVoices; ++vi) {
-    if (!(g_vdirty >> vi & 1)) continue;
+  for (int k = 0; k < kBoxVoices; ++k) {
+    if (!(g_vdirty >> k & 1)) continue;
+    const int vi = device::base_voice(k);
     if (v[vi].user >= 0) {
       if (ms - g_user_ms[vi] < kUserMs) continue;
       g_user_ms[vi] = ms;
       ++g_stats.user_calls;
     }
-    g_vdirty &= (uint8_t)~(1u << vi);
+    g_vdirty &= (uint8_t)~(1u << k);
     voice_params_changed(vi);
   }
 }
@@ -320,8 +322,8 @@ static CORE_COLD void tick_body(uint32_t us) {
 CORE_COLD void restore_all() {
   for (Entry& e : used())
     if (e.t) restore(e);
-  for (int vi = 0; vi < kVoices; ++vi)
-    if (g_vdirty >> vi & 1) voice_params_changed(vi);
+  for (int k = 0; k < kBoxVoices; ++k)
+    if (g_vdirty >> k & 1) voice_params_changed(device::base_voice(k));
   g_vdirty = 0;
 #if CORE_POLY
   rp_clear_all();   // the Rytm's own params: CLEAR on every track (a project change; rytm_param.h)
@@ -338,8 +340,10 @@ CORE_COLD void voice_params(int vi, float* p, int np) {
   lfo::voice_params(vi, p, np, false);   // the rollback: the LFOs' own table
   return;
 #endif
+  const int bk = device::base_box_voice(vi);   // the project's targets are the base box's voices
+  if (bk < 0) return;
   for (Entry& e : used()) {
-    if (!e.t || kind_of(e.t) != kV || index_of(e.t) != (vi & 7) || param_of(e.t) >= np) continue;
+    if (!e.t || kind_of(e.t) != kV || index_of(e.t) != bk || param_of(e.t) >= np) continue;
     e.base = p[param_of(e.t)];
     float val = clampf(start_of(e) + e.off, 0.0f, 127.99f);   // (a morph plays on: the report moves the base only)
     p[param_of(e.t)] = val;
@@ -382,11 +386,12 @@ CORE_COLD float base_of(int vi, int k, float cur) {
 #if !CORE_MOD_LFO
   return lfo::base_of(vi, k, cur);   // the rollback: the LFOs' own table
 #endif
-  const Entry* e = find_e(tid(kV, vi & 7, k & 15));
+  const int bk = device::base_box_voice(vi);
+  const Entry* e = bk < 0 ? nullptr : find_e(tid(kV, bk, k & 15));
   return e ? e->base : cur;
 }
 
-CORE_COLD void played(int vi, float out[16]) { memcpy(out, (const float*)v[vi & 7].p, 16 * sizeof(float)); }
+CORE_COLD void played(int vi, float out[16]) { memcpy(out, (const float*)v[voice_wrap(vi)].p, 16 * sizeof(float)); }
 
 namespace {
 // a value for the console: kV with two decimals, the others whole (integer printf only: the Teensy shares this file)

@@ -1381,7 +1381,7 @@ int main() {
   {
     const int D = 713;
     std::vector<int16_t> hist;   // BD's rendered output, by host frame
-    int16_t ring[64][8];
+    int16_t ring[64][kVoices];
     uint64_t mach[16] = {};
     CHECK(cmd("seq=cal:1").find("calibrating") != std::string::npos);
     int64_t start = (int64_t)seq::frames();

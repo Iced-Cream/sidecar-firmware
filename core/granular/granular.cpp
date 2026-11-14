@@ -616,10 +616,10 @@ CORE_COLD bool step() {
   return false;
 }
 
-CORE_COLD bool forced(int vi) { return force[vi & 7]; }
+CORE_COLD bool forced(int vi) { return force[voice_wrap(vi)]; }
 
 CORE_COLD void report(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job) return;
   for (int k = 0; k < 16; ++k) vp[vi][k] = p[k];
   v[vi].live = true;
@@ -637,7 +637,7 @@ CORE_COLD void report(int vi, int note, int vel, const float* p) {
 }
 
 CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || key < 0 || key > 127) return;
   if (__atomic_load_n(&sel[vi], __ATOMIC_SEQ_CST) == kNone) set_knobs(vi), select(vi);
   cur_live = {true, (int8_t)ch, (uint8_t)mnote};
@@ -647,7 +647,7 @@ CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
 }
 
 CORE_COLD void live_off(int vi, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   for (int k = 0; k < kPerVoice; ++k) {
     Note& n = notes[vi][k];
     if (!n.live || n.ch != ch || (mnote >= 0 && n.mnote != mnote)) continue;
@@ -658,19 +658,19 @@ CORE_COLD void live_off(int vi, int ch, int mnote) {
 
 CORE_COLD int voice_notes(int vi) {
   int a = 0;
-  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[vi & 7][k]);
+  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[voice_wrap(vi)][k]);
   return a;
 }
 
 CORE_COLD void note_off(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   for (int k = 0; k < kPerVoice; ++k)
     if (!notes[vi][k].live) release_note(notes[vi][k]);
 }
 
 CORE_COLD void silence(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   for (int k = 0; k < kPerVoice; ++k) {
     Note& n = notes[vi][k];
@@ -729,7 +729,7 @@ CORE_COLD bool voice_picked(int) { return false; }   // (no picks over SRC: a ch
 // The touchscreen's / the web's choice: SRC written on the Rytm (48, as a knob turn: the kit keeps it, its report then
 // names the row); the voice takes it at once (the report follows)
 CORE_COLD bool pick(int vi, int e) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || !list || e < 0 || e >= nlist) return false;
   ui::remote_param_write(vi, kGranMachine, 0, e & 127, srclib::lo_of(e));
   vp[vi][0] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
@@ -740,7 +740,7 @@ CORE_COLD bool pick(int vi, int e) {
 }
 CORE_COLD int entry_lib(int e) { return list && e >= 0 && e < nlist ? list[e].lib : srclib::kLibOff; }
 CORE_COLD void preview(int vi, int e) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || !list || !preview_enabled || !(v[vi].gr || force[vi])) return;
   if (e >= 0) {   // the entry the Rytm's list shows (its SRC; the voice's report follows at its next trig)
     if (e >= nlist || !srclib::playable(list[e])) return;
@@ -895,8 +895,12 @@ inline void orphan(Grain& g, float env) {
 }
 }  // namespace
 
-static float head_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};
-static uint32_t pan_rnd[kVoices] = {0x9e3779b9u, 2, 3, 4, 5, 6, 7, 8};   // the stereo grains' pans (their own stream)
+static PerVoice<float> head_g(1.0f);
+static uint32_t pan_rnd[kVoices];   // the stereo grains' pans (their own stream): 0x9e3779b9, 2, 3 .. kVoices
+[[maybe_unused]] static const bool pan_rnd_set = [] {
+  for (int i = 0; i < kVoices; ++i) pan_rnd[i] = i ? (uint32_t)i + 1 : 0x9e3779b9u;
+  return true;
+}();
 
 // a grain's read of the data at its channels (CH: the source's), into acc (and accr: a stereo voice)
 static inline bool play_data(Grain& g, const int16_t* data, uint32_t len, int ch, const float* eb, float* acc, int nfr,
@@ -926,7 +930,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   }
   const Knobs k = knobs[vi];
   Grain* G = grains + vi * kMaxGrains;
-  static uint32_t last_sid[kVoices] = {kNone, kNone, kNone, kNone, kNone, kNone, kNone, kNone};
+  static PerVoice<uint32_t> last_sid(kNone);
   static const int16_t* last_data[kVoices];
   static uint32_t last_len[kVoices];
   static uint8_t last_ch[kVoices];
@@ -966,7 +970,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   // a stereo voice's pan spread: SPRY x WID (out.h; WID 64 = SPRY's own)
   float pan_amt = 0.0f;
   if (outr) {
-    float w = out::control.wid[vi] * (1.0f / 64.0f);
+    float w = out::control.wid[box_voice(vi)] * (1.0f / 64.0f);
     pan_amt = clamp01(k.spr * w);
   }
   const float* ring = rings + (size_t)vi * kRing;
@@ -1176,7 +1180,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   for (int s = nfr; s < kBlock; ++s) fbb[vi][s] = 0;
 }
 
-CORE_COLD float headroom(int vi) { return head_g[vi & 7]; }
+CORE_COLD float headroom(int vi) { return head_g[voice_wrap(vi)]; }
 
 CORE_COLD const char* hold_text(int v, char* b, int cap_) {
   if (v >= kHoldFreeze) sniprintf(b, cap_, "FRZ");
@@ -1192,7 +1196,7 @@ CORE_COLD const char* anim_text(int v, char* b, int cap_) {
 
 // The display's: read while the render core writes (floats and flags; a torn frame draws a grain a block off)
 CORE_COLD bool viz(int vi, Viz* o) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   o->n = 0;
   o->entry = -1;
   if (!begun) return false;
@@ -1230,7 +1234,7 @@ CORE_COLD bool viz(int vi, Viz* o) {
   return true;
 }
 CORE_COLD int viz_wave(int vi, int cols, float* mn, float* mx) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!begun || cols <= 0) return 0;
   uint32_t sid = __atomic_load_n(&sel[vi], __ATOMIC_RELAXED);
   if (sid == kNone || sid >= (uint32_t)kSrcIds) return 0;
@@ -1355,13 +1359,13 @@ const Stats& stats() {
 }
 void set_cap(int n) { grain_cap = n < 1 ? 1 : n > kMaxGrains ? kMaxGrains : n; }
 int cap() { return grain_cap; }
-int voice_grains(int vi) { return (int)ld_rlx(&g_grains[vi & 7]); }
-uint32_t ring_written(int vi) { return ring_w[vi & 7]; }
-float ring_at(int vi, uint32_t f) { return rings ? rings[(size_t)(vi & 7) * kRing + (f & (kRing - 1))] : 0.0f; }
+int voice_grains(int vi) { return (int)ld_rlx(&g_grains[voice_wrap(vi)]); }
+uint32_t ring_written(int vi) { return ring_w[voice_wrap(vi)]; }
+float ring_at(int vi, uint32_t f) { return rings ? rings[(size_t)(voice_wrap(vi)) * kRing + (f & (kRing - 1))] : 0.0f; }
 int voice_entry(int vi) {
-  uint32_t t = __atomic_load_n(&sel[vi & 7], __ATOMIC_SEQ_CST);
+  uint32_t t = __atomic_load_n(&sel[voice_wrap(vi)], __ATOMIC_SEQ_CST);
   if (t == kNone) return -1;
-  int e = knobs[vi & 7].src;   // (a file listed twice: the entry the voice chose)
+  int e = knobs[voice_wrap(vi)].src;   // (a file listed twice: the entry the voice chose)
   if (e >= 0 && e < nlist && resident(e) == (int)t) return e;
   return t < (uint32_t)kFixed ? -1 : slots[t - kFixed].entry;
 }

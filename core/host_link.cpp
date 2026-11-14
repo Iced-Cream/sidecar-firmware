@@ -296,8 +296,10 @@ static CORE_COLD void contact() {
 }
 }  // namespace fxin
 
-CORE_COLD void link_reset(const char* why) {
-  for (int vi = 0; vi < kVoices; ++vi) voice_silence(vi);
+CORE_COLD void link_reset(const char* why, int slot) {
+  // the link's own voices (slot 1's 8..15 leave the Rytm's playing); on 8 voices every link's are 0..7
+  const int b = slot < 0 ? device::voice_base() : device::voice_base(device::g_links[slot]);
+  for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
   midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
@@ -460,7 +462,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     if (d[4] == 0x12 && len >= 11) { pool_assign(d[5], d[6] << 7 | d[7], d[8] << 7 | d[9]); return; }
   }
   if (len < 7 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
-  int cmd = d[4], vi = d[5] & 7;
+  int cmd = d[4], vi = device::voice_in(d[5]);   // the link's box voice -> engine voice (slot 1's: 8 + k)
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
     if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate
@@ -469,7 +471,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     voice_note_off(vi);
     return;
   }
-  voice_report(cmd, d, len);
+  voice_report_at(vi, cmd, d, len);
 }
 
 }  // namespace core

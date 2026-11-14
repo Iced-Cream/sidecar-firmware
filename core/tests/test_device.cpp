@@ -105,7 +105,7 @@ int main() {
 
   // the default: the Rytm, nothing in between
   CHECK(!device::foreign() && device::active().id == device::kIdRytm && hooks.to_rytm == ::out);
-  CHECK(device::rytm().voices == kVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
+  CHECK(device::rytm().voices == kBoxVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
   CHECK(device::rytm().usb_vid == 0x1935 && device::rytm().usb_pid == 0x0b48);
   send(sidecar({0x10, 'A', 'B'}));
   CHECK(!strcmp(project, "AB") && count(0x14) == 1);
@@ -132,30 +132,32 @@ int main() {
   CHECK(g_out.size() == 1 && g_out[0][6] == kBoxId >> 7 && g_out[0][7] == (kBoxId & 0x7f) && g_out[0][8] == device::kOk);
   CHECK(device::foreign() && device::active().id == kBoxId && hooks.to_rytm != ::out);
   CHECK(device::box_screen() == nullptr && !strcmp(voice_name(0), "BD"));   // no Screen: the Rytm's words
+  const int b = device::voice_base();   // the box is slot 1's: its voice k plays engine voice 8 + k (k on 8 voices)
+  CHECK(b == (kVoices > kBoxVoices ? kBoxVoices : 0));
   send(box_trig(0, 48, 127, 10, 20, 30));
-  CHECK(v[0].live);
+  CHECK(v[b].live);
   g_out.clear();
   send(hello(kBoxId));   // (its periodic hello: the voice keeps playing, no link reset)
   CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk);
   render();
-  CHECK(rms(0) > 50);
+  CHECK(rms(b) > 50);
 
   // its trig on its own head and ids: played through the map (P1 fixed, P2 its c, P3 its a + fraction 0, P4 fixed)
   send(box_trig(1, 48, 127, 10, 20, 30));
-  CHECK(v[1].live && (int)v[1].p[0] == 12 && (int)v[1].p[1] == 30 && (int)v[1].p[2] == 10 && (int)v[1].p[3] == 33);
-  CHECK((int)v[1].target == 48 + (int)roundf(v[1].p[6] - 64));
+  CHECK(v[b + 1].live && (int)v[b + 1].p[0] == 12 && (int)v[b + 1].p[1] == 30 && (int)v[b + 1].p[2] == 10 && (int)v[b + 1].p[3] == 33);
+  CHECK((int)v[b + 1].target == 48 + (int)roundf(v[b + 1].p[6] - 64));
   render();
-  CHECK(rms(1) > 50);
+  CHECK(rms(b + 1) > 50);
   // a params message moves them without a note; the fraction arrives
   send(box({0x62, 1, 40, 0, 0, 0, 50, 64}));
-  CHECK((int)v[1].p[1] == 50 && fabsf(v[1].p[1] - 50.5f) < 0.01f && (int)v[1].p[2] == 40);
+  CHECK((int)v[b + 1].p[1] == 50 && fabsf(v[b + 1].p[1] - 50.5f) < 0.01f && (int)v[b + 1].p[2] == 40);
   // its note-off closes the voice as a 0x11
   send(box({0x63, 1}));
 
   // what it may not do: a track past its voices, a wrong length, another head, the Rytm's commands
   uint32_t d0 = device::dropped();
   send(box_trig(2, 48, 100, 1, 2, 3));
-  CHECK(!v[2].live);
+  CHECK(!v[b + 2].live);
   send(box({0x62, 1, 40, 0}));
   send(sidecar({0x10, 'X', 'Y'}));
   CHECK(!strcmp(project, "AB"));   // the box does not move the Rytm's project
@@ -306,19 +308,20 @@ int main() {
       static std::vector<std::vector<uint8_t>> sent;
       sent.clear();
       keys::set_forward([](uint8_t st, uint8_t a, uint8_t b) { sent.push_back({st, a, b}); });
-      device::box_note(1, 60, 100);
-      device::box_note(1, 64, 90);
-      device::box_note(1, 67, 80);
-      device::box_note(1, 60, 0);                              // one let go by itself
-      device::box_note(2, 48, 100);
+      const int e = device::voice_base();   // box_note takes engine voices: the A4's (slot 1's) voice k is e + k
+      device::box_note(e + 1, 60, 100);
+      device::box_note(e + 1, 64, 90);
+      device::box_note(e + 1, 67, 80);
+      device::box_note(e + 1, 60, 0);                              // one let go by itself
+      device::box_note(e + 2, 48, 100);
       sent.clear();
-      device::box_note(1, -1, 0);
+      device::box_note(e + 1, -1, 0);
       CHECK(sent.size() == 2);
       for (auto& m : sent) CHECK(m[0] == 0x81 && m[1] <= 127 && (m[1] == 64 || m[1] == 67) && m[2] == 0);
       sent.clear();
-      device::box_note(1, -1, 0);                              // nothing held: nothing sent
+      device::box_note(e + 1, -1, 0);                              // nothing held: nothing sent
       CHECK(sent.empty());
-      device::box_note(2, -1, 0);                              // another voice's stays its own
+      device::box_note(e + 2, -1, 0);                              // another voice's stays its own
       CHECK(sent.size() == 1 && sent[0][0] == 0x82 && sent[0][1] == 48);
       keys::set_forward(nullptr);
     }
@@ -381,8 +384,10 @@ int main() {
       return sidecar(t);
     };
     auto off = [](int vi) { return sidecar({0x11, (uint8_t)vi}); };
-    auto notes = [](int vi) { return inst::voice_notes(vi) + poly::voice_notes(vi); };
-    auto quiet = [&](int vi) { send(off(vi)); voice_silence(vi); usleep(25000); };
+    // vi: the A4's own voice (the wire's); E(vi) its engine voice, slot 1's 8 + vi
+    auto E = [](int vi) { return device::voice_base(device::g_links[1]) + vi; };
+    auto notes = [&](int vi) { return inst::voice_notes(E(vi)) + poly::voice_notes(E(vi)); };
+    auto quiet = [&](int vi) { send(off(vi)); voice_silence(E(vi)); usleep(25000); };
     send(hello(device::kA4.id));
     CHECK(device::kA4.chords && !device::rytm().chords && !device::kDigitakt.chords);
 
@@ -392,25 +397,25 @@ int main() {
       CHECK(notes(1) == 0);                    // a lone trig: no instance, as ever
       send(trig(m | 1, 64));
       send(trig(m | 1, 67));
-      CHECK(inst::voice_notes(1) == 2);
+      CHECK(inst::voice_notes(E(1)) == 2);
       send(trig(m | 1, 64));                   // twice in a chord is once
-      CHECK(inst::voice_notes(1) == 2);
+      CHECK(inst::voice_notes(E(1)) == 2);
       send(off(1));                            // 0x11 lets all of them go
-      CHECK(inst::stat(1).sounding <= 2);
+      CHECK(inst::stat(E(1)).sounding <= 2);
       quiet(1);
       CHECK(notes(1) == 0);
     }
     {   // 6-OP FM: its pool, released with the voice
       send(trig(kFm | 2, 60));
-      CHECK(poly::voice_notes(2) == 0);
+      CHECK(poly::voice_notes(E(2)) == 0);
       send(trig(kFm | 2, 64));
       send(trig(kFm | 2, 67));
       send(trig(kFm | 2, 71));
-      CHECK(poly::voice_notes(2) == 3 && poly::held_notes(2) == 3);
+      CHECK(poly::voice_notes(E(2)) == 3 && poly::held_notes(E(2)) == 3);
       send(off(2));
-      CHECK(poly::held_notes(2) == 0);
+      CHECK(poly::held_notes(E(2)) == 0);
       quiet(2);
-      poly::silence(2);
+      poly::silence(E(2));
     }
     {   // MD plays no second note: a chord is its first hit
       static int hits;
@@ -459,7 +464,7 @@ int main() {
       send(trig(kPlaits | 0, 64));
       usleep((device::kChordMs + 5) * 1000);
       send(trig(kPlaits | 0, 62));
-      CHECK(inst::stat(0).sounding <= 1);
+      CHECK(inst::stat(E(0)).sounding <= 1);
       quiet(0);
     }
     {   // a machine change inside the window is no chord
@@ -469,12 +474,12 @@ int main() {
       quiet(0);
     }
     {   // the sequencer's chord to the box: each note's echo is dropped, the voice plays it once
-      uint32_t before = inst::voice_notes(0);
+      uint32_t before = inst::voice_notes(E(0));
       static std::vector<std::vector<uint8_t>> sent;
       keys::set_forward([](uint8_t st, uint8_t a, uint8_t b) { sent.push_back({st, a, b}); });
-      device::box_note(0, 60, 100);
-      device::box_note(0, 64, 100);
-      device::box_note(0, 67, 100);
+      device::box_note(E(0), 60, 100);
+      device::box_note(E(0), 64, 100);
+      device::box_note(E(0), 67, 100);
       const uint8_t* d;
       uint8_t buf[device::kMaxMessage];
       for (int n : {60, 64, 67}) {
@@ -487,9 +492,9 @@ int main() {
       d = m.data();
       int len = (int)m.size();
       CHECK(device::translate(device::cur(), d, len, buf));
-      device::box_note(0, -1, 0);
+      device::box_note(E(0), -1, 0);
       keys::set_forward(nullptr);
-      CHECK(inst::voice_notes(0) == before);
+      CHECK(inst::voice_notes(E(0)) == before);
       quiet(0);
     }
     {   // a MIDI channel bound and in use (the A4's note send on 6-OP FM): its notes are the voice's, no second copy from the trigs
@@ -504,12 +509,12 @@ int main() {
         poly::midi(0x82, 60, 0);
         usleep(40000);
       }
-      CHECK(poly::live_now(2));
+      CHECK(poly::live_now(E(2)));
       poly::midi(0x92, 60, 100);
       poly::midi(0x92, 64, 100);
       send(trig(kFm | 2, 60));
       send(trig(kFm | 2, 64));
-      CHECK(poly::held_notes(2) == 2);
+      CHECK(poly::held_notes(E(2)) == 2);
       poly::midi(0x82, 60, 0);
       poly::midi(0x82, 64, 0);
       quiet(2);
@@ -535,7 +540,7 @@ int main() {
         double p[3] = {0, 0, 0};
         for (int w = 0; w < 8; ++w) {
           render();
-          p[0] += tone(1, 60), p[1] += tone(1, 64), p[2] += tone(1, 66);
+          p[0] += tone(E(1), 60), p[1] += tone(E(1), 64), p[2] += tone(E(1), 66);
         }
         for (int k = 0; k < 3; ++k) o[k] = 10 * std::log10(p[k] / 8 + 1e-12);
       };
@@ -556,7 +561,7 @@ int main() {
         quiet(1);
         render();
         for (int n : ns) send(tuned(m | 1, n));
-        CHECK(inst::voice_notes(1) == 2);
+        CHECK(inst::voice_notes(E(1)) == 2);
         heard(ch);
         printf("  chord, machine %02x: dB on 60 64 66, each alone %.1f %.1f %.1f, 60's own on the others %.1f %.1f; in the chord %.1f %.1f %.1f\n", m, alone[0], alone[1], alone[2], other[1], other[2], ch[0], ch[1], ch[2]);
         for (int k = 1; k < 3; ++k) CHECK(ch[k] > other[k] + 12 && ch[k] > alone[k] - 6);   // there, about 3 dB under alone: the headroom gain

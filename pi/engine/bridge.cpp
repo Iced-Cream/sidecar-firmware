@@ -54,6 +54,7 @@
 namespace bridge {
 
 static_assert(kVoices == core::kVoices && kBlock == core::kBlock && kMachines == core::kMachines, "bridge sizes");
+static_assert(kBoxVoices == core::kBoxVoices && kVoiceSlots == core::kVoiceSlots, "bridge sizes");
 static_assert(kLfoJsonCap == core::lfo::kJsonCap, "the /status LFO buffer");
 
 static void put32(uint8_t* p, uint32_t v) { for (int i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (8 * i)); }
@@ -132,6 +133,10 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
 }
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
+int out_base() { return core::device::base_voice_base(); }
+bool slot_renders(int slot) {
+  return slot == 0 || (slot < core::device::kLinks && __atomic_load_n(&core::device::g_links[slot].box, __ATOMIC_RELAXED));
+}
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach, int16_t (*block_r)[kVoices], uint8_t* st) {
   return core::render_voices(block, kBlock, 0, v0, v1, mach, block_r, st);
 }
@@ -225,7 +230,7 @@ void samp_in(const int32_t* f, int n, int stride) {
   core::samp::asamp_in_block(f, n, stride);
 }
 bool samp_wants_voices() { return core::samp::wants_voices(); }
-void samp_voices(const int16_t (*v)[kVoices], int n, const int16_t (*lr)[2 * kVoices], const float (*fx)[4]) { core::samp::voice_block(v, n, lr, fx); }
+void samp_voices(const int16_t (*v)[kBoxVoices], int n, const int16_t (*lr)[2 * kBoxVoices], const float (*fx)[4]) { core::samp::voice_block(v, n, lr, fx); }
 void pool_mono(bool on) { core::pcache::set_mono(on); }
 void stereo_trim(int pair, int db10) { core::out::set_trim(pair, db10); }
 void stream_bench(int vol, unsigned mbps_x100, unsigned p99_us) {
@@ -369,7 +374,7 @@ bool livein_on() { return core::livein::wanted(); }
 void livein_in(const int32_t* f, int n, int stride) { core::livein::in_block(f, n, stride); }
 void livein_fifo(unsigned frames) { core::livein::set_fifo((int)frames); }
 int livein_status(int vi, char* b, int cap) {
-  if (!core::v[vi & 7].li) return 0;
+  if (!core::v[core::voice_wrap(vi)].li) return 0;
   return core::livein::status_short(vi, b, cap);
 }
 bool gr_live_on() { return core::gr::live_wanted(); }
@@ -541,30 +546,30 @@ uint64_t ins_bus_bench(uint32_t* worst_block, uint32_t* hash) {
   return sum;
 }
 uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash) {
-  using namespace core::ins;
+  using namespace core::ins;   // (its chains: one box's, core::ins::kVoices; bridge::kVoices is the engine's)
   Engine* e = ins_bench_engine();
   static Control c;
   memset(&c, 0, sizeof c);
-  for (int v = 0; v < kVoices; ++v) {
+  for (int v = 0; v < core::ins::kVoices; ++v) {
     for (int k = 0; k < 4; ++k) c.type[v][0] = (uint8_t)a, c.type[v][1] = (uint8_t)b, c.play[v][0][k] = c.play[v][1][k] = (uint8_t)(40 + 20 * k);
     // ins1112: a == kOff && b == kOff is the post EQ measured on its own (kernel.cpp's last Pairs row); otherwise the
     // pair is measured with the post EQ flat, i.e. skipped, so the existing numbers stay comparable
     for (int k = 0; k < kEqParams; ++k)
       c.peq[v][k] = (int8_t)(a == kOff && b == kOff ? eq_store(k, k < 2 ? 70 : 100) : eq_store(k, kEqFlat(k)));
   }
-  float x[kVoices][kBlock];
+  float x[core::ins::kVoices][kBlock];
   uint64_t sum = 0;
   uint32_t worst = 0, h = 2166136261u;
   for (int n = 0; n < 4000; ++n) {
-    for (int v = 0; v < kVoices; ++v)   // (the test signal outside the timing: its sinf would weigh more than the chains)
+    for (int v = 0; v < core::ins::kVoices; ++v)   // (the test signal outside the timing: its sinf would weigh more than the chains)
       for (int s = 0; s < kBlock; ++s) x[v][s] = 0.3f * sinf(0.05f * (float)(n * kBlock + s) * (float)(v + 1));
     uint32_t t0 = core::cycles();
-    for (int v = 0; v < kVoices; ++v) e->ProcessMono(v, x[v], kBlock, c);
+    for (int v = 0; v < core::ins::kVoices; ++v) e->ProcessMono(v, x[v], kBlock, c);
     uint32_t t = core::cycles() - t0;
     sum += t;
     if (t > worst) worst = t;
     if (hash)
-      for (int v = 0; v < kVoices; ++v)
+      for (int v = 0; v < core::ins::kVoices; ++v)
         for (int s = 0; s < kBlock; ++s) h = (h ^ (uint32_t)(int32_t)(x[v][s] * 1048576.0f)) * 16777619u;
   }
   *worst_block = worst;
@@ -606,11 +611,11 @@ int rytm_pattern(int* transport) {
 #endif
 }
 uint32_t machine_gen(int vi) {
-  const core::V& x = core::v[vi & 7];
+  const core::V& x = core::v[core::voice_wrap(vi)];
   return x.user >= 0 ? (uint32_t) (x.user + 1) | um::code_epoch() << 3 : 0;
 }
 const char* machine_name(int vi) {
-  const core::V& x = core::v[vi & 7];
+  const core::V& x = core::v[core::voice_wrap(vi)];
   // the shared short names (core/machines.h machine_short: the Rytm's SIDECAR page says the same)
   return x.user >= 0 ? "USER" : core::machine_short(x.mi ? core::kMidiMachine : x.li ? core::kLiveMachine : x.cp ? core::kChopMachine : x.gr ? core::kGranMachine : x.wt ? core::kWaveMachine : x.ms ? core::kMultiMachine
                                                     : x.fm ? core::kFm : x.juno ? core::kJuno : x.grain ? core::kGrainMachine

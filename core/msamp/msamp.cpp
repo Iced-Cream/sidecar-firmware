@@ -1816,10 +1816,10 @@ CORE_COLD bool step() {
   return false;
 }
 
-CORE_COLD bool forced(int vi) { return force[vi & 7]; }
+CORE_COLD bool forced(int vi) { return force[voice_wrap(vi)]; }
 
 CORE_COLD void report(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   for (int k = 0; k < 16; ++k) vp[vi][k] = p[k];
   select(vi);
   pools::seen(pools::kInstr, srclib::code_of(vp[vi][0]));   // the used set
@@ -1841,7 +1841,7 @@ CORE_COLD void report(int vi, int note, int vel, const float* p) {
 }
 
 CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   int s = vslot[vi];
   if (key < 0 || key > 127) return;
   if (s < 0 || slots[s].state != kReady) {   // its instrument loads: the note waits (loaded() starts it)
@@ -1867,7 +1867,7 @@ CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
 }
 
 CORE_COLD void live_off(int vi, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   for (int k = 0; k < kPerVoice; ++k)   // still waiting for the instrument: dropped
     if (lpend[vi][k].on && lpend[vi][k].ch == ch && (mnote < 0 || lpend[vi][k].mnote == mnote)) lpend[vi][k].on = false;
   uint8_t keys[kPerVoice];
@@ -1893,14 +1893,14 @@ CORE_COLD void live_off(int vi, int ch, int mnote) {
 
 CORE_COLD int voice_notes(int vi) {
   int a = 0;
-  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[vi & 7][k]);
+  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[voice_wrap(vi)][k]);
   return a;
 }
 
 CORE_COLD int voice_keys(int vi, uint8_t* keys, int max) {
   int n = 0;
   for (int k = 0; k < kPerVoice && n < max; ++k) {
-    const Note& x = notes[vi & 7][k];
+    const Note& x = notes[voice_wrap(vi)][k];
     if (!note_free(x) && !x.rtrig) keys[n++] = x.key;
   }
   return n;
@@ -1912,7 +1912,7 @@ CORE_COLD const char* entry_name(int inst) {
 }
 
 CORE_COLD void note_off(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   release_voice(vi, vp[vi][3] >= 64);
 }
@@ -1943,7 +1943,7 @@ uint32_t list_gen() { return __atomic_load_n(&g_list_gen, __ATOMIC_ACQUIRE); }
 CORE_COLD int src_entry(int vi, int v) { return !list || nlist <= 0 ? -1 : v < 0 ? 0 : v >= nlist ? nlist - 1 : v; }
 CORE_COLD bool voice_picked(int) { return false; }   // (no picks over INST: a choice writes INST)
 CORE_COLD bool pick(int vi, int e) {   // the touchscreen's choice: INST written on the Rytm (48: the kit keeps it)
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || !list || e < 0 || e >= nlist) return false;
   ui::remote_param_write(vi, kMultiMachine, 0, e & 127, srclib::lo_of(e));
   vp[vi][0] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
@@ -1953,7 +1953,7 @@ CORE_COLD bool pick(int vi, int e) {   // the touchscreen's choice: INST written
 }
 
 CORE_COLD void silence(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   pend[vi].on = false;
   for (int k = 0; k < kPerVoice; ++k) lpend[vi][k].on = false;
   for (int k = 0; k < kPerVoice; ++k) kill(vi, k);
@@ -1967,7 +1967,7 @@ inline float herm(float xm1, float x0, float x1, float x2, float t) {
 }
 }  // namespace
 
-static float head_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};   // the render core's: each voice's headroom gain
+static PerVoice<float> head_g(1.0f);   // the render core's: each voice's headroom gain
 
 static void render_impl(int vi, float* out, float* outr, int nfr);
 void render_add(int vi, float* out, int nfr) { render_impl(vi, out, nullptr, nfr); }
@@ -2131,7 +2131,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
     for (int s = 0; s < nfr; ++s) dstr[s] += accr[s] * (g0 + dg * (float)(s + 1));
 }
 
-CORE_COLD float headroom(int vi) { return head_g[vi & 7]; }
+CORE_COLD float headroom(int vi) { return head_g[voice_wrap(vi)]; }
 
 CORE_COLD bool command(const char* p, char* out, int cap) {
   if (strncmp(p, "msamp", 5) != 0 || (p[5] && p[5] != '=')) return false;
@@ -2225,7 +2225,7 @@ const Stats& stats() {
   return st;
 }
 const char* list_path(int k) { return k >= 0 && k < nlist ? list[k].path : ""; }
-int voice_slot(int vi) { return vslot[vi & 7]; }
+int voice_slot(int vi) { return vslot[voice_wrap(vi)]; }
 const Desc* slot_desc(int s) { return s >= 0 && s < kSlots && slots[s].state == kReady ? &slots[s].d : nullptr; }
 uint64_t slot_bytes(int s) { return s >= 0 && s < kSlots ? slots[s].used : 0; }
 bool slot_ram(int s) { return s >= 0 && s < kSlots && slots[s].ram; }

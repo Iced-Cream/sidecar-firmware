@@ -430,20 +430,21 @@ static inline int16_t knee16(float y) {
   float q = y * 32767.0f;
   return (int16_t)(q > 32767.0f ? 32767 : q < -32768.0f ? -32768 : q);
 }
-void voice_out(int vi, int16_t (*ring)[kVoices], const int* row, int n, int16_t (*ring_r)[kVoices]) {
-  if (vi < 0 || vi >= kVoices) return;
-  amp::service(vi);   // an AMP capture offered to a slot not playing AMP: taken now
-  if (!ring_r) g_engine.MarkMono(vi);
-  if (!g_engine.Active(vi, control)) return;
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices]) {
+  if (vi < 0 || vi >= core::kVoices) return;
+  const int c = box_voice(vi);   // its box voice's chain (one box's chains until slot 1 has its own)
+  amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now
+  if (!ring_r) g_engine.MarkMono(c);
+  if (!g_engine.Active(c, control)) return;
   float x[64], r[64];
   if (n > 64) n = 64;
   for (int i = 0; i < n; ++i) x[i] = ring[row[i]][vi] * (1.0f / 32768.0f);
   if (ring_r) {
     for (int i = 0; i < n; ++i) r[i] = ring_r[row[i]][vi] * (1.0f / 32768.0f);
-    g_engine.ProcessVoiceStereo(vi, x, r, n, control);
+    g_engine.ProcessVoiceStereo(c, x, r, n, control);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]), ring_r[row[i]][vi] = knee16(r[i]);
   } else {
-    g_engine.ProcessMono(vi, x, n, control);
+    g_engine.ProcessMono(c, x, n, control);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]);
   }
   __atomic_fetch_add(&g_stats.voice_blocks, 1u, __ATOMIC_RELAXED);

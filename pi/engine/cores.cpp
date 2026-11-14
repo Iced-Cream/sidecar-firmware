@@ -307,13 +307,15 @@ void CEngineCores::Run (unsigned nCore)
 
 void CEngineCores::Worker (unsigned nCore)
 {
-	const unsigned v0 = nCore == 1 ? 0 : s_nSplit, v1 = nCore == 1 ? s_nSplit : bridge::kVoices;
+	// each slot's eight split as one box's always were (split=4: 0-3 here, 4-7 on core 2), slot 1's as 8 + the same
+	const unsigned v0 = nCore == 1 ? 0 : s_nSplit, v1 = nCore == 1 ? s_nSplit : bridge::kBoxVoices;
 	// static: they survive the guard's longjmp
 	static volatile u32 s_nSeen[3];		// the last block generation this core finished
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
-	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u", nCore, v0, v1 - 1);
+	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u and %u-%u (slot 1's, while a box has it)", nCore,
+				v0, v1 - 1, v0 + bridge::kBoxVoices, v1 - 1 + bridge::kBoxVoices);
 	if (__builtin_setjmp (g_Guard.JumpBuffer (nCore)))
 	{
 		// a fault in a voice's render (guard.cpp returned from the exception into here, at task level): that
@@ -331,7 +333,7 @@ void CEngineCores::Worker (unsigned nCore)
 	for (;;)
 	{
 		u32 nGen;
-		unsigned vFirst;
+		unsigned vFirst;	// an engine voice (a fault's resume may be in slot 1's group)
 		if (s_nResume[nCore])
 		{
 			nGen = s_nGenNow[nCore];
@@ -348,8 +350,13 @@ void CEngineCores::Worker (unsigned nCore)
 			s_nT0[nCore] = Ticks ();
 			vFirst = v0;
 		}
-		for (unsigned v = vFirst; v < v1; v++)
+		// the voices of this core: v0..v1-1 of each slot that renders (slot_renders: slot 1's only while a box has it)
+		for (unsigned v = vFirst; v < bridge::kVoices; v++)
 		{
+			const unsigned k = v % bridge::kBoxVoices, sl = v / bridge::kBoxVoices;
+			if (k < v0) { v += v0 - k - 1; continue; }
+			if (k >= v1) { v += bridge::kBoxVoices - k - 1; continue; }
+			if (k == v0 && !bridge::slot_renders ((int) sl)) { v += v1 - v0 - 1; continue; }
 			const void *pMach = bridge::machine_name ((int) v);	// the guard's machine key: a static name,
 			const u32 nMGen = bridge::machine_gen ((int) v);	// and a user plugin's slot and load
 			if (g_Guard.Muted (v) && !g_Guard.Fresh (v, pMach, nMGen))
@@ -396,9 +403,14 @@ void CEngineCores::RenderBlock (void)
 	}
 	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());
 	if (nUs > s_nMaxBlock) s_nMaxBlock = nUs;
+	// the output stage: the base box's eight (one box's output until slot 1 has its own; bridge.h out_base)
+	const unsigned b = (unsigned) bridge::out_base ();
+	static s16 Box[bridge::kBlock][bridge::kBoxVoices], BoxR[bridge::kBlock][bridge::kBoxVoices];
+	for (unsigned s = 0; s < bridge::kBlock; s++)
+		for (unsigned k = 0; k < bridge::kBoxVoices; k++) Box[s][k] = s_Block[s][b + k], BoxR[s][k] = s_BlockR[s][b + k];
 	u8 nSt = 0;
-	for (unsigned v = 0; v < bridge::kVoices; v++) nSt |= s_St[v] ? 1u << v : 0;
-	g_Output.Push (s_Block, bridge::kBlock, s_BlockR, nSt);
+	for (unsigned k = 0; k < bridge::kBoxVoices; k++) nSt |= s_St[b + k] ? 1u << k : 0;
+	g_Output.Push (Box, bridge::kBlock, BoxR, nSt);
 	s_nBlocks++;
 }
 

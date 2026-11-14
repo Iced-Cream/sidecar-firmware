@@ -60,7 +60,7 @@ static_assert(seq::kArpLockMax[0] == kModes - 1 && seq::kArpLockMax[1] == kSpeed
 Vo vo[kVoices];
 Lk lk[kVoices];
 uint16_t code[12];
-uint8_t running = 0;   // bit vi
+uint32_t running = 0;   // bit vi (engine voices)
 Stats st;
 uint32_t rnd = 0x2545F491u;
 uint32_t check_ms = 0;
@@ -99,7 +99,7 @@ CORE_COLD void wake(int vi) {
     vo[vi].run = true;
     vo[vi].started = false;
     vo[vi].pos = 0;
-    running |= (uint8_t)(1u << vi);
+    running |= 1u << vi;
     ++st.running;
     ++st.chords;
   }
@@ -107,7 +107,7 @@ CORE_COLD void wake(int vi) {
 CORE_COLD void sleep(int vi) {
   if (vo[vi].run) {
     vo[vi].run = false;
-    running &= (uint8_t)~(1u << vi);
+    running &= ~(1u << vi);
     --st.running;
   }
 }
@@ -316,7 +316,7 @@ CORE_COLD bool live_off(int vi, int ch, int key) {
   return release(vi, ch, key, -1) > 0;
 }
 CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!on(vi)) return false;
   drop(vi, kLiveTrig, -1, -1);   // mono on the voice, as a trig is
   if (!vo[vi].n) vo[vi].seq_cfg = false;

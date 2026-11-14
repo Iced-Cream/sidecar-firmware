@@ -1137,7 +1137,7 @@ CORE_COLD bool step() {
   if (rs.state == kRsPlaying && (int32_t)(now_ms() - rs.until_ms) >= 0) {
     samp::stop();
     for (int k = 0; k < kPerVoice; ++k)   // the take is over: its player ends (a LOOP slice would not)
-      if (notes[rs.vi & 7][k].keep) kill_note(notes[rs.vi & 7][k]);
+      if (notes[voice_wrap(rs.vi)][k].keep) kill_note(notes[voice_wrap(rs.vi)][k]);
     rs.state = kRsWriting;
   }
   if (rs.state == kRsWriting) {
@@ -1181,10 +1181,10 @@ CORE_COLD bool step() {
   return pcache::step();
 }
 
-CORE_COLD bool forced(int vi) { return vs[vi & 7].force; }
+CORE_COLD bool forced(int vi) { return vs[voice_wrap(vi)].force; }
 
 CORE_COLD void report(int vi, int note, int vel, const float* p) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job) return;
   VS& x = vs[vi];
   for (int k = 0; k < 16; ++k) x.p[k] = p[k];
@@ -1202,7 +1202,7 @@ CORE_COLD void report(int vi, int note, int vel, const float* p) {
 }
 
 CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || key < 0 || key > 127) return;
   VS& x = vs[vi];
   if (x.code < 0 && x.buf_src < 0) set_source(vi);
@@ -1228,7 +1228,7 @@ CORE_COLD void live_on(int vi, int key, int vel, int ch, int mnote) {
 }
 
 CORE_COLD void live_off(int vi, int ch, int mnote) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   for (int k = 0; k < kPerVoice; ++k) {
     Note& n = notes[vi][k];
     if (!n.live || n.ch != ch || (mnote >= 0 && n.mnote != mnote)) continue;
@@ -1238,18 +1238,18 @@ CORE_COLD void live_off(int vi, int ch, int mnote) {
 }
 
 CORE_COLD void seq_hit(int vi, int note, int vel) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job) return;
   if (vs[vi].code < 0 && vs[vi].buf_src < 0) set_source(vi);
   hit(vi, note, vel, true);
 }
 CORE_COLD int voice_notes(int vi) {
   int a = 0;
-  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[vi & 7][k]);
+  for (int k = 0; k < kPerVoice; ++k) a += !note_free(notes[voice_wrap(vi)][k]);
   return a;
 }
 CORE_COLD void note_off(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   vs[vi].pend.on = false;
   // The 0x11 carries only the voice: it ends the NEWEST held trig note (identical under MONO; a POLY note of an older trig
   // keeps its own trig's 0x11). A GATE note that started under kStaleOffMs ago is not released: that 0x11 is the previous trig's
@@ -1284,7 +1284,7 @@ CORE_COLD void release_gates() {
     }
 }
 CORE_COLD void silence(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   vs[vi].pend.on = false;
   if (vs[vi].lazy.on) vs[vi].lazy.on = false;
   for (int k = 0; k < kPerVoice; ++k) kill_note(notes[vi][k]);
@@ -1300,19 +1300,19 @@ CORE_COLD int slices(int vi) {
   const Map* m = map_of(vi);
   return m ? m->n : 0;
 }
-CORE_COLD int slice_of_hit(int vi, int note, bool seq_note) { return job ? hit_slice(vi & 7, note, seq_note) : -1; }
-CORE_COLD int played_slice(int vi) { return vs[vi & 7].last; }
-CORE_COLD bool sample_ready(int vi) { return job && voice_src(vi & 7) != nullptr; }
+CORE_COLD int slice_of_hit(int vi, int note, bool seq_note) { return job ? hit_slice(voice_wrap(vi), note, seq_note) : -1; }
+CORE_COLD int played_slice(int vi) { return vs[voice_wrap(vi)].last; }
+CORE_COLD bool sample_ready(int vi) { return job && voice_src(voice_wrap(vi)) != nullptr; }
 CORE_COLD uint32_t sample_frames(int vi) {
-  const Src* s = job ? voice_src(vi & 7) : nullptr;
+  const Src* s = job ? voice_src(voice_wrap(vi)) : nullptr;
   return s ? s->frames : 0;
 }
 CORE_COLD uint32_t sample_rate(int vi) {
-  const Src* s = job ? voice_src(vi & 7) : nullptr;
+  const Src* s = job ? voice_src(voice_wrap(vi)) : nullptr;
   return s ? s->rate : 48000;
 }
 CORE_COLD int outline(int vi, uint32_t a, uint32_t b, int cols, float* mn, float* mx) {
-  const Src* s = job ? voice_src(vi & 7) : nullptr;
+  const Src* s = job ? voice_src(voice_wrap(vi)) : nullptr;
   if (!s || cols <= 0 || b <= a) return 0;
   if (b > s->frames) b = s->frames;
   if (a >= b) return 0;
@@ -1341,25 +1341,25 @@ CORE_COLD int outline(int vi, uint32_t a, uint32_t b, int cols, float* mn, float
 CORE_COLD int playheads(int vi, int32_t* pos, int max) {
   int n = 0;
   for (int k = 0; k < kPerVoice && n < max; ++k) {
-    int32_t h = g_head[vi & 7][k];
+    int32_t h = g_head[voice_wrap(vi)][k];
     if (h >= 0) pos[n++] = h;
   }
   return n;
 }
 CORE_COLD uint32_t map_gen(int vi) {
-  int m = job ? vs[vi & 7].map : -1;
+  int m = job ? vs[voice_wrap(vi)].map : -1;
   return m >= 0 ? maps[m].gen * 2 + (maps[m].state == kMReady) : 0;
 }
 CORE_COLD const char* map_file(int vi) {
-  int m = job ? vs[vi & 7].map : -1;
+  int m = job ? vs[voice_wrap(vi)].map : -1;
   return m >= 0 && maps[m].saved_once ? maps[m].file : "";
 }
 CORE_COLD int map_row(int vi) {
-  int m = job ? vs[vi & 7].map : -1;
+  int m = job ? vs[voice_wrap(vi)].map : -1;
   return m >= 0 ? maps[m].inst : -1;
 }
 CORE_COLD bool map_dirty(int vi) {
-  int m = job ? vs[vi & 7].map : -1;
+  int m = job ? vs[voice_wrap(vi)].map : -1;
   return m >= 0 && maps[m].dirty;
 }
 
@@ -1380,7 +1380,7 @@ CORE_COLD bool edit_transient(int vi, int sens) {
   return true;
 }
 CORE_COLD bool transient_busy(int vi) {
-  int m = job ? vs[vi & 7].map : -1;
+  int m = job ? vs[voice_wrap(vi)].map : -1;
   return m >= 0 && maps[m].on_busy;
 }
 CORE_COLD bool edit_add(int vi, uint32_t frame) {
@@ -1457,7 +1457,7 @@ CORE_COLD int latency() {
 }
 CORE_COLD void set_latency(int frames) { g_lat = frames < 0 ? -1 : frames > 9600 ? 9600 : frames; }
 CORE_COLD bool lazy_arm(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   const Src* s = job ? voice_src(vi) : nullptr;
   if (!s || vs[vi].map < 0 || maps[vs[vi].map].state != kMReady) return false;
   VS& x = vs[vi];
@@ -1475,7 +1475,7 @@ CORE_COLD bool lazy_arm(int vi) {
   return true;
 }
 CORE_COLD int32_t lazy_tap(int vi) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   VS& x = vs[vi];
   const Src* s = job ? voice_src(vi) : nullptr;
   if (!s || !x.lazy.on) return -1;
@@ -1498,9 +1498,9 @@ CORE_COLD int32_t lazy_tap(int vi) {
   }
   return at;
 }
-CORE_COLD bool lazy_undo(int vi) { return vs[vi & 7].lazy.on && chop::lazy_undo(&vs[vi & 7].lazy); }
+CORE_COLD bool lazy_undo(int vi) { return vs[voice_wrap(vi)].lazy.on && chop::lazy_undo(&vs[voice_wrap(vi)].lazy); }
 CORE_COLD bool lazy_stop(int vi, bool keep) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   VS& x = vs[vi];
   if (!x.lazy.on) return false;
   x.lazy.on = false;
@@ -1517,11 +1517,11 @@ CORE_COLD bool lazy_stop(int vi, bool keep) {
   log(CORE_STR("chop: LAZY: %d slices at%s"), m->m.n, b);
   return true;
 }
-CORE_COLD bool lazy_on(int vi) { return job && vs[vi & 7].lazy.on; }
-CORE_COLD const Lazy* lazy_state(int vi) { return job ? &vs[vi & 7].lazy : nullptr; }
-CORE_COLD uint32_t lazy_playhead(int vi) { return ld_acq(&g_lazy_t[vi & 7]); }
+CORE_COLD bool lazy_on(int vi) { return job && vs[voice_wrap(vi)].lazy.on; }
+CORE_COLD const Lazy* lazy_state(int vi) { return job ? &vs[voice_wrap(vi)].lazy : nullptr; }
+CORE_COLD uint32_t lazy_playhead(int vi) { return ld_acq(&g_lazy_t[voice_wrap(vi)]); }
 CORE_COLD void audition(int vi, int k) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job || vs[vi].lazy.on) return;
   live_off(vi, kPreviewCh, -1);
   live_on(vi, k, 110, kPreviewCh, k);
@@ -1531,7 +1531,7 @@ CORE_COLD void audition(int vi, int k) {
 
 // ---- RESAMPLE
 CORE_COLD bool resample(int vi, int k, bool fx) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   // review M5: one take at a time - an offer not yet answered (YES / NO) holds the next one off
   if (!job || rs.state == kRsPlaying || rs.state == kRsWriting || rs.state == kRsOffer) return false;
   const Map* mp = map_of(vi);
@@ -1609,7 +1609,7 @@ CORE_COLD bool resample_answer(bool yes) {
 }
 
 CORE_COLD bool use_buffer(int vi, const int16_t* pcm, uint32_t frames, int ch, uint32_t rate) {
-  vi &= 7;
+  vi = voice_wrap(vi);
   if (!job) return false;
   VS& x = vs[vi];
   for (int k = 0; k < kPerVoice; ++k) kill_note(notes[vi][k]);
@@ -1967,8 +1967,8 @@ void render_voice(int vi, float* l, float* r, int cnt) {
 }
 }  // namespace
 
-void render_add(int vi, float* out, int n) { render_voice(vi & 7, out, nullptr, n); }
-void render_add2(int vi, float* l, float* r, int n) { render_voice(vi & 7, l, r, n); }
+void render_add(int vi, float* out, int n) { render_voice(voice_wrap(vi), out, nullptr, n); }
+void render_add2(int vi, float* l, float* r, int n) { render_voice(voice_wrap(vi), l, r, n); }
 #endif
 
 }  // namespace chop
