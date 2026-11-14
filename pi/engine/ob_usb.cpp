@@ -189,7 +189,7 @@ void CObUsb::PollTargets (void)
 		if (s_pTarget[k] != 0) s_pTarget[k]->MirrorPoll ();
 }
 unsigned CObUsb::s_nGen = 0, CObUsb::s_nPipeResets = 0;
-u8 *CObUsb::s_PipeBuf[CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf = 0;	// usb=mirror's: allocated once, as s_InBuf
+u8 *CObUsb::s_PipeBuf[CObUsb::Slots][CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf[CObUsb::Slots] = {};	// usb=mirror's: allocated once per slot, as s_InBuf (two boxes can be mirrored at once)
 unsigned CObUsb::s_nDetaches = 0, CObUsb::s_nFreedInFlight = 0, CObUsb::s_nKeptInFlight = 0;
 static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
 static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
@@ -841,8 +841,8 @@ void CObUsb::MirrorAttach (void)
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
 	m_bMirror = TRUE;
 
-	if (s_pCtlBuf == 0) s_pCtlBuf = AllocDmaBuf ();
-	m_pCtlBuf = s_pCtlBuf;
+	if (s_pCtlBuf[m_nSlot] == 0) s_pCtlBuf[m_nSlot] = AllocDmaBuf ();
+	m_pCtlBuf = s_pCtlBuf[m_nSlot];
 	CUSBHostController *pHost = GetHost ();
 	u8 *pBuf = m_pCtlBuf;
 	u16 nLang = 0x0409;
@@ -901,8 +901,8 @@ void CObUsb::MirrorAttach (void)
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
-		if (s_PipeBuf[m_nPipes] == 0) s_PipeBuf[m_nPipes] = AllocDmaBuf ();
-		p.pBuf = s_PipeBuf[m_nPipes];
+		if (s_PipeBuf[m_nSlot][m_nPipes] == 0) s_PipeBuf[m_nSlot][m_nPipes] = AllocDmaBuf ();
+		p.pBuf = s_PipeBuf[m_nSlot][m_nPipes];
 		p.bBusy = p.bStopped = FALSE;
 		p.nPackets = p.nErrors = p.nTries = p.nLastTry = 0;
 		p.bRefused = FALSE;
