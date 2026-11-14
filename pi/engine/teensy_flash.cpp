@@ -315,6 +315,7 @@ void Put (uint64_t nOff, uint64_t nTotal, uint32_t nCrc, const uint8_t *pData, u
 		s_Sha.init ();
 		s_ShaHex[0] = 0;
 		s_Error[0] = 0;
+		s_nBlocks = 0;
 		s_State = Uploading;
 	}
 	if (s_State != Uploading || nTotal != s_nTotal) { Res (r, 409, "expected off=0 (a new upload)"); return; }
@@ -351,6 +352,8 @@ void Start (const char *pExpect, fsweb::Result *r)
 	if (Busy ()) { Res (r, 409, "a write is running (GET /teensy/state)"); return; }
 	if (s_State != Ready && s_State != Done && s_State != Failed) { Res (r, 409, "no program uploaded (POST /teensy/put)"); return; }
 	if (s_ShaHex[0] == 0) { Res (r, 409, "no program uploaded (POST /teensy/put)"); return; }
+	if (CTeensyBoot::Get () == 0 && !RelayUp ())
+		{ Res (r, 409, "no Teensy on the USB-A ports (neither the relay 1209:0002 nor its bootloader 16C0:0478)"); return; }
 	if (s_pTask == 0) s_pTask = new CFlashTask;
 	strncpy (s_Expect, pExpect ? pExpect : "", sizeof s_Expect - 1);
 	s_Expect[sizeof s_Expect - 1] = 0;
@@ -365,7 +368,7 @@ void Start (const char *pExpect, fsweb::Result *r)
 		s_State = Entering;		// already in its bootloader (a recovery): Step goes straight to the write
 		Res (r, 200, "started: the Teensy is in its bootloader, %u blocks, sha256 %s", s_nBlocks, s_ShaHex);
 	}
-	else if (RelayUp ())
+	else
 	{
 #ifdef CIRCLE_GADGET_MIRROR
 		CTeensyTarget::RequestBootloader ();
@@ -373,7 +376,6 @@ void Start (const char *pExpect, fsweb::Result *r)
 		s_State = Entering;
 		Res (r, 200, "started: the relay is told to enter its bootloader, %u blocks, sha256 %s", s_nBlocks, s_ShaHex);
 	}
-	else { Res (r, 409, "no Teensy on the USB-A ports (neither the relay 1209:0002 nor its bootloader 16C0:0478)"); return; }
 	CLogger::Get ()->Write (From, LogNotice, "teensyflash: %s", r->msg);
 }
 
