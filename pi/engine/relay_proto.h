@@ -126,6 +126,14 @@ struct Stats
 	uint32_t hist_to_pi[kHistBins];		// audio block: the computer sent it -> the Pi took it
 	uint32_t worst_to_pc_us, worst_to_pi_us;
 	uint32_t isr1, isr2;
+	// TR2b (T329): the link's audio OUT packets from the Pi took 4-8+ ms with the real A4 and the Engine (0.5-2 ms in
+	// relaytest); appended so an older reader still gets the fields above
+	uint32_t isr1_max_us, isr2_max_us;	// the longest run of each port's interrupt
+	uint32_t link_gap_max_us;		// longest gap between two link audio packets taken (under 1 s: a stream, not idle)
+	uint32_t link_gap_hist[kHistBins];	// those gaps, 125 us bins
+	uint32_t link_dry;			// a link audio packet taken with no other dTD armed: the next one NAKed until re-armed
+	uint32_t link_nak_polls;		// loop() polls that saw the link audio OUT endpoint NAK (ENDPTNAK)
+	uint32_t pc_audio_err;			// the computer's audio IN dTDs that ended with an error
 };
 
 inline unsigned hist_bin (uint32_t us)

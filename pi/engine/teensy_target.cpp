@@ -1,5 +1,6 @@
 // pi/engine/teensy_target.cpp - see teensy_target.h, relay_proto.h and docs/teensy-mirror.md
 #include "teensy_target.h"
+#include <stddef.h>
 #include "ob_usb.h"
 #include "sidecar_gadget.h"
 #include "link1.h"
@@ -836,9 +837,11 @@ void CTeensyTarget::MirrorPoll (void)
 		// the Teensy's own counters: how long the box's blocks waited there for the computer (the margin is 8 blocks,
 		// about 1.2 ms), and its drops
 		Stats ts;
-		if (Vendor (TRUE, kReqStats, 0, 0, 0, sizeof ts) == (int) sizeof ts)
+		memset (&ts, 0, sizeof ts);
+		int n = Vendor (TRUE, kReqStats, 0, 0, 0, sizeof ts);
+		if (n >= (int) offsetof (Stats, isr1_max_us))	// a Teensy build before TR2c answers without the fields after isr2
 		{
-			memcpy (&ts, m_pCtlBuf, sizeof ts);
+			memcpy (&ts, m_pCtlBuf, (unsigned) n);
 			unsigned over1ms = 0, total = 0;
 			for (unsigned i = 0; i < kHistBins; i++) { total += ts.hist_to_pc[i]; if (i >= 8) over1ms += ts.hist_to_pc[i]; }
 			CLogger::Get ()->Write (From, LogNotice, "relay teensy: to-pc %u drop %u empty %u qmax %u worst %u us, >=1 ms %u of %u "
@@ -846,6 +849,15 @@ void CTeensyTarget::MirrorPoll (void)
 						ts.audio_to_pc, ts.audio_to_pc_drop, ts.audio_to_pc_empty, ts.q_to_pc_max, ts.worst_to_pc_us,
 						over1ms, total, ts.audio_to_pi, ts.audio_to_pi_drop, ts.worst_to_pi_us, ts.ctl_forwarded,
 						ts.ctl_answered, ts.ctl_late, ts.ctl_aborted, ts.pc_resets, ts.link_resets);
+			if (n >= (int) sizeof (Stats))	// a Teensy build with the TR2c fields (older ones answer shorter)
+				CLogger::Get ()->Write (From, LogNotice, "relay teensy: isr max link %u us pc %u us | link gap max %u us, "
+							"hist <125 %u <250 %u <375 %u <500 %u <1ms %u <2ms %u more %u | dry %u nak polls %u | pc audio err %u",
+							ts.isr1_max_us, ts.isr2_max_us, ts.link_gap_max_us, ts.link_gap_hist[0], ts.link_gap_hist[1],
+							ts.link_gap_hist[2], ts.link_gap_hist[3],
+							ts.link_gap_hist[4] + ts.link_gap_hist[5] + ts.link_gap_hist[6] + ts.link_gap_hist[7],
+							ts.link_gap_hist[8] + ts.link_gap_hist[9] + ts.link_gap_hist[10] + ts.link_gap_hist[11] +
+							ts.link_gap_hist[12] + ts.link_gap_hist[13] + ts.link_gap_hist[14], ts.link_gap_hist[15],
+							ts.link_dry, ts.link_nak_polls, ts.pc_audio_err);
 		}
 	}
 }

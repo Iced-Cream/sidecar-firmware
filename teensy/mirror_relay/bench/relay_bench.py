@@ -54,6 +54,8 @@ STATS_FIELDS += ["chan_to_pc%d" % i for i in range(4)] + ["chan_to_pi%d" % i for
 STATS_FIELDS += ["chan_nocredit%d" % i for i in range(4)] + "events events_drop q_to_pc_max q_to_pi_max".split()
 STATS_FIELDS += ["hist_to_pc%d" % i for i in range(16)] + ["hist_to_pi%d" % i for i in range(16)]
 STATS_FIELDS += "worst_to_pc_us worst_to_pi_us isr1 isr2".split()
+STATS_FIELDS += "isr1_max_us isr2_max_us link_gap_max_us".split() + ["link_gap_hist%d" % i for i in range(16)]
+STATS_FIELDS += "link_dry link_nak_polls pc_audio_err".split()
 STATS_FMT = "<%dI" % len(STATS_FIELDS)
 
 

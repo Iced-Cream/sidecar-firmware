@@ -172,6 +172,7 @@ static void a_to_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t err)
 {
 	unsigned k = t->param;
 	a_to_pc_busy[k] = 0;
+	if (err) st.pc_audio_err++;
 	if (!err)
 	{
 		st.audio_to_pc++;
@@ -183,9 +184,24 @@ static void a_to_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t err)
 	a_to_pc_pump ();
 }
 
+static uint32_t link_last_cyc;
+static bool link_seen;
+
 static void a_from_pi_done (ci_dev *, uint8_t, ci_td *t, uint32_t len, uint32_t err)
 {
 	unsigned k = t->param;
+	uint32_t now = ARM_DWT_CYCCNT;
+	if (link_seen)
+	{
+		uint32_t us = cyc_us (now - link_last_cyc);
+		if (us < 1000000u)
+		{
+			st.link_gap_hist[hist_bin (us)]++;
+			if (us > st.link_gap_max_us) st.link_gap_max_us = us;
+		}
+	}
+	link_seen = true, link_last_cyc = now;
+	if (ci_queued (&L, kAudioFromPiEp) == 0) st.link_dry++;	// this was the last armed one (re-armed below)
 	if (!err && P.ep[kAudioInEp & 7][1].open)
 	{
 		if (aq_pc_head - aq_pc_tail >= kAQ) { aq_pc_tail++; st.audio_to_pc_drop++; }
@@ -819,8 +835,21 @@ static void l_reset (ci_dev *)
 
 static void l_port (ci_dev *) { st.link_hs = ci_high_speed (&L); }
 
-static void isr1 (void) { ci_isr (&L); }
-static void isr2 (void) { ci_isr (&P); }
+static void isr1 (void)
+{
+	uint32_t c = ARM_DWT_CYCCNT;
+	ci_isr (&L);
+	uint32_t us = cyc_us (ARM_DWT_CYCCNT - c);
+	if (us > st.isr1_max_us) st.isr1_max_us = us;
+}
+
+static void isr2 (void)
+{
+	uint32_t c = ARM_DWT_CYCCNT;
+	ci_isr (&P);
+	uint32_t us = cyc_us (ARM_DWT_CYCCNT - c);
+	if (us > st.isr2_max_us) st.isr2_max_us = us;
+}
 
 // ---------------------------------------------------------------- bring-up
 
@@ -892,6 +921,7 @@ void relay_begin (void)
 
 void relay_poll (void)
 {
+	if (L.ep[kAudioFromPiEp & 7][0].open && ci_nak_take (&L, kAudioFromPiEp)) st.link_nak_polls++;
 	if (connect_due && (pc_off_at == 0 || millis () - pc_off_at >= 300))
 	{
 		__disable_irq ();

@@ -167,6 +167,14 @@ void ci_queue (ci_dev *d, uint8_t addr, ci_td *t, void *buf, uint32_t len)
 
 uint32_t ci_queued (ci_dev *d, uint8_t addr) { return qh_of (d, addr)->queued; }
 
+bool ci_nak_take (ci_dev *d, uint8_t addr)
+{
+	uint32_t m = bit_of (addr);
+	bool nak = (R (0x178) & m) != 0;		// ENDPTNAK: RX bits 0-7, TX bits 16-23, write 1 to clear
+	if (nak) R (0x178) = m;
+	return nak;
+}
+
 void ci_stall (ci_dev *d, uint8_t addr, bool on)
 {
 	unsigned n = addr & 7;
