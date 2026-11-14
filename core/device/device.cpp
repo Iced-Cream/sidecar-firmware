@@ -90,7 +90,10 @@ CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) 
   return nullptr;
 }
 
-void strip_tick(uint32_t us) { strip::tick(*g_links[0].box->controls, us); }
+void strip_tick(uint32_t us) {   // (one box with controls at a time: the first slot's that has them)
+  for (const Link& l : g_links)
+    if (l.box && l.box->controls) return strip::tick(*l.box->controls, us);
+}
 
 static inline bool is_sidecar(const uint8_t* d, int len) { return len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54; }
 

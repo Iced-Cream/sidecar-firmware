@@ -209,7 +209,8 @@ bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m);
 // The control loop, every pass: a box with Controls runs its envelopes (strip.h). Nothing else: one test.
 void strip_tick(uint32_t us);
 inline void tick(uint32_t us) {
-  if (g_links[0].box && g_links[0].box->controls) strip_tick(us);
+  for (const Link& l : g_links)
+    if (l.box && l.box->controls) return strip_tick(us);
 }
 
 }  // namespace device
