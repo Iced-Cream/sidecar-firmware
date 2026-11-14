@@ -68,8 +68,23 @@ to the box only with `usbmidi=os:on`) into `link1::FromComputer`, sent from link
 which wait while the computer's SysEx is part way out. Only the slot-1 box (`mirror=rytm`, the default): with
 `mirror=a4` the relay shows the Rytm, whose MIDI is the host link, and its MIDI is not relayed.
 
-## Pi runs (KB analog-four-mkii hardware-tests T314-T323)
+## Pi runs (KB analog-four-mkii hardware-tests T314-T326)
 
+**State (2026-11-14, T326):** check 3 passes on the Pi with relaytest=1: every bench stage PASS (control requests, Pi ->
+computer audio with no corrupt or duplicated block, computer -> Pi audio, pipe echo lossless), worst Teensy wait 625 us
+against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder testbuild-teensyrelay-test3-ramdisk.
+
+- The corrupt Pi -> computer blocks of T323 were the A4's own Overbridge audio (the A4 is on the Pi's USB; rytmob2
+  streams it): relaytest's "feeding" flag was set across TestPoll, so the box's blocks (xHCI IRQ) passed FromBoxBlock's
+  test-mode gate (T324, bench `--dump`). A flag only around each call still let a few through (T325). Fixed in b39f391:
+  TestPoll sends through `SendBoxBlock`; FromBoxBlock drops every real box block in test mode.
+- The long Teensy waits (2.7-3.2 ms) were the Python reader: 8 reads of 8 blocks queued. With `--read-blocks 32
+  --read-depth 32` the worst is 0.5-0.6 ms (T324-T326).
+- Left: 0.6-0.8 % of relaytest's blocks lost. The Pi's test feed runs in core 0's loop and bursts up to 16 blocks when
+  the loop was held; the link's 16 URBs and the Teensy's 16-block queue overflow then (Pi drops ~6.5k, Teensy ~7.2k per
+  30 s). A real box's blocks come from the xHCI IRQ at a steady rate, so this is a test-mode limit; the A4 itself through
+  the relay is the check.
+- The bench counts a pipe echo left from the previous stage as stale (it made every echo count as a duplicate, T325).
 - The Pi reset with the relay attached until 72e4a61: a no-data link request passed a buffer, and Circle's xHCI asserts
   `nBufLen > 0` on a URB with a buffer at completion (xhciendpoint.cpp(450)). The same case is fixed in ob_usb.cpp's pipe
   OUT and forwarded control paths (a zero-length packet, a request with wLength 0).
@@ -80,17 +95,11 @@ which wait while the computer's SysEx is part way out. Only the slot-1 box (`mir
 
 ## Gaps (named, not done)
 
-1. **Pi build and run:** the kernel with `teensy_target.o` and `circle-usbdevicefactory3.patch` is not built yet;
-   then check 3 of two-boxes.md (the Pi forwards a box to the relay; jitter against the 8-block margin).
-2. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
+1. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
    two-links branch changes that file.
+2. **relaytest's feed** bursts after a held loop (see above); a timer-paced feed would let the test count losses exactly.
 
-## Next (handed over 2026-11-14)
+## Next
 
-1. Pi -> computer audio: dump the bad blocks on the bench (other blocks' data, shifted, or half-written?); suspects are the
-   Pi's 16-buffer pool in `FromBoxBlock`, the Teensy's `aq_pc` ring when it drops the oldest, and the reused
-   `m_pAudioOutURB[k]`.
-2. The same burst pattern (up to 16 blocks back to back, as relaytest's feed) from a PC playing the Pi, to see whether the
-   Teensy alone corrupts.
-3. A faster reader than the Python bench, to tell its limit from the relay's.
-4. Then a real A4 on the Pi's other USB-A port with Overbridge on the computer.
+1. The A4 through the relay: the A4 on the Pi's USB, relaytest off (cmdline usb=mirror), Overbridge on the computer on
+   the Teensy's USB2; the branch has the stock-A4 claim (be7df33). Judge by Overbridge's dropouts and the Teensy's waits.
