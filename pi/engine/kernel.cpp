@@ -376,6 +376,9 @@ boolean CKernel::Initialize (void)
 	g_Output.SetMode (strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
 											      : Output::kTracks);
 	g_Output.SetOutControl (&core::out::control);	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md)
+	g_OutputSide.SetMode (g_Output.GetMode ());	// slot 1's voices beside a Rytm (side_out.h): their own OUT routes,
+	g_OutputSide.SetOutControl (&core::out::control_side);	// their box's channels (set by its stream), no stereo=measure
+	g_OutputSide.SetMeasured (false);
 	// poolmono=1: stereo files summed at load (half the pool RAM for them; PRE / POST voices then play them centred)
 	bridge::pool_mono (m_Options.GetAppOptionDecimal ("poolmono", 0) != 0);
 	// trimpre= / trimpost= (tenths of a dB, may be negative): the PRE / POST pairs' calibration from stereo=measure
@@ -643,6 +646,11 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  (int) D.restart_last, (int) D.under_first, (int) D.under_last, D.since_reset,
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
+	pOut->Append (s);
+	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
+	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
+		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
+		  g_OutputSide.Streams ());
 	pOut->Append (s);
 	usbnet_pi::Status (pOut, k->m_pSidecar != 0 && k->m_pSidecar->NetInDevice (), k->m_pSidecar != 0 && k->m_pSidecar->NetUp (),
 			   k->m_pSidecar != 0 && k->m_pSidecar->NetLate ());	// late: reboot to use the cable

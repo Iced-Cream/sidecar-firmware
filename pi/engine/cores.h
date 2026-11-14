@@ -84,7 +84,7 @@ public:
 private:
 	void Worker (unsigned nCore);
 	void Control (void);
-	void RenderBlock (void);
+	void RenderBlock (int nSide);		// -1 the base box's block; a slot: the side stage's (side_out.h)
 	void Command (const char *pText);
 };
 
