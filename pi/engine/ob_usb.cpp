@@ -997,7 +997,7 @@ boolean CObUsb::PipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
 		if (p.bBusy || p.bStopped) return FALSE;	// halted: dropped until MirrorPipePoll has cleared it
 		if (nLength) memcpy (p.pBuf, pData, nLength);
 		CleanAndInvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-		CUSBRequest *pURB = new CUSBRequest (p.pEP, p.pBuf, nLength);	// its length is this packet's (IRQ-safe heap)
+		CUSBRequest *pURB = new CUSBRequest (p.pEP, nLength ? p.pBuf : 0, nLength);	// its length is this packet's (IRQ-safe heap); a zero-length one has no buffer (Circle asserts nBufLen > 0 on one)
 		pURB->SetCompletionRoutine (PipeOutStub, Param (pThis->m_nGen, i), pThis);
 		p.bBusy = TRUE;
 		p.pURB = pURB;					// ~CObUsb frees it if the box leaves first
@@ -1043,7 +1043,7 @@ boolean CObUsb::Control (const TSetupData *pSetup, const u8 *pOutData, unsigned 
 	memcpy (pS, pSetup, sizeof *pS);
 	if (!(pSetup->bmRequestType & REQUEST_IN) && pSetup->wLength) memcpy (pThis->m_pCtlBuf, pOutData, pSetup->wLength);
 	CleanAndInvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
-	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pThis->m_pCtlBuf, pSetup->wLength, pS);
+	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pSetup->wLength ? pThis->m_pCtlBuf : 0, pSetup->wLength, pS);	// no data stage: no buffer (Circle asserts nBufLen > 0 on one)
 	pURB->SetCompletionRoutine (MirrorCtlStub, Param (pThis->m_nGen, nSeq), pThis);
 	pThis->m_bCtlBusy = TRUE;
 	pThis->m_pCtlSetup = pS;
