@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "fmt/fmt.h"
-#include "fx/insert.h"   // g_amp_slot
 #include "fx/out.h"
 #include "host_link.h"
 #if CORE_POLY
@@ -76,7 +75,7 @@ static CORE_COLD void rebase() {
   if (b == g_base) return;
   g_base = b, g_web_link = (int8_t)b->index;
   if (!g_depth) g_cur = b;
-  ins::g_amp_slot = (int8_t)slot_of_voice(voice_base(*b));   // AMP plays on the base box's chains (insert.h)
+  out::g_base_slot = (int8_t)slot_of_voice(voice_base(*b));   // the base box's settings: its stage, the console's trim, AMP
 }
 
 CORE_COLD const Profile* by_id(uint16_t id) {
@@ -210,7 +209,7 @@ CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
 }
 
 CORE_COLD void reset() {
-  g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0;
+  g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0, out::g_base_slot = 0;
   for (Link& l : g_links) select(l, nullptr), l.state = nullptr;
   for (int k = 1; k < kLinks; ++k) g_links[k].out = nullptr;
   s_route[0] = 0, s_route[1] = 1, s_tx[0] = s_tx[1] = nullptr;

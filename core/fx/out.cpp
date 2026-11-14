@@ -17,6 +17,7 @@ namespace core {
 namespace out {
 
 Control control;
+volatile int8_t g_base_slot = 0;
 Control control1 = [] { Control c; defaults(c); return c; }();
 void (*on_change)() = nullptr;
 
@@ -159,7 +160,7 @@ bool any_stereo() {
   return false;
 }
 void set_trim(int pair, int db10) {
-  if (pair == 2) control.trk10 = (int16_t)clampi(db10, -240, 240);
+  if (pair == 2) control_of(g_base_slot).trk10 = (int16_t)clampi(db10, -240, 240);   // the base box's
   if (pair < 0 || pair > 1) return;
   control.trim10[pair] = (int16_t)clampi(db10, -240, 120);
 }

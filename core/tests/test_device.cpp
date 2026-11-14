@@ -355,10 +355,10 @@ int main() {
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
-    CHECK(out::control.trk10 == 180);
-    out::set_trim(2, 60);                              // a live stereo=trim:trk
+    CHECK(out::control1.trk10 == 180 && out::control.trk10 == 0);   // slot 1's, the A4's (slot 0's: the Rytm's)
+    out::set_trim(2, 60);                              // a live stereo=trim:trk: the base box's (the A4 alone)
     send(hello(device::kA4.id));                       // a repeated hello is no change of box
-    CHECK(out::control.trk10 == 60);
+    CHECK(out::control1.trk10 == 60);
     static int s_user = -1;                            // U1..U5: the A4 reports them as the Rytm does, the voice byte's flag
     hooks.user_report = [](int, int s, int, int, int, int) { s_user = s; };
     std::vector<uint8_t> t = sidecar({0x04, 0x50 + 1, 60, 100});

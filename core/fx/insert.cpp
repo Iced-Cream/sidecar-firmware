@@ -16,7 +16,6 @@ namespace ins {
 
 Control control;
 Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
-volatile int8_t g_amp_slot = 0;
 void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
@@ -456,7 +455,7 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
   const int c = box_voice(vi);   // its box voice's chain, in its slot's engine
   Engine& e = engine(slot);
   const Control& k = control_of(slot);
-  const bool amp = slot == g_amp_slot;
+  const bool amp = slot == out::g_base_slot;
   e.SetAmp(amp);
   if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
   if (!ring_r) e.MarkMono(c);
@@ -793,7 +792,7 @@ void reset() {
     for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f, g_send_off[v][b] = 0, send_refresh(v, b);
   g_engine.Reset();
 #if CORE_VOICES > 8
-  memset((void*)&control1, 0, sizeof control1);   // (g_amp_slot is core/device's)
+  memset((void*)&control1, 0, sizeof control1);
   g_engine1.Reset();
 #endif
   amp::reset();

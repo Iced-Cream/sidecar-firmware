@@ -154,8 +154,8 @@ int main() {
 
   // each slot's INSERT and OUT settings are its own, alone or beside a Rytm (control_of(slot)). The same trig on voice 3
   // and 11 with a TREMOLO on slot 0's chain 3: voice 3 only; on slot 1's chain 3: voice 11 only. AMP plays on the base
-  // box's chains (g_amp_slot): beside the Rytm slot 1's AMP slot is dry
-  CHECK(device::side_slot() == 1 && device::on_side(11) && !device::on_side(3) && ins::g_amp_slot == 0);
+  // box's chains (out::g_base_slot): beside the Rytm slot 1's AMP slot is dry
+  CHECK(device::side_slot() == 1 && device::on_side(11) && !device::on_side(3) && out::g_base_slot == 0);
   CHECK(&out::control_of(1) == &out::control1 && out::control1.route[3] == out::kTrk && out::control1.lev[3] == 100);
   auto same_3_11 = [] {
     voices_init();
@@ -184,8 +184,7 @@ int main() {
   trem(ins::control1);
   CHECK(!same_3_11());
   const double slot1_trem = rms(11);
-  printf("  slot 1's TREMOLO: voice 11 %.1f, voice 3 %.1f (plain %.1f)
-", slot1_trem, rms(3), plain);
+  printf("  slot 1's TREMOLO: voice 11 %.1f, voice 3 %.1f (plain %.1f)\n", slot1_trem, rms(3), plain);
   CHECK(std::fabs(rms(3) - plain) < 1e-6 && ins::control.type[3][0] == ins::kOff);
   ins::reset();
   ins::control1.type[3][0] = ins::kAmp;   // AMP is the base box's chains': dry on slot 1 beside the Rytm
@@ -198,7 +197,7 @@ int main() {
   CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices);
   CHECK(device::base_voice(2) == 10 && device::base_box_voice(10) == 2 && device::base_box_voice(2) == -1);
   CHECK(ui::remote_track_voice(0) == kBoxVoices + 0);   // track 1 (BD's place): the base box's voice 0
-  CHECK(device::side_slot() == -1 && ins::g_amp_slot == 1);   // alone: AMP on its chains
+  CHECK(device::side_slot() == -1 && out::g_base_slot == 1);   // alone: AMP on its chains
   // still slot 1's own chains: slot 1's TREMOLO on voice 11 as beside the Rytm, slot 0's setting reaches only voice 3
   trem(ins::control1);
   CHECK(!same_3_11() && std::fabs(rms(11) - slot1_trem) < 1e-6 && std::fabs(rms(3) - plain) < 1e-6);

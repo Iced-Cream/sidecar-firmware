@@ -98,9 +98,8 @@ extern Control control;
 // slot 0's (the send FX and the master chain are the primary stream's). control_of(slot of a voice).
 extern Control control1;
 inline Control& control_of(int slot) { return slot ? control1 : control; }
-// The slot whose voice chains play AMP (the base box's: AMP's state is keyed by chain, one box's at a time; core/device
-// sets it as the base changes). The other slot's AMP slots play dry.
-extern volatile int8_t g_amp_slot;
+// AMP plays on the base box's voice chains (out::g_base_slot: AMP's state is keyed by chain, one box's at a time); the
+// other slot's AMP slots play dry.
 
 // ---- small DSP helpers (no tables; the Pi's hosted side has libm)
 inline float flush(float x) { return (x > -1e-20f && x < 1e-20f) ? 0.0f : x; }
@@ -695,7 +694,7 @@ class Engine {
   Peq peq_[kChains];        // ins1112: each chain's POST EQ
   bool st_[kChains] = {};   // a voice chain ran in stereo last
   float sr_;
-  bool amp_ = true;         // AMP plays (SetAmp: the chains of the slot that is not g_amp_slot play it dry)
+  bool amp_ = true;         // AMP plays (SetAmp: the chains of the slot that is not out::g_base_slot play it dry)
   uint32_t faults_ = 0;
 };
 

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "fx/insert.h"
+#include "fx/out.h"   // g_base_slot
 #include "platform.h"
 #if CORE_MSAMP
 #include "msamp/cardq.h"
@@ -60,8 +61,8 @@ constexpr int kRows = ins::kChains + ins::kMasters;
 inline bool row_on(int c) { return (c >= 0 && c < kVoices) || (c >= ins::kM0 && c < kRows); }
 inline bool is_pair_row(int c) { return c >= ins::kChains && c < kRows; }
 inline int parent(int c) { return is_pair_row(c) ? ins::kM0 + (c - ins::kChains) : c; }   // the chain whose knobs it follows
-// the settings chain pc plays by: a voice chain's are the AMP slot's (ins::g_amp_slot: the base box's), the master's slot 0's
-inline const ins::Control& ctl(int pc) { return pc < kVoices ? ins::control_of(ins::g_amp_slot) : ins::control; }
+// the settings chain pc plays by: a voice chain's are the base box's slot's (out::g_base_slot), the master's slot 0's
+inline const ins::Control& ctl(int pc) { return pc < kVoices ? ins::control_of(out::g_base_slot) : ins::control; }
 inline bool wanted(int c, int s) {   // the row's slot is an AMP that should hold an instance
   int pc = parent(c);
   return ctl(pc).type[pc][s] == ins::kAmp && (!is_pair_row(c) || ins::control.mpair[pc - ins::kM0][s]);
