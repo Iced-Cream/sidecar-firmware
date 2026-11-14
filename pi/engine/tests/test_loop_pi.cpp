@@ -103,7 +103,7 @@ static void test_plan() {
   CHECK(StoreMB(8000, -1) == 256 && StoreMB(16000, -1) == 256);                 // 8 / 16 GB
   // loopram=MB: asked for, 0..1024; 0 is off whatever the board has; a 1 GB board turned on by asking
   CHECK(StoreMB(8000, 0) == 0 && StoreMB(2048, 0) == 0);                        // loopram_zero_off
-  CHECK(StoreMB(1024, 48) == 48 && StoreMB(8000, 2000) == 1024 && StoreMB(2048, 1024) == 1024);
+  CHECK(StoreMB(1024, 48) == 48 && StoreMB(8000, 2000) == 1024 && StoreMB(2048, 1024) == 512 && StoreMB(1024, 1024) == 256);   // (at most a quarter of the RAM)
   printf("  plan: defaults by board, loopram=0 off, 1 GB off by default ok\n");
 }
 
@@ -112,6 +112,7 @@ static std::string g_root;
 static FILE* g_fh[8];
 static bool g_in_poll = false;   // a write outside Keep::poll / begin would be another thread's: none counted
 static int g_writes = 0, g_bad_writes = 0;
+static int g_fail_after = -1;   // KWrite fails from this many writes on (a full card)
 static uint32_t g_largest = 0;
 static std::string disk(const char* p) { return g_root + p; }
 static bool KMkdir(const char* p) { return mkdir(disk(p).c_str(), 0755) == 0 || access(disk(p).c_str(), F_OK) == 0; }
@@ -123,11 +124,13 @@ static int KOpen(const char* p) {
 }
 static bool KWrite(int h, const void* p, uint32_t n) {
   ++g_writes;
+  if (g_fail_after >= 0 && g_writes > g_fail_after) return false;
   if (!g_in_poll) ++g_bad_writes;
   if (n > g_largest) g_largest = n;
   return fwrite(p, 1, n, g_fh[h]) == n;
 }
 static bool KPwrite(int, uint64_t, const void*, uint32_t) { return false; }
+static bool KRemove(const char* p) { return remove(disk(p).c_str()) == 0; }
 static bool KSync(int h) { return fflush(g_fh[h]) == 0; }
 static bool KClose(int h) { fclose(g_fh[h]); g_fh[h] = nullptr; return true; }
 static bool KSpace(uint64_t* f, uint64_t* t) { *f = 1ull << 33, *t = 1ull << 34; return true; }
@@ -151,7 +154,7 @@ static void KLog(const char*) {}
 static bool KClock(uint32_t* t) { *t = 1794571200; return true; }   // 2026-11-13 12:00
 static void KProject(char* o, unsigned cap) { snprintf(o, cap, "Demo Project"); }
 static const rec::Backend kKB = {KMkdir, KOpen, KWrite, KPwrite, KSync, KClose, KSpace, KNow, KList, KRead, KPatch, KLog,
-                                 nullptr, nullptr, nullptr, nullptr, nullptr, KMkdirNew, KClock, KProject, nullptr, nullptr, nullptr};
+                                 nullptr, nullptr, nullptr, KRemove, nullptr, KMkdirNew, KClock, KProject, nullptr, nullptr, nullptr};
 static uint32_t g_done_id = 0;
 static bool g_done_ok = false;
 static std::string g_done_take;
@@ -213,6 +216,34 @@ static void test_keep() {
   {
     std::vector<uint8_t> t2 = slurp(g_root + "/Recordings/" + g_done_take + "/loop.txt");
     CHECK(std::string(t2.begin(), t2.end()).find("bars=0.5") != std::string::npos);
+  }
+  // M3: a card that fills mid-take: told, and no take left behind (no short file under a header with the full sizes)
+  {
+    int taken = 0;
+    {
+      DIR* dp = opendir((g_root + "/Recordings").c_str());
+      while (dirent* e = readdir(dp)) taken += e->d_name[0] != '.';
+      closedir(dp);
+    }
+    g_done_ok = true;
+    g_fail_after = g_writes + 3;
+    Keep f;
+    f.init(&kKB, KDone);
+    g_in_poll = true;
+    core::loop::KeepJob job2{11, frames, pcm.data(), 120.0f, 2, 0};
+    CHECK(f.begin(job2));
+    while (f.poll()) {
+    }
+    g_in_poll = false;
+    g_fail_after = -1;
+    CHECK(!g_done_ok && g_done_id == 11);
+    int now_n = 0;
+    {
+      DIR* dp = opendir((g_root + "/Recordings").c_str());
+      while (dirent* e = readdir(dp)) now_n += e->d_name[0] != '.';
+      closedir(dp);
+    }
+    CHECK(now_n == taken);
   }
   // no backend room: refused, told
   g_done_ok = true;

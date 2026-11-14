@@ -16,6 +16,26 @@ bool Keep::fail(const char* why) {
     sniprintf(l, sizeof l, "loop keep: %s", why);
     b_->log(l);
   }
+  // no lying take: the partial file (a header with the full sizes over a short body) and its folder go; without a remove the
+  // header is patched to what was written
+  if (b_ && take_[0]) {
+    char rel[100];
+    rec::take_dir(rel, sizeof rel, take_);
+    if (h_ >= 0) {
+      if (!b_->remove) {
+        uint8_t hdr[recwav::kHeader];
+        recwav::build(hdr, 2, 24, done_ * 6);
+        b_->pwrite(h_, 0, hdr, sizeof hdr);
+      }
+      b_->close(h_), h_ = -1;
+    }
+    if (b_->remove) {
+      char f[160];
+      sniprintf(f, sizeof f, "%s/00_LOOP.wav", rel);
+      b_->remove(f);
+      b_->remove(rel);
+    }
+  }
   finish(false);
   return false;
 }

@@ -12,7 +12,9 @@ constexpr int kLoopramMax = 1024;
 
 // the grab store in MB for a board with mem_mb of RAM; opt: the cmdline's loopram=MB, -1 not given. 0: the looper is off
 inline unsigned StoreMB(uint64_t mem_mb, int opt) {
-  if (opt >= 0) return opt > kLoopramMax ? (unsigned)kLoopramMax : (unsigned)opt;
+  // at most a quarter of the board's RAM (and 1024): loopram=1024 on a 2 GB board would starve the pool
+  unsigned cap = mem_mb / 4 < (uint64_t)kLoopramMax ? (unsigned)(mem_mb / 4) : (unsigned)kLoopramMax;
+  if (opt >= 0) return (unsigned)opt > cap ? cap : (unsigned)opt;
   return mem_mb >= 6000 ? 256 : mem_mb >= 3000 ? 192 : mem_mb >= 1500 ? 96 : 0;
 }
 
