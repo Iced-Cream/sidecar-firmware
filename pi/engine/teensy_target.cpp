@@ -239,7 +239,7 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 		pS->bmRequestType = (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR;
 		pS->bRequest = uchRequest, pS->wValue = wValue, pS->wIndex = wIndex, pS->wLength = (u16) nLength;
 		CleanAndInvalidateDataCacheRange ((uintptr) m_pCtlBuf, kDmaSize);
-		CUSBRequest *pURB = new CUSBRequest (GetEndpoint0 (), m_pCtlBuf, nLength, pS);
+		CUSBRequest *pURB = new CUSBRequest (GetEndpoint0 (), nLength ? m_pCtlBuf : 0, nLength, pS);
 		pURB->SetCompletionRoutine (CtlStub, 0, this);
 		m_bCtlDone = FALSE;
 		n = -1;
@@ -257,8 +257,10 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 		else { delete pURB; delete pS; }
 	}
 	else
+		// no buffer for a request with no data stage: Circle's xHCI asserts nBufLen > 0 on a buffer at completion
+		// (xhciendpoint.cpp: TR1g 2026-11-14, every reset of TR1 to TR1g)
 		n = GetHost ()->ControlMessage (GetEndpoint0 (), (bIn ? REQUEST_IN : REQUEST_OUT) | REQUEST_VENDOR, uchRequest,
-						wValue, wIndex, m_pCtlBuf, (u16) nLength);
+						wValue, wIndex, nLength ? m_pCtlBuf : 0, (u16) nLength);
 	if (m_nDebugVendor < 40) { m_nDebugVendor++; Step ("vendor %02x: returned %d", uchRequest, n); }
 	if (n < 0) m_Stats.nVendorFail++;
 	return n;
@@ -403,7 +405,7 @@ boolean CTeensyTarget::MirrorPipeIn (u8 uchAddr, const u8 *pData, unsigned nLeng
 	if (c >= kChannels || !MirrorShown () || nLength > kLinkMps || m_bChanOutBusy[c]) { m_Stats.nPipeInDrop++; return FALSE; }
 	if (nLength) memcpy (m_pChanOutBuf[c], pData, nLength);
 	CleanAndInvalidateDataCacheRange ((uintptr) m_pChanOutBuf[c], kDmaSize);
-	CUSBRequest *pURB = new CUSBRequest (m_pChanOut[c], m_pChanOutBuf[c], nLength);
+	CUSBRequest *pURB = new CUSBRequest (m_pChanOut[c], nLength ? m_pChanOutBuf[c] : 0, nLength);	// a zero-length packet: no buffer (Circle asserts on one)
 	pURB->SetCompletionRoutine (ChanOutStub, (void *) (uintptr) c, this);
 	m_bChanOutBusy[c] = TRUE;
 	if (!GetHost ()->SubmitAsyncRequest (pURB)) { m_bChanOutBusy[c] = FALSE; delete pURB; m_Stats.nPipeInDrop++; return FALSE; }
