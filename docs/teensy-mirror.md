@@ -1,9 +1,9 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
-Current state (2026-11-14): Teensy firmware and link protocol run on the bench (Teensy alone on a PC, the PC playing both
-ends): audio both ways, the pipes and the forwarded control requests pass (see below). The Pi side
-(teensy_target.cpp, the link1 MIDI tap, per-slot mirror buffers, CObUsb::Reattach) is written, host-tested where portable
-and syntax-checked against Circle: no kernel build, no Pi run, no unit run yet.
+Current state (2026-11-14): the relay runs end to end on a Pi 4 (TR1 tries 5-6, `relaytest=1`: a made-up box, no Elektron
+unit): the box enumerates on the computer through the Teensy, forwarded control requests, pipes and the computer's audio
+to the Pi pass. Open: the Pi's audio to the computer had 4.5 % of blocks with wrong content and 2 % lost, with the
+Teensy's queue full (worst wait 2.7 ms against the ~1.2 ms margin), read by a Python bench; not yet run with a real box.
 
 The Pi's USB-C port is one USB device, so `usb=mirror` (docs/usb-mirror.md) shows one box. A Teensy 4.1 adds a second
 device port: the Pi stays the host of both boxes and keeps all of the mirror's logic, and the Teensy only relays.
@@ -67,6 +67,16 @@ slot-1 box sends (besides the engine), batched to the Teensy; the computer's pac
 to the box only with `usbmidi=os:on`) into `link1::FromComputer`, sent from link1's `Send` ahead of the engine's records,
 which wait while the computer's SysEx is part way out. Only the slot-1 box (`mirror=rytm`, the default): with
 `mirror=a4` the relay shows the Rytm, whose MIDI is the host link, and its MIDI is not relayed.
+
+## Pi runs (KB analog-four-mkii hardware-tests T314-T323)
+
+- The Pi reset with the relay attached until 72e4a61: a no-data link request passed a buffer, and Circle's xHCI asserts
+  `nBufLen > 0` on a URB with a buffer at completion (xhciendpoint.cpp(450)). The same case is fixed in ob_usb.cpp's pipe
+  OUT and forwarded control paths (a zero-length packet, a request with wLength 0).
+- Debug options kept in the driver: `relaydelay=N` (start N s after boot, past the black box's first write at 5 s),
+  `relaydebug=1` (each start step and link request written to the black box at once), `relayvariant=` (TR1g's bisect).
+  A panic's line reaches the black box (`blackbox_pi::PanicFlush`, ported from 8f027d3).
+- relaytest uploads the bench's BOS and MS OS 2.0 set: the made-up box says bcdUSB 2.10 and Windows refused it without.
 
 ## Gaps (named, not done)
 
