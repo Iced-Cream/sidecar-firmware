@@ -434,15 +434,18 @@ void project_lists_step() {}
 #endif
 
 // The switch itself: the old project's unsaved edits into its own files, then the new name's files loaded
-CORE_COLD static void switch_to(const char* n) {
+CORE_COLD static void switch_to(const char* to) {
 #if CORE_POLY
   seq::project_leaving();   // 1042: the old project's unsaved sequence edits, in its own folder (before the name moves)
 #endif
-  sniprintf(prj().key, sizeof prj().key, "%s", n);
-  sniprintf(prj().name, sizeof prj().name, "%s", prj().next[0] ? prj().next : n);
-  prj().next[0] = 0;
-  if (strcmp(prj().key, prj().name)) log(CORE_STR("project: %s (%s)"), prj().key, prj().name);
-  else log(CORE_STR("project: %s"), prj().key);
+  Project& j = prj();
+  char n[sizeof j.key];
+  sniprintf(n, sizeof n, "%s", to);   // (to may be j.key itself: a reload)
+  sniprintf(j.name, sizeof j.name, "%s", j.next[0] ? j.next : n);
+  sniprintf(j.key, sizeof j.key, "%s", n);
+  j.next[0] = 0;
+  if (strcmp(j.key, j.name)) log(CORE_STR("project: %s (%s)"), j.key, j.name);
+  else log(CORE_STR("project: %s"), j.key);
 #if CORE_MSAMP
   sedit::project_changed();   // the sample editor closed first: its edit is the old project's sample (samp/sedit.h)
 #endif
