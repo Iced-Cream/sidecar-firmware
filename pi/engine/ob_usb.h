@@ -26,7 +26,12 @@
 #include <circle/logger.h>
 #include <circle/types.h>
 #include "fx/out.h"
+#include "mirror_target.h"
 
+// One CObUsb per box streaming (two at most): the Rytm's (slot 0) and another box's (slot 1, its profile's audio row). The
+// primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
+// device follow, as the one stream did; the other streams in step with its own box (its own clock), its OUT silent until the
+// engine renders voices of its own for it. Each box's usb=mirror goes to its own target (mirror_target.h).
 class CObUsb : public CUSBFunction
 {
 public:
@@ -40,7 +45,16 @@ public:
 
 	// called once a second from the main loop (counters are updated in IRQ context)
 	static void LogAllStats (CLogger *pLogger);
-	static boolean Streaming (void)		{ return s_pThis != 0 && s_pThis->m_bStreaming; }
+	static boolean Streaming (void)		{ return s_pThis != 0 && s_pThis->m_bStreaming; }	// the primary stream
+	static const unsigned Slots = 2;
+	static CObUsb *Box (unsigned nSlot)	{ return nSlot < Slots ? s_pBox[nSlot] : 0; }
+	static boolean Streaming (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bStreaming; }
+	unsigned Slot (void) const		{ return m_nSlot; }
+	boolean Primary (void) const		{ return this == s_pThis; }
+	const core::out::Device *Audio (void) const	{ return m_pAudio; }
+	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
+	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
+	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 #if RASPPI >= 5
@@ -68,6 +82,25 @@ public:
 
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
+
+	// The URBs of a box that left: ~CObUsb (and ~CObFollow) free every one, those still in flight too. Circle deletes a
+	// configured function from ~CUSBDevice, which runs after ~CXHCIUSBDevice has disabled and freed the xHC slot, so the
+	// controller completes none of them any more. They used to be left allocated; with Circle's 256 CUSBRequest
+	// instances (a LogPanic past that) ~17 a Rytm restart rebooted the Pi after about 15 restarts on one boot.
+	static unsigned Detaches (void)		{ return s_nDetaches; }
+	static unsigned FreedInFlight (void)	{ return s_nFreedInFlight; }	// URBs in flight freed at detaches, all told
+	static unsigned KeptInFlight (void)	{ return s_nKeptInFlight; }	// left allocated: a Configure that failed
+	static void CountDetach (boolean bGone, unsigned nFreed, unsigned nKept)
+	{
+		if (bGone) s_nDetaches++;
+		s_nFreedInFlight += nFreed;
+		s_nKeptInFlight += nKept;
+	}
+	// Circle's CUSBRequest instances on the heap, every driver's (circle-usb-urb-free.patch): now, the most since boot,
+	// and the allocator's limit (XHCI_CONFIG_MAX_REQUESTS on the Pi 4 and 5; past it a LogPanic)
+	static unsigned UsbRequests (void)	{ return CUSBRequest::GetHeapInstances (); }
+	static unsigned UsbRequestsPeak (void)	{ return CUSBRequest::GetHeapInstancesPeak (); }
+	static unsigned UsbRequestsLimit (void);
 
 	// 10 s capture of IN MAIN L/R (channels 0, 1) as the raw int32 samples (the on-wire scale is not yet measured on the Rytm side: MAIN peaks of ~3.9e6 with a pattern playing would be -55 dBFS as int32 full scale, so nothing is cut off),
 	// interleaved little-endian, i.e. WAV PCM data. Task level: CaptureAlloc once (1.92 MB on the
@@ -98,18 +131,30 @@ public:
 	// usb=mirror (docs/usb-mirror.md, sidecar_gadget.h): the box's side. At Configure the box's device, configuration and
 	// string descriptors go to the gadget, and the other vendor-class endpoints (pipes: the async channel) are opened.
 	// FALSE: no box (or busy): the caller drops or STALLs.
+	// The statics are the USB-C gadget's: they act on the box it mirrors (GadgetSlot). A target of its own (mirror_target.h)
+	// calls the members on its box instead.
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
 	static void MirrorAttachLate (void);
 	static unsigned MirrorParked (void);		// pipe IN packets drained while the Sidecar device was shown (the mirror line)
 	static void MirrorWanted (void);		// core 0's loop: the USB-C mode turned to OVERBRIDGE: a box up and not yet read is read (MirrorAttachLate)
-	static u16 OutCounter (void)		{ return s_pThis != 0 ? s_pThis->m_nOutCounter : 0; }	// the next block's		// core 0's loop: the box was configured before the gadget existed
+	static u16 OutCounter (void);			// the next block's of the gadget's box
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
 	static unsigned MirrorPipeResets (void);	// those clears so far (the mirror line)
 	// a forwarded request of the computer's is on the box's EP0 (async, its answer not back): no synchronous EP0 transfer to
 	// the box meanwhile (Circle's 3 s timeout would drop the forwarded URB's slot and leave the caller's on the ring)
 	static boolean MirrorCtlBusy (void);
+	// the same, on this box (a target's own calls)
+	boolean Control (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);
+	boolean PipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);
+	void PipeInNext (u8 uchAddr);
+	void PipePoll (void);
+	void AttachLate (void);
+	void Wanted (void);
+	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
+	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
+	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
@@ -128,7 +173,8 @@ public:
 		unsigned nOrphan;		// no URB pending when the event came
 	};
 
-	static CObUsb *s_pThis;
+	static CObUsb *s_pThis;				// the primary stream: s_pBox[0], else s_pBox[1]
+	static CObUsb *s_pBox[Slots];
 	static volatile boolean s_bActive;
 #if RASPPI >= 5
 	static volatile boolean s_bFading;
@@ -149,6 +195,12 @@ private:
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
+	static boolean Live (const void *p)	{ return p != 0 && (p == s_pBox[0] || p == s_pBox[1]); }	// a completion of a box still here
+	static void Rebind (void);			// s_pThis from s_pBox
+	IMirrorTarget *Target (void);			// this box's mirror target now (the gadget's adapter, a slot's own, or 0)
+	unsigned m_nSlot;
+	u8 **m_pInBuf, **m_pOutBuf;			// this slot's DMA buffers (AllocBufs)
+
 	// usb=mirror
 	void MirrorAttach (void);
 	boolean SubmitPipeIn (unsigned i);
@@ -161,8 +213,8 @@ private:
 		u8 uchAddr;
 		unsigned nMps;
 		CUSBEndpoint *pEP;
-		CUSBRequest *pURB;			// IN: the one in flight (OUT: a new one each packet)
-		u8 *pBuf;				// DMA, 512 B
+		CUSBRequest *pURB;			// IN: its one URB, reused; OUT: a new one each packet, here while in flight
+		u8 *pBuf;				// DMA, 512 B (s_PipeBuf: allocated once, reused by every attach)
 		volatile boolean bBusy;
 		volatile boolean bStopped;		// an error: halted until MirrorPipePoll clears it (IN: then resubmitted)
 		volatile unsigned nPackets, nErrors;
@@ -173,10 +225,17 @@ private:
 	unsigned m_nPipes;
 	boolean m_bMirror;
 	volatile boolean m_bAttachDue;			// configured while CSidecarGadget::Get () was 0
-	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data
+	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data (s_pCtlBuf, allocated once)
 	volatile boolean m_bCtlBusy;
+	CUSBRequest *volatile m_pCtlURB;		// the forwarded request in flight, and its setup packet
+	TSetupData *volatile m_pCtlSetup;
 	unsigned m_nGen;				// this box's attach: a completion of an earlier one is ignored
 	static unsigned s_nGen, s_nPipeResets;
+	boolean m_bConfigured;				// Configure returned TRUE: only ~CUSBDevice deletes this (the slot is gone)
+	static unsigned s_nDetaches, s_nFreedInFlight, s_nKeptInFlight;
+	// usb=mirror's DMA buffers (pipes, forwarded requests): allocated once and reused by every attach (one box at a time,
+	// and an old attach's transfers are over before a new one exists: ~CObUsb); they were allocated anew each attach
+	static u8 *s_PipeBuf[MaxPipes], *s_pCtlBuf;
 
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called

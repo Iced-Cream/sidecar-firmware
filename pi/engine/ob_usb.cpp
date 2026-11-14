@@ -50,6 +50,9 @@
 #include <circle/usb/usbstandardhub.h>
 #include <circle/usb/usb.h>
 #include <circle/usb/xhciendpoint.h>
+#if RASPPI >= 4
+#include <circle/usb/xhciconfig.h>
+#endif
 #include <circle/koptions.h>
 #include <circle/synchronize.h>
 #include <circle/timer.h>
@@ -83,8 +86,8 @@ static const unsigned kOutEpID = (ob::kOutEp & 0x0F) * 2;		// 6
 
 // Circle's xHCI wants transfer buffers above MEM_KERNEL_END (asserted in xhciendpoint.cpp),
 // so not static arrays in the kernel image: heap blocks, 64 B aligned, allocated once.
-static u8 *s_InBuf[CObUsb::MaxURBs];
-static u8 *s_OutBuf[CObUsb::MaxURBs];
+static u8 *s_InBuf[CObUsb::Slots][CObUsb::MaxURBs];	// each slot's box its own (two stream at once)
+static u8 *s_OutBuf[CObUsb::Slots][CObUsb::MaxURBs];
 
 static u8 *AllocDmaBuf (void)
 {
@@ -92,16 +95,16 @@ static u8 *AllocDmaBuf (void)
 	return (u8 *) (((uintptr) p + 63) & ~(uintptr) 63);
 }
 
-static void AllocBufs (void)
+static void AllocBufs (unsigned nSlot)
 {
-	if (s_InBuf[0] != 0)
+	if (s_InBuf[nSlot][0] != 0)
 	{
 		return;
 	}
 	for (unsigned i = 0; i < CObUsb::MaxURBs; i++)
 	{
-		s_InBuf[i] = AllocDmaBuf ();
-		s_OutBuf[i] = AllocDmaBuf ();
+		s_InBuf[nSlot][i] = AllocDmaBuf ();
+		s_OutBuf[nSlot][i] = AllocDmaBuf ();
 	}
 }
 
@@ -111,7 +114,83 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 }
 
 CObUsb *CObUsb::s_pThis = 0;
+CObUsb *CObUsb::s_pBox[CObUsb::Slots] = {};
+static IMirrorTarget *s_pTarget[CObUsb::Slots];		// a slot's own mirror target (a Teensy relay), besides the gadget
+
+void CObUsb::Rebind (void)
+{
+	s_pThis = s_pBox[0] != 0 ? s_pBox[0] : s_pBox[1];
+}
+
+unsigned CObUsb::GadgetSlot (void)
+{
+	static int s_nSlot = -1;
+	if (s_nSlot < 0) s_nSlot = strcmp (CKernelOptions::Get ()->GetAppOptionString ("mirror", "rytm"), "a4") == 0 ? 1 : 0;
+	return (unsigned) s_nSlot;
+}
+
+void CObUsb::SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget)
+{
+	if (nSlot >= Slots) return;
+	s_pTarget[nSlot] = pTarget;
+	if (pTarget != 0) pTarget->SetBox (s_pBox[nSlot]);
+}
+
+// The USB-C gadget as a mirror target (mirror_target.h): the CSidecarGadget calls as they were.
+namespace {
+class CGadgetTarget : public IMirrorTarget
+{
+public:
+	void SetBox (CObUsb *) override {}
+	boolean Mirror (void) const override			{ CSidecarGadget *g = CSidecarGadget::Get (); return g != 0 && g->Mirror (); }
+	boolean MirrorShown (void) const override		{ CSidecarGadget *g = CSidecarGadget::Get (); return g != 0 && g->MirrorShown (); }
+#ifdef CIRCLE_GADGET_MIRROR
+	boolean MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg) override
+								{ return CSidecarGadget::Get ()->MirrorSetDescriptors (pDev, pCfg, nCfg); }
+	void MirrorSetString (u8 i, const u8 *pDesc, unsigned n) override	{ CSidecarGadget::Get ()->MirrorSetString (i, pDesc, n); }
+	void MirrorBoxUp (boolean bUp) override			{ CSidecarGadget::Get ()->MirrorBoxUp (bUp); }
+	void MirrorControlDone (unsigned nSeq, const u8 *pData, int n) override	{ CSidecarGadget::Get ()->MirrorControlDone (nSeq, pData, n); }
+	boolean MirrorPipeIn (u8 a, const u8 *pData, unsigned n) override	{ return CSidecarGadget::Get ()->MirrorPipeIn (a, pData, n); }
+	void MirrorPipeOutDone (u8 a) override			{ CSidecarGadget::Get ()->MirrorPipeOutDone (a); }
+	boolean MirrorOutExtra (u8 *pBlock, u16 nCounter) override	{ return CSidecarGadget::Get ()->MirrorOutExtra (pBlock, nCounter); }
+#else
+	boolean MirrorSetDescriptors (const u8 *, const u8 *, unsigned) override	{ return FALSE; }
+	void MirrorSetString (u8, const u8 *, unsigned) override	{}
+	void MirrorBoxUp (boolean) override			{}
+	void MirrorControlDone (unsigned, const u8 *, int) override	{}
+	boolean MirrorPipeIn (u8, const u8 *, unsigned) override	{ return FALSE; }
+	void MirrorPipeOutDone (u8) override			{}
+	boolean MirrorOutExtra (u8 *, u16) override		{ return FALSE; }
+#endif
+	void FromBoxBlock (const u8 *pBlock) override		{ CSidecarGadget::Get ()->FromRytmBlock (pBlock); }
+	void ToBox (s32 (*pF)[12], const s16 (*pV)[8], unsigned n) override	{ CSidecarGadget::Get ()->ToRytm (pF, pV, n, FALSE); }
+};
+CGadgetTarget s_Gadget;
+
+// The box the gadget serves: with usb=mirror on, the box of mirror=rytm|a4 (0 while it is not here); else the primary
+// stream (the Sidecar device's audio follows it, as it did with one stream)
+CObUsb *GadgetBox (void)
+{
+	CSidecarGadget *g = CSidecarGadget::Get ();
+	if (g == 0) return 0;
+	return g->Mirror () ? CObUsb::Box (CObUsb::GadgetSlot ()) : CObUsb::s_pThis;
+}
+}
+
+IMirrorTarget *CObUsb::Target (void)
+{
+	if (this == GadgetBox ()) return &s_Gadget;
+	return s_pTarget[m_nSlot];
+}
+
+void CObUsb::PollTargets (void)
+{
+	for (unsigned k = 0; k < Slots; k++)
+		if (s_pTarget[k] != 0) s_pTarget[k]->MirrorPoll ();
+}
 unsigned CObUsb::s_nGen = 0, CObUsb::s_nPipeResets = 0;
+u8 *CObUsb::s_PipeBuf[CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf = 0;	// usb=mirror's: allocated once, as s_InBuf
+unsigned CObUsb::s_nDetaches = 0, CObUsb::s_nFreedInFlight = 0, CObUsb::s_nKeptInFlight = 0;
 static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
 static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
 static CUSBStandardHub *s_pRetryHub = 0;		// or the Pi 4's VL805 hub (BuiltInHub), which lives as long too
@@ -220,14 +299,17 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
 	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
-	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct);
+	// usb=mirror relays the box itself to the computer, so a stock box that has not said its mod's hello (an A4 without the
+	// Sidecar mod) is claimed too; without the mirror such a box waits for its hello (core/device/device.cpp)
+	boolean bMirror = strcmp (CKernelOptions::Get ()->GetAppOptionString ("usb", "sidecar"), "mirror") == 0;
+	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct, bMirror);
 	if (p == 0) return 0;
 	const core::out::Device *pAudio = p->audio;
 	boolean bRytm = pAudio == &core::out::kRytmMk2;
 	if (bRytm && CObUsb::s_bActive) core::device::rytm_on_usb (true);	// a stock Rytm's way back to /.rytm (core/device/device.h)
-	if (CObUsb::s_pThis != 0)					// one stream: a second box keeps its MIDI, Circle goes on to its interfaces
+	if (CObUsb::Box (bRytm ? 0 : 1) != 0)			// one box a slot: a third keeps its MIDI, Circle goes on to its interfaces
 	{
-		CLogger::Get ()->Write (From, LogWarning, "%s: a box already streams, no audio from this one", pAudio->name);
+		CLogger::Get ()->Write (From, LogWarning, "%s: its slot's box streams already, no audio from this one", pAudio->name);
 		return 0;
 	}
 	if ((pAudio->in_channels != ob::kChannels && pAudio->in_channels != 8) || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
@@ -288,9 +370,10 @@ boolean CObUsb::s_bResetDone;
 void CObUsb::PollHalt (void)
 {
 	s_bResetDone = FALSE;
-	CObUsb *p = s_pThis;
-	if (p != 0 && p->m_bStreaming)
+	for (unsigned k = 0; k < Slots && !s_bResetDone; k++)	// (one reset a pass, every box's together)
 	{
+		CObUsb *p = s_pBox[k];
+		if (p == 0 || !p->m_bStreaming) continue;
 		unsigned now = CTimer::GetClockTicks ();
 		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
 	}
@@ -324,7 +407,7 @@ boolean CObUsb::BoxWait (unsigned nNowUs)
 
 void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
 {
-	CObUsb *p = s_pThis;
+	CObUsb *p = s_pBox[0];					// the host link's MIDI OUT is the Rytm's
 	if (p == 0) return;
 	if (bHalted && !p->m_bMidiErred) p->m_nMidiFailUs = nNowUs;
 	p->m_bMidiErred = bHalted;
@@ -332,7 +415,7 @@ void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
 
 boolean CObUsb::BoxWaits (unsigned nNowUs)
 {
-	CObUsb *p = s_pThis;
+	CObUsb *p = s_pBox[0];
 	return p != 0 && p->m_bStreaming && p->BoxWait (nNowUs);
 }
 
@@ -379,7 +462,7 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	else if (m_OutMode == OutPaced) PumpOut ();
 	else if (m_OutMode == OutFree)
 	{
-		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (s_OutBuf[i], m_nBlocks), SubmitOut (i);
+		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (m_pOutBuf[i], m_nBlocks), SubmitOut (i);
 	}
 	LeaveCritical ();
 	if (h.Log (nNowUs))
@@ -394,6 +477,15 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 						pX->GetLastErrorCode (), h.resets, h.dropped, pDir, h.fails, h.TakeQuiet ());
 	}
 	return s_bResetDone;
+}
+
+unsigned CObUsb::UsbRequestsLimit (void)
+{
+#if RASPPI >= 4
+	return XHCI_CONFIG_MAX_REQUESTS;
+#else
+	return 0;				// the DWHCI host: no such limit to report here
+#endif
 }
 
 void CObUsb::SetActive (boolean bActive)
@@ -438,34 +530,73 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nMidiFailUs = 0;
 	m_pCtlBuf = 0;
 	m_bCtlBusy = FALSE;
+	m_pCtlURB = 0;
+	m_pCtlSetup = 0;
 	m_nGen = ++s_nGen;
+	m_bConfigured = FALSE;
 
-	s_pThis = this;
+	m_nSlot = pAudio == &core::out::kRytmMk2 ? 0 : 1;
+	m_pInBuf = s_InBuf[m_nSlot];
+	m_pOutBuf = s_OutBuf[m_nSlot];
+	s_pBox[m_nSlot] = this;
+	Rebind ();
+	if (s_pTarget[m_nSlot] != 0) s_pTarget[m_nSlot]->SetBox (this);
 }
 
+// The box left (Circle's ~CUSBDevice, task level), or Configure failed (CUSBDevice::Configure deletes the function).
+// Left: ~CXHCIUSBDevice ran first (the derived class's destructor) and disabled and freed the xHC slot, so no transfer
+// event reaches these endpoints any more (CXHCISlotManager::TransferEvent drops a freed slot's): the URBs still queued
+// are never completed, and each is freed here, in flight or not. A failed Configure leaves the slot running, so an URB
+// in flight there is left allocated (its completion may still come), as every one was before.
 CObUsb::~CObUsb (void)
 {
-	s_pThis = 0;
+	const boolean bWasPrimary = Primary ();
+	IMirrorTarget *pTarget = m_bMirror ? Target () : 0;	// (asked while this box is still its slot's)
+	(void) pTarget;					// (no mirror in this build)
+	if (s_pBox[m_nSlot] == this) s_pBox[m_nSlot] = 0;
+	Rebind ();
+	if (s_pTarget[m_nSlot] != 0) s_pTarget[m_nSlot]->SetBox (0);
 	m_bStreaming = FALSE;
-	core::out::set_device (0);
-#ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror && CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorBoxUp (FALSE);
-	for (unsigned i = 0; i < m_nPipes; i++)		// a URB in flight is leaked, as below
+	if (bWasPrimary) core::out::set_device (s_bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// the other box's, if one streams
+	const boolean bGone = m_bConfigured;
+	unsigned nFreed = 0, nKept = 0;
+	auto Free = [&] (CUSBRequest *pURB, boolean bBusy)
 	{
-		if (!m_Pipe[i].bBusy) delete m_Pipe[i].pURB;
+		if (pURB == 0) return;
+		if (!bBusy) { delete pURB; return; }
+		if (bGone) { delete pURB; nFreed++; }
+		else nKept++;
+	};
+#ifdef CIRCLE_GADGET_MIRROR
+	if (pTarget != 0) pTarget->MirrorBoxUp (FALSE);
+	for (unsigned i = 0; i < m_nPipes; i++)
+	{
+		Free (m_Pipe[i].pURB, m_Pipe[i].bBusy);
+		m_Pipe[i].pURB = 0;
 		delete m_Pipe[i].pEP;
+		m_Pipe[i].pEP = 0;
+	}
+	if (m_pCtlURB != 0)				// a forwarded request in flight (on EP0, which ~CUSBDevice deletes next)
+	{
+		Free (m_pCtlURB, TRUE);
+		if (bGone) delete m_pCtlSetup;
+		m_pCtlURB = 0;
+		m_pCtlSetup = 0;
 	}
 #endif
 	if (m_pAudio == &core::out::kRytmMk2) core::device::rytm_on_usb (false);
-	// URBs still queued on the (gone) endpoint are leaked, not freed under the controller
 	for (unsigned i = 0; i < MaxURBs; i++)
 	{
-		if (!m_bInBusy[i]) delete m_pInURB[i];
-		if (!m_bOutBusy[i]) delete m_pOutURB[i];
+		Free (m_pInURB[i], m_bInBusy[i]);
+		Free (m_pOutURB[i], m_bOutBusy[i]);
+		m_pInURB[i] = m_pOutURB[i] = 0;
 	}
 	delete m_pOut;
 	delete m_pIn;
 	m_pOut = m_pIn = 0;
+	CountDetach (bGone, nFreed, nKept);
+	CLogger::Get ()->Write (From, LogNotice, "%s: %u URBs in flight freed, %u kept (USB requests now %u)",
+				bGone ? "box gone" : "not configured", nFreed, nKept, UsbRequests ());
 }
 
 // Log every interface/alternate/endpoint of the default configuration; find alt 3's endpoints.
@@ -516,7 +647,7 @@ boolean CObUsb::ScanDescriptors (void)
 
 boolean CObUsb::Configure (void)
 {
-	AllocBufs ();
+	AllocBufs (m_nSlot);
 
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
@@ -591,15 +722,15 @@ boolean CObUsb::Configure (void)
 	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
 	for (unsigned i = 0; i < m_nURBs; i++)
 	{
-		m_pInURB[i] = new CUSBRequest (m_pIn, s_InBuf[i], nLen);
+		m_pInURB[i] = new CUSBRequest (m_pIn, m_pInBuf[i], nLen);
 		m_pInURB[i]->SetCompletionRoutine (InStub, (void *) (uintptr) i, this);
-		m_pOutURB[i] = new CUSBRequest (m_pOut, s_OutBuf[i], nOutLen);
+		m_pOutURB[i] = new CUSBRequest (m_pOut, m_pOutBuf[i], nOutLen);
 		m_pOutURB[i]->SetCompletionRoutine (OutStub, (void *) (uintptr) i, this);
 	}
 
 #ifdef CIRCLE_GADGET_MIRROR
-	if (CSidecarGadget::Get () != 0) { if (CSidecarGadget::Get ()->Mirror ()) MirrorAttach (); }
-	else m_bAttachDue = TRUE;			// the box came up before the gadget (at boot): MirrorAttachLate
+	if (IMirrorTarget *pT = Target ()) { if (pT->Mirror ()) MirrorAttach (); }
+	else m_bAttachDue = TRUE;			// the box came up before its target (at boot: the gadget): MirrorAttachLate
 #endif
 
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
@@ -613,12 +744,14 @@ boolean CObUsb::Configure (void)
 					m_pAudio->ret == core::out::kStereoMix ? "the voices as one stereo mix" : "per voice");
 	}
 
-	if (s_bActive) core::out::set_device (m_pAudio);	// the voices' channels and routes follow the box; not while the TCP link owns g_Output
+	if (s_bActive && Primary ()) core::out::set_device (m_pAudio);	// the voices' channels and routes follow the box; not while the TCP link owns g_Output
 
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
-	if (s_bActive) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
-	if (s_bActive) masterfx_pi::Reset ();
+	if (s_bActive && Primary ()) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
+	if (s_bActive && Primary ()) masterfx_pi::Reset ();
+	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, OUT silent for now", m_pAudio->name,
+						s_pThis != 0 ? s_pThis->m_pAudio->name : "?");
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
@@ -632,7 +765,7 @@ boolean CObUsb::Configure (void)
 	{
 		for (unsigned i = 0; i < m_nURBs && bOK; i++)
 		{
-			FillOut (s_OutBuf[i], m_nBlocks);
+			FillOut (m_pOutBuf[i], m_nBlocks);
 			bOK = SubmitOut (i);
 		}
 	}
@@ -644,6 +777,7 @@ boolean CObUsb::Configure (void)
 		return FALSE;
 	}
 
+	m_bConfigured = TRUE;
 	return TRUE;
 }
 
@@ -659,12 +793,18 @@ static inline unsigned ParamIndex (void *pParam)		{ return (unsigned) ((uintptr)
 // core 0's loop (the gadget's MirrorPoll): a box configured before the gadget existed is attached now
 void CObUsb::MirrorAttachLate (void)
 {
-	CObUsb *p = s_pThis;
-	if (p == 0 || !p->m_bAttachDue || CSidecarGadget::Get () == 0) return;
-	p->m_bAttachDue = FALSE;
-	if (!CSidecarGadget::Get ()->Mirror ()) return;
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box was up before the gadget or the mode: read now");
-	p->MirrorAttach ();
+	for (unsigned k = 0; k < Slots; k++)
+		if (s_pBox[k] != 0 && s_pBox[k] == GadgetBox ()) s_pBox[k]->AttachLate ();
+}
+
+void CObUsb::AttachLate (void)
+{
+	IMirrorTarget *pT = Target ();
+	if (!m_bAttachDue || pT == 0) return;
+	m_bAttachDue = FALSE;
+	if (!pT->Mirror ()) return;
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %s was up before its target or the mode: read now", m_pAudio->name);
+	MirrorAttach ();
 }
 
 static volatile unsigned s_nParked;		// the box's pipe IN packets while the computer saw the Sidecar device
@@ -680,14 +820,19 @@ unsigned CObUsb::MirrorParked (void)
 // (the mode was CLASS COMPLIANT at its Configure) is read by the next MirrorAttachLate, as one configured before the gadget
 void CObUsb::MirrorWanted (void)
 {
-	CObUsb *p = s_pThis;
-	if (p != 0 && p->m_bStreaming && !p->m_bMirror) p->m_bAttachDue = TRUE;
+	if (CObUsb *p = GadgetBox ()) p->Wanted ();
+}
+
+void CObUsb::Wanted (void)
+{
+	if (m_bStreaming && !m_bMirror) m_bAttachDue = TRUE;
 }
 
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
-	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	IMirrorTarget *pGadget = Target ();		// (the gadget's adapter, or this slot's own target)
+	if (pGadget == 0) return;
 	const TUSBDeviceDescriptor *pDev = GetDevice ()->GetDeviceDescriptor ();
 	const TUSBConfigurationDescriptor *pCfg = GetDevice ()->GetConfigurationDescriptor ();
 	if (pDev == 0 || pCfg == 0) return;
@@ -696,7 +841,8 @@ void CObUsb::MirrorAttach (void)
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
 	m_bMirror = TRUE;
 
-	if (m_pCtlBuf == 0) m_pCtlBuf = AllocDmaBuf ();
+	if (s_pCtlBuf == 0) s_pCtlBuf = AllocDmaBuf ();
+	m_pCtlBuf = s_pCtlBuf;
 	CUSBHostController *pHost = GetHost ();
 	u8 *pBuf = m_pCtlBuf;
 	u16 nLang = 0x0409;
@@ -755,7 +901,8 @@ void CObUsb::MirrorAttach (void)
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
-		p.pBuf = AllocDmaBuf ();
+		if (s_PipeBuf[m_nPipes] == 0) s_PipeBuf[m_nPipes] = AllocDmaBuf ();
+		p.pBuf = s_PipeBuf[m_nPipes];
 		p.bBusy = p.bStopped = FALSE;
 		p.nPackets = p.nErrors = p.nTries = p.nLastTry = 0;
 		p.bRefused = FALSE;
@@ -791,14 +938,14 @@ boolean CObUsb::SubmitPipeIn (unsigned i)
 void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CObUsb *pThis = (CObUsb *) pContext;
-	if (pThis != s_pThis || ParamGen (pParam) != pThis->m_nGen) return;
+	if (!Live (pThis) || ParamGen (pParam) != pThis->m_nGen) return;
 	TPipe &p = pThis->m_Pipe[ParamIndex (pParam)];
 	p.bBusy = FALSE;
 	if (pURB->GetStatus () == 0) { p.nErrors++; p.bStopped = TRUE; return; }	// halted: MirrorPipePoll clears it and resubmits
 	p.nTries = 0;
 	unsigned n = pURB->GetResultLength ();
 	InvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-	CSidecarGadget *pGadget = CSidecarGadget::Get ();
+	IMirrorTarget *pGadget = pThis->Target ();
 	if (pGadget != 0 && !pGadget->MirrorShown ())	// the Sidecar device is shown: drained, not a drop (always renewed,
 	{						// so no packet of the box waits in it for the computer)
 		s_nParked++;
@@ -811,16 +958,25 @@ void CObUsb::PipeInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 
 void CObUsb::MirrorPipeInNext (u8 uchAddr)
 {
-	CObUsb *pThis = s_pThis;
-	if (pThis == 0) return;
-	for (unsigned i = 0; i < pThis->m_nPipes; i++)
-		if (pThis->m_Pipe[i].uchAddr == uchAddr && !pThis->m_Pipe[i].bBusy && !pThis->m_Pipe[i].bStopped) pThis->SubmitPipeIn (i);
+	if (CObUsb *p = GadgetBox ()) p->PipeInNext (uchAddr);
+}
+
+void CObUsb::PipeInNext (u8 uchAddr)
+{
+	for (unsigned i = 0; i < m_nPipes; i++)
+		if (m_Pipe[i].uchAddr == uchAddr && !m_Pipe[i].bBusy && !m_Pipe[i].bStopped) SubmitPipeIn (i);
 }
 
 boolean CObUsb::MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
 {
-	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || nLength > 512) return FALSE;
+	CObUsb *p = GadgetBox ();
+	return p != 0 && p->PipeOut (uchAddr, pData, nLength);
+}
+
+boolean CObUsb::PipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
+{
+	CObUsb *pThis = this;
+	if (nLength > 512) return FALSE;
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 	{
 		TPipe &p = pThis->m_Pipe[i];
@@ -831,7 +987,9 @@ boolean CObUsb::MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
 		CUSBRequest *pURB = new CUSBRequest (p.pEP, p.pBuf, nLength);	// its length is this packet's (IRQ-safe heap)
 		pURB->SetCompletionRoutine (PipeOutStub, Param (pThis->m_nGen, i), pThis);
 		p.bBusy = TRUE;
+		p.pURB = pURB;					// ~CObUsb frees it if the box leaves first
 		if (pThis->GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
+		p.pURB = 0;
 		p.bBusy = FALSE;
 		p.nErrors++;
 		delete pURB;
@@ -843,13 +1001,14 @@ boolean CObUsb::MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
 void CObUsb::PipeOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CObUsb *pThis = (CObUsb *) pContext;
-	if (pThis == s_pThis && ParamGen (pParam) == pThis->m_nGen)
+	if (Live (pThis) && ParamGen (pParam) == pThis->m_nGen)
 	{
 		TPipe &p = pThis->m_Pipe[ParamIndex (pParam)];
+		p.pURB = 0;
 		p.bBusy = FALSE;
 		if (pURB->GetStatus () == 0) { p.nErrors++; p.bStopped = TRUE; }	// halted: MirrorPipePoll clears it
 		else { p.nPackets++; p.nTries = 0; }
-		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorPipeOutDone (p.uchAddr);	// the computer's next
+		if (IMirrorTarget *pT = pThis->Target ()) pT->MirrorPipeOutDone (p.uchAddr);	// the computer's next
 	}
 	delete pURB;
 }
@@ -858,8 +1017,14 @@ void CObUsb::PipeOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 // completion. FALSE: no box, or one still in flight.
 boolean CObUsb::MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq)
 {
-	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || !pThis->m_bMirror || pThis->m_bCtlBusy || pSetup->wLength > 512) return FALSE;
+	CObUsb *p = GadgetBox ();
+	return p != 0 && p->Control (pSetup, pOutData, nSeq);
+}
+
+boolean CObUsb::Control (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq)
+{
+	CObUsb *pThis = this;
+	if (!pThis->m_bMirror || pThis->m_bCtlBusy || pSetup->wLength > 512) return FALSE;
 	if ((pSetup->bmRequestType & REQUEST_IN) && pSetup->wLength == 0) return FALSE;	// no data stage to read into: STALL
 	TSetupData *pS = new TSetupData;
 	memcpy (pS, pSetup, sizeof *pS);
@@ -868,7 +1033,11 @@ boolean CObUsb::MirrorControl (const TSetupData *pSetup, const u8 *pOutData, uns
 	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pThis->m_pCtlBuf, pSetup->wLength, pS);
 	pURB->SetCompletionRoutine (MirrorCtlStub, Param (pThis->m_nGen, nSeq), pThis);
 	pThis->m_bCtlBusy = TRUE;
+	pThis->m_pCtlSetup = pS;
+	pThis->m_pCtlURB = pURB;			// ~CObUsb frees it if the box leaves first
 	if (pThis->GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
+	pThis->m_pCtlURB = 0;
+	pThis->m_pCtlSetup = 0;
 	pThis->m_bCtlBusy = FALSE;
 	delete pURB;
 	delete pS;
@@ -879,12 +1048,14 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CObUsb *pThis = (CObUsb *) pContext;
 	TSetupData *pS = pURB->GetSetupData ();
-	if (pThis == s_pThis && ParamGen (pParam) == pThis->m_nGen)
+	if (Live (pThis) && ParamGen (pParam) == pThis->m_nGen)
 	{
+		pThis->m_pCtlURB = 0;
+		pThis->m_pCtlSetup = 0;
 		pThis->m_bCtlBusy = FALSE;
 		int n = pURB->GetStatus () ? (int) pURB->GetResultLength () : -1;
 		InvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
-		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorControlDone (ParamIndex (pParam), pThis->m_pCtlBuf, n);
+		if (IMirrorTarget *pT = pThis->Target ()) pT->MirrorControlDone (ParamIndex (pParam), pThis->m_pCtlBuf, n);
 	}
 	delete pURB;
 	delete pS;
@@ -899,9 +1070,15 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 // the pipe would stay busy for good.
 void CObUsb::MirrorPipePoll (void)
 {
-	CObUsb *pThis = s_pThis;
-	if (pThis == 0 || !pThis->m_bMirror) return;
-	if (CSidecarGadget::Get () == 0 || !CSidecarGadget::Get ()->MirrorShown ()) return;	// the Sidecar device shown: no EP0 traffic
+	if (CObUsb *p = GadgetBox ()) p->PipePoll ();
+}
+
+void CObUsb::PipePoll (void)
+{
+	CObUsb *pThis = this;
+	if (!pThis->m_bMirror) return;
+	IMirrorTarget *pT = Target ();
+	if (pT == 0 || !pT->MirrorShown ()) return;	// the Sidecar device shown: no EP0 traffic
 	const unsigned nNow = CTimer::Get ()->GetTicks ();
 	for (unsigned i = 0; i < pThis->m_nPipes; i++)
 	{
@@ -947,8 +1124,8 @@ unsigned CObUsb::MirrorPipeResets (void)
 
 boolean CObUsb::MirrorCtlBusy (void)
 {
-	CObUsb *p = s_pThis;
-	return p != 0 && p->m_bMirror && p->m_bCtlBusy;
+	CObUsb *p = GadgetBox ();
+	return p != 0 && p->CtlBusy ();
 }
 
 #else	// a gadget without circle-gadget-mirror.patch (a Pi 5 built with PI5_GADGET=0, the host tests): no mirror
@@ -962,22 +1139,42 @@ void CObUsb::MirrorWanted (void)					{}
 void CObUsb::MirrorPipeInNext (u8)					{}
 void CObUsb::MirrorPipePoll (void)					{}
 unsigned CObUsb::MirrorPipeResets (void)				{ return 0; }
+boolean CObUsb::Control (const TSetupData *, const u8 *, unsigned)	{ return FALSE; }
+boolean CObUsb::PipeOut (u8, const u8 *, unsigned)			{ return FALSE; }
+void CObUsb::PipeInNext (u8)						{}
+void CObUsb::PipePoll (void)						{}
+void CObUsb::AttachLate (void)						{}
+void CObUsb::Wanted (void)						{}
 
 #endif
 
 // host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels from the output stage
 // (output.h: the voices mapped, faded in, limited; silence when its FIFO is empty). Capture channel 2: OUT MAIN L
 // as sent. The control core is woken to refill the FIFO (sev).
+u16 CObUsb::OutCounter (void)
+{
+	CObUsb *p = GadgetBox ();
+	return p != 0 ? p->m_nOutCounter : 0;
+}
+
 void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 {
+	IMirrorTarget *pTarget = Target ();
 	for (unsigned b = 0; b < nBlocks; b++)
 	{
 		u8 *pBlock = pBuf + b * m_nOutBlk;
 		ob::write_header (pBlock, m_nOutCounter);
-#ifdef CIRCLE_GADGET_MIRROR
-		if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
-#endif
+		if (pTarget != 0) pTarget->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
 		m_nOutCounter += ob::kFramesPerBlock;
+		if (!Primary ())				// a box beside the primary stream: no voices of its own yet
+		{
+			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
+			const s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
+			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
+			for (int f = 0; f < ob::kFramesPerBlock; f++)
+				core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
+			continue;
+		}
 
 		s32 F[ob::kFramesPerBlock][ob::kChannels];
 		s16 V[ob::kFramesPerBlock][ob::kVoices];
@@ -995,8 +1192,8 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			memset (FD, 0, sizeof FD);
 			memset (PR, 0, sizeof PR);
 		}
-		if (CSidecarGadget::Get () != 0)		// the computer's OUT added (UAC2 OUT 1-12), the voices kept
-			CSidecarGadget::Get ()->ToRytm (F, V, ob::kFramesPerBlock, FALSE);
+		if (pTarget != 0)				// the computer's OUT added (UAC2 OUT 1-12), the voices kept
+			pTarget->ToBox (F, V, ob::kFramesPerBlock);
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
 		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
@@ -1079,13 +1276,13 @@ boolean CObUsb::SubmitOut (unsigned i)
 
 void CObUsb::InStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
-	if (pContext != s_pThis) return;		// a late event after unplug: the device is gone
+	if (!Live (pContext)) return;		// a late event after unplug: the device is gone
 	((CObUsb *) pContext)->InDone ((unsigned) (uintptr) pParam, pURB);
 }
 
 void CObUsb::OutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
-	if (pContext != s_pThis) return;
+	if (!Live (pContext)) return;
 	((CObUsb *) pContext)->OutDone ((unsigned) (uintptr) pParam, pURB);
 }
 
@@ -1116,7 +1313,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	m_bInBusy[i] = FALSE;
 	m_nInPending--;
 
-	u8 *pBuf = s_InBuf[i];
+	u8 *pBuf = m_pInBuf[i];
 	boolean ok = pURB->GetStatus () != 0;
 	unsigned len = ok ? pURB->GetResultLength () : 0;
 	InvalidateDataCacheRange ((uintptr) pBuf, kBufSize);	// the CPU must not see stale cache lines
@@ -1166,7 +1363,14 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nExpectIn = c + ob::kFramesPerBlock;
 			m_nInBlocks++;
 			good++;
-			if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->FromRytmBlock (pBlk);	// UAC2 IN 1-12
+			if (IMirrorTarget *pT = Target ()) pT->FromBoxBlock (pBlk);	// UAC2 IN 1-12, or its mirror
+			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
+			{
+				int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
+				if (s < 0) s = -s;
+				if (s > m_nInPeak) m_nInPeak = s;
+				continue;
+			}
 			boolean bRecIn = g_Rec.wants_in (), bSampIn = bridge::samp_wants_in ();
 			if (bRecIn || bSampIn)		// the recorder: the selected channels into its ring (rec_pi.h); the sampler's (core/samp)
 			{
@@ -1287,7 +1491,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	if (!m_bStreaming) return;
 	if (m_OutMode == OutFree)
 	{
-		FillOut (s_OutBuf[i], m_nBlocks);
+		FillOut (m_pOutBuf[i], m_nBlocks);
 		SubmitOut (i);
 	}
 	else if (m_OutMode == OutPaced)
@@ -1312,7 +1516,7 @@ void CObUsb::PumpOut (void)
 		if (i == m_nURBs) break;
 
 		u16 nCounter = m_nOutCounter;
-		FillOut (s_OutBuf[i], m_nBlocks);
+		FillOut (m_pOutBuf[i], m_nBlocks);
 		if (!SubmitOut (i))
 		{
 			m_nOutCounter = nCounter;		// as if not sent
@@ -1325,9 +1529,8 @@ void CObUsb::PumpOut (void)
 void CObUsb::LogAllStats (CLogger *pLogger)
 {
 	CObFollow::LogStats (pLogger);
-	CObUsb *p = s_pThis;
-	if (p == 0 || !p->m_bStreaming) return;
-	p->Log (pLogger);
+	for (unsigned k = 0; k < Slots; k++)
+		if (s_pBox[k] != 0 && s_pBox[k]->m_bStreaming) s_pBox[k]->Log (pLogger);
 }
 
 void CObUsb::Log (CLogger *pLogger)
@@ -1347,7 +1550,7 @@ void CObUsb::Log (CLogger *pLogger)
 		{
 			if (!m_OutHalt.halted && !m_bOutBusy[i])
 			{
-				FillOut (s_OutBuf[i], m_nBlocks);
+				FillOut (m_pOutBuf[i], m_nBlocks);
 				if (SubmitOut (i)) nRequeued++;
 			}
 		}
@@ -1375,7 +1578,7 @@ void CObUsb::Log (CLogger *pLogger)
 	if (!m_bSaidStart && m_nSeconds >= 2)
 	{
 		m_bSaidStart = TRUE;
-		pLogger->Write (From, LogNotice, "start: first IN done at %u us, first OUT done at %u us, "
+		pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice, "start: first IN done at %u us, first OUT done at %u us, "
 				"16th OUT block at %u us (0 = never)", m_nFirstInUs, m_nFirstOutUs, m_nOut16Us);
 	}
 
@@ -1383,7 +1586,7 @@ void CObUsb::Log (CLogger *pLogger)
 	// OUT rate/total, errors, endpoint resets (PollHalt), ms since the last OUT completion, credit; URBs pending
 	// (driver/xHCI FIFO), endpoint states (1 running, 2 halted, 4 error); xHCI events per
 	// endpoint: success/short/missed-service/other(last code)/orphan
-	pLogger->Write (From, LogNotice,
+	pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice,	// (rytmob2: the box of slot 1; the xHCI event counts are both boxes')
 			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u rs %u dt %uus pk %d"
 			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
@@ -1409,8 +1612,10 @@ void CObUsb::Log (CLogger *pLogger)
 void CObUsb::Stop (void)
 {
 	CObFollow::Stop ();
-	CObUsb *p = s_pThis;
-	if (p == 0) return;
+	for (unsigned k = 0; k < Slots; k++)
+	{
+	CObUsb *p = s_pBox[k];
+	if (p == 0) continue;
 	p->m_bStreaming = FALSE;
 	unsigned t0 = CTimer::GetClockTicks ();
 	while ((p->m_nInPending || p->m_nOutPending) && CTimer::GetClockTicks () - t0 < 50000) {}
@@ -1420,14 +1625,16 @@ void CObUsb::Stop (void)
 	{
 		pHost->ControlMessage (p->GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, 0, nIface, 0, 0);
 	}
-	CLogger::Get ()->Write (From, LogNotice, "stream stopped cleanly: alt 0 (URBs still pending in %u out %u)", nIn, nOut);
+	CLogger::Get ()->Write (From, LogNotice, "%s: stream stopped cleanly: alt 0 (URBs still pending in %u out %u)", p->m_pAudio->name, nIn, nOut);
+	}
 }
 
 // From an exception on core 0 (guard.cpp): only the flag - no more resubmits; nothing that waits or allocates.
 void CObUsb::EmergencyStop (void)
 {
 	CObFollow::EmergencyStop ();
-	if (s_pThis != 0) s_pThis->m_bStreaming = FALSE;
+	for (unsigned k = 0; k < Slots; k++)
+		if (s_pBox[k] != 0) s_pBox[k]->m_bStreaming = FALSE;
 }
 
 void CObUsbTransport::SetMIDI (CUSBMIDIDevice *pMIDI)
@@ -1458,7 +1665,7 @@ struct TCircleIo : UsbMidiMerge::Io
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
 	bool has_computer (void) override			{ return pSidecar != 0; }
 	void computer_connected (bool bUp) override		{ pSidecar->RytmMIDIConnected (bUp); }
-	bool computer (u32 *w) override				{ return pSidecar->ForRytm (w); }
+	bool computer (u32 *w) override				{ return !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && pSidecar->ForRytm (w); }
 	bool computer_in_sysex (void) override			{ return pSidecar != 0 && pSidecar->ForRytmInSysEx (); }
 	const u8 *engine_next (int *pLen) override		{ return g_ToHost.Next (pLen); }
 	unsigned engine_drain (void) override			{ return g_ToHost.Drain (); }

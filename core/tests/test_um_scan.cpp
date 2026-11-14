@@ -579,7 +579,7 @@ int main() {
 
   // ---- a box with a folder of its own (the A4's /.a4): the web tab's assign lands there, and its report's voice byte plays the slot
   {
-    device::g_link.state = "/.a4";
+    device::cur().state = "/.a4";
     CHECK(um::command("um=assign:2:rytm.scanb", o, sizeof o));
     idle_all();
     CHECK(um::slot_view(1).state == RMP_SLOT_READY);

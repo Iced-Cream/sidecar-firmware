@@ -12,6 +12,7 @@
 #include "guard.h"
 #include "idlewait.h"
 #include "midi_in.h"
+#include "link1.h"
 #include "notes.h"
 #include "paircode_pi.h"
 #include "usbc_pi.h"
@@ -488,6 +489,7 @@ void CEngineCores::Control (void)
 			s_nMidiBytes++;
 			bWorked = TRUE;
 		}
+		link1::Poll ();		// the second box's messages, as the engine's slot 1 (link1.h)
 		Mark (0);
 		u32 nKey;
 		while (g_KeysIn.pop (&nKey))

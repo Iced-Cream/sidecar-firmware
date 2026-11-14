@@ -192,27 +192,21 @@ int main() {
   device::reset();
   CHECK(!device::foreign() && hooks.to_rytm == ::out);
 
-  // a box with a state folder of its own: answered "restart", the choice kept in /.rytm, one restart after the saves
+  // a box with a state folder of its own: its folder from its hello on, in slot 1; nothing restarts, no choice is written;
+  // the Rytm's folder not touched, the Pi's files stay
   static const device::Profile kBox2 = [] { device::Profile p = kBox; p.id = kBoxId + 1; p.state_dir = "/.boxtest"; return p; }();
   CHECK(device::add(&kBox2));
   mkdir((std::string(tmpl) + "/.rytm").c_str(), 0755);
-  g_out.clear();
-  send(hello(kBoxId + 1));   // no restart hook on this board: told it has no such profile, nothing changes
-  CHECK(g_out.size() == 1 && g_out[0][8] == device::kUnknown && !device::foreign());
   hooks.device_restart = [] { ++g_restarts; };
   g_out.clear();
   send(hello(kBoxId + 1));
-  CHECK(g_out.size() == 1 && g_out[0][8] == device::kRestart && !device::foreign() && !device::g_link.state);
-  send(hello(kBoxId + 1));   // its repeat before the restart: the same answer, one request
-  for (int k = 0; k < 100 && !g_restarts; ++k) {
+  CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk && device::foreign() && device::active().id == kBoxId + 1);
+  CHECK(device::cur().index == 1 && !strcmp(device::cur().state, "/.boxtest") && !device::g_links[0].state);
+  for (int k = 0; k < 100; ++k) {
     device::step();
     fmt::post_step();
   }
-  CHECK(g_restarts == 1 && exists_on_card(tmpl, "/.rytm/device"));
-  // the next boot: the box's folder from the first file on; the Rytm's folder not touched, the Pi's files stay
-  device::reset();
-  device::boot();
-  CHECK(device::foreign() && device::active().id == kBoxId + 1 && !strcmp(device::g_link.state, "/.boxtest"));
+  CHECK(g_restarts == 0 && !exists_on_card(tmpl, "/.rytm/device"));
   {
     File f;
     CHECK(fs.mkdir("/.rytm/pools") && f.open("/.rytm/pools/P.txt", kWrite) && f.write("x", 1) == 1);
@@ -224,20 +218,17 @@ int main() {
     CHECK(f.open("/.rytm/pools/P.txt", kRead));   // the engine's own path reads it back
     f.close();
     CHECK(exists_on_card(tmpl, "/Samples") && fs.exists("/Samples"));   // shared content: one place
+    {   // the Rytm's slot, named: its own folder, at the same time
+      device::Scope s0(device::g_links[0]);
+      CHECK(!fs.exists("/.rytm/pools/P.txt"));
+    }
   }
   g_out.clear();
-  send(hello(kBoxId + 1));   // after the restart: accepted
+  send(hello(kBoxId + 1));   // its periodic hello: the same
   CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk);
-  // a Rytm plugged in now: its 35 asks for /.rytm, the next boot has no box
+  // a Rytm plugged in now: its 35 gives the transport back to slot 0, which is /.rytm; no restart
   send(h35);
-  for (int k = 0; k < 100 && g_restarts < 2; ++k) {
-    device::step();
-    fmt::post_step();
-  }
-  CHECK(g_restarts == 2);
-  device::reset();
-  device::boot();
-  CHECK(!device::foreign() && !device::g_link.state && hooks.to_rytm == ::out);
+  CHECK(!device::foreign() && !device::cur().state && hooks.to_rytm == ::out && g_restarts == 0);
   {
     char b[64];
     const char* p = "/.rytm/pools/P.txt";
@@ -245,74 +236,27 @@ int main() {
   }
   CHECK(!fs.exists("/.rytm/pools/P.txt"));
 
-  // A stock Rytm on USB (never a 35) and a Digitakt: the driver's rytm_on_usb, restarts as boots, no loop
+  // A Digitakt and a stock Rytm (its USB id, never a 35): no restart ever. The Digitakt in /.digitakt from its hello; with the
+  // Rytm on USB as well the engine's own work is the Rytm's again (slot 0) and the Digitakt keeps slot 1
   {
     using device::kIdDigitakt;
-    int boots = 0;
-    auto steps = [&] { for (int k = 0; k < 40; ++k) { device::step(); fmt::post_step(); } };
-    auto reboot = [&] {   // what a restart is: the choice on the card read by a fresh boot
-      ++boots;
-      device::reset();
-      g_out.clear();
-      device::boot();
-    };
     auto hello = [&](uint16_t id) {
       send(sidecar({device::kCmdHello, 1, (uint8_t)(id >> 7), (uint8_t)(id & 0x7f), 1, 'D', 'T'}));
       return (int)g_out.back()[8];
     };
-    auto folder = [] { return device::g_link.state ? device::g_link.state : "/.rytm"; };
-    uint64_t t = 1000000000;
-    host_fake_time(true, t);
+    auto folder = [] { return device::cur().state ? device::cur().state : "/.rytm"; };
     g_restarts = 0;
     device::reset();
-    // a Digitakt's session
-    CHECK(hello(kIdDigitakt) == device::kRestart);
-    steps();
-    CHECK(g_restarts == 1);
-    reboot();
-    CHECK(!strcmp(folder(), "/.digitakt") && hello(kIdDigitakt) == device::kOk);
+    CHECK(hello(kIdDigitakt) == device::kOk && !strcmp(folder(), "/.digitakt"));
     CHECK(device::foreign() && device::box_screen() == device::kDigitakt.screen && !strcmp(voice_name(0), "T1"));   // its words (L7: one read of the box)
-    reboot();   // the next day: no Digitakt, a stock Rytm: its id alone goes home, once
-    CHECK(!strcmp(folder(), "/.digitakt"));
     device::rytm_on_usb(true);
-    steps();
-    CHECK(g_restarts == 2);
-    reboot();
-    CHECK(!strcmp(folder(), "/.rytm"));
-    device::rytm_on_usb(true);
-    steps();
-    CHECK(g_restarts == 2);
-    // both on USB, the Rytm's id first: the Digitakt waits, for as long as the Rytm is there
-    CHECK(hello(kIdDigitakt) == device::kWait);
-    t += 3600000000ull, host_fake_time(true, t);
-    CHECK(hello(kIdDigitakt) == device::kWait);
-    steps();
-    CHECK(g_restarts == 2 && !strcmp(folder(), "/.rytm"));
-    // the same boot again, the Digitakt's hello before the Rytm has enumerated: the settle window holds it
-    reboot();
-    CHECK(hello(kIdDigitakt) == device::kWait);
-    device::rytm_on_usb(true);
-    CHECK(hello(kIdDigitakt) == device::kWait);
-    steps();
-    CHECK(g_restarts == 2);
-    // the Rytm gone: the Digitakt alone gets through, past the window
-    reboot();
-    t += (uint64_t)device::kSettleMs * 1000 + 1000, host_fake_time(true, t);
-    CHECK(hello(kIdDigitakt) == device::kRestart);
-    steps();
-    CHECK(g_restarts == 3);
-    reboot();
-    CHECK(!strcmp(folder(), "/.digitakt"));
-    // its hello first, then a Rytm: the Digitakt keeps it
-    CHECK(hello(kIdDigitakt) == device::kOk);
-    device::rytm_on_usb(true);
-    steps();
-    CHECK(g_restarts == 3 && !strcmp(folder(), "/.digitakt"));
-    // a Digitakt's USB id: rytm_on_usb is never called, so nothing moves without its hello
-    reboot();
-    steps();
-    CHECK(g_restarts == 3 && !strcmp(folder(), "/.digitakt"));
-    host_fake_time(false, 0);
+    device::step();
+    CHECK(!strcmp(folder(), "/.rytm") && !device::foreign() && device::g_links[1].box == &device::kDigitakt);
+    CHECK(!strcmp(device::g_links[1].state, "/.digitakt"));
+    CHECK(hello(kIdDigitakt) == device::kOk);   // its periodic hello: still its slot
+    device::rytm_on_usb(false);
+    device::step();
+    CHECK(!strcmp(folder(), "/.digitakt") && g_restarts == 0);
     device::reset();
   }
 
@@ -326,15 +270,12 @@ int main() {
     };
     g_restarts = 0;
     device::reset();
-    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);   // a stock A4 beside a Rytm: nothing
-    CHECK(hello() == device::kRestart);
-    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid) == &device::kA4);   // a stock A4 beside a Rytm: its own slot's stream, claimed at enumeration
+    CHECK(device::by_usb(device::kA4Vid, device::kA4Pid, true) == &device::kA4);   // usb=mirror: the stock A4 as it is
+    CHECK(hello() == device::kOk);   // its folder from its hello on: no restart
     steps();
-    CHECK(g_restarts == 1);
-    device::reset();
-    g_out.clear();
-    device::boot();
-    CHECK(device::active().id == kIdA4 && !strcmp(device::g_link.state, "/.a4"));
+    CHECK(g_restarts == 0);
+    CHECK(device::active().id == kIdA4 && !strcmp(device::cur().state, "/.a4"));
     CHECK(!strcmp(ui::tap_source_name(1), "T1") && !strcmp(ui::tap_source_name(4), "T4") && !strcmp(ui::tap_source_name(9), "IN L"));   // the box's own words on SCOPE, its voices on their channels
     CHECK(ui::tap_channel_of_voice(1) == 3 && ui::tap_channel_of_voice(3) == 5);
     CHECK(!strcmp(device::kA4.screen->keys, "UP + YES: PAGES"));
@@ -351,7 +292,7 @@ int main() {
     auto passes = [&](std::vector<uint8_t> m) {
       const uint8_t* d = m.data();
       int len = (int)m.size();
-      return device::translate(device::g_link, d, len, buf);
+      return device::translate(device::cur(), d, len, buf);
     };
     std::vector<uint8_t> tr = {0x04, 0x03 | 0x08, 60, 100};   // JUNO on voice 3
     for (int k = 0; k < 2 * 16 + 2; ++k) tr.push_back(k % 2 ? 0 : 64);
@@ -388,52 +329,6 @@ int main() {
     device::reset();
   }
 
-  // A failed write of the choice: no restart, so no restart loop; the next hello tries again and goes through
-  {
-    device::reset();
-    fmt::post_wait();
-    remove((std::string(tmpl) + "/.rytm/device").c_str());
-    g_restarts = 0;
-    host_fail_open("/.rytm/device.tmp", true);
-    for (int round = 0; round < 3; ++round) {
-      send(hello(kBoxId + 1));
-      for (int k = 0; k < 200 && device::leaving(); ++k) {
-        device::step();
-        fmt::post_step();
-      }
-      CHECK(!device::leaving() && g_restarts == 0);
-    }
-    host_fail_open("/.rytm/device.tmp", false);
-    send(hello(kBoxId + 1));
-    for (int k = 0; k < 200 && !g_restarts; ++k) {
-      device::step();
-      fmt::post_step();
-    }
-    CHECK(g_restarts == 1 && exists_on_card(tmpl, "/.rytm/device"));
-  }
-
-  // A restart comes after the saves: the LFOs' 1 s debounce not waited for, the project first, the choice last
-  {
-    device::reset();
-    fmt::post_wait();
-    remove((std::string(tmpl) + "/.rytm/device").c_str());
-    static bool s_saved;
-    s_saved = false, g_restarts = 0;
-    hooks.device_restart = [] { ++g_restarts, s_saved = !lfo::dirty() && !project_dirty && !seq::unsaved(); };
-    for (int k = 0; k < 200000 && project_loading(); ++k) idle_save();
-    lfo::Settings ls = lfo::get(0);
-    ls.depth = ls.depth == 20 ? 10 : 20;
-    lfo::set(0, ls);
-    CHECK(lfo::dirty());
-    project_dirty = true;
-    char sb[80];
-    CHECK(seq::command("seq=lat:200", sb, sizeof sb) && seq::unsaved());   // held for kSaveMs otherwise: edits of the last second lost at the restart
-    send(hello(kBoxId + 1));
-    for (int k = 0; k < 200 && !g_restarts; ++k) idle_save();
-    CHECK(g_restarts == 1 && s_saved);
-    hooks.device_restart = [] { ++g_restarts; };
-  }
-
   // A stock Digitakt's stereo mix plays POST and leaves the project's routes alone
   {
     char b[64];
@@ -455,7 +350,6 @@ int main() {
     CHECK(out::control.trk10 == 0);
     CHECK(device::rytm().trk10 == 0 && device::kDigitakt.trk10 == 0 && device::kA4.trk10 == 180);
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
-    device::g_link.state = "/.a4";                     // the folder chosen at boot: this hello is accepted
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
     CHECK(out::control.trk10 == 180);
@@ -474,19 +368,9 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    {   // the usual way in: the boot after its hello's restart picks the box, and its hello then changes nothing
-      Fs f;
-      File w;
-      CHECK(w.open("/.rytm/device", kWrite));
-      CHECK(w.write((const uint8_t*)"3\n", 2) == 2);
-      w.close();
-      device::boot();
-      CHECK(device::active().id == device::kIdA4 && out::control.trk10 == 180);
-      send(hello(device::kA4.id));
-      CHECK(out::control.trk10 == 180);
-      device::reset();
-      CHECK(f.remove("/.rytm/device"));
-    }
+    send(hello(device::kA4.id));                       // its hello again: the A4's trim, nothing else
+    CHECK(out::control.trk10 == 180);
+    device::reset();
   }
 
   // A poly track's chord on the A4's voices: one 04 a note, on the voice's machine; a lone trig is what it always was
@@ -499,7 +383,6 @@ int main() {
     auto off = [](int vi) { return sidecar({0x11, (uint8_t)vi}); };
     auto notes = [](int vi) { return inst::voice_notes(vi) + poly::voice_notes(vi); };
     auto quiet = [&](int vi) { send(off(vi)); voice_silence(vi); usleep(25000); };
-    device::g_link.state = "/.a4";
     send(hello(device::kA4.id));
     CHECK(device::kA4.chords && !device::rytm().chords && !device::kDigitakt.chords);
 
@@ -598,12 +481,12 @@ int main() {
         auto m = trig(kPlaits | 0, n);
         d = m.data();
         int len = (int)m.size();
-        CHECK(!device::translate(device::g_link, d, len, buf));
+        CHECK(!device::translate(device::cur(), d, len, buf));
       }
       auto m = trig(kPlaits | 0, 67);          // once only
       d = m.data();
       int len = (int)m.size();
-      CHECK(device::translate(device::g_link, d, len, buf));
+      CHECK(device::translate(device::cur(), d, len, buf));
       device::box_note(0, -1, 0);
       keys::set_forward(nullptr);
       CHECK(inst::voice_notes(0) == before);
@@ -683,7 +566,6 @@ int main() {
     }
     {   // the Rytm: the same bytes are what they always were, no chord
       device::reset();
-      device::g_link.state = nullptr;
       send(trig(kPlaits | 1, 60));
       send(trig(kPlaits | 1, 64));
       send(trig(kPlaits | 1, 67));
@@ -695,7 +577,6 @@ int main() {
 
   {  // the A4's screen: the pages' messages alone, their text in the pixels, its hello never the Rytm's 35, the Rytm's pages hidden
     device::reset();
-    device::g_link.state = "/.a4";
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
     ui::remote_reset();
@@ -735,7 +616,6 @@ int main() {
   {  // the Digitakt's screen and slots (mod 0.3): the pages as the A4's, eight tracks T1..T8; a slot's 19 answered with its 1A, a 1D let
      // through; the Rytm's other messages still filtered
     device::reset();
-    device::g_link.state = "/.digitakt";
     send(hello(device::kIdDigitakt));
     CHECK(device::foreign() && device::active().id == device::kIdDigitakt);
     CHECK((device::kDigitakt.features & (device::kRemoteUi | device::kUserSlots)) == (device::kRemoteUi | device::kUserSlots));

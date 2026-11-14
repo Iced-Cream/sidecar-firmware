@@ -34,11 +34,11 @@ const Profile& active() {             // (only ob_follow.cpp asks)
   static Profile none;
   return g_a4_chosen ? kA4 : none;
 }
-const Profile* by_usb(uint16_t vid, uint16_t pid) {   // device.cpp's list, without the engine it links
+const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {   // device.cpp's list, without the engine it links
   static Profile rytm;
   rytm.audio = &out::kRytmMk2;
   if (vid == 0x1935 && pid == 0x0b48) return &rytm;
-  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen ? &kA4 : nullptr;
+  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen || without_hello ? &kA4 : nullptr;
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
@@ -152,10 +152,19 @@ int main() {
     Bus b(g_rytm, 0x0b48);
     CHECK(b.ob && b.ob->Configure());
     CHECK(g_rytm_usb == 1);
-    {  // a second box while one streams: no second stream, and its id is still noted when it is a Rytm
+    {  // a second box while the Rytm streams: its own stream in slot 1, beside it; the Rytm stays the primary one (the engine's
+       // output and the device table follow it), the second's OUT silent; a third box finds its slot taken
       Bus s(g_digitakt, 0x0b2c);
-      CHECK(s.ob == nullptr && g_rytm_usb == 1);
+      CHECK(s.ob != nullptr && s.ob->Configure() && g_rytm_usb == 1);
+      CObUsb *so = (CObUsb *)s.ob, *bo = (CObUsb *)b.ob;
+      CHECK(so->Slot() == 1 && !so->Primary() && bo->Primary() && CObUsb::Box(1) == so && CObUsb::Box(0) == bo);
+      CHECK(&core::out::device() == &core::out::kRytmMk2);
+      {
+        Bus t(g_digitakt, 0x0b2c);
+        CHECK(t.ob == nullptr);
+      }
     }
+    CHECK(CObUsb::Box(1) == nullptr && ((CObUsb *)b.ob)->Primary() && &core::out::device() == &core::out::kRytmMk2);
     same_sequence(b.host);
     CHECK(b.host.in.size() == 8 && b.host.in.front()->len == 368);
     CHECK(&core::out::device() == &core::out::kRytmMk2);

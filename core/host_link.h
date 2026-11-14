@@ -26,7 +26,9 @@ bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);   // "\"fxin\":{\"want\":1,\"state\":\"on\",\"rytm\":1}"
 }  // namespace fxin
 
-void host_sysex(const uint8_t* d, int len);
+void host_sysex(const uint8_t* d, int len);        // transport 0's message: engine_sysex_link(0, ...)
+void host_sysex_slot(const uint8_t* d, int len);   // a message of the slot in hand (device::Scope)
+void engine_sysex_link(int transport, const uint8_t* d, int len);   // (engine.h)
 // The link to the Rytm went down or came up (the Rytm's hello 35, its USB MIDI attached or gone, the Overbridge
 // stream started or stopped): every voice silenced (CC 120's ramp, until its next trig) and the send FX's tails
 // cleared, as a double STOP does - a note-on whose note-off (or a STOP) was lost across the gap must not hang.

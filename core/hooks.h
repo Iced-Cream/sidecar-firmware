@@ -35,6 +35,9 @@ struct Hooks {
   void (*transport)(uint8_t status);
   // Another box needs another state folder (core/device/device.h): saved, restart the Sidecar. Null: a board that cannot.
   void (*device_restart)();
+  // True on the control core (the Pi: core 3). Read by the file layer to pick the link a path is for (device::path_link):
+  // the control core's own Scope, or the card core's request. Null: one thread, always the control core.
+  bool (*control_core)();
   // The recent log copied to the card once, as /.rytm/logs/<name>.log (the Rytm's first freeze probe of a boot,
   // core/host_link.cpp). Any core; only asks: the platform writes it later, off the audio path. Null: nothing kept.
   void (*log_snapshot)(const char* name);

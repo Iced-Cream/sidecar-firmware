@@ -121,13 +121,17 @@ void heap_place(void*) {}
 static volatile bool s_restart;
 static void device_restart() { s_restart = true; }
 bool take_restart() { bool r = s_restart; s_restart = false; return r; }
+extern "C" int rytm_render_core() __attribute__((weak));   // platform_pi.cpp: the calling core (the host tests: none, one thread)
+static bool control_core() { return !rytm_render_core || rytm_render_core() == 3; }   // (core/device/device.h path_link)
 
 bool begin(void (*to_host)(const uint8_t*, int)) {
   core::hooks.to_rytm = to_host;
   core::hooks.device_restart = device_restart;
+  core::hooks.control_core = control_core;
   return core::engine_begin();
 }
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
+void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach, int16_t (*block_r)[kVoices], uint8_t* st) {
   return core::render_voices(block, kBlock, 0, v0, v1, mach, block_r, st);
 }

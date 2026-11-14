@@ -16,11 +16,10 @@
 // State: a box with a state_dir keeps its projects, settings and pools there, not in /.rytm, so two devices' state never
 // mixes (shared content stays shared: /Samples, /Plugins, /JUNO, /DX7, ...). The engine's "/.rytm/..." literals stay as
 // they are: the one path function of each port (platform_pi.cpp full, platform_host.cpp host_path) passes them through
-// state_path. The folder is chosen once a boot, before the first file is read, and never changes while the engine runs:
-// the card is touched long before any box can speak, and a stock Rytm never says hello. So the box of the last run is
-// remembered in /.rytm/device. No file: the Rytm and /.rytm, as ever. A hello (or a Rytm's 35) that needs another folder
-// is answered kRestart, the choice saved, the Pi restarted once after the saves drained (hooks.device_restart). The Pi's
-// own files stay in /.rytm whatever the box: kMachine in device.cpp.
+// state_path. Two slots (docs/device-profiles.md "Several devices"): slot 0 is the Rytm's, in /.rytm from the first file
+// on; a box takes slot 1 at its hello, in its own folder from then on, on whichever transport it spoke (slot_of). Nothing
+// restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's (CardScope). The
+// Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
 #pragma once
 #include <stdint.h>
 
@@ -31,7 +30,7 @@ namespace device {
 constexpr uint8_t kCmdHello = 0x4F;
 constexpr uint8_t kProto = 1;
 constexpr uint16_t kIdRytm = 1;
-enum Status : uint8_t { kUnknown = 0, kOk = 1, kBadProto = 2, kRestart = 3, kWait = 4 };   // kRestart: say hello again after the Sidecar's reboot; kWait: a Rytm has the Sidecar, go on saying hello
+enum Status : uint8_t { kUnknown = 0, kOk = 1, kBadProto = 2, kRestart = 3, kWait = 4 };   // kRestart: no longer sent (a restart for a folder, before slots); kWait: slot 1 is another box's, go on saying hello
 constexpr int kMaxParams = 16;
 constexpr int kMaxMessage = 44;   // the engine's longest report: 0x04 with P1..P16 and the sound tag
 constexpr uint8_t kCmdControls = 0x50;   // a box's controls report: head 50 <track> { <value> <fraction> } x Controls::n F7
@@ -110,7 +109,7 @@ struct Profile {
                               // voice, what the Pi's driver opens. Null: no audio, the driver leaves the USB id alone
   const Controls* controls;   // null: no controls report
   bool note_out;              // the engine's own notes (the sequencer's) go to the box as MIDI, channel = voice: its voice's amp must open for the Sidecar's voice to sound
-  bool audio_by_hello;        // its USB id alone claims nothing: only once it is the box in use (a stock A4 beside a Rytm stays out of the Rytm's way)
+  bool audio_by_hello;        // (no longer read: by_usb claims every box's stream at enumeration, one stream a slot) its stream was claimed only once it was the box in use
   int16_t trk10;              // the voices' own channels' trim while it is the box in use, tenths of a dB (out::Control::trk10): a box whose insert point sits lower than the Rytm's; 0 for the Rytm
   bool chords;                // its 0x04s on a voice within kChordMs with different notes are one chord on the voice's machine, released whole by 0x11 (one report a note: the A4, on any track)
   const Screen* screen;       // with kRemoteUi; null: the Rytm's words
@@ -122,10 +121,11 @@ inline const char* short_name(const Profile& p) { return p.short_name ? p.short_
 const Profile& rytm();                 // the default
 const Profile& active();               // the profile in use
 const Profile* by_id(uint16_t id);        // the known box with this id; null none
-const Profile* by_usb(uint16_t vid, uint16_t pid);   // the known box with this USB id and an audio row (the Pi's driver); null none
+const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello = false);   // the known box with this USB id and an audio row (the Pi's driver); null none.
+                                       // without_hello: no longer changes the answer (every box's stream is claimed at enumeration)
 bool add(const Profile* p);            // one more known box (false: id taken, table full, or it does not fit the engine)
-// What one connected box has chosen: its profile, its state folder, its output, its counts. There is one link today, g_link
-// (docs/device-profiles.md, "Several devices"): a second one is a second Link and a way to tell whose message it is.
+// What one connected box has chosen: its profile, its state folder, its output, its counts. One Link per box on USB, kLinks
+// at most (docs/device-profiles.md, "Several devices"). Link 0 is the one a single box has always had.
 struct Link {
   const Profile* box;                     // the box in use; null: the Rytm
   const char* state;                      // the state folder when it is not /.rytm; null: /.rytm
@@ -134,20 +134,53 @@ struct Link {
   const Profile* next;                    // a change of folder asked: the box it is for
   bool saving, posted;
   uint32_t post_id;                       // its write to /.rytm/device
+  uint8_t index;                          // its place in g_links
 };
-extern Link g_link;
-void hello(Link& l, const uint8_t* d, int len);   // a whole 4F
+constexpr int kLinks = 2;
+extern Link g_links[kLinks];
+// The control core's link in hand: whose message is being handled, whose state is being saved. Outside any Scope it is g_base,
+// the slot the engine's own work is for (its pages, its reports, its saves): slot 1 while a box has it and no Rytm is on USB
+// (a box alone, as it always was), else slot 0, so everything that never names a link is what it always was.
+extern Link* g_cur;
+extern Link* g_base;
+extern int g_depth;   // Scopes open (the control core's)
+inline Link& cur() { return *g_cur; }
+struct Scope {   // the control core only; nests
+  Link* was;
+  explicit Scope(Link& l) : was(g_cur) { ++g_depth, g_cur = &l; }
+  ~Scope() { g_cur = --g_depth ? was : g_base; }
+  Scope(const Scope&) = delete;
+  Scope& operator=(const Scope&) = delete;
+};
+// Which link a file call is for (state_path). On the control core: g_cur. On the card core: the link its request was
+// queued for (CardScope, set around each request it runs), else g_web_link (the web's own calls: the box its page serves).
+// hooks.control_core says which core calls; null (the host, one thread): always the control core's answer.
+int path_link();
+extern volatile int8_t g_web_link;
+struct CardScope {   // around one card request, on whichever core runs it
+  int8_t was;
+  Link* was_cur;
+  explicit CardScope(int link);
+  ~CardScope();
+  CardScope(const CardScope&) = delete;
+  CardScope& operator=(const CardScope&) = delete;
+};
+// The platform's sender for link 1.. (its box's USB MIDI), null when it goes. Link 0's is hooks.to_rytm as ever. While only link 0
+// is up and it is a Rytm, hooks.to_rytm stays the platform's own; otherwise it sends to the link in hand (Scope).
+void set_out(int link, void (*out)(const uint8_t*, int));
+void hello(Link& l, const uint8_t* d, int len);   // a whole 4F, on the slot in hand
+// The slot transport t's message is for: 0 the platform's host link (the Rytm's USB MIDI, the emulator's TCP link), 1 a second
+// Elektron box's USB MIDI. A box's hello takes slot 1 for its transport; a Rytm's 35 gives it back to slot 0. -1: a box's hello
+// while slot 1 is another box's (answered kWait). engine_sysex_link calls it for each message.
+int slot_of(int t, const uint8_t* d, int len);
+void (*tx(int t))(const uint8_t*, int);   // transport t's sender
 void reset();                          // back to the Rytm and /.rytm, as a fresh boot (tests)
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered
 
-void boot();                           // engine_begin, before anything else reads the card: the last box and its folder
-bool leaving();                        // a change of folder waits: the idle saves flush, not settle
-// The idle saves' tail: a change of folder once settled (all saved), and a restart only when the choice is on the card; true if it did work
-bool step(bool settled = true);
-// The Pi's Overbridge driver (core 0): a Rytm is on USB, or gone. A stock Rytm never says hello, so its USB id is how it asks for
-// /.rytm: the same saved choice and one restart as its 35, unless a box said hello this boot. While it is there, a hello that
-// would leave /.rytm waits (kWait), so two boxes on USB do not restart each other; so does one in the first kSettleMs of the boot
-// a Rytm's id caused, when the Rytm may not have enumerated yet. Another box's USB id changes nothing: its hello decides.
+void boot();                           // engine_begin: nothing to choose any more (slot 0 is /.rytm)
+bool leaving();                        // false: no change of folder ever waits (no restart)
+bool step(bool settled = true);        // false: nothing to do (kept for the engine's idle saves)
+// The Pi's Overbridge driver (core 0): a Rytm is on USB, or gone. Kept for the platform; slot 0 is the Rytm's whatever it says.
 void rytm_on_usb(bool on);
 constexpr uint32_t kSettleMs = 10000;
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
@@ -155,14 +188,18 @@ void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;
 constexpr uint32_t kChordMs = 20;   // from a chord's last note to its next; the A4's mod keeps a mono track's trigs apart by the same time (a4_report.c CHORD_GAP)
 constexpr int kChordNotes = 4;      // the A4's most on a trig [read in OS 1.56]
-const char* state_path_box(const char* path, char* buf, int cap);
-// path as the card has it: path itself, or in buf. Every file call passes here, so the Rytm's cost is the one test.
-// The file layer has no link to ask: this is g_link's folder.
-inline const char* state_path(const char* path, char* buf, int cap) { return g_link.state ? state_path_box(path, buf, cap) : path; }
-inline bool foreign(const Link& l = g_link) { return l.box != nullptr; }
+const char* state_path_box(const char* state, const char* path, char* buf, int cap);
+// path as the card has it: path itself, or in buf. Every file call passes here: with no box on any link (a lone Rytm) the cost
+// is the one test it always was.
+inline const char* state_path(const char* path, char* buf, int cap) {
+  if (!g_links[0].state && !g_links[1].state) return path;
+  const char* s = g_links[path_link()].state;
+  return s ? state_path_box(s, path, buf, cap) : path;
+}
+inline bool foreign(const Link& l = cur()) { return l.box != nullptr; }
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
 // the control core may set the box. Null: the Rytm, or a box without a Screen.
-inline const Screen* box_screen(const Link& l = g_link) {
+inline const Screen* box_screen(const Link& l = cur()) {
   const Profile* p = __atomic_load_n(&l.box, __ATOMIC_RELAXED);
   return p ? p->screen : nullptr;
 }
@@ -172,7 +209,8 @@ bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m);
 // The control loop, every pass: a box with Controls runs its envelopes (strip.h). Nothing else: one test.
 void strip_tick(uint32_t us);
 inline void tick(uint32_t us) {
-  if (g_link.box && g_link.box->controls) strip_tick(us);
+  for (const Link& l : g_links)
+    if (l.box && l.box->controls) return strip_tick(us);
 }
 
 }  // namespace device
