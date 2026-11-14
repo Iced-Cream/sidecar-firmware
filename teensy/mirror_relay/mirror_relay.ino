@@ -13,6 +13,7 @@ void setup ()
 void loop ()
 {
 	// LED: off = no link, blinking = link up and no computer, on = the computer configured the box
+	relay_poll ();
 	static uint32_t t;
 	if (millis () - t < 250) return;
 	t = millis ();

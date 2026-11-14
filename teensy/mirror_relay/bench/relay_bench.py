@@ -177,7 +177,7 @@ class Bench:
     def _out_stream(self, h, ep, depth, gen, rate, kind="int"):
         """A paced OUT stream: the main loop submits (pump) while fewer than rate * elapsed went out; a finished
         transfer goes back to the idle list from its callback, which never blocks."""
-        s = dict(ep=ep, gen=gen, rate=rate, idle=[], sent=0, t0=None, err=0)
+        s = dict(ep=ep, who="pi" if h is self.link else "computer", gen=gen, rate=rate, idle=[], sent=0, t0=None, err=0)
 
         def done(t):
             if t.getStatus() != usb1.TRANSFER_COMPLETED and not self.stop:
@@ -360,10 +360,10 @@ def one_stage(ctx, link, paths, seconds):
     b.run(paths)
     st = read_stats(link)
     rtt = sorted(b.ctl_rtt)
-    sent = {s["ep"]: s["sent"] for s in b.streams}
+    sent = {"%s 0x%02x" % (s["who"], s["ep"]): s["sent"] for s in b.streams}
     res = dict(paths=list(paths),
                audio_to_pc=b.a_pc.d(), audio_to_pi=b.a_pi.d(), pipe_to_pi=b.p_pi.d(), pipe_to_pc=b.p_pc.d(),
-               sent={"0x%02x" % k: v for k, v in sent.items()}, intaken=b.taken,
+               sent=sent, intaken=b.taken,
                ctl=dict(n=b.ctl_n, bad=b.ctl_bad, rtt_us_median=rtt[len(rtt) // 2] if rtt else None,
                         rtt_us_max=rtt[-1] if rtt else None),
                events=b.events, teensy=st)

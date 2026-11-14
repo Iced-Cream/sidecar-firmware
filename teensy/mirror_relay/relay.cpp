@@ -25,6 +25,7 @@ static ci_dev P;		// USB2: the computer
 
 static volatile Stats st;
 volatile uint32_t relay_stage;
+static volatile uint32_t reboot_at;		// kReqBootloader: when loop() reboots into the bootloader (0: never)
 
 // the box's descriptors as the Pi uploaded them
 static uint8_t dev_desc[18] __attribute__ ((aligned (32)));
@@ -721,8 +722,8 @@ static void l_setup_fn (ci_dev *d, const uint8_t *s)
 		case kReqBootloader:
 			if (wValue != 0x4C42) break;		// "BL": not by accident
 			ci_ep0_status_in (d);
-			delay (20);
-			_reboot_Teensyduino_ ();
+			reboot_at = millis () + 50;	// from loop(): a bkpt inside an interrupt is a fault, not the bootloader
+			return;
 		case kReqHalt:
 			if ((wValue & 0x0F) == 0) break;
 			ci_stall (&P, (uint8_t) wValue, wIndex != 0);
@@ -881,6 +882,17 @@ void relay_begin (void)
 	ci_run (&L, true);
 	relay_stage = 5;
 	rlog ("mirror relay up, protocol %u.%02u", kVersion >> 8, kVersion & 0xFF);
+}
+
+void relay_poll (void)
+{
+	if (reboot_at && (int32_t) (millis () - reboot_at) >= 0)
+	{
+		ci_run (&P, false);
+		ci_run (&L, false);
+		delay (20);
+		_reboot_Teensyduino_ ();
+	}
 }
 
 bool relay_link_up (void) { return st.link_configured != 0; }
