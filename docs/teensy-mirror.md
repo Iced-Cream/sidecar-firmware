@@ -1,7 +1,7 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
 Current state (2026-11-14): Teensy firmware and link protocol run on the bench (Teensy alone on a PC, the PC playing both
-ends): audio both ways and the pipes pass; forwarded control requests are not measured yet (see below). The Pi side
+ends): audio both ways, the pipes and the forwarded control requests pass (see below). The Pi side
 (teensy_target.cpp, the link1 MIDI tap, per-slot mirror buffers, CObUsb::Reattach) is written, host-tested where portable
 and syntax-checked against Circle: no kernel build, no Pi run, no unit run yet.
 
@@ -53,9 +53,12 @@ same opt-in as today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a rel
   waited under 250 us (worst 267 us).
 - Fixed on the way: the controller's interrupt threshold (ITC) left at its reset value of 8 microframes held completions
   back to one batch per millisecond (2000 blocks/s); `ci_init` now sets it to 0.
-- Forwarded control requests: not measured yet. With both Teensy ports on this PC, Windows does not send the link any
-  control transfer while the other port's request is open (seen in the firmware log: the request never arrives), so the
-  "Pi" cannot answer. The link has to be on another host controller for the bench (on the real setup it is on the Pi).
+- Forwarded control requests (staged run, 15 s a stage, then all paths at once): 650 vendor IN/OUT requests of 16-127
+  bytes, answered by the "Pi" through the link, all correct; round trip median 6.8 ms (8.6 ms with every stream running),
+  the Python "Pi" being most of it. One request a stage took about 1 s (not yet explained; to watch on the Pi).
+  With the link behind one of the PC's Genesys USB 2.0 hubs and the box's port behind another, Windows held every control
+  transfer to the link while the box's request was NAKing, so nothing could be answered; with the link on a root port
+  of the same controller it works. On the real setup the link is on the Pi.
 
 ## USB MIDI
 
