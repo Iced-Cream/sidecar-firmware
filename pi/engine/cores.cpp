@@ -646,8 +646,9 @@ void CEngineCores::Command (const char *p)
 	}
 	else if (strcmp (p, "out=main") == 0 || strcmp (p, "out=tracks") == 0)	// (out=Vn:...: the OUT route, core/fx/out.h)
 	{
-		g_Output.SetMode (strcmp (p + 4, "tracks") == 0 ? Output::kTracks : Output::kMain);
-		g_OutputSide.SetMode (g_Output.GetMode ());	// (the side box's own device decides MAIN for a stereo mix)
+		const Output::Mode M = strcmp (p + 4, "tracks") == 0 ? Output::kTracks : Output::kMain;
+		g_Output.SetMode (M);
+		g_OutputSide.SetMode (M);	// (each stage's own device decides MAIN for a stereo mix)
 		L->Write (From, LogNotice, "output: %s", g_Output.GetMode () == Output::kTracks ? "tracks" : "main");
 	}
 	else if (strncmp (p, "fifo=", 5) == 0)

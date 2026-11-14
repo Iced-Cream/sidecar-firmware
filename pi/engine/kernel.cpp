@@ -373,10 +373,11 @@ boolean CKernel::Initialize (void)
 	// boot defaults (the user's decision, 2026-10-16): out=tracks, the voices on their tracks' inputs, through the
 	// Rytm's filters and FX (the mod build); MIDI notes off (notes=on is for a stock Rytm, with out=main); no drone
 	// (only :drone=). cmdline.txt or the console override them.
-	g_Output.SetMode (strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
-											      : Output::kTracks);
+	const Output::Mode OutMode = strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
+												      : Output::kTracks;
+	g_Output.SetMode (OutMode);
 	g_Output.SetOutControl (&core::out::control);	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md)
-	g_OutputSide.SetMode (g_Output.GetMode ());	// slot 1's voices beside a Rytm (side_out.h): their own OUT routes,
+	g_OutputSide.SetMode (OutMode);			// slot 1's voices beside a Rytm (side_out.h): their own OUT routes,
 	g_OutputSide.SetOutControl (&core::out::control_side);	// their box's channels (set by its stream), no stereo=measure
 	g_OutputSide.SetMeasured (false);
 	// poolmono=1: stereo files summed at load (half the pool RAM for them; PRE / POST voices then play them centred)
