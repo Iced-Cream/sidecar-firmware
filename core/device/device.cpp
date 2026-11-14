@@ -158,7 +158,8 @@ static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm 
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
-  out::control1.trk10 = g_links[1].box ? g_links[1].box->trk10 : 0;   // slot 1's TRK trim, its box's (slot 0's: the Rytm's, 0)
+  // slot 1's TRK trim, its box's (slot 0's: the Rytm's, 0). On 8 voices a box plays slot 0's settings: there
+  out::control_of(slot_of_voice(voice_base(g_links[1]))).trk10 = g_links[1].box ? g_links[1].box->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, p ? p->name : l.index ? "none" : kRytm.name, l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
 }
