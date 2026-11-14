@@ -1475,8 +1475,13 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
     else soft_out(ring, row, i, l);
     mach[mach_of(v[i])] += cycles() - t1;
   }
-  for (int i = v0; i < v1; ++i)   // the voice's INSERT chain (core/fx/insert.h), in its stage's engine
-    ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr, slot_of_voice(i) == side);
+  {   // the voice's INSERT chain (core/fx/insert.h), in its stage's engine: the base box's voices and the side stage's only
+      // (a box alone in slot 1: slot 0's voices render, but chain k is its voice 8 + k's, never run twice a block)
+    const int base = slot_of_voice(device::base_voice_base());
+    for (int i = v0; i < v1; ++i)
+      if (slot_of_voice(i) == base || slot_of_voice(i) == side)
+        ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr, slot_of_voice(i) == side);
+  }
 #if CORE_MSAMP
   for (int i = v0; i < v1; ++i)   // LIVE IN after its chain: the limiter, the feedback guard, the measure's clicks
     if (v[i].li && v[i].live) livein::post(i, ring, stv[i] ? ring_r : nullptr, row, kBlock);
