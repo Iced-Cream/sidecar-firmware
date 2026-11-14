@@ -2,6 +2,7 @@
 #include "link1.h"
 
 #include <circle/usb/usbmidi.h>
+#include <circle/util.h>
 
 #include "bridge.h"
 #include "device/device.h"
@@ -16,6 +17,9 @@ static RecordReader<Spsc<uint8_t, kOutBytes>> s_Reader (&g_Out);
 static CUSBMIDIDevice *volatile s_pDevice;	// core 0 writes, the control core reads (Poll: its sender while there)
 static TStats s_Stats;
 static SysExAsm<4096> s_Asm;			// the control core's
+static TTap *volatile s_pTap;
+static Spsc<uint32_t, kFromComputerPackets> s_FromComputer;	// xHCI IRQ -> core 0's loop (Send), whole event packets
+static boolean s_bComputerSysEx;		// the computer's SysEx is part way out: the engine's records wait
 
 const TStats &Stats (void) { return s_Stats; }
 CUSBMIDIDevice *Device (void) { return s_pDevice; }
@@ -26,6 +30,23 @@ void Packet (unsigned nCable, uint8_t *pPacket, unsigned nLength)
 		if (!g_In.push (pPacket[i])) s_Stats.nInLost++;
 	asm volatile ("dsb sy; sev");
 }
+
+void SetTap (TTap *pTap) { s_pTap = pTap; }
+
+void Tap (const uint8_t *pEventPacket)
+{
+	TTap *p = s_pTap;
+	if (p != 0) p (pEventPacket);
+}
+
+bool FromComputer (const uint8_t *pEventPacket)
+{
+	uint32_t w;
+	memcpy (&w, pEventPacket, 4);
+	return s_FromComputer.push (w);
+}
+
+unsigned FromComputerRoom (void) { return kFromComputerPackets - s_FromComputer.size (); }
 
 void SetDevice (CUSBMIDIDevice *pDevice)
 {
@@ -41,11 +62,31 @@ void Send (void)
 	if (p == 0)
 	{
 		s_Reader.Drain ();			// no box: the engine's records for it go nowhere (whole)
+		uint32_t w;
+		while (s_FromComputer.pop (&w)) {}	// nor the relay's computer's packets
+		s_bComputerSysEx = FALSE;
 		return;
 	}
 	unsigned nState = p->GetSendState ();
 	if (nState == 1) return;			// the last transfer still in flight
 	if (nState == 2) s_Stats.nSendFail++;		// it failed: that message is lost (counted), the next goes
+	// the relay's computer first (up to 64 packets a transfer); while its SysEx is part way out, the engine's records wait
+	// so they never land inside it
+	static uint32_t s_Batch[64];
+	unsigned nBatch = 0;
+	uint32_t w;
+	while (nBatch < 64 && s_FromComputer.pop (&w))
+	{
+		s_Batch[nBatch++] = w;
+		unsigned cin = w & 0x0F;
+		s_bComputerSysEx = cin == 0x4 || (s_bComputerSysEx && cin != 0x5 && cin != 0x6 && cin != 0x7);
+	}
+	if (nBatch != 0)
+	{
+		if (!p->SendEventPacketsAsync ((const uint8_t *) s_Batch, nBatch * 4)) s_Stats.nSendFail++;
+		return;
+	}
+	if (s_bComputerSysEx) return;
 	int nLen;
 	const uint8_t *pRec = s_Reader.Next (&nLen);
 	if (pRec == 0) return;

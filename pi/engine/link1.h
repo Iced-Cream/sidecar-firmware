@@ -39,6 +39,15 @@ void Send (void);
 void Poll (void);
 void ToBox (const uint8_t *pData, int nLength);	// core::device::set_out(1, ...): records into g_Out
 
+// usb=mirror through a Teensy relay (teensy_target.cpp, docs/teensy-mirror.md): the box's USB MIDI to and from the relay's
+// computer, beside the engine. Event packets (4 bytes, cable + CIN first), as on the wire.
+typedef void TTap (const uint8_t *pEventPacket);
+void SetTap (TTap *pTap);			// each packet the box sends, also to pTap (0: none); core 0, task or loop
+void Tap (const uint8_t *pEventPacket);		// xHCI IRQ: the box's packet handler (kernel.cpp), before anything else
+const unsigned kFromComputerPackets = 1024;
+bool FromComputer (const uint8_t *pEventPacket);	// xHCI IRQ: one packet for the box; false: the queue is full (dropped)
+unsigned FromComputerRoom (void);		// packets that fit now
+
 }  // namespace link1
 
 #endif
