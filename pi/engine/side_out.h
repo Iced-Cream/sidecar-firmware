@@ -1,6 +1,6 @@
 // pi/engine/side_out.h - the side output stage's two ends (two links, phase 3(b)). While a box sits beside a Rytm
-// (core/device/device.h side_slot), slot 1's voices 8..15 go into g_OutputSide: a FIFO of their own, their own OUT
-// settings (core::out::control_side) and INSERT chains (core::ins::control_side), filled by render passes of their own
+// (core/device/device.h side_slot), slot 1's voices 8..15 go into g_OutputSide: a FIFO of their own, slot 1's OUT
+// settings (core::out::control1; its INSERT chains are its own alone or paired), filled by render passes of their own
 // (pick: cores.cpp) and pulled by slot 1's own box stream (Pull: ob_usb.cpp), so each box's clock paces its own voices.
 // The base box's stage (g_Output, the primary stream) is what it always was. A lone Rytm or a lone box has no side stage.
 // Header only: the transport's tests build it as it is.

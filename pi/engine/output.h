@@ -43,6 +43,9 @@ class Output {
   // The OUT settings the output stage follows (core::out::control; the kernel sets it). Unset: its own defaults (every
   // voice TRK: the Mac tests of the output stage alone).
   void SetOutControl(const core::out::Control* c) { ctl_ = c ? c : &own_; }
+  // Or the settings of whichever box this stage carries now, asked each Pull (the base box's stage: slot 0's while a Rytm
+  // is on USB, slot 1's for a box alone; null: SetOutControl's)
+  void FollowControl(const core::out::Control* (*f)()) { follow_ = f; }
   core::out::Control& OwnControl() { return own_; }   // tests: the default control's settings
   void Reset();                                         // transport (consumer) side only: a new stream drops the
                                                         // frames left from the last one and fades in again
@@ -123,6 +126,7 @@ class Output {
   core::MainOut main_;                                  // the fade (both modes), MAIN's sum and limit
   core::out::Control own_ = [] { core::out::Control c; core::out::defaults(c); return c; }();
   const core::out::Control* ctl_ = &own_;
+  const core::out::Control* (*follow_)() = nullptr;
   // the OUT mixer (core/fx/out_mix.h: libm, hosted only), placed here by output.cpp's constructor
   alignas(16) unsigned char mix_mem_[1024];
   core::out::Mixer* mix_;

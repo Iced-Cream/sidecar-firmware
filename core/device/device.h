@@ -216,9 +216,9 @@ inline int base_box_voice(int vi) {   // engine voice vi -> its number in the ba
   const int k = vi - base_voice_base();
   return k >= 0 && k < kBoxVoices ? k : -1;
 }
-// The slot whose voices sound beside the base box's, through an output stage of their own (its own OUT settings and
-// INSERT chains, core/fx/out.h control_side and core/fx/insert.h control_side; on the Pi its own FIFO and render pace,
-// paced by its own box's stream): 1 while slot 1 has a box and the base is slot 0 (a box beside a Rytm), else -1 (one
+// The slot whose voices sound beside the base box's, through an output stage of their own (on the Pi its own FIFO and
+// render pace, paced by its own box's stream; its OUT and INSERT settings are slot 1's, core/fx/out.h control1 and
+// core/fx/insert.h control1, alone or paired): 1 while slot 1 has a box and the base is slot 0 (a box beside a Rytm), else -1 (one
 // box: the base box's stage carries it, as it always did). Any core reads it (two aligned loads).
 inline int side_slot() {
   if (kVoiceSlots < 2) return -1;

@@ -60,9 +60,11 @@ constexpr int kRows = ins::kChains + ins::kMasters;
 inline bool row_on(int c) { return (c >= 0 && c < kVoices) || (c >= ins::kM0 && c < kRows); }
 inline bool is_pair_row(int c) { return c >= ins::kChains && c < kRows; }
 inline int parent(int c) { return is_pair_row(c) ? ins::kM0 + (c - ins::kChains) : c; }   // the chain whose knobs it follows
+// the settings chain pc plays by: a voice chain's are the AMP slot's (ins::g_amp_slot: the base box's), the master's slot 0's
+inline const ins::Control& ctl(int pc) { return pc < kVoices ? ins::control_of(ins::g_amp_slot) : ins::control; }
 inline bool wanted(int c, int s) {   // the row's slot is an AMP that should hold an instance
   int pc = parent(c);
-  return ins::control.type[pc][s] == ins::kAmp && (!is_pair_row(c) || ins::control.mpair[pc - ins::kM0][s]);
+  return ctl(pc).type[pc][s] == ins::kAmp && (!is_pair_row(c) || ins::control.mpair[pc - ins::kM0][s]);
 }
 Xchg g_x[kRows][kSlots];
 
@@ -813,7 +815,7 @@ bool job_step() {
       j.ph = kNone;
       // still wanted? (the knob / a lock moved on, the TYPE changed: the instance is kept for a later reuse)
       Ctl& k = g_k[j.c][j.s];
-      bool want = wanted(j.c, j.s) && model_for_knob(ins::control.play[parent(j.c)][j.s][0]) == j.model &&
+      bool want = wanted(j.c, j.s) && model_for_knob(ctl(parent(j.c)).play[parent(j.c)][j.s][0]) == j.model &&
                   j.gen == g_gen;
       if (!want || acq(&g_x[j.c][j.s].done) != g_x[j.c][j.s].offer) {
         free_inst(j.inst);
@@ -895,7 +897,7 @@ bool step() {
         k.st = kLoading;
         continue;
       }
-      const int want = model_for_knob(ins::control.play[parent(c)][s][0]);
+      const int want = model_for_knob(ctl(parent(c)).play[parent(c)][s][0]);
       if (want < 0) {
         k.st = kNoFiles;
         if (k.cur >= 0) offer(c, s, -1), did = true;

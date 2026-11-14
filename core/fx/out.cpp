@@ -17,7 +17,7 @@ namespace core {
 namespace out {
 
 Control control;
-Control control_side = [] { Control c; defaults(c); return c; }();
+Control control1 = [] { Control c; defaults(c); return c; }();
 void (*on_change)() = nullptr;
 
 namespace {
@@ -319,7 +319,7 @@ const Stats& stats() { return g_stats; }
 
 void reset() {
   defaults(control);
-  defaults(control_side);
+  defaults(control1);
   g_device = &kRytmMk2;
   for (int v = 0; v < kVoices; ++v) {
     g_knob[v][0] = 100, g_knob[v][1] = 64, g_knob[v][2] = 64, g_knob[v][3] = 0;

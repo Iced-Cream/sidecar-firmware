@@ -15,7 +15,8 @@ namespace core {
 namespace ins {
 
 Control control;
-Control control_side;   // zero: every chain OFF, no post EQ, no sends (insert.h: the side stage's)
+Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
+volatile int8_t g_amp_slot = 0;
 void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
@@ -70,19 +71,19 @@ uint32_t g_dirty_ms = 0;
 
 Engine g_engine(48000.0f);
 #if CORE_VOICES > 8
-// the side stage's chains (device.h side_slot): slot 1's voices beside a Rytm. No AMP (amp.h is keyed by chain).
-Engine g_engine_side(48000.0f, false);
+// slot 1's chains (its voices 8..15)
+Engine g_engine1(48000.0f);
 #endif
 #ifndef CORE_HEAP_BUFFERS
 float g_lines[kLines][kLine];
 #if CORE_VOICES > 8
-float g_lines_side[kLines][kLine];
+float g_lines1[kLines][kLine];
 #endif
 struct Placer {
   Placer() {
     g_engine.Place(g_lines);
 #if CORE_VOICES > 8
-    g_engine_side.Place(g_lines_side);
+    g_engine1.Place(g_lines1);
 #endif
   }
 } g_placer;
@@ -430,11 +431,11 @@ bool any_on() {
 
 // ---------------------------------------------------------------------------------------------------- the DSP hooks
 
-Engine& engine(bool side) {
+Engine& engine(int slot) {
 #if CORE_VOICES > 8
-  if (side) return g_engine_side;
+  if (slot) return g_engine1;
 #else
-  (void)side;
+  (void)slot;
 #endif
   return g_engine;
 }
@@ -450,12 +451,14 @@ static inline int16_t knee16(float y) {
   float q = y * 32767.0f;
   return (int16_t)(q > 32767.0f ? 32767 : q < -32768.0f ? -32768 : q);
 }
-void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices], bool side) {
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices], int slot) {
   if (vi < 0 || vi >= core::kVoices) return;
-  const int c = box_voice(vi);   // its box voice's chain, in its stage's engine
-  Engine& e = engine(side);
-  const Control& k = control_of(side);
-  if (!side) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the base box's chains)
+  const int c = box_voice(vi);   // its box voice's chain, in its slot's engine
+  Engine& e = engine(slot);
+  const Control& k = control_of(slot);
+  const bool amp = slot == g_amp_slot;
+  e.SetAmp(amp);
+  if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
   if (!ring_r) e.MarkMono(c);
   if (!e.Active(c, k)) return;
   float x[64], r[64];
@@ -532,7 +535,7 @@ static struct BusHook {
 } g_bus_hook;
 
 // the DELAY lines, then AMP's engine pool (amp.h; on the Mac: its own static memory)
-// (and on 16 voices the side stage's DELAY lines right after the base box's: both line arrays at their alignment)
+// (and on 16 voices slot 1's DELAY lines right after slot 0's: both line arrays at their alignment)
 static const unsigned long kLinesBytes = sizeof(float) * kLines * kLine;
 static const unsigned long kSideBytes = kVoiceSlots > 1 ? kLinesBytes : 0;
 unsigned long heap_bytes() { return kLinesBytes + kSideBytes + amp::heap_bytes() + master::heap_bytes(); }
@@ -540,7 +543,7 @@ void heap_place(void* mem) {
   memset(mem, 0, heap_bytes());
   g_engine.Place((float(*)[kLine])mem);
 #if CORE_VOICES > 8
-  g_engine_side.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes));
+  g_engine1.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes));
 #endif
   amp::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes);
   master::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes + amp::heap_bytes());
@@ -790,8 +793,8 @@ void reset() {
     for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f, g_send_off[v][b] = 0, send_refresh(v, b);
   g_engine.Reset();
 #if CORE_VOICES > 8
-  memset((void*)&control_side, 0, sizeof control_side);
-  g_engine_side.Reset();
+  memset((void*)&control1, 0, sizeof control1);   // (g_amp_slot is core/device's)
+  g_engine1.Reset();
 #endif
   amp::reset();
   master::reset();

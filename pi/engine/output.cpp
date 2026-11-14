@@ -52,7 +52,7 @@ float Output::Own(float x, float t) {
 }
 
 void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoices], const Taps* taps) {
-  const core::out::Control& c = *ctl_;
+  const core::out::Control& c = follow_ ? *follow_() : *ctl_;
   bool block_set = false;
   const uint32_t base = d_.since_reset;
   if (d_.first_pull_level == kNone) d_.first_pull_level = fifo_.size();
