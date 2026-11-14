@@ -18,7 +18,7 @@ bool Keep::fail(const char* why) {
   }
   // no lying take: the partial file (a header with the full sizes over a short body) and its folder go; without a remove the
   // header is patched to what was written
-  if (b_ && take_[0]) {
+  if (b_ && take_[0] && own_dir_) {   // (only a folder this job made: never an existing take's)
     char rel[100];
     rec::take_dir(rel, sizeof rel, take_);
     if (h_ >= 0) {
@@ -52,6 +52,7 @@ bool Keep::begin(const core::loop::KeepJob& j) {
   static uint64_t sizes[1024];
   static bool dirs[1024];
   job_ = j;
+  own_dir_ = false;
   err_[0] = 0, take_[0] = 0, done_ = pieces_ = worst_ = yields_ = 0;
   if (!b_ || !j.pcm || !j.frames) return fail("nothing to write"), false;
   state_ = 1;
@@ -76,7 +77,8 @@ bool Keep::begin(const core::loop::KeepJob& j) {
     if (m < 0) return fail("cannot make the take's folder"), false;
     made = m > 0;
   }
-  if (!made) return fail("cannot make the take's folder"), false;
+  if (!made) return take_[0] = 0, fail("cannot make the take's folder"), false;
+  own_dir_ = true;
   sniprintf(path_, sizeof path_, "%s/00_LOOP.wav", rel);
   h_ = b_->open(path_);
   if (h_ < 0) return fail("cannot open the file"), false;

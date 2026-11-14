@@ -116,7 +116,8 @@ static int g_fail_after = -1;   // KWrite fails from this many writes on (a full
 static uint32_t g_largest = 0;
 static std::string disk(const char* p) { return g_root + p; }
 static bool KMkdir(const char* p) { return mkdir(disk(p).c_str(), 0755) == 0 || access(disk(p).c_str(), F_OK) == 0; }
-static int KMkdirNew(const char* p) { return mkdir(disk(p).c_str(), 0755) == 0 ? 1 : errno == EEXIST ? 0 : -1; }
+static bool g_mkdir_fail = false, g_list_empty = false;   // N3: a folder that cannot be made; a listing that misses the takes
+static int KMkdirNew(const char* p) { if (g_mkdir_fail) return -1; return mkdir(disk(p).c_str(), 0755) == 0 ? 1 : errno == EEXIST ? 0 : -1; }
 static int KOpen(const char* p) {
   for (int i = 0; i < 8; ++i)
     if (!g_fh[i]) return (g_fh[i] = fopen(disk(p).c_str(), "wb")) ? i : -1;
@@ -138,6 +139,7 @@ static uint32_t KNow() { return 0; }
 static int KList(const char* d, char (*names)[64], uint64_t* sizes, bool* dirs, int max) {
   DIR* dp = opendir(disk(d).c_str());
   if (!dp) return -1;
+  if (g_list_empty) return closedir(dp), 0;
   int n = 0;
   while (dirent* e = readdir(dp)) {
     if (e->d_name[0] == '.' || n == max) continue;
@@ -244,6 +246,19 @@ static void test_keep() {
       closedir(dp);
     }
     CHECK(now_n == taken);
+  }
+  // N3: a Keep that cannot even make its folder never removes another take's file
+  {
+    std::string old = g_root + "/Recordings/demo-project_2026-11-13_1200/00_LOOP.wav";
+    CHECK(access(old.c_str(), F_OK) == 0);
+    g_list_empty = g_mkdir_fail = true;   // the first candidate name is the existing take's
+    Keep n3;
+    n3.init(&kKB, KDone);
+    g_done_ok = true;
+    core::loop::KeepJob job3{12, frames, pcm.data(), 120.0f, 2, 0};
+    CHECK(!n3.begin(job3) && !g_done_ok);
+    g_list_empty = g_mkdir_fail = false;
+    CHECK(access(old.c_str(), F_OK) == 0);
   }
   // no backend room: refused, told
   g_done_ok = true;

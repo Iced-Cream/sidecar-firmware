@@ -32,6 +32,7 @@ class Keep {
   core::loop::KeepJob job_;
   int state_ = 0;   // 0 idle, 1 writing the audio, 2 closing
   int h_ = -1;
+  bool own_dir_ = false;   // the take's folder was made by this job (a failure removes only that)
   uint32_t done_ = 0, pieces_ = 0, worst_ = 0, yields_ = 0;
   char take_[rec::kTakeMax] = "", path_[160] = "", err_[48] = "";
 };

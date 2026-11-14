@@ -43,6 +43,7 @@ Grab g_[kMaxGrabs];   // 0 newest
 uint64_t g_off_[kMaxGrabs];   // each one's place in the store (bytes)
 uint64_t g_k0_[kMaxGrabs];    // its first frame's absolute ring index (the ring's source until copied)
 int ng_ = 0;
+uint32_t list_seq_ = 0;   // odd while the grab list is being shifted (json, read on core 0, retries around it)
 uint32_t next_id_ = 1;
 
 struct Pending {
@@ -182,11 +183,14 @@ int via_macro_ = 0;
 
 // ------------------------------------------------------------------------------------------------ the store
 CORE_COLD bool protected_id(uint32_t id) { return (lp_.on && lp_.grab_id == id) || (lpp_.on && lpp_.grab_id == id) || (keep_state_ && keep_id_ == id); }
+CORE_COLD void list_edit(bool on) { __atomic_store_n(&list_seq_, list_seq_ + 1, on ? __ATOMIC_RELAXED : __ATOMIC_RELEASE), __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 CORE_COLD void drop_at(int i) {
+  list_edit(true);
   if (cp_.on && cp_.id == g_[i].id) cp_.on = false;
   for (int j = i; j + 1 < ng_; ++j) g_[j] = g_[j + 1], g_off_[j] = g_off_[j + 1], g_k0_[j] = g_k0_[j + 1];
   --ng_;
   ++stats_.dropped;
+  list_edit(false);
 }
 CORE_COLD bool drop_oldest() {   // the oldest that is not playing or copying
   for (int i = ng_ - 1; i >= 0; --i)
@@ -253,7 +257,7 @@ CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   // grab or a tap in the wait) - the one that has been playing under it all along
   if (replace && lp_.on && lp_.start > now && lpp_.on) {
     // lpp_ and snap_.prev stay
-  } else if (replace && lp_.on) {
+  } else if (replace && lp_.on && lp_.start <= now) {   // (a loop that has not started is not heard: nothing to keep under the new one)
     lpp_ = lp_, snap_.prev = snap_.cur;
   } else {
     lpp_ = LoopInfo(), snap_.prev = LpSnap();
@@ -306,6 +310,7 @@ CORE_COLD void finalize(uint64_t now) {
     ++stats_.refused;
     return;
   }
+  list_edit(true);
   for (int j = ng_; j > 0; --j) g_[j] = g_[j - 1], g_off_[j] = g_off_[j - 1], g_k0_[j] = g_k0_[j - 1];
   ++ng_;
   Grab& n = g_[0];
@@ -318,6 +323,7 @@ CORE_COLD void finalize(uint64_t now) {
   n.gap = ring_.gap_in(start_h, (uint32_t)len) ? 1 : 0;
   g_off_[0] = off;
   g_k0_[0] = k0;
+  list_edit(false);
   cp_ = {true, n.id, k0 - (uint64_t)kPre, 0, (uint32_t)(len + kPre)};
   ++stats_.grabs;
   bool replace = lp_.on && (lp_.stop_at == 0 || now < lp_.stop_end);
@@ -361,8 +367,14 @@ CORE_COLD void pump_copy() {
   uint32_t got = lost ? 0 : ring_.copy_idx(cp_.k, n, dst);
   if (got != n) {   // overtaken: abandoned, the grab refused; a loop playing from it goes (cut)
     ++stats_.abandoned;
-    bool was_playing = protected_id(cp_.id);
+    bool was_playing = lp_.on && lp_.grab_id == cp_.id;
+    bool was_under = lpp_.on && lpp_.grab_id == cp_.id;   // the loop a waiting resample replaces
     cp_.on = false;
+    if (was_under) {
+      snap_.prev.active = false;
+      lpp_ = LoopInfo();
+      publish();
+    }
     if (was_playing) {
       snap_.cur.active = false;
       publish();
@@ -370,8 +382,10 @@ CORE_COLD void pump_copy() {
     }
     int i = find_id(cp_.id);
     if (i >= 0) {
+      list_edit(true);
       for (int j = i; j + 1 < ng_; ++j) g_[j] = g_[j + 1], g_off_[j] = g_off_[j + 1], g_k0_[j] = g_k0_[j + 1];
       --ng_;
+      list_edit(false);
     }
     return;
   }
@@ -836,7 +850,7 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     }
     float bar, of;
     char pos[24] = "";
-    if (bar_position(&bar, &of)) sniprintf(pos, sizeof pos, " pos %.2f/%.0f", bar, of);
+    if (bar_position(&bar, &of)) sniprintf(pos, sizeof pos, " pos %d.%02d/%d", (int)bar, (int)(bar * 100) % 100, (int)of < 1 ? 1 : (int)of);   // (integers: the Pi's sniprintf has no %f)
     char lv[10] = "off";
     if (live_via_) sniprintf(lv, sizeof lv, "perf%d", live_via_);
     sniprintf(o, cap, "loop: %s, ring %d s, %d grabs [%s]%s, bal %d lev %d fade %s mute %s live %s postlat %d", kStateName[state()],
@@ -925,7 +939,8 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
   return true;
 }
 
-CORE_COLD int json(char* o, int cap) {
+namespace {
+CORE_COLD int json_once(char* o, int cap) {
   if (cap <= 0) return 0;
   int n = sniprintf(o, cap, "\"loop\":{\"on\":%d", on_ ? 1 : 0);
   if (!on_) return n + sniprintf(o + n, cap - n, "}");
@@ -935,14 +950,26 @@ CORE_COLD int json(char* o, int cap) {
                  ",\"state\":\"%s\",\"ring_s\":%d,\"bal\":%d,\"lev\":%d,\"fade\":%d,\"mute\":%d,\"live\":%d,\"post_lat\":%d,\"pending\":%d,\"cal\":%d",
                  kStateName[state()], ring_seconds(), bal_, lev_, fade_, auto_mute_ ? 1 : 0, live_via_, post_lat_, pend_.on ? 1 : 0,
                  cal_state_ == 1 ? 1 : 0);
-  if (pos) n += sniprintf(o + n, cap - n, ",\"bar\":%.3f,\"bars\":%.1f", bar, of);
+  if (pos) n += sniprintf(o + n, cap - n, ",\"bar\":%d.%03d,\"bars\":%d.%d", (int)bar, (int)(bar * 1000) % 1000, (int)of, (int)(of * 10) % 10);
   n += sniprintf(o + n, cap - n, ",\"msg\":\"%s\",\"msg_n\":%u,\"grabs\":[", msg_, (unsigned)msg_gen_);
   int pi = playing();
   for (int i = 0; i < ng_ && n < cap - 120; ++i)
-    n += sniprintf(o + n, cap - n, "%s{\"id\":%u,\"hb\":%d,\"bpm\":%.1f,\"kept\":%d,\"gap\":%d,\"copied\":%d,\"playing\":%d}", i ? "," : "",
-                   (unsigned)g_[i].id, g_[i].half_bars, (double)g_[i].bpm, g_[i].kept, g_[i].gap, g_[i].copied, i == pi ? 1 : 0);
+    n += sniprintf(o + n, cap - n, "%s{\"id\":%u,\"hb\":%d,\"bpm\":%d.%d,\"kept\":%d,\"gap\":%d,\"copied\":%d,\"playing\":%d}", i ? "," : "",
+                   (unsigned)g_[i].id, g_[i].half_bars, (int)(g_[i].bpm * 10.0f + 0.5f) / 10, (int)(g_[i].bpm * 10.0f + 0.5f) % 10, g_[i].kept, g_[i].gap, g_[i].copied, i == pi ? 1 : 0);
   n += sniprintf(o + n, cap - n, "]}");
   return n < cap ? n : 0;
+}
+}  // namespace
+CORE_COLD int json(char* o, int cap) {   // (core 0 reads core 3's list: again if it was shifted meanwhile, a few tries)
+  int n = 0;
+  for (int t = 0; t < 4; ++t) {
+    uint32_t s0 = __atomic_load_n(&list_seq_, __ATOMIC_ACQUIRE);
+    if (s0 & 1) continue;
+    n = json_once(o, cap);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    if (__atomic_load_n(&list_seq_, __ATOMIC_RELAXED) == s0) break;
+  }
+  return n;
 }
 
 // ------------------------------------------------------------------------------------------------ core 0

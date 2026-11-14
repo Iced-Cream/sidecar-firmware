@@ -717,6 +717,19 @@ static void test_cal_console() {
   CHECK(loop::json(js, sizeof js) > 0 && strstr(js, "\"loop\":{\"on\":1") && strstr(js, "\"grabs\":[{") && strstr(js, "\"kept\":1"));
   CHECK(!loop::command("looper", js, sizeof js) && !loop::command("lo", js, sizeof js));
 
+  {   // the status text without floats (the Pi's sniprintf has none): exact
+    fresh();
+    started(loop::k1);
+    char jb[1500];
+    CHECK(loop::json(jb, sizeof jb) > 0);
+    CHECK(strstr(jb, "\"bpm\":120.0,") && strstr(jb, "\"bars\":1.0") && !strstr(jb, "e+"));
+    const char* bp = strstr(jb, "\"bar\":");
+    CHECK(bp && bp[6] >= '0' && bp[6] <= '1' && bp[7] == '.' && bp[8] >= '0' && bp[11] == ',');   // d.ddd
+    std::string c = cmd("loop");
+    CHECK(c.find(" pos 0.") != std::string::npos || c.find(" pos 1.") != std::string::npos);
+    CHECK(c.find("/1,") != std::string::npos);
+  }
+
   // bal_is_a_target: LOOP:BAL / LOOP:LEV are modulation targets; a value replaces the knob, a release gives it back
   fresh();
   mod::Tid tb = 0, tl = 0;
@@ -895,6 +908,41 @@ static void test_room_without_drops() {
 }
 
 
+// ---- N4 / N5
+static void test_wait_edges() {
+  // N5: a tap while the first loop waits for its start puts nothing under it
+  fresh();
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::grab(loop::kHalf) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::play(1));   // (the first loop has not started)
+  to((uint64_t)(g_origin + 45 * bar()));
+  CHECK(loop::stats().grabs == 2);
+  // N4: the copy of the loop under a waiting resample is abandoned: the new loop plays on, the old one is dropped
+  fresh(48u << 20);
+  g_per16 = 6000 * 120 / 47;   // 47 BPM: a 16-bar grab barely fits
+  to((uint64_t)(line(20) + bar() / 16));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::grab(loop::k16) == loop::kOk);   // copying from the ring: the loop plays from the ring
+  CHECK(loop::grabs() == 2);
+  uint32_t big = loop::grab_at(0)->id, small = loop::grab_at(1)->id;
+  (void)big;
+  CHECK(loop::play(loop::grab_index(small)));   // a tap on the 1-bar grab while the 16-bar one is still copying
+  for (int i = 0; i < 400 && loop::stats().abandoned == 0; ++i) {
+    g_now += 48000, g_us += 1000;
+    feed();
+    loop::tick(g_us);
+  }
+  CHECK(loop::stats().abandoned == 1 && loop::grabs() == 1);
+  uint64_t st;
+  uint32_t ln;
+  CHECK(loop::playing_info(&st, &ln) && ln == loop::grab_at(0)->frames && loop::state() != loop::kRing);   // the tapped loop plays on
+  printf("  wait edges: a first loop's tap, an abandoned copy under a resample\n");
+}
+
 int main() {
   test_ring();
   test_ring_gap_cost();
@@ -905,6 +953,7 @@ int main() {
   test_cal_console();
   test_resample_wait();
   test_room_without_drops();
+  test_wait_edges();
   test_cost();
   printf("test_loop: OK\n");
   return 0;
