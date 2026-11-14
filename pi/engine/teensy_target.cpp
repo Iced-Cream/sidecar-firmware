@@ -45,9 +45,12 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 		m_pChanOutBuf[c] = 0;
 		m_bChanOutBusy[c] = FALSE;
 		m_nCreditDue[c] = 0;
-		for (unsigned k = 0; k < ChanInURBs; k++) m_pChanInBuf[c][k] = 0;
+		m_nAtBox[c] = 0;
+		for (unsigned k = 0; k < ChanInURBs; k++) { m_pChanInBuf[c][k] = 0; m_pChanInURB[c][k] = 0; }
 	}
-	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; }
+	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
+	for (unsigned k = 0; k < EvURBs; k++) m_pEvURB[k] = 0;
+	for (unsigned k = 0; k < AudioInURBs; k++) m_pAudioInURB[k] = 0;
 	memset (&m_Map, 0, sizeof m_Map);
 	memset (&m_Stats, 0, sizeof m_Stats);
 	m_Stream.init (CKernelOptions::Get ()->GetAppOptionDecimal ("mirrormargin", 8));
@@ -135,31 +138,37 @@ boolean CTeensyTarget::Configure (void)
 		for (unsigned k = 0; k < ChanInURBs; k++) m_pChanInBuf[c][k] = DmaBuf ();
 	}
 	s_pThis = this;
+	// the IN URBs: a fixed pool, resubmitted from their completions (no allocation while streaming, as ob_usb.cpp's)
 	for (unsigned k = 0; k < EvURBs; k++)
 	{
-		CUSBRequest *pURB = new CUSBRequest (m_pEv, m_pEvBuf[k], kEvMps);
-		pURB->SetCompletionRoutine (EvStub, (void *) (uintptr) k, this);
-		GetHost ()->SubmitAsyncRequest (pURB);
+		m_pEvURB[k] = new CUSBRequest (m_pEv, m_pEvBuf[k], kEvMps);
+		m_pEvURB[k]->SetCompletionRoutine (EvStub, (void *) (uintptr) k, this);
+		Resubmit (m_pEvURB[k]);
 	}
 	for (unsigned k = 0; k < AudioInURBs; k++)
 	{
-		CUSBRequest *pURB = new CUSBRequest (m_pAudioIn, m_pAudioInBuf[k], kLinkMps);
-		pURB->SetCompletionRoutine (AudioInStub, (void *) (uintptr) k, this);
-		GetHost ()->SubmitAsyncRequest (pURB);
+		m_pAudioInURB[k] = new CUSBRequest (m_pAudioIn, m_pAudioInBuf[k], kLinkMps);
+		m_pAudioInURB[k]->SetCompletionRoutine (AudioInStub, (void *) (uintptr) k, this);
+		Resubmit (m_pAudioInURB[k]);
 	}
 	for (unsigned c = 0; c < kChannels; c++)
-		for (unsigned k = 0; k < ChanInURBs; k++) SubmitChanIn (c, k);
+		for (unsigned k = 0; k < ChanInURBs; k++)
+		{
+			m_pChanInURB[c][k] = new CUSBRequest (m_pChanIn[c], m_pChanInBuf[c][k], kLinkMps);
+			m_pChanInURB[c][k]->SetCompletionRoutine (ChanInStub, (void *) (uintptr) (c * ChanInURBs + k), this);
+			Resubmit (m_pChanInURB[c][k]);
+		}
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed: the box %s mirrors through it", m_nVersion >> 8,
 				m_nVersion & 0xFF, CObUsb::GadgetSlot () == 0 ? "in slot 1 (not the Rytm)" : "in slot 0 (the Rytm)");
 	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// SetBox comes from there
 	return TRUE;
 }
 
-void CTeensyTarget::SubmitChanIn (unsigned c, unsigned k)
+void CTeensyTarget::Resubmit (CUSBRequest *pURB)
 {
-	CUSBRequest *pURB = new CUSBRequest (m_pChanIn[c], m_pChanInBuf[c][k], kLinkMps);
-	pURB->SetCompletionRoutine (ChanInStub, (void *) (uintptr) (c * ChanInURBs + k), this);
-	GetHost ()->SubmitAsyncRequest (pURB);
+	pURB->SetStatus (0);
+	pURB->SetResultLen (0);
+	if (!GetHost ()->SubmitAsyncRequest (pURB)) m_Stats.nVendorFail++;	// the link is going away
 }
 
 int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, const void *pData, unsigned nLength)
@@ -233,7 +242,11 @@ void CTeensyTarget::MirrorBoxUp (boolean bUp)
 		m_nCtlAnswer = -1;
 		m_CtlState = CtlAnswered;
 	}
-	for (unsigned c = 0; c < kChannels; c++) m_bChanOutBusy[c] = FALSE;
+	for (unsigned c = 0; c < kChannels; c++)	// a computer packet at the box that went is never taken: credit it back
+	{
+		m_nCreditDue[c] += m_nAtBox[c];
+		m_nAtBox[c] = 0;
+	}
 	LeaveCritical ();
 	if (bUp && m_nCfg)
 	{
@@ -298,7 +311,9 @@ boolean CTeensyTarget::MirrorPipeIn (u8 uchAddr, const u8 *pData, unsigned nLeng
 void CTeensyTarget::MirrorPipeOutDone (u8 uchAddr)
 {
 	unsigned c = ChanOfOut (uchAddr);
-	if (c < kChannels) m_nCreditDue[c]++;
+	if (c >= kChannels) return;
+	if (m_nAtBox[c]) m_nAtBox[c]--;
+	m_nCreditDue[c]++;
 }
 
 boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
@@ -316,10 +331,18 @@ void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 	unsigned n = m_Stream.in_block (pBlock, m_pAudioOutBuf[k]);
 	if (n == 0) return;
 	CleanAndInvalidateDataCacheRange ((uintptr) m_pAudioOutBuf[k], kDmaSize);
-	CUSBRequest *pURB = new CUSBRequest (m_pAudioOut, m_pAudioOutBuf[k], n);
-	pURB->SetCompletionRoutine (AudioOutStub, (void *) (uintptr) k, this);
+	if (m_pAudioOutURB[k] == 0 || m_nAudioOutLen[k] != n)	// the computer's channels changed (its SET_INTERFACE): once
+	{
+		delete m_pAudioOutURB[k];
+		m_pAudioOutURB[k] = new CUSBRequest (m_pAudioOut, m_pAudioOutBuf[k], n);
+		m_pAudioOutURB[k]->SetCompletionRoutine (AudioOutStub, (void *) (uintptr) k, this);
+		m_nAudioOutLen[k] = n;
+	}
 	m_bAudioOutBusy[k] = TRUE;
-	if (!GetHost ()->SubmitAsyncRequest (pURB)) { m_bAudioOutBusy[k] = FALSE; delete pURB; m_Stats.nAudioOutDrop++; }
+	CUSBRequest *pURB = m_pAudioOutURB[k];
+	pURB->SetStatus (0);
+	pURB->SetResultLen (0);
+	if (!GetHost ()->SubmitAsyncRequest (pURB)) { m_bAudioOutBusy[k] = FALSE; m_Stats.nAudioOutDrop++; }
 }
 
 void CTeensyTarget::ToBox (s32 (*pFrames)[12], const s16 (*)[8], unsigned nFrames)
@@ -333,7 +356,7 @@ void CTeensyTarget::EvStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
 	unsigned k = (unsigned) (uintptr) pParam;
-	if (p != s_pThis) { delete pURB; return; }
+	if (p != s_pThis) return;			// the relay went: Circle frees its URBs with the device
 	if (pURB->GetStatus () && pURB->GetResultLength () >= sizeof (Event))
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pEvBuf[k], kDmaSize);
@@ -341,10 +364,7 @@ void CTeensyTarget::EvStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		memcpy (&e, p->m_pEvBuf[k], sizeof e);
 		p->OnEvent (e);
 	}
-	delete pURB;
-	CUSBRequest *pNext = new CUSBRequest (p->m_pEv, p->m_pEvBuf[k], kEvMps);
-	pNext->SetCompletionRoutine (EvStub, pParam, p);
-	if (!p->GetHost ()->SubmitAsyncRequest (pNext)) delete pNext;
+	p->Resubmit (pURB);
 }
 
 void CTeensyTarget::OnEvent (const Event &e)
@@ -393,31 +413,28 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
 	unsigned k = (unsigned) (uintptr) pParam;
-	if (p != s_pThis) { delete pURB; return; }
+	if (p != s_pThis) return;
 	if (pURB->GetStatus ())
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pAudioInBuf[k], kDmaSize);
 		CObUsb *pBox = p->m_pBox;
 		if (pBox != 0 && p->MirrorShown ()) p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
 	}
-	delete pURB;
-	CUSBRequest *pNext = new CUSBRequest (p->m_pAudioIn, p->m_pAudioInBuf[k], kLinkMps);
-	pNext->SetCompletionRoutine (AudioInStub, pParam, p);
-	if (!p->GetHost ()->SubmitAsyncRequest (pNext)) delete pNext;
+	p->Resubmit (pURB);
 }
 
 void CTeensyTarget::AudioOutStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
-	if (p == s_pThis) p->m_bAudioOutBusy[(unsigned) (uintptr) pParam] = FALSE;
-	delete pURB;
+	if (p == s_pThis) p->m_bAudioOutBusy[(unsigned) (uintptr) pParam] = FALSE;	// its URB kept for the next block
+	(void) pURB;
 }
 
 void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 {
 	CTeensyTarget *p = (CTeensyTarget *) pContext;
 	unsigned c = (unsigned) (uintptr) pParam / ChanInURBs, k = (unsigned) (uintptr) pParam % ChanInURBs;
-	if (p != s_pThis) { delete pURB; return; }
+	if (p != s_pThis) return;
 	if (pURB->GetStatus () && p->m_Map.ep_of_out[c] >= 0)
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pChanInBuf[c][k], kDmaSize);
@@ -425,7 +442,10 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		CObUsb *pBox = p->m_pBox;
 		if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
 		    && pBox->PipeOut (ep.addr, p->m_pChanInBuf[c][k], pURB->GetResultLength ()))
+		{
 			p->m_Stats.nPipeOut++;			// its credit comes back with MirrorPipeOutDone
+			p->m_nAtBox[c]++;
+		}
 		else
 		{
 			// dropped: no box, a halted pipe, or USB MIDI (not relayed yet: docs/teensy-mirror.md "Gaps"); the
@@ -435,8 +455,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			p->m_nCreditDue[c]++;
 		}
 	}
-	delete pURB;
-	p->SubmitChanIn (c, k);
+	p->Resubmit (pURB);
 }
 
 void CTeensyTarget::ChanOutStub (CUSBRequest *pURB, void *pParam, void *pContext)

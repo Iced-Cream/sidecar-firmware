@@ -42,6 +42,8 @@ static unsigned msos_len;
 static uint8_t msos_code;
 static Map map;
 static bool shown;
+static volatile bool connect_due;		// kReqConnect(1) taken: loop() raises the pull-up once 300 ms have passed since it dropped
+static volatile uint32_t pc_off_at;		// millis() when USB2 left the bus (0: never on it)
 static uint8_t pc_config;
 static uint8_t pc_alt[mirror::kMaxIfaces];
 
@@ -484,6 +486,8 @@ static void pc_show (bool on)
 {
 	if (!on)
 	{
+		connect_due = false;
+		if (shown) pc_off_at = millis () | 1;
 		ci_run (&P, false);
 		pc_eps_close ();
 		pc_config = 0;
@@ -500,7 +504,7 @@ static void pc_show (bool on)
 
 static void forget_box (void)
 {
-	if (shown) pc_show (false);
+	pc_show (false);
 	have_dev = false;
 	cfg_len = 0;
 	n_strs = 0;
@@ -691,12 +695,11 @@ static void l_setup_fn (ci_dev *d, const uint8_t *s)
 				rlog ("connect refused: dev %d cfg %u map no", have_dev, cfg_len);
 				break;
 			}
-			if (shown) { pc_show (false); delay (300); }	// a replug the computer sees, as the DWC2 mirror's 300 ms
+			if (shown) pc_show (false);
 			rlog ("connect: %04x:%04x, %u B cfg, %u eps, chans in %u out %u", dev_desc[8] | dev_desc[9] << 8,
 				dev_desc[10] | dev_desc[11] << 8, cfg_len, map.l.n, map.n_in, map.n_out);
 			ci_ep0_status_in (d);
-			pc_show (true);
-			ev_post (kEvHello, kVersion >> 8, kVersion & 0xFF);
+			connect_due = true;		// relay_poll: on the bus 300 ms after it left (a replug the computer sees, as the gadget's)
 			return;
 		case kReqCredit:
 			for (unsigned c = 0; c < kChannels; c++)
@@ -881,11 +884,25 @@ void relay_begin (void)
 	NVIC_ENABLE_IRQ (IRQ_USB1);
 	ci_run (&L, true);
 	relay_stage = 5;
-	rlog ("mirror relay up, protocol %u.%02u", kVersion >> 8, kVersion & 0xFF);
+#ifndef RELAY_BUILD
+#define RELAY_BUILD "unknown"
+#endif
+	rlog ("mirror relay up, protocol %u.%02u, build %s", kVersion >> 8, kVersion & 0xFF, RELAY_BUILD);
 }
 
 void relay_poll (void)
 {
+	if (connect_due && (pc_off_at == 0 || millis () - pc_off_at >= 300))
+	{
+		__disable_irq ();
+		if (connect_due)
+		{
+			connect_due = false;
+			pc_show (true);
+			ev_post (kEvHello, kVersion >> 8, kVersion & 0xFF);
+		}
+		__enable_irq ();
+	}
 	if (reboot_at && (int32_t) (millis () - reboot_at) >= 0)
 	{
 		ci_run (&P, false);
