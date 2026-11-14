@@ -91,9 +91,19 @@ wet only, soft-limited at -6 dBFS on the 2/3 return (the Rytm adds it at ~0.16) 
   15 STUTTER (only with `RYTM_SENDFX_LARGE`, the default on the Pi and the Mac, not on the Teensy), the other ids of 3..63 reserved built-ins (named, silent,
   reported MISSING), 64..67
   UFX1..UFX4, user-effect slots per project like the user machines (`/.rytm/fxslots/<project>.txt`, loaded on 0x10;
-  the kit's tag must match the slot's; no user-effect plugins exist yet, so they are MISSING).
+  the kit's tag must match the slot's). A line is `<tag> <name>` and, for an effect put there by `um=fx`, the
+  package after a tab (`\t<id> <a.b.c>`): it is written when `um=fx` changes a slot and read with the slot map
+  at boot and on a project change; a package not installed leaves the slot MISSING and the file untouched
+  (docs/plugin-api-3-plan.md item 11).
 - **To the Rytm:** 0x21 SENDFX NAMES (the TYPE knob's list) and 0x22 SENDFX STATE (per FX: id, READY/MISSING, name,
   for `!NAME`) on 0x23 ASK, on a project change, and 0x22 when an FX's id or state changes.
+- **BASE / WIDTH (0x22 ver 2, both ways, 0.5.0, the Pi only):** `F0 7D 52 54 22 02 <fx 0|1> <base> <width> F7` is
+  each send FX's return filter (bus 1 / 2's post EQ HPF and LPF seen as a band, docs/INSERT-FX.md "BASE / WIDTH"),
+  shown and turned on the Rytm's SEND FX 1 / 2 knobs G / H (0029). The host sends both on 0x23 ASK, on the first 0x20
+  and on a 0x35 hello, both again every 2 s (a dropped message or a crossed turn heals), and one when a value changes
+  (at most every 20 ms, `sendfx_step`); a pair from the Rytm is set on the bus and not echoed. All of it only while the
+  Rytm listens: `core::link_lost()` (the Pi's `rytm_gone`, its USB MIDI removed) stops it until its next hello, ASK, 0x20
+  or turn. An older 0029 drops ver 2 (it reads ver 1 only); an older host ignores it.
 - **Labels to the Rytm (0x24 SENDFX LABELS, 2026-10-16):** after the 0x21s, one message per TYPE this build plays: the
   four P2..P5 labels (<= 4 chars) and the zones of zoned knobs (<= 12: knob, lo, base, show, step, 5-char name), from the
   table next to each effect (`fx/knob_labels.h`; `kChorusLabels`, `kCombLabels` in `send_fx.h`, `kRingsLabels`,

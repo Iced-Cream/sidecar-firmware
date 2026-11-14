@@ -29,6 +29,7 @@
 #include "rmp_slots.h"
 #include "um_host.h"
 #include "user/um.h"
+#include "voices.h"
 
 using namespace core;
 
@@ -289,8 +290,12 @@ static void fixture() {
   }
 }
 
-static const uint32_t kGolden = 0xa68a7eb6;      // fnv(json + list + enums) of the old scan
-static const uint32_t kGoldenLog = 0xb8835fb2;   // fnv(its um log lines)
+// Plugin API 3 (2026-11) added the READY slots' "muted", "late", "api", "arena", the JSON's "plugpool" and the begin
+// line's arena pool: the old scan's values were 0xa68a7eb6 / 0xb8835fb2, and these are the same JSON and log with only
+// those added (compared field by field when they changed). 2026-11 (the UFX picker): the "plugins" row's "ufx_slots":4
+// (the web page's Effects section) moved it to 0x1a04e040; nothing else changed (the log's hash is the same).
+static const uint32_t kGolden = 0x1a04e040;      // fnv(json + list + enums) of the old scan
+static const uint32_t kGoldenLog = 0x0f5d3fc0;   // fnv(its um log lines)
 
 int main() {
   char tmpl[] = "/tmp/core-umscan-XXXXXX";
@@ -314,6 +319,20 @@ int main() {
   CHECK(um::command("um=assign:1:rytm.scanb", o, sizeof o));
   idle_all();
   CHECK(um::slot_view(0).state == RMP_SLOT_READY);
+  {   // hooks.user_label (the LFO, MORPH and XY names on core 0): the slot's short labels from the cache um's idle builds
+    char b[8];
+    const int8_t u = v[0].user;
+    v[0].user = 0;
+    CHECK(hooks.user_label && hooks.user_label(0, 0, b, sizeof b) && !strcmp(b, "LEV"));
+    CHECK(hooks.user_label(0, 1, b, sizeof b) && !strcmp(b, "MOD"));
+    CHECK(hooks.user_label(0, 15, b, sizeof b) && !strcmp(b, ""));   // an unused knob: empty
+    CHECK(!hooks.user_label(0, 16, b, sizeof b) && !hooks.user_label(-1, 0, b, sizeof b));
+    v[0].user = 3;   // an empty slot: no names
+    CHECK(!hooks.user_label(0, 0, b, sizeof b));
+    v[0].user = -1;
+    CHECK(!hooks.user_label(0, 0, b, sizeof b));
+    v[0].user = u;
+  }
 
   // ---- no card core: the old scan's result
   const std::string j0 = json(), l0 = list(), e0 = enums();
@@ -446,7 +465,7 @@ int main() {
   CHECK(opens() - o0 == ran(cardq::kCloseReq) - c0);
   CHECK(fs.remove("/PRESETS/rytm.scanb") && fs.remove("/PRESETS"));
 
-  // ---- the map's read: the old project's until both files are here, a request each, none of it on the control core
+  // ---- the map's read: the old project's until all three files are here, a request each, none of it on the control core
   uint32_t m0 = ran(cardq::kSmallReq);
   c3 = host_card_us(3);
   to_project("UMQ");
@@ -456,7 +475,7 @@ int main() {
   CHECK(cardq::pending() == 1 && !strcmp(um::slot_view(0).id, "rytm.scanb"));
   CHECK(logged("um: project UMQ, map /.rytm/slots/UMQ.txt (none: fresh)") == 0);
   idle_all();
-  CHECK(ran(cardq::kSmallReq) == m0 + 2);
+  CHECK(ran(cardq::kSmallReq) == m0 + 3);   // (the map, the notes, the effects' file)
   CHECK(logged("um: project UMQ, map /.rytm/slots/UMQ.txt (none: fresh)") == 1);
   CHECK(!um::slot_view(0).id[0]);
   // the map's write: posted, written on the card core

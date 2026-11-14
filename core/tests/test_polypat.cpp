@@ -83,10 +83,11 @@ static int caught(int k) {
   return -1;
 }
 // ux1027 review 8: a question on the SEQ page catches YES (it answers it), DOWN leaves the question as it is; PLAY and
-// SCNE never caught (YES + PLAY / SCNE: the Rytm's quick saves). updown1029: UP / DOWN caught under it too
+// SCNE never caught (YES + PLAY / SCNE: the Rytm's quick saves). 0.4.4 (the user: CHRO's octave dead under UP + TRIG's
+// make prompt): UP / DOWN the Rytm's under a question too - only the track menu's rows use them (updown044)
 static void question_keys(int prompt) {
   tick();
-  CHECK(caught(0x44) == 1 && caught(0x51) == 0 && caught(0x13) == 0 && caught(0x42) == 1 && caught(0x43) == 1);
+  CHECK(caught(0x44) == 1 && caught(0x51) == 0 && caught(0x13) == 0 && caught(0x42) == 0 && caught(0x43) == 0);
   key(0x43), tick();
   CHECK(seq::view().prompt == prompt);
 }
@@ -451,7 +452,7 @@ int main() {
     tick();
     g_out.clear();
     from_rytm({seq::kSeqMode, 1, CH}, 0x2D);   // GRID REC on CH: seq mode, the SEQ page asked open
-    tick();
+    for (int i = 0; i < 3; ++i) tick();          // (polyuser-3: asked once seq mode held 150 ms)
     from_rytm({0, 1, 0}, 0x30);   // the Rytm opens the page
     for (int i = 0; i < 4; ++i) tick();
     CHECK(remote_page_title() && !strcmp(remote_page_title(), "SEQ") && seq::seqmode_on() == CH);
@@ -519,7 +520,8 @@ int main() {
     cmd("seq=track:9:on");
     // review: seq mode ends early at a switch to a pattern without CH (a trig held then let go edits nothing); back in
     // A01 the Rytm's 2D 08 1 brings it back
-    from_rytm({seq::kSeqMode, 1, CH}, 0x2D), tick();
+    from_rytm({seq::kSeqMode, 1, CH}, 0x2D);
+    for (int i = 0; i < 3; ++i) tick();   // (polyuser-3: the page asked after 150 ms)
     from_rytm({0, 1, 0}, 0x30), tick();
     CHECK(seq::seqmode_on() == CH);
     from_rytm({0, 0, 1}, 0x31), tick();   // T1 held
@@ -531,7 +533,8 @@ int main() {
     page(0);
     go(0);
     CHECK(steps(CH) == 1);
-    from_rytm({seq::kSeqMode, 1, CH}, 0x2D), tick();
+    from_rytm({seq::kSeqMode, 1, CH}, 0x2D);
+    for (int i = 0; i < 3; ++i) tick();   // (review M2: taken once held 150 ms)
     CHECK(seq::seqmode_on() == CH);
     from_rytm({seq::kSeqMode, 0, 0x7F}, 0x2D), tick();
     page(0);
@@ -597,8 +600,26 @@ int main() {
     cmd("seq=track:10:off");
     seq::clear_steps(*seq::edit_track(CH, false), 4, 1), seq::touched();   // (back to case 11's CH: one step)
     page(0);
-    page(2), tick();   // updown1029: only the SEQ page leaves UP / DOWN to the Rytm - INSERT (UP + FX) keeps them
-    CHECK(caught(0x42) == 1 && caught(0x43) == 1 && caught(0x40) == 1);
+    // updown044 (0.4.4, the owner: UP / DOWN only on a Sidecar page that uses them): INSERT (UP + FX) and ARP (UP + FLTR)
+    // leave them to the Rytm (CHRO's octave), LEFT stays theirs; a ring page (SIDECAR: DOWN its next page) and POOL (its
+    // rows) keep them
+    page(2), tick();
+    CHECK(caught(0x42) == 0 && caught(0x43) == 0 && caught(0x40) == 1);
+    page(4), tick();
+    CHECK(caught(0x42) == 0 && caught(0x43) == 0 && caught(0x40) == 1);
+    from_rytm({0, 1, 0}, 0x30), tick();
+    CHECK(caught(0x42) == 1 && caught(0x43) == 1);
+    remote_show_page("POOL"), tick();
+    CHECK(caught(0x42) == 1 && caught(0x43) == 1);
+    // review: LFO (UP + LFO) and POLY pass them too (no updown); SYSTEM, a ring page, keeps them
+    g_out.clear();   // (a fresh mask: -1 if none was sent)
+    page(1), tick();
+    CHECK(remote_page_title() && !strcmp(remote_page_title(), "LFO") && caught(0x42) == 0 && caught(0x43) == 0);
+    g_out.clear();   // (a fresh mask: -1 if none was sent)
+    remote_show_page("POLY"), tick();
+    CHECK(remote_page_title() && !strcmp(remote_page_title(), "POLY") && caught(0x42) == 0 && caught(0x43) == 0);
+    remote_show_page("SYSTEM"), tick();
+    CHECK(caught(0x42) == 1 && caught(0x43) == 1);
     page(0);
     seq::set_undo_hooks(nullptr);
     CHECK(mask() == 1u << CH);
@@ -654,7 +675,9 @@ int main() {
     CHECK(mask() == 1u << CH && steps(CH) == 1);
     // (1b) the OFF question, then A04: YES turns nothing off there
     page(0x10 + CH);
-    menu(), key(0x43), key(0x44), tick();
+    menu(), tick();
+    CHECK(seq::view().prompt == seq::kPromptMenu && caught(0x42) == 1 && caught(0x43) == 1);   // updown044: its rows
+    key(0x43), key(0x44), tick();
     CHECK(seq::view().prompt == seq::kPromptOff);
     question_keys(seq::kPromptOff);
     go(3);

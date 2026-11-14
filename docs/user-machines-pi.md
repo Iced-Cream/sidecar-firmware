@@ -204,6 +204,15 @@ core library, because `teensy/setup_core_lib.sh` leaves `core/user/` out.
   - NO drops a pick; with none, NO goes back to SIDECAR as on every page. A pick is also dropped when the row changes
     or the page is left.
   - With an empty `/Plugins` the bottom bar says `NO MACHINES IN /PLUGINS`; a slot can still be cleared.
+  - **UFX1..UFX4** (Plugin API 3's user effects) are rows 6..9, after U1..U5, where the platform has them (the same
+    hooks: `RemoteSlots::effects`, `effect`, `ufx`). A row shows the effect its send FX slot plays as the box shows
+    it elsewhere (`---` empty, `!NAME` missing, `NAME...` loading). Knob B picks from the installed *effects* (not
+    the machines), `---` first; YES sends `um=fx:<n>:<id>` / `um=fx:<n>:-`, the console's call, so the project's
+    `/.rytm/fxslots/<project>.txt` is written as for the console (`UFX1 = PHASER`, `UFX1 CLEARED` in the bottom bar;
+    `NO EFFECTS IN /PLUGINS` with none installed). Five rows are in view at a time: the list scrolls so the
+    selected row is always visible. U1..U5 behave as above.
+  - The web page has the same picker: Voices › User machines, section Effects (the `/um` JSON's `ufx_slots` says
+    the build has the slots; effect packages are the `plugin` rows with `effect: true`).
   - The page shows only where the platform has the user machines (`um::begin` installs its hooks,
     `core::ui::remote_slots`): the Pi and the Mac's core lib, not the Teensy.
 
@@ -288,6 +297,47 @@ To build and install:
 - `tools/um_starter.sh [CARD_DIR]` builds all six with `make a64` (Docker's aarch64-none-elf-gcc when it is not
   on PATH) and copies them to `CARD_DIR/Plugins/<name>.rmp`.
 - Or upload the `plugins/sc_*/sc_*.a64.rmp` files on the web page.
+
+## MIST (plugins/mist): granular textures
+
+`mist.a64.rmp`, id `mist.texture`, MIT. Shipped on its own, not in the starter set or the release zip. A Plugin
+API 3 machine: it needs the voice arena (883 KB a voice), so an API 2 host refuses it at the scan. The DSP is Beads',
+Emilie Gillet's texture synthesizer (MIT; `plugins/mist/NOTICE`), vendored under `plugins/mist/third_party`.
+
+**What it does.** A built-in wavetable oscillator plays the trig's note into a buffer that records all the time.
+Grains read the buffer back (position, size, density, pitch, envelope, stereo spread), with feedback into the buffer,
+FREEZE, and Beads' reverb: clouds and smears around the note, or a frozen pad that keeps playing after the note is
+gone. QUAL picks Beads' buffer formats (LOFI, TAPE, VINTAGE, DIGITAL), each with its own colour and buffer length.
+ENG SYNTH plays Beads' wavetable grains at the note instead, without a buffer.
+
+**Pitch:** the cloud follows the trig's note (C3 = note 48 is the oscillator's root); PTCH transposes the grains in
+Beads' steps (0, 1, 3, 4, 7, 12, 24 semitones each way). A trig also makes a grain when DENS is at the centre.
+
+**Why an oscillator and not the track's audio:** API 3 gives a machine no audio input yet (`plugin-api-3-plan.md`,
+part 9: `aux[]`). With it, MIST could granulate the Rytm's own sound as Beads granulates its input.
+
+| Page | P | Knob | Default | |
+|---|---|---|---|---|
+| SRC | P1 | TIME | 24 | where the grains read: left now, right the oldest sound; the delay time in the delay mode |
+| SRC | P2 | SIZE | 72 | grain size; below a third reversed grains; fully right the delay mode |
+| SRC | P3 | DENS | 92 | left of the centre a steady clock, the centre only the trigs, right random grains |
+| SRC | P4 | PTCH | 64 | the grains' transposition (Beads' interval steps) |
+| SRC | P5 | SHAP | 64 | grain envelope: square, decay, bell, reversed |
+| SRC | P6 | FDBK | 40 | feedback into the buffer |
+| SRC | P7 | SPRD | 64 | random grain shapes and stereo spread |
+| SRC | P8 | MIX | 96 | dry oscillator to cloud |
+| MORE | P9 | RVB | 64 | reverb amount and length |
+| MORE | P10 | FRZ | OFF | ON stops the recording; the grains play what the buffer holds (nothing yet: silence) |
+| MORE | P11 | QUAL | DIGITAL | LOFI (8-bit mu-law, 24 kHz, wow and flutter), TAPE (12-bit, 24 kHz), VINTAGE (12-bit, 48 kHz), DIGITAL (16-bit, 48 kHz, 8 s) |
+| MORE | P12 | BANK | SINE | the oscillator's wavetable bank (12) |
+| MORE | P13 | WAVE | 40 | the wave in the bank |
+| MORE | P14 | TRND | 76 | random grain position: right smooth drift, left jumps |
+| MORE | P15 | PRND | 64 | random grain pitch, the same law |
+| MORE | P16 | ENG | CLOUD | CLOUD or SYNTH |
+
+CPU: about 1.9 % of an arm64 Mac core a voice at its heaviest (dense long grains, VINTAGE); estimated 17-46 % of
+the 125 us voice budget on a Pi 4, and less than half that on a Pi 5 (to be measured on the Pi). Declared 700 per
+mille. More in `plugins/mist/README.md`; `make -C plugins/mist check` runs its tests.
 
 ## Tests
 
