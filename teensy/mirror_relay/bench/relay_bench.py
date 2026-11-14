@@ -425,8 +425,21 @@ def computer_stage(ctx, paths, seconds):
         errs.append("pipe echo none/dup/bad/lost")
     if "ctl" in paths and (b.ctl_bad or b.ctl_n == 0):
         errs.append("control answers wrong or none")
+    # relaytest answers 0xC0 0x7E with the Teensy's counters (relay::Stats): how long the box's blocks waited there
+    try:
+        raw = bytes(mirr.controlRead(0xC0, 0x7E, 0, 0, struct.calcsize(STATS_FMT), timeout=2000))
+        st = dict(zip(STATS_FIELDS, struct.unpack(STATS_FMT, raw.ljust(struct.calcsize(STATS_FMT), b"\0"))))
+        res["teensy"] = st
+        print("teensy: to-pc %d drop %d qmax %d worst %d us | to-pi %d drop %d worst %d us" % (
+            st["audio_to_pc"], st["audio_to_pc_drop"], st["q_to_pc_max"], st["worst_to_pc_us"], st["audio_to_pi"],
+            st["audio_to_pi_drop"], st["worst_to_pi_us"]))
+        print("hist to pc (125 us bins):", [st["hist_to_pc%d" % i] for i in range(16)])
+        if "audio_pc" in paths and st["worst_to_pc_us"] >= 1200:
+            errs.append("a block waited %d us on the Teensy (margin ~1200 us)" % st["worst_to_pc_us"])
+    except usb1.USBError as e:
+        errs.append("the Teensy's counters not read (0x7E): %s" % e)
     res["verdict"] = "PASS" if not errs else "FAIL: " + ", ".join(errs)
-    print(json.dumps(res, indent=1))
+    print(json.dumps({k: v for k, v in res.items() if k != "teensy"}, indent=1))
     mirr.close()
     return res
 
