@@ -3861,7 +3861,7 @@ CORE_COLD bool ui_key(int code, bool down, bool shown) {
     if (down) {
       if (shown && !ui().held) ne_leave();   // U1: TRIG leaves NOTE EDIT (on to DEFAULTS, as from the notes); a trig held:
                                            // its step pages as before, NOTE EDIT again at the next hold
-      if (!shown) ui().tv = kTvNotes, ui().sv = kSvNotes, seqpage_log("trig", ui_track()), ui::remote_show_page("SEQ");
+      if (!shown) ui().tv = kTvNotes, ui().sv = kSvNotes, seqpage_log("trig", ui_track()), (sq_box() ? (void)0 : ui::remote_show_page("SEQ"));   // (a box: no host-opened page, 3(c))
       else if (ui().held) ui().sv = ui().lockpg >= 0 ? kSvTrig : (ui().sv + 1) % kSvPages;
       else ui().tv = (ui().tv + 1) % kTvPages, ui().sv = ui().tv == kTvNotes ? kSvNotes : ui().sv ? ui().sv : kSvTrig;
       ui().lockpg = -1, ui().touched = -1, ui().cond_e = -1, ui().push_down = 0, ui().msg_ms = 0;
@@ -3879,7 +3879,7 @@ CORE_COLD bool ui_key(int code, bool down, bool shown) {
       ui().lockpg = lp, ui().touched = -1, ui().cond_e = -1, ui().push_down = 0, ui().msg_ms = 0;
       for (int k = 0; k < 16; ++k)
         if (ui().held >> k & 1) ui().held_used[k] = true;   // no tap toggle at the release
-      if (!shown) seqpage_log("lockpage", ui_track()), ui::remote_show_page("SEQ");
+      if (!shown) seqpage_log("lockpage", ui_track()), (sq_box() ? (void)0 : ui::remote_show_page("SEQ"));
     }
     return true;
   }
@@ -4213,10 +4213,14 @@ static CORE_COLD void tick_here(uint32_t ms) {
       // that is no seq track now (the Rytm's own test is the 2E it has: at a switch that is the next pattern's mask)
       seqmode() = true, seqmode_track() = w;
       ui().track = w;
-      if (!ui::remote_open()) we_opened() = true;
-      show_wanted() = true;
-      seqpage_log("seqmode", w);
-      ui::remote_show_page("SEQ");
+      // 3(c): a box's seq mode opens no page: its mod shows only pages it opened itself (sidecar-a4: UP + YES), and the
+      // remote UI is one still (step 10b) - its trig keys and LEDs work without one
+      if (!sq_box()) {
+        if (!ui::remote_open()) we_opened() = true;
+        show_wanted() = true;
+        seqpage_log("seqmode", w);
+        ui::remote_show_page("SEQ");
+      }
     }
   }
   // rui1050: a lock page's encoder held kLongPushMs: its COND (or back to its value), at once while it is still held

@@ -23,6 +23,7 @@
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
 #include "seq/seq.h"
+#include "ui/remote.h"
 #include "store/store.h"
 #include "um_host.h"
 #include "user/um.h"
@@ -408,6 +409,17 @@ int main() {
     };
     printf("  seq 2E: to the A4 0x%x, to the Rytm 0x%x\n", mask_of(g_out1), mask_of(g_out));
     CHECK(mask_of(g_out1) == 1 && mask_of(g_out) <= 0);
+    // the A4's seq mode on track 1 (2D 08 1 0): seq mode taken, no SEQ page opened (its mod shows host pages only it
+    // opened; the remote UI is one still)
+    {
+      const bool open_was = ui::remote_open();
+      const uint8_t sm[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 8, 1, 0, 0xf7};
+      engine_sysex_link(1, sm, (int)sizeof sm);
+      seq::tick(now_ms() + 200);
+      device::Scope in(device::g_links[1]);
+      printf("  slot 1 seq mode: track %d, the remote page open %d (was %d)\n", seq::seqmode_on(), ui::remote_open(), open_was);
+      CHECK(seq::seqmode_on() == 0 && ui::remote_open() == open_was);
+    }
     settle();
     CHECK(!get("/.a4/seq/B4/tracks.txt").empty());   // (its own folder)
     CHECK(get("/.rytm/seq/B4/tracks.txt").empty());
