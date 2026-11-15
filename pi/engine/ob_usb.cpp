@@ -63,6 +63,7 @@
 #include "ob_block.h"
 #include "ob_follow.h"
 #include "ob_speed.h"
+#include "mirror_assign.h"
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"		// the master FX chain
 #include "spectrum_pi.h"
@@ -116,26 +117,110 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 
 CObUsb *CObUsb::s_pThis = 0;
 CObUsb *CObUsb::s_pBox[CObUsb::Slots] = {};
-static IMirrorTarget *s_pTarget[CObUsb::Slots];		// a slot's own mirror target (a Teensy relay), besides the gadget
+static IMirrorTarget *s_pRelay;				// the Teensy relay's target, besides the gadget (0: none)
+static CObUsb *s_pRelayBox;				// the box it was given (SetBox)
+
+// usb=mirror with two boxes: who goes where (mirror_assign.h). Core 0 (task level and its loop) alone writes these.
+static mirror_assign::State s_Assign;
+static mirror_assign::Config s_AssignCfg;
+static boolean s_bAssignCfg;
+
+static const mirror_assign::Config &AssignCfg (void)
+{
+	if (!s_bAssignCfg)
+	{
+		CKernelOptions *pOpt = CKernelOptions::Get ();
+		s_AssignCfg.prefer = mirror_assign::parse_prefer (pOpt->GetAppOptionString ("mirror", "rytm"));
+		s_AssignCfg.relay_first = mirror_assign::parse_relay_first (pOpt->GetAppOptionString ("mirrorfirst", "usbc"));
+		s_AssignCfg.settle_us = (u64) pOpt->GetAppOptionDecimal ("mirrorsettle", 15) * 1000000;
+		s_AssignCfg.hold_us = (u64) pOpt->GetAppOptionDecimal ("mirrorhold", 10) * 1000000;	// the gadget's and the relay's
+		s_bAssignCfg = TRUE;
+	}
+	return s_AssignCfg;
+}
+
+static u64 NowUs (void) { return CTimer::GetClockTicks64 (); }
+#ifdef OB_USB_TEST
+void ObUsbTestRelayFirst (bool bOn) { AssignCfg (); s_AssignCfg.relay_first = bOn; }	// (the shim's cmdline has no strings)
+#endif
 
 void CObUsb::Rebind (void)
 {
 	s_pThis = s_pBox[0] != 0 ? s_pBox[0] : s_pBox[1];
 }
 
+int CObUsb::UsbcSlot (void)	{ return mirror_assign::usbc_slot (AssignCfg (), s_Assign.first); }
+int CObUsb::RelaySlot (void)	{ return mirror_assign::relay_slot (AssignCfg (), s_Assign.first); }
+int CObUsb::MirrorPrefer (void)	{ return AssignCfg ().prefer; }
+boolean CObUsb::MirrorRelayFirst (void)	{ return AssignCfg ().relay_first; }
+
 unsigned CObUsb::GadgetSlot (void)
 {
-	static int s_nSlot = -1;
-	if (s_nSlot < 0) s_nSlot = strcmp (CKernelOptions::Get ()->GetAppOptionString ("mirror", "rytm"), "a4") == 0 ? 1 : 0;
-	return (unsigned) s_nSlot;
+	return UsbcSlot () == 1 ? 1 : 0;
 }
 
-void CObUsb::SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget)
+// The boxes USB-C and the relay show under the assignment now (0: none chosen, or that box is not here)
+static CObUsb *UsbcBox (void)
 {
-	if (nSlot >= Slots) return;
-	s_pTarget[nSlot] = pTarget;
-	if (pTarget != 0) pTarget->SetBox (s_pBox[nSlot]);
-	if (pTarget != 0 && s_pBox[nSlot] != 0) s_pBox[nSlot]->Reattach ();	// a target that came while its box streams
+	int k = CObUsb::UsbcSlot ();
+	return k < 0 ? 0 : CObUsb::Box ((unsigned) k);
+}
+static CObUsb *RelayBox (void)
+{
+	int k = CObUsb::RelaySlot ();
+	return k < 0 ? 0 : CObUsb::Box ((unsigned) k);
+}
+
+// The relay told which box it shows, if that changed. bMoved: the old one went to USB-C (it did not leave): the relay goes
+// off the computer's bus at once, not after mirrorhold
+static void RelayFollow (boolean bMoved)
+{
+	CObUsb *pBox = RelayBox ();
+	if (s_pRelay == 0 || pBox == s_pRelayBox) return;
+	if (bMoved && s_pRelayBox != 0) s_pRelay->MirrorMoved ();
+	s_pRelayBox = pBox;
+	s_pRelay->SetBox (pBox);
+	if (pBox != 0) pBox->Reattach ();			// read for the relay at its next MirrorPoll (AttachLate)
+}
+
+void CObUsb::SetRelayTarget (IMirrorTarget *pTarget)
+{
+	s_pRelay = pTarget;
+	s_pRelayBox = 0;
+	RelayFollow (FALSE);
+}
+
+static void GadgetBoxMoved (void);			// (below: the gadget's adapter)
+
+// core 0's loop (and a box's Configure): the boxes there now against the assignment; a change moves a box between the
+// gadget and the relay (either way: mirrorfirst=relay moves USB-C's box to the relay). A box with a forwarded request of
+// the computer's on its EP0 is not moved until it has its answer.
+void CObUsb::PollAssign (void)
+{
+	const mirror_assign::Config &c = AssignCfg ();
+	for (unsigned k = 0; k < Slots; k++) s_Assign.up[k] = s_pBox[k] != 0 && s_pBox[k]->m_bUp;
+	const int nOld = s_Assign.first, nNew = mirror_assign::decide (c, s_Assign, NowUs ());
+	if (nNew == nOld) return;
+	for (unsigned k = 0; k < Slots; k++)
+		if (s_pBox[k] != 0 && s_pBox[k]->m_bCtlBusy) return;
+	CObUsb *pOldUsbc = UsbcBox ();
+	s_Assign.first = nNew;
+	CObUsb *pNewUsbc = UsbcBox ();
+	const boolean bToUsbc = pNewUsbc != 0 && pNewUsbc == s_pRelayBox;	// the relay's box moves to USB-C
+	const boolean bToRelay = pOldUsbc != 0 && pOldUsbc == RelayBox ();	// USB-C's box moves to the relay
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (mirror=%s, mirrorfirst=%s)%s",
+				pNewUsbc != 0 ? mirror_assign::slot_name (UsbcSlot ()) : "nothing",
+				RelayBox () != 0 ? mirror_assign::slot_name (RelaySlot ()) : "nothing",
+				mirror_assign::prefer_name (c.prefer), c.relay_first ? "relay" : "usbc",
+				bToUsbc ? ": moved from the relay" : bToRelay ? ": moved from USB-C" : "");
+	if (bToRelay && pOldUsbc->m_bMirror) GadgetBoxMoved ();
+	RelayFollow (bToUsbc);
+	if (bToRelay) pOldUsbc->KickPipes ();		// (RelayFollow had it read for the relay)
+	if (pNewUsbc != 0 && pNewUsbc != pOldUsbc)
+	{
+		if (bToUsbc) pNewUsbc->KickPipes ();
+		pNewUsbc->Reattach ();				// read for the gadget at its next MirrorPoll (MirrorAttachLate)
+	}
 }
 
 // The USB-C gadget as a mirror target (mirror_target.h): the CSidecarGadget calls as they were.
@@ -168,27 +253,37 @@ public:
 	void ToBox (s32 (*pF)[12], const s16 (*pV)[8], unsigned n) override	{ CSidecarGadget::Get ()->ToRytm (pF, pV, n, FALSE); }
 };
 CGadgetTarget s_Gadget;
+}
 
-// The box the gadget serves: with usb=mirror on, the box of mirror=rytm|a4 (0 while it is not here); else the primary
-// stream (the Sidecar device's audio follows it, as it did with one stream)
+// PollAssign, mirrorfirst=relay: USB-C's box moved to the relay (it did not leave): the gadget shows it gone (requests
+// STALLed), then the Sidecar device after mirrorhold, as after a box that left
+static void GadgetBoxMoved (void)
+{
+	s_Gadget.MirrorBoxUp (FALSE);
+}
+
+namespace {
+
+// The box the gadget serves: with usb=mirror on, the box assigned to USB-C (mirror_assign.h; 0 while none is chosen or it
+// is away); else the primary stream (the Sidecar device's audio follows it, as it did with one stream)
 CObUsb *GadgetBox (void)
 {
 	CSidecarGadget *g = CSidecarGadget::Get ();
 	if (g == 0) return 0;
-	return g->Mirror () ? CObUsb::Box (CObUsb::GadgetSlot ()) : CObUsb::s_pThis;
+	if (!g->Mirror ()) return CObUsb::s_pThis;
+	return UsbcBox ();
 }
 }
 
 IMirrorTarget *CObUsb::Target (void)
 {
 	if (this == GadgetBox ()) return &s_Gadget;
-	return s_pTarget[m_nSlot];
+	return s_pRelay != 0 && this == RelayBox () ? s_pRelay : 0;
 }
 
 void CObUsb::PollTargets (void)
 {
-	for (unsigned k = 0; k < Slots; k++)
-		if (s_pTarget[k] != 0) s_pTarget[k]->MirrorPoll ();
+	if (s_pRelay != 0) s_pRelay->MirrorPoll ();
 }
 unsigned CObUsb::s_nGen = 0, CObUsb::s_nPipeResets = 0;
 u8 *CObUsb::s_PipeBuf[CObUsb::Slots][CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf[CObUsb::Slots] = {};	// usb=mirror's: allocated once per slot, as s_InBuf (two boxes can be mirrored at once)
@@ -461,7 +556,11 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
 	}
-	else if (m_OutMode == OutPaced) PumpOut ();
+	else if (m_OutMode == OutPaced)
+	{
+		m_bLeadDue = TRUE;			// the blocks queued for the box were skipped: its lead again with the next IN
+		PumpOut ();
+	}
 	else if (m_OutMode == OutFree)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (m_pOutBuf[i], m_nBlocks), SubmitOut (i);
@@ -504,10 +603,10 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
 	m_nOutCounter (0), m_bOutCounterSet (FALSE), m_nExpectIn (0), m_bHaveIn (FALSE), m_nPhase (0),
-	m_nCredit (0),
+	m_nCredit (0), m_bLeadDue (TRUE), m_nLeadGiven (0),
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
 	m_nInOddGap (0), m_nInErrors (0), m_nInSubmitFail (0),
-	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0),
+	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0), m_nOutMaxDt (0), m_nOutPendMin (~0u),
 	m_nInPeak (0), m_nInMaxDt (0),
 	m_nStartUs (0), m_nLastInUs (0), m_nLastOutUs (0), m_nFirstInUs (0), m_nFirstOutUs (0), m_nOut16Us (0), m_nLastLogUs (0),
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
@@ -516,6 +615,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
+	m_nOutLead = Clamp (pOpt->GetAppOptionDecimal ("oboutlead", 0), 0, m_nURBs * m_nBlocks);
+	m_nRelayLead = Clamp (pOpt->GetAppOptionDecimal ("obrelaylead", 7), 0, m_nURBs * m_nBlocks);
 	const char *pMode = pOpt->GetAppOptionString ("obout", "paced");
 	m_OutMode = strcmp (pMode, "free") == 0 ? OutFree : strcmp (pMode, "off") == 0 ? OutOff : OutPaced;
 	const char *pCtr = pOpt->GetAppOptionString ("obctr", "zero");
@@ -535,6 +636,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_pCtlURB = 0;
 	m_pCtlSetup = 0;
 	m_nGen = ++s_nGen;
+	m_bUp = FALSE;
 	m_bConfigured = FALSE;
 
 	m_nSlot = pAudio == &core::out::kRytmMk2 ? 0 : 1;
@@ -542,7 +644,6 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_pOutBuf = s_OutBuf[m_nSlot];
 	s_pBox[m_nSlot] = this;
 	Rebind ();
-	if (s_pTarget[m_nSlot] != 0) s_pTarget[m_nSlot]->SetBox (this);
 }
 
 // The box left (Circle's ~CUSBDevice, task level), or Configure failed (CUSBDevice::Configure deletes the function).
@@ -557,7 +658,12 @@ CObUsb::~CObUsb (void)
 	(void) pTarget;					// (no mirror in this build)
 	if (s_pBox[m_nSlot] == this) s_pBox[m_nSlot] = 0;
 	Rebind ();
-	if (s_pTarget[m_nSlot] != 0) s_pTarget[m_nSlot]->SetBox (0);
+	if (m_bUp) { s_Assign.up[m_nSlot] = false; s_Assign.gone_at[m_nSlot] = NowUs (); }	// USB-C's place held (mirror_assign.h)
+	if (this == s_pRelayBox)			// gone, not moved: the relay holds it for mirrorhold, as ever
+	{
+		s_pRelayBox = 0;
+		if (s_pRelay != 0) s_pRelay->SetBox (0);
+	}
 	m_bStreaming = FALSE;
 	if (bWasPrimary) core::out::set_device (s_bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// the other box's, if one streams
 	const boolean bGone = m_bConfigured;
@@ -730,6 +836,11 @@ boolean CObUsb::Configure (void)
 		m_pOutURB[i]->SetCompletionRoutine (OutStub, (void *) (uintptr) i, this);
 	}
 
+	// up: who goes where now (mirror_assign.h); the box USB-C or the relay takes is read at once, else when assigned
+	m_bUp = TRUE;
+	s_Assign.up_at[m_nSlot] = NowUs ();
+	PollAssign ();
+	if (s_pRelay != 0 && this == RelayBox () && s_pRelayBox != this) { s_pRelayBox = this; s_pRelay->SetBox (this); }	// (no change: a box for the relay as it is)
 #ifdef CIRCLE_GADGET_MIRROR
 	if (IMirrorTarget *pT = Target ()) { if (pT->Mirror ()) MirrorAttach (); }
 	else m_bAttachDue = TRUE;			// the box came up before its target (at boot: the gadget): MirrorAttachLate
@@ -737,8 +848,8 @@ boolean CObUsb::Configure (void)
 
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
 	CLogger::Get ()->Write (From, LogNotice, "alt 3 selected: %u URBs x %u blocks (%u B) per endpoint, "
-				"OUT %s (delay %u blk), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
-				Modes[m_OutMode], m_nOutDelay, m_bCounterFromIn ? "IN" : "0");
+				"OUT %s (delay %u blk, lead %u blk, %u through a relay), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
+				Modes[m_OutMode], m_nOutDelay, m_nOutLead, m_nRelayLead, m_bCounterFromIn ? "IN" : "0");
 
 	if (m_nOutCh != ob::kChannels)
 	{
@@ -837,6 +948,16 @@ void CObUsb::Wanted (void)
 void CObUsb::Reattach (void)
 {
 	if (m_bStreaming) m_bAttachDue = TRUE;
+}
+
+// PollAssign: this box moved from the relay to USB-C. A pipe IN packet the relay took waits for its computer's
+// MirrorPipeInNext, which never comes now: each IN pipe not in flight and not halted asks the box again
+void CObUsb::KickPipes (void)
+{
+	EnterCritical (IRQ_LEVEL);
+	for (unsigned i = 0; i < m_nPipes; i++)
+		if ((m_Pipe[i].uchAddr & 0x80) && !m_Pipe[i].bBusy && !m_Pipe[i].bStopped) SubmitPipeIn (i);
+	LeaveCritical ();
 }
 
 static char s_PipeInfo[2][192];
@@ -952,10 +1073,11 @@ void CObUsb::MirrorAttach (void)
 		// An interrupt pipe of the box the Teensy relay shows is polled every 1 ms at most (bInterval 4 at high speed):
 		// the A4's async IN 0x82 asks for every 125 us, and polled that often beside the relay's link the Pi's host
 		// controller sent the link only ~1 block/ms (T330); every 1 ms the link carried the full rate and the Overbridge
-		// Engine's latency check passed (T335). The USB-C gadget's box keeps its own interval. mirrorpipeiv=N sets it
-		// (0: the box's own)
+		// Engine's latency check passed (T335). The USB-C gadget's box keeps its own interval, and so does the Rytm
+		// wherever it is (PA1, T353: its stream died with its async pipe at 1 ms). A box moved later (PollAssign) keeps the
+		// interval its pipes were opened with. mirrorpipeiv=N sets it for every box (0: the box's own)
 		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
-		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != GadgetSlot () ? 4 : 0);
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != GadgetSlot () && m_nSlot != 0 ? 4 : 0);
 		if (nIv > 16) nIv = 16;
 		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
 		{
@@ -1217,6 +1339,7 @@ void CObUsb::PipePoll (void)						{}
 void CObUsb::AttachLate (void)						{}
 void CObUsb::Wanted (void)						{}
 void CObUsb::Reattach (void)						{}
+void CObUsb::KickPipes (void)						{}
 
 #endif
 
@@ -1542,6 +1665,17 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (m_OutMode == OutPaced && m_nInBlocks > m_nOutDelay)
 	{
 		m_nCredit += good;
+		if (good != 0)				// oboutlead / obrelaylead: N blocks ahead of the one-for-one, once a stream
+		{					// (or OUT reset), topped up if the box's route now wants more
+			if (m_bLeadDue) m_nLeadGiven = 0, m_bLeadDue = FALSE;
+			IMirrorTarget *pT = Target ();
+			const unsigned nLead = pT != 0 && pT != &s_Gadget ? m_nRelayLead : m_nOutLead;
+			if (nLead > m_nLeadGiven)
+			{
+				m_nCredit += nLead - m_nLeadGiven;
+				m_nLeadGiven = nLead;
+			}
+		}
 		PumpOut ();
 	}
 }
@@ -1549,11 +1683,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 {
 	unsigned now = CTimer::GetClockTicks ();
+	if (m_nFirstOutUs != 0 && now - m_nLastOutUs > m_nOutMaxDt) m_nOutMaxDt = now - m_nLastOutUs;
 	m_nLastOutUs = now;
 	if (m_nFirstOutUs == 0) m_nFirstOutUs = now - m_nStartUs + 1;
 
 	m_bOutBusy[i] = FALSE;
 	m_nOutPending--;
+	if (m_nOutPending < m_nOutPendMin) m_nOutPendMin = m_nOutPending;	// before this completion's refill
 
 	if (pURB->GetStatus () != 0)
 	{
@@ -1643,6 +1779,9 @@ void CObUsb::Log (CLogger *pLogger)
 	m_nInPeak = 0;
 	unsigned nOutAge = (now - m_nLastOutUs) / 1000;
 	unsigned nInPend = m_nInPending, nOutPend = m_nOutPending, nCredit = m_nCredit;
+	unsigned nOutMaxDt = m_nOutMaxDt, nOutPendMin = m_nOutPendMin == ~0u ? nOutPend : m_nOutPendMin;
+	m_nOutMaxDt = 0;
+	m_nOutPendMin = ~0u;
 	TEvStats ei = s_EvIn, eo = s_EvOut;
 	unsigned nQIn = m_pIn->GetXHCIEndpoint ()->GetPendingURBs ();
 	unsigned nQOut = m_pOut->GetXHCIEndpoint ()->GetPendingURBs ();
@@ -1668,14 +1807,14 @@ void CObUsb::Log (CLogger *pLogger)
 	// endpoint: success/short/missed-service/other(last code)/orphan
 	pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice,	// (rytmob2: the box of slot 1; the xHCI event counts are both boxes')
 			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u rs %u dt %uus pk %d"
-			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
+			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u odt %uus pmin %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
 			" | evI %u ok %u sh %u ms %u x %u(%u) o %u evO %u ok %u ms %u x %u(%u) o %u",
 			(now - m_nStartUs) / 1000, (nIn - m_nPrevIn) * 1000 / nMs, nIn, (unsigned) m_nInGaps, (unsigned) m_nInLost,
 			(unsigned) m_nInMaxGap, (unsigned) m_nInOddGap, (unsigned) m_nInShort,
 			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, m_InHalt.resets, nInMaxDt, nPeak,
 			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_OutHalt.resets, nOutAge, nCredit,
-			(unsigned) m_nCreditDrops,
+			(unsigned) m_nCreditDrops, nOutMaxDt, nOutPendMin,
 			nInPend, nOutPend, nQIn, nQOut, nStIn, nStOut, nRequeued,
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
 			ei.nEvents, ei.nSuccess, ei.nShort, ei.nMissed, ei.nOther + ei.nRing, ei.nLastOther, ei.nOrphan,

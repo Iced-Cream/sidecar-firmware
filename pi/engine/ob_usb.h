@@ -11,6 +11,13 @@
 //                  rytm-emu's host and the Teensy's RytmHost do; free: every OUT URB is
 //                  resubmitted on completion (the first hardware run's behaviour); off: no OUT
 //   oboutdelay=N   paced: IN blocks to receive before the first OUT block (default 0)
+//   oboutlead=N    paced: OUT blocks sent ahead of IN, once, with the first credit and again after an OUT endpoint
+//                  reset (default 0, at most oburbs x obblocks): the box then has N blocks queued for it beyond
+//                  the one-for-one, so a late IN completion on the Pi no longer leaves it without OUT (T346-T351)
+//   obrelaylead=N  paced: the lead instead while the box's mirror goes to its own target (a Teensy relay), not the USB-C
+//                  gadget (default 7, at most oburbs x obblocks): through the relay the IN credit trails the box's OUT use
+//                  by a few blocks more, and lead 4 ran out before each slip (T369); 7 had none (T371). Follows the
+//                  routing at run time: a target that comes while the box streams tops the lead up with the next IN
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
 //
@@ -52,9 +59,16 @@ public:
 	unsigned Slot (void) const		{ return m_nSlot; }
 	boolean Primary (void) const		{ return this == s_pThis; }
 	const core::out::Device *Audio (void) const	{ return m_pAudio; }
-	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
-	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
-	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
+	// usb=mirror with two boxes (mirror_assign.h): which box USB-C shows and which a Teensy relay shows is decided at run
+	// time, USB-C first (mirrorfirst=relay: the relay first); cmdline mirror=rytm|a4|first names the box that takes the first
+	// route when both are there.
+	static void SetRelayTarget (IMirrorTarget *pTarget);	// the Teensy relay came (0: went). Task level
+	static unsigned GadgetSlot (void);		// the box the USB-C gadget mirrors (0, the Rytm's, while none is chosen)
+	static int UsbcSlot (void);			// the same, -1 while none is chosen (/status)
+	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
+	static int MirrorPrefer (void);			// cmdline mirror=: 0 rytm, 1 a4, -1 first
+	static boolean MirrorRelayFirst (void);		// cmdline mirrorfirst=relay: the relay filled first (testing it), not USB-C
+	static void PollAssign (void);			// core 0's loop: a box came or went: who goes where (before PollTargets)
 	static const char *PipeInfo (unsigned nSlot);
 	static const u8 *BoxConfig (unsigned nSlot, unsigned *pLen);	// the configuration descriptor MirrorAttach read	// the pipes MirrorAttach opened: address, type, wMaxPacketSize, bInterval
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
@@ -154,7 +168,8 @@ public:
 	void PipePoll (void);
 	void AttachLate (void);
 	void Wanted (void);
-	void Reattach (void);				// a new mirror target for this box (SetMirrorTarget): read again at AttachLate
+	void Reattach (void);				// a new mirror target for this box (PollAssign, SetRelayTarget): read again at AttachLate
+	void KickPipes (void);				// moved to another target: each IN pipe waiting for the old one's computer asks again
 	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
 	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
 	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
@@ -234,6 +249,7 @@ private:
 	TSetupData *volatile m_pCtlSetup;
 	unsigned m_nGen;				// this box's attach: a completion of an earlier one is ignored
 	static unsigned s_nGen, s_nPipeResets;
+	boolean m_bUp;					// came up far enough to be mirrored (mirror_assign.h counts it there)
 	boolean m_bConfigured;				// Configure returned TRUE: only ~CUSBDevice deletes this (the slot is gone)
 	static unsigned s_nDetaches, s_nFreedInFlight, s_nKeptInFlight;
 	// usb=mirror's DMA buffers (pipes, forwarded requests): allocated once and reused by every attach (one box at a time,
@@ -246,7 +262,7 @@ private:
 	const unsigned m_nInCh, m_nInBlk;		// device -> host
 
 	// options
-	unsigned m_nURBs, m_nBlocks, m_nOutDelay;
+	unsigned m_nURBs, m_nBlocks, m_nOutDelay, m_nOutLead, m_nRelayLead;
 	TOutMode m_OutMode;
 	boolean m_bCounterFromIn;
 
@@ -268,11 +284,14 @@ private:
 	boolean m_bHaveIn;
 	u32 m_nPhase;
 	volatile unsigned m_nCredit;			// OUT blocks owed (paced)
+	volatile boolean m_bLeadDue;			// oboutlead: the lead is added with the next credit
+	volatile unsigned m_nLeadGiven;			// the lead given since then (topped up when the route's is larger)
 
 	// statistics, written from the xHCI interrupt, read by LogAllStats
 	volatile unsigned m_nInBlocks, m_nInShort, m_nInBadMagic, m_nInGaps, m_nInLost, m_nInMaxGap,
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
+	volatile unsigned m_nOutMaxDt, m_nOutPendMin;	// per log line: longest gap between OUT completions (us), fewest OUT URBs left in flight
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)

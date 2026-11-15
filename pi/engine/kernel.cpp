@@ -62,6 +62,7 @@ static int s_nRytmPatIndex = -1;
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "hello_gate.h"
 #include "link1.h"
+#include "mirror_assign.h"
 #include "teensy_target.h"	// CTeensyTarget::TakeReboot (usbreboot=1 through the relay)
 #include "box_list.h"
 #include "device/a4.h"
@@ -688,6 +689,14 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 			  k->m_pSidecar != 0 && k->m_pSidecar->MirrorBoxThere () ? "true" : "false", RASPPI >= 5 ? 5 : 4);
 		pOut->Append (s);
 	}
+	// usb=mirror with two boxes (mirror_assign.h): prefer (cmdline mirror=), first (mirrorfirst=: the route filled first),
+	// the box USB-C shows and the one the Teensy relay shows ("none": none chosen yet / not there), and whether a relay is up
+	s.Format (",\"mirror\":{\"prefer\":\"%s\",\"first\":\"%s\",\"usbc\":\"%s\",\"relay\":\"%s\",\"relayUp\":%s}",
+		  mirror_assign::prefer_name (CObUsb::MirrorPrefer ()), CObUsb::MirrorRelayFirst () ? "relay" : "usbc",
+		  CObUsb::UsbcSlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::UsbcSlot ()) != 0 ? mirror_assign::slot_name (CObUsb::UsbcSlot ()) : "none",
+		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? mirror_assign::slot_name (CObUsb::RelaySlot ()) : "none",
+		  CTeensyTarget::Relaying () ? "true" : "false");
+	pOut->Append (s);
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
@@ -1559,7 +1568,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
 	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	// (mirror=a4: the computer talks to the A4, through link 1's tap below; the Rytm has no computer then)
+	// (the A4 on USB-C: the computer talks to the A4, through link 1's tap below; the Rytm's USB MIDI is not relayed)
 	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
 		pSidecar->FromRytmMIDI (pPacket - 1);
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
@@ -1575,7 +1584,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 static CDevice *volatile s_pHelloBox;
 static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box_list.h)
 static HelloGate s_HelloGate;
-// usb=mirror with mirror=a4 (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
+// usb=mirror with the A4 on USB-C (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
 // Rytm's is otherwise (xHCI IRQ, through link1's tap); the computer's MIDI goes to it from core 0's loop (link1::FromComputer)
 static void GadgetTap (const uint8_t *pEventPacket)
 {
@@ -2536,10 +2545,12 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
-		if (CObUsb::GadgetSlot () == 1)		// mirror=a4: the computer's MIDI to the A4, not the Rytm (GadgetTap above)
+		CObUsb::PollAssign ();			// usb=mirror with two boxes: who goes where, USB-C first (mirror_assign.h)
+		// the A4's USB MIDI (link1) to the computer of whichever port shows it: USB-C (GadgetTap above) or the relay
+		link1::SetTap (CObUsb::GadgetSlot () == 1 ? GadgetTap
+			       : CObUsb::RelaySlot () == 1 && CTeensyTarget::Relaying () ? CTeensyTarget::MidiTap : 0);
+		if (CObUsb::GadgetSlot () == 1)		// the A4 on USB-C: the computer's MIDI to the A4, not the Rytm
 		{
-			static boolean s_bTap;
-			if (!s_bTap) s_bTap = TRUE, link1::SetTap (GadgetTap);
 			u32 w;
 			if (m_pSidecar != 0 && m_pSidecar->Mirror ())
 				while (link1::FromComputerRoom () != 0 && m_pSidecar->ForRytm (&w)) link1::FromComputer ((const u8 *) &w);

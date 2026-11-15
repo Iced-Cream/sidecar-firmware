@@ -71,7 +71,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -112,8 +112,8 @@ CTeensyTarget::~CTeensyTarget (void)
 {
 	if (s_pThis == this)
 	{
-		CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), 0);
-		link1::SetTap (0);
+		CObUsb::SetRelayTarget (0);
+		link1::SetTap (0);				// (kernel.cpp's loop sets it again for USB-C's box, if that is the A4)
 		s_pThis = 0;			// completions still on their way see it gone (they test s_pThis)
 		CLogger::Get ()->Write (From, LogNotice, "the mirror relay went away: the box it showed is not shown");
 	}
@@ -167,7 +167,7 @@ boolean CTeensyTarget::Configure (void)
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,
 				m_nVersion & 0xFF, m_nEpDesc, m_nDelay, m_bFeedIrq ? ", relaytest=1 relayfeed=irq" : m_bTest ? ", relaytest=1" : "");
 	Step ("configured; registering as a mirror target");
-	CObUsb::SetMirrorTarget (1 - CObUsb::GadgetSlot (), this);	// its MirrorPoll starts the relay (Start)
+	CObUsb::SetRelayTarget (this);		// the box USB-C does not show (ob_usb.cpp PollAssign); its MirrorPoll starts the relay (Start)
 	Step ("registered");
 	return TRUE;
 }
@@ -252,7 +252,7 @@ boolean CTeensyTarget::Start (void)
 		int n = GetHost ()->GetDescriptor (GetEndpoint0 (), DESCRIPTOR_DEVICE, DESCRIPTOR_INDEX_DEFAULT, m_pCtlBuf, 18, REQUEST_IN);
 		Step ("variant 3: returned %d", n);
 	}
-	if (!m_bTest && CObUsb::GadgetSlot () == 0) link1::SetTap (MidiTap);	// the slot-1 box's USB MIDI (link1.h); not the Rytm's host link
+	// (the A4's USB MIDI to this computer: kernel.cpp's loop sets link1's tap to MidiTap while the relay shows the A4)
 	m_bStarted = TRUE;
 	Step ("started");
 	return TRUE;
@@ -319,11 +319,33 @@ void CTeensyTarget::CtlStub (CUSBRequest *pURB, void *, void *pContext)
 	delete pS;
 }
 
+// xHCI IRQ: one event packet of the computer's MIDI to the relay: usbreboot=1's reboot SysEx
+void CTeensyTarget::RebootFeed (const u8 *pEventPacket)
+{
+	if (!m_bUsbReboot || pEventPacket[0] == 0) return;
+	s_Reboot.Feed (pEventPacket);
+	if (s_Reboot.Matched ()) { s_Reboot.Clear (); s_bRebootAsked = TRUE; }
+}
+
+boolean CTeensyTarget::Relaying (void)
+{
+	return s_pThis != 0 && s_pThis->m_bStarted && !s_pThis->m_bTest;
+}
+
 void CTeensyTarget::SetBox (CObUsb *pBox)
 {
 	if (m_bTest) return;
 	m_pBox = pBox;
 	if (pBox == 0 && m_bBoxUp) MirrorBoxUp (FALSE);
+}
+
+// ob_usb.cpp PollAssign: the box moved to USB-C (it did not leave): off the computer's bus at once, not after mirrorhold
+void CTeensyTarget::MirrorMoved (void)
+{
+	if (m_bTest) return;
+	if (m_bBoxUp) MirrorBoxUp (FALSE);
+	m_bLeaveNow = TRUE;
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the relay's box moved to USB-C: the relay leaves the computer's bus");
 }
 
 boolean CTeensyTarget::Mirror (void) const
@@ -688,17 +710,13 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			else p->m_nTestEchoDrop++;
 			p->m_nCreditDue[c]++;
 		}
-		else if (ep.role == mirror::kMidiOut && link1::Device () != 0)
+		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 1 && link1::Device () != 0)
 		{
 			const u8 *q = p->m_pChanInBuf[c][k];
 			unsigned n = pURB->GetResultLength () / 4;
 			for (unsigned i = 0; i < n; i++, q += 4)
 			{
-				if (p->m_bUsbReboot && q[0] != 0)
-				{
-					s_Reboot.Feed (q);
-					if (s_Reboot.Matched ()) { s_Reboot.Clear (); s_bRebootAsked = TRUE; }
-				}
+				p->RebootFeed (q);
 				p->m_ToBoxFilter.Feed (q, [p] (const uint8_t *e)
 				{
 					if (link1::FromComputer (e)) p->m_Stats.nMidiToBox++;
@@ -717,8 +735,14 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		}
 		else
 		{
-			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1); the computer may send the next one
-			if (ep.role == mirror::kMidiOut) p->m_Stats.nChanInMidi++;
+			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1; the Rytm's USB MIDI is not relayed
+			// yet); the computer may send the next one. The reboot SysEx is obeyed whichever box the relay shows
+			if (ep.role == mirror::kMidiOut)
+			{
+				const u8 *q = p->m_pChanInBuf[c][k];
+				for (unsigned i = 0, n = pURB->GetResultLength () / 4; i < n; i++, q += 4) p->RebootFeed (q);
+				p->m_Stats.nChanInMidi++;
+			}
 			else p->m_Stats.nChanInDrop++;
 			p->m_nCreditDue[c]++;
 		}
@@ -910,10 +934,10 @@ void CTeensyTarget::MirrorPoll (void)
 			pBox->PipeInNext (a);
 		}
 	}
-	if (pBox != 0 && !m_bHave && Mirror ())		// the box was up before the relay or the mode: read it now
+	if (pBox != 0 && Mirror ())			// the box was up before the relay or the mode, or was given to it: read it now
 	{
-		pBox->Wanted ();
-		pBox->AttachLate ();
+		if (!m_bHave) pBox->Wanted ();
+		pBox->AttachLate ();			// (nothing unless it is due: Reattach, Wanted, Configure before a target)
 	}
 	if (m_bUploadDue && m_bHave && Mirror ())
 	{
@@ -921,7 +945,8 @@ void CTeensyTarget::MirrorPoll (void)
 		if (!Upload ()) CLogger::Get ()->Write (From, LogError, "usb=mirror: the relay refused the box's descriptors");
 	}
 	if (m_bConnected && !Mirror ()) Disconnect ();			// the mode turned to CLASS COMPLIANT
-	if (m_bConnected && !m_bBoxUp && NowTicks () - m_nBoxGoneAt >= (u64) m_nHoldSecs * CLOCKHZ) Disconnect ();
+	if (m_bConnected && !m_bBoxUp && (m_bLeaveNow || NowTicks () - m_nBoxGoneAt >= (u64) m_nHoldSecs * CLOCKHZ)) Disconnect ();
+	if (!m_bConnected || m_bBoxUp) m_bLeaveNow = FALSE;
 	if (!m_bConnected) return;
 	ControlPoll ();
 	for (unsigned c = 0; c < m_Map.n_out; c++)
@@ -1020,7 +1045,8 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 		pLogger->Write (From, LogNotice, "relay box pipes: slot 0 (%s) slot 1 (%s)%s", CObUsb::PipeInfo (0),
 				CObUsb::PipeInfo (1), p->m_bBoxPipes ? ", relayboxpipes=1" : "");
 		unsigned nCfg = 0;
-		const u8 *pCfg = CObUsb::BoxConfig (1 - CObUsb::GadgetSlot (), &nCfg);
+		const int nRelaySlot = CObUsb::RelaySlot ();
+		const u8 *pCfg = nRelaySlot < 0 ? 0 : CObUsb::BoxConfig ((unsigned) nRelaySlot, &nCfg);
 		for (unsigned o = 0; pCfg != 0 && o < nCfg; o += 64)	// the relay's box's configuration descriptor, 64 B a line
 		{
 			char Hex[129];

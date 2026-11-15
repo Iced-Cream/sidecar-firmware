@@ -17,8 +17,32 @@ A4   --USB--> Pi USB-A (host, its Overbridge stream as today)
                                        Teensy USB2 (5-pin header: the A4 as the computer sees it) --> computer 2
 ```
 
-`mirror=rytm|a4` on the cmdline picks which box the USB-C gadget mirrors; the relay mirrors the other one. Both need the
-same opt-in as today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a relay alone never shows a box maker's IDs.
+Which box goes where is decided at run time, so one build serves any mix of boxes (`pi/engine/mirror_assign.h`,
+`ob_usb.cpp` `PollAssign`, `tests/test_mirror_assign.cpp`, `tests/test_ob_mirror.cpp`). Both routes need the same opt-in as
+today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a relay alone never shows a box maker's IDs.
+
+### Which box goes where
+
+| cmdline | default | what |
+|---|---|---|
+| `mirrorfirst=usbc\|relay` | `usbc` | the route filled first. `relay`: a lone box goes to the Teensy, the second one to USB-C (to test the relay with one box) |
+| `mirror=rytm\|a4\|first` | `rytm` | the box that takes the first route when both are there; `first`: whichever came first |
+| `mirrorsettle=N` | 15 | seconds from boot the first route waits for the preferred box before it takes the other one alone |
+| `mirrorhold=N` | 10 | seconds the first route's box keeps its place after it left (a reboot after an OS update comes back as itself) |
+
+- A box on its own goes to the first route, whichever box it is; the second box to arrive goes to the other route.
+- A box on the first route is never moved while it is there, not even for the preferred box: the computer's session is
+  not cut. The preferred box only wins when both are there before the first route is taken (a boot, inside
+  `mirrorsettle`).
+- The first route's box gone past `mirrorhold`: the other route's box moves to the first route. The relay leaves its
+  computer's bus at once (`MirrorMoved`); the gadget shows the box gone, then the Sidecar device after `mirrorhold`. A
+  pipe packet the old route held for its computer is asked for again (`KickPipes`). No Pi reboot for any of this.
+- `mirrorfirst=relay` with no relay attached: a lone box is not shown on USB-C (it waits for the relay).
+- The A4's async interrupt pipe is polled at 1 ms at most when its pipes open on the relay (T330); the Rytm's keeps its
+  own interval on either route (PA1, T353). A box that moves keeps the interval its pipes were opened with.
+- `/status` `"mirror":{"prefer","first","usbc","relay","relayUp"}`: the box each route shows (`none`: none there).
+- `usbreboot=1`: the reboot SysEx works on either route's MIDI port, whichever box it shows; a driver can send it to the
+  first listed of the Rytm's, the A4's or the Sidecar's port.
 
 ## Pieces
 
@@ -67,8 +91,9 @@ same opt-in as today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a rel
 The box's MIDI function is relayed like a pipe pair. On the Pi, `link1::SetTap` gives the target every event packet the
 slot-1 box sends (besides the engine), batched to the Teensy; the computer's packets go through a `MidiFilter` (OS updates
 to the box only with `usbmidi=os:on`) into `link1::FromComputer`, sent from link1's `Send` ahead of the engine's records,
-which wait while the computer's SysEx is part way out. Only the slot-1 box (`mirror=rytm`, the default): with
-`mirror=a4` the relay shows the Rytm, whose MIDI is the host link, and its MIDI is not relayed.
+which wait while the computer's SysEx is part way out. Only while the relay shows the A4 (slot 1): when it shows the Rytm,
+whose MIDI is the host link, the Rytm's MIDI is not relayed (the reboot SysEx is still obeyed). kernel.cpp's loop sets
+link1's tap each pass to whichever route shows the A4.
 
 ## Pi runs (KB analog-four-mkii hardware-tests T314-T326)
 
@@ -132,6 +157,12 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   (T349); over the Pi's USB-C it does (T347/T348). `obctr=in` changes nothing (T350); `obout=free` is worse (T351: its rate
   is not the A4's).
 - **Next:** the Pi's Overbridge host timing of its OUT stream to the box (how the box wants it paced), in its own work.
+- **OUT lead (`oboutlead=N`, not yet run on the unit):** the A4 hands its IN blocks over in bursts about every 500 us
+  (the IN log's `dt` 494-501 us, now and then ~600 us in T346), and paced OUT goes back one block per IN block in the
+  same bursts with nothing kept ahead, so a late burst can leave the A4 without OUT. With `obout=free` (8 transfers
+  always queued) the A4 slipped only where the computer's ring underran (T351). `oboutlead=N` sends N blocks ahead
+  once, then one per IN as before; the log line adds `odt` (longest gap between OUT completions) and `pmin` (fewest
+  OUT URBs left in flight).
 
 ## Gaps (named, not done)
 

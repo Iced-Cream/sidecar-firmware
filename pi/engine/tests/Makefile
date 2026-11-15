@@ -19,6 +19,10 @@ all: $(TESTS)
 build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/out.h $(CORE)/fx/out_mix.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
+# usb=mirror with two boxes: which one USB-C shows, which one the Teensy relay shows (mirror_assign.h, docs/usb-mirror.md)
+build/test_mirror_assign: test_mirror_assign.cpp ../mirror_assign.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 # usb=mirror's audio for a second port (mirror_stream.h, docs/teensy-mirror.md)
 build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
 	@mkdir -p build
