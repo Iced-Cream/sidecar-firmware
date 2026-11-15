@@ -602,7 +602,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
 	m_nOutCounter (0), m_bOutCounterSet (FALSE), m_nExpectIn (0), m_bHaveIn (FALSE), m_nPhase (0),
-	m_nCredit (0), m_bLeadDue (TRUE),
+	m_nCredit (0), m_bLeadDue (TRUE), m_nLeadGiven (0),
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
 	m_nInOddGap (0), m_nInErrors (0), m_nInSubmitFail (0),
 	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0), m_nOutMaxDt (0), m_nOutPendMin (~0u),
@@ -615,6 +615,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
 	m_nOutLead = Clamp (pOpt->GetAppOptionDecimal ("oboutlead", 0), 0, m_nURBs * m_nBlocks);
+	m_nRelayLead = Clamp (pOpt->GetAppOptionDecimal ("obrelaylead", 7), 0, m_nURBs * m_nBlocks);
 	const char *pMode = pOpt->GetAppOptionString ("obout", "paced");
 	m_OutMode = strcmp (pMode, "free") == 0 ? OutFree : strcmp (pMode, "off") == 0 ? OutOff : OutPaced;
 	const char *pCtr = pOpt->GetAppOptionString ("obctr", "zero");
@@ -846,8 +847,8 @@ boolean CObUsb::Configure (void)
 
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
 	CLogger::Get ()->Write (From, LogNotice, "alt 3 selected: %u URBs x %u blocks (%u B) per endpoint, "
-				"OUT %s (delay %u blk, lead %u blk), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
-				Modes[m_OutMode], m_nOutDelay, m_nOutLead, m_bCounterFromIn ? "IN" : "0");
+				"OUT %s (delay %u blk, lead %u blk, %u through a relay), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
+				Modes[m_OutMode], m_nOutDelay, m_nOutLead, m_nRelayLead, m_bCounterFromIn ? "IN" : "0");
 
 	if (m_nOutCh != ob::kChannels)
 	{
@@ -1653,10 +1654,16 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (m_OutMode == OutPaced && m_nInBlocks > m_nOutDelay)
 	{
 		m_nCredit += good;
-		if (m_bLeadDue && good != 0)		// oboutlead: N blocks ahead of the one-for-one, once a stream (or OUT reset)
-		{
-			m_nCredit += m_nOutLead;
-			m_bLeadDue = FALSE;
+		if (good != 0)				// oboutlead / obrelaylead: N blocks ahead of the one-for-one, once a stream
+		{					// (or OUT reset), topped up if the box's route now wants more
+			if (m_bLeadDue) m_nLeadGiven = 0, m_bLeadDue = FALSE;
+			IMirrorTarget *pT = Target ();
+			const unsigned nLead = pT != 0 && pT != &s_Gadget ? m_nRelayLead : m_nOutLead;
+			if (nLead > m_nLeadGiven)
+			{
+				m_nCredit += nLead - m_nLeadGiven;
+				m_nLeadGiven = nLead;
+			}
 		}
 		PumpOut ();
 	}

@@ -14,6 +14,10 @@
 //   oboutlead=N    paced: OUT blocks sent ahead of IN, once, with the first credit and again after an OUT endpoint
 //                  reset (default 0, at most oburbs x obblocks): the box then has N blocks queued for it beyond
 //                  the one-for-one, so a late IN completion on the Pi no longer leaves it without OUT (T346-T351)
+//   obrelaylead=N  paced: the lead instead while the box's mirror goes to its own target (a Teensy relay), not the USB-C
+//                  gadget (default 7, at most oburbs x obblocks): through the relay the IN credit trails the box's OUT use
+//                  by a few blocks more, and lead 4 ran out before each slip (T369); 7 had none (T371). Follows the
+//                  routing at run time: a target that comes while the box streams tops the lead up with the next IN
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
 //
@@ -258,7 +262,7 @@ private:
 	const unsigned m_nInCh, m_nInBlk;		// device -> host
 
 	// options
-	unsigned m_nURBs, m_nBlocks, m_nOutDelay, m_nOutLead;
+	unsigned m_nURBs, m_nBlocks, m_nOutDelay, m_nOutLead, m_nRelayLead;
 	TOutMode m_OutMode;
 	boolean m_bCounterFromIn;
 
@@ -281,6 +285,7 @@ private:
 	u32 m_nPhase;
 	volatile unsigned m_nCredit;			// OUT blocks owed (paced)
 	volatile boolean m_bLeadDue;			// oboutlead: the lead is added with the next credit
+	volatile unsigned m_nLeadGiven;			// the lead given since then (topped up when the route's is larger)
 
 	// statistics, written from the xHCI interrupt, read by LogAllStats
 	volatile unsigned m_nInBlocks, m_nInShort, m_nInBadMagic, m_nInGaps, m_nInLost, m_nInMaxGap,
