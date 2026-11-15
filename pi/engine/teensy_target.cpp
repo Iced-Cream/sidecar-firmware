@@ -914,7 +914,7 @@ void CTeensyTarget::MirrorPoll (void)
 						ts.audio_to_pc, ts.audio_to_pc_drop, ts.audio_to_pc_empty, ts.q_to_pc_max, ts.worst_to_pc_us,
 						over1ms, total, ts.audio_to_pi, ts.audio_to_pi_drop, ts.worst_to_pi_us, ts.ctl_forwarded,
 						ts.ctl_answered, ts.ctl_late, ts.ctl_aborted, ts.pc_resets, ts.link_resets);
-			if (n >= (int) sizeof (Stats))	// a Teensy build with the TR2c fields (older ones answer shorter)
+			if (n >= (int) offsetof (Stats, pc_in_gap))	// a Teensy build with the TR2c fields (older ones answer shorter)
 				CLogger::Get ()->Write (From, LogNotice, "relay teensy: isr max link %u us pc %u us | link gap max %u us, "
 							"hist <125 %u <250 %u <375 %u <500 %u <1ms %u <2ms %u more %u | dry %u nak polls %u | pc audio err %u",
 							ts.isr1_max_us, ts.isr2_max_us, ts.link_gap_max_us, ts.link_gap_hist[0], ts.link_gap_hist[1],
@@ -923,6 +923,13 @@ void CTeensyTarget::MirrorPoll (void)
 							ts.link_gap_hist[8] + ts.link_gap_hist[9] + ts.link_gap_hist[10] + ts.link_gap_hist[11] +
 							ts.link_gap_hist[12] + ts.link_gap_hist[13] + ts.link_gap_hist[14], ts.link_gap_hist[15],
 							ts.link_dry, ts.link_nak_polls, ts.pc_audio_err);
+			if (n >= (int) sizeof (Stats))	// a Teensy build with the TR5d fields
+				CLogger::Get ()->Write (From, LogNotice, "relay teensy: pc gaps in max %u us <.25 %u <.5 %u <1 %u <2 %u <4 %u <8 %u <16 %u more %u"
+							" | out max %u us <.25 %u <.5 %u <1 %u <2 %u <4 %u <8 %u <16 %u more %u",
+							ts.pc_in_gap_max_us, ts.pc_in_gap[0], ts.pc_in_gap[1], ts.pc_in_gap[2], ts.pc_in_gap[3],
+							ts.pc_in_gap[4], ts.pc_in_gap[5], ts.pc_in_gap[6], ts.pc_in_gap[7], ts.pc_out_gap_max_us,
+							ts.pc_out_gap[0], ts.pc_out_gap[1], ts.pc_out_gap[2], ts.pc_out_gap[3], ts.pc_out_gap[4],
+							ts.pc_out_gap[5], ts.pc_out_gap[6], ts.pc_out_gap[7]);
 		}
 	}
 }

@@ -134,7 +134,17 @@ struct Stats
 	uint32_t link_dry;			// a link audio packet taken with no other dTD armed: the next one NAKed until re-armed
 	uint32_t link_nak_polls;		// loop() polls that saw the link audio OUT endpoint NAK (ENDPTNAK)
 	uint32_t pc_audio_err;			// the computer's audio IN dTDs that ended with an error
+	// TR5c (T339): the computer's side in time: gaps between blocks the computer took (IN) and sent (OUT), while streaming
+	// (under 1 s), bins < 0.25, 0.5, 1, 2, 4, 8, 16 ms, more; and the longest
+	uint32_t pc_in_gap[8], pc_out_gap[8], pc_in_gap_max_us, pc_out_gap_max_us;
 };
+
+inline unsigned gap_bin (uint32_t us)
+{
+	unsigned b = 0;
+	for (uint32_t lim = 250; b < 7 && us >= lim; lim <<= 1) b++;
+	return b;
+}
 
 inline unsigned hist_bin (uint32_t us)
 {

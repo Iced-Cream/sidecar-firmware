@@ -170,11 +170,30 @@ static void a_to_pc_pump (void)
 	}
 }
 
+static uint32_t pc_in_last, pc_out_last;
+static bool pc_in_seen, pc_out_seen;
+
+static void gap_note (uint32_t *last, bool *seen, volatile uint32_t *hist, volatile uint32_t *maxv)
+{
+	uint32_t now = ARM_DWT_CYCCNT;
+	if (*seen)
+	{
+		uint32_t us = cyc_us (now - *last);
+		if (us < 1000000u)
+		{
+			hist[gap_bin (us)]++;
+			if (us > *maxv) *maxv = us;
+		}
+	}
+	*seen = true, *last = now;
+}
+
 static void a_to_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t err)
 {
 	unsigned k = t->param;
 	a_to_pc_busy[k] = 0;
 	if (err) st.pc_audio_err++;
+	else gap_note (&pc_in_last, &pc_in_seen, st.pc_in_gap, &st.pc_in_gap_max_us);
 	if (!err)
 	{
 		st.audio_to_pc++;
@@ -254,6 +273,7 @@ static void a_from_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t len, uint32_t 
 	unsigned k = t->param;
 	if (!err)
 	{
+		gap_note (&pc_out_last, &pc_out_seen, st.pc_out_gap, &st.pc_out_gap_max_us);
 		if (aq_pi_head - aq_pi_tail >= kAQ) { aq_pi_tail++; st.audio_to_pi_drop++; }
 		Block &b = aq_pi[aq_pi_head++ % kAQ];
 		memcpy (b.d, a_from_pc_buf[k], len);
