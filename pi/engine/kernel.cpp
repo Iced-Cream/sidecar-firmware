@@ -62,6 +62,7 @@ static int s_nRytmPatIndex = -1;
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "hello_gate.h"
 #include "link1.h"
+#include "teensy_target.h"	// CTeensyTarget::TakeReboot (usbreboot=1 through the relay)
 #include "box_list.h"
 #include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
@@ -234,7 +235,11 @@ static void *BootAlloc (size_t nBytes, const char *pWhat)
 	return p;
 }
 
-static void CrumbPanic (void) { crumb::Why ("a panic (the log's last line says which)"); }
+static void CrumbPanic (void)
+{
+	crumb::Why ("a panic (the log's last line says which)");
+	blackbox_pi::PanicFlush ();		// the panic's line onto the card (the RAM is not kept on the Pi 4's rpiboot path)
+}
 static u32 s_nPmRsts;			// PM_RSTS as this boot found it (crumb.h's report)
 
 // The previous boot's breadcrumb on the card, /.rytm/prevboot.txt: the report's lines, then its whole log tail. Once,
@@ -2898,6 +2903,7 @@ void CKernel::Run (void)
 		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// usbmidi=os:emu follows the host
 		if (s_bRebootRequested) StopAndReboot ("the flasher's magic");
 		if (m_pSidecar != 0 && m_pSidecar->TakeReboot ()) StopAndReboot ("asked on the USB-C MIDI port (usbreboot=1)");
+		if (CTeensyTarget::TakeReboot ()) StopAndReboot ("asked on the Teensy relay's MIDI port (usbreboot=1)");
 		if (g_Guard.FatalWhy () != 0) StopAndReboot (g_Guard.FatalWhy ());
 		if (m_pWifi->TakeReboot ()) StopAndReboot ("the Wi-Fi settings (a join, or a failed one's revert)");
 		if (usbnet_pi::TakeReboot ()) StopAndReboot ("the page's reboot onto USB-C (a computer started its USB-C network late)");

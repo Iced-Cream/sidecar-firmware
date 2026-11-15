@@ -55,6 +55,8 @@ public:
 	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
 	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
 	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
+	static const char *PipeInfo (unsigned nSlot);
+	static const u8 *BoxConfig (unsigned nSlot, unsigned *pLen);	// the configuration descriptor MirrorAttach read	// the pipes MirrorAttach opened: address, type, wMaxPacketSize, bInterval
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 #if RASPPI >= 5
@@ -152,6 +154,7 @@ public:
 	void PipePoll (void);
 	void AttachLate (void);
 	void Wanted (void);
+	void Reattach (void);				// a new mirror target for this box (SetMirrorTarget): read again at AttachLate
 	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
 	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
 	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
@@ -214,7 +217,7 @@ private:
 		unsigned nMps;
 		CUSBEndpoint *pEP;
 		CUSBRequest *pURB;			// IN: its one URB, reused; OUT: a new one each packet, here while in flight
-		u8 *pBuf;				// DMA, 512 B (s_PipeBuf: allocated once, reused by every attach)
+		u8 *pBuf;				// DMA, 512 B (s_PipeBuf: allocated once per slot, reused by every attach)
 		volatile boolean bBusy;
 		volatile boolean bStopped;		// an error: halted until MirrorPipePoll clears it (IN: then resubmitted)
 		volatile unsigned nPackets, nErrors;
@@ -225,7 +228,7 @@ private:
 	unsigned m_nPipes;
 	boolean m_bMirror;
 	volatile boolean m_bAttachDue;			// configured while CSidecarGadget::Get () was 0
-	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data (s_pCtlBuf, allocated once)
+	u8 *m_pCtlBuf;					// DMA, 512 B: the forwarded request's data (s_pCtlBuf, allocated once per slot)
 	volatile boolean m_bCtlBusy;
 	CUSBRequest *volatile m_pCtlURB;		// the forwarded request in flight, and its setup packet
 	TSetupData *volatile m_pCtlSetup;
@@ -235,7 +238,7 @@ private:
 	static unsigned s_nDetaches, s_nFreedInFlight, s_nKeptInFlight;
 	// usb=mirror's DMA buffers (pipes, forwarded requests): allocated once and reused by every attach (one box at a time,
 	// and an old attach's transfers are over before a new one exists: ~CObUsb); they were allocated anew each attach
-	static u8 *s_PipeBuf[MaxPipes], *s_pCtlBuf;
+	static u8 *s_PipeBuf[Slots][MaxPipes], *s_pCtlBuf[Slots];	// per slot: the gadget's box and a relay's box at once
 
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called

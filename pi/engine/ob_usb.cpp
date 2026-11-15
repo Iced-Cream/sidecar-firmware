@@ -135,6 +135,7 @@ void CObUsb::SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget)
 	if (nSlot >= Slots) return;
 	s_pTarget[nSlot] = pTarget;
 	if (pTarget != 0) pTarget->SetBox (s_pBox[nSlot]);
+	if (pTarget != 0 && s_pBox[nSlot] != 0) s_pBox[nSlot]->Reattach ();	// a target that came while its box streams
 }
 
 // The USB-C gadget as a mirror target (mirror_target.h): the CSidecarGadget calls as they were.
@@ -190,7 +191,7 @@ void CObUsb::PollTargets (void)
 		if (s_pTarget[k] != 0) s_pTarget[k]->MirrorPoll ();
 }
 unsigned CObUsb::s_nGen = 0, CObUsb::s_nPipeResets = 0;
-u8 *CObUsb::s_PipeBuf[CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf = 0;	// usb=mirror's: allocated once, as s_InBuf
+u8 *CObUsb::s_PipeBuf[CObUsb::Slots][CObUsb::MaxPipes] = {}, *CObUsb::s_pCtlBuf[CObUsb::Slots] = {};	// usb=mirror's: allocated once per slot, as s_InBuf (two boxes can be mirrored at once)
 unsigned CObUsb::s_nDetaches = 0, CObUsb::s_nFreedInFlight = 0, CObUsb::s_nKeptInFlight = 0;
 static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
 static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
@@ -831,6 +832,22 @@ void CObUsb::Wanted (void)
 	if (m_bStreaming && !m_bMirror) m_bAttachDue = TRUE;
 }
 
+// SetMirrorTarget: a new target for a box that already streams (a Teensy relay plugged in or replugged while the box is
+// up) gets its descriptors and strings at the next AttachLate; pipes already open stay as they are (MirrorAttach)
+void CObUsb::Reattach (void)
+{
+	if (m_bStreaming) m_bAttachDue = TRUE;
+}
+
+static char s_PipeInfo[2][192];
+
+const char *CObUsb::PipeInfo (unsigned nSlot) { return nSlot < 2 ? s_PipeInfo[nSlot] : ""; }
+
+static u8 s_BoxCfg[2][512];
+static unsigned s_nBoxCfg[2];
+
+const u8 *CObUsb::BoxConfig (unsigned nSlot, unsigned *pLen) { *pLen = nSlot < 2 ? s_nBoxCfg[nSlot] : 0; return nSlot < 2 ? s_BoxCfg[nSlot] : 0; }
+
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
@@ -841,11 +858,17 @@ void CObUsb::MirrorAttach (void)
 	if (pDev == 0 || pCfg == 0) return;
 	const u8 *pC = (const u8 *) pCfg;
 	unsigned nCfg = pCfg->wTotalLength;
+	if (m_nSlot < 2)
+	{
+		s_nBoxCfg[m_nSlot] = nCfg < sizeof s_BoxCfg[0] ? nCfg : sizeof s_BoxCfg[0];
+		memcpy (s_BoxCfg[m_nSlot], pC, s_nBoxCfg[m_nSlot]);
+	}
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
+	const boolean bPipesOpen = m_bMirror;		// read before (Reattach: a new target): its pipes run already
 	m_bMirror = TRUE;
 
-	if (s_pCtlBuf == 0) s_pCtlBuf = AllocDmaBuf ();
-	m_pCtlBuf = s_pCtlBuf;
+	if (s_pCtlBuf[m_nSlot] == 0) s_pCtlBuf[m_nSlot] = AllocDmaBuf ();
+	m_pCtlBuf = s_pCtlBuf[m_nSlot];
 	CUSBHostController *pHost = GetHost ();
 	u8 *pBuf = m_pCtlBuf;
 	u16 nLang = 0x0409;
@@ -868,7 +891,9 @@ void CObUsb::MirrorAttach (void)
 	// that is not 0). Never on an interface of the audio stream: the Pi's own stream stays at the alternate the engine
 	// opened (ob::kAlt), so a pipe there is taken only at that alternate.
 	mirror::Layout l;
-	if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
+	if (!bPipesOpen && m_nSlot < 2) s_PipeInfo[m_nSlot][0] = 0;
+	if (bPipesOpen) l.n = 0;
+	else if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
 	{
 		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: the box's configuration does not parse: no pipes");
 		l.n = 0;
@@ -900,12 +925,49 @@ void CObUsb::MirrorAttach (void)
 			CLogger::Get ()->Write (From, LogWarning, "usb=mirror: SET_INTERFACE %d alt %d for pipe 0x%02x failed", iface, alt, e.addr);
 			continue;
 		}
+		if (m_nSlot < 2)			// TR2c: the pipes open beside the relay's link (its throughput fell to ~1 block/ms)
+		{
+			char *s = s_PipeInfo[m_nSlot];
+			unsigned len = strlen (s);
+			if (len + 40 < sizeof s_PipeInfo[0])
+			{
+				// "0xAA tT mps 0xMMMM iv I" without CString (the host-test shim has none)
+				static const char H[] = "0123456789abcdef";
+				char *o = s + len;
+				const unsigned nMps = pDesc->wMaxPacketSize, nIv = pDesc->bInterval;
+				if (len) *o++ = ',', *o++ = ' ';
+				*o++ = '0', *o++ = 'x', *o++ = H[pDesc->bEndpointAddress >> 4], *o++ = H[pDesc->bEndpointAddress & 15];
+				*o++ = ' ', *o++ = 't', *o++ = (char) ('0' + (pDesc->bmAttributes & 3));
+				*o++ = ' ', *o++ = 'm', *o++ = 'p', *o++ = 's', *o++ = ' ', *o++ = '0', *o++ = 'x';
+				for (int sh = 12; sh >= 0; sh -= 4) *o++ = H[(nMps >> sh) & 15];
+				*o++ = ' ', *o++ = 'i', *o++ = 'v', *o++ = ' ';
+				if (nIv >= 10) *o++ = (char) ('0' + nIv / 10 % 10);
+				*o++ = (char) ('0' + nIv % 10);
+				*o = 0;
+			}
+		}
 		TPipe &p = m_Pipe[m_nPipes];
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
+		// An interrupt pipe of the box the Teensy relay shows is polled every 1 ms at most (bInterval 4 at high speed):
+		// the A4's async IN 0x82 asks for every 125 us, and polled that often beside the relay's link the Pi's host
+		// controller sent the link only ~1 block/ms (T330); every 1 ms the link carried the full rate and the Overbridge
+		// Engine's latency check passed (T335). The USB-C gadget's box keeps its own interval. mirrorpipeiv=N sets it
+		// (0: the box's own)
+		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != GadgetSlot () ? 4 : 0);
+		if (nIv > 16) nIv = 16;
+		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
+		{
+			TUSBEndpointDescriptor &d = s_Desc[m_nSlot][m_nPipes];
+			memcpy (&d, pDesc, sizeof d);
+			d.bInterval = (u8) nIv;
+			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x polled at bInterval %u (the box asks %u)", e.addr, nIv, (unsigned) pDesc->bInterval);
+			pDesc = &d;
+		}
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
-		if (s_PipeBuf[m_nPipes] == 0) s_PipeBuf[m_nPipes] = AllocDmaBuf ();
-		p.pBuf = s_PipeBuf[m_nPipes];
+		if (s_PipeBuf[m_nSlot][m_nPipes] == 0) s_PipeBuf[m_nSlot][m_nPipes] = AllocDmaBuf ();
+		p.pBuf = s_PipeBuf[m_nSlot][m_nPipes];
 		p.bBusy = p.bStopped = FALSE;
 		p.nPackets = p.nErrors = p.nTries = p.nLastTry = 0;
 		p.bRefused = FALSE;
@@ -917,10 +979,16 @@ void CObUsb::MirrorAttach (void)
 		}
 		m_nPipes++;
 	}
-	EnterCritical (IRQ_LEVEL);
-	for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
-	LeaveCritical ();
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
+	// mirrorpipepoll=0 (TR2d, a test): the pipes opened, but no IN request kept on them, so the box's interrupt IN pipe
+	// is not polled every microframe beside the relay's link (with it the link ran at ~1 block/ms, T329/T330)
+	if (!bPipesOpen && CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipepoll", 1) != 0)
+	{
+		EnterCritical (IRQ_LEVEL);
+		for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
+		LeaveCritical ();
+	}
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes (%s)", nGot, (unsigned) nLang, m_nPipes,
+				m_nSlot < 2 ? s_PipeInfo[m_nSlot] : "");
 	pGadget->MirrorBoxUp (TRUE);
 }
 
@@ -987,7 +1055,7 @@ boolean CObUsb::PipeOut (u8 uchAddr, const u8 *pData, unsigned nLength)
 		if (p.bBusy || p.bStopped) return FALSE;	// halted: dropped until MirrorPipePoll has cleared it
 		if (nLength) memcpy (p.pBuf, pData, nLength);
 		CleanAndInvalidateDataCacheRange ((uintptr) p.pBuf, kBufSize);
-		CUSBRequest *pURB = new CUSBRequest (p.pEP, p.pBuf, nLength);	// its length is this packet's (IRQ-safe heap)
+		CUSBRequest *pURB = new CUSBRequest (p.pEP, nLength ? p.pBuf : 0, nLength);	// its length is this packet's (IRQ-safe heap); a zero-length one has no buffer (Circle asserts nBufLen > 0 on one)
 		pURB->SetCompletionRoutine (PipeOutStub, Param (pThis->m_nGen, i), pThis);
 		p.bBusy = TRUE;
 		p.pURB = pURB;					// ~CObUsb frees it if the box leaves first
@@ -1033,7 +1101,7 @@ boolean CObUsb::Control (const TSetupData *pSetup, const u8 *pOutData, unsigned 
 	memcpy (pS, pSetup, sizeof *pS);
 	if (!(pSetup->bmRequestType & REQUEST_IN) && pSetup->wLength) memcpy (pThis->m_pCtlBuf, pOutData, pSetup->wLength);
 	CleanAndInvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
-	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pThis->m_pCtlBuf, pSetup->wLength, pS);
+	CUSBRequest *pURB = new CUSBRequest (pThis->GetEndpoint0 (), pSetup->wLength ? pThis->m_pCtlBuf : 0, pSetup->wLength, pS);	// no data stage: no buffer (Circle asserts nBufLen > 0 on one)
 	pURB->SetCompletionRoutine (MirrorCtlStub, Param (pThis->m_nGen, nSeq), pThis);
 	pThis->m_bCtlBusy = TRUE;
 	pThis->m_pCtlSetup = pS;
@@ -1148,6 +1216,7 @@ void CObUsb::PipeInNext (u8)						{}
 void CObUsb::PipePoll (void)						{}
 void CObUsb::AttachLate (void)						{}
 void CObUsb::Wanted (void)						{}
+void CObUsb::Reattach (void)						{}
 
 #endif
 
