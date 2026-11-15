@@ -938,6 +938,19 @@ void CObUsb::MirrorAttach (void)
 		TPipe &p = m_Pipe[m_nPipes];
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
+		// mirrorpipeiv=N (a test, TR2e): an interrupt pipe polled at bInterval N at least (high speed: 2^(N-1) microframes).
+		// The A4's async IN 0x82 says 1 (every 125 us); with it the relay's link beside it ran at ~1 block/ms (T330)
+		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", 0);
+		if (nIv > 16) nIv = 16;
+		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
+		{
+			TUSBEndpointDescriptor &d = s_Desc[m_nSlot][m_nPipes];
+			memcpy (&d, pDesc, sizeof d);
+			d.bInterval = (u8) nIv;
+			pDesc = &d;
+			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x polled at bInterval %u (mirrorpipeiv)", e.addr, nIv);
+		}
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
 		if (s_PipeBuf[m_nSlot][m_nPipes] == 0) s_PipeBuf[m_nSlot][m_nPipes] = AllocDmaBuf ();
 		p.pBuf = s_PipeBuf[m_nSlot][m_nPipes];
