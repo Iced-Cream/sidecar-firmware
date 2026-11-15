@@ -1,9 +1,11 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
-Current state (2026-11-15, KB analog-four-mkii hardware-tests T335): the real A4 (on the Pi's USB) works through the relay
-with the Overbridge Engine on the computer: the link carries the A4's full rate (16,423 IN blocks, none dropped, every
-link transfer done under 2 ms) and the Engine's latency check passes (1056-1061 samples, 22.0-22.1 ms). Not yet run: audio
-through it with an app (ASIO loop), and a long run. The Pi can also rewrite the Teensy's program (docs/teensy-flash.md).
+Current state (2026-11-15, KB analog-four-mkii hardware-tests T335-T351): the real A4 (on the Pi's USB) works through the
+relay with the Overbridge Engine and an app: nothing is lost or late anywhere in the relay (Teensy and link drops 0, the
+Pi's buffers clean), latency 19.8 ms (Engine's measurement). A 60 s / 10 min ASIO sine loop still shows 1-6 sample slips,
+~5 per 10 minutes; they happen in the A4 while the Pi streams to it (the Pi's detectors: the computer's audio arrives
+intact, the A4's comes back slipped), and the plain USB-C mirror has them too (~2 per 10 min), the A4 straight on the PC
+none (T349). So they belong to the Pi's Overbridge host stream to the box (ob_usb.cpp), not to the relay.
 
 The Pi's USB-C port is one USB device, so `usb=mirror` (docs/usb-mirror.md) shows one box. A Teensy 4.1 adds a second
 device port: the Pi stays the host of both boxes and keeps all of the mirror's logic, and the Teensy only relays.
@@ -113,6 +115,23 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   isr max ..."), the relay box's configuration in hex and its pipes repeated in the stats for 2 minutes,
   `relaytest=1 relayfeed=irq`, bench `--paths engine --late N`. `relayboxpipes=1` (relaytest with the real box's
   pipes) does not stream (T332) and is not to be used.
+
+## Audio through the relay with an app (T336-T351)
+
+- **Loop:** `tr2_loop.py` / `tr9_loop.py` (in the run folder of the work tree): ASIO 997 Hz at -24 dBFS on the A4's Main
+  out, its Main in fitted per 10 ms window; a break is a window whose residual jumps, its phase slip measured after.
+- **Stale blocks (T340, fixed b84523a):** the Engine stops reading after its latency check; the Teensy kept the A4's blocks
+  meanwhile, so the loop started on a full queue the Engine never drained. While the computer takes no block for 20 ms the
+  Teensy keeps only the newest and arms nothing; its next poll (NAK) starts it again.
+- **Paced IN (f4ca851):** the Teensy hands the computer one block per microframe at the box's mean rate (SOF phase
+  accumulator, ~4 blocks kept, rate trimmed <= 2 %), as the A4 has them ready. Even arrival did not remove the slips
+  (T342), but it is kept: the computer's reads are evener (gaps <= 0.6 ms).
+- **OUT ring 2 ms (142c176):** the relay's box keeps 96 frames of the computer's audio, the gadget 48.
+- **Where the slips are (T346, slip_detect.h):** the Pi watches the test sine in the computer's OUT as it arrives (0 slips)
+  and in the A4's IN as it arrives (the slips, at the loop's break times). The A4 slips; straight on the PC it does not
+  (T349); over the Pi's USB-C it does (T347/T348). `obctr=in` changes nothing (T350); `obout=free` is worse (T351: its rate
+  is not the A4's).
+- **Next:** the Pi's Overbridge host timing of its OUT stream to the box (how the box wants it paced), in its own work.
 
 ## Gaps (named, not done)
 
