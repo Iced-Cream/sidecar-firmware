@@ -864,6 +864,16 @@ boolean CObUsb::Configure (void)
 	if (s_bActive && Primary ()) masterfx_pi::Reset ();
 	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, OUT silent for now", m_pAudio->name,
 						s_pThis != 0 ? s_pThis->m_pAudio->name : "?");
+	// obidle=N (a diagnostic, T352/PD1 follow-up): slot N's box is set up as always (alt 3, its endpoints, the mirror)
+	// but no URB is queued on its audio endpoints, so the host controller never polls them: is the other box's
+	// trouble beside it (the relay's link, its OUT) the load of these two every-microframe interrupt endpoints?
+	if ((int) CKernelOptions::Get ()->GetAppOptionDecimal ("obidle", 99) == (int) m_nSlot)
+	{
+		CLogger::Get ()->Write (From, LogWarning, "obidle=%u: %s's audio endpoints set up, not polled (no stream)",
+					m_nSlot, m_pAudio->name);
+		m_bConfigured = TRUE;
+		return TRUE;
+	}
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
