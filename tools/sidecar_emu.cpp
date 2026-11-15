@@ -156,7 +156,7 @@ void render_block() {
   static int16_t l[kBlock][kVoices], r[kBlock][kVoices];
   uint8_t st[kVoices] = {}, bits = 0;
   refill_neediest(4 * kBlock);
-  seq::pre_block();
+  seq::pre_block_all();   // (one pass for every voice: every slot's sequencer)
   render_voices(l, kBlock, 0, 0, kVoices, g_mach, r, st);
   for (int v = 0; v < kVoices; ++v) bits |= st[v] ? 1 << v : 0;
   g_out.Push(l, kBlock, r, bits);

@@ -52,7 +52,11 @@ namespace {
 // Slot 0 is the Rytm's: its own params / scene / QPERF / acks, the send FX locks, the mute gate, rytm_dump and
 // patwrite, the recorder's transport, arp's clock, SONG RECORD and the latency calibration (the Rytm's stems) stay
 // its alone (sq_rytm()). Another slot's box plays its tracks 0..voices-1 on its own voices (voice_of).
-int sq_slot() { return prj_slot(); }
+// (prj_slot()'s answer, read inline: every name() goes through it, the planner's loops too)
+inline int sq_slot() {
+  const int s = device::g_cur->index;
+  return s < kVoiceSlots ? s : 0;
+}
 bool sq_rytm() { return sq_slot() == 0; }
 // slot s's sequencer runs: slot 0 always, another while a box's folder is on its link (as mod.cpp's slot_on)
 bool sq_on(int s) { return s == 0 || (s > 0 && s < kVoiceSlots && s < device::kLinks && device::g_links[s].state); }
@@ -3088,6 +3092,11 @@ void pre_block() {
   const int side = device::side_slot();
   for (int s = 0; s < kVoiceSlots; ++s)
     if (s != side && sq_on(s)) in_slot(s, pre_block_here);
+}
+// one pass for every voice (the Mac host, sidecar_emu: no side stage): every running slot's block
+void pre_block_all() {
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (sq_on(s)) in_slot(s, pre_block_here);
 }
 void pre_block_side(int s) {
   if (s >= 0 && s < kVoiceSlots && sq_on(s)) in_slot(s, pre_block_here);

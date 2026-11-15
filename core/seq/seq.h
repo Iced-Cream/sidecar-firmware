@@ -433,6 +433,7 @@ bool rytm_live_rec();                          // the Rytm records live (2D 06 R
 void pre_block();                              // before each render block (kBlock frames): due notes started / ended (3(c): each
                                                // running slot that renders in the base pass, in its Scope)
 void pre_block_side(int slot);                 // the side stage's pass (core/device/device.h side_slot): that slot's block
+void pre_block_all();                          // a platform with one render pass for every voice (no side stage): every slot's
 void tick(uint32_t ms);                        // the control loop: LEDs, the page's state, the debounced save (each slot's)
 bool idle();                                   // a card job (load / prefetch / save): true if it did one
 void save_due();    // a restart is coming: idle saves the edits now, not when they settle
