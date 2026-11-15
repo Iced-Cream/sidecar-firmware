@@ -253,6 +253,69 @@ int main() {
     CHECK((b.host.out[2]->buf[2] << 8 | b.host.out[2]->buf[3]) == 7 * 7);
     CKernelOptions::Get()->num.erase("oboutlead");
   }
+  {  // obrelaylead (default 7): the box's mirror on its own target (a Teensy relay), not the gadget: the first IN sends 1 + 7
+     // (T369: lead 4 ran out before each relay slip; T371: 7 had none), then one per IN
+    struct Relay : IMirrorTarget {
+      void SetBox(CObUsb*) override {}
+      boolean Mirror() const override { return TRUE; }
+      boolean MirrorShown() const override { return TRUE; }
+      boolean MirrorSetDescriptors(const u8*, const u8*, unsigned) override { return FALSE; }
+      void MirrorSetString(u8, const u8*, unsigned) override {}
+      void MirrorBoxUp(boolean) override {}
+      void MirrorControlDone(unsigned, const u8*, int) override {}
+      boolean MirrorPipeIn(u8, const u8*, unsigned) override { return FALSE; }
+      void MirrorPipeOutDone(u8) override {}
+      boolean MirrorOutExtra(u8*, u16) override { return FALSE; }
+      void FromBoxBlock(const u8*) override {}
+      void ToBox(s32 (*)[12], const s16 (*)[8], unsigned) override {}
+    } relay;
+    {
+      Bus b(g_rytm, 0x0b48);
+      CHECK(b.ob && b.ob->Configure() && CObUsb::Box(0) != nullptr);
+      CObUsb::SetMirrorTarget(0, &relay);
+      uint16_t c = 0;
+      b.in(1, c);
+      CHECK(b.host.out.size() == 8);
+      for (int k = 0; k < 8; ++k) CHECK((b.host.out[k]->buf[2] << 8 | b.host.out[k]->buf[3]) == 7 * k);
+      for (int k = 0; k < 8; ++k) b.out_done();
+      b.in(3, c);
+      CHECK(b.host.out.size() == 3);   // one per IN: 7 ahead, not given again
+      CObUsb::SetMirrorTarget(0, nullptr);
+    }
+    {  // oboutlead=4 while the box has no relay; a relay that comes while it streams tops the lead up to 7 with the next IN,
+       // once; it going again takes nothing back (the blocks are already queued)
+      CKernelOptions::Get()->num["oboutlead"] = 4;
+      Bus b(g_rytm, 0x0b48);
+      CHECK(b.ob && b.ob->Configure());
+      uint16_t c = 0;
+      b.in(1, c);
+      CHECK(b.host.out.size() == 5);
+      for (int k = 0; k < 5; ++k) b.out_done();
+      CObUsb::SetMirrorTarget(0, &relay);
+      b.in(1, c);
+      CHECK(b.host.out.size() == 4);   // 1 + the 3 more
+      for (int k = 0; k < 4; ++k) CHECK((b.host.out[k]->buf[2] << 8 | b.host.out[k]->buf[3]) == 7 * (5 + k));
+      for (int k = 0; k < 4; ++k) b.out_done();
+      b.in(2, c);
+      CHECK(b.host.out.size() == 2);
+      for (int k = 0; k < 2; ++k) b.out_done();
+      CObUsb::SetMirrorTarget(0, nullptr);
+      b.in(2, c);
+      CHECK(b.host.out.size() == 2);
+      CKernelOptions::Get()->num.erase("oboutlead");
+    }
+    {  // obrelaylead=0: the relay's lead off, as before this option
+      CKernelOptions::Get()->num["obrelaylead"] = 0;
+      Bus b(g_rytm, 0x0b48);
+      CHECK(b.ob && b.ob->Configure());
+      CObUsb::SetMirrorTarget(0, &relay);
+      uint16_t c = 0;
+      b.in(1, c);
+      CHECK(b.host.out.size() == 1);
+      CObUsb::SetMirrorTarget(0, nullptr);
+      CKernelOptions::Get()->num.erase("obrelaylead");
+    }
+  }
   CHECK(&core::out::device() == &core::out::kRytmMk2);   // the box gone: the Rytm's table again
 
   // The A4 beside the Rytm
