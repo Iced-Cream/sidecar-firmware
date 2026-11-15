@@ -54,8 +54,8 @@ static core::fx::SendFx& Fx(Inst& x) {
 // last, so there is no read-and-clear shared with core 2 (a clear lost what core 2 added in between). The busy total is
 // 64-bit and the elapsed time milliseconds: core::cycles() is 32-bit and wraps every 79.5 s at 54 MHz, so a "sendfx" a
 // few minutes after the last one (or after boot) measured against the wrapped difference - 1-2 % read as ~60 %.
-static uint64_t s_nLastBusy;     // core 3's (Command): the busy ticks, frames and clock at the last "sendfx" (box 0's)
-static uint32_t s_nLastFrames, s_nLastMs;
+static uint64_t s_nLastBusy[kBoxes];   // core 3's (Command): the busy ticks, frames and clock at each box's last "sendfx"
+static uint32_t s_nLastFrames[kBoxes], s_nLastMs[kBoxes];
 
 static constexpr unsigned long kFxBytes = ((unsigned long)sizeof(core::fx::SendFx) + 63) & ~63ul;
 unsigned long Bytes() { return kBoxes * kFxBytes; }
@@ -120,7 +120,7 @@ void Read(View* v) { Read(0, v); }
 void Read(int box, View* v) {
   const core::fx::Control& c = core::fx::control_of(box);
   for (int k = 0; k < 2; ++k) {
-    const char* n = core::fx::type_name(c.knob[k][0], k);
+    const char* n = core::fx::type_name_in(box, c.knob[k][0]);   // (its own user effects' names)
     unsigned i = 0;
     for (; n && n[i] && i < sizeof v->type[k] - 1; ++i) v->type[k][i] = n[i];
     v->type[k][i] = 0;
@@ -247,25 +247,28 @@ static uint32_t Take(volatile uint32_t* p) {
 
 bool Command(const char* p) {
   char r[400];
+  // 3(c): the slot in hand's box (as fx::command's settings): its own send FX, stats and kill (slot 1's lines say so)
+  const int b = core::fx::slot_in_hand() < kBoxes ? core::fx::slot_in_hand() : 0;
+  const char* sl = b ? "slot 1: " : "";
   if (strcmp(p, "killfx") == 0) {   // the display's "kill tails"
-    core::log(core::fx::all_sound_off() ? "sendfx: kill tails -> cleared" : "sendfx: kill tails ignored (a request within 100 ms)");
+    core::log(core::fx::all_sound_off(core::fx::control_of(b)) ? "sendfx: %skill tails -> cleared" : "sendfx: %skill tails ignored (a request within 100 ms)", sl);
     return true;
   }
   if (!core::fx::command(p, r, sizeof r)) return false;
   core::log("%s", r);
-  if (p[6] == 0) {   // "sendfx": the stats since the last one
-    Inst& x = I(0);   // (box 0's: slot 1's in /status)
-    uint32_t ms = core::now_ms(), dt_ms = ms - s_nLastMs, fr = x.nFrames, frames = fr - s_nLastFrames;
-    uint64_t total = x.nCycles, busy = total - s_nLastBusy;
-    s_nLastMs = ms, s_nLastFrames = fr, s_nLastBusy = total;
+  if (p[6] == 0) {   // "sendfx": the stats since the box's last one
+    Inst& x = I(b);
+    uint32_t ms = core::now_ms(), dt_ms = ms - s_nLastMs[b], fr = x.nFrames, frames = fr - s_nLastFrames[b];
+    uint64_t total = x.nCycles, busy = total - s_nLastBusy[b];
+    s_nLastMs[b] = ms, s_nLastFrames[b] = fr, s_nLastBusy[b] = total;
     uint64_t window = (uint64_t)dt_ms * core::cycles_per_second() / 1000;   // the window in ticks (no 32-bit wrap)
     unsigned load = window ? (unsigned)(busy * 100000 / window) : 0;        // 1/1000 %
     unsigned ns = frames ? (unsigned)((double)busy * 1e9 / core::cycles_per_second() * 12 / frames) : 0;   // (a long window: busy x 1e9 passes 2^64)
     unsigned pk = (unsigned)(x.Peak * 1000.0f);
     x.Peak = 0.0f;
-    core::log("sendfx: %u frames, core 2 load %u.%03u percent, %u ns a 12-frame block, underruns %u, drops in %u out %u, "
+    core::log("sendfx: %s%u frames, core 2 load %u.%03u percent, %u ns a 12-frame block, underruns %u, drops in %u out %u, "
               "peak %u/1000, faults %u",
-              frames, load / 1000, load % 1000, ns, Take(&x.nUnder), Take(&x.nDropIn), Take(&x.nDropOut), pk,
+              sl, frames, load / 1000, load % 1000, ns, Take(&x.nUnder), Take(&x.nDropIn), Take(&x.nDropOut), pk,
               Fx(x).Faults());
   }
   return true;
