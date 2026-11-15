@@ -167,6 +167,12 @@ void ci_queue (ci_dev *d, uint8_t addr, ci_td *t, void *buf, uint32_t len)
 
 uint32_t ci_queued (ci_dev *d, uint8_t addr) { return qh_of (d, addr)->queued; }
 
+void ci_sof_irq (ci_dev *d, bool on)
+{
+	if (on) USBINTR |= USB_USBINTR_SRE;
+	else USBINTR &= ~USB_USBINTR_SRE;
+}
+
 void ci_ep_flush (ci_dev *d, uint8_t addr)
 {
 	uint32_t mask = bit_of (addr);
@@ -346,6 +352,7 @@ void ci_isr (ci_dev *d)
 			}
 		}
 	}
+	if ((status & USB_USBSTS_SRI) && d->on_sof) d->on_sof (d);
 	if (status & USB_USBSTS_URI)
 	{
 		SETUPSTAT = SETUPSTAT;

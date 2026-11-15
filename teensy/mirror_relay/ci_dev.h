@@ -56,6 +56,7 @@ struct ci_dev
 	void (*on_reset) (ci_dev *d);
 	void (*on_port) (ci_dev *d);		// port change: speed known (ci_high_speed)
 	void (*on_suspend) (ci_dev *d);
+	void (*on_sof) (ci_dev *d);		// each (micro)frame start, when ci_sof_irq turned it on
 	void (*ep0_rx) (ci_dev *d, uint32_t len);	// the OUT data stage armed by ci_ep0_recv arrived
 	uint8_t *ep0_rx_buf;
 	uint32_t ep0_rx_want;
@@ -74,6 +75,7 @@ void ci_ep_close (ci_dev *d, uint8_t addr);		// flushed: its dTDs are dropped wi
 void ci_ep_close_all (ci_dev *d);			// every endpoint but 0
 void ci_queue (ci_dev *d, uint8_t addr, ci_td *t, void *buf, uint32_t len);	// IN: len to send; OUT: buffer size
 uint32_t ci_queued (ci_dev *d, uint8_t addr);
+void ci_sof_irq (ci_dev *d, bool on);		// the SOF interrupt (8000 a second at high speed) on or off
 void ci_ep_flush (ci_dev *d, uint8_t addr);	// drop every dTD primed on an open endpoint (no completions), keep it open
 bool ci_nak_take (ci_dev *d, uint8_t addr);	// the endpoint NAKed since the last call (ENDPTNAK, cleared)
 void ci_stall (ci_dev *d, uint8_t addr, bool on);	// on = FALSE also resets the data toggle

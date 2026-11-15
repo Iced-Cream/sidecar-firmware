@@ -163,9 +163,55 @@ static const uint32_t kPcIdleUs = 20000;
 static volatile bool pc_in_idle = true;
 static uint32_t pc_in_last_take;
 
+// Paced IN (T341: the returned sine slipped 1-2 samples every ~2.6 s through the relay, not on the A4 alone): blocks reach
+// the Teensy in bunches (the link, the Pi's IRQ), while the A4 itself has one ready every 7/48000 s. The computer's
+// Overbridge Engine follows the box's clock from when its blocks come; so they are handed out one per microframe at the
+// box's mean rate (48000 / 7 / 8000 a microframe, a phase accumulator at each SOF), kept ~kPaceTarget blocks behind the
+// newest, the rate trimmed slowly toward that level (at most +-2 %).
+static const bool kPace = true;
+static const uint32_t kPaceBase = 56174;		// 65536 * 48000 / 7 / 8000
+static const int32_t kPaceTarget = 4, kPaceGain = 280, kPaceClamp = 1123;	// blocks; Q16 per block of level error; 2 %
+static uint32_t pace_acc;
+static int32_t pace_lvl;				// the level, smoothed (Q8)
+
+static void a_to_pc_prime_one (void)
+{
+	for (unsigned k = 0; k < kAPcTds && aq_pc_head != aq_pc_tail; k++)
+	{
+		if (a_to_pc_busy[k]) continue;
+		Block &b = aq_pc[aq_pc_tail++ % kAQ];
+		memcpy (a_to_pc_buf[k], b.d, b.len);
+		a_to_pc_t[k] = b.t;
+		a_to_pc_busy[k] = 1;
+		a_to_pc_td[k].param = k;
+		ci_queue (&P, kAudioInEp, &a_to_pc_td[k], a_to_pc_buf[k], b.len);
+		st.pace_primed++;
+		return;
+	}
+}
+
+static void p_sof (ci_dev *)
+{
+	if (!kPace || !P.ep[kAudioInEp & 7][1].open || pc_in_idle) return;
+	unsigned busy = 0;
+	for (unsigned k = 0; k < kAPcTds; k++) busy += a_to_pc_busy[k];
+	int32_t level = (int32_t) (aq_pc_head - aq_pc_tail) + (int32_t) busy;
+	pace_lvl += (level * 256 - pace_lvl) / 64;		// ~8 ms
+	int32_t trim = (pace_lvl - kPaceTarget * 256) * kPaceGain / 256;
+	if (trim > kPaceClamp) trim = kPaceClamp;
+	if (trim < -kPaceClamp) trim = -kPaceClamp;
+	pace_acc += (uint32_t) ((int32_t) kPaceBase + trim);
+	if (pace_acc < 65536) return;
+	pace_acc -= 65536;
+	if (pace_acc > 65536) pace_acc = 65536;		// none queued for a while: no burst after
+	if (busy >= 2) { st.pace_held++; return; }	// the computer has not taken the last two yet
+	if (aq_pc_head == aq_pc_tail) { st.pace_empty++; return; }
+	a_to_pc_prime_one ();
+}
+
 static void a_to_pc_pump (void)
 {
-	if (!P.ep[kAudioInEp & 7][1].open || pc_in_idle) return;
+	if (!P.ep[kAudioInEp & 7][1].open || pc_in_idle || kPace) return;
 	for (unsigned k = 0; k < kAPcTds && aq_pc_head != aq_pc_tail; k++)
 	{
 		if (a_to_pc_busy[k]) continue;
@@ -951,7 +997,8 @@ void relay_begin (void)
 	relay_stage = 2;
 	if (!usb2_phy_up ()) { relay_stage = 0x82; rlog ("usb2: PLL7 no lock"); }
 	ci_init (&P, IMXRT_USB2_ADDRESS, qh2);
-	P.on_setup = p_setup, P.on_reset = p_reset, P.on_port = p_port, P.on_suspend = p_suspend;
+	P.on_setup = p_setup, P.on_reset = p_reset, P.on_port = p_port, P.on_suspend = p_suspend, P.on_sof = p_sof;
+	if (kPace) ci_sof_irq (&P, true);
 	NVIC_CLEAR_PENDING (IRQ_USB2);
 	attachInterruptVector (IRQ_USB2, isr2);
 	NVIC_SET_PRIORITY (IRQ_USB2, 96);
@@ -973,6 +1020,7 @@ void relay_poll (void)
 		pc_in_idle = false;
 		pc_in_last_take = ARM_DWT_CYCCNT;
 		st.pc_idle_leave++;
+		pace_acc = 65536, pace_lvl = kPaceTarget * 256;	// the next SOF hands out the newest block
 		a_to_pc_pump ();
 		__enable_irq ();
 	}

@@ -138,6 +138,7 @@ struct Stats
 	// (under 1 s), bins < 0.25, 0.5, 1, 2, 4, 8, 16 ms, more; and the longest
 	uint32_t pc_in_gap[8], pc_out_gap[8], pc_in_gap_max_us, pc_out_gap_max_us;
 	uint32_t pc_idle_enter, pc_idle_leave;	// the computer stopped / started again taking the box's IN (stale blocks not kept)
+	uint32_t pace_primed, pace_held, pace_empty;	// paced IN: blocks handed out at SOFs; SOFs due but 2 primed; due but none queued
 };
 
 inline unsigned gap_bin (uint32_t us)

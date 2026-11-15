@@ -930,8 +930,9 @@ void CTeensyTarget::MirrorPoll (void)
 							ts.pc_in_gap[4], ts.pc_in_gap[5], ts.pc_in_gap[6], ts.pc_in_gap[7], ts.pc_out_gap_max_us,
 							ts.pc_out_gap[0], ts.pc_out_gap[1], ts.pc_out_gap[2], ts.pc_out_gap[3], ts.pc_out_gap[4],
 							ts.pc_out_gap[5], ts.pc_out_gap[6], ts.pc_out_gap[7]);
-			if (n >= (int) sizeof (Stats))
-				CLogger::Get ()->Write (From, LogNotice, "relay teensy: computer IN idle entered %u, left %u", ts.pc_idle_enter, ts.pc_idle_leave);
+			if (n >= (int) offsetof (Stats, pc_idle_enter) + 8)
+				CLogger::Get ()->Write (From, LogNotice, "relay teensy: computer IN idle entered %u, left %u | paced %u held %u empty %u",
+							ts.pc_idle_enter, ts.pc_idle_leave, ts.pace_primed, ts.pace_held, ts.pace_empty);
 		}
 	}
 }
