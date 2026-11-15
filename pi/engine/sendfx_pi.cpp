@@ -132,6 +132,11 @@ void Read(int box, View* v) {
   }
 }
 
+Stats ReadStats(int box) {
+  const Inst& x = I(box);
+  return Stats{x.nFrames, x.nUnder, x.nDropIn, x.nDropOut, On(box)};
+}
+
 void FromRytm(const int32_t (*stems)[8], unsigned n) {
   if (!On(0)) return;
   Inst& x = I(0);

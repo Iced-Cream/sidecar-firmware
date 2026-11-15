@@ -73,6 +73,9 @@ struct View {
 };
 void Read(View* v);
 void Read(int box, View* v);
+// box's counters since boot (any core, plain reads): frames rendered, return underruns, ring drops in / out; on: On(box)
+struct Stats { uint32_t frames, under, drop_in, drop_out; bool on; };
+Stats ReadStats(int box);
 // MIDI clock / Start / Continue / Stop / SPP from the Rytm (MidiIn's realtime callback): STUTTER's grid.
 void Clock(uint8_t status, uint16_t spp);
 void ClockBox(int box, uint8_t status, uint16_t spp);   // box's clock: its STUTTER's grid

@@ -66,6 +66,7 @@ static int s_nRytmPatIndex = -1;
 #include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
+#include "masterfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "usbc_pi.h"		// the USB-C mode for the SIDECAR MENU > USB-C (usb_mode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
@@ -654,6 +655,19 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
 		  g_OutputSide.Streams ());
 	pOut->Append (s);
+	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
+	// are cleared by the console's `sendfx` line, which reports them)
+	pOut->Append (",\"slotFx\":[");
+	for (int b = 0; b < 2; b++)
+	{
+		const sendfx_pi::Stats F = sendfx_pi::ReadStats (b);
+		const masterfx_pi::Stats M = masterfx_pi::Read (b);
+		s.Format ("%s{\"slot\":%d,\"sendOn\":%s,\"send\":[%u,%u,%u,%u],\"master\":[%u,%u,%u,%u],\"wet\":%u}", b ? "," : "",
+			  b, F.on ? "true" : "false", F.frames, F.under, F.drop_in, F.drop_out, M.frames, M.under, M.drop_in,
+			  M.drop_out, (unsigned) (masterfx_pi::Wet (b) * 100.0f));
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	usbnet_pi::Status (pOut, k->m_pSidecar != 0 && k->m_pSidecar->NetInDevice (), k->m_pSidecar != 0 && k->m_pSidecar->NetUp (),
 			   k->m_pSidecar != 0 && k->m_pSidecar->NetLate ());	// late: reboot to use the cable
 	{	// the USB-C mode (usb_mode.h): set (chosen), from (card, cmdline, default), runs (set, or class where the unit cannot
