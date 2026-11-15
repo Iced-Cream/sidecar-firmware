@@ -304,7 +304,10 @@ bool mod_command(const char* p, char* out, int cap) { return core::mod::command(
 int mod_json(char* out, int cap) { return core::mod::json(out, cap); }
 bool scene_command(const char* p, char* out, int cap) { return core::scene::command(p, out, cap); }
 bool xy_command(const char* p, char* out, int cap) { return core::xypad::command(p, out, cap); }
-int scene_json(char* out, int cap) { return core::scene::json(out, cap); }
+int scene_json(char* out, int cap) {   // the base box's scenes (core 0: names the slot, never the slot in hand)
+  const core::device::Link* b = __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED);
+  return core::scene::json(out, cap, b ? b->index : 0);
+}
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {

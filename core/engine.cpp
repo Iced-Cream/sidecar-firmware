@@ -168,10 +168,13 @@ CORE_COLD bool idle_save() {
     device::Scope in(device::g_links[k]);
     if (T_("ins", ins::save())) return true;
   }
-  if (leaving) scene::save_due();
-  if (T_("scene", scene::save())) return true;
-  if (leaving) xypad::save_due();
-  if (T_("xy", xypad::save())) return true;
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's scenes and XY pad, into its own folder (3(c))
+    device::Scope in(device::g_links[k]);
+    if (leaving) scene::save_due();
+    if (T_("scene", scene::save())) return true;
+    if (leaving) xypad::save_due();
+    if (T_("xy", xypad::save())) return true;
+  }
 #endif
 #if CORE_POLY
   if (T_("keys", keys::save())) return true;
@@ -198,7 +201,7 @@ CORE_COLD bool idle_save() {
   }
   bool settled = !lfo::dirty_any() && !fx::card_dirty;
 #if CORE_POLY
-  settled = settled && !ins::settings_dirty_any() && !seq::unsaved() && !scene::dirty() && !xypad::dirty();
+  settled = settled && !ins::settings_dirty_any() && !seq::unsaved() && !scene::dirty_any() && !xypad::dirty_any();
 #endif
   return T_("device", device::step(settled)) || ix;   // a change of state folder: the last write, behind all of the above
 }

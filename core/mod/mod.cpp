@@ -336,11 +336,9 @@ static CORE_COLD void tick_body(uint32_t us) {
       if (g_source) g_source(us, dus);   // (tests)
       else lfo::waves(us, dus);         // the LFOs: the clock position, the waves, each one's offset
 #if CORE_POLY
-      if (s == 0) {   // (slot 0's only until their own per-slot step: 3(c) step 6, learn with the settings, step 8)
-        learn::tick();                    // the MIDI-learn routes' offsets (core/mod/learn.h)
-        xypad::tick();                    // the XY pad's slots (core/mod/xypad.h)
-        scene::tick(now_ms());            // the morph: a value for each lock of A and B (core/mod/scene.h)
-      }
+      if (s == 0) learn::tick();         // the MIDI-learn routes' offsets (core/mod/learn.h; slot 0's: the settings, 3(c) step 8)
+      xypad::tick();                    // the slot's XY pad (core/mod/xypad.h)
+      scene::tick(now_ms());            // the slot's morph: a value for each lock of A and B (core/mod/scene.h)
 #endif
       end_tick();
 #if CORE_POLY

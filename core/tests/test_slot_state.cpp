@@ -18,6 +18,8 @@
 #include "lfo.h"
 #include "lib/pools.h"
 #include "mod/mod.h"
+#include "mod/scene.h"
+#include "mod/xypad.h"
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
 #include "store/store.h"
@@ -307,6 +309,35 @@ int main() {
           !strstr(a.c_str(), "\nB1 ") && !ins::settings_dirty_any());
     CHECK(ins::control.type[0][0] == ins::kDrive && ins::control1.type[0][0] == ins::kCrush);
     CHECK(out::control1.lev[0] == 77 && out::control.lev[0] == 100);
+  }
+  // each slot's scenes and XY pad: its own locks, A / B and fader in its own folder's files, its morph on its own voices
+  {
+    char o[400];
+    CHECK(scene::command("scene=lock:1:V1:P3:50", o, sizeof o) && strstr(o, "S1 1 lock"));
+    CHECK(xypad::command("xy=set:x:1:V1:P5:50", o, sizeof o));
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(scene::command("scene=lock:2:V2:P4:60", o, sizeof o) && strstr(o, "S2 1 lock") && !strstr(o, "S1 "));
+      CHECK(scene::command("scene=ab:2:0", o, sizeof o) && scene::state().a == 1);
+      CHECK(xypad::command("xy=hold:1", o, sizeof o) && xypad::cfg().hold && !xypad::cfg().s[0][0].t);
+    }
+    CHECK(scene::state().a < 0 && !xypad::cfg().hold && xypad::cfg().s[0][0].t);   // (slot 0's untouched)
+    settle();
+    const std::string r = get("/.rytm/scene/NEW.txt"), a4 = get("/.a4/scene/NEW.txt");
+    const std::string rx = get("/.rytm/xy/NEW.txt"), ax = get("/.a4/xy/NEW.txt");
+    printf("  NEW's scene files: /.rytm %d bytes, /.a4 %d bytes; xy %d / %d bytes\n", (int)r.size(), (int)a4.size(),
+           (int)rx.size(), (int)ax.size());
+    CHECK(strstr(r.c_str(), "\nL 1 V1:P3 6400") && !strstr(r.c_str(), "V2:P4"));
+    CHECK(strstr(a4.c_str(), "\nL 2 V2:P4 7680") && strstr(a4.c_str(), "\nAB 2 0") && !strstr(a4.c_str(), "V1:P3"));
+    CHECK(strstr(rx.c_str(), "V1:P5") && strstr(ax.c_str(), "H 1") && !strstr(ax.c_str(), "V1:P5"));
+    CHECK(!scene::dirty_any() && !xypad::dirty_any());
+    // slot 1's A (scene 2, V2's P4 at 60) morphs its own voice kBoxVoices + 1 only
+    const int va = kBoxVoices + 1;
+    v[1].p[3] = 20.0f, v[va].p[3] = 20.0f;
+    uint32_t us = 9000000;
+    for (int i = 0; i < 100; ++i, us += 2000) mod::tick(us);
+    printf("  slot 1's morph: voice %d P4 %.2f, voice 1 P4 %.2f\n", va, v[va].p[3], v[1].p[3]);
+    CHECK(v[va].p[3] == 60.0f && v[1].p[3] == 20.0f);
   }
 
   // each box's user slots U1..U5 (option (a), decided 2026-11-14): its own map in its own folder, its own load slots;
