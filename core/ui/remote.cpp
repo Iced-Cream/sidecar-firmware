@@ -1687,6 +1687,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         bool page_trig = code < 16 && s.open &&
                          ((b[2] && !(x && !strcmp(x->title, "SEQ")) && (page_trigs(x) >> code & 1)) ||
                           (!b[2] && (key_held(code) || code == s.scene_key)));
+        if (page_trig) seq::ui_skipped(seq::kSkipKeyPage);   // (T374: counted for the box's slot)
         if (!page_trig && seq::ui_key(code, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;
@@ -1701,6 +1702,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       s.user = true;
       popup_key_closed();   // (a turn ends the Rytm's splash as a key does)
       if (!s.open && src_bank_enc(b[0], (int)b[1] - 64, b[2] != 0)) {   // rui1038: knob A in the bank list
+#if CORE_POLY
+        seq::ui_skipped(seq::kSkipEncBank);   // (T374: counted for the box's slot)
+#endif
         s.input = true;
         return;
       }
@@ -1710,6 +1714,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         // rui1048: POLY CONFIG's knobs are its own, also in seq mode (seq::ui_enc takes every turn then)
         // review (0.5.0): MORPH's knobs, and a turn under EDIT's held scene key, are the page's too
         bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH"))) || (s.scene_key >= 0 && edit_page(x));
+        if (own) seq::ui_skipped(seq::kSkipEncPage);   // (T374: counted for the box's slot)
         if (!own && seq::ui_enc(b[0], (int)b[1] - 64, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;

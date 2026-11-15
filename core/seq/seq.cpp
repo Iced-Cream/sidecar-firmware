@@ -270,6 +270,7 @@ Per<bool> ne_after_on{false};
 Per<int> ne_after_r{-1}; Per<int> ne_after_p{-1};
 
 Per<Stats> st;
+Per<UiIn> uin;   // T374: each box's 31 / 32 / 08 as they reached here (seq.h UiIn)
 Per<uint32_t> view_gen{0};          // seq-ux: TRK + TRIG's requests (rui1036: FUNC + LFO) (the Pi's touch editor follows view_track)
 Per<int> view_track{-1};
 
@@ -1813,6 +1814,17 @@ CORE_COLD Track* seq_track(int r, bool create) {
 // "the selected track in the 2E's mask and GRID REC on" (rytm-mods 0026 rui.c sq_tick), so it ends at the next 2E -
 // the host does not wait for that report: the held trigs, NOTE EDIT on that track, our trig LEDs (tick) and the page
 // seq mode opened go now. view_too: the page TRK + TRIG opened as well (a TURN OFF: no poly page left over the track).
+// T374: the first refusals of a box's 31 / 32 / 08 a second, logged with its slot (a unit run's pi.log shows them)
+static CORE_COLD void ui_log(const char* fmt, int a = 0, int b = 0) {
+  static uint32_t win = 0;
+  static int n = 0;
+  const uint32_t ms = now_ms();
+  if (ms - win >= 1000) win = ms, n = 0;
+  if (n++ >= 6) return;
+  char m[96];
+  sniprintf(m, sizeof m, fmt, a, b);
+  log(CORE_STR("seq: slot %d %s"), sq_slot(), m);
+}
 CORE_COLD void seqmode_end(bool view_too) {
   if (ui().ne && !in_mask(ui().ne_track)) ne_leave();   // (NOTE EDIT is a poly track's)
   seqmode() = false;
@@ -2243,6 +2255,8 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
         if (nlog++ < 4) on ? log(CORE_STR("seqmode: 08 on trk=%d"), tr + 1) : log(CORE_STR("seqmode: 08 off"));
       }
       const int want = on && tr >= 0 ? tr : -1, have = seqmode() ? seqmode_track() : -1;
+      ++(on ? uin().m08_on : uin().m08_off);
+      if (want == have && seqopen_track() != -2) ++uin().m08_blip;
       if (want == have) seqopen_track() = -2;   // back to what is applied: a blip, nothing changed
       else if (want != seqopen_track()) seqopen_track() = want, seqopen_ms() = now_ms();   // applied from tick(), an exit too
       return;
@@ -3787,7 +3801,7 @@ CORE_COLD void ne_leave() {
   ui().touched = -1;
 }
 
-CORE_COLD bool ui_key(int code, bool down, bool shown) {
+static CORE_COLD bool ui_key_here(int code, bool down, bool shown) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   if (code == 0x80) {   // rui1050: FUNC (the SEQ page catches it, the Rytm keeps it too: both sides'); never taken
     ui().func = down;
@@ -3985,7 +3999,7 @@ CORE_COLD bool ui_key(int code, bool down, bool shown) {
   return false;
 }
 
-CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
+static CORE_COLD bool ui_enc_here(int e, int delta, bool func, bool shown) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   // U1 NOTE EDIT: DATA (encoder 8; the page catches it on a poly track only, data_wanted) walks the highlight
   if (e == 8) {
@@ -4206,9 +4220,11 @@ static CORE_COLD void tick_here(uint32_t ms) {
     const int w = seqopen_track();
     seqopen_track() = -2;
     if (w < 0) {
+      if (seqmode()) ++uin().m08_applied_off;
       seqmode_end(false);
     } else if (in_mask(w) || (mask_sent() >= 0 && (mask_sent() >> w & 1))) {   // review round 2, L-a: never on a track
       // that is no seq track now (the Rytm's own test is the 2E it has: at a switch that is the next pattern's mask)
+      ++uin().m08_applied_on;
       seqmode() = true, seqmode_track() = w;
       ui().track = w;
       // 3(c): a box's seq mode opens no page: its mod shows only pages it opened itself (sidecar-a4: UP + YES), and the
@@ -4219,6 +4235,9 @@ static CORE_COLD void tick_here(uint32_t ms) {
         seqpage_log("seqmode", w);
         ui::remote_show_page("SEQ");
       }
+    } else {
+      ++uin().m08_refused;
+      ui_log("08 on for track %d: no seq track here, seq mode stays off", w + 1);
     }
   }
   // rui1050: a lock page's encoder held kLongPushMs: its COND (or back to its value), at once while it is still held
@@ -5212,6 +5231,22 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     if (n < cap) inst::describe(c, ok ? &rs : nullptr, m, out + n, cap - n);
     return true;
   }
+  if (!strcmp(p, "seq=ui") || !strncmp(p, "seq=ui:", 7)) {   // T374: a box's 31 / 32 / 08 counts (seq.h UiIn)
+    const int sl = p[6] == ':' ? atoi(p + 7) : sq_slot();
+    if (sl < 0 || sl >= kVoiceSlots) return sniprintf(out, cap, CORE_STR("seq=ui[:S], S 0..%d"), kVoiceSlots - 1), true;
+    const UiIn& u = ui_in(sl);
+    sniprintf(out, cap, CORE_STR("seq: slot %d ui: seqmode %d trk %d held 0x%04x; 31 %lu (mode %lu taken %lu page %lu; trig down %lu "
+                                 "tap %lu used %lu unheld %lu); 32 %lu (mode %lu range %lu held %lu free %lu other %lu page %lu "
+                                 "bank %lu); 08 on %lu off %lu blip %lu applied on %lu off %lu refused %lu"),
+              sl, seqmode.at(sl) ? 1 : 0, seqmode_track.at(sl) + 1, ui.at(sl).held, (unsigned long)u.keys,
+              (unsigned long)u.key_mode, (unsigned long)u.key_taken, (unsigned long)u.key_page, (unsigned long)u.trig_down,
+              (unsigned long)u.trig_tap, (unsigned long)u.trig_used, (unsigned long)u.trig_unheld, (unsigned long)u.encs,
+              (unsigned long)u.enc_mode, (unsigned long)u.enc_range, (unsigned long)u.enc_held, (unsigned long)u.enc_free,
+              (unsigned long)u.enc_other, (unsigned long)u.enc_page, (unsigned long)u.enc_bank, (unsigned long)u.m08_on,
+              (unsigned long)u.m08_off, (unsigned long)u.m08_blip, (unsigned long)u.m08_applied_on,
+              (unsigned long)u.m08_applied_off, (unsigned long)u.m08_refused);
+    return true;
+  }
   if (!strcmp(p, "seq=show")) {
     show_wanted() = true;
     seqpage_log("console", ui_track());
@@ -5237,6 +5272,60 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
             (unsigned long)view_gen(), ui().prompt == kPromptMake ? " (make prompt)" : ui().prompt == kPromptExplain ? " (why not)" :
             ui().prompt == kPromptOff ? " (off prompt)" : "");
   return true;
+}
+
+CORE_COLD bool ui_key(int code, bool down, bool shown) {
+  if (!cur()) reset();
+  UiIn& u = uin();
+  ++u.keys;
+  if (code != 0x80 && !seqmode() && !shown) {   // (FUNC is never taken: ui_key_here notes it)
+    ++u.key_mode;
+    if (code < 16 || code == 0x84) ui_log("31 key %d (down %d) refused: seq mode off here", code, down);
+    return ui_key_here(code, down, shown);
+  }
+  const bool trig = code >= 0 && code < 16 && !ui().page_held && !ui().prompt;
+  const uint16_t bit = (uint16_t)(1u << (code & 15));
+  const bool was_held = trig && (ui().held & bit);
+  const bool fresh = was_held && !ui().held_used[code] && now_ms() - ui().held_ms[code] < kTapMs;
+  const bool r = ui_key_here(code, down, shown);
+  if (r) ++u.key_taken;
+  if (r && trig) {
+    if (down) ++u.trig_down;
+    else if (!was_held) ++u.trig_unheld, ui_log("31 trig %d up: its press was not taken here, no toggle", code + 1);
+    else if (fresh) ++u.trig_tap;
+    else ++u.trig_used;
+  }
+  return r;
+}
+
+CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
+  if (!cur()) reset();
+  UiIn& u = uin();
+  ++u.encs;
+  if (e != 8 && !seqmode() && !shown) {
+    ++u.enc_mode;
+    ui_log("32 knob %d refused: seq mode off here (held 0x%04x)", e, ui().held);
+    return ui_enc_here(e, delta, func, shown);
+  }
+  if (e != 8 && (e < 0 || e > 7 || !delta)) {
+    ++u.enc_range;
+    ui_log("32 knob %d delta %d refused: no knob A..H or no movement", e, delta);
+    return ui_enc_here(e, delta, func, shown);
+  }
+  const bool held = ui().held != 0;
+  const bool r = ui_enc_here(e, delta, func, shown);
+  if (!r) ++u.enc_other, ui_log("32 knob %d not taken (held 0x%04x)", e, ui().held);
+  else if (held) ++u.enc_held;
+  else ++u.enc_free;
+  return r;
+}
+
+CORE_COLD const UiIn& ui_in(int slot) { return uin.at(slot >= 0 && slot < kVoiceSlots ? slot : 0); }
+CORE_COLD void ui_skipped(UiSkip why) {
+  UiIn& u = uin();
+  if (why == kSkipEncPage) ++u.enc_page, ui_log("32 kept by the page shown (POLY, MORPH or a scene key)");
+  else if (why == kSkipEncBank) ++u.enc_bank, ui_log("32 kept by the bank list");
+  else ++u.key_page, ui_log("31 kept by the page shown (its trig keys)");
 }
 
 CORE_COLD uint16_t silenced() { return silenced_now(); }

@@ -461,6 +461,29 @@ uint64_t frames();                             // slot 0's render frames so far 
 // first): true when taken.
 bool ui_key(int code, bool down, bool page_shown);
 bool ui_enc(int e, int delta, bool func, bool page_shown);
+// T374 (the A4's 32s lost under a held trig on a unit): each slot's own counts of what its box's 31 / 32 / 2D 08 did
+// here, so a unit run shows where they stop. The console's "seq=ui[:S]" prints them (S the slot, default the slot in
+// hand); the first refusals a second are logged ("seq: slot S 32 ...").
+//   keys / encs       31s / 32s that reached ui_key / ui_enc (remote.cpp's 31 / 32 after its own takers)
+//   *_mode            refused: seq mode off here (its 08 on not applied yet, or never) and the SEQ page not shown
+//   key_taken         taken by the sequencer; trig_down / trig_tap / trig_used / trig_unheld: a trig's press, a release
+//                     that toggled its step (a tap), one that did not (turned or used while held), one whose press this
+//                     side never took (held was 0 for it: no toggle)
+//   enc_held          taken with a trig held (its step edited); enc_free taken with none held (defaults, the lists);
+//   enc_range         refused: no knob A..H or no movement; enc_other: not taken (returned false past the mode test)
+//   enc_page / enc_bank / key_page: remote.cpp gave it to a page's own (POLY, MORPH, a scene key, a held page key) or the
+//                     bank list, never to the sequencer
+//   m08_on / m08_off  2D 08 reports; m08_blip: one that put back what is applied (cancelled a pending change);
+//                     m08_applied_on / _off: the changes tick() applied after kSeqOpenMs; m08_refused: an on for a track
+//                     that is no seq track here (nothing applied)
+struct UiIn {
+  uint32_t keys, key_mode, key_taken, key_page, trig_down, trig_tap, trig_used, trig_unheld;
+  uint32_t encs, enc_mode, enc_range, enc_held, enc_free, enc_other, enc_page, enc_bank;
+  uint32_t m08_on, m08_off, m08_blip, m08_applied_on, m08_applied_off, m08_refused;
+};
+const UiIn& ui_in(int slot);
+enum UiSkip { kSkipEncPage, kSkipEncBank, kSkipKeyPage };
+void ui_skipped(UiSkip why);   // remote.cpp: a 31 / 32 of the slot in hand's box kept from the sequencer (counted, logged)
 bool leds(uint8_t c[16]);                      // the trig LEDs now (palette); false: none (not a seq track shown)
 void page_leds(uint8_t c[4]);                  // the 4 PAGE LEDs (palette)
 bool command(const char* p, char* out, int cap);   // the console's "seq", "seq=track:T:on|off", "seq=lat:FRAMES", ...
