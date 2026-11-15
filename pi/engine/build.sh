@@ -221,6 +221,8 @@ grep -q circle-hid-reenum3 include/circle/usb/usbhiddevice.h || patch -p1 < /rep
 grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /repo/pi/circle/circle-usbdevicefactory2.patch
 # then the Teensy mirror relay (1209:0002) reaches its driver (pi/engine/teensy_target.cpp, docs/teensy-mirror.md); idempotent
 grep -q circle-usbdevicefactory3 lib/usb/usbdevicefactory.cpp || patch -p1 < /repo/pi/circle/circle-usbdevicefactory3.patch
+# then a Teensy in its bootloader (16C0:0478) reaches the flasher (pi/engine/teensy_flash.cpp, docs/teensy-flash.md); idempotent
+grep -q circle-usbdevicefactory4 lib/usb/usbdevicefactory.cpp || patch -p1 < /repo/pi/circle/circle-usbdevicefactory4.patch
 # a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
 # enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
 grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch

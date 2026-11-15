@@ -21,6 +21,20 @@ static const char From[] = "teensy";
 using namespace relay;
 
 CTeensyTarget *CTeensyTarget::s_pThis = 0;
+volatile boolean CTeensyTarget::s_bBootDue = FALSE, CTeensyTarget::s_bLogDue = FALSE;
+volatile unsigned CTeensyTarget::s_nLogReads = 0;
+char CTeensyTarget::s_Log[2048];
+unsigned CTeensyTarget::s_nLog = 0;
+
+void CTeensyTarget::RequestBootloader (void)	{ s_bBootDue = TRUE; }
+void CTeensyTarget::RequestLog (void)		{ s_nLog = 0; s_bLogDue = TRUE; }
+unsigned CTeensyTarget::LogReads (void)		{ return s_nLogReads; }
+unsigned CTeensyTarget::Log (char *pOut, unsigned nCap)
+{
+	unsigned n = s_nLog < nCap ? s_nLog : nCap;
+	memcpy (pOut, s_Log, n);
+	return n;
+}
 
 static const unsigned kDmaSize = 576;			// a link packet (512) and EP0's answers, 64-byte lines
 static u8 *DmaBuf (void)
@@ -804,6 +818,28 @@ void CTeensyTarget::MirrorPoll (void)
 	{
 		if (CTimer::Get ()->GetUptime () < m_nDelay) return;
 		if (!Start ()) { m_nDelay = 0xFFFFFFFF; return; }	// not the link: stays idle
+	}
+	// the Pi flashing the Teensy (teensy_flash.h, docs/teensy-flash.md): its log (the start line names the build), and
+	// the bootloader request. EP0 and m_pCtlBuf stay this poll's; after kReqBootloader the link goes within ~50 ms.
+	if (s_bLogDue)
+	{
+		s_bLogDue = FALSE;
+		for (unsigned k = 0; k < 8; k++)
+		{
+			int n = Vendor (TRUE, kReqLog, 0, 0, 0, 512);
+			if (n <= 0) break;
+			unsigned nCopy = s_nLog + (unsigned) n <= sizeof s_Log ? (unsigned) n : sizeof s_Log - s_nLog;
+			memcpy (s_Log + s_nLog, m_pCtlBuf, nCopy);
+			s_nLog += nCopy;
+		}
+		s_nLogReads++;
+	}
+	if (s_bBootDue)
+	{
+		s_bBootDue = FALSE;
+		CLogger::Get ()->Write (From, LogNotice, "the relay is told to start its bootloader (teensyflash)");
+		Vendor (FALSE, kReqBootloader, 0x4C42, 0, 0, 0);
+		return;
 	}
 	if (m_bTest) TestPoll ();
 	CObUsb *pBox = m_pBox;
