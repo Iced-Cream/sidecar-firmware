@@ -31,6 +31,11 @@ build/test_relay_proto: test_relay_proto.cpp ../relay_proto.h ../mirror_desc.h .
 build/test_teensy_hex: test_teensy_hex.cpp ../teensy_hex.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# the write itself (teensy_flash.cpp) on a fake Circle (shim_tf/), copied so its quoted includes find the shim first
+build/test_teensy_flash: test_teensy_flash.cpp ../teensy_flash.cpp ../teensy_flash.h ../teensy_hex.h ../fsweb.h $(wildcard shim_tf/*.h) $(wildcard shim_tf/circle/*.h) $(wildcard shim_tf/circle/*/*.h) $(CORE)/lib/sha256.cpp check.h
+	@mkdir -p build/tf_src
+	cp ../teensy_flash.cpp build/tf_src/
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ishim_tf -I.. -I$(CORE) -DTEENSY_FLASH_TEST -o $@ test_teensy_flash.cpp build/tf_src/teensy_flash.cpp $(CORE)/lib/sha256.cpp
 # usb=mirror's descriptor and per-block helpers (mirror_desc.h) with the Overbridge block layout (ob_block.h)
 build/test_mirror_desc: test_mirror_desc.cpp ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build

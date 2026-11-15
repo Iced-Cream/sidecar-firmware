@@ -28,7 +28,7 @@ using namespace teensyhex;
 class CTeensyBoot : public CUSBFunction
 {
 public:
-	CTeensyBoot (CUSBFunction *pParent) : CUSBFunction (pParent), m_nResult (0) {}
+	CTeensyBoot (CUSBFunction *pParent) : CUSBFunction (pParent), m_nSeq (0), m_nResult (0) {}
 	~CTeensyBoot (void)
 	{
 		if (s_pThis == this) { s_pThis = 0; CLogger::Get ()->Write (From, LogNotice, "the Teensy left its bootloader"); }
@@ -43,31 +43,39 @@ public:
 	}
 	static CTeensyBoot *Get (void)	{ return s_pThis; }
 
-	// one report (kReport bytes, in a DMA buffer that stays put until the completion) as SET_REPORT; FALSE: not sent
+	// one report (kReport bytes, in a DMA buffer that stays put until the completion) as SET_REPORT; FALSE: not sent.
+	// Each submit has its own number: a late completion of an earlier one (a block given up on) is not this one's.
 	boolean Submit (u8 *pBuf)
 	{
-		TSetupData *pS = new TSetupData;
-		pS->bmRequestType = kReqType, pS->bRequest = kReq, pS->wValue = kValue, pS->wIndex = kIndex;
-		pS->wLength = (u16) kReport;
+		TReq *pR = new TReq;
+		pR->Setup.bmRequestType = kReqType, pR->Setup.bRequest = kReq, pR->Setup.wValue = kValue, pR->Setup.wIndex = kIndex;
+		pR->Setup.wLength = (u16) kReport;
+		m_nSeq = m_nSeq + 1;
+		pR->nSeq = m_nSeq;
 		CleanAndInvalidateDataCacheRange ((uintptr) pBuf, kReport);
-		CUSBRequest *pURB = new CUSBRequest (GetEndpoint0 (), pBuf, kReport, pS);
-		pURB->SetCompletionRoutine (Stub, pS, this);
+		CUSBRequest *pURB = new CUSBRequest (GetEndpoint0 (), pBuf, kReport, &pR->Setup);
+		pURB->SetCompletionRoutine (Stub, pR, this);
 		m_nResult = 0;
 		if (GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
 		delete pURB;
-		delete pS;
+		delete pR;
 		return FALSE;
 	}
 	int Result (void) const	{ return m_nResult; }	// the last Submit: 0 pending, 1 done, -1 refused
+	// after a refusal: the xHC halts EP0 on a STALL, and every later request on it would fail until it is reset
+	void Recover (void)	{ GetEndpoint0 ()->ResetPID (); }
 
 private:
+	struct TReq { TSetupData Setup; unsigned nSeq; };
 	static void Stub (CUSBRequest *pURB, void *pParam, void *pContext)	// xHCI IRQ
 	{
 		CTeensyBoot *p = (CTeensyBoot *) pContext;
-		if (p == s_pThis) p->m_nResult = pURB->GetStatus () ? 1 : -1;
+		TReq *pR = (TReq *) pParam;
+		if (p == s_pThis && pR->nSeq == p->m_nSeq) p->m_nResult = pURB->GetStatus () ? 1 : -1;
 		delete pURB;
-		delete (TSetupData *) pParam;
+		delete pR;
 	}
+	volatile unsigned m_nSeq;
 	volatile int m_nResult;
 	static CTeensyBoot *volatile s_pThis;
 };
@@ -186,8 +194,9 @@ void Step (void)
 				break;
 			}
 			s_bInFlight = FALSE;
-			if (r < 0)		// refused (busy erasing): again shortly
+			if (r < 0)		// refused (busy erasing): again shortly, EP0 reset first
 			{
+				pBoot->Recover ();
 				s_nRetries++;
 				s_nRetryAt = now + kRetryMs;
 				if (now >= s_nBlockDeadline)
@@ -399,3 +408,7 @@ int StateJson (char *pOut, unsigned nCap)
 }
 
 }	// namespace teensy_flash
+
+#ifdef TEENSY_FLASH_TEST	// tests/test_teensy_flash.cpp: the task's step, driven by the test
+namespace teensy_flash { void TestStep (void) { Step (); } }
+#endif
