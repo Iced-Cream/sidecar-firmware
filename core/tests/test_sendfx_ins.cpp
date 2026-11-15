@@ -661,14 +661,14 @@ static void sfx_bench_row() {
   for (int which = 0; which < 3; ++which) {   // master::bench, sfx_bench sets 0 and 1
     ins::reset();
     static int calls;
-    static void (*real)(int, int, const float*, const float*, const float*, float*, float*, int);
+    static void (*real)(int, int, int, const float*, const float*, const float*, float*, float*, int);
     calls = 0, real = ins::send_insert;
-    ins::send_insert = [](int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
+    ins::send_insert = [](int box, int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
       if (++calls == 2000) {   // "the load": a voice chain, a voice's send, a bus EQ, the master's LEV
         ins::control.type[2][1] = ins::kDelay, ins::control.send[2][1] = 77;
         ins::control.peq[kB3][3] = 9, master::control.lev = 88;
       }
-      real(c, s, p, x, r, y0, y1, m);
+      real(box, c, s, p, x, r, y0, y1, m);
     };
     uint32_t w = 0;
     const uint64_t t = which == 0 ? master::bench(&w) : master::sfx_bench(which - 1, &w);

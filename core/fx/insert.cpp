@@ -17,7 +17,7 @@ namespace ins {
 Control control;
 Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
 int (*slot_fn)() = nullptr;
-void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
+void (*send_insert)(int, int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
 
@@ -90,8 +90,8 @@ Stats g_stats;
 
 Engine g_engine(48000.0f);
 #if CORE_VOICES > 8
-// slot 1's chains (its voices 8..15)
-Engine g_engine1(48000.0f);
+// slot 1's chains (its voices 8..15, its buses and its master: phase 3(d))
+Engine g_engine1(48000.0f, 1);
 #endif
 #ifndef CORE_HEAP_BUFFERS
 float g_lines[kLines][kLine];
@@ -202,7 +202,7 @@ void clear_settings() {
 // bus 3's soft limit, as the send FX's pairs (send_fx.h kLimitFx / kLimitMain)
 inline float lim(float x, float l) { return fx::soft_limit(x, l); }
 
-float g_send_g[kVoices][kBuses];   // the OUT fill's ramped send gains (core 0)
+float g_send_g[2][kVoices][kBuses];   // the OUT fill's ramped send gains (core 0), each box's
 
 }  // namespace
 
@@ -505,48 +505,62 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
   __atomic_fetch_add(&g_stats.voice_blocks, 1u, __ATOMIC_RELAXED);
 }
 
-bool sends_on() {
+bool sends_on() { return sends_on(0); }
+
+bool sends_on(int box) {
+  const Control& k = control_of(box);
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b)
-      if (control.send[v][b] || g_send_g[v][b] != 0.0f) return true;
+      if (k.send[v][b] || g_send_g[box & 1][v][b] != 0.0f) return true;
   return false;
 }
 
-void voice_sends(const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) {
+void voice_sends(const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) { voice_sends(0, V, n, out); }
+
+void voice_sends(int box, const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) {
   for (int i = 0; i < n; ++i) out[i][0] = out[i][1] = out[i][2] = 0.0f;
   if (n <= 0) return;
+  const Control& k = control_of(box);
+  float (*gs)[kBuses] = g_send_g[box & 1];
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) {
-      float t = knob01(control.send[v][b]);
+      float t = knob01(k.send[v][b]);
       t *= t;   // squared, as the send FX's sends
-      float g0 = g_send_g[v][b];
+      float g0 = gs[v][b];
       if (g0 == 0.0f && t == 0.0f) continue;
       // toward the target over ~5 ms (a block is 7 frames on the Pi): linear within the block
       float g1 = g0 + (t - g0) * fminf(1.0f, (float)n / 240.0f);
       if (fabsf(g1 - t) < 1e-5f) g1 = t;
-      g_send_g[v][b] = g1;
+      gs[v][b] = g1;
       const float dg = (g1 - g0) / (float)n;
       float g = g0;
       for (int i = 0; i < n; ++i) g += dg, out[i][b] += g * (float)V[i][v] * (1.0f / 32768.0f);
     }
 }
 
-bool bus3_on() {
+bool bus3_on() { return bus3_on(0); }
+
+bool bus3_on(int box) {
+  const Control& k = control_of(box);
   bool send = false;
-  for (int v = 0; v < kVoices; ++v) send |= control.send[v][2] != 0;
-  return (send && (control.type[kBus0 + 2][0] || control.type[kBus0 + 2][1] || eq_on(kBus0 + 2))) ||
-         g_engine.Active(kBus0 + 2, control);
+  for (int v = 0; v < kVoices; ++v) send |= k.send[v][2] != 0;
+  return (send && (k.type[kBus0 + 2][0] || k.type[kBus0 + 2][1] || (box ? peq_set(k, kBus0 + 2) : eq_on(kBus0 + 2)))) ||   // (slot 0: its knobs, as before; slot 1: as played)
+         engine(box).Active(kBus0 + 2, k);
 }
 
-void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) {
-  if (!g_engine.Active(kBus0 + 2, control)) return;
+void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) { bus3(0, in, n, pre, post, mono); }
+
+void bus3(int box, const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) {
+  Engine& e = engine(box);
+  const Control& k = control_of(box);
+  if (!e.Active(kBus0 + 2, k)) return;
   float y[128][2];
   if (n > 128) n = 128;
   for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = in[i];
-  g_engine.ProcessStereo(kBus0 + 2, y, n, control);
+  e.ProcessStereo(kBus0 + 2, y, n, k);
   if (mono)
     for (int i = 0; i < n; ++i) mono[i] = 0.5f * (y[i][0] + y[i][1]);
-  bool p = control.route3 != 0;
+  bool p = k.route3 != 0;
   float (*d)[2] = p ? post : pre;
   const float l = p ? fx::kLimitMain : fx::kLimitFx;
   if (!d) return;
@@ -555,9 +569,12 @@ void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono
 }
 
 // the send FX's hook (send_fx.h fx::bus_insert): FX slot s's return through bus s's chain
-static void bus_hook(int s, float (*y)[2], int n) {
-  if (s < 0 || s > 1 || !g_engine.Active(kBus0 + s, control)) return;
-  g_engine.ProcessStereo(kBus0 + s, y, n, control);
+static void bus_hook(const fx::Control& fc, int s, float (*y)[2], int n) {
+  const int box = fx::box_of(fc);
+  Engine& e = engine(box);
+  const Control& k = control_of(box);
+  if (s < 0 || s > 1 || !e.Active(kBus0 + s, k)) return;
+  e.ProcessStereo(kBus0 + s, y, n, k);
   ++g_stats.bus_blocks;
 }
 static struct BusHook {
@@ -846,7 +863,7 @@ void reset() {
   }
   g_force = -1;
   for (int v = 0; v < kVoices; ++v)
-    for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f;
+    for (int b = 0; b < kBuses; ++b) g_send_g[0][v][b] = g_send_g[1][v][b] = 0.0f;
   g_engine.Reset();
 #if CORE_VOICES > 8
   memset((void*)&control1, 0, sizeof control1);

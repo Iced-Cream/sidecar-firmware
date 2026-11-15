@@ -82,7 +82,7 @@ constexpr uint8_t kEqFlat(int k) { return k >= 2 ? (uint8_t)64 : (uint8_t)0; }
 
 // The master's send TYPE slots (kMChorus..): chain c's slot s, its smoothed params p, x / r -> y0 / y1 (master.cpp; null
 // without one: the slot passes dry). As amp::run, on the render core that runs the chain.
-extern void (*send_insert)(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
+extern void (*send_insert)(int box, int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
 
 struct Control {
   volatile uint8_t type[kChains][kSlots];
@@ -239,7 +239,8 @@ inline bool peq_set(const Control& k, int c) {
 
 class Engine {
  public:
-  explicit Engine(float sample_rate = 48000.0f) : sr_(sample_rate) {}
+  explicit Engine(float sample_rate = 48000.0f, int box = 0) : sr_(sample_rate), box_(box) {}
+  int Box() const { return box_; }   // the slot whose chains these are (send_insert's master and bus rooms are its)
   void SetAmp(bool on) { amp_ = on; }   // AMP plays on these chains (else an AMP slot is dry)
   // The DELAY lines: kLines x kLine floats (zeroed), or null (DELAY plays dry). Before any Process.
   void Place(float (*lines)[kLine]) {
@@ -346,7 +347,7 @@ class Engine {
     if (o.cur == kAmp) {
       amp::run(c, s, o.sp, x, r, y[0], y[1], m);   // mono: (L + R) / 2 onto both sides
     } else if (o.cur >= kTypes && send_insert) {
-      send_insert(c, s, o.sp, x, r, y[0], y[1], m);   // a master slot's send TYPE (core/fx/master.h)
+      send_insert(box_, c, s, o.sp, x, r, y[0], y[1], m);   // a master slot's send TYPE (core/fx/master.h), this box's
     } else {
       Effect(o, 0, x, y[0], m, c >= kBus0 || r ? 0 : -1);
       if (r) Effect(o, 1, r, y[1], m, 1);
@@ -702,6 +703,7 @@ class Engine {
   Peq peq_[kChains];        // ins1112: each chain's POST EQ
   bool st_[kChains] = {};   // a voice chain ran in stereo last
   float sr_;
+  int box_ = 0;
   bool amp_ = true;         // AMP plays (SetAmp: the chains of the slot that is not out::g_base_slot play it dry)
   uint32_t faults_ = 0;
 };
@@ -777,11 +779,16 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
 // = sum over v of V[i][v] x send[v][b]^2 (ramped per block), full scale 1.0
 void voice_sends(const int16_t (*v)[kVoices], int n, float (*out)[kBuses]);
 bool sends_on();                             // a voice sends to a bus (else voice_sends writes zeros)
+// ... of box `box`'s voices with its sends (control_of(box)), its own ramps (phase 3(d): each box its send FX)
+void voice_sends(int box, const int16_t (*v)[kVoices], int n, float (*out)[kBuses]);
+bool sends_on(int box);
 // Bus 3 (the send FX's core, after SendFx::Process): its send mix in[n] (mono) through its chain onto pre / post (the
 // pair route3 names; soft-limited as the send FX's pairs). bus3_on: anything to do (a send and a TYPE, or its tail).
 // mono (optional): the chain's output, (L + R) / 2, before the limit (the Pi's spectrum); untouched while it is off
 void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono = nullptr);
 bool bus3_on();
+void bus3(int box, const float* in, int n, float (*pre)[2], float (*post)[2], float* mono = nullptr);   // box's bus 3 (engine(box))
+bool bus3_on(int box);
 Engine& engine(int slot = 0);   // slot 0's chains (with the buses and the master), or slot 1's
 // The DELAY lines (slot 1's after slot 0's): on CORE_HEAP_BUFFERS ports placed by heap_buffers_place (voices.cpp), else a static array.
 unsigned long heap_bytes();

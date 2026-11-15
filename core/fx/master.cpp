@@ -5,6 +5,7 @@
 
 #include <new>
 
+#include "fx/out.h"
 #include "fx/out_mix.h"
 #include "fx/send_fx.h"
 #include "mod/target.h"
@@ -14,24 +15,32 @@ namespace core {
 namespace master {
 
 Control control;
+Control control1;   // slot 1's (master.h control_of)
 volatile float lim_gain = 1.0f;
+volatile float lim_gain1 = 1.0f;
 
 namespace {
 
 // the inserts' SendFx: booking f plays on g_fx[f / fx::kSlots]'s slot f % fx::kSlots
 static_assert(kFxSlots == kFxUnits * fx::kSlots, "two slots a SendFx");
-fx::SendFx* volatile g_fx[kFxUnits] = {};
-fx::Control g_ctl[kFxUnits];          // their knobs: only knob[][] (from the slots), kill and clock (copied)
-float g_mix[kAllSlots];               // the render core's: each slot's MIX, smoothed
-bool g_mix_set[kAllSlots];
-int8_t g_run_fx[kAllSlots] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
-int8_t g_play[kAllSlots] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // the room each slot played on its last chunk
-int16_t g_waited[kAllSlots];          // the frames a slot has waited for its room (the render core's, as these two)
+// Each box its own (phase 3(d)): rooms, SendFx units, the render core's smoothing and meters. Box 0's are what a lone
+// Rytm always had; box 1's (16-voice builds) serve slot 1's chains (ins::engine(1)) and its settings (control1).
+struct Box {
+  fx::SendFx* volatile fx[kFxUnits] = {};
+  fx::Control ctl[kFxUnits];          // their knobs: only knob[][] (from the slots), kill and clock (copied)
+  float mix[kAllSlots];               // the render core's: each slot's MIX, smoothed
+  bool mix_set[kAllSlots];
+  int8_t run_fx[kAllSlots] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  int8_t play[kAllSlots] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // the room each slot played on its last chunk
+  int16_t waited[kAllSlots];          // the frames a slot has waited for its room (the render core's, as these two)
+  volatile float peak_in, peak_out;
+  float lev = 1.0f;
+};
+Box g_box[kBoxes];
+inline Box& box_at(int box) { return g_box[box > 0 && box < kBoxes ? box : 0]; }
 // the longest wait for a room's last user to fade out: its fade and as much again (a holder frozen meanwhile, bus 1 / 2
 // with its send FX off, plays no more and is let go then), counted in the waiting slot's own frames
 constexpr int kWaitFrames = 2 * ins::kFadeFrames;
-volatile float g_peak_in, g_peak_out;
-float g_lev = 1.0f;
 
 constexpr uint8_t kSendId[ins::kAllTypes - ins::kTypes] = {fx::kChorus, fx::kComb, fx::kTape, fx::kRings, fx::kCloudSeed, fx::kHalo};
 
@@ -74,24 +83,27 @@ int free_fx() {
 }
 void sfx() {
 #ifndef CORE_HEAP_BUFFERS
-  for (int u = 0; u < kFxUnits; ++u)
-    if (!g_fx[u]) g_fx[u] = new fx::SendFx(48000.0f);
+  for (Box& b : g_box)
+    for (int u = 0; u < kFxUnits; ++u)
+      if (!b.fx[u]) b.fx[u] = new fx::SendFx(48000.0f);
 #endif
 }
 
 // room f played on its last chunk by a slot other than i that has left it (fading out after its TYPE went, a kit
 // change). A slot waiting for its own room plays none, so two slots whose rooms swap never wait for each other.
-bool held_by_other(int f, int i) {
+bool held_by_other(const Box& B, const Control& M, int f, int i) {
   for (int k = 0; k < kAllSlots; ++k)
-    if (k != i && g_play[k] == f && control.fx[k] != f) return true;
+    if (k != i && B.play[k] == f && M.fx[k] != f) return true;
   return false;
 }
 
 // the slot's send TYPE over m <= ins::kChunk frames: the sum in, the return out, MIX the crossfade (127: only the return)
-void send_run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
+void send_run(int box, int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
   // the TYPE playing and the SendFx slot it plays on, also while the slot fades out after the TYPE was changed or cleared
   // (a voice chain never gets here: accept refuses it, and slot_index's -1 is no slot of these arrays)
-  const int i = slot_index(c, s), t = ins::engine().slot(c, s).cur;
+  Box& B = box_at(box);
+  const Control& M = control_of(box);   // box's rooms and MIX (its settings)
+  const int i = slot_index(c, s), t = ins::engine(box).slot(c, s).cur;
   float in[ins::kChunk], w[ins::kChunk][2];
   if (i < 0) {
     for (int j = 0; j < m; ++j) y0[j] = x[j];
@@ -99,41 +111,41 @@ void send_run(int c, int s, const float* p, const float* x, const float* r, floa
       for (int j = 0; j < m; ++j) y1[j] = r[j];
     return;
   }
-  const int want = control.fx[i];
+  const int want = M.fx[i];
   bool wait = false;
-  if (want >= 0 && want < kFxSlots && g_run_fx[i] != want) {   // a room newly taken
-    if (held_by_other(want, i) && g_waited[i] < kWaitFrames) {
+  if (want >= 0 && want < kFxSlots && B.run_fx[i] != want) {   // a room newly taken
+    if (held_by_other(B, M, want, i) && B.waited[i] < kWaitFrames) {
       wait = true;   // its last user still fades out on it: this slot passes its input dry until that is done
-      g_waited[i] = (int16_t)(g_waited[i] + m);
+      B.waited[i] = (int16_t)(B.waited[i] + m);
     } else {         // from clean, never the last user's tail; a frozen last user lets it go (dry when it runs again)
       for (int k = 0; k < kAllSlots; ++k)
-        if (g_run_fx[k] == want) g_run_fx[k] = -1, g_play[k] = -1;
-      g_run_fx[i] = (int8_t)want;
-      if (g_fx[want / fx::kSlots]) g_fx[want / fx::kSlots]->Drop(want % fx::kSlots);
-      if (g_waited[i]) g_mix[i] = 0.0f, g_mix_set[i] = true;   // it waited dry: MIX fades in from there (the one-pole below), no step
+        if (B.run_fx[k] == want) B.run_fx[k] = -1, B.play[k] = -1;
+      B.run_fx[i] = (int8_t)want;
+      if (B.fx[want / fx::kSlots]) B.fx[want / fx::kSlots]->Drop(want % fx::kSlots);
+      if (B.waited[i]) B.mix[i] = 0.0f, B.mix_set[i] = true;   // it waited dry: MIX fades in from there (the one-pole below), no step
     }
   }
-  if (!wait) g_waited[i] = 0;
-  const int f = wait ? -1 : g_run_fx[i], u = f / fx::kSlots, fs = f % fx::kSlots;
+  if (!wait) B.waited[i] = 0;
+  const int f = wait ? -1 : B.run_fx[i], u = f / fx::kSlots, fs = f % fx::kSlots;
   for (int j = 0; j < m; ++j) in[j] = r ? 0.5f * (x[j] + r[j]) : x[j];
-  if (f >= 0 && f < kFxSlots && g_fx[u]) {
-    fx::Control& k = g_ctl[u];
+  if (f >= 0 && f < kFxSlots && B.fx[u]) {
+    fx::Control& k = B.ctl[u];
     k.knob[fs][0] = t >= ins::kTypes && t < ins::kAllTypes ? kSendId[t - ins::kTypes] : (uint8_t)fx::kOff;
     k.knob[fs][1] = 0;
     for (int q = 0; q < ins::kParams; ++q) k.knob[fs][2 + q] = (uint8_t)(p[q] * 127.0f + 0.5f);
-    k.kill = fx::control.kill;
-    k.clock = fx::control.clock;
-    g_fx[u]->Insert(fs, in, m, w, k);
-    g_play[i] = (int8_t)f;
+    k.kill = fx::control_of(box).kill;
+    k.clock = fx::control_of(box).clock;
+    B.fx[u]->Insert(fs, in, m, w, k);
+    B.play[i] = (int8_t)f;
   } else {
-    g_play[i] = -1;   // no room to play on (waiting, or let go): the input as it is, so MIX changes nothing
+    B.play[i] = -1;   // no room to play on (waiting, or let go): the input as it is, so MIX changes nothing
     for (int j = 0; j < m; ++j) w[j][0] = x[j], w[j][1] = r ? r[j] : x[j];
   }
-  const float tgt = ins::knob01((uint8_t)played_mix(i));   // the knob + core/mod's offset
-  if (!g_mix_set[i]) g_mix[i] = tgt, g_mix_set[i] = true;
-  const float a = g_mix[i], b = a + (tgt - a) * ((float)m / ((float)m + 144.0f));   // 3 ms a chunk, as a slot's params
-  g_mix[i] = fabsf(b - tgt) < 1e-4f ? tgt : b;
-  const float d = (g_mix[i] - a) / (float)m;
+  const float tgt = ins::knob01((uint8_t)played_mix(M, i));   // the knob + core/mod's offset
+  if (!B.mix_set[i]) B.mix[i] = tgt, B.mix_set[i] = true;
+  const float a = B.mix[i], b = a + (tgt - a) * ((float)m / ((float)m + 144.0f));   // 3 ms a chunk, as a slot's params
+  B.mix[i] = fabsf(b - tgt) < 1e-4f ? tgt : b;
+  const float d = (B.mix[i] - a) / (float)m;
   float q = a;
   for (int j = 0; j < m; ++j) {
     q += d;
@@ -141,14 +153,17 @@ void send_run(int c, int s, const float* p, const float* x, const float* r, floa
     if (r) y1[j] = r[j] + q * (w[j][1] - r[j]);
   }
   // the room left and the fade-out done (this chunk ended dry): the slot holds nothing; taken again, it starts from clean
-  if (want < 0 && ins::engine().slot(c, s).feed1 <= 0.0f) g_run_fx[i] = -1, g_play[i] = -1;
+  if (want < 0 && ins::engine(box).slot(c, s).feed1 <= 0.0f) B.run_fx[i] = -1, B.play[i] = -1;
 }
 
 struct Hook {
   Hook() {
     ins::send_insert = send_run;
-    for (int i = 0; i < kAllSlots; ++i) control.mix[i] = kMixDef, control.fx[i] = -1;
-    control.lev = kLevUnity, control.trim = kTrimDef;
+    Control* const both[2] = {&control, &control1};
+    for (Control* m : both) {
+      for (int i = 0; i < kAllSlots; ++i) m->mix[i] = kMixDef, m->fx[i] = -1;
+      m->lev = kLevUnity, m->trim = kTrimDef;
+    }
   }
 } g_hook;
 
@@ -156,11 +171,14 @@ struct Hook {
 
 bool send_type(int t) { return t >= ins::kTypes && t < ins::kAllTypes; }
 
-bool on() {
+bool on() { return on(0); }
+
+bool on(int box) {
+  const ins::Control& k = ins::control_of(box);
   for (int i = 0; i < kSlots; ++i)
-    if (ins::control.type[chain(i)][slot(i)]) return true;
+    if (k.type[chain(i)][slot(i)]) return true;
   for (int c = ins::kM0; c < ins::kChains; ++c)
-    if (ins::peq_set(ins::control, c)) return true;
+    if (ins::peq_set(k, c)) return true;
   return false;
 }
 
@@ -292,30 +310,36 @@ void reset() {
   clear();
   control.mod_lev = 0;
   for (int i = 0; i < kAllSlots; ++i) control.mod_mix[i] = 0;
-  for (int u = 0; u < kFxUnits; ++u)
-    if (g_fx[u]) g_fx[u]->Reset();
-  memset((void*)g_ctl, 0, sizeof g_ctl);
-  for (int i = 0; i < kAllSlots; ++i) g_mix_set[i] = false, g_run_fx[i] = -1, g_play[i] = -1, g_waited[i] = 0;
-  g_peak_in = g_peak_out = 0.0f;
-  g_lev = 1.0f;
+  for (Box& B : g_box) {
+    for (int u = 0; u < kFxUnits; ++u)
+      if (B.fx[u]) B.fx[u]->Reset();
+    memset((void*)B.ctl, 0, sizeof B.ctl);
+    for (int i = 0; i < kAllSlots; ++i) B.mix_set[i] = false, B.run_fx[i] = -1, B.play[i] = -1, B.waited[i] = 0;
+    B.peak_in = B.peak_out = 0.0f;
+    B.lev = 1.0f;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------- the audio side
 
-void render(float (*y)[2], int n) {
-  float pi = g_peak_in, po = g_peak_out;
+void render(float (*y)[2], int n) { render(0, y, n); }
+
+void render(int box, float (*y)[2], int n) {
+  Box& B = box_at(box);
+  float pi = B.peak_in, po = B.peak_out;
   for (int i = 0; i < n; ++i) {
     float a = fabsf(y[i][0]), b = fabsf(y[i][1]);
     pi = fmaxf(pi, fmaxf(a, b));
   }
-  amp::service_master();
-  ins::Engine& e = ins::engine();
+  if (box == out::g_base_slot) amp::service_master();   // AMP: the base box's chains only (keyed by chain, ins::voice_out)
+  ins::Engine& e = ins::engine(box);
+  const ins::Control& k = ins::control_of(box);
   for (int c = ins::kM0; c < ins::kChains; ++c)
-    if (e.Active(c, ins::control)) e.ProcessStereo(c, y, n, ins::control);
-  const float t = (float)played_lev() * (1.0f / kLevUnity), g0 = g_lev;   // the knob + core/mod's offset
+    if (e.Active(c, k)) e.ProcessStereo(c, y, n, k);
+  const float t = (float)played_lev(control_of(box)) * (1.0f / kLevUnity), g0 = B.lev;   // the knob + core/mod's offset
   float g1 = g0 + (t - g0) * ((float)n / ((float)n + 144.0f));
   if (fabsf(g1 - t) < 1e-4f) g1 = t;
-  g_lev = g1;
+  B.lev = g1;
   const float dg = (g1 - g0) / (float)n;
   float g = g0;
   for (int i = 0; i < n; ++i) {
@@ -324,17 +348,22 @@ void render(float (*y)[2], int n) {
     y[i][0] = l, y[i][1] = r;
     po = fmaxf(po, fmaxf(fabsf(l), fabsf(r)));
   }
-  g_peak_in = pi, g_peak_out = po;
+  B.peak_in = pi, B.peak_out = po;
 }
 
-int gr10() {
-  const float g = lim_gain;
+int gr10() { return gr10(0); }
+
+int gr10(int box) {
+  const float g = lim_gain_of(box);
   return g < 1.0f ? (int)(-200.0f * log10f(g) + 0.5f) : 0;
 }
 
-void take_peaks(float* in, float* outp) {
-  *in = g_peak_in, *outp = g_peak_out;
-  g_peak_in = g_peak_out = 0.0f;
+void take_peaks(float* in, float* outp) { take_peaks(0, in, outp); }
+
+void take_peaks(int box, float* in, float* outp) {
+  Box& B = box_at(box);
+  *in = B.peak_in, *outp = B.peak_out;
+  B.peak_in = B.peak_out = 0.0f;
 }
 
 // The benches' writes into the controls, each byte's value before: given back only where it still holds what the bench
@@ -359,9 +388,10 @@ struct BenchUndo {
 template <typename Silence>
 void bench_end(Silence silence) {
   for (int n = 0; n < 200; ++n) silence();
-  for (int i = 0; i < kAllSlots; ++i) g_mix_set[i] = false, g_run_fx[i] = -1, g_play[i] = -1, g_waited[i] = 0;
-  for (int u = 0; u < kFxUnits; ++u) g_fx[u]->Reset();
-  g_peak_in = g_peak_out = 0.0f;
+  Box& B = g_box[0];   // the boot benches run on box 0's chains
+  for (int i = 0; i < kAllSlots; ++i) B.mix_set[i] = false, B.run_fx[i] = -1, B.play[i] = -1, B.waited[i] = 0;
+  for (int u = 0; u < kFxUnits; ++u) B.fx[u]->Reset();
+  B.peak_in = B.peak_out = 0.0f;
 }
 
 uint64_t bench(uint32_t* worst_block) {
@@ -370,7 +400,7 @@ uint64_t bench(uint32_t* worst_block) {
 #ifndef CORE_HEAP_BUFFERS
   sfx();
 #endif
-  if (!g_fx[0] || !g_fx[1]) return 0;
+  if (!g_box[0].fx[0] || !g_box[0].fx[1]) return 0;
   static const uint8_t kT[kSlots] = {ins::kComp, ins::kEq, ins::kMSpace, ins::kMCloud};
   static BenchUndo u;
   for (int i = 0; i < kSlots; ++i) {
@@ -413,7 +443,7 @@ uint64_t sfx_bench(int set, uint32_t* worst_block) {
 #ifndef CORE_HEAP_BUFFERS
   sfx();
 #endif
-  if (!g_fx[0] || !g_fx[1]) return 0;
+  if (!g_box[0].fx[0] || !g_box[0].fx[1]) return 0;
   static BenchUndo u;
   static const int kC[4] = {ins::kBus0, ins::kBus0 + 1, ins::kBus0 + 2, ins::kM0};
   for (int i = 0; i < 4; ++i) {   // the bytes set directly (no file marked), rooms 0..3
@@ -433,7 +463,7 @@ uint64_t sfx_bench(int set, uint32_t* worst_block) {
     }
     memset(pre, 0, sizeof pre), memset(post, 0, sizeof post);
     const uint32_t t0 = cycles();
-    if (fx::bus_insert) fx::bus_insert(0, b12[0], 12), fx::bus_insert(1, b12[1], 12);
+    if (fx::bus_insert) fx::bus_insert(fx::control, 0, b12[0], 12), fx::bus_insert(fx::control, 1, b12[1], 12);
     ins::bus3(in3, 12, pre, post);
     render(y, 12);
     const uint32_t t = cycles() - t0;
@@ -444,7 +474,7 @@ uint64_t sfx_bench(int set, uint32_t* worst_block) {
   u.undo();
   bench_end([&]() {
     memset(b12, 0, sizeof b12), memset(in3, 0, sizeof in3), memset(y, 0, sizeof y);
-    if (fx::bus_insert) fx::bus_insert(0, b12[0], 12), fx::bus_insert(1, b12[1], 12);
+    if (fx::bus_insert) fx::bus_insert(fx::control, 0, b12[0], 12), fx::bus_insert(fx::control, 1, b12[1], 12);
     ins::bus3(in3, 12, pre, post);
     render(y, 12);
   });
@@ -454,7 +484,7 @@ uint64_t sfx_bench(int set, uint32_t* worst_block) {
 static constexpr unsigned long kUnitBytes = ((unsigned long)sizeof(fx::SendFx) + 63) & ~63ul;
 unsigned long heap_bytes() {
 #ifdef CORE_HEAP_BUFFERS
-  return kFxUnits * kUnitBytes + 64;
+  return kBoxes * kFxUnits * kUnitBytes + 64;   // box 0's units, then box 1's
 #else
   return 0;
 #endif
@@ -462,7 +492,8 @@ unsigned long heap_bytes() {
 void heap_place(void* mem) {
 #ifdef CORE_HEAP_BUFFERS
   uintptr_t a = ((uintptr_t)mem + 63) & ~(uintptr_t)63;
-  for (int u = 0; u < kFxUnits; ++u) g_fx[u] = new ((void*)(a + u * kUnitBytes)) fx::SendFx(48000.0f);
+  for (int b = 0; b < kBoxes; ++b)
+    for (int u = 0; u < kFxUnits; ++u) g_box[b].fx[u] = new ((void*)(a + (b * kFxUnits + u) * kUnitBytes)) fx::SendFx(48000.0f);
 #else
   (void)mem;
 #endif
