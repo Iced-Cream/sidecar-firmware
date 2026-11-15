@@ -20,6 +20,9 @@ build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
 # usb=mirror's audio for a second port (mirror_stream.h, docs/teensy-mirror.md)
+build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 build/test_mirror_stream: test_mirror_stream.cpp ../mirror_stream.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<

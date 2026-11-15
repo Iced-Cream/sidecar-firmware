@@ -21,6 +21,7 @@
 #include "mirror_stream.h"
 #include "relay_proto.h"
 #include "midi_filter.h"
+#include "slip_detect.h"
 
 class CObUsb;
 
@@ -107,7 +108,8 @@ private:
 	unsigned m_nCompGapMax, m_nCompGap1, m_nCompGap2;	// gaps between them: longest, >= 1 ms, >= 2 ms (T342)
 	unsigned m_nUnderSeen, m_nOverSeen;
 	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
-	char m_EvKind[8];	// submit time (us) of the block on link 0x02
+	char m_EvKind[8];
+	SlipDetect m_SlipOut, m_SlipIn;		// the loop's test sine on channel 0: the computer's OUT as it arrives, the box's IN (T344)	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];
 	u8 *m_pChanOutBuf[relay::kChannels];
 	volatile boolean m_bChanOutBusy[relay::kChannels];

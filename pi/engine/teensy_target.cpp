@@ -475,6 +475,11 @@ boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
 // xHCI IRQ: an IN block of the box (12-channel layout), cut to the computer's alternate and sent on link 0x02
 void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 {
+	if (!m_bTest && MirrorShown ())
+	{
+		uint32_t ms = (uint32_t) (NowTicks () / 1000);
+		for (int f = 0; f < ob::kFramesPerBlock; f++) m_SlipIn.feed (ob::block_sample (pBlock, ob::kChannels, f, 0), ms);
+	}
 	if (m_bTest)					// relaytest: a real box's blocks never reach the computer (TestPoll uses SendBoxBlock)
 	{
 		// relayfeed=irq: the box's block only paces the test stream: a test block goes out in its place, from the same
@@ -625,6 +630,10 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 				if (us >= 2000) p->m_nCompGap2++;
 			}
 			p->m_nCompLast = nNow;
+			unsigned nCh = p->m_Stream.out_ch;
+			if (nCh != 0 && pURB->GetResultLength () == (unsigned) ob::block_bytes (nCh))
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					p->m_SlipOut.feed (ob::block_sample (p->m_pAudioInBuf[k], nCh, f, 0), (uint32_t) (nNow / 1000));
 			p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
 		}
 	}
@@ -1016,6 +1025,21 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 				" | events (U under, O over, uptime ms):%s", a.lvl_min, a.lvl_max, p->m_nCompGapMax, p->m_nCompGap1,
 				p->m_nCompGap2, (const char *) e);
 		p->m_Stream.st.lvl_min = ~0u, p->m_Stream.st.lvl_max = 0;
+		const SlipDetect *D[2] = {&p->m_SlipOut, &p->m_SlipIn};
+		CString l[2];
+		for (unsigned j = 0; j < 2; j++)
+		{
+			const SlipDetect &d = *D[j];
+			l[j].Format ("crossings %u slips %u lost %u", d.crossings, d.slips, d.lost);
+			for (unsigned i = d.ev_n > SlipDetect::kEvents ? d.ev_n - SlipDetect::kEvents : 0; i < d.ev_n; i++)
+			{
+				CString t;
+				t.Format (" %d@%u", (int) d.ev_size[i % SlipDetect::kEvents], (unsigned) d.ev_ms[i % SlipDetect::kEvents]);
+				l[j].Append (t);
+			}
+		}
+		pLogger->Write (From, LogNotice, "relay slips (1/100 sample @ uptime ms): computer OUT %s | box IN %s",
+				(const char *) l[0], (const char *) l[1]);
 	}
 	pLogger->Write (From, LogNotice, "relay link 0x02: done %u err %u (usb %u) max %u us, hist <125 %u <250 %u <500 %u <1ms %u "
 			"<2ms %u <4ms %u <8ms %u more %u | busy max %u, drops in a row max %u",
