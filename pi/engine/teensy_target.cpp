@@ -144,6 +144,10 @@ boolean CTeensyTarget::Configure (void)
 		const char *pFeed = CKernelOptions::Get ()->GetAppOptionString ("relayfeed", "loop");
 		m_bFeedIrq = m_bTest && strcmp (pFeed, "irq") == 0;
 		m_bBoxPipes = m_bTest && CKernelOptions::Get ()->GetAppOptionDecimal ("relayboxpipes", 0) != 0;
+		// the computer's audio for the box waits 2 ms in the OUT ring, not the gadget's 1 ms: through the Teensy both ways the
+		// computer's blocks come with more jitter (T336: one underrun in 60 s at 48 frames). relayouttarget= frames
+		unsigned nT = CKernelOptions::Get ()->GetAppOptionDecimal ("relayouttarget", 96);
+		m_Stream.out_target = nT < 8 ? 8 : nT > mirror::Stream::kRing / 2 ? mirror::Stream::kRing / 2 : nT;
 	}
 	s_pThis = this;
 	CLogger::Get ()->Write (From, LogNotice, "mirror relay %u.%02u claimed (%u endpoints): starts %u s after boot%s", m_nVersion >> 8,

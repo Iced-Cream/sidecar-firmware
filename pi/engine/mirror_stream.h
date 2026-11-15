@@ -24,6 +24,7 @@ struct StreamStats
 struct Stream
 {
 	static constexpr unsigned kRing = 512, kOutTarget = 48;	// the gadget's Ring and OutTarget (frames)
+	unsigned out_target = kOutTarget;	// frames the OUT ring fills to before the box takes from it (the relay: more, T336)
 	static constexpr unsigned kCh = 12;
 
 	unsigned in_ch, out_ch;			// the computer's alternates (0: not streaming)
@@ -36,7 +37,7 @@ struct Stream
 	uint16_t off;
 	StreamStats st;
 
-	void init (unsigned nMargin) { memset (this, 0, sizeof *this); margin = nMargin; priming = true; }
+	void init (unsigned nMargin) { memset (this, 0, sizeof *this); margin = nMargin; priming = true; out_target = kOutTarget; }
 	void out_reset () { head = tail = 0; priming = true; }
 	// the box's stream started again (a box that went away and came back): its counter starts from 0, a new offset
 	void box_restart () { off_set = false; extra.flush (); }
@@ -120,7 +121,7 @@ struct Stream
 			unsigned level = head - tail;
 			if (priming)
 			{
-				if (level < kOutTarget) continue;
+				if (level < out_target) continue;
 				priming = false;
 			}
 			if (level == 0) { st.out_under++; priming = true; continue; }
