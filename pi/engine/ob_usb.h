@@ -52,9 +52,16 @@ public:
 	unsigned Slot (void) const		{ return m_nSlot; }
 	boolean Primary (void) const		{ return this == s_pThis; }
 	const core::out::Device *Audio (void) const	{ return m_pAudio; }
-	// usb=mirror's target for a slot's box other than the gadget's (a Teensy relay); 0 none. Task level.
-	static void SetMirrorTarget (unsigned nSlot, IMirrorTarget *pTarget);
-	static unsigned GadgetSlot (void);		// mirror=rytm|a4 (cmdline): the box the USB-C gadget mirrors
+	// usb=mirror with two boxes (mirror_assign.h): which box USB-C shows and which a Teensy relay shows is decided at run
+	// time, USB-C first (mirrorfirst=relay: the relay first); cmdline mirror=rytm|a4|first names the box that takes the first
+	// route when both are there.
+	static void SetRelayTarget (IMirrorTarget *pTarget);	// the Teensy relay came (0: went). Task level
+	static unsigned GadgetSlot (void);		// the box the USB-C gadget mirrors (0, the Rytm's, while none is chosen)
+	static int UsbcSlot (void);			// the same, -1 while none is chosen (/status)
+	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
+	static int MirrorPrefer (void);			// cmdline mirror=: 0 rytm, 1 a4, -1 first
+	static boolean MirrorRelayFirst (void);		// cmdline mirrorfirst=relay: the relay filled first (testing it), not USB-C
+	static void PollAssign (void);			// core 0's loop: a box came or went: who goes where (before PollTargets)
 	static const char *PipeInfo (unsigned nSlot);
 	static const u8 *BoxConfig (unsigned nSlot, unsigned *pLen);	// the configuration descriptor MirrorAttach read	// the pipes MirrorAttach opened: address, type, wMaxPacketSize, bInterval
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
@@ -154,7 +161,8 @@ public:
 	void PipePoll (void);
 	void AttachLate (void);
 	void Wanted (void);
-	void Reattach (void);				// a new mirror target for this box (SetMirrorTarget): read again at AttachLate
+	void Reattach (void);				// a new mirror target for this box (PollAssign, SetRelayTarget): read again at AttachLate
+	void KickPipes (void);				// moved to another target: each IN pipe waiting for the old one's computer asks again
 	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
 	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
 	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)
@@ -234,6 +242,7 @@ private:
 	TSetupData *volatile m_pCtlSetup;
 	unsigned m_nGen;				// this box's attach: a completion of an earlier one is ignored
 	static unsigned s_nGen, s_nPipeResets;
+	boolean m_bUp;					// came up far enough to be mirrored (mirror_assign.h counts it there)
 	boolean m_bConfigured;				// Configure returned TRUE: only ~CUSBDevice deletes this (the slot is gone)
 	static unsigned s_nDetaches, s_nFreedInFlight, s_nKeptInFlight;
 	// usb=mirror's DMA buffers (pipes, forwarded requests): allocated once and reused by every attach (one box at a time,

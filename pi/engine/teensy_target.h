@@ -1,6 +1,6 @@
 // pi/engine/teensy_target.h - usb=mirror through a Teensy 4.1 (docs/teensy-mirror.md): the Pi's end of the link
 // (relay_proto.h). The Teensy enumerates on a Pi USB-A port as 1209:0002; this driver claims it and becomes the mirror
-// target (mirror_target.h) of the box the USB-C gadget does not mirror (mirror=rytm|a4 picks the gadget's), so both boxes
+// target (mirror_target.h) of the box the USB-C gadget does not mirror (ob_usb.cpp PollAssign, mirror_assign.h), so both boxes
 // are shown to computers at once, each on its own cable.
 //
 // What runs where (all on core 0):
@@ -57,6 +57,7 @@ public:
 	void FromBoxBlock (const u8 *pBlock) override;
 	void ToBox (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames) override;
 	void MirrorPoll (void) override;
+	void MirrorMoved (void) override;
 
 private:
 	static void EvStub (CUSBRequest *pURB, void *pParam, void *pContext);
@@ -85,6 +86,7 @@ private:
 	void TestOutBlock (const u8 *pBlock, unsigned nLength);
 	boolean TestExtras (void);		// the made-up box's BOS + MS OS 2.0 set (WinUSB on the bench computer)
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
+	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
 	void FlushMidiIn (void);			// xHCI IRQ: queued box MIDI out to the Teensy when its channel is free
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
 
@@ -145,6 +147,7 @@ private:
 
 	volatile unsigned m_nCreditDue[relay::kChannels];
 	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back while link1's queue to the box is full
+	void RebootFeed (const u8 *pEventPacket);	// xHCI IRQ: usbreboot=1's matcher
 	boolean m_bUsbReboot;				// usbreboot=1: the reboot SysEx from the relay's computer is obeyed
 	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)
 	static const unsigned MidiInRing = 512;
@@ -173,7 +176,7 @@ private:
 	boolean SendPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength);	// MirrorPipeIn's work (relaytest's echo too)
 	boolean m_bFeedIrq;			// relayfeed=irq (relaytest): the test blocks go out from the real box's IN
 					// completions (xHCI IRQ, its pace), as a box's own blocks do, not from TestPoll's loop
-	boolean m_bStarted, m_bDebug;
+	boolean m_bStarted, m_bLeaveNow, m_bDebug;	// m_bLeaveNow: MirrorMoved, off the bus without mirrorhold
 	unsigned m_nDelay;
 	unsigned m_nDebugVendor;
 	unsigned m_nVariant;			// relayvariant= (TR1g bisect): 2 a link request before the URBs, 3 a standard request after

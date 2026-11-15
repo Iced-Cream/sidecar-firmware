@@ -3,7 +3,7 @@
 // (CObUsb, one per box: ob_usb.h) hands its descriptors, strings, pipe packets, EP0 answers and per-block bytes to its target,
 // and the target calls back into that box (CObUsb's members: Control, PipeOut, PipeInNext, ...). The Pi's USB-C gadget
 // (CSidecarGadget, through an adapter in ob_usb.cpp) is one target; a second device port (a Teensy relay) can be another, so
-// each box can have its own. Which box the gadget takes: cmdline mirror=rytm|a4 (default rytm).
+// each box can have its own. Which box goes where is decided at run time, USB-C first (mirror_assign.h).
 //
 #ifndef _mirror_target_h
 #define _mirror_target_h
@@ -31,6 +31,7 @@ public:
 	// the box's OUT fill: the computer's OUT added to the frames (pVoices: the Sidecar's voices on the box's channels, 0 none)
 	virtual void ToBox (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames) = 0;
 	virtual void MirrorPoll (void) {}		// core 0's loop, every pass: its own control and attach work
+	virtual void MirrorMoved (void) {}		// its box moved to another target (not gone): off the computer's bus now
 };
 
 #endif
