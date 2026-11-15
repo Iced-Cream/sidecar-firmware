@@ -460,7 +460,11 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bInBusy[i]) SubmitIn (i);
 	}
-	else if (m_OutMode == OutPaced) PumpOut ();
+	else if (m_OutMode == OutPaced)
+	{
+		m_bLeadDue = TRUE;			// the blocks queued for the box were skipped: its lead again with the next IN
+		PumpOut ();
+	}
 	else if (m_OutMode == OutFree)
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (m_pOutBuf[i], m_nBlocks), SubmitOut (i);
@@ -503,10 +507,10 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
 	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
 	m_nOutCounter (0), m_bOutCounterSet (FALSE), m_nExpectIn (0), m_bHaveIn (FALSE), m_nPhase (0),
-	m_nCredit (0),
+	m_nCredit (0), m_bLeadDue (TRUE),
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
 	m_nInOddGap (0), m_nInErrors (0), m_nInSubmitFail (0),
-	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0),
+	m_nOutBlocks (0), m_nOutErrors (0), m_nOutSubmitFail (0), m_nCreditDrops (0), m_nOutMaxDt (0), m_nOutPendMin (~0u),
 	m_nInPeak (0), m_nInMaxDt (0),
 	m_nStartUs (0), m_nLastInUs (0), m_nLastOutUs (0), m_nFirstInUs (0), m_nFirstOutUs (0), m_nOut16Us (0), m_nLastLogUs (0),
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
@@ -515,6 +519,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
+	m_nOutLead = Clamp (pOpt->GetAppOptionDecimal ("oboutlead", 0), 0, m_nURBs * m_nBlocks);
 	const char *pMode = pOpt->GetAppOptionString ("obout", "paced");
 	m_OutMode = strcmp (pMode, "free") == 0 ? OutFree : strcmp (pMode, "off") == 0 ? OutOff : OutPaced;
 	const char *pCtr = pOpt->GetAppOptionString ("obctr", "zero");
@@ -736,8 +741,8 @@ boolean CObUsb::Configure (void)
 
 	static const char *Modes[] = {"paced by IN", "free-running", "off"};
 	CLogger::Get ()->Write (From, LogNotice, "alt 3 selected: %u URBs x %u blocks (%u B) per endpoint, "
-				"OUT %s (delay %u blk), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
-				Modes[m_OutMode], m_nOutDelay, m_bCounterFromIn ? "IN" : "0");
+				"OUT %s (delay %u blk, lead %u blk), OUT counter from %s", m_nURBs, m_nBlocks, nLen,
+				Modes[m_OutMode], m_nOutDelay, m_nOutLead, m_bCounterFromIn ? "IN" : "0");
 
 	if (m_nOutCh != ob::kChannels)
 	{
@@ -1531,6 +1536,11 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	if (m_OutMode == OutPaced && m_nInBlocks > m_nOutDelay)
 	{
 		m_nCredit += good;
+		if (m_bLeadDue && good != 0)		// oboutlead: N blocks ahead of the one-for-one, once a stream (or OUT reset)
+		{
+			m_nCredit += m_nOutLead;
+			m_bLeadDue = FALSE;
+		}
 		PumpOut ();
 	}
 }
@@ -1538,11 +1548,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 {
 	unsigned now = CTimer::GetClockTicks ();
+	if (m_nFirstOutUs != 0 && now - m_nLastOutUs > m_nOutMaxDt) m_nOutMaxDt = now - m_nLastOutUs;
 	m_nLastOutUs = now;
 	if (m_nFirstOutUs == 0) m_nFirstOutUs = now - m_nStartUs + 1;
 
 	m_bOutBusy[i] = FALSE;
 	m_nOutPending--;
+	if (m_nOutPending < m_nOutPendMin) m_nOutPendMin = m_nOutPending;	// before this completion's refill
 
 	if (pURB->GetStatus () != 0)
 	{
@@ -1632,6 +1644,9 @@ void CObUsb::Log (CLogger *pLogger)
 	m_nInPeak = 0;
 	unsigned nOutAge = (now - m_nLastOutUs) / 1000;
 	unsigned nInPend = m_nInPending, nOutPend = m_nOutPending, nCredit = m_nCredit;
+	unsigned nOutMaxDt = m_nOutMaxDt, nOutPendMin = m_nOutPendMin == ~0u ? nOutPend : m_nOutPendMin;
+	m_nOutMaxDt = 0;
+	m_nOutPendMin = ~0u;
 	TEvStats ei = s_EvIn, eo = s_EvOut;
 	unsigned nQIn = m_pIn->GetXHCIEndpoint ()->GetPendingURBs ();
 	unsigned nQOut = m_pOut->GetXHCIEndpoint ()->GetPendingURBs ();
@@ -1657,14 +1672,14 @@ void CObUsb::Log (CLogger *pLogger)
 	// endpoint: success/short/missed-service/other(last code)/orphan
 	pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice,	// (rytmob2: the box of slot 1; the xHCI event counts are both boxes')
 			"%ums IN %u/s %u gap %u lost %u max %u odd %u sh %u bad %u err %u rs %u dt %uus pk %d"
-			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u"
+			" | OUT %u/s %u err %u rs %u age %ums cr %u drop %u odt %uus pmin %u"
 			" | pend %u/%u q %u/%u ep %u/%u rq %u sf %u/%u"
 			" | evI %u ok %u sh %u ms %u x %u(%u) o %u evO %u ok %u ms %u x %u(%u) o %u",
 			(now - m_nStartUs) / 1000, (nIn - m_nPrevIn) * 1000 / nMs, nIn, (unsigned) m_nInGaps, (unsigned) m_nInLost,
 			(unsigned) m_nInMaxGap, (unsigned) m_nInOddGap, (unsigned) m_nInShort,
 			(unsigned) m_nInBadMagic, (unsigned) m_nInErrors, m_InHalt.resets, nInMaxDt, nPeak,
 			(nOut - m_nPrevOut) * 1000 / nMs, nOut, (unsigned) m_nOutErrors, m_OutHalt.resets, nOutAge, nCredit,
-			(unsigned) m_nCreditDrops,
+			(unsigned) m_nCreditDrops, nOutMaxDt, nOutPendMin,
 			nInPend, nOutPend, nQIn, nQOut, nStIn, nStOut, nRequeued,
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
 			ei.nEvents, ei.nSuccess, ei.nShort, ei.nMissed, ei.nOther + ei.nRing, ei.nLastOther, ei.nOrphan,

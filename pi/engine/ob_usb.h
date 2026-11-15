@@ -11,6 +11,9 @@
 //                  rytm-emu's host and the Teensy's RytmHost do; free: every OUT URB is
 //                  resubmitted on completion (the first hardware run's behaviour); off: no OUT
 //   oboutdelay=N   paced: IN blocks to receive before the first OUT block (default 0)
+//   oboutlead=N    paced: OUT blocks sent ahead of IN, once, with the first credit and again after an OUT endpoint
+//                  reset (default 0, at most oburbs x obblocks): the box then has N blocks queued for it beyond
+//                  the one-for-one, so a late IN completion on the Pi no longer leaves it without OUT (T346-T351)
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
 //
@@ -246,7 +249,7 @@ private:
 	const unsigned m_nInCh, m_nInBlk;		// device -> host
 
 	// options
-	unsigned m_nURBs, m_nBlocks, m_nOutDelay;
+	unsigned m_nURBs, m_nBlocks, m_nOutDelay, m_nOutLead;
 	TOutMode m_OutMode;
 	boolean m_bCounterFromIn;
 
@@ -268,11 +271,13 @@ private:
 	boolean m_bHaveIn;
 	u32 m_nPhase;
 	volatile unsigned m_nCredit;			// OUT blocks owed (paced)
+	volatile boolean m_bLeadDue;			// oboutlead: the lead is added with the next credit
 
 	// statistics, written from the xHCI interrupt, read by LogAllStats
 	volatile unsigned m_nInBlocks, m_nInShort, m_nInBadMagic, m_nInGaps, m_nInLost, m_nInMaxGap,
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
+	volatile unsigned m_nOutMaxDt, m_nOutPendMin;	// per log line: longest gap between OUT completions (us), fewest OUT URBs left in flight
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
