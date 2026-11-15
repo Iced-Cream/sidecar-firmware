@@ -22,6 +22,7 @@
 #include "relay_proto.h"
 #include "midi_filter.h"
 #include "slip_detect.h"
+#include "slip_trace.h"
 
 class CObUsb;
 
@@ -54,6 +55,7 @@ public:
 	boolean MirrorOutExtra (u8 *pBlock, u16 nCounter) override;
 	void FromBoxBlock (const u8 *pBlock) override;
 	void ToBox (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames) override;
+	void BoxOutDone (unsigned nPending) override;
 	void MirrorPoll (void) override;
 
 private:
@@ -109,6 +111,9 @@ private:
 	unsigned m_nUnderSeen, m_nOverSeen;
 	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
 	char m_EvKind[8];
+	SlipTrace m_Trace;			// sliptrace=1: the block events around the box IN's first slip of a cluster (TR17)
+	boolean m_bTrace;
+	unsigned m_nSlipInSeen, m_nTraceAt;	// slips the trace has seen; when its last line was written (us)
 	SlipDetect m_SlipOut, m_SlipIn;		// the loop's test sine on channel 0: the computer's OUT as it arrives, the box's IN (T344)	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];
 	u8 *m_pChanOutBuf[relay::kChannels];

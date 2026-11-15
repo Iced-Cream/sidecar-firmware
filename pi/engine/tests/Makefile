@@ -23,6 +23,9 @@ build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) $(CORE)/fx/
 build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+build/test_slip_trace: test_slip_trace.cpp ../slip_trace.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 build/test_mirror_stream: test_mirror_stream.cpp ../mirror_stream.h ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -I../../../teensy/libraries/RytmHost -o $@ $<

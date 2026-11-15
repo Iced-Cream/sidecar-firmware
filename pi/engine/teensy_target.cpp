@@ -58,7 +58,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_bTrace (FALSE), m_nSlipInSeen (0), m_nTraceAt (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -140,6 +140,7 @@ boolean CTeensyTarget::Configure (void)
 	m_nDelay = CKernelOptions::Get ()->GetAppOptionDecimal ("relaydelay", 0);
 	m_nVariant = CKernelOptions::Get ()->GetAppOptionDecimal ("relayvariant", 1);
 	m_bTest = CKernelOptions::Get ()->GetAppOptionDecimal ("relaytest", 0) != 0;
+	m_bTrace = CKernelOptions::Get ()->GetAppOptionDecimal ("sliptrace", 0) != 0;	// slip_trace.h (TR17)
 	{
 		const char *pFeed = CKernelOptions::Get ()->GetAppOptionString ("relayfeed", "loop");
 		m_bFeedIrq = m_bTest && strcmp (pFeed, "irq") == 0;
@@ -468,6 +469,7 @@ void CTeensyTarget::MirrorPipeOutDone (u8 uchAddr)
 
 boolean CTeensyTarget::MirrorOutExtra (u8 *pBlock, u16 nCounter)
 {
+	if (m_bTrace && MirrorShown ()) m_Trace.add (SlipTrace::kFill, (uint32_t) NowTicks (), m_Stream.head - m_Stream.tail);
 	if (m_bTest) return FALSE;
 	return MirrorShown () && m_Stream.out_extra (pBlock, nCounter);
 }
@@ -477,8 +479,18 @@ void CTeensyTarget::FromBoxBlock (const u8 *pBlock)
 {
 	if (!m_bTest && MirrorShown ())
 	{
-		uint32_t ms = (uint32_t) (NowTicks () / 1000);
+		u64 nNow = NowTicks ();
+		uint32_t ms = (uint32_t) (nNow / 1000);
 		for (int f = 0; f < ob::kFramesPerBlock; f++) m_SlipIn.feed (ob::block_sample (pBlock, ob::kChannels, f, 0), ms);
+		if (m_bTrace)
+		{
+			m_Trace.add (SlipTrace::kIn, (uint32_t) nNow, (ob::block_counter (pBlock) / ob::kFramesPerBlock) % 1000);
+			if (m_SlipIn.slips != m_nSlipInSeen)
+			{
+				m_nSlipInSeen = m_SlipIn.slips;
+				m_Trace.trigger ((uint32_t) nNow, m_SlipIn.ev_size[(m_SlipIn.ev_n - 1) % SlipDetect::kEvents], ms);
+			}
+		}
 	}
 	if (m_bTest)					// relaytest: a real box's blocks never reach the computer (TestPoll uses SendBoxBlock)
 	{
@@ -545,6 +557,12 @@ void CTeensyTarget::ToBox (s32 (*pFrames)[12], const s16 (*)[8], unsigned nFrame
 		m_EvKind[m_nEv % 8] = c;
 		m_nEv++;
 	}
+}
+
+// xHCI IRQ: the box took an OUT transfer (sliptrace=1)
+void CTeensyTarget::BoxOutDone (unsigned nPending)
+{
+	if (m_bTrace && MirrorShown ()) m_Trace.add (SlipTrace::kOutDone, (uint32_t) NowTicks (), nPending);
 }
 
 // ---- the link's completions (xHCI IRQ) -----------------------------------------------------------------------------
@@ -635,6 +653,7 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					p->m_SlipOut.feed (ob::block_sample (p->m_pAudioInBuf[k], nCh, f, 0), (uint32_t) (nNow / 1000));
 			p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
+			if (p->m_bTrace) p->m_Trace.add (SlipTrace::kPc, (uint32_t) nNow, p->m_Stream.head - p->m_Stream.tail);
 		}
 	}
 	p->Resubmit (pURB);
@@ -853,6 +872,24 @@ void CTeensyTarget::MirrorPoll (void)
 	{
 		if (CTimer::Get ()->GetUptime () < m_nDelay) return;
 		if (!Start ()) { m_nDelay = 0xFFFFFFFF; return; }	// not the link: stays idle
+	}
+	// sliptrace=1: a frozen trace goes to the log one line per 100 ms (the serial port and the web log keep up), then the
+	// trace records again; slips meanwhile are counted as skipped
+	if (m_bTrace && m_Trace.ready ())
+	{
+		unsigned nNow = (unsigned) NowTicks ();
+		if (m_Trace.line_k == 0 || nNow - m_nTraceAt >= 100000)
+		{
+			char Line[600];
+			if (m_Trace.line (m_Trace.line_k, Line, sizeof Line))
+			{
+				CLogger::Get ()->Write (From, LogNotice, "relay trace slip %d@%u ms (%u, skipped %u): %s", (int) m_Trace.trig_size,
+							m_Trace.trig_ms, m_Trace.triggers, m_Trace.skipped, Line);
+				m_Trace.line_k++;
+				m_nTraceAt = nNow;
+			}
+			else m_Trace.done ();
+		}
 	}
 	// the Pi flashing the Teensy (teensy_flash.h, docs/teensy-flash.md): its log (the start line names the build), and
 	// the bootloader request. EP0 and m_pCtlBuf stay this poll's; after kReqBootloader the link goes within ~50 ms.

@@ -1555,6 +1555,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	m_bOutBusy[i] = FALSE;
 	m_nOutPending--;
 	if (m_nOutPending < m_nOutPendMin) m_nOutPendMin = m_nOutPending;	// before this completion's refill
+	if (IMirrorTarget *pTarget = Target ()) pTarget->BoxOutDone (m_nOutPending);	// sliptrace=1 (slip_trace.h)
 
 	if (pURB->GetStatus () != 0)
 	{

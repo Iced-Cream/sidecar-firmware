@@ -31,6 +31,7 @@ public:
 	// the box's OUT fill: the computer's OUT added to the frames (pVoices: the Sidecar's voices on the box's channels, 0 none)
 	virtual void ToBox (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames) = 0;
 	virtual void MirrorPoll (void) {}		// core 0's loop, every pass: its own control and attach work
+	virtual void BoxOutDone (unsigned) {}		// xHCI IRQ: an OUT transfer to the box completed (OUT transfers still in flight)
 };
 
 #endif
