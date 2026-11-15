@@ -1,9 +1,9 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
-Current state (2026-11-14): the relay runs end to end on a Pi 4 (TR1 tries 5-6, `relaytest=1`: a made-up box, no Elektron
-unit): the box enumerates on the computer through the Teensy, forwarded control requests, pipes and the computer's audio
-to the Pi pass. Open: the Pi's audio to the computer had 4.5 % of blocks with wrong content and 2 % lost, with the
-Teensy's queue full (worst wait 2.7 ms against the ~1.2 ms margin), read by a Python bench; not yet run with a real box.
+Current state (2026-11-15, KB analog-four-mkii hardware-tests T335): the real A4 (on the Pi's USB) works through the relay
+with the Overbridge Engine on the computer: the link carries the A4's full rate (16,423 IN blocks, none dropped, every
+link transfer done under 2 ms) and the Engine's latency check passes (1056-1061 samples, 22.0-22.1 ms). Not yet run: audio
+through it with an app (ASIO loop), and a long run. The Pi can also rewrite the Teensy's program (docs/teensy-flash.md).
 
 The Pi's USB-C port is one USB device, so `usb=mirror` (docs/usb-mirror.md) shows one box. A Teensy 4.1 adds a second
 device port: the Pi stays the host of both boxes and keeps all of the mirror's logic, and the Teensy only relays.
@@ -93,6 +93,27 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   A panic's line reaches the black box (`blackbox_pi::PanicFlush`, ported from 8f027d3).
 - relaytest uploads the bench's BOS and MS OS 2.0 set: the made-up box says bcdUSB 2.10 and Windows refused it without.
 
+## The A4 through the relay (T327-T335)
+
+- **T327 (TR2):** "Latency measurement failed": the link carried ~18 % of the A4's IN blocks (the Pi's 16 link URBs busy).
+- **T328 (TR3):** relaytest carried the full rate with the Engine's pattern (bench `--paths engine --late 2`: reads start
+  late, one OUT block per IN block) and with blocks sent from the box's IN completions (`relayfeed=irq`): neither is it.
+- **T329/T330 (TR2b/TR2c):** link counters on both ends. The Pi's link URBs completed 4-8+ ms after submit; the Teensy
+  never NAKed the link (ENDPTNAK polls 0), never ran out of armed dTDs, its interrupts ran <= 20 us: the Pi's host
+  controller sent the link's interrupt OUT only ~1.2 times per ms.
+- **Cause:** the A4's async pipe, interrupt IN 0x82 (64 B, bInterval 1), which MirrorAttach keeps a request on so the
+  computer gets its async packets. Polled every microframe beside the link, it left the link one transfer per frame.
+  The A4 does not stream at all with it not polled (T333, but that kernel had the bug below).
+- **Fix (T335, TR2e):** the relay's box polls its interrupt pipes every 1 ms at most (bInterval 4; `mirrorpipeiv=N`
+  sets it, 0 the box's own; the USB-C gadget's box keeps its own). The link then carried the full rate and the
+  Engine's latency check passed. The Engine stops streaming by itself after the check while no app uses the A4.
+- f56dc30..b408c9b had a bug: MirrorAttach skipped parsing the box's configuration for slots 0/1 (fixed in 29fe713);
+  T331-T333 ran with it and do not count.
+- Kept for later runs: link 0x02 counters (Pi stats line "relay link 0x02"), the Teensy's link counters ("relay teensy:
+  isr max ..."), the relay box's configuration in hex and its pipes repeated in the stats for 2 minutes,
+  `relaytest=1 relayfeed=irq`, bench `--paths engine --late N`. `relayboxpipes=1` (relaytest with the real box's
+  pipes) does not stream (T332) and is not to be used.
+
 ## Gaps (named, not done)
 
 1. **The gadget's own copy** of the audio steps (sidecar_gadget.cpp) could use `mirror_stream.h` too; left alone while the
@@ -101,5 +122,4 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
 
 ## Next
 
-1. The A4 through the relay: the A4 on the Pi's USB, relaytest off (cmdline usb=mirror), Overbridge on the computer on
-   the Teensy's USB2; the branch has the stock-A4 claim (be7df33). Judge by Overbridge's dropouts and the Teensy's waits.
+1. Audio through the relay with an app: the 60 s ASIO sine loop of go-TR2 (tr2_loop.py with a timeout), then a long run.
