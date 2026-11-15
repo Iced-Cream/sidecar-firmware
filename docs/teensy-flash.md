@@ -5,7 +5,8 @@ that cable to the computer and running Teensy Loader. The Pi now writes the prog
 `.hex` to the Pi's web server, the Pi tells the relay to enter its bootloader, writes the blocks, starts the program, and
 checks that the relay comes back with the expected build.
 
-State: built and host-tested; not yet run on a unit.
+State: works on the unit (T334, 2026-11-15, 77cf2c7): the relay's own build written again from the Pi, 60 blocks in 0.5 s
+(38 refusals while block 0 erased), the relay back naming its build 2.1 s after the request.
 
 ## Use
 
@@ -55,5 +56,6 @@ see the lines the Pi took.
 - `relaydelay=`: the bootloader request and the log read wait for the relay's Start. A request made before Start is kept
   and sent at Start; if the write gave up (15 s) before that, the Teensy then waits in its bootloader for the next
   `POST /teensy/flash`.
-- No emulator covers the bootloader's USB path. The host test (`pi/engine/tests/test_teensy_hex.cpp`) covers the parser
-  and the reports; the unit run is the first test of the USB side.
+- No emulator covers the bootloader's USB path. The host tests (`pi/engine/tests/test_teensy_hex.cpp`,
+  `test_teensy_flash.cpp` on a fake Circle in `shim_tf/`) cover the parser, the reports and the write's steps; the USB side
+  is covered by unit runs (T334).
