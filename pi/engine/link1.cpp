@@ -54,10 +54,16 @@ void SetDevice (CUSBMIDIDevice *pDevice)
 	asm volatile ("dsb sy; sev");
 }
 
-// One record at a time, one transfer in flight (circle-midi-async.patch): the box never holds core 0's loop.
+// One record at a time, one transfer in flight (circle-midi-async.patch): the box never holds core 0's loop. Each transfer
+// is at most kTxBytes (the async send's TxBufferSize, 16 event packets): a longer one was refused and lost (an A4 OS
+// upgrade through the mirror stopped at offset 0, T358: the computer's 64-packet batches; the engine's records over 48
+// bytes too). A record is sent in kTxBytes pieces, one per call.
+static const unsigned kTxBytes = 64;
+
 void Send (void)
 {
 	static uint8_t s_Packets[4 * ((4096 + 2) / 3)];
+	static unsigned s_nRec, s_nRecOff;		// the engine's record being sent: its packets' bytes, how far
 	CUSBMIDIDevice *p = s_pDevice;
 	if (p == 0)
 	{
@@ -65,17 +71,34 @@ void Send (void)
 		uint32_t w;
 		while (s_FromComputer.pop (&w)) {}	// nor the relay's computer's packets
 		s_bComputerSysEx = FALSE;
+		s_nRec = s_nRecOff = 0;
 		return;
 	}
 	unsigned nState = p->GetSendState ();
 	if (nState == 1) return;			// the last transfer still in flight
 	if (nState == 2) s_Stats.nSendFail++;		// it failed: that message is lost (counted), the next goes
-	// the relay's computer first (up to 64 packets a transfer); while its SysEx is part way out, the engine's records wait
-	// so they never land inside it
-	static uint32_t s_Batch[64];
+	// the rest of an engine record first: nothing lands inside it
+	if (s_nRecOff < s_nRec)
+	{
+		unsigned n = s_nRec - s_nRecOff < kTxBytes ? s_nRec - s_nRecOff : kTxBytes;
+		if (p->SendEventPacketsAsync (s_Packets + s_nRecOff, n))
+		{
+			s_nRecOff += n;
+			if (s_nRecOff == s_nRec) s_Stats.nSent++;
+		}
+		else
+		{
+			s_Stats.nSendFail++;
+			s_nRec = s_nRecOff = 0;		// the rest dropped: the box sees a cut SysEx, the next record goes
+		}
+		return;
+	}
+	// the computer's next (a relay's or the USB-C mirror's, up to 16 packets a transfer); while its SysEx is part way
+	// out, the engine's records wait so they never land inside it
+	static uint32_t s_Batch[kTxBytes / 4];
 	unsigned nBatch = 0;
 	uint32_t w;
-	while (nBatch < 64 && s_FromComputer.pop (&w))
+	while (nBatch < kTxBytes / 4 && s_FromComputer.pop (&w))
 	{
 		s_Batch[nBatch++] = w;
 		unsigned cin = w & 0x0F;
@@ -93,8 +116,19 @@ void Send (void)
 	int n = usbmidi_pack_sysex (pRec, nLen, s_Packets);
 	if (n == 0) n = usbmidi_pack_piece (pRec, nLen, s_Packets);
 	if (n == 0) return;				// (the engine sends whole SysEx, or pieces of one)
-	if (p->SendEventPacketsAsync (s_Packets, (unsigned) n)) s_Stats.nSent++;
-	else s_Stats.nSendFail++;
+	s_nRec = (unsigned) n;
+	s_nRecOff = 0;
+	unsigned k = s_nRec < kTxBytes ? s_nRec : kTxBytes;
+	if (p->SendEventPacketsAsync (s_Packets, k))
+	{
+		s_nRecOff = k;
+		if (s_nRecOff == s_nRec) s_Stats.nSent++;
+	}
+	else
+	{
+		s_Stats.nSendFail++;
+		s_nRec = s_nRecOff = 0;			// lost whole (as before)
+	}
 }
 
 void ToBox (const uint8_t *pData, int nLength)
