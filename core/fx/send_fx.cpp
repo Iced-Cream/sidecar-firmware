@@ -10,6 +10,7 @@ namespace core {
 namespace fx {
 
 Control control;
+Control control1;   // slot 1's (send_fx.h control_of)
 volatile bool card_dirty = false;
 UserFx user[kUserSlots];
 volatile uint16_t kit_tag[kSlots];
@@ -64,11 +65,14 @@ CORE_COLD int type_from_name(const char* s) {
   return v >= 0 && v <= 127 ? v : -1;
 }
 
-CORE_COLD State state(int slot) {
-  int id = control.knob[slot][0];
+CORE_COLD State state(int slot) { return state(control, slot); }
+
+CORE_COLD State state(const Control& c, int slot) {
+  int id = c.knob[slot][0];
   if (id == kOff) return kStEmpty;
-  if (id == kStutter && stutter_slot(control) != slot) return kStMissing;   // FX 1 has it (or this build lacks it)
+  if (id == kStutter && stutter_slot(c) != slot) return kStMissing;   // FX 1 has it (or this build lacks it)
   if (builtin(id)) return kStReady;
+  if (!user_box(c)) return kStMissing;   // box 1: no user effects yet (user_box)
   // a user id: the slot map must hold an effect whose tag matches the kit's (an untagged kit takes the slot's), and
   // (Plugin API 3) its plugin must be loaded: READY then, else MISSING (the name says which effect the slot holds)
   int u = id - kFirstUser;
@@ -76,26 +80,32 @@ CORE_COLD State state(int slot) {
   return kStMissing;
 }
 
-bool any_on() {
+bool any_on() { return any_on(control); }
+
+bool any_on(const Control& c) {
+  const bool u = user_box(c);
   for (int s = 0; s < kSlots; ++s)
-    if (builtin(control.knob[s][0]) || user_plays(control.knob[s][0])) return true;
+    if (builtin(c.knob[s][0]) || (u && user_plays(c.knob[s][0]))) return true;
   return false;
 }
 
-bool all_sound_off() {
-  static uint32_t last = 0;
-  static bool seen = false;
+bool all_sound_off() { return all_sound_off(control); }
+
+bool all_sound_off(Control& c) {
+  static uint32_t last[2] = {0, 0};
+  static bool seen[2] = {false, false};
+  const int b = box_of(c);
   uint32_t now = now_ms();
-  bool fresh = !seen || now - last >= 100;
-  seen = true, last = now;   // a burst keeps itself going
-  if (fresh) control.kill = (uint8_t)(control.kill + 1);
+  bool fresh = !seen[b] || now - last[b] >= 100;
+  seen[b] = true, last[b] = now;   // a burst keeps itself going
+  if (fresh) c.kill = (uint8_t)(c.kill + 1);
   return fresh;
 }
 
 uint8_t (*knob_filter)(int slot, int knob, uint8_t v) = nullptr;
 uint8_t (*send_filter)(int track, int slot, uint8_t v) = nullptr;
 void (*clock_listener)(uint8_t status, uint16_t spp) = nullptr;
-void (*bus_insert)(int slot, float (*y)[2], int n) = nullptr;
+void (*bus_insert)(const Control& c, int slot, float (*y)[2], int n) = nullptr;
 bool (*user_ready)(int u) = nullptr;
 volatile bool list_dirty = false;
 bool (*user_loaded)(int u) = nullptr;
@@ -112,20 +122,23 @@ CORE_COLD void set_send_base(int t, int s, uint8_t v) {
   if (t >= 0 && t < kTracks && s >= 0 && s < kSlots) control.send[t][s] = send(t, s, v);
 }
 
-CORE_COLD void clock_in(uint8_t status, uint16_t spp) {   // per MIDI realtime byte, control side: cold
-  static int32_t pos = -1;   // the latest tick's song position (24 ppqn), -1 before the first after Start
-  static uint32_t ticks = 0;
-  static bool run = false;
+CORE_COLD void clock_in(uint8_t status, uint16_t spp) { clock_in(control, status, spp); }
+
+CORE_COLD void clock_in(Control& c, uint8_t status, uint16_t spp) {   // per MIDI realtime byte, control side: cold
+  static int32_t pos[2] = {-1, -1};   // the latest tick's song position (24 ppqn), -1 before the first after Start
+  static uint32_t ticks[2] = {0, 0};
+  static bool run[2] = {false, false};
+  const int b = box_of(c);
   switch (status) {
-    case 0xF8: ++ticks; if (run) ++pos; break;
-    case 0xFA: pos = -1, run = true; break;
-    case 0xFB: run = true; break;
-    case 0xFC: run = false; break;
-    case 0xF2: pos = (int32_t)spp * 6 - 1; break;
+    case 0xF8: ++ticks[b]; if (run[b]) ++pos[b]; break;
+    case 0xFA: pos[b] = -1, run[b] = true; break;
+    case 0xFB: run[b] = true; break;
+    case 0xFC: run[b] = false; break;
+    case 0xF2: pos[b] = (int32_t)spp * 6 - 1; break;
     default: return;
   }
-  control.clock = ClockWord::pack(pos, ticks, run);
-  if (clock_listener) clock_listener(status, spp);   // the Sidecar's LFOs' sync (core/lfo.h)
+  c.clock = ClockWord::pack(pos[b], ticks[b], run[b]);
+  if (b == 0 && clock_listener) clock_listener(status, spp);   // the Sidecar's LFOs' sync (core/lfo.h): the Rytm's clock, as before
 }
 
 CORE_COLD uint16_t fx_tag(const char* name) {

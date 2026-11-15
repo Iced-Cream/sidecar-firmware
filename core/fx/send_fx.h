@@ -115,20 +115,32 @@ struct Control {
   volatile uint16_t stutter_lag;            // frames the stems trail the MIDI (console stutterlag=; 0 by default)
 };
 extern Control control;
+// Two links (phase 3(d), decided 2026-11-14: the two boxes work independently and identically): each box its own send
+// FX settings. `control` is slot 0's (the Rytm's: its kit's 0x20s, the console, the LFOs and mods), control1 slot 1's (a
+// box beside or instead of the Rytm; 3(c) loads its files into it). The audio side reads the settings of the box whose
+// instance it runs (pi/engine/sendfx_pi.h, master.h). box_of: which box a Control is (any other Control, such as the
+// master's own SendFx knobs, is box 0's: user effects allowed as before).
+extern Control control1;
+inline Control& control_of(int box) { return box ? control1 : control; }
+inline int box_of(const Control& c) { return &c == &control1 ? 1 : 0; }
 
 bool builtin(int id);                        // an id this build plays (1, 2; 6, 8 with RYTM_SENDFX_LARGE)
 // The name for id (built in, reserved, or the registry's user effect), at most 10 chars; "OFF" for 0.
 const char* type_name(int id, int slot = -1);   // slot: a user id's name as the kit's FX `slot` sees it
 int type_from_name(const char* s);           // a built-in name (any case) or a number 0..127; -1 if neither
 State state(int slot);                       // FX slot's TYPE: kStEmpty (off), kStReady (playable), kStMissing
+State state(const Control& c, int slot);     // ... of box c's settings (box 1: a user TYPE is MISSING, see user_box)
 bool any_on();                               // an FX slot has a TYPE that plays
+bool any_on(const Control& c);               // ... in box c's settings
 // MIDI CC 120 (All Sound Off) from the Rytm (a double STOP sends it on channels 1..13): both FX fade out in ~5 ms,
 // are cleared and come back with TYPE and params untouched. Control side; a burst within 100 ms is one request.
 // True if this call made the request (the board logs it).
 bool all_sound_off();
+bool all_sound_off(Control& c);   // box c's send FX (each box its own 100 ms window)
 // MIDI realtime / SPP from the Rytm (control side): F8 tick, FA start, FB continue, FC stop, F2 song position (spp in
 // 16ths) -> control.clock, for STUTTER's grid.
 void clock_in(uint8_t status, uint16_t spp = 0);
+void clock_in(Control& c, uint8_t status, uint16_t spp);   // box c's clock (its own position): its STUTTER's grid
 // The LFOs' (core/lfo.cpp sets them; null without): each knob take_sendfx takes passes knob_filter (the value to play,
 // an LFO's modulation on top), each clock_in byte goes on to clock_listener.
 extern uint8_t (*knob_filter)(int slot, int knob, uint8_t v);
@@ -148,8 +160,9 @@ inline void edited(uint16_t tid, float v = -1) {
   if (manual_edit) manual_edit(tid, v);
 }
 // The FX buses' insert chains (core/fx/insert.h, CORE_POLY builds; null without): FX slot s's return y[n] (stereo, before
-// its TYPE fade and the limits) through bus s's chain, in place. The send FX's core.
-extern void (*bus_insert)(int slot, float (*y)[2], int n);
+// its TYPE fade and the limits) through bus s's chain, in place. The send FX's core. c: the settings the SendFx plays
+// (box_of(c): whose buses).
+extern void (*bus_insert)(const Control& c, int slot, float (*y)[2], int n);
 // Plugin API 3's user effects (core/user/um.cpp): UFX u (0..3) loaded and playing; its render in send slot `slot` over x
 // (mono), its wet stereo return added into y; k the slot's knobs (k[2..5] = the effect's P1..P4). Null: none (MISSING).
 extern bool (*user_ready)(int u);
@@ -211,6 +224,10 @@ inline bool user_plays_at(int t, int slot) {
   int u = t - kFirstUser;
   return user_plays(t) && (!kit_tag[slot] || kit_tag[slot] == __atomic_load_n(&user[u].tag, __ATOMIC_ACQUIRE));
 }
+// The user effects (one loaded set, its state per FX slot) are box 0's for now: box 1 gets its own 4 (decided
+// 2026-11-14, a later step); until then a user TYPE in box 1's settings plays silence and reads MISSING, never box 0's
+// effect or state.
+inline bool user_box(const Control& c) { return box_of(c) == 0; }
 uint16_t fx_tag(const char* name);          // FNV-1a 32 of the name, folded to 14 bits, 0 avoided
 
 // ---- the DSP
@@ -616,6 +633,7 @@ class SendFx {
     for (int i = 0; i < n; ++i) gs_[i] = 0.0f;
 #endif
     Killed(c);
+    const bool ufx = user_box(c);   // user effects: box 0's only (user_box)
     int sslot = stutter_slot(c);
     // the send mixes, both slots in one pass when both (likely) run: the stems loaded once, two independent chains
     float xs[kSlots][kMaxFrames];
@@ -624,7 +642,7 @@ class SendFx {
       int ss[kSlots], ns = 0;
       for (int s = 0; s < kSlots; ++s)
         if ((plays(cur_[s]) && cur_[s] != kStutter) || (plays(c.knob[s][0]) && c.knob[s][0] != kStutter) ||
-            user_plays(cur_[s]) || user_plays_at(c.knob[s][0], s))
+            user_plays(cur_[s]) || (ufx && user_plays_at(c.knob[s][0], s)))
           ss[ns++] = s;
       if (ns) Mix(stems, n, tg, ss, ns, xs);
       for (int k2 = 0; k2 < ns; ++k2) have[ss[k2]] = true;
@@ -635,7 +653,7 @@ class SendFx {
     for (int s = 0; s < kSlots; ++s) {
       uint8_t want = c.knob[s][0];
       if (want == kStutter && s != sslot) want = kOff;   // the other slot has it: this one silent (MISSING)
-      if (want >= kFirstUser && !user_plays_at(want, s)) want = kOff;   // a user effect not loaded, or the kit's another: off, faded
+      if (want >= kFirstUser && !(ufx && user_plays_at(want, s))) want = kOff;   // a user effect not loaded, or the kit's another: off, faded
       if (cur_[s] >= kFirstUser && !user_plays(cur_[s])) cur_[s] = kOff, fade_[s] = 0;   // (gone: it fades in again when back)
       bool same;
       int t = Step(s, want, n, c, &same);
@@ -666,7 +684,7 @@ class SendFx {
       for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = 0.0f;
       any = true;
       Run(s, t, Gate(s, same, xs[s], xf, n), n, y, c);
-      if (bus_insert) bus_insert(s, y, n);   // the bus's insert chain (core/fx/insert.h)
+      if (bus_insert) bus_insert(c, s, y, n);   // the bus's insert chain (core/fx/insert.h), in c's box
       upre |= pb[s][0] < 1.0f || pb[s][n - 1] < 1.0f;
       upost |= pb[s][0] > 0.0f || pb[s][n - 1] > 0.0f;
       const float q0 = pb[s][0], q1 = pb[s][n - 1];
