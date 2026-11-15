@@ -836,6 +836,15 @@ void CObUsb::Reattach (void)
 	if (m_bStreaming) m_bAttachDue = TRUE;
 }
 
+static char s_PipeInfo[2][192];
+
+const char *CObUsb::PipeInfo (unsigned nSlot) { return nSlot < 2 ? s_PipeInfo[nSlot] : ""; }
+
+static u8 s_BoxCfg[2][512];
+static unsigned s_nBoxCfg[2];
+
+const u8 *CObUsb::BoxConfig (unsigned nSlot, unsigned *pLen) { *pLen = nSlot < 2 ? s_nBoxCfg[nSlot] : 0; return nSlot < 2 ? s_BoxCfg[nSlot] : 0; }
+
 // Configure (task level): the box's descriptors to the gadget, its string descriptors read once, its pipes opened
 void CObUsb::MirrorAttach (void)
 {
@@ -846,6 +855,11 @@ void CObUsb::MirrorAttach (void)
 	if (pDev == 0 || pCfg == 0) return;
 	const u8 *pC = (const u8 *) pCfg;
 	unsigned nCfg = pCfg->wTotalLength;
+	if (m_nSlot < 2)
+	{
+		s_nBoxCfg[m_nSlot] = nCfg < sizeof s_BoxCfg[0] ? nCfg : sizeof s_BoxCfg[0];
+		memcpy (s_BoxCfg[m_nSlot], pC, s_nBoxCfg[m_nSlot]);
+	}
 	if (!pGadget->MirrorSetDescriptors ((const u8 *) pDev, pC, nCfg)) return;
 	const boolean bPipesOpen = m_bMirror;		// read before (Reattach: a new target): its pipes run already
 	m_bMirror = TRUE;
@@ -874,6 +888,7 @@ void CObUsb::MirrorAttach (void)
 	// that is not 0). Never on an interface of the audio stream: the Pi's own stream stays at the alternate the engine
 	// opened (ob::kAlt), so a pipe there is taken only at that alternate.
 	mirror::Layout l;
+	if (!bPipesOpen && m_nSlot < 2) s_PipeInfo[m_nSlot][0] = 0;
 	if (bPipesOpen) l.n = 0;
 	else if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
 	{
@@ -907,9 +922,43 @@ void CObUsb::MirrorAttach (void)
 			CLogger::Get ()->Write (From, LogWarning, "usb=mirror: SET_INTERFACE %d alt %d for pipe 0x%02x failed", iface, alt, e.addr);
 			continue;
 		}
+		if (m_nSlot < 2)			// TR2c: the pipes open beside the relay's link (its throughput fell to ~1 block/ms)
+		{
+			char *s = s_PipeInfo[m_nSlot];
+			unsigned len = strlen (s);
+			if (len + 40 < sizeof s_PipeInfo[0])
+			{
+				// "0xAA tT mps 0xMMMM iv I" without CString (the host-test shim has none)
+				static const char H[] = "0123456789abcdef";
+				char *o = s + len;
+				const unsigned nMps = pDesc->wMaxPacketSize, nIv = pDesc->bInterval;
+				if (len) *o++ = ',', *o++ = ' ';
+				*o++ = '0', *o++ = 'x', *o++ = H[pDesc->bEndpointAddress >> 4], *o++ = H[pDesc->bEndpointAddress & 15];
+				*o++ = ' ', *o++ = 't', *o++ = (char) ('0' + (pDesc->bmAttributes & 3));
+				*o++ = ' ', *o++ = 'm', *o++ = 'p', *o++ = 's', *o++ = ' ', *o++ = '0', *o++ = 'x';
+				for (int sh = 12; sh >= 0; sh -= 4) *o++ = H[(nMps >> sh) & 15];
+				*o++ = ' ', *o++ = 'i', *o++ = 'v', *o++ = ' ';
+				if (nIv >= 10) *o++ = (char) ('0' + nIv / 10 % 10);
+				*o++ = (char) ('0' + nIv % 10);
+				*o = 0;
+			}
+		}
 		TPipe &p = m_Pipe[m_nPipes];
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
+		// mirrorpipeiv=N (a test, TR2e): an interrupt pipe polled at bInterval N at least (high speed: 2^(N-1) microframes).
+		// The A4's async IN 0x82 says 1 (every 125 us); with it the relay's link beside it ran at ~1 block/ms (T330)
+		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", 0);
+		if (nIv > 16) nIv = 16;
+		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
+		{
+			TUSBEndpointDescriptor &d = s_Desc[m_nSlot][m_nPipes];
+			memcpy (&d, pDesc, sizeof d);
+			d.bInterval = (u8) nIv;
+			pDesc = &d;
+			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x polled at bInterval %u (mirrorpipeiv)", e.addr, nIv);
+		}
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
 		if (s_PipeBuf[m_nSlot][m_nPipes] == 0) s_PipeBuf[m_nSlot][m_nPipes] = AllocDmaBuf ();
 		p.pBuf = s_PipeBuf[m_nSlot][m_nPipes];
@@ -924,13 +973,16 @@ void CObUsb::MirrorAttach (void)
 		}
 		m_nPipes++;
 	}
-	if (!bPipesOpen)
+	// mirrorpipepoll=0 (TR2d, a test): the pipes opened, but no IN request kept on them, so the box's interrupt IN pipe
+	// is not polled every microframe beside the relay's link (with it the link ran at ~1 block/ms, T329/T330)
+	if (!bPipesOpen && CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipepoll", 1) != 0)
 	{
 		EnterCritical (IRQ_LEVEL);
 		for (unsigned i = 0; i < m_nPipes; i++) if (m_Pipe[i].uchAddr & 0x80) SubmitPipeIn (i);
 		LeaveCritical ();
 	}
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes", nGot, (unsigned) nLang, m_nPipes);
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes (%s)", nGot, (unsigned) nLang, m_nPipes,
+				m_nSlot < 2 ? s_PipeInfo[m_nSlot] : "");
 	pGadget->MirrorBoxUp (TRUE);
 }
 

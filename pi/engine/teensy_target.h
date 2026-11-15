@@ -156,6 +156,11 @@ private:
 	u32 m_nTestSent, m_nTestOutNext, m_nTestOutLost, m_nTestOutDup, m_nTestOutBad, m_nTestOut, m_nTestEcho, m_nTestEchoDrop;
 	boolean m_bTestOutSeen;
 	boolean m_bTestFeeding;
+	boolean m_bBoxPipes;			// relayboxpipes=1 (relaytest): the real box's pipes opened as without relaytest (TR2c)
+	unsigned m_nInfoLines;
+	volatile u8 m_uchTestParked;		// relayboxpipes: a real box pipe IN packet dropped; its next request from MirrorPoll
+	u64 m_nTestParkedAt;			// LogStats: the endpoint lines repeated for the first ~2 minutes (the log ring is ~1 min)
+	boolean SendPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength);	// MirrorPipeIn's work (relaytest's echo too)
 	boolean m_bFeedIrq;			// relayfeed=irq (relaytest): the test blocks go out from the real box's IN
 					// completions (xHCI IRQ, its pace), as a box's own blocks do, not from TestPoll's loop
 	boolean m_bStarted, m_bDebug;
