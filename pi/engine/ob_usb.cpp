@@ -57,7 +57,6 @@
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
-#include <circle/string.h>
 #include <circle/new.h>
 #include <assert.h>
 
@@ -889,8 +888,8 @@ void CObUsb::MirrorAttach (void)
 	// that is not 0). Never on an interface of the audio stream: the Pi's own stream stays at the alternate the engine
 	// opened (ob::kAlt), so a pipe there is taken only at that alternate.
 	mirror::Layout l;
+	if (!bPipesOpen && m_nSlot < 2) s_PipeInfo[m_nSlot][0] = 0;
 	if (bPipesOpen) l.n = 0;
-	else if (m_nSlot < 2) s_PipeInfo[m_nSlot][0] = 0;
 	else if (!mirror::parse (pC, nCfg, ob::kInEp, ob::kOutEp, &l))
 	{
 		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: the box's configuration does not parse: no pipes");
@@ -929,10 +928,19 @@ void CObUsb::MirrorAttach (void)
 			unsigned len = strlen (s);
 			if (len + 40 < sizeof s_PipeInfo[0])
 			{
-				CString t;
-				t.Format ("%s0x%02x t%u mps 0x%04x iv %u", len ? ", " : "", (unsigned) e.addr, (unsigned) (pDesc->bmAttributes & 3),
-					  (unsigned) pDesc->wMaxPacketSize, (unsigned) pDesc->bInterval);
-				strcpy (s + len, (const char *) t);
+				// "0xAA tT mps 0xMMMM iv I" without CString (the host-test shim has none)
+				static const char H[] = "0123456789abcdef";
+				char *o = s + len;
+				const unsigned nMps = pDesc->wMaxPacketSize, nIv = pDesc->bInterval;
+				if (len) *o++ = ',', *o++ = ' ';
+				*o++ = '0', *o++ = 'x', *o++ = H[pDesc->bEndpointAddress >> 4], *o++ = H[pDesc->bEndpointAddress & 15];
+				*o++ = ' ', *o++ = 't', *o++ = (char) ('0' + (pDesc->bmAttributes & 3));
+				*o++ = ' ', *o++ = 'm', *o++ = 'p', *o++ = 's', *o++ = ' ', *o++ = '0', *o++ = 'x';
+				for (int sh = 12; sh >= 0; sh -= 4) *o++ = H[(nMps >> sh) & 15];
+				*o++ = ' ', *o++ = 'i', *o++ = 'v', *o++ = ' ';
+				if (nIv >= 10) *o++ = (char) ('0' + nIv / 10 % 10);
+				*o++ = (char) ('0' + nIv % 10);
+				*o = 0;
 			}
 		}
 		TPipe &p = m_Pipe[m_nPipes];
