@@ -50,6 +50,7 @@ static volatile u32 s_nDone[3];
 // The pass s_nGen announces (published before it): the slots whose voices render in it (bit s: slot s), and kBasePass
 // for the base box's pass (the send FX and the master chain render after it). The side stage's passes carry slot 1 alone.
 static const u32 kBasePass = 0x80;
+static const u32 kBaseBoxShift = 8;	// a base pass: the base box's slot in bits 8.. (its send FX and master chain run after it)
 static volatile u32 s_nPass = 1 | kBasePass;
 static u64 s_Mach[3][bridge::kMachines];
 static_assert (sizeof CEngineCores::TStats::nMach / sizeof (u64) == bridge::kMachines, "nMach is bridge::kMachines");
@@ -387,8 +388,12 @@ void CEngineCores::Worker (unsigned nCore)
 		s_nSeen[nCore] = nGen;
 		__atomic_store_n (&s_nDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
-		if (nCore == 2 && (nPass & kBasePass)) sendfx_pi::Render ();	// the send FX, after the block (sendfx_pi.h): the base box's
-		if (nCore == 2 && (nPass & kBasePass)) masterfx_pi::Render ();	// the master chain, after the send FX (masterfx_pi.h)
+		if (nCore == 2)				// the send FX and the master chain of the box this pass rendered (phase 3(d)): the base
+		{					// box's after a base pass, the side stage's after its own (sendfx_pi.h, masterfx_pi.h)
+			const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+			sendfx_pi::Render (nFxBox);	// the send FX, after the block
+			masterfx_pi::Render (nFxBox);	// the master chain, after the send FX
+		}
 	}
 }
 
@@ -403,7 +408,7 @@ void CEngineCores::RenderBlock (int nSide)
 		const int nSideNow = core::device::side_slot ();
 		for (int sl = 0; sl < (int) (bridge::kVoices / bridge::kBoxVoices); sl++)
 			if (sl != nSideNow && bridge::slot_renders (sl)) nPass |= 1u << sl;
-		nPass |= kBasePass;
+		nPass |= kBasePass | (u32) (bridge::out_base () / bridge::kBoxVoices) << kBaseBoxShift;
 	}
 	else nPass = 1u << nSide;
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
