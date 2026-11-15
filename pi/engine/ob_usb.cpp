@@ -946,18 +946,21 @@ void CObUsb::MirrorAttach (void)
 		TPipe &p = m_Pipe[m_nPipes];
 		p.uchAddr = e.addr;
 		p.nMps = (pDesc->wMaxPacketSize & 0x7FF) > 512 ? 512 : pDesc->wMaxPacketSize & 0x7FF;
-		// mirrorpipeiv=N (a test, TR2e): an interrupt pipe polled at bInterval N at least (high speed: 2^(N-1) microframes).
-		// The A4's async IN 0x82 says 1 (every 125 us); with it the relay's link beside it ran at ~1 block/ms (T330)
+		// An interrupt pipe of the box the Teensy relay shows is polled every 1 ms at most (bInterval 4 at high speed):
+		// the A4's async IN 0x82 asks for every 125 us, and polled that often beside the relay's link the Pi's host
+		// controller sent the link only ~1 block/ms (T330); every 1 ms the link carried the full rate and the Overbridge
+		// Engine's latency check passed (T335). The USB-C gadget's box keeps its own interval. mirrorpipeiv=N sets it
+		// (0: the box's own)
 		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
-		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", 0);
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != GadgetSlot () ? 4 : 0);
 		if (nIv > 16) nIv = 16;
 		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
 		{
 			TUSBEndpointDescriptor &d = s_Desc[m_nSlot][m_nPipes];
 			memcpy (&d, pDesc, sizeof d);
 			d.bInterval = (u8) nIv;
+			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x polled at bInterval %u (the box asks %u)", e.addr, nIv, (unsigned) pDesc->bInterval);
 			pDesc = &d;
-			CLogger::Get ()->Write (From, LogNotice, "usb=mirror: pipe 0x%02x polled at bInterval %u (mirrorpipeiv)", e.addr, nIv);
 		}
 		p.pEP = new CUSBEndpoint (GetDevice (), pDesc);
 		if (s_PipeBuf[m_nSlot][m_nPipes] == 0) s_PipeBuf[m_nSlot][m_nPipes] = AllocDmaBuf ();
