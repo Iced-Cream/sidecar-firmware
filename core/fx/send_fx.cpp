@@ -11,7 +11,13 @@ namespace fx {
 
 Control control;
 Control control1;   // slot 1's (send_fx.h control_of)
-volatile bool card_dirty = false;
+volatile uint8_t card_dirty = 0;
+int (*slot_fn)() = nullptr;
+CORE_COLD int slot_in_hand() {
+  int sl = slot_fn ? slot_fn() : 0;
+  return sl > 0 && sl < kVoiceSlots ? sl : 0;
+}
+CORE_COLD Control& cur() { return control_of(slot_in_hand()); }
 UserFx user[kUserSlots];
 volatile uint16_t kit_tag[kSlots];
 
@@ -116,10 +122,10 @@ void (*user_run)(int u, int slot, const float* x, int n, float (*y)[2], const ui
 static inline uint8_t knob(int s, int k, uint8_t v) { return knob_filter ? knob_filter(s, k, v) : v; }
 static inline uint8_t send(int t, int s, uint8_t v) { return send_filter ? send_filter(t, s, v) : v; }
 CORE_COLD void set_knob_base(int s, int k, uint8_t v) {
-  if (s >= 0 && s < kSlots && k >= 0 && k < kKnobs) control.knob[s][k] = knob(s, k, v);
+  if (s >= 0 && s < kSlots && k >= 0 && k < kKnobs) cur().knob[s][k] = knob(s, k, v);
 }
 CORE_COLD void set_send_base(int t, int s, uint8_t v) {
-  if (t >= 0 && t < kTracks && s >= 0 && s < kSlots) control.send[t][s] = send(t, s, v);
+  if (t >= 0 && t < kTracks && s >= 0 && s < kSlots) cur().send[t][s] = send(t, s, v);
 }
 
 CORE_COLD void clock_in(uint8_t status, uint16_t spp) { clock_in(control, status, spp); }
@@ -297,28 +303,30 @@ static CORE_COLD const char* slot_arg(const char* p, int* slot) {
 }
 
 static CORE_COLD void show(char* r, int max) {
+  Control& C = cur();
   static const char* const kSt[4] = {"", "", "", " MISSING"};
   int at = put(r, max, 0, "sendfx:");
   for (int s = 0; s < kSlots; ++s) {
-    int id = control.knob[s][0];
+    int id = C.knob[s][0];
     at = put(r, max, at, s ? "; fx2 " : " fx1 ");
     at = put(r, max, at, type_name(id, s));
     at = put(r, max, at, " (");
     at = put_u(r, max, at, (unsigned)id);
     at = put(r, max, at, ")");
-    at = put(r, max, at, kSt[state(s) & 3]);
+    at = put(r, max, at, kSt[state(C, s) & 3]);
     at = put(r, max, at, " p");
-    for (int j = 1; j < kKnobs; ++j) at = put(r, max, at, " "), at = put_u(r, max, at, control.knob[s][j]);
+    for (int j = 1; j < kKnobs; ++j) at = put(r, max, at, " "), at = put_u(r, max, at, C.knob[s][j]);
     at = put(r, max, at, " send");
-    for (int t = 0; t < kTracks; ++t) at = put(r, max, at, " "), at = put_u(r, max, at, control.send[t][s]);
+    for (int t = 0; t < kTracks; ++t) at = put(r, max, at, " "), at = put_u(r, max, at, C.send[t][s]);
   }
-  at = put(r, max, at, control.route == kRouteMain ? "; out forced main (0/1)" : control.route == kRouteFx ? "; out forced fx (2/3)" : "; out per slot (P1: 0..63 fx 2/3, 64..127 main 0/1)");
-  if (control.stutter_lag) at = put(r, max, at, "; stutter lag "), at = put_u(r, max, at, control.stutter_lag);
+  at = put(r, max, at, C.route == kRouteMain ? "; out forced main (0/1)" : C.route == kRouteFx ? "; out forced fx (2/3)" : "; out per slot (P1: 0..63 fx 2/3, 64..127 main 0/1)");
+  if (C.stutter_lag) at = put(r, max, at, "; stutter lag "), at = put_u(r, max, at, C.stutter_lag);
   at = put(r, max, at, "; 0x20 msgs ");
-  put_u(r, max, at, control.messages);
+  put_u(r, max, at, C.messages);
 }
 
 CORE_COLD bool command(const char* p, char* r, int max) {
+  Control& C = cur();   // the slot in hand's (3(c) step 8)
   int s;
   const char* a;
   if (strcmp(p, "sendfx") == 0) {
@@ -326,7 +334,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
     return true;
   }
   if (strcmp(p, "sendfx=off") == 0) {
-    control.knob[0][0] = control.knob[1][0] = kOff;
+    C.knob[0][0] = C.knob[1][0] = kOff;
     show(r, max);
     return true;
   }
@@ -336,19 +344,19 @@ CORE_COLD bool command(const char* p, char* r, int max) {
       put(r, max, 0, "sendfx=K:TYPE (K 1|2; off chorus comb halo ..., or an id 0..127), sendfx=off");
       return true;
     }
-    control.knob[s][0] = (uint8_t)t;
+    C.knob[s][0] = (uint8_t)t;
     show(r, max);
     return true;
   }
   if (strncmp(p, "sendfxout=", 10) == 0) {
-    if (strcmp(p + 10, "fx") == 0) control.route = kRouteFx;
-    else if (strcmp(p + 10, "main") == 0) control.route = kRouteMain;
-    else if (strcmp(p + 10, "slot") == 0) control.route = kRouteSlot;
+    if (strcmp(p + 10, "fx") == 0) C.route = kRouteFx;
+    else if (strcmp(p + 10, "main") == 0) C.route = kRouteMain;
+    else if (strcmp(p + 10, "slot") == 0) C.route = kRouteSlot;
     else {
       put(r, max, 0, "sendfxout=slot|fx|main (slot: each FX's P1; fx, main: force all)");
       return true;
     }
-    card_dirty = true;
+    card_dirty = (uint8_t)(card_dirty | 1u << slot_in_hand());
     show(r, max);
     return true;
   }
@@ -361,7 +369,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
       return true;
     }
     for (int i = 0; i < kTracks; ++i)
-      if (all || i == t) control.send[i][s] = send(i, s, (uint8_t)v), edited(mod::tid(mod::kSnd, i, s), (float)v);
+      if (all || i == t) C.send[i][s] = send(i, s, (uint8_t)v), edited(mod::tid(mod::kSnd, i, s), (float)v);
     show(r, max);
     return true;
   }
@@ -371,7 +379,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
       put(r, max, 0, "stutterlag=FRAMES (0..4800, 48 kHz)");
       return true;
     }
-    control.stutter_lag = (uint16_t)v;
+    C.stutter_lag = (uint16_t)v;
     show(r, max);
     return true;
   }

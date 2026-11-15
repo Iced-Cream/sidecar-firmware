@@ -151,11 +151,16 @@ CORE_COLD bool idle_save() {
   if (T_("post", fmt::post_step())) return true;
   for (int k = 1; k < kVoiceSlots; ++k)   // a box's project from its own folder, once it has said hello
     if (T_("attach", project_attach_step(k))) return true;
-  if (fx::card_dirty && fmt::post_begin()) {   // (the slot or the queue busy: card_save would not post - not a step)
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's send FX route, fxin, keys, learn and PREVIEW LEVEL: its own folder's
+    if (!(fx::card_dirty >> k & 1) || !fmt::post_begin()) continue;   // (the slot or the queue busy: card_save would not post)
+    device::Scope in(device::g_links[k]);
     TV_("fxsave", fx::card_save());
     return true;
   }
-  if (T_("fxin", fxin::save())) return true;
+  for (int k = 0; k < kVoiceSlots; ++k) {
+    device::Scope in(device::g_links[k]);
+    if (T_("fxin", fxin::save())) return true;
+  }
   bool leaving = device::leaving() || g_flush;   // a restart or a power-off is coming: what waits for its edits to settle goes now
   if (leaving) lfo::save_due();
   for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's LFOs, into its own folder (3(c))
@@ -176,13 +181,16 @@ CORE_COLD bool idle_save() {
     if (T_("xy", xypad::save())) return true;
   }
 #endif
+  for (int k = 0; k < kVoiceSlots; ++k) {
+    device::Scope in(device::g_links[k]);
 #if CORE_POLY
-  if (T_("keys", keys::save())) return true;
-  if (T_("learn", learn::save())) return true;
+    if (T_("keys", keys::save())) return true;
+    if (T_("learn", learn::save())) return true;
 #endif
 #if CORE_MSAMP
-  if (T_("preview", preview::save())) return true;   // PREVIEW LEVEL (core/samp/preview.h)
+    if (T_("preview", preview::save())) return true;   // PREVIEW LEVEL (core/samp/preview.h)
 #endif
+  }
 #if CORE_POLY
   if (leaving) seq::save_due();
   if (T_("seq", seq::idle())) return true;   // the sequencer's pattern files: load, prefetch, save

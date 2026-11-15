@@ -51,10 +51,9 @@ const Labels kLabels[kAllTypes] = {
 #undef FXL
 const char* const kChainNames[kChains] = {"V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "B1", "B2", "B3", "M1", "M2"};
 
-// 3(c) (option A): each voice slot's settings as set - its voice chains' knobs, locks and offsets, their post EQs and
-// sends, its dirty mark and kit - playing through control_of(slot). The buses' and the master's chains (and B3's
-// route) are slot 0's only (3(b): one send FX, one master): a chain c >= kBus0 is always set 0 / `control`, whatever
-// slot is in hand, and a slot's own file never holds them.
+// 3(c) (option A): each voice slot's settings as set - its chains' knobs, locks and offsets, their post EQs and sends,
+// its dirty mark and kit - playing through control_of(slot). Since 3(d) every chain is the slot's own: its voice chains,
+// its buses, its master chains and B3's route (each box its send FX and master), set and saved in its own file.
 struct Set {
   uint8_t knob[kChains][kSlots][kParams];
   int16_t lock[kVoices][kSlots][kParams];   // -1 none
@@ -82,7 +81,7 @@ int hand() {
   int sl = g_force >= 0 ? g_force : slot_fn ? slot_fn() : 0;
   return sl > 0 && sl < kVoiceSlots ? sl : 0;
 }
-int sl_of(int c) { return c < kVoices ? hand() : 0; }   // chain c's settings: a voice chain the slot in hand's
+int sl_of(int) { return hand(); }   // chain c's settings: the slot in hand's (every chain, 3(d))
 Set& S(int c) { return g_set[sl_of(c)]; }
 Control& K(int c) { return control_of(sl_of(c)); }
 const Labels kEqLabels = {"POST EQ", {"HPF", "LPF", "LOW", "HIGH"}, {0, 0, 64, 64}};
@@ -181,9 +180,9 @@ float exp2c(float x) {   // 2^x, |x| < 30 (cold: the names)
   return fast_exp2(x);
 }
 
-// the slot in hand's settings (3(c): another slot's voice chains only; slot 0's buses, master and B3 route with slot 0's)
+// the slot in hand's settings: its chains, sends, B3 route and master (3(d): each slot all of its own)
 void clear_settings() {
-  const int nc = hand() ? kVoices : kChains;
+  const int nc = kChains;
   for (int c = 0; c < nc; ++c)
     for (int s = 0; s < kSlots; ++s) {
       K(c).type[c][s] = kOff;
@@ -194,9 +193,13 @@ void clear_settings() {
   for (int c = 0; c < nc; ++c) S(c).bw_width[c] = 127;   // sfx-basewidth: no WIDTH remembered
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
-  if (hand()) return;
-  control.route3 = 0;
-  master::clear();
+  control_of(hand()).route3 = 0;
+  master::clear();   // (the slot in hand's: master.cpp asks slot_in_hand)
+  if (hand()) {      // 3(c) step 8: another slot's send FX is its file's (SFX lines; slot 0's are the Rytm's kit's 0x20s)
+    fx::Control& f = fx::control_of(hand());
+    for (int s = 0; s < fx::kSlots; ++s)
+      for (int k = 0; k < fx::kKnobs; ++k) f.knob[s][k] = 0;
+  }
 }
 
 // bus 3's soft limit, as the send FX's pairs (send_fx.h kLimitFx / kLimitMain)
@@ -374,8 +377,8 @@ void send_offset(int vi, int b, int off) {
 }
 int send_knob(int vi, int b) { return vi >= 0 && vi < kVoices && b >= 0 && b < kBuses ? S(vi).send_knob[vi][b] : 0; }
 void set_route3(int post) {
-  control.route3 = post ? 1 : 0;
-  mark(0);   // (bus 3: slot 0's)
+  control_of(hand()).route3 = post ? 1 : 0;
+  mark(hand());
 }
 int param(int c, int s, int k) { return valid(c, s, k) ? S(c).knob[c][s][k] : 0; }
 // ---- ins1112, the POST EQ (end of the chain, after both slots)
@@ -413,12 +416,14 @@ void eq_mod_offset(int c, int k, int off) {
   eq_refresh(c, k);
   ++g_stats.lfo_sets;
 }
-bool eq_on(int c) {
-  if (!eq_valid(c, 0)) return false;
+bool eq_on(int c) { return eq_on_in(hand(), c); }
+bool eq_on_in(int slot, int c) {   // (any core: names its slot, never asks the slot in hand)
+  if (!eq_valid(c, 0) || slot < 0 || slot >= kVoiceSlots) return false;
   for (int k = 0; k < kEqParams; ++k)
-    if (S(c).eq[c][k] != kEqFlat(k)) return true;
+    if (g_set[slot].eq[c][k] != kEqFlat(k)) return true;
   return false;
 }
+int slot_in_hand() { return hand(); }
 bool eq_any_on() {
   for (int c = 0; c < kChains; ++c)
     if (eq_on(c)) return true;
@@ -544,7 +549,7 @@ bool bus3_on(int box) {
   const Control& k = control_of(box);
   bool send = false;
   for (int v = 0; v < kVoices; ++v) send |= k.send[v][2] != 0;
-  return (send && (k.type[kBus0 + 2][0] || k.type[kBus0 + 2][1] || (box ? peq_set(k, kBus0 + 2) : eq_on(kBus0 + 2)))) ||   // (slot 0: its knobs, as before; slot 1: as played)
+  return (send && (k.type[kBus0 + 2][0] || k.type[kBus0 + 2][1] || eq_on_in(box, kBus0 + 2))) ||   // (box's own knobs)
          engine(box).Active(kBus0 + 2, k);
 }
 
@@ -657,7 +662,7 @@ bool command(const char* p, char* o, int cap) {
       if (k < 0 || k >= cap - n) break;
       n += k;
     }
-    if (n < cap) sniprintf(o + n, cap - n, CORE_STR(" b3 %s, faults %u"), control.route3 ? "post" : "pre",
+    if (n < cap) sniprintf(o + n, cap - n, CORE_STR(" b3 %s, faults %u"), control_of(hand()).route3 ? "post" : "pre",
                            (unsigned)engine(hand()).Faults());
     return true;
   }
@@ -693,7 +698,7 @@ bool command(const char* p, char* o, int cap) {
   }
   if (same_ci(b, "route") && c == kBus0 + 2) {
     set_route3(same_ci(key, "post"));
-    sniprintf(o, cap, CORE_STR("ins: B3 returns %s"), control.route3 ? "POST (0/1)" : "PRE (2/3)");
+    sniprintf(o, cap, CORE_STR("ins: B3 returns %s"), control_of(hand()).route3 ? "POST (0/1)" : "PRE (2/3)");
     return true;
   }
   if (same_ci(b, "eq")) {   // ins1112: ins=V3:eq:hpf:40, ins=b1:eq:lpf:90, ins=V3:eq:off; 0.5.0 ins=b1:eq:base:40, :width:90
@@ -778,12 +783,12 @@ bool command(const char* p, char* o, int cap) {
   for (int k = 0; k < kParams; ++k) slot_value_text(c, s, k, S(c).knob[c][s][k], v4[k], sizeof v4[k]);
   int n = sniprintf(o, cap, CORE_STR("ins: %s %c %s %s %s %s %s %s %s %s %s"), kChainNames[c], 'A' + s, kLabels[t].name,
                     kLabels[t].label[0], v4[0], kLabels[t].label[1], v4[1], kLabels[t].label[2], v4[2], kLabels[t].label[3], v4[3]);
-  if (master::send_type(t) && n > 0 && n < cap) sniprintf(o + n, cap - n, CORE_STR(" mix %d"), master::control.mix[master::slot_index(c, s)]);
+  if (master::send_type(t) && n > 0 && n < cap) sniprintf(o + n, cap - n, CORE_STR(" mix %d"), master::cur().mix[master::slot_index(c, s)]);
   return true;
 }
 
 int json(char* o, int cap) {
-  int n = sniprintf(o, cap, CORE_STR("\"ins\":{\"kit\":%d,\"route3\":%d,\"c\":["), kit() + 1, control.route3);
+  int n = sniprintf(o, cap, CORE_STR("\"ins\":{\"kit\":%d,\"route3\":%d,\"c\":["), kit() + 1, control_of(hand()).route3);
   for (int c = 0; c < kM0 && n < cap; ++c) {   // (the master's chains: "mfx", below)
     int k = sniprintf(o + n, cap - n, CORE_STR("%s{\"n\":\"%s\",\"s\":["), c ? "," : "", kChainNames[c]);
     if (k < 0 || k >= cap - n) return cap;
@@ -796,7 +801,7 @@ int json(char* o, int cap) {
       if (k < 0 || k >= cap - n) return cap;
       n += k;
       if (master::send_type(t)) {   // 0.5.0: a bus's send TYPE: its MIX
-        k = sniprintf(o + n, cap - n, CORE_STR(",\"mix\":%d"), master::control.mix[master::slot_index(c, s)]);
+        k = sniprintf(o + n, cap - n, CORE_STR(",\"mix\":%d"), master::cur().mix[master::slot_index(c, s)]);
         if (k < 0 || k >= cap - n) return cap;
         n += k;
       }
@@ -846,7 +851,7 @@ void reset() {
   for (int sl = kVoiceSlots - 1; sl >= 0; --sl) {   // every slot's (slot 0's last: its buses and master too)
     g_force = sl;
     clear_settings();
-    const int nc = sl ? kVoices : kChains;
+    const int nc = kChains;
     for (int c = 0; c < nc; ++c)
       for (int s = 0; s < kSlots; ++s)
         for (int k = 0; k < kParams; ++k) {

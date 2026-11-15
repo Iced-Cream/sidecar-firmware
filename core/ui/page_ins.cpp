@@ -102,10 +102,10 @@ CORE_COLD void strip(Canvas& c, int ch) {
     return;
   } else if (ip.busel < 2) {
     int k = ip.busel;
-    bool post = fx::control.route == fx::kRouteMain || (fx::control.route == fx::kRouteSlot && fx::control.knob[k][1] >= 64);
+    bool post = fx::cur().route == fx::kRouteMain || (fx::cur().route == fx::kRouteSlot && fx::cur().knob[k][1] >= 64);
     sniprintf(b, sizeof b, CORE_STR("%s"), post ? "POST" : "PRE");
   } else {
-    sniprintf(b, sizeof b, "%s", ins::control.route3 ? "POST" : "PRE");
+    sniprintf(b, sizeof b, "%s", ins::ctl(ins::kBus0).route3 ? "POST" : "PRE");
   }
   c.put_text(kSlotFree + 2, kRSmall, 127, kStripY + 4, b, kAlignRight);
 }
@@ -174,10 +174,10 @@ CORE_COLD void eq_strip(Canvas& c, int ch) {
   }
   int k = ch - ins::kBus0;
   if (k < 2) {
-    bool post = fx::control.route == fx::kRouteMain || (fx::control.route == fx::kRouteSlot && fx::control.knob[k][1] >= 64);
+    bool post = fx::cur().route == fx::kRouteMain || (fx::cur().route == fx::kRouteSlot && fx::cur().knob[k][1] >= 64);
     sniprintf(b, sizeof b, CORE_STR("FX%d %s"), k + 1, post ? "POST" : "PRE");
   } else {
-    sniprintf(b, sizeof b, CORE_STR("B3 %s"), ins::control.route3 ? "POST" : "PRE");
+    sniprintf(b, sizeof b, CORE_STR("B3 %s"), ins::ctl(ins::kBus0).route3 ? "POST" : "PRE");
   }
   c.put_text(kSlotFree + 3, kRSmall, 127, kStripY + 4, b, kAlignRight);
 }
@@ -242,7 +242,7 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
   sniprintf(val[5], 8, "%.7s", ins::type_name(t));
   if (mix_on_g(ch)) {
     sniprintf(lab[6], 6, "MIX");
-    sniprintf(val[6], 8, CORE_STR("%d"), master::control.mix[master::slot_index(ch, ip.slot)]);
+    sniprintf(val[6], 8, CORE_STR("%d"), master::cur().mix[master::slot_index(ch, ip.slot)]);
   } else {
     sniprintf(lab[6], 6, "BUS");
     sniprintf(val[6], 8, CORE_STR("%d"), ip.busel + 1);
@@ -252,7 +252,7 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
     sniprintf(val[7], 8, CORE_STR("%d"), ins::send_knob(ch, ip.busel));
   } else {
     sniprintf(lab[7], 6, "ROUT");
-    if (ip.busel == 2) sniprintf(val[7], 8, "%s", ins::control.route3 ? "POST" : "PRE");
+    if (ip.busel == 2) sniprintf(val[7], 8, "%s", ins::ctl(ins::kBus0).route3 ? "POST" : "PRE");
     else sniprintf(val[7], 8, CORE_STR("FX%d P1"), ip.busel + 1);
   }
   for (int e = 0; e < 8; ++e) {
@@ -272,13 +272,13 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
     sniprintf(b, sizeof b, CORE_STR("%s SEND BUS %d:%d"), voice_name(ch), ip.busel + 1, ins::send_knob(ch, ip.busel));
     footer(c, b, ins::send_knob(ch, ip.busel));
   } else if (e == 6 && mix_on_g(ch)) {
-    const int m = master::control.mix[master::slot_index(ch, ip.slot)];
+    const int m = master::cur().mix[master::slot_index(ch, ip.slot)];
     sniprintf(b, sizeof b, CORE_STR("%s %c MIX:%d"), ins::chain_name(ch), 'A' + ip.slot, m);
     footer(c, b, m);
   } else if (e == 5 && ip.full) {
     sniprintf(b, sizeof b, CORE_STR("SEND FX INSERTS: %d IN USE"), master::kFxSlots);
     footer(c, b);
-  } else if (ip.bus && ip.busel < 2 && master::send_type(t) && fx::control.knob[ip.busel][0] == fx::kOff) {
+  } else if (ip.bus && ip.busel < 2 && master::send_type(t) && fx::cur().knob[ip.busel][0] == fx::kOff) {
     // bus 1 / 2's chain runs in its send FX's return: that send FX OFF, the send TYPE is silent (and holds its room)
     sniprintf(b, sizeof b, CORE_STR("SEND FX %d OFF: SILENT"), ip.busel + 1);
     footer(c, b);
@@ -345,7 +345,7 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
         ip.track = clampi(track_now() + l, 0, 11), ip.manual = true;
       } else if (!func && mix_on_g(ch)) {   // a bus slot's send TYPE: G its MIX (FUNC + G the bus)
         const int i = master::slot_index(ch, ip.slot);
-        master::set_mix(i, master::control.mix[i] + d);
+        master::set_mix(i, master::cur().mix[i] + d);
       } else {
         ip.busel = clampi(ip.busel + l, 0, ins::kBuses - 1);
       }

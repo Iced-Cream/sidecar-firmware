@@ -11,6 +11,8 @@
 #include "fx/insert.h"
 #include "fx/master.h"
 #include "fx/out.h"
+#include "fx/send_fx.h"
+#include "mod/mod.h"
 #include "platform.h"
 #include "pool/pool.h"
 #if CORE_MSAMP
@@ -24,8 +26,8 @@ namespace ins {
 namespace {
 
 // 3(c): each voice slot's file state (the project and kit its settings are of, the box's kit, the lock), the slot in
-// hand's (prj_slot): its voice chains, sends and OUT lines in its own folder's file; slot 0's file also the buses, the
-// master and B3's route (one send FX, one master: 3(b))
+// hand's (prj_slot): all of its chains, sends, OUT lines, B3's route and its master in its own folder's file (3(d): each
+// box its send FX and master)
 struct Card {
   char proj[24] = "";
   int kit = -1, rytm_kit = -1;
@@ -80,10 +82,6 @@ bool from_line(const char* b) {
     for (int i = 0; i < n; ++i) wp[i] = w[i];
     return out::from_line(wp, n);
   }
-  if (prj_slot() && n >= 1 && (same_ci(w[0], "MFX") || same_ci(w[0], "ROUTE"))) {   // (3(c): slot 0's own, never another slot's
-    log(CORE_STR("ins: slot %d: \"%s\" is slot 0's (the master, bus 3): not taken"), prj_slot(), w[0]);
-    return false;
-  }
   if (n >= 2 && same_ci(w[0], "MFX")) {   // the master's own settings (core/fx/master.h)
     const char* wp[master::kLineWords];
     for (int i = 0; i < n; ++i) wp[i] = w[i];
@@ -109,8 +107,16 @@ bool from_line(const char* b) {
       while (*p && *p != ' ') ++p;
     }
     while (*p == ' ') ++p;
-    if (prj_slot() && c >= kVoices) return false;   // (3(c): the master's chains are slot 0's)
     want_amp(c, s, p);
+    return true;
+  }
+  if (n >= 3 && same_ci(w[0], "SFX")) {   // 3(c) step 8: SFX A|B TYPE P1 P2 P3 P4 P5 (TYPE: its id) - a box's send FX that
+    int s = same_ci(w[1], "A") ? 0 : same_ci(w[1], "B") ? 1 : -1;   // has no kit of its own for it (not the Rytm's: its
+    int t = fx::type_from_name(w[2]);                                // 0x20s are its kit's), in its own file
+    if (s < 0 || t < 0 || !prj_slot()) return false;
+    fx::set_knob_base(s, 0, (uint8_t)t);
+    for (int k = 1; k < fx::kKnobs && 2 + k < n; ++k)
+      if (num(w[2 + k]) >= 0) fx::set_knob_base(s, k, (uint8_t)num(w[2 + k]));
     return true;
   }
   if (n >= 3 && same_ci(w[0], "ROUTE")) {
@@ -119,7 +125,7 @@ bool from_line(const char* b) {
   }
   if (n >= 3 && same_ci(w[0], "PEQ")) {   // ins1112: PEQ V1 40 0 64 70 (HPF LPF LOW HIGH; a missing one stays flat)
     int c = chain_from_name(w[1]);
-    if (c < 0 || (prj_slot() && c >= kVoices)) return false;   // (3(c): another slot's file: its voice chains only)
+    if (c < 0) return false;
     for (int k = 0; k < kEqParams; ++k) {
       int v = 2 + k < n ? num(w[2 + k]) : -1;
       set_eq(c, k, v >= 0 ? v : kEqFlat(k));
@@ -131,7 +137,6 @@ bool from_line(const char* b) {
   int s = same_ci(w[1], "A") ? 0 : same_ci(w[1], "B") ? 1 : -1;
   int t = type_from_name(w[2]);
   if (c < 0 || s < 0 || t < 0) return false;
-  if (prj_slot() && c >= kVoices) return false;   // (3(c): another slot's file: its voice chains only)
   set_type(c, s, t);   // its defaults, then the line's params (a missing one keeps its default)
   if (ctl(c).type[c][s] != t) {   // refused (a send TYPE on a voice, or past the room: master.h kFxSlots): said, and the
     char m[96];                    // line counted as one this build does not read, so its file is kept, not written over
@@ -259,7 +264,7 @@ static bool save_text(bool queue) {
     if (n <= 0 || len + (uint32_t)n > fmt::kPostMax) return (void)(fits = false);
     memcpy(t + len, s, (size_t)n), len += (uint32_t)n;
   };
-  const int nc = prj_slot() ? kVoices : kChains;   // (3(c): another slot's file: its voice chains only)
+  const int nc = kChains;
   for (int c = 0; c < nc; ++c)
     for (int s = 0; s < kSlots; ++s) {
       int ty = ctl(c).type[c][s];
@@ -268,7 +273,7 @@ static bool save_text(bool queue) {
       // and refuses the TYPE on a bus without a word: its next save drops the line)
       if (master::send_type(ty) && c < kM0)
         add(b, sniprintf(b, sizeof b, CORE_STR("%s %c %s %d %d %d %d %d\n"), chain_name(c), 'A' + s, type_name(ty), param(c, s, 0),
-                         param(c, s, 1), param(c, s, 2), param(c, s, 3), master::control.mix[master::slot_index(c, s)]));
+                         param(c, s, 1), param(c, s, 2), param(c, s, 3), master::cur().mix[master::slot_index(c, s)]));
       else
         add(b, sniprintf(b, sizeof b, CORE_STR("%s %c %s %d %d %d %d\n"), chain_name(c), 'A' + s, type_name(ty),
                          param(c, s, 0), param(c, s, 1), param(c, s, 2), param(c, s, 3)));
@@ -289,7 +294,14 @@ static bool save_text(bool queue) {
     add(b, sniprintf(b, sizeof b, CORE_STR("SEND %s %d %d %d\n"), chain_name(v), send_knob(v, 0), send_knob(v, 1),
                      send_knob(v, 2)));
   }
-  if (!prj_slot() && control.route3) {
+  if (prj_slot())   // 3(c) step 8: another slot's send FX (slot 0's are the Rytm's kit's 0x20s)
+    for (int s = 0; s < fx::kSlots; ++s) {
+      const fx::Control& f = fx::cur();
+      if (f.knob[s][0] == fx::kOff) continue;
+      add(b, sniprintf(b, sizeof b, CORE_STR("SFX %c %d %d %d %d %d %d\n"), 'A' + s, f.knob[s][0], mod::knob_base(s, 1),
+                       mod::knob_base(s, 2), mod::knob_base(s, 3), mod::knob_base(s, 4), mod::knob_base(s, 5)));
+    }
+  if (ctl(kBus0).route3) {
     static const char kR[] = "ROUTE B3 POST\n";
     add(kR, (int)sizeof kR - 1);
   }
@@ -297,7 +309,7 @@ static bool save_text(bool queue) {
     int n = out::line(v, b, sizeof b);
     if (n > 0) add(b, n);
   }
-  if (!prj_slot()) {
+  {
     int n = master::line(b, sizeof b);   // only off its defaults
     if (n > 0) add(b, n);
   }

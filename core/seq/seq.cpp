@@ -322,14 +322,14 @@ Per<LockSet[kLockSets]> lset;
 Per<int> lset_w{0};
 CORE_COLD float lock_float(int v) { return (float)(v >> 7) + (float)(v & 127) / 128.0f; }
 CORE_COLD uint8_t fx_play(int sl, int k, uint8_t v) { return fx_prev ? fx_prev(sl, k, v) : v; }
-CORE_COLD uint8_t fx_filter(int sl, int k, uint8_t val) {   // fx::knob_filter: the Rytm's FX knob reports (3(c): the send FX locks are slot 0's)
+CORE_COLD uint8_t fx_filter(int sl, int k, uint8_t val) {   // fx::knob_filter: a send FX knob set (the slot in hand's: its own locks, 3(c) step 8)
   if (k >= 2 && k <= 5 && sl >= 0 && sl < 2) {
     int i = 4 * sl + k - 2;
     uint8_t bit = (uint8_t)(1u << i);
-    flk.at(0).rep[i] = val, flk.at(0).seen |= bit;
-    if (flk.at(0).on & bit) {
-      flk.at(0).base[i] = val;
-      return fx_play(sl, k, flk.at(0).val[i]);
+    flk().rep[i] = val, flk().seen |= bit;
+    if (flk().on & bit) {
+      flk().base[i] = val;
+      return fx_play(sl, k, flk().val[i]);
     }
   }
   return fx_play(sl, k, val);
@@ -615,8 +615,7 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
       }
     }
   }
-  if (!sq_rytm()) return;   // 3(c): the arpeggiator's and the send FX's locks are the Rytm's slot's (lock_param_of)
-  if (vi >= 0 && vi < kVoices) {   // arp locks: the step's only (core/arp/arp.h); a track that locks none does nothing here
+  if (sq_rytm() && vi >= 0 && vi < kVoices) {   // arp locks (3(c): the Rytm's slot's; the send FX's: each slot its own): the step's only (core/arp/arp.h); a track that locks none does nothing here
     uint8_t awant = 0, av[kArpLocks] = {0};
     for (int i = 0; i < n && ls->arp_end > (int64_t)hframes(); ++i)
       if (arp_lock(ls->l[i].param)) {
@@ -643,13 +642,13 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
     int sl = j / 4, k = 2 + j % 4;
     if (sl >= fx::kSlots) continue;
     if (fwant & bit) {
-      if (!(flk().on & bit)) flk().base[j] = flk().seen & bit ? flk().rep[j] : fx::control.knob[sl][k];
+      if (!(flk().on & bit)) flk().base[j] = flk().seen & bit ? flk().rep[j] : fx::control_of(sq_slot()).knob[sl][k];
       flk().on |= bit, flk().owner[j] = (int8_t)r, flk().val[j] = fv[j];
-      fx::control.knob[sl][k] = fx_play(sl, k, fv[j]);
+      fx::control_of(sq_slot()).knob[sl][k] = fx_play(sl, k, fv[j]);
       ++st().locks_applied;
     } else if ((flk().on & bit) && flk().owner[j] == r) {
       flk().on &= (uint8_t)~bit;
-      fx::control.knob[sl][k] = fx_play(sl, k, flk().base[j]);
+      fx::control_of(sq_slot()).knob[sl][k] = fx_play(sl, k, flk().base[j]);
     }
   }
 }
@@ -1489,7 +1488,7 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
     push(lf, fol().to_host((int64_t)fs0), ++ev_id(), 2, vi, slot, 0, r, pred);   // (sf: the grid's - a replan cuts by it)
   }
   if (!notes) return;
-  if (sq_rytm()) out::trig_track(vi, r);   // a shared voice's mute gate follows this track now (core/fx/out.h)
+  out::trig_track(sq_slot(), box_voice(vi), r);   // the slot's mute gate: a shared voice's follows this track now (core/fx/out.h)
   // the notes that play: the step's own (R1's pitches), or P4 / M4's repeats of them
   RtNote rn[kRtNotes];
   int nr = 0;
@@ -2199,7 +2198,7 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
       if (a[0] == kMutes) mutes() = m;
       else solos() = m, ++st().solos;
       uint16_t now_muted = (uint16_t)(silenced_now() & ~was);
-      if (sq_rytm()) out::set_mutes(silenced_now());   // the PRE / POST voices' mute gates (core/fx/out.h)
+      out::set_mutes(sq_slot(), silenced_now());   // the slot's PRE / POST voices' mute gates (core/fx/out.h)
       for (int r = 0; r < kRytmTracks; ++r)
         if (now_muted >> r & 1) release(r);
       return;
@@ -2390,11 +2389,10 @@ CORE_COLD int lock_param_of(int pg, int e) {
   // envelope words none (the host's envelope plays them)
   static const int8_t kFltrW[3] = {30, 31, 25}, kAmpW[8] = {33, 34, 35, 36, 40, 41, 38, 37}, kLfoW[8] = {5, 1, 6, -1, 2, 7, 3, 8};
   int rw = pg == kLpFltr && e >= kArpLocks ? kFltrW[e - kArpLocks] : pg == kLpAmp ? kAmpW[e] : pg == kLpLfo ? kLfoW[e] : -1;
-  // 3(c): a box's slot locks its voices' machine and INSERT params only (the Rytm's words, its tracks' arpeggiator and
-  // the send FX are the Rytm's slot's)
+  // 3(c): a box's slot locks its voices' machine and INSERT params and its own send FX (3(c) step 8); the Rytm's words
+  // and its tracks' arpeggiator are the Rytm's slot's
   if (rw > 0) return !sq_rytm() || ((pins_now() >> ui_track() & 1) && rytm_env_word(rw)) ? -1 : kLockRytm + rw;
   if (pg == kLpFltr) return e < kArpLocks && sq_rytm() ? kLockArp + e : -1;
-  if (pg == kLpFx && !sq_rytm()) return -1;
   if ((pg == kLpSrc || pg == kLpSmpl) && sq_rytm() && ui::remote_track_smpl(ui_track())) {   // 0.5.0: SAMPLER's page 1, page 2 empty
     static const int8_t kDt[8] = {10, 12, 13, 11, 8, 9, 14, 15};   // SMP STRT END PLAY / TUNE FINE LOOP LEV (page_wave.cpp kDspsPageDt)
     return pg == kLpSrc ? kDt[e] : -1;
@@ -2418,7 +2416,7 @@ CORE_COLD int base_value(int r, int param) {
   }
   int j = param - kLockFx, sl = j / 4, k = 2 + j % 4;
   if (sl >= fx::kSlots) return 0;
-  return ((flk().seen >> j & 1) ? flk().rep[j] : fx::control.knob[sl][k]) << 7;
+  return ((flk().seen >> j & 1) ? flk().rep[j] : fx::control_of(sq_slot()).knob[sl][k]) << 7;
 }
 CORE_COLD void lock_turn(int e, int d, bool func) {
   int r = ui_track(), prm = lock_param_of(ui().lockpg, e);
@@ -2877,7 +2875,7 @@ CORE_COLD void reset() {
   for (int r = 0; r < kRytmTracks; ++r) clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1;
   set_transport(kStop);   // a take recording through a project load / hello ends (FC), as at the Rytm's STOP
   hframes() = 0, transport_frame() = INT64_MIN, bpm() = 0, mask() = 0, legacy_mask() = 0, clock_now() = 0, mask_sent() = -1, hello_due() = true, mutes() = 0, solos() = 0;
-  if (sq_rytm()) out::set_mutes(0);   // (the mute gate: the Rytm's)
+  out::set_mutes(sq_slot(), 0);   // (the slot's own mute gate)
   rec_live() = rec_grid() = false;
   pat_now() = 0, pat_queued() = -1, pat_loaded() = 0, load_due() = false;
   seqmode() = false, seqmode_track() = -1, we_opened() = false, show_wanted() = false, named() = false, seqopen_track() = -2;

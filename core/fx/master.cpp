@@ -72,11 +72,15 @@ int trim_word(const char* p) {
   if (*p == '-') return num(p + 1) >= 0 ? -num(p + 1) : 1;
   return num(p) == 0 ? 0 : 1;
 }
-void book(int i, int f) { control.fx[i] = (int8_t)f; }
+// 3(d): the settings code (book .. clear, the line, the console, json) works on the slot in hand's (ins::slot_in_hand:
+// prj_slot on the control core, each slot in turn in ins::reset); report / stems_on_main are the Rytm's (slot 0's)
+Control& M() { return control_of(ins::slot_in_hand()); }
+ins::Control& IK() { return ins::control_of(ins::slot_in_hand()); }
+void book(int i, int f) { M().fx[i] = (int8_t)f; }
 int free_fx() {
   for (int f = 0; f < kFxSlots; ++f) {
     bool used = false;
-    for (int i = 0; i < kAllSlots; ++i) used |= control.fx[i] == f;
+    for (int i = 0; i < kAllSlots; ++i) used |= M().fx[i] == f;
     if (!used) return f;
   }
   return -1;
@@ -169,6 +173,8 @@ struct Hook {
 
 }  // namespace
 
+Control& cur() { return M(); }
+
 bool send_type(int t) { return t >= ins::kTypes && t < ins::kAllTypes; }
 
 bool on() { return on(0); }
@@ -184,11 +190,11 @@ bool on(int box) {
 
 int fx_used() {
   int n = 0;
-  for (int i = 0; i < kAllSlots; ++i) n += control.fx[i] >= 0;
+  for (int i = 0; i < kAllSlots; ++i) n += M().fx[i] >= 0;
   return n;
 }
 
-bool room(int i) { return i >= 0 && i < kAllSlots && (control.fx[i] >= 0 || free_fx() >= 0); }
+bool room(int i) { return i >= 0 && i < kAllSlots && (M().fx[i] >= 0 || free_fx() >= 0); }
 
 int full_text(int t, char* b, int cap) {
   return sniprintf(b, cap, CORE_STR("%s: %d send FX inserts at most, the master and the buses together (%d in use)"),
@@ -199,10 +205,10 @@ bool accept(int c, int s, int t) {
   const int i = slot_index(c, s);
   if (i < 0) return !send_type(t);   // a voice chain: never a send TYPE (core 1 renders voices 1..4)
   if (!send_type(t)) {
-    if (control.fx[i] >= 0) book(i, -1);
+    if (M().fx[i] >= 0) book(i, -1);
     return true;
   }
-  if (control.fx[i] >= 0) return true;   // it holds one already: the new TYPE follows it there
+  if (M().fx[i] >= 0) return true;   // it holds one already: the new TYPE follows it there
   int f = free_fx();
   if (f < 0) return false;
   book(i, f);
@@ -213,37 +219,37 @@ bool accept(int c, int s, int t) {
 }
 
 void set_byp(int v) {
-  control.byp = v ? 1 : 0;
+  M().byp = v ? 1 : 0;
   ins::touch();
 }
 void set_src(int v) {
-  control.src = v == kMix ? kMix : kRet;
+  M().src = v == kMix ? kMix : kRet;
   ins::touch();
 }
 void set_lev(int v) {
-  control.lev = (uint8_t)clampi(v, 0, 127);
+  M().lev = (uint8_t)clampi(v, 0, 127);
   ins::touch();
 }
 void mod_offset(int param, int off) {   // never saved, no touch: the knobs are the file's
   int8_t o = (int8_t)clampi(off, -127, 127);
-  if (param == 0) control.mod_lev = o;
-  else if (param >= 1 && param <= kAllSlots) control.mod_mix[param - 1] = o;
+  if (param == 0) M().mod_lev = o;
+  else if (param >= 1 && param <= kAllSlots) M().mod_mix[param - 1] = o;
 }
 void set_trim(int db) {
-  control.trim = (uint8_t)clampi(-db, 0, kTrimMax);
+  M().trim = (uint8_t)clampi(-db, 0, kTrimMax);
   ins::touch();
 }
 void set_mix(int i, int v) {
   if (i < 0 || i >= kAllSlots) return;
-  control.mix[i] = (uint8_t)clampi(v, 0, 127);
+  M().mix[i] = (uint8_t)clampi(v, 0, 127);
   ins::touch();
 }
 void set_pair(int i, int v) {
   if (i < 0 || i >= kSlots) return;
-  ins::control.mpair[i / ins::kSlots][slot(i)] = v ? 1 : 0;
+  IK().mpair[i / ins::kSlots][slot(i)] = v ? 1 : 0;
   ins::touch();
 }
-bool pair(int i) { return i >= 0 && i < kSlots && ins::control.mpair[i / ins::kSlots][slot(i)]; }
+bool pair(int i) { return i >= 0 && i < kSlots && IK().mpair[i / ins::kSlots][slot(i)]; }
 
 int next_type(int i, int t, int d) {
   const int n = ins::kAllTypes;
@@ -270,14 +276,14 @@ bool zone_text(int t, int k, int v, char* b, int cap) {
 }
 
 void clear_master() {
-  control.byp = 0, control.src = kRet, control.lev = kLevUnity, control.trim = kTrimDef;
-  for (int i = 0; i < kSlots; ++i) control.mix[i] = kMixDef, control.fx[i] = -1;
+  M().byp = 0, M().src = kRet, M().lev = kLevUnity, M().trim = kTrimDef;
+  for (int i = 0; i < kSlots; ++i) M().mix[i] = kMixDef, M().fx[i] = -1;
   for (int c = 0; c < ins::kMasters; ++c)
-    for (int s = 0; s < ins::kSlots; ++s) ins::control.mpair[c][s] = 0;
+    for (int s = 0; s < ins::kSlots; ++s) IK().mpair[c][s] = 0;
 }
 void clear() {
   clear_master();
-  for (int i = kSlots; i < kAllSlots; ++i) control.mix[i] = kMixDef, control.fx[i] = -1;
+  for (int i = kSlots; i < kAllSlots; ++i) M().mix[i] = kMixDef, M().fx[i] = -1;
 }
 
 // The Rytm's route byte 0x80006466, a set bit: that voice off the main bus. Packed from physical voices 7,6,5,4,0,1,2,3, MSB
@@ -307,9 +313,13 @@ int stems_on_main() {
 }
 
 void reset() {
-  clear();
-  control.mod_lev = 0;
-  for (int i = 0; i < kAllSlots; ++i) control.mod_mix[i] = 0;
+  for (int b = 0; b < kBoxes; ++b) {   // every slot's settings (the slot in hand's are cleared by ins::reset's pass too)
+    Control& m = control_of(b);
+    m.byp = 0, m.src = kRet, m.lev = kLevUnity, m.trim = kTrimDef, m.mod_lev = 0;
+    for (int i = 0; i < kAllSlots; ++i) m.mix[i] = kMixDef, m.fx[i] = -1, m.mod_mix[i] = 0;
+    for (int c = 0; c < ins::kMasters; ++c)
+      for (int s = 0; s < ins::kSlots; ++s) ins::control_of(b).mpair[c][s] = 0;
+  }
   for (Box& B : g_box) {
     for (int u = 0; u < kFxUnits; ++u)
       if (B.fx[u]) B.fx[u]->Reset();
@@ -502,11 +512,11 @@ void heap_place(void* mem) {
 // ---------------------------------------------------------------------------------------------------- console, json, card
 
 static int slot_line(int i, char* o, int cap) {
-  const int c = chain(i), s = slot(i), t = ins::control.type[c][s];
+  const int c = chain(i), s = slot(i), t = IK().type[c][s];
   const ins::Labels& L = ins::labels(t);
   int n = sniprintf(o, cap, CORE_STR(" %d %s"), i + 1, L.name);
   if (t == ins::kAmp && pair(i)) n += sniprintf(o + n, n < cap ? cap - n : 0, " L/R");
-  if (send_type(t)) n += sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR(" mix %d"), control.mix[i]);
+  if (send_type(t)) n += sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR(" mix %d"), M().mix[i]);
   return n;
 }
 
@@ -550,7 +560,7 @@ bool command(const char* p, char* o, int cap) {
         int t = ins::type_from_name(v);
         if (t < 0) return sniprintf(o, cap, "mfx: no type \"%s\"", v), true;
         ins::set_type(c, s, t);
-        if (ins::control.type[c][s] != t) {
+        if (IK().type[c][s] != t) {
           int n = sniprintf(o, cap, "mfx: ");
           return full_text(t, o + n, cap - n), true;
         }
@@ -563,27 +573,27 @@ bool command(const char* p, char* o, int cap) {
       return sniprintf(o, cap, "%s", kHelp), true;
     }
   }
-  int n = sniprintf(o, cap, CORE_STR("mfx: %s, src %s, lev %d, trim %d:"), control.byp ? "BYPASS" : "on", control.src == kMix ? "MIX" : "RET", control.lev,
-                    -(int)control.trim);
+  int n = sniprintf(o, cap, CORE_STR("mfx: %s, src %s, lev %d, trim %d:"), M().byp ? "BYPASS" : "on", M().src == kMix ? "MIX" : "RET", M().lev,
+                    -(int)M().trim);
   for (int i = 0; i < kSlots && n < cap; ++i)
-    if (ins::control.type[chain(i)][slot(i)]) n += slot_line(i, o + n, cap - n);
+    if (IK().type[chain(i)][slot(i)]) n += slot_line(i, o + n, cap - n);
   if (n < cap && ins::eq_on(kEqChain)) n += sniprintf(o + n, cap - n, " EQ");
   return true;
 }
 
 int json(char* o, int cap) {
-  const int gr = gr10();
-  int n = sniprintf(o, cap, CORE_STR("\"mfx\":{\"byp\":%d,\"src\":\"%s\",\"lev\":%d,\"trim\":%d,\"gr\":%d.%d,\"on\":%d,\"s\":["), control.byp,
-                    control.src == kMix ? "mix" : "ret", control.lev, -(int)control.trim, gr / 10, gr % 10, on() ? 1 : 0);
+  const int gr = gr10(ins::slot_in_hand());
+  int n = sniprintf(o, cap, CORE_STR("\"mfx\":{\"byp\":%d,\"src\":\"%s\",\"lev\":%d,\"trim\":%d,\"gr\":%d.%d,\"on\":%d,\"s\":["), M().byp,
+                    M().src == kMix ? "mix" : "ret", M().lev, -(int)M().trim, gr / 10, gr % 10, on(ins::slot_in_hand()) ? 1 : 0);
   for (int i = 0; i < kSlots && n < cap; ++i) {
-    const int c = chain(i), s = slot(i), t = ins::control.type[c][s];
+    const int c = chain(i), s = slot(i), t = IK().type[c][s];
     const ins::Labels& L = ins::labels(t);
     char v[ins::kParams][8] = {};
     if (t)
       for (int j = 0; j < ins::kParams; ++j) ins::slot_value_text(c, s, j, ins::param(c, s, j), v[j], sizeof v[j]);
     int k = sniprintf(o + n, cap - n, CORE_STR("%s{\"t\":\"%s\",\"p\":[%d,%d,%d,%d],\"l\":[\"%s\",\"%s\",\"%s\",\"%s\"],\"v\":[\"%s\",\"%s\",\"%s\",\"%s\"],\"mix\":%d,\"pair\":%d,\"send\":%d}"),
                       i ? "," : "", ins::type_name(t), ins::param(c, s, 0), ins::param(c, s, 1), ins::param(c, s, 2), ins::param(c, s, 3),
-                      L.label[0], L.label[1], L.label[2], L.label[3], v[0], v[1], v[2], v[3], control.mix[i], pair(i) ? 1 : 0, send_type(t) ? 1 : 0);
+                      L.label[0], L.label[1], L.label[2], L.label[3], v[0], v[1], v[2], v[3], M().mix[i], pair(i) ? 1 : 0, send_type(t) ? 1 : 0);
     if (k < 0 || k >= cap - n) return cap;
     n += k;
   }
@@ -595,15 +605,15 @@ int json(char* o, int cap) {
 
 int line(char* b, int cap) {
   int pairs = 0;
-  bool def = !control.byp && control.src == kRet && control.lev == kLevUnity && control.trim == kTrimDef;
+  bool def = !M().byp && M().src == kRet && M().lev == kLevUnity && M().trim == kTrimDef;
   for (int i = 0; i < kSlots; ++i) {
     if (pair(i)) pairs |= 1 << i, def = false;
-    def = def && control.mix[i] == kMixDef;
+    def = def && M().mix[i] == kMixDef;
   }
   if (def) return 0;
-  int n = sniprintf(b, cap, CORE_STR("MFX %d %s %d %d %d %d %d %d"), control.byp, control.src == kMix ? "MIX" : "RET", control.lev,
-                    control.mix[0], control.mix[1], control.mix[2], control.mix[3], pairs);
-  if (control.trim != kTrimDef) n += sniprintf(b + n, cap - n, CORE_STR(" %d"), -(int)control.trim);
+  int n = sniprintf(b, cap, CORE_STR("MFX %d %s %d %d %d %d %d %d"), M().byp, M().src == kMix ? "MIX" : "RET", M().lev,
+                    M().mix[0], M().mix[1], M().mix[2], M().mix[3], pairs);
+  if (M().trim != kTrimDef) n += sniprintf(b + n, cap - n, CORE_STR(" %d"), -(int)M().trim);
   return n + sniprintf(b + n, cap - n, "\n");
 }
 

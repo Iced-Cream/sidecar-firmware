@@ -1,4 +1,4 @@
-// core/fx/send_fx_card.cpp - send_fx.h's card files: /.rytm/sendfx.txt (global: the route) and
+// core/fx/send_fx_card.cpp - send_fx.h's card files: /.rytm/sendfx.txt (each box's route, in its own folder) and
 // /.rytm/fxslots/<project>.txt (the project's user-FX slot map). Cold: boot, a project change, the idle step.
 #include "fmt/fmt.h"
 #include "fx/send_fx.h"
@@ -23,36 +23,64 @@ static CORE_COLD bool line(File& f, char* out, int max) {
   return any;
 }
 
-static fmt::KvKeep g_keep;   // the lines a newer build wrote that this one does not read (fmt.h, class S: kept)
+static fmt::KvKeep g_keep[kVoiceSlots];   // each slot's lines a newer build wrote that this one does not read (class S: kept)
+
+// a line of sendfx.txt into the slot in hand's route (or its kept lines)
+static CORE_COLD void take(const char* b) {
+  static const char* const kKnown[] = {"out", nullptr};
+  fmt::KvKeep& keep = g_keep[slot_in_hand()];
+  if (strcmp(b, "out=main") == 0) cur().route = kRouteMain;
+  else if (strcmp(b, "out=fx") == 0) cur().route = kRouteFx;
+  else if (strncmp(b, "out=", 4)) {   // (one line at a time into the kept lines)
+    fmt::KvKeep one;
+    if (fmt::kv_keep(b, (uint32_t)strlen(b), kKnown, &one) && keep.n + one.n < sizeof keep.text)
+      memcpy(keep.text + keep.n, one.text, one.n + 1), keep.n += one.n;
+  }
+}
+static CORE_COLD void said() {
+  const int r = cur().route;
+  log(CORE_STR("sendfx: slot %d: out %s"), slot_in_hand(), r == kRouteMain ? "forced main" : r == kRouteFx ? "forced fx" : "per slot (P1)");
+}
+
 CORE_COLD void card_load() {
   File f;
-  control.route = kRouteSlot;
-  g_keep.n = 0;
+  cur().route = kRouteSlot;
+  g_keep[slot_in_hand()].n = 0;
   fmt::post_wait(kGlobal);   // 0.3.0: a posted save of it lands before we read it back (fmt.h)
   fmt::recover(kGlobal);   // a power cut between write_atomic's renames: the previous file back, a stray .tmp gone
   if (!f.open(kGlobal, kRead)) return;
   char b[256];
-  static const char* const kKnown[] = {"out", nullptr};
-  while (line(f, b, sizeof b)) {
-    if (strcmp(b, "out=main") == 0) control.route = kRouteMain;
-    else if (strcmp(b, "out=fx") == 0) control.route = kRouteFx;
-    else if (strncmp(b, "out=", 4)) {   // (one line at a time into the kept lines)
-      fmt::KvKeep one;
-      if (fmt::kv_keep(b, (uint32_t)strlen(b), kKnown, &one) && g_keep.n + one.n < sizeof g_keep.text)
-        memcpy(g_keep.text + g_keep.n, one.text, one.n + 1), g_keep.n += one.n;
-    }
-  }
+  while (line(f, b, sizeof b)) take(b);
   f.close();
-  log(CORE_STR("sendfx: out %s"), control.route == kRouteMain ? "forced main" : control.route == kRouteFx ? "forced fx" : "per slot (P1)");
+  said();
+}
+
+// 3(c) step 8: another slot's file, read by the card core at its attach (core/pool/pool.cpp), taken in its Scope
+CORE_COLD void card_text(const char* t, int n) {
+  cur().route = kRouteSlot;
+  g_keep[slot_in_hand()].n = 0;
+  char b[256];
+  for (int i = 0; i < n;) {
+    int k = 0;
+    while (i < n && t[i] != '\n') {
+      if (t[i] != '\r' && k < (int)sizeof b - 1) b[k++] = t[i];
+      ++i;
+    }
+    ++i;
+    b[k] = 0;
+    take(b);
+  }
+  said();
 }
 
 // 0.3.0 power-cut safety: posted to the card core as one atomic write (fmt.h), a newer build's keys kept (class S)
 CORE_COLD void card_save() {
   char* s = fmt::post_begin();
   if (!s) return;   // another settings write is in flight: at a later pass (card_dirty still set)
-  uint32_t n = (uint32_t)sniprintf(s, 16, "%s", control.route == kRouteMain ? "out=main\n" : control.route == kRouteFx ? "out=fx\n" : "out=slot\n");
-  n = fmt::kv_append(g_keep, s, n, fmt::kPostMax);
-  if (fmt::post_end(kGlobal, n)) card_dirty = false;
+  const int r = cur().route, sl = slot_in_hand();
+  uint32_t n = (uint32_t)sniprintf(s, 16, "%s", r == kRouteMain ? "out=main\n" : r == kRouteFx ? "out=fx\n" : "out=slot\n");
+  n = fmt::kv_append(g_keep[sl], s, n, fmt::kPostMax);
+  if (fmt::post_end(kGlobal, n)) card_dirty = (uint8_t)(card_dirty & ~(1u << sl));
 }
 
 static CORE_COLD int hexv(char c) {

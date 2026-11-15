@@ -281,10 +281,10 @@ struct StatusView {
     // FX1, FX2 a row each: "FX1" in a badge, the TYPE's name (12 characters: 60 px), PRE / POST at the right
     for (int sl = 0; sl < 2; ++sl) {
       int y = 38 + 9 * sl;
-      const char* t = sl < fx::kSlots ? fx::type_name(fx::control.knob[sl][0], sl) : nullptr;
+      const char* t = sl < fx::kSlots ? fx::type_name(fx::cur().knob[sl][0], sl) : nullptr;
       bool off = !t || !*t || !strcmp(t, "OFF");
-      bool post = fx::control.route == fx::kRouteMain ||
-                  (fx::control.route == fx::kRouteSlot && fx::control.knob[sl][1] >= 64);
+      bool post = fx::cur().route == fx::kRouteMain ||
+                  (fx::cur().route == fx::kRouteSlot && fx::cur().knob[sl][1] >= 64);
       c.fill(Rect{1, (int16_t)(y - 1), 17, 7}, kOn);
       sniprintf(b, sizeof b, CORE_STR("FX%d"), sl + 1);
       c.put_text(kSlotFree + 16 + 3 * sl, kRSmall, 2, y, b, kTextInvert);

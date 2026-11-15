@@ -14,7 +14,13 @@
 #include "granular/granular.h"
 #include "lib/library.h"
 #include "fx/insert.h"
+#include "fx/master.h"
 #include "fx/out.h"
+#include "fx/send_fx.h"
+#include "host_link.h"
+#include "keys.h"
+#include "mod/learn.h"
+#include "samp/preview.h"
 #include "lfo.h"
 #include "lib/pools.h"
 #include "mod/mod.h"
@@ -109,7 +115,14 @@ int main() {
   put("/.a4/lfo/A4P.txt", kA4Lfo);
   // its INSERT / OUT file: V2's slot A FILTER, V2 on POST at LEV 90 (slot 1's chains and OUT, control1)
   CHECK(fs.mkdir("/.a4/ins"));
-  put("/.a4/ins/A4P.txt", "V2 A FILTER 80 20 0 0\nOUT V2 POST 90 64 64 0\n");
+  put("/.a4/ins/A4P.txt", "V2 A FILTER 80 20 0 0\nOUT V2 POST 90 64 64 0\nB1 A SAT 0 40 64 127\nSFX A 1 70 11 22 33 44\nMFX 0 RET 80 127 127 127 127 0\n");
+  // 3(c) step 8: its box settings in its own folder (the Rytm's keys in /.rytm): read at its attach into its own
+  put("/.rytm/keys.txt", "mode=selected\nauto=3\nmac=1\n");
+  put("/.a4/keys.txt", "mode=channel\nauto=5\nmac=0\n");
+  put("/.a4/sendfx.txt", "out=fx\n");
+  put("/.a4/fxin.txt", "src=fx\n");
+  put("/.a4/preview.txt", "level=-6\n");
+  put("/.a4/learn.txt", "#sidecar learn 1\nR 1 1 20 fader\n");
   // each box's JUNO list in its own folder (the A4's project B4: one row; the Rytm's NEW: two)
   put("/.a4/juno/B4.txt", "000102030405060708090a0b0c0d0e0f1011\tA4 ROW\n");
   put("/.rytm/juno/NEW.txt", "000102030405060708090a0b0c0d0e0f1012\tRYTM ONE\n000102030405060708090a0b0c0d0e0f1013\tRYTM TWO\n");
@@ -153,6 +166,24 @@ int main() {
   CHECK(ins::control1.type[1][0] == ins::kFilter && ins::control.type[1][0] == ins::kOff);
   CHECK(out::control1.route[1] == out::kPost && out::control1.lev[1] == 90 && out::control.route[1] == out::kTrk);
   CHECK(ins::param(1, 0, 0) == 80);   // (the slot in hand: the lone A4's)
+  // 3(c) step 8: its bus, master and send FX settings (its file) and its box settings (read at its attach), slot 0's apart
+  CHECK(ins::control1.type[ins::kBus0][0] == ins::kSat && ins::control.type[ins::kBus0][0] == ins::kOff);
+  CHECK(master::control1.lev == 80 && master::control.lev == master::kLevUnity);
+  printf("  slot 1's send FX A: type %d P1 %d P5 %d, route %d\n", fx::control1.knob[0][0], fx::control1.knob[0][1],
+         fx::control1.knob[0][5], fx::control1.route);
+  CHECK(fx::control1.knob[0][0] == 1 && fx::control1.knob[0][1] == 70 && fx::control1.knob[0][5] == 44);
+  CHECK(fx::control.knob[0][0] == 0 && fx::control1.route == fx::kRouteFx && fx::control.route == fx::kRouteSlot);
+  {
+    device::Scope in(device::g_links[1]);
+    CHECK(keys::auto_channel() == 5 && !keys::computer_on() && fxin::wanted() && preview::level_db() == -6);
+    const learn::Route* r;
+    CHECK(learn::routes(&r) == 1 && r[0].cc == 20);
+  }
+  {
+    device::Scope in(device::g_links[0]);
+    CHECK(keys::auto_channel() == 3 && keys::computer_on() && !fxin::wanted() && preview::level_db() != -6);
+    CHECK(learn::routes(nullptr) == 0);
+  }
   // its LFOs: loaded from its store when the fill ended; the slot in hand outside a Scope is the lone A4's
   CHECK(lfo::get(0).target == lfo::kTVoice + 1 && lfo::get(0).param == 3 && lfo::get(0).depth == 20);
   {
@@ -193,22 +224,27 @@ int main() {
     p[3] = 70.0f;
     mod::voice_params(va, p, 16);
     CHECK(mod::base_of(va, 3, 0) == 70.0f && mod::base_of(1, 3, -1) == -1.0f);
-    // slot 1 takes its own voices, chains and OUT: an FX target (one send FX: slot 0's) is refused in its layer; its
-    // I2 offset lands on its own chain (control1), never slot 0's
+    // slot 1 takes its own voices, chains, OUT, send FX and master (3(c) step 8): an FX knob target moves its own send FX
+    // (fx::control1), a bus target its own bus chain; the Rytm's track sends (kSnd) stay slot 0's; its I2 offset lands on
+    // its own chain (control1), never slot 0's
     {
       device::Scope in(device::g_links[1]);
+      char o[256];
+      CHECK(fx::command("sendknob=1:3:40", o, sizeof o) && fx::control1.knob[0][3] == 40 && fx::control.knob[0][3] == 0);
       mod::begin_tick();
       mod::offset(0, mod::tid(mod::kFx, 0, 1), 10.0f, 1.0f);
       mod::offset(0, mod::tid(mod::kIns, 1, 0), 10.0f, 1.0f);
-      CHECK(mod::find(mod::tid(mod::kFx, 0, 1)) == nullptr);
-      CHECK(mod::find(mod::tid(mod::kIns, 8, 0)) == nullptr);   // (bus 1: slot 0's)
       mod::offset(0, mod::tid(mod::kIns, 8, 0), 10.0f, 1.0f);
-      CHECK(mod::find(mod::tid(mod::kIns, 8, 0)) == nullptr);
-      mod::end_tick();   // (T1A's voice restored: not live this tick)
+      mod::offset(0, mod::tid(mod::kSnd, 0, 0), 10.0f, 1.0f);
+      CHECK(mod::find(mod::tid(mod::kFx, 0, 1)) != nullptr && mod::find(mod::tid(mod::kIns, 8, 0)) != nullptr);
+      CHECK(mod::find(mod::tid(mod::kSnd, 0, 0)) == nullptr);
+      mod::end_tick();
+      printf("  slot 1's FX P3 %d (slot 0's %d)\n", fx::control1.knob[0][3], fx::control.knob[0][3]);
+      CHECK(fx::control1.knob[0][3] == 50 && fx::control.knob[0][3] == 0);
       CHECK(ins::control1.play[1][0][0] == 90 && ins::control.play[1][0][0] == 0);
       mod::begin_tick();
-      mod::end_tick();   // (I2 restored)
-      CHECK(ins::control1.play[1][0][0] == 80);
+      mod::end_tick();   // (I2 and the FX knob restored: not live this tick)
+      CHECK(ins::control1.play[1][0][0] == 80 && fx::control1.knob[0][3] == 40);
     }
   }
 
@@ -292,6 +328,11 @@ int main() {
     device::Scope in(device::g_links[1]);
     CHECK(lfo::command("lfo=T2A:dep:-22", o, sizeof o));
     CHECK(ins::command("ins=V1:A:type:CRUSH", o, sizeof o) && out::command("out=V1:lev:77", o, sizeof o));
+    // 3(d): slot 1's buses, B3 route and master are its own (its file, control1, master::control1)
+    CHECK(ins::command("ins=B2:B:type:SAT", o, sizeof o) && master::command("mfx=lev:90", o, sizeof o));
+    ins::set_route3(1);
+    CHECK(fx::command("sendfx=2:comb", o, sizeof o) && fx::command("sendfxout=main", o, sizeof o));
+    CHECK(keys::command("keys=auto:7", o, sizeof o) && fxin::command("fxin=0", o, sizeof o));
   }
   settle();
   {
@@ -310,6 +351,18 @@ int main() {
     CHECK(strstr(a.c_str(), "\nV1 A CRUSH ") && strstr(a.c_str(), "\nOUT V1 TRK 77 ") && !strstr(a.c_str(), "DRIVE") &&
           !strstr(a.c_str(), "\nB1 ") && !ins::settings_dirty_any());
     CHECK(ins::control.type[0][0] == ins::kDrive && ins::control1.type[0][0] == ins::kCrush);
+    printf("  slot 1's bus / master lines:%s%s%s\n", strstr(a.c_str(), "\nB2 B SAT ") ? " B2" : "",
+           strstr(a.c_str(), "\nROUTE B3 POST") ? " ROUTE" : "", strstr(a.c_str(), "\nMFX 0 RET 90 ") ? " MFX" : "");
+    CHECK(strstr(a.c_str(), "\nB2 B SAT ") && strstr(a.c_str(), "\nROUTE B3 POST") && strstr(a.c_str(), "\nMFX 0 RET 90 "));
+    CHECK(!strstr(r.c_str(), " SAT ") && !strstr(r.c_str(), "\nROUTE ") && !strstr(r.c_str(), "\nMFX "));
+    CHECK(ins::control1.type[ins::kBus0 + 1][1] == ins::kSat && ins::control.type[ins::kBus0 + 1][1] == ins::kOff);
+    CHECK(ins::control1.route3 == 1 && ins::control.route3 == 0);
+    CHECK(master::control1.lev == 90 && master::control.lev == master::kLevUnity);
+    CHECK(strstr(a.c_str(), "\nSFX B 2 ") && !strstr(r.c_str(), "\nSFX "));   // (slot 0's: the Rytm's kit)
+    const std::string sf = get("/.a4/sendfx.txt"), kk = get("/.a4/keys.txt"), fi = get("/.a4/fxin.txt");
+    printf("  slot 1's sendfx.txt \"%s\", fxin.txt \"%s\"\n", sf.c_str(), fi.c_str());
+    CHECK(sf == "out=main\n" && strstr(kk.c_str(), "auto=7") && fi == "src=in\n");
+    CHECK(get("/.rytm/sendfx.txt").empty() && strstr(get("/.rytm/keys.txt").c_str(), "auto=3"));
     CHECK(out::control1.lev[0] == 77 && out::control.lev[0] == 100);
   }
   // each slot's scenes and XY pad: its own locks, A / B and fader in its own folder's files, its morph on its own voices
@@ -419,6 +472,19 @@ int main() {
       device::Scope in(device::g_links[1]);
       printf("  slot 1 seq mode: track %d, the remote page open %d (was %d)\n", seq::seqmode_on(), ui::remote_open(), open_was);
       CHECK(seq::seqmode_on() == 0 && ui::remote_open() == open_was);
+    }
+    // 3(c) step 8: the A4's mutes (2D 01 05) close its own voices' mute gates (out::control1), never the Rytm's
+    {
+      const uint8_t mu[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 5, 0x05, 0, 0xf7};   // tracks 1 and 3
+      engine_sysex_link(1, mu, (int)sizeof mu);
+      printf("  slot 1 mutes: open %d%d%d%d, slot 0's %d%d%d%d\n", out::control1.open[0], out::control1.open[1],
+             out::control1.open[2], out::control1.open[3], out::control.open[0], out::control.open[1], out::control.open[2],
+             out::control.open[3]);
+      CHECK(!out::control1.open[0] && out::control1.open[1] && !out::control1.open[2] && out::control1.open[3]);
+      for (int v = 0; v < 8; ++v) CHECK(out::control.open[v]);
+      const uint8_t un[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 5, 0, 0, 0xf7};
+      engine_sysex_link(1, un, (int)sizeof un);
+      CHECK(out::control1.open[0] && out::control1.open[2]);
     }
     settle();
     CHECK(!get("/.a4/seq/B4/tracks.txt").empty());   // (its own folder)

@@ -14,6 +14,11 @@
 #include "../song/song.h"
 #include "../fx/insert.h"
 #include "../fx/out.h"
+#include "../fx/send_fx.h"
+#include "../host_link.h"
+#include "../keys.h"
+#include "../mod/learn.h"
+#include "../samp/preview.h"
 #include "../mod/scene.h"
 #include "../mod/xypad.h"
 #if CORE_MSAMP
@@ -56,6 +61,10 @@ static struct SlotFns {
   SlotFns() { ins::slot_fn = prj_slot, out::slot_fn = prj_slot; }
 } g_slot_fns;
 #endif
+// 3(c) step 8: the send FX settings too (core/fx/send_fx.h; its control side builds without core/device)
+static struct FxSlotFn {
+  FxSlotFn() { fx::slot_fn = prj_slot; }
+} g_fx_slot_fn;
 
 CORE_COLD int pool_slot(float p11) {
 #if CORE_MSAMP
@@ -667,18 +676,50 @@ struct Attach {
   bool reading;
   cardq::Req rq;
   char buf[24];
+  int set;            // 3(c) step 8: the next of kSettings to read (kNSettings: all read)
+  bool set_reading;
+  char text[1536];    // a settings file's text
 };
 Attach g_attach[kVoiceSlots];
+// 3(c) step 8: the box settings slot 0 loads at boot (engine.cpp), read for another slot from its own folder at its
+// attach, each by the card core (kSmallReq) and taken in the slot's Scope into its own instance
+struct SettingsFile {
+  const char* path;
+  void (*take)(const char* b, int n);
+};
+const SettingsFile kSettings[] = {
+    {"/.rytm/sendfx.txt", fx::card_text},
+    {"/.rytm/fxin.txt", fxin::take_text},
+#if CORE_POLY
+    {"/.rytm/keys.txt", keys::take_text},
+    {"/.rytm/learn.txt", learn::take_text},
+#endif
+    {"/.rytm/preview.txt", preview::take_text},
+};
+constexpr int kNSettings = (int)(sizeof kSettings / sizeof kSettings[0]);
+CORE_COLD bool settings_attach_step(int s, Attach& a) {
+  if (a.set >= kNSettings) return false;
+  const SettingsFile& f = kSettings[a.set];
+  if (!a.set_reading) a.set_reading = true, memset(a.text, 0, sizeof a.text);
+  if (!cardq::async(&a.rq, cardq::kSmallReq, nullptr, f.path, 0, (uint8_t*)a.text, sizeof a.text - 1, s)) return true;
+  const int n = a.rq.got > 0 ? (int)a.rq.got : 0;
+  a.text[n] = 0;
+  a.set_reading = false, ++a.set;
+  device::Scope in(device::g_links[s]);
+  f.take(a.text, n);   // (none there: n 0, the defaults)
+  return true;
+}
 }  // namespace
 CORE_COLD bool project_attach_step(int s) {
   if (s <= 0 || s >= kVoiceSlots || s >= device::kLinks) return false;
   device::Link& l = device::g_links[s];
   Attach& a = g_attach[s];
-  if (!l.box || !l.state || (a.from == l.state && !a.reading)) return false;
+  if (!l.box || !l.state) return false;
+  if (a.from == l.state && !a.reading) return settings_attach_step(s, a);   // then its box settings, one file a step
   if (!a.reading) a.reading = true, memset(a.buf, 0, sizeof a.buf);
   if (!cardq::async(&a.rq, cardq::kSmallReq, nullptr, "/.rytm/project", 0, (uint8_t*)a.buf, sizeof a.buf - 1, s)) return true;
   a.buf[a.rq.got > 0 ? a.rq.got : 0] = 0;
-  a.reading = false, a.from = l.state;
+  a.reading = false, a.from = l.state, a.set = 0, a.set_reading = false;
   device::Scope in(l);
   Project& j = prj(s);
   sniprintf(j.key, sizeof j.key, "%s", a.buf);

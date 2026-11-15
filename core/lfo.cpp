@@ -197,7 +197,7 @@ CORE_COLD Tgt* find(int target, int param) {
 CORE_COLD float current(int target, int param) {   // a new target's base: what plays now
   if (is_voice(target)) return v[device::voice_in(target - kTVoice)].p[param & 15];
   if (is_ins(target) || is_out(target)) return 0;   // an insert's / OUT's LFO is an offset (mod_offset), its base the knob
-  return fx::control.knob[target - kTFx][2 + (param & 3)];
+  return fx::cur().knob[target - kTFx][2 + (param & 3)];
 }
 #endif
 
@@ -367,7 +367,7 @@ CORE_COLD void restore(Tgt& e) {
     v[vi].p[e.param & 15] = e.base;
     g_vdirty |= 1u << vi;
   } else if (is_fx(e.target)) {
-    fx::control.knob[e.target - kTFx][2 + (e.param & 3)] = (uint8_t)e.base;
+    fx::cur().knob[e.target - kTFx][2 + (e.param & 3)] = (uint8_t)e.base;
   }
 #if CORE_POLY
   else if (is_ins(e.target) && e.param >= 8) ins::eq_mod_offset(e.target - kTIns, (e.param - 8) & 3, 0);
@@ -628,7 +628,7 @@ CORE_COLD const char* param_name(int t, int p, char* b, int cap) {
     ui::voice_label(device::voice_in(t - kTVoice), p & 15, b, cap);
     if (!b[0]) sniprintf(b, cap, "-");   // a P the voice's machine leaves unused
   } else if (is_fx(t)) {
-    const fx::KnobLabels* l = fx::labels(fx::control.knob[t - kTFx][0]);
+    const fx::KnobLabels* l = fx::labels(fx::cur().knob[t - kTFx][0]);
     if (l && l->label[p & 3] && *l->label[p & 3]) sniprintf(b, cap, "%s", l->label[p & 3]);
     else sniprintf(b, cap, "-");   // a knob the TYPE leaves unused
 #if CORE_POLY
@@ -961,7 +961,7 @@ CORE_COLD void tick(uint32_t us) {
       } else {
         int iv = rnd0(clampf(e.base + e.off, 0.0f, 127.0f));
         if ((float)iv != e.applied) {
-          fx::control.knob[e.target - kTFx][2 + (e.param & 3)] = (uint8_t)iv;
+          fx::cur().knob[e.target - kTFx][2 + (e.param & 3)] = (uint8_t)iv;
           e.applied = (float)iv;
           ++g_stats.fx_sets;
         }

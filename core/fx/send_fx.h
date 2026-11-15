@@ -123,6 +123,12 @@ extern Control control;
 extern Control control1;
 inline Control& control_of(int box) { return box ? control1 : control; }
 inline int box_of(const Control& c) { return &c == &control1 ? 1 : 0; }
+// 3(c) step 8: the settings code (the console, set_knob_base / set_send_base, the route file, the LFOs' and the mod
+// layer's writers) works on the slot in hand's: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0).
+// take_sendfx and the 0x21 / 0x22 replies are the Rytm's (slot 0's, `control`).
+extern int (*slot_fn)();
+int slot_in_hand();
+Control& cur();
 
 bool builtin(int id);                        // an id this build plays (1, 2; 6, 8 with RYTM_SENDFX_LARGE)
 // The name for id (built in, reserved, or the registry's user effect), at most 10 chars; "OFF" for 0.
@@ -203,11 +209,13 @@ int sysex_labels(uint8_t* m, int id);
 // sendknob=K:I:V): true if it was one; the answer (one line) in reply. TYPE and knobs hold until the next 0x20 for
 // the FX track (a stock Rytm sends none). A route change marks the card file to be written (card_dirty).
 bool command(const char* p, char* reply, int max);
-extern volatile bool card_dirty;
-// The card: /.rytm/sendfx.txt "out=fx|main" (global: card_load at boot), /.rytm/fxslots/<project>.txt (line n =
-// UFXn+1: "<tag 4 hex> <name>" or empty; slots_load on a 0x10 project change). card_save writes the route (the
-// board's idle step). send_fx_card.cpp (the core's card).
+extern volatile uint8_t card_dirty;   // a bit per slot whose route file is to be written (1 << slot)
+// The card: /.rytm/sendfx.txt "out=fx|main" (a box setting: each slot's in its own folder; card_load at boot for slot 0,
+// at its attach for another, in its Scope), /.rytm/fxslots/<project>.txt (line n = UFXn+1: "<tag 4 hex> <name>" or
+// empty; slots_load on a 0x10 project change). card_save writes the slot in hand's route (the board's idle step, in each
+// dirty slot's Scope). card_text: a read file's text into the slot in hand's settings. send_fx_card.cpp.
 void card_load();
+void card_text(const char* b, int n);
 void card_save();
 void slots_load(const char* project);   // the map starts over, empty; with CORE_MSAMP read by the card core: slots_step
 bool slots_step();                      // takes a read in; true: none under way, user[] is the project's

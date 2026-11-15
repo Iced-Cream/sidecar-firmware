@@ -94,18 +94,19 @@ struct Control {
 };
 extern Control control;
 // Slot 1's: its voices 8..15 play through chains of their own, alone or beside a Rytm (every chain OFF until slot 1's
-// settings are loaded into it); `control` is slot 0's (the Rytm's). Its voice chains only: the buses and the master are
-// slot 0's (the send FX and the master chain are the primary stream's). control_of(slot of a voice).
+// settings are loaded into it); `control` is slot 0's (the Rytm's). Each holds all of its slot's chains: its voices', its
+// buses' and its master's (3(d): each box its own send FX and master chain). control_of(slot of a voice).
 extern Control control1;
 inline Control& control_of(int slot) { return slot ? control1 : control; }
-// 3(c): the settings (set_type .. mod_offset, the card, the console) are the slot in hand's for a voice chain (its own
-// control_of), slot 0's for the buses and the master. slot_fn names the slot in hand (core/pool/pool.cpp sets it to
-// prj_slot; null: 0, the DSP benches). ctl(c): what chain c of the slot in hand plays (the pages).
+// 3(c), 3(d): the settings (set_type .. mod_offset, the card, the console) are the slot in hand's, every chain (its own
+// control_of). slot_fn names the slot in hand (core/pool/pool.cpp sets it to prj_slot; null: 0, the DSP benches).
+// ctl(c): what chain c of the slot in hand plays (the pages). slot_in_hand: that slot (master.cpp's settings follow it).
 extern int (*slot_fn)();
-inline const Control& ctl(int c) {
-  int sl = c < kVoices && slot_fn ? slot_fn() : 0;
+inline const Control& ctl(int) {
+  int sl = slot_fn ? slot_fn() : 0;
   return control_of(sl > 0 && sl < kVoiceSlots ? sl : 0);
 }
+int slot_in_hand();
 // AMP plays on the base box's voice chains (out::g_base_slot: AMP's state is keyed by chain, one box's at a time); the
 // other slot's AMP slots play dry.
 
@@ -728,6 +729,7 @@ int eq_param(int c, int k);     // the knob as set
 int eq_playing(int c, int k);   // the knob as it plays (the LFO's offset on top)
 void eq_mod_offset(int c, int k, int off);   // -127..127, on the knob (core/mod kIns params 8..11: E1..E4)
 bool eq_on(int c);              // chain c's post EQ is off its flat defaults
+bool eq_on_in(int slot, int c);  // ... slot `slot`'s chain c (any core)
 // sfx-basewidth (0.5.0): HPF and LPF as BASE / WIDTH, the Elektron delay filter's way (Digitone, Analog Four): BASE is the
 // high-pass's corner (HPF = BASE), WIDTH how far above it the low-pass sits, in the same steps (LPF = 127 - BASE - WIDTH,
 // 0 = off once BASE + WIDTH >= 127; the LPF's scale is the HPF's within 0.03 octave). BASE 0 / WIDTH 127 = both off.

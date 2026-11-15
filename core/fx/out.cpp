@@ -25,7 +25,7 @@ int (*slot_fn)() = nullptr;
 namespace {
 
 // 3(c): each voice slot's OUT knobs, offsets and routes as set, playing in control_of(slot) - the slot in hand's
-// (slot_fn). The mute gate (the Rytm's mutes, the tracks that triggered) and the PRE / POST trims are slot 0's.
+// (slot_fn). The mute gate is each slot's own (set_mutes / trig_track name the slot); the PRE / POST trims are slot 0's.
 struct Set {
   uint8_t knob[kVoices][4];      // LEV PAN WID DEC
   int16_t lfo[kVoices][3];
@@ -41,8 +41,9 @@ Set& S() { return g_set[hand()]; }
 Control& K() { return control_of(hand()); }
 // a box with one stereo mix return forces POST on the base box's voices (the Overbridge device: out::g_device)
 bool mix_forced(int sl) { return device().ret == kStereoMix && sl == g_base_slot; }
-int8_t g_track[kVoices];         // the track that last triggered the voice (-1 unknown)
-uint16_t g_mutes = 0;
+// the mute gate, each slot's (3(c) step 8): its box's tracks muted, the track that last triggered each of its voices
+int8_t g_track[kVoiceSlots][kVoices];   // (-1 unknown)
+uint16_t g_mutes[kVoiceSlots];
 Stats g_stats;
 
 struct Init {
@@ -91,16 +92,19 @@ void refresh(int vi) {
   c.wid[vi] = (uint8_t)clampi(t.knob[vi][2] + t.lfo[vi][2], 0, 127);
   c.dec[vi] = t.knob[vi][3];
 }
-void gates() {
+void gates(int sl) {
+  const uint16_t m = g_mutes[sl];
   for (int v = 0; v < kVoices; ++v) {
-    int t = g_track[v];
+    int t = g_track[sl][v];
     bool muted;
-    if (t >= 0) muted = (g_mutes >> t) & 1;
-    else {
-      int a = device().tracks[v][0], b = device().tracks[v][1];
-      muted = ((g_mutes >> a) & 1) && (b < 0 || ((g_mutes >> b) & 1));
+    if (t >= 0) muted = (m >> t) & 1;
+    else if (sl == 0) {   // the Rytm's shared voices: muted when both of its tracks are
+      int a = kRytmMk2.tracks[v][0], b = kRytmMk2.tracks[v][1];
+      muted = ((m >> a) & 1) && (b < 0 || ((m >> b) & 1));
+    } else {
+      muted = (m >> v) & 1;   // a box's voice v plays its track v (seq voice_of)
     }
-    control.open[v] = muted ? 0 : 1;
+    control_of(sl).open[v] = muted ? 0 : 1;
   }
 }
 
@@ -162,14 +166,17 @@ void mod_offset(int vi, int k, int off) {
   refresh(vi);
 }
 const Control& ctl() { return K(); }
-void set_mutes(uint16_t mask) {
-  g_mutes = mask;
-  gates();
+void set_mutes(uint16_t mask) { set_mutes(0, mask); }
+void set_mutes(int slot, uint16_t mask) {
+  if (slot < 0 || slot >= kVoiceSlots) return;
+  g_mutes[slot] = mask;
+  gates(slot);
 }
-void trig_track(int vi, int track) {
-  if (vi < 0 || vi >= kVoices) return;
-  g_track[vi] = (int8_t)(track >= 0 && track < 12 ? track : -1);
-  gates();
+void trig_track(int vi, int track) { trig_track(0, vi, track); }
+void trig_track(int slot, int vi, int track) {
+  if (slot < 0 || slot >= kVoiceSlots || vi < 0 || vi >= kVoices) return;
+  g_track[slot][vi] = (int8_t)(track >= 0 && track < 12 ? track : -1);
+  gates(slot);
 }
 bool any_stereo() {   // (slot 0's: the output stage's PRE / POST pairs)
   for (int v = 0; v < kVoices; ++v)
@@ -348,8 +355,10 @@ void reset() {
       t.lfo[v][0] = t.lfo[v][1] = t.lfo[v][2] = 0;
       t.route[v] = kTrk;
     }
-  for (int v = 0; v < kVoices; ++v) g_track[v] = -1;
-  g_mutes = 0;
+  for (int sl = 0; sl < kVoiceSlots; ++sl) {
+    for (int v = 0; v < kVoices; ++v) g_track[sl][v] = -1;
+    g_mutes[sl] = 0;
+  }
   g_stats = Stats();
 }
 

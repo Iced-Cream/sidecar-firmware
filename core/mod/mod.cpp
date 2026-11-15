@@ -81,15 +81,15 @@ CORE_COLD void ix_del(Layer& l, Entry& e) {
     if (!stays) l.ix[i] = l.ix[j], l.ix[j] = 0, i = j;
   }
 }
-// 3(c): the kinds a slot's layer may have. Slot 0's: all of them. Another slot's: its own voices (kV), their INSERT
-// chains, OUT routes and sends (its own control_of: the settings are the slot in hand's, core/fx/insert.h), never the
-// targets with one instance (the send FX, the Rytm's sends, the master, the buses and the master chains are slot 0's -
-// 3(b); the Rytm's own params, scene and the sequencer are the Rytm's). Refused at the source's call (offset / morph): an LFO
-// file naming one still loads and saves as it was.
+// 3(c): the kinds a slot's layer may have. Slot 0's: all of them. Another slot's: its own voices (kV), all of its INSERT
+// chains (voices, buses, master), OUT routes and sends, its send FX's knobs (kFx) and its master (kMfx) - its own
+// control_of, the slot in hand's settings (core/fx/insert.h, send_fx.h, master.h; 3(c) step 8) - never the Rytm's own
+// (its tracks' sends kSnd, its params, scene and the sequencer words). Refused at the source's call (offset / morph): an
+// LFO file naming one still loads and saves as it was.
 CORE_COLD bool slot_has(Tid t) {
   if (prj_slot() == 0) return true;
   const Kind k = kind_of(t);
-  return k == kV || k == kOut || k == kIsnd || (k == kIns && index_of(t) < kBoxVoices);   // (its voice chains: step 5)
+  return k == kV || k == kOut || k == kIsnd || k == kIns || k == kFx || k == kMfx;   // (3(c) step 8: its own send FX and master too)
 }
 // a new entry for t: the first free one (the order 0.4.0's table filled in, so the writes come in its order); its
 // base what plays now. Null: the table is full
@@ -336,7 +336,7 @@ static CORE_COLD void tick_body(uint32_t us) {
       if (g_source) g_source(us, dus);   // (tests)
       else lfo::waves(us, dus);         // the LFOs: the clock position, the waves, each one's offset
 #if CORE_POLY
-      if (s == 0) learn::tick();         // the MIDI-learn routes' offsets (core/mod/learn.h; slot 0's: the settings, 3(c) step 8)
+      learn::tick();                    // the slot's MIDI-learn routes' offsets (core/mod/learn.h)
       xypad::tick();                    // the slot's XY pad (core/mod/xypad.h)
       scene::tick(now_ms());            // the slot's morph: a value for each lock of A and B (core/mod/scene.h)
 #endif
@@ -392,7 +392,7 @@ CORE_COLD void voice_params(int vi, float* p, int np) {
 
 CORE_COLD uint8_t fx_knob(int slot, int knob, uint8_t val) {
   if (knob < 2 || knob > 5) return val;
-  Entry* e = find_e(L(0), tid(kFx, slot & 1, knob - 2));   // (the send FX: slot 0's layer)
+  Entry* e = find_e(L(), tid(kFx, slot & 1, knob - 2));   // (the slot in hand's send FX: its layer, 3(c) step 8)
   if (!e) return val;
   e->base = val;
   int iv = rnd0(clampf(start_of(*e) + e->off, 0.0f, 127.0f));
@@ -412,13 +412,13 @@ CORE_COLD uint8_t fx_send(int track, int slot, uint8_t val) {
 CORE_COLD uint8_t knob_base(int slot, int knob) {
   slot &= 1;
   if (knob < 0 || knob > 5) return 0;
-  const Entry* e = knob >= 2 ? find_e(L(0), tid(kFx, slot, knob - 2)) : nullptr;
-  return e ? (uint8_t)e->base : fx::control.knob[slot][knob];
+  const Entry* e = knob >= 2 ? find_e(L(), tid(kFx, slot, knob - 2)) : nullptr;
+  return e ? (uint8_t)e->base : fx::cur().knob[slot][knob];
 }
 CORE_COLD uint8_t send_base(int track, int slot) {
   if (track < 0 || track >= fx::kTracks) return 0;
   const Entry* e = find_e(L(0), tid(kSnd, track, slot & 1));
-  return e ? (uint8_t)e->base : fx::control.send[track][slot & 1];
+  return e ? (uint8_t)e->base : fx::control.send[track][slot & 1];   // (the Rytm's: slot 0's)
 }
 
 CORE_COLD float base_of(int vi, int k, float cur) {

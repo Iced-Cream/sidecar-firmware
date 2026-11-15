@@ -61,11 +61,11 @@ constexpr int kRows = ins::kChains + ins::kMasters;
 inline bool row_on(int c) { return (c >= 0 && c < kVoices) || (c >= ins::kM0 && c < kRows); }
 inline bool is_pair_row(int c) { return c >= ins::kChains && c < kRows; }
 inline int parent(int c) { return is_pair_row(c) ? ins::kM0 + (c - ins::kChains) : c; }   // the chain whose knobs it follows
-// the settings chain pc plays by: a voice chain's are the base box's slot's (out::g_base_slot), the master's slot 0's
-inline const ins::Control& ctl(int pc) { return pc < kVoices ? ins::control_of(out::g_base_slot) : ins::control; }
+// the settings chain pc plays by: the base box's slot's (out::g_base_slot), its voice and its master chains alike
+inline const ins::Control& ctl(int) { return ins::control_of(out::g_base_slot); }   // the base box's chains, voices and master (3(d))
 inline bool wanted(int c, int s) {   // the row's slot is an AMP that should hold an instance
   int pc = parent(c);
-  return ctl(pc).type[pc][s] == ins::kAmp && (!is_pair_row(c) || ins::control.mpair[pc - ins::kM0][s]);
+  return ctl(pc).type[pc][s] == ins::kAmp && (!is_pair_row(c) || ctl(pc).mpair[pc - ins::kM0][s]);
 }
 Xchg g_x[kRows][kSlots];
 
@@ -517,7 +517,7 @@ void one(int c, int s, const float* p, const float* u, float* y0, int m) {
 void run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m) {
   if (m > NAM_A2LITE_MAX_BUFFER_SIZE) m = NAM_A2LITE_MAX_BUFFER_SIZE;
   float u[NAM_A2LITE_MAX_BUFFER_SIZE];
-  if (r && c >= ins::kM0 && c < ins::kChains && ins::control.mpair[c - ins::kM0][s & 1]) {   // the master's L/R pair
+  if (r && c >= ins::kM0 && c < ins::kChains && ctl(c).mpair[c - ins::kM0][s & 1]) {   // the master's L/R pair
     for (int i = 0; i < m; ++i) u[i] = ins::flush(x[i]);
     one(c, s, p, u, y0, m);
     for (int i = 0; i < m; ++i) u[i] = ins::flush(r[i]);

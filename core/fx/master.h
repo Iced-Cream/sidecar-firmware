@@ -73,10 +73,12 @@ struct Control {
 extern Control control;
 // Two links (phase 3(d), decided 2026-11-14: the boxes work independently and identically): slot 1's master settings
 // (3(c) loads its MFX line into it), played on slot 1's chains (ins::engine(1), ins::control_of(1)) with its own rooms and
-// SendFx units (kBoxes: 16-voice builds). `control` is slot 0's; the settings code below (set_*, accept, the console, the
-// card, json) still writes and reads slot 0's.
+// SendFx units (kBoxes: 16-voice builds). `control` is slot 0's. The settings code below (set_*, accept, the rooms, the
+// console, the card line, json) works on the slot in hand's (ins::slot_in_hand, 3(c)'s prj_slot): cur(). report,
+// link_lost and stems_on_main are the Rytm's (slot 0's control).
 extern Control control1;
 inline Control& control_of(int box) { return box ? control1 : control; }
+Control& cur();   // the slot in hand's
 constexpr int kBoxes = kVoiceSlots;   // 2 on 16 voices, 1 on 8
 inline int played_lev(const Control& m) { int x = m.lev + m.mod_lev; return x < 0 ? 0 : x > 127 ? 127 : x; }
 inline int played_lev() { return played_lev(control); }

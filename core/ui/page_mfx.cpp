@@ -36,7 +36,7 @@ CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi :
 CORE_COLD void strip(Canvas& c) {
   for (int i = 0; i < master::kSlots; ++i) {
     Rect r{(int16_t)(i * 21), (int16_t)kStripY, 19, (int16_t)kStripH};
-    bool set = ins::control.type[master::chain(i)][master::slot(i)] != 0, sel = i == mp.slot && !mp.eq;
+    bool set = ins::ctl(master::chain(i)).type[master::chain(i)][master::slot(i)] != 0, sel = i == mp.slot && !mp.eq;
     if (sel) c.fill(r, kOn);
     else c.rect(r, kOn);
     char b[4];
@@ -44,7 +44,7 @@ CORE_COLD void strip(Canvas& c) {
     c.put_text(kSlotFree + i, kRSmall, r.x + 9, kStripY + 4, b, kAlignCentre | (sel ? kTextInvert : 0));
   }
   char b[20];
-  sniprintf(b, sizeof b, CORE_STR("%s %s"), master::control.src == master::kMix ? "MIX" : "RET", !master::on() ? "OFF" : master::control.byp ? "BYP" : "ON");
+  sniprintf(b, sizeof b, CORE_STR("%s %s"), master::cur().src == master::kMix ? "MIX" : "RET", !master::on(ins::slot_in_hand()) ? "OFF" : master::cur().byp ? "BYP" : "ON");
   c.put_text(kSlotFree + 4, kRSmall, 127, kStripY + 4, b, kAlignRight);
 }
 
@@ -72,7 +72,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
       ins::eq_value_text(k, ins::eq_param(master::kEqChain, k), val[k], 8);
     }
     sniprintf(lab[7], 6, "LEV");
-    sniprintf(val[7], 8, CORE_STR("%d"), master::control.lev);
+    sniprintf(val[7], 8, CORE_STR("%d"), master::cur().lev);
     cells(c, lab, val);
     if (e >= 0 && e < ins::kEqParams) {
       sniprintf(b, sizeof b, CORE_STR("EQ %s:%s"), lab[e], val[e]);
@@ -82,9 +82,9 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
     }
     return;
   }
-  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::control.type[ch][s];
+  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::ctl(ch).type[ch][s];
   const ins::Labels& L = ins::labels(t);
-  header(c, "MASTER", page, npages, master::control.byp ? "BYPASS" : "");
+  header(c, "MASTER", page, npages, master::cur().byp ? "BYPASS" : "");
   strip(c);
   for (int k = 0; k < 4; ++k) {
     sniprintf(lab[k], 6, "%s", t ? L.label[k] : "-");
@@ -97,7 +97,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
   sniprintf(val[5], 8, "%.7s", ins::type_name(t));
   if (master::send_type(t)) {
     sniprintf(lab[6], 6, "MIX");
-    sniprintf(val[6], 8, CORE_STR("%d"), master::control.mix[mp.slot]);
+    sniprintf(val[6], 8, CORE_STR("%d"), master::cur().mix[mp.slot]);
   } else if (t == ins::kAmp) {
     sniprintf(lab[6], 6, "MODE");
     sniprintf(val[6], 8, "%s", master::pair(mp.slot) ? "L/R" : "ONE");
@@ -105,7 +105,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
     sniprintf(lab[6], 6, "-"), sniprintf(val[6], 8, "-");
   }
   sniprintf(lab[7], 6, "SRC");
-  sniprintf(val[7], 8, "%s", master::control.src == master::kMix ? "MIX" : "RET");
+  sniprintf(val[7], 8, "%s", master::cur().src == master::kMix ? "MIX" : "RET");
   cells(c, lab, val);
   if (e >= 0 && e < 4 && t) {
     sniprintf(b, sizeof b, CORE_STR("%d %s:%s"), mp.slot + 1, L.label[e], val[e]);
@@ -113,7 +113,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
   } else if (e == 5 && mp.full) {
     sniprintf(b, sizeof b, CORE_STR("SEND FX INSERTS: %d IN USE"), master::kFxSlots);
     footer(c, b);
-  } else if (master::control.src == master::kMix) {
+  } else if (master::cur().src == master::kMix) {
     const int on = master::stems_on_main();
     if (on) sniprintf(b, sizeof b, CORE_STR("%d VOICES STILL ON MAIN"), on);
     footer(c, on ? b : master::control.known ? "THROUGH: PANS FROM THE RYTM" : "MONO: TRACKS OFF MAIN");
@@ -128,10 +128,10 @@ CORE_COLD void mfx_enc(int e, int d, bool func) {
   const int st = func ? 8 : 1, l = list_turn(e, d);   // the slot, type and switches: lists; the rest values
   if (mp.eq) {
     if (e < ins::kEqParams) ins::set_eq(master::kEqChain, e, ins::eq_param(master::kEqChain, e) + d * st), mod::manual_knob(mod::tid(mod::kIns, master::kEqChain, 8 + e));
-    else if (e == 7) master::set_lev(master::control.lev + d * st), mod::manual_knob(mod::tid(mod::kMfx, 0, 0));
+    else if (e == 7) master::set_lev(master::cur().lev + d * st), mod::manual_knob(mod::tid(mod::kMfx, 0, 0));
     return;
   }
-  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::control.type[ch][s];
+  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::ctl(ch).type[ch][s];
   if (e < 4) {
     if (t) ins::set_param(ch, s, e, ins::param(ch, s, e) + d * st), mod::manual_knob(mod::tid(mod::kIns, ch, s * 4 + e));
   } else if (e == 4) {
@@ -146,7 +146,7 @@ CORE_COLD void mfx_enc(int e, int d, bool func) {
       ins::set_type(ch, s, n);
     }
   } else if (e == 6) {
-    if (master::send_type(t)) master::set_mix(mp.slot, master::control.mix[mp.slot] + d * st), mod::manual_knob(mod::tid(mod::kMfx, 0, 1 + mp.slot));
+    if (master::send_type(t)) master::set_mix(mp.slot, master::cur().mix[mp.slot] + d * st), mod::manual_knob(mod::tid(mod::kMfx, 0, 1 + mp.slot));
     else if (t == ins::kAmp && l) master::set_pair(mp.slot, l > 0);
   } else if (e == 7) {
     if (l) master::set_src(l > 0 ? master::kMix : master::kRet);
@@ -156,7 +156,7 @@ CORE_COLD void mfx_enc(int e, int d, bool func) {
 // 0.5.0 (EDIT): the target mfx_enc's turn of e edits now, as its mod::manual_knob names it (0 none)
 CORE_COLD uint16_t mfx_enc_tid(int e) {
   if (mp.eq) return e < ins::kEqParams ? mod::tid(mod::kIns, master::kEqChain, 8 + e) : e == 7 ? mod::tid(mod::kMfx, 0, 0) : 0;
-  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::control.type[ch][s];
+  const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::ctl(ch).type[ch][s];
   if (e < 4) return t ? mod::tid(mod::kIns, ch, s * 4 + e) : 0;
   if (e == 6 && master::send_type(t)) return mod::tid(mod::kMfx, 0, 1 + mp.slot);
   return 0;
@@ -165,7 +165,7 @@ CORE_COLD uint16_t mfx_enc_tid(int e) {
 CORE_COLD bool mfx_key(int code) {
   if (code == 0x41 && !mp.eq) return mp.eq = true, mp.touched = -1, true;    // RIGHT: the EQ view
   if ((code == 0x40 || code == 0x45) && mp.eq) return mp.eq = false, mp.touched = -1, true;   // LEFT, NO: back
-  if (code == 0x44) return master::set_byp(!master::control.byp), true;      // YES: bypass
+  if (code == 0x44) return master::set_byp(!master::cur().byp), true;      // YES: bypass
   return false;
 }
 
