@@ -21,6 +21,8 @@
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
 #include "store/store.h"
+#include "um_host.h"
+#include "user/um.h"
 #include "voices.h"
 #include "wavetable/wavetable.h"
 
@@ -305,6 +307,50 @@ int main() {
           !strstr(a.c_str(), "\nB1 ") && !ins::settings_dirty_any());
     CHECK(ins::control.type[0][0] == ins::kDrive && ins::control1.type[0][0] == ins::kCrush);
     CHECK(out::control1.lev[0] == 77 && out::control.lev[0] == 100);
+  }
+
+  // each box's user slots U1..U5 (option (a), decided 2026-11-14): its own map in its own folder, its own load slots;
+  // the slot in hand's U2 is its own box's (an id not installed: the map saved, the slot MISSING)
+  {
+    um::begin(host_um_exec());
+    auto um_settle = [] {
+      for (int i = 0; i < 2000; ++i) {
+        bool did = um::idle();
+        idle_save();
+        if (!did && i > 20) break;
+      }
+    };
+    um_settle();
+    char o[200];
+    CHECK(um::command("um=put:2:rytm.alpha:1.0.0", o, sizeof o));   // (outside a Scope: the base box, the Rytm)
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(um::command("um=put:2:a4.bravo:1.0.0", o, sizeof o));
+      CHECK(um::command("um=put:4:a4.delta:1.0.0", o, sizeof o));
+    }
+    um_settle();
+    const std::string r = get("/.rytm/slots/NEW.txt"), a = get("/.a4/slots/NEW.txt");
+    printf("  user slots: /.rytm %s/.a4 %s", r.c_str(), a.c_str());
+    CHECK(strstr(r.c_str(), "U2 rytm.alpha 1.0.0") && !strstr(r.c_str(), "a4."));
+    CHECK(strstr(a.c_str(), "U2 a4.bravo 1.0.0") && strstr(a.c_str(), "U4 a4.delta 1.0.0") && !strstr(a.c_str(), "rytm."));
+    CHECK(!strcmp(um::slot_view(1).id, "rytm.alpha") && !um::slot_view(3).id[0]);
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(!strcmp(um::slot_view(1).id, "a4.bravo") && !strcmp(um::slot_view(3).id, "a4.delta"));
+    }
+    // the A4's project changes: its map read again from its own folder, the Rytm's untouched
+    {
+      device::Scope in(device::g_links[1]);
+      const uint8_t n[] = {'B', '4', 0xf7};
+      set_project(n, 3);
+    }
+    settle();
+    um_settle();
+    CHECK(!strcmp(um::slot_view(1).id, "rytm.alpha"));
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(!um::slot_view(1).id[0] || strcmp(um::slot_view(1).id, "a4.bravo"));   // (B4's own map: none, or inherited)
+    }
   }
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4

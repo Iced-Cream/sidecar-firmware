@@ -684,6 +684,7 @@ CORE_COLD bool project_attach_step(int s) {
   log(CORE_STR("project: slot %d (%s): %s"), s, l.state, j.key[0] ? j.key : "(none yet)");
   pool_load();
   if (cardq::worker()) lists_begin();   // its JUNO / FM lists, read from its folder (one reader: in turn)
+  if (hooks.project_changed) hooks.project_changed();   // its machines: its own user-slot map (core/user/um.h, 3(c))
   project_fill_begin();                 // its RAM store, from its folder
   return true;
 }
