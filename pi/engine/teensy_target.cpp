@@ -923,13 +923,15 @@ void CTeensyTarget::MirrorPoll (void)
 							ts.link_gap_hist[8] + ts.link_gap_hist[9] + ts.link_gap_hist[10] + ts.link_gap_hist[11] +
 							ts.link_gap_hist[12] + ts.link_gap_hist[13] + ts.link_gap_hist[14], ts.link_gap_hist[15],
 							ts.link_dry, ts.link_nak_polls, ts.pc_audio_err);
-			if (n >= (int) sizeof (Stats))	// a Teensy build with the TR5d fields
+			if (n >= (int) offsetof (Stats, pc_idle_enter))	// a Teensy build with the TR5d fields
 				CLogger::Get ()->Write (From, LogNotice, "relay teensy: pc gaps in max %u us <.25 %u <.5 %u <1 %u <2 %u <4 %u <8 %u <16 %u more %u"
 							" | out max %u us <.25 %u <.5 %u <1 %u <2 %u <4 %u <8 %u <16 %u more %u",
 							ts.pc_in_gap_max_us, ts.pc_in_gap[0], ts.pc_in_gap[1], ts.pc_in_gap[2], ts.pc_in_gap[3],
 							ts.pc_in_gap[4], ts.pc_in_gap[5], ts.pc_in_gap[6], ts.pc_in_gap[7], ts.pc_out_gap_max_us,
 							ts.pc_out_gap[0], ts.pc_out_gap[1], ts.pc_out_gap[2], ts.pc_out_gap[3], ts.pc_out_gap[4],
 							ts.pc_out_gap[5], ts.pc_out_gap[6], ts.pc_out_gap[7]);
+			if (n >= (int) sizeof (Stats))
+				CLogger::Get ()->Write (From, LogNotice, "relay teensy: computer IN idle entered %u, left %u", ts.pc_idle_enter, ts.pc_idle_leave);
 		}
 	}
 }

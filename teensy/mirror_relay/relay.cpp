@@ -155,9 +155,17 @@ static void ev_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t)
 
 // ---------------------------------------------------------------- audio
 
+// The computer idle on the box's IN (T339/T340: the Overbridge Engine stops reading after its latency check and starts
+// again with the app): blocks that arrive meanwhile are not kept, or the computer starts on a full queue of stale blocks
+// and, reading in step with its own OUT, never drains it (every later jitter then overflows it: breaks). Idle: nothing
+// primed, the newest block kept; the computer's next poll (its NAK, loop()) primes from the newest.
+static const uint32_t kPcIdleUs = 20000;
+static volatile bool pc_in_idle = true;
+static uint32_t pc_in_last_take;
+
 static void a_to_pc_pump (void)
 {
-	if (!P.ep[kAudioInEp & 7][1].open) return;
+	if (!P.ep[kAudioInEp & 7][1].open || pc_in_idle) return;
 	for (unsigned k = 0; k < kAPcTds && aq_pc_head != aq_pc_tail; k++)
 	{
 		if (a_to_pc_busy[k]) continue;
@@ -193,7 +201,11 @@ static void a_to_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t err)
 	unsigned k = t->param;
 	a_to_pc_busy[k] = 0;
 	if (err) st.pc_audio_err++;
-	else gap_note (&pc_in_last, &pc_in_seen, st.pc_in_gap, &st.pc_in_gap_max_us);
+	else
+	{
+		gap_note (&pc_in_last, &pc_in_seen, st.pc_in_gap, &st.pc_in_gap_max_us);
+		pc_in_last_take = ARM_DWT_CYCCNT;
+	}
 	if (!err)
 	{
 		st.audio_to_pc++;
@@ -227,7 +239,16 @@ static void a_from_pi_done (ci_dev *, uint8_t, ci_td *t, uint32_t len, uint32_t 
 	if (ci_queued (&L, kAudioFromPiEp) == 0) st.link_dry++;	// this was the last armed one (re-armed below)
 	if (!err && P.ep[kAudioInEp & 7][1].open)
 	{
-		if (aq_pc_head - aq_pc_tail >= kAQ) { aq_pc_tail++; st.audio_to_pc_drop++; }
+		if (!pc_in_idle && cyc_us (now - pc_in_last_take) > kPcIdleUs)	// the computer stopped taking blocks
+		{
+			pc_in_idle = true;
+			ci_ep_flush (&P, kAudioInEp);
+			ci_nak_take (&P, kAudioInEp);		// a NAK from before the flush is not the computer coming back
+			memset (a_to_pc_busy, 0, sizeof a_to_pc_busy);
+			st.pc_idle_enter++;
+		}
+		if (pc_in_idle) aq_pc_tail = aq_pc_head;		// keep only the block below, the newest
+		else if (aq_pc_head - aq_pc_tail >= kAQ) { aq_pc_tail++; st.audio_to_pc_drop++; }
 		Block &b = aq_pc[aq_pc_head++ % kAQ];
 		memcpy (b.d, a_from_pi_buf[k], len);
 		b.len = (uint16_t) len;
@@ -375,6 +396,7 @@ static void pc_eps_close (void)
 	ci_ep_close_all (&P);
 	memset (a_to_pc_busy, 0, sizeof a_to_pc_busy);
 	aq_pc_head = aq_pc_tail = 0;
+	pc_in_idle = true;
 	for (unsigned c = 0; c < kChannels; c++)
 	{
 		credits[c] = 0;
@@ -945,6 +967,15 @@ void relay_begin (void)
 
 void relay_poll (void)
 {
+	if (pc_in_idle && P.ep[kAudioInEp & 7][1].open && ci_nak_take (&P, kAudioInEp))	// the computer polls again
+	{
+		__disable_irq ();
+		pc_in_idle = false;
+		pc_in_last_take = ARM_DWT_CYCCNT;
+		st.pc_idle_leave++;
+		a_to_pc_pump ();
+		__enable_irq ();
+	}
 	if (L.ep[kAudioFromPiEp & 7][0].open && ci_nak_take (&L, kAudioFromPiEp)) st.link_nak_polls++;
 	if (connect_due && (pc_off_at == 0 || millis () - pc_off_at >= 300))
 	{

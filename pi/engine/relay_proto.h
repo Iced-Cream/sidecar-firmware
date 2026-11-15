@@ -137,6 +137,7 @@ struct Stats
 	// TR5c (T339): the computer's side in time: gaps between blocks the computer took (IN) and sent (OUT), while streaming
 	// (under 1 s), bins < 0.25, 0.5, 1, 2, 4, 8, 16 ms, more; and the longest
 	uint32_t pc_in_gap[8], pc_out_gap[8], pc_in_gap_max_us, pc_out_gap_max_us;
+	uint32_t pc_idle_enter, pc_idle_leave;	// the computer stopped / started again taking the box's IN (stale blocks not kept)
 };
 
 inline unsigned gap_bin (uint32_t us)

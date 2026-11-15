@@ -167,6 +167,25 @@ void ci_queue (ci_dev *d, uint8_t addr, ci_td *t, void *buf, uint32_t len)
 
 uint32_t ci_queued (ci_dev *d, uint8_t addr) { return qh_of (d, addr)->queued; }
 
+void ci_ep_flush (ci_dev *d, uint8_t addr)
+{
+	uint32_t mask = bit_of (addr);
+	__disable_irq ();
+	uint32_t t = ARM_DWT_CYCCNT;
+	do
+	{
+		FLUSH = mask;
+		while ((FLUSH & mask) && ARM_DWT_CYCCNT - t < 600000u) ;
+	} while ((EPSTATUS & mask) && ARM_DWT_CYCCNT - t < 600000u);
+	ci_qh *q = qh_of (d, addr);
+	q->next = 1;
+	q->status = 0;
+	q->first = q->last = 0;
+	q->queued = 0;
+	COMPLETE = mask;
+	__enable_irq ();
+}
+
 bool ci_nak_take (ci_dev *d, uint8_t addr)
 {
 	uint32_t m = bit_of (addr);

@@ -74,6 +74,7 @@ void ci_ep_close (ci_dev *d, uint8_t addr);		// flushed: its dTDs are dropped wi
 void ci_ep_close_all (ci_dev *d);			// every endpoint but 0
 void ci_queue (ci_dev *d, uint8_t addr, ci_td *t, void *buf, uint32_t len);	// IN: len to send; OUT: buffer size
 uint32_t ci_queued (ci_dev *d, uint8_t addr);
+void ci_ep_flush (ci_dev *d, uint8_t addr);	// drop every dTD primed on an open endpoint (no completions), keep it open
 bool ci_nak_take (ci_dev *d, uint8_t addr);	// the endpoint NAKed since the last call (ENDPTNAK, cleared)
 void ci_stall (ci_dev *d, uint8_t addr, bool on);	// on = FALSE also resets the data toggle
 bool ci_stalled (ci_dev *d, uint8_t addr);
