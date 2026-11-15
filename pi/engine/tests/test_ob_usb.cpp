@@ -237,6 +237,22 @@ int main() {
     CHECK(ob::block_sample(l, 2, 6, 0) != 0 && ob::block_sample(l, 2, 6, 0) == ob::block_sample(l, 2, 6, 1));
     CHECK(g_Output.Underflows() == 0);
   }
+  {  // oboutlead=4: the first IN block sends 1 + 4 OUT blocks (the box's cushion, T346-T351), then one per IN as ever; the
+     // counters run on without a gap; the lead is not given again within the stream
+    CKernelOptions::Get()->num["oboutlead"] = 4;
+    Bus b(g_rytm, 0x0b48);
+    CHECK(b.ob && b.ob->Configure());
+    uint16_t c = 0;
+    b.in(1, c);
+    CHECK(b.host.out.size() == 5);
+    for (int k = 0; k < 5; ++k) CHECK((b.host.out[k]->buf[2] << 8 | b.host.out[k]->buf[3]) == 7 * k);
+    for (int k = 0; k < 5; ++k) b.out_done();
+    CHECK(b.host.out.empty());
+    b.in(3, c);
+    CHECK(b.host.out.size() == 3);   // one per IN: the lead stays 4 ahead
+    CHECK((b.host.out[2]->buf[2] << 8 | b.host.out[2]->buf[3]) == 7 * 7);
+    CKernelOptions::Get()->num.erase("oboutlead");
+  }
   CHECK(&core::out::device() == &core::out::kRytmMk2);   // the box gone: the Rytm's table again
 
   // The A4 beside the Rytm

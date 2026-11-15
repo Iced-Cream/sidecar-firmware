@@ -132,6 +132,12 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   (T349); over the Pi's USB-C it does (T347/T348). `obctr=in` changes nothing (T350); `obout=free` is worse (T351: its rate
   is not the A4's).
 - **Next:** the Pi's Overbridge host timing of its OUT stream to the box (how the box wants it paced), in its own work.
+- **OUT lead (`oboutlead=N`, not yet run on the unit):** the A4 hands its IN blocks over in bursts about every 500 us
+  (the IN log's `dt` 494-501 us, now and then ~600 us in T346), and paced OUT goes back one block per IN block in the
+  same bursts with nothing kept ahead, so a late burst can leave the A4 without OUT. With `obout=free` (8 transfers
+  always queued) the A4 slipped only where the computer's ring underran (T351). `oboutlead=N` sends N blocks ahead
+  once, then one per IN as before; the log line adds `odt` (longest gap between OUT completions) and `pmin` (fewest
+  OUT URBs left in flight).
 
 ## Gaps (named, not done)
 
