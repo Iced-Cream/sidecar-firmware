@@ -609,7 +609,7 @@ size_t CWebServer::WsBuild (void *pParam, wsproto::Topic Topic, char *pOut, size
 		g_PeakFan.feed_master (g_Output.TakePeak ());
 		float X[peakfan::Fan::kExtra];
 		g_Output.TakeTrkPeaks (X);			// each voice on its own track (only the web reads these)
-		sendfx_pi::TakeBusPeaks (X + 8);		// B1..B3
+		sendfx_pi::TakeBusPeaks (bridge::base_slot (), X + 8);	// B1..B3: the base box's (whose voices g_Output carries)
 		g_PeakFan.feed_extra (X, 0, peakfan::Fan::kExtra);
 		peakfan::Reader r = (peakfan::Reader) (peakfan::kWeb + pThis->m_nWsSlot);
 		g_PeakFan.take_voices (r, Pk);

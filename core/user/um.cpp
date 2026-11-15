@@ -91,20 +91,26 @@ int g_nnames = 0;
 
 // ---- 3(c) (option A, decided 2026-11-14): each voice slot (a box) has U1..U5 of its own - its project's map and notes,
 // its own loaded slots, its own protocol state (the 1D generations, the asks) - and nothing of one box's is the other's.
-// The load slots: box b's U(s+1) is b * kSlots + s ("L" below: 0..kMach-1), then the user effects UFX1..UFX4 (the send
-// FX's, slot 0's: kMach + u). The packages on the card, the code arena and the arenas' pool are the board's (an image
+// The load slots: box b's U(s+1) is b * kSlots + s ("L" below: 0..kMach-1), then the user effects (each box's UFX1..UFX4:
+// kMach + b * kUfx + u). The packages on the card, the code arena and the arenas' pool are the board's (an image
 // two slots play is placed once). A voice plays its own box's slots (lv). A box's map state is Bx (g_bx), the box in
 // work M() (g_bw: set with its Scope by BoxIn wherever a box's map, file or messages are worked on).
 constexpr int kBoxes = core::kVoiceSlots;
 constexpr int kMach = kSlots * kBoxes;   // the machine slots of every box
-inline int bx(int L) { return L >= 0 && L < kMach ? L / kSlots : 0; }   // a load slot's box (a UFX: slot 0's)
-inline int ul(int L) { return L < kMach ? L % kSlots : L - kMach; }      // its U number - 1 in its box (a UFX: its u)
+// Plugin API 3's user effects UFX1..UFX4, each box its own four (3(c), decided 2026-11-14): box b's UFX(u+1) is effect
+// e = b * kUfx + u (the send FX's hooks name it so: core/fx/send_fx.h user_index), its load slot kMach + e.
+constexpr int kUfx = 4;                  // a box's
+constexpr int kFx = kUfx * kBoxes;       // every box's
+static_assert(kUfx == core::fx::kUserSlots, "UFX1..UFX4");
+inline int bx(int L) { return L >= kMach ? (L - kMach) / kUfx : L >= 0 ? L / kSlots : 0; }   // a load slot's box
+inline int ul(int L) { return L < kMach ? L % kSlots : (L - kMach) % kUfx; }   // its U number - 1 in its box (a UFX: its u)
 inline int lslot(int b, int s) { return b * kSlots + s; }
 // 7z (2026-10-31): a project's map and notes are read by the card core (map_step, from idle()): until both are here
 // the map and its file names stay the old project's and everything goes on as if the project had changed a moment later.
 #if CORE_MSAMP
 enum : uint8_t { kMrIdle, kMrMap, kMrNotes, kMrFx };
 #endif
+constexpr uint32_t kFxRaw = 4096;   // a box's effects' file kept whole up to this (a line this build did not write is kept as it was)
 struct Bx {
 #if CORE_MSAMP
   uint8_t mr = 0;                 // the read under way (kMrIdle)
@@ -113,7 +119,17 @@ struct Bx {
   char mr_map[64], mr_notes[64], mr_fx[64];   // the files read (map_file, notes_file, the effects' once all are here)
   char mr_b[2][512];
   int mr_n[3];
+  char mr_fxb[kFxRaw + 1];        // (one byte more: a file over kFxRaw shows)
 #endif
+  // ---- its user effects' file (/.rytm/fxslots/<project>.txt in its own folder; send_fx_card.cpp reads its "<tag> <name>"
+  // for the kits): a line a UFX, as read or written - "<tag> <name>\t<id> <a.b.c>" when um put the effect there. A line
+  // this build did not write (no tab) is kept as it is when the file is written again.
+  char fx_file[64];
+  char fx_txt[kUfx][64];
+  char fx_raw[kFxRaw];            // ... as read or last written; fx_raw_n its length
+  uint32_t fx_raw_n;
+  bool fx_big;                    // the file is over kFxRaw: never written
+  bool fx_locked;                 // the file is there but a line did not parse: never written over (as map_locked)
   rmp_slot_map map;
   char map_file[64];
   // ---- which machine a slot plays (rmp_resolve.h): the notes file next to the map, the fingerprints the box reports
@@ -163,10 +179,10 @@ struct Slot {
   uint32_t state_bytes, crc;
   uint16_t fp;
 };
-// Plugin API 3's user effects UFX1..UFX4 (core/fx/send_fx.h kFirstUser): load targets kMach + u next to the machine
+// Plugin API 3's user effects UFX1..UFX4 (core/fx/send_fx.h kFirstUser): load targets kMach + e next to the machine
 // slots - the same job, the same checks, an arena and the guard - but never in the Rytm's slot protocol (19..1E).
-constexpr int kUfx = 4;
-constexpr int kAll = kMach + kUfx;
+constexpr int kAll = kMach + kFx;
+static_assert(kAll <= 32, "g_muted, g_need: a bit a load slot");
 Slot g_slot[kAll];
 // ---- Plugin API 3 (sdk/rmp/rmp_api3.h, docs/plugin-api-3-plan.md): per slot its API 3 table, its image's code part,
 // its arena. Set by the load (job_step, the arena phase), cleared when the slot's assignment starts again (job_begin);
@@ -190,41 +206,31 @@ V3 g_v3[kAll];
 volatile uint32_t g_muted = 0;   // the guard muted the slot (bit s): a plugin call faulted, or ran late three times
 uint8_t g_late[kAll];            // late control calls in a row (API 3 plugins: three mute)
 uint32_t g_late_n[kAll];         // late control calls since the load (every plugin: the JSON's "late")
-// the effects: which package each UFX plays (um=fx:<n>:<id>; in memory), its two states (send FX 1 and 2: in its
-// arena block), live while core 2 may run it (published after both states are set up), busy while core 2 runs it
-rmp_slot_entry g_fxmap[kUfx];
-// the effects' file (/.rytm/fxslots/<project>.txt; send_fx_card.cpp reads its "<tag> <name>" for the kits): a line a
-// UFX, as read or written - "<tag> <name>\t<id> <a.b.c>" when um put the effect there. A line this build did not write
-// (no tab) is kept as it is when the file is written again.
-char g_fx_file[64] = "";
-char g_fx_txt[kUfx][64];
-constexpr uint32_t kFxRaw = 4096;   // the effects' file kept whole up to this (a line this build did not write is kept as it was)
-char g_fx_raw[kFxRaw];              // ... as read or last written; g_fx_raw_n its length
-uint32_t g_fx_raw_n = 0;
-bool g_fx_big = false;              // the file is over kFxRaw: never written
-bool g_fx_locked = false;   // the file is there but a line did not parse: never written over (as M().map_locked)
+// the effects (e: every box's): which package each UFX plays (um=fx:<n>:<id>; in memory), its two states (send FX 1 and
+// 2: in its arena block), live while core 2 may run it (published after both states are set up), busy while core 2 runs it
+rmp_slot_entry g_fxmap[kFx];
 void fx_stop(int u);
-uint8_t* g_fxst[kUfx][2];
-volatile uint8_t g_fx_live[kUfx], g_fx_busy[kUfx];
-volatile uint64_t g_fx_fault[kUfx];   // core 2's fault address (the control core words the why)
-volatile uint8_t g_fx_total[kUfx];
+uint8_t* g_fxst[kFx][2];
+volatile uint8_t g_fx_live[kFx], g_fx_busy[kFx];
+volatile uint64_t g_fx_fault[kFx];   // core 2's fault address (the control core words the why)
+volatile uint8_t g_fx_total[kFx];
 volatile uint32_t g_render_faults = 0;   // voices whose render faulted (render_fault, any core): bit vi    // core 2 muted it as the dearest when its effects together were over their share
-uint32_t g_fx_lastgen[kUfx][2];       // the gen of each state's last call (N5: edges older than that are not news)
-volatile uint32_t g_fx_slow_us[kUfx]; // core 2: the render that took the effect over its budget (the why), 0 none
-uint8_t g_fx_over[kUfx][2];           // core 2: calls over budget in a row, per send slot
-volatile bool g_fx_dead[kUfx];        // core 2 never left its render (fx_stop gave up): its states and arena kept out of reuse
-volatile uint32_t g_fx_era[kUfx];     // bumped by each fx_stop: a render that began before it mutes nothing after it
+uint32_t g_fx_lastgen[kFx][2];       // the gen of each state's last call (N5: edges older than that are not news)
+volatile uint32_t g_fx_slow_us[kFx]; // core 2: the render that took the effect over its budget (the why), 0 none
+uint8_t g_fx_over[kFx][2];           // core 2: calls over budget in a row, per send slot
+volatile bool g_fx_dead[kFx];        // core 2 never left its render (fx_stop gave up): its states and arena kept out of reuse
+volatile uint32_t g_fx_era[kFx];     // bumped by each fx_stop: a render that began before it mutes nothing after it
 // an effect's render of 12..16 frames: about half a block (the proposal: under 30 us); and all of core 2's effects in a
 // block together (both send slots, every UFX): kFxTotalUs. um=fxbudget:<call>:<total> sets both (tests, the bench).
 uint32_t g_fx_budget_us = 120, g_fx_total_us = 150;
 constexpr int kFxOverMax = 16;        // calls (or blocks) over it in a row (a burst, a cold cache never mutes)
 // core 2's account of the block it is in (by the transport's gen): every effect's time, the frames, the overs in a row
-struct FxAcct { uint32_t gen, us, frames, us_u[kUfx], over; };
+struct FxAcct { uint32_t gen, us, frames, us_u[kFx], over; };
 FxAcct g_fxa;
 constexpr uint32_t kFxHugeUs = 2000;  // one call this long mutes at once: the FIFO's 2 ms
 constexpr uint32_t kFxStopWaitUs = 5000;   // fx_stop's wait for core 2 (then it gives up: core 3's block watchdog sees a hang)
-float g_fx_p[kUfx][2][16];            // the knobs last handed to each state (b->p_changed)
-uint32_t g_fx_ev[kUfx][2][3];         // the transport's START / STOP / JUMP counts each state has seen (once each)
+float g_fx_p[kFx][2][16];            // the knobs last handed to each state (b->p_changed)
+uint32_t g_fx_ev[kFx][2][3];         // the transport's START / STOP / JUMP counts each state has seen (once each)
 uint8_t g_jph = 0;               // the load's phase: 0 the package, 1 the arena (zeroed in pieces, then setup())
 enum : uint8_t { kJphImage = 0, kJphArena = 1 };
 constexpr uint32_t kZeroStep = 256u << 10;     // the arena zeroed per idle step (the slot LOADING meanwhile)
@@ -249,16 +255,17 @@ FreeBlk g_free[kFree];
 int g_nfree = 0;
 rmp3_host g_h3;                  // what an API 2 or 3 plugin finds in rmp_host.reserved[RMP_H_V3]
 rmp_host g_host3;                // the host table of an API 3 only plugin (api 3)
-// the transport snapshots (pre_block): two, the render cores read the block's (g_xp_gen & 1)
-rmp3_transport g_xp[2];
+// the transport snapshots (pre_block): two a box, the render cores read the block's (g_xp_gen & 1). 3(c): each box's from
+// its own MIDI clock (core/lfo.h clock_state(slot)): its machines and its effects follow its own transport
+rmp3_transport g_xp[kBoxes][2];
 volatile uint32_t g_xp_gen = 0;
 constexpr uint32_t kLeadFrames = 385;   // the FIFO's 96 frames + the Rytm's measured 289-frame loop (the proposal's estimate)
-uint32_t g_xp_starts = 0, g_xp_stops = 0, g_xp_jumps = 0;
+uint32_t g_xp_starts[kBoxes], g_xp_stops[kBoxes], g_xp_jumps[kBoxes];
 // per snapshot: how many START, STOP and JUMP blocks there were up to it (a consumer out of step with the blocks, the
 // send FX's effects on core 2, takes each edge once: fx_run)
-uint32_t g_xp_ev[2][3];
-uint32_t g_xp_evn[3];
-int32_t g_xp_song = -1;
+uint32_t g_xp_ev[kBoxes][2][3];
+uint32_t g_xp_evn[kBoxes][3];
+int32_t g_xp_song[kBoxes] = {-1};
 // what a block hands a plugin that declares signals while the host has no bus (RMP3_CAP_BUS): silence in, a sink out
 float g_sig_zero[16];
 rmp3_sig_in g_sig_none[4];
@@ -746,7 +753,7 @@ void fault_where(int s, uint64_t pc, char* b, int cap) {
   if (pc && c0 && pc >= c0 && pc < c0 + x.code_bytes) sniprintf(b, cap, "+0x%x", (unsigned)(pc - c0));
   else sniprintf(b, cap, "0x%llx (outside its code)", (unsigned long long)pc);
 }
-const char* slot_pfx(int s) { return s >= kMach ? "UFX" : bx(s) ? "S1:U" : "U"; }   // (slot 1's: "S1:U3")
+const char* slot_pfx(int s) { return s >= kMach ? (bx(s) ? "S1:UFX" : "UFX") : bx(s) ? "S1:U" : "U"; }   // (slot 1's: "S1:U3")
 int slot_no(int s) { return ul(s) + 1; }
 void slot_mute1(int s, const char* why) {
   __atomic_or_fetch(&g_muted, 1u << s, __ATOMIC_RELEASE);
@@ -859,7 +866,7 @@ void c_note_off(int s, void* st) {
 float g_sig_sink[kCores][4][16];   // signals a plugin writes while the host has no bus: dropped
 float* g_sig_sinkp[kCores][4];
 float g_sig_val[kCores][4];
-void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place) {
+void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place, int box) {   // (box: whose transport)
   int c = this_core();
   memset(b, 0, sizeof *b);
   b->size = sizeof *b;
@@ -868,7 +875,7 @@ void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place) {
   b->flags = r ? 0u : (uint32_t)RMP3_B_MONO_OUT;
   b->out[0] = l, b->out[1] = r;
   b->place = place;
-  b->transport = &g_xp[b->gen & 1];
+  b->transport = &g_xp[box][b->gen & 1];
   b->sig_in = g_sig_none;
   for (int k = 0; k < 4; ++k) g_sig_sinkp[c][k] = g_sig_sink[c][k];
   b->sig_audio = g_sig_sinkp[c];
@@ -1549,7 +1556,7 @@ void on_render(int vi, float* o) {
     const rmp3_plugin* p3 = g_v3[s].p3;
     if (p3) {   // API 3: one block of data (mono here: out[1] null)
       rmp3_block b;
-      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE);
+      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE, bx(s));
       p3->render(g_vstate[vi], &b);
     } else {
       sl.p->render(g_vstate[vi], o, core::kBlock);
@@ -1579,7 +1586,7 @@ bool on_render2(int vi, float* l, float* r) {
   {
     VNow now(vi);
     rmp3_block b;
-    block_fill(&b, core::kBlock, l, r, RMP3_AT_VOICE);
+    block_fill(&b, core::kBlock, l, r, RMP3_AT_VOICE, bx(s));
     p3->render(g_vstate[vi], &b);
   }
   uint32_t dt = core::cycles() - t0;
@@ -1623,26 +1630,27 @@ void map_take(const char* b, int n, const char* nb, int k) {
 // The effects' file as read (b[0..n); n -1: missing, -2: there but not read): each line a UFX. A project with no file keeps
 // what is loaded, as before (nothing is written until um changes a slot). A line with an effect ("...\t<id> <a.b.c>", the
 // slot map's fields) that does not parse, or a file that is there and could not be read (a card error): the file is
-// locked, every slot empty, the file never written over. The whole text is kept (g_fx_raw) so that the lines this build
+// locked, every slot empty, the file never written over. The whole text is kept (M().fx_raw) so that the lines this build
 // does not own are written back as they were (fx_save); a file over kFxRaw bytes is read for its first lines and never
 // written. An effect not installed is not looked at here: its slot goes MISSING when it loads, the file as it was.
 void fx_take(const char* b, int n) {
-  g_fx_locked = false;
-  g_fx_big = false;
-  g_fx_raw_n = 0;
+  M().fx_locked = false;
+  M().fx_big = false;
+  M().fx_raw_n = 0;
+  if (g_bw) core::fx::slots_text(g_bw, b, n);   // (another box's names for its kits: box 0's are the Rytm's, sendfx_project)
   if (n == -1) return;
   const bool unread = n < 0;
   if (unread) n = 0;
   if (n > (int)kFxRaw) {
-    g_fx_big = true;
+    M().fx_big = true;
     n = (int)kFxRaw;
-    core::log("um: %s is over %u bytes - read, kept as it is (not written: the effects change in memory only)", g_fx_file,
+    core::log("um: %s is over %u bytes - read, kept as it is (not written: the effects change in memory only)", M().fx_file,
               (unsigned)kFxRaw);
   } else {
-    memcpy(g_fx_raw, b, (size_t)n);
-    g_fx_raw_n = (uint32_t)n;
+    memcpy(M().fx_raw, b, (size_t)n);
+    M().fx_raw_n = (uint32_t)n;
   }
-  if (unread) g_fx_locked = true;
+  if (unread) M().fx_locked = true;
   rmp_slot_entry ne[kUfx];
   char txt[kUfx][64];
   memset(ne, 0, sizeof ne);
@@ -1661,30 +1669,31 @@ void fx_take(const char* b, int n) {
     rmp_slot_map m;
     sniprintf(l, sizeof l, "U1 %s\n", tab + 1);
     if (!rmp_slots_parse(l, (uint32_t)strlen(l), &m)) {
-      g_fx_locked = true;
+      M().fx_locked = true;
       memset(ne, 0, sizeof ne);
       break;
     }
     ne[u] = m.slot[0];
   }
-  if (g_fx_locked) {
+  if (M().fx_locked) {
     memset(txt, 0, sizeof txt);
     if (unread)
-      core::log("um: %s is there but could not be read - every UFX empty, the file kept as it is (not written)", g_fx_file);
+      core::log("um: %s is there but could not be read - every UFX empty, the file kept as it is (not written)", M().fx_file);
     else
       core::log("um: %s is not a user-effect file this build reads (a newer Sidecar's, or damaged) - every UFX empty, the "
-                "file kept as it is (not written)", g_fx_file);
+                "file kept as it is (not written)", M().fx_file);
   }
   for (int u = 0; u < kUfx; ++u) {
-    memcpy(g_fx_txt[u], txt[u], sizeof g_fx_txt[u]);
-    if (!strcmp(ne[u].id, g_fxmap[u].id) && ne[u].version == g_fxmap[u].version) continue;
-    fx_stop(u);   // (core 2 out of it before its assignment changes)
-    g_fxmap[u] = ne[u];
-    __atomic_store_n(&core::fx::user[u].tag, (uint16_t)0, __ATOMIC_RELEASE);   // (named again once it is READY: fx_named)
+    const int e = g_bw * kUfx + u;   // (the box in work's UFX u)
+    memcpy(M().fx_txt[u], txt[u], sizeof M().fx_txt[u]);
+    if (!strcmp(ne[u].id, g_fxmap[e].id) && ne[u].version == g_fxmap[e].version) continue;
+    fx_stop(e);   // (core 2 out of it before its assignment changes)
+    g_fxmap[e] = ne[u];
+    __atomic_store_n(&core::fx::user_of(g_bw)[u].tag, (uint16_t)0, __ATOMIC_RELEASE);   // (named again once it is READY: fx_named)
+    g_need |= 1u << (kMach + e);   // (loaded again: its new effect, or empty)
   }
 }
 #if CORE_MSAMP
-char g_mr_fxb[kFxRaw + 1];   // (one byte more: a file over kFxRaw shows; slot 0's effects' file only)
 // The map's read, a request a file (kSmallReq: recover, open, read, close): the map, the notes, then both taken at once.
 // A save of the file still on its way lands first (a project left and come back to at once). The request's own step:
 // a newer project meanwhile (M().mr_again) reads again from the map.
@@ -1694,21 +1703,21 @@ void map_step() {
     const char* path = w == 2 ? M().mr_fx : w ? M().mr_notes : M().mr_map;
     if (M().mrq.state == cardq::kFree && core::fmt::pending(path)) return;
     if (!core::card_ok) M().mr_n[w] = -1;
-    else if (!cardq::async(&M().mrq, cardq::kSmallReq, nullptr, path, 0, w == 2 ? (uint8_t*)g_mr_fxb : (uint8_t*)M().mr_b[w],
-                           w == 2 ? (uint32_t)sizeof g_mr_fxb : (uint32_t)sizeof M().mr_b[w])) return;
+    else if (!cardq::async(&M().mrq, cardq::kSmallReq, nullptr, path, 0, w == 2 ? (uint8_t*)M().mr_fxb : (uint8_t*)M().mr_b[w],
+                           w == 2 ? (uint32_t)sizeof M().mr_fxb : (uint32_t)sizeof M().mr_b[w])) return;
     else M().mr_n[w] = M().mrq.got;
     if (M().mr_again) {
       M().mr_again = false;
       M().mr = kMrMap;
-    } else if (w == 0 || (w == 1 && !g_bw)) {   // (the effects' file: slot 0's only, the send FX's)
+    } else if (w < 2) {   // (then the effects' file: each box its own)
       M().mr = w ? kMrFx : kMrNotes;
     } else {
       M().mr = kMrIdle;
       copy(M().map_file, M().mr_map, sizeof M().map_file);
       copy(M().notes_file, M().mr_notes, sizeof M().notes_file);
-      if (!g_bw) copy(g_fx_file, M().mr_fx, sizeof g_fx_file);
+      copy(M().fx_file, M().mr_fx, sizeof M().fx_file);
       map_take(M().mr_b[0], M().mr_n[0], M().mr_b[1], M().mr_n[1]);
-      if (!g_bw) fx_take(g_mr_fxb, M().mr_n[2]);
+      fx_take(M().mr_fxb, M().mr_n[2]);
       core::log("um: project %s, map %s%s", core::prj().key, M().map_file, M().fresh ? " (none: fresh)" : "");
     }
   }
@@ -1733,14 +1742,14 @@ int read_small(const char* path, char* b, int cap) {
 void map_read() {
   map_file(M().map_file, sizeof M().map_file);
   notes_file(M().notes_file, M().map_file, sizeof M().notes_file);
-  fx_file(g_fx_file, M().map_file, sizeof g_fx_file);
+  fx_file(M().fx_file, M().map_file, sizeof M().fx_file);
   char b[512], nb[512], fb[512];
   core::fmt::recover(M().map_file);     // 0.3.0: a cut between write_atomic's renames - the previous map back (fmt.h)
   core::fmt::recover(M().notes_file);
-  core::fmt::recover(g_fx_file);
+  core::fmt::recover(M().fx_file);
   int n = read_small(M().map_file, b, sizeof b);
   int k = read_small(M().notes_file, nb, sizeof nb);
-  int f = read_small(g_fx_file, fb, sizeof fb);
+  int f = read_small(M().fx_file, fb, sizeof fb);
   map_take(b, n, nb, k);
   fx_take(fb, f);
   core::log("um: project %s, map %s%s", core::prj().key, M().map_file, M().fresh ? " (none: fresh)" : "");
@@ -1778,45 +1787,45 @@ bool map_save() {   // the map (what an older build reads), then the notes
 // line this build does not own (a long one, one past the fourth) too. Not over a file that did not parse, could not be
 // read or is over kFxRaw, and never cut: a result over kFxRaw is refused.
 bool fx_save(int u) {
-  if (g_fx_locked) {
-    core::log("um: %s not written: it did not parse or could not be read (the effects change in memory only)", g_fx_file);
+  if (M().fx_locked) {
+    core::log("um: %s not written: it did not parse or could not be read (the effects change in memory only)", M().fx_file);
     return false;
   }
-  if (g_fx_big) {
-    core::log("um: %s not written: it is over %u bytes (the effects change in memory only)", g_fx_file, (unsigned)kFxRaw);
+  if (M().fx_big) {
+    core::log("um: %s not written: it is over %u bytes (the effects change in memory only)", M().fx_file, (unsigned)kFxRaw);
     return false;
   }
   static char out[kFxRaw + kUfx * 66];
   uint32_t o = 0, at = 0;
   for (int i = 0; i < kUfx; ++i) {
-    if (i != u && at < g_fx_raw_n) {   // the line as it is
+    if (i != u && at < M().fx_raw_n) {   // the line as it is
       uint32_t e = at;
-      while (e < g_fx_raw_n && g_fx_raw[e] != '\n') ++e;
-      bool nl = e < g_fx_raw_n;
-      memcpy(out + o, g_fx_raw + at, e - at);
+      while (e < M().fx_raw_n && M().fx_raw[e] != '\n') ++e;
+      bool nl = e < M().fx_raw_n;
+      memcpy(out + o, M().fx_raw + at, e - at);
       o += e - at;
       if (nl || i + 1 < kUfx) out[o++] = '\n';
       at = e + 1;
     } else {   // the changed line, or one the file did not have
-      if (at < g_fx_raw_n) {
-        while (at < g_fx_raw_n && g_fx_raw[at] != '\n') ++at;
+      if (at < M().fx_raw_n) {
+        while (at < M().fx_raw_n && M().fx_raw[at] != '\n') ++at;
         ++at;
       }
-      o += (uint32_t)sniprintf(out + o, sizeof out - o, "%s\n", g_fx_txt[i]);
+      o += (uint32_t)sniprintf(out + o, sizeof out - o, "%s\n", M().fx_txt[i]);
     }
   }
-  if (at < g_fx_raw_n) {   // the lines after the fourth
-    memcpy(out + o, g_fx_raw + at, g_fx_raw_n - at);
-    o += g_fx_raw_n - at;
+  if (at < M().fx_raw_n) {   // the lines after the fourth
+    memcpy(out + o, M().fx_raw + at, M().fx_raw_n - at);
+    o += M().fx_raw_n - at;
   }
   if (o > kFxRaw) {
-    core::log("um: %s not written: the change would make it over %u bytes (the effects change in memory only)", g_fx_file,
+    core::log("um: %s not written: the change would make it over %u bytes (the effects change in memory only)", M().fx_file,
               (unsigned)kFxRaw);
     return false;
   }
-  memcpy(g_fx_raw, out, o);
-  g_fx_raw_n = o;
-  return write_whole(g_fx_file, out, o);
+  memcpy(M().fx_raw, out, o);
+  M().fx_raw_n = o;
+  return write_whole(M().fx_file, out, o);
 }
 void note_log(int s, const char* what) {   // (a load slot L)
   const rmp_slot_note& e = nslot(s);
@@ -2300,12 +2309,13 @@ struct FxLabels {
   char lab[4][core::fx::kLabelChars + 1];
   char zn[core::fx::kMaxZones][core::fx::kZoneChars + 1];
 };
-FxLabels g_fxl[kUfx][2];
-volatile uint8_t g_fxl_on;   // bit u: the loaded effect u has labels; bit 4 + u: they are in g_fxl[u][1]
+FxLabels g_fxl[kFx][2];
+volatile uint32_t g_fxl_on;   // bit u: the loaded effect u has labels; bit 16 + u: they are in g_fxl[u][1]
+static_assert(kFx <= 16, "g_fxl_on");
 const core::fx::KnobLabels* fx_labels(int u) {
-  if (u < 0 || u >= kUfx) return nullptr;
-  uint8_t on = __atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE);
-  return on >> u & 1 ? &g_fxl[u][on >> (4 + u) & 1].kl : nullptr;
+  if (u < 0 || u >= kFx) return nullptr;
+  uint32_t on = __atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE);
+  return on >> u & 1 ? &g_fxl[u][on >> (16 + u) & 1].kl : nullptr;
 }
 // knob q's zones of package e into L from zone *nz on; false (nothing added) if they would not fit, or it has none
 bool fx_zones(const Pkg& e, int q, int knob, FxLabels& L, int* nz) {
@@ -2344,11 +2354,11 @@ bool fx_zones(const Pkg& e, int q, int knob, FxLabels& L, int* nz) {
 }
 void fx_labels_build(int u, int pkg) {
   if (pkg < 0) {
-    __atomic_fetch_and(&g_fxl_on, (uint8_t)~(1u << u), __ATOMIC_ACQ_REL);
+    __atomic_fetch_and(&g_fxl_on, ~(1u << u), __ATOMIC_ACQ_REL);
     return;
   }
   const Pkg& e = g_pkg[pkg];
-  int b = !(__atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE) >> (4 + u) & 1);   // the copy no reader was given
+  int b = !(__atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE) >> (16 + u) & 1);   // the copy no reader was given
   FxLabels& L = g_fxl[u][b];
   memset(&L, 0, sizeof L);
   int nz = 0;
@@ -2361,8 +2371,8 @@ void fx_labels_build(int u, int pkg) {
   for (int j = 0; j < 4; ++j) L.kl.label[j] = L.lab[j];
   L.kl.zones = L.z;
   L.kl.nzones = (uint8_t)nz;
-  uint8_t on = __atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE);   // (only this core writes it)
-  on = (uint8_t)((on & ~(1u << (4 + u))) | 1u << u | b << (4 + u));
+  uint32_t on = __atomic_load_n(&g_fxl_on, __ATOMIC_ACQUIRE);   // (only this core writes it)
+  on = (on & ~(1u << (16 + u))) | 1u << u | (uint32_t)b << (16 + u);
   __atomic_store_n(&g_fxl_on, on, __ATOMIC_RELEASE);
 }
 
@@ -2411,14 +2421,14 @@ bool fx_state_init(int s, int k, uint64_t* pcout) {
   void* st = g_fxst[u][k];
   memset(st, 0, g_slot[s].state_bytes);
   for (int j = 0; j < 16; ++j) g_fx_p[u][k][j] = -1.0f;   // (the first block: every knob changed)
-  for (int q = 0; q < 3; ++q) g_fx_ev[u][k][q] = g_xp_evn[q];   // (no old edges)
+  for (int q = 0; q < 3; ++q) g_fx_ev[u][k][q] = g_xp_evn[u / kUfx][q];   // (no old edges: its box's)
   uint64_t pc = 0;
   uint32_t us = 0;
   rmp3_voice v;
   v.shared = x.shared, v.shared_bytes = x.shared_bytes;
   v.arena = x.voice_bytes && (uint32_t)k < x.states ? x.voices + (size_t)k * x.voice_bytes : nullptr;
   v.arena_bytes = v.arena ? x.voice_bytes : 0;
-  v.slot = 64 + u, v.voice = -1, v.instance = k, v.place = RMP3_AT_SEND;
+  v.slot = 64 + u % kUfx, v.voice = -1, v.instance = k, v.place = RMP3_AT_SEND;   // (its box's UFX number)
   if (guarded([&] {
         if (p->voice_init) p->voice_init(st);
         if (x.p3->voice_attach) x.p3->voice_attach(st, &v);
@@ -2445,22 +2455,22 @@ bool fx_states(int s) {
 // control call) asks by fx_fresh_req and plays nothing in that slot till fx_fresh_done; the control core (fx_fresh_pass,
 // each idle pass) zeroes that state's arena part (in kZeroStep pieces, as the load does), then does what the load does
 // to a state: zero, voice_init, voice_attach, guarded. Core 2 does not render a state it is waiting for.
-uint32_t g_fx_req[kUfx][2], g_fx_ack[kUfx][2];   // requests made by core 2 / answered by the control core
-uint32_t g_fx_zoff[kUfx][2];                     // the control core's progress zeroing the arena part
-uint32_t g_fx_req_us[kUfx][2];                   // when core 2 made the latest request (only read for the log below)
-uint32_t g_fx_waitlog[kUfx][2];                  // the request the control core logged as waiting long (once each)
+uint32_t g_fx_req[kFx][2], g_fx_ack[kFx][2];   // requests made by core 2 / answered by the control core
+uint32_t g_fx_zoff[kFx][2];                     // the control core's progress zeroing the arena part
+uint32_t g_fx_req_us[kFx][2];                   // when core 2 made the latest request (only read for the log below)
+uint32_t g_fx_waitlog[kFx][2];                  // the request the control core logged as waiting long (once each)
 constexpr uint32_t kFxFreshLogUs = 250000;       // a request that waits longer than this is logged
 void fx_fresh_req(int u, int sl) {
-  if (u < 0 || u >= kUfx || sl < 0 || sl > 1) return;
+  if (u < 0 || u >= kFx || sl < 0 || sl > 1) return;
   __atomic_store_n(&g_fx_req_us[u][sl], core::now_us(), __ATOMIC_RELAXED);   // (a counter read; the log is the control core's)
   __atomic_add_fetch(&g_fx_req[u][sl], 1u, __ATOMIC_SEQ_CST);
 }
 bool fx_fresh_done(int u, int sl) {
-  if (u < 0 || u >= kUfx || sl < 0 || sl > 1) return true;
+  if (u < 0 || u >= kFx || sl < 0 || sl > 1) return true;
   return __atomic_load_n(&g_fx_ack[u][sl], __ATOMIC_SEQ_CST) == __atomic_load_n(&g_fx_req[u][sl], __ATOMIC_SEQ_CST);
 }
 bool fx_fresh_pass() {
-  for (int u = 0; u < kUfx; ++u)
+  for (int u = 0; u < kFx; ++u)
     for (int sl = 0; sl < 2; ++sl) {
       uint32_t r = __atomic_load_n(&g_fx_req[u][sl], __ATOMIC_SEQ_CST);
       if (r == g_fx_ack[u][sl]) continue;
@@ -2468,7 +2478,7 @@ bool fx_fresh_pass() {
       const uint32_t waited = core::now_us() - __atomic_load_n(&g_fx_req_us[u][sl], __ATOMIC_RELAXED);
       if (waited > kFxFreshLogUs && g_fx_waitlog[u][sl] != r) {   // (a request the slot has been silent for: once)
         g_fx_waitlog[u][sl] = r;
-        core::log("um: UFX%d send %d: fresh state waited %u ms for the control core (%s; silent till then)", u + 1, sl + 1,
+        core::log("um: %s%d send %d: fresh state waited %u ms for the control core (%s; silent till then)", slot_pfx(s), slot_no(s), sl + 1,
                   (unsigned)(waited / 1000), g_fxmap[u].id[0] ? g_fxmap[u].id : "-");
       }
       const V3& x = g_v3[s];
@@ -2498,9 +2508,9 @@ bool fx_fresh_pass() {
   return false;
 }
 // UFX u READY: the TYPE list's name and the kits' tag (send_fx.h), the name first, the tag released last
-void fx_named(int u) {
+void fx_named(int u) {   // (u: every box's effect e)
   int k = g_slot[kMach + u].pkg;
-  core::fx::UserFx& f = core::fx::user[u];
+  core::fx::UserFx& f = core::fx::user_of(u / kUfx)[u % kUfx];
   __atomic_store_n(&f.tag, (uint16_t)0, __ATOMIC_RELEASE);
   copy(f.name, k >= 0 ? g_pkg[k].desc.name : "", sizeof f.name);
   __atomic_store_n(&f.tag, core::fx::fx_tag(f.name), __ATOMIC_RELEASE);
@@ -2514,7 +2524,7 @@ void fx_stop(int u) {
   uint32_t t0 = core::now_us();
   while (__atomic_load_n(&g_fx_busy[u], __ATOMIC_SEQ_CST)) {
     if (g_fx_dead[u] || core::now_us() - t0 > kFxStopWaitUs) {   // stuck in its render: give up (once), keep its memory
-      if (!g_fx_dead[u]) core::log("um: UFX%d %s: core 2 never left its render (%u ms): left behind", u + 1, g_fxmap[u].id,
+      if (!g_fx_dead[u]) core::log("um: %s%d %s: core 2 never left its render (%u ms): left behind", slot_pfx(kMach + u), slot_no(kMach + u), g_fxmap[u].id,
                                    (unsigned)(kFxStopWaitUs / 1000));
       g_fx_dead[u] = true;
       break;
@@ -2524,7 +2534,7 @@ void fx_stop(int u) {
   g_fx_fault[u] = 0, g_fx_slow_us[u] = 0, g_fx_over[u][0] = g_fx_over[u][1] = 0, g_fx_total[u] = 0;
 }
 bool fx_any_dead() {
-  for (int u = 0; u < kUfx; ++u)
+  for (int u = 0; u < kFx; ++u)
     if (g_fx_dead[u] && __atomic_load_n(&g_fx_busy[u], __ATOMIC_SEQ_CST)) return true;
   return false;
 }
@@ -2534,7 +2544,7 @@ template <class F> struct FxCall {
 };
 // Core 2 (the send FX's core, after its block): UFX u in send slot sl (0 FX 1, 1 FX 2) over x[n], its wet stereo
 // return added into y. The knobs: k[2..5] (the slot's P2..P5) are the effect's P1..P4, in b->p. Silent unless live.
-bool fx_ready(int u) { return u >= 0 && u < kUfx && __atomic_load_n(&g_fx_live[u], __ATOMIC_ACQUIRE) && !muted(kMach + u); }
+bool fx_ready(int u) { return u >= 0 && u < kFx && __atomic_load_n(&g_fx_live[u], __ATOMIC_ACQUIRE) && !muted(kMach + u); }
 // Core 2, after each effect call: the block's sum of every effect's time (N4). A block whose effects together ran over
 // kFxTotal (scaled by its frames) counts; kFxOverMax such blocks in a row mute the dearest effect of the last one.
 void fx_account(uint32_t gen, int u, uint32_t us, int n) {
@@ -2545,7 +2555,7 @@ void fx_account(uint32_t gen, int u, uint32_t us, int n) {
       if (a.us > share) {
         if (++a.over >= kFxOverMax) {
           int w = 0;
-          for (int k = 1; k < kUfx; ++k)
+          for (int k = 1; k < kFx; ++k)
             if (a.us_u[k] > a.us_u[w]) w = k;
           g_fx_total[w] = 1;
           g_fx_slow_us[w] = a.us_u[w] ? a.us_u[w] : 1;
@@ -2563,7 +2573,7 @@ void fx_account(uint32_t gen, int u, uint32_t us, int n) {
   if ((uint32_t)n > a.frames) a.frames = (uint32_t)n;
 }
 void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t* k) {
-  if (u < 0 || u >= kUfx || sl < 0 || sl > 1) return;
+  if (u < 0 || u >= kFx || sl < 0 || sl > 1) return;
   __atomic_store_n(&g_fx_busy[u], 1, __ATOMIC_SEQ_CST);
   if (__atomic_load_n(&g_fx_live[u], __ATOMIC_SEQ_CST) && !muted(kMach + u)) {
     int s = kMach + u;
@@ -2588,22 +2598,23 @@ void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t
     // the transport: one snapshot for the whole call; its edges (START, STOP, JUMP) once for this state, in the first
     // sub-block - core 2's send FX runs out of step with the blocks, so it may see a snapshot twice or skip one
     uint32_t g = __atomic_load_n(&g_xp_gen, __ATOMIC_ACQUIRE);
-    rmp3_transport tr = g_xp[g & 1], tr0;
+    const int xb = u / kUfx;   // (its box's transport)
+    rmp3_transport tr = g_xp[xb][g & 1], tr0;
     tr.flags &= ~(uint32_t)(RMP3_T_START | RMP3_T_STOP | RMP3_T_JUMP);
     tr0 = tr;
     static const uint32_t kEdge[3] = {RMP3_T_START, RMP3_T_STOP, RMP3_T_JUMP};
     // a state not called for more than two blocks (its send slot played something else): older edges are not news
     if (g - g_fx_lastgen[u][sl] > 2u)
-      for (int q = 0; q < 3; ++q) g_fx_ev[u][sl][q] = g_xp_ev[g & 1][q] - ((g_xp[g & 1].flags & kEdge[q]) ? 1u : 0u);
+      for (int q = 0; q < 3; ++q) g_fx_ev[u][sl][q] = g_xp_ev[xb][g & 1][q] - ((g_xp[xb][g & 1].flags & kEdge[q]) ? 1u : 0u);
     g_fx_lastgen[u][sl] = g;
     for (int q = 0; q < 3; ++q)
-      if (g_xp_ev[g & 1][q] != g_fx_ev[u][sl][q]) tr0.flags |= kEdge[q], g_fx_ev[u][sl][q] = g_xp_ev[g & 1][q];
+      if (g_xp_ev[xb][g & 1][q] != g_fx_ev[u][sl][q]) tr0.flags |= kEdge[q], g_fx_ev[u][sl][q] = g_xp_ev[xb][g & 1][q];
     uint32_t t0 = core::now_us();
     for (int at = 0; at < n; at += 16) {   // blocks of 16 frames at most
       int m = n - at < 16 ? n - at : 16;
       float l[16], r[16];
       rmp3_block b;
-      block_fill(&b, m, l, r, RMP3_AT_SEND);
+      block_fill(&b, m, l, r, RMP3_AT_SEND, xb);
       b.flags |= RMP3_B_WET_ONLY;
       b.gen = g;
       b.transport = at ? &tr : &tr0;
@@ -2645,7 +2656,7 @@ void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t
 }
 // the control core: a fault core 2 noted, in words (a fault mutes the slots sharing its image too)
 void fx_faults() {
-  for (int u = 0; u < kUfx; ++u) {
+  for (int u = 0; u < kFx; ++u) {
     uint32_t slow = g_fx_slow_us[u];
     if (slow && strncmp(g_why[kMach + u], "muted", 5)) {
       char w[96];
@@ -2851,7 +2862,7 @@ void arena_step() {
     rmp3_setup su;
     su.host = host_for(p), su.host3 = &g_h3;
     su.shared = x.shared, su.shared_bytes = x.shared_bytes, su.voice_bytes = x.voice_bytes, su.states = x.states;
-    su.slot = s < kMach ? ul(s) + 1 : 64 + (s - kMach);
+    su.slot = s < kMach ? ul(s) + 1 : 64 + ul(s);
     int32_t r = 0;
     uint64_t pc = 0;
     uint32_t us = 0;
@@ -3292,10 +3303,11 @@ void publish() {
     j.put(",\"pre_ext\":"); j.str(p ? p->preset_ext : "");
     j.put("},");
   }
-  for (int u = 0; u < kUfx; ++u) {   // API 3's user effects (UFX1..UFX4), when one is assigned
+  for (int u = 0; u < kFx; ++u) {   // API 3's user effects (each box's UFX1..UFX4), when one is assigned
     int s = kMach + u;
     if (!g_fxmap[u].id[0]) continue;
-    j.put("{\"t\":\"ufx\","); j.num("ufx", (uint32_t)u + 1);
+    j.put("{\"t\":\"ufx\","); j.num("ufx", (uint32_t)ul(s) + 1);
+    if (bx(s)) { j.put(","); j.num("slot", (uint32_t)bx(s)); }   // (3(c): another box's own; none: box 0's, as before)
     j.put(",\"id\":"); j.str(g_fxmap[u].id);
     j.put(",\"state\":"); j.str(state_name(g_slot[s].st));
     if (g_why[s][0]) { j.put(",\"why\":"); j.str(g_why[s]); }
@@ -3369,8 +3381,9 @@ bool ui_effect(int i, char* name, int cap, const char** id) {
   *id = e.id;
   return true;
 }
-const char* ui_ufx(int u, char* name, int cap) {
+const char* ui_ufx(int u, char* name, int cap) {   // (the slot in hand's box's UFX u + 1)
   if (u < 0 || u >= kUfx) { copy(name, "", cap); return ""; }
+  u += hand() * kUfx;
   slot_shown(kMach + u, name, cap);
   return g_fxmap[u].id;
 }
@@ -3391,7 +3404,7 @@ void rekey(const char* key) {   // (the slot in hand's box)
 #endif
   sniprintf(M().map_file, sizeof M().map_file, "/.rytm/slots/%s.txt", key);
   notes_file(M().notes_file, M().map_file, sizeof M().notes_file);
-  fx_file(g_fx_file, M().map_file, sizeof g_fx_file);
+  fx_file(M().fx_file, M().map_file, sizeof M().fx_file);
 }
 
 void begin(const Exec* e, const char* d) {
@@ -3429,7 +3442,9 @@ void begin(const Exec* e, const char* d) {
   g_host2.reserved[RMP_H_V3] = &g_h3;
   g_host3 = g_host2;
   g_host3.api = RMP_API3;
-  for (rmp3_transport& t : g_xp) t = rmp3_transport{0, 120.0f, 20833.333f, 0.0f, -1, 0.0f, 0, kLeadFrames};
+  for (auto& x : g_xp)
+    for (rmp3_transport& t : x) t = rmp3_transport{0, 120.0f, 20833.333f, 0.0f, -1, 0.0f, 0, kLeadFrames};
+  for (int b = 0; b < kBoxes; ++b) g_xp_song[b] = -1;
   for (rmp3_sig_in& x : g_sig_none) x = rmp3_sig_in{g_sig_zero, 0.0f, 0};
   core::hooks.pool_changed = on_pool_changed;
   for (Bx& b : g_bx) rmp_meta_init(&b.meta, core::random_seed() | 1u);
@@ -3444,7 +3459,7 @@ void begin(const Exec* e, const char* d) {
   core::fx::user_fresh_req = fx_fresh_req;
   core::fx::user_fresh_done = fx_fresh_done;
   core::fx::user_labels = fx_labels;
-  core::fx::user_loaded = [](int u) { return u >= 0 && u < kUfx && g_slot[kMach + u].st == RMP_SLOT_READY && g_fxmap[u].id[0] != 0; };
+  core::fx::user_loaded = [](int u) { return u >= 0 && u < kFx && g_slot[kMach + u].st == RMP_SLOT_READY && g_fxmap[u].id[0] != 0; };
   core::hooks.slot_ask = on_ask;
   core::hooks.slot_assign = on_assign;
   core::hooks.project_seen = on_project_seen;
@@ -3485,7 +3500,7 @@ bool idle() {
     did = false;
   } else if (g_full) {
     for (int vi = 0; vi < core::kVoices; ++vi) voice_leave(vi);
-    for (int u = 0; u < kUfx; ++u) fx_stop(u);   // (core 2 out of the effects before their images go)
+    for (int u = 0; u < kFx; ++u) fx_stop(u);   // (core 2 out of the effects before their images go)
     for (int s = 0; s < kAll; ++s) slot_set(s, entry_of(s).id[0] ? RMP_SLOT_LOADING : RMP_SLOT_EMPTY, nullptr, -1);
     jf_close();
     g_job = -1;
@@ -3498,7 +3513,7 @@ bool idle() {
     for (int s = 0; s < kAll; ++s) g_v3[s] = V3{};
     g_full = false;
     g_need = (1u << kMach) - 1;
-    for (int u = 0; u < kUfx; ++u)
+    for (int u = 0; u < kFx; ++u)
       if (g_fxmap[u].id[0]) g_need |= 1u << (kMach + u);
   } else if ([] {   // each box's map work: its fingerprints, its inheritance, its resolve's save
                for (int b = 0; b < kBoxes; ++b) {
@@ -3571,37 +3586,40 @@ void call_stall_limit(uint32_t us) { g_call_stall_us = us ? us : kCallStallUs; }
 void render_fault(int vi) {
   if (vi >= 0 && vi < core::kVoices) __atomic_or_fetch(&g_render_faults, 1u << vi, __ATOMIC_ACQ_REL);
 }
-// API 3: the block's transport snapshot (see um.h). The newest becomes the render cores' at the release store.
+// API 3: the block's transport snapshot (see um.h), each box's from its own clock. The newest becomes the render cores' at
+// the release store.
 void pre_block() {
   if (!ex) return;
-  core::lfo::ClockState c;
-  core::lfo::clock_state(&c);
   uint32_t g = g_xp_gen + 1;
-  rmp3_transport& t = g_xp[g & 1];
-  uint32_t since = core::now_us() - c.last_us;
-  bool clocked = c.ticking && since < 250000;
-  bool locked = c.run && clocked && c.pos >= 0;
-  float tu = c.tick_us > 100.0f ? c.tick_us : 20833.333f;
-  uint32_t f = (c.run ? (uint32_t)RMP3_T_RUNNING : 0u) | (clocked ? (uint32_t)RMP3_T_CLOCKED : 0u) | (locked ? (uint32_t)RMP3_T_LOCKED : 0u);
-  if (c.starts != g_xp_starts) f |= RMP3_T_START;
-  if (c.stops != g_xp_stops) f |= RMP3_T_STOP;
-  int32_t song = locked ? c.pos : -1;
-  // a song position message, or the position going back (a restart the Rytm sent no F2 for)
-  if (c.jumps != g_xp_jumps || (song >= 0 && g_xp_song >= 0 && song < g_xp_song)) f |= RMP3_T_JUMP;
-  g_xp_starts = c.starts, g_xp_stops = c.stops, g_xp_jumps = c.jumps, g_xp_song = song;
-  float frac = locked ? (float)since / tu : 0.0f;
-  t.flags = f;
-  t.tick_us = tu;
-  t.bpm = 60e6f / (24.0f * tu);
-  t.free_tick = c.tp;
-  t.song_tick = song;
-  t.song_frac = frac < 0.0f ? 0.0f : frac > 0.999f ? 0.999f : frac;
-  t.step16 = locked ? (uint32_t)c.pos / 6u : 0u;
-  t.lead_frames = kLeadFrames;
-  if (f & RMP3_T_START) ++g_xp_evn[0];
-  if (f & RMP3_T_STOP) ++g_xp_evn[1];
-  if (f & RMP3_T_JUMP) ++g_xp_evn[2];
-  for (int k = 0; k < 3; ++k) g_xp_ev[g & 1][k] = g_xp_evn[k];
+  for (int b = 0; b < kBoxes; ++b) {
+    core::lfo::ClockState c;
+    core::lfo::clock_state(b, &c);
+    rmp3_transport& t = g_xp[b][g & 1];
+    uint32_t since = core::now_us() - c.last_us;
+    bool clocked = c.ticking && since < 250000;
+    bool locked = c.run && clocked && c.pos >= 0;
+    float tu = c.tick_us > 100.0f ? c.tick_us : 20833.333f;
+    uint32_t f = (c.run ? (uint32_t)RMP3_T_RUNNING : 0u) | (clocked ? (uint32_t)RMP3_T_CLOCKED : 0u) | (locked ? (uint32_t)RMP3_T_LOCKED : 0u);
+    if (c.starts != g_xp_starts[b]) f |= RMP3_T_START;
+    if (c.stops != g_xp_stops[b]) f |= RMP3_T_STOP;
+    int32_t song = locked ? c.pos : -1;
+    // a song position message, or the position going back (a restart the box sent no F2 for)
+    if (c.jumps != g_xp_jumps[b] || (song >= 0 && g_xp_song[b] >= 0 && song < g_xp_song[b])) f |= RMP3_T_JUMP;
+    g_xp_starts[b] = c.starts, g_xp_stops[b] = c.stops, g_xp_jumps[b] = c.jumps, g_xp_song[b] = song;
+    float frac = locked ? (float)since / tu : 0.0f;
+    t.flags = f;
+    t.tick_us = tu;
+    t.bpm = 60e6f / (24.0f * tu);
+    t.free_tick = c.tp;
+    t.song_tick = song;
+    t.song_frac = frac < 0.0f ? 0.0f : frac > 0.999f ? 0.999f : frac;
+    t.step16 = locked ? (uint32_t)c.pos / 6u : 0u;
+    t.lead_frames = kLeadFrames;
+    if (f & RMP3_T_START) ++g_xp_evn[b][0];
+    if (f & RMP3_T_STOP) ++g_xp_evn[b][1];
+    if (f & RMP3_T_JUMP) ++g_xp_evn[b][2];
+    for (int k = 0; k < 3; ++k) g_xp_ev[b][g & 1][k] = g_xp_evn[b][k];
+  }
   __atomic_store_n(&g_xp_gen, g, __ATOMIC_RELEASE);
 }
 
@@ -3621,7 +3639,7 @@ void rescan() {
 
 // The public calls below name a slot as its box does - U(s + 1), 0..4, of the slot in hand's box (5..8: UFX1..UFX4) -
 // and take it to the load slot here
-int pub(int s) { return s < 0 ? -1 : s < kSlots ? lslot(hand(), s) : s < kSlots + kUfx ? kMach + (s - kSlots) : -1; }
+int pub(int s) { return s < 0 ? -1 : s < kSlots ? lslot(hand(), s) : s < kSlots + kUfx ? kMach + hand() * kUfx + (s - kSlots) : -1; }
 bool tag_ok(int s, int tag) {
   s = s >= 0 && s < kSlots ? pub(s) : -1;
   return s >= 0 && g_slot[s].st == RMP_SLOT_READY && tag == g_slot[s].fp;
@@ -3692,7 +3710,7 @@ void inst_render(int vi, int i, float* o) {
     const rmp3_plugin* p3 = g_v3[s].p3;
     if (p3) {
       rmp3_block b;
-      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE);
+      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE, bx(s));
       p3->render(g_istate[i], &b);
     } else {
       g_slot[s].p->render(g_istate[i], o, core::kBlock);
@@ -3749,21 +3767,21 @@ bool command(const char* c, char* out, int cap) {   // (the slot in hand's box: 
   if (strncmp(c, "um=fx:", 6) == 0) {   // API 3: UFX<n> plays an installed effect (its newest version), or none ("-")
     int u = c[6] - '1';
     if (u < 0 || u >= kUfx || c[7] != ':') { sniprintf(out, cap, "usage: um=fx:<1..4>:<id|->"); return true; }
-    if (g_bw) { sniprintf(out, cap, "UFX1..UFX4 are slot 0's (the send FX's)"); return true; }
     const char* id = c + 8;
-    fx_stop(u);   // (core 2 out of the one it plays, before anything about it changes)
-    rmp_slot_entry& m = g_fxmap[u];
+    const int e = g_bw * kUfx + u;   // (the slot in hand's box's own UFX)
+    fx_stop(e);   // (core 2 out of the one it plays, before anything about it changes)
+    rmp_slot_entry& m = g_fxmap[e];
     if (!strcmp(id, "-")) {
       m.id[0] = 0;
     } else {
       int k = find_pkg(id);
-      if (k < 0) { sniprintf(out, cap, "UFX%d: %s is not installed", u + 1, id); return true; }
+      if (k < 0) { sniprintf(out, cap, "%s%d: %s is not installed", slot_pfx(kMach + e), u + 1, id); return true; }
       copy(m.id, g_pkg[k].id, sizeof m.id);
       m.version = g_pkg[k].version;
     }
-    __atomic_store_n(&core::fx::user[u].tag, (uint16_t)0, __ATOMIC_RELEASE);   // (named again once it is READY: fx_named)
-    g_need |= 1u << (kMach + u);
-    g_fx_txt[u][0] = 0;
+    __atomic_store_n(&core::fx::user_of(g_bw)[u].tag, (uint16_t)0, __ATOMIC_RELEASE);   // (named again once it is READY: fx_named)
+    g_need |= 1u << (kMach + e);
+    M().fx_txt[u][0] = 0;
     if (m.id[0]) {   // the project's file: the kit's tag and name, then the package as the slot map names it
       rmp_slot_map one;
       memset(&one, 0, sizeof one);
@@ -3775,10 +3793,10 @@ bool command(const char* c, char* out, int cap) {   // (the slot in hand's box: 
       copy(nm, g_pkg[find_pkg(id)].desc.name, sizeof nm);
       for (char* c = nm; *c; ++c)
         if ((uint8_t)*c < 0x20) *c = '_';
-      sniprintf(g_fx_txt[u], sizeof g_fx_txt[u], "%04x %s\t%s", (unsigned)core::fx::fx_tag(nm), nm, f + 3);
+      sniprintf(M().fx_txt[u], sizeof M().fx_txt[u], "%04x %s\t%s", (unsigned)core::fx::fx_tag(nm), nm, f + 3);
     }
-    if (!fx_save(u)) core::log("um: %s not written (UFX%d changes until the next project load)", g_fx_file, u + 1);
-    sniprintf(out, cap, "UFX%d: %s", u + 1, m.id[0] ? m.id : "empty");
+    if (!fx_save(u)) core::log("um: %s not written (%s%d changes until the next project load)", M().fx_file, slot_pfx(kMach + e), u + 1);
+    sniprintf(out, cap, "%s%d: %s", slot_pfx(kMach + e), u + 1, m.id[0] ? m.id : "empty");
     return true;
   }
   if (strncmp(c, "um=fxbudget:", 12) == 0) {   // API 3: the effects' budgets, us a 12-frame block: one call, all of core 2's
@@ -3796,7 +3814,7 @@ bool command(const char* c, char* out, int cap) {   // (the slot in hand's box: 
     const bool f = c[10] == 'f';
     int s = f ? c[11] - '1' : c[10] - '1';   // um=reload:f<1..4>: UFX<n>
     if (s < 0 || (f ? s >= kUfx || c[12] : s >= kSlots || c[11])) { sniprintf(out, cap, "usage: um=reload:<1..5> or f<1..4>"); return true; }
-    s = f ? kMach + s : lslot(g_bw, s);
+    s = f ? kMach + g_bw * kUfx + s : lslot(g_bw, s);
     g_need |= 1u << s;
     sniprintf(out, cap, "%s%d: loading again%s", slot_pfx(s), slot_no(s), muted(s) ? " (it was muted)" : "");
     return true;

@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "fx/insert.h"
 #include "fx/limiter.h"
 #include "fx/master.h"
 #include "fx/out.h"
@@ -35,8 +36,8 @@ struct Inst {
 static constexpr int kBoxes = core::master::kBoxes;
 static Inst s_I[kBoxes];
 static inline Inst& I(int box) { return s_I[box > 0 && box < kBoxes ? box : 0]; }
-static uint64_t s_nLastBusy;          // core 3's (Command): the last mfx=stats (box 0's)
-static uint32_t s_nLastFrames, s_nLastMs;
+static uint64_t s_nLastBusy[kBoxes];  // core 3's (Command): each box's last mfx=stats
+static uint32_t s_nLastFrames[kBoxes], s_nLastMs[kBoxes];
 
 static inline int32_t Sat(int64_t s) { return s > 2147483647 ? 2147483647 : s < -2147483647 - 1 ? -2147483647 - 1 : (int32_t)s; }
 static inline int32_t Add(int32_t a, float x) { return Sat((int64_t)a + (int64_t)(x * 2147483648.0f)); }
@@ -212,14 +213,17 @@ void Render(int box) {
 
 bool Command(const char* p) {
   if (strcmp(p, "mfx=stats") != 0) return false;
-  const Inst& x = I(0);   // (box 0's)
-  uint32_t ms = core::now_ms(), dt = ms - s_nLastMs, fr = x.nFrames, frames = fr - s_nLastFrames;
-  uint64_t total = x.nCycles, busy = total - s_nLastBusy;
-  s_nLastMs = ms, s_nLastFrames = fr, s_nLastBusy = total;
+  // 3(c): the slot in hand's box (as the master's settings code, master::cur()): its own chain's counters
+  const int b = core::ins::slot_in_hand() < kBoxes ? core::ins::slot_in_hand() : 0;
+  const Inst& x = I(b);
+  uint32_t ms = core::now_ms(), dt = ms - s_nLastMs[b], fr = x.nFrames, frames = fr - s_nLastFrames[b];
+  uint64_t total = x.nCycles, busy = total - s_nLastBusy[b];
+  s_nLastMs[b] = ms, s_nLastFrames[b] = fr, s_nLastBusy[b] = total;
   uint64_t window = (uint64_t)dt * core::cycles_per_second() / 1000;
   unsigned load = window ? (unsigned)(busy * 100000 / window) : 0;   // 1/1000 %
-  unsigned gr = (unsigned)core::master::gr10();
-  core::log("mfx: %u frames, core 2 load %u.%03u percent, wet %u %%, underruns %u, drops in %u out %u, stems short %u, limiter %u.%u dB", frames,
+  unsigned gr = (unsigned)core::master::gr10(b);
+  core::log("mfx: %s%u frames, core 2 load %u.%03u percent, wet %u %%, underruns %u, drops in %u out %u, stems short %u, limiter %u.%u dB",
+            b ? "slot 1: " : "", frames,
             load / 1000, load % 1000, (unsigned)(x.fWet * 100.0f), x.nUnder, x.nDropIn, x.nDropOut, x.nStemUnder, gr / 10, gr % 10);
   return true;
 }
