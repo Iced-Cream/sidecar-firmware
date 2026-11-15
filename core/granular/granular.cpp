@@ -1033,7 +1033,7 @@ static void render_impl(int vi, float* out, float* outr, int nfr) {
   float a_pos = 0, a_size = 1, a_dens = 1, a_spray = 0;
   {
     float tp, tus;
-    if (lfo::clock_now(&tp, &tus)) anim_ticks[vi] = tp;
+    if (lfo::clock_now(slot_of_voice(vi), &tp, &tus)) anim_ticks[vi] = tp;   // (the voice's own box's clock, 3(c) step 10)
     else anim_ticks[vi] = fmod(anim_ticks[vi] + nfr * (1e6 / 48000.0) / (tus > 1 ? tus : 20833.3f), 2304.0);
     if (k.anim_beats > 0) {
       double per = k.anim_beats * 24.0;

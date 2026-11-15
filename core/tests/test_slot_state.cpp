@@ -473,6 +473,49 @@ int main() {
       printf("  slot 1 seq mode: track %d, the remote page open %d (was %d)\n", seq::seqmode_on(), ui::remote_open(), open_was);
       CHECK(seq::seqmode_on() == 0 && ui::remote_open() == open_was);
     }
+    // T374: the A4's held trig and encoder A (31 / 32, as sidecar-a4 sends them): taken by its slot's sequencer and
+    // counted there (seq=ui:1); a 31 / 32 that comes before its 08 on is applied (kSeqOpenMs) is refused and counted
+    {
+      auto k31 = [](int c, int down) {
+        const uint8_t m[] = {0xf0, 0x7d, 0x52, 0x54, 0x31, 1, (uint8_t)(c >> 7), (uint8_t)(c & 0x7f), (uint8_t)down, 0xf7};
+        engine_sysex_link(1, m, (int)sizeof m);
+      };
+      auto e32 = [](int e, int d) {
+        const uint8_t m[] = {0xf0, 0x7d, 0x52, 0x54, 0x32, 1, (uint8_t)e, (uint8_t)(d + 64), 0, 0xf7};
+        engine_sysex_link(1, m, (int)sizeof m);
+      };
+      const seq::UiIn u0 = seq::ui_in(1), r0 = seq::ui_in(0);
+      k31(4, 1);
+      for (int i = 0; i < 12; ++i) e32(0, 2);
+      k31(4, 0);
+      seq::UiIn u = seq::ui_in(1);
+      {
+        device::Scope in(device::g_links[1]);
+        CHECK(seq::command("seq=steps:1", o, sizeof o));
+        printf("  slot 1 trig 5 held + A x12: %s\n", o);
+        CHECK(strstr(o, " 5:") && !strstr(o, " 5:64"));   // (step 5 kept, its note moved)
+        CHECK(seq::command("seq=ui", o, sizeof o));
+        printf("  %s\n", o);
+      }
+      CHECK(u.keys == u0.keys + 2 && u.trig_down == u0.trig_down + 1 && u.trig_used == u0.trig_used + 1 && u.trig_tap == u0.trig_tap);
+      CHECK(u.encs == u0.encs + 12 && u.enc_held == u0.enc_held + 12 && u.enc_mode == u0.enc_mode);
+      CHECK(seq::ui_in(0).encs == r0.encs && seq::ui_in(0).keys == r0.keys);   // (the Rytm's slot saw none of it)
+      // seq mode off (08 0, applied), then on again: the trig and turns sent before the on is applied are refused here
+      const uint8_t off[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 8, 0, 0x7f, 0xf7};
+      const uint8_t on[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 8, 1, 0, 0xf7};
+      engine_sysex_link(1, off, (int)sizeof off);
+      seq::tick(now_ms() + 400);
+      engine_sysex_link(1, on, (int)sizeof on);
+      k31(8, 1), e32(0, 2), k31(8, 0);
+      seq::tick(now_ms() + 400);
+      seq::UiIn v = seq::ui_in(1);
+      printf("  08 off / on: applied off %u on %u; early 31s refused %u, 32s %u\n", (unsigned)(v.m08_applied_off - u.m08_applied_off),
+             (unsigned)(v.m08_applied_on - u.m08_applied_on), (unsigned)(v.key_mode - u.key_mode), (unsigned)(v.enc_mode - u.enc_mode));
+      CHECK(v.m08_off == u.m08_off + 1 && v.m08_on == u.m08_on + 1 && v.m08_applied_off == u.m08_applied_off + 1);
+      CHECK(v.m08_applied_on == u.m08_applied_on + 1 && v.key_mode == u.key_mode + 2 && v.enc_mode == u.enc_mode + 1);
+      device::Scope in(device::g_links[1]);
+      CHECK(seq::seqmode_on() == 0);
+    }
     // 3(c) step 8: the A4's mutes (2D 01 05) close its own voices' mute gates (out::control1), never the Rytm's
     {
       const uint8_t mu[] = {0xf0, 0x7d, 0x52, 0x54, 0x2D, 1, 5, 0x05, 0, 0xf7};   // tracks 1 and 3

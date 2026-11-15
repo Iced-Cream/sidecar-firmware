@@ -315,7 +315,7 @@ CORE_COLD void link_reset(const char* why, int slot) {
   for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
-  midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
+  midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
 #endif
   if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
 }
@@ -331,6 +331,17 @@ CORE_COLD void link_lost() {
 
 // Transport 0's (the host link's) whole SysEx: its slot (a box's hello moves it to slot 1), then handled as that slot's.
 CORE_COLD void host_sysex(const uint8_t* d, int len) { engine_sysex_link(0, d, len); }
+
+// 3(c) step 10: a box's MIDI clock is its own slot's. Transport t's realtime byte / song position goes to the slot its
+// messages go to (device::slot_of: a box's hello moved it), into that box's send FX clock (its STUTTER's grid), which
+// hands it on to that slot's LFOs (fx::clock_listener -> lfo::clock(slot, ..)). Nothing of it reaches another box's.
+CORE_COLD int engine_realtime_link(int t, uint8_t status, uint16_t spp) {
+  const int slot = device::slot_of(t, nullptr, 0);
+  if (slot < 0) return -1;
+  device::Scope in(device::g_links[slot]);
+  fx::clock_in(fx::control_of(slot), status, spp);
+  return slot;
+}
 
 __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never

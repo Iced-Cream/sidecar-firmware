@@ -32,6 +32,7 @@ int json(char* out, int cap);   // "\"fxin\":{\"want\":1,\"state\":\"on\",\"rytm
 void host_sysex(const uint8_t* d, int len);        // transport 0's message: engine_sysex_link(0, ...)
 void host_sysex_slot(const uint8_t* d, int len);   // a message of the slot in hand (device::Scope)
 void engine_sysex_link(int transport, const uint8_t* d, int len);   // (engine.h)
+int engine_realtime_link(int transport, uint8_t status, uint16_t spp);   // (engine.h)
 // The link to the Rytm went down or came up (the Rytm's hello 35, its USB MIDI attached or gone, the Overbridge
 // stream started or stopped): the link's voices silenced (CC 120's ramp, until its next trig; slot: that slot's, -1 the
 // link in hand's; on 8 voices every voice) and the send FX's tails cleared, as a double STOP does - a note-on whose

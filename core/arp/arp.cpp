@@ -427,9 +427,10 @@ CORE_COLD void end(int vi) {
   vo[vi].n = 0;
   sleep(vi);
 }
-CORE_COLD void kit_changed() {
+CORE_COLD void kit_changed(int slot) {
   uint32_t ms = now_ms();
   for (int vi = 0; vi < kVoices; ++vi) {
+    if (slot >= 0 && slot_of_voice(vi) != slot) continue;   // (3(c) step 9: a box's kit, its own voices)
     Vo& x = vo[vi];
     bool fresh = false;
     for (int i = 0; i < x.n; ++i) fresh = fresh || (x.h[i].src == kLiveTrig && ms - x.trig_ms <= kFreshMs);

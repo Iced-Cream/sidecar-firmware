@@ -20,6 +20,8 @@ CORE_COLD int slot_in_hand() {
 CORE_COLD Control& cur() { return control_of(slot_in_hand()); }
 UserFx user[kUserSlots];
 volatile uint16_t kit_tag[kSlots];
+UserFx user1[kUserSlots];            // box 1's (send_fx.h user_of)
+volatile uint16_t kit_tag1[kSlots];
 
 // The stable TYPE ids 1..63 (sim/protocol.py SENDFX_TYPES): implemented 1, 2, 16, 17, 18 (and 5, 6, 8, 15 with
 // RYTM_SENDFX_LARGE); the rest reserved for planned effects.
@@ -37,13 +39,18 @@ static const int kNumBuiltins = sizeof kBuiltins / sizeof kBuiltins[0];
 CORE_COLD bool builtin(int id) { return plays(id); }
 
 CORE_COLD const char* type_name(int id, int slot) {
+  (void)slot;
+  return type_name_in(0, id);
+}
+
+CORE_COLD const char* type_name_in(int box, int id) {
   if (id == kOff) return "OFF";
   for (int i = 0; i < kNumBuiltins; ++i)
     if (kBuiltins[i].id == id) return kBuiltins[i].name;
   static const char* const kUfx[kUserSlots] = {"UFX1", "UFX2", "UFX3", "UFX4"};
   int u = id - kFirstUser;
-  if (u >= 0 && u < kUserSlots) return user[u].tag ? user[u].name : kUfx[u];
-  (void)slot;
+  const UserFx* us = user_of(box);
+  if (u >= 0 && u < kUserSlots) return us[u].tag ? us[u].name : kUfx[u];
   return "?";
 }
 
@@ -78,20 +85,19 @@ CORE_COLD State state(const Control& c, int slot) {
   if (id == kOff) return kStEmpty;
   if (id == kStutter && stutter_slot(c) != slot) return kStMissing;   // FX 1 has it (or this build lacks it)
   if (builtin(id)) return kStReady;
-  if (!user_box(c)) return kStMissing;   // box 1: no user effects yet (user_box)
-  // a user id: the slot map must hold an effect whose tag matches the kit's (an untagged kit takes the slot's), and
+  // a user id: the box's slot map must hold an effect whose tag matches the kit's (an untagged kit takes the slot's), and
   // (Plugin API 3) its plugin must be loaded: READY then, else MISSING (the name says which effect the slot holds)
   int u = id - kFirstUser;
-  if (u >= 0 && u < kUserSlots && user_plays_at(id, slot)) return kStReady;
+  if (u >= 0 && u < kUserSlots && box_plays_at(box_of(c), id, slot)) return kStReady;
   return kStMissing;
 }
 
 bool any_on() { return any_on(control); }
 
 bool any_on(const Control& c) {
-  const bool u = user_box(c);
+  const int b = box_of(c);
   for (int s = 0; s < kSlots; ++s)
-    if (builtin(c.knob[s][0]) || (u && user_plays(c.knob[s][0]))) return true;
+    if (builtin(c.knob[s][0]) || box_plays(b, c.knob[s][0])) return true;
   return false;
 }
 
@@ -110,7 +116,7 @@ bool all_sound_off(Control& c) {
 
 uint8_t (*knob_filter)(int slot, int knob, uint8_t v) = nullptr;
 uint8_t (*send_filter)(int track, int slot, uint8_t v) = nullptr;
-void (*clock_listener)(uint8_t status, uint16_t spp) = nullptr;
+void (*clock_listener)(int box, uint8_t status, uint16_t spp) = nullptr;
 void (*bus_insert)(const Control& c, int slot, float (*y)[2], int n) = nullptr;
 bool (*user_ready)(int u) = nullptr;
 volatile bool list_dirty = false;
@@ -144,7 +150,7 @@ CORE_COLD void clock_in(Control& c, uint8_t status, uint16_t spp) {   // per MID
     default: return;
   }
   c.clock = ClockWord::pack(pos[b], ticks[b], run[b]);
-  if (b == 0 && clock_listener) clock_listener(status, spp);   // the Sidecar's LFOs' sync (core/lfo.h): the Rytm's clock, as before
+  if (clock_listener) clock_listener(b, status, spp);   // the LFOs' sync (core/lfo.h): each box's clock its own slot's LFOs' (3(c) step 10)
 }
 
 CORE_COLD uint16_t fx_tag(const char* name) {
@@ -309,7 +315,7 @@ static CORE_COLD void show(char* r, int max) {
   for (int s = 0; s < kSlots; ++s) {
     int id = C.knob[s][0];
     at = put(r, max, at, s ? "; fx2 " : " fx1 ");
-    at = put(r, max, at, type_name(id, s));
+    at = put(r, max, at, type_name_in(slot_in_hand(), id));
     at = put(r, max, at, " (");
     at = put_u(r, max, at, (unsigned)id);
     at = put(r, max, at, ")");

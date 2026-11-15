@@ -105,7 +105,11 @@ void midim_set_out(bool (*f)(int dest, const uint8_t* m, int n));   // the MIDI 
 void rytm_gone();                                                   // the Rytm's USB MIDI removed: the MIDI machine's USB notes off, the arpeggios end
 void rytm_resync();                                                 // records for the Rytm were lost: the remote UI sends what it owes again (remote_resync), DIN's recent note-offs too
 void rytm_link(bool up);                                            // records can reach the Rytm (core 0's word, each control pass)
-void midim_realtime(uint8_t status);                                // the Rytm's realtime bytes, the control core
+void midim_realtime(uint8_t status);                                // the base box's realtime bytes, the control core
+// 3(c) step 10: transport t's realtime byte / song position (F8 FA FB FC F2, spp in 16ths) into its box's slot's clock
+// (core::engine_realtime_link: its LFOs, its send FX's STUTTER grid); the slot, -1 none. The control core.
+int realtime_link(int t, uint8_t status, uint16_t spp);
+int base_slot();                                                    // the base box's slot (core::device::g_base)
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard

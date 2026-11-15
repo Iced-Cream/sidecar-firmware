@@ -87,15 +87,16 @@ static CORE_COLD int hexv(char c) {
   return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
-// The map's text into user[]. n bytes of g_stext
+// The map's text txt[0..n) into box's user names (box 0: user[], 1: user1[])
 static char g_stext[CORE_MSAMP ? 4096 : 512];   // (formats.cpp: 4 KB at most; only the first lines are read)
-static CORE_COLD void slots_parse(uint32_t n) {
+static CORE_COLD void slots_parse(int box, const char* txt, uint32_t n) {
+  UserFx* user = user_of(box);
   uint32_t at = 0;
   char b[64];
   for (int u = 0; u < kUserSlots && at < n; ++u) {
     int k = 0;
     while (at < n) {
-      char c = g_stext[at++];
+      char c = txt[at++];
       if (c == '\n') break;
       if (c != '\r' && k < (int)sizeof b - 1) b[k++] = c;
     }
@@ -104,11 +105,26 @@ static CORE_COLD void slots_parse(uint32_t n) {
     int t = 0, i = 0;
     for (; i < 4 && hexv(b[i]) >= 0; ++i) t = t << 4 | hexv(b[i]);
     if (i != 4 || b[4] != ' ' || (t & 0x3FFF) == 0) continue;
-    if (user_loaded && user_loaded(u)) continue;   // (a loaded effect's own name stays)
+    if (user_loaded && user_loaded(box * kUserSlots + u)) continue;   // (a loaded effect's own name stays)
     user[u].tag = (uint16_t)(t & 0x3FFF);
     strncpy(user[u].name, b + 5, sizeof user[u].name - 1);
     user[u].name[sizeof user[u].name - 1] = 0;
   }
+}
+
+// a box's names start over: each slot empty but a loaded effect's (its own name and tag stay: the project's file only
+// names a slot, the loaded effect is what plays - Plugin API 3, core/user/um.cpp)
+static CORE_COLD void slots_clear(int box) {
+  UserFx* user = user_of(box);
+  for (int u = 0; u < kUserSlots; ++u)
+    if (!(user_loaded && user_loaded(box * kUserSlots + u))) user[u].tag = 0, user[u].name[0] = 0;
+}
+
+// 3(c): another box's map (core/user/um.cpp reads it with its own slot map, from the box's folder): its names
+CORE_COLD void slots_text(int box, const char* t, int n) {
+  if (box < 0 || box >= kVoiceSlots) return;
+  slots_clear(box);
+  if (n > 0) slots_parse(box, t, (uint32_t)n);
 }
 
 static char g_spath[72];
@@ -126,10 +142,7 @@ static bool g_sbusy, g_sagain;
 
 CORE_COLD void slots_load(const char* project) {
   (void)project;
-  // (a user effect loaded in its slot keeps its name and tag: the project's file only names a slot, the loaded effect
-  // is what plays - Plugin API 3, core/user/um.cpp)
-  for (int u = 0; u < kUserSlots; ++u)
-    if (!(user_loaded && user_loaded(u))) user[u].tag = 0, user[u].name[0] = 0;
+  slots_clear(0);   // (the Rytm's: box 0's)
   if (g_sbusy) {
     g_sagain = true;
     return;
@@ -147,17 +160,14 @@ CORE_COLD bool slots_step() {
       continue;
     }
     g_sbusy = false;
-    if (g_sreq.got > 0) slots_parse((uint32_t)g_sreq.got);
+    if (g_sreq.got > 0) slots_parse(0, g_stext, (uint32_t)g_sreq.got);
   }
   return true;
 }
 #else
 CORE_COLD void slots_load(const char* project) {
   (void)project;
-  // (a user effect loaded in its slot keeps its name and tag: the project's file only names a slot, the loaded effect
-  // is what plays - Plugin API 3, core/user/um.cpp)
-  for (int u = 0; u < kUserSlots; ++u)
-    if (!(user_loaded && user_loaded(u))) user[u].tag = 0, user[u].name[0] = 0;
+  slots_clear(0);   // (the Rytm's: box 0's)
   slots_name();
   File f;
   if (!f.open(g_spath, kRead)) return;
@@ -165,7 +175,7 @@ CORE_COLD void slots_load(const char* project) {
   uint32_t n = 0;
   while (n < sizeof g_stext && (c = f.read()) >= 0) g_stext[n++] = (char)c;
   f.close();
-  slots_parse(n);
+  slots_parse(0, g_stext, n);
 }
 CORE_COLD bool slots_step() { return true; }
 #endif

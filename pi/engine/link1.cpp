@@ -17,6 +17,7 @@ static RecordReader<Spsc<uint8_t, kOutBytes>> s_Reader (&g_Out);
 static CUSBMIDIDevice *volatile s_pDevice;	// core 0 writes, the control core reads (Poll: its sender while there)
 static TStats s_Stats;
 static SysExAsm<4096> s_Asm;			// the control core's
+static RealtimeAsm s_Rt;			// the control core's: the box's clock (3(c) step 10)
 static TTap *volatile s_pTap;
 static Spsc<uint32_t, kFromComputerPackets> s_FromComputer;	// xHCI IRQ -> core 0's loop (Send), whole event packets
 static boolean s_bComputerSysEx;		// the computer's SysEx is part way out: the engine's records wait
@@ -144,7 +145,7 @@ void ToBox (const uint8_t *pData, int nLength)
 	for (int i = 0; i < nLength; i++) g_Out.push (pData[i]);
 }
 
-void Poll (void)
+void Poll (TRealtime *pRealtime)
 {
 	static boolean s_bUp;
 	boolean bUp = s_pDevice != 0;
@@ -156,6 +157,11 @@ void Poll (void)
 	uint8_t b;
 	while (g_In.pop (&b))
 	{
+		if (s_Rt.feed (b))
+		{
+			s_Stats.nRealtime++;
+			if (pRealtime != 0) pRealtime (1, s_Rt.status (), s_Rt.spp ());	// transport 1's: its box's clock
+		}
 		unsigned n = s_Asm.feed (b);
 		if (n == 0) continue;
 		s_Stats.nSysEx++;

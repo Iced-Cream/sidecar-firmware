@@ -281,7 +281,7 @@ struct StatusView {
     // FX1, FX2 a row each: "FX1" in a badge, the TYPE's name (12 characters: 60 px), PRE / POST at the right
     for (int sl = 0; sl < 2; ++sl) {
       int y = 38 + 9 * sl;
-      const char* t = sl < fx::kSlots ? fx::type_name(fx::cur().knob[sl][0], sl) : nullptr;
+      const char* t = sl < fx::kSlots ? fx::type_name_in(fx::slot_in_hand(), fx::cur().knob[sl][0]) : nullptr;
       bool off = !t || !*t || !strcmp(t, "OFF");
       bool post = fx::cur().route == fx::kRouteMain ||
                   (fx::cur().route == fx::kRouteSlot && fx::cur().knob[sl][1] >= 64);
@@ -359,7 +359,8 @@ constexpr uint8_t kPageLfo = 1;   // 30's page byte (rui1026): 0 the default (SI
 constexpr uint8_t kPageSeq = 0x10;   // rui1036: 0x10 + t (16..27) the SEQ page of track t (rui1037: TRK + TRIG; rui1036: FUNC + LFO)
 constexpr uint8_t kPageIns = 2;      // fx-ins: 2 the INSERT page (proposed rytm-mods 0026 mapping: TRK + FX; docs/INSERT-FX.md)
 constexpr uint8_t kPageInsOut = 3;   // rui1047: 3 the INSERT page on its OUT view (UP + AMP; stereo / POST, docs/STEREO.md); an older host reads it as the SIDECAR page
-int kit_said = -1;                   // the kit the last 3B named
+int kit_said[kVoiceSlots];           // the kit each box's last 3B named (3(c) step 9: each box its own; -1 none yet)
+struct KitSaidInit { KitSaidInit() { for (int& k : kit_said) k = -1; } } kit_said_init;
 constexpr uint8_t kPageArp = 4;      // 7ae: UP + FLTR, the ARP page (page_arp.cpp); an older host reads it as the SIDECAR page
 constexpr uint8_t kPagePoly = 0x20;  // rui1048: 0x20 + t (32..43) POLY CONFIG of track t (the Rytm's track menu, FUNC + CHRO; page_poly.cpp); an older host reads it as the SIDECAR page
 constexpr int kExtra0 = -10;   // s.voice of extra page k (extra.h: SCOPE, REC): kExtra0 - k
@@ -1686,6 +1687,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         bool page_trig = code < 16 && s.open &&
                          ((b[2] && !(x && !strcmp(x->title, "SEQ")) && (page_trigs(x) >> code & 1)) ||
                           (!b[2] && (key_held(code) || code == s.scene_key)));
+        if (page_trig) seq::ui_skipped(seq::kSkipKeyPage);   // (T374: counted for the box's slot)
         if (!page_trig && seq::ui_key(code, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;
@@ -1700,6 +1702,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       s.user = true;
       popup_key_closed();   // (a turn ends the Rytm's splash as a key does)
       if (!s.open && src_bank_enc(b[0], (int)b[1] - 64, b[2] != 0)) {   // rui1038: knob A in the bank list
+#if CORE_POLY
+        seq::ui_skipped(seq::kSkipEncBank);   // (T374: counted for the box's slot)
+#endif
         s.input = true;
         return;
       }
@@ -1709,6 +1714,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         // rui1048: POLY CONFIG's knobs are its own, also in seq mode (seq::ui_enc takes every turn then)
         // review (0.5.0): MORPH's knobs, and a turn under EDIT's held scene key, are the page's too
         bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH"))) || (s.scene_key >= 0 && edit_page(x));
+        if (own) seq::ui_skipped(seq::kSkipEncPage);   // (T374: counted for the box's slot)
         if (!own && seq::ui_enc(b[0], (int)b[1] - 64, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;
@@ -1921,22 +1927,25 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
           core::juno_sound_pat(tv(t), pat);
       }
       return;
-    case kKit:   // 1026: the Rytm's active kit: the LFOs are per kit (core/lfo.h)
+    case kKit: {   // 1026: the box's active kit: the LFOs are per kit (core/lfo.h). 3(c) step 9: each box's 3B (the A4's
+                   // too, its profile's in_allow) is handled in its link's Scope, so every per-kit module below is that
+                   // box's own (the slot in hand's); MIDI and the arpeggios end only its own voices' notes
       if (n < 1 || b[0] > 127) break;
+      const int slot = prj_slot();
       lfo::kit_changed(b[0]);
-      if (b[0] != kit_said) {  // (a 3B also comes with every page open and hello: the same kit is no change)
-        kit_said = b[0];
-        page_two_cancel();     // rc5: a kit loaded around a list choice: its machines and words are the kit's
+      if (b[0] != kit_said[slot]) {  // (a 3B also comes with every page open and hello: the same kit is no change)
+        kit_said[slot] = b[0];
+        page_two_cancel();     // rc5: a kit loaded around a list choice: its machines and words are the kit's (the remote UI is one: 10b)
 #if CORE_MSAMP
-        midim::kit_switched(); // MIDI: its held notes off; the new kit's PRG and the rest go out at its reports
+        midim::kit_switched(slot); // MIDI: its held notes off; the new kit's PRG and the rest go out at its reports
 #endif
 #if CORE_POLY
-        arp::kit_changed();    // the arpeggios end; the new kit's settings come as 45s
+        arp::kit_changed(slot);    // the arpeggios end; the new kit's settings come as 45s
 #endif
       }
 #if CORE_POLY
       ins::kit_changed(b[0]);   // the inserts are per kit too (core/fx/insert.h)
-      mod::rp_kit(b[0]);        // the Rytm's own params: the kit byte of every message (core/mod/rytm_param.h)
+      if (slot == 0) mod::rp_kit(b[0]);   // the Rytm's own params: the kit byte of every message (core/mod/rytm_param.h)
       xypad::kit_changed(b[0]);   // the XY pad (core/mod/xypad.h): released first, its fader back before the scenes save
       scene::kit_changed(b[0]);   // and the scenes (core/mod/scene.h)
 #endif
@@ -1944,6 +1953,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       gr::kit_changed(b[0]);   // GRANULAR's picks are per kit too
 #endif
       return;
+    }
     case kHello: {   // 1023: <uptime >> 7> <uptime & 0x7F> <caps>: the splash when the Rytm was up before the link
       s.presets_told = false;
       s.mlist = false, page_two_cancel();   // rc5: a new link: no list choice owed

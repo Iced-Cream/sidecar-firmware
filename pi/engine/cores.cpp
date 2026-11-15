@@ -123,12 +123,18 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	if (s_bNotes && !s_bModded) s_Notes.Channel (s, a, b);
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff ();	// the send FX hear it with the notes off too
 }
-// The Rytm's realtime bytes: the recorder's and STUTTER's (rec_pi::Transport), and MIDI's on USB-A (core/midim/midim.h)
-static void OnRealtime (uint8_t s, uint16_t spp)
+// A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
+// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). The base box's also arm the
+// recorder and drive the sampler, the bundles' and the storage bench's waits (rec_pi::Transport) and MIDI's on USB-A
+// (core/midim/midim.h), as the Rytm's did; another box's reach only its own clock.
+static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 {
+	int nSlot = bridge::realtime_link (nTransport, s, spp);
+	if (nSlot < 0 || nSlot != bridge::base_slot ()) return;
 	rec_pi::Transport (s, spp);
 	bridge::midim_realtime (s);
 }
+static void OnRealtime (uint8_t s, uint16_t spp) { RealtimeIn (0, s, spp); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
 // The Pi's own keyboards' notes for the Rytm (core/keys.h: an analog track's, a forwarded one's): one USB MIDI event
 // packet each into g_KeysToRytm (core 0's transport sends them between whole messages); a full queue drops it
@@ -532,7 +538,7 @@ void CEngineCores::Control (void)
 			s_nMidiBytes++;
 			bWorked = TRUE;
 		}
-		link1::Poll ();		// the second box's messages, as the engine's slot 1 (link1.h)
+		link1::Poll (RealtimeIn);	// the second box's messages, as the engine's slot 1, and its clock (link1.h)
 		Mark (0);
 		u32 nKey;
 		while (g_KeysIn.pop (&nKey))
