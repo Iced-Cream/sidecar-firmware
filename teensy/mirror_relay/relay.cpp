@@ -64,7 +64,9 @@ static uint8_t ev_buf[2][kEvMps] __attribute__ ((aligned (32)));
 static uint8_t ev_busy[2];
 
 // audio: link -> computer (blocks for 0x83) and computer -> link (blocks from 0x03)
-static const unsigned kAQ = 16, kALinkTds = 4, kAPcTds = 2;
+// T337: the Engine's reads of the A4's IN came late enough that a 16-block queue (2.3 ms) overflowed (69 blocks in 60 s):
+// 48 blocks (7 ms) waiting, 4 primed at once toward each side
+static const unsigned kAQ = 48, kALinkTds = 4, kAPcTds = 4;
 struct Block { uint8_t d[kLinkMps]; uint16_t len; uint32_t t; };
 static Block aq_pc[kAQ];			// waiting for the computer
 static unsigned aq_pc_head, aq_pc_tail;
@@ -180,7 +182,9 @@ static void a_to_pc_done (ci_dev *, uint8_t, ci_td *t, uint32_t, uint32_t err)
 		st.hist_to_pc[hist_bin (us)]++;
 		if (us > st.worst_to_pc_us) st.worst_to_pc_us = us;
 	}
-	if (aq_pc_head == aq_pc_tail && !a_to_pc_busy[0] && !a_to_pc_busy[1]) st.audio_to_pc_empty++;
+	bool idle = aq_pc_head == aq_pc_tail;
+	for (unsigned i = 0; i < kAPcTds; i++) idle = idle && !a_to_pc_busy[i];
+	if (idle) st.audio_to_pc_empty++;
 	a_to_pc_pump ();
 }
 
