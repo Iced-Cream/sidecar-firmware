@@ -11,7 +11,14 @@
 #define _slip_trace_h
 
 #include <stdint.h>
+#include <stddef.h>
+#if __has_include(<circle/memorymap.h>)
+extern "C" int core_snprintf (char *out, size_t n, const char *fmt, ...);	// platform_pi.cpp (Circle has no snprintf)
+#define SLIPTRACE_FMT core_snprintf
+#else
 #include <stdio.h>
+#define SLIPTRACE_FMT snprintf
+#endif
 
 struct SlipTrace
 {
@@ -67,13 +74,13 @@ struct SlipTrace
 	{
 		const unsigned m = events (), first = frozen_n - m;
 		if (k * kPerLine >= m || cap < 32) return false;
-		unsigned p = (unsigned) snprintf (buf, cap, "%u/%u", k + 1, lines ());
+		unsigned p = (unsigned) SLIPTRACE_FMT (buf, cap, "%u/%u", k + 1, lines ());
 		for (unsigned j = k * kPerLine; j < m && j < (k + 1) * kPerLine && p + 20 < cap; j++)
 		{
 			const Rec &e = r[(first + j) % kN];
 			int32_t dt = j == k * kPerLine ? (int32_t) (e.t_us - trig_us)
 						    : (int32_t) (e.t_us - r[(first + j - 1) % kN].t_us);
-			p += (unsigned) snprintf (buf + p, cap - p, " %c%ld/%u", (char) e.kind, (long) dt, (unsigned) e.v);
+			p += (unsigned) SLIPTRACE_FMT (buf + p, cap - p, " %c%ld/%u", (char) e.kind, (long) dt, (unsigned) e.v);
 		}
 		return true;
 	}
