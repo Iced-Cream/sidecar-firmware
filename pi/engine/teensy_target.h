@@ -59,6 +59,9 @@ public:
 	void MirrorPoll (void) override;
 	void MirrorMoved (void) override;
 
+	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
+	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
+
 private:
 	static void EvStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext);	// the computer's OUT blocks (link 0x82)
@@ -85,8 +88,6 @@ private:
 	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
 	void TestOutBlock (const u8 *pBlock, unsigned nLength);
 	boolean TestExtras (void);		// the made-up box's BOS + MS OS 2.0 set (WinUSB on the bench computer)
-	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
-	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
 	void FlushMidiIn (void);			// xHCI IRQ: queued box MIDI out to the Teensy when its channel is free
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
 
