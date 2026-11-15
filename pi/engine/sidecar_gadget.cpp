@@ -1169,7 +1169,7 @@ void CSidecarGadget::Poll (void)
 	}
 	else if (!m_bRytmMIDI && !(Mirror () && CObUsb::GadgetSlot () == 1))
 	{
-		// (mirror=a4: the computer's packets are the A4's, taken by core 0's loop for link1 (kernel.cpp); draining
+		// (the A4 on USB-C: the computer's packets are the A4's, taken by core 0's loop for link1 (kernel.cpp); draining
 		// them here while no Rytm MIDI is up left the A4 deaf to the computer: PD2, T354)
 		u32 w;
 		while (ForRytm (&w)) m_Stats.nMidiNoRytm++;		// nowhere to go: counted

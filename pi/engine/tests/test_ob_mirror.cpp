@@ -80,17 +80,22 @@ extern "C" const char *__asan_default_options () { return "detect_leaks=1"; }
 
 static CSidecarGadget g_gadget;
 
+// the A4's: the Rytm's with alt 3's sizes changed (as test_ob_usb.cpp's), made in main
+static uint8_t g_a4[263];
+static const int kOutAlt3Mps = 137, kInAlt3Mps = 80;
+
 struct Box {
   CUSBDevice dev;
   CUSBHostController host;
   CUSBFunction parent{&dev, &host};
   CUSBFunction* ob = nullptr;
-  Box() {
-    dev.config = g_rytm;
-    dev.desc.idVendor = 0x1935, dev.desc.idProduct = 0x0b48;
+  explicit Box(bool a4 = false) {
+    dev.config = a4 ? g_a4 : g_rytm;
+    dev.desc.idVendor = a4 ? core::device::kA4Vid : 0x1935, dev.desc.idProduct = a4 ? core::device::kA4Pid : 0x0b48;
     ob = RytmObDeviceCreate(&parent);
     CHECK(ob && ob->Configure());
   }
+  CObUsb* box() { return static_cast<CObUsb*>(ob); }
   ~Box() { delete ob; }
   // the pipe's URB in flight (IN: one at a time), or null
   CUSBRequest* pipe(uint8_t addr) {
@@ -119,8 +124,35 @@ static bool logged(const char* s) {
   return false;
 }
 
+void ObUsbTestRelayFirst(bool);   // ob_usb.cpp (OB_USB_TEST): cmdline mirrorfirst=relay
+
+// a Teensy relay as the second mirror target: notes what it is handed
+struct FakeRelay : IMirrorTarget {
+  CObUsb* box = nullptr;
+  std::vector<int> up;
+  int moved = 0, strings = 0;
+  bool shown = true, hold_pipe_in = false;
+  std::vector<u8> pipe_in;
+  void SetBox(CObUsb* p) override { box = p; if (!p) up.push_back(0); }
+  boolean Mirror() const override { return TRUE; }
+  boolean MirrorShown() const override { return shown; }
+  boolean MirrorSetDescriptors(const u8*, const u8*, unsigned) override { return TRUE; }
+  void MirrorSetString(u8, const u8*, unsigned) override { ++strings; }
+  void MirrorBoxUp(boolean b) override { up.push_back(b); }
+  void MirrorControlDone(unsigned, const u8*, int) override {}
+  boolean MirrorPipeIn(u8 a, const u8*, unsigned) override { pipe_in.push_back(a); return hold_pipe_in; }
+  void MirrorPipeOutDone(u8) override {}
+  boolean MirrorOutExtra(u8*, u16) override { return FALSE; }
+  void FromBoxBlock(const u8*) override {}
+  void ToBox(s32 (*)[12], const s16 (*)[8], unsigned) override {}
+  void MirrorMoved() override { ++moved; }
+};
+
 int main() {
   CSidecarGadget::s_pThis = &g_gadget;
+  memcpy(g_a4, g_rytm, sizeof g_rytm);
+  g_a4[kInAlt3Mps] = 0x00, g_a4[kInAlt3Mps + 1] = 0x01;
+  g_a4[kOutAlt3Mps] = 0xc8, g_a4[kOutAlt3Mps + 1] = 0x00;
   CTimer::s_ticks = 1000;
 
   {  // attach: the pipes of interface 3 (bulk OUT 0x02, interrupt IN 0x82), nothing on the audio interfaces' alternates
@@ -373,6 +405,105 @@ int main() {
     t.SetMIDI(nullptr);
     CTimer::s_now = 0;
   }
+
+  {  // Two boxes, one build (mirror_assign.h, ob_usb.cpp PollAssign): USB-C first, whichever box is alone; a box that
+     // arrives while USB-C shows the other goes to the relay; nobody is moved while there; the USB-C box gone past the
+     // hold: the relay's box moves to USB-C (the relay told at once, a pipe packet it held asked for again)
+    const unsigned long long S = 1000000;
+    g_gadget.mirror = true, g_gadget.shown = true, g_gadget.hold_pipe_in = false;
+    core::device::g_a4_chosen = true;                      // (the shim's usb= is not "mirror": the A4 claimed as one with the mod)
+    CTimer::s_now64 = 1000 * S;                // long after boot: the earlier tests' Rytm is past its hold
+    CObUsb::PollAssign();
+    CHECK(CObUsb::UsbcSlot() == -1 && CObUsb::RelaySlot() == -1);
+    FakeRelay relay;
+    CObUsb::SetRelayTarget(&relay);
+    CHECK(relay.box == nullptr);
+    {
+      size_t nBox = g_gadget.box.size();
+      Box a(true);                             // the A4 alone: USB-C at once, read for the gadget
+      CHECK(CObUsb::UsbcSlot() == 1 && CObUsb::GadgetSlot() == 1 && CObUsb::RelaySlot() == 0);
+      CHECK(g_gadget.box.size() == nBox + 1 && g_gadget.box.back() == 1 && relay.up.empty());
+      CHECK(logged("usb=mirror: USB-C shows a4, the relay nothing (mirror=rytm, mirrorfirst=usbc)"));
+      Box r;                                   // the Rytm (the preferred box) after it: the relay, the A4 stays
+      CHECK(CObUsb::UsbcSlot() == 1 && relay.box == r.box() && relay.up.back() == 1);
+      CHECK(g_gadget.box.size() == nBox + 1);
+      CUSBRequest* rin = r.pipe(0x82);         // the Rytm's async pipe at its own interval on the relay too (PA1, T353)
+      CHECK(rin && rin->ep->desc->bInterval == 1 && a.pipe(0x82)->ep->desc->bInterval == 1);
+      r.complete(rin, true, 5);                // its pipe packets to the relay, not the gadget
+      CHECK(relay.pipe_in.size() == 1 && relay.pipe_in[0] == 0x82);
+      delete r.ob;                             // the Rytm leaves: gone (held on the relay), nobody moves
+      r.ob = nullptr;
+      CHECK(relay.box == nullptr && relay.moved == 0 && CObUsb::UsbcSlot() == 1);
+      CTimer::s_now64 += 100 * S;
+      CObUsb::PollAssign();
+      CHECK(CObUsb::UsbcSlot() == 1);
+    }
+    CTimer::s_now64 += 100 * S;                // the A4 gone past the hold too: USB-C free
+    CObUsb::PollAssign();
+    CHECK(CObUsb::UsbcSlot() == -1);
+    {
+      Box r;                                   // the Rytm, then the A4: Rytm USB-C, A4 the relay
+      Box a(true);
+      CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.up.back() == 1);
+      CHECK(a.pipe(0x82)->ep->desc->bInterval == 4);   // the A4's beside the relay's link: 1 ms at most (T330)
+      relay.hold_pipe_in = true;               // the relay keeps the A4's next pipe packet for its computer
+      CUSBRequest* ain = a.pipe(0x82);
+      a.complete(ain, true, 7);
+      CHECK(a.pipe(0x82) == nullptr);          // waits for the relay's computer (MirrorPipeInNext)
+      size_t nBox = g_gadget.box.size();
+      delete r.ob;                             // the Rytm leaves: held for it (a reboot comes back as itself)
+      r.ob = nullptr;
+      CHECK(g_gadget.box.back() == 0);
+      CTimer::s_now64 += 5 * S;
+      CObUsb::PollAssign();
+      CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.moved == 0);
+      CTimer::s_now64 += 6 * S;                // past the hold (10 s): the A4 moves to USB-C
+      CObUsb::PollAssign();
+      CHECK(CObUsb::UsbcSlot() == 1 && CObUsb::RelaySlot() == 0 && relay.moved == 1 && relay.box == nullptr);
+      CHECK(a.pipe(0x82) != nullptr);          // its pipe asks the box again (the relay's computer never will)
+      CHECK(logged(": moved from the relay"));
+      CObUsb::MirrorAttachLate();              // the gadget's MirrorPoll: the A4 read for USB-C
+      CHECK(g_gadget.box.size() == nBox + 2 && g_gadget.box.back() == 1);
+      CObUsb::MirrorAttachLate();              // once
+      CHECK(g_gadget.box.size() == nBox + 2);
+      Box r2;                                  // the Rytm back: the relay now
+      CHECK(CObUsb::UsbcSlot() == 1 && relay.box == r2.box());
+    }
+    CTimer::s_now64 += 100 * S;                // everyone gone past the hold
+    CObUsb::PollAssign();
+    CHECK(CObUsb::UsbcSlot() == -1);
+    ObUsbTestRelayFirst(true);                 // mirrorfirst=relay (testing the relay): the relay filled first
+    {
+      size_t nBox = g_gadget.box.size();
+      Box a(true);                             // the A4 alone: the relay, USB-C stays the Sidecar device
+      CHECK(CObUsb::RelaySlot() == 1 && CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.up.back() == 1);
+      CHECK(g_gadget.box.size() == nBox && CObUsb::GadgetSlot() == 0);
+      Box r;                                   // the Rytm: USB-C
+      CHECK(CObUsb::RelaySlot() == 1 && relay.box == a.box() && g_gadget.box.back() == 1);
+      g_gadget.hold_pipe_in = true;            // the gadget keeps the Rytm's next pipe packet for its computer
+      CUSBRequest* rin = r.pipe(0x82);
+      r.complete(rin, true, 3);
+      CHECK(r.pipe(0x82) == nullptr);
+      delete a.ob;                             // the A4 leaves; past the hold the Rytm moves from USB-C to the relay
+      a.ob = nullptr;
+      CHECK(relay.box == nullptr);
+      CTimer::s_now64 += 11 * S;
+      size_t nUp = relay.up.size(), nG = g_gadget.box.size();
+      CObUsb::PollAssign();
+      CHECK(CObUsb::RelaySlot() == 0 && relay.box == r.box() && relay.moved == 1);
+      CHECK(g_gadget.box.size() == nG + 1 && g_gadget.box.back() == 0);   // USB-C: the box gone (then the Sidecar device)
+      CHECK(r.pipe(0x82) != nullptr && logged(": moved from USB-C"));
+      CObUsb::PollTargets();                   // (the fake relay's MirrorPoll does nothing; read it as the relay's would)
+      r.box()->AttachLate();
+      CHECK(relay.up.size() == nUp + 1 && relay.up.back() == 1);
+      g_gadget.hold_pipe_in = false;
+    }
+    ObUsbTestRelayFirst(false);
+    CObUsb::SetRelayTarget(nullptr);
+    core::device::g_a4_chosen = false;
+    CTimer::s_now64 = 0;
+  }
+  CHECK(CUSBRequest::live() == 0);
 
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget
     g_gadget.mirror = false;
