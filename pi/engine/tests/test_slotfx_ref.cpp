@@ -55,6 +55,37 @@ static void scene() {
   master::control.src = master::kMix;
 }
 
+#if CORE_VOICES > 8 && !defined(SLOTFX_BASE)   // (SLOTFX_BASE: built on the code before the change, for its hash)
+// slot 1 (an A4-like row: no PRE pair, tracks on 2..5): CHORUS on its FX 1, its voices sending to bus 1, a COMP on its master
+static const core::out::Device kBox = {"box", 6, {0, 1}, {0, 1}};
+static bool g_box1 = false;
+static double g_peak1 = 0, g_track1 = 0;   // its return's peak on 0/1; frames that moved its tracks 2..5
+static void scene1() {
+  fx::control1.knob[0][0] = fx::kChorus;
+  for (int k = 2; k < fx::kKnobs; ++k) fx::control1.knob[0][k] = 70;
+  for (int v = 0; v < ins::kVoices; ++v) ins::control1.send[v][0] = 100;
+  ins::control1.type[ins::kM0][0] = ins::kComp;
+  for (int k = 0; k < ins::kParams; ++k) ins::control1.play[ins::kM0][0][k] = ins::labels(ins::kComp).def[k];
+}
+static void box1_block(int k) {
+  int16_t v[7][8] = {};
+  for (int f = 0; f < 7; ++f)
+    for (int c = 0; c < 8; ++c) v[f][c] = (int16_t)(4000.0 * std::sin(6.2831853 * (220.0 + 5.0 * c) * (7.0 * k + f) / 48000.0));
+  int32_t o[7][12] = {};
+  for (int f = 0; f < 7; ++f)
+    for (int c = 2; c < 6; ++c) o[f][c] = 1234 * c;
+  sendfx_pi::FromVoices(1, v, 7);
+  sendfx_pi::AddReturn(1, kBox, o, 7);
+  masterfx_pi::Process(1, kBox, o, 7);
+  for (int f = 0; f < 7; ++f) {
+    g_peak1 = std::fmax(g_peak1, std::fabs((double)o[f][0]));
+    for (int c = 2; c < 6; ++c) g_track1 += o[f][c] != 1234 * c;
+  }
+  sendfx_pi::Render(1);
+  masterfx_pi::Render(1);
+}
+#endif
+
 // n blocks of 7 frames: stems (two sines), voices (a third), the OUT fill's channels; render after each block
 static void run(int blocks) {
   for (int k = 0; k < blocks; ++k) {
@@ -78,13 +109,33 @@ static void run(int blocks) {
     hash(x, sizeof x);
     sendfx_pi::Render();
     masterfx_pi::Render();
+#if CORE_VOICES > 8 && !defined(SLOTFX_BASE)   // (SLOTFX_BASE: built on the code before the change, for its hash)
+    if (g_box1) box1_block(k);   // slot 1's instances in between: slot 0's frames must not change
+#endif
     core::g_ms += (k % 7 == 0);
   }
 }
 
 int main(int argc, char** argv) {
   if (!getenv("SLOTFX_NOSCENE")) scene();   // (the scene off: a different hash, so the FX did play)
+#if CORE_VOICES > 8 && !defined(SLOTFX_BASE)   // (SLOTFX_BASE: built on the code before the change, for its hash)
+  // SLOTFX_BOX1: slot 1 plays beside it (its own return non-zero on 0/1, its tracks untouched, a user TYPE in its settings
+  // MISSING); slot 0's hash must still be the reference
+  if (getenv("SLOTFX_BOX1")) {
+    g_box1 = true;
+    scene1();
+    CHECK(fx::state(fx::control1, 0) == fx::kStReady && sendfx_pi::On(1) && core::master::on(1));
+  }
+#endif
   run(4000);
+#if CORE_VOICES > 8 && !defined(SLOTFX_BASE)   // (SLOTFX_BASE: built on the code before the change, for its hash)
+  if (g_box1) {
+    printf("slot 1 return peak %.0f, track frames moved %.0f\n", g_peak1, g_track1);
+    CHECK(g_peak1 > 1e6 && g_track1 == 0);
+    fx::control1.knob[1][0] = fx::kFirstUser;
+    CHECK(fx::state(fx::control1, 1) == fx::kStMissing);
+  }
+#endif
   printf("slot 0 hash %016llx\n", (unsigned long long)g_h);
   const char* ref = argc > 1 ? argv[1] : getenv("SLOTFX_REF");
   if (ref) {
