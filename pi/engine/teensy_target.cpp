@@ -21,6 +21,19 @@ static const char From[] = "teensy";
 using namespace relay;
 
 CTeensyTarget *CTeensyTarget::s_pThis = 0;
+
+// usbreboot=1: the reboot SysEx from the relay's computer reboots the Pi too, as on the USB-C port (sidecar_gadget.cpp).
+// Fed from the xHCI IRQ (the computer's MIDI packets), taken by core 0's loop; static, so a Teensy that went and came
+// back starts a fresh match. The request is a host-link SysEx, which m_ToBoxFilter drops: it never reaches the box.
+static RebootSysEx s_Reboot;
+static volatile boolean s_bRebootAsked;
+
+boolean CTeensyTarget::TakeReboot (void)
+{
+	if (!s_bRebootAsked) return FALSE;
+	s_bRebootAsked = FALSE;
+	return TRUE;
+}
 volatile boolean CTeensyTarget::s_bBootDue = FALSE, CTeensyTarget::s_bLogDue = FALSE;
 volatile unsigned CTeensyTarget::s_nLogReads = 0;
 char CTeensyTarget::s_Log[2048];
@@ -81,6 +94,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	// the Rytm; here the box is the second one, so the safer default)
 	const char *pMidi = CKernelOptions::Get ()->GetAppOptionString ("usbmidi", "");
 	m_ToBoxFilter.SetPassOsUpdate (strstr (pMidi, "os:on") != 0);
+	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 	// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " (SC)", as the gadget's
 	const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
 	if (pName == 0) strcpy (m_Name, " (SC)");
@@ -679,11 +693,18 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			const u8 *q = p->m_pChanInBuf[c][k];
 			unsigned n = pURB->GetResultLength () / 4;
 			for (unsigned i = 0; i < n; i++, q += 4)
+			{
+				if (p->m_bUsbReboot && q[0] != 0)
+				{
+					s_Reboot.Feed (q);
+					if (s_Reboot.Matched ()) { s_Reboot.Clear (); s_bRebootAsked = TRUE; }
+				}
 				p->m_ToBoxFilter.Feed (q, [p] (const uint8_t *e)
 				{
 					if (link1::FromComputer (e)) p->m_Stats.nMidiToBox++;
 					else p->m_Stats.nMidiToBoxFull++;
 				});
+			}
 			// the next packet from the computer once a whole one (128 event packets) fits; else MirrorPoll grants it
 			if (link1::FromComputerRoom () >= 128) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;

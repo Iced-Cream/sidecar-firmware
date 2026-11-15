@@ -21,6 +21,7 @@
 #include "mirror_stream.h"
 #include "relay_proto.h"
 #include "midi_filter.h"
+#include "reboot_sysex.h"
 #include "slip_detect.h"
 
 class CObUsb;
@@ -33,6 +34,7 @@ public:
 	boolean Configure (void) override;
 
 	static CTeensyTarget *Get (void)	{ return s_pThis; }
+	static boolean TakeReboot (void);	// core 0's loop: the relay's computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 	static void LogStats (CLogger *pLogger);
 	// teensy_flash.h (docs/teensy-flash.md): requests MirrorPoll carries out on the link's EP0, once started.
 	// RequestLog: the Teensy's log since its last read into a 2 KB buffer (LogReads counts the reads done; Log copies it)
@@ -143,6 +145,7 @@ private:
 
 	volatile unsigned m_nCreditDue[relay::kChannels];
 	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back while link1's queue to the box is full
+	boolean m_bUsbReboot;				// usbreboot=1: the reboot SysEx from the relay's computer is obeyed
 	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)
 	static const unsigned MidiInRing = 512;
 	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
