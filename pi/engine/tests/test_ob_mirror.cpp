@@ -503,6 +503,112 @@ int main() {
     core::device::g_a4_chosen = false;
     CTimer::s_now64 = 0;
   }
+
+  {  // obrelaylead (default 7): the paced OUT lead while the box is the relay's (T369: lead 4 ran out before each relay
+     // slip; T371, T373: 7 had none); USB-C keeps oboutlead. A box that moves to the relay while it streams gets the
+     // rest of the relay's lead with its next IN block, once; moving back takes nothing back (those blocks are queued)
+    const unsigned long long S = 1000000;
+    g_gadget.mirror = true, g_gadget.shown = true, g_gadget.hold_pipe_in = false;
+    core::device::g_a4_chosen = true;
+    CTimer::s_now64 = 2000 * S;
+    CObUsb::PollAssign();
+    FakeRelay relay;
+    CObUsb::SetRelayTarget(&relay);
+    uint16_t ctr = 0;
+    auto in = [&](Box& b, int n) {             // n audio IN blocks (0x83) from the box, in order
+      for (int k = 0; k < n; ++k) {
+        CUSBRequest* u = b.pipe(0x83);
+        CHECK(u != nullptr);
+        if (!u) return;
+        memset(u->buf, 0, u->len);
+        u->buf[0] = 0x07, u->buf[2] = ctr >> 8, u->buf[3] = (uint8_t)ctr;
+        ctr += 7;
+        b.complete(u, true, u->len);
+      }
+    };
+    auto outs = [](Box& b) {                   // audio OUT URBs (0x03) in flight
+      int n = 0;
+      for (CUSBRequest* u : b.host.out) n += u->ep && u->ep->desc && u->ep->desc->bEndpointAddress == 0x03;
+      return n;
+    };
+    auto out_done = [](Box& b) {               // every audio OUT URB in flight completes
+      for (CUSBRequest* u; (u = b.pipe(0x03)) != nullptr;) b.complete(u, true, u->len);
+    };
+    ObUsbTestRelayFirst(true);
+    {
+      Box a(true);                             // the A4 alone, mirrorfirst=relay: the relay's
+      CHECK(relay.box == a.box() && CObUsb::RelaySlot() == 1);
+      in(a, 1);
+      CHECK(outs(a) == 8);                     // 1 + 7
+      out_done(a);
+      in(a, 3);
+      CHECK(outs(a) == 3);                     // then one per IN: the lead not given again
+      out_done(a);
+    }
+    ObUsbTestRelayFirst(false);
+    CTimer::s_now64 += 100 * S;
+    CObUsb::PollAssign();
+    CHECK(CObUsb::UsbcSlot() == -1);
+    CKernelOptions::Get()->num["oboutlead"] = 4;
+    {
+      Box a(true);                             // the A4 alone: USB-C, oboutlead's 4
+      CHECK(CObUsb::UsbcSlot() == 1 && relay.box == nullptr);
+      in(a, 1);
+      CHECK(outs(a) == 5);
+      out_done(a);
+      Box r;                                   // the Rytm: the relay; the A4 stays on USB-C, its lead too
+      in(a, 2);
+      CHECK(outs(a) == 2);
+      out_done(a);
+      delete r.ob;                             // the Rytm leaves; past the hold nothing moves (the A4 is USB-C's)
+      r.ob = nullptr;
+    }
+    CTimer::s_now64 += 100 * S;
+    CObUsb::PollAssign();
+    {
+      Box r;                                   // the Rytm USB-C's, the A4 the relay's
+      Box a(true);
+      CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box());
+      in(a, 1);
+      CHECK(outs(a) == 8);                     // 1 + the relay's 7
+      out_done(a);
+      delete r.ob;                             // the Rytm leaves; past the hold the A4 moves from the relay to USB-C
+      r.ob = nullptr;
+      CTimer::s_now64 += 11 * S;
+      CObUsb::PollAssign();
+      CHECK(relay.box == nullptr && CObUsb::UsbcSlot() == 1);
+      in(a, 2);
+      CHECK(outs(a) == 2);                     // nothing taken back, nothing added: still 7 ahead
+      out_done(a);
+    }
+    CTimer::s_now64 += 100 * S;
+    CObUsb::PollAssign();
+    ObUsbTestRelayFirst(true);
+    {
+      Box a(true);                             // mirrorfirst=relay: the A4 the relay's, the Rytm USB-C's (oboutlead 4)
+      Box r;
+      CHECK(relay.box == a.box() && CObUsb::UsbcSlot() == 0);
+      in(r, 1);
+      CHECK(outs(r) == 5);
+      out_done(r);
+      delete a.ob;                             // the A4 leaves; past the hold the Rytm moves from USB-C to the relay
+      a.ob = nullptr;
+      CTimer::s_now64 += 11 * S;
+      CObUsb::PollAssign();
+      CHECK(relay.box == r.box());
+      in(r, 1);
+      CHECK(outs(r) == 4);                     // 1 + the 3 more, with its next IN
+      out_done(r);
+      in(r, 2);
+      CHECK(outs(r) == 2);                     // once
+      out_done(r);
+    }
+    ObUsbTestRelayFirst(false);
+    CKernelOptions::Get()->num.erase("oboutlead");
+    CObUsb::SetRelayTarget(nullptr);
+    core::device::g_a4_chosen = false;
+    CTimer::s_now64 = 0;
+  }
   CHECK(CUSBRequest::live() == 0);
 
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget
