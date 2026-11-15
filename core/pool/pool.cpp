@@ -599,8 +599,8 @@ CORE_COLD void project_switch_named(const char* key, const char* name, bool relo
 static bool g_loading[kVoiceSlots];
 
 // The slot in hand's project's files (a fill of that slot still running is abandoned by fill_begin: a switch while one
-// runs reads only the new project's files). Per slot so far: the LFOs, the inserts and OUT, the XY pad and the scenes
-// (each slot's fill switches its own). The other modules (sequencer, song, kits) are one set still, slot 0's: their files are wanted for every
+// runs reads only the new project's files). Per slot so far: the LFOs, the inserts and OUT, the XY pad, the scenes and the sequencer
+// (each slot's fill switches its own). The other modules (song: the Rytm's; kits) are one set still, slot 0's: their files are wanted for every
 // slot (each module's paths for the slot in hand's key), but only slot 0's fill switches them (3(c) steps 5-7).
 CORE_COLD void project_fill_begin() {
   const int s = prj_slot();
@@ -613,7 +613,7 @@ CORE_COLD void project_fill_begin() {
   xypad::want_files();   // (the XY pad: core/mod/xypad.h)
   seq::want_files();   // (phase 2: tracks.txt, the patterns, their saved states)
   song::want_files();  // (UNDO REPLAY's backup slots: .backups.txt)
-  if (s == 0) seq::loading_begin();   // (its edits refused until project_changed: they would be lost to the load)
+  seq::loading_begin();   // (its edits refused until project_changed: they would be lost to the load; each slot's own, 3(c))
 #endif
   store::fill_begin();
   g_loading[s] = true;
@@ -638,12 +638,13 @@ CORE_COLD bool project_fill_step() {
       scene::project_changed();
       seq::project_changed();   // (the boot's too: seq::init leaves its tracks and A01 to this)
 #endif
-    } else {   // 3(c): slot s's own LFOs, inserts and OUT, XY pad and scenes, from its store (in its Scope)
+    } else {   // 3(c): slot s's own LFOs, inserts and OUT, XY pad, scenes and sequencer, from its store (in its Scope)
       lfo::project_changed();
 #if CORE_POLY
       ins::project_changed();
       xypad::project_changed();   // (before the scenes: its release puts the fader back first)
       scene::project_changed();
+      seq::project_changed();   // (its own sequencer: tracks.txt and the patterns from its folder, 3(c) step 7)
 #endif
     }
     log(CORE_STR("store: slot %d: %s loaded: %d files of %d paths, %u bytes"), s, prj().key, store::present(),

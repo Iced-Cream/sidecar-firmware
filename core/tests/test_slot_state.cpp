@@ -22,6 +22,7 @@
 #include "mod/xypad.h"
 #include "pool/pool.h"
 #include "presets/juno_lib.h"
+#include "seq/seq.h"
 #include "store/store.h"
 #include "um_host.h"
 #include "user/um.h"
@@ -382,6 +383,61 @@ int main() {
       device::Scope in(device::g_links[1]);
       CHECK(!um::slot_view(1).id[0] || strcmp(um::slot_view(1).id, "a4.bravo"));   // (B4's own map: none, or inherited)
     }
+  }
+
+  // the sequencer per slot (3(c) step 7): the A4's own seq track, its own 2E, its 5-byte 2C records playing its own
+  // voice (kBoxVoices + track) in its own pass; tracks.txt in its own folder; the Rytm's sequencer untouched
+  {
+    char o[900];
+    const uint32_t on0 = seq::stats().notes_on;   // (outside a Scope: the base box's, the Rytm's)
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(seq::command("seq=track:1:on", o, sizeof o));
+      CHECK(seq::command("seq=step:1:1:60", o, sizeof o) && seq::command("seq=step:1:5:64", o, sizeof o));
+      CHECK(seq::owns_track(0) && !seq::owns_track(4));   // (track 5: the A4's FX track, no voice)
+    }
+    CHECK(!seq::owns_track(0));
+    CHECK(seq::owns_voice(kBoxVoices) && !seq::owns_voice(0) && !seq::owns_voice(kBoxVoices + 1));
+    g_out.clear(), g_out1.clear();
+    seq::tick(now_ms());
+    auto mask_of = [](const std::vector<std::vector<uint8_t>>& w) {
+      int m = -1;
+      for (const auto& x : w)
+        if (x.size() > 7 && x[4] == 0x2E) m = x[6] | x[7] << 7;
+      return m;
+    };
+    printf("  seq 2E: to the A4 0x%x, to the Rytm 0x%x\n", mask_of(g_out1), mask_of(g_out));
+    CHECK(mask_of(g_out1) == 1 && mask_of(g_out) <= 0);
+    settle();
+    CHECK(!get("/.a4/seq/B4/tracks.txt").empty());   // (its own folder)
+    CHECK(get("/.rytm/seq/B4/tracks.txt").empty());
+    // the A4 plays: 2C 01 <blk4> <n> {track step len speed flags} from its link, 32 steps of 6000 frames (two bars:
+    // the first step after PLAY comes with its tick, not planned)
+    const int side = device::side_slot();
+    CHECK(side == 1);
+    int64_t h = 0;
+    int k = 0;
+    for (int b = 0; b < 32 * 6000 / kBlock; ++b, h += kBlock) {
+      if (h >= (int64_t)k * 6000 + 300 && k < 32) {   // (300 frames on the way)
+        const int64_t f = (int64_t)k * 6000;
+        const uint32_t bl = (uint32_t)(f / 32);
+        const uint8_t m[] = {0xf0, 0x7d, 0x52, 0x54, 0x2C, 1, (uint8_t)(bl >> 21 & 0x7F), (uint8_t)(bl >> 14 & 0x7F),
+                             (uint8_t)(bl >> 7 & 0x7F), (uint8_t)(bl & 0x7F), 1, 0, (uint8_t)(k % 16), 16, 2, 0, 0xf7};
+        engine_sysex_link(1, m, (int)sizeof m);
+        ++k;
+      }
+      seq::pre_block();
+      seq::pre_block_side(side);
+    }
+    {
+      device::Scope in(device::g_links[1]);
+      CHECK(seq::command("seq=played", o, sizeof o));
+      printf("  slot 1: %u notes on, %u bad ticks, transport %d; %s\n", (unsigned)seq::stats().notes_on,
+             (unsigned)seq::stats().ticks_bad, seq::transport_now(), o);
+      CHECK(seq::stats().notes_on >= 3 && strstr(o, ":1:60") && seq::stats().ticks_bad == 0 && seq::transport_now() == seq::kPlay);
+    }
+    printf("  slot 0: %u notes on, transport %d\n", (unsigned)seq::stats().notes_on, seq::transport_now());
+    CHECK(seq::stats().notes_on == on0 && seq::transport_now() == seq::kStop);
   }
 
   // the A4 unplugged: slot 1 has no box, but keeps its folder, so a write queued for it before it left lands in /.a4

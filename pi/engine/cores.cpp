@@ -405,7 +405,11 @@ void CEngineCores::RenderBlock (int nSide)
 			if (sl != nSideNow && bridge::slot_renders (sl)) nPass |= 1u << sl;
 		nPass |= kBasePass;
 	}
-	else nPass = 1u << nSide;
+	else
+	{
+		bridge::seq_block_side (nSide);	// 3(c): the side stage's slot's own sequencer block, in its pass
+		nPass = 1u << nSide;
+	}
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
 	u32 nGen = s_nGen + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);

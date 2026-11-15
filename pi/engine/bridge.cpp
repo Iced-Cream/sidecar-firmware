@@ -203,6 +203,7 @@ void seq_block() {
   core::seq::pre_block();
   um::pre_block();   // API 3: the block's transport snapshot for the user machines (core/user/um.h)
 }
+void seq_block_side(int slot) { core::seq::pre_block_side(slot); }   // (3(c): um's snapshot stays once a base block)
 void poly_midi(uint8_t st, uint8_t d1, uint8_t d2) {
   core::poly::midi(st, d1, d2);           // (and through its note sink the sequencer's recording and step entry)
 }

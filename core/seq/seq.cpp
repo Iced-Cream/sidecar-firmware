@@ -26,6 +26,7 @@
 #include "poly.h"
 #include "fmt/fmt.h"   // write_atomic / recover: every build's pattern saves (0.3.0 power-cut safety)
 #include "pool/pool.h"
+#include "device/device.h"   // 3(c): each slot's sequencer runs in its link's Scope
 #if CORE_MSAMP
 #include "store/store.h"
 #endif
@@ -45,8 +46,21 @@ namespace {
 
 // 3(c): the sequencer's state per voice slot (option A: each box its own sequencer, nothing shared). Every
 // namespace-scope variable below that is not indexed by engine voice is a Per<T>: name() is the slot in hand's,
-// name.at(s) slot s's. The slot in hand is sq_slot().
-int sq_slot() { return 0; }
+// name.at(s) slot s's. The slot in hand is sq_slot(): device::cur()'s (pool.h prj_slot). The public entry points
+// that are not already in a box's Scope (tick, pre_block, idle, a voice's note) enter the slot's Scope themselves
+// (in_slot), so the modules seq calls (store, out, voices, the sends to the box) follow the same slot.
+// Slot 0 is the Rytm's: its own params / scene / QPERF / acks, the send FX locks, the mute gate, rytm_dump and
+// patwrite, the recorder's transport, arp's clock, SONG RECORD and the latency calibration (the Rytm's stems) stay
+// its alone (sq_rytm()). Another slot's box plays its tracks 0..voices-1 on its own voices (voice_of).
+int sq_slot() { return prj_slot(); }
+bool sq_rytm() { return sq_slot() == 0; }
+// slot s's sequencer runs: slot 0 always, another while a box's folder is on its link (as mod.cpp's slot_on)
+bool sq_on(int s) { return s == 0 || (s > 0 && s < kVoiceSlots && s < device::kLinks && device::g_links[s].state); }
+template <class F> auto in_slot(int s, F f) -> decltype(f()) {
+  if (s == sq_slot() || s < 0 || s >= kVoiceSlots || !sq_on(s)) return f();
+  device::Scope in(device::g_links[s]);
+  return f();
+}
 template <class T> struct Per {
   T v[kVoiceSlots];
   constexpr Per() : v{} {}
@@ -118,6 +132,7 @@ void set_transport(int t) {
   if (t == transport()) return;
   const int was = transport();
   transport() = t;
+  if (!sq_rytm()) return;   // 3(c): MIDI, the arpeggiator and the recorder follow the Rytm's transport only
 #if CORE_MSAMP
   if (t != kPlay) midim::stop();   // MIDI: what the sequencers hold ends here, whatever 0x11s come
 #endif
@@ -244,6 +259,8 @@ Per<Ui> ui;
 // NOTE EDIT's undo (review rounds 1 / 2; below ui_key): the platform's hooks, the track before the gesture running and
 // after the last one
 const UndoHooks* ne_hooks = nullptr;
+// 3(c): the touch editor's undo history (seqed) is the Rytm's slot's: another slot's edits keep none there
+const UndoHooks* ne_hooks_now() { return sq_rytm() ? ne_hooks : nullptr; }
 Per<Track> ne_pre; Per<Track> ne_after;
 Per<bool> ne_after_on{false};
 Per<int> ne_after_r{-1}; Per<int> ne_after_p{-1};
@@ -301,14 +318,14 @@ Per<LockSet[kLockSets]> lset;
 Per<int> lset_w{0};
 CORE_COLD float lock_float(int v) { return (float)(v >> 7) + (float)(v & 127) / 128.0f; }
 CORE_COLD uint8_t fx_play(int sl, int k, uint8_t v) { return fx_prev ? fx_prev(sl, k, v) : v; }
-CORE_COLD uint8_t fx_filter(int sl, int k, uint8_t val) {   // fx::knob_filter: the Rytm's FX knob reports
+CORE_COLD uint8_t fx_filter(int sl, int k, uint8_t val) {   // fx::knob_filter: the Rytm's FX knob reports (3(c): the send FX locks are slot 0's)
   if (k >= 2 && k <= 5 && sl >= 0 && sl < 2) {
     int i = 4 * sl + k - 2;
     uint8_t bit = (uint8_t)(1u << i);
-    flk().rep[i] = val, flk().seen |= bit;
-    if (flk().on & bit) {
-      flk().base[i] = val;
-      return fx_play(sl, k, flk().val[i]);
+    flk.at(0).rep[i] = val, flk.at(0).seen |= bit;
+    if (flk.at(0).on & bit) {
+      flk.at(0).base[i] = val;
+      return fx_play(sl, k, flk.at(0).val[i]);
     }
   }
   return fx_play(sl, k, val);
@@ -372,11 +389,25 @@ Per<int[kRytmTracks]> pred_planned;  // the new pattern's steps planned so far
 Per<int64_t> pat_start{-1};         // the Rytm frame of the playing pattern's step 0 (the first tick after PLAY / a switch)
 Per<int> pat_start_track{-1};
 
-CORE_COLD int voice_of(int r) { return ui::remote_track_voice(r); }
+// 3(c): the slot's tracks. The Rytm (no box on the link): the Remote UI's 33s. A box: its tracks 0..voices-1 play its
+// own voices (voice_base + track: the A4's synth tracks 0..3 = engine voices 8..11 beside a Rytm), the rest (the A4's
+// FX / CV tracks) play none.
+CORE_COLD const device::Profile* sq_box() { return device::cur().box; }
+CORE_COLD int voice_of(int r) {
+  if (const device::Profile* b = sq_box())
+    return r >= 0 && r < b->voices && r < b->tracks ? device::voice_base(device::cur()) + r : -1;
+  return ui::remote_track_voice(r);
+}
+// track r's voice byte (ui/remote.h remote_track_machine: 0x7F not a Sidecar machine, -1 not reported); a box's
+// voiced tracks count as a Sidecar machine (0: no family the SEED source knows)
+CORE_COLD int track_machine(int r) {
+  if (sq_box()) return voice_of(r) >= 0 ? 0 : 0x7F;
+  return ui::remote_track_machine(r);
+}
 CORE_COLD bool in_mask(int r) { return r >= 0 && r < kRytmTracks && (mask() >> r & 1); }
 // per pattern poly: Rytm track r plays a Sidecar machine, or its machine is not reported yet (a Pi reboot: the 33 comes
 // only at the next pattern / kit change - until then its capture stays)
-CORE_COLD bool plays_sidecar(int r) { return ui::remote_track_machine(r) != 0x7F; }
+CORE_COLD bool plays_sidecar(int r) { return track_machine(r) != 0x7F; }
 CORE_COLD uint16_t mask_of(const Pattern& p) {
   if (p.index < 0) return 0;
   uint16_t m = 0;
@@ -517,7 +548,7 @@ CORE_COLD uint16_t pins_now() { return (uint16_t)((pin_seq() ? mask() : 0) | pin
 CORE_COLD void apply_locks(int r, const LockSet* ls) {
   int vi = r >= 0 && r < kRytmTracks ? voice_of(r) : -1;
   int n = ls ? ls->n : 0;
-  if (r >= 0 && r < kRytmTracks) {   // 0.5.0: the Rytm's own words (kLockRytm): overrides at the step's time + the lead,
+  if (r >= 0 && r < kRytmTracks && sq_rytm()) {   // 0.5.0: the Rytm's own words (kLockRytm): overrides at the step's time + the lead,
     uint64_t want = 0;               // the ones the last set had and this one has not released (rytm-param-mod 5.4)
     uint16_t rv[42];
     bool pin = pins_now() >> r & 1;
@@ -580,6 +611,7 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
       }
     }
   }
+  if (!sq_rytm()) return;   // 3(c): the arpeggiator's and the send FX's locks are the Rytm's slot's (lock_param_of)
   if (vi >= 0 && vi < kVoices) {   // arp locks: the step's only (core/arp/arp.h); a track that locks none does nothing here
     uint8_t awant = 0, av[kArpLocks] = {0};
     for (int i = 0; i < n && ls->arp_end > (int64_t)hframes(); ++i)
@@ -1453,7 +1485,7 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
     push(lf, fol().to_host((int64_t)fs0), ++ev_id(), 2, vi, slot, 0, r, pred);   // (sf: the grid's - a replan cuts by it)
   }
   if (!notes) return;
-  out::trig_track(vi, r);   // a shared voice's mute gate follows this track now (core/fx/out.h)
+  if (sq_rytm()) out::trig_track(vi, r);   // a shared voice's mute gate follows this track now (core/fx/out.h)
   // the notes that play: the step's own (R1's pitches), or P4 / M4's repeats of them
   RtNote rn[kRtNotes];
   int nr = 0;
@@ -1642,7 +1674,7 @@ CORE_COLD int64_t frame_of_blk(const uint8_t* b) {
   return fol().unwrap(blk) * kBlkFrames;
 }
 
-CORE_COLD void on_ticks(const uint8_t* b, int n) {
+CORE_COLD void on_ticks(const uint8_t* b, int n, int rs = 4) {   // rs: a record's bytes (4, or the A4's 5)
   int64_t f = frame_of_blk(b);
   fol().sample((int64_t)hframes(), f);
   st().offset = fol().offset;
@@ -1651,7 +1683,7 @@ CORE_COLD void on_ticks(const uint8_t* b, int n) {
   if (transport() == kPause) set_transport(kPlay);
   int cnt = b[4];
   for (int i = 0; i < cnt; ++i) {
-    const uint8_t* t = b + 5 + 4 * i;
+    const uint8_t* t = b + 5 + rs * i;
     int r = t[0], step = t[1], len = t[2], sp = t[3];
     ++st().ticks;
     if (r >= kRytmTracks) continue;
@@ -1704,7 +1736,7 @@ CORE_COLD void on_switch(int to, const uint8_t* blk) {
   }
   install(to);
   pat_now() = to, pat_queued() = -1, pat_changed_ms() = now_ms();
-  rytm_dump::pattern_changed(to);
+  if (sq_rytm()) rytm_dump::pattern_changed(to);
   restart_all();
   for (int r = 0; r < kRytmTracks; ++r) restart_skip()[r] = skip[r];
 }
@@ -2133,7 +2165,7 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
         pat_changed_ms() = now_ms();
       }
       if (!(transport() == kPlay && a[1] == pat_queued() && a[1] != pat_now())) pat_queued() = a[2] == kNone ? -1 : a[2];
-      rytm_dump::pattern_changed(pat_now());
+      if (sq_rytm()) rytm_dump::pattern_changed(pat_now());
       return;
     case kScale:
       if (n < 6) break;
@@ -2146,7 +2178,7 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
     case kDirty:
       if (n < 2) break;
       ++st().dirties;
-      rytm_dump::dirty();
+      if (sq_rytm()) rytm_dump::dirty();
       return;
     case kFill:
       if (n < 2) break;
@@ -2163,7 +2195,7 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
       if (a[0] == kMutes) mutes() = m;
       else solos() = m, ++st().solos;
       uint16_t now_muted = (uint16_t)(silenced_now() & ~was);
-      out::set_mutes(silenced_now());   // the PRE / POST voices' mute gates (core/fx/out.h)
+      if (sq_rytm()) out::set_mutes(silenced_now());   // the PRE / POST voices' mute gates (core/fx/out.h)
       for (int r = 0; r < kRytmTracks; ++r)
         if (now_muted >> r & 1) release(r);
       return;
@@ -2174,20 +2206,21 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
       return;
     case kQperf:     // 2D 01 0E <pos hi> <pos lo> <mask lo7> <mask hi5> <flags>: the QUICK PERF knob (core/mod/scene.h)
       if (n < 6) break;
-      scene::qperf(a[1] << 7 | a[2], (uint16_t)(a[3] | (a[4] & 0x1F) << 7), a[5]);
+      if (sq_rytm()) scene::qperf(a[1] << 7 | a[2], (uint16_t)(a[3] | (a[4] & 0x1F) << 7), a[5]);
       return;
     case kSceneRep:  // 2D 01 0F <n>: the Rytm's own scene 1..12, 0 none
       if (n < 2) break;
-      scene::rytm_scene_seen(a[1]);
+      if (sq_rytm()) scene::rytm_scene_seen(a[1]);
       return;
     case kHostAck:   // 2D 01 10 <op> <status>: the mod command done (0) or refused (core/mod/rytm_out.h)
       if (n < 3) break;
       // 0.5.0: ops 04..07 are the Rytm's params' (core/mod/rytm_param.h): counted there, never the CC fallback
+      if (!sq_rytm()) break;
       if (a[1] >= mod::kOpOffset && a[1] <= mod::kOpStatus) mod::rp_ack(a[1], a[2]);
       else mod::rytm_ack(a[1], a[2]);
       return;
     case kPmStatus:  // 2D 01 11 <slots> <ring drops hi> <lo> <kit drops hi> <lo> <timeouts> <flags>: op 07's answer
-      mod::rp_status(a + 1, n - 1);
+      if (sq_rytm()) mod::rp_status(a + 1, n - 1);
       return;
     case kTempo: {
       if (n < 4) break;
@@ -2314,7 +2347,7 @@ CORE_COLD void edit_step(Track& t, Step& s, int e, int d, bool func, int l = 0) 
 // instance pool's PLAITS / DAISYSP / JUNO / user machines, DSP SAMPLE mono; unknown before the Rytm's 33
 // too), 0 an analog machine. (2 and 3, JUNO and the other mono machines before E0, are no longer answered.)
 CORE_COLD int can_seq(int r) {
-  int vb = ui::remote_track_machine(r);
+  int vb = track_machine(r);
   if (vb < 0) return 1;
   return vb == 0x7F ? 0 : 1;
 }
@@ -2353,9 +2386,12 @@ CORE_COLD int lock_param_of(int pg, int e) {
   // envelope words none (the host's envelope plays them)
   static const int8_t kFltrW[3] = {30, 31, 25}, kAmpW[8] = {33, 34, 35, 36, 40, 41, 38, 37}, kLfoW[8] = {5, 1, 6, -1, 2, 7, 3, 8};
   int rw = pg == kLpFltr && e >= kArpLocks ? kFltrW[e - kArpLocks] : pg == kLpAmp ? kAmpW[e] : pg == kLpLfo ? kLfoW[e] : -1;
-  if (rw > 0) return (pins_now() >> ui_track() & 1) && rytm_env_word(rw) ? -1 : kLockRytm + rw;
-  if (pg == kLpFltr) return e < kArpLocks ? kLockArp + e : -1;
-  if ((pg == kLpSrc || pg == kLpSmpl) && ui::remote_track_smpl(ui_track())) {   // 0.5.0: SAMPLER's page 1, page 2 empty
+  // 3(c): a box's slot locks its voices' machine and INSERT params only (the Rytm's words, its tracks' arpeggiator and
+  // the send FX are the Rytm's slot's)
+  if (rw > 0) return !sq_rytm() || ((pins_now() >> ui_track() & 1) && rytm_env_word(rw)) ? -1 : kLockRytm + rw;
+  if (pg == kLpFltr) return e < kArpLocks && sq_rytm() ? kLockArp + e : -1;
+  if (pg == kLpFx && !sq_rytm()) return -1;
+  if ((pg == kLpSrc || pg == kLpSmpl) && sq_rytm() && ui::remote_track_smpl(ui_track())) {   // 0.5.0: SAMPLER's page 1, page 2 empty
     static const int8_t kDt[8] = {10, 12, 13, 11, 8, 9, 14, 15};   // SMP STRT END PLAY / TUNE FINE LOOP LEV (page_wave.cpp kDspsPageDt)
     return pg == kLpSrc ? kDt[e] : -1;
   }
@@ -2365,7 +2401,7 @@ CORE_COLD int lock_param_of(int pg, int e) {
 // The value a held step's lock of param starts from: the Rytm's (the SRC view's 2A, else the voice's own) / the FX
 // knob's, 14 bits
 CORE_COLD int base_value(int r, int param) {
-  if (param < 16) return ui::remote_track_param(r, param) << 7;
+  if (param < 16) return sq_rytm() ? ui::remote_track_param(r, param) << 7 : 64 << 7;   // (a box's: not known here)
   if (rytm_lock(param)) return 64 << 7;   // the Rytm's own word: its value is the Rytm's, not known here (the middle)
   if (arp_lock(param)) {   // the track's sound's
     arp::Cfg c = arp::get(r);
@@ -2546,11 +2582,11 @@ CORE_COLD void say(const char* m, uint32_t dur) {
 // SEED on the Rytm where it could be - DAISYSP's SMPL B (P11, was FB), DSP SAMPLE's SRC F (P6, was FB; its SMPL page is
 // full); 6-OP FM's and JUNO's SMPL C (P12) keep stock's BR label (0021's page code has no room). PLAITS, MULTISAMPLE, WAVETABLE, GRANULAR and the user machines have none: -1.
 CORE_COLD int seed_slot(int r) {
-  int vb = ui::remote_track_machine(r);
+  int vb = track_machine(r);
   if (vb < 0 || vb == 0x7F) return -1;
   switch (vb & 0x78) {
     case kDaisy: return 11;
-    case kDspSample: return ui::remote_track_smpl(r) ? -1 : 6;   // (SAMPLER: none, its P1..P8 are no knobs)
+    case kDspSample: return sq_rytm() && ui::remote_track_smpl(r) ? -1 : 6;   // (SAMPLER: none, its P1..P8 are no knobs)
     case kFm: case kJuno: return 12;
     default: return -1;
   }
@@ -2831,13 +2867,13 @@ CORE_COLD void reset() {
   cal().state = 0, cal().vi = -1, cal().track = -1, cal().n = 0, cal().found = -1, cal().auto_done = false, cal().manual = false;
   cal().fed_ms = 0;
   predict() = true, pred_to() = -1, pat_start() = -1, pat_start_track() = -1;
-  rytm_dump::reset();
+  if (sq_rytm()) rytm_dump::reset();
   sav_pending() = false;
   fol().reset();
   for (int r = 0; r < kRytmTracks; ++r) clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1;
   set_transport(kStop);   // a take recording through a project load / hello ends (FC), as at the Rytm's STOP
   hframes() = 0, transport_frame() = INT64_MIN, bpm() = 0, mask() = 0, legacy_mask() = 0, clock_now() = 0, mask_sent() = -1, hello_due() = true, mutes() = 0, solos() = 0;
-  out::set_mutes(0);
+  if (sq_rytm()) out::set_mutes(0);   // (the mute gate: the Rytm's)
   rec_live() = rec_grid() = false;
   pat_now() = 0, pat_queued() = -1, pat_loaded() = 0, load_due() = false;
   seqmode() = false, seqmode_track() = -1, we_opened() = false, show_wanted() = false, named() = false, seqopen_track() = -2;
@@ -2846,11 +2882,13 @@ CORE_COLD void reset() {
   smod_reset(), seg_gen() = 0;   // seqtop R1b
   played_n() = 0;
   nev() = 0, ev_id() = 0;
-  memset(sounding, 0, sizeof sounding);
+  // 3(c): the engine-voice tables: the slot's own voices only (the other slot's sequencer keeps its notes and locks)
+  const int vb = kVoiceSlots > 1 ? sq_slot() * kBoxVoices : 0, vn = kVoiceSlots > 1 ? kBoxVoices : kVoices;
+  memset(sounding[vb], 0, sizeof sounding[0] * vn);
   memset(opens(), 0, sizeof opens());
   dirty() = save_now() = tracks_dirty() = false;
   ui() = Ui();
-  memset(vlk, 0, sizeof vlk), memset(&flk(), 0, sizeof flk()), lset_w() = 0;   // seq-ux
+  memset(&vlk[vb], 0, sizeof vlk[0] * vn), memset(&flk(), 0, sizeof flk()), lset_w() = 0;   // seq-ux
   memset(rlk(), 0, sizeof rlk());
   memset(slides(), 0, sizeof slides()), slide_any() = 0;                         // seqtop X1
   view_gen() = 0, view_track() = -1;
@@ -2868,21 +2906,27 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
   const uint8_t* b = d + 6;
   int n = len - 7;
   if (d[4] == kTickCmd) {
-    if (n < 5 || b[4] < 1 || n != 5 + 4 * b[4]) {
+    // 3(c): a record is 4 bytes (the Rytm's) or 5 (the A4 companion's: a flags byte after the four, not read here);
+    // the size comes from the length
+    const int rs = n >= 5 && b[4] >= 1 ? (n - 5) / b[4] : 0;
+    if (n < 5 || b[4] < 1 || (rs != 4 && rs != 5) || n != 5 + rs * b[4]) {
       ++st().ticks_bad;
       return true;
     }
-    on_ticks(b, n);
+    on_ticks(b, n, rs);
   } else {
     on_state(b, n);
   }
   return true;
 }
 
-CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra() = (uint16_t)(m & 0xFFF); }
-CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins() = (uint16_t)(pins & 0xFFF), arp_clock() = clock; }
-CORE_COLD double tempo() { return bpm(); }
-CORE_COLD bool beat_map(double* origin, double* per16, int* lat) {
+// 3(c): SONG RECORD's clock tracks and the arpeggiator's pins, tempo and grid are the Rytm's: slot 0's
+CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra.at(0) = (uint16_t)(m & 0xFFF); }
+CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins.at(0) = (uint16_t)(pins & 0xFFF), arp_clock.at(0) = clock; }
+CORE_COLD double tempo() { return bpm.at(0); }
+static CORE_COLD bool beat_map_here(double* origin, double* per16, int* lat);
+CORE_COLD bool beat_map(double* origin, double* per16, int* lat) { return in_slot(0, [&] { return beat_map_here(origin, per16, lat); }); }
+static CORE_COLD bool beat_map_here(double* origin, double* per16, int* lat) {
   *lat = latency();
   if (transport() != kPlay || !fol().valid) return false;
   for (int r = 0; r < kRytmTracks; ++r) {
@@ -2905,12 +2949,12 @@ CORE_COLD void hello(int up20) {
   // little older" (a burst of late notes, then the wrong steps): learnt afresh. Review L1: only when the hello shows a
   // restart - the Rytm up for less time than has passed since the last hello (or no uptime / no hello before); a
   // re-plug keeps the follower (a reset stopped the planning until the next tick)
-  static uint32_t last_ms = 0;
-  static bool seen = false;
+  static Per<uint32_t> last_ms;   // (3(c): each slot's box)
+  static Per<bool> seen;
   uint32_t ms = now_ms();
-  if (up20 < 0 || !seen || (uint32_t)up20 * 50u + 500u < ms - last_ms) fol().reset();
-  seen = true, last_ms = ms;
-  rytm_dump::forget_pattern();   // FILL writes by pattern number: none until the resync's 2D 02 says which
+  if (up20 < 0 || !seen() || (uint32_t)up20 * 50u + 500u < ms - last_ms()) fol().reset();
+  seen() = true, last_ms() = ms;
+  if (sq_rytm()) rytm_dump::forget_pattern();   // FILL writes by pattern number: none until the resync's 2D 02 says which
   ++st().resyncs;
 }
 
@@ -2955,7 +2999,7 @@ CORE_COLD void project_changed() {
   if (seqopen_track() == -1) seqmode_end(false);
   seqopen_track() = -2;
   // NOTE EDIT (review round 2, N4): the undo history and the state after the last gesture are the old project's
-  if (ne_hooks && ne_hooks->clear) ne_hooks->clear();
+  if (ne_hooks_now() && ne_hooks_now()->clear) ne_hooks_now()->clear();
   ne_after_on() = false, ui().ne_undo_e = -1, ui().ne_del_ms = 0;
   g_loading() = false;   // (the store is full: the project's files are here now)
   bool was_named = named();
@@ -3008,25 +3052,47 @@ CORE_COLD void project_changed() {
   take_copy_due();
 }
 
+// 3(c): a voice's questions go to its own slot's sequencer (a slot not running owns none)
+static CORE_COLD int voice_slot(int vi) { return vi >= 0 && vi < kVoices && kVoiceSlots > 1 ? slot_of_voice(vi) : sq_slot(); }
 CORE_COLD int pad_oct(int vi) {
-  if (!mask() || !cur()) return 0;
-  for (int r = 0; r < kRytmTracks; ++r)
-    if ((mask() >> r & 1) && voice_of(r) == vi) return cfg_of(track_of(*cur(), r), r).oct;
-  return 0;
+  const int s = voice_slot(vi);
+  if (!sq_on(s)) return 0;
+  return in_slot(s, [&] {
+    if (!mask() || !cur()) return 0;
+    for (int r = 0; r < kRytmTracks; ++r)
+      if ((mask() >> r & 1) && voice_of(r) == vi) return (int)cfg_of(track_of(*cur(), r), r).oct;
+    return 0;
+  });
 }
 
 CORE_COLD bool owns_voice(int vi) {
-  if (!mask()) return false;
-  for (int r = 0; r < kRytmTracks; ++r)
-    if ((mask() >> r & 1) && voice_of(r) == vi) return true;
-  return false;
+  const int s = voice_slot(vi);
+  if (!sq_on(s)) return false;
+  return in_slot(s, [&] {
+    if (!mask()) return false;
+    for (int r = 0; r < kRytmTracks; ++r)
+      if ((mask() >> r & 1) && voice_of(r) == vi) return true;
+    return false;
+  });
 }
 
-CORE_COLD uint64_t frames() { return hframes(); }
+// slot 0's render frames: the arpeggiator's and SONG RECORD's clock and the calibration's (all the Rytm's, 3(c))
+CORE_COLD uint64_t frames() { return hframes.at(0); }
 CORE_COLD bool any_tracks() { return mask() != 0; }
 CORE_COLD bool shown_wanted() { return show_wanted(); }
 
+static void pre_block_here();
+// 3(c): the base pass's block: each running slot that renders in it (all but the side stage's), in its own Scope;
+// the side stage's slot in its own pass (pre_block_side). Each slot's frames count its own pass's blocks.
 void pre_block() {
+  const int side = device::side_slot();
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (s != side && sq_on(s)) in_slot(s, pre_block_here);
+}
+void pre_block_side(int s) {
+  if (s >= 0 && s < kVoiceSlots && sq_on(s)) in_slot(s, pre_block_here);
+}
+static void pre_block_here() {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   int64_t h = (int64_t)hframes();
   if (nev()) {
@@ -3053,7 +3119,7 @@ void pre_block() {
   }
   slide_tick();   // seqtop X1
   plan();
-  arp::block(h);   // (after the events: a chord's off and the next one's on in one block is no gap)
+  if (sq_rytm()) arp::block(h);   // (after the events: a chord's off and the next one's on in one block is no gap)
   hframes() += kBlock;
 }
 
@@ -3077,7 +3143,13 @@ CORE_COLD void params_in(int vi, float* p, int np) {
 CORE_COLD int seqmode_on() { return seqmode() && seqmode_track() >= 0 && seqmode_track() < kRytmTracks ? seqmode_track() : -1; }
 CORE_COLD bool rytm_live_rec() { return rec_live() && transport() == kPlay; }
 
-CORE_COLD void note(int vi, bool on, int pitch, int vel, int track) {
+static CORE_COLD void note_here(int vi, bool on, int pitch, int vel, int track);
+CORE_COLD void note(int vi, bool on, int pitch, int vel, int track) {   // 3(c): the voice's slot's (a voice-less note: the slot in hand's)
+  const int s = vi >= 0 ? voice_slot(vi) : sq_slot();
+  if (!sq_on(s)) return;
+  in_slot(s, [&] { note_here(vi, on, pitch, vel, track); });
+}
+static CORE_COLD void note_here(int vi, bool on, int pitch, int vel, int track) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   uint8_t d2 = (uint8_t)vel;
   pitch = clampi(pitch, 0, 127);
@@ -3362,7 +3434,7 @@ CORE_COLD void ne_snapshot(const Track& t, int r) {
 }
 CORE_COLD void ne_cover_outside() {
   if (!ne_after_changed()) return;
-  if (ne_hooks && ne_hooks->save) ne_hooks->save(ne_after_r(), ne_after_p(), ne_after());
+  if (ne_hooks_now() && ne_hooks_now()->save) ne_hooks_now()->save(ne_after_r(), ne_after_p(), ne_after());
   ne_after_on() = false;
 }
 // a gesture of kind (a knob 0..4, -2 a fill, -3 a delete) begins: true when it needs a level (the track then in ne_pre)
@@ -3382,7 +3454,7 @@ CORE_COLD bool ne_begin(int kind) {
 CORE_COLD void ne_commit(int kind, bool need, bool done) {
   if (!done) return;   // a refused gesture: no level
   int r = ui_track();
-  if (need && ne_hooks && ne_hooks->save) ne_hooks->save(r, cur()->index, ne_pre());
+  if (need && ne_hooks_now() && ne_hooks_now()->save) ne_hooks_now()->save(r, cur()->index, ne_pre());
   ui().ne_undo_e = kind, ui().ne_undo_ms = now_ms(), ui().ne_undo_r = r, ui().ne_undo_p = cur()->index, ui().ne_undo_key = ne_key();
   const Track* t = track_of(*cur(), r);
   if (t) ne_snapshot(*t, r);
@@ -3396,7 +3468,7 @@ CORE_COLD void ne_undo() {
     return;
   }
   ne_cover_outside();
-  if (!t || !ne_hooks || !ne_hooks->undo || !ne_hooks->undo(r, cur()->index, *t)) {
+  if (!t || !ne_hooks_now() || !ne_hooks_now()->undo || !ne_hooks_now()->undo(r, cur()->index, *t)) {
     say("NOTHING TO UNDO");
     return;
   }
@@ -3421,9 +3493,9 @@ CORE_COLD void start_empty(int r) {
     say("EMPTY");
     return;
   }
-  bool hist = ne_hooks && ne_hooks->save;
+  bool hist = ne_hooks_now() && ne_hooks_now()->save;
   ne_cover_outside();
-  if (hist) ne_hooks->save(r, cur()->index, *t);
+  if (hist) ne_hooks_now()->save(r, cur()->index, *t);
   clear_steps(*t, 0, kMaxSteps);
   replan(r), mark_dirty(), ne_bump();
   ne_snapshot(*t, r);
@@ -4116,7 +4188,12 @@ static CORE_COLD void cal_tick(uint32_t ms) {
   }
 }
 
-CORE_COLD void tick(uint32_t ms) {
+static CORE_COLD void tick_here(uint32_t ms);
+CORE_COLD void tick(uint32_t ms) {   // 3(c): each running slot's, in its Scope (its 2E / 34 / 2F go to its own box)
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (sq_on(s)) in_slot(s, [&] { tick_here(ms); });
+}
+static CORE_COLD void tick_here(uint32_t ms) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   if (seqopen_track() != -2 && ms - seqopen_ms() >= kSeqOpenMs) {   // polyuser-3 / M2: the Rytm stayed there kSeqOpenMs
     const int w = seqopen_track();
@@ -4143,7 +4220,7 @@ CORE_COLD void tick(uint32_t ms) {
       log(CORE_STR("seq: lock page knob %c: %s"), 'A' + e, ui().cond_e == e ? "COND" : "value");
     }
   remask(true);   // per pattern poly: a 33 (a track's machine) since
-  arp::tick(ms);
+  if (sq_rytm()) arp::tick(ms);   // (the arpeggiator: one, on the Rytm's clock)
   // per pattern poly, the switch: the Rytm must hear the next pattern's capture before it plays that pattern's first step
   // (or the step plays with the old one). With a pattern queued (prefetched in nxt) its new seq tracks are clocked (the
   // 2E's clock part: their ticks, nothing else - the prediction plans their first steps); kSwitchLead + the latency
@@ -4170,11 +4247,13 @@ CORE_COLD void tick(uint32_t ms) {
     silent_sent() = 0xFFFF;   // the pin's silence again after every 2E
     ++st().masks;
   }
-  silence_tick(ms);
-  cal_tick(ms);
-  rytm_dump::set_playing(transport() == kPlay);
-  rytm_dump::tick(ms);
-  patwrite::tick(ms);   // 0.5.0 FILL (core/seq/patwrite.h)
+  if (sq_rytm()) {   // 3(c): the pin's 46, the calibration (the Rytm's stems), its pattern dump and FILL writes
+    silence_tick(ms);
+    cal_tick(ms);
+    rytm_dump::set_playing(transport() == kPlay);
+    rytm_dump::tick(ms);
+    patwrite::tick(ms);   // 0.5.0 FILL (core/seq/patwrite.h)
+  }
   // follow: the edited page goes with the playhead
   int r = ui_track();
   const Track* t = track_of(*cur(), r);
@@ -4214,12 +4293,23 @@ CORE_COLD void tick(uint32_t ms) {
   }
 }
 
-CORE_COLD void save_due() {
-  if (dirty() || tracks_dirty()) save_now() = true;
+CORE_COLD void save_due() {   // (every slot's: 3(c))
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (dirty.at(s) || tracks_dirty.at(s)) save_now.at(s) = true;
 }
-CORE_COLD bool unsaved() { return dirty() || tracks_dirty() || sav_pending(); }
+CORE_COLD bool unsaved() {
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (sq_on(s) && (dirty.at(s) || tracks_dirty.at(s) || sav_pending.at(s))) return true;   // (idle saves those)
+  return false;
+}
 
-CORE_COLD bool idle() {
+static CORE_COLD bool idle_here();
+CORE_COLD bool idle() {   // 3(c): each running slot's files in its Scope (its own folder), slot 0 first; one job a call
+  for (int s = 0; s < kVoiceSlots; ++s)
+    if (sq_on(s) && in_slot(s, idle_here)) return true;
+  return false;
+}
+static CORE_COLD bool idle_here() {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   if (load_due()) {   // a pattern change without a switch, a project's first
     load_due() = false;
@@ -4259,37 +4349,37 @@ CORE_COLD bool idle() {
 }
 
 // ---- the calibration click (render side) and its return (the platform's stream side; on the Pi an interrupt: only
-// the volatile words of `cal` are touched)
+// the volatile words of `cal` are touched) (3(c): slot 0's, the Rytm's stems; another slot keeps its latency as set)
 static const int kStem[8] = {0, 3, 1, 4, 6, 5, 7, 2};   // physical voice -> the stream's voice channel (BD SD RS/CP ..)
 void cal_render(int16_t (*ring)[kVoices], const int* rows, int v0, int v1) {
-  if (cal().state != 1 && cal().state != 3) return;
-  int vi = cal().vi;
+  if (cal.at(0).state != 1 && cal.at(0).state != 3) return;
+  int vi = cal.at(0).vi;
   if (vi < v0 || vi >= v1) return;
-  int64_t bf = (int64_t)hframes() - kBlock;   // this block's first frame (pre_block counted it)
-  if (cal().state == 1) {
-    if (cal().at >= bf + kBlock) return;      // not yet
-    if (cal().at < bf) cal().at = bf;           // late: from here (the round trip is measured from where it went)
-    cal().state = 3;                          // rendering
+  int64_t bf = (int64_t)hframes.at(0) - kBlock;   // this block's first frame (pre_block counted it)
+  if (cal.at(0).state == 1) {
+    if (cal.at(0).at >= bf + kBlock) return;      // not yet
+    if (cal.at(0).at < bf) cal.at(0).at = bf;           // late: from here (the round trip is measured from where it went)
+    cal.at(0).state = 3;                          // rendering
   }
   for (int s = 0; s < kBlock; ++s) {
     int64_t f = bf + s;
-    if (f < cal().at || f >= cal().at + kCalClickFrames) continue;
-    ring[rows[s]][vi] = (int16_t)((((f - cal().at) / 24) & 1) ? -12000 : 12000);   // a 1 kHz square burst, 2 ms, -9 dBFS
+    if (f < cal.at(0).at || f >= cal.at(0).at + kCalClickFrames) continue;
+    ring[rows[s]][vi] = (int16_t)((((f - cal.at(0).at) / 24) & 1) ? -12000 : 12000);   // a 1 kHz square burst, 2 ms, -9 dBFS
   }
-  if (bf + kBlock >= cal().at + kCalClickFrames) cal().state = 2;
+  if (bf + kBlock >= cal.at(0).at + kCalClickFrames) cal.at(0).state = 2;
 }
 void cal_audio(const int32_t* s, int n, int stride, int64_t arrival) {
-  cal().fed_ms = now_ms();
-  int st_ = cal().state, vi = cal().vi;
-  if (!st_ || vi < 0 || vi > 7 || cal().found >= 0) return;
+  cal.at(0).fed_ms = now_ms();
+  int st_ = cal.at(0).state, vi = cal.at(0).vi;
+  if (!st_ || vi < 0 || vi > 7 || cal.at(0).found >= 0) return;
   const int32_t* x = s + kStem[vi];
-  int32_t fl = cal().floor;
+  int32_t fl = cal.at(0).floor;
   if (st_ != 2) {   // before the click is out: the stream's own level
     for (int i = 0; i < n; ++i) {
       int32_t a = x[i * stride] < 0 ? -x[i * stride] : x[i * stride];
       if (a > fl) fl = a;
     }
-    cal().floor = fl;
+    cal.at(0).floor = fl;
     return;
   }
   int32_t thr = fl > 0x7FFFFFFF / 8 ? 0x7FFFFFFF / 2 : 4 * fl;
@@ -4297,12 +4387,12 @@ void cal_audio(const int32_t* s, int n, int stride, int64_t arrival) {
   for (int i = 0; i < n; ++i) {
     int32_t a = x[i * stride] < 0 ? -x[i * stride] : x[i * stride];
     if (a > thr) {
-      cal().found = arrival - (n - 1 - i);
+      cal.at(0).found = arrival - (n - 1 - i);
       return;
     }
   }
 }
-bool cal_wanted() { return cal().state != 0; }
+bool cal_wanted() { return cal.at(0).state != 0; }
 
 double play_pos(int r) {
   if (!cur() || r < 0 || r >= kRytmTracks) return -1;
@@ -4599,7 +4689,7 @@ View view() {
   w.prompt = ui().prompt;
   w.prompt_track = ui().prompt_track;
   w.prompt_n = ui().prompt_n, w.prompt_locks = ui().prompt_locks;
-  w.prompt_undo = ne_hooks && ne_hooks->save;
+  w.prompt_undo = ne_hooks_now() && ne_hooks_now()->save;
   w.prompt_why = ui().prompt == kPromptExplain ? can_seq(ui().prompt_track) : 0;
   w.prompt_sel = ui().prompt_sel;
   w.off_hint = ui().off_hint_ms && (int32_t)(now_ms() - ui().off_hint_ms) < 3000;
@@ -4897,6 +4987,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     int r = p[7] == ':' ? atoi(p + 8) - 1 : -1;
     for (int t = 0; t < kRytmTracks && r < 0; ++t)
       if (in_mask(t)) r = t;
+    if (!sq_rytm()) return sniprintf(out, cap, CORE_STR("seq=cal: the Rytm's slot only (a box keeps seq=lat)")), true;
     if (r < 0 || r >= kRytmTracks || voice_of(r) < 0)
       return sniprintf(out, cap, CORE_STR("seq=cal:T: a track with a voice (and its pin, and the Rytm's stream)")), true;
     cal_start(r);

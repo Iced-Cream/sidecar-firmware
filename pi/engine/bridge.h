@@ -37,6 +37,7 @@ bool take_restart();                       // another box needs its state folder
 void tick();
 // The Sidecar sequencer (core/seq/seq.h): before each render block, on the control core (its due notes start / end)
 void seq_block();
+void seq_block_side(int slot);   // the side stage's pass: slot's sequencer block (core/seq/seq.h pre_block_side)
 // The remote UI (core/ui/remote.h): its tick runs in tick(); the status for its SIDECAR page (core 0's stats, once a
 // second: plain words); the console's rui=on|off (the page opened / closed from here) and rui (its numbers, logged).
 // The rest of the remote UI's SIDECAR page (1021): the recorder (1 idle, 2 armed, 3 recording, 4 off), the network

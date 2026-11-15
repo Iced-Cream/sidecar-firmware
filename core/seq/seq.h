@@ -430,8 +430,10 @@ void note(int vi, bool on, int pitch, int vel, int track);
 bool owns_track(int t);                        // Rytm track t (0..11) is a seq track (the mask)
 int seqmode_on();                              // the Rytm's seq mode (2D 08): its track 0..11, -1 off
 bool rytm_live_rec();                          // the Rytm records live (2D 06 REC on, 2D 01 PLAY)
-void pre_block();                              // before each render block (kBlock frames): due notes started / ended
-void tick(uint32_t ms);                        // the control loop: LEDs, the page's state, the debounced save
+void pre_block();                              // before each render block (kBlock frames): due notes started / ended (3(c): each
+                                               // running slot that renders in the base pass, in its Scope)
+void pre_block_side(int slot);                 // the side stage's pass (core/device/device.h side_slot): that slot's block
+void tick(uint32_t ms);                        // the control loop: LEDs, the page's state, the debounced save (each slot's)
 bool idle();                                   // a card job (load / prefetch / save): true if it did one
 void save_due();    // a restart is coming: idle saves the edits now, not when they settle
 bool unsaved();     // edits idle has not posted yet
@@ -453,7 +455,7 @@ int pad_oct(int vi);                           // BACKLOG 7g: the PAD OCT (-3..+
 bool owns_voice(int vi);                       // a seq track plays on voice vi now: its 0x04s make no note
 bool any_tracks();                             // a seq track is set (the mask)
 bool shown_wanted();                           // the SEQ page was asked for (seq=show, the Rytm's seq mode)
-uint64_t frames();                             // render frames so far (pre_block's count)
+uint64_t frames();                             // slot 0's render frames so far (pre_block's count): arp's, SONG's, the calibration's
 // The Rytm's trig keys / PAGE / encoders while seq mode is on or the SEQ page shows (remote.cpp routes 31 / 32 here
 // first): true when taken.
 bool ui_key(int code, bool down, bool page_shown);
