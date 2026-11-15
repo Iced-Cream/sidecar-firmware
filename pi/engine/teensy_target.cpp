@@ -58,7 +58,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -529,7 +529,17 @@ void CTeensyTarget::SendBoxBlock (const u8 *pBlock)
 void CTeensyTarget::ToBox (s32 (*pFrames)[12], const s16 (*)[8], unsigned nFrames)
 {
 	if (m_bTest) return;
-	if (MirrorShown ()) m_Stream.to_box (pFrames, nFrames);
+	if (!MirrorShown ()) return;
+	m_Stream.to_box (pFrames, nFrames);
+	const mirror::StreamStats &a = m_Stream.st;	// each OUT ring under/over event's time, for a loop's breaks (T342)
+	if (a.out_under != m_nUnderSeen || a.out_over != m_nOverSeen)
+	{
+		char c = a.out_under != m_nUnderSeen ? 'U' : 'O';
+		m_nUnderSeen = a.out_under, m_nOverSeen = a.out_over;
+		m_EvMs[m_nEv % 8] = (unsigned) (NowTicks () / 1000);
+		m_EvKind[m_nEv % 8] = c;
+		m_nEv++;
+	}
 }
 
 // ---- the link's completions (xHCI IRQ) -----------------------------------------------------------------------------
@@ -604,7 +614,19 @@ void CTeensyTarget::AudioInStub (CUSBRequest *pURB, void *pParam, void *pContext
 		InvalidateDataCacheRange ((uintptr) p->m_pAudioInBuf[k], kDmaSize);
 		CObUsb *pBox = p->m_pBox;
 		if (p->m_bTest) p->TestOutBlock (p->m_pAudioInBuf[k], pURB->GetResultLength ());
-		else if (pBox != 0 && p->MirrorShown ()) p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
+		else if (pBox != 0 && p->MirrorShown ())
+		{
+			u64 nNow = NowTicks ();
+			if (p->m_nCompLast != 0 && nNow - p->m_nCompLast < 1000000)
+			{
+				unsigned us = (unsigned) (nNow - p->m_nCompLast);
+				if (us > p->m_nCompGapMax) p->m_nCompGapMax = us;
+				if (us >= 1000) p->m_nCompGap1++;
+				if (us >= 2000) p->m_nCompGap2++;
+			}
+			p->m_nCompLast = nNow;
+			p->m_Stream.out_block (p->m_pAudioInBuf[k], pURB->GetResultLength (), pBox->NextOutCounter ());
+		}
 	}
 	p->Resubmit (pURB);
 }
@@ -981,6 +1003,19 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 			Hex[2 * n] = 0;
 			pLogger->Write (From, LogNotice, "relay box cfg %03u: %s", o, Hex);
 		}
+	}
+	{
+		CString e;
+		for (unsigned i = p->m_nEv > 8 ? p->m_nEv - 8 : 0; i < p->m_nEv; i++)
+		{
+			CString t;
+			t.Format (" %c%u", p->m_EvKind[i % 8], p->m_EvMs[i % 8]);
+			e.Append (t);
+		}
+		pLogger->Write (From, LogNotice, "relay out ring: level min %u max %u frames | computer OUT gaps max %u us, >=1 ms %u, >=2 ms %u"
+				" | events (U under, O over, uptime ms):%s", a.lvl_min, a.lvl_max, p->m_nCompGapMax, p->m_nCompGap1,
+				p->m_nCompGap2, (const char *) e);
+		p->m_Stream.st.lvl_min = ~0u, p->m_Stream.st.lvl_max = 0;
 	}
 	pLogger->Write (From, LogNotice, "relay link 0x02: done %u err %u (usb %u) max %u us, hist <125 %u <250 %u <500 %u <1ms %u "
 			"<2ms %u <4ms %u <8ms %u more %u | busy max %u, drops in a row max %u",

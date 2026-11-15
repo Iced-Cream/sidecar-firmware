@@ -19,6 +19,7 @@ namespace mirror {
 struct StreamStats
 {
 	unsigned in_blocks, in_sent, out_blocks, out_bad, out_under, out_over, out_extra, anchor, alt_bad;
+	unsigned lvl_min, lvl_max;		// the OUT ring's level (frames) seen by to_box since the reader last reset them (T342)
 };
 
 struct Stream
@@ -119,6 +120,7 @@ struct Stream
 		{
 			if (!out_ch) continue;
 			unsigned level = head - tail;
+			if (!priming) { if (level < st.lvl_min) st.lvl_min = level; if (level > st.lvl_max) st.lvl_max = level; }
 			if (priming)
 			{
 				if (level < out_target) continue;

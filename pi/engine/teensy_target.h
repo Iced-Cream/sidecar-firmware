@@ -102,7 +102,12 @@ private:
 	u8 *m_pAudioInBuf[AudioInURBs];
 	u8 *m_pAudioOutBuf[AudioOutBufs];
 	volatile boolean m_bAudioOutBusy[AudioOutBufs];
-	volatile u64 m_nAudioOutAt[AudioOutBufs];	// submit time (us) of the block on link 0x02
+	volatile u64 m_nAudioOutAt[AudioOutBufs];
+	u64 m_nCompLast;				// the last computer OUT block in (link 0x82), us
+	unsigned m_nCompGapMax, m_nCompGap1, m_nCompGap2;	// gaps between them: longest, >= 1 ms, >= 2 ms (T342)
+	unsigned m_nUnderSeen, m_nOverSeen;
+	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
+	char m_EvKind[8];	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];
 	u8 *m_pChanOutBuf[relay::kChannels];
 	volatile boolean m_bChanOutBusy[relay::kChannels];
