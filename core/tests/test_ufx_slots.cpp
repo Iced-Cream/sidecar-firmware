@@ -198,6 +198,31 @@ int main() {
     CHECK(y[0][0] == 0.0f);
   }
 
+  // ---- each box's effects follow its own transport (um::pre_block: each box's from its own MIDI clock): the A4's Start
+  // reaches box 1's effect once, never box 0's; the Rytm's Stop box 0's only. (The api3_fx probe: frame 1 = its block's
+  // START / STOP edges, 1 / 16 and 2 / 16.)
+  {
+    cmd(0, "um=fx:2:fx.api3_fx");   // (box 0's UFX2 the same probe: effect 1)
+    CHECK(fx::user_ready(1));
+    float x[12] = {0}, y[12][2];
+    uint8_t k[6] = {fx::kFirstUser, 0, 0, 0, 0, 0};
+    auto edges = [&](int e) {
+      for (auto& r : y) r[0] = r[1] = 0.0f;
+      fx::user_run(e, 0, x, 12, y, k);
+      return (int)std::lround(y[1][0] * 16);
+    };
+    um::pre_block();
+    edges(1), edges(fx::kUserSlots);   // (whatever came before: seen)
+    engine_realtime_link(1, 0xFA, 0);   // the A4's Start, on its own link
+    um::pre_block();
+    CHECK(edges(fx::kUserSlots) == 1 && edges(1) == 0);
+    CHECK(edges(fx::kUserSlots) == 0);   // (once)
+    engine_realtime_link(0, 0xFC, 0);   // the Rytm's Stop
+    um::pre_block();
+    CHECK(edges(1) == 2 && edges(fx::kUserSlots) == 0);
+    cmd(0, "um=fx:2:-");
+  }
+
   // ---- each box's send FX on TYPE 64 plays its own UFX1
   std::unique_ptr<fx::SendFx> f1(new fx::SendFx(48000.0f));
   fx::control1.route = fx::kRouteFx;

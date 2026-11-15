@@ -255,16 +255,17 @@ FreeBlk g_free[kFree];
 int g_nfree = 0;
 rmp3_host g_h3;                  // what an API 2 or 3 plugin finds in rmp_host.reserved[RMP_H_V3]
 rmp_host g_host3;                // the host table of an API 3 only plugin (api 3)
-// the transport snapshots (pre_block): two, the render cores read the block's (g_xp_gen & 1)
-rmp3_transport g_xp[2];
+// the transport snapshots (pre_block): two a box, the render cores read the block's (g_xp_gen & 1). 3(c): each box's from
+// its own MIDI clock (core/lfo.h clock_state(slot)): its machines and its effects follow its own transport
+rmp3_transport g_xp[kBoxes][2];
 volatile uint32_t g_xp_gen = 0;
 constexpr uint32_t kLeadFrames = 385;   // the FIFO's 96 frames + the Rytm's measured 289-frame loop (the proposal's estimate)
-uint32_t g_xp_starts = 0, g_xp_stops = 0, g_xp_jumps = 0;
+uint32_t g_xp_starts[kBoxes], g_xp_stops[kBoxes], g_xp_jumps[kBoxes];
 // per snapshot: how many START, STOP and JUMP blocks there were up to it (a consumer out of step with the blocks, the
 // send FX's effects on core 2, takes each edge once: fx_run)
-uint32_t g_xp_ev[2][3];
-uint32_t g_xp_evn[3];
-int32_t g_xp_song = -1;
+uint32_t g_xp_ev[kBoxes][2][3];
+uint32_t g_xp_evn[kBoxes][3];
+int32_t g_xp_song[kBoxes] = {-1};
 // what a block hands a plugin that declares signals while the host has no bus (RMP3_CAP_BUS): silence in, a sink out
 float g_sig_zero[16];
 rmp3_sig_in g_sig_none[4];
@@ -865,7 +866,7 @@ void c_note_off(int s, void* st) {
 float g_sig_sink[kCores][4][16];   // signals a plugin writes while the host has no bus: dropped
 float* g_sig_sinkp[kCores][4];
 float g_sig_val[kCores][4];
-void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place) {
+void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place, int box) {   // (box: whose transport)
   int c = this_core();
   memset(b, 0, sizeof *b);
   b->size = sizeof *b;
@@ -874,7 +875,7 @@ void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place) {
   b->flags = r ? 0u : (uint32_t)RMP3_B_MONO_OUT;
   b->out[0] = l, b->out[1] = r;
   b->place = place;
-  b->transport = &g_xp[b->gen & 1];
+  b->transport = &g_xp[box][b->gen & 1];
   b->sig_in = g_sig_none;
   for (int k = 0; k < 4; ++k) g_sig_sinkp[c][k] = g_sig_sink[c][k];
   b->sig_audio = g_sig_sinkp[c];
@@ -1555,7 +1556,7 @@ void on_render(int vi, float* o) {
     const rmp3_plugin* p3 = g_v3[s].p3;
     if (p3) {   // API 3: one block of data (mono here: out[1] null)
       rmp3_block b;
-      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE);
+      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE, bx(s));
       p3->render(g_vstate[vi], &b);
     } else {
       sl.p->render(g_vstate[vi], o, core::kBlock);
@@ -1585,7 +1586,7 @@ bool on_render2(int vi, float* l, float* r) {
   {
     VNow now(vi);
     rmp3_block b;
-    block_fill(&b, core::kBlock, l, r, RMP3_AT_VOICE);
+    block_fill(&b, core::kBlock, l, r, RMP3_AT_VOICE, bx(s));
     p3->render(g_vstate[vi], &b);
   }
   uint32_t dt = core::cycles() - t0;
@@ -2420,7 +2421,7 @@ bool fx_state_init(int s, int k, uint64_t* pcout) {
   void* st = g_fxst[u][k];
   memset(st, 0, g_slot[s].state_bytes);
   for (int j = 0; j < 16; ++j) g_fx_p[u][k][j] = -1.0f;   // (the first block: every knob changed)
-  for (int q = 0; q < 3; ++q) g_fx_ev[u][k][q] = g_xp_evn[q];   // (no old edges)
+  for (int q = 0; q < 3; ++q) g_fx_ev[u][k][q] = g_xp_evn[u / kUfx][q];   // (no old edges: its box's)
   uint64_t pc = 0;
   uint32_t us = 0;
   rmp3_voice v;
@@ -2597,22 +2598,23 @@ void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t
     // the transport: one snapshot for the whole call; its edges (START, STOP, JUMP) once for this state, in the first
     // sub-block - core 2's send FX runs out of step with the blocks, so it may see a snapshot twice or skip one
     uint32_t g = __atomic_load_n(&g_xp_gen, __ATOMIC_ACQUIRE);
-    rmp3_transport tr = g_xp[g & 1], tr0;
+    const int xb = u / kUfx;   // (its box's transport)
+    rmp3_transport tr = g_xp[xb][g & 1], tr0;
     tr.flags &= ~(uint32_t)(RMP3_T_START | RMP3_T_STOP | RMP3_T_JUMP);
     tr0 = tr;
     static const uint32_t kEdge[3] = {RMP3_T_START, RMP3_T_STOP, RMP3_T_JUMP};
     // a state not called for more than two blocks (its send slot played something else): older edges are not news
     if (g - g_fx_lastgen[u][sl] > 2u)
-      for (int q = 0; q < 3; ++q) g_fx_ev[u][sl][q] = g_xp_ev[g & 1][q] - ((g_xp[g & 1].flags & kEdge[q]) ? 1u : 0u);
+      for (int q = 0; q < 3; ++q) g_fx_ev[u][sl][q] = g_xp_ev[xb][g & 1][q] - ((g_xp[xb][g & 1].flags & kEdge[q]) ? 1u : 0u);
     g_fx_lastgen[u][sl] = g;
     for (int q = 0; q < 3; ++q)
-      if (g_xp_ev[g & 1][q] != g_fx_ev[u][sl][q]) tr0.flags |= kEdge[q], g_fx_ev[u][sl][q] = g_xp_ev[g & 1][q];
+      if (g_xp_ev[xb][g & 1][q] != g_fx_ev[u][sl][q]) tr0.flags |= kEdge[q], g_fx_ev[u][sl][q] = g_xp_ev[xb][g & 1][q];
     uint32_t t0 = core::now_us();
     for (int at = 0; at < n; at += 16) {   // blocks of 16 frames at most
       int m = n - at < 16 ? n - at : 16;
       float l[16], r[16];
       rmp3_block b;
-      block_fill(&b, m, l, r, RMP3_AT_SEND);
+      block_fill(&b, m, l, r, RMP3_AT_SEND, xb);
       b.flags |= RMP3_B_WET_ONLY;
       b.gen = g;
       b.transport = at ? &tr : &tr0;
@@ -3440,7 +3442,9 @@ void begin(const Exec* e, const char* d) {
   g_host2.reserved[RMP_H_V3] = &g_h3;
   g_host3 = g_host2;
   g_host3.api = RMP_API3;
-  for (rmp3_transport& t : g_xp) t = rmp3_transport{0, 120.0f, 20833.333f, 0.0f, -1, 0.0f, 0, kLeadFrames};
+  for (auto& x : g_xp)
+    for (rmp3_transport& t : x) t = rmp3_transport{0, 120.0f, 20833.333f, 0.0f, -1, 0.0f, 0, kLeadFrames};
+  for (int b = 0; b < kBoxes; ++b) g_xp_song[b] = -1;
   for (rmp3_sig_in& x : g_sig_none) x = rmp3_sig_in{g_sig_zero, 0.0f, 0};
   core::hooks.pool_changed = on_pool_changed;
   for (Bx& b : g_bx) rmp_meta_init(&b.meta, core::random_seed() | 1u);
@@ -3582,37 +3586,40 @@ void call_stall_limit(uint32_t us) { g_call_stall_us = us ? us : kCallStallUs; }
 void render_fault(int vi) {
   if (vi >= 0 && vi < core::kVoices) __atomic_or_fetch(&g_render_faults, 1u << vi, __ATOMIC_ACQ_REL);
 }
-// API 3: the block's transport snapshot (see um.h). The newest becomes the render cores' at the release store.
+// API 3: the block's transport snapshot (see um.h), each box's from its own clock. The newest becomes the render cores' at
+// the release store.
 void pre_block() {
   if (!ex) return;
-  core::lfo::ClockState c;
-  core::lfo::clock_state(&c);
   uint32_t g = g_xp_gen + 1;
-  rmp3_transport& t = g_xp[g & 1];
-  uint32_t since = core::now_us() - c.last_us;
-  bool clocked = c.ticking && since < 250000;
-  bool locked = c.run && clocked && c.pos >= 0;
-  float tu = c.tick_us > 100.0f ? c.tick_us : 20833.333f;
-  uint32_t f = (c.run ? (uint32_t)RMP3_T_RUNNING : 0u) | (clocked ? (uint32_t)RMP3_T_CLOCKED : 0u) | (locked ? (uint32_t)RMP3_T_LOCKED : 0u);
-  if (c.starts != g_xp_starts) f |= RMP3_T_START;
-  if (c.stops != g_xp_stops) f |= RMP3_T_STOP;
-  int32_t song = locked ? c.pos : -1;
-  // a song position message, or the position going back (a restart the Rytm sent no F2 for)
-  if (c.jumps != g_xp_jumps || (song >= 0 && g_xp_song >= 0 && song < g_xp_song)) f |= RMP3_T_JUMP;
-  g_xp_starts = c.starts, g_xp_stops = c.stops, g_xp_jumps = c.jumps, g_xp_song = song;
-  float frac = locked ? (float)since / tu : 0.0f;
-  t.flags = f;
-  t.tick_us = tu;
-  t.bpm = 60e6f / (24.0f * tu);
-  t.free_tick = c.tp;
-  t.song_tick = song;
-  t.song_frac = frac < 0.0f ? 0.0f : frac > 0.999f ? 0.999f : frac;
-  t.step16 = locked ? (uint32_t)c.pos / 6u : 0u;
-  t.lead_frames = kLeadFrames;
-  if (f & RMP3_T_START) ++g_xp_evn[0];
-  if (f & RMP3_T_STOP) ++g_xp_evn[1];
-  if (f & RMP3_T_JUMP) ++g_xp_evn[2];
-  for (int k = 0; k < 3; ++k) g_xp_ev[g & 1][k] = g_xp_evn[k];
+  for (int b = 0; b < kBoxes; ++b) {
+    core::lfo::ClockState c;
+    core::lfo::clock_state(b, &c);
+    rmp3_transport& t = g_xp[b][g & 1];
+    uint32_t since = core::now_us() - c.last_us;
+    bool clocked = c.ticking && since < 250000;
+    bool locked = c.run && clocked && c.pos >= 0;
+    float tu = c.tick_us > 100.0f ? c.tick_us : 20833.333f;
+    uint32_t f = (c.run ? (uint32_t)RMP3_T_RUNNING : 0u) | (clocked ? (uint32_t)RMP3_T_CLOCKED : 0u) | (locked ? (uint32_t)RMP3_T_LOCKED : 0u);
+    if (c.starts != g_xp_starts[b]) f |= RMP3_T_START;
+    if (c.stops != g_xp_stops[b]) f |= RMP3_T_STOP;
+    int32_t song = locked ? c.pos : -1;
+    // a song position message, or the position going back (a restart the box sent no F2 for)
+    if (c.jumps != g_xp_jumps[b] || (song >= 0 && g_xp_song[b] >= 0 && song < g_xp_song[b])) f |= RMP3_T_JUMP;
+    g_xp_starts[b] = c.starts, g_xp_stops[b] = c.stops, g_xp_jumps[b] = c.jumps, g_xp_song[b] = song;
+    float frac = locked ? (float)since / tu : 0.0f;
+    t.flags = f;
+    t.tick_us = tu;
+    t.bpm = 60e6f / (24.0f * tu);
+    t.free_tick = c.tp;
+    t.song_tick = song;
+    t.song_frac = frac < 0.0f ? 0.0f : frac > 0.999f ? 0.999f : frac;
+    t.step16 = locked ? (uint32_t)c.pos / 6u : 0u;
+    t.lead_frames = kLeadFrames;
+    if (f & RMP3_T_START) ++g_xp_evn[b][0];
+    if (f & RMP3_T_STOP) ++g_xp_evn[b][1];
+    if (f & RMP3_T_JUMP) ++g_xp_evn[b][2];
+    for (int k = 0; k < 3; ++k) g_xp_ev[b][g & 1][k] = g_xp_evn[b][k];
+  }
   __atomic_store_n(&g_xp_gen, g, __ATOMIC_RELEASE);
 }
 
@@ -3703,7 +3710,7 @@ void inst_render(int vi, int i, float* o) {
     const rmp3_plugin* p3 = g_v3[s].p3;
     if (p3) {
       rmp3_block b;
-      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE);
+      block_fill(&b, core::kBlock, o, nullptr, RMP3_AT_VOICE, bx(s));
       p3->render(g_istate[i], &b);
     } else {
       g_slot[s].p->render(g_istate[i], o, core::kBlock);
