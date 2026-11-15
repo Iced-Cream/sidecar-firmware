@@ -42,3 +42,34 @@ class SysExAsm {
   unsigned n_ = 0, bad_ = 0;
   bool in_ = false, over_ = false;
 };
+
+// The MIDI realtime bytes and song position from the same stream (3(c) step 10: the second box's clock, link1.h): F8 FA FB
+// FC anywhere, even inside a SysEx (SysExAsm skips them), and F2 with its two data bytes (no running status; any other
+// status byte before both came drops it). feed() is true when b ended one: its status in status(), an F2's position (in
+// 16ths) in spp().
+class RealtimeAsm {
+ public:
+  bool feed(uint8_t b) {
+    if (b >= 0xF8) {
+      if (b == 0xF8 || b == 0xFA || b == 0xFB || b == 0xFC) return st_ = b, spp_ = 0, true;
+      return false;                                 // (active sensing, reset, undefined: not a clock's)
+    }
+    if (b & 0x80) {
+      have_ = b == 0xF2 ? 0 : -1;                   // another status: an F2 begins, or none waits
+      return false;
+    }
+    if (have_ < 0) return false;
+    d_[have_++] = b;
+    if (have_ < 2) return false;
+    have_ = -1, st_ = 0xF2, spp_ = (uint16_t)(d_[0] | d_[1] << 7);
+    return true;
+  }
+  uint8_t status() const { return st_; }
+  uint16_t spp() const { return spp_; }
+
+ private:
+  uint8_t d_[2] = {};
+  int have_ = -1;
+  uint8_t st_ = 0;
+  uint16_t spp_ = 0;
+};

@@ -110,7 +110,7 @@ bool all_sound_off(Control& c) {
 
 uint8_t (*knob_filter)(int slot, int knob, uint8_t v) = nullptr;
 uint8_t (*send_filter)(int track, int slot, uint8_t v) = nullptr;
-void (*clock_listener)(uint8_t status, uint16_t spp) = nullptr;
+void (*clock_listener)(int box, uint8_t status, uint16_t spp) = nullptr;
 void (*bus_insert)(const Control& c, int slot, float (*y)[2], int n) = nullptr;
 bool (*user_ready)(int u) = nullptr;
 volatile bool list_dirty = false;
@@ -144,7 +144,7 @@ CORE_COLD void clock_in(Control& c, uint8_t status, uint16_t spp) {   // per MID
     default: return;
   }
   c.clock = ClockWord::pack(pos[b], ticks[b], run[b]);
-  if (b == 0 && clock_listener) clock_listener(status, spp);   // the Sidecar's LFOs' sync (core/lfo.h): the Rytm's clock, as before
+  if (clock_listener) clock_listener(b, status, spp);   // the LFOs' sync (core/lfo.h): each box's clock its own slot's LFOs' (3(c) step 10)
 }
 
 CORE_COLD uint16_t fx_tag(const char* name) {

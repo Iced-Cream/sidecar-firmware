@@ -121,10 +121,15 @@ struct Clock {
   float tp = 0;               // the clock position now, in ticks mod kWrap
   bool start = false;         // a Start since the last tick (PLAY retrigs)
   uint32_t starts = 0, stops = 0, jumps = 0;   // FA / FB, FC, F2 since boot (clock_state: API 3's transport flags)
-  bool moved = false;         // 3(c): waves() moved tp at moved_us (each slot's pass of one tick: once)
+  bool moved = false;         // 3(c): waves() moved tp at moved_us (once a tick, whatever calls it)
   uint32_t moved_us = 0;
 };
-Clock g_clk;
+// 3(c) step 10: each voice slot's MIDI clock (option A: nothing shared between the boxes): its box's realtime bytes
+// (send_fx.cpp clock_in's listener, per box), its tempo, transport and position. The slot in hand's (K()); a voice's
+// reader names its own slot (clock_now(slot, ..)).
+Clock g_clk[kVoiceSlots];
+CORE_COLD Clock& K() { return g_clk[prj_slot()]; }
+CORE_COLD Clock& K(int slot) { return g_clk[slot > 0 && slot < kVoiceSlots ? slot : 0]; }
 
 Stats g_stats;
 
@@ -203,7 +208,7 @@ CORE_COLD float current(int target, int param) {   // a new target's base: what 
 
 CORE_COLD void retrig(int i) {
   Run& r = S().run[i];
-  if (S().set[i].sync) r.anchor = g_clk.tp;
+  if (S().set[i].sync) r.anchor = K().tp;
   else r.ph = 0;
   r.fresh = true;
 }
@@ -382,7 +387,7 @@ CORE_COLD void restore(Tgt& e) {
 
 // the send FX's hooks into the LFOs (fx/send_fx.h), set before main
 static struct FxHooks {
-  FxHooks() { fx::knob_filter = fx_knob, fx::clock_listener = clock; }
+  FxHooks() { fx::knob_filter = fx_knob, fx::clock_listener = [](int box, uint8_t st, uint16_t spp) { clock(box, st, spp); }; }
 } g_fx_hooks;
 
 // ---------------------------------------------------------------------------------------------------- settings
@@ -715,22 +720,27 @@ CORE_COLD const Stats& stats() {
 
 // ---------------------------------------------------------------------------------------------------- the engine
 
-bool clock_now(float* ticks, float* tick_us) {
-  *ticks = g_clk.tp;
-  *tick_us = g_clk.tick_us;
+bool clock_now(float* ticks, float* tick_us) { return clock_now(0, ticks, tick_us); }
+bool clock_now(int slot, float* ticks, float* tick_us) {
+  const Clock& c = K(slot);
+  *ticks = c.tp;
+  *tick_us = c.tick_us;
 #if CORE_MOD_LFO
   return mod::stats().ticks != 0;
 #else
   return g_stats.ticks != 0;
 #endif
 }
-void clock_state(ClockState* o) {
-  const Clock& c = g_clk;
+void clock_state(ClockState* o) { clock_state(prj_slot(), o); }
+void clock_state(int slot, ClockState* o) {
+  const Clock& c = K(slot);
   *o = ClockState{c.run, c.ticking, c.pos, c.last_us, c.tick_us, c.tp, c.starts, c.stops, c.jumps};
 }
 
-CORE_COLD void clock(uint8_t status, uint16_t spp) {
-  Clock& c = g_clk;
+CORE_COLD void clock(uint8_t status, uint16_t spp) { clock(0, status, spp); }
+CORE_COLD void clock(int slot, uint8_t status, uint16_t spp) {
+  if (slot < 0 || slot >= kVoiceSlots) return;   // (a box with no voice slot of its own: the Teensy's one)
+  Clock& c = K(slot);
   uint32_t now = now_us();
   switch (status) {
     case 0xF8: {
@@ -745,9 +755,8 @@ CORE_COLD void clock(uint8_t status, uint16_t spp) {
     }
     case 0xFA:
       c.run = true, c.pos = -1, c.start = true, ++c.starts;
-      for (Sl& l : g_sl)   // (every slot's: the one clock)
-        for (int i = 0; i < kLfos; ++i)
-          if (l.set[i].retrig == kOnPlay) l.run[i].retrig = true;
+      for (int i = 0; i < kLfos; ++i)   // (the box's own LFOs: its PLAY)
+        if (S(slot).set[i].retrig == kOnPlay) S(slot).run[i].retrig = true;
       break;
     case 0xFB: c.run = true, ++c.starts; break;
     case 0xFC: c.run = false, ++c.stops; break;
@@ -803,8 +812,8 @@ CORE_COLD void tick(uint32_t us) { mod::tick(us); }
 CORE_COLD void waves(uint32_t us, uint32_t dus) {
   float dt = (float)dus * 1e-6f;
   // the clock position: locked to the song position while the Rytm plays and ticks, else on at the last tempo
-  Clock& c = g_clk;
-  if (!c.moved || c.moved_us != us) {   // (3(c): mod::tick calls this once a voice slot, the same us: the clock moves once)
+  Clock& c = K();   // (the slot in hand's: mod::tick's pass of that slot)
+  if (!c.moved || c.moved_us != us) {   // (a second call with the same us: the clock moves once)
     c.moved = true, c.moved_us = us;
     uint32_t since = us - c.last_us;
     bool locked = c.run && c.ticking && since < 250000;
@@ -882,7 +891,7 @@ CORE_COLD void tick(uint32_t us) {
     float dt = (float)dus * 1e-6f;
     ++g_stats.ticks;
     // the clock position: locked to the song position while the Rytm plays and ticks, else on at the last tempo
-    Clock& c = g_clk;
+    Clock& c = K();
     uint32_t since = us - c.last_us;
     bool locked = c.run && c.ticking && since < 250000;
     if (locked && c.pos < 0) c.tp = 0;
@@ -1302,7 +1311,7 @@ CORE_COLD void reset() {
     for (int i = 0; i < kLfos; ++i) l.run[i] = Run(), l.run[i].rng = 0x9E3779B9u * (uint32_t)(i + 1);
     l.dirty = false, l.kit = l.rytm_kit = -1;
   }
-  g_clk = Clock();
+  for (Clock& c : g_clk) c = Clock();
   g_stats = Stats();
 #if CORE_MOD_LFO
   mod::reset();   // the targets, the tick's clock, the voice flush, the counts: the layer's

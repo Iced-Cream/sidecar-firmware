@@ -1059,7 +1059,7 @@ void Transport (u8 nStatus, u16 nSPP)
 	bundle_pi::transport (nStatus);	// project bundles: card writes wait while the Rytm plays (bundle_pi.h)
 	stor_pi::Transport (nStatus);		// the storage bench is refused while the Rytm plays (stor_pi.h)
 	bridge::samp_transport (nStatus);	// the sampler: PLAY / next-bar starts, the tempo (core/samp/sampler.h)
-	sendfx_pi::Clock (nStatus, nSPP);
+	(void) nSPP;	// (STUTTER's grid: the box's own clock, cores.cpp RealtimeIn -> bridge::realtime_link, 3(c) step 10)
 }
 
 bool TakeBusy (const char *pPath)
