@@ -609,8 +609,9 @@ static bool g_loading[kVoiceSlots];
 
 // The slot in hand's project's files (a fill of that slot still running is abandoned by fill_begin: a switch while one
 // runs reads only the new project's files). Per slot so far: the LFOs, the inserts and OUT, the XY pad, the scenes and the sequencer
-// (each slot's fill switches its own). The other modules (song: the Rytm's; kits) are one set still, slot 0's: their files are wanted for every
-// slot (each module's paths for the slot in hand's key), but only slot 0's fill switches them (3(c) steps 5-7).
+// (each slot's fill switches its own). The kits' records (core/bundle/kits.h) are each slot's too: read from the store of the
+// slot whose kit report needs them (3(c) step 9), nothing to switch. song is the Rytm's still (10c): its files are wanted
+// for every slot (the paths of the slot in hand's key), but only slot 0's song uses them.
 CORE_COLD void project_fill_begin() {
   const int s = prj_slot();
   store::clear();

@@ -76,7 +76,7 @@ int locked(int vi);                         // the mask in force, 0 none
 
 void block(int64_t h);                      // seq::pre_block, each render block: h its first frame
 void stop();                                // the transport left PLAY
-void kit_changed();                         // another active kit: every voice's notes end, but a trig of the last kFreshMs (the new kit's own: its 3B comes after it)
+void kit_changed(int slot = -1);            // slot >= 0: that box's voices only (-1 every voice). Another active kit: every voice's notes end, but a trig of the last kFreshMs (the new kit's own: its 3B comes after it)
 void link_lost();                           // the Rytm's USB gone: every note ends, no 0x11 will come
 void end(int vi);                           // vi's notes end now (a machine change, a silence)
 void machines();                            // the Rytm's 33: a voice whose machine changed ends

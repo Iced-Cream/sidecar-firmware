@@ -315,7 +315,7 @@ CORE_COLD void link_reset(const char* why, int slot) {
   for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
-  midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
+  midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
 #endif
   if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
 }

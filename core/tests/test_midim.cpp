@@ -636,6 +636,24 @@ int main() {
     midim::kit_switched();
     same("1:803C00 ");
   }
+  // 3(c) step 9: another box's kit (its 3B, its link's reset) ends only its own voices' notes; the Rytm's voice keeps its
+  {
+    midim::reset();
+    g.clear();
+    ms(10);
+    rep(0x43, 1, -1, 0, words(kDin, 0));
+    midim::live_on(1, 60, 100, poly::kSeqCh, 60);
+    same("1:903C64 ");
+    ms(midim::kFreshHeldMs + 1);
+    if (kVoiceSlots > 1) {
+      midim::kit_switched(1);
+      midim::kit_changed(1);
+      same("");
+      CHECK(midim::voice_notes(1) == 1);
+    }
+    midim::kit_switched(0);
+    same("1:803C00 ");
+  }
   // a Pi restart: a track on MIDI, the machine known from its 33, before any report
   {
     midim::reset();

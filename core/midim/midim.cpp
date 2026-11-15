@@ -267,15 +267,19 @@ CORE_COLD void leave(int vi) {
   forget(x);
 }
 
-CORE_COLD void kit_switched() {
+// 3(c) step 9: slot >= 0 a box's own voices only (its kit, its link), -1 every voice
+static inline bool of_slot(int vi, int slot) { return slot < 0 || slot_of_voice(vi) == slot; }
+CORE_COLD void kit_switched(int slot) {
   uint32_t ms = now_ms();
   for (Held& h : held)
-    if (h.used && !((h.src == kTrigSrc || h.src == poly::kSeqCh) && ms - h.ms <= kFreshHeldMs)) off_entry(h);   // (kSeqCh: the arp's note of that trig)
-  for (int vi = 0; vi < kVoices; ++vi) forget(vo[vi]);
+    if (h.used && of_slot(h.vi, slot) && !((h.src == kTrigSrc || h.src == poly::kSeqCh) && ms - h.ms <= kFreshHeldMs)) off_entry(h);   // (kSeqCh: the arp's note of that trig)
+  for (int vi = 0; vi < kVoices; ++vi)
+    if (of_slot(vi, slot)) forget(vo[vi]);
 }
 
-CORE_COLD void kit_changed() {
+CORE_COLD void kit_changed(int slot) {
   for (int vi = 0; vi < kVoices; ++vi) {
+    if (!of_slot(vi, slot)) continue;
     silence(vi);
     forget(vo[vi]);
   }

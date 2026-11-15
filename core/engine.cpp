@@ -142,7 +142,10 @@ CORE_COLD bool idle_save() {
   // a project load's RAM store fill (pool.h): one step; nothing below reads the store (the saves after it are of the
   // project still loaded, and post_step lands the writes a fill waits for)
   if (T_("fill", project_fill_step())) return true;
-  if (T_("kits", kits::tick())) return true;   // the Rytm's SAVE / RELOAD KIT: the per-kit files' saved copies (core/bundle/kits.h)
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each box's SAVE / RELOAD KIT: its per-kit files' saved copies (core/bundle/kits.h)
+    device::Scope in(device::g_links[k]);
+    if (T_("kits", kits::tick())) return true;
+  }
 #endif
   // 0.3.0 power-cut safety: the posted settings write first (fmt.h), so one writer owns the shared buffer at a time.
   // A write that only waits does not stop the rest: post_begin is null while the slot is busy, so no saver below can touch

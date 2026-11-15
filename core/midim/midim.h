@@ -58,8 +58,8 @@ void live_off(int vi, int ch, int mnote);                      // mnote -1: ever
 int voice_notes(int vi);
 void silence(int vi);                                          // every note of the voice off now
 void leave(int vi);                                            // the voice left the machine: silence, its state forgotten
-void kit_changed();                                            // every note off; what was sent forgotten (the new kit's PRG goes out)
-void kit_switched();                                           // the Rytm's 3B named another kit: as kit_changed, but a trig of the last 100 ms stays (the new kit's own step: the 3B comes after it)
+void kit_changed(int slot = -1);                               // every note off; what was sent forgotten (the new kit's PRG goes out). slot >= 0: that box's voices only
+void kit_switched(int slot = -1);                              // a box's 3B named another kit: as kit_changed, but a trig of the last 100 ms stays (the new kit's own step: the 3B comes after it); slot: its voices only
 void link_lost();                                              // the Rytm's USB gone (no hello to come): as kit_changed
 void resync();                                                 // records for the Rytm were lost, sending is on again: DIN's recent note-offs go again
 void link_state(bool up);                                      // each control pass: records can reach the Rytm
