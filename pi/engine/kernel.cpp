@@ -68,6 +68,7 @@ static int s_nRytmPatIndex = -1;
 #include "sendfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "usbc_pi.h"		// the USB-C mode for the SIDECAR MENU > USB-C (usb_mode.h)
+#include "ui_contrast.h"	// the SIDECAR theme's high contrast (uicontrast=)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
 #include "sdfiles.h"
 #include "wifi.h"
@@ -1204,6 +1205,7 @@ void CKernel::SetSelfTest (boolean bOn, const char *pWhy)
 }
 
 static int s_nUiLook;			// UX review L1: the OLED look (0 studio, 1 stage), /.rytm/display.txt's uilook=
+static int s_nUiContrast;		// 0.5.1: the SIDECAR theme's high contrast (0 off, 1 blue, 2 green), display.txt's uicontrast=
 
 boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 {
@@ -1257,6 +1259,22 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 			}
 		}
 		pThis->m_Logger.Write (From, LogNotice, "display: look %s", s_nUiLook ? "stage" : "studio");
+		return TRUE;
+	}
+	if (strncmp (pCmd, "uicontrast", 10) == 0 && (pCmd[10] == 0 || pCmd[10] == '='))	// 0.5.1: the SIDECAR theme's high contrast
+	{
+		if (pCmd[10] == '=')
+		{
+			int n = ui_contrast::parse (pCmd + 11);
+			if (n < 0) pThis->m_Logger.Write (From, LogWarning, "uicontrast=off|blue|green");
+			else
+			{
+				s_nUiContrast = n;
+				pThis->m_bSaveDisplay = TRUE;
+				if (pThis->m_pDisplay != 0) { pThis->m_pDisplay->Activity (); pThis->PushUi (); }
+			}
+		}
+		pThis->m_Logger.Write (From, LogNotice, "display: contrast %s", ui_contrast::name (s_nUiContrast));
 		return TRUE;
 	}
 	if (strncmp (pCmd, "cpumhz", 6) == 0 && (pCmd[6] == 0 || pCmd[6] == '='))	// Settings > System: the CPU clock option
@@ -1442,7 +1460,7 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 			f_close (&f);
 		}
 		Text[n] = 0;
-		static const char *const Known[] = {"screensaver", "brightness", "touchtest", "uistyle", "uilook", "res", "touchcal", "cpumhz",
+		static const char *const Known[] = {"screensaver", "brightness", "touchtest", "uistyle", "uilook", "uicontrast", "res", "touchcal", "cpumhz",
 						    "usbmode",
 #if RASPPI >= 5
 						    "fan",	// a Pi 4 build carries it (class S)
@@ -1490,6 +1508,8 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 		s_nUiLook = pl && strncmp (pl + 7, "stage", 5) == 0 ? 1 : 0;
 		sidecar_dot_look (s_nUiLook);
 		m_Ui.ui_look = s_nUiLook;
+		s_nUiContrast = ui_contrast::from_text (Text);		// off without the key or with a word not known
+		m_Ui.ui_contrast = s_nUiContrast;
 	}
 	m_Ui.screensaver = (int) m_nSaverMin;
 	m_Ui.brightness = (int) m_nBright;
@@ -1516,8 +1536,8 @@ void CKernel::SaveDisplaySettings (void)
 {
 	m_bSaveDisplay = FALSE;
 	CString s;
-	s.Format ("screensaver=%u\nbrightness=%u\ntouchtest=%u\nuistyle=%s\nuilook=%s\n", m_nSaverMin, m_nBright, m_bTouchHidden ? 0u : 1u,
-		  m_nUiStyle ? "sidecar" : "oled", s_nUiLook ? "stage" : "studio");
+	s.Format ("screensaver=%u\nbrightness=%u\ntouchtest=%u\nuistyle=%s\nuilook=%s\nuicontrast=%s\n", m_nSaverMin, m_nBright, m_bTouchHidden ? 0u : 1u,
+		  m_nUiStyle ? "sidecar" : "oled", s_nUiLook ? "stage" : "studio", ui_contrast::name (s_nUiContrast));
 	if (m_bTouchCal)
 	{
 		char b[64];
@@ -1825,6 +1845,7 @@ void CKernel::PushUi (void)
 	u.touch_hidden = m_bTouchHidden;
 	u.ui_style = (int) m_nUiStyle;
 	u.ui_look = s_nUiLook;
+	u.ui_contrast = s_nUiContrast;
 	u.temp_c = (int) m_nTempC;		// the temperature warning's banner (thermal.h)
 	u.temp_warn = m_Thermal.warn ? 1 : 0;
 	u.lfo_full = bridge::lfo_link_full () ? 1 : 0;	// 0.5.0 LFO FINAL: "RYTM LINK FULL: LFOs update slower" (a plain read)

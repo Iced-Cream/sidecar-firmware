@@ -46,6 +46,7 @@ typedef struct
 	unsigned	rec_secs;			// the take's length so far
 	int		ui_style;			// the display's theme (sidecar_theme.h THEME_*: 0 OLED, 1 SIDECAR), -1: not known
 	int		ui_look;			// UX review L1: the OLED look, 0 STUDIO 1 STAGE (sidecar_dot_look), -1: not known
+	int		ui_contrast;			// 0.5.1: the SIDECAR theme's high contrast, 0 off 1 blue 2 green (uicontrast=), -1: not known
 	unsigned	poly;				// UX review S1: bit v - voice v plays a poly track (a POLY badge on HOME)
 	int		pattern;			// UX review T1: the Rytm's pattern 0..127 (-1 not known) and transport (0 stop,
 	int		transport;			// 1 play, 2 pause): HOME's NOW panel
