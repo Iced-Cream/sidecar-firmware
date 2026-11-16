@@ -460,8 +460,8 @@ int pad_oct(int vi);                           // BACKLOG 7g: the PAD OCT (-3..+
 bool owns_voice(int vi);                       // a seq track plays on voice vi now: its 0x04s make no note
 bool any_tracks();                             // a seq track is set (the mask)
 bool shown_wanted();                           // the SEQ page was asked for (seq=show, the Rytm's seq mode)
-uint64_t frames();                             // slot 0's render frames so far (pre_block's count): SONG's, the calibration's
-uint64_t frames(int s);                        // slot s's (its own pass's count): its arpeggiator's
+uint64_t frames();                             // slot 0's render frames so far (pre_block's count): the calibration's
+uint64_t frames(int s);                        // slot s's (its own pass's count): its arpeggiator's, its SONG RECORD's
 // The Rytm's trig keys / PAGE / encoders while seq mode is on or the SEQ page shows (remote.cpp routes 31 / 32 here
 // first): true when taken.
 bool ui_key(int code, bool down, bool page_shown);

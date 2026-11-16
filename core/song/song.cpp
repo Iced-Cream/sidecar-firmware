@@ -61,7 +61,8 @@ constexpr uint32_t kUndoMs = 30000;        // UNDO REPLAY: offered until 30 s st
 constexpr uint32_t kGraceMs = 1000;        // T5 kept by the page after the undo ended (a late press: "UNDO EXPIRED")
 constexpr int kBackupSlots = 8;            // backup sets kept on the card (.backup-1 .. -8, in turn)
 
-int64_t default_frames() { return (int64_t)seq::frames(); }
+// each slot its own render pass's count (seq::frames(s)): the box's 2C ticks are placed in its own frames (slot 0: as ever)
+int64_t default_frames() { return (int64_t)seq::frames(prj_slot()); }
 int64_t (*g_frames)() = default_frames;
 
 struct Engine {
