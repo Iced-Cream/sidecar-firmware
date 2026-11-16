@@ -110,6 +110,7 @@ void midim_realtime(uint8_t status);                                // the base 
 // (core::engine_realtime_link: its LFOs, its send FX's STUTTER grid); the slot, -1 none. The control core.
 int realtime_link(int t, uint8_t status, uint16_t spp);
 int base_slot();                                                    // the base box's slot (core::device::g_base)
+int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard

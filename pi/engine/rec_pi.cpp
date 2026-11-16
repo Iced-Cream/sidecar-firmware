@@ -15,7 +15,7 @@
 #include "rec/rec_wav.h"
 #include "sendfx_pi.h"
 #include "bridge.h"
-#include "hooks.h"	// core::hooks.transport: the mods' PLAY / STOP arm the recorder too
+#include "hooks.h"	// core::hooks.transport_box: the mods' PLAY / STOP arm the recorder too
 #include "ui/tap_names.h"	// tap_source_name: the stems' names, as SCOPE has them (not ui/extra.h: it pulls <new> in, which the kernel build has not)
 #include "voice_name.h"	// the voices' names for the user
 #include "lib/library.h"	// the sample library: a take indexed (not hashed: docs/LIBRARY.md)
@@ -612,12 +612,16 @@ void ClockSync (void)
 namespace rec_pi {
 
 // the mods' transport report (core/seq: whatever the Rytm's MIDI TRANSPORT SEND is): the recorder's arm only - the
-// other Transport () users keep the MIDI messages (the sampler's PLAY starts, the send FX's clock)
-static void ModsTransport (uint8_t nStatus) { g_Rec.transport (nStatus); }
+// other Transport () users keep the MIDI messages (the sampler's PLAY starts, the send FX's clock). 3(c): every box's
+// sequencer reports its own; the recorder (one, the primary stream's) arms on the base box's, as RealtimeIn (cores.cpp)
+static void ModsTransport (int nSlot, uint8_t nStatus)
+{
+	if (nSlot == bridge::base_slot ()) g_Rec.transport (nStatus);
+}
 
 void Init (void)
 {
-	core::hooks.transport = ModsTransport;
+	core::hooks.transport_box = ModsTransport;
 	CLogger *L = CLogger::Get ();
 	// recbuf=MB (cmdline), else sized from the free heap (memalign's: the low heap), 64..256 MB (recorder.h recbuf_mb)
 	unsigned nFreeMB = (unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW) >> 20);

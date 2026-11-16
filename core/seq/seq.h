@@ -423,6 +423,9 @@ void set_arp_tracks(uint16_t pins, bool clock);
 // clock now (stopped, or no tick yet). *lat the latency either way.
 bool beat_map(double* origin, double* per16, int* lat);
 double tempo();                                // the BPM last reported, 0 none
+// 3(c): slot s's (each box's own clock: its 2C ticks, its tempo). The forms above are slot 0's (SONG RECORD's)
+bool beat_map(int s, double* origin, double* per16, int* lat);
+double tempo(int s);
 void midi(uint8_t st, uint8_t d1, uint8_t d2); // a channel message (the Rytm's pads, a host keyboard): poly::midi's note sink (init)
 // A note heard on voice vi (pitch as the voice plays it): what midi() records and step-enters, for a source that knows
 // its voice and track (core/keys.h: a keyboard on the Pi; track -1: the seq track on vi shown first, else the first)
@@ -456,7 +459,8 @@ int pad_oct(int vi);                           // BACKLOG 7g: the PAD OCT (-3..+
 bool owns_voice(int vi);                       // a seq track plays on voice vi now: its 0x04s make no note
 bool any_tracks();                             // a seq track is set (the mask)
 bool shown_wanted();                           // the SEQ page was asked for (seq=show, the Rytm's seq mode)
-uint64_t frames();                             // slot 0's render frames so far (pre_block's count): arp's, SONG's, the calibration's
+uint64_t frames();                             // slot 0's render frames so far (pre_block's count): SONG's, the calibration's
+uint64_t frames(int s);                        // slot s's (its own pass's count): its arpeggiator's
 // The Rytm's trig keys / PAGE / encoders while seq mode is on or the SEQ page shows (remote.cpp routes 31 / 32 here
 // first): true when taken.
 bool ui_key(int code, bool down, bool page_shown);

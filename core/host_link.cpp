@@ -317,7 +317,9 @@ CORE_COLD void link_reset(const char* why, int slot) {
 #if CORE_MSAMP
   midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
 #endif
-  if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+  // 3(c): the link's own box's send FX (each box its own, its own 100 ms window)
+  const int s = slot < 0 ? device::cur().index : slot;
+  if (fx::all_sound_off(fx::control_of(s >= 0 && s < kVoiceSlots ? s : 0))) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
 }
 
 CORE_COLD void link_lost() {

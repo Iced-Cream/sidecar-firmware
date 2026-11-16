@@ -47,6 +47,29 @@ class SysExAsm {
 // FC anywhere, even inside a SysEx (SysExAsm skips them), and F2 with its two data bytes (no running status; any other
 // status byte before both came drops it). feed() is true when b ended one: its status in status(), an F2's position (in
 // 16ths) in spp().
+// A MIDI stream's CC 120 (All Sound Off, Bn 78 vv, any channel, running status too): feed every byte, true at the
+// message's last. Realtime bytes between pass through; SysEx and other messages reset it (3(c): a box's own STOP STOP).
+class Cc120Asm {
+ public:
+  bool feed(uint8_t b) {
+    if (b >= 0xF8) return false;                    // (realtime: anywhere, changes nothing)
+    if (b & 0x80) {
+      run_ = (b & 0xF0) == 0xB0, have_ = 0;         // a CC's status (kept for running status), or another's
+      return false;
+    }
+    if (!run_) return false;
+    d_[have_++] = b;
+    if (have_ < 2) return false;
+    have_ = 0;                                      // (running status: the next pair is another CC)
+    return d_[0] == 120;
+  }
+
+ private:
+  uint8_t d_[2] = {};
+  int have_ = 0;
+  bool run_ = false;
+};
+
 class RealtimeAsm {
  public:
   bool feed(uint8_t b) {

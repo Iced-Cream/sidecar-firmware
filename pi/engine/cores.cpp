@@ -121,12 +121,19 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	bridge::lfo_midi (s, a, b);		// the LFOs: a Rytm track's trig (an FX target's TRIG, core/lfo.h)
 	bridge::poly_midi (s, a, b);		// poly FM: the pads' notes, live chords (core/poly.h)
 	if (s_bNotes && !s_bModded) s_Notes.Channel (s, a, b);
-	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff ();	// the send FX hear it with the notes off too
+	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
 // A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
 // first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). The base box's also arm the
 // recorder and drive the sampler, the bundles' and the storage bench's waits (rec_pi::Transport) and MIDI's on USB-A
 // (core/midim/midim.h), as the Rytm's did; another box's reach only its own clock.
+// A box's CC 120 (All Sound Off, any channel; the Rytm's STOP STOP) on transport t other than the host link's: its own
+// box's send FX fade out and clear (3(c); the host link's comes through OnChannel)
+static void AllSoundOffIn (int nTransport)
+{
+	int nSlot = bridge::transport_slot (nTransport);
+	if (nSlot >= 0) sendfx_pi::AllSoundOff (nSlot);
+}
 static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 {
 	int nSlot = bridge::realtime_link (nTransport, s, spp);
@@ -538,7 +545,7 @@ void CEngineCores::Control (void)
 			s_nMidiBytes++;
 			bWorked = TRUE;
 		}
-		link1::Poll (RealtimeIn);	// the second box's messages, as the engine's slot 1, and its clock (link1.h)
+		link1::Poll (RealtimeIn, AllSoundOffIn);	// the second box's messages, as the engine's slot 1, its clock and its CC 120 (link1.h)
 		Mark (0);
 		u32 nKey;
 		while (g_KeysIn.pop (&nKey))

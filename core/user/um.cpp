@@ -220,13 +220,15 @@ volatile uint32_t g_fx_slow_us[kFx]; // core 2: the render that took the effect 
 uint8_t g_fx_over[kFx][2];           // core 2: calls over budget in a row, per send slot
 volatile bool g_fx_dead[kFx];        // core 2 never left its render (fx_stop gave up): its states and arena kept out of reuse
 volatile uint32_t g_fx_era[kFx];     // bumped by each fx_stop: a render that began before it mutes nothing after it
-// an effect's render of 12..16 frames: about half a block (the proposal: under 30 us); and all of core 2's effects in a
-// block together (both send slots, every UFX): kFxTotalUs. um=fxbudget:<call>:<total> sets both (tests, the bench).
+// an effect's render of 12..16 frames: about half a block (the proposal: under 30 us); and a box's effects in a block
+// together (both its send slots, its UFX1..UFX4): kFxTotalUs, each box its own (3(c): one box's dear effects never mute
+// the other's). um=fxbudget:<call>:<total> sets both (tests, the bench).
 uint32_t g_fx_budget_us = 120, g_fx_total_us = 150;
 constexpr int kFxOverMax = 16;        // calls (or blocks) over it in a row (a burst, a cold cache never mutes)
-// core 2's account of the block it is in (by the transport's gen): every effect's time, the frames, the overs in a row
-struct FxAcct { uint32_t gen, us, frames, us_u[kFx], over; };
-FxAcct g_fxa;
+// core 2's account of the block it is in (by the transport's gen), one per box: each of its effects' time, the frames,
+// the overs in a row (us_u by the box's own effect 0..kUfx-1)
+struct FxAcct { uint32_t gen, us, frames, us_u[kUfx], over; };
+FxAcct g_fxa[kBoxes];
 constexpr uint32_t kFxHugeUs = 2000;  // one call this long mutes at once: the FIFO's 2 ms
 constexpr uint32_t kFxStopWaitUs = 5000;   // fx_stop's wait for core 2 (then it gives up: core 3's block watchdog sees a hang)
 float g_fx_p[kFx][2][16];            // the knobs last handed to each state (b->p_changed)
@@ -2548,17 +2550,19 @@ bool fx_ready(int u) { return u >= 0 && u < kFx && __atomic_load_n(&g_fx_live[u]
 // Core 2, after each effect call: the block's sum of every effect's time (N4). A block whose effects together ran over
 // kFxTotal (scaled by its frames) counts; kFxOverMax such blocks in a row mute the dearest effect of the last one.
 void fx_account(uint32_t gen, int u, uint32_t us, int n) {
-  FxAcct& a = g_fxa;
+  const int xb = u / kUfx, base = xb * kUfx;   // (its box's account: the dearest of that box's effects mutes)
+  FxAcct& a = g_fxa[xb];
   if (gen != a.gen) {   // a new block: the last one's verdict
     if (a.frames) {
       uint32_t share = g_fx_total_us * (a.frames > 12 ? a.frames : 12) / 12u;
       if (a.us > share) {
         if (++a.over >= kFxOverMax) {
           int w = 0;
-          for (int k = 1; k < kFx; ++k)
+          for (int k = 1; k < kUfx; ++k)
             if (a.us_u[k] > a.us_u[w]) w = k;
+          w += base;
           g_fx_total[w] = 1;
-          g_fx_slow_us[w] = a.us_u[w] ? a.us_u[w] : 1;
+          g_fx_slow_us[w] = a.us_u[w - base] ? a.us_u[w - base] : 1;
           __atomic_or_fetch(&g_muted, 1u << (kMach + w), __ATOMIC_RELEASE);
           a.over = 0;
         }
@@ -2569,7 +2573,7 @@ void fx_account(uint32_t gen, int u, uint32_t us, int n) {
     a.gen = gen, a.us = 0, a.frames = 0;
     for (uint32_t& x : a.us_u) x = 0;
   }
-  a.us += us, a.us_u[u] += us;
+  a.us += us, a.us_u[u - base] += us;
   if ((uint32_t)n > a.frames) a.frames = (uint32_t)n;
 }
 void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t* k) {
