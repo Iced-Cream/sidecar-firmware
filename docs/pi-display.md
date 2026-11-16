@@ -32,8 +32,9 @@ shows the same content on 400x240 dots (512x300 on a 1024x600 screen).
   - Hidden, a SIDECAR panel takes its place: network (IP), web page address, link and USB-C mode, and the recorder's state. No Wi-Fi name or key.
   - **Settings > About > Touch test (home): Hide / Show** (or the console command `touchtest=0|1`) switches it.
 
-The title bar's **Settings** button (48 px high, top right) opens the settings pages and becomes **Home**; a tab strip
-(Sound, MIDI, Send FX, Display, Pool, System, About) switches between them, and Settings reopens the page last used. Every control is at least 48 px
+The navigation (0.5.1, docs/UI-THEMES.md "Sections and sub-page rows"): the keys T1..T8 (HOME SEQ PAT VOICE FX SONG REC SET) are sections; under the
+header each has a row of sub-pages (HOME: Overview, Status, Project; VOICE: Sound, Insert, Source, Scope; FX: Sends, Master, XY; SONG: Timeline, Setup;
+REC: Record, Takes; SET: Sound, MIDI, Display, Pool, System, About), and a T key lands on the pill used last. SEQ and PAT carry their own header row. Every control is at least 48 px
 high and sends a console command through `CConsole::Command`, the web page's path (`UiCommand` in kernel.cpp logs
 `display: command "..."`). Commands only queue (core 3 applies them), so a tap never waits for the engine. About 150 ms
 after a command, and every second, `CKernel::PushUi` reads the state back the way `/status` does, so a change from the web
@@ -51,7 +52,7 @@ page, the serial console or the display shows on all of them.
   Rytm's own auto channel), **Computer notes (USB-C)** Off / On (`keys=mac:off|on`); stored in `/.rytm/keys.txt`, at once.
   Read only: the USB-A devices by name, where the last key went, the MIDI-learn routes (cleared on the Rytm: SIDECAR
   MENU > MIDI; stored in `/.rytm/learn.txt`). Until the engine's first state the controls are greyed.
-- **Send FX**:
+- **Send FX** (FX > Sends since 0.5.1; before: Settings > Send FX):
   - FX 1 / FX 2 TYPE and the 12 tracks' send levels, read only: the Rytm's kit owns them, and a console override
     (`sendlvl=`) lasts only until the next 0x20 message.
   - **Kill tails** sends `killfx`: the CC 120 request (`core::fx::all_sound_off`, both FX fade out in about 5 ms, clear and

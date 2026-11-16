@@ -278,11 +278,44 @@ power warning is amber with ink text. A meter is a box with a 1 px olive edge an
 so one 1 px line stands between two panels; segments (`th_seg`) lay their items 1 px overlapped (no gap), so a row of keys is one boxed grid. SQUARE keeps panels apart as the
 layouts place them and a 4 px gap in segments.
 
-**Left out for now:** GUIDE's table cells for info rows (11 px label over an 18 px value with the unit small) and the bottom-left status line need page layouts of their own (the section layout work); the pages keep SIDECAR's rows, in the guide's type. The
-boot screen is SIDECAR's. The help text on Send FX names "sage" and "brick".
+**Left out for now:** GUIDE's table cells for info rows (11 px label over an 18 px value with the unit small) and the bottom-left status line are done on the pages the section layout
+re-laid out (SEQ's header, FX > Sends); the other pages keep SIDECAR's rows, in the guide's type. The boot screen is SIDECAR's.
 
 The shots: `make -C pi/ui/host shots-sq [SIZE=1024x600|1280x720]` writes `square-*.png` and `guide-*.png` beside the others (`./shot DIR [WxH] sq|gd` is one theme, as `hc` is a look), and `bounds`
 runs both next to OLED and SIDECAR.
+
+## Sections and sub-page rows (0.5.1 test build)
+
+The eight navigation keys T1..T8 are **sections**. Under the header (SIDECAR, SQUARE, GUIDE: 58 px from the top; OLED: under the page's title bar)
+every section but SEQ and PAT has a **row of sub-pages**, keys 44 px high (OLED 22 dots): the first is where the T key lands, and a section
+remembers the last pill used (the T key lands there). Every page that existed before is a pill of one section; nothing was dropped. The page
+numbers (`sidecar_ui_show`, the Rytm's UP + T requests in `voice_pi`) are unchanged.
+
+| section | pills | what a pill is |
+|---|---|---|
+| T1 HOME | Overview, Status, Project | Overview is today's home page, Status the SIDECAR STATUS page, Project the PROJECT page (bundles) |
+| T2 SEQ | (own row) | the pattern editor; its header row holds the tracks (T9 / T10 ...), the pattern's pages and RYTM |
+| T3 PAT | (own row) | the Rytm's pattern, read only; its header row holds the pages 1 2 3 4 ALL and SEQ |
+| T4 VOICE | Sound, Insert, Source, Scope | VOICE; INSERT FX (moved here from FX); the machine view with POOL, PRESET, CHOP and SAMPLE EDIT under it; SCOPE |
+| T5 FX | Sends, Master, (Morph), XY | Send FX (moved here from Settings); MASTER FX; MORPH (only in a build with `SIDECAR_MORPH`); the XY pad |
+| T6 SONG | Timeline, Setup | the timeline; the MIDI CONFIG how-to (the CFG key became the pill) |
+| T7 REC | Record, Takes | the recorder; its takes list (the TAKES key became the pill) |
+| T8 SET | Sound, MIDI, Display, Pool, System, About | the settings pages (Send FX moved out; the touch test and calibration stay on Display, power and service on System) |
+
+`show_page` is the one place that knows it: a page maps to its section and pill (`page_sec`, `page_pill`), lights the section's key, shows that
+section's row (`SEG_SUB + section`, built by `sub_build`), lights the pill and stores it as the section's memory. SONG's Setup and REC's Takes
+are views of their page (`sidecar_song_explain`, `sidecar_rec_takes`), so their pill follows the view (also when a dialog's CANCEL closes it).
+POOL and PRESET light VOICE > Source when the machine view opened them, else SET > Pool.
+
+**Room.** The row takes 58 px (OLED 25 dots) of the 428 the pages had, so every page below it lays itself out for `TH->pdy` = `TH->dy` less that
+(the pages stretch with it, as they stretch with `dy` at 1024x600), and starts at y 110 (OLED: the page's title bar stays on top and everything
+else of the page moves down by 25 dots, `oled_under_row`). The settings pages start at 110, HOME's panels at 110. The lists of the machine view,
+POOL and PRESET have rows of 25 px (OLED 15 dots) at 800x480 so the ten rows still fit; a REC take list shows five rows at 800x480.
+MASTER FX and MORPH have their numbers in `LU ()` now, which they did not (they failed the `bounds` check at every theme before).
+
+**Themes.** SIDECAR draws the pills as its keys, SQUARE and GUIDE as sharp boxes (GUIDE: sharing one line), OLED as its dotted keys, the lit one
+inverted. FX > Sends follows the board: two FX cards (name, POST / PRE, the BASE and WIDTH dials with their values), the Kill tails card and the
+send levels; GUIDE's hint line is the 11 px status line at the bottom left.
 
 ## Components
 
