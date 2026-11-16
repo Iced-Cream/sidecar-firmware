@@ -52,6 +52,7 @@ void sidecar_insfx_show (int on);
 int sidecar_insfx_shown (void);
 void sidecar_insfx_set (const sidecar_insfx_view_t *v);	// copied; cheap when gen is unchanged
 int sidecar_insfx_voice (void);				// the voice shown now
+int sidecar_insfx_hit (int what, int *x, int *y);	// a key's middle (tests): voice key 0 (0), slot A's TYPE (1), OUT (2); 1: given
 
 #ifdef __cplusplus
 }

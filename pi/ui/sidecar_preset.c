@@ -28,7 +28,7 @@ static uint32_t c_bg (void) { return oled () ? TH->bg : TH->win; }
 static const char *kName[2] = {"JUNO", "6-OP FM"};
 static const char *kTag[2] = {"juno", "fm"};
 
-static int row_h (void) { return oled () ? LU (TH->dy ? 18 : 15) : LU (TH->dy ? 31 : 25); }	// (800x480: the page lost the sub-page row's height: ten rows still fit)
+static int row_h (void) { return oled () ? LU (18) : LU (36); }	// (0.5.1: a touch target of 36 px, 18 dots; at 800x480 fewer rows show below the sub-page row, the list scrolls)
 static int bar_w (void) { return oled () ? LU (5) : LU (8); }
 static int hdr (void) { return s_bIndex ? 2 : 1; }			// the tab row, in the index the path row too
 static int nvis (void) { return lv_obj_get_height (s_List) / row_h (); }

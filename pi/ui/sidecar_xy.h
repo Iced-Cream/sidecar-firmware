@@ -50,6 +50,21 @@ void sidecar_xy_set_command (sidecar_xy_command_t fn);
 void sidecar_xy_show (int on);
 int sidecar_xy_shown (void);
 void sidecar_xy_set (const sidecar_xy_view_t *v);	// copied; cheap when gen is unchanged
+// 0.5.1 HOME > Perform: the same pad, its HOLD and SETUP keys and the slots' list on the page's own parent (rectangles x, y, w, h in
+// the parent's coordinates); SETUP calls setup (the page opens FX > XY on its setup). The view is wanted while the XY page, Perform
+// or HOME > Overview (its XY tile: HOLD and the first targets) shows: sidecar_xy_wanted () is what the engine's feed asks.
+typedef struct
+{
+	int	pad[4], hold[4], setup_key[4], list[4];	// the list's rectangle is in list_parent's coordinates
+	void	*list_parent;
+	void	(*setup) (void);
+} sidecar_xy_perform_t;
+void sidecar_xy_perform_create (void *parent, const sidecar_xy_perform_t *g);	// after sidecar_xy_create
+void sidecar_xy_perform_show (int on);
+void sidecar_xy_overview (int on);
+int sidecar_xy_wanted (void);
+int sidecar_xy_perform_hit (int what, int *x, int *y, int *w, int *h);	// Perform's pad (0), HOLD (1), SETUP (2) in UI coordinates (tests)
+void sidecar_xy_axes (char *x, char *y, int cap);	// the first target of X and of Y as the screens name it, "" none
 // the page's own state (the host's screenshots, tests)
 void sidecar_xy_setup (int on);				// SETUP (1) or the pad (0)
 int sidecar_xy_setup_shown (void);

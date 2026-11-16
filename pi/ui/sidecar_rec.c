@@ -769,8 +769,8 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		static const char *const kH[4] = {"TAKE", "LENGTH", "SIZE", "FILES"};
 		const int hx[4] = {3, LU (150) + dx / 3, LU (202) + dx / 2, LU (258) + 2 * dx / 3};
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], 1, mi, TH->faint, kH[k]);
-		const int rh = pitch ();
-		s_nRowH = rh;
+		const int rh = pitch () < LU (18) ? LU (18) : pitch (), fit = (H - LU (62) - 10) / rh;	// (0.5.1: 18 dots a row at least; 800x480 shows seven)
+		s_nRows = fit < TROWS ? fit : TROWS, s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{
 			int y = 10 + i * rh, ty = y + (rh - 11) / 2 + 1;

@@ -220,7 +220,7 @@ enum { M_REPLACE, M_UNLOAD, M_ACCEPT, M_CANCEL };
 #define UNLOAD_PER	19			// rows a command ("pool=inst:unload:" + "A010:yes," each: the console's 191)
 #define UNLOAD_CMDS	8			// commands a tap (the control core's queue holds 16)
 
-static int row_h (void) { return oled () ? LU (TH->dy ? 18 : 15) : LU (TH->dy ? 31 : 25); }	// (800x480: the page lost the sub-page row's height: ten rows still fit)
+static int row_h (void) { return oled () ? LU (18) : LU (36); }	// (0.5.1: a touch target of 36 px, 18 dots; at 800x480 fewer rows show below the sub-page row, the list scrolls)
 static int bar_w (void) { return oled () ? LU (5) : LU (8); }
 static int hdr (void) { return s_bLib ? 0 : s_bPage ? 2 : 1; }	// the tab rows on top (not scrolled)
 static int nvis (void) { return lv_obj_get_height (s_List) / row_h (); }
@@ -828,6 +828,7 @@ int sidecar_wgview_bank (void) { return s_nBank; }
 int sidecar_wgview_pool_page_shown (void) { return s_Page && s_bPage; }
 int sidecar_wgview_page_list (void) { return s_nPageList; }
 int sidecar_wgview_list_id (void) { return cur_list (); }
+int sidecar_wgview_rows (int *top, int *head) { *top = s_nTop < 0 ? 0 : s_nTop, *head = hdr (); return rows_shown (); }
 int sidecar_wgview_selecting (void) { return s_bList && s_bSelect; }
 int sidecar_wgview_target (void) { return s_bLib ? s_nTarget : -1; }
 const char *sidecar_wgview_message (void) { return s_nAsk ? s_Ask1 : s_Msg; }

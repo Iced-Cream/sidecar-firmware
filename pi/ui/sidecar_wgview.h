@@ -138,6 +138,7 @@ int sidecar_wgview_selecting (void);			// SELECT UNUSED on (the provider fills u
 int sidecar_wgview_target (void);			// the code FILES fills (-1 none)
 const char *sidecar_wgview_message (void);		// the message row ("" none), the confirm's question while it asks
 int sidecar_wgview_asking (void);			// a confirm (P3) or a row's menu is open: 1 confirm, 2 menu
+int sidecar_wgview_rows (int *top, int *head);		// the list's rows shown now (tests): the first one's index, the tab rows above it
 
 #ifdef __cplusplus
 }

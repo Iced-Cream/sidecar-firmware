@@ -145,7 +145,7 @@ static int mod_page (void)
 {
 	switch (sidecar_ui_page ())
 	{
-	case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 16: case 23: return 0;
+	case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 16: case 23: case 24: return 0;
 	}
 	return 1;
 }
@@ -331,6 +331,7 @@ static void status_init (int style)
 	s.ui_contrast = s_nContrastSt;
 	s.poly = 1u << 7;		// RS/CP (voice 7, WAVE): a poly track
 	s.pattern = 3, s.transport = 1;	// A04 playing (HOME's NOW)
+	{ static const int vl[8] = {38, 64, 140, 120, 22, 57, 93, 210}; for (int v = 0; v < 8; v++) s.vload[v] = vl[v]; }	// HOME's voice tiles: tenths of a percent
 	s_St = s;
 }
 
@@ -1119,6 +1120,20 @@ static void sedit_fake (int mode)
 }
 
 static void contrast_check (void);
+// the machine view's list: its i-th row as counted from the list's top (the tab rows first), y on the screen; a row below or
+// above the rows shown is brought in with DOWN / UP first (0.5.1: 36 px rows, at 800x480 fewer than the list has show)
+static int wg_list_y (int i, int wly, int wlr)
+{
+	const int o = TH->id == THEME_OLED;
+	int top, head, n = sidecar_wgview_rows (&top, &head);
+	for (int k = 0; k < 16 && i >= head && (i - head < top || i - head >= top + n); k++)
+	{
+		tap (i - head < top ? (o ? (LU (84) + DX / 4) / 2 : LU (16) + (LU (140) + DX / 4) / 2) : WG_DN_X, WG_KY);
+		n = sidecar_wgview_rows (&top, &head);
+	}
+	return wly + (i < head ? i : head + i - head - top) * wlr + wlr / 2;
+}
+
 static void theme_run (int style, const char *pre)
 {
 	snprintf (s_Pre, sizeof s_Pre, "%s", pre);
@@ -1195,10 +1210,10 @@ static void theme_run (int style, const char *pre)
 	{
 	// the POOL (core/lib/pools.h): the list's rows below a tab row (the POOL page: two), FILES aimed at a row, a row's
 	// menu (a long press), the P3 confirm, the message row (UNDO), SELECT UNUSED
-	const int wlr = o ? LU (TH->dy ? 18 : 15) : LU (TH->dy ? 31 : 25), wly = o ? LU (16) : LU (52) + LU (44), wlx = o ? LU (150) : LU (24) + LU (200), lh = (o ? LU (180) : LU (310)) + DY;
+	const int wlr = o ? LU (18) : LU (36), wly = o ? LU (16) : LU (52) + LU (44), wlx = o ? LU (150) : LU (24) + LU (200), lh = (o ? LU (180) : LU (310)) + DY;
 	const int tx0 = o ? 0 : LU (24), rw = (o ? LU (352) - LU (5) : LU (752) - LU (8)) + DX - 3, tw = rw / 8, tw5 = rw / 5;
 	const int yes_x = tx0 + (o ? LU (8) : LU (40)) + LU (12), no_x = tx0 + rw - (o ? LU (8) : LU (40)) - LU (12);
-#define WG_ROW(i)	(wly + (i) * wlr + wlr / 2)				// the list area's i-th row
+#define WG_ROW(i)	wg_list_y (i, wly, wlr)				// the list area's i-th row (counted from the list's top: scrolled to it)
 #define WG_BOX(n, j)	(wly + (lh - (n) * wlr) / 2 + (j) * wlr + wlr / 2)	// the box of n rows' j-th
 #define WG_MSG		(wly + (lh / wlr - 1) * wlr + wlr / 2)			// the message row
 #define WG_PUSH()	do { wg_fake (s_Wg.kind, 0.3); sidecar_wgview_set (&s_Wg); run (2); } while (0)
@@ -1417,8 +1432,7 @@ static void theme_run (int style, const char *pre)
 	sidecar_ui_show (0); run (2);
 	{
 		const char *keep = s_St.track[6];
-#define CYCB_TAP() do { if (o) { int cw = (LU (352) + DX - LU (4)) / 2, kp = (LU (106) + PDY / 2 - LU (14)) / 4, kw = (cw - LU (8)) / 2; tap (3 + kw + 2 + kw / 2, LU (40) + LU (12) + 3 * kp + kp / 2); } \
-			else { int tw = LU (476) + DX * 3 / 4, kw = (tw - LU (36)) / 2, kp = LU (48) + PDY / 8; tap (LU (12) + LU (12) + kw + LU (10) + kw / 2, LU (110) + LU (32) + 3 * kp + kp / 2); } } while (0)	// CY/CB: voice 6
+#define CYCB_TAP() do { int hx_, hy_; EXPECT (sidecar_ui_home_hit (sidecar_ui_voice_pos (6), &hx_, &hy_)); tap (hx_, hy_); } while (0)	// CY/CB: voice 6
 		s_St.track[6] = "MULTI"; sidecar_ui_status (&s_St); run (2);
 		CYCB_TAP ();
 		EXPECT (sidecar_ui_page () == 8); EXPECT_CMD ("voicepick=10");
@@ -1561,18 +1575,52 @@ static void theme_run (int style, const char *pre)
 		sidecar_ui_show (pg);
 		EXPECT (!sidecar_xy_shown ());
 	}
-	EXPECT (sidecar_insfx_voice () == 2);
+	// 0.5.1 HOME: Overview (the XY tile and the send FX tiles open their pages) and Perform (the pad, HOLD, SETUP, the quick keys)
 	{
-		int e = DY / 6, sp = o ? LU (177) + DX / 2 : LU (380) + DX / 2;
-		if (o) tap (sp / 2, LU (41) + e + (LU (21) + e) / 2); else tap (LU (24) + (sp - LU (8)) / 2, LU (52) + LU (96) + e + (LU (40) + e / 2) / 2);
-	}			// slot A's TYPE: FILTER -> the next
-	EXPECT_CMD ("ins=V3:A:type:CRUSH");
-	{	// the OUT key (voice 3 on POST): the next route, TRK
-		int e = DY / 6;
-		if (o) tap (LU (35), LU (136) + 3 * e + 3 * (LU (16) + e / 2) + LU (4)); else tap (LU (24) + LU (70), LU (52) + LU (286) + 3 * e + 3 * (LU (28) + e) + LU (11));
+		int pg = sidecar_ui_page (), hx, hy, px, py, pw, ph;
+		sidecar_ui_show (0); run (2);
+		EXPECT (sidecar_xy_wanted () && !sidecar_xy_shown ());		// (the view is built for the XY tile)
+		xy_fake (4, 1, 1); sidecar_xy_set (&s_Xy); s_Last[0] = 0; sidecar_ui_status (&s_St); run (2); shot ("home-overview");
+		s_St.vmuted[6] = 1, s_St.underruns = 3; sidecar_ui_status (&s_St); run (2); shot ("home-overview-trouble");
+		s_St.vmuted[6] = 0, s_St.underruns = 0; sidecar_ui_status (&s_St); run (2);
+		EXPECT (sidecar_ui_home_hit (9, &hx, &hy)); tap (hx, hy);	// the XY tile: Perform
+		EXPECT (sidecar_ui_page () == 24 && sidecar_xy_wanted () && !sidecar_xy_shown ());
+		sidecar_ui_show (0); run (2);
+		EXPECT (sidecar_ui_home_hit (10, &hx, &hy)); tap (hx, hy);	// a send FX tile: FX > Sends
+		EXPECT (sidecar_ui_page () == 2);
+		sidecar_ui_show (0); run (2);
+		tap_raw (SUBX (4, 3), SUBY);					// the Perform pill
+		EXPECT (sidecar_ui_page () == 24 && sidecar_xy_wanted ());
+		xy_fake (4, 0, 0); sidecar_xy_set (&s_Xy); run (2); shot ("home-perform");
+		EXPECT (sidecar_xy_perform_hit (0, &px, &py, &pw, &ph) && pw > 100 && ph > 100);
+		int n0 = s_nXyPos;
+		drag (px + pw / 8, py + ph * 7 / 8, px + pw * 3 / 4, py + ph / 4, 10, "home-perform-drag");	// live, as the XY page
+		EXPECT (s_nXyPos - n0 >= 3);
+		run (2);
+		EXPECT (sidecar_xy_perform_hit (1, &px, &py, &pw, &ph)); tap (px + pw / 2, py + ph / 2);
+		EXPECT_CMD ("xy=hold:1");
+		xy_fake (4, 1, 1); sidecar_xy_set (&s_Xy); run (2); shot ("home-perform-hold");
+		EXPECT (sidecar_ui_home_hit (16, &hx, &hy)); tap (hx, hy);
+		EXPECT_CMD ("killfx");
+		s_St.rec = 2; sidecar_ui_status (&s_St); run (2);
+		EXPECT (sidecar_ui_home_hit (15, &hx, &hy)); tap (hx, hy);		// a take running: REC stops it
+		EXPECT_CMD ("rec=stop");
+		s_St.rec = 0; sidecar_ui_status (&s_St); run (2);
+		tap (hx, hy); EXPECT (sidecar_ui_page () == 11);			// idle: the REC page (its warnings)
+		sidecar_ui_show (24); run (2);
+		EXPECT (sidecar_xy_perform_hit (2, &px, &py, &pw, &ph)); tap (px + pw / 2, py + ph / 2);	// SETUP: the XY page's setup
+		EXPECT (sidecar_ui_page () == 22 && sidecar_xy_setup_shown ());
+		sidecar_xy_setup (0);
+		sidecar_ui_show (4); run (2);
+		EXPECT (!sidecar_xy_wanted ());
+		sidecar_ui_show (pg);
 	}
+	EXPECT (sidecar_insfx_voice () == 2);
+	{ int hx, hy; EXPECT (sidecar_insfx_hit (1, &hx, &hy)); tap_raw (hx, hy); }			// slot A's TYPE: FILTER -> the next
+	EXPECT_CMD ("ins=V3:A:type:CRUSH");
+	{ int hx, hy; EXPECT (sidecar_insfx_hit (2, &hx, &hy)); tap_raw (hx, hy); }	// the OUT key (voice 3 on POST): the next route, TRK
 	EXPECT_CMD ("out=V3:trk");
-	if (o) tap (LU (20), LU (16) + (LU (21) + DY / 6) / 2); else tap (LU (24) + LU (47), LU (52) + LU (44) + (LU (40) + DY / 12) / 2);			// V1: another voice (nothing set)
+	{ int hx, hy; EXPECT (sidecar_insfx_hit (0, &hx, &hy)); tap_raw (hx, hy); }		// V1: another voice (nothing set)
 	EXPECT (sidecar_insfx_voice () == 0);
 	run (2); shot ("insfx-empty");
 	// the SONG page: a take replaying (the playhead), recording, the replay's confirmation, the how-to, zoomed in
@@ -1645,7 +1693,7 @@ static void theme_run (int style, const char *pre)
 		run (2); shot ("rec-takes");
 		{	// playback: a tap on a take plays / pauses it, STOP resets; the playing row's glyph, frame and bar
 			const int rx = o ? LU (100) : LU (300), stop_x = arm_x;
-			const int rh0 = o ? ph : (LU (312) + DY) / ((LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8);
+			const int rh0 = o ? (ph < LU (18) ? LU (18) : ph) : (LU (312) + DY) / ((LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8);
 #define REC_RY(i) (o ? LU (62) + LU (10) + (i) * rh0 + rh0 / 2 : LU (52) + LU (72) + LU (34) + (i) * rh0 + rh0 / 2)
 			tap (rx, REC_RY (0)); EXPECT_CMD ("play=toggle:take_004");
 			tap (rx, REC_RY (2)); EXPECT_CMD ("play=toggle:take_002");
@@ -1661,7 +1709,7 @@ static void theme_run (int style, const char *pre)
 			rec_fake (SRV_IDLE, 3723, 2); sidecar_rec_set (&s_Rv); run (2);
 #undef REC_RY
 		}
-		const int dl_x = o ? Wd - LU (24) : Wd - LU (74), rh = o ? ph : (LU (312) + DY) / ((LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8);
+		const int dl_x = o ? Wd - LU (24) : Wd - LU (74), rh = o ? (ph < LU (18) ? LU (18) : ph) : (LU (312) + DY) / ((LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8);
 #define REC_DY(i) (o ? LU (62) + LU (10) + (i) * rh + rh / 2 : LU (52) + LU (72) + LU (34) + (i) * rh + rh / 2)
 		snprintf (s_Last, sizeof s_Last, "none");
 		tap (dl_x, REC_DY (1));
@@ -1696,7 +1744,7 @@ static void theme_run (int style, const char *pre)
 		}
 		{	// 5d: many takes, newest first: a vertical drag scrolls them a row at a time (the header says which show)
 			char want[96];
-			const int rx = o ? LU (100) : LU (300), nr = o ? 8 : (LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8;
+			const int rx = o ? LU (100) : LU (300), nr = o ? ((TH->h - LU (25) - LU (62) - 10) / rh < 8 ? (TH->h - LU (25) - LU (62) - 10) / rh : 8) : (LU (312) + DY) / LU (40) < 8 ? (LU (312) + DY) / LU (40) : 8;
 			s_RecMany = 1;
 			rec_play (SRV_IDLE, 83, 2);
 			tap_raw (SUBX (2, sidecar_rec_takes_shown () ? 0 : 1), SUBY);		// the Record / Takes pills
@@ -1765,7 +1813,7 @@ static void theme_run (int style, const char *pre)
 #undef REC_DY
 		// the home page's REC status opens it
 		sidecar_ui_show (0); run (2);
-		if (o) tap (OW_HIT_X, LU (6)); else tap (LU (24) + LU (476) + DX * 3 / 4 + (LU (800) + DX - LU (12) - (LU (24) + LU (476) + DX * 3 / 4)) - LU (75), LU (110) + LU (70) + PDY / 8 + LU (18));	// (NOW: the Recorder row)
+		if (o) tap (OW_HIT_X, LU (6)); else { int hx, hy; EXPECT (sidecar_ui_home_hit (12, &hx, &hy)); tap (hx, hy); }	// (the status line's Recorder)
 		EXPECT (sidecar_ui_page () == 11);
 	}
 
@@ -1832,8 +1880,12 @@ static void theme_run (int style, const char *pre)
 		EXPECT (!strcmp (s_Last, "chop=set:0:5:PTCH:1"));
 		EXPECT (sidecar_chop_hit (2, 1, &x, &y)); tap_raw (x, y);			// DOWN: slice 6
 		EXPECT (sidecar_chop_sel () == 5);
-		EXPECT (sidecar_chop_hit (3, 0, &x, &y)); tap_raw (x, y);			// the list's first row
-		EXPECT (sidecar_chop_sel () == 0);
+		{	// the list's first row: slice 1, or (fewer rows than six show: 800x480) the first one scrolled to
+			int nr = 0;
+			while (sidecar_chop_hit (3, nr, &x, &y)) nr++;
+			EXPECT (sidecar_chop_hit (3, 0, &x, &y)); tap_raw (x, y);
+			EXPECT (sidecar_chop_sel () == (nr > 5 ? 0 : 5 - nr + 1));
+		}
 		EXPECT (sidecar_chop_hit (1, 3, &x, &y)); tap_raw (x, y);			// GRID: the next count (32)
 		EXPECT (!strcmp (s_Last, "chop=grid:0:32"));
 		sidecar_chop_debug (5, 3, 0, 9);
@@ -1989,16 +2041,14 @@ static void theme_run (int style, const char *pre)
 	status_fake (0); sidecar_status_set (&s_Stv);
 	EXPECT (text_shown (lv_screen_active (), o ? "1500 MHZ" : "1500 MHz"));
 	sidecar_ui_show (0); run (2);
-	if (o) { int cw = (352 + DX - 4) / 2; tap (cw + LU (4) + cw / 2, LU (40) + (LU (106) + PDY / 2) / 2); }
-	else { int tw = 476 + DX * 3 / 4, sxp = 24 + tw, sw = 800 + DX - 12 - sxp; tap (sxp + sw / 2, LU (110) + LU (40)); }	// (NOW: the pattern row)
+	{ int hx, hy; EXPECT (sidecar_ui_home_hit (8, &hx, &hy)); tap (hx, hy); }	// (Now: the pattern)
 	EXPECT (sidecar_ui_page () == 13);
 
 	// ---- PROJECT (project bundles): the home page's PROJECT panel opens it; the list, the stick, the bundles, delete's
 	// confirmation (DELETE grey for a second), the progress with WAITING, the summary with a machine left out, done, failed
 	sidecar_ui_show (0); run (2);
 	snprintf (s_Last, sizeof s_Last, "none");
-	if (o) { int cw = (352 + DX - 4) / 2; tap (cw / 2, LU (40) + LU (106) + PDY / 2 + LU (3) + LU (40)); }
-	else { int lw = 380 + DX / 2, px = 24 + lw, pw = 800 + DX - 12 - px; tap (px + pw / 2, LU (110) + LU (232) + PDY / 2 + LU (12) + LU (40)); }
+	tap_raw (SUBX (4, 2), SUBY);	// HOME > Project (the 3rd of 4 pills)
 	EXPECT (sidecar_ui_page () == 14 && sidecar_project_shown () && !sidecar_status_shown ());
 	EXPECT_CMD ("bundle=list:card");
 	{

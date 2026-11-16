@@ -366,7 +366,7 @@ void sidecar_sedit_create (void *parent, int y0)
 {
 	int O = oled ();
 	int pw = th_page_w (), ph = O ? TH->h - LU (25) : LU (428) + TH->pdy;
-	int x0 = O ? 0 : LU (8), g = TH->gap, kh = LU (O ? 22 : 52) + TH->pdy / 8;
+	int x0 = O ? 0 : LU (8), g = TH->gap, kh = LU (O ? 22 : 52) + (O && TH->pdy < 0 ? 0 : TH->pdy / 8);	// (OLED at 400x240: the keys stay at the touch size, the picture gives)
 	int ky2 = ph - kh - (O ? 0 : LU (4)), ky1 = ky2 - kh - g;
 	int top = O ? LU (15) : LU (38);
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (O ? LU (25) : 0));

@@ -47,6 +47,8 @@ typedef struct
 	int		ui_style;			// the display's theme (sidecar_theme.h THEME_*: 0 OLED, 1 SIDECAR), -1: not known
 	int		ui_look;			// UX review L1: the OLED look, 0 STUDIO 1 STAGE (sidecar_dot_look), -1: not known
 	int		ui_contrast;			// 0.5.1: the SIDECAR theme's high contrast, 0 off 1 blue 2 green (uicontrast=), -1: not known
+	int		vload[SIDECAR_UI_TRACKS];	// 0.5.1 HOME: voice v's render time, tenths of a percent of one render core, -1 not known
+	unsigned char	vmuted[SIDECAR_UI_TRACKS];	// 1: the voice guard muted it (HOME's voice tile in trouble)
 	unsigned	poly;				// UX review S1: bit v - voice v plays a poly track (a POLY badge on HOME)
 	int		pattern;			// UX review T1: the Rytm's pattern 0..127 (-1 not known) and transport (0 stop,
 	int		transport;			// 1 play, 2 pause): HOME's NOW panel
@@ -92,7 +94,8 @@ void sidecar_ui_set_command (sidecar_ui_command_t fn, void *param);
 // the home page's PROJECT panel), 15 POOL (sidecar_wgview.h's POOL page: the three pool lists; Settings > Pool, or the
 // machine view's ALL POOLS), 16 SERVICE (settings), 17 CHOP (sidecar_chop.h: a CHOP voice's page; VOICE on a CHOP track), 18 PRESET (sidecar_preset.h: the POOL page's JUNO / 6-OP FM tabs),
 // 21 SAMPLE EDIT (sidecar_sedit.h: shown while the sample editor has an edit open), 22 XY PAD (sidecar_xy.h: Send FX > XY),
-// 23 settings/MIDI (0.5.0: the keyboards' route, auto channel, computer notes; MIDI learn's routes)
+// 23 settings/MIDI (0.5.0: the keyboards' route, auto channel, computer notes; MIDI learn's routes),
+// 24 HOME > Perform (0.5.1: the XY pad with HOLD and SETUP, the targets, kill tails and REC; sidecar_xy.h's second pad); page 0 is HOME > Overview
 void sidecar_ui_show (int page);
 // UX review N3: the Rytm's UP held alone: the UP + T map over the screen (0: gone); cheap when unchanged
 void sidecar_ui_combo_map (int on);
@@ -106,6 +109,7 @@ int sidecar_ui_nav_lit (void);					// the navigation key lit for it (-1: none; t
 // key ("T1"; "" when the device has no key for that page) - the tests hold the two to the same order (pi/ui/host/shot.c)
 const char *sidecar_ui_nav_page (int i);
 const char *sidecar_ui_nav_key (int i);
+int sidecar_ui_home_hit (int what, int *x, int *y);		// HOME's tiles (tests): 0..7 voices, 8 Now, 9 XY, 10 / 11 send FX, 12 recorder, 13 health, 14 links, 15 Perform's REC, 16 its Kill tails; 1: given
 unsigned sidecar_ui_taps (void);				// the touch test's TAP count (tests)
 int sidecar_ui_touch_test_shown (void);				// HOME shows the touch test (until the first tap)
 

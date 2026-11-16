@@ -62,32 +62,37 @@ void sidecar_insfx_create (void *parent, int y0)
 	int o = oled ();
 	s_nGen = ~0u, s_nShown = -1;
 	memset (&s_V, 0, sizeof s_V);
-	// 1024x600 (TH->dx, dy): the same rows, wider, the keys and knobs a little taller (e)
-	const int dx = TH->dx, dy = TH->pdy, e = dy / 6;
+	// 1024x600 (TH->dx, dy): the same rows, wider, the keys and knobs a little taller (e). 0.5.1: below the sub-page row the page has
+	// 58 px (25 dots) less than it had; the keys stay at the touch size (44 px, OLED 21 dots) and the title shares the voice
+	// keys' row, so the rows below are a little tighter (the knobs shorter) instead
+	const int dx = TH->dx, dy = TH->pdy, e = TH->dy / 6;
+	const int K = (o ? LU (22) : LU (44)) + e / 2;			// a key
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, th_page_w (), o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
 	{
-		const int sp = LU (177) + dx / 2, kp = LU (44) + dx / 8;
+		const int sp = LU (177) + dx / 2, kp = LU (44) + dx / 8, g = LU (3);
+		const int yv = LU (16), yt = yv + K + g, yk = yt + K + g, hk = LU (46) + e, yval = yk + hk + 1, ys = yval + LU (9), pit = LU (14) + e / 2;
+		const int yo = ys + 3 * pit + LU (2);
 		s_TitleBar = th_titlebar (pg, 0, 0, LU (352) + dx, LU (13));
 		th_titlebar_set (s_TitleBar, "INSERT FX", "", 0);
 		s_Title = 0;
-		s_Voice = th_seg (pg, 0, LU (16), LU (352) + dx, LU (21) + e, voice_map (), TH_KEY | TH_KEY_SMALL, voice_cb, 0);
+		s_Voice = th_seg (pg, 0, yv, LU (352) + dx, K, voice_map (), TH_KEY | TH_KEY_SMALL, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
-			s_Type[s] = th_key (pg, s * sp, LU (41) + e, sp - 2, LU (21) + e, "A OFF", TH_KEY | TH_KEY_SMALL, type_cb, (void *) (intptr_t) s);
+			s_Type[s] = th_key (pg, s * sp, yt, sp - 2, K, "A OFF", TH_KEY | TH_KEY_SMALL, type_cb, (void *) (intptr_t) s);
 			for (int k = 0; k < 4; k++)
 			{
 				int i = s * 4 + k, x = s * sp + k * kp;
-				s_Knob[i] = th_meter (pg, x, LU (66) + 2 * e, kp - 2, LU (51) + e, 127, TH_METER_KNOB, s ? TH->ink : th_oled_secondary (127));
-				s_Val[i] = th_label (pg, x, LU (118) + 3 * e, TH->f_micro, TH->dim, "");
+				s_Knob[i] = th_meter (pg, x, yk, kp - 2, hk, 127, TH_METER_KNOB, s ? TH->ink : th_oled_secondary (127));
+				s_Val[i] = th_label (pg, x, yval, TH->f_micro, TH->dim, "");
 				lv_obj_set_width (s_Val[i], kp - 1);
 				lv_obj_set_style_text_align (s_Val[i], LV_TEXT_ALIGN_CENTER, 0);
 			}
 		}
 		for (int b = 0; b < 3; b++)
 		{
-			const int y = LU (136) + 3 * e + b * (LU (16) + e / 2);
+			const int y = ys + b * pit;
 			s_SendL[b] = th_label (pg, 0, y, TH->f_micro, TH->dim, "");
 			lv_obj_set_width (s_SendL[b], LU (72));
 			s_Send[b] = th_meter (pg, LU (74), y + 1, LU (76) + dx / 2, LU (7), 127, TH_METER_H, TH->ink);
@@ -95,42 +100,46 @@ void sidecar_insfx_create (void *parent, int y0)
 			lv_obj_set_width (s_Bus[b], LU (194) + dx / 2);
 		}
 		{	// the OUT row
-			const int y = LU (136) + 3 * e + 3 * (LU (16) + e / 2), g = LU (76) + dx / 6;
-			s_Out = th_key (pg, 0, y - 2, LU (70), LU (13) + e / 2, "OUT TRK", TH_KEY | TH_KEY_SMALL, out_cb, 0);
+			const int y = yo + (K - LU (7)) / 2, g2 = LU (76) + dx / 6;
+			s_Out = th_key (pg, 0, yo, LU (70), K, "OUT TRK", TH_KEY | TH_KEY_SMALL, out_cb, 0);
 			for (int k = 0; k < 3; k++)
 			{
-				s_OutL[k] = th_label (pg, LU (74) + k * g, y, TH->f_micro, TH->dim, "");
+				s_OutL[k] = th_label (pg, LU (74) + k * g2, y, TH->f_micro, TH->dim, "");
 				lv_obj_set_width (s_OutL[k], LU (40));
-				s_OutM[k] = th_meter (pg, LU (116) + k * g, y + 1, g - LU (46), LU (7), 127, TH_METER_H, TH->ink);
+				s_OutM[k] = th_meter (pg, LU (116) + k * g2, y + 1, g2 - LU (46), LU (7), 127, TH_METER_H, TH->ink);
 			}
 			for (int c = 0; c < 2; c++)
-				s_Pk[c] = th_meter (pg, LU (74) + 3 * g, y + c * 5, LU (352) + dx - (LU (74) + 3 * g), 3, 127, TH_METER_H, th_oled_secondary (127));
+				s_Pk[c] = th_meter (pg, LU (74) + 3 * g2, y + c * 5, LU (352) + dx - (LU (74) + 3 * g2), 3, 127, TH_METER_H, th_oled_secondary (127));
 		}
-		s_Info = th_label (pg, 0, LU (206) + dy, TH->f_micro, TH->faint, "");
+		s_Info = th_label (pg, 0, yo + K + LU (3), TH->f_micro, TH->faint, "");
 		lv_obj_set_width (s_Info, LU (352) + dx);
 	}
 	else
 	{
-		const int sp = LU (380) + dx / 2, kp = LU (94) + dx / 8;
+		const int sp = LU (380) + dx / 2, kp = LU (94) + dx / 8, g = LU (8);
+		const int yv = LU (12), yt = yv + K + g, yk = yt + K + g, hk = LU (84) + e, yval = yk + hk + 2, ys = yval + LU (18), pit = LU (22) + e / 2;
+		const int yo = ys + 3 * pit + LU (2);
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "INSERT FX");
-		s_Voice = th_seg (pg, LU (24), LU (44), LU (752) + dx, LU (40) + e / 2, voice_map (), TH_KEY, voice_cb, 0);
+		s_Title = th_label (pg, LU (24), yv + (K - TH->f_mid->line_height) / 2, TH->f_mid, TH->win_ink, "INSERT FX");
+		lv_obj_set_width (s_Title, LU (276));
+		lv_label_set_long_mode (s_Title, LV_LABEL_LONG_MODE_CLIP);
+		s_Voice = th_seg (pg, LU (304), yv, LU (472) + dx, K, voice_map (), TH_KEY, voice_cb, 0);
 		for (int s = 0; s < 2; s++)
 		{
-			s_Type[s] = th_key (pg, LU (24) + s * sp, LU (96) + e, sp - LU (8), LU (40) + e / 2, "A OFF", TH_KEY, type_cb, (void *) (intptr_t) s);
+			s_Type[s] = th_key (pg, LU (24) + s * sp, yt, sp - LU (8), K, "A OFF", TH_KEY, type_cb, (void *) (intptr_t) s);
 			for (int k = 0; k < 4; k++)
 			{
 				int i = s * 4 + k, x = 24 + s * sp + k * kp;
-				s_Knob[i] = th_meter (pg, x, LU (146) + e + e / 2, kp - LU (8), LU (110) + e, 127, TH_METER_KNOB, TH->accent);
-				s_Val[i] = th_label (pg, x, LU (258) + 2 * e + e / 2, TH->f_small, TH->win_dim, "");
+				s_Knob[i] = th_meter (pg, x, yk, kp - LU (8), hk, 127, TH_METER_KNOB, TH->accent);
+				s_Val[i] = th_label (pg, x, yval, TH->f_small, TH->win_dim, "");
 				lv_obj_set_width (s_Val[i], kp - LU (8));
 				lv_obj_set_style_text_align (s_Val[i], LV_TEXT_ALIGN_CENTER, 0);
 			}
 		}
 		for (int b = 0; b < 3; b++)
 		{
-			const int y = LU (286) + 3 * e + b * (LU (28) + e);
+			const int y = ys + b * pit;
 			s_SendL[b] = th_label (pg, LU (24), y, TH->f_body, TH->win_ink, "");
 			lv_obj_set_width (s_SendL[b], LU (200));
 			s_Send[b] = th_meter (pg, LU (230), y + LU (4), LU (200) + dx / 2, LU (14), 127, TH_METER_H, TH->win_ink);
@@ -138,18 +147,18 @@ void sidecar_insfx_create (void *parent, int y0)
 			lv_obj_set_width (s_Bus[b], LU (326) + dx / 2);
 		}
 		{	// the OUT row
-			const int y = LU (286) + 3 * e + 3 * (LU (28) + e), g = LU (160) + dx / 6;
-			s_Out = th_key (pg, LU (24), y - 2, LU (140), LU (26) + e / 4, "OUT TRK", TH_KEY, out_cb, 0);
+			const int y = yo + (K - LU (16)) / 2, g2 = LU (160) + dx / 6;
+			s_Out = th_key (pg, LU (24), yo, LU (140), K, "OUT TRK", TH_KEY, out_cb, 0);
 			for (int k = 0; k < 3; k++)
 			{
-				s_OutL[k] = th_label (pg, LU (176) + k * g, y + 2, TH->f_small, TH->win_ink, "");
+				s_OutL[k] = th_label (pg, LU (176) + k * g2, y, TH->f_small, TH->win_ink, "");
 				lv_obj_set_width (s_OutL[k], LU (74));
-				s_OutM[k] = th_meter (pg, LU (252) + k * g, y + LU (6), g - LU (84), LU (10), 127, TH_METER_H, TH->win_ink);
+				s_OutM[k] = th_meter (pg, LU (252) + k * g2, y + LU (4), g2 - LU (84), LU (10), 127, TH_METER_H, TH->win_ink);
 			}
 			for (int c = 0; c < 2; c++)
-				s_Pk[c] = th_meter (pg, LU (176) + 3 * g, y + 2 + c * LU (12), LU (776) + dx - (LU (176) + 3 * g), LU (8), 127, TH_METER_H, TH->win_ink);
+				s_Pk[c] = th_meter (pg, LU (176) + 3 * g2, y + c * LU (12), LU (776) + dx - (LU (176) + 3 * g2), LU (8), 127, TH_METER_H, TH->win_ink);
 		}
-		s_Info = th_label (pg, LU (24), LU (402) + dy, TH->f_small, TH->win_dim, "");
+		s_Info = th_label (pg, LU (24), yo + K + LU (4), TH->f_small, TH->win_dim, "");
 		lv_obj_set_width (s_Info, LU (752) + dx);
 	}
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
@@ -165,6 +174,15 @@ void sidecar_insfx_show (int on)
 
 int sidecar_insfx_shown (void) { return s_Page && !lv_obj_has_flag (s_Page, LV_OBJ_FLAG_HIDDEN); }
 int sidecar_insfx_voice (void) { return s_nVoice; }
+int sidecar_insfx_hit (int what, int *x, int *y)	// the middle of a key: voice key 0 (0), slot A's TYPE (1), OUT (2); UI coordinates
+{
+	lv_obj_t *o = what == 0 ? (s_Voice ? th_seg_item (s_Voice, 0) : 0) : what == 1 ? s_Type[0] : what == 2 ? s_Out : 0;
+	if (!o) return 0;
+	lv_area_t c;
+	lv_obj_get_coords (o, &c);
+	*x = (c.x1 + c.x2) / 2, *y = (c.y1 + c.y2) / 2;
+	return 1;
+}
 
 static void refresh (int all)
 {
@@ -178,7 +196,13 @@ static void refresh (int all)
 	}
 	lv_snprintf (r, sizeof r, "%s  KNOBS ON %s", sidecar_ui_voice (vi), sidecar_ui_box_up ());	// T10: the knobs mirror the Rytm's (read only here)
 	if (s_TitleBar) th_titlebar_set (s_TitleBar, "INSERT FX", r, 0);
-	else { lv_snprintf (t, sizeof t, "INSERT FX  %s", r); th_label_set (s_Title, t); }
+	else
+	{
+		lv_snprintf (t, sizeof t, "INSERT FX  %s", r);
+		if (th_text_width (TH->f_mid, t) > (int) lv_obj_get_style_width (s_Title, 0))	// (800x480: the title shares the voice keys' row)
+			lv_snprintf (t, sizeof t, "INSERT FX  %s", sidecar_ui_voice (vi));
+		th_label_set (s_Title, t);
+	}
 	for (int s = 0; s < 2; s++)
 	{
 		const sidecar_insfx_slot_t *x = &v->slot[vi][s];

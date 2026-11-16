@@ -45,7 +45,7 @@ void sidecar_mfx_create (void *parent, int y0)
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, ink = o ? TH->ink : TH->win_ink, dim = o ? TH->dim : TH->win_dim;
-	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : LU (44), keyh = o ? LU (20) + TH->pdy / 12 : LU (38) + TH->pdy / 8;
+	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : TH->dy ? LU (44) : LU (14), keyh = o ? LU (22) + (TH->pdy > 0 ? TH->pdy / 12 : 0) : LU (44) + (TH->pdy > 0 ? TH->pdy / 8 : 0);	// (0.5.1: touch size; at 800x480 the title makes room: the sub-page row names the page)
 	const int foot = o ? LU (22) : LU (54);	// the POST EQ's line and the hint
 	if (o)
 	{
@@ -58,6 +58,7 @@ void sidecar_mfx_create (void *parent, int y0)
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), pw - LU (16), ph - LU (14), "", TH_PANEL_WINDOW);
 		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "MASTER FX");
+		if (!TH->dy) lv_obj_add_flag (s_Title, LV_OBJ_FLAG_HIDDEN);
 	}
 	// the top row: ON / BYPASS, SRC, LEV, the meters
 	const int kw = w / 4 - 4;
@@ -81,7 +82,8 @@ void sidecar_mfx_create (void *parent, int y0)
 			lv_obj_set_width (s_Lab[s][r], cw - 4);
 			s_Bar[s][r] = th_meter (pg, x, y2 + r * rh + rh - bh - 2, cw - 6, bh, 127, TH_METER_H, ink);
 		}
-		s_Pair[s] = th_key (pg, x, y2 + (ROWS - 1) * rh, cw - 4, rh - 2, "MONO", kind, pair_cb, (void *) (intptr_t) s);
+		const int py = y2 + (ROWS - 1) * rh, pk = rh - 2 < keyh ? keyh : rh - 2, room = ph - foot - py - 1;	// (0.5.1: the touch size, into the gap above the EQ line)
+		s_Pair[s] = th_key (pg, x, py, cw - 4, pk < room ? pk : room, "MONO", kind, pair_cb, (void *) (intptr_t) s);
 		lv_obj_add_flag (s_Pair[s], LV_OBJ_FLAG_HIDDEN);
 	}
 	s_Eq = th_label (pg, x0, ph - foot, f, dim, "");

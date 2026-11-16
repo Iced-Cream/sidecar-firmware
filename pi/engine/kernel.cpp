@@ -218,6 +218,7 @@ CKernel::CKernel (void)
 	memset (&m_Ui, 0, sizeof m_Ui);
 	m_Ui.screensaver = -1;
 	for (unsigned c = 0; c < SIDECAR_UI_CORES; c++) m_Ui.load[c] = -1;
+	for (unsigned v = 0; v < SIDECAR_UI_TRACKS; v++) m_Ui.vload[v] = -1;
 	// no m_ActLED.Blink (3) (the skeleton's): it held the boot 2.1 s before the first log line (measured 2026-10-16);
 	// the boot screen shows the start now
 }
@@ -2063,6 +2064,7 @@ void CKernel::LogStats (void)
 		{
 			sv.vload[v] = (int) (s.nVoice[v] * 1000 / s.nTicks);	// tenths of a percent of one render core
 			sv.muted[v] = g_Guard.Muted ((unsigned) v) ? 1 : 0;
+			if (v < SIDECAR_UI_TRACKS) m_Ui.vload[v] = sv.vload[v], m_Ui.vmuted[v] = sv.muted[v];	// HOME > Overview's voice tiles
 		}
 		for (int c = 0; c < SST_CORES; c++) sv.load[c] = m_Ui.load[c];
 		sv.block_max_us = s.nMaxBlockUs, sv.block_budget_us = bridge::kBlock * 1000000 / 48000;
@@ -2816,8 +2818,8 @@ void CKernel::Run (void)
 			{	// 0.5.0: the XY page, the same way (xypad_pi)
 				static sidecar_xy_view_t s_XyView;
 				static unsigned s_nXySeen;
-				xypad_pi::Want (sidecar_xy_shown (), sidecar_xy_picking () >= 0);	// (the picker: its names)
-				if (sidecar_xy_shown () && xypad_pi::View (&s_XyView, &s_nXySeen))
+				xypad_pi::Want (sidecar_xy_wanted () != 0, sidecar_xy_picking () >= 0);	// (the picker: its names; HOME's Overview and Perform too)
+				if (sidecar_xy_wanted () && xypad_pi::View (&s_XyView, &s_nXySeen))
 					sidecar_xy_set (&s_XyView);
 			}
 			if (sidecar_wgview_shown ())		// the machine view: ~10 frames a second, redrawn only on a change
