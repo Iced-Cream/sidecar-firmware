@@ -16,7 +16,7 @@ namespace {
 // even and unchanged across the copy (0: nothing published yet)
 sidecar_xy_view_t g_buf;
 volatile uint32_t g_n = 0;
-volatile bool g_want = false;
+volatile bool g_want = false, g_slow = false;
 volatile bool g_names = false;   // the picker is open: its name tables wanted
 bool g_named = false;            // built since it opened
 uint32_t g_ms = 0, g_names_ms = 0;
@@ -76,7 +76,7 @@ void FillView(sidecar_xy_view_t* o, bool names) {
 
 void Tick() {
   uint32_t ms = core::now_ms();
-  if (!g_want || ms - g_ms < 50) return;
+  if (!g_want || ms - g_ms < (g_slow ? 1000u : 50u)) return;
   g_ms = ms;
   if (!g_names) g_named = false;
   bool names = g_names && (!g_named || ms - g_names_ms >= 250);   // (at once when it opens, then 4 a second)
@@ -106,6 +106,7 @@ bool View(sidecar_xy_view_t* out, unsigned* seen) {
 }
 
 void Want(bool on, bool names) { g_want = on, g_names = on && names; }
+void Slow(bool on) { g_slow = on; }
 unsigned NamesBuilt() { return g_built; }
 
 bool Quiet(const char* c) {

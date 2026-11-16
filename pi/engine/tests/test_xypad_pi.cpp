@@ -122,6 +122,27 @@ int main() {
     }
     CHECK(xypad_pi::NamesBuilt() == nv);
   }
+  // slow (only HOME > Overview's tile wants it): one view a second; fast again at once when the page opens
+  {
+    xypad_pi::Slow(true);
+    g_us += 1100000, host_fake_time(true, g_us);
+    xypad_pi::Tick();
+    (void)xypad_pi::View(&a, &seen);
+    int got = 0;
+    bool h = false;
+    for (int ms = 0; ms < 3000; ms += 60) {
+      xypad::set_hold(h = !h);   // (a change each time)
+      g_us += 60000, host_fake_time(true, g_us);
+      xypad_pi::Tick();
+      got += xypad_pi::View(&a, &seen);
+    }
+    CHECK(got >= 2 && got <= 3);       // (3 s: not 50)
+    xypad_pi::Slow(false);
+    g_us += 60000, host_fake_time(true, g_us);
+    xypad_pi::Tick();
+    CHECK(xypad_pi::View(&a, &seen));
+    xypad::set_hold(false);
+  }
   xypad_pi::Want(false);
   xypad::reset();
   // a drag's lines (the pad's, the morph slider's) are not logged, and do not hold the status push back

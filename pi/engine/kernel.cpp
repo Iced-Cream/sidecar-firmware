@@ -2819,6 +2819,7 @@ void CKernel::Run (void)
 				static sidecar_xy_view_t s_XyView;
 				static unsigned s_nXySeen;
 				xypad_pi::Want (sidecar_xy_wanted () != 0, sidecar_xy_picking () >= 0);	// (the picker: its names; HOME's Overview and Perform too)
+				xypad_pi::Slow (sidecar_xy_wanted () == 2);	// (Overview's tile alone: a view a second)
 				if (sidecar_xy_wanted () && xypad_pi::View (&s_XyView, &s_nXySeen))
 					sidecar_xy_set (&s_XyView);
 			}

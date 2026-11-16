@@ -800,7 +800,9 @@ static void home_overview (lv_obj_t *h)
 	label (np, O ? LU (6) : LU (12), r1 - (O ? LU (27) : LU (44)), lab, dim, O ? "PROJECT" : "Project");
 	s_Project = label_w (np, O ? LU (6) : LU (12), r1 - (O ? LU (18) : LU (28)), nw - (O ? LU (10) : LU (24)), val, ink, "-");
 	lv_label_set_long_mode (s_Project, LV_LABEL_LONG_MODE_DOTS);
-	status_hit (np, 0, 0, nw, r1);
+	const int pjy = r1 - (O ? LU (29) : LU (48));		// the pattern and transport open STATUS, the project's lines PROJECT
+	status_hit (np, 0, 0, nw, pjy);
+	project_hit (np, 0, pjy, nw, r1 - pjy);
 
 	// PERFORM: what the pad and the send FX are doing; a tap opens that page
 	const int px = M + nw + g, pw = cw - nw - g, tg = O ? LU (3) : LU (8), ty = O ? LU (11) : THEME_IS_SQ (TH->id) ? top - LU (2) : LU (18), tw = (pw - 2 * pad - 2 * tg) / 3, th = r1 - ty - pad;

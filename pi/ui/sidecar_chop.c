@@ -367,7 +367,7 @@ static void list_cb (lv_event_t *e)
 	lv_obj_get_coords (s_List, &c);
 	int r = (p.y - c.y1 - hd_h () - 2) / row_h (), x[8], n = nf ();
 	col_x (lv_area_get_width (&c), x);
-	if (r >= 0 && s_nTop + r < s_V.n) s_nSel = s_nTop + r;
+	if (r >= 0 && r < list_rows () && s_nTop + r < s_V.n) s_nSel = s_nTop + r;	// (not the band under the last row shown)
 	for (int j = 0; j < n; j++)
 		if (p.x - c.x1 >= x[3 + j] && p.x - c.x1 < x[4 + j] && (s_nFcol / n) * n + j < SCH_FIELDS) s_nFcol = (s_nFcol / n) * n + j;
 	inval_all ();

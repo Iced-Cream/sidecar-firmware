@@ -573,7 +573,7 @@ void sidecar_xy_show (int on)
 
 int sidecar_xy_shown (void) { return s_Page && !lv_obj_has_flag (s_Page, LV_OBJ_FLAG_HIDDEN); }
 // the engine's view is built while the XY page, HOME > Perform or HOME > Overview (its XY tile) shows
-int sidecar_xy_wanted (void) { return sidecar_xy_shown () || s_bPerform || s_bOverview; }
+int sidecar_xy_wanted (void) { return sidecar_xy_shown () || s_bPerform ? 1 : s_bOverview ? 2 : 0; }	// 2: only Overview's tile (a slow feed will do)
 void sidecar_xy_overview (int on) { s_bOverview = !!on; }
 void sidecar_xy_perform_show (int on)
 {
