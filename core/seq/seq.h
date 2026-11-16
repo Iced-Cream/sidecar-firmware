@@ -415,7 +415,8 @@ void init();                                   // boot: the pattern buffers (hea
 void reset();                                  // tests: everything stopped and empty, the latency default
 bool sysex(const uint8_t* d, int len);         // a whole 2C / 2D from the Rytm (true: it was one)
 void hello(int up20 = -1);                     // the Rytm's hello (35, its uptime in 1/20 s, -1 unknown): 2E again, a resync asked
-// Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying)
+// Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying): the
+// slot in hand's (each box's own song, step 10c)
 void set_clock_tracks(uint16_t mask);
 // The arpeggiator (core/arp/arp.h): the tracks to pin as its notes are the host's, and whether it wants the clock (BD's ticks)
 void set_arp_tracks(uint16_t pins, bool clock);
@@ -459,8 +460,8 @@ int pad_oct(int vi);                           // BACKLOG 7g: the PAD OCT (-3..+
 bool owns_voice(int vi);                       // a seq track plays on voice vi now: its 0x04s make no note
 bool any_tracks();                             // a seq track is set (the mask)
 bool shown_wanted();                           // the SEQ page was asked for (seq=show, the Rytm's seq mode)
-uint64_t frames();                             // slot 0's render frames so far (pre_block's count): SONG's, the calibration's
-uint64_t frames(int s);                        // slot s's (its own pass's count): its arpeggiator's
+uint64_t frames();                             // slot 0's render frames so far (pre_block's count): the calibration's
+uint64_t frames(int s);                        // slot s's (its own pass's count): its arpeggiator's, its SONG RECORD's
 // The Rytm's trig keys / PAGE / encoders while seq mode is on or the SEQ page shows (remote.cpp routes 31 / 32 here
 // first): true when taken.
 bool ui_key(int code, bool down, bool page_shown);

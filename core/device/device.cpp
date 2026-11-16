@@ -192,6 +192,8 @@ CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
 }
 
 // The slot the bytes of transport t are for; a box's hello moves t to slot 1 (an answer kWait while another transport's box has it).
+int route_of(int t) { return t >= 0 && t < kLinks ? s_route[t] : 0; }
+
 CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
   if (t < 0 || t >= kLinks) t = 0;
   if (len < 6 || (d[4] != kCmdHello && d[4] != 0x35)) return s_route[t];   // (a Rytm's every other message: two compares)
