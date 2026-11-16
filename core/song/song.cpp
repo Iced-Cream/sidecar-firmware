@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include "device/a4.h"
 #include "device/device.h"
 #include "fmt/fmt.h"
 #include "fx/send_fx.h"
@@ -204,9 +205,13 @@ volatile uint32_t g_lanes_n[kVoiceSlots] = {};
 
 // the slot in hand (pool.h prj_slot: device::cur()'s, clamped)
 inline int sl() { return prj_slot(); }
-// the slot's box is the Rytm (slot 0): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and FILL's writer,
-// the remote UI's track tables. Another slot's box records without them (song.h "Per slot")
+// the slot's box is the Rytm (slot 0): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and FILL's writer.
+// Another slot's box records without them (song.h "Per slot")
 inline bool rytm() { return sl() == 0; }
+// the slot's box's stock dumps: the Rytm's (0x07), the A4's (0x06, traced: song.h), 0 none known (no start snapshot,
+// MIDI CONFIG read, replay or UNDO REPLAY for that box)
+inline uint8_t dev() { return rytm() ? kDevRytm : device::cur().box == &device::kA4 ? kDevA4 : 0; }
+inline const char* box_name() { return rytm() ? "the Rytm" : device::cur().box == &device::kA4 ? "the A4" : "the box"; }
 Engine& eng_of(int s) {
   Engine*& e = E[s];
   if (!e) {
@@ -227,8 +232,6 @@ template <class F> auto in_slot(int s, F f) -> decltype(f()) {
   device::Scope in(device::g_links[s]);
   return f();
 }
-// the box's name in messages
-const char* box_name() { return rytm() ? "the Rytm" : "the box"; }
 
 double now_frame() { return (double)g_frames(); }
 
@@ -241,18 +244,24 @@ void set_msg(const char* fmt, ...) {
 }
 
 // ---- out
+// to the slot's box: the Rytm's as ever (to_rytm); another box's through its link's own sender (stock SysEx and channel
+// messages: the Sidecar's output filter passes its own commands only)
+void tx(const uint8_t* m, int n) {
+  if (rytm()) to_rytm(m, n);
+  else if (auto* o = device::cur().out) o(m, n);
+}
 void out(const uint8_t* m, int n) {
   if (n > 3 && m[0] == 0xF0 && n > kPiece) {   // a long dump: in 3-byte aligned pieces (the platform's record limit)
-    for (int i = 0; i < n; i += kPiece) to_rytm(m + i, n - i < kPiece ? n - i : kPiece);
+    for (int i = 0; i < n; i += kPiece) tx(m + i, n - i < kPiece ? n - i : kPiece);
     return;
   }
-  to_rytm(m, n);
+  tx(m, n);
 }
 
 void request(uint8_t id) {
   uint8_t m[15];
-  dump_request(m, id);
-  to_rytm(m, 15);
+  dump_request(m, id, dev());
+  tx(m, 15);
 }
 
 bool card() { return card_ok; }
@@ -468,7 +477,7 @@ void poll_sidecar(bool record) {
     if (record) e.rec.sidecar(kScRoute, 0, e.fx_route, f, e.ms_now);
   }
   if (edit && undo_watch()) undo_end("the send FX changed");
-  if (!rytm()) return;   // (the remote UI's track tables are the Rytm's until step 10b: another box's machines not read)
+  // (the remote UI's track tables: the slot in hand's own, step 10b)
   for (int t = 0; t < kTracks; ++t) {
     int vb = ui::remote_track_machine(t);
     if (vb != e.mach[t]) {
@@ -505,6 +514,7 @@ struct EnginePort : Port {
   bool backup(const Take& p0, const Take* const* more, int n, bool partial) override;
   bool relink(int k, const Buf& kit) override;
   bool playing() override { return eng().transport != 0; }
+  int pattern() override { return rytm() ? -2 : eng().pattern; }   // (step 10c: the A4's stopped PC not traced)
   void sidecar(const Ev& ev) override {
     // the bases, through the filters (a live modulation's base follows, its value stays on top)
     if (ev.a == kScSend && ev.b < kTracks * 2) fx::set_send_base(ev.b / 2, ev.b % 2, (uint8_t)ev.v);
@@ -960,14 +970,14 @@ void arm_go() {
   clock(true);
   poll_sidecar(false);
   ++e.show_req;
-  if (!rytm()) {   // (its stock dumps not traced yet: no start snapshot, no MIDI CONFIG read)
+  if (!dev()) {   // (a box whose stock dumps are not known: no start snapshot, no MIDI CONFIG read)
     e.state = kArmed;
     set_msg("armed: PLAY records (no start snapshot)");
     return;
   }
   static const uint8_t ids[4] = {kReqGlobal, kReqKit, kReqPattern, kReqSettings};
   fetch_start(ids, 4, true);
-  set_msg("arming %s: reading the Rytm", e.take.name);
+  set_msg("arming %s: reading %s", e.take.name, box_name());
 }
 
 void disarm() {
@@ -1018,7 +1028,7 @@ void rec_stop() {
 void replay_request() {
   Engine& e = eng();
   if (e.state != kOff || !e.take_valid || !e.take.n) { set_msg("no take to replay"); return; }
-  if (!rytm()) { set_msg("no replay into this box yet: its dumps are not traced"); return; }
+  if (!dev()) { set_msg("no replay into this box: its dumps are not known"); return; }
   if (e.transport != 0) { set_msg("stop the Rytm first: a replay starts stopped"); return; }
   e.state = kConfirm;
   ++e.show_req;
@@ -1278,7 +1288,7 @@ void on_dump(const uint8_t* m, int n) {
     uint8_t u[kGlobalBytes + 8];
     int k = unpack7(m + 10, n - 15, u, sizeof u);
     MidiConfig c = e.cfg;
-    if (parse_global(u, k, &c)) e.cfg = c, e.cfg_valid = true;
+    if (rytm() ? parse_global(u, k, &c) : parse_global_a4(u, k, &c)) e.cfg = c, e.cfg_valid = true;
     if (e.fetch_for_arm) e.take.global.clear(), e.take.global.add(m, n);
   } else if (e.fetch_for_arm && e.state == kArming) {
     Buf& b = id == kReqKit - 0x10 ? e.take.kit : id == kReqPattern - 0x10 ? e.take.pat : e.take.settings;
@@ -1290,7 +1300,7 @@ void on_dump(const uint8_t* m, int n) {
 
 void on_sysex(const uint8_t* m, int n) {
   if (n >= 6 && m[1] == 0x7D && m[2] == 0x52 && m[3] == 0x54 && (m[4] == 0x2C || m[4] == 0x2D)) on_mod(m, n);
-  else if (n >= 15 && m[1] == 0 && m[2] == 0x20 && m[3] == 0x3C && rytm()) on_dump(m, n);
+  else if (n >= 15 && m[1] == 0 && m[2] == 0x20 && m[3] == 0x3C && dev() && m[4] == dev()) on_dump(m, n);
 }
 
 void on_channel(uint8_t st, uint8_t d1, uint8_t d2) {
@@ -1536,7 +1546,7 @@ CORE_COLD Status status() {
   bool replay = e.state >= kConfirm && e.state <= kReplaying;
   s.problems = config_problems(replay && e.take_valid ? e.take.cfg : e.cfg, replay);
   if (replay && e.cfg_valid) s.problems = config_problems(e.cfg, true);
-  if (!rytm()) s.problems = 0;   // (another box: no MIDI CONFIG read, nothing asked of it)
+  if (!dev()) s.problems = 0;   // (a box whose dumps are not known: no MIDI CONFIG read, nothing asked of it)
   s.cfg_valid = e.cfg_valid, s.settings = e.settings, s.recovered = e.take_valid && e.take.recovered;
   s.cfg_wrong = (int8_t)(e.cfg_valid ? config_wrong(e.cfg) : -1);
   s.undo = undo_ok();
@@ -1622,7 +1632,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
   else if (!strcmp(v, "mark")) e.rec.mark(now_frame(), e.ms_now);
   else if (!strcmp(v, "undo")) undo();
   else if (!strcmp(v, "show")) ++e.show_req;
-  else if ((!strcmp(v, "check") || !strcmp(v, "state")) && !rytm()) sniprintf(e.msg, sizeof e.msg, "no MIDI CONFIG or dumps read from this box yet");
+  else if ((!strcmp(v, "check") || !strcmp(v, "state")) && !dev()) sniprintf(e.msg, sizeof e.msg, "no MIDI CONFIG or dumps read from this box");
   else if (!strcmp(v, "check")) {
     static const uint8_t ids[1] = {kReqGlobal};
     if (e.fetch_want < 0) fetch_start(ids, 1, false);

@@ -56,7 +56,10 @@ void header(const Take& t, Buf& o, bool journal) {
          c.valid ? 1 : 0, c.encoder_ext ? "int+ext" : "int", c.trk_ch ? "trk" : "auto", c.nrpn ? "nrpn" : "cc",
          c.pc_receive, c.pc_send, c.transport_send, c.clock_send);
   for (int i = 0; i < kTracks; ++i) o.addf("%s%d", i ? "," : "", c.track_ch[i]);
-  o.addf("],\"fx_ch\":%d,\"auto_ch\":%d}", c.fx_ch, c.auto_ch);
+  o.addf("],\"fx_ch\":%d,\"auto_ch\":%d", c.fx_ch, c.auto_ch);
+  if (c.ntracks != kTracks) o.addf(",\"tracks\":%d", c.ntracks);   // (step 10c: another box's)
+  if (c.pc_in_ch) o.addf(",\"pc_in_ch\":%d", c.pc_in_ch);
+  o.adds("}");
   char bpm[16];
   bpm_text(t.tempo, bpm, sizeof bpm);
   o.addf(",\"start\":{\"pattern\":%d,\"tempo\":%s,\"mutes\":%u,\"scene\":%d,\"rytm_sysex\":{", t.pattern,
@@ -340,6 +343,8 @@ bool read_config(Lex& x, MidiConfig* c) {
     else if (is(k, kl, "clock_send")) { if (!x.num_i(&v)) return false; c->clock_send = v != 0; }
     else if (is(k, kl, "fx_ch")) { if (!x.num_i(&v)) return false; c->fx_ch = (uint8_t)v; }
     else if (is(k, kl, "auto_ch")) { if (!x.num_i(&v)) return false; c->auto_ch = (uint8_t)v; }
+    else if (is(k, kl, "tracks")) { if (!x.num_i(&v)) return false; c->ntracks = (uint8_t)(v > 0 && v <= kTracks ? v : kTracks); }
+    else if (is(k, kl, "pc_in_ch")) { if (!x.num_i(&v)) return false; c->pc_in_ch = (uint8_t)(v >= 0 && v <= 16 ? v : 0); }
     else if (is(k, kl, "track_ch")) {
       int ch[kTracks];
       int got = 0;
