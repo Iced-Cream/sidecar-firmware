@@ -105,6 +105,7 @@ enum						// th_key kinds and flags
 	TH_KEY_LEFT = 16,			// text left-aligned (pads, lists)
 	TH_KEY_HOLD = 32,			// checkable (seg items are)
 	TH_KEY_FILL = 64,			// drawn filled (inverted): a dialog's destructive confirm (UX review T16)
+	TH_KEY_TAB = 128,			// a header page key: in SIDECAR's high contrast a tab (accent label, selected = accent fill, rounded top)
 };
 typedef void (*th_cb_t) (lv_obj_t *o, int idx, void *ud);
 

@@ -592,7 +592,7 @@ static void lane_draw (lv_event_t *e)
 		if (x0 < 0 || x0 >= GRID_W) continue;
 		if (x1 < x0) x1 = x0;
 		int k = nl > SEQED_LOCKS ? SEQED_LOCKS : nl;
-		uint32_t col = oled () ? (k >= 4 ? TH->ink : TH->dim) : th_mix (TH->win_edge, TH->lock, 80 + 176 * k / SEQED_LOCKS);
+		uint32_t col = TH->hc ? TH->lock : oled () ? (k >= 4 ? TH->ink : TH->dim) : th_mix (TH->win_edge, TH->lock, 80 + 176 * k / SEQED_LOCKS);
 		fill (l, &c, ox + x0, 0, ox + x1, oled () ? 2 : 4, col, LV_OPA_COVER, 0);
 	}
 	// seqtop: a step's extras, one mark each (the most telling): R a ratchet / arp, F an FX command, ~ random notes,

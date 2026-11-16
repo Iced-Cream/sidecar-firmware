@@ -1101,7 +1101,8 @@ static void sc_fx (lv_obj_t *pg)
 		}
 		label (w, x + bw - LU (16), LU (118) + dy, TH->f_body, TH->win_ink, kSendName[t]);
 	}
-	lv_obj_t *h = label_w (p, LU (12), LU (302) + dy, LU (440) + dx, TH->f_small, TH->sub, "Lavender: FX 1, coral: FX 2. Kill tails clears both FX "
+	lv_obj_t *h = label_w (p, LU (12), LU (302) + dy, LU (440) + dx, TH->f_small, TH->sub, TH->hc ? "Accent: FX 1, yellow: FX 2. Kill tails clears both FX "
+			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H." : "Lavender: FX 1, coral: FX 2. Kill tails clears both FX "
 			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H.");
 	// 0.5.0: each FX's return filter, BASE / WIDTH as dials (read only), right of the hint
 	for (int k = 0; k < 2; k++)
@@ -1129,32 +1130,32 @@ static void sc_display (lv_obj_t *pg)
 	const lv_font_t *sm = TH->f_small;
 	const int dx = TH->dx, d = (CH (48) - LU (48)) / 2;	// labels stay centred on their taller controls
 	lv_obj_t *p = th_panel (pg, LU (12), 0, LU (776) + dx, LU (358) + TH->dy, "Display", TH_PANEL_GROUP);
-	// (0.5.1: seven rows, a row 52 px apart instead of 62 and the controls 44 px, for the Contrast row)
-	label (p, LU (16), CY (32) + LU (12) + d, sm, TH->ink, "UI style");
-	seg (p, SEG_STYLE, LU (190), CY (32), LU (300), CH (44), kStyleMap, TH_KEY);
-	label (p, LU (504), CY (32) + LU (6) + d, sm, TH->sub, "OLED: the screen as dots.");
-	label (p, LU (504), CY (32) + LU (24) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
-	label (p, LU (16), CY (82) + LU (12) + d, sm, TH->ink, "Screensaver");
-	seg (p, SEG_SAVER, LU (190), CY (82), LU (570) + dx, CH (44), kSaverMap, TH_KEY);
-	label (p, LU (16), CY (132) + LU (12) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
-	lv_obj_t *tk = th_key (p, LU (190), CY (132), LU (110), CH (44), "TAP", TH_KEY_FUNC, tap_cb, 0);
+	// (0.5.1: seven rows, 48 / 44 px apart instead of 62 and the controls 44 / 40 px (the Touch keys 40 px, as the Contrast row's), for the Contrast row)
+	label (p, LU (16), CY (30) + LU (12) + d, sm, TH->ink, "UI style");
+	seg (p, SEG_STYLE, LU (190), CY (30), LU (300), CH (44), kStyleMap, TH_KEY);
+	label (p, LU (504), CY (30) + LU (6) + d, sm, TH->sub, "OLED: the screen as dots.");
+	label (p, LU (504), CY (30) + LU (24) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
+	label (p, LU (16), CY (78) + LU (12) + d, sm, TH->ink, "Screensaver");
+	seg (p, SEG_SAVER, LU (190), CY (78), LU (570) + dx, CH (44), kSaverMap, TH_KEY);
+	label (p, LU (16), CY (126) + LU (12) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
+	lv_obj_t *tk = th_key (p, LU (190), CY (126), LU (110), CH (44), "TAP", TH_KEY_FUNC, tap_cb, 0);
 	th_key_font (tk, TH->f_title);
-	s_Taps2 = label (p, LU (316), CY (132) + LU (12) + d, sm, TH->ink, "taps: 0");
-	s_Touch2 = label_w (p, LU (420), CY (132) + LU (12) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
-	label (p, LU (16), CY (182) + LU (10) + d, sm, TH->ink, "Brightness");
-	label (p, LU (16), CY (182) + LU (28) + d, TH->f_micro, TH->sub, "(dims the picture)");
-	s_Bright = th_slider (p, LU (190), CY (182), LU (460) + dx, CH (44), 5, 100, bright_cb, 0);
-	s_BrightVal = label (p, LU (672) + dx, CY (182) + LU (12) + d, TH->f_body, TH->ink, "100 %");
-	label (p, LU (16), CY (232) + LU (10) + d, sm, TH->ink, "OLED look");						// UX review L1
-	seg (p, SEG_LOOK, LU (190), CY (232), LU (300), CH (40), kLookMap, TH_KEY);
-	label (p, LU (504), CY (232) + LU (10) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
-	label (p, LU (16), CY (278) + LU (10) + d, sm, TH->ink, "Contrast");						// 0.5.1: SIDECAR only
-	seg (p, SEG_CONTRAST, LU (190), CY (278), LU (300), CH (40), kContrastMap, TH_KEY);
-	label (p, LU (504), CY (278) + LU (10) + d, sm, TH->sub, "High: black, white edges, one accent.");
-	label (p, LU (16), CY (326) + LU (4), sm, TH->ink, "Touch");					// touch_cal.h
-	th_key (p, LU (190), CY (326) - (TH->big ? 8 : 0), LU (130), TH->big ? 46 : 26, "Calibrate", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
-	th_key (p, LU (330), CY (326) - (TH->big ? 8 : 0), LU (80), TH->big ? 46 : 26, "Reset", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
-	s_CalState = label_w (p, LU (424), CY (326) + LU (4), LU (336) + dx, sm, TH->sub, "default (the device's range)");
+	s_Taps2 = label (p, LU (316), CY (126) + LU (12) + d, sm, TH->ink, "taps: 0");
+	s_Touch2 = label_w (p, LU (420), CY (126) + LU (12) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
+	label (p, LU (16), CY (174) + LU (10) + d, sm, TH->ink, "Brightness");
+	label (p, LU (16), CY (174) + LU (28) + d, TH->f_micro, TH->sub, "(dims the picture)");
+	s_Bright = th_slider (p, LU (190), CY (174), LU (460) + dx, CH (44), 5, 100, bright_cb, 0);
+	s_BrightVal = label (p, LU (672) + dx, CY (174) + LU (12) + d, TH->f_body, TH->ink, "100 %");
+	label (p, LU (16), CY (222) + LU (10) + d, sm, TH->ink, "OLED look");						// UX review L1
+	seg (p, SEG_LOOK, LU (190), CY (222), LU (300), CH (40), kLookMap, TH_KEY);
+	label (p, LU (504), CY (222) + LU (10) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
+	label (p, LU (16), CY (266) + LU (10) + d, sm, TH->ink, "Contrast");						// 0.5.1: SIDECAR only
+	seg (p, SEG_CONTRAST, LU (190), CY (266), LU (300), CH (40), kContrastMap, TH_KEY);
+	label (p, LU (504), CY (266) + LU (10) + d, sm, TH->sub, "High: black, white edges, one accent.");
+	label (p, LU (16), CY (310) + LU (10) + d, sm, TH->ink, "Touch");					// touch_cal.h
+	th_key (p, LU (190), CY (310), LU (130), CH (40), "Calibrate", TH_KEY, cal_cb, 0);
+	th_key (p, LU (330), CY (310), LU (80), CH (40), "Reset", TH_KEY, calreset_cb, 0);
+	s_CalState = label_w (p, LU (424), CY (310) + LU (10) + d, LU (336) + dx, sm, TH->sub, "default (the device's range)");
 }
 
 static void sc_home (lv_obj_t *h)
@@ -1267,13 +1268,13 @@ static void sc_build (lv_obj_t *scr)
 		lv_obj_t *r = th_box (scr, W, 0, rail, TH->h);		// the rail: the Rytm's T1..T8, the page's key a light pill
 		lv_obj_set_style_bg_color (r, lv_color_hex (TH->hc ? 0x000000 : 0x0D0A2A), 0);	// (the rail's own night blue, black in high contrast; its keys at 0: the border shifts the content by 1)
 		lv_obj_set_style_bg_opa (r, LV_OPA_COVER, 0);
-		lv_obj_set_style_border_color (r, lv_color_hex (TH->win_edge), 0);
-		lv_obj_set_style_border_width (r, TH->edge_w, 0);
+		lv_obj_set_style_border_color (r, lv_color_hex (TH->hc ? TH->accent : TH->win_edge), 0);
+		lv_obj_set_style_border_width (r, TH->hc ? 3 : TH->edge_w, 0);		// (high contrast: the accent line along the rail's inner edge)
 		lv_obj_set_style_border_side (r, LV_BORDER_SIDE_LEFT, 0);
 		const int p = (TH->h - LU (6)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - TH->edge_w, p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
+			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - (TH->hc ? 3 : TH->edge_w), p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
 	}
@@ -1285,7 +1286,7 @@ static void sc_build (lv_obj_t *scr)
 		const int nx0 = LU (300), nkw = (W - LU (12) - nx0 + LU (4)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4), LU (46), kNavName[i], i == NAV_SET ? TH_KEY_FUNC : TH_KEY, nav_cb, (void *) (intptr_t) i);
+			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4), LU (46), kNavName[i], (i == NAV_SET ? TH_KEY_FUNC : TH_KEY) | TH_KEY_TAB, nav_cb, (void *) (intptr_t) i);
 			th_key_font (s_Nav[i], TH->f_small);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}

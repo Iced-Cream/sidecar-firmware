@@ -684,14 +684,33 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 	int ew = TH->edge_w, dashed = 0;
 	if (k == TH_KEY_NAV)					// the rail: the page's key a light pill, an icon over its name, its T key in the corner
 	{
-		uint32_t nink = checked ? UV_BG : text && !strcmp (text, "REC") ? UV_COR : UV_LBL;
+		uint32_t nink = checked ? UV_BG : text && !strcmp (text, "REC") ? UV_COR : HC ? UV_ACC : UV_LBL;
 		if (pressed && !checked) th_fill (l, &c, LU (5), 2, w - 1 - LU (5), h - 3, th_mix (UV_RAIL, UV_ACC, 50), LV_OPA_COVER, LU (12));
-		if (checked) th_fill (l, &c, LU (5), 2, w - 1 - LU (5), h - 3, UV_TXT, LV_OPA_COVER, LU (12));
+		if (checked && HC)					// high contrast: the accent, rounded toward the content (left), flush on the rail's line
+		{
+			th_fill (l, &c, 0, 2, w - 1, h - 3, UV_ACC, LV_OPA_COVER, LU (12));
+			th_fill (l, &c, w / 2, 2, w - 1, h - 3, UV_ACC, LV_OPA_COVER, 0);
+		}
+		else if (checked) th_fill (l, &c, LU (5), 2, w - 1 - LU (5), h - 3, UV_TXT, LV_OPA_COVER, LU (12));
 		const int ih = ICON_H * 2, fh = lv_font_get_line_height (TH->f_micro), iy = (h - ih - LU (4) - fh) / 2;
 		if (lc && !checked) nink = lc;
 		nav_icon (l, &c, text, w / 2, iy, nink);
-		th_text (l, &c, LU (6), iy + ih + LU (4), w - LU (12), TH->f_micro, checked ? UV_BG : nink == UV_COR ? UV_COR : UV_LBL, LV_TEXT_ALIGN_CENTER, text);
-		if (sub && sub[0]) th_text (l, &c, LU (11), LU (4), w - LU (16), TH->f_micro, checked ? (HC ? UV_BG : 0x3B3670) : UV_FAINT, LV_TEXT_ALIGN_LEFT, sub);
+		th_text (l, &c, LU (6), iy + ih + LU (4), w - LU (12), TH->f_micro, checked ? UV_BG : nink == UV_COR || HC ? nink : UV_LBL, LV_TEXT_ALIGN_CENTER, text);
+		if (sub && sub[0]) th_text (l, &c, LU (11), LU (4), w - LU (16), TH->f_micro, checked ? (HC ? UV_BG : 0x3B3670) : HC ? UV_LBL : UV_FAINT, LV_TEXT_ALIGN_LEFT, sub);
+		return;
+	}
+	if (HC && (kind & TH_KEY_TAB))				// the header's page keys, high contrast: a tab, the page's one filled with the accent, its top corners rounded,
+	{							// its foot flush on the header's accent line (title_draw)
+		uint32_t tink = UV_ACC, tsb = UV_LBL;
+		if (checked || pressed)
+		{
+			uint32_t f = checked ? UV_ACC : th_mix (UV_BG, UV_ACC, 90);
+			th_fill (l, &c, 0, 0, w - 1, h - 1, f, LV_OPA_COVER, TH->big ? 10 : 8);
+			th_fill (l, &c, 0, h / 2, w - 1, h - 1, f, LV_OPA_COVER, 0);
+			if (checked) tink = tsb = UV_BG;
+		}
+		th_text (l, &c, 0, ty, w, f, tink, LV_TEXT_ALIGN_CENTER, text);
+		if (sub && sub[0]) th_text (l, &c, 0, ty + font_line (f), w, TH->f_micro, tsb, LV_TEXT_ALIGN_CENTER, sub);
 		return;
 	}
 	if (disabled)							// (high contrast: a dashed outline too, so disabled is not only a colour)
@@ -1127,10 +1146,10 @@ static void title_draw (lv_event_t *e)
 	// SIDECAR: the header band, a plain horizontal gradient (no blur, no glow: three fills) over a border line; the power
 	// warning coral with dark text
 	if (t->alert) th_fill (l, &c, 0, 0, w - 1, h - 1, UV_COR, LV_OPA_COVER, 0);
-	else if (HC)							// high contrast: black, no glow, a white line under it
+	else if (HC)							// high contrast: black, no glow, a 3 px accent line under it
 	{
 		th_fill (l, &c, 0, 0, w - 1, h - 1, UV_BG, LV_OPA_COVER, 0);
-		th_fill (l, &c, 0, h - TH->edge_w, w - 1, h - 1, UV_BORD, LV_OPA_COVER, 0);
+		th_fill (l, &c, 0, h - 3, w - 1, h - 1, UV_ACC, LV_OPA_COVER, 0);	// the accent line the page tabs sit on
 	}
 	else
 	{

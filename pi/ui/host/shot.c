@@ -2167,15 +2167,15 @@ static void theme_run (int style, const char *pre)
 		tap (CTAB (2), LU (84));								// tab: Send FX
 		tap (LU (674) + DX, LU (114) + LU (52));                EXPECT_CMD ("killfx");
 		tap (CTAB (3), LU (84));								// tab: Display
-		tap (LU (190) + LU (60), LU (114) + CY (82) + CH / 2);                      EXPECT_CMD ("screensaver=0");
-		tap (LU (190) + (LU (570) + DX) * 5 / 8 + LU (4), LU (114) + CY (82) + CH / 2);  EXPECT_CMD ("screensaver=60");
+		tap (LU (190) + LU (60), LU (114) + CY (78) + CH / 2);                      EXPECT_CMD ("screensaver=0");
+		tap (LU (190) + (LU (570) + DX) * 5 / 8 + LU (4), LU (114) + CY (78) + CH / 2);  EXPECT_CMD ("screensaver=60");
 		(void) by; (void) e; (void) lw;
 		tap (CNAV_X (0), CNAV_Y (0));							// HOME
 		sidecar_ui_show (0); run (3);
 		shot ("hidden");
 		sidecar_ui_show (6); run (3);
 		unsigned taps = sidecar_ui_taps ();
-		tap (LU (190) + LU (55), LU (114) + CY (132) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
+		tap (LU (190) + LU (55), LU (114) + CY (126) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
 	}
 	// N1: the eight navigation keys in both themes - each opens its page and lights itself; VOICE asks for the Rytm's
 	// track again (voicepick=-1).
@@ -2739,7 +2739,7 @@ static void contrast_run (void)
 	sidecar_ui_status (&s_St);
 	run (12);
 	DX = TH->dx, DY = TH->dy;
-	const int cy = LU (114) + 278 * (LU (358) + DY) / 358 + (LU (40) + DY / 15) / 2;
+	const int cy = LU (114) + 266 * (LU (358) + DY) / 358 + (LU (40) + DY / 15) / 2;
 	sidecar_ui_show (6); run (3);
 	tap (LU (12) + LU (190) + LU (300) * 3 / 6, cy); EXPECT_CMD ("uicontrast=blue"); run (3);
 	EXPECT (sidecar_theme_get_contrast () == 1 && TH->hc == 1 && TH->edge_w == 2 && TH->id == THEME_SIDECAR);

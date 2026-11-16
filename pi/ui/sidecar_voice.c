@@ -365,6 +365,17 @@ static void heat_draw (lv_event_t *e)
 	for (int s = 0; s < n; s++)
 	{
 		int x0 = s * w / n, x1 = (s + 1) * w / n - (oled () ? 1 : 2);
+		if (TH->hc)						// high contrast: an empty step black with a grey outline (a trig: a light one), a locked step
+		{							// full yellow with a black dot; no tints. The page split is white
+			if (s_V.locks[s])
+			{
+				th_fill (l, &c, x0, 0, x1, h - 1, TH->lock, LV_OPA_COVER, 0);
+				th_fill (l, &c, (x0 + x1) / 2 - 2, h / 2 - 2, (x0 + x1) / 2 + 2, h / 2 + 2, 0x000000, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+			}
+			else th_frame (l, &c, x0, 0, x1, h - 1, s_V.trig[s] ? TH->dim : 0x767676, 1, 0);
+			if (s % 16 == 0 && s) th_fill (l, &c, x0 - 1, 0, x0, h - 1, c_ink (), LV_OPA_COVER, 0);
+			continue;
+		}
 		uint32_t base = s_V.trig[s] ? th_mix (c_bg (), c_dim (), 140) : (oled () ? 0x262626 : th_mix (c_bg (), c_dim (), 50));
 		th_fill (l, &c, x0, 0, x1, h - 1, base, LV_OPA_COVER, 0);
 		if (s_V.locks[s])

@@ -251,7 +251,11 @@ static void locks_draw (lv_event_t *e)
 			if (v == 0xFF)
 			{
 				if (o) fill (l, &c, x, y + G->lane_h / 2 - 1, x, y + G->lane_h / 2 - 1, 0x1E1E1E, LV_OPA_COVER, 0);
-				else fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->row_in, LV_OPA_COVER, 2);
+				else
+				{
+					fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->row_in, LV_OPA_COVER, 2);
+					if (TH->hc) frame (l, &c, x + 1, y + 1, x + w - 2, y + 15, 0x767676, 1, 2);	// high contrast: an empty step outlined
+				}
 				continue;
 			}
 			if (o)						// a bar: the value as height, the amber ramp as brightness
@@ -260,11 +264,12 @@ static void locks_draw (lv_event_t *e)
 				fill (l, &c, x, y2 - bh + 1, x + (w > 2 ? w - 2 : 0), y2, lock_rgb (v), LV_OPA_COVER, 0);
 				continue;
 			}
-			fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, lock_rgb (v), LV_OPA_COVER, 2);
+			fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->hc ? TH->lock : lock_rgb (v), LV_OPA_COVER, 2);	// (high contrast: any lock full yellow, the number or a dot says it)
+			if (TH->hc && w < 30) fill (l, &c, x + w / 2 - 2, y + 6, x + w / 2 + 1, y + 9, 0x000000, LV_OPA_COVER, 2);
 			if (w >= 30)
 			{
 				lv_snprintf (b, sizeof b, "%d", v);
-				text (l, &c, x, y + 1, w, TH->f_micro, v > 70 ? TH->bg : TH->win_ink, LV_TEXT_ALIGN_CENTER, b);
+				text (l, &c, x, y + 1, w, TH->f_micro, TH->hc || v > 70 ? TH->bg : TH->win_ink, LV_TEXT_ALIGN_CENTER, b);
 			}
 		}
 		lane++;
