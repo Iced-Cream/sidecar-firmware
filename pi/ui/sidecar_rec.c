@@ -88,7 +88,7 @@ static lv_obj_t *label_w (lv_obj_t *p, int x, int y, int w, const lv_font_t *f, 
 // ---- geometry (the 800x480 layouts plus what the screen adds: TH->dx, dy)
 static int W (void) { return th_page_w (); }
 static int grid_y (void) { return oled () ? LU (72) : LU (88); }
-static int grid_h (void) { return oled () ? LU (168) + TH->dy : LU (336) + TH->dy; }
+static int grid_h (void) { return oled () ? LU (168) + TH->pdy : LU (336) + TH->pdy; }
 static int pitch (void) { return grid_h () / ROWS; }			// 21 / 28 dots, 42 / 57 px
 static int col_w (void) { return oled () ? (W () - LU (4)) / 3 : (W () - LU (16) - LU (16)) / 3; }
 static int col_x (int c) { return oled () ? c * (col_w () + 2) : LU (8) + c * (col_w () + LU (8)); }
@@ -105,7 +105,7 @@ static void meter_geo (int c, int r, int *x0, int *x1, int *y0, int *bh, int *cl
 	else
 	{
 		*x0 = x + LU (112) + TH->dx / 12, *x1 = x + w - LU (40), *clipx = *x1 + LU (4);	// the clip lamp inside the window
-		*bh = LU (12) + TH->dy / 20;
+		*bh = LU (12) + TH->pdy / 20;
 		*y0 = y + (h - *bh) / 2;
 	}
 }
@@ -701,13 +701,13 @@ static void arm_cb (lv_obj_t *o, int idx, void *ud)
 void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 {
 	int O = oled ();
-	const int dx = TH->dx, dy = TH->dy, Wd = W (), H = O ? TH->h : LU (428) + dy;
+	const int dx = TH->dx, dy = TH->pdy, Wd = W (), H = O ? TH->h - LU (25) : LU (428) + dy;
 	s_Cmd = c;
 	s_bTakes = 0, s_nDel = -1, s_nPress = -1, s_nTakesGen = ~0u, s_nRows = TROWS, s_nTop = 0, s_nDlg = DLG_NONE, s_nDragY = -1;
 	s_nStatusW = -1, s_nValidWas = -1, s_nClock = ~0u;
 	memset (s_Drawn, 0, sizeof s_Drawn);
 	if (!s_bHave) { memset (&s_V, 0, sizeof s_V); s_V.ntakes = -1; s_V.bits = 24; s_V.rate = 48000; }
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, H);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, H + (O ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *mi = mi_font ();
 	if (O)
@@ -723,12 +723,13 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_Status = label_w (pg, LU (114), LU (51), LU (120) + dx / 2, mi, TH->dim, 0);
 		for (int i = 0; i < 4; i++) s_Info[i] = label_w (pg, LU (237) + dx / 2, LU (16) + i * LU (11), LU (62) + dx / 2, mi, i == 0 ? TH->ink : TH->dim, 0);
 		s_TakesKey = th_key (pg, LU (301) + dx, LU (15), LU (51), LU (46), "TAKES", TH_KEY | TH_KEY_SMALL, takes_cb, 0);
+		lv_obj_add_flag (s_TakesKey, LV_OBJ_FLAG_HIDDEN);	// (a pill of the REC row now)
 		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, LU (63), mi, TH->faint, group (g, 0));
 	}
 	else
 	{
 		s_TitleBar = 0;
-		const int ww = LU (508) + dx;		// the display window; the keys at its right
+		const int ww = Wd - LU (210);		// the display window; REC and ARM at its right (TAKES is a pill of the REC row)
 		th_panel (pg, LU (8), LU (6), ww, LU (62), "", TH_PANEL_WINDOW);
 		s_Clock = th_box (pg, LU (20), LU (6), LU (156), LU (62));
 		s_Take = label_w (pg, LU (188), LU (12), ww - LU (188) - LU (112), TH->f_mid, TH->win_ink, 0);
@@ -744,6 +745,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_TakesKey = th_key (pg, kx + LU (192), LU (6), Wd - LU (8) - (kx + LU (192)), LU (62), "TAKES", TH_KEY, takes_cb, 0);
 		th_key_font (s_ArmKey, TH->f_body);
 		th_key_font (s_TakesKey, TH->f_body);
+		lv_obj_add_flag (s_TakesKey, LV_OBJ_FLAG_HIDDEN);
 		for (int g = 0; g < 3; g++)
 		{
 			s_Group[g] = th_label (pg, col_x (g) + 2, LU (72), TH->f_micro, TH->sub, group (g, 1));
@@ -793,7 +795,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		static const char *const kH[4] = {"Take", "Length", "Size", "Files"};
 		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, (THEME_IS_SQ (TH->id) ? LU (600) : 600) + 2 * dx / 3};	// (SQUARE, GUIDE: the faces keep their size at 1280x720, the last column follows the layout)
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], LU (10), TH->f_small, TH->win_dim, kH[k]);
-		const int nr = (H - LU (76) - LU (40)) / LU (44) < TROWS ? (H - LU (76) - LU (40)) / LU (44) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 7 rows of 44 px, 8 of 54
+		const int nr = (H - LU (76) - LU (40)) / LU (40) < TROWS ? (H - LU (76) - LU (40)) / LU (40) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 6 rows of 42 px at 800x480 (the sub-page row took 58), 8 of 47 at 1280x720
 		s_nRows = nr, s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{

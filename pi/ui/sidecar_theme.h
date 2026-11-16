@@ -47,6 +47,7 @@ typedef struct
 	int		bw, bh;			// the base layout's size in them (OLED 400x240, SIDECAR 800x480; 1280x720: LU of those)
 	int		dx, dy;			// w - nav - bw (OLED: w - bw), h - bh: what the screen adds to the base layout (1024x600: OLED 112x60 dots, SIDECAR 128x120 px; 1280x720: 140x60, 160x120; 800x480: 0)
 	int		nav;			// the navigation column at the right edge: OLED LU (48) (inside its base layout), SIDECAR's rail from 1024x600 on (96 / 120 px, outside it), else 0
+	int		pdy;			// dy less what the sub-page row takes (SIDECAR 58 px, OLED 25 dots, in LU): what the pages below the row stretch by (0.5.1)
 	int		big;			// 1280x720: LU below
 	// colours, 0xRRGGBB
 	uint32_t	bg;			// the screen

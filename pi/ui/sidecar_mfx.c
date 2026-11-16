@@ -40,24 +40,24 @@ void sidecar_mfx_create (void *parent, int y0)
 	const int o = oled ();
 	s_nGen = ~0u;
 	memset (&s_V, 0, sizeof s_V);
-	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0 - (o ? LU (25) : 0);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (o ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, ink = o ? TH->ink : TH->win_ink, dim = o ? TH->dim : TH->win_dim;
-	const int x0 = o ? 0 : 24, w = o ? pw : pw - 48, top = o ? 16 : 44, keyh = o ? 20 + TH->dy / 12 : 38 + TH->dy / 8;
-	const int foot = o ? 22 : 54;	// the POST EQ's line and the hint
+	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : LU (44), keyh = o ? LU (20) + TH->pdy / 12 : LU (38) + TH->pdy / 8;
+	const int foot = o ? LU (22) : LU (54);	// the POST EQ's line and the hint
 	if (o)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		th_titlebar_set (s_TitleBar, "MASTER FX", "", 0);
 		s_Title = 0;
 	}
 	else
 	{
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, pw - 16, ph - 14, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, TH->f_mid, TH->win_ink, "MASTER FX");
+		th_panel (pg, LU (8), LU (6), pw - LU (16), ph - LU (14), "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "MASTER FX");
 	}
 	// the top row: ON / BYPASS, SRC, LEV, the meters
 	const int kw = w / 4 - 4;
@@ -69,8 +69,8 @@ void sidecar_mfx_create (void *parent, int y0)
 	s_In = th_meter (pg, x0 + w * 3 / 4, top + 1, w / 4, keyh / 2 - 2, 127, TH_METER_H, dim);
 	s_Out = th_meter (pg, x0 + w * 3 / 4, top + keyh / 2 + 1, w / 4, keyh / 2 - 2, 127, TH_METER_H, ink);
 	// four columns
-	const int y1 = top + keyh + (o ? 3 : 8), cw = w / SMF_SLOTS, y2 = y1 + keyh + (o ? 3 : 6);
-	const int rh = (ph - (o ? 0 : 14) - foot - y2) / ROWS, bh = o ? 5 : 8 + TH->dy / 30;
+	const int y1 = top + keyh + LU (o ? 3 : 8), cw = w / SMF_SLOTS, y2 = y1 + keyh + LU (o ? 3 : 6);
+	const int rh = (ph - (o ? 0 : LU (14)) - foot - y2) / ROWS, bh = LU (o ? 5 : 8) + TH->pdy / 30;
 	for (int s = 0; s < SMF_SLOTS; s++)
 	{
 		const int x = x0 + s * cw;
@@ -85,7 +85,7 @@ void sidecar_mfx_create (void *parent, int y0)
 		lv_obj_add_flag (s_Pair[s], LV_OBJ_FLAG_HIDDEN);
 	}
 	s_Eq = th_label (pg, x0, ph - foot, f, dim, "");
-	s_Info = th_label (pg, x0, ph - foot / 2 - (o ? 0 : 8), f, o ? TH->faint : dim, "");
+	s_Info = th_label (pg, x0, ph - foot / 2 - (o ? 0 : LU (8)), f, o ? TH->faint : dim, "");
 	lv_obj_set_width (s_Eq, w);
 	lv_obj_set_width (s_Info, w);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);

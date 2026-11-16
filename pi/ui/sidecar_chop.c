@@ -482,10 +482,10 @@ static void layout (void)
 	int O = oled (), u = U ();
 	int pw = th_page_w ();
 	int x0 = O ? 0 : LU (8), top = LU (O ? 15 : 8), kh = LU (O ? 22 : 52);
-	int ph = O ? TH->h : LU (428) + TH->dy;
+	int ph = O ? TH->h - LU (25) : LU (428) + TH->pdy;
 	int ky = ph - kh - (O ? 0 : LU (4));
 	int lw = (pw - 2 * x0) * 58 / 100;
-	r_wave = (rc_t) {x0, top, lw, LU (O ? 78 : 150) + TH->dy / 2};
+	r_wave = (rc_t) {x0, top, lw, LU (O ? 78 : 150) + TH->pdy / 2};
 	r_tabs = (rc_t) {x0, r_wave.y + r_wave.h + 2 * u, lw, TH->big ? (O ? 23 : 50) : O ? 12 : 30};	// 1280x720: a key's height
 	r_pads = (rc_t) {x0, r_tabs.y + r_tabs.h + 2 * u, lw, ky - (r_tabs.y + r_tabs.h + 2 * u) - 3 * u};
 	int lx = x0 + lw + 4 * u, lwid = pw - x0 - lx;
@@ -499,7 +499,7 @@ void sidecar_chop_create (void *parent, int y0)
 	int O = oled (), u = U ();
 	int pw = th_page_w ();
 	layout ();
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->pdy);
 	s_Page = pg;
 	s_nGen = ~0u, s_nGridI = 2;
 	if (O)

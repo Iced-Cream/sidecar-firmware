@@ -38,14 +38,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-enum { SEG_TAB, SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CONTRAST, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_N };
+enum { SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CONTRAST, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_SUB, SEG_N = SEG_SUB + 8 };	// SEG_SUB + section: that section's sub-page row (0.5.1)
 enum { PG_HOME, PG_SOUND, PG_FX, PG_ABOUT, PG_SEQ, PG_RYTM, PG_DISPLAY, PG_MACH, PG_VOICE, PG_INS, PG_SONG, PG_REC, PG_SCOPE, PG_STATUS, PG_PROJECT, PG_POOL,
        PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
 
-// the settings tabs; Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
-#define N_TABS 7
-static const char *const kTabMap[] = {"Sound", "MIDI", "Send FX", "Display", "Pool", "System", "About", ""};
-static const int kTabPage[N_TABS] = {PG_SOUND, PG_MIDI, PG_FX, PG_DISPLAY, PG_POOL, PG_SERVICE, PG_ABOUT};
+// Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
 static const char *const kOnOff[] = {"Off", "On", ""};
 static const char *const kOutMap[] = {"Main", "Tracks", ""};
 static const char *s_VoiceMap[9], *s_VoiceMap2[10];	// the voices' keys in list order (voice_maps: the box's names)
@@ -103,6 +100,32 @@ static const char *nav_t (int i)		// its caption ("T11"; "" when the device has 
 	if (k) lv_snprintf (b[i], sizeof b[i], "%s%d", sc_keymap ()->map_key, k->code); else b[i][0] = 0;
 	return b[i];
 }
+// 0.5.1: every section has a row of sub-pages under the header (44 px keys); the first is where the T key lands, the section
+// remembers the last one used. SEQ and PAT have none here: their pages carry their own row (the tracks, the pattern's pages).
+// A pill is a page, SONG's Setup and REC's Takes are a view of theirs.
+static const char *const kHomeMap[] = {"Overview", "Status", "Project", ""};
+static const int kHomePg[] = {PG_HOME, PG_STATUS, PG_PROJECT};
+static const char *const kVoiceMap[] = {"Sound", "Insert", "Source", "Scope", ""};
+static const int kVoicePg[] = {PG_VOICE, PG_INS, PG_MACH, PG_SCOPE};
+#if SIDECAR_MORPH
+static const char *const kFxMap[] = {"Sends", "Master", "Morph", "XY", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_MORPH, PG_XY};
+#else
+static const char *const kFxMap[] = {"Sends", "Master", "XY", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_XY};
+#endif
+static const char *const kSongMap[] = {"Timeline", "Setup", ""};
+static const int kSongPg[] = {PG_SONG, PG_SONG};
+static const char *const kRecMap[] = {"Record", "Takes", ""};
+static const int kRecPg[] = {PG_REC, PG_REC};
+static const char *const kSetMap[] = {"Sound", "MIDI", "Display", "Pool", "System", "About", ""};
+static const int kSetPg[] = {PG_SOUND, PG_MIDI, PG_DISPLAY, PG_POOL, PG_SERVICE, PG_ABOUT};
+typedef struct { const char *const *map; const int *page; int n; } sub_t;
+#define SUB(m, p)	{m, p, (int) (sizeof p / sizeof *p)}
+static const sub_t kSub[NAV_N] = {SUB (kHomeMap, kHomePg), {0, 0, 0}, {0, 0, 0}, SUB (kVoiceMap, kVoicePg), SUB (kFxMap, kFxPg),
+				  SUB (kSongMap, kSongPg), SUB (kRecMap, kRecPg), SUB (kSetMap, kSetPg)};
+static int s_nSub[NAV_N];				// each section's last pill
+
 // N3: the map's text from the same table (the device's modifier + each page request, then its combos with a map
 // text), two columns (two labels: the SIDECAR font is proportional). Each entry's first word is the key, as on the
 // Rytm; SIDECAR writes the page's words in its case ("T6 Insert FX"): a word of up to three letters is an abbreviation
@@ -152,7 +175,7 @@ static lv_obj_t *s_UsbInfo;			// Settings > Sound: what USB-C is now, OVERBRIDGE
 static lv_obj_t *s_KeysAuto, *s_KeysIn, *s_KeysLast, *s_LearnInfo;	// Settings > MIDI
 static int s_nAutoLocal;				// the auto channel the - / + keys asked for (0: none waits)
 static uint32_t s_AutoAt;				// when (lv_tick): held until the engine's state says so, or 1 s
-static lv_obj_t *s_Seg[SEG_N], *s_FifoVal, *s_DroneInfo, *s_FxName[2], *s_Bar[2][SIDECAR_UI_SENDS], *s_Kill;
+static lv_obj_t *s_Seg[SEG_N], *s_FifoVal, *s_DroneInfo, *s_FxName[2], *s_FxRoute[2], *s_Bar[2][SIDECAR_UI_SENDS], *s_Kill;
 static lv_obj_t *s_Bw[2][2];	// 0.5.0: FX k's return filter, BASE / WIDTH as dials (read only: the Rytm's SEND FX knobs G / H)
 static lv_obj_t *s_About[8], *s_Bright, *s_BrightVal, *s_Dim, *s_Power;
 static char s_Banner[96];				// the warning banner's text (s_Power draws it itself: tests read it here)
@@ -169,7 +192,7 @@ static int s_PhysW, s_PhysH;				// the screen's size (the display as the caller 
 static int s_nNavLit = -1;				// the navigation key lit now (-1: none)
 static int s_nTouchShown = 1, s_nTouchSeen = -1, s_bTouchDown;	// the touch test shown now; the caller's last value (-1: none yet)
 static unsigned s_nTaps;
-static int s_nRytm = -1, s_nPage, s_nLast = PG_SOUND, s_nPoolFrom = PG_HOME;
+static int s_nRytm = -1, s_nPage, s_nPoolFrom = PG_HOME;
 static sidecar_ui_command_t s_Cmd;
 static void *s_CmdParam;
 static sidecar_ui_status_t s_St;			// the last state given: the voice selector and a rebuild re-read it
@@ -410,12 +433,40 @@ static int cal_touch (int pressed, int raw_x, int raw_y, int x, int y)
 // ---- pages
 
 static void stale_view (void);
+static int pool_from_voice (void);
+// the section a page belongs to (-1: none) and its pill in that section's row (-1: none: SEQ, PAT)
+static int page_sec (int page)
+{
+	switch (page)
+	{
+	case PG_HOME: case PG_PROJECT: case PG_STATUS: return NAV_HOME;
+	case PG_SEQ: return NAV_SEQ;
+	case PG_RYTM: return NAV_PAT;
+	case PG_VOICE: case PG_MACH: case PG_SCOPE: case PG_CHOP: case PG_SEDIT: case PG_INS: return NAV_VOICE;
+	case PG_FX: case PG_MFX: case PG_MORPH: case PG_XY: return NAV_FX;
+	case PG_SONG: return NAV_SONG;
+	case PG_REC: return NAV_REC;
+	case PG_POOL: case PG_PRESET: return pool_from_voice () ? NAV_VOICE : NAV_SET;
+	default: return NAV_SET;
+	}
+}
+static int page_pill (int page, int sec)
+{
+	if (sec < 0 || !kSub[sec].n) return -1;
+	if (sec == NAV_SONG) return sidecar_song_explain_shown ();
+	if (sec == NAV_REC) return sidecar_rec_takes_shown ();
+	if (page == PG_CHOP || page == PG_SEDIT || (sec == NAV_VOICE && (page == PG_POOL || page == PG_PRESET))) page = PG_MACH;
+	else if (page == PG_PRESET) page = PG_POOL;
+	for (int i = 0; i < kSub[sec].n; i++) if (kSub[sec].page[i] == page) return i;
+	return -1;
+}
 static void show_page (int page)
 {
 	s_nPage = page;
-	int set = page == PG_SOUND || page == PG_FX || page == PG_ABOUT || page == PG_DISPLAY || page == PG_SERVICE || page == PG_MIDI;
+	int set = page == PG_SOUND || page == PG_FX || page == PG_ABOUT || page == PG_DISPLAY || page == PG_SERVICE || page == PG_MIDI;	// (Send FX: FX's first page, in the settings' box)
 	if (page) lv_obj_add_flag (s_Home, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag (s_Home, LV_OBJ_FLAG_HIDDEN);
 	if (set) lv_obj_remove_flag (s_Pages, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
+	if (s_SetTitle) th_titlebar_set (s_SetTitle, page == PG_FX ? "SEND FX" : "SETTINGS", "", 0);
 	sidecar_seqed_show (page == PG_SEQ);
 	sidecar_rytmpat_show (page == PG_RYTM);
 	if (sidecar_wgview_pool_page_shown () != (page == PG_POOL)) sidecar_wgview_pool_page (page == PG_POOL);
@@ -438,23 +489,20 @@ static void show_page (int page)
 		if (!s_Pg[i]) continue;
 		if (i == page) lv_obj_remove_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN);
 	}
-	if (set)
-	{
-		s_nLast = page;
-		for (int i = 0; i < N_TABS; i++) if (kTabPage[i] == page) seg_set (SEG_TAB, i);
-	}
-	// the page's own key (UX review N1 / N2): a page reached from another lights that one (PROJECT, STATUS: HOME; the
-	// machine view, SCOPE: VOICE; POOL: SET); never SET for a page that is not a setting
-	int nav = page == PG_HOME || page == PG_PROJECT || page == PG_STATUS ? NAV_HOME : page == PG_SEQ ? NAV_SEQ
-		: page == PG_RYTM ? NAV_PAT : page == PG_VOICE || page == PG_MACH || page == PG_SCOPE || page == PG_CHOP || page == PG_SEDIT ? NAV_VOICE
-		: page == PG_INS || page == PG_MFX || page == PG_MORPH || page == PG_XY ? NAV_FX : page == PG_SONG ? NAV_SONG : page == PG_REC ? NAV_REC : set || page == PG_POOL || page == PG_PRESET ? NAV_SET : -1;
+	// the page's own key (UX review N1 / N2): a page reached from another lights that one (the machine view, SCOPE: VOICE; POOL:
+	// SET, or VOICE when the machine view opened it); never SET for a page that is not a setting
+	const int nav = page_sec (page), pill = page_pill (page, nav);
+	if (pill >= 0) s_nSub[nav] = pill;
 	s_nNavLit = nav;
 	for (int i = 0; i < NAV_N; i++) if (s_Nav[i]) th_key_check (s_Nav[i], i == nav);
-	if (s_PageName) set_text (s_PageName, kPageName[page]);
-	if (!oled ())
+	for (int i = 0; i < NAV_N; i++)			// the section's row, its pill lit
 	{
-		if (set) lv_obj_remove_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
+		lv_obj_t *r = s_Seg[SEG_SUB + i];
+		if (!r) continue;
+		if (i == nav && pill >= 0) { lv_obj_remove_flag (r, LV_OBJ_FLAG_HIDDEN); seg_set (SEG_SUB + i, pill); }
+		else lv_obj_add_flag (r, LV_OBJ_FLAG_HIDDEN);
 	}
+	if (s_PageName) set_text (s_PageName, kPageName[page]);
 	stale_view ();
 }
 
@@ -492,16 +540,16 @@ static void rebuild (void);
 static void style_async (void *p) { sidecar_ui_style ((int) (intptr_t) p); }
 static void contrast_async (void *p) { (void) p; rebuild (); }
 
+static void sub_go (int sec, int i);
 static void seg_cb (lv_obj_t *m, int i, void *ud)
 {
 	(void) m;
 	int id = (int) (intptr_t) ud;
 	s_Sel[id] = i;							// the control has checked it already
 	char b[40];
+	if (id >= SEG_SUB) { sub_go (id - SEG_SUB, i); return; }
 	switch (id)
 	{
-	case SEG_TAB:	if (kTabPage[i] == PG_POOL) s_nPoolFrom = s_nPage;
-			show_page (kTabPage[i]); break;
 	case SEG_NOTES:	command (i ? "notes=1" : "notes=0"); break;
 	case SEG_OUT:	command (i ? "out=tracks" : "out=main"); break;
 	case SEG_MAC:	command (i ? "mac=on" : "mac=off"); break;
@@ -576,20 +624,26 @@ static void keys_auto_cb (lv_obj_t *o, int i, void *ud)	// Settings > MIDI: the 
 	set_text (s_KeysAuto, b);
 }
 static void show_page (int page);
-static void ins_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_INS); }	// fx-ins
-static void mfx_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MFX); }
-#if SIDECAR_MORPH
-static void morph_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MORPH); }
-#endif
-static void xy_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_XY); }
+// a pill (or a section's key: its remembered pill): the page, and for SONG's Setup and REC's Takes the view of it
+static int pool_from_voice (void) { return s_nPoolFrom != PG_POOL && s_nPoolFrom != PG_HOME && page_sec (s_nPoolFrom) == NAV_VOICE; }
+static void sub_go (int sec, int i)
+{
+	if (i < 0 || i >= kSub[sec].n) i = 0;
+	const int page = kSub[sec].page[i];
+	if (page == PG_POOL && s_nPage != PG_POOL) s_nPoolFrom = s_nPage;
+	if (sec == NAV_SONG) sidecar_song_explain (i == 1);
+	if (sec == NAV_REC) sidecar_rec_takes (i == 1);
+	if (page == PG_MACH) sidecar_wgview_want (-1);			// the Rytm's selected voice, as the VOICE page's source tap
+	if (sec == NAV_VOICE && i == 0) command ("voicepick=-1");
+	if (sec == NAV_VOICE && i == 0 && sidecar_sedit_open ()) { show_page (PG_SEDIT); return; }	// an edit open: Sound goes back to it
+	show_page (page);
+}
 static void nav_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
-	static const int kPage[NAV_N] = {PG_HOME, PG_SEQ, PG_RYTM, PG_VOICE, PG_INS, PG_SONG, PG_REC, -1};
+	static const int kPage[NAV_N] = {PG_HOME, PG_SEQ, PG_RYTM};
 	int n = (int) (intptr_t) ud;
-	if (n == NAV_VOICE) command ("voicepick=-1");		// VOICE: the Rytm's selected track again
-	if (n == NAV_VOICE && sidecar_sedit_open ()) { show_page (PG_SEDIT); return; }	// an edit open: VOICE goes back to it
-	show_page (n == NAV_SET ? s_nLast : kPage[n]);
+	if (kSub[n].n) sub_go (n, s_nSub[n]); else show_page (kPage[n]);
 }
 static void track_cb (lv_obj_t *o, int i, void *ud)		// a voice on the home page: VOICE for its first track (UX review
 {								// T3; GRANULAR / WAVETABLE: their machine view, as UP + T4 on the Rytm)
@@ -689,6 +743,31 @@ static void bright_cb (lv_obj_t *o, int v, void *ud)
 #define TBH	LU (13)			// a title bar
 #define VS(v)	((v) * (UH - LU (41)) / 199)	// a settings page's y and heights, stretched to its panel (199 or 259 dots)
 
+// 0.5.1: a page's content below the sub-page row (the page's own title bar stays at the top): everything but its first child
+// (the title bar) moves down by the row, and the page lays itself out for that much less (TH->pdy)
+static void oled_under_row (lv_obj_t *pg)
+{
+	for (uint32_t i = 1; i < lv_obj_get_child_count (pg); i++)
+	{
+		lv_obj_t *c = lv_obj_get_child (pg, (int32_t) i);
+		lv_obj_set_y (c, lv_obj_get_style_y (c, LV_PART_MAIN) + LU (25));
+	}
+}
+#define OLED_UNDER(scr, create)	do { uint32_t n0_ = lv_obj_get_child_count (scr); create; oled_under_row (lv_obj_get_child (scr, (int32_t) n0_)); } while (0)
+static void sub_build (lv_obj_t *scr)			// the rows of sub-pages: one a section, the one of the page shown is shown
+{
+	const int O = oled ();
+	for (int sec = 0; sec < NAV_N; sec++)
+	{
+		const sub_t *t = &kSub[sec];
+		if (!t->n) continue;
+		int w = t->n * LU (O ? 60 : 130), full = O ? OW : th_page_w () - LU (24);
+		lv_obj_t *m = seg (scr, SEG_SUB + sec, O ? 0 : LU (12), O ? LU (16) : LU (58), w > full ? full : w, O ? LU (22) : LU (44), t->map, TH_KEY);
+		if (!O) th_seg_font (m, TH->f_body);
+		lv_obj_add_flag (m, LV_OBJ_FLAG_HIDDEN);
+	}
+}
+
 static void oled_nav (lv_obj_t *scr)
 {
 	const int p = UH / NAV_N;		// 30 or 37 dots a key (60 / 74 px: above the 42 px touch minimum)
@@ -704,9 +783,9 @@ static void oled_home (lv_obj_t *h)
 	s_Title = th_titlebar (h, 0, 0, OW, TBH);
 	th_titlebar_set (s_Title, "SIDECAR EXPANDER", "", 0);
 	const int cw = (OW - LU (4)) / 2, ew = cw - LU (174);		// a column: 174 or 230 dots
-	const int th = LU (106) + TH->dy / 2, by = LU (124) + TH->dy / 2, bh = UH - by, ey = TH->dy / 6;
+	const int th = LU (106) + TH->pdy / 2, by = LU (40) + th + LU (3), bh = UH - by, ey = TH->pdy / 6;
 
-	lv_obj_t *tp = th_panel (h, 0, LU (15), cw, th, "VOICES", TH_PANEL_GROUP);
+	lv_obj_t *tp = th_panel (h, 0, LU (40), cw, th, "VOICES", TH_PANEL_GROUP);
 	const int kp = (th - LU (14)) / 4, kw = (cw - LU (8)) / 2;	// 23 / 30 dots a row, keys 83 / 111 wide
 	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
 	{
@@ -715,7 +794,7 @@ static void oled_home (lv_obj_t *h)
 
 	// UX review T1: NOW - what matters on stage: the pattern (L3: the page's hero value) and the transport, the
 	// recorder, one health line (the core loads and Overbridge numbers are STATUS's: a tap opens it)
-	lv_obj_t *ep = th_panel (h, cw + LU (4), LU (15), cw, th, "NOW", TH_PANEL_GROUP);
+	lv_obj_t *ep = th_panel (h, cw + LU (4), LU (40), cw, th, "NOW", TH_PANEL_GROUP);
 	(void) ew;
 	s_NowPat = label (ep, LU (6), LU (14), TH->f_big, TH->ink, "-");
 	s_NowTr = label_w (ep, LU (66), LU (20), cw - LU (72), TH->f_body, TH->dim, "-");
@@ -728,7 +807,7 @@ static void oled_home (lv_obj_t *h)
 
 	lv_obj_t *up = th_panel (h, 0, by, cw, bh, "PROJECT", TH_PANEL_GROUP);
 	s_Project = label_w (up, LU (6), LU (13), cw - LU (10), TH->f_title, TH->ink, "-");
-	const int sp = LU (16) + TH->dy / 10;
+	const int sp = LU (16) + TH->pdy / 10;
 	for (int i = 0; i < 5; i++)
 	{
 		char n[4];
@@ -752,7 +831,7 @@ static void oled_home (lv_obj_t *h)
 
 	s_InfoPanel = th_panel (h, cw + LU (4), by, cw, bh, "SIDECAR", TH_PANEL_GROUP);
 	static const char *const kInfoName[4] = {"NET", "WEB", "LINK", "REC"};
-	const int ip = LU (23) + TH->dy / 8;
+	const int ip = LU (23) + TH->pdy / 8;
 	for (int i = 0; i < 4; i++)
 	{
 		label (s_InfoPanel, LU (6), LU (19) + i * ip, TH->f_micro, TH->dim, kInfoName[i]);
@@ -861,26 +940,11 @@ static void oled_fx (lv_obj_t *pg)
 		int x = 9 + t * tp;
 		for (int k = 0; k < 2; k++)
 		{
-			s_Bar[k][t] = th_meter (p, x + k * (bw + 2), LU (50), bw, LU (107) + dy, 127, TH_METER_V, k ? TH->ink : th_oled_secondary (127));
+			s_Bar[k][t] = th_meter (p, x + k * (bw + 2), LU (50), bw, LU (121) + dy, 127, TH_METER_V, k ? TH->ink : th_oled_secondary (127));
 			th_meter_set (s_Bar[k][t], 0);
 			label (p, x + k * (bw + 2) + (bw - LU (5)) / 2, LU (41), TH->f_micro, k ? TH->ink : th_oled_secondary (127), k ? "2" : "1");	// T19
 		}
-		label (p, x + bw - LU (5), LU (160) + dy, TH->f_micro, TH->dim, kSendName[t]);
-	}
-	// the other FX pages: one row of four keys as tall as KILL TAILS (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
-	{
-#if SIDECAR_MORPH
-		static const char *const kName[4] = {"INSERTS", "MASTER", "MORPH", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		enum { NK = 4 };
-#else	// 0.5.0: no MORPH key
-		static const char *const kName[3] = {"INSERTS", "MASTER", "XY"};
-		static const th_cb_t kCb[3] = {ins_cb, mfx_cb, xy_cb};
-		enum { NK = 3 };
-#endif
-		const int kw = (OW - LU (12) - (NK - 1) * LU (6)) / NK;
-		for (int i = 0; i < NK; i++)
-			th_key (p, LU (6) + i * (kw + LU (6)), LU (172) + dy, kw, LU (24), kName[i], TH_KEY | TH_KEY_SMALL, kCb[i], 0);
+		label (p, x + bw - LU (5), LU (174) + dy, TH->f_micro, TH->dim, kSendName[t]);
 	}
 }
 
@@ -926,7 +990,6 @@ static void oled_build (lv_obj_t *scr)
 	lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
 	s_SetTitle = th_titlebar (s_Pages, 0, 0, OW, TBH);
 	th_titlebar_set (s_SetTitle, "SETTINGS", "", 0);
-	seg (s_Pages, SEG_TAB, 0, LU (16), OW, LU (22), kTabMap, TH_KEY);
 	for (int i = 0; i < PG_N; i++)
 		if (i == PG_SOUND || i == PG_FX || i == PG_ABOUT || i == PG_DISPLAY || i == PG_SERVICE || i == PG_MIDI)
 		{
@@ -943,32 +1006,33 @@ static void oled_build (lv_obj_t *scr)
 	sidecar_seqed_create (scr, 0, seq_cmd, 0);
 	sidecar_seqed_set_rytm_cb (to_rytm);
 	sidecar_rytmpat_create (scr, 0, to_seq);
-	sidecar_wgview_create (scr, 0);
+	OLED_UNDER (scr, sidecar_wgview_create (scr, 0));
 	sidecar_wgview_set_command (command);
 	sidecar_wgview_set_page (pool_page);
 	sidecar_wgview_set_preset (preset_page);
-	sidecar_preset_create (scr, 0);
+	OLED_UNDER (scr, sidecar_preset_create (scr, 0));
 	sidecar_preset_set_command (command);
 	sidecar_preset_set_pool (preset_back);
-	sidecar_voice_create (scr, 0);
-	sidecar_insfx_create (scr, 0);
+	OLED_UNDER (scr, sidecar_voice_create (scr, 0));
+	OLED_UNDER (scr, sidecar_insfx_create (scr, 0));
 	sidecar_insfx_set_command (command);
-	sidecar_mfx_create (scr, 0);
+	OLED_UNDER (scr, sidecar_mfx_create (scr, 0));
 	sidecar_mfx_set_command (command);
-	sidecar_morph_create (scr, 0);
+	OLED_UNDER (scr, sidecar_morph_create (scr, 0));
 	sidecar_morph_set_command (command);
-	sidecar_xy_create (scr, 0);
+	OLED_UNDER (scr, sidecar_xy_create (scr, 0));
 	sidecar_xy_set_command (command);
-	sidecar_song_create (scr, 0, song_cmd);
-	sidecar_rec_create (scr, 0, rec_cmd);
-	sidecar_scope_create (scr, 0);
-	sidecar_status_create (scr, 0);
-	sidecar_project_create (scr, 0, project_cmd);
-	sidecar_chop_create (scr, 0);
+	OLED_UNDER (scr, sidecar_song_create (scr, 0, song_cmd));
+	OLED_UNDER (scr, sidecar_rec_create (scr, 0, rec_cmd));
+	OLED_UNDER (scr, sidecar_scope_create (scr, 0));
+	OLED_UNDER (scr, sidecar_status_create (scr, 0));
+	OLED_UNDER (scr, sidecar_project_create (scr, 0, project_cmd));
+	OLED_UNDER (scr, sidecar_chop_create (scr, 0));
 	sidecar_chop_set_command (command);
-	sidecar_sedit_create (scr, 0);
+	OLED_UNDER (scr, sidecar_sedit_create (scr, 0));
 	sidecar_sedit_set_command (command);
 	sidecar_voice_set_tap (voice_tap);
+	sub_build (scr);
 	oled_nav (scr);
 }
 
@@ -1066,53 +1130,45 @@ static void sc_service (lv_obj_t *pg)	// UX review T18: the engineering controls
 	lv_label_set_long_mode (h, LV_LABEL_LONG_MODE_WRAP);
 }
 
-static void sc_fx (lv_obj_t *pg)
+static void sc_fx (lv_obj_t *pg)		// FX > Sends (board T4): the two FX cards, Kill tails, the send levels
 {
-	const int dx = TH->dx, dy = TH->dy;
-	lv_obj_t *p = th_panel (pg, LU (12), 0, LU (776) + dx, LU (358) + dy, "Send FX  -  the Rytm's kit sets these, read only", TH_PANEL_GROUP);
+	const int dx = TH->dx, dy = TH->dy, ph = LU (358) + dy, ch = LU (118) + dy / 6, gap = LU (8), g = TH->id == THEME_GUIDE;
+	const int kw = LU (200), cw = (LU (776) + dx - kw - 2 * gap) / 2, sx = LU (12);
 	for (int k = 0; k < 2; k++)
-		s_FxName[k] = label (p, LU (12) + k * (LU (250) + dx / 4), LU (34), TH->f_big, k ? TH->bad : TH->accent, "-");
-	s_Kill = th_key (p, LU (614) + dx, LU (26), LU (150), LU (52), "Kill tails", TH_KEY_DANGER, kill_cb, 0);
+	{
+		lv_obj_t *c = th_panel (pg, sx + k * (cw + gap), 0, cw, ch, k ? "FX 2" : "FX 1", TH_PANEL_GROUP);
+		s_FxName[k] = label_w (c, LU (12), LU (34), cw - LU (12) - 2 * LU (72) - LU (12), TH->f_big, k ? TH->bad : TH->accent, "-");
+		s_FxRoute[k] = label_w (c, LU (12), LU (34) + TH->f_big->line_height + LU (10), LU (80), TH->f_small, TH->sub, "");
+		for (int j = 0; j < 2; j++)	// 0.5.0: the return filter, BASE / WIDTH as dials (read only: the Rytm's SEND FX knobs G / H)
+		{
+			s_Bw[k][j] = th_meter (c, cw - LU (8) - (2 - j) * LU (72), LU (22), LU (68), ch - LU (30), 127, TH_METER_KNOB, k ? TH->bad : TH->accent_hi);
+			th_meter_label (s_Bw[k][j], j ? "WIDTH" : "BASE");
+		}
+	}
+	lv_obj_t *kc = th_panel (pg, sx + 2 * (cw + gap), 0, kw, ch, "", TH_PANEL_GROUP);
+	s_Kill = th_key (kc, LU (8), LU (8), kw - LU (16), ch - LU (16), "Kill tails", TH_KEY_DANGER, kill_cb, 0);
 	th_key_font (s_Kill, TH->f_title);
 	th_key_led (s_Kill, LED_RED + 15);
-	// the other FX pages: one row of four keys as tall as Kill tails (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
-	{
-#if SIDECAR_MORPH
-		static const char *const kName[4] = {"Inserts", "Master", "Morph", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		enum { NK = 4 };
-#else	// 0.5.0: no Morph key
-		static const char *const kName[3] = {"Inserts", "Master", "XY"};
-		static const th_cb_t kCb[3] = {ins_cb, mfx_cb, xy_cb};
-		enum { NK = 3 };
-#endif
-		const int kw = (LU (760) + dx - (NK - 1) * LU (8)) / NK;
-		for (int i = 0; i < NK; i++)
-			th_key_font (th_key (p, LU (8) + i * (kw + LU (8)), LU (88), kw, LU (52), kName[i], TH_KEY, kCb[i], 0), TH->f_title);
-	}
-	lv_obj_t *w = th_panel (p, LU (8), LU (148), LU (760) + dx, LU (148) + dy, "", TH_PANEL_WINDOW);
-	const int tp = LU (62) + dx / 12, bw = LU (22) + dx / 48;		// 62 / 80 px a track, bars 22 / 26
+	lv_obj_t *kh = label_w (kc, LU (16), ch - LU (46), kw - LU (32), TH->f_micro, TH->sub, "clears both FX, like the Rytm's double STOP");
+	lv_label_set_long_mode (kh, LV_LABEL_LONG_MODE_WRAP);
+	lv_obj_set_style_text_align (kh, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_add_flag (kh, LV_OBJ_FLAG_EVENT_BUBBLE);
+	const int py = ch + gap, pph = ph - py;
+	lv_obj_t *p = th_panel (pg, sx, py, LU (776) + dx, pph, "Send levels, read only", TH_PANEL_GROUP);
+	const int hy = pph - LU (26), wy = LU (26), wh = hy - wy - LU (4);
+	lv_obj_t *w = th_panel (p, LU (8), wy, LU (760) + dx, wh, "", TH_PANEL_WINDOW);
+	const int tp = LU (62) + dx / 12, bw = LU (22) + dx / 48, bt = LU (10), bh = wh - bt - LU (26);	// 62 / 80 px a track
 	for (int t = 0; t < SIDECAR_UI_SENDS; t++)
 	{
 		int x = 10 + t * tp;
 		for (int k = 0; k < 2; k++)
 		{
-			s_Bar[k][t] = th_meter (w, x + k * (bw + LU (4)), LU (12), bw, LU (100) + dy, 127, TH_METER_V, k ? TH->bad : TH->accent_hi);
+			s_Bar[k][t] = th_meter (w, x + k * (bw + LU (4)), bt, bw, bh, 127, TH_METER_V, k ? TH->bad : TH->accent_hi);
 			th_meter_set (s_Bar[k][t], 0);
 		}
-		label (w, x + bw - LU (16), LU (118) + dy, TH->f_body, TH->win_ink, kSendName[t]);
+		label (w, x + bw - LU (16), bt + bh + LU (6), TH->f_body, TH->win_ink, kSendName[t]);
 	}
-	lv_obj_t *h = label_w (p, LU (12), LU (302) + dy, LU (440) + dx, TH->f_small, TH->sub, TH->hc ? "Accent: FX 1, yellow: FX 2. Kill tails clears both FX "
-			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H." : THEME_IS_SQ (TH->id) ? "Sage: FX 1, brick: FX 2. Kill tails clears both FX "
-			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H." : "Lavender: FX 1, coral: FX 2. Kill tails clears both FX "
-			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H.");
-	// 0.5.0: each FX's return filter, BASE / WIDTH as dials (read only), right of the hint
-	for (int k = 0; k < 2; k++)
-		for (int j = 0; j < 2; j++)
-		{
-			s_Bw[k][j] = th_meter (p, LU (464) + dx + (2 * k + j) * LU (76), LU (296) + dy, LU (72), LU (58), 127, TH_METER_KNOB, k ? TH->bad : TH->accent_hi);
-		}
-	lv_label_set_long_mode (h, LV_LABEL_LONG_MODE_WRAP);
+	label_w (p, LU (12), hy, LU (740) + dx, g ? TH->f_micro : TH->f_small, TH->sub, TH->hc ? "Accent: FX 1, yellow: FX 2. The Rytm's kit sets the levels." : THEME_IS_SQ (TH->id) ? "Sage: FX 1, brick: FX 2. The Rytm's kit sets the levels." : "Lavender: FX 1, coral: FX 2. The Rytm's kit sets the levels.");
 }
 
 static void sc_about (lv_obj_t *pg)
@@ -1163,9 +1219,9 @@ static void sc_display (lv_obj_t *pg)
 
 static void sc_home (lv_obj_t *h)
 {
-	const int dx = TH->dx, dy = TH->dy;
-	const int tw = LU (476) + dx * 3 / 4, th = LU (232) + dy / 2, by = LU (308) + dy / 2, bh = LU (160) + dy / 2;
-	lv_obj_t *tp = th_panel (h, LU (12), LU (64), tw, th, "Tracks", TH_PANEL_GROUP);
+	const int dx = TH->dx, dy = TH->pdy;			// (below the sub-page row: 58 px less than the page had)
+	const int tw = LU (476) + dx * 3 / 4, th = LU (232) + dy / 2, by = LU (110) + th + LU (12), bh = LU (160) + dy / 2;
+	lv_obj_t *tp = th_panel (h, LU (12), LU (110), tw, th, "Tracks", TH_PANEL_GROUP);
 	const int kw = (tw - LU (36)) / 2, kp = LU (48) + dy / 8;		// keys 220 / 304 wide, a row 48 / 63 px
 	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
 	{
@@ -1175,7 +1231,7 @@ static void sc_home (lv_obj_t *h)
 	}
 
 	const int sx = LU (24) + tw, sw = LU (800) + dx - LU (12) - sx;		// 500 + 288, or 668 + 344
-	lv_obj_t *sp = th_panel (h, sx, LU (64), sw, th, "Now", TH_PANEL_WINDOW);	// UX review T1 (STATUS: a tap)
+	lv_obj_t *sp = th_panel (h, sx, LU (110), sw, th, "Now", TH_PANEL_WINDOW);	// UX review T1 (STATUS: a tap)
 	s_NowPat = label (sp, LU (12), LU (30), TH->f_hero, TH->win_ink, "-");		// the dot font: the page's hero value
 	s_NowTr = label_w (sp, LU (110), LU (36), sw - LU (122), TH->f_body, TH->win_dim, "-");
 	label (sp, LU (12), LU (80) + dy / 8, TH->f_small, TH->win_dim, "Recorder");
@@ -1195,7 +1251,7 @@ static void sc_home (lv_obj_t *h)
 	const int uc = (pw - LU (18)) / 3;
 	for (int i = 0; i < 5; i++)
 	{
-		int x = 12 + (i % 3) * uc, y = 62 + (i / 3) * (44 + dy / 4);
+		int x = LU (12) + (i % 3) * uc, y = LU (52) + (i / 3) * (LU (50) + dy / 4);
 		char n[4];
 		lv_snprintf (n, sizeof n, "U%d", i + 1);
 		label (up, x, y, TH->f_micro, TH->accent, n);
@@ -1217,7 +1273,7 @@ static void sc_home (lv_obj_t *h)
 	s_Note = label_w (s_TouchPanel, LU (150), LU (8), LU (218) + ew, TH->f_micro, TH->dim, "");
 	lv_obj_set_style_text_align (s_Note, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_label_set_long_mode (s_Note, LV_LABEL_LONG_MODE_DOTS);
-	k = th_key (s_TouchPanel, LU (12), LU (104) + 2 * e, lw - LU (26), LU (48) + e, "Touch works - hide", TH_KEY, hide_cb, 0);
+	k = th_key (s_TouchPanel, LU (12), bh - LU (40), lw - LU (26), LU (34), "Touch works - hide", TH_KEY, hide_cb, 0);
 	th_key_font (k, TH->f_title);
 
 	s_InfoPanel = th_panel (h, LU (12), by, lw, bh, "Sidecar", TH_PANEL_WINDOW);
@@ -1244,12 +1300,12 @@ static void sc_build (lv_obj_t *scr)
 {
 	const int W = th_page_w ();				// the rail (1024x600 and up) right of the pages
 	s_Home = th_box (scr, 0, 0, W, TH->h);
-	s_Pages = th_box (scr, 0, LU (114), W, TH->h - LU (114));		// the settings pages below their tab strip
+	s_Pages = th_box (scr, 0, LU (110), W, TH->h - LU (110));		// the settings pages below the sub-page row
 	lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
 	for (int i = 0; i < PG_N; i++)
 		if (i == PG_SOUND || i == PG_FX || i == PG_ABOUT || i == PG_DISPLAY || i == PG_SERVICE || i == PG_MIDI)
 		{
-			s_Pg[i] = th_box (s_Pages, 0, 0, W, TH->h - LU (114));
+			s_Pg[i] = th_box (s_Pages, 0, 0, W, TH->h - LU (110));
 			lv_obj_add_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN);
 		}
 
@@ -1303,36 +1359,34 @@ static void sc_build (lv_obj_t *scr)
 	sidecar_seqed_create (scr, LU (52), seq_cmd, 0);
 	sidecar_seqed_set_rytm_cb (to_rytm);
 	sidecar_rytmpat_create (scr, LU (52), to_seq);
-	sidecar_wgview_create (scr, LU (52));
+	sidecar_wgview_create (scr, LU (110));
 	sidecar_wgview_set_command (command);
 	sidecar_wgview_set_page (pool_page);
 	sidecar_wgview_set_preset (preset_page);
-	sidecar_preset_create (scr, LU (52));
+	sidecar_preset_create (scr, LU (110));
 	sidecar_preset_set_command (command);
 	sidecar_preset_set_pool (preset_back);
-	sidecar_voice_create (scr, LU (52));
-	sidecar_insfx_create (scr, LU (52));
+	sidecar_voice_create (scr, LU (110));
+	sidecar_insfx_create (scr, LU (110));
 	sidecar_insfx_set_command (command);
-	sidecar_mfx_create (scr, LU (52));
+	sidecar_mfx_create (scr, LU (110));
 	sidecar_mfx_set_command (command);
-	sidecar_morph_create (scr, LU (52));
+	sidecar_morph_create (scr, LU (110));
 	sidecar_morph_set_command (command);
-	sidecar_xy_create (scr, LU (52));
+	sidecar_xy_create (scr, LU (110));
 	sidecar_xy_set_command (command);
-	sidecar_song_create (scr, LU (52), song_cmd);
-	sidecar_rec_create (scr, LU (52), rec_cmd);
-	sidecar_scope_create (scr, LU (52));
-	sidecar_status_create (scr, LU (52));
-	sidecar_project_create (scr, LU (52), project_cmd);
-	sidecar_chop_create (scr, LU (52));
+	sidecar_song_create (scr, LU (110), song_cmd);
+	sidecar_rec_create (scr, LU (110), rec_cmd);
+	sidecar_scope_create (scr, LU (110));
+	sidecar_status_create (scr, LU (110));
+	sidecar_project_create (scr, LU (110), project_cmd);
+	sidecar_chop_create (scr, LU (110));
 	sidecar_chop_set_command (command);
-	sidecar_sedit_create (scr, LU (52));
+	sidecar_sedit_create (scr, LU (110));
 	sidecar_sedit_set_command (command);
 	sidecar_voice_set_tap (voice_tap);
 
-	seg (scr, SEG_TAB, LU (12), LU (60), W - LU (24), LU (48), kTabMap, TH_KEY);
-	th_seg_font (s_Seg[SEG_TAB], TH->f_body);
-	lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
+	sub_build (scr);
 	sc_sound (s_Pg[PG_SOUND]);
 	sc_midi (s_Pg[PG_MIDI]);
 	sc_fx (s_Pg[PG_FX]);
@@ -1514,6 +1568,7 @@ static void build (void)
 	s_nCalStep = -1;
 	s_nCalCal = -1;
 	s_Blocks = s_Underruns = s_NowPat = s_NowTr = s_NowRec = s_Health = 0;
+	s_FxRoute[0] = s_FxRoute[1] = 0;
 	memset (s_Load, 0, sizeof s_Load);
 	memset (s_USlot, 0, sizeof s_USlot);
 	if (s_UTimer) { lv_timer_delete (s_UTimer); s_UTimer = 0; }
@@ -1523,7 +1578,6 @@ static void build (void)
 	lv_obj_set_style_text_font (scr, TH->f_body, 0);
 	lv_obj_remove_flag (scr, LV_OBJ_FLAG_SCROLLABLE);
 	if (oled ()) oled_build (scr); else sc_build (scr);
-	if (!oled ()) lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
 
 	// the dot under the finger (top layer, never clickable), the power warning's banner, the dimming layer
 	lv_obj_t *top = lv_layer_top ();
@@ -1744,8 +1798,18 @@ static void uslot_paint (void)
 }
 static void uslot_tick (lv_timer_t *t) { (void) t; uslot_paint (); }
 
+// the lit pill follows the page's own view (SONG's how-to closed by its CANCEL, REC's TAKES)
+static void sub_sync (void)
+{
+	const int sec = s_nNavLit;
+	if (sec < 0 || !s_Seg[SEG_SUB + sec]) return;
+	const int p = page_pill (s_nPage, sec);
+	if (p >= 0) { s_nSub[sec] = p; seg_set (SEG_SUB + sec, p); }
+}
+
 void sidecar_ui_status (const sidecar_ui_status_t *s)
 {
+	sub_sync ();
 	char b[80];
 	const int cchg = s->ui_contrast >= 0 && s->ui_contrast != sidecar_theme_get_contrast ();	// the stored high contrast (SIDECAR only)
 	if (cchg) sidecar_theme_contrast (s->ui_contrast);		// (before any rebuild below: its build reads it)
@@ -1973,23 +2037,17 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 	{
 		const char *t = s->fx_type[k][0] ? s->fx_type[k] : "-";
 		const char *pp = s->fx_type[k][0] && strcmp (s->fx_type[k], "OFF") ? (s->fx_post[k] ? "  POST" : "  PRE") : "";
-		lv_snprintf (b, sizeof b, "FX %d  %s%s", k + 1, t, pp);
+		if (oled ()) lv_snprintf (b, sizeof b, "FX %d  %s%s", k + 1, t, pp);
+		else lv_snprintf (b, sizeof b, "%s", t);			// (the card says which FX)
 		set_text (s_FxName[k], b);
+		if (s_FxRoute[k]) set_text (s_FxRoute[k], pp + (pp[0] ? 2 : 0));
 		for (int t2 = 0; t2 < SIDECAR_UI_SENDS; t2++) th_meter_set (s_Bar[k][t2], s->send[k][t2]);
 		for (int j = 0; j < 2; j++)
 			if (s_Bw[k][j])
 			{
 				th_meter_set (s_Bw[k][j], s->fx_bw[k][j]);
-				if (oled ())
-				{
-					lv_snprintf (b, sizeof b, "%d", s->fx_bw[k][j]);
-					th_meter_value (s_Bw[k][j], b);
-				}
-				else	// SIDECAR: one caption line, so all four knobs draw alike (the value fits inside the ring only when short)
-				{
-					lv_snprintf (b, sizeof b, "%d %s %d", k + 1, j ? "WID" : "BASE", s->fx_bw[k][j]);
-					th_meter_label (s_Bw[k][j], b);
-				}
+				lv_snprintf (b, sizeof b, "%d", s->fx_bw[k][j]);
+				th_meter_value (s_Bw[k][j], b);
 			}
 	}
 	lv_snprintf (b, sizeof b, "http://%s/", s->host[0] ? s->host : "sidecar.local");

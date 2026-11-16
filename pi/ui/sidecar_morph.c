@@ -92,30 +92,30 @@ void sidecar_morph_create (void *parent, int y0)
 	const int o = oled ();
 	s_nGen = ~0u, s_nTop = 0, s_nAssign = 0, s_nSel = -2;
 	memset (&s_V, 0, sizeof s_V);
-	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0 - (o ? LU (25) : 0);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (o ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, ink = o ? TH->ink : TH->win_ink, dim = o ? TH->dim : TH->win_dim;
-	const int x0 = o ? 0 : 24, w = o ? pw : pw - 48, top = o ? 16 : 44, keyh = o ? 20 + TH->dy / 12 : 38 + TH->dy / 8;
-	const int foot = o ? 18 : 44, fh = o ? 14 + TH->dy / 16 : 34 + TH->dy / 8;	// the hint line; the fader's height
+	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : LU (44), keyh = o ? LU (20) + TH->pdy / 12 : LU (38) + TH->pdy / 8;
+	const int foot = o ? LU (18) : LU (44), fh = o ? LU (14) + TH->pdy / 16 : LU (34) + TH->pdy / 8;	// the hint line; the fader's height
 	if (o)
 	{
-		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
+		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		th_titlebar_set (s_TitleBar, "MORPH", "", 0);
 		s_Title = 0;
 	}
 	else
 	{
 		s_TitleBar = 0;
-		th_panel (pg, 8, 6, pw - 16, ph - 14, "", TH_PANEL_WINDOW);
-		s_Title = th_label (pg, 24, 14, TH->f_mid, TH->win_ink, "MORPH");
+		th_panel (pg, LU (8), LU (6), pw - LU (16), ph - LU (14), "", TH_PANEL_WINDOW);
+		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "MORPH");
 	}
 	// the left half: A / B, then the pads in two rows of six
-	const int lw = w * 9 / 20, gap = o ? 3 : 6, pwid = (lw - 5 * gap) / 6;
+	const int lw = w * 9 / 20, gap = LU (o ? 3 : 6), pwid = (lw - 5 * gap) / 6;
 	s_A = th_key (pg, x0, top, (lw - gap) / 2, keyh, "A", kind, ab_cb, (void *) (intptr_t) 1);
 	s_B = th_key (pg, x0 + (lw + gap) / 2, top, (lw - gap) / 2, keyh, "B", kind, ab_cb, (void *) (intptr_t) 2);
-	const int fy = ph - (o ? 0 : 14) - foot - fh, py = top + keyh + gap * 2, padh = (fy - gap * 3 - py) / 2;
+	const int fy = ph - (o ? 0 : LU (14)) - foot - fh, py = top + keyh + gap * 2, padh = (fy - gap * 3 - py) / 2;
 	for (int n = 0; n < SMO_SCENES; n++)
 	{
 		char t[4];
@@ -124,15 +124,15 @@ void sidecar_morph_create (void *parent, int y0)
 				   (void *) (intptr_t) n);
 	}
 	// the right half: the list
-	const int rx = x0 + lw + gap * 3, rw = w - lw - gap * 3, kw = o ? 26 : 44;
+	const int rx = x0 + lw + gap * 3, rw = w - lw - gap * 3, kw = LU (o ? 26 : 44);
 	s_ListT = th_label (pg, rx, top, f, dim, "");
 	lv_obj_set_width (s_ListT, rw - 2 * kw - 2 * gap);
 	s_Up = th_key (pg, rx + rw - 2 * kw - gap, top, kw, keyh * 2 / 3, "UP", kind, scroll_cb, (void *) (intptr_t) -1);
 	s_Dn = th_key (pg, rx + rw - kw, top, kw, keyh * 2 / 3, "DN", kind, scroll_cb, (void *) (intptr_t) 1);
-	const int ly = top + keyh * 2 / 3 + gap, rh = o ? 16 + TH->dy / 20 : 30 + TH->dy / 10;
+	const int ly = top + keyh * 2 / 3 + gap, rh = o ? LU (16) + TH->pdy / 20 : LU (30) + TH->pdy / 10;
 	s_nRows = (fy - gap * 2 - ly) / rh;
 	if (s_nRows > SMO_ROWS) s_nRows = SMO_ROWS;
-	const int nw = rw * 2 / 5, vw = o ? 30 : 48, dw = o ? 28 : 46, sw = rw - nw - vw - dw - 3 * gap;
+	const int nw = rw * 2 / 5, vw = LU (o ? 30 : 48), dw = LU (o ? 28 : 46), sw = rw - nw - vw - dw - 3 * gap;
 	for (int r = 0; r < SMO_ROWS; r++)
 	{
 		int y = ly + r * rh;
@@ -149,13 +149,13 @@ void sidecar_morph_create (void *parent, int y0)
 		}
 	}
 	// the crossfader: A's scene left, B's right
-	const int lab = o ? 26 : 48;
+	const int lab = LU (o ? 26 : 48);
 	s_FadA = th_label (pg, x0, fy + (fh - lv_font_get_line_height (f)) / 2, f, ink, "A -");
 	s_FadB = th_label (pg, x0 + w - lab, fy + (fh - lv_font_get_line_height (f)) / 2, f, ink, "B -");
 	lv_obj_set_width (s_FadA, lab), lv_obj_set_width (s_FadB, lab);
 	lv_obj_set_style_text_align (s_FadB, LV_TEXT_ALIGN_RIGHT, 0);
 	s_Fader = th_slider (pg, x0 + lab + gap, fy, w - 2 * (lab + gap), fh, 0, 16383, fader_cb, 0);
-	s_Info = th_label (pg, x0, ph - foot - (o ? 0 : 8) + (o ? 4 : 10), f, o ? TH->faint : dim, "");
+	s_Info = th_label (pg, x0, ph - foot - (o ? 0 : LU (8)) + LU (o ? 4 : 10), f, o ? TH->faint : dim, "");
 	lv_obj_set_width (s_Info, w);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
 }

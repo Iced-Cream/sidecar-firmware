@@ -66,9 +66,9 @@ static void rows (lv_obj_t *p, int y, int rp, int w, int capw, int n, const char
 
 void sidecar_status_create (void *parent, int y0)
 {
-	const int O = oled (), dx = TH->dx, dy = TH->dy;
-	const int pw = th_page_w (), ph = O ? TH->h : LU (428) + dy;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int O = oled (), dx = TH->dx, dy = TH->pdy;
+	const int pw = th_page_w (), ph = O ? TH->h - LU (25) : LU (428) + dy;
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (O ? LU (25) : 0));
 	s_Page = pg;
 	s_nGen = ~0u;
 	memset (&s_V, 0, sizeof s_V);
@@ -77,7 +77,7 @@ void sidecar_status_create (void *parent, int y0)
 	const int top = O ? LU (15) : LU (6), gap = O ? LU (4) : LU (8), mx = O ? 0 : LU (8);
 	const int cw = (pw - 2 * mx - gap) / 2, rx = mx + cw + gap, H = ph - top - (O ? 0 : LU (4));
 	const int pt = O ? LU (12) : LU (26);				// the panel's title (its rows start below it)
-	const int rp = O ? LU (12) + dy / 16 : LU (22) + dy / 16;	// a row
+	const int rp = O ? LU (10) + TH->dy / 16 : LU (22) + dy / 10;	// a row
 	if (O)
 	{
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));

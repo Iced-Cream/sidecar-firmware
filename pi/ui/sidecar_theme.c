@@ -368,6 +368,7 @@ void sidecar_theme_set (int id)
 	if (id == THEME_OLED) s_Cur.f_num = s_Cur.f_hero = s_Cur.f_big;
 	s_Cur.dx = s_Cur.w - s_Cur.bw - (id == THEME_OLED ? 0 : s_Cur.nav);
 	s_Cur.dy = s_Cur.h - s_Cur.bh;
+	s_Cur.pdy = s_Cur.dy - (id == THEME_OLED ? 25 : 58) * lu / 4;	// the sub-page row (sidecar_ui.c) takes that off the pages below it
 	g_Theme = &s_Cur;
 }
 

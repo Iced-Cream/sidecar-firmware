@@ -40,8 +40,8 @@ typedef struct
 
 static const seq_geo_t kGeoSidecar = {
 	.pg_h = 428,
-	.strip_x = 430, .strip_y = 4, .strip_w = 222, .strip_h = 48, .cell = 28,
-	.tracks_x = 254, .tracks_y = 4, .tracks_w = 168, .tracks_h = 48,
+	.strip_x = 430, .strip_y = 6, .strip_w = 222, .strip_h = 44, .cell = 28,	// (the header row: 44 px keys, as the sub-page rows of the other sections)
+	.tracks_x = 254, .tracks_y = 6, .tracks_w = 168, .tracks_h = 44,
 	.rul_y = 56, .rul_h = 14, .grid_x = 52, .grid_y = 70, .grid_w = 640, .grid_h = 280, .keys_x = 8, .keys_w = 40,
 	.lane_x = 8, .lane_y = 354, .lane_w = 684, .lane_h = 70,
 	.tools_x = 700, .tools_y = 56, .tools_w = 92, .tools_h = 6 * 42 + 5 * 4,	// (touch2: six tools of 42 px; seqx: seven of 35)
@@ -137,6 +137,7 @@ static void geo_size (const seq_geo_t *b)
 
 
 static lv_obj_t *s_Page, *s_Grid, *s_Keys, *s_Ruler, *s_Strip, *s_Lane, *s_Head, *s_Card, *s_CardText, *s_CardSub;
+static lv_obj_t *s_Cell[3];		// GUIDE's info row: the tempo's label, value and unit
 static lv_obj_t *s_Title, *s_TitleBar, *s_Where, *s_Tracks, *s_Tools, *s_Snap, *s_Undo, *s_Redo, *s_Empty, *s_Zoom;
 static lv_obj_t *s_Panel[SEQED_TOOLS];			// the lane's place for CHORD, STRUM, HUMAN, KEY, SWING, POLY (index = tool)
 static lv_obj_t *s_ChordM, *s_InvM, *s_ChStrM, *s_StrumM, *s_DirM, *s_HumTM, *s_HumVM, *s_RootM, *s_ScaleM, *s_PanelInfo[SEQED_TOOLS];
@@ -1533,11 +1534,25 @@ static void header_update (void)
 		else lv_snprintf (pg, sizeof pg, "%d/%d", s_First + 1, npages ());
 		if (s_V.bpm10 > 0) lv_snprintf (b, sizeof b, "%s %d.%d  %s%s", tr, s_V.bpm10 / 10, s_V.bpm10 % 10, pg, sw);
 		else lv_snprintf (b, sizeof b, "%s  %s%s", tr, pg, sw);
-		set_text (s_Title, b);
-		if (s_V.track >= 0)
-			lv_snprintf (b, sizeof b, "%s  %s  T%d", s_V.project[0] ? s_V.project : "-", pat, s_V.track + 1);
-		else lv_snprintf (b, sizeof b, "%s  %s", s_V.project[0] ? s_V.project : "-", pat);
-		set_text (s_Where, b);
+		if (TH->id == THEME_GUIDE)	// the guide's table cells: a 11 px label over an 18 px value, the unit 11 px
+		{
+			if (s_V.track >= 0) lv_snprintf (b, sizeof b, "SEQUENCER / %s / T%d", pat, s_V.track + 1);
+			else lv_snprintf (b, sizeof b, "SEQUENCER / %s", pat);
+			set_text (s_Title, b);
+			set_text (s_Where, s_V.project[0] ? s_V.project : "-");
+			if (s_V.bpm10 > 0) lv_snprintf (b, sizeof b, "%d.%d", s_V.bpm10 / 10, s_V.bpm10 % 10); else lv_snprintf (b, sizeof b, "-");
+			set_text (s_Cell[1], b);
+			lv_obj_set_x (s_Cell[2], lv_obj_get_x (s_Cell[1]) + th_text_width (TH->f_title, b) + LU (4));
+			set_text (s_Cell[2], s_V.bpm10 > 0 ? "BPM" : "");
+		}
+		else
+		{
+			set_text (s_Title, b);
+			if (s_V.track >= 0)
+				lv_snprintf (b, sizeof b, "%s  %s  T%d", s_V.project[0] ? s_V.project : "-", pat, s_V.track + 1);
+			else lv_snprintf (b, sizeof b, "%s  %s", s_V.project[0] ? s_V.project : "-", pat);
+			set_text (s_Where, b);
+		}
 	}
 	int changed = 0, sel = -1;
 	for (int i = 0; i < SEQED_TRACKS; i++)
@@ -1806,10 +1821,27 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		s_Where = label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
 		lv_obj_set_width (s_Where, LU (226) + dx / 4);
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_DOTS);
+		memset (s_Cell, 0, sizeof s_Cell);
+		if (TH->id == THEME_GUIDE)	// info row as table cells: SEQUENCER / A04 over the project, TEMPO over its value and unit
+		{
+			lv_obj_add_flag (acc, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag (t, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_set_pos (s_Title, LU (12), LU (9));
+			lv_obj_set_style_text_color (s_Title, lv_color_hex (TH->sub), 0);
+			lv_obj_set_width (s_Title, LU (150));
+			lv_label_set_long_mode (s_Title, LV_LABEL_LONG_MODE_DOTS);
+			lv_obj_set_pos (s_Where, LU (12), LU (24));
+			lv_obj_set_width (s_Where, LU (150));
+			lv_obj_set_style_text_font (s_Where, TH->f_title, 0);
+			const int cx = LU (170);
+			label (pg, cx, LU (9), TH->f_micro, TH->sub, "TEMPO");
+			s_Cell[1] = label (pg, cx, LU (24), TH->f_title, TH->ink, "-");
+			s_Cell[2] = label (pg, cx + LU (50), LU (30), TH->f_micro, TH->sub, "");
+		}
 		s_Tracks = th_seg (pg, G->tracks_x, G->tracks_y, G->tracks_w, G->tracks_h, (const char *const[]) {"-", "-", "-", "-", ""},
 				   TH_KEY | TH_KEY_ROUND, track_cb, 0);	// (SQUARE, GUIDE: circles, the guide's track selectors)
 		th_seg_font (s_Tracks, TH->f_small);
-		button (pg, LU (660) + dx, LU (4), LU (132), LU (48), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
+		button (pg, LU (660) + dx, LU (6), LU (132), LU (44), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
 		s_Snap = button (pg, G->snap_x, G->snap_y, G->snap_w, G->snap_h, snap_text (), TH_KEY, snap_cb, TH->f_micro);
 	}
 	s_Strip = drawn (pg, G->strip_x, G->strip_y, G->strip_w, G->strip_h, strip_draw, strip_cb, 0, 0);

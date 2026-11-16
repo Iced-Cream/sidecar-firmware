@@ -365,11 +365,11 @@ static void key_cb (lv_obj_t *o, int idx, void *ud)
 void sidecar_sedit_create (void *parent, int y0)
 {
 	int O = oled ();
-	int pw = th_page_w (), ph = O ? TH->h : LU (428) + TH->dy;
-	int x0 = O ? 0 : LU (8), g = TH->gap, kh = LU (O ? 22 : 52) + TH->dy / 8;
+	int pw = th_page_w (), ph = O ? TH->h - LU (25) : LU (428) + TH->pdy;
+	int x0 = O ? 0 : LU (8), g = TH->gap, kh = LU (O ? 22 : 52) + TH->pdy / 8;
 	int ky2 = ph - kh - (O ? 0 : LU (4)), ky1 = ky2 - kh - g;
 	int top = O ? LU (15) : LU (38);
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (O ? LU (25) : 0));
 	s_Page = pg;
 	s_nGen = ~0u, s_bHave = 0, s_nDlg = DLG_NONE, s_nDrag = -1, s_bPanning = 0, s_nShift = 0;
 	s_nHold = 0, s_nHoldM = -1, s_bHoldPan = 0;
@@ -409,7 +409,7 @@ void sidecar_sedit_create (void *parent, int y0)
 		lv_obj_set_style_bg_opa (s_Scrim, LV_OPA_50, 0);
 	}
 	lv_obj_add_flag (s_Scrim, LV_OBJ_FLAG_HIDDEN);
-	int dw = O ? LU (300) + TH->dx / 2 : LU (600) + TH->dx / 2, dh = O ? LU (130) + TH->dy / 2 : LU (260) + TH->dy / 2;
+	int dw = O ? LU (300) + TH->dx / 2 : LU (600) + TH->dx / 2, dh = O ? LU (130) + TH->pdy / 2 : LU (260) + TH->pdy / 2;
 	s_Dlg = th_box (pg, (pw - dw) / 2, (ph - dh) / 2, dw, dh);
 	if (O)
 	{
@@ -426,7 +426,7 @@ void sidecar_sedit_create (void *parent, int y0)
 	s_DlgSub = th_label (s_Dlg, tx, LU (O ? 26 : 56), O ? TH->f_small : TH->f_body, c_dim (), "");
 	lv_obj_set_width (s_DlgSub, dw - 2 * tx);
 	static const char *const kDO[SSE_D_N] = {"SAVE+USE", "SAVE", "CANCEL"}, *const kDC[SSE_D_N] = {"Save + use", "Save", "Cancel"};
-	int dkh = LU (O ? 26 : 56) + TH->dy / 8, dkw = (dw - 2 * tx - 2 * g) / 3, dky = dh - dkh - LU (O ? 8 : 20);
+	int dkh = LU (O ? 26 : 56) + TH->pdy / 8, dkw = (dw - 2 * tx - 2 * g) / 3, dky = dh - dkh - LU (O ? 8 : 20);
 	for (int i = 0; i < SSE_D_N; i++)
 	{
 		s_DlgKey[i] = th_key (s_Dlg, tx + i * (dkw + g), dky, dkw, dkh, O ? kDO[i] : kDC[i], i == SSE_D_USE ? TH_KEY_ACCENT : TH_KEY,

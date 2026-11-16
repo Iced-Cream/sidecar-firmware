@@ -63,7 +63,7 @@ void sidecar_insfx_create (void *parent, int y0)
 	s_nGen = ~0u, s_nShown = -1;
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the same rows, wider, the keys and knobs a little taller (e)
-	const int dx = TH->dx, dy = TH->dy, e = dy / 6;
+	const int dx = TH->dx, dy = TH->pdy, e = dy / 6;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, th_page_w (), o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
@@ -130,7 +130,7 @@ void sidecar_insfx_create (void *parent, int y0)
 		}
 		for (int b = 0; b < 3; b++)
 		{
-			const int y = LU (286) + 3 * e + b * (LU (28) + e / 2);
+			const int y = LU (286) + 3 * e + b * (LU (28) + e);
 			s_SendL[b] = th_label (pg, LU (24), y, TH->f_body, TH->win_ink, "");
 			lv_obj_set_width (s_SendL[b], LU (200));
 			s_Send[b] = th_meter (pg, LU (230), y + LU (4), LU (200) + dx / 2, LU (14), 127, TH_METER_H, TH->win_ink);
@@ -138,7 +138,7 @@ void sidecar_insfx_create (void *parent, int y0)
 			lv_obj_set_width (s_Bus[b], LU (326) + dx / 2);
 		}
 		{	// the OUT row
-			const int y = LU (286) + 3 * e + 3 * (LU (28) + e / 2), g = LU (160) + dx / 6;
+			const int y = LU (286) + 3 * e + 3 * (LU (28) + e), g = LU (160) + dx / 6;
 			s_Out = th_key (pg, LU (24), y - 2, LU (140), LU (26) + e / 4, "OUT TRK", TH_KEY, out_cb, 0);
 			for (int k = 0; k < 3; k++)
 			{

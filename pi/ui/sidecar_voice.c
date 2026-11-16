@@ -401,7 +401,7 @@ void sidecar_voice_create (void *parent, int y0)
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the knobs wider apart and taller, the machine's panel (keyboard, algorithm, scope) gets most
 	// of the extra room, the heatmap the full width
-	const int dx = TH->dx, dy = TH->dy;
+	const int dx = TH->dx, dy = TH->pdy;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, th_page_w (), o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
@@ -414,22 +414,22 @@ void sidecar_voice_create (void *parent, int y0)
 		const int kp = (LU (352) + dx) / 8, ky = dy / 6;
 		s_Name = th_label (pg, 3, LU (16), TH->f_body, TH->ink, "");
 		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, k * kp, LU (29), kp - 1, LU (52) + ky, 127, TH_METER_KNOB, TH->ink);
-		s_Scope = th_box (pg, 3, LU (91) + ky, LU (349) + dx, LU (104) + (dy - ky) * 4 / 5);
-		s_Mode = th_box (pg, 3, LU (87) + ky, LU (349) + dx, LU (110) + (dy - ky) * 4 / 5);
+		s_Scope = th_box (pg, 3, LU (91) + ky, LU (349) + dx, LU (104) + (dy - ky));
+		s_Mode = th_box (pg, 3, LU (87) + ky, LU (349) + dx, LU (110) + (dy - ky));
 		s_HeatCap = th_label (pg, 3, LU (205) + dy, TH->f_micro, TH->dim, "P-LOCKS");
 		s_Heat = th_box (pg, LU (50), LU (202) + dy, LU (302) + dx, LU (16));
 		s_Info = th_label (pg, 3, LU (226) + dy, TH->f_micro, TH->dim, "");
 	}
 	else
 	{
-		const int kp = LU (100) + dx / 16, kh = LU (124) + dy / 4, sx = LU (440) + dx / 4;
+		const int kp = LU (100) + dx / 16, kh = LU (124) + dy / 2, sx = LU (440) + dx / 4;
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
 		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "VOICE");
 		s_Name = th_label (pg, LU (24), LU (40), TH->f_big, TH->win_ink, "");
 		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, LU (24) + (k & 3) * kp, LU (84) + (k >> 2) * (kh + LU (6)), kp - LU (8), kh, 127, TH_METER_KNOB, TH->accent);
-		s_Scope = th_box (pg, sx, LU (84), LU (336) + dx * 3 / 4, LU (250) + dy * 3 / 4);
-		s_Mode = th_box (pg, sx, LU (80), LU (336) + dx * 3 / 4, LU (258) + dy * 3 / 4);
+		s_Scope = th_box (pg, sx, LU (84), LU (336) + dx * 3 / 4, LU (250) + dy);
+		s_Mode = th_box (pg, sx, LU (80), LU (336) + dx * 3 / 4, LU (258) + dy);
 		s_HeatCap = th_label (pg, LU (24), LU (348) + dy, TH->f_small, TH->win_dim, "P-LOCKS (THE RYTM'S PATTERN)");
 		s_Heat = th_box (pg, LU (24), LU (370) + dy, LU (752) + dx, LU (30));
 		s_Info = th_label (pg, sx, LU (14), TH->f_small, TH->win_dim, "");

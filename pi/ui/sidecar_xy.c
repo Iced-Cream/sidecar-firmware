@@ -234,7 +234,7 @@ static void pad_draw (lv_event_t *e)
 	int have = s_bDown || (s_V.valid && s_V.active);
 	if (!have) return;
 	int x = s_bDown ? s_nX : s_V.x, y = s_bDown ? s_nY : s_V.y;
-	int px = x * (w - 1) / SXY_MAX, py = (h - 1) - y * (h - 1) / SXY_MAX, r = O ? 4 : 10 + TH->dy / 24;
+	int px = x * (w - 1) / SXY_MAX, py = (h - 1) - y * (h - 1) / SXY_MAX, r = O ? 4 : 10 + TH->pdy / 24;
 	const uint32_t dot = O ? TH->ink : TH->accent, cross = O ? DOT_DOTTED : th_mix (TH->win, TH->accent, 90);
 	th_fill (l, &c, px, 1, px, h - 2, cross, LV_OPA_COVER, 0);
 	th_fill (l, &c, 1, py, w - 2, py, cross, LV_OPA_COVER, 0);
@@ -417,13 +417,13 @@ void sidecar_xy_create (void *parent, int y0)
 	const int o = oled ();
 	s_nGen = ~0u, s_bSetup = 0, s_nPickA = -1, s_bDown = 0, s_nTrail = 0;
 	memset (&s_V, 0, sizeof s_V);
-	const int pw = th_page_w (), ph = TH->h - y0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int pw = th_page_w (), ph = TH->h - y0 - (o ? LU (25) : 0);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (o ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, ink = o ? TH->ink : TH->win_ink, dim = o ? TH->dim : TH->win_dim;
 	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : LU (44), g = o ? LU (3) : LU (8);
-	const int lh = lv_font_get_line_height (f), foot = o ? lh + LU (4) : lh + LU (10), keyh = o ? LU (20) + TH->dy / 12 : LU (40) + TH->dy / 8;
+	const int lh = lv_font_get_line_height (f), foot = o ? lh + LU (4) : lh + LU (10), keyh = o ? LU (20) + TH->pdy / 12 : LU (40) + TH->pdy / 8;
 	if (o)
 	{
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));

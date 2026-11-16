@@ -486,9 +486,9 @@ void sidecar_rytmpat_create (void *parent, int y0, void (*back) (void))
 		s_Info = th_label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
 		lv_obj_set_size (s_Info, LU (376) + dx, LU (24));
 		lv_label_set_long_mode (s_Info, LV_LABEL_LONG_MODE_DOTS);
-		s_PageM = th_seg (pg, LU (404) + dx, LU (4), LU (260), LU (48), kPages, TH_KEY_TRIG, page_cb, 0);
+		s_PageM = th_seg (pg, LU (404) + dx, LU (6), LU (260), LU (44), kPages, TH_KEY_TRIG, page_cb, 0);
 		th_seg_font (s_PageM, TH->f_body);
-		lv_obj_t *b = th_key (pg, LU (672) + dx, LU (4), LU (120), LU (48), "SEQ", TH_KEY_FUNC, back_cb, 0);
+		lv_obj_t *b = th_key (pg, LU (672) + dx, LU (6), LU (120), LU (44), "SEQ", TH_KEY_FUNC, back_cb, 0);
 		th_key_font (b, TH->f_body);
 		th_panel (pg, 2, G->rul_y - LU (4), GX + GW, GH + LU (22), "", TH_PANEL_WINDOW);	// the grid's display window
 	}
