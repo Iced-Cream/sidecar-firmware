@@ -58,6 +58,8 @@ OBJS += ../ui/sidecar_display.o ../ui/sidecar_ui.o ../ui/sidecar_splash.o ../ui/
 OBJS += ../ui/sidecar_seqed.o ../ui/sidecar_rytmpat.o ../ui/rytm_pattern.o ../ui/sidecar_theme.o ../ui/sidecar_dot.o ../ui/sidecar_dotfont.o
 # the SIDECAR theme's text faces: Space Grotesk Medium, 12..28 px (pi/ui/fonts/gen.sh)
 OBJS += $(patsubst %,../ui/fonts/sidecar_sg%.o,12 14 16 18 20 22 24 28)
+# the SQUARE and GUIDE themes' text faces: Arimo Regular, 11 13 18 28 px (pi/ui/fonts/gen-arimo.sh)
+OBJS += $(patsubst %,../ui/fonts/sidecar_ar%.o,11 13 18 28)
 # the WAVETABLE / GRANULAR machine view (pi/ui/sidecar_wgview.h), filled by wgview_pi.cpp
 OBJS += ../ui/sidecar_wgview.o
 # the CHOP page (pi/ui/sidecar_chop.h), filled by chopview_pi.cpp

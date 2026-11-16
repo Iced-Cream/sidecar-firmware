@@ -833,6 +833,14 @@ Font Awesome 5 Free symbols (below).
 ------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
+Arimo font (the SQUARE and GUIDE touchscreen themes' text: pi/ui/fonts/sidecar_ar*.c, Latin subset as LVGL tables)
+Licence: SIL Open Font License 1.1, Copyright 2026 The Arimo Project Authors (https://github.com/googlefonts/Arimo).
+The licence text: licenses/OFL-Arimo.txt. The tables are a conversion (lv_font_conv, pi/ui/fonts/gen-arimo.sh) of the
+unmodified Arimo Regular, not a Modified Version under its own name; they also hold the same eleven Font Awesome 5
+Free symbols as the Space Grotesk tables.
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
 Montserrat font (built into LVGL)
 Licence: SIL Open Font License 1.1, Copyright 2011 The Montserrat Project Authors (https://github.com/JulietaUla/Montserrat).
 ------------------------------------------------------------------------------

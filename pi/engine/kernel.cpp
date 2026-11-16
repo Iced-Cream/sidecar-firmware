@@ -69,6 +69,7 @@ static int s_nRytmPatIndex = -1;
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "usbc_pi.h"		// the USB-C mode for the SIDECAR MENU > USB-C (usb_mode.h)
 #include "ui_contrast.h"	// the SIDECAR theme's high contrast (uicontrast=)
+#include "ui_style.h"	// the display theme's words (uistyle=)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
 #include "sdfiles.h"
 #include "wifi.h"
@@ -331,7 +332,7 @@ boolean CKernel::Initialize (void)
 		unsigned ts = m_Timer.GetClockTicks ();
 		m_pDisplay = new CSidecarDisplay (m_Options.GetWidth (), m_Options.GetHeight ());
 		const char *pStyle = m_Options.GetAppOptionString ("uistyle", 0);	// the card is not read yet: cmdline only
-		sidecar_splash_style (pStyle != 0 && (strcmp (pStyle, "sidecar") == 0 || strcmp (pStyle, "classic") == 0) ? 1 : 0);
+		sidecar_splash_style (ui_style::parse (pStyle) > 0 ? 1 : 0);	// SIDECAR, SQUARE and GUIDE: the SIDECAR boot screen
 		if (!m_pDisplay->Splash ()) m_Logger.Write (From, LogNotice, "boot screen: no frame buffer");
 		else m_Logger.Write (From, LogNotice, "boot screen: %ux%u in %u us", m_pDisplay->GetFrameWidth (),
 				     m_pDisplay->GetFrameHeight (), m_Timer.GetClockTicks () - ts);
@@ -1227,9 +1228,8 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 	{
 		if (pCmd[7] == '=')
 		{
-			int n = strcmp (pCmd + 8, "oled") == 0 || strcmp (pCmd + 8, "0") == 0 ? 0
-				: strcmp (pCmd + 8, "sidecar") == 0 || strcmp (pCmd + 8, "classic") == 0 || strcmp (pCmd + 8, "1") == 0 ? 1 : -1;
-			if (n < 0) pThis->m_Logger.Write (From, LogWarning, "uistyle=oled|sidecar");
+			int n = ui_style::parse (pCmd + 8);
+			if (n < 0) pThis->m_Logger.Write (From, LogWarning, "uistyle=oled|sidecar|square|guide");
 			else
 			{
 				pThis->m_nUiStyle = (unsigned) n;
@@ -1241,7 +1241,7 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 				}
 			}
 		}
-		pThis->m_Logger.Write (From, LogNotice, "display: UI style %s", pThis->m_nUiStyle ? "sidecar" : "oled");
+		pThis->m_Logger.Write (From, LogNotice, "display: UI style %s", ui_style::name ((int) pThis->m_nUiStyle));
 		return TRUE;
 	}
 	if (strncmp (pCmd, "uilook", 6) == 0 && (pCmd[6] == 0 || pCmd[6] == '='))	// UX review L1: the OLED look
@@ -1440,7 +1440,7 @@ void CKernel::LoadDisplayRes (boolean bCard)
 	if (m_nResW) m_Logger.Write (From, LogNotice, "display: res=%ux%u", m_nResW, m_nResH);
 }
 
-// /.rytm/display.txt: "screensaver=MIN", "brightness=PCT", "touchtest=0|1" and "uistyle=oled|sidecar" lines
+// /.rytm/display.txt: "screensaver=MIN", "brightness=PCT", "touchtest=0|1" and "uistyle=oled|sidecar|square|guide" lines
 // (SIDECAR replaced the CLASSIC theme under its id 1, so an older card's "classic" is read as "sidecar" and
 // written back as "sidecar" at the next save); cmdline.txt's same keys win
 static core::fmt::KvKeep s_DisplayKeep;		// display.txt's lines a newer build wrote: written back unchanged
@@ -1490,17 +1490,7 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 	m_nSaverMin = Value ("screensaver", 60, 0, 1440);
 	m_nBright = Value ("brightness", 100, 5, 100);
 	m_bTouchHidden = Value ("touchtest", 1, 0, 1) == 0;
-	auto Style = [&] (const char *p) -> int		// "oled" / "sidecar" (older cards: "classic"; or 0 / 1), -1: neither
-	{
-		if (p == 0) return -1;
-		auto End = [] (char c) { return c == 0 || c == '\n' || c == '\r'; };
-		if ((strncmp (p, "oled", 4) == 0 && End (p[4])) || (*p == '0' && End (p[1]))) return 0;
-		if ((strncmp (p, "sidecar", 7) == 0 && End (p[7])) || (strncmp (p, "classic", 7) == 0 && End (p[7])) || (*p == '1' && End (p[1])))
-			return 1;
-		return -1;
-	};
-	const char *ps = strstr (Text, "uistyle=");
-	int nStyle = Style (ps ? ps + 8 : 0), nCmd = Style (m_Options.GetAppOptionString ("uistyle", 0));
+	int nStyle = ui_style::from_text (Text), nCmd = ui_style::parse_line (m_Options.GetAppOptionString ("uistyle", 0));	// ("oled", "sidecar", "square", "guide"; older cards "classic" = sidecar)
 	m_nUiStyle = nCmd >= 0 ? (unsigned) nCmd : nStyle >= 0 ? (unsigned) nStyle : 0;
 	m_Ui.ui_style = (int) m_nUiStyle;
 	{
@@ -1529,7 +1519,7 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 	}
 	if (m_pDisplay != 0) m_pDisplay->SetScreensaver (m_nSaverMin);
 	m_Logger.Write (From, LogNotice, "display: screensaver %u min, brightness %u %%, UI style %s (%s)", m_nSaverMin, m_nBright,
-			m_nUiStyle ? "sidecar" : "oled", Text[0] ? "/.rytm/display.txt" : "defaults");
+			ui_style::name ((int) m_nUiStyle), Text[0] ? "/.rytm/display.txt" : "defaults");
 }
 
 void CKernel::SaveDisplaySettings (void)
@@ -1537,7 +1527,7 @@ void CKernel::SaveDisplaySettings (void)
 	m_bSaveDisplay = FALSE;
 	CString s;
 	s.Format ("screensaver=%u\nbrightness=%u\ntouchtest=%u\nuistyle=%s\nuilook=%s\nuicontrast=%s\n", m_nSaverMin, m_nBright, m_bTouchHidden ? 0u : 1u,
-		  m_nUiStyle ? "sidecar" : "oled", s_nUiLook ? "stage" : "studio", ui_contrast::name (s_nUiContrast));
+		  ui_style::name ((int) m_nUiStyle), s_nUiLook ? "stage" : "studio", ui_contrast::name (s_nUiContrast));
 	if (m_bTouchCal)
 	{
 		char b[64];
