@@ -107,7 +107,7 @@ static const sidecar_theme_t kOled = {
 	// 5x9 the body and titles, 5x7 the micro face (the sizes of the 3x3 grid's 4x6 and 3x5)
 	.f_micro = &kDotMicro, .f_small = &kDotText, .f_body = &kDotText, .f_big = &kDotBig, .f_title = &kDotText,
 	.f_mid = &kDotText, .f_mid2 = &kDotText,
-	.radius = 0, .gap = 3, .touch = 21,
+	.radius = 0, .gap = 3, .touch = 21, .edge_w = 1,
 };
 
 // SIDECAR's faces: Space Grotesk Medium (pi/ui/fonts/gen.sh, SIL OFL 1.1) for text, the dot font in round dots for the
@@ -121,47 +121,105 @@ static const lv_font_t kSdHero = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = 
 static const lv_font_t kSdHero11 = {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = 36, .base_line = 2, .dsc = &kHero11Dsc};
 
 // the "UV night" palette (the web app's, docs/UI-THEMES.md "SIDECAR"): text >= 4.5:1, controls >= 3:1 on bg and cards
-#define UV_BG		0x08071A	// the screen
-#define UV_CARD		0x110F28	// a card (panel, window)
-#define UV_BORD		0x2C2950	// a card's border, a track, an empty meter
-#define UV_CTRL		0x6A64A0	// a control's border (3.5:1 on a card)
-#define UV_TXT		0xEEEDFF
-#define UV_LBL		0xBDB9E8	// labels, secondary text
-#define UV_FAINT	0x8A85C0	// disabled (5.5:1 all the same)
-#define UV_ACC		0x9A97FF	// the accent: selection, values, the A side
-#define UV_COR		0xFF7A5C	// coral: the B side, FM carriers, recording, the selected note, warnings
-#define UV_MAG		0xD46CFF	// magenta: the crossfader's middle, a hot meter
-#define UV_RAIL		0x0D0A2A	// the T1..T8 rail
+#define UVN_BG		0x08071A	// the screen
+#define UVN_CARD	0x110F28	// a card (panel, window)
+#define UVN_BORD	0x2C2950	// a card's border, a track, an empty meter
+#define UVN_CTRL	0x6A64A0	// a control's border (3.5:1 on a card)
+#define UVN_TXT		0xEEEDFF
+#define UVN_LBL		0xBDB9E8	// labels, secondary text
+#define UVN_FAINT	0x8A85C0	// disabled (5.5:1 all the same)
+#define UVN_ACC		0x9A97FF	// the accent: selection, values, the A side
+#define UVN_COR		0xFF7A5C	// coral: the B side, FM carriers, recording, the selected note, warnings
+#define UVN_MAG		0xD46CFF	// magenta: the crossfader's middle, a hot meter
+#define UVN_RAIL	0x0D0A2A	// the T1..T8 rail
+
+// The painters read the palette through UV_*: the standard one above, or the high-contrast one (sidecar_theme_set picks;
+// docs/UI-THEMES.md "High contrast"). trk: an empty track / meter; cor2, acc2: the light tints of coral and the accent.
+static struct { uint32_t bg, card, bord, ctrl, txt, lbl, faint, acc, cor, mag, rail, trk, cor2, acc2; int hc; } UV =
+	{UVN_BG, UVN_CARD, UVN_BORD, UVN_CTRL, UVN_TXT, UVN_LBL, UVN_FAINT, UVN_ACC, UVN_COR, UVN_MAG, UVN_RAIL, UVN_BORD, 0xFFB3A1, 0xC9C7FF, 0};
+#define UV_BG	UV.bg
+#define UV_CARD	UV.card
+#define UV_BORD	UV.bord
+#define UV_CTRL	UV.ctrl
+#define UV_TXT	UV.txt
+#define UV_LBL	UV.lbl
+#define UV_FAINT UV.faint
+#define UV_ACC	UV.acc
+#define UV_COR	UV.cor
+#define UV_MAG	UV.mag
+#define UV_RAIL	UV.rail
+#define UV_TRK	UV.trk
+#define UV_COR2	UV.cor2
+#define UV_ACC2	UV.acc2
+#define HC	(UV.hc)
+
+// the high-contrast accents
+#define HC_BLUE		0x8FD3FF
+#define HC_GREEN	0x80D553
+#define HC_YELLOW	0xFFD166
 
 static const sidecar_theme_t kSidecar = {
 	.id = THEME_SIDECAR, .name = "SIDECAR", .dot = 1, .w = 800, .h = 480, .bw = 800, .bh = 480,
-	.bg = UV_BG, .ink = UV_TXT, .dim = UV_LBL, .faint = UV_FAINT, .sub = UV_LBL,
-	.win = UV_CARD, .win_edge = UV_BORD, .win_ink = UV_TXT, .win_dim = UV_LBL,
-	.title_bg = 0x14103A, .title_ink = UV_TXT, .sel_bg = UV_ACC, .sel_ink = UV_BG,
-	.accent = UV_ACC, .accent_hi = 0xC9C7FF,
-	.ok = UV_ACC, .bad = UV_COR, .warn = 0xFFB3A1,
-	.play = UV_TXT, .lock = UV_MAG,
+	.bg = UVN_BG, .ink = UVN_TXT, .dim = UVN_LBL, .faint = UVN_FAINT, .sub = UVN_LBL,
+	.win = UVN_CARD, .win_edge = UVN_BORD, .win_ink = UVN_TXT, .win_dim = UVN_LBL,
+	.title_bg = 0x14103A, .title_ink = UVN_TXT, .sel_bg = UVN_ACC, .sel_ink = UVN_BG,
+	.accent = UVN_ACC, .accent_hi = 0xC9C7FF,
+	.ok = UVN_ACC, .bad = UVN_COR, .warn = 0xFFB3A1,
+	.play = UVN_TXT, .lock = UVN_MAG,
 	// the piano roll: white-key rows lighter than black-key rows, the lines in three steps of the control lavender
 	.row_in = 0x120F2C, .row_out = 0x0B0920, .row_root = 0x1E1A48, .line_step = 0x1D1A3D, .line_beat = 0x3A3566,
-	.line_page = UV_CTRL, .key_white = 0x7A779A, .key_black = UV_BORD, .muted = 0x5A548C,
+	.line_page = UVN_CTRL, .key_white = 0x7A779A, .key_black = UVN_BORD, .muted = 0x5A548C,
 	.f_micro = &sidecar_sg12, .f_small = &sidecar_sg14, .f_body = &sidecar_sg16,
 	.f_big = &sidecar_sg24, .f_title = &sidecar_sg20,
 	.f_mid = &sidecar_sg18, .f_mid2 = &sidecar_sg22,
 	.f_num = &kSdNum, .f_hero = &kSdHero,
-	.radius = 12, .gap = 6, .touch = 46,
+	.radius = 12, .gap = 6, .touch = 46, .edge_w = 1,
 };
 
 const sidecar_theme_t *g_Theme = &kOled;
 th_fit_fn th_fit_report;
 static sidecar_theme_t s_Cur;				// the table now: the theme's, sized for the screen
-static int s_bWide, s_bBig;
+static int s_bWide, s_bBig, s_nContrast;
 
 const sidecar_theme_t *sidecar_theme_get (int id) { return id == THEME_SIDECAR ? &kSidecar : &kOled; }
 void sidecar_theme_screen (int pw, int ph) { s_bWide = pw >= 1024 && ph >= 600; s_bBig = pw >= 1280 && ph >= 720; }
 int sidecar_theme_wide (void) { return s_bWide; }
+void sidecar_theme_contrast (int hc) { s_nContrast = hc == 1 || hc == 2 ? hc : 0; }
+int sidecar_theme_get_contrast (void) { return s_nContrast; }
+
+// the high-contrast SIDECAR (the web app's data-theme="contrast"): black, white 2 px edges, one accent, yellow for the
+// warm roles; the same ids, fonts, sizes and layouts as SIDECAR, so the pages need no branch of their own
+static void contrast_apply (sidecar_theme_t *t, int hc)
+{
+	const uint32_t acc = hc == 2 ? HC_GREEN : HC_BLUE;
+	UV.bg = UV.card = UV.rail = 0x000000;
+	UV.bord = UV.ctrl = UV.txt = 0xFFFFFF;
+	UV.lbl = 0xE6E6E6;
+	UV.faint = 0xA6A6A6;
+	UV.acc = UV.acc2 = acc;
+	UV.cor = UV.mag = UV.cor2 = HC_YELLOW;
+	UV.trk = 0x767676;
+	UV.hc = hc;
+	t->hc = hc;
+	t->edge_w = 2;
+	t->bg = 0x000000; t->ink = 0xFFFFFF; t->dim = 0xE6E6E6; t->faint = 0xA6A6A6; t->sub = 0xE6E6E6;
+	t->win = 0x000000; t->win_edge = 0xFFFFFF; t->win_ink = 0xFFFFFF; t->win_dim = 0xE6E6E6;
+	t->title_bg = 0x000000; t->title_ink = 0xFFFFFF; t->sel_bg = acc; t->sel_ink = 0x000000;
+	t->accent = t->accent_hi = t->ok = acc;
+	t->bad = t->warn = t->lock = HC_YELLOW;
+	t->play = 0xFFFFFF;
+	t->row_in = 0x000000; t->row_out = 0x161616; t->row_root = th_mix (0x000000, acc, 41);
+	t->line_step = 0x333333; t->line_beat = 0x777777; t->line_page = 0xFFFFFF;
+	t->key_white = 0xE6E6E6; t->key_black = 0x000000; t->muted = 0xA6A6A6;
+}
+
 void sidecar_theme_set (int id)
 {
 	s_Cur = *sidecar_theme_get (id);
+	UV.bg = UVN_BG; UV.card = UVN_CARD; UV.bord = UVN_BORD; UV.ctrl = UVN_CTRL; UV.txt = UVN_TXT; UV.lbl = UVN_LBL;
+	UV.faint = UVN_FAINT; UV.acc = UVN_ACC; UV.cor = UVN_COR; UV.mag = UVN_MAG; UV.rail = UVN_RAIL; UV.trk = UVN_BORD;
+	UV.cor2 = 0xFFB3A1; UV.acc2 = 0xC9C7FF; UV.hc = 0;
+	if (id == THEME_SIDECAR && s_nContrast) contrast_apply (&s_Cur, s_nContrast);
 	if (s_bWide)						// 1024x600: the dots / pixels it has
 	{
 		s_Cur.w = (s_bBig ? 1280 : 1024) / s_Cur.dot;
@@ -212,10 +270,10 @@ uint32_t th_led (int c)
 {
 	if (TH->id != THEME_OLED)
 	{
-		static const uint32_t kHue[7] = {UV_COR, UV_ACC, UV_ACC, 0xFFB3A1, 0xC9C7FF, UV_MAG, UV_TXT};
-		if (c < 0 || c >= 112 || c % 16 == 0) return UV_BORD;
+		const uint32_t kHue[7] = {UV_COR, UV_ACC, UV_ACC, UV_COR2, UV_ACC2, UV_MAG, UV_TXT};
+		if (c < 0 || c >= 112 || c % 16 == 0) return UV_TRK;
 		int i = c % 16;
-		return th_mix (UV_BORD, kHue[c / 16], 70 + 186 * i * i / 225);
+		return th_mix (UV_TRK, kHue[c / 16], 70 + 186 * i * i / 225);
 	}
 	if (c >= LED_WHITE) return 0xFFFFFF;
 	if (c >= LED_GREEN && c < LED_BLUE) return TH->accent;
@@ -417,24 +475,26 @@ void th_paint_knob (lv_layer_t *l, const lv_area_t *a, int v, int max, uint32_t 
 	// SIDECAR: a 270 degree arc, the track in the border's colour, the value in the knob's colour (the accent; coral for a
 	// level) from the minimum, a light dot at the value; not known yet: the track alone (the value inside: meter_draw)
 	const int aw = r >= LU (30) ? LU (6) : LU (4), rr = r - aw / 2 - 1;
-	arc (l, &c, cx, cy, rr, aw, 135, 405, UV_BORD);
+	arc (l, &c, cx, cy, rr, aw, 135, 405, UV_TRK);
 	if (!known) return;
 	int e = 135 + 270 * v / max;
 	if (e > 136) arc (l, &c, cx, cy, rr, aw, 135, e, rgb);
 	int px = cx + icos (360 - e) * rr / 1024, py = cy - isin (360 - e) * rr / 1024;
+	if (HC) circle (l, &c, px, py, aw * 3 / 4 + 3, 0x000000, LV_OPA_COVER);	// the dot: white with a black edge
 	circle (l, &c, px, py, aw * 3 / 4 + 1, UV_TXT, LV_OPA_COVER);
 }
 
 void th_paint_logo (lv_layer_t *l, const lv_area_t *c, int x, int y, int size)
 {
-	static const uint32_t kPal[4] = {UV_COR, UV_MAG, UV_ACC, UV_LBL};
+	const uint32_t kPal[4] = {UV_COR, UV_MAG, UV_ACC, UV_LBL}, kWhite[4] = {0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF};
+	const uint32_t *pal = HC ? kWhite : kPal;			// high contrast: plain white dots
 	for (int i = 0; i < SIDECAR_LOGO_N; i++)
 	{
 		int cx = x + (kLogo[i].x * size + 230) / 460, cy = y + (kLogo[i].y * size + 230) / 460, r = (kLogo[i].r * size + 2300) / 4600;
-		th_fill (l, c, cx - r, cy - r, cx + r, cy + r, kPal[kLogo[i].c], LV_OPA_COVER, LV_RADIUS_CIRCLE);
+		th_fill (l, c, cx - r, cy - r, cx + r, cy + r, pal[kLogo[i].c], LV_OPA_COVER, LV_RADIUS_CIRCLE);
 	}
 	int cx = x + SIDECAR_LOGO_DISC_X * size / 460, cy = y + SIDECAR_LOGO_DISC_Y * size / 460, r = SIDECAR_LOGO_DISC_R * size / 460;
-	th_fill (l, c, cx - r, cy - r, cx + r, cy + r, UV_ACC, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+	th_fill (l, c, cx - r, cy - r, cx + r, cy + r, HC ? 0xFFFFFF : UV_ACC, LV_OPA_COVER, LV_RADIUS_CIRCLE);
 }
 
 int th_page_w (void) { return TH->w - TH->nav; }
@@ -621,7 +681,7 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 	const int r = tile ? (TH->big ? 14 : 11) : h / 2 < LU (24) ? h / 2 : LU (24);
 	uint32_t lc = led > 0 && !disabled ? th_led (led) : 0;
 	uint32_t edge = UV_CTRL, ink = UV_TXT, sb = UV_LBL;
-	int ew = 1;
+	int ew = TH->edge_w, dashed = 0;
 	if (k == TH_KEY_NAV)					// the rail: the page's key a light pill, an icon over its name, its T key in the corner
 	{
 		uint32_t nink = checked ? UV_BG : text && !strcmp (text, "REC") ? UV_COR : UV_LBL;
@@ -631,27 +691,41 @@ void th_paint_key (lv_layer_t *l, const lv_area_t *a, const char *text, const ch
 		if (lc && !checked) nink = lc;
 		nav_icon (l, &c, text, w / 2, iy, nink);
 		th_text (l, &c, LU (6), iy + ih + LU (4), w - LU (12), TH->f_micro, checked ? UV_BG : nink == UV_COR ? UV_COR : UV_LBL, LV_TEXT_ALIGN_CENTER, text);
-		if (sub && sub[0]) th_text (l, &c, LU (11), LU (4), w - LU (16), TH->f_micro, checked ? 0x3B3670 : UV_FAINT, LV_TEXT_ALIGN_LEFT, sub);
+		if (sub && sub[0]) th_text (l, &c, LU (11), LU (4), w - LU (16), TH->f_micro, checked ? (HC ? UV_BG : 0x3B3670) : UV_FAINT, LV_TEXT_ALIGN_LEFT, sub);
 		return;
 	}
-	if (disabled) { edge = UV_BORD; ink = UV_FAINT; sb = UV_FAINT; }
+	if (disabled)							// (high contrast: a dashed outline too, so disabled is not only a colour)
+	{
+		edge = HC ? UV_FAINT : UV_BORD; ink = UV_FAINT; sb = UV_FAINT;
+		dashed = HC;
+	}
 	else if (checked || (kind & TH_KEY_FILL))
 	{
 		uint32_t f = k == TH_KEY_DANGER ? UV_COR : UV_ACC;
 		th_fill (l, &c, 0, 0, w - 1, h - 1, pressed ? th_mix (f, UV_TXT, 80) : f, LV_OPA_COVER, r);
-		edge = 0; ink = UV_BG; sb = 0x2C2950;
+		edge = 0; ink = UV_BG; sb = HC ? UV_BG : 0x2C2950;
 	}
 	else
 	{
-		if (k == TH_KEY_DANGER) { edge = UV_COR; ink = 0xFFB3A1; }
-		else if (k == TH_KEY_ACCENT || k == TH_KEY_FUNC) { edge = UV_ACC; ew = k == TH_KEY_ACCENT ? 2 : 1; }
+		if (k == TH_KEY_DANGER) { edge = UV_COR; ink = UV_COR2; }
+		else if (k == TH_KEY_ACCENT || k == TH_KEY_FUNC) { edge = UV_ACC; ew = k == TH_KEY_ACCENT ? 2 : TH->edge_w; }
 		if (pressed) th_fill (l, &c, 0, 0, w - 1, h - 1, th_mix (UV_CARD, k == TH_KEY_DANGER ? UV_COR : UV_ACC, 90), LV_OPA_COVER, r);
+		else if (HC) {}						// high contrast: no tints, black inside
 		else if (k == TH_KEY_ACCENT || k == TH_KEY_FUNC) th_fill (l, &c, 0, 0, w - 1, h - 1, th_mix (UV_CARD, UV_ACC, 40), LV_OPA_COVER, r);
 		else if (k == TH_KEY_DANGER) th_fill (l, &c, 0, 0, w - 1, h - 1, th_mix (UV_CARD, UV_COR, 36), LV_OPA_COVER, r);
 		else if (lc && k == TH_KEY_PAD) th_fill (l, &c, 0, 0, w - 1, h - 1, th_mix (UV_CARD, lc, 40), LV_OPA_COVER, r);
 	}
 	if (lc && k == TH_KEY_PAD && !checked) { edge = lc; ew = 2; }	// a pad lit: its outline in the LED's colour
 	if (edge) th_frame (l, &c, 0, 0, w - 1, h - 1, edge, ew, r);
+	if (dashed)							// gaps cut in the straight top and bottom edges (the rounded ends stay solid)
+	{
+		const int per = LU (10), gap = LU (4);
+		for (int x = r + per / 2; x + gap < w - r; x += per)
+		{
+			th_fill (l, &c, x, 0, x + gap - 1, ew - 1, UV_BG, LV_OPA_COVER, 0);
+			th_fill (l, &c, x, h - ew, x + gap - 1, h - 1, UV_BG, LV_OPA_COVER, 0);
+		}
+	}
 	if (lc && k != TH_KEY_PAD)				// a corner dot (a trig key: a bar under its number)
 	{
 		if (k == TH_KEY_TRIG) th_fill (l, &c, w / 2 - LU (8), h - LU (7), w / 2 + LU (8), h - LU (5), lc, LV_OPA_COVER, LU (1));
@@ -994,13 +1068,14 @@ static void panel_draw (lv_event_t *e)
 		top = ph / 2;
 		if (tw > w - LU (40)) tw = w - LU (40);
 		th_fill (l, &c, 0, top, w - 1, h - 1, UV_CARD, LV_OPA_COVER, r);
-		th_frame (l, &c, 0, top, w - 1, h - 1, UV_BORD, 1, r);
-		th_fill (l, &c, LU (12), 0, LU (12) + tw + LU (18) - 1, ph - 1, UV_ACC, LV_OPA_COVER, ph / 2);
-		th_text (l, &c, LU (21), (ph - font_line (f)) / 2, tw, f, UV_BG, LV_TEXT_ALIGN_LEFT, p->title);
+		th_frame (l, &c, 0, top, w - 1, h - 1, UV_BORD, TH->edge_w, r);
+		th_fill (l, &c, LU (12), 0, LU (12) + tw + LU (18) - 1, ph - 1, HC ? UV_BG : UV_ACC, LV_OPA_COVER, ph / 2);
+		if (HC) th_frame (l, &c, LU (12), 0, LU (12) + tw + LU (18) - 1, ph - 1, UV_TXT, TH->edge_w, ph / 2);	// the pill: black, white edge
+		th_text (l, &c, LU (21), (ph - font_line (f)) / 2, tw, f, HC ? UV_TXT : UV_BG, LV_TEXT_ALIGN_LEFT, p->title);
 		return;
 	}
 	th_fill (l, &c, 0, 0, w - 1, h - 1, UV_CARD, LV_OPA_COVER, r);
-	th_frame (l, &c, 0, 0, w - 1, h - 1, UV_BORD, 1, r);
+	th_frame (l, &c, 0, 0, w - 1, h - 1, UV_BORD, TH->edge_w, r);
 }
 
 lv_obj_t *th_panel (lv_obj_t *parent, int x, int y, int w, int h, const char *title, int kind)
@@ -1052,6 +1127,11 @@ static void title_draw (lv_event_t *e)
 	// SIDECAR: the header band, a plain horizontal gradient (no blur, no glow: three fills) over a border line; the power
 	// warning coral with dark text
 	if (t->alert) th_fill (l, &c, 0, 0, w - 1, h - 1, UV_COR, LV_OPA_COVER, 0);
+	else if (HC)							// high contrast: black, no glow, a white line under it
+	{
+		th_fill (l, &c, 0, 0, w - 1, h - 1, UV_BG, LV_OPA_COVER, 0);
+		th_fill (l, &c, 0, h - TH->edge_w, w - 1, h - 1, UV_BORD, LV_OPA_COVER, 0);
+	}
 	else
 	{
 		static const uint32_t kBand[4] = {0x1A1150, 0x14103A, 0x2A1033, 0x120E36};
@@ -1207,7 +1287,17 @@ static void meter_draw (lv_event_t *e)
 	}
 	// SIDECAR: a rounded bar on a track; an accent meter turns magenta past 70 % and coral past 90 % (hot)
 	const int r = (vert ? w : h) / 2;
-	th_fill (l, &c, 0, 0, w - 1, h - 1, UV_BORD, LV_OPA_COVER, r);
+	if (HC)							// high contrast: a white outline, black inside, the fill in the accent
+	{
+		th_frame (l, &c, 0, 0, w - 1, h - 1, UV_BORD, TH->edge_w, r);
+		if (!v || m->v < 0) return;
+		const int len = vert ? h : w, n = len * v / m->max, in = TH->edge_w + 1;
+		const uint32_t col = m->rgb == UV_ACC && n > len * 9 / 10 ? UV_COR : m->rgb;	// (hot: yellow)
+		if (vert) th_fill (l, &c, in, h - n < in ? in : h - n, w - 1 - in, h - 1 - in, col, LV_OPA_COVER, r / 2);
+		else th_fill (l, &c, in, in, n - 1 < in ? in : n - 1, h - 1 - in, col, LV_OPA_COVER, r / 2);
+		return;
+	}
+	th_fill (l, &c, 0, 0, w - 1, h - 1, UV_TRK, LV_OPA_COVER, r);
 	if (!v || m->v < 0) return;
 	const int len = vert ? h : w, n = len * v / m->max;
 	const int hot = m->rgb == UV_ACC, m9 = len * 9 / 10, m7 = len * 7 / 10;
@@ -1278,7 +1368,7 @@ static void slider_draw (lv_event_t *e)
 	}
 	// SIDECAR: a rounded track, the value in the accent, a light round handle (the accent while dragged)
 	int kw = LU (28), x = (w - kw) * (s->v - s->min) / span, gh = h / 4 > LU (6) ? LU (6) : h / 4;
-	th_fill (l, &c, 0, (h - gh) / 2, w - 1, (h + gh) / 2, UV_BORD, LV_OPA_COVER, gh / 2 + 1);
+	th_fill (l, &c, 0, (h - gh) / 2, w - 1, (h + gh) / 2, UV_TRK, LV_OPA_COVER, gh / 2 + 1);
 	th_fill (l, &c, 0, (h - gh) / 2, x + kw / 2, (h + gh) / 2, UV_ACC, LV_OPA_COVER, gh / 2 + 1);
 	int hr = (kw < h ? kw : h) / 2 - 1;
 	circle (l, &c, x + kw / 2, h / 2, hr, s->drag ? UV_ACC : UV_TXT, LV_OPA_COVER);

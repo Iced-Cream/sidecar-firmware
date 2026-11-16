@@ -347,7 +347,7 @@ static void grid_draw (lv_event_t *e)
 			th_text (l, &c, x + LU (32), y + (ph - fh) / 2, x0 - x - LU (40), f, cs.armed ? TH->ink : busy () ? TH->faint : TH->sub,
 				 LV_TEXT_ALIGN_LEFT, name);
 			th_fill (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->row_out, LV_OPA_COVER, 5);	// the meter's window
-			th_frame (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->win_edge, 1, 5);
+			th_frame (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->win_edge, TH->edge_w, 5);
 		}
 	meter:;
 		int n = nseg (x0, x1), st = sidecar_rec_stereo (id);
@@ -835,7 +835,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 		lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);		// taps stop here
 		for (int i = 0; i < 3; i++) s_DlgText[i] = label_w (s_Dlg, LU (8), LU (8) + i * LU (16) + (i ? LU (4) : 0), LU (284), i ? mi : TH->f_body, i == 2 ? TH->accent_hi : TH->ink, 0);
 		s_DlgNo = th_key (s_Dlg, LU (8), LU (70), LU (136), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);

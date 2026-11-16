@@ -297,7 +297,7 @@ static void meters_draw (lv_event_t *e)
 			lv_area_t a = {c.x1 + x, c.y1, c.x1 + x + cw - 1, c.y2 - 3};
 			th_paint_key (l, &a, "", 0, fl, TH_KEY, cs.sel, cs.press, 0, 0);
 			th_fill (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->row_out, LV_OPA_COVER, 5);	// the meter's window
-			th_frame (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->win_edge, 1, 5);
+			th_frame (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->win_edge, TH->edge_w, 5);
 			th_text (l, &c, x, y0 + h + LU (6), cw, fl, cs.sel ? TH->sel_ink : TH->sub, LV_TEXT_ALIGN_CENTER, src_name (k));
 		}
 		// the ladders: MAIN two (L, R), the others one; the clip lamp on top

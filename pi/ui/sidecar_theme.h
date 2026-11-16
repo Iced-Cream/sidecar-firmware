@@ -62,10 +62,16 @@ typedef struct
 	int		radius;			// corners (OLED: 0)
 	int		gap;			// between controls
 	int		touch;			// the smallest touch target (about 40 physical px)
+	int		edge_w;			// SIDECAR: a card's / control's border width (1; 2 in the high-contrast look)
+	int		hc;			// SIDECAR: 0 standard, 1 high contrast with the blue accent, 2 with the green one (sidecar_theme_contrast)
 } sidecar_theme_t;
 
 extern const sidecar_theme_t *g_Theme;
 #define TH g_Theme
+// The high-contrast option of the SIDECAR theme: 0 off, 1 light blue accent, 2 Rytm mute-pad green. Stored for the next
+// sidecar_theme_set (the OLED theme ignores it); the pages are rebuilt by the caller.
+void sidecar_theme_contrast (int hc);
+int sidecar_theme_get_contrast (void);
 void sidecar_theme_set (int id);		// THEME_*; the pages are rebuilt by the caller (sidecar_ui_style)
 const sidecar_theme_t *sidecar_theme_get (int id);	// the 800x480 table
 // The screen's size (physical pixels, before sidecar_theme_set): 1280x720 or more in both gives the big layouts, 1024x600

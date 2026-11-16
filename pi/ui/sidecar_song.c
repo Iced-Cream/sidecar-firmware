@@ -409,7 +409,7 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 		for (int i = 0; i < 10; i++) s_DlgText[i] = th_label (s_Dlg, LU (6), LU (5) + i * LU (16) + (i ? 2 : 0), i ? TH->f_micro : TH->f_body, TH->ink, "");
 		s_DlgYes = th_key (s_Dlg, LU (180), LU (178), LU (146), LU (32), "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);	// (filled while it overwrites: dlg_show)
 		s_DlgNo = th_key (s_Dlg, LU (8), LU (178), LU (146), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);

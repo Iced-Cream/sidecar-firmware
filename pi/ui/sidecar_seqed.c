@@ -317,6 +317,7 @@ static uint32_t note_rgb (int step, int micro, int len, int vel, int muted, int 
 	if (muted) return TH->muted;
 	if (sel) return TH->bad;
 	uint32_t c = th_mix (0x6A66CC, TH->accent_hi, clampi (vel * 256 / 127, 0, 256));	// (dark text on it >= 4.5:1)
+	if (TH->hc) c = TH->accent;				// high contrast: the accent, whatever the velocity (the lane shows it)
 	return lit ? th_mix (c, TH->ink, 170) : c;
 }
 
@@ -498,6 +499,7 @@ static void keys_draw (lv_event_t *e)
 			continue;
 		}
 		fill (l, &c, 0, y + 1, KEYS_W - 1, y2 - 1, black_key (p) ? TH->key_black : TH->key_white, LV_OPA_COVER, 3);
+		if (TH->hc) frame (l, &c, 0, y + 1, KEYS_W - 1, y2 - 1, 0xFFFFFF, 1, 3);	// high contrast: every key edged white
 		if (s_Scale && in_scale (p))
 			fill (l, &c, KEYS_W - 4, y + 2, KEYS_W - 2, y2 - 3, p % 12 == s_Root % 12 ? TH->accent : TH->line_beat, LV_OPA_COVER, 1);
 		if (p % 12 == 0 || (p % 12 == s_Root % 12 && s_RowH >= 12))
@@ -505,7 +507,7 @@ static void keys_draw (lv_event_t *e)
 			char b[8];
 			note_name (p, b, sizeof b);
 			text (l, &c, 3, y + (s_RowH - LU (14)) / 2, KEYS_W - LU (8), TH->f_micro,
-			      p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->win_dim, LV_TEXT_ALIGN_LEFT, b);
+			      TH->hc ? 0x000000 : p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->win_dim, LV_TEXT_ALIGN_LEFT, b);	// (high contrast: on a light key)
 		}
 	}
 	if (oled ())					// the C labels last: micro text on a black patch over the 5-dot rows
@@ -1843,7 +1845,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		if (!oled ())
 		{
 			lv_obj_set_style_border_color (p, lv_color_hex (TH->win_edge), 0);
-			lv_obj_set_style_border_width (p, 1, 0);
+			lv_obj_set_style_border_width (p, TH->edge_w, 0);
 			lv_obj_set_style_radius (p, TH->radius, 0);
 		}
 		lv_obj_add_flag (p, LV_OBJ_FLAG_HIDDEN);
@@ -2015,7 +2017,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		lv_obj_set_style_bg_color (s_Card, lv_color_hex (0x000000), 0);
 		lv_obj_set_style_bg_opa (s_Card, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent_hi), 0);
-		lv_obj_set_style_border_width (s_Card, 1, 0);
+		lv_obj_set_style_border_width (s_Card, TH->edge_w, 0);
 		s_CardText = label (s_Card, LU (5), 3, TH->f_body, TH->ink, "");
 		s_CardSub = label (s_Card, LU (5), LU (21), mic, TH->dim, "");
 		button (s_Card, G->card_w - LU (33), 3, LU (30), LU (30), LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, 0);
@@ -2024,7 +2026,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	{
 		s_Card = th_panel (pg, 0, 0, G->card_w, G->card_h, "", TH_PANEL_WINDOW);
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent), 0);
-		lv_obj_set_style_border_width (s_Card, 1, 0);
+		lv_obj_set_style_border_width (s_Card, TH->edge_w, 0);
 		lv_obj_set_style_radius (s_Card, TH->radius, 0);
 		s_CardText = label (s_Card, LU (10), LU (6), TH->f_body, TH->win_ink, "");
 		s_CardSub = label (s_Card, LU (10), LU (30), TH->f_micro, TH->win_dim, "");
@@ -2036,7 +2038,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	lv_obj_set_style_bg_color (s_Toast, lv_color_hex (oled () ? 0x000000 : TH->win), 0);
 	lv_obj_set_style_bg_opa (s_Toast, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_color (s_Toast, lv_color_hex (oled () ? TH->ink : TH->accent), 0);
-	lv_obj_set_style_border_width (s_Toast, 1, 0);
+	lv_obj_set_style_border_width (s_Toast, TH->edge_w, 0);
 	lv_obj_set_style_pad_all (s_Toast, oled () ? 2 : 5, 0);
 	lv_obj_add_flag (s_Toast, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_event_cb (s_Grid, grid_cb, LV_EVENT_LONG_PRESSED, 0);

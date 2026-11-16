@@ -38,7 +38,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-enum { SEG_TAB, SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_N };
+enum { SEG_TAB, SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CONTRAST, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_N };
 enum { PG_HOME, PG_SOUND, PG_FX, PG_ABOUT, PG_SEQ, PG_RYTM, PG_DISPLAY, PG_MACH, PG_VOICE, PG_INS, PG_SONG, PG_REC, PG_SCOPE, PG_STATUS, PG_PROJECT, PG_POOL,
        PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
 
@@ -66,6 +66,8 @@ static const char *const kKeysMap[] = {"Selected track", "By channel", ""};	// S
 static const char *const kKeysMap2[] = {"Selected", "Channel", ""};			// (OLED)
 static const char *const kStyleMap[] = {"OLED", "Sidecar", ""};
 static const char *const kLookMap[] = {"Studio", "Stage", ""};	// L1: the OLED look
+static const char *const kContrastMap[] = {"Standard", "High blue", "High green", ""};	// 0.5.1: the SIDECAR theme's high contrast
+static const char *const kContrastCmd[3] = {"uicontrast=off", "uicontrast=blue", "uicontrast=green"};
 static const char *const kSendName[SIDECAR_UI_SENDS] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"};
 static const char *const kAboutName[8] = {"Web page", "Address", "IP", "Web server", "Link", "USB-C", "Version", "Libraries"};
 
@@ -485,7 +487,9 @@ static void voice_view (void)		// the machine and drone controls for s_nVoice, f
 	set_text (s_DroneInfo, b);
 }
 
+static void rebuild (void);
 static void style_async (void *p) { sidecar_ui_style ((int) (intptr_t) p); }
+static void contrast_async (void *p) { (void) p; rebuild (); }
 
 static void seg_cb (lv_obj_t *m, int i, void *ud)
 {
@@ -521,6 +525,11 @@ static void seg_cb (lv_obj_t *m, int i, void *ud)
 		command (i ? "uilook=stage" : "uilook=studio");
 		lv_obj_invalidate (lv_screen_active ());
 		break;
+	case SEG_CONTRAST:
+		command (kContrastCmd[i < 0 || i > 2 ? 0 : i]);
+		sidecar_theme_contrast (i);
+		lv_async_call (contrast_async, 0);			// rebuilt after this event (its key is deleted then), as a theme change
+		return;
 	case SEG_STYLE:
 		command (i ? "uistyle=sidecar" : "uistyle=oled");
 		lv_async_call (style_async, (void *) (intptr_t) i);	// rebuilt after this event (its key is deleted then)
@@ -1120,28 +1129,32 @@ static void sc_display (lv_obj_t *pg)
 	const lv_font_t *sm = TH->f_small;
 	const int dx = TH->dx, d = (CH (48) - LU (48)) / 2;	// labels stay centred on their taller controls
 	lv_obj_t *p = th_panel (pg, LU (12), 0, LU (776) + dx, LU (358) + TH->dy, "Display", TH_PANEL_GROUP);
-	label (p, LU (16), CY (36) + LU (14) + d, sm, TH->ink, "UI style");
-	seg (p, SEG_STYLE, LU (190), CY (36), LU (300), CH (48), kStyleMap, TH_KEY);
-	label (p, LU (504), CY (36) + LU (8) + d, sm, TH->sub, "OLED: the screen as dots.");
-	label (p, LU (504), CY (36) + LU (26) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
-	label (p, LU (16), CY (98) + LU (14) + d, sm, TH->ink, "Screensaver");
-	seg (p, SEG_SAVER, LU (190), CY (98), LU (570) + dx, CH (48), kSaverMap, TH_KEY);
-	label (p, LU (16), CY (160) + LU (14) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
-	lv_obj_t *tk = th_key (p, LU (190), CY (160), LU (110), CH (48), "TAP", TH_KEY_FUNC, tap_cb, 0);
+	// (0.5.1: seven rows, a row 52 px apart instead of 62 and the controls 44 px, for the Contrast row)
+	label (p, LU (16), CY (32) + LU (12) + d, sm, TH->ink, "UI style");
+	seg (p, SEG_STYLE, LU (190), CY (32), LU (300), CH (44), kStyleMap, TH_KEY);
+	label (p, LU (504), CY (32) + LU (6) + d, sm, TH->sub, "OLED: the screen as dots.");
+	label (p, LU (504), CY (32) + LU (24) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
+	label (p, LU (16), CY (82) + LU (12) + d, sm, TH->ink, "Screensaver");
+	seg (p, SEG_SAVER, LU (190), CY (82), LU (570) + dx, CH (44), kSaverMap, TH_KEY);
+	label (p, LU (16), CY (132) + LU (12) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
+	lv_obj_t *tk = th_key (p, LU (190), CY (132), LU (110), CH (44), "TAP", TH_KEY_FUNC, tap_cb, 0);
 	th_key_font (tk, TH->f_title);
-	s_Taps2 = label (p, LU (316), CY (160) + LU (14) + d, sm, TH->ink, "taps: 0");
-	s_Touch2 = label_w (p, LU (420), CY (160) + LU (14) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
-	label (p, LU (16), CY (222) + LU (14) + d, sm, TH->ink, "Brightness");
-	label (p, LU (16), CY (222) + LU (32) + d, TH->f_micro, TH->sub, "(dims the picture)");
-	s_Bright = th_slider (p, LU (190), CY (222), LU (460) + dx, CH (48), 5, 100, bright_cb, 0);
-	s_BrightVal = label (p, LU (672) + dx, CY (222) + LU (14) + d, TH->f_body, TH->ink, "100 %");
-	label (p, LU (16), CY (284) + LU (14) + d, sm, TH->ink, "OLED look");						// UX review L1
-	seg (p, SEG_LOOK, LU (190), CY (284), LU (300), CH (40), kLookMap, TH_KEY);
-	label (p, LU (504), CY (284) + LU (14) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
-	label (p, LU (16), CY (330) + LU (4), sm, TH->ink, "Touch");					// touch_cal.h
-	th_key (p, LU (190), CY (330) - (TH->big ? 8 : 0), LU (130), TH->big ? 46 : 26, "Calibrate", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
-	th_key (p, LU (330), CY (330) - (TH->big ? 8 : 0), LU (80), TH->big ? 46 : 26, "Reset", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
-	s_CalState = label_w (p, LU (424), CY (330) + LU (4), LU (336) + dx, sm, TH->sub, "default (the device's range)");
+	s_Taps2 = label (p, LU (316), CY (132) + LU (12) + d, sm, TH->ink, "taps: 0");
+	s_Touch2 = label_w (p, LU (420), CY (132) + LU (12) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
+	label (p, LU (16), CY (182) + LU (10) + d, sm, TH->ink, "Brightness");
+	label (p, LU (16), CY (182) + LU (28) + d, TH->f_micro, TH->sub, "(dims the picture)");
+	s_Bright = th_slider (p, LU (190), CY (182), LU (460) + dx, CH (44), 5, 100, bright_cb, 0);
+	s_BrightVal = label (p, LU (672) + dx, CY (182) + LU (12) + d, TH->f_body, TH->ink, "100 %");
+	label (p, LU (16), CY (232) + LU (10) + d, sm, TH->ink, "OLED look");						// UX review L1
+	seg (p, SEG_LOOK, LU (190), CY (232), LU (300), CH (40), kLookMap, TH_KEY);
+	label (p, LU (504), CY (232) + LU (10) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
+	label (p, LU (16), CY (278) + LU (10) + d, sm, TH->ink, "Contrast");						// 0.5.1: SIDECAR only
+	seg (p, SEG_CONTRAST, LU (190), CY (278), LU (300), CH (40), kContrastMap, TH_KEY);
+	label (p, LU (504), CY (278) + LU (10) + d, sm, TH->sub, "High: black, white edges, one accent.");
+	label (p, LU (16), CY (326) + LU (4), sm, TH->ink, "Touch");					// touch_cal.h
+	th_key (p, LU (190), CY (326) - (TH->big ? 8 : 0), LU (130), TH->big ? 46 : 26, "Calibrate", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
+	th_key (p, LU (330), CY (326) - (TH->big ? 8 : 0), LU (80), TH->big ? 46 : 26, "Reset", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
+	s_CalState = label_w (p, LU (424), CY (326) + LU (4), LU (336) + dx, sm, TH->sub, "default (the device's range)");
 }
 
 static void sc_home (lv_obj_t *h)
@@ -1252,15 +1265,15 @@ static void sc_build (lv_obj_t *scr)
 		s_Rytm = label_w (bar, W - LU (16) - LU (240), (LU (52) - TH->f_small->line_height) / 2, LU (240), TH->f_small, TH->win_dim, "");
 		lv_obj_set_style_text_align (s_Rytm, LV_TEXT_ALIGN_RIGHT, 0);
 		lv_obj_t *r = th_box (scr, W, 0, rail, TH->h);		// the rail: the Rytm's T1..T8, the page's key a light pill
-		lv_obj_set_style_bg_color (r, lv_color_hex (0x0D0A2A), 0);	// (the rail's own night blue; its keys at 0: the border shifts the content by 1)
+		lv_obj_set_style_bg_color (r, lv_color_hex (TH->hc ? 0x000000 : 0x0D0A2A), 0);	// (the rail's own night blue, black in high contrast; its keys at 0: the border shifts the content by 1)
 		lv_obj_set_style_bg_opa (r, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (r, lv_color_hex (TH->win_edge), 0);
-		lv_obj_set_style_border_width (r, 1, 0);
+		lv_obj_set_style_border_width (r, TH->edge_w, 0);
 		lv_obj_set_style_border_side (r, LV_BORDER_SIDE_LEFT, 0);
 		const int p = (TH->h - LU (6)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - 1, p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
+			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - TH->edge_w, p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
 	}
@@ -1558,6 +1571,7 @@ static void build (void)
 	touch_view (s_nTouchShown);
 	seg_set (SEG_STYLE, s_nStyle);
 	seg_set (SEG_LOOK, sidecar_dot_get_look ());
+	seg_set (SEG_CONTRAST, sidecar_theme_get_contrast ());
 	if (s_Seg[SEG_VOICE]) { th_seg_set (s_Seg[SEG_VOICE], sidecar_ui_voice_pos (s_nVoice)); s_Sel[SEG_VOICE] = sidecar_ui_voice_pos (s_nVoice); }
 	show_page (s_nPage);
 }
@@ -1724,6 +1738,8 @@ static void uslot_tick (lv_timer_t *t) { (void) t; uslot_paint (); }
 void sidecar_ui_status (const sidecar_ui_status_t *s)
 {
 	char b[80];
+	const int cchg = s->ui_contrast >= 0 && s->ui_contrast != sidecar_theme_get_contrast ();	// the stored high contrast (SIDECAR only)
+	if (cchg) sidecar_theme_contrast (s->ui_contrast);		// (before any rebuild below: its build reads it)
 	if (box_take (s) && s_nBuilt)					// another box: its words on every page, built anew
 	{
 		s_St = *s;
@@ -1741,6 +1757,13 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 			sidecar_ui_style (s->ui_style);			// its build applies s
 			return;
 		}
+	}
+	if (cchg && !oled ())						// (the OLED theme keeps the value and ignores it)
+	{
+		s_St = *s;
+		s_bHaveSt = 1;
+		rebuild ();						// its build applies s
+		return;
 	}
 	if (s->ui_look >= 0 && s->ui_look != sidecar_dot_get_look ())		// the stored look (L1)
 	{

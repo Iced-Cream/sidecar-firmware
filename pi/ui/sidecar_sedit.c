@@ -416,7 +416,7 @@ void sidecar_sedit_create (void *parent, int y0)
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 	}
 	else th_panel (s_Dlg, 0, 0, dw, dh, "", TH_PANEL_WINDOW);
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);

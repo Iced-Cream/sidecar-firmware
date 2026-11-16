@@ -27,6 +27,7 @@ static int level_draw (lv_layer_t *l, const lv_area_t *c)
 	int w = lv_area_get_width (c), h = lv_area_get_height (c), lw = LU (oled () ? 7 : 14);
 	int lh = s_V.level * (h - 2) / 127, x0 = w - lw;
 	th_fill (l, c, x0, 0, w - 1, h - 1, oled () ? 0x262626 : th_mix (c_bg (), c_dim (), 40), LV_OPA_COVER, 0);
+	if (TH->hc) th_frame (l, c, x0, 0, w - 1, h - 1, 0xFFFFFF, 1, 0);		// high contrast: a white outline
 	if (lh > 0) th_fill (l, c, x0, h - 1 - lh, w - 1, h - 1, s_V.level > 96 ? TH->accent : c_ink (), LV_OPA_COVER, 0);
 	return w - lw - (LU (oled () ? 4 : 8));
 }
