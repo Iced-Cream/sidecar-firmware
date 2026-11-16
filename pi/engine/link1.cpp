@@ -124,6 +124,7 @@ void Poll (TRealtime *pRealtime, TAllSoundOff *pAllSoundOff)
 	uint8_t b;
 	while (g_In.pop (&b))
 	{
+		bridge::link_byte (1, b);	// SONG RECORD (core/song): the box's whole stream, its CC / NRPN too, as its slot's (step 10c)
 		if (s_Rt.feed (b))
 		{
 			s_Stats.nRealtime++;

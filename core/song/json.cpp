@@ -46,6 +46,7 @@ void header(const Take& t, Buf& o, bool journal) {
   if (journal) o.adds("\"journal\":1,");
   o.adds("\"project\":"), add_str(o, t.project);
   o.adds(",\"name\":"), add_str(o, t.name);
+  if (t.box[0]) o.adds(",\"box\":"), add_str(o, t.box);   // (step 10c: another slot's box; none: the Rytm's)
   o.adds(",\"sidecar\":\"" SIDECAR_VERSION "\"");
   o.addf(",\"ppq_step\":%d,\"bar_steps\":%d", kPpq, kBarSteps);
   if (t.recovered) o.adds(",\"recovered\":1");
@@ -489,6 +490,7 @@ bool read_head(Lex& x, Take* t, bool* at_events) {
       if (v != 1) return x.bad = true, false;
     } else if (is(k, kl, "project")) { if (!x.str_to(t->project, sizeof t->project)) return false; }
     else if (is(k, kl, "name")) { if (!x.str_to(t->name, sizeof t->name)) return false; }
+    else if (is(k, kl, "box")) { if (!x.str_to(t->box, sizeof t->box)) return false; }
     else if (is(k, kl, "recovered")) { if (!x.num_i(&v)) return false; t->recovered = v != 0; }
     else if (is(k, kl, "length")) { if (!x.num_i(&v)) return false; t->end = (uint32_t)v; }
     else if (is(k, kl, "midi_config")) { if (!read_config(x, &t->cfg)) return false; }

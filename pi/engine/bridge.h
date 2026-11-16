@@ -178,6 +178,7 @@ int livein_status(int vi, char* b, int cap);
 bool cal_on();
 void cal_in(const int32_t* f, int n, int stride);
 void rytm_byte(uint8_t b);
+void link_byte(int transport, uint8_t b);   // SONG RECORD's tap of a transport's whole MIDI stream (its slot's song)
 // The remote UI's REC page (core/ui/extra.h RecInfo): the recorder's state from core 0 (rec_pi.cpp), and the page's
 // request for it taken there: 0 none, 1 start, 2 stop, 3 arm, 4 disarm. state 0: no recorder (the page hidden).
 struct RuiRec {

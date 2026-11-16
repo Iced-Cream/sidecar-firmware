@@ -2941,7 +2941,7 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 }
 
 // 3(c): SONG RECORD's clock tracks and the arpeggiator's pins, tempo and grid are the Rytm's: slot 0's
-CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra.at(0) = (uint16_t)(m & 0xFFF); }
+CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra() = (uint16_t)(m & 0xFFF); }   // (the slot in hand's: each box's SONG RECORD, step 10c)
 // (arp's tick: the slot in hand's, in its own Scope; a box's asks the clock only)
 CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins() = (uint16_t)(pins & 0xFFF), arp_clock() = clock; }
 CORE_COLD double tempo() { return bpm.at(0); }

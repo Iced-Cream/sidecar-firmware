@@ -175,6 +175,9 @@ void hello(Link& l, const uint8_t* d, int len);   // a whole 4F, on the slot in 
 // Elektron box's USB MIDI. A box's hello takes slot 1 for its transport; a Rytm's 35 gives it back to slot 0. -1: a box's hello
 // while slot 1 is another box's (answered kWait). engine_sysex_link calls it for each message.
 int slot_of(int t, const uint8_t* d, int len);
+// The slot transport t carries now (slot_of's answer for a message that is not a hello or a 35): the platform's raw MIDI
+// taps (core/song's byte) enter that slot's Scope. Two loads, any core.
+int route_of(int t);
 void (*tx(int t))(const uint8_t*, int);   // transport t's sender
 void reset();                          // back to the Rytm and /.rytm, as a fresh boot (tests)
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered

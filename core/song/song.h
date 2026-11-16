@@ -48,6 +48,18 @@
 //
 // Threads: everything on the control side (the Pi's core 3): byte() from the platform's MIDI tap, tick() from its loop,
 // idle() among the card jobs, command() from the console. The display (core 0) reads lanes_publish's copy (lanes_read).
+//
+// Per slot (3(c) step 10c, the two-boxes rule: nothing shared): one engine per voice slot, each box its own takes in its
+// own state folder (/.rytm/songs/<project>, /.a4/songs/<project>), its own clock, transport, tempo, mutes, MIDI tap,
+// journal and display lanes. Every entry point is the slot in hand's (device::Scope; outside one the base box's), except
+// tick() and idle(), which run each slot's engine in its own Scope (slot 0 always, another while a box's folder is on its
+// link), and midi_config(), the Rytm's. The platform taps each transport's whole MIDI stream into byte() in the Scope of
+// the slot that transport carries (device::route_of). Slot 0 (the Rytm) is as it always was. Another slot's box (the A4)
+// records everything the Rytm's records that comes from its own stream and the Sidecar: its 2C ticks (4- or 5-byte
+// records) and 2D reports, its CC / NRPN and program changes by channel (config_none: no MIDI CONFIG read), its send FX
+// knobs and route (fx::control_of(slot)). Not yet for it (named gaps, owner decision 2026-11-16: parity once traced): the
+// start snapshot, MIDI CONFIG read, replay and UNDO REPLAY (its stock dumps are other formats, traced first), and the
+// machine / SRC lanes (the remote UI's track tables are the Rytm's until step 10b).
 #pragma once
 #include <stdint.h>
 
@@ -110,9 +122,13 @@ struct MidiConfig {
 // notes scenes050]; byte 11 = AUTO CHANNEL - 1 [inferred: 0x0d with AUTO 14, not varied]
 constexpr int kGlobalPerfCh = 27, kGlobalAutoCh = 11;
 void config_default(MidiConfig* c);   // the Rytm's defaults (channels 1..12, FX 13, auto 14, PERF 15), not valid
+// step 10c: another box's (not the Rytm's): no channel names a track (every CC / NRPN recorded by its channel, 0x40 | ch,
+// and replayed there), every program change a pattern change, not valid
+void config_none(MidiConfig* c);
 bool parse_global(const uint8_t* u, int n, MidiConfig* c);
-// the MIDI CONFIG as known now: the last GLOBAL dump's (song arming fetches it), else the defaults with the auto channel
-// learned from the PC at PLAY; core/mod/rytm_out.cpp's channels. set_midi_config: a GLOBAL's (tests)
+// the Rytm's MIDI CONFIG as known now (slot 0's engine, whatever the slot in hand): the last GLOBAL dump's (song arming
+// fetches it), else the defaults with the auto channel learned from the PC at PLAY; core/mod/rytm_out.cpp's channels.
+// set_midi_config: a GLOBAL's (tests)
 const MidiConfig& midi_config();
 void set_midi_config(const MidiConfig& c);
 enum : uint32_t { kCfgEncoder = 1, kCfgTrkCh = 2, kCfgNrpn = 4, kCfgPcReceive = 8, kCfgUnknown = 16 };
@@ -155,6 +171,8 @@ struct Buf {
 struct Take {
   char project[24];
   char name[40];
+  char box[8];          // step 10c: the box whose take it is ("" the Rytm's, slot 0; "a4" another slot's box: no stock
+                        // snapshot or replay until that box's dumps are traced)
   MidiConfig cfg;
   int pattern;          // at PLAY (-1 unknown)
   uint32_t tempo;       // bpm x 120 (0 unknown)

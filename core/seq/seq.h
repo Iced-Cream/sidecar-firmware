@@ -415,7 +415,8 @@ void init();                                   // boot: the pattern buffers (hea
 void reset();                                  // tests: everything stopped and empty, the latency default
 bool sysex(const uint8_t* d, int len);         // a whole 2C / 2D from the Rytm (true: it was one)
 void hello(int up20 = -1);                     // the Rytm's hello (35, its uptime in 1/20 s, -1 unknown): 2E again, a resync asked
-// Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying)
+// Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying): the
+// slot in hand's (each box's own song, step 10c)
 void set_clock_tracks(uint16_t mask);
 // The arpeggiator (core/arp/arp.h): the tracks to pin as its notes are the host's, and whether it wants the clock (BD's ticks)
 void set_arp_tracks(uint16_t pins, bool clock);

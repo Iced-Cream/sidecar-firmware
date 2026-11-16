@@ -31,6 +31,11 @@ CORE_COLD void config_default(MidiConfig* c) {
   c->nrpn = 0, c->transport_send = 1, c->transport_receive = 1;
 }
 
+CORE_COLD void config_none(MidiConfig* c) {
+  memset(c, 0, sizeof *c);
+  c->transport_send = 1, c->transport_receive = 1;
+}
+
 CORE_COLD bool parse_global(const uint8_t* u, int n, MidiConfig* c) {
   uint8_t auto_ch = c->auto_ch ? c->auto_ch : 14;
   config_default(c);
@@ -212,6 +217,7 @@ CORE_COLD void Buf::free() {
 CORE_COLD void Take::clear() {
   project[0] = name[0] = 0;
   config_default(&cfg);
+  box[0] = 0;
   pattern = -1, tempo = 0, mutes = 0, scene = 0;
   kit.clear(), pat.clear(), settings.clear(), global.clear(), kit2.clear();
   has_fx = false;
