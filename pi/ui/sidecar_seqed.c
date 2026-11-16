@@ -315,8 +315,8 @@ static uint32_t note_rgb (int step, int micro, int len, int vel, int muted, int 
 		return notes_at (step) > 1 ? th_oled_accent (vel) : th_oled_secondary (vel);
 	}
 	if (muted) return TH->muted;
-	if (sel) return TH->bad;
-	uint32_t c = th_mix (0x6A66CC, TH->accent_hi, clampi (vel * 256 / 127, 0, 256));	// (dark text on it >= 4.5:1)
+	if (sel) return THEME_IS_SQ (TH->id) ? TH->accent : TH->bad;				// (SQUARE, GUIDE: the selected is green)
+	uint32_t c = th_mix (THEME_IS_SQ (TH->id) ? th_mix (TH->bg, TH->accent_hi, 150) : 0x6A66CC, TH->accent_hi, clampi (vel * 256 / 127, 0, 256));	// (dark text on it >= 4.5:1; SQUARE, GUIDE: sage, 60 % .. 100 %)
 	if (TH->hc) c = TH->accent;				// high contrast: the accent, whatever the velocity (the lane shows it)
 	return lit ? th_mix (c, TH->ink, 170) : c;
 }
@@ -1807,7 +1807,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		lv_obj_set_width (s_Where, LU (226) + dx / 4);
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_DOTS);
 		s_Tracks = th_seg (pg, G->tracks_x, G->tracks_y, G->tracks_w, G->tracks_h, (const char *const[]) {"-", "-", "-", "-", ""},
-				   TH_KEY, track_cb, 0);
+				   TH_KEY | TH_KEY_ROUND, track_cb, 0);	// (SQUARE, GUIDE: circles, the guide's track selectors)
 		th_seg_font (s_Tracks, TH->f_small);
 		button (pg, LU (660) + dx, LU (4), LU (132), LU (48), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
 		s_Snap = button (pg, G->snap_x, G->snap_y, G->snap_w, G->snap_h, snap_text (), TH_KEY, snap_cb, TH->f_micro);

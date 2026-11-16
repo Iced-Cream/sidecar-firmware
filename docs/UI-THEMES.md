@@ -1,24 +1,26 @@
 # UI themes: the Pi display's design system
 
-The Sidecar Pi's touchscreen (800x480, 1024x600 or 1280x720, LVGL 9.4, `pi/ui`; docs/pi-display.md) has two themes, each laid out
+The Sidecar Pi's touchscreen (800x480, 1024x600 or 1280x720, LVGL 9.4, `pi/ui`; docs/pi-display.md) has four themes (0.5.1 test build: SQUARE and GUIDE), each laid out
 for all three sizes ("Sizes" below):
 
 | theme | what | default |
 |---|---|---|
 | **OLED** | The whole screen as a zoomed-in Elektron OLED: 400x240 dots, each a 2x2-pixel cell with a darker grid between, black, our own pixel font, dotted outlines, grey dithered title bars, inverted selection, knobs as dot rings, greys plus the Rytm panel's FUNC teal and blue print. A fixed navigation column on the right. | yes |
 | **SIDECAR** | The web app's look on the touchscreen: a UV night-blue screen (`#08071a`), cards (`#110f28`, a `#2c2950` border, radius 12-15 px) with their title as a lavender pill on the top edge, pill keys and segments (selected: filled lavender, dark text), knobs as 270° arcs with the value inside, rounded meters lavender -> magenta -> coral, the piano roll's notes rounded (the selected one coral). A header with a flat gradient (no blur) carries the "Docked" logo, SIDECAR and the page's name in the dot face; from 1024x600 a T1..T8 rail on the right (the page's key a light pill), at 800x480 the same keys as a row of pills in the header. Text in Space Grotesk, big numbers (the pattern, knob values, the page title) in the dot face with round dots. It replaced CLASSIC (the Rytm's hardware look) under the same id. | |
+| **SQUARE** | The style guide's look on SIDECAR's layouts ([SQUARE and GUIDE](#square-and-guide-051-test-build)): charcoal, signal green only for the active and the selected, sage notes, Arimo in capitals, 1 px olive edges, sharp corners, a label at the top left of every panel. | |
+| **GUIDE** | The same palette and type with the guide applied strictly: only 11 / 13 / 18 px, panels and selector keys share their edges (one grid of 1 px lines). | |
 
-**Switching:** Settings > Display > **UI style: OLED / SIDECAR**, or the console / web command `uistyle=oled|sidecar`. SIDECAR has a high-contrast option, Settings > Display > **Contrast** ([High contrast](#high-contrast-sidecar-051)).
+**Switching:** Settings > Display > **UI style: OLED / SIDECAR / SQUARE / GUIDE**, or the console / web command `uistyle=oled|sidecar|square|guide`. SIDECAR has a high-contrast option, Settings > Display > **Contrast** ([High contrast](#high-contrast-sidecar-051)).
 - Applied at once, no reboot (`sidecar_ui_style`).
-- Stored as `uistyle=oled|sidecar` in `/.rytm/display.txt`, with the screensaver, brightness and touch test settings.
-- **From CLASSIC:** SIDECAR took CLASSIC's id 1, so a card or cmdline.txt that says `uistyle=classic` (or `1`) comes up in SIDECAR, and the next save of the display settings writes `uistyle=sidecar`. `classic` stays accepted by the command as well. A build from before SIDECAR does not know `sidecar` and falls back to OLED, the default.
-- `uistyle=` in cmdline.txt overrides the file. It is also the only way to give the boot screen the SIDECAR look (`uistyle=sidecar`: the logo over the wordmark on the night blue), because the boot screen is drawn before the card is read.
+- Stored as `uistyle=oled|sidecar|square|guide` in `/.rytm/display.txt`, with the screensaver, brightness and touch test settings.
+- **From CLASSIC:** SIDECAR took CLASSIC's id 1, so a card or cmdline.txt that says `uistyle=classic` (or `1`) comes up in SIDECAR, and the next save of the display settings writes `uistyle=sidecar`. `classic` stays accepted by the command as well. A build from before SIDECAR does not know `sidecar`, and one from before SQUARE and GUIDE does not know `square` or `guide`: they fall back to OLED, the default. The words and the file's line are `pi/engine/ui_style.h` (`tests/test_ui_style.cpp`).
+- `uistyle=` in cmdline.txt overrides the file. It is also the only way to give the boot screen the SIDECAR look (`uistyle=sidecar`, `square` or `guide`: the logo over the wordmark on the night blue; SQUARE and GUIDE have no boot screen of their own), because the boot screen is drawn before the card is read.
 
 Every page exists in both themes: home, Settings (Sound, Send FX, Display, About), SEQ (the piano roll with chord stamp, strum, humanise, key, swing, velocity lane, page strip), RYTM (the pattern and its p-locks), REC (the Overbridge recorder: "REC" below), SCOPE and SIDECAR STATUS ("SCOPE", "SIDECAR STATUS" below), the machine view (GRANULAR, WAVETABLE, MULTISAMPLE), the boot screen and the power warning.
 
 The display has no LFO, Wi-Fi or preset/pool browser pages. Those live on the web page and the Rytm's remote pages, which are outside `pi/ui` and unchanged.
 
-Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,sidecar}-*.png`, `make -C pi/ui/host shot.png SIZE=1024x600` the same at 1024x600 (`shots-1024x600/`), `SIZE=1280x720` at 1280x720, `make -C pi/ui/host bounds` compares the 1024x600 and 1280x720 layouts (`check_bounds.py`), `make -C pi/ui/host splash.png` the boot screens and `make -C pi/ui/host anim` an animation of the OLED piano roll (`seq-oled.mp4`, `seq-oled.gif`).
+Renders: `make -C pi/ui/host` writes `pi/ui/host/shots/{oled,sidecar}-*.png` (`make shots-sq`: `square-*`, `guide-*`), `make -C pi/ui/host shot.png SIZE=1024x600` the same at 1024x600 (`shots-1024x600/`), `SIZE=1280x720` at 1280x720, `make -C pi/ui/host bounds` compares the 1024x600 and 1280x720 layouts (`check_bounds.py`), `make -C pi/ui/host splash.png` the boot screens and `make -C pi/ui/host anim` an animation of the OLED piano roll (`seq-oled.mp4`, `seq-oled.gif`).
 
 ## Sizes (800x480, 1024x600, 1280x720)
 
@@ -227,6 +229,60 @@ high-contrast tables against the contrast targets (text 4.5:1, controls and line
 
 Touch targets are 46 px or more at 800x480 and 1024x600 (`TH->touch`), 57 px at 1280x720 (the T1..T8 rail's keys
 72 px tall at 1024x600, 86 at 1280x720); `make -C pi/ui/host bounds` checks them against 1024x600.
+
+### SQUARE and GUIDE (0.5.1 test build)
+
+Two themes after the interface style guide (the compact sequencer, the palette, Arimo, the grid), next to SIDECAR and OLED. Both are laid
+out as SIDECAR (every page tests `oled ()` only), so they are a table, a font and the painters: `THEME_SQUARE = 2`, `THEME_GUIDE = 3`
+(`THEME_IS_SQ (id)` asks for either), `uistyle=square|guide`. `contrast_apply` is SIDECAR only: on the Display page the Contrast row is
+greyed in the other themes.
+
+**Palette** (the guide's eight colours, then the extras it has no token for; `square_apply` sets the painters' `UV_*`):
+
+| role | hex | used for |
+|---|---|---|
+| charcoal | `#171916` | the screen, every panel, the header |
+| signal green | `#31bd3e` | the selected key, tab and segment (filled, ink text), active values, knob arcs, status; only the active and the selected |
+| sage | `#8dc494` | notes (60 % to 100 % of it by velocity), the logo, a track's machine, FUNC key text |
+| chalk | `#ecefe8` | primary text, the play head |
+| muted sage | `#b0bead` | secondary text, panel labels |
+| olive grey | `#4b5449` | panel and control borders |
+| deep olive | `#2b342b` | the piano roll's grid, an empty meter or knob track |
+| ink | `#0f120e` | text on green |
+| amber (extra) | `#e8c25a` | warning, held, p-lock, recording text, a level knob, a meter past 90 % (the guide's sketch shows this yellow on REC and MISSING) |
+| brick (extra) | `#d9674f` | an error, DELETE / KILL keys, FX 2, the record LED |
+| faint (derived) | `#7e8a7c` | disabled text: olive grey and muted sage, half and half |
+
+The piano roll's rows (`#1c201b` white keys, `#121411` black keys, `#232c24` the root) and beat line (`#3a4439`) are mixes of these.
+
+**Type:** Arimo Regular only (`pi/ui/fonts/gen-arimo.sh`, `sidecar_ar{11,13,18,28}.c`, SIL OFL 1.1, `licenses/OFL-Arimo.txt`), the same Font Awesome
+symbols as SIDECAR's tables. 11 px supporting (labels, captions, status), 13 px controls and body, 18 px primary (page names, main values,
+big key labels), and in SQUARE 28 px for hero numbers (HOME's pattern). GUIDE has only 11 / 13 / 18 (its hero is 18). The sizes are physical: the same at 800x480,
+1024x600 and 1280x720 (the layouts still grow, `LU ()`). **All labels are capitals** without touching a string: the table's faces are
+`up_*` wrappers (`sidecar_theme.c`) that ask the Arimo table for A-Z when a-z is asked, so the pages' text stays as written (and `shot`'s
+text checks still match it). Tracking: 2 px on the wordmark, 1 px on panel labels (LVGL's `letter_space` is whole pixels, the guide's 0.6 px
+is not possible), 0 elsewhere.
+
+**Shape:** radius 0 everywhere. `th_fill` and `th_frame` turn any radius except `LV_RADIUS_CIRCLE` into 0, and the page tables use `TH->radius` (0). Circles stay for
+the track selectors (`TH_KEY_ROUND`: SEQ's T9 / T10 ..., a circle of the key's smaller side) and for status dots and LEDs on the pages that draw them (the header's
+connected dot, REC's record dots, the Rytm pattern's step marker, the touch test's ring). Arc ends are square; a knob's value is a short chalk tick across the arc.
+
+**Components:** a key is a box with a 1 px olive edge and chalk text; the selected one is filled green with ink text; the main action has a
+green edge, DANGER a brick one, a disabled key a deep-olive edge and faint text; pressed is a 30 % green tint. A pad (a track on HOME) is outlined:
+green 2 px selected, in its LED's colour when lit. A navigation key (the header row at 800x480, the rail from 1024x600) shows its name and its T key small at the top right; the keys
+overlap by a pixel so one line is between two. A panel is a 1 px olive frame, its label 11 px capitals at the top left inside (12 px in), no pill; a dialog's window is
+filled charcoal. The header is charcoal over a 1 px olive line, SIDECAR in 18 px with 2 px tracking, the page's name 18 px, the Rytm's state 13 px muted with its green dot; the
+power warning is amber with ink text. A meter is a box with a 1 px olive edge and a block of colour (a thin one: a bar on a track), a slider a 2 px track with a square handle.
+
+**GUIDE** adds the shared edges: `snap_edges` moves a panel's frame to the middle of the gap (up to 16 px) to a panel beside or above / below it, where the neighbour's frame goes too,
+so one 1 px line stands between two panels; segments (`th_seg`) lay their items 1 px overlapped (no gap), so a row of keys is one boxed grid. SQUARE keeps panels apart as the
+layouts place them and a 4 px gap in segments.
+
+**Left out for now:** GUIDE's table cells for info rows (11 px label over an 18 px value with the unit small) and the bottom-left status line need page layouts of their own (the section layout work); the pages keep SIDECAR's rows, in the guide's type. The
+boot screen is SIDECAR's. The help text on Send FX names "sage" and "brick".
+
+The shots: `make -C pi/ui/host shots-sq [SIZE=1024x600|1280x720]` writes `square-*.png` and `guide-*.png` beside the others (`./shot DIR [WxH] sq|gd` is one theme, as `hc` is a look), and `bounds`
+runs both next to OLED and SIDECAR.
 
 ## Components
 
@@ -511,7 +567,7 @@ At **1024x600** (1.6x the pixels) a full redraw costs about 1.3x (the text and k
 ## Adding a theme
 
 1. **Table.** Add a `sidecar_theme_t` to `sidecar_theme.c` (`THEME_*` id, name, dot size, UI size, colour tokens, fonts, radius, gap, touch) and return it from `sidecar_theme_get`.
-2. **Painters.** Give `th_paint_key`, `panel_draw`, `title_draw`, `meter_draw`, `slider_draw` and `th_paint_knob` a branch for it, or reuse one of the two looks with other tokens.
+2. **Painters.** (SQUARE and GUIDE: `sq_key`, the `sq ()` branches, `square_apply`.) Give `th_paint_key`, `panel_draw`, `title_draw`, `meter_draw`, `slider_draw` and `th_paint_knob` a branch for it, or reuse one of the two looks with other tokens.
 3. **Layout.**
    - The layouts grow from `TH->dx, dy` ("Sizes"); a new theme with its own grid needs `kGeo*` tables in
      `sidecar_seqed.c` and `sidecar_rytmpat.c` (their `geo_size` grows them for 1024x600), and builders in `sidecar_ui.c`.
@@ -534,6 +590,8 @@ At **1024x600** (1.6x the pixels) a full redraw costs about 1.3x (the text and k
 | `pi/ui/sidecar_status.{h,c}` | SIDECAR STATUS, filled by `pi/engine/kernel.cpp` (the stats, the links) and `status_pi.cpp` (machines, the mod level) |
 | `pi/ui/sidecar_dot.{h,c}` | the dot expansion, the pattern colours, the LED palette, plain dot-font drawing (no LVGL) |
 | `pi/ui/dotfont.py`, `sidecar_dotfont.{h,c}` | the pixel fonts (generated) |
+| `pi/ui/fonts/gen-arimo.sh`, `fonts/sidecar_ar*.c` | SQUARE's and GUIDE's text faces: Arimo Regular 11 / 13 / 18 / 28 px + the same symbols (generated; SIL OFL 1.1) |
+| `pi/engine/ui_style.h` | the `uistyle=` words and display.txt's line (`tests/test_ui_style.cpp`) |
 | `pi/ui/fonts/gen.sh`, `fonts/sidecar_sg*.c` | SIDECAR's text faces: Space Grotesk Medium 12-28 px + 11 Font Awesome symbols, 4 bpp (generated; SIL OFL 1.1) |
 | `pi/ui/sidecar_logo.h` | the "Docked" logo's dots (the header, the SIDECAR boot screen) |
 | `pi/ui/sidecar_ui.{h,c}` | the pages, both layouts, `sidecar_ui_style`, `sidecar_ui_dot` / `origin` / `to_ui` / `bright` |
@@ -541,7 +599,7 @@ At **1024x600** (1.6x the pixels) a full redraw costs about 1.3x (the text and k
 | `pi/ui/sidecar_splash.{h,c}` | the boot screen in both looks (`sidecar_splash_style`) |
 | `pi/ui/sidecar_display.cpp` | the Pi's flush (expansion), pointer and second finger in UI pixels; the UI's size (`ChooseUi`, `res=`, the EDID) and its place (centred) |
 | `pi/engine/kernel.cpp` | `uistyle=`, `display.txt`, the status field, the boot screen's look from the cmdline |
-| `pi/ui/host/shot.c` | the host render, both themes: every page, the controls' commands, the SEQ gestures, the costs, the animation |
+| `pi/ui/host/shot.c` | the host render, every theme: every page, the controls' commands, the SEQ gestures, the costs, the animation |
 
 ## STAGE look and the alert grammar (UX review L1, L2)
 

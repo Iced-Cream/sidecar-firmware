@@ -656,7 +656,7 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 	s_Empty = label_w (pg, lx, ly + lh / 2 - LU (8), lw, f_cap (), c_dim (), -1);
 	th_panel (pg, rx, ly, rw, lh, O ? "" : "", O ? TH_PANEL_GROUP : TH_PANEL_WINDOW);
 	const int ip = O ? LU (14) + TH->dy / 12 : LU (30) + TH->dy / 10;
-	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? LU (4) : LU (14)), ly + (O ? LU (4) : LU (12)) + k * ip, rw - (O ? LU (8) : LU (28)), k ? f_cap () : f_val (), c_ink (), 0);
+	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? LU (4) : LU (14)), ly + (O ? LU (4) : LU (12)) + k * ip, rw - (O ? LU (8) : THEME_IS_SQ (TH->id) ? LU (20) : LU (28)), k ? f_cap () : f_val (), c_ink (), 0);
 	// the keys
 	static const char *const kO[6] = {"EXPORT CARD", "IMPORT...", "DELETE", "UP", "DOWN", "TRASH"};
 	static const char *const kC[6] = {"Export > card", "Import...", "Delete", "Up", "Down", "Trash"};

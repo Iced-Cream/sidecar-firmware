@@ -121,7 +121,7 @@ void sidecar_status_create (void *parent, int y0)
 	int vrp = (verh - pt - (LU (O ? 2 : 6))) / V_N;		// (five rows: tighter where the panel is short)
 	if (vrp > rp) vrp = rp;
 	int vy = (verh - pt - V_N * vrp - (LU (O ? 2 : 6))) / 2;
-	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? LU (54) : LU (96), V_N, O ? kVerCap : kVerCapC, s_Ver);
+	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? LU (54) : THEME_IS_SQ (TH->id) ? LU (84) : LU (96), V_N, O ? kVerCap : kVerCapC, s_Ver);
 	// ---- right: CPU (4 cores, 4 rows), LINKS (9 rows)
 	const int cph = pt + 4 * rp + C_N * rp + (O ? LU (4) : LU (10));
 	lv_obj_t *cp = th_panel (pg, rx, top, cw, cph, O ? "CPU" : "CPU", kind);

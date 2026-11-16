@@ -19,7 +19,7 @@ UI_C := ../sidecar_ui.c ../sidecar_theme.c ../sidecar_dot.c ../sidecar_dotfont.c
 	../sidecar_rytmpat.c ../rytm_pattern.c ../sidecar_wgview.c ../sidecar_voice.c ../sidecar_insfx.c ../sidecar_mfx.c ../sidecar_morph.c ../sidecar_xy.c ../sidecar_song.c ../sidecar_rec.c \
 	../sidecar_scope.c ../sidecar_status.c ../sidecar_project.c ../sidecar_chop.c ../sidecar_sedit.c ../sidecar_preset.c ../touch_cal.c rytm_fake.c
 UI_O := $(addprefix obj/ui-,$(notdir $(UI_C:.c=.o)))
-FONT_O := $(patsubst %,obj/ui-sidecar_sg%.o,12 14 16 18 20 22 24 28)
+FONT_O := $(patsubst %,obj/ui-sidecar_sg%.o,12 14 16 18 20 22 24 28) $(patsubst %,obj/ui-sidecar_ar%.o,11 13 18 28)
 SEQ_O := obj/seq_touch.o obj/seqdemo.o obj/seq_pattern.o obj/seq_music.o obj/seq_xcmd.o obj/poly.o obj/rytm_dump.o obj/inst_alloc.o
 UI_H := ../sidecar_ui.h ../sidecar_theme.h ../sidecar_dot.h ../sidecar_dotfont.h ../sidecar_seqed.h ../sidecar_rytmpat.h \
 	../rytm_pattern.h ../seq_touch.h ../sidecar_wgview.h ../sidecar_voice.h ../sidecar_insfx.h ../sidecar_mfx.h ../sidecar_morph.h ../sidecar_xy.h ../sidecar_song.h ../sidecar_rec.h \
@@ -44,6 +44,12 @@ shots-hc: shot
 	./shot obj/$(SHOTS)-hc $(SIZE) hc
 	./shot obj/$(SHOTS)-hcg $(SIZE) hcg
 	for f in obj/$(SHOTS)-hc/sidecar-hc-*.ppm obj/$(SHOTS)-hcg/sidecar-hcg-*.ppm; do sips -s format png $$f --out $(SHOTS)/$$(basename $$f .ppm).png >/dev/null; done
+# shots-sq: the SQUARE and GUIDE themes (0.5.1 test build): square-*.png, guide-*.png beside the others in shots/ (a process each)
+shots-sq: shot
+	@mkdir -p obj/$(SHOTS)-sq obj/$(SHOTS)-gd $(SHOTS)
+	./shot obj/$(SHOTS)-sq $(SIZE) sq
+	./shot obj/$(SHOTS)-gd $(SIZE) gd
+	for f in obj/$(SHOTS)-sq/square-*.ppm obj/$(SHOTS)-gd/guide-*.ppm; do sips -s format png $$f --out $(SHOTS)/$$(basename $$f .ppm).png >/dev/null; done
 shots-all: shot
 	$(MAKE) shot.png SIZE=800x480
 	$(MAKE) shot.png SIZE=1024x600
@@ -58,6 +64,10 @@ bounds: shot
 	@rm -rf obj/bounds-1024 obj/bounds-1280; mkdir -p obj/bounds-1024 obj/bounds-1280
 	./shot obj/bounds-1024 1024x600 >/dev/null
 	./shot obj/bounds-1280 1280x720 >/dev/null
+	./shot obj/bounds-1024 1024x600 sq >/dev/null
+	./shot obj/bounds-1280 1280x720 sq >/dev/null
+	./shot obj/bounds-1024 1024x600 gd >/dev/null
+	./shot obj/bounds-1280 1280x720 gd >/dev/null
 	python3 check_bounds.py obj/bounds-1024 obj/bounds-1280
 # splash.png (OLED, the default) and splash-sidecar.png: the boot screen (sidecar_splash.c), no LVGL
 splash.png: ../sidecar_splash.c ../sidecar_splash.h ../sidecar_wordmark.c ../sidecar_dot.c ../sidecar_dotfont.c splash.c ../sidecar_logo.h
@@ -88,6 +98,8 @@ obj/ui-%.o: ../%.c $(UI_H) obj/lv_conf.h
 obj/ui-%.o: %.c $(UI_H) obj/lv_conf.h
 	$(CC) $(CFLAGS) -Wall -c $< -o $@
 obj/ui-sidecar_sg%.o: ../fonts/sidecar_sg%.c obj/lv_conf.h
+	$(CC) $(CFLAGS) -c $< -o $@
+obj/ui-sidecar_ar%.o: ../fonts/sidecar_ar%.c obj/lv_conf.h
 	$(CC) $(CFLAGS) -c $< -o $@
 obj/seq_touch.o: ../seq_touch.cpp ../seq_touch.h ../sidecar_seqed.h $(CORE)/seq/seq.h obj/lv_conf.h
 	$(CXX) $(SEQFLAGS) -c $< -o $@
@@ -122,6 +134,6 @@ obj/lv_conf.h: $(LVCONF)
 obj/%.o: $(LVGL)/%.c obj/lv_conf.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c -o $@ $<
-.PHONY: test clean anim shots-all shots-a4 shot.png splash-wide bounds
+.PHONY: test clean anim shots-sq shots-all shots-a4 shot.png splash-wide bounds
 clean:
 	rm -rf obj shot shot*.png seq-*.png rytm-*.png shots shots-* seq-oled.mp4 seq-oled.gif

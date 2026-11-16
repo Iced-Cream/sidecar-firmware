@@ -791,7 +791,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_TBox = th_box (pg, 0, LU (72), Wd, H - LU (72));
 		th_panel (s_TBox, LU (8), 0, Wd - LU (16), H - LU (76), "", TH_PANEL_WINDOW);
 		static const char *const kH[4] = {"Take", "Length", "Size", "Files"};
-		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, 600 + 2 * dx / 3};
+		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, (THEME_IS_SQ (TH->id) ? LU (600) : 600) + 2 * dx / 3};	// (SQUARE, GUIDE: the faces keep their size at 1280x720, the last column follows the layout)
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], LU (10), TH->f_small, TH->win_dim, kH[k]);
 		const int nr = (H - LU (76) - LU (40)) / LU (44) < TROWS ? (H - LU (76) - LU (40)) / LU (44) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 7 rows of 44 px, 8 of 54
 		s_nRows = nr, s_nRowH = rh;
@@ -981,7 +981,7 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 		else lv_snprintf (r, sizeof r, "%u kHz  %u-bit  %u file%s", v->rate / 1000, v->bits, files, files == 1 ? "" : "s");
 		th_label_set (s_Status, r);
 		th_label_color (s_Status, warn ? TH->warn : TH->win_dim);
-		int full = lv_obj_get_width (s_Take) + 112 - 6, sw = warn ? full : th_text_width (mi_font (), r) + 8;
+		int full = lv_obj_get_width (s_Take) + 112 - 6, sw = warn ? full : th_text_width (mi_font (), r) + (THEME_IS_SQ (TH->id) ? 2 : 8);	// (SQUARE, GUIDE: capitals are wider, the time left keeps the room)
 		if (sw > full) sw = full;
 		if (sw != s_nStatusW)				// (only a change moves them)
 		{

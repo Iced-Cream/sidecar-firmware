@@ -180,7 +180,7 @@ static void draw_ms (lv_layer_t *l, const lv_area_t *c, int w, int h)
 	for (int k = k0; k <= k1; k++)			// white keys first, their octave's C named
 	{
 		if (ms_black (k)) continue;
-		th_fill (l, c, KX (k), ky, KR (k) - 1, h - 1, ms_on (k) ? TH->accent : o ? 0x848484 : 0xD8D6F0, LV_OPA_COVER, 0);
+		th_fill (l, c, KX (k), ky, KR (k) - 1, h - 1, ms_on (k) ? TH->accent : o ? 0x848484 : THEME_IS_SQ (TH->id) ? TH->dim : 0xD8D6F0, LV_OPA_COVER, 0);
 	}
 	for (int k = (k0 + 11) / 12 * 12; k <= k1; k += 12)	// (after all of them: a name spans two keys)
 	{

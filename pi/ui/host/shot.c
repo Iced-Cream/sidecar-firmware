@@ -3040,10 +3040,14 @@ int main (int argc, char **argv)
 	// (the OLED run before it is the fresh start the SIDECAR run expects; a run in a process of its own for the same reason)
 	const int hc = argc > 2 && !strcmp (argv[2], "hc") ? 1 : argc > 2 && !strcmp (argv[2], "hcg") ? 2 : 0;
 	if (hc) s_nContrastSt = hc;
-	theme_run (THEME_SIDECAR, hc == 1 ? "sidecar-hc" : hc == 2 ? "sidecar-hcg" : "sidecar");
+	// ./shot DIR [WxH] sq | gd: SQUARE or GUIDE (0.5.1 test build): square-*.ppm / guide-*.ppm, the same checks as SIDECAR's
+	const int nw = argc > 2 && !strcmp (argv[2], "sq") ? THEME_SQUARE : argc > 2 && !strcmp (argv[2], "gd") ? THEME_GUIDE : 0;
+	if (nw) theme_run (nw, nw == THEME_SQUARE ? "square" : "guide");
+	else theme_run (THEME_SIDECAR, hc == 1 ? "sidecar-hc" : hc == 2 ? "sidecar-hcg" : "sidecar");
 	theme_run (THEME_OLED, "again");		// back: a second switch rebuilds cleanly (again-*.ppm)
-	if (!hc) contrast_run ();
+	if (!hc && !nw) contrast_run ();
 	if (s_nFit) printf ("shot: %d strings do not fit (TEXT-FIT above)\n", s_nFit);
-	printf (s_nFail ? "shot: %d checks FAILED\n" : "shot: all checks ok (both themes)\n", s_nFail);
+	if (s_nFail) printf ("shot: %d checks FAILED\n", s_nFail);
+	else printf ("shot: all checks ok (%s)\n", nw == THEME_SQUARE ? "OLED, SQUARE" : nw == THEME_GUIDE ? "OLED, GUIDE" : "both themes");
 	return s_nFail != 0 || s_nFit != 0;
 }

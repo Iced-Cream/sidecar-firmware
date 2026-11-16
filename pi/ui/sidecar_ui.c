@@ -64,7 +64,8 @@ static const char *const kUsbMap2[] = {"Class", "Overbridge", ""};			// (OLED: t
 static const char *const kUsbCmd[2] = {"usbmode=class", "usbmode=overbridge"};
 static const char *const kKeysMap[] = {"Selected track", "By channel", ""};	// Settings > MIDI: keys= (core/keys.h)
 static const char *const kKeysMap2[] = {"Selected", "Channel", ""};			// (OLED)
-static const char *const kStyleMap[] = {"OLED", "Sidecar", ""};
+static const char *const kStyleMap[] = {"OLED", "Sidecar", "Square", "Guide", ""};
+static const char *const kStyleCmd[4] = {"uistyle=oled", "uistyle=sidecar", "uistyle=square", "uistyle=guide"};
 static const char *const kLookMap[] = {"Studio", "Stage", ""};	// L1: the OLED look
 static const char *const kContrastMap[] = {"Standard", "High blue", "High green", ""};	// 0.5.1: the SIDECAR theme's high contrast
 static const char *const kContrastCmd[3] = {"uicontrast=off", "uicontrast=blue", "uicontrast=green"};
@@ -531,7 +532,7 @@ static void seg_cb (lv_obj_t *m, int i, void *ud)
 		lv_async_call (contrast_async, 0);			// rebuilt after this event (its key is deleted then), as a theme change
 		return;
 	case SEG_STYLE:
-		command (i ? "uistyle=sidecar" : "uistyle=oled");
+		command (kStyleCmd[i < 0 || i > 3 ? 0 : i]);
 		lv_async_call (style_async, (void *) (intptr_t) i);	// rebuilt after this event (its key is deleted then)
 		return;
 	case SEG_DRONE:
@@ -1102,6 +1103,7 @@ static void sc_fx (lv_obj_t *pg)
 		label (w, x + bw - LU (16), LU (118) + dy, TH->f_body, TH->win_ink, kSendName[t]);
 	}
 	lv_obj_t *h = label_w (p, LU (12), LU (302) + dy, LU (440) + dx, TH->f_small, TH->sub, TH->hc ? "Accent: FX 1, yellow: FX 2. Kill tails clears both FX "
+			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H." : THEME_IS_SQ (TH->id) ? "Sage: FX 1, brick: FX 2. Kill tails clears both FX "
 			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H." : "Lavender: FX 1, coral: FX 2. Kill tails clears both FX "
 			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H.");
 	// 0.5.0: each FX's return filter, BASE / WIDTH as dials (read only), right of the hint
@@ -1133,8 +1135,8 @@ static void sc_display (lv_obj_t *pg)
 	// (0.5.1: seven rows, 48 / 44 px apart instead of 62 and the controls 44 / 40 px (the Touch keys 40 px, as the Contrast row's), for the Contrast row)
 	label (p, LU (16), CY (30) + LU (12) + d, sm, TH->ink, "UI style");
 	seg (p, SEG_STYLE, LU (190), CY (30), LU (300), CH (44), kStyleMap, TH_KEY);
-	label (p, LU (504), CY (30) + LU (6) + d, sm, TH->sub, "OLED: the screen as dots.");
-	label (p, LU (504), CY (30) + LU (24) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
+	label (p, LU (504), CY (30) + LU (6) + d, sm, TH->sub, "OLED dots, Sidecar cards,");
+	label (p, LU (504), CY (30) + LU (24) + d, sm, TH->sub, "Square panels, Guide one grid.");
 	label (p, LU (16), CY (78) + LU (12) + d, sm, TH->ink, "Screensaver");
 	seg (p, SEG_SAVER, LU (190), CY (78), LU (570) + dx, CH (44), kSaverMap, TH_KEY);
 	label (p, LU (16), CY (126) + LU (12) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
@@ -1151,7 +1153,8 @@ static void sc_display (lv_obj_t *pg)
 	label (p, LU (504), CY (222) + LU (10) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
 	label (p, LU (16), CY (266) + LU (10) + d, sm, TH->ink, "Contrast");						// 0.5.1: SIDECAR only
 	seg (p, SEG_CONTRAST, LU (190), CY (266), LU (300), CH (40), kContrastMap, TH_KEY);
-	label (p, LU (504), CY (266) + LU (10) + d, sm, TH->sub, "High: black, white edges, one accent.");
+	label (p, LU (504), CY (266) + LU (10) + d, sm, TH->sub, "Sidecar: black, white edges.");
+	if (TH->id != THEME_SIDECAR) th_seg_enable (s_Seg[SEG_CONTRAST], -1, 0);				// (the other themes keep their palette)
 	label (p, LU (16), CY (310) + LU (10) + d, sm, TH->ink, "Touch");					// touch_cal.h
 	th_key (p, LU (190), CY (310), LU (130), CH (40), "Calibrate", TH_KEY, cal_cb, 0);
 	th_key (p, LU (330), CY (310), LU (80), CH (40), "Reset", TH_KEY, calreset_cb, 0);
@@ -1257,24 +1260,29 @@ static void sc_build (lv_obj_t *scr)
 	th_titlebar_set (bar, "", "", 0);
 	lv_obj_t *logo = th_box (bar, LU (14), (LU (52) - LU (40) * 40 / 46) / 2, LU (40), LU (40) * 40 / 46);
 	lv_obj_add_event_cb (logo, logo_draw, LV_EVENT_DRAW_MAIN, 0);
-	lv_obj_t *word = label (bar, LU (64), rail ? (LU (52) - TH->f_small->line_height) / 2 : LU (9), TH->f_small, TH->dim, "SIDECAR");
-	lv_obj_set_style_text_letter_space (word, LU (3), 0);
+	// (SQUARE, GUIDE: the wordmark 18 px with 2 px tracking, the page's name in 18 px, not the hero face)
+	const int gsq = THEME_IS_SQ (TH->id);
+	const lv_font_t *fw = gsq ? TH->f_title : TH->f_small, *fp = gsq ? TH->f_title : TH->f_hero;
+	const int ls = gsq ? 2 : LU (3);
+	lv_obj_t *word = label (bar, LU (64), rail ? (LU (52) - fw->line_height) / 2 : LU (gsq ? 5 : 9), fw, gsq ? TH->ink : TH->dim, "SIDECAR");
+	lv_obj_set_style_text_letter_space (word, ls, 0);
 	if (rail)
 	{
-		s_PageName = label (bar, LU (64) + th_text_width (TH->f_small, "SIDECAR") + 7 * LU (3) + LU (22), (LU (52) - TH->f_hero->line_height) / 2 + 1,
-				    TH->f_hero, TH->ink, "");
+		s_PageName = label (bar, LU (64) + th_text_width (fw, "SIDECAR") + 7 * ls + LU (22), (LU (52) - fp->line_height) / 2 + 1,
+				    fp, TH->ink, "");
 		s_Rytm = label_w (bar, W - LU (16) - LU (240), (LU (52) - TH->f_small->line_height) / 2, LU (240), TH->f_small, TH->win_dim, "");
 		lv_obj_set_style_text_align (s_Rytm, LV_TEXT_ALIGN_RIGHT, 0);
 		lv_obj_t *r = th_box (scr, W, 0, rail, TH->h);		// the rail: the Rytm's T1..T8, the page's key a light pill
-		lv_obj_set_style_bg_color (r, lv_color_hex (TH->hc ? 0x000000 : 0x0D0A2A), 0);	// (the rail's own night blue, black in high contrast; its keys at 0: the border shifts the content by 1)
+		lv_obj_set_style_bg_color (r, lv_color_hex (TH->hc ? 0x000000 : THEME_IS_SQ (TH->id) ? TH->bg : 0x0D0A2A), 0);	// (the rail's own night blue, black in high contrast; its keys at 0: the border shifts the content by 1)
 		lv_obj_set_style_bg_opa (r, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (r, lv_color_hex (TH->hc ? TH->accent : TH->win_edge), 0);
-		lv_obj_set_style_border_width (r, TH->hc ? 3 : TH->edge_w, 0);		// (high contrast: the accent line along the rail's inner edge)
+		lv_obj_set_style_border_width (r, TH->hc ? 3 : gsq ? 0 : TH->edge_w, 0);	// (SQUARE, GUIDE: the keys' own left edge is the line)		// (high contrast: the accent line along the rail's inner edge)
 		lv_obj_set_style_border_side (r, LV_BORDER_SIDE_LEFT, 0);
 		const int p = (TH->h - LU (6)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - (TH->hc ? 3 : TH->edge_w), p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
+			// (SQUARE, GUIDE: a pixel taller, so the keys share their edge)
+			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - (TH->hc ? 3 : gsq ? 0 : TH->edge_w), p + (gsq && i < NAV_N - 1 ? 1 : 0), kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
 	}
@@ -1286,7 +1294,7 @@ static void sc_build (lv_obj_t *scr)
 		const int nx0 = LU (300), nkw = (W - LU (12) - nx0 + LU (4)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4), LU (46), kNavName[i], (i == NAV_SET ? TH_KEY_FUNC : TH_KEY) | TH_KEY_TAB, nav_cb, (void *) (intptr_t) i);
+			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4) + (gsq ? LU (4) + (i < NAV_N - 1) : 0), LU (46), kNavName[i], (i == NAV_SET ? TH_KEY_FUNC : TH_KEY) | TH_KEY_TAB, nav_cb, (void *) (intptr_t) i);
 			th_key_font (s_Nav[i], TH->f_small);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
@@ -1607,7 +1615,7 @@ static void wipe_cb (lv_timer_t *t)
 
 void sidecar_ui_style (int style)
 {
-	style = style == THEME_SIDECAR ? THEME_SIDECAR : THEME_OLED;
+	style = style == THEME_SIDECAR || style == THEME_SQUARE || style == THEME_GUIDE ? style : THEME_OLED;
 	if (style == s_nStyle && s_nBuilt) return;
 	s_nStyle = style;
 	if (!s_nBuilt) return;					// sidecar_ui_create builds it
@@ -1759,7 +1767,7 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 			return;
 		}
 	}
-	if (cchg && !oled ())						// (the OLED theme keeps the value and ignores it)
+	if (cchg && s_nStyle == THEME_SIDECAR)				// (the other themes keep the value and ignore it)
 	{
 		s_St = *s;
 		s_bHaveSt = 1;

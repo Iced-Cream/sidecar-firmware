@@ -1,5 +1,5 @@
 // pi/ui/sidecar_theme.h - the Pi display's theme layer (docs/UI-THEMES.md): every colour, font, line style, spacing and
-// widget of the display's pages comes from here. Two themes:
+// widget of the display's pages comes from here. Four themes:
 //   OLED (default)  the whole screen as a zoomed-in Elektron OLED: 400x240 dots on 800x480, 512x300 on 1024x600, 640x360 on 1280x720 (sidecar_dot.h), black, a
 //                   pixel font of our own (sidecar_dotfont.h), dotted outlines, grey dithered title bars, inverted
 //                   selection, knobs as dot rings, colour only from the Rytm's LED palette
@@ -7,6 +7,12 @@
 //                   pill label, pill keys and segmented controls (selected = filled), arc knobs, rounded meters, Space
 //                   Grotesk for text and the dot font (round dots) for the big numbers; from 1024x600 the T1..T8 keys
 //                   are a rail at the right edge, at 800x480 a row in the header
+//   SQUARE          SIDECAR's layouts in the style guide's look (docs/UI-THEMES.md "SQUARE"): charcoal, signal green only for the
+//                   active and the selected, sage notes, Arimo in capitals (11 / 13 / 18 px and 28 for hero numbers), 1 px olive
+//                   edges, square panels with a label at the top left and a gap between them, no rounded corners (circles:
+//                   the track selectors and the status dots only)
+//   GUIDE           the same, the guide applied strictly: three sizes (11 / 13 / 18), panels and selector keys share their edges
+//                   (one grid of 1 px lines)
 // The pages lay themselves out per theme (TH->id) and draw only through the widgets and painters below, so a new theme
 // is a table and a set of painters (docs/UI-THEMES.md "Adding a theme"). LVGL only, one thread (core 0 on the Pi).
 #ifndef SIDECAR_THEME_H
@@ -20,8 +26,10 @@ extern "C" {
 #endif
 
 // The ids are stored (display.txt uistyle=, the status's ui_style): SIDECAR took CLASSIC's 1, so a card that chose the
-// old CLASSIC theme comes up in SIDECAR ("classic" is still read as 1).
-enum { THEME_OLED = 0, THEME_SIDECAR = 1, THEME_N };
+// old CLASSIC theme comes up in SIDECAR ("classic" is still read as 1). SQUARE and GUIDE (0.5.1 test build) are laid out
+// as SIDECAR (every page tests oled () only); an older build that reads their ids or words falls back to OLED.
+enum { THEME_OLED = 0, THEME_SIDECAR = 1, THEME_SQUARE = 2, THEME_GUIDE = 3, THEME_N };
+#define THEME_IS_SQ(id)	((id) >= THEME_SQUARE)	// SQUARE or GUIDE: sharp corners, Arimo capitals, the guide's palette
 
 // colours the OLED theme's dot expansion turns into patterns (sidecar_dot_expand): exact RGB565 values that no
 // drawing produces otherwise (1-bit fonts, square corners, no anti-aliasing in that theme)
@@ -33,7 +41,7 @@ enum { THEME_OLED = 0, THEME_SIDECAR = 1, THEME_N };
 typedef struct
 {
 	int		id;
-	const char	*name;			// "OLED", "SIDECAR" (the settings page, display.txt's uistyle=)
+	const char	*name;			// "OLED", "SIDECAR", "SQUARE", "GUIDE" (the settings page, display.txt's uistyle=)
 	int		dot;			// physical pixels a UI pixel: SIDECAR_DOT or 1
 	int		w, h;			// the UI's size in its own pixels now: OLED 400x240 / 512x300 / 640x360, SIDECAR 800x480 / 1024x600 / 1280x720
 	int		bw, bh;			// the base layout's size in them (OLED 400x240, SIDECAR 800x480; 1280x720: LU of those)
@@ -105,6 +113,7 @@ enum						// th_key kinds and flags
 	TH_KEY_LEFT = 16,			// text left-aligned (pads, lists)
 	TH_KEY_HOLD = 32,			// checkable (seg items are)
 	TH_KEY_FILL = 64,			// drawn filled (inverted): a dialog's destructive confirm (UX review T16)
+	TH_KEY_ROUND = 256,			// SQUARE / GUIDE: a circle (a track selector; every other key is square there)
 	TH_KEY_TAB = 128,			// a header page key: in SIDECAR's high contrast a tab (accent label, selected = accent fill, rounded top)
 };
 typedef void (*th_cb_t) (lv_obj_t *o, int idx, void *ud);

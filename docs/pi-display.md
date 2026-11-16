@@ -57,7 +57,7 @@ page, the serial console or the display shows on all of them.
   - **Kill tails** sends `killfx`: the CC 120 request (`core::fx::all_sound_off`, both FX fade out in about 5 ms, clear and
     return). Needs a build with the cc120-kill change.
   - **XY** opens the XY pad (0.5.0, docs/XY-PAD.md): a touch controller for up to 4 targets per axis, HOLD and SETUP.
-- **Display**: UI style (OLED / SIDECAR, `uistyle=`), screensaver, the home page's touch test, brightness.
+- **Display**: UI style (OLED / SIDECAR / SQUARE / GUIDE, `uistyle=`), screensaver, the home page's touch test, brightness.
 - **About**: the web page address, IP, whether the web server runs (cmdline `web=`, not switchable at run time), link,
   USB-C gadget mode, the engine's build time, Circle and LVGL versions.
 
@@ -550,7 +550,7 @@ A USB mouse on this panel still moves in the panel's portrait range: not handled
 - The settings are stored in `/.rytm/display.txt` (`screensaver=60`, `brightness=100`, `touchtest=1`, `uistyle=oled`, and
   `res=` when one was added by hand: "Screen sizes"), written by core 0 as a whole file (tmp + rename). `screensaver=`, `brightness=`, `touchtest=` and `uistyle=` in cmdline.txt override
   the file at boot.
-- **UI style:** `uistyle=oled|sidecar` (console, web page, the Display page; an older card's `classic` reads as `sidecar`): the theme, switched live (docs/UI-THEMES.md).
+- **UI style:** `uistyle=oled|sidecar|square|guide` (console, web page, the Display page; an older card's `classic` reads as `sidecar`): the theme, switched live (docs/UI-THEMES.md).
 - `/status` carries `screensaver`, `brightness`, `touchtest` (1 shown, 0 hidden), `display` (a display is attached) and `blank`.
 
 ## Cost
