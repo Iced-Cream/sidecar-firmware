@@ -8,7 +8,7 @@ for all three sizes ("Sizes" below):
 | **OLED** | The whole screen as a zoomed-in Elektron OLED: 400x240 dots, each a 2x2-pixel cell with a darker grid between, black, our own pixel font, dotted outlines, grey dithered title bars, inverted selection, knobs as dot rings, greys plus the Rytm panel's FUNC teal and blue print. A fixed navigation column on the right. | yes |
 | **SIDECAR** | The web app's look on the touchscreen: a UV night-blue screen (`#08071a`), cards (`#110f28`, a `#2c2950` border, radius 12-15 px) with their title as a lavender pill on the top edge, pill keys and segments (selected: filled lavender, dark text), knobs as 270° arcs with the value inside, rounded meters lavender -> magenta -> coral, the piano roll's notes rounded (the selected one coral). A header with a flat gradient (no blur) carries the "Docked" logo, SIDECAR and the page's name in the dot face; from 1024x600 a T1..T8 rail on the right (the page's key a light pill), at 800x480 the same keys as a row of pills in the header. Text in Space Grotesk, big numbers (the pattern, knob values, the page title) in the dot face with round dots. It replaced CLASSIC (the Rytm's hardware look) under the same id. | |
 
-**Switching:** Settings > Display > **UI style: OLED / SIDECAR**, or the console / web command `uistyle=oled|sidecar`.
+**Switching:** Settings > Display > **UI style: OLED / SIDECAR**, or the console / web command `uistyle=oled|sidecar`. SIDECAR has a high-contrast option, Settings > Display > **Contrast** ([High contrast](#high-contrast-sidecar-051)).
 - Applied at once, no reboot (`sidecar_ui_style`).
 - Stored as `uistyle=oled|sidecar` in `/.rytm/display.txt`, with the screensaver, brightness and touch test settings.
 - **From CLASSIC:** SIDECAR took CLASSIC's id 1, so a card or cmdline.txt that says `uistyle=classic` (or `1`) comes up in SIDECAR, and the next save of the display settings writes `uistyle=sidecar`. `classic` stays accepted by the command as well. A build from before SIDECAR does not know `sidecar` and falls back to OLED, the default.
@@ -186,6 +186,44 @@ used (WCAG: text 4.5:1, controls 3:1):
 | coral | `#ff7a5c` | recording, the selected note, FM carriers, FX 2, the B side, LEV knobs, alerts, a hot meter's top | 7.3:1 |
 | magenta | `#d46cff` | p-locks, a meter between -12 and -3 dB, the crossfader's middle | 6.6:1 |
 | header | `#1a1150` -> `#14103a` -> `#2a1033` -> `#120e36` | the title bar, a flat gradient of three fills (no blur, no shadow) | |
+
+### High contrast (SIDECAR, 0.5.1)
+
+An option of the SIDECAR theme, after the web app's `data-theme="contrast"` (`web-next/src/styles/tokens.css`): the same
+layouts, fonts and sizes, only colours, border widths and a few treatments change. `THEME_SIDECAR` stays the theme's id (pages that branch on
+`TH->id` need nothing), `TH->hc` says which look (0 standard, 1 blue, 2 green) and `TH->edge_w` is the card / control border width (1, or 2 here).
+
+**The setting:** Settings > Display > **Contrast: Standard / High blue / High green** (a row of the SIDECAR Display page only;
+the OLED page has none), the console / web command `uicontrast=off|blue|green`, stored as `uicontrast=off|blue|green` in
+`/.rytm/display.txt` (default `off`; a card without the key, or a word not known, reads as `off`; the OLED theme ignores it and keeps
+the stored value). The status carries it (`ui_contrast`, 0 / 1 / 2, -1 not known), like `ui_look`. A change rebuilds and redraws
+the screen as a theme change does (`sidecar_theme_contrast`, then `rebuild`). The words and the file's line are
+`pi/engine/ui_contrast.h` (`tests/test_ui_contrast.cpp`). The Rytm's SIDECAR MENU does not list the theme or the OLED look, so it has no
+contrast entry either (it would need a Rytm mods change).
+
+| role | standard | high contrast |
+|---|---|---|
+| screen, cards, rail, header | night blue, a glow in the header | `#000000`, no texture, no glow (a white line under the header) |
+| card and control edges | `#2c2950` / `#6a64a0`, 1 px | `#ffffff`, 2 px |
+| card's pill label | accent fill, dark text | black fill, white 2 px edge, white text |
+| text / labels / disabled | `#eeedff` / `#bdb9e8` / `#8a85c0` | `#ffffff` / `#e6e6e6` / `#a6a6a6` |
+| accent | `#9a97ff` | `#8fd3ff` (blue) or `#80d553` (green, the Rytm's mute-pad colour; 11.6:1 on black) |
+| selected key / tab / segment | accent fill, dark text | accent fill, black text |
+| coral roles (recording, warnings, selected note, LEV arcs, missing items, a hot meter's top), p-locks | `#ff7a5c`, magenta `#d46cff` | `#ffd166` |
+| logo | its hues | plain white dots |
+| knob | track `#2c2950`, value accent, light dot | track `#767676` (4.6:1), value accent, white dot with a black edge |
+| piano roll | lavender rows and lines | rows `#000` / `#161616`, root rows the accent at 16 %, lines `#333` step / `#777` beat / `#fff` page, play head white, notes the accent with black text, the selected note yellow; keys `#e6e6e6` and black, each edged white |
+| meters, sliders | filled tracks | a white outline, the accent inside (yellow past 90 %); a slider's track `#767676` |
+| disabled key | `#2c2950` outline | `#a6a6a6` and a **dashed** edge |
+
+Disabled keys are dashed along their straight top and bottom edges (gaps cut in the outline; the rounded ends stay solid), so
+disabled does not rest on colour alone. A p-lock keeps the Rytm page's own cues besides its colour (the dotted underline under a
+trig). What is still drawn in its own colours in this look: the boot screen (`sidecar_splash.c`, drawn before the setting is read), and the help
+texts that name colours ("Lavender: FX 1, coral: FX 2" on Send FX).
+
+The shots: `make -C pi/ui/host shots-hc` (`sidecar-hc-*`, `sidecar-hcg-*` beside the others; `./shot DIR [WxH] hc|hcg` is one look), and the plain
+`./shot` also taps the Contrast row (`uicontrast=`, the rebuild, a stored value, the OLED theme ignoring it). `./shot` checks the
+high-contrast tables against the contrast targets (text 4.5:1, controls and lines 3:1, WCAG) and fails on a miss.
 
 Touch targets are 46 px or more at 800x480 and 1024x600 (`TH->touch`), 57 px at 1280x720 (the T1..T8 rail's keys
 72 px tall at 1024x600, 86 at 1280x720); `make -C pi/ui/host bounds` checks them against 1024x600.
@@ -481,7 +519,10 @@ At **1024x600** (1.6x the pixels) a full redraw costs about 1.3x (the text and k
    - A new screen size: `sidecar_theme_screen` and `sidecar_theme_set` (the table's `w, h, dx, dy`), and the checks in
      `shot.c` (`DX`, `DY`).
 4. **Expansion.** A dot size other than 1 or 2 needs `sidecar_dot_expand` generalised; today it is written for 2.
-5. **Wiring.** Add the name to the Display page's `kStyleMap`, to `uistyle=` in `pi/engine/kernel.cpp` (command, `display.txt`), and to the host render's `theme_run`.
+5. **A variant of a theme** (SIDECAR's high contrast) is no new theme: `contrast_apply` in `sidecar_theme.c` overrides the table's colours
+   and the painters' palette (`UV_*`, a runtime palette) after `sidecar_theme_set` copies the base; a painter that needs more than a
+   colour reads a field (`TH->hc`, `TH->edge_w`), a page never a literal. Wiring as for a theme: a `display.txt` key in the kernel's `Known[]`, a console command, a status field, a Display row.
+6. **Wiring.** Add the name to the Display page's `kStyleMap`, to `uistyle=` in `pi/engine/kernel.cpp` (command, `display.txt`), and to the host render's `theme_run`.
 
 ## Files
 

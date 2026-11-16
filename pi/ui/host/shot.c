@@ -286,6 +286,7 @@ static double bench (const lv_area_t *a, int n)
 }
 
 static sidecar_ui_status_t s_St;
+static int s_nContrastSt = -1;		// 0.5.1: the status's ui_contrast (-1: not known)
 static void status_init (int style)
 {
 	static const char *const tracks[8] = {"PLAITS", "FM", "JUNO", "DSPS", "DAISY", "MD", "GRAN", "WAVE"};
@@ -307,6 +308,7 @@ static void status_init (int style)
 	strcpy (s.keys_in, "MPKMINI, LAUNCHCONTROLXL"); strcpy (s.keys_last, "MPKMINI > SD POLY"); s.learn_routes = 2;
 	s.ui_style = style;
 	s.ui_look = -1;
+	s.ui_contrast = s_nContrastSt;
 	s.poly = 1u << 7;		// RS/CP (voice 7, WAVE): a poly track
 	s.pattern = 3, s.transport = 1;	// A04 playing (HOME's NOW)
 	s_St = s;
@@ -1092,6 +1094,7 @@ static void sedit_fake (int mode)
 	}
 }
 
+static void contrast_check (void);
 static void theme_run (int style, const char *pre)
 {
 	snprintf (s_Pre, sizeof s_Pre, "%s", pre);
@@ -1101,6 +1104,7 @@ static void theme_run (int style, const char *pre)
 	DX = TH->dx, DY = TH->dy;
 	EXPECT (sidecar_ui_get_style () == style);
 	EXPECT (sidecar_ui_dot () == (o ? SIDECAR_DOT : 1));
+	if (TH->hc) contrast_check ();
 	sidecar_ui_touch (1, 2010, 1240, 392, 145);
 	sidecar_ui_show (0); shot ("home");
 	EXPECT (sidecar_ui_touch_test_shown ());
@@ -2163,15 +2167,15 @@ static void theme_run (int style, const char *pre)
 		tap (CTAB (2), LU (84));								// tab: Send FX
 		tap (LU (674) + DX, LU (114) + LU (52));                EXPECT_CMD ("killfx");
 		tap (CTAB (3), LU (84));								// tab: Display
-		tap (LU (190) + LU (60), LU (114) + CY (98) + CH / 2);                      EXPECT_CMD ("screensaver=0");
-		tap (LU (190) + (LU (570) + DX) * 5 / 8 + LU (4), LU (114) + CY (98) + CH / 2);  EXPECT_CMD ("screensaver=60");
+		tap (LU (190) + LU (60), LU (114) + CY (82) + CH / 2);                      EXPECT_CMD ("screensaver=0");
+		tap (LU (190) + (LU (570) + DX) * 5 / 8 + LU (4), LU (114) + CY (82) + CH / 2);  EXPECT_CMD ("screensaver=60");
 		(void) by; (void) e; (void) lw;
 		tap (CNAV_X (0), CNAV_Y (0));							// HOME
 		sidecar_ui_show (0); run (3);
 		shot ("hidden");
 		sidecar_ui_show (6); run (3);
 		unsigned taps = sidecar_ui_taps ();
-		tap (LU (190) + LU (55), LU (114) + CY (160) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
+		tap (LU (190) + LU (55), LU (114) + CY (132) + CH / 2);  EXPECT (sidecar_ui_taps () == taps + 1);	// Display's touch test: TAP
 	}
 	// N1: the eight navigation keys in both themes - each opens its page and lights itself; VOICE asks for the Rytm's
 	// track again (voicepick=-1).
@@ -2725,6 +2729,72 @@ static void theme_run (int style, const char *pre)
 	s_bQuiet = 0;
 }
 
+// 0.5.1: the high contrast (SIDECAR): the Display page's Contrast row sends uicontrast= and rebuilds in that look; a stored
+// value (status ui_contrast) does the same. After the theme runs: a rebuild would reset what their gestures set up.
+static void contrast_run (void)
+{
+	snprintf (s_Pre, sizeof s_Pre, "sidecar");
+	s_nContrastSt = -1;
+	status_init (THEME_SIDECAR);
+	sidecar_ui_status (&s_St);
+	run (12);
+	DX = TH->dx, DY = TH->dy;
+	const int cy = LU (114) + 278 * (LU (358) + DY) / 358 + (LU (40) + DY / 15) / 2;
+	sidecar_ui_show (6); run (3);
+	tap (LU (12) + LU (190) + LU (300) * 3 / 6, cy); EXPECT_CMD ("uicontrast=blue"); run (3);
+	EXPECT (sidecar_theme_get_contrast () == 1 && TH->hc == 1 && TH->edge_w == 2 && TH->id == THEME_SIDECAR);
+	sidecar_ui_show (6); run (2); shot ("hc-display-tap");
+	tap (LU (12) + LU (190) + LU (300) * 5 / 6, cy); EXPECT_CMD ("uicontrast=green"); run (3);
+	EXPECT (sidecar_theme_get_contrast () == 2 && TH->hc == 2);
+	tap (LU (12) + LU (190) + LU (300) / 6, cy); EXPECT_CMD ("uicontrast=off"); run (3);
+	EXPECT (sidecar_theme_get_contrast () == 0 && TH->hc == 0 && TH->edge_w == 1);
+	s_St.ui_contrast = 2; sidecar_ui_status (&s_St); run (3);		// a stored value arrives
+	EXPECT (TH->hc == 2);
+	s_St.ui_contrast = 0; sidecar_ui_status (&s_St); run (3);
+	EXPECT (TH->hc == 0);
+	// the OLED theme keeps a stored value and ignores it
+	sidecar_ui_style (THEME_OLED); run (12);
+	s_St.ui_style = THEME_OLED; s_St.ui_contrast = 1; sidecar_ui_status (&s_St); run (3);
+	EXPECT (sidecar_theme_get_contrast () == 1 && TH->id == THEME_OLED && TH->hc == 0 && TH->edge_w == 1);
+	s_St.ui_contrast = 0; sidecar_ui_status (&s_St); run (3);
+	sidecar_ui_style (THEME_SIDECAR); run (12);
+	s_St.ui_style = THEME_SIDECAR;
+}
+
+// WCAG contrast of two 0xRRGGBB colours (the web app's tokens.css check, as the theme's contrast targets say)
+static double lum (uint32_t c)
+{
+	double v[3];
+	for (int i = 0; i < 3; i++)
+	{
+		double x = (double) (c >> (16 - 8 * i) & 255) / 255.0;
+		v[i] = x <= 0.03928 ? x / 12.92 : pow ((x + 0.055) / 1.055, 2.4);
+	}
+	return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+static double ratio (uint32_t a, uint32_t b)
+{
+	double x = lum (a), y = lum (b);
+	return (x > y ? x + 0.05 : y + 0.05) / (x > y ? y + 0.05 : x + 0.05);
+}
+// 0.5.1: the high-contrast tables (the table now: blue or green): text >= 4.5:1, controls and lines >= 3:1 on the black
+#define CONTRAST_AT_LEAST(a, b, min) do { double r_ = ratio (a, b); if (r_ < (min)) { printf ("FAIL shot.c:%d [%s] contrast %s on %s is %.2f:1, wanted %.1f:1\n", __LINE__, s_Pre, #a, #b, r_, (double) (min)); s_nFail++; } } while (0)
+static void contrast_check (void)
+{
+	const uint32_t bg = TH->bg;
+	CONTRAST_AT_LEAST (TH->ink, bg, 4.5); CONTRAST_AT_LEAST (TH->dim, bg, 4.5); CONTRAST_AT_LEAST (TH->faint, bg, 4.5);
+	CONTRAST_AT_LEAST (TH->sub, bg, 4.5); CONTRAST_AT_LEAST (TH->win_ink, TH->win, 4.5); CONTRAST_AT_LEAST (TH->win_dim, TH->win, 4.5);
+	CONTRAST_AT_LEAST (TH->accent, bg, 4.5); CONTRAST_AT_LEAST (TH->bad, bg, 4.5); CONTRAST_AT_LEAST (TH->warn, bg, 4.5);
+	CONTRAST_AT_LEAST (TH->lock, bg, 4.5); CONTRAST_AT_LEAST (TH->play, bg, 4.5);
+	CONTRAST_AT_LEAST (TH->sel_ink, TH->sel_bg, 4.5);			// the selected key: black on the accent
+	CONTRAST_AT_LEAST (TH->win_edge, TH->win, 3.0);			// a card's and a control's edge
+	CONTRAST_AT_LEAST (TH->line_beat, TH->row_in, 3.0); CONTRAST_AT_LEAST (TH->line_page, TH->row_in, 3.0);
+	CONTRAST_AT_LEAST (0x767676, bg, 3.0);					// the empty track of a knob / meter (sidecar_theme.c UV.trk)
+	CONTRAST_AT_LEAST (TH->key_white, TH->key_black, 3.0);
+	CONTRAST_AT_LEAST (TH->accent, TH->row_root, 4.5);			// a note on the root rows
+	CONTRAST_AT_LEAST (0x000000, TH->accent, 4.5); CONTRAST_AT_LEAST (0x000000, TH->bad, 4.5);	// a note's text, the selected note's
+}
+
 // ---- the animation: the OLED SEQ page playing the demo pattern (strummed chords, a humanised melody), a note dragged,
 // a chord stamped, the velocity lane touched, 20 frames a second
 static int s_Frame, s_Frames;
@@ -2966,8 +3036,13 @@ int main (int argc, char **argv)
 	snprintf (s_Dir, sizeof s_Dir, "%s", argc > 1 ? argv[1] : "obj");
 	th_fit_report = fit_painted;
 	theme_run (THEME_OLED, "oled");
-	theme_run (THEME_SIDECAR, "sidecar");
+	// ./shot DIR [WxH] hc | hcg: the SIDECAR theme's high contrast (0.5.1), blue or green: sidecar-hc-*.ppm / sidecar-hcg-*.ppm
+	// (the OLED run before it is the fresh start the SIDECAR run expects; a run in a process of its own for the same reason)
+	const int hc = argc > 2 && !strcmp (argv[2], "hc") ? 1 : argc > 2 && !strcmp (argv[2], "hcg") ? 2 : 0;
+	if (hc) s_nContrastSt = hc;
+	theme_run (THEME_SIDECAR, hc == 1 ? "sidecar-hc" : hc == 2 ? "sidecar-hcg" : "sidecar");
 	theme_run (THEME_OLED, "again");		// back: a second switch rebuilds cleanly (again-*.ppm)
+	if (!hc) contrast_run ();
 	if (s_nFit) printf ("shot: %d strings do not fit (TEXT-FIT above)\n", s_nFit);
 	printf (s_nFail ? "shot: %d checks FAILED\n" : "shot: all checks ok (both themes)\n", s_nFail);
 	return s_nFail != 0 || s_nFit != 0;

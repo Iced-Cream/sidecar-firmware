@@ -37,6 +37,13 @@ shot.png: shot
 	./shot obj/$(SHOTS) $(SIZE)
 	for f in obj/$(SHOTS)/*.ppm; do sips -s format png $$f --out $(SHOTS)/$$(basename $$f .ppm).png >/dev/null; done
 	cp $(SHOTS)/oled-home.png $(SHOTPNG)
+# shots-hc: the SIDECAR theme's high contrast (0.5.1), blue and green: sidecar-hc-*.png, sidecar-hcg-*.png beside the others in
+# shots/ (each look in a process of its own; ./shot fails on a miss as in the plain run)
+shots-hc: shot
+	@mkdir -p obj/$(SHOTS)-hc obj/$(SHOTS)-hcg $(SHOTS)
+	./shot obj/$(SHOTS)-hc $(SIZE) hc
+	./shot obj/$(SHOTS)-hcg $(SIZE) hcg
+	for f in obj/$(SHOTS)-hc/sidecar-hc-*.ppm obj/$(SHOTS)-hcg/sidecar-hcg-*.ppm; do sips -s format png $$f --out $(SHOTS)/$$(basename $$f .ppm).png >/dev/null; done
 shots-all: shot
 	$(MAKE) shot.png SIZE=800x480
 	$(MAKE) shot.png SIZE=1024x600
