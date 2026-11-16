@@ -32,6 +32,7 @@
 #include "../store/store.h"
 #include "../msamp/cardq.h"
 #include "../samp/sedit.h"
+#include "../ui/remote.h"
 #include "../presets/preset_index.h"
 #endif
 
@@ -54,16 +55,23 @@ CORE_COLD int prj_slot() {
   int s = device::cur().index;
   return s < kVoiceSlots ? s : 0;
 }
+// 10b: the FX settings' slot. On the control core the slot in hand's (prj_slot); on any other core (the Pi's touchscreen
+// views, core 0: pi/engine/insfx_pi.cpp) the slot the display follows (ui::remote_display_slot), not whatever the
+// control core has in hand at that moment.
+static int fx_slot() {
+  if (!hooks.control_core || hooks.control_core()) return prj_slot();
+  return ui::remote_display_slot();
+}
 #if CORE_POLY
 // 3(c): the INSERT and OUT settings are the slot in hand's (core/fx/insert.h, out.h: their control side builds without
 // core/device, so it asks through these)
 static struct SlotFns {
-  SlotFns() { ins::slot_fn = prj_slot, out::slot_fn = prj_slot; }
+  SlotFns() { ins::slot_fn = fx_slot, out::slot_fn = fx_slot; }
 } g_slot_fns;
 #endif
 // 3(c) step 8: the send FX settings too (core/fx/send_fx.h; its control side builds without core/device)
 static struct FxSlotFn {
-  FxSlotFn() { fx::slot_fn = prj_slot; }
+  FxSlotFn() { fx::slot_fn = fx_slot; }
 } g_fx_slot_fn;
 
 CORE_COLD int pool_slot(float p11) {

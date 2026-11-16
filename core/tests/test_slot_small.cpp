@@ -155,6 +155,21 @@ int main() {
     printf("  all sound off: slot 1's reset cleared control1 only, slot 0's control only\n");
   }
 
+  // ---- the Rytm's tracks read its own remote UI's tables (10b: one per slot) whatever slot is in hand
+  arp::set(0, up);   // (outside a Scope: the Rytm's track 1, on voice 0)
+  CHECK(arp::on(0));
+  {
+    device::Scope in(device::g_links[1]);
+    CHECK(arp::on(0) && arp::on(a4v) && arp::get(0).mode == arp::kUp);
+  }
+  {
+    arp::Cfg off = arp::decode(0);
+    device::Scope in(device::g_links[1]);
+    arp::set(0, off);   // the A4's track 1 off: the Rytm's stays on
+    CHECK(!arp::on(a4v) && arp::on(0));
+  }
+  printf("  arp: the Rytm's track 1 read from its own tables in the A4's Scope\n");
+
   hooks.transport = nullptr;
   hooks.transport_box = nullptr;
   printf("test_slot_small: PASS\n");

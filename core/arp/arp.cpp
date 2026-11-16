@@ -10,8 +10,8 @@
 #include "hooks.h"
 #include "inst.h"
 #include "machines.h"
+#include "device/device.h"
 #include "platform.h"
-#include "pool/pool.h"
 #include "poly.h"
 #include "ui/remote.h"
 #include "voices.h"
@@ -73,7 +73,13 @@ struct Sl {
 };
 Sl g_sl[kVoiceSlots];
 inline int vslot(int vi) { return kVoiceSlots > 1 && vi >= 0 && vi < kVoices ? slot_of_voice(vi) : 0; }
-inline Sl& S() { return g_sl[prj_slot()]; }   // the slot in hand's (the control core; a box's 45 comes in its Scope)
+// the slot in hand (prj_slot, read inline as seq's sq_slot: cfg_at runs a block's every voice)
+inline int cur_slot() {
+  if (kVoiceSlots < 2) return 0;
+  const int s = device::g_cur->index;
+  return s < kVoiceSlots ? s : 0;
+}
+inline Sl& S() { return g_sl[cur_slot()]; }   // the slot in hand's (the control core; a box's 45 comes in its Scope)
 inline Sl& SV(int vi) { return g_sl[vslot(vi)]; }
 inline int64_t vframes(int vi) { return (int64_t)seq::frames(vslot(vi)); }
 
@@ -82,14 +88,21 @@ CORE_COLD int rand_below(Sl& l, int n) {
   rnd ^= rnd << 13, rnd ^= rnd >> 17, rnd ^= rnd << 5;
   return (int)((rnd >> 8) % (uint32_t)n);
 }
+// The Rytm's track tables (its 33s) are its remote UI's, read in slot 0's Scope (10b: the remote UI one per slot, the
+// slot in hand's) whatever slot is in hand
+template <class F> CORE_COLD auto rytm_ui(F f) -> decltype(f()) {
+  if (cur_slot() == 0) return f();
+  device::Scope in(device::g_links[0]);
+  return f();
+}
 // slot s's track t plays on this voice (-1 none): the Rytm's from its 33s, a box's track t on its own voice t
 CORE_COLD int track_voice(int s, int t) {
-  if (s == 0) return ui::remote_track_voice(t);
+  if (s == 0) return rytm_ui([&] { return ui::remote_track_voice(t); });
   return t < kBoxVoices ? s * kBoxVoices + t : -1;
 }
 CORE_COLD bool sidecar_track(int s, int t) {
   if (s != 0) return t < kBoxVoices;   // (a box's tracks on its own voices: every one a Sidecar voice)
-  int vb = ui::remote_track_machine(t);
+  int vb = rytm_ui([&] { return ui::remote_track_machine(t); });
   return vb != 0x7F;   // (-1: not reported yet, a test's or a first report's: the voice's reports say it is ours)
 }
 CORE_COLD bool code_on(int c) { return c < kCodes && c % kModes != kOff; }   // (past the table: decode's 0, OFF)
@@ -267,7 +280,7 @@ CORE_COLD int gate_pct(int g) { return kGatePct[g >= 0 && g < kGates ? g : kDefG
 CORE_COLD int swing_pct(int s) { return kSwingPct[s >= 0 && s < kSwings ? s : 0]; }
 
 CORE_COLD static void changed(int t) {   // the slot in hand's track t's code moved: its voice runs by it, or stops
-  int vi = track_voice(prj_slot(), t);
+  int vi = track_voice(cur_slot(), t);
   if (vi >= 0 && vi < kVoices && vo[vi].run && !on(vi)) end(vi);
   S().check_ms = 0;   // the pins and the clock at the next pass
 }
@@ -474,7 +487,7 @@ CORE_COLD void machines() {
     if (vslot(vi) != 0) continue;   // (the Rytm's 33s: its own voices' tracks)
     uint16_t sig = 0;
     for (int t = 0; t < 12; ++t)
-      if (ui::remote_track_voice(t) == vi) sig = (uint16_t)(sig * 31 + (uint16_t)(ui::remote_track_machine(t) + 1));
+      if (track_voice(0, t) == vi) sig = (uint16_t)(sig * 31 + (uint16_t)(rytm_ui([&] { return ui::remote_track_machine(t); }) + 1));
     if (sig != vo[vi].sig) {
       vo[vi].sig = sig;
       end(vi);
@@ -484,7 +497,7 @@ CORE_COLD void machines() {
 CORE_COLD bool busy(int vi) { return vi >= 0 && vi < kVoices && vo[vi].run; }
 
 CORE_COLD void tick(uint32_t ms) {
-  const int s = prj_slot();
+  const int s = cur_slot();
   Sl& l = g_sl[s];
   if ((int32_t)(ms - l.check_ms) < 200 && l.check_ms) return;
   l.check_ms = ms | 1;
