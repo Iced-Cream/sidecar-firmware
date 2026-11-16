@@ -747,6 +747,24 @@ as MD: DIGIDRUM's ENG picks the closest ENGINE / TYPE (EFM-BD..CY -> FM BD..CY, 
 its controls carried over where they are the same. The MD user machine and MD-PI / MD-EFM / MD-TRX stay installable
 as before. Not on the Teensy (a PI voice's state is over its RAM): 0x40 is silent there.
 
+### 10.3 BP303 (plugins/bp303, `bp303.bass`, MIT)
+
+A 303-style bass line voice as a user machine (API 2, mono, pitched; `bp303.a64.rmp`, installed like any package). The
+voice is **BLACKPYRAMIDS_303's** (Zac Kyoti and the OT Kyoti FW contributors, MIT:
+https://github.com/Zac-Kyoti/octatrack-kyoti-fw, an Octatrack track machine), which is built on **Open303** (Robin
+Schmidt, 2009, MIT) and recalibrated on the TB-303's circuit. `bp303.c` is a float rewrite of that project's reference
+code of the voice (not its DSP assembly): a polyBLEP saw / tanh-shaped square blend, Open303's TeeBee ladder 4x
+oversampled (192 kHz) behind two half-band decimators, the couplings 0.7 Hz in / 55 Hz in the resonance loop / 110 Hz
+out, the fitted resonance curve, the accent RC and the accent sweep capacitor, the VCA (tau 1.35 s), a soft drive on
+VOL 65..127, glided knobs. Both licences and the source files are in the folder (`LICENSE.kyoti`, `LICENSE.open303`,
+`NOTICE`); `README.md` has the knobs, what differs from the original and the checks.
+
+P1 CUT, P2 RES, P3 ENV, P4 DEC, P5 ACC, P6 WAVE, P7 SLID, P8 VOL, P9 TUNE (the original's ranges and defaults). **A
+note with velocity above 100 is an accent** (by the ACC knob's amount); **a trig while the gate is still open is a
+slide** (it glides there, no retrigger); the gate is the track's note length. `make check` runs the package on the Mac
+as the Pi runs it (silence at rest, CUT x RES under the ceiling, a slide keeps one note, accents, the CPU estimate);
+`make demo` writes acid lines as WAV files.
+
 ## 11. User slots on the Rytm (sub-project 2)
 
 The Rytm (rytm-mods 0021, machines 35..39 as U1..U5) shows each slot's machine, knobs and status from the Teensy: the
