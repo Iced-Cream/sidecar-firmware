@@ -275,6 +275,10 @@ void rytm_link(bool up) { core::midim::link_state(up); }
 void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
 int realtime_link(int t, uint8_t status, uint16_t spp) { return core::engine_realtime_link(t, status, spp); }
 int base_slot() { return core::device::g_base ? core::device::g_base->index : 0; }
+int transport_slot(int t) {
+  const int s = core::device::slot_of(t, nullptr, 0);
+  return s >= 0 && s < core::kVoiceSlots ? s : -1;
+}
 void asamp_set_midi_out(bool (*f)(int, const uint8_t*, int)) { core::samp::asamp_set_midi_out(f); }
 bool keys_computer_on() { return core::keys::computer_on(); }
 const char* keys_line(char* b, int cap) { return core::keys::line(b, cap); }

@@ -67,6 +67,20 @@ int main() {
     CHECK(got == want && sx == 1);   // (F2 05 cut by the note: no position; the last F2 not whole yet)
     CHECK(r.feed(0x02) && r.status() == 0xF2 && r.spp() == (0x7F | 2 << 7));
   }
+  {
+    // a box's CC 120 (All Sound Off, 3(c)): any channel, running status, realtime between; SysEx data and other CCs are not
+    Cc120Asm c;
+    std::vector<uint8_t> in = {0xB3, 120, 0,            // 1: channel 4
+                               121, 0,                  // reset all controllers (running status): no
+                               0xF8, 120, 0xF8, 0,      // 2: running status, a clock byte between each
+                               0x90, 120, 0,            // a note of pitch 120: no
+                               0xF0, 0x7D, 120, 0, 0xF7,// SysEx data: no
+                               120, 0,                  // after F7: no running status
+                               0xBF, 7, 100, 120, 127}; // 3: channel 16, after another CC
+    int n = 0;
+    for (uint8_t b : in) n += c.feed(b) ? 1 : 0;
+    CHECK(n == 3);
+  }
   printf("test_sysex_asm: ok\n");
   return 0;
 }

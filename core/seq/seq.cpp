@@ -136,12 +136,16 @@ void set_transport(int t) {
   if (t == transport()) return;
   const int was = transport();
   transport() = t;
-  if (!sq_rytm()) return;   // 3(c): MIDI, the arpeggiator and the recorder follow the Rytm's transport only
+  // 3(c): each slot's transport its own: MIDI and the arpeggiator end its own voices' notes; the platform hears every
+  // box's (hooks.transport_box: the Pi's recorder arms on the base box's), hooks.transport the Rytm's as before
+  const int s = sq_slot();
 #if CORE_MSAMP
-  if (t != kPlay) midim::stop();   // MIDI: what the sequencers hold ends here, whatever 0x11s come
+  if (t != kPlay) midim::stop(s);   // MIDI: what the sequencers hold ends here, whatever 0x11s come
 #endif
-  if (t != kPlay) arp::stop();     // the arpeggiator: a trig's and the sequencer's notes end, keys run on free
-  if (hooks.transport) hooks.transport(t == kPlay ? (was == kPause ? 0xFB : 0xFA) : 0xFC);
+  if (t != kPlay) arp::stop(s);     // the arpeggiator: a trig's and the sequencer's notes end, keys run on free
+  const uint8_t rt = t == kPlay ? (was == kPause ? 0xFB : 0xFA) : 0xFC;
+  if (s == 0 && hooks.transport) hooks.transport(rt);
+  if (hooks.transport_box) hooks.transport_box(s, rt);
 }
 Per<int64_t> transport_frame{INT64_MIN};   // the Rytm frame of the last TRANSPORT (older ticks after it: ignored)
 Per<double> bpm{0};
@@ -616,7 +620,7 @@ CORE_COLD void apply_locks(int r, const LockSet* ls) {
       }
     }
   }
-  if (sq_rytm() && vi >= 0 && vi < kVoices) {   // arp locks (3(c): the Rytm's slot's; the send FX's: each slot its own): the step's only (core/arp/arp.h); a track that locks none does nothing here
+  if (vi >= 0 && vi < kVoices) {   // arp locks (3(c): each slot its own arpeggiator, as its own send FX): the step's only (core/arp/arp.h); a track that locks none does nothing here
     uint8_t awant = 0, av[kArpLocks] = {0};
     for (int i = 0; i < n && ls->arp_end > (int64_t)hframes(); ++i)
       if (arp_lock(ls->l[i].param)) {
@@ -2403,10 +2407,10 @@ CORE_COLD int lock_param_of(int pg, int e) {
   // envelope words none (the host's envelope plays them)
   static const int8_t kFltrW[3] = {30, 31, 25}, kAmpW[8] = {33, 34, 35, 36, 40, 41, 38, 37}, kLfoW[8] = {5, 1, 6, -1, 2, 7, 3, 8};
   int rw = pg == kLpFltr && e >= kArpLocks ? kFltrW[e - kArpLocks] : pg == kLpAmp ? kAmpW[e] : pg == kLpLfo ? kLfoW[e] : -1;
-  // 3(c): a box's slot locks its voices' machine and INSERT params and its own send FX (3(c) step 8); the Rytm's words
-  // and its tracks' arpeggiator are the Rytm's slot's
+  // 3(c): a box's slot locks its voices' machine and INSERT params, its own send FX (3(c) step 8) and its own arpeggiator;
+  // the Rytm's words are the Rytm's slot's
   if (rw > 0) return !sq_rytm() || ((pins_now() >> ui_track() & 1) && rytm_env_word(rw)) ? -1 : kLockRytm + rw;
-  if (pg == kLpFltr) return e < kArpLocks && sq_rytm() ? kLockArp + e : -1;
+  if (pg == kLpFltr) return e < kArpLocks ? kLockArp + e : -1;
   if ((pg == kLpSrc || pg == kLpSmpl) && sq_rytm() && ui::remote_track_smpl(ui_track())) {   // 0.5.0: SAMPLER's page 1, page 2 empty
     static const int8_t kDt[8] = {10, 12, 13, 11, 8, 9, 14, 15};   // SMP STRT END PLAY / TUNE FINE LOOP LEV (page_wave.cpp kDspsPageDt)
     return pg == kLpSrc ? kDt[e] : -1;
@@ -2938,10 +2942,16 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 
 // 3(c): SONG RECORD's clock tracks and the arpeggiator's pins, tempo and grid are the Rytm's: slot 0's
 CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra.at(0) = (uint16_t)(m & 0xFFF); }
-CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins.at(0) = (uint16_t)(pins & 0xFFF), arp_clock.at(0) = clock; }
+// (arp's tick: the slot in hand's, in its own Scope; a box's asks the clock only)
+CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins() = (uint16_t)(pins & 0xFFF), arp_clock() = clock; }
 CORE_COLD double tempo() { return bpm.at(0); }
+CORE_COLD double tempo(int s) { return s >= 0 && s < kVoiceSlots ? bpm.at(s) : 0; }
 static CORE_COLD bool beat_map_here(double* origin, double* per16, int* lat);
 CORE_COLD bool beat_map(double* origin, double* per16, int* lat) { return in_slot(0, [&] { return beat_map_here(origin, per16, lat); }); }
+CORE_COLD bool beat_map(int s, double* origin, double* per16, int* lat) {
+  if (s < 0 || s >= kVoiceSlots) s = 0;
+  return in_slot(s, [&] { return beat_map_here(origin, per16, lat); });
+}
 static CORE_COLD bool beat_map_here(double* origin, double* per16, int* lat) {
   *lat = latency();
   if (transport() != kPlay || !fol().valid) return false;
@@ -3092,8 +3102,9 @@ CORE_COLD bool owns_voice(int vi) {
   });
 }
 
-// slot 0's render frames: the arpeggiator's and SONG RECORD's clock and the calibration's (all the Rytm's, 3(c))
+// slot 0's render frames: SONG RECORD's clock and the calibration's (the Rytm's, 3(c)); a slot's: its arpeggiator's
 CORE_COLD uint64_t frames() { return hframes.at(0); }
+CORE_COLD uint64_t frames(int s) { return hframes.at(s >= 0 && s < kVoiceSlots ? s : 0); }
 CORE_COLD bool any_tracks() { return mask() != 0; }
 CORE_COLD bool shown_wanted() { return show_wanted(); }
 
@@ -3140,7 +3151,7 @@ static void pre_block_here() {
   }
   slide_tick();   // seqtop X1
   plan();
-  if (sq_rytm()) arp::block(h);   // (after the events: a chord's off and the next one's on in one block is no gap)
+  arp::block(h, sq_slot());   // (after the events: a chord's off and the next one's on in one block is no gap; the slot's voices)
   hframes() += kBlock;
 }
 
@@ -3945,6 +3956,8 @@ static CORE_COLD bool ui_key_here(int code, bool down, bool shown) {
     uint16_t bit = (uint16_t)(1u << code);
     Track* t = ui_track_data(false);
     int np = npages_of(eff_len(t, ui_track()));
+    if (down && (ui().held & bit)) return true;   // a second down of a trig still held (a box's repeated 31): its hold goes on, its
+                                                 // time and use kept (a long hold never turns into a tap)
     if (down) {
       if (ui().page_held) {   // PAGE held + a trig: that page
         if (code < np) ui().page = code;
@@ -4250,7 +4263,7 @@ static CORE_COLD void tick_here(uint32_t ms) {
       log(CORE_STR("seq: lock page knob %c: %s"), 'A' + e, ui().cond_e == e ? "COND" : "value");
     }
   remask(true);   // per pattern poly: a 33 (a track's machine) since
-  if (sq_rytm()) arp::tick(ms);   // (the arpeggiator: one, on the Rytm's clock)
+  arp::tick(ms);   // (the slot's arpeggiator, on its own box's clock)
   // per pattern poly, the switch: the Rytm must hear the next pattern's capture before it plays that pattern's first step
   // (or the step plays with the old one). With a pattern queued (prefetched in nxt) its new seq tracks are clocked (the
   // 2E's clock part: their ticks, nothing else - the prediction plans their first steps); kSwitchLead + the latency

@@ -311,9 +311,9 @@ CORE_COLD bool echo(int dest, int ch, int note, int vel) {
   return false;
 }
 
-CORE_COLD void stop() {
+CORE_COLD void stop(int slot) {
   for (Held& h : held)
-    if (h.used && (h.src == kTrigSrc || h.src == poly::kSeqCh)) off_entry(h);
+    if (h.used && (h.src == kTrigSrc || h.src == poly::kSeqCh) && of_slot(h.vi, slot)) off_entry(h);
 }
 
 CORE_COLD void realtime(uint8_t status) {

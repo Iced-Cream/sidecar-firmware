@@ -64,7 +64,7 @@ void link_lost();                                              // the Rytm's USB
 void resync();                                                 // records for the Rytm were lost, sending is on again: DIN's recent note-offs go again
 void link_state(bool up);                                      // each control pass: records can reach the Rytm
 bool echo(int dest, int ch, int note, int vel);                // a note-on came in from dest's port: true when it is our own, drop it
-void stop();                                                   // the Rytm's transport left PLAY: trig and sequencer notes off
+void stop(int slot = -1);                                      // slot's transport left PLAY: its voices' trig and sequencer notes off (-1 every voice's)
 void realtime(uint8_t status);                                 // the Rytm's F8 FA FB FC: to USB-A while a voice sends there
 void tick(uint32_t ms);                                        // every control pass: what the budget held back
 
