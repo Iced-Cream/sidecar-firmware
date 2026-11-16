@@ -1,0 +1,22 @@
+{
+  "id": "bp303.bass",
+  "version": "1.0.0",
+  "compatible_from": "1.0.0",
+  "name": "BP303",
+  "short": "B303",
+  "licence": "MIT (BLACKPYRAMIDS_303, Open303)",
+  "page2": "params",
+  "page2_title": "BP303 MORE",
+  "pitch": "note",
+  "knobs": [
+    {"p": 1, "long": "Cutoff", "short": "CUT", "look": "dial", "text": "number", "default": 44},
+    {"p": 2, "long": "Resonance", "short": "RES", "look": "dial", "text": "number", "default": 64},
+    {"p": 3, "long": "Env Mod", "short": "ENV", "look": "dial", "text": "number", "default": 32},
+    {"p": 4, "long": "Decay", "short": "DEC", "look": "dial", "text": "number", "default": 72},
+    {"p": 5, "long": "Accent", "short": "ACC", "look": "dial", "text": "number", "default": 100},
+    {"p": 6, "long": "Saw>Square", "short": "WAVE", "look": "dial", "text": "number", "default": 0},
+    {"p": 7, "long": "Slide Time", "short": "SLID", "look": "dial", "text": "number", "default": 73},
+    {"p": 8, "long": "Volume", "short": "VOL", "look": "fader", "text": "number", "default": 99},
+    {"p": 9, "long": "Tune", "short": "TUNE", "look": "centred", "text": "bipolar", "default": 64}
+  ]
+}
