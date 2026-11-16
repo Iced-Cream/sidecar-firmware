@@ -293,7 +293,7 @@ numbers (`sidecar_ui_show`, the Rytm's UP + T requests in `voice_pi`) are unchan
 
 | section | pills | what a pill is |
 |---|---|---|
-| T1 HOME | Overview, Status, Project | Overview is today's home page, Status the SIDECAR STATUS page, Project the PROJECT page (bundles) |
+| T1 HOME | Overview, Status, Project, Perform | Overview the new landing page (below), Status the SIDECAR STATUS page, Project the PROJECT page (bundles), Perform the XY pad with its quick keys (below) |
 | T2 SEQ | (own row) | the pattern editor; its header row holds the tracks (T9 / T10 ...), the pattern's pages and RYTM |
 | T3 PAT | (own row) | the Rytm's pattern, read only; its header row holds the pages 1 2 3 4 ALL and SEQ |
 | T4 VOICE | Sound, Insert, Source, Scope | VOICE; INSERT FX (moved here from FX); the machine view with POOL, PRESET, CHOP and SAMPLE EDIT under it; SCOPE |
@@ -310,12 +310,49 @@ POOL and PRESET light VOICE > Source when the machine view opened them, else SET
 **Room.** The row takes 58 px (OLED 25 dots) of the 428 the pages had, so every page below it lays itself out for `TH->pdy` = `TH->dy` less that
 (the pages stretch with it, as they stretch with `dy` at 1024x600), and starts at y 110 (OLED: the page's title bar stays on top and everything
 else of the page moves down by 25 dots, `oled_under_row`). The settings pages start at 110, HOME's panels at 110. The lists of the machine view,
-POOL and PRESET have rows of 25 px (OLED 15 dots) at 800x480 so the ten rows still fit; a REC take list shows five rows at 800x480.
+POOL and PRESET have rows of 36 px (OLED 18 dots) at every size, so fewer show at 800x480 and UP / DOWN page through them; a REC take list shows six rows at 800x480 (OLED seven of 18 dots).
 MASTER FX and MORPH have their numbers in `LU ()` now, which they did not (they failed the `bounds` check at every theme before).
 
 **Themes.** SIDECAR draws the pills as its keys, SQUARE and GUIDE as sharp boxes (GUIDE: sharing one line), OLED as its dotted keys, the lit one
 inverted. FX > Sends follows the board: two FX cards (name, POST / PRE, the BASE and WIDTH dials with their values), the Kill tails card and the
 send levels; GUIDE's hint line is the 11 px status line at the bottom left.
+
+### HOME: Overview and Perform (0.5.1 test build)
+
+**Overview** (page 0, boards T2 and T12; one builder, `home_overview`, for all four themes, OLED in its dots). From top to bottom, three rows
+(at 800x480 110 / 152 / 72 px, the extra of a larger screen goes to the first two and, from 1024x600, the status line; SQUARE and GUIDE
+set the captions and supporting lines in the guide's 11 px):
+- **Now**: the pattern (A04, the dot face; SQUARE its 28 px face, GUIDE 18 px), the transport word, the Rytm's project name. A tap opens Status.
+- **Perform**, three tiles: **XY pad** (HOLD on / off and the first target of X and of Y; a tap opens Perform), **Send FX 1** and **Send FX 2** (the
+  TYPE and POST / PRE; a tap opens FX > Sends). The XY view is built by the engine while Overview shows (`sidecar_xy_wanted`).
+- **Voices**: eight tiles in the Rytm's track order (a tap opens VOICE on it, as before): the voice (RS/CP), its machine, the render load as a bar and
+  a figure, `poly` for a poly track, and in trouble (the guard muted it: `muted`) the tile in the danger colour.
+- **Status line**. At 800x480 one card with three columns: **Recorder** (a dot and REC 0:01:23 / REC armed / off; a tap opens REC), **Health**,
+  **Links** (host name; address and the USB-C gadget). From 1024x600 three titled cards (Recorder, Health with a CPU line, Links with Rytm /
+  USB-C / Web rows). **Health** names the one thing wrong: "All fine", or "1 thing to look at" / "N things" with the first (underruns, power,
+  a core over 85 %, temperature, the Rytm link full, a muted voice, a user machine missing, bad, out of room ...).
+- The touch test is no longer a panel here: the first tap anywhere still stores `touchtest=0` and its ring shows under the finger until then; the
+  test stays under SET > Display. The old Project card (the slots U1..U5) is HOME > Project's.
+
+**Perform** (page 24 = `PG_PERFORM`, board T5 and T12): the XY pad (sidecar_xy.c's drawing and logic: a second pad object, the same view, the same
+`xy=pos / up / hold` lines; X and Y's targets in two corners, the position as `X 75  Y 75`), **Hold** and **Setup** at the right end of the sub-page
+row (Setup opens FX > XY on its setup), the **Targets** (X and Y slots, depth) and the **Quick keys**: **Kill tails** (`killfx`) and **REC** (a take
+running: `rec=stop`; else the REC page, which asks first when the card may fall behind).
+
+**Left out (no data or no engine support in the UI today):** MORPH tile and fader (`SIDECAR_MORPH` is off), LOOP tile, loop keys and Loop mute (the
+looper has no console or view), LFO tile ("5 of 8 on": the LFO state is not in the UI's status), Song arm (the song view is fed only while SONG
+shows, so no armed state), BPM, the kit name ("shared set": only the project name exists), the recorder's file name, bit depth and the card's free
+space (REC's view only), a per-voice live level (only the selected voice's stem has one; the bar is the render load), the header's "A04 playing
+121.5" on Perform.
+
+**Touch sizes.** Keys are 44 px (OLED 22 dots) and list rows at least 36 px (OLED 18 dots) again where Task 2's 58 px loss had pushed them under,
+by laying the page out again (nothing overlaps or is cut): INSERT FX (the title shares the voice keys' row, the knobs are shorter), MASTER FX (the
+title goes at 800x480; L/R PAIR at the key height in the gap above the EQ line), XY (HOLD, SETUP, the slot and picker keys), CHOP (the bank keys at
+the key height; where four rows of pads would be under it, 800x480, the pads are two rows of eight and the wave gives the height; the slice list's
+rows 36 px under a header of the font's height), SAMPLE EDIT on the OLED, the machine view's POOL, the POOL page and PRESET (36 px rows: the list
+pages with UP / DOWN), REC's OLED take rows, and SET > Display (every row 44 px, 48 px apart). Not changed: SEQ's tool column and arp rows (a dense
+editor of its own, 23 to 26 px keys before this work too), the XY setup's depth sliders (a 12 px track with the slider's wider touch area), the
+take rows' DELETE keys (the row's height, 36 to 42 px, with their touch area widened to the row), MORPH (the feature is off).
 
 ## Components
 

@@ -16,24 +16,20 @@ Display > UI style switches them live; docs/UI-THEMES.md has the design system. 
 shows the same content on 400x240 dots (512x300 on a 1024x600 screen).
 
 - Title bar "Sidecar | Expander", with "Rytm connected" (green) or "Rytm not connected" (red) on the right.
-- TRACKS: voices 1-8 with their current machine (PLAITS, FM, JUNO, DSPS, DAISY, MD, USER; MD in DIGIDRUM's place since 2026-10-29).
-- STATUS:
-  - Overbridge blocks since boot.
-  - Underruns (red once nonzero).
-  - Load bars for cores 1-3. Core 0 is not measured and shows "-".
-  - The status updates once a second, from the stats line.
-- TOUCH TEST:
-  - A TAP button with a counter.
-  - A 0-127 slider.
-  - The touch readout `raw x,y -> screen x,y`.
-  - A green ring under the finger.
-  - The link (usb, tcp or self-test) in the panel's title row.
-  - **Touch works - hide** (48 px high) hides the panel and stores `touchtest=0`, so it stays hidden after a reboot.
-  - Hidden, a SIDECAR panel takes its place: network (IP), web page address, link and USB-C mode, and the recorder's state. No Wi-Fi name or key.
-  - **Settings > About > Touch test (home): Hide / Show** (or the console command `touchtest=0|1`) switches it.
+- HOME > Overview (0.5.1; docs/UI-THEMES.md "HOME: Overview and Perform"), the page the T1 key lands on first:
+  - NOW: the pattern, the transport, the project.
+  - PERFORM: the XY pad's HOLD and first targets, send FX 1 and 2 (tap: Perform, FX > Sends).
+  - VOICES: voices 1-8 with their machine (PLAITS, FM, JUNO, DSPS, DAISY, MD, USER), the render load as a bar, `poly`, `muted`; a tap opens VOICE on it.
+  - The status line: the recorder (tap: REC), Health (names the one thing wrong: underruns, power, a core over 85 %, temperature, a muted voice, a
+    user machine missing; tap: Status), the links (host, address, USB-C). From 1024x600 three cards.
+  - The status updates once a second, from the stats line. Core 0 is not measured.
+- HOME > Perform: the XY pad, HOLD, SETUP (opens FX > XY), the slots, Kill tails and REC.
+- TOUCH TEST: the first tap anywhere hides HOME's ring under the finger and stores `touchtest=0`; the test itself (TAP, a 0-127 slider, the raw
+  readout, calibration) is on Settings > Display. **Settings > About > Touch test (home): Hide / Show** (or the console command `touchtest=0|1`)
+  switches the first-tap ring.
 
 The navigation (0.5.1, docs/UI-THEMES.md "Sections and sub-page rows"): the keys T1..T8 (HOME SEQ PAT VOICE FX SONG REC SET) are sections; under the
-header each has a row of sub-pages (HOME: Overview, Status, Project; VOICE: Sound, Insert, Source, Scope; FX: Sends, Master, XY; SONG: Timeline, Setup;
+header each has a row of sub-pages (HOME: Overview, Status, Project, Perform; VOICE: Sound, Insert, Source, Scope; FX: Sends, Master, XY; SONG: Timeline, Setup;
 REC: Record, Takes; SET: Sound, MIDI, Display, Pool, System, About), and a T key lands on the pill used last. SEQ and PAT carry their own header row. Every control is at least 48 px
 high and sends a console command through `CConsole::Command`, the web page's path (`UiCommand` in kernel.cpp logs
 `display: command "..."`). Commands only queue (core 3 applies them), so a tap never waits for the engine. About 150 ms
@@ -105,7 +101,8 @@ view's POOL key shows the selected voice's own list - GRANULAR the SAMPLES, WAVE
 INSTRUMENTS - as a tab row A..H (all banks alike; a change sends `pool=smp|wt|inst:shown:B`, takes go to the bank last
 shown) and the bank's rows `000 OFF`, `001 name`, `---`. Row states: LOADING, RAM, `!name` MISSING (the theme's alert),
 `~name` CHANGED, and an in-use marker (filled: voices on it now, `x3` right; an outline: seen playing in this project).
-The title shows the list and the pool RAM (`RAM 412 MB 40%`, `RAM -` until the shared cache counts).
+The title shows the list and the pool RAM (`RAM 412 MB 40%`, `RAM -` until the shared cache counts). Rows are 36 px (a touch
+target); what does not fit is paged with UP / DOWN (at 800x480 about five rows show under the tab row).
 - a tap on a row with content: the voice plays it (`gr=pick:V:C005`, `wt=pick:V:C005`, `msamp=pick:V:C005`: the Rytm's P1);
   on an empty row: FILES aimed at it - the list machine's browser (`browse=gr|wt|ms:open:I`, `up`, `root`; the root shows
   `@INPUTS/` and `@BUILT-IN/` where the list takes them), a file or virtual item goes into the row
