@@ -521,6 +521,7 @@ void CTeensyTarget::EvWatch (void)
 		return;
 	}
 	// step 2: show the relay again, so that the computer enumerates it from the start
+	if (!m_bBoxUp) return;				// the box went: Disconnect follows after mirrorhold, nothing to show
 	if (m_nEvReshowTry >= kReshowMax)
 	{
 		CLogger::Get ()->Write (From, LogError, "relay event pipe still silent after %u re-shows: left as it is (the computer's "
