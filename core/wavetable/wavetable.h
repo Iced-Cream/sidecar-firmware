@@ -1,8 +1,9 @@
 // core/wavetable/wavetable.h - the WAVETABLE machine (docs/WAVETABLE.md): a band-limited wavetable oscillator (mip
-// levels an octave apart, tables.h), frame position with a smooth morph between neighbouring frames, a warp (SYNC,
-// PWM, FM), unison up to 7 oscillators summed to the voice's mono return, a sub oscillator, a DJ-style SVF (LP below
-// CUT 64, HP above) with drive, an amp ADSR and a mod envelope on POS; polyphonic with the chord params on P13..P16
-// (core/poly.h), playable by trigs, the Sidecar sequencer and the live pads / keys. Pi and Mac only (CORE_MSAMP).
+// levels an octave apart, tables.h), frame position with a smooth morph between neighbouring frames, a second table B
+// played with it in every unison lane, a warp (nine), unison up to 7 oscillators summed to the voice's mono return, a sub
+// oscillator, a filter (the DJ-style SVF, LP below CUT 64 and HP above, or one of seven others) with drive, an amp ADSR
+// and a mod envelope on POS; polyphonic: a trig is one note, chords come from a Sidecar poly track (core/poly.h: the
+// sequencer's notes, the live pads, the keyboards), all of them playable. Pi and Mac only (CORE_MSAMP).
 //
 //   tables   TBL (the 14-bit word bank * 128 + row) is a row of the project's WAVETABLES pool (core/lib/pools.h,
 //            docs/POOLS.md): a built-in row (tables.h: BASIC PWM VOCAL ORGAN FM SYNC, 64 frames each, generated at
@@ -18,13 +19,21 @@
 // The params (P1..P16 = sound words 9..16, 17..24):
 //   P1 TBL   the WAVETABLES pool row (OFF, empty and missing rows are silent)
 //   P2 POS   the frame position, 0 = the first frame, 127 = the last; morphs between neighbours
-//   P3 WARP  zones: OFF SYNC PWM FM (4 zones)            P4 AMT   the warp's amount
+//   P3 WARP  zones: OFF SYNC PWM FM FORMANT QUANT BEND SQUEEZE RM (9 zones)   P4 AMT   the warp's amount
+//            (SYNC 1..8x, PWM 50 % .. 4 %, FM index 0..5: the engine's own laws; FORMANT 1/16..16x sync with the half-sine
+//            window, QUANT steps, BEND, SQUEEZE, RM depth: Vital's; FM and RM take B as the modulator when B is on, a
+//            sine at the note's rate otherwise)
 //   P5 UNI   unison: 0 one oscillator; up: pairs fade in (3, 5, 7 oscillators) and the detune opens (up to 60 cents)
 //   P6 SUB   a sine an octave down, its level            P7 CUT   0..63 low-pass (20 Hz .. 20 kHz), 64 open, 65..127
 //            high-pass (20 Hz .. 8 kHz), 50 % key tracking   P8 RES  resonance, and the drive into the filter with it
 //   P9 ATK  P10 DEC  P11 SUS  the amp envelope (1 ms .. 10 s; DEC is also the release, as a Minimoog's)
-//   P12 ENV  the mod envelope (attack ATK, decay DEC, to 0) onto POS: 64 none, 127 +the whole table, 0 -the whole
-//   P13..P16 CHD INV SPR VOI (core/poly.h)
+//   P12 ENV  the mod envelope (attack ATK, decay DEC, to 0) onto POS (and POS B): 64 none, 127 +the whole table, 0 -the
+//            whole
+//   P13 TBL B  table B (as TBL; row 000 OFF: no B, the default)     P14 POS B  its frame position
+//   P15 MIX    0 only A .. 127 only B, equal power                  P16 FTYPE  the filter: DJ LP12 LP24 BP12 BP24 HP12
+//            HP24 LADDER (8 zones; DJ the default). The others: CUT 0..127 is 8 + CUT x 128/127 semitones above C-1 (Vital's
+//            law) + 50 % key tracking + the filter envelope; RES as Vital's; the drive comes with RES
+//   The filter envelope (the mod envelope onto CUT of the new types, -64 .. +64 semitones) has no knob: set_fenv / wt=fenv:
 // The Rytm side (the machine, its labels) is a rytm-mods 0021 change; until it exists `wt=voice:V` makes voice V
 // play WAVETABLE whatever built-in machine the Rytm reports for it (as msamp=voice:V).
 #pragma once

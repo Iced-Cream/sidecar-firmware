@@ -13,11 +13,16 @@
 - Every frame is held as 10 mip levels an octave apart (harmonics 512 >> k): a note reads the level whose top harmonic
   stays under 0.6 fs, so nothing aliases audibly at any pitch [measured: a C7 saw's aliases -67 dB under its
   harmonics, against -14 dB reading level 0; C2..C8 all under -67 dB up to 18 kHz].
-- Per note: up to 7 unison oscillators (stereo summed to the voice's mono return), a warp (SYNC, PWM, FM), a sub sine,
-  a DJ-style SVF (low-pass below CUT 64, high-pass above) with drive, an amp ADSR and a mod envelope on POS. Chords on
-  P13..P16 as MULTISAMPLE's / 6-OP FM's; trigs, the Sidecar sequencer and the live pads / keys all play it.
+- Per note: up to 7 unison oscillators (stereo summed to the voice's mono return), **two tables** (A and B, each with
+  its own frames and POS, played at once in every lane), a warp (nine: SYNC PWM FM FORMANT QUANT BEND SQUEEZE RM), a sub
+  sine, a filter (the DJ-style SVF, low-pass below CUT 64 and high-pass above, or LP / BP / HP at 12 and 24 dB, or a
+  ladder) with drive, an amp ADSR and a mod envelope on both POS. A trig is one note: **chords come from a Sidecar poly
+  track** (its sequencer notes, the live pads, the keyboards), not from the machine; trigs, the sequencer and the live
+  pads / keys all play it.
+- Derived in part from Vital by Matt Tytel (GPL-3.0-or-later): the new warps and filters (section 9: the Pi binaries carry
+  its licence).
 - CPU [measured: Mac; inferred: Pi]: the boot bench's note (3 oscillators, SYNC) ~1.0 % of a Pi 4 core; a 6-note
-  chord of 7 oscillators each with the filter ~7.5 %; Pi 5 about 2.5x less.
+  chord of 7 oscillators each with the filter ~7.5 %, with table B, BEND and the ladder ~CPU_CHORD_B %; Pi 5 about 2.5x less.
 
 Reference feel: the Elektron Tonverk's wavetable machine (public information only: a wavetable oscillator with
 position morphing, warps and unison into a filter); nothing of its code, tables or exact parameter set is used.
@@ -78,33 +83,75 @@ P1..P16 are sound words 9..16 and 17..24 (page 1 A..H, page 2 A..H), each 0..127
 
 | P | name | what | range |
 |---|---|---|---|
-| 1 | TBL | the table: 0..5 built-ins, then the card's by path | min(TBL, count - 1) |
-| 2 | POS | the frame position (smoothed 10 ms); neighbouring frames crossfaded | 0 first .. 127 last |
-| 3 | WARP | the warp, 4 zones | OFF SYNC PWM FM |
-| 4 | AMT | the warp's amount | SYNC 1..8x, PWM width 50 % .. 4 %, FM index 0..5 (squared) |
-| 5 | UNI | unison: 0 one oscillator; up, pairs fade in (3, 5, 7 oscillators) while the detune opens | 0 .. 60 cents (x^1.5) |
+| 1 | TBL | table A: a row of the WAVETABLES list (A001..A006 the built-ins, then the card's by path) | 14-bit code, OFF = row 000 |
+| 2 | POS | the frame position of A (smoothed 10 ms); neighbouring frames crossfaded | 0 first .. 127 last |
+| 3 | WARP | the warp, 9 zones (value x 9 >> 7) | OFF SYNC PWM FM FORMANT QUANT BEND SQUEEZE RM |
+| 4 | AMT | the warp's amount | per warp, below |
+| 5 | UNI | unison: 0 one oscillator; up, pairs fade in (3, 5, 7 oscillators) while the detune opens (both tables) | 0 .. 60 cents (x^1.5) |
 | 6 | SUB | a sine an octave down | level 0..0.8 |
-| 7 | CUT | DJ-style SVF: below 64 low-pass, 64 open, above high-pass; 50 % key tracking | LP 20 Hz .. 20 kHz, HP 20 Hz .. 8 kHz |
-| 8 | RES | resonance, and the drive into the filter with it | 0 .. near self-oscillation, drive 1..4x |
+| 7 | CUT | DJ: below 64 low-pass, 64 open, above high-pass; 50 % key tracking. The other types: a plain cutoff | DJ: LP 20 Hz .. 20 kHz, HP 20 Hz .. 8 kHz; others 8 .. 136 semitones above C-1 (13 Hz .. 21 kHz) |
+| 8 | RES | resonance, and the drive into the filter with it | DJ: 0 .. near self-oscillation, drive 1..4x; others: Vital's laws |
 | 9 | ATK | attack (amp and mod envelope) | 1 ms .. 10 s, exponential |
 | 10 | DEC | decay to SUS; also the release (a Minimoog's DEC/REL) | 1 ms .. 10 s (-60 dB) |
 | 11 | SUS | sustain | 0 .. 1 |
-| 12 | ENV | the mod envelope (attack ATK, decay DEC, to 0) onto POS | 64 none, 127 +the whole table, 0 -the whole |
-| 13..16 | CHD INV SPR VOI | the chord (`core/poly.h`) | as MULTISAMPLE / 6-OP FM |
+| 12 | ENV | the mod envelope (attack ATK, decay DEC, to 0) onto POS **and POS B** | 64 none, 127 +the whole table, 0 -the whole |
+| 13 | TBL B | table B: the same list; row 000 (OFF, the default) is no B | 14-bit code |
+| 14 | POS B | the frame position of B | 0 first .. 127 last |
+| 15 | MIX | A against B, equal power (cos / sin of 0..90 degrees); with no B, nothing | 0 only A .. 127 only B |
+| 16 | FTYPE | the filter, 8 zones (value x 8 >> 7) | DJ LP12 LP24 BP12 BP24 HP12 HP24 LADDER |
 
-Decisions: page 1 is the oscillator and filter (TBL POS WARP AMT UNI SUB CUT RES, as asked); page 2 has only four free
-knobs before the chord's, so the amp envelope is ATK DEC SUS with DEC also the release, and the fourth is ENV, the
-mod envelope's depth onto POS (the wavetable's signature move). The filter has LP and HP on one knob rather than a
-type switch (no knob left; one knob also sweeps smoothly through open). The LFO is the Sidecar's own (`core/lfo.h`):
-any of P1..P12 can be its target, POS above all. Velocity: 0.25 + 0.75 v^2.
+The warps (AMT laws; SYNC, PWM and FM keep this engine's, the others are Vital's):
+
+| WARP | AMT 0 .. 127 |
+|---|---|
+| OFF | none |
+| SYNC | the phase read 1x .. 8x faster, restarting each cycle (hard sync) |
+| PWM | the cycle's first half stretched: pulse width 50 % .. 4 % |
+| FM | phase modulation, index 0 .. 5 rad (AMT squared); the modulator is **table B when B is on**, a sine at the note's rate otherwise |
+| FORMANT | sync ratio 1/16 .. 16x (2^((a - 0.5) x 8)), under a half-sine window (a formant, not a sweep) |
+| QUANT | the phase quantised into steps: many (AMT 0: none) .. few (AMT 127: the staircase collapses) |
+| BEND | the phase bent by a cubic: AMT 64 is the straight phase, below / above push it either way |
+| SQUEEZE | the cycle squeezed toward its start (AMT 0) or its middle (AMT 127); AMT 64 is straight |
+| RM | the table multiplied in by a window: 1 + (m - 1) x AMT with m the modulator as in FM (table B, or a sine) |
+
+With table B on, the warp acts on A and on B, except FM and RM: there B is the modulator of A, and B is heard unwarped
+under MIX. Reading B when MIX is 0 under FM or RM still happens (it modulates), so MIX 0 plus FM is "A modulated by B,
+B not heard". B shares the note's unison lanes, rates and pitch, and its own random start phases. Old projects' WARP
+values land in other zones now (nine zones, not four: an old SYNC at 40 is PWM now); P13..P16 of an old project were
+the chord (CHD INV SPR VOI): a CHD value reads as a TBL B row now (CHD 1 = A001 = BASIC as B, MIX 0: nothing audible
+until MIX moves), INV / SPR are POS B / MIX, VOI an FTYPE zone: they are all zero on a project without a chord, and
+those sound as before.
+
+The filters (FTYPE): DJ is the engine's own (CUT as before: a project with FTYPE 0 sounds as before, sample for sample
+with B off). The others are Vital's: a digital state-variable filter (12 dB, or two stages for 24 dB: LP, BP, HP by blend;
+resonance 0.5 .. 16 Q by RES cubed, drive compensated) and its ladder (4 stages, LP). CUT is semitones: 8 + CUT x 128/127
+above C-1, plus 50 % key tracking (0.5 semitone a semitone from C4) plus the **filter envelope** (the mod envelope x
+FENV x 64 semitones). The oscillators play into them at half scale (Vital's levels: hardTanh's linear range), the level
+made up after, so the passband keeps the DJ filter's. The 24 dB HP's first stage is Vital's blend through a resonance-1
+stage, so it falls 18 dB / octave below its cutoff (its 24 dB shows above and in the cascade).
+
+Decisions: page 1 is the oscillator and filter (TBL POS WARP AMT UNI SUB CUT RES, as asked); page 2 is the amp envelope
+ATK DEC SUS (DEC also the release), the mod envelope's depth ENV onto both POS, and TBL B, POS B, MIX, FTYPE where the
+chord was (owner, 2026-11-17: "chords we can already do from a poly track"). The LFO is the Sidecar's own (`core/lfo.h`):
+any of P1..P12 can be its target, POS above all (P13..P16 are not LFO targets). Velocity: 0.25 + 0.75 v^2.
+
+**The filter envelope's depth has no knob and no store.** The brief put it on the touchscreen's WAVETABLE page, but the
+project keeps no per-track, per-machine store for a touch-only setting (the stores are the LFO / INSERT / XY / scene
+files, each its own kind; none takes a machine's number). So it is the engine's `fenv` per voice, 0 at boot, set from
+the console (`wt=fenv:V:PERCENT`, -100..100, 100 % = +64 semitones at the envelope's peak) and **not saved**; with 0 the
+new filters have no envelope. A store for it (a line in a kit's record) is a decision for a later task.
 
 ## 4. Voice
 
 ```
-note -> 7 phase accumulators (unison detune, own random phases; the centre one starts at 0)
-     -> warp (SYNC / PWM / FM: a sine modulator at the note's rate) -> Hermite read of frames A and B at the level
-     -> crossfade by POS (+ ENV x the mod envelope) -> sum x 1/sqrt(sum w^2) -> DC blocker (4 Hz)
-     -> + SUB -> drive -> SVF (LP / HP) -> x amp envelope x velocity x 0.5
+note -> 7 phase accumulators (unison detune, own random phases; the centre one starts at 0), once for table A and
+        once for table B (B only when it is on and MIX or the warp needs it)
+     -> warp of the phase (SYNC / PWM / FM / FORMANT / QUANT / BEND / SQUEEZE / RM; FM and RM modulate A by B's lane,
+        or by a sine at the note's rate while B is off)
+     -> Hermite read of frames A and B' at the level, each table's frame pair crossfaded by its POS (+ ENV x the mod env)
+     -> A x cos(MIX) + B x sin(MIX) -> sum x 1/sqrt(sum w^2) -> DC blocker (4 Hz)
+     -> + SUB -> DJ: drive -> SVF (LP / HP)     |  the others: x 0.5 -> SVF 12 / 24 dB or ladder -> x 2
+     -> x amp envelope x velocity x 0.5
 voice: the notes summed x the headroom gain 1/sqrt(sum of envelopes) (as MULTISAMPLE's, smoothed 3 / 15 ms)
      -> voices.cpp's soft limiter (soft_out) -> the voice's Overbridge return
 ```
@@ -113,8 +160,12 @@ voice: the notes summed x the headroom gain 1/sqrt(sum of envelopes) (as MULTISA
   the voice's earlier trig notes (their tails ring) and starts the chord; 0x11 releases them; live pad notes (a bound
   MIDI channel) and the sequencer's (channel 16) are held until their own note-off.
 - Cores: the control core posts a note's start / release / kill through a sequence-locked mailbox (as msamp's); the
-  render core reads the voice's table through a hazard slot (`sel` / `use`), so a table a render core reads is never
-  reloaded under it. No allocation after `begin()`.
+  render core reads the voice's tables A and B through a hazard slot each (`sel` / `use`, `selb` / `useb`), so a table a
+  render core reads (either one) is never reloaded under it, and a card slot a voice's B holds is not given to another
+  table. A B that is not in yet is silent (A plays alone) until it loads. No allocation after `begin()`.
+- Chords: the live pads' chord detection writes the Rytm track's chord words (a 28 01) for 6-OP FM and the sample
+  machines; for WAVETABLE it does not (P13..P16 would be overwritten): the pads' notes play as notes. The sequencer's
+  chord steps, the pads and the keyboards reach the voice as `live_on` notes (`poly::seq_on`, `key_on`).
 
 ## 5. CPU
 

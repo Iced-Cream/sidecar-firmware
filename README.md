@@ -89,4 +89,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Licence
 
 GPL-2.0-or-later (`LICENSE`), except where a file says otherwise; third-party parts and their licences: `NOTICE`,
-`THIRD_PARTY_LICENSES`, `licenses/`.
+`THIRD_PARTY_LICENSES`, `licenses/`. The Pi binaries are distributed under GPL-3.0-or-later (they link Circle, and
+WAVETABLE's warps and filters in `core/wavetable/wavetable.cpp` are derived from Vital by Matt Tytel,
+GPL-3.0-or-later; `NOTICE`).

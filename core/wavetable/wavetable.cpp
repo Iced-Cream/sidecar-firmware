@@ -1,4 +1,10 @@
 // core/wavetable/wavetable.cpp - see wavetable.h. Everything but render_add is the control core's and cold.
+//
+// The warps FORMANT QUANT BEND SQUEEZE RM and the filters LP / BP / HP 12 and 24 dB and LADDER (the render core's block
+// further down: phase_warp, warp_pf, filter_targets, svf_tick, ladder_tick and their helpers) are derived from Vital by
+// Matt Tytel (https://github.com/mtytel/vital, commit 636ca0e; Copyright 2013-2019 Matt Tytel), GPL-3.0-or-later: the
+// Pi binaries carry it (NOTICE, THIRD_PARTY_LICENSES). Through plugins/warpwave (feature/warpwave), our port checked
+// against the original's C++. The rest of this file is ours: GPL-2.0-or-later.
 #include "../platform.h"
 
 #if CORE_MSAMP
@@ -905,6 +911,34 @@ inline void clear_filters(Note& n) {
   n.ic1 = n.ic2 = n.ic1p = n.ic2p = n.lin = 0.0f;
   for (int k = 0; k < 4; ++k) n.ls[k][0] = n.ls[k][1] = n.ls[k][2] = 0.0f;
 }
+// The lanes of a sample for what the fast paths above do not take: the new warps, and table B with PWM / FM / the new
+// warps (B warped as A is; under FM and RM B is A's modulator and is read plain). o, ob: A's and B's weighted sums.
+__attribute__((noinline)) void lanes_generic(Note& n, int nu, const uint32_t* iu, const float* w, const WP& wp, bool modulated, bool read_b,
+                                             int lsz, const float* A, const float* B, float ft, const float* Bb, const float* Bc,
+                                             float ftb, float* o_out, float* ob_out) {
+  const WP plain = {kWOff, 1, 0.5f, 0, 0};
+  float o = 0, ob = 0;
+  for (int j = 0; j < nu; ++j) {
+    uint32_t pa = n.ph[j], pb = n.phb[j], pm = n.fm_ph[j];
+    n.ph[j] = pa + iu[j], n.phb[j] = pb + iu[j], n.fm_ph[j] = pm + iu[j];
+    if (w[j] <= 0) continue;
+    float m = 0, bl = 0;
+    if (modulated) {   // B as it is is the modulator (a sine at the note's rate while B is off)
+      float wb = 1;
+      if (read_b) m = bl = read2(Bb, Bc, warp_pf(plain, pb, 0, &wb), lsz, ftb);
+      else m = sin01((float)(pm >> 8) * (1.0f / 16777216.0f));
+    } else if (read_b) {   // B warped as A is
+      float wb = 1;
+      float pfb = warp_pf(wp, pb, 0, &wb);
+      bl = wb * read2(Bb, Bc, pfb, lsz, ftb);
+    }
+    float wa = 1;
+    float pfa = warp_pf(wp, pa, m, &wa);
+    o += w[j] * wa * read2(A, B, pfa, lsz, ft);
+    ob += w[j] * bl;
+  }
+  *o_out = o, *ob_out = ob;
+}
 }  // namespace
 
 static float head_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};
@@ -1114,7 +1148,8 @@ void render_add(int vi, float* out, int nfr) {
         }
         float o = 0, ob = 0;
         if (!bon && k.warp <= kWSync && w[nu - 1] > 0) o = simd::wt_unison(n.ph, iu, w, nu, k.warp, wp.sync_r, lsz, A, B, ft);   // (nu: the weights > 0)
-        else if (!bon && k.warp <= kWFm) {
+        else if (!bon && k.warp <= kWFm) {   // PWM, FM (B off: FM's modulator is a sine at the note's rate)
+          const float pw_w = wp.pw_w, fm_i = wp.fm_i;
           for (int j = 0; j < nu; ++j) {
             if (w[j] <= 0) {
               n.ph[j] += iu[j];
@@ -1122,14 +1157,24 @@ void render_add(int vi, float* out, int nfr) {
             }
             uint32_t ph = n.ph[j];
             n.ph[j] = ph + iu[j];
-            float m = 0;
-            if (k.warp == kWFm) {
-              uint32_t mp = n.fm_ph[j];
-              n.fm_ph[j] = mp + iu[j];
-              m = sin01((float)(mp >> 8) * (1.0f / 16777216.0f));
+            float pf = (float)(ph >> 8) * (1.0f / 16777216.0f);
+            switch (k.warp) {
+              case kWPwm: pf = pf < pw_w ? pf * 0.5f / pw_w : 0.5f + (pf - pw_w) * 0.5f / (1.0f - pw_w); break;
+              case kWFm: {
+                uint32_t mp = n.fm_ph[j];
+                n.fm_ph[j] = mp + iu[j];
+                pf += fm_i * 0.159155f * sin01((float)(mp >> 8) * (1.0f / 16777216.0f));
+                pf -= floorf(pf);
+                break;
+              }
+              default: break;
             }
-            float win = 1;
-            o += w[j] * read2(A, B, warp_pf(wp, ph, m, &win), lsz, ft);
+            float x = pf * (float)lsz;
+            int i = (int)x;
+            float tt = x - (float)i;
+            i &= lsz - 1;
+            float a = herm(A + i, tt);
+            o += w[j] * (a + (herm(B + i, tt) - a) * ft);
           }
         } else if (bon && k.warp <= kWSync) {   // table B the same way: its own phases, the same rates
           o = simd::wt_unison(n.ph, iu, w, nu, k.warp, wp.sync_r, lsz, A, B, ft);
@@ -1137,26 +1182,7 @@ void render_add(int vi, float* out, int nfr) {
           else
             for (int j = 0; j < nu; ++j) n.phb[j] += iu[j];
         } else {   // PWM, FM and the new warps (and B)
-          const WP plain = {kWOff, 1, 0.5f, 0, 0};
-          for (int j = 0; j < nu; ++j) {
-            uint32_t pa = n.ph[j], pb = n.phb[j], pm = n.fm_ph[j];
-            n.ph[j] = pa + iu[j], n.phb[j] = pb + iu[j], n.fm_ph[j] = pm + iu[j];
-            if (w[j] <= 0) continue;
-            float m = 0, bl = 0;
-            if (modulated) {   // B as it is is the modulator (a sine at the note's rate while B is off)
-              float wb = 1;
-              if (read_b) m = bl = read2(Bb, Bc, warp_pf(plain, pb, 0, &wb), lsz, ftb);
-              else m = sin01((float)(pm >> 8) * (1.0f / 16777216.0f));
-            } else if (read_b) {   // B warped as A is
-              float wb = 1;
-              float pfb = warp_pf(wp, pb, 0, &wb);
-              bl = wb * read2(Bb, Bc, pfb, lsz, ftb);
-            }
-            float wa = 1;
-            float pfa = warp_pf(wp, pa, m, &wa);
-            o += w[j] * wa * read2(A, B, pfa, lsz, ft);
-            ob += w[j] * bl;
-          }
+          lanes_generic(n, nu, iu, w, wp, modulated, read_b, lsz, A, B, ft, Bb, Bc, ftb, &o, &ob);
         }
         y = (bon ? ga * o + gb * ob : o) * unorm;
         float d = y - n.dc_x + 0.9995f * n.dc_y;   // the DC blocker (4 Hz)
