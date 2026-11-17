@@ -92,7 +92,7 @@ private:
 	unsigned MidiInChan (void) const;		// the link channel of the box's MIDI IN endpoint (kChannels: none)
 
 	static CTeensyTarget *s_pThis;
-	static volatile boolean s_bBootDue, s_bLogDue;
+	static volatile boolean s_bBootDue, s_bLogDue, s_bLeaving;
 	static volatile unsigned s_nLogReads;
 	static char s_Log[2048];
 	static unsigned s_nLog;
@@ -112,7 +112,8 @@ private:
 	u64 m_nCompLast;				// the last computer OUT block in (link 0x82), us
 	unsigned m_nCompGapMax, m_nCompGap1, m_nCompGap2;	// gaps between them: longest, >= 1 ms, >= 2 ms (T342)
 	unsigned m_nUnderSeen, m_nOverSeen;
-	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
+	unsigned m_EvMs[8], m_nEv;
+	volatile unsigned m_nPipeInZlp;		// box pipe zero-length packets not sent on (Circle cannot take one, T409)			// uptime ms of the last 8 OUT ring under/over events
 	char m_EvKind[8];
 	SlipDetect m_SlipOut, m_SlipIn;		// the loop's test sine on channel 0: the computer's OUT as it arrives, the box's IN (T344)	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];

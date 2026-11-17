@@ -35,6 +35,7 @@ boolean CTeensyTarget::TakeReboot (void)
 	return TRUE;
 }
 volatile boolean CTeensyTarget::s_bBootDue = FALSE, CTeensyTarget::s_bLogDue = FALSE;
+volatile boolean CTeensyTarget::s_bLeaving = FALSE;	// set with the bootloader request: the link is going, nothing more is sent on it
 volatile unsigned CTeensyTarget::s_nLogReads = 0;
 char CTeensyTarget::s_Log[2048];
 unsigned CTeensyTarget::s_nLog = 0;
@@ -71,7 +72,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -187,6 +188,7 @@ void CTeensyTarget::Step (const char *pFormat, ...)
 boolean CTeensyTarget::Start (void)
 {
 	Step ("start: endpoints");
+	s_bLeaving = FALSE;		// a new link (after a flash the relay enumerates again)
 	for (unsigned i = 0; i < m_nEpDesc; i++)
 	{
 		const TUSBEndpointDescriptor *e = m_pEpDesc[i];
@@ -199,6 +201,10 @@ boolean CTeensyTarget::Start (void)
 			((a & 0x80) ? m_pChanIn : m_pChanOut)[(a & 0x7F) - kChanFirstEp] = pEP;
 		else delete pEP;
 		Step ("endpoint 0x%02x made", a);
+		if (a == kAudioToPiEp || a == kAudioFromPiEp)		// 1.01 makes these bulk (T406/T407): say which the Teensy gave
+			CLogger::Get ()->Write (From, LogNotice, "link audio 0x%02x: %s, %u B", a,
+						(e->bmAttributes & 3) == 2 ? "bulk" : (e->bmAttributes & 3) == 3 ? "interrupt" : "other",
+						(unsigned) e->wMaxPacketSize);
 	}
 	boolean bAll = m_pEv && m_pAudioIn && m_pAudioOut;
 	for (unsigned c = 0; c < kChannels; c++) bAll = bAll && m_pChanIn[c] && m_pChanOut[c];
@@ -329,7 +335,7 @@ void CTeensyTarget::RebootFeed (const u8 *pEventPacket)
 
 boolean CTeensyTarget::Relaying (void)
 {
-	return s_pThis != 0 && s_pThis->m_bStarted && !s_pThis->m_bTest;
+	return s_pThis != 0 && s_pThis->m_bStarted && !s_pThis->m_bTest && !s_bLeaving;
 }
 
 void CTeensyTarget::SetBox (CObUsb *pBox)
@@ -358,7 +364,7 @@ boolean CTeensyTarget::Mirror (void) const
 	return strcmp (CKernelOptions::Get ()->GetAppOptionString ("usb", "sidecar"), "mirror") == 0;
 }
 
-boolean CTeensyTarget::MirrorShown (void) const { return m_bConnected && m_bPcConfigured; }
+boolean CTeensyTarget::MirrorShown (void) const { return m_bConnected && m_bPcConfigured && !s_bLeaving; }
 
 boolean CTeensyTarget::MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg)
 {
@@ -483,9 +489,13 @@ boolean CTeensyTarget::SendPipeIn (u8 uchAddr, const u8 *pData, unsigned nLength
 {
 	unsigned c = ChanOfIn (uchAddr);
 	if (c >= kChannels || !MirrorShown () || nLength > kLinkMps || m_bChanOutBusy[c]) { m_Stats.nPipeInDrop++; return FALSE; }
-	if (nLength) memcpy (m_pChanOutBuf[c], pData, nLength);
+	// a zero-length packet is not sent on: Circle's xHCI asserts pBuffer != 0 and nBufLen > 0 on a bulk or interrupt
+	// transfer (xhciendpoint.cpp), which reset the Pi in BL1 (T409, 2026-11-17: an A4 pipe packet as the relay left
+	// for its bootloader). Dropped and counted; the box's next IN request goes out at once (the caller resubmits).
+	if (nLength == 0 || m_pChanOut[c] == 0 || m_pChanOutBuf[c] == 0) { m_Stats.nPipeInDrop++; m_nPipeInZlp++; return FALSE; }
+	memcpy (m_pChanOutBuf[c], pData, nLength);
 	CleanAndInvalidateDataCacheRange ((uintptr) m_pChanOutBuf[c], kDmaSize);
-	CUSBRequest *pURB = new CUSBRequest (m_pChanOut[c], nLength ? m_pChanOutBuf[c] : 0, nLength);	// a zero-length packet: no buffer (Circle asserts on one)
+	CUSBRequest *pURB = new CUSBRequest (m_pChanOut[c], m_pChanOutBuf[c], nLength);
 	pURB->SetCompletionRoutine (ChanOutStub, (void *) (uintptr) c, this);
 	m_bChanOutBusy[c] = TRUE;
 	if (!GetHost ()->SubmitAsyncRequest (pURB)) { m_bChanOutBusy[c] = FALSE; delete pURB; m_Stats.nPipeInDrop++; return FALSE; }
@@ -917,7 +927,8 @@ void CTeensyTarget::MirrorPoll (void)
 	if (s_bBootDue)
 	{
 		s_bBootDue = FALSE;
-		CLogger::Get ()->Write (From, LogNotice, "the relay is told to start its bootloader (teensyflash)");
+		CLogger::Get ()->Write (From, LogNotice, "the relay is told to start its bootloader (teensyflash): link traffic stops");
+		s_bLeaving = TRUE;		// MirrorShown/Relaying false from here: the boxes' packets are parked, not sent (T409)
 		Vendor (FALSE, kReqBootloader, 0x4C42, 0, 0, 0);
 		return;
 	}
@@ -1026,13 +1037,13 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 				p->m_nTestEchoDrop);
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
-			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u vendor fail %u connects %u",
+			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u vendor fail %u connects %u pipe zlp %u",
 			p->m_bConnected ? "shown" : "off", p->m_bBoxUp ? "up" : "none", p->m_bPcConfigured ? "configured" : "-",
 			p->m_Stream.in_ch, a.in_blocks, a.in_sent, s.nAudioOutDrop, p->m_Stream.out_ch, a.out_blocks, a.out_bad,
 			a.out_under, a.out_over, a.out_extra, p->m_Stream.extra.dropped, p->m_Stream.extra.late, a.anchor,
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
 			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
-			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects);
+			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
 	if (p->m_nInfoLines < 12)		// the first ~2 minutes: what the link shares the bus with (the log ring holds ~1 min)
 	{
 		p->m_nInfoLines++;
