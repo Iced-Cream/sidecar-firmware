@@ -171,32 +171,67 @@ voice: the notes summed x the headroom gain 1/sqrt(sum of envelopes) (as MULTISA
 
 `./core/build/render_wavegrain --bench` runs the Pi's boot bench (`pi/engine/bridge.cpp bench`: voice 0, note 48, a
 retrigger on 55, 1 s of audio) on the Mac; the Pi 4's measured numbers for the other machines (`docs/pi-engine.md`
-"Boot bench") give the ratio, 8.1..8.4x (5.9..12.3x across machines) [measured: Mac 2026-10-20; inferred: Pi].
+"Boot bench") give the ratio, **4.3x** in this run (2026-11-17: the Mac was busy with other builds; the first version
+of this table, 2026-10-20, had 8.1..8.4x on a quieter Mac: the Mac's figures are 1.7x those of then for the same code,
+the Pi estimates the same) [measured: Mac; inferred: Pi]. A block is 12 frames (250 us); a row is the best of five runs of
+40000 blocks, one voice, all notes held.
 
-| case | Mac (% of a core) | Pi 4 1.5 GHz (estimate) | Pi 5 (estimate, ~2.5x) |
+| case | Mac (% of a core) | Pi 4 1.5 GHz (estimate, x 4.3) | Pi 5 (estimate, ~2.5x less) |
 |---|---|---|---|
-| bench note (`notes.cpp` wt: 3 osc, SYNC, sub, LP) | 0.12 % | ~1.0 % | ~0.4 % |
-| 1 note, 1 osc | 0.04 % | ~0.3 % | ~0.15 % |
-| 1 note, 7 osc + FM warp + filter | 0.16 % | ~1.3 % | ~0.5 % |
-| 6-note chord, 7 osc each + filter | 0.90 % | ~7.5 % (5..11 %) | ~3 % |
+| bench note (`notes.cpp` wt: 3 osc, SYNC, sub, LP) | 0.18 % | ~0.8 % | ~0.3 % |
+| 1 note, 1 osc | 0.07 % | ~0.3 % | ~0.12 % |
+| 1 note, 7 osc + FM (sine) + DJ filter (table B off) | 0.27 % | ~1.2 % | ~0.5 % |
+| 6-note chord, 7 osc each + FM + DJ filter (B off) | 1.6 % | ~6.9 % (5..11 %) | ~2.8 % |
+| 1 note, 7 osc, B on, no warp, LP24 | 0.30 % | ~1.3 % | ~0.5 % |
+| 1 note, 7 osc, A only, BEND, LP12 | 0.41 % | ~1.7 % | ~0.7 % |
+| 1 note, 7 osc, B on, FM by B, LP24 | 0.56 % | ~2.4 % | ~1.0 % |
+| 1 note, 7 osc, B on, BEND, LADDER | 0.77 % | ~3.3 % | ~1.3 % |
+| 6-note chord, 7 osc each, B on, no warp, LP24 | 1.7 % | ~7.4 % | ~3.0 % |
+| 6-note chord, 7 osc each, B on, BEND, LADDER (the worst case) | 4.5 % | ~19 % | ~7.7 % |
 
-The Pi's bench now runs `wt` and `gr` too (`pi/engine/cores.cpp`, `pi_run.py bench`): its boot log has the measured
-numbers once a kernel with this branch boots. Boot: the built-ins take 24 ms on the Mac (~0.2 s on a Pi 4).
+With table B off the engine costs what it did (the same session's old build: 0.07 / 0.26 / 1.52 %: within 5 %, the
+noise of a shared Mac; the code paths are the old loops, unchanged); B on costs roughly its own lanes again, and the
+new warps' and filters' per-lane work (the phase warps run per lane and sample; the ladder is four saturating stages).
+SYNC and OFF with B on use the NEON read for both tables. The worst case, a six-note chord of seven-oscillator
+unison on two tables with the ladder, is a fifth of a Pi 4 core.
+
+The Pi's bench runs `wt` and `gr` too (`pi/engine/cores.cpp`, `pi_run.py bench`): its boot log has the measured numbers
+once a kernel with this branch boots. Boot: the built-ins take 24 ms on the Mac (~0.2 s on a Pi 4).
 
 ## 6. Console and the Rytm side
 
 - `wt` stats; `wt=voice:V` / `wt=voice:V:off` (the override); `wt=list` (the tables in the log); `wt=rescan` (failed
-  tables tried again); `wt=pick:V:ROW` (writes the Rytm's TBL through 48). The list itself: `pool=wt:...`
-  (docs/POOLS.md).
-- Rytm mod (rytm-mods 0021 + 0026, not in this branch): a machine slot reported with **0x28** in the voice byte (one
-  of 0021's free hidden machines: `us_flag_tab` entries that are 0 now, machines 43 / 46..50; e.g. 46 -> 0x28, and
+  tables tried again); `wt=pick:V:ROW` (writes the Rytm's TBL through 48); `wt=fenv:V:PERCENT` (the filter envelope's
+  depth, -100..100, not saved). The list itself: `pool=wt:...` (docs/POOLS.md).
+- Rytm mod (rytm-mods 0021 + 0026 + 0029, not in this branch): a machine slot reported with **0x28** in the voice byte
+  (one of 0021's free hidden machines: `us_flag_tab` entries that are 0 now, machines 43 / 46..50; e.g. 46 -> 0x28, and
   0026's `mr_flag` the same), name `WAVETABLE` / short `WTBL`. Its SRC knobs P1..P8 TBL POS WARP AMT UNI SUB CUT RES
   (long: Table, Position, Warp, Amount, Unison, Sub Osc, Cutoff, Resonance; looks: dial, dial, list, dial, dial,
-  level, bipolar, dial; defaults 1 0 0 0 0 0 64 0 since rui1043, TBL was 0), page 2 ATK DEC SUS ENV + CHD INV SPR VOI (long: Attack, Decay,
-  Sustain, Env>Pos, then as MULTISAMPLE's; looks: dial, dial, dial, bipolar, then 0026's chord texts; defaults 0 64 100
-  64 0 0 0 0). Value texts: WARP OFF SYNC PWM FM (4 zones), CHD..VOI as 0026's `cu_chd` etc.; TBL the host's row names
-  (47 with the bank byte, `OFF` at row 000, `A005` for an empty row; rui1043: bank A like B..H, default 1). 0029's stepped list
-  knobs: WARP 4 zones, the chord knobs as MULTISAMPLE's.
+  level, bipolar, dial; defaults 1 0 0 0 0 0 64 0 since rui1043, TBL was 0), page 2 ATK DEC SUS ENV (long: Attack,
+  Decay, Sustain, Env>Pos; looks: dial, dial, dial, bipolar; defaults 0 64 100 64: as before) **then TBLB POSB MIX FTYP
+  in place of CHD INV SPR VOI**. What the mods task has to change, exactly (the Rytm shows the old labels until then):
+  - **Names**: P13 `TBLB` (long `Table B`), P14 `POSB` (long `Position B`), P15 `MIX` (long `Mix A-B`), P16 `FTYP` (long
+    `Filter Type`). Looks: P13 list-like as P1 (the host's row names: 47 with the bank byte, `OFF` at row 000, `A005`
+    for an empty row), P14 dial, P15 dial, P16 list. Defaults **0 0 0 0** (`kPageTwo` in `core/ui/remote.cpp` already
+    writes 0 64 100 64 / 0 0 0 0 for WAVETABLE when it is chosen: no change there; 0026's `cu_wtp2k` page-2 record: the
+    last four words 0).
+  - **P13 is a 14-bit row word** like P1: the bank rides in the value's fraction (`srclib::code_of`: bank * 128 + row,
+    `lo_of`), so 0026's TBL handling (the bank byte of 47 / 48, the list view that opens the WAVETABLES list, the
+    pick that writes the knob) has to serve P13 as well as P1. The host reads it as it reads P1 (`select_b`); only the
+    touchscreen's own pick (`wt::pick`, from the TABLE list) writes P1 and has no B yet.
+  - **WARP** (P3), value texts for the **nine zones**, zone = (v * 9) >> 7: `OFF SYNC PWM FM FORMANT QUANT BEND SQUEEZE
+    RM` (a four-letter set if the display wants one: `OFF SYNC PWM FM FRMT QNT BEND SQZE RM`). 0029's stepped list
+    knob for WARP: 9 zones (was 4).
+  - **FTYP** (P16), **eight zones**, zone = (v * 8) >> 7: `DJ LP12 LP24 BP12 BP24 HP12 HP24 LADDER` (`LDR` if short).
+    A stepped list knob (0029). The CUT knob (P7) is a bipolar dial for DJ (LP below 64, HP above) and a plain cutoff
+    for the others: its text (the Rytm's dial) can stay the same; there is no way for the Rytm to know the type from P7.
+  - **Chord**: CHD INV SPR VOI leave WAVETABLE: no chord texts (`cu_chd`...), no chord view, no 28 01 write-back for
+    this machine (the Pi does not send one for it, `poly::close_window`). The other machines keep theirs.
+  - **MIX** text: 0 `A` .. 127 `B` is enough (the law is equal power), or the plain number.
+  - **P13..P16 are not LFO targets** (the LFO's targets stay P1..P12).
+  - An old project's chord words (P13..P16 of a WAVETABLE sound) now read as TBL B, POS B, MIX, FTYPE: a sound with
+    no chord (all four 0) is as before; one with a chord plays its root alone (B is silent while MIX is 0), and the
+    project's WARP value is read in nine zones.
 
 ## 7. Files
 
@@ -207,10 +242,11 @@ numbers once a kernel with this branch boots. Boot: the built-ins take 24 ms on 
 | the machine | `core/wavetable/wavetable.{h,cpp}` |
 | the note machines' dispatch (MULTISAMPLE, WAVETABLE, GRANULAR) | `core/nmach.h` |
 | remote UI page | `core/ui/page_wavegrain.cpp` |
-| tests, demo | `core/tests/test_wavetable.cpp`, `core/tests/wg_util.h`, `core/tests/demo/render_wavegrain.cpp` (`make -C core demo-wavegrain OUT=dir`, `--bench`) |
+| tests, demo | `core/tests/test_wavetable.cpp`, `core/tests/wg_util.h`, `core/tests/demo/render_wavegrain.cpp` (`make -C core demo-wavegrain OUT=dir`, `--bench`, `--vital DIR`: the new patches' phrases) |
 
 Shared files touched (small hooks): `core/machines.h` (flags), `core/voices.{h,cpp}` (V's `wt` `gr`, report / note-off /
-silence / render through `nm::`), `core/poly.cpp` (live / sequencer notes through `nm::`), `core/engine.cpp` (begin,
+silence / render through `nm::`), `core/poly.cpp` (live / sequencer notes through `nm::`; no chord write-back for a
+WAVETABLE voice), `core/engine.cpp` (begin,
 idle step), `core/notes.cpp` (`wt` `gr` for the bench and MIDI notes), `core/ui/remote.cpp` (machine names, the
 override), `core/ui/page_seq.cpp`, `core/ui/page_gfx.cpp` + `extra.h` (the pages), `core/host/core_c.cpp`,
 `core/Makefile`, `pi/engine/Makefile`, `pi/engine/bridge.{h,cpp}` (console, live input), `pi/engine/ob_usb.cpp` (the IN
@@ -225,5 +261,28 @@ every level (nothing over its top harmonic, the rest kept, the guards); the WAVE
 file refused; the morph (a POS sweep's steepest step no more than the steepest frame's own; halfway between two frames
 both at half); aliasing (a C7 saw -67 dB vs -14 dB without the levels, C2..C8 under -60 dB); the warps; unison (0.86 of
 the fundamental's energy spread off it, the level within 0.6..1.6x); chords and the headroom; live and sequencer notes
-and `wt=voice:V`; golden renders (pluck, pad, sync, vocal: rms and zero crossings within 10 %); the CPU.
+and `wt=voice:V`; golden renders (pluck, pad, sync, vocal: rms, mean |x| and zero crossings within 1e-4 / 1e-3 of what
+the engine rendered before TBL B, the new warps and filters, with B off and the DJ filter: sample for sample, nine
+patches compared as 32-bit floats); the CPU.
+Table B and the new warps and filters (the same file): a trig is one note (an old chord word is a TBL B row); a poly
+track's chord (`poly::seq_on` MAJ, `key_on` MAJ7: 3 and 7 notes, the headroom of a chord); MIX's law (A's share of the
+energy cos^2, the level constant within 3 %, 0 / 32 / 64 / 96 / 127 against a table of single harmonics); POS B; ENV on
+both POS; B's aliases (a saw at C2..C8, B alone and mixed: under -60 dB); B's unison; the five new warps change a saw,
+BEND 63.5 and SQUEEZE 63.5 are the straight phase; FM / RM by B against by a sine, B plain under them; **every warp x
+every filter type x both ends of the knobs x B on and off** (288 renders): finite, under 4, silent after the release; the
+new filters against the design (a sine at each key: LP12 LP24 BP12 BP24 HP12 HP24 within 0.1 dB of the digital
+response of Vital's blends over 16..25 keys, their slopes 11.8 / 24.3 / 11.9 / 18.2 dB per octave against the design's,
+the band-passes' peak at f / fc 0.98, the LP's level at its cutoff 0.50 (Q 1/2) and RES 90 raising it to 2.6, the
+ladder -23.5 dB per octave and 0.94 of the level far below its cutoff); the filter envelope (FENV +1: 3x the level at
+10..50 ms of a low-cut saw; 0: none); the card slots of two tables (a slot a voice's B reads is not reloaded, goes back once B leaves it).
+`core/tests/test_poly.cpp`: the pads' chord on a WAVETABLE voice plays and writes nothing back to the Rytm's track.
 `core/tests/test_notes.cpp` plays `wt` through the MIDI note adapter and checks CC 120's silence.
+
+## 9. Licence of the new warps and filters
+
+FORMANT, QUANT, BEND, SQUEEZE, RM and the filters LP / BP / HP 12 / 24 dB and LADDER (`core/wavetable/wavetable.cpp`:
+`phase_warp`, `warp_pf`, `filter_targets`, `svf_tick`, `ladder_tick`, the tanh / hardTanh helpers) are derived from Vital
+by Matt Tytel (https://github.com/mtytel/vital, commit 636ca0e, GPL-3.0-or-later; Copyright 2013-2019 Matt Tytel), by way
+of our port plugins/warpwave (feature/warpwave), whose outputs were checked against Vital's C++. They are named by what
+they do; the original's names are not used for anything here. The Pi binaries are distributed under GPL-3.0-or-later
+(Circle is too); NOTICE, THIRD_PARTY_LICENSES and README say so. No wavetable or preset of Vital is included.
