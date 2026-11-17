@@ -1,0 +1,196 @@
+diff --git a/include/circle/usb/xhciconfig.h b/include/circle/usb/xhciconfig.h
+index c35edfa..1f56537 100644
+--- a/include/circle/usb/xhciconfig.h
++++ b/include/circle/usb/xhciconfig.h
+@@ -60,7 +60,13 @@
+ 
+ #define XHCI_CONFIG_EVENT_RING_SIZE	256
+ #define XHCI_CONFIG_CMD_RING_SIZE	64
+-#define XHCI_CONFIG_TRANSFER_RING_SIZE	64
++// rytm-pi patch (pi/circle/circle-xhci-vl805.patch): transfer rings of 256 TRBs, as Linux (TRBS_PER_SEGMENT), not 64.
++// With 64 a periodic endpoint's ring wraps through its link TRB every 63 transfers; the VL805 handles link TRBs poorly
++// (Linux XHCI_AVOID_DQ_ON_LINK) and short box OUT ran in k x 984.4/s = k x 1000 x 63/64 steps (2026-11-17)
++#define XHCI_CONFIG_TRANSFER_RING_SIZE	256
++// circle-xhci-vl805: every ring allocated at twice its size and aligned to that size (Linux XHCI_ZHAOXIN_TRB_FETCH,
++// set for the VL805: the controller fetches TRBs past the end of a segment, which must stay in the ring's own memory)
++#define XHCI_CONFIG_RING_ALLOC_FACTOR	2
+ 
+ #define XHCI_CONFIG_IMODI		500		// defines maximum interrupt rate
+ 
+diff --git a/include/circle/usb/xhcisharedmemallocator.h b/include/circle/usb/xhcisharedmemallocator.h
+index 97d60f3..f4aee4c 100644
+--- a/include/circle/usb/xhcisharedmemallocator.h
++++ b/include/circle/usb/xhcisharedmemallocator.h
+@@ -40,6 +40,13 @@
+ #define XHCI_BLOCK_ALIGN	64
+ #define XHCI_BLOCK_BOUNDARY	0x10000
+ 
++// rytm-pi patch (pi/circle/circle-xhci-vl805.patch): a second kept class for the 256-TRB rings allocated at twice their
++// size (4 KB ring in an 8 KB block, aligned to 8 KB, as Linux's segment pool with XHCI_ZHAOXIN_TRB_FETCH). Without its
++// own free list every endpoint ring of a device that leaves would be lost (a Rytm restart, a Teensy flash)
++#define XHCI_RING_BLOCK_SIZE		8192
++#define XHCI_RING_BLOCK_ALIGN		8192
++#define XHCI_RING_BLOCK_BOUNDARY	8192
++
+ struct TXHCIBlockHeader
+ {
+ 	u32			 nMagic;
+@@ -68,6 +75,7 @@ private:
+ 	uintptr m_nMemEnd;
+ 
+ 	TXHCIBlockHeader *m_pFreeList;
++	TXHCIBlockHeader *m_pRingFreeList;	// circle-xhci-vl805
+ };
+ 
+ #endif
+diff --git a/lib/usb/xhcidevice.cpp b/lib/usb/xhcidevice.cpp
+index 764cb74..8ab5432 100644
+--- a/lib/usb/xhcidevice.cpp
++++ b/lib/usb/xhcidevice.cpp
+@@ -205,6 +205,8 @@ boolean CXHCIDevice::Initialize (boolean bScanDevices)
+ #endif
+ 
+ #ifdef XHCI_DEBUG
++	CLogger::Get ()->Write (From, LogNotice, "circle-xhci-vl805: rings %u TRB (x%u alloc), interrupt avg TRB = MPS",
++				XHCI_CONFIG_TRANSFER_RING_SIZE, XHCI_CONFIG_RING_ALLOC_FACTOR);
+ 	CLogger::Get ()->Write (From, LogDebug, "%u slots, %u ports, %u scratchpad bufs",
+ 				nMaxSlots, nMaxPorts, nMaxScratchpadBufs);
+ #endif
+diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+index 206e179..a7b605c 100644
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -492,10 +492,24 @@ boolean CXHCIEndpoint::ResetFromHalted (void)
+ 	}
+ 
+ 	assert (m_pTransferRing);
++	// circle-xhci-vl805: the new dequeue is the enqueue TRB with the ring's own cycle state (never the context's
++	// written-back DCS, which the VL805 gets wrong: Linux XHCI_EP_CTX_BROKEN_DCS). The enqueue index never rests on the
++	// link TRB (IncrementEnqueue wraps past it), so the dequeue is never set on one (Linux XHCI_AVOID_DQ_ON_LINK);
++	// both checked here rather than assumed
++	TXHCITRB *pDequeueTRB = m_pTransferRing->GetEnqueueTRB ();
++	if (   pDequeueTRB == 0
++	    || pDequeueTRB == &m_pTransferRing->GetFirstTRB ()[m_pTransferRing->GetTRBCount () - 1])
++	{
++		CLogger::Get ()->Write (From, LogWarning, "EP %u: no valid dequeue TRB after reset",
++					(unsigned) m_uchEndpointID);
++
++		return FALSE;
++	}
++
+ 	return m_pXHCIDevice->GetCommandManager ()->SetTRDequeuePointer (
+ 								m_pDevice->GetSlotID (),
+ 								m_uchEndpointID,
+-								m_pTransferRing->GetEnqueueTRB (),
++								pDequeueTRB,
+ 								!!m_pTransferRing->GetCycleState ());
+ }
+ 
+@@ -657,7 +671,9 @@ TXHCIInputContext *CXHCIEndpoint::GetInputContextConfigureEndpoint (void)
+ 	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_OUT:
+ 	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_IN:
+ 		pEPContext->Interval = m_uchInterval;
+-		pEPContext->AverageTRBLength = 16;	// best guess
++		// circle-xhci-vl805: the real size, as Linux (avg_trb_len = max_esit_payload for periodic endpoints):
++		// the controller budgets its periodic schedule with it; 16 told it 368 B audio transfers were 16 B
++		pEPContext->AverageTRBLength = m_usMaxPacketSize;
+ 		pEPContext->MaxESITPayload = m_usMaxPacketSize;
+ 		break;
+ 
+diff --git a/lib/usb/xhciring.cpp b/lib/usb/xhciring.cpp
+index 2d301c3..4eef5a4 100644
+--- a/lib/usb/xhciring.cpp
++++ b/lib/usb/xhciring.cpp
+@@ -20,6 +20,8 @@
+ #include <circle/usb/xhciring.h>
+ #include <circle/usb/xhcidevice.h>
+ #include <circle/logger.h>
++#include <circle/usb/xhciconfig.h>
++#include <circle/usb/xhcisharedmemallocator.h>
+ #include <circle/debug.h>
+ #include <assert.h>
+ 
+@@ -38,8 +40,21 @@ CXHCIRing::CXHCIRing (TXHCIRingType Type, unsigned nTRBCount, CXHCIDevice *pAllo
+ 	assert (m_nTRBCount % 4 == 0);
+ 
+ 	assert (m_pAllocator != 0);
+-	m_pFirstTRB = (TXHCITRB *) m_pAllocator->AllocateSharedMem (m_nTRBCount * sizeof (TXHCITRB),
+-								    64, 0x10000);
++	// circle-xhci-vl805: twice the ring's size, so a TRB fetch past its end stays in its own memory (Linux
++	// XHCI_ZHAOXIN_TRB_FETCH). Up to 2 KB this is the allocator's kept 2 KB class, as before; the 256-TRB rings take
++	// its kept 8 KB class (8 KB aligned, as Linux's segment pool), the only other size that is freed and reused
++	size_t nBytes = XHCI_CONFIG_RING_ALLOC_FACTOR * m_nTRBCount * sizeof (TXHCITRB);
++	if (nBytes <= XHCI_BLOCK_SIZE)
++	{
++		m_pFirstTRB = (TXHCITRB *) m_pAllocator->AllocateSharedMem (nBytes, 64, 0x10000);
++	}
++	else
++	{
++		assert (nBytes == XHCI_RING_BLOCK_SIZE);
++		m_pFirstTRB = (TXHCITRB *) m_pAllocator->AllocateSharedMem (XHCI_RING_BLOCK_SIZE,
++									    XHCI_RING_BLOCK_ALIGN,
++									    XHCI_RING_BLOCK_BOUNDARY);
++	}
+ 	if (m_pFirstTRB == 0)
+ 	{
+ 		return;
+diff --git a/lib/usb/xhcisharedmemallocator.cpp b/lib/usb/xhcisharedmemallocator.cpp
+index fe7f970..8b4ac6f 100644
+--- a/lib/usb/xhcisharedmemallocator.cpp
++++ b/lib/usb/xhcisharedmemallocator.cpp
+@@ -26,7 +26,8 @@ static const char From[] = "xhcialloc";
+ CXHCISharedMemAllocator::CXHCISharedMemAllocator (uintptr nMemStart, uintptr nMemEnd)
+ :	m_nMemStart (nMemStart),
+ 	m_nMemEnd (nMemEnd),
+-	m_pFreeList (0)
++	m_pFreeList (0),
++	m_pRingFreeList (0)
+ {
+ 	assert (m_nMemStart != 0);
+ 	assert (m_nMemEnd > m_nMemStart);
+@@ -38,6 +39,7 @@ CXHCISharedMemAllocator::~CXHCISharedMemAllocator (void)
+ 	m_nMemEnd = 0;
+ 
+ 	m_pFreeList = 0;
++	m_pRingFreeList = 0;
+ }
+ 
+ size_t CXHCISharedMemAllocator::GetFreeSpace (void) const
+@@ -78,6 +80,23 @@ void *CXHCISharedMemAllocator::Allocate (size_t nSize, size_t nAlign, size_t nBo
+ 		nAlign = XHCI_BLOCK_ALIGN;
+ 		nBoundary = XHCI_BLOCK_BOUNDARY;
+ 	}
++	else if (   nSize == XHCI_RING_BLOCK_SIZE		// circle-xhci-vl805: the ring class, reused
++		 && nAlign == XHCI_RING_BLOCK_ALIGN
++		 && nBoundary == XHCI_RING_BLOCK_BOUNDARY
++		 && m_pRingFreeList != 0)
++	{
++		TXHCIBlockHeader *pBlockHeader = m_pRingFreeList;
++		assert (pBlockHeader->nMagic == XHCI_BLOCK_MAGIC);
++		assert (pBlockHeader->nSize == XHCI_RING_BLOCK_SIZE);
++
++		m_pRingFreeList = pBlockHeader->pNext;
++		pBlockHeader->pNext = 0;
++
++		void *pResult = pBlockHeader->Data;
++		assert (((uintptr) pResult & (XHCI_RING_BLOCK_ALIGN-1)) == 0);
++
++		return pResult;
++	}
+ 
+ 	m_nMemStart += sizeof (TXHCIBlockHeader);
+ 
+@@ -133,6 +152,13 @@ void CXHCISharedMemAllocator::Free (void *pBlock)
+ 		pBlockHeader->pNext = m_pFreeList;
+ 		m_pFreeList = pBlockHeader;
+ 	}
++	else if (   pBlockHeader->nSize == XHCI_RING_BLOCK_SIZE	// circle-xhci-vl805
++		 && pBlockHeader->nAlign == XHCI_RING_BLOCK_ALIGN
++		 && pBlockHeader->nBoundary == XHCI_RING_BLOCK_BOUNDARY)
++	{
++		pBlockHeader->pNext = m_pRingFreeList;
++		m_pRingFreeList = pBlockHeader;
++	}
+ 	else
+ 	{
+ 		CLogger::Get ()->Write (From, LogWarning,
