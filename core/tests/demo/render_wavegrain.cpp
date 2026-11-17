@@ -15,6 +15,7 @@
 #include "notes.h"
 #include "voices.h"
 #include "wavetable/wavetable.h"
+#include "wavetable/wt_make.h"
 #include "wg_util.h"
 #include "pool_util.h"
 #include "lib/pools.h"
@@ -234,6 +235,116 @@ void warps_demo(const std::string& dir) {
     }
 }
 
+// ---- tables made from samples (MAKE WT, core/wavetable/wt_make.h): three sources synthesised here, each converted with
+// the editor's converter (64 frames) into /WAVETABLES on the demo card, then played by WAVETABLE with POS swept 0 > 127 > 0
+// over 8 s on a held note, each scaled to the same loudness. Files in DIR: fromsample-<name>-source.wav (the sample),
+// fromsample-<name>-table.wav (the table: float32, `clm ` 2048, as MAKE WT writes it), fromsample-<name>-sweep.wav.
+struct Source { const char* name; std::vector<float> x; int note; };
+std::vector<Source> g_src;
+std::vector<float> make_vowel() {   // a sung-like tone: 196 Hz, vibrato +-35 cents at 5.5 Hz, the vowel gliding /a/ -> /o/ over 3 s
+  const double secs = 3.0;
+  std::vector<float> x((size_t)(secs * 48000));
+  double ph = 0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    double t = (double)i / 48000.0, u = t / secs;
+    double f = 196.0 * std::pow(2.0, 35.0 / 1200.0 * std::sin(2 * M_PI * 5.5 * t));
+    ph += f / 48000.0;
+    const double f1 = 800 + (450 - 800) * u, f2 = 1200 + (800 - 1200) * u, f3 = 2500;
+    double a = 0;
+    for (int h = 1; h * f < 20000 && h < 200; ++h) {
+      double hz = h * f, g = 1.0 / std::pow(h, 1.1);
+      double res = 1.0 * std::exp(-std::pow(std::log(hz / f1) / 0.22, 2)) + 0.5 * std::exp(-std::pow(std::log(hz / f2) / 0.2, 2)) +
+                   0.25 * std::exp(-std::pow(std::log(hz / f3) / 0.2, 2)) + 0.03;
+      a += g * res * std::sin(2 * M_PI * h * ph);
+    }
+    double env = std::min(1.0, t / 0.05) * std::min(1.0, (secs - t) / 0.15);
+    x[i] = (float)(0.5 * a * env);
+  }
+  return x;
+}
+std::vector<float> make_pluck() {   // a Karplus-Strong string, D3 (146.8 Hz: a 327-sample loop), 2.5 s
+  std::vector<float> x((size_t)(2.5 * 48000));
+  const int L = 327;
+  std::vector<float> d(L);
+  uint32_t r = 7;
+  for (int i = 0; i < L; ++i) r = r * 1664525u + 1013904223u, d[i] = ((r >> 8) & 0xFFFF) / 32768.0f - 1.0f;
+  float prev = 0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    int k = (int)(i % L);
+    float y = d[k];
+    x[i] = y * 0.7f;
+    d[k] = 0.4975f * (y + prev);   // the loop's low-pass and its loss
+    prev = y;
+  }
+  return x;
+}
+std::vector<float> make_noise() {   // a noise burst through a resonant low-pass sweeping 6 kHz > 300 Hz, 0.6 s
+  std::vector<float> x((size_t)(0.6 * 48000));
+  uint32_t r = 99;
+  double lo = 0, bp = 0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    double u = (double)i / x.size(), fc = 6000.0 * std::pow(0.05, u);
+    double F = 2 * std::sin(M_PI * fc / 48000.0), q = 0.25;
+    r = r * 1664525u + 1013904223u;
+    double in = ((r >> 8) & 0xFFFF) / 32768.0 - 1.0;
+    lo += F * bp;
+    double hp = in - lo - q * bp;
+    bp += F * hp;
+    x[i] = (float)(0.8 * lo * std::exp(-4.0 * u));
+  }
+  return x;
+}
+// writes the sources and their tables (card: the demo card's /WAVETABLES, dir: the output); the converter's report printed
+void fromsample_make(const std::string& dir, const std::string& card) {
+  system(("mkdir -p '" + card + "/WAVETABLES'").c_str());
+  g_src = {{"vowel", make_vowel(), 55}, {"pluck", make_pluck(), 50}, {"noise", make_noise(), 48}};
+  for (const Source& s : g_src) {
+    std::vector<float> t((size_t)64 * wt::make::kFrameLen);
+    wt::make::Method m = wt::make::kNone;
+    float per = 0;
+    int r = wt::make::make_table(s.x.data(), 1, (uint32_t)s.x.size(), 48000, 64, t.data(), &m, &per);
+    CHECK(r == 0);
+    std::vector<uint8_t> w(wt::make::kTableHeaderMax);
+    int hl = wt::make::table_wav_header(w.data(), 48000, (uint32_t)t.size());
+    w.resize((size_t)hl + t.size() * 4);
+    memcpy(&w[hl], t.data(), t.size() * 4);
+    wg::write_file(dir + "/fromsample-" + s.name + "-table.wav", w);
+    wg::write_file(card + "/WAVETABLES/fromsample-" + s.name + ".wav", w);
+    wg::write_wav16(dir + "/fromsample-" + s.name + "-source.wav", s.x);
+    printf("%s: %.2f s of source -> 64 frames, %s%s%.1f Hz\n", s.name, s.x.size() / 48000.0, m == wt::make::kPitched ? "PITCHED " : "SPECTRAL ",
+           m == wt::make::kPitched ? "at " : "(no pitch) ", per > 0 ? 48000.0f / per : 0.0f);
+  }
+}
+void fromsample_demo(const std::string& dir) {
+  const int F = kWaveMachine;
+  const char* rows[3] = {"A007", "A008", "A009"};
+  for (int k = 0; k < 3; ++k) {
+    CHECK(pu::put(pools::kTables, rows[k], ("/WAVETABLES/fromsample-" + std::string(g_src[k].name) + ".wav").c_str()) == pools::kOk);
+  }
+  const double secs = 9.0;
+  for (int k = 0; k < 3; ++k) {
+    voices_init();
+    wt::reset();
+    auto knobs = [&](double t) {   // P1..P16: TBL POS WARP AMT UNI SUB CUT RES ATK DEC SUS ENV TBLB POSB MIX FTYPE
+      std::vector<float> p = {(float)(7 + k), tri(t, 8.0, 0, 127), 0, 0, 20, 0, 90, 20, 30, 110, 120, 64, 0, 0, 0, 0};
+      return p;
+    };
+    at(-0.01, [=] { wg::params(F, 0, knobs(0)); });
+    for (double t = 0; t < secs; t += 0.01) at(t, [=] { wg::params(F, 0, knobs(t)); });
+    at(0.0, [=] { wg::trig(F, 0, g_src[k].note, 100, knobs(0)); });
+    at(8.2, [] { wg::off(0); });
+    std::vector<float> y = run(secs, false);
+    double r = wg::rms(y), pk = 0;
+    for (float x : y) pk = std::max(pk, (double)std::fabs(x));
+    float g = (float)std::min(0.1 / std::max(r, 1e-9), 0.989 / std::max(pk, 1e-9));
+    for (float& x : y) x *= g;
+    std::string path = dir + "/fromsample-" + g_src[k].name + "-sweep.wav";
+    wg::write_wav16(path, y);
+    printf("%s: %.1f s, raw rms %.3f peak %.3f, written x %.2f (rms %.1f dBFS)\n", path.c_str(), y.size() / 48000.0, r, pk, g,
+           20 * std::log10(r * g));
+  }
+}
+
 void granular_demo(const std::string& dir) {
   const int F = kGranMachine;
   auto sz = [](double s) { return (float)(127 * std::log(s / 0.005) / std::log(200.0)); };
@@ -347,6 +458,12 @@ int main(int argc, char** argv) {
   // an empty card: the project's pools from their template (WAVETABLES A001..A006 the built-ins), as the engine boots
   const std::string card = "/tmp/wg-demo-empty-card";
   system(("mkdir -p '" + card + "'").c_str());
+  const bool fromsample = dir == "--fromsample";   // --fromsample DIR: tables made from synthesised samples (MAKE WT)
+  if (fromsample) {
+    dir = argc > 2 ? argv[2] : ".";
+    system(("rm -rf '" + card + "/WAVETABLES'").c_str());
+    fromsample_make(dir, card);
+  }
   host_set_card(card.c_str());
   hooks.to_rytm = [](const uint8_t*, int) {};
   host_fake_time(true, 1000000);
@@ -367,6 +484,10 @@ int main(int argc, char** argv) {
   wt::begin(true);
   gr::begin(true);
   pu::steps();
+  if (fromsample) {
+    fromsample_demo(dir);
+    return 0;
+  }
   if (dir == "--warps") {   // --warps DIR: the new patches' phrases
     warps_demo(argc > 2 ? argv[2] : ".");
     return 0;

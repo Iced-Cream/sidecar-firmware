@@ -61,6 +61,18 @@ POOL view, FILES, FILL), the web (Files: **+WT**, Fill bank; the Pool tab) or th
 load on use into 4 card slots (least recently used replaced, never one a voice reads); their memory is set aside at
 boot and shown apart in the pool RAM figure ("tables"). See docs/POOLS.md.
 
+### Tables from samples (MAKE WT) and encoder B
+
+On a WAVETABLE track's SRC view, **push knob B** (POS: it has no push of its own, and FUNC + push and the other pushes keep
+their meaning) to open SAMPLE EDIT: on table A's file when it is a card file, else on the POOL page's SAMPLES list to pick a
+sample. In SAMPLE EDIT, **FUNC + YES, MAKE WT** turns the region (START..END) into a table of 16 .. 256 frames (default 64):
+a period track with a harmonic analysis per frame and the frames phase-aligned to each other for a pitched sample, windows
+made periodic for noise and hits (the screen says `PITCHED` or `SPECTRAL`); the file goes to `/WAVETABLES/<stem>-wt<N>.wav` (a
+float32 WAV with the `clm ` 2048 chunk this reader takes), into the WAVETABLES list, onto the track's TBL, and the page goes
+back to the SRC view. On the touchscreen the machine view's **EDIT** key does the same. The method, the file and the
+limits: docs/SAMPLE-EDIT.md "MAKE WT". A float32 WAV is one the frame-size rules above read as they read any other (2048
+when it divides; the `clm ` chunk names it).
+
 ## 2. Band limiting
 
 | level k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
