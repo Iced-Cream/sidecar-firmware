@@ -199,6 +199,10 @@ boolean CTeensyTarget::Start (void)
 			((a & 0x80) ? m_pChanIn : m_pChanOut)[(a & 0x7F) - kChanFirstEp] = pEP;
 		else delete pEP;
 		Step ("endpoint 0x%02x made", a);
+		if (a == kAudioToPiEp || a == kAudioFromPiEp)		// 1.01 makes these bulk (T406/T407): say which the Teensy gave
+			CLogger::Get ()->Write (From, LogNotice, "link audio 0x%02x: %s, %u B", a,
+						(e->bmAttributes & 3) == 2 ? "bulk" : (e->bmAttributes & 3) == 3 ? "interrupt" : "other",
+						(unsigned) e->wMaxPacketSize);
 	}
 	boolean bAll = m_pEv && m_pAudioIn && m_pAudioOut;
 	for (unsigned c = 0; c < kChannels; c++) bAll = bAll && m_pChanIn[c] && m_pChanOut[c];

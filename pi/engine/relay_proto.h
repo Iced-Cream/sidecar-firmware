@@ -43,7 +43,7 @@ namespace relay {
 
 // the link's IDs: pid.codes test VID/PID (no Elektron IDs on the link); bcdDevice = kVersion
 constexpr uint16_t kVid = 0x1209, kPid = 0x0002;
-constexpr uint16_t kVersion = 0x0100;			// 1.00: this file's protocol; the Pi refuses another major
+constexpr uint16_t kVersion = 0x0101;			// 1.01: link audio 0x82/0x02 bulk (1.00: interrupt); the Pi refuses another major
 constexpr uint8_t kIfaceClass = 0xFF, kIfaceSub = 0x53, kIfaceProto = 0x01;	// vendor, 'S', 1
 
 constexpr uint8_t kEvEp = 0x81;

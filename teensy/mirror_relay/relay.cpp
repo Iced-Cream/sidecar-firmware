@@ -636,8 +636,8 @@ static unsigned l_config (uint8_t *b, bool hs, uint8_t type)
 	put ({9, type, 0, 0, 1, 1, 0, 0x80, 50});
 	put ({9, 4, 0, 0, 0, kIfaceClass, kIfaceSub, kIfaceProto, 0});
 	put ({7, 5, kEvEp, 3, kEvMps, 0, 1});
-	put ({7, 5, kAudioToPiEp, 3, (int) (big & 0xFF), (int) (big >> 8), 1});
-	put ({7, 5, kAudioFromPiEp, 3, (int) (big & 0xFF), (int) (big >> 8), 1});
+	put ({7, 5, kAudioToPiEp, 2, (int) (big & 0xFF), (int) (big >> 8), 0});	// bulk since 1.01 (T406/T407: the 512 B interrupt pair was never polled beside the Rytm)
+	put ({7, 5, kAudioFromPiEp, 2, (int) (big & 0xFF), (int) (big >> 8), 0});
 	for (unsigned c = 0; c < kChannels; c++)
 	{
 		put ({7, 5, chan_in_ep (c), 2, (int) (big & 0xFF), (int) (big >> 8), 0});
@@ -703,10 +703,10 @@ static void l_eps_open (void)
 {
 	ci_ep_open (&L, kEvEp, 3, kEvMps, ev_done);
 	memset (ev_busy, 0, sizeof ev_busy);
-	ci_ep_open (&L, kAudioToPiEp, 3, kLinkMps, a_to_pi_done);
+	ci_ep_open (&L, kAudioToPiEp, 2, kLinkMps, a_to_pi_done);
 	memset (a_to_pi_busy, 0, sizeof a_to_pi_busy);
 	aq_pi_head = aq_pi_tail = 0;
-	ci_ep_open (&L, kAudioFromPiEp, 3, kLinkMps, a_from_pi_done);
+	ci_ep_open (&L, kAudioFromPiEp, 2, kLinkMps, a_from_pi_done);
 	for (unsigned k = 0; k < kALinkTds; k++)
 	{
 		a_from_pi_td[k].param = k;
