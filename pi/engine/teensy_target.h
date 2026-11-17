@@ -15,6 +15,7 @@
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
+#include <circle/usb/xhciendpoint.h>
 #include <circle/logger.h>
 #include <circle/types.h>
 #include "mirror_target.h"
@@ -23,6 +24,7 @@
 #include "midi_filter.h"
 #include "reboot_sysex.h"
 #include "slip_detect.h"
+#include "ep_halt.h"
 
 class CObUsb;
 
@@ -83,6 +85,8 @@ private:
 	// relaytest=1 (cmdline; docs/teensy-mirror.md "Pi bench"): no box; a made-up one (pid.codes 1209:0003, the bench's shape)
 	// with a synthetic IN stream at the box rate, pipe packets echoed, vendor requests answered with a pattern
 	void TestPoll (void);
+	void EvWatch (void);			// the event pipe silent after the relay was shown: resubmit, then show it again (T411)
+	void EvArm (void);			// (from each kReqConnect 1: the Teensy answers it with kEvHello)
 	void TestBlock (u8 *pBlk, u32 nSeq);	// the made-up box's block nSeq in the 12-channel layout
 	void SendBoxBlock (const u8 *pBlock);	// FromBoxBlock's work (xHCI IRQ or TestPoll in a critical section)
 	boolean TestControl (const u8 *pSetup, const u8 *pData, int *pAnswer);
@@ -115,6 +119,17 @@ private:
 	unsigned m_nCompGapMax, m_nCompGap1, m_nCompGap2;	// gaps between them: longest, >= 1 ms, >= 2 ms (T342)
 	unsigned m_nUnderSeen, m_nOverSeen;
 	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
+	// the event pipe's safety net (T411: on some boots no event ever came, so the computer's first forwarded request was
+	// never answered and it gave up on the relay). The Teensy posts kEvHello ~300 ms after each kReqConnect 1: none
+	// within kEvSilentSecs, the event URBs are reset and resubmitted; still none kEvSilentSecs later, the relay is shown
+	// again (kReqConnect 0, 1: the computer enumerates it again), at most kReshowMax times for one upload
+	static const unsigned kEvSilentSecs = 5, kReshowMax = 3;
+	u64 m_nEvShownAt;			// the last kReqConnect 1 (0: not watching)
+	unsigned m_nEvAtShow;			// m_Stats.nEvents then
+	unsigned m_nEvStep;			// 0: waiting; 1: URBs resubmitted
+	unsigned m_nEvReshowTry;		// re-shows since the last Upload
+	unsigned m_nEvSilent, m_nEvReshows;	// the relay line's counts: silent pipes seen, re-shows sent
+	EpHalt<CXHCIEndpoint> m_EvHalt;
 	volatile unsigned m_nPipeInZlp;		// box pipe zero-length packets not sent on (Circle cannot take one, T409)
 	char m_EvKind[8];
 	SlipDetect m_SlipOut, m_SlipIn;		// the loop's test sine on channel 0: the computer's OUT as it arrives, the box's IN (T344)	// submit time (us) of the block on link 0x02

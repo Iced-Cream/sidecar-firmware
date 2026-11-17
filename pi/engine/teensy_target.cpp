@@ -73,7 +73,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
 	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
-	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
+	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_nEvShownAt (0), m_nEvAtShow (0), m_nEvStep (0), m_nEvReshowTry (0), m_nEvSilent (0), m_nEvReshows (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
 	for (unsigned c = 0; c < kChannels; c++)
 	{
@@ -202,8 +202,8 @@ boolean CTeensyTarget::Start (void)
 			((a & 0x80) ? m_pChanIn : m_pChanOut)[(a & 0x7F) - kChanFirstEp] = pEP;
 		else delete pEP;
 		Step ("endpoint 0x%02x made", a);
-		if (a == kAudioToPiEp || a == kAudioFromPiEp)		// 1.01 makes these bulk (T406/T407): say which the Teensy gave
-			CLogger::Get ()->Write (From, LogNotice, "link audio 0x%02x: %s, %u B", a,
+		if (a == kAudioToPiEp || a == kAudioFromPiEp || a == kEvEp)	// 1.01 makes the audio pair bulk (T406/T407), 1.02 the events (T411)
+			CLogger::Get ()->Write (From, LogNotice, "link %s 0x%02x: %s, %u B", a == kEvEp ? "events" : "audio", a,
 						(e->bmAttributes & 3) == 2 ? "bulk" : (e->bmAttributes & 3) == 3 ? "interrupt" : "other",
 						(unsigned) e->wMaxPacketSize);
 	}
@@ -451,6 +451,8 @@ boolean CTeensyTarget::Upload (void)
 	if (Vendor (FALSE, kReqConnect, 1, 0, 0, 0) < 0) return FALSE;
 	m_bConnected = TRUE;
 	m_Stats.nConnects++;
+	m_nEvReshowTry = 0;
+	EvArm ();
 	Step ("upload: connected");
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the relay shows the box to its computer (%u strings)", m_nStr);
 	return TRUE;
@@ -460,9 +462,85 @@ void CTeensyTarget::Disconnect (void)
 {
 	Vendor (FALSE, kReqConnect, 0, 0, 0, 0);
 	m_bConnected = FALSE;
+	m_nEvShownAt = 0;
 	m_bPcConfigured = FALSE;
 	m_Stream.in_ch = m_Stream.out_ch = 0;
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the relay's computer side left the bus");
+}
+
+void CTeensyTarget::EvArm (void)
+{
+	m_nEvAtShow = m_Stats.nEvents;
+	m_nEvStep = 0;
+	m_nEvShownAt = NowTicks ();
+	if (m_nEvShownAt == 0) m_nEvShownAt = 1;
+}
+
+// MirrorPoll (task level, IRQs on: the xHCI commands wait for their events), while the relay is shown
+void CTeensyTarget::EvWatch (void)
+{
+	if (m_nEvShownAt == 0 || m_pEv == 0) return;
+	if (m_Stats.nEvents != m_nEvAtShow)		// the kEvHello (or anything) came: the pipe works
+	{
+		if (m_nEvStep != 0 || m_nEvReshowTry != 0)
+			CLogger::Get ()->Write (From, LogNotice, "relay event pipe answered again (%s, %u re-shows)",
+						m_nEvStep ? "after its URBs were resubmitted" : "after the relay was shown again", m_nEvReshowTry);
+		m_nEvShownAt = 0;
+		return;
+	}
+	u64 nNow = NowTicks ();
+	if (nNow - m_nEvShownAt < (u64) kEvSilentSecs * (m_nEvStep + 1) * CLOCKHZ) return;
+	unsigned nSecs = (unsigned) ((nNow - m_nEvShownAt) / CLOCKHZ);
+	if (m_nEvStep == 0)
+	{
+		// step 1: the URBs. A halted (or erred) endpoint is reset and every queued URB dropped, then all are submitted
+		// again; a running one keeps its URBs (Circle cannot cancel them there), so only its state is told
+		m_nEvStep = 1;
+		m_nEvSilent++;
+		CXHCIEndpoint *pX = m_pEv->GetXHCIEndpoint ();
+		unsigned nPending = pX->GetPendingURBs ();
+		unsigned nNowUs = (unsigned) nNow;
+		m_EvHalt.Stall ();
+		int r = m_EvHalt.Reset (pX, nNowUs, [this] {
+			GetHost ()->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT,
+						    kEvEp, 0, 0);
+		});
+		unsigned nResubmitted = 0;
+		if (r > 0)
+		{
+			EnterCritical ();
+			if (m_EvHalt.Finish (pX))
+				for (unsigned k = 0; k < EvURBs; k++) { Resubmit (m_pEvURB[k]); nResubmitted++; }
+			LeaveCritical ();
+		}
+		m_EvHalt.halted = m_EvHalt.erred = false;	// (a refused reset: tried again only with the next silence)
+		CLogger::Get ()->Write (From, LogWarning, "relay event pipe silent %u s after the relay was shown (ev %u, endpoint state %u, "
+					"%u URBs pending): %s; shown again in %u s if still silent", nSecs, m_Stats.nEvents, m_EvHalt.state,
+					nPending, r < 0 ? "reset refused" : nResubmitted ? "reset, URBs resubmitted" :
+					"running, URBs left queued", kEvSilentSecs);
+		return;
+	}
+	// step 2: show the relay again, so that the computer enumerates it from the start
+	if (m_nEvReshowTry >= kReshowMax)
+	{
+		CLogger::Get ()->Write (From, LogError, "relay event pipe still silent after %u re-shows: left as it is (the computer's "
+					"requests go unanswered until the relay or the box comes back)", m_nEvReshowTry);
+		m_nEvShownAt = 0;
+		return;
+	}
+	m_nEvReshowTry++;
+	m_nEvReshows++;
+	EnterCritical ();
+	if (m_CtlState != CtlIdle) m_CtlState = CtlIdle;	// the request was the old enumeration's: an answer is for nobody
+	LeaveCritical ();
+	m_bPcConfigured = FALSE;
+	m_Stream.in_ch = m_Stream.out_ch = 0;
+	int n0 = Vendor (FALSE, kReqConnect, 0, 0, 0, 0);
+	int n1 = Vendor (FALSE, kReqConnect, 1, 0, 0, 0);
+	m_Stats.nConnects++;
+	CLogger::Get ()->Write (From, LogWarning, "relay event pipe still silent %u s after the relay was shown: shown again (%u of %u; "
+				"connect 0 %d, 1 %d)", nSecs, m_nEvReshowTry, kReshowMax, n0, n1);
+	EvArm ();
 }
 
 // xHCI IRQ: the box's answer to a forwarded request
@@ -979,6 +1057,8 @@ void CTeensyTarget::MirrorPoll (void)
 	if (m_bConnected && !m_bBoxUp && (m_bLeaveNow || NowTicks () - m_nBoxGoneAt >= (u64) m_nHoldSecs * CLOCKHZ)) Disconnect ();
 	if (!m_bConnected || m_bBoxUp) m_bLeaveNow = FALSE;
 	if (!m_bConnected) return;
+	EvWatch ();
+	if (!m_bConnected) return;
 	ControlPoll ();
 	for (unsigned c = 0; c < m_Map.n_out; c++)
 		if (m_nMidiHeld[c] && link1::FromComputerRoom () >= 128)
@@ -1057,13 +1137,13 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 				p->m_nTestEchoDrop);
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
-			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u vendor fail %u connects %u pipe zlp %u",
+			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u silent %u reshow %u vendor fail %u connects %u pipe zlp %u",
 			p->m_bConnected ? "shown" : "off", p->m_bBoxUp ? "up" : "none", p->m_bPcConfigured ? "configured" : "-",
 			p->m_Stream.in_ch, a.in_blocks, a.in_sent, s.nAudioOutDrop, p->m_Stream.out_ch, a.out_blocks, a.out_bad,
 			a.out_under, a.out_over, a.out_extra, p->m_Stream.extra.dropped, p->m_Stream.extra.late, a.anchor,
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
 			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
-			s.nMidiToPcDrop, s.nEvents, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
+			s.nMidiToPcDrop, s.nEvents, p->m_nEvSilent, p->m_nEvReshows, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
 	if (p->m_nInfoLines < 12)		// the first ~2 minutes: what the link shares the bus with (the log ring holds ~1 min)
 	{
 		p->m_nInfoLines++;
