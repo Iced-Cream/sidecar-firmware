@@ -2141,6 +2141,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (n < 3) break;
       s.stats.hellos++;
       int up = b[0] << 7 | b[1];
+      if (s.stats.hellos > 1) voice_reports_forget();   // the Rytm restarted: its 33 re-seeds the engines (not the Pi's own boot)
       // A new link (a replug, the Rytm's or our restart): whatever the Rytm showed before is gone - its page left by its
       // 1 s timeout, its SRC view says 29 t 1 again after this hello if it is on. Stale state here (the page open, a
       // view's track, a splash running when the cable went) blocked the splash and the view until a restart.

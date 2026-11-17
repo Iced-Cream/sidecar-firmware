@@ -808,6 +808,24 @@ int main() {
   CHECK(splash_last == 0 && remote_open() && sent_cmd(0x3A) == 0);
   from_rytm(0x30, 0, 0, 0);
   remote_tick(t += 100);
+  // link-reset (a): BD on 6-OP FM reported; the Rytm restarts (a second hello) and its 33 says BD is on JUNO now. The
+  // voice re-seeds from that snapshot, as at the Pi's own boot (voices.cpp reported[] cleared by a later hello)
+  report_machine(0, core::kFm);
+  CHECK(core::v[0].fm && !core::v[0].juno);
+  from_rytm(0x35, 0, 1, 1);
+  const uint8_t juno_bd2[2] = {41, 0x08};
+  machines(0, 1, juno_bd2);
+  CHECK(core::v[0].juno && !core::v[0].fm);
+  // link-reset (b): the SRC view of a track with a page, after a restart too quick for a splash (up 1 s): a whole frame
+  src_view(0, 1);
+  for (int i = 0; i < 20; ++i) remote_tick(t += 30);
+  src_view(0, 0);
+  from_rytm(0x35, 0, 20, 1);
+  src_view(0, 1);
+  r1 = rects, other.clear();
+  for (int i = 0; i < 20; ++i) remote_tick(t += 30);
+  CHECK(rects - r1 >= 8 && shown_text("JUNO") && sent_cmd(0x3A) == 0);
+  src_view(0, 0);
   // the Rytm has the SRC view (it sent 29 / 2A): TRK + YES lists SIDECAR, SYSTEM and the live pages, no voice page
   // (BD and SD are on JUNO, CP on 6-OP FM: an older build listed them)
   from_rytm(0x30, 0, 1, 0);

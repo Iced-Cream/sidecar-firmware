@@ -143,6 +143,7 @@ void voices_init();
 void voice_report(int cmd, const uint8_t* d, int len);
 // polyuser-4 F-b1: a 33 names voice vi's Sidecar machine (vb): the voice takes it while no 0x03 / 0x04 has come yet
 void voice_machine_hint(int vi, uint8_t vb);
+void voice_reports_forget();   // a new link (the Rytm restarted): the next 33 names the machines again
 void voice_note_off(int vi);
 void voice_params_changed(int vi);   // x.p changed on the control side (core/lfo.h): the machine takes it
 void voice_silence(int vi);   // MIDI CC 120: note-off and the output ramped out in 5 ms, silent until the next trig

@@ -1053,6 +1053,10 @@ __attribute__((noinline)) CORE_COLD void voice_report(int cmd, const uint8_t* d,
   }
 }
 
+// A new link to the Rytm (its restart; 0026's second hello and later): what it reported before is gone with its working
+// state, so the next 33 names the voices' machines again (voice_machine_hint) instead of keeping the old engines.
+CORE_COLD void voice_reports_forget() { memset(reported, 0, sizeof reported); }
+
 // polyuser-4 F-b1 (a cold boot: the Pi and the Rytm powered on together): the voice's engine came only from 0021's
 // 0x03 / 0x04, and a captured poly track never trigs on the Rytm, so the one boot-time 0x03 (sent before the Pi
 // listened) left the voice on PLAITS until a pad or a knob. A 33 naming a Sidecar machine for a voice with no report
