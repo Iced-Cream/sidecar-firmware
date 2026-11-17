@@ -811,7 +811,14 @@ boolean CObUsb::Configure (void)
 		}
 	}
 	CTimer::Get ()->MsDelay (100);
-	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface; nIface++)
+	// obidle=N obidlealt=0 (a diagnostic, T406/PB1 follow-up): slot N's box stays at alt 0 and gets no audio endpoint
+	// contexts, so the host controller reserves no periodic bandwidth for its audio (obidle alone keeps alt 3 and the
+	// contexts: PB1 showed the relay's 512 B interrupt link endpoints never polled even so)
+	const boolean bAlt0 = (int) CKernelOptions::Get ()->GetAppOptionDecimal ("obidle", 99) == (int) m_nSlot
+			      && CKernelOptions::Get ()->GetAppOptionDecimal ("obidlealt", 3) == 0;
+	if (bAlt0) CLogger::Get ()->Write (From, LogWarning, "obidle=%u obidlealt=0: %s stays at alt 0, no audio endpoints",
+					   m_nSlot, m_pAudio->name);
+	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface && !bAlt0; nIface++)
 	{
 		if (pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE,
 					   ob::kAlt, nIface, 0, 0) < 0)
@@ -823,11 +830,11 @@ boolean CObUsb::Configure (void)
 	}
 
 	// creates the xHCI endpoint contexts (after the alternate setting is selected)
-	m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
-	m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
+	if (!bAlt0) m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
+	if (!bAlt0) m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
 
 	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
-	for (unsigned i = 0; i < m_nURBs; i++)
+	for (unsigned i = 0; i < m_nURBs && !bAlt0; i++)
 	{
 		m_pInURB[i] = new CUSBRequest (m_pIn, m_pInBuf[i], nLen);
 		m_pInURB[i]->SetCompletionRoutine (InStub, (void *) (uintptr) i, this);
