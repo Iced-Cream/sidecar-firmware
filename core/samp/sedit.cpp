@@ -805,7 +805,7 @@ CORE_COLD int start_load(const char* path, int code, int track, float sta, float
   sniprintf(e.name, sizeof e.name, "%s", sl ? sl + 1 : e.src);
   e.code = code, e.track = (int8_t)track, e.sta = sta, e.end = end, e.file = file;
   // a sample picked for a WAVETABLE voice (the POOL page, opened from its SRC view): the new table goes onto that voice
-  if (!file && wnext >= 0 && now_ms() - wnext_ms < kWantMs) e.wvi = (int8_t)wnext;
+  if (!file && track < 0 && wnext >= 0 && now_ms() - wnext_ms < kWantMs) e.wvi = (int8_t)wnext;
   e.frames = e.rate = 0, e.ch = e.bits = 0, e.a = e.b = e.wa = e.wb = 0;
   e.undo = e.dirty = false;
   e.msg[0] = 0;
@@ -895,8 +895,7 @@ CORE_COLD int open_wt_track(int track) {
     return -1;
   }
   int c14 = ui::remote_track_src14_fresh(track);
-  float tv = c14 >= 0 ? (float)(c14 >> 7 & 127) + (float)(c14 & 127) / 128.0f : v[vi].p[0];
-  int ent = wt::src_entry(vi, tv);
+  int ent = c14 >= 0 ? srclib::code_of14(c14) : wt::src_entry(vi, v[vi].p[0]);
   const char* path = ent >= 0 ? wt::entry_path(ent) : "";
   if (!path || !path[0]) return 1;
   int r = start_load(path, -1, -1, 0, 120, true);
@@ -1260,7 +1259,7 @@ CORE_COLD bool step() {
   e.step_frames = 0;
   if (g_use_on) use_poll();   // (no work done: a few answers looked at)
   if (g_nret) retired_step();
-  if (e.back_ms && now_ms() - e.back_ms >= kBackMs && e.job == kNoJob) {   // a table made for a voice: back to it
+  if (e.back_ms && (int32_t)(now_ms() - e.back_ms) >= (int32_t)kBackMs && e.job == kNoJob) {   // a table made for a voice: back to it
     e.back_ms = 0;
     close();
     return true;

@@ -2164,6 +2164,10 @@ CORE_COLD void remote_tick(uint32_t ms) {
   if (s.popup && !s.open && s.src_track < 0) { popup_tick(ms); return; }
   if (!s.open && s.src_track >= 0) { src_tick(ms); return; }
   if (!s.open) return;
+#if CORE_POLY && CORE_MSAMP
+  // SAMPLE EDIT closed itself after MAKE WT for a WAVETABLE voice: back to where it was opened from (the SRC view)
+  if (extra_of(s.voice) == &kSeditPage && sedit_page_leaves() && !sedit_back_to() && !go_back()) go(0);
+#endif
   wave_idle(ms);   // a sample overview being read (page_wave.cpp): one column at most
   uint32_t tick = s.legacy ? 50 : kTickMs;
   if (!s.clock_set) s.clock_set = true, s.last_draw = ms - tick, s.last_tx = ms;

@@ -231,6 +231,10 @@ void chop_page_up_cancel();   // a UP combo reached the host (49 / 30 / 29): the
 extern const ExtraPage kSeditPage;
 bool sedit_src_push(int track, int code, bool down);
 void sedit_page_open(int track, int code);
+bool sedit_page_leaves();   // remote_tick: true once when a table made for a voice has closed the editor (the page goes back)
+// The POOL page on the SAMPLES list with EDIT chosen, to pick a sample to make a wavetable of (the WAVETABLE SRC view's push of B on
+// a built-in or OFF table A: page_sedit.cpp; sedit::set_wt_voice first)
+void pool_page_pick_sample();
 #if CORE_UI_TOOLS
 void chop_page_set(int view, int sel, int zoom);   // tests and the renderer: the editor's view (0 EDIT 1 SLICE 1 2 SLICE 2 3 SLICE 3)
 int chop_page_sel();
