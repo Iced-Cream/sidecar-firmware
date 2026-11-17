@@ -273,8 +273,8 @@ grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/p
 # circle-hub-noportpanic, idempotent)
 grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-poll.patch
 # then the xHCI rings and endpoint contexts as Linux sets them up for the VL805 (pi/circle/circle-xhci-vl805.patch,
-# docs/circle-xhci-vl805.md): interrupt endpoints' Average TRB Length = their max packet (was 16), transfer rings of 256 TRBs
-# (was 64) allocated at twice their size and aligned to it (Linux XHCI_ZHAOXIN_TRB_FETCH) with a kept 8 KB class in the
+# docs/circle-xhci-vl805.md): the Average TRB Length of interrupt endpoints = their max packet (was 16), transfer rings of 256 TRBs
+# (was 64) allocated at twice their size and aligned to it (as Linux does: XHCI_ZHAOXIN_TRB_FETCH) with a kept 8 KB class in the
 # shared memory allocator, and the Set TR Dequeue target checked never to be a link TRB (XHCI_AVOID_DQ_ON_LINK);
 # boot log "circle-xhci-vl805: rings 256 TRB"; after circle-hub-poll, idempotent
 grep -q circle-xhci-vl805 include/circle/usb/xhciconfig.h || patch -p1 < /repo/pi/circle/circle-xhci-vl805.patch
