@@ -1011,6 +1011,11 @@ void CTeensyTarget::MirrorPoll (void)
 		s_bLeaving = TRUE;		// MirrorShown/Relaying false from here: the boxes' packets are parked, not sent (T409)
 		s_nLeavingAt = NowTicks ();
 		// the answer may never come (the Teensy resets): a failure here is logged, the flag still waits for kLeaveSecs
+		if (CKernelOptions::Get ()->GetAppOptionDecimal ("relayblignore", 0) != 0)
+		{	// test only (relayblignore=1): the request is not sent, as if the relay had ignored it; the link comes back after kLeaveSecs
+			CLogger::Get ()->Write (From, LogWarning, "relayblignore=1: the bootloader request is not sent (test of the %u s resume)", kLeaveSecs);
+			return;
+		}
 		int n = Vendor (FALSE, kReqBootloader, 0x4C42, 0, 0, 0);
 		CLogger::Get ()->Write (From, LogNotice, "bootloader request: %s (%d)", n < 0 ? "not answered" : "answered", n);
 		return;

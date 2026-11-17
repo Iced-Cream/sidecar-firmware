@@ -119,6 +119,7 @@ private:
 	unsigned m_nCompGapMax, m_nCompGap1, m_nCompGap2;	// gaps between them: longest, >= 1 ms, >= 2 ms (T342)
 	unsigned m_nUnderSeen, m_nOverSeen;
 	unsigned m_EvMs[8], m_nEv;			// uptime ms of the last 8 OUT ring under/over events
+	volatile unsigned m_nPipeInZlp;		// box pipe zero-length packets not sent on (Circle cannot take one, T409)
 	// the event pipe's safety net (T411: on some boots no event ever came, so the computer's first forwarded request was
 	// never answered and it gave up on the relay). The Teensy posts kEvHello ~300 ms after each kReqConnect 1: none
 	// within kEvSilentSecs, the event URBs are reset and resubmitted; still none kEvSilentSecs later, the relay is shown
@@ -130,7 +131,6 @@ private:
 	unsigned m_nEvReshowTry;		// re-shows since the last Upload
 	unsigned m_nEvSilent, m_nEvReshows;	// the relay line's counts: silent pipes seen, re-shows sent
 	EpHalt<CXHCIEndpoint> m_EvHalt;
-	volatile unsigned m_nPipeInZlp;		// box pipe zero-length packets not sent on (Circle cannot take one, T409)
 	char m_EvKind[8];
 	SlipDetect m_SlipOut, m_SlipIn;		// the loop's test sine on channel 0: the computer's OUT as it arrives, the box's IN (T344)	// submit time (us) of the block on link 0x02
 	u8 *m_pChanInBuf[relay::kChannels][ChanInURBs];

@@ -122,6 +122,8 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   OUT and forwarded control paths (a zero-length packet, a request with wLength 0).
 - Debug options kept in the driver: `relaydelay=N` (start N s after boot, past the black box's first write at 5 s),
   `relaydebug=1` (each start step and link request written to the black box at once), `relayvariant=` (TR1g's bisect).
+  `relayblignore=1` (test only): a flash's bootloader request is not sent, so the relay stays and the link comes back
+  20 s later (the resume after a request the relay did not act on, BL3).
   A panic's line reaches the black box (`blackbox_pi::PanicFlush`, ported from 8f027d3).
 - relaytest uploads the bench's BOS and MS OS 2.0 set: the made-up box says bcdUSB 2.10 and Windows refused it without.
 
