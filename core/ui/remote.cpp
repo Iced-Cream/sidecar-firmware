@@ -1397,6 +1397,7 @@ CORE_COLD void splash_tick(uint32_t ms) {
     send_short(kSplash, &b, 1);
     s.splash = false;
     s.sent_valid = false;   // the Rytm's shadow holds the splash; the page sends its whole frame on opening anyway
+    if (!s.open) remote_request(false);   // 3A 0 0: the shadow (CONNECTED) stays hidden until our next commit
     return;
   }
   if (!first && ms - s.last_draw < (t < kSlideMs + kSlideStepMs ? kSlideStepMs : kSplashStepMs)) return;
