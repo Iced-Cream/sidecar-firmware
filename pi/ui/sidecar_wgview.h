@@ -56,6 +56,7 @@ typedef struct
 	unsigned char	grev[WGV_GRAINS];
 	// WAVETABLE
 	int		frames;			// the table's frames
+	int		tbl_file;		// table A is a card file (its EDIT opens it in SAMPLE EDIT); else EDIT offers the SAMPLES list
 	float		pos;			// 0..1
 	float		cur[WGV_COLS];		// the frame at POS
 	float		stack[WGV_STACK][WGV_COLS];	// frames 0, 1/8 .. 1 of the table

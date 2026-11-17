@@ -886,22 +886,42 @@ CORE_COLD int open_track(int track) {
 
 CORE_COLD int open_code(int code) { return start_open(code, -1, 0, 120); }
 
-// A WAVETABLE track's table A: a card file opens as a sample (the region the whole file; the new table goes onto this
-// track's TBL, in the bank of that row); a built-in or OFF has no file: 1, and the caller offers the SAMPLES list
-CORE_COLD int open_wt_track(int track) {
-  const int vi = ui::remote_track_voice(track);
-  if (vi < 0 || (ui::remote_track_machine(track) & 0x78) != kWaveMachine) {
-    say("NOT A WAVETABLE TRACK");
+// A WAVETABLE voice's table A (the track's 2A when it has one the voice has not reported over, else the voice's): its
+// list entry
+CORE_COLD int wt_entry(int track, int vi) {
+  int c14 = track >= 0 ? ui::remote_track_src14_fresh(track) : -1;
+  return c14 >= 0 ? srclib::code_of14(c14) : wt::src_entry(vi, v[vi].p[0]);
+}
+CORE_COLD bool wt_table_file(int track, int vi) {
+  if (vi < 0 || vi >= kVoices) return false;
+  int ent = wt_entry(track, vi);
+  const char* path = ent >= 0 ? wt::entry_path(ent) : "";
+  return path && path[0];
+}
+// A WAVETABLE track's (or voice's) table A: a card file opens as a sample (the region the whole file; the new table
+// goes onto the voice's TBL, in the bank of that row); a built-in or OFF has no file: 1, and the caller offers the
+// SAMPLES list
+CORE_COLD int open_wt(int track, int vi) {
+  if (vi < 0 || vi >= kVoices || !(v[vi].wt || wt::forced(vi) || (track >= 0 && (ui::remote_track_machine(track) & 0x78) == kWaveMachine))) {
+    say("NOT A WAVETABLE VOICE");
     return -1;
   }
-  int c14 = ui::remote_track_src14_fresh(track);
-  int ent = c14 >= 0 ? srclib::code_of14(c14) : wt::src_entry(vi, v[vi].p[0]);
+  int ent = wt_entry(track, vi);
   const char* path = ent >= 0 ? wt::entry_path(ent) : "";
   if (!path || !path[0]) return 1;
   int r = start_load(path, -1, -1, 0, 120, true);
   if (r == 0) e.wvi = (int8_t)vi, e.wcode = ent, e.wtrack = (int8_t)track;
   return r;
 }
+CORE_COLD int open_wt_track(int track) {
+  const int vi = track >= 0 && track < 12 ? ui::remote_track_voice(track) : -1;
+  if (vi < 0 || (ui::remote_track_machine(track) & 0x78) != kWaveMachine) {
+    say("NOT A WAVETABLE TRACK");
+    return -1;
+  }
+  return open_wt(track, vi);
+}
+CORE_COLD int open_wt_voice(int vi) { return open_wt(-1, vi); }
 CORE_COLD int open_file(const char* path) { return start_load(path, -1, -1, 0, 120, true); }
 CORE_COLD void set_wt_voice(int vi) {
   e.wnext = (int8_t)(vi >= 0 && vi < kVoices ? vi : -1);
@@ -1330,11 +1350,12 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
         open_file(a);
         return command("sedit", out, cap);
       }
-      bool track = word("track"), code = !track && word("code"), wtt = !track && !code && word("wt");
-      ok = (track || code || wtt) && num(&x) && !*a;
+      bool track = word("track"), code = !track && word("code"), wtt = !track && !code && word("wt"), wtv = !track && !code && !wtt && word("wtv");
+      ok = (track || code || wtt || wtv) && num(&x) && !*a;
       // (out of range: -1, refused as such - never cast into a valid track or row)
       int k = x < 0 || x >= pools::kCodes ? -1 : (int)x;
       if (ok && wtt) open_wt_track(x < 0 || x >= 12 ? -1 : (int)x);   // (a built-in or OFF table A: nothing opens, 1)
+      else if (ok && wtv) open_wt_voice(x < 0 || x >= kVoices ? -1 : (int)x);
       else if (ok && track) open_track(k);
       else if (ok) open_code(k);
     } else if (word("close")) {
@@ -1392,6 +1413,9 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     } else if (word("makewt")) {
       ok = !*a;
       if (ok) make_wt();
+    } else if (word("wtvoice")) {   // the next open of a SAMPLES row belongs to WAVETABLE voice V (the touchscreen's pick)
+      ok = num(&x) && !*a && x >= 0 && x < kVoices;
+      if (ok) set_wt_voice((int)x);
     } else if (word("wtn")) {
       ok = num(&x) && !*a && (x == 16 || x == 32 || x == 64 || x == 128 || x == 256);
       if (ok) set_wt_frames((int)x);
@@ -1402,7 +1426,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     }
     if (!ok) {
       sniprintf(out, cap, "sedit=open:track:T|open:code:C|close|start:F|end:F|region:A:B|nudge:S|E:N[:c]|jump:S|E:N|"
-                          "zoom:L|pan:N[:c]|window:A:B|fn:N|NAME|apply[:NAME]|undo|save|save:use|makewt|wtn:N|open:wt:T|open:file:PATH|preview");
+                          "zoom:L|pan:N[:c]|window:A:B|fn:N|NAME|apply[:NAME]|undo|save|save:use|makewt|wtn:N|wtvoice:V|open:wt:T|open:wtv:V|open:file:PATH|preview");
       return true;
     }
   }

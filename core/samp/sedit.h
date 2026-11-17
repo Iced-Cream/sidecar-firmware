@@ -41,6 +41,8 @@ int open_code(int code);
 // A WAVETABLE track's table A as a sample: a card file opens (0 loading, the new table goes onto the track's TBL), a
 // built-in or OFF has none (1: the caller offers the SAMPLES list, set_wt_voice first), -1 refused.
 int open_wt_track(int track);
+int open_wt_voice(int vi);   // the same by voice (no track known)
+bool wt_table_file(int track, int vi);   // table A is a card file (open_wt_* opens it; else they answer 1); track may be -1
 int open_file(const char* path);   // a card file (a table's too: float WAVs read) as an edit: the whole file, no row, no live play
 void set_wt_voice(int vi);   // the next open of a SAMPLES row (within 2 minutes) belongs to WAVETABLE voice vi (-1: none)
 // MAKE WT (docs/SAMPLE-EDIT.md): the region as a wavetable (core/wavetable/wt_make.h) of wt_frames() frames, written

@@ -1103,13 +1103,15 @@ static void sedit_fake (int mode)
 	unsigned gen = v->gen;
 	memset (v, 0, sizeof *v);
 	v->gen = gen + 1;
-	v->valid = 1, v->st = mode == 2 ? SSE_ST_BUSY : SSE_ST_READY, v->rate = 48000, v->bits = 24, v->fn = mode == 2 ? 1 : 0;
-	v->frames = mode == 1 ? 192000 : 57600, v->ch = mode == 1 ? 2 : 1;
-	snprintf (v->name, sizeof v->name, "%s", mode == 1 ? "PAD WARM C3.wav" : "KICK 808 LONG.wav");
-	v->a = mode == 1 ? 0 : 2400, v->b = mode == 1 ? v->frames : 48000;
+	v->valid = 1, v->st = mode == 2 || mode == 3 ? SSE_ST_BUSY : SSE_ST_READY, v->rate = 48000, v->bits = 24, v->fn = mode == 2 ? 1 : 0;
+	v->frames = mode == 1 ? 192000 : mode == 4 ? 131072 : 57600, v->ch = mode == 1 ? 2 : 1;
+	if (mode == 4) v->bits = 32;
+	snprintf (v->name, sizeof v->name, "%s", mode == 1 ? "PAD WARM C3.wav" : mode == 4 ? "saw-wt1.wav" : "KICK 808 LONG.wav");
+	v->a = mode == 1 ? 0 : 2400, v->b = mode == 1 || mode == 4 ? v->frames : 48000;
+	v->wt_frames = 64, v->wt_voice = mode == 4 ? 2 : -1, v->file = mode == 4, v->making = mode == 3;
 	v->wa = 0, v->wb = v->frames;
-	v->undo = mode != 1, v->dirty = mode != 1, v->has_track = mode != 1, v->track = mode != 1 ? 0 : -1;
-	v->progress = mode == 2 ? 42 : 100, v->playhead = -1, v->ncols = SSE_COLS, v->unity = 32767;
+	v->undo = mode == 0 || mode == 2, v->dirty = mode == 0 || mode == 2, v->has_track = mode == 0 || mode == 2, v->track = mode == 0 || mode == 2 ? 0 : -1;
+	v->progress = mode == 2 || mode == 3 ? 42 : 100, v->playhead = -1, v->ncols = SSE_COLS, v->unity = 32767;
 	for (int i = 0; i < SSE_COLS; i++)
 	{
 		double t = (double) i / SSE_COLS, a;
@@ -1252,7 +1254,7 @@ static void theme_run (int style, const char *pre)
 	hold (wlx, WG_ROW (1 + 1)); WG_PUSH ();
 	EXPECT (sidecar_wgview_asking () == 2);
 	shot ("pool-menu");
-	tap (wlx, WG_BOX (4, 2));		// UNLOAD
+	tap (wlx, WG_BOX (5, 3));		// UNLOAD
 	EXPECT (sidecar_wgview_asking () == 1 && !strcmp (sidecar_wgview_message (), "ROW C001 USED BY 3 SOUNDS."));
 	WG_PUSH (); shot ("pool-confirm");
 	tap (yes_x, WG_BOX (3, 2)); EXPECT_CMD ("pool=smp:unload:C001:yes");
@@ -1260,7 +1262,7 @@ static void theme_run (int style, const char *pre)
 	WG_PUSH (); shot ("pool-undo");
 	tap (wlx, WG_MSG); EXPECT_CMD ("pool=smp:undo");
 	// REPLACE (C003: seen playing): FILES aimed at it, the file asked first, then sent with ":yes"
-	hold (wlx, WG_ROW (1 + 3)); tap (wlx, WG_BOX (4, 1));
+	hold (wlx, WG_ROW (1 + 3)); tap (wlx, WG_BOX (5, 2));
 	EXPECT (sidecar_wgview_lib_shown () && sidecar_wgview_target () == 2 * 128 + 3);
 	WG_PUSH (); shot ("pool-replace-files");
 	tap (wlx, WG_ROW (5));
@@ -1270,10 +1272,10 @@ static void theme_run (int style, const char *pre)
 	// while the Rytm plays: a row in use is refused (no command); a row not in use is unloaded at once
 	s_WgPlaying = 1; WG_PUSH ();
 	s_nCmds = 0;
-	hold (wlx, WG_ROW (1 + 1)); tap (wlx, WG_BOX (4, 2));
+	hold (wlx, WG_ROW (1 + 1)); tap (wlx, WG_BOX (5, 3));
 	EXPECT (s_nCmds == 0 && !sidecar_wgview_asking () && strstr (sidecar_wgview_message (), "THE RYTM PLAYS") != 0);
 	WG_PUSH (); shot ("pool-playing");
-	hold (wlx, WG_ROW (1 + 2)); tap (wlx, WG_BOX (4, 2)); EXPECT_CMD ("pool=smp:unload:C002");
+	hold (wlx, WG_ROW (1 + 2)); tap (wlx, WG_BOX (5, 3)); EXPECT_CMD ("pool=smp:unload:C002");
 	s_WgPlaying = 0;
 	// a bank tab: shown (takes go there); bank H: the inputs and built-ins
 	tap (tx0 + 7 * tw + tw / 2, WG_ROW (0)); EXPECT_CMD ("pool=smp:shown:H");
@@ -1297,6 +1299,22 @@ static void theme_run (int style, const char *pre)
 	// WAVETABLE's POOL: WAVETABLES (the built-ins in A001..A006); a pick; an empty row filled from FILES; a long press on
 	// a built-in: UNLOAD only, asked (A001: a voice on it), NO sends nothing
 	wg_fake (WGV_WAVETABLE, 0.3); sidecar_wgview_set (&s_Wg); run (2); shot ("mach-wavetable");
+	{	// EDIT (where UP stands in the lists): table A's card file in SAMPLE EDIT, else the SAMPLES list to pick a sample from
+		const int ed_x = o ? (LU (84) + DX / 4) / 2 : LU (16) + (LU (140) + DX / 4) / 2;
+		s_Wg.tbl_file = 1, s_Wg.gen++; sidecar_wgview_set (&s_Wg); run (2);
+		tap (ed_x, WG_KY); EXPECT_CMD ("sedit=open:wt:2");
+		s_Wg.track = -1, s_Wg.gen++; sidecar_wgview_set (&s_Wg); run (2);
+		tap (ed_x, WG_KY); EXPECT_CMD ("sedit=open:wtv:2");
+		s_Wg.tbl_file = 0, s_Wg.track = 2, s_Wg.gen++; sidecar_wgview_set (&s_Wg); run (2);
+		shot ("mach-wavetable-edit");
+		s_nCmds = 0;
+		tap (ed_x, WG_KY);
+		EXPECT (s_nCmds >= 1 && sidecar_ui_page () == 15 && sidecar_wgview_pool_page_shown () && sidecar_wgview_page_list () == WGV_SAMPLES);
+		EXPECT (!strcmp (sidecar_wgview_message (), o ? "PICK A SAMPLE: TAP ITS ROW, EDIT" : "Pick a sample: tap its row, Edit"));
+		WG_PUSH (); shot ("pool-page-pick-sample");
+		sidecar_ui_show (7); run (2);
+		wg_fake (WGV_WAVETABLE, 0.3); sidecar_wgview_set (&s_Wg); run (2);
+	}
 	s_WgRamKnown = 0;			// (until the shared cache counts: "RAM -")
 	tap (WG_SRC_X, WG_KY); WG_PUSH (); shot ("pool-tables");
 	EXPECT (sidecar_wgview_list_shown () && sidecar_wgview_list_id () == WGV_TABLES);
@@ -1353,7 +1371,7 @@ static void theme_run (int style, const char *pre)
 	tap (wlx, WG_ROW (2 + 5)); WG_PUSH ();							// A005: changed
 	EXPECT (sidecar_wgview_asking () == 2);
 	shot ("pool-page-menu");
-	tap (wlx, WG_BOX (5, 3)); EXPECT_CMD ("pool=smp:accept:A005");
+	tap (wlx, WG_BOX (6, 4)); EXPECT_CMD ("pool=smp:accept:A005");		// (a sample's menu: EDIT REPLACE UNLOAD ACCEPT CANCEL)
 	tap (WG_SRC_X, WG_KY);			// DONE: back
 	EXPECT (sidecar_ui_page () == 7 && !sidecar_wgview_pool_page_shown () && !sidecar_wgview_list_shown ());
 	sidecar_ui_show (1); run (2);
@@ -1996,6 +2014,26 @@ static void theme_run (int style, const char *pre)
 		EXPECT (sidecar_sedit_hit (3, SSE_D_CANCEL, &x, &y)); tap_raw (x, y);
 		EXPECT (sidecar_sedit_hit (2, SSE_K_CLOSE, &x, &y)); tap_raw (x, y);	// nothing to drop: closed at once
 		EXPECT_CMD ("sedit=close");
+		// MAKE WT: the key makes the table (a console command), FRAMES takes the next choice (16 32 64 128 256 and round);
+		// while it is made the page says so; from a WAVETABLE voice the edit is a table's file: no PLAY, MAKE WT first
+		sedit_fake (1); sidecar_sedit_set (&s_Se); run (2);
+		EXPECT (sidecar_sedit_hit (2, SSE_K_WT, &x, &y)); tap_raw (x, y);
+		EXPECT_CMD ("sedit=makewt");
+		EXPECT (sidecar_sedit_hit (2, SSE_K_FR, &x, &y)); tap_raw (x, y);
+		EXPECT_CMD ("sedit=wtn:128");
+		s_Se.wt_frames = 256; s_Se.gen++; sidecar_sedit_set (&s_Se); run (1);
+		tap_raw (x, y);
+		EXPECT_CMD ("sedit=wtn:16");
+		sedit_fake (3); sidecar_sedit_set (&s_Se); run (2); shot ("sedit-make-wt");
+		snprintf (s_Last, sizeof s_Last, "-");
+		EXPECT (sidecar_sedit_hit (2, SSE_K_WT, &x, &y)); tap_raw (x, y);	// busy: the key waits
+		EXPECT_CMD ("-");
+		sedit_fake (4); sidecar_sedit_set (&s_Se); run (2); shot ("sedit-table-file");
+		EXPECT (sidecar_sedit_hit (2, SSE_K_PLAY, &x, &y));
+		tap_raw (x, y);
+		EXPECT_CMD ("-");					// (a file has no PLAY)
+		EXPECT (sidecar_sedit_hit (2, SSE_K_WT, &x, &y)); tap_raw (x, y);
+		EXPECT_CMD ("sedit=makewt");
 		sedit_fake (2); sidecar_sedit_set (&s_Se); run (2); shot ("sedit-busy");
 		snprintf (s_Last, sizeof s_Last, "-");
 		EXPECT (sidecar_sedit_hit (1, SSE_FN_CROP, &x, &y)); tap_raw (x, y);	// busy: the functions wait
