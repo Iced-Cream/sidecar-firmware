@@ -5,6 +5,7 @@
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
+#include <circle/usb/usbstandardhub.h>
 #include <circle/usb/usbrequest.h>
 #include <circle/usb/usb.h>
 #include <circle/sched/scheduler.h>
@@ -116,6 +117,9 @@ u8 *s_pDma[kDmaBufs];
 unsigned s_nDma;
 boolean s_bInFlight;
 CTask *s_pTask;
+CUSBStandardHub *s_pHub;		// the Pi 4's VL805 hub the Teensy hangs off (BuiltInHub), polled while it moves; 0: none
+u64 s_nPollAt;
+const unsigned kHubPollMs = 250;
 
 u64 NowMs (void) { return CTimer::GetClockTicks64 () / (CLOCKHZ / 1000); }
 
@@ -125,6 +129,34 @@ void Fail (const char *pFormat, const char *pArg = "")
 	s_State = Failed;
 	s_nDoneAt = NowMs ();
 	CLogger::Get ()->Write (From, LogError, "teensyflash failed: %s", s_Error);
+}
+
+// The hub pDevice hangs off when it is the Pi 4's own (as ob_usb.cpp's BuiltInHub): the VL805's USB 2 hub (2109:3431)
+// right on a root port, part of the board, so the pointer stays good for as long as the controller. Any other hub can be
+// unplugged during the write, so it gets no poll (0); a root port reports its changes through the xHCI event ring.
+CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
+{
+#if RASPPI != 4 && !defined (TEENSY_FLASH_TEST)
+	return 0;
+#endif
+	if (pDevice == 0) return 0;
+	CUSBStandardHub *pHub = pDevice->GetParentHub ();
+	if (pHub == 0) return 0;
+	CUSBDevice *pHubDevice = pHub->GetDevice ();
+	const TUSBDeviceDescriptor *pDesc = pHubDevice->GetDeviceDescriptor ();
+	if (pHubDevice->GetParentRootPort () == 0 || pDesc->idVendor != 0x2109 || pDesc->idProduct != 0x3431) return 0;
+	return pHub;
+}
+
+// While the Teensy leaves for its bootloader (Entering) or back to its program (Booting): the hub's ports read every
+// 250 ms, so its unplug and replug are seen. Beside a streaming Rytm the VL805 hub's status-change endpoint went unserved
+// and neither was seen in 15 s (BL3, KB T411: the Teensy's endpoints failed as it left, then no "removed", no 16C0:0478);
+// with the Rytm off both came within 0.45 s. A port that showed its change through the request already is not seen again.
+void PollHub (u64 now)
+{
+	if (s_pHub == 0 || now < s_nPollAt) return;
+	s_nPollAt = now + kHubPollMs;
+	s_pHub->RequestPortPoll ();
 }
 
 boolean RelayUp (void)
@@ -174,6 +206,7 @@ void Step (void)
 			CLogger::Get ()->Write (From, LogNotice, "writing %u blocks", s_nBlocks);
 		}
 		else if (now >= s_nDeadline) Fail ("the Teensy did not come up in its bootloader within %s s (power, cable, or relaydelay=?)", "15");
+		else PollHub (now);
 		break;
 
 	case Writing:
@@ -243,6 +276,7 @@ void Step (void)
 		else if (now >= s_nDeadline)
 			Fail (CTeensyBoot::Get () != 0 ? "the Teensy stayed in its bootloader after the write%s"
 						       : "the relay did not come back on the link (1209:0002)%s", "");
+		else PollHub (now);
 		break;
 
 	case Checking:
@@ -372,6 +406,12 @@ void Start (const char *pExpect, fsweb::Result *r)
 	s_nStartedAt = NowMs ();
 	s_nDoneAt = 0;
 	s_nDeadline = s_nStartedAt + kEnterSecs * 1000;
+	// the hub to poll: the bootloader's or the relay's (the same port, before and after the move)
+	s_pHub = CTeensyBoot::Get () != 0 ? BuiltInHub (CTeensyBoot::Get ()->GetDevice ()) : 0;
+#ifdef CIRCLE_GADGET_MIRROR
+	if (s_pHub == 0 && CTeensyTarget::Get () != 0) s_pHub = BuiltInHub (CTeensyTarget::Get ()->GetDevice ());
+#endif
+	s_nPollAt = s_nStartedAt + kHubPollMs;
 	if (CTeensyBoot::Get () != 0)
 	{
 		s_State = Entering;		// already in its bootloader (a recovery): Step goes straight to the write
