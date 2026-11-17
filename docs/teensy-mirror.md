@@ -56,9 +56,14 @@ today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a relay alone never 
 
 ## The link (relay_proto.h)
 
-- USB1, high speed, one vendor interface: events on interrupt IN 0x81; the computer's audio OUT blocks on interrupt IN
-  0x82; audio IN blocks for the computer on interrupt OUT 0x02; four bulk channel pairs (0x83..0x86 / 0x03..0x06) for the
-  other endpoints (pipes, MIDI). One mirrored packet per link packet.
+- USB1, high speed, one vendor interface, every endpoint bulk since protocol 1.02: events on IN 0x81; the computer's audio
+  OUT blocks on IN 0x82; audio IN blocks for the computer on OUT 0x02; four channel pairs (0x83..0x86 / 0x03..0x06) for the
+  other endpoints (pipes, MIDI). One mirrored packet per link packet. (1.00 had 0x81/0x82/0x02 as interrupt endpoints and
+  1.01 0x81 only: beside a Rytm on the Pi 4's VL805 they went unserved, T406/T407/T411.)
+- The Pi's safety net for the event pipe: the Teensy answers each kReqConnect 1 with kEvHello. No event within 5 s of
+  showing the relay: "relay event pipe silent", the event endpoint reset and its URBs resubmitted if it halted; still none
+  5 s later: the relay is shown again (kReqConnect 0, then 1), so the computer enumerates it from the start; at most 3
+  times per upload. The relay line counts both (`silent N reshow N`).
 - Both sides derive the channel map from the box's configuration descriptor (`mirror::parse`), so nothing about it is sent.
 - EP0 on the Teensy: standard requests answered there (descriptors as uploaded, SET_ADDRESS, SET_CONFIGURATION,
   SET_INTERFACE kept local as the gadget keeps it, GET_STATUS, endpoint halt); every class and vendor request goes to the

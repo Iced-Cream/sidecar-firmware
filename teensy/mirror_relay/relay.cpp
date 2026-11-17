@@ -635,7 +635,7 @@ static unsigned l_config (uint8_t *b, bool hs, uint8_t type)
 	unsigned big = hs ? kLinkMps : 64;
 	put ({9, type, 0, 0, 1, 1, 0, 0x80, 50});
 	put ({9, 4, 0, 0, 0, kIfaceClass, kIfaceSub, kIfaceProto, 0});
-	put ({7, 5, kEvEp, 3, kEvMps, 0, 1});
+	put ({7, 5, kEvEp, 2, (int) (big & 0xFF), (int) (big >> 8), 0});	// bulk since 1.02 (T411: the 64 B iv1 event pipe went unserved beside the Rytm)
 	put ({7, 5, kAudioToPiEp, 2, (int) (big & 0xFF), (int) (big >> 8), 0});	// bulk since 1.01 (T406/T407: the 512 B interrupt pair was never polled beside the Rytm)
 	put ({7, 5, kAudioFromPiEp, 2, (int) (big & 0xFF), (int) (big >> 8), 0});
 	for (unsigned c = 0; c < kChannels; c++)
@@ -701,7 +701,7 @@ static unsigned l_string (uint8_t *b, uint8_t i)
 
 static void l_eps_open (void)
 {
-	ci_ep_open (&L, kEvEp, 3, kEvMps, ev_done);
+	ci_ep_open (&L, kEvEp, 2, kLinkMps, ev_done);		// bulk (1.02); an event is one 16 B short packet
 	memset (ev_busy, 0, sizeof ev_busy);
 	ci_ep_open (&L, kAudioToPiEp, 2, kLinkMps, a_to_pi_done);
 	memset (a_to_pi_busy, 0, sizeof a_to_pi_busy);

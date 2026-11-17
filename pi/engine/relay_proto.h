@@ -15,9 +15,12 @@
 //   - moves each mirrored endpoint's packets over a fixed link endpoint ("channel").
 //
 // Link layout (USB1, high speed, one vendor interface, alt 0):
-//   0x81 interrupt IN  64 B, every microframe   events (Event below), one per packet
-//   0x82 interrupt IN  512 B, every microframe  the computer's audio OUT blocks (the box's ob::kOutEp), one per packet
-//   0x02 interrupt OUT 512 B, every microframe  audio IN blocks for the computer (the box's ob::kInEp), one per packet
+//   0x81 bulk IN 512 B (1.00-1.01: interrupt 64 B)  events (Event below), one per packet (16 B: a short packet)
+//   0x82 bulk IN 512 B (1.00: interrupt)            the computer's audio OUT blocks (the box's ob::kOutEp), one per packet
+//   0x02 bulk OUT 512 B (1.00: interrupt)           audio IN blocks for the computer (the box's ob::kInEp), one per packet
+// 1.02 has no interrupt endpoint left: beside a Rytm on the Pi 4's VL805 the Teensy's iv1 interrupt endpoints went
+// unserved (PB1/PB2, T406/T407), the event pipe too on some boots (BL3 end, T411: ev 0, the computer's first forwarded
+// request never answered). The Pi opens what the descriptor gives, so a 1.02 Pi takes a 1.00/1.01 Teensy and back.
 //   0x83..0x86 bulk IN 512 B                    channel 0..3 IN: packets the computer sent to an OUT endpoint of the box
 //   0x03..0x06 bulk OUT 512 B                   channel 0..3 OUT: packets for the computer from an IN endpoint of the box
 // Every link packet carries exactly one packet of the mirrored endpoint (a zero-length packet too), so the Pi's URBs are
@@ -43,14 +46,14 @@ namespace relay {
 
 // the link's IDs: pid.codes test VID/PID (no Elektron IDs on the link); bcdDevice = kVersion
 constexpr uint16_t kVid = 0x1209, kPid = 0x0002;
-constexpr uint16_t kVersion = 0x0101;			// 1.01: link audio 0x82/0x02 bulk (1.00: interrupt); the Pi refuses another major
+constexpr uint16_t kVersion = 0x0102;			// 1.02: event pipe 0x81 bulk too; 1.01: link audio bulk; the Pi refuses another major
 constexpr uint8_t kIfaceClass = 0xFF, kIfaceSub = 0x53, kIfaceProto = 0x01;	// vendor, 'S', 1
 
 constexpr uint8_t kEvEp = 0x81;
 constexpr uint8_t kAudioToPiEp = 0x82, kAudioFromPiEp = 0x02;
 constexpr unsigned kChannels = 4;
 constexpr uint8_t kChanFirstEp = 3;			// channel c: IN 0x80 | (3 + c), OUT 3 + c
-constexpr unsigned kLinkMps = 512, kEvMps = 64;
+constexpr unsigned kLinkMps = 512, kEvMps = 64;		// kEvMps: the buffer for one event packet (an Event is 16 B)
 constexpr unsigned kChanDepth = 4;			// link buffers per channel and direction on the Teensy
 constexpr unsigned kMaxCredits = kChanDepth;
 
