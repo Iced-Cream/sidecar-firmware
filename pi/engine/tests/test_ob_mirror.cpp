@@ -427,8 +427,8 @@ int main() {
       Box r;                                   // the Rytm (the preferred box) after it: the relay, the A4 stays
       CHECK(CObUsb::UsbcSlot() == 1 && relay.box == r.box() && relay.up.back() == 1);
       CHECK(g_gadget.box.size() == nBox + 1);
-      CUSBRequest* rin = r.pipe(0x82);         // the Rytm's async pipe at its own interval on the relay too (PA1, T353)
-      CHECK(rin && rin->ep->desc->bInterval == 1 && a.pipe(0x82)->ep->desc->bInterval == 1);
+      CUSBRequest* rin = r.pipe(0x82);         // the Rytm's async pipe at its own interval on the relay too (PA1, T353, PV1);
+      CHECK(rin && rin->ep->desc->bInterval == 1 && a.pipe(0x82)->ep->desc->bInterval == 4);	// the A4's at 4 on USB-C (T416/T417)
       r.complete(rin, true, 5);                // its pipe packets to the relay, not the gadget
       CHECK(relay.pipe_in.size() == 1 && relay.pipe_in[0] == 0x82);
       delete r.ob;                             // the Rytm leaves: gone (held on the relay), nobody moves
