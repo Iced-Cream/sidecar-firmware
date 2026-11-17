@@ -36,6 +36,7 @@ boolean CTeensyTarget::TakeReboot (void)
 }
 volatile boolean CTeensyTarget::s_bBootDue = FALSE, CTeensyTarget::s_bLogDue = FALSE;
 volatile boolean CTeensyTarget::s_bLeaving = FALSE;	// set with the bootloader request: the link is going, nothing more is sent on it
+u64 CTeensyTarget::s_nLeavingAt = 0;			// when (clock ticks): the relay still here kLeaveSecs later clears it (MirrorPoll)
 volatile unsigned CTeensyTarget::s_nLogReads = 0;
 char CTeensyTarget::s_Log[2048];
 unsigned CTeensyTarget::s_nLog = 0;
@@ -929,8 +930,32 @@ void CTeensyTarget::MirrorPoll (void)
 		s_bBootDue = FALSE;
 		CLogger::Get ()->Write (From, LogNotice, "the relay is told to start its bootloader (teensyflash): link traffic stops");
 		s_bLeaving = TRUE;		// MirrorShown/Relaying false from here: the boxes' packets are parked, not sent (T409)
-		Vendor (FALSE, kReqBootloader, 0x4C42, 0, 0, 0);
+		s_nLeavingAt = NowTicks ();
+		// the answer may never come (the Teensy resets): a failure here is logged, the flag still waits for kLeaveSecs
+		if (CKernelOptions::Get ()->GetAppOptionDecimal ("relayblignore", 0) != 0)
+		{	// test only (relayblignore=1): the request is not sent, as if the relay had ignored it; the link comes back after kLeaveSecs
+			CLogger::Get ()->Write (From, LogWarning, "relayblignore=1: the bootloader request is not sent (test of the %u s resume)", kLeaveSecs);
+			return;
+		}
+		int n = Vendor (FALSE, kReqBootloader, 0x4C42, 0, 0, 0);
+		CLogger::Get ()->Write (From, LogNotice, "bootloader request: %s (%d)", n < 0 ? "not answered" : "answered", n);
 		return;
+	}
+	if (s_bLeaving)
+	{
+		// the relay did not leave (BL3, T411: no removal and no bootloader device seen): the link comes back rather than
+		// staying hidden until the Pi restarts. teensyflash gives up at 15 s (kEnterSecs); a relay that does go is a new
+		// CTeensyTarget, whose Start clears the flag. The box is shown again from the start (its computer may have given up
+		// on requests that went unanswered meanwhile).
+		if (NowTicks () - s_nLeavingAt < (u64) kLeaveSecs * CLOCKHZ) return;
+		s_bLeaving = FALSE;
+		CLogger::Get ()->Write (From, LogWarning, "the relay was still here %u s after the bootloader request: link traffic resumes%s",
+					kLeaveSecs, m_bConnected && m_bBoxUp ? ", the box is shown again" : "");
+		if (m_bConnected)
+		{
+			Disconnect ();
+			if (m_bBoxUp) m_bUploadDue = TRUE;		// below: Upload and connect, as when the box comes up
+		}
 	}
 	if (m_bTest) TestPoll ();
 	CObUsb *pBox = m_pBox;
