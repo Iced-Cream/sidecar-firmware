@@ -34,6 +34,10 @@ that the relay came back. `--upload-only` uploads and checks the file without wr
 2. **Bootloader.** If the relay is on the link (1209:0002), `CTeensyTarget::RequestBootloader` makes its MirrorPoll send
    `kReqBootloader` (wValue 0x4C42); the Teensy reboots about 50 ms later and comes up as HalfKay, 16C0:0478. A Teensy
    already in its bootloader (a failed write, or the program button) is used as it is: that is the recovery path.
+   While the Teensy moves (to HalfKay here, back to the relay after step 5) and it hangs off the Pi 4's VL805 hub
+   (2109:3431), the hub's ports are read every 250 ms (`circle-hub-poll.patch`, `CUSBStandardHub::RequestPortPoll`).
+   Beside a streaming Rytm the hub's status-change endpoint went unserved, so the Teensy's unplug and HalfKay's arrival
+   were never seen and the write gave up after 15 s (BL3, KB T411); with the Rytm off both came within 0.45 s.
 3. **Claim.** `circle-usbdevicefactory4.patch` hands the device name `ven16c0-478` to `CTeensyBoot` (teensy_flash.cpp)
    before its HID interface would reach Circle's gamepad driver.
 4. **Write.** One HID output report per 1 KB block as SET_REPORT (0x21, 9, wValue 0x0200, wIndex 0), 1088 bytes: the

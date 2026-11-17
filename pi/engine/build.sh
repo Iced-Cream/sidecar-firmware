@@ -267,6 +267,11 @@ grep -q circle-usb-urb-free include/circle/usb/usbrequest.h || patch -p1 < /repo
 # logged, and the hub status-change request armed again from the recovery timer, so the latched change is read again;
 # after circle-hub-rearm, idempotent)
 grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-noportpanic.patch
+# then the ports of a hub read on request (pi/circle/circle-hub-poll.patch: CUSBStandardHub::RequestPortPoll; the Teensy
+# flash polls the VL805 hub while it waits for the relay to leave or come back: beside a streaming Rytm the status-change
+# endpoint of the hub went unserved and the move of the Teensy to its bootloader was never seen (BL3, T411); after
+# circle-hub-noportpanic, idempotent)
+grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-poll.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
