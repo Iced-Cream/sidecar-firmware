@@ -12,7 +12,6 @@
 #include "simd.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -1263,15 +1262,17 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     return true;
   }
   if (!strncmp(a, "fenv:", 5)) {   // fenv:V:PERCENT (-100..100): the mod envelope's depth onto CUT of the new filters
-    int vi = a[5] - '0';
-    char* e = nullptr;
-    long pc = a[6] == ':' ? strtol(a + 7, &e, 10) : 0;
-    if (vi < 0 || vi > 7 || a[6] != ':' || e == a + 7 || *e || pc < -100 || pc > 100) {
+    int vi = a[5] - '0', pc = 0;
+    const char* q = a[5] && a[6] == ':' ? a + 7 : "";
+    bool neg = *q == '-';
+    q += neg;
+    if (vi < 0 || vi > 7 || !parse_num(&q, &pc) || *q || pc > 100) {
       sniprintf(out, cap, "wt: fenv:V:PERCENT (V 0..7, -100..100)");
       return true;
     }
+    if (neg) pc = -pc;
     set_fenv(vi, (float)pc / 100.0f);
-    sniprintf(out, cap, "wt: voice %d filter envelope %ld %%", vi, pc);
+    sniprintf(out, cap, "wt: voice %d filter envelope %d %%", vi, pc);
     return true;
   }
   if (!strncmp(a, "pick:", 5)) {   // pick:V:ROW (or a code)

@@ -727,8 +727,14 @@ static void test_filters() {
   }
   // the filter envelope (the mod envelope x FENV onto CUT): a saw through LP12 at a low CUT is bright at its start with
   // FENV +1, and as dull at the start as at the end with FENV 0
+  char co[120];
+  CHECK(wt::command("wt=fenv:7:-40", co, sizeof co) && strstr(co, "-40 %") && std::fabs(wt::fenv_get(7) + 0.4f) < 1e-6);
+  CHECK(wt::command("wt=fenv:9:10", co, sizeof co) && strstr(co, "fenv:V:PERCENT") && std::fabs(wt::fenv_get(7) + 0.4f) < 1e-6);
+  CHECK(wt::command("wt=fenv:7:101", co, sizeof co) && strstr(co, "fenv:V:PERCENT") && wt::command("wt=fenv:7:x", co, sizeof co) && strstr(co, "fenv:V:PERCENT"));
   for (float fe : {0.0f, 1.0f}) {
-    wt::set_fenv(7, fe);
+    char cmd[40];
+    snprintf(cmd, sizeof cmd, "wt=fenv:7:%d", (int)(fe * 100));
+    CHECK(wt::command(cmd, co, sizeof co) && std::fabs(wt::fenv_get(7) - fe) < 1e-6);
     wt::silence(7);
     render(7, 480);
     wg::trig(kW, 7, 48, 127, P(1, kSawPos, 0, 0, 0, 0, 30, 0, 0, 60, 127, 64, 0, 0, 0, fz(kFLp12)));   // ATK 0 DEC 60 (80 ms)
