@@ -538,7 +538,8 @@ CORE_COLD int target_pos(int t) {
 // 0.5.0 owner test: SAMPLER names P9..P16 only - its list had eight empty "P1 -".."P8 -" rows.
 static CORE_COLD uint32_t voice_params(int t, int keep) {
   uint32_t m = 0;
-  for (int p = 0; p < 16; ++p) {
+  const bool wave = ui::remote_voice_machine(t - kTVoice) == kWaveMachine;
+  for (int p = 0; p < (wave ? 12 : 16); ++p) {   // (WAVETABLE's P13..P16 are TBL B, POS B, MIX, FTYPE: not targets)
     char b[8];
     if (ui::voice_label(t - kTVoice, p, b, sizeof b)[0]) m |= 1u << p;
   }

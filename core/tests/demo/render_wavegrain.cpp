@@ -155,10 +155,10 @@ void wavetable_demo(const std::string& dir) {
   printf("wavetable_demo.wav: %.1f s, rms %.3f\n", y.size() / 48000.0, wg::rms(y));
 }
 
-// The phrases of plugins/warpwave/tests/demo.py (on feature/warpwave) through WAVETABLE's new patches, one voice, each
-// scaled to the same loudness (rms -20 dBFS, less where the peak would pass -0.1 dBFS): chords (Am7 Fmaj7 C G, a bar
-// each at 100 BPM, the notes of a chord together), bass (a two-bar line twice, a note each step), pad (one chord held
-// 8 s with POS swept 0 > 127 > 0 while it is held, then released). Files: wt-vital-<patch>-<phrase>.wav.
+// Three phrases through WAVETABLE's new patches, one voice, each scaled to the same loudness (rms -20 dBFS, less where the
+// peak would pass -0.1 dBFS): chords (Am7 Fmaj7 C G, a bar each at 100 BPM, the notes of a chord together), bass (a
+// two-bar line twice, a note each step), pad (one chord held 8 s with POS swept 0 > 127 > 0 while it is held, then
+// released). Files: wt-warps-<patch>-<phrase>.wav.
 //   plain    A only: BASIC, no warp, one oscillator, LP12
 //   mix      A + B: BASIC and SYNC (the table) half and half, two unison pairs, LP12
 //   bend / squeeze / formant   A only, the warp's AMT mid-way, LP12
@@ -171,7 +171,7 @@ float tri(double t, double len, float a, float top) {
 }
 struct Patch { const char* name; std::vector<float> p; bool sweep; float fenv; };
 struct Phrase { const char* name; double secs; };
-void vital_demo(const std::string& dir) {
+void warps_demo(const std::string& dir) {
   const int F = kWaveMachine;
   auto wz = [](int z) { return (float)((z * 128 + 64) / 9); };
   auto fz = [](int z) { return (float)(z * 16 + 8); };
@@ -227,7 +227,7 @@ void vital_demo(const std::string& dir) {
       for (float x : y) pk = std::max(pk, (double)std::fabs(x));
       float g = (float)std::min(0.1 / std::max(r, 1e-9), 0.989 / std::max(pk, 1e-9));
       for (float& x : y) x *= g;
-      std::string path = dir + "/wt-vital-" + pt.name + "-" + phrases[ph].name + ".wav";
+      std::string path = dir + "/wt-warps-" + pt.name + "-" + phrases[ph].name + ".wav";
       wg::write_wav16(path, y);
       printf("%s: %.1f s, raw rms %.3f peak %.3f, written x %.2f (rms %.1f dBFS)\n", path.c_str(), y.size() / 48000.0, r, pk, g,
              20 * std::log10(r * g));
@@ -367,8 +367,8 @@ int main(int argc, char** argv) {
   wt::begin(true);
   gr::begin(true);
   pu::steps();
-  if (dir == "--vital") {   // --vital DIR: the new patches' phrases
-    vital_demo(argc > 2 ? argv[2] : ".");
+  if (dir == "--warps") {   // --warps DIR: the new patches' phrases
+    warps_demo(argc > 2 ? argv[2] : ".");
     return 0;
   }
   wavetable_demo(dir);

@@ -323,7 +323,7 @@ CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
   const V& x = v[vi];
   bool chords = x.fm;
 #if CORE_MSAMP
-  chords = chords || x.ms || x.wt || x.gr;   // the machines with chord words on P13..P16
+  chords = chords || x.ms || x.gr;   // the machines with chord words on P13..P16 (WAVETABLE's are TBL B ... FTYPE)
 #endif
   uint8_t ns[poly::kMaxNotes] = {(uint8_t)note};
   int k = chords ? poly::expand(note, poly::chord_of(p), ns) : 1;
@@ -332,6 +332,7 @@ CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
   vo[vi].trig_ms = now_ms();
   return true;
 }
+CORE_COLD int held(int vi) { return vo[vi & 7].n; }
 CORE_COLD bool trig_off(int vi) { return vi >= 0 && vi < kVoices && release(vi, kLiveTrig, -1, -1) > 0; }
 
 CORE_COLD void lock(int vi, int track, int mask, const uint8_t* val, int64_t until) {

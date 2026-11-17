@@ -99,6 +99,7 @@ const Stats& stats();
 // tests
 int voice_entry(int vi);             // the list entry voice vi plays now (-1 none)
 int voice_entry_b(int vi);           // the list entry its table B plays now (-1 none: B off)
+bool denormal_state(int vi);         // a subnormal float in a note's filter memories (tests)
 int table_frames(int e);             // a resident entry's frames (0: not resident)
 uint64_t ram_bytes(uint64_t* capacity);   // the tables' frames in RAM now (and the memory set aside for them)
 const float* table_frame(int e, int f);   // its frame f (kFrameFloats floats), nullptr not resident

@@ -111,12 +111,16 @@ The warps (AMT laws; SYNC, PWM and FM keep this engine's, the others are Vital's
 | FORMANT | sync ratio 1/16 .. 16x (2^((a - 0.5) x 8)), under a half-sine window (a formant, not a sweep) |
 | QUANT | the phase quantised into steps: many (AMT 0: none) .. two .. one (AMT 127: the phase stops on the cycle's start, silence: Vital's end of the law; level 0.23 at AMT 60, 0.08 at 110, 0.02 at 120) |
 | BEND | the phase bent by a cubic: AMT 64 is the straight phase, below / above push it either way |
-| SQUEEZE | the cycle squeezed toward its start (AMT 0) or its middle (AMT 127); AMT 64 is straight |
+| SQUEEZE | the cycle squeezed toward its start (AMT 0) or its middle (AMT 127); AMT 64 is straight. The mip level allows for the squeeze's steepest slope up to 8x the note's rate (a cap: past it the note is brighter than the level, with some aliasing at the extremes of AMT on high notes) |
 | RM | the table multiplied in by a window: 1 + (m - 1) x AMT with m the modulator as in FM (table B, or a sine) |
 
 With table B on, the warp acts on A and on B, except FM and RM: there B is the modulator of A, and B is heard unwarped
 under MIX. Reading B when MIX is 0 under FM or RM still happens (it modulates), so MIX 0 plus FM is "A modulated by B,
-B not heard". B shares the note's unison lanes, rates and pitch, and its own random start phases. Old projects' WARP
+B not heard". B shares the note's unison lanes, rates and pitch, and its own random start phases. B is **wanted** (requested from the card, kept in its slot) only while it can be heard: MIX above 0, or FM / RM; so an old
+project's chord words, which read as TBL B rows at MIX 0, claim no card slot, and every voice's A tables load before any
+B. The mix is faded: it moves 1/40 a block (10 ms) toward MIX while B is wanted and in, and back to 0 when B goes (B's
+table stays 40 ms for that); with TBL B OFF it is exactly A. Under FM / RM B is read at the note's own mip level (plain),
+A at the warp's. Old projects' WARP
 values land in other zones now (nine zones, not four: an old SYNC at 40 is PWM now); P13..P16 of an old project were
 the chord (CHD INV SPR VOI): a CHD value reads as a TBL B row now (CHD 1 = A001 = BASIC as B, MIX 0: nothing audible
 until MIX moves), INV / SPR are POS B / MIX, VOI an FTYPE zone: they are all zero on a project without a chord, and
@@ -133,7 +137,7 @@ stage, so it falls 18 dB / octave below its cutoff (its 24 dB shows above and in
 Decisions: page 1 is the oscillator and filter (TBL POS WARP AMT UNI SUB CUT RES, as asked); page 2 is the amp envelope
 ATK DEC SUS (DEC also the release), the mod envelope's depth ENV onto both POS, and TBL B, POS B, MIX, FTYPE where the
 chord was (owner, 2026-11-17: "chords we can already do from a poly track"). The LFO is the Sidecar's own (`core/lfo.h`):
-any of P1..P12 can be its target, POS above all (P13..P16 are not LFO targets). Velocity: 0.25 + 0.75 v^2.
+any of P1..P12 can be its target, POS above all (P13..P16 are not LFO targets: the PAR list stops at P12 on a WAVETABLE voice; their labels are TBLB POSB MIX FTYP). Velocity: 0.25 + 0.75 v^2.
 
 **The filter envelope's depth has no knob and no store.** The brief put it on the touchscreen's WAVETABLE page, but the
 project keeps no per-track, per-machine store for a touch-only setting (the stores are the LFO / INSERT / XY / scene
@@ -242,7 +246,7 @@ once a kernel with this branch boots. Boot: the built-ins take 24 ms on the Mac 
 | the machine | `core/wavetable/wavetable.{h,cpp}` |
 | the note machines' dispatch (MULTISAMPLE, WAVETABLE, GRANULAR) | `core/nmach.h` |
 | remote UI page | `core/ui/page_wavegrain.cpp` |
-| tests, demo | `core/tests/test_wavetable.cpp`, `core/tests/wg_util.h`, `core/tests/demo/render_wavegrain.cpp` (`make -C core demo-wavegrain OUT=dir`, `--bench`, `--vital DIR`: the new patches' phrases) |
+| tests, demo | `core/tests/test_wavetable.cpp`, `core/tests/wg_util.h`, `core/tests/demo/render_wavegrain.cpp` (`make -C core demo-wavegrain OUT=dir`, `--bench`, `--warps DIR`: the new patches' phrases) |
 
 Shared files touched (small hooks): `core/machines.h` (flags), `core/voices.{h,cpp}` (V's `wt` `gr`, report / note-off /
 silence / render through `nm::`), `core/poly.cpp` (live / sequencer notes through `nm::`; no chord write-back for a
@@ -282,7 +286,7 @@ ladder -23.5 dB per octave and 0.94 of the level far below its cutoff); the filt
 
 FORMANT, QUANT, BEND, SQUEEZE, RM and the filters LP / BP / HP 12 / 24 dB and LADDER (`core/wavetable/wavetable.cpp`:
 `phase_warp`, `warp_pf`, `filter_targets`, `svf_tick`, `ladder_tick`, the tanh / hardTanh helpers) are derived from Vital
-by Matt Tytel (https://github.com/mtytel/vital, commit 636ca0e, GPL-3.0-or-later; Copyright 2013-2019 Matt Tytel), by way
-of our port plugins/warpwave (feature/warpwave), whose outputs were checked against Vital's C++. They are named by what
-they do; the original's names are not used for anything here. The Pi binaries are distributed under GPL-3.0-or-later
+by Matt Tytel (https://github.com/mtytel/vital, commit 636ca0e, GPL-3.0-or-later; Copyright 2013-2019 Matt Tytel), ported
+to float C and checked against the original's C++ (its phase warps, digital SVF and ladder). They are named by what
+they do; the original's names are not used for anything here. The file as a whole is GPL-3.0-or-later (SPDX line). The Pi binaries are distributed under GPL-3.0-or-later
 (Circle is too); NOTICE, THIRD_PARTY_LICENSES and README say so. No wavetable or preset of Vital is included.

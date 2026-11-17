@@ -1,10 +1,12 @@
 // core/wavetable/wavetable.cpp - see wavetable.h. Everything but render_add is the control core's and cold.
 //
+// SPDX-License-Identifier: GPL-3.0-or-later
 // The warps FORMANT QUANT BEND SQUEEZE RM and the filters LP / BP / HP 12 and 24 dB and LADDER (the render core's block
 // further down: phase_warp, warp_pf, filter_targets, svf_tick, ladder_tick and their helpers) are derived from Vital by
 // Matt Tytel (https://github.com/mtytel/vital, commit 636ca0e; Copyright 2013-2019 Matt Tytel), GPL-3.0-or-later: the
-// Pi binaries carry it (NOTICE, THIRD_PARTY_LICENSES). Through plugins/warpwave (feature/warpwave), our port checked
-// against the original's C++. The rest of this file is ours: GPL-2.0-or-later.
+// Pi binaries carry it (NOTICE, THIRD_PARTY_LICENSES). Ported to float C and checked against the original's C++ (its
+// phase warps, digital filters and ladder). The rest of this file is ours, GPL-2.0-or-later; as one combined file it is
+// GPL-3.0-or-later.
 #include "../platform.h"
 
 #if CORE_MSAMP
@@ -125,6 +127,10 @@ volatile uint32_t sel[kVoices];   // the table id voice vi plays (kTables: none)
 volatile uint32_t use[kVoices];   // the table id its render core reads now (kTables: none)
 volatile uint32_t selb[kVoices];  // table B's (kTables: none: B off)
 volatile uint32_t useb[kVoices];
+volatile uint32_t bwant[kVoices];   // 1: table B is wanted (a row, and it can be heard): the render core fades it in / out
+bool b_off[kVoices];              // B was dropped: its table is kept kFadeMs for the fade out, then selb goes
+uint32_t b_off_ms[kVoices];
+constexpr uint32_t kFadeMs = 40;
 int16_t want[kVoices];            // the list entry it wants (-1 none)
 int16_t wantb[kVoices];           // table B's
 bool force[kVoices];
@@ -244,21 +250,36 @@ CORE_COLD void select_a(int vi) {
   else if (__atomic_load_n(&sel[vi], __ATOMIC_SEQ_CST) >= (uint32_t)kTables)
     __atomic_store_n(&sel[vi], 0u, __ATOMIC_SEQ_CST);   // nothing yet: BASIC meanwhile
 }
-// table B (P13): OFF (row 000 of a bank, an empty or missing row) is no B; a table loading leaves the B it had (none:
-// silent until it is in)
+// table B (P13): OFF (row 000 of a bank, an empty or missing row) is no B. B is wanted (requested from the card, kept in
+// its slot) only while it can be heard: MIX above 0, or FM / RM using it as the modulator (an old project's chord words
+// read as TBL B rows at MIX 0: they claim no slot). A B that goes keeps its table kFadeMs more, for the render core's
+// fade out (b_fade_step); a table loading leaves the B it had (none: silent until it is in).
 CORE_COLD void select_b(int vi) {
   int e = srclib::code_of(vp[vi][12]);
   if (!list || e < 0 || e >= nlist) return;
   if (!(v[vi].wt || force[vi])) return;
-  if (e != wantb[vi] && failed[e]) failed[e] = 0, why[e] = 0;
-  wantb[vi] = (int16_t)e;
-  if (srclib::silent(list, e)) {
-    __atomic_store_n(&selb[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
+  int wz = eng_zone(vp[vi][2], kWarps);
+  bool on = !srclib::silent(list, e) && (vp[vi][14] > 0 || wz == kWFm || wz == kWRm);
+  if (!on) {
+    wantb[vi] = -1;
+    __atomic_store_n(&bwant[vi], 0u, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&selb[vi], __ATOMIC_SEQ_CST) < (uint32_t)kTables && !b_off[vi]) b_off[vi] = true, b_off_ms[vi] = now_ms();
     return;
   }
+  b_off[vi] = false;
+  if (e != wantb[vi] && failed[e]) failed[e] = 0, why[e] = 0;
+  wantb[vi] = (int16_t)e;
+  __atomic_store_n(&bwant[vi], 1u, __ATOMIC_SEQ_CST);
   int t = resident(e);
   if (t >= kBuiltins) slots[t - kBuiltins].used_ms = now_ms();
   if (t >= 0) __atomic_store_n(&selb[vi], (uint32_t)t, __ATOMIC_SEQ_CST);
+}
+CORE_COLD void b_fade_step() {
+  for (int vi = 0; vi < kVoices; ++vi)
+    if (b_off[vi] && now_ms() - b_off_ms[vi] >= kFadeMs) {
+      b_off[vi] = false;
+      if (wantb[vi] < 0) __atomic_store_n(&selb[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
+    }
 }
 CORE_COLD void select(int vi) {
   select_a(vi);
@@ -357,9 +378,11 @@ CORE_COLD int free_slot() {
 CORE_COLD bool start_load() {
   if (!job->raw) return false;   // no memory for card tables
   int e = -1;
-  for (int vi = 0; vi < kVoices && e < 0; ++vi)   // a voice's wanted table (A, then B) that is not resident
-    for (int w = want[vi], b = 0; b < 2 && e < 0; ++b, w = wantb[vi])
+  for (int pass = 0; pass < 2 && e < 0; ++pass)   // every voice's A first, then the B tables (they never starve an A)
+    for (int vi = 0; vi < kVoices && e < 0; ++vi) {
+      int w = pass ? wantb[vi] : want[vi];
       if (w >= 0 && fixed_tab(w) < 0 && list[w].path[0] && resident(w) < 0 && !failed[w]) e = w;
+    }
   if (e < 0) return false;
   int s = free_slot();
   if (s < 0) return false;   // every slot plays: later
@@ -545,6 +568,7 @@ CORE_COLD void begin(bool card) {
   for (int vi = 0; vi < kVoices; ++vi) {
     want[vi] = wantb[vi] = -1, pend[vi].on = false, pv[vi].wait = pv[vi].on = false;
     sel[vi] = use[vi] = selb[vi] = useb[vi] = kTables;
+    bwant[vi] = 0, b_off[vi] = false;
     fenv_amt[vi] = 0;
     for (int k = 0; k < 16; ++k) vp[vi][k] = k == 2 ? 0 : k == 6 ? 64 : k == 10 ? 100 : k == 11 ? 64 : k == 9 ? 60 : k == 0 ? 1 : 0;   // (TBL A001 before a report: the template's BASIC)
     set_knobs(vi);
@@ -561,6 +585,7 @@ CORE_COLD void rescan() {   // the card changed: failed files are tried again (t
 CORE_COLD bool step() {
   if (!job) return false;
   preview_step();
+  b_fade_step();
   switch (job->phase) {
     case kIdle:
       if (srclib::pool_sig(srclib::kWt) != composed_sig) {   // the WAVETABLES pool changed (a row, a state)
@@ -650,6 +675,7 @@ CORE_COLD void leave(int vi) {   // the voice left WAVETABLE: its notes end, its
   want[vi] = wantb[vi] = -1;
   __atomic_store_n(&sel[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
   __atomic_store_n(&selb[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
+  bwant[vi] = 0, b_off[vi] = false;
   fenv_amt[vi] = 0;
 }
 
@@ -740,7 +766,7 @@ inline float soft(float x) {   // tanh, rational (|x| <= 3)
 const float kSpread[kUni] = {0, -0.33f, 0.33f, -0.66f, 0.66f, -1.0f, 1.0f};
 constexpr float kDetuneCents = 60.0f;
 
-// ---- the warps and filters below are derived from Vital by Matt Tytel (GPL-3.0-or-later), as plugins/warpwave's port
+// ---- the warps and filters below are derived from Vital by Matt Tytel (GPL-3.0-or-later), as a port
 // checked against its C++ (NOTICE): syncPhase / quantizePhase / bendPhase / squeezePhase / halfSinWindow / rmWindow and
 // their amount laws (synth_oscillator.cpp), the digital SVF and the ladder (filters/), futils' tanh.
 constexpr float kPhaseMult = 4294967296.0f, kInvPhaseMult = 1.0f / 4294967296.0f;
@@ -846,7 +872,7 @@ inline void frames_at(const float* data, uint32_t nf, float pos, int loff, const
 }
 
 // The new filters' block constants (Vital's DigitalSvf::setupFilter, LadderFilter::setupFilter / setStageScales as
-// warpwave.c's filter_targets): the blend, resonance and drive of the type and RES
+// a port's filter_targets): the blend, resonance and drive of the type and RES
 struct FT {
   bool two, ladder;    // 24 dB (two stages), the ladder
   float res, drv, b0, b1, b2, sc[5];
@@ -913,7 +939,7 @@ inline void clear_filters(Note& n) {
 // The lanes of a sample for what the fast paths above do not take: the new warps, and table B with PWM / FM / the new
 // warps (B warped as A is; under FM and RM B is A's modulator and is read plain). o, ob: A's and B's weighted sums.
 __attribute__((noinline)) void lanes_generic(Note& n, int nu, const uint32_t* iu, const float* w, const WP& wp, bool modulated, bool read_b,
-                                             int lsz, const float* A, const float* B, float ft, const float* Bb, const float* Bc,
+                                             int lsz, int lszb, const float* A, const float* B, float ft, const float* Bb, const float* Bc,
                                              float ftb, float* o_out, float* ob_out) {
   const WP plain = {kWOff, 1, 0.5f, 0, 0};
   float o = 0, ob = 0;
@@ -924,12 +950,12 @@ __attribute__((noinline)) void lanes_generic(Note& n, int nu, const uint32_t* iu
     float m = 0, bl = 0;
     if (modulated) {   // B as it is is the modulator (a sine at the note's rate while B is off)
       float wb = 1;
-      if (read_b) m = bl = read2(Bb, Bc, warp_pf(plain, pb, 0, &wb), lsz, ftb);
+      if (read_b) m = bl = read2(Bb, Bc, warp_pf(plain, pb, 0, &wb), lszb, ftb);
       else m = sin01((float)(pm >> 8) * (1.0f / 16777216.0f));
     } else if (read_b) {   // B warped as A is
       float wb = 1;
       float pfb = warp_pf(wp, pb, 0, &wb);
-      bl = wb * read2(Bb, Bc, pfb, lsz, ftb);
+      bl = wb * read2(Bb, Bc, pfb, lszb, ftb);
     }
     float wa = 1;
     float pfa = warp_pf(wp, pa, m, &wa);
@@ -943,6 +969,7 @@ __attribute__((noinline)) void lanes_generic(Note& n, int nu, const uint32_t* iu
 static float head_g[kVoices] = {1, 1, 1, 1, 1, 1, 1, 1};
 static float pos_s[kVoices];   // the render core's smoothed POS (0..1)
 static float posb_s[kVoices];  // ... and POS B
+static float mix_s[kVoices];   // ... and the A / B mix as played (0 until B is in and wanted: it fades in and out)
 static float amt_s[kVoices];   // ... and AMT for the new warps (FORMANT .. RM: a step of QUANT's law would click)
 
 void render_add(int vi, float* out, int nfr) {
@@ -953,12 +980,18 @@ void render_add(int vi, float* out, int nfr) {
   }
   // the tables (a hazard slot each: the control core never reloads one a render core reads)
   uint32_t t = __atomic_load_n(&sel[vi], __ATOMIC_SEQ_CST), tb = __atomic_load_n(&selb[vi], __ATOMIC_SEQ_CST);
-  for (int i = 0; i < 4; ++i) {
+  bool held = false;
+  for (int i = 0; i < 4 && !held; ++i) {
     __atomic_store_n(&use[vi], t, __ATOMIC_SEQ_CST);
     __atomic_store_n(&useb[vi], tb, __ATOMIC_SEQ_CST);
     uint32_t t2 = __atomic_load_n(&sel[vi], __ATOMIC_SEQ_CST), tb2 = __atomic_load_n(&selb[vi], __ATOMIC_SEQ_CST);
-    if (t2 == t && tb2 == tb) break;
+    held = t2 == t && tb2 == tb;
     t = t2, tb = tb2;
+  }
+  if (!held) {   // the selection kept moving: this block is skipped (nothing is read that use does not name)
+    __atomic_store_n(&use[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&useb[vi], (uint32_t)kTables, __ATOMIC_SEQ_CST);
+    return;
   }
   uint32_t nf = t < (uint32_t)kTables ? ld_acq(&tables[t].frames) : 0;
   const float* data = nf ? tables[t].data : nullptr;
@@ -1025,8 +1058,15 @@ void render_add(int vi, float* out, int nfr) {
   }
   const bool modulated = k.warp == kWFm || k.warp == kWRm;   // B (or a sine) is the modulator
   // the A / B mix (equal power); B off: A alone, untouched
-  const float ga = bon ? cosf(k.mix * 1.5707963f) : 1.0f, gb = bon ? sinf(k.mix * 1.5707963f) : 0.0f;
-  const bool read_b = bon && (gb > 1e-4f || modulated);
+  // (B is faded: the mix moves 1/40 a block toward MIX while B is wanted and in, toward 0 otherwise; 0 with no B at all)
+  const float mx0 = mix_s[vi];
+  float mt = bon && __atomic_load_n(&bwant[vi], __ATOMIC_SEQ_CST) ? k.mix : 0.0f;
+  float mx1 = mx0 + (mt > mx0 ? (mt - mx0 < 0.025f ? mt - mx0 : 0.025f) : (mx0 - mt < 0.025f ? mt - mx0 : -0.025f));
+  if (!bon) mx1 = 0;
+  mix_s[vi] = mx1;
+  const bool mramp = mx0 != mx1;
+  const float ga = bon ? cosf(mx1 * 1.5707963f) : 1.0f, gb = bon ? sinf(mx1 * 1.5707963f) : 0.0f;
+  const bool read_b = bon && (mx0 > 1e-4f || mx1 > 1e-4f || modulated);
   // the filter's block constants (the new types)
   FT fl = {};
   if (k.ftype != kFDj) filter_targets(k.ftype, k.res, &fl);
@@ -1050,8 +1090,7 @@ void render_add(int vi, float* out, int nfr) {
         n.ph[0] = 0;
         for (int j = 1; j < kUni; ++j) n.ph[j] = s = s * 1664525u + 1013904223u;   // the unison's own phases
         for (int j = 0; j < kUni; ++j) n.fm_ph[j] = n.ph[j];
-        n.phb[0] = 0;
-        for (int j = 1; j < kUni; ++j) n.phb[j] = s = s * 1664525u + 1013904223u;   // B's own (the same rates)
+        for (int j = 0; j < kUni; ++j) n.phb[j] = s = s * 1664525u + 1013904223u;   // B's own (the same rates)
         n.sub_ph = 0, n.env = 0, n.menv = 0, n.stage = 0, n.mstage = 0, n.ic1 = n.ic2 = 0, n.dc_x = n.dc_y = 0;
         clear_filters(n);
         n.ftype = (uint8_t)k.ftype, n.coef_set = false;
@@ -1077,6 +1116,9 @@ void render_add(int vi, float* out, int nfr) {
     uint32_t sub_inc = (uint32_t)(inc0 * 0.5f * 4294967296.0f);
     int lsz = lv < kLevels ? kLevelSize[lv] : 0;
     int loff = lv < kLevels ? level_off(lv) : 0;
+    // table B read as the modulator of FM / RM is plain: its own level (the note's, not the warp's)
+    int lvb = modulated ? pick_level(top) : lv;
+    int lszb = lvb < kLevels ? kLevelSize[lvb] : 0, loffb = lvb < kLevels ? level_off(lvb) : 0;
     // the filter: DJ-style (50 % key tracking), or one of the new types (Vital's cutoff law: 8 .. 136 semitones above
     // C-1 as CUT 0..127, the same key tracking, the mod envelope x FENV x 64 semitones)
     float kt = exp2f((n.r.key - 60.0f) / 24.0f);
@@ -1084,6 +1126,13 @@ void render_add(int vi, float* out, int nfr) {
     bool bypass = false;
     float g = 0, a1 = 0, a2 = 0, a3 = 0, drive = 0, dnorm = 1;
     float coef = 0, d_coef = 0;
+    if (n.ftype != k.ftype) {   // a filter type change: what the new type does not share is cleared
+      auto family = [](int f) { return f == kFDj ? 0 : f == kFLadder ? 2 : 1; };
+      auto two = [](int f) { return f == kFLp24 || f == kFBp24 || f == kFHp24; };
+      if (family(n.ftype) != family(k.ftype)) clear_filters(n), n.coef_set = false;
+      else if (family(k.ftype) == 1 && two(n.ftype) != two(k.ftype)) n.ic1p = n.ic2p = 0;
+      n.ftype = (uint8_t)k.ftype;
+    }
     if (k.ftype == kFDj) {
       float fc = hp ? 20.0f * powf(400.0f, (k.cut - 64.0f) / 64.0f) : 20.0f * powf(1000.0f, k.cut / 64.0f);
       bypass = k.res < 0.01f && (hp ? k.cut < 65.0f : k.cut > 62.5f);
@@ -1093,9 +1142,7 @@ void render_add(int vi, float* out, int nfr) {
       float kq = 2.0f - 1.96f * k.res;
       a1 = 1.0f / (1.0f + g * (g + kq)), a2 = g * a1, a3 = g * a2;
       drive = k.res * 3.0f, dnorm = 1.0f / sqrtf(1.0f + drive);
-      if (n.ftype != kFDj) clear_filters(n), n.ftype = kFDj;
     } else {
-      if (n.ftype != k.ftype) clear_filters(n), n.ftype = (uint8_t)k.ftype;
       float semis = 8.0f + k.cut * (128.0f / 127.0f) + 0.5f * (n.r.key - 60.0f) + 64.0f * fenv * n.menv;
       float r = exp2f(semis * (1.0f / 12.0f)) * (8.1757989f / sr);
       float rmax = fl.ladder ? 20000.0f / sr : 0.45f;
@@ -1143,7 +1190,7 @@ void render_add(int vi, float* out, int nfr) {
         Bb = Bc = nullptr;
         if (bon) {
           float posb = q0 + (q1 - q0) * (float)(s + 1) / (float)nfr + k.env * n.menv;
-          frames_at(datab, nfb, posb, loff, &Bb, &Bc, &ftb);
+          frames_at(datab, nfb, posb, loffb, &Bb, &Bc, &ftb);
         }
         float o = 0, ob = 0;
         if (!bon && k.warp <= kWSync && w[nu - 1] > 0) o = simd::wt_unison(n.ph, iu, w, nu, k.warp, wp.sync_r, lsz, A, B, ft);   // (nu: the weights > 0)
@@ -1181,9 +1228,14 @@ void render_add(int vi, float* out, int nfr) {
           else
             for (int j = 0; j < nu; ++j) n.phb[j] += iu[j];
         } else {   // PWM, FM and the new warps (and B)
-          lanes_generic(n, nu, iu, w, wp, modulated, read_b, lsz, A, B, ft, Bb, Bc, ftb, &o, &ob);
+          lanes_generic(n, nu, iu, w, wp, modulated, read_b, lsz, lszb, A, B, ft, Bb, Bc, ftb, &o, &ob);
         }
-        y = (bon ? ga * o + gb * ob : o) * unorm;
+        if (bon && mramp) {   // the mix moves over the block
+          float ang = (mx0 + (mx1 - mx0) * (float)(s + 1) / (float)nfr) * 1.5707963f;
+          y = (cosf(ang) * o + sinf(ang) * ob) * unorm;
+        } else {
+          y = (bon ? ga * o + gb * ob : o) * unorm;
+        }
         float d = y - n.dc_x + 0.9995f * n.dc_y;   // the DC blocker (4 Hz)
         n.dc_x = y, n.dc_y = d, y = d;
       }
@@ -1208,6 +1260,11 @@ void render_add(int vi, float* out, int nfr) {
         y *= 2.0f;
       }
       acc[s] += y * n.env * gain;
+    }
+    if (k.ftype != kFDj) {   // no subnormals in the new filters' memories (a held note on a flat input decays into them)
+      auto fl0 = [](float& x) { if (fabsf(x) < 1e-20f) x = 0.0f; };
+      fl0(n.ic1), fl0(n.ic2), fl0(n.ic1p), fl0(n.ic2p), fl0(n.lin);
+      for (int q = 0; q < 4; ++q) fl0(n.ls[q][0]), fl0(n.ls[q][1]), fl0(n.ls[q][2]);
     }
     if (!fin) wk[nw++] = n.env;
     else {
@@ -1237,7 +1294,7 @@ CORE_COLD bool parse_num(const char** p, int* v) {
   const char* q = *p;
   if (*q < '0' || *q > '9') return false;
   int x = 0;
-  while (*q >= '0' && *q <= '9') x = x * 10 + (*q++ - '0');
+  for (int n = 0; *q >= '0' && *q <= '9' && n < 6; ++n) x = x * 10 + (*q++ - '0');   // (six digits at most: no overflow)
   *v = x, *p = q;
   return true;
 }
@@ -1328,6 +1385,15 @@ int voice_entry(int vi) {
     if (fixed_tab(i) == (int)t) return i;
   return -1;
 }
+bool denormal_state(int vi) {
+  for (const Note& n : notes[vi & 7]) {
+    float x[] = {n.ic1, n.ic2, n.ic1p, n.ic2p, n.lin, n.ls[0][0], n.ls[0][1], n.ls[0][2], n.ls[1][0], n.ls[1][1], n.ls[1][2],
+                 n.ls[2][0], n.ls[2][1], n.ls[2][2], n.ls[3][0], n.ls[3][1], n.ls[3][2]};
+    for (float y : x)
+      if (fpclassify(y) == FP_SUBNORMAL) return true;
+  }
+  return false;
+}
 int voice_entry_b(int vi) {
   uint32_t t = __atomic_load_n(&selb[vi & 7], __ATOMIC_SEQ_CST);
   int e = wantb[vi & 7];
@@ -1385,6 +1451,7 @@ CORE_COLD void reset() {
     silence(vi);
     force[vi] = false;
     head_g[vi] = 1.0f;
+    mix_s[vi] = 0;
     fenv_amt[vi] = 0;
   }
   uint32_t loads = st.loads, fails = st.load_fails;

@@ -1535,7 +1535,7 @@ UI_ROM const PageTwo kPageTwo[] = {
     {kPlaits, 0xFF, {64, 64, 0, 0, 0, 120, 0, 100}},
     {kDaisy, 0xFF, {64, 64, 0, 0, 0, 120, 0, 100}},
     {kMultiMachine, 0xFF, {64, 64, 0, 0, 0, 0, 0, 0}},     // TUNE FINE STRT LOOP / CHD INV SPR VOI
-    {kWaveMachine, 0xFF, {0, 64, 100, 64, 0, 0, 0, 0}},    // ATK DEC SUS ENV / CHD INV SPR VOI
+    {kWaveMachine, 0xFF, {0, 64, 100, 64, 0, 0, 0, 0}},    // ATK DEC SUS ENV / TBLB POSB MIX FTYP
     {kGranMachine, 0xFF, {10, 60, 0, 0, 0, 0, 0, 0}},      // ATK REL HOLD ANIM / CHD INV SPR VOI
     {kFm, 0xF0, {0, 0, 0, 0, 0, 0, 0, 0}},                 // E..H: CHD INV SPR VOI (A..D are FM's own)
 };

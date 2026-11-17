@@ -14,7 +14,9 @@
 #include <unistd.h>
 #include <sys/stat.h>   // chmod
 
+#include "arp/arp.h"
 #include "check.h"
+#include "lfo.h"
 #include "ui/remote.h"
 #include "poly.h"
 #include "voices.h"
@@ -26,6 +28,7 @@
 #include "pool/pool.h"
 
 using namespace core;
+namespace core { namespace ui { const char* voice_label(int vi, int k, char* b, int cap); } }   // page_lfo.cpp
 
 static constexpr int kW = kWaveMachine;
 // P1..P16: TBL POS WARP AMT UNI SUB CUT RES ATK DEC SUS ENV TBLB POSB MIX FTYPE
@@ -42,6 +45,11 @@ enum { kWOff, kWSync, kWPwm, kWFm, kWFormant, kWQuant, kWBend, kWSqueeze, kWRm, 
 enum { kFDj, kFLp12, kFLp24, kFBp12, kFBp24, kFHp12, kFHp24, kFLadder, kFTypes };
 static const float kSawPos = 84 + 85 / 128.0f;   // BASIC's saw frame (42 of 64)
 
+static uint64_t g_us = 1000000;
+static void advance_ms(int ms) {   // the control core's clock (the B fade out waits on it)
+  g_us += (uint64_t)ms * 1000;
+  host_fake_time(true, g_us);
+}
 static void idle() {
   for (int i = 0; i < 4000 && wt::step(); ++i) {}
 }
@@ -502,7 +510,7 @@ static void test_table_b() {
   double rms0 = 0;
   for (int m : {0, 32, 64, 96, 127}) {
     y = note(0, P((float)h, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)h, (float)frame_pos(1, 8), (float)m));
-    CHECK(wt::voice_entry_b(0) == h);
+    CHECK(wt::voice_entry_b(0) == (m ? h : -1));   // (B is wanted while it can be heard)
     spec(y, &b1, &b2, &b8);
     double ang = m / 127.0 * M_PI / 2, share = b1 / (b1 + b2), r = wg::rms(y);
     printf("test_wavetable: MIX %3d: A's share of the energy %.3f (law %.3f), rms %.4f\n", m, share, std::cos(ang) * std::cos(ang), r);
@@ -591,10 +599,11 @@ static void test_warps_filters() {
     std::vector<float> b = note(0, P(tbl, kSawPos, wz(w), 80, 0, 0, 64, 0, 0, 127, 127, 64, 3, 20, 0));
     std::vector<float> c = note(0, P(tbl, kSawPos, wz(w), 80, 0, 0, 64, 0, 0, 127, 127, 64, 3, 20, 127));
     std::vector<float> p = note(0, P(3, 20));   // B's table plain
-    double d = 0, e = 0, f = 0;
-    for (size_t i = 0; i < a.size(); ++i) d += (a[i] - b[i]) * (a[i] - b[i]), e += a[i] * a[i], f += (c[i] - p[i]) * (c[i] - p[i]);
-    printf("test_wavetable: %s by B against by a sine: %.2f of the energy differs; B alone under it: %.2g off plain B\n", names[w], d / e, f);
-    CHECK(d / e > 0.1 && f / e < 1e-3 && wg::rms(b) > 0.01);
+    double d = 0, e = 0;
+    for (size_t i = 0; i < a.size(); ++i) d += (a[i] - b[i]) * (a[i] - b[i]), e += a[i] * a[i];
+    double f = wg::rms(c) / wg::rms(p);   // (B has phases of its own: its level, not its waveform)
+    printf("test_wavetable: %s by B against by a sine: %.2f of the energy differs; B alone under it: %.3f of plain B's level\n", names[w], d / e, f);
+    CHECK(d / e > 0.1 && std::fabs(f - 1) < 0.03 && wg::rms(b) > 0.01);
   }
   // every warp x every filter at the knobs' ends: finite, bounded, silent after the release (B on at the upper end)
   int cases = 0;
@@ -769,7 +778,9 @@ static void test_b_slots() {
   wg::trig(kW, 6, 60, 100, P(1, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)t5, 0, 64));
   render(6, 4800);
   CHECK(wt::voice_notes(6) == 1 && wt::table_frames(t5) > 0);
-  wg::params(kW, 6, P(1, 0));   // B off: its slot goes back, the waiting table loads into it
+  wg::params(kW, 6, P(1, 0));   // B off: its slot goes back (after its fade out), the waiting table loads into it
+  render(6, 4800);
+  advance_ms(100);
   idle();
   CHECK(wt::voice_entry_b(6) == -1 && wt::table_frames(late) > 0 && wt::voice_entry(3) == late);
   // B on the built-in rows (no slot) and again OFF
@@ -778,6 +789,99 @@ static void test_b_slots() {
   wg::params(kW, 6, P(1, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 0, 0, 64));
   CHECK(wt::voice_entry_b(6) == -1);
   for (int vi = 0; vi < 8; ++vi) wg::off(vi);
+  wt::reset();
+}
+
+// review fixes: B claims no slot while it cannot be heard, B fades in and out, the arpeggiator and the LFO treat P13..P16 as
+// TBL B ... FTYPE, the new filters' memories hold no subnormals
+static void test_review() {
+  const int t5 = entry("t5"), t6 = entry("t6"), harm = entry("harm"), clm = entry("clm256"), akwf = entry("akwf600"), late = entry("late");
+  // old projects: card rows in P13 at MIX 0 (chord words read as TBL B): four voices' card A tables all load and play
+  for (int vi = 0; vi < 8; ++vi) wg::params(kPlaits, vi, {0, 64, 64, 64, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100});
+  advance_ms(100);
+  idle();
+  const int as[4] = {harm, clm, akwf, t5}, bs[4] = {t6, late, t6, late};
+  for (int vi = 0; vi < 4; ++vi) wg::params(kW, vi, P((float)as[vi], 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)bs[vi], 0, 0));
+  idle();
+  for (int vi = 0; vi < 4; ++vi) CHECK(wt::table_frames(as[vi]) > 0 && wt::voice_entry(vi) == as[vi] && wt::voice_entry_b(vi) == -1);
+  wt::reset();
+  for (int vi = 0; vi < 4; ++vi) render(vi, 480);
+  for (int vi = 0; vi < 4; ++vi) wg::trig(kW, vi, 60, 100, P((float)as[vi], 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)bs[vi], 0, 0));
+  for (int vi = 0; vi < 4; ++vi) CHECK(wt::voice_notes(vi) == 1);
+  // MIX up: B is wanted now, and loads (after the A tables, in a slot not read by a voice)
+  wg::params(kW, 0, P((float)as[0], 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)bs[0], 0, 64));
+  for (int vi = 0; vi < 8; ++vi) wg::off(vi), wt::silence(vi);
+  idle();
+  CHECK(wt::voice_entry_b(0) == -1 || wt::voice_entry_b(0) == bs[0]);
+  for (int vi = 0; vi < 8; ++vi) wg::params(kPlaits, vi, {0, 64, 64, 64, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100});
+  advance_ms(100);
+  idle();
+  wt::reset();
+
+  // B off at MIX 127 mid-note, and B arriving: no step above a bound (a sine's own is 0.02; a dropped B would be 0.3)
+  auto steps = [&](const std::vector<float>& p1, const std::vector<float>& p2, int frames) {
+    wt::silence(6);
+    render(6, 480);
+    wg::trig(kW, 6, 48, 127, p1);
+    render(6, 9600);
+    wg::params(kW, 6, p2);
+    std::vector<float> y = render(6, frames);
+    double mx = 0;
+    for (size_t i = 1; i < y.size(); ++i) mx = std::max(mx, (double)std::fabs(y[i] - y[i - 1]));
+    return mx;
+  };
+  const float p2 = (float)frame_pos(1, 8);
+  double down = steps(P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)harm, p2, 127), P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 0, p2, 127), 4800);
+  double up = steps(P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 0, p2, 127), P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)harm, p2, 127), 4800);
+  double slide = steps(P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)harm, p2, 0), P((float)harm, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)harm, p2, 127), 4800);
+  double ref = steps(P((float)harm, 0), P((float)harm, 0), 4800);
+  printf("test_wavetable: largest step: a sine %.4f, B off at MIX 127 %.4f, B arriving %.4f, MIX 0 > 127 %.4f\n", ref, down, up, slide);
+  CHECK(down < 0.06 && up < 0.06 && slide < 0.06);
+  wt::reset();
+  advance_ms(100);
+
+  // the arpeggiator: one note a trig on a WAVETABLE voice whatever P13 holds (it read the chord words before)
+  {
+    wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 46, (uint8_t)(kW | 0), 0xF7});   // BD plays WAVETABLE
+    wg::params(kW, 0, P(1, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 5, 0, 0));
+    arp::Cfg up = arp::decode(0);
+    up.mode = arp::kUp;
+    arp::set(0, up);
+    CHECK(arp::on(0));
+    float pw[16] = {1, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 5, 0, 0, 0};
+    CHECK(arp::trig(0, 60, 100, pw) && arp::held(0) == 1);
+    arp::trig_off(0);
+    arp::set(0, arp::decode(0));
+    arp::end(0);
+  }
+  // the LFO's targets: P13..P16 of a WAVETABLE voice are not among them, and the labels say what they are
+  {
+    wg::params(kW, 3, P(1, 0));
+    char b[8];
+    CHECK(!strcmp(ui::voice_label(3, 12, b, sizeof b), "TBLB") && !strcmp(ui::voice_label(3, 13, b, sizeof b), "POSB") &&
+          !strcmp(ui::voice_label(3, 14, b, sizeof b), "MIX") && !strcmp(ui::voice_label(3, 15, b, sizeof b), "FTYP"));
+    lfo::Settings st = {};
+    st.target = (uint8_t)(lfo::kTVoice + 3);
+    int n = lfo::param_count(st);
+    printf("test_wavetable: the LFO's targets on a WAVETABLE voice: %d parameters\n", n);
+    CHECK(n == 12);
+    wg::params(kPlaits, 3, {0, 64, 64, 64, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100});
+  }
+
+  // no subnormal in the new filters' memories: a flat input (QUANT's end: the phase stops) decays them through the range
+  for (int ft : {kFLp12, kFBp24, kFLadder}) {
+    wt::silence(7);
+    render(7, 480);
+    wg::trig(kW, 7, 48, 127, P(1, kSawPos, wz(kWQuant), 127, 0, 0, 90, 20, 0, 127, 127, 64, 0, 0, 0, fz(ft)));
+    bool seen = false;
+    for (int b = 0; b < 12000; ++b) {
+      render(7, kBlock);
+      seen = seen || wt::denormal_state(7);
+    }
+    printf("test_wavetable: filter type %d held on a flat input for 3 s: subnormal state seen %d\n", ft, (int)seen);
+    CHECK(!seen);
+    wg::off(7);
+  }
   wt::reset();
 }
 
@@ -874,7 +978,7 @@ int main() {
   test_levels();
   setup_card();
   hooks.to_rytm = [](const uint8_t*, int) {};
-  host_fake_time(true, 1000000);
+  host_fake_time(true, g_us);
   voices_init();
   card_ok = true;
   srclib::begin(true);
@@ -899,6 +1003,7 @@ int main() {
   test_cpu();
   test_retry_release();
   test_b_slots();
+  test_review();
   system(("rm -rf '" + g_card + "'").c_str());
   printf("test_wavetable: PASS\n");
   return 0;
