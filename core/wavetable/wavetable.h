@@ -44,6 +44,11 @@ void begin(bool card);               // boot (engine_begin): the built-ins gener
 bool step();                         // one bounded card job; true when it did one
 void rescan();                       // the card changed: failed tables are tried again
 bool forced(int vi);                 // wt=voice:V
+// The filter envelope's depth (-1..1): the mod envelope onto CUT of the new filter types (0 = none; 64 semitones at 1).
+// A touchscreen-only setting in the brief, but the project has no per-track store for one: it is the engine's, set from
+// the console (wt=fenv:V:PERCENT), not saved, 0 at boot and when the voice leaves WAVETABLE.
+void set_fenv(int vi, float a);
+float fenv_get(int vi);
 // voices.cpp's hooks for a WAVETABLE voice vi (note -1: a 0x03 PARAMS)
 void report(int vi, int note, int vel, const float* p);
 void note_off(int vi);
@@ -84,6 +89,7 @@ struct Stats {
 const Stats& stats();
 // tests
 int voice_entry(int vi);             // the list entry voice vi plays now (-1 none)
+int voice_entry_b(int vi);           // the list entry its table B plays now (-1 none: B off)
 int table_frames(int e);             // a resident entry's frames (0: not resident)
 uint64_t ram_bytes(uint64_t* capacity);   // the tables' frames in RAM now (and the memory set aside for them)
 const float* table_frame(int e, int f);   // its frame f (kFrameFloats floats), nullptr not resident
