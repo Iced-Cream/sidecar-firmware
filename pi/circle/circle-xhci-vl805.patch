@@ -44,18 +44,19 @@ index 97d60f3..f4aee4c 100644
  
  #endif
 diff --git a/lib/usb/xhcidevice.cpp b/lib/usb/xhcidevice.cpp
-index 764cb74..8ab5432 100644
+index 764cb74..15a1e5b 100644
 --- a/lib/usb/xhcidevice.cpp
 +++ b/lib/usb/xhcidevice.cpp
-@@ -205,6 +205,8 @@ boolean CXHCIDevice::Initialize (boolean bScanDevices)
+@@ -204,6 +204,9 @@ boolean CXHCIDevice::Initialize (boolean bScanDevices)
+ 	assert (!(m_pMMIO->cap_read32 (XHCI_REG_CAP_HCCPARAMS) & XHCI_REG_CAP_HCCPARAMS1_CSZ));
  #endif
  
- #ifdef XHCI_DEBUG
++	// circle-xhci-vl805: outside XHCI_DEBUG, so a unit run can see which ring setup it boots
 +	CLogger::Get ()->Write (From, LogNotice, "circle-xhci-vl805: rings %u TRB (x%u alloc), interrupt avg TRB = MPS",
 +				XHCI_CONFIG_TRANSFER_RING_SIZE, XHCI_CONFIG_RING_ALLOC_FACTOR);
+ #ifdef XHCI_DEBUG
  	CLogger::Get ()->Write (From, LogDebug, "%u slots, %u ports, %u scratchpad bufs",
  				nMaxSlots, nMaxPorts, nMaxScratchpadBufs);
- #endif
 diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
 index 206e179..a7b605c 100644
 --- a/lib/usb/xhciendpoint.cpp

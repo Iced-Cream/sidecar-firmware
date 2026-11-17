@@ -27,7 +27,7 @@ costs 16 KB of the pool with the alignment: ~30 rings for two boxes, the relay a
 allocator (40 rings, 1000 free/allocate rounds): no growth.
 
 ## What a unit run shows
-- Boot log: `xhcidev: circle-xhci-vl805: rings 256 TRB (x2 alloc), interrupt avg TRB = MPS`.
+- Boot log (always, not only with XHCI_DEBUG): `xhcidev: circle-xhci-vl805: rings 256 TRB (x2 alloc), interrupt avg TRB = MPS`.
 - If the link TRB was the cause: no short box OUT with 6 every-microframe endpoints (default route, both async pipes at
   their own interval). If short OUT remains, its step tells which part mattered: 996.1/s (= 1000 x 255/256) means the link TRB
   still costs a service but less often; 984.4/s would mean the old ring is still in use (check the boot line).

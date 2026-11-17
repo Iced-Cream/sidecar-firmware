@@ -277,7 +277,12 @@ grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circl
 # (was 64) allocated at twice their size and aligned to it (as Linux does: XHCI_ZHAOXIN_TRB_FETCH) with a kept 8 KB class in the
 # shared memory allocator, and the Set TR Dequeue target checked never to be a link TRB (XHCI_AVOID_DQ_ON_LINK);
 # boot log "circle-xhci-vl805: rings 256 TRB"; after circle-hub-poll, idempotent
-grep -q circle-xhci-vl805 include/circle/usb/xhciconfig.h || patch -p1 < /repo/pi/circle/circle-xhci-vl805.patch
+# (a tree patched by its first build, 1fcb967/a67d7ae, has the boot line inside XHCI_DEBUG: stop and say so)
+if ! grep -q circle-xhci-vl805 include/circle/usb/xhciconfig.h; then
+  patch -p1 < /repo/pi/circle/circle-xhci-vl805.patch
+elif ! grep -q "outside XHCI_DEBUG" lib/usb/xhcidevice.cpp; then
+  echo "$T: an unreleased circle-xhci-vl805 (a67d7ae) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1
+fi
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
