@@ -783,8 +783,9 @@ int main() {
   other.clear();
   for (int i = 0; i < 120; ++i) remote_tick(t += 30);   // past its 3 s: 36 0, then the view
   CHECK(splash_last == 0 && remote_stats().page == 4 && rects - r1 >= 8 && shown_text("JUNO") && shown_text("BD"));
-  // splash-shadow: the splash end sent 3A 0 0 (the Rytm's shadow still held CONNECTED); the view's frame followed it
-  CHECK(sent_cmd(0x3A) == 1 && other[0][4] == 0x3A && other[0][6] == 0 && other[0][7] == 0);
+  // splash-shadow (b): a track with a SRC page: no 3A 0 0 at the splash end (the Rytm would apply it at its next UI
+  // tick and hide the view's first frame too); the view's whole frame replaces the shadow's CONNECTED
+  CHECK(sent_cmd(0x3A) == 0);
   src_view(0, 0);
   // splash-shadow (a): a track with no page (BT, analog): the splash ends with one 3A 0 0 and no frame, else the Rytm
   // shows the shadow's CONNECTED at the next host message
