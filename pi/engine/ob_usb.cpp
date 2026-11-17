@@ -1070,11 +1070,14 @@ void CObUsb::MirrorAttach (void)
 		// An interrupt pipe of the box the Teensy relay shows is polled every 1 ms at most (bInterval 4 at high speed):
 		// the A4's async IN 0x82 asks for every 125 us, and polled that often beside the relay's link the Pi's host
 		// controller sent the link only ~1 block/ms (T330); every 1 ms the link carried the full rate and the Overbridge
-		// Engine's latency check passed (T335). The USB-C gadget's box keeps its own interval, and so does the Rytm
-		// wherever it is (PA1, T353: its stream died with its async pipe at 1 ms). A box moved later (PollAssign) keeps the
-		// interval its pipes were opened with. mirrorpipeiv=N sets it for every box (0: the box's own)
+		// Engine's latency check passed (T335). The A4 (slot 1) does so on USB-C too: with the Rytm on the relay beside it
+		// (the default route) both boxes' async pipes at 125 us made 6 every-microframe interrupt endpoints on the VL805,
+		// one more than it serves in full, and one box's OUT ran short (PD6/PD6b, T416/T417; diagnosis-periodic-starvation).
+		// The Rytm keeps its own interval wherever it is: with its pipe at 1 ms both boxes' IN collapsed in stalls (PV1;
+		// PA1, T353: its stream died). A box moved later (PollAssign) keeps the interval its pipes were opened with.
+		// mirrorpipeiv=N sets it for every box (0: the box's own)
 		static TUSBEndpointDescriptor s_Desc[2][MaxPipes];
-		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != GadgetSlot () && m_nSlot != 0 ? 4 : 0);
+		unsigned nIv = CKernelOptions::Get ()->GetAppOptionDecimal ("mirrorpipeiv", m_nSlot != 0 ? 4 : 0);
 		if (nIv > 16) nIv = 16;
 		if (m_nSlot < 2 && (pDesc->bmAttributes & 3) == 3 && nIv > pDesc->bInterval)
 		{

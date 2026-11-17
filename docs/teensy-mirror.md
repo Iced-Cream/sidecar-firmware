@@ -139,8 +139,11 @@ against the ~1.2 ms margin. Build: teensy-relay-fixes b39f391, rpiboot folder te
   computer gets its async packets. Polled every microframe beside the link, it left the link one transfer per frame.
   The A4 does not stream at all with it not polled (T333, but that kernel had the bug below).
 - **Fix (T335, TR2e):** the relay's box polls its interrupt pipes every 1 ms at most (bInterval 4; `mirrorpipeiv=N`
-  sets it, 0 the box's own; the USB-C gadget's box keeps its own). The link then carried the full rate and the
-  Engine's latency check passed. The Engine stops streaming by itself after the check while no app uses the A4.
+  sets it, 0 the box's own). The link then carried the full rate and the Engine's latency check passed.
+  Since PD6/PD6b (T416/T417) the A4 polls its pipe at bInterval 4 on USB-C too: on the default route (A4 on USB-C,
+  Rytm on the relay) both async pipes at bInterval 1 made 6 every-microframe interrupt endpoints on the VL805 and one
+  box's OUT ran short in ~984/s steps. The Rytm keeps its own interval (PV1: with both pipes at 4 both boxes' IN
+  collapsed; PA1, T353). The Engine stops streaming by itself after the check while no app uses the A4.
 - f56dc30..b408c9b had a bug: MirrorAttach skipped parsing the box's configuration for slots 0/1 (fixed in 29fe713);
   T331-T333 ran with it and do not count.
 - Kept for later runs: link 0x02 counters (Pi stats line "relay link 0x02"), the Teensy's link counters ("relay teensy:
