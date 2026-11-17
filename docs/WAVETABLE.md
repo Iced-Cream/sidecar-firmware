@@ -109,7 +109,7 @@ The warps (AMT laws; SYNC, PWM and FM keep this engine's, the others are Vital's
 | PWM | the cycle's first half stretched: pulse width 50 % .. 4 % |
 | FM | phase modulation, index 0 .. 5 rad (AMT squared); the modulator is **table B when B is on**, a sine at the note's rate otherwise |
 | FORMANT | sync ratio 1/16 .. 16x (2^((a - 0.5) x 8)), under a half-sine window (a formant, not a sweep) |
-| QUANT | the phase quantised into steps: many (AMT 0: none) .. few (AMT 127: the staircase collapses) |
+| QUANT | the phase quantised into steps: many (AMT 0: none) .. two .. one (AMT 127: the phase stops on the cycle's start, silence: Vital's end of the law; level 0.23 at AMT 60, 0.08 at 110, 0.02 at 120) |
 | BEND | the phase bent by a cubic: AMT 64 is the straight phase, below / above push it either way |
 | SQUEEZE | the cycle squeezed toward its start (AMT 0) or its middle (AMT 127); AMT 64 is straight |
 | RM | the table multiplied in by a window: 1 + (m - 1) x AMT with m the modulator as in FM (table B, or a sine) |
