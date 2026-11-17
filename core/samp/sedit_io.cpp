@@ -20,6 +20,7 @@ namespace {
 uint8_t g_stage[cardq::kPiece + 8];                       // the Loader's piece, after at most 7 bytes of a split frame
 uint8_t g_out[samp::kWavHeaderMax + cardq::kPiece + 1];   // the Saver's piece (the header first, a pad byte last)
 char g_stem[256];                                         // edit_name's stem, for the listing on the card core
+bool g_mkdir = false;                                     // the listing makes a missing folder (a table's /WAVETABLES)
 char g_sfx[8] = "-ed";                                    // the name's suffix before its number ("-ed", a table's "-wt")
 
 enum : uint8_t { kIdle, kOpen, kHead, kData, kClose, kDone };                       // the Loader's
@@ -36,6 +37,11 @@ int base_len(const char* stem) {
 // kFnReq on the card core: the highest k of "<g_stem>-ed<k>.wav" in the folder r->path (0 none, -1 no folder)
 void list_fn(cardq::Req* r) {
   File d;
+  if (g_mkdir && !d.open(r->path, kRead)) {
+    Fs fs;
+    fs.mkdir(r->path);
+  }
+  d.close();
   if (!d.open(r->path, kRead) || !d.isDir()) {
     r->got = -1;
     return;
@@ -118,6 +124,7 @@ CORE_COLD static int name_from(const char* src_path, int dl, int top, char* out,
 
 CORE_COLD int edit_name(const char* src_path, char* out, int cap) {
   sniprintf(g_sfx, sizeof g_sfx, "-ed");
+  g_mkdir = false;
   int dl = 0, e = stem_of(src_path, &dl);
   if (e) return e;
   static cardq::Req r;
@@ -134,9 +141,10 @@ CORE_COLD int edit_name(const char* src_path, char* out, int cap) {
 
 // ---- Namer
 
-CORE_COLD int Namer::begin(const char* src_path, char* out, int cap, const char* sfx) {
+CORE_COLD int Namer::begin(const char* src_path, char* out, int cap, const char* sfx, bool make_dir) {
   if (!cardq::idle(&r_)) return kErrBusy;
   on_ = false;
+  g_mkdir = make_dir;
   sniprintf(g_sfx, sizeof g_sfx, "%s", sfx);
   if (strlen(src_path) >= sizeof src_) return -1;
   int e = stem_of(src_path, &dl_);
@@ -160,8 +168,9 @@ CORE_COLD int Namer::step() {
 
 // ---- Loader
 
-CORE_COLD int Loader::begin(const char* path) {
+CORE_COLD int Loader::begin(const char* path, bool allow_float) {
   if (!cardq::idle(&r_)) return kErrBusy;
+  fl_ = allow_float;
   if (strlen(path) >= sizeof path_) return kErrName;
   sniprintf(path_, sizeof path_, "%s", path);
   r_.state = cardq::kFree;
@@ -190,9 +199,11 @@ CORE_COLD int Loader::step() {
       if (!cardq::async(&r_, cardq::kReadReq, &f_, nullptr, 0, g_stage, ask_)) return ++waits, 1;
       if (r_.got <= 0) return fail(kErrOpen);
       wavread::Info in;
-      if (!wavread::parse(g_stage, (uint32_t)r_.got, &in, size_) || in.be || in.format != 1 ||
-          (in.bits != 16 && in.bits != 24 && in.bits != 32) || in.ch < 1 || in.ch > 2 || !in.frames)
+      if (!wavread::parse(g_stage, (uint32_t)r_.got, &in, size_) || in.be ||
+          !((in.format == 1 && (in.bits == 16 || in.bits == 24 || in.bits == 32)) || (fl_ && in.format == 3 && in.bits == 32)) ||
+          in.ch < 1 || in.ch > 2 || !in.frames)
         return fail(kErrFormat);
+      fmt_ = in.format;
       if (in.frames > pcache::kMaxFrames) return fail(kErrLong);
       void* p = nullptr;
       blk = pcache::alloc_private((uint64_t)in.frames * in.ch * 4, &p);
@@ -210,7 +221,7 @@ CORE_COLD int Loader::step() {
         return ++waits, 1;
       if (r_.got != (int32_t)ask_) return fail(kErrOpen);
       wavread::Info in = {};
-      in.format = 1, in.ch = ch, in.bits = bits;
+      in.format = fmt_, in.ch = ch, in.bits = bits;
       uint32_t n = carry_ + ask_, nf = n / fb_;
       float* o = x + (size_t)frame_ * ch;
       const uint8_t* s = g_stage;

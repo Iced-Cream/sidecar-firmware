@@ -30,7 +30,8 @@ int edit_name(const char* src_path, char* out, int cap);
 // -1 too long, -2 no folder in src_path, kErrBusy (the last listing still runs). One at a time (edit_name's stem).
 struct Namer {
   // sfx: the text before the number ("-ed"; WAVETABLE's tables "-wt": <stem>-wt<N>.wav)
-  int begin(const char* src_path, char* out, int cap, const char* sfx = "-ed");
+  // make_dir: the folder is made when it is not there (a table's /WAVETABLES on a card that has none yet)
+  int begin(const char* src_path, char* out, int cap, const char* sfx = "-ed", bool make_dir = false);
   int step();
   uint32_t waits = 0;   // the steps that only waited for the card core (the caller's step did no work)
 
@@ -48,7 +49,8 @@ void edit_name_from(const char* stem, const int* taken, int ntaken, char* out, i
 // pcache block (blk) allocated after the header is read; the caller owns it once step returned 0 and frees it with
 // pcache::release. An error frees it and closes the file.
 struct Loader {
-  int begin(const char* path);   // 0, kErrName, or kErrBusy (its last request still runs)
+  // allow_float: a 32-bit float WAV is read too (a wavetable's file); else it is refused (kErrFormat)
+  int begin(const char* path, bool allow_float = false);   // 0, kErrName, or kErrBusy (its last request still runs)
   int step();                    // 1 more, 0 done, < 0 a kErr* code
   uint32_t loaded() const { return frame_; }   // the frames decoded so far
   uint32_t waits = 0;                          // the steps that only waited for the card core (no work done)
@@ -64,6 +66,8 @@ struct Loader {
   char path_[cardq::kPathMax] = "";
   uint8_t st_ = 0;
   int err_ = 0;
+  bool fl_ = false;
+  uint16_t fmt_ = 1;
   uint32_t size_ = 0, fb_ = 0, data_off_ = 0, data_len_ = 0, pos_ = 0, carry_ = 0, frame_ = 0, ask_ = 0;
 };
 
