@@ -9,6 +9,7 @@
 #include "check.h"
 
 #include <circle/usb/usbfunction.h>
+#include <circle/usb/usbstandardhub.h>
 #include <circle/timer.h>
 #include <cstdio>
 #include <string>
@@ -220,6 +221,58 @@ int main (void)
 	CHECK (Has (State (), "\"state\":\"failed\""));
 	Host.refuse = false;
 	BootGone ();
+
+	// ---- I: the Teensy on the Pi 4's VL805 hub (2109:3431 on a root port): its ports polled every 250 ms while the Teensy
+	// moves (entering, booting), not while it writes or is checked; beside a streaming Rytm the hub's own report never came
+	CUSBDevice HubDev, RelayDev;
+	HubDev.desc.idVendor = 0x2109, HubDev.desc.idProduct = 0x3431, HubDev.root = (CUSBHCIRootPort *) &HubDev;
+	CUSBStandardHub Hub;
+	Hub.dev = &HubDev;
+	RelayDev.hub = &Hub;
+	CTeensyTarget::dev = &RelayDev;
+	CTeensyTarget::up = true;
+	teensy_flash::Start ("", &r);
+	CHECK (r.status == 200);
+	Step ();
+	CHECK (Hub.polls == 0);			// not before 250 ms
+	Ms (250); Step ();
+	CHECK (Hub.polls == 1);
+	Step (3);
+	CHECK (Hub.polls == 1);			// once per 250 ms
+	Ms (250); Step ();
+	CHECK (Hub.polls == 2);
+	CTeensyTarget::up = false;
+	Dev.hub = &Hub;				// the bootloader on the same port
+	BootUp ();
+	Ms (250); Step ();			// -> writing: no poll
+	CHECK (Has (State (), "\"state\":\"writing\"") && Hub.polls == 2);
+	for (int k = 0; k < 3; k++) { Ms (250); Step (); CHECK (Hub.polls == 2); Done (Last (), 1); }
+	Step ();
+	CHECK (Has (State (), "\"state\":\"booting\""));
+	Orphan ();
+	Ms (250); Step ();
+	CHECK (Hub.polls == 3);			// booting: polled again
+	BootGone (); CTeensyTarget::up = true;
+	Ms (250); Step ();
+	CHECK (Has (State (), "\"state\":\"checking\""));
+	unsigned nPolls = Hub.polls;
+	Ms (1000); Step ();
+	CHECK (Hub.polls == nPolls);		// checking: no poll
+	CTeensyTarget::log = "mirror relay up, protocol 1.01, build abc1234\n";
+	CTeensyTarget::log_reads++;
+	Step ();
+	CHECK (Has (State (), "\"state\":\"done\""));
+
+	// ---- J: another hub (could be unplugged during the write): never polled; nor a Teensy on a root port
+	HubDev.desc.idProduct = 0x2817;
+	teensy_flash::Start ("", &r);
+	for (int k = 0; k < 4; k++) { Ms (250); Step (); }
+	CHECK (Hub.polls == nPolls);
+	CTeensyTarget::up = false;
+	Ms (15000); Step ();			// (no bootloader: the 15 s run out)
+	CHECK (Has (State (), "\"state\":\"failed\"") && Has (State (), "did not come up"));
+	Dev.hub = 0;
+	CTeensyTarget::dev = 0;
 
 	for (CUSBRequest *u : Orphans) u->Complete (0);	// after their device went: nothing counted, no crash
 	CHECK (CUSBRequest::live () == 0);
