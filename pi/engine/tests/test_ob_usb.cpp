@@ -387,6 +387,48 @@ int main() {
     for (int f = 0; f < 7; ++f) CHECK(ob::block_sample(q, 12, f, 2) == 0);
   }
   opt->num.clear();
+  {  // periodic starvation (XV1/XR1, periodic_starve.h): IN full, OUT served one transfer in ten with every OUT URB at the
+     // controller: named after 3 s with the iv1 endpoints; over on the first full second. With URBs free: never named
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    uint16_t c = 0;
+    r.in(1, c);
+    CXHCIEndpoint* x = r.host.out.front()->ep->GetXHCIEndpoint();
+    x->ring = &r.host.out;
+    CXHCIEndpoint::s_iv1 = 6, CXHCIEndpoint::s_iv1_busy = 6, CXHCIEndpoint::s_iv1_list = "s1:83,03,82 s2:81,01,82";
+    auto count = [](const char* what, size_t from) {
+      int n = 0;
+      auto& L = CLogger::Get()->lines;
+      for (size_t i = from; i < L.size(); ++i) n += L[i].find(what) != std::string::npos;
+      return n;
+    };
+    auto second = [&](int every) {   // 1400 IN blocks; an OUT completes after every `every` IN (1: full)
+      for (int k = 0; k < 1400; ++k) {
+        r.in(1, c);
+        if (k % every == every - 1 && !r.host.out.empty()) r.out_done();
+      }
+      CTimer::s_now += 1000000;
+      CObUsb::LogAllStats(CLogger::Get());
+    };
+    size_t l0 = CLogger::Get()->lines.size();
+    second(1);
+    second(1);   // the start line (2nd second): the iv1 count and list
+    CHECK(count("periodic iv1 6, 6 busy: s1:83,03,82 s2:81,01,82", l0) == 1);
+    CHECK(count("periodic starvation", l0) == 0);
+    for (int k = 0; k < 2; ++k) second(10);
+    CHECK(r.host.out.size() == 8 && count("periodic starvation", l0) == 0);
+    second(10);
+    CHECK(count("periodic starvation: OUT 140/s under IN 1400/s for 3 s with all 8 OUT URBs at the controller (k 0 "
+                "services a ms); periodic iv1 6, 6 busy: s1:83,03,82 s2:81,01,82", l0) == 1);
+    second(10);
+    CHECK(count("periodic starvation", l0) == 1);   // still short: no second line
+    second(1);
+    CHECK(count("periodic starvation over after 4 s: OUT", l0) == 1 && count("(1 times this stream)", l0) == 1);
+    second(1);
+    CHECK(count("periodic starvation", l0) == 2);
+    CXHCIEndpoint::s_iv1 = 0, CXHCIEndpoint::s_iv1_busy = 0, CXHCIEndpoint::s_iv1_list = "";
+    x->ring = nullptr;
+  }
   {  // an OUT transfer error (the tester's "xhciep: Transfer error 4 on endpoint 6", Pi 5, 0.4.0): the xHC halts the
      // endpoint, the URBs behind the failed one never complete. The main loop's PollHalt resets it, drops what the reset
      // skipped and the stream goes on: OUT pulls the voices again (before: OUT stopped for good, the output FIFO stayed
