@@ -1116,6 +1116,27 @@ int main() {
     CTimer::s_now64 = 0;
   }
 
+  {  // obstart=0 obstartat=40 (SQ1): the Rytm is set up (alt 3, its endpoints) but its stream starts only at 40 s
+    auto& o = CKernelOptions::Get()->num;
+    o["obstart"] = 0, o["obstartat"] = 40;
+    CTimer::s_now64 = 5000000;
+    Bus r(g_rytm, 0x0b48);
+    CHECK(r.ob && r.ob->Configure());
+    same_sequence(r.host);                       // alt 3 selected as always
+    CHECK(!CObUsb::Streaming() && r.host.in.empty() && r.host.out.empty());
+    CHECK(CLogger::Get()->lines.back().find("audio starts 40 s after boot") != std::string::npos);
+    CTimer::s_now64 = 39999999, CObUsb::PollHalt();
+    CHECK(!CObUsb::Streaming() && r.host.in.empty());
+    CTimer::s_now64 = 40000000, CObUsb::PollHalt();
+    CHECK(CObUsb::Streaming() && r.host.in.size() == 8);
+    CHECK(CLogger::Get()->lines.back().find("obstartat: ") != std::string::npos
+          && CLogger::Get()->lines.back().find("audio started") != std::string::npos);
+    CTimer::s_now64 = 41000000, CObUsb::PollHalt();   // once only
+    CHECK(r.host.in.size() == 8);
+    o.erase("obstart"), o.erase("obstartat");
+    CTimer::s_now64 = 0;
+  }
+
   printf("test_ob_usb: ok\n");
   return 0;
 }

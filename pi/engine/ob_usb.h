@@ -208,6 +208,7 @@ private:
 	void PumpOut (void);
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
+	boolean StartStream (void);			// the first audio URBs (Configure; PollHalt for obstartat)
 	boolean Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint: TRUE a reset was sent
 	boolean BoxWait (unsigned nNowUs);		// EpBox::Wait over IN, OUT and the MIDI OUT: TRUE no reset now
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
@@ -277,6 +278,7 @@ private:
 	volatile boolean m_bInBusy[MaxURBs], m_bOutBusy[MaxURBs];
 	volatile unsigned m_nInPending, m_nOutPending;
 	volatile boolean m_bStreaming;
+	unsigned m_nStartAtSec;			// obstartat: the stream starts at this uptime (0: started, or not held)
 
 	u16 m_nOutCounter;
 	boolean m_bOutCounterSet;

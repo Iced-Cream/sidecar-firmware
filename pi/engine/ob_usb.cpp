@@ -469,6 +469,13 @@ void CObUsb::PollHalt (void)
 	for (unsigned k = 0; k < Slots && !s_bResetDone; k++)	// (one reset a pass, every box's together)
 	{
 		CObUsb *p = s_pBox[k];
+		if (p != 0 && p->m_nStartAtSec != 0 && CTimer::GetClockTicks64 () / 1000000 >= p->m_nStartAtSec)
+		{
+			p->m_nStartAtSec = 0;			// obstartat (Configure): this box's stream starts now
+			boolean bOK = p->StartStream ();
+			CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "obstartat: %s's audio %s", p->m_pAudio->name,
+						bOK ? "started" : "failed to start");
+		}
 		if (p == 0 || !p->m_bStreaming) continue;
 		unsigned now = CTimer::GetClockTicks ();
 		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
@@ -600,7 +607,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nInCh (pAudio->in_channels), m_nInBlk (ob::block_bytes (pAudio->in_channels)),
 	m_pInDesc (0), m_pOutDesc (0), m_pIn (0), m_pOut (0),
 	m_pInURB {}, m_pOutURB {}, m_bInBusy {}, m_bOutBusy {},
-	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE),
+	m_nInPending (0), m_nOutPending (0), m_bStreaming (FALSE), m_nStartAtSec (0),
 	m_nOutCounter (0), m_bOutCounterSet (FALSE), m_nExpectIn (0), m_bHaveIn (FALSE), m_nPhase (0),
 	m_nCredit (0), m_bLeadDue (TRUE), m_nLeadGiven (0),
 	m_nInBlocks (0), m_nInShort (0), m_nInBadMagic (0), m_nInGaps (0), m_nInLost (0), m_nInMaxGap (0),
@@ -881,6 +888,29 @@ boolean CObUsb::Configure (void)
 		m_bConfigured = TRUE;
 		return TRUE;
 	}
+	// obstart=N obstartat=S (a diagnostic, stall-restart.md SQ1): slot N's box is set up as always (alt 3, its endpoints
+	// and their reserved bandwidth, the mirror) but its audio URBs are first queued S s after boot (PollHalt), so the
+	// two boxes' streams start one after the other: is the VL805's start-of-stream stall the two starting together?
+	if ((int) CKernelOptions::Get ()->GetAppOptionDecimal ("obstart", 99) == (int) m_nSlot)
+	{
+		unsigned nAt = CKernelOptions::Get ()->GetAppOptionDecimal ("obstartat", 0);
+		if (nAt > 0)
+		{
+			CLogger::Get ()->Write (From, LogWarning, "obstart=%u obstartat=%u: %s's audio starts %u s after boot",
+						m_nSlot, nAt, m_pAudio->name, nAt);
+			m_nStartAtSec = nAt;
+			m_bConfigured = TRUE;
+			return TRUE;
+		}
+	}
+	if (!StartStream ()) return FALSE;
+	m_bConfigured = TRUE;
+	return TRUE;
+}
+
+// The first URBs on both audio endpoints: the stream starts (Configure, or PollHalt for obstartat)
+boolean CObUsb::StartStream (void)
+{
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
@@ -905,8 +935,6 @@ boolean CObUsb::Configure (void)
 		CLogger::Get ()->Write (From, LogError, "cannot submit the first URBs");
 		return FALSE;
 	}
-
-	m_bConfigured = TRUE;
 	return TRUE;
 }
 
