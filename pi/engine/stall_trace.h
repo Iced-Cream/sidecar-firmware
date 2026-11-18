@@ -10,7 +10,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <stdio.h>
 
 namespace stall_trace {
 
@@ -34,6 +33,17 @@ struct Entry {
   uint16_t mf;
   uint8_t kind, a, b, c;
   uint16_t d, e;
+};
+
+// a small text writer (the Pi kernel has no C library, so no snprintf)
+struct Text {
+  char* p;
+  unsigned n, cap;  // written, room (one byte kept for the 0)
+  bool ok() const { return n < cap; }
+  void c(char ch) { if (n + 1 < cap) p[n++] = ch, p[n] = 0; else n = cap; }
+  void s(const char* t) { while (*t) c(*t++); }
+  void u(unsigned v) { char d[10]; unsigned k = 0; do d[k++] = (char)('0' + v % 10), v /= 10; while (v); while (k) c(d[--k]); }
+  void x(unsigned v, unsigned digits) { for (int sh = (int)digits * 4 - 4; sh >= 0; sh -= 4) c("0123456789abcdef"[(v >> sh) & 15]); }
 };
 
 template <unsigned N = 256>
@@ -71,7 +81,9 @@ struct Ring {
       if ((int32_t)(ev[n & (N - 1)].us - ref_us) >= -(int32_t)before_us) ++in_window;
     unsigned skip = in_window > max_entries ? in_window - max_entries : 0;
     char buf[400];
-    unsigned len = 0, on_line = 0, total = 0;
+    buf[0] = 0;
+    unsigned on_line = 0, total = 0;
+    Text t{buf, 0, sizeof buf};
     for (uint32_t n = first; n < h; ++n) {
       const Entry& x = ev[n & (N - 1)];
       if (__atomic_load_n(&x.seq, __ATOMIC_ACQUIRE) != n + 1) continue;
@@ -83,11 +95,12 @@ struct Ring {
       int ms10 = rel / 100;  // 0.1 ms
       char sign = rel < 0 ? '-' : '+';
       unsigned m = (unsigned)(ms10 < 0 ? -ms10 : ms10);
-      int w = snprintf(buf + len, sizeof buf - len, "%s%c%c%u.%u@%04x %02x %02x %u %04x %04x", on_line ? "; " : "",
-                       (char)y.kind, sign, m / 10, m % 10, (unsigned)y.mf, y.a, y.b, y.c, y.d, y.e);
-      if (w < 0 || (unsigned)w >= sizeof buf - len) break;
-      len += (unsigned)w, ++on_line, ++total;
-      if (on_line == per_line) line(buf), len = 0, on_line = 0;
+      if (on_line) t.s("; ");
+      t.c((char)y.kind), t.c(sign), t.u(m / 10), t.c('.'), t.u(m % 10), t.c('@'), t.x(y.mf, 4);
+      t.c(' '), t.x(y.a, 2), t.c(' '), t.x(y.b, 2), t.c(' '), t.u(y.c), t.c(' '), t.x(y.d, 4), t.c(' '), t.x(y.e, 4);
+      if (!t.ok()) break;  // (a line holds far more than per_line entries: not reached)
+      ++on_line, ++total;
+      if (on_line == per_line) line(buf), t.n = 0, buf[0] = 0, on_line = 0;
     }
     if (on_line) line(buf);
     return total;
