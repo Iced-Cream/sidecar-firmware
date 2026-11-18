@@ -14,6 +14,22 @@ index 5afe73d..abb4f5a 100644
  #ifndef NDEBUG
  	void DumpStatus (void);
  #endif
+diff --git a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+index 729b898..5da598a 100644
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -72,6 +72,11 @@ public:
+ 	// The VL805 on the Pi 4 has starved one of them whenever 6 or more were busy (diagnosis-periodic-starvation.md).
+ 	static unsigned GetPeriodicIv1 (unsigned *pBusy = 0, char *pList = 0, unsigned nListSize = 0);
+ 
++	// circle-xhci-trace: s_pStartHook (if set) is called (IRQ or task level) when an URB is queued on an endpoint
++	// that had none queued and had none submitted for 20 ms or more: slot ID, endpoint ID (DCI), endpoint type
++	// (xHCI EP type 1..7) and the time since its last submit in ms (0xFFFF: never before, or 65 s or more)
++	static void (*s_pStartHook) (unsigned nSlot, unsigned nEndpointID, unsigned nType, unsigned nIdleMs);
++
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+ #endif
 diff --git a/lib/usb/xhcicommandmanager.cpp b/lib/usb/xhcicommandmanager.cpp
 index d3dfea0..356018e 100644
 --- a/lib/usb/xhcicommandmanager.cpp
@@ -62,3 +78,53 @@ index d3dfea0..356018e 100644
  	DataSyncBarrier ();
  
  	m_pMMIO->db_write32 (XHCI_REG_DB_HOST_CONTROLLER, XHCI_REG_DB_TARGET_HC_COMMAND);
+diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+index 5f4458f..94a0de1 100644
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -271,6 +271,10 @@ boolean CXHCIEndpoint::Transfer (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 	return pURB->GetStatus () ? TRUE : FALSE;
+ }
+ 
++// circle-xhci-trace: the last submit on each slot's endpoints (us; 0: never), for s_pStartHook
++void (*CXHCIEndpoint::s_pStartHook) (unsigned nSlot, unsigned nEndpointID, unsigned nType, unsigned nIdleMs) = 0;
++static unsigned s_nTraceLastUs[XHCI_CONFIG_MAX_SLOTS+1][XHCI_MAX_ENDPOINTS+1];
++
+ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ {
+ 	assert (pURB != 0);
+@@ -293,6 +297,22 @@ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 	}
+ 	m_pURB[(m_nURBHead + m_nURBCount) % XHCI_EP_MAX_URBS] = pURB;
+ 	m_nURBCount++;
++	unsigned nTraceIdleMs = 0;		// circle-xhci-trace: > 0 the endpoint starts after an idle time
++	if (s_pStartHook != 0 && m_pDevice != 0)
++	{
++		unsigned nSlot = m_pDevice->GetSlotID ();
++		if (nSlot <= XHCI_CONFIG_MAX_SLOTS && m_uchEndpointID <= XHCI_MAX_ENDPOINTS)
++		{
++			unsigned nNow = CTimer::GetClockTicks ();
++			unsigned &rLast = s_nTraceLastUs[nSlot][m_uchEndpointID];
++			if (m_nURBCount == 1 && (rLast == 0 || nNow - rLast >= 20000))
++			{
++				unsigned nMs = rLast == 0 ? 0xFFFF : (nNow - rLast) / 1000;
++				nTraceIdleMs = nMs > 0xFFFF ? 0xFFFF : nMs;
++			}
++			rLast = nNow != 0 ? nNow : 1;
++		}
++	}
+ 	// the lock stays held until the doorbell: an URB resubmitted from a completion routine
+ 	// (IRQ) must not get its TRB between this URB's FIFO slot and this URB's TRB
+ 
+@@ -417,6 +437,11 @@ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 
+ 	m_SpinLock.Release ();
+ 
++	if (nTraceIdleMs != 0 && s_pStartHook != 0)	// circle-xhci-trace (after the doorbell, the lock released)
++	{
++		(*s_pStartHook) (m_pDevice->GetSlotID (), m_uchEndpointID, m_uchEndpointType, nTraceIdleMs);
++	}
++
+ 	return TRUE;
+ 
+ EnqueueError:

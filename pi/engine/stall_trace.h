@@ -21,6 +21,7 @@ enum Kind : uint8_t {
   kVendor = 'V',        // the Pi's vendor request to the Teensy (a: 1 IN / 0 OUT, b: request, d: length)
   kVendorDone = 'v',    // its return (b: request, d: result as int16, e: time taken in 100 us)
   kXhciCmd = 'X',       // an xHCI command rung (b: TRB type, c: slot)
+  kEpStart = 'T',       // an endpoint queued a transfer after 20 ms or more with none (a: EP type, b: DCI, c: slot, d: idle ms, ffff: first)
   kQuiet = 'Q',         // a box endpoint found quiet (a: 1 IN / 0 OUT, c: slot)
   kResume = 'r',        // a box's IN completed again after a gap over kResumeGapUs (c: slot, d: gap in ms)
 };
