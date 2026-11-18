@@ -272,6 +272,11 @@ grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/p
 # endpoint of the hub went unserved and the move of the Teensy to its bootloader was never seen (BL3, T411); after
 # circle-hub-noportpanic, idempotent)
 grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-poll.patch
+# then the endpoints polled every microframe counted (pi/circle/circle-xhci-iv1count.patch: "xhciep: periodic iv1 N (+ slot S
+# ep 0xAA ...)" each time one is configured or removed, a warning past 5, and CXHCIEndpoint::GetPeriodicIv1 for ob_usb.cpp'"'"'s
+# "periodic starvation" line: the VL805 starved one of them at 6 busy, XV1/XR1, diagnosis-periodic-starvation.md; no change to
+# the class layout; after circle-xhci-dropurbs, idempotent)
+grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-iv1count.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

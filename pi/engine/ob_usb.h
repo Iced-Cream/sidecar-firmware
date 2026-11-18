@@ -24,6 +24,7 @@
 #ifndef _ob_usb_h
 #define _ob_usb_h
 
+#include "periodic_starve.h"
 #include "ep_halt.h"
 #include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
@@ -305,6 +306,7 @@ private:
 	unsigned m_nStartUs, m_nLastInUs, m_nLastOutUs, m_nFirstInUs, m_nFirstOutUs, m_nOut16Us, m_nLastLogUs;
 	boolean m_bSaidStart;
 	unsigned m_nPrevIn, m_nPrevOut, m_nSeconds;
+	PeriodicStarve m_Starve;			// OUT short with every URB at the controller (Log, periodic_starve.h)
 
 	static s32 *s_pCapBuf;
 	static volatile unsigned s_nCapPos;		// frames written

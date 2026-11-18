@@ -53,6 +53,9 @@
 #if RASPPI >= 4
 #include <circle/usb/xhciconfig.h>
 #endif
+#ifndef XHCI_CONFIG_TRANSFER_RING_SIZE
+#define XHCI_CONFIG_TRANSFER_RING_SIZE	64		// Circle's (the portable tests' shim has none)
+#endif
 #include <circle/koptions.h>
 #include <circle/synchronize.h>
 #include <circle/timer.h>
@@ -1789,8 +1792,11 @@ void CObUsb::Log (CLogger *pLogger)
 	if (!m_bSaidStart && m_nSeconds >= 2)
 	{
 		m_bSaidStart = TRUE;
+		char Iv1[96];
+		unsigned nIv1Busy = 0, nIv1 = CXHCIEndpoint::GetPeriodicIv1 (&nIv1Busy, Iv1, sizeof Iv1);
 		pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice, "start: first IN done at %u us, first OUT done at %u us, "
-				"16th OUT block at %u us (0 = never)", m_nFirstInUs, m_nFirstOutUs, m_nOut16Us);
+				"16th OUT block at %u us (0 = never); periodic iv1 %u, %u busy: %s", m_nFirstInUs, m_nFirstOutUs,
+				m_nOut16Us, nIv1, nIv1Busy, Iv1);
 	}
 
 	// one line: IN rate/total, gaps (blocks lost, largest), longest IN gap in time, peak;
@@ -1811,6 +1817,29 @@ void CObUsb::Log (CLogger *pLogger)
 			(unsigned) m_nInSubmitFail, (unsigned) m_nOutSubmitFail,
 			ei.nEvents, ei.nSuccess, ei.nShort, ei.nMissed, ei.nOther + ei.nRing, ei.nLastOther, ei.nOrphan,
 			eo.nEvents, eo.nSuccess, eo.nMissed, eo.nOther + eo.nRing + eo.nShort, eo.nLastOther, eo.nOrphan);
+
+	// the controller starving this box's OUT (periodic_starve.h): every OUT URB queued at the xHC and OUT still short of IN
+	unsigned nInRate = (nIn - m_nPrevIn) * 1000 / nMs, nOutRate = (nOut - m_nPrevOut) * 1000 / nMs;
+	boolean bAllQueued = nOutPend >= m_nURBs && nQOut >= m_nURBs;
+	switch (m_OutMode == OutOff ? PeriodicStarve::None : m_Starve.Tick (nInRate, nOutRate, bAllQueued))
+	{
+	case PeriodicStarve::Start:
+		{
+			char Iv1[96];
+			unsigned nIv1Busy = 0, nIv1 = CXHCIEndpoint::GetPeriodicIv1 (&nIv1Busy, Iv1, sizeof Iv1);
+			pLogger->Write (m_nSlot ? "rytmob2" : From, LogWarning, "periodic starvation: OUT %u/s under IN %u/s for %u s "
+					"with all %u OUT URBs at the controller (k %u services a ms); periodic iv1 %u, %u busy: %s "
+					"(the VL805 has starved one at 6 busy)", nOutRate, nInRate, m_Starve.run, m_nURBs,
+					PeriodicStarve::Steps (nOutRate, XHCI_CONFIG_TRANSFER_RING_SIZE, m_nBlocks), nIv1, nIv1Busy, Iv1);
+		}
+		break;
+	case PeriodicStarve::Over:
+		pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice, "periodic starvation over after %u s: OUT %u/s, IN %u/s "
+				"(%u times this stream)", m_Starve.lasted, nOutRate, nInRate, m_Starve.events);
+		break;
+	default:
+		break;
+	}
 
 	m_nPrevIn = nIn;
 	m_nPrevOut = nOut;
