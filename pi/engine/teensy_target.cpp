@@ -1,5 +1,6 @@
 // pi/engine/teensy_target.cpp - see teensy_target.h, relay_proto.h and docs/teensy-mirror.md
 #include "teensy_target.h"
+#include "stall_trace_pi.h"
 #include <stddef.h>
 #include "ob_usb.h"
 #include "sidecar_gadget.h"
@@ -276,6 +277,8 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 {
 	if (nLength > kDmaSize || m_pCtlBuf == 0) return -1;	// (not started yet: no EP0 buffer)
 	if (!bIn && nLength) memcpy (m_pCtlBuf, pData, nLength);
+	const unsigned nTraceUs = CTimer::GetClockTicks ();
+	StallNote (stall_trace::kVendor, bIn, uchRequest, 0, (u16) nLength, wValue);
 	if (m_nDebugVendor < 40) Step ("vendor %s %02x value %04x index %04x length %u: sent", bIn ? "IN" : "OUT", uchRequest, wValue, wIndex, nLength);
 	int n;
 	if (m_nVariant == 4)		// as CObUsb::Control: the request as an async URB on EP0, waited for here (1 s)
@@ -308,6 +311,8 @@ int CTeensyTarget::Vendor (boolean bIn, u8 uchRequest, u16 wValue, u16 wIndex, c
 						wValue, wIndex, nLength ? m_pCtlBuf : 0, (u16) nLength);
 	if (m_nDebugVendor < 40) { m_nDebugVendor++; Step ("vendor %02x: returned %d", uchRequest, n); }
 	if (n < 0) m_Stats.nVendorFail++;
+	unsigned nTook = (CTimer::GetClockTicks () - nTraceUs) / 100;
+	StallNote (stall_trace::kVendorDone, bIn, uchRequest, 0, (u16) (s16) n, (u16) (nTook > 0xFFFF ? 0xFFFF : nTook));
 	return n;
 }
 
@@ -721,6 +726,8 @@ void CTeensyTarget::OnEvent (const Event &e)
 		m_Stats.nSetups++;
 		m_CtlSeq = e.a;
 		memcpy (m_CtlSetup, e.data, 8);
+		StallNote (stall_trace::kRelaySetup, m_CtlSetup[0], m_CtlSetup[1], 0, (u16) (m_CtlSetup[2] | m_CtlSetup[3] << 8),
+			   (u16) (m_CtlSetup[4] | m_CtlSetup[5] << 8));
 		m_CtlState = CtlNew;			// MirrorPoll forwards it (its OUT data stage read there)
 		break;
 	case kEvAbort:

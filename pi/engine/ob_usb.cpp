@@ -44,6 +44,7 @@
 #include "usbmidi_pack.h"
 #include "sidecar_gadget.h"
 #include "midibridge_pi.h"
+#include "stall_trace_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
 #include <circle/usb/usbhcirootport.h>
@@ -519,15 +520,33 @@ boolean CObUsb::BoxWaits (unsigned nNowUs)
 }
 
 // TRUE: a reset was sent (the pass's one)
+// A box endpoint found quiet (Recover): the trace of the 3 s before its last completion and since, once a stall
+// (stall_trace.h; the first box that finds the stall prints it, the other's quiet is noted in it)
+void CObUsb::StallTraceDump (boolean bIn, unsigned nNowUs)
+{
+	unsigned nLast = bIn ? m_nLastInUs : m_nLastOutUs;
+	StallNote (stall_trace::kQuiet, bIn, 0, (u8) m_nSlot, (u16) ((nNowUs - nLast) / 1000));
+	if (!g_StallTrace.DumpDue (nNowUs)) return;
+	CLogger::Get ()->Write (From, LogNotice, "stall trace %u: slot %u %s quiet %u ms, mf now %04x; entries kind+ms from the "
+				"last completion@mf a b c d e", g_StallTrace.dumps, m_nSlot, bIn ? "IN" : "OUT",
+				(nNowUs - nLast) / 1000, (unsigned) StallTraceMf ());
+	unsigned nDump = g_StallTrace.dumps;
+	g_StallTrace.Format (nLast, 3000000, 5, [nDump] (const char *pLine) {
+		CLogger::Get ()->Write (From, LogNotice, "stall trace %u: %s", nDump, pLine);
+	}, 150);					// at most 30 lines a stall: the newest 150 entries
+}
+
 boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 {
 	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
 	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
 	const char *pDir = bIn ? "IN" : "OUT";
 	EnterCritical (IRQ_LEVEL);			// gone quiet with no error: URBs pending, none completed for 50 ms
+	boolean bQuiet = FALSE;
 	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
-	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall ();
+	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall (), bQuiet = TRUE;
 	LeaveCritical ();
+	if (bQuiet) StallTraceDump (bIn, nNowUs);
 	if (!h.Due (nNowUs)) return FALSE;
 	if (m_bMirror && m_bCtlBusy) return FALSE;	// usb=mirror: the computer's request holds EP0 (the clear would queue behind it)
 	const u8 uchAddr = bIn ? ob::kInEp : ob::kOutEp;
@@ -757,6 +776,7 @@ boolean CObUsb::ScanDescriptors (void)
 
 boolean CObUsb::Configure (void)
 {
+	StallTraceInstall ();				// every xHCI command into the stall trace (stall_trace_pi.h)
 	AllocBufs (m_nSlot);
 
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
@@ -1231,6 +1251,7 @@ boolean CObUsb::Control (const TSetupData *pSetup, const u8 *pOutData, unsigned 
 	pThis->m_bCtlBusy = TRUE;
 	pThis->m_pCtlSetup = pS;
 	pThis->m_pCtlURB = pURB;			// ~CObUsb frees it if the box leaves first
+	StallNote (stall_trace::kBoxCtl, pS->bmRequestType, pS->bRequest, (u8) pThis->m_nSlot, pS->wValue, pS->wIndex);
 	if (pThis->GetHost ()->SubmitAsyncRequest (pURB)) return TRUE;
 	pThis->m_pCtlURB = 0;
 	pThis->m_pCtlSetup = 0;
@@ -1250,6 +1271,7 @@ void CObUsb::MirrorCtlStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		pThis->m_pCtlSetup = 0;
 		pThis->m_bCtlBusy = FALSE;
 		int n = pURB->GetStatus () ? (int) pURB->GetResultLength () : -1;
+		StallNote (stall_trace::kBoxCtlDone, 0, 0, (u8) pThis->m_nSlot, (u16) (n < 0 ? 0 : n), n >= 0);
 		InvalidateDataCacheRange ((uintptr) pThis->m_pCtlBuf, kBufSize);
 		if (IMirrorTarget *pT = pThis->Target ()) pT->MirrorControlDone (ParamIndex (pParam), pThis->m_pCtlBuf, n);
 	}
@@ -1504,6 +1526,8 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 {
 	unsigned now = CTimer::GetClockTicks ();
 	unsigned dt = now - m_nLastInUs;
+	if (dt > stall_trace::kResumeGapUs && m_nFirstInUs != 0)	// back after a gap (stall_trace.h)
+		StallNote (stall_trace::kResume, 1, 0, (u8) m_nSlot, (u16) (dt / 1000 > 0xFFFF ? 0xFFFF : dt / 1000));
 	if (dt > m_nInMaxDt) m_nInMaxDt = dt;
 	m_nLastInUs = now;
 	if (m_nFirstInUs == 0) m_nFirstInUs = now - m_nStartUs + 1;

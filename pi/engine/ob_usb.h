@@ -210,6 +210,7 @@ private:
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
 	boolean Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint: TRUE a reset was sent
+	void StallTraceDump (boolean bIn, unsigned nNowUs);	// a quiet endpoint: the stall_trace ring printed, once a stall
 	boolean BoxWait (unsigned nNowUs);		// EpBox::Wait over IN, OUT and the MIDI OUT: TRUE no reset now
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);

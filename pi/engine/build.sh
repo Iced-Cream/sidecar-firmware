@@ -277,6 +277,10 @@ grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circl
 # "periodic starvation" line: the VL805 starved one of them at 6 busy, XV1/XR1, diagnosis-periodic-starvation.md; no change to
 # the class layout; after circle-xhci-dropurbs, idempotent)
 grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-iv1count.patch
+# then a trace hook on xHCI commands and the controller MFINDEX read (pi/circle/circle-xhci-trace.patch:
+# CXHCICommandManager::s_pTraceHook, ReadMFIndex), for stall_trace.h: what came before each start-of-stream stall of the
+# VL805 (stall-restart.md); statics only, no change to the class layout; idempotent
+grep -q circle-xhci-trace include/circle/usb/xhcicommandmanager.h || patch -p1 < /repo/pi/circle/circle-xhci-trace.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

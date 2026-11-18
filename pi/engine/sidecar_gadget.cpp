@@ -1,5 +1,6 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
+#include "stall_trace_pi.h"
 
 #include <circle/string.h>
 #include <circle/usb/usb.h>
@@ -1845,6 +1846,8 @@ void CSidecarGadget::MirrorPipeInSent (u8 uchAddr)
 int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutData)
 {
 	if (!m_bShowMirror) return ControlNotHandled;
+	StallNote (stall_trace::kGadgetSetup, pSetup->bmRequestType, pSetup->bRequest, m_Ctl.pending ? 1 : 0, pSetup->wValue,
+		   pSetup->wIndex);
 	if (m_Ctl.pending) { m_MirStats.nCtlStall++; return ControlNotHandled; }	// one at a time: this one is STALLed
 	memcpy (&m_CtlSetup, pSetup, sizeof m_CtlSetup);
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);

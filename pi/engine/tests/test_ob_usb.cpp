@@ -752,6 +752,14 @@ int main() {
     CObUsb::PollHalt();
     CHECK(x->resets == 1 && CObUsb::HaltResets(FALSE) == before + 1);
     CHECK(CLogger::Get()->lines.back().find("OUT endpoint halted (state 2") != std::string::npos);
+    {  // the quiet endpoint printed the stall trace once (stall_trace.h): its header and the quiet entry (Q, +60 ms)
+      unsigned head = 0, q = 0;
+      for (auto& l : CLogger::Get()->lines) {
+        if (l.find("stall trace ") != std::string::npos && l.find(" OUT quiet 60 ms") != std::string::npos) ++head;
+        if (l.find("stall trace ") != std::string::npos && l.find("Q+60.0@0000 00 00 ") != std::string::npos) ++q;
+      }
+      CHECK(head == 1 && q == 1);
+    }
     while (!r.host.out.empty()) r.out_done();
     r.in(1, c);
     CHECK(r.host.out.size() == 1);      // OUT again

@@ -1,0 +1,64 @@
+diff --git a/include/circle/usb/xhcicommandmanager.h b/include/circle/usb/xhcicommandmanager.h
+index 5afe73d..abb4f5a 100644
+--- a/include/circle/usb/xhcicommandmanager.h
++++ b/include/circle/usb/xhcicommandmanager.h
+@@ -47,6 +47,11 @@ public:
+ 	int SetTRDequeuePointer (u8 uchSlotID, u8 uchEndpointID, TXHCITRB *pTRB, boolean bDCS);
+ 	int NoOp (void);
+ 
++	// circle-xhci-trace: s_pTraceHook (if set) is called with each command's TRB type and slot ID as its doorbell is
++	// rung (task level); ReadMFIndex gives the controller's microframe index (14 bits, 0 before the controller is up)
++	static void (*s_pTraceHook) (unsigned nType, unsigned nSlot);
++	static u32 ReadMFIndex (void);
++
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+ #endif
+diff --git a/lib/usb/xhcicommandmanager.cpp b/lib/usb/xhcicommandmanager.cpp
+index d3dfea0..356018e 100644
+--- a/lib/usb/xhcicommandmanager.cpp
++++ b/lib/usb/xhcicommandmanager.cpp
+@@ -25,6 +25,14 @@
+ 
+ static const char From[] = "xhcicmd";
+ 
++void (*CXHCICommandManager::s_pTraceHook) (unsigned nType, unsigned nSlot) = 0;	// circle-xhci-trace
++static CXHCIMMIOSpace *s_pTraceMMIO = 0;
++
++u32 CXHCICommandManager::ReadMFIndex (void)
++{
++	return s_pTraceMMIO != 0 ? s_pTraceMMIO->rt_read32 (XHCI_REG_RT_MFINDEX) & XHCI_REG_RT_MFINDEX_INDEX__MASK : 0;
++}
++
+ CXHCICommandManager::CXHCICommandManager (CXHCIDevice *pXHCIDevice)
+ :	m_pXHCIDevice (pXHCIDevice),
+ 	m_pMMIO (pXHCIDevice->GetMMIOSpace ()),
+@@ -38,6 +46,7 @@ CXHCICommandManager::CXHCICommandManager (CXHCIDevice *pXHCIDevice)
+ 	}
+ 
+ 	assert (m_pMMIO != 0);
++	s_pTraceMMIO = m_pMMIO;		// circle-xhci-trace
+ 	m_pMMIO->op_write64 (XHCI_REG_OP_CRCR,   XHCI_TO_DMA (m_CmdRing.GetFirstTRB ())
+ 					       | m_CmdRing.GetCycleState ());
+ }
+@@ -46,6 +55,7 @@ CXHCICommandManager::~CXHCICommandManager (void)
+ {
+ 	assert (m_bCommandCompleted);
+ 
++	s_pTraceMMIO = 0;		// circle-xhci-trace
+ 	m_pMMIO = 0;
+ 	m_pXHCIDevice = 0;
+ }
+@@ -204,6 +214,12 @@ int CXHCICommandManager::DoCommand (u32 nControl, u32 nParameter1, u32 nParamete
+ 
+ 	m_CmdRing.IncrementEnqueue ();
+ 
++	if (s_pTraceHook != 0)		// circle-xhci-trace
++	{
++		(*s_pTraceHook) ((nControl & XHCI_TRB_CONTROL_TRB_TYPE__MASK) >> XHCI_TRB_CONTROL_TRB_TYPE__SHIFT,
++				 nControl >> 24);
++	}
++
+ 	DataSyncBarrier ();
+ 
+ 	m_pMMIO->db_write32 (XHCI_REG_DB_HOST_CONTROLLER, XHCI_REG_DB_TARGET_HC_COMMAND);
