@@ -31,3 +31,9 @@ allocator (40 rings, 1000 free/allocate rounds): no growth.
 - If the link TRB was the cause: no short box OUT with 6 every-microframe endpoints (default route, both async pipes at
   their own interval). If short OUT remains, its step tells which part mattered: 996.1/s (= 1000 x 255/256) means the link TRB
   still costs a service but less often; 984.4/s would mean the old ring is still in use (check the boot line).
+
+## XV1 result and the rings-only variant (2026-11-18)
+XV1 (KB T421, dccd79c, PD6's 6-endpoint setup) failed: short box OUT moved from 984.4/s to 996.1/s steps (the step follows
+the ring size; the starvation stays), and both boxes' IN collapsed for ~50 s, which c07b71d did not show. Branch
+circle-xhci-vl805-rings keeps the 256-TRB rings, the 2x allocation and the dequeue guard but leaves the interrupt Average TRB
+Length at stock Circle's 16, to see whether the real length caused the IN collapse. Boot line: `... interrupt avg TRB = 16 (rings only)`.

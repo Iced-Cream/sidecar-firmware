@@ -44,7 +44,7 @@ index 97d60f3..f4aee4c 100644
  
  #endif
 diff --git a/lib/usb/xhcidevice.cpp b/lib/usb/xhcidevice.cpp
-index 764cb74..15a1e5b 100644
+index 764cb74..8ff9042 100644
 --- a/lib/usb/xhcidevice.cpp
 +++ b/lib/usb/xhcidevice.cpp
 @@ -204,6 +204,9 @@ boolean CXHCIDevice::Initialize (boolean bScanDevices)
@@ -52,13 +52,13 @@ index 764cb74..15a1e5b 100644
  #endif
  
 +	// circle-xhci-vl805: outside XHCI_DEBUG, so a unit run can see which ring setup it boots
-+	CLogger::Get ()->Write (From, LogNotice, "circle-xhci-vl805: rings %u TRB (x%u alloc), interrupt avg TRB = MPS",
++	CLogger::Get ()->Write (From, LogNotice, "circle-xhci-vl805: rings %u TRB (x%u alloc), interrupt avg TRB = 16 (rings only)",
 +				XHCI_CONFIG_TRANSFER_RING_SIZE, XHCI_CONFIG_RING_ALLOC_FACTOR);
  #ifdef XHCI_DEBUG
  	CLogger::Get ()->Write (From, LogDebug, "%u slots, %u ports, %u scratchpad bufs",
  				nMaxSlots, nMaxPorts, nMaxScratchpadBufs);
 diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
-index 206e179..a7b605c 100644
+index 206e179..7676dbc 100644
 --- a/lib/usb/xhciendpoint.cpp
 +++ b/lib/usb/xhciendpoint.cpp
 @@ -492,10 +492,24 @@ boolean CXHCIEndpoint::ResetFromHalted (void)
@@ -87,17 +87,15 @@ index 206e179..a7b605c 100644
  								!!m_pTransferRing->GetCycleState ());
  }
  
-@@ -657,7 +671,9 @@ TXHCIInputContext *CXHCIEndpoint::GetInputContextConfigureEndpoint (void)
+@@ -657,6 +671,8 @@ TXHCIInputContext *CXHCIEndpoint::GetInputContextConfigureEndpoint (void)
  	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_OUT:
  	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_IN:
  		pEPContext->Interval = m_uchInterval;
--		pEPContext->AverageTRBLength = 16;	// best guess
-+		// circle-xhci-vl805: the real size, as Linux (avg_trb_len = max_esit_payload for periodic endpoints):
-+		// the controller budgets its periodic schedule with it; 16 told it 368 B audio transfers were 16 B
-+		pEPContext->AverageTRBLength = m_usMaxPacketSize;
++		// circle-xhci-vl805 (rings only, 2026-11-18): kept at 16 as stock Circle. The real size (as Linux) ran in XV1
++		// (KB T421) together with the rings and both boxes' IN collapsed; this variant tests the rings alone
+ 		pEPContext->AverageTRBLength = 16;	// best guess
  		pEPContext->MaxESITPayload = m_usMaxPacketSize;
  		break;
- 
 diff --git a/lib/usb/xhciring.cpp b/lib/usb/xhciring.cpp
 index 2d301c3..4eef5a4 100644
 --- a/lib/usb/xhciring.cpp
