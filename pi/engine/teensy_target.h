@@ -194,6 +194,7 @@ private:
 	boolean m_bRytmMidi;				// the Rytm takes MIDI (the USB merge)
 	unsigned m_nLink1LostSeen;			// link1::ComputerLost at the last look
 	unsigned m_nToBoxFullSeen;			// m_Stats.nMidiToBoxFull at the last look
+	unsigned m_nNoBoxSeen;				// m_Stats.nChanInMidi (the computer's MIDI dropped, no box up) at the last look
 	void OsLost (boolean bSendFailed, const char *pWhy);		// slot 0
 	void BoxOsLost (boolean bSendFailed, const char *pWhy);	// slot 1
 	unsigned ApplyBoxGate (boolean bCut);		// slot 1's ApplyGate (IRQs masked by the caller); the packets cut

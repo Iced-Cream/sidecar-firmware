@@ -71,7 +71,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 :	CUSBFunction (pFunction),
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
-	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_ToPcFilter (false), m_bCutRytm (FALSE), m_bRytmMidi (FALSE), m_nLink1LostSeen (0), m_nToBoxFullSeen (0), m_nMidiInHead (0),
+	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_ToPcFilter (false), m_bCutRytm (FALSE), m_bRytmMidi (FALSE), m_nLink1LostSeen (0), m_nToBoxFullSeen (0), m_nNoBoxSeen (0), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
 	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_nEvShownAt (0), m_nEvAtShow (0), m_nEvStep (0), m_nEvReshowTry (0), m_nEvSilent (0), m_nEvReshows (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
@@ -972,6 +972,12 @@ void CTeensyTarget::OsGatePoll (void)
 	{
 		m_nLink1LostSeen = nLost;
 		if (m_pBox != 0 && m_pBox->Slot () == 1) BoxOsLost (TRUE, "a send to the box failed");
+	}
+	if (m_Stats.nChanInMidi != m_nNoBoxSeen)		// the computer's MIDI dropped with no box up (ChanInStub's last branch):
+	{							// a box gone mid-image and back within mirrorhold must not get the rest
+		m_nNoBoxSeen = m_Stats.nChanInMidi;
+		OsLost (TRUE, "MIDI for the box was dropped while it was gone");
+		BoxOsLost (TRUE, "MIDI for the box was dropped while it was gone");
 	}
 	if (m_Stats.nMidiToBoxFull != m_nToBoxFullSeen)	// either slot: the computer's packets dropped at a full queue
 	{
