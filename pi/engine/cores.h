@@ -72,6 +72,9 @@ public:
 	// were always there and stay.
 	static void SetIdleWfe (boolean bOn);
 	static boolean IdleWfe (void);
+	// blocklimit=N on the cmdline (QEMU gates only, docs/pi-engine.md): a render core that has not finished its block
+	// after N ms is fatal (default and minimum 20, the unit's; at most 10000). Returns the limit set.
+	static unsigned SetBlockLimitMs (unsigned nMs);
 	static void EventStream (void);			// the calling core: a wfe sleeps 152 us at most
 	static void Sleep (void);			// core 0: one counted sleep (idlewait::nap)
 	static boolean NotesOn (void);			// notes=, for the web page (read only)

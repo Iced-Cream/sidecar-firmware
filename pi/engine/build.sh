@@ -178,6 +178,9 @@ grep -q circle-http-auth include/circle/net/httpdaemon.h || patch -p1 < /repo/pi
 # "content-type" for a fetch() with a Headers object, and the form was then not read: /cmd refused every paired change;
 # after circle-http-auth.patch, idempotent)
 grep -q circle-http-case lib/net/httpdaemon.cpp || patch -p1 < /repo/pi/circle/circle-http-case.patch
+# a TCP accept that wakes for a connection already gone fails instead of asserting on its unset foreign address
+# (pi/circle/circle-tcp-accept.patch: ipaddress.cpp(112) from CHTTPDaemon::Listener, seen under QEMU; idempotent)
+grep -q circle-tcp-accept lib/net/tcpconnection.cpp || patch -p1 < /repo/pi/circle/circle-tcp-accept.patch
 # then the WebSocket upgrade (pi/circle/circle-http-ws.patch: the Upgrade / Sec-WebSocket-* headers and the
 # UpgradeConnection hook that hands the socket to web_ws.cpp, docs/web-ws.md; after circle-http-case.patch, idempotent).
 # web.cpp overrides UpgradeConnection, so a tree without this patch does not build.
