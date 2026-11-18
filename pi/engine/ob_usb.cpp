@@ -1878,7 +1878,11 @@ struct TCircleIo : UsbMidiMerge::Io
 	// the Rytm's computer: USB-C's gadget, or the Teensy relay's when the relay shows the Rytm (slot 0) and USB-C does not
 	static bool RelayHasRytm (void)				{ return CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm (); }
 	bool has_computer (void) override			{ return pSidecar != 0 || RelayHasRytm (); }
-	void computer_connected (bool bUp) override		{ if (pSidecar != 0) pSidecar->RytmMIDIConnected (bUp); }
+	void computer_connected (bool bUp) override
+	{
+		if (RelayHasRytm ()) CTeensyTarget::RytmMidiConnected (bUp);
+		else if (pSidecar != 0) pSidecar->RytmMIDIConnected (bUp);
+	}
 	bool computer (u32 *w) override
 	{
 		if (RelayHasRytm ()) return CTeensyTarget::ForRytm (w);
@@ -1945,7 +1949,8 @@ void CObUsbTransport::Poll (void)
 	if (m_Merge.mac_failed () != m_nMacFailedSeen)	// the computer's packets in that send are lost (usbmidi=os: aborts an upgrade)
 	{
 		m_nMacFailedSeen = m_Merge.mac_failed ();
-		if (Io.pSidecar != 0) Io.pSidecar->ComputerSendFailed ();
+		if (TCircleIo::RelayHasRytm ()) CTeensyTarget::RytmSendFailed ();	// the relay's computer sent them
+		else if (Io.pSidecar != 0) Io.pSidecar->ComputerSendFailed ();
 	}
 	midibridge_pi::SetRytmFail (m_Merge.bridge_failed ());
 	boolean bSending = m_pMIDI != 0 && m_bSend && !m_Merge.failed ();

@@ -47,6 +47,11 @@ void Tap (const uint8_t *pEventPacket);		// xHCI IRQ: the box's packet handler (
 const unsigned kFromComputerPackets = 1024;
 bool FromComputer (const uint8_t *pEventPacket);	// xHCI IRQ: one packet for the box; false: the queue is full (dropped)
 unsigned FromComputerRoom (void);		// packets that fit now
+// usbmidi=os: on the relay (core 0's loop): the computer's packets lost on the way (a failed send, no box), whether any
+// still wait or a SysEx of its is part way out, and dropping all of what waits (the count)
+unsigned ComputerLost (void);
+bool ComputerBusy (void);
+unsigned CutFromComputer (void);
 
 }  // namespace link1
 

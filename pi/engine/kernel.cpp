@@ -1548,8 +1548,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
 		pSidecar->FromRytmMIDI (pPacket - 1);
 	// the Rytm on the Teensy relay (CObUsb::RelaySlot 0): its MIDI to the relay's computer, as to USB-C's otherwise
-	if (CTeensyTarget::ShowsRytm () && (pSidecar == 0 || !pSidecar->OsUpdate () || CObUsb::Active ()))
-		CTeensyTarget::RytmTap (pPacket - 1);
+	if (CTeensyTarget::ShowsRytm ()) CTeensyTarget::RytmTap (pPacket - 1);	// (its own usbmidi=os: gate inside)
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();
@@ -1634,7 +1633,9 @@ static void AsampMidiSend (CSidecarGadget *pSidecar)
 		w &= ~0xF0u;				// cable 0
 		if (nPort == 1)
 		{
-			if (pSidecar != 0) pSidecar->MIDIToComputer (w);
+			// the Rytm's computer: the relay's when it shows the Rytm and USB-C does not, else USB-C's
+			if (CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm ()) CTeensyTarget::MidiToComputer (w);
+			else if (pSidecar != 0) pSidecar->MIDIToComputer (w);
 		}
 		else if (nPort == 2 || nPort == 3)
 			for (unsigned i = 0; i < MaxKeyboards; i++)

@@ -7,4 +7,6 @@ class CTeensyTarget {
   static bool ShowsRytm() { return false; }
   static bool ForRytm(uint32_t*) { return false; }
   static bool ForRytmInSysEx() { return false; }
+  static void RytmSendFailed() {}
+  static void RytmMidiConnected(bool) {}
 };

@@ -69,6 +69,11 @@ public:
 	static void RytmTap (const u8 *pEventPacket);	// xHCI IRQ (MIDIPacketHandler): the Rytm's packet, for the computer
 	static boolean ForRytm (u32 *pPacket);		// core 0's loop (the USB merge): the computer's next packet for the Rytm
 	static boolean ForRytmInSysEx (void);		// a SysEx of the computer's is half sent to the Rytm
+	// usbmidi=os: for the Rytm on the relay, as the gadget's on USB-C (core 0's loop): an upgrade that loses data is
+	// aborted - the path cut, OS messages dropped until the computer stops sending them - rather than let a hole through
+	static void RytmSendFailed (void);		// the USB merge: a send of the computer's packets failed
+	static void RytmMidiConnected (boolean bOn);	// the USB merge: whether the Rytm takes MIDI
+	static void MidiToComputer (u32 nPacket);	// core 0's loop: the engine's own packet (port 1) to the relay's computer
 
 private:
 	static void EvStub (CUSBRequest *pURB, void *pParam, void *pContext);
@@ -181,6 +186,18 @@ private:
 	static const unsigned RytmQueue = 2048;
 	OwnedToRytmPath<RytmQueue> m_ToRytmPath;
 	MidiFilter m_ToPcFilter;
+	// usbmidi=os: on the relay, one gate per path (usbmidi_os_path.h OsGate), as the gadget's on USB-C: slot 0 (the
+	// Rytm, m_ToRytmPath) and slot 1 (the A4, m_ToBoxFilter into link1's queue). OsLost: data lost while an upgrade is
+	// under way -> the path cut and OS messages dropped until the computer has sent none for OsGate::kQuietUs
+	OsGate m_Gate;					// slot 0
+	OsGate m_BoxGate;				// slot 1
+	boolean m_bRytmMidi;				// the Rytm takes MIDI (the USB merge)
+	unsigned m_nLink1LostSeen;			// link1::ComputerLost at the last look
+	unsigned m_nToBoxFullSeen;			// m_Stats.nMidiToBoxFull at the last look
+	void OsLost (boolean bSendFailed, const char *pWhy);		// slot 0
+	void BoxOsLost (boolean bSendFailed, const char *pWhy);	// slot 1
+	unsigned ApplyBoxGate (boolean bCut);		// slot 1's ApplyGate (IRQs masked by the caller); the packets cut
+	void OsGatePoll (void);				// core 0's loop: losses, the box going, the quiet after an abort
 	volatile boolean m_bCutRytm;			// the box went: MirrorPoll cuts m_ToRytmPath
 	unsigned MidiRoom (void) const;			// packets the box-bound MIDI queue (link1's, or the Rytm's) takes now
 	void QueueToPc (const u8 *pEventPacket);	// IRQ level: one packet onto m_MidiIn, flushed to the Teensy
