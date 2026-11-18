@@ -396,6 +396,9 @@ boolean CKernel::Initialize (void)
 				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
 	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
 	CEngineCores::SetIdleWfe (m_Options.GetAppOptionDecimal ("idlewfe", 1) != 0);	// docs/pi-engine.md "Idle sleep"
+	if (m_Options.GetAppOptionString ("blocklimit", 0) != 0)	// the QEMU gates only: a unit's cmdline never has it
+		m_Logger.Write (From, LogWarning, "blocklimit: a render core's block limit is %u ms (not 20): emulator gates only",
+				CEngineCores::SetBlockLimitMs (m_Options.GetAppOptionDecimal ("blocklimit", 20)));
 	ApplyBudget (m_nClockMHz, TRUE);			// the voice guard's budget, for the clock the engine runs at
 	m_Console.Initialize ();
 	BootStep (4);
