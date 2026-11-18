@@ -169,6 +169,10 @@ int main() {
     CHECK(g_gadget.pipe_in.size() == 1 && g_gadget.pipe_in[0].addr == 0x82 && g_gadget.pipe_in[0].n == 12);
     CHECK(b.pipe(0x82) == in);
 
+    // the box's audio IN restarted as quiet (the VL805 stall, circle-xhci-restart.patch): its IN pipe in flight is
+    // restarted too and stays in flight; the OUT pipe (bulk, nothing in flight) is not touched
+    CHECK(b.box()->RestartPipes() == 1 && in->ep->GetXHCIEndpoint()->restarts == 1 && b.pipe(0x82) == in);
+
     // the computer's pipe OUT packet: one at a time, the gadget told when the box has it
     static const u8 pkt[10] = {1, 2, 3};
     CHECK(CObUsb::MirrorPipeOut(0x02, pkt, sizeof pkt));

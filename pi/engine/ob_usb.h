@@ -171,6 +171,7 @@ public:
 	void Wanted (void);
 	void Reattach (void);				// a new mirror target for this box (PollAssign, SetRelayTarget): read again at AttachLate
 	void KickPipes (void);				// moved to another target: each IN pipe waiting for the old one's computer asks again
+	unsigned RestartPipes (void);			// IN restarted as quiet: each IN pipe in flight restarted too (circle-xhci-restart); how many
 	u16 NextOutCounter (void) const		{ return m_nOutCounter; }
 	boolean CtlBusy (void) const		{ return m_bMirror && m_bCtlBusy; }
 	static void PollTargets (void);			// core 0's loop: each target's MirrorPoll (the gadget's runs in its own Poll)

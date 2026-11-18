@@ -13,6 +13,8 @@ class CXHCIEndpoint {
   // as Circle's: TRUE whatever the commands gave (it returns !code); a reset that did not take leaves the state at 2
   bool ResetFromHalted() { ++resets; if (reset_ok) state = 3; return true; }
   unsigned DropURBs() { unsigned n = GetPendingURBs(); if (ring) ring->clear(); return n; }
+  // circle-xhci-restart.patch: Stop Endpoint + doorbell; the TDs and URBs stay queued. TRUE: the command took
+  bool Restart() { ++restarts; return restart_ok; }
   // circle-xhci-iv1count.patch: the test sets s_iv1 / s_iv1_busy / s_iv1_list
   static unsigned GetPeriodicIv1(unsigned* busy = nullptr, char* list = nullptr, unsigned size = 0) {
     if (busy) *busy = s_iv1_busy;
@@ -25,5 +27,7 @@ class CXHCIEndpoint {
   unsigned state = 1;                  // 1 running, 2 halted, 3 stopped
   bool reset_ok = true;   // false: the commands fail, the endpoint stays halted
   int resets = 0;
+  int restarts = 0;
+  bool restart_ok = true;
   std::deque<CUSBRequest*>* ring = nullptr;   // the test's: the host's queue of this endpoint
 };

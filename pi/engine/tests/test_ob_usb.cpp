@@ -763,6 +763,17 @@ int main() {
     CObUsb::PollHalt();
     CHECK(x->resets == 1 && CObUsb::HaltResets(FALSE) == before + 1);   // B5: not a reset
     CHECK(CLogger::Get()->lines.back().find("OUT endpoint quiet or failed but not halted (state 1") != std::string::npos);
+    // the stall restart: the running endpoint got Stop Endpoint + its doorbell (the VL805 waits one MFINDEX wrap
+    // otherwise), its URBs still pending, and the line says so
+    CHECK(x->restarts == 1 && !r.host.out.empty());
+    CHECK(CLogger::Get()->lines.back().find("restarted (1, 0 refused") != std::string::npos);
+    x->restart_ok = false;              // a refused Stop Endpoint: counted, still resubmitted, no reset
+    CTimer::s_now += 1100000;
+    r.in(1, c);
+    CObUsb::PollHalt();
+    CHECK(x->restarts == 2 && x->resets == 1);
+    CHECK(CLogger::Get()->lines.back().find("restarted (1, 1 refused") != std::string::npos);
+    x->restart_ok = true;
     x->ring = nullptr;
     CTimer::s_now = 0;
   }

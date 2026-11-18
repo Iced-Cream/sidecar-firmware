@@ -365,8 +365,8 @@ boolean CObFollow::Recover (boolean bIn, unsigned nNowUs)
 	{
 		if (r == 2)
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
-						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
-						h.TakeQuiet ());
+						"restarted (%u, %u refused) and resubmitted (%u in a row; %u lines left out)", pDir,
+						h.state, h.stalls, h.restarts, h.restart_fails, h.fails, h.TakeQuiet ());
 		else
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
 						"%u URBs dropped, %s goes on (%u in a row; %u lines left out)", pDir, h.state,

@@ -568,12 +568,14 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 		for (unsigned i = 0; i < m_nURBs; i++) if (!m_bOutBusy[i]) FillOut (m_pOutBuf[i], m_nBlocks), SubmitOut (i);
 	}
 	LeaveCritical ();
+	unsigned nPipes = r == 2 && bIn ? RestartPipes () : 0;
 	if (h.Log (nNowUs))
 	{
 		if (r == 2)
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
-						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
-						h.TakeQuiet ());
+						"restarted (%u, %u refused; %u IN pipes too) and resubmitted (%u in a row; "
+						"%u lines left out)", pDir, h.state, h.stalls, h.restarts, h.restart_fails, nPipes,
+						h.fails, h.TakeQuiet ());
 		else
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint halted (state %u, transfer error %u): reset %u, "
 						"%u URBs dropped, %s goes on (%u in a row; %u lines left out)", pDir, h.state,
@@ -960,6 +962,22 @@ void CObUsb::KickPipes (void)
 	LeaveCritical ();
 }
 
+// Recover restarted this box's audio IN (a quiet running endpoint: the VL805 waits one MFINDEX wrap for every periodic
+// endpoint at once, circle-xhci-restart.patch): its IN pipe in flight (the async pipe 0x82, interrupt) waits as long,
+// and the Engine's latency check needs it, so each IN pipe with its URB at the controller is restarted too. Task level
+unsigned CObUsb::RestartPipes (void)
+{
+	unsigned n = 0;
+	for (unsigned i = 0; i < m_nPipes; i++)
+	{
+		TPipe &p = m_Pipe[i];
+		if (!(p.uchAddr & 0x80) || !p.bBusy || p.bStopped || p.pEP == 0) continue;
+		p.pEP->GetXHCIEndpoint ()->Restart ();
+		n++;
+	}
+	return n;
+}
+
 static char s_PipeInfo[2][192];
 
 const char *CObUsb::PipeInfo (unsigned nSlot) { return nSlot < 2 ? s_PipeInfo[nSlot] : ""; }
@@ -1343,6 +1361,7 @@ void CObUsb::AttachLate (void)						{}
 void CObUsb::Wanted (void)						{}
 void CObUsb::Reattach (void)						{}
 void CObUsb::KickPipes (void)						{}
+unsigned CObUsb::RestartPipes (void)					{ return 0; }
 
 #endif
 

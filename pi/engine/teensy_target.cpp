@@ -494,7 +494,8 @@ void CTeensyTarget::EvWatch (void)
 	if (m_nEvStep == 0)
 	{
 		// step 1: the URBs. A halted (or erred) endpoint is reset and every queued URB dropped, then all are submitted
-		// again; a running one keeps its URBs (Circle cannot cancel them there), so only its state is told
+		// again; a running one keeps its URBs (Circle cannot cancel them there) and is restarted (Stop Endpoint and its
+		// doorbell, circle-xhci-restart.patch)
 		m_nEvStep = 1;
 		m_nEvSilent++;
 		CXHCIEndpoint *pX = m_pEv->GetXHCIEndpoint ();
@@ -517,7 +518,7 @@ void CTeensyTarget::EvWatch (void)
 		CLogger::Get ()->Write (From, LogWarning, "relay event pipe silent %u s after the relay was shown (ev %u, endpoint state %u, "
 					"%u URBs pending): %s; shown again in %u s if still silent", nSecs, m_Stats.nEvents, m_EvHalt.state,
 					nPending, r < 0 ? "reset refused" : nResubmitted ? "reset, URBs resubmitted" :
-					"running, URBs left queued", kEvSilentSecs);
+					"running, restarted (URBs left queued)", kEvSilentSecs);
 		return;
 	}
 	// step 2: show the relay again, so that the computer enumerates it from the start

@@ -17,7 +17,10 @@
 //     so a state of 2 or 4 afterwards is a refused reset, tried again after the back-off.
 // On 1, with the IRQ held off, Finish: the reset skipped every queued URB (DropURBs, circle-xhci-dropurbs.patch), so all
 // of the caller's are free and it submits them again. On 2 the endpoint was not halted on the xHC (state 1): nothing was
-// reset or dropped, and the caller only resubmits what is free (not counted as a reset). Log: at most kLogFirst lines in
+// reset or dropped, and the caller only resubmits what is free (not counted as a reset). On 2 Reset has also restarted the
+// endpoint (X::Restart: Stop Endpoint, then its doorbell): a running endpoint with TDs queued and none completing is the
+// VL805 waiting one MFINDEX wrap (2.048 s) for a service time it already passed, every periodic endpoint at once; a restart
+// makes the controller schedule it again from now (the start-of-stream stall, stall-restart.md). Log: at most kLogFirst lines in
 // a kLogEveryUs window, whatever came between; the first line of the next window tells the number left out. X: CXHCIEndpoint (GetEPState, ResetFromHalted, DropURBs).
 // Before any of a box's resets, its EpBox (below) may hold them: a pull of the cable fails every endpoint at once.
 // Portable: tests/test_ob_usb.cpp.
@@ -31,6 +34,7 @@ struct EpHalt {
   volatile unsigned fail_us = 0;   // when (the first failed URB since the last reset)
   volatile unsigned fails = 0;   // resets in a row with no good completion between them
   unsigned resets = 0, refusals = 0, stalls = 0, quiet = 0, state = 0, dropped = 0, last_us = 0;
+  unsigned restarts = 0, restart_fails = 0;   // Stop Endpoint + doorbell on a quiet running endpoint (and refused)
   unsigned log_start_us = 0, log_lines = 0, rate_start_us = 0, rate_n = 0;   // the log's and the rate cap's windows
 
   void Fail(unsigned now_us) {     // a failed URB's completion (IRQ)
@@ -58,7 +62,10 @@ struct EpHalt {
     ++rate_n;
     if (fails < 1000) fails = fails + 1;
     state = x->GetEPState();   // 1 running, 2 halted, 3 stopped, 4 error
-    if (state < 2) return 2;
+    if (state < 2) {           // running but quiet: the VL805 lost its schedule, restart it (circle-xhci-restart.patch)
+      if (x->Restart()) ++restarts; else ++restart_fails;
+      return 2;
+    }
     clear();                   // the box's side (its answer does not matter: a box that did not halt it ignores it)
     unsigned after = x->ResetFromHalted() ? x->GetEPState() : 4;
     if (after == 2 || after == 4) return ++refusals, -1;

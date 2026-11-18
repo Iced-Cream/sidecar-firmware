@@ -277,6 +277,12 @@ grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circl
 # "periodic starvation" line: the VL805 starved one of them at 6 busy, XV1/XR1, diagnosis-periodic-starvation.md; no change to
 # the class layout; after circle-xhci-dropurbs, idempotent)
 grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-iv1count.patch
+# then a quiet running periodic endpoint restarted (pi/circle/circle-xhci-restart.patch: CXHCICommandManager::StopEndpoint,
+# CXHCIEndpoint::Restart = Stop Endpoint + its doorbell, Stopped events not taken as completions): the VL805 stopped every
+# periodic endpoint at once for one MFINDEX wrap (2.048 s) after boot and now and then later; ep_halt.h restarts the
+# endpoint when its quiet resubmit finds it running (stall-restart.md); no change to the class layout; after
+# circle-xhci-iv1count, idempotent)
+grep -q circle-xhci-restart include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-restart.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

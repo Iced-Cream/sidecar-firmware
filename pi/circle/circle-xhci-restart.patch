@@ -1,0 +1,96 @@
+diff --git a/include/circle/usb/xhcicommandmanager.h b/include/circle/usb/xhcicommandmanager.h
+index 5afe73d..baeec75 100644
+--- a/include/circle/usb/xhcicommandmanager.h
++++ b/include/circle/usb/xhcicommandmanager.h
+@@ -44,6 +44,7 @@ public:
+ 	int ConfigureEndpoint (u8 uchSlotID, TXHCIInputContext *pInputContext, boolean bDeconfigure);
+ 	int EvaluateContext (u8 uchSlotID, TXHCIInputContext *pInputContext);
+ 	int ResetEndpoint (u8 uchSlotID, u8 uchEndpointID);
++	int StopEndpoint (u8 uchSlotID, u8 uchEndpointID);	// circle-xhci-restart
+ 	int SetTRDequeuePointer (u8 uchSlotID, u8 uchEndpointID, TXHCITRB *pTRB, boolean bDCS);
+ 	int NoOp (void);
+ 
+diff --git a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+index 729b898..c96db37 100644
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -62,6 +62,11 @@ public:
+ 	// circle-xhci-dropurbs: after ResetFromHalted (its Set TR Dequeue skips every TD still queued), forget their URBs:
+ 	// none of them completes. Returns how many; the caller owns them again.
+ 	unsigned DropURBs (void);
++	// circle-xhci-restart: a running periodic endpoint that the VL805 stopped serving with its TDs still queued (it waits
++	// one MFINDEX wrap, 2.048 s): Stop Endpoint, then its doorbell, so the controller schedules it again from now. The TDs
++	// stay queued and their URBs pending; the Stopped event of the TD in progress is not a completion. Task level.
++	// TRUE: the Stop Endpoint command succeeded
++	boolean Restart (void);
+ 
+ 	unsigned GetEPState (void);		// output endpoint context: 0 disabled, 1 running, 2 halted, 3 stopped, 4 error
+ 	unsigned GetPendingURBs (void) const	{ return m_nURBCount; }
+diff --git a/lib/usb/xhcicommandmanager.cpp b/lib/usb/xhcicommandmanager.cpp
+index d3dfea0..b6e2819 100644
+--- a/lib/usb/xhcicommandmanager.cpp
++++ b/lib/usb/xhcicommandmanager.cpp
+@@ -135,6 +135,18 @@ int CXHCICommandManager::ResetEndpoint (u8 uchSlotID, u8 uchEndpointID)
+ 	return DoCommand (nControl);
+ }
+ 
++// circle-xhci-restart: Stop Endpoint (the TRB's slot and endpoint fields sit where Reset Endpoint's do)
++int CXHCICommandManager::StopEndpoint (u8 uchSlotID, u8 uchEndpointID)
++{
++	assert (XHCI_IS_SLOTID (uchSlotID));
++	assert (XHCI_IS_ENDPOINTID (uchEndpointID));
++	u32 nControl =   XHCI_TRB_TYPE_CMD_STOP_ENDPOINT << XHCI_TRB_CONTROL_TRB_TYPE__SHIFT
++		       | (u32) uchSlotID << XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_SLOTID__SHIFT
++		       | (u32) uchEndpointID <<  XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_ENDPOINTID__SHIFT;
++
++	return DoCommand (nControl);
++}
++
+ int CXHCICommandManager::SetTRDequeuePointer (u8 uchSlotID, u8 uchEndpointID, TXHCITRB *pTRB,
+ 					      boolean bDCS)
+ {
+diff --git a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+index 5f4458f..3e57309 100644
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -445,6 +445,14 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 					   uchCompletionCode, nTransferLength, m_nURBCount);
+ 	}
+ 
++	// circle-xhci-restart: Stopped (26), Stopped - Length Invalid (27) and Stopped - Short Packet (28) come only from
++	// Restart's Stop Endpoint. The TD stays on the ring and runs again when the doorbell restarts the endpoint: its URB
++	// is still pending, so this is not its completion
++	if (uchCompletionCode >= 26 && uchCompletionCode <= 28)
++	{
++		return;
++	}
++
+ 	CUSBRequest *pURB = m_nURBCount > 0 ? m_pURB[m_nURBHead] : 0;
+ 	if (!pURB)
+ 	{
+@@ -622,6 +630,25 @@ unsigned CXHCIEndpoint::GetPeriodicIv1 (unsigned *pBusy, char *pList, unsigned n
+ 	return nCount;
+ }
+ 
++boolean CXHCIEndpoint::Restart (void)
++{
++	if (   !m_bValid
++	    || m_pDevice == 0
++	    || !XHCI_IS_ENDPOINTID (m_uchEndpointID))
++	{
++		return FALSE;
++	}
++
++	assert (m_pXHCIDevice);
++	int nCode = m_pXHCIDevice->GetCommandManager ()->StopEndpoint (m_pDevice->GetSlotID (), m_uchEndpointID);
++
++	// Stopped (or not running, if the command was refused): the doorbell (re)starts it at the TD it stopped on
++	DataSyncBarrier ();
++	m_pMMIO->db_write32 (m_pDevice->GetSlotID (), XHCI_REG_DB_TARGET_EP0 + m_uchEndpointID-1);
++
++	return XHCI_TRB_SUCCESS (nCode);
++}
++
+ unsigned CXHCIEndpoint::DropURBs (void)
+ {
+ 	m_SpinLock.Acquire ();
