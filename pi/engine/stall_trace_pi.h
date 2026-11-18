@@ -11,7 +11,16 @@
 #define STALL_TRACE_XHCI 1
 #endif
 
-inline stall_trace::Ring<1024> g_StallTrace;	// 16 KB: every Teensy vendor request (credits too) for 3 s and more
+inline stall_trace::Ring<1024> g_StallTrace;
+inline stall_trace::XferStats<256> g_XferStats;	// 25.6 s of 100 ms windows, both boxes' audio transfers
+inline stall_trace::Ring<512> g_XferRing;		// the last 512 audio completions (I/O: a slot, d length, e ok), no MFINDEX
+
+// a box's audio completion (xHCI IRQ): into the windows and the ring
+inline void XferNote(unsigned nSlot, bool bOut, unsigned nLen, unsigned nBlk, bool bOk) {
+  uint32_t us = CTimer::GetClockTicks();
+  g_XferStats.Add(us, nSlot, bOut, nLen, nBlk, bOk);
+  g_XferRing.Add(us, 0, bOut ? 'O' : 'I', (uint8_t)nSlot, 0, 0, (uint16_t)nLen, bOk);
+}	// 16 KB: every Teensy vendor request (credits too) for 3 s and more
 
 inline uint16_t StallTraceMf(void) {
 #ifdef STALL_TRACE_XHCI

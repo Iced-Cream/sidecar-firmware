@@ -57,6 +57,23 @@ int main() {
   CHECK(w.Format(0x00000000u, 3000000, 5, out) == 2);
   CHECK(lines[0] == "B-0.2@0001 21 0b 1 0003 0001; r+0.2@0002 01 00 1 034e 0000");
 
+  {  // XferStats: 100 ms windows per slot and direction; short, failed, gap; the window of a reference time
+    XferStats<16> x;
+    std::vector<std::string> l;
+    auto o = [&](const char* t) { l.push_back(t); };
+    x.Add(1000000, 0, 0, 368, 368, true);
+    x.Add(1000125, 0, 0, 368, 368, true);
+    x.Add(1000250, 0, 0, 100, 368, true);       // short
+    x.Add(1000375, 1, 1, 0, 200, false);        // failed
+    x.Add(1100000, 0, 0, 368, 368, true);       // next window, gap 99750
+    CHECK(x.Format(1100000, 200000, 0, o) == 2);
+    CHECK(l[0] == "-100 | s0 in 3/1/0/0K g125 out 0/0/0/0K g0 | s1 in 0/0/0/0K g0 out 1/0/1/0K g0");
+    CHECK(l[1] == "+0 | s0 in 1/0/0/0K g65535 out 0/0/0/0K g0 | s1 in 0/0/0/0K g0 out 0/0/0/0K g0");
+    l.clear();
+    x.Add(1000000 + 16 * 100000, 0, 0, 368, 368, true);   // the ring of windows wraps: the old window is reused
+    CHECK(x.Format(1000000, 0, 0, o) == 0);
+  }
+
   printf("test_stall_trace: ok\n");
   return 0;
 }

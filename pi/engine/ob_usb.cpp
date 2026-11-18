@@ -534,6 +534,15 @@ void CObUsb::StallTraceDump (boolean bIn, unsigned nNowUs)
 	g_StallTrace.Format (nLast, 3000000, 5, [nDump] (const char *pLine) {
 		CLogger::Get ()->Write (From, LogNotice, "stall trace %u: %s", nDump, pLine);
 	}, 150);					// at most 30 lines a stall: the newest 150 entries
+	if (nDump > 3) return;				// the transfer view: the first 3 stalls of a boot only
+	// every audio transfer of both boxes in 100 ms windows, 8 s before the last completion to 0.3 s after
+	// (n/short/failed/KB and the longest gap in us, per slot and direction), then the last 160 completions
+	g_XferStats.Format (nLast, 8000000, 300000, [nDump] (const char *pLine) {
+		CLogger::Get ()->Write (From, LogNotice, "xfer win %u: %s", nDump, pLine);
+	});
+	g_XferRing.Format (nLast, 1000000, 10, [nDump] (const char *pLine) {
+		CLogger::Get ()->Write (From, LogNotice, "xfer last %u: %s", nDump, pLine);
+	}, 160);
 }
 
 boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
@@ -1538,6 +1547,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	u8 *pBuf = m_pInBuf[i];
 	boolean ok = pURB->GetStatus () != 0;
 	unsigned len = ok ? pURB->GetResultLength () : 0;
+	XferNote (m_nSlot, false, len, m_nInBlk, ok);	// the transfer windows (stall_trace_pi.h)
 	InvalidateDataCacheRange ((uintptr) pBuf, kBufSize);	// the CPU must not see stale cache lines
 
 	unsigned good = 0;
@@ -1709,6 +1719,7 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	m_bOutBusy[i] = FALSE;
 	m_nOutPending--;
 	if (m_nOutPending < m_nOutPendMin) m_nOutPendMin = m_nOutPending;	// before this completion's refill
+	XferNote (m_nSlot, true, pURB->GetStatus () != 0 ? pURB->GetResultLength () : 0, m_nOutBlk, pURB->GetStatus () != 0);
 
 	if (pURB->GetStatus () != 0)
 	{

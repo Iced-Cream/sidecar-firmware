@@ -108,4 +108,61 @@ struct Ring {
   }
 };
 
+// Every audio transfer of the boxes (slot 0/1, IN/OUT) summed in 100 ms windows (xHCI IRQ only, one writer), to see
+// what changes on the bus in the 5 s after a second box's audio starts (SQ1, KB T436): completions, bytes, short ones
+// (not a whole number of blocks, or zero), failed ones, and the longest gap between two completions.
+struct XferWin {
+  uint32_t t;                  // the window's start (us, a multiple of kWinUs); 0: unused
+  uint16_t n[2][2], shrt[2][2], fail[2][2], gap[2][2];   // [slot][0 IN, 1 OUT]; gap in us, capped at 65535
+  uint32_t bytes[2][2];
+};
+
+template <unsigned W = 256>
+struct XferStats {
+  static constexpr uint32_t kWinUs = 100000;
+  XferWin w[W] = {};
+  uint32_t last_us[2][2] = {};
+
+  void Add(uint32_t us, unsigned slot, unsigned dir, unsigned len, unsigned blk, bool ok) {
+    if (slot > 1 || dir > 1) return;
+    uint32_t t = us - us % kWinUs;
+    XferWin& x = w[(us / kWinUs) % W];
+    if (x.t != t) x = XferWin{}, x.t = t;
+    uint32_t g = last_us[slot][dir] ? us - last_us[slot][dir] : 0;
+    last_us[slot][dir] = us;
+    if (g > 65535) g = 65535;
+    if (g > x.gap[slot][dir]) x.gap[slot][dir] = (uint16_t)g;
+    if (x.n[slot][dir] != 0xFFFF) ++x.n[slot][dir];
+    if (!ok) { if (x.fail[slot][dir] != 0xFFFF) ++x.fail[slot][dir]; return; }
+    x.bytes[slot][dir] += len;
+    if ((len == 0 || (blk && len % blk)) && x.shrt[slot][dir] != 0xFFFF) ++x.shrt[slot][dir];
+  }
+
+  // line(text) for each used window from ref_us - before_us to ref_us + after_us, oldest first, as
+  // "<ms from ref> | s0 in n/short/fail/KB gap | s0 out ... | s1 in ... | s1 out ...". Returns the windows written.
+  template <class Line>
+  unsigned Format(uint32_t ref_us, uint32_t before_us, uint32_t after_us, Line line) const {
+    char buf[200];
+    unsigned total = 0;
+    uint32_t from = ref_us - before_us;
+    for (uint32_t k = 0; k <= (before_us + after_us) / kWinUs; ++k) {
+      uint32_t at = from + k * kWinUs;
+      const XferWin& x = w[(at / kWinUs) % W];
+      if (x.t != at - at % kWinUs || x.t == 0) continue;
+      Text t{buf, 0, sizeof buf};
+      buf[0] = 0;
+      int32_t rel = (int32_t)(x.t - ref_us) / 1000;
+      t.c(rel < 0 ? '-' : '+'), t.u((unsigned)(rel < 0 ? -rel : rel));
+      for (unsigned s = 0; s < 2; ++s)
+        for (unsigned d = 0; d < 2; ++d) {
+          t.s(d ? " out " : s ? " | s1 in " : " | s0 in ");
+          t.u(x.n[s][d]), t.c('/'), t.u(x.shrt[s][d]), t.c('/'), t.u(x.fail[s][d]), t.c('/'), t.u(x.bytes[s][d] / 1024);
+          t.s("K g"), t.u(x.gap[s][d]);
+        }
+      line(buf), ++total;
+    }
+    return total;
+  }
+};
+
 }  // namespace stall_trace
