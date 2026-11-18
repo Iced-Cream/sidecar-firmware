@@ -176,7 +176,9 @@ private:
 	int m_nCtlAnswer;			// the box's answer length (< 0: STALL)
 
 	volatile unsigned m_nCreditDue[relay::kChannels];
-	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back while link1's queue to the box is full
+	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back until a whole packet more fits the box's queue
+	volatile unsigned m_nMidiOut[relay::kChannels];	// MIDI credits granted whose packets have not come yet (at most 128 events each)
+	boolean MidiCreditFits (unsigned c) const;	// one more MIDI credit: every packet it and the granted ones bring fits
 	void RebootFeed (const u8 *pEventPacket);	// xHCI IRQ: usbreboot=1's matcher
 	boolean m_bUsbReboot;				// usbreboot=1: the reboot SysEx from the relay's computer is obeyed
 	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)

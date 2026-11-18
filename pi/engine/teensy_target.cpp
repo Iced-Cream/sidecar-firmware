@@ -83,6 +83,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 		m_nCreditDue[c] = 0;
 		m_nAtBox[c] = 0;
 		m_nMidiHeld[c] = 0;
+		m_nMidiOut[c] = 0;
 		for (unsigned k = 0; k < ChanInURBs; k++) { m_pChanInBuf[c][k] = 0; m_pChanInURB[c][k] = 0; }
 	}
 	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_nAudioOutAt[k] = 0; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
@@ -714,10 +715,16 @@ void CTeensyTarget::OnEvent (const Event &e)
 		m_bPcConfigured = e.a != 0;
 		if (m_bDebug) CLogger::Get ()->Write (From, LogNotice, "relaydebug: the computer configured %u", e.a);
 		m_Stream.in_ch = m_Stream.out_ch = 0;
-		for (unsigned c = 0; c < m_Map.n_out; c++)	// each OUT pipe takes one packet at a time; MIDI a few
+		for (unsigned c = 0; c < m_Map.n_out; c++)	// each OUT pipe takes one packet at a time; MIDI a few, as they fit
 		{
 			const mirror::Ep &ep = m_Map.l.ep[m_Map.ep_of_out[c]];
-			m_nCreditDue[c] += ep.role == mirror::kPipeOut ? 1 : kMaxCredits;
+			if (ep.role == mirror::kPipeOut) { m_nCreditDue[c]++; continue; }
+			// MIDI: the Teensy holds none now (bus reset, kReqConnect); MirrorPoll grants these while a whole packet each fits
+			EnterCritical ();
+			m_nMidiOut[c] = 0;
+			m_nCreditDue[c] = 0;
+			m_nMidiHeld[c] = kMaxCredits;
+			LeaveCritical ();
 		}
 		break;
 	case kEvAlt:
@@ -797,6 +804,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pChanInBuf[c][k], kDmaSize);
 		const mirror::Ep &ep = p->m_Map.l.ep[p->m_Map.ep_of_out[c]];
+		if (ep.role == mirror::kMidiOut && p->m_nMidiOut[c]) p->m_nMidiOut[c]--;	// the credit's packet came
 		CObUsb *pBox = p->m_pBox;
 		if (p->m_bTest && ep.role == mirror::kPipeOut)
 		{
@@ -819,8 +827,8 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 					else p->m_Stats.nMidiToBoxFull++;
 				});
 			}
-			// the next packet from the computer once a whole one (128 event packets) fits; else MirrorPoll grants it
-			if (link1::FromComputerRoom () >= 128) p->m_nCreditDue[c]++;
+			// the next packet from the computer once it fits beside every packet already granted; else MirrorPoll grants it
+			if (p->MidiCreditFits (c)) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;
 		}
 		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 0 && p->m_bBoxUp)
@@ -837,7 +845,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 				if (p->m_ToRytmPath.FromHost (q)) p->m_Stats.nMidiToBox++;
 				else p->m_Stats.nMidiToBoxFull++;
 			}
-			if (p->MidiRoom () >= 128) p->m_nCreditDue[c]++;
+			if (p->MidiCreditFits (c)) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;
 		}
 		else if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
@@ -1036,6 +1044,14 @@ unsigned CTeensyTarget::MidiRoom (void) const
 		return n >= RytmQueue ? 0 : RytmQueue - n;
 	}
 	return link1::FromComputerRoom ();
+}
+
+// A MIDI credit lets the computer send one link packet of up to 128 event packets. Credits not yet used, those due and
+// the one asked for may all come at once, so each needs a whole packet's room: one per 128 the queue takes now
+// (RF1, 2026-11-18: a credit per packet at room >= 128 kept 4 in flight and overflowed link1's queue during an OS upgrade)
+boolean CTeensyTarget::MidiCreditFits (unsigned c) const
+{
+	return MidiRoom () >= 128 * (m_nMidiOut[c] + m_nCreditDue[c] + 1);
 }
 
 unsigned CTeensyTarget::MidiInChan (void) const
@@ -1243,24 +1259,32 @@ void CTeensyTarget::MirrorPoll (void)
 	if (!m_bConnected) return;
 	ControlPoll ();
 	for (unsigned c = 0; c < m_Map.n_out; c++)
-		if (m_nMidiHeld[c] && MidiRoom () >= 128)
+		while (m_nMidiHeld[c])
 		{
 			EnterCritical ();
-			m_nCreditDue[c] += m_nMidiHeld[c];
-			m_nMidiHeld[c] = 0;
+			boolean bFits = m_nMidiHeld[c] && MidiCreditFits (c);
+			if (bFits) { m_nCreditDue[c]++; m_nMidiHeld[c]--; }
 			LeaveCritical ();
+			if (!bFits) break;
 		}
 	for (unsigned c = 0; c < m_Map.n_out; c++)
 	{
+		// taken from the due ones (and counted as granted) before the request, so their packets can't come first
+		const boolean bMidi = m_Map.l.ep[m_Map.ep_of_out[c]].role == mirror::kMidiOut;
+		EnterCritical ();
 		unsigned n = m_nCreditDue[c];
-		if (n == 0) continue;
 		if (n > kMaxCredits) n = kMaxCredits;
-		if (Vendor (FALSE, kReqCredit, m_Map.l.ep[m_Map.ep_of_out[c]].addr, n, 0, 0) >= 0)
+		m_nCreditDue[c] -= n;
+		if (bMidi) m_nMidiOut[c] += n;
+		LeaveCritical ();
+		if (n == 0) continue;
+		if (Vendor (FALSE, kReqCredit, m_Map.l.ep[m_Map.ep_of_out[c]].addr, n, 0, 0) >= 0) m_Stats.nCredits += n;
+		else
 		{
-			EnterCritical ();
-			m_nCreditDue[c] -= n;
+			EnterCritical ();			// not granted: due again
+			m_nCreditDue[c] += n;
+			if (bMidi) m_nMidiOut[c] -= m_nMidiOut[c] < n ? m_nMidiOut[c] : n;
 			LeaveCritical ();
-			m_Stats.nCredits += n;
 		}
 	}
 	if (pBox != 0) pBox->PipePoll ();				// a halted pipe: cleared and resubmitted
