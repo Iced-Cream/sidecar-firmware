@@ -43,6 +43,7 @@
 #include "simd.h"
 #include "usbmidi_pack.h"
 #include "sidecar_gadget.h"
+#include "teensy_target.h"	// the Rytm on the Teensy relay: its computer's MIDI (TCircleIo)
 #include "midibridge_pi.h"
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbdevice.h>
@@ -1874,10 +1875,20 @@ struct TCircleIo : UsbMidiMerge::Io
 		return ok;
 	}
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
-	bool has_computer (void) override			{ return pSidecar != 0; }
-	void computer_connected (bool bUp) override		{ pSidecar->RytmMIDIConnected (bUp); }
-	bool computer (u32 *w) override				{ return !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && pSidecar->ForRytm (w); }
-	bool computer_in_sysex (void) override			{ return pSidecar != 0 && pSidecar->ForRytmInSysEx (); }
+	// the Rytm's computer: USB-C's gadget, or the Teensy relay's when the relay shows the Rytm (slot 0) and USB-C does not
+	static bool RelayHasRytm (void)				{ return CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm (); }
+	bool has_computer (void) override			{ return pSidecar != 0 || RelayHasRytm (); }
+	void computer_connected (bool bUp) override		{ if (pSidecar != 0) pSidecar->RytmMIDIConnected (bUp); }
+	bool computer (u32 *w) override
+	{
+		if (RelayHasRytm ()) return CTeensyTarget::ForRytm (w);
+		return pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && pSidecar->ForRytm (w);
+	}
+	bool computer_in_sysex (void) override
+	{
+		if (RelayHasRytm ()) return CTeensyTarget::ForRytmInSysEx ();
+		return pSidecar != 0 && pSidecar->ForRytmInSysEx ();
+	}
 	const u8 *engine_next (int *pLen) override		{ return g_ToHost.Next (pLen); }
 	unsigned engine_drain (void) override			{ return g_ToHost.Drain (); }
 	void warn (const char *p) override			{ CLogger::Get ()->Write (From, LogWarning, "%s", p); }

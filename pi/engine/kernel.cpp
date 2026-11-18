@@ -1544,9 +1544,12 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
 	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	// (the A4 on USB-C: the computer talks to the A4, through link 1's tap below; the Rytm's USB MIDI is not relayed)
+	// (the A4 on USB-C: the computer talks to the A4, through link 1's tap below; the Rytm's goes to the relay, if it shows it)
 	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
 		pSidecar->FromRytmMIDI (pPacket - 1);
+	// the Rytm on the Teensy relay (CObUsb::RelaySlot 0): its MIDI to the relay's computer, as to USB-C's otherwise
+	if (CTeensyTarget::ShowsRytm () && (pSidecar == 0 || !pSidecar->OsUpdate () || CObUsb::Active ()))
+		CTeensyTarget::RytmTap (pPacket - 1);
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();

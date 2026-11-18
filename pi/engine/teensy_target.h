@@ -22,6 +22,7 @@
 #include "mirror_stream.h"
 #include "relay_proto.h"
 #include "midi_filter.h"
+#include "usbmidi_os_path.h"
 #include "reboot_sysex.h"
 #include "slip_detect.h"
 #include "ep_halt.h"
@@ -63,6 +64,11 @@ public:
 
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
+	// the Rytm (slot 0, the host link) on the relay: its USB MIDI both ways, as the gadget does for it on USB-C
+	static boolean ShowsRytm (void);		// the relay is started and shows slot 0
+	static void RytmTap (const u8 *pEventPacket);	// xHCI IRQ (MIDIPacketHandler): the Rytm's packet, for the computer
+	static boolean ForRytm (u32 *pPacket);		// core 0's loop (the USB merge): the computer's next packet for the Rytm
+	static boolean ForRytmInSysEx (void);		// a SysEx of the computer's is half sent to the Rytm
 
 private:
 	static void EvStub (CUSBRequest *pURB, void *pParam, void *pContext);
@@ -169,6 +175,15 @@ private:
 	void RebootFeed (const u8 *pEventPacket);	// xHCI IRQ: usbreboot=1's matcher
 	boolean m_bUsbReboot;				// usbreboot=1: the reboot SysEx from the relay's computer is obeyed
 	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)
+	// slot 0 (the Rytm) on the relay: the computer's MIDI waits here for the USB merge (ob_usb.cpp TCircleIo), filtered
+	// as the gadget's (host-link SysEx dropped, OS updates only with usbmidi=os:on); the Rytm's MIDI to the computer
+	// goes through m_ToPcFilter (host link and MIDI-CI dropped), as the gadget's m_ToHostFilter
+	static const unsigned RytmQueue = 2048;
+	OwnedToRytmPath<RytmQueue> m_ToRytmPath;
+	MidiFilter m_ToPcFilter;
+	volatile boolean m_bCutRytm;			// the box went: MirrorPoll cuts m_ToRytmPath
+	unsigned MidiRoom (void) const;			// packets the box-bound MIDI queue (link1's, or the Rytm's) takes now
+	void QueueToPc (const u8 *pEventPacket);	// IRQ level: one packet onto m_MidiIn, flushed to the Teensy
 	static const unsigned MidiInRing = 512;
 	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
 	volatile unsigned m_nMidiInHead, m_nMidiInTail;
@@ -177,7 +192,7 @@ private:
 	struct TStats {
 		unsigned nEvents, nSetups, nAborts, nAnswers, nStalls, nLate, nAudioOutDrop, nChanInDrop, nChanInMidi;
 		unsigned nPipeOut, nPipeIn, nPipeInDrop, nCredits, nVendorFail, nConnects;
-		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop;
+		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop, nMidiToKeys;
 		// link 0x02 (IN blocks to the Teensy, TR2: the link carried ~18 %): each URB's submit -> completion time
 		unsigned nLinkErr, nLinkDone, nLinkMaxUs, nLinkHist[8];	// < 125, 250, 500 us, 1, 2, 4, 8 ms, more
 		unsigned nDropRun, nDropRunMax, nBusyMax, nLinkErrStatus;	// drops in a row; most URBs busy at a submit

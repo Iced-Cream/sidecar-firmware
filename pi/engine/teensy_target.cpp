@@ -71,7 +71,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 :	CUSBFunction (pFunction),
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
-	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
+	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_ToPcFilter (false), m_bCutRytm (FALSE), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
 	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_nEvShownAt (0), m_nEvAtShow (0), m_nEvStep (0), m_nEvReshowTry (0), m_nEvSilent (0), m_nEvReshows (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
@@ -96,6 +96,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	// the Rytm; here the box is the second one, so the safer default)
 	const char *pMidi = CKernelOptions::Get ()->GetAppOptionString ("usbmidi", "");
 	m_ToBoxFilter.SetPassOsUpdate (strstr (pMidi, "os:on") != 0);
+	m_ToRytmPath.Filter ().SetPassOsUpdate (strstr (pMidi, "os:on") != 0);	// the Rytm on the relay: the same rule
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 	// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " (SC)", as the gadget's
 	const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
@@ -414,6 +415,7 @@ void CTeensyTarget::MirrorBoxUp (boolean bUp)
 		m_nCtlAnswer = -1;
 		m_CtlState = CtlAnswered;
 	}
+	if (!m_bBoxUp) m_bCutRytm = TRUE;		// the box went: MirrorPoll drops what waits for the Rytm (core 0's loop, the queue's consumer)
 	for (unsigned c = 0; c < kChannels; c++)	// a computer packet at the box that went is never taken: credit it back
 	{
 		m_nCreditDue[c] += m_nAtBox[c];
@@ -817,6 +819,23 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			if (link1::FromComputerRoom () >= 128) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;
 		}
+		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 0 && p->m_bBoxUp)
+		{
+			// the Rytm on the relay: the computer's MIDI to it through the USB merge (ob_usb.cpp), as from USB-C
+			const u8 *q = p->m_pChanInBuf[c][k];
+			unsigned n = pURB->GetResultLength () / 4;
+			for (unsigned i = 0; i < n; i++, q += 4)
+			{
+				if (q[0] == 0) continue;			// padding
+				p->RebootFeed (q);
+				// the keys tap first, as MIDIFromHost on USB-C (the gadget's tap is off then: USB-C shows the A4 or nothing)
+				if (g_pSidecarKeysTap != 0 && (*g_pSidecarKeysTap) (q)) { p->m_Stats.nMidiToKeys++; continue; }
+				if (p->m_ToRytmPath.FromHost (q)) p->m_Stats.nMidiToBox++;
+				else p->m_Stats.nMidiToBoxFull++;
+			}
+			if (p->MidiRoom () >= 128) p->m_nCreditDue[c]++;
+			else p->m_nMidiHeld[c]++;
+		}
 		else if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
 		    && pBox->PipeOut (ep.addr, p->m_pChanInBuf[c][k], pURB->GetResultLength ()))
 		{
@@ -825,8 +844,8 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		}
 		else
 		{
-			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1; the Rytm's USB MIDI is not relayed
-			// yet); the computer may send the next one. The reboot SysEx is obeyed whichever box the relay shows
+			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1; a Rytm not up); the computer may send
+			// the next one. The reboot SysEx is obeyed whichever box the relay shows
 			if (ep.role == mirror::kMidiOut)
 			{
 				const u8 *q = p->m_pChanInBuf[c][k];
@@ -855,12 +874,51 @@ void CTeensyTarget::MidiTap (const u8 *pEventPacket)
 {
 	CTeensyTarget *p = s_pThis;
 	if (p == 0 || !p->MirrorShown ()) return;
-	if (p->m_nMidiInHead - p->m_nMidiInTail >= MidiInRing) { p->m_Stats.nMidiToPcDrop++; return; }
+	p->QueueToPc (pEventPacket);
+}
+
+void CTeensyTarget::QueueToPc (const u8 *pEventPacket)
+{
+	if (m_nMidiInHead - m_nMidiInTail >= MidiInRing) { m_Stats.nMidiToPcDrop++; return; }
 	u32 w;
 	memcpy (&w, pEventPacket, 4);
-	p->m_MidiIn[p->m_nMidiInHead % MidiInRing] = w;
-	p->m_nMidiInHead = p->m_nMidiInHead + 1;
-	p->FlushMidiIn ();
+	m_MidiIn[m_nMidiInHead % MidiInRing] = w;
+	m_nMidiInHead = m_nMidiInHead + 1;
+	FlushMidiIn ();
+}
+
+boolean CTeensyTarget::ShowsRytm (void)
+{
+	return Relaying () && CObUsb::RelaySlot () == 0;
+}
+
+void CTeensyTarget::RytmTap (const u8 *pEventPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	if (p == 0 || !ShowsRytm () || (!p->MirrorShown () && !p->m_ToPcFilter.InSysEx ())) return;
+	p->m_ToPcFilter.Feed (pEventPacket, [p] (const u8 *q) { if (p->MirrorShown ()) p->QueueToPc (q); });
+}
+
+boolean CTeensyTarget::ForRytm (u32 *pPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	return p != 0 && p->m_ToRytmPath.Pop (pPacket);
+}
+
+boolean CTeensyTarget::ForRytmInSysEx (void)
+{
+	CTeensyTarget *p = s_pThis;
+	return p != 0 && p->m_ToRytmPath.InSysEx ();
+}
+
+unsigned CTeensyTarget::MidiRoom (void) const
+{
+	if (m_pBox != 0 && m_pBox->Slot () == 0)
+	{
+		unsigned n = m_ToRytmPath.Size () + MidiFilter::kHoldPackets;
+		return n >= RytmQueue ? 0 : RytmQueue - n;
+	}
+	return link1::FromComputerRoom ();
 }
 
 unsigned CTeensyTarget::MidiInChan (void) const
@@ -1066,8 +1124,16 @@ void CTeensyTarget::MirrorPoll (void)
 	EvWatch ();
 	if (!m_bConnected) return;
 	ControlPoll ();
+	if (m_bCutRytm)					// nothing of the computer's waits for the next Rytm (half a SysEx)
+	{
+		EnterCritical ();
+		m_bCutRytm = FALSE;
+		unsigned n = m_ToRytmPath.Cut ();
+		LeaveCritical ();
+		if (n) CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box went: %u MIDI packets for the Rytm dropped", n);
+	}
 	for (unsigned c = 0; c < m_Map.n_out; c++)
-		if (m_nMidiHeld[c] && link1::FromComputerRoom () >= 128)
+		if (m_nMidiHeld[c] && MidiRoom () >= 128)
 		{
 			EnterCritical ();
 			m_nCreditDue[c] += m_nMidiHeld[c];
@@ -1143,13 +1209,13 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 				p->m_nTestEchoDrop);
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
-			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u silent %u reshow %u vendor fail %u connects %u pipe zlp %u",
+			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u keys %u nobox %u | ev %u silent %u reshow %u vendor fail %u connects %u pipe zlp %u",
 			p->m_bConnected ? "shown" : "off", p->m_bBoxUp ? "up" : "none", p->m_bPcConfigured ? "configured" : "-",
 			p->m_Stream.in_ch, a.in_blocks, a.in_sent, s.nAudioOutDrop, p->m_Stream.out_ch, a.out_blocks, a.out_bad,
 			a.out_under, a.out_over, a.out_extra, p->m_Stream.extra.dropped, p->m_Stream.extra.late, a.anchor,
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
-			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
-			s.nMidiToPcDrop, s.nEvents, p->m_nEvSilent, p->m_nEvReshows, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
+			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) (p->m_ToBoxFilter.DroppedPackets () + p->m_ToRytmPath.Filter ().DroppedPackets ()),
+			s.nMidiToPc, s.nMidiToPcDrop, s.nMidiToKeys, s.nChanInMidi, s.nEvents, p->m_nEvSilent, p->m_nEvReshows, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
 	if (p->m_nInfoLines < 12)		// the first ~2 minutes: what the link shares the bus with (the log ring holds ~1 min)
 	{
 		p->m_nInfoLines++;
