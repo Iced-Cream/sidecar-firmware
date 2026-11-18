@@ -14,8 +14,26 @@ int main () {
   CHECK (P::Short (6860, 6780, true));            // 1.2 % under
   CHECK (P::Short (6860, 0, true));               // XR1: 40 lines at 0/s
   CHECK (!P::Short (500, 0, true));               // IN not running: not judged
+  // steady IN: within 1 % of the second before
+  CHECK (P::Steady (6861, 6863) && P::Steady (6860, 6800) && !P::Steady (6863, 3809) && !P::Steady (6860, 0));
+  { // IV2 T424 A1, the lines before the start-of-stream stall (OUT/IN): IN ramping, so never named
+    P s;
+    const unsigned in[] = {6860, 3809, 6863, 6861, 3128, 0}, out[] = {6860, 3755, 6700, 6631, 2946, 0};
+    for (int i = 0; i < 6; i++) CHECK (s.Tick (in[i], out[i], true) == P::None);
+    CHECK (s.events == 0);
+  }
+  { // IV2 S1, the A4 after a ramp: named on the 5th line (the ramp's line and the one after it are not steady)
+    P s;
+    CHECK (s.Tick (6860, 6860, true) == P::None);
+    CHECK (s.Tick (3969, 2566, true) == P::None);
+    CHECK (s.Tick (6860, 3933, true) == P::None);
+    CHECK (s.Tick (6858, 3606, true) == P::None);
+    CHECK (s.Tick (6861, 3940, true) == P::None);
+    CHECK (s.Tick (6864, 3940, true) == P::Start);
+  }
   { // 3 short seconds name it once; over on the first full second; again later counts a second event
     P s;
+    s.Tick (6860, 6860, true);   // a steady second before
     CHECK (s.Tick (6860, 984, true) == P::None);
     CHECK (s.Tick (6860, 984, true) == P::None);
     CHECK (s.Tick (6860, 984, true) == P::Start && s.on && s.events == 1);
@@ -27,13 +45,17 @@ int main () {
   }
   { // a full second between short ones starts the count again
     P s;
+    s.Tick (6860, 6860, true);
     s.Tick (6860, 984, true); s.Tick (6860, 984, true);
     CHECK (s.Tick (6860, 6860, true) == P::None && s.run == 0);
     s.Tick (6860, 984, true); s.Tick (6860, 984, true);
     CHECK (s.Tick (6860, 984, true) == P::Start);
   }
-  { // a second with a free URB breaks the run too
+  { // a second with a free URB breaks the run too, and so does an unsteady IN
     P s;
+    s.Tick (6860, 6860, true);
+    s.Tick (6860, 984, true); s.Tick (6860, 984, true);
+    CHECK (s.Tick (5000, 984, true) == P::None && s.run == 0);
     s.Tick (6860, 984, true); s.Tick (6860, 984, true);
     CHECK (s.Tick (6860, 984, false) == P::None && s.run == 0);
   }
