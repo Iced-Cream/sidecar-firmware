@@ -567,6 +567,7 @@ int main() {
     CHECK(s9.n == 1 && s9.note[0].pitch == 65 && s9.note[0].micro == 0);
     // the same from a keyboard on the Pi (core/keys.h, by channel: channel 1 = BD): recorded as the notes are heard,
     // the seq track's own voice playing them (nothing to the Rytm: it does not record a seq track)
+    cmd("seq=poly:1:chord=1");   // (a chord: recorded as one only with CHORD REC ON; the default records a mono line)
     keys::reset();
     CHECK(keys::command("keys=channel", b, sizeof b));
     k0 = (r.next_k / 16 + 1) * 16;
@@ -580,10 +581,92 @@ int main() {
     const seq::Step& s11 = seq::edit_track(0, false)->step[11];
     CHECK(s11.n == 2 && s11.note[0].pitch == 70 && s11.note[1].pitch == 74 && s11.note[0].micro == 0);
     keys::reset();
+    cmd("seq=poly:1:chord=0");
     cmd("seq=quant:0");
     state((int64_t)seq::frames(), {6, 0, 0});
     run(r, (int64_t)seq::frames() + 100);
     CHECK(seq::stats().recorded == 4);
+  }
+
+  // ---- CHORD REC (F6): live recording is mono unless the track's CHORD REC is ON; playing is poly either way
+  {
+    cmd("seq=quant:1");
+    state((int64_t)seq::frames(), {6, 1, 0});
+    run(r, (int64_t)seq::frames() + 10);
+    auto at_bar = [&](double x) {   // the Rytm frame of step x of the next bar, in host frames
+      int64_t k0 = (r.next_k / 16 + 1) * 16;
+      return r.t0 + (int64_t)((k0 + x) * r.period) + seq::stats().offset;
+    };
+    auto track = [&] { return seq::edit_track(0, false); };
+    CHECK(seq::poly_of(0).chord == 0);   // the default: OFF
+    // OFF: hold 60 on step 12, press 64 on step 13, release both: 60 cut at 64's start, then 64; both sounded
+    int64_t at = at_bar(12.0);
+    run(r, at);
+    poly::midi(0x90, 60, 100);
+    run(r, at + (int64_t)(1.0 * r.period));
+    poly::midi(0x90, 64, 100);
+    CHECK(poly::held_notes(0) >= 2);   // playing is unchanged: both notes sound
+    run(r, at + (int64_t)(1.6 * r.period));
+    poly::midi(0x80, 60, 0);   // the older one released first: nothing changes
+    run(r, at + (int64_t)(2.0 * r.period));
+    poly::midi(0x80, 64, 0);
+    {
+      const seq::Step& s12 = track()->step[12];
+      const seq::Step& s13 = track()->step[13];
+      CHECK(s12.n == 1 && s12.note[0].pitch == 60 && std::abs((int)s12.note[0].len - 96) <= 3);
+      CHECK(s13.n == 1 && s13.note[0].pitch == 64 && std::abs((int)s13.note[0].len - 96) <= 3);
+    }
+    // OFF: the newest released while an older one is held: the older does not resume in the recording
+    at = at_bar(14.0);
+    run(r, at);
+    poly::midi(0x90, 67, 100);
+    run(r, at + (int64_t)(1.0 * r.period));
+    poly::midi(0x90, 69, 100);
+    run(r, at + (int64_t)(1.5 * r.period));
+    poly::midi(0x80, 69, 0);
+    run(r, at + (int64_t)(3.0 * r.period));
+    poly::midi(0x80, 67, 0);
+    {
+      const seq::Step& s14 = track()->step[14];
+      const seq::Step& s15 = track()->step[15];
+      CHECK(s14.n == 1 && s14.note[0].pitch == 67 && std::abs((int)s14.note[0].len - 96) <= 3);
+      CHECK(s15.n == 1 && s15.note[0].pitch == 69 && std::abs((int)s15.note[0].len - 48) <= 3);
+    }
+    // OFF: two presses that land on one step: one note (the later one) from that pass
+    at = at_bar(7.0);
+    run(r, at);
+    poly::midi(0x90, 72, 100);
+    run(r, at + (int64_t)(0.1 * r.period));
+    poly::midi(0x90, 76, 100);
+    run(r, at + (int64_t)(1.0 * r.period));
+    poly::midi(0x80, 72, 0), poly::midi(0x80, 76, 0);
+    {
+      const seq::Step& s7 = track()->step[7];
+      CHECK(s7.n == 1 && s7.note[0].pitch == 76);
+    }
+    // ON: both notes keep their own lengths, overlapping
+    CHECK(cmd("seq=poly:1:chord=1").find("CHORD REC ON") != std::string::npos);
+    CHECK(seq::poly_of(0).chord == 1);
+    at = at_bar(8.0);
+    run(r, at);
+    poly::midi(0x90, 62, 100);
+    run(r, at + (int64_t)(2.0 * r.period));
+    poly::midi(0x90, 65, 100);
+    run(r, at + (int64_t)(3.0 * r.period));
+    poly::midi(0x80, 62, 0), poly::midi(0x80, 65, 0);
+    {
+      const seq::Step& s8 = track()->step[8];
+      const seq::Step& s10 = track()->step[10];
+      bool a = false, c = false;
+      for (int k = 0; k < s8.n; ++k) a |= s8.note[k].pitch == 62 && std::abs((int)s8.note[k].len - 288) <= 3;
+      for (int k = 0; k < s10.n; ++k) c |= s10.note[k].pitch == 65 && std::abs((int)s10.note[k].len - 96) <= 3;
+      CHECK(a && c);
+    }
+    cmd("seq=poly:1:chord=0");
+    CHECK(seq::poly_of(0).chord == 0);
+    cmd("seq=quant:0");
+    state((int64_t)seq::frames(), {6, 0, 0});
+    run(r, (int64_t)seq::frames() + 100);
   }
 
   // ---- pause / continue / stop

@@ -183,6 +183,17 @@ int main() {
   turn(6, +1);   // OCT +1 stays set through the round-trip checks below (tracks.txt, the console)
   tick();
   CHECK(seq::poly_of(1).oct == 1);
+  // CHORD REC: encoder H, OFF by default, ON / OFF (clamped, no wrap)
+  CHECK(shown("CHRD") && shown("OFF") && seq::poly_of(1).chord == 0);
+  turn(7, +1);
+  tick();
+  CHECK(seq::poly_of(1).chord == 1 && shown("SD CHORD REC:ON"));
+  turn(7, +1);
+  tick();
+  CHECK(seq::poly_of(1).chord == 1);
+  turn(7, -1);
+  tick();
+  CHECK(seq::poly_of(1).chord == 0 && shown("SD CHORD REC:OFF"));
   std::string r = cmd("seq=poly:2");
   printf("  %s\n", r.c_str());
   CHECK(r.find("VOICES 3 ROTATE UNISON 2 DETUNE 5 SPREAD 8 GROUP 1") != std::string::npos);
