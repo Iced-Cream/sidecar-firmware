@@ -272,9 +272,9 @@ grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/p
 # endpoint of the hub went unserved and the move of the Teensy to its bootloader was never seen (BL3, T411); after
 # circle-hub-noportpanic, idempotent)
 grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-poll.patch
-# then the async USB MIDI send takes 512 bytes, one high-speed bulk packet (pi/circle/circle-midi-async512.patch: link1's
+# then the async USB MIDI send takes 512 bytes, one high-speed bulk packet (pi/circle/circle-midi-async512.patch: link1'"'"'s
 # transfers to the second box were 64 bytes, an A4 OS image through the relay ran at 28.5 KiB/s, RF2; after
-# circle-midi-async, idempotent; the object is rebuilt, as a header constant is not tracked by lib/usb's make)
+# circle-midi-async, idempotent; the object is rebuilt, as a header constant is not tracked by lib/usb'"'"'s make)
 grep -q circle-midi-async512 include/circle/usb/usbmidihost.h || { patch -p1 < /repo/pi/circle/circle-midi-async512.patch && rm -f lib/usb/usbmidihost.o lib/usb/libusb.a; }
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
