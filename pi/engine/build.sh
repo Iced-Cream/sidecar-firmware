@@ -284,6 +284,11 @@ grep -q circle-midi-async512 include/circle/usb/usbmidihost.h || { patch -p1 < /
 # "periodic starvation" line: the VL805 starved one of them at 6 busy, XV1/XR1, diagnosis-periodic-starvation.md; no change to
 # the class layout; after circle-xhci-dropurbs, idempotent)
 grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-iv1count.patch
+# then a device whose slot is gone is no halt (pi/circle/circle-xhci-slotgone.patch: ~CXHCIUSBDevice frees the slot before the
+# base class deletes the functions, so the "periodic iv1 -" line of every removed Overbridge endpoint asserted in GetSlotID
+# when a Rytm came back after its restart - core 0 halted, the 15 s watchdog rebooted the Pi; GetSlotID gives 0 then, and
+# Transfer, ResetFromHalted, GetEPState and the endpoint setup fail on it instead; after circle-xhci-iv1count, idempotent)
+grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/circle/circle-xhci-slotgone.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
