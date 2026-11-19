@@ -48,6 +48,21 @@ bool FromComputer (const uint8_t *pEventPacket)
 
 unsigned FromComputerRoom (void) { return kFromComputerPackets - s_FromComputer.size (); }
 
+// usbmidi=os: for a box on the Teensy relay (teensy_target.cpp): the computer's packets lost on the way, what still waits,
+// and a cut. The counter and the flag move in core 0's loop (Send); CutFromComputer is called there too (MirrorPoll)
+static volatile unsigned s_nComputerLost;
+static boolean s_bLastComputer;			// the transfer in flight holds the computer's packets
+unsigned ComputerLost (void) { return s_nComputerLost; }
+bool ComputerBusy (void) { return s_FromComputer.size () != 0 || s_bComputerSysEx; }
+unsigned CutFromComputer (void)
+{
+	uint32_t w;
+	unsigned n = 0;
+	while (s_FromComputer.pop (&w)) n++;
+	s_bComputerSysEx = FALSE;
+	return n;
+}
+
 void SetDevice (CUSBMIDIDevice *pDevice)
 {
 	s_pDevice = pDevice;
@@ -69,14 +84,19 @@ void Send (void)
 	{
 		s_Reader.Drain ();			// no box: the engine's records for it go nowhere (whole)
 		uint32_t w;
-		while (s_FromComputer.pop (&w)) {}	// nor the relay's computer's packets
+		while (s_FromComputer.pop (&w)) s_nComputerLost++;	// nor the relay's computer's packets (lost: counted)
 		s_bComputerSysEx = FALSE;
 		s_nRec = s_nRecOff = 0;
 		return;
 	}
 	unsigned nState = p->GetSendState ();
 	if (nState == 1) return;			// the last transfer still in flight
-	if (nState == 2) s_Stats.nSendFail++;		// it failed: that message is lost (counted), the next goes
+	if (nState == 2)				// it failed: that message is lost (counted), the next goes
+	{
+		s_Stats.nSendFail++;
+		if (s_bLastComputer) s_nComputerLost++;	// the computer's packets in it (usbmidi=os: aborts an upgrade)
+	}
+	s_bLastComputer = FALSE;
 	// the rest of an engine record first: nothing lands inside it
 	if (s_nRecOff < s_nRec)
 	{
@@ -106,7 +126,8 @@ void Send (void)
 	}
 	if (nBatch != 0)
 	{
-		if (!p->SendEventPacketsAsync ((const uint8_t *) s_Batch, nBatch * 4)) s_Stats.nSendFail++;
+		if (!p->SendEventPacketsAsync ((const uint8_t *) s_Batch, nBatch * 4)) s_Stats.nSendFail++, s_nComputerLost++;
+		else s_bLastComputer = TRUE;
 		return;
 	}
 	if (s_bComputerSysEx) return;

@@ -22,6 +22,7 @@
 #include "mirror_stream.h"
 #include "relay_proto.h"
 #include "midi_filter.h"
+#include "usbmidi_os_path.h"
 #include "reboot_sysex.h"
 #include "slip_detect.h"
 #include "ep_halt.h"
@@ -63,6 +64,16 @@ public:
 
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
+	// the Rytm (slot 0, the host link) on the relay: its USB MIDI both ways, as the gadget does for it on USB-C
+	static boolean ShowsRytm (void);		// the relay is started and shows slot 0
+	static void RytmTap (const u8 *pEventPacket);	// xHCI IRQ (MIDIPacketHandler): the Rytm's packet, for the computer
+	static boolean ForRytm (u32 *pPacket);		// core 0's loop (the USB merge): the computer's next packet for the Rytm
+	static boolean ForRytmInSysEx (void);		// a SysEx of the computer's is half sent to the Rytm
+	// usbmidi=os: for the Rytm on the relay, as the gadget's on USB-C (core 0's loop): an upgrade that loses data is
+	// aborted - the path cut, OS messages dropped until the computer stops sending them - rather than let a hole through
+	static void RytmSendFailed (void);		// the USB merge: a send of the computer's packets failed
+	static void RytmMidiConnected (boolean bOn);	// the USB merge: whether the Rytm takes MIDI
+	static void MidiToComputer (u32 nPacket);	// core 0's loop: the engine's own packet (port 1) to the relay's computer
 
 private:
 	static void EvStub (CUSBRequest *pURB, void *pParam, void *pContext);
@@ -165,10 +176,34 @@ private:
 	int m_nCtlAnswer;			// the box's answer length (< 0: STALL)
 
 	volatile unsigned m_nCreditDue[relay::kChannels];
-	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back while link1's queue to the box is full
+	volatile unsigned m_nMidiHeld[relay::kChannels];	// MIDI credits held back until a whole packet more fits the box's queue
+	volatile unsigned m_nMidiOut[relay::kChannels];	// MIDI credits granted whose packets have not come yet (at most 128 events each)
+	boolean MidiCreditFits (unsigned c) const;	// one more MIDI credit: every packet it and the granted ones bring fits
 	void RebootFeed (const u8 *pEventPacket);	// xHCI IRQ: usbreboot=1's matcher
 	boolean m_bUsbReboot;				// usbreboot=1: the reboot SysEx from the relay's computer is obeyed
 	MidiFilter m_ToBoxFilter;			// the computer's MIDI to the box: usbmidi=os: as the gadget's (no OS update by default)
+	// slot 0 (the Rytm) on the relay: the computer's MIDI waits here for the USB merge (ob_usb.cpp TCircleIo), filtered
+	// as the gadget's (host-link SysEx dropped, OS updates only with usbmidi=os:on); the Rytm's MIDI to the computer
+	// goes through m_ToPcFilter (host link and MIDI-CI dropped), as the gadget's m_ToHostFilter
+	static const unsigned RytmQueue = 2048;
+	OwnedToRytmPath<RytmQueue> m_ToRytmPath;
+	MidiFilter m_ToPcFilter;
+	// usbmidi=os: on the relay, one gate per path (usbmidi_os_path.h OsGate), as the gadget's on USB-C: slot 0 (the
+	// Rytm, m_ToRytmPath) and slot 1 (the A4, m_ToBoxFilter into link1's queue). OsLost: data lost while an upgrade is
+	// under way -> the path cut and OS messages dropped until the computer has sent none for OsGate::kQuietUs
+	OsGate m_Gate;					// slot 0
+	OsGate m_BoxGate;				// slot 1
+	boolean m_bRytmMidi;				// the Rytm takes MIDI (the USB merge)
+	unsigned m_nLink1LostSeen;			// link1::ComputerLost at the last look
+	unsigned m_nToBoxFullSeen;			// m_Stats.nMidiToBoxFull at the last look
+	unsigned m_nNoBoxSeen;				// m_Stats.nChanInMidi (the computer's MIDI dropped, no box up) at the last look
+	void OsLost (boolean bSendFailed, const char *pWhy);		// slot 0
+	void BoxOsLost (boolean bSendFailed, const char *pWhy);	// slot 1
+	unsigned ApplyBoxGate (boolean bCut);		// slot 1's ApplyGate (IRQs masked by the caller); the packets cut
+	void OsGatePoll (void);				// core 0's loop: losses, the box going, the quiet after an abort
+	volatile boolean m_bCutRytm;			// the box went: MirrorPoll cuts m_ToRytmPath
+	unsigned MidiRoom (void) const;			// packets the box-bound MIDI queue (link1's, or the Rytm's) takes now
+	void QueueToPc (const u8 *pEventPacket);	// IRQ level: one packet onto m_MidiIn, flushed to the Teensy
 	static const unsigned MidiInRing = 512;
 	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
 	volatile unsigned m_nMidiInHead, m_nMidiInTail;
@@ -177,7 +212,7 @@ private:
 	struct TStats {
 		unsigned nEvents, nSetups, nAborts, nAnswers, nStalls, nLate, nAudioOutDrop, nChanInDrop, nChanInMidi;
 		unsigned nPipeOut, nPipeIn, nPipeInDrop, nCredits, nVendorFail, nConnects;
-		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop;
+		unsigned nMidiToBox, nMidiToBoxFull, nMidiToPc, nMidiToPcDrop, nMidiToKeys;
 		// link 0x02 (IN blocks to the Teensy, TR2: the link carried ~18 %): each URB's submit -> completion time
 		unsigned nLinkErr, nLinkDone, nLinkMaxUs, nLinkHist[8];	// < 125, 250, 500 us, 1, 2, 4, 8 ms, more
 		unsigned nDropRun, nDropRunMax, nBusyMax, nLinkErrStatus;	// drops in a row; most URBs busy at a submit

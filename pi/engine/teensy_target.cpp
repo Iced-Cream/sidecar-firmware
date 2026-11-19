@@ -71,7 +71,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 :	CUSBFunction (pFunction),
 	m_pEv (0), m_pAudioIn (0), m_pAudioOut (0), m_pCtlBuf (0), m_nVersion (0), m_pBox (0), m_nCfg (0), m_nStr (0),
 	m_bHave (FALSE), m_bKeep (FALSE), m_bBoxUp (FALSE), m_bConnected (FALSE), m_bPcConfigured (FALSE), m_bUploadDue (FALSE),
-	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_nMidiInHead (0),
+	m_nBoxGoneAt (0), m_CtlState (CtlIdle), m_CtlSeq (0), m_nCtlAnswer (0), m_ToBoxFilter (true), m_ToPcFilter (false), m_bCutRytm (FALSE), m_bRytmMidi (FALSE), m_nLink1LostSeen (0), m_nToBoxFullSeen (0), m_nNoBoxSeen (0), m_nMidiInHead (0),
 	m_nMidiInTail (0), m_nTakenDue (0), m_nLastLog (0), m_bTest (FALSE), m_nTestStart (0), m_nTestSent (0), m_nTestOutNext (0),
 	m_nTestOutLost (0), m_nTestOutDup (0), m_nTestOutBad (0), m_nTestOut (0), m_nTestEcho (0), m_nTestEchoDrop (0), m_bTestOutSeen (FALSE), m_bTestFeeding (FALSE), m_bBoxPipes (FALSE), m_nInfoLines (0), m_nCompLast (0), m_nCompGapMax (0), m_nCompGap1 (0), m_nCompGap2 (0), m_nUnderSeen (0), m_nOverSeen (0), m_nEv (0), m_nPipeInZlp (0), m_nEvShownAt (0), m_nEvAtShow (0), m_nEvStep (0), m_nEvReshowTry (0), m_nEvSilent (0), m_nEvReshows (0), m_uchTestParked (0), m_nTestParkedAt (0), m_bFeedIrq (FALSE), m_bStarted (FALSE), m_bLeaveNow (FALSE), m_bDebug (FALSE), m_nDelay (0), m_nDebugVendor (0), m_nVariant (0), m_bCtlDone (FALSE), m_nCtlResult (0), m_nEpDesc (0)
 {
@@ -83,6 +83,7 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 		m_nCreditDue[c] = 0;
 		m_nAtBox[c] = 0;
 		m_nMidiHeld[c] = 0;
+		m_nMidiOut[c] = 0;
 		for (unsigned k = 0; k < ChanInURBs; k++) { m_pChanInBuf[c][k] = 0; m_pChanInURB[c][k] = 0; }
 	}
 	for (unsigned k = 0; k < AudioOutBufs; k++) { m_pAudioOutBuf[k] = 0; m_bAudioOutBusy[k] = FALSE; m_nAudioOutAt[k] = 0; m_pAudioOutURB[k] = 0; m_nAudioOutLen[k] = 0; }
@@ -95,7 +96,12 @@ CTeensyTarget::CTeensyTarget (CUSBFunction *pFunction)
 	// OS updates to the box over the relay's MIDI pass only with usbmidi=os:on (the gadget's default lets them pass for
 	// the Rytm; here the box is the second one, so the safer default)
 	const char *pMidi = CKernelOptions::Get ()->GetAppOptionString ("usbmidi", "");
-	m_ToBoxFilter.SetPassOsUpdate (strstr (pMidi, "os:on") != 0);
+	// the Rytm on the relay: the gadget's setting and gate (usbmidi=os:on|off|emu; emu never passes here: no TCP host)
+	m_Gate.SetMode (usbmidi_os::from_cmdline (pMidi, CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
+	ApplyGate (m_ToRytmPath, m_Gate, FALSE);		// no IRQ yet
+	m_BoxGate.SetMode (usbmidi_os::from_cmdline (pMidi, CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
+	ApplyBoxGate (FALSE);
+	m_nLink1LostSeen = link1::ComputerLost ();
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 	// mirrorname=off | TEXT (an underscore for a space; a space comes first): the default " (SC)", as the gadget's
 	const char *pName = CKernelOptions::Get ()->GetAppOptionString ("mirrorname", 0);
@@ -414,6 +420,7 @@ void CTeensyTarget::MirrorBoxUp (boolean bUp)
 		m_nCtlAnswer = -1;
 		m_CtlState = CtlAnswered;
 	}
+	if (!m_bBoxUp) m_bCutRytm = TRUE;		// the box went: MirrorPoll drops what waits for the Rytm (core 0's loop, the queue's consumer)
 	for (unsigned c = 0; c < kChannels; c++)	// a computer packet at the box that went is never taken: credit it back
 	{
 		m_nCreditDue[c] += m_nAtBox[c];
@@ -708,10 +715,16 @@ void CTeensyTarget::OnEvent (const Event &e)
 		m_bPcConfigured = e.a != 0;
 		if (m_bDebug) CLogger::Get ()->Write (From, LogNotice, "relaydebug: the computer configured %u", e.a);
 		m_Stream.in_ch = m_Stream.out_ch = 0;
-		for (unsigned c = 0; c < m_Map.n_out; c++)	// each OUT pipe takes one packet at a time; MIDI a few
+		for (unsigned c = 0; c < m_Map.n_out; c++)	// each OUT pipe takes one packet at a time; MIDI a few, as they fit
 		{
 			const mirror::Ep &ep = m_Map.l.ep[m_Map.ep_of_out[c]];
-			m_nCreditDue[c] += ep.role == mirror::kPipeOut ? 1 : kMaxCredits;
+			if (ep.role == mirror::kPipeOut) { m_nCreditDue[c]++; continue; }
+			// MIDI: the Teensy holds none now (bus reset, kReqConnect); MirrorPoll grants these while a whole packet each fits
+			EnterCritical ();
+			m_nMidiOut[c] = 0;
+			m_nCreditDue[c] = 0;
+			m_nMidiHeld[c] = kMaxCredits;
+			LeaveCritical ();
 		}
 		break;
 	case kEvAlt:
@@ -791,6 +804,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 	{
 		InvalidateDataCacheRange ((uintptr) p->m_pChanInBuf[c][k], kDmaSize);
 		const mirror::Ep &ep = p->m_Map.l.ep[p->m_Map.ep_of_out[c]];
+		if (ep.role == mirror::kMidiOut && p->m_nMidiOut[c]) p->m_nMidiOut[c]--;	// the credit's packet came
 		CObUsb *pBox = p->m_pBox;
 		if (p->m_bTest && ep.role == mirror::kPipeOut)
 		{
@@ -813,8 +827,25 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 					else p->m_Stats.nMidiToBoxFull++;
 				});
 			}
-			// the next packet from the computer once a whole one (128 event packets) fits; else MirrorPoll grants it
-			if (link1::FromComputerRoom () >= 128) p->m_nCreditDue[c]++;
+			// the next packet from the computer once it fits beside every packet already granted; else MirrorPoll grants it
+			if (p->MidiCreditFits (c)) p->m_nCreditDue[c]++;
+			else p->m_nMidiHeld[c]++;
+		}
+		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 0 && p->m_bBoxUp)
+		{
+			// the Rytm on the relay: the computer's MIDI to it through the USB merge (ob_usb.cpp), as from USB-C
+			const u8 *q = p->m_pChanInBuf[c][k];
+			unsigned n = pURB->GetResultLength () / 4;
+			for (unsigned i = 0; i < n; i++, q += 4)
+			{
+				if (q[0] == 0) continue;			// padding
+				p->RebootFeed (q);
+				// the keys tap first, as MIDIFromHost on USB-C (the gadget's tap is off then: USB-C shows the A4 or nothing)
+				if (g_pSidecarKeysTap != 0 && (*g_pSidecarKeysTap) (q)) { p->m_Stats.nMidiToKeys++; continue; }
+				if (p->m_ToRytmPath.FromHost (q)) p->m_Stats.nMidiToBox++;
+				else p->m_Stats.nMidiToBoxFull++;
+			}
+			if (p->MidiCreditFits (c)) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;
 		}
 		else if (ep.role == mirror::kPipeOut && pBox != 0 && p->m_bBoxUp
@@ -825,8 +856,8 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 		}
 		else
 		{
-			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1; the Rytm's USB MIDI is not relayed
-			// yet); the computer may send the next one. The reboot SysEx is obeyed whichever box the relay shows
+			// dropped: no box, a halted pipe, or USB MIDI with no box MIDI (link1; a Rytm not up); the computer may send
+			// the next one. The reboot SysEx is obeyed whichever box the relay shows
 			if (ep.role == mirror::kMidiOut)
 			{
 				const u8 *q = p->m_pChanInBuf[c][k];
@@ -855,12 +886,172 @@ void CTeensyTarget::MidiTap (const u8 *pEventPacket)
 {
 	CTeensyTarget *p = s_pThis;
 	if (p == 0 || !p->MirrorShown ()) return;
-	if (p->m_nMidiInHead - p->m_nMidiInTail >= MidiInRing) { p->m_Stats.nMidiToPcDrop++; return; }
+	p->QueueToPc (pEventPacket);
+}
+
+void CTeensyTarget::QueueToPc (const u8 *pEventPacket)
+{
+	if (m_nMidiInHead - m_nMidiInTail >= MidiInRing) { m_Stats.nMidiToPcDrop++; return; }
 	u32 w;
 	memcpy (&w, pEventPacket, 4);
-	p->m_MidiIn[p->m_nMidiInHead % MidiInRing] = w;
-	p->m_nMidiInHead = p->m_nMidiInHead + 1;
-	p->FlushMidiIn ();
+	m_MidiIn[m_nMidiInHead % MidiInRing] = w;
+	m_nMidiInHead = m_nMidiInHead + 1;
+	FlushMidiIn ();
+}
+
+boolean CTeensyTarget::ShowsRytm (void)
+{
+	return Relaying () && CObUsb::RelaySlot () == 0;
+}
+
+void CTeensyTarget::RytmTap (const u8 *pEventPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	if (p == 0 || !ShowsRytm () || (!p->MirrorShown () && !p->m_ToPcFilter.InSysEx ())) return;
+	if (p->m_Gate.On () && !CObUsb::Active ()) return;	// usbmidi=os: on or emu: only while USB is the host (as the gadget's)
+	p->m_ToPcFilter.Feed (pEventPacket, [p] (const u8 *q) { if (p->MirrorShown ()) p->QueueToPc (q); });
+}
+
+boolean CTeensyTarget::ForRytm (u32 *pPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	return p != 0 && p->m_ToRytmPath.Pop (pPacket);
+}
+
+boolean CTeensyTarget::ForRytmInSysEx (void)
+{
+	CTeensyTarget *p = s_pThis;
+	return p != 0 && p->m_ToRytmPath.InSysEx ();
+}
+
+void CTeensyTarget::OsLost (boolean bSendFailed, const char *pWhy)
+{
+	if (!m_Gate.Lost (bSendFailed, m_ToRytmPath.Busy (), m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))
+		return;
+	EnterCritical ();				// the filter and the queue's producer run in the xHCI IRQ (ChanInStub)
+	unsigned n = ApplyGate (m_ToRytmPath, m_Gate, TRUE);
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, LogError, "usb=mirror: usbmidi=os: OS upgrade of the Rytm on the relay ABORTED: %s during it, "
+				"part of the image is lost (%u packets dropped). Start the upgrade again (OS messages are dropped until "
+				"the computer stops sending them for %u s)", pWhy, n, OsGate::kQuietUs / 1000000);
+}
+
+void CTeensyTarget::BoxOsLost (boolean bSendFailed, const char *pWhy)
+{
+	if (!m_BoxGate.Lost (bSendFailed, link1::ComputerBusy () || m_ToBoxFilter.InSysEx (), m_ToBoxFilter.OsMessages (),
+			     CTimer::GetClockTicks ()))
+		return;
+	EnterCritical ();				// the filter runs in the xHCI IRQ (ChanInStub)
+	unsigned n = ApplyBoxGate (TRUE);
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, LogError, "usb=mirror: usbmidi=os: OS upgrade of the box on the relay ABORTED: %s during it, "
+				"part of the image is lost (%u packets dropped). Start the upgrade again (OS messages are dropped until "
+				"the computer stops sending them for %u s)", pWhy, n, OsGate::kQuietUs / 1000000);
+}
+
+unsigned CTeensyTarget::ApplyBoxGate (boolean bCut)
+{
+	unsigned n = 0;
+	if (bCut)
+	{
+		n = link1::CutFromComputer ();
+		m_ToBoxFilter.Cut ();
+	}
+	boolean bPass = m_BoxGate.Pass ();
+	if (bPass && !m_ToBoxFilter.PassOsUpdate ()) m_ToBoxFilter.AwaitStart (true);	// a new upgrade's start first
+	m_ToBoxFilter.SetPassOsUpdate (bPass);
+	return n;
+}
+
+void CTeensyTarget::OsGatePoll (void)
+{
+	if (m_bCutRytm)					// the box went: nothing of the computer's waits for the next one
+	{
+		m_bCutRytm = FALSE;
+		OsLost (FALSE, "the box went");		// an upgrade under way: aborted, loudly
+		BoxOsLost (FALSE, "the box went");
+		EnterCritical ();
+		unsigned n = m_ToRytmPath.Cut ();
+		LeaveCritical ();
+		if (n) CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the box went: %u MIDI packets for the Rytm dropped", n);
+	}
+	unsigned nLost = link1::ComputerLost ();	// slot 1: the computer's packets lost on link1's way to the box
+	if (nLost != m_nLink1LostSeen)
+	{
+		m_nLink1LostSeen = nLost;
+		if (m_pBox != 0 && m_pBox->Slot () == 1) BoxOsLost (TRUE, "a send to the box failed");
+	}
+	if (m_Stats.nChanInMidi != m_nNoBoxSeen)		// the computer's MIDI dropped with no box up (ChanInStub's last branch):
+	{							// a box gone mid-image and back within mirrorhold must not get the rest
+		m_nNoBoxSeen = m_Stats.nChanInMidi;
+		OsLost (TRUE, "MIDI for the box was dropped while it was gone");
+		BoxOsLost (TRUE, "MIDI for the box was dropped while it was gone");
+	}
+	if (m_Stats.nMidiToBoxFull != m_nToBoxFullSeen)	// either slot: the computer's packets dropped at a full queue
+	{
+		m_nToBoxFullSeen = m_Stats.nMidiToBoxFull;
+		if (m_pBox != 0 && m_pBox->Slot () == 0) OsLost (TRUE, "the queue to the Rytm was full");
+		else BoxOsLost (TRUE, "the queue to the box was full");
+	}
+	unsigned nNow = CTimer::GetClockTicks ();
+	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), nNow))	// an aborted upgrade's sender stopped
+	{
+		EnterCritical ();
+		ApplyGate (m_ToRytmPath, m_Gate, FALSE);	// the pass on again, from a new start
+		LeaveCritical ();
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: usbmidi=os: OS upgrades to the Rytm on the relay %s again "
+					"after the aborted one, from a new start", m_Gate.Pass () ? "pass" : "are dropped");
+	}
+	if (m_BoxGate.Quiet (m_ToBoxFilter.OsMessages (), nNow))
+	{
+		EnterCritical ();
+		ApplyBoxGate (FALSE);
+		LeaveCritical ();
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: usbmidi=os: OS upgrades to the box on the relay %s again "
+					"after the aborted one, from a new start", m_BoxGate.Pass () ? "pass" : "are dropped");
+	}
+}
+
+void CTeensyTarget::RytmSendFailed (void)
+{
+	if (s_pThis != 0) s_pThis->OsLost (TRUE, "a send to the Rytm failed");
+}
+
+void CTeensyTarget::RytmMidiConnected (boolean bOn)
+{
+	CTeensyTarget *p = s_pThis;
+	if (p == 0) return;
+	if (p->m_bRytmMidi && !bOn) p->OsLost (FALSE, "the Rytm stopped taking MIDI");
+	p->m_bRytmMidi = bOn;
+}
+
+void CTeensyTarget::MidiToComputer (u32 nPacket)
+{
+	CTeensyTarget *p = s_pThis;
+	if (p == 0 || !ShowsRytm () || !p->MirrorShown ()) return;
+	u8 q[4];
+	memcpy (q, &nPacket, 4);
+	EnterCritical ();				// the ring's other producer is the xHCI IRQ (RytmTap)
+	p->QueueToPc (q);
+	LeaveCritical ();
+}
+
+unsigned CTeensyTarget::MidiRoom (void) const
+{
+	if (m_pBox != 0 && m_pBox->Slot () == 0)
+	{
+		unsigned n = m_ToRytmPath.Size () + MidiFilter::kHoldPackets;
+		return n >= RytmQueue ? 0 : RytmQueue - n;
+	}
+	return link1::FromComputerRoom ();
+}
+
+// A MIDI credit lets the computer send one link packet of up to 128 event packets. Credits not yet used, those due and
+// the one asked for may all come at once, so each needs a whole packet's room: one per 128 the queue takes now
+// (RF1, 2026-11-18: a credit per packet at room >= 128 kept 4 in flight and overflowed link1's queue during an OS upgrade)
+boolean CTeensyTarget::MidiCreditFits (unsigned c) const
+{
+	return MidiRoom () >= 128 * (m_nMidiOut[c] + m_nCreditDue[c] + 1);
 }
 
 unsigned CTeensyTarget::MidiInChan (void) const
@@ -1059,6 +1250,7 @@ void CTeensyTarget::MirrorPoll (void)
 		m_bUploadDue = FALSE;
 		if (!Upload ()) CLogger::Get ()->Write (From, LogError, "usb=mirror: the relay refused the box's descriptors");
 	}
+	OsGatePoll ();					// usbmidi=os: (also while the box is gone and the relay still shows it)
 	if (m_bConnected && !Mirror ()) Disconnect ();			// the mode turned to CLASS COMPLIANT
 	if (m_bConnected && !m_bBoxUp && (m_bLeaveNow || NowTicks () - m_nBoxGoneAt >= (u64) m_nHoldSecs * CLOCKHZ)) Disconnect ();
 	if (!m_bConnected || m_bBoxUp) m_bLeaveNow = FALSE;
@@ -1067,24 +1259,32 @@ void CTeensyTarget::MirrorPoll (void)
 	if (!m_bConnected) return;
 	ControlPoll ();
 	for (unsigned c = 0; c < m_Map.n_out; c++)
-		if (m_nMidiHeld[c] && link1::FromComputerRoom () >= 128)
+		while (m_nMidiHeld[c])
 		{
 			EnterCritical ();
-			m_nCreditDue[c] += m_nMidiHeld[c];
-			m_nMidiHeld[c] = 0;
+			boolean bFits = m_nMidiHeld[c] && MidiCreditFits (c);
+			if (bFits) { m_nCreditDue[c]++; m_nMidiHeld[c]--; }
 			LeaveCritical ();
+			if (!bFits) break;
 		}
 	for (unsigned c = 0; c < m_Map.n_out; c++)
 	{
+		// taken from the due ones (and counted as granted) before the request, so their packets can't come first
+		const boolean bMidi = m_Map.l.ep[m_Map.ep_of_out[c]].role == mirror::kMidiOut;
+		EnterCritical ();
 		unsigned n = m_nCreditDue[c];
-		if (n == 0) continue;
 		if (n > kMaxCredits) n = kMaxCredits;
-		if (Vendor (FALSE, kReqCredit, m_Map.l.ep[m_Map.ep_of_out[c]].addr, n, 0, 0) >= 0)
+		m_nCreditDue[c] -= n;
+		if (bMidi) m_nMidiOut[c] += n;
+		LeaveCritical ();
+		if (n == 0) continue;
+		if (Vendor (FALSE, kReqCredit, m_Map.l.ep[m_Map.ep_of_out[c]].addr, n, 0, 0) >= 0) m_Stats.nCredits += n;
+		else
 		{
-			EnterCritical ();
-			m_nCreditDue[c] -= n;
+			EnterCritical ();			// not granted: due again
+			m_nCreditDue[c] += n;
+			if (bMidi) m_nMidiOut[c] -= m_nMidiOut[c] < n ? m_nMidiOut[c] : n;
 			LeaveCritical ();
-			m_Stats.nCredits += n;
 		}
 	}
 	if (pBox != 0) pBox->PipePoll ();				// a halted pipe: cleared and resubmitted
@@ -1143,13 +1343,13 @@ void CTeensyTarget::LogStats (CLogger *pLogger)
 				p->m_nTestEchoDrop);
 	pLogger->Write (From, LogNotice, "relay %s box %s pc %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u "
 			"under %u over %u extra %u lost %u late %u anchor %u | ctl %u answered %u stall %u abort %u late %u | "
-			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u | ev %u silent %u reshow %u vendor fail %u connects %u pipe zlp %u",
+			"pipe in %u drop %u out %u drop %u credits %u | midi to-box %u full %u filtered %u to-pc %u drop %u keys %u nobox %u | ev %u silent %u reshow %u vendor fail %u connects %u pipe zlp %u",
 			p->m_bConnected ? "shown" : "off", p->m_bBoxUp ? "up" : "none", p->m_bPcConfigured ? "configured" : "-",
 			p->m_Stream.in_ch, a.in_blocks, a.in_sent, s.nAudioOutDrop, p->m_Stream.out_ch, a.out_blocks, a.out_bad,
 			a.out_under, a.out_over, a.out_extra, p->m_Stream.extra.dropped, p->m_Stream.extra.late, a.anchor,
 			s.nSetups, s.nAnswers, s.nStalls, s.nAborts, s.nLate, s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nChanInDrop,
-			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) p->m_ToBoxFilter.DroppedPackets (), s.nMidiToPc,
-			s.nMidiToPcDrop, s.nEvents, p->m_nEvSilent, p->m_nEvReshows, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
+			s.nCredits, s.nMidiToBox, s.nMidiToBoxFull, (unsigned) (p->m_ToBoxFilter.DroppedPackets () + p->m_ToRytmPath.Filter ().DroppedPackets ()),
+			s.nMidiToPc, s.nMidiToPcDrop, s.nMidiToKeys, s.nChanInMidi, s.nEvents, p->m_nEvSilent, p->m_nEvReshows, s.nVendorFail, s.nConnects, p->m_nPipeInZlp);
 	if (p->m_nInfoLines < 12)		// the first ~2 minutes: what the link shares the bus with (the log ring holds ~1 min)
 	{
 		p->m_nInfoLines++;
