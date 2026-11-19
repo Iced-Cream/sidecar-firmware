@@ -873,7 +873,11 @@ built since (rui1048, below, "E0 on the Rytm"); the RANDOM page waits for the se
   rule in `seq.cpp note()`, the single entry of live recording: the pads (poly's channel binding, `seq::midi`), a
   keyboard (`keys.cpp`, `seq::note`) and the Pi's bridge all end there. The Rytm-sequenced tracks are not covered
   (the Rytm records one NOTE per trig anyway). Step and grid entry of several notes on a step is not live recording
-  and is unchanged. Stored as the 9th byte of the pattern's poly block (written only when ON, so a file with OFF stays
+  and is unchanged. Two details of the OFF rule: the held note is cut at the new note's *recorded* start (step +
+  micro, so quantised or not there is no overlap and no gap), and a note that lands on the same step as the held one
+  replaces it by design (a grace note or a fast run inside one step keeps only its last note; with CHORD REC ON they
+  all stay). A held key does not carry over a punch-out (REC off) or a pattern switch: its note is left as recorded.
+  Stored as the 9th byte of the pattern's poly block (written only when ON, so a file with OFF stays
   byte for byte as before; an older file reads as OFF) and as the 9th number of `poly=` (optional).
 - **Where it is stored (decided):** in the pattern (a v4 block per track), and as the Rytm track's **default** in
   `tracks.txt` (`poly=T:V,A,U,D,S,G,O,C`; O, the PAD OCT, and C, CHORD REC, are optional when read): a track plays its pattern's config, else its default - the last one set on it in
@@ -1019,7 +1023,8 @@ core/ui/page_keys.h). An older host opens its SIDECAR page instead.
 | H CHRD | CHORD REC | OFF (default), ON: live recording writes a mono line, or every held note |
 
 - Each turn is the console's `seq=poly:T:<key>=<value>` (`seq::command`): the pattern's config and the track's default
-  in `tracks.txt`, exactly as the console, the web page and the touchscreen's POLY tool. No core/seq change.
+  in `tracks.txt`, exactly as the console and the touchscreen's POLY tool (the web page has no poly controls). CHORD REC (H) is
+  reached from the console (`seq=poly:T:chord=0|1`, 0 and 1 only) and this encoder.
 - **The info line** under the title is what the config resolves to now (inst::resolve_for, describe_short's figures):
   `4 NOTES 4 INST 2.92%` (+ ` CUT` when the budget or the machine's maximum cut it); the machine is left out (the Rytm's
   line holds 25 characters; the touchscreen's says `PLAITS 4 INST ...`).

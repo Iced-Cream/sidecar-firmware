@@ -184,7 +184,13 @@ CORE_COLD bool parse_cfg(const char* kv, seq::PolyCfg* c, char* err, int cap) {
       case 'd': c->detune = (uint8_t)clampi(x, 0, 127); break;
       case 's': c->spread = (uint8_t)clampi(x, 0, 127); break;
       case 'o': c->oct = (int8_t)clampi(neg ? -x : x, -seq::kMaxPadOct, seq::kMaxPadOct); break;
-      case 'c': c->chord = (uint8_t)(x ? 1 : 0); break;
+      case 'c':
+        if (!num || x > 1) {
+          if (err) sniprintf(err, cap, "chord=0|1");
+          return false;
+        }
+        c->chord = (uint8_t)x;
+        break;
       case 'g': c->group = (uint8_t)clampi(x, 0, seq::kPolyGroups); break;
       case 'a': {
         int a = -1;

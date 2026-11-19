@@ -194,6 +194,8 @@ int main() {
   turn(7, -1);
   tick();
   CHECK(seq::poly_of(1).chord == 0 && shown("SD CHORD REC:OFF"));
+  cmd("seq=poly:2:chord=-1"), cmd("seq=poly:2:chord=2");   // 0 and 1 only
+  CHECK(seq::poly_of(1).chord == 0);
   std::string r = cmd("seq=poly:2");
   printf("  %s\n", r.c_str());
   CHECK(r.find("VOICES 3 ROTATE UNISON 2 DETUNE 5 SPREAD 8 GROUP 1") != std::string::npos);

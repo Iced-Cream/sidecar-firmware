@@ -82,7 +82,8 @@ struct Open {   // a recorded note waiting for its note-off
   int8_t track;
   uint8_t pitch;
   int idx;
-  double x;     // its start in steps
+  double x;     // its start in steps (as played)
+  double rx;    // its start as recorded (step + micro), in steps: the mono cut measures from here
 };
 
 Pattern* cur = nullptr;    // playing and edited
@@ -1052,6 +1053,7 @@ CORE_COLD void mark_dirty() {
 // go to `sav` for idle().
 CORE_COLD void install(int index) {
   if (cur->index == index && pat_loaded == index) return;
+  for (Open& o : opens) o.used = false;   // (a held key's note belongs to the pattern it was recorded in)
   ne_cover_outside();   // round 3 (NB-3): an outside edit after a NOTE EDIT gesture becomes a level before its pattern goes
   int was_lock = lock_of(index);   // (the loaded project's lock of it, before a fill's stand-in replaces it: below)
   if (dirty && cur->index >= 0) {
@@ -2192,6 +2194,8 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
     case kRec:
       if (n < 3) break;
       rec_live = a[1] != 0, rec_grid = a[2] != 0;
+      if (!rec_live)
+        for (Open& o : opens) o.used = false;   // (punch-out: a key still held is not rewritten at a later punch-in)
       return;
     case kQperf:     // 2D 01 0E <pos hi> <pos lo> <mask lo7> <mask hi5> <flags>: the QUICK PERF knob (core/mod/scene.h)
       if (n < 6) break;
@@ -3157,7 +3161,8 @@ CORE_COLD void note(int vi, bool on, int pitch, int vel, int track) {
           remove_pitch(s, o.pitch);
           continue;
         }
-        int l = clampi((int)((x - o.x) * kSub + 0.5), 1, 16 * kSub);
+        // (from its recorded start to this note's recorded start: no overlap, no gap, whatever the quantise)
+        int l = clampi((int)(((double)sa + (double)micro / kSub - o.rx) * kSub + 0.5), 1, 16 * kSub);
         for (int k = 0; k < s.n; ++k)
           if (s.note[k].pitch == o.pitch) s.note[k].len = (uint16_t)l;
       }
@@ -3167,7 +3172,7 @@ CORE_COLD void note(int vi, bool on, int pitch, int vel, int track) {
     add_note(t->step[idx], n);
     for (Open& o : opens)
       if (!o.used) {
-        o = {true, (int8_t)r, (uint8_t)pitch, idx, x};
+        o = {true, (int8_t)r, (uint8_t)pitch, idx, x, (double)sa + (double)micro / kSub};
         break;
       }
     ++st.recorded;
