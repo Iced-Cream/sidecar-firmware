@@ -70,10 +70,11 @@ void SetDevice (CUSBMIDIDevice *pDevice)
 }
 
 // One record at a time, one transfer in flight (circle-midi-async.patch): the box never holds core 0's loop. Each transfer
-// is at most kTxBytes (the async send's TxBufferSize, 16 event packets): a longer one was refused and lost (an A4 OS
-// upgrade through the mirror stopped at offset 0, T358: the computer's 64-packet batches; the engine's records over 48
-// bytes too). A record is sent in kTxBytes pieces, one per call.
-static const unsigned kTxBytes = 64;
+// is at most kTxBytes, the async send's TxBufferSize: a longer one is refused and lost (an A4 OS upgrade through the mirror
+// stopped at offset 0, T358, when link1 sent more than the 64 bytes it took then). 512 bytes (circle-midi-async512.patch,
+// 128 event packets, one high-speed bulk packet): at 64 an A4 OS image through the relay ran at 28.5 KiB/s (RF2).
+// A record is sent in kTxBytes pieces, one per call.
+static const unsigned kTxBytes = 512;
 
 void Send (void)
 {
