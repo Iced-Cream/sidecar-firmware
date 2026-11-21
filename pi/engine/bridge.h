@@ -37,6 +37,7 @@ bool take_restart();                       // another box needs its state folder
 void tick();
 // The Sidecar sequencer (core/seq/seq.h): before each render block, on the control core (its due notes start / end)
 void seq_block();
+void seq_block_side(int slot);   // the side stage's pass: slot's sequencer block (core/seq/seq.h pre_block_side)
 // The remote UI (core/ui/remote.h): its tick runs in tick(); the status for its SIDECAR page (core 0's stats, once a
 // second: plain words); the console's rui=on|off (the page opened / closed from here) and rui (its numbers, logged).
 // The rest of the remote UI's SIDECAR page (1021): the recorder (1 idle, 2 armed, 3 recording, 4 off), the network
@@ -104,7 +105,12 @@ void midim_set_out(bool (*f)(int dest, const uint8_t* m, int n));   // the MIDI 
 void rytm_gone();                                                   // the Rytm's USB MIDI removed: the MIDI machine's USB notes off, the arpeggios end
 void rytm_resync();                                                 // records for the Rytm were lost: the remote UI sends what it owes again (remote_resync), DIN's recent note-offs too
 void rytm_link(bool up);                                            // records can reach the Rytm (core 0's word, each control pass)
-void midim_realtime(uint8_t status);                                // the Rytm's realtime bytes, the control core
+void midim_realtime(uint8_t status);                                // the base box's realtime bytes, the control core
+// 3(c) step 10: transport t's realtime byte / song position (F8 FA FB FC F2, spp in 16ths) into its box's slot's clock
+// (core::engine_realtime_link: its LFOs, its send FX's STUTTER grid); the slot, -1 none. The control core.
+int realtime_link(int t, uint8_t status, uint16_t spp);
+int base_slot();                                                    // the base box's slot (core::device::g_base)
+int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard
@@ -172,6 +178,7 @@ int livein_status(int vi, char* b, int cap);
 bool cal_on();
 void cal_in(const int32_t* f, int n, int stride);
 void rytm_byte(uint8_t b);
+void link_byte(int transport, uint8_t b);   // SONG RECORD's tap of a transport's whole MIDI stream (its slot's song)
 // The remote UI's REC page (core/ui/extra.h RecInfo): the recorder's state from core 0 (rec_pi.cpp), and the page's
 // request for it taken there: 0 none, 1 start, 2 stop, 3 arm, 4 disarm. state 0: no recorder (the page hidden).
 struct RuiRec {

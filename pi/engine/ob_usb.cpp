@@ -72,6 +72,7 @@
 #include "fx/out_measure.h"		// stereo=measure's read-back (MAIN L/R)
 #include "samp/preview.h"		// the sample browser's preview (POST)
 #include "shared.h"
+#include "side_out.h"		// a box beside the Rytm: its own voices (slot 1)
 
 static const char From[] = "rytmob";
 
@@ -749,8 +750,10 @@ boolean CObUsb::Configure (void)
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
 	if (s_bActive && Primary ()) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
-	if (s_bActive && Primary ()) masterfx_pi::Reset ();
-	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, OUT silent for now", m_pAudio->name,
+	if (s_bActive && Primary ()) masterfx_pi::Reset (core::out::g_base_slot);	// the base box's master chain
+	if (s_bActive && !Primary ()) masterfx_pi::Reset (m_nSlot);	// a side box's own (phase 3(d))
+	if (!Primary ()) side_out::Restart ();	// its own voices fade in again (side_out.h)
+	if (!Primary ()) CLogger::Get ()->Write (From, LogNotice, "%s streams beside %s: its own clock, its own voices", m_pAudio->name,
 						s_pThis != 0 ? s_pThis->m_pAudio->name : "?");
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
@@ -1166,11 +1169,18 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		ob::write_header (pBlock, m_nOutCounter);
 		if (pTarget != 0) pTarget->MirrorOutExtra (pBlock, m_nOutCounter);	// usb=mirror
 		m_nOutCounter += ob::kFramesPerBlock;
-		if (!Primary ())				// a box beside the primary stream: no voices of its own yet
+		if (!Primary ())				// a box beside the primary stream: its own voices (side_out.h), no FX
 		{
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
-			const s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
+			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
+			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
+			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
+			{
+				sendfx_pi::FromVoices (m_nSlot, V, ob::kFramesPerBlock);
+				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
+				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
+			}
 			for (int f = 0; f < ob::kFramesPerBlock; f++)
 				core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
 			continue;
@@ -1195,10 +1205,11 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		if (pTarget != 0)				// the computer's OUT added (UAC2 OUT 1-12), the voices kept
 			pTarget->ToBox (F, V, ob::kFramesPerBlock);
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
-		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
-		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
+		const int nBase = core::out::g_base_slot;	// the base box's send FX and master chain (phase 3(d))
+		if (s_bActive) sendfx_pi::FromVoices (nBase, V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
+		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
-		if (s_bActive) masterfx_pi::Process (F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
+		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
 		spectrum_pi::FromOut (V, X, F, ob::kFramesPerBlock);	// the spectrum's strip, while a reader wants it (a copy)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 #if CORE_MSAMP
@@ -1411,7 +1422,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) C[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::cal_in (&C[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
-			if (sendfx_pi::On ())		// the voice stems (IN 2..9) into the send FX
+			if (m_nSlot == 0 && sendfx_pi::On (0))	// the Rytm's voice stems (IN 2..9) into its send FX (a box's IN 2..9 are no stems)
 			{
 				s32 S[ob::kFramesPerBlock][8];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
@@ -1419,7 +1430,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
 			}
 
-			if (masterfx_pi::WantStems ())	// SRC MIX: the stems onto 0/1 (core/fx/master.h)
+			if (m_nSlot == 0 && masterfx_pi::WantStems ())	// SRC MIX: the Rytm's stems onto 0/1 (core/fx/master.h)
 			{
 				s32 S[ob::kFramesPerBlock][8];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)

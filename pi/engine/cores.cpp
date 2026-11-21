@@ -20,6 +20,7 @@
 #include "masterfx_pi.h"
 #include "rec_pi.h"
 #include "shared.h"
+#include "side_out.h"
 #include "user/lists.h"
 #include "user/um.h"
 #if SIDECAR_SEQED
@@ -46,6 +47,11 @@ static s16 s_BlockR[bridge::kBlock][bridge::kVoices];	// the voices' R (core/fx/
 static u8 s_St[bridge::kVoices];			// a voice's pair is a real stereo pair this block
 static volatile u32 s_nGen;
 static volatile u32 s_nDone[3];
+// The pass s_nGen announces (published before it): the slots whose voices render in it (bit s: slot s), and kBasePass
+// for the base box's pass (the send FX and the master chain render after it). The side stage's passes carry slot 1 alone.
+static const u32 kBasePass = 0x80;
+static const u32 kBaseBoxShift = 8;	// a base pass: the base box's slot in bits 8.. (its send FX and master chain run after it)
+static volatile u32 s_nPass = 1 | kBasePass;
 static u64 s_Mach[3][bridge::kMachines];
 static_assert (sizeof CEngineCores::TStats::nMach / sizeof (u64) == bridge::kMachines, "nMach is bridge::kMachines");
 static u64 s_VoiceTicks[bridge::kVoices];		// touch2: per voice (each voice renders on one core only)
@@ -115,14 +121,27 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	bridge::lfo_midi (s, a, b);		// the LFOs: a Rytm track's trig (an FX target's TRIG, core/lfo.h)
 	bridge::poly_midi (s, a, b);		// poly FM: the pads' notes, live chords (core/poly.h)
 	if (s_bNotes && !s_bModded) s_Notes.Channel (s, a, b);
-	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff ();	// the send FX hear it with the notes off too
+	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
-// The Rytm's realtime bytes: the recorder's and STUTTER's (rec_pi::Transport), and MIDI's on USB-A (core/midim/midim.h)
-static void OnRealtime (uint8_t s, uint16_t spp)
+// A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
+// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). The base box's also arm the
+// recorder and drive the sampler, the bundles' and the storage bench's waits (rec_pi::Transport) and MIDI's on USB-A
+// (core/midim/midim.h), as the Rytm's did; another box's reach only its own clock.
+// A box's CC 120 (All Sound Off, any channel; the Rytm's STOP STOP) on transport t other than the host link's: its own
+// box's send FX fade out and clear (3(c); the host link's comes through OnChannel)
+static void AllSoundOffIn (int nTransport)
 {
+	int nSlot = bridge::transport_slot (nTransport);
+	if (nSlot >= 0) sendfx_pi::AllSoundOff (nSlot);
+}
+static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
+{
+	int nSlot = bridge::realtime_link (nTransport, s, spp);
+	if (nSlot < 0 || nSlot != bridge::base_slot ()) return;
 	rec_pi::Transport (s, spp);
 	bridge::midim_realtime (s);
 }
+static void OnRealtime (uint8_t s, uint16_t spp) { RealtimeIn (0, s, spp); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
 // The Pi's own keyboards' notes for the Rytm (core/keys.h: an analog track's, a forwarded one's): one USB MIDI event
 // packet each into g_KeysToRytm (core 0's transport sends them between whole messages); a full queue drops it
@@ -237,6 +256,7 @@ void CEngineCores::Configure (unsigned nFifoTarget, boolean bNotes)
 {
 	s_nTarget = ClampTarget (nFifoTarget);
 	g_Output.SetFifoTarget (s_nTarget);
+	g_OutputSide.SetFifoTarget (s_nTarget);
 	s_bNotes = bNotes;
 	if (s_nLastTake == 0) s_nLastTake = Ticks ();	// the first stats line's interval: from the boot's Configure
 }
@@ -247,7 +267,7 @@ unsigned CEngineCores::FifoTarget (void) { return s_nTarget; }
 // core 0 (UseLink): a single aligned word, read by core 3 each pass
 void CEngineCores::LinkFifoTarget (unsigned n)
 {
-	if (!s_bTargetFixed) s_nTarget = ClampTarget (n), g_Output.SetFifoTarget (s_nTarget);
+	if (!s_bTargetFixed) s_nTarget = ClampTarget (n), g_Output.SetFifoTarget (s_nTarget), g_OutputSide.SetFifoTarget (s_nTarget);
 }
 
 void CEngineCores::FixFifoTarget (void) { s_bTargetFixed = TRUE; }
@@ -312,6 +332,7 @@ void CEngineCores::Worker (unsigned nCore)
 	// static: they survive the guard's longjmp
 	static volatile u32 s_nSeen[3];		// the last block generation this core finished
 	static volatile u32 s_nGenNow[3];	// the one it renders
+	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
 	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u and %u-%u (slot 1's, while a box has it)", nCore,
@@ -337,7 +358,7 @@ void CEngineCores::Worker (unsigned nCore)
 		if (s_nResume[nCore])
 		{
 			nGen = s_nGenNow[nCore];
-			vFirst = s_nResume[nCore];
+			vFirst = s_nResume[nCore];	// (s_nPassNow[nCore] as it was)
 			s_nResume[nCore] = 0;
 			crumb::BeatEnter (nCore, 200);	// (back in the block a recovered fault left)
 		}
@@ -347,16 +368,19 @@ void CEngineCores::Worker (unsigned nCore)
 			while ((nGen = __atomic_load_n (&s_nGen, __ATOMIC_ACQUIRE)) == s_nSeen[nCore]) Wfe (nCore);
 			crumb::BeatEnter (nCore, 200);
 			s_nGenNow[nCore] = nGen;
+			s_nPassNow[nCore] = __atomic_load_n (&s_nPass, __ATOMIC_RELAXED);	// (published before nGen)
 			s_nT0[nCore] = Ticks ();
 			vFirst = v0;
 		}
-		// the voices of this core: v0..v1-1 of each slot that renders (slot_renders: slot 1's only while a box has it)
+		// the voices of this core: v0..v1-1 of each slot in this pass (RenderBlock: slot 1's only while a box has it, in
+		// the base box's pass or, beside a Rytm, in passes of its own)
+		const u32 nPass = s_nPassNow[nCore];
 		for (unsigned v = vFirst; v < bridge::kVoices; v++)
 		{
 			const unsigned k = v % bridge::kBoxVoices, sl = v / bridge::kBoxVoices;
 			if (k < v0) { v += v0 - k - 1; continue; }
 			if (k >= v1) { v += bridge::kBoxVoices - k - 1; continue; }
-			if (k == v0 && !bridge::slot_renders ((int) sl)) { v += v1 - v0 - 1; continue; }
+			if (k == v0 && !(nPass >> sl & 1)) { v += v1 - v0 - 1; continue; }
 			const void *pMach = bridge::machine_name ((int) v);	// the guard's machine key: a static name,
 			const u32 nMGen = bridge::machine_gen ((int) v);	// and a user plugin's slot and load
 			if (g_Guard.Muted (v) && !g_Guard.Fresh (v, pMach, nMGen))
@@ -377,14 +401,34 @@ void CEngineCores::Worker (unsigned nCore)
 		s_nSeen[nCore] = nGen;
 		__atomic_store_n (&s_nDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
-		if (nCore == 2) sendfx_pi::Render ();	// the send FX, after the block (sendfx_pi.h)
-		if (nCore == 2) masterfx_pi::Render ();	// the master chain, after the send FX (masterfx_pi.h)
+		if (nCore == 2)				// the send FX and the master chain of the box this pass rendered (phase 3(d)): the base
+		{					// box's after a base pass, the side stage's after its own (sendfx_pi.h, masterfx_pi.h)
+			const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+			sendfx_pi::Render (nFxBox);	// the send FX, after the block
+			masterfx_pi::Render (nFxBox);	// the master chain, after the send FX
+		}
 	}
 }
 
-void CEngineCores::RenderBlock (void)
+void CEngineCores::RenderBlock (int nSide)
 {
-	bridge::seq_block ();			// the sequencer's notes due in this block (core/seq/seq.h)
+	// the base box's pass (nSide < 0): the sequencer's block, every slot that renders but the side stage's; the side
+	// stage's: slot nSide's voices alone, into its own FIFO (side_out.h)
+	u32 nPass = 0;
+	if (nSide < 0)
+	{
+		bridge::seq_block ();		// the sequencer's notes due in this block (core/seq/seq.h): once a base block
+		const int nSideNow = core::device::side_slot ();
+		for (int sl = 0; sl < (int) (bridge::kVoices / bridge::kBoxVoices); sl++)
+			if (sl != nSideNow && bridge::slot_renders (sl)) nPass |= 1u << sl;
+		nPass |= kBasePass | (u32) (bridge::out_base () / bridge::kBoxVoices) << kBaseBoxShift;
+	}
+	else
+	{
+		bridge::seq_block_side (nSide);	// 3(c): the side stage's slot's own sequencer block, in its pass
+		nPass = 1u << nSide;
+	}
+	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
 	u32 nGen = s_nGen + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
@@ -403,14 +447,14 @@ void CEngineCores::RenderBlock (void)
 	}
 	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());
 	if (nUs > s_nMaxBlock) s_nMaxBlock = nUs;
-	// the output stage: the base box's eight (one box's output until slot 1 has its own; bridge.h out_base)
-	const unsigned b = (unsigned) bridge::out_base ();
+	// the output stage: the base box's eight (bridge.h out_base), or the side stage's slot's
+	const unsigned b = nSide < 0 ? (unsigned) bridge::out_base () : (unsigned) nSide * bridge::kBoxVoices;
 	static s16 Box[bridge::kBlock][bridge::kBoxVoices], BoxR[bridge::kBlock][bridge::kBoxVoices];
 	for (unsigned s = 0; s < bridge::kBlock; s++)
 		for (unsigned k = 0; k < bridge::kBoxVoices; k++) Box[s][k] = s_Block[s][b + k], BoxR[s][k] = s_BlockR[s][b + k];
 	u8 nSt = 0;
 	for (unsigned k = 0; k < bridge::kBoxVoices; k++) nSt |= s_St[b + k] ? 1u << k : 0;
-	g_Output.Push (Box, bridge::kBlock, BoxR, nSt);
+	(nSide < 0 ? g_Output : g_OutputSide).Push (Box, bridge::kBlock, BoxR, nSt);
 	s_nBlocks++;
 }
 
@@ -501,7 +545,7 @@ void CEngineCores::Control (void)
 			s_nMidiBytes++;
 			bWorked = TRUE;
 		}
-		link1::Poll ();		// the second box's messages, as the engine's slot 1 (link1.h)
+		link1::Poll (RealtimeIn, AllSoundOffIn);	// the second box's messages, as the engine's slot 1, its clock and its CC 120 (link1.h)
 		Mark (0);
 		u32 nKey;
 		while (g_KeysIn.pop (&nKey))
@@ -554,9 +598,14 @@ void CEngineCores::Control (void)
 		unsigned nLevel = g_Output.Level ();
 		if (nLevel < s_nFifoMin) s_nFifoMin = nLevel;
 		if (nLevel > s_nFifoMax) s_nFifoMax = nLevel;
-		while (g_Output.Level () + bridge::kBlock <= s_nTarget)
+		// each stage's FIFO to its target: the base box's, and beside a Rytm slot 1's (side_out.h), each paced by its
+		// own box's stream; the emptier first
+		for (;;)
 		{
-			RenderBlock ();
+			const int nSide = core::device::side_slot ();
+			const int nPick = side_out::pick (g_Output.Level (), nSide >= 0, g_OutputSide.Level (), s_nTarget, bridge::kBlock);
+			if (nPick < 0) break;
+			RenderBlock (nPick == 1 ? nSide : -1);
 			bWorked = TRUE;
 		}
 		Mark (4);
@@ -619,7 +668,9 @@ void CEngineCores::Command (const char *p)
 	}
 	else if (strcmp (p, "out=main") == 0 || strcmp (p, "out=tracks") == 0)	// (out=Vn:...: the OUT route, core/fx/out.h)
 	{
-		g_Output.SetMode (strcmp (p + 4, "tracks") == 0 ? Output::kTracks : Output::kMain);
+		const Output::Mode M = strcmp (p + 4, "tracks") == 0 ? Output::kTracks : Output::kMain;
+		g_Output.SetMode (M);
+		g_OutputSide.SetMode (M);	// (each stage's own device decides MAIN for a stereo mix)
 		L->Write (From, LogNotice, "output: %s", g_Output.GetMode () == Output::kTracks ? "tracks" : "main");
 	}
 	else if (strncmp (p, "fifo=", 5) == 0)

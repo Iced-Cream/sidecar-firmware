@@ -12,8 +12,11 @@ namespace core {
 // IN L/R source (rytm-mods 0030-fx-in): the Rytm's delay+reverb return on Overbridge IN L/R (channels 10/11) instead of
 // the codec inputs. Host -> Rytm 26 <v>: 1 FX return, 0 AUDIO IN, 0x7F ask; Rytm -> host 27 <s>: 1 on, 0 off, sent for
 // every 26 and unasked each time the Rytm's USB port comes up (a Rytm resets itself to off on a disconnect).
+// 3(c) step 8: each box's own setting and state (its fxin.txt in its own folder, its 26 / 27 with its own box), the slot
+// in hand's (prj_slot): slot 0's loaded at boot, another's at its attach (take_text, in its Scope).
 namespace fxin {
 bool wanted();        // the setting: IN L/R carry the FX return (kept in /.rytm/fxin.txt "src=fx|in", default inputs)
+void take_text(const char* b, int n);   // a read fxin.txt into the slot in hand's setting
 int rytm();           // the Rytm's last 27: 1 FX return, 0 inputs, -1 none yet
 bool active();        // rytm() == 1: IN L/R are FX_L / FX_R now (recorder names, SCOPE source names)
 const char* state();  // "on" "off" "unknown" (no answer yet) "unsupported" (asked 3 s ago, never answered)
@@ -29,6 +32,7 @@ int json(char* out, int cap);   // "\"fxin\":{\"want\":1,\"state\":\"on\",\"rytm
 void host_sysex(const uint8_t* d, int len);        // transport 0's message: engine_sysex_link(0, ...)
 void host_sysex_slot(const uint8_t* d, int len);   // a message of the slot in hand (device::Scope)
 void engine_sysex_link(int transport, const uint8_t* d, int len);   // (engine.h)
+int engine_realtime_link(int transport, uint8_t status, uint16_t spp);   // (engine.h)
 // The link to the Rytm went down or came up (the Rytm's hello 35, its USB MIDI attached or gone, the Overbridge
 // stream started or stopped): the link's voices silenced (CC 120's ramp, until its next trig; slot: that slot's, -1 the
 // link in hand's; on 8 voices every voice) and the send FX's tails cleared, as a double STOP does - a note-on whose

@@ -19,7 +19,7 @@
 // state_path. Two slots (docs/device-profiles.md "Several devices"): slot 0 is the Rytm's, in /.rytm from the first file
 // on; a box takes slot 1 at its hello, in its own folder from then on, on whichever transport it spoke (slot_of). Nothing
 // restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's (CardScope). The
-// Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
+// Pi's own files are in /.sidecar whatever the box (core/device/sidecar_dir.h): no box's folder holds them.
 #pragma once
 #include <stdint.h>
 
@@ -175,6 +175,9 @@ void hello(Link& l, const uint8_t* d, int len);   // a whole 4F, on the slot in 
 // Elektron box's USB MIDI. A box's hello takes slot 1 for its transport; a Rytm's 35 gives it back to slot 0. -1: a box's hello
 // while slot 1 is another box's (answered kWait). engine_sysex_link calls it for each message.
 int slot_of(int t, const uint8_t* d, int len);
+// The slot transport t carries now (slot_of's answer for a message that is not a hello or a 35): the platform's raw MIDI
+// taps (core/song's byte) enter that slot's Scope. Two loads, any core.
+int route_of(int t);
 void (*tx(int t))(const uint8_t*, int);   // transport t's sender
 void reset();                          // back to the Rytm and /.rytm, as a fresh boot (tests)
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered
@@ -216,6 +219,16 @@ inline int base_box_voice(int vi) {   // engine voice vi -> its number in the ba
   const int k = vi - base_voice_base();
   return k >= 0 && k < kBoxVoices ? k : -1;
 }
+// The slot whose voices sound beside the base box's, through an output stage of their own (on the Pi its own FIFO and
+// render pace, paced by its own box's stream; its OUT and INSERT settings are slot 1's, core/fx/out.h control1 and
+// core/fx/insert.h control1, alone or paired): 1 while slot 1 has a box and the base is slot 0 (a box beside a Rytm), else -1 (one
+// box: the base box's stage carries it, as it always did). Any core reads it (two aligned loads).
+inline int side_slot() {
+  if (kVoiceSlots < 2) return -1;
+  const Link* b = __atomic_load_n(&g_base, __ATOMIC_RELAXED);
+  return b == &g_links[0] && __atomic_load_n(&g_links[1].box, __ATOMIC_RELAXED) ? 1 : -1;
+}
+inline bool on_side(int vi) { return slot_of_voice(vi) == side_slot(); }   // engine voice vi plays through the side stage
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while
 // the control core may set the box. Null: the Rytm, or a box without a Screen.
 inline const Screen* box_screen(const Link& l = cur()) {

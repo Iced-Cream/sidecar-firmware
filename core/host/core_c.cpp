@@ -175,7 +175,7 @@ void core_c_render(int16_t* out, int n) {
     int want = n < kRingFrames - core::kBlock ? n : kRingFrames - core::kBlock;
     while (g_n < want) {
       core::refill_neediest((uint32_t)(want - g_n) + 4 * core::kBlock);
-      core::seq::pre_block();   // the sequencer's notes due in this block (core/seq/seq.h)
+      core::seq::pre_block_all();   // the sequencer's notes due in this block, every slot's (one pass here: core/seq/seq.h)
       um::pre_block();          // API 3: the block's transport snapshot for the user machines
       core::render_voices(g_ring, kRingFrames, (g_rd + g_n) % kRingFrames, 0, core::kVoices, g_mach);
       g_n += core::kBlock;
@@ -427,7 +427,7 @@ void core_c_livein_fifo(int frames) { core::livein::set_fifo(frames); }
 // project index save. Returns the job's phase.
 static void bundle_current(char* out, int cap) {
   char p[24];
-  memcpy(p, (const char*)core::project, sizeof p);
+  memcpy(p, (const char*)core::prj().key, sizeof p);
   p[23] = 0;
   snprintf(out, cap, "%s", p);
 }

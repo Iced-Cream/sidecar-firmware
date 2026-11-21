@@ -134,40 +134,42 @@ int main() {
     run(3000);   // (the capture's envelopes have run out)
     ctl(vi, {127, 0, 1, 64, 0, 64, 0, 64, 0, 127, 64, 100, 64});   // the default sound: an open low-pass, nothing to run
     device::strip::trig(vi);
+    // (3(c): the Digitakt alone is the slot in hand: its strip plays in its own chains and OUT, control1)
+    CHECK(&ins::ctl(vi) == &ins::control_of(slot_of_voice(b)) && &out::ctl() == &out::control_of(slot_of_voice(b)));
     run(1);
-    CHECK(ins::control.type[vi][0] == ins::kOff && out::control.lev[vi] == 100 && out::control.pan[vi] == 64);
+    CHECK(ins::ctl(vi).type[vi][0] == ins::kOff && out::ctl().lev[vi] == 100 && out::ctl().pan[vi] == 64);
     ctl(vi, {48, 20, 1, 64, 0, 64, 0, 64, 0, 127, 64, 90, 30});     // LP at 48, VOL 90, PAN 30
-    CHECK(ins::control.type[vi][0] == ins::kFilter && ins::locked(vi, 0, 0) == 48 && ins::locked(vi, 0, 1) == 20 && ins::locked(vi, 0, 2) == 0);
-    CHECK(out::control.lev[vi] == 90 && out::control.pan[vi] == 30);
+    CHECK(ins::ctl(vi).type[vi][0] == ins::kFilter && ins::locked(vi, 0, 0) == 48 && ins::locked(vi, 0, 1) == 20 && ins::locked(vi, 0, 2) == 0);
+    CHECK(out::ctl().lev[vi] == 90 && out::ctl().pan[vi] == 30);
     ctl(vi, {48, 20, 2, 64, 0, 64, 0, 64, 0, 127, 64, 90, 30});     // HP: FILTER's morph at its far end
-    CHECK(ins::control.type[vi][0] == ins::kFilter && ins::locked(vi, 0, 2) == 127);
+    CHECK(ins::ctl(vi).type[vi][0] == ins::kFilter && ins::locked(vi, 0, 2) == 127);
     ctl(vi, {70, 90, 5, 64, 0, 64, 0, 64, 0, 127, 64, 90, 30});     // EQ_3: a bell, GAIN from RESO's knob
-    CHECK(ins::control.type[vi][0] == ins::kEq && ins::locked(vi, 0, 3) == 70 && ins::locked(vi, 0, 1) == 90);
+    CHECK(ins::ctl(vi).type[vi][0] == ins::kEq && ins::locked(vi, 0, 3) == 70 && ins::locked(vi, 0, 1) == 90);
     ctl(vi, {70, 90, 0, 64, 0, 64, 0, 64, 0, 127, 64, 90, 30});     // OFF
-    CHECK(ins::control.type[vi][0] == ins::kOff);
+    CHECK(ins::ctl(vi).type[vi][0] == ins::kOff);
     // ATK 0: at once, HOLD 127 (NOTE: no gate is reported): it stays
     ctl(vi, {127, 0, 1, 64, 0, 64, 0, 64, 0, 127, 64, 100, 64});
     device::strip::trig(vi);
     CHECK(device::strip::amp_env(vi) == 1.0f);
     run(2000);
-    CHECK(device::strip::amp_env(vi) == 1.0f && out::control.lev[vi] == 100);
+    CHECK(device::strip::amp_env(vi) == 1.0f && out::ctl().lev[vi] == 100);
     // an attack rises, HOLD 0, a short DEC ends the voice
     ctl(vi, {127, 0, 1, 64, 60, 64, 0, 64, 60, 0, 30, 100, 64});
     device::strip::trig(vi);
-    CHECK(device::strip::amp_env(vi) == 0.0f && out::control.lev[vi] <= 100);
+    CHECK(device::strip::amp_env(vi) == 0.0f && out::ctl().lev[vi] <= 100);
     run(4);
     float rising = device::strip::amp_env(vi);
     CHECK(rising > 0.0f && rising < 1.0f);
     run(3000);
-    CHECK(device::strip::amp_env(vi) == 0.0f && out::control.lev[vi] == 0);
+    CHECK(device::strip::amp_env(vi) == 0.0f && out::ctl().lev[vi] == 0);
     // the filter's envelope on CUT: up with a positive ENV, down to SUS
     ctl(vi, {40, 0, 1, 127, 0, 20, 0, 64, 0, 127, 64, 100, 64});
     device::strip::trig(vi);
     run(1);
     CHECK(device::strip::flt_env(vi) > 0.5f);
-    CHECK(ins::control.play[vi][0][0] > 40);
+    CHECK(ins::ctl(vi).play[vi][0][0] > 40);
     run(3000);
-    CHECK(device::strip::flt_env(vi) < 0.01f && ins::control.play[vi][0][0] == 40);
+    CHECK(device::strip::flt_env(vi) < 0.01f && ins::ctl(vi).play[vi][0][0] == 40);
     // a wrong length, a track past the box: dropped, not played
     uint32_t d1 = device::dropped();
     const uint8_t shortm[] = {0xf0, 0x7d, 0x52, 0x54, device::kCmdControls, 1, 10, 0, 0xf7};

@@ -12,6 +12,8 @@
 #include "device/a4.h"
 #include "device/device.h"
 #include "engine.h"
+#include "fx/insert.h"
+#include "fx/out.h"
 #include "host_link.h"
 #include "pool/pool.h"
 #include "ui/remote.h"
@@ -150,17 +152,77 @@ int main() {
   for (int i = kRows / 2; i < kRows; ++i) tail += std::fabs((double)ring[i][3]);
   CHECK(tail == 0);
 
+  // each slot's INSERT and OUT settings are its own, alone or beside a Rytm (control_of(slot)). The same trig on voice 3
+  // and 11 with a TREMOLO on slot 0's chain 3: voice 3 only; on slot 1's chain 3: voice 11 only. AMP plays on the base
+  // box's chains (out::g_base_slot): beside the Rytm slot 1's AMP slot is dry
+  CHECK(device::side_slot() == 1 && device::on_side(11) && !device::on_side(3) && out::g_base_slot == 0);
+  CHECK(&out::control_of(1) == &out::control1 && out::control1.route[3] == out::kTrk && out::control1.lev[3] == 100);
+  auto same_3_11 = [] {
+    voices_init();
+    send(0, trig(kPlaits, 3, 60));
+    send(1, trig(kPlaits, 3, 60));
+    memset(ring, 0, sizeof ring);
+    render();
+    CHECK(rms(3) > 100 && rms(11) > 100);
+    for (int i = 0; i < kRows; ++i)
+      if (ring[i][3] != ring[i][11]) return false;
+    return true;
+  };
+  auto trem = [](ins::Control& k) {   // chain 3's slot 0: TREMOLO, full depth, as insert.cpp's settings would play it
+    k.type[3][0] = ins::kTrem;
+    for (int p = 0; p < ins::kParams; ++p) k.play[3][0][p] = 127;
+  };
+  ins::reset();
+  CHECK(same_3_11());   // both slots' chains off
+  ins::set_type(3, 0, ins::kTrem);
+  ins::set_param(3, 0, 1, 127);
+  ins::set_param(3, 0, 0, 127);
+  CHECK(!same_3_11());
+  const double plain = rms(11);
+  CHECK(std::fabs(rms(3) - plain) > 100);   // slot 0's TREMOLO on voice 3
+  ins::reset();
+  trem(ins::control1);
+  CHECK(!same_3_11());
+  const double slot1_trem = rms(11);
+  printf("  slot 1's TREMOLO: voice 11 %.1f, voice 3 %.1f (plain %.1f)\n", slot1_trem, rms(3), plain);
+  CHECK(std::fabs(rms(3) - plain) < 1e-6 && ins::control.type[3][0] == ins::kOff);
+  ins::reset();
+  ins::control1.type[3][0] = ins::kAmp;   // AMP is the base box's chains': dry on slot 1 beside the Rytm
+  CHECK(same_3_11());
+  ins::reset();
+
   // the A4 alone (no Rytm on USB): the base box is slot 1's, its tracks the pages' voices 8..15
   device::rytm_on_usb(false);
   device::step();
   CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices);
   CHECK(device::base_voice(2) == 10 && device::base_box_voice(10) == 2 && device::base_box_voice(2) == -1);
   CHECK(ui::remote_track_voice(0) == kBoxVoices + 0);   // track 1 (BD's place): the base box's voice 0
+  CHECK(device::side_slot() == -1 && out::g_base_slot == 1);   // alone: AMP on its chains
+  // still slot 1's own chains: slot 1's TREMOLO on voice 11 as beside the Rytm, slot 0's setting reaches only voice 3
+  trem(ins::control1);
+  CHECK(!same_3_11() && std::fabs(rms(11) - slot1_trem) < 1e-6 && std::fabs(rms(3) - plain) < 1e-6);
+  ins::reset();
+  {
+    device::Scope in(device::g_links[0]);   // (3(c): the settings are the slot in hand's: slot 0's here)
+    ins::set_type(3, 0, ins::kTrem);
+    ins::set_param(3, 0, 1, 127);
+    ins::set_param(3, 0, 0, 127);
+  }
+  CHECK(!same_3_11() && std::fabs(rms(11) - plain) < 1e-6);
+  ins::reset();
+  // outside a Scope the slot in hand is the lone A4's: its settings go into its own chains (control1)
+  ins::set_type(3, 0, ins::kTrem);
+  ins::set_param(3, 0, 1, 127);
+  ins::set_param(3, 0, 0, 127);
+  CHECK(ins::control1.type[3][0] == ins::kTrem && ins::control.type[3][0] == ins::kOff);
+  CHECK(!same_3_11() && std::fabs(rms(11) - plain) > 100 && std::fabs(rms(3) - plain) < 1e-6);
+  ins::reset();
   device::rytm_on_usb(true);
   device::step();
   CHECK(device::base_voice_base() == 0 && ui::remote_track_voice(0) == 0);
 
   printf("test_two_slots: PASS (slot 0 on 0..7, slot 1 on 8..15: the same report the same samples, machines, "
-         "note-offs and link resets each slot's own, the base box's voices follow g_base)\n");
+         "note-offs and link resets each slot's own, the base box's voices follow g_base, each slot's INSERT chains its own "
+         "alone or paired)\n");
   return 0;
 }

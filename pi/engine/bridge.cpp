@@ -203,6 +203,7 @@ void seq_block() {
   core::seq::pre_block();
   um::pre_block();   // API 3: the block's transport snapshot for the user machines (core/user/um.h)
 }
+void seq_block_side(int slot) { core::seq::pre_block_side(slot); }   // (3(c): um's snapshot stays once a base block)
 void poly_midi(uint8_t st, uint8_t d1, uint8_t d2) {
   core::poly::midi(st, d1, d2);           // (and through its note sink the sequencer's recording and step entry)
 }
@@ -272,6 +273,12 @@ void rytm_gone() { core::midim::link_lost(); core::arp::link_lost(); core::maste
 void rytm_resync() { core::ui::remote_resync(); core::midim::resync(); }
 void rytm_link(bool up) { core::midim::link_state(up); }
 void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
+int realtime_link(int t, uint8_t status, uint16_t spp) { return core::engine_realtime_link(t, status, spp); }
+int base_slot() { return core::device::g_base ? core::device::g_base->index : 0; }
+int transport_slot(int t) {
+  const int s = core::device::slot_of(t, nullptr, 0);
+  return s >= 0 && s < core::kVoiceSlots ? s : -1;
+}
 void asamp_set_midi_out(bool (*f)(int, const uint8_t*, int)) { core::samp::asamp_set_midi_out(f); }
 bool keys_computer_on() { return core::keys::computer_on(); }
 const char* keys_line(char* b, int cap) { return core::keys::line(b, cap); }
@@ -295,13 +302,19 @@ void lfo_midi(uint8_t st, uint8_t d1, uint8_t d2) {
 }
 bool learn_command(const char* p, char* out, int cap) { return core::learn::command(p, out, cap); }
 bool lfo_command(const char* p, char* out, int cap) { return core::lfo::command(p, out, cap); }
-int lfo_json(char* out, int cap) { return core::lfo::json(out, cap); }
+int lfo_json(char* out, int cap) {   // the base box's LFOs (core 0: names the slot, never the control core's slot in hand)
+  const core::device::Link* b = __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED);
+  return core::lfo::json(out, cap, b ? b->index : 0);
+}
 bool lfo_link_full() { return core::lfo::link_full(); }
 bool mod_command(const char* p, char* out, int cap) { return core::mod::command(p, out, cap); }
 int mod_json(char* out, int cap) { return core::mod::json(out, cap); }
 bool scene_command(const char* p, char* out, int cap) { return core::scene::command(p, out, cap); }
 bool xy_command(const char* p, char* out, int cap) { return core::xypad::command(p, out, cap); }
-int scene_json(char* out, int cap) { return core::scene::json(out, cap); }
+int scene_json(char* out, int cap) {   // the base box's scenes (core 0: names the slot, never the slot in hand)
+  const core::device::Link* b = __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED);
+  return core::scene::json(out, cap, b ? b->index : 0);
+}
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {
@@ -367,7 +380,18 @@ void cal_in(const int32_t* f, int n, int stride) { core::seq::cal_audio(f + 2, n
 void rytm_byte(uint8_t b) {
   core::rytm_dump::byte(b);
   core::patwrite::byte(b);   // 0.5.0 FILL: the pattern writer's answers (core/seq/patwrite.h)
-  core::song::byte(b);   // SONG RECORD (core/song/song.h): the whole stream
+  link_byte(0, b);   // SONG RECORD (core/song/song.h): the whole stream
+}
+// SONG RECORD's tap (step 10c): transport t's every byte, as the slot it carries (each box its own song)
+void link_byte(int t, uint8_t b) {
+  const int s = core::device::route_of(t);
+  if (s < 0 || s >= core::kVoiceSlots || s >= core::device::kLinks) return;
+  if (&core::device::g_links[s] == core::device::g_cur) {
+    core::song::byte(b);
+    return;
+  }
+  core::device::Scope in(core::device::g_links[s]);
+  core::song::byte(b);
 }
 void tap_in(const int32_t* f, int n, int stride) { core::ui::tap_in(f, n, stride); }
 bool livein_on() { return core::livein::wanted(); }
@@ -643,13 +667,14 @@ int track_src_json(char* out, int cap) {
 // The RAM store (core/store/store.h) and what is still on its way to the card: unwritten = the card queue's pending requests
 // plus fmt's writes the queue does not hold (queued, and the slot's once the card core has taken it: running or held); oldestMs the oldest of those. An edit still inside
 // its 1 s settle has not been posted yet and is not counted.
+// (slot 0's store: the base Rytm's project, as before; core 0 names the slot)
 int store_json(char* out, int cap, unsigned long heap_free) {
   uint32_t fo = 0, fn = core::fmt::unwritten(&fo), co = core::cardq::oldest_ms();
   int cn = core::cardq::pending();
   int n = sniprintf(out, cap,
                     "\"store\":{\"files\":%d,\"bytes\":%lu,\"ready\":%s,\"unwritten\":%lu,\"oldestMs\":%lu,\"held\":%lu,"
                     "\"heapFree\":%lu}",
-                    core::store::present(), (unsigned long)core::store::bytes(), core::store::ready() ? "true" : "false",
+                    core::store::present(0), (unsigned long)core::store::bytes(0), core::store::ready(0) ? "true" : "false",
                     (unsigned long)((cn > 0 ? (uint32_t)cn : 0) + fn), (unsigned long)(fo > co ? fo : co),
                     (unsigned long)core::fmt::post_held(), heap_free);
   return n > 0 && n < cap ? n : 0;
@@ -659,8 +684,8 @@ const char* stat_name(int k) {
   return k >= 0 && k < kMachines ? n[k] : "?";
 }
 int card_folders() { return core::card_ok ? core::cards.folders() : 0; }
-const char* project() { return core::project; }
-int pool_slots() { return core::npool; }
+const char* project() { return core::prj().key; }
+int pool_slots() { return core::prj().npool; }
 uint32_t to_host_dropped() { return core::to_rytm_dropped(); }
 
 }  // namespace bridge

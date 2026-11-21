@@ -165,7 +165,7 @@ int sweep(const char* root) {
   if (fixed) log(CORE_STR("fmt: boot sweep %s: %d files"), root, fixed);
   return fixed;
 }
-int sweep_boot() { return sweep("/.rytm") + sweep("/CHOP") + sweep("/Samples"); }
+int sweep_boot() { return sweep("/.rytm") + sweep("/.sidecar") + sweep("/CHOP") + sweep("/Samples"); }
 #endif
 
 void AtomicWriter::begin(const char* path, const uint8_t* data, uint32_t len, uint32_t piece) {

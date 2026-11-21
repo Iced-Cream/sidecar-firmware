@@ -30,7 +30,7 @@ void rules(core::bundle::IoRule* r) {
 bool card_busy() { return core::cardq::worker() && core::cardq::busy(); }
 void current(char* out, int cap) {   // core 3's (a stale copy at worst)
   char p[24];
-  memcpy(p, (const char*)core::project, sizeof p);
+  memcpy(p, (const char*)core::prj().key, sizeof p);
   p[23] = 0;
   sniprintf(out, cap, "%s", p);
 }

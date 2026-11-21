@@ -108,7 +108,7 @@ int main() {
   CHECK(device::rytm().voices == kBoxVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
   CHECK(device::rytm().usb_vid == 0x1935 && device::rytm().usb_pid == 0x0b48);
   send(sidecar({0x10, 'A', 'B'}));
-  CHECK(!strcmp(project, "AB") && count(0x14) == 1);
+  CHECK(!strcmp(prj().key, "AB") && count(0x14) == 1);
   std::vector<uint8_t> trig = sidecar({0x04, 0, 60, 100});
   for (int k = 0; k < 16; ++k) trig.insert(trig.end() - 1, {64, 0});
   send(trig);
@@ -160,7 +160,7 @@ int main() {
   CHECK(!v[b + 2].live);
   send(box({0x62, 1, 40, 0}));
   send(sidecar({0x10, 'X', 'Y'}));
-  CHECK(!strcmp(project, "AB"));   // the box does not move the Rytm's project
+  CHECK(!strcmp(prj(0).key, "AB"));   // the box does not move the Rytm's project
   send(trig);                      // a Rytm report's bytes: not this box's
   send(sidecar({0x23}));           // SENDFX ASK
   send(sidecar({0x30, 1, 0, 1, 0}));
@@ -184,7 +184,7 @@ int main() {
   CHECK(!device::foreign() && hooks.to_rytm == ::out && device::active().id == device::kIdRytm);
   CHECK(ui::remote_caps() == 3);
   send(sidecar({0x10, 'C', 'D'}));
-  CHECK(!strcmp(project, "CD"));
+  CHECK(!strcmp(prj().key, "CD"));
   send(trig);
   CHECK(v[0].live);
 
@@ -213,10 +213,10 @@ int main() {
     File f;
     CHECK(fs.mkdir("/.rytm/pools") && f.open("/.rytm/pools/P.txt", kWrite) && f.write("x", 1) == 1);
     f.close();
-    CHECK(f.open("/.rytm/wifi.txt", kWrite));
+    CHECK(f.open("/.sidecar/wifi.txt", kWrite));
     f.close();
     CHECK(exists_on_card(tmpl, "/.boxtest/pools/P.txt") && !exists_on_card(tmpl, "/.rytm/pools/P.txt"));
-    CHECK(exists_on_card(tmpl, "/.rytm/wifi.txt") && !exists_on_card(tmpl, "/.boxtest/wifi.txt"));
+    CHECK(exists_on_card(tmpl, "/.sidecar/wifi.txt") && !exists_on_card(tmpl, "/.boxtest/wifi.txt"));
     CHECK(f.open("/.rytm/pools/P.txt", kRead));   // the engine's own path reads it back
     f.close();
     CHECK(exists_on_card(tmpl, "/Samples") && fs.exists("/Samples"));   // shared content: one place
@@ -355,10 +355,11 @@ int main() {
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
-    CHECK(out::control.trk10 == 180);
-    out::set_trim(2, 60);                              // a live stereo=trim:trk
+    out::Control& a4 = out::control_of(kVoiceSlots - 1);   // slot 1's settings (on 8 voices the one set)
+    CHECK(a4.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));   // the A4's (slot 0's: the Rytm's)
+    out::set_trim(2, 60);                              // a live stereo=trim:trk: the base box's (the A4 alone)
     send(hello(device::kA4.id));                       // a repeated hello is no change of box
-    CHECK(out::control.trk10 == 60);
+    CHECK(a4.trk10 == 60);
     static int s_user = -1;                            // U1..U5: the A4 reports them as the Rytm does, the voice byte's flag
     hooks.user_report = [](int, int s, int, int, int, int) { s_user = s; };
     std::vector<uint8_t> t = sidecar({0x04, 0x50 + 1, 60, 100});
@@ -371,8 +372,8 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    send(hello(device::kA4.id));                       // its hello again: the A4's trim, nothing else
-    CHECK(out::control.trk10 == 180);
+    send(hello(device::kA4.id));                       // its hello again: the A4's trim on slot 1, nothing else
+    CHECK(a4.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));
     device::reset();
   }
 

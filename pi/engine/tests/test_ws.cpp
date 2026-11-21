@@ -580,9 +580,9 @@ static void test_voices_and_next ()
 
 	// /next from the card
 	char p[160];
-	CHECK (webnext::path ("/next", p, sizeof p) && std::string (p) == "SD:/.rytm/www-next/index.html");
-	CHECK (webnext::path ("/next/", p, sizeof p) && std::string (p) == "SD:/.rytm/www-next/index.html");
-	CHECK (webnext::path ("/next/assets/index-Ab_9.js", p, sizeof p) && std::string (p) == "SD:/.rytm/www-next/assets/index-Ab_9.js");
+	CHECK (webnext::path ("/next", p, sizeof p) && std::string (p) == "SD:/.sidecar/www-next/index.html");
+	CHECK (webnext::path ("/next/", p, sizeof p) && std::string (p) == "SD:/.sidecar/www-next/index.html");
+	CHECK (webnext::path ("/next/assets/index-Ab_9.js", p, sizeof p) && std::string (p) == "SD:/.sidecar/www-next/assets/index-Ab_9.js");
 	const char *bad[] = {"/nextx", "/nex", "/next/../x", "/next/a/../b", "/next/.hidden", "/next/a//b", "/next/a/", "/next//a",
 			     "/next/a b", "/next/a%2e", "/next/a?x=1", "/next/a\\b", "/fs/x", "/"};
 	for (const char *b : bad) CHECK (!webnext::path (b, p, sizeof p));

@@ -15,7 +15,9 @@ namespace core {
 namespace ins {
 
 Control control;
-void (*send_insert)(int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
+Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
+int (*slot_fn)() = nullptr;
+void (*send_insert)(int, int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
 
@@ -49,43 +51,78 @@ const Labels kLabels[kAllTypes] = {
 #undef FXL
 const char* const kChainNames[kChains] = {"V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "B1", "B2", "B3", "M1", "M2"};
 
-uint8_t g_knob[kChains][kSlots][kParams];
-int16_t g_lock[kVoices][kSlots][kParams];   // -1 none
-int16_t g_lfo[kChains][kSlots][kParams];
-// ins1112, the POST EQ: the knobs as set (0..127, the UI's units) and the LFOs' offsets. No step locks: the lock
-// param space is exactly full at kLockParams = 32 (seq.h), so the post EQ takes LFOs and the knob, not p-locks.
-uint8_t g_eq[kChains][kEqParams];
-// sfx-basewidth: the WIDTH last set through set_eq_bw (eq_bw keeps it while it still gives the LPF). 127 is "none": it
-// reads the same as no memory. Any other write of the HPF / LPF, and a clear, forgets it, so a kit's HPF / LPF always
-// read as the same WIDTH whatever came before (it is not stored: the kit file keeps the PEQ line only).
-uint8_t g_bw_width[kChains];
-int16_t g_eq_lfo[kChains][kEqParams];
-uint8_t g_send_knob[kVoices][kBuses];   // the sends as set (control.send: as they play, + g_send_off)
-int16_t g_send_off[kVoices][kBuses];    // core/mod kIsnd's offsets
+// 3(c) (option A): each voice slot's settings as set - its chains' knobs, locks and offsets, their post EQs and sends,
+// its dirty mark and kit - playing through control_of(slot). Since 3(d) every chain is the slot's own: its voice chains,
+// its buses, its master chains and B3's route (each box its send FX and master), set and saved in its own file.
+struct Set {
+  uint8_t knob[kChains][kSlots][kParams];
+  int16_t lock[kVoices][kSlots][kParams];   // -1 none
+  int16_t lfo[kChains][kSlots][kParams];
+  // ins1112, the POST EQ: the knobs as set (0..127, the UI's units) and the LFOs' offsets. No step locks: the lock
+  // param space is exactly full at kLockParams = 32 (seq.h), so the post EQ takes LFOs and the knob, not p-locks.
+  uint8_t eq[kChains][kEqParams];
+  // sfx-basewidth: the WIDTH last set through set_eq_bw (eq_bw keeps it while it still gives the LPF). 127 is "none": it
+  // reads the same as no memory. Any other write of the HPF / LPF, and a clear, forgets it, so a kit's HPF / LPF always
+  // read as the same WIDTH whatever came before (it is not stored: the kit file keeps the PEQ line only).
+  uint8_t bw_width[kChains];
+  int16_t eq_lfo[kChains][kEqParams];
+  uint8_t send_knob[kVoices][kBuses];   // the sends as set (control.send: as they play, + send_off)
+  int16_t send_off[kVoices][kBuses];    // core/mod kIsnd's offsets
+  // an AMP slot's capture as the file names it (a slot that is not out::g_base_slot keeps it here: AMP's state is the
+  // base box's chains', amp.h; its file keeps the line)
+  char amp_file[kVoices][kSlots][amp::kNameMax];
+  bool dirty;
+  uint32_t dirty_ms;
+  int kit_now;
+};
+Set g_set[kVoiceSlots];
+int g_force = -1;   // reset(): the slot worked on, whatever is in hand
+int hand() {
+  int sl = g_force >= 0 ? g_force : slot_fn ? slot_fn() : 0;
+  return sl > 0 && sl < kVoiceSlots ? sl : 0;
+}
+int sl_of(int) { return hand(); }   // chain c's settings: the slot in hand's (every chain, 3(d))
+Set& S(int c) { return g_set[sl_of(c)]; }
+Control& K(int c) { return control_of(sl_of(c)); }
 const Labels kEqLabels = {"POST EQ", {"HPF", "LPF", "LOW", "HIGH"}, {0, 0, 64, 64}};
 Stats g_stats;
-bool g_dirty = false;
-uint32_t g_dirty_ms = 0;
 
 Engine g_engine(48000.0f);
+#if CORE_VOICES > 8
+// slot 1's chains (its voices 8..15, its buses and its master: phase 3(d))
+Engine g_engine1(48000.0f, 1);
+#endif
 #ifndef CORE_HEAP_BUFFERS
 float g_lines[kLines][kLine];
+#if CORE_VOICES > 8
+float g_lines1[kLines][kLine];
+#endif
 struct Placer {
-  Placer() { g_engine.Place(g_lines); }
+  Placer() {
+    g_engine.Place(g_lines);
+#if CORE_VOICES > 8
+    g_engine1.Place(g_lines1);
+#endif
+  }
 } g_placer;
 #endif
 
 struct LockInit {   // no step locks at boot (a 0 would be a lock to 0)
   LockInit() {
-    for (auto& a : g_lock)
-      for (auto& b : a)
-        for (int16_t& x : b) x = -1;
-    for (auto& a : g_eq)
-      for (int k = 0; k < kEqParams; ++k) a[k] = kEqFlat(k);
+    for (Set& t : g_set) {
+      for (auto& a : t.lock)
+        for (auto& b : a)
+          for (int16_t& x : b) x = -1;
+      for (auto& a : t.eq)
+        for (int k = 0; k < kEqParams; ++k) a[k] = kEqFlat(k);
+      t.kit_now = -1;
+    }
   }
 } g_lock_init;
 
-void changed() { g_dirty = true, g_dirty_ms = now_ms(); }
+void mark(int sl) { g_set[sl].dirty = true, g_set[sl].dirty_ms = now_ms(); }
+void changed(int c) { mark(sl_of(c)); }   // chain c's settings changed: its slot's file
+void changed() { mark(hand()); }          // the slot in hand's (OUT, a touch)
 struct OutHook {   // OUT's settings live in the INSERT file (out.h)
   OutHook() { out::on_change = changed; }
 } g_out_hook;
@@ -93,14 +130,17 @@ struct OutHook {   // OUT's settings live in the INSERT file (out.h)
 int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 void refresh(int c, int s, int k) {
-  int v = c < kVoices && g_lock[c][s][k] >= 0 ? g_lock[c][s][k] : g_knob[c][s][k];
-  control.play[c][s][k] = (uint8_t)clampi(v + g_lfo[c][s][k], 0, 127);
+  const Set& t = S(c);
+  int v = c < kVoices && t.lock[c][s][k] >= 0 ? t.lock[c][s][k] : t.knob[c][s][k];
+  K(c).play[c][s][k] = (uint8_t)clampi(v + t.lfo[c][s][k], 0, 127);
 }
 bool valid(int c, int s, int k = 0) { return c >= 0 && c < kChains && s >= 0 && s < kSlots && k >= 0 && k < kParams; }
 bool eq_valid(int c, int k) { return c >= 0 && c < kChains && k >= 0 && k < kEqParams; }
-void send_refresh(int vi, int b) { control.send[vi][b] = (uint8_t)clampi(g_send_knob[vi][b] + g_send_off[vi][b], 0, 127); }
+void send_refresh(int vi, int b) {
+  K(vi).send[vi][b] = (uint8_t)clampi(S(vi).send_knob[vi][b] + S(vi).send_off[vi][b], 0, 127);
+}
 void eq_refresh(int c, int k) {
-  control.peq[c][k] = (int8_t)eq_store(k, clampi((int)g_eq[c][k] + g_eq_lfo[c][k], 0, 127));
+  K(c).peq[c][k] = (int8_t)eq_store(k, clampi((int)S(c).eq[c][k] + S(c).eq_lfo[c][k], 0, 127));
 }
 
 bool same_ci(const char* a, const char* b) {
@@ -140,25 +180,32 @@ float exp2c(float x) {   // 2^x, |x| < 30 (cold: the names)
   return fast_exp2(x);
 }
 
+// the slot in hand's settings: its chains, sends, B3 route and master (3(d): each slot all of its own)
 void clear_settings() {
-  for (int c = 0; c < kChains; ++c)
+  const int nc = kChains;
+  for (int c = 0; c < nc; ++c)
     for (int s = 0; s < kSlots; ++s) {
-      control.type[c][s] = kOff;
-      for (int k = 0; k < kParams; ++k) g_knob[c][s][k] = 0, refresh(c, s, k);
+      K(c).type[c][s] = kOff;
+      for (int k = 0; k < kParams; ++k) S(c).knob[c][s][k] = 0, refresh(c, s, k);
     }
-  for (int c = 0; c < kChains; ++c)
-    for (int k = 0; k < kEqParams; ++k) g_eq[c][k] = kEqFlat(k), eq_refresh(c, k);   // ins1112
-  for (int c = 0; c < kChains; ++c) g_bw_width[c] = 127;   // sfx-basewidth: no WIDTH remembered
+  for (int c = 0; c < nc; ++c)
+    for (int k = 0; k < kEqParams; ++k) S(c).eq[c][k] = kEqFlat(k), eq_refresh(c, k);   // ins1112
+  for (int c = 0; c < nc; ++c) S(c).bw_width[c] = 127;   // sfx-basewidth: no WIDTH remembered
   for (int v = 0; v < kVoices; ++v)
-    for (int b = 0; b < kBuses; ++b) g_send_knob[v][b] = 0, send_refresh(v, b);
-  control.route3 = 0;
-  master::clear();
+    for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
+  control_of(hand()).route3 = 0;
+  master::clear();   // (the slot in hand's: master.cpp asks slot_in_hand)
+  if (hand()) {      // 3(c) step 8: another slot's send FX is its file's (SFX lines; slot 0's are the Rytm's kit's 0x20s)
+    fx::Control& f = fx::control_of(hand());
+    for (int s = 0; s < fx::kSlots; ++s)
+      for (int k = 0; k < fx::kKnobs; ++k) f.knob[s][k] = 0;
+  }
 }
 
 // bus 3's soft limit, as the send FX's pairs (send_fx.h kLimitFx / kLimitMain)
 inline float lim(float x, float l) { return fx::soft_limit(x, l); }
 
-float g_send_g[kVoices][kBuses];   // the OUT fill's ramped send gains (core 0)
+float g_send_g[2][kVoices][kBuses];   // the OUT fill's ramped send gains (core 0), each box's
 
 }  // namespace
 
@@ -288,7 +335,7 @@ void value_text(int t, int k, int v, char* b, int cap) {
 }
 
 void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
-  int t = valid(c, s, k) ? control.type[c][s] : kOff;
+  int t = valid(c, s, k) ? K(c).type[c][s] : kOff;
   if (t == kAmp && k == 0) return amp::knob_text(c, s, v, b, cap);
   value_text(t, k, v, b, cap);
 }
@@ -300,81 +347,83 @@ void set_type(int c, int s, int t, bool keep) {
   if (t == kAmp && c >= kVoices && c < kM0) return;   // AMP: the voice chains and the master (amp.h)
   if (t >= kTypes && c < kBus0) return;               // a send TYPE: the buses' and the master's chains (core 2's) only
   if (c >= kBus0 && !master::accept(c, s, t)) return;   // no room for another send TYPE (master.h kFxSlots)
-  if (control.type[c][s] == t && keep) return;
-  control.type[c][s] = (uint8_t)t;
+  if (K(c).type[c][s] == t && keep) return;
+  K(c).type[c][s] = (uint8_t)t;
   if (!keep)
-    for (int k = 0; k < kParams; ++k) g_knob[c][s][k] = kLabels[t].def[k];
+    for (int k = 0; k < kParams; ++k) S(c).knob[c][s][k] = kLabels[t].def[k];
   for (int k = 0; k < kParams; ++k) refresh(c, s, k);
   ++g_stats.sets;
-  changed();
+  changed(c);
 }
 void set_param(int c, int s, int k, int v) {
   if (!valid(c, s, k)) return;
-  g_knob[c][s][k] = (uint8_t)clampi(v, 0, 127);
+  S(c).knob[c][s][k] = (uint8_t)clampi(v, 0, 127);
   refresh(c, s, k);
   ++g_stats.sets;
-  changed();
+  changed(c);
 }
 void set_send(int vi, int b, int v) {
   if (vi < 0 || vi >= kVoices || b < 0 || b >= kBuses) return;
-  g_send_knob[vi][b] = (uint8_t)clampi(v, 0, 127);
+  S(vi).send_knob[vi][b] = (uint8_t)clampi(v, 0, 127);
   send_refresh(vi, b);
   ++g_stats.sets;
-  changed();
+  changed(vi);
 }
 void send_offset(int vi, int b, int off) {
   if (vi < 0 || vi >= kVoices || b < 0 || b >= kBuses) return;
-  g_send_off[vi][b] = (int16_t)clampi(off, -127, 127);
+  S(vi).send_off[vi][b] = (int16_t)clampi(off, -127, 127);
   send_refresh(vi, b);
   ++g_stats.lfo_sets;
 }
-int send_knob(int vi, int b) { return vi >= 0 && vi < kVoices && b >= 0 && b < kBuses ? g_send_knob[vi][b] : 0; }
+int send_knob(int vi, int b) { return vi >= 0 && vi < kVoices && b >= 0 && b < kBuses ? S(vi).send_knob[vi][b] : 0; }
 void set_route3(int post) {
-  control.route3 = post ? 1 : 0;
-  changed();
+  control_of(hand()).route3 = post ? 1 : 0;
+  mark(hand());
 }
-int param(int c, int s, int k) { return valid(c, s, k) ? g_knob[c][s][k] : 0; }
+int param(int c, int s, int k) { return valid(c, s, k) ? S(c).knob[c][s][k] : 0; }
 // ---- ins1112, the POST EQ (end of the chain, after both slots)
 const Labels& eq_labels() { return kEqLabels; }
 static void eq_write(int c, int k, int v) {
-  g_eq[c][k] = (uint8_t)clampi(v, 0, 127);
+  S(c).eq[c][k] = (uint8_t)clampi(v, 0, 127);
   eq_refresh(c, k);
   ++g_stats.sets;
-  changed();
+  changed(c);
 }
 void set_eq(int c, int k, int v) {
   if (!eq_valid(c, k)) return;
-  if (k < 2) g_bw_width[c] = 127;   // the HPF / LPF set as themselves: WIDTH is what they give
+  if (k < 2) S(c).bw_width[c] = 127;   // the HPF / LPF set as themselves: WIDTH is what they give
   eq_write(c, k, v);
 }
-int eq_param(int c, int k) { return eq_valid(c, k) ? g_eq[c][k] : 0; }
+int eq_param(int c, int k) { return eq_valid(c, k) ? S(c).eq[c][k] : 0; }
 static int bw_lpf(int base, int width) { return base + width >= 127 ? 0 : 127 - base - width; }
 void set_eq_bw(int c, int base, int width) {
   if (!eq_valid(c, 0)) return;
   base = clampi(base, 0, 127), width = clampi(width, 0, 127);
   eq_write(c, 0, base);
   eq_write(c, 1, bw_lpf(base, width));
-  g_bw_width[c] = (uint8_t)width;
+  S(c).bw_width[c] = (uint8_t)width;
 }
 void eq_bw(int c, int* base, int* width) {
   int b = eq_param(c, 0), l = eq_param(c, 1);
   *base = b;
-  if (eq_valid(c, 0) && bw_lpf(b, g_bw_width[c]) == l) *width = g_bw_width[c];
+  if (eq_valid(c, 0) && bw_lpf(b, S(c).bw_width[c]) == l) *width = S(c).bw_width[c];
   else *width = l ? clampi(127 - b - l, 0, 127) : 127;
 }
-int eq_playing(int c, int k) { return eq_valid(c, k) ? eq_knob(k, control.peq[c][k]) : 0; }
+int eq_playing(int c, int k) { return eq_valid(c, k) ? eq_knob(k, K(c).peq[c][k]) : 0; }
 void eq_mod_offset(int c, int k, int off) {
   if (!eq_valid(c, k)) return;
-  g_eq_lfo[c][k] = (int16_t)clampi(off, -127, 127);
+  S(c).eq_lfo[c][k] = (int16_t)clampi(off, -127, 127);
   eq_refresh(c, k);
   ++g_stats.lfo_sets;
 }
-bool eq_on(int c) {
-  if (!eq_valid(c, 0)) return false;
+bool eq_on(int c) { return eq_on_in(hand(), c); }
+bool eq_on_in(int slot, int c) {   // (any core: names its slot, never asks the slot in hand)
+  if (!eq_valid(c, 0) || slot < 0 || slot >= kVoiceSlots) return false;
   for (int k = 0; k < kEqParams; ++k)
-    if (g_eq[c][k] != kEqFlat(k)) return true;
+    if (g_set[slot].eq[c][k] != kEqFlat(k)) return true;
   return false;
 }
+int slot_in_hand() { return hand(); }
 bool eq_any_on() {
   for (int c = 0; c < kChains; ++c)
     if (eq_on(c)) return true;
@@ -396,14 +445,14 @@ void eq_value_text(int k, int v, char* b, int cap) {
 }
 void lock(int vi, int s, int k, int v) {
   if (vi < 0 || vi >= kVoices || !valid(vi, s, k)) return;
-  g_lock[vi][s][k] = (int16_t)(v < 0 ? -1 : clampi(v, 0, 127));
+  S(vi).lock[vi][s][k] = (int16_t)(v < 0 ? -1 : clampi(v, 0, 127));
   refresh(vi, s, k);
   ++g_stats.locks;
 }
-int locked(int c, int s, int k) { return c >= 0 && c < kVoices && valid(c, s, k) ? g_lock[c][s][k] : -1; }
+int locked(int c, int s, int k) { return c >= 0 && c < kVoices && valid(c, s, k) ? S(c).lock[c][s][k] : -1; }
 void mod_offset(int c, int s, int k, int off) {
   if (!valid(c, s, k)) return;
-  g_lfo[c][s][k] = (int16_t)clampi(off, -127, 127);
+  S(c).lfo[c][s][k] = (int16_t)clampi(off, -127, 127);
   refresh(c, s, k);
   ++g_stats.lfo_sets;
 }
@@ -411,13 +460,20 @@ void touch() { changed(); }
 bool any_on() {
   for (int c = 0; c < kChains; ++c)
     for (int s = 0; s < kSlots; ++s)
-      if (control.type[c][s]) return true;
+      if (K(c).type[c][s]) return true;
   return eq_any_on();   // ins1112
 }
 
 // ---------------------------------------------------------------------------------------------------- the DSP hooks
 
-Engine& engine() { return g_engine; }
+Engine& engine(int slot) {
+#if CORE_VOICES > 8
+  if (slot) return g_engine1;
+#else
+  (void)slot;
+#endif
+  return g_engine;
+}
 
 // the poly voices' soft limiter (voices.h kSoftKnee / kSoftCeil): an EQ boost or a DRIVE never hard-clips
 static inline int16_t knee16(float y) {
@@ -430,68 +486,86 @@ static inline int16_t knee16(float y) {
   float q = y * 32767.0f;
   return (int16_t)(q > 32767.0f ? 32767 : q < -32768.0f ? -32768 : q);
 }
-void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices]) {
+void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, int16_t (*ring_r)[core::kVoices], int slot) {
   if (vi < 0 || vi >= core::kVoices) return;
-  const int c = box_voice(vi);   // its box voice's chain (one box's chains until slot 1 has its own)
-  amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now
-  if (!ring_r) g_engine.MarkMono(c);
-  if (!g_engine.Active(c, control)) return;
+  const int c = box_voice(vi);   // its box voice's chain, in its slot's engine
+  Engine& e = engine(slot);
+  const Control& k = control_of(slot);
+  const bool amp = slot == out::g_base_slot;
+  e.SetAmp(amp);
+  if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
+  if (!ring_r) e.MarkMono(c);
+  if (!e.Active(c, k)) return;
   float x[64], r[64];
   if (n > 64) n = 64;
   for (int i = 0; i < n; ++i) x[i] = ring[row[i]][vi] * (1.0f / 32768.0f);
   if (ring_r) {
     for (int i = 0; i < n; ++i) r[i] = ring_r[row[i]][vi] * (1.0f / 32768.0f);
-    g_engine.ProcessVoiceStereo(c, x, r, n, control);
+    e.ProcessVoiceStereo(c, x, r, n, k);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]), ring_r[row[i]][vi] = knee16(r[i]);
   } else {
-    g_engine.ProcessMono(c, x, n, control);
+    e.ProcessMono(c, x, n, k);
     for (int i = 0; i < n; ++i) ring[row[i]][vi] = knee16(x[i]);
   }
   __atomic_fetch_add(&g_stats.voice_blocks, 1u, __ATOMIC_RELAXED);
 }
 
-bool sends_on() {
+bool sends_on() { return sends_on(0); }
+
+bool sends_on(int box) {
+  const Control& k = control_of(box);
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b)
-      if (control.send[v][b] || g_send_g[v][b] != 0.0f) return true;
+      if (k.send[v][b] || g_send_g[box & 1][v][b] != 0.0f) return true;
   return false;
 }
 
-void voice_sends(const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) {
+void voice_sends(const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) { voice_sends(0, V, n, out); }
+
+void voice_sends(int box, const int16_t (*V)[kVoices], int n, float (*out)[kBuses]) {
   for (int i = 0; i < n; ++i) out[i][0] = out[i][1] = out[i][2] = 0.0f;
   if (n <= 0) return;
+  const Control& k = control_of(box);
+  float (*gs)[kBuses] = g_send_g[box & 1];
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) {
-      float t = knob01(control.send[v][b]);
+      float t = knob01(k.send[v][b]);
       t *= t;   // squared, as the send FX's sends
-      float g0 = g_send_g[v][b];
+      float g0 = gs[v][b];
       if (g0 == 0.0f && t == 0.0f) continue;
       // toward the target over ~5 ms (a block is 7 frames on the Pi): linear within the block
       float g1 = g0 + (t - g0) * fminf(1.0f, (float)n / 240.0f);
       if (fabsf(g1 - t) < 1e-5f) g1 = t;
-      g_send_g[v][b] = g1;
+      gs[v][b] = g1;
       const float dg = (g1 - g0) / (float)n;
       float g = g0;
       for (int i = 0; i < n; ++i) g += dg, out[i][b] += g * (float)V[i][v] * (1.0f / 32768.0f);
     }
 }
 
-bool bus3_on() {
+bool bus3_on() { return bus3_on(0); }
+
+bool bus3_on(int box) {
+  const Control& k = control_of(box);
   bool send = false;
-  for (int v = 0; v < kVoices; ++v) send |= control.send[v][2] != 0;
-  return (send && (control.type[kBus0 + 2][0] || control.type[kBus0 + 2][1] || eq_on(kBus0 + 2))) ||
-         g_engine.Active(kBus0 + 2, control);
+  for (int v = 0; v < kVoices; ++v) send |= k.send[v][2] != 0;
+  return (send && (k.type[kBus0 + 2][0] || k.type[kBus0 + 2][1] || eq_on_in(box, kBus0 + 2))) ||   // (box's own knobs)
+         engine(box).Active(kBus0 + 2, k);
 }
 
-void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) {
-  if (!g_engine.Active(kBus0 + 2, control)) return;
+void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) { bus3(0, in, n, pre, post, mono); }
+
+void bus3(int box, const float* in, int n, float (*pre)[2], float (*post)[2], float* mono) {
+  Engine& e = engine(box);
+  const Control& k = control_of(box);
+  if (!e.Active(kBus0 + 2, k)) return;
   float y[128][2];
   if (n > 128) n = 128;
   for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = in[i];
-  g_engine.ProcessStereo(kBus0 + 2, y, n, control);
+  e.ProcessStereo(kBus0 + 2, y, n, k);
   if (mono)
     for (int i = 0; i < n; ++i) mono[i] = 0.5f * (y[i][0] + y[i][1]);
-  bool p = control.route3 != 0;
+  bool p = k.route3 != 0;
   float (*d)[2] = p ? post : pre;
   const float l = p ? fx::kLimitMain : fx::kLimitFx;
   if (!d) return;
@@ -500,9 +574,12 @@ void bus3(const float* in, int n, float (*pre)[2], float (*post)[2], float* mono
 }
 
 // the send FX's hook (send_fx.h fx::bus_insert): FX slot s's return through bus s's chain
-static void bus_hook(int s, float (*y)[2], int n) {
-  if (s < 0 || s > 1 || !g_engine.Active(kBus0 + s, control)) return;
-  g_engine.ProcessStereo(kBus0 + s, y, n, control);
+static void bus_hook(const fx::Control& fc, int s, float (*y)[2], int n) {
+  const int box = fx::box_of(fc);
+  Engine& e = engine(box);
+  const Control& k = control_of(box);
+  if (s < 0 || s > 1 || !e.Active(kBus0 + s, k)) return;
+  e.ProcessStereo(kBus0 + s, y, n, k);
   ++g_stats.bus_blocks;
 }
 static struct BusHook {
@@ -510,33 +587,56 @@ static struct BusHook {
 } g_bus_hook;
 
 // the DELAY lines, then AMP's engine pool (amp.h; on the Mac: its own static memory)
-unsigned long heap_bytes() { return sizeof(float) * kLines * kLine + amp::heap_bytes() + master::heap_bytes(); }
+// (and on 16 voices slot 1's DELAY lines right after slot 0's: both line arrays at their alignment)
+static const unsigned long kLinesBytes = sizeof(float) * kLines * kLine;
+static const unsigned long kSideBytes = kVoiceSlots > 1 ? kLinesBytes : 0;
+unsigned long heap_bytes() { return kLinesBytes + kSideBytes + amp::heap_bytes() + master::heap_bytes(); }
 void heap_place(void* mem) {
   memset(mem, 0, heap_bytes());
   g_engine.Place((float(*)[kLine])mem);
-  amp::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine);
-  master::heap_place((uint8_t*)mem + sizeof(float) * kLines * kLine + amp::heap_bytes());
+#if CORE_VOICES > 8
+  g_engine1.Place((float(*)[kLine])((uint8_t*)mem + kLinesBytes));
+#endif
+  amp::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes);
+  master::heap_place((uint8_t*)mem + kLinesBytes + kSideBytes + amp::heap_bytes());
 }
 
 // ---------------------------------------------------------------------------------------------------- the card's hooks
 
-bool settings_dirty(uint32_t* since) {
-  if (since) *since = g_dirty_ms;
-  return g_dirty;
+bool settings_dirty(uint32_t* since) {   // the slot in hand's
+  const Set& t = g_set[hand()];
+  if (since) *since = t.dirty_ms;
+  return t.dirty;
 }
-static int g_kit_now = -1;
-int kit() { return g_kit_now; }
-void set_kit(int k) { g_kit_now = k; }
-void settings_clean() { g_dirty = false; }
-void settings_due() { g_dirty_ms = now_ms() - 1000; }
+bool settings_dirty_any() {
+  for (const Set& t : g_set)
+    if (t.dirty) return true;
+  return false;
+}
+int kit() { return g_set[hand()].kit_now; }
+void set_kit(int k) { g_set[hand()].kit_now = k; }
+void settings_clean() { g_set[hand()].dirty = false; }
+void settings_due() {   // every slot's (a restart or a power-off is coming)
+  for (Set& t : g_set) t.dirty_ms = now_ms() - 1000;
+}
+bool amp_here() { return hand() == out::g_base_slot; }   // AMP plays on the slot in hand's chains (amp.h, 3(b))
+void want_amp(int c, int s, const char* file) {
+  if (c < 0 || c >= kChains || s < 0 || s >= kSlots) return;
+  if (c < kVoices) sniprintf(S(c).amp_file[c][s], amp::kNameMax, "%s", file ? file : "");
+  if (c >= kVoices || amp_here()) amp::want_file(c, s, file);
+}
+const char* amp_file(int c, int s) {
+  if (c < 0 || c >= kChains || s < 0 || s >= kSlots) return "";
+  return c < kVoices && !amp_here() ? S(c).amp_file[c][s] : amp::slot_file(c, s);
+}
 void clear() {
   clear_settings();
   out::clear();
   for (int c = 0; c < kVoices; ++c)
-    for (int s = 0; s < kSlots; ++s) amp::want_file(c, s, "");
+    for (int s = 0; s < kSlots; ++s) want_amp(c, s, "");
   for (int c = 0; c < kVoices; ++c)
     for (int s = 0; s < kSlots; ++s)
-      for (int k = 0; k < kParams; ++k) g_lock[c][s][k] = -1, refresh(c, s, k);
+      for (int k = 0; k < kParams; ++k) S(c).lock[c][s][k] = -1, refresh(c, s, k);
 }
 
 // ---------------------------------------------------------------------------------------------------- console
@@ -546,15 +646,15 @@ bool command(const char* p, char* o, int cap) {
   if (!p[3]) {
     int n = sniprintf(o, cap, "ins:");
     for (int c = 0; c < kChains && n < cap; ++c) {
-      int a = control.type[c][0], b = control.type[c][1];
-      bool send = c < kVoices && (control.send[c][0] || control.send[c][1] || control.send[c][2]);   // as it plays (a knob 0 + an offset is heard)
+      int a = K(c).type[c][0], b = K(c).type[c][1];
+      bool send = c < kVoices && (K(c).send[c][0] || K(c).send[c][1] || K(c).send[c][2]);   // as it plays (a knob 0 + an offset is heard)
       if (!a && !b && !send && !eq_on(c)) continue;
       int k = sniprintf(o + n, cap - n, CORE_STR(" %s %s/%s%s"), kChainNames[c], kLabels[a].name, kLabels[b].name,
                         eq_on(c) ? "/EQ" : "");
       if (k < 0 || k >= cap - n) break;
       n += k;
       if (send) {
-        k = sniprintf(o + n, cap - n, CORE_STR(" send %d/%d/%d"), g_send_knob[c][0], g_send_knob[c][1], g_send_knob[c][2]);
+        k = sniprintf(o + n, cap - n, CORE_STR(" send %d/%d/%d"), send_knob(c, 0), send_knob(c, 1), send_knob(c, 2));
         if (k < 0 || k >= cap - n) break;
         n += k;
       }
@@ -562,8 +662,8 @@ bool command(const char* p, char* o, int cap) {
       if (k < 0 || k >= cap - n) break;
       n += k;
     }
-    if (n < cap) sniprintf(o + n, cap - n, CORE_STR(" b3 %s, faults %u"), control.route3 ? "post" : "pre",
-                           (unsigned)g_engine.Faults());
+    if (n < cap) sniprintf(o + n, cap - n, CORE_STR(" b3 %s, faults %u"), control_of(hand()).route3 ? "post" : "pre",
+                           (unsigned)engine(hand()).Faults());
     return true;
   }
   const char* q = p + 4;
@@ -593,12 +693,12 @@ bool command(const char* p, char* o, int cap) {
       return true;
     }
     set_send(c, bus, v), fx::edited(mod::tid(mod::kIsnd, c, bus));
-    sniprintf(o, cap, CORE_STR("ins: %s send %d/%d/%d"), kChainNames[c], g_send_knob[c][0], g_send_knob[c][1], g_send_knob[c][2]);
+    sniprintf(o, cap, CORE_STR("ins: %s send %d/%d/%d"), kChainNames[c], send_knob(c, 0), send_knob(c, 1), send_knob(c, 2));
     return true;
   }
   if (same_ci(b, "route") && c == kBus0 + 2) {
     set_route3(same_ci(key, "post"));
-    sniprintf(o, cap, CORE_STR("ins: B3 returns %s"), control.route3 ? "POST (0/1)" : "PRE (2/3)");
+    sniprintf(o, cap, CORE_STR("ins: B3 returns %s"), control_of(hand()).route3 ? "POST (0/1)" : "PRE (2/3)");
     return true;
   }
   if (same_ci(b, "eq")) {   // ins1112: ins=V3:eq:hpf:40, ins=b1:eq:lpf:90, ins=V3:eq:off; 0.5.0 ins=b1:eq:base:40, :width:90
@@ -657,7 +757,7 @@ bool command(const char* p, char* o, int cap) {
       return true;
     }
     set_type(c, s, t);
-    if (control.type[c][s] != t) {   // the send TYPEs' room is full (master.h kFxSlots)
+    if (K(c).type[c][s] != t) {   // the send TYPEs' room is full (master.h kFxSlots)
       int n = sniprintf(o, cap, CORE_STR("ins: %s %c: "), kChainNames[c], 'A' + s);
       master::full_text(t, o + n, cap - n);
       return true;
@@ -669,7 +769,7 @@ bool command(const char* p, char* o, int cap) {
       return true;
     }
     set_param(c, s, key[1] - '1', v), fx::edited(mod::tid(mod::kIns, c, s * 4 + key[1] - '1'));
-  } else if (same_ci(key, "mix") && master::slot_index(c, s) >= 0 && master::send_type(control.type[c][s]) && num(val) >= 0) {
+  } else if (same_ci(key, "mix") && master::slot_index(c, s) >= 0 && master::send_type(K(c).type[c][s]) && num(val) >= 0) {
     // a bus's or the master's slot holding a send TYPE (else the help: no MIX to set); the master's an edit as mfx=S:mix:
     const int i = master::slot_index(c, s);
     master::set_mix(i, num(val));
@@ -678,30 +778,30 @@ bool command(const char* p, char* o, int cap) {
     sniprintf(o, cap, "%s", kHelp);
     return true;
   }
-  int t = control.type[c][s];
+  int t = K(c).type[c][s];
   char v4[4][8];
-  for (int k = 0; k < kParams; ++k) slot_value_text(c, s, k, g_knob[c][s][k], v4[k], sizeof v4[k]);
+  for (int k = 0; k < kParams; ++k) slot_value_text(c, s, k, S(c).knob[c][s][k], v4[k], sizeof v4[k]);
   int n = sniprintf(o, cap, CORE_STR("ins: %s %c %s %s %s %s %s %s %s %s %s"), kChainNames[c], 'A' + s, kLabels[t].name,
                     kLabels[t].label[0], v4[0], kLabels[t].label[1], v4[1], kLabels[t].label[2], v4[2], kLabels[t].label[3], v4[3]);
-  if (master::send_type(t) && n > 0 && n < cap) sniprintf(o + n, cap - n, CORE_STR(" mix %d"), master::control.mix[master::slot_index(c, s)]);
+  if (master::send_type(t) && n > 0 && n < cap) sniprintf(o + n, cap - n, CORE_STR(" mix %d"), master::cur().mix[master::slot_index(c, s)]);
   return true;
 }
 
 int json(char* o, int cap) {
-  int n = sniprintf(o, cap, CORE_STR("\"ins\":{\"kit\":%d,\"route3\":%d,\"c\":["), kit() + 1, control.route3);
+  int n = sniprintf(o, cap, CORE_STR("\"ins\":{\"kit\":%d,\"route3\":%d,\"c\":["), kit() + 1, control_of(hand()).route3);
   for (int c = 0; c < kM0 && n < cap; ++c) {   // (the master's chains: "mfx", below)
     int k = sniprintf(o + n, cap - n, CORE_STR("%s{\"n\":\"%s\",\"s\":["), c ? "," : "", kChainNames[c]);
     if (k < 0 || k >= cap - n) return cap;
     n += k;
     for (int s = 0; s < kSlots; ++s) {
-      int t = control.type[c][s];
+      int t = K(c).type[c][s];
       k = sniprintf(o + n, cap - n, CORE_STR("%s{\"t\":\"%s\",\"p\":[%d,%d,%d,%d],\"l\":[%d,%d,%d,%d]"), s ? "," : "",
-                    kLabels[t].name, g_knob[c][s][0], g_knob[c][s][1], g_knob[c][s][2], g_knob[c][s][3],
-                    control.play[c][s][0], control.play[c][s][1], control.play[c][s][2], control.play[c][s][3]);
+                    kLabels[t].name, S(c).knob[c][s][0], S(c).knob[c][s][1], S(c).knob[c][s][2], S(c).knob[c][s][3],
+                    K(c).play[c][s][0], K(c).play[c][s][1], K(c).play[c][s][2], K(c).play[c][s][3]);
       if (k < 0 || k >= cap - n) return cap;
       n += k;
       if (master::send_type(t)) {   // 0.5.0: a bus's send TYPE: its MIX
-        k = sniprintf(o + n, cap - n, CORE_STR(",\"mix\":%d"), master::control.mix[master::slot_index(c, s)]);
+        k = sniprintf(o + n, cap - n, CORE_STR(",\"mix\":%d"), master::cur().mix[master::slot_index(c, s)]);
         if (k < 0 || k >= cap - n) return cap;
         n += k;
       }
@@ -722,7 +822,7 @@ int json(char* o, int cap) {
     if (k < 0 || k >= cap - n) return cap;
     n += k;
     if (c < kVoices)
-      k = sniprintf(o + n, cap - n, CORE_STR(",\"send\":[%d,%d,%d]}"), g_send_knob[c][0], g_send_knob[c][1], g_send_knob[c][2]);
+      k = sniprintf(o + n, cap - n, CORE_STR(",\"send\":[%d,%d,%d]}"), send_knob(c, 0), send_knob(c, 1), send_knob(c, 2));
     else if (c < kBus0 + 2) {   // sfx-basewidth: the send FX return filter as BASE / WIDTH (the same two knobs as HPF / LPF)
       int bs, w;
       eq_bw(c, &bs, &w);
@@ -748,24 +848,36 @@ int json(char* o, int cap) {
 const Stats& stats() { return g_stats; }
 
 void reset() {
-  clear_settings();
-  for (int c = 0; c < kChains; ++c)
-    for (int s = 0; s < kSlots; ++s)
-      for (int k = 0; k < kParams; ++k) {
-        if (c < kVoices) g_lock[c][s][k] = -1;
-        g_lfo[c][s][k] = 0;
-        refresh(c, s, k);
-      }
-  for (int c = 0; c < kChains; ++c)
-    for (int k = 0; k < kEqParams; ++k) g_eq_lfo[c][k] = 0, eq_refresh(c, k);   // ins1112
+  for (int sl = kVoiceSlots - 1; sl >= 0; --sl) {   // every slot's (slot 0's last: its buses and master too)
+    g_force = sl;
+    clear_settings();
+    const int nc = kChains;
+    for (int c = 0; c < nc; ++c)
+      for (int s = 0; s < kSlots; ++s)
+        for (int k = 0; k < kParams; ++k) {
+          if (c < kVoices) S(c).lock[c][s][k] = -1;
+          S(c).lfo[c][s][k] = 0;
+          refresh(c, s, k);
+        }
+    for (int c = 0; c < nc; ++c)
+      for (int k = 0; k < kEqParams; ++k) S(c).eq_lfo[c][k] = 0, eq_refresh(c, k);   // ins1112
+    for (int v = 0; v < kVoices; ++v)
+      for (int b = 0; b < kBuses; ++b) S(v).send_off[v][b] = 0, send_refresh(v, b);
+    memset(S(0).amp_file, 0, sizeof S(0).amp_file);
+    S(0).dirty = false, S(0).kit_now = -1;
+  }
+  g_force = -1;
   for (int v = 0; v < kVoices; ++v)
-    for (int b = 0; b < kBuses; ++b) g_send_g[v][b] = 0.0f, g_send_off[v][b] = 0, send_refresh(v, b);
+    for (int b = 0; b < kBuses; ++b) g_send_g[0][v][b] = g_send_g[1][v][b] = 0.0f;
   g_engine.Reset();
+#if CORE_VOICES > 8
+  memset((void*)&control1, 0, sizeof control1);
+  g_engine1.Reset();
+#endif
   amp::reset();
   master::reset();
   g_stats = Stats();
   out::reset();
-  g_dirty = false;
 }
 
 }  // namespace ins

@@ -693,12 +693,13 @@ CORE_COLD uint32_t onset_landing(uint32_t o) {
   return l;
 }
 
-CORE_COLD int start_open(int code, int track, float sta, float end) {
+// ls: the voice slot whose SAMPLES list the code is of (a track's voice: its box's; the views: the slot in hand's)
+CORE_COLD int start_open(int ls, int code, int track, float sta, float end) {
   if (code < 0 || code >= pools::kCodes || !pools::row_of(code)) {
     say("NO SAMPLE");
     return -1;
   }
-  const pools::Entry& en = pools::at(pools::kSamples, code);
+  const pools::Entry& en = pools::at(ls, pools::kSamples, code);
   if (en.type != pools::kSample || !en.path[0]) {
     say("NO SAMPLE");
     return -1;
@@ -773,10 +774,10 @@ CORE_COLD int open_track(int track) {
     return -1;
   }
   int code = pools::code((slot - 1) / core::kPool, (slot - 1) % core::kPool + 1);   // (core::: SavePass has a kPool)
-  return start_open(code, track, v[vi].p[12], v[vi].p[13]);
+  return start_open(slot_of_voice(vi), code, track, v[vi].p[12], v[vi].p[13]);
 }
 
-CORE_COLD int open_code(int code) { return start_open(code, -1, 0, 120); }
+CORE_COLD int open_code(int code) { return start_open(prj_slot(), code, -1, 0, 120); }
 
 CORE_COLD void close() {
   release_play();   // the track on its own sample first (the save in flight reads the float edit only)

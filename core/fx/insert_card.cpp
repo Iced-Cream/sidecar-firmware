@@ -11,6 +11,8 @@
 #include "fx/insert.h"
 #include "fx/master.h"
 #include "fx/out.h"
+#include "fx/send_fx.h"
+#include "mod/mod.h"
 #include "platform.h"
 #include "pool/pool.h"
 #if CORE_MSAMP
@@ -23,8 +25,16 @@ namespace ins {
 
 namespace {
 
-char g_proj[24] = "";
-int g_kit = -1, g_rytm_kit = -1;
+// 3(c): each voice slot's file state (the project and kit its settings are of, the box's kit, the lock), the slot in
+// hand's (prj_slot): all of its chains, sends, OUT lines, B3's route and its master in its own folder's file (3(d): each
+// box its send FX and master)
+struct Card {
+  char proj[24] = "";
+  int kit = -1, rytm_kit = -1;
+  bool locked = false;
+};
+Card g_card[kVoiceSlots];
+Card& C() { return g_card[prj_slot()]; }
 
 bool same_ci(const char* a, const char* b) {
   for (; *a && *b; ++a, ++b) {
@@ -47,7 +57,7 @@ void name_of(const char* proj, char* fn, int cap, int kit) {
   else if (kit < 128) sniprintf(fn, cap, CORE_STR("/.rytm/ins/%s/k%03d.txt"), n, kit + 1);
   else sniprintf(fn, cap, CORE_STR("/.rytm/ins/%s"), n);
 }
-void file_name(char* fn, int cap, int kit) { name_of(g_proj, fn, cap, kit); }
+void file_name(char* fn, int cap, int kit) { name_of(C().proj, fn, cap, kit); }
 // the line's words (at most 7) into w
 int words(const char* b, char (*w)[12], int max) {
   int n = 0;
@@ -97,7 +107,16 @@ bool from_line(const char* b) {
       while (*p && *p != ' ') ++p;
     }
     while (*p == ' ') ++p;
-    amp::want_file(c, s, p);
+    want_amp(c, s, p);
+    return true;
+  }
+  if (n >= 3 && same_ci(w[0], "SFX")) {   // 3(c) step 8: SFX A|B TYPE P1 P2 P3 P4 P5 (TYPE: its id) - a box's send FX that
+    int s = same_ci(w[1], "A") ? 0 : same_ci(w[1], "B") ? 1 : -1;   // has no kit of its own for it (not the Rytm's: its
+    int t = fx::type_from_name(w[2]);                                // 0x20s are its kit's), in its own file
+    if (s < 0 || t < 0 || !prj_slot()) return false;
+    fx::set_knob_base(s, 0, (uint8_t)t);
+    for (int k = 1; k < fx::kKnobs && 2 + k < n; ++k)
+      if (num(w[2 + k]) >= 0) fx::set_knob_base(s, k, (uint8_t)num(w[2 + k]));
     return true;
   }
   if (n >= 3 && same_ci(w[0], "ROUTE")) {
@@ -119,7 +138,7 @@ bool from_line(const char* b) {
   int t = type_from_name(w[2]);
   if (c < 0 || s < 0 || t < 0) return false;
   set_type(c, s, t);   // its defaults, then the line's params (a missing one keeps its default)
-  if (control.type[c][s] != t) {   // refused (a send TYPE on a voice, or past the room: master.h kFxSlots): said, and the
+  if (ctl(c).type[c][s] != t) {   // refused (a send TYPE on a voice, or past the room: master.h kFxSlots): said, and the
     char m[96];                    // line counted as one this build does not read, so its file is kept, not written over
     if (master::send_type(t) && c >= kBus0) master::full_text(t, m, sizeof m);
     else sniprintf(m, sizeof m, CORE_STR("%s takes no %s"), w[0], w[2]);
@@ -137,27 +156,27 @@ bool from_line(const char* b) {
 
 }  // namespace
 
-void card_forget() { g_kit = g_rytm_kit = -1, set_kit(-1); }
+void card_forget() { C().kit = C().rytm_kit = -1, set_kit(-1); }
 
 // 1042 (data safety): the file save() writes (the kit's) had a line this build does not read, or is there but could not be
-// opened: never written over (before: the next settings edit rewrote it without those lines)
-bool g_locked = false;
+// opened: never written over (before: the next settings edit rewrote it without those lines) - Card::locked
 
 #if CORE_MSAMP
-void rekey(const char* name) { sniprintf(g_proj, sizeof g_proj, "%s", name ? name : ""); }
+void rekey(const char* name) { sniprintf(C().proj, sizeof C().proj, "%s", name ? name : ""); }
 void want_files() {
   char fn[80];
-  for (int k = -1; k < 128; ++k) name_of(project, fn, sizeof fn, k), store::want(fn);
+  for (int k = -1; k < 128; ++k) name_of(prj().key, fn, sizeof fn, k), store::want(fn);
 }
 #endif
 
 void load() {
-  g_locked = false;
+  Card& cd = C();
+  cd.locked = false;
   clear();
-  strncpy(g_proj, project, sizeof g_proj - 1);
-  g_proj[sizeof g_proj - 1] = 0;
-  g_kit = g_rytm_kit;
-  set_kit(g_kit);
+  strncpy(cd.proj, prj().key, sizeof cd.proj - 1);
+  cd.proj[sizeof cd.proj - 1] = 0;
+  cd.kit = cd.rytm_kit;
+  set_kit(cd.kit);
   char fn[80], b[96];
   int n = 0, bad = 0;
   auto take = [&](int k) {
@@ -166,7 +185,7 @@ void load() {
     else ++bad;
   };
   auto done = [&](bool own) {
-    if (bad && own) g_locked = true;
+    if (bad && own) C().locked = true;
     log(CORE_STR("ins: %d lines from %s%s"), n, fn, bad ? (own ? " (lines it does not read: the file is kept, not written)" : " (lines it does not read)") : "");
   };
 #if CORE_MSAMP
@@ -174,9 +193,9 @@ void load() {
     const uint8_t* d;
     uint32_t len, at = 0;
     bool own = true;   // the file read is the one save() writes
-    file_name(fn, sizeof fn, g_kit);
+    file_name(fn, sizeof fn, C().kit);
     store::State st = store::get(fn, &d, &len);
-    if (st == store::kAbsent && g_kit >= 0) {   // a kit without its own file: the project's
+    if (st == store::kAbsent && C().kit >= 0) {   // a kit without its own file: the project's
       file_name(fn, sizeof fn, -1), own = false;
       st = store::get(fn, &d, &len);
     }
@@ -185,7 +204,7 @@ void load() {
       done(own);
     } else if (st != store::kAbsent) {   // there but unreadable (kLocked), or never filled (kUnknown): never absent
       // (as the card path: only the kit's own file is never written over; the project's, the default, is not save()'s)
-      if (own) g_locked = true;
+      if (own) C().locked = true;
       log(CORE_STR("ins: %s %s: all off%s"), fn, st == store::kLocked ? "cannot be read" : "not in the store",
           own ? ", nothing written" : "");
     }
@@ -193,12 +212,12 @@ void load() {
 #else
   if (card_ok) {
     File f;
-    file_name(fn, sizeof fn, g_kit);
+    file_name(fn, sizeof fn, C().kit);
     fmt::post_wait(fn);   // 0.3.0: a posted (or queued) save of this very file lands first (another kit's is not in the way)
     fmt::recover(fn);     // a power cut between write_atomic's renames: the previous file back, a stray .tmp removed
     bool open = f.open(fn, kRead), own = open;   // own: the file read is the one save() writes
-    if (!open && cards.sd().exists(fn)) g_locked = true;
-    if (!open && g_kit >= 0)
+    if (!open && cards.sd().exists(fn)) C().locked = true;
+    if (!open && C().kit >= 0)
       file_name(fn, sizeof fn, -1), fmt::post_wait(fn), fmt::recover(fn), open = f.open(fn, kRead);
     if (open) {
       fmt::LineReader rd(f);   // 2026-10-26: buffered, not a card read a byte (40 ms on core 3 at a kit change)
@@ -224,7 +243,7 @@ static bool save_text(bool queue) {
   uint32_t since;
   if (!settings_dirty(&since) || now_ms() - since < 1000) return false;
   if (!card_ok) return settings_clean(), false;
-  if (g_locked) {   // 1042
+  if (C().locked) {   // 1042
     settings_clean();
     log(CORE_STR("ins: not saved: its file has lines this build does not read (kept as it is)"));
     return true;
@@ -236,7 +255,7 @@ static bool save_text(bool queue) {
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
 #endif
   char fn[80], b[96];
-  file_name(fn, sizeof fn, g_kit);
+  file_name(fn, sizeof fn, C().kit);
   static const char kHead[] = "# Sidecar inserts: CHAIN SLOT TYPE P1 P2 P3 P4 / PEQ CHAIN HPF LPF LOW HIGH / AMP CHAIN SLOT FILE / SEND Vn B1 B2 B3 / ROUTE B3 PRE|POST / OUT Vn TRK|PRE|POST LEV PAN WID DEC\n";
   uint32_t len = sizeof kHead - 1;
   memcpy(t, kHead, len);
@@ -245,25 +264,26 @@ static bool save_text(bool queue) {
     if (n <= 0 || len + (uint32_t)n > fmt::kPostMax) return (void)(fits = false);
     memcpy(t + len, s, (size_t)n), len += (uint32_t)n;
   };
-  for (int c = 0; c < kChains; ++c)
+  const int nc = kChains;
+  for (int c = 0; c < nc; ++c)
     for (int s = 0; s < kSlots; ++s) {
-      int ty = control.type[c][s];
+      int ty = ctl(c).type[c][s];
       if (!ty) continue;
       // 0.5.0: a bus slot's send TYPE has its MIX after P4 (the master's are on the MFX line; 0.4.x reads no fifth number,
       // and refuses the TYPE on a bus without a word: its next save drops the line)
       if (master::send_type(ty) && c < kM0)
         add(b, sniprintf(b, sizeof b, CORE_STR("%s %c %s %d %d %d %d %d\n"), chain_name(c), 'A' + s, type_name(ty), param(c, s, 0),
-                         param(c, s, 1), param(c, s, 2), param(c, s, 3), master::control.mix[master::slot_index(c, s)]));
+                         param(c, s, 1), param(c, s, 2), param(c, s, 3), master::cur().mix[master::slot_index(c, s)]));
       else
         add(b, sniprintf(b, sizeof b, CORE_STR("%s %c %s %d %d %d %d\n"), chain_name(c), 'A' + s, type_name(ty),
                          param(c, s, 0), param(c, s, 1), param(c, s, 2), param(c, s, 3)));
-      const char* af = ty == kAmp ? amp::slot_file(c, s) : "";
+      const char* af = ty == kAmp ? amp_file(c, s) : "";
       if (af[0]) {   // AMP's capture by name: the knob's position follows /NAM/'s list when files come and go
         int n = sniprintf(b, sizeof b, CORE_STR("AMP %s %c %s\n"), chain_name(c), 'A' + s, af);
         if (n > 0 && n < (int)sizeof b) add(b, n);
       }
     }
-  for (int c = 0; c < kChains; ++c) {   // ins1112: only a chain whose post EQ is off its flat defaults
+  for (int c = 0; c < nc; ++c) {   // ins1112: only a chain whose post EQ is off its flat defaults
     if (!eq_on(c)) continue;
     int n = sniprintf(b, sizeof b, CORE_STR("PEQ %s %d %d %d %d\n"), chain_name(c), eq_param(c, 0), eq_param(c, 1),
                       eq_param(c, 2), eq_param(c, 3));
@@ -274,7 +294,14 @@ static bool save_text(bool queue) {
     add(b, sniprintf(b, sizeof b, CORE_STR("SEND %s %d %d %d\n"), chain_name(v), send_knob(v, 0), send_knob(v, 1),
                      send_knob(v, 2)));
   }
-  if (control.route3) {
+  if (prj_slot())   // 3(c) step 8: another slot's send FX (slot 0's are the Rytm's kit's 0x20s)
+    for (int s = 0; s < fx::kSlots; ++s) {
+      const fx::Control& f = fx::cur();
+      if (f.knob[s][0] == fx::kOff) continue;
+      add(b, sniprintf(b, sizeof b, CORE_STR("SFX %c %d %d %d %d %d %d\n"), 'A' + s, f.knob[s][0], mod::knob_base(s, 1),
+                       mod::knob_base(s, 2), mod::knob_base(s, 3), mod::knob_base(s, 4), mod::knob_base(s, 5)));
+    }
+  if (ctl(kBus0).route3) {
     static const char kR[] = "ROUTE B3 POST\n";
     add(kR, (int)sizeof kR - 1);
   }
@@ -294,7 +321,7 @@ static bool save_text(bool queue) {
 #if CORE_MSAMP
   // the store is the project's now named (filled, or filling: the fill keeps this newer text); an old project's file
   // saved while the next one's store fills is not put in it
-  if (!strcmp(g_proj, project)) store::put(fn, (const uint8_t*)t, len);
+  if (!strcmp(C().proj, prj().key)) store::put(fn, (const uint8_t*)t, len);
   // (a held slot, phase 3: queued too, so the edit is on its way rather than dirty for the whole hold)
   if (queue || fmt::post_stalled()) {
     if (!fmt::post_queue(fn, t, len)) log(CORE_STR("ins: %s not written to the card (refused or out of memory: in RAM only)"), fn);
@@ -325,7 +352,7 @@ void project_changed() {
 
 void kit_changed(int kit) {
   if (kit < 0 || kit > 127) return;
-  g_rytm_kit = kit;
+  C().rytm_kit = kit;
 #if CORE_MSAMP
   // a project load's store still filling: its load (project_fill_step) takes this kit. Likewise while a rename moves
   // the old key's files (final review): a save now would queue a write under the old name that lands after the
@@ -333,7 +360,7 @@ void kit_changed(int kit) {
   // switch that follows the move loads this kit, its project_changed saving the old kit's edits under the new name
   if (!store::ready() || rename::moving()) return;
 #endif
-  if (kit != g_kit) project_changed();
+  if (kit != C().kit) project_changed();
 }
 
 }  // namespace ins

@@ -88,6 +88,7 @@ void kit_changed(int kit);                  // the Rytm's active kit (0..127): t
 void project_changed();                     // the old project's (kit's) edits saved (queued), the new loaded
 void save_due();                            // the unsaved edits due now (a rename's flush, a restart)
 bool dirty();
+bool dirty_any();   // any slot's (the idle pass's settled; 3(c): each voice slot has its own scenes)
 bool locked();
 int kit();                                  // the kit the scenes are of, -1 none named
 
@@ -102,6 +103,7 @@ bool command(const char* p, char* out, int cap);
 // (SRC the fader's last source, 0 none; R the Rytm's own scene 1..12, 0 none, -1 not reported)
 // (A, B, S, N 1-based, 0 none; only the scenes with locks): its length, cap when it did not fit (a 768-lock state fits 16 KB)
 int json(char* out, int cap);
+int json(char* out, int cap, int slot);   // slot's (the Pi's /status on core 0: never the slot in hand)
 
 }  // namespace scene
 }  // namespace core

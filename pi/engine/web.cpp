@@ -439,7 +439,7 @@ static boolean Open (const char *pPath)
 static boolean NewAppOnCard (void)
 {
 	FILINFO fi;
-	return f_stat ("SD:/.rytm/www-next/index.html", &fi) == FR_OK || f_stat ("SD:/.rytm/www-next/index.html.gz", &fi) == FR_OK;
+	return f_stat ("SD:/.sidecar/www-next/index.html", &fi) == FR_OK || f_stat ("SD:/.sidecar/www-next/index.html.gz", &fi) == FR_OK;
 }
 
 static const char NewAppHop[] = "<!doctype html><meta charset=utf-8><title>Sidecar</title>"
@@ -609,7 +609,7 @@ size_t CWebServer::WsBuild (void *pParam, wsproto::Topic Topic, char *pOut, size
 		g_PeakFan.feed_master (g_Output.TakePeak ());
 		float X[peakfan::Fan::kExtra];
 		g_Output.TakeTrkPeaks (X);			// each voice on its own track (only the web reads these)
-		sendfx_pi::TakeBusPeaks (X + 8);		// B1..B3
+		sendfx_pi::TakeBusPeaks (bridge::base_slot (), X + 8);	// B1..B3: the base box's (whose voices g_Output carries)
 		g_PeakFan.feed_extra (X, 0, peakfan::Fan::kExtra);
 		peakfan::Reader r = (peakfan::Reader) (peakfan::kWeb + pThis->m_nWsSlot);
 		g_PeakFan.take_voices (r, Pk);
@@ -877,7 +877,7 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 	else if (strcmp (pPath, "/prevboot") == 0)	// the last crashed boot's report and log tail (kernel.cpp CrumbToCard; paired only)
 	{
 		core::File f;
-		if (!f.open ("/.rytm/prevboot.txt", core::kRead)) return HTTPNotFound;
+		if (!f.open ("/.sidecar/prevboot.txt", core::kRead)) return HTTPNotFound;
 		const unsigned nMax = *pLength < 65536 ? *pLength : 65536;
 		int n = f.read (pBuffer, nMax);
 		f.close ();

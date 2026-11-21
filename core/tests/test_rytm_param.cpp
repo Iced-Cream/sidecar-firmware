@@ -640,17 +640,17 @@ static void to_project(const char* name) {   // 0x10: the Rytm's project; its fi
   for (const char* c = name; *c; ++c) m.push_back((uint8_t)*c);
   m.push_back(0xF7);
   engine_sysex(m.data(), (int)m.size());
-  for (int i = 0; i < 400 && strcmp(core::project, name); ++i) {
+  for (int i = 0; i < 400 && strcmp(core::prj().key, name); ++i) {
     if (rename::state() == rename::kAsk) rename::answer(false);
     at(g_us + 20000), idle_save(), card_core_turn();
   }
   for (int i = 0; i < 100000 && project_loading(); ++i) idle_save(), card_core_turn();
-  CHECK(!project_loading() && !strcmp(core::project, name));
+  CHECK(!project_loading() && !strcmp(core::prj().key, name));
 }
 // 3: a kit change with the XY pad live (a project's store: it switches with the kit): no old offset under the new kit's
 // byte, ever (0.5.0 owner test: no LFO on the Rytm any more; R3b holds a source that lets go)
 static void r3_kit_change() {
-  CHECK(!strcmp(core::project, "RPK"));   // (main: before any hello, as a 0.4 Rytm names its project)
+  CHECK(!strcmp(core::prj().key, "RPK"));   // (main: before any hello, as a 0.4 Rytm names its project)
   fresh(127, 7);   // (kits 8 and 9: the other tests' kit 5 keeps no LFO or slot of this one's)
   CHECK(xypad::set(0, 0, T("RT2:RES"), 50));
   xypad::pos(16383, 0);

@@ -86,7 +86,7 @@ uint8_t (*stream_rings_b)[rytm::StreamVoice::kRingBytes] = nullptr;
 
 static size_t up64(size_t n) { return (n + 63) & ~(size_t)63; }
 static const size_t kSharedB = up64(sizeof(char[kVoices][16384])), kHeadsB = up64(sizeof(uint8_t[kVoices][rytm::StreamVoice::kHead])),
-                    kRingsB = up64(sizeof(uint8_t[kVoices / 2][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolLines]));
+                    kRingsB = up64(sizeof(uint8_t[kVoices / 2][rytm::StreamVoice::kRingBytes])), kFilesB = up64(sizeof(File[kPoolAll]));
 
 #if CORE_POLY
 static const size_t kInsB = up64(ins::heap_bytes());   // the INSERT chains' DELAY lines (core/fx/insert.h)
@@ -102,7 +102,7 @@ CORE_COLD void heap_buffers_place(void* mem) {
   stream_heads = (uint8_t(*)[rytm::StreamVoice::kHead])p, p += kHeadsB;
   stream_rings_a = (uint8_t(*)[rytm::StreamVoice::kRingBytes])p, p += kRingsB;
   stream_rings_b = (uint8_t(*)[rytm::StreamVoice::kRingBytes])p, p += kRingsB;
-  pool_files = new (p) File[kPoolLines], p += kFilesB;
+  pool_files = new (p) File[kPoolAll], p += kFilesB;
 #if CORE_POLY
   ins::heap_place(p), p += kInsB;
 #endif
@@ -214,13 +214,14 @@ void ram_release(int vi) {
 }
 // The sample RAM's key of SMP slot (1..npool, pool_slot: rui1045 every SAMPLES bank): the card index's folder / file (under /Samples), or, on the Pi and the
 // Mac, a sample outside /Samples (the pools design 3.6: RAM only, no stream) as folder rytm::kSlotKey - line; -1 none.
-CORE_COLD int ram_key(int slot, int* smp) {
+CORE_COLD int ram_key(int vi, int slot, int* smp) {
   *smp = 0;
-  if (slot < 1 || slot > npool) return -1;
-  const PoolEntry& e = pool[slot - 1];
+  const int s = slot_of_voice(vi);
+  if (slot < 1 || slot > prj(s).npool) return -1;
+  const PoolEntry& e = pool[pool_line(s, slot)];
   if (e.folder >= 0) return *smp = e.file, e.folder;
 #if CORE_MSAMP
-  if (e.path[0] == '/') return rytm::SampleRamPool::kSlotKey - (slot - 1);
+  if (e.path[0] == '/') return rytm::SampleRamPool::kSlotKey - pool_line(s, slot);
 #endif
   return -1;
 }
@@ -255,7 +256,8 @@ int fm_pat[kVoices];
 __attribute__((noinline)) CORE_COLD void fm_select(int vi, int pat) {
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
   fm_pat[vi] = pat;
-  int nl = dxlib.listed(), total = nl ? nl : dx7::kRomVoices;
+  const int ls = slot_of_voice(vi);   // (its own box's FM list)
+  int nl = dxlib.listed(ls), total = nl ? nl : dx7::kRomVoices;
   int e = pat >= total ? total - 1 : pat;
   int key = fm_gen << 8 | e;
   if (key == fm_key[vi]) return;
@@ -263,27 +265,28 @@ __attribute__((noinline)) CORE_COLD void fm_select(int vi, int pat) {
   uint8_t b[128];
   const uint8_t* bytes = nullptr;
   if (!nl) bytes = dx7::rom_bank(e / 32) + 128 * (e % 32);
-  else if (dxlib.voice(e, b)) bytes = b;
+  else if (dxlib.voice(ls, e, b)) bytes = b;
   fms[vi].SetVoice(bytes);
 #if CORE_POLY
   poly::set_voice(vi, bytes);   // the voice's chord notes play it too
 #endif
   if (!bytes) {   // an empty slot, or its bank not on the card: silent
-    log(CORE_STR("voice %d: FM slot %d %s"), vi, e, dxlib.slot(e).used ? "not on the card" : "empty");
+    log(CORE_STR("voice %d: FM slot %d %s"), vi, e, dxlib.slot(ls, e).used ? "not on the card" : "empty");
   }
 }
 
 // The DX7 voice entry e of the effective FM list into b (false: an empty slot / not on the card).
-CORE_COLD bool fm_bytes(int pat, uint8_t* b) {
+CORE_COLD bool fm_bytes_in(int ls, int pat, uint8_t* b) {   // voice slot ls's list
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
-  int nl = dxlib.listed(), total = nl ? nl : dx7::kRomVoices;
+  int nl = dxlib.listed(ls), total = nl ? nl : dx7::kRomVoices;
   int e = pat >= total ? total - 1 : pat;
   if (!nl) {
     memcpy(b, dx7::rom_bank(e / 32) + 128 * (e % 32), 128);
     return true;
   }
-  return dxlib.voice(e, b);
+  return dxlib.voice(ls, e, b);
 }
+CORE_COLD bool fm_bytes(int pat, uint8_t* b) { return fm_bytes_in(prj_slot(), pat, b); }
 
 // The FM list changed: FM voices play what their PAT now picks.
 CORE_COLD void fm_relist() {
@@ -318,20 +321,21 @@ bool juno_holding[kVoices];
 
 // The patch PAT picks: the project's JUNO list's slot min(PAT, total - 1),
 // else factory patch PAT. Returns its key; the bytes and name in b and name.
-int juno_pick(int pat, const uint8_t** b, const char** name) {
-  int nl = junolib.listed();
+int juno_pick(int pat, const uint8_t** b, const char** name) { return juno_pick_in(prj_slot(), pat, b, name); }
+int juno_pick_in(int ls, int pat, const uint8_t** b, const char** name) {   // voice slot ls's list
+  int nl = junolib.listed(ls);
   if (!nl) {
     *b = juno::kPatches[pat & 127].b;
     *name = juno::kPatches[pat & 127].name;
     return pat & 127;
   }
-  if (pat == 127 && nl == jlib::kMaxList && !memcmp(junolib.slot(126).b, juno::kPatches[126].b, 18)) {
+  if (pat == 127 && nl == jlib::kMaxList && !memcmp(junolib.slot(ls, 126).b, juno::kPatches[126].b, 18)) {
     *b = juno::kPatches[127].b;   // a list seeded with the factory's rows (presets::seed): 127 slots, PAT 127 is still B88
     *name = juno::kPatches[127].name;
     return 127;
   }
   int slot = pat >= nl ? nl - 1 : pat;
-  const jlib::Patch& jp = junolib.slot(slot);
+  const jlib::Patch& jp = junolib.slot(ls, slot);
   *b = jp.used ? jp.b : kQuiet;
   *name = jp.used ? jp.name : "(empty)";
   return 128 + slot;
@@ -344,9 +348,10 @@ __attribute__((noinline)) CORE_COLD void juno_select(int vi, int pat, bool sync,
   pat = pat < 0 ? 0 : pat > 127 ? 127 : pat;
   const uint8_t* b;
   const char* name;
-  int key = juno_pick(pat, &b, &name);
+  const int ls = slot_of_voice(vi);   // (its own box's JUNO list)
+  int key = juno_pick_in(ls, pat, &b, &name);
   // (a row that is its PAT's factory patch plays as the factory's: the same level, its gain; the list's own rows gain 1)
-  junos[vi].UsePatch(junolib.listed() && memcmp(b, juno::kPatches[pat & 127].b, 18) ? b : nullptr, name);
+  junos[vi].UsePatch(junolib.listed(ls) && memcmp(b, juno::kPatches[pat & 127].b, 18) ? b : nullptr, name);
   if (sync) {
     juno_pat[vi] = pat;
     if (force || key != juno_key[vi] || memcmp(b, juno_kb[vi], 18) != 0) {
@@ -462,21 +467,22 @@ CORE_COLD void prepare_stream(int vi) {   // (per report: cold, as when it was i
     return;
   }
 #endif
-  if (slot < 1 || slot > npool || pool[slot - 1].folder < 0) {
+  const int ps = slot_of_voice(vi);   // (the voice's own box's pool)
+  if (slot < 1 || slot > prj(ps).npool || pool[pool_line(ps, slot)].folder < 0) {
     if (prepared[vi][0] != -1) streams[vi].clear();
     prepared[vi][0] = -1;
     prep_pending[vi] = trig_pending[vi] = false;
-    int smp, f = ram_key(slot, &smp);
+    int smp, f = ram_key(vi, slot, &smp);
     if (psram && f != -1) psram->want(f, smp, false);   // outside /Samples: from RAM only
     else ram_release(vi);   // no sample: silent, as the stream
     return;
   }
-  int f = pool[slot - 1].folder, smp = pool[slot - 1].file;
+  int f = pool[pool_line(ps, slot)].folder, smp = pool[pool_line(ps, slot)].file;
   if (psram) psram->want(f, smp, false);   // into RAM if not there (loop() loads it)
   want_prep[vi][0] = f;
   want_prep[vi][1] = smp;
   want_prep[vi][2] = sta;
-  want_prep[vi][3] = slot - 1;
+  want_prep[vi][3] = pool_line(ps, slot);
   prep_pending[vi] = !(prepared[vi][0] == f && prepared[vi][1] == smp && prepared[vi][2] == sta);
   prep_deferred[vi] = false;
   if (prep_pending[vi] && psram) {   // loadstall: no stream prepare (an open and a head read on the card) the voice will
@@ -560,7 +566,7 @@ CORE_COLD void trigger_stream(int vi, int note) {
       from_ram[vi] = false;
       return;
     }
-    int smp, f = ram_key(slot, &smp);
+    int smp, f = ram_key(vi, slot, &smp);
     const int16_t* pcm = nullptr;
     uint32_t frames = 0;
     float rate = 48000.0f;
@@ -1036,7 +1042,7 @@ __attribute__((noinline)) CORE_COLD void voice_report_at(int vi, int cmd, const 
   if (x.dsps && np >= 16) prepare_stream(vi);
 #if CORE_MSAMP
   if (x.dsps && np >= 16 && srclib::index_of(srclib::code_of(x.p[10])))   // the used set: SMP's row (rui1045: its bank)
-    pools::seen(pools::kSamples, srclib::code_of(x.p[10]));
+    pools::seen_in(slot_of_voice(vi), pools::kSamples, srclib::code_of(x.p[10]));   // (its box's)
 #endif
   if (note >= 0 && x.fm) {
 #if CORE_POLY
@@ -1281,7 +1287,7 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
   bool ustv[kVoices] = {};  // ... and its user machine wrote R itself (Plugin API 3, out_channels 2)
 #if CORE_POLY
   if (ring_r)
-    for (int i = v0; i < v1; ++i) stv[i] = out::stereo(i);
+    for (int i = v0; i < v1; ++i) stv[i] = out::control_of(slot_of_voice(i)).route[box_voice(i)] != out::kTrk;
 #else
   (void)ring_r;
 #endif
@@ -1417,7 +1423,7 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
         if (of != r_env_off[i]) r_env_off[i] = of, r_env_rel[i] = true;
         float g = r_env_g[i];
 #if CORE_POLY
-        const float dk = out::dec_coef(out::control.dec[box_voice(i)]);
+        const float dk = out::dec_coef(out::control_of(slot_of_voice(i)).dec[box_voice(i)]);
 #else
         const float dk = 1.0f;
 #endif
@@ -1474,7 +1480,8 @@ uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, in
     else soft_out(ring, row, i, l);
     mach[mach_of(v[i])] += cycles() - t1;
   }
-  for (int i = v0; i < v1; ++i) ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr);   // the voice's INSERT chain (core/fx/insert.h)
+  for (int i = v0; i < v1; ++i)   // the voice's INSERT chain (core/fx/insert.h), in its own slot's engine
+    ins::voice_out(i, ring, row, kBlock, stv[i] ? ring_r : nullptr, slot_of_voice(i));
 #if CORE_MSAMP
   for (int i = v0; i < v1; ++i)   // LIVE IN after its chain: the limiter, the feedback guard, the measure's clicks
     if (v[i].li && v[i].live) livein::post(i, ring, stv[i] ? ring_r : nullptr, row, kBlock);
@@ -1517,7 +1524,7 @@ CORE_COLD bool voice_sound(int vi, VoiceSound* o) {
   for (int k = 0; k < 16; ++k) o->p[k] = x.p[k];
   if (x.fm) {
     o->machine = kFm;
-    o->has_dx7 = fm_bytes((int)x.p[0], o->dx7);
+    o->has_dx7 = fm_bytes_in(slot_of_voice(vi), (int)x.p[0], o->dx7);
     memcpy(o->name, o->dx7 + 118, 10);   // the DX7 voice's name (packed bytes 118..127)
     return true;
   }
@@ -1525,9 +1532,9 @@ CORE_COLD bool voice_sound(int vi, VoiceSound* o) {
     o->machine = kJuno;
     const uint8_t* b;
     const char* name;
-    juno_pick((int)x.p[0], &b, &name);
+    juno_pick_in(slot_of_voice(vi), (int)x.p[0], &b, &name);
     memcpy(o->juno, b, 18);
-    o->juno_ext = junolib.listed() > 0 && memcmp(b, juno::kPatches[(int)x.p[0] & 127].b, 18);
+    o->juno_ext = junolib.listed(slot_of_voice(vi)) > 0 && memcmp(b, juno::kPatches[(int)x.p[0] & 127].b, 18);
     strncpy(o->name, name ? name : "", sizeof o->name - 1);
     return true;
   }

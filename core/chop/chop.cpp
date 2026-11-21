@@ -8,6 +8,7 @@
 #include <strings.h>
 
 #if CORE_MSAMP
+#include "../device/device.h"
 #include "../fmt/fmt.h"
 #include "../fx/out.h"
 #include "../lib/library.h"
@@ -178,6 +179,7 @@ struct MapSlot {
   uint32_t dirty_ms, gen, used_ms;
   char file[kPathLen];          // where it is written / was read
   int inst;                     // its INSTRUMENTS row (-1 not known)
+  int8_t ls;                    // the voice slot whose project it belongs to (its pool rows, its folder)
   int find_code;                // the scan's next INSTRUMENTS code
   char found[kPathLen];         // the scan's best file
   int found_rank;               // 2 a .chop.sfz, 1 a -slices.sfz (v1)
@@ -412,10 +414,10 @@ CORE_COLD void src_ready(int s, const int16_t* pcm, uint32_t frames, uint32_t ra
 }
 
 // ---- maps
-CORE_COLD int map_find_slot(const lib::Ref& r, const char* path) {
+CORE_COLD int map_find_slot(int ls, const lib::Ref& r, const char* path) {
   for (int m = 0; m < kMaps; ++m) {
     const MapSlot& x = maps[m];
-    if (x.state == kMFree || x.ram) continue;
+    if (x.state == kMFree || x.ram || x.ls != ls) continue;   // (each box's project its own maps)
     if (r.has_sha && x.has_sha && !memcmp(x.sha, r.sha, 32)) return m;
     if (!r.has_sha && !x.has_sha && path && !strcasecmp(x.key_path, path)) return m;
   }
@@ -477,7 +479,7 @@ CORE_COLD void map_fit(int m, int s) {
 }
 CORE_COLD void fill_sample_info(int m, int code) {
   MapSlot& x = maps[m];
-  const pools::Entry& e = pools::at(pools::kSamples, code);
+  const pools::Entry& e = pools::at(x.ls, pools::kSamples, code);
   x.m.has_sha = e.ref.has_sha;
   if (e.ref.has_sha) memcpy(x.m.sha, e.ref.sha, 32);
   x.m.size = e.ref.size;
@@ -486,8 +488,9 @@ CORE_COLD void fill_sample_info(int m, int code) {
 }
 // the voice's map for SRC's sample: held already, else a new slot that looks for its file in the INSTRUMENTS pool
 CORE_COLD int map_for(int vi, int code) {
-  const pools::Entry& e = pools::at(pools::kSamples, code);
-  int m = map_find_slot(e.ref, e.path);
+  const int ls = slot_of_voice(vi);
+  const pools::Entry& e = pools::at(ls, pools::kSamples, code);
+  int m = map_find_slot(ls, e.ref, e.path);
   if (m >= 0) {
     maps[m].used_ms = now_ms();
     return m;
@@ -500,10 +503,10 @@ CORE_COLD int map_for(int vi, int code) {
   if (e.ref.has_sha) memcpy(x.sha, e.ref.sha, 32);
   sniprintf(x.key_path, sizeof x.key_path, "%s", e.path);
   map_clear(&x.m);
+  x.ls = (int8_t)ls;
   fill_sample_info(m, code);
   x.inst = -1, x.find_code = 0, x.found_rank = 0, x.found[0] = 0;
   x.state = kMFind, x.used_ms = now_ms();
-  (void)vi;
   return m;
 }
 CORE_COLD bool ends_with(const char* s, const char* t) {
@@ -516,12 +519,12 @@ CORE_COLD bool map_find_step(int m) {
   MapSlot& x = maps[m];
   int end = x.find_code + 128 < pools::kCodes ? x.find_code + 128 : pools::kCodes;
   for (int c = x.find_code; c < end; ++c) {
-    const pools::Entry& e = pools::at(pools::kInstr, c);
+    const pools::Entry& e = pools::at(x.ls, pools::kInstr, c);
     if (e.type != pools::kInstrument || !e.path[0]) continue;
     int rank = ends_with(e.path, ".chop.sfz") ? 2 : ends_with(e.path, "-slices.sfz") ? 1 : 0;
     if (rank <= x.found_rank) continue;
     int nm = 0;
-    const pools::Member* mem = pools::members(pools::kInstr, c, &nm);
+    const pools::Member* mem = pools::members(x.ls, pools::kInstr, c, &nm);
     bool match = false;
     for (int i = 0; mem && i < nm && !match; ++i)
       match = x.has_sha ? mem[i].ref.has_sha && !memcmp(mem[i].ref.sha, x.sha, 32)
@@ -592,7 +595,7 @@ CORE_COLD void map_path(const MapSlot& x, char* out, int cap) {
   static const char kHex[] = "0123456789abcdef";
   if (x.has_sha)
     for (int i = 0; i < 4; ++i) h[2 * i] = kHex[x.sha[i] >> 4], h[2 * i + 1] = kHex[x.sha[i] & 15];
-  const char* key = pools::project();
+  const char* key = pools::project(x.ls);
   char dir[kPathLen];
   if (!fmt::path("slicemap", key && key[0] ? key : "default", 0, dir, sizeof dir)) sniprintf(dir, sizeof dir, "/CHOP/default");
   sniprintf(out, cap, "%s/%s-%s.chop.sfz", dir, nm, h);
@@ -604,7 +607,7 @@ CORE_COLD bool start_load() {
   for (int vi = 0; vi < kVoices; ++vi) {
     VS& x = vs[vi];
     if (!(v[vi].cp || x.force || x.pre) || x.code < 0 || x.src >= 0 || x.buf_src >= 0 || x.code == x.fail_code) continue;
-    const pools::Entry& e = pools::at(pools::kSamples, x.code);
+    const pools::Entry& e = pools::at(slot_of_voice(vi), pools::kSamples, x.code);
     if (e.type != pools::kSample || !pools::playable(e) || !e.path[0]) continue;
     int s = src_find(e.ref, e.path);
     if (s >= 0 && srcs[s].ready) { x.src = s; continue; }
@@ -673,7 +676,7 @@ CORE_COLD bool step_load() {
     for (int vi = 0; vi < kVoices; ++vi) {
       VS& x = vs[vi];
       if (x.code >= 0 && x.src < 0 && x.buf_src < 0) {
-        const pools::Entry& e = pools::at(pools::kSamples, x.code);
+        const pools::Entry& e = pools::at(slot_of_voice(vi), pools::kSamples, x.code);
         if (same_ref(e.ref, sr.ref) || !strcasecmp(e.path, sr.path)) x.src = job->slot;
       }
       if (x.map >= 0)
@@ -692,7 +695,7 @@ CORE_COLD bool step_load() {
     for (int vi = 0; vi < kVoices; ++vi) {
       VS& x = vs[vi];
       if (x.code < 0) continue;
-      const pools::Entry& e = pools::at(pools::kSamples, x.code);
+      const pools::Entry& e = pools::at(slot_of_voice(vi), pools::kSamples, x.code);
       if (same_ref(e.ref, sr.ref) || !strcasecmp(e.path, sr.path)) x.fail_code = x.code, x.pend.on = false;
     }
     src_drop(job->slot);
@@ -806,16 +809,19 @@ CORE_COLD void accept_step() {
   for (int m = 0; m < kMaps; ++m) {
     MapSlot& x = maps[m];
     if (!x.accept || x.inst < 0) continue;
-    const pools::Entry& e = pools::at(pools::kInstr, x.inst);
+    const pools::Entry& e = pools::at(x.ls, pools::kInstr, x.inst);
     if (e.type != pools::kInstrument || strcasecmp(e.ref.hint, x.file)) { x.accept = false; continue; }
-    if (e.st == lib::kChanged) pools::accept_changed(pools::kInstr, x.inst), x.accept = false;
+    if (e.st == lib::kChanged) {
+      device::Scope in(device::g_links[x.ls]);   // (an edit of the map's own box's list)
+      pools::accept_changed(pools::kInstr, x.inst), x.accept = false;
+    }
   }
 }
 CORE_COLD void find_inst_row(int m) {   // the row a map's file went into (add_take's .sfz read finishes later)
   MapSlot& x = maps[m];
   if (x.inst >= 0 || !x.file[0] || !x.saved_once) return;
   for (int c = 0; c < pools::kCodes; ++c) {
-    const pools::Entry& e = pools::at(pools::kInstr, c);
+    const pools::Entry& e = pools::at(x.ls, pools::kInstr, c);
     if (e.type == pools::kInstrument && (!strcasecmp(e.ref.hint, x.file) || !strcasecmp(e.path, x.file))) {
       x.inst = c;
       return;
@@ -1029,7 +1035,7 @@ CORE_COLD void set_source(int vi) {
   VS& x = vs[vi];
   if (x.buf_src >= 0) return;
   int code = srclib::code_of(x.p[0]);
-  const pools::Entry& e = pools::at(pools::kSamples, code);
+  const pools::Entry& e = pools::at(slot_of_voice(vi), pools::kSamples, code);
   bool file = e.type == pools::kSample && pools::playable(e) && e.path[0];
   if (v[vi].cp || x.force) pools::voice_on(pools::kSamples, vi, file ? code : -1);
   if (!file) {
@@ -1157,8 +1163,11 @@ CORE_COLD bool step() {
     if (vs[vi].pend.on && now_ms() - vs[vi].pend.ms > kLateMs && !ready_now(vi)) vs[vi].pend.on = false, ++st.late;
   switch (job->kind) {
     case kJLoad: return step_load();
-    case kJMapRead: return step_map_read();
-    case kJMapWrite: return step_map_write();
+    case kJMapRead:
+    case kJMapWrite: {   // a map's card work and its pool row: in its own box's Scope (its folder, its INSTRUMENTS)
+      device::Scope in(device::g_links[maps[job->slot].ls]);
+      return job->kind == kJMapRead ? step_map_read() : step_map_write();
+    }
     default: break;
   }
   if (start_map_job()) return true;
@@ -1192,7 +1201,7 @@ CORE_COLD void report(int vi, int note, int vel, const float* p) {
   x.reported = true;
   v[vi].live = true;
   set_source(vi);
-  if (x.code >= 0) pools::seen(pools::kSamples, x.code);
+  if (x.code >= 0) pools::seen_in(slot_of_voice(vi), pools::kSamples, x.code);   // (its box's used set)
   if (note < 0) return;
   if (x.lazy.on) {   // LAZY: a trig is a tap
     lazy_tap(vi);

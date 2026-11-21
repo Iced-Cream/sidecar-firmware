@@ -1321,7 +1321,7 @@ int main() {
   hooks.to_rytm = [](const uint8_t*, int) {};
   voices_init();
   card_ok = true;
-  snprintf(core::project, sizeof core::project, "LIVE");
+  snprintf(core::prj().key, sizeof core::prj().key, "LIVE");
   cardq::reset();
   cardq::set_worker(true);   // the Pi: the card core runs every card request (run() is its turn)
   lib::begin(true);

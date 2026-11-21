@@ -7,7 +7,8 @@
 //   core 0, loop      Send           g_Link1Out's records -> the box's MIDI OUT, packed as USB MIDI event packets
 //   core 0, loop      SetDevice      the box came (its CUSBMIDIDevice) or went (0)
 //   control core      Poll           g_Link1In -> whole SysEx -> engine_sysex_link(1, ...); the sender handed to
-//                                    core::device::set_out(1, ...) while a device is there
+//                                    core::device::set_out(1, ...) while a device is there; its MIDI clock (realtime
+//                                    bytes, song position) to pRealtime as transport 1's (3(c) step 10)
 #ifndef _link1_h
 #define _link1_h
 #include <stdint.h>
@@ -29,6 +30,7 @@ struct TStats {
 	unsigned nOutFull;	// engine bytes for it lost: g_Out full, or a record > 4096
 	unsigned nSent, nSendFail;	// SysEx sent to it; failed sends (the message dropped)
 	unsigned nSysEx, nBadSysEx;	// whole SysEx handed to the engine; pieces dropped (too long, broken)
+	unsigned nRealtime;		// realtime bytes and song positions handed on (its clock)
 };
 const TStats &Stats (void);
 
@@ -36,7 +38,9 @@ void Packet (unsigned nCable, uint8_t *pPacket, unsigned nLength);
 void SetDevice (CUSBMIDIDevice *pDevice);
 CUSBMIDIDevice *Device (void);
 void Send (void);
-void Poll (void);
+typedef void TRealtime (int nTransport, uint8_t nStatus, uint16_t nSPP);
+typedef void TAllSoundOff (int nTransport);
+void Poll (TRealtime *pRealtime = 0, TAllSoundOff *pAllSoundOff = 0);	// pRealtime: the box's F8 FA FB FC, and F2 with its position in 16ths
 void ToBox (const uint8_t *pData, int nLength);	// core::device::set_out(1, ...): records into g_Out
 
 // usb=mirror through a Teensy relay (teensy_target.cpp, docs/teensy-mirror.md): the box's USB MIDI to and from the relay's
