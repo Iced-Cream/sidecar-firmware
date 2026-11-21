@@ -213,10 +213,10 @@ int main() {
     File f;
     CHECK(fs.mkdir("/.rytm/pools") && f.open("/.rytm/pools/P.txt", kWrite) && f.write("x", 1) == 1);
     f.close();
-    CHECK(f.open("/.rytm/wifi.txt", kWrite));
+    CHECK(f.open("/.sidecar/wifi.txt", kWrite));
     f.close();
     CHECK(exists_on_card(tmpl, "/.boxtest/pools/P.txt") && !exists_on_card(tmpl, "/.rytm/pools/P.txt"));
-    CHECK(exists_on_card(tmpl, "/.rytm/wifi.txt") && !exists_on_card(tmpl, "/.boxtest/wifi.txt"));
+    CHECK(exists_on_card(tmpl, "/.sidecar/wifi.txt") && !exists_on_card(tmpl, "/.boxtest/wifi.txt"));
     CHECK(f.open("/.rytm/pools/P.txt", kRead));   // the engine's own path reads it back
     f.close();
     CHECK(exists_on_card(tmpl, "/Samples") && fs.exists("/Samples"));   // shared content: one place

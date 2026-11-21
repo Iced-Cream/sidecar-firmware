@@ -10,7 +10,7 @@ for all three sizes ("Sizes" below):
 
 **Switching:** Settings > Display > **UI style: OLED / SIDECAR**, or the console / web command `uistyle=oled|sidecar`.
 - Applied at once, no reboot (`sidecar_ui_style`).
-- Stored as `uistyle=oled|sidecar` in `/.rytm/display.txt`, with the screensaver, brightness and touch test settings.
+- Stored as `uistyle=oled|sidecar` in `/.sidecar/display.txt`, with the screensaver, brightness and touch test settings.
 - **From CLASSIC:** SIDECAR took CLASSIC's id 1, so a card or cmdline.txt that says `uistyle=classic` (or `1`) comes up in SIDECAR, and the next save of the display settings writes `uistyle=sidecar`. `classic` stays accepted by the command as well. A build from before SIDECAR does not know `sidecar` and falls back to OLED, the default.
 - `uistyle=` in cmdline.txt overrides the file. It is also the only way to give the boot screen the SIDECAR look (`uistyle=sidecar`: the logo over the wordmark on the night blue), because the boot screen is drawn before the card is read.
 
@@ -504,7 +504,7 @@ At **1024x600** (1.6x the pixels) a full redraw costs about 1.3x (the text and k
 
 ## STAGE look and the alert grammar (UX review L1, L2)
 
-- **Display > LOOK: STUDIO / STAGE** (OLED; `uilook=studio|stage`, stored in `/.rytm/display.txt`). STUDIO is the dot
+- **Display > LOOK: STUDIO / STAGE** (OLED; `uilook=studio|stage`, stored in `/.sidecar/display.txt`). STUDIO is the dot
   look above and stays the default (the review asks for the setting, not a new default). STAGE draws every dot as its
   whole 2x2 cell (no grid lines) and lifts every grey a step (`v -> 0x30 + v x 0xD0 / 0xFF`, `sidecar_dot_look`), for a
   stage and an angle. The bold face of the review is not in STAGE yet: every layout is measured for the regular face and
