@@ -234,7 +234,7 @@ static std::string slurp(const std::string& p) {
 static void plug(const char* name, const std::string& body) { put(std::string("/Plugins/") + name, body); }
 static std::string plugins(const std::string& j) { return j.substr(0, j.find("{\"t\":\"slot\"")); }   // the JSON's packages
 static void to_project(const char* n) {   // pool.cpp's switch_to, the user machines' part: its hook on the control core
-  sniprintf(project, sizeof project, "%s", n);
+  sniprintf(prj().key, sizeof prj().key, "%s", n);
   hooks.project_changed();
 }
 // A pass's steps with the card core one request behind the control core at most
