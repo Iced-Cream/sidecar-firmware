@@ -214,8 +214,24 @@ static const char *BoxName (int k)	// mirror_assign::slot_name's words, by the b
 }
 const char *CObUsb::SlotName (int nSlot)	{ return BoxName (nSlot); }
 
+// The route line, in mirror mode only (usb=sidecar, the class mode, has no routes to name). The first assignment comes
+// before the gadget is up (about 0.6 s on the unit, AO3), so a line not yet printed waits for the gadget's mirror mode.
+static boolean s_bRouteUnlogged = FALSE;
+static void LogRoutes (const char *pWhy)
+{
+	if (!s_bRouteUnlogged || CSidecarGadget::Get () == 0 || !CSidecarGadget::Get ()->Mirror ()) return;
+	s_bRouteUnlogged = FALSE;
+	CObUsb *pUsbc = UsbcBox ();
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (%s, mirrorfirst=%s)%s",
+				pUsbc != 0 ? BoxName (CObUsb::UsbcSlot ()) : "nothing",
+				RelayBox () != 0 ? BoxName (CObUsb::RelaySlot ()) : "nothing",
+				AssignCfg ().prefer == mirror_assign::kFirst ? "attach order" : mirror_assign::prefer_name (AssignCfg ().prefer),
+				AssignCfg ().relay_first ? "relay" : "usbc", pWhy);
+}
+
 void CObUsb::PollAssign (void)
 {
+	LogRoutes ("");
 	const mirror_assign::Config &c = AssignCfg ();
 	for (unsigned k = 0; k < Slots; k++) s_Assign.up[k] = s_pBox[k] != 0 && s_pBox[k]->m_bUp;
 	const int nOld = s_Assign.first, nNew = mirror_assign::decide (c, s_Assign, NowUs ());
@@ -227,12 +243,8 @@ void CObUsb::PollAssign (void)
 	CObUsb *pNewUsbc = UsbcBox ();
 	const boolean bToUsbc = pNewUsbc != 0 && pNewUsbc == s_pRelayBox;	// the relay's box moves to USB-C
 	const boolean bToRelay = pOldUsbc != 0 && pOldUsbc == RelayBox ();	// USB-C's box moves to the relay
-	if (CSidecarGadget::Get () != 0 && CSidecarGadget::Get ()->Mirror ())	// (usb=sidecar, the class mode: no routes to name)
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (%s, mirrorfirst=%s)%s",
-				pNewUsbc != 0 ? BoxName (UsbcSlot ()) : "nothing",
-				RelayBox () != 0 ? BoxName (RelaySlot ()) : "nothing",
-				AssignCfg ().prefer == mirror_assign::kFirst ? "attach order" : mirror_assign::prefer_name (AssignCfg ().prefer), c.relay_first ? "relay" : "usbc",
-				bToUsbc ? ": moved from the relay" : bToRelay ? ": moved from USB-C" : "");
+	s_bRouteUnlogged = TRUE;
+	LogRoutes (bToUsbc ? ": moved from the relay" : bToRelay ? ": moved from USB-C" : "");
 	if (bToRelay && pOldUsbc->m_bMirror) GadgetBoxMoved ();
 	RelayFollow (bToUsbc);
 	if (bToRelay) pOldUsbc->KickPipes ();		// (RelayFollow had it read for the relay)
