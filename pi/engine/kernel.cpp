@@ -1152,7 +1152,7 @@ void CKernel::SelfCheck (void)
 	static const u8 Trig[41] = {0xF0, 0x7D, 0x52, 0x54, 0x04, 0x00, 48, 100,
 				    40, 0, 64, 0, 64, 0, 64, 0, 64, 0, 64, 0, 64, 0, 100, 0,
 				    64, 0, 64, 0, 0, 0, 0, 0, 0, 0, 120, 0, 0, 0, 100, 0, 0xF7};
-	bridge::sysex (Trig, sizeof Trig);
+	bridge::sysex_self (Trig, sizeof Trig);	// (the Pi's own: not the Rytm speaking, slot 0 stays presumed)
 	static s16 Ring[bridge::kBlock][bridge::kVoices];
 	u64 Mach[bridge::kMachines] = {0};
 	unsigned nPeak = 0, nCycles = 0;
