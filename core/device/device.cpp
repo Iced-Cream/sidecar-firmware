@@ -212,7 +212,7 @@ static CORE_COLD void admit_slot(Link& l, bool back) {
     if (&o != &l && o.held && (!back || o.order < l.order)) other = true;
   admit::Load ld = load_now();
   ld.voices[l.index] = 0;
-  const int n = other || kVoiceSlots < 2 ? admit::fit(l.index, l.want, ld) : l.want;
+  const int n = other || kVoiceSlots < 2 ? admit::admit(l.index, l.want, ld) : l.want;
   set_voices(l, kVoiceSlots < 2 || !other ? l.want : n, n < l.want);
   if (l.voices < l.want)
     log(CORE_STR("device: slot %d: %d of %d voices admitted (CPU: each render core under 80 %%)"), l.index, l.voices, l.want);
@@ -249,7 +249,7 @@ CORE_COLD void readmit() {
     l.want = (uint8_t)voices_asked(l.held);
     admit::Load ld = load_now();
     ld.voices[l.index] = 0;
-    const int n = admit::fit(l.index, l.want, ld);
+    const int n = admit::admit(l.index, l.want, ld);
     set_voices(l, n, n < l.want);
   }
 }
@@ -645,6 +645,12 @@ CORE_COLD void engine_sysex_link(int t, const uint8_t* d, int len) {
 
 CORE_COLD void engine_sysex_self(const uint8_t* d, int len) {
   device::Scope s(device::g_links[0]);
+  host_sysex_slot(d, len);
+}
+
+CORE_COLD void engine_sysex_self_slot(int slot, const uint8_t* d, int len) {   // the load test's notes (the Pi's own, slot's box)
+  if (slot < 0 || slot >= device::kLinks) return;
+  device::Scope s(device::g_links[slot]);
   host_sysex_slot(d, len);
 }
 

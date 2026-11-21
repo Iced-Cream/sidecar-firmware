@@ -24,6 +24,9 @@ unsigned clock() { return s_clock ? s_clock : s_costs.mhz; }
 void set_split(unsigned n) { s_split = n < 1 ? 1 : n > 7 ? 7 : n; }
 unsigned split() { return s_split; }
 bool on() { return s_costs.mhz != 0; }
+static bool s_enforce = true;
+void set_enforce(bool on) { s_enforce = on; }
+bool enforce() { return s_enforce; }
 
 static unsigned scaled(unsigned long long bp) {   // the bench's bp at the clock now
   const unsigned now = clock();
@@ -67,6 +70,11 @@ CORE_COLD int fit(int s, int want, const Load& l) {
   return 0;
 }
 
+CORE_COLD int admit(int s, int want, const Load& l) {
+  if (s_enforce) return fit(s, want, l);
+  return want < 0 ? 0 : want > 8 ? 8 : want;
+}
+
 static int type_index(const char* name, size_t len) {
   if (len == 2 && !strncasecmp(name, "dt", 2)) return 2;
   for (int k = 0; k < kNTypes; ++k)
@@ -105,6 +113,7 @@ void reset() {
   s_costs = {};
   s_clock = 0;
   s_split = 4;
+  s_enforce = true;
   for (int8_t& o : s_over) o = -1;
 }
 

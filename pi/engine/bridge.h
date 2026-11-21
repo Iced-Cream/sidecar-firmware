@@ -23,6 +23,9 @@ bool begin(void (*to_host)(const uint8_t* m, int n));   // core::hooks.to_rytm =
 void sysex(const uint8_t* d, int len);                  // core::engine_sysex
 void sysex_link(int link, const uint8_t* d, int len);    // core::engine_sysex_link: the second box's (link1.h)
 void sysex_self(const uint8_t* d, int len);             // core::engine_sysex_self: the Pi's own (self-check, bench)
+void sysex_self_slot(int slot, const uint8_t* d, int len);   // the same as slot's box's (the load test's notes)
+bool in_slot(int slot, void (*fn)(void*), void* arg);        // fn in slot's Scope (the load test's slot=S:); false: no such slot
+bool admit_command(const char* p);                           // admit=report|enforce, loadtest=on|off
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach,   // one block of voices v0..v1-1
                 int16_t (*block_r)[kVoices] = nullptr, uint8_t* st = nullptr);  // (R, real-stereo bytes: core/voices.h)
 bool idle_prepare();

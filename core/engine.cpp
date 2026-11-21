@@ -131,6 +131,9 @@ CORE_COLD bool idle_prepare() {
 
 static volatile bool g_flush = false;   // idle_flush: a power-off waits for the saves
 CORE_COLD void idle_flush(bool on) { g_flush = on; }
+static bool g_nosave = false;   // loadtest=on (pi cores.cpp): no card writes of edits from here on
+CORE_COLD void idle_nosave(bool on) { g_nosave = on; }
+CORE_COLD bool idle_nosave() { return g_nosave; }
 
 CORE_COLD bool idle_save() {
 #if CORE_MSAMP
@@ -149,6 +152,11 @@ CORE_COLD bool idle_save() {
     if (T_("kits", kits::tick())) return true;
   }
 #endif
+  if (g_nosave) {   // the load test: a box that attaches still loads its project; nothing is saved (the edits are the test's)
+    for (int k = 0; k < kVoiceSlots; ++k)
+      if (T_("attach", project_attach_step(k))) return true;
+    return false;
+  }
   // 0.3.0 power-cut safety: the posted settings write first (fmt.h), so one writer owns the shared buffer at a time.
   // A write that only waits does not stop the rest: post_begin is null while the slot is busy, so no saver below can touch
   // its buffer, the sequencer's loads, the SONG journal and the queued saves need no card core of their own here, and

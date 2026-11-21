@@ -58,6 +58,13 @@ static void model() {
   admit::set_split(9);
   CHECK(admit::split() == 7);
   admit::set_split(4);
+  // admit=report (the two-box load test): fit unchanged, nothing refused; enforce again
+  admit::set_costs({1500, 1000, 0, 0, 2000});
+  CHECK(admit::enforce() && admit::admit(1, 8, l) == 4);
+  admit::set_enforce(false);
+  CHECK(admit::admit(1, 8, l) == 8 && admit::admit(1, 3, l) == 3 && admit::admit(1, 12, l) == 8 && admit::fit(1, 8, l) == 4);
+  admit::set_enforce(true);
+  CHECK(admit::admit(1, 8, l) == 4);
   // voices=
   CHECK(admit::parse_override("a4:2,dt:6"));
   CHECK(admit::override_for("A4") == 2 && admit::override_for("Digitakt") == 6 && admit::override_for("Rytm") == -1);
@@ -166,6 +173,34 @@ static void engine() {
   // a Digitakt now attaches second, beside the Rytm's 8 (core 1 at 48 %): two of its voices fit
   CHECK(hello(0, device::kIdDigitakt) == device::kOk);
   CHECK(device::slot_held_by(&device::kDigitakt) == 0 && device::admitted(0) == 2 && device::admitted(1) == 8);
+  // admit=report: the second box gets its 8, /status's core_bp shows the worst case of both; the Pi's own notes as either box's
+  // (engine_sysex_self_slot: the load test's drone on stock boxes) play its voices; enforce again: back to 2
+  admit::set_enforce(false);
+  device::readmit();
+  CHECK(device::admitted(0) == 8 && device::admitted(1) == 8);
+  {
+    admit::Load both = {{8, 8}, {true, true}};
+    CHECK(admit::core_bp(1, both) == 8 * 1200 && admit::core_bp(2, both) == 8 * 1200 + 2 * 1000);
+  }
+  {
+    std::vector<uint8_t> a = trig(6, 60), b = trig(3, 64);
+    engine_sysex_self_slot(0, a.data(), (int)a.size());   // the Digitakt's voice 6
+    engine_sysex_self_slot(1, b.data(), (int)b.size());   // the Rytm's voice 3
+    engine_sysex_self_slot(2, b.data(), (int)b.size());   // (no such slot: nothing)
+    CHECK(rms(6) > 100 && rms(8 + 3) > 100);
+  }
+  admit::set_enforce(true);
+  device::readmit();
+  CHECK(device::admitted(1) == 8 && device::admitted(0) == 2);
+  {
+    std::vector<uint8_t> a = trig(5, 62);
+    engine_sysex_self_slot(0, a.data(), (int)a.size());   // past the Digitakt's two: dropped
+    CHECK(rms(5) == 0);
+  }
+  // loadtest=on (idle_nosave): the flag only (the Pi's console; idle_save writes nothing while on)
+  idle_nosave(true);
+  CHECK(idle_nosave());
+  idle_nosave(false);
   // voices= lowers a count (never raises one past its profile's): readmit keeps the first box (the Rytm) first
   CHECK(admit::parse_override("rytm:2,dt:8,a4:6"));
   CHECK(device::voices_asked(nullptr) == 2 && device::voices_asked(&device::kA4) == 4);

@@ -13,6 +13,7 @@
 #include "mod/scene.h"
 #include "mod/xypad.h"
 #include "device/device.h"
+#include "device/admit.h"
 #include "fx/insert.h"
 #include "fx/master.h"
 #include "fx/out.h"
@@ -134,6 +135,28 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
 void sysex_self(const uint8_t* d, int len) { core::engine_sysex_self(d, len); }
+void sysex_self_slot(int slot, const uint8_t* d, int len) { core::engine_sysex_self_slot(slot, d, len); }
+bool in_slot(int slot, void (*fn)(void*), void* arg) {   // the load test's slot=S: (cores.cpp): fn in slot S's Scope
+  if (slot < 0 || slot >= core::device::kLinks) return false;
+  core::device::Scope s(core::device::g_links[slot]);
+  fn(arg);
+  return true;
+}
+bool admit_command(const char* p) {   // admit=report|enforce (core/device/admit.h), loadtest=on|off (core/engine.h idle_nosave)
+  if (!strcmp(p, "admit=report") || !strcmp(p, "admit=enforce")) {
+    core::admit::set_enforce(p[6] == 'e');
+    core::device::readmit();
+    core::log("admit: %s (slot voices %d / %d)", core::admit::enforce() ? "enforced" : "report only: no box refused",
+              core::device::admitted(0), core::device::admitted(1));
+    return true;
+  }
+  if (!strcmp(p, "loadtest=on") || !strcmp(p, "loadtest=off")) {
+    core::idle_nosave(p[10] == 'n');
+    core::log("loadtest: %s", core::idle_nosave() ? "on: edits are not saved to the card until a reboot or loadtest=off" : "off: saves again");
+    return true;
+  }
+  return false;
+}
 int out_base() { return core::device::base_voice_base(); }
 bool slot_renders(int slot) {   // a box holds it (attach order: either slot), or it is the base
   if (slot < 0 || slot >= core::device::kLinks) return false;

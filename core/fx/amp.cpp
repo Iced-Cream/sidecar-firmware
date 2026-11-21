@@ -580,8 +580,11 @@ int find_model(const char* f) {
 // the list being built (control core) into the unpublished buffer
 namespace {
 List& building() { return g_list[(__atomic_load_n(&g_pub, __ATOMIC_RELAXED) & 1) ^ 1]; }
+bool g_synth = false;   // amp=synthetic:on (the load test): a synthetic A2-Lite capture listed beside /NAM/'s files
+constexpr const char* kSynthFile = "~TSYNTH.namb";   // (never read: its weights are synthetic_weights(seed 1), the bench's)
 void publish() {
   List& b = building();
+  if (g_synth && b.n < kMaxModels) sniprintf(b.file[b.n++], kNameMax, "%s", kSynthFile);
   for (int i = 1; i < b.n; ++i)   // sorted by name, case ignored (insertion: 64 at most)
     for (int j = i; j > 0 && cmp_ci(b.file[j - 1], b.file[j]) > 0; --j) {
       char t[kNameMax];
@@ -929,6 +932,10 @@ bool step() {
       sniprintf(j.path, sizeof j.path, "%s/%s", kFolder, model_file(want));
       k.st = kLoading;
       j.ph = g_meta[i].model == want && g_meta[i].gen == g_gen ? kInit : kNone;
+      if (j.ph == kNone && g_synth && same_ci(model_file(want), kSynthFile)) {   // the load test's: no card, the bench's weights
+        synthetic_weights(g_w, 1);
+        j.ph = kInit;
+      }
 #if CORE_MSAMP
       if (j.ph == kNone) j.rq.state = cardq::kFree, j.ph = kOpen;
 #endif
@@ -946,13 +953,19 @@ bool step() {
 
 bool command(const char* p, char* o, int cap) {
   if (strncmp(p, "amp", 3) != 0 || (p[3] && p[3] != '=')) return false;
+  if (p[3] == '=' && (same_ci(p + 4, "synthetic:on") || same_ci(p + 4, "synthetic:off"))) {
+    g_synth = same_ci(p + 4, "synthetic:on");
+    rescan();
+    sniprintf(o, cap, "amp: synthetic capture %s (%s), listing %s again", g_synth ? "listed" : "off", kSynthFile, kFolder);
+    return true;
+  }
   if (p[3] == '=' && same_ci(p + 4, "rescan")) {
     rescan();
     sniprintf(o, cap, "amp: listing %s again", kFolder);
     return true;
   }
   if (p[3]) {
-    sniprintf(o, cap, "amp (the AMP inserts), amp=rescan (list %s again)", kFolder);
+    sniprintf(o, cap, "amp (the AMP inserts), amp=rescan (list %s again), amp=synthetic:on|off (a test capture listed)", kFolder);
     return true;
   }
   int n = sniprintf(o, cap, "amp: %d captures in %s, %d of %d playing, loads %u reuses %u refused %u",
@@ -1002,6 +1015,7 @@ void reset() {
   for (int c = 0; c < kRows; ++c)
     for (int s = 0; s < kSlots; ++s) g_a[c][s] = Audio();
   for (int i = 0; i < kInstances; ++i) g_meta[i].busy = false;
+  g_synth = false;
   bool lw = g_job.list_wanted || (g_job.ph == kList);
   g_job = Job();
   g_job.list_wanted = lw;   // a listing asked for (or under way) is still made

@@ -108,6 +108,13 @@ static void ToCore (const u8 *pData, int nLength)
 	}
 }
 static core::NoteAdapter s_Notes (ToCore);
+// The two-box load test (slot=S:drone=..., slot=S:notemach=V:NAME): each slot's own adapter, its notes the Pi's own as that
+// slot's box's (bridge::sysex_self_slot), so a stock box's voices play with no mod on it. -1 off, 0..7 one voice, 8 all
+static void ToSlot0 (const u8 *pData, int nLength) { bridge::sysex_self_slot (0, pData, nLength); }
+static void ToSlot1 (const u8 *pData, int nLength) { bridge::sysex_self_slot (1, pData, nLength); }
+static core::NoteAdapter s_SlotNotes[2] = {core::NoteAdapter (ToSlot0), core::NoteAdapter (ToSlot1)};
+static int s_nSlotDrone[2] = {-1, -1};
+static int s_nCmdSlot = -1;			// the slot= prefix's slot while its command runs, else -1
 // A Rytm running the mods (any F0 7D 52 54 from it) reports its voices itself (0021's 03 / 04, 0026's 33): the note
 // adapter (a stock Rytm's notes on channels 1..8 as PLAITS reports) then steps aside, or each MIDI note the Rytm
 // sends out over USB turned the voice it just set to JUNO / DSP SAMPLE / ... back into the adapter's PLAITS (the
@@ -484,13 +491,21 @@ void CEngineCores::RenderBlock (int nSide)
 static void Drone (void)
 {
 	u64 now = Ticks ();
-	if (s_nDrone < 0 || now - s_nDroneAt < TickRate () / 2) return;
+	if ((s_nDrone < 0 && s_nSlotDrone[0] < 0 && s_nSlotDrone[1] < 0) || now - s_nDroneAt < TickRate () / 2) return;
 	s_nDroneAt = now;
 	for (int v = 0; v < 8; v++)
 	{
-		if (s_nDrone != 8 && s_nDrone != v) continue;
-		s_Notes.Channel (0x80 | v, 48 + 2 * v, 0);
-		s_Notes.Channel (0x90 | v, 48 + 2 * v, 100);
+		if (s_nDrone == 8 || s_nDrone == v)
+		{
+			s_Notes.Channel (0x80 | v, 48 + 2 * v, 0);
+			s_Notes.Channel (0x90 | v, 48 + 2 * v, 100);
+		}
+		for (int s = 0; s < 2; s++)		// the load test's, per slot (a voice past its box's admitted count: dropped)
+		{
+			if (s_nSlotDrone[s] != 8 && s_nSlotDrone[s] != v) continue;
+			s_SlotNotes[s].Channel (0x80 | v, 48 + 2 * v, 0);
+			s_SlotNotes[s].Channel (0x90 | v, 48 + 2 * v, 100);
+		}
 	}
 }
 
@@ -667,20 +682,43 @@ void CEngineCores::Control (void)
 }
 
 // The console's commands (console.cpp: ':' lines), run here so the engine core is touched by one core only.
+struct TSlotCmd { CEngineCores *pThis; const char *pText; };
+static void SlotCommand (void *pArg)	// slot=S:<command>, in slot S's Scope (bridge::in_slot)
+{
+	TSlotCmd *c = (TSlotCmd *) pArg;
+	c->pThis->Command (c->pText);
+}
+
 void CEngineCores::Command (const char *p)
 {
 	CLogger *L = CLogger::Get ();
-	if (strncmp (p, "notemach=", 9) == 0 && p[9] >= '0' && p[9] <= '7' && p[10] == ':')
+	if (strncmp (p, "slot=", 5) == 0 && (p[5] == '0' || p[5] == '1') && p[6] == ':' && s_nCmdSlot < 0)
+	{	// the two-box load test: any command as slot S's box's (ins=, mfx=, sendfx=, ...); drone= and notemach= its own adapter
+		s_nCmdSlot = p[5] - '0';
+		TSlotCmd c = {this, p + 7};
+		if (!bridge::in_slot (s_nCmdSlot, SlotCommand, &c)) L->Write (From, LogWarning, "slot=%c: no such slot", p[5]);
+		s_nCmdSlot = -1;
+		return;
+	}
+	core::NoteAdapter &Notes = s_nCmdSlot >= 0 ? s_SlotNotes[s_nCmdSlot] : s_Notes;
+	if (bridge::admit_command (p))		// admit=report|enforce, loadtest=on|off
+	{
+	}
+	else if (strncmp (p, "notemach=", 9) == 0 && p[9] >= '0' && p[9] <= '7' && p[10] == ':')
 	{
 		int v = p[9] - '0';
-		if (s_Notes.SetMachine (v, p + 11)) L->Write (From, LogNotice, "notes: voice %d plays %s", v, p + 11);
-		else L->Write (From, LogWarning, "notes: no machine \"%s\" (plaits juno daisy dsps fm md)", p + 11);
+		if (Notes.SetMachine (v, p + 11)) L->Write (From, LogNotice, "notes: %s%svoice %d plays %s", s_nCmdSlot >= 0 ? "slot " : "",
+							       s_nCmdSlot == 0 ? "0 " : s_nCmdSlot == 1 ? "1 " : "", v, p + 11);
+		else L->Write (From, LogWarning, "notes: no machine \"%s\" (%s)", p + 11, core::NoteAdapter::Names ());
 	}
 	else if (strncmp (p, "drone=", 6) == 0)
 	{
-		s_nDrone = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
-		if (s_nDrone > 8) s_nDrone = -1;
-		L->Write (From, LogNotice, "drone %s", p + 6);
+		int &Drone = s_nCmdSlot >= 0 ? s_nSlotDrone[s_nCmdSlot] : s_nDrone;
+		Drone = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
+		if (Drone > 8) Drone = -1;
+		if (s_nCmdSlot >= 0 && Drone < 0)	// its voices' notes closed (the drone's last notes)
+			for (int v = 0; v < 8; v++) Notes.Channel (0xB0 | v, 123, 0);
+		L->Write (From, LogNotice, "drone %s%s%s", s_nCmdSlot == 0 ? "slot 0 " : s_nCmdSlot == 1 ? "slot 1 " : "", p + 6, "");
 	}
 	else if (strncmp (p, "notes=", 6) == 0)
 	{

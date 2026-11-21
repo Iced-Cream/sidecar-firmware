@@ -40,6 +40,10 @@ unsigned clock();
 void set_split(unsigned n);     // split=: voices 0..n-1 of each box on render core 1 (1..7)
 unsigned split();
 bool on() ;                     // a bench to admit against
+// admit=report (console, the two-box load test): the costs, core_bp and fit stay, but no box is refused (every box its
+// count) so the worst case can be measured against core_bp; admit=enforce (the default) refuses again
+void set_enforce(bool on);
+bool enforce();
 
 // A load: voices[s] of slot s's box render (its 0..voices-1), held[s] its chains run.
 struct Load {
@@ -51,6 +55,8 @@ unsigned core_bp(int core, const Load& l);
 // The most voices (<= want) slot s may render beside the other slot's in l, so that every render core this box's voices land
 // on stays within kLimitBp. A core already over without this box's voices (core 2 by the chains alone) takes none of them.
 int fit(int s, int want, const Load& l);
+// What slot s gets at attach: fit() while enforcing, else want (0..8)
+int admit(int s, int want, const Load& l);
 
 // cmdline voices=: per box type, "rytm:8,a4:2,dt:6" (dt or digitakt). Each count 0..8, at most its profile's (it lowers a
 // count: device.cpp voices_asked); false: not understood (nothing changed).

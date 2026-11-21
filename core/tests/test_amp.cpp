@@ -640,6 +640,27 @@ int main() {
     CHECK(strstr(j, "\"amp\":{\"models\":5"));
     printf("json: %s\n", strstr(j, "\"amp\""));
   }
+  // amp=synthetic:on (the two-box load test): a synthetic capture listed beside /NAM/'s files, loaded without the card
+  {
+    char o[256];
+    const int n1 = amp::models();
+    const uint32_t ld = amp::stats().loads;
+    CHECK(amp::command("amp=synthetic:on", o, sizeof o) && strstr(o, "listed"));
+    settle();
+    const int i = amp::find_model("~TSYNTH.namb");
+    CHECK(amp::models() == n1 + 1 && i >= 0);
+    ins::set_type(0, 0, ins::kAmp);
+    ins::set_param(0, 0, 0, amp::knob_for_model(i));
+    std::vector<float> y = play(guitarish(24000));
+    settle();
+    CHECK(amp::status(0, 0) == amp::kPlaying && amp::stats().loads == ld + 1);
+    for (float v : y) CHECK(std::isfinite(v));
+    printf("amp=synthetic:on: %s, slot V1 A plays it (%s)\n", o, text(0, 0).c_str());
+    CHECK(amp::command("amp=synthetic:off", o, sizeof o));
+    ins::set_type(0, 0, ins::kOff);
+    settle();
+    CHECK(amp::models() == n1);
+  }
   // the CPU: one instance's cost on this Mac (the Pi 4 estimate: x 4.4, the boot bench's PLAITS ratio)
   {
     uint32_t worst = 0;

@@ -693,8 +693,8 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		core::admit::Load AL = {};
 		for (int k = 0; k < 2 && k < core::device::kLinks; k++)
 			AL.held[k] = core::device::held (k), AL.voices[k] = AL.held[k] ? (u8) core::device::admitted (k) : 0;
-		s.Format (",\"admit\":{\"bench\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u}",
-			  core::admit::on () ? "true" : "false", core::admit::clock (), core::admit::kLimitBp,
+		s.Format (",\"admit\":{\"bench\":%s,\"enforce\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u}",
+			  core::admit::on () ? "true" : "false", core::admit::enforce () ? "true" : "false", core::admit::clock (), core::admit::kLimitBp,
 			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL));
 		pOut->Append (s);
 	}
