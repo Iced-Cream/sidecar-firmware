@@ -228,6 +228,24 @@ int main() {
   settle();
   CHECK(key(0) == "A4P" && key(1) == "R2");
 
+  // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
+  // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)
+  device::reset();
+  device::set_out(1, out1);
+  CHECK(device::g_links[0].presumed && device::rytm_slot() == 0);
+  {
+    const std::vector<uint8_t> m = trig(0, 48);
+    engine_sysex_self(m.data(), (int)m.size());
+  }
+  CHECK(device::g_links[0].presumed);
+  CHECK(device::usb_attach(&device::kA4) == 0);
+  device::step(true);
+  CHECK(device::slot_held_by(&device::kA4) == 0 && device::rytm_slot() < 0 && !device::g_links[0].presumed);
+  CHECK(device::usb_attach(&device::rytm()) == 1);
+  device::step(true);
+  CHECK(device::rytm_slot() == 1 && device::slot_held_by(&device::kA4) == 0);
+  printf("  self-check before any box: slot 0 still presumed; the A4's USB first takes slot 0, the Rytm's slot 1\n");
+
   printf("test_attach_order: PASS (slots by attach order, folders by type: A4 + Digitakt either order, the Rytm in slot 1, "
          "a box leaving saves into its folder and frees its slot, the other box never moves, a box back loads its folder)\n");
   return 0;

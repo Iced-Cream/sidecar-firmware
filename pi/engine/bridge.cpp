@@ -133,6 +133,7 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
 }
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
+void sysex_self(const uint8_t* d, int len) { core::engine_sysex_self(d, len); }
 int out_base() { return core::device::base_voice_base(); }
 bool slot_renders(int slot) {   // a box holds it (attach order: either slot), or it is the base
   if (slot < 0 || slot >= core::device::kLinks) return false;
@@ -480,7 +481,7 @@ static void voices_boot_state() {
 }
 void reinit_voices() { voices_boot_state(); }
 
-static void bench_out(const uint8_t* d, int n) { core::engine_sysex(d, n); }
+static void bench_out(const uint8_t* d, int n) { core::engine_sysex_self(d, n); }
 
 uint64_t bench(const char* machine, uint32_t* worst_block, int* peak, uint32_t* hash) {
   core::NoteAdapter na(bench_out);
@@ -505,7 +506,7 @@ uint64_t bench(const char* machine, uint32_t* worst_block, int* peak, uint32_t* 
     const uint8_t p[16] = {10, 0, 64, 64, 0, 0, 64, 100, 0, 0, 0, 0, 0, 0, 0, 0};
     for (int k = 0; k < 16; ++k) m[6 + 2 * k] = p[k], m[7 + 2 * k] = 0;
     m[38] = 0xF7;
-    core::engine_sysex(m, 39);
+    core::engine_sysex_self(m, 39);
     for (int k = 0; k < 8; ++k) core::chop::live_on(0, k, 100, core::poly::kSeqCh, k);
   }
   for (int b = 0; b < 4000; ++b) {

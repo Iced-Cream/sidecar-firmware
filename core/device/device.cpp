@@ -614,4 +614,9 @@ CORE_COLD void engine_sysex_link(int t, const uint8_t* d, int len) {
   host_sysex_slot(d, len);
 }
 
+CORE_COLD void engine_sysex_self(const uint8_t* d, int len) {
+  device::Scope s(device::g_links[0]);
+  host_sysex_slot(d, len);
+}
+
 }  // namespace core
