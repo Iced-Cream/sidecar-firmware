@@ -227,6 +227,7 @@ void CObUsb::PollAssign (void)
 	CObUsb *pNewUsbc = UsbcBox ();
 	const boolean bToUsbc = pNewUsbc != 0 && pNewUsbc == s_pRelayBox;	// the relay's box moves to USB-C
 	const boolean bToRelay = pOldUsbc != 0 && pOldUsbc == RelayBox ();	// USB-C's box moves to the relay
+	if (CSidecarGadget::Get () != 0 && CSidecarGadget::Get ()->Mirror ())	// (usb=sidecar, the class mode: no routes to name)
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (%s, mirrorfirst=%s)%s",
 				pNewUsbc != 0 ? BoxName (UsbcSlot ()) : "nothing",
 				RelayBox () != 0 ? BoxName (RelaySlot ()) : "nothing",
@@ -415,8 +416,8 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
 	if (pFollow != 0) return pFollow;
 	const TUSBDeviceDescriptor *pDesc = pParent->GetDevice ()->GetDeviceDescriptor ();
-	// usb=mirror relays the box itself to the computer, so a stock box that has not said its mod's hello (an A4 without the
-	// Sidecar mod) is claimed too; without the mirror such a box waits for its hello (core/device/device.cpp)
+	// any known box is claimed by its USB ids, with the mirror or without, a stock one too (attach order: its USB is its
+	// hello; core/device/device.cpp by_usb no longer reads the flag, the tests' shim still does)
 	boolean bMirror = strcmp (CKernelOptions::Get ()->GetAppOptionString ("usb", "sidecar"), "mirror") == 0;
 	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct, bMirror);
 	if (p == 0) return 0;
