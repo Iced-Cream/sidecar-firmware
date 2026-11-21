@@ -178,9 +178,11 @@ void trig_track(int slot, int vi, int track) {
   g_track[slot][vi] = (int8_t)(track >= 0 && track < 12 ? track : -1);
   gates(slot);
 }
-bool any_stereo() {   // (slot 0's: the output stage's PRE / POST pairs)
+bool any_stereo() { return any_stereo(0); }   // (slot 0's: the output stage's PRE / POST pairs)
+bool any_stereo(int slot) {
+  const Control& c = control_of(slot);
   for (int v = 0; v < kVoices; ++v)
-    if (control.route[v] != kTrk) return true;
+    if (c.route[v] != kTrk) return true;
   return false;
 }
 void set_trim(int pair, int db10) {

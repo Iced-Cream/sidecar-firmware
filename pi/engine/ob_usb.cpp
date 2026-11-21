@@ -1402,11 +1402,12 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		{
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
 			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
-			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V);
+			float FD[ob::kFramesPerBlock][ob::kVoices] = {};	// the Rytm's PRE / POST voices' stand-ins for their stems (a box's: unused)
+			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V, FD);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
 			{
-				sendfx_pi::FromVoices (m_nSlot, V, ob::kFramesPerBlock);
+				sendfx_pi::FromVoices (m_nSlot, *m_pAudio, V, ob::kFramesPerBlock, FD);	// the Rytm here: paced by her stems
 				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 			}
@@ -1435,7 +1436,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			pTarget->ToBox (F, V, ob::kFramesPerBlock);
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		const int nBase = core::out::g_base_slot;	// the base box's send FX and master chain (phase 3(d))
-		if (s_bActive) sendfx_pi::FromVoices (nBase, V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
+		if (s_bActive) sendfx_pi::FromVoices (nBase, core::out::device (), V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems (the Rytm's: paced by her stems, another box's by its voices)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
@@ -1604,6 +1605,18 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nInBlocks++;
 			good++;
 			if (IMirrorTarget *pT = Target ()) pT->FromBoxBlock (pBlk);	// UAC2 IN 1-12, or its mirror
+			if (m_pAudio == &core::out::kRytmMk2)	// the Rytm's voice stems (IN 2..9), whichever slot she holds (a box's IN 2..9 are no stems)
+			{
+				const boolean bFx = sendfx_pi::On (m_nSlot), bMix = masterfx_pi::WantStems (m_nSlot);	// her send FX; SRC MIX onto 0/1 (core/fx/master.h)
+				if (bFx || bMix)
+				{
+					s32 S[ob::kFramesPerBlock][8];
+					for (int f = 0; f < ob::kFramesPerBlock; f++)
+						for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
+					if (bFx) sendfx_pi::FromRytm (m_nSlot, S, ob::kFramesPerBlock);
+					if (bMix) masterfx_pi::Stems (m_nSlot, S, ob::kFramesPerBlock);
+				}
+			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{
 				int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
@@ -1651,22 +1664,6 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) C[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::cal_in (&C[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
-			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && sendfx_pi::On (0))	// the Rytm's voice stems (IN 2..9) into its send FX (a box's IN 2..9 are no stems; the Rytm in slot 1: not yet)
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
-			}
-
-			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && masterfx_pi::WantStems ())	// SRC MIX: the Rytm's stems onto 0/1 (core/fx/master.h; in slot 1: not yet)
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				masterfx_pi::Stems (S, ob::kFramesPerBlock);
-			}
-
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
 			if (s < 0) s = -s;
 			if (s > m_nInPeak) m_nInPeak = s;

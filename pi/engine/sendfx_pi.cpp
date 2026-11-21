@@ -21,7 +21,8 @@ struct Ret { float l, r, pl, pr, s[4]; };   // the PRE pair (onto 2/3) and the P
 // core 0 only (the OUT fill writes, the IN completion reads): the voices' bus sends and stem stand-ins waiting for their
 // stem frame
 struct Vq { float vs[3], st[8]; };
-// One per box (two links, phase 3(d)): box 0's is what a lone Rytm always had; box 1's has no stems (FromVoices paces it)
+// One per box (two links, phase 3(d)): the Rytm's (slot 0 or 1) is what a lone Rytm always had, her stems pace it (FromRytm);
+// another box's has no stems (FromVoices paces it)
 struct Inst {
   Spsc<Stem, kRing> Stems;
   volatile float BusPk[3];   // the buses' peaks since TakeBusPeaks (core 2 writes, core 0 takes: racy floats, a meter)
@@ -76,12 +77,18 @@ void AllSoundOff(int box) {
 bool On() { return On(0); }
 bool On(int box) { return core::fx::any_on(core::fx::control_of(box)) || core::ins::bus3_on(box); }
 
-void FromVoices(const int16_t (*v)[8], unsigned n, const float (*feed)[8]) { FromVoices(0, v, n, feed); }
+static void Voices(int box, bool stems, const int16_t (*v)[8], unsigned n, const float (*feed)[8]);
+void FromVoices(const int16_t (*v)[8], unsigned n, const float (*feed)[8]) { Voices(0, true, v, n, feed); }
+void FromVoices(int box, const int16_t (*v)[8], unsigned n, const float (*feed)[8]) { Voices(box, box == 0, v, n, feed); }
+void FromVoices(int box, const core::out::Device& dev, const int16_t (*v)[8], unsigned n, const float (*feed)[8]) {
+  Voices(box, &dev == &core::out::kRytmMk2, v, n, feed);
+}
 
-void FromVoices(int box, const int16_t (*v)[8], unsigned n, const float (*feed)[8]) {
+// stems: box is the Rytm's (her stems pace it, FromRytm), else its voices' sends are its input
+static void Voices(int box, bool stems, const int16_t (*v)[8], unsigned n, const float (*feed)[8]) {
   if (!On(box)) return;
   Inst& x = I(box);
-  if (box != 0) {   // no stems: each frame of the voices' sends is the send FX's input frame (silent ones too: the tails)
+  if (!stems) {   // no stems: each frame of the voices' sends is the send FX's input frame (silent ones too: the tails)
     const bool sends = core::ins::sends_on(box);
     float o[16][3];
     while (n) {
@@ -98,7 +105,7 @@ void FromVoices(int box, const int16_t (*v)[8], unsigned n, const float (*feed)[
     return;
   }
   // (a voice off TRK queues every frame, silent ones too: the queue's depth - the lag - stays the stems')
-  bool sends = core::ins::sends_on(box), fd = feed && core::out::any_stereo();
+  bool sends = core::ins::sends_on(box), fd = feed && core::out::any_stereo(box);
   if (!sends && !fd) return;
   float o[16][3];
   while (n) {
@@ -137,16 +144,18 @@ Stats ReadStats(int box) {
   return Stats{x.nFrames, x.nUnder, x.nDropIn, x.nDropOut, On(box)};
 }
 
-void FromRytm(const int32_t (*stems)[8], unsigned n) {
-  if (!On(0)) return;
-  Inst& x = I(0);
+void FromRytm(const int32_t (*stems)[8], unsigned n) { FromRytm(0, stems, n); }
+
+void FromRytm(int box, const int32_t (*stems)[8], unsigned n) {
+  if (!On(box)) return;
+  Inst& x = I(box);
   for (unsigned f = 0; f < n; ++f) {
     Stem s;
     for (int v = 0; v < 8; ++v) s.v[v] = (float)stems[f][v] * (1.0f / 2147483648.0f);
     if (x.nVsR != x.nVsW) {
       const Vq& d = x.Vs[x.nVsR++ & 1023];
       s.vs[0] = d.vs[0], s.vs[1] = d.vs[1], s.vs[2] = d.vs[2];
-      for (int v = 0; v < 8; ++v) s.v[core::out::device().stem[v]] += d.st[v];   // a PRE / POST voice in its silent stem's place
+      for (int v = 0; v < 8; ++v) s.v[core::out::kRytmMk2.stem[v]] += d.st[v];   // a PRE / POST voice in its silent stem's place
     } else {
       s.vs[0] = s.vs[1] = s.vs[2] = 0.0f;
     }
