@@ -172,7 +172,7 @@ int main() {
   CHECK(!strcmp(fmt::path("sqp", "LIVE", 5, p, sizeof p), "/.rytm/seq/LIVE/p005.sqp"));
   CHECK(!strcmp(fmt::path("keys", nullptr, 0, p, sizeof p), "/.rytm/keys.txt"));
   CHECK(!strcmp(fmt::path("preview", nullptr, 0, p, sizeof p), "/.rytm/preview.txt"));   // 0.5.0 (core/samp/preview.h)
-  CHECK(!strcmp(fmt::path("library", nullptr, 0, p, sizeof p), "/.rytm/library/index.bin"));
+  CHECK(!strcmp(fmt::path("library", nullptr, 0, p, sizeof p), "/.sidecar/library/index.bin"));
   // the pools (generation 2: the project's own folder)
   CHECK(!strcmp(fmt::path("samplepool", "LIVE", 0, p, sizeof p), "/.rytm/projects/LIVE/samples.pool.txt"));
   CHECK(!strcmp(fmt::path("wtpool", "LIVE", 0, p, sizeof p), "/.rytm/projects/LIVE/wavetables.pool.txt"));

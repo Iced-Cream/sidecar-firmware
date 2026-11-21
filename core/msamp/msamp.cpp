@@ -1689,11 +1689,11 @@ CORE_COLD void compose(int ls) {
     if (slot_of_voice(vi) == ls && (want[vi] >= 0 || v[vi].ms)) select(vi);
 }
 
-// /.rytm/sdtest.txt's read-ahead and stream count (sdtest.h), if the card was tested: the job's first work after begin
+// /.sidecar/sdtest.txt's read-ahead and stream count (sdtest.h), if the card was tested: the job's first work after begin
 CORE_COLD bool step_limits() {
   constexpr uint32_t kCap = 599;
   if (job->opening) {
-    if (!cardq::async(&job->rq, cardq::kOpenReq, &job->f, "/.rytm/sdtest.txt", 0, nullptr, 0)) return false;
+    if (!cardq::async(&job->rq, cardq::kOpenReq, &job->f, "/.sidecar/sdtest.txt", 0, nullptr, 0)) return false;
     job->opening = false;
     if (job->rq.got != 1) job->phase = kIdle;
     else job->open = true;

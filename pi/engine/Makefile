@@ -22,7 +22,7 @@ OBJS += usbc_pi.o              # the USB-C mode for the SIDECAR MENU > USB-C on 
 OBJS += update_pi.o             # the firmware update from the web page (update_pi.h; the portable part update.cpp is in PORT_SRC)
 # the volumes besides the card and the storage bench (docs/STORAGE.md): Circle's side; the logic is hosted (PORT_SRC)
 OBJS += stor_pi.o
-OBJS += blackbox_pi.o          # the black box: the log to /.rytm/blackbox.log (blackbox.h)
+OBJS += blackbox_pi.o          # the black box: the log to /.sidecar/blackbox.log (blackbox.h)
 # FatFs's disk layer in place of Circle's addon/fatfs/diskio.cpp (linked before libfatfs.a, so the archive's diskio.o
 # is never pulled in): the USB drives' transfers kept to the 64 KB TRB rule below FatFs (stor_diskio.cpp)
 OBJS += stor_diskio.o

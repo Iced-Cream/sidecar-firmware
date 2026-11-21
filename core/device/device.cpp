@@ -61,8 +61,6 @@ CardScope::~CardScope() {
 }
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
-// The Pi's own files, the same for every box: the network, the pairing, the screen, the black box, this choice.
-static const char* const kMachine[] = {"wifi", "pair", "display", "prevboot", "blackbox", "device", "recspeed", "storbench", "wpa.conf"};
 
 const Profile& rytm() { return kRytm; }
 const Profile& active() { return cur().box ? *cur().box : kRytm; }
@@ -126,10 +124,8 @@ static CORE_COLD void rewire() {
 
 
 CORE_COLD const char* state_path_box(const char* state, const char* path, char* buf, int cap) {
+  // only /.rytm's paths are a box's: the Pi's own files are in /.sidecar (core/device/sidecar_dir.h), the libraries shared
   if (strncmp(path, "/.rytm", 6) || (path[6] && path[6] != '/')) return path;
-  if (path[6])
-    for (const char* k : kMachine)
-      if (!strncmp(path + 7, k, strlen(k))) return path;
   sniprintf(buf, cap, "%s%s", state, path + 6);
   return buf;
 }

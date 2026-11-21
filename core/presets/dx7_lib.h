@@ -4,9 +4,9 @@
 // /DX7 and its subfolders hold packed 32-voice DX7 banks: a 4104-byte .syx
 // (F0 43 0n 09 20 00, 4096 bytes, checksum, F7) or a bare 4096-byte file. At
 // boot a walk of /DX7 gives a hash of its listing (names, sizes, times); if it
-// matches /.rytm/dx7.bin's, that index is used, else it is rebuilt (each bank
+// matches /.sidecar/dx7.bin's, that index is used, else it is rebuilt (each bank
 // read once: an MD5 of its 4096 voice bytes and its 32 names). The index:
-//   /.rytm/dx7.bin   a Header, then a Rec per node: folders and banks, breadth
+//   /.sidecar/dx7.bin   a Header, then a Rec per node: folders and banks, breadth
 //                    first in the card's directory order (node 0 = /DX7); the
 //                    header is written last, so a half-written index has none
 // The nodes are TEENSY folders (core/pool/pool.cpp numbers them after /JUNO's): a
@@ -59,7 +59,7 @@ struct Node {                // in RAM, 28 bytes
   uint8_t pad;
 };
 
-struct Rec {                 // in /.rytm/dx7.bin, 480 bytes
+struct Rec {                 // in /.sidecar/dx7.bin, 480 bytes
   Node node;
   uint16_t offset;           // of the voice bytes in the file (6: .syx, 0: bare)
   uint16_t pad;
@@ -430,7 +430,7 @@ class Lib {
 
   DX7_FLASH(rec) bool rec(int k, Rec* r) {
     core::File f;
-    if (!f.open("/.rytm/dx7.bin", core::kRead)) return false;
+    if (!f.open("/.sidecar/dx7.bin", core::kRead)) return false;
     bool ok = f.seekSet(sizeof(Header) + (uint32_t)k * sizeof(Rec)) && f.read(r, sizeof *r) == (int)sizeof *r;
     f.close();
     return ok;
@@ -439,7 +439,7 @@ class Lib {
   DX7_FLASH(load) bool load(uint64_t h) {
     core::File f;
     Header hd;
-    if (!f.open("/.rytm/dx7.bin", core::kRead)) return false;
+    if (!f.open("/.sidecar/dx7.bin", core::kRead)) return false;
     bool ok = f.read(&hd, sizeof hd) == (int)sizeof hd && memcmp(hd.magic, "DX7IDX1", 8) == 0 &&
               hd.hash_hi == (uint32_t)(h >> 32) && hd.hash_lo == (uint32_t)h && hd.count >= 1 &&
               hd.count <= (uint32_t)kMaxNodes && f.fileSize() == sizeof hd + hd.count * sizeof(Rec);
@@ -456,9 +456,9 @@ class Lib {
   // Breadth first from /DX7: each folder's entries in the card's order;
   // folders' paths read back from the records written so far.
   DX7_FLASH(build) bool build(uint64_t h) {
-    sd_->mkdir("/.rytm");
+    sd_->mkdir("/.sidecar");
     core::File out;
-    if (!out.open("/.rytm/dx7.bin", core::kReadWrite)) return false;
+    if (!out.open("/.sidecar/dx7.bin", core::kReadWrite)) return false;
     Header hd;
     memset(&hd, 0, sizeof hd);   // no magic until the index is whole
     out.write(&hd, sizeof hd);
@@ -550,7 +550,7 @@ class Lib {
         if (memcmp(e.md5, rom_md5_[k], 16) == 0) e.bank = -2 - k;
     }
     core::File f;
-    if (!nnodes_ || !f.open("/.rytm/dx7.bin", core::kRead)) return;
+    if (!nnodes_ || !f.open("/.sidecar/dx7.bin", core::kRead)) return;
     for (int k = k0; k < k1 && k < nnodes_; ++k) {
       if (!nodes_[k].bank) continue;
       uint8_t m[16];
