@@ -86,11 +86,7 @@ void on_fault(int sig, siginfo_t*, void* uc) {
 #ifdef __APPLE__
   t_pc = (uint64_t)((ucontext_t*)uc)->uc_mcontext->__ss.__pc;
 #else
-#if defined(__x86_64__)
-  t_pc = (uint64_t)((ucontext_t*)uc)->uc_mcontext.gregs[REG_RIP];
-#else
   t_pc = (uint64_t)((ucontext_t*)uc)->uc_mcontext.pc;
-#endif
 #endif
   siglongjmp(*t_jb, 1);
 }

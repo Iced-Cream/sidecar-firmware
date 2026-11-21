@@ -51,15 +51,20 @@ class Pi:
         self.since = end
         return body
 
-    def cmd(self, c, wait=0.15):
-        data = urllib.parse.urlencode({'c': c}).encode()
-        req = urllib.request.Request(self.base + '/cmd', data=data, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as r:
-            r.read()
-        time.sleep(wait)
-        got = self.log()
-        self.clog.write('> %s\n%s\n' % (c, got.rstrip()))
-        self.clog.flush()
+    def cmd(self, c, wait=0.3, tries=6):
+        """One command; a "command queue full" answer (the control core behind, console.cpp) is sent again after a pause."""
+        for k in range(tries):
+            data = urllib.parse.urlencode({'c': c}).encode()
+            req = urllib.request.Request(self.base + '/cmd', data=data, method='POST')
+            with urllib.request.urlopen(req, timeout=10) as r:
+                r.read()
+            time.sleep(wait)
+            got = self.log()
+            self.clog.write('> %s%s\n%s\n' % (c, ' (again %d)' % k if k else '', got.rstrip()))
+            self.clog.flush()
+            if 'queue full' not in got:
+                break
+            time.sleep(1.0 * (k + 1))
         bad = [l for l in got.splitlines() if BAD.search(l)]
         return got, bad
 
