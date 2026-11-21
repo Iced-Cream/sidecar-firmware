@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
   }
   if (o.card.empty()) return fprintf(stderr, "sidecar_emu: --card DIR\n"), 2;
   signal(SIGPIPE, SIG_IGN);
-  for (const char* d : {"", "/Samples", "/.rytm"}) mkdir((o.card + d).c_str(), 0755);
+  for (const char* d : {"", "/Samples", "/.rytm", "/.sidecar"}) mkdir((o.card + d).c_str(), 0755);
   host_set_card(o.card.c_str());
   host_fake_time(true, 1000000);
   hooks.to_rytm = engine_out;

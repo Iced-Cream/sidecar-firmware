@@ -2,6 +2,7 @@
 #include "engine.h"
 
 #include "device/device.h"
+#include "device/sidecar_dir.h"
 #include "fmt/fmt.h"
 #include "fx/send_fx.h"
 #include "fx/insert.h"
@@ -35,6 +36,7 @@ CORE_COLD bool engine_begin() {
   {   // an import cut by a power loss: finished or undone before anything reads the card (core/bundle/bundle.h)
     Fs fs;
     if (fs.begin()) {
+      sidecar_dir::migrate();   // the Pi's own files out of /.rytm into /.sidecar, once (core/device/sidecar_dir.h)
       device::boot();   // first: every read below is of this box's state folder (core/device/device.h)
       bundle::recover();
       fmt::sweep_boot();   // 2026-10-26: every atomic write's .prev / .tmp, for the readers that never recover()
