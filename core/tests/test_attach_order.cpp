@@ -272,6 +272,32 @@ int main() {
   CHECK(device::slot_held_by(&device::kA4) == 1 && !device::held(0));
   printf("  a box back while its slot is still saving takes the same slot\n");
 
+  // ---- the hold: a slot whose box left stays its box's for g_hold_ms after its saves land (slothold=, unit run AO2: a box
+  // knocked off the hub came back 0.2 s later, its saves already done, and took the other slot)
+  device::g_hold_ms = 600000;                  // (long: the test's own steps decide when it ends)
+  CHECK(device::slot_held_by(&device::kA4) == 1 && !device::held(0));
+  device::usb_detach(1);                       // the A4 drops off the bus
+  device::step(true);                          // its saves land at once
+  CHECK(!device::held(1) && !device::g_links[1].parting && device::g_links[1].holding);
+  CHECK(device::usb_attach(&device::rytm()) == 0);   // another box: not its slot (slot 0, free)
+  device::step(true);
+  CHECK(device::rytm_slot() == 0 && device::g_links[1].holding);
+  CHECK(device::usb_attach(&device::kDigitakt) == -1);   // a third: nothing (slot 1 still the A4's)
+  CHECK(device::usb_attach(&device::kA4) == 1);   // the A4 back: its own slot
+  device::step(true);
+  CHECK(device::slot_held_by(&device::kA4) == 1 && !device::g_links[1].holding);
+  device::usb_detach(1);                       // and gone for good: past the hold the slot is free for any box
+  device::step(true);
+  CHECK(device::g_links[1].holding);
+  device::g_hold_ms = 1;
+  { const uint32_t t0 = now_ms(); while (now_ms() - t0 < 3) {} }
+  device::step(true);
+  CHECK(!device::g_links[1].holding && device::usb_attach(&device::kDigitakt) == 1);
+  device::step(true);
+  CHECK(device::slot_held_by(&device::kDigitakt) == 1);
+  device::g_hold_ms = 0;
+  printf("  the hold: a box's slot kept for it after its saves; another box takes the other slot or waits\n");
+
   printf("test_attach_order: PASS (slots by attach order, folders by type: A4 + Digitakt either order, the Rytm in slot 1, "
          "a box leaving saves into its folder and frees its slot, the other box never moves, a box back loads its folder)\n");
   return 0;

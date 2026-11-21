@@ -138,6 +138,8 @@ struct Link {
   const Profile* was;                     // whose folder state is: the slot's last holder (kept after it leaves: its queued writes land there)
   bool presumed;                          // held by the Rytm presumed at boot, not yet heard from (a box's hello takes the slot)
   bool parting;                           // its holder left and its edits are still being saved: no other box takes it yet
+  bool holding;                           // its holder left, its edits saved: kept for it a while yet (g_hold_ms), no other box takes it
+  uint32_t left_ms;                       // when its holder left (now_ms)
   const char* state;                      // the state folder when it is not /.rytm; null: /.rytm
   void (*out)(const uint8_t*, int);       // the platform's to_rytm while a box is in use
   uint32_t dropped;
@@ -187,6 +189,10 @@ uint8_t hello_status(const uint8_t* d, int len);   // a refused hello's answer: 
 // edits are saved into its folder (parting until they are), the other slot does not move. Control core.
 int claim(const Profile* p);
 void release(int s);
+// How long a slot whose box left stays that box's after its edits are saved (ms; 0: none, freed at once). A box that drops off
+// the bus for a moment and comes back (a plug on the hub's other port knocked it off, unit run AO2) keeps its slot and route.
+// The Pi's cmdline slothold= (ms, default 5000); 0 in the host tests.
+extern uint32_t g_hold_ms;
 int slot_held_by(const Profile* p);    // the slot box p (null: the Rytm) holds, -1 none
 inline bool held(int s) { return s >= 0 && s < kLinks && __atomic_load_n(&g_links[s].held, __ATOMIC_RELAXED) != nullptr; }
 // slot s's modules run (tick, saves, its folder's work): held, or its box left and its edits are still being saved, or it is the

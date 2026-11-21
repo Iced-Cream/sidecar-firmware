@@ -40,6 +40,8 @@
 // primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
 // device follow, as the one stream did; the other streams in step with its own box (its own clock), its OUT silent until the
 // engine renders voices of its own for it. Each box's usb=mirror goes to its own target (mirror_target.h).
+extern volatile boolean g_bObPowerAsk;		// a box's endpoints failed together: the kernel reads the supply's flags at its next second
+
 class CObUsb : public CUSBFunction
 {
 public:

@@ -40,6 +40,7 @@ Link g_links[kLinks] = {{}, {}};   // (slot 0 presumed the Rytm's: s_presume bel
 Link* g_cur = &g_links[0];
 Link* g_base = &g_links[0];
 int g_depth = 0;
+uint32_t g_hold_ms = 0;
 volatile int8_t g_web_link = 0;
 static volatile int8_t s_card_link = -1;   // the card core's request in hand: its link (CardScope)
 static struct LinkIndex {
@@ -164,7 +165,13 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   usb_take();   // the USB devices that came or went (core 0's)
   if (settled)
     for (Link& l : g_links)
-      if (l.parting) l.parting = false, log(CORE_STR("device: slot %d saved, free"), l.index);
+      if (l.parting) {
+        l.parting = false, l.holding = g_hold_ms > 0;
+        if (l.holding) log(CORE_STR("device: slot %d saved, kept %u ms for its box"), l.index, (unsigned)g_hold_ms);
+        else log(CORE_STR("device: slot %d saved, free"), l.index);
+      }
+  for (Link& l : g_links)
+    if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   rebase();
   return false;
 }
@@ -184,7 +191,7 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   __atomic_store_n(&l.box, p, __ATOMIC_RELAXED);
   l.presumed = false;
   const char* was = l.state;
-  if (h) l.state = p ? p->state_dir : nullptr, l.was = h, l.parting = false;
+  if (h) l.state = p ? p->state_dir : nullptr, l.was = h, l.parting = l.holding = false;
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
@@ -210,10 +217,11 @@ static CORE_COLD void route(int t, int slot) {
 // usb_attach's reservations (core 0 writes them, the control core takes them in step / claim) and usb_detach's
 static const Profile* volatile s_usb_want[kLinks];
 static volatile bool s_usb_gone[kLinks];
+static inline bool kept(const Link& l) { return l.parting || l.holding; }   // (its last holder's still: saving, or held for it)
 static CORE_COLD bool open_for(const Link& l, const Profile* p) {   // a slot p may take now (no other's reservation)
   const Profile* w = __atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE);
   const Profile* h = __atomic_load_n(&l.held, __ATOMIC_RELAXED);
-  return (!w || w == p) && (!h || (l.presumed && p != &kRytm)) && (!l.parting || l.was == p);
+  return (!w || w == p) && (!h || (l.presumed && p != &kRytm)) && (!kept(l) || l.was == p);
 }
 
 CORE_COLD int usb_attach(const Profile* p) {
@@ -231,7 +239,7 @@ CORE_COLD int usb_attach(const Profile* p) {
   // was, the RA1 re-enumeration), then the lowest free one
   for (int own = 1; own >= 0; --own)
     for (const Link& l : g_links) {
-      if (own && !(l.parting && l.was == p)) continue;
+      if (own && !(kept(l) && l.was == p)) continue;
       if (!open_for(l, p)) continue;
       const Profile* none = nullptr;
       if (__atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return l.index;
@@ -271,7 +279,7 @@ CORE_COLD int claim(const Profile* p) {
   // box's USB has just reserved
   for (int own = 1; own >= 0; --own)   // (its own slot first while that is still saving: usb_attach's)
   for (Link& l : g_links)
-    if (!l.held && (!own || (l.parting && l.was == p)) && open_for(l, p)) {
+    if (!l.held && (!own || (kept(l) && l.was == p)) && open_for(l, p)) {
       select(l, p);
       log(CORE_STR("device: %s attached: slot %d"), p->name, l.index);
       return l.index;
@@ -287,7 +295,7 @@ CORE_COLD void release(int s) {
   const bool quiet = l.presumed;   // (a Rytm presumed at boot never spoke: nothing of hers to save beyond what idle_save does anyway)
   slot_left(s);   // its transport, sequencer, arpeggiator and MIDI stop, in its Scope (host_link.h)
   select(l, nullptr);   // its voices silenced (link_reset); its folder kept for its saves
-  l.parting = !quiet;
+  l.parting = !quiet, l.holding = false, l.left_ms = now_ms();
   for (int t = 0; t < kLinks; ++t)
     if (s_route[t] == s) s_route[t] = -1;
   route(0, s_route[0]);   // (the senders again)
@@ -356,7 +364,7 @@ CORE_COLD void reset() {
   void (*plat)(const uint8_t*, int) = s_tx[0];
   g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0, out::g_base_slot = 0;
   s_route[0] = 0, s_route[1] = -1;
-  for (Link& l : g_links) select(l, nullptr), l.state = nullptr, l.was = nullptr, l.parting = false, l.out = nullptr;
+  for (Link& l : g_links) select(l, nullptr), l.state = nullptr, l.was = nullptr, l.parting = l.holding = false, l.out = nullptr;
   select(g_links[0], &kRytm), g_links[0].presumed = true;   // (as at boot)
   for (Link& l : g_links) l.out = nullptr;
   s_tx[0] = s_tx[1] = nullptr;
