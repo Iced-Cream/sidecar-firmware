@@ -198,9 +198,10 @@ the card's top level. The engine's own code keeps saying `/.rytm/...`. Every fil
 port (`full` in `pi/engine/platform_pi.cpp`, `host_path` in `core/host/platform_host.cpp`), and those call
 `device::state_path`, which swaps the folder. With the Rytm it returns the same pointer after one test.
 
-The Pi's own files stay in `/.rytm` whatever the box: the network, the pairing, the screen, the black box
-(`kMachine` in `core/device/device.cpp`). A folder of its own also means its own copy of what is derived from the card,
-such as the sample library's index: built once, and it does not touch the Rytm's.
+The Pi's own files are in `/.sidecar` whatever the box (decided 2026-11-21): the network, the pairing, the screen and CPU
+clock, the black box, the update and web app, and the indexes of the shared libraries (the card index, `library/`,
+`dx7.bin`: one index of `/Samples`, `/JUNO`, `/DX7` for every box). See `core/device/sidecar_dir.h`; a card from an older
+build has them in `/.rytm` and the first boot moves them. A box's folder holds only that box's state.
 
 **Slots by attach order, folders by box type (decided 2026-11-21), and nothing restarts.** The first box to attach is slot 0,
 the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.digitakt`) from then on, on
@@ -339,7 +340,7 @@ older stock-firmware path: an A4 with no mod streamed beside the Rytm, audio onl
 ### One per Sidecar by design
 
 The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow her
-slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) stay in `/.rytm`.
+slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) are in `/.sidecar`, no box's.
 
 ### Named gaps
 

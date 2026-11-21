@@ -70,8 +70,6 @@ CardScope::~CardScope() {
   if (on_control()) g_cur = --g_depth ? was_cur : g_base;
   else __atomic_store_n(&s_card_link, was, __ATOMIC_RELAXED);
 }
-// The Pi's own files, the same for every box: the network, the pairing, the screen, the black box, this choice.
-static const char* const kMachine[] = {"wifi", "pair", "display", "prevboot", "blackbox", "device", "recspeed", "storbench", "wpa.conf"};
 
 const Profile& rytm() { return kRytm; }
 const Profile& active() { return cur().box ? *cur().box : kRytm; }
@@ -150,17 +148,15 @@ static CORE_COLD void rewire() {
 
 
 CORE_COLD const char* state_path_box(const char* state, const char* path, char* buf, int cap) {
+  // only /.rytm's paths are a box's: the Pi's own files are in /.sidecar (core/device/sidecar_dir.h), the libraries shared
   if (strncmp(path, "/.rytm", 6) || (path[6] && path[6] != '/')) return path;
-  if (path[6])
-    for (const char* k : kMachine)
-      if (!strncmp(path + 7, k, strlen(k))) return path;
   sniprintf(buf, cap, "%s%s", state, path + 6);
   return buf;
 }
 
-// Boot: nothing to choose. Slot 0 is the Rytm's, in /.rytm, from the first file on; a box takes slot 1 at its hello, in its own
-// folder (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two
-// slots) is left as it is and never read.
+// Boot: nothing to choose. Slot 0 is presumed the Rytm's, in /.rytm, from the first file on; boxes take slots by attach order
+// (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two slots) is
+// left as it is and never read.
 CORE_COLD void boot() {}
 
 CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
@@ -303,8 +299,15 @@ static CORE_COLD bool open_for(const Link& l, const Profile* p) {   // a slot p 
 
 CORE_COLD int usb_attach(const Profile* p) {
   if (!p) p = &kRytm;
-  for (const Link& l : g_links)
-    if (__atomic_load_n(&l.held, __ATOMIC_RELAXED) == p || __atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE) == p) return l.index;
+  for (const Link& l : g_links) {
+    if (__atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE) == p) return l.index;
+    if (__atomic_load_n(&l.held, __ATOMIC_RELAXED) != p) continue;
+    // its slot already (the Rytm's presumed at boot): reserved for it all the same, so usb_take confirms it (a stock Rytm
+    // says no 35: her USB is her hello) and routes her MIDI
+    const Profile* none = nullptr;
+    __atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return l.index;
+  }
   for (const Link& l : g_links) {
     if (!open_for(l, p)) continue;
     const Profile* none = nullptr;

@@ -439,7 +439,7 @@ static boolean Open (const char *pPath)
 static boolean NewAppOnCard (void)
 {
 	FILINFO fi;
-	return f_stat ("SD:/.rytm/www-next/index.html", &fi) == FR_OK || f_stat ("SD:/.rytm/www-next/index.html.gz", &fi) == FR_OK;
+	return f_stat ("SD:/.sidecar/www-next/index.html", &fi) == FR_OK || f_stat ("SD:/.sidecar/www-next/index.html.gz", &fi) == FR_OK;
 }
 
 static const char NewAppHop[] = "<!doctype html><meta charset=utf-8><title>Sidecar</title>"
@@ -877,7 +877,7 @@ THTTPStatus CWebServer::GetContent (const char *pPath, const char *pParams, cons
 	else if (strcmp (pPath, "/prevboot") == 0)	// the last crashed boot's report and log tail (kernel.cpp CrumbToCard; paired only)
 	{
 		core::File f;
-		if (!f.open ("/.rytm/prevboot.txt", core::kRead)) return HTTPNotFound;
+		if (!f.open ("/.sidecar/prevboot.txt", core::kRead)) return HTTPNotFound;
 		const unsigned nMax = *pLength < 65536 ? *pLength : 65536;
 		int n = f.read (pBuffer, nMax);
 		f.close ();

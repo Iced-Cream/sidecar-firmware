@@ -175,7 +175,7 @@ private:
 	boolean			m_bUiPending;		// a display command was sent: re-read at m_nUiAt (us, m_Timer.GetClockTicks)
 	unsigned		m_nUiAt;
 	boolean			m_bWeb;			// web=1 and the network is up
-	// the display's screensaver and brightness (docs/pi-display.md): /.rytm/display.txt, cmdline screensaver= /
+	// the display's screensaver and brightness (docs/pi-display.md): /.sidecar/display.txt, cmdline screensaver= /
 	// brightness= override it at boot; screensaver=MIN and brightness=PCT on the console (web page, display) change it
 	unsigned		m_nSaverMin;
 	unsigned		m_nBright;

@@ -23,7 +23,7 @@
 // confirms it, and a box's hello before that takes slot 0 instead. A box that leaves (release) frees its slot, its voices
 // stop and its edits are saved into its folder; the other box stays where it is; a box that comes back loads from its
 // folder. Nothing restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's
-// (CardScope). The Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
+// (CardScope). The Pi's own files are in /.sidecar whatever the box (core/device/sidecar_dir.h): no box's folder holds them.
 #pragma once
 #include <stdint.h>
 

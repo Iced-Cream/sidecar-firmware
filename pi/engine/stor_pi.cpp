@@ -151,14 +151,14 @@ const char *BenchPath (int nVol, int f)
 {
 	static char Path[2][32];
 	CString s;
-	s.Format ("%s%s", stor::drive (nVol), nVol == stor::kSD ? (f ? "/.rytm/storbench2.tmp" : "/.rytm/storbench.tmp")
+	s.Format ("%s%s", stor::drive (nVol), nVol == stor::kSD ? (f ? "/.sidecar/storbench2.tmp" : "/.sidecar/storbench.tmp")
 								 : (f ? "/storbench2.tmp" : "/storbench.tmp"));
 	strncpy (Path[f], (const char *) s, sizeof Path[f] - 1);
 	return Path[f];
 }
 bool BOpen (int nVol, int f, bool bWrite)
 {
-	if (nVol == stor::kSD) f_mkdir ("SD:/.rytm");
+	if (nVol == stor::kSD) f_mkdir ("SD:/.sidecar");
 	return f_open (s_pFil[f], BenchPath (nVol, f), bWrite ? FA_WRITE | FA_CREATE_ALWAYS : FA_READ) == FR_OK;
 }
 int BWrite (int f, const void *p, u32 n)
@@ -206,16 +206,16 @@ void BLog (const char *pLine)
 const storbench::Io kBenchIo = {BOpen, BWrite, BReadAt, BSync, BClose, BRemove, BRaw, BRawSize, BNow, BStreaming, BUnder,
 				BLoopReset, BLoopRead, BLog, BHold};
 
-// the finished bench's table on the card: SD:/.rytm/storbench-<VOL>.txt (the console's stor=last prints it again)
+// the finished bench's table on the card: SD:/.sidecar/storbench-<VOL>.txt (the console's stor=last prints it again)
 void SaveResult (void)
 {
 	static char t[1600];
 	int n = storbench::table (storbench::results (), t, sizeof t);
 	if (n >= (int) sizeof t) n = sizeof t - 1;
 	CString Path;
-	Path.Format ("SD:/.rytm/storbench-%s.txt", stor::name (storbench::vol ()));
+	Path.Format ("SD:/.sidecar/storbench-%s.txt", stor::name (storbench::vol ()));
 	FIL *f = s_pFil[0];		// (the bench has closed both)
-	f_mkdir ("SD:/.rytm");
+	f_mkdir ("SD:/.sidecar");
 	if (f_open (f, (const char *) Path, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
 	UINT w;
 	f_write (f, t, (UINT) n, &w);
