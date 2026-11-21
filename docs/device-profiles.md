@@ -257,6 +257,9 @@ changes nothing here.
   recorder's fxin, the JUNO / FM names to her, her MIDI CONFIG and SONG replay, `hooks.transport`) follows her slot:
   `device::rytm_at(s)`, `rytm_slot()` (-1 none), `rytm_home()` (her slot, else 0, where her state is read). Never slot 0 as
   such. On one slot (the Teensy) `rytm_at` is always true, as slot 0 always was.
+  On the Pi, her pattern dumps and FILL's answers are read from whichever transport is routed to her slot
+  (`bridge::rytm_byte(t, b)` through `device::rytm_route(t)`: transport 0 unless it carries another box, transport 1 while it
+  carries her), in her Scope.
 - **Per-slot module state** is one struct per slot, `[kVoiceSlots]` (or `Per<T>`), read through an accessor of the slot in
   hand (`prj()`, `pools::S()`, `ins::control_of(slot)`, `out::control_of(slot)`, `fx::control_of(slot)`,
   `master::control_of(slot)`).
@@ -274,7 +277,7 @@ changes nothing here.
 | LFOs and the modulation layer | `core/mod` | a box's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is the Rytm's slot's |
 | INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines |
 | output stage | `pi/engine/output.*`, `side_out.h` | beside a Rytm, slot 1's voices go to a side stage paced by its own box's stream; alone, a box has the base stage |
-| send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s |
+| send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s. The Rytm's instance, in either slot, is paced by her stems from her own stream's IN (`sendfx_pi::FromRytm(slot)`, SRC MIX `masterfx_pi::Stems(slot)`; her report 50 in `master::rytm()`); another box's by its voices |
 | user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport |
 | scenes and the XY pad | `core/ui` | |
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
@@ -331,9 +334,6 @@ What the second box does not have yet, or has differently:
   project names.
 - **Readers off the control core** (`gr` / `wt` / `msamp` `entry_note`, the `srclib` browser, `page_gfx`, `preset_index`)
   read the slot in hand's lists. The console's `gr=pick`, `wt=pick`, `msamp=pick` and `voice:` forms take voices 0..7 only.
-- **The Rytm in slot 1** (she attached second): her stems into her send FX and SRC MIX on the Pi (`ob_usb.cpp`
-  `FromRytm`, `masterfx_pi::Stems`) run only while she is slot 0; the Pi's `rytm_byte` tap (her pattern dumps, FILL's
-  writer) reads transport 0 only.
 - **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.

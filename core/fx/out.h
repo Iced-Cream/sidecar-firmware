@@ -131,6 +131,7 @@ void trig_track(int vi, int track);          // the track that triggered voice v
 void set_mutes(int slot, uint16_t mask);
 void trig_track(int slot, int vi, int track);
 bool any_stereo();                           // a voice is routed PRE or POST
+bool any_stereo(int slot);                   // ... of slot's (control_of(slot))
 void set_trim(int pair, int db10);           // stereo=trim:pre|post|trk:DB10; pair 0 pre, 1 post, 2 trk
 // The kit file's line ("OUT V3 POST 100 64 64 0"): from_line takes one (false: not an OUT line it reads); line(vi)
 // writes the voice's when it is not the default (0 none)

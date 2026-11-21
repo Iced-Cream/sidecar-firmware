@@ -120,6 +120,10 @@ build/test_slotfx_ref: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../ma
 build/test_slotfx_ref16: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+# the Rytm in either slot (attach order): her stems pace her slot's send FX and SRC MIX alike; a box's voices pace its own
+build/test_rytm_slot1: test_rytm_slot1.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the recorder (WAV writer, ring, channel lists) on a temp folder
 # (core/rec/rec_names.cpp: the parts shared with the Sidecar Mini's recorder, with the Mac's port of the core)
 build/test_recorder: test_recorder.cpp ../recorder.cpp ../recorder.h ../rec_wav.h $(CORE)/rec/rec_wav.h $(CORE)/rec/rec_names.h $(CORE)/rec/rec_names.cpp ../spsc.h check.h

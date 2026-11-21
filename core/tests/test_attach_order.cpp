@@ -15,6 +15,7 @@
 #include "device/device.h"
 #include "device/digitakt.h"
 #include "engine.h"
+#include "fx/master.h"
 #include "host_link.h"
 #include "lfo.h"
 #include "pool/pool.h"
@@ -121,6 +122,7 @@ int main() {
   // boot: slot 0 presumed the Rytm's (her project read), nothing on transport 1
   CHECK(device::rytm_slot() == 0 && device::g_links[0].presumed && key(0) == "RYP");
   CHECK(device::route_of(0) == 0 && device::route_of(1) < 0 && !device::held(1));
+  CHECK(device::rytm_route(0) == 0 && device::rytm_route(1) < 0);   // her raw MIDI taps: transport 0's
 
   // ---- an A4 and a Digitakt, no Rytm: the A4 says hello first (on USB-C), so it is slot 0 in /.a4; the Digitakt slot 1
   CHECK(hello(0, device::kIdA4) == device::kOk);
@@ -132,6 +134,7 @@ int main() {
   CHECK(device::slot_held_by(&device::kDigitakt) == 1 && device::route_of(1) == 1 && device::side_slot() == 1);
   settle();
   CHECK(key(1) == "DTP" && lfo_depth(1) == 11 && key(0) == "A4P" && lfo_depth(0) == 20);
+  CHECK(device::rytm_route(0) < 0 && device::rytm_route(1) < 0);   // no Rytm: her taps read neither transport
   CHECK(device::g_base == &device::g_links[0] && device::voice_base(device::g_links[1]) == kBoxVoices);
   printf("  A4 then Digitakt: slot 0 %s (%s), slot 1 %s (%s)\n", key(0).c_str(), device::g_links[0].state, key(1).c_str(),
          device::g_links[1].state);
@@ -205,8 +208,14 @@ int main() {
   rytm35(0);
   CHECK(device::rytm_slot() == 1 && device::rytm_at(1) && !device::rytm_at(0) && device::rytm_home() == 1);
   CHECK(device::slot_held_by(&device::kDigitakt) == 0 && device::route_of(0) == 1 && device::route_of(1) == 0);
+  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // her taps (pattern dumps, FILL): her transport, her slot
   settle();
   CHECK(key(1) == "RYP" && key(0) == "DTP" && !device::g_links[1].state);
+  // her report 50 (the stems' pans, who is off ROUTE TO MAIN) lands in her slot's master control, for her SRC MIX
+  master::link_lost();
+  send(0, sidecar({0x50, 50, 64, 64, 64, 64, 64, 64, 64, 0, 1 << 3}));
+  CHECK(master::control_of(1).known && !master::control_of(0).known && &master::rytm() == &master::control_of(1));
+  CHECK(master::control_of(1).pan[0] == 50 && master::stems_on_main() == 7);
   voices_init();
   send(0, trig(3, 60));   // her voice 3: engine voice 8 + 3, her slot's
   CHECK(v[kBoxVoices + 3].live && !v[3].live);
@@ -227,6 +236,7 @@ int main() {
   CHECK(hello(1, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0 && device::rytm_slot() == 1);
   settle();
   CHECK(key(0) == "A4P" && key(1) == "R2");
+  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // the A4 on transport 1: not hers
 
   // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
   // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)

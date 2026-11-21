@@ -43,11 +43,11 @@ static inline int32_t Sat(int64_t s) { return s > 2147483647 ? 2147483647 : s < 
 static inline int32_t Add(int32_t a, float x) { return Sat((int64_t)a + (int64_t)(x * 2147483648.0f)); }
 static inline float Fl(int32_t a) { return (float)a * (1.0f / 2147483648.0f); }
 
-bool WantStems() { return core::master::control.src == core::master::kMix || I(0).fStem > 0.0f; }   // the Rytm's: box 0
+bool WantStems() { return WantStems(0); }
+bool WantStems(int box) { return core::master::control_of(box).src == core::master::kMix || I(box).fStem > 0.0f; }
 
 // a stem's gains on L, R, from the Rytm's report: its pan law's linear split, 0 while it is still on main (it sounds there)
-static inline void Target(const Inst& x, int v, float* t) {
-  const auto& c = core::master::control;
+static inline void Target(const Inst& x, const core::master::Control& c, int v, float* t) {
   const float trim = (v == 5 || v == 6 ? kStemHotTrim : 1.0f) * x.fTrim;
   if (!c.known) {
     t[0] = t[1] = trim;
@@ -60,17 +60,20 @@ static inline void Target(const Inst& x, int v, float* t) {
   }
 }
 
-void Stems(const int32_t (*stems)[8], unsigned n) {
-  Inst& x = I(0);
+void Stems(const int32_t (*stems)[8], unsigned n) { Stems(0, stems, n); }
+
+void Stems(int box, const int32_t (*stems)[8], unsigned n) {
+  Inst& x = I(box);
+  const auto& c = core::master::control_of(box);   // her slot's: its SRC, TRIM and her report (master::rytm())
   float g[8][2], d[8][2];
-  if (core::master::control.trim != x.nTrim) {   // (the gains' own ramp below smooths it)
-    x.nTrim = core::master::control.trim;
+  if (c.trim != x.nTrim) {   // (the gains' own ramp below smooths it)
+    x.nTrim = c.trim;
     x.fTrim = core::out::Mixer::Trim(-10 * x.nTrim);
   }
   const float lim = 2.0f / (float)kGainFrames * (float)n;   // a block's largest move
   for (int v = 0; v < 8; ++v) {
     float t[2];
-    Target(x, v, t);
+    Target(x, c, v, t);
     for (int c = 0; c < 2; ++c) {
       if (!x.bGains) x.Gain[v][c] = t[c];
       g[v][c] = x.Gain[v][c];
@@ -112,8 +115,7 @@ static inline void AddStems(Inst& z, float& l, float& r, float t) {
 }
 
 void Process(int32_t (*out)[12], unsigned n) {
-  static const core::out::Device kMain = {"", 12, {0, 1}, {2, 3}};   // the Rytm's pairs (the calls without a box)
-  Process(0, kMain, out, n);
+  Process(0, core::out::kRytmMk2, out, n);   // the Rytm's pairs (the calls without a box)
 }
 
 void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned n) {
@@ -124,7 +126,9 @@ void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned
   const int p0 = dev.post[0], p1 = dev.post[1], q0 = dev.pre[0], q1 = dev.pre[1];
   const bool hasPre = q0 != p0 || q1 != p1;
   // stereo=measure reads the plain return, so all of this stands aside for it whatever BYP says
-  const bool on = core::master::on(box), meas = box == 0 && core::out::meas::active(), mix = box == 0 && c.src == core::master::kMix;   // SRC MIX: the Rytm's stems (box 0)
+  // SRC MIX: the Rytm's stems, on her stream (dev is her row) whichever slot she holds; another box has no stems to mix
+  const bool rytm = &dev == &core::out::kRytmMk2;
+  const bool on = core::master::on(box), meas = box == 0 && core::out::meas::active(), mix = rytm && c.src == core::master::kMix;
   const bool chain = on && !c.byp && !meas;
   // The limiter is first in and last out: the stems and the chain's output, neither of them clipped, reach 0/1 only with it
   // fully in, so its crossfade has nothing over full scale on the direct side, and BYP and SRC RET still end bit for bit

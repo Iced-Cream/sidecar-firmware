@@ -321,6 +321,11 @@ CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
 
 // The slot the bytes of transport t are for, -1 none.
 int route_of(int t) { return t >= 0 && t < kLinks ? s_route[t] : -1; }
+int rytm_route(int t) {
+  const int s = route_of(t);
+  if (s < 0) return t == 0 ? rytm_home() : -1;
+  return rytm_at(s) ? s : -1;
+}
 
 // A hello's profile when the box may have a slot (known, this protocol); null: its answer is kUnknown / kBadProto
 static CORE_COLD const Profile* hello_profile(const uint8_t* d, int len) {
