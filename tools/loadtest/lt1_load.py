@@ -105,8 +105,8 @@ def readback_cmds(slots):
 def held_slots(st):
     out = []
     for k, sl in enumerate(st.get('slots', [])):
-        if sl.get('held'):
-            out.append((k, int(sl.get('asked') or sl.get('voices') or 0), sl))
+        if sl.get('box') and not sl.get('presumed'):   # (kernel /status slots: slot box presumed ... voices asked short)
+            out.append((int(sl.get('slot', k)), int(sl.get('asked') or sl.get('voices') or 0), sl))
     return out
 
 
@@ -130,7 +130,7 @@ def read(pi, secs, tag):
     summ = {'tag': tag, 'secs': secs, 'samples': len(cpu),
             'c1': [c[1] for c in cpu], 'c2': [c[2] for c in cpu], 'c3': [c[3] for c in cpu],
             'under_last': cpu[-1][0] if cpu else None, 'under_first': cpu[0][0] if cpu else None,
-            'admit': adm, 'slots': [{k: s.get(k) for k in ('held', 'voices', 'asked', 'short', 'box', 'type')}
+            'admit': adm, 'slots': [{k: s.get(k) for k in ('slot', 'box', 'base', 'voices', 'asked', 'short')}
                                     for s in st.get('slots', [])],
             'mutes': mutes[:20], 'uptime': st.get('uptime'), 'commit': st.get('commit') or st.get('version')}
     if cpu:
@@ -167,7 +167,7 @@ def main():
             pi.cmd(c, wait=0.5)
         st = pi.status()
         json.dump(st, open(os.path.join(pi.out, 'status-stop.json'), 'w'), indent=1)
-        print(json.dumps({'admit': st.get('admit'), 'slots': [{k: s.get(k) for k in ('held', 'voices', 'asked', 'short')}
+        print(json.dumps({'admit': st.get('admit'), 'slots': [{k: s.get(k) for k in ('slot', 'box', 'base', 'voices', 'asked', 'short')}
                                                               for s in st.get('slots', [])]}, indent=1))
         return 0
     if a.what == 'config':
@@ -176,7 +176,8 @@ def main():
             return 2
         st = pi.status()
         hs = held_slots(st)
-        first = min(hs, key=lambda h: h[2].get('order', h[0]))[0] if hs else 0
+        base = [h for h in hs if h[2].get('base')]   # AMP renders on the base box's chains only (core/fx/amp.cpp ctl)
+        first = base[0][0] if base else (hs[0][0] if hs else 0)
         bad = []
         for c in ['slot=%d:ins=V%d:A:type:amp' % (first, v) for v in range(1, 7)]:
             bad += pi.cmd(c)[1]
@@ -211,7 +212,7 @@ def main():
     print('setup: %d commands, worst machine %s, refused/unknown: %d' % (len(cmds), worst, len(bad)))
     for b in bad:
         print('  ' + b)
-    print(json.dumps({'admit': st.get('admit'), 'slots': [{k: s.get(k) for k in ('held', 'voices', 'asked', 'short')}
+    print(json.dumps({'admit': st.get('admit'), 'slots': [{k: s.get(k) for k in ('slot', 'box', 'base', 'voices', 'asked', 'short')}
                                                           for s in st.get('slots', [])]}, indent=1))
     return 1 if bad else 0
 
