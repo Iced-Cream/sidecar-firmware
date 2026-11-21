@@ -19,7 +19,7 @@
 // state_path. Two slots (docs/device-profiles.md "Several devices"): slot 0 is the Rytm's, in /.rytm from the first file
 // on; a box takes slot 1 at its hello, in its own folder from then on, on whichever transport it spoke (slot_of). Nothing
 // restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's (CardScope). The
-// Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
+// Pi's own files are in /.sidecar whatever the box (core/device/sidecar_dir.h): no box's folder holds them.
 #pragma once
 #include <stdint.h>
 

@@ -201,7 +201,7 @@ int main() {
   char tmpl[] = "/tmp/firstplay-XXXXXX";
   CHECK(mkdtemp(tmpl));
   g_card = tmpl;
-  CHECK(system(("mkdir -p '" + g_card + "/MULTISAMPLE/fp' '" + g_card + "/.rytm'").c_str()) == 0);
+  CHECK(system(("mkdir -p '" + g_card + "/MULTISAMPLE/fp' '" + g_card + "/.rytm' '" + g_card + "/.sidecar'").c_str()) == 0);
   for (int i = 0; i < kSamples; ++i) wav(g_card + "/MULTISAMPLE/fp/s" + std::to_string(i) + ".wav", kFrames, 2, 24, i);
   std::string stream = inst("streamed", "stream"), ram = inst("inram", "ram"), first = inst("first", "auto");
   // another instrument in RAM, and a sample of its own (other contents than fp's: nothing of it in the cache)
@@ -648,7 +648,7 @@ int main() {
   }
   // ---- the card test's stream limits read at begin through the card core
   {
-    text(g_card + "/.rytm/sdtest.txt", "verdict=x\nahead_ms=250\nstreams=12\n");
+    text(g_card + "/.sidecar/sdtest.txt", "verdict=x\nahead_ms=250\nstreams=12\n");
     msamp::begin(true);
     for (int i = 0; i < 1000 && msamp::load_phase(); ++i) render(1);
     render(100);

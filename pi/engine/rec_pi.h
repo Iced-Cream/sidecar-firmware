@@ -37,7 +37,7 @@ void ScopeWant (bool bOn);
 void ScopePeaks (uint32_t *pPeaks);
 void CardSpace (unsigned *pFreeMB, unsigned *pTotalMB);
 // a storage bench done (stor_pi.cpp): that volume's 64 KB write speed for the warning before a take (recorder.h
-// rate_warning), kept in SD:/.rytm/recspeed.txt
+// rate_warning), kept in SD:/.sidecar/recspeed.txt
 void BenchDone (int nVol, unsigned nWriteKBps);
 }
 

@@ -554,10 +554,10 @@ void HoldDest (void)
 bool DestOk (const char *pRoot) { return !pRoot[0] || (s_pBounce && stor::mounted (stor::parse_vol (pRoot))); }
 
 // The destinations' write speeds for the warning before a take (recorder.h rate_warning): stor=bench's sequential
-// 64 KB writes (BenchDone), kept in SD:/.rytm/recspeed.txt; 0: not measured (the volume's default then)
+// 64 KB writes (BenchDone), kept in SD:/.sidecar/recspeed.txt; 0: not measured (the volume's default then)
 uint32_t s_Speed[stor::kVols];
 const char *s_VolNames[stor::kVols];
-const char kSpeedFile[] = "SD:/.rytm/recspeed.txt";
+const char kSpeedFile[] = "SD:/.sidecar/recspeed.txt";
 void SpeedNames (void) { for (int v = 0; v < stor::kVols; v++) s_VolNames[v] = stor::name (v); }
 void SpeedLoad (void)
 {
@@ -576,7 +576,7 @@ void SpeedSave (void)
 	char t[256];
 	int n = rec::format_speeds (t, sizeof t, s_VolNames, stor::kVols, s_Speed);
 	FIL f;
-	f_mkdir ("SD:/.rytm");
+	f_mkdir ("SD:/.sidecar");
 	if (f_open (&f, kSpeedFile, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
 	UINT w;
 	f_write (&f, t, (UINT) n, &w);

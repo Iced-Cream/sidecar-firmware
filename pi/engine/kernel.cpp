@@ -6,7 +6,7 @@
 #include "idlewait.h"
 #include "ob_follow.h"	// CObFollow::HaltResets (/status "usbhalt")
 #include "mbtrace.h"
-#include "blackbox_pi.h"	// the black box (2026-10-30): the whole log appended to /.rytm/blackbox.log
+#include "blackbox_pi.h"	// the black box (2026-10-30): the whole log appended to /.sidecar/blackbox.log
 #include "crumb.h"		// the crash breadcrumb (2026-10-29): kept over a watchdog reset, reported here at the next boot
 
 static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last read it (once a second); /status and the UI show this
@@ -242,7 +242,7 @@ static void CrumbPanic (void)
 }
 static u32 s_nPmRsts;			// PM_RSTS as this boot found it (crumb.h's report)
 
-// The previous boot's breadcrumb on the card, /.rytm/prevboot.txt: the report's lines, then its whole log tail. Once,
+// The previous boot's breadcrumb on the card, /.sidecar/prevboot.txt: the report's lines, then its whole log tail. Once,
 // 60 s into the boot (a card that hangs a write would not hang every boot at once: no reboot loop), in its own section
 // (41): skipped when the previous boot's core 0 died there. A planned reboot's (an update, the page's reboot) keeps the
 // file there: the last crash's.
@@ -252,12 +252,12 @@ static void CrumbToCard (CLogger *pLogger)
 	if (!crumb::had_prev ()) return;
 	if (crumb::PrevPlanned ())
 	{
-		pLogger->Write (From, LogNotice, "crumb: the previous boot ended with a planned reboot: /.rytm/prevboot.txt kept (the last crash's)");
+		pLogger->Write (From, LogNotice, "crumb: the previous boot ended with a planned reboot: /.sidecar/prevboot.txt kept (the last crash's)");
 		return;
 	}
 	if (crumb::PrevDiedIn (41))
 	{
-		pLogger->Write (From, LogWarning, "crumb: the previous boot hung writing /.rytm/prevboot.txt: not written again");
+		pLogger->Write (From, LogWarning, "crumb: the previous boot hung writing /.sidecar/prevboot.txt: not written again");
 		return;
 	}
 	crumb::Section Cs (41);
@@ -269,8 +269,8 @@ static void CrumbToCard (CLogger *pLogger)
 	}, s_nPmRsts, 0);
 	n += (unsigned) core_snprintf (s_Text + n, 128, "---- the previous boot's log, its last %u KB ----\n", crumb::kLog / 1024);
 	n += crumb::PrevLog (s_Text + n, sizeof s_Text - n);
-	boolean bOK = SdWriteWhole ("/.rytm/prevboot.txt", s_Text, n);
-	pLogger->Write (From, bOK ? LogNotice : LogWarning, "crumb: the previous boot's report and log (%u bytes) %s /.rytm/prevboot.txt",
+	boolean bOK = SdWriteWhole ("/.sidecar/prevboot.txt", s_Text, n);
+	pLogger->Write (From, bOK ? LogNotice : LogWarning, "crumb: the previous boot's report and log (%u bytes) %s /.sidecar/prevboot.txt",
 			n, bOK ? "in" : "NOT written to");
 }
 
@@ -493,7 +493,7 @@ boolean CKernel::Initialize (void)
 	// Or the USB-C network (usbnet_pi.h, docs/usb-network.md): net=auto (the default) takes it when a computer on
 	// USB-C starts its network driver in time, net=usb always, net=wifi|lan never; a Sidecar with no computer on USB-C
 	// comes up as before. On USB-C the Wi-Fi chip stays up for scans (Wi-Fi can be set up from the page) and joins nothing.
-	m_pWifi = new CWifi;				// reads /.rytm/wifi.txt (the card is mounted by bridge::begin)
+	m_pWifi = new CWifi;				// reads /.sidecar/wifi.txt (the card is mounted by bridge::begin)
 	CWifi::TMode WifiMode = m_pWifi->BootMode (&m_Options);
 	const usbnet::Options UsbOpt = usbnet::options (m_Options.GetAppOptionString ("net", 0),
 		m_Options.GetAppOptionString ("usbnet", 0), m_Options.GetAppOptionString ("usbip", 0),
@@ -1187,7 +1187,7 @@ void CKernel::SetSelfTest (boolean bOn, const char *pWhy)
 	m_Console.SetSelfTest (bOn);
 }
 
-static int s_nUiLook;			// UX review L1: the OLED look (0 studio, 1 stage), /.rytm/display.txt's uilook=
+static int s_nUiLook;			// UX review L1: the OLED look (0 studio, 1 stage), /.sidecar/display.txt's uilook=
 
 boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 {
@@ -1368,7 +1368,7 @@ boolean CKernel::Core0Command (const char *pCmd, void *pParam)
 	return pThis->m_pSidecar != 0 && pThis->m_pSidecar->Command (pCmd);
 }
 
-// res= in /.rytm/display.txt or cmdline.txt (cmdline wins): "800x480", "1024x600" or "1280x720" fixes the UI's size, "auto" (or
+// res= in /.sidecar/display.txt or cmdline.txt (cmdline wins): "800x480", "1024x600" or "1280x720" fixes the UI's size, "auto" (or
 // none) lets the display choose (the frame buffer's size if it is one of them, else 800x480 centred; docs/pi-display.md
 // "Screen sizes"). Read once, before the display's Initialize; a change takes a reboot. Kept when display.txt is written.
 void CKernel::LoadDisplayRes (boolean bCard)
@@ -1380,8 +1380,8 @@ void CKernel::LoadDisplayRes (boolean bCard)
 		UINT n = 0;
 		// 0.3.0: the first read of display.txt after a boot - a cut between the atomic write's renames left the
 		// settings in display.txt.prev, and a cut during it left a display.txt.tmp (core/fmt/fmt.h recover)
-		core::fmt::recover ("/.rytm/display.txt");
-		if (f_open (&f, "SD:/.rytm/display.txt", FA_READ) == FR_OK)
+		core::fmt::recover ("/.sidecar/display.txt");
+		if (f_open (&f, "SD:/.sidecar/display.txt", FA_READ) == FR_OK)
 		{
 			f_read (&f, Text, sizeof Text - 1, &n);
 			f_close (&f);
@@ -1400,13 +1400,13 @@ void CKernel::LoadDisplayRes (boolean bCard)
 	};
 	const char *ps = strstr (Text, "\nres=");
 	ps = strncmp (Text, "res=", 4) == 0 ? Text + 4 : ps ? ps + 5 : 0;
-	Parse (ps, "/.rytm/display.txt", m_nResFileW, m_nResFileH);
+	Parse (ps, "/.sidecar/display.txt", m_nResFileW, m_nResFileH);
 	m_nResW = m_nResFileW, m_nResH = m_nResFileH;
 	Parse (m_Options.GetAppOptionString ("res", 0), "cmdline.txt", m_nResW, m_nResH);
 	if (m_nResW) m_Logger.Write (From, LogNotice, "display: res=%ux%u", m_nResW, m_nResH);
 }
 
-// /.rytm/display.txt: "screensaver=MIN", "brightness=PCT", "touchtest=0|1" and "uistyle=oled|sidecar" lines
+// /.sidecar/display.txt: "screensaver=MIN", "brightness=PCT", "touchtest=0|1" and "uistyle=oled|sidecar" lines
 // (SIDECAR replaced the CLASSIC theme under its id 1, so an older card's "classic" is read as "sidecar" and
 // written back as "sidecar" at the next save); cmdline.txt's same keys win
 static core::fmt::KvKeep s_DisplayKeep;		// display.txt's lines a newer build wrote: written back unchanged
@@ -1419,8 +1419,8 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 	{
 		FIL f;
 		UINT n = 0;
-		core::fmt::recover ("/.rytm/display.txt");	// 0.3.0: as LoadDisplayRes (which display=0 skips), idempotent
-		if (f_open (&f, "SD:/.rytm/display.txt", FA_READ) == FR_OK)
+		core::fmt::recover ("/.sidecar/display.txt");	// 0.3.0: as LoadDisplayRes (which display=0 skips), idempotent
+		if (f_open (&f, "SD:/.sidecar/display.txt", FA_READ) == FR_OK)
 		{
 			f_read (&f, Text, sizeof Text - 1, &n);
 			f_close (&f);
@@ -1489,11 +1489,11 @@ void CKernel::LoadDisplaySettings (boolean bCard)
 		// dropped at the next write, with a warning now
 		bool bFound;
 		m_bUsbStored = usb_mode::from_text (Text, &m_UsbStored, &bFound);
-		if (bFound && !m_bUsbStored) m_Logger.Write (From, LogWarning, "usb: usbmode= in /.rytm/display.txt: class or overbridge");
+		if (bFound && !m_bUsbStored) m_Logger.Write (From, LogWarning, "usb: usbmode= in /.sidecar/display.txt: class or overbridge");
 	}
 	if (m_pDisplay != 0) m_pDisplay->SetScreensaver (m_nSaverMin);
 	m_Logger.Write (From, LogNotice, "display: screensaver %u min, brightness %u %%, UI style %s (%s)", m_nSaverMin, m_nBright,
-			m_nUiStyle ? "sidecar" : "oled", Text[0] ? "/.rytm/display.txt" : "defaults");
+			m_nUiStyle ? "sidecar" : "oled", Text[0] ? "/.sidecar/display.txt" : "defaults");
 }
 
 void CKernel::SaveDisplaySettings (void)
@@ -1537,8 +1537,8 @@ void CKernel::SaveDisplaySettings (void)
 		s.Append (r);
 	}
 	if (s_DisplayKeep.n) s.Append (s_DisplayKeep.text);	// (class S: a newer build's keys carried, fmt.h)
-	boolean bOK = SdWriteWhole ("/.rytm/display.txt", (const char *) s, s.GetLength ());
-	m_Logger.Write (From, bOK ? LogNotice : LogWarning, "/.rytm/display.txt %s", bOK ? "written" : "NOT written");
+	boolean bOK = SdWriteWhole ("/.sidecar/display.txt", (const char *) s, s.GetLength ());
+	m_Logger.Write (From, bOK ? LogNotice : LogWarning, "/.sidecar/display.txt %s", bOK ? "written" : "NOT written");
 }
 
 void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
@@ -2130,7 +2130,7 @@ void CKernel::ReadPower (boolean bLog)
 	}
 }
 
-// The CPU clock option (cpuclock.h; Settings > System: 1500 / 1200 / 1000 MHz). cpumhz= in /.rytm/display.txt, cmdline.txt's
+// The CPU clock option (cpuclock.h; Settings > System: 1500 / 1200 / 1000 MHz). cpumhz= in /.sidecar/display.txt, cmdline.txt's
 // wins; read before the boot bench. 1500 is the board's full clock (the Pi 4's 1500; a Pi 5 keeps its own maximum).
 void CKernel::LoadClock (boolean bCard)
 {
@@ -2141,7 +2141,7 @@ void CKernel::LoadClock (boolean bCard)
 		FIL f;
 		UINT n = 0;
 		Text[0] = 0;
-		if (f_open (&f, "SD:/.rytm/display.txt", FA_READ) == FR_OK)
+		if (f_open (&f, "SD:/.sidecar/display.txt", FA_READ) == FR_OK)
 		{
 			f_read (&f, Text, sizeof Text - 1, &n);
 			f_close (&f);
@@ -2289,7 +2289,7 @@ void CKernel::ThermalStep (unsigned nTempC)
 }
 
 #if RASPPI >= 5
-// The fan header (fan.h, fan_pi.h, docs/pi5.md "The fan"). fan= in /.rytm/display.txt (auto, on, off), cmdline.txt's
+// The fan header (fan.h, fan_pi.h, docs/pi5.md "The fan"). fan= in /.sidecar/display.txt (auto, on, off), cmdline.txt's
 // wins; the default AUTO. The pin starts here, before the bench, and is set from a first reading at once (the
 // firmware's boot check leaves it as it was: often off). A pin that fails to start is logged and the rest goes on.
 void CKernel::LoadFan (boolean bCard)
@@ -2300,7 +2300,7 @@ void CKernel::LoadFan (boolean bCard)
 		FIL f;
 		UINT n = 0;
 		Text[0] = 0;
-		if (f_open (&f, "SD:/.rytm/display.txt", FA_READ) == FR_OK)
+		if (f_open (&f, "SD:/.sidecar/display.txt", FA_READ) == FR_OK)
 		{
 			f_read (&f, Text, sizeof Text - 1, &n);
 			f_close (&f);
@@ -2311,7 +2311,7 @@ void CKernel::LoadFan (boolean bCard)
 		if (p != 0)
 		{
 			if (fan::parse (p + 4, &m_FanStored)) m_FanMode = m_FanStored, m_nFanFrom = 1;
-			else m_Logger.Write (From, LogWarning, "fan: fan= in /.rytm/display.txt: auto, on or off");
+			else m_Logger.Write (From, LogWarning, "fan: fan= in /.sidecar/display.txt: auto, on or off");
 		}
 	}
 	const char *pCmd = m_Options.GetAppOptionString ("fan", 0);
@@ -2326,7 +2326,7 @@ void CKernel::LoadFan (boolean bCard)
 	FanStep (nTemp, "boot");
 	fan_pi::SetDuty (fan::duty (m_Fan.level));	// level 0 too: the pin's boot state replaced either way
 	m_Logger.Write (From, m_bFanPin ? LogNotice : LogError, "fan: %s (%s), %s, level %d (duty %u/255) at SoC %u C",
-			fan::name (m_FanMode), m_nFanFrom == 2 ? "cmdline" : m_nFanFrom == 1 ? "/.rytm/display.txt" : "default",
+			fan::name (m_FanMode), m_nFanFrom == 2 ? "cmdline" : m_nFanFrom == 1 ? "/.sidecar/display.txt" : "default",
 			m_bFanPin ? "pin GPIO45 PWM1 running" : "the PWM did NOT start", m_Fan.level, fan::kPwm[m_Fan.level], nTemp);
 }
 
@@ -2587,7 +2587,7 @@ void CKernel::Run (void)
 #ifdef SIDECAR_PI5_TESTMODE
 		if (m_nTestSecs == 0 || m_bTestCard)
 #endif
-		blackbox_pi::Poll ();						// the log to /.rytm/blackbox.log (its own crumb section, 42)
+		blackbox_pi::Poll ();						// the log to /.sidecar/blackbox.log (its own crumb section, 42)
 		{ mbtrace::Scope Mb (20, 200); bridge::samp_poll (); }			// SAMPLING / the AUTO-SAMPLER: a take's step (core/samp)
 		if (m_pDisplay != 0)
 		{

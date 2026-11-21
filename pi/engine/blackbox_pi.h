@@ -1,5 +1,5 @@
 // pi/engine/blackbox_pi.h - the black box's card side (blackbox.h): core 0's loop appends the log to
-// /.rytm/blackbox.log (blackbox.1.log the file before). /status "blackbox" has its counts; GET /blackbox reads them
+// /.sidecar/blackbox.log (blackbox.1.log the file before). /status "blackbox" has its counts; GET /blackbox reads them
 // (?old=1 the one before, ?off=N from N, else the last 64 KB; the first line "SIZE FROM").
 #pragma once
 
