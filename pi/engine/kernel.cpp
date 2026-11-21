@@ -62,6 +62,8 @@ static int s_nRytmPatIndex = -1;
 #include "usb_box.h"	// which USB MIDI device is the host link
 #include "hello_gate.h"
 #include "link1.h"
+#include "mirror_assign.h"
+#include "teensy_target.h"	// CTeensyTarget::TakeReboot (usbreboot=1 through the relay)
 #include "box_list.h"
 #include "device/a4.h"
 #include "device/admit.h"
@@ -236,7 +238,11 @@ static void *BootAlloc (size_t nBytes, const char *pWhat)
 	return p;
 }
 
-static void CrumbPanic (void) { crumb::Why ("a panic (the log's last line says which)"); }
+static void CrumbPanic (void)
+{
+	crumb::Why ("a panic (the log's last line says which)");
+	blackbox_pi::PanicFlush ();		// the panic's line onto the card (the RAM is not kept on the Pi 4's rpiboot path)
+}
 static u32 s_nPmRsts;			// PM_RSTS as this boot found it (crumb.h's report)
 
 // The previous boot's breadcrumb on the card, /.sidecar/prevboot.txt: the report's lines, then its whole log tail. Once,
@@ -403,6 +409,9 @@ boolean CKernel::Initialize (void)
 		else m_Logger.Write (From, LogWarning, "voices=%s not understood: voices=rytm:N,a4:N,dt:N (0..8)", pVoices);
 	}
 	CEngineCores::SetIdleWfe (m_Options.GetAppOptionDecimal ("idlewfe", 1) != 0);	// docs/pi-engine.md "Idle sleep"
+	if (m_Options.GetAppOptionString ("blocklimit", 0) != 0)	// the QEMU gates only: a unit's cmdline never has it
+		m_Logger.Write (From, LogWarning, "blocklimit: a render core's block limit is %u ms (not 20): emulator gates only",
+				CEngineCores::SetBlockLimitMs (m_Options.GetAppOptionDecimal ("blocklimit", 20)));
 	ApplyBudget (m_nClockMHz, TRUE);			// the voice guard's budget, for the clock the engine runs at
 	m_Console.Initialize ();
 	BootStep (4);
@@ -718,6 +727,14 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 			  k->m_pSidecar != 0 && k->m_pSidecar->MirrorBoxThere () ? "true" : "false", RASPPI >= 5 ? 5 : 4);
 		pOut->Append (s);
 	}
+	// usb=mirror with two boxes (mirror_assign.h): prefer (cmdline mirror=), first (mirrorfirst=: the route filled first),
+	// the box USB-C shows and the one the Teensy relay shows ("none": none chosen yet / not there), and whether a relay is up
+	s.Format (",\"mirror\":{\"prefer\":\"%s\",\"first\":\"%s\",\"usbc\":\"%s\",\"relay\":\"%s\",\"relayUp\":%s}",
+		  mirror_assign::prefer_name (CObUsb::MirrorPrefer ()), CObUsb::MirrorRelayFirst () ? "relay" : "usbc",
+		  CObUsb::UsbcSlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::UsbcSlot ()) != 0 ? CObUsb::SlotName (CObUsb::UsbcSlot ()) : "none",
+		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? CObUsb::SlotName (CObUsb::RelaySlot ()) : "none",
+		  CTeensyTarget::Relaying () ? "true" : "false");
+	pOut->Append (s);
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
@@ -1638,9 +1655,11 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
 	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	// (mirror=a4: the computer talks to the A4, through link 1's tap below; the Rytm has no computer then)
+	// (the A4 on USB-C: the computer talks to the A4, through link 1's tap below; the Rytm's goes to the relay, if it shows it)
 	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
 		pSidecar->FromRytmMIDI (pPacket - 1);
+	// the Rytm on the Teensy relay (CObUsb::RelaySlot 0): its MIDI to the relay's computer, as to USB-C's otherwise
+	if (CTeensyTarget::ShowsRytm ()) CTeensyTarget::RytmTap (pPacket - 1);	// (its own usbmidi=os: gate inside)
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
 	if (nLength >= 3 && (pPacket[0] & 0xF0) == 0x90 && pPacket[2] != 0) CObUsb::CaptureMarkMIDI ();
@@ -1654,7 +1673,7 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 static CDevice *volatile s_pHelloBox;
 static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box_list.h)
 static HelloGate s_HelloGate;
-// usb=mirror with mirror=a4 (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
+// usb=mirror with the A4 on USB-C (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
 // Rytm's is otherwise (xHCI IRQ, through link1's tap); the computer's MIDI goes to it from core 0's loop (link1::FromComputer)
 static void GadgetTap (const uint8_t *pEventPacket)
 {
@@ -1725,7 +1744,9 @@ static void AsampMidiSend (CSidecarGadget *pSidecar)
 		w &= ~0xF0u;				// cable 0
 		if (nPort == 1)
 		{
-			if (pSidecar != 0) pSidecar->MIDIToComputer (w);
+			// the Rytm's computer: the relay's when it shows the Rytm and USB-C does not, else USB-C's
+			if (CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm ()) CTeensyTarget::MidiToComputer (w);
+			else if (pSidecar != 0) pSidecar->MIDIToComputer (w);
 		}
 		else if (nPort == 2 || nPort == 3)
 			for (unsigned i = 0; i < MaxKeyboards; i++)
@@ -2617,10 +2638,12 @@ void CKernel::Run (void)
 		{ mbtrace::Scope Mb (13, 200); UpdateMIDI (); }
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
-		if (CObUsb::GadgetSlot () == 1)		// mirror=a4: the computer's MIDI to the A4, not the Rytm (GadgetTap above)
+		CObUsb::PollAssign ();			// usb=mirror with two boxes: who goes where, USB-C first (mirror_assign.h)
+		// the A4's USB MIDI (link1) to the computer of whichever port shows it: USB-C (GadgetTap above) or the relay
+		link1::SetTap (CObUsb::GadgetSlot () == 1 ? GadgetTap
+			       : CObUsb::RelaySlot () == 1 && CTeensyTarget::Relaying () ? CTeensyTarget::MidiTap : 0);
+		if (CObUsb::GadgetSlot () == 1)		// the A4 on USB-C: the computer's MIDI to the A4, not the Rytm
 		{
-			static boolean s_bTap;
-			if (!s_bTap) s_bTap = TRUE, link1::SetTap (GadgetTap);
 			u32 w;
 			if (m_pSidecar != 0 && m_pSidecar->Mirror ())
 				while (link1::FromComputerRoom () != 0 && m_pSidecar->ForRytm (&w)) link1::FromComputer ((const u8 *) &w);
@@ -2984,6 +3007,7 @@ void CKernel::Run (void)
 		if (m_pSidecar != 0) m_pSidecar->SetLinkTcp (m_pTransport == &m_Tcp);	// usbmidi=os:emu follows the host
 		if (s_bRebootRequested) StopAndReboot ("the flasher's magic");
 		if (m_pSidecar != 0 && m_pSidecar->TakeReboot ()) StopAndReboot ("asked on the USB-C MIDI port (usbreboot=1)");
+		if (CTeensyTarget::TakeReboot ()) StopAndReboot ("asked on the Teensy relay's MIDI port (usbreboot=1)");
 		if (g_Guard.FatalWhy () != 0) StopAndReboot (g_Guard.FatalWhy ());
 		if (m_pWifi->TakeReboot ()) StopAndReboot ("the Wi-Fi settings (a join, or a failed one's revert)");
 		if (usbnet_pi::TakeReboot ()) StopAndReboot ("the page's reboot onto USB-C (a computer started its USB-C network late)");

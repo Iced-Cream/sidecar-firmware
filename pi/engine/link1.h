@@ -48,9 +48,14 @@ void ToBox (const uint8_t *pData, int nLength);	// core::device::set_out(1, ...)
 typedef void TTap (const uint8_t *pEventPacket);
 void SetTap (TTap *pTap);			// each packet the box sends, also to pTap (0: none); core 0, task or loop
 void Tap (const uint8_t *pEventPacket);		// xHCI IRQ: the box's packet handler (kernel.cpp), before anything else
-const unsigned kFromComputerPackets = 1024;
+const unsigned kFromComputerPackets = 2048;	// as the Rytm's (sidecar_gadget.h MIDIQueue, teensy_target.h RytmQueue)
 bool FromComputer (const uint8_t *pEventPacket);	// xHCI IRQ: one packet for the box; false: the queue is full (dropped)
 unsigned FromComputerRoom (void);		// packets that fit now
+// usbmidi=os: on the relay (core 0's loop): the computer's packets lost on the way (a failed send, no box), whether any
+// still wait or a SysEx of its is part way out, and dropping all of what waits (the count)
+unsigned ComputerLost (void);
+bool ComputerBusy (void);
+unsigned CutFromComputer (void);
 
 }  // namespace link1
 
