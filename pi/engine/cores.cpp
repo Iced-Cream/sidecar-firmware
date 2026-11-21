@@ -21,6 +21,7 @@
 #include "rec_pi.h"
 #include "shared.h"
 #include "side_out.h"
+#include "device/admit.h"
 #include "user/lists.h"
 #include "user/um.h"
 #if SIDECAR_SEQED
@@ -272,7 +273,7 @@ void CEngineCores::LinkFifoTarget (unsigned n)
 
 void CEngineCores::FixFifoTarget (void) { s_bTargetFixed = TRUE; }
 
-void CEngineCores::SetSplit (unsigned n) { s_nSplit = n < 1 ? 1 : n > 7 ? 7 : n; }
+void CEngineCores::SetSplit (unsigned n) { s_nSplit = n < 1 ? 1 : n > 7 ? 7 : n; core::admit::set_split (s_nSplit); }
 
 // wt gr: WAVETABLE (3 unison oscillators, SYNC) and GRANULAR (the built-in PAD, ~9 grains at once): notes.cpp's defaults;
 // livein: LIVE IN on a synthetic AUDIO IN (bridge::bench feeds it), the gate on; chop: CHOP's 8 slice players (VOICES' most)
@@ -383,7 +384,8 @@ void CEngineCores::Worker (unsigned nCore)
 			if (k == v0 && !(nPass >> sl & 1)) { v += v1 - v0 - 1; continue; }
 			const void *pMach = bridge::machine_name ((int) v);	// the guard's machine key: a static name,
 			const u32 nMGen = bridge::machine_gen ((int) v);	// and a user plugin's slot and load
-			if (g_Guard.Muted (v) && !g_Guard.Fresh (v, pMach, nMGen))
+			if (!core::device::voice_admitted ((int) v)	// CPU admission (core/device/admit.h): not its box's
+			    || (g_Guard.Muted (v) && !g_Guard.Fresh (v, pMach, nMGen)))
 			{
 				for (unsigned s = 0; s < bridge::kBlock; s++) s_Block[s][v] = s_BlockR[s][v] = 0;
 				continue;

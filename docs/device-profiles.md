@@ -301,6 +301,34 @@ handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
 - **Resets:** `link_reset(why, slot)` silences that slot's eight only, with its own send FX; a box's hello leaves the
   Rytm's voices playing.
 
+### Voices and CPU admission
+
+Decided 2026-11-21 (`core/device/admit.h`). Each box asks for its type's voices (`Profile::voices`: the Rytm 8, the A4 4,
+the Digitakt 8). `voices=` in cmdline.txt lowers a type's count (`voices=rytm:6,a4:2,dt:4`, each 0..8, never above its
+profile's: a box's reports past its profile's voices are dropped anyway).
+
+When a box attaches (`device::select`, both by hello and by USB), its voices are admitted against the Pi's boot bench,
+scaled to the CPU clock setting, so that each render core stays under 80 % in the worst case:
+
+- **A voice** costs the worst machine of the bench (any voice may play any machine), its INSERT chain at the worst TYPE
+  pair plus the POST EQ (the `bench ins` rows / 8), and an AMP instance for each voice on that core up to the AMP cap (6).
+- **A box's chains** on render core 2: the master chain, the worst send TYPE insert set, SAT on every bus and master
+  slot, its master AMP pair and its two send FX (half the `CLOUD x4` row: inferred, no row of their own). Overlapping rows
+  are added: an upper bound.
+- **Placement:** a box's voices are its 0..n-1; 0..split-1 render on core 1 and split..7 on core 2 (`split=`, 4).
+
+The first box keeps its voices. The second gets the most that keep every core its voices land on under 80 % (a core
+already over by the chains alone takes none of them), never more than it asked for. Its reports past them are dropped
+(`host_sysex_slot`), the render cores skip those voices (`device::voice_admitted`), the box is told by a popup on its
+screen (`SIDECAR 4/8 VOICES` / `CPU FULL`, for 30 s while its screen can take one), and `/status` `slots[]` has `voices`,
+`asked` and `short`, with `admit` (bench, MHz, the limit and each render core's worst case now, in 1/100 % of a core).
+When its partner leaves, a box gets back what it asked for. A clock change after an attach does not take voices away; it
+applies to the next attach (the boot log's `admit at N MHz, the second box's voices:` line lists each pair). No bench
+(`bench=0`, the host, the Teensy): nothing is refused.
+
+Not settled yet: the costs are an upper bound from the boot bench rows; the two-box worst-case measurement on a unit (full
+voices, the worst machine, expensive user FX on both boxes) checks them before the rule ships.
+
 ### Audio
 
 Each box's audio stays its own: each slot's voices go back to its own box's stream (`CObUsb::Slot` is the core slot
@@ -339,7 +367,8 @@ What the second box does not have yet, or has differently:
 - **Two boxes of one type** (two A4s, two Digitakts): both are the one slot of that type (one folder), so the second's hello
   is that slot's. Two boxes of a type served at once
   would need a third slot and folders keyed by something that stays with the box, such as its USB serial number.
-- **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet.
+- **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet (CPU admission's upper
+  bound stands in for it until then: "Voices and CPU admission").
 
 ## Remote UI on a box
 

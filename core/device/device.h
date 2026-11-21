@@ -145,6 +145,13 @@ struct Link {
   bool saving, posted;
   uint32_t post_id;                       // its write to /.rytm/device
   uint8_t index;                          // its place in g_links
+  // CPU admission (admit.h): the voices its box asked for (its type's count, or voices=) and the ones admitted, 0 while free.
+  // Its box voices 0..voices-1 render and play; a report for another is dropped. order: its attach (the first box keeps its
+  // voices). tell: its box is to be told its count (a popup on its screen) until tell_until.
+  uint8_t want, voices;
+  uint32_t order;
+  bool tell;
+  uint32_t tell_until;
 };
 constexpr int kLinks = 2;
 extern Link g_links[kLinks];
@@ -224,6 +231,21 @@ void rytm_on_usb(bool on);
 int usb_attach(const Profile* p);
 void usb_detach(int s);
 constexpr uint32_t kSettleMs = 10000;
+// CPU admission (admit.h; decided 2026-11-21). voices_asked: what box h (null or rytm(): the Rytm) asks for, its type's
+// voices= or its profile's count. admitted: slot s's box voices that render and play now (0 free); any core, one byte load.
+// readmit: every held slot again in attach order (the kernel's boot, once the bench and voices= are in: before a box can attach).
+int voices_asked(const Profile* h);
+inline int admitted(int s) {
+  return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].voices, __ATOMIC_RELAXED) : 0;
+}
+// engine voice vi plays: its box voice is under its slot's count (one slot: link 0's), or its slot is free (nothing of a box's
+// plays there: the self-test's drone, the tests)
+inline bool voice_admitted(int vi) {
+  const int s = kVoiceSlots > 1 ? slot_of_voice(vi) : 0;
+  return !held(s) || box_voice(vi) < admitted(s);
+}
+void readmit();
+constexpr uint32_t kTellMs = 30000;   // a box is told its count while its screen may take a popup, this long after its attach
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;

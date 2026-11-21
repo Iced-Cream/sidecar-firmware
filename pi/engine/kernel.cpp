@@ -64,6 +64,8 @@ static int s_nRytmPatIndex = -1;
 #include "link1.h"
 #include "box_list.h"
 #include "device/a4.h"
+#include "device/admit.h"
+#include "device/digitakt.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"
@@ -395,6 +397,11 @@ boolean CKernel::Initialize (void)
 				 strcmp (m_Options.GetAppOptionString ("notes", "off"), "on") == 0
 				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
 	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
+	if (const char *pVoices = m_Options.GetAppOptionString ("voices", 0))	// voices=a4:2,dt:6: per box type (core/device/admit.h)
+	{
+		if (core::admit::parse_override (pVoices)) core::device::readmit ();
+		else m_Logger.Write (From, LogWarning, "voices=%s not understood: voices=rytm:N,a4:N,dt:N (0..8)", pVoices);
+	}
 	CEngineCores::SetIdleWfe (m_Options.GetAppOptionDecimal ("idlewfe", 1) != 0);	// docs/pi-engine.md "Idle sleep"
 	ApplyBudget (m_nClockMHz, TRUE);			// the voice guard's budget, for the clock the engine runs at
 	m_Console.Initialize ();
@@ -660,12 +667,24 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		int nT = -1;
 		for (int t = 0; t < core::device::kLinks; t++)
 			if (core::device::route_of (t) == k) nT = t;
-		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"transport\":%d,\"base\":%s}", k ? "," : "", k,
-			  pHeld ? core::device::short_name (*pHeld) : "", L.presumed ? "true" : "false", L.parting ? "true" : "false", nT,
-			  core::device::g_base == &L ? "true" : "false");
+		// voices: admitted (core/device/admit.h), asked: its type's count; short: what the CPU admission held back
+		const int nV = core::device::admitted (k);
+		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"transport\":%d,\"base\":%s,\"voices\":%d,\"asked\":%d,\"short\":%d}",
+			  k ? "," : "", k, pHeld ? core::device::short_name (*pHeld) : "", L.presumed ? "true" : "false",
+			  L.parting ? "true" : "false", nT, core::device::g_base == &L ? "true" : "false", pHeld ? nV : 0,
+			  pHeld ? (int) L.want : 0, pHeld && L.want > nV ? (int) L.want - nV : 0);
 		pOut->Append (s);
 	}
 	pOut->Append ("]");
+	{	// CPU admission (core/device/admit.h): the render cores' worst case for the voices admitted now, 1/100 % of a core
+		core::admit::Load AL = {};
+		for (int k = 0; k < 2 && k < core::device::kLinks; k++)
+			AL.held[k] = core::device::held (k), AL.voices[k] = AL.held[k] ? (u8) core::device::admitted (k) : 0;
+		s.Format (",\"admit\":{\"bench\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u}",
+			  core::admit::on () ? "true" : "false", core::admit::clock (), core::admit::kLimitBp,
+			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL));
+		pOut->Append (s);
+	}
 	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
 	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
 		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
@@ -1068,6 +1087,12 @@ void CKernel::LogBench (void)
 		m_Timer.MsDelay (2);
 	}
 	m_nBenchMHz = nMHz;
+	// CPU admission's costs (core/device/admit.h): gathered from the rows below, set at the end
+	core::admit::Costs Adm = {};
+	Adm.mhz = nMHz;
+	for (unsigned m = 0; m < CEngineCores::BenchMachines; m++)
+		if (m_nBenchBp[m] > Adm.voice_bp) Adm.voice_bp = m_nBenchBp[m];
+	unsigned nInsPairBp = 0, nInsPostBp = 0, nSfxWorstBp = 0, nSfxCloudBp = 0, nBusBp = 0, nMfxBp = 0;
 	// fx-ins (core/fx/insert.h): 8 voices' INSERT chains, two slots each, on core 0 (docs/INSERT-FX.md "CPU")
 	// FILTER+DELAY COMP+EQ DRIVE+TREMOLO CRUSH+RINGMOD SAT+SAT, then OFF+OFF = ins1112's POST EQ on its own (bridge.cpp turns
 	// the post EQ on only for that row; the four pairs are measured with it flat, i.e. skipped, so their numbers
@@ -1079,6 +1104,8 @@ void CKernel::LogBench (void)
 		u32 nHash = 0;
 		u64 nTicks = bridge::ins_bench (Pairs[p][0], Pairs[p][1], &nWorst, &nHash);
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		if (Pairs[p][0] == 0 && Pairs[p][1] == 0) nInsPostBp = nBp;	// (the POST EQ alone)
+		else if (nBp > nInsPairBp) nInsPairBp = nBp;
 		m_Logger.Write (From, LogNotice, "bench ins %s+%s: 8 voices x 2 slots %u.%02u %% of a core, worst block %u.%u %%, hash %08X",
 				bridge::ins_bench_name (Pairs[p][0]), bridge::ins_bench_name (Pairs[p][1]), nBp / 100, nBp % 100,
 				nBlk / 10, nBlk % 10, nHash);
@@ -1088,6 +1115,7 @@ void CKernel::LogBench (void)
 		u32 nWorst = 0;
 		u64 nTicks = bridge::ins_bus_bench (&nWorst);
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		nBusBp = nBp;
 		m_Logger.Write (From, LogNotice, "bench ins SAT buses+master: 10 stereo slots %u.%02u %% of a core, worst block %u.%u %%",
 				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
@@ -1107,6 +1135,7 @@ void CKernel::LogBench (void)
 		u32 nWorst = 0;
 		u64 nTicks = bridge::amp_bench (&nWorst);
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		Adm.amp_bp = nBp;
 		m_Logger.Write (From, LogNotice, "bench amp A2-LITE: 1 instance %u.%02u %% of a core, worst block %u.%u %% -> cap 6 = %u.%02u %%",
 				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10, nBp * 6 / 100, nBp * 6 % 100);	// the cap: core/fx/amp.h kMaxRunning
 		m_Timer.MsDelay (2);
@@ -1117,6 +1146,7 @@ void CKernel::LogBench (void)
 		u32 nWorst = s_ChainBench[0].nWorst;
 		u64 nTicks = s_ChainBench[0].nTicks;
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		nMfxBp = nBp;
 		m_Logger.Write (From, LogNotice, "bench mfx COMP EQ SPACE CLOUD POSTEQ: %u.%02u %% of a core, worst block %u.%u %%",
 				nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
@@ -1128,10 +1158,48 @@ void CKernel::LogBench (void)
 		u32 nWorst = s_ChainBench[nSet + 1].nWorst;
 		u64 nTicks = s_ChainBench[nSet + 1].nTicks;
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
+		if (nBp > nSfxWorstBp) nSfxWorstBp = nBp;
+		if (strcmp (pName, "CLOUD x4") == 0) nSfxCloudBp = nBp;
 		m_Logger.Write (From, LogNotice, "bench sfxins %s: %u.%02u %% of a core, worst block %u.%u %%",
 				pName, nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
 	}
+	// CPU admission (core/device/admit.h): a voice's INSERT chain is the worst pair's eighth and the POST EQ's; a box's chains
+	// on core 2 the master chain, the worst send TYPE set, SAT on every bus and master slot, its master AMP pair and its two
+	// send FX (half of CLOUD x4: the same SendFx code at its worst TYPE; inferred, no row of their own). Rows that overlap are
+	// added: an upper bound, checked by the two-box worst-case measurement before the rule ships.
+	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
+	Adm.fx_bp = nMfxBp + nSfxWorstBp + nBusBp + 2 * Adm.amp_bp + nSfxCloudBp / 2;
+	core::admit::set_costs (Adm);
+	core::admit::set_clock (m_nClockMHz);
+	core::device::readmit ();
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains on core 2 %u.%02u %%; limit 80 %% a render core",
+			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
+			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100);
+	LogAdmit ();
+}
+
+// What two boxes would get now, each pair of the known boxes in either order (admit.h): one line, at boot and when the clock
+// setting changes
+void CKernel::LogAdmit (void)
+{
+	if (!core::admit::on ()) return;
+	static const char *const Types[3] = {"Rytm", "A4", "Digitakt"};
+	CString Line;
+	for (int a = 0; a < 3; a++)
+		for (int b = 0; b < 3; b++)
+		{
+			if (a == b) continue;
+			const core::device::Profile *pA = a == 0 ? &core::device::rytm () : core::device::by_id (a == 1 ? core::device::kIdA4 : core::device::kIdDigitakt);
+			const core::device::Profile *pB = b == 0 ? &core::device::rytm () : core::device::by_id (b == 1 ? core::device::kIdA4 : core::device::kIdDigitakt);
+			if (!pA || !pB) continue;
+			core::admit::Load L = {{(u8) core::device::voices_asked (pA), 0}, {true, false}};
+			const int nB = core::admit::fit (1, core::device::voices_asked (pB), L);
+			CString One;
+			One.Format (" %s+%s %d/%d", Types[a], Types[b], nB, core::device::voices_asked (pB));
+			Line.Append (One);
+		}
+	m_Logger.Write (From, LogNotice, "admit at %u MHz, the second box's voices:%s", core::admit::clock (), (const char *) Line);
 }
 
 // The master chain's and the send TYPE inserts' benches (core/fx/master.h bench, sfx_bench), run on core 0 before cores
@@ -2229,6 +2297,8 @@ void CKernel::SetClock (unsigned nSettingMHz)
 	if (m_nClockMHz == 0) m_nClockMHz = nHz / 1000000;
 	ApplyBudget (m_nClockMHz, TRUE);
 	LogClockRescale ();
+	core::admit::set_clock (m_nClockMHz);		// CPU admission: the next box attached is admitted at this clock (admit.h)
+	LogAdmit ();
 }
 
 // The guard's budget (guard.h): voicebudget= (50 % of a 12-frame block by default, the share measured at 1500 MHz) scaled

@@ -76,6 +76,7 @@ private:
 	void MeasureClock (void);				// every 10 s: the clock the firmware measures, against the one it reports
 	unsigned AskedMHz (void) const;				// the clock the setting asks for on this board (cpuclock::asked_mhz)
 	void ApplyBudget (unsigned nMHz, boolean bLog);		// the voice guard's budget for that clock (voicebudget= scaled by it)
+	void LogAdmit (void);					// CPU admission (core/device/admit.h): the second box's voices for each pair
 	void LogClockRescale (void);				// the boot bench's voices a core, rescaled to the clock now (not re-measured)
 	void ThermalStep (unsigned nTempC);			// the temperature warning (thermal.h): once a second, from LogStats
 	void UpdateNoticeStep (void);				// the web update's notice on the Rytm's screen (a popup each second)

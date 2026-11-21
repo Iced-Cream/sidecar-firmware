@@ -1,6 +1,7 @@
 // core/device/device.cpp - see device.h. Per message, never per sample: cold.
 #include "device/device.h"
 #include "device/a4.h"
+#include "device/admit.h"
 #include "device/digitakt.h"
 #include "device/strip.h"
 
@@ -14,6 +15,7 @@
 #endif
 #include "keys.h"
 #include "platform.h"
+#include "ui/remote.h"
 
 namespace core {
 namespace device {
@@ -33,6 +35,7 @@ static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static void select(Link& l, const Profile* h);
 static void usb_take();
+static void tell_tick();
 static constexpr int kMax = 8;
 static const Profile* s_list[kMax] = {&kRytm, &kDigitakt, &kA4};
 static int s_n = 3;
@@ -46,6 +49,7 @@ static struct LinkIndex {
   LinkIndex() {
     for (int k = 0; k < kLinks; ++k) g_links[k].index = (uint8_t)k;
     g_links[0].held = g_links[0].was = &kRytm, g_links[0].presumed = true;   // boot: slot 0 the Rytm's until a box says otherwise
+    g_links[0].want = g_links[0].voices = kRytm.voices, g_links[0].order = 1;   // (readmit: voices= once the cmdline is read)
   }
 } s_link_index;
 
@@ -166,11 +170,86 @@ CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
 }
 CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is saved, a slot whose box left is free for any box)
   usb_take();   // the USB devices that came or went (core 0's)
+  tell_tick();
   if (settled)
     for (Link& l : g_links)
       if (l.parting) l.parting = false, log(CORE_STR("device: slot %d saved, free"), l.index);
   rebase();
   return false;
+}
+
+// CPU admission (admit.h). s_order: attach order, so the first box (the lower order) keeps its voices.
+static uint32_t s_order = 1;
+int voices_asked(const Profile* h) {
+  if (!h) h = &kRytm;
+  const int o = admit::override_for(h == &kRytm ? "rytm" : short_name(*h));
+  const int n = o >= 0 && o < h->voices ? o : h->voices;   // (voices= lowers a count: a box's reports past its profile's are dropped)
+  return n > kBoxVoices ? kBoxVoices : n;
+}
+static admit::Load load_now() {
+  admit::Load ld = {};
+  for (int k = 0; k < kLinks && k < 2; ++k) ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr;
+  return ld;
+}
+static CORE_COLD void set_voices(Link& l, int n, bool tell) {
+  __atomic_store_n(&l.voices, (uint8_t)n, __ATOMIC_RELAXED);
+  l.tell = tell, l.tell_until = now_ms() + kTellMs;
+}
+// Slot l's box has just attached: its voices, beside the other slot's box if one is held (the first keeps its own).
+static CORE_COLD void admit_slot(Link& l) {
+  l.want = (uint8_t)voices_asked(l.held);
+  l.order = ++s_order;
+  bool other = false;
+  for (const Link& o : g_links)
+    if (&o != &l && o.held) other = true;
+  admit::Load ld = load_now();
+  ld.voices[l.index] = 0;
+  const int n = other || kVoiceSlots < 2 ? admit::fit(l.index, l.want, ld) : l.want;
+  set_voices(l, kVoiceSlots < 2 || !other ? l.want : n, n < l.want);
+  if (l.voices < l.want)
+    log(CORE_STR("device: slot %d: %d of %d voices admitted (CPU: each render core under 80 %%)"), l.index, l.voices, l.want);
+  ld = load_now();
+  if (admit::on() && (admit::core_bp(1, ld) > admit::kLimitBp || admit::core_bp(2, ld) > admit::kLimitBp))
+    log(CORE_STR("device: render cores at worst %u / %u bp (limit %u)"), admit::core_bp(1, ld), admit::core_bp(2, ld), admit::kLimitBp);
+}
+// Slot l's box left: the other box, now alone, gets back what it asked for.
+static CORE_COLD void admit_left(Link& l) {
+  set_voices(l, 0, false);
+  l.want = 0;
+  for (Link& o : g_links)
+    if (&o != &l && o.held && o.voices < o.want) {
+      log(CORE_STR("device: slot %d: alone, %d voices again"), o.index, o.want);
+      set_voices(o, o.want, true);
+    }
+}
+CORE_COLD void readmit() {
+  Link* first = nullptr;
+  for (Link& l : g_links)
+    if (l.held && (!first || l.order < first->order)) first = &l;
+  if (!first) return;
+  first->want = (uint8_t)voices_asked(first->held);
+  set_voices(*first, first->want, false);
+  for (Link& l : g_links) {
+    if (&l == first || !l.held) continue;
+    l.want = (uint8_t)voices_asked(l.held);
+    admit::Load ld = load_now();
+    ld.voices[l.index] = 0;
+    const int n = admit::fit(l.index, l.want, ld);
+    set_voices(l, n, n < l.want);
+  }
+}
+// Its box told its count while it may take a popup (its screen: the remote UI's own rule), in its Scope; a box with no screen
+// for it reads /status.
+static CORE_COLD void tell_tick() {
+  for (Link& l : g_links) {
+    if (!l.tell) continue;
+    if (!l.held || (int32_t)(now_ms() - l.tell_until) > 0) { l.tell = false; continue; }
+    char a[24], b[24];
+    sniprintf(a, sizeof a, "SIDECAR %d/%d VOICES", l.voices, l.want);
+    sniprintf(b, sizeof b, l.voices < l.want ? "CPU FULL" : "ALL VOICES");
+    Scope in(l);
+    if (ui::remote_popup(a, b, 3000)) l.tell = false;
+  }
 }
 
 static uint32_t s_held[kBoxVoices][4];   // box_note's
@@ -196,6 +275,8 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   if (h || kVoiceSlots > 1) out::control_of(slot_of_voice(voice_base(l))).trk10 = p ? p->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, h ? h->name : "free", l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
+  if (h) admit_slot(l);
+  else admit_left(l);
 }
 
 // Which slot each transport's messages are (in), -1 none: transport 0 is the platform's host link (the USB-C box's MIDI, or the
