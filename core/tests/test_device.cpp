@@ -194,8 +194,9 @@ int main() {
   device::reset();
   CHECK(!device::foreign() && hooks.to_rytm == ::out);
 
-  // a box with a state folder of its own: its folder from its hello on, in slot 1; nothing restarts, no choice is written;
-  // the Rytm's folder not touched, the Pi's files stay
+  // a box with a state folder of its own: its folder from its hello on, in slot 0 (attach order: the presumed Rytm never
+  // spoke, so the first box is the first attached); nothing restarts, no choice is written; the Rytm's folder not touched,
+  // the Pi's files stay
   static const device::Profile kBox2 = [] { device::Profile p = kBox; p.id = kBoxId + 1; p.state_dir = "/.boxtest"; return p; }();
   CHECK(device::add(&kBox2));
   mkdir((std::string(tmpl) + "/.rytm").c_str(), 0755);
@@ -203,7 +204,8 @@ int main() {
   g_out.clear();
   send(hello(kBoxId + 1));
   CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk && device::foreign() && device::active().id == kBoxId + 1);
-  CHECK(device::cur().index == 1 && !strcmp(device::cur().state, "/.boxtest") && !device::g_links[0].state);
+  CHECK(device::cur().index == 0 && !strcmp(device::cur().state, "/.boxtest") && !device::g_links[1].state);
+  CHECK(!device::held(1) && device::slot_held_by(nullptr) < 0);
   for (int k = 0; k < 100; ++k) {
     device::step();
     fmt::post_step();
@@ -220,17 +222,22 @@ int main() {
     CHECK(f.open("/.rytm/pools/P.txt", kRead));   // the engine's own path reads it back
     f.close();
     CHECK(exists_on_card(tmpl, "/Samples") && fs.exists("/Samples"));   // shared content: one place
-    {   // the Rytm's slot, named: its own folder, at the same time
-      device::Scope s0(device::g_links[0]);
+    {   // a slot with no box (the Rytm's folder, /.rytm), named: not the box's folder, at the same time
+      device::Scope s1(device::g_links[1]);
       CHECK(!fs.exists("/.rytm/pools/P.txt"));
     }
   }
   g_out.clear();
   send(hello(kBoxId + 1));   // its periodic hello: the same
   CHECK(g_out.size() == 1 && g_out[0][8] == device::kOk);
-  // a Rytm plugged in now: its 35 gives the transport back to slot 0, which is /.rytm; no restart
+  // a Rytm plugged in now on the same transport: the box before it left (its slot saving its edits into /.boxtest, so the
+  // Rytm takes the other one, /.rytm); no restart
   send(h35);
   CHECK(!device::foreign() && !device::cur().state && hooks.to_rytm == ::out && g_restarts == 0);
+  CHECK(device::slot_held_by(nullptr) == 1 && !device::held(0) && device::g_links[0].parting && device::cur().index == 1);
+  CHECK(device::route_of(0) == 1 && device::leaving());
+  device::step(true);   // its edits saved: slot 0 free for any box
+  CHECK(!device::g_links[0].parting && !device::leaving() && device::slot_held_by(nullptr) == 1);   // (the Rytm stays where she is)
   {
     char b[64];
     const char* p = "/.rytm/pools/P.txt";
@@ -238,8 +245,8 @@ int main() {
   }
   CHECK(!fs.exists("/.rytm/pools/P.txt"));
 
-  // A Digitakt and a stock Rytm (its USB id, never a 35): no restart ever. The Digitakt in /.digitakt from its hello; with the
-  // Rytm on USB as well the engine's own work is the Rytm's again (slot 0) and the Digitakt keeps slot 1
+  // A Digitakt and a stock Rytm (its USB id, never a 35): no restart ever. The Digitakt in /.digitakt from its hello, in slot 0
+  // (the first attached); the Rytm on USB after it takes slot 1, the Digitakt keeps slot 0 and the base
   {
     using device::kIdDigitakt;
     auto hello = [&](uint16_t id) {
@@ -251,10 +258,12 @@ int main() {
     device::reset();
     CHECK(hello(kIdDigitakt) == device::kOk && !strcmp(folder(), "/.digitakt"));
     CHECK(device::foreign() && device::box_screen() == device::kDigitakt.screen && !strcmp(voice_name(0), "T1"));   // its words (L7: one read of the box)
+    CHECK(device::g_links[0].box == &device::kDigitakt && !device::held(1));
     device::rytm_on_usb(true);
     device::step();
-    CHECK(!strcmp(folder(), "/.rytm") && !device::foreign() && device::g_links[1].box == &device::kDigitakt);
-    CHECK(!strcmp(device::g_links[1].state, "/.digitakt"));
+    CHECK(!strcmp(folder(), "/.digitakt") && device::foreign() && device::g_links[0].box == &device::kDigitakt);
+    CHECK(device::slot_held_by(nullptr) == 1 && !device::g_links[1].state && (kVoiceSlots == 1 || device::side_slot() == 1));
+    CHECK(!strcmp(device::g_links[0].state, "/.digitakt"));
     CHECK(hello(kIdDigitakt) == device::kOk);   // its periodic hello: still its slot
     device::rytm_on_usb(false);
     device::step();
@@ -355,8 +364,9 @@ int main() {
     CHECK(device::kA4.audio->loop_frames == 197 && device::kDigitakt.audio->loop_frames == 0);   // LIVE IN's latency, the chop's
     send(hello(device::kA4.id));
     CHECK(device::foreign() && device::active().id == device::kIdA4);
-    out::Control& a4 = out::control_of(kVoiceSlots - 1);   // slot 1's settings (on 8 voices the one set)
-    CHECK(a4.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));   // the A4's (slot 0's: the Rytm's)
+    CHECK(device::slot_held_by(&device::kA4) == 0);   // attach order: alone, the first attached
+    out::Control& a4 = out::control_of(0);             // its slot's settings (on 8 voices the one set)
+    CHECK(a4.trk10 == 180 && (kVoiceSlots == 1 || out::control1.trk10 == 0));   // the A4's (the other slot's: free, 0)
     out::set_trim(2, 60);                              // a live stereo=trim:trk: the base box's (the A4 alone)
     send(hello(device::kA4.id));                       // a repeated hello is no change of box
     CHECK(a4.trk10 == 60);
@@ -372,8 +382,10 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    send(hello(device::kA4.id));                       // its hello again: the A4's trim on slot 1, nothing else
-    CHECK(a4.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));
+    device::rytm_on_usb(true);                         // the Rytm on USB first: the A4 after her takes slot 1
+    send(hello(device::kA4.id));                       // its hello again: the A4's trim on its slot, nothing else
+    out::Control& a4b = out::control_of(kVoiceSlots - 1);
+    CHECK(a4b.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));
     device::reset();
   }
 
@@ -385,8 +397,8 @@ int main() {
       return sidecar(t);
     };
     auto off = [](int vi) { return sidecar({0x11, (uint8_t)vi}); };
-    // vi: the A4's own voice (the wire's); E(vi) its engine voice, slot 1's 8 + vi
-    auto E = [](int vi) { return device::voice_base(device::g_links[1]) + vi; };
+    // vi: the A4's own voice (the wire's); E(vi) its engine voice, its slot's base + vi (alone: slot 0, the first attached)
+    auto E = [](int vi) { return device::voice_base(device::g_links[device::slot_held_by(&device::kA4)]) + vi; };
     auto notes = [&](int vi) { return inst::voice_notes(E(vi)) + poly::voice_notes(E(vi)); };
     auto quiet = [&](int vi) { send(off(vi)); voice_silence(E(vi)); usleep(25000); };
     send(hello(device::kA4.id));

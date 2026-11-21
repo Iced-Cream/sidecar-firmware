@@ -152,8 +152,8 @@ static CORE_COLD bool midi_one(int port, uint8_t st, uint8_t d1, uint8_t d2) {
 CORE_COLD bool midi(int port, uint8_t st, uint8_t d1, uint8_t d2) {
   if ((st & 0xF0) != 0xB0 || port < 0 || port > 4) return false;
   bool took = false;
-  for (int s = 0; s < kVoiceSlots; ++s) {   // each slot's routes in its Scope (the Rytm's port 0: slot 0's only)
-    if (s && (port == 0 || s >= device::kLinks || !device::g_links[s].state)) continue;
+  for (int s = 0; s < kVoiceSlots; ++s) {   // each slot's routes in its Scope (port 0, the USB-C box's: its slot's only)
+    if (!device::live(s) || (kVoiceSlots > 1 && port == 0 && s != device::route_of(0))) continue;
     device::Scope in(device::g_links[s]);
     took = midi_one(port, st, d1, d2) || took;
   }

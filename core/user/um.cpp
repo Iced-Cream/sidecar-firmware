@@ -168,8 +168,8 @@ struct BoxIn {
   explicit BoxIn(int b) : was(g_bw), sc(core::device::g_links[b > 0 && b < kBoxes ? b : 0]) { g_bw = b > 0 && b < kBoxes ? b : 0; }
   ~BoxIn() { g_bw = was; }
 };
-// box b is there to be worked for: slot 0 always, another while a box's folder is on its link
-bool box_on(int b) { return b == 0 || (b < core::device::kLinks && core::device::g_links[b].state); }
+// box b is there to be worked for: device::live (held, saving, or the base)
+bool box_on(int b) { return core::device::live(b); }
 uint32_t g_resolve_n = 0;         // resolves that changed something (the JSON's)
 constexpr uint32_t kFreshWaitMs = 1500;
 struct Slot {
@@ -3566,8 +3566,8 @@ bool idle() {
     UMT("um.meta");
     meta_poll();
   }
-  for (int b = 0; b < kBoxes; ++b) {   // each box's 1D (a box on its link: slot 0 always, as before)
-    if (b && !core::device::g_links[b].box) continue;
+  for (int b = 0; b < kBoxes; ++b) {   // each box's 1D (a box on its link; one slot: always, as before)
+    if (kBoxes > 1 && !core::device::held(b)) continue;
     const Bx& x = g_bx[b];
     uint32_t age = core::now_ms() - x.d1_ms;
     if (x.meta.dirty || (x.d1_owed && age >= 1000) || age >= 5000 || !x.d1_sent) { BoxIn in(b); UMT("um.1d"); send_1d(0, 0); did = true; }

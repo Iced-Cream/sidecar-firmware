@@ -253,8 +253,8 @@ CORE_COLD void set_fader(uint16_t v, int source) { move_fader(v, source, kSmooth
 CORE_COLD uint16_t fader_played() { return (uint16_t)S().played; }
 CORE_COLD int fader_source() { return S().src; }
 
-CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's knob: slot 0's fader)
-  device::Scope in(device::g_links[0]);
+CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's knob: her slot's fader)
+  device::Scope in(device::g_links[device::rytm_home()]);
   g_qp_mask = (uint16_t)(mask & 0xFFF);
   if (!(flags & kQpMoved) || pos < 0 || pos > 255) return;   // the hello's report before the knob ever sent: no position
   if (g_qp_pos < 0) {   // the first report since the link came up: a baseline only, the knob takes on a change (M2)
@@ -272,7 +272,7 @@ CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's k
   move_fader(v, kQperf, sm);
 }
 CORE_COLD void qperf_rebase() { g_qp_pos = -1, g_qp_seen = false; }
-CORE_COLD uint16_t qperf_mask() { return S(0).src == kQperf ? g_qp_mask : 0; }
+CORE_COLD uint16_t qperf_mask() { return S(device::rytm_home()).src == kQperf ? g_qp_mask : 0; }
 CORE_COLD void rytm_scene_seen(int n) { g_rscn = n >= 0 && n <= kScenes ? n : 0; }
 CORE_COLD int rytm_scene() { return g_rscn; }
 

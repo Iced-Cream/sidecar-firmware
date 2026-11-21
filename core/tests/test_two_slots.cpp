@@ -191,35 +191,46 @@ int main() {
   CHECK(same_3_11());
   ins::reset();
 
-  // the A4 alone (no Rytm on USB): the base box is slot 1's, its tracks the pages' voices 8..15
+  // the Rytm leaves (her USB gone): attach order, the A4 stays in slot 1 and is the base box now, its tracks the pages'
+  // voices 8..15; nothing more comes on her transport (a message there would be the Rytm back)
   device::rytm_on_usb(false);
   device::step();
-  CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices);
+  CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices && !device::held(0));
+  CHECK(device::route_of(0) < 0 && device::route_of(1) == 1);
   CHECK(device::base_voice(2) == 10 && device::base_box_voice(10) == 2 && device::base_box_voice(2) == -1);
   CHECK(ui::remote_track_voice(0) == kBoxVoices + 0);   // track 1 (BD's place): the base box's voice 0
   CHECK(device::side_slot() == -1 && out::g_base_slot == 1);   // alone: AMP on its chains
-  // still slot 1's own chains: slot 1's TREMOLO on voice 11 as beside the Rytm, slot 0's setting reaches only voice 3
+  auto solo11 = [] {   // the A4's voice 3 alone
+    voices_init();
+    send(1, trig(kPlaits, 3, 60));
+    memset(ring, 0, sizeof ring);
+    render();
+    return rms(11);
+  };
+  // still slot 1's own chains: slot 1's TREMOLO on voice 11 as beside the Rytm
   trem(ins::control1);
-  CHECK(!same_3_11() && std::fabs(rms(11) - slot1_trem) < 1e-6 && std::fabs(rms(3) - plain) < 1e-6);
+  CHECK(std::fabs(solo11() - slot1_trem) < 1e-6);
   ins::reset();
   {
-    device::Scope in(device::g_links[0]);   // (3(c): the settings are the slot in hand's: slot 0's here)
+    device::Scope in(device::g_links[0]);   // (3(c): the settings are the slot in hand's: slot 0's here, free)
     ins::set_type(3, 0, ins::kTrem);
     ins::set_param(3, 0, 1, 127);
     ins::set_param(3, 0, 0, 127);
   }
-  CHECK(!same_3_11() && std::fabs(rms(11) - plain) < 1e-6);
+  CHECK(std::fabs(solo11() - plain) < 1e-6);
   ins::reset();
   // outside a Scope the slot in hand is the lone A4's: its settings go into its own chains (control1)
   ins::set_type(3, 0, ins::kTrem);
   ins::set_param(3, 0, 1, 127);
   ins::set_param(3, 0, 0, 127);
   CHECK(ins::control1.type[3][0] == ins::kTrem && ins::control.type[3][0] == ins::kOff);
-  CHECK(!same_3_11() && std::fabs(rms(11) - plain) > 100 && std::fabs(rms(3) - plain) < 1e-6);
+  CHECK(std::fabs(solo11() - plain) > 100);
   ins::reset();
+  // the Rytm back (her USB again): the lowest free slot, 0 (her own, saved), the base again; the A4 stays in slot 1
   device::rytm_on_usb(true);
   device::step();
   CHECK(device::base_voice_base() == 0 && ui::remote_track_voice(0) == 0);
+  CHECK(device::rytm_slot() == 0 && device::slot_held_by(&device::kA4) == 1 && device::route_of(1) == 1);
 
   printf("test_two_slots: PASS (slot 0 on 0..7, slot 1 on 8..15: the same report the same samples, machines, "
          "note-offs and link resets each slot's own, the base box's voices follow g_base, each slot's INSERT chains its own "

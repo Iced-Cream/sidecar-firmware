@@ -202,16 +202,28 @@ The Pi's own files stay in `/.rytm` whatever the box: the network, the pairing, 
 (`kMachine` in `core/device/device.cpp`). A folder of its own also means its own copy of what is derived from the card,
 such as the sample library's index: built once, and it does not touch the Rytm's.
 
-**Each slot's folder is fixed for the whole run, and nothing restarts.** Slot 0 is the Rytm's, in `/.rytm` from the first file
-the engine reads at boot. Another box takes slot 1 with its hello and is in its own folder from then on, on whichever transport
-it spoke (`device::slot_of`); its project, lists, store and settings are read from that folder at its attach. A Rytm's 35 on
-that transport gives it back to slot 0. Status 3 (restart) is no longer sent, and `/.rytm/device` chooses nothing any more.
+**Slots by attach order, folders by box type (decided 2026-11-21), and nothing restarts.** The first box to attach is slot 0,
+the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.digitakt`) from then on, on
+whichever transport it spoke (`device::slot_of`), and its project, lists, store and settings are read from that folder at its
+attach (`project_attach_step`, either slot). No file stores a slot number. A box attaches with its hello (`4F`), the Rytm with
+her 35, and on the Pi any box with its USB device (`device::usb_attach`
+at enumeration: the same type is the same slot both ways). Status 3 (restart) is no longer sent, and `/.rytm/device` chooses
+nothing any more.
 
-**What a box without a hello gets:** slot 0 and `/.rytm`. A *stock* Rytm (no mods, so no 35) is slot 0 as it always was.
+**At boot** slot 0 is presumed the Rytm's (`Link::presumed`): her project is read from `/.rytm` as it always was, so a *stock*
+Rytm (no mods, so no 35) is slot 0 as it always was. Her first message confirms it. A box whose hello (or USB) comes before
+any word from her takes slot 0 instead, and its folder is read into it.
 
-**Two boxes that both need slot 1** (an A4 and a Digitakt, two A4s): the first hello keeps it; the other's hello is answered
-status 4, wait, and is accepted once the first box goes. A Rytm and one other box both work at once: see "Several devices".
-A box's stream is claimed when it enumerates, its hello or not (one stream a slot).
+**A box that leaves** (`device::release`: its USB device gone, its transport down, another box's hello or a Rytm's 35 on its
+transport): its voices, transport, arpeggiator and MIDI notes stop, its transports route nowhere, and its edits are saved into
+its own folder (`Link::parting`, `device::leaving()` until `idle_save` has settled). Until then only that same box may take the
+slot back; another box's hello is answered status 4, wait (or it takes the other slot when that one is free). The box that stays
+never moves: its slot, voices, folder and transport stay as they are (the base, `g_base`, is slot 0 while held, else the slot
+that is). A box that comes back takes the lowest free slot and loads from its folder (the same slot it left, with nothing else
+there since: its state is as it saved it).
+
+**Two boxes at once** take both slots; a third box's hello is answered status 4, wait. A box's stream is claimed when it
+enumerates, its hello or not (one stream a slot).
 
 A box without `state_dir` shares `/.rytm`. A box sends no project name unless it can, so it stays on the project its folder
 last had: `_default` on a new folder.
@@ -220,24 +232,30 @@ A bundle exported on one device can be imported on another: their contents have 
 
 ## Several devices
 
-One Sidecar on the Pi (or the Mac, `CORE_MSAMP` builds) serves two boxes at once: the Rytm in slot 0 and one other box (an
-A4, a Digitakt) in slot 1. The two do completely unrelated work. **Nothing of a project is shared:** each box has its own
+One Sidecar on the Pi (or the Mac, `CORE_MSAMP` builds) serves two boxes at once, any two of different types in either order
+(the Rytm, an A4, a Digitakt), slot 0 the first attached and slot 1 the second (see "State folders" above). The two do completely
+unrelated work. **Nothing of a project is shared:** each box has its own
 folder, project, pools, sequencer, scenes, LFOs, effects, clock, transport, song and pages, and differs from the other only
 in its profile's numbers. A part the second box does not have yet is a named gap (listed below), not a design choice. The
 Teensy has one slot (`kVoiceSlots` 1), so everything there stays one.
 
-What a box chose lives in one `device::Link` per box (`g_links[kLinks]`, `kLinks` 2). Each transport (0: the platform's host
-link, the Rytm's USB MIDI or the emulator's TCP link; 1: a second box's USB MIDI) carries one slot at a time
-(`device::slot_of`, `route_of`). Which physical port a box is on (USB-C or the Teensy relay) is decided at run time and
+What a box chose lives in one `device::Link` per box (`g_links[kLinks]`, `kLinks` 2): who holds it (`held`, the Rytm too),
+its box (`box`, null for the Rytm), its folder. Each transport (0: the platform's host link, the USB-C box's MIDI or the
+emulator's TCP link; 1: the other box's, the Teensy relay's) carries one slot at a time or none (`device::slot_of`,
+`route_of`, -1 none). Which physical port a box is on (USB-C or the Teensy relay) is decided at run time and
 changes nothing here.
 
 ### How a slot's state is reached
 
 - **The slot in hand.** On the control core, `device::cur()` is the link whose message is being handled or whose state is
   being stepped; `prj_slot()` is its index. A box's messages are handled inside its link's `device::Scope`, and each module's
-  tick runs once per live slot inside that slot's Scope (slot 0 always, slot 1 while its link has a folder). Outside any
-  Scope it is `g_base`: slot 1 while a box is alone with no Rytm on USB, else slot 0, so code that never names a slot does
+  tick runs once per live slot inside that slot's Scope (`device::live`: held, saving after its box left, or the base).
+  Outside any Scope it is `g_base`: slot 0 while it is held, else the slot that is, so code that never names a slot does
   what it always did.
+- **The Rytm's own machinery** (her params, scene and QPERF, kSnd, rytm_dump and patwrite, the calibration and her stems, the
+  recorder's fxin, the JUNO / FM names to her, her MIDI CONFIG and SONG replay, `hooks.transport`) follows her slot:
+  `device::rytm_at(s)`, `rytm_slot()` (-1 none), `rytm_home()` (her slot, else 0, where her state is read). Never slot 0 as
+  such. On one slot (the Teensy) `rytm_at` is always true, as slot 0 always was.
 - **Per-slot module state** is one struct per slot, `[kVoiceSlots]` (or `Per<T>`), read through an accessor of the slot in
   hand (`prj()`, `pools::S()`, `ins::control_of(slot)`, `out::control_of(slot)`, `fx::control_of(slot)`,
   `master::control_of(slot)`).
@@ -250,9 +268,9 @@ changes nothing here.
 
 | part | where | notes |
 |---|---|---|
-| project, its name and saves | `core/pool/pool.cpp` (`prj()`) | slot 1's read from its folder at its hello; a 0x10 names its own box's project |
+| project, its name and saves | `core/pool/pool.cpp` (`prj()`) | read from its folder at its attach (either slot); a 0x10 names its own box's project |
 | pool lists, JUNO / FM lists, the RAM store | `pools::S()`, `user/lists.cpp`, `store` | GRANULAR, WAVETABLE, MULTISAMPLE, CHOP resolve a voice's rows through its own slot; a file both lists hold loads once |
-| LFOs and the modulation layer | `core/mod` | slot 1's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is slot 0's |
+| LFOs and the modulation layer | `core/mod` | a box's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is the Rytm's slot's |
 | INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines |
 | output stage | `pi/engine/output.*`, `side_out.h` | beside a Rytm, slot 1's voices go to a side stage paced by its own box's stream; alone, a box has the base stage |
 | send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s |
@@ -269,8 +287,8 @@ changes nothing here.
 ### Voices on two links
 
 The Pi and the Mac render 16 engine voices (`core::kVoices`); the Teensy renders 8, and `-DCORE_VOICES=8` builds that engine
-anywhere. A box names 8 (`kBoxVoices`: the voice byte's low 3 bits, a project's tracks). Slot 0 (the Rytm) plays engine
-voices 0..7 and slot 1 (any other box) 8..15, alone or paired. Each box keeps its own voice count (an A4's 4, a Digitakt's
+anywhere. A box names 8 (`kBoxVoices`: the voice byte's low 3 bits, a project's tracks). Slot 0 (the first attached) plays
+engine voices 0..7 and slot 1 (the second) 8..15, whatever their types. Each box keeps its own voice count (an A4's 4, a Digitakt's
 8). The wire never changes: `device::voice_in` turns a report's voice byte into the link's engine voice where the message is
 handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
 
@@ -285,15 +303,15 @@ handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
 
 ### Audio
 
-Each box's audio stays its own: slot 0's voices go back to the Rytm's stream and slot 1's to the second box's, each paced
-by its own box's clock. No audio crosses between boxes and nothing is resampled. (`a4=1`, `docs/pi-engine.md`, is the
+Each box's audio stays its own: each slot's voices go back to its own box's stream (`CObUsb::Slot` is the core slot
+`usb_attach` gave it), each paced by its own box's clock. No audio crosses between boxes and nothing is resampled. (`a4=1`, `docs/pi-engine.md`, is the
 older stock-firmware path: an A4 with no mod streamed beside the Rytm, audio only, resampled into the Rytm's PRE pair by
 `pi/engine/drift_src.h`. An A4 with the Sidecar mod takes slot 1 instead.)
 
 ### One per Sidecar by design
 
-The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and stay slot
-0's. The Pi's own files (network, pairing, screen, black box) stay in `/.rytm`.
+The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow her
+slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) stay in `/.rytm`.
 
 ### Named gaps
 
@@ -308,11 +326,18 @@ What the second box does not have yet, or has differently:
 - **Kits:** the A4's mod sends no 4C yet, so its slot's kit records exist only once it reports SAVE / RELOAD KIT.
 - **SONG RECORD on the A4:** its stopped program change is not traced, so a restore or undo writes only once its mod has
   reported the pattern selected (2D 02); `midi_config()` is the Rytm's.
-- **Rytm-only project machinery** (`prjslot::take_10`, `prjslot::resolve`, `rename::intercept`) also runs for slot 1's
+- **Rytm-only project machinery** (`prjslot::take_10`, `prjslot::resolve`, `rename::intercept`) also runs for a box's
   project names.
 - **Readers off the control core** (`gr` / `wt` / `msamp` `entry_note`, the `srclib` browser, `page_gfx`, `preset_index`)
   read the slot in hand's lists. The console's `gr=pick`, `wt=pick`, `msamp=pick` and `voice:` forms take voices 0..7 only.
-- **Two boxes of one type** (two A4s, two Digitakts): one has slot 1, the other waits. Two boxes of a type served at once
+- **The Rytm in slot 1** (she attached second): her stems into her send FX and SRC MIX on the Pi (`ob_usb.cpp`
+  `FromRytm`, `masterfx_pi::Stems`) run only while she is slot 0; the Pi's `rytm_byte` tap (her pattern dumps, FILL's
+  writer) reads transport 0 only.
+- **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
+  it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
+- **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.
+- **Two boxes of one type** (two A4s, two Digitakts): both are the one slot of that type (one folder), so the second's hello
+  is that slot's. Two boxes of a type served at once
   would need a third slot and folders keyed by something that stays with the box, such as its USB serial number.
 - **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet.
 

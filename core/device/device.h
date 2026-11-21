@@ -16,10 +16,14 @@
 // State: a box with a state_dir keeps its projects, settings and pools there, not in /.rytm, so two devices' state never
 // mixes (shared content stays shared: /Samples, /Plugins, /JUNO, /DX7, ...). The engine's "/.rytm/..." literals stay as
 // they are: the one path function of each port (platform_pi.cpp full, platform_host.cpp host_path) passes them through
-// state_path. Two slots (docs/device-profiles.md "Several devices"): slot 0 is the Rytm's, in /.rytm from the first file
-// on; a box takes slot 1 at its hello, in its own folder from then on, on whichever transport it spoke (slot_of). Nothing
-// restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's (CardScope). The
-// Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
+// state_path. Two slots (docs/device-profiles.md "Several devices"; design decided 2026-11-21): slots by attach order, folders
+// by box type. A box takes the lowest free slot at its hello (or its USB enumeration on the Pi, claim), on whichever
+// transport it spoke (slot_of); the Rytm's hello is its 35, or its USB id. Any two different box types in either order; no
+// file stores a slot number. At boot slot 0 is presumed the Rytm's (a lone stock Rytm says nothing first): its first message
+// confirms it, and a box's hello before that takes slot 0 instead. A box that leaves (release) frees its slot, its voices
+// stop and its edits are saved into its folder; the other box stays where it is; a box that comes back loads from its
+// folder. Nothing restarts. Each file call is in the folder of the slot in hand (device::Scope), or of the card request's
+// (CardScope). The Pi's own files stay in /.rytm whatever the box: kMachine in device.cpp.
 #pragma once
 #include <stdint.h>
 
@@ -32,7 +36,7 @@ namespace device {
 constexpr uint8_t kCmdHello = 0x4F;
 constexpr uint8_t kProto = 1;
 constexpr uint16_t kIdRytm = 1;
-enum Status : uint8_t { kUnknown = 0, kOk = 1, kBadProto = 2, kRestart = 3, kWait = 4 };   // kRestart: no longer sent (a restart for a folder, before slots); kWait: slot 1 is another box's, go on saying hello
+enum Status : uint8_t { kUnknown = 0, kOk = 1, kBadProto = 2, kRestart = 3, kWait = 4 };   // kRestart: no longer sent (a restart for a folder, before slots); kWait: no slot free (two other boxes, or a slot whose box left still saving), go on saying hello
 constexpr int kMaxParams = 16;
 constexpr int kMaxMessage = 44;   // the engine's longest report: 0x04 with P1..P16 and the sound tag
 constexpr uint8_t kCmdControls = 0x50;   // a box's controls report: head 50 <track> { <value> <fraction> } x Controls::n F7
@@ -129,7 +133,11 @@ bool add(const Profile* p);            // one more known box (false: id taken, t
 // What one connected box has chosen: its profile, its state folder, its output, its counts. One Link per box on USB, kLinks
 // at most (docs/device-profiles.md, "Several devices"). Link 0 is the one a single box has always had.
 struct Link {
-  const Profile* box;                     // the box in use; null: the Rytm
+  const Profile* box;                     // the box in use; null: the Rytm, or no box (held null)
+  const Profile* held;                    // who holds the slot (rytm() for the Rytm); null: free
+  const Profile* was;                     // whose folder state is: the slot's last holder (kept after it leaves: its queued writes land there)
+  bool presumed;                          // held by the Rytm presumed at boot, not yet heard from (a box's hello takes the slot)
+  bool parting;                           // its holder left and its edits are still being saved: no other box takes it yet
   const char* state;                      // the state folder when it is not /.rytm; null: /.rytm
   void (*out)(const uint8_t*, int);       // the platform's to_rytm while a box is in use
   uint32_t dropped;
@@ -141,8 +149,8 @@ struct Link {
 constexpr int kLinks = 2;
 extern Link g_links[kLinks];
 // The control core's link in hand: whose message is being handled, whose state is being saved. Outside any Scope it is g_base,
-// the slot the engine's own work is for (its pages, its reports, its saves): slot 1 while a box has it and no Rytm is on USB
-// (a box alone, as it always was), else slot 0, so everything that never names a link is what it always was.
+// the slot the engine's own work is for (its pages, its reports, its saves): slot 0 while it is held, else the slot that is
+// (a box alone in slot 1: its partner in slot 0 left), so everything that never names a link is what it always was.
 extern Link* g_cur;
 extern Link* g_base;
 extern int g_depth;   // Scopes open (the control core's)
@@ -170,10 +178,33 @@ struct CardScope {   // around one card request, on whichever core runs it
 // The platform's sender for link 1.. (its box's USB MIDI), null when it goes. Link 0's is hooks.to_rytm as ever. While only link 0
 // is up and it is a Rytm, hooks.to_rytm stays the platform's own; otherwise it sends to the link in hand (Scope).
 void set_out(int link, void (*out)(const uint8_t*, int));
-void hello(Link& l, const uint8_t* d, int len);   // a whole 4F, on the slot in hand
-// The slot transport t's message is for: 0 the platform's host link (the Rytm's USB MIDI, the emulator's TCP link), 1 a second
-// Elektron box's USB MIDI. A box's hello takes slot 1 for its transport; a Rytm's 35 gives it back to slot 0. -1: a box's hello
-// while slot 1 is another box's (answered kWait). engine_sysex_link calls it for each message.
+void hello(Link& l, const uint8_t* d, int len);   // a whole 4F, on the slot in hand (slot_of has claimed it): answered kOk
+uint8_t hello_status(const uint8_t* d, int len);   // a refused hello's answer: kUnknown, kBadProto or kWait (no slot free)
+// Attach order (decided 2026-11-21). claim: the slot box p holds (null or rytm(): the Rytm), else the lowest free one, which
+// it now holds (its folder from now on; a presumed Rytm gives slot 0 up to the first box); -1: none free. Called at a hello
+// (slot_of) and, on the Pi, when the box's USB device enumerates (ob_usb): the same box type is the same slot both ways.
+// release: slot s's box left (its USB device gone, its transport down): its voices stop, its transports route nowhere, its
+// edits are saved into its folder (parting until they are), the other slot does not move. Control core.
+int claim(const Profile* p);
+void release(int s);
+int slot_held_by(const Profile* p);    // the slot box p (null: the Rytm) holds, -1 none
+inline bool held(int s) { return s >= 0 && s < kLinks && __atomic_load_n(&g_links[s].held, __ATOMIC_RELAXED) != nullptr; }
+// slot s's modules run (tick, saves, its folder's work): held, or its box left and its edits are still being saved, or it is the
+// base (the slot in hand outside any Scope, held or not). One slot (the Teensy): slot 0 always. Control core.
+inline bool live(int s) {
+  if (kVoiceSlots < 2) return s == 0;
+  return s >= 0 && s < kLinks && (g_links[s].held || g_links[s].parting || &g_links[s] == g_base);
+}
+// slot s is held by the Rytm (its own words, kits, scenes, stems, calibration: hers alone). One slot (the Teensy): always, as
+// slot 0 always was
+bool rytm_at(int s);
+int rytm_slot();                       // the Rytm's slot, -1 none (one slot: 0)
+inline int rytm_home() { const int r = rytm_slot(); return r < 0 ? 0 : r; }   // where the Rytm's own state is read: her slot, else 0
+// The slot transport t's message is for: 0 the platform's host link (the USB-C box's MIDI, the emulator's TCP link), 1 the other
+// box's (the Teensy relay's). A hello claims a slot for its transport, a Rytm's 35 the Rytm's (her first other message only
+// confirms the slot 0 presumed hers at boot). -1: none (a hello refused: engine_sysex_link answers it; else the message is
+// dropped: a transport goes nowhere until a hello or a 35).
+// engine_sysex_link calls it for each message; with d null it only says where t goes now.
 int slot_of(int t, const uint8_t* d, int len);
 // The slot transport t carries now (slot_of's answer for a message that is not a hello or a 35): the platform's raw MIDI
 // taps (core/song's byte) enter that slot's Scope. Two loads, any core.
@@ -183,10 +214,15 @@ void reset();                          // back to the Rytm and /.rytm, as a fres
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered
 
 void boot();                           // engine_begin: nothing to choose any more (slot 0 is /.rytm)
-bool leaving();                        // false: no change of folder ever waits (no restart)
+bool leaving();                        // a slot whose box left is saving its edits (idle_save: what waits to settle goes now)
 bool step(bool settled = true);        // false: nothing to do (kept for the engine's idle saves)
-// The Pi's Overbridge driver (core 0): a Rytm is on USB, or gone. Kept for the platform; slot 0 is the Rytm's whatever it says.
+// A Rytm is on USB (claim), or gone (release): the control core's (the tests'). The Pi's driver uses usb_attach / usb_detach.
 void rytm_on_usb(bool on);
+// The Pi's Overbridge driver, core 0, when box p's USB device enumerates: the slot its stream is (its slot already, else the
+// lowest one a hello could take now), reserved for p at once; the control core makes it p's at its next step (claim). -1: none
+// (two other boxes: it keeps its MIDI, no audio). usb_detach: slot s's device is gone; the control core releases it.
+int usb_attach(const Profile* p);
+void usb_detach(int s);
 constexpr uint32_t kSettleMs = 10000;
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);
@@ -203,7 +239,7 @@ inline const char* state_path(const char* path, char* buf, int cap) {
 }
 inline bool foreign(const Link& l = cur()) { return l.box != nullptr; }
 // The engine voices of a link: its box's voice k (the wire's voice byte & 7, a project's track) is engine voice
-// voice_base(l) + k. Slot 0's (the Rytm's) are 0..7 and slot 1's 8..15, alone or paired; on an 8-voice engine (the
+// voice_base(l) + k. Slot 0's (the first attached) are 0..7 and slot 1's 8..15, whatever the boxes; on an 8-voice engine (the
 // Teensy) every link's are 0..7.
 inline int voice_base(const Link& l) { return kVoiceSlots > 1 ? l.index * kBoxVoices : 0; }
 inline int voice_base() { return voice_base(cur()); }
@@ -221,12 +257,12 @@ inline int base_box_voice(int vi) {   // engine voice vi -> its number in the ba
 }
 // The slot whose voices sound beside the base box's, through an output stage of their own (on the Pi its own FIFO and
 // render pace, paced by its own box's stream; its OUT and INSERT settings are slot 1's, core/fx/out.h control1 and
-// core/fx/insert.h control1, alone or paired): 1 while slot 1 has a box and the base is slot 0 (a box beside a Rytm), else -1 (one
-// box: the base box's stage carries it, as it always did). Any core reads it (two aligned loads).
+// core/fx/insert.h control1, alone or paired): 1 while both slots are held (the second box to attach, whatever its type), else -1
+// (one box: the base box's stage carries it, as it always did). Any core reads it (two aligned loads).
 inline int side_slot() {
   if (kVoiceSlots < 2) return -1;
   const Link* b = __atomic_load_n(&g_base, __ATOMIC_RELAXED);
-  return b == &g_links[0] && __atomic_load_n(&g_links[1].box, __ATOMIC_RELAXED) ? 1 : -1;
+  return b == &g_links[0] && __atomic_load_n(&g_links[1].held, __ATOMIC_RELAXED) ? 1 : -1;
 }
 inline bool on_side(int vi) { return slot_of_voice(vi) == side_slot(); }   // engine voice vi plays through the side stage
 // The box's own words (Screen), from one read of l.box: the Pi's core 0 (rec_pi's view, the voices' names) asks while

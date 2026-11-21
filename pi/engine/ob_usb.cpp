@@ -306,11 +306,12 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	const core::device::Profile *p = core::device::by_usb (pDesc->idVendor, pDesc->idProduct, bMirror);
 	if (p == 0) return 0;
 	const core::out::Device *pAudio = p->audio;
-	boolean bRytm = pAudio == &core::out::kRytmMk2;
-	if (bRytm && CObUsb::s_bActive) core::device::rytm_on_usb (true);	// a stock Rytm's way back to /.rytm (core/device/device.h)
-	if (CObUsb::Box (bRytm ? 0 : 1) != 0)			// one box a slot: a third keeps its MIDI, Circle goes on to its interfaces
+	// attach order (core/device/device.h): its slot already, else the lowest free one, reserved for it now; the control core
+	// makes it the box's at its next pass (a stock box, a stock Rytm too: its USB is its hello)
+	const int nSlot = core::device::usb_attach (p);
+	if (nSlot < 0 || nSlot >= (int) CObUsb::Slots || CObUsb::Box ((unsigned) nSlot) != 0)	// one box a slot: a third keeps its MIDI, Circle goes on to its interfaces
 	{
-		CLogger::Get ()->Write (From, LogWarning, "%s: its slot's box streams already, no audio from this one", pAudio->name);
+		CLogger::Get ()->Write (From, LogWarning, "%s: no slot free (two boxes stream already), no audio from this one", pAudio->name);
 		return 0;
 	}
 	if ((pAudio->in_channels != ob::kChannels && pAudio->in_channels != 8) || pAudio->channels < 2 || pAudio->channels > ob::kChannels)
@@ -319,7 +320,7 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
 		return 0;
 	}
-	return new CObUsb (pParent, pAudio);
+	return new CObUsb (pParent, pAudio, (unsigned) nSlot);
 }
 
 void CObUsb::PollReEnum (void)
@@ -495,7 +496,7 @@ void CObUsb::SetActive (boolean bActive)
 	core::out::set_device (bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// the TCP link's host is 12 channels, the Rytm's
 }
 
-CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
+CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsigned nSlot)
 :	CUSBFunction (pFunction),
 	m_pAudio (pAudio), m_nOutCh (pAudio->channels), m_nOutBlk (ob::block_bytes (pAudio->channels)),
 	m_nInCh (pAudio->in_channels), m_nInBlk (ob::block_bytes (pAudio->in_channels)),
@@ -536,7 +537,7 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)
 	m_nGen = ++s_nGen;
 	m_bConfigured = FALSE;
 
-	m_nSlot = pAudio == &core::out::kRytmMk2 ? 0 : 1;
+	m_nSlot = nSlot < Slots ? nSlot : Slots - 1;	// its core slot (attach order): its buffers, its side stage, its FX
 	m_pInBuf = s_InBuf[m_nSlot];
 	m_pOutBuf = s_OutBuf[m_nSlot];
 	s_pBox[m_nSlot] = this;
@@ -585,7 +586,7 @@ CObUsb::~CObUsb (void)
 		m_pCtlSetup = 0;
 	}
 #endif
-	if (m_pAudio == &core::out::kRytmMk2) core::device::rytm_on_usb (false);
+	core::device::usb_detach ((int) m_nSlot);	// its slot freed (the control core's next pass): the other box stays
 	for (unsigned i = 0; i < MaxURBs; i++)
 	{
 		Free (m_pInURB[i], m_bInBusy[i]);
@@ -1422,7 +1423,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) C[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::cal_in (&C[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
-			if (m_nSlot == 0 && sendfx_pi::On (0))	// the Rytm's voice stems (IN 2..9) into its send FX (a box's IN 2..9 are no stems)
+			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && sendfx_pi::On (0))	// the Rytm's voice stems (IN 2..9) into its send FX (a box's IN 2..9 are no stems; the Rytm in slot 1: not yet)
 			{
 				s32 S[ob::kFramesPerBlock][8];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
@@ -1430,7 +1431,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
 			}
 
-			if (m_nSlot == 0 && masterfx_pi::WantStems ())	// SRC MIX: the Rytm's stems onto 0/1 (core/fx/master.h)
+			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && masterfx_pi::WantStems ())	// SRC MIX: the Rytm's stems onto 0/1 (core/fx/master.h; in slot 1: not yet)
 			{
 				s32 S[ob::kFramesPerBlock][8];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)

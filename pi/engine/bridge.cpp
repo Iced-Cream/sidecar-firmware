@@ -134,8 +134,10 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
 int out_base() { return core::device::base_voice_base(); }
-bool slot_renders(int slot) {
-  return slot == 0 || (slot < core::device::kLinks && __atomic_load_n(&core::device::g_links[slot].box, __ATOMIC_RELAXED));
+bool slot_renders(int slot) {   // a box holds it (attach order: either slot), or it is the base
+  if (slot < 0 || slot >= core::device::kLinks) return false;
+  return __atomic_load_n(&core::device::g_links[slot].held, __ATOMIC_RELAXED) ||
+         __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED) == &core::device::g_links[slot];
 }
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach, int16_t (*block_r)[kVoices], uint8_t* st) {
   return core::render_voices(block, kBlock, 0, v0, v1, mach, block_r, st);

@@ -106,8 +106,8 @@ int main() {
   }
   CHECK(hellos >= 2 && trigs >= 8 && reports > 100);
   // the machines the panel chose, each on its own voice
-  const int b = device::voice_base();   // the Digitakt alone: slot 1, its voices 8..15
-  CHECK(b == (kVoices > kBoxVoices ? kBoxVoices : 0));
+  const int b = device::voice_base();   // the Digitakt alone: the first attached, slot 0, its voices 0..7
+  CHECK(b == 0 && device::slot_held_by(&device::kDigitakt) == 0);
   CHECK(v[b + 0].md && !v[b + 1].daisy && !v[b + 1].juno && !v[b + 1].fm && !v[b + 1].md && v[b + 2].juno && v[b + 3].fm &&
         v[b + 4].daisy && v[b + 5].md && !strcmp(md::set_name(md::voice_set(b + 5)), "FM BD") && v[b + 7].juno);
   // one answer a hello, nothing else: no traffic back but that

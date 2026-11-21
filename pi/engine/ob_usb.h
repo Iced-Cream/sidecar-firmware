@@ -38,7 +38,7 @@ public:
 	static const unsigned MaxURBs = 16;		// <= XHCI_EP_MAX_URBS (circle-xhci-urbqueue.patch)
 	static const unsigned MaxBlocks = 8;
 
-	CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio);
+	CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsigned nSlot);	// nSlot: core::device::usb_attach's
 	~CObUsb (void);
 
 	boolean Configure (void);

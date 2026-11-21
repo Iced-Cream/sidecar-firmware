@@ -444,6 +444,7 @@ void save_due();    // a restart is coming: idle saves the edits now, not when t
 bool unsaved();     // edits idle has not posted yet
 void project_changed();                        // 0x10 named another project (pool.h project)
 void project_leaving();                        // 1042: before pool.cpp takes a new name: the old project's edits saved
+void slot_left();                              // the slot in hand's box left (device::release): its transport stopped, its edits saved
 #if CORE_MSAMP
 // 2026-10-26, the RAM store (phase 2): the files a project load reads into the store for the sequencer (pool.h project's
 // tracks.txt, its 128 patterns' .sqp and 1042's saved states .sqs); project_changed runs once it is full (pool.h

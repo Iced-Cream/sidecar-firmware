@@ -278,7 +278,7 @@ static CORE_COLD void on_state(uint8_t s) {
   x.pending = false;
   x.rytm = s ? 1 : 0;
   x.ask_ms = 0;
-  if (prj_slot() == 0) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: slot 0's)
+  if (device::rytm_at(prj_slot())) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: her slot's)
   if (!reply && x.want && s == 0) send26(1);   // a connect: the box forgot; a 00 in reply to our 01 is not repeated
 }
 CORE_COLD bool command(const char* p, char* out, int cap) {
@@ -320,6 +320,18 @@ CORE_COLD void link_reset(const char* why, int slot) {
   // 3(c): the link's own box's send FX (each box its own, its own 100 ms window)
   const int s = slot < 0 ? device::cur().index : slot;
   if (fx::all_sound_off(fx::control_of(s >= 0 && s < kVoiceSlots ? s : 0))) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+}
+
+CORE_COLD void slot_left(int slot) {
+  if (slot < 0 || slot >= device::kLinks) return;
+  device::Scope in(device::g_links[slot]);
+#if CORE_POLY
+  seq::slot_left();   // (its transport to STOP: its MIDI and arpeggiator end there; its edits saved by idle)
+#endif
+#if CORE_MSAMP
+  midim::stop(slot);
+#endif
+  arp::stop(slot);
 }
 
 CORE_COLD void link_lost() {

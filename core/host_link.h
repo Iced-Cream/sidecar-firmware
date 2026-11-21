@@ -40,6 +40,7 @@ int engine_realtime_link(int transport, uint8_t status, uint16_t spp);   // (eng
 // (100 ms): an attach's several edges clear once.
 void link_reset(const char* why, int slot = -1);
 void link_lost();   // the Rytm's USB MIDI gone (the platform's edge): what is sent only to a Rytm that listens stops
+void slot_left(int slot);   // slot's box left (device::release): its transport, arpeggiator and MIDI notes stop, in its Scope
 void sendfx_project();   // the send FX's user-FX slot map for `project` (boot, 0x10); read on the card core, the Rytm told after it
 bool sendfx_step();      // each idle pass: that read in, the Rytm told; true when it was
 void host_project_changed();   // 2026-10-27: a project switch the slot reports made (core/bundle/prjslot.h): as a 10's

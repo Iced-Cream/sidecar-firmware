@@ -136,9 +136,11 @@ int main() {
   settle();
   CHECK(!strcmp(prj(0).key, "RYP"));   // boot: slot 0's folder; slot 1 has no box yet
 
-  // a lone A4 (no Rytm on USB): its own project, from /.a4; the Rytm's stays slot 0's
-  device::rytm_on_usb(false);
+  // the A4 attached after the Rytm (slot 1), then the Rytm leaves: a lone A4 in slot 1 (attach order: it does not move), its
+  // own project from /.a4; the Rytm's stays in slot 0, saved, until she comes back
+  device::rytm_on_usb(true);
   hello_a4();
+  device::rytm_on_usb(false);
   settle();
   CHECK(device::g_links[1].box == &device::kA4 && device::g_base == &device::g_links[1]);
   printf("  after the A4's hello: slot 0 %s, slot 1 %s\n", prj(0).key, prj(1).key);

@@ -768,7 +768,7 @@ CORE_COLD void clock(int slot, uint8_t status, uint16_t spp) {
 CORE_COLD void midi_in(uint8_t st, uint8_t d1, uint8_t d2) {
   (void)d1;
   if ((st & 0x0F) > 12 || (st & 0xF0) != 0x90 || !d2) return;
-  Sl& l = S(0);   // 3(c): the Rytm's notes (its port), so slot 0's LFOs (the Rytm's), whatever slot is in hand
+  Sl& l = S(device::rytm_home());   // 3(c): the Rytm's notes (its port), so her slot's LFOs, whatever slot is in hand
   for (int i = 0; i < kLfos; ++i)   // a trig on one of the Rytm's tracks (its note out): the FX targets' TRIG
     if (l.set[i].retrig == kOnTrig && is_fx(l.set[i].target)) l.run[i].retrig = true;
 #if CORE_POLY

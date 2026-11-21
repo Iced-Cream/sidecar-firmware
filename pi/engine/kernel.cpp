@@ -650,6 +650,22 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
 	pOut->Append (s);
+	// the slots (attach order, core/device/device.h): who holds each, a Rytm presumed at boot, a box gone still saving, which
+	// transport goes there (0 USB-C, 1 the relay; -1 none) and the base (plain reads of the control core's: stale at worst)
+	pOut->Append (",\"slots\":[");
+	for (int k = 0; k < core::device::kLinks; k++)
+	{
+		const core::device::Link &L = core::device::g_links[k];
+		const core::device::Profile *pHeld = __atomic_load_n (&L.held, __ATOMIC_RELAXED);
+		int nT = -1;
+		for (int t = 0; t < core::device::kLinks; t++)
+			if (core::device::route_of (t) == k) nT = t;
+		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"transport\":%d,\"base\":%s}", k ? "," : "", k,
+			  pHeld ? core::device::short_name (*pHeld) : "", L.presumed ? "true" : "false", L.parting ? "true" : "false", nT,
+			  core::device::g_base == &L ? "true" : "false");
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
 	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
 		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),

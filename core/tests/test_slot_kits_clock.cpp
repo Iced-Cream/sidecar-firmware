@@ -190,17 +190,18 @@ int main() {
   CHECK(kits::stats(1).saves == 2 && kits::stats(1).stale == 1);
   CHECK(!exists("/.a4/kits/A4P/k012.sks") && exists("/.a4/kits/A4P/k013.sks"));
 
-  // ---- a lone A4 on transport 0 (the Rytm gone, the A4's hello on the host link): its clock is slot 1's
+  // ---- a lone A4 on transport 0 (no Rytm, the A4's hello on the host link): attach order, the first attached is slot 0,
+  // its clock slot 0's; nothing reaches slot 1
   device::reset();
   lfo::reset();
   device::set_out(1, out1);
-  device::rytm_on_usb(false);
   hello_a4(0);
   settle();
-  CHECK(device::slot_of(0, nullptr, 0) == 1);
-  CHECK(engine_realtime_link(0, 0xFA, 0) == 1);
+  CHECK(device::slot_of(0, nullptr, 0) == 0 && device::slot_held_by(&device::kA4) == 0 && device::rytm_slot() < 0);
+  CHECK(engine_realtime_link(0, 0xFA, 0) == 0);
+  CHECK(engine_realtime_link(1, 0xFA, 0) == -1);   // (transport 1: no box, nowhere)
   ticks(0, 3, 20000);
-  CHECK(cs(1).run && cs(1).pos == 2 && !cs(0).run && cs(0).pos == -1);
+  CHECK(cs(0).run && cs(0).pos == 2 && !cs(1).run && cs(1).pos == -1);
 
   printf("test_slot_kits_clock: PASS\n");
   return 0;

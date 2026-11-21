@@ -537,13 +537,13 @@ CORE_COLD int remote_display_slot() {
   return d >= 0 && d < kVoiceSlots ? d : 0;
 }
 namespace {
-// f(base) in each live slot's Scope (slot 0, and another while a box's folder is on its link: seq's sq_on); base: the
+// f(base) in each live slot's Scope (device::live: held, saving, or the base; seq's sq_on); base: the
 // slot is the base box's. One slot (the Teensy): once, in the link in hand (a box alone there is the base's link).
 template <class F> CORE_COLD void each_slot(F f) {
   if (kVoiceSlots < 2) return f(true);
   const int base = device::g_base->index;
   for (int k = 0; k < kVoiceSlots; ++k) {
-    if (k && !(k < device::kLinks && device::g_links[k].state)) continue;
+    if (!device::live(k)) continue;
     device::Scope in(device::g_links[k]);
     f(k == base);
   }

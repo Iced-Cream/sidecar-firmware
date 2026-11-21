@@ -81,13 +81,13 @@ CORE_COLD void ix_del(Layer& l, Entry& e) {
     if (!stays) l.ix[i] = l.ix[j], l.ix[j] = 0, i = j;
   }
 }
-// 3(c): the kinds a slot's layer may have. Slot 0's: all of them. Another slot's: its own voices (kV), all of its INSERT
+// 3(c): the kinds a slot's layer may have. The Rytm's slot's: all of them. Another slot's: its own voices (kV), all of its INSERT
 // chains (voices, buses, master), OUT routes and sends, its send FX's knobs (kFx) and its master (kMfx) - its own
 // control_of, the slot in hand's settings (core/fx/insert.h, send_fx.h, master.h; 3(c) step 8) - never the Rytm's own
 // (its tracks' sends kSnd, its params, scene and the sequencer words). Refused at the source's call (offset / morph): an
 // LFO file naming one still loads and saves as it was.
 CORE_COLD bool slot_has(Tid t) {
-  if (prj_slot() == 0) return true;
+  if (device::rytm_at(prj_slot())) return true;
   const Kind k = kind_of(t);
   return k == kV || k == kOut || k == kIsnd || k == kIns || k == kFx || k == kMfx;   // (3(c) step 8: its own send FX and master too)
 }
@@ -296,8 +296,8 @@ static CORE_COLD void flush_body() {
     voice_params_changed(vi);
   }
 }
-// 3(c): slot s takes part in the tick: slot 0 always, another while a box's folder is on its link
-static CORE_COLD bool slot_on(int s) { return s == 0 || (s < device::kLinks && device::g_links[s].state); }
+// 3(c): slot s takes part in the tick: device::live (held, saving, or the base)
+static CORE_COLD bool slot_on(int s) { return device::live(s); }
 
 static CORE_COLD void tick_body(uint32_t us);
 CORE_COLD void tick(uint32_t us) {   // the whole tick timed (spec-050 1.5): stats().worst_us
@@ -342,7 +342,7 @@ static CORE_COLD void tick_body(uint32_t us) {
 #endif
       end_tick();
 #if CORE_POLY
-      if (s == 0) {   // (the Rytm's: once a tick)
+      if (device::rytm_at(s)) {   // (the Rytm's: once a tick)
         rp_layer_done();                  // (a kit change's releases are in the layer now: the grid may send)
         rytm_out_tick(now_ms());          // the Rytm's scene / macros whose 5 ms have passed (core/mod/rytm_out.h)
         rp_tick(us);                      // and the Rytm's own params this tick's offsets moved (rytm_param.h)
@@ -365,7 +365,7 @@ CORE_COLD void restore_all() {   // the slot in hand's
     if (l.vdirty >> k & 1) voice_params_changed(device::voice_in((uint8_t)k));
   l.vdirty = 0;
 #if CORE_POLY
-  if (prj_slot() == 0) rp_clear_all();   // the Rytm's own params: CLEAR on every track (a project change; rytm_param.h)
+  if (device::rytm_at(prj_slot())) rp_clear_all();   // the Rytm's own params: CLEAR on every track (a project change; rytm_param.h)
 #endif
 }
 
@@ -401,7 +401,7 @@ CORE_COLD uint8_t fx_knob(int slot, int knob, uint8_t val) {
 }
 
 CORE_COLD uint8_t fx_send(int track, int slot, uint8_t val) {
-  Entry* e = find_e(L(0), tid(kSnd, track, slot & 1));   // (the Rytm's sends: slot 0's layer)
+  Entry* e = find_e(L(device::rytm_home()), tid(kSnd, track, slot & 1));   // (the Rytm's sends: her slot's layer)
   if (!e) return val;
   e->base = val;
   int iv = rnd0(clampf(start_of(*e) + e->off, 0.0f, 127.0f));
@@ -417,8 +417,8 @@ CORE_COLD uint8_t knob_base(int slot, int knob) {
 }
 CORE_COLD uint8_t send_base(int track, int slot) {
   if (track < 0 || track >= fx::kTracks) return 0;
-  const Entry* e = find_e(L(0), tid(kSnd, track, slot & 1));
-  return e ? (uint8_t)e->base : fx::control.send[track][slot & 1];   // (the Rytm's: slot 0's)
+  const Entry* e = find_e(L(device::rytm_home()), tid(kSnd, track, slot & 1));
+  return e ? (uint8_t)e->base : fx::control_of(device::rytm_home()).send[track][slot & 1];   // (the Rytm's: her slot's)
 }
 
 CORE_COLD float base_of(int vi, int k, float cur) {

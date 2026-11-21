@@ -152,7 +152,7 @@ CORE_COLD bool idle_save() {
   // its buffer, the sequencer's loads, the SONG journal and the queued saves need no card core of their own here, and
   // true from here would keep idle_stream out for as long as the write waits (a burst of writes: DSP and MULTISAMPLE dry)
   if (T_("post", fmt::post_step())) return true;
-  for (int k = 1; k < kVoiceSlots; ++k)   // a box's project from its own folder, once it has said hello
+  for (int k = 0; k < kVoiceSlots; ++k)   // a box's project from its own folder, once it holds a slot (attach order: either)
     if (T_("attach", project_attach_step(k))) return true;
   for (int k = 0; k < kVoiceSlots; ++k) {   // each slot's send FX route, fxin, keys, learn and PREVIEW LEVEL: its own folder's
     if (!(fx::card_dirty >> k & 1) || !fmt::post_begin()) continue;   // (the slot or the queue busy: card_save would not post)

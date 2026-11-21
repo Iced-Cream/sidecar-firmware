@@ -206,9 +206,9 @@ volatile uint32_t g_lanes_n[kVoiceSlots] = {};
 
 // the slot in hand (pool.h prj_slot: device::cur()'s, clamped)
 inline int sl() { return prj_slot(); }
-// the slot's box is the Rytm (slot 0): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and FILL's writer.
-// Another slot's box records without them (song.h "Per slot")
-inline bool rytm() { return sl() == 0; }
+// the slot's box is the Rytm (her slot, attach order): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and
+// FILL's writer. Another slot's box records without them (song.h "Per slot")
+inline bool rytm() { return device::rytm_at(sl()); }
 // the slot's box's stock dumps: the Rytm's (0x07), the A4's (0x06, traced: song.h), 0 none known (no start snapshot,
 // MIDI CONFIG read, replay or UNDO REPLAY for that box)
 inline uint8_t dev() { return rytm() ? kDevRytm : device::cur().box == &device::kA4 ? kDevA4 : 0; }
@@ -219,15 +219,15 @@ Engine& eng_of(int s) {
     e = new Engine;
     e->take.clear(), e->scratch.clear(), e->rst.backup.clear();
     for (int k = 0; k < kUndoMax; ++k) e->set[0][k].clear(), e->set[1][k].clear(), e->utake[k].clear();
-    if (s == 0) config_default(&e->cfg);
+    if (device::rytm_at(s)) config_default(&e->cfg);
     else config_none(&e->cfg);
     for (int t = 0; t < kTracks; ++t) e->mach[t] = -2, e->src[t] = -2;
   }
   return *e;
 }
 Engine& eng() { return eng_of(sl()); }
-// slot s's engine runs: slot 0 always, another while a box's folder is on its link (seq.cpp's sq_on)
-bool slot_on(int s) { return s == 0 || (s > 0 && s < kVoiceSlots && s < device::kLinks && device::g_links[s].state); }
+// slot s's engine runs: device::live (held, saving, or the base; seq.cpp's sq_on)
+bool slot_on(int s) { return s < kVoiceSlots && device::live(s); }
 template <class F> auto in_slot(int s, F f) -> decltype(f()) {
   if (s == sl()) return f();
   device::Scope in(device::g_links[s]);

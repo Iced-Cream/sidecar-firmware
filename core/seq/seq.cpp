@@ -49,17 +49,17 @@ namespace {
 // name.at(s) slot s's. The slot in hand is sq_slot(): device::cur()'s (pool.h prj_slot). The public entry points
 // that are not already in a box's Scope (tick, pre_block, idle, a voice's note) enter the slot's Scope themselves
 // (in_slot), so the modules seq calls (store, out, voices, the sends to the box) follow the same slot.
-// Slot 0 is the Rytm's: its own params / scene / QPERF / acks, the send FX locks, the mute gate, rytm_dump and
-// patwrite, the recorder's transport, arp's clock, SONG RECORD and the latency calibration (the Rytm's stems) stay
-// its alone (sq_rytm()). Another slot's box plays its tracks 0..voices-1 on its own voices (voice_of).
+// The Rytm's slot (attach order: either, device::rytm_at): its own params / scene / QPERF / acks, rytm_dump and patwrite,
+// the recorder's transport, arp's clock and the latency calibration (the Rytm's stems) stay its alone (sq_rytm()).
+// Another slot's box plays its tracks 0..voices-1 on its own voices (voice_of).
 // (prj_slot()'s answer, read inline: every name() goes through it, the planner's loops too)
 inline int sq_slot() {
   const int s = device::g_cur->index;
   return s < kVoiceSlots ? s : 0;
 }
-bool sq_rytm() { return sq_slot() == 0; }
-// slot s's sequencer runs: slot 0 always, another while a box's folder is on its link (as mod.cpp's slot_on)
-bool sq_on(int s) { return s == 0 || (s > 0 && s < kVoiceSlots && s < device::kLinks && device::g_links[s].state); }
+bool sq_rytm() { return device::rytm_at(sq_slot()); }
+// slot s's sequencer runs: while a box holds it, or its box left and its edits are still being saved (as mod.cpp's slot_on)
+bool sq_on(int s) { return s < kVoiceSlots && device::live(s); }
 template <class F> auto in_slot(int s, F f) -> decltype(f()) {
   if (s == sq_slot() || s < 0 || s >= kVoiceSlots || !sq_on(s)) return f();
   device::Scope in(device::g_links[s]);
@@ -144,7 +144,7 @@ void set_transport(int t) {
 #endif
   if (t != kPlay) arp::stop(s);     // the arpeggiator: a trig's and the sequencer's notes end, keys run on free
   const uint8_t rt = t == kPlay ? (was == kPause ? 0xFB : 0xFA) : 0xFC;
-  if (s == 0 && hooks.transport) hooks.transport(rt);
+  if (device::rytm_at(s) && hooks.transport) hooks.transport(rt);
   if (hooks.transport_box) hooks.transport_box(s, rt);
 }
 Per<int64_t> transport_frame{INT64_MIN};   // the Rytm frame of the last TRANSPORT (older ticks after it: ignored)
@@ -2944,10 +2944,10 @@ CORE_COLD bool sysex(const uint8_t* d, int len) {
 CORE_COLD void set_clock_tracks(uint16_t m) { clock_extra() = (uint16_t)(m & 0xFFF); }   // (the slot in hand's: each box's SONG RECORD, step 10c)
 // (arp's tick: the slot in hand's, in its own Scope; a box's asks the clock only)
 CORE_COLD void set_arp_tracks(uint16_t pins, bool clock) { arp_pins() = (uint16_t)(pins & 0xFFF), arp_clock() = clock; }
-CORE_COLD double tempo() { return bpm.at(0); }
+CORE_COLD double tempo() { return bpm.at(device::rytm_home()); }
 CORE_COLD double tempo(int s) { return s >= 0 && s < kVoiceSlots ? bpm.at(s) : 0; }
 static CORE_COLD bool beat_map_here(double* origin, double* per16, int* lat);
-CORE_COLD bool beat_map(double* origin, double* per16, int* lat) { return in_slot(0, [&] { return beat_map_here(origin, per16, lat); }); }
+CORE_COLD bool beat_map(double* origin, double* per16, int* lat) { return in_slot(device::rytm_home(), [&] { return beat_map_here(origin, per16, lat); }); }
 CORE_COLD bool beat_map(int s, double* origin, double* per16, int* lat) {
   if (s < 0 || s >= kVoiceSlots) s = 0;
   return in_slot(s, [&] { return beat_map_here(origin, per16, lat); });
@@ -3011,6 +3011,14 @@ CORE_COLD void loading_begin() {
   nxt()->index = -1;   // round 2: an old pattern prefetched before the switch never comes up editable during the fill
 }
 #endif
+// The slot in hand's box left (device::release): its transport stops as at its STOP, its edits are saved by idle (save_due)
+CORE_COLD void slot_left() {
+  if (!cur()) return;
+  if (transport() != kStop) on_stop();
+  set_transport(kStop);
+  if (dirty() || tracks_dirty()) save_now() = true;
+}
+
 CORE_COLD void project_leaving() {
   if (!cur() || !named()) return;   // not named yet: project_changed keeps the edits for the first name
   if (tracks_dirty()) save_tracks(), tracks_dirty() = false;   // fix1049: a settling tracks.txt into its own folder too
@@ -3102,8 +3110,8 @@ CORE_COLD bool owns_voice(int vi) {
   });
 }
 
-// slot 0's render frames: SONG RECORD's clock and the calibration's (the Rytm's, 3(c)); a slot's: its arpeggiator's
-CORE_COLD uint64_t frames() { return hframes.at(0); }
+// the Rytm's slot's render frames: the calibration's (3(c)); a slot's: its arpeggiator's, its song's
+CORE_COLD uint64_t frames() { return hframes.at(device::rytm_home()); }
 CORE_COLD uint64_t frames(int s) { return hframes.at(s >= 0 && s < kVoiceSlots ? s : 0); }
 CORE_COLD bool any_tracks() { return mask() != 0; }
 CORE_COLD bool shown_wanted() { return show_wanted(); }
@@ -4392,37 +4400,41 @@ static CORE_COLD bool idle_here() {
 }
 
 // ---- the calibration click (render side) and its return (the platform's stream side; on the Pi an interrupt: only
-// the volatile words of `cal` are touched) (3(c): slot 0's, the Rytm's stems; another slot keeps its latency as set)
+// the volatile words of `cal` are touched) (3(c): the Rytm's slot's, her stems; another slot keeps its latency as set)
 static const int kStem[8] = {0, 3, 1, 4, 6, 5, 7, 2};   // physical voice -> the stream's voice channel (BD SD RS/CP ..)
 void cal_render(int16_t (*ring)[kVoices], const int* rows, int v0, int v1) {
-  if (cal.at(0).state != 1 && cal.at(0).state != 3) return;
-  int vi = cal.at(0).vi;
+  const int R = device::rytm_home();
+  auto& c = cal.at(R);
+  if (c.state != 1 && c.state != 3) return;
+  int vi = c.vi;
   if (vi < v0 || vi >= v1) return;
-  int64_t bf = (int64_t)hframes.at(0) - kBlock;   // this block's first frame (pre_block counted it)
-  if (cal.at(0).state == 1) {
-    if (cal.at(0).at >= bf + kBlock) return;      // not yet
-    if (cal.at(0).at < bf) cal.at(0).at = bf;           // late: from here (the round trip is measured from where it went)
-    cal.at(0).state = 3;                          // rendering
+  int64_t bf = (int64_t)hframes.at(R) - kBlock;   // this block's first frame (pre_block counted it)
+  if (c.state == 1) {
+    if (c.at >= bf + kBlock) return;      // not yet
+    if (c.at < bf) c.at = bf;           // late: from here (the round trip is measured from where it went)
+    c.state = 3;                          // rendering
   }
   for (int s = 0; s < kBlock; ++s) {
     int64_t f = bf + s;
-    if (f < cal.at(0).at || f >= cal.at(0).at + kCalClickFrames) continue;
-    ring[rows[s]][vi] = (int16_t)((((f - cal.at(0).at) / 24) & 1) ? -12000 : 12000);   // a 1 kHz square burst, 2 ms, -9 dBFS
+    if (f < c.at || f >= c.at + kCalClickFrames) continue;
+    ring[rows[s]][vi] = (int16_t)((((f - c.at) / 24) & 1) ? -12000 : 12000);   // a 1 kHz square burst, 2 ms, -9 dBFS
   }
-  if (bf + kBlock >= cal.at(0).at + kCalClickFrames) cal.at(0).state = 2;
+  if (bf + kBlock >= c.at + kCalClickFrames) c.state = 2;
 }
 void cal_audio(const int32_t* s, int n, int stride, int64_t arrival) {
-  cal.at(0).fed_ms = now_ms();
-  int st_ = cal.at(0).state, vi = cal.at(0).vi;
-  if (!st_ || vi < 0 || vi > 7 || cal.at(0).found >= 0) return;
+  const int R = device::rytm_home();
+  auto& c = cal.at(R);
+  c.fed_ms = now_ms();
+  int st_ = c.state, vi = c.vi - device::voice_base(device::g_links[R]);   // (her box voice: the stream's stem)
+  if (!st_ || vi < 0 || vi > 7 || c.found >= 0) return;
   const int32_t* x = s + kStem[vi];
-  int32_t fl = cal.at(0).floor;
+  int32_t fl = c.floor;
   if (st_ != 2) {   // before the click is out: the stream's own level
     for (int i = 0; i < n; ++i) {
       int32_t a = x[i * stride] < 0 ? -x[i * stride] : x[i * stride];
       if (a > fl) fl = a;
     }
-    cal.at(0).floor = fl;
+    c.floor = fl;
     return;
   }
   int32_t thr = fl > 0x7FFFFFFF / 8 ? 0x7FFFFFFF / 2 : 4 * fl;
@@ -4430,12 +4442,12 @@ void cal_audio(const int32_t* s, int n, int stride, int64_t arrival) {
   for (int i = 0; i < n; ++i) {
     int32_t a = x[i * stride] < 0 ? -x[i * stride] : x[i * stride];
     if (a > thr) {
-      cal.at(0).found = arrival - (n - 1 - i);
+      c.found = arrival - (n - 1 - i);
       return;
     }
   }
 }
-bool cal_wanted() { return cal.at(0).state != 0; }
+bool cal_wanted() { return cal.at(device::rytm_home()).state != 0; }
 
 double play_pos(int r) {
   if (!cur() || r < 0 || r >= kRytmTracks) return -1;

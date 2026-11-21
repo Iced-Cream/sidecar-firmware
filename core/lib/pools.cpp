@@ -924,7 +924,7 @@ CORE_COLD bool step() {
     if (io_step()) return true;
   }
   for (int k = 0; k < kVoiceSlots; ++k) {
-    if (k && !device::g_links[k].state) continue;
+    if (!device::live(k)) continue;
     device::Scope in(device::g_links[k]);
     if (slot_step()) return true;
   }

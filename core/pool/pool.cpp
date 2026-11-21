@@ -434,7 +434,7 @@ void lists_done() {
     if (g_lf_old && g_lf_whole) dxlib.resave();
     g_lf_old = false;
     fm_relist();
-    if (g_ls_slot == 0) {   // the names to the Rytm (its JUNO / FM lists' 16 / 17)
+    if (device::rytm_at(g_ls_slot)) {   // the names to the Rytm (its JUNO / FM lists' 16 / 17)
       send_juno_names();
       send_fm_names();
     }
@@ -676,12 +676,12 @@ bool project_loading() { return g_loading[prj_slot()]; }   // the slot in hand's
 #endif
 
 #if CORE_MSAMP
-// Slot s > 0's project, from its box's folder once a box is there (slot 0's is the boot's project_load): its name read by
-// the card core (kSmallReq: no card time here), then its pool. Read again when another box (another folder) takes the slot;
-// a box gone leaves it as it was until the next one.
+// Slot s's project, from its box's folder once a box holds it (attach order: either slot; the presumed Rytm's slot 0 is the
+// boot's project_load): its name read by the card core (kSmallReq: no card time here), then its pool. Read again when another
+// box (another folder) takes the slot; a box gone leaves it as it was until the next one, and the same box back finds it so.
 namespace {
 struct Attach {
-  const char* from;   // the folder its project was read from (a profile's state_dir), null none yet
+  const device::Profile* from;   // the holder whose folder its project was read from, null none yet
   bool reading;
   cardq::Req rq;
   char buf[24];
@@ -720,21 +720,22 @@ CORE_COLD bool settings_attach_step(int s, Attach& a) {
 }
 }  // namespace
 CORE_COLD bool project_attach_step(int s) {
-  if (s <= 0 || s >= kVoiceSlots || s >= device::kLinks) return false;
+  if (s < 0 || s >= kVoiceSlots || s >= device::kLinks) return false;
   device::Link& l = device::g_links[s];
   Attach& a = g_attach[s];
-  if (!l.box || !l.state) return false;
-  if (a.from == l.state && !a.reading) return settings_attach_step(s, a);   // then its box settings, one file a step
+  if (!l.held) return false;
+  if (!a.from && !a.reading && s == 0 && l.held == &device::rytm()) a.from = l.held, a.set = kNSettings;   // (the boot's Rytm: project_load's)
+  if (a.from == l.held && !a.reading) return settings_attach_step(s, a);   // then its box settings, one file a step
   if (!a.reading) a.reading = true, memset(a.buf, 0, sizeof a.buf);
   if (!cardq::async(&a.rq, cardq::kSmallReq, nullptr, "/.rytm/project", 0, (uint8_t*)a.buf, sizeof a.buf - 1, s)) return true;
   a.buf[a.rq.got > 0 ? a.rq.got : 0] = 0;
-  a.reading = false, a.from = l.state, a.set = 0, a.set_reading = false;
+  a.reading = false, a.from = l.held, a.set = 0, a.set_reading = false;
   device::Scope in(l);
   Project& j = prj(s);
   sniprintf(j.key, sizeof j.key, "%s", a.buf);
   sniprintf(j.name, sizeof j.name, "%s", a.buf);
   j.next[0] = 0, j.dirty = false, j.seen = false, ++j.gen;
-  log(CORE_STR("project: slot %d (%s): %s"), s, l.state, j.key[0] ? j.key : "(none yet)");
+  log(CORE_STR("project: slot %d (%s): %s"), s, l.state ? l.state : "/.rytm", j.key[0] ? j.key : "(none yet)");
   pool_load();
   if (cardq::worker()) lists_begin();   // its JUNO / FM lists, read from its folder (one reader: in turn)
   if (hooks.project_changed) hooks.project_changed();   // its machines: its own user-slot map (core/user/um.h, 3(c))
@@ -765,6 +766,10 @@ CORE_COLD void project_load() {
   pool_load();
   junolib.load_list(prj().key);
   dxlib.load_list(prj().key);
+#if CORE_MSAMP
+  Attach& a = g_attach[prj_slot()];   // (the boot's: its holder's project and settings read here and by engine_begin)
+  a.from = device::cur().held, a.set = kNSettings, a.reading = a.set_reading = false;
+#endif
 }
 
 #if CORE_MSAMP

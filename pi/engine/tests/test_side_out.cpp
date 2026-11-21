@@ -45,7 +45,7 @@ int main() {
 
   // a box beside the Rytm (slot 1 has a box, the base is slot 0): its stream's pull starts the stage afresh - the frames
   // queued before it are dropped, the fade starts at 0
-  core::device::g_links[1].box = &box;
+  core::device::g_links[1].box = &box, core::device::g_links[1].held = &box;   // (attach order: slot 1 held, the second box)
   CHECK(core::device::side_slot() == 1 && core::device::on_side(8) && !core::device::on_side(7));
   side_out::Pull(0, &core::out::kRytmMk2, f, 7);   // another slot's stream: still silence
   CHECK(f[3][4] == 0 && g_OutputSide.Level() == 12);
