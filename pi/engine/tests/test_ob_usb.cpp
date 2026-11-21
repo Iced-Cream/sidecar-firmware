@@ -42,8 +42,27 @@ const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {   // dev
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
-static int g_rytm_usb = 0;
-namespace core { namespace device { void rytm_on_usb(bool on) { g_rytm_usb += on ? 1 : -1; } }}
+static int g_rytm_usb = 0;   // the Rytm's slot held (usb_attach / usb_detach)
+// device.cpp's attach order without the engine: a box's slot already, else the lowest free one; freed when its device goes
+static const core::device::Profile* g_slot_of[2];
+namespace core { namespace device {
+int usb_attach(const Profile* p) {
+  for (int k = 0; k < 2; ++k)
+    if (g_slot_of[k] == p) return k;
+  for (int k = 0; k < 2; ++k)
+    if (!g_slot_of[k]) {
+      g_slot_of[k] = p;
+      if (p->audio == &out::kRytmMk2) ++g_rytm_usb;
+      return k;
+    }
+  return -1;
+}
+void usb_detach(int s) {
+  if (s < 0 || s > 1 || !g_slot_of[s]) return;
+  if (g_slot_of[s]->audio == &out::kRytmMk2) --g_rytm_usb;
+  g_slot_of[s] = nullptr;
+}
+}}
 CUSBFunction* RytmObDeviceCreate(CUSBFunction* p);
 extern "C" int core_snprintf(char* b, unsigned long n, const char* f, ...) {
   va_list a;
@@ -132,6 +151,8 @@ static void same_sequence(const CUSBHostController& h) {
 
 // the driver holds its URBs and endpoints for the life of the device; on the Pi nothing frees them
 extern "C" const char *__asan_default_options () { return "detect_leaks=0"; }
+
+Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
 
 int main() {
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);

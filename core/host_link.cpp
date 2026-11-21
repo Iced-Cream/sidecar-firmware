@@ -168,9 +168,9 @@ static char fx_project[24] = "\x01";   // the project whose fxslots file is load
 static bool fx_owed = false;           // the Rytm is told the slots' names when the card core has read them
 
 CORE_COLD void sendfx_project() {
-  if (strcmp(fx_project, project) == 0) return;
-  strcpy(fx_project, project);
-  fx::slots_load(project);
+  if (strcmp(fx_project, prj().key) == 0) return;
+  strcpy(fx_project, prj().key);
+  fx::slots_load(prj().key);
   fx_owed = true;
   sendfx_step();
 }
@@ -207,31 +207,44 @@ CORE_COLD void host_project_changed() {
 
 namespace fxin {
 static const char kFile[] = "/.rytm/fxin.txt";
-static bool s_want, s_dirty, s_hello, s_pending;   // setting, unsaved, first contact since boot, a 26 awaiting its 27
-static int8_t s_rytm = -1;
-static uint32_t s_ask_ms, s_sent_ms;   // when the oldest unanswered 26 went out (0: none); when the last went
+// 3(c) step 8: each box's own (its file in its own folder, its 26 / 27 with its own box), the slot in hand's
+struct Sl {
+  bool want, dirty, hello, pending;   // setting, unsaved, first contact since boot, a 26 awaiting its 27
+  int8_t rytm = -1;
+  uint32_t ask_ms, sent_ms;   // when the oldest unanswered 26 went out (0: none); when the last went
+  fmt::KvKeep keep;           // the lines a newer build wrote that this one does not read (fmt.h, class S: kept)
+};
+static Sl g_sl[kVoiceSlots];
+static inline Sl& S() { return g_sl[prj_slot()]; }
 
-CORE_COLD bool wanted() { return s_want; }
-CORE_COLD int rytm() { return s_rytm; }
-CORE_COLD bool active() { return s_rytm == 1; }
+CORE_COLD bool wanted() { return S().want; }
+CORE_COLD int rytm() { return S().rytm; }
+CORE_COLD bool active() { return S().rytm == 1; }
 CORE_COLD const char* state() {
-  if (s_rytm >= 0) return s_rytm ? "on" : "off";
-  return s_ask_ms && now_ms() - s_ask_ms >= 3000 ? "unsupported" : "unknown";
+  if (S().rytm >= 0) return S().rytm ? "on" : "off";
+  return S().ask_ms && now_ms() - S().ask_ms >= 3000 ? "unsupported" : "unknown";
 }
 static CORE_COLD void send26(uint8_t v) {
   const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x26, v, 0xF7};
   if (!hooks.to_rytm) return;
-  hooks.to_rytm(m, (int)sizeof m);
-  if (s_rytm < 0 && !s_ask_ms) s_ask_ms = now_ms() | 1;
-  s_pending = true;
-  s_sent_ms = now_ms();
+  hooks.to_rytm(m, (int)sizeof m);   // (the box in hand's link)
+  if (S().rytm < 0 && !S().ask_ms) S().ask_ms = now_ms() | 1;
+  S().pending = true;
+  S().sent_ms = now_ms();
 }
 CORE_COLD void ask() { send26(0x7F); }
-static fmt::KvKeep s_keep;   // the lines a newer build wrote that this one does not read (fmt.h, class S: kept)
+// the file's text into the slot in hand's setting
+CORE_COLD void take_text(const char* b, int got) {
+  Sl& x = S();
+  x.want = got > 0 && strncmp(b, "src=fx", 6) == 0;
+  x.keep.n = 0;
+  static const char* const kKnown[] = {"src", nullptr};
+  if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &x.keep);
+}
 CORE_COLD void load() {
   File f;
-  s_want = false;
-  s_keep.n = 0;
+  S().want = false;
+  S().keep.n = 0;
   fmt::post_wait(kFile);   // 0.3.0: a posted save of it lands before we read it back (fmt.h)
   fmt::recover(kFile);   // a power cut between write_atomic's renames: the previous file back, a stray .tmp removed
   if (!f.open(kFile, kRead)) return;
@@ -239,34 +252,34 @@ CORE_COLD void load() {
   memset(b, 0, sizeof b);
   int got = f.read(b, sizeof b - 1);
   f.close();
-  s_want = strncmp(b, "src=fx", 6) == 0;
-  static const char* const kKnown[] = {"src", nullptr};
-  if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &s_keep);
+  take_text(b, got);
 }
 // 0.3.0 power-cut safety: posted to the card core as one atomic write (fmt.h), a newer build's keys kept (class S)
 CORE_COLD bool save() {
-  if (!s_dirty) return false;
+  Sl& x = S();
+  if (!x.dirty) return false;
   char* t = fmt::post_begin();
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
-  uint32_t n = (uint32_t)sniprintf(t, 16, "%s", s_want ? "src=fx\n" : "src=in\n");
-  n = fmt::kv_append(s_keep, t, n, fmt::kPostMax);
+  uint32_t n = (uint32_t)sniprintf(t, 16, "%s", x.want ? "src=fx\n" : "src=in\n");
+  n = fmt::kv_append(x.keep, t, n, fmt::kPostMax);
   if (!fmt::post_end(kFile, n)) return false;
-  s_dirty = false;
+  x.dirty = false;
   return true;
 }
 CORE_COLD void set(bool on) {
-  if (on != s_want) s_dirty = true;
-  s_want = on;
+  if (on != S().want) S().dirty = true;
+  S().want = on;
   send26(on ? 1 : 0);
 }
-// 27 <s> from the Rytm: a reply to a 26, or the unasked one at USB port-up (the cue to send the setting again)
+// 27 <s> from the box in hand: a reply to a 26, or the unasked one at USB port-up (the cue to send the setting again)
 static CORE_COLD void on_state(uint8_t s) {
-  bool reply = s_pending && now_ms() - s_sent_ms < 1000;   // (a 26 sent into a closed port is no one's reply)
-  s_pending = false;
-  s_rytm = s ? 1 : 0;
-  s_ask_ms = 0;
-  rec::set_fxin(s != 0);
-  if (!reply && s_want && s == 0) send26(1);   // a connect: the Rytm forgot; a 00 in reply to our 01 is not repeated
+  Sl& x = S();
+  bool reply = x.pending && now_ms() - x.sent_ms < 1000;   // (a 26 sent into a closed port is no one's reply)
+  x.pending = false;
+  x.rytm = s ? 1 : 0;
+  x.ask_ms = 0;
+  if (device::rytm_at(prj_slot())) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: her slot's)
+  if (!reply && x.want && s == 0) send26(1);   // a connect: the box forgot; a 00 in reply to our 01 is not repeated
 }
 CORE_COLD bool command(const char* p, char* out, int cap) {
   if (strncmp(p, "fxin", 4) != 0 || (p[4] && p[4] != '=')) return false;
@@ -280,29 +293,45 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
   }
-  sniprintf(out, cap, CORE_STR("fxin: IN L/R source %s, the Rytm %s%s"), s_want ? "FX return" : "inputs", state(),
+  sniprintf(out, cap, CORE_STR("fxin: IN L/R source %s, the Rytm %s%s"), S().want ? "FX return" : "inputs", state(),
             strcmp(state(), "unsupported") == 0 ? " (not supported by this Rytm build)" : "");
   return true;
 }
 CORE_COLD int json(char* out, int cap) {
-  return sniprintf(out, cap, CORE_STR("\"fxin\":{\"want\":%d,\"state\":\"%s\",\"rytm\":%d}"), s_want, state(), s_rytm);
+  return sniprintf(out, cap, CORE_STR("\"fxin\":{\"want\":%d,\"state\":\"%s\",\"rytm\":%d}"), S().want, state(), S().rytm);
 }
-// the first message since boot is the host's first contact: tell the Rytm the setting (or ask)
+// the first message since boot is the host's first contact: tell the box the setting (or ask)
 static CORE_COLD void contact() {
-  if (s_hello) return;
-  s_hello = true;
-  if (s_want) send26(1);
+  if (S().hello) return;
+  S().hello = true;
+  if (S().want) send26(1);
   else send26(0x7F);
 }
 }  // namespace fxin
 
-CORE_COLD void link_reset(const char* why) {
-  for (int vi = 0; vi < kVoices; ++vi) voice_silence(vi);
+CORE_COLD void link_reset(const char* why, int slot) {
+  // the link's own voices (slot 1's 8..15 leave the Rytm's playing); on 8 voices every link's are 0..7
+  const int b = slot < 0 ? device::voice_base() : device::voice_base(device::g_links[slot]);
+  for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
-  midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
+  midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
 #endif
-  if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+  // 3(c): the link's own box's send FX (each box its own, its own 100 ms window)
+  const int s = slot < 0 ? device::cur().index : slot;
+  if (fx::all_sound_off(fx::control_of(s >= 0 && s < kVoiceSlots ? s : 0))) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+}
+
+CORE_COLD void slot_left(int slot) {
+  if (slot < 0 || slot >= device::kLinks) return;
+  device::Scope in(device::g_links[slot]);
+#if CORE_POLY
+  seq::slot_left();   // (its transport to STOP: its MIDI and arpeggiator end there; its edits saved by idle)
+#endif
+#if CORE_MSAMP
+  midim::stop(slot);
+#endif
+  arp::stop(slot);
 }
 
 CORE_COLD void link_lost() {
@@ -316,6 +345,17 @@ CORE_COLD void link_lost() {
 
 // Transport 0's (the host link's) whole SysEx: its slot (a box's hello moves it to slot 1), then handled as that slot's.
 CORE_COLD void host_sysex(const uint8_t* d, int len) { engine_sysex_link(0, d, len); }
+
+// 3(c) step 10: a box's MIDI clock is its own slot's. Transport t's realtime byte / song position goes to the slot its
+// messages go to (device::slot_of: a box's hello moved it), into that box's send FX clock (its STUTTER's grid), which
+// hands it on to that slot's LFOs (fx::clock_listener -> lfo::clock(slot, ..)). Nothing of it reaches another box's.
+CORE_COLD int engine_realtime_link(int t, uint8_t status, uint16_t spp) {
+  const int slot = device::slot_of(t, nullptr, 0);
+  if (slot < 0) return -1;
+  device::Scope in(device::g_links[slot]);
+  fx::clock_in(fx::control_of(slot), status, spp);
+  return slot;
+}
 
 __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never
@@ -460,7 +500,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     if (d[4] == 0x12 && len >= 11) { pool_assign(d[5], d[6] << 7 | d[7], d[8] << 7 | d[9]); return; }
   }
   if (len < 7 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
-  int cmd = d[4], vi = d[5] & 7;
+  int cmd = d[4], vi = device::voice_in(d[5]);   // the link's box voice -> engine voice (slot 1's: 8 + k)
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
     if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate
@@ -469,7 +509,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     voice_note_off(vi);
     return;
   }
-  voice_report(cmd, d, len);
+  voice_report_at(vi, cmd, d, len);
 }
 
 }  // namespace core

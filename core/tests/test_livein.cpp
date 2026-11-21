@@ -268,7 +268,10 @@ int main() {
       amp::step();
       run(1, pluck);
       float vs[kBlock][ins::kBuses];
-      ins::voice_sends(ring, kBlock, vs);
+      int16_t box[kBlock][kBoxVoices];   // one box's columns (the output stage's), slot 0's
+      for (int s = 0; s < kBlock; ++s)
+        for (int k = 0; k < kBoxVoices; ++k) box[s][k] = ring[s][k];
+      ins::voice_sends(box, kBlock, vs);
       float o[kBlock][2], post[kBlock][2];
       sfx->Process(stems, kBlock, o, fx::control, post, nullptr, vs);
       for (int s = 0; s < kBlock; ++s) fxo.push_back(o[s][0]);

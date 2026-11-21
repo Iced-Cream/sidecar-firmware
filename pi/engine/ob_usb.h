@@ -40,13 +40,15 @@
 // primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
 // device follow, as the one stream did; the other streams in step with its own box (its own clock), its OUT silent until the
 // engine renders voices of its own for it. Each box's usb=mirror goes to its own target (mirror_target.h).
+extern volatile boolean g_bObPowerAsk;		// a box's endpoints failed together: the kernel reads the supply's flags at its next second
+
 class CObUsb : public CUSBFunction
 {
 public:
 	static const unsigned MaxURBs = 16;		// <= XHCI_EP_MAX_URBS (circle-xhci-urbqueue.patch)
 	static const unsigned MaxBlocks = 8;
 
-	CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio);
+	CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsigned nSlot);	// nSlot: core::device::usb_attach's
 	~CObUsb (void);
 
 	boolean Configure (void);
@@ -61,13 +63,14 @@ public:
 	boolean Primary (void) const		{ return this == s_pThis; }
 	const core::out::Device *Audio (void) const	{ return m_pAudio; }
 	// usb=mirror with two boxes (mirror_assign.h): which box USB-C shows and which a Teensy relay shows is decided at run
-	// time, USB-C first (mirrorfirst=relay: the relay first); cmdline mirror=rytm|a4|first names the box that takes the first
+	// time, USB-C first (mirrorfirst=relay: the relay first); the box that came first takes the first
 	// route when both are there.
 	static void SetRelayTarget (IMirrorTarget *pTarget);	// the Teensy relay came (0: went). Task level
 	static unsigned GadgetSlot (void);		// the box the USB-C gadget mirrors (0, the Rytm's, while none is chosen)
 	static int UsbcSlot (void);			// the same, -1 while none is chosen (/status)
+	static const char *SlotName (int nSlot);	// the box in slot nSlot (rytm, a4, digitakt; none)
 	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
-	static int MirrorPrefer (void);			// cmdline mirror=: 0 rytm, 1 a4, -1 first
+	static int MirrorPrefer (void);			// -1 (mirror_assign::kFirst): attach order (mirror= retired 2026-11-21)
 	static boolean MirrorRelayFirst (void);		// cmdline mirrorfirst=relay: the relay filled first (testing it), not USB-C
 	static void PollAssign (void);			// core 0's loop: a box came or went: who goes where (before PollTargets)
 	static const char *PipeInfo (unsigned nSlot);

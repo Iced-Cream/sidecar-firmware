@@ -68,6 +68,7 @@ static int s_nRytmPatIndex = -1;
 #include "device/a4.h"
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
+#include "masterfx_pi.h"
 #include "paircode_pi.h"	// the pairing code that gates the network (paircode.h)
 #include "usbc_pi.h"		// the USB-C mode for the SIDECAR MENU > USB-C (usb_mode.h)
 #include "midibridge_pi.h"	// the Rytm MIDI bridge (midibridge.h): off at every boot
@@ -367,6 +368,9 @@ boolean CKernel::Initialize (void)
 	// core 3, as before
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
 	BootStep (3);
+	// a slot whose box left stays that box's this long after its edits are saved (core/device/device.h g_hold_ms): a box
+	// knocked off the hub a moment (a plug on the other port, AO2) comes back to its slot and route
+	core::device::g_hold_ms = (u32) m_Options.GetAppOptionDecimal ("slothold", 5000);
 	m_Usb.SetSend (m_Options.GetAppOptionDecimal ("tohost", 1) != 0);	// tohost=0: the replies dropped, as before
 	boolean bBench = m_Options.GetAppOptionDecimal ("bench", 1) != 0;
 	LoadClock (bCard);				// the CPU clock option, before the bench: the bench measures the clock the engine plays at
@@ -379,9 +383,14 @@ boolean CKernel::Initialize (void)
 	// boot defaults (the user's decision, 2026-10-16): out=tracks, the voices on their tracks' inputs, through the
 	// Rytm's filters and FX (the mod build); MIDI notes off (notes=on is for a stock Rytm, with out=main); no drone
 	// (only :drone=). cmdline.txt or the console override them.
-	g_Output.SetMode (strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
-											      : Output::kTracks);
-	g_Output.SetOutControl (&core::out::control);	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md)
+	const Output::Mode OutMode = strcmp (m_Options.GetAppOptionString ("out", "tracks"), "main") == 0 ? Output::kMain
+												      : Output::kTracks;
+	g_Output.SetMode (OutMode);
+	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md): each slot's own; the base box's stage follows the base box
+	g_Output.FollowControl ([] () -> const core::out::Control * { return &core::out::control_of (core::slot_of_voice (core::device::base_voice_base ())); });
+	g_OutputSide.SetMode (OutMode);			// slot 1's voices beside a Rytm (side_out.h): slot 1's OUT routes,
+	g_OutputSide.SetOutControl (&core::out::control1);	// their box's channels (set by its stream), no stereo=measure
+	g_OutputSide.SetMeasured (false);
 	// poolmono=1: stereo files summed at load (half the pool RAM for them; PRE / POST voices then play them centred)
 	bridge::pool_mono (m_Options.GetAppOptionDecimal ("poolmono", 0) != 0);
 	// trimpre= / trimpost= (tenths of a dB, may be negative): the PRE / POST pairs' calibration from stereo=measure
@@ -653,6 +662,40 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  ST.gap_us, ST.at_frames, ST.gaps_over_2ms, ST.sec_us[0], ST.sec_us[1], ST.sec_us[2], ST.sec_us[3], ST.sec_us[4],
 		  ST.sec_us[5], CEngineCores::StallStep (), ST.step_us, ST.step_sum, ST.here_us);	// -1: did not happen
 	pOut->Append (s);
+	// the slots (attach order, core/device/device.h): who holds each, a Rytm presumed at boot, a box gone still saving, which
+	// transport goes there (0 USB-C, 1 the relay; -1 none) and the base (plain reads of the control core's: stale at worst)
+	pOut->Append (",\"slots\":[");
+	for (int k = 0; k < core::device::kLinks; k++)
+	{
+		const core::device::Link &L = core::device::g_links[k];
+		const core::device::Profile *pHeld = __atomic_load_n (&L.held, __ATOMIC_RELAXED);
+		int nT = -1;
+		for (int t = 0; t < core::device::kLinks; t++)
+			if (core::device::route_of (t) == k) nT = t;
+		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"kept\":%s,\"transport\":%d,\"base\":%s}", k ? "," : "", k,
+			  pHeld ? core::device::short_name (*pHeld) : "", L.presumed ? "true" : "false", L.parting ? "true" : "false", L.holding ? "true" : "false", nT,
+			  core::device::g_base == &L ? "true" : "false");
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
+	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
+	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
+		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
+		  g_OutputSide.Streams ());
+	pOut->Append (s);
+	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
+	// are cleared by the console's `sendfx` line, which reports them)
+	pOut->Append (",\"slotFx\":[");
+	for (int b = 0; b < 2; b++)
+	{
+		const sendfx_pi::Stats F = sendfx_pi::ReadStats (b);
+		const masterfx_pi::Stats M = masterfx_pi::Read (b);
+		s.Format ("%s{\"slot\":%d,\"sendOn\":%s,\"send\":[%u,%u,%u,%u],\"master\":[%u,%u,%u,%u],\"wet\":%u}", b ? "," : "",
+			  b, F.on ? "true" : "false", F.frames, F.under, F.drop_in, F.drop_out, M.frames, M.under, M.drop_in,
+			  M.drop_out, (unsigned) (masterfx_pi::Wet (b) * 100.0f));
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	usbnet_pi::Status (pOut, k->m_pSidecar != 0 && k->m_pSidecar->NetInDevice (), k->m_pSidecar != 0 && k->m_pSidecar->NetUp (),
 			   k->m_pSidecar != 0 && k->m_pSidecar->NetLate ());	// late: reboot to use the cable
 	{	// the USB-C mode (usb_mode.h): set (chosen), from (card, cmdline, default), runs (set, or class where the unit cannot
@@ -672,8 +715,8 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	// the box USB-C shows and the one the Teensy relay shows ("none": none chosen yet / not there), and whether a relay is up
 	s.Format (",\"mirror\":{\"prefer\":\"%s\",\"first\":\"%s\",\"usbc\":\"%s\",\"relay\":\"%s\",\"relayUp\":%s}",
 		  mirror_assign::prefer_name (CObUsb::MirrorPrefer ()), CObUsb::MirrorRelayFirst () ? "relay" : "usbc",
-		  CObUsb::UsbcSlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::UsbcSlot ()) != 0 ? mirror_assign::slot_name (CObUsb::UsbcSlot ()) : "none",
-		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? mirror_assign::slot_name (CObUsb::RelaySlot ()) : "none",
+		  CObUsb::UsbcSlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::UsbcSlot ()) != 0 ? CObUsb::SlotName (CObUsb::UsbcSlot ()) : "none",
+		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? CObUsb::SlotName (CObUsb::RelaySlot ()) : "none",
 		  CTeensyTarget::Relaying () ? "true" : "false");
 	pOut->Append (s);
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
@@ -744,10 +787,10 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  k->m_nAsleepPct[0], k->m_nAsleepPct[1], k->m_nAsleepPct[2], k->m_nAsleepPct[3],
 		  k->m_nWakes[0], k->m_nWakes[1], k->m_nWakes[2], k->m_nWakes[3]);
 	pOut->Append (s);
-	pOut->Append (",\"machines\":[");			// each voice's machine (the Sound tab shows the current one)
+	pOut->Append (",\"machines\":[");			// each voice's machine (the Sound tab shows the current one): the base box's
 	for (unsigned v = 0; v < 8; v++)
 	{
-		s.Format ("%s\"%s\"", v ? "," : "", bridge::machine_name (v));
+		s.Format ("%s\"%s\"", v ? "," : "", bridge::machine_name (bridge::out_base () + (int) v));
 		pOut->Append (s);
 	}
 	pOut->Append ("]");
@@ -1129,7 +1172,7 @@ void CKernel::SelfCheck (void)
 	static const u8 Trig[41] = {0xF0, 0x7D, 0x52, 0x54, 0x04, 0x00, 48, 100,
 				    40, 0, 64, 0, 64, 0, 64, 0, 64, 0, 64, 0, 64, 0, 100, 0,
 				    64, 0, 64, 0, 0, 0, 0, 0, 0, 0, 120, 0, 0, 0, 100, 0, 0xF7};
-	bridge::sysex (Trig, sizeof Trig);
+	bridge::sysex_self (Trig, sizeof Trig);	// (the Pi's own: not the Rytm speaking, slot 0 stays presumed)
 	static s16 Ring[bridge::kBlock][bridge::kVoices];
 	u64 Mach[bridge::kMachines] = {0};
 	unsigned nPeak = 0, nCycles = 0;
@@ -1718,7 +1761,7 @@ void CKernel::UpdateMIDI (void)
 			((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
 			link1::SetDevice ((CUSBMIDIDevice *) p);
 			const char *pBox = p->GetProperty (CDevice::PropertyProduct);
-			m_Logger.Write (From, LogNotice, "midi: %s (%s): the second box's link, its hello takes slot 1", pBox != 0 && *pBox ? pBox : "an Elektron box", (const char *) Name);
+			m_Logger.Write (From, LogNotice, "midi: %s (%s): the second box's link, its hello takes a slot", pBox != 0 && *pBox ? pBox : "an Elektron box", (const char *) Name);
 			continue;
 		}
 		if (Box == UsbBoxOther)
@@ -1790,7 +1833,7 @@ void CKernel::PushUi (void)
 	sidecar_ui_status_t &u = m_Ui;
 	u.rytm = CObUsb::Streaming () || m_pMIDI != 0;
 	u.underruns = g_Output.Underflows ();
-	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (v);
+	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.track[v] = bridge::machine_name (bridge::out_base () + v);	// the base box's voices
 	const core::device::Profile &Box = core::device::active ();	// the box in use: its word and its voices' names
 	u.box = core::device::short_name (Box);
 	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.voice[v] = Box.screen ? Box.screen->names[v] : 0;
@@ -2042,8 +2085,9 @@ void CKernel::LogStats (void)
 		sv.valid = 1;
 		for (int v = 0; v < SST_VOICES; v++)
 		{
-			sv.vload[v] = (int) (s.nVoice[v] * 1000 / s.nTicks);	// tenths of a percent of one render core
-			sv.muted[v] = g_Guard.Muted ((unsigned) v) ? 1 : 0;
+			const int ev = bridge::out_base () + v;			// the base box's voice v
+			sv.vload[v] = (int) (s.nVoice[ev] * 1000 / s.nTicks);	// tenths of a percent of one render core
+			sv.muted[v] = g_Guard.Muted ((unsigned) ev) ? 1 : 0;
 		}
 		for (int c = 0; c < SST_CORES; c++) sv.load[c] = m_Ui.load[c];
 		sv.block_max_us = s.nMaxBlockUs, sv.block_budget_us = bridge::kBlock * 1000000 / 48000;
@@ -2072,6 +2116,7 @@ void CKernel::LogStats (void)
 		nTemp);
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
+	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
 	if (s_nPowerTick % 10 == 5)				// every 10 s: the heat's figures, in the black box as well
 	{
 		MeasureClock ();

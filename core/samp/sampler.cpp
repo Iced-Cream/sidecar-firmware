@@ -197,7 +197,7 @@ CORE_COLD void process_step() {
       else
         nslices = 0;
       char prj[24];
-      safe_name(project_name[0] ? project_name : "Sidecar", prj, sizeof prj);   // (2026-10-27: the Rytm's name, not a slot key)
+      safe_name(core::prj().name[0] ? core::prj().name : "Sidecar", prj, sizeof prj);   // (2026-10-27: the Rytm's name, not a slot key)
       sniprintf(dir, sizeof dir, "/Samples/%s", prj);
       if (!mkdirs(dir)) {
         fail("cannot make the folder");
@@ -225,7 +225,7 @@ CORE_COLD void process_step() {
     case kPSfz: {
       static char txt[8192];
       char path[160], prj[24];
-      safe_name(project_name[0] ? project_name : "Sidecar", prj, sizeof prj);   // (2026-10-27: the Rytm's name, not a slot key)
+      safe_name(core::prj().name[0] ? core::prj().name : "Sidecar", prj, sizeof prj);   // (2026-10-27: the Rytm's name, not a slot key)
       if (nslices > 0) {   // the slicing data next to the WAV, then the instruments
         sniprintf(path, sizeof path, "%s/%s.sfz", dir, take);
         char rel[48];

@@ -71,18 +71,33 @@ struct Control {
   volatile uint8_t known;
 };
 extern Control control;
-inline int played_lev() { int x = control.lev + control.mod_lev; return x < 0 ? 0 : x > 127 ? 127 : x; }
-inline int played_mix(int i) {   // slot_index i's MIX with its modulation (MFX:MIX1..4, MFX:B1A..B3B)
+// Two links (phase 3(d), decided 2026-11-14: the boxes work independently and identically): slot 1's master settings
+// (3(c) loads its MFX line into it), played on slot 1's chains (ins::engine(1), ins::control_of(1)) with its own rooms and
+// SendFx units (kBoxes: 16-voice builds). `control` is slot 0's. The settings code below (set_*, accept, the rooms, the
+// console, the card line, json) works on the slot in hand's (ins::slot_in_hand, 3(c)'s prj_slot): cur(). report,
+// link_lost and stems_on_main are the Rytm's (slot 0's control).
+extern Control control1;
+inline Control& control_of(int box) { return box ? control1 : control; }
+Control& cur();   // the slot in hand's
+constexpr int kBoxes = kVoiceSlots;   // 2 on 16 voices, 1 on 8
+inline int played_lev(const Control& m) { int x = m.lev + m.mod_lev; return x < 0 ? 0 : x > 127 ? 127 : x; }
+inline int played_lev() { return played_lev(control); }
+inline int played_mix(const Control& m, int i) {   // slot_index i's MIX with its modulation (MFX:MIX1..4, MFX:B1A..B3B)
   if (i < 0 || i >= kAllSlots) return 0;
-  int x = control.mix[i] + control.mod_mix[i];
+  int x = m.mix[i] + m.mod_mix[i];
   return x < 0 ? 0 : x > 127 ? 127 : x;
 }
+inline int played_mix(int i) { return played_mix(control, i); }
 void mod_offset(int param, int off);   // core/mod kMfx: param 0 LEV, 1 + slot_index the MIX (1..4 the master's, 5..10 B1A..B3B); -127..127
 extern volatile float lim_gain;    // core 0's: the limiter's lowest gain of the last second or so, 1 while it is out
+extern volatile float lim_gain1;   // ... slot 1's (its stream's masterfx_pi instance)
+inline volatile float& lim_gain_of(int box) { return box ? lim_gain1 : lim_gain; }
 int gr10();                        // ... as its reduction, in tenths of a dB (any core but the audio's: a log)
+int gr10(int box);
 
 // ---- the control side (the Pi's core 3)
 bool on();                         // a slot has a TYPE, or the POST EQ is set: the chain runs
+bool on(int box);                  // ... box's chain (ins::control_of(box))
 bool accept(int c, int s, int t);  // ins::set_type's question: chain c's slot s may take TYPE t (the room for send TYPEs is
                                    // booked here; the answer is no past kFxSlots, and on a voice chain: the slot keeps what it has)
 int fx_used();                     // send TYPE slots booked now (0..kFxSlots)
@@ -120,6 +135,10 @@ bool from_line(const char* const* w, int n);
 // y's peaks, in and out, kept for the meters.
 void render(float (*y)[2], int n);
 void take_peaks(float* in, float* out);   // the largest |sample| since the last call
+// ... box `box`'s chain (ins::engine(box)) with its settings (control_of(box)), rooms, LEV ramp and meters. AMP is serviced
+// for the base box only (out::g_base_slot; AMP is keyed by chain).
+void render(int box, float (*y)[2], int n);
+void take_peaks(int box, float* in, float* out);
 // The boot benches. Call them only while no other core can load a project or edit (the Pi: core 0 before cores 1-3 start,
 // pi/engine/kernel.cpp BenchChains: the project's inserts are applied by core 3's store fill, later). Each sets its bytes
 // directly (no file marked) and gives back only the bytes that still hold what it set, then runs silence until the fades

@@ -33,6 +33,9 @@ struct Hooks {
   // as MIDI realtime: 0xFA start, 0xFB continue, 0xFC stop (pause too). The control core; null: ignored. The Pi's
   // recorder arms on it as on the MIDI messages (its gate is idempotent: both may arrive).
   void (*transport)(uint8_t status);
+  // 3(c): every voice slot's sequencer transport, as transport (slot 0's comes through both): the box's own clock out to
+  // the platform. The Pi arms its recorder on the base box's (rec_pi.cpp). Null: ignored.
+  void (*transport_box)(int slot, uint8_t status);
   // Another box needs another state folder (core/device/device.h): saved, restart the Sidecar. Null: a board that cannot.
   void (*device_restart)();
   // True on the control core (the Pi: core 3). Read by the file layer to pick the link a path is for (device::path_link):

@@ -1019,7 +1019,7 @@ int main() {
     const uint8_t other[] = {0xF0, 0x7D, 0x52, 0x54, 0x10, 'O', 'T', 'H', 0xF7};
     engine_sysex(other, sizeof other);
     // UX review B1: OTH has no Sidecar files, SEQTEST some - the switch waits for the Rytm's answer; NO: a new project
-    CHECK(rename::state() == rename::kAsk && !strcmp(project, "SEQTEST") && seq::any_tracks());
+    CHECK(rename::state() == rename::kAsk && !strcmp(prj().key, "SEQTEST") && seq::any_tracks());
     rename::answer(false);
     // fix round 1: while OTH's store fills, an edit of OTH (the project the Rytm is on) is refused at once with that
     // reason - a track made a seq track, a pattern edit on a pattern switched to meanwhile - never taken and then lost
@@ -1062,11 +1062,11 @@ int main() {
     for (int i = 0; i < 1000 && fmt::post_busy(); ++i) fmt::post_step();
     direct_state({2, 0, 0x7F});
     while (seq::idle()) {}
-    CHECK(!strcmp(project, "SEQTEST") && seq::view().pattern == 0 && seq::view().locked == 0);
+    CHECK(!strcmp(prj().key, "SEQTEST") && seq::view().pattern == 0 && seq::view().locked == 0);
     const uint8_t other[] = {0xF0, 0x7D, 0x52, 0x54, 0x10, 'O', 'T', 'H', 0xF7};
     engine_sysex(other, sizeof other);
     if (rename::state() == rename::kAsk) rename::answer(false);
-    CHECK(project_loading() && !strcmp(project, "OTH"));
+    CHECK(project_loading() && !strcmp(prj().key, "OTH"));
     CHECK(seq::view().locked == 0);   // the loaded pattern is still SEQTEST's A01: editable
     int u0 = used(0);
     seq::Track* lt = seq::edit_track(0, true);
@@ -1381,7 +1381,7 @@ int main() {
   {
     const int D = 713;
     std::vector<int16_t> hist;   // BD's rendered output, by host frame
-    int16_t ring[64][8];
+    int16_t ring[64][kVoices];
     uint64_t mach[16] = {};
     CHECK(cmd("seq=cal:1").find("calibrating") != std::string::npos);
     int64_t start = (int64_t)seq::frames();
@@ -2528,7 +2528,7 @@ int main() {
     for (int way = 0; way < 2; ++way) {   // 0: back to it (install), 1: queued back (the prefetch)
       direct_state({2, 41, 0x7F});
       while (seq::idle()) {}
-      CHECK(!strcmp(project, "SEQTEST") && seq::view().pattern == 41 && seq::view().locked == 2);
+      CHECK(!strcmp(prj().key, "SEQTEST") && seq::view().pattern == 41 && seq::view().locked == 2);
       engine_sysex(other, sizeof other);
       if (rename::state() == rename::kAsk) rename::answer(false);
       CHECK(project_loading() && seq::view().locked == 2);

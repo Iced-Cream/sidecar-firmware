@@ -15,7 +15,7 @@
 #include "rec/rec_wav.h"
 #include "sendfx_pi.h"
 #include "bridge.h"
-#include "hooks.h"	// core::hooks.transport: the mods' PLAY / STOP arm the recorder too
+#include "hooks.h"	// core::hooks.transport_box: the mods' PLAY / STOP arm the recorder too
 #include "ui/tap_names.h"	// tap_source_name: the stems' names, as SCOPE has them (not ui/extra.h: it pulls <new> in, which the kernel build has not)
 #include "voice_name.h"	// the voices' names for the user
 #include "lib/library.h"	// the sample library: a take indexed (not hashed: docs/LIBRARY.md)
@@ -255,7 +255,7 @@ bool BPatch (const char *p, uint64_t nOff, const void *pBuf, uint32_t n)
 void BLog (const char *pLine) { CLogger::Get ()->Write (From, LogNotice, "%s", pLine + (strncmp (pLine, "rec: ", 5) ? 0 : 5)); }
 bool BCardBusy (void) { return bridge::card_busy (); }	// the streams need the card (core/msamp/cardq.h)
 // the take's name (recorder.h): the wall clock's local time, the Rytm project's name. ProjectName is the one place
-// that knows where the core keeps the current project (core::project, the Rytm's 10 name, written by the control core:
+// that knows where the core keeps the current project (core::prj().key, the Rytm's 10 name, written by the control core:
 // copied a byte at a time up to its NUL, 23 characters at most)
 bool BClock (uint32_t *pLocal) { int nSrc; return core::projects::clock_local (pLocal, &nSrc); }
 void ProjectName (char *pOut, unsigned nCap)
@@ -612,12 +612,16 @@ void ClockSync (void)
 namespace rec_pi {
 
 // the mods' transport report (core/seq: whatever the Rytm's MIDI TRANSPORT SEND is): the recorder's arm only - the
-// other Transport () users keep the MIDI messages (the sampler's PLAY starts, the send FX's clock)
-static void ModsTransport (uint8_t nStatus) { g_Rec.transport (nStatus); }
+// other Transport () users keep the MIDI messages (the sampler's PLAY starts, the send FX's clock). 3(c): every box's
+// sequencer reports its own; the recorder (one, the primary stream's) arms on the base box's, as RealtimeIn (cores.cpp)
+static void ModsTransport (int nSlot, uint8_t nStatus)
+{
+	if (nSlot == bridge::base_slot ()) g_Rec.transport (nStatus);
+}
 
 void Init (void)
 {
-	core::hooks.transport = ModsTransport;
+	core::hooks.transport_box = ModsTransport;
 	CLogger *L = CLogger::Get ();
 	// recbuf=MB (cmdline), else sized from the free heap (memalign's: the low heap), 64..256 MB (recorder.h recbuf_mb)
 	unsigned nFreeMB = (unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW) >> 20);
@@ -1059,7 +1063,7 @@ void Transport (u8 nStatus, u16 nSPP)
 	bundle_pi::transport (nStatus);	// project bundles: card writes wait while the Rytm plays (bundle_pi.h)
 	stor_pi::Transport (nStatus);		// the storage bench is refused while the Rytm plays (stor_pi.h)
 	bridge::samp_transport (nStatus);	// the sampler: PLAY / next-bar starts, the tempo (core/samp/sampler.h)
-	sendfx_pi::Clock (nStatus, nSPP);
+	(void) nSPP;	// (STUTTER's grid: the box's own clock, cores.cpp RealtimeIn -> bridge::realtime_link, 3(c) step 10)
 }
 
 bool TakeBusy (const char *pPath)

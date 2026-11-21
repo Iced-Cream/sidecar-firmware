@@ -554,7 +554,7 @@ static void test_um(bool a4) {
     CHECK(device::foreign() && device::active().id == device::kIdA4 && device::active().voices == 4);
     CHECK(!(device::active().features & device::kProject) && extra_for_box("USER SLOTS") && !extra_for_box("PROJECT"));
     sx({0x36, 1, 0, 100, 1});
-    project[0] = 0;   // (the box names none: the default's map)
+    prj().key[0] = 0;   // (the box names none: the default's map)
     hooks.project_changed();
     CHECK(um::command("um=rescan", o, sizeof o));
   }

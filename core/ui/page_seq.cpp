@@ -396,12 +396,12 @@ CORE_COLD void lock_label(int pg, int t, int e, char* b, int cap) {
   } else if (pg == seq::kLpSmpl) {
     sniprintf(b, cap, "%s", p2_label(remote_track_machine(t), e));
   } else if (pg == seq::kLpFx && e / 4 < fx::kSlots) {
-    const fx::KnobLabels* l = fx::labels(fx::control.knob[e / 4][0]);
+    const fx::KnobLabels* l = fx::labels(fx::cur().knob[e / 4][0]);
     if (l && l->label[e % 4] && l->label[e % 4][0]) sniprintf(b, cap, "%.4s", l->label[e % 4]);
     else sniprintf(b, cap, "-");   // a knob the TYPE leaves unused
   } else if (pg == seq::kLpIns) {   // fx-ins: the track's voice's INSERT A (A..D) and B (E..H)
     int vi = remote_track_voice(t);
-    int ty = vi >= 0 && vi < ins::kVoices ? ins::control.type[vi][e / 4] : 0;
+    int ty = vi >= 0 ? ins::control_of(slot_of_voice(vi)).type[box_voice(vi)][e / 4] : 0;   // (its box voice's chain)
     const char* l = ins::labels(ty).label[e % 4];
     if (ty && l[0]) sniprintf(b, cap, "%.4s", l);
     else sniprintf(b, cap, CORE_STR("%c -"), 'A' + e / 4);   // the slot OFF
