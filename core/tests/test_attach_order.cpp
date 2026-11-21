@@ -246,6 +246,19 @@ int main() {
   CHECK(device::rytm_slot() == 1 && device::slot_held_by(&device::kA4) == 0);
   printf("  self-check before any box: slot 0 still presumed; the A4's USB first takes slot 0, the Rytm's slot 1\n");
 
+  // ---- a Rytm whose USB enumerates at boot, on the slot 0 presumed hers: her USB confirms it, so an A4 after her takes slot 1
+  // (the QEMU gate's rytm-a4 order, 2026-11-21)
+  device::reset();
+  device::set_out(1, out1);
+  CHECK(device::g_links[0].presumed);
+  CHECK(device::usb_attach(&device::rytm()) == 0);
+  device::step(true);
+  CHECK(device::rytm_slot() == 0 && !device::g_links[0].presumed && device::route_of(0) == 0);
+  CHECK(device::usb_attach(&device::kA4) == 1);
+  device::step(true);
+  CHECK(device::rytm_slot() == 0 && device::slot_held_by(&device::kA4) == 1);
+  printf("  the Rytm's USB at boot confirms slot 0; the A4's USB after her takes slot 1\n");
+
   printf("test_attach_order: PASS (slots by attach order, folders by type: A4 + Digitakt either order, the Rytm in slot 1, "
          "a box leaving saves into its folder and frees its slot, the other box never moves, a box back loads its folder)\n");
   return 0;

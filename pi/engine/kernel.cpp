@@ -1737,7 +1737,7 @@ void CKernel::UpdateMIDI (void)
 			((CUSBMIDIDevice *) p)->RegisterPacketHandler (HelloPacketHandler);
 			link1::SetDevice ((CUSBMIDIDevice *) p);
 			const char *pBox = p->GetProperty (CDevice::PropertyProduct);
-			m_Logger.Write (From, LogNotice, "midi: %s (%s): the second box's link, its hello takes slot 1", pBox != 0 && *pBox ? pBox : "an Elektron box", (const char *) Name);
+			m_Logger.Write (From, LogNotice, "midi: %s (%s): the second box's link, its hello takes a slot", pBox != 0 && *pBox ? pBox : "an Elektron box", (const char *) Name);
 			continue;
 		}
 		if (Box == UsbBoxOther)

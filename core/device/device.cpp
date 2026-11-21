@@ -218,8 +218,15 @@ static CORE_COLD bool open_for(const Link& l, const Profile* p) {   // a slot p 
 
 CORE_COLD int usb_attach(const Profile* p) {
   if (!p) p = &kRytm;
-  for (const Link& l : g_links)
-    if (__atomic_load_n(&l.held, __ATOMIC_RELAXED) == p || __atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE) == p) return l.index;
+  for (const Link& l : g_links) {
+    if (__atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE) == p) return l.index;
+    if (__atomic_load_n(&l.held, __ATOMIC_RELAXED) != p) continue;
+    // its slot already (the Rytm's presumed at boot): reserved for it all the same, so usb_take confirms it (a stock Rytm
+    // says no 35: her USB is her hello) and routes her MIDI
+    const Profile* none = nullptr;
+    __atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return l.index;
+  }
   for (const Link& l : g_links) {
     if (!open_for(l, p)) continue;
     const Profile* none = nullptr;
