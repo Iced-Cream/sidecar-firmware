@@ -323,7 +323,7 @@ already over by the chains alone takes none of them), never more than it asked f
 (`host_sysex_slot`), the render cores skip those voices (`device::voice_admitted`), the box is told by a popup on its
 screen (`SIDECAR 4/8 VOICES` / `CPU FULL`, for 30 s while its screen can take one), and `/status` `slots[]` has `voices`,
 `asked` and `short`, with `admit` (bench, MHz, the limit and each render core's worst case now, in 1/100 % of a core).
-When its partner leaves, a box gets back what it asked for, once the partner has been gone 10 s (`kSettleMs`): a plug or unplug on one of the Pi's hub ports knocks the box on the other port off and back (re-enumerated; seen on a unit 2026-11-21, 8 of 8), and a box back within that time keeps its place in the attach order, so a first box stays first with its voices. A clock change after an attach does not take voices away; it
+When its partner leaves, a box gets back what it asked for, once the partner's slot is no longer kept for it (saving, then `slothold=`, 5 s by default): a plug or unplug on one of the Pi's hub ports knocks the box on the other port off and back (re-enumerated; seen on a unit 2026-11-21, 8 of 8), and a box back to its kept slot keeps its place in the attach order, so a first box stays first with its voices. A clock change after an attach does not take voices away; it
 applies to the next attach (the boot log's `admit at N MHz, the second box's voices:` line lists each pair). No bench
 (`bench=0`, the host, the Teensy): nothing is refused.
 

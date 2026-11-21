@@ -370,6 +370,9 @@ boolean CKernel::Initialize (void)
 	// core 3, as before
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
 	BootStep (3);
+	// a slot whose box left stays that box's this long after its edits are saved (core/device/device.h g_hold_ms): a box
+	// knocked off the hub a moment (a plug on the other port, AO2) comes back to its slot and route
+	core::device::g_hold_ms = (u32) m_Options.GetAppOptionDecimal ("slothold", 5000);
 	m_Usb.SetSend (m_Options.GetAppOptionDecimal ("tohost", 1) != 0);	// tohost=0: the replies dropped, as before
 	boolean bBench = m_Options.GetAppOptionDecimal ("bench", 1) != 0;
 	LoadClock (bCard);				// the CPU clock option, before the bench: the bench measures the clock the engine plays at
@@ -676,12 +679,13 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		int nT = -1;
 		for (int t = 0; t < core::device::kLinks; t++)
 			if (core::device::route_of (t) == k) nT = t;
-		// voices: admitted (core/device/admit.h), asked: its type's count; short: what the CPU admission held back
+		// kept: held for its box that left (slothold=); voices: admitted (core/device/admit.h), asked: its type's count; short:
+		// what the CPU admission held back
 		const int nV = core::device::admitted (k);
-		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"transport\":%d,\"base\":%s,\"voices\":%d,\"asked\":%d,\"short\":%d}",
+		s.Format ("%s{\"slot\":%d,\"box\":\"%s\",\"presumed\":%s,\"saving\":%s,\"kept\":%s,\"transport\":%d,\"base\":%s,\"voices\":%d,\"asked\":%d,\"short\":%d}",
 			  k ? "," : "", k, pHeld ? core::device::short_name (*pHeld) : "", L.presumed ? "true" : "false",
-			  L.parting ? "true" : "false", nT, core::device::g_base == &L ? "true" : "false", pHeld ? nV : 0,
-			  pHeld ? (int) L.want : 0, pHeld && L.want > nV ? (int) L.want - nV : 0);
+			  L.parting ? "true" : "false", L.holding ? "true" : "false", nT, core::device::g_base == &L ? "true" : "false",
+			  pHeld ? nV : 0, pHeld ? (int) L.want : 0, pHeld && L.want > nV ? (int) L.want - nV : 0);
 		pOut->Append (s);
 	}
 	pOut->Append ("]");
@@ -2181,6 +2185,7 @@ void CKernel::LogStats (void)
 		nTemp);
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
+	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
 	if (s_nPowerTick % 10 == 5)				// every 10 s: the heat's figures, in the black box as well
 	{
 		MeasureClock ();

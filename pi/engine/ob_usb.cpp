@@ -122,6 +122,7 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 }
 
 CObUsb *CObUsb::s_pThis = 0;
+volatile boolean g_bObPowerAsk = FALSE;
 CObUsb *CObUsb::s_pBox[CObUsb::Slots] = {};
 static IMirrorTarget *s_pRelay;				// the Teensy relay's target, besides the gadget (0: none)
 static CObUsb *s_pRelayBox;				// the box it was given (SetBox)
@@ -512,6 +513,7 @@ boolean CObUsb::BoxWait (unsigned nNowUs)
 	if (w == 3)
 	{
 		s_nHaltHeld++;
+		g_bObPowerAsk = TRUE;			// the supply read and logged at the next second (kernel.cpp: a drop's cause, power or not)
 		if (m_Box.Log (nNowUs))
 			CLogger::Get ()->Write (From, LogWarning, "endpoints failed together (IN %u, OUT %u, MIDI OUT %u): a likely "
 						"unplug, their resets held up to %u ms for the hub (held %u; %u lines left out)",

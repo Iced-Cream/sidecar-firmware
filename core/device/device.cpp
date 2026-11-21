@@ -44,6 +44,7 @@ Link g_links[kLinks] = {{}, {}};   // (slot 0 presumed the Rytm's: s_presume bel
 Link* g_cur = &g_links[0];
 Link* g_base = &g_links[0];
 int g_depth = 0;
+uint32_t g_hold_ms = 0;
 volatile int8_t g_web_link = 0;
 static volatile int8_t s_card_link = -1;   // the card core's request in hand: its link (CardScope)
 static struct LinkIndex {
@@ -170,7 +171,13 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   tell_tick();
   if (settled)
     for (Link& l : g_links)
-      if (l.parting) l.parting = false, log(CORE_STR("device: slot %d saved, free"), l.index);
+      if (l.parting) {
+        l.parting = false, l.holding = g_hold_ms > 0;
+        if (l.holding) log(CORE_STR("device: slot %d saved, kept %u ms for its box"), l.index, (unsigned)g_hold_ms);
+        else log(CORE_STR("device: slot %d saved, free"), l.index);
+      }
+  for (Link& l : g_links)
+    if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   admit_alone();
   rebase();
   return false;
@@ -194,22 +201,12 @@ static CORE_COLD void set_voices(Link& l, int n, bool tell) {
   l.tell = tell, l.tell_until = now_ms() + kTellMs;
 }
 // Slot l's box has just attached: its voices, beside the other slot's box if one is held (the first keeps its own).
-// A box that left within kReturnMs: a plug or unplug on one of the Pi's hub ports knocks the box on the other port off and
-// back (re-enumerated: seen on a unit 2026-11-21, 8 of 8). It keeps its place in the attach order when it comes back, so a
-// first box stays first and keeps its voices, and the box that stayed is not raised meanwhile.
-static constexpr uint32_t kReturnMs = kSettleMs;
-static struct { const Profile* who; uint32_t order, at; } s_gone[kLinks];
-static CORE_COLD bool gone_recent(int except) {
-  for (int k = 0; k < kLinks; ++k)
-    if (k != except && s_gone[k].who && now_ms() - s_gone[k].at < kReturnMs) return true;
-  return false;
-}
-static CORE_COLD void admit_slot(Link& l) {
+// back: the box came back to the slot still kept for it (saving, or held g_hold_ms: a plug or unplug on one of the Pi's hub
+// ports knocks the box on the other port off and back, seen on a unit 2026-11-21, 8 of 8). It keeps its place in the attach
+// order, so a first box stays first and keeps its voices; the box that stayed is not raised meanwhile (admit_alone).
+static CORE_COLD void admit_slot(Link& l, bool back) {
   l.want = (uint8_t)voices_asked(l.held);
-  bool back = false;
-  for (auto& g : s_gone)
-    if (g.who == l.held && now_ms() - g.at < kReturnMs) back = true, l.order = g.order, g.who = nullptr;
-  if (!back) l.order = ++s_order;
+  if (!back || !l.order) l.order = ++s_order;
   bool other = false;
   for (const Link& o : g_links)
     if (&o != &l && o.held && (!back || o.order < l.order)) other = true;
@@ -224,18 +221,17 @@ static CORE_COLD void admit_slot(Link& l) {
     log(CORE_STR("device: render cores at worst %u / %u bp (limit %u)"), admit::core_bp(1, ld), admit::core_bp(2, ld), admit::kLimitBp);
 }
 // Slot l's box left: its voices stop (its place in the attach order is kept while its edits are saved: it may come back).
-static CORE_COLD void admit_left(Link& l, bool presumed) {
-  if (!presumed && (l.voices || l.want)) s_gone[l.index] = {l.was, l.order, now_ms()};   // (a Rytm presumed at boot never attached)
+static CORE_COLD void admit_left(Link& l) {
   set_voices(l, 0, false);
   l.want = 0;
 }
-// Each idle pass: a box alone (no other box held, none gone within kReturnMs that may come back) gets back what it asked for.
+// Each idle pass: a box alone (no other slot held, or kept for a box that left: it may come back) gets back what it asked for.
 static CORE_COLD void admit_alone() {
   for (Link& o : g_links) {
     if (!o.held || o.voices >= o.want) continue;
-    bool other = gone_recent(o.index);
+    bool other = false;
     for (const Link& x : g_links)
-      if (&x != &o && x.held) other = true;
+      if (&x != &o && (x.held || x.parting || x.holding)) other = true;
     if (other) continue;
     log(CORE_STR("device: slot %d: alone, %d voices again"), o.index, o.want);
     set_voices(o, o.want, true);
@@ -284,10 +280,10 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   if (!l.box) rewire();   // (link 0's sender taken while it is still the platform's)
   __atomic_store_n(&l.held, h, __ATOMIC_RELAXED);
   __atomic_store_n(&l.box, p, __ATOMIC_RELAXED);
-  const bool presumed = l.presumed;
   l.presumed = false;
   const char* was = l.state;
-  if (h) l.state = p ? p->state_dir : nullptr, l.was = h, l.parting = false;
+  const bool back = h && h == l.was && (l.parting || l.holding);   // (CPU admission: its place in the attach order kept)
+  if (h) l.state = p ? p->state_dir : nullptr, l.was = h, l.parting = l.holding = false;
   if (l.state && l.state != was) Fs().mkdir(l.state);
   rewire();
   rebase();
@@ -295,8 +291,8 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   if (h || kVoiceSlots > 1) out::control_of(slot_of_voice(voice_base(l))).trk10 = p ? p->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, h ? h->name : "free", l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
-  if (h) admit_slot(l);
-  else admit_left(l, presumed);
+  if (h) admit_slot(l, back);
+  else admit_left(l);
 }
 
 // Which slot each transport's messages are (in), -1 none: transport 0 is the platform's host link (the USB-C box's MIDI, or the
@@ -315,10 +311,11 @@ static CORE_COLD void route(int t, int slot) {
 // usb_attach's reservations (core 0 writes them, the control core takes them in step / claim) and usb_detach's
 static const Profile* volatile s_usb_want[kLinks];
 static volatile bool s_usb_gone[kLinks];
+static inline bool kept(const Link& l) { return l.parting || l.holding; }   // (its last holder's still: saving, or held for it)
 static CORE_COLD bool open_for(const Link& l, const Profile* p) {   // a slot p may take now (no other's reservation)
   const Profile* w = __atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE);
   const Profile* h = __atomic_load_n(&l.held, __ATOMIC_RELAXED);
-  return (!w || w == p) && (!h || (l.presumed && p != &kRytm)) && (!l.parting || l.was == p);
+  return (!w || w == p) && (!h || (l.presumed && p != &kRytm)) && (!kept(l) || l.was == p);
 }
 
 CORE_COLD int usb_attach(const Profile* p) {
@@ -336,7 +333,7 @@ CORE_COLD int usb_attach(const Profile* p) {
   // was, the RA1 re-enumeration), then the lowest free one
   for (int own = 1; own >= 0; --own)
     for (const Link& l : g_links) {
-      if (own && !(l.parting && l.was == p)) continue;
+      if (own && !(kept(l) && l.was == p)) continue;
       if (!open_for(l, p)) continue;
       const Profile* none = nullptr;
       if (__atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return l.index;
@@ -376,7 +373,7 @@ CORE_COLD int claim(const Profile* p) {
   // box's USB has just reserved
   for (int own = 1; own >= 0; --own)   // (its own slot first while that is still saving: usb_attach's)
   for (Link& l : g_links)
-    if (!l.held && (!own || (l.parting && l.was == p)) && open_for(l, p)) {
+    if (!l.held && (!own || (kept(l) && l.was == p)) && open_for(l, p)) {
       select(l, p);
       log(CORE_STR("device: %s attached: slot %d"), p->name, l.index);
       return l.index;
@@ -392,7 +389,7 @@ CORE_COLD void release(int s) {
   const bool quiet = l.presumed;   // (a Rytm presumed at boot never spoke: nothing of hers to save beyond what idle_save does anyway)
   slot_left(s);   // its transport, sequencer, arpeggiator and MIDI stop, in its Scope (host_link.h)
   select(l, nullptr);   // its voices silenced (link_reset); its folder kept for its saves
-  l.parting = !quiet;
+  l.parting = !quiet, l.holding = false, l.left_ms = now_ms();
   for (int t = 0; t < kLinks; ++t)
     if (s_route[t] == s) s_route[t] = -1;
   route(0, s_route[0]);   // (the senders again)
@@ -461,14 +458,13 @@ CORE_COLD void reset() {
   void (*plat)(const uint8_t*, int) = s_tx[0];
   g_cur = g_base = &g_links[0], g_depth = 0, s_card_link = -1, g_web_link = 0, out::g_base_slot = 0;
   s_route[0] = 0, s_route[1] = -1;
-  for (Link& l : g_links) select(l, nullptr), l.state = nullptr, l.was = nullptr, l.parting = false, l.out = nullptr;
+  for (Link& l : g_links) select(l, nullptr), l.state = nullptr, l.was = nullptr, l.parting = l.holding = false, l.out = nullptr;
   select(g_links[0], &kRytm), g_links[0].presumed = true;   // (as at boot)
   for (Link& l : g_links) l.out = nullptr;
   s_tx[0] = s_tx[1] = nullptr;
   for (int k = 0; k < kLinks; ++k) s_usb_want[k] = nullptr, s_usb_gone[k] = false;
   hooks.to_rytm = plat;          // back to the platform's sender (taken again: a test may set another)
   strip::reset();
-  memset(s_gone, 0, sizeof s_gone);
 }
 
 CORE_COLD bool add(const Profile* p) {
