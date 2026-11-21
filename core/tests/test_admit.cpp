@@ -135,10 +135,27 @@ static void engine() {
   send(1, trig(1, 60));
   send(1, trig(5, 60));
   CHECK(rms(8 + 1) > 100 && rms(8 + 5) == 0);
-  // the A4 leaves: the Rytm is alone and gets her 8 back (and is told)
+  // a USB re-enumeration (a plug on the Pi's other hub port knocks a box off and back, seen on a unit): the A4 leaves and comes
+  // back within kSettleMs. The Rytm is not raised meanwhile, and the A4 keeps its place: first, its 4; the Rytm still 2
+  uint64_t t = 1000000000ull;
+  host_fake_time(true, t);
   device::release(0);
+  CHECK(device::admitted(0) == 0 && device::admitted(1) == 2);
+  device::step(true);
+  CHECK(device::admitted(1) == 2);   // (not yet: the A4 may come back)
+  t += 2000000, host_fake_time(true, t);
+  CHECK(hello(0, device::kIdA4) == device::kOk);
+  CHECK(device::slot_held_by(&device::kA4) == 0 && device::admitted(0) == 4 && device::admitted(1) == 2);
+  CHECK(device::g_links[0].order < device::g_links[1].order);
+  // the A4 leaves for good: the Rytm is alone once kSettleMs has passed, and gets her 8 back (and is told)
+  device::release(0);
+  device::step(true);
+  CHECK(device::admitted(1) == 2);
+  t += 11000000, host_fake_time(true, t);
+  device::step(true);
   CHECK(device::admitted(0) == 0 && device::admitted(1) == 8 && device::g_links[1].tell);
   CHECK(device::voice_admitted(0));   // (a free slot: nothing of a box's plays there)
+  host_fake_time(false, 0);
   send(1, trig(5, 62));
   CHECK(rms(8 + 5) > 100);
   for (int i = 0; i < 10; ++i) device::step(true);   // (the A4's saves settle: slot 0 free for any box)
