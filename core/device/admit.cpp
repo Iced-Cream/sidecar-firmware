@@ -1,7 +1,6 @@
 // core/device/admit.cpp - see admit.h. Per attach, never per sample: cold.
 #include "device/admit.h"
 
-#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -85,9 +84,10 @@ CORE_COLD bool parse_override(const char* text) {
     if (!colon) return false;
     const int k = type_index(p, (size_t)(colon - p));
     if (k < 0) return false;
-    char* end = nullptr;
-    const long n = strtol(colon + 1, &end, 10);
-    if (end == colon + 1 || n < 0 || n > 8 || (*end && *end != ',')) return false;
+    const char* end = colon + 1;   // (no strtol on the Pi)
+    long n = 0;
+    while (*end >= '0' && *end <= '9' && n <= 8) n = n * 10 + (*end++ - '0');
+    if (end == colon + 1 || n > 8 || (*end && *end != ',')) return false;
     next[k] = (int8_t)n;
     p = *end ? end + 1 : end;
   }
