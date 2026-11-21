@@ -308,11 +308,15 @@ CORE_COLD int usb_attach(const Profile* p) {
     __atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
     return l.index;
   }
-  for (const Link& l : g_links) {
-    if (!open_for(l, p)) continue;
-    const Profile* none = nullptr;
-    if (__atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return l.index;
-  }
+  // its own slot first while that is still saving (a box that dropped off the bus a moment and came back: it stays where it
+  // was, the RA1 re-enumeration), then the lowest free one
+  for (int own = 1; own >= 0; --own)
+    for (const Link& l : g_links) {
+      if (own && !(l.parting && l.was == p)) continue;
+      if (!open_for(l, p)) continue;
+      const Profile* none = nullptr;
+      if (__atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return l.index;
+    }
   return -1;
 }
 void usb_detach(int s) {
@@ -346,8 +350,9 @@ CORE_COLD int claim(const Profile* p) {
     if (l.presumed && p != &kRytm) release(l.index);
   // the lowest free slot; one whose box left and is still saving only for that same box (its own folder); none another
   // box's USB has just reserved
+  for (int own = 1; own >= 0; --own)   // (its own slot first while that is still saving: usb_attach's)
   for (Link& l : g_links)
-    if (!l.held && open_for(l, p)) {
+    if (!l.held && (!own || (l.parting && l.was == p)) && open_for(l, p)) {
       select(l, p);
       log(CORE_STR("device: %s attached: slot %d"), p->name, l.index);
       return l.index;

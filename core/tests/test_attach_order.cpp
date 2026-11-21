@@ -259,6 +259,19 @@ int main() {
   CHECK(device::rytm_slot() == 0 && device::slot_held_by(&device::kA4) == 1);
   printf("  the Rytm's USB at boot confirms slot 0; the A4's USB after her takes slot 1\n");
 
+  // ---- a box that drops off the bus and comes back while its slot is still saving takes that same slot back, not the
+  // lowest free one (a nudged cable, the RA1 re-enumeration: unit run AO1, 2026-11-21)
+  CHECK(device::rytm_slot() == 0 && device::slot_held_by(&device::kA4) == 1);
+  device::release(0);                          // the Rytm gone: slot 0 free
+  CHECK(!device::held(0));
+  device::usb_detach(1);                       // the A4 drops off the bus...
+  device::step(false);                         // (its saves not landed yet: slot 1 parting)
+  CHECK(device::g_links[1].parting && device::g_links[1].was == &device::kA4);
+  CHECK(device::usb_attach(&device::kA4) == 1);   // ...and comes back at once: its own slot, not slot 0
+  device::step(true);
+  CHECK(device::slot_held_by(&device::kA4) == 1 && !device::held(0));
+  printf("  a box back while its slot is still saving takes the same slot\n");
+
   printf("test_attach_order: PASS (slots by attach order, folders by type: A4 + Digitakt either order, the Rytm in slot 1, "
          "a box leaving saves into its folder and frees its slot, the other box never moves, a box back loads its folder)\n");
   return 0;
