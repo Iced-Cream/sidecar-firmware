@@ -89,6 +89,7 @@ private:
 	void Control (void);
 	void RenderBlock (int nSide);		// -1 the base box's block; a slot: the side stage's (side_out.h)
 	void Command (const char *pText);
+	static void SlotCommand (void *pArg);	// slot=S:<command> in slot S's Scope (cores.cpp, bridge::in_slot)
 };
 
 #endif

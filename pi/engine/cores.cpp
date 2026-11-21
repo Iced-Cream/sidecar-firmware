@@ -683,7 +683,7 @@ void CEngineCores::Control (void)
 
 // The console's commands (console.cpp: ':' lines), run here so the engine core is touched by one core only.
 struct TSlotCmd { CEngineCores *pThis; const char *pText; };
-static void SlotCommand (void *pArg)	// slot=S:<command>, in slot S's Scope (bridge::in_slot)
+void CEngineCores::SlotCommand (void *pArg)	// slot=S:<command>, in slot S's Scope (bridge::in_slot)
 {
 	TSlotCmd *c = (TSlotCmd *) pArg;
 	c->pThis->Command (c->pText);
@@ -713,12 +713,12 @@ void CEngineCores::Command (const char *p)
 	}
 	else if (strncmp (p, "drone=", 6) == 0)
 	{
-		int &Drone = s_nCmdSlot >= 0 ? s_nSlotDrone[s_nCmdSlot] : s_nDrone;
-		Drone = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
-		if (Drone > 8) Drone = -1;
-		if (s_nCmdSlot >= 0 && Drone < 0)	// its voices' notes closed (the drone's last notes)
+		int &nD = s_nCmdSlot >= 0 ? s_nSlotDrone[s_nCmdSlot] : s_nDrone;
+		nD = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
+		if (nD > 8) nD = -1;
+		if (s_nCmdSlot >= 0 && nD < 0)	// its voices' notes closed (the drone's last notes)
 			for (int v = 0; v < 8; v++) Notes.Channel (0xB0 | v, 123, 0);
-		L->Write (From, LogNotice, "drone %s%s%s", s_nCmdSlot == 0 ? "slot 0 " : s_nCmdSlot == 1 ? "slot 1 " : "", p + 6, "");
+		L->Write (From, LogNotice, "drone %s%s", s_nCmdSlot == 0 ? "slot 0 " : s_nCmdSlot == 1 ? "slot 1 " : "", p + 6);
 	}
 	else if (strncmp (p, "notes=", 6) == 0)
 	{
