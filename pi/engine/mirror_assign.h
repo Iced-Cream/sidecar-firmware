@@ -1,6 +1,6 @@
 //
-// mirror_assign.h - usb=mirror with two boxes (slots by attach order, core/device/device.h; ob_usb.cpp turns mirror=rytm|a4
-// into the slot that box holds, PreferSlot): which box the
+// mirror_assign.h - usb=mirror with two boxes (slots by attach order, core/device/device.h; ob_usb.cpp runs it with prefer
+// kFirst, attach order: cmdline mirror= retired 2026-11-21): which box the
 // Pi's USB-C gadget shows and which one a Teensy relay shows (docs/usb-mirror.md "Which box goes where"). Decided at run
 // time, so one build serves any mix of boxes:
 //

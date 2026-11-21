@@ -447,7 +447,7 @@ int main() {
       CHECK(sa == 0);
       CHECK(CObUsb::UsbcSlot() == sa && CObUsb::GadgetSlot() == (unsigned)sa && CObUsb::RelaySlot() == 1 - sa);
       CHECK(g_gadget.box.size() == nBox + 1 && g_gadget.box.back() == 1 && relay.up.empty());
-      CHECK(logged("usb=mirror: USB-C shows a4, the relay nothing (mirror=rytm, mirrorfirst=usbc)"));
+      CHECK(logged("usb=mirror: USB-C shows a4, the relay nothing (attach order, mirrorfirst=usbc)"));
       Box r;                                   // the Rytm (the preferred box) after it: the relay, the A4 stays
       CHECK(sl(r) == 1 - sa && CObUsb::UsbcSlot() == sa && relay.box == r.box() && relay.up.back() == 1);
       CHECK(g_gadget.box.size() == nBox + 1);
