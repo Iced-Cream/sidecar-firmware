@@ -103,6 +103,17 @@ def setup_cmds(worst, slots_voices):
     return c
 
 
+def light_cmds(worst, slots_voices):
+    """--profile qemu: every kind of command once per slot, on one voice (QEMU can't carry the full load: its engine stalls)."""
+    c = ['loadtest=on', 'admit=report', 'amp=synthetic:on']
+    for s, n in slots_voices:
+        c += ['slot=%d:notemach=0:%s' % (s, worst), 'slot=%d:ins=V1:A:type:sat' % s, 'slot=%d:ins=V1:B:type:sat' % s,
+              'slot=%d:ins=V1:eq:hpf:40' % s, 'slot=%d:ins=V1:send:3:80' % s, 'slot=%d:ins=B3:A:type:cloud' % s,
+              'slot=%d:ins=B3:B:type:sat' % s, 'slot=%d:mfx=4:type:sat' % s, 'slot=%d:sendfx=1:chorus' % s,
+              'slot=%d:sendlvl=1:all:100' % s, 'slot=%d:drone=0' % s]
+    return c
+
+
 def readback_cmds(slots):
     c = ['amp']
     for s in slots:
@@ -164,6 +175,7 @@ def main():
     ap.add_argument('--worst')
     ap.add_argument('--secs', type=int, default=30)
     ap.add_argument('--tag', default='read')
+    ap.add_argument('--profile', choices=['unit', 'qemu'], default='unit')
     a = ap.parse_args()
     pi = Pi(a.base, a.out)
     pi.log()
@@ -187,7 +199,8 @@ def main():
         base = [h for h in hs if h[2].get('base')]   # AMP renders on the base box's chains only (core/fx/amp.cpp ctl)
         first = base[0][0] if base else (hs[0][0] if hs else 0)
         bad = []
-        for c in ['slot=%d:ins=V%d:A:type:amp' % (first, v) for v in range(1, 7)]:
+        nv = 1 if a.profile == 'qemu' else 6
+        for c in ['slot=%d:ins=V%d:A:type:amp' % (first, v) for v in range(1, nv + 1)]:
             bad += pi.cmd(c)[1]
         for c in readback_cmds([h[0] for h in hs]):
             pi.cmd(c, wait=0.5)
@@ -205,7 +218,7 @@ def main():
     if len(hs) != 2:
         print('not two boxes held: %s' % [(h[0], h[1]) for h in hs])
         return 2
-    cmds = setup_cmds(worst, [(h[0], min(8, h[1])) for h in hs])
+    cmds = (light_cmds if a.profile == 'qemu' else setup_cmds)(worst, [(h[0], min(8, h[1])) for h in hs])
     if a.what == 'cmds':
         print('\n'.join(cmds))
         return 0
