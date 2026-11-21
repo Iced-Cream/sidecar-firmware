@@ -26,7 +26,7 @@ today's mirror (the USB-C mode OVERBRIDGE or `usb=mirror`): a relay alone never 
 | cmdline | default | what |
 |---|---|---|
 | `mirrorfirst=usbc\|relay` | `usbc` | the route filled first. `relay`: a lone box goes to the Teensy, the second one to USB-C (to test the relay with one box) |
-| `mirror=rytm\|a4\|first` | `rytm` | the box that takes the first route when both are there; `first`: whichever came first |
+| `mirror=` | retired | (decided 2026-11-21) the routes go by attach order: the box that came first takes the first route and keeps it; the other box the second |
 | `mirrorsettle=N` | 15 | seconds from boot the first route waits for the preferred box before it takes the other one alone |
 | `mirrorhold=N` | 10 | seconds the first route's box keeps its place after it left (a reboot after an OS update comes back as itself) |
 

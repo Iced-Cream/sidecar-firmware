@@ -136,7 +136,7 @@ static const mirror_assign::Config &AssignCfg (void)
 	if (!s_bAssignCfg)
 	{
 		CKernelOptions *pOpt = CKernelOptions::Get ();
-		s_AssignCfg.prefer = mirror_assign::parse_prefer (pOpt->GetAppOptionString ("mirror", "rytm"));
+		s_AssignCfg.prefer = mirror_assign::kFirst;	// attach order (design decided 2026-11-21): the first box keeps USB-C; mirror= retired
 		s_AssignCfg.relay_first = mirror_assign::parse_relay_first (pOpt->GetAppOptionString ("mirrorfirst", "usbc"));
 		s_AssignCfg.settle_us = (u64) pOpt->GetAppOptionDecimal ("mirrorsettle", 15) * 1000000;
 		s_AssignCfg.hold_us = (u64) pOpt->GetAppOptionDecimal ("mirrorhold", 10) * 1000000;	// the gadget's and the relay's
@@ -201,19 +201,9 @@ static void GadgetBoxMoved (void);			// (below: the gadget's adapter)
 // core 0's loop (and a box's Configure): the boxes there now against the assignment; a change moves a box between the
 // gadget and the relay (either way: mirrorfirst=relay moves USB-C's box to the relay). A box with a forwarded request of
 // the computer's on its EP0 is not moved until it has its answer.
-// Attach order (core/device/device.h): a slot holds whichever box came first, so mirror=rytm / a4 name a box, not a slot.
-// The slot of the box mirror= names (the Rytm, or the other box), the free slot it would take while it is not there (the
-// lone box waits for it as before), or kFirst.
+// Attach order (core/device/device.h): a slot holds whichever box came first; the routes go by attach order too (the box
+// that came first keeps the first route, AssignCfg), and the logs name the box, not the slot.
 static boolean IsRytm (const CObUsb *p)	{ return p != 0 && p->Audio () == &core::out::kRytmMk2; }
-static int PreferSlot (int nPrefer)
-{
-	if (nPrefer != 0 && nPrefer != 1) return nPrefer;
-	for (unsigned k = 0; k < CObUsb::Slots; k++)
-		if (CObUsb::Box (k) != 0 && IsRytm (CObUsb::Box (k)) == (nPrefer == 0)) return (int) k;
-	for (unsigned k = 0; k < CObUsb::Slots; k++)
-		if (CObUsb::Box (k) == 0) return (int) k;
-	return 0;
-}
 static const char *BoxName (int k)	// mirror_assign::slot_name's words, by the box in slot k
 {
 	CObUsb *p = k >= 0 && k < (int) CObUsb::Slots ? CObUsb::Box ((unsigned) k) : 0;
@@ -225,8 +215,7 @@ const char *CObUsb::SlotName (int nSlot)	{ return BoxName (nSlot); }
 
 void CObUsb::PollAssign (void)
 {
-	mirror_assign::Config c = AssignCfg ();
-	c.prefer = PreferSlot (c.prefer);
+	const mirror_assign::Config &c = AssignCfg ();
 	for (unsigned k = 0; k < Slots; k++) s_Assign.up[k] = s_pBox[k] != 0 && s_pBox[k]->m_bUp;
 	const int nOld = s_Assign.first, nNew = mirror_assign::decide (c, s_Assign, NowUs ());
 	if (nNew == nOld) return;
@@ -237,10 +226,10 @@ void CObUsb::PollAssign (void)
 	CObUsb *pNewUsbc = UsbcBox ();
 	const boolean bToUsbc = pNewUsbc != 0 && pNewUsbc == s_pRelayBox;	// the relay's box moves to USB-C
 	const boolean bToRelay = pOldUsbc != 0 && pOldUsbc == RelayBox ();	// USB-C's box moves to the relay
-	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (mirror=%s, mirrorfirst=%s)%s",
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: USB-C shows %s, the relay %s (%s, mirrorfirst=%s)%s",
 				pNewUsbc != 0 ? BoxName (UsbcSlot ()) : "nothing",
 				RelayBox () != 0 ? BoxName (RelaySlot ()) : "nothing",
-				mirror_assign::prefer_name (AssignCfg ().prefer), c.relay_first ? "relay" : "usbc",
+				AssignCfg ().prefer == mirror_assign::kFirst ? "attach order" : mirror_assign::prefer_name (AssignCfg ().prefer), c.relay_first ? "relay" : "usbc",
 				bToUsbc ? ": moved from the relay" : bToRelay ? ": moved from USB-C" : "");
 	if (bToRelay && pOldUsbc->m_bMirror) GadgetBoxMoved ();
 	RelayFollow (bToUsbc);
