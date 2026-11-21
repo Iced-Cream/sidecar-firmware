@@ -58,6 +58,8 @@ static u64 s_VoiceTicks[bridge::kVoices];		// touch2: per voice (each voice rend
 static volatile u64 s_nBusy[4];
 static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
 static volatile unsigned s_nWakes[4];
+static unsigned s_nBlockLimitMs = 20;			// blocklimit=N (emulator gates only): RenderBlock's fatal limit
+static char s_BlockLimitWhy[64] = "a render core did not finish its block in 20 ms";
 static volatile boolean s_bIdleWfe = TRUE;		// idlewfe=0: core 3's render wait spins and core 0's loop sleeps as before
 static volatile unsigned s_nBlocks, s_nMaxBlock, s_nMaxPass, s_nFifoMin = ~0u, s_nFifoMax, s_nMidiBytes, s_nNotes;
 static volatile unsigned s_nNoteChans;	// bit c: a note-on on MIDI channel c+1 this second
@@ -235,6 +237,23 @@ void CEngineCores::Sleep (void)
 	s_nWakes[0]++;
 }
 void CEngineCores::SetIdleWfe (boolean bOn) { s_bIdleWfe = bOn; }
+
+// blocklimit=N (docs/pi-engine.md): RenderBlock's limit in ms, never below the unit's 20 ms. Only the QEMU gates set it:
+// without icount the emulated counter is the host's clock, so a vCPU thread the host does not run for 20 ms fails a
+// block a real core finishes in 250 us. A unit's cmdline never carries it, so the unit's limit stays 20 ms.
+unsigned CEngineCores::SetBlockLimitMs (unsigned nMs)
+{
+	s_nBlockLimitMs = nMs < 20 ? 20 : nMs > 10000 ? 10000 : nMs;
+	s_BlockLimitWhy[0] = 0;
+	char *d = s_BlockLimitWhy;
+	for (const char *p = "a render core did not finish its block in "; *p;) *d++ = *p++;
+	char n[8]; int i = 0;
+	for (unsigned v = s_nBlockLimitMs; v || i == 0; v /= 10) n[i++] = (char) ('0' + v % 10);
+	while (i) *d++ = n[--i];
+	for (const char *p = " ms"; *p;) *d++ = *p++;
+	*d = 0;
+	return s_nBlockLimitMs;
+}
 boolean CEngineCores::IdleWfe (void) { return s_bIdleWfe; }
 
 // The generic timer's event stream on the calling core: an event every 2^13 counter ticks (152 us at 54 MHz, both boards),
@@ -432,7 +451,7 @@ void CEngineCores::RenderBlock (int nSide)
 	u32 nGen = s_nGen + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
-	u64 t0 = Ticks (), nLimit = TickRate () / 50;		// 20 ms
+	u64 t0 = Ticks (), nLimit = TickRate () / 1000 * s_nBlockLimitMs;	// 20 ms (blocklimit= in the QEMU gates only)
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under
 	// 1 us: clock gating, no retention state is enabled), and core 3's event stream bounds it at 152 us if a sev were ever
 	// missed, which also keeps the 20 ms limit below alive. An event another core's sev spends here (a FIFO pull) costs
@@ -442,7 +461,7 @@ void CEngineCores::RenderBlock (int nSide)
 					      [&] { return Ticks () - t0 > nLimit; }, [] { Wfe (3); }, s_bIdleWfe);
 	if (!bDone)
 	{
-		g_Guard.Fatal ("a render core did not finish its block in 20 ms");
+		g_Guard.Fatal (s_BlockLimitWhy);
 		for (;;) asm volatile ("wfe");		// core 0 stops the stream and reboots
 	}
 	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());

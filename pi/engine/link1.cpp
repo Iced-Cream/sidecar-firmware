@@ -50,34 +50,78 @@ bool FromComputer (const uint8_t *pEventPacket)
 
 unsigned FromComputerRoom (void) { return kFromComputerPackets - s_FromComputer.size (); }
 
+// usbmidi=os: for a box on the Teensy relay (teensy_target.cpp): the computer's packets lost on the way, what still waits,
+// and a cut. The counter and the flag move in core 0's loop (Send); CutFromComputer is called there too (MirrorPoll)
+static volatile unsigned s_nComputerLost;
+static boolean s_bLastComputer;			// the transfer in flight holds the computer's packets
+unsigned ComputerLost (void) { return s_nComputerLost; }
+bool ComputerBusy (void) { return s_FromComputer.size () != 0 || s_bComputerSysEx; }
+unsigned CutFromComputer (void)
+{
+	uint32_t w;
+	unsigned n = 0;
+	while (s_FromComputer.pop (&w)) n++;
+	s_bComputerSysEx = FALSE;
+	return n;
+}
+
 void SetDevice (CUSBMIDIDevice *pDevice)
 {
 	s_pDevice = pDevice;
 	asm volatile ("dsb sy; sev");
 }
 
-// One record at a time, one transfer in flight (circle-midi-async.patch): the box never holds core 0's loop.
+// One record at a time, one transfer in flight (circle-midi-async.patch): the box never holds core 0's loop. Each transfer
+// is at most kTxBytes, the async send's TxBufferSize: a longer one is refused and lost (an A4 OS upgrade through the mirror
+// stopped at offset 0, T358, when link1 sent more than the 64 bytes it took then). 512 bytes (circle-midi-async512.patch,
+// 128 event packets, one high-speed bulk packet): at 64 an A4 OS image through the relay ran at 28.5 KiB/s (RF2).
+// A record is sent in kTxBytes pieces, one per call.
+static const unsigned kTxBytes = 512;
+
 void Send (void)
 {
 	static uint8_t s_Packets[4 * ((4096 + 2) / 3)];
+	static unsigned s_nRec, s_nRecOff;		// the engine's record being sent: its packets' bytes, how far
 	CUSBMIDIDevice *p = s_pDevice;
 	if (p == 0)
 	{
 		s_Reader.Drain ();			// no box: the engine's records for it go nowhere (whole)
 		uint32_t w;
-		while (s_FromComputer.pop (&w)) {}	// nor the relay's computer's packets
+		while (s_FromComputer.pop (&w)) s_nComputerLost++;	// nor the relay's computer's packets (lost: counted)
 		s_bComputerSysEx = FALSE;
+		s_nRec = s_nRecOff = 0;
 		return;
 	}
 	unsigned nState = p->GetSendState ();
 	if (nState == 1) return;			// the last transfer still in flight
-	if (nState == 2) s_Stats.nSendFail++;		// it failed: that message is lost (counted), the next goes
-	// the relay's computer first (up to 64 packets a transfer); while its SysEx is part way out, the engine's records wait
-	// so they never land inside it
-	static uint32_t s_Batch[64];
+	if (nState == 2)				// it failed: that message is lost (counted), the next goes
+	{
+		s_Stats.nSendFail++;
+		if (s_bLastComputer) s_nComputerLost++;	// the computer's packets in it (usbmidi=os: aborts an upgrade)
+	}
+	s_bLastComputer = FALSE;
+	// the rest of an engine record first: nothing lands inside it
+	if (s_nRecOff < s_nRec)
+	{
+		unsigned n = s_nRec - s_nRecOff < kTxBytes ? s_nRec - s_nRecOff : kTxBytes;
+		if (p->SendEventPacketsAsync (s_Packets + s_nRecOff, n))
+		{
+			s_nRecOff += n;
+			if (s_nRecOff == s_nRec) s_Stats.nSent++;
+		}
+		else
+		{
+			s_Stats.nSendFail++;
+			s_nRec = s_nRecOff = 0;		// the rest dropped: the box sees a cut SysEx, the next record goes
+		}
+		return;
+	}
+	// the computer's next (a relay's or the USB-C mirror's, up to 16 packets a transfer); while its SysEx is part way
+	// out, the engine's records wait so they never land inside it
+	static uint32_t s_Batch[kTxBytes / 4];
 	unsigned nBatch = 0;
 	uint32_t w;
-	while (nBatch < 64 && s_FromComputer.pop (&w))
+	while (nBatch < kTxBytes / 4 && s_FromComputer.pop (&w))
 	{
 		s_Batch[nBatch++] = w;
 		unsigned cin = w & 0x0F;
@@ -85,7 +129,8 @@ void Send (void)
 	}
 	if (nBatch != 0)
 	{
-		if (!p->SendEventPacketsAsync ((const uint8_t *) s_Batch, nBatch * 4)) s_Stats.nSendFail++;
+		if (!p->SendEventPacketsAsync ((const uint8_t *) s_Batch, nBatch * 4)) s_Stats.nSendFail++, s_nComputerLost++;
+		else s_bLastComputer = TRUE;
 		return;
 	}
 	if (s_bComputerSysEx) return;
@@ -95,8 +140,19 @@ void Send (void)
 	int n = usbmidi_pack_sysex (pRec, nLen, s_Packets);
 	if (n == 0) n = usbmidi_pack_piece (pRec, nLen, s_Packets);
 	if (n == 0) return;				// (the engine sends whole SysEx, or pieces of one)
-	if (p->SendEventPacketsAsync (s_Packets, (unsigned) n)) s_Stats.nSent++;
-	else s_Stats.nSendFail++;
+	s_nRec = (unsigned) n;
+	s_nRecOff = 0;
+	unsigned k = s_nRec < kTxBytes ? s_nRec : kTxBytes;
+	if (p->SendEventPacketsAsync (s_Packets, k))
+	{
+		s_nRecOff = k;
+		if (s_nRecOff == s_nRec) s_Stats.nSent++;
+	}
+	else
+	{
+		s_Stats.nSendFail++;
+		s_nRec = s_nRecOff = 0;			// lost whole (as before)
+	}
 }
 
 void ToBox (const uint8_t *pData, int nLength)
