@@ -137,6 +137,8 @@ struct Link {
   bool saving, posted;
   uint32_t post_id;                       // its write to /.rytm/device
   uint8_t index;                          // its place in g_links
+  bool tracks;                            // a Rytm that sends track reports (5B 01 01 came back): its tracks' voices are kRytmTrackVoice
+  bool asked;                             // 5B 01 01 sent since its last hello (asked again at the next)
 };
 constexpr int kLinks = 2;
 extern Link g_links[kLinks];
@@ -202,10 +204,31 @@ inline const char* state_path(const char* path, char* buf, int cap) {
   return s ? state_path_box(s, path, buf, cap) : path;
 }
 inline bool foreign(const Link& l = cur()) { return l.box != nullptr; }
-// The engine voices of a link: its box's voice k (the wire's voice byte & 7, a project's track) is engine voice
-// voice_base(l) + k. Slot 0's (the Rytm's) are 0..7 and slot 1's 8..15, alone or paired; on an 8-voice engine (the
-// Teensy) every link's are 0..7.
-inline int voice_base(const Link& l) { return kVoiceSlots > 1 ? l.index * kBoxVoices : 0; }
+// The engine voices of a link: its box's voice k (the wire's voice byte & 7, a project's track; a Rytm's track report's
+// track_voice) is engine voice voice_base(l) + k. Slot 0's (the Rytm's) are 0..kSlotVoices-1 and slot 1's the next
+// kSlotVoices, alone or paired; on an 8-voice engine (the Teensy) every link's are 0..7.
+// Track reports (sim/protocol.py "Track reports", rytm-mods 0021): a Rytm the host asked (5B 01 01, answered 5B 01 01)
+// ends its 03 / 04 / 43 / 44 / 11 with <track 0..11> before F7, one byte longer than the classic message (42 / 44 / 8
+// bytes; the voice byte's meaning unchanged). Its track t then plays box voice kRytmTrackVoice[t]: the Rytm's physical
+// voice for the first track on it, 8..11 for a shared voice's second track (CP HT OH CB), so tracks that share a
+// voice on the Rytm are two Sidecar voices. A Rytm without them (no answer) keeps kRytmTrackVoice8: one voice a pair.
+constexpr uint8_t kCmdTracks = 0x5B;   // host -> Rytm 5B 01 <flags: bit 0 track reports>; Rytm -> host 5B 01 <flags it sends>
+constexpr uint8_t kRytmTrackVoice8[12] = {0, 2, 7, 7, 1, 3, 5, 5, 4, 4, 6, 6};    // BD SD RS CP BT LT MT HT CH OH CY CB
+constexpr uint8_t kRytmTrackVoice[12] = {0, 2, 7, 8, 1, 3, 5, 9, 4, 10, 6, 11};
+static_assert(kRytmVoices == 8 || kRytmVoices == 12, "the Rytm's voices");
+inline bool wants_tracks() { return kRytmVoices > 8; }   // the engine has room for them (not on 8-voice slots)
+// The box voice track t plays on a Rytm link: one per track once it sends track reports
+inline int rytm_track_voice(int t, const Link& l) {
+  return (unsigned)t < 12 ? (l.tracks && wants_tracks() ? kRytmTrackVoice : kRytmTrackVoice8)[t] : 0;
+}
+// A Rytm's report with the track byte: the track (0..11), else -1 (a classic message, or a byte out of range)
+inline int track_byte(const uint8_t* d, int len) {
+  if (len < 8 || d[len - 1] != 0xF7) return -1;
+  const int c = d[4];
+  const bool ok = ((c == 0x04 || c == 0x44) && len == 44) || ((c == 0x03 || c == 0x43) && len == 42) || (c == 0x11 && len == 8);
+  return ok && d[len - 2] < 12 ? d[len - 2] : -1;
+}
+inline int voice_base(const Link& l) { return kVoiceSlots > 1 ? l.index * kSlotVoices : 0; }
 inline int voice_base() { return voice_base(cur()); }
 inline int voice_in(uint8_t vb, const Link& l = cur()) { return voice_base(l) + (vb & (kBoxVoices - 1)); }   // a voice byte -> engine voice
 // The first engine voice of the box the engine's own work is for (g_base): the voices the one output stage carries, the
@@ -217,7 +240,7 @@ inline int base_voice_base() {
 inline int base_voice(int k) { return base_voice_base() + (k & (kBoxVoices - 1)); }   // the base box's voice k -> engine voice
 inline int base_box_voice(int vi) {   // engine voice vi -> its number in the base box, -1 another box's
   const int k = vi - base_voice_base();
-  return k >= 0 && k < kBoxVoices ? k : -1;
+  return k >= 0 && k < kSlotVoices ? box_voice(k) : -1;
 }
 // The slot whose voices sound beside the base box's, through an output stage of their own (on the Pi its own FIFO and
 // render pace, paced by its own box's stream; its OUT and INSERT settings are slot 1's, core/fx/out.h control1 and

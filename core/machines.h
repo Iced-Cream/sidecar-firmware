@@ -6,24 +6,41 @@
 
 namespace core {
 
-// Voices: a box names 8 (the voice byte's low 3 bits, a project's tracks), kBoxVoices. The engine renders kVoices: on the
-// Pi and the Mac (CORE_MSAMP) two boxes' worth, 16, slot 0's (the Rytm's) 0..7 and slot 1's 8..15 (docs/device-profiles.md
-// "Several devices"); on the Teensy one box's, 8. -DCORE_VOICES=8 builds the single-box engine anywhere.
+// Voices. A box has 8 voices of its own, V1..V8 (kBoxVoices): the voice byte's low 3 bits (the Rytm's physical voices),
+// its audio channels, and everything kept per voice (a project's per-voice data, LFO / mod targets, INSERT and OUT
+// chains, a box's rows). A slot holds kSlotVoices engine voices: on the Pi and the Mac (CORE_MSAMP) 16, of which the
+// Rytm uses 12 (one per track, docs/device-profiles.md), on the Teensy 8. Its voices 0..7 are V1..V8; the Rytm's 8..11
+// are the second track of a shared voice (CP HT OH CB), reached only through a track report (sim/protocol.py "Track
+// reports", core/device/device.h kCmdTracks). Such a voice is its pair's V (box_voice): its per-voice state, targets,
+// chains and audio channel are the shared voice's, as they were when both tracks played one voice; its sound (machine,
+// params, notes, render) is its own. The engine renders kVoices, two slots' worth: slot 0's 0..15 and slot 1's 16..31
+// (docs/device-profiles.md "Several devices"); on the Teensy one box's, 8. -DCORE_VOICES=8 builds that engine anywhere.
 #ifndef CORE_VOICES
 #if CORE_MSAMP
-#define CORE_VOICES 16
+#define CORE_VOICES 32
 #else
 #define CORE_VOICES 8
 #endif
 #endif
-constexpr int kBoxVoices = 8;            // one box's voices: the wire's voice byte & 7, a project's per-voice data, a box's rows
-constexpr int kVoices = CORE_VOICES;     // the engine's: render arrays, machine state, a block's columns
-constexpr int kVoiceSlots = kVoices / kBoxVoices;   // slots with voices of their own (1 or 2)
-static_assert(kVoices == kBoxVoices || kVoices == 2 * kBoxVoices, "one box's voices or two boxes'");
-inline int slot_of_voice(int vi) { return vi / kBoxVoices; }          // the slot an engine voice belongs to (0 on 8 voices)
-inline int box_voice(int vi) { return vi & (kBoxVoices - 1); }     // its number in its box, 0..7 (per-box state's index)
+constexpr int kBoxVoices = 8;                // one box's V1..V8: the wire's voice byte & 7, per-voice data, channels, rows
+constexpr int kSlotVoices = CORE_VOICES >= 32 ? 16 : 8;   // one slot's engine voices: the stride between slots
+constexpr int kVoices = CORE_VOICES;         // the engine's: render arrays, machine state, a block's columns
+constexpr int kVoiceSlots = kVoices / kSlotVoices;   // slots with voices of their own (1 or 2)
+static_assert(kVoices == kSlotVoices || kVoices == 2 * kSlotVoices, "one slot's voices or two slots'");
+static_assert((kSlotVoices & (kSlotVoices - 1)) == 0 && (kVoices & (kVoices - 1)) == 0, "voice masks: powers of two");
+constexpr int kRytmVoices = kSlotVoices >= 12 ? 12 : 8;   // the Rytm's Sidecar voices: one per track where the slot has room
+// A slot voice k (0..kSlotVoices-1) -> its V (0..7): itself below 8; the Rytm's 8..11 (CP HT OH CB) their pair's
+inline int pair_voice(int k) {
+  static constexpr uint8_t kPair[4] = {7, 5, 4, 6};   // CP on RS/CP's V8, HT on MT/HT's V6, OH on CH/OH's V5, CB on CY/CB's V7
+  k &= kSlotVoices - 1;
+  return k < kBoxVoices ? k : k < 12 ? kPair[k - kBoxVoices] : k & (kBoxVoices - 1);
+}
+inline int slot_of_voice(int vi) { return vi / kSlotVoices; }          // the slot an engine voice belongs to (0 on 8 voices)
+inline int in_slot(int vi) { return vi & (kSlotVoices - 1); }         // its number in its slot, 0..kSlotVoices-1
+inline int box_voice(int vi) { return pair_voice(vi); }                // its V in its box, 0..7 (per-box state's index)
+inline int voice_v(int vi) { return slot_of_voice(vi) * kSlotVoices + pair_voice(vi); }   // the engine voice of its V
 inline int voice_wrap(int vi) { return vi & (kVoices - 1); }       // an engine voice index kept in range (was vi & 7)
-// A per-voice array every element of which starts at x (a brace list of 8 left voices 8..15 at zero)
+// A per-voice array every element of which starts at x (a brace list of 8 left the voices after them at zero)
 template <class T> struct PerVoice {
   T a[kVoices];
   constexpr explicit PerVoice(T x) : a() {

@@ -54,7 +54,7 @@
 namespace bridge {
 
 static_assert(kVoices == core::kVoices && kBlock == core::kBlock && kMachines == core::kMachines, "bridge sizes");
-static_assert(kBoxVoices == core::kBoxVoices && kVoiceSlots == core::kVoiceSlots, "bridge sizes");
+static_assert(kBoxVoices == core::kBoxVoices && kSlotVoices == core::kSlotVoices && kVoiceSlots == core::kVoiceSlots, "bridge sizes");
 static_assert(kLfoJsonCap == core::lfo::kJsonCap, "the /status LFO buffer");
 
 static void put32(uint8_t* p, uint32_t v) { for (int i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (8 * i)); }
@@ -620,7 +620,7 @@ unsigned poly_voices() {
   unsigned m = 0;
 #if CORE_POLY
   for (int t = 0; t < 12; ++t)
-    if (core::seq::owns_track(t)) m |= 1u << (core::ui::remote_track_voice(t) & 7);   // (a plain read: drawing only)
+    if (core::seq::owns_track(t)) m |= 1u << core::box_voice(core::ui::remote_track_voice(t));   // (a plain read: drawing only; a pair's second track on its V)
 #endif
   return m;
 }

@@ -1234,7 +1234,7 @@ CORE_COLD void voice_on(int l, int vi, int c) {
 int users(int s, int l, int c) {
   if (!began || !slot_ok(s) || l < 0 || l >= kLists) return 0;
   int n = 0;
-  const int v0 = s * kBoxVoices, v1 = kVoiceSlots > 1 ? v0 + kBoxVoices : kVoicesMax;   // (this slot's voices)
+  const int v0 = s * kSlotVoices, v1 = kVoiceSlots > 1 ? v0 + kSlotVoices : kVoicesMax;   // (this slot's voices)
   for (int vi = v0; vi < v1; ++vi) {   // (a voice that plays another machine now holds no row of this list)
     const V& x = v[vi];
     bool on = l == kSamples ? x.gr || x.cp : l == kTables ? x.wt : x.ms;

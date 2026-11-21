@@ -98,7 +98,7 @@ template <class F> CORE_COLD auto rytm_ui(F f) -> decltype(f()) {
 // slot s's track t plays on this voice (-1 none): the Rytm's from its 33s, a box's track t on its own voice t
 CORE_COLD int track_voice(int s, int t) {
   if (s == 0) return rytm_ui([&] { return ui::remote_track_voice(t); });
-  return t < kBoxVoices ? s * kBoxVoices + t : -1;
+  return t < kBoxVoices ? s * kSlotVoices + t : -1;
 }
 CORE_COLD bool sidecar_track(int s, int t) {
   if (s != 0) return t < kBoxVoices;   // (a box's tracks on its own voices: every one a Sidecar voice)

@@ -312,7 +312,11 @@ static CORE_COLD void contact() {
 CORE_COLD void link_reset(const char* why, int slot) {
   // the link's own voices (slot 1's 8..15 leave the Rytm's playing); on 8 voices every link's are 0..7
   const int b = slot < 0 ? device::voice_base() : device::voice_base(device::g_links[slot]);
-  for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
+  for (int vi = b; vi < b + kSlotVoices; ++vi) voice_silence(vi);
+  {   // track reports: asked again (the Rytm forgets them when its port comes up)
+    device::Link& l = slot < 0 ? device::cur() : device::g_links[slot];
+    l.tracks = l.asked = false;
+  }
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
   midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
@@ -345,9 +349,45 @@ CORE_COLD int engine_realtime_link(int t, uint8_t status, uint16_t spp) {
   return slot;
 }
 
+// Track reports (core/device/device.h kCmdTracks): ask the Rytm in hand for them, once a hello (an older Rytm drops 5B)
+static CORE_COLD void tracks_ask() {
+  device::Link& l = device::cur();
+  if (!device::wants_tracks() || device::foreign(l) || l.asked || !hooks.to_rytm) return;
+  l.asked = true;
+  const uint8_t m[8] = {0xF0, 0x7D, 0x52, 0x54, device::kCmdTracks, 1, 1, 0xF7};
+  hooks.to_rytm(m, (int)sizeof m);
+}
+static CORE_COLD void tracks_set(bool on, const char* why) {
+  device::Link& l = device::cur();
+  on = on && device::wants_tracks();
+  if (l.tracks == on) return;
+  l.tracks = on;
+  log(CORE_STR("link %d: track reports %s (%s): the Rytm's tracks on %d voices"), l.index, on ? "on" : "off", why, on ? 12 : 8);
+}
+
 __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int len) {
-  uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never
+  uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: its report without the track byte
   if (device::foreign() && !device::translate(device::cur(), d, len, box)) return;
+  int track = -1;   // a Rytm's track report: its track; the message goes on as the classic one (one byte shorter)
+  if (!device::foreign() && len >= 7 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {
+    const int c = d[4];
+    if (c == device::kCmdTracks) {   // the Rytm's answer: 5B 01 <flags>
+      if (len == 8 && d[5] == 1) tracks_set(d[6] & 1, "the Rytm's answer");
+      return;
+    }
+    if ((track = device::track_byte(d, len)) >= 0) {
+      memcpy(box, d, (size_t)(len - 2));
+      box[len - 2] = 0xF7;
+      d = box, --len;
+      tracks_set(true, "a track report");   // (its answer lost: the reports say it)
+    } else if (c == 0x03 || c == 0x04 || c == 0x43 || c == 0x44) {
+      if (device::cur().tracks) {   // a classic report: the Rytm forgot (its port came up again without a hello)
+        tracks_set(false, "a report without the track byte");
+        device::cur().asked = false;
+      }
+      tracks_ask();
+    }
+  }
   if (len >= 6 && d[4] == device::kCmdHello && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {   // a box says what it is
     device::hello(device::cur(), d, len);
     return;
@@ -463,7 +503,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     }
     if (d[4] == 0x35) seq::hello(len >= 9 ? d[6] << 7 | d[7] : -1);   // its seq-track mask forgotten: 2E again
 #endif
-    if (d[4] == 0x35) link_reset("hello");   // the Rytm's USB port came up: its transport and notes unknown
+    if (d[4] == 0x35) link_reset("hello"), tracks_ask();   // the Rytm's USB port came up: its transport and notes unknown
 #if CORE_POLY
     if (d[4] == 0x35 && s_sendfx_hello) sendfx_bw_all();   // (sfx-basewidth: a Rytm that came up again shows its defaults)
 #endif
@@ -488,7 +528,8 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     if (d[4] == 0x12 && len >= 11) { pool_assign(d[5], d[6] << 7 | d[7], d[8] << 7 | d[9]); return; }
   }
   if (len < 7 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
-  int cmd = d[4], vi = device::voice_in(d[5]);   // the link's box voice -> engine voice (slot 1's: 8 + k)
+  // the link's box voice -> engine voice (slot 1's: kBoxVoices + k); a track report's track picks it
+  int cmd = d[4], vi = track >= 0 ? device::voice_base() + device::rytm_track_voice(track, device::cur()) : device::voice_in(d[5]);
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
     if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate

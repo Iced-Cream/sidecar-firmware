@@ -40,6 +40,7 @@ static bool leds_on = false;
 static bool caught(int code) { return mask_key[code & 0xFF]; }
 static void terminal(const uint8_t* d, int len) {
   if (len == 7 && d[4] == 0x26) return;   // the IN L/R source ask on the first message (host_link.cpp, fxin): not the remote UI's
+  if (len == 8 && d[4] == 0x5B) return;   // the track reports' ask after a hello (host_link.cpp tracks_ask): not the remote UI's
   if (len < 7 || d[0] != 0xF0 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54 || d[5] != 1 || d[len - 1] != 0xF7) {
     other.emplace_back(d, d + len);
     return;

@@ -34,6 +34,7 @@
 // (No libm here: the Pi's Circle side includes this through pi/engine/output.h. The DSP is out_mix.h.)
 #pragma once
 #include <stdint.h>
+#include "../machines.h"   // box_voice
 
 namespace core {
 namespace out {
@@ -109,7 +110,7 @@ extern volatile int8_t g_base_slot;
 extern int (*slot_fn)();
 const Control& ctl();
 
-inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
+inline bool stereo(int vi) { return control.route[box_voice(vi)] != kTrk; }   // (a pair voice 8..11: its V's route)
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }
 int route_from_name(const char* s);          // "trk" / "pre" / "post" (any case), -1 neither
 // DEC's decay a sample for t60 at value v (1..127: 20 ms .. 10 s, exponential), 1 for OFF

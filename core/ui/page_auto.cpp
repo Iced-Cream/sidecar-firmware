@@ -261,7 +261,7 @@ CORE_COLD bool auto_key(int code) {
       for (int t = 0; t < 12 && g_aud_vi < 0; ++t) {
         int vb = remote_track_machine(t);
         if (vb >= 0 && (vb & 0x78) == kMultiMachine) {
-          int vi = vb & 7;
+          int vi = remote_track_voice(t);   // (the track's engine voice: its slot's, a pair track's own)
           int inst = 0;
           char key[40];
           sniprintf(key, sizeof key, CORE_STR("/%s.sfz"), a.name);

@@ -79,7 +79,7 @@ CORE_COLD void tap_in(const int32_t* f, int n, int stride) {
 
 CORE_COLD void tap_enable(bool on) { tap_enabled = on; }
 CORE_COLD void tap_source(int src) { t_src = src < 0 ? 0 : src >= kTapSources ? kTapSources - 1 : src; }
-CORE_COLD int tap_channel_of_voice(int vi) { return box_screen() ? 2 + (vi & 7) : kVoiceCh[vi & 7]; }
+CORE_COLD int tap_channel_of_voice(int vi) { return box_screen() ? 2 + box_voice(vi) : kVoiceCh[box_voice(vi)]; }   // (a pair voice: its V's)
 CORE_COLD const char* tap_source_name(int src) {
   const device::Screen* bx = box_screen();
   if (bx && src >= 1 && src <= 8) return bx->names[src - 1];

@@ -197,10 +197,10 @@ int main() {
   CHECK(device::g_base == &device::g_links[0]);
   CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));
 
-  // each slot's LFOs on its own box's voices: the A4's T1A (V2 P4) moves engine voice kBoxVoices + 1 only, never the
+  // each slot's LFOs on its own box's voices: the A4's T1A (V2 P4) moves engine voice kSlotVoices + 1 only, never the
   // Rytm's voice 1 (the same V2 in slot 0's numbering)
   {
-    const int va = kBoxVoices + 1;
+    const int va = kSlotVoices + 1;
     v[1].p[3] = 50.0f, v[va].p[3] = 50.0f;
     uint32_t us = 5000000;
     float lo = 50, hi = 50;
@@ -274,11 +274,11 @@ int main() {
       CHECK(pools::find_hash(pools::kSamples, pools::at(0, pools::kSamples, b7).ref) < 0);   // slot 1's list: no a.wav
     }
     CHECK(gr::entry_state_in(0, b7) == gr::kStateCard && gr::entry_state_in(1, b7) == gr::kStateCard);
-    // a voice resolves through its own box's list: voice 0 the Rytm's, voice kBoxVoices the A4's
-    CHECK(gr::pick(0, b7) && gr::pick(kBoxVoices, b7));
-    CHECK(gr::src_entry(0, b7) == b7 && gr::src_entry(kBoxVoices, b7) == b7);
+    // a voice resolves through its own box's list: voice 0 the Rytm's, voice kSlotVoices the A4's
+    CHECK(gr::pick(0, b7) && gr::pick(kSlotVoices, b7));
+    CHECK(gr::src_entry(0, b7) == b7 && gr::src_entry(kSlotVoices, b7) == b7);
     // a row seen playing on the A4's voice is in the A4's used set only
-    pools::seen_in(slot_of_voice(kBoxVoices), pools::kSamples, b7);
+    pools::seen_in(slot_of_voice(kSlotVoices), pools::kSamples, b7);
     CHECK(pools::used(1, pools::kSamples, b7) && !pools::used(0, pools::kSamples, b7));
   }
 
@@ -386,8 +386,8 @@ int main() {
     CHECK(strstr(a4.c_str(), "\nL 2 V2:P4 7680") && strstr(a4.c_str(), "\nAB 2 0") && !strstr(a4.c_str(), "V1:P3"));
     CHECK(strstr(rx.c_str(), "V1:P5") && strstr(ax.c_str(), "H 1") && !strstr(ax.c_str(), "V1:P5"));
     CHECK(!scene::dirty_any() && !xypad::dirty_any());
-    // slot 1's A (scene 2, V2's P4 at 60) morphs its own voice kBoxVoices + 1 only
-    const int va = kBoxVoices + 1;
+    // slot 1's A (scene 2, V2's P4 at 60) morphs its own voice kSlotVoices + 1 only
+    const int va = kSlotVoices + 1;
     v[1].p[3] = 20.0f, v[va].p[3] = 20.0f;
     uint32_t us = 9000000;
     for (int i = 0; i < 100; ++i, us += 2000) mod::tick(us);
@@ -440,7 +440,7 @@ int main() {
   }
 
   // the sequencer per slot (3(c) step 7): the A4's own seq track, its own 2E, its 5-byte 2C records playing its own
-  // voice (kBoxVoices + track) in its own pass; tracks.txt in its own folder; the Rytm's sequencer untouched
+  // voice (kSlotVoices + track) in its own pass; tracks.txt in its own folder; the Rytm's sequencer untouched
   {
     char o[900];
     const uint32_t on0 = seq::stats().notes_on;   // (outside a Scope: the base box's, the Rytm's)
@@ -451,7 +451,7 @@ int main() {
       CHECK(seq::owns_track(0) && !seq::owns_track(4));   // (track 5: the A4's FX track, no voice)
     }
     CHECK(!seq::owns_track(0));
-    CHECK(seq::owns_voice(kBoxVoices) && !seq::owns_voice(0) && !seq::owns_voice(kBoxVoices + 1));
+    CHECK(seq::owns_voice(kSlotVoices) && !seq::owns_voice(0) && !seq::owns_voice(kSlotVoices + 1));
     g_out.clear(), g_out1.clear();
     seq::tick(now_ms());
     auto mask_of = [](const std::vector<std::vector<uint8_t>>& w) {

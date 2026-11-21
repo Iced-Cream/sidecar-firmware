@@ -1,5 +1,6 @@
 // core/sysex.cpp - see sysex.h. Cold: per message, never per sample.
 #include "sysex.h"
+#include "machines.h"
 
 #include <string.h>
 
@@ -58,7 +59,7 @@ CORE_COLD int sysex_names(uint8_t* m, uint8_t cmd, bool replace, int total, int 
 
 CORE_COLD int sysex_juno_knobs(uint8_t* m, int voice, const uint8_t knobs[6]) {
   int n = head(m, 0x15);
-  m[n++] = (uint8_t)voice & 7;
+  m[n++] = (uint8_t)box_voice(voice);   // the Rytm's physical voice (a pair voice 8..11: the voice it shares)
   for (int i = 0; i < 6; ++i) m[n++] = knobs[i] & 0x7f;
   m[n++] = 0xf7;
   return n;

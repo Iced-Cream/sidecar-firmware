@@ -58,6 +58,21 @@ implemented 2026-10-08, P1..P8 only):
   follows a trig on that voice, never between a trig and its own retrig; a
   new trig (0x04) always reopens the voice. JUNO's LEN 127 holds until it.
 
+  Track reports (2026-11-21; core/device/device.h kCmdTracks, rytm-mods 0021 ext.c, slots=1 image): the host
+  asks a Rytm, after each hello (35) and at a link's first report:
+
+    F0 7D 52 54 5B 01 <flags> F7          host -> Rytm, flags bit 0: track reports on (0: off)
+    F0 7D 52 54 5B 01 <flags> F7          Rytm -> host, the answer: what it now sends
+
+  On, the Rytm ends 03 / 04 / 43 / 44 and 11 with the owner track <0..11> before F7: one byte longer (42 / 44 / 8
+  bytes), the voice byte unchanged. The host then plays track t on its slot's voice
+  {0, 2, 7, 8, 1, 3, 5, 9, 4, 10, 6, 11}[t] - a shared voice's second track (CP HT OH CB) on 8..11, beside the first
+  one's - and a note-off ends only its track's voice; voices 8..11 sound on their pair's Overbridge channel and take its
+  per-voice settings (core/machines.h pair_voice). A classic report from a Rytm that was on means it forgot (its port
+  came up again): the host goes back to 8 voices and asks again. A Rytm without the command never answers: 8 voices,
+  one a pair, as before. A displaced track's held note (CP's trig over a held RS) gets its own 11 with RS's number
+  when RS's gate closes.
+
   Voice (0x04, 0x03) is the physical voice (rytm-mods machines.md) in its
   low 3 bits; the machine is (voice byte & 0x78), matched exactly: 0x00
   PLAITS, 0x08 JUNO, 0x10 DAISYSP, 0x20 DSP SAMPLE, 0x40 DIGIDRUM, 0x48 6-OP

@@ -2,6 +2,7 @@
 #include <cstring>
 
 #include "check.h"
+#include "machines.h"
 #include "sysex.h"
 
 int main() {
@@ -9,9 +10,12 @@ int main() {
   uint8_t m[256];
   {   // 15: voice, CUT RES ENV ATK DEC REL
     const uint8_t k[6] = {1, 2, 3, 4, 5, 0x85};
-    CHECK(sysex_juno_knobs(m, 9, k) == 13);
-    const uint8_t want[13] = {0xf0, 0x7d, 0x52, 0x54, 0x15, 9 & 7, 1, 2, 3, 4, 5, 5, 0xf7};
+    CHECK(sysex_juno_knobs(m, kSlotVoices + 1, k) == 13);   // (another slot's voice: its box's V2)
+    const uint8_t want[13] = {0xf0, 0x7d, 0x52, 0x54, 0x15, 1, 1, 2, 3, 4, 5, 5, 0xf7};
     CHECK(memcmp(m, want, 13) == 0);
+    if (kSlotVoices >= 12) {   // a pair voice (HT, 9): the Rytm's physical voice it shares, MT/HT's 5
+      CHECK(sysex_juno_knobs(m, 9, k) == 13 && m[5] == 5);
+    }
   }
   {   // 16: two names (one empty), replace, total 2
     const char* names[2] = {"Brass\x01", nullptr};

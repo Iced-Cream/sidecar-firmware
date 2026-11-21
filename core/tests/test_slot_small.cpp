@@ -1,7 +1,7 @@
 // core/tests/test_slot_small.cpp - 3(c): the last small pieces each box has of its own (docs/device-profiles.md "Several
 // devices"). With the Rytm on transport 0 and the A4 on transport 1 (slot 1):
 //   arp        each slot its own arpeggiator: its tracks' codes (the slot in hand's), a box's track t on its own voice
-//              (kBoxVoices + t), its notes on its own slot's tempo and frames in its own pass, its transport's STOP
+//              (kSlotVoices + t), its notes on its own slot's tempo and frames in its own pass, its transport's STOP
 //              ending only its own voices' sequencer notes
 //   transport  every slot's sequencer transport reaches hooks.transport_box with its slot; hooks.transport the Rytm's only
 //   all sound  a link's reset clears its own box's send FX (fx::control_of(slot).kill), not the other's
@@ -93,7 +93,7 @@ int main() {
   hello_a4(1);
   settle();
   CHECK(device::g_links[1].box == &device::kA4 && device::g_base == &device::g_links[0]);
-  const int a4v = kBoxVoices;   // the A4's track 1 plays on the engine's voice 8
+  const int a4v = kSlotVoices;   // the A4's track 1 plays on the engine's voice 8
 
   // ---- arp codes: the slot in hand's; a box's track on its own voice
   arp::Cfg up = arp::decode(0);

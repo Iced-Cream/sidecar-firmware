@@ -5,10 +5,11 @@
 #include <stdint.h>
 
 namespace bridge {
-const int kVoices = 16, kBlock = 12, kMachines = 7;   // core::kVoices, kBlock, kMachines (bridge.cpp checks)
-// Two boxes' voices: slot 0's (the Rytm's) 0..7, slot 1's 8..15 (core/machines.h). The output stage carries one box's
-// eight (kBoxVoices), the base box's: out_base() is its first engine voice.
-const int kBoxVoices = 8, kVoiceSlots = kVoices / kBoxVoices;
+const int kVoices = 32, kBlock = 12, kMachines = 7;   // core::kVoices, kBlock, kMachines (bridge.cpp checks)
+// Two slots' voices: slot 0's (the Rytm's) 0..15, slot 1's 16..31 (core/machines.h kSlotVoices); a slot's 0..7 are its
+// box's V1..V8, the Rytm's 8..11 the second tracks of its shared voices. The output stage carries one box's eight
+// channels (kBoxVoices), the base box's: out_base() is its first engine voice; voices 8..11 sound on their pair's channel.
+const int kBoxVoices = 8, kSlotVoices = 16, kVoiceSlots = kVoices / kSlotVoices;
 int out_base();              // the base box's first engine voice (core/device/device.h base_voice_base), any core
 bool slot_renders(int slot);  // the slot's voices render: slot 0 always (a lone Rytm as ever), slot 1 while a box has it
 // Before begin(): /Samples/pi-test/sine440.wav (2 s, 440 Hz, 16-bit mono, 48 kHz) and, if the project's pool file

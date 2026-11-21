@@ -105,7 +105,7 @@ int main() {
 
   // the default: the Rytm, nothing in between
   CHECK(!device::foreign() && device::active().id == device::kIdRytm && hooks.to_rytm == ::out);
-  CHECK(device::rytm().voices == kBoxVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
+  CHECK(device::rytm().voices == kRytmVoices && device::rytm().params == 16 && device::rytm().tracks == 12);
   CHECK(device::rytm().usb_vid == 0x1935 && device::rytm().usb_pid == 0x0b48);
   send(sidecar({0x10, 'A', 'B'}));
   CHECK(!strcmp(prj().key, "AB") && count(0x14) == 1);
@@ -133,7 +133,7 @@ int main() {
   CHECK(device::foreign() && device::active().id == kBoxId && hooks.to_rytm != ::out);
   CHECK(device::box_screen() == nullptr && !strcmp(voice_name(0), "BD"));   // no Screen: the Rytm's words
   const int b = device::voice_base();   // the box is slot 1's: its voice k plays engine voice 8 + k (k on 8 voices)
-  CHECK(b == (kVoices > kBoxVoices ? kBoxVoices : 0));
+  CHECK(b == (kVoices > kSlotVoices ? kSlotVoices : 0));
   send(box_trig(0, 48, 127, 10, 20, 30));
   CHECK(v[b].live);
   g_out.clear();

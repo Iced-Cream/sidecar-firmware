@@ -302,7 +302,7 @@ CORE_COLD void draw_chord(Canvas& c, const Rect& r, const Cell& cell, const Sour
 #if CORE_POLY
   ctx |= seq::stats().loads << 9;
 #endif
-  auto& wv = win[vi < 0 ? 8 : vi & 7];
+  auto& wv = win[vi < 0 ? 8 : box_voice(vi)];
   if (wv.ctx != ctx) wv.ctx = ctx, wv.c0 = -1;
   int base = wv.c0 = keys_window(wv.c0, lo, hi);
   for (int o = 0; o < 3; ++o) {

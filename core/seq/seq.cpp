@@ -2903,7 +2903,7 @@ CORE_COLD void reset() {
   played_n() = 0;
   nev() = 0, ev_id() = 0;
   // 3(c): the engine-voice tables: the slot's own voices only (the other slot's sequencer keeps its notes and locks)
-  const int vb = kVoiceSlots > 1 ? sq_slot() * kBoxVoices : 0, vn = kVoiceSlots > 1 ? kBoxVoices : kVoices;
+  const int vb = kVoiceSlots > 1 ? sq_slot() * kSlotVoices : 0, vn = kVoiceSlots > 1 ? kSlotVoices : kVoices;
   memset(sounding[vb], 0, sizeof sounding[0] * vn);
   memset(opens(), 0, sizeof opens());
   dirty() = save_now() = tracks_dirty() = false;

@@ -117,7 +117,7 @@ int main() {
   sx(0, {0x33, 1, 0, 1, 1, 0x00});
   CHECK(in(0, [] { return ui::remote_track_machine(0); }) == 0 && in(1, [] { return ui::remote_track_machine(0); }) == -1);
   // each slot's tracks play its own voices: the Rytm's BD voice 0, slot 1's track 1 voice 8
-  CHECK(in(0, [] { return ui::remote_track_voice(0); }) == 0 && in(1, [] { return ui::remote_track_voice(0); }) == kBoxVoices);
+  CHECK(in(0, [] { return ui::remote_track_voice(0); }) == 0 && in(1, [] { return ui::remote_track_voice(0); }) == kSlotVoices);
   // the selection (49 1 2 <track> ..): the Rytm's, the touchscreen back on slot 0
   sx(0, {0x49, 1, 2, 4, 0, 'L', 'T', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
   CHECK(in(0, [] { return ui::remote_selected_track(nullptr); }) == 4);
@@ -133,7 +133,7 @@ int main() {
   {
     device::Scope s(device::g_links[0]);   // (the control core's hand on slot 0 meanwhile)
     CHECK(ins::slot_in_hand() == 1 && ui::remote_open() && ui::remote_selected_track(nullptr) == -1);
-    CHECK(ui::remote_track_voice(0) == kBoxVoices);
+    CHECK(ui::remote_track_voice(0) == kSlotVoices);
   }
   g_control = true;
   CHECK(in(0, [] { return ins::slot_in_hand(); }) == 0 && in(1, [] { return ins::slot_in_hand(); }) == 1);

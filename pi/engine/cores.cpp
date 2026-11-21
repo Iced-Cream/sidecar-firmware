@@ -327,16 +327,19 @@ void CEngineCores::Run (unsigned nCore)
 
 void CEngineCores::Worker (unsigned nCore)
 {
-	// each slot's eight split as one box's always were (split=4: 0-3 here, 4-7 on core 2), slot 1's as 8 + the same
+	// each slot's V1..V8 split as one box's always were (split=4: 0-3 here, 4-7 on core 2); a slot's voices 8.. (the
+	// Rytm's pair voices CP HT OH CB, 8..11) alternate in pairs, 8-9 here, 10-11 on core 2, so a pair's two voices
+	// render on different cores
 	const unsigned v0 = nCore == 1 ? 0 : s_nSplit, v1 = nCore == 1 ? s_nSplit : bridge::kBoxVoices;
+	auto mine = [nCore, v0, v1] (unsigned k) { return k < bridge::kBoxVoices ? k >= v0 && k < v1 : ((k - bridge::kBoxVoices) >> 1 & 1) == nCore - 1; };
 	// static: they survive the guard's longjmp
 	static volatile u32 s_nSeen[3];		// the last block generation this core finished
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
-	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u and %u-%u (slot 1's, while a box has it)", nCore,
-				v0, v1 - 1, v0 + bridge::kBoxVoices, v1 - 1 + bridge::kBoxVoices);
+	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u and %s of each slot (slot 1's from %u, while a box has it)",
+				nCore, v0, v1 - 1, nCore == 1 ? "8-9 12-13" : "10-11 14-15", bridge::kSlotVoices);
 	if (__builtin_setjmp (g_Guard.JumpBuffer (nCore)))
 	{
 		// a fault in a voice's render (guard.cpp returned from the exception into here, at task level): that
@@ -377,10 +380,9 @@ void CEngineCores::Worker (unsigned nCore)
 		const u32 nPass = s_nPassNow[nCore];
 		for (unsigned v = vFirst; v < bridge::kVoices; v++)
 		{
-			const unsigned k = v % bridge::kBoxVoices, sl = v / bridge::kBoxVoices;
-			if (k < v0) { v += v0 - k - 1; continue; }
-			if (k >= v1) { v += bridge::kBoxVoices - k - 1; continue; }
-			if (k == v0 && !(nPass >> sl & 1)) { v += v1 - v0 - 1; continue; }
+			const unsigned k = v % bridge::kSlotVoices, sl = v / bridge::kSlotVoices;
+			if (!(nPass >> sl & 1)) { v += bridge::kSlotVoices - k - 1; continue; }
+			if (!mine (k)) continue;
 			const void *pMach = bridge::machine_name ((int) v);	// the guard's machine key: a static name,
 			const u32 nMGen = bridge::machine_gen ((int) v);	// and a user plugin's slot and load
 			if (g_Guard.Muted (v) && !g_Guard.Fresh (v, pMach, nMGen))
@@ -419,9 +421,9 @@ void CEngineCores::RenderBlock (int nSide)
 	{
 		bridge::seq_block ();		// the sequencer's notes due in this block (core/seq/seq.h): once a base block
 		const int nSideNow = core::device::side_slot ();
-		for (int sl = 0; sl < (int) (bridge::kVoices / bridge::kBoxVoices); sl++)
+		for (int sl = 0; sl < bridge::kVoiceSlots; sl++)
 			if (sl != nSideNow && bridge::slot_renders (sl)) nPass |= 1u << sl;
-		nPass |= kBasePass | (u32) (bridge::out_base () / bridge::kBoxVoices) << kBaseBoxShift;
+		nPass |= kBasePass | (u32) (bridge::out_base () / bridge::kSlotVoices) << kBaseBoxShift;
 	}
 	else
 	{
@@ -447,13 +449,25 @@ void CEngineCores::RenderBlock (int nSide)
 	}
 	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());
 	if (nUs > s_nMaxBlock) s_nMaxBlock = nUs;
-	// the output stage: the base box's eight (bridge.h out_base), or the side stage's slot's
-	const unsigned b = nSide < 0 ? (unsigned) bridge::out_base () : (unsigned) nSide * bridge::kBoxVoices;
+	// the output stage: the base box's eight channels (bridge.h out_base), or the side stage's slot's; a slot's voices
+	// 8..11 (the Rytm's CP HT OH CB, track reports) summed onto their pair's channel (core/machines.h pair_voice)
+	const unsigned b = nSide < 0 ? (unsigned) bridge::out_base () : (unsigned) nSide * bridge::kSlotVoices;
 	static s16 Box[bridge::kBlock][bridge::kBoxVoices], BoxR[bridge::kBlock][bridge::kBoxVoices];
+	static const u8 kPair[4] = {7, 5, 4, 6};	// (core::pair_voice; the Circle side has no core includes)
+	auto sat = [] (int x) -> s16 { return (s16) (x > 32767 ? 32767 : x < -32768 ? -32768 : x); };
 	for (unsigned s = 0; s < bridge::kBlock; s++)
+	{
 		for (unsigned k = 0; k < bridge::kBoxVoices; k++) Box[s][k] = s_Block[s][b + k], BoxR[s][k] = s_BlockR[s][b + k];
+		for (unsigned k = 0; k < 4; k++)
+		{
+			const unsigned v = b + bridge::kBoxVoices + k, c = kPair[k];
+			if (s_Block[s][v] | s_BlockR[s][v])
+				Box[s][c] = sat (Box[s][c] + s_Block[s][v]), BoxR[s][c] = sat (BoxR[s][c] + s_BlockR[s][v]);
+		}
+	}
 	u8 nSt = 0;
 	for (unsigned k = 0; k < bridge::kBoxVoices; k++) nSt |= s_St[b + k] ? 1u << k : 0;
+	for (unsigned k = 0; k < 4; k++) nSt |= s_St[b + bridge::kBoxVoices + k] ? 1u << kPair[k] : 0;
 	(nSide < 0 ? g_Output : g_OutputSide).Push (Box, bridge::kBlock, BoxR, nSt);
 	s_nBlocks++;
 }
@@ -696,18 +710,18 @@ void CEngineCores::Command (const char *p)
 	}
 	else if (strncmp (p, "faulttest=", 10) == 0)
 	{
-		g_Guard.ArmFault (atoi (p + 10) & 7);
-		L->Write (From, LogNotice, "guard: voice %d faults on its next render", atoi (p + 10) & 7);
+		g_Guard.ArmFault (atoi (p + 10) & (bridge::kVoices - 1));
+		L->Write (From, LogNotice, "guard: voice %d faults on its next render", atoi (p + 10) & (bridge::kVoices - 1));
 	}
 	else if (strncmp (p, "overtest=", 9) == 0)
 	{
-		g_Guard.ArmOverrun (atoi (p + 9) & 7, CGuard::kOverBlocks + 20);
-		L->Write (From, LogNotice, "guard: voice %d runs 300 us long for %u blocks", atoi (p + 9) & 7, CGuard::kOverBlocks + 20);
+		g_Guard.ArmOverrun (atoi (p + 9) & (bridge::kVoices - 1), CGuard::kOverBlocks + 20);
+		L->Write (From, LogNotice, "guard: voice %d runs 300 us long for %u blocks", atoi (p + 9) & (bridge::kVoices - 1), CGuard::kOverBlocks + 20);
 	}
 	else if (strncmp (p, "hangtest=", 9) == 0)
 	{
-		g_Guard.ArmHang (atoi (p + 9) & 7);
-		L->Write (From, LogNotice, "guard: voice %d runs 30 ms long once (fatal: clean stop, reboot)", atoi (p + 9) & 7);
+		g_Guard.ArmHang (atoi (p + 9) & (bridge::kVoices - 1));
+		L->Write (From, LogNotice, "guard: voice %d runs 30 ms long once (fatal: clean stop, reboot)", atoi (p + 9) & (bridge::kVoices - 1));
 	}
 	else if (strncmp (p, "pool=", 5) == 0 || strncmp (p, "juno=", 5) == 0 || strncmp (p, "fm=", 3) == 0 || strncmp (p, "preset=", 7) == 0)
 	{

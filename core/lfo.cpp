@@ -849,7 +849,7 @@ CORE_COLD void waves(uint32_t us, uint32_t dus) {
 CORE_COLD void waves(uint32_t, uint32_t) {}
 
 CORE_COLD void voice_params(int vi, float* p, int np, bool trig) {
-  int t = kTVoice + (vi & 7);
+  int t = kTVoice + box_voice(vi);   // (a pair voice 8..11: its V's targets, as when both tracks played one voice)
   for (Tgt& e : g_t) {
     if (e.state != 1 || e.target != t || e.param >= np) continue;
     e.base = p[e.param];
@@ -873,7 +873,7 @@ CORE_COLD uint8_t fx_knob(int slot, int knob, uint8_t val) {
 }
 
 CORE_COLD float base_of(int vi, int k, float cur) {
-  Tgt* e = find(kTVoice + (vi & 7), k & 15);
+  Tgt* e = find(kTVoice + box_voice(vi), k & 15);
   return e && e->state == 1 ? e->base : cur;
 }
 

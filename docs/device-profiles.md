@@ -268,16 +268,31 @@ changes nothing here.
 
 ### Voices on two links
 
-The Pi and the Mac render 16 engine voices (`core::kVoices`); the Teensy renders 8, and `-DCORE_VOICES=8` builds that engine
-anywhere. A box names 8 (`kBoxVoices`: the voice byte's low 3 bits, a project's tracks). Slot 0 (the Rytm) plays engine
-voices 0..7 and slot 1 (any other box) 8..15, alone or paired. Each box keeps its own voice count (an A4's 4, a Digitakt's
-8). The wire never changes: `device::voice_in` turns a report's voice byte into the link's engine voice where the message is
-handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
+The Pi and the Mac render 32 engine voices (`core::kVoices`), 16 a slot (`kSlotVoices`); the Teensy renders 8, and
+`-DCORE_VOICES=8` builds that engine anywhere. A box names 8 (`kBoxVoices`, V1..V8: the voice byte's low 3 bits, its audio
+channels and everything kept per voice). Slot 0 (the Rytm) plays engine voices 0..15 and slot 1 (any other box) 16..31,
+alone or paired. Each box keeps its own voice count from its profile: the Rytm 12, an A4 4, a Digitakt 8. A box's report
+turns into the link's engine voice where the message is handled (`host_sysex_slot`, `voice_report`): `device::voice_in`
+for the voice byte, and `box_voice` turns an engine voice back into its V.
+
+**The Rytm's 12 (2026-11-21, decided in the dual-engine design).** The Rytm has 8 physical voices for 12 tracks: RS/CP,
+MT/HT, CH/OH and CY/CB share one each. A Rytm that sends track reports (sim/protocol.py "Track reports": the host asks with
+`5B 01 01` after each hello) adds the track to each report, and its tracks play slot voices
+`device::kRytmTrackVoice` = BD 0, SD 2, RS 7, CP 8, BT 1, LT 3, MT 5, HT 9, CH 4, OH 10, CY 6, CB 11: the first track of a
+pair on the physical voice as ever, the second on 8..11, so both sound at once on the Sidecar. A pair voice is its pair's V
+(`pair_voice`): its INSERT and OUT chains, LFO and mod targets, per-voice project data, name lists and Overbridge channel
+are the shared voice's, as they were when both tracks played one voice; its machine, parameters, notes and render are its
+own. On the Pi it renders on the other core from its pair (8-9 on core 1, 10-11 on core 2) and is summed onto its pair's
+channel before the output stage. A Rytm without track reports keeps 8 voices, one a pair. Named gaps: the Rytm reports
+only the track that owns a physical voice, so a displaced track's parameters and LFO stop changing while the other one
+plays (its held note still gets its own note-off); JUNO's knob sync names the physical voice (its current owner); the
+console's `voice:` forms take 0..7.
 
 - **Engine state** (machines, render arrays, the stream and sample-RAM state, MULTISAMPLE, WAVETABLE, GRANULAR, CHOP,
   LIVE IN, MIDI, user machines, poly FM, the sequencer's instances, the arpeggiator) is sized `kVoices` and indexed by
-  engine voice. `render_voices` takes the 16-wide ring. The Pi splits each slot's eight as one box's always were (`split=4`:
-  0-3 and 8-11 on core 1, 4-7 and 12-15 on core 2), and slot 1's only while a box has it, so a lone Rytm costs what it did.
+  engine voice. `render_voices` takes the 32-wide ring. The Pi splits each slot's V1..V8 as one box's always were (`split=4`:
+  0-3 on core 1, 4-7 on core 2, the same from 16 for slot 1), a slot's voices 8.. in pairs between the cores, and slot 1's
+  only while a box has it, so a lone Rytm without track reports costs what it did.
 - **Per-box state** stays 8 wide, one set per slot, indexed by the box's own voice: the INSERT chains (`ins::kVoices`,
   chains V1..V8), OUT's knobs and a profile's `out::Device` rows, the output stage, a project's files.
 - **Resets:** `link_reset(why, slot)` silences that slot's eight only, with its own send FX; a box's hello leaves the

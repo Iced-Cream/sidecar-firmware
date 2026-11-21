@@ -22,13 +22,13 @@ namespace device {
 // map / fixed / out_allow are never read for it.
 static constexpr Profile kRytm = {
     kIdRytm, "Analog Rytm MKII", 0x1935, 0x0b48,
-    12, 8, 16,
+    12, kRytmVoices, 16,
     {0x7D, 0x52, 0x54},
     0x04, 0x03, 0x11,
     kRemoteUi | kProject | kKits | kPatterns | kSendFx | kUserSlots | kSrcView | kFxIn | kPools,
     0, 0, {}, {}, {}, nullptr, nullptr, {},
     kBracketFull, &out::kRytmMk2, nullptr, false, false, 0, false, nullptr, "Rytm"};
-static_assert(kRytm.voices == kBoxVoices, "the Rytm's voices are one box's");
+static_assert(kRytm.voices <= kSlotVoices, "the Rytm's voices fit one slot");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
