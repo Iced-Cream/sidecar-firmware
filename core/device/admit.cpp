@@ -33,22 +33,33 @@ static unsigned scaled(unsigned long long bp) {   // the bench's bp at the clock
   return now ? (unsigned)((bp * s_costs.mhz + now - 1) / now) : (unsigned)bp;
 }
 
-// box voices 0..n-1: how many of them render on core c
-static unsigned on_core(int c, unsigned n) {
-  const unsigned one = n < s_split ? n : s_split;
+unsigned split_for(unsigned asked) {
+  if (!asked) return s_split;
+  const unsigned half = (asked + 1) / 2;
+  return half < s_split ? half : s_split;
+}
+
+// box voices 0..n-1 at split sp: how many of them render on core c
+static unsigned on_core(int c, unsigned n, unsigned sp) {
+  const unsigned one = n < sp ? n : sp;
   return c == 1 ? one : n - one;
 }
 
 CORE_COLD unsigned core_bp(int c, const Load& l) {
   if (c != 1 && c != 2) return 0;
-  unsigned v = 0, boxes = 0;
+  const int base = l.held[0] ? 0 : 1;   // the base box: AMP plays on its voices' and master chains only
+  unsigned v = 0, amps = 0;
+  unsigned long long bp = 0;
   for (int s = 0; s < 2; ++s) {
-    v += on_core(c, l.voices[s] > 8 ? 8 : l.voices[s]);
-    boxes += l.held[s] ? 1 : 0;
+    const unsigned n = on_core(c, l.voices[s] > 8 ? 8 : l.voices[s], split_for(l.asked[s]));
+    v += n;
+    if (s == base) amps = n < (unsigned)kAmpCap ? n : (unsigned)kAmpCap;
+    if (l.held[s] && chain_core(s) == c) {   // its chains, on the core that runs them; the other box's without the AMP pair
+      const unsigned pair = 2 * s_costs.amp_bp;
+      bp += s == base ? s_costs.fx_bp : s_costs.fx_bp > pair ? s_costs.fx_bp - pair : 0;
+    }
   }
-  const unsigned amps = v < (unsigned)kAmpCap ? v : (unsigned)kAmpCap;
-  unsigned long long bp = (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) + (unsigned long long)amps * s_costs.amp_bp;
-  if (c == 2) bp += (unsigned long long)boxes * s_costs.fx_bp;
+  bp += (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) + (unsigned long long)amps * s_costs.amp_bp;
   return scaled(bp);
 }
 
@@ -59,12 +70,14 @@ CORE_COLD int fit(int s, int want, const Load& l) {
   Load t = l;
   t.held[s] = true;
   t.voices[s] = 0;
+  t.asked[s] = (uint8_t)want;
+  const unsigned sp = split_for((unsigned)want);
   const unsigned base[3] = {0, core_bp(1, t), core_bp(2, t)};   // without its voices (its chains counted)
   for (int n = want; n > 0; --n) {
     t.voices[s] = (uint8_t)n;
     bool ok = true;
     for (int c = 1; c <= 2 && ok; ++c)
-      if (on_core(c, (unsigned)n) && core_bp(c, t) > kLimitBp && core_bp(c, t) > base[c]) ok = false;
+      if (on_core(c, (unsigned)n, sp) && core_bp(c, t) > kLimitBp && core_bp(c, t) > base[c]) ok = false;
     if (ok) return n;
   }
   return 0;

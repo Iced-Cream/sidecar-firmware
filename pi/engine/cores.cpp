@@ -51,15 +51,31 @@ static volatile u32 s_nDone[3];
 // The pass s_nGen announces (published before it): the slots whose voices render in it (bit s: slot s), and kBasePass
 // for the base box's pass (the send FX and the master chain render after it). The side stage's passes carry slot 1 alone.
 static const u32 kBasePass = 0x80;
-static const u32 kBaseBoxShift = 8;	// a base pass: the base box's slot in bits 8.. (its send FX and master chain run after it)
-static volatile u32 s_nPass = 1 | kBasePass;
+static const u32 kBaseBoxShift = 8;	// a base pass: the base box's slot in bits 8..15 (its send FX and master chain run after it)
+// Each slot's split in the pass (bits 16.. , 4 a slot): the voices of its box on core 1, the rest on core 2. Core 3 sets it with
+// the pass (core::admit::split_for: split= or half its box's voices, the smaller), so cores 1 and 2 always split a slot alike:
+// a change between passes never renders a voice on both or neither
+static const u32 kSplitShift = 16;
+static inline unsigned PassSplit (u32 nPass, unsigned sl) { const unsigned n = nPass >> (kSplitShift + 4 * sl) & 0xF; return n ? n : 4; }
+static volatile u32 s_nPass = 1 | kBasePass | 4u << kSplitShift | 4u << (kSplitShift + 4);
 static u64 s_Mach[3][bridge::kMachines];
 static_assert (sizeof CEngineCores::TStats::nMach / sizeof (u64) == bridge::kMachines, "nMach is bridge::kMachines");
 static u64 s_VoiceTicks[bridge::kVoices];		// touch2: per voice (each voice renders on one core only)
 static volatile u64 s_nBusy[4];
-// CPU admission's check (core/device/admit.h): core 2's send FX and master chains, after its voices and outside s_nBusy[2];
-// core 3's time waiting in RenderBlock for cores 1 and 2, inside s_nBusy[3]. stats shows both beside c2 and c3.
-static volatile u64 s_nChainTicks, s_nRenderWait;
+// CPU admission's check (core/device/admit.h): each render core's send FX and master chains, after its voices and outside
+// s_nBusy (ChainCore: slot 0's on core 2, slot 1's on core 1); core 3's time waiting in RenderBlock for cores 1 and 2,
+// inside s_nBusy[3]. stats shows them beside c1, c2 and c3.
+static volatile u64 s_nChainTicks[3], s_nRenderWait;
+// The last block generation whose chains each render core has finished (after s_nDone: core 3 does not wait for them).
+// RenderBlock waits for both before a pass whose base box differs from the last pass's: AMP's master rows play on the base
+// box's master chain only (core/fx/amp.cpp ctl), so a chain of the old base still running on one core never overlaps the
+// new base's on the other.
+static volatile u32 s_nChainDone[3];
+static u32 s_nLastPassBase = ~0u;			// core 3's: the base box (kBaseBoxShift's slot) of the last base pass
+// The render core that runs slot b's send FX and master chain (decided 2026-11-22: LT1 found core 2 full with both boxes'
+// chains, core 1 ~70 % idle). Fixed by slot, never by which box is the base, so each box's rings (sendfx_pi, masterfx_pi:
+// SPSC, one consumer) keep one render core whatever attaches or leaves. An 8-voice engine has slot 0 only: core 2.
+static inline unsigned ChainCore (int b) { return bridge::kVoiceSlots > 1 && b == 1 ? 1 : 2; }
 static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
 static volatile unsigned s_nWakes[4];
 static unsigned s_nBlockLimitMs = 20;			// blocklimit=N (emulator gates only): RenderBlock's fatal limit
@@ -357,16 +373,16 @@ void CEngineCores::Run (unsigned nCore)
 
 void CEngineCores::Worker (unsigned nCore)
 {
-	// each slot's eight split as one box's always were (split=4: 0-3 here, 4-7 on core 2), slot 1's as 8 + the same
-	const unsigned v0 = nCore == 1 ? 0 : s_nSplit, v1 = nCore == 1 ? s_nSplit : bridge::kBoxVoices;
+	// each slot's box voices split at that slot's own split, which the pass carries (PassSplit: split= or half the voices its
+	// box asks for, the smaller; an A4's 4 as 2 + 2): 0..split-1 on core 1, the rest on core 2. Slot 1's are 8 + the same
 	// static: they survive the guard's longjmp
 	static volatile u32 s_nSeen[3];		// the last block generation this core finished
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
-	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders voices %u-%u and %u-%u (slot 1's, while a box has it)", nCore,
-				v0, v1 - 1, v0 + bridge::kBoxVoices, v1 - 1 + bridge::kBoxVoices);
+	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders each box's voices %s its split (split=%u, or half its voices), %s", nCore,
+				nCore == 1 ? "below" : "from", s_nSplit, nCore == 1 ? "and slot 1's send FX and master chain" : "and slot 0's send FX and master chain");
 	if (__builtin_setjmp (g_Guard.JumpBuffer (nCore)))
 	{
 		// a fault in a voice's render (guard.cpp returned from the exception into here, at task level): that
@@ -400,17 +416,18 @@ void CEngineCores::Worker (unsigned nCore)
 			s_nGenNow[nCore] = nGen;
 			s_nPassNow[nCore] = __atomic_load_n (&s_nPass, __ATOMIC_RELAXED);	// (published before nGen)
 			s_nT0[nCore] = Ticks ();
-			vFirst = v0;
+			vFirst = 0;
 		}
 		// the voices of this core: v0..v1-1 of each slot in this pass (RenderBlock: slot 1's only while a box has it, in
-		// the base box's pass or, beside a Rytm, in passes of its own)
+		// the base box's pass or, beside a Rytm, in passes of its own), at that slot's split as the pass carries it
 		const u32 nPass = s_nPassNow[nCore];
 		for (unsigned v = vFirst; v < bridge::kVoices; v++)
 		{
 			const unsigned k = v % bridge::kBoxVoices, sl = v / bridge::kBoxVoices;
+			const unsigned nSp = PassSplit (nPass, sl);
+			const unsigned v0 = nCore == 1 ? 0 : nSp, v1 = nCore == 1 ? nSp : bridge::kBoxVoices;
+			if (!(nPass >> sl & 1) || k >= v1) { v += bridge::kBoxVoices - k - 1; continue; }
 			if (k < v0) { v += v0 - k - 1; continue; }
-			if (k >= v1) { v += bridge::kBoxVoices - k - 1; continue; }
-			if (k == v0 && !(nPass >> sl & 1)) { v += v1 - v0 - 1; continue; }
 			const void *pMach = bridge::machine_name ((int) v);	// the guard's machine key: a static name,
 			const u32 nMGen = bridge::machine_gen ((int) v);	// and a user plugin's slot and load
 			if (!core::device::voice_admitted ((int) v)	// CPU admission (core/device/admit.h): not its box's
@@ -432,14 +449,18 @@ void CEngineCores::Worker (unsigned nCore)
 		s_nSeen[nCore] = nGen;
 		__atomic_store_n (&s_nDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
-		if (nCore == 2)				// the send FX and the master chain of the box this pass rendered (phase 3(d)): the base
-		{					// box's after a base pass, the side stage's after its own (sendfx_pi.h, masterfx_pi.h)
-			const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+		// the send FX and the master chain of the box this pass rendered (phase 3(d)): the base box's after a base pass, the
+		// side stage's after its own (sendfx_pi.h, masterfx_pi.h), on that box's render core (ChainCore)
+		const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+		if (ChainCore (nFxBox) == nCore)
+		{
 			const u64 tC = Ticks ();
 			sendfx_pi::Render (nFxBox);	// the send FX, after the block
 			masterfx_pi::Render (nFxBox);	// the master chain, after the send FX
-			s_nChainTicks += Ticks () - tC;
+			s_nChainTicks[nCore] += Ticks () - tC;
 		}
+		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
+		asm volatile ("dsb sy; sev");
 	}
 }
 
@@ -461,11 +482,27 @@ void CEngineCores::RenderBlock (int nSide)
 		bridge::seq_block_side (nSide);	// 3(c): the side stage's slot's own sequencer block, in its pass
 		nPass = 1u << nSide;
 	}
+	for (unsigned sl = 0; sl < bridge::kVoiceSlots && sl < 2; sl++)	// each slot's split (PassSplit), from what its box asks
+		nPass |= (u32) core::admit::split_for (core::device::wanted ((int) sl)) << (kSplitShift + 4 * sl);
+	u64 t0 = Ticks (), nLimit = TickRate () / 1000 * s_nBlockLimitMs;	// 20 ms (blocklimit= in the QEMU gates only)
+	const u32 nPrev = s_nGen;
+	if ((nPass & kBasePass) && (nPass >> kBaseBoxShift & 0xFF) != s_nLastPassBase)
+	{	// the base box changed (attach, leave): every chain of the last pass done first (s_nChainDone), a rare wait
+		if (s_nLastPassBase != ~0u
+		    && !idlewait::wait ([&] { return __atomic_load_n (&s_nChainDone[1], __ATOMIC_ACQUIRE) == nPrev
+						&& __atomic_load_n (&s_nChainDone[2], __ATOMIC_ACQUIRE) == nPrev; },
+					[&] { return Ticks () - t0 > nLimit; }, [] { Wfe (3); }, s_bIdleWfe))
+		{
+			g_Guard.Fatal (s_BlockLimitWhy);
+			for (;;) asm volatile ("wfe");		// core 0 stops the stream and reboots
+		}
+		s_nLastPassBase = nPass >> kBaseBoxShift & 0xFF;
+		t0 = Ticks ();
+	}
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
-	u32 nGen = s_nGen + 1;
+	u32 nGen = nPrev + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
-	u64 t0 = Ticks (), nLimit = TickRate () / 1000 * s_nBlockLimitMs;	// 20 ms (blocklimit= in the QEMU gates only)
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under
 	// 1 us: clock gating, no retention state is enabled), and core 3's event stream bounds it at 152 us if a sev were ever
 	// missed, which also keeps the 20 ms limit below alive. An event another core's sev spends here (a FIFO pull) costs
@@ -860,7 +897,8 @@ void CEngineCores::TakeStats (TStats *s)
 		s->nBusy[c] = s_nBusy[c];
 		s_nBusy[c] = 0;
 	}
-	s->nChain2 = s_nChainTicks, s_nChainTicks = 0;
+	s->nChain1 = s_nChainTicks[1], s_nChainTicks[1] = 0;
+	s->nChain2 = s_nChainTicks[2], s_nChainTicks[2] = 0;
 	s->nWait3 = s_nRenderWait, s_nRenderWait = 0;
 	for (int k = 0; k < bridge::kMachines; k++)
 	{

@@ -11,7 +11,7 @@
 // 0.5.0, send FX as insert FX: the bus chains B1..B3 take the send TYPEs too, under one cap with the master's slots
 // (kFxSlots, 4 at once, anywhere among the master's 4 slots and the buses' 6). The room is booked here (accept): a slot
 // with a send TYPE holds one of the kFxSlots SendFx slots, on two more fx::SendFx (kFxUnits, 5.9 MB each, the send FX's
-// own SendFx untouched). Every chain that runs them runs on the send FX's core (the Pi's render core 2: the buses inside
+// own SendFx untouched). Every chain that runs them runs on the send FX's core (the Pi: slot 0's render core 2, slot 1's core 1; the buses inside
 // sendfx_pi::Render, the master in masterfx_pi::Render, one after the other), so the bookings and the SendFx are that
 // core's alone. The voice chains stay refused: they run on the core that renders the voice (core 1 for voices 1..4).
 // A bus slot's MIX is kept here (mix[] after the master's 4) and saved on its slot line ("B3 A RINGS P1 P2 P3 P4 MIX").

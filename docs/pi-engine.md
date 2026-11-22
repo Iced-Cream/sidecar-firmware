@@ -252,9 +252,10 @@ SEND FX 1 and 2 (`core/fx/send_fx.h`, docs/core.md "Send FX"; route A of
 
 - **In:** the IN completion (`ob_usb.cpp`, core 0) copies the Rytm's voice stems, IN 2..9, into a ring, only while
   an FX has a playable TYPE (`fx::any_on()`: off costs nothing).
-- **Render:** render core 2, after it has published its block (`cores.cpp` Worker: the block is not delayed), runs
-  `fx::SendFx` on what is queued (at most 96 frames a call). The voices' render state is not touched; the send FX's
-  state is core 2's alone; the values come from the control core (0x20, the console) as bytes.
+- **Render:** the box's render core (slot 0's: core 2; slot 1's: core 1, decided 2026-11-22: `cores.cpp` ChainCore), after
+  it has published its block (`cores.cpp` Worker: the block is not delayed), runs
+  `fx::SendFx` on what is queued (at most 96 frames a call). The voices' render state is not touched; each box's send FX
+  state is its render core's alone; the values come from the control core (0x20, the console) as bytes.
 - **Out:** the OUT fill (`ob_usb.cpp` FillOut, after the Sidecar's computer OUT) adds the return onto host -> Rytm
   2/3 (MAIN FX: PRE, before the Rytm's analog distortion and compressor) and 0/1 (MAIN: POST, clean), each FX on the pair
   its P1 names (0..63 PRE, 64..127 POST; STUTTER too; `sendfxout=fx|main` forces all, `slot` is the default),

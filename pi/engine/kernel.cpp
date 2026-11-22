@@ -1186,8 +1186,8 @@ void CKernel::LogBench (void)
 				pName, nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
 	}
-	// One box's chains on core 2 as one row (master::box_bench: its send FX, the bus chains and the master chain at the worst
-	// set the rooms allow together, as core 2 runs them), replacing the sum of the overlapping rows above (LT1, 2026-11-22)
+	// One box's chains as one row (master::box_bench: its send FX, the bus chains and the master chain at the worst set the
+	// rooms allow together, as its render core runs them: slot 0's core 2, slot 1's core 1), replacing the sum of the overlapping rows above (LT1, 2026-11-22)
 	unsigned nBoxBp = 0;
 	if (s_BoxBench.nTicks != 0)
 	{
@@ -1198,14 +1198,14 @@ void CKernel::LogBench (void)
 		m_Timer.MsDelay (2);
 	}
 	// CPU admission (core/device/admit.h): a voice's INSERT chain is the worst pair's eighth and the POST EQ's; a box's chains
-	// on core 2 the box chains row plus its master AMP pair (the boot has no capture loaded for the row's M2 and M3). No box
+	// on its render core the box chains row plus its master AMP pair (the boot has no capture loaded for the row's M2 and M3). No box
 	// row (a slot already set): the earlier sum of the overlapping rows, an upper bound.
 	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
 	Adm.fx_bp = nBoxBp ? nBoxBp + 2 * Adm.amp_bp : nMfxBp + nSfxWorstBp + nBusBp + 2 * Adm.amp_bp + nSfxCloudBp / 2;
 	core::admit::set_costs (Adm);
 	core::admit::set_clock (m_nClockMHz);
 	core::device::readmit ();
-	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains on core 2 %u.%02u %% (%s); limit 80 %% a render core",
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains %u.%02u %% (%s; slot 0's on core 2, slot 1's on core 1); limit 80 %% a render core",
 			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
 			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100,
 			nBoxBp ? "box row + AMP pair" : "no box row: the rows' sum");
@@ -1226,7 +1226,7 @@ void CKernel::LogAdmit (void)
 			const core::device::Profile *pA = a == 0 ? &core::device::rytm () : core::device::by_id (a == 1 ? core::device::kIdA4 : core::device::kIdDigitakt);
 			const core::device::Profile *pB = b == 0 ? &core::device::rytm () : core::device::by_id (b == 1 ? core::device::kIdA4 : core::device::kIdDigitakt);
 			if (!pA || !pB) continue;
-			core::admit::Load L = {{(u8) core::device::voices_asked (pA), 0}, {true, false}};
+			core::admit::Load L = {{(u8) core::device::voices_asked (pA), 0}, {true, false}, {(u8) core::device::voices_asked (pA), 0}};
 			const int nB = core::admit::fit (1, core::device::voices_asked (pB), L);
 			CString One;
 			One.Format (" %s+%s %d/%d", Types[a], Types[b], nB, core::device::voices_asked (pB));
@@ -2140,8 +2140,9 @@ void CKernel::LogStats (void)
 		Chans.Append (One);
 	}
 	unsigned c1 = pct (s.nBusy[1]), c2 = pct (s.nBusy[2]), c3 = pct (s.nBusy[3]);
-	// CPU admission's check (core/device/admit.h): core 2 with its chains, core 3 without its render wait
-	unsigned c2all = pct (s.nBusy[2] + s.nChain2), c3own = pct (s.nBusy[3] > s.nWait3 ? s.nBusy[3] - s.nWait3 : 0);
+	// CPU admission's check (core/device/admit.h): cores 1 and 2 with their chains (slot 1's on core 1, slot 0's on core 2),
+	// core 3 without its render wait
+	unsigned c1all = pct (s.nBusy[1] + s.nChain1), c2all = pct (s.nBusy[2] + s.nChain2), c3own = pct (s.nBusy[3] > s.nWait3 ? s.nBusy[3] - s.nWait3 : 0);
 	bridge::RuiMore More = {};			// the remote UI's SIDECAR page (core 3 reads it)
 	unsigned nRec = 0;
 	int nRecState = rec_pi::UiState (&nRec);	// 0 off (idle), 1 armed, 2 recording
@@ -2191,10 +2192,10 @@ void CKernel::LogStats (void)
 					m_pDisplay->TakeRotateDiag (), m_pDisplay->TakeTouchDiag ());
 	}
 	m_Logger.Write (From, LogNotice,
-		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% (c2 with chains %u.%u, c3 own %u.%u) | "
+		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% (with chains c1 %u.%u c2 %u.%u, c3 own %u.%u) | "
 		"pass max %u us | %s| midi %u B (lost %u) sysex %u notes %u%s | to-host sent %u B %u msgs fail %u dropped %u | peak %u/1000 | %u C",
 		s.nFifoMin, s.nFifoMax, CEngineCores::FifoTarget (), g_Output.Underflows (), g_Output.RestartUnderflows (), g_Output.Streams (), s.nBlocks, s.nMaxBlockUs,
-		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, c2all / 10, c2all % 10, c3own / 10, c3own % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
+		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, c1all / 10, c1all % 10, c2all / 10, c2all % 10, c3own / 10, c3own % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);

@@ -251,6 +251,8 @@ inline bool voice_admitted(int vi) {
   return !held(s) || box_voice(vi) < admitted(s);
 }
 void readmit();
+// what slot s's box asked for (0 free): the Pi's core 3 reads it for the render split (admit::split_for), one byte load
+inline int wanted(int s) { return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].want, __ATOMIC_RELAXED) : 0; }
 constexpr uint32_t kTellMs = 30000;   // a box is told its count while its screen may take a popup, this long after its attach
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);

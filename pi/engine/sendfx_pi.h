@@ -14,7 +14,7 @@
 // each its own rings, SendFx, stats and settings (core::fx::control_of(box), its buses: ins::engine(box)). Box 0 (the
 // Rytm's) is what a lone Rytm always had: its stems from the IN completion pace it. Box 1 (an A4 or another box, alone or
 // beside the Rytm) has no stems the send FX understands: its voices' sends (FromVoices, its own stream's OUT fill) are
-// its input frame by frame and pace it, rendered on core 2 after its own render pass (the base pass when it is the base
+// its input frame by frame and pace it, rendered on render core 1 (2026-11-22: cores.cpp ChainCore; box 0's stay on core 2) after its own render pass (the base pass when it is the base
 // box, else a side pass), its return added in its own stream's OUT fill. The calls without a box are box 0's.
 #pragma once
 #include <stdint.h>
@@ -61,7 +61,7 @@ void AddReturn(int32_t (*out)[12], unsigned n,            // core 0, OUT fill: o
 // box's return onto its stream's pairs (dev: that box's device row, its pre / post; core::out::device() for the primary)
 void AddReturn(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned n, float (*slots)[4] = nullptr);
 // The console's sendfx commands (core 3, cores.cpp's Command); the answer logged; `sendfx` adds the stats since the
-// last `sendfx`: frames, render-core 2 load, underruns, ring drops, the return's peak.
+// last `sendfx`: frames, its render core's load (box 0 core 2, box 1 core 1), underruns, ring drops, the return's peak.
 bool Command(const char* p);
 // MIDI CC 120 with the note adapter off (with it on, core::NoteAdapter makes the same request): both FX fade out,
 // clear and return (core::fx::all_sound_off); logged.
