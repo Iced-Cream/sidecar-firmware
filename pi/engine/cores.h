@@ -15,6 +15,8 @@ public:
 	{
 		u64 nTicks;			// generic-timer ticks since the last TakeStats
 		u64 nBusy[4];			// ticks working, per core
+		u64 nChain2;			// core 2's send FX and master chains (not in nBusy[2]: after its voices)
+		u64 nWait3;			// core 3 waiting for cores 1 and 2 in RenderBlock (inside nBusy[3])
 		u64 nSleep[4];			// ticks asleep in a counted wfe, per core
 		unsigned nWakes[4];		// how many of those wfe returned
 		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)

@@ -6,7 +6,8 @@
 // clock setting, so that each render core stays under kLimitBp (80 % of a core) in the worst case:
 //   - a voice costs the worst machine in the bench (any voice may play any machine), plus its INSERT chain at the worst
 //     TYPE pair and the POST EQ, plus one AMP instance while the AMP cap (amp::kMaxRunning) allows another on that core
-//   - each box held adds its own send FX, send TYPE inserts, bus and master chains (with its AMP pair) on render core 2
+//   - each box held adds its own send FX, send TYPE inserts, bus and master chains (with its AMP pair) on render core 2,
+//     measured together as one bench row (LT1 2026-11-22: core 2 ran ~95 % with both boxes' chains, the limit that binds)
 //   - a box's voices are its voices 0..n-1: voices 0..split-1 of each box on core 1, split..7 on core 2 (cmdline split=)
 // The first box keeps its voices (it was alone: nothing to take them from). The second gets the most that fit beside the
 // first one's (never more than it asked for), is told (a popup on its screen), and /status shows the shortfall. A box whose
@@ -29,8 +30,9 @@ struct Costs {
   unsigned voice_bp;   // one voice at the worst machine of the bench (its mean over 1 s)
   unsigned ins_bp;     // one voice's INSERT chain: the worst TYPE pair, plus the POST EQ (bench ins rows / 8)
   unsigned amp_bp;     // one AMP instance (bench amp)
-  unsigned fx_bp;      // one box's chains on core 2: master chain + the worst send TYPE insert set + SAT on every bus and
-                       // master slot + its master AMP pair + its two send FX (an upper bound: the rows overlap)
+  unsigned fx_bp;      // one box's chains on core 2: the bench's box chains row (its send FX, bus and master chains at the
+                       // worst set the rooms allow, as one run: master.h box_bench) + its master AMP pair. Before LT1
+                       // (2026-11-22) the sum of overlapping rows; still that when the boot has no box row
 };
 
 void set_costs(const Costs& c);

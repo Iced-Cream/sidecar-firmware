@@ -23,6 +23,9 @@ namespace core {
 namespace out {
 struct Device;
 }
+namespace fx {
+class SendFx;
+}
 }  // namespace core
 
 namespace sendfx_pi {
@@ -31,6 +34,8 @@ const unsigned kRing = 1024, kPrime = 96, kMaxPerRender = 96;   // frames
 // once at boot from Circle's heap, so its ~4.8 MB is not in the image's .bss). Hosted: Fx() builds it on first use.
 unsigned long Bytes();                                    // every box's SendFx (2 x ~5.9 MB on 16 voices)
 void Init(void* mem);
+// box's SendFx (built on first use hosted): the boot's box chains bench (core/fx/master.h box_bench), core 0 before the cores start
+core::fx::SendFx* Instance(int box);
 bool On();                                                // a playable TYPE on FX 1 or 2
 bool On(int box);
 void FromRytm(const int32_t (*stems)[8], unsigned n);    // core 0, IN completion: IN 2..9 (int32 full scale)

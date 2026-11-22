@@ -27,6 +27,7 @@
 #include "seq/seq.h"
 #include "song/song.h"
 #include "song_pi.h"
+#include "sendfx_pi.h"   // its box 0 SendFx for the box chains bench (box_bench)
 #include "morph_pi.h"   // 0.5.0: the display's MORPH page
 #include "xypad_pi.h"   // 0.5.0: the display's XY page
 #include "msamp/msamp.h"
@@ -631,6 +632,7 @@ uint64_t amp_bench(uint32_t* worst_block) { return core::amp::bench(worst_block)
 uint64_t mfx_bench(uint32_t* worst_block) { return core::master::bench(worst_block); }
 uint64_t sfxins_bench(int set, uint32_t* worst_block) { return core::master::sfx_bench(set, worst_block); }
 const char* sfxins_bench_name(int set) { return core::master::sfx_bench_name(set); }
+uint64_t box_bench(uint32_t* worst_block) { return core::master::box_bench(sendfx_pi::Instance(0), worst_block); }
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);
   if (n > 0 && n < cap - 2) {

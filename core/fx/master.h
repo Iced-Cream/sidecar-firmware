@@ -24,6 +24,9 @@
 #include "fx/insert.h"
 
 namespace core {
+namespace fx {
+class SendFx;
+}
 namespace master {
 
 constexpr int kSlots = ins::kMasters * ins::kSlots;   // 4
@@ -153,6 +156,11 @@ uint64_t bench(uint32_t* worst_block);
 // master is OFF and no room is taken.
 uint64_t sfx_bench(int set, uint32_t* worst_block);
 const char* sfx_bench_name(int set);   // "RINGS CLOUD SPACE HALO", "CLOUD x4"; null past the last set
+// The boot bench of one box's chains as core 2 runs them, at the worst insert set the rooms allow together (LT1's config A
+// without its AMP pair, which the caller adds from the amp row): send (the box's send FX, at CLOUDSEED x2, every track sent)
+// with buses 1 / 2's chains inside it, bus 3's, the master chain, over 1 s in 12-frame blocks. Ticks as bench(). 0 (nothing
+// touched) unless every bus and master slot is OFF, no room is taken and box 0's send FX are off. send is left Reset.
+uint64_t box_bench(fx::SendFx* send, uint32_t* worst_block);
 unsigned long heap_bytes();        // the inserts' SendFx (on CORE_HEAP_BUFFERS ports; else built on first use)
 void heap_place(void* mem);
 

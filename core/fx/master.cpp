@@ -491,6 +491,72 @@ uint64_t sfx_bench(int set, uint32_t* worst_block) {
   return sum;
 }
 
+// One box's chains at their worst set that can play together, as one row (LT1, 2026-11-22: the rows above overlap, and their
+// sum stood for a box's chains at ~6x what they took). Measured as core 2 runs them for a box (pi/engine/cores.cpp: sendfx_pi
+// then masterfx_pi): its two send FX at CLOUDSEED with every track sent to both (SendFx::Process, which runs buses 1 and 2's
+// chains through fx::bus_insert), bus 3's chain (ins::bus3), then the master chain (render) on the main pair. The inserts
+// are LT1's config A, the costliest set the rooms allow: B1..B3 A and M1 CLOUD (the four rooms), B1..B3 B and M4 SAT, the
+// POST EQ on. M2 and M3 stay OFF: AMP needs a capture, which the boot has not loaded; the caller adds its AMP pair from the
+// amp row. send: the box's send FX (sendfx_pi's on the Pi), left Reset.
+uint64_t box_bench(fx::SendFx* send, uint32_t* worst_block) {
+  *worst_block = 0;
+  if (!send) return 0;
+  for (int c = ins::kBus0; c < ins::kChains; ++c)   // the buses' and the master's slots all OFF, no room taken
+    for (int s = 0; s < ins::kSlots; ++s)
+      if (ins::control.type[c][s] != ins::kOff) return 0;
+  if (fx_used() || fx::any_on(fx::control)) return 0;
+#ifndef CORE_HEAP_BUFFERS
+  sfx();
+#endif
+  if (!g_box[0].fx[0] || !g_box[0].fx[1]) return 0;
+  static BenchUndo u;
+  struct Set { int c, s, t; };
+  static const Set kSet[8] = {{ins::kBus0, 0, ins::kMCloud},     {ins::kBus0 + 1, 0, ins::kMCloud}, {ins::kBus0 + 2, 0, ins::kMCloud},
+                              {ins::kM0, 0, ins::kMCloud},       {ins::kBus0, 1, ins::kSat},        {ins::kBus0 + 1, 1, ins::kSat},
+                              {ins::kBus0 + 2, 1, ins::kSat},    {ins::kM0 + 1, 1, ins::kSat}};
+  for (int i = 0, room = 0; i < 8; ++i) {   // the bytes set directly (no file marked), rooms 0..3 for the send TYPEs
+    const Set& e = kSet[i];
+    u.set(&ins::control.type[e.c][e.s], (uint8_t)e.t);
+    for (int k = 0; k < ins::kParams; ++k) u.set(&ins::control.play[e.c][e.s][k], ins::labels(e.t).def[k]);
+    if (send_type(e.t)) {
+      const int j = slot_index(e.c, e.s);
+      u.set(&control.fx[j], (int8_t)room++), u.set(&control.mix[j], 64);
+    }
+  }
+  for (int k = 0; k < ins::kEqParams; ++k) u.set(&ins::control.peq[kEqChain][k], (int8_t)ins::eq_store(k, k < 2 ? 20 : 70));
+  static fx::Control fc;   // the send FX's knobs: not the box's (box_of: any other Control is box 0's), so nothing to give back
+  memset((void*)&fc, 0, sizeof fc);
+  for (int k = 0; k < fx::kSlots; ++k) fc.knob[k][0] = fx::kCloudSeed, fc.knob[k][1] = 100, fc.knob[k][2] = fc.knob[k][3] = 80, fc.knob[k][4] = fc.knob[k][5] = 64;
+  for (int t = 0; t < fx::kTracks; ++t) fc.send[t][0] = fc.send[t][1] = 127;
+  float st[12][fx::kStems], pre[12][2], post[12][2], in3[12], y[12][2];
+  uint64_t sum = 0;
+  uint32_t worst = 0;
+  for (int n = 0; n < 4000; ++n) {
+    for (int i = 0; i < 12; ++i) {   // (the test signal outside the timing)
+      const float a = sinf(0.05f * (float)(n * 12 + i)), b = sinf(0.031f * (float)(n * 12 + i));
+      for (int v = 0; v < fx::kStems; ++v) st[i][v] = 0.1f * (v & 1 ? a : b);
+      in3[i] = 0.15f * (a + b), y[i][0] = 0.2f * a + 0.1f * b, y[i][1] = 0.2f * a - 0.1f * b;
+    }
+    const uint32_t t0 = cycles();
+    send->Process(st, 12, pre, fc, post);
+    ins::bus3(in3, 12, pre, post);
+    for (int i = 0; i < 12; ++i) y[i][0] += post[i][0], y[i][1] += post[i][1];
+    render(y, 12);
+    const uint32_t t = cycles() - t0;
+    sum += t;
+    if (t > worst) worst = t;
+  }
+  *worst_block = worst;
+  u.undo();
+  bench_end([&]() {
+    memset(in3, 0, sizeof in3), memset(y, 0, sizeof y), memset(pre, 0, sizeof pre), memset(post, 0, sizeof post);
+    ins::bus3(in3, 12, pre, post);
+    render(y, 12);
+  });
+  send->Reset();
+  return sum;
+}
+
 static constexpr unsigned long kUnitBytes = ((unsigned long)sizeof(fx::SendFx) + 63) & ~63ul;
 unsigned long heap_bytes() {
 #ifdef CORE_HEAP_BUFFERS

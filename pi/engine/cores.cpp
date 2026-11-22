@@ -57,6 +57,9 @@ static u64 s_Mach[3][bridge::kMachines];
 static_assert (sizeof CEngineCores::TStats::nMach / sizeof (u64) == bridge::kMachines, "nMach is bridge::kMachines");
 static u64 s_VoiceTicks[bridge::kVoices];		// touch2: per voice (each voice renders on one core only)
 static volatile u64 s_nBusy[4];
+// CPU admission's check (core/device/admit.h): core 2's send FX and master chains, after its voices and outside s_nBusy[2];
+// core 3's time waiting in RenderBlock for cores 1 and 2, inside s_nBusy[3]. stats shows both beside c2 and c3.
+static volatile u64 s_nChainTicks, s_nRenderWait;
 static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
 static volatile unsigned s_nWakes[4];
 static unsigned s_nBlockLimitMs = 20;			// blocklimit=N (emulator gates only): RenderBlock's fatal limit
@@ -432,8 +435,10 @@ void CEngineCores::Worker (unsigned nCore)
 		if (nCore == 2)				// the send FX and the master chain of the box this pass rendered (phase 3(d)): the base
 		{					// box's after a base pass, the side stage's after its own (sendfx_pi.h, masterfx_pi.h)
 			const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+			const u64 tC = Ticks ();
 			sendfx_pi::Render (nFxBox);	// the send FX, after the block
 			masterfx_pi::Render (nFxBox);	// the master chain, after the send FX
+			s_nChainTicks += Ticks () - tC;
 		}
 	}
 }
@@ -473,7 +478,9 @@ void CEngineCores::RenderBlock (int nSide)
 		g_Guard.Fatal (s_BlockLimitWhy);
 		for (;;) asm volatile ("wfe");		// core 0 stops the stream and reboots
 	}
-	unsigned nUs = (unsigned) ((Ticks () - t0) * 1000000 / TickRate ());
+	const u64 nWait = Ticks () - t0;
+	s_nRenderWait += nWait;
+	unsigned nUs = (unsigned) (nWait * 1000000 / TickRate ());
 	if (nUs > s_nMaxBlock) s_nMaxBlock = nUs;
 	// the output stage: the base box's eight (bridge.h out_base), or the side stage's slot's
 	const unsigned b = nSide < 0 ? (unsigned) bridge::out_base () : (unsigned) nSide * bridge::kBoxVoices;
@@ -853,6 +860,8 @@ void CEngineCores::TakeStats (TStats *s)
 		s->nBusy[c] = s_nBusy[c];
 		s_nBusy[c] = 0;
 	}
+	s->nChain2 = s_nChainTicks, s_nChainTicks = 0;
+	s->nWait3 = s_nRenderWait, s_nRenderWait = 0;
 	for (int k = 0; k < bridge::kMachines; k++)
 	{
 		s->nMach[k] = s_Mach[1][k] + s_Mach[2][k];

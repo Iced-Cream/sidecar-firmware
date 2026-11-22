@@ -122,6 +122,7 @@ static const char From[] = "engine";
 // BenchChains' results (core 0, before cores 1-3), LogBench's rows: [0] the master chain, [1..] the send TYPE insert sets
 static const int ChainBenches = 3;
 static struct { u64 nTicks; u32 nWorst; } s_ChainBench[ChainBenches];
+static struct { u64 nTicks; u32 nWorst; } s_BoxBench;	// one box's chains as one row (master::box_bench): CPU admission
 static const char RebootMagic[] = "RYTM-REBOOT";
 static volatile boolean s_bRebootRequested = FALSE;
 static void RebootRequest (void) { s_bRebootRequested = TRUE; }   // UART IRQ: core 0's loop stops cleanly first
@@ -1185,18 +1186,29 @@ void CKernel::LogBench (void)
 				pName, nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
 	}
+	// One box's chains on core 2 as one row (master::box_bench: its send FX, the bus chains and the master chain at the worst
+	// set the rooms allow together, as core 2 runs them), replacing the sum of the overlapping rows above (LT1, 2026-11-22)
+	unsigned nBoxBp = 0;
+	if (s_BoxBench.nTicks != 0)
+	{
+		nBoxBp = (unsigned) (s_BoxBench.nTicks * 10000 / nCntFrq);
+		unsigned nBlk = (unsigned) (s_BoxBench.nWorst * 1000 / nBlock);
+		m_Logger.Write (From, LogNotice, "bench box chains SENDFX CLOUDSEED x2, B1-B3 CLOUD+SAT, M1 CLOUD M4 SAT POSTEQ: %u.%02u %% of a core, worst block %u.%u %%",
+				nBoxBp / 100, nBoxBp % 100, nBlk / 10, nBlk % 10);
+		m_Timer.MsDelay (2);
+	}
 	// CPU admission (core/device/admit.h): a voice's INSERT chain is the worst pair's eighth and the POST EQ's; a box's chains
-	// on core 2 the master chain, the worst send TYPE set, SAT on every bus and master slot, its master AMP pair and its two
-	// send FX (half of CLOUD x4: the same SendFx code at its worst TYPE; inferred, no row of their own). Rows that overlap are
-	// added: an upper bound, checked by the two-box worst-case measurement before the rule ships.
+	// on core 2 the box chains row plus its master AMP pair (the boot has no capture loaded for the row's M2 and M3). No box
+	// row (a slot already set): the earlier sum of the overlapping rows, an upper bound.
 	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
-	Adm.fx_bp = nMfxBp + nSfxWorstBp + nBusBp + 2 * Adm.amp_bp + nSfxCloudBp / 2;
+	Adm.fx_bp = nBoxBp ? nBoxBp + 2 * Adm.amp_bp : nMfxBp + nSfxWorstBp + nBusBp + 2 * Adm.amp_bp + nSfxCloudBp / 2;
 	core::admit::set_costs (Adm);
 	core::admit::set_clock (m_nClockMHz);
 	core::device::readmit ();
-	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains on core 2 %u.%02u %%; limit 80 %% a render core",
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains on core 2 %u.%02u %% (%s); limit 80 %% a render core",
 			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
-			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100);
+			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100,
+			nBoxBp ? "box row + AMP pair" : "no box row: the rows' sum");
 	LogAdmit ();
 }
 
@@ -1232,6 +1244,7 @@ void CKernel::BenchChains (void)
 	s_ChainBench[0].nTicks = bridge::mfx_bench (&s_ChainBench[0].nWorst);
 	for (int nSet = 0; nSet + 1 < ChainBenches && bridge::sfxins_bench_name (nSet); nSet++)
 		s_ChainBench[nSet + 1].nTicks = bridge::sfxins_bench (nSet, &s_ChainBench[nSet + 1].nWorst);
+	s_BoxBench.nTicks = bridge::box_bench (&s_BoxBench.nWorst);
 }
 
 // Task 3's boot self-check, before the cores start: one second of a PLAITS voice rendered offline (no USB), then
@@ -2127,6 +2140,8 @@ void CKernel::LogStats (void)
 		Chans.Append (One);
 	}
 	unsigned c1 = pct (s.nBusy[1]), c2 = pct (s.nBusy[2]), c3 = pct (s.nBusy[3]);
+	// CPU admission's check (core/device/admit.h): core 2 with its chains, core 3 without its render wait
+	unsigned c2all = pct (s.nBusy[2] + s.nChain2), c3own = pct (s.nBusy[3] > s.nWait3 ? s.nBusy[3] - s.nWait3 : 0);
 	bridge::RuiMore More = {};			// the remote UI's SIDECAR page (core 3 reads it)
 	unsigned nRec = 0;
 	int nRecState = rec_pi::UiState (&nRec);	// 0 off (idle), 1 armed, 2 recording
@@ -2176,10 +2191,10 @@ void CKernel::LogStats (void)
 					m_pDisplay->TakeRotateDiag (), m_pDisplay->TakeTouchDiag ());
 	}
 	m_Logger.Write (From, LogNotice,
-		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% | "
+		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% (c2 with chains %u.%u, c3 own %u.%u) | "
 		"pass max %u us | %s| midi %u B (lost %u) sysex %u notes %u%s | to-host sent %u B %u msgs fail %u dropped %u | peak %u/1000 | %u C",
 		s.nFifoMin, s.nFifoMax, CEngineCores::FifoTarget (), g_Output.Underflows (), g_Output.RestartUnderflows (), g_Output.Streams (), s.nBlocks, s.nMaxBlockUs,
-		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
+		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, c2all / 10, c2all % 10, c3own / 10, c3own % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);

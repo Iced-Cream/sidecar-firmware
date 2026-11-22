@@ -65,6 +65,8 @@ void Init(void* mem) {
     if (!s_I[b].pFx) s_I[b].pFx = new ((char*)mem + b * kFxBytes) core::fx::SendFx(48000.0f);
 }
 
+core::fx::SendFx* Instance(int box) { return &Fx(I(box)); }
+
 void Clock(uint8_t status, uint16_t spp) { ClockBox(0, status, spp); }
 void ClockBox(int box, uint8_t status, uint16_t spp) { core::fx::clock_in(core::fx::control_of(box), status, spp); }
 
