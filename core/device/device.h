@@ -31,6 +31,7 @@
 
 namespace core {
 namespace out { struct Device; }
+namespace admit { struct Load; }
 namespace device {
 
 constexpr uint8_t kCmdHello = 0x4F;
@@ -251,6 +252,9 @@ inline bool voice_admitted(int vi) {
   return !held(s) || box_voice(vi) < admitted(s);
 }
 void readmit();
+// The load admission counts now (admit.h Load): the held boxes' admitted voices, what they asked for, and the AMP slots playing
+// on each render core (the first ask wins: amp_fits). /status's core1Bp / core2Bp
+void load_now(admit::Load* out);
 // what slot s's box asked for (0 free): the Pi's core 3 reads it for the render split (admit::split_for), one byte load
 inline int wanted(int s) { return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].want, __ATOMIC_RELAXED) : 0; }
 constexpr uint32_t kTellMs = 30000;   // a box is told its count while its screen may take a popup, this long after its attach

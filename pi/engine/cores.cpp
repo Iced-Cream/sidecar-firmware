@@ -65,7 +65,7 @@ static volatile u64 s_nBusy[4];
 // CPU admission's check (core/device/admit.h): each render core's send FX and master chains, after its voices and outside
 // s_nBusy (ChainCore: slot 0's on core 2, slot 1's on core 1); core 3's time waiting in RenderBlock for cores 1 and 2,
 // inside s_nBusy[3]. stats shows them beside c1, c2 and c3.
-static volatile u64 s_nChainTicks[3], s_nRenderWait;
+static volatile u64 s_nChainTicks[4], s_nRenderWait;	// [3]: slot 0's master chain on core 3 (MasterCore), outside s_nRenderWait
 // The last block generation whose chains each render core has finished (after s_nDone: core 3 does not wait for them).
 // RenderBlock waits for both before a pass whose base box differs from the last pass's: AMP's master rows play on the base
 // box's master chain only (core/fx/amp.cpp ctl), so a chain of the old base still running on one core never overlaps the
@@ -76,6 +76,12 @@ static u32 s_nLastPassBase = ~0u;			// core 3's: the base box (kBaseBoxShift's s
 // chains, core 1 ~70 % idle). Fixed by slot, never by which box is the base, so each box's rings (sendfx_pi, masterfx_pi:
 // SPSC, one consumer) keep one render core whatever attaches or leaves. An 8-voice engine has slot 0 only: core 2.
 static inline unsigned ChainCore (int b) { return bridge::kVoiceSlots > 1 && b == 1 ? 1 : 2; }
+// ... and its master chain (decided 2026-11-22, LT3: the base box's master chain with its AMP pair took ~31-39 % of core 2,
+// its send FX ~29-34 % more): slot 0's on core 3 in a two-slot engine, during RenderBlock's wait for cores 1 and 2 (core 3's
+// own work there was 3-12 %), slot 1's on core 1 with its send FX. Fixed by slot like ChainCore (masterfx_pi's rings: one
+// consumer). An 8-voice engine keeps it on core 2. core/device/admit.h master_core says the same.
+static inline unsigned MasterCore (int b) { return bridge::kVoiceSlots > 1 ? (b == 1 ? 1 : 3) : 2; }
+static_assert (core::admit::master_core (0) == (bridge::kVoiceSlots > 1 ? 3 : 2) && core::admit::master_core (1) == 1, "admit.h's master_core is MasterCore");
 static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
 static volatile unsigned s_nWakes[4];
 static unsigned s_nBlockLimitMs = 20;			// blocklimit=N (emulator gates only): RenderBlock's fatal limit
@@ -456,7 +462,8 @@ void CEngineCores::Worker (unsigned nCore)
 		{
 			const u64 tC = Ticks ();
 			sendfx_pi::Render (nFxBox);	// the send FX, after the block
-			masterfx_pi::Render (nFxBox);	// the master chain, after the send FX
+			if (MasterCore (nFxBox) == nCore)
+				masterfx_pi::Render (nFxBox);	// the master chain, after the send FX (else core 3's: MasterCore)
 			s_nChainTicks[nCore] += Ticks () - tC;
 		}
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
@@ -503,6 +510,18 @@ void CEngineCores::RenderBlock (int nSide)
 	u32 nGen = nPrev + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
+	{	// slot 0's master chain on this core (MasterCore), while cores 1 and 2 render: the box this pass's chains are for,
+		// as the render cores pick it. Its time is core 3's own: neither its render wait nor the 20 ms limit's (cores 1 and 2's)
+		const int nFxBox = (nPass & kBasePass) ? (int) (nPass >> kBaseBoxShift & 0xFF) : __builtin_ctz (nPass & 0x7F);
+		if (MasterCore (nFxBox) == 3)
+		{
+			const u64 tM = Ticks ();
+			masterfx_pi::Render (nFxBox);
+			const u64 dM = Ticks () - tM;
+			s_nChainTicks[3] += dM;
+			t0 += dM;
+		}
+	}
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under
 	// 1 us: clock gating, no retention state is enabled), and core 3's event stream bounds it at 152 us if a sev were ever
 	// missed, which also keeps the 20 ms limit below alive. An event another core's sev spends here (a FIFO pull) costs
@@ -899,6 +918,7 @@ void CEngineCores::TakeStats (TStats *s)
 	}
 	s->nChain1 = s_nChainTicks[1], s_nChainTicks[1] = 0;
 	s->nChain2 = s_nChainTicks[2], s_nChainTicks[2] = 0;
+	s->nChain3 = s_nChainTicks[3], s_nChainTicks[3] = 0;
 	s->nWait3 = s_nRenderWait, s_nRenderWait = 0;
 	for (int k = 0; k < bridge::kMachines; k++)
 	{

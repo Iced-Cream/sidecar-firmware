@@ -63,6 +63,7 @@ enum Status : uint8_t {
   kCap,         // kMaxRunning AMP slots play already
   kNoMem,       // the pool was not placed
   kCapM,        // kMaxMaster instances play on the master already
+  kCpu,         // CPU admission: no room on the slot's render core (set_cpu_check; core/device/admit.h amp_fits)
   kStatuses
 };
 const char* status_short(int s);   // "LOADING" .. (<= 7 characters); "" for kIdle / kPlaying
@@ -137,6 +138,14 @@ void want_file(int c, int s, const char* file);
 const char* slot_file(int c, int s);   // the file the slot's knob picks ("" none)
 int running();                     // the voices' AMP slots with a capture (playing or fading)
 int running_master();              // the master's instances
+// CPU admission (core/device/admit.h amp_fits, decided 2026-11-22): AMP is admitted when a slot loads a capture, not reserved
+// when a box attaches. The check: may a slot of row r (0..7 the base box's voices, buses, the master's from master_row())
+// start playing? false: it stays dry and shows NO CPU until there is room (another AMP stops, a box leaves). device.cpp
+// sets it; null (the default, a test without the device layer): yes. Called on the control core, never per sample.
+void set_cpu_check(bool (*fits)(int row));
+int rows();                        // AMP's rows
+int master_row();                  // the first master row (the master's chains and the R row after them)
+bool slot_playing(int row, int s); // a capture in it (playing or fading): what admission counts
 // The console: "amp" (the state), "amp=rescan"; false: not an amp command
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);      // "\"amp\":{...}"

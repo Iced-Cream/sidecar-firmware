@@ -1,6 +1,7 @@
 // core/tests/test_admit.cpp - CPU admission of a box's voices at attach (core/device/admit.h; design decided 2026-11-21):
-// the cost model (voices per render core by each box's split, the AMP cap on the base box's voices, slot 0's chains on core 2
-// and slot 1's on core 1 (decided 2026-11-22), the clock's scale), fit (the
+// the cost model (voices per render core by each box's split, AMPs counted where they play (admitted when loaded:
+// amp_fits, amp_core; decided 2026-11-22), slot 0's chains on core 2 and slot 1's on core 1 (decided 2026-11-22), the clock's
+// scale), fit (the
 // most voices that keep every render core its voices land on under 80 %), voices= per box type, and in the engine: the
 // first box keeps its voices, the second gets what fits and its reports past them are dropped, a box left alone gets its
 // count back, readmit after the bench. Synthetic costs: the Pi's come from its boot bench (pi/engine/kernel.cpp LogBench).
@@ -44,33 +45,55 @@ static void model() {
     admit::Load l2 = {{8, 0}, {true, true}, {8, 8}};   // slot 1's chains count on core 1 only
     CHECK(admit::core_bp(1, l2) == 4000 + 2000 && admit::core_bp(2, l2) == 4000 + 2000);
   }
-  // INSERT and AMP: a voice 10 % + 2 %, AMP 5 % for each of up to 6 voices on a core
+  // INSERT and AMP: a voice 10 % + 2 %, AMP 5 %; nothing reserved for AMP at attach, only those playing (Load::amps) count
   admit::set_costs({1500, 1000, 200, 500, 2000});
-  CHECK(admit::core_bp(1, l) == 4 * 1200 + 4 * 500);   // 68 %
-  // core 1: 68 % + slot 1's chains, dry (no AMP pair: not the base box) 20 % = 88 %: over by its chains alone; core 2
-  // already 98 % with slot 0's chains and their AMP pair (20 + 2 x 5)
-  CHECK(admit::fit(1, 8, l) == 0);
-  admit::set_costs({1500, 1000, 200, 300, 400});
-  // core 1: 4 x 12 + 4 x 3 + 4 = 64 %, +1 voice 76 %, +2 88 %; core 2: 60 + 4 + 2 x 3 = 70 % (no voice there below 5)
-  CHECK(admit::fit(1, 8, l) == 1);
-  admit::Load six = {{8, 8}, {true, true}};   // AMP: the base box's (slot 0) voices only, 4 a core at split 4
-  CHECK(admit::core_bp(1, six) == 8 * 1200 + 4 * 300 + 400);
-  admit::set_split(7);                         // the AMP cap: 6 of the base box's 7 on core 1
-  CHECK(admit::core_bp(1, six) == 14 * 1200 + 6 * 300 + 400);
-  admit::set_split(4);
+  CHECK(admit::core_bp(1, l) == 4 * 1200 && admit::core_bp(2, l) == 4 * 1200 + 2000);   // 48 % / 68 %
   {
-    admit::Load b1 = {{0, 8}, {false, true}};  // slot 1 alone is the base box: its AMP and its whole chains (on core 1)
-    CHECK(admit::core_bp(1, b1) == 4 * 1200 + 4 * 300 + 1000 && admit::core_bp(2, b1) == 4 * 1200 + 4 * 300);
+    admit::Load p = l;
+    p.amps[1] = 2, p.amps[2] = 1;
+    CHECK(admit::core_bp(1, p) == 4 * 1200 + 2 * 500 && admit::core_bp(2, p) == 4 * 1200 + 2000 + 500);
+    // core 1: 4 x 12 + 2 x 5 = 58 %, + slot 1's chains 20 % = 78 %: no voice of its fits (90 % with one)
+    CHECK(admit::fit(1, 8, p) == 0);
+    CHECK(admit::fit(1, 8, l) == 1);   // without those AMPs: core 1 48 + 20 + 12 = 80 %
   }
-  // LT1's boot bench (2026-11-22, 1500 MHz): a voice 1.59 + 2.05 %, AMP 4.01 %, at the bench's own cost (factors 100). An A4
-  // first (4: 2 + 2, its AMP), a Rytm second: all 8 while a box's chains (dry) are at most 42.12 % (core 2: 2 x (3.64 + 4.01)
-  // + 4 x 3.64 + chains + the AMP pair 8.02 <= 80 %)
+  // amp_fits: one more AMP on a core within 80 % (68 + 5 = 73 % fits; at 76 % + 5 it does not)
+  CHECK(admit::amp_fits(1, l) && admit::amp_fits(2, l));
+  {
+    admit::Load p = l;
+    p.amps[2] = 2;   // core 2: 68 + 10 = 78 %
+    CHECK(!admit::amp_fits(2, p) && admit::amp_fits(1, p));
+    CHECK(admit::amp_fits(3, p) && admit::amp_fits(0, p));   // core 3 (slot 0's master chain): not modelled
+    admit::set_enforce(false);
+    CHECK(admit::amp_fits(2, p));   // admit=report: nothing refused
+    admit::set_enforce(true);
+  }
+  // amp_core: the base box's voice rows by its split (an A4's 4: 2 + 2), its master rows on master_core
   {
     admit::Load a4 = {{4, 0}, {true, false}, {4, 0}};
-    admit::set_costs({1500, 159, 205, 401, 4212});
+    CHECK(admit::amp_core(0, 10, a4) == 1 && admit::amp_core(1, 10, a4) == 1 && admit::amp_core(2, 10, a4) == 2 &&
+          admit::amp_core(3, 10, a4) == 2 && admit::amp_core(8, 10, a4) == 0);
+    CHECK(admit::amp_core(10, 10, a4) == admit::master_core(0) && admit::amp_core(12, 10, a4) == admit::master_core(0));
+    CHECK(admit::master_core(0) == (kVoiceSlots > 1 ? 3 : 2) && admit::master_core(1) == 1);
+    admit::Load b1 = {{0, 8}, {false, true}, {0, 8}};   // slot 1 alone is the base box: split 4, its master on core 1
+    CHECK(admit::base_of(b1) == 1 && admit::amp_core(4, 10, b1) == 2 && admit::amp_core(10, 10, b1) == 1);
+  }
+  admit::set_costs({1500, 1000, 200, 300, 400});
+  {
+    admit::Load b1 = {{0, 8}, {false, true}};   // slot 1 alone: its whole chains on core 1, no AMP reserved
+    CHECK(admit::core_bp(1, b1) == 4 * 1200 + 400 && admit::core_bp(2, b1) == 4 * 1200);
+  }
+  // LT1's boot bench (2026-11-22, 1500 MHz): a voice 1.59 + 2.05 %, at the bench's own cost (factors 100). An A4 first (4:
+  // 2 + 2), a Rytm second, no AMP playing: all 8 while a box's chains (dry) are at most 58.16 % (each core: 6 x 3.64 + chains
+  // <= 80 %: core 2 the A4's chains, core 1 the Rytm's)
+  {
+    admit::Load a4 = {{4, 0}, {true, false}, {4, 0}};
+    admit::set_costs({1500, 159, 205, 401, 5816});
     CHECK(admit::fit(1, 8, a4) == 8);
-    admit::set_costs({1500, 159, 205, 401, 4237});   // core 2 over at its 8th voice
-    CHECK(admit::fit(1, 8, a4) == 7);
+    a4.amps[2] = 1;   // one of the A4's AMPs playing on core 2 (4.01 %): the first ask wins, the Rytm gets 6 (core 2 76.7 %)
+    CHECK(admit::fit(1, 8, a4) == 6);
+    a4.amps[2] = 0;
+    admit::set_costs({1500, 159, 205, 401, 5817});   // core 1 over at the Rytm's 4th voice there (its chains on core 1)
+    CHECK(admit::fit(1, 8, a4) == 3);
   }
   // the clock: 1000 MHz costs 1.5 x the bench's 1500
   admit::set_costs({1500, 1000, 0, 0, 2000});
@@ -109,21 +132,29 @@ static void model() {
 
 static std::vector<std::vector<uint8_t>> g_out, g_out1;
 // LT3's boot bench (2026-11-22, chains-core1 64fdd7b, 1500 MHz: a voice 1.57 + 2.05 %, AMP 4.02 %, the box row 30.28 %) at
-// the LT3 load factors (admit.h): the worst case (AMP on every base-box voice the cap allows, its master pair, both boxes'
-// chains incl. send FX) does not fit a Rytm or Digitakt base box even alone (core 2 125 %: chains 33.3 + pair 24.1 + 4 x
-// (4.89 + 12.06)), so a box beside it gets none; an A4 base box leaves a second box 2 (core 1: 33.9 + 33.3 + 2 x 4.89 = 77 %).
-// Measured on the unit: order 2 (Rytm base, no voice AMP) core 2 ~96 %; order 1 config B (A4 base, 4 voice AMPs, its send FX
-// idle: the slot 0 stems gap) 81 / 83 %, which the model reads 87 % on core 1 and ~82 % on core 2 with that send FX left out.
+// the LT3 load factors (admit.h; a voice 4.89 %, AMP 12.06 %, a box's chains 33.31 %). Reserving an AMP on every base-box
+// voice and its master pair on core 2 (2ee233c) left a Rytm or Digitakt base box over even alone (core 2 125 %). With AMPs
+// admitted when loaded and slot 0's master chain on core 3 (decided 2026-11-22; design/rebalance-core2/MODEL.md): Rytm+A4
+// 4/4, Rytm+Digitakt 8/8, A4+Rytm 8/8. AMPs then fit where there is room: beside two 8-voice boxes none (core 1 72.4 %,
+// core 2 72.4 %: + 12.06 is over), beside a Rytm base + an A4 one on each core.
 static void lt3() {
   admit::reset();
   admit::set_costs({1500, 157, 205, 402, 3028});
   admit::set_clock(1500);
   admit::Load r = {{8, 0}, {true, false}, {8, 0}}, a = {{4, 0}, {true, false}, {4, 0}};
-  CHECK(admit::core_bp(2, r) == 12522 && admit::core_bp(1, r) == 6779);
-  CHECK(admit::fit(1, 4, r) == 0 && admit::fit(1, 8, r) == 0);
-  CHECK(admit::core_bp(1, a) == 3390 && admit::core_bp(2, a) == 9133);
-  CHECK(admit::fit(1, 8, a) == 2);
-  admit::Load b = {{4, 8}, {true, true}, {4, 8}};   // order 1 config B as run (all 8): core 1 87 %
+  CHECK(admit::core_bp(2, r) == 5286 && admit::core_bp(1, r) == 1955);
+  CHECK(admit::fit(1, 4, r) == 4 && admit::fit(1, 8, r) == 8);
+  CHECK(admit::core_bp(1, a) == 978 && admit::core_bp(2, a) == 4309);
+  CHECK(admit::fit(1, 8, a) == 8);
+  admit::Load rd = {{8, 8}, {true, true}, {8, 8}};   // Rytm + Digitakt, all 8 each: 72.4 % a core, no AMP room
+  CHECK(admit::core_bp(1, rd) == 7241 && admit::core_bp(2, rd) == 7241);
+  CHECK(!admit::amp_fits(1, rd) && !admit::amp_fits(2, rd));
+  admit::Load ra = {{8, 4}, {true, true}, {8, 4}};   // Rytm + A4: one AMP on each core (core 2 62.6 %, + 12.06 = 74.7 %)
+  CHECK(admit::amp_fits(1, ra) && admit::amp_fits(2, ra));
+  ra.amps[1] = ra.amps[2] = 1;
+  CHECK(!admit::amp_fits(1, ra) && !admit::amp_fits(2, ra));
+  admit::Load b = {{4, 8}, {true, true}, {4, 8}};   // order 1 config B as run (A4 base, 4 voice AMPs: 2 a core): core 1 87 %
+  b.amps[1] = b.amps[2] = 2;
   CHECK(admit::core_bp(1, b) == 8675);
   admit::reset();
 }

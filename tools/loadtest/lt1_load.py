@@ -23,7 +23,7 @@ STATS = re.compile(r'engine: fifo min \d+ max \d+ target \d+ under (\d+).*?\| cp
 BENCH = re.compile(r'bench (\w+): (\d+)\.(\d+) % of a core per voice at (\d+) MHz')
 ADMIT = re.compile(r'admit: at \d+ MHz a voice .*')
 # stats with chains (945da9a: c2 only; 64fdd7b: c1 and c2) and core 3 without its render wait; the idle line's asleep %
-CHAINS = re.compile(r'\((?:with chains c1 (\d+\.\d) c2 (\d+\.\d)|c2 with chains (\d+\.\d)), c3 own (\d+\.\d)\)')
+CHAINS = re.compile(r'\((?:with chains c1 (\d+\.\d) c2 (\d+\.\d)|c2 with chains (\d+\.\d)), c3 own (\d+\.\d)(?:, c3 mfx (\d+\.\d))?\)')
 ASLEEP = re.compile(r'idle: asleep (\d+) (\d+) (\d+) (\d+) %')
 MUTE = re.compile(r'engine: muted|guard: voice \d.*(crash|over budget|muted)', re.I)
 
@@ -159,6 +159,7 @@ def read(pi, secs, tag):
             'c1_chains': [float(m.group(1)) for m in ch if m.group(1)],
             'c2_chains': [float(m.group(2) or m.group(3)) for m in ch],
             'c3_own': [float(m.group(4)) for m in ch],
+            'c3_mfx': [float(m.group(5)) for m in ch if m.group(5)],
             'asleep': sl,
             'mutes': mutes[:20], 'uptime': st.get('uptime'), 'commit': st.get('commit') or st.get('version')}
     if cpu:
@@ -166,7 +167,7 @@ def read(pi, secs, tag):
             v = summ[k]
             summ[k + '_mean'] = round(sum(v) / len(v), 1)
             summ[k + '_max'] = max(v)
-        for k in ('c1_chains', 'c2_chains', 'c3_own'):
+        for k in ('c1_chains', 'c2_chains', 'c3_own', 'c3_mfx'):
             v = summ[k]
             if v:
                 summ[k + '_mean'] = round(sum(v) / len(v), 1)
@@ -176,7 +177,7 @@ def read(pi, secs, tag):
     json.dump(summ, open(os.path.join(pi.out, 'summary-%s.json' % tag), 'w'), indent=1)
     print(json.dumps({k: summ.get(k) for k in ('tag', 'samples', 'c1_mean', 'c1_max', 'c1_chains_mean', 'c1_chains_max',
                                                'c1_estimate', 'c2_mean', 'c2_max', 'c2_chains_mean', 'c2_chains_max',
-                                               'c2_estimate', 'c3_mean', 'c3_own_mean', 'under_first', 'under_last', 'slots', 'mutes')},
+                                               'c2_estimate', 'c3_mean', 'c3_own_mean', 'c3_mfx_mean', 'under_first', 'under_last', 'slots', 'mutes')},
                      indent=1))
     return summ
 

@@ -311,18 +311,29 @@ profile's: a box's reports past its profile's voices are dropped anyway).
 When a box attaches (`device::select`, both by hello and by USB), its voices are admitted against the Pi's boot bench,
 scaled to the CPU clock setting, so that each render core stays under 80 % in the worst case:
 
-- **A voice** costs the worst machine of the bench (any voice may play any machine), its INSERT chain at the worst TYPE
-  pair plus the POST EQ (the `bench ins` rows / 8), and, for the base box's voices only, an AMP instance for each on that
-  core up to the AMP cap (6): AMP plays on the base box's chains only, the other box's AMP slots play dry.
-- **A box's chains:** its send FX, bus and master chains at their worst set, measured as one bench row (`master::box_bench`),
-  plus its master AMP pair (the base box's only, 2 AMP instances). Before that row (LT1, 2026-11-22) the sum of overlapping rows.
+- **A voice** costs the worst machine of the bench (any voice may play any machine) and its INSERT chain at the worst TYPE
+  pair plus the POST EQ (the `bench ins` rows / 8).
+- **A box's chains:** its send FX, bus and master chains at their worst set, dry, measured as one bench row
+  (`master::box_bench`), counted on the core that runs its send FX. Before that row (LT1, 2026-11-22) the sum of
+  overlapping rows.
+- **AMP is admitted when a slot loads a capture** (decided 2026-11-22), not reserved at attach: an AMP slot (a base-box
+  voice's, or the master pair's) starts playing only while its render core stays under 80 % with the AMPs already playing
+  there (`admit::amp_fits`, `amp_core`; the check is `amp::set_cpu_check`, set by `device.cpp`). Otherwise it plays dry
+  and shows `NO CPU` (`amp::kCpu`) until there is room (another AMP stops, a box leaves). AMPs playing when a box attaches
+  count against that box: the first ask wins. AMP plays on the base box's chains only, the other box's AMP slots play dry;
+  the cap of 6 voice AMP slots (`MAX 6`) still holds. `/status` `admit` has `amps1` / `amps2`, the AMPs counted per core.
 - **Under load** (LT3, 2026-11-22): each row alone on core 0 reads low against the two-box load, where all four cores share
   the L2. The model scales them (`admit.h` `kAmpLoadPct` 300, `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
-  line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them a Rytm
-  or Digitakt base box's worst case (AMP on its voices) is over on core 2 even alone, so a second box beside it gets none,
-  and an A4 base box leaves a second box 2; moving part of the base box's chains off core 2 is the follow-up.
-- **Where the chains run** (decided 2026-11-22): slot 0's on render core 2, slot 1's on render core 1, each after its
-  voices (`cores.cpp` `ChainCore`). LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
+  line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them,
+  reserved at attach (an AMP on every base-box voice, the pair on core 2), a Rytm or Digitakt base box was over on core 2
+  even alone; hence AMPs on load and the master chain on core 3 (below). Model with LT3's bench
+  (`design/rebalance-core2/MODEL.md` in the project files): Rytm+A4 4/4, Rytm+Digitakt 8/8, A4+Rytm 8/8, with room for one
+  AMP a core beside an A4 and none beside two 8-voice boxes.
+- **Where the chains run** (decided 2026-11-22): slot 0's send FX on render core 2, slot 1's send FX and master chain on
+  render core 1, each after its voices (`cores.cpp` `ChainCore`). Slot 0's master chain (the base box's while it is held,
+  with its AMP pair) runs on core 3 during RenderBlock's wait for cores 1 and 2 (`MasterCore`, `admit::master_core`; an
+  8-voice engine keeps it on core 2): the stats line prints its time as `c3 mfx`, inside `c3 own`. Core 3's load is not
+  modelled, only measured. LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
   ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches
   or leaves; core 3 waits for both cores' chains before a pass whose base box changed (AMP's master rows follow the base).
 - **Placement:** a box's voices are its 0..n-1; 0..s-1 render on core 1 and s..7 on core 2, s its split: `split=` (4), or

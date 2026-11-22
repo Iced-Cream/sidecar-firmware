@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "fmt/fmt.h"
+#include "fx/amp.h"
 #include "fx/out.h"
 #include "host_link.h"
 #if CORE_POLY
@@ -159,7 +160,8 @@ CORE_COLD const char* state_path_box(const char* state, const char* path, char* 
 // Boot: nothing to choose. Slot 0 is presumed the Rytm's, in /.rytm, from the first file on; boxes take slots by attach order
 // (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two slots) is
 // left as it is and never read.
-CORE_COLD void boot() {}
+static bool amp_room(int row);
+CORE_COLD void boot() { amp::set_cpu_check(amp_room); }
 
 CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
   for (const Link& l : g_links)
@@ -191,11 +193,29 @@ int voices_asked(const Profile* h) {
   const int n = o >= 0 && o < h->voices ? o : h->voices;   // (voices= lowers a count: a box's reports past its profile's are dropped)
   return n > kBoxVoices ? kBoxVoices : n;
 }
+void load_now(admit::Load* out);
 static admit::Load load_now() {
-  admit::Load ld = {};
+  admit::Load ld;
+  load_now(&ld);
+  return ld;
+}
+void load_now(admit::Load* out) {
+  admit::Load& ld = *out;
+  ld = {};
   for (int k = 0; k < kLinks && k < 2; ++k)
     ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr, ld.asked[k] = g_links[k].want;
-  return ld;
+  const int m = amp::master_row();   // the AMPs playing, each on its render core (admit.h amp_core): the first ask wins
+  for (int r = 0; r < amp::rows(); ++r)
+    for (int s = 0; s < amp::kSlots; ++s)
+      if (amp::slot_playing(r, s)) {
+        const int c = admit::amp_core(r, m, ld);
+        if (c == 1 || c == 2) ++ld.amps[c];
+      }
+}
+// AMP's CPU check (amp::set_cpu_check): one more AMP slot on row's render core, beside what renders now
+static CORE_COLD bool amp_room(int row) {
+  const admit::Load ld = load_now();
+  return admit::amp_fits(admit::amp_core(row, amp::master_row(), ld), ld);
 }
 static CORE_COLD void set_voices(Link& l, int n, bool tell) {
   __atomic_store_n(&l.voices, (uint8_t)n, __ATOMIC_RELAXED);
@@ -466,6 +486,7 @@ CORE_COLD void reset() {
   for (int k = 0; k < kLinks; ++k) s_usb_want[k] = nullptr, s_usb_gone[k] = false;
   hooks.to_rytm = plat;          // back to the platform's sender (taken again: a test may set another)
   strip::reset();
+  amp::set_cpu_check(amp_room);
 }
 
 CORE_COLD bool add(const Profile* p) {

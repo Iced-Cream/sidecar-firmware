@@ -5,28 +5,32 @@
 // voices= for its type. When a box attaches, its voices are admitted against the boot bench's costs, scaled to the CPU
 // clock setting, so that each render core stays under kLimitBp (80 % of a core) in the worst case:
 //   - a voice costs the worst machine in the bench (any voice may play any machine), plus its INSERT chain at the worst
-//     TYPE pair and the POST EQ, plus one AMP instance while the AMP cap (amp::kMaxRunning) allows another on that core, for
-//     the base box's voices only (AMP plays on the base box's chains, its voices' and its master's: core/fx/insert.cpp
-//     voice_out, master.cpp render; the other box's AMP slots play dry), so the other box's chains leave out the AMP pair
-//   - each box held adds its own send FX, send TYPE inserts, bus and master chains (with its AMP pair), measured together
-//     as one bench row, on the render core that runs them: slot 0's on core 2, slot 1's on core 1 (chain_core; decided
-//     2026-11-22: LT1 found core 2 ~95 % with both boxes' chains on it and core 1 ~70 % idle)
+//     TYPE pair and the POST EQ
+//   - each box held adds its own send FX, send TYPE inserts, bus and master chains (dry), measured together as one bench
+//     row, on the render core that runs its send FX: slot 0's on core 2, slot 1's on core 1 (chain_core; decided
+//     2026-11-22: LT1 found core 2 ~95 % with both boxes' chains on it and core 1 ~70 % idle). Two-slot builds run slot 0's
+//     master chain on core 3 (master_core; decided 2026-11-22, LT3: the base box's master AMP pair took ~26 % of core 2);
+//     the row is still counted whole on core 2 (its master part, dry, ~4 %: an upper bound)
+//   - AMP (core/fx/amp.h) is admitted when a slot loads a capture, not reserved at attach (decided 2026-11-22: reserving
+//     one for every base-box voice left a Rytm or Digitakt base box over on core 2 even alone): amp_fits() lets an AMP
+//     slot play while its render core (amp_core) stays within kLimitBp with the AMPs already playing there (Load::amps);
+//     else it plays dry and shows NO CPU (amp::kCpu). AMPs playing when a box attaches count against it: the first ask wins
 //   - a box's voices are its voices 0..n-1: voices 0..s-1 on core 1, s..7 on core 2, s its split (split_for: the cmdline's
 //     split=, or half the voices its box asks for if fewer: an A4's 4 as 2 + 2, so its voices and the chains share both cores)
 // The first box keeps its voices (it was alone: nothing to take them from). The second gets the most that fit beside the
 // first one's (never more than it asked for), is told (a popup on its screen), and /status shows the shortfall. A box whose
 // partner leaves gets back what it asked for. Nothing here runs per sample; the render cores read the counts (device.h
-// admitted) once per voice.
-//
+// admitted) once per voice. Core 3's own load (slot 0's master chain and its AMP pair there) is not modelled: measured only.
 // No bench (bench=0, the host, the Teensy): nothing measured, so nothing is refused (every box its count; /status says so).
 #pragma once
 #include <stdint.h>
+
+#include "machines.h"
 
 namespace core {
 namespace admit {
 
 constexpr unsigned kLimitBp = 8000;   // 80 % of a render core, in 1/100 % (bp)
-constexpr int kAmpCap = 6;            // fx/amp.h kMaxRunning: AMP slots playing at once, engine-wide
 
 // What the bench's rows cost under the two-box load, in % of the row (LT3, 2026-11-22, chains-core1 64fdd7b, 1500 MHz;
 // project file gates/chains-core1-64fdd7b/RESULTS-LT3.md). The bench runs each row alone on core 0; under load all four
@@ -35,9 +39,9 @@ constexpr int kAmpCap = 6;            // fx/amp.h kMaxRunning: AMP slots playing
 //     slot 1's dry 4.3 %), and 2 voice AMPs a core added 19.5-21.9 points (config B), so one AMP ~10-13 %: 300 %
 //   - a voice (machine + INSERT): 6 voices a core measured 26.1-32.8 points against 6 x 3.62: 135 %
 //   - a box's chains (the box row, dry): slot 1's Rytm 33.1 % (send FX 28.8 + master 4.3) against the row's 30.28: 110 %
-// With them the worst case of a Rytm or Digitakt base box is over on core 2 even alone (~125 %: its chains, master pair and
-// 4 voice AMPs), and order 2's core 2 as run (no voice AMP) reads ~87 % against 96 % measured (the bare bench: 68.9 %).
-// Moving part of the base box's chains off core 2 is the follow-up (decided 2026-11-22: model first, then rebalance).
+// With them, reserved at attach, the worst case of a Rytm or Digitakt base box was over on core 2 even alone (~125 %: its
+// chains, master pair and 4 voice AMPs). Since the rebalance (decided 2026-11-22) AMPs count when they play (amp_fits) and
+// slot 0's master chain with its pair runs on core 3.
 constexpr unsigned kAmpLoadPct = 300;
 constexpr unsigned kVoiceLoadPct = 135;
 constexpr unsigned kChainLoadPct = 110;
@@ -73,18 +77,30 @@ bool on() ;                     // a bench to admit against
 void set_enforce(bool on);
 bool enforce();
 
-// The render core that runs slot s's send FX, bus and master chains (the Pi's cores.cpp ChainCore): slot 1's core 1, slot 0's core 2
+// The render core that runs slot s's send FX and bus chains (the Pi's cores.cpp ChainCore): slot 1's core 1, slot 0's core 2
 constexpr int chain_core(int s) { return s == 1 ? 1 : 2; }
+// ... and its master chain (cores.cpp MasterCore): slot 1's core 1; slot 0's core 3 on two-slot builds (the control core,
+// during its render wait), core 2 on an 8-voice engine
+constexpr int master_core(int s) { return s == 1 ? 1 : kVoiceSlots > 1 ? 3 : 2; }
 
 // A load: voices[s] of slot s's box render (its 0..voices-1), held[s] its chains run (on chain_core(s)), asked[s] what it
-// asked for (its split: split_for; 0: split()). The base box (AMP's): slot 0 while held, else slot 1 (device.h g_base).
+// asked for (its split: split_for; 0: split()), amps[c] the AMP slots playing on render core c (1, 2; [0] unused: amp_core).
+// The base box (AMP's): slot 0 while held, else slot 1 (device.h g_base).
 struct Load {
   uint8_t voices[2];
   bool held[2];
   uint8_t asked[2];
+  uint8_t amps[3];
 };
-// Render core 1 or 2's worst load for l, in bp at the clock now, each row at its load factor (kAmpLoadPct and the rest).
-// Another core: 0.
+int base_of(const Load& l);   // the base box's slot in l: 0 while held, else 1
+// The core that runs AMP row r (fx/amp.cpp's rows: the base box's voices 0..7, its master chains from master_row on): a voice
+// row its voice's (by the base box's split), a master row master_core(the base box)
+int amp_core(int row, int master_row, const Load& l);
+// AMP admission: one more AMP slot may play on core c (1 or 2) beside l (its amps[] those playing): core_bp + one AMP at its
+// load factor within kLimitBp. Always: no bench, admit=report, core 3 (not modelled) or another core.
+bool amp_fits(int c, const Load& l);
+// Render core 1 or 2's worst load for l, in bp at the clock now, each row at its load factor (kAmpLoadPct and the rest):
+// its voices, the chains it runs, and the AMPs playing on it (l.amps[c]). Another core: 0.
 unsigned core_bp(int core, const Load& l);
 // The most voices (<= want, which is also what it asked for: its split) slot s may render beside the other slot's in l, so that every render core this box's voices land
 // on stays within kLimitBp. A core already over without this box's voices (by the chains alone) takes none of them.
