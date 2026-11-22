@@ -814,7 +814,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			else p->m_nTestEchoDrop++;
 			p->m_nCreditDue[c]++;
 		}
-		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 1 && link1::Device () != 0)
+		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->OnTransport (1) && link1::Device () != 0)
 		{
 			const u8 *q = p->m_pChanInBuf[c][k];
 			unsigned n = pURB->GetResultLength () / 4;
@@ -831,7 +831,7 @@ void CTeensyTarget::ChanInStub (CUSBRequest *pURB, void *pParam, void *pContext)
 			if (p->MidiCreditFits (c)) p->m_nCreditDue[c]++;
 			else p->m_nMidiHeld[c]++;
 		}
-		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->Slot () == 0 && p->m_bBoxUp)
+		else if (ep.role == mirror::kMidiOut && pBox != 0 && pBox->OnTransport (0) && p->m_bBoxUp)
 		{
 			// the Rytm on the relay: the computer's MIDI to it through the USB merge (ob_usb.cpp), as from USB-C
 			const u8 *q = p->m_pChanInBuf[c][k];
@@ -901,7 +901,7 @@ void CTeensyTarget::QueueToPc (const u8 *pEventPacket)
 
 boolean CTeensyTarget::ShowsRytm (void)
 {
-	return Relaying () && CObUsb::RelaySlot () == 0;
+	return Relaying () && CObUsb::RelayShowsHostLink ();
 }
 
 void CTeensyTarget::RytmTap (const u8 *pEventPacket)
@@ -979,7 +979,7 @@ void CTeensyTarget::OsGatePoll (void)
 	if (nLost != m_nLink1LostSeen)
 	{
 		m_nLink1LostSeen = nLost;
-		if (m_pBox != 0 && m_pBox->Slot () == 1) BoxOsLost (TRUE, "a send to the box failed");
+		if (m_pBox != 0 && m_pBox->OnTransport (1)) BoxOsLost (TRUE, "a send to the box failed");
 	}
 	if (m_Stats.nChanInMidi != m_nNoBoxSeen)		// the computer's MIDI dropped with no box up (ChanInStub's last branch):
 	{							// a box gone mid-image and back within mirrorhold must not get the rest
@@ -990,7 +990,7 @@ void CTeensyTarget::OsGatePoll (void)
 	if (m_Stats.nMidiToBoxFull != m_nToBoxFullSeen)	// either slot: the computer's packets dropped at a full queue
 	{
 		m_nToBoxFullSeen = m_Stats.nMidiToBoxFull;
-		if (m_pBox != 0 && m_pBox->Slot () == 0) OsLost (TRUE, "the queue to the Rytm was full");
+		if (m_pBox != 0 && m_pBox->OnTransport (0)) OsLost (TRUE, "the queue to the Rytm was full");
 		else BoxOsLost (TRUE, "the queue to the box was full");
 	}
 	unsigned nNow = CTimer::GetClockTicks ();
@@ -1038,7 +1038,7 @@ void CTeensyTarget::MidiToComputer (u32 nPacket)
 
 unsigned CTeensyTarget::MidiRoom (void) const
 {
-	if (m_pBox != 0 && m_pBox->Slot () == 0)
+	if (m_pBox != 0 && m_pBox->OnTransport (0))
 	{
 		unsigned n = m_ToRytmPath.Size () + MidiFilter::kHoldPackets;
 		return n >= RytmQueue ? 0 : RytmQueue - n;

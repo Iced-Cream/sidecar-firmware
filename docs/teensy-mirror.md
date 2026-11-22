@@ -100,6 +100,17 @@ which wait while the computer's SysEx is part way out. Only while the relay show
 whose MIDI is the host link, the Rytm's MIDI is not relayed (the reboot SysEx is still obeyed). kernel.cpp's loop sets
 link1's tap each pass to whichever route shows the A4.
 
+**Box to computer, no backpressure (decided 2026-11-22, T463/T464).** The box's MIDI is read as fast as it sends and is
+never held back for the computer. A Rytm made to wait overruns its own USB MIDI transmit buffer (stock 1.74: 4 KB, wrapped
+at 4032 bytes, which waits on a byte count, not on what the host has taken). That buffer overrun is how T464's Data RPC
+replies came back with one event packet replaced by the one 1008 packets (4032 bytes) later. So:
+- Circle's USB MIDI host keeps both receive buffers in flight on the xHCI and asks again at once after a zero-length
+  completion (`pi/circle/circle-midi-rxqueue.patch`; it used to pause 10 ms, about 1000 event packets of a Rytm's RPC reply).
+  The DWHCI (Pi 3) is unchanged. Test: `pi/engine/tests/test_midi_rxqueue.cpp`.
+- The queue toward the Teensy (`CTeensyTarget::m_MidiIn`) holds 16384 event packets, the largest RPC reply whole (37457
+  SysEx bytes). It was 512, and a computer that read late lost part of a reply (T463: 420 bytes); a drop is still counted
+  in the relay line's `to-pc N drop M`.
+
 ## Pi runs (KB analog-four-mkii hardware-tests T314-T326)
 
 **State (2026-11-14, T326):** check 3 passes on the Pi with relaytest=1: every bench stage PASS (control requests, Pi ->
