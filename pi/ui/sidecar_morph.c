@@ -276,7 +276,7 @@ void sidecar_morph_create (void *parent, int y0)
 	}
 	// ADD's picker in the list's place: TRACK / PAGE / PARAM (- name +), the value's slider, ADD / BACK
 	{
-		const int ah = fy - gap * 2 - ly, arh = ah / 6, sk = o ? 24 : 48, lw3 = o ? 34 : 70;
+		const int ah = fy - gap * 2 - ly, arh = ah / 6, sk = o ? LU (24) : LU (48), lw3 = o ? 34 : 70;
 		s_Add = th_box (pg, rx, ly, rw, ah);
 		s_AddT = th_label (s_Add, 0, 0, f, ink, "");
 		lv_obj_set_width (s_AddT, rw);
@@ -310,7 +310,7 @@ void sidecar_morph_create (void *parent, int y0)
 	th_slider_default (s_Fader, 0);	// a double tap: A (the scene crossfade off); the lock rows' targets have no default to go back to (DEL removes a lock)
 	s_Info = th_label (pg, x0, ph - foot - (o ? 0 : LU (8)) + LU (o ? 4 : 10), f, o ? TH->faint : dim, "");
 	lv_obj_set_width (s_Info, w);
-	const int uw = o ? 36 : 88, uh = o ? 15 : 34;	// UNDO at the hint line's right end, while offered
+	const int uw = LU (o ? 36 : 88), uh = LU (o ? 15 : 34);	// UNDO at the hint line's right end, while offered
 	s_Undo = th_key (pg, x0 + w - uw, ph - foot - (o ? 0 : 8) + (o ? 2 : 4), uw, uh, "UNDO", kind, undo_cb, 0);
 	lv_obj_add_flag (s_Undo, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_flag (pg, LV_OBJ_FLAG_HIDDEN);
