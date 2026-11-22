@@ -1819,7 +1819,10 @@ void CKernel::UpdateMIDI (void)
 		if (p == 0 || (m_pGadget != 0 && m_pGadget->IsMIDIDevice (p))) continue;
 		if (p != m_pMIDI && BoxOf (p) == UsbBoxKeyboard) continue;
 		const char *pProduct = p->GetProperty (CDevice::PropertyProduct);
-		u16 nId = p == m_pMIDI ? core::device::active ().id : usb_box_id (pProduct);
+		// its own type by its USB name (the host link's box need not be the base box: an A4 first, then the Rytm on the
+		// host link in slot 1); the profile in use only for a name usb_box_id does not know
+		u16 nId = usb_box_id (pProduct);
+		if (nId == 0 && p == m_pMIDI) nId = core::device::active ().id;
 		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
 		s_Boxes.add (nId, n, Role, pProduct);
 	}
