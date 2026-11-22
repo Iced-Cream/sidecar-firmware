@@ -20,8 +20,10 @@ float g_val[kRoutes];       // the route's value 0..127.99 (-1: none came yet)
 uint8_t g_msb[kRoutes];     // a 14-bit route's last MSB
 bool g_14[kRoutes];         // its LSB (CC n + 32) heard: 14 bits
 int g_armed = -1;           // the What the next CC is learned for, -1 none
+int g_last = -1;            // the route the last learn made or replaced (the MIDI page's LEARN rows)
 mod::Tid g_arm_t = 0;
 int8_t g_arm_depth = 32;
+bool g_arm_only = false;    // the armed learn replaces the other routes of its What
 bool g_dirty = false, g_locked = false;
 
 CORE_COLD const char* what_name(const Route& r, char* b, int cap) {
@@ -42,6 +44,7 @@ CORE_COLD bool add(const Route& r) {   // (replacing a route on the same port / 
   }
   g_r[i] = r, g_val[i] = -1, g_14[i] = false, g_msb[i] = 0;
   g_dirty = true;
+  g_last = i;
   return true;
 }
 CORE_COLD void apply(int i, float v) {   // v 0..127.99
@@ -124,6 +127,9 @@ CORE_COLD bool midi(int port, uint8_t st, uint8_t d1, uint8_t d2) {
       log(CORE_STR("learn: %d routes already: CC %d not learned"), kRoutes, d1);
       return true;
     }
+    if (g_arm_only)
+      for (int j = g_n - 1; j >= 0; --j)
+        if (j != g_last && g_r[j].what == r.what && (r.what != kTarget || g_r[j].t == r.t)) clear(j);
     char nm[16];
     log(CORE_STR("learn: CC %d on port %d channel %d -> %s"), d1, port, ch + 1, what_name(r, nm, sizeof nm));
   }
@@ -141,14 +147,15 @@ CORE_COLD bool midi(int port, uint8_t st, uint8_t d1, uint8_t d2) {
   return false;
 }
 
-CORE_COLD bool arm(const char* what) {
+CORE_COLD bool arm(const char* what, bool only) {
   Route r = {};
   if (!what || !parse_what(what, &r)) return false;
-  g_armed = r.what, g_arm_t = r.t, g_arm_depth = r.depth;
+  g_armed = r.what, g_arm_t = r.t, g_arm_depth = r.depth, g_arm_only = only;
   return true;
 }
 CORE_COLD void disarm() { g_armed = -1; }
 CORE_COLD int armed() { return g_armed; }
+CORE_COLD int last() { return g_last; }
 
 CORE_COLD void tick() {
   for (int i = 0; i < g_n; ++i) {
@@ -166,6 +173,7 @@ CORE_COLD bool clear(int i) {
   if (i < 0 || i >= g_n) return false;
   for (int k = i; k + 1 < g_n; ++k) g_r[k] = g_r[k + 1], g_val[k] = g_val[k + 1], g_14[k] = g_14[k + 1], g_msb[k] = g_msb[k + 1];
   --g_n;
+  g_last = g_last == i ? -1 : g_last > i ? g_last - 1 : g_last;
   g_dirty = true;
   return true;
 }
@@ -250,7 +258,7 @@ CORE_COLD bool dirty() { return g_dirty; }
 CORE_COLD bool locked() { return g_locked; }
 
 CORE_COLD void reset() {
-  g_n = 0, g_armed = -1, g_arm_t = 0, g_arm_depth = 32;
+  g_n = 0, g_armed = -1, g_last = -1, g_arm_only = false, g_arm_t = 0, g_arm_depth = 32;
   g_dirty = g_locked = false;
   for (int i = 0; i < kRoutes; ++i) g_val[i] = -1, g_14[i] = false, g_msb[i] = 0;
 }

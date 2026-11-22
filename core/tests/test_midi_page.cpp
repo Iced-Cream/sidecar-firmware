@@ -1,6 +1,7 @@
 // core/tests/test_midi_page.cpp - the MIDI page (core/ui/page_midi.cpp, 0.5.0): SIDECAR MENU > MIDI on the Rytm's
-// screen. Its rows: KEYBOARD ROUTE (SELECTED / CHANNEL), AUTO CHANNEL, COMPUTER NOTES (core/keys.h), MIDI LEARN (the
-// routes, YES twice clears them; core/mod/learn.h), then what is plugged into the USB-A ports and where the last key
+// screen. Its rows: KEYBOARD ROUTE (SELECTED / CHANNEL), AUTO CHANNEL, COMPUTER NOTES (core/keys.h), LEARN FADER / SCENE A /
+// SCENE B (YES, then move a control: it drives that; again replaces it), MIDI LEARN (the routes, YES twice clears them;
+// core/mod/learn.h), then what is plugged into the USB-A ports and where the last key
 // went (read only). Knob A / UP / DOWN pick a row, YES or knob B change it; each change takes effect at once and is
 // saved by idle_save (/.rytm/keys.txt, /.rytm/learn.txt) and read back at boot. Every text fits (check.h's TEXT-FIT).
 #include <cstdio>
@@ -35,7 +36,7 @@ static void tick(int n = 2) {
 static void tap(int code) { from_rytm(0x31, 0, (uint8_t)code, 1), from_rytm(0x31, 0, (uint8_t)code, 0), tick(); }
 static void turn(int e, int delta) { from_rytm(0x32, (uint8_t)e, (uint8_t)(64 + delta), 0), tick(); }
 enum { kUp = 0x42, kDown = 0x43, kYes = 0x44, kNo = 0x45 };
-enum { kRoute, kAuto, kMac, kLearn, kUsbA, kLast };
+enum { kRoute, kAuto, kMac, kLFader, kLA, kLB, kLearn, kUsbA, kLast };
 
 static ui::Canvas g_c;
 static void draw() { ui::kMidiPage.draw(g_c, 0, 1, now_ms() | 1); }
@@ -92,9 +93,14 @@ static void open_page() {
 static void menu_row_opens_the_page() {
   open_page();
   CHECK(shows("KEYBOARD ROUTE") && shows("SELECTED") && shows("AUTO CHANNEL") && shows("14") && shows("COMPUTER NOTES") &&
-        shows("ON") && shows("MIDI LEARN") && shows("NONE") && shows("USB-A") && shows("MPKMINI +1") && shows("LAST") &&
+        shows("ON") && shows("LEARN FADER") && shows("LEARN SCENE A") && shows("LEARN SCENE B") &&
         shows("YES / B: SET  NO: BACK"));
+  CHECK(!shows("USB-A"));   // six rows a screen: the rest scroll in
   png("midi_1_open.png");
+  for (int i = 0; i < kLast; ++i) tap(kDown);
+  CHECK(shows("MIDI LEARN") && shows("NONE") && shows("USB-A") && shows("MPKMINI +1") && shows("LAST") &&
+        !shows("KEYBOARD ROUTE"));
+  for (int i = 0; i < kLast; ++i) tap(kUp);
   tap(kNo);   // NO: back to SIDECAR, the page out of the list
   CHECK(!is("MIDI") && ui::remote_stats().page == 0);
   printf("  menu_row_opens_the_page: SIDECAR MENU > MIDI, its rows; NO back to SIDECAR\n");
@@ -179,7 +185,7 @@ static void learn_routes_clear_after_confirm() {
   CHECK(shows("YES: CLEAR ALL  NO: KEEP"));
   CHECK(learn::clear(0) && routes() == 0);
   tap(kYes);
-  CHECK(!shows("YES: CLEAR ALL  NO: KEEP") && shows("ARM IT: CONSOLE LEARN="));
+  CHECK(!shows("YES: CLEAR ALL  NO: KEEP") && shows("LEARN ON THE ROWS ABOVE"));
   CHECK(learn::arm("fader") && learn::midi(1, 0xB0, 7, 64) && routes() == 1);
   tap(kYes);   // asks again first
   CHECK(routes() == 1 && shows("YES: CLEAR ALL  NO: KEEP"));
@@ -208,8 +214,61 @@ static void learn_routes_clear_after_confirm() {
   printf("  learn_routes_clear_after_confirm: the routes' count, YES asks, NO keeps, YES again clears (saved); WAITING; LOCKED\n");
 }
 
+static std::string val_of(int what) {   // the route of a What, as the LEARN rows show it ("CC7 CH1"), "" none
+  const learn::Route* r = nullptr;
+  const int n = learn::routes(&r);
+  for (int i = 0; i < n; ++i)
+    if (r[i].what == what) {
+      char b[16];
+      snprintf(b, sizeof b, "CC%d CH%d", r[i].cc, r[i].ch + 1);
+      return b;
+    }
+  return "";
+}
+
+static void learn_rows_arm_and_replace() {
+  open_page();
+  for (int i = 0; i < kLFader; ++i) tap(kDown);
+  CHECK(shows("LEARN FADER") && shows("YES: LEARN  NO: BACK"));
+  tap(kYes);   // armed: the next CC drives the morph fader
+  CHECK(learn::armed() == learn::kFader && shows("MOVE IT") && shows("MOVE A CONTROL  YES: STOP"));
+  png("midi_6_learn_waiting.png");
+  CHECK(learn::midi(1, 0xB0, 7, 64));
+  CHECK(routes() == 1 && val_of(learn::kFader) == "CC7 CH1");
+  CHECK(shows("CC7 CH1") && shows("LEARNED CC7 CH1"));
+  png("midi_7_learned.png");
+  tap(kDown);   // SCENE A: its own route
+  tap(kYes);
+  CHECK(learn::armed() == learn::kA);
+  CHECK(learn::midi(2, 0xB1, 20, 0));
+  CHECK(routes() == 2 && val_of(learn::kA) == "CC20 CH2" && shows("CC20 CH2"));
+  tap(kUp);     // the fader again, another control: it replaces the first (one fader route), SCENE A's stays
+  tap(kYes);
+  CHECK(learn::midi(2, 0xB0, 9, 10));
+  CHECK(routes() == 2 && val_of(learn::kFader) == "CC9 CH1" && val_of(learn::kA) == "CC20 CH2");
+  tap(kYes);    // armed, YES again: stopped, nothing learned
+  CHECK(learn::armed() == learn::kFader);
+  tap(kYes);
+  CHECK(learn::armed() < 0 && shows("LEARN STOPPED") && routes() == 2);
+  tap(kYes), tap(kNo);   // NO while waiting: stops it too, and leaves the page
+  CHECK(learn::armed() < 0 && !is("MIDI"));
+  open_page();
+  for (int i = 0; i < kLB; ++i) tap(kDown);
+  CHECK(shows("LEARN SCENE B") && shows("-"));
+  // a console target route (learn=NAME) is not touched by the rows
+  CHECK(learn::arm("fader") && learn::midi(3, 0xB0, 1, 0) && routes() == 3);   // (a second fader route from the console)
+  tap(kUp), tap(kUp), tap(kYes);
+  CHECK(learn::midi(1, 0xB0, 7, 1));
+  CHECK(routes() == 2 && val_of(learn::kFader) == "CC7 CH1");   // the rows keep one fader route: the new one
+  flush();
+  learn::reset(), learn::load();
+  CHECK(routes() == 2 && val_of(learn::kFader) == "CC7 CH1" && val_of(learn::kA) == "CC20 CH2");
+  printf("  learn_rows_arm_and_replace: YES arms, a control is learned and shown, learning again replaces it, YES / NO stop\n");
+}
+
 static void status_rows() {
   open_page();
+  for (int i = 0; i < kLast; ++i) tap(kDown);   // the read-only rows: below the first screen
   CHECK(shows("MPKMINI +1") && shows("LAST") && shows("-"));
   keys::source(0, false, nullptr);
   CHECK(shows("LAUNCHCO"));   // the one left, 8 characters
@@ -219,7 +278,7 @@ static void status_rows() {
   keys::midi(0, 0x90, 60, 100), keys::midi(0, 0x80, 60, 0);   // no track known: to the Rytm, learning
   CHECK(shows("MPKMINI > RYTM"));
   png("midi_5_last.png");
-  for (int i = 0; i < 9; ++i) tap(kDown);   // clamped at the last row; the read-only rows: NO back only
+  for (int i = 0; i < 12; ++i) tap(kDown);   // clamped at the last row; the read-only rows: NO back only
   CHECK(shows("NO: BACK"));
   tap(kYes);
   CHECK(is("MIDI") && keys::view().mode == keys::kSelected);
@@ -251,6 +310,8 @@ int main() {
   auto_channel_and_computer();
   reset_both();
   learn_routes_clear_after_confirm();
+  reset_both();
+  learn_rows_arm_and_replace();
   reset_both();
   status_rows();
   ui::remote_reset();
