@@ -113,6 +113,23 @@ bool from_line(const char* b) {
     }
     return true;
   }
+  if (n >= 3 && same_ci(w[0], "SC") && sc::mode_from_name(w[2]) == sc::kOff) {   // SC V1 OFF (a hand-written line: the stage off)
+    int c = chain_from_name(w[1]);
+    if (c < 0) return false;
+    set_sc_mode(c, sc::kOff);
+    return true;
+  }
+  if (n >= 4 && same_ci(w[0], "SC")) {   // 0.5.0 SIDECHAIN: SC V1 PUMP BD 90 0 20 60 40 50 (MODE SRC P1..P6; a missing P keeps the mode's default)
+    int c = chain_from_name(w[1]), m = sc::mode_from_name(w[2]), sr = sc::src_from_name(w[3]);
+    if (c < 0 || m <= 0 || sr < 0) return false;
+    set_sc_mode(c, m);
+    set_sc_src(c, sr);
+    for (int k = 0; k < sc::kParams && 4 + k < n; ++k) {
+      int v = num(w[4 + k]);
+      if (v >= 0) set_sc_param(c, k, v);
+    }
+    return true;
+  }
   if (n < 3) return false;
   int c = chain_from_name(w[0]);
   int s = same_ci(w[1], "A") ? 0 : same_ci(w[1], "B") ? 1 : -1;
@@ -268,6 +285,12 @@ static bool save_text(bool queue) {
     int n = sniprintf(b, sizeof b, CORE_STR("PEQ %s %d %d %d %d\n"), chain_name(c), eq_param(c, 0), eq_param(c, 1),
                       eq_param(c, 2), eq_param(c, 3));
     add(b, n);
+  }
+  for (int c = 0; c < kChains; ++c) {   // 0.5.0 SIDECHAIN: only a chain whose stage is on (the knobs, never a modulation)
+    if (!sc_on(c)) continue;
+    add(b, sniprintf(b, sizeof b, CORE_STR("SC %s %s %s %d %d %d %d %d %d\n"), chain_name(c), sc::mode_name(sc_mode(c)),
+                     sc::src_name(sc_src(c)), sc_param(c, 0), sc_param(c, 1), sc_param(c, 2), sc_param(c, 3), sc_param(c, 4),
+                     sc_param(c, 5)));
   }
   for (int v = 0; v < kVoices; ++v) {
     if (!send_knob(v, 0) && !send_knob(v, 1) && !send_knob(v, 2)) continue;   // the knobs, never a modulation (core/mod)

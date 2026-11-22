@@ -1,6 +1,6 @@
 // web-next/src/lib/mix.test.ts
 import { describe, expect, it } from "vitest";
-import { EQ_FLAT, eqDb, eqPath, eqText, insertText, mixCmd, slotTypes, strips, typeBlocked, typeOutcome } from "./mix";
+import { EQ_FLAT, SC_CHAINS, eqDb, eqPath, eqText, insertText, mixCmd, pumpPath, scText, sidechains, slotTypes, strips, typeBlocked, typeOutcome } from "./mix";
 
 const status = {
   machines: ["plaits", "juno", "daisy", "dsps", "fm", "dd", "daisy", "plaits"],
@@ -108,5 +108,56 @@ describe("mix", () => {
     expect(typeOutcome(full, 0, "RINGS")).toBe("taken");
     expect(typeOutcome(strips(st, null)[10], 1, "CLOUD")).toBe("wait"); // room left: not applied yet
     expect(typeOutcome(full, 1, "COMP")).toBe("wait"); // not a send TYPE: no room to refuse it for
+  });
+});
+
+describe("sidechain (0.5.0)", () => {
+  const sc = [
+    { m: "PUMP", s: "BD", p: [90, 0, 20, 60, 40, 50], l: [90, 0, 20, 60, 40, 50], n: ["DPTH", "ATT", "HOLD", "REL", "SHAP", "THR"], st: "NO STEMS" },
+    ...Array.from({ length: 10 }, () => ({ m: "OFF" })),
+    { m: "DUCK", s: "AINLR", p: [50, 70, 10, 50, 99, 0], l: [50, 70, 10, 50, 99, 0], n: ["THR", "RAT", "ATT", "REL", "HPF", "-"], st: "OK" },
+    { m: "OFF" },
+  ];
+  it("reads the 13 stages, and an older build as unsupported", () => {
+    const r = sidechains({ ins: { sc } });
+    expect(r.supported).toBe(true);
+    expect(r.list.map((x) => x.id)).toEqual(SC_CHAINS);
+    expect(r.list).toHaveLength(13);
+    expect(r.list[0]).toMatchObject({ mode: "PUMP", src: "BD", status: "NO STEMS" });
+    expect(r.list[1].mode).toBe("OFF");
+    expect(r.list[11]).toMatchObject({ id: "M1", mode: "DUCK", src: "AINLR" });
+    expect(r.list[11].p).toEqual([50, 70, 10, 50, 99, 0]);
+    const old = sidechains({ ins: {} });
+    expect(old.supported).toBe(false);
+    expect(old.list.every((x) => x.mode === "OFF")).toBe(true);
+    expect(sidechains(null).supported).toBe(false);
+  });
+  it("words the knobs as the Rytm's page does", () => {
+    expect(scText("PUMP", 0, 127)).toBe("100%");
+    expect(scText("PUMP", 1, 0)).toBe("instant");
+    expect(scText("PUMP", 3, 127)).toBe("1.50 s");
+    expect(scText("PUMP", 4, 64)).toBe("linear");
+    expect(scText("PUMP", 4, 20)).toBe("-44");
+    expect(scText("PUMP", 5, 127)).toBe("0 dB");
+    expect(scText("DUCK", 0, 127)).toBe("-40 dB");
+    expect(scText("DUCK", 1, 0)).toBe("1.0:1");
+    expect(scText("DUCK", 4, 0)).toBe("off");
+    expect(scText("DUCK", 4, 127)).toBe("2560 Hz");
+  });
+  it("sends the console lines", () => {
+    expect(mixCmd.scMode("V3", "PUMP")).toBe("ins=V3:sc:mode:pump");
+    expect(mixCmd.scMode("M2", "OFF")).toBe("ins=M2:sc:mode:off");
+    expect(mixCmd.scSrc("B1", "AINLR")).toBe("ins=B1:sc:src:ainlr");
+    expect(mixCmd.scParam("V1", 5, 300)).toBe("ins=V1:sc:p6:127");
+    expect(mixCmd.scParam("V1", 0, -4)).toBe("ins=V1:sc:p1:0");
+  });
+  it("draws the pump envelope: full gain, down by the depth, back", () => {
+    const d = pumpPath([127, 0, 20, 60, 64, 50], 360, 90);
+    const ys = [...d.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => Number(m[2]));
+    expect(ys[0]).toBe(1); // unity at the top
+    expect(Math.max(...ys)).toBeCloseTo(89, 0); // depth 100%: the bottom
+    expect(ys[ys.length - 1]).toBe(1);
+    const shallow = [...pumpPath([32, 0, 20, 60, 64, 50], 360, 90).matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => Number(m[2]));
+    expect(Math.max(...shallow)).toBeLessThan(40);
   });
 });

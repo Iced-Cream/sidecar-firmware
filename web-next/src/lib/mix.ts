@@ -152,6 +152,90 @@ export function eqText(peq: number[]): string {
   return parts.filter(Boolean).join(", ") || "flat";
 }
 
+
+// ---- SIDECHAIN (0.5.0, core/fx/sidechain.h): one gain stage per chain (V1..V8, B1..B3, M1 M2), between its two slots and its
+// POST EQ. PUMP: a trig-driven gain envelope (DPTH ATT HOLD REL SHAP THR); DUCK: the COMP keyed by the source (THR RAT ATT REL HPF).
+// /status "ins" "sc": 13 entries, {"m":"OFF"} or {m, s: source, p: knobs, l: as they play, n: names, st: "OK" | "NO STEMS" | ...}
+export const SC_MODES = ["OFF", "PUMP", "DUCK"] as const;
+export type ScMode = (typeof SC_MODES)[number];
+export const SC_CHAINS = [...Array.from({ length: 8 }, (_, i) => `V${i + 1}`), "B1", "B2", "B3", "M1", "M2"];
+export const SC_TRACKS = ["BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"];
+export const SC_SOURCES: { group: string; items: { value: string; text: string }[] }[] = [
+  { group: "Rytm track (its stem)", items: SC_TRACKS.map((t) => ({ value: t, text: t })) },
+  { group: "Audio in", items: [{ value: "AINL", text: "Audio in L" }, { value: "AINR", text: "Audio in R" }, { value: "AINLR", text: "Audio in L+R" }] },
+  { group: "Sidecar voice", items: Array.from({ length: 8 }, (_, i) => ({ value: `V${i + 1}`, text: `Voice ${i + 1}` })) },
+];
+export const SC_NAMES: Record<string, string[]> = {
+  PUMP: ["DPTH", "ATT", "HOLD", "REL", "SHAP", "THR"],
+  DUCK: ["THR", "RAT", "ATT", "REL", "HPF", "-"],
+};
+export interface Sidechain {
+  id: string; // V1..V8, B1..B3, M1, M2
+  chain: number; // 0..12
+  mode: ScMode;
+  src: string;
+  p: number[]; // the knobs, 0..127 (6)
+  l: number[]; // as they play (the LFO's offset on top)
+  names: string[];
+  status: string; // "OK", "NO STEMS", "NO AUDIO IN", ...
+}
+
+/** The 13 stages from a status (an older Pi without "sc": all OFF, supported false). */
+export function sidechains(st: Any | null): { supported: boolean; list: Sidechain[] } {
+  const sc: Any[] | null = Array.isArray(st?.ins?.sc) ? st!.ins.sc : null;
+  const list = SC_CHAINS.map((id, chain): Sidechain => {
+    const x = sc?.[chain] ?? {};
+    const mode = (SC_MODES as readonly string[]).includes(x.m) ? (x.m as ScMode) : "OFF";
+    const six = (a: unknown) => (Array.isArray(a) ? [...a.map(Number), 0, 0, 0, 0, 0, 0].slice(0, 6) : [0, 0, 0, 0, 0, 0]);
+    return { id, chain, mode, src: typeof x.s === "string" ? x.s : "BD", p: six(x.p), l: six(x.l ?? x.p), names: Array.isArray(x.n) ? x.n : SC_NAMES[mode] ?? [], status: typeof x.st === "string" ? x.st : "OFF" };
+  });
+  return { supported: sc !== null, list };
+}
+
+const msText = (ms: number) => (ms < 100 ? `${ms.toFixed(1)} ms` : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`);
+/** A knob's value as the Rytm's page shows it (core/fx/insert.cpp sc_vt). */
+export function scText(mode: string, k: number, v: number): string {
+  const p = v / 127;
+  if (mode === "PUMP") {
+    if (k === 0) return `${Math.round(p * 100)}%`;
+    if (k === 1) return v ? msText(30 * p * p) : "instant";
+    if (k === 2) return msText(250 * p * p);
+    if (k === 3) return msText(10 + 1490 * p * p);
+    if (k === 4) return v === 64 ? "linear" : `${v < 64 ? "-" : "+"}${Math.abs(v - 64)}`;
+    if (k === 5) return `${Math.round(-60 * (1 - p))} dB`;
+  } else if (mode === "DUCK") {
+    if (k === 0) return `${-Math.round((v * 40) / 127)} dB`;
+    if (k === 1) return `${(1 + 19 * p * p).toFixed(1)}:1`;
+    if (k === 2) return msText(0.3 + 30 * p * p);
+    if (k === 3) return msText(40 + 600 * p);
+    if (k === 4) return v ? `${Math.round(40 * Math.pow(2, 6 * p))} Hz` : "off";
+  }
+  return String(v);
+}
+
+/** PUMP's envelope as an SVG path in a w x h box (a drawing of the design: instant / linear attack, hold, the release's u^e curve). */
+export function pumpPath(p: number[], w: number, h: number, points = 64): string {
+  const q = (k: number) => p[k] / 127;
+  const att = 0.03 * q(1) * q(1), hold = 0.25 * q(2) * q(2), rel = 0.01 + 1.49 * q(3) * q(3);
+  const e = p[4] === 64 ? 1 : Math.pow(2, (p[4] - 64) / 32), depth = q(0), total = att + hold + rel;
+  const lead = total * 0.08, span = total + lead * 2;
+  const g = (t: number) => {
+    if (t < lead) return 1;
+    t -= lead;
+    if (t < att) return 1 - depth * (att ? t / att : 1);
+    t -= att;
+    if (t < hold) return 1 - depth;
+    t -= hold;
+    return t >= rel ? 1 : 1 - depth + depth * Math.pow(t / rel, e);
+  };
+  let d = "";
+  for (let i = 0; i <= points; i++) {
+    const t = (i / points) * span;
+    d += `${i ? " L" : "M"}${((i / points) * w).toFixed(1)} ${(1 + (1 - g(t)) * (h - 2)).toFixed(1)}`;
+  }
+  return d;
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
 
 // ---- command lines (core/fx/insert.cpp, out.cpp, master.cpp kHelp)
@@ -169,5 +253,8 @@ export const mixCmd = {
   mfxSource: (src: "ret" | "mix") => `mfx=src:${src}`,
   mfxTrim: (db: number) => `mfx=trim:${clamp(db, -24, 0)}`,
   mfxMix: (slot: number, v: number) => `mfx=${slot + 1}:mix:${clamp(v, 0, 127)}`,
+  scMode: (id: string, m: ScMode) => `ins=${id}:sc:mode:${m.toLowerCase()}`,
+  scSrc: (id: string, src: string) => `ins=${id}:sc:src:${src.toLowerCase()}`,
+  scParam: (id: string, k: number, v: number) => `ins=${id}:sc:p${k + 1}:${clamp(v, 0, 127)}`,
   mix: (s: Strip, slot: number, v: number) => (s.chain < 0 ? `mfx=${slot + 1}:mix:${clamp(v, 0, 127)}` : `ins=${s.id}:${"AB"[slot]}:mix:${clamp(v, 0, 127)}`),
 };

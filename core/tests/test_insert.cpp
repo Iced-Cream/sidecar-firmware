@@ -882,14 +882,15 @@ int main() {
     CHECK(ins::command("ins=V3:eq:nope:1", o, sizeof o) && strstr(o, "ins=") && ins::eq_param(2, 0) == 0);
     CHECK(ins::command("ins", o, sizeof o));
     CHECK(strstr(o, "B1") && strstr(o, "/EQ"));   // the bare dump says which chains have one
-    // the LFO: targets I1..I8 / B1..B3 now carry 12 params, 8..11 the post EQ
-    CHECK(lfo::params_of(lfo::kTIns + 2) == 8 + ins::kEqParams);
+    // the LFO: targets I1..I8 / B1..B3 carry 18 params, 8..11 the post EQ, 12..17 the SIDECHAIN (0.5.0)
+    CHECK(lfo::params_of(lfo::kTIns + 2) == 8 + ins::kEqParams + sc::kParams);
     char nb[16];
     CHECK(!strcmp(lfo::param_name(lfo::kTIns + 2, 8, nb, sizeof nb), "QHPF"));
     CHECK(!strcmp(lfo::param_name(lfo::kTIns + 2, 11, nb, sizeof nb), "QHIG"));
     CHECK(lfo::command("lfo=1:tgt:I3", o, sizeof o) && lfo::command("lfo=1:par:9", o, sizeof o));
-    CHECK(lfo::command("lfo=1:par:12", o, sizeof o));   // clamped to the target's last
-    CHECK(lfo::get(0).param == 8 + ins::kEqParams - 1);
+    CHECK(lfo::command("lfo=1:par:12", o, sizeof o) && lfo::get(0).param == 12);   // the SIDECHAIN's first (0.5.0)
+    CHECK(lfo::command("lfo=1:par:30", o, sizeof o));   // clamped to the target's last
+    CHECK(lfo::get(0).param == 8 + ins::kEqParams + sc::kParams - 1);
     CHECK(lfo::command("lfo=1:off", o, sizeof o));
     // /status: "peq" (set) and "peql" (playing) per chain
     ins::set_eq(0, 0, 55);
@@ -1262,6 +1263,27 @@ int main() {
       CHECK(n == sizeof bad - 1 && !memcmp(got, bad, n));
       printf("card: 1042: an unreadable line locks its file (not written over)\n");
     }
+    // L5: a hand-written "SC V1 OFF" line is read (an OFF stage), it does not lock the kit's file
+    {
+      const char hand[] = "V1 A EQ 64 64 100\nSC V1 OFF\n";
+      std::string fn = std::string(tmpl) + "/.rytm/ins/INS/k015.txt";
+      FILE* fp = fopen(fn.c_str(), "wb");
+      fwrite(hand, 1, sizeof hand - 1, fp);
+      fclose(fp);
+      project_fill_begin();
+      loaded();
+      ins::kit_changed(14);   // kit 15: that file
+      ins::set_type(3, 0, ins::kRing);
+      host_fake_time(true, us += 1100000);
+      for (int i = 0; i < 64; ++i) idle_save();
+      char got[400] = {};
+      fp = fopen(fn.c_str(), "rb");
+      size_t n = fp ? fread(got, 1, sizeof got - 1, fp) : 0;
+      if (fp) fclose(fp);
+      CHECK(n > 0 && n != sizeof hand - 1 && strstr(got, "V4 A RING"));
+      printf("card: L5: a hand-written SC OFF line does not lock the file\n");
+      ins::reset();
+    }
     // ins1112: the post EQ in the kit's file ("PEQ V1 40 0 64 70"), read back; a flat chain no line
     {
       ins::kit_changed(11);   // kit 12: a file of its own
@@ -1282,6 +1304,37 @@ int main() {
       CHECK(ins::eq_param(0, 0) == 40 && ins::eq_param(0, 3) == 70 && ins::eq_param(ins::kBus0, 1) == 90 &&
             !ins::eq_on(1));
       printf("card: the PEQ line round trip (%s)\n", fn.c_str());
+      ins::reset();
+    }
+    // 0.5.0 SIDECHAIN in the kit's file ("SC V1 PUMP BD 90 0 20 60 40 50"), read back: every chain kind, nothing for an OFF stage
+    {
+      ins::kit_changed(12);   // kit 13: a file of its own
+      ins::set_sc_mode(0, sc::kPump);
+      ins::set_sc_src(0, 3);
+      ins::set_sc_param(0, 0, 77);
+      ins::set_sc_mode(ins::kBus0 + 1, sc::kDuck);
+      ins::set_sc_src(ins::kBus0 + 1, sc::kAinLR);
+      ins::set_sc_param(ins::kBus0 + 1, 4, 99);
+      ins::set_sc_mode(ins::kM0 + 1, sc::kPump);
+      ins::set_sc_src(ins::kM0 + 1, sc::kV0 + 6);
+      host_fake_time(true, us += 1100000);
+      for (int i = 0; i < 64; ++i) idle_save();
+      std::string fn = std::string(tmpl) + "/.rytm/ins/INS/k013.txt";
+      char got[1200] = {};
+      FILE* fp = fopen(fn.c_str(), "rb");
+      size_t n = fp ? fread(got, 1, sizeof got - 1, fp) : 0;
+      if (fp) fclose(fp);
+      CHECK(n > 0 && strstr(got, "SC V1 PUMP CP 77 0 20 60 40 50\n") && strstr(got, "SC B2 DUCK AINLR 50 70 10 50 99 0\n") &&
+            strstr(got, "SC M2 PUMP V7 90 0 20 60 40 50\n") && !strstr(got, "SC V2"));
+      ins::reset();
+      CHECK(!ins::sc_any_on());
+      ins::kit_changed(4), ins::kit_changed(12);   // away and back
+      CHECK(ins::sc_mode(0) == sc::kPump && ins::sc_src(0) == 3 && ins::sc_param(0, 0) == 77 &&
+            ins::sc_mode(ins::kBus0 + 1) == sc::kDuck && ins::sc_src(ins::kBus0 + 1) == sc::kAinLR &&
+            ins::sc_param(ins::kBus0 + 1, 4) == 99 && ins::sc_mode(ins::kM0 + 1) == sc::kPump &&
+            ins::sc_src(ins::kM0 + 1) == sc::kV0 + 6 && !ins::sc_on(1));
+      CHECK(ins::control.scmode[0] == sc::kPump && sc::bus().wanted != 0u);
+      printf("card: the SC line round trip (%s)\n", fn.c_str());
       ins::reset();
     }
     // the OUT route (core/fx/out.h) in the kit's file: "OUT V3 POST 90 20 100 30", read back; a default voice no line

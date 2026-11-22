@@ -163,6 +163,10 @@ void gr_live_in(const int32_t* f, int n, int stride);
 // 3, once a second); a LIVE IN voice's STATUS words ("LIVE -18DB"; 0: the voice is not LIVE IN)
 bool livein_on();
 void livein_in(const int32_t* f, int n, int stride);
+// 0.5.0 SIDECHAIN (core/fx/sidechain.h): sidechain_on() while an insert chain's stage reads a stem or AUDIO IN, then each IN block's
+// frames (as livein_in's) into the key bus
+bool sidechain_on();
+void sidechain_in(const int32_t* f, int n, int stride);
 void livein_fifo(unsigned frames);
 int livein_status(int vi, char* b, int cap);
 // seq-p2 (core/seq/seq.h, rytm_dump.h): cal_on() while the sequencer's latency click is due or on its way back, then each
@@ -206,6 +210,7 @@ uint64_t ins_bench(int a, int b, uint32_t* worst_block, uint32_t* hash = nullptr
 uint64_t ins_bus_bench(uint32_t* worst_block, uint32_t* hash = nullptr);
 // neon_bench.cpp: NEON kernel row (0..) against its C, ticks of the same work in each; its name, null past the last row
 const char* neon_bench(unsigned row, uint64_t* c_ticks, uint64_t* neon_ticks);
+const int kInsJsonCap = 12288;     // the buffer /status gives ins_json (core::ins::kInsJsonCap: bridge.cpp checks; the core test measures its worst case)
 int ins_json(char* out, int cap);   // "\"ins\":{...}" (core/fx/insert.h json: the /status page's)
 const char* ins_bench_name(int type);
 // INSERT AMP (core/fx/amp.h): one NAM A2-Lite instance (a synthetic capture) over 4000 12-frame blocks (1 s); ticks as

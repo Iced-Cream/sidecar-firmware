@@ -272,6 +272,51 @@ NOTLITE, the cap, silence, noise at every knob corner, the texts and the INSERT 
 -> AMP; -> AMP with GAIN up; -> AMP -> SPACE H1 slapback; H123 synced 1/8 with REPEAT and AGE; a dub throw). Without
 MODEL capture A is SYNTHETIC (random weights, not an amp: no amp colour); with MODEL a real A2-Lite capture.
 
+## SIDECHAIN (0.5.0): pump and duck from a source
+
+One gain stage per insert chain (V1..V8, B1..B3, M1, M2), after the chain's two slots and before its POST EQ. Off is the
+default: the stage is skipped, bit for bit, and costs nothing.
+
+| MODE | knobs (A..F of the page's C..H) |
+|---|---|
+| PUMP | DPTH ATT HOLD REL SHAP THR |
+| DUCK | THR RAT ATT REL HPF (-) |
+
+**SRC.** A Rytm track BD..CB (its Overbridge stem; RS/CP, MT/HT, CH/OH and CY/CB share one stem each, but each track has its
+own trig), AUDIO IN L, R or L+R, or a Sidecar voice V1..V8 (its sound before its own chain: a voice keyed by itself is a COMP on its own pre-chain signal, there is no loop).
+Stems and AUDIO IN exist only in Overbridge mode: when the source is not there DUCK does nothing, and the page says why
+(`NO STEMS`, `NO AUDIO IN`). PUMP keyed by a Rytm track needs no stem: it runs on the track's MIDI trigs, with or
+without Overbridge (AUDIO IN has no trigs: its onset needs the audio). B1 and B2 run inside send FX 1 / 2's return, so
+with that send FX OFF their sidechain does nothing too (`SEND FX OFF`). Choosing the mode a chain is already in changes
+nothing (the knobs stay); a different mode loads that mode's defaults. A mode or source change ramps the gain over
+about 5 ms, never a step, and a new source's trig counter is taken as it is (no trig from an old count).
+
+**PUMP** is a trig-driven gain envelope, sample-exact from the frame it starts on (`j` = frames since the trig frame):
+attack `g0 -> 1 - DPTH` linear over ATT (ATT 0: the trig's own frame is already down; `g0` is the gain when the trig
+came, so a retrigger is continuous), hold HOLD, release back to 1 over REL on the curve `u^e` (`e = 2^((SHAP-64)/32)`,
+SHAP 64 is linear, below it the gain comes back fast first, above it slow first). DPTH is linear (127 = silence),
+ATT 0..30 ms, HOLD 0..250 ms, REL 10 ms..1.5 s (all squared knobs). The trig is the Rytm's note-out on the track's
+channel (channel 1..12 = track 1..12), a voice's note, or for AUDIO IN a level onset (key high-passed at 80 Hz, a peak
+follower, THR -60..0 dB, re-armed below half of it, 20 ms lock). A trig reaches the stage at the start of its next chunk
+(16 frames at most, 0.33 ms).
+
+**DUCK** is the INSERT COMP (its detector and gain computer are the same code), keyed by the source instead of the
+chain's own signal: THR 0..-40 dB, RAT 1..20, ATT 0.3..30 ms and REL 40..640 ms (each on its own knob), HPF 40 Hz..2.5 kHz
+on the key only (0 = off). Keyed by the chain's own signal it gives COMP's answer exactly [tested].
+
+**Control.** The six knobs take LFOs and scenes: targets `I3:S1`..`S6` (`B1:S1`, `M2:S6`; param 12..17 of the chain),
+labelled by the mode (`SDPT`, `STHR`). Mode and source are lists and are not modulated. No p-locks (the step-lock space
+is full).
+
+**UI.** The Rytm: on the INSERT page press RIGHT for the EQ view, then DOWN: the SIDECHAIN view (A MODE, B SRC, C..H
+the knobs; YES steps voice > bus 1 > 2 > 3; LEFT, DOWN or NO back); the MASTER FX page the same (YES: M1 / M2). Web:
+Mix > Sidechain. Console: `ins=V2:sc:mode:pump`, `ins=V2:sc:src:bd`, `ins=V2:sc:p1:90`, `ins=V2:sc:off`; `/status` `"ins"`
+`"sc"` has 13 entries. The touchscreen's INSERT FX page has no dials for it.
+
+**Card.** `SC V1 PUMP BD 90 0 20 60 40 50` (MODE SRC P1..P6) per chain that is on, in the kit's INSERT file.
+
+**Cost** [measured on a Mac, -O2, `test_sidechain`]: PUMP about 0.02 % and DUCK about 0.05 % of a core at 48 kHz per chain.
+
 ## Control: knob, p-lock, LFO
 
 `ins::control.play` is what the DSP reads: the knob, or a step's p-lock in its place, plus the LFO's offset.

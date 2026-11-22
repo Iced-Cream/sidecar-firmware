@@ -196,6 +196,10 @@ NeRoll ne_roll_shown();
 extern const ExtraPage kSongPage;  // SONG RECORD (page_song.cpp, core/song/song.h), last
 extern const ExtraPage kInsPage;   // fx-ins: the INSERT page (page_ins.cpp, core/fx/insert.h), after SEQ
 extern const ExtraPage kMasterPage;   // the master FX (page_mfx.cpp, core/fx/master.h), after INSERT
+// 0.5.0 SIDECHAIN view of chain ch (insert.h), drawn / turned by the INSERT page and the MASTER FX page; nav: the footer's hint
+void sc_view_draw(Canvas& c, int page, int npages, int ch, const char* title, const char* right, const char* nav);
+void sc_view_enc(int ch, int e, int d, bool func, int list_delta);
+uint16_t sc_view_tid(int ch, int e);   // the mod target the turn of knob e edits (0 none)
 void ins_open_out();   // rui1047: the INSERT page on its OUT view of the Rytm's selected track (UP + AMP: 30 page 3)
 // rui1048: POLY CONFIG (page_poly.cpp): a track's poly config (seq.h PolyCfg) on the Rytm's screen. poly_page_open: the
 // device's page request for track t (the Rytm's track menu item: 30 page 0x20 + t, from_menu: NO goes back to the stock
@@ -246,7 +250,7 @@ void poly_page_closed();
 int poly_page_track();   // the track it shows (tests)
 #if CORE_UI_TOOLS
 // tests and the renderer: the view (track -1: the Rytm's; out: the OUT view; eq: ins1112's EQ view, RIGHT)
-void ins_page_set(bool bus, int slot, int busel, int track, bool out = false, bool eq = false);
+void ins_page_set(bool bus, int slot, int busel, int track, bool out = false, bool eq = false, bool sc = false);
 void mfx_page_set(int slot, bool eq);
 #endif
 #endif

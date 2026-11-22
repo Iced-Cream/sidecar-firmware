@@ -1209,6 +1209,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) L[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::livein_in (&L[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
+			if (bridge::sidechain_on ())	// SIDECHAIN (core/fx/sidechain.h): the stems and AUDIO IN into the key bus, as they come
+			{
+				s32 K[ob::kFramesPerBlock][ob::kChannels];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (int c = 0; c < ob::kChannels; c++) K[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
+				bridge::sidechain_in (&K[0][0], ob::kFramesPerBlock, ob::kChannels);
+			}
 			if (core::out::meas::active ())	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					core::out::meas::in_frame (ob::block_sample (pBlk, ob::kChannels, f, 0), ob::block_sample (pBlk, ob::kChannels, f, 1));
