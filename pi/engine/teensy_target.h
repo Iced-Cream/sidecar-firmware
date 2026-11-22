@@ -204,7 +204,10 @@ private:
 	volatile boolean m_bCutRytm;			// the box went: MirrorPoll cuts m_ToRytmPath
 	unsigned MidiRoom (void) const;			// packets the box-bound MIDI queue (link1's, or the Rytm's) takes now
 	void QueueToPc (const u8 *pEventPacket);	// IRQ level: one packet onto m_MidiIn, flushed to the Teensy
-	static const unsigned MidiInRing = 512;
+	// T463/T464: 512 packets (2 KB) dropped part of a Data RPC reply when the computer read late; the box is never held
+	// back for it (a Rytm made to wait overruns its own transmit buffer), so the ring holds the largest reply whole:
+	// 37457 SysEx bytes, 12486 packets
+	static const unsigned MidiInRing = 16384;
 	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
 	volatile unsigned m_nMidiInHead, m_nMidiInTail;
 	volatile unsigned m_nTakenDue;
