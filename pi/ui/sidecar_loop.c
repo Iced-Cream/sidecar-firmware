@@ -94,12 +94,12 @@ void sidecar_loop_create (void *parent, int y0)
 	const int o = oled ();
 	s_nGen = ~0u, s_nSel = 0, s_nSelId = 0;
 	memset (&s_V, 0, sizeof s_V);
-	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int pw = o ? TH->w - 48 : th_page_w (), ph = TH->h - y0 - (o ? LU (25) : 0);		// OLED: under the sub-page row (0.5.1: OLED_UNDER)
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (o ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, dim = o ? TH->dim : TH->win_dim;
-	const int x0 = o ? 0 : 24, w = o ? pw : pw - 48, top = o ? 16 : 44, keyh = o ? 22 + TH->dy / 12 : 40 + TH->dy / 8, gap = o ? 3 : 6;
+	const int x0 = o ? 0 : 24, w = o ? pw : pw - 48, top = o ? 16 : 44, keyh = o ? LU (22) + TH->pdy / 12 : LU (44) + TH->pdy / 8, gap = o ? 3 : 6;
 	if (o)
 	{
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, 13);
@@ -123,7 +123,7 @@ void sidecar_loop_create (void *parent, int y0)
 	for (int n = 0; n < SLP_GRABS; n++)
 		s_Pad[n] = th_key (pg, x0 + n * (pwid + gap), py, pwid, padh, "", kind | TH_KEY_PAD, pad_cb, (void *) (intptr_t) n);
 	// row 3: BAL and LEV sliders with their names, KEEP
-	const int sy = py + padh + gap * 2, sh = o ? 14 + TH->dy / 24 : 28 + TH->dy / 12, lab = o ? 40 : 84, kk = o ? 44 : 90;
+	const int sy = py + padh + gap * 2, sh = o ? LU (14) + TH->pdy / 24 : LU (28) + TH->pdy / 12, lab = o ? 40 : 84, kk = o ? 44 : 90;
 	s_BalL = th_label (pg, x0, sy + (sh - lv_font_get_line_height (f)) / 2, f, o ? TH->ink : TH->win_ink, "BAL");
 	s_LevL = th_label (pg, x0, sy + sh + gap + (sh - lv_font_get_line_height (f)) / 2, f, o ? TH->ink : TH->win_ink, "LEV");
 	lv_obj_set_width (s_BalL, lab), lv_obj_set_width (s_LevL, lab);

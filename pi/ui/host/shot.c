@@ -1935,7 +1935,7 @@ static void theme_run (int style, const char *pre)
 	// 0.5.0: the LOOP page - no grabs, a loop playing with eight grabs (the longest texts), the looper off, the engine not there yet
 	{
 		int pg = sidecar_ui_page ();
-		sidecar_ui_show (24);
+		sidecar_ui_show (25);
 		EXPECT (sidecar_loop_shown () && !sidecar_morph_shown ());
 		loop_fake (0, 0); sidecar_loop_set (&s_Lo); run (2); shot ("loop-empty");
 		loop_fake (8, 2); sidecar_loop_set (&s_Lo); run (2); shot ("loop-playing");
@@ -1944,15 +1944,15 @@ static void theme_run (int style, const char *pre)
 		loop_fake (8, 2); sidecar_loop_set (&s_Lo); run (2);
 		{	// the controls send the console's lines (a pad plays and shows; STOP fades, CUT cuts at once; sliders absolute)
 			int x, y, c0 = s_nCmds;
-			EXPECT (sidecar_loop_key (0, &x, &y)); tap (x, y); EXPECT_CMD ("loop=grab:0.5");
-			EXPECT (sidecar_loop_key (5, &x, &y)); tap (x, y); EXPECT_CMD ("loop=grab:16");
-			EXPECT (sidecar_loop_key (6, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop");
-			EXPECT (sidecar_loop_key (7, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop:cut:now");
-			EXPECT (sidecar_loop_key (10, &x, &y)); tap (x, y); EXPECT_CMD ("loop=play:#102"); EXPECT (sidecar_loop_sel () == 2);
-			EXPECT (sidecar_loop_key (16, &x, &y)); tap (x, y); EXPECT_CMD ("loop=keep:#102");
-			EXPECT (sidecar_loop_key (17, &x, &y)); tap (x, y); EXPECT_CMD ("loop=fade:2");	// FADE 1 -> 2 (the fake: index 2 = 1 bar, next 2)
-			EXPECT (sidecar_loop_key (18, &x, &y)); tap (x, y); EXPECT_CMD ("loop=mute:off");	// (the fake has it on)
-			EXPECT (sidecar_loop_key (19, &x, &y)); tap (x, y); EXPECT_CMD ("loop=live:off");	// (the fake has PERF 12: past it is off)
+			EXPECT (sidecar_loop_key (0, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=grab:0.5");
+			EXPECT (sidecar_loop_key (5, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=grab:16");
+			EXPECT (sidecar_loop_key (6, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=stop");
+			EXPECT (sidecar_loop_key (7, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=stop:cut:now");
+			EXPECT (sidecar_loop_key (10, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=play:#102"); EXPECT (sidecar_loop_sel () == 2);
+			EXPECT (sidecar_loop_key (16, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=keep:#102");
+			EXPECT (sidecar_loop_key (17, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=fade:2");	// FADE 1 -> 2 (the fake: index 2 = 1 bar, next 2)
+			EXPECT (sidecar_loop_key (18, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=mute:off");	// (the fake has it on)
+			EXPECT (sidecar_loop_key (19, &x, &y)); tap_raw (x, y); EXPECT_CMD ("loop=live:off");	// (the fake has PERF 12: past it is off)
 			EXPECT (s_nCmds - c0 == 9);
 		}
 		sidecar_ui_show (pg);

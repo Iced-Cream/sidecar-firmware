@@ -23,7 +23,7 @@
 #include "sidecar_insfx.h"		// page 9: INSERT FX, a voice's inserts and sends (fx-ins)
 #include "sidecar_mfx.h"		// MASTER FX
 #include "sidecar_morph.h"		// page 20: MORPH (0.5.0 scenes: the pads, a scene's locks, the crossfader)
-#include "sidecar_loop.h"		// page 24: LOOP (0.5.0 the master looper: grabs, STOP, KEEP, BAL / LEV; core/loop)
+#include "sidecar_loop.h"		// page 25: LOOP (0.5.0 the master looper: grabs, STOP, KEEP, BAL / LEV; core/loop)
 #include "sidecar_xy.h"		// page 22: XY PAD (0.5.0: the touchscreen as an XY controller, core/mod/xypad.h)
 #include "sidecar_song.h"		// page 10: SONG, SONG RECORD's timeline (core/song)
 #include "sidecar_rec.h"		// page 11: REC, the Overbridge multitrack recorder (UP + T7, the home page's REC status)
@@ -1191,7 +1191,7 @@ static void oled_build (lv_obj_t *scr)
 	sidecar_morph_set_command (command);
 	OLED_UNDER (scr, sidecar_xy_create (scr, 0));
 	sidecar_xy_set_command (command);
-	sidecar_loop_create (scr, 0);
+	OLED_UNDER (scr, sidecar_loop_create (scr, 0));
 	sidecar_loop_set_command (command);
 	home_perform (s_Pg[PG_PERFORM]);
 	OLED_UNDER (scr, sidecar_song_create (scr, 0, song_cmd));
