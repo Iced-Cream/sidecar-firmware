@@ -70,6 +70,21 @@ public:
 	static int UsbcSlot (void);			// the same, -1 while none is chosen (/status)
 	static const char *SlotName (int nSlot);	// the box in slot nSlot (rytm, a4, digitakt; none)
 	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
+	// A box's MIDI by its transport, not its slot (slots by attach order: the Rytm, on the host link, may be slot 1 and an
+	// A4, on link1, slot 0). Transport 0 is the host link (the kernel's m_pMIDI: a Rytm or a Digitakt), 1 link1 (link1.h:
+	// an A4, or a second host-type box). MidiSlot: the slot whose box that MIDI device is part of (the same USB vendor,
+	// product and serial strings as the slot's stream), -1 none (no such MIDI, or its box has no stream). SetMidiDevices: core 0's loop, each pass
+	// (0: none); the slots are worked out there and read anywhere (IRQs too).
+	static void SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1);
+	static int MidiSlot (unsigned nTransport)	{ return nTransport < 2 ? s_nMidiSlot[nTransport] : -1; }
+	// usb=mirror: USB-C shows the host link's box (or none is chosen: the host link's MIDI goes to USB-C, as before two
+	// boxes); USB-C shows link1's box; the relay shows the host link's box. A transport's MIDI goes to the computer of the
+	// port that shows its box, the computer's MIDI there to it.
+	static boolean UsbcShowsHostLink (void)		{ return UsbcSlot () < 0 || UsbcSlot () == MidiSlot (0); }
+	static boolean UsbcShowsLink1 (void)		{ return UsbcSlot () >= 0 && UsbcSlot () == MidiSlot (1); }
+	static boolean RelayShowsHostLink (void)	{ return RelaySlot () >= 0 && RelaySlot () == MidiSlot (0); }
+	static boolean RelayShowsLink1 (void)		{ return RelaySlot () >= 0 && RelaySlot () == MidiSlot (1); }
+	boolean OnTransport (unsigned nTransport) const	{ return (int) m_nSlot == MidiSlot (nTransport); }
 	static int MirrorPrefer (void);			// -1 (mirror_assign::kFirst): attach order (mirror= retired 2026-11-21)
 	static boolean MirrorRelayFirst (void);		// cmdline mirrorfirst=relay: the relay filled first (testing it), not USB-C
 	static void PollAssign (void);			// core 0's loop: a box came or went: who goes where (before PollTargets)
@@ -197,6 +212,7 @@ public:
 
 	static CObUsb *s_pThis;				// the primary stream: s_pBox[0], else s_pBox[1]
 	static CObUsb *s_pBox[Slots];
+	static volatile int s_nMidiSlot[2];		// SetMidiDevices: each transport's slot, -1 none
 	static volatile boolean s_bActive;
 #if RASPPI >= 5
 	static volatile boolean s_bFading;
