@@ -239,7 +239,8 @@ build/umh/.patched: $(UMH_PATCHES)
 	@rm -rf build/umh && mkdir -p build/umh/lib/usb
 	@cp -R $(DWC_ROOT)/include build/umh/ && cp $(DWC_ROOT)/lib/usb/usbmidihost.cpp $(DWC_ROOT)/lib/usb/xhciendpoint.cpp $(DWC_ROOT)/lib/usb/usbmidi.cpp \
 	  $(DWC_ROOT)/lib/usb/usbrequest.cpp build/umh/lib/usb/
-	@cd build/umh && for p in $(UMH_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
+	@# a patch already in the checkout (pi/circle/build.sh puts spike2's into pi/circle/build/circle) is not applied again
+	@cd build/umh && for p in $(UMH_PATCHES); do patch -s -f -R -p1 --dry-run < ../../$$p >/dev/null 2>&1 || patch -s -p1 < ../../$$p || exit 1; done
 	@touch $@
 UMH_CXX = $(CXX) -std=c++17 -O1 -g -Wall -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -fno-exceptions -fno-rtti \
 	  -DAARCH=64 -Ibuild/umh/include -I.
