@@ -229,6 +229,24 @@ build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(w
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
 	  -Ishim_dwc -Ibuild/dwc/include -I. -I.. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
 	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp
+# the USB MIDI host's IN requests (test_midi_rxqueue.cpp, pi/circle/circle-midi-rxqueue.patch): Circle's usbmidihost.cpp with
+# the engine's patch stack (pi/engine/build.sh's order), copied into build/umh and patched there; built for the xHCI
+# (RASPPI 4: both buffers in flight, no pause after a zero-length packet) and the DWHCI (RASPPI 3: Circle's behaviour)
+UMH_PATCHES := ../../circle/spike2/circle-xhci-urbqueue.patch $(addprefix ../../circle/,circle-midi-async.patch circle-xhci-dropurbs.patch \
+	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch)
+build/umh/.patched: $(UMH_PATCHES)
+	@test -f $(DWC_ROOT)/lib/usb/usbmidihost.cpp || { echo "test_midi_rxqueue: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
+	@rm -rf build/umh && mkdir -p build/umh/lib/usb
+	@cp -R $(DWC_ROOT)/include build/umh/ && cp $(DWC_ROOT)/lib/usb/usbmidihost.cpp $(DWC_ROOT)/lib/usb/xhciendpoint.cpp $(DWC_ROOT)/lib/usb/usbmidi.cpp \
+	  $(DWC_ROOT)/lib/usb/usbrequest.cpp build/umh/lib/usb/
+	@cd build/umh && for p in $(UMH_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
+	@touch $@
+UMH_CXX = $(CXX) -std=c++17 -O1 -g -Wall -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -fno-exceptions -fno-rtti \
+	  -DAARCH=64 -Ibuild/umh/include -I.
+build/test_midi_rxqueue: test_midi_rxqueue.cpp build/umh/.patched check.h
+	$(UMH_CXX) -DRASPPI=4 -o $@ $< build/umh/lib/usb/usbmidihost.cpp
+	$(UMH_CXX) -DRASPPI=3 -o $@_dwhci $< build/umh/lib/usb/usbmidihost.cpp
+	./$@_dwhci
 build/test_stor_fatfs: build/fatfs-fat/ff.h $(FATFS_DEPS)
 	cc -O1 -g -w -c -o build/fatfs-fat/ff.o build/fatfs-fat/ff.c && cc -O1 -g -w -c -o build/fatfs-fat/ffunicode.o build/fatfs-fat/ffunicode.c
 	$(CXX) $(CXXFLAGS) -Ibuild/fatfs-fat -o $@ test_stor_fatfs.cpp ../stor_vol.cpp build/fatfs-fat/ff.o build/fatfs-fat/ffunicode.o
