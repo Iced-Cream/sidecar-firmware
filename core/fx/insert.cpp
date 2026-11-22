@@ -353,6 +353,15 @@ int refused_count(int box) {
     for (int s = 0; s < kSlots; ++s) n += k.refused[c][s] && k.type[c][s] != kOff;
   return n;
 }
+CORE_COLD bool shed(int box, int c, int s) {
+  if (box < 0 || box >= kVoiceSlots || c < 0 || c >= kVoices || s < 0 || s >= kSlots) return false;
+  Control& k = control_of(box);
+  const int t = k.type[c][s];
+  if (t == kOff || t == kAmp || k.refused[c][s]) return false;
+  k.refused[c][s] = 1;   // (the render core reads it each block: dry from the next)
+  ++g_stats.refused;
+  return true;
+}
 CORE_COLD int regrant() {
   int n = 0;
   if (!g_cpu_fits) return 0;

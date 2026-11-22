@@ -145,7 +145,10 @@ int running_master();              // the master's instances
 void set_cpu_check(bool (*fits)(int row));
 int rows();                        // AMP's rows
 int master_row();                  // the first master row (the master's chains and the R row after them)
-bool slot_playing(int row, int s); // a capture in it (playing or fading): what admission counts
+bool slot_playing(int row, int s); // a capture in it (playing or fading), not shed: what admission counts
+// Shed for CPU (decided 2026-11-22, a Pi without cooling: the clock lowered for heat): a playing slot stops at the next
+// step and shows NO CPU, and is admitted again like any refused slot once it fits (amp_fits). false: not playing.
+bool shed(int row, int s);
 int refused_cpu();                 // AMP slots showing NO CPU now (/status admit ampRefused)
 // The console: "amp" (the state), "amp=rescan"; false: not an amp command
 bool command(const char* p, char* out, int cap);

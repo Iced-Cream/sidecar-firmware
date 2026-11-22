@@ -170,6 +170,7 @@ CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
     if (l.parting) return true;
   return false;
 }
+static void shed_over();
 CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is saved, a slot whose box left is free for any box)
   usb_take();   // the USB devices that came or went (core 0's)
   tell_tick();
@@ -183,6 +184,7 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   for (Link& l : g_links)
     if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   admit_alone();
+  shed_over();
   if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
   rebase();
   return false;
@@ -238,6 +240,39 @@ static CORE_COLD bool ins_room(int b, int c, int s, int t) {
 static CORE_COLD bool amp_room(int row) {
   const admit::Load ld = load_now();
   return admit::amp_fits(admit::amp_core(row, amp::master_row(), ld), ld);
+}
+// The clock lowered (admit::set_clock: the engine's step-down for heat, decided 2026-11-22 for a Pi without cooling, or
+// cpumhz=) leaves a render core over kLimitBp with what is admitted: shed one item a step until each is within it. AMPs
+// first (the costliest: the highest voice row first), then the voice INSERT slots of the box attached last (the first ask
+// wins), its highest voice and slot first. Each plays dry and shows NO CPU, and is admitted again when it fits (amp_fits,
+// ins::regrant: the same limit with its own cost added, so nothing flickers). Voices are never shed here.
+static CORE_COLD void shed_over() {
+  if (!admit::on() || !admit::enforce()) return;
+  admit::Load ld;
+  load_now(&ld);
+  for (int core = 1; core <= 2; ++core) {
+    if (admit::core_bp(core, ld) <= admit::kLimitBp) continue;
+    const int m = amp::master_row();
+    for (int r = m - 1; r >= 0; --r)
+      for (int s = amp::kSlots - 1; s >= 0; --s)
+        if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == core && amp::shed(r, s)) {
+          log(CORE_STR("device: core %d over 80 %% at %u MHz: AMP row %d %c shed (NO CPU)"), core, admit::clock(), r, 'A' + s);
+          return;
+        }
+    int order[2] = {0, 1};
+    if (g_links[0].order < g_links[1].order) order[0] = 1, order[1] = 0;   // the box attached last first
+    for (int b : order) {
+      if (b >= kVoiceSlots || !ld.held[b]) continue;
+      const int n = ld.asked[b] < ins::kVoices ? ld.asked[b] : ins::kVoices;
+      for (int c = n - 1; c >= 0; --c)
+        for (int s = ins::kSlots - 1; s >= 0; --s)
+          if (admit::voice_core(b, c, ld) == core && ins::shed(b, c, s)) {
+            log(CORE_STR("device: core %d over 80 %% at %u MHz: slot %d V%d %c shed (NO CPU)"), core, admit::clock(), b, c + 1,
+                'A' + s);
+            return;
+          }
+    }
+  }
 }
 static CORE_COLD void set_voices(Link& l, int n, bool tell) {
   __atomic_store_n(&l.voices, (uint8_t)n, __ATOMIC_RELAXED);

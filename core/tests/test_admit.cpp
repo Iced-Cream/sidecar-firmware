@@ -359,6 +359,23 @@ static void engine() {
     CHECK(!ins::refused(c, 0));
     admit::set_enforce(true);
     ins::set_type(c, 0, ins::kOff), ins::set_type(c, 1, ins::kOff);
+    // the clock lowered (the step-down for heat, decided 2026-11-22: a Pi without cooling): core 2 76 % at 1500 is 95 % at
+    // 1200, over even without the SAT (87.5 %): the next idle pass sheds the SAT (dry, NO CPU; voices never), and the
+    // clock back at 1500 admits it again
+    ins::set_type(c, 0, ins::kSat);
+    CHECK(!ins::refused(c, 0));
+    admit::set_clock(1200);
+    device::step(true);
+    CHECK(ins::refused(c, 0) && ins::refused_count(b) == 1);
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 0 && device::admitted(0) == 8 && device::admitted(1) == 2);
+    device::step(true);   // (still over: nothing else to shed, nothing admitted again)
+    CHECK(ins::refused(c, 0));
+    admit::set_clock(1500);
+    device::step(true);
+    CHECK(!ins::refused(c, 0));
+    ins::set_type(c, 0, ins::kOff);
+    admit::set_clock(0);
   }
   // no bench: everything its count
   admit::reset();

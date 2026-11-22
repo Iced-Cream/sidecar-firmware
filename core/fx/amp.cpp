@@ -87,6 +87,7 @@ struct Ctl {
   uint32_t fail_gen = 0;
   Status fail_st = kIdle;
   bool refused = false;      // the cap's refusal counted once
+  bool shed = false;         // shed(): stop at the next step, NO CPU until there is room again
   char pending[kNameMax];    // the card's AMP line, resolved once listed
 };
 Ctl g_k[kRows][kSlots];
@@ -638,7 +639,14 @@ int refused_cpu() {
   return n;
 }
 int master_row() { return ins::kM0; }
-bool slot_playing(int row, int s) { return row >= 0 && row < kRows && s >= 0 && s < kSlots && g_k[row][s].cur >= 0; }
+bool slot_playing(int row, int s) {
+  return row >= 0 && row < kRows && s >= 0 && s < kSlots && g_k[row][s].cur >= 0 && !g_k[row][s].shed;
+}
+bool shed(int row, int s) {
+  if (!slot_playing(row, s)) return false;
+  g_k[row][s].shed = true;
+  return true;
+}
 int running_master() {
   int n = 0;
   for (int c = ins::kM0; c < kRows; ++c)
@@ -917,6 +925,14 @@ bool step() {
       if (want < 0) {
         k.st = kNoFiles;
         if (k.cur >= 0) offer(c, s, -1), did = true;
+        continue;
+      }
+      if (k.shed) {   // shed for CPU (the clock lowered: device.cpp shed_over): dry, NO CPU, admitted again when it fits
+        k.shed = false;
+        if (!k.refused) ++g_stats.refused, k.refused = true;
+        k.st = kCpu;
+        if (k.cur >= 0) offer(c, s, -1), did = true;
+        log(CORE_STR("amp: %s %c: NO CPU (shed: its render core over 80 %% at the clock now)"), ins::chain_name(parent(c)), 'A' + s);
         continue;
       }
       if (k.cur >= 0 && g_meta[k.cur].model == want && g_meta[k.cur].gen == g_gen) {

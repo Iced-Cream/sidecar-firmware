@@ -843,6 +843,9 @@ int json(char* out, int cap);                // "\"ins\":{...}" (docs/INSERT-FX.
 // idle pass, never refusing one that plays. Control core, never per sample.
 void set_cpu_check(bool (*fits)(int box, int c, int s, int t));
 int regrant();                               // the refused slots now admitted
+// Shed for CPU (decided 2026-11-22: the clock lowered for heat): box slot box's voice chain c, slot s plays dry and shows
+// NO CPU, as if refused, until regrant() finds room. false: OFF, AMP (amp::shed) or already refused.
+bool shed(int box, int c, int s);
 bool refused(int c, int s);                  // the slot in hand's voice slot plays dry for CPU (the pages: NO CPU)
 int refused_count(int box);                  // box slot's voice slots set but refused now (/status admit insRefused)
 struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks, refused; };

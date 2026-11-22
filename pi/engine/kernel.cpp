@@ -790,10 +790,10 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	}
 	// setting: cpumhz=, where 1500 means the board's full clock; mhz: what the firmware says it set; fullMhz, minMhz: its range;
 	// measuredMhz: what it measured (MeasureClock, up to 10 s old, 0: none yet); socMaxC: Circle's throttle (socmaxtemp)
-	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s}",
+	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s,\"heatCapMhz\":%d}",
 		  k->m_nClockSetting, k->m_nClockMHz, k->m_nBudgetUs, k->AskedMHz (), k->m_CPUThrottle.GetMaxClockRate () / 1000000,
 		  k->m_CPUThrottle.GetMinClockRate () / 1000000, k->m_nMeasuredMHz, k->m_Options.GetSoCMaxTemp (),
-		  k->m_bClockCapped ? "true" : "false");
+		  k->m_bClockCapped ? "true" : "false", k->m_ThermalCap.cap_mhz);
 	pOut->Append (s);
 #if RASPPI >= 5
 	{	// the fan header (fan.h): mode (auto, on, off), from (default, card, cmdline, console), level 0..4, duty (of 255),
@@ -2131,6 +2131,7 @@ void CKernel::LogStats (void)
 	{ mbtrace::Scope Mb (3); nTemp = m_CPUThrottle.GetTemperature (); }
 	s_nTempC = m_nTempC = nTemp;
 	ThermalStep (nTemp);
+	ThermalCapStep (nTemp);
 	UpdateNoticeStep ();
 #if RASPPI >= 5
 	FanStep (nTemp, 0);
@@ -2338,7 +2339,10 @@ void CKernel::SetClock (unsigned nSettingMHz)
 		m_Logger.Write (From, LogWarning, "cpu: the firmware gave no clock range, the CPU clock is left as it is");
 		return;
 	}
-	const unsigned nHz = cpuclock::target_hz (nSettingMHz, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
+	unsigned nHz = cpuclock::target_hz (nSettingMHz, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
+	if (m_ThermalCap.cap_mhz > 0 && (unsigned) m_ThermalCap.cap_mhz * 1000000u < nHz)	// the step-down for heat (ThermalCapStep)
+		nHz = (unsigned) m_ThermalCap.cap_mhz * 1000000u < m_CPUThrottle.GetMinClockRate () ? m_CPUThrottle.GetMinClockRate ()
+										 : (unsigned) m_ThermalCap.cap_mhz * 1000000u;
 	const boolean bFull = nHz >= m_CPUThrottle.GetMaxClockRate ();
 	if (m_nClockMHz != 0 && nHz / 1000000 < m_nClockMHz) ApplyBudget (nHz / 1000000, FALSE);	// lowering: the budget first
 	if (bFull)
@@ -2443,6 +2447,30 @@ void CKernel::ThermalStep (unsigned nTempC)
 	}
 }
 
+// The step-down for a Pi without cooling (thermal.h step; decided 2026-11-22 after LT4, where a bare Pi 4 reached 77 C under
+// the full two-box load and Circle's throttle dropped it from 1500 to 600 MHz at once: ~150,000 underruns in 4 s). From
+// 74 C the clock is capped at 1200, from 76 C at 1000, and only at 78 C (socmaxtemp) at the board's minimum; each cap is
+// raised a step after 30 s at or below 70 C. The cap goes through SetClock (the mailbox: Circle's Update stops while it
+// holds, m_bClockCapped), so the voice budget and CPU admission follow; what no longer fits on a render core at the lower
+// clock (AMPs, then INSERT types) plays dry and shows NO CPU until it fits again (device.cpp shed_over). thermalstep=off
+// on the cmdline leaves the clock to Circle's throttle as before.
+void CKernel::ThermalCapStep (unsigned nTempC)
+{
+	static int s_nOn = -1;
+	if (s_nOn < 0)
+	{
+		const char *p = m_Options.GetAppOptionString ("thermalstep", 0);
+		s_nOn = p != 0 && strcmp (p, "off") == 0 ? 0 : 1;
+	}
+	if (!s_nOn || !m_CPUThrottle.IsDynamic ()) return;
+	const int nWas = m_ThermalCap.cap_mhz;
+	if (!thermal::step (m_ThermalCap, (int) nTempC, (int) AskedMHz (), (int) (m_CPUThrottle.GetMinClockRate () / 1000000))) return;
+	m_Logger.Write (From, m_ThermalCap.cap_mhz && (nWas == 0 || m_ThermalCap.cap_mhz < nWas) ? LogWarning : LogNotice,
+			"thermal: SoC %u C, clock cap %u -> %u MHz (0: none; setting %u, step %u this boot)", nTempC, nWas,
+			m_ThermalCap.cap_mhz, m_nClockSetting, m_ThermalCap.steps);
+	SetClock (m_nClockSetting);
+}
+
 #if RASPPI >= 5
 // The fan header (fan.h, fan_pi.h, docs/pi5.md "The fan"). fan= in /.sidecar/display.txt (auto, on, off), cmdline.txt's
 // wins; the default AUTO. The pin starts here, before the bench, and is set from a first reading at once (the
@@ -2514,6 +2542,7 @@ void CKernel::FollowClock (void)
 			nMHz, m_nClockMHz, m_nClockSetting, m_nTempC);
 	m_nClockMHz = nMHz;
 	ApplyBudget (nMHz, TRUE);
+	core::admit::set_clock (nMHz);		// CPU admission follows too: what no longer fits is shed (device.cpp shed_over)
 }
 
 // What the firmware measures, not what it says it set: GET_CLOCK_RATE repeats the rate asked for, so the firmware's own
