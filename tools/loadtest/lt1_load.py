@@ -4,7 +4,7 @@
 Both boxes may be on stock OS: every voice and setting comes from the Pi (pi/engine/cores.cpp slot=S:, docs/pi-engine.md).
 Needs a kernel with the load test (sidecar-firmware b73c0c1 or later) and the pairing gate off (paircode=0).
 
-  lt1_load.py --base http://HOST[:PORT] setup [--worst NAME] [--config A|B]   load on (loadtest=on first: nothing saved)
+  lt1_load.py --base http://HOST[:PORT] setup [--worst NAME] [--config A|B] [--enforce]   load on (loadtest=on first: nothing saved)
   lt1_load.py --base ... config B                                             AMP on the first box's voices 1-6 (INSERT A)
   lt1_load.py --base ... read --secs 30 --tag NAME                            stats lines for SECS, /status, mfx / sendfx
   lt1_load.py --base ... stop                                                 drones off, admit=enforce
@@ -87,8 +87,10 @@ def worst_machine(pi):
     return max(play, key=play.get), rows
 
 
-def setup_cmds(worst, slots_voices):
-    c = ['loadtest=on', 'admit=report', 'amp=synthetic:on']
+def setup_cmds(worst, slots_voices, enforce=False):
+    # --enforce (LT4, rebalance-core2): admission stays on, so each INSERT type and AMP is admitted as it is set (or refused,
+    # NO CPU: /status admit insRefused / ampRefused) and the voices are the admitted counts; else admit=report (all of it)
+    c = ['loadtest=on', 'admit=enforce' if enforce else 'admit=report', 'amp=synthetic:on']
     for s, n in slots_voices:
         for v in range(n):
             c.append('slot=%d:notemach=%d:%s' % (s, v, worst))
@@ -106,9 +108,9 @@ def setup_cmds(worst, slots_voices):
     return c
 
 
-def light_cmds(worst, slots_voices):
+def light_cmds(worst, slots_voices, enforce=False):
     """--profile qemu: every kind of command once per slot, on one voice (QEMU can't carry the full load: its engine stalls)."""
-    c = ['loadtest=on', 'admit=report', 'amp=synthetic:on']
+    c = ['loadtest=on', 'admit=enforce' if enforce else 'admit=report', 'amp=synthetic:on']
     for s, n in slots_voices:
         c += ['slot=%d:notemach=0:%s' % (s, worst), 'slot=%d:ins=V1:A:type:sat' % s, 'slot=%d:ins=V1:B:type:sat' % s,
               'slot=%d:ins=V1:eq:hpf:40' % s, 'slot=%d:ins=V1:send:3:80' % s, 'slot=%d:ins=B3:A:type:cloud' % s,
@@ -192,6 +194,7 @@ def main():
     ap.add_argument('--secs', type=int, default=30)
     ap.add_argument('--tag', default='read')
     ap.add_argument('--profile', choices=['unit', 'qemu'], default='unit')
+    ap.add_argument('--enforce', action='store_true', help='setup with admission on (admit=enforce): types and AMPs admitted as set')
     a = ap.parse_args()
     pi = Pi(a.base, a.out)
     pi.log()
@@ -234,7 +237,7 @@ def main():
     if len(hs) != 2:
         print('not two boxes held: %s' % [(h[0], h[1]) for h in hs])
         return 2
-    cmds = (light_cmds if a.profile == 'qemu' else setup_cmds)(worst, [(h[0], min(8, h[1])) for h in hs])
+    cmds = (light_cmds if a.profile == 'qemu' else setup_cmds)(worst, [(h[0], min(8, h[1])) for h in hs], a.enforce)
     if a.what == 'cmds':
         print('\n'.join(cmds))
         return 0

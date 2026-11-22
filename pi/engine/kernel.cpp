@@ -68,6 +68,8 @@ static int s_nRytmPatIndex = -1;
 #include "device/a4.h"
 #include "device/admit.h"
 #include "device/digitakt.h"
+#include "fx/amp.h"		// CPU admission's refusals in /status (amp::refused_cpu)
+#include "fx/insert.h"		// ... and ins::refused_count
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"
@@ -693,9 +695,10 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	{	// CPU admission (core/device/admit.h): the render cores' worst case for the voices admitted now, 1/100 % of a core
 		core::admit::Load AL;
 		core::device::load_now (&AL);	// with the AMPs playing on each core (admitted when loaded: admit.h amp_fits)
-		s.Format (",\"admit\":{\"bench\":%s,\"enforce\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u,\"amps1\":%u,\"amps2\":%u}",
+		s.Format (",\"admit\":{\"bench\":%s,\"enforce\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u,\"amps1\":%u,\"amps2\":%u,\"ins1Bp\":%u,\"ins2Bp\":%u,\"insRefused\":[%d,%d],\"ampRefused\":%d}",
 			  core::admit::on () ? "true" : "false", core::admit::enforce () ? "true" : "false", core::admit::clock (), core::admit::kLimitBp,
-			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL), AL.amps[1], AL.amps[2]);
+			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL), AL.amps[1], AL.amps[2], (unsigned) AL.ins[1], (unsigned) AL.ins[2],
+			  core::ins::refused_count (0), core::ins::refused_count (1), core::amp::refused_cpu ());
 		pOut->Append (s);
 	}
 	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)

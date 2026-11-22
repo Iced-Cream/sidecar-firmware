@@ -631,6 +631,12 @@ const char* slot_file(int c, int s) {
 static bool (*g_cpu_fits)(int row) = nullptr;
 void set_cpu_check(bool (*fits)(int row)) { g_cpu_fits = fits; }
 int rows() { return kRows; }
+int refused_cpu() {
+  int n = 0;
+  for (int c = 0; c < kRows; ++c)
+    for (int s = 0; s < kSlots; ++s) n += g_k[c][s].st == kCpu;
+  return n;
+}
 int master_row() { return ins::kM0; }
 bool slot_playing(int row, int s) { return row >= 0 && row < kRows && s >= 0 && s < kSlots && g_k[row][s].cur >= 0; }
 int running_master() {

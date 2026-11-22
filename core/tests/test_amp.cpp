@@ -554,6 +554,7 @@ int main() {
     int playing = 0, cpu = 0;
     for (int c = 0; c < 8; ++c) playing += amp::status(c, 0) == amp::kPlaying, cpu += amp::status(c, 0) == amp::kCpu;
     printf("CPU check: %d playing, %d NO CPU\n", playing, cpu);
+    CHECK(amp::refused_cpu() == 6);
     CHECK(playing == 2 && cpu == 6 && amp::running() == 2 && text(4, 0) == "NO CPU" && amp::slot_playing(0, 0) + amp::slot_playing(1, 0) + amp::slot_playing(2, 0) + amp::slot_playing(3, 0) == 2);
     s_room = 3;   // room again (a box left): one more of 0..3 plays
     run();

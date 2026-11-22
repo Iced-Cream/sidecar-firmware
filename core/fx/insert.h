@@ -844,6 +844,7 @@ int json(char* out, int cap);                // "\"ins\":{...}" (docs/INSERT-FX.
 void set_cpu_check(bool (*fits)(int box, int c, int s, int t));
 int regrant();                               // the refused slots now admitted
 bool refused(int c, int s);                  // the slot in hand's voice slot plays dry for CPU (the pages: NO CPU)
+int refused_count(int box);                  // box slot's voice slots set but refused now (/status admit insRefused)
 struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks, refused; };
 const Stats& stats();
 void reset();                                // tests: every chain off, sends 0, the engine cleared

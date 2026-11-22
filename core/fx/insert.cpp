@@ -345,6 +345,14 @@ void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
 static bool (*g_cpu_fits)(int box, int c, int s, int t) = nullptr;
 void set_cpu_check(bool (*fits)(int box, int c, int s, int t)) { g_cpu_fits = fits; }
 bool refused(int c, int s) { return valid(c, s) && c < kVoices && K(c).refused[c][s] && K(c).type[c][s] != kOff; }
+int refused_count(int box) {
+  if (box < 0 || box >= kVoiceSlots) return 0;
+  const Control& k = control_of(box);
+  int n = 0;
+  for (int c = 0; c < kVoices; ++c)
+    for (int s = 0; s < kSlots; ++s) n += k.refused[c][s] && k.type[c][s] != kOff;
+  return n;
+}
 CORE_COLD int regrant() {
   int n = 0;
   if (!g_cpu_fits) return 0;

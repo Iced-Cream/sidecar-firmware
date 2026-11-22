@@ -146,6 +146,7 @@ void set_cpu_check(bool (*fits)(int row));
 int rows();                        // AMP's rows
 int master_row();                  // the first master row (the master's chains and the R row after them)
 bool slot_playing(int row, int s); // a capture in it (playing or fading): what admission counts
+int refused_cpu();                 // AMP slots showing NO CPU now (/status admit ampRefused)
 // The console: "amp" (the state), "amp=rescan"; false: not an amp command
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);      // "\"amp\":{...}"

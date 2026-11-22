@@ -322,6 +322,7 @@ static void engine() {
     CHECK(ld.ins[2] == 600 && admit::core_bp(2, ld) == 7600);
     ins::set_type(c, 1, ins::kSat);
     CHECK(ins::refused(c, 1) && ins::stats().refused >= 1);
+    CHECK(ins::refused_count(b) == 1 && ins::refused_count(1 - b) == 0);
     device::load_now(&ld);
     CHECK(ld.ins[2] == 600);   // (a refused slot is not counted)
     ins::set_type(c, 0, ins::kSat);   // set again (the same type): still admitted, its own place not counted twice
