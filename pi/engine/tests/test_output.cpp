@@ -150,6 +150,43 @@ int main() {
     for (int k = 0; k < 1000; ++k) n.Pull(g, 7);
     CHECK(n.Underflows() == 0 && n.RestartUnderflows() == 7000);
   }
+  {  // The overload mute (core3-refill-bound): underruns in 4 x 50 ms windows in a row mute the stage (frames still
+     // taken); 500 ms without one brings it back, faded in. A single burst never mutes.
+    static Output m;
+    static int16_t b[12][8];
+    for (int k = 0; k < 12; ++k) for (int v = 0; v < 8; ++v) b[k][v] = v == 0 ? 8192 : 0;
+    int32_t g[13][12];
+    m.SetFifoTarget(96);
+    m.Reset();
+    for (int k = 0; k < 8; ++k) m.Push(b, 12);
+    for (int k = 0; k < 2000; ++k) m.Push(b, 12), m.Pull(g, 12);   // 0.5 s healthy: armed, faded in
+    CHECK(m.Underflows() == 0 && !m.Starved() && g[11][0] != 0);
+    while (m.Level()) m.Pull(g, 12);                               // one burst: ~100 ms dry, then healthy again
+    for (int k = 0; k < 400; ++k) m.Pull(g, 12);
+    const uint32_t u1 = m.Underflows();
+    CHECK(u1 >= 4800 && !m.Starved() && m.StarveMutes() == 0);   // 2 windows: no mute
+    for (int k = 0; k < 8; ++k) m.Push(b, 12);
+    for (int k = 0; k < 1000; ++k) m.Push(b, 12), m.Pull(g, 12);
+    CHECK(m.Underflows() == u1 && !m.Starved() && g[11][0] != 0);
+    // behind real time: 12 frames in for every 13 out (LT1 config B was ~7,500 blocks of 8,000), for 400 ms
+    for (int k = 0; k < 1600; ++k) m.Push(b, 12), m.Pull(g, 13);
+    CHECK(m.Underflows() > u1 && m.Starved() && m.StarveMutes() == 1);
+    m.Push(b, 12);
+    m.Pull(g, 12);
+    bool silent = true;
+    for (int i = 0; i < 12; ++i) for (int c = 0; c < 12; ++c) silent = silent && g[i][c] == 0;
+    CHECK(silent && m.Level() == 0);                               // the frames taken, nothing sent
+    for (int k = 0; k < 8; ++k) m.Push(b, 12);                     // keeping up again
+    for (int k = 0; k < 1990; ++k) m.Push(b, 12), m.Pull(g, 12);   // just under 500 ms clean: still muted
+    CHECK(m.Starved() && g[11][0] == 0);
+    for (int k = 0; k < 20; ++k) m.Push(b, 12), m.Pull(g, 12);
+    CHECK(!m.Starved() && m.StarveMutes() == 1);
+    CHECK(g[11][0] > 0 && g[11][0] < (int32_t)(0.25f * Output::kMainGain * 2147483648.0f * 0.2f));   // fading in from 0
+    for (int k = 0; k < 1000; ++k) m.Push(b, 12), m.Pull(g, 12);
+    CHECK(std::fabs(g[11][0] / 2147483648.0f - 0.25f * Output::kMainGain) < 1e-4f);
+    m.Reset();                                                     // a new stream: judged afresh
+    CHECK(!m.Starved() && m.StarveMutes() == 1);
+  }
   printf("test_output: PASS\n");
   return 0;
 }

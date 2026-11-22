@@ -66,6 +66,10 @@ static volatile unsigned s_nBlocks, s_nMaxBlock, s_nMaxPass, s_nFifoMin = ~0u, s
 static volatile unsigned s_nNoteChans;	// bit c: a note-on on MIDI channel c+1 this second
 static u64 s_nLastTake;
 static unsigned s_nTarget = 96;
+static volatile unsigned s_nRefillCut;		// passes whose refill stopped at RefillCap (the render cores behind real time)
+// A pass's refill at most: both stages from empty to the target (a new stream's refill) and a block each to spare
+static unsigned RefillCap (unsigned nTarget) { return 2 * (nTarget / bridge::kBlock + 1) + 2; }
+unsigned CEngineCores::RefillCuts (void) { return s_nRefillCut; }
 static volatile boolean s_bTargetFixed = FALSE;	// a fifo= set it: the link's default does not
 static boolean s_bNotes = TRUE;
 static boolean s_bReportLog = FALSE;
@@ -635,14 +639,24 @@ void CEngineCores::Control (void)
 		if (nLevel < s_nFifoMin) s_nFifoMin = nLevel;
 		if (nLevel > s_nFifoMax) s_nFifoMax = nLevel;
 		// each stage's FIFO to its target: the base box's, and beside a Rytm slot 1's (side_out.h), each paced by its
-		// own box's stream; the emptier first
-		for (;;)
+		// own box's stream; the emptier first. At most RefillCap blocks a pass (core3-refill-bound): when the render
+		// cores fall behind real time (LT1 config B: core 2 at 100 %, ~7,500 blocks a second where two stages need
+		// 8,000) the FIFOs never reach their target, and an unbounded loop kept this core in here for 5-11 s at a time:
+		// no MIDI, no console command (admit=enforce waited 16-65 s), no tick. Bounded, the pass goes on and the next
+		// one renders again at once (bWorked: no wfe).
 		{
-			const int nSide = core::device::side_slot ();
-			const int nPick = side_out::pick (g_Output.Level (), nSide >= 0, g_OutputSide.Level (), s_nTarget, bridge::kBlock);
-			if (nPick < 0) break;
-			RenderBlock (nPick == 1 ? nSide : -1);
-			bWorked = TRUE;
+			const unsigned nCap = RefillCap (s_nTarget);
+			unsigned nRendered = 0;
+			for (;;)
+			{
+				const int nSide = core::device::side_slot ();
+				const int nPick = side_out::pick (g_Output.Level (), nSide >= 0, g_OutputSide.Level (), s_nTarget, bridge::kBlock);
+				if (nPick < 0) break;
+				if (nRendered == nCap) { s_nRefillCut++; break; }
+				RenderBlock (nPick == 1 ? nSide : -1);
+				nRendered++;
+				bWorked = TRUE;
+			}
 		}
 		Mark (4);
 		if (bridge::idle_prepare () || bridge::idle_save ()) bWorked = TRUE;

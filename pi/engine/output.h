@@ -100,6 +100,17 @@ class Output {
   // core refills a target of a few ms in well under that, so a stream that has not reached its target by then is not
   // refilling but starved, and from then on its empty frames are counted as underruns (armed or not).
   static const uint32_t kRestartGrace = 4800;
+  // Overload mute (core3-refill-bound, after LT1's config B: the render cores fell behind real time for minutes and the
+  // stream crackled with no mute). Underruns in kStarveWindows windows of kStarveWindow frames in a row (each with more
+  // than a render block's worth, kArmSlack) mean the render cores cannot keep up, not a hiccup: the stage's output goes
+  // silent (frames still taken, so the FIFO keeps pacing) until kStarveClear frames pass with no underrun, then fades in
+  // over 200 ms (MainOut's fade, as after a Reset). A single burst never mutes. Starved(): muted now; StarveMutes():
+  // how many times it muted (both the consumer's; others only read).
+  static const uint32_t kStarveWindow = 2400;           // 50 ms
+  static const uint32_t kStarveWindows = 4;             // 200 ms of underruns in every window
+  static const uint32_t kStarveClear = 24000;           // 500 ms without one
+  bool Starved() const { return starved_; }
+  uint32_t StarveMutes() const { return starve_mutes_; }
   float TakePeak();                                     // the largest |sample| (0..1) sent since the last call
   // each PRE / POST voice's pair (L, R) as it went into its pair since the last call (0 for TRK voices); any core
   // (racy floats: a meter)
@@ -135,6 +146,9 @@ class Output {
   uint32_t under_ = 0, restart_under_ = 0, streams_ = 0, target_ = 0;
   Diag d_ = {0, 0, kNone, kNone, 0, kNone, kNone, kNone, kNone, 0};
   bool armed_ = false;                                  // the FIFO reached its target since the last Reset
+  volatile bool starved_ = false;                       // the overload mute (kStarveWindow ..)
+  volatile uint32_t starve_mutes_ = 0;
+  uint32_t win_n_ = 0, win_u_ = 0, bad_ = 0, clean_ = 0;   // the mute's windows: frames, underruns, bad ones in a row
   float peak_ = 0.0f;
   volatile float vpk_[kVoices][2] = {};
   volatile int32_t tpk_[kVoices] = {};                  // TakeTrkPeaks: |int16| a voice, merged once a Pull

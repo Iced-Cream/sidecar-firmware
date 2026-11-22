@@ -28,6 +28,7 @@ void Output::Reset() {
   d_ = Diag{d_.pre_reset_pulled, level, kNone, kNone, 0, kNone, kNone, kNone, kNone, 0};
   main_.Reset();
   armed_ = false;   // the refill burst that follows is the restart bucket's
+  starved_ = false, win_n_ = win_u_ = bad_ = clean_ = 0;   // a new stream fades in anyway; the mute judges it afresh
   ++streams_;
 }
 
@@ -65,6 +66,8 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
   const float trk_gain = c.trk10 ? powf(10.0f, (float)c.trk10 / 200.0f) : 1.0f;   // stereo=trim:trk (once a block: a change is a step, a test setting)
   int32_t tp[kVoices] = {};   // each voice's largest |sample| on its own track this call (the web's meters, TakeTrkPeaks)
   float tg = 0.0f;
+  const bool mute = starved_;   // the overload mute, decided for the whole call
+  uint32_t nu = 0;              // this call's underruns while armed (the mute's count)
   for (uint32_t i = 0; i < n; ++i) {
     for (int ch = 0; ch < kChannels; ++ch) out[i][ch] = 0;
     if (taps && taps->feed) memset(taps->feed[i], 0, sizeof taps->feed[i]);
@@ -75,7 +78,7 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
       // a glitch: armed, or a stream (with a target) that has had its refill grace and still never reached it - a
       // stream that never fills is starved, and calling all of it "restart" read as `under 0` (audit 2026-10-26)
       if (armed_ || (streams_ && target_ && pos >= kRestartGrace)) {
-        ++under_;
+        ++under_, ++nu;
         if (d_.under_first == kNone) d_.under_first = pos;
         d_.under_last = pos;
       } else {
@@ -155,6 +158,25 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
     if (taps && taps->pairs) taps->pairs[i][0] = pre[0], taps->pairs[i][1] = pre[1], taps->pairs[i][2] = post[0], taps->pairs[i][3] = post[1];
   }
   d_.since_reset += n;
+  if (mute) {   // the overload mute: the frames were taken (the FIFO keeps its pace), nothing of them goes out
+    memset(out, 0, sizeof *out * n);
+    if (voices) memset(voices, 0, sizeof *voices * n);
+    if (taps && taps->lr) memset(taps->lr, 0, sizeof *taps->lr * n);
+    if (taps && taps->feed) memset(taps->feed, 0, sizeof *taps->feed * n);
+    if (taps && taps->pairs) memset(taps->pairs, 0, sizeof *taps->pairs * n);
+    memset(tp, 0, sizeof tp);
+  }
+  win_n_ += n, win_u_ += nu;
+  clean_ = nu ? 0 : clean_ + n;
+  if (win_n_ >= kStarveWindow) {
+    bad_ = win_u_ > kArmSlack ? bad_ + 1 : 0;
+    win_n_ = win_u_ = 0;
+    if (!starved_ && bad_ >= kStarveWindows) starved_ = true, ++starve_mutes_;
+  }
+  if (starved_ && clean_ >= kStarveClear) {   // the cores keep up again: back, faded in
+    starved_ = false, bad_ = 0;
+    main_.Reset();
+  }
   for (int v = 0; v < kVoices; ++v)
     if (tp[v] > tpk_[v]) tpk_[v] = tp[v];
   if (tg > 0.0f) tgain_ = tg;
