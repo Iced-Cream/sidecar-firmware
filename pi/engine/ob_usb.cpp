@@ -124,6 +124,7 @@ static unsigned Clamp (unsigned v, unsigned lo, unsigned hi)
 CObUsb *CObUsb::s_pThis = 0;
 volatile boolean g_bObPowerAsk = FALSE;
 CObUsb *CObUsb::s_pBox[CObUsb::Slots] = {};
+volatile int CObUsb::s_nMidiSlot[2] = {-1, -1};
 static IMirrorTarget *s_pRelay;				// the Teensy relay's target, besides the gadget (0: none)
 static CObUsb *s_pRelayBox;				// the box it was given (SetBox)
 
@@ -154,6 +155,35 @@ void ObUsbTestRelayFirst (bool bOn) { AssignCfg (); s_AssignCfg.relay_first = bO
 void CObUsb::Rebind (void)
 {
 	s_pThis = s_pBox[0] != 0 ? s_pBox[0] : s_pBox[1];
+}
+
+// Circle's USB MIDI device has no link back to its USB device, but it carries that device's vendor, product and serial
+// strings (CDevice's properties, copied from its function), as each slot's stream does: the same three strings, the same box
+static boolean SameStrings (const CDevice *pA, const CDevice *pB)
+{
+	static const CDevice::TProperty P[] = {CDevice::PropertyVendor, CDevice::PropertyProduct, CDevice::PropertySerialNumber};
+	for (CDevice::TProperty x : P)
+	{
+		const char *a = pA->GetProperty (x), *b = pB->GetProperty (x);
+		if (strcmp (a != 0 ? a : "", b != 0 ? b : "") != 0) return FALSE;
+	}
+	return TRUE;
+}
+
+void CObUsb::SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1)
+{
+	const CDevice *const pMidi[2] = {pHostLink, pLink1};
+	for (unsigned t = 0; t < 2; t++)
+	{
+		int nSlot = -1;
+		for (unsigned k = 0; k < Slots && pMidi[t] != 0; k++)
+			if (s_pBox[k] != 0 && SameStrings (s_pBox[k], pMidi[t])) nSlot = (int) k;
+		if (nSlot == s_nMidiSlot[t]) continue;
+		s_nMidiSlot[t] = nSlot;
+		if (nSlot < 0) CLogger::Get ()->Write (From, LogNotice, "midi: %s is no slot's box", t == 0 ? "the host link" : "link1");
+		else CLogger::Get ()->Write (From, LogNotice, "midi: %s is the box of slot %d (%s)", t == 0 ? "the host link" : "link1",
+					     nSlot, SlotName (nSlot));
+	}
 }
 
 int CObUsb::UsbcSlot (void)	{ return mirror_assign::usbc_slot (AssignCfg (), s_Assign.first); }
@@ -628,7 +658,8 @@ boolean CObUsb::BoxWait (unsigned nNowUs)
 
 void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
 {
-	CObUsb *p = s_pBox[0];					// the host link's MIDI OUT is the Rytm's
+	const int k = MidiSlot (0);				// the host link's MIDI OUT is its box's (any slot)
+	CObUsb *p = k < 0 ? 0 : s_pBox[k];
 	if (p == 0) return;
 	if (bHalted && !p->m_bMidiErred) p->m_nMidiFailUs = nNowUs;
 	p->m_bMidiErred = bHalted;
@@ -636,7 +667,8 @@ void CObUsb::MidiHalted (boolean bHalted, unsigned nNowUs)
 
 boolean CObUsb::BoxWaits (unsigned nNowUs)
 {
-	CObUsb *p = s_pBox[0];
+	const int k = MidiSlot (0);				// the host link's box, whichever slot it holds
+	CObUsb *p = k < 0 ? 0 : s_pBox[k];
 	return p != 0 && p->m_bStreaming && p->BoxWait (nNowUs);
 }
 
@@ -2032,8 +2064,9 @@ struct TCircleIo : UsbMidiMerge::Io
 		return ok;
 	}
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
-	// the Rytm's computer: USB-C's gadget, or the Teensy relay's when the relay shows the Rytm (slot 0) and USB-C does not
-	static bool RelayHasRytm (void)				{ return CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm (); }
+	// the host link's computer: USB-C's gadget, or the Teensy relay's when the relay shows the host link's box (any slot;
+	// USB-C then shows the other box)
+	static bool RelayHasRytm (void)				{ return CTeensyTarget::ShowsRytm (); }
 	bool has_computer (void) override			{ return pSidecar != 0 || RelayHasRytm (); }
 	void computer_connected (bool bUp) override
 	{
@@ -2043,7 +2076,7 @@ struct TCircleIo : UsbMidiMerge::Io
 	bool computer (u32 *w) override
 	{
 		if (RelayHasRytm ()) return CTeensyTarget::ForRytm (w);
-		return pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && pSidecar->ForRytm (w);
+		return pSidecar != 0 && !(pSidecar->Mirror () && !CObUsb::UsbcShowsHostLink ()) && pSidecar->ForRytm (w);
 	}
 	bool computer_in_sysex (void) override
 	{

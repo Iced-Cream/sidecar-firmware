@@ -154,6 +154,14 @@ extern "C" const char *__asan_default_options () { return "detect_leaks=0"; }
 
 Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
 
+// the host link's USB MIDI is box ob's (the same USB strings, as Circle copies them; the kernel's SetMidiDevices each pass):
+// its MIDI OUT's failures go with that box's endpoints (MidiHalted, BoxWaits)
+static void host_link_is(CUSBFunction* ob) {
+  static CDevice midi;
+  ob->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), midi.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+  CObUsb::SetMidiDevices(&midi, nullptr);
+}
+
 int main() {
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);
   CHECK(g_rytm[kOutAlt3Mps] == 0x70 && g_rytm[kOutAlt3Mps + 1] == 0x01);
@@ -852,6 +860,7 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
     auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     {
@@ -996,6 +1005,8 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
+    CHECK(CObUsb::MidiSlot(0) == 0);
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     m.fail = 1;
     g_ToHost.q.push_back(rec);
@@ -1005,6 +1016,7 @@ int main() {
     CHECK(r.host.ctl.size() == c0 && xi->resets == 0 && xo->resets == 1 && m.resets == 0);   // nothing sent meanwhile
     g_ToHost.q.clear();
     t.SetMIDI(nullptr);
+    CObUsb::SetMidiDevices(nullptr, nullptr);
     xi->ring = xo->ring = nullptr;
     CTimer::s_now = 0;
   }
@@ -1058,6 +1070,7 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
     auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     unsigned held = CObUsb::HaltHeld(), t0 = CTimer::s_now;
