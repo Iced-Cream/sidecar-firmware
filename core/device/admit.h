@@ -4,8 +4,10 @@
 // Each box asks for its type's voices (Profile::voices: the Rytm 8, the A4 4, the Digitakt 8), or the cmdline's
 // voices= for its type. When a box attaches, its voices are admitted against the boot bench's costs, scaled to the CPU
 // clock setting, so that each render core stays under kLimitBp (80 % of a core) in the worst case:
-//   - a voice costs the worst machine in the bench (any voice may play any machine), plus its INSERT chain at the worst
-//     TYPE pair and the POST EQ
+//   - a voice costs the worst machine in the bench (any voice may play any machine), plus its POST EQ
+//   - its INSERT slots are admitted when a type is set (core/fx/insert.h set_cpu_check; decided 2026-11-22), each at its
+//     type's bench row (Costs::type_bp) on its voice's core (voice_core), like AMP below: Load::ins, ins_fits. A type with
+//     no room plays dry and shows NO CPU (insert.h refused); before, each voice reserved the worst TYPE pair
 //   - each box held adds its own send FX, send TYPE inserts, bus and master chains (dry), measured together as one bench
 //     row, on the render core that runs its send FX: slot 0's on core 2, slot 1's on core 1 (chain_core; decided
 //     2026-11-22: LT1 found core 2 ~95 % with both boxes' chains on it and core 1 ~70 % idle). Two-slot builds run slot 0's
@@ -54,13 +56,16 @@ const LoadPct& load_pct();
 struct Costs {
   unsigned mhz;        // the clock the bench ran at; 0: no bench (admission off)
   unsigned voice_bp;   // one voice at the worst machine of the bench (its mean over 1 s)
-  unsigned ins_bp;     // one voice's INSERT chain: the worst TYPE pair, plus the POST EQ (bench ins rows / 8)
+  unsigned ins_bp;     // one voice's POST EQ (bench ins OFF+OFF / 8; its INSERT types count when set: type_bp)
   unsigned amp_bp;     // one AMP instance (bench amp)
   unsigned fx_bp;      // one box's chains on its render core (chain_core), dry (no AMP): the bench's box chains row (its send FX, bus and
                        // master chains at the worst set the rooms allow, as one run: master.h box_bench). Before LT1
                        // (2026-11-22) the sum of overlapping rows; still that when the boot has no box row. The base box's
                        // master AMP pair is added by core_bp (2 AMPs at kAmpLoadPct), not here (LT3)
+  unsigned slot_bp;    // one INSERT slot at the worst TYPE pair (bench ins rows / 16): a type with no row of its own
+  uint16_t type_bp[16];   // one voice INSERT slot of type t (bench ins T+T / 16), 0: not measured (slot_bp). AMP: amp_bp
 };
+unsigned type_bp(int t);   // a voice INSERT slot of type t at the bench (OFF, AMP: 0)
 
 void set_costs(const Costs& c);
 const Costs& costs();
@@ -91,7 +96,13 @@ struct Load {
   bool held[2];
   uint8_t asked[2];
   uint8_t amps[3];
+  uint32_t ins[3];   // the voice INSERT slots admitted on render core c (1, 2), at the bench (type_bp; [0] unused)
 };
+// The render core of slot b's box's voice chain c (0..7): by its box's split
+int voice_core(int b, int c, const Load& l);
+// INSERT admission: a voice slot of type t may play on core c beside l (its ins[] those playing): core_bp + the type's cost
+// at the voice load factor within kLimitBp. Always: no bench, admit=report, another core.
+bool ins_fits(int c, const Load& l, int t);
 int base_of(const Load& l);   // the base box's slot in l: 0 while held, else 1
 // The core that runs AMP row r (fx/amp.cpp's rows: the base box's voices 0..7, its master chains from master_row on): a voice
 // row its voice's (by the base box's split), a master row master_core(the base box)
@@ -100,7 +111,7 @@ int amp_core(int row, int master_row, const Load& l);
 // load factor within kLimitBp. Always: no bench, admit=report, core 3 (not modelled) or another core.
 bool amp_fits(int c, const Load& l);
 // Render core 1 or 2's worst load for l, in bp at the clock now, each row at its load factor (kAmpLoadPct and the rest):
-// its voices, the chains it runs, and the AMPs playing on it (l.amps[c]). Another core: 0.
+// its voices, the chains it runs, the INSERT slots (l.ins[c]) and AMPs (l.amps[c]) admitted on it. Another core: 0.
 unsigned core_bp(int core, const Load& l);
 // The most voices (<= want, which is also what it asked for: its split) slot s may render beside the other slot's in l, so that every render core this box's voices land
 // on stays within kLimitBp. A core already over without this box's voices (by the chains alone) takes none of them.

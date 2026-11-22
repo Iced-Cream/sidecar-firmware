@@ -91,6 +91,9 @@ struct Control {
   volatile uint8_t route3;                           // bus 3: 0 PRE (host -> Rytm 2/3), 1 POST (0/1)
   volatile int8_t peq[kChains][kEqParams];           // ins1112 the POST EQ as it plays (eq_store: 0 = does nothing)
   volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
+  // CPU admission (core/device/admit.h ins_fits, decided 2026-11-22): 1 the voice slot's type was not admitted when it was
+  // set (no room on its render core): it plays dry (bypassed) and shows NO CPU until it is (set_cpu_check). 0: plays
+  volatile uint8_t refused[kVoices][kSlots];
 };
 extern Control control;
 // Slot 1's: its voices 8..15 play through chains of their own, alone or beside a Rytm (every chain OFF until slot 1's
@@ -266,7 +269,9 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp)) || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !(c < kVoices && k.refused[c][s])) || slot_[c][s].cur ||
+          slot_[c][s].wet > 0.0f)
+        return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
   }
   // A voice's chain, mono, in place (n any; processed in kChunk pieces)
@@ -318,7 +323,9 @@ class Engine {
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) ? k.type[c][s] : kOff;   // (no AMP: dry)
+    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !(c < kVoices && k.refused[c][s])
+                         ? k.type[c][s]
+                         : kOff;   // (no AMP: dry; not admitted: dry, CPU admission)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
     const float step = (float)m / kFadeFrames;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
@@ -829,7 +836,15 @@ void card_forget();
 // "ins=b3:route:pre|post", "ins=reset"; the answer in out. False: not an ins command.
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);                // "\"ins\":{...}" (docs/INSERT-FX.md)
-struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks; };
+// CPU admission of the voice slots' types (decided 2026-11-22; core/device/admit.h ins_fits): a type is admitted when it is set
+// (set_type), not reserved per voice at attach. The check (device.cpp sets it; null, the default: every type plays): may box
+// slot `box`'s voice chain c, slot s play type t beside what plays now? OFF and AMP (amp.h admits its own) always may. A type
+// refused plays dry with NO CPU (Control::refused); regrant() admits what fits again (a box left, a slot went OFF), each
+// idle pass, never refusing one that plays. Control core, never per sample.
+void set_cpu_check(bool (*fits)(int box, int c, int s, int t));
+int regrant();                               // the refused slots now admitted
+bool refused(int c, int s);                  // the slot in hand's voice slot plays dry for CPU (the pages: NO CPU)
+struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks, refused; };
 const Stats& stats();
 void reset();                                // tests: every chain off, sends 0, the engine cleared
 

@@ -9,6 +9,7 @@
 
 #include "fmt/fmt.h"
 #include "fx/amp.h"
+#include "fx/insert.h"
 #include "fx/out.h"
 #include "host_link.h"
 #if CORE_POLY
@@ -161,7 +162,8 @@ CORE_COLD const char* state_path_box(const char* state, const char* path, char* 
 // (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two slots) is
 // left as it is and never read.
 static bool amp_room(int row);
-CORE_COLD void boot() { amp::set_cpu_check(amp_room); }
+static bool ins_room(int b, int c, int s, int t);
+CORE_COLD void boot() { amp::set_cpu_check(amp_room), ins::set_cpu_check(ins_room); }
 
 CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
   for (const Link& l : g_links)
@@ -181,6 +183,7 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   for (Link& l : g_links)
     if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   admit_alone();
+  if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
   rebase();
   return false;
 }
@@ -211,6 +214,25 @@ void load_now(admit::Load* out) {
         const int c = admit::amp_core(r, m, ld);
         if (c == 1 || c == 2) ++ld.amps[c];
       }
+  static_assert(ins::kAmp == 9 && ins::kTypes <= 16, "admit.cpp type_bp: AMP is 9, every voice type under 16");
+  for (int b = 0; b < kVoiceSlots && b < 2; ++b) {   // the voice INSERT slots admitted (insert.h refused: not counted)
+    if (!ld.held[b]) continue;
+    const ins::Control& k = ins::control_of(b);
+    const int n = ld.asked[b] < ins::kVoices ? ld.asked[b] : ins::kVoices;   // (its chains past what it asked never render)
+    for (int c = 0; c < n; ++c)
+      for (int s = 0; s < ins::kSlots; ++s)
+        if (!k.refused[c][s]) ld.ins[admit::voice_core(b, c, ld)] += admit::type_bp(k.type[c][s]);
+  }
+}
+// INSERT's CPU check (ins::set_cpu_check): box slot b's voice chain c, slot s may play type t, beside everything admitted
+// now but what that slot plays (it is replaced). A chain its box does not render (not held, past what it asked): yes.
+static CORE_COLD bool ins_room(int b, int c, int s, int t) {
+  admit::Load ld = load_now();
+  if (b < 0 || b > 1 || !ld.held[b] || c >= ld.asked[b]) return true;
+  const int core = admit::voice_core(b, c, ld);
+  const ins::Control& k = ins::control_of(b);
+  if (!k.refused[c][s]) ld.ins[core] -= admit::type_bp(k.type[c][s]);
+  return admit::ins_fits(core, ld, t);
 }
 // AMP's CPU check (amp::set_cpu_check): one more AMP slot on row's render core, beside what renders now
 static CORE_COLD bool amp_room(int row) {
@@ -486,7 +508,7 @@ CORE_COLD void reset() {
   for (int k = 0; k < kLinks; ++k) s_usb_want[k] = nullptr, s_usb_gone[k] = false;
   hooks.to_rytm = plat;          // back to the platform's sender (taken again: a test may set another)
   strip::reset();
-  amp::set_cpu_check(amp_room);
+  amp::set_cpu_check(amp_room), ins::set_cpu_check(ins_room);
 }
 
 CORE_COLD bool add(const Profile* p) {

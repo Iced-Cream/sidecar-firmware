@@ -1132,6 +1132,22 @@ void CKernel::LogBench (void)
 				nBlk / 10, nBlk % 10, nHash);
 		m_Timer.MsDelay (2);
 	}
+	{	// CPU admission's INSERT types (core/device/admit.h type_bp; decided 2026-11-22: a voice slot's type is admitted when
+		// it is set): each voice type on its own, T+T on 8 voices x 2 slots (the post EQ flat), its sixteenth a slot
+		static const int Types[] = {1, 2, 3, 4, 5, 6, 7, 8, 10};	// FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD SAT (AMP: its own row)
+		CString Line;
+		for (int t : Types)
+		{
+			u32 nWorst = 0;
+			const unsigned nBp = (unsigned) (bridge::ins_bench (t, t, &nWorst) * 10000 / nCntFrq), nSlot = (nBp + 15) / 16;
+			Adm.type_bp[t] = (u16) (nSlot < 65535 ? nSlot : 65535);
+			CString One;
+			One.Format (" %s %u.%02u", bridge::ins_bench_name (t), nSlot / 100, nSlot % 100);
+			Line.Append (One);
+		}
+		m_Logger.Write (From, LogNotice, "bench ins a slot of each type, %% of a core:%s", (const char *) Line);
+		m_Timer.MsDelay (2);
+	}
 	{	// SAT on every slot of the buses and the master: what it can add to core 2
 		u32 nWorst = 0;
 		u64 nTicks = bridge::ins_bus_bench (&nWorst);
@@ -1200,13 +1216,14 @@ void CKernel::LogBench (void)
 	// on its render core the box chains row, dry (the boot has no capture loaded for the row's M2 and M3: an AMP counts when a
 	// slot loads one, amp_fits). No box row (a slot already set): the earlier sum of the overlapping rows, an upper bound.
 	// core_bp scales each row by its LT3 load factor (admit.h kAmpLoadPct, kVoiceLoadPct, kChainLoadPct), logged here.
-	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
+	Adm.ins_bp = (nInsPostBp + 7) / 8;	// a voice's POST EQ (its INSERT types count when set: type_bp)
+	Adm.slot_bp = (nInsPairBp + 15) / 16;	// a type without a row of its own: the worst pair's slot
 	Adm.fx_bp = nBoxBp ? nBoxBp : nMfxBp + nSfxWorstBp + nBusBp + nSfxCloudBp / 2;	// dry: AMPs count when loaded (amp_fits)
 	core::admit::set_costs (Adm);
 	core::admit::set_clock (m_nClockMHz);
 	const core::admit::LoadPct &Lp = core::admit::load_pct ();
 	core::device::readmit ();
-	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains %u.%02u %% (%s, dry; slot 0's on core 2, its master chain on core 3; slot 1's on core 1); under load x%u.%02u voice, x%u.%02u AMP (admitted when a slot loads one), x%u.%02u chains (LT3); limit 80 %% a render core",
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + POST EQ %u.%02u; INSERT types admitted when set), AMP %u.%02u %%, a box's chains %u.%02u %% (%s, dry; slot 0's on core 2, its master chain on core 3; slot 1's on core 1); under load x%u.%02u voice, x%u.%02u AMP (admitted when a slot loads one), x%u.%02u chains (LT3); limit 80 %% a render core",
 			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
 			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100,
 			nBoxBp ? "box row" : "no box row: the rows' sum", Lp.voice / 100, Lp.voice % 100,

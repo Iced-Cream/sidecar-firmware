@@ -18,6 +18,7 @@
 #include "device/device.h"
 #include "device/digitakt.h"
 #include "engine.h"
+#include "fx/insert.h"
 #include "host_link.h"
 #include "voices.h"
 
@@ -66,6 +67,20 @@ static void model() {
     admit::set_enforce(false);
     CHECK(admit::amp_fits(2, p));   // admit=report: nothing refused
     admit::set_enforce(true);
+  }
+  // INSERT types: each at its bench row (type_bp; no row: slot_bp, the worst pair's slot), on its voice's core
+  {
+    admit::Costs co = admit::costs();
+    co.slot_bp = 150, co.type_bp[10] = 400;   // SAT
+    admit::set_costs(co);
+    CHECK(admit::type_bp(0) == 0 && admit::type_bp(9) == 0 && admit::type_bp(10) == 400 && admit::type_bp(1) == 150);
+    admit::Load p = l;
+    CHECK(admit::voice_core(0, 3, p) == 1 && admit::voice_core(0, 4, p) == 2 && admit::voice_core(1, 0, p) == 1);
+    p.ins[2] = 1000;   // core 2: 68 + 10 = 78 %; a SAT (4 %) is over, an unmeasured type (1.5 %) fits
+    CHECK(admit::core_bp(2, p) == 4 * 1200 + 2000 + 1000 && !admit::ins_fits(2, p, 10) && admit::ins_fits(2, p, 1));
+    CHECK(admit::ins_fits(1, p, 10) && admit::ins_fits(2, p, 0) && admit::ins_fits(2, p, 9));
+    co.slot_bp = 0, co.type_bp[10] = 0;
+    admit::set_costs(co);
   }
   // amp_core: the base box's voice rows by its split (an A4's 4: 2 + 2), its master rows on master_core
   {
@@ -290,6 +305,42 @@ static void engine() {
   device::readmit();
   // her 2 as 1 + 1; the Digitakt all 8: core 1 12 + 10 + 48 = 70 %, core 2 12 + 10 + 48 = 70 %
   CHECK(device::admitted(1) == 2 && device::admitted(0) == 8);
+  // INSERT types admitted when set (decided 2026-11-22): a SAT slot 6 % here. The slot in hand's box's chain on core 2 (the
+  // Digitakt's voice 4, or the Rytm's voice 1: her 2 as 1 + 1): core 2 70 % (48 + 10 + 12), one SAT fits (76 %), a second
+  // not (82 %): it plays dry, NO CPU. OFF frees its place; the next idle pass admits the refused one again
+  {
+    admit::Costs co = admit::costs();
+    co.type_bp[ins::kSat] = 600;
+    admit::set_costs(co);
+    const int b = ins::slot_in_hand(), c = b == 0 ? 4 : 1;
+    admit::Load ld;
+    device::load_now(&ld);
+    CHECK(admit::voice_core(b, c, ld) == 2 && admit::core_bp(2, ld) == 7000 && ld.ins[1] == 0 && ld.ins[2] == 0);
+    ins::set_type(c, 0, ins::kSat);
+    CHECK(!ins::refused(c, 0));
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 600 && admit::core_bp(2, ld) == 7600);
+    ins::set_type(c, 1, ins::kSat);
+    CHECK(ins::refused(c, 1) && ins::stats().refused >= 1);
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 600);   // (a refused slot is not counted)
+    ins::set_type(c, 0, ins::kSat);   // set again (the same type): still admitted, its own place not counted twice
+    CHECK(!ins::refused(c, 0));
+    ins::set_type(c, 1, ins::kOff);
+    CHECK(!ins::refused(c, 1));
+    ins::set_type(c, 1, ins::kSat);
+    CHECK(ins::refused(c, 1));
+    ins::set_type(c, 0, ins::kOff);
+    device::step(true);   // regrant
+    CHECK(!ins::refused(c, 1));
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 600);
+    admit::set_enforce(false);   // admit=report: nothing refused
+    ins::set_type(c, 0, ins::kSat);
+    CHECK(!ins::refused(c, 0));
+    admit::set_enforce(true);
+    ins::set_type(c, 0, ins::kOff), ins::set_type(c, 1, ins::kOff);
+  }
   // no bench: everything its count
   admit::reset();
   device::readmit();

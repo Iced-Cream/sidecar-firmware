@@ -311,8 +311,14 @@ profile's: a box's reports past its profile's voices are dropped anyway).
 When a box attaches (`device::select`, both by hello and by USB), its voices are admitted against the Pi's boot bench,
 scaled to the CPU clock setting, so that each render core stays under 80 % in the worst case:
 
-- **A voice** costs the worst machine of the bench (any voice may play any machine) and its INSERT chain at the worst TYPE
-  pair plus the POST EQ (the `bench ins` rows / 8).
+- **A voice** costs the worst machine of the bench (any voice may play any machine) and its POST EQ (`bench ins OFF+OFF` / 8).
+- **INSERT types are admitted when set** (decided 2026-11-22, like AMP below): a voice slot's type plays only while its
+  voice's render core stays under 80 % with the types already admitted there, each at its own boot bench row (`bench ins a
+  slot of each type`, a sixteenth of T+T on 8 voices x 2 slots; `admit::type_bp`, `ins_fits`, `voice_core`; the check is
+  `ins::set_cpu_check`, set by `device.cpp`). Otherwise the slot plays dry and its strip shows `NO CPU`
+  (`ins::Control::refused`), and each idle pass admits it again once there is room (`ins::regrant`). A type that plays is
+  never refused afterwards; a box attaching later counts it. Before, every voice reserved the worst TYPE pair. Gaps: a voice
+  chain in stereo (PRE / POST pairs) costs about twice its mono bench row; the bus and master chains stay in the box row.
 - **A box's chains:** its send FX, bus and master chains at their worst set, dry, measured as one bench row
   (`master::box_bench`), counted on the core that runs its send FX. Before that row (LT1, 2026-11-22) the sum of
   overlapping rows.

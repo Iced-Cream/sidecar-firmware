@@ -59,9 +59,22 @@ CORE_COLD unsigned core_bp(int c, const Load& l) {
     v += on_core(c, l.voices[s] > 8 ? 8 : l.voices[s], split_for(l.asked[s]));
     if (l.held[s] && chain_core(s) == c) chains += s_costs.fx_bp;   // its chains (dry) on the core that runs its send FX
   }
-  const unsigned long long bp = (chains * s_pct.chain + (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) * s_pct.voice +
+  const unsigned long long bp = (chains * s_pct.chain +
+                                 ((unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) + l.ins[c]) * s_pct.voice +
                                  (unsigned long long)l.amps[c] * s_costs.amp_bp * s_pct.amp + 99) / 100;
   return scaled(bp);
+}
+
+unsigned type_bp(int t) {
+  if (t <= 0 || t >= 16 || t == 9) return 0;   // OFF; AMP (fx/insert.h kAmp): amp_bp, admitted by amp.h
+  return s_costs.type_bp[t] ? s_costs.type_bp[t] : s_costs.slot_bp;
+}
+
+int voice_core(int b, int c, const Load& l) { return (unsigned)c < split_for(l.asked[b & 1]) ? 1 : 2; }
+
+CORE_COLD bool ins_fits(int c, const Load& l, int t) {
+  if (!on() || !s_enforce || (c != 1 && c != 2)) return true;
+  return core_bp(c, l) + scaled(((unsigned long long)type_bp(t) * s_pct.voice + 99) / 100) <= kLimitBp;
 }
 
 int amp_core(int row, int master_row, const Load& l) {
