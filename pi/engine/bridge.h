@@ -84,6 +84,11 @@ bool scene_command(const char* p, char* out, int cap);   // scene, scene=...: th
 bool xy_command(const char* p, char* out, int cap);
 bool learn_command(const char* p, char* out, int cap);   // learn, learn=...: the MIDI-learn routes (core/mod/learn.h)
 int scene_json(char* out, int cap);
+// the master looper (core/loop/loop.h): `loop`, `loop=...`; "\"loop\":{...}" for /status; the render frame count the IN completion
+// stamps its blocks with (seq::frames(): the control core's block counter, an aligned 64-bit read)
+bool loop_command(const char* p, char* out, int cap);
+int loop_json(char* out, int cap);
+uint64_t render_frames();
 // Poly FM (core/poly.h): the Rytm's channel messages (its pads' notes: live chords), the console's `poly` (its stats;
 // false: not a poly command)
 void poly_midi(uint8_t st, uint8_t d1, uint8_t d2);

@@ -11,6 +11,7 @@
 #include "fx/insert.h"
 #include "fx/master.h"
 #include "fx/out.h"
+#include "loop/loop.h"
 #include "mod/rytm_out.h"
 #include "mod/rytm_param.h"
 #endif
@@ -237,6 +238,7 @@ CORE_COLD float base_now(Tid t) {
     case kFx: return fx::control.knob[i & 1][2 + (p & 3)];
 #if CORE_POLY
     case kSnd: return fx::control.send[i % fx::kTracks][p & 1];
+    case kLoop: return (float)(p ? loop::lev() : loop::bal());   // an LFO moves around the knob as it was when the entry began
 #endif
     default: return 0;   // the offset kinds: the offset is on the knob (their base is read where it is applied)
   }
@@ -274,6 +276,10 @@ CORE_COLD void put(Tid t, float val) {
     case kSnd: fx::control.send[i % fx::kTracks][p & 1] = (uint8_t)val; break;
     case kIsnd: ins::send_offset(i, p, (int)val); break;
     case kMfx: master::mod_offset(p, (int)val); break;
+    case kLoop:   // the looper's BAL / LEV (spec 3.8): a value replaces the knob until released (a value < 0)
+      if (p == 0) loop::set_bal_mod(val < 0 ? -1 : (int)val);
+      else loop::set_lev_mod(val < 0 ? -1 : (int)val);
+      break;
     case kRytm:   // the Rytm's own scene / a PERF macro (spec-050 2.7: never the kit), on change, at most every 5 ms
       if (p == 0) rytm_scene((int)val);
       else rytm_perf(p, (int)val);

@@ -415,7 +415,9 @@ void reset();                                  // tests: everything stopped and 
 bool sysex(const uint8_t* d, int len);         // a whole 2C / 2D from the Rytm (true: it was one)
 void hello(int up20 = -1);                     // the Rytm's hello (35, its uptime in 1/20 s, -1 unknown): 2E again, a resync asked
 // Clock-only tracks in the 2E (ticked in 2C, nothing else; core/song: BD while SONG RECORD is armed or replaying)
-void set_clock_tracks(uint16_t mask);
+// per user, OR-ed: kClockSong (core/song), kClockLoop (core/loop); each user's mask replaces its own earlier one
+enum { kClockSong = 0, kClockLoop = 1, kClockUsers = 2 };
+void set_clock_tracks(int user, uint16_t mask);
 // The arpeggiator (core/arp/arp.h): the tracks to pin as its notes are the host's, and whether it wants the clock (BD's ticks)
 void set_arp_tracks(uint16_t pins, bool clock);
 // Its time: position p in 1/16ths since PLAY falls at host frame origin + p per16, `latency` early as the sequencer's notes. false: no
@@ -633,6 +635,7 @@ struct Stats {
   uint32_t solos;         // fix1049: 2D 0D SOLO reports taken
 };
 uint16_t silenced();      // fix1049: the Rytm tracks not heard now: muted (2D 05), or not soloed while any is (2D 0D)
+uint16_t muted();         // the Rytm tracks it reports muted (2D 05; bit k: track k + 1), solo not counted (the looper's auto-mute)
 const Stats& stats();
 // tests: the events waiting (frame, on 1 / off 0, voice, note)
 int pending(int64_t* frames, uint8_t* on, uint8_t* voice, uint8_t* note, int max);

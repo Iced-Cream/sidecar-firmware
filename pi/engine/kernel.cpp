@@ -22,6 +22,8 @@ static volatile unsigned s_nTempC;	// the SoC temperature as the stats line last
 #include "chopview_pi.h"		// the display's CHOP page
 #include "seditview_pi.h"		// the display's SAMPLE EDIT page (core/samp/sedit.h)
 #include "song_pi.h"		// the display's SONG page (core/song)
+#include "loop_pi.h"		// 0.5.0: the master looper (core/loop/loop.h)
+#include "loopview_pi.h"		// 0.5.0: the display's LOOP page (core/loop/loop.h)
 #include "morph_pi.h"		// 0.5.0: the display's MORPH page (core/mod/scene.h)
 #include "xypad_pi.h"		// 0.5.0: the display's XY page (core/mod/xypad.h)
 #include "voice_pi.h"		// the display's VOICE page, the Rytm's UP + T1..T5 (rui1036b)
@@ -378,6 +380,7 @@ boolean CKernel::Initialize (void)
 			(unsigned) (nHeap0 >> 10), (unsigned) ((sendfx_pi::Bytes () + bridge::heap_bytes ()) >> 10),
 			(unsigned) (sendfx_pi::Bytes () >> 10), pFxMem, (unsigned) (bridge::heap_bytes () >> 10), pCoreMem,
 			(unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_ANY) >> 10));
+	loop_pi::Initialize ();		// the looper's ring and grab store (loopram=MB), before bridge::begin's pool RAM takes what is left
 	unsigned t0 = m_Timer.GetClockTicks ();
 	m_Logger.Write (From, LogNotice, "boot: sendfx init...");
 	sendfx_pi::Init (pFxMem);
@@ -887,6 +890,15 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		{
 			pOut->Append (",");
 			pOut->Append (Sc);
+		}
+	}
+	{
+		static char Lp[2048];		// the looper: state, settings, the grabs (core/loop/loop.h; core 3's, plain reads)
+		int n = bridge::loop_json (Lp, sizeof Lp);
+		if (n > 0 && n < (int) sizeof Lp)
+		{
+			pOut->Append (",");
+			pOut->Append (Lp);
 		}
 	}
 	{
@@ -2768,6 +2780,7 @@ void CKernel::Run (void)
 		};
 		CardPass ();								// the streams' card requests first (core/msamp/cardq.h)
 		{ mbtrace::Scope Mb (17, 200); rec_pi::Poll (); }			// the recorder's ring to the card: one 64 KB piece a pass at most
+		loop_pi::Poll ();							// the looper's KEEP: one 30 KB piece of a grab to the card a pass at most (core/loop)
 		CardPass ();
 		{					// a project bundle's step: one piece, only while the card queue is idle
 			unsigned nRecSecs;
@@ -2896,6 +2909,13 @@ void CKernel::Run (void)
 				morph_pi::Want (sidecar_morph_shown (), sidecar_morph_top ());
 				if (sidecar_morph_shown () && morph_pi::View (&s_MorphView, &s_nMorphSeen))
 					sidecar_morph_set (&s_MorphView);
+			}
+			{	// 0.5.0: the LOOP page, the same way (loopview_pi)
+				static sidecar_loop_view_t s_LoopView;
+				static unsigned s_nLoopSeen;
+				loopview_pi::Want (sidecar_loop_shown (), sidecar_loop_sel ());
+				if (sidecar_loop_shown () && loopview_pi::View (&s_LoopView, &s_nLoopSeen))
+					sidecar_loop_set (&s_LoopView);
 			}
 			{	// 0.5.0: the XY page, the same way (xypad_pi)
 				static sidecar_xy_view_t s_XyView;

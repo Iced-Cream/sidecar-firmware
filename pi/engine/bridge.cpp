@@ -11,6 +11,8 @@
 #include "mod/rytm_param.h"
 #include "mod/learn.h"
 #include "mod/scene.h"
+#include "loop/loop.h"
+#include "loopview_pi.h"
 #include "mod/xypad.h"
 #include "device/device.h"
 #include "fx/insert.h"
@@ -176,11 +178,13 @@ void tick() {
     core::idle_note("remote", us > w ? us - w : 0);
   }
   timed_tick("mod", [] { core::mod::tick(core::now_us()); });        // the modulation layer (core/mod/mod.h): the LFOs, once a millisecond at most
+  timed_tick("loop", [] { core::loop::tick(core::now_us()); });      // 0.5.0: the master looper's grabs, copies and state (core/loop/loop.h)
   timed_tick("device", [] { core::device::tick(core::now_us()); });  // a box's envelopes (core/device/strip.h): the Rytm has none
   timed_tick("poly", [] { core::poly::tick(core::now_ms()); });      // poly FM: a held trig's time, a live chord's window (core/poly.h)
   timed_tick("seq", [] { core::seq::tick(core::now_ms()); });        // the Sidecar sequencer: its LEDs, its 2E (core/seq/seq.h)
   timed_tick("song", [] { core::song::tick(core::now_ms()); });      // SONG RECORD (core/song/song.h)
   timed_tick("songview", [] { song_pi::Tick(); });                   // its view for the display's SONG page
+  timed_tick("loopview", [] { loopview_pi::Tick(); });                 // 0.5.0: the display's LOOP page (the looper)
   timed_tick("morphview", [] { morph_pi::Tick(); });                 // 0.5.0: the display's MORPH page (scenes)
   timed_tick("xyview", [] { xypad_pi::Tick(); });                    // 0.5.0: the display's XY page (the XY pad)
 #if SIDECAR_SEQED
@@ -294,6 +298,9 @@ int mod_json(char* out, int cap) { return core::mod::json(out, cap); }
 bool scene_command(const char* p, char* out, int cap) { return core::scene::command(p, out, cap); }
 bool xy_command(const char* p, char* out, int cap) { return core::xypad::command(p, out, cap); }
 int scene_json(char* out, int cap) { return core::scene::json(out, cap); }
+bool loop_command(const char* p, char* out, int cap) { return core::loop::command(p, out, cap); }
+int loop_json(char* out, int cap) { return core::loop::json(out, cap); }
+uint64_t render_frames() { return core::seq::frames(); }
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {

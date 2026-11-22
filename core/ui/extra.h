@@ -153,6 +153,10 @@ extern const ExtraPage kRecPage;
 extern const ExtraPage kLfoPage;
 // ---- the MORPH page (page_morph.cpp, core/mod/scene.h, spec-050 2.6): the scenes, A / B, the fader, a scene's locks
 extern const ExtraPage kMorphPage;
+// ---- the LOOP page (page_loop.cpp, core/loop/loop.h, spec-050 3.12): the master looper's grabs, BAL / LEV, STOP, KEEP
+extern const ExtraPage kLoopPage;
+void loop_page_reset();   // the page's own state (the grab shown, a note) cleared (tests)
+int loop_page_sel();      // the grab shown on it (0 newest)
 // 0.5.0 (the owner): MIDI (page_midi.cpp, CORE_POLY), the SIDECAR MENU's row: the keyboards' route, auto channel and
 // computer notes (core/keys.h), the MIDI-learn routes (core/mod/learn.h), the USB-A devices and the last key's way
 extern const ExtraPage kMidiPage;

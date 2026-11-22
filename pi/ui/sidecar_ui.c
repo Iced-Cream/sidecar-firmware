@@ -23,6 +23,7 @@
 #include "sidecar_insfx.h"		// page 9: INSERT FX, a voice's inserts and sends (fx-ins)
 #include "sidecar_mfx.h"		// MASTER FX
 #include "sidecar_morph.h"		// page 20: MORPH (0.5.0 scenes: the pads, a scene's locks, the crossfader)
+#include "sidecar_loop.h"		// page 24: LOOP (0.5.0 the master looper: grabs, STOP, KEEP, BAL / LEV; core/loop)
 #include "sidecar_xy.h"		// page 22: XY PAD (0.5.0: the touchscreen as an XY controller, core/mod/xypad.h)
 #include "sidecar_song.h"		// page 10: SONG, SONG RECORD's timeline (core/song)
 #include "sidecar_rec.h"		// page 11: REC, the Overbridge multitrack recorder (UP + T7, the home page's REC status)
@@ -40,7 +41,7 @@
 
 enum { SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CONTRAST, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_SUB, SEG_N = SEG_SUB + 8 };	// SEG_SUB + section: that section's sub-page row (0.5.1)
 enum { PG_HOME, PG_SOUND, PG_FX, PG_ABOUT, PG_SEQ, PG_RYTM, PG_DISPLAY, PG_MACH, PG_VOICE, PG_INS, PG_SONG, PG_REC, PG_SCOPE, PG_STATUS, PG_PROJECT, PG_POOL,
-       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_PERFORM, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
+       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_PERFORM, PG_LOOP, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
 
 // Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
 static const char *const kOnOff[] = {"Off", "On", ""};
@@ -107,11 +108,11 @@ static const int kHomePg[] = {PG_HOME, PG_STATUS, PG_PROJECT, PG_PERFORM};
 static const char *const kVoiceMap[] = {"Sound", "Insert", "Source", "Scope", ""};
 static const int kVoicePg[] = {PG_VOICE, PG_INS, PG_MACH, PG_SCOPE};
 #if SIDECAR_MORPH
-static const char *const kFxMap[] = {"Sends", "Master", "Morph", "XY", ""};
-static const int kFxPg[] = {PG_FX, PG_MFX, PG_MORPH, PG_XY};
+static const char *const kFxMap[] = {"Sends", "Master", "Morph", "XY", "Loop", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_MORPH, PG_XY, PG_LOOP};
 #else
-static const char *const kFxMap[] = {"Sends", "Master", "XY", ""};
-static const int kFxPg[] = {PG_FX, PG_MFX, PG_XY};
+static const char *const kFxMap[] = {"Sends", "Master", "XY", "Loop", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_XY, PG_LOOP};
 #endif
 static const char *const kSongMap[] = {"Timeline", "Setup", ""};
 static const int kSongPg[] = {PG_SONG, PG_SONG};
@@ -169,7 +170,7 @@ static void map_cols (int mixed, char *c1, char *c2, int cap)	// c1: the title a
 static lv_obj_t *s_Home, *s_Pages, *s_Pg[PG_N], *s_Nav[NAV_N], *s_SetTitle;
 static lv_obj_t *s_PageName;			// SIDECAR's header from 1024x600: the page's name in the dot font
 static const char *const kPageName[PG_N] = {"HOME", "SOUND", "SEND FX", "ABOUT", "SEQ", "PAT", "DISPLAY", "MACHINE", "VOICE",
-	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI", "PERFORM"};
+	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI", "PERFORM", "LOOP"};
 static lv_obj_t *s_UsbInfo;			// Settings > Sound: what USB-C is now, OVERBRIDGE's warning
 static lv_obj_t *s_KeysAuto, *s_KeysIn, *s_KeysLast, *s_LearnInfo;	// Settings > MIDI
 static int s_nAutoLocal;				// the auto channel the - / + keys asked for (0: none waits)
@@ -484,7 +485,7 @@ static int page_sec (int page)
 	case PG_SEQ: return NAV_SEQ;
 	case PG_RYTM: return NAV_PAT;
 	case PG_VOICE: case PG_MACH: case PG_SCOPE: case PG_CHOP: case PG_SEDIT: case PG_INS: return NAV_VOICE;
-	case PG_FX: case PG_MFX: case PG_MORPH: case PG_XY: return NAV_FX;
+	case PG_FX: case PG_MFX: case PG_MORPH: case PG_XY: case PG_LOOP: return NAV_FX;
 	case PG_SONG: return NAV_SONG;
 	case PG_REC: return NAV_REC;
 	case PG_POOL: case PG_PRESET: return pool_from_voice () ? NAV_VOICE : NAV_SET;
@@ -547,6 +548,7 @@ static void show_page (int page)
 	sidecar_morph_show (page == PG_MORPH);
 	sidecar_xy_show (page == PG_XY);
 	sidecar_xy_perform_show (page == PG_PERFORM);
+	sidecar_loop_show (page == PG_LOOP);
 	sidecar_xy_overview (page == PG_HOME);
 	sidecar_song_show (page == PG_SONG);
 	sidecar_rec_show (page == PG_REC);
@@ -1189,6 +1191,8 @@ static void oled_build (lv_obj_t *scr)
 	sidecar_morph_set_command (command);
 	OLED_UNDER (scr, sidecar_xy_create (scr, 0));
 	sidecar_xy_set_command (command);
+	sidecar_loop_create (scr, 0);
+	sidecar_loop_set_command (command);
 	home_perform (s_Pg[PG_PERFORM]);
 	OLED_UNDER (scr, sidecar_song_create (scr, 0, song_cmd));
 	OLED_UNDER (scr, sidecar_rec_create (scr, 0, rec_cmd));
@@ -1473,6 +1477,8 @@ static void sc_build (lv_obj_t *scr)
 	sidecar_morph_set_command (command);
 	sidecar_xy_create (scr, LU (110));
 	sidecar_xy_set_command (command);
+	sidecar_loop_create (scr, LU (110));
+	sidecar_loop_set_command (command);
 	home_perform (s_Pg[PG_PERFORM]);
 	sidecar_song_create (scr, LU (110), song_cmd);
 	sidecar_rec_create (scr, LU (110), rec_cmd);

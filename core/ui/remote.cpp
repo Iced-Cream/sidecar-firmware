@@ -1148,8 +1148,8 @@ CORE_COLD void frame(uint32_t ms) {
     s.modal_shown = on;
   }
   bool sq = x && !strcmp(x->title, "SEQ");
-  // 0.5.0: MORPH's FUNC + YES (EDIT) needs FUNC (both sides'); SAMPLE EDIT's FUNC + YES (save) too
-  bool fn = sq || (x && (!strcmp(x->title, "MORPH") || !strcmp(x->title, "SAMPLE EDIT") || !strcmp(x->title, "FILL")));   // FILL: FUNC + YES / NO
+  // 0.5.0: MORPH's FUNC + YES (EDIT) needs FUNC (both sides'); SAMPLE EDIT's FUNC + YES (save) too, LOOP's FUNC + T8
+  bool fn = sq || (x && (!strcmp(x->title, "MORPH") || !strcmp(x->title, "SAMPLE EDIT") || !strcmp(x->title, "FILL") || !strcmp(x->title, "LOOP")));   // FILL: FUNC + YES / NO; LOOP: FUNC + T8 (a cut)
   bool updown = claims_updown(x);   // updown044: a page alone only when it uses them
   if (!s.legacy) send_mask(p, x ? extra_encs(*x) : 0, page_trigs(x), fn, sq && seq_data(),
                             !sq || seq_yes(), updown);   // before the frame: the keys and knobs the page shows are its own from now on
@@ -1812,7 +1812,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         const ExtraPage* x = s.open ? extra_of(s.voice) : nullptr;
         // rui1048: POLY CONFIG's knobs are its own, also in seq mode (seq::ui_enc takes every turn then)
         // review (0.5.0): MORPH's knobs, and a turn under EDIT's held scene key, are the page's too
-        bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH"))) || (s.scene_key >= 0 && edit_page(x));
+        bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH") || !strcmp(x->title, "LOOP"))) || (s.scene_key >= 0 && edit_page(x));
         if (!own && seq::ui_enc(b[0], (int)b[1] - 64, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;

@@ -351,9 +351,9 @@ UI_ROM const ExtraPage kScopePage = {"SCOPE", nullptr, scope_draw, scope_enc, sc
 #define MORPH_PAGE_LAST
 #endif
 #if CORE_POLY && CORE_MSAMP
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kSlotsPage, &kPoolPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kChopPage, &kSeditPage, &kArpPage, MORPH_PAGE_ENTRY &kMidiPage, &kFillPage};   // SAMPLE (core/samp) where REC shows, USER SLOTS after AUTO (a box without the Rytm's pages: after SCOPE, the ring's last), POOL (core/lib/pools.h) after it; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kSlotsPage, &kPoolPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kChopPage, &kSeditPage, &kArpPage, MORPH_PAGE_ENTRY &kLoopPage, &kMidiPage, &kFillPage};   // SAMPLE (core/samp) where REC shows, USER SLOTS after AUTO (a box without the Rytm's pages: after SCOPE, the ring's last), POOL (core/lib/pools.h) after it; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
 #elif CORE_POLY
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSlotsPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kArpPage, MORPH_PAGE_ENTRY &kMidiPage, &kFillPage};   // USER SLOTS, SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSlotsPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kArpPage, MORPH_PAGE_ENTRY &kLoopPage, &kMidiPage, &kFillPage};   // USER SLOTS, SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
 #else
 UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage MORPH_PAGE_LAST};   // the page order: LFO, REC (where shown), SCOPE last
 #endif
@@ -374,7 +374,7 @@ CORE_COLD bool extra_for_box(const char* title) {
   struct Need { const char* title; uint32_t f; };
   static UI_ROM const Need kNeeds[] = {{"SAMPLE", device::kPools}, {"AUTO", device::kPools}, {"POOL", device::kPools}, {"CHOP", device::kPools}, {"SAMPLE EDIT", device::kPools}, {"SEQ", device::kPatterns},
                                        {"SONG", device::kPatterns}, {"POLY", device::kPatterns}, {"INSERT", device::kSendFx}, {"MASTER", device::kSendFx}, {"ARP", device::kSrcView},
-                                       {"PROJECT", device::kProject}, {"KEYS", device::kRytmKeys}, {"USER SLOTS", device::kUserSlots}};
+                                       {"PROJECT", device::kProject}, {"LOOP", device::kRytmKeys}, {"KEYS", device::kRytmKeys}, {"USER SLOTS", device::kUserSlots}};
   for (const Need& n : kNeeds)
     if (!strcmp(n.title, title)) return (device::active().features & n.f) != 0;
   return true;

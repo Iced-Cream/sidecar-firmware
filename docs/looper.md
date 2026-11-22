@@ -76,3 +76,10 @@ them: empty slot -> record 4 bars from the next bar, then loop; slot with a clip
 transport stopped, at once. Bars from MIDI clock (CLOCK SEND, TRANSPORT SEND on).
 Checked end to end in rytm-emu (`--usb-host`, OVERBRIDGE): 7.56 s recorded at 127
 BPM (4 bars), loop continues after STOP, the pad stops it.
+
+## Resampling and level (0.5.0 master looper)
+
+The ring records the master as heard: the loop plus the live Rytm. A grab while a loop plays (a resample) therefore holds both, at
+about twice the level of the first grab when the Rytm is not muted. After one or two resamples with the Rytm live the master can clip:
+turn LEV down for the resample (LEV 100 is the level as grabbed), or use auto-mute / LIVE VIA so the live Rytm is down under the loop
+(then a resample is the loop alone, as the Octatrack's). The page and the console say nothing about this: it is the design.

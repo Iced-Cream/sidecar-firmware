@@ -14,6 +14,7 @@
 #include "../sidecar_insfx.h"
 #include "../sidecar_mfx.h"
 #include "../sidecar_morph.h"
+#include "../sidecar_loop.h"
 #include "../sidecar_xy.h"
 #include "../sidecar_song.h"
 #include "../sidecar_rec.h"
@@ -564,6 +565,22 @@ static void morph_fake (int n, int top)
 		r->lo = 0, r->hi = i % 8 == 4 ? 12 : 127, r->v = (unsigned char) (i * 13 % 128);
 	}
 	s_Mo.gen = (unsigned) (n * 1000 + top + 1);
+}
+// 0.5.0: the LOOP page's made-up state (n grabs, a loop playing, the longest texts), as loopview_pi.cpp fills it
+static sidecar_loop_view_t s_Lo;
+static void loop_fake (int n, int state)
+{
+	static const unsigned char kHb[8] = {2, 1, 32, 8, 4, 16, 2, 1};
+	memset (&s_Lo, 0, sizeof s_Lo);
+	s_Lo.valid = 1, s_Lo.on = 1, s_Lo.state = (unsigned char) state, s_Lo.ring_s = 87, s_Lo.bal = 64, s_Lo.lev = 100, s_Lo.fade = 2;
+	s_Lo.mute = 1, s_Lo.live = 12, s_Lo.playing = n ? 0 : -1, s_Lo.sel = 0, s_Lo.ngrabs = (unsigned char) n;
+	if (state) s_Lo.pos10 = 27, s_Lo.bars10 = 40;
+	for (int i = 0; i < n; i++)
+	{
+		s_Lo.g[i].hb = kHb[i], s_Lo.g[i].kept = i == 1, s_Lo.g[i].gap = i == 3, s_Lo.g[i].copied = 1, s_Lo.g[i].bpm10 = (unsigned short) (1200 + i * 87), s_Lo.g[i].id = (unsigned) (100 + i);
+	}
+	if (n) snprintf (s_Lo.msg, sizeof s_Lo.msg, "KEPT SIDECAR_2026-11-13_1200");
+	s_Lo.gen = (unsigned) (n * 10 + state + 1);
 }
 // 0.5.0: the XY page's made-up setup (the longest names, both signs, MORPH), HOLD and a held position as asked
 static sidecar_xy_view_t s_Xy;
@@ -1914,6 +1931,32 @@ static void theme_run (int style, const char *pre)
 		}
 		sidecar_ui_show (pg);
 		EXPECT (!sidecar_morph_shown ());
+	}
+	// 0.5.0: the LOOP page - no grabs, a loop playing with eight grabs (the longest texts), the looper off, the engine not there yet
+	{
+		int pg = sidecar_ui_page ();
+		sidecar_ui_show (24);
+		EXPECT (sidecar_loop_shown () && !sidecar_morph_shown ());
+		loop_fake (0, 0); sidecar_loop_set (&s_Lo); run (2); shot ("loop-empty");
+		loop_fake (8, 2); sidecar_loop_set (&s_Lo); run (2); shot ("loop-playing");
+		loop_fake (3, 1); s_Lo.pending = 1; s_Lo.gen++; sidecar_loop_set (&s_Lo); run (2); shot ("loop-resample");
+		loop_fake (0, 0); s_Lo.on = 0; s_Lo.gen++; sidecar_loop_set (&s_Lo); run (2); shot ("loop-off");
+		loop_fake (8, 2); sidecar_loop_set (&s_Lo); run (2);
+		{	// the controls send the console's lines (a pad plays and shows; STOP fades, CUT cuts at once; sliders absolute)
+			int x, y, c0 = s_nCmds;
+			EXPECT (sidecar_loop_key (0, &x, &y)); tap (x, y); EXPECT_CMD ("loop=grab:0.5");
+			EXPECT (sidecar_loop_key (5, &x, &y)); tap (x, y); EXPECT_CMD ("loop=grab:16");
+			EXPECT (sidecar_loop_key (6, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop");
+			EXPECT (sidecar_loop_key (7, &x, &y)); tap (x, y); EXPECT_CMD ("loop=stop:cut:now");
+			EXPECT (sidecar_loop_key (10, &x, &y)); tap (x, y); EXPECT_CMD ("loop=play:#102"); EXPECT (sidecar_loop_sel () == 2);
+			EXPECT (sidecar_loop_key (16, &x, &y)); tap (x, y); EXPECT_CMD ("loop=keep:#102");
+			EXPECT (sidecar_loop_key (17, &x, &y)); tap (x, y); EXPECT_CMD ("loop=fade:2");	// FADE 1 -> 2 (the fake: index 2 = 1 bar, next 2)
+			EXPECT (sidecar_loop_key (18, &x, &y)); tap (x, y); EXPECT_CMD ("loop=mute:off");	// (the fake has it on)
+			EXPECT (sidecar_loop_key (19, &x, &y)); tap (x, y); EXPECT_CMD ("loop=live:off");	// (the fake has PERF 12: past it is off)
+			EXPECT (s_nCmds - c0 == 9);
+		}
+		sidecar_ui_show (pg);
+		EXPECT (!sidecar_loop_shown ());
 	}
 	// 0.5.0: the XY page - empty, a drag (xy=pos while it moves, the last position and xy=up at the release), HOLD's
 	// held position, SETUP with every slot, the picker (its SET, NONE), the engine not there yet
