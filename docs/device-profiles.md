@@ -315,7 +315,12 @@ scaled to the CPU clock setting, so that each render core stays under 80 % in th
   pair plus the POST EQ (the `bench ins` rows / 8), and, for the base box's voices only, an AMP instance for each on that
   core up to the AMP cap (6): AMP plays on the base box's chains only, the other box's AMP slots play dry.
 - **A box's chains:** its send FX, bus and master chains at their worst set, measured as one bench row (`master::box_bench`),
-  plus its master AMP pair (the base box's only). Before that row (LT1, 2026-11-22) the sum of overlapping rows.
+  plus its master AMP pair (the base box's only, 2 AMP instances). Before that row (LT1, 2026-11-22) the sum of overlapping rows.
+- **Under load** (LT3, 2026-11-22): each row alone on core 0 reads low against the two-box load, where all four cores share
+  the L2. The model scales them (`admit.h` `kAmpLoadPct` 300, `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
+  line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them a Rytm
+  or Digitakt base box's worst case (AMP on its voices) is over on core 2 even alone, so a second box beside it gets none,
+  and an A4 base box leaves a second box 2; moving part of the base box's chains off core 2 is the follow-up.
 - **Where the chains run** (decided 2026-11-22): slot 0's on render core 2, slot 1's on render core 1, each after its
   voices (`cores.cpp` `ChainCore`). LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
   ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches

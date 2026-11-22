@@ -1198,17 +1198,20 @@ void CKernel::LogBench (void)
 		m_Timer.MsDelay (2);
 	}
 	// CPU admission (core/device/admit.h): a voice's INSERT chain is the worst pair's eighth and the POST EQ's; a box's chains
-	// on its render core the box chains row plus its master AMP pair (the boot has no capture loaded for the row's M2 and M3). No box
-	// row (a slot already set): the earlier sum of the overlapping rows, an upper bound.
+	// on its render core the box chains row, dry (the boot has no capture loaded for the row's M2 and M3: core_bp adds the base
+	// box's AMP pair). No box row (a slot already set): the earlier sum of the overlapping rows, an upper bound. core_bp scales
+	// each row by its LT3 load factor (admit.h kAmpLoadPct, kVoiceLoadPct, kChainLoadPct), logged here.
 	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
-	Adm.fx_bp = nBoxBp ? nBoxBp + 2 * Adm.amp_bp : nMfxBp + nSfxWorstBp + nBusBp + 2 * Adm.amp_bp + nSfxCloudBp / 2;
+	Adm.fx_bp = nBoxBp ? nBoxBp : nMfxBp + nSfxWorstBp + nBusBp + nSfxCloudBp / 2;	// dry: core_bp adds the base box's AMP pair (LT3)
 	core::admit::set_costs (Adm);
 	core::admit::set_clock (m_nClockMHz);
+	const core::admit::LoadPct &Lp = core::admit::load_pct ();
 	core::device::readmit ();
-	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains %u.%02u %% (%s; slot 0's on core 2, slot 1's on core 1); limit 80 %% a render core",
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains %u.%02u %% (%s, dry; slot 0's on core 2, slot 1's on core 1); under load x%u.%02u voice, x%u.%02u AMP (the base box's master pair 2 AMPs), x%u.%02u chains (LT3); limit 80 %% a render core",
 			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
 			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100,
-			nBoxBp ? "box row + AMP pair" : "no box row: the rows' sum");
+			nBoxBp ? "box row" : "no box row: the rows' sum", Lp.voice / 100, Lp.voice % 100,
+			Lp.amp / 100, Lp.amp % 100, Lp.chain / 100, Lp.chain % 100);
 	LogAdmit ();
 }
 

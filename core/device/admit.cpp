@@ -33,6 +33,10 @@ static unsigned scaled(unsigned long long bp) {   // the bench's bp at the clock
   return now ? (unsigned)((bp * s_costs.mhz + now - 1) / now) : (unsigned)bp;
 }
 
+static LoadPct s_pct = {kVoiceLoadPct, kAmpLoadPct, kChainLoadPct};
+void set_load_pct(const LoadPct& p) { s_pct = p; }
+const LoadPct& load_pct() { return s_pct; }
+
 unsigned split_for(unsigned asked) {
   if (!asked) return s_split;
   const unsigned half = (asked + 1) / 2;
@@ -49,17 +53,18 @@ CORE_COLD unsigned core_bp(int c, const Load& l) {
   if (c != 1 && c != 2) return 0;
   const int base = l.held[0] ? 0 : 1;   // the base box: AMP plays on its voices' and master chains only
   unsigned v = 0, amps = 0;
-  unsigned long long bp = 0;
+  unsigned long long chains = 0;
   for (int s = 0; s < 2; ++s) {
     const unsigned n = on_core(c, l.voices[s] > 8 ? 8 : l.voices[s], split_for(l.asked[s]));
     v += n;
     if (s == base) amps = n < (unsigned)kAmpCap ? n : (unsigned)kAmpCap;
-    if (l.held[s] && chain_core(s) == c) {   // its chains, on the core that runs them; the other box's without the AMP pair
-      const unsigned pair = 2 * s_costs.amp_bp;
-      bp += s == base ? s_costs.fx_bp : s_costs.fx_bp > pair ? s_costs.fx_bp - pair : 0;
+    if (l.held[s] && chain_core(s) == c) {   // its chains, on the core that runs them; the base box's with its master AMP pair
+      chains += s_costs.fx_bp;
+      if (s == base) amps += 2;
     }
   }
-  bp += (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) + (unsigned long long)amps * s_costs.amp_bp;
+  const unsigned long long bp = (chains * s_pct.chain + (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) * s_pct.voice +
+                                 (unsigned long long)amps * s_costs.amp_bp * s_pct.amp + 99) / 100;
   return scaled(bp);
 }
 
@@ -127,6 +132,7 @@ void reset() {
   s_clock = 0;
   s_split = 4;
   s_enforce = true;
+  s_pct = {kVoiceLoadPct, kAmpLoadPct, kChainLoadPct};
   for (int8_t& o : s_over) o = -1;
 }
 
