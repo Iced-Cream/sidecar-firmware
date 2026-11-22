@@ -65,7 +65,7 @@ public:
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
 	// the Rytm (slot 0, the host link) on the relay: its USB MIDI both ways, as the gadget does for it on USB-C
-	static boolean ShowsRytm (void);		// the relay is started and shows slot 0
+	static boolean ShowsRytm (void);		// the relay is started and shows the host link's box (any slot)
 	static void RytmTap (const u8 *pEventPacket);	// xHCI IRQ (MIDIPacketHandler): the Rytm's packet, for the computer
 	static boolean ForRytm (u32 *pPacket);		// core 0's loop (the USB merge): the computer's next packet for the Rytm
 	static boolean ForRytmInSysEx (void);		// a SysEx of the computer's is half sent to the Rytm
