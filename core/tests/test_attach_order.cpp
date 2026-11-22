@@ -2,7 +2,7 @@
 // docs/device-profiles.md "Several devices"): the first box to attach is slot 0, the second slot 1, any two different box
 // types in either order (an A4 and a Digitakt with no Rytm at all; the Rytm in slot 1). A box that leaves frees its slot, its
 // voices stop and its edits land in its own folder; the other box stays where it is; a box that comes back loads from its
-// folder. The Rytm's own machinery follows her slot, not slot 0.
+// folder. The Rytm's own machinery follows its slot, not slot 0.
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -119,10 +119,10 @@ int main() {
   CHECK(engine_begin());
   device::set_out(1, out1);
   settle();
-  // boot: slot 0 presumed the Rytm's (her project read), nothing on transport 1
+  // boot: slot 0 presumed the Rytm's (its project read), nothing on transport 1
   CHECK(device::rytm_slot() == 0 && device::g_links[0].presumed && key(0) == "RYP");
   CHECK(device::route_of(0) == 0 && device::route_of(1) < 0 && !device::held(1));
-  CHECK(device::rytm_route(0) == 0 && device::rytm_route(1) < 0);   // her raw MIDI taps: transport 0's
+  CHECK(device::rytm_route(0) == 0 && device::rytm_route(1) < 0);   // its raw MIDI taps: transport 0's
 
   // ---- an A4 and a Digitakt, no Rytm: the A4 says hello first (on USB-C), so it is slot 0 in /.a4; the Digitakt slot 1
   CHECK(hello(0, device::kIdA4) == device::kOk);
@@ -134,7 +134,7 @@ int main() {
   CHECK(device::slot_held_by(&device::kDigitakt) == 1 && device::route_of(1) == 1 && device::side_slot() == 1);
   settle();
   CHECK(key(1) == "DTP" && lfo_depth(1) == 11 && key(0) == "A4P" && lfo_depth(0) == 20);
-  CHECK(device::rytm_route(0) < 0 && device::rytm_route(1) < 0);   // no Rytm: her taps read neither transport
+  CHECK(device::rytm_route(0) < 0 && device::rytm_route(1) < 0);   // no Rytm: its taps read neither transport
   CHECK(device::g_base == &device::g_links[0] && device::voice_base(device::g_links[1]) == kBoxVoices);
   printf("  A4 then Digitakt: slot 0 %s (%s), slot 1 %s (%s)\n", key(0).c_str(), device::g_links[0].state, key(1).c_str(),
          device::g_links[1].state);
@@ -169,7 +169,7 @@ int main() {
   CHECK(get("/.digitakt/lfo/DTP.txt").find(" 33 ") == std::string::npos && get("/.rytm/lfo/A4P.txt").empty());
   printf("  the A4 left: its edit saved in /.a4, the Digitakt still slot 1\n");
 
-  // ---- a Rytm on USB-C now: the lowest free slot, 0, in /.rytm, her project read again; the Digitakt does not move
+  // ---- a Rytm on USB-C now: the lowest free slot, 0, in /.rytm, its project read again; the Digitakt does not move
   rytm35(0);
   CHECK(device::rytm_slot() == 0 && device::rytm_at(0) && device::route_of(0) == 0 && !device::g_links[0].state);
   CHECK(device::slot_held_by(&device::kDigitakt) == 1 && device::route_of(1) == 1 && device::g_base == &device::g_links[0]);
@@ -202,31 +202,31 @@ int main() {
   CHECK(v[kBoxVoices + 1].live && !v[1].live);
   printf("  Digitakt then A4: slot 0 %s, slot 1 %s\n", key(0).c_str(), key(1).c_str());
 
-  // ---- the Rytm in slot 1: the A4 leaves, a Rytm takes its place on USB-C; her machinery follows her slot
+  // ---- the Rytm in slot 1: the A4 leaves, a Rytm takes its place on USB-C; its machinery follows its slot
   device::usb_detach(1);
   settle();
   rytm35(0);
   CHECK(device::rytm_slot() == 1 && device::rytm_at(1) && !device::rytm_at(0) && device::rytm_home() == 1);
   CHECK(device::slot_held_by(&device::kDigitakt) == 0 && device::route_of(0) == 1 && device::route_of(1) == 0);
-  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // her taps (pattern dumps, FILL): her transport, her slot
+  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // its taps (pattern dumps, FILL): its transport, its slot
   settle();
   CHECK(key(1) == "RYP" && key(0) == "DTP" && !device::g_links[1].state);
-  // her report 50 (the stems' pans, who is off ROUTE TO MAIN) lands in her slot's master control, for her SRC MIX
+  // its report 50 (the stems' pans, who is off ROUTE TO MAIN) lands in its slot's master control, for its SRC MIX
   master::link_lost();
   send(0, sidecar({0x50, 50, 64, 64, 64, 64, 64, 64, 64, 0, 1 << 3}));
   CHECK(master::control_of(1).known && !master::control_of(0).known && &master::rytm() == &master::control_of(1));
   CHECK(master::control_of(1).pan[0] == 50 && master::stems_on_main() == 7);
   voices_init();
-  send(0, trig(3, 60));   // her voice 3: engine voice 8 + 3, her slot's
+  send(0, trig(3, 60));   // its voice 3: engine voice 8 + 3, its slot's
   CHECK(v[kBoxVoices + 3].live && !v[3].live);
-  {   // the Rytm's own machinery is her slot's: the Digitakt's slot is no Rytm's
+  {   // the Rytm's own machinery is its slot's: the Digitakt's slot is no Rytm's
     device::Scope in(device::g_links[0]);
     CHECK(!device::rytm_at(device::cur().index));
   }
-  // a project name (0x10) from her moves her slot's project only
+  // a project name (0x10) from it moves its slot's project only
   send(0, sidecar({0x10, 'R', '2'}));
   CHECK(key(1) == "R2" && key(0) == "DTP");
-  printf("  the Rytm in slot 1: slot 0 %s, slot 1 %s; her voices 8..15\n", key(0).c_str(), key(1).c_str());
+  printf("  the Rytm in slot 1: slot 0 %s, slot 1 %s; its voices 8..15\n", key(0).c_str(), key(1).c_str());
 
   // ---- a box on a transport replaced by another box on the same transport: the one before left (its slot saving)
   device::set_out(1, out1);
@@ -236,7 +236,7 @@ int main() {
   CHECK(hello(1, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0 && device::rytm_slot() == 1);
   settle();
   CHECK(key(0) == "A4P" && key(1) == "R2");
-  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // the A4 on transport 1: not hers
+  CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // the A4 on transport 1: not the Rytm's
 
   // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
   // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)
@@ -256,7 +256,7 @@ int main() {
   CHECK(device::rytm_slot() == 1 && device::slot_held_by(&device::kA4) == 0);
   printf("  self-check before any box: slot 0 still presumed; the A4's USB first takes slot 0, the Rytm's slot 1\n");
 
-  // ---- a Rytm whose USB enumerates at boot, on the slot 0 presumed hers: her USB confirms it, so an A4 after her takes slot 1
+  // ---- a Rytm whose USB enumerates at boot, on the slot 0 presumed the Rytm's: its USB confirms it, so an A4 after it takes slot 1
   // (the QEMU gate's rytm-a4 order, 2026-11-21)
   device::reset();
   device::set_out(1, out1);
@@ -267,7 +267,7 @@ int main() {
   CHECK(device::usb_attach(&device::kA4) == 1);
   device::step(true);
   CHECK(device::rytm_slot() == 0 && device::slot_held_by(&device::kA4) == 1);
-  printf("  the Rytm's USB at boot confirms slot 0; the A4's USB after her takes slot 1\n");
+  printf("  the Rytm's USB at boot confirms slot 0; the A4's USB after it takes slot 1\n");
 
   // ---- a box that drops off the bus and comes back while its slot is still saving takes that same slot back, not the
   // lowest free one (a nudged cable, the RA1 re-enumeration: unit run AO1, 2026-11-21)

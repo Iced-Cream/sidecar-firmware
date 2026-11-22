@@ -253,7 +253,7 @@ CORE_COLD void set_fader(uint16_t v, int source) { move_fader(v, source, kSmooth
 CORE_COLD uint16_t fader_played() { return (uint16_t)S().played; }
 CORE_COLD int fader_source() { return S().src; }
 
-CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's knob: her slot's fader)
+CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's knob: its slot's fader)
   device::Scope in(device::g_links[device::rytm_home()]);
   g_qp_mask = (uint16_t)(mask & 0xFFF);
   if (!(flags & kQpMoved) || pos < 0 || pos > 255) return;   // the hello's report before the knob ever sent: no position

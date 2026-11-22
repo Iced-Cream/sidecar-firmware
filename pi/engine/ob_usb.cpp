@@ -1407,7 +1407,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
 			{
-				sendfx_pi::FromVoices (m_nSlot, *m_pAudio, V, ob::kFramesPerBlock, FD);	// the Rytm here: paced by her stems
+				sendfx_pi::FromVoices (m_nSlot, *m_pAudio, V, ob::kFramesPerBlock, FD);	// the Rytm here: paced by its stems
 				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 			}
@@ -1436,7 +1436,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			pTarget->ToBox (F, V, ob::kFramesPerBlock);
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		const int nBase = core::out::g_base_slot;	// the base box's send FX and master chain (phase 3(d))
-		if (s_bActive) sendfx_pi::FromVoices (nBase, core::out::device (), V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems (the Rytm's: paced by her stems, another box's by its voices)
+		if (s_bActive) sendfx_pi::FromVoices (nBase, core::out::device (), V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems (the Rytm's: paced by its stems, another box's by its voices)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
@@ -1605,9 +1605,9 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nInBlocks++;
 			good++;
 			if (IMirrorTarget *pT = Target ()) pT->FromBoxBlock (pBlk);	// UAC2 IN 1-12, or its mirror
-			if (m_pAudio == &core::out::kRytmMk2)	// the Rytm's voice stems (IN 2..9), whichever slot she holds (a box's IN 2..9 are no stems)
+			if (m_pAudio == &core::out::kRytmMk2)	// the Rytm's voice stems (IN 2..9), whichever slot it holds (a box's IN 2..9 are no stems)
 			{
-				const boolean bFx = sendfx_pi::On (m_nSlot), bMix = masterfx_pi::WantStems (m_nSlot);	// her send FX; SRC MIX onto 0/1 (core/fx/master.h)
+				const boolean bFx = sendfx_pi::On (m_nSlot), bMix = masterfx_pi::WantStems (m_nSlot);	// its send FX; SRC MIX onto 0/1 (core/fx/master.h)
 				if (bFx || bMix)
 				{
 					s32 S[ob::kFramesPerBlock][8];

@@ -12,8 +12,8 @@
 //
 // Two links (phase 3(d), decided 2026-11-14: the boxes work independently and identically): one instance per box (slot),
 // each its own rings, SendFx, stats and settings (core::fx::control_of(box), its buses: ins::engine(box)). Box 0 (the
-// Rytm's, slot 0 or 1 by attach order) is what a lone Rytm always had: her stems from her stream's IN completion pace it
-// (FromRytm with her slot). Another box (an A4, a Digitakt: either slot, alone or beside the Rytm) has no stems the send FX
+// Rytm's, slot 0 or 1 by attach order) is what a lone Rytm always had: its stems from its stream's IN completion pace it
+// (FromRytm with its slot). Another box (an A4, a Digitakt: either slot, alone or beside the Rytm) has no stems the send FX
 // understands: its voices' sends (FromVoices, its own stream's OUT fill) are its input frame by frame and pace it. Which of
 // the two a box is: its stream's device row (FromVoices with dev: the Rytm's row, core::out::kRytmMk2, has stems). Each is
 // rendered on core 2 after its own render pass (the base pass when it is the base box, else a side pass), its return added
@@ -46,7 +46,7 @@ void FromRytm(int box, const int32_t (*stems)[8], unsigned n);   // ... into box
 // the track's FX1 / FX2 send levels apply to it as to the stem, with the same lag.
 const unsigned kVoiceLag = 256;
 void FromVoices(const int16_t (*v)[8], unsigned n, const float (*feed)[8] = nullptr);
-// box's voices: the Rytm's box (dev: her row, core::out::kRytmMk2) queued for FromRytm as above; another box's: its input,
+// box's voices: the Rytm's box (dev: its row, core::out::kRytmMk2) queued for FromRytm as above; another box's: its input,
 // every frame while On(box), feed unused. dev: the box's stream's device row. Without dev: box 0 has stems, box 1 none.
 void FromVoices(int box, const int16_t (*v)[8], unsigned n, const float (*feed)[8] = nullptr);
 void FromVoices(int box, const core::out::Device& dev, const int16_t (*v)[8], unsigned n, const float (*feed)[8] = nullptr);

@@ -73,7 +73,7 @@ int trim_word(const char* p) {
   return num(p) == 0 ? 0 : 1;
 }
 // 3(d): the settings code (book .. clear, the line, the console, json) works on the slot in hand's (ins::slot_in_hand:
-// prj_slot on the control core, each slot in turn in ins::reset); report / stems_on_main are the Rytm's (her slot's: rytm())
+// prj_slot on the control core, each slot in turn in ins::reset); report / stems_on_main are the Rytm's (its slot's: rytm())
 Control& M() { return control_of(ins::slot_in_hand()); }
 ins::Control& IK() { return ins::control_of(ins::slot_in_hand()); }
 void book(int i, int f) { M().fx[i] = (int8_t)f; }
@@ -307,7 +307,7 @@ bool report(const uint8_t* d, int len) {
   return true;
 }
 
-void link_lost() {   // (both slots': she may have left her slot already; no other box reports)
+void link_lost() {   // (both slots': it may have left its slot already; no other box reports)
   for (int b = 0; b < kBoxes; ++b) control_of(b).known = 0;
 }
 

@@ -75,8 +75,8 @@ extern Control control;
 // (3(c) loads its MFX line into it), played on slot 1's chains (ins::engine(1), ins::control_of(1)) with its own rooms and
 // SendFx units (kBoxes: 16-voice builds). `control` is slot 0's. The settings code below (set_*, accept, the rooms, the
 // console, the card line, json) works on the slot in hand's (ins::slot_in_hand, 3(c)'s prj_slot): cur(). report,
-// link_lost and stems_on_main are the Rytm's: rytm(), her slot's control (core::device::rytm_home: slot 0 or 1, whichever
-// she holds; slot 0 while she holds none).
+// link_lost and stems_on_main are the Rytm's: rytm(), its slot's control (core::device::rytm_home: slot 0 or 1, whichever
+// it holds; slot 0 while it holds none).
 extern Control control1;
 inline Control& control_of(int box) { return box ? control1 : control; }
 Control& cur();   // the slot in hand's

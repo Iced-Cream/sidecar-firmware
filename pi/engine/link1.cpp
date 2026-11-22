@@ -181,7 +181,7 @@ void Poll (TRealtime *pRealtime, TAllSoundOff *pAllSoundOff)
 	while (g_In.pop (&b))
 	{
 		bridge::link_byte (1, b);	// SONG RECORD (core/song): the box's whole stream, its CC / NRPN too, as its slot's (step 10c)
-		bridge::rytm_byte (1, b);	// the Rytm's pattern dumps and FILL's answers while she is on this transport (bridge.h)
+		bridge::rytm_byte (1, b);	// the Rytm's pattern dumps and FILL's answers while it is on this transport (bridge.h)
 		if (s_Rt.feed (b))
 		{
 			s_Stats.nRealtime++;

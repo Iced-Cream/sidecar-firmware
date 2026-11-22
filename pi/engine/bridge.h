@@ -179,9 +179,9 @@ int livein_status(int vi, char* b, int cap);
 bool cal_on();
 void cal_in(const int32_t* f, int n, int stride);
 void rytm_byte(uint8_t b);   // transport 0's (g_MidiIn): rytm_byte(0, b) and SONG RECORD's link_byte(0, b)
-// transport t's byte to the pattern dump's reader and FILL's writer while t carries the Rytm, whichever slot she holds: transport 0
-// unless it is routed to another box's slot, transport 1 only while it is routed to hers (core::device::rytm_at). Read in her
-// slot's Scope (what it sends back goes to her). One parser each: only her transport feeds them.
+// transport t's byte to the pattern dump's reader and FILL's writer while t carries the Rytm, whichever slot it holds: transport 0
+// unless it is routed to another box's slot, transport 1 only while it is routed to its slot (core::device::rytm_at). Read in its
+// slot's Scope (what it sends back goes to it). One parser each: only its transport feeds them.
 void rytm_byte(int transport, uint8_t b);
 void link_byte(int transport, uint8_t b);   // SONG RECORD's tap of a transport's whole MIDI stream (its slot's song)
 // The remote UI's REC page (core/ui/extra.h RecInfo): the recorder's state from core 0 (rec_pi.cpp), and the page's

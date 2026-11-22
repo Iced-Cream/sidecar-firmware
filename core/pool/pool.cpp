@@ -75,7 +75,7 @@ static struct FxSlotFn {
   FxSlotFn() { fx::slot_fn = fx_slot; }
 } g_fx_slot_fn;
 #if CORE_POLY
-// the Rytm's report 50 (core/fx/master.h rytm()): her slot's master control, whichever slot she holds
+// the Rytm's report 50 (core/fx/master.h rytm()): its slot's master control, whichever slot it holds
 static int rytm_home_slot() { const int s = device::rytm_home(); return s < kVoiceSlots ? s : 0; }
 static struct MasterRytmFn {
   MasterRytmFn() { master::rytm_slot_fn = rytm_home_slot; }

@@ -1,8 +1,8 @@
-// pi/engine/tests/test_rytm_slot1.cpp - the Rytm in either slot (attach order, design 2026-11-21 item 4): her stems pace her
-// own slot's send FX and feed her slot's SRC MIX, and her report 50 lands in her slot's master control. A fixed scene (CHORUS
-// on FX 1, COMB on FX 2 POST, her track sends, the voices' sends to the buses, a TYPE on bus 3, the master's COMP and a send
-// TYPE insert, SRC MIX with the stems and her report) is played once as slot 0 and once as slot 1 through sendfx_pi and
-// masterfx_pi as ob_usb.cpp calls them (her stream's device row, core::out::kRytmMk2); every OUT frame hashed (FNV-1a 64):
+// pi/engine/tests/test_rytm_slot1.cpp - the Rytm in either slot (attach order, design 2026-11-21 item 4): its stems pace its
+// own slot's send FX and feed its slot's SRC MIX, and its report 50 lands in its slot's master control. A fixed scene (CHORUS
+// on FX 1, COMB on FX 2 POST, its track sends, the voices' sends to the buses, a TYPE on bus 3, the master's COMP and a send
+// TYPE insert, SRC MIX with the stems and its report) is played once as slot 0 and once as slot 1 through sendfx_pi and
+// masterfx_pi as ob_usb.cpp calls them (its stream's device row, core::out::kRytmMk2); every OUT frame hashed (FNV-1a 64):
 // the two hashes are equal. Then a box that is not the Rytm (an A4-like row) in slot 0: its voices pace its send FX (frames
 // rendered, a return on its pair) and SRC MIX mixes no stems on its stream. 16 voices (two slots).
 #include <cmath>
@@ -66,12 +66,12 @@ static void scene(int b) {
   g_hand = 0;
 }
 
-static void report() {   // her 50: BD pan 50 off main, CY/CB pan 100 off main, the rest centred on main
+static void report() {   // the Rytm's 50: BD pan 50 off main, CY/CB pan 100 off main, the rest centred on main
   const uint8_t m[16] = {0xF0, 0x7D, 0x52, 0x54, 0x50, 50, 64, 64, 64, 64, 64, 64, 100, 0, (1 << 3) | (1 << 6), 0xF7};
   CHECK(master::report(m, 16));
 }
 
-// n blocks of 7 frames for box b on stream dev, as ob_usb.cpp: the IN completion (her stems, when dev is hers), the OUT fill
+// n blocks of 7 frames for box b on stream dev, as ob_usb.cpp: the IN completion (its stems, when dev is the Rytm's), the OUT fill
 // (voices, the send FX return, the master chain), core 2 after the block
 static void run(int b, const out::Device& dev, int blocks, bool stems, double* peak = nullptr) {
   for (int k = 0; k < blocks; ++k) {
@@ -107,7 +107,7 @@ static uint64_t as_rytm(int b) {
   g_rytm = b;
   scene(b);
   report();
-  CHECK(master::control_of(b).known && !master::control_of(1 - b).known);   // her report: her slot's
+  CHECK(master::control_of(b).known && !master::control_of(1 - b).known);   // its report: its slot's
   CHECK(master::stems_on_main() == 6);
   CHECK(sendfx_pi::On(b) && master::on(b) && masterfx_pi::WantStems(b));
   if (b == 1) CHECK(!masterfx_pi::WantStems(0));   // (slot 0 has no scene yet)
@@ -116,10 +116,10 @@ static uint64_t as_rytm(int b) {
   const uint32_t f0 = sendfx_pi::ReadStats(b).frames, o0 = sendfx_pi::ReadStats(1 - b).frames;
   const uint32_t m0 = masterfx_pi::Read(b).frames, n0 = masterfx_pi::Read(1 - b).frames;
   run(b, out::kRytmMk2, 3000, true);
-  CHECK(sendfx_pi::ReadStats(b).frames - f0 >= 3000 * 7 - 2 * sendfx_pi::kMaxPerRender);   // her stems paced it
+  CHECK(sendfx_pi::ReadStats(b).frames - f0 >= 3000 * 7 - 2 * sendfx_pi::kMaxPerRender);   // its stems paced it
   CHECK(sendfx_pi::ReadStats(1 - b).frames == o0);                                        // the other slot's: untouched
   CHECK(masterfx_pi::Read(b).frames > m0 && masterfx_pi::Read(1 - b).frames == n0);
-  master::link_lost();   // she left: her report is forgotten, in either slot
+  master::link_lost();   // the Rytm left: its report is forgotten, in either slot
   CHECK(!master::control_of(0).known && !master::control_of(1).known && master::stems_on_main() == 0);
   return g_h;
 }
@@ -127,12 +127,12 @@ static uint64_t as_rytm(int b) {
 int main() {
   ins::slot_fn = hand;
   master::rytm_slot_fn = rytm;
-  const uint64_t h1 = as_rytm(1);   // she attached second (an A4 first)
+  const uint64_t h1 = as_rytm(1);   // the Rytm attached second (an A4 first)
   printf("test_rytm_slot1: the Rytm in slot 1: hash %016llx\n", (unsigned long long)h1);
-  const uint64_t h0 = as_rytm(0);   // she attached first, as ever
+  const uint64_t h0 = as_rytm(0);   // the Rytm attached first, as ever
   printf("test_rytm_slot1: the Rytm in slot 0: hash %016llx\n", (unsigned long long)h0);
   CHECK(h0 == h1);
-  printf("test_rytm_slot1: her send FX and SRC MIX play bit for bit the same in slot 1 as in slot 0\n");
+  printf("test_rytm_slot1: the Rytm's send FX and SRC MIX play bit for bit the same in slot 1 as in slot 0\n");
 
   // A box (no stems: an A4-like row) in slot 0 with the same scene (SRC MIX set): its voices pace its send FX (before: its
   // voices waited for stems that never came and nothing rendered), and its master mixes no stems

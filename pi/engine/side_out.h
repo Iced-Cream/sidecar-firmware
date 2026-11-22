@@ -30,7 +30,7 @@ inline void Restart() { g_restart = true; }
 
 // n frames for slot `slot`'s own stream (dev: its box's device row): its voices through the side stage, or silence
 // (and nothing popped) while that slot has no side stage. voices, feed (optional): as Output::Pull's (feed: Taps::feed, the
-// PRE / POST voices' stand-ins for their stems: the Rytm's send FX when she is the side box; left as is while silent).
+// PRE / POST voices' stand-ins for their stems: the Rytm's send FX when it is the side box; left as is while silent).
 inline void Pull(int slot, const core::out::Device* dev, int32_t (*out)[Output::kChannels], uint32_t n,
                  int16_t (*voices)[Output::kVoices] = nullptr, float (*feed)[Output::kVoices] = nullptr) {
   const bool on = core::device::side_slot() == slot;

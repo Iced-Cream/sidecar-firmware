@@ -21,7 +21,7 @@ struct Ret { float l, r, pl, pr, s[4]; };   // the PRE pair (onto 2/3) and the P
 // core 0 only (the OUT fill writes, the IN completion reads): the voices' bus sends and stem stand-ins waiting for their
 // stem frame
 struct Vq { float vs[3], st[8]; };
-// One per box (two links, phase 3(d)): the Rytm's (slot 0 or 1) is what a lone Rytm always had, her stems pace it (FromRytm);
+// One per box (two links, phase 3(d)): the Rytm's (slot 0 or 1) is what a lone Rytm always had, its stems pace it (FromRytm);
 // another box's has no stems (FromVoices paces it)
 struct Inst {
   Spsc<Stem, kRing> Stems;
@@ -84,7 +84,7 @@ void FromVoices(int box, const core::out::Device& dev, const int16_t (*v)[8], un
   Voices(box, &dev == &core::out::kRytmMk2, v, n, feed);
 }
 
-// stems: box is the Rytm's (her stems pace it, FromRytm), else its voices' sends are its input
+// stems: box is the Rytm's (its stems pace it, FromRytm), else its voices' sends are its input
 static void Voices(int box, bool stems, const int16_t (*v)[8], unsigned n, const float (*feed)[8]) {
   if (!On(box)) return;
   Inst& x = I(box);

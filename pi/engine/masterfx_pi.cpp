@@ -64,7 +64,7 @@ void Stems(const int32_t (*stems)[8], unsigned n) { Stems(0, stems, n); }
 
 void Stems(int box, const int32_t (*stems)[8], unsigned n) {
   Inst& x = I(box);
-  const auto& c = core::master::control_of(box);   // her slot's: its SRC, TRIM and her report (master::rytm())
+  const auto& c = core::master::control_of(box);   // its slot's: its SRC, TRIM and its report (master::rytm())
   float g[8][2], d[8][2];
   if (c.trim != x.nTrim) {   // (the gains' own ramp below smooths it)
     x.nTrim = c.trim;
@@ -126,7 +126,7 @@ void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned
   const int p0 = dev.post[0], p1 = dev.post[1], q0 = dev.pre[0], q1 = dev.pre[1];
   const bool hasPre = q0 != p0 || q1 != p1;
   // stereo=measure reads the plain return, so all of this stands aside for it whatever BYP says
-  // SRC MIX: the Rytm's stems, on her stream (dev is her row) whichever slot she holds; another box has no stems to mix
+  // SRC MIX: the Rytm's stems, on its stream (dev is its row) whichever slot it holds; another box has no stems to mix
   const bool rytm = &dev == &core::out::kRytmMk2;
   const bool on = core::master::on(box), meas = box == 0 && core::out::meas::active(), mix = rytm && c.src == core::master::kMix;
   const bool chain = on && !c.byp && !meas;

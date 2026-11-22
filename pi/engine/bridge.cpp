@@ -389,7 +389,7 @@ static void rytm_read(uint8_t b) {
   core::patwrite::byte(b);   // 0.5.0 FILL: the pattern writer's answers (core/seq/patwrite.h)
 }
 void rytm_byte(int t, uint8_t b) {
-  const int h = core::device::rytm_route(t);   // her slot when t carries her (transport 0 with no route yet: as ever)
+  const int h = core::device::rytm_route(t);   // its slot when t carries it (transport 0 with no route yet: as ever)
   if (h < 0) return;
   if (h >= core::device::kLinks || &core::device::g_links[h] == core::device::g_cur) {
     rytm_read(b);

@@ -43,7 +43,7 @@ void Process(int32_t (*out)[12], unsigned n);
 void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned n);   // box's, on dev's pairs
 // SRC MIX: core 0, the IN completion: the Rytm's stems IN 2..9 while it is asked for (WantStems): each stem panned as the
 // Rytm reports it (master::report), none that is still on main; no report: all of them, centred. box: the Rytm's slot
-// (her stream's, slot 0 or 1: her slot's SRC, TRIM and report, master::rytm()); Process mixes them on her stream only
+// (its stream's, slot 0 or 1: its slot's SRC, TRIM and report, master::rytm()); Process mixes them on its stream only
 // (dev == core::out::kRytmMk2). The calls without a box are box 0's.
 bool WantStems();
 bool WantStems(int box);

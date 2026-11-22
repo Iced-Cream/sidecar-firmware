@@ -278,7 +278,7 @@ static CORE_COLD void on_state(uint8_t s) {
   x.pending = false;
   x.rytm = s ? 1 : 0;
   x.ask_ms = 0;
-  if (device::rytm_at(prj_slot())) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: her slot's)
+  if (device::rytm_at(prj_slot())) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: its slot's)
   if (!reply && x.want && s == 0) send26(1);   // a connect: the box forgot; a 00 in reply to our 01 is not repeated
 }
 CORE_COLD bool command(const char* p, char* out, int cap) {
