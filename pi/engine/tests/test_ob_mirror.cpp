@@ -450,6 +450,18 @@ int main() {
       CHECK(logged("usb=mirror: USB-C shows a4, the relay nothing (attach order, mirrorfirst=usbc)"));
       Box r;                                   // the Rytm (the preferred box) after it: the relay, the A4 stays
       CHECK(sl(r) == 1 - sa && CObUsb::UsbcSlot() == sa && relay.box == r.box() && relay.up.back() == 1);
+      // the MIDI routes follow the boxes, not the slot numbers (RXQ1/2/4, T470/T471/T478: the A4 first, the Rytm's host link
+      // in slot 1 went to USB-C and the relay got none): the host link is slot 1's box, shown by the relay; link1 slot 0's on USB-C
+      CDevice hm, lm;
+      a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
+      r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+      CObUsb::SetMidiDevices(&hm, &lm);
+      CHECK(CObUsb::MidiSlot(0) == 1 - sa && CObUsb::MidiSlot(1) == sa && r.box()->OnTransport(0) && a.box()->OnTransport(1));
+      CHECK(!CObUsb::UsbcShowsHostLink() && CObUsb::UsbcShowsLink1() && CObUsb::RelayShowsHostLink() && !CObUsb::RelayShowsLink1());
+      CHECK(logged("midi: the host link is the box of slot 1 (rytm)") && logged("midi: link1 is the box of slot 0 (a4)"));
+      CObUsb::SetMidiDevices(&hm, nullptr);    // the A4's MIDI not up yet: link1 nowhere, the host link's box still the relay's
+      CHECK(CObUsb::MidiSlot(1) == -1 && !CObUsb::UsbcShowsLink1() && !CObUsb::UsbcShowsHostLink() && CObUsb::RelayShowsHostLink());
+      CObUsb::SetMidiDevices(nullptr, nullptr);
       CHECK(g_gadget.box.size() == nBox + 1);
       CUSBRequest* rin = r.pipe(0x82);         // the Rytm's async pipe at its own interval on the relay too (PA1, T353, PV1);
       CHECK(rin && rin->ep->desc->bInterval == 1 && a.pipe(0x82)->ep->desc->bInterval == 4);	// the A4's at 4 on USB-C (T416/T417)
@@ -469,6 +481,16 @@ int main() {
       Box r;                                   // the Rytm, then the A4: Rytm USB-C, A4 the relay
       Box a(true);
       CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.up.back() == 1);
+      {   // the Rytm first (slot 0, USB-C), the A4 the relay (slot 1): as before two boxes, now by the boxes' own MIDI
+        CDevice hm, lm;
+        a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
+        r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+        CObUsb::SetMidiDevices(&hm, &lm);
+        CHECK(CObUsb::MidiSlot(0) == 0 && CObUsb::MidiSlot(1) == 1);
+        CHECK(CObUsb::UsbcShowsHostLink() && !CObUsb::UsbcShowsLink1() && !CObUsb::RelayShowsHostLink() && CObUsb::RelayShowsLink1());
+        CObUsb::SetMidiDevices(nullptr, nullptr);
+        CHECK(CObUsb::MidiSlot(0) == -1 && CObUsb::MidiSlot(1) == -1);
+      }
       CHECK(a.pipe(0x82)->ep->desc->bInterval == 4);   // the A4's beside the relay's link: 1 ms at most (T330)
       relay.hold_pipe_in = true;               // the relay keeps the A4's next pipe packet for its computer
       CUSBRequest* ain = a.pipe(0x82);
