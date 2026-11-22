@@ -156,6 +156,7 @@ static void lt3() {
   admit::reset();
   admit::set_costs({1500, 157, 205, 402, 3028});
   admit::set_clock(1500);
+  admit::set_load_pct({135, 300, 110});   // LT3's factors (AMP 500 since LT4: lt4() below)
   admit::Load r = {{8, 0}, {true, false}, {8, 0}}, a = {{4, 0}, {true, false}, {4, 0}};
   CHECK(admit::core_bp(2, r) == 5286 && admit::core_bp(1, r) == 1955);
   CHECK(admit::fit(1, 4, r) == 4 && admit::fit(1, 8, r) == 8);
@@ -171,6 +172,23 @@ static void lt3() {
   admit::Load b = {{4, 8}, {true, true}, {4, 8}};   // order 1 config B as run (A4 base, 4 voice AMPs: 2 a core): core 1 87 %
   b.amps[1] = b.amps[2] = 2;
   CHECK(admit::core_bp(1, b) == 8675);
+  admit::reset();
+}
+
+// LT4 (2026-11-22, rebalance-core2 81b96b4): one voice AMP beside a Rytm base box + an A4 under the full INSERT load cost
+// ~19-20 points of core 1 (c1 with chains 78.8 % against core1Bp 70.07), so AMP counts at 500 % (admit.h): 4.02 % -> 20.1 %.
+// Beside two boxes at the full load (every voice's two INSERT slots set) no voice AMP fits on either core any more.
+static void lt4() {
+  admit::reset();
+  CHECK(admit::load_pct().amp == 500);
+  admit::set_costs({1500, 157, 205, 402, 3028});
+  admit::set_clock(1500);
+  admit::Load ra = {{8, 4}, {true, true}, {8, 4}};   // Rytm + A4: core 2 62.6 % + 20.1 = 82.7 %: no AMP
+  CHECK(!admit::amp_fits(1, ra) && !admit::amp_fits(2, ra));
+  admit::Load r = {{8, 0}, {true, false}, {8, 0}};   // a Rytm alone: room on core 1 (19.6 % + 20.1)
+  CHECK(admit::amp_fits(1, r));
+  r.amps[1] = 2;
+  CHECK(admit::core_bp(1, r) == 1955 + 2 * 2010 && admit::amp_fits(1, r));
   admit::reset();
 }
 
@@ -353,6 +371,7 @@ static void engine() {
 int main() {
   model();
   lt3();
+  lt4();
   engine();
   printf("test_admit: PASS\n");
   return 0;

@@ -38,13 +38,16 @@ constexpr unsigned kLimitBp = 8000;   // 80 % of a render core, in 1/100 % (bp)
 // project file gates/chains-core1-64fdd7b/RESULTS-LT3.md). The bench runs each row alone on core 0; under load all four
 // cores share the L2, and AMP (NAM's weights) loses most:
 //   - AMP: the base box's master pair took 26.3 % of a core against the bench's 2 x 4.02 (slot 0's master chain 30.6 %,
-//     slot 1's dry 4.3 %), and 2 voice AMPs a core added 19.5-21.9 points (config B), so one AMP ~10-13 %: 300 %
+//     slot 1's dry 4.3 %), and 2 voice AMPs a core added 19.5-21.9 points (config B), so one AMP ~10-13 %: 300 %. LT4
+//     (2026-11-22, rebalance-core2 81b96b4; project file gates/rebalance-core2-81b96b4/LT4-RESULTS.md): one voice AMP on
+//     core 1 beside a Rytm base box measured ~19-20 points (c1 with chains 78.8 % against core1Bp 70.07; beside an A4 base
+//     box ~13, as LT3): 500 %, the worst seen, so core 1 is not left at 79 % against the 80 % limit
 //   - a voice (machine + INSERT): 6 voices a core measured 26.1-32.8 points against 6 x 3.62: 135 %
 //   - a box's chains (the box row, dry): slot 1's Rytm 33.1 % (send FX 28.8 + master 4.3) against the row's 30.28: 110 %
 // With them, reserved at attach, the worst case of a Rytm or Digitakt base box was over on core 2 even alone (~125 %: its
 // chains, master pair and 4 voice AMPs). Since the rebalance (decided 2026-11-22) AMPs count when they play (amp_fits) and
 // slot 0's master chain with its pair runs on core 3.
-constexpr unsigned kAmpLoadPct = 300;
+constexpr unsigned kAmpLoadPct = 500;
 constexpr unsigned kVoiceLoadPct = 135;
 constexpr unsigned kChainLoadPct = 110;
 // The factors in use (reset: the k*LoadPct above; the host tests' synthetic costs set 100 each)

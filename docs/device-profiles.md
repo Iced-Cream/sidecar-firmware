@@ -329,7 +329,7 @@ scaled to the CPU clock setting, so that each render core stays under 80 % in th
   count against that box: the first ask wins. AMP plays on the base box's chains only, the other box's AMP slots play dry;
   the cap of 6 voice AMP slots (`MAX 6`) still holds. `/status` `admit` has `amps1` / `amps2`, the AMPs counted per core.
 - **Under load** (LT3, 2026-11-22): each row alone on core 0 reads low against the two-box load, where all four cores share
-  the L2. The model scales them (`admit.h` `kAmpLoadPct` 300, `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
+  the L2. The model scales them (`admit.h` `kAmpLoadPct` 500 since LT4 (300 at LT3), `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
   line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them,
   reserved at attach (an AMP on every base-box voice, the pair on core 2), a Rytm or Digitakt base box was over on core 2
   even alone; hence AMPs on load and the master chain on core 3 (below). Model with LT3's bench
