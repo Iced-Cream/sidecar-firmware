@@ -153,6 +153,11 @@ int main() {
   um::begin(host_um_exec());
   device::set_out(1, out1);
   settle();
+  // the Rytm's USB confirms slot 0, presumed its since the boot (attach order: a presumed Rytm that never spoke gives slot 0
+  // to the first box that says hello, test_attach_order)
+  CHECK(device::usb_attach(&device::rytm()) == 0);
+  device::step(true);
+  settle();
   hello_a4();   // the A4 beside the Rytm: slot 1, its folder /.a4, its project A4P
   settle();
   CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));
