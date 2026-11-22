@@ -388,7 +388,7 @@ void CEngineCores::Worker (unsigned nCore)
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
 	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders each box's voices %s its split (split=%u, or half its voices), %s", nCore,
-				nCore == 1 ? "below" : "from", s_nSplit, nCore == 1 ? "and slot 1's send FX and master chain" : "and slot 0's send FX and master chain");
+				nCore == 1 ? "below" : "from", s_nSplit, nCore == 1 ? "and slot 1's send FX and master chain" : MasterCore (0) == 3 ? "and slot 0's send FX (its master chain: core 3)" : "and slot 0's send FX and master chain");
 	if (__builtin_setjmp (g_Guard.JumpBuffer (nCore)))
 	{
 		// a fault in a voice's render (guard.cpp returned from the exception into here, at task level): that
