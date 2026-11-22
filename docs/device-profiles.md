@@ -312,11 +312,22 @@ When a box attaches (`device::select`, both by hello and by USB), its voices are
 scaled to the CPU clock setting, so that each render core stays under 80 % in the worst case:
 
 - **A voice** costs the worst machine of the bench (any voice may play any machine), its INSERT chain at the worst TYPE
-  pair plus the POST EQ (the `bench ins` rows / 8), and an AMP instance for each voice on that core up to the AMP cap (6).
-- **A box's chains** on render core 2: the master chain, the worst send TYPE insert set, SAT on every bus and master
-  slot, its master AMP pair and its two send FX (half the `CLOUD x4` row: inferred, no row of their own). Overlapping rows
-  are added: an upper bound.
-- **Placement:** a box's voices are its 0..n-1; 0..split-1 render on core 1 and split..7 on core 2 (`split=`, 4).
+  pair plus the POST EQ (the `bench ins` rows / 8), and, for the base box's voices only, an AMP instance for each on that
+  core up to the AMP cap (6): AMP plays on the base box's chains only, the other box's AMP slots play dry.
+- **A box's chains:** its send FX, bus and master chains at their worst set, measured as one bench row (`master::box_bench`),
+  plus its master AMP pair (the base box's only, 2 AMP instances). Before that row (LT1, 2026-11-22) the sum of overlapping rows.
+- **Under load** (LT3, 2026-11-22): each row alone on core 0 reads low against the two-box load, where all four cores share
+  the L2. The model scales them (`admit.h` `kAmpLoadPct` 300, `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
+  line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them a Rytm
+  or Digitakt base box's worst case (AMP on its voices) is over on core 2 even alone, so a second box beside it gets none,
+  and an A4 base box leaves a second box 2; moving part of the base box's chains off core 2 is the follow-up.
+- **Where the chains run** (decided 2026-11-22): slot 0's on render core 2, slot 1's on render core 1, each after its
+  voices (`cores.cpp` `ChainCore`). LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
+  ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches
+  or leaves; core 3 waits for both cores' chains before a pass whose base box changed (AMP's master rows follow the base).
+- **Placement:** a box's voices are its 0..n-1; 0..s-1 render on core 1 and s..7 on core 2, s its split: `split=` (4), or
+  half the voices its box asks for if fewer (an A4's 4 as 2 + 2), so a box's voices share both cores with the chains.
+  Core 3 puts each slot's split in every pass, so cores 1 and 2 never split a slot differently.
 
 The first box keeps its voices. The second gets the most that keep every core its voices land on under 80 % (a core
 already over by the chains alone takes none of them), never more than it asked for. Its reports past them are dropped

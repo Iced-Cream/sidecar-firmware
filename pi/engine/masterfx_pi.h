@@ -15,7 +15,7 @@
 //
 // Two links (phase 3(d), decided 2026-11-14: the boxes work independently and identically): one instance per box (slot),
 // each its own rings, crossfades, limiter and stats, its own settings (core::master::control_of(box)) and chain
-// (ins::engine(box)), rendered on core 2 after that box's render pass, processed in that box's own stream's OUT fill on its
+// (ins::engine(box)), rendered after that box's render pass on its render core (box 0 core 2, box 1 core 1: cores.cpp ChainCore, 2026-11-22), processed in that box's own stream's OUT fill on its
 // device row's pairs (a box without a PRE pair of its own, pre == post, has only POST). SRC MIX and stereo=measure are the
 // Rytm's (box 0). The calls without a box are box 0's on the Rytm's pairs.
 #pragma once
@@ -47,7 +47,7 @@ bool WantStems();
 void Stems(const int32_t (*stems)[8], unsigned n);
 void Render();          // core 2, after the send FX: the frames queued
 void Render(int box);   // ... box's, after its own send FX
-bool Command(const char* p);   // core 3: mfx=stats (logged): since the last one, core 2's load, underruns, drops
+bool Command(const char* p);   // core 3: mfx=stats (logged): since the last one, its render core's load, underruns, drops
 // The stats, for the display (any core, plain reads)
 struct Stats { uint32_t frames, under, drop_in, drop_out, stem_under; };
 Stats Read();

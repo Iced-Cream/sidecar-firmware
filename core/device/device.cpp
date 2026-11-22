@@ -193,7 +193,8 @@ int voices_asked(const Profile* h) {
 }
 static admit::Load load_now() {
   admit::Load ld = {};
-  for (int k = 0; k < kLinks && k < 2; ++k) ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr;
+  for (int k = 0; k < kLinks && k < 2; ++k)
+    ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr, ld.asked[k] = g_links[k].want;
   return ld;
 }
 static CORE_COLD void set_voices(Link& l, int n, bool tell) {

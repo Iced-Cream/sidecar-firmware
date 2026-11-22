@@ -10,7 +10,7 @@
 //   ins::Engine   the DSP: allocation-free; the DELAY's lines (kLine floats a channel) are memory the platform places
 //                 (heap_buffers.h on the Pi, a static array elsewhere). A voice's chain runs on the render core that
 //                 renders the voice (render_voices, after the voice's own sound: chains of other voices are other
-//                 cores' business); the bus chains on the send FX's core (the Pi's render core 2).
+//                 cores' business); the bus chains on the send FX's core (the Pi: slot 0's render core 2, slot 1's core 1).
 //
 // TYPE ids (stable: the card's files name them, sim/protocol.py INSERT_TYPES): 0 OFF, 1 FILTER, 2 CRUSH, 3 DRIVE,
 // 4 EQ, 5 COMP, 6 DELAY, 7 TREMOLO, 8 RINGMOD, 9 AMP, 10 SAT. Params P1..P4 0..127 (labels: kLabels):
