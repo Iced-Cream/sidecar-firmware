@@ -8,6 +8,9 @@
 //   LEARN FADER     CC7 CH1 / - / MOVE IT   core/mod/learn.h: YES arms a learn, the next CC heard (the Rytm's MIDI or a
 //   LEARN SCENE A                        USB-A device, e.g. a crossfader) drives the morph fader / picks scene A / B;
 //   LEARN SCENE B                        learning again replaces it (one route each); YES or NO while waiting stops it
+//   QPERF FADER     MUTED ONLY / OFF / ALWAYS   the Rytm's QUICK PERF knob as the morph fader (core/mod/scene.h, v2
+//                                        Task 6): only with the macros muted (FUNC + QPER), never, or always; kept in
+//                                        learn.txt. A mod without the mute report: MUTED ONLY acts as OFF (the footer)
 //   MIDI LEARN      N ROUTES / NONE      all the routes (the console's target routes too): YES twice clears them all
 //                                        (WAITING: a learn armed - YES stops it; LOCKED: learn.txt has lines of a newer
 //                                        build, nothing is cleared)
@@ -22,6 +25,7 @@
 
 #include "keys.h"
 #include "mod/learn.h"
+#include "mod/scene.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
 #include "ui/widgets.h"
@@ -32,7 +36,7 @@ namespace ui {
 namespace {
 
 enum : int { kYes = 0x44, kNo = 0x45, kUp = 0x42, kDown = 0x43 };
-enum : int { kRoute, kAuto, kMac, kLFader, kLA, kLB, kLearn, kUsbA, kLast, kRows };
+enum : int { kRoute, kAuto, kMac, kLFader, kLA, kLB, kQp, kLearn, kUsbA, kLast, kRows };
 constexpr int kRowY = 11, kRowH = 7, kVisible = 6;
 
 struct MidiPage {
@@ -115,6 +119,14 @@ CORE_COLD void change(int dir) {
     if (want == on) return;
     keys_cmd(want ? "keys=mac:on" : "keys=mac:off");
     note(want ? "COMPUTER: SIDECAR ROUTES" : "COMPUTER: TO THE RYTM");
+  } else if (P.cur == kQp) {   // the order MUTED ONLY, OFF, ALWAYS (scene::QpMode)
+    const int m = scene::qp_mode(), n = dir ? m + dir : (m + 1) % 3;
+    if (n < scene::kQpMutedOnly || n > scene::kQpAlways || n == m) return;
+    sniprintf(b, sizeof b, "scene=qperf:%s", scene::qp_mode_name(n));
+    char o[48];
+    scene::command(b, o, sizeof o);
+    note(n == scene::kQpOff ? "THE KNOB: PERF ONLY" : n == scene::kQpAlways ? "THE KNOB IS THE FADER"
+         : remote_caps2() & kCaps2QpMute ? "MUTED: THE KNOB IS FADER" : "OLD RYTM MOD: ACTS AS OFF");
   }
 }
 
@@ -143,6 +155,12 @@ CORE_COLD void row_text(int i, const char** name, char* v, int cap) {
       break;
     case kAuto: *name = "AUTO CHANNEL"; sniprintf(v, cap, "%d", keys::auto_channel()); break;
     case kMac: *name = "COMPUTER NOTES"; sniprintf(v, cap, "%s", keys::computer_on() ? "ON" : "OFF"); break;
+    case kQp: {
+      *name = "QPERF FADER";
+      const int m = scene::qp_mode();
+      sniprintf(v, cap, "%s", m == scene::kQpOff ? "OFF" : m == scene::kQpAlways ? "ALWAYS" : "MUTED ONLY");
+      break;
+    }
     case kLFader:
     case kLA:
     case kLB:
@@ -201,7 +219,10 @@ CORE_COLD void midi_draw(Canvas& c, int page, int npages, uint32_t ms) {
   }
   if (P.confirm) footer(c, "YES: CLEAR ALL  NO: KEEP");
   else if (P.note_new || (P.note_ms && ms - P.note_ms < 2000)) footer(c, P.note);
-  else if (P.cur <= kMac) footer(c, "YES / B: SET  NO: BACK");
+  else if (P.cur == kQp && learn::locked()) footer(c, "LEARN FILE IS NEWER");   // (review L4: not saved)
+  else if (P.cur == kQp && scene::qp_mode() == scene::kQpMutedOnly && !(remote_caps2() & kCaps2QpMute))
+    footer(c, "OLD RYTM MOD: ACTS AS OFF");
+  else if (P.cur <= kMac || P.cur == kQp) footer(c, "YES / B: SET  NO: BACK");
   else if (learn_row(P.cur)) footer(c, learn::armed() == row_what(P.cur) ? "MOVE A CONTROL  YES: STOP" : "YES: LEARN  NO: BACK");
   else if (P.cur == kLearn && learn::armed() >= 0) footer(c, "YES: STOP LEARN  NO: BACK");
   else if (P.cur == kLearn && learn_routes() && !learn::locked()) footer(c, "YES TWICE: CLEAR ALL");

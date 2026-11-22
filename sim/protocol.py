@@ -1431,6 +1431,29 @@ def decode_qperf(b):
     if len(b) != 5:
         return None
     return dict(pos=b[0] << 7 | b[1], mask=b[2] | b[3] << 7, flags=b[4])
+
+
+# 0.5.0 v2 P2 (rytm-mods 0026 "ms"; core/mod/scene.h capture / stock_edit): the MORPH scene edit on the Rytm's own pages.
+# The hello's caps2: bit 1 RUI_CAPS2_QP_MUTE (SEQ_QPERF flags bit 2 = the macros muted), bit 2 RUI_CAPS2_CAPTURE. Host
+# -> Rytm HOST_CMD 01 HOST_EDIT_ARM <0/1> (PAGE + T15 / T16 is the edit; a hello clears it), HOST_READOUT <n 1..16>
+# <ASCII 0x20..0x5F> (drawn over the Rytm's header ~1 s). Rytm -> host 2D 01 SEQ_CAPTURE <side 0 A / 1 B> <t 0..12>
+# <w 1..41> <delta s7 detents> <func: fine> <base hi7> <lo7> (the kit's value x 128); 2D 01 SEQ_EDIT_KEY <ev 1 held / 0
+# let go / 2 picked> <side> <n 0..11 or 7F>.
+RUI_CAPS2_QP_MUTE, RUI_CAPS2_CAPTURE = 2, 4
+HOST_READOUT, HOST_EDIT_ARM = 8, 0x0B
+SEQ_CAPTURE, SEQ_EDIT_KEY = 0x12, 0x13
+
+
+def host_readout(text) -> bytes:
+    t = [ord(c) for c in text.upper()[:16]]
+    return host_cmd(HOST_READOUT, len(t), *[c if 0x20 <= c <= 0x5F else ord("?") for c in t])
+
+
+def decode_capture(b):
+    """2D 01 12's bytes after the kind -> dict(side, t, w, delta, func, base), else None."""
+    if len(b) != 7:
+        return None
+    return dict(side=b[0], t=b[1], w=b[2], delta=b[3] - 128 if b[3] & 0x40 else b[3], func=b[4], base=b[5] << 7 | b[6])
 SEQ_SILENT = 0x46
 SEQ_FLAG_NO_PIN = 4
 SEQ_EDIT_OPS = {1: "COPY PAT", 2: "PASTE PAT", 3: "CLEAR PAT", 4: "UNDO PAT", 5: "COPY TRK", 6: "PASTE TRK",

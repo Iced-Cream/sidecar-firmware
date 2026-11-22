@@ -2,7 +2,9 @@
 // the Pi (ports 1..4, by their order: the Devine EZ-Creator Fade's crossfader) moves the scenes' fader, picks scene A
 // or B, or adds a bipolar offset to any modulation target. Arm a route (learn=fader|a|b|NAME[:DEPTH]): the next CC heard
 // is its port, channel and number. 7-bit CCs, or 14-bit once CC n (0..31) has been followed by CC n + 32 on the same
-// port and channel (the LSB). A target route is a source of the layer (8..39): each tick mod::offset(8 + i, t, depth,
+// port and channel (the LSB; an MSB alone then plays with the last LSB). A fader route takes the fader from another
+// source (or a held edit) only on a change of 2 CC steps / 256 (14 bit) from its last value, then follows every step
+// (0.5.0 v2 Task 6). A target route is a source of the layer (8..39): each tick mod::offset(8 + i, t, depth,
 // (v - 63.5) / 63.5) once a value came. A box setting, not a kit's: /.rytm/learn.txt, read at boot, written by
 // idle_save. Control side (core 3 on the Pi), cold.
 #pragma once
@@ -36,8 +38,9 @@ bool clear(int i);                   // route i (0-based) dropped
 // the console: "learn" (the routes, one per line), "learn=fader|a|b|NAME[:DEPTH]", "learn=clear:N" (1-based),
 // "learn=off". False: not "learn..."
 bool command(const char* p, char* out, int cap);
-// the file: "#sidecar learn 1" then "R <port> <ch 1..16> <cc> <what> [depth]", what fader / a / b / a target name. A line
-// this build does not read locks the file (read what can be read, never written: the 1042 rule)
+// the file: "#sidecar learn 1", "QP off|always" (scene's QPERF FADER when not the default MUTED ONLY, v2 Task 6), then
+// "R <port> <ch 1..16> <cc> <what> [depth]", what fader / a / b / a target name. A line this build does not read locks
+// the file (read what can be read, never written: the 1042 rule). A QPERF FADER change makes it dirty.
 void load();                         // boot (the card: a box setting, as keys.txt)
 bool save();                         // idle_save: true if it wrote
 bool dirty();

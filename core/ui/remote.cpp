@@ -410,11 +410,15 @@ struct State {
   // the press, the next repeat
   int rep_code = -1, rep_voice = 0;
   uint32_t rep_t0 = 0, rep_next = 0;
-  // 0.5.0 (spec-050 2.6, EDIT): the scene key (T1..T12: 0..11) held on a page that locks, -1 none; the target a turn
-  // locked last while it is held (the bottom bar shows its locked value), 0 none
-  int scene_key = -1;
+  // 0.5.0 v2 (EDIT, momentary: the owner 2026-11-14): PAGE held on a page that locks (its step held back until it is
+  // let go alone: page_owed); the trig keys the gesture took (T15 / T16 = the side, scene::edit_side(); T1..T12 picked
+  // that side's scene), their releases its too; the target a turn locked last while the side is held (the bottom bar
+  // shows its locked value), 0 none
+  bool page_down = false, page_owed = false;
+  uint16_t edit_keys = 0;
   uint16_t edit_tid = 0;
-  bool edit_refused = false;   // review: a knob with no target turned under the held scene key (NOT LOCKABLE)
+  bool edit_refused = false;   // review: a knob with no target turned under the held side (NOT LOCKABLE)
+  bool edit_unset = false;     // v2: a turn with the side's scene unset (SET A: T1-12)
   // rui1051 (the user's report on rui1050: NO on a page opened by its shortcut went to SIDECAR, a second NO out), nav044
   // (0.4.4, the user: "several NOs to leave after visiting more than one tab" - rui1051 walked back through the pages
   // the shortcuts came from): the page shown was put up by a shortcut (UP / TRK + key, UP + T, the host's own page
@@ -713,21 +717,33 @@ CORE_COLD void set_param(int vi, int k, int nv) {
   s.stats.edits++;
 }
 
-// 0.5.0 (spec-050 2.6, EDIT): with the scenes' EDIT on, a voice page and the pages that name their knobs' targets
-// (ExtraPage::enc_tid: INSERT, MASTER) take T1..T12 too; a turn while one is held locks the knob's target into that
-// scene (from the scene's lock, else from the base) instead of editing it. The SEQ page keeps its trig keys (steps).
+// 0.5.0 v2 (EDIT, momentary): on a voice page and the pages that name their knobs' targets (ExtraPage::enc_tid:
+// INSERT, MASTER), PAGE held takes T15 / T16; PAGE + T15 (T16) held is EDIT A (B): a turn locks the knob's target into
+// that side's scene (from the scene's lock, else from the base) instead of editing it, and T1..T12 make scene n that
+// side. T15 / T16 alone stay the Rytm's trigs; PAGE alone steps the page at its release. The SEQ page keeps its trig keys.
 CORE_COLD bool edit_page(const ExtraPage* x) {
-  if (!s.open || !scene::edit()) return false;
+  if (!s.open) return false;
   return x ? x->enc_tid != nullptr : s.voice >= 0 && !src_capable;
 }
 CORE_COLD uint16_t page_trigs(const ExtraPage* x) {
   uint16_t t = x && x->trigs_now ? x->trigs_now() : 0;
-  return edit_page(x) ? (uint16_t)(t | 0x0FFF) : t;
+  if (!edit_page(x)) return t;
+  return (uint16_t)(t | (scene::edit_side() >= 0 ? 0xCFFF : s.page_down ? 0xC000 : 0));
 }
-// the scene key's lock of t moved by `units` (whole units of the target; lo..hi its range there), from the lock, else
-// from the base; the value a voice page's step gives when `voice_nv` >= 0
+CORE_COLD void edit_end() {   // the side let go (or the gesture dropped): EDIT off
+  scene::set_edit_side(-1);
+  s.edit_tid = 0, s.edit_refused = false, s.edit_unset = false;
+}
+// the side's lock of t moved by `units` (whole units of the target; lo..hi its range there), from the lock, else from
+// the base; the value a voice page's step gives when `voice_nv` >= 0
 CORE_COLD void edit_lock(mod::Tid t, int units, int voice_nv) {
-  const scene::Scene& sc = scene::state().s[s.scene_key];
+  const int n = scene::side_scene(scene::edit_side());
+  if (n < 0) {   // the side has no scene: refused (SET A: T1-12)
+    s.edit_unset = true, s.edit_tid = 0;
+    return;
+  }
+  s.edit_unset = false;
+  const scene::Scene& sc = scene::state().s[n];
   int cur = -1;
   for (int i = 0; i < sc.n; ++i)
     if (sc.l[i].t == t) cur = sc.l[i].v;
@@ -742,12 +758,12 @@ CORE_COLD void edit_lock(mod::Tid t, int units, int voice_nv) {
     u += units;
     nv = (u < lo ? lo : u > hi ? hi : u) * 128;
   }
-  if (scene::lock(s.scene_key, t, (uint16_t)nv)) s.edit_tid = t;
+  if (scene::lock(n, t, (uint16_t)nv)) s.edit_tid = t;
 }
 
 CORE_COLD void on_enc(int e, int delta, bool func) {
   s.input = true;
-  const bool lock = s.scene_key >= 0 && edit_page(extra_of(s.voice));
+  const bool lock = scene::edit() && edit_page(extra_of(s.voice));
   if (const ExtraPage* x = extra_of(s.voice)) {
     if (e < 0 || e >= 8 || !(extra_encs(*x) >> e & 1)) return;
     if (!lock) x->enc(e, delta, func);
@@ -765,9 +781,10 @@ CORE_COLD void on_enc(int e, int delta, bool func) {
   if (!delta) return;
   if (lock) {   // EDIT: the scene's lock, from its value (else the base), never the voice
     mod::Tid t = mod::tid(mod::kV, s.voice, k);
-    const scene::Scene& sc = scene::state().s[s.scene_key];
-    for (int i = 0; i < sc.n; ++i)
-      if (sc.l[i].t == t) cur = (sc.l[i].v + 64) / 128;
+    const int n = scene::side_scene(scene::edit_side());
+    if (n >= 0)
+      for (int i = 0; i < scene::state().s[n].n; ++i)
+        if (scene::state().s[n].l[i].t == t) cur = (scene::state().s[n].l[i].v + 64) / 128;
     edit_lock(t, 0, step_value(*p, k, cur < 0 ? 0 : cur > 127 ? 127 : cur, delta, func));
     s.edit_refused = false;
     return;
@@ -785,7 +802,8 @@ CORE_COLD void release_held() {
       if (x && x->key_up) x->key_up(c);
     }
   s.held_page = nullptr;
-  s.scene_key = -1, s.edit_tid = 0, s.edit_refused = false;
+  s.edit_keys = 0, s.page_owed = false;
+  edit_end();
   s.rep_code = -1;   // (and nothing repeats on: the release is lost too)
 }
 
@@ -813,10 +831,19 @@ CORE_COLD bool up_right_fill() {
 }
 
 
+CORE_COLD void key_down(int code);
+
 CORE_COLD void on_key(int code, bool down) {
   if (!down) {   // 0.5.0: a release goes to the page that took its press (key_up), else nowhere
-    if (code == s.scene_key) {   // EDIT's scene key let go
-      s.scene_key = -1, s.edit_tid = 0, s.edit_refused = false, s.input = true;
+    if (code == kKeyPage && s.page_owed) {   // v2: PAGE let go alone: its own step now
+      s.page_owed = false, s.input = true;
+      key_down(kKeyPage);
+      return;
+    }
+    if (code >= 0 && code < 16 && (s.edit_keys >> code & 1)) {   // v2: a key of the EDIT gesture let go
+      s.edit_keys &= (uint16_t)~(1u << code);
+      if (code == 14 + scene::edit_side()) edit_end();
+      s.input = true;
       return;
     }
     if (key_held(code)) {
@@ -827,10 +854,32 @@ CORE_COLD void on_key(int code, bool down) {
     return;
   }
   s.input = true;
-  if (code >= 0 && code < 12 && edit_page(extra_of(s.voice))) {   // EDIT: a scene key
-    s.scene_key = code, s.edit_tid = 0, s.edit_refused = false;
-    return;
+  if (edit_page(extra_of(s.voice))) {   // v2: the EDIT gesture
+    const int side = scene::edit_side();
+    if (code == kKeyPage) {   // held back: it may start the gesture (its step at the release, alone); under EDIT nothing
+      if (side < 0) s.page_owed = true;
+      return;
+    }
+    if ((code == 0x0E || code == 0x0F) && side < 0 && s.page_down) {   // PAGE + T15 / T16: EDIT A / B
+      s.page_owed = false, s.edit_keys |= (uint16_t)(1u << code);
+      edit_end();
+      scene::set_edit_side(code - 0x0E);
+      return;
+    }
+    if (code >= 0 && code < 16 && side >= 0) {   // under the side: T1..T12 make scene n that side; the rest nothing
+      s.edit_keys |= (uint16_t)(1u << code);
+      if (code < scene::kScenes) {
+        const scene::State& st = scene::state();
+        scene::set_ab(side == 0 ? code : st.a, side == 1 ? code : st.b);
+        s.edit_unset = false;
+      }
+      return;
+    }
   }
+  key_down(code);
+}
+
+CORE_COLD void key_down(int code) {
   if (const ExtraPage* x = extra_of(s.voice))
     if (x->key && x->key(code)) {
       if (x->key_up && code >= 0 && code < 256) {
@@ -1097,17 +1146,15 @@ CORE_COLD void frame(uint32_t ms) {
   const ExtraPage* x = extra_of(s.voice);
   if (standalone(x)) at = 0, n = 1;   // ux1027: no siblings, no page dots
   tap_enable(x && x->tap);
-  char tag[12] = "";   // 0.5.0: EDIT on - every page's header says so, with the scene key held
-  if (scene::edit()) {
-    if (s.scene_key >= 0) sniprintf(tag, sizeof tag, "EDIT S%d", s.scene_key + 1);
-    else strcpy(tag, "EDIT");
-  }
-  header_tag(tag);
+  char tag[12] = "";   // 0.5.0 v2: EDIT held (PAGE + T15 / T16) - every page's header says so, with the side
+  if (scene::edit()) sniprintf(tag, sizeof tag, "EDIT %c", scene::edit_side() ? 'B' : 'A');
+  header_tag(p ? "" : tag);   // (a voice page puts it after the voice's name itself)
   int drawn = 1;
   if (p) {
-    char right[12];
+    char right[16];
     vsrc.vi = s.voice;
-    sniprintf(right, sizeof right, "%s", tag[0] ? tag : voice_label(s.voice));
+    if (tag[0]) sniprintf(right, sizeof right, "%s %s", voice_label(s.voice), tag);   // UX 7: the voice kept ("V1 EDIT A")
+    else sniprintf(right, sizeof right, "%s", voice_label(s.voice));
     const bool turned = s.touched >= 0 && turn_live(ms, s.touch_ms, kScreenTurnMs);   // 0.5.0 screens: a turn names the knob for a moment
     if (!voice_screen(work, view, *p, vsrc, right, at, n, turned ? s.touched : -1, false, &drawn)) {
       drawn = view.draw(work, *p, vsrc, right, at, n);
@@ -1120,19 +1167,22 @@ CORE_COLD void frame(uint32_t ms) {
     view.invalidate();   // the status pages are drawn whole; a voice page after them starts clean
     ssrc.draw(work, s.voice == -2 ? 1 : 0, at, n);
   }
-  if (s.scene_key >= 0 && s.edit_refused && edit_page(x)) {   // EDIT: that knob names no target
+  const int edit_n = scene::side_scene(scene::edit_side());
+  if (scene::edit() && s.edit_unset && edit_page(x)) {   // v2: the side has no scene yet
+    footer(work, scene::edit_side() ? "SET B: T1-12" : "SET A: T1-12");
+  } else if (scene::edit() && s.edit_refused && edit_page(x) && edit_n >= 0) {   // EDIT: that knob names no target
     char b[kTextLen + 1];
-    sniprintf(b, sizeof b, "S%d: NOT LOCKABLE", s.scene_key + 1);
+    sniprintf(b, sizeof b, "S%d: NOT LOCKABLE", edit_n + 1);
     footer(work, b);
   }
-  if (s.scene_key >= 0 && s.edit_tid && edit_page(x)) {   // EDIT: the bottom bar shows the scene's locked value
-    const scene::Scene& sc = scene::state().s[s.scene_key];
+  if (scene::edit() && s.edit_tid && edit_page(x) && edit_n >= 0) {   // EDIT: the bottom bar shows the scene's locked value
+    const scene::Scene& sc = scene::state().s[edit_n];
     for (int i = 0; i < sc.n; ++i)
       if (sc.l[i].t == s.edit_tid) {
         char nm[16], val[8], b[kTextLen + 1];
         mod::label(s.edit_tid, nm, sizeof nm);   // (its machine's name for the param: "V1:HRM")
         morph_value_text(s.edit_tid, sc.l[i].v, val, sizeof val);
-        int n2 = sniprintf(b, sizeof b, "S%d %s:%s", s.scene_key + 1, nm, val);
+        int n2 = sniprintf(b, sizeof b, "S%d %s:%s", edit_n + 1, nm, val);
         footer(work, b, n2 <= 16 ? sc.l[i].v >> 7 : -1);
       }
   }
@@ -1493,6 +1543,13 @@ CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims t
   g_fill_claimed = true;
 #endif
 }
+// 0.5.0 v2 P2: the scene edit on the Rytm's own pages armed after every hello (the Rytm clears it at each); an older
+// mod (no kCaps2Capture) counts 5A 01 0B as a refused command: never sent to it
+CORE_COLD void edit_arm() {
+#if CORE_POLY
+  if (s.caps2 & kCaps2Capture) mod::rytm_edit_arm(true);
+#endif
+}
 CORE_COLD void fill_unclaim() {
   if (!g_fill_claimed) return;
   g_fill_claimed = false;
@@ -1724,6 +1781,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         keys_map_drop(), s.map_over = false;   // (UP's map goes with the page)
         release_held();                        // 0.5.0: and every key a page holds
         s.up_down = false;
+        s.page_down = s.page_owed = false;     // (v2 review M1: a PAGE held across the close sends no release here)
 #if CORE_POLY
         seq::page_closed();   // seq-ux: a prompt, TRK + TRIG's view end with the page
         poly_page_closed();   // rui1048
@@ -1780,6 +1838,8 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         s.input = true;
         return;
       }
+      // v2: PAGE held, whoever takes it (seq mode's sequencer too): PAGE + T15 / T16 start EDIT on a page that locks
+      if (s.open && (b[0] << 7 | b[1]) == kKeyPage) s.page_down = b[2] != 0;
 #if CORE_POLY
       {   // the sequencer's trig keys and PAGE: in seq mode (the page open or not) and on its SEQ page
         const ExtraPage* x = s.open ? extra_of(s.voice) : nullptr;
@@ -1789,7 +1849,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         // review: a release of a key a page holds is that page's whatever page shows now (SEQ too)
         bool page_trig = code < 16 && s.open &&
                          ((b[2] && !(x && !strcmp(x->title, "SEQ")) && (page_trigs(x) >> code & 1)) ||
-                          (!b[2] && (key_held(code) || code == s.scene_key)));
+                          (!b[2] && (key_held(code) || (s.edit_keys >> code & 1))));
         if (!page_trig && seq::ui_key(code, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;
@@ -1812,7 +1872,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         const ExtraPage* x = s.open ? extra_of(s.voice) : nullptr;
         // rui1048: POLY CONFIG's knobs are its own, also in seq mode (seq::ui_enc takes every turn then)
         // review (0.5.0): MORPH's knobs, and a turn under EDIT's held scene key, are the page's too
-        bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH") || !strcmp(x->title, "LOOP"))) || (s.scene_key >= 0 && edit_page(x));
+        bool own = (x && (!strcmp(x->title, "POLY") || !strcmp(x->title, "MORPH") || !strcmp(x->title, "LOOP"))) || (scene::edit() && edit_page(x));
         if (!own && seq::ui_enc(b[0], (int)b[1] - 64, b[2] != 0, x && !strcmp(x->title, "SEQ"))) {
           s.input = true;
           return;
@@ -2092,8 +2152,10 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         release_held();   // 0.5.0: a key held across the new link sends no release
         s.up_down = false;
         s.caps36 = (b[2] & 1) != 0, s.caps = b[2], s.caps2 = n >= 4 ? b[3] : 0;
+        s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
         mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
         fill_claim();
+        edit_arm();
 #if CORE_POLY
         mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
@@ -2107,8 +2169,10 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       s.src_track = -1, s.src_told = -1, s.splash = false, s.clock_set = false;
       tap_enable(false);
       s.caps36 = (b[2] & 1) != 0, s.caps = b[2], s.caps2 = n >= 4 ? b[3] : 0;
+      s.page_down = s.page_owed = false;   // (v2 review M1: a key held across the new link sends no release)
       mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
       fill_claim();
+      edit_arm();
 #if CORE_POLY
       mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
