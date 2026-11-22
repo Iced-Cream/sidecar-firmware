@@ -703,6 +703,12 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  core::device::side_slot (), g_OutputSide.Level (), g_OutputSide.Underflows (), g_OutputSide.RestartUnderflows (),
 		  g_OutputSide.Streams ());
 	pOut->Append (s);
+	// the overload mute (output.h Starved: underruns 200 ms in a row, silent until 500 ms clean) of each stage, and the
+	// control core's refills cut at their cap (cores.cpp RefillCap): the render cores behind real time
+	s.Format (",\"overload\":{\"muted\":[%s,%s],\"mutes\":[%u,%u],\"refillCuts\":%u}",
+		  g_Output.Starved () ? "true" : "false", g_OutputSide.Starved () ? "true" : "false", g_Output.StarveMutes (),
+		  g_OutputSide.StarveMutes (), CEngineCores::RefillCuts ());
+	pOut->Append (s);
 	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
 	// are cleared by the console's `sendfx` line, which reports them)
 	pOut->Append (",\"slotFx\":[");
@@ -2183,6 +2189,25 @@ void CKernel::LogStats (void)
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);
+	{	// the overload mute's changes, once each (output.h Starved): which stage, the underruns and refill cuts so far
+		static boolean s_bStarved[2];
+		static unsigned s_nCuts;
+		const Output *St[2] = {&g_Output, &g_OutputSide};
+		for (int k = 0; k < 2; k++)
+		{
+			const boolean b = St[k]->Starved ();
+			if (b == s_bStarved[k]) continue;
+			s_bStarved[k] = b;
+			if (b)
+				m_Logger.Write (From, LogWarning, "overload: the %s stage muted: the render cores are behind real time (underruns %u, "
+						"refill cut %u times in the last second); back after 500 ms without an underrun",
+						k ? "side" : "base", St[k]->Underflows (), CEngineCores::RefillCuts () - s_nCuts);
+			else
+				m_Logger.Write (From, LogNotice, "overload: the %s stage back (fading in), muted %u times", k ? "side" : "base",
+						St[k]->StarveMutes ());
+		}
+		s_nCuts = CEngineCores::RefillCuts ();
+	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
 	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)

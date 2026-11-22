@@ -36,6 +36,7 @@ public:
 	};
 
 	CEngineCores (CMemorySystem *pMemorySystem) : CMultiCoreSupport (pMemorySystem) {}
+	static unsigned RefillCuts (void);		// passes whose FIFO refill stopped at its cap (render cores behind real time)
 	static void Configure (unsigned nFifoTarget, boolean bNotes);
 	static void SetSplit (unsigned nVoicesCore1);	// cmdline split=N: voices 0..N-1 on core 1, N..7 on core 2
 	static void BenchCore (unsigned nCore);		// this core's bench (core 0 calls it; Run does for 1-3)
