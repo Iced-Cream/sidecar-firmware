@@ -75,10 +75,14 @@ extern Control control;
 // (3(c) loads its MFX line into it), played on slot 1's chains (ins::engine(1), ins::control_of(1)) with its own rooms and
 // SendFx units (kBoxes: 16-voice builds). `control` is slot 0's. The settings code below (set_*, accept, the rooms, the
 // console, the card line, json) works on the slot in hand's (ins::slot_in_hand, 3(c)'s prj_slot): cur(). report,
-// link_lost and stems_on_main are the Rytm's (slot 0's control).
+// link_lost and stems_on_main are the Rytm's: rytm(), its slot's control (core::device::rytm_home: slot 0 or 1, whichever
+// it holds; slot 0 while it holds none).
 extern Control control1;
 inline Control& control_of(int box) { return box ? control1 : control; }
 Control& cur();   // the slot in hand's
+Control& rytm();  // the Rytm's slot's (its report: pan, off_main, known). The control core's
+// ... which slot that is: core/pool/pool.cpp sets it to device::rytm_home (this side builds without core/device); null: 0
+extern int (*rytm_slot_fn)();
 constexpr int kBoxes = kVoiceSlots;   // 2 on 16 voices, 1 on 8
 inline int played_lev(const Control& m) { int x = m.lev + m.mod_lev; return x < 0 ? 0 : x > 127 ? 127 : x; }
 inline int played_lev() { return played_lev(control); }

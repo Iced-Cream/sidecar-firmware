@@ -153,7 +153,7 @@ int main() {
   um::begin(host_um_exec());
   device::set_out(1, out1);
   settle();
-  device::rytm_on_usb(true);   // the Rytm attached first (attach order): she keeps slot 0
+  device::rytm_on_usb(true);   // the Rytm attached first (attach order): it keeps slot 0
   hello_a4();   // the A4 beside the Rytm: slot 1, its folder /.a4, its project A4P
   settle();
   CHECK(!strcmp(prj(0).key, "RYP") && !strcmp(prj(1).key, "A4P"));

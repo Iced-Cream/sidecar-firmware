@@ -530,6 +530,11 @@ boolean CObUsb::s_bResetDone;
 void CObUsb::PollHalt (void)
 {
 	s_bResetDone = FALSE;
+	if (PollFreeze ())				// a frozen box enumerated again: its object is gone, the pass is spent
+	{
+		s_bResetDone = TRUE;
+		return;
+	}
 	for (unsigned k = 0; k < Slots && !s_bResetDone; k++)	// (one reset a pass, every box's together)
 	{
 		CObUsb *p = s_pBox[k];
@@ -538,6 +543,81 @@ void CObUsb::PollHalt (void)
 		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
 	}
 	if (!s_bResetDone) s_bResetDone = CObFollow::PollHalt ();	// an A4's stream beside it (ob_follow.h)
+}
+
+obfreeze::Budget CObUsb::s_FreezeBudget[2];
+int CObUsb::s_nForceReEnum = -1;
+unsigned CObUsb::s_nFreezeReEnums;
+
+// TRUE: a box was removed and its hub asked to enumerate it again (ob_freeze.h). At most one a pass.
+boolean CObUsb::PollFreeze (void)
+{
+	const u32 nNowMs = NowMs ();
+	for (unsigned k = 0; k < Slots && k < 2; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		const boolean bForce = s_nForceReEnum == (int) k;
+		if (bForce) s_nForceReEnum = -1;
+		if (p == 0 || !p->m_bStreaming)
+		{
+			if (bForce) CLogger::Get ()->Write (From, LogWarning, "obreenum: no box streams in slot %u", k);
+			continue;
+		}
+		const unsigned nIn = p->m_InHalt.fails, nOut = p->m_OutHalt.fails;
+		if (!bForce && !obfreeze::pass (p->m_Freeze, s_FreezeBudget[k], nIn > nOut ? nIn : nOut, nNowMs))
+		{
+			if (obfreeze::spent_now (p->m_Freeze, s_FreezeBudget[k], nNowMs))
+				CLogger::Get ()->Write (From, LogError, "%s (slot %u): its stream is frozen again after %u re-enumerations: "
+							"unplug it at the box and plug it in again", p->m_pAudio->name, k, obfreeze::kTries);
+			continue;
+		}
+		if (p->ReEnumerate (bForce ? "asked (obreenum)" : "its stream froze with the box still on the bus")) return TRUE;
+	}
+	return FALSE;
+}
+
+// The software replug (ob_freeze.h): CUSBDevice::RemoveDevice is Circle's hot-unplug path (the hub port disabled, the
+// xHCI slot freed, this driver and the box's other functions deleted: its MIDI too), and the parent's ReScanDevices its
+// hot-plug path (the port reset, a fresh slot, address and Configure). Main loop only. Nothing of this object is used
+// once RemoveDevice is called.
+boolean CObUsb::ReEnumerate (const char *pWhy)
+{
+	CUSBDevice *pDevice = GetDevice ();
+	CUSBHCIRootPort *pPort = pDevice->GetParentRootPort ();
+	CUSBStandardHub *pHub = pPort == 0 ? BuiltInHub (pDevice) : 0;
+	const char *pName = m_pAudio->name;		// (a static table: still good after the delete)
+	const unsigned nSlot = m_nSlot;
+	if (pPort == 0 && pHub == 0)
+	{
+		CLogger::Get ()->Write (From, LogError, "%s (slot %u): %s, but it hangs off another hub: no re-enumeration; unplug "
+					"it at the box and plug it in again", pName, nSlot, pWhy);
+		return FALSE;
+	}
+	s_nFreezeReEnums++;
+	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: enumerating it again (try %u of %u, %u since boot)", pName,
+				nSlot, pWhy, nSlot < 2 ? s_FreezeBudget[nSlot].tries : 0, obfreeze::kTries, s_nFreezeReEnums);
+	pDevice->RemoveDevice ();			// deletes this
+	if (!(pPort != 0 ? pPort->ReScanDevices () : pHub->ReScanDevices ()))
+		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it again (unplugged meanwhile?)");
+	return TRUE;
+}
+
+// obreenum=<slot>: the re-enumeration above at the next main-loop pass, whatever the stream does (a test of the path)
+boolean CObUsb::Command (const char *pText)
+{
+	if (strncmp (pText, "obreenum", 8) != 0) return FALSE;
+	if (pText[8] == '=' && (pText[9] == '0' || pText[9] == '1') && pText[10] == 0)
+	{
+		s_nForceReEnum = pText[9] - '0';
+		CLogger::Get ()->Write (From, LogNotice, "obreenum: slot %d at the next pass", s_nForceReEnum);
+	}
+	else
+	{
+		CLogger::Get ()->Write (From, LogNotice, "obreenum=0|1 (re-enumerate that slot's box; frozen-stream re-enumerations "
+					"since boot %u, budget slot 0 %u/%u, slot 1 %u/%u)", s_nFreezeReEnums, s_FreezeBudget[0].tries,
+					obfreeze::kTries, s_FreezeBudget[1].tries, obfreeze::kTries);
+	}
+	return TRUE;
 }
 
 // TRUE: none of the Rytm's endpoints is reset now: one failed a moment ago (another may follow), or several failed
@@ -1434,11 +1514,12 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		{
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
 			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
-			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V);
+			float FD[ob::kFramesPerBlock][ob::kVoices] = {};	// the Rytm's PRE / POST voices' stand-ins for their stems (a box's: unused)
+			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V, FD);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
 			{
-				sendfx_pi::FromVoices (m_nSlot, V, ob::kFramesPerBlock);
+				sendfx_pi::FromVoices (m_nSlot, *m_pAudio, V, ob::kFramesPerBlock, FD);	// the Rytm here: paced by its stems
 				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 			}
@@ -1467,7 +1548,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			pTarget->ToBox (F, V, ob::kFramesPerBlock);
 		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
 		const int nBase = core::out::g_base_slot;	// the base box's send FX and master chain (phase 3(d))
-		if (s_bActive) sendfx_pi::FromVoices (nBase, V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
+		if (s_bActive) sendfx_pi::FromVoices (nBase, core::out::device (), V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems (the Rytm's: paced by its stems, another box's by its voices)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
@@ -1636,6 +1717,18 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nInBlocks++;
 			good++;
 			if (IMirrorTarget *pT = Target ()) pT->FromBoxBlock (pBlk);	// UAC2 IN 1-12, or its mirror
+			if (m_pAudio == &core::out::kRytmMk2)	// the Rytm's voice stems (IN 2..9), whichever slot it holds (a box's IN 2..9 are no stems)
+			{
+				const boolean bFx = sendfx_pi::On (m_nSlot), bMix = masterfx_pi::WantStems (m_nSlot);	// its send FX; SRC MIX onto 0/1 (core/fx/master.h)
+				if (bFx || bMix)
+				{
+					s32 S[ob::kFramesPerBlock][8];
+					for (int f = 0; f < ob::kFramesPerBlock; f++)
+						for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
+					if (bFx) sendfx_pi::FromRytm (m_nSlot, S, ob::kFramesPerBlock);
+					if (bMix) masterfx_pi::Stems (m_nSlot, S, ob::kFramesPerBlock);
+				}
+			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{
 				int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
@@ -1683,22 +1776,6 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) C[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::cal_in (&C[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
-			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && sendfx_pi::On (0))	// the Rytm's voice stems (IN 2..9) into its send FX (a box's IN 2..9 are no stems; the Rytm in slot 1: not yet)
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
-			}
-
-			if (m_nSlot == 0 && m_pAudio == &core::out::kRytmMk2 && masterfx_pi::WantStems ())	// SRC MIX: the Rytm's stems onto 0/1 (core/fx/master.h; in slot 1: not yet)
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				masterfx_pi::Stems (S, ob::kFramesPerBlock);
-			}
-
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
 			if (s < 0) s = -s;
 			if (s > m_nInPeak) m_nInPeak = s;

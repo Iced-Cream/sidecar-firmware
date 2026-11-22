@@ -201,20 +201,23 @@ inline bool live(int s) {
   if (kVoiceSlots < 2) return s == 0;
   return s >= 0 && s < kLinks && (g_links[s].held || g_links[s].parting || &g_links[s] == g_base);
 }
-// slot s is held by the Rytm (its own words, kits, scenes, stems, calibration: hers alone). One slot (the Teensy): always, as
+// slot s is held by the Rytm (its own words, kits, scenes, stems, calibration: its alone). One slot (the Teensy): always, as
 // slot 0 always was
 bool rytm_at(int s);
 int rytm_slot();                       // the Rytm's slot, -1 none (one slot: 0)
-inline int rytm_home() { const int r = rytm_slot(); return r < 0 ? 0 : r; }   // where the Rytm's own state is read: her slot, else 0
+inline int rytm_home() { const int r = rytm_slot(); return r < 0 ? 0 : r; }   // where the Rytm's own state is read: its slot, else 0
 // The slot transport t's message is for: 0 the platform's host link (the USB-C box's MIDI, the emulator's TCP link), 1 the other
-// box's (the Teensy relay's). A hello claims a slot for its transport, a Rytm's 35 the Rytm's (her first other message only
-// confirms the slot 0 presumed hers at boot). -1: none (a hello refused: engine_sysex_link answers it; else the message is
+// box's (the Teensy relay's). A hello claims a slot for its transport, a Rytm's 35 the Rytm's (its first other message only
+// confirms the slot 0 presumed the Rytm's at boot). -1: none (a hello refused: engine_sysex_link answers it; else the message is
 // dropped: a transport goes nowhere until a hello or a 35).
 // engine_sysex_link calls it for each message; with d null it only says where t goes now.
 int slot_of(int t, const uint8_t* d, int len);
 // The slot transport t carries now (slot_of's answer for a message that is not a hello or a 35): the platform's raw MIDI
 // taps (core/song's byte) enter that slot's Scope. Two loads, any core.
 int route_of(int t);
+// The Rytm's slot when transport t carries it, else -1: a transport routed to its slot; transport 0 with no route yet (a stock
+// Rytm on the host link, as ever): rytm_home(). The Pi's taps of its raw MIDI (its pattern dumps, FILL's answers) read only it.
+int rytm_route(int t);
 void (*tx(int t))(const uint8_t*, int);   // transport t's sender
 void reset();                          // back to the Rytm and /.rytm, as a fresh boot (tests)
 uint32_t dropped();                    // messages from the box not translated, and messages to it filtered

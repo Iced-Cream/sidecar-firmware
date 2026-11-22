@@ -191,8 +191,8 @@ int main() {
   CHECK(same_3_11());
   ins::reset();
 
-  // the Rytm leaves (her USB gone): attach order, the A4 stays in slot 1 and is the base box now, its tracks the pages'
-  // voices 8..15; nothing more comes on her transport (a message there would be the Rytm back)
+  // the Rytm leaves (its USB gone): attach order, the A4 stays in slot 1 and is the base box now, its tracks the pages'
+  // voices 8..15; nothing more comes on its transport (a message there would be the Rytm back)
   device::rytm_on_usb(false);
   device::step();
   CHECK(device::g_base == &device::g_links[1] && device::base_voice_base() == kBoxVoices && !device::held(0));
@@ -226,7 +226,7 @@ int main() {
   CHECK(ins::control1.type[3][0] == ins::kTrem && ins::control.type[3][0] == ins::kOff);
   CHECK(std::fabs(solo11() - plain) > 100);
   ins::reset();
-  // the Rytm back (her USB again): the lowest free slot, 0 (her own, saved), the base again; the A4 stays in slot 1
+  // the Rytm back (its USB again): the lowest free slot, 0 (its own, saved), the base again; the A4 stays in slot 1
   device::rytm_on_usb(true);
   device::step();
   CHECK(device::base_voice_base() == 0 && ui::remote_track_voice(0) == 0);
