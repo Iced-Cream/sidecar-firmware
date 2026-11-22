@@ -4,8 +4,8 @@
 //
 // T464: a Rytm's Data RPC reply came back with one event packet replaced by the one 1008 later. The Rytm's own USB MIDI
 // transmit buffer (4 KB, wrapped at 4032 bytes) overran while the Pi did not read: Circle kept one IN request and, after an
-// empty completion, asked again only 10 ms later. On the xHCI (RASPPI 4) an empty completion now asks again at once; the DWHCI
-// (RASPPI 3) is unchanged. One request in flight on both.
+// empty completion, asked again only 10 ms later. On the xHCI (RASPPI 4) both buffers are now in flight and an empty
+// completion asks again at once; the DWHCI (RASPPI 3) is unchanged.
 #include <circle/usb/usbmidihost.h>
 #include <circle/usb/usbhostcontroller.h>
 #include <circle/usb/usbaudio.h>
@@ -243,9 +243,11 @@ static CUSBMIDIHostDevice *NewDevice (void)
 
 // ---- tests ----------------------------------------------------------------------------------------------------------
 
-// one request in flight on both (two got nothing from a Rytm on the VL805, RXQ1 2026-11-22); the depth-2 cases stay for
-// a later depth
+#if RASPPI >= 4
+static const size_t kDepth = 2;
+#else
 static const size_t kDepth = 1;
+#endif
 
 static void test_configure_fills_depth (void)
 {

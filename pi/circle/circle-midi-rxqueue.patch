@@ -12,20 +12,23 @@ diff -ruN a/include/circle/usb/usbmidihost.h b/include/circle/usb/usbmidihost.h
  	static void CompletionStub (CUSBRequest *pURB, void *pParam, void *pContext);
  	static void TxCompletionStub (CUSBRequest *pURB, void *pParam, void *pContext);
  
-@@ -64,6 +65,12 @@ private:
+@@ -64,6 +65,15 @@ private:
  	static const unsigned RXBufferCount = 2;
  	u8 *m_pPacketBuffer[RXBufferCount];
  	unsigned m_nNextBuffer;
-+	// circle-midi-rxqueue.patch: on the xHCI (a Pi 4 and later) an empty completion (a zero-length packet: the xHCI does
-+	// not complete on NAK) asks again at once, not 10 ms later. A device that kept sending meanwhile (a Rytm's RPC reply,
-+	// ~1000 event packets in 10 ms) overran its own transmit buffer (T464). The DWHCI keeps the 10 ms pause.
-+	// RXDepth: requests in flight. 2 on the xHCI (02bcfca) got nothing at all from a Rytm on the VL805 (RXQ1 set B,
-+	// 2026-11-22: requests out, no reply), so one, as Circle; the code takes more.
++	// circle-midi-rxqueue.patch: on the xHCI (a Pi 4 and later) both buffers are in flight, so the endpoint always has a
++	// request while a completion is handled; and an empty completion (a zero-length packet: the xHCI does not complete
++	// on NAK) asks again at once, not 10 ms later. A device that kept sending meanwhile (a Rytm's RPC reply, ~1000 event
++	// packets in 10 ms) overran its own transmit buffer (T464). The DWHCI keeps one request and the 10 ms pause.
++#if RASPPI >= 4
++	static const unsigned RXDepth = RXBufferCount;
++#else
 +	static const unsigned RXDepth = 1;
++#endif
  
  	TKernelTimerHandle m_hTimer;
  
-@@ -74,7 +81,7 @@ private:
+@@ -74,7 +84,7 @@ private:
  
  	// circle-usb-urb-free.patch: the URBs in flight, freed by the destructor. A function is deleted by ~CUSBDevice, after
  	// ~CXHCIUSBDevice has disabled and freed the slot, so the controller completes neither of them any more.
