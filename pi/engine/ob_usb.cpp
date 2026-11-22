@@ -323,6 +323,7 @@ unsigned CObUsb::s_nDetaches = 0, CObUsb::s_nFreedInFlight = 0, CObUsb::s_nKeptI
 static obspeed::Retry s_Retry;				// a box refused below high speed (ob_speed.h)
 static CUSBHCIRootPort *s_pRetryPort = 0;		// its root port: Circle's, it lives as long as the controller
 static CUSBStandardHub *s_pRetryHub = 0;		// or the Pi 4's VL805 hub (BuiltInHub), which lives as long too
+static unsigned s_nRetryHubPort = 0;			// the box's 0-based port on that hub
 static u32 NowMs (void) { return (u32) (CTimer::GetClockTicks64 () / (CLOCKHZ / 1000)); }	// wraps at 2^32 ms
 volatile boolean CObUsb::s_bActive = TRUE;
 #if RASPPI >= 5
@@ -455,8 +456,17 @@ void CObUsb::PollReEnum (void)
 {
 	if (!obspeed::due (s_Retry, NowMs ()) || (s_pRetryPort == 0 && s_pRetryHub == 0)) return;
 	CLogger::Get ()->Write (From, LogNotice, "enumerating the box again (try %u of %u)", s_Retry.tries, obspeed::kTries);
-	// the hot-plug path: port reset, address, configure (this driver again). A hub resets each of its empty ports
-	// that has something connected; a root port with a device already on it only rescans that device
+	// The refused box is still on its port: Configure failed only this driver, and its other functions (its USB MIDI)
+	// keep the device configured there (SR4, T482: "Port 4: Device configured" after the refusal). A hub resets only
+	// its empty ports, and a root port with a device on it only rescans that device, so the rescan alone did nothing
+	// and the box stayed off until a reboot. So the hot-unplug path first (the port disabled, the device and its
+	// functions deleted; nothing there: only the port disabled), then the hot-plug path: port reset, address,
+	// configure (this driver again)
+	if (!(s_pRetryPort != 0 ? s_pRetryPort->RemoveDevice () : s_pRetryHub->RemoveDeviceAt (s_nRetryHubPort)))
+	{
+		CLogger::Get ()->Write (From, LogWarning, "the port could not be disabled: the box stays as it is");
+		return;
+	}
 	if (!(s_pRetryPort != 0 ? s_pRetryPort->ReScanDevices () : s_pRetryHub->ReScanDevices ()))
 	{
 		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it (unplugged, or something else "
@@ -891,7 +901,7 @@ boolean CObUsb::Configure (void)
 		}
 		else if (obspeed::refused (s_Retry, nNow))
 		{
-			s_pRetryPort = pPort, s_pRetryHub = pHub;
+			s_pRetryPort = pPort, s_pRetryHub = pHub, s_nRetryHubPort = GetDevice ()->GetParentHubPortIndex ();
 			CLogger::Get ()->Write (From, LogWarning, "%s came up at %s, Overbridge needs HS: enumerating it again "
 						"in %u s (try %u of %u)", m_pAudio->name, pSpeed,
 						obspeed::kWaitMs[s_Retry.tries] / 1000, s_Retry.tries + 1, obspeed::kTries);

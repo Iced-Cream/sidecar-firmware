@@ -1175,6 +1175,7 @@ int main() {
     CHECK(port.rescans == 0);
     CTimer::s_now64 = 12000000, CObUsb::PollReEnum(), CObUsb::PollReEnum();
     CHECK(port.rescans == 1);   // once
+    CHECK(port.removed == 1);   // the refused box removed first: its MIDI kept it on the port (SR4, T482)
     {  // the port's new reset gives high speed: streams, and the budget is back
       Bus b(g_rytm, 0x0b48);
       b.dev.root = &port;
@@ -1202,11 +1203,12 @@ int main() {
       CUSBStandardHub vl805(&hd);
       for (int k = 0; k < 3; ++k) {
         Bus b(g_rytm, 0x0b48);
-        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 3;   // Pi port 4 (0-based 3), as SR4's Rytm
         CHECK(b.ob && !b.ob->Configure());
         CHECK(CLogger::Get()->lines.back().find("(try " + std::to_string(k + 1) + " of 3)") != std::string::npos);
         CTimer::s_now64 += 10000000, CObUsb::PollReEnum();
         CHECK(vl805.rescans == k + 1);
+        CHECK(vl805.removes == k + 1 && vl805.removed_at == 3);   // that port emptied before the rescan, else it is skipped
       }
       Bus b(g_rytm, 0x0b48);   // still at full speed after three: stays off, says so
       b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
@@ -1214,6 +1216,20 @@ int main() {
       CHECK(CLogger::Get()->lines.back().find("still at FS after 3 tries") != std::string::npos);
       CTimer::s_now64 += 60000000, CObUsb::PollReEnum();
       CHECK(vl805.rescans == 3 && port.rescans == 1);
+    }
+    {  // the hub refuses to disable the port: no rescan (it would skip the port anyway), the log says so
+      CUSBDevice hd;
+      hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+      hd.root = &port;
+      CUSBStandardHub vl805(&hd);
+      vl805.remove_ok = FALSE;
+      CTimer::s_now64 += 60000000;   // a new plug: the budget is full again
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 2;
+      CHECK(b.ob && !b.ob->Configure());
+      CTimer::s_now64 += 2000000, CObUsb::PollReEnum();
+      CHECK(vl805.removes == 1 && vl805.removed_at == 2 && vl805.rescans == 0);
+      CHECK(CLogger::Get()->lines.back().find("could not be disabled") != std::string::npos);
     }
     CTimer::s_now64 = 0;
   }
