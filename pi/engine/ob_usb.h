@@ -26,6 +26,7 @@
 
 #include "periodic_starve.h"
 #include "ep_halt.h"
+#include "ob_freeze.h"
 #include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
@@ -91,6 +92,10 @@ public:
 	// and the URBs behind it never complete; reset it, drop the URBs the reset skipped and the stream goes on, with a
 	// back-off while it keeps failing (ep_halt.h). Also the A4 follower's. At most one endpoint reset a pass.
 	static void PollHalt (void);
+	// a stream frozen with its box still on the bus (ob_freeze.h: kHoldMs of failing resets / resubmits) is enumerated
+	// again, as a replug would (PollHalt's first step); obreenum=<slot> asks for it at once (a test)
+	static boolean Command (const char *pText);
+	static unsigned FreezeReEnums (void)	{ return s_nFreezeReEnums; }
 	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
@@ -297,6 +302,12 @@ private:
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
 	volatile unsigned m_nOutMaxDt, m_nOutPendMin;	// per log line: longest gap between OUT completions (us), fewest OUT URBs left in flight
 	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
+	obfreeze::Watch m_Freeze;			// the failing run PollFreeze watches (ob_freeze.h)
+	static obfreeze::Budget s_FreezeBudget[2];	// per slot: outlives this object, which a re-enumeration deletes
+	static int s_nForceReEnum;			// obreenum=<slot>: -1 none
+	static unsigned s_nFreezeReEnums;		// since boot
+	static boolean PollFreeze (void);
+	boolean ReEnumerate (const char *pWhy);		// TRUE: removed (this object is deleted)
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
 	unsigned m_nMidiFailUs;
