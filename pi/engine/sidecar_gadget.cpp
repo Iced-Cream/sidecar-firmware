@@ -1018,7 +1018,7 @@ boolean (*g_pSidecarKeysTap) (const u8 *pPacket) = 0;
 // them here or passes them on to the Rytm) and go to the A4 with everything else; the tap ate them, uncounted: T374/T375
 void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 {
-	const boolean bKeys = g_pSidecarKeysTap != 0 && !(Mirror () && CObUsb::GadgetSlot () == 1);
+	const boolean bKeys = g_pSidecarKeysTap != 0 && !(Mirror () && !CObUsb::UsbcShowsHostLink ());
 	for (size_t i = 0; i + 4 <= nLength; i += 4)
 	{
 		if (pBuffer[i] == 0) continue;				// padding
@@ -1169,7 +1169,7 @@ void CSidecarGadget::Poll (void)
 			LeaveCritical ();
 		}
 	}
-	else if (!m_bRytmMIDI && !(Mirror () && CObUsb::GadgetSlot () == 1))
+	else if (!m_bRytmMIDI && !(Mirror () && !CObUsb::UsbcShowsHostLink ()))
 	{
 		// (the A4 on USB-C: the computer's packets are the A4's, taken by core 0's loop for link1 (kernel.cpp); draining
 		// them here while no Rytm MIDI is up left the A4 deaf to the computer: PD2, T354)
