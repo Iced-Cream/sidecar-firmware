@@ -22,6 +22,9 @@ NOTBAD = re.compile(r'requests, \d+ refused|no box refused|web: command :')   # 
 STATS = re.compile(r'engine: fifo min \d+ max \d+ target \d+ under (\d+).*?\| cpu c1 (\d+)\.(\d) c2 (\d+)\.(\d) c3 (\d+)\.(\d) %')
 BENCH = re.compile(r'bench (\w+): (\d+)\.(\d+) % of a core per voice at (\d+) MHz')
 ADMIT = re.compile(r'admit: at \d+ MHz a voice .*')
+# stats with chains (945da9a: c2 only; 64fdd7b: c1 and c2) and core 3 without its render wait; the idle line's asleep %
+CHAINS = re.compile(r'\((?:with chains c1 (\d+\.\d) c2 (\d+\.\d)|c2 with chains (\d+\.\d)), c3 own (\d+\.\d)\)')
+ASLEEP = re.compile(r'idle: asleep (\d+) (\d+) (\d+) (\d+) %')
 MUTE = re.compile(r'engine: muted|guard: voice \d.*(crash|over budget|muted)', re.I)
 
 
@@ -138,30 +141,42 @@ def read(pi, secs, tag):
     st = pi.status()
     json.dump(st, open(os.path.join(pi.out, 'status-%s.json' % tag), 'w'), indent=1)
     extra = []
-    for c in ['mfx=stats', 'sendfx', 'slot=1:sendfx', 'amp']:
+    for c in ['mfx=stats', 'slot=1:mfx=stats', 'sendfx', 'slot=1:sendfx', 'amp']:
         got, _ = pi.cmd(c, wait=0.5)
         extra += got.splitlines()
     open(os.path.join(pi.out, 'read-%s.txt' % tag), 'w', encoding='utf-8').write('\n'.join(lines + ['---'] + extra) + '\n')
     cpu = [(int(m.group(1)), float(m.group(2) + '.' + m.group(3)), float(m.group(4) + '.' + m.group(5)),
             float(m.group(6) + '.' + m.group(7))) for m in map(STATS.search, lines) if m]
     mutes = [l for l in lines if MUTE.search(l)]
+    ch = [m for m in map(CHAINS.search, lines) if m]
+    sl = [[int(m.group(k)) for k in range(1, 5)] for m in map(ASLEEP.search, lines) if m]
     adm = st.get('admit', {})
     summ = {'tag': tag, 'secs': secs, 'samples': len(cpu),
             'c1': [c[1] for c in cpu], 'c2': [c[2] for c in cpu], 'c3': [c[3] for c in cpu],
             'under_last': cpu[-1][0] if cpu else None, 'under_first': cpu[0][0] if cpu else None,
             'admit': adm, 'slots': [{k: s.get(k) for k in ('slot', 'box', 'base', 'voices', 'asked', 'short')}
                                     for s in st.get('slots', [])],
+            'c1_chains': [float(m.group(1)) for m in ch if m.group(1)],
+            'c2_chains': [float(m.group(2) or m.group(3)) for m in ch],
+            'c3_own': [float(m.group(4)) for m in ch],
+            'asleep': sl,
             'mutes': mutes[:20], 'uptime': st.get('uptime'), 'commit': st.get('commit') or st.get('version')}
     if cpu:
         for k in ('c1', 'c2', 'c3'):
             v = summ[k]
             summ[k + '_mean'] = round(sum(v) / len(v), 1)
             summ[k + '_max'] = max(v)
+        for k in ('c1_chains', 'c2_chains', 'c3_own'):
+            v = summ[k]
+            if v:
+                summ[k + '_mean'] = round(sum(v) / len(v), 1)
+                summ[k + '_max'] = max(v)
         summ['c1_estimate'] = adm.get('core1Bp', 0) / 100.0
         summ['c2_estimate'] = adm.get('core2Bp', 0) / 100.0
     json.dump(summ, open(os.path.join(pi.out, 'summary-%s.json' % tag), 'w'), indent=1)
-    print(json.dumps({k: summ.get(k) for k in ('tag', 'samples', 'c1_mean', 'c1_max', 'c1_estimate', 'c2_mean', 'c2_max',
-                                               'c2_estimate', 'c3_mean', 'under_first', 'under_last', 'slots', 'mutes')},
+    print(json.dumps({k: summ.get(k) for k in ('tag', 'samples', 'c1_mean', 'c1_max', 'c1_chains_mean', 'c1_chains_max',
+                                               'c1_estimate', 'c2_mean', 'c2_max', 'c2_chains_mean', 'c2_chains_max',
+                                               'c2_estimate', 'c3_mean', 'c3_own_mean', 'under_first', 'under_last', 'slots', 'mutes')},
                      indent=1))
     return summ
 
