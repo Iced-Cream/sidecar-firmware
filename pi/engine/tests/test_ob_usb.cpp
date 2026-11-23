@@ -511,6 +511,7 @@ int main() {
       CHECK(x->resets == 2);
       CTimer::s_now += 1000000;
       x->reset_ok = true;
+      CObUsb::PollHalt();   // (the IN, quiet for that second with URBs queued, is kicked first: one command a pass)
       CObUsb::PollHalt();
       CHECK(x->resets == 3 && x->state == 3);
       r.in(1, c);
@@ -791,8 +792,38 @@ int main() {
     r.in(1, c);
     CObUsb::PollHalt();
     CHECK(x->resets == 1 && CObUsb::HaltResets(FALSE) == before + 1);   // B5: not a reset
-    CHECK(CLogger::Get()->lines.back().find("OUT endpoint quiet or failed but not halted (state 1") != std::string::npos);
+    // GT2 (T490): the VL805 holds every periodic endpoint for an MFINDEX wrap (2.048 s) with URBs queued: stopped, its
+    // TDs skipped (circle-xhci-stopskip.patch) and the URBs submitted again
+    CHECK(x->skips == 1);
+    CHECK(CLogger::Get()->lines.back().find("OUT endpoint quiet with URBs queued (state 1, ") != std::string::npos);
+    CHECK(CLogger::Get()->lines.back().find("stopped, ") != std::string::npos);
+    CHECK(CObUsb::QuietKicks(FALSE) >= 1);
+    r.in(1, c);
+    CHECK(!r.host.out.empty());         // OUT goes on (paced: with the next IN)
+    size_t l0 = CLogger::Get()->lines.size();
+    while (!r.host.out.empty()) r.out_done();
+    CObUsb::LogAllStats(CLogger::Get());
+    CHECK(count_lines("OUT back after 60 ms quiet (1 kicks; obquietkick on)", l0) == 1);   // from the last completion
     x->ring = nullptr;
+    CTimer::s_now = 0;
+  }
+  {  // obquietkick=0: the old resubmit only (nothing sent to the controller)
+    opt->num["obquietkick"] = 0;
+    {
+      Bus q(g_rytm, 0x0b48);
+      CHECK(q.ob && q.ob->Configure());
+      uint16_t c2 = 0;
+      q.in(1, c2);
+      CXHCIEndpoint* y = q.host.out.front()->ep->GetXHCIEndpoint();
+      y->ring = &q.host.out;
+      CTimer::s_now += 60000;
+      q.in(1, c2);
+      CObUsb::PollHalt();
+      CHECK(y->skips == 0 && y->resets == 0);
+      CHECK(CLogger::Get()->lines.back().find("OUT endpoint quiet or failed but not halted (state 1") != std::string::npos);
+      y->ring = nullptr;
+    }
+    opt->num.erase("obquietkick");
     CTimer::s_now = 0;
   }
   {  // B2: a reset that says OK but leaves the endpoint halted (Circle's ResetFromHalted returns !code): refused, counted,
@@ -1079,9 +1110,10 @@ int main() {
     g_ToHost.q.push_back(rec);
     pass();                               // the MIDI send fails in the same ms
     CHECK(m.resets == 0 && xo->resets == 0 && CObUsb::HaltHeld() == held + 1);
-    while (CTimer::s_now - t0 < EpBox::kGraceUs - 1000) CTimer::s_now += 1000, pass();
+    while (CTimer::s_now - t0 < EpBox::kGraceUs - 1000) CTimer::s_now += 1000, r.in(1, c), pass();   // (IN goes on)
     CHECK(m.resets == 0 && xo->resets == 0);
     CTimer::s_now = t0 + EpBox::kGraceUs;
+    r.in(1, c);
     pass();
     CHECK(xo->resets == 1 && m.resets == 0);   // one reset a pass: the Overbridge one first
     pass();

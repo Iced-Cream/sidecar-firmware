@@ -15,6 +15,11 @@ class CXHCIEndpoint {
   unsigned DropURBs() { unsigned n = GetPendingURBs(); if (ring) ring->clear(); return n; }
   // circle-xhci-stopep.patch: Stop Endpoint, then DropURBs (a stream restarted on the Pi, attach_gate.h)
   unsigned StopAndDrop() { ++stops; state = 3; if (s_on_stop) s_on_stop(this); return DropURBs(); }
+  // circle-xhci-stopskip.patch: Stop Endpoint and Set TR Dequeue on the same ring (every queued TD skipped), then DropURBs;
+  // the next submit's doorbell runs it again (state 1 here at once)
+  unsigned StopAndSkip(int* ok) { ++skips; if (ok) *ok = skip_ok; if (s_on_stop) s_on_stop(this); unsigned n = DropURBs(); state = 1; return n; }
+  int skips = 0;
+  bool skip_ok = true;
   int stops = 0;
   static inline void (*s_on_stop)(CXHCIEndpoint*) = nullptr;   // the test's: its host forgets this endpoint's URBs
   // circle-xhci-iv1count.patch: the test sets s_iv1 / s_iv1_busy / s_iv1_list

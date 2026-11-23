@@ -128,6 +128,7 @@ public:
 	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
+	static unsigned QuietKicks (boolean bIn)	{ return s_nQuietKicks[bIn ? 0 : 1]; }
 	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
 	static unsigned HaltHeld (void)			{ return s_nHaltHeld; }	// resets held: endpoints failed together (EpBox)
 	// the transport's USB MIDI OUT, the Rytm's third endpoint in its EpBox: seen halted after a failed send (or not)
@@ -356,6 +357,14 @@ private:
 	unsigned m_nMidiFailUs;
 	static unsigned s_nHaltResets[2], s_nHaltRefused, s_nHaltHeld;
 	static boolean s_bResetDone;
+	// a stream gone quiet with its URBs queued and the endpoint running (Recover): the VL805 has stopped serving every periodic
+	// endpoint until its microframe index wraps (2.048 s, GT2 T490). Stop Endpoint and a Set TR Dequeue on the same ring
+	// (circle-xhci-stopskip.patch) have it scheduled again from now. obquietkick=0: the old resubmit only
+	static boolean s_bQuietKick;
+	static unsigned s_nQuietKicks[2];		// since boot, IN and OUT
+	volatile unsigned m_nQuietUs[2];		// IN, OUT: the last completion before a quiet episode (0: none open)
+	volatile unsigned m_nBackMs[2];			// IN, OUT: how long the last one lasted, for Log to tell (0: told)
+	unsigned m_nKicks[2];				// this stream's kicks in the open episode
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
 

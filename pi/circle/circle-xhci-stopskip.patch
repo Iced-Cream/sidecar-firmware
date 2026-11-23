@@ -1,0 +1,46 @@
+diff -ruN a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -68,6 +68,11 @@ public:
+ 	// the endpoint anew (a new CUSBEndpoint: Configure Endpoint drops and adds it, a new transfer ring) or rings its
+ 	// doorbell by submitting again.
+ 	unsigned StopAndDrop (void);
++	// circle-xhci-stopskip: StopAndDrop on the same ring: Stop Endpoint, then Set TR Dequeue to the enqueue pointer (every
++	// TD still queued skipped), then the URBs forgotten as DropURBs. The endpoint is left Stopped on its own ring; the
++	// next submit rings its doorbell and the controller schedules it again from the current microframe. Task level.
++	// Returns how many were dropped; *pOK FALSE if a command was refused (the URBs are forgotten all the same).
++	unsigned StopAndSkip (boolean *pOK);
+ 
+ 	unsigned GetEPState (void);		// output endpoint context: 0 disabled, 1 running, 2 halted, 3 stopped, 4 error
+ 	unsigned GetPendingURBs (void) const	{ return m_nURBCount; }
+diff -ruN a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -676,6 +676,27 @@ unsigned CXHCIEndpoint::StopAndDrop (void)
+ 	return DropURBs ();
+ }
+ 
++unsigned CXHCIEndpoint::StopAndSkip (boolean *pOK)
++{
++	boolean bOK = FALSE;
++	if (   m_bValid
++	    && m_pDevice != 0
++	    && m_pXHCIDevice != 0
++	    && XHCI_IS_ENDPOINTID (m_uchEndpointID)
++	    && m_pDevice->GetSlotID () != 0)		// circle-xhci-slotgone
++	{
++		CXHCICommandManager *pCmd = m_pXHCIDevice->GetCommandManager ();
++		pCmd->StopEndpoint (m_pDevice->GetSlotID (), m_uchEndpointID);	// (refused when already stopped: fine)
++		assert (m_pTransferRing);
++		bOK = XHCI_CMD_SUCCESS (pCmd->SetTRDequeuePointer (m_pDevice->GetSlotID (), m_uchEndpointID,
++						 m_pTransferRing->GetEnqueueTRB (),
++						 !!m_pTransferRing->GetCycleState ()));
++	}
++	if (pOK != 0) *pOK = bOK;
++
++	return DropURBs ();
++}
++
+ unsigned CXHCIEndpoint::GetEPState (void)
+ {
+ 	if (!m_bValid || m_pDevice == 0 || !XHCI_IS_ENDPOINTID (m_uchEndpointID))

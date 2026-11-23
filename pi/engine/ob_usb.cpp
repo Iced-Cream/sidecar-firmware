@@ -521,6 +521,8 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 }
 
 unsigned CObUsb::s_nHaltResets[2], CObUsb::s_nHaltRefused, CObUsb::s_nHaltHeld;
+boolean CObUsb::s_bQuietKick = TRUE;
+unsigned CObUsb::s_nQuietKicks[2];
 
 boolean CObUsb::s_bResetDone;
 
@@ -857,9 +859,14 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	EpHalt<CXHCIEndpoint> &h = bIn ? m_InHalt : m_OutHalt;
 	CXHCIEndpoint *pX = (bIn ? m_pIn : m_pOut)->GetXHCIEndpoint ();
 	const char *pDir = bIn ? "IN" : "OUT";
+	const unsigned d = bIn ? 0 : 1;
 	EnterCritical (IRQ_LEVEL);			// gone quiet with no error: URBs pending, none completed for 50 ms
 	if (!h.halted && (bIn ? m_nInPending : m_nOutPending) != 0
-	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs)) h.Stall ();
+	    && EpHalt<CXHCIEndpoint>::Quiet (nNowUs, bIn ? m_nLastInUs : m_nLastOutUs))
+	{
+		h.Stall ();
+		if (m_nQuietUs[d] == 0) m_nQuietUs[d] = (bIn ? m_nLastInUs : m_nLastOutUs) | 1, m_nKicks[d] = 0;
+	}
 	LeaveCritical ();
 	if (!h.Due (nNowUs)) return FALSE;
 	if (m_bMirror && m_bCtlBusy) return FALSE;	// usb=mirror: the computer's request holds EP0 (the clear would queue behind it)
@@ -880,8 +887,22 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 		return TRUE;
 	}
 	if (r == 1) s_nHaltResets[bIn ? 0 : 1]++;
+	// running on the xHC, quiet with URBs queued, no error: the controller holds them (all periodic endpoints at once, for
+	// one MFINDEX wrap). Stop it and skip what is queued; the submits below ring its doorbell and it is scheduled from now
+	boolean bKick = FALSE, bKickOK = TRUE;
+	unsigned nKickDropped = 0;
+	if (r == 2 && s_bQuietKick && !h.erred && (bIn ? m_nInPending : m_nOutPending) != 0)
+	{
+		const unsigned nErr = bIn ? m_nInErrors : m_nOutErrors;
+		nKickDropped = pX->StopAndSkip (&bKickOK);	// (the TD in progress may complete as Stopped meanwhile)
+		bKick = TRUE;
+		s_bResetDone = TRUE;			// two xHCI commands sent: the pass's one
+		s_nQuietKicks[d]++;
+		m_nKicks[d]++;
+		(bIn ? m_nInErrors : m_nOutErrors) = nErr;	// that Stopped completion is ours, not the box's error
+	}
 	EnterCritical (IRQ_LEVEL);
-	if (h.Finish (pX))				// every TD still on the ring was skipped: its URB never completes
+	if (h.Finish (pX) || bKick)			// every TD still on the ring was skipped: its URB never completes
 	{
 		for (unsigned i = 0; i < m_nURBs; i++) (bIn ? m_bInBusy : m_bOutBusy)[i] = FALSE;
 		(bIn ? m_nInPending : m_nOutPending) = 0;
@@ -903,7 +924,12 @@ boolean CObUsb::Recover (boolean bIn, unsigned nNowUs)
 	LeaveCritical ();
 	if (h.Log (nNowUs))
 	{
-		if (r == 2)
+		if (bKick)
+			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet with URBs queued (state %u, %u stalls): stopped, "
+						"%u TDs skipped%s, resubmitted (%u in a row; %u kicks since boot; %u lines left out)",
+						pDir, h.state, h.stalls, nKickDropped, bKickOK ? "" : " (Set TR Dequeue refused)",
+						h.fails, s_nQuietKicks[d], h.TakeQuiet ());
+		else if (r == 2)
 			CLogger::Get ()->Write (From, LogWarning, "%s endpoint quiet or failed but not halted (state %u, %u stalls): "
 						"resubmitted (%u in a row; %u lines left out)", pDir, h.state, h.stalls, h.fails,
 						h.TakeQuiet ());
@@ -947,6 +973,9 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
 {
 	CKernelOptions *pOpt = CKernelOptions::Get ();
+	s_bQuietKick = pOpt->GetAppOptionDecimal ("obquietkick", 1) != 0;
+	m_nQuietUs[0] = m_nQuietUs[1] = m_nBackMs[0] = m_nBackMs[1] = 0;
+	m_nKicks[0] = m_nKicks[1] = 0;
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
@@ -1891,6 +1920,11 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 	else
 	{
 		m_InHalt.Ok ();
+		if (m_nQuietUs[0] != 0)			// a quiet episode ends: Log tells how long it was
+		{
+			m_nBackMs[0] = (now - m_nQuietUs[0]) / 1000 + 1;
+			m_nQuietUs[0] = 0;
+		}
 		if (len % m_nInBlk != 0) m_nInShort++;
 		for (unsigned b = 0; b < len / m_nInBlk; b++)
 		{
@@ -2051,6 +2085,11 @@ void CObUsb::OutDone (unsigned i, CUSBRequest *pURB)
 	if (pURB->GetStatus () != 0)
 	{
 		m_OutHalt.Ok ();
+		if (m_nQuietUs[1] != 0)
+		{
+			m_nBackMs[1] = (now - m_nQuietUs[1]) / 1000 + 1;
+			m_nQuietUs[1] = 0;
+		}
 		m_nOutBlocks += pURB->GetResultLength () / m_nOutBlk;
 		if (m_nOut16Us == 0 && m_nOutBlocks >= 16) m_nOut16Us = now - m_nStartUs + 1;
 	}
@@ -2142,7 +2181,18 @@ void CObUsb::Log (CLogger *pLogger)
 	TEvStats ei = s_EvIn, eo = s_EvOut;
 	unsigned nQIn = m_pIn->GetXHCIEndpoint ()->GetPendingURBs ();
 	unsigned nQOut = m_pOut->GetXHCIEndpoint ()->GetPendingURBs ();
+	const unsigned nBack[2] = {m_nBackMs[0], m_nBackMs[1]};
+	m_nBackMs[0] = m_nBackMs[1] = 0;
 	LeaveCritical ();
+
+	for (unsigned d = 0; d < 2; d++)		// a quiet episode ended since the last line: from the last completion before it
+		if (nBack[d] != 0)
+		{
+			pLogger->Write (m_nSlot ? "rytmob2" : From, LogNotice, "%s back after %u ms quiet (%u kicks; %s)",
+					d ? "OUT" : "IN", nBack[d], m_nKicks[d],
+					s_bQuietKick ? "obquietkick on" : "obquietkick=0: resubmit only");
+			m_nKicks[d] = 0;
+		}
 
 	unsigned nStIn = m_pIn->GetXHCIEndpoint ()->GetEPState ();
 	unsigned nStOut = m_pOut->GetXHCIEndpoint ()->GetEPState ();

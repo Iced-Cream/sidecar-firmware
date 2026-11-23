@@ -299,6 +299,10 @@ grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/c
 # CObUsb::RestartStream, attach_gate.h - a box the VL805 starves gets its endpoints added again; after
 # circle-xhci-slotgone, idempotent)
 grep -q circle-xhci-stopep include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-stopep.patch
+# then Stop Endpoint and Set TR Dequeue on the same ring, for a box stream gone quiet with its URBs queued and the endpoint
+# running (pi/circle/circle-xhci-stopskip.patch: CObUsb::Recover - the VL805 stalls every periodic endpoint for one MFINDEX
+# wrap, 2.048 s; the stopped endpoint is scheduled again from the current microframe; after circle-xhci-stopep, idempotent)
+grep -q circle-xhci-stopskip include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-stopskip.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
