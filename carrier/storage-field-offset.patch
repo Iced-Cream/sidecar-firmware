@@ -1,0 +1,3087 @@
+From 01d9b898eaad16539b1569c0c147fb50ba0d4749 Mon Sep 17 00:00:00 2001
+From: Iced-Cream <86374804+Iced-Cream@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:56:39 +0000
+Subject: [PATCH] Mod storage: a field's "offset" pins it to its bits
+
+A storage field in mod.json can take "offset": N, its first bit in the scope. The allocator
+places it there in every lockfile, the first build's too, so a mod moving data an older build of
+its own kept in these bytes reads the same bits under both builds (elekloader issue #423: a sound
+field at bit 30 and one at bit 42 land on stored +0x78..+0x7b). A hand-written lockfile can't do
+this: each user's build keeps its own.
+
+- store.allocate takes pins; a repack places the pinned fields at their offsets and packs the
+  others around them, each at the lowest bits clear (mod, sym order; widest first where that
+  leaves one out), so another mod's new field no longer moves a pin. Without pins the order and
+  the bits are the ones it has always packed (the existing store vectors are unchanged).
+- A new field may take the gaps pins leave below "next": those bits never held anything. A pin
+  on another field's bits, or on a freed field's, repacks the scope.
+- A field whose offset changes moves there, its data dropped ("moved to its offset").
+- Refused: two pinned fields on one bit; a pin that ends past the scope's room with the build's
+  core (core's own bytes lie past it), naming the core that has the room; fields that don't fit
+  around their pins. "offset" must be a whole number, 0 or more.
+- +Drive mods can't pin a field: the boot linker already refuses "offset" as a format error
+  (now tested, C and twin).
+- js/: the same in store.ts and link.ts; store-vectors.json gains pin_runs and offset decls.
+- docs/FORMAT.md and docs/ADAPTING.md ("Mod storage (core-ar2 0.2, Analog Rytm MKII)").
+
+The lockfile format doesn't change: a pin is not stored, a field keeps its place while its place
+is its offset. An older elekloader refuses a mod.json with "offset" (an unknown storage key).
+---
+ docs/ADAPTING.md               |   29 +
+ docs/FORMAT.md                 |   18 +-
+ elekloader/link.py             |    5 +-
+ elekloader/store.py            |  135 ++-
+ js/src/link.ts                 |    5 +-
+ js/src/store.ts                |  137 ++-
+ js/test/store-vectors.json     | 2081 +++++++++++++++++++++++++++++++-
+ js/test/store.test.ts          |   26 +-
+ js/tools/store_vectors.py      |   51 +-
+ tests/test_drive_link_store.py |    7 +
+ tests/test_link_refusals.py    |   39 +
+ tests/test_store.py            |   69 ++
+ 12 files changed, 2546 insertions(+), 56 deletions(-)
+
+diff --git a/docs/ADAPTING.md b/docs/ADAPTING.md
+index 1f51967..7258be3 100644
+--- a/docs/ADAPTING.md
++++ b/docs/ADAPTING.md
+@@ -1935,6 +1935,35 @@ itself can't give it back: it never sends its OS out. On a unit with the
+ Drive Loader, `--drive-store` keeps the lock codes and CCs its +Drive mods
+ hold free (docs/DRIVE.md, "+Drive storage").
+ 
++**A field on fixed bits.** A mod moving data an older build of its own
++kept in these bytes can pin a field to the bits it used, so a project
++saved by either build reads the same, with `offset`, the field's first bit
++in its scope (bit 0 is the top bit of the scope's first byte; a field is
++big-endian):
++
++```json
++"storage": [{"sym": "sc_arp", "scope": "sound", "bits": 10, "offset": 30},
++            {"sym": "sc_tag", "scope": "sound", "bits": 14, "offset": 42}]
++```
++
++The allocator places a pinned field at its offset in every lockfile, the
++first build's too, and other mods' fields fill the bits around it: a repack
++puts the pinned fields back where they ask and packs the rest around them.
++Pins are for that, not for choosing places: they cost room another mod
++could use. Leave `init` out of a field that must read an older build's
++bits, as core keeps the value XOR the init. The linker refuses:
++
++| what | message |
++|---|---|
++| two pinned fields on one bit | `the storage fields A (m, bits 30..39) and B (n, bits 35..48) are both pinned on bits 35..39 of sound storage` |
++| a pin past the scope's room with the build's core (core's own bytes lie past it; the table above gives each scope's room) | `m: storage field A: offset 30 with 10 bits ends past the 24 bits of sound storage the analog-rytm-mk2 keeps for mods with core 0.2 (56 with core 0.3)` |
++| fields that don't fit around the pins | `the mods' sound fields do not fit in the 56 bits of sound storage the analog-rytm-mk2 has, their pinned fields at their offsets` |
++
++A pin on bits another field holds, or a freed field kept for its mod,
++repacks the scope (its generation goes up). A field whose `offset` changes
++moves there, and its data is dropped. +Drive mods can't pin fields: the
++Drive Loader places them itself, and refuses `offset` as a format error.
++
+ **What is checked.** Sounds and kits carry the layout ID and their
+ generation in their own spare bytes and are checked on every load. Pattern
+ tracks, patterns, the project and globals are checked against the header of
+diff --git a/docs/FORMAT.md b/docs/FORMAT.md
+index a0d64aa..5ab2e72 100644
+--- a/docs/FORMAT.md
++++ b/docs/FORMAT.md
+@@ -432,7 +432,9 @@ no `init`, otherwise); it is refused with a core that has no table
+ lockable one or one with an `init` can take `"handle": true` (core-ar2
+ 0.11): it holds a mod's handle on something kept elsewhere, 0 for none;
+ the mark is not in the lockfile or the layout ID, and it is refused with
+-a core that has no table `core_handles`. Only a core
++a core that has no table `core_handles`. Any field can take `"offset": N`,
++its first bit in the scope: the allocator places it there and nowhere else
++(below). Only a core
+ that imports `__store_gen` takes them (core-ar2 from 0.2, core-a4mk2); with another
+ core a mod that declares storage is refused. A scope's room can depend on
+ the core's version (a sound's: 24 bits with core-ar2 0.2, 56 from 0.3,
+@@ -442,7 +444,11 @@ linker:
+ - reads the build's lockfile, or starts one, and places every field
+   (`elekloader/store.py`, `js/src/store.ts`: the same bytes from both)
+   within what the build's core keeps; a field an earlier build placed past
+-  that (with a newer core) repacks its scope;
++  that (with a newer core) repacks its scope. A field with an `offset` is
++  placed at that bit, and a repack packs the scope's other fields around it,
++  each at the lowest bits clear (in `mod`, `sym` order, then widest first
++  where that leaves one out); a pin on another field's bits, or on a freed
++  field's, repacks the scope, and docs/ADAPTING.md has the pins it refuses;
+ - defines each `sym` as `scope << 28 | bits << 22 | slot << 16 | offset`,
+   the offset in bits from the start of the scope's bytes, most significant
+   bit first (no scope keeps 2^16 bits), and `slot` the field's place in
+@@ -469,14 +475,16 @@ linker:
+ The lockfile is JSON: `elekloader_store` (1, or 2 once a field has an
+ `init`, which an older elekloader refuses), `device`, `id`, `ancestors`,
+ `split` (`track`, `pattern`: bytes per item in the tagged store),
+-`generation` and `next` (per scope: its generation and its first bit no
+-field ever used), `fields` (`mod`, `sym`, `scope`, `offset`, `bits`, and
++`generation` and `next` (per scope: its generation and the bit after the
++last any field used; below it, only gaps a pinned field left were never
++used, and a new field may take them), `fields` (`mod`, `sym`, `scope`, `offset`, `bits`, and
+ `init` when it is not 0) and
+ `freed` (fields a build dropped: no other field is given their bits until
+ the scope's generation is bumped, and a field back with the same `mod`,
+ `sym`, `scope`, `bits` and `init` takes its old place again). A field keeps its
+ place while its mod, `sym`, `scope`, `bits` and `init` stay the same: a
+-field whose `init` changes is a new field, as its old bits mean other values. `id` is the
++field whose `init` changes is a new field, as its old bits mean other values. A pin is not in
++the lockfile: a field keeps its place while its place is its `offset`. `id` is the
+ first 4 bytes of a SHA-256 of the layout (`store.layout_id`: the format, the
+ device, `split`, `generation`, `next`, `fields` and `freed`, each field's
+ `init` only where it has one, so older IDs stay; not the ID or
+diff --git a/elekloader/link.py b/elekloader/link.py
+index f496dfe..87cca59 100644
+--- a/elekloader/link.py
++++ b/elekloader/link.py
+@@ -346,6 +346,7 @@ class Mod2:
+             self.routes = store.parse_routes(doc)
+             self.cvs = store.parse_cvs(doc)
+             self.inits = store.parse_inits(doc)
++            self.offsets = store.parse_offsets(doc)
+             self.handles = store.parse_handles(doc)
+         except ModError as e:
+             raise ModError('%s: %s' % (name, e))
+@@ -1118,7 +1119,9 @@ def link(mods, image, lock=None, *, sharc_stream=None, drive=None):
+             users = sorted({k[0] for k in handles})
+             raise ModError('%s mark%s storage fields as handles, which %s does not keep (no table %s)'
+                            % (', '.join(users), 's' if len(users) == 1 else '', core.label(), store.HANDLES_TABLE))
+-        new_lock, store_notes = store.allocate(lock, decls, dev.key, core.version, locks, ccs, inits, cvs, drive)
++        pins = {(m.id, sym): v for m in order for sym, v in m.offsets.items()}
++        new_lock, store_notes = store.allocate(lock, decls, dev.key, core.version, locks, ccs, inits, cvs, drive,
++                                               pins)
+         store_syms, ids = store.symbols(new_lock, dev.key)
+         store_syms.setdefault(store.LOCK_DST, 0)    # not placed: no LFO field
+         store_syms.setdefault(store.FX_LOCK_DST, 0)
+diff --git a/elekloader/store.py b/elekloader/store.py
+index 6480ccb..4a429d4 100644
+--- a/elekloader/store.py
++++ b/elekloader/store.py
+@@ -452,6 +452,12 @@ def parse_inits(m):
+     return {f['sym']: f['init'] for f in m.get('storage', []) if isinstance(f, dict) and f.get('init')}
+ 
+ 
++def parse_offsets(m):
++    """A mod document's "storage" -> {sym: offset} of its fields with an "offset" (their pinned first bit).
++    parse_decls checks the rest."""
++    return {f['sym']: f['offset'] for f in m.get('storage', []) if isinstance(f, dict) and 'offset' in f}
++
++
+ def parse_handles(m):
+     """A mod document's "storage" -> the syms of its fields declared "handle": true, in order."""
+     return [f['sym'] for f in m.get('storage', []) if isinstance(f, dict) and f.get('handle') is True]
+@@ -465,7 +471,7 @@ def parse_decls(m):
+         raise ModError('"storage" is a list of fields')
+     for f in st:
+         if not isinstance(f, dict) or set(f) - {'sym', 'scope', 'bits', 'lock', 'cc', 'lfo', 'smooth', 'mod', 'track', 'init',
+-                                                'handle'}:
++                                                'handle', 'offset'}:
+             raise ModError('a storage field is {"sym", "scope", "bits"}, and "lock" for a lockable one')
+         for k in ('lock', 'cc', 'lfo', 'smooth', 'mod', 'handle'):
+             if k in f and not isinstance(f[k], bool):
+@@ -504,6 +510,9 @@ def parse_decls(m):
+         if 'init' in f and (not _whole(f['init']) or not 0 <= f['init'] < 1 << bits):
+             raise ModError('storage field %s: init %r (0 to %d, what its %d bits hold)'
+                            % (sym, f['init'], (1 << bits) - 1, bits))
++        if 'offset' in f and (not _whole(f['offset']) or f['offset'] < 0):
++            raise ModError('storage field %s: offset %r (its first bit in the scope, 0 or more)'
++                           % (sym, f['offset']))
+         if sym in seen:
+             raise ModError('storage field %s is declared twice' % sym)
+         seen.add(sym)
+@@ -951,16 +960,56 @@ def _bump(g):
+     return 1 if g >= 255 else g + 1
+ 
+ 
+-def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=(), drive=None):
++def _spans(fs):
++    return sorted((f['offset'], f['offset'] + f['bits']) for f in fs)
++
++
++def _first_fit(taken, bits, cap):
++    """The lowest bit where `bits` bits lie clear of the spans taken and inside cap, or None."""
++    at = 0
++    for a, b in sorted(taken):
++        if at + bits <= a:
++            break
++        at = max(at, b)
++    return at if at + bits <= cap else None
++
++
++def _pack(fs, pins, cap):
++    """Place fields from bit 0: the pinned ones at their offsets, then the others in (mod id, symbol) order,
++    each at the lowest bits clear of those placed; where that leaves one out, the others widest first.
++    -> {(mod id, sym): offset}, or None where they don't fit in cap bits. With no pins, this is the order
++    and the bits the allocator has always packed."""
++    free = [f for f in fs if (f['mod'], f['sym']) not in pins]
++    for order in (lambda f: (f['mod'], f['sym']), lambda f: (-f['bits'], f['mod'], f['sym'])):
++        out, taken = {}, []
++        for f in fs:
++            k = (f['mod'], f['sym'])
++            if k in pins:
++                out[k] = pins[k]
++                taken.append((pins[k], pins[k] + f['bits']))
++        for f in sorted(free, key=order):
++            at = _first_fit(taken, f['bits'], cap)
++            if at is None:
++                break
++            out[(f['mod'], f['sym'])] = at
++            taken.append((at, at + f['bits']))
++        else:
++            return out
++    return None
++
++
++def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=(), drive=None, pins=None):
+     """lock: a lockfile (dict) or None for a new one; decls: [(mod id, sym,
+     scope, bits)]; core: the build's core's version (None: the newest core's
+     room); locks: [(mod id, sym)] of the lockable fields; ccs: those of them
+     with a CC; inits: {(mod id, sym): init} of the fields with an init other
+     than 0 (core-ar2 0.10); cvs: those declared "track": "cv" (core-a4mk2 0.5);
+     drive: what the unit's +Drive keeps (drive_store.reserve), None to keep the
+-    lockfile's, False to drop it.
++    lockfile's, False to drop it; pins: {(mod id, sym): offset} of the fields
++    declared with an "offset", placed at that bit and nowhere else.
+     -> (the new lockfile, [notes]). The lockfile given is not changed."""
+     inits = {k: v for k, v in (inits or {}).items() if v}
++    pins = dict(pins or {})
+     notes = []
+     if lock is None:
+         lock = fresh(dev_key)
+@@ -981,9 +1030,22 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+         if any(k[1] == sym for k in want):
+             raise ModError('the storage field %s is declared by two mods' % sym)
+         want[(mid, sym)] = (scope, bits, inits.get((mid, sym), 0))
++    pins = {k: v for k, v in pins.items() if k in want}
++    # pinned fields of a scope must lie apart: nothing the allocator does can move one off the other
++    for s in SCOPES:
++        ps = sorted((pins[k], pins[k] + want[k][1], k) for k in pins if want[k][0] == s)
++        for (a0, a1, ka), (b0, b1, kb) in zip(ps, ps[1:]):
++            if b0 < a1:
++                raise ModError('the storage fields %s (%s, bits %d..%d) and %s (%s, bits %d..%d) are both pinned '
++                               'on bits %d..%d of %s storage' % (ka[1], ka[0], a0, a1 - 1, kb[1], kb[0], b0, b1 - 1,
++                                                                 b0, min(a1, b1) - 1, s))
++
++    def pin_ok(f):
++        k = (f['mod'], f['sym'])
++        return k not in pins or pins[k] == f['offset']
+     kept, gone = [], []
+     for f in lock['fields']:
+-        if want.get((f['mod'], f['sym'])) == (f['scope'], f['bits'], f.get('init', 0)):
++        if want.get((f['mod'], f['sym'])) == (f['scope'], f['bits'], f.get('init', 0)) and pin_ok(f):
+             kept.append(f)
+         else:
+             gone.append(f)
+@@ -996,7 +1058,7 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+     back = set()
+     for f in added:
+         same = [g for g in lock['freed'] if (g['mod'], g['sym'], g['scope'], g['bits'], g.get('init', 0))
+-                == (f['mod'], f['sym'], f['scope'], f['bits'], f.get('init', 0))]
++                == (f['mod'], f['sym'], f['scope'], f['bits'], f.get('init', 0)) and pin_ok(g)]
+         if same:
+             f['offset'] = same[-1]['offset']
+             lock['freed'].remove(same[-1])
+@@ -1011,17 +1073,25 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+         repacked.add(scope)
+         lock['generation'][scope] = _bump(lock['generation'][scope])
+         lock['freed'] = [f for f in lock['freed'] if f['scope'] != scope]
+-        at = 0
+-        for f in sorted((f for f in fields if f['scope'] == scope),
+-                        key=lambda f: (f['mod'], f['sym'])):
+-            f['offset'] = at
+-            at += f['bits']
+-        lock['next'][scope] = at
++        fs = [f for f in fields if f['scope'] == scope]
++        at = _pack(fs, pins, cap[scope])     # without pins, need() checked it fits
++        if at is None:
++            raise ModError('the mods\' %s fields do not fit in the %d bits of %s storage the %s has, their pinned '
++                           'fields at their offsets' % (scope, cap[scope], scope, dev_key))
++        for f in fs:
++            f['offset'] = at[(f['mod'], f['sym'])]
++        lock['next'][scope] = max([0] + [f['offset'] + f['bits'] for f in fs])
+         notes.append('%s storage repacked (generation %d): older projects and sounds load it '
+                      'at defaults' % (scope, lock['generation'][scope]))
+ 
+     def need(scope):
+-        return sum(f['bits'] for f in fields if f['scope'] == scope)
++        """The bits the scope's fields take packed: their sum, or with pins where the packing ends (a repack
++        refuses pinned fields that don't fit)."""
++        fs = [f for f in fields if f['scope'] == scope]
++        if not any((f['mod'], f['sym']) in pins for f in fs):
++            return sum(f['bits'] for f in fs)
++        at = _pack(fs, pins, 1 << 30)
++        return max([0] + [at[(f['mod'], f['sym'])] + f['bits'] for f in fs])
+ 
+     def pending(scope):
+         return [f for f in added if f['scope'] == scope and f['offset'] is None]
+@@ -1052,11 +1122,20 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+                      % (split['track'], split['pattern']))
+         for k in moved:
+             repack(k)
++    for k in sorted(pins):
++        s, bits = want[k][0], want[k][1]
++        if pins[k] + bits > cap[s]:
++            more = capacity(dev_key, lock['split'])[s]
++            raise ModError('%s: storage field %s: offset %d with %d bits ends past the %d bits of %s storage '
++                           'the %s keeps for mods%s'
++                           % (k[0], k[1], pins[k], bits, cap[s], s, dev_key,
++                              ' with core %s (%d with core %s)' % (core, more, _room_core(dev_key, lock['split'], s, core))
++                              if more > cap[s] and pins[k] + bits <= more else ''))
+     for s in SCOPES:
+-        if need(s) > cap[s]:
++        if sum(f['bits'] for f in fields if f['scope'] == s) > cap[s]:
+             more = capacity(dev_key, lock['split'])[s]
+             raise ModError('the mods need %d bits of %s storage; the %s has %d%s'
+-                           % (need(s), s, dev_key, cap[s],
++                           % (sum(f['bits'] for f in fields if f['scope'] == s), s, dev_key, cap[s],
+                               ' with core %s (%d with core %s)'
+                               % (core, more, _room_core(dev_key, lock['split'], s, core))
+                               if more > cap[s] else ''))
+@@ -1067,10 +1146,29 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+         pend = pending(s)
+         if not pend:
+             continue
+-        if lock['next'][s] + sum(f['bits'] for f in pend) <= cap[s]:
+-            for f in pend:
+-                f['offset'] = lock['next'][s]
+-                lock['next'][s] += f['bits']
++        # bits a field holds or held (a freed one's values are still there) are taken; the gaps pinned fields
++        # leave below the used bits never held anything, so a new field may take them
++        taken = _spans([f for f in fields if f['scope'] == s and f['offset'] is not None]
++                       + [f for f in lock['freed'] if f['scope'] == s])
++        placed, ok = [], True
++        for f in sorted(pend, key=lambda f: (f['mod'], f['sym']) not in pins):    # pinned first, in order
++            k = (f['mod'], f['sym'])
++            if k in pins:
++                at = pins[k]
++                if any(at < b and a < at + f['bits'] for a, b in taken):
++                    ok = False          # a field's bits, or a freed one's values: the scope is packed again
++                    break
++            else:
++                at = _first_fit(taken, f['bits'], cap[s])
++                if at is None:
++                    ok = False
++                    break
++            placed.append((f, at))
++            taken.append((at, at + f['bits']))
++        if ok:
++            for f, at in placed:
++                f['offset'] = at
++                lock['next'][s] = max(lock['next'][s], at + f['bits'])
+         else:
+             repack(s)
+     for f in gone:
+@@ -1079,6 +1177,7 @@ def allocate(lock, decls, dev_key, core=None, locks=(), ccs=(), inits=None, cvs=
+             notes.append('%s %s (%s): %s, its data is dropped'
+                          % (f['mod'], f['sym'], f['scope'],
+                             'no longer in the build' if w is None
++                            else 'moved to its offset' if w == (f['scope'], f['bits'], f.get('init', 0))
+                             else 'changed its init' if w[:2] == (f['scope'], f['bits']) else 'changed size'))
+         else:
+             notes.append('%s %s (%s): no longer in the build; its bits are kept, so it gets its '
+diff --git a/js/src/link.ts b/js/src/link.ts
+index a15e7d1..5624f82 100644
+--- a/js/src/link.ts
++++ b/js/src/link.ts
+@@ -155,6 +155,7 @@ export class Mod2 implements AnyMod {
+   routes: string[]
+   cvs: string[]
+   inits: Map<string, number>
++  offsets: Map<string, number>
+   handles: string[]
+   regions: Region[]
+   names: string[]
+@@ -326,6 +327,7 @@ export class Mod2 implements AnyMod {
+       this.routes = store.parseRoutes(doc)
+       this.cvs = store.parseCvs(doc)
+       this.inits = store.parseInits(doc)
++      this.offsets = store.parseOffsets(doc)
+       this.handles = store.parseHandles(doc)
+     } catch (e) {
+       if (e instanceof ModError) throw new ModError(`${name}: ${e.message}`)
+@@ -1079,7 +1081,8 @@ export function link(mods: Mod2[], image: Uint8Array, lock: store.Lock | null =
+       const users = [...new Set(handles.map(k => k[0]))].sort(cmp)
+       throw new ModError(`${users.join(', ')} mark${users.length === 1 ? 's' : ''} storage fields as handles, which ${core.label()} does not keep (no table ${store.HANDLES_TABLE})`)
+     }
+-    ;[newLock, storeNotes] = store.allocate(lock, decls, dev.key, core.version, locks, ccs, inits, cvs, drive)
++    const pins = order.flatMap(m => [...m.offsets].map(([sym, v]) => [m.id, sym, v] as [string, string, number]))
++    ;[newLock, storeNotes] = store.allocate(lock, decls, dev.key, core.version, locks, ccs, inits, cvs, drive, pins)
+     let ids: Uint8Array[]
+     ;[storeSyms, ids] = store.symbols(newLock)
+     if (!storeSyms.has(store.LOCK_DST)) storeSyms.set(store.LOCK_DST, 0)    // not placed: no LFO field
+diff --git a/js/src/store.ts b/js/src/store.ts
+index 511cb5f..908fa97 100644
+--- a/js/src/store.ts
++++ b/js/src/store.ts
+@@ -255,6 +255,13 @@ export function parseInits(m: Record<string, any>): Map<string, number> {
+   return new Map(st.filter((f: unknown) => isDict(f) && f.init).map((f: Record<string, any>) => [f.sym, f.init]))
+ }
+ 
++/** A mod document's "storage" -> {sym: offset} of its fields with an "offset" (their pinned first bit).
++ * store.parse_offsets. */
++export function parseOffsets(m: Record<string, any>): Map<string, number> {
++  const st = Object.hasOwn(m, 'storage') && Array.isArray(m.storage) ? m.storage : []
++  return new Map(st.filter((f: unknown) => isDict(f) && Object.hasOwn(f, 'offset')).map((f: Record<string, any>) => [f.sym, f.offset]))
++}
++
+ /** A mod document's "storage" -> the syms of its fields declared "handle": true, in order. store.parse_handles. */
+ export function parseHandles(m: Record<string, any>): string[] {
+   const st = Object.hasOwn(m, 'storage') && Array.isArray(m.storage) ? m.storage : []
+@@ -268,7 +275,7 @@ export function parseDecls(m: Record<string, any>): [string, string, number][] {
+   const st = Object.hasOwn(m, 'storage') ? m.storage : []
+   if (!Array.isArray(st)) throw new ModError('"storage" is a list of fields')
+   for (const f of st) {
+-    if (!isDict(f) || Object.keys(f).some(k => !['sym', 'scope', 'bits', 'lock', 'cc', 'lfo', 'smooth', 'mod', 'track', 'init', 'handle'].includes(k)))
++    if (!isDict(f) || Object.keys(f).some(k => !['sym', 'scope', 'bits', 'lock', 'cc', 'lfo', 'smooth', 'mod', 'track', 'init', 'handle', 'offset'].includes(k)))
+       throw new ModError('a storage field is {"sym", "scope", "bits"}, and "lock" for a lockable one')
+     for (const k of ['lock', 'cc', 'lfo', 'smooth', 'mod', 'handle'])
+       if (Object.hasOwn(f, k) && typeof f[k] !== 'boolean')
+@@ -300,6 +307,8 @@ export function parseDecls(m: Record<string, any>): [string, string, number][] {
+       throw new ModError(`storage field ${sym}: bits ${repr(bits)} (1 to ${MAX_BITS})`)
+     if (Object.hasOwn(f, 'init') && (!whole(f.init) || !(f.init >= 0 && f.init < 2 ** bits)))
+       throw new ModError(`storage field ${sym}: init ${repr(f.init)} (0 to ${2 ** bits - 1}, what its ${bits} bits hold)`)
++    if (Object.hasOwn(f, 'offset') && (!whole(f.offset) || f.offset < 0))
++      throw new ModError(`storage field ${sym}: offset ${repr(f.offset)} (its first bit in the scope, 0 or more)`)
+     if (seen.has(sym)) throw new ModError(`storage field ${sym} is declared twice`)
+     seen.add(sym)
+     out.push([sym, scope as string, bits])
+@@ -705,15 +714,54 @@ const bump = (g: number) => (g >= 255 ? 1 : g + 1)
+ const byModSym = (a: { mod: string; sym: string }, b: { mod: string; sym: string }) =>
+   a.mod < b.mod ? -1 : a.mod > b.mod ? 1 : a.sym < b.sym ? -1 : a.sym > b.sym ? 1 : 0
+ const ceilDiv = (a: number, b: number) => Math.floor((a + b - 1) / b)
++const bySpan = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1] - b[1]
++
++/** The lowest bit where `bits` bits lie clear of the spans taken and inside cap, or null. store._first_fit. */
++function firstFit(taken: [number, number][], bits: number, cap: number): number | null {
++  let at = 0
++  for (const [a, b] of [...taken].sort(bySpan)) {
++    if (at + bits <= a) break
++    at = Math.max(at, b)
++  }
++  return at + bits <= cap ? at : null
++}
++
++/** Place fields from bit 0: the pinned ones at their offsets, then the others in (mod id, symbol) order, each at the
++ * lowest bits clear of those placed; where that leaves one out, the others widest first. -> {mod id \0 sym: offset},
++ * or null where they don't fit in cap bits. store._pack. */
++function pack(fs: { mod: string; sym: string; bits: number }[], pins: Map<string, number>, cap: number): Map<string, number> | null {
++  const free = fs.filter(f => !pins.has(f.mod + '\0' + f.sym))
++  type F = { mod: string; sym: string; bits: number }
++  for (const order of [byModSym, (a: F, b: F) => b.bits - a.bits || byModSym(a, b)]) {
++    const out = new Map<string, number>(), taken: [number, number][] = []
++    for (const f of fs) {
++      const k = f.mod + '\0' + f.sym
++      if (pins.has(k)) {
++        out.set(k, pins.get(k)!)
++        taken.push([pins.get(k)!, pins.get(k)! + f.bits])
++      }
++    }
++    let ok = true
++    for (const f of [...free].sort(order)) {
++      const at = firstFit(taken, f.bits, cap)
++      if (at === null) { ok = false; break }
++      out.set(f.mod + '\0' + f.sym, at)
++      taken.push([at, at + f.bits])
++    }
++    if (ok) return out
++  }
++  return null
++}
+ 
+ /** lock: a lockfile, or null for a new one; decls: [mod id, sym, scope, bits]; locks: [mod id, sym] of the lockable
+  * fields; ccs: those of them with a CC; inits: [mod id, sym, init] of the fields with an init other than 0 (core-ar2
+  * 0.10); cvs: those declared "track": "cv" (core-a4mk2 0.5); drive: what the unit's +Drive keeps (drivestore.reserve),
+- * null to keep the lockfile's, false to drop it. -> [the new lockfile, notes]. The lockfile given is not changed.
++ * null to keep the lockfile's, false to drop it; pins: [mod id, sym, offset] of the fields declared with an "offset",
++ * placed at that bit and nowhere else. -> [the new lockfile, notes]. The lockfile given is not changed.
+  * store.allocate. */
+ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core: string | null = null,
+   locks: [string, string][] = [], ccs: [string, string][] = [], inits: [string, string, number][] = [],
+-  cvs: [string, string][] = [], drive: Drive | false | null = null): [Lock, string[]] {
++  cvs: [string, string][] = [], drive: Drive | false | null = null, pins0: [string, string, number][] = []): [Lock, string[]] {
+   const notes: string[] = []
+   const initOf = new Map(inits.filter(([, , v]) => v).map(([m, sy, v]) => [m + '\0' + sy, v]))
+   let lock: Lock
+@@ -739,10 +787,26 @@ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core
+     if ([...want.keys()].some(k => k.split('\0')[1] === sym)) throw new ModError(`the storage field ${sym} is declared by two mods`)
+     want.set(keyOf(mid, sym), [scope, bits, initOf.get(keyOf(mid, sym)) ?? 0])
+   }
++  const pins = new Map(pins0.map(([m, sy, v]) => [keyOf(m, sy), v] as [string, number]).filter(([k]) => want.has(k)))
++  const pinKeys = [...pins.keys()].map(k => { const [mod, sym] = k.split('\0'); return { mod, sym } }).sort(byModSym)
++    .map(({ mod, sym }) => keyOf(mod, sym))
++  // pinned fields of a scope must lie apart: nothing the allocator does can move one off the other
++  for (const s of SCOPES) {
++    const ps = pinKeys.filter(k => want.get(k)![0] === s).map(k => [pins.get(k)!, pins.get(k)! + want.get(k)![1], k] as [number, number, string])
++      .sort((a, b) => a[0] - b[0] || a[1] - b[1] || (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0))
++    for (let i = 1; i < ps.length; i++) {
++      const [a0, a1, ka] = ps[i - 1], [b0, b1, kb] = ps[i]
++      if (b0 < a1) {
++        const [ma, sa] = ka.split('\0'), [mb, sb] = kb.split('\0')
++        throw new ModError(`the storage fields ${sa} (${ma}, bits ${a0}..${a1 - 1}) and ${sb} (${mb}, bits ${b0}..${b1 - 1}) are both pinned on bits ${b0}..${Math.min(a1, b1) - 1} of ${s} storage`)
++      }
++    }
++  }
++  const pinOk = (f: { mod: string; sym: string; offset: number }) => !pins.has(keyOf(f.mod, f.sym)) || pins.get(keyOf(f.mod, f.sym)) === f.offset
+   const kept: Field[] = [], gone: Field[] = []
+   for (const f of lock.fields) {
+     const w = want.get(keyOf(f.mod, f.sym))
+-    if (w && w[0] === f.scope && w[1] === f.bits && w[2] === (f.init ?? 0)) kept.push(f)
++    if (w && w[0] === f.scope && w[1] === f.bits && w[2] === (f.init ?? 0) && pinOk(f)) kept.push(f)
+     else gone.push(f)
+   }
+   const have = new Set(kept.map(f => keyOf(f.mod, f.sym)))
+@@ -759,7 +823,7 @@ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core
+   const back = new Set<string>()
+   for (const f of added) {
+     const same = lock.freed.filter(g => g.mod === f.mod && g.sym === f.sym && g.scope === f.scope && g.bits === f.bits
+-      && (g.init ?? 0) === (f.init ?? 0))
++      && (g.init ?? 0) === (f.init ?? 0) && pinOk(g))
+     if (same.length) {
+       const g = same[same.length - 1]
+       f.offset = g.offset
+@@ -777,15 +841,21 @@ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core
+     repacked.add(scope)
+     lock.generation[scope] = bump(lock.generation[scope])
+     lock.freed = lock.freed.filter(f => f.scope !== scope)
+-    let at = 0
+-    for (const f of fields.filter(f => f.scope === scope).sort(byModSym)) {
+-      f.offset = at
+-      at += f.bits
+-    }
+-    lock.next[scope] = at
++    const fs = fields.filter(f => f.scope === scope)
++    const at = pack(fs, pins, cap[scope])   // without pins, need() checked it fits
++    if (at === null)
++      throw new ModError(`the mods' ${scope} fields do not fit in the ${cap[scope]} bits of ${scope} storage the ${devKey} has, their pinned fields at their offsets`)
++    for (const f of fs) f.offset = at.get(keyOf(f.mod, f.sym))!
++    lock.next[scope] = Math.max(0, ...fs.map(f => f.offset + f.bits))
+     notes.push(`${scope} storage repacked (generation ${lock.generation[scope]}): older projects and sounds load it at defaults`)
+   }
+-  const need = (scope: string) => fields.filter(f => f.scope === scope).reduce((n, f) => n + f.bits, 0)
++  // the bits the scope's fields take packed: their sum, or with pins where the packing ends
++  const need = (scope: string) => {
++    const fs = fields.filter(f => f.scope === scope)
++    if (!fs.some(f => pins.has(keyOf(f.mod, f.sym)))) return fs.reduce((n, f) => n + f.bits, 0)
++    const at = pack(fs, pins, 2 ** 30)!
++    return Math.max(0, ...fs.map(f => at.get(keyOf(f.mod, f.sym))! + f.bits))
++  }
+   const pending = (scope: string) => added.filter(f => f.scope === scope && f.offset === null)
+ 
+   const sp = spec(devKey)
+@@ -806,10 +876,20 @@ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core
+     notes.push(`the tagged store now keeps ${split.track} B per pattern track and ${split.pattern} B per pattern`)
+     for (const k of moved) repack(k)
+   }
++  for (const k of pinKeys) {
++    const [s, bits] = want.get(k)!
++    const at = pins.get(k)!
++    if (at + bits > cap[s]) {
++      const more = capacity(devKey, lock.split)[s]
++      const [m, sy] = k.split('\0')
++      throw new ModError(`${m}: storage field ${sy}: offset ${at} with ${bits} bits ends past the ${cap[s]} bits of ${s} storage the ${devKey} keeps for mods${more > cap[s] && at + bits <= more ? ` with core ${core} (${more} with core ${roomCore(devKey, lock.split, s, core as string)})` : ''}`)
++    }
++  }
+   for (const s of SCOPES) {
+-    if (need(s) > cap[s]) {
++    const sum = fields.filter(f => f.scope === s).reduce((n, f) => n + f.bits, 0)
++    if (sum > cap[s]) {
+       const more = capacity(devKey, lock.split)[s]
+-      throw new ModError(`the mods need ${need(s)} bits of ${s} storage; the ${devKey} has ${cap[s]}${more > cap[s] ? ` with core ${core} (${more} with core ${roomCore(devKey, lock.split, s, core as string)})` : ''}`)
++      throw new ModError(`the mods need ${sum} bits of ${s} storage; the ${devKey} has ${cap[s]}${more > cap[s] ? ` with core ${core} (${more} with core ${roomCore(devKey, lock.split, s, core as string)})` : ''}`)
+     }
+     if (fields.some(f => f.scope === s && f.offset !== null && f.offset + f.bits > cap[s])) {
+       repack(s)                   // placed by a newer core, past what this one keeps
+@@ -817,17 +897,36 @@ export function allocate(lock0: Lock | null, decls: Decl[], devKey: string, core
+     }
+     const pend = pending(s)
+     if (!pend.length) continue
+-    if (lock.next[s] + pend.reduce((a, f) => a + f.bits, 0) <= cap[s]) {
+-      for (const f of pend) {
+-        f.offset = lock.next[s]
+-        lock.next[s] += f.bits
++    // bits a field holds or held (a freed one's values are still there) are taken; the gaps pinned fields leave below
++    // the used bits never held anything, so a new field may take them
++    const taken: [number, number][] = [...fields.filter(f => f.scope === s && f.offset !== null), ...lock.freed.filter(f => f.scope === s)]
++      .map(f => [f.offset, f.offset + f.bits] as [number, number]).sort(bySpan)
++    const placed: [typeof pend[number], number][] = []
++    let ok = true
++    for (const f of [...pend].sort((a, b) => Number(!pins.has(keyOf(a.mod, a.sym))) - Number(!pins.has(keyOf(b.mod, b.sym))))) {
++      let at: number | null
++      if (pins.has(keyOf(f.mod, f.sym))) {
++        at = pins.get(keyOf(f.mod, f.sym))!
++        const a0 = at
++        if (taken.some(([a, b]) => a0 < b && a < a0 + f.bits)) { ok = false; break }   // the scope is packed again
++      } else {
++        at = firstFit(taken, f.bits, cap[s])
++        if (at === null) { ok = false; break }
++      }
++      placed.push([f, at])
++      taken.push([at, at + f.bits])
++    }
++    if (ok) {
++      for (const [f, at] of placed) {
++        f.offset = at
++        lock.next[s] = Math.max(lock.next[s], at + f.bits)
+       }
+     } else repack(s)
+   }
+   for (const f of gone) {
+     const w = want.get(keyOf(f.mod, f.sym))
+     if (w || repacked.has(f.scope))
+-      notes.push(`${f.mod} ${f.sym} (${f.scope}): ${!w ? 'no longer in the build' : w[0] === f.scope && w[1] === f.bits ? 'changed its init' : 'changed size'}, its data is dropped`)
++      notes.push(`${f.mod} ${f.sym} (${f.scope}): ${!w ? 'no longer in the build' : w[0] === f.scope && w[1] === f.bits && w[2] === (f.init ?? 0) ? 'moved to its offset' : w[0] === f.scope && w[1] === f.bits ? 'changed its init' : 'changed size'}, its data is dropped`)
+     else notes.push(`${f.mod} ${f.sym} (${f.scope}): no longer in the build; its bits are kept, so it gets its values back if it returns`)
+   }
+   for (const f of added) {
+diff --git a/js/test/store-vectors.json b/js/test/store-vectors.json
+index a8805dd..b0d91f0 100644
+--- a/js/test/store-vectors.json
++++ b/js/test/store-vectors.json
+@@ -20498,7 +20498,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "not a list": {
+    "doc": {
+@@ -20614,7 +20615,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "lock kit": {
+    "doc": {
+@@ -20649,7 +20651,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "lock global": {
+    "doc": {
+@@ -20694,7 +20697,8 @@
+    ],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "track cv": {
+    "doc": {
+@@ -20741,7 +20745,8 @@
+     "a"
+    ],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "track fx": {
+    "doc": {
+@@ -20840,7 +20845,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "cc without lock": {
+    "doc": {
+@@ -20912,7 +20918,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "lfo without lock": {
+    "doc": {
+@@ -20996,7 +21003,8 @@
+    "routes": [],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "mod": {
+    "doc": {
+@@ -21058,7 +21066,8 @@
+    ],
+    "cvs": [],
+    "inits": {},
+-   "handles": []
++   "handles": [],
++   "offsets": {}
+   },
+   "mod without lock": {
+    "doc": {
+@@ -21130,6 +21139,97 @@
+     ]
+    },
+    "error": "storage field a is declared twice"
++  },
++  "offset": {
++   "doc": {
++    "storage": [
++     {
++      "sym": "a",
++      "scope": "sound",
++      "bits": 10,
++      "offset": 30
++     },
++     {
++      "sym": "b",
++      "scope": "sound",
++      "bits": 14,
++      "offset": 0
++     },
++     {
++      "sym": "c",
++      "scope": "kit",
++      "bits": 3
++     }
++    ]
++   },
++   "ok": [
++    [
++     "a",
++     "sound",
++     10
++    ],
++    [
++     "b",
++     "sound",
++     14
++    ],
++    [
++     "c",
++     "kit",
++     3
++    ]
++   ],
++   "locks": [],
++   "ccs": [],
++   "lfos": [],
++   "rough": [],
++   "routes": [],
++   "cvs": [],
++   "inits": {},
++   "handles": [],
++   "offsets": {
++    "a": 30,
++    "b": 0
++   }
++  },
++  "offset negative": {
++   "doc": {
++    "storage": [
++     {
++      "sym": "a",
++      "scope": "sound",
++      "bits": 3,
++      "offset": -1
++     }
++    ]
++   },
++   "error": "storage field a: offset -1 (its first bit in the scope, 0 or more)"
++  },
++  "offset type": {
++   "doc": {
++    "storage": [
++     {
++      "sym": "a",
++      "scope": "sound",
++      "bits": 3,
++      "offset": "30"
++     }
++    ]
++   },
++   "error": "storage field a: offset '30' (its first bit in the scope, 0 or more)"
++  },
++  "offset bool": {
++   "doc": {
++    "storage": [
++     {
++      "sym": "a",
++      "scope": "sound",
++      "bits": 3,
++      "offset": true
++     }
++    ]
++   },
++   "error": "storage field a: offset True (its first bit in the scope, 0 or more)"
+   }
+  },
+  "knob_runs": {
+@@ -24655,5 +24755,1968 @@
+    },
+    "error": null
+   }
++ },
++ "pin_runs": {
++  "pins, gaps, a repack": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "x",
++       "sound",
++       8
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "x",
++       "sound",
++       8
++      ],
++      [
++       "o",
++       "y",
++       "sound",
++       20
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "y",
++       "sound",
++       20
++      ],
++      [
++       "o",
++       "w",
++       "sound",
++       9
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "y",
++       "sound",
++       20
++      ],
++      [
++       "o",
++       "w",
++       "sound",
++       9
++      ],
++      [
++       "o",
++       "v",
++       "sound",
++       2
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x7e43c06d",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0x7e43c06d: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "sc arp: 10 bits of sound storage at bit 30",
++      "sc tag: 14 bits of sound storage at bit 42"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "arp": 310378526,
++      "tag": 327155754
++     },
++     "ids": [
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x7e43c06d\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2118369389
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xe03493cf",
++      "ancestors": [
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "o",
++        "sym": "x",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 8
++       },
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "o x: 8 bits of sound storage at bit 0",
++      "layout ID 0xe03493cf (from 0x7e43c06d, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "x": 301989888,
++      "arp": 310378526,
++      "tag": 327155754
++     },
++     "ids": [
++      "e03493cf",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xe03493cf\",\n \"ancestors\": [\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"o\",\n   \"sym\": \"x\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 8\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 3761542095
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xaff4323f",
++      "ancestors": [
++       "0xe03493cf",
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "o",
++        "sym": "x",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 8
++       },
++       {
++        "mod": "o",
++        "sym": "y",
++        "scope": "sound",
++        "offset": 8,
++        "bits": 20
++       },
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "o y: 20 bits of sound storage at bit 8",
++      "layout ID 0xaff4323f (from 0xe03493cf, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "x": 301989888,
++      "y": 352321544,
++      "arp": 310378526,
++      "tag": 327155754
++     },
++     "ids": [
++      "aff4323f",
++      "e03493cf",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xaff4323f\",\n \"ancestors\": [\n  \"0xe03493cf\",\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"o\",\n   \"sym\": \"x\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 8\n  },\n  {\n   \"mod\": \"o\",\n   \"sym\": \"y\",\n   \"scope\": \"sound\",\n   \"offset\": 8,\n   \"bits\": 20\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2952016447
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xe1917528",
++      "ancestors": [
++       "0xaff4323f",
++       "0xe03493cf",
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 2,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "o",
++        "sym": "w",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 9
++       },
++       {
++        "mod": "o",
++        "sym": "y",
++        "scope": "sound",
++        "offset": 9,
++        "bits": 20
++       },
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "sound storage repacked (generation 2): older projects and sounds load it at defaults",
++      "o x (sound): no longer in the build, its data is dropped",
++      "o w: 9 bits of sound storage at bit 0",
++      "layout ID 0xe1917528 (from 0xaff4323f, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 33620225,
++      "__store_gen2": 16843268,
++      "w": 306184192,
++      "y": 352321545,
++      "arp": 310378526,
++      "tag": 327155754
++     },
++     "ids": [
++      "e1917528",
++      "aff4323f",
++      "e03493cf",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xe1917528\",\n \"ancestors\": [\n  \"0xaff4323f\",\n  \"0xe03493cf\",\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 2,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"o\",\n   \"sym\": \"w\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 9\n  },\n  {\n   \"mod\": \"o\",\n   \"sym\": \"y\",\n   \"scope\": \"sound\",\n   \"offset\": 9,\n   \"bits\": 20\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 3784406312
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x9b41d2f9",
++      "ancestors": [
++       "0xe1917528",
++       "0xaff4323f",
++       "0xe03493cf",
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 2,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "o",
++        "sym": "w",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 9
++       },
++       {
++        "mod": "o",
++        "sym": "y",
++        "scope": "sound",
++        "offset": 9,
++        "bits": 20
++       },
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "o",
++        "sym": "v",
++        "scope": "sound",
++        "offset": 40,
++        "bits": 2
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "o v: 2 bits of sound storage at bit 40",
++      "layout ID 0x9b41d2f9 (from 0xe1917528, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 33620225,
++      "__store_gen2": 16843268,
++      "w": 306184192,
++      "y": 352321545,
++      "arp": 310378526,
++      "v": 276824104,
++      "tag": 327155754
++     },
++     "ids": [
++      "9b41d2f9",
++      "e1917528",
++      "aff4323f",
++      "e03493cf",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x9b41d2f9\",\n \"ancestors\": [\n  \"0xe1917528\",\n  \"0xaff4323f\",\n  \"0xe03493cf\",\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 2,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"o\",\n   \"sym\": \"w\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 9\n  },\n  {\n   \"mod\": \"o\",\n   \"sym\": \"y\",\n   \"scope\": \"sound\",\n   \"offset\": 9,\n   \"bits\": 20\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"o\",\n   \"sym\": \"v\",\n   \"scope\": \"sound\",\n   \"offset\": 40,\n   \"bits\": 2\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2604782329
++    }
++   ]
++  },
++  "kit words": {
++   "steps": [
++    [
++     [
++      [
++       "fx",
++       "w0",
++       "kit",
++       16
++      ],
++      [
++       "fx",
++       "w1",
++       "kit",
++       16
++      ],
++      [
++       "fx",
++       "w2",
++       "kit",
++       16
++      ],
++      [
++       "fx",
++       "w3",
++       "kit",
++       16
++      ]
++     ],
++     [
++      [
++       "fx",
++       "w0",
++       0
++      ],
++      [
++       "fx",
++       "w1",
++       16
++      ],
++      [
++       "fx",
++       "w2",
++       32
++      ],
++      [
++       "fx",
++       "w3",
++       48
++      ]
++     ],
++     null
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x4528c05c",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 0,
++       "kit": 64,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "fx",
++        "sym": "w0",
++        "scope": "kit",
++        "offset": 0,
++        "bits": 16
++       },
++       {
++        "mod": "fx",
++        "sym": "w1",
++        "scope": "kit",
++        "offset": 16,
++        "bits": 16
++       },
++       {
++        "mod": "fx",
++        "sym": "w2",
++        "scope": "kit",
++        "offset": 32,
++        "bits": 16
++       },
++       {
++        "mod": "fx",
++        "sym": "w3",
++        "scope": "kit",
++        "offset": 48,
++        "bits": 16
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0x4528c05c: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "fx w0: 16 bits of kit storage at bit 0",
++      "fx w1: 16 bits of kit storage at bit 16",
++      "fx w2: 16 bits of kit storage at bit 32",
++      "fx w3: 16 bits of kit storage at bit 48"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "w0": 603979776,
++      "w1": 603979792,
++      "w2": 603979808,
++      "w3": 603979824
++     },
++     "ids": [
++      "4528c05c"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x4528c05c\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 0,\n  \"kit\": 64,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"fx\",\n   \"sym\": \"w0\",\n   \"scope\": \"kit\",\n   \"offset\": 0,\n   \"bits\": 16\n  },\n  {\n   \"mod\": \"fx\",\n   \"sym\": \"w1\",\n   \"scope\": \"kit\",\n   \"offset\": 16,\n   \"bits\": 16\n  },\n  {\n   \"mod\": \"fx\",\n   \"sym\": \"w2\",\n   \"scope\": \"kit\",\n   \"offset\": 32,\n   \"bits\": 16\n  },\n  {\n   \"mod\": \"fx\",\n   \"sym\": \"w3\",\n   \"scope\": \"kit\",\n   \"offset\": 48,\n   \"bits\": 16\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 1160298588
++    }
++   ]
++  },
++  "a pin on a placed field repacks": {
++   "steps": [
++    [
++     [
++      [
++       "a",
++       "z",
++       "sound",
++       8
++      ]
++     ],
++     [],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "a",
++       "z",
++       "sound",
++       8
++      ],
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       0
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xe30de6ec",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 8,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "a",
++        "sym": "z",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 8
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0xe30de6ec: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "a z: 8 bits of sound storage at bit 0"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "z": 301989888
++     },
++     "ids": [
++      "e30de6ec"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xe30de6ec\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 8,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"a\",\n   \"sym\": \"z\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 8\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 3809339116
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x4dc533fc",
++      "ancestors": [
++       "0xe30de6ec"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 2,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 10
++       },
++       {
++        "mod": "a",
++        "sym": "z",
++        "scope": "sound",
++        "offset": 10,
++        "bits": 8
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "sound storage repacked (generation 2): older projects and sounds load it at defaults",
++      "sc arp: 10 bits of sound storage at bit 0",
++      "sc tag: 14 bits of sound storage at bit 42",
++      "layout ID 0x4dc533fc (from 0xe30de6ec, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 33620225,
++      "__store_gen2": 16843268,
++      "arp": 310378496,
++      "z": 301989898,
++      "tag": 327155754
++     },
++     "ids": [
++      "4dc533fc",
++      "e30de6ec"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x4dc533fc\",\n \"ancestors\": [\n  \"0xe30de6ec\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 2,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"a\",\n   \"sym\": \"z\",\n   \"scope\": \"sound\",\n   \"offset\": 10,\n   \"bits\": 8\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 1304769532
++    }
++   ]
++  },
++  "a pin on freed bits repacks": {
++   "steps": [
++    [
++     [
++      [
++       "a",
++       "z",
++       "sound",
++       8
++      ],
++      [
++       "a",
++       "q",
++       "sound",
++       4
++      ]
++     ],
++     [],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "a",
++       "q",
++       "sound",
++       4
++      ]
++     ],
++     [],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "a",
++       "q",
++       "sound",
++       4
++      ],
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       2
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x983ec572",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 12,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "a",
++        "sym": "q",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 4
++       },
++       {
++        "mod": "a",
++        "sym": "z",
++        "scope": "sound",
++        "offset": 4,
++        "bits": 8
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0x983ec572: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "a q: 4 bits of sound storage at bit 0",
++      "a z: 8 bits of sound storage at bit 4"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "q": 285212672,
++      "z": 301989892
++     },
++     "ids": [
++      "983ec572"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x983ec572\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 12,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"a\",\n   \"sym\": \"q\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 4\n  },\n  {\n   \"mod\": \"a\",\n   \"sym\": \"z\",\n   \"scope\": \"sound\",\n   \"offset\": 4,\n   \"bits\": 8\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2554250610
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xefa9cff3",
++      "ancestors": [
++       "0x983ec572"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 12,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "a",
++        "sym": "q",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 4
++       }
++      ],
++      "freed": [
++       {
++        "mod": "a",
++        "sym": "z",
++        "scope": "sound",
++        "offset": 4,
++        "bits": 8
++       }
++      ]
++     },
++     "notes": [
++      "a z (sound): no longer in the build; its bits are kept, so it gets its values back if it returns",
++      "layout ID 0xefa9cff3 (from 0x983ec572, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "q": 285212672
++     },
++     "ids": [
++      "efa9cff3",
++      "983ec572"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xefa9cff3\",\n \"ancestors\": [\n  \"0x983ec572\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 12,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"a\",\n   \"sym\": \"q\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 4\n  }\n ],\n \"freed\": [\n  {\n   \"mod\": \"a\",\n   \"sym\": \"z\",\n   \"scope\": \"sound\",\n   \"offset\": 4,\n   \"bits\": 8\n  }\n ]\n}\n",
++     "layout_id": 4020883443
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xa1c2e83b",
++      "ancestors": [
++       "0xefa9cff3",
++       "0x983ec572"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 2,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 2,
++        "bits": 10
++       },
++       {
++        "mod": "a",
++        "sym": "q",
++        "scope": "sound",
++        "offset": 12,
++        "bits": 4
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "sound storage repacked (generation 2): older projects and sounds load it at defaults",
++      "sc arp: 10 bits of sound storage at bit 2",
++      "sc tag: 14 bits of sound storage at bit 42",
++      "layout ID 0xa1c2e83b (from 0xefa9cff3, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 33620225,
++      "__store_gen2": 16843268,
++      "arp": 310378498,
++      "q": 285212684,
++      "tag": 327155754
++     },
++     "ids": [
++      "a1c2e83b",
++      "efa9cff3",
++      "983ec572"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xa1c2e83b\",\n \"ancestors\": [\n  \"0xefa9cff3\",\n  \"0x983ec572\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 2,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 2,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"a\",\n   \"sym\": \"q\",\n   \"scope\": \"sound\",\n   \"offset\": 12,\n   \"bits\": 4\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2713905211
++    }
++   ]
++  },
++  "a pin that moves": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       16
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x7e43c06d",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0x7e43c06d: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "sc arp: 10 bits of sound storage at bit 30",
++      "sc tag: 14 bits of sound storage at bit 42"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "arp": 310378526,
++      "tag": 327155754
++     },
++     "ids": [
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x7e43c06d\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2118369389
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x3c0a09a0",
++      "ancestors": [
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 16,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       }
++      ]
++     },
++     "notes": [
++      "sc arp (sound): moved to its offset, its data is dropped",
++      "sc arp: 10 bits of sound storage at bit 16",
++      "layout ID 0x3c0a09a0 (from 0x7e43c06d, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "arp": 310378512,
++      "tag": 327155754
++     },
++     "ids": [
++      "3c0a09a0",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x3c0a09a0\",\n \"ancestors\": [\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 16,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  }\n ]\n}\n",
++     "layout_id": 1007290784
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x3c0a09a0",
++      "ancestors": [
++       "0x7e43c06d"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 16,
++        "bits": 10
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": [
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       }
++      ]
++     },
++     "notes": [],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "arp": 310378512,
++      "tag": 327155754
++     },
++     "ids": [
++      "3c0a09a0",
++      "7e43c06d"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x3c0a09a0\",\n \"ancestors\": [\n  \"0x7e43c06d\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 16,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": [\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  }\n ]\n}\n",
++     "layout_id": 1007290784
++    }
++   ]
++  },
++  "pins that overlap": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       35
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "error": "the storage fields arp (sc, bits 30..39) and tag (sc, bits 35..48) are both pinned on bits 35..39 of sound storage"
++    }
++   ]
++  },
++  "a pin past the room of an older core": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.2"
++    ]
++   ],
++   "results": [
++    {
++     "error": "sc: storage field arp: offset 30 with 10 bits ends past the 24 bits of sound storage the analog-rytm-mk2 keeps for mods with core 0.2 (56 with core 0.3)"
++    }
++   ]
++  },
++  "a pin past the room": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       50
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "error": "sc: storage field tag: offset 50 with 14 bits ends past the 56 bits of sound storage the analog-rytm-mk2 keeps for mods"
++    }
++   ]
++  },
++  "pins leave too little room": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "x",
++       "sound",
++       8
++      ],
++      [
++       "o",
++       "y",
++       "sound",
++       30
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ],
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "x",
++       "sound",
++       8
++      ],
++      [
++       "o",
++       "y",
++       "sound",
++       23
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "error": "the mods need 62 bits of sound storage; the analog-rytm-mk2 has 56"
++    },
++    {
++     "error": "the mods' sound fields do not fit in the 56 bits of sound storage the analog-rytm-mk2 has, their pinned fields at their offsets"
++    }
++   ]
++  },
++  "pins, then the widest first": {
++   "steps": [
++    [
++     [
++      [
++       "sc",
++       "arp",
++       "sound",
++       10
++      ],
++      [
++       "sc",
++       "tag",
++       "sound",
++       14
++      ],
++      [
++       "o",
++       "a",
++       "sound",
++       2
++      ],
++      [
++       "o",
++       "b",
++       "sound",
++       29
++      ]
++     ],
++     [
++      [
++       "sc",
++       "arp",
++       30
++      ],
++      [
++       "sc",
++       "tag",
++       42
++      ]
++     ],
++     "0.19"
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x956a8394",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 2,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 56,
++       "kit": 0,
++       "global": 0,
++       "track": 0,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "o",
++        "sym": "b",
++        "scope": "sound",
++        "offset": 0,
++        "bits": 29
++       },
++       {
++        "mod": "sc",
++        "sym": "arp",
++        "scope": "sound",
++        "offset": 30,
++        "bits": 10
++       },
++       {
++        "mod": "o",
++        "sym": "a",
++        "scope": "sound",
++        "offset": 40,
++        "bits": 2
++       },
++       {
++        "mod": "sc",
++        "sym": "tag",
++        "scope": "sound",
++        "offset": 42,
++        "bits": 14
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0x956a8394: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "sound storage repacked (generation 2): older projects and sounds load it at defaults",
++      "o a: 2 bits of sound storage at bit 40",
++      "o b: 29 bits of sound storage at bit 0",
++      "sc arp: 10 bits of sound storage at bit 30",
++      "sc tag: 14 bits of sound storage at bit 42"
++     ],
++     "symbols": {
++      "__store_gen": 33620225,
++      "__store_gen2": 16843268,
++      "b": 390070272,
++      "arp": 310378526,
++      "a": 276824104,
++      "tag": 327155754
++     },
++     "ids": [
++      "956a8394"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x956a8394\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 2,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 56,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 0,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"o\",\n   \"sym\": \"b\",\n   \"scope\": \"sound\",\n   \"offset\": 0,\n   \"bits\": 29\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"arp\",\n   \"scope\": \"sound\",\n   \"offset\": 30,\n   \"bits\": 10\n  },\n  {\n   \"mod\": \"o\",\n   \"sym\": \"a\",\n   \"scope\": \"sound\",\n   \"offset\": 40,\n   \"bits\": 2\n  },\n  {\n   \"mod\": \"sc\",\n   \"sym\": \"tag\",\n   \"scope\": \"sound\",\n   \"offset\": 42,\n   \"bits\": 14\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 2506785684
++    }
++   ]
++  },
++  "pins in a pattern track": {
++   "steps": [
++    [
++     [
++      [
++       "a",
++       "p",
++       "track",
++       4
++      ]
++     ],
++     [
++      [
++       "a",
++       "p",
++       12
++      ]
++     ],
++     null
++    ],
++    [
++     [
++      [
++       "a",
++       "p",
++       "track",
++       4
++      ],
++      [
++       "b",
++       "r",
++       "track",
++       7
++      ]
++     ],
++     [
++      [
++       "a",
++       "p",
++       12
++      ]
++     ],
++     null
++    ]
++   ],
++   "results": [
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0xbb0961a8",
++      "ancestors": [],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 0,
++       "kit": 0,
++       "global": 0,
++       "track": 16,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "a",
++        "sym": "p",
++        "scope": "track",
++        "offset": 12,
++        "bits": 4
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "a new lockfile, layout ID 0xbb0961a8: projects and sounds saved by builds with other layouts load their mod data at defaults",
++      "a p: 4 bits of track storage at bit 12"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "p": 1090519052
++     },
++     "ids": [
++      "bb0961a8"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0xbb0961a8\",\n \"ancestors\": [],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 0,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 16,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"a\",\n   \"sym\": \"p\",\n   \"scope\": \"track\",\n   \"offset\": 12,\n   \"bits\": 4\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 3137954216
++    },
++    {
++     "lock": {
++      "elekloader_store": 1,
++      "device": "analog-rytm-mk2",
++      "id": "0x72f8068c",
++      "ancestors": [
++       "0xbb0961a8"
++      ],
++      "split": {
++       "track": 2,
++       "pattern": 4
++      },
++      "generation": {
++       "sound": 1,
++       "kit": 1,
++       "global": 1,
++       "track": 1,
++       "pattern": 1,
++       "project": 1
++      },
++      "next": {
++       "sound": 0,
++       "kit": 0,
++       "global": 0,
++       "track": 16,
++       "pattern": 0,
++       "project": 0
++      },
++      "fields": [
++       {
++        "mod": "b",
++        "sym": "r",
++        "scope": "track",
++        "offset": 0,
++        "bits": 7
++       },
++       {
++        "mod": "a",
++        "sym": "p",
++        "scope": "track",
++        "offset": 12,
++        "bits": 4
++       }
++      ],
++      "freed": []
++     },
++     "notes": [
++      "b r: 7 bits of track storage at bit 0",
++      "layout ID 0x72f8068c (from 0xbb0961a8, whose projects it still reads)"
++     ],
++     "symbols": {
++      "__store_gen": 16843009,
++      "__store_gen2": 16843268,
++      "r": 1103101952,
++      "p": 1090519052
++     },
++     "ids": [
++      "72f8068c",
++      "bb0961a8"
++     ],
++     "json": "{\n \"elekloader_store\": 1,\n \"device\": \"analog-rytm-mk2\",\n \"id\": \"0x72f8068c\",\n \"ancestors\": [\n  \"0xbb0961a8\"\n ],\n \"split\": {\n  \"track\": 2,\n  \"pattern\": 4\n },\n \"generation\": {\n  \"sound\": 1,\n  \"kit\": 1,\n  \"global\": 1,\n  \"track\": 1,\n  \"pattern\": 1,\n  \"project\": 1\n },\n \"next\": {\n  \"sound\": 0,\n  \"kit\": 0,\n  \"global\": 0,\n  \"track\": 16,\n  \"pattern\": 0,\n  \"project\": 0\n },\n \"fields\": [\n  {\n   \"mod\": \"b\",\n   \"sym\": \"r\",\n   \"scope\": \"track\",\n   \"offset\": 0,\n   \"bits\": 7\n  },\n  {\n   \"mod\": \"a\",\n   \"sym\": \"p\",\n   \"scope\": \"track\",\n   \"offset\": 12,\n   \"bits\": 4\n  }\n ],\n \"freed\": []\n}\n",
++     "layout_id": 1928857228
++    }
++   ]
++  }
+  }
+ }
+diff --git a/js/test/store.test.ts b/js/test/store.test.ts
+index d611e2d..2a1554c 100644
+--- a/js/test/store.test.ts
++++ b/js/test/store.test.ts
+@@ -4,7 +4,7 @@
+ import { test } from 'node:test'
+ import assert from 'node:assert/strict'
+ import { readFileSync } from 'node:fs'
+-import { allocate, ccEntries, checkFlags, checkLock, fresh, knobs, machines, poolIds, codeEntries, dumps, fromImage, handleEntries, initEntries, layoutId, parseCcs, parseCvs, parseDecls, parseHandles, parseInits, parseLfos, parseLocks, parseRough, parseRoutes, symbols, trailer, type Decl, type Lock } from '../src/store.ts'
++import { allocate, ccEntries, checkFlags, checkLock, fresh, knobs, machines, poolIds, codeEntries, dumps, fromImage, handleEntries, initEntries, layoutId, parseCcs, parseCvs, parseDecls, parseHandles, parseInits, parseLfos, parseOffsets, parseLocks, parseRough, parseRoutes, symbols, trailer, type Decl, type Lock } from '../src/store.ts'
+ 
+ const V = JSON.parse(readFileSync(new URL('./store-vectors.json', import.meta.url), 'utf8'))
+ const DEV = 'analog-rytm-mk2'
+@@ -136,6 +136,29 @@ test('inits: the same lockfiles, descriptors, table entries and notes', () => {
+   }
+ })
+ 
++test('pinned fields ("offset"): the same lockfiles, notes, symbols and IDs, and the same refusals', () => {
++  for (const [name, run] of Object.entries<any>(V.pin_runs)) {
++    let lock: Lock | null = null
++    run.steps.forEach(([decls, pins, core]: [Decl[], [string, string, number][], string | null], i: number) => {
++      const want = run.results[i]
++      if (want.error) {
++        assert.throws(() => allocate(lock, decls, DEV, core, [], [], [], [], null, pins), (e: Error) => e.message === want.error,
++          `${name} step ${i}`)
++        return
++      }
++      const [l, notes] = allocate(lock, decls, DEV, core, [], [], [], [], null, pins)
++      lock = l
++      assert.deepEqual(l, want.lock, `${name} step ${i}: lockfile`)
++      assert.deepEqual(notes, want.notes, `${name} step ${i}: notes`)
++      const [syms, tab] = symbols(l)
++      assert.deepEqual(Object.fromEntries(syms), want.symbols, `${name} step ${i}: symbols`)
++      assert.deepEqual(tab.map(hex), want.ids, `${name} step ${i}: IDs`)
++      assert.equal(layoutId(l), want.layout_id, `${name} step ${i}: layout ID`)
++      assert.equal(dumps(l), want.json, `${name} step ${i}: JSON`)
++    })
++  }
++})
++
+ test('handles (core-ar2 0.11): core_handles as store.py lists it, with the lockfile and layout of the same fields', () => {
+   for (const [name, c] of Object.entries<any>(V.handle_runs)) {
+     const [l] = allocate(null, c.decls, DEV)
+@@ -165,6 +188,7 @@ test('a mod\'s "storage": what it reads, and what it refuses', () => {
+       assert.deepEqual(parseCvs(c.doc), c.cvs, name)
+       assert.deepEqual(Object.fromEntries(parseInits(c.doc)), c.inits, name)
+       assert.deepEqual(parseHandles(c.doc), c.handles, name)
++      assert.deepEqual(Object.fromEntries(parseOffsets(c.doc)), c.offsets, name)
+     }
+   }
+ })
+diff --git a/js/tools/store_vectors.py b/js/tools/store_vectors.py
+index ef756f8..4f30bbd 100644
+--- a/js/tools/store_vectors.py
++++ b/js/tools/store_vectors.py
+@@ -334,6 +334,40 @@ DECLS = {
+     'smooth without lock': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'smooth': False}]},
+     'smooth type': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'lock': True, 'smooth': 0}]},
+     'twice': {'storage': [{'sym': 'a', 'scope': 'kit', 'bits': 1}, {'sym': 'a', 'scope': 'kit', 'bits': 2}]},
++    'offset': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 10, 'offset': 30},
++                           {'sym': 'b', 'scope': 'sound', 'bits': 14, 'offset': 0}, {'sym': 'c', 'scope': 'kit', 'bits': 3}]},
++    'offset negative': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'offset': -1}]},
++    'offset type': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'offset': '30'}]},
++    'offset bool': {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'offset': True}]},
++}
++
++# pinned fields ("offset"): each run is steps of [decls, pins ([mod, sym, offset]), core]
++PS = [F('sc', 'arp', 'sound', 10), F('sc', 'tag', 'sound', 14)]
++PP = [['sc', 'arp', 30], ['sc', 'tag', 42]]
++PIN_RUNS = {
++    # sidecar-mods' sound fields on their old build's bits; other mods fill the gaps, and a repack keeps the pins
++    'pins, gaps, a repack': [[PS, PP, '0.19'], [PS + [F('o', 'x', 'sound', 8)], PP, '0.19'],
++                             [PS + [F('o', 'x', 'sound', 8), F('o', 'y', 'sound', 20)], PP, '0.19'],
++                             [PS + [F('o', 'y', 'sound', 20), F('o', 'w', 'sound', 9)], PP, '0.19'],
++                             [PS + [F('o', 'y', 'sound', 20), F('o', 'w', 'sound', 9), F('o', 'v', 'sound', 2)], PP,
++                              '0.19']],
++    'kit words': [[[F('fx', 'w%d' % i, 'kit', 16) for i in range(4)], [['fx', 'w%d' % i, 16 * i] for i in range(4)],
++                   None]],
++    'a pin on a placed field repacks': [[[F('a', 'z', 'sound', 8)], [], '0.19'],
++                                        [[F('a', 'z', 'sound', 8)] + PS, [['sc', 'arp', 0], ['sc', 'tag', 42]], '0.19']],
++    'a pin on freed bits repacks': [[[F('a', 'z', 'sound', 8), F('a', 'q', 'sound', 4)], [], '0.19'],
++                                    [[F('a', 'q', 'sound', 4)], [], '0.19'],
++                                    [[F('a', 'q', 'sound', 4)] + PS, [['sc', 'arp', 2], ['sc', 'tag', 42]], '0.19']],
++    'a pin that moves': [[PS, PP, '0.19'], [PS, [['sc', 'arp', 16], ['sc', 'tag', 42]], '0.19'],
++                         [PS, [['sc', 'tag', 42]], '0.19']],
++    'pins that overlap': [[PS, [['sc', 'arp', 30], ['sc', 'tag', 35]], '0.19']],
++    'a pin past the room of an older core': [[PS, PP, '0.2']],
++    'a pin past the room': [[PS, [['sc', 'arp', 30], ['sc', 'tag', 50]], '0.19']],
++    'pins leave too little room': [[PS + [F('o', 'x', 'sound', 8), F('o', 'y', 'sound', 30)], PP, '0.19'],
++                                   [PS + [F('o', 'x', 'sound', 8), F('o', 'y', 'sound', 23)], PP, '0.19']],
++    'pins, then the widest first': [[PS + [F('o', 'a', 'sound', 2), F('o', 'b', 'sound', 29)], PP, '0.19']],
++    'pins in a pattern track': [[[F('a', 'p', 'track', 4)], [['a', 'p', 12]], None],
++                                [[F('a', 'p', 'track', 4), F('b', 'r', 'track', 7)], [['a', 'p', 12]], None]],
+ }
+ 
+ 
+@@ -402,7 +436,7 @@ POOL_LOCKS = {
+ def main():
+     out = {'runs': {}, 'lock_runs': {}, 'cc_runs': {}, 'init_runs': {}, 'handle_runs': {}, 'kind_runs': {},
+            'locks': {}, 'kind_locks': {}, 'flags': {}, 'decls': {}, 'knob_runs': {}, 'knob_locks': {},
+-           'machine_runs': {}, 'machine_locks': {}, 'pool_runs': {}, 'pool_locks': {}}
++           'machine_runs': {}, 'machine_locks': {}, 'pool_runs': {}, 'pool_locks': {}, 'pin_runs': {}}
+     def run(lock, steps, core, dev=DEV):
+         res = []
+         for decls in steps:
+@@ -468,6 +502,18 @@ def main():
+             except ModError as e:
+                 res.append({'error': str(e)})
+         out['init_runs'][name] = {'steps': [list(st) for st in steps], 'results': res}
++    for name, steps in PIN_RUNS.items():
++        lock, res = None, []
++        for decls, pins, core in steps:
++            try:
++                lock, notes = store.allocate(lock, [tuple(d) for d in decls], DEV, core,
++                                             pins={(m, s): v for m, s, v in pins})
++                syms, tab = store.symbols(lock, DEV)
++                res.append({'lock': lock, 'notes': notes, 'symbols': syms, 'ids': [t.hex() for t in tab],
++                            'json': store.dumps(lock), 'layout_id': store.layout_id(lock)})
++            except ModError as e:
++                res.append({'error': str(e)})
++        out['pin_runs'][name] = {'steps': [list(st) for st in steps], 'results': res}
+     for name, (decls, handles) in HANDLE_RUNS.items():
+         lock, notes = store.allocate(None, [tuple(d) for d in decls], DEV)
+         out['handle_runs'][name] = {'decls': decls, 'handles': handles, 'lock': lock,
+@@ -514,7 +560,8 @@ def main():
+             out['decls'][name] = {'doc': doc, 'ok': store.parse_decls(doc), 'locks': store.parse_locks(doc),
+                                   'ccs': store.parse_ccs(doc), 'lfos': store.parse_lfos(doc),
+                                   'rough': store.parse_rough(doc), 'routes': store.parse_routes(doc),
+-                                  'cvs': store.parse_cvs(doc), 'inits': store.parse_inits(doc), 'handles': store.parse_handles(doc)}
++                                  'cvs': store.parse_cvs(doc), 'inits': store.parse_inits(doc), 'handles': store.parse_handles(doc),
++                                  'offsets': store.parse_offsets(doc)}
+         except ModError as e:
+             out['decls'][name] = {'doc': doc, 'error': str(e)}
+     for name, steps in KNOB_RUNS.items():
+diff --git a/tests/test_drive_link_store.py b/tests/test_drive_link_store.py
+index c595c64..811b09d 100644
+--- a/tests/test_drive_link_store.py
++++ b/tests/test_drive_link_store.py
+@@ -181,6 +181,13 @@ def main():
+         check('a CV field is a format refusal, in C and twin',
+               (sm['status'][0]['code'], r.choices[0].code) == (drive.CODE['format'],) * 2
+               and not compare(F, sm, ram, st, r), sm['status'])
++        # a pinned field ("offset"): the boot allocator places +Drive fields itself, so pass 1 refuses it
++        pinned = storage_mod(B, {'id': 'pin', 'storage': [{'sym': 'pn1', 'scope': 'sound', 'bits': 4, 'offset': 40}]})
++        sm, ram, st = boot(exe, F, [pinned, mods['lfo']], None, work)
++        r = twin(F, [pinned, mods['lfo']], None)
++        check('a pinned field is a format refusal, in C and twin',
++              (sm['status'][0]['code'], r.choices[0].code) == (drive.CODE['format'],) * 2
++              and not compare(F, sm, ram, st, r), sm['status'])
+         # two mods with one storage symbol: an export clash
+         clash = storage_mod(B, {'id': 'zz', 'storage': [{'sym': 'lr_a', 'scope': 'global', 'bits': 1}]})
+         sm, ram, st = boot(exe, F, [mods['lfo'], clash], None, work)
+diff --git a/tests/test_link_refusals.py b/tests/test_link_refusals.py
+index 70714f3..14ac35d 100644
+--- a/tests/test_link_refusals.py
++++ b/tests/test_link_refusals.py
+@@ -269,6 +269,8 @@ def _(B):               # the storage module's reading of the mod's "storage"
+                     ("m: storage field a: scope 'lunch'", storage([{'sym': 'a', 'scope': 'lunch', 'bits': 1}])),
+                     ('m: storage field a: bits 33 (1 to 32)',
+                      storage([{'sym': 'a', 'scope': 'project', 'bits': 33}])),
++                    ('m: storage field a: offset -1 (its first bit in the scope, 0 or more)',
++                     storage([{'sym': 'a', 'scope': 'project', 'bits': 1, 'offset': -1}])),
+                     ('m: storage field a is declared twice',
+                      storage([{'sym': 'a', 'scope': 'project', 'bits': 1}] * 2))], storage([]))
+ 
+@@ -1577,6 +1579,43 @@ def test_a_field_with_an_init_gets_its_slot_and_a_new_place_when_the_init_change
+         assert build([dict(k, init=0)]).store['elekloader_store'] == 1   # init 0 is no init
+ 
+ 
++def test_a_field_with_an_offset_is_placed_there_and_stays_there():
++    """"offset": the linker hands a mod's pinned fields to the allocator, which places them at their
++    offset in a new lockfile and keeps them there when another mod's field makes the scope repack;
++    a pin past the scope's room, or on another mod's pin, is refused."""
++    with Bench('analog-rytm-mk2') as B:
++        core = keeper(B)
++
++        def build(mods, lock=None):
++            return link.link([link.Mod2(d, d['id']) for d in [copy.deepcopy(core)] + mods], B.img, lock=lock)
++        sc = B.other('sc', storage=[{'sym': 'sc_arp', 'scope': 'sound', 'bits': 10, 'offset': 30},
++                                    {'sym': 'sc_tag', 'scope': 'sound', 'bits': 14, 'offset': 42}])
++        first = build([sc]).store
++
++        def where(lock):
++            return {f['sym']: f['offset'] for f in lock['fields']}
++        assert where(first) == {'sc_arp': 30, 'sc_tag': 42}, first
++        other = B.other('o', storage=[{'sym': 'o_a', 'scope': 'sound', 'bits': 8},
++                                      {'sym': 'o_b', 'scope': 'sound', 'bits': 9}])
++        more = build([sc, other], lock=first).store
++        assert where(more) == {'o_a': 0, 'o_b': 8, 'sc_arp': 30, 'sc_tag': 42}, more
++        wide = B.other('o', storage=[{'sym': 'o_b', 'scope': 'sound', 'bits': 9},
++                                     {'sym': 'o_c', 'scope': 'sound', 'bits': 14}])
++        repacked = build([sc, wide], lock=more).store
++        assert repacked['generation']['sound'] == more['generation']['sound'] + 1, repacked
++        assert where(repacked) == {'o_b': 0, 'o_c': 9, 'sc_arp': 30, 'sc_tag': 42}, repacked
++        for mods, said in (([B.other('sc', storage=[{'sym': 'sc_tag', 'scope': 'sound', 'bits': 14, 'offset': 50}])],
++                            'sc: storage field sc_tag: offset 50 with 14 bits ends past the 56 bits of sound storage'),
++                           ([sc, B.other('o', storage=[{'sym': 'o_x', 'scope': 'sound', 'bits': 4, 'offset': 40}])],
++                            'the storage fields o_x (o, bits 40..43) and sc_tag (sc, bits 42..55) are both pinned on bits 42..43')):
++            try:
++                build(mods)
++            except ModError as e:
++                assert said in str(e), e
++            else:
++                raise AssertionError('accepted: %s' % said)
++
++
+ def test_the_image_check_refuses_a_protected_or_kept_byte_the_other_checks_let_through():
+     """The checks that refuse a write to a protected or kept range run before the link. With them
+     made to say nothing (as a bug in them would), the image check refuses the same site, so it
+diff --git a/tests/test_store.py b/tests/test_store.py
+index 0656c7b..c3fb34c 100644
+--- a/tests/test_store.py
++++ b/tests/test_store.py
+@@ -454,6 +454,75 @@ def test_pool_lockfiles_it_refuses():
+         assert refused(store.check_lock, bad, DEV).startswith('lockfile: ')
+ 
+ 
++
++SC = [('sc', 'arp', 'sound', 10), ('sc', 'tag', 'sound', 14)]
++SC_PINS = {('sc', 'arp'): 30, ('sc', 'tag'): 42}
++
++
++def test_a_pinned_field_is_placed_at_its_offset_and_others_fill_the_gaps():
++    lock, notes = store.allocate(None, SC, DEV, '0.19', pins=SC_PINS)
++    assert where(lock) == {'arp': ('sound', 30, 10), 'tag': ('sound', 42, 14)} and lock['next']['sound'] == 56
++    lock, notes = store.allocate(lock, SC + [('o', 'x', 'sound', 8), ('o', 'y', 'sound', 2)], DEV, '0.19',
++                                 pins=SC_PINS)
++    assert where(lock)['x'] == ('sound', 0, 8) and where(lock)['y'] == ('sound', 8, 2), lock
++    assert lock['generation']['sound'] == 1 and not any('repacked' in n for n in notes), notes
++    kit = [('fx', 'w%d' % i, 'kit', 16) for i in range(4)]
++    lock, _ = store.allocate(None, kit, DEV, None, pins={k[:2]: 16 * i for i, k in enumerate(kit)})
++    assert [f['offset'] for f in lock['fields']] == [0, 16, 32, 48]
++
++
++def test_a_repack_keeps_the_pins():
++    """Another mod's new field that fits no gap repacks the scope: the pinned fields stay put."""
++    lock, _ = store.allocate(None, SC + [('o', 'x', 'sound', 20)], DEV, '0.19', pins=SC_PINS)
++    lock, notes = store.allocate(lock, SC + [('o', 'y', 'sound', 20)], DEV, '0.19', pins=SC_PINS)
++    assert any('repacked (generation 2)' in n for n in notes), notes
++    assert where(lock) == {'y': ('sound', 0, 20), 'arp': ('sound', 30, 10), 'tag': ('sound', 42, 14)}
++    store.check_lock(json.loads(json.dumps(lock)), DEV)
++
++
++def test_a_pin_on_a_fields_bits_or_a_freed_fields_repacks_the_scope():
++    lock, _ = store.allocate(None, [('a', 'z', 'sound', 8)], DEV, '0.19')
++    lock2, notes = store.allocate(lock, [('a', 'z', 'sound', 8)] + SC, DEV, '0.19',
++                                  pins={('sc', 'arp'): 0, ('sc', 'tag'): 42})
++    assert where(lock2)['arp'] == ('sound', 0, 10) and where(lock2)['z'] == ('sound', 10, 8), notes
++    assert lock2['generation']['sound'] == 2
++    lock3, _ = store.allocate(lock, [], DEV, '0.19')                  # z freed: its bits keep its values
++    lock4, notes = store.allocate(lock3, SC, DEV, '0.19', pins={('sc', 'arp'): 4, ('sc', 'tag'): 42})
++    assert lock4['generation']['sound'] == 2 and lock4['freed'] == [], notes
++
++
++def test_a_pin_that_changes_moves_the_field():
++    lock, _ = store.allocate(None, SC, DEV, '0.19', pins=SC_PINS)
++    moved, notes = store.allocate(lock, SC, DEV, '0.19', pins={('sc', 'arp'): 16, ('sc', 'tag'): 42})
++    assert where(moved)['arp'] == ('sound', 16, 10) and 'sc arp (sound): moved to its offset, its data is dropped' \
++        in notes, notes
++    same, notes = store.allocate(moved, SC, DEV, '0.19', pins={('sc', 'tag'): 42})   # no pin: it stays
++    assert same['id'] == moved['id'] and notes == [], notes
++
++
++def test_pins_it_refuses():
++    assert refused(store.allocate, None, SC, DEV, '0.19', (), (), None, (), None,
++                   {('sc', 'arp'): 30, ('sc', 'tag'): 35}) == \
++        'the storage fields arp (sc, bits 30..39) and tag (sc, bits 35..48) are both pinned on bits 35..39 of ' \
++        'sound storage'
++    assert refused(store.allocate, None, SC, DEV, '0.2', (), (), None, (), None, SC_PINS) == \
++        'sc: storage field arp: offset 30 with 10 bits ends past the 24 bits of sound storage the ' \
++        'analog-rytm-mk2 keeps for mods with core 0.2 (56 with core 0.3)'
++    assert refused(store.allocate, None, SC, DEV, '0.19', (), (), None, (), None,
++                   {('sc', 'arp'): 30, ('sc', 'tag'): 50}) == \
++        'sc: storage field tag: offset 50 with 14 bits ends past the 56 bits of sound storage the ' \
++        'analog-rytm-mk2 keeps for mods'
++    assert refused(store.allocate, None, SC + [('o', 'x', 'sound', 8), ('o', 'y', 'sound', 23)], DEV, '0.19',
++                   (), (), None, (), None, SC_PINS) == \
++        "the mods' sound fields do not fit in the 56 bits of sound storage the analog-rytm-mk2 has, their " \
++        'pinned fields at their offsets'
++    for bad in (-1, '30', True, 1.5):
++        assert 'offset' in refused(store.parse_decls, {'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3,
++                                                                    'offset': bad}]})
++    assert store.parse_offsets({'storage': [{'sym': 'a', 'scope': 'sound', 'bits': 3, 'offset': 30},
++                                            {'sym': 'b', 'scope': 'sound', 'bits': 3}]}) == {'a': 30}
++
++
+ if __name__ == '__main__':
+     for name, fn in sorted(globals().items()):
+         if name.startswith('test_'):
+-- 
+2.43.0
+
