@@ -18,7 +18,7 @@ import argparse, json, os, re, sys, time, urllib.parse, urllib.request
 DRONE_OK = ['plaits', 'juno', 'fm', 'daisy', 'dsps', 'wt', 'gr', 'md']   # the bench machines the note adapter plays as benched
 BAD = re.compile(r'unknown command|no type|not taken|at most|refused|no such slot|not understood|no machine|is for the|'
                  r'command too long|queue full', re.I)
-NOTBAD = re.compile(r'requests, \d+ refused|no box refused|web: command :')   # (the web stats line, admit=report's answer, the echo)
+NOTBAD = re.compile(r'requests, \d+ refused|reuses \d+ refused \d+|no box refused|web: command :')   # (the web stats line, the amp readback's counters, admit=report's answer, the echo)
 STATS = re.compile(r'engine: fifo min \d+ max \d+ target \d+ under (\d+).*?\| cpu c1 (\d+)\.(\d) c2 (\d+)\.(\d) c3 (\d+)\.(\d) %')
 BENCH = re.compile(r'bench (\w+): (\d+)\.(\d+) % of a core per voice at (\d+) MHz')
 ADMIT = re.compile(r'admit: at \d+ MHz a voice .*')
