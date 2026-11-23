@@ -9,6 +9,7 @@
 #include "lib/pools.h"
 #include "lib/srclib.h"
 #include "msamp/msamp.h"
+#include "samp/sedit.h"
 #include "ui/remote.h"
 #include "voices.h"
 #include "wavetable/wavetable.h"
@@ -181,6 +182,7 @@ void Fill(sidecar_wg_view_t* o, int want) {
   o->track = track;
   o->n = 0, o->ncols = 0;
   o->name[0] = 0;
+  o->tbl_file = 0;
   int p0 = vi >= 0 ? core::srclib::code_of(core::v[vi].p[0]) : 0;   // rui1038: the source code (bank * 128 + index)
   if (vi >= 0 && core::v[vi].gr && core::gr::viz(vi, &g_z)) {
     o->kind = WGV_GRANULAR;
@@ -210,8 +212,9 @@ void Fill(sidecar_wg_view_t* o, int want) {
         s_e = e, s_nf = o->frames;
       }
     }
+    o->tbl_file = core::sedit::wt_table_file(track, vi);
     h = mix(h, fbits(o->pos) >> 12);
-    h = mix(h, (uint32_t)(e + 7) * 977u + (uint32_t)o->frames);
+    h = mix(h, (uint32_t)(e + 7) * 977u + (uint32_t)o->frames + (uint32_t)o->tbl_file * 7919u);
   } else if (vi >= 0 && core::v[vi].ms) {   // touch2: MULTISAMPLE, its zones
     o->kind = WGV_MULTISAMPLE;
     int e = core::msamp::src_entry(vi, p0);
