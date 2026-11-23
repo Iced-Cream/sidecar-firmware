@@ -1,0 +1,100 @@
+diff -ruN a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -80,6 +80,19 @@ public:
+ 	// The VL805 on the Pi 4 has starved one of them whenever 6 or more were busy (diagnosis-periodic-starvation.md).
+ 	static unsigned GetPeriodicIv1 (unsigned *pBusy = 0, char *pList = 0, unsigned nListSize = 0);
+ 
++	// circle-xhci-probe: reads for the VL805 periodic-stall probe (pi/engine/vl805_probe.h). Reads only: nothing here
++	// changes the controller. ProbeMFIndex: the microframe index (MFINDEX, 14 bits, 125 us each, wraps every 2.048 s);
++	// ~0 before any controller is up. Any level (one PCIe read).
++	static u32 ProbeMFIndex (void);
++	// 0 USBSTS, 1 IMAN (interrupter 0), 2 ERDP low, 3 CRCR low, 4 PORTSC of root port 1, 5 MFINDEX; ~0 without a controller
++	static u32 ProbeReg (unsigned nWhich);
++	// this endpoint's output context as the controller last wrote it, raw (up to nMax dwords: 8 with 32-byte contexts,
++	// 16 with 64-byte ones); 0 when it has no slot. Its xHC-reserved dwords (5-7 and up) are where a controller may keep
++	// its own scheduling state.
++	unsigned ProbeContext (u32 *pDW, unsigned nMax);
++	unsigned ProbeSlotID (void) const;
++	unsigned ProbeEndpointID (void) const	{ return m_uchEndpointID; }
++
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+ #endif
+diff -ruN a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -41,6 +41,10 @@ static CXHCIEndpoint *s_pIv1[XHCI_IV1_MAX];
+ static unsigned s_nIv1;
+ static CSpinLock s_Iv1Lock;		// IRQ level: safe wherever a device is removed
+ 
++// circle-xhci-probe: the controller's registers, for ProbeMFIndex / ProbeReg (set by the first endpoint made: EP0 of the
++// first device; one xHC on the Pi 4)
++static CXHCIMMIOSpace *s_pProbeMMIO;
++
+ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, CXHCIDevice *pXHCIDevice)
+ :	m_pDevice (pDevice),
+ 	m_pXHCIDevice (pXHCIDevice),
+@@ -57,6 +61,7 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, CXHCIDevice *pXHCIDevice)
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
++	if (s_pProbeMMIO == 0) s_pProbeMMIO = m_pMMIO;		// circle-xhci-probe
+ 	m_pTransferRing = new CXHCIRing (XHCIRingTypeTransfer,
+ 					 XHCI_CONFIG_TRANSFER_RING_SIZE, pXHCIDevice);
+ 	if (   m_pTransferRing == 0
+@@ -87,6 +92,7 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, const TUSBEndpointDescrip
+ 	m_bTransferCompleted (TRUE),
+ 	m_pInputContextBuffer (0)
+ {
++	if (s_pProbeMMIO == 0) s_pProbeMMIO = m_pMMIO;		// circle-xhci-probe
+ 	m_pTransferRing = new CXHCIRing (XHCIRingTypeTransfer,
+ 					 XHCI_CONFIG_TRANSFER_RING_SIZE, pXHCIDevice);
+ 	if (   m_pTransferRing == 0
+@@ -881,3 +887,46 @@ u8 CXHCIEndpoint::ConvertInterval (u8 uchInterval, TUSBSpeed Speed)
+ 
+ 	return i;
+ }
++
++// circle-xhci-probe
++u32 CXHCIEndpoint::ProbeMFIndex (void)
++{
++	CXHCIMMIOSpace *p = s_pProbeMMIO;
++	return p == 0 ? ~0U : p->rt_read32 (XHCI_REG_RT_MFINDEX) & XHCI_REG_RT_MFINDEX_INDEX__MASK;
++}
++
++u32 CXHCIEndpoint::ProbeReg (unsigned nWhich)
++{
++	CXHCIMMIOSpace *p = s_pProbeMMIO;
++	if (p == 0) return ~0U;
++	switch (nWhich)
++	{
++	case 0:	return p->op_read32 (XHCI_REG_OP_USBSTS);
++	case 1:	return p->rt_read32 (0, XHCI_REG_RT_IR_IMAN);
++	case 2:	return (u32) p->rt_read64 (0, XHCI_REG_RT_IR_ERDP_LO);
++	case 3:	return p->op_read32 (XHCI_REG_OP_CRCR);
++	case 4:	return p->pt_read32 (0, XHCI_REG_OP_PORTS_PORTSC);
++	case 5:	return p->rt_read32 (XHCI_REG_RT_MFINDEX);
++	default: return ~0U;
++	}
++}
++
++unsigned CXHCIEndpoint::ProbeSlotID (void) const
++{
++	return m_pDevice == 0 ? 0 : m_pDevice->GetSlotID ();
++}
++
++unsigned CXHCIEndpoint::ProbeContext (u32 *pDW, unsigned nMax)
++{
++	if (!m_bValid || m_pDevice == 0 || !XHCI_IS_ENDPOINTID (m_uchEndpointID) || m_pDevice->GetSlotID () == 0)
++	{
++		return 0;
++	}
++	DataMemBarrier ();
++	TXHCIDeviceContext *pContext = m_pDevice->GetDeviceContext ();	// coherent shared memory
++	const volatile u32 *pSrc = (const volatile u32 *) &pContext->Endpoint[m_uchEndpointID-1];
++	unsigned n = XHCI_CONTEXT_SIZE / 4;
++	if (n > nMax) n = nMax;
++	for (unsigned i = 0; i < n; i++) pDW[i] = pSrc[i];
++	return n;
++}

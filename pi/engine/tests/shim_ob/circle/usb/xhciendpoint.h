@@ -23,6 +23,14 @@ class CXHCIEndpoint {
     if (list && size) { unsigned n = 0; for (; s_iv1_list[n] && n + 1 < size; n++) list[n] = s_iv1_list[n]; list[n] = 0; }
     return s_iv1;
   }
+  // circle-xhci-probe.patch: reads only (vl805_probe.h); the test sets s_mfindex
+  static unsigned ProbeMFIndex() { return s_mfindex & 0x3FFF; }
+  static unsigned ProbeReg(unsigned) { return 0; }
+  unsigned ProbeContext(unsigned* dw, unsigned n) { for (unsigned i = 0; i < n && i < 16; i++) dw[i] = i == 0 ? state : 0; return n < 16 ? n : 16; }
+  unsigned ProbeSlotID() const { return slot_id; }
+  unsigned ProbeEndpointID() const { return 0; }
+  static inline unsigned s_mfindex = 0;
+  unsigned slot_id = 1;
   static inline unsigned s_iv1 = 0, s_iv1_busy = 0;
   static inline const char* s_iv1_list = "";
   static inline bool s_valid = true;   // false: the controller refused the endpoint

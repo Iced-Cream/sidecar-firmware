@@ -299,6 +299,9 @@ grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/c
 # CObUsb::RestartStream, attach_gate.h - a box the VL805 starves gets its endpoints added again; after
 # circle-xhci-slotgone, idempotent)
 grep -q circle-xhci-stopep include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-stopep.patch
+# then reads for the VL805 periodic-stall probe (pi/circle/circle-xhci-probe.patch: MFINDEX, a few registers and an
+# endpoint's output context, raw; vl805_probe.h, obprobe=1 - reads only; after circle-xhci-stopep, idempotent)
+grep -q circle-xhci-probe include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-probe.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

@@ -150,6 +150,7 @@ static void same_sequence(const CUSBHostController& h) {
 }
 
 // the driver holds its URBs and endpoints for the life of the device; on the Pi nothing frees them
+void RytmXHCITransferEventHook(unsigned, unsigned, unsigned, unsigned, unsigned);
 extern "C" const char *__asan_default_options () { return "detect_leaks=0"; }
 
 Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
@@ -1231,6 +1232,51 @@ int main() {
     CTimer::s_now64 = 0;
   }
 
+  {  // obprobe=1 obstallreadd=1 (vl805_probe.h): a VL805 stall logged with its MFINDEX, the quiet box given new endpoints
+     // after 30 ms, and the first event after it told against the last one before
+    opt->num["obprobe"] = 1;
+    opt->num["obstallreadd"] = 1;
+    {
+      Bus r(g_rytm, 0x0b48);
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      size_t l0 = CLogger::Get()->lines.size();
+      CTimer::s_now = 3000000;
+      CXHCIEndpoint::s_mfindex = 16000;
+      for (int i = 0; i < 40; i++) {    // 5 ms streaming, MFINDEX wrapping on the way
+        CTimer::s_now += 125, CXHCIEndpoint::s_mfindex++;
+        r.in(1, c);
+        RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+        CObUsb::PollHalt();
+      }
+      CHECK(count_lines("vl805probe", l0) == 0 || count_lines("stall", l0) == 0);
+      const unsigned last_mf = CXHCIEndpoint::s_mfindex & 0x3FFF;
+      CTimer::s_now += 25000, CXHCIEndpoint::s_mfindex += 200;   // 25 ms quiet, URBs queued
+      CObUsb::PollHalt();
+      CHECK(count_lines("stall 1: no box event for 25000 us with URBs queued", l0) == 1);
+      CHECK(count_lines("ctx at the stall: box 0 IN slot 1", l0) == 1);
+      CHECK(count_lines("before (10 ms each", l0) >= 1);
+      CHECK(count_lines("its endpoints added again", l0) == 0);
+      CTimer::s_now += 10000, CXHCIEndpoint::s_mfindex += 80;    // 35 ms: new endpoints
+      CObUsb::PollHalt();
+      CHECK(count_lines("box 0: no event for 35 ms", l0) == 1);
+      CHECK(count_lines("its audio stream restarted on the Pi", l0) == 1);
+      CHECK(count_lines("ctx after Stop Endpoint: box 0 IN", l0) == 1);
+      CTimer::s_now += 2000, CXHCIEndpoint::s_mfindex += 16;
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+      CObUsb::PollHalt();
+      CHECK(count_lines("stall 1 back after 37000 us", l0) == 1);
+      char want[64];
+      snprintf(want, sizeof want, "the first event at MFINDEX %u, 296 uframes", (last_mf + 296) & 0x3FFF);
+      CHECK(count_lines(want, l0) == 1);
+      CTimer::s_now += 1000000;
+      CObUsb::PollHalt();
+      CHECK(count_lines("second: events box0 ", l0) >= 1);
+    }
+    opt->num.erase("obprobe");
+    opt->num.erase("obstallreadd");
+    CTimer::s_now = 0;
+  }
   printf("test_ob_usb: ok\n");
   return 0;
 }

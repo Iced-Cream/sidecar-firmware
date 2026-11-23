@@ -80,6 +80,7 @@
 #include "samp/preview.h"		// the sample browser's preview (POST)
 #include "shared.h"
 #include "side_out.h"		// a box beside the Rytm: its own voices (slot 1)
+#include "vl805_probe.h"		// obprobe=1: the VL805 periodic-stall probe
 
 static const char From[] = "rytmob";
 
@@ -494,11 +495,17 @@ void CObUsb::PollReEnum (void)
 	}
 }
 
+// obprobe=1: each box stream's xHCI slot (index & 63) as its box slot + 1 (ProbeMap), for the IRQ's events
+static vl805::Probe s_Probe;
+static volatile u8 s_ProbeSlotBox[64];
+static unsigned s_nProbeSlot;			// the event's xHCI slot (XHCIEvent's caller sets it)
+
 // The hook the patched CXHCIEndpoint::TransferEvent calls for every transfer event (weak there).
 // The endpoint ID alone picks 0x83 / 0x03: with a4=1 the A4's events are counted in these two as well.
 void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID, unsigned nCompletionCode,
 				unsigned nResidue, unsigned nPending)
 {
+	s_nProbeSlot = nSlotID;				// (the xHCI IRQ: one event at a time)
 	CObUsb::XHCIEvent (nEndpointID, nCompletionCode, nResidue, nPending);
 }
 
@@ -506,6 +513,12 @@ void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue,
 {
 	TEvStats *s = nEndpointID == kInEpID ? &s_EvIn : nEndpointID == kOutEpID ? &s_EvOut : 0;
 	if (s == 0) return;
+	if (s_bProbe && (nCode == 1 || nCode == 13))	// a completed transfer (a Stopped one is the Pi's doing, not the controller's)
+	{
+		const unsigned b = s_ProbeSlotBox[s_nProbeSlot & 63];
+		if (b != 0) s_Probe.OnEvent (b - 1, nEndpointID == kInEpID ? 0 : 1, CTimer::GetClockTicks (),
+					     CXHCIEndpoint::ProbeMFIndex (), nPending);
+	}
 
 	s->nEvents++;
 	if (nPending == 0) s->nOrphan++;
@@ -530,6 +543,11 @@ boolean CObUsb::s_bResetDone;
 void CObUsb::PollHalt (void)
 {
 	s_bResetDone = FALSE;
+	if (PollProbe ())				// obstallreadd=1: a box quiet in a VL805 stall got new endpoints
+	{
+		s_bResetDone = TRUE;
+		return;
+	}
 	if (PollFreeze ())				// a frozen box enumerated again: its object is gone, the pass is spent
 	{
 		s_bResetDone = TRUE;
@@ -548,6 +566,178 @@ void CObUsb::PollHalt (void)
 		p->BoxWait (now) || p->Recover (TRUE, now) || p->Recover (FALSE, now);
 	}
 	if (!s_bResetDone) s_bResetDone = CObFollow::PollHalt ();	// an A4's stream beside it (ob_follow.h)
+}
+
+// ---- obprobe=1: the VL805 periodic-stall probe (vl805_probe.h) ----
+boolean CObUsb::s_bProbe, CObUsb::s_bStallReadd;
+unsigned CObUsb::s_nProbeSecUs, CObUsb::s_nReaddUs[2], CObUsb::s_nProbeEpN[2][2];
+
+// a line without CString or a printf (the host-test shim has neither): text, decimal, 8-digit hex
+struct ProbeLine
+{
+	char Buf[480];
+	unsigned n = 0;
+	ProbeLine &S (const char *p)	{ while (*p && n + 1 < sizeof Buf) Buf[n++] = *p++; Buf[n] = 0; return *this; }
+	ProbeLine &D (unsigned v)
+	{
+		char t[12];
+		int i = 0;
+		do { t[i++] = (char) ('0' + v % 10); v /= 10; } while (v != 0 && i < 11);
+		while (i > 0 && n + 1 < sizeof Buf) Buf[n++] = t[--i];
+		Buf[n] = 0;
+		return *this;
+	}
+	ProbeLine &X (unsigned v)	{ for (int i = 7; i >= 0 && n + 1 < sizeof Buf; i--) Buf[n++] = "0123456789abcdef"[(v >> (4 * i)) & 15];
+					  Buf[n] = 0; return *this; }
+};
+
+void CObUsb::ProbeMap (void)
+{
+	if (m_pIn == 0) return;
+	const unsigned nSlot = m_pIn->GetXHCIEndpoint ()->ProbeSlotID ();
+	if (nSlot != 0) s_ProbeSlotBox[nSlot & 63] = (u8) (m_nSlot + 1);
+}
+
+// every streaming box's IN and OUT output contexts (bFull: all dwords; else the state, dequeue and xHC-reserved ones)
+void CObUsb::ProbeContexts (const char *pWhen, boolean bFull)
+{
+	for (unsigned k = 0; k < Slots; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		if (p == 0 || p->m_pIn == 0 || p->m_pOut == 0) continue;
+		for (unsigned d = 0; d < 2; d++)
+		{
+			CXHCIEndpoint *pX = (d ? p->m_pOut : p->m_pIn)->GetXHCIEndpoint ();
+			u32 DW[16];
+			const unsigned n = pX->ProbeContext (DW, 16);
+			ProbeLine L;
+			L.S ("ctx ").S (pWhen).S (": box ").D (k).S (d ? " OUT" : " IN").S (" slot ").D (pX->ProbeSlotID ())
+			 .S (" ep ").D (pX->ProbeEndpointID ()).S (":");
+			for (unsigned i = 0; i < n; i++)
+				if (bFull || i == 0 || i == 2 || i >= 5) L.S (" ").X (DW[i]);
+			CLogger::Get ()->Write ("vl805probe", LogNotice, "%s", L.Buf);
+		}
+	}
+}
+
+boolean CObUsb::PollProbe (void)
+{
+	if (!s_bProbe) return FALSE;
+	CLogger *pLog = CLogger::Get ();
+	const u32 nNow = CTimer::GetClockTicks ();
+	const u32 nMf = CXHCIEndpoint::ProbeMFIndex ();
+	if (nMf == ~0U) return FALSE;			// no controller yet
+	s_Probe.Sample (nNow, nMf);
+	boolean bPending = FALSE;
+	for (unsigned k = 0; k < Slots; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		if (p != 0 && p->m_bStreaming && (p->m_nInPending != 0 || p->m_nOutPending != 0)) bPending = TRUE;
+	}
+
+	switch (s_Probe.Check (nNow, bPending))
+	{
+	case vl805::Probe::Began:
+		{
+			ProbeLine L;
+			L.S ("stall ").D (s_Probe.stalls).S (": no box event for ").D (nNow - s_Probe.stall_last_us)
+			 .S (" us with URBs queued; MFINDEX ").D (nMf).S (", the last event at ").D (s_Probe.stall_last_mf)
+			 .S (" (").D (vl805::mf_ahead (s_Probe.stall_last_mf, nMf)).S (" uframes before; the clock says ")
+			 .D (((nNow - s_Probe.stall_last_us) / vl805::kMfUs) & vl805::kMfMask).S ("); last MFINDEX box0 IN ")
+			 .D (s_Probe.stall_ep_mf[0][0]).S (" OUT ").D (s_Probe.stall_ep_mf[0][1]).S (", box1 IN ")
+			 .D (s_Probe.stall_ep_mf[1][0]).S (" OUT ").D (s_Probe.stall_ep_mf[1][1]);
+			pLog->Write ("vl805probe", LogWarning, "%s", L.Buf);
+			ProbeLine R;
+			R.S ("regs: USBSTS ").X (CXHCIEndpoint::ProbeReg (0)).S (" IMAN ").X (CXHCIEndpoint::ProbeReg (1))
+			 .S (" ERDP ").X (CXHCIEndpoint::ProbeReg (2)).S (" CRCR ").X (CXHCIEndpoint::ProbeReg (3))
+			 .S (" PORTSC1 ").X (CXHCIEndpoint::ProbeReg (4)).S (" MFINDEX ").X (CXHCIEndpoint::ProbeReg (5));
+			pLog->Write ("vl805probe", LogNotice, "%s", R.Buf);
+			vl805::Bucket H[vl805::kBuckets];
+			const unsigned nH = s_Probe.History (H, vl805::kBuckets);
+			for (unsigned a = 0; a < nH; a += 16)	// events/longest gap us/fewest queued/MFINDEX off the clock us
+			{
+				ProbeLine B;
+				B.S ("before (10 ms each, oldest first; events/gap us/min queued/mf dev us; ms before the stall):");
+				for (unsigned i = a; i < nH && i < a + 16; i++)
+					B.S (" -").D ((s_Probe.stall_us - H[i].start_us) / 1000).S (":").D (H[i].events).S ("/")
+					 .D (H[i].gap_max_us).S ("/").D (H[i].pend_min).S ("/").D (H[i].mf_dev_us);
+				pLog->Write ("vl805probe", LogNotice, "%s", B.Buf);
+			}
+			ProbeContexts ("at the stall", TRUE);
+		}
+		break;
+
+	case vl805::Probe::Still:
+		{
+			ProbeLine L;
+			L.S ("stall ").D (s_Probe.stalls).S (" still: ").D ((nNow - s_Probe.stall_last_us) / 1000)
+			 .S (" ms quiet, MFINDEX ").D (nMf).S (" (").D (vl805::mf_ahead (s_Probe.stall_last_mf, nMf))
+			 .S (" uframes past the last event)");
+			pLog->Write ("vl805probe", LogNotice, "%s", L.Buf);
+			ProbeContexts ("still", FALSE);
+		}
+		break;
+
+	case vl805::Probe::Back:
+		{
+			ProbeLine L;
+			L.S ("stall ").D (s_Probe.stalls).S (" back after ").D (s_Probe.BackUs ()).S (" us: the first event at MFINDEX ")
+			 .D (s_Probe.last_mf).S (", ").D (s_Probe.BackMf ()).S (" uframes after the last one before it (the clock: ")
+			 .D (s_Probe.BackMfByClock ()).S (" mod 16384); now box0 IN ").D (s_Probe.ep_mf[0][0]).S (" OUT ")
+			 .D (s_Probe.ep_mf[0][1]).S (", box1 IN ").D (s_Probe.ep_mf[1][0]).S (" OUT ").D (s_Probe.ep_mf[1][1]);
+			pLog->Write ("vl805probe", LogWarning, "%s", L.Buf);
+		}
+		break;
+
+	default:
+		break;
+	}
+
+	if (nNow - s_nProbeSecUs >= 1000000)		// one line a second
+	{
+		s_nProbeSecUs = nNow;
+		u32 nGap, nDev;
+		u8 Pmin[2][2];
+		const u32 nGapAt = s_Probe.gap_at_us, nDevAt = s_Probe.dev_at_us;
+		s_Probe.TakeSecond (&nGap, &nDev, Pmin);
+		ProbeLine L;
+		L.S ("second: events box0 ");
+		for (unsigned k = 0; k < 2; k++)
+		{
+			if (k) L.S (", box1 ");
+			for (unsigned d = 0; d < 2; d++)
+			{
+				const unsigned n = s_Probe.ep_n[k][d];
+				L.S (d ? "/" : "").D (n - s_nProbeEpN[k][d]);
+				s_nProbeEpN[k][d] = n;
+			}
+		}
+		L.S (" (IN/OUT); longest event gap ").D (nGap).S (" us (").D ((nNow - nGapAt) / 1000).S (" ms ago); MFINDEX off the clock by up to ")
+		 .D (nDev).S (" us (").D ((nNow - nDevAt) / 1000).S (" ms ago); fewest queued box0 ").D (Pmin[0][0]).S ("/").D (Pmin[0][1])
+		 .S (", box1 ").D (Pmin[1][0]).S ("/").D (Pmin[1][1]).S ("; MFINDEX ").D (nMf).S ("; stalls ").D (s_Probe.stalls);
+		pLog->Write ("vl805probe", LogNotice, "%s", L.Buf);
+	}
+
+	// obstallreadd=1: a box with URBs queued and no event of its own for kReaddUs: new endpoints (at most one a second each)
+	static const u32 kReaddUs = 30000;
+	if (s_bStallReadd && s_Probe.events != 0)
+		for (unsigned k = 0; k < Slots; k++)
+		{
+			CObUsb *p = s_pBox[k];
+			if (p == 0 || !p->m_bStreaming || (p->m_nInPending == 0 && p->m_nOutPending == 0)) continue;
+			if (p->m_bMirror && p->m_bCtlBusy) continue;
+			const u32 nIn = s_Probe.ep_us[k][0], nOut = s_Probe.ep_us[k][1];
+			const u32 nLast = (int) (nIn - nOut) > 0 ? nIn : nOut;
+			if ((int) (nNow - nLast) <= (int) kReaddUs || nNow - s_nReaddUs[k] < 1000000) continue;
+			if (s_Probe.ep_n[k][0] == 0 && s_Probe.ep_n[k][1] == 0) continue;	// (no event yet: not a stall)
+			s_nReaddUs[k] = nNow | 1;
+			ProbeLine L;
+			L.S ("box ").D (k).S (": no event for ").D ((nNow - nLast) / 1000).S (" ms at MFINDEX ").D (nMf)
+			 .S (": its endpoints added again now (obstallreadd=1)");
+			pLog->Write ("vl805probe", LogWarning, "%s", L.Buf);
+			if (p->RestartStream ("VL805 stall (obstallreadd=1)")) return TRUE;
+		}
+	return FALSE;
 }
 
 obfreeze::Budget CObUsb::s_FreezeBudget[2];
@@ -702,6 +892,7 @@ boolean CObUsb::RestartStream (const char *pWhy)
 	LeaveCritical ();
 	CXHCIEndpoint *pXIn = m_pIn->GetXHCIEndpoint (), *pXOut = m_pOut->GetXHCIEndpoint ();
 	const unsigned nDropIn = pXIn->StopAndDrop (), nDropOut = pXOut->StopAndDrop ();
+	if (s_bProbe) ProbeContexts ("after Stop Endpoint", TRUE);	// (Stop writes the contexts back)
 	EnterCritical (IRQ_LEVEL);
 	for (unsigned i = 0; i < m_nURBs; i++) m_bInBusy[i] = m_bOutBusy[i] = FALSE;
 	m_nInPending = m_nOutPending = 0;
@@ -736,6 +927,7 @@ boolean CObUsb::RestartStream (const char *pWhy)
 		}
 		delete pOldIn;					// (the device's endpoint table points at the new ones now)
 		delete pOldOut;
+		ProbeMap ();
 	}
 	else
 	{
@@ -947,6 +1139,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 	m_bSaidStart (FALSE), m_nPrevIn (0), m_nPrevOut (0), m_nSeconds (0)
 {
 	CKernelOptions *pOpt = CKernelOptions::Get ();
+	s_bStallReadd = pOpt->GetAppOptionDecimal ("obstallreadd", 0) != 0;
+	s_bProbe = s_bStallReadd || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);
@@ -996,6 +1190,7 @@ CObUsb::~CObUsb (void)
 	IMirrorTarget *pTarget = m_bMirror ? Target () : 0;	// (asked while this box is still its slot's)
 	(void) pTarget;					// (no mirror in this build)
 	if (s_pBox[m_nSlot] == this) s_pBox[m_nSlot] = 0;
+	for (unsigned i = 0; i < 64; i++) if (s_ProbeSlotBox[i] == m_nSlot + 1) s_ProbeSlotBox[i] = 0;	// obprobe
 	Rebind ();
 	if (m_bShowDue && m_nSlot < 2) obgate::gone (s_Gate[m_nSlot]);	// (the gate's own re-enumeration: the hold goes on)
 	if (m_bUp) { s_Assign.up[m_nSlot] = false; s_Assign.gone_at[m_nSlot] = NowUs (); }	// USB-C's place held (mirror_assign.h)
@@ -1166,6 +1361,7 @@ boolean CObUsb::Configure (void)
 	// creates the xHCI endpoint contexts (after the alternate setting is selected)
 	m_pIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
 	m_pOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
+	ProbeMap ();
 
 	const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
 	for (unsigned i = 0; i < m_nURBs; i++)

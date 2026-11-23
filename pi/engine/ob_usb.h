@@ -351,6 +351,14 @@ private:
 	static uint32_t GateHoldMs (void);
 	void Show (boolean bLate);
 	boolean RestartStream (const char *pWhy);	// FALSE: not now (EP0 busy), or the new endpoints were refused
+	// the VL805 periodic-stall probe (vl805_probe.h, ob_usb.cpp): obprobe=1 records and logs; obstallreadd=1 (the probe on
+	// with it) gives a box quiet in such a stall new endpoints at once (RestartStream), to see if that ends the wait
+	static boolean PollProbe (void);		// main loop, PollHalt's first step; TRUE: a restart was done (the pass's)
+	static void ProbeContexts (const char *pWhen, boolean bFull);
+	void ProbeMap (void);				// this box's xHCI slot for the IRQ's events (after its endpoints are made)
+	static boolean s_bProbe, s_bStallReadd;
+	static unsigned s_nProbeSecUs, s_nReaddUs[2];
+	static unsigned s_nProbeEpN[2][2];
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
 	unsigned m_nMidiFailUs;
