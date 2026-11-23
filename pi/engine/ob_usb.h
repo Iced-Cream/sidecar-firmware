@@ -20,6 +20,14 @@
 //                  routing at run time: a target that comes while the box streams tops the lead up with the next IN
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
+//   obgate=MS      usb=mirror: a box is shown to the computer only once its IN and OUT both run at full rate for 2 s,
+//                  held at most MS (default 10000, then shown anyway with a warning; 0: shown at once, as before).
+//                  Overbridge Engine measures a box's latency once, as soon as it streams, and latches a Fault when
+//                  the pulse never comes back (attach_gate.h). A held box starved for 3 s is restarted on the Pi (its
+//                  audio interfaces to alt 0 and back, its endpoints added again), then re-enumerated
+//   obgatereenum=0 the held box is not re-enumerated (default 1: once a hold, only while the computer cannot see it)
+//   obgatetest=S   a test: slot S's OUT read as 0/s by the gate until the gate has re-enumerated it (restart and
+//                  re-enumeration both exercised); the console's obrestart=S restarts slot S's stream at once
 //
 #ifndef _ob_usb_h
 #define _ob_usb_h
@@ -27,6 +35,7 @@
 #include "periodic_starve.h"
 #include "ep_halt.h"
 #include "ob_freeze.h"
+#include "attach_gate.h"
 #include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
@@ -111,6 +120,11 @@ public:
 	// again, as a replug would (PollHalt's first step); obreenum=<slot> asks for it at once (a test)
 	static boolean Command (const char *pText);
 	static unsigned FreezeReEnums (void)	{ return s_nFreezeReEnums; }
+	// usb=mirror's attach gate (attach_gate.h): a slot's gate (holds, restarts, re-enumerations since boot), whether its
+	// box is held from the computer now, and the stream restarts since boot (the gate's and a starved shown box's)
+	static const obgate::Gate &AttachGate (unsigned nSlot)	{ return s_Gate[nSlot < 2 ? nSlot : 1]; }
+	static boolean GateHolds (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bShowDue; }
+	static unsigned StreamRestarts (void)		{ return s_nStreamRestarts; }
 	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
@@ -324,6 +338,19 @@ private:
 	static unsigned s_nFreezeReEnums;		// since boot
 	static boolean PollFreeze (void);
 	boolean ReEnumerate (const char *pWhy);		// TRUE: removed (this object is deleted)
+	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop
+	static obgate::Gate s_Gate[2];			// per slot: outlives this object, which a re-enumeration deletes
+	static int s_nForceRestart;			// obrestart=<slot>: -1 none
+	static int s_nGateTest;				// obgatetest=<slot>: -1 none
+	static unsigned s_nStreamRestarts;		// since boot
+	boolean m_bShowDue;				// descriptors at the target, held from its computer (MirrorAttach)
+	boolean m_bShown;				// shown to a computer (a later target shows it at once)
+	unsigned m_nStarveRestarts;			// this stream's restarts for a starvation named while not held
+	volatile int m_nGateAct;			// obgate::Act for PollGate
+	static boolean PollGate (void);
+	static uint32_t GateHoldMs (void);
+	void Show (boolean bLate);
+	boolean RestartStream (const char *pWhy);	// FALSE: not now (EP0 busy), or the new endpoints were refused
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
 	unsigned m_nMidiFailUs;

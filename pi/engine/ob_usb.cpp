@@ -535,6 +535,11 @@ void CObUsb::PollHalt (void)
 		s_bResetDone = TRUE;
 		return;
 	}
+	if (PollGate ())				// the attach gate showed, restarted or re-enumerated a box (attach_gate.h)
+	{
+		s_bResetDone = TRUE;
+		return;
+	}
 	for (unsigned k = 0; k < Slots && !s_bResetDone; k++)	// (one reset a pass, every box's together)
 	{
 		CObUsb *p = s_pBox[k];
@@ -602,9 +607,193 @@ boolean CObUsb::ReEnumerate (const char *pWhy)
 	return TRUE;
 }
 
+// ---- the attach gate (attach_gate.h) ------------------------------------------------------------------------------
+
+obgate::Gate CObUsb::s_Gate[2];
+int CObUsb::s_nForceRestart = -1;
+int CObUsb::s_nGateTest = -2;			// -2: cmdline not read yet
+unsigned CObUsb::s_nStreamRestarts;
+static boolean s_bGateTestDone[2];		// obgatetest: the gate re-enumerated that slot once (the faking ends)
+
+uint32_t CObUsb::GateHoldMs (void)
+{
+	return CKernelOptions::Get ()->GetAppOptionDecimal ("obgate", obgate::kHoldMs);
+}
+
+// Main loop: what Log decided for each box (and obrestart=). TRUE: something was done this pass (a show, a restart, or
+// a re-enumeration, after which that box's object is gone).
+boolean CObUsb::PollGate (void)
+{
+	for (unsigned k = 0; k < Slots && k < 2; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		const boolean bForce = s_nForceRestart == (int) k;
+		if (bForce) s_nForceRestart = -1;
+		if (p == 0 || !p->m_bStreaming)
+		{
+			if (bForce) CLogger::Get ()->Write (From, LogWarning, "obrestart: no box streams in slot %u", k);
+			continue;
+		}
+		if (bForce)
+		{
+			p->RestartStream ("asked (obrestart)");
+			return TRUE;
+		}
+		const int a = p->m_nGateAct;
+		if (a == obgate::Wait) continue;
+		switch (a)
+		{
+		case obgate::Show:
+		case obgate::ShowLate:
+			p->m_nGateAct = obgate::Wait;
+			p->Show (a == obgate::ShowLate);
+			return TRUE;
+		case obgate::Restart:
+			if (!p->RestartStream (p->m_bShowDue ? "held from the computer, its audio not running both ways"
+							      : "its OUT starved by the host controller")) continue;	// (EP0 busy: next pass)
+			p->m_nGateAct = obgate::Wait;
+			return TRUE;
+		case obgate::ReEnum:
+			p->m_nGateAct = obgate::Wait;
+			if (s_nGateTest == (int) k) s_bGateTestDone[k] = TRUE;
+			if (p->ReEnumerate ("held from the computer, still starved after a stream restart")) return TRUE;
+			s_Gate[k].reenum_due = false;			// (not removed: the hold goes on to its limit)
+			continue;
+		default:
+			p->m_nGateAct = obgate::Wait;
+			continue;
+		}
+	}
+	return FALSE;
+}
+
+// The held box to its computer (the target's MirrorBoxUp): the Engine's latency measurement starts now
+void CObUsb::Show (boolean bLate)
+{
+	const obgate::Gate &g = s_Gate[m_nSlot < 2 ? m_nSlot : 1];
+	m_bShowDue = FALSE;
+	IMirrorTarget *pT = Target ();
+	if (pT == 0 || !m_bMirror) return;		// (moved off its target meanwhile: the next MirrorAttach holds it again)
+	m_bShown = TRUE;
+	if (bLate)
+		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: %s shown to the computer after %u ms although its audio "
+					"does not run both ways (the hold's limit, obgate=%u): Overbridge may fail its latency "
+					"measurement (%u restarts, %u re-enumerations since boot)", m_pAudio->name, g.last_wait_ms,
+					GateHoldMs (), g.total_restarts, g.total_reenums);
+	else
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %s shown to the computer after %u ms, its audio running "
+					"both ways", m_pAudio->name, g.last_wait_ms);
+	pT->MirrorBoxUp (TRUE);
+}
+
+// The stream again on the same device (TRUE: done, FALSE: not now, EP0 busy): the controller lets go of every queued transfer (Stop Endpoint, the URBs
+// dropped), the box's audio interfaces to alt 0 and back to alt 3 (its stream engine off and on, as Configure), then
+// new endpoint objects: each one's Configure Endpoint drops and adds that endpoint on the xHC with a new transfer ring
+// (a new place in the controller's periodic schedule, which a resubmit or a Reset Endpoint does not give: LT9, T426).
+// Then the URBs go in as at Configure. Main loop only, the box's pipes and MIDI untouched.
+boolean CObUsb::RestartStream (const char *pWhy)
+{
+	if (m_bMirror && m_bCtlBusy) return FALSE;	// a forwarded request of the computer's holds EP0
+	s_nStreamRestarts++;
+	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: its audio stream restarted on the Pi (alt 0 and back, "
+				"its endpoints added again; %u since boot)", m_pAudio->name, m_nSlot, pWhy, s_nStreamRestarts);
+	EnterCritical (IRQ_LEVEL);
+	m_bStreaming = FALSE;				// no completion resubmits from here
+	LeaveCritical ();
+	CXHCIEndpoint *pXIn = m_pIn->GetXHCIEndpoint (), *pXOut = m_pOut->GetXHCIEndpoint ();
+	const unsigned nDropIn = pXIn->StopAndDrop (), nDropOut = pXOut->StopAndDrop ();
+	EnterCritical (IRQ_LEVEL);
+	for (unsigned i = 0; i < m_nURBs; i++) m_bInBusy[i] = m_bOutBusy[i] = FALSE;
+	m_nInPending = m_nOutPending = 0;
+	LeaveCritical ();
+
+	CUSBHostController *pHost = GetHost ();
+	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface; nIface++)
+		if (pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, 0, nIface, 0, 0) < 0)
+			CLogger::Get ()->Write (From, LogWarning, "restart: SET_INTERFACE %u alt 0 failed", (unsigned) nIface);
+	CTimer::Get ()->MsDelay (100);
+	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface; nIface++)
+		if (pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, ob::kAlt, nIface, 0, 0) < 0)
+			CLogger::Get ()->Write (From, LogError, "restart: SET_INTERFACE %u alt %u failed", (unsigned) nIface,
+						(unsigned) ob::kAlt);
+
+	CUSBEndpoint *pNewIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
+	CUSBEndpoint *pNewOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
+	const boolean bNew = pNewIn->GetXHCIEndpoint ()->IsValid () && pNewOut->GetXHCIEndpoint ()->IsValid ();
+	if (bNew)
+	{
+		CUSBEndpoint *pOldIn = m_pIn, *pOldOut = m_pOut;
+		m_pIn = pNewIn, m_pOut = pNewOut;
+		const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
+		for (unsigned i = 0; i < m_nURBs; i++)
+		{
+			delete m_pInURB[i];
+			delete m_pOutURB[i];
+			m_pInURB[i] = new CUSBRequest (m_pIn, m_pInBuf[i], nLen);
+			m_pInURB[i]->SetCompletionRoutine (InStub, (void *) (uintptr) i, this);
+			m_pOutURB[i] = new CUSBRequest (m_pOut, m_pOutBuf[i], nOutLen);
+			m_pOutURB[i]->SetCompletionRoutine (OutStub, (void *) (uintptr) i, this);
+		}
+		delete pOldIn;					// (the device's endpoint table points at the new ones now)
+		delete pOldOut;
+	}
+	else
+	{
+		// refused (the new endpoint's Configure Endpoint failed: it registered nothing): the old ones stay; their
+		// doorbells (the submits below) run them again from where Stop Endpoint left them
+		CLogger::Get ()->Write (From, LogError, "restart: the controller refused the new endpoints: the old ones go on");
+		delete pNewIn;
+		delete pNewOut;
+	}
+
+	// a new stream: its counters from 0 (the box's too, after alt 0), the recoveries' state cleared
+	m_nOutCounter = 0;
+	m_bOutCounterSet = FALSE;
+	m_bHaveIn = FALSE;
+	m_nExpectIn = 0;
+	m_nCredit = 0;
+	m_bLeadDue = TRUE;
+	m_nLeadGiven = 0;
+	m_InHalt.halted = m_InHalt.erred = m_OutHalt.halted = m_OutHalt.erred = false;
+	m_InHalt.fails = m_OutHalt.fails = 0;
+	m_Freeze = obfreeze::Watch ();
+	m_Starve = PeriodicStarve ();
+	if (m_bShown && !m_bShowDue)			// shown: its target's counter offset and rings start again (as a box back)
+		if (IMirrorTarget *pT = Target ()) pT->MirrorBoxUp (TRUE);
+
+	EnterCritical (IRQ_LEVEL);
+	m_nLastInUs = m_nLastOutUs = CTimer::GetClockTicks ();
+	m_bStreaming = TRUE;
+	boolean bOK = TRUE;
+	for (unsigned i = 0; i < m_nURBs && bOK; i++) bOK = SubmitIn (i);
+	if (bOK && m_OutMode == OutFree)
+		for (unsigned i = 0; i < m_nURBs && bOK; i++)
+		{
+			FillOut (m_pOutBuf[i], m_nBlocks);
+			bOK = SubmitOut (i);
+		}
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "restart: %s (%u IN and %u OUT transfers dropped at the "
+				"controller)%s", bNew ? "new endpoints" : "old endpoints", nDropIn, nDropOut,
+				bOK ? "" : ": cannot submit the first URBs");
+	return TRUE;
+}
+
 // obreenum=<slot>: the re-enumeration above at the next main-loop pass, whatever the stream does (a test of the path)
 boolean CObUsb::Command (const char *pText)
 {
+	if (strncmp (pText, "obrestart", 9) == 0)
+	{
+		if (pText[9] == '=' && (pText[10] == '0' || pText[10] == '1') && pText[11] == 0)
+		{
+			s_nForceRestart = pText[10] - '0';
+			CLogger::Get ()->Write (From, LogNotice, "obrestart: slot %d at the next pass", s_nForceRestart);
+		}
+		else
+			CLogger::Get ()->Write (From, LogNotice, "obrestart=0|1 (restart that slot's audio stream; %u restarts "
+						"since boot)", s_nStreamRestarts);
+		return TRUE;
+	}
 	if (strncmp (pText, "obreenum", 8) != 0) return FALSE;
 	if (pText[8] == '=' && (pText[9] == '0' || pText[9] == '1') && pText[10] == 0)
 	{
@@ -784,6 +973,10 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 	m_nGen = ++s_nGen;
 	m_bUp = FALSE;
 	m_bConfigured = FALSE;
+	m_bShowDue = FALSE;
+	m_bShown = FALSE;
+	m_nStarveRestarts = 0;
+	m_nGateAct = obgate::Wait;
 
 	m_nSlot = nSlot < Slots ? nSlot : Slots - 1;	// its core slot (attach order): its buffers, its side stage, its FX
 	m_pInBuf = s_InBuf[m_nSlot];
@@ -804,6 +997,7 @@ CObUsb::~CObUsb (void)
 	(void) pTarget;					// (no mirror in this build)
 	if (s_pBox[m_nSlot] == this) s_pBox[m_nSlot] = 0;
 	Rebind ();
+	if (m_bShowDue && m_nSlot < 2) obgate::gone (s_Gate[m_nSlot]);	// (the gate's own re-enumeration: the hold goes on)
 	if (m_bUp) { s_Assign.up[m_nSlot] = false; s_Assign.gone_at[m_nSlot] = NowUs (); }	// USB-C's place held (mirror_assign.h)
 	if (this == s_pRelayBox)			// gone, not moved: the relay holds it for mirrorhold, as ever
 	{
@@ -1260,7 +1454,24 @@ void CObUsb::MirrorAttach (void)
 	}
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes (%s)", nGot, (unsigned) nLang, m_nPipes,
 				m_nSlot < 2 ? s_PipeInfo[m_nSlot] : "");
-	pGadget->MirrorBoxUp (TRUE);
+	// the attach gate (attach_gate.h): shown to the computer once its audio runs both ways. A box already shown (moved
+	// to another target, PollAssign) is shown at once
+	if (m_bShown || GateHoldMs () == 0 || m_nSlot >= 2)
+	{
+		m_bShowDue = FALSE;
+		m_bShown = TRUE;
+		pGadget->MirrorBoxUp (TRUE);
+		return;
+	}
+	if (m_bShowDue) return;				// held already (a new target meanwhile): the same hold
+	const boolean bGoesOn = s_Gate[m_nSlot].reenum_due;
+	m_bShowDue = TRUE;
+	m_nGateAct = obgate::Wait;
+	obgate::begin (s_Gate[m_nSlot], NowMs (), GateHoldMs ());
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %s held from the computer until its audio runs both ways "
+				"(obgate=%u ms%s)", m_pAudio->name, GateHoldMs (),
+				bGoesOn && s_Gate[m_nSlot].held && s_Gate[m_nSlot].holds > 0 ? ", the hold goes on after the gate's "
+				"re-enumeration" : "");
 }
 
 boolean CObUsb::SubmitPipeIn (unsigned i)
@@ -1972,7 +2183,8 @@ void CObUsb::Log (CLogger *pLogger)
 	// the controller starving this box's OUT (periodic_starve.h): every OUT URB queued at the xHC and OUT still short of IN
 	unsigned nInRate = (nIn - m_nPrevIn) * 1000 / nMs, nOutRate = (nOut - m_nPrevOut) * 1000 / nMs;
 	boolean bAllQueued = nOutPend >= m_nURBs && nQOut >= m_nURBs;
-	switch (m_OutMode == OutOff ? PeriodicStarve::None : m_Starve.Tick (nInRate, nOutRate, bAllQueued))
+	const PeriodicStarve::Say Say = m_OutMode == OutOff ? PeriodicStarve::None : m_Starve.Tick (nInRate, nOutRate, bAllQueued);
+	switch (Say)
 	{
 	case PeriodicStarve::Start:
 		{
@@ -1990,6 +2202,30 @@ void CObUsb::Log (CLogger *pLogger)
 		break;
 	default:
 		break;
+	}
+
+	// the attach gate (attach_gate.h): a held box shown, restarted or re-enumerated; a box not held whose OUT starves
+	// restarted (PollGate acts in the main loop)
+	if (m_nGateAct == obgate::Wait && m_nSlot < 2)
+	{
+		if (s_nGateTest == -2) s_nGateTest = (int) CKernelOptions::Get ()->GetAppOptionDecimal ("obgatetest", (unsigned) -1);
+		obgate::Gate &g = s_Gate[m_nSlot];
+		if (m_bShowDue && g.held)
+		{
+			const boolean bFake = s_nGateTest == (int) m_nSlot && !s_bGateTestDone[m_nSlot];
+			const boolean bReEnum = CKernelOptions::Get ()->GetAppOptionDecimal ("obgatereenum", 1) != 0;
+			const obgate::Act a = obgate::tick (g, nInRate, bFake ? 0 : nOutRate, m_OutMode != OutOff, NowMs (),
+							   GateHoldMs (), bReEnum);
+			if (a != obgate::Wait)
+			{
+				pLogger->Write (m_nSlot ? "rytmob2" : From, a == obgate::Show ? LogNotice : LogWarning, "gate: %s (IN %u/s, "
+						"OUT %u/s%s, held %u ms)", obgate::act_name (a), nInRate, nOutRate,
+						bFake ? " read as 0: obgatetest" : "", NowMs () - g.since_ms);
+				m_nGateAct = a;
+			}
+		}
+		else if (Say == PeriodicStarve::Start && obgate::starved (m_nStarveRestarts))
+			m_nGateAct = obgate::Restart;
 	}
 
 	m_nPrevIn = nIn;
