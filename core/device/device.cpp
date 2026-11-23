@@ -171,6 +171,10 @@ CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
   return false;
 }
 static void shed_over();
+CORE_COLD void cpu_step() {
+  shed_over();
+  if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
+}
 CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is saved, a slot whose box left is free for any box)
   usb_take();   // the USB devices that came or went (core 0's)
   tell_tick();
@@ -184,8 +188,7 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   for (Link& l : g_links)
     if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   admit_alone();
-  shed_over();
-  if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
+  cpu_step();
   rebase();
   return false;
 }

@@ -410,6 +410,16 @@ static void engine() {
     admit::set_clock(1500);
     device::step(true);
     CHECK(!ins::refused(c, 0));
+    // LT7 (2026-11-23): under loadtest=on idle_save returns before device::step, so nothing was shed on the unit at
+    // 1200 (core 3 at 82 %, the master AMP pair still playing). The load test's own pass sheds and admits again too
+    idle_nosave(true);
+    admit::set_clock(1200);
+    for (int i = 0; i < 10; ++i) idle_save();   // (the idle passes: a step that is due goes first)
+    CHECK(ins::refused(c, 0));
+    admit::set_clock(1500);
+    for (int i = 0; i < 10; ++i) idle_save();
+    CHECK(!ins::refused(c, 0));
+    idle_nosave(false);
     ins::set_type(c, 0, ins::kOff);
     admit::set_clock(0);
   }

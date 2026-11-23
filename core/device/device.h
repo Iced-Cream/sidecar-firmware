@@ -230,6 +230,9 @@ uint32_t dropped();                    // messages from the box not translated, 
 void boot();                           // engine_begin: nothing to choose any more (slot 0 is /.rytm)
 bool leaving();                        // a slot whose box left is saving its edits (idle_save: what waits to settle goes now)
 bool step(bool settled = true);        // false: nothing to do (kept for the engine's idle saves)
+// CPU admission's own pass (in step): shed what no longer fits at the clock now, admit refused INSERT types again. The
+// load test (loadtest=on: idle_save returns before step) runs it too, so a lowered clock sheds there as it does in use.
+void cpu_step();
 // A Rytm is on USB (claim), or gone (release): the control core's (the tests'). The Pi's driver uses usb_attach / usb_detach.
 void rytm_on_usb(bool on);
 // The Pi's Overbridge driver, core 0, when box p's USB device enumerates: the slot its stream is (its slot already, else the
