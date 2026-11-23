@@ -201,6 +201,12 @@ extern const ExtraPage kMasterPage;   // the master FX (page_mfx.cpp, core/fx/ma
 void sc_view_draw(Canvas& c, int page, int npages, int ch, const char* title, const char* right, const char* nav);
 void sc_view_enc(int ch, int e, int d, bool func, int list_delta);
 uint16_t sc_view_tid(int ch, int e);   // the mod target the turn of knob e edits (0 none)
+// 0.5.2 MON (DUCK plays its filtered key): T1 in the view, taken only while the chain's stage is DUCK; its LED shows it. The view
+// left, another chain, or the page left (remote.cpp: sc_mon_page_left) turns it off
+bool sc_view_key(int ch, int code);
+uint16_t sc_view_trigs(int ch);
+bool sc_view_leds(int ch, uint8_t c[16]);
+void sc_mon_page_left();   // the shown page changed or closed, or a hello: MON off on every chain
 void ins_open_out();   // rui1047: the INSERT page on its OUT view of the Rytm's selected track (UP + AMP: 30 page 3)
 // rui1048: POLY CONFIG (page_poly.cpp): a track's poly config (seq.h PolyCfg) on the Rytm's screen. poly_page_open: the
 // device's page request for track t (the Rytm's track menu item: 30 page 0x20 + t, from_menu: NO goes back to the stock

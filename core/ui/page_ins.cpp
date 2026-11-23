@@ -267,6 +267,8 @@ CORE_COLD void sc_view_draw(Canvas& c, int page, int npages, int ch, const char*
     footer(c, b, ins::sc_param(ch, t));
   } else if (!ok) {
     footer(c, why);
+  } else if (ins::sc_mon(ch)) {
+    footer(c, "MON ON (KEY)  T1: OFF");
   } else {
     footer(c, nav);
   }
@@ -282,6 +284,20 @@ CORE_COLD void sc_view_enc(int ch, int e, int d, bool func, int l) {
   }
 }
 CORE_COLD uint16_t sc_view_tid(int ch, int e) { return e >= 2 && ins::sc_on(ch) ? mod::tid(mod::kIns, ch, 12 + e - 2) : 0; }
+// 0.5.2 MON: T1 (code 0) in the view, while the chain's stage is DUCK
+CORE_COLD bool sc_view_key(int ch, int code) {
+  if (code != 0 || ins::sc_mode(ch) != sc::kDuck) return false;
+  ins::set_sc_mon(ch, !ins::sc_mon(ch));
+  return true;
+}
+CORE_COLD uint16_t sc_view_trigs(int ch) { return ins::sc_mode(ch) == sc::kDuck ? 1u : 0u; }
+CORE_COLD bool sc_view_leds(int ch, uint8_t c[16]) {
+  if (ins::sc_mode(ch) != sc::kDuck) return false;
+  memset(c, kLedOff, 16);
+  c[0] = ins::sc_mon(ch) ? kLedBlue : kLedBlueDim;
+  return true;
+}
+CORE_COLD void sc_mon_page_left() { ins::sc_mon_off_all(); }
 namespace {
 
 CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
@@ -291,7 +307,7 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
     char right[16];
     if (ip.bus) sniprintf(right, sizeof right, CORE_STR("BUS %d"), ip.busel + 1);
     else sniprintf(right, sizeof right, CORE_STR("%s"), voice_name(voice_now()));
-    return sc_view_draw(c, page, npages, chain_now(), "INSERT SC", right, "LEFT: BACK  YES: CHAIN");
+    return sc_view_draw(c, page, npages, chain_now(), "INSERT SC", right, "YES: CHAIN  T1: MON");
   }
   if (ip.eq) return eq_draw(c, page, npages);   // ins1112 (RIGHT)
   if (ip.out) return out_draw(c, page, npages);
@@ -460,11 +476,14 @@ CORE_COLD bool ins_key(int code) {
     ip.sc = true, ip.touched = -1, sc_touched = -1;
     return true;
   }
+  if (ip.sc && sc_view_key(chain_now(), code)) return true;   // 0.5.2 T1: MON
   if ((code == 0x40 || code == 0x43) && ip.sc) {   // LEFT, DOWN: back to the EQ view
     ip.sc = false, ip.touched = -1;
+    ins::sc_mon_off_all();
     return true;
   }
   if (code == 0x44 && ip.sc) {   // YES: the voice, then bus 1, 2, 3, then the voice again
+    ins::sc_mon_off_all();
     if (!ip.bus) ip.bus = true, ip.busel = 0;
     else if (ip.busel < ins::kBuses - 1) ++ip.busel;
     else ip.bus = false;
@@ -492,6 +511,7 @@ CORE_COLD bool ins_key(int code) {
   }
   if (code == 0x45 && (ip.bus || ip.out || ip.eq)) {   // NO: back to the TRACK view (then SIDECAR, as every page)
     ip.bus = ip.out = ip.eq = ip.sc = false, ip.touched = -1;
+    ins::sc_mon_off_all();
     return true;
   }
   return false;
@@ -514,7 +534,10 @@ CORE_COLD void ins_open_out() {
   ip.bus = false, ip.out = true, ip.eq = false, ip.sc = false, ip.track = -1, ip.manual = false, ip.touched = -1, ip.out_top = true;
 }
 
-UI_ROM const ExtraPage kInsPage = {"INSERT", ins_shown, ins_draw, ins_enc, ins_key, 0xFF, false, nullptr, nullptr, nullptr,
+CORE_COLD uint16_t ins_trigs() { return ip.sc ? sc_view_trigs(chain_now()) : 0; }   // 0.5.2: T1 is MON's in the SIDECHAIN view
+CORE_COLD bool ins_leds(uint8_t c[16]) { return ip.sc && sc_view_leds(chain_now(), c); }
+
+UI_ROM const ExtraPage kInsPage = {"INSERT", ins_shown, ins_draw, ins_enc, ins_key, 0xFF, false, nullptr, ins_trigs, ins_leds,
                                    false, nullptr, ins_enc_tid};
 
 #if CORE_UI_TOOLS

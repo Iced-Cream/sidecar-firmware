@@ -93,6 +93,7 @@ struct Control {
   volatile uint8_t scmode[kChains];                  // sc::Mode
   volatile uint8_t scsrc[kChains];                   // sc::Src
   volatile uint8_t scp[kChains][sc::kParams];        // the knobs as they play (the knob + the LFO's offset), 0..127
+  volatile uint8_t scmon[kChains];                   // 0.5.2 MON: DUCK plays its filtered key instead of the chain (never saved)
 };
 extern Control control;
 
@@ -237,8 +238,8 @@ inline bool peq_set(const Control& k, int c) {
 }
 
 // 0.5.0 SIDECHAIN: one chain's stage state (the DSP is Engine::RunSc)
-struct ScCh {   // one channel's key filter / follower
-  float hp1 = 0, hp2 = 0;
+struct ScCh {   // the key's band-pass states: the high pass (one pole, then two) and the low pass (two)
+  float hp1 = 0, hp2 = 0, p1 = 0, l1 = 0, l2 = 0;
 };
 struct Sc {
   float wet = 0.0f;               // 0 dry .. 1 the stage: the engage / release fade (kFadeFrames, as the POST EQ's)
@@ -248,7 +249,10 @@ struct Sc {
   uint8_t pv[sc::kParams] = {255, 255, 255, 255, 255, 255};   // the knobs the coefficients below are for
   uint8_t pvm = 255;
   float c[6] = {};                // coefficients: PUMP attN holdN relN shape e, onset thr; DUCK att rel thr slope
-  SvfK khp;                       // DUCK's key high pass
+  SvfK khp;                       // DUCK's key high pass: the 2-pole of KBAS's 18 dB/oct (Q 1), after a 1-pole (kg = g / (1 + g))
+  SvfK klp;                       // the key low pass, KWID octaves above (12 dB/oct)
+  float kg = 0.0f;
+  float mw = 0.0f;                // MON's blend 0 chain .. 1 the filtered key (5 ms ramp)
   SvfK ohp;                       // the onset detector's (80 Hz)
   uint32_t last_w = ~0u, since = (uint32_t)sc::kStale;   // the key ring's counter last seen (~0: none yet), the reader's frames since it moved
   uint32_t last_trig = 0;
@@ -258,7 +262,7 @@ struct Sc {
   bool trig_seen = false;               // last_trig is current (the first look after an engage only takes the counter)
   // DUCK
   float env = 0.0f;                     // COMP's detector, on the key
-  ScCh key;                             // the key HPF (one: the key is one signal for both sides)
+  ScCh key;                             // the key band-pass (one: the key is one signal for both sides)
   // PUMP
   float gain = 1.0f, g0 = 1.0f;         // the gain now; the gain when the envelope began (a retrigger is continuous)
   int32_t j = -1;                       // frames since the trig frame, -1 idle
@@ -421,7 +425,7 @@ class Engine {
     Sc& o = sc_[c];
     const int mode = k.scmode[c] < sc::kModes ? k.scmode[c] : 0;
     const bool want = mode != sc::kOff;
-    if (!want && o.wet <= 0.0f) {
+    if (!want && o.wet <= 0.0f && o.mw <= 0.0f) {
       if (!o.idle) ScClear(o);
       return;
     }
@@ -444,6 +448,7 @@ class Engine {
       o.pvm = (uint8_t)md;
       ScCoefs(o, kn, md);
     }
+    const bool monw = want && md == sc::kDuck && k.scmon[c] != 0;   // MON (0.5.2): the filtered key in place of the chain
     // the key
     const int src = k.scsrc[c], key = sc::key_of(src);
     float kb[kChunk];
@@ -459,7 +464,8 @@ class Engine {
     }
     if (!live)
       for (int i = 0; i < m; ++i) kb[i] = 0.0f;
-    float y[2][kChunk];
+    float y[2][kChunk], kf[kChunk];
+    bool haskf = false;   // DUCK: kf is the key as the detector sees it (MON plays it)
     // a mode or source change (o.xf frames): the gain slews to its new value over ~5 ms, never a step
     const float sl = 1.0f / (0.004f * sr_);
     auto slew = [&](float g) {
@@ -516,19 +522,28 @@ class Engine {
       }
     } else {   // DUCK
       const float thr = o.c[2], slope = o.c[3], att = o.c[0], rel = o.c[1];
-      const bool hpf = o.pv[4] != 0;
-      float env = o.env, s1 = o.key.hp1, s2 = o.key.hp2;
-      if (!live && env < 1e-7f && o.xf <= 0) {   // nothing keyed and nothing left of it: the signal as it is
+      const bool hpf = o.pv[4] != 0, lpf = o.pv[5] != 0;   // KBAS, KWID: OFF is the key as it is, bit for bit
+      float env = o.env, s1 = o.key.hp1, s2 = o.key.hp2, p1 = o.key.p1, l1 = o.key.l1, l2 = o.key.l2;
+      if (!live && env < 1e-7f && o.xf <= 0 && !monw && o.mw <= 0.0f) {   // nothing keyed and nothing left of it: the signal as it is
         o.env = 0.0f, o.ga = 1.0f;
         for (int i = 0; i < m; ++i) y[0][i] = x[i], y[1][i] = r ? r[i] : 0.0f;
       } else {
         for (int i = 0; i < m; ++i) {
           float v = kb[i];
-          if (hpf) {
+          if (hpf) {   // 18 dB/oct: one pole, then two (a 3rd order Butterworth)
+            const float w = (v - p1) * o.kg, lp1 = w + p1;
+            p1 = lp1 + w;
+            v -= lp1;
             float bp, lp;
             svf(o.khp, v, s1, s2, bp, lp);
             v = v - o.khp.k * bp - lp;
           }
+          if (lpf) {   // 12 dB/oct
+            float bp, lp;
+            svf(o.klp, v, l1, l2, bp, lp);
+            v = lp;
+          }
+          kf[i] = v;
           const float a = fabsf(v);
           env += (a > env ? att : rel) * (a - env);
           const float gr = comp_gr_db(6.0206f * fast_log2(env + 1e-9f), thr, slope);
@@ -536,7 +551,9 @@ class Engine {
           y[0][i] = x[i] * g;
           if (r) y[1][i] = r[i] * g;
         }
-        o.env = flush(env), o.key.hp1 = flush(s1), o.key.hp2 = flush(s2);
+        haskf = true;
+        o.env = flush(env), o.key.hp1 = flush(s1), o.key.hp2 = flush(s2), o.key.p1 = flush(p1), o.key.l1 = flush(l1),
+        o.key.l2 = flush(l2);
       }
     }
     float chk = 0.0f;   // NaN or a runaway: the stage cleared, the chain passes dry until it fades in again
@@ -550,14 +567,32 @@ class Engine {
       for (int i = 0; i < m; ++i) x[i] = y[0][i];
       if (r)
         for (int i = 0; i < m; ++i) r[i] = y[1][i];
-      return;
+    } else {
+      const float dw = (w1 - w0) / (float)m;
+      float wv = w0;
+      for (int i = 0; i < m; ++i) {
+        wv += dw;
+        x[i] += wv * (y[0][i] - x[i]);
+        if (r) r[i] += wv * (y[1][i] - r[i]);
+      }
     }
-    const float dw = (w1 - w0) / (float)m;
-    float wv = w0;
-    for (int i = 0; i < m; ++i) {
-      wv += dw;
-      x[i] += wv * (y[0][i] - x[i]);
-      if (r) r[i] += wv * (y[1][i] - r[i]);
+    // MON: the filtered key in place of the chain's output (both sides), a 5 ms ramp each way; PUMP has no key to play
+    const float q0 = o.mw, q1 = haskf ? clampf(monw ? q0 + step : q0 - step, 0.0f, 1.0f) : 0.0f;
+    o.mw = q1;
+    if (q0 > 0.0f || q1 > 0.0f) {
+      if (q0 >= 1.0f && q1 >= 1.0f) {
+        for (int i = 0; i < m; ++i) x[i] = kf[i];
+        if (r)
+          for (int i = 0; i < m; ++i) r[i] = kf[i];
+      } else {
+        const float dq = (q1 - q0) / (float)m;
+        float qv = q0;
+        for (int i = 0; i < m; ++i) {
+          qv += dq;
+          x[i] += qv * (kf[i] - x[i]);
+          if (r) r[i] += qv * (kf[i] - r[i]);
+        }
+      }
     }
   }
   // the stage's mode or source changed while it ran: the gain slews (ramp), the trig counter is the new source's now, and a
@@ -566,7 +601,7 @@ class Engine {
     if (ramp) o.xf = (int32_t)(0.005f * sr_);
     o.cs = (uint8_t)src, o.trig_seen = false, o.last_w = ~0u, o.since = (uint32_t)sc::kStale;
     if (mode != o.mode) {
-      o.env = 0.0f, o.key.hp1 = 0.0f, o.key.hp2 = 0.0f;
+      o.env = 0.0f, o.key = ScCh();
       o.gain = o.g0 = 1.0f, o.j = -1, o.fresh = true;
       o.oenv = 0.0f, o.ohp1 = 0.0f, o.ohp2 = 0.0f, o.oarm = true, o.olock = 0;
     }
@@ -591,7 +626,16 @@ class Engine {
       o.c[1] = 1.0f - expf(-1.0f / (comp_rel_s(q(3)) * sr_));
       o.c[2] = -40.0f * q(0);
       o.c[3] = comp_slope(q(1));
-      if (kn[4]) o.khp.set(tanf(kPi * fminf(40.0f * exp2f(6.0f * q(4)), 0.45f * sr_) / sr_), 1.41421356f);
+      const float hz = sc::kbas_hz(kn[4]), oct = sc::kwid_oct(kn[5]), nyq = 0.45f * sr_;   // KBAS KWID (0.5.2); the corners stay below Nyquist
+      if (hz > 0.0f) {
+        const float g = tanf(kPi * fminf(hz, nyq) / sr_);
+        o.kg = g / (1.0f + g);
+        o.khp.set(g, 1.0f);
+      } else {
+        o.key.hp1 = 0.0f, o.key.hp2 = 0.0f, o.key.p1 = 0.0f;   // off: no stale state when it comes on
+      }
+      if (oct > 0.0f) o.klp.set(tanf(kPi * fminf((hz > 0.0f ? hz : 20.0f) * exp2f(oct), nyq) / sr_), 1.41421356f);
+      else o.key.l1 = 0.0f, o.key.l2 = 0.0f;
     }
   }
 
@@ -957,6 +1001,9 @@ bool eq_any_on();
 void set_sc_mode(int c, int mode, bool keep = false);
 void set_sc_src(int c, int src);
 void set_sc_param(int c, int k, int v);
+void set_sc_mon(int c, bool on);   // 0.5.2 MON: DUCK plays its filtered key instead of the chain (not saved; a mode / source change ends it)
+bool sc_mon(int c);
+void sc_mon_off_all();
 int sc_mode(int c);
 int sc_src(int c);
 int sc_param(int c, int k);     // the knob as set

@@ -154,8 +154,8 @@ export function eqText(peq: number[]): string {
 
 
 // ---- SIDECHAIN (0.5.0, core/fx/sidechain.h): one gain stage per chain (V1..V8, B1..B3, M1 M2), between its two slots and its
-// POST EQ. PUMP: a trig-driven gain envelope (DPTH ATT HOLD REL SHAP THR); DUCK: the COMP keyed by the source (THR RAT ATT REL HPF).
-// /status "ins" "sc": 13 entries, {"m":"OFF"} or {m, s: source, p: knobs, l: as they play, n: names, st: "OK" | "NO STEMS" | ...}
+// POST EQ. PUMP: a trig-driven gain envelope (DPTH ATT HOLD REL SHAP THR); DUCK: the COMP keyed by the source (THR RAT ATT REL KBAS KWID: the key's band-pass; MON plays it).
+// /status "ins" "sc": 13 entries, {"m":"OFF"} or {m, s: source, p: knobs, l: as they play, n: names, st: "OK" | "NO STEMS" | ..., mon: 0 | 1 (0.5.2)}
 export const SC_MODES = ["OFF", "PUMP", "DUCK"] as const;
 export type ScMode = (typeof SC_MODES)[number];
 export const SC_CHAINS = [...Array.from({ length: 8 }, (_, i) => `V${i + 1}`), "B1", "B2", "B3", "M1", "M2"];
@@ -167,7 +167,7 @@ export const SC_SOURCES: { group: string; items: { value: string; text: string }
 ];
 export const SC_NAMES: Record<string, string[]> = {
   PUMP: ["DPTH", "ATT", "HOLD", "REL", "SHAP", "THR"],
-  DUCK: ["THR", "RAT", "ATT", "REL", "HPF", "-"],
+  DUCK: ["THR", "RAT", "ATT", "REL", "KBAS", "KWID"],
 };
 export interface Sidechain {
   id: string; // V1..V8, B1..B3, M1, M2
@@ -178,6 +178,7 @@ export interface Sidechain {
   l: number[]; // as they play (the LFO's offset on top)
   names: string[];
   status: string; // "OK", "NO STEMS", "NO AUDIO IN", ...
+  mon: boolean; // 0.5.2 MON: the chain plays the filtered key (DUCK only; never saved)
 }
 
 /** The 13 stages from a status (an older Pi without "sc": all OFF, supported false). */
@@ -187,11 +188,17 @@ export function sidechains(st: Any | null): { supported: boolean; list: Sidechai
     const x = sc?.[chain] ?? {};
     const mode = (SC_MODES as readonly string[]).includes(x.m) ? (x.m as ScMode) : "OFF";
     const six = (a: unknown) => (Array.isArray(a) ? [...a.map(Number), 0, 0, 0, 0, 0, 0].slice(0, 6) : [0, 0, 0, 0, 0, 0]);
-    return { id, chain, mode, src: typeof x.s === "string" ? x.s : "BD", p: six(x.p), l: six(x.l ?? x.p), names: Array.isArray(x.n) ? x.n : SC_NAMES[mode] ?? [], status: typeof x.st === "string" ? x.st : "OFF" };
+    return { id, chain, mode, src: typeof x.s === "string" ? x.s : "BD", p: six(x.p), l: six(x.l ?? x.p), names: Array.isArray(x.n) ? x.n : SC_NAMES[mode] ?? [], status: typeof x.st === "string" ? x.st : "OFF", mon: x.mon === 1 };
   });
   return { supported: sc !== null, list };
 }
 
+/** KBAS: OFF or 20 Hz .. 19.6 kHz, log over knob 1..127 (core/fx/sidechain.h kbas_hz). */
+export const kbasHz = (v: number) => (v <= 0 ? 0 : 20 * Math.pow(2, (Math.log2(980) * (Math.min(v, 127) - 1)) / 126));
+const kbasText = (v: number) => {
+  const h = Math.round(kbasHz(v));
+  return h < 1000 ? `${h} Hz` : `${(h / 1000).toFixed(1)} kHz`;
+};
 const msText = (ms: number) => (ms < 100 ? `${ms.toFixed(1)} ms` : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`);
 /** A knob's value as the Rytm's page shows it (core/fx/insert.cpp sc_vt). */
 export function scText(mode: string, k: number, v: number): string {
@@ -208,7 +215,8 @@ export function scText(mode: string, k: number, v: number): string {
     if (k === 1) return `${(1 + 19 * p * p).toFixed(1)}:1`;
     if (k === 2) return msText(0.3 + 30 * p * p);
     if (k === 3) return msText(40 + 600 * p);
-    if (k === 4) return v ? `${Math.round(40 * Math.pow(2, 6 * p))} Hz` : "off";
+    if (k === 4) return v ? kbasText(v) : "off";
+    if (k === 5) return v ? `${(0.5 + (9.4 * (v - 1)) / 126).toFixed(1)} oct` : "off";
   }
   return String(v);
 }
@@ -256,5 +264,6 @@ export const mixCmd = {
   scMode: (id: string, m: ScMode) => `ins=${id}:sc:mode:${m.toLowerCase()}`,
   scSrc: (id: string, src: string) => `ins=${id}:sc:src:${src.toLowerCase()}`,
   scParam: (id: string, k: number, v: number) => `ins=${id}:sc:p${k + 1}:${clamp(v, 0, 127)}`,
+  scMon: (id: string, on: boolean) => `ins=${id}:sc:mon:${on ? "on" : "off"}`,
   mix: (s: Strip, slot: number, v: number) => (s.chain < 0 ? `mfx=${slot + 1}:mix:${clamp(v, 0, 127)}` : `ins=${s.id}:${"AB"[slot]}:mix:${clamp(v, 0, 127)}`),
 };

@@ -1,7 +1,8 @@
 // core/tests/test_sidechain.cpp - the SIDECHAIN stage of the INSERT chains (core/fx/sidechain.h, insert.h RunSc,
 // docs/INSERT-FX.md): PUMP's envelope shape and timing sample for sample, its trig sources (Rytm track, voice, AUDIO IN's
 // level onset), DUCK as the INSERT COMP keyed from the source (gain reduction against the key's level, the key HPF, and
-// the same answer as a COMP slot when the key is the signal itself), off = untouched, a missing source = no effect, the
+// the same answer as a COMP slot when the key is the signal itself), the key band-pass KBAS / KWID (its response through
+// MON, OFF bit for bit) and MON itself, off = untouched, a missing source = no effect, the
 // control side (modes, defaults, wanted sources, status, console, json), the mod targets, and the stage's cost.
 #include <chrono>
 #include <cmath>
@@ -11,6 +12,7 @@
 
 #include "check.h"
 #include "core.h"
+#include "rui_png.h"
 #include "fx/insert.h"
 #include "lfo.h"
 #include "mod/target.h"
@@ -184,9 +186,9 @@ int main() {
   }
   {
     // gain reduction against the key's level: a quiet key under the threshold leaves the signal alone, a loud one ducks it
-    auto gr_db = [](float key_amp, float key_hz, int hpf) {
+    auto gr_db = [](float key_amp, float key_hz, int kbas) {
       Engine e = fresh();
-      setsc(0, sc::kDuck, 0, {64, 100, 10, 10, hpf, 0});   // BD's stem, THR -20 dB
+      setsc(0, sc::kDuck, 0, {64, 100, 10, 10, kbas, 0});   // BD's stem, THR -20 dB
       std::vector<float> y(9600), k(kB);
       for (int i = 0; i < 9600; ++i) y[i] = 0.2f * std::sin(2.0f * (float)M_PI * 3000.0f * (float)i / kSr);
       std::vector<float> x = y;
@@ -202,10 +204,268 @@ int main() {
     float quiet = gr_db(0.02f, 1000, 0), mid = gr_db(0.2f, 1000, 0), loud = gr_db(0.8f, 1000, 0);
     printf("DUCK gain against the key's level (THR -20 dB, RAT 100): key -34 dB %.2f dB, -14 dB %.2f dB, -2 dB %.2f dB\n", quiet, mid, loud);
     CHECK(quiet > -0.1f && mid < -2.0f && loud < mid - 4.0f);
-    // the key HPF (126 = 1 kHz+): a 50 Hz key stops driving it, a 5 kHz key still does
-    float lo_off = gr_db(0.8f, 50, 0), lo_on = gr_db(0.8f, 50, 100), hi_on = gr_db(0.8f, 5000, 100);
-    printf("DUCK key HPF: 50 Hz key %.2f dB off, %.2f dB with HPF; 5 kHz key with HPF %.2f dB\n", lo_off, lo_on, hi_on);
+    // the key's high pass (KBAS at about 1 kHz): a 50 Hz key stops driving it, a 5 kHz key still does
+    const int kb = sc::kbas_from_old_hpf(100);
+    float lo_off = gr_db(0.8f, 50, 0), lo_on = gr_db(0.8f, 50, kb), hi_on = gr_db(0.8f, 5000, kb);
+    printf("DUCK key high pass: 50 Hz key %.2f dB off, %.2f dB with KBAS %.0f Hz; 5 kHz key %.2f dB\n", lo_off, lo_on, sc::kbas_hz(kb), hi_on);
     CHECK(lo_off < -6.0f && lo_on > -0.5f && hi_on < -6.0f);
+  }
+
+
+  // ---- the key band-pass KBAS / KWID and MON (0.5.2): the response is measured through MON, which plays the filtered key
+  {
+    // MON on, the chain's own signal a constant 0.3 (not in the output), THR / RAT such that nothing is reduced; a sine key
+    // of `hz` on BD's stem; the gain (dB) of the monitored key over the last 4800 frames
+    auto kf_db = [](int kbas, int kwid, float hz, float sr_scale = 1.0f) {
+      Engine e = fresh();
+      setsc(0, sc::kDuck, 0, {0, 0, 10, 10, kbas, kwid});
+      ins::control.scmon[0] = 1;
+      const int N = 28800;
+      std::vector<float> y(N, 0.3f), k(kB);
+      double sx = 0, sy = 0;
+      for (int i = 0; i < N; i += kB) {
+        for (int j = 0; j < kB; ++j) k[j] = 0.5f * std::sin(2.0f * (float)M_PI * hz * sr_scale * (float)(i + j) / kSr);
+        sc::write(0, k.data(), kB);
+        e.ProcessMono(0, &y[i], kB, ins::control);
+        if (i >= N - 4800)
+          for (int j = 0; j < kB; ++j) sx += k[j] * k[j], sy += y[i + j] * y[i + j];
+      }
+      return 10.0f * std::log10((float)(sy / sx) + 1e-20f);
+    };
+    // the knobs' scales: KBAS OFF or 20 Hz .. 19.6 kHz (log), KWID OFF or 0.5 .. 9.9 octaves
+    CHECK(sc::kbas_hz(0) == 0.0f && std::fabs(sc::kbas_hz(1) - 20.0f) < 0.01f && std::fabs(sc::kbas_hz(127) - 19600.0f) < 20.0f);
+    CHECK(sc::kwid_oct(0) == 0.0f && std::fabs(sc::kwid_oct(1) - 0.5f) < 1e-4f && std::fabs(sc::kwid_oct(127) - 9.9f) < 1e-3f);
+    // KBAS: a 3rd order high pass: -3 dB at the corner, 18 dB per octave below it, flat above
+    {
+      const int KB = 70;
+      const float f0 = sc::kbas_hz(KB);
+      const float a = kf_db(KB, 0, f0), b = kf_db(KB, 0, f0 / 4.0f), c = kf_db(KB, 0, f0 / 8.0f), d = kf_db(KB, 0, f0 * 8.0f);
+      printf("KBAS %.0f Hz: corner %.2f dB, f/4 %.1f dB, f/8 %.1f dB (slope %.1f dB/oct), 8f %.2f dB\n", f0, a, b, c, (c - b), d);
+      CHECK(std::fabs(a + 3.01f) < 0.5f);
+      CHECK(std::fabs((c - b) + 18.06f) < 1.2f);
+      CHECK(std::fabs(d) < 0.15f);
+    }
+    // KWID: a 2nd order low pass KWID octaves above KBAS: -3 dB there, 12 dB per octave above it
+    {
+      const int KB = 20, KW = 50;
+      const float f1 = sc::kbas_hz(KB) * std::exp2(sc::kwid_oct(KW));
+      const float a = kf_db(KB, KW, f1), b = kf_db(KB, KW, f1 * 2.0f), c = kf_db(KB, KW, f1 * 4.0f), d = kf_db(KB, KW, f1 / 8.0f);
+      printf("KWID: low pass at %.0f Hz: corner %.2f dB, 2f %.1f dB, 4f %.1f dB (slope %.1f dB/oct)\n", f1, a, b, c, c - b);
+      CHECK(std::fabs(a + 3.01f) < 0.5f);
+      CHECK(std::fabs((c - b) + 11.8f) < 1.5f);
+      CHECK(std::fabs(d) < 0.3f);   // (the high pass at 20 Hz x 2^KWID below)
+    }
+    // KBAS OFF, KWID on: a plain low pass from 20 Hz x 2^KWID
+    {
+      const int KW = 70;
+      const float f1 = 20.0f * std::exp2(sc::kwid_oct(KW));
+      const float a = kf_db(0, KW, f1), lo = kf_db(0, KW, 40.0f);
+      printf("KBAS OFF, KWID %.2f oct: low pass at %.0f Hz: corner %.2f dB, 40 Hz %.2f dB\n", sc::kwid_oct(KW), f1, a, lo);
+      CHECK(std::fabs(a + 3.01f) < 0.5f && std::fabs(lo) < 0.05f);
+    }
+    // both OFF: MON plays the key exactly (bit for bit), and with the chain's own signal not in it
+    {
+      Engine e = fresh();
+      setsc(0, sc::kDuck, 0, {0, 0, 10, 10, 0, 0});
+      ins::control.scmon[0] = 1;
+      const int N = 4800;
+      std::vector<float> y(N, 0.3f), key(N);
+      bool same = true;
+      for (int i = 0; i < N; ++i) key[i] = 0.5f * std::sin(0.031f * (float)i) + 0.2f * std::sin(0.7f * (float)i);
+      for (int i = 0; i < N; i += kB) {
+        sc::write(0, &key[i], kB);
+        e.ProcessMono(0, &y[i], kB, ins::control);
+      }
+      for (int i = 1000; i < N; ++i) same = same && y[i] == key[i];
+      CHECK(same);
+      printf("MON with KBAS and KWID OFF: the key, bit for bit\n");
+    }
+    // MON in stereo: both sides the key; with the key filtered it is the same filtered mono key on L and R
+    {
+      Engine e = fresh();
+      setsc(8, sc::kDuck, 0, {0, 0, 10, 10, 50, 60});
+      ins::control.scmon[8] = 1;
+      float y[kB][2], k[kB];
+      float worst = 0.0f;
+      for (int it = 0; it < 600; ++it) {
+        for (int j = 0; j < kB; ++j) k[j] = 0.5f * std::sin(0.05f * (float)(it * kB + j)), y[j][0] = 0.3f, y[j][1] = -0.2f;
+        sc::write(0, k, kB);
+        e.ProcessStereo(8, y, kB, ins::control);
+        if (it > 400)
+          for (int j = 0; j < kB; ++j) worst = std::max(worst, std::fabs(y[j][0] - y[j][1]));
+      }
+      CHECK(worst == 0.0f);
+    }
+    // MON ramps (5 ms): switched on and off in the middle of a signal, no step
+    {
+      Engine e = fresh();
+      setsc(0, sc::kDuck, 0, {0, 0, 10, 10, 40, 80});
+      const int N = 9600, on_at = 3200, off_at = 6400;
+      std::vector<float> y(N, 0.3f), key(N), ref(N, 0.3f);
+      for (int i = 0; i < N; ++i) key[i] = 0.5f * std::sin(2.0f * (float)M_PI * 1000.0f * (float)i / kSr);
+      Engine e2 = fresh();
+      setsc(0, sc::kDuck, 0, {0, 0, 10, 10, 40, 80});
+      std::vector<float> mon(N, 0.3f);
+      ins::control.scmon[0] = 0;
+      for (int i = 0; i < N; i += kB) {
+        ins::control.scmon[0] = i >= on_at && i < off_at;
+        sc::write(0, &key[i], kB);
+        e.ProcessMono(0, &y[i], kB, ins::control);
+      }
+      float step = 0.0f, offdiff = 0.0f;
+      for (int i = 1; i < N; ++i) step = std::max(step, std::fabs(y[i] - y[i - 1]));
+      for (int i = off_at + 256; i < N; ++i) offdiff = std::max(offdiff, std::fabs(y[i] - 0.3f));
+      printf("MON on / off: the largest sample step %.4f (the key alone steps up to %.4f), back to the chain within 5 ms: %.1e\n", step,
+             0.5f * 2.0f * (float)M_PI * 1000.0f / kSr, offdiff);
+      CHECK(step < 0.1f);
+      CHECK(offdiff < 1e-6f);
+      CHECK(y[on_at - 1] == 0.3f && y[on_at + 300] != 0.3f);
+      (void)e2;
+    }
+    // MON is DUCK's: PUMP plays its own gain whatever scmon says
+    {
+      Engine e = fresh();
+      setsc(0, sc::kPump, 0, {127, 0, 20, 20, 64, 50});
+      ins::control.scmon[0] = 1;
+      auto y = pump(e, 3000, {960});
+      CHECK(y[959] == 0.5f && std::fabs(y[960]) < 1e-6f);
+    }
+    // a sweep of both knobs, with and without MON, a loud key and a chirp: nothing but finite numbers (and no fault)
+    {
+      for (int sr_i = 0; sr_i < 2; ++sr_i) {
+        const float sr = sr_i ? 22050.0f : kSr;
+        std::vector<float> mem((size_t)ins::kLines * ins::kLine);
+        Engine e(sr);
+        e.Place((float(*)[ins::kLine])mem.data());
+        e.Reset();
+        ins::reset();
+        memset((void*)&sc::bus(), 0, sizeof(sc::Bus));
+        bool fin = true;
+        float peak = 0.0f;
+        for (int kb = 0; kb < 128; kb += 9)
+          for (int kw = 0; kw < 128; kw += 9) {
+            setsc(0, sc::kDuck, 0, {64, 60, 10, 10, kb, kw});
+            ins::control.scmon[0] = (kb + kw) & 1;
+            float k[kB], y[kB];
+            for (int it = 0; it < 200; ++it) {
+              for (int j = 0; j < kB; ++j) {
+                const float t = (float)(it * kB + j);
+                k[j] = 0.9f * std::sin(0.00004f * t * t) + ((it * 7 + j) % 3 == 0 ? 0.3f : -0.2f);
+                y[j] = 0.4f * std::sin(0.02f * t);
+              }
+              sc::write(0, k, kB);
+              e.ProcessMono(0, y, kB, ins::control);
+              for (int j = 0; j < kB; ++j) fin = fin && std::isfinite(y[j]), peak = std::max(peak, std::fabs(y[j]));
+            }
+          }
+        printf("KBAS x KWID sweep at %.0f Hz: finite %d, peak %.2f, faults %d\n", sr, (int)fin, peak, (int)e.Faults());
+        CHECK(fin && peak < 4.0f && e.Faults() == 0);
+      }
+      ins::control.scmon[0] = 0;
+    }
+  }
+
+  // ---- MON's control side: a per chain flag, off by default, off after a mode or source change, console and /status
+  {
+    ins::reset();
+    char o[400];
+    ins::set_sc_mode(1, sc::kDuck);
+    CHECK(!ins::sc_mon(1));
+    CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o) && ins::sc_mon(1) && ins::control.scmon[1] == 1);
+    static char js[16384];
+    ins::json(js, sizeof js);
+    CHECK(strstr(js, "\"mon\":1") != nullptr);
+    CHECK(ins::command("ins=V2:sc:mon:off", o, sizeof o) && !ins::sc_mon(1));
+    ins::json(js, sizeof js);
+    CHECK(!strstr(js, "\"mon\":1") && strstr(js, "\"mon\":0"));
+    ins::set_sc_mon(1, true);
+    ins::set_sc_src(1, 3);                    // a source change: MON off
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mon(1, true);
+    ins::set_sc_mode(1, sc::kPump);           // a mode change: MON off
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mon(1, true);                 // PUMP has no key to hear: refused
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mon(5, true);                 // a chain whose stage is off: refused
+    CHECK(!ins::sc_mon(5));
+    ins::set_sc_mode(1, sc::kDuck);
+    ins::set_sc_mon(1, true);
+    ins::set_sc_mode(1, sc::kOff);
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mode(1, sc::kDuck);
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mon(1, true);
+    ins::set_sc_param(1, 4, 50);              // a knob does not turn it off
+    CHECK(ins::sc_mon(1));
+    ins::sc_mon_off_all();
+    CHECK(!ins::sc_mon(1));
+    ins::set_sc_mon(1, true);
+    ins::reset();                             // a kit change / reset: off
+    CHECK(!ins::sc_mon(1) && ins::control.scmon[1] == 0);
+    printf("MON control: off by default, console + /status, off on a mode / source change, PUMP / OFF refuse it\n");
+  }
+
+  // ---- the Rytm's SIDECHAIN view: T1 toggles MON (a trig key the page takes in that view only, its LED shows it), the knobs
+  // are KBAS / KWID, leaving the view or the page turns it off
+  {
+    ins::reset();
+    int ki = -1, km = -1;
+    for (int i = 0; i < ui::extra_pages(); ++i) {
+      if (!strcmp(ui::extra_page(i).title, "INSERT")) ki = i;
+      if (!strcmp(ui::extra_page(i).title, "MASTER")) km = i;
+    }
+    const ui::ExtraPage& pg = ui::extra_page(ki);
+    ui::ins_page_set(false, 0, 0, 0);
+    CHECK(!pg.trigs_now || pg.trigs_now() == 0);           // not in the SIDECHAIN view: no trig key is the page's
+    CHECK(pg.key(0x41) && pg.key(0x43));                  // RIGHT, DOWN: the SIDECHAIN view
+    CHECK(pg.trigs_now && pg.trigs_now() == 0);            // the stage is off: no MON key
+    pg.enc(0, 2, false);                                    // DUCK
+    CHECK(ins::sc_mode(0) == sc::kDuck && pg.trigs_now() == 1u);
+    uint8_t leds[16];
+    CHECK(pg.leds_now && pg.leds_now(leds));
+    const uint8_t led_off = leds[0];
+    CHECK(pg.key(0));                                       // T1: MON on
+    CHECK(ins::sc_mon(0));
+    CHECK(pg.leds_now(leds) && leds[0] != led_off);
+    CHECK(pg.key(0) && !ins::sc_mon(0));                    // again: off
+    CHECK(pg.key(0) && ins::sc_mon(0));
+    {   // the shots of the view (build/rui_sidechain): DUCK with KBAS / KWID set, MON off and on, and a source that is not there
+      const std::string dir = rui_png_dir("RUI_SIDECHAIN", "build/rui_sidechain");
+      uint8_t fb[ui::kBytes];
+      ui::Canvas sc_cv;
+      ins::set_sc_param(0, 4, 60), ins::set_sc_param(0, 5, 40);
+      ins::set_sc_mon(0, false);
+      CHECK(ui::remote_render(6 + ki, 0, nullptr, sc_cv));
+      ui::preview(sc_cv, fb);
+      rui_png(dir, "duck_kbas_kwid.png", fb);
+      ins::set_sc_mon(0, true);
+      CHECK(ui::remote_render(6 + ki, 0, nullptr, sc_cv));
+      ui::preview(sc_cv, fb);
+      rui_png(dir, "duck_mon_on.png", fb);
+      ins::set_sc_mon(0, false);
+    }
+    CHECK(pg.key(0));
+    CHECK(pg.key(0x44) && !ins::sc_mon(0));                // YES: another chain (the bus): MON off
+    CHECK(pg.key(0x44) && pg.key(0x44) && pg.key(0x44));   // bus 2, 3, then the voice again
+    CHECK(pg.key(0) && ins::sc_mon(0));
+    CHECK(pg.key(0x43) && !ins::sc_mon(0));                // DOWN, back to the EQ view: MON off
+    CHECK(pg.key(0x43));                                    // again to the SIDECHAIN view
+    CHECK(pg.key(0) && ins::sc_mon(0));
+    ui::sc_mon_page_left();                                 // the page left (remote.cpp): MON off on every chain
+    CHECK(!ins::sc_mon(0));
+    // the MASTER page's view: the same T1, M1 / M2 by YES
+    ins::reset();
+    CHECK(km >= 0);
+    const ui::ExtraPage& mg = ui::extra_page(km);
+    CHECK(mg.key(0x41) && mg.key(0x43));                  // RIGHT, DOWN
+    CHECK(mg.trigs_now && mg.trigs_now() == 0);
+    mg.enc(0, 2, false);                                    // DUCK on M1
+    CHECK(ins::sc_mode(ins::kM0) == sc::kDuck && mg.trigs_now() == 1u);
+    CHECK(mg.key(0) && ins::sc_mon(ins::kM0));
+    CHECK(mg.key(0x44) && !ins::sc_mon(ins::kM0));          // YES: M2 (another chain: MON off)
+    CHECK(mg.trigs_now() == 0);                              // M2's stage is off: no MON key
+    CHECK(mg.key(0x44) && mg.key(0) && ins::sc_mon(ins::kM0) && mg.key(0x43) && !ins::sc_mon(ins::kM0));   // M1 again, MON, out of the view: off
+    ins::reset();
   }
 
   // ---- off: untouched, and no work
@@ -322,6 +582,17 @@ int main() {
     CHECK(!strcmp(t, "INST"));
     ins::sc_value_text(sc::kDuck, 4, 0, t, sizeof t);
     CHECK(!strcmp(t, "OFF"));
+    ins::sc_value_text(sc::kDuck, 5, 0, t, sizeof t);
+    CHECK(!strcmp(t, "OFF"));
+    ins::sc_value_text(sc::kDuck, 4, 1, t, sizeof t);
+    CHECK(!strcmp(t, "20HZ"));
+    ins::sc_value_text(sc::kDuck, 4, 127, t, sizeof t);
+    CHECK(!strcmp(t, "19.6K"));
+    ins::sc_value_text(sc::kDuck, 5, 1, t, sizeof t);
+    CHECK(!strcmp(t, "0.5 OCT"));
+    ins::sc_value_text(sc::kDuck, 5, 127, t, sizeof t);
+    CHECK(!strcmp(t, "9.9 OCT"));
+    CHECK(!strcmp(sc::label(sc::kDuck, 4), "KBAS") && !strcmp(sc::label(sc::kDuck, 5), "KWID"));
     // the console and the json
     char o[400];
     CHECK(ins::command("ins=V2:sc:mode:pump", o, sizeof o) && ins::sc_mode(1) == sc::kPump);
@@ -368,6 +639,10 @@ int main() {
     ins::set_sc_mode(2, sc::kDuck);
     mod::param_label(t, pl, sizeof pl);
     CHECK(!strcmp(pl, "STHR"));
+    mod::param_label(mod::tid(mod::kIns, 2, 16), pl, sizeof pl);   // S5 / S6 in DUCK are KBAS / KWID
+    CHECK(!strcmp(pl, "SKBAS") || !strcmp(pl, "SKBA"));
+    mod::param_label(mod::tid(mod::kIns, 2, 17), pl, sizeof pl);
+    CHECK(!strcmp(pl, "SKWID") || !strcmp(pl, "SKWI"));
     printf("mod: I3:S1..S6 (kIns 12..17) are targets, offsets on the knob, labels follow the mode\n");
     ins::reset();
   }
@@ -446,7 +721,7 @@ int main() {
     printf("source change: no spurious trig from the new source's counter\n");
   }
 
-  // ---- H1 on the Rytm view / L4: a mode knob nudge that does not change the mode keeps the knobs; DUCK's unused knob H does nothing
+  // ---- H1 on the Rytm view / L4: a mode knob nudge that does not change the mode keeps the knobs; DUCK's H is KWID
   {
     ins::reset();
     int ki = -1;
@@ -462,8 +737,8 @@ int main() {
     ui::extra_page(ki).enc(0, 0, false);
     CHECK(ins::sc_mode(0) == sc::kDuck && ins::sc_param(0, 0) == thr);
     const int h = ins::sc_param(0, 5);
-    ui::extra_page(ki).enc(7, 5, false);          // H: DUCK has no sixth knob
-    CHECK(ins::sc_param(0, 5) == h);
+    ui::extra_page(ki).enc(7, 5, false);          // H: DUCK's sixth knob is KWID now
+    CHECK(ins::sc_param(0, 5) != h);
     ins::reset();
   }
 
@@ -531,9 +806,10 @@ int main() {
 
   // ---- the cost: a stereo bus chain, 16-frame chunks (what the bus and master chains see), and a mono voice chain
   {
-    auto cost = [](int mode, bool stereo) {
+    auto cost = [](int mode, bool stereo, bool keyfilter = true) {
       Engine e = fresh();
-      setsc(8, mode, 0, mode == sc::kPump ? std::vector<int>{100, 5, 30, 60, 40, 50} : std::vector<int>{60, 80, 30, 50, 60, 0});
+      setsc(8, mode, 0, mode == sc::kPump ? std::vector<int>{100, 5, 30, 60, 40, 50}
+                                          : std::vector<int>{60, 80, 30, 50, keyfilter ? 60 : 0, keyfilter ? 60 : 0});
       std::vector<float> key(kB), l(kB), r(kB);
       const int N = 60000;
       uint64_t ns = 0;
@@ -553,9 +829,14 @@ int main() {
     for (int m = sc::kPump; m <= sc::kDuck; ++m)
       for (int st = 0; st < 2; ++st) {
         double ns = cost(m, st);
-        printf("CPU: %s %s, %.0f ns per 16-frame chunk = %.3f %% of a core at 48 kHz (this Mac, -O2; the Pi is ~3-5x slower)\n",
-               sc::mode_name(m), st ? "stereo" : "mono", ns, ns * 3000.0 / 1e9 * 100.0);
+        printf("CPU: %s %s%s, %.0f ns per 16-frame chunk = %.3f %% of a core at 48 kHz (this Mac, -O2; the Pi is ~3-5x slower)\n",
+               sc::mode_name(m), st ? "stereo" : "mono", m == sc::kDuck ? " (KBAS + KWID on)" : "", ns, ns * 3000.0 / 1e9 * 100.0);
       }
+    for (int st = 0; st < 2; ++st) {
+      double ns = cost(sc::kDuck, st, false);
+      printf("CPU: DUCK %s (KBAS, KWID OFF), %.0f ns per 16-frame chunk = %.3f %% of a core at 48 kHz\n", st ? "stereo" : "mono", ns,
+             ns * 3000.0 / 1e9 * 100.0);
+    }
   }
   printf("test_sidechain: ALL OK\n");
   return 0;

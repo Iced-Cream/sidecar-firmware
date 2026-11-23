@@ -115,7 +115,7 @@ describe("sidechain (0.5.0)", () => {
   const sc = [
     { m: "PUMP", s: "BD", p: [90, 0, 20, 60, 40, 50], l: [90, 0, 20, 60, 40, 50], n: ["DPTH", "ATT", "HOLD", "REL", "SHAP", "THR"], st: "NO STEMS" },
     ...Array.from({ length: 10 }, () => ({ m: "OFF" })),
-    { m: "DUCK", s: "AINLR", p: [50, 70, 10, 50, 99, 0], l: [50, 70, 10, 50, 99, 0], n: ["THR", "RAT", "ATT", "REL", "HPF", "-"], st: "OK" },
+    { m: "DUCK", s: "AINLR", p: [50, 70, 10, 50, 99, 0], l: [50, 70, 10, 50, 99, 0], n: ["THR", "RAT", "ATT", "REL", "KBAS", "KWID"], st: "OK", mon: 1 },
     { m: "OFF" },
   ];
   it("reads the 13 stages, and an older build as unsupported", () => {
@@ -127,6 +127,8 @@ describe("sidechain (0.5.0)", () => {
     expect(r.list[1].mode).toBe("OFF");
     expect(r.list[11]).toMatchObject({ id: "M1", mode: "DUCK", src: "AINLR" });
     expect(r.list[11].p).toEqual([50, 70, 10, 50, 99, 0]);
+    expect(r.list[11].mon).toBe(true);
+    expect(r.list[0].mon).toBe(false);
     const old = sidechains({ ins: {} });
     expect(old.supported).toBe(false);
     expect(old.list.every((x) => x.mode === "OFF")).toBe(true);
@@ -142,7 +144,12 @@ describe("sidechain (0.5.0)", () => {
     expect(scText("DUCK", 0, 127)).toBe("-40 dB");
     expect(scText("DUCK", 1, 0)).toBe("1.0:1");
     expect(scText("DUCK", 4, 0)).toBe("off");
-    expect(scText("DUCK", 4, 127)).toBe("2560 Hz");
+    expect(scText("DUCK", 4, 1)).toBe("20 Hz");
+    expect(scText("DUCK", 4, 127)).toBe("19.6 kHz");
+    expect(scText("DUCK", 4, 73)).toBe("1.0 kHz");
+    expect(scText("DUCK", 5, 0)).toBe("off");
+    expect(scText("DUCK", 5, 1)).toBe("0.5 oct");
+    expect(scText("DUCK", 5, 127)).toBe("9.9 oct");
   });
   it("sends the console lines", () => {
     expect(mixCmd.scMode("V3", "PUMP")).toBe("ins=V3:sc:mode:pump");
@@ -150,6 +157,8 @@ describe("sidechain (0.5.0)", () => {
     expect(mixCmd.scSrc("B1", "AINLR")).toBe("ins=B1:sc:src:ainlr");
     expect(mixCmd.scParam("V1", 5, 300)).toBe("ins=V1:sc:p6:127");
     expect(mixCmd.scParam("V1", 0, -4)).toBe("ins=V1:sc:p1:0");
+    expect(mixCmd.scMon("V2", true)).toBe("ins=V2:sc:mon:on");
+    expect(mixCmd.scMon("M1", false)).toBe("ins=M1:sc:mon:off");
   });
   it("draws the pump envelope: full gain, down by the depth, back", () => {
     const d = pumpPath([127, 0, 20, 60, 64, 50], 360, 90);

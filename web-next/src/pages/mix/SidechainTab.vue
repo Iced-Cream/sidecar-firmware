@@ -3,7 +3,7 @@
      Rytm track's stem, the audio in, or a Sidecar voice. Stems exist only in Overbridge mode: without them DUCK does nothing (PUMP on a track runs on its MIDI trigs),
      and the page says so. -->
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import Card from "../../ui/Card.vue";
 import Fader from "../../ui/Fader.vue";
 import Segmented from "../../ui/Segmented.vue";
@@ -29,9 +29,17 @@ const why = computed(() => {
 const hint = computed(() =>
   cur.value.mode === "PUMP"
     ? "Each trig of the source starts the envelope. An audio in has no trigs: its level onset above THR does."
-    : "The insert COMP, keyed by the source's level: the chain is turned down while the source is over THR. HPF keeps the key's low end out.",
+    : "The insert COMP, keyed by the source's level: the chain is turned down while the source is over THR. KBAS and KWID shape the key: a high pass at KBAS (18 dB per octave) and a low pass KWID octaves above it (12 dB per octave); MON lets you hear it.",
 );
 const path = computed(() => pumpPath(cur.value.p, 360, 90));
+
+// MON (0.5.2): the chain plays its filtered key instead of its output. Not saved; it ends with the page or the chain shown.
+const monOn = computed(() => sc.value.list.filter((x) => x.mon).map((x) => x.id));
+function monOff(ids: string[]) {
+  for (const id of ids) send(mixCmd.scMon(id, false));
+}
+watch(chain, (_n, old) => monOff(monOn.value.filter((id) => id === old)));
+onBeforeUnmount(() => monOff(monOn.value));
 </script>
 
 <template>
@@ -69,6 +77,18 @@ const path = computed(() => pumpPath(cur.value.p, 360, 90));
         <line x1="0" y1="1" x2="360" y2="1" class="ref" />
         <path :d="path" class="line" />
       </svg>
+      <div v-if="cur.mode === 'DUCK'" class="row">
+        <button
+          type="button"
+          class="pill"
+          :aria-pressed="cur.mon"
+          :disabled="!paired"
+          @click="send(mixCmd.scMon(cur.id, !cur.mon))"
+        >
+          Monitor the key (MON)
+        </button>
+        <span class="small">{{ cur.mon ? "You hear the filtered key instead of this chain. It switches off when you leave this page." : "Plays the filtered key in place of the chain, to set KBAS and KWID by ear." }}</span>
+      </div>
       <div class="faders">
         <template v-for="(n, k) in cur.names.slice(0, 6)" :key="`${cur.mode}${k}`">
           <Fader

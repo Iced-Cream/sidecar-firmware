@@ -1324,7 +1324,7 @@ int main() {
       FILE* fp = fopen(fn.c_str(), "rb");
       size_t n = fp ? fread(got, 1, sizeof got - 1, fp) : 0;
       if (fp) fclose(fp);
-      CHECK(n > 0 && strstr(got, "SC V1 PUMP CP 77 0 20 60 40 50\n") && strstr(got, "SC B2 DUCK AINLR 50 70 10 50 99 0\n") &&
+      CHECK(n > 0 && strstr(got, "SC V1 PUMP CP 77 0 20 60 40 50\n") && strstr(got, "SCK B2 DUCK AINLR 50 70 10 50 99 0\n") &&
             strstr(got, "SC M2 PUMP V7 90 0 20 60 40 50\n") && !strstr(got, "SC V2"));
       ins::reset();
       CHECK(!ins::sc_any_on());
@@ -1335,6 +1335,43 @@ int main() {
             ins::sc_src(ins::kM0 + 1) == sc::kV0 + 6 && !ins::sc_on(1));
       CHECK(ins::control.scmode[0] == sc::kPump && sc::bus().wanted != 0u);
       printf("card: the SC line round trip (%s)\n", fn.c_str());
+      ins::reset();
+    }
+    // 0.5.2: an old card's "SC V1 DUCK BD 50 70 10 50 100 0" (HPF in the fifth knob, the sixth unused) loads as the nearest KBAS
+    // with KWID OFF (the same corner); the new line is "SCK ..." and is read as it is; MON is never saved
+    {
+      const char hand[] = "SC V1 DUCK BD 50 70 10 50 100 0\nSC V2 DUCK CP 50 70 10 50 0 0\nSC V3 PUMP BD 90 0 20 60 40 50\n"
+                          "SC V4 DUCK RS 50 70 10 50 127 0\nSC V5 DUCK RS 50 70 10 50 1 0\nSCK V6 DUCK RS 50 70 10 50 99 33\n";
+      std::string fn = std::string(tmpl) + "/.rytm/ins/INS/k014.txt";
+      FILE* fp = fopen(fn.c_str(), "wb");
+      fwrite(hand, 1, sizeof hand - 1, fp);
+      fclose(fp);
+      project_fill_begin();
+      loaded();
+      ins::kit_changed(4), ins::kit_changed(13);   // kit 14: that file
+      auto old_hz = [](int v) { return 40.0f * std::exp2(6.0f * (float)v / 127.0f); };
+      const int k1 = ins::sc_param(0, 4), k4 = ins::sc_param(3, 4), k5 = ins::sc_param(4, 4);
+      CHECK(ins::sc_mode(0) == sc::kDuck && ins::sc_src(0) == 0 && ins::sc_param(0, 5) == 0 && k1 > 0);
+      CHECK(std::fabs(std::log2(sc::kbas_hz(k1) / old_hz(100))) < 0.1f);   // the same corner, within a tenth of an octave
+      CHECK(std::fabs(std::log2(sc::kbas_hz(k4) / old_hz(127))) < 0.1f && std::fabs(std::log2(sc::kbas_hz(k5) / old_hz(1))) < 0.1f);
+      CHECK(ins::sc_param(1, 4) == 0 && ins::sc_param(1, 5) == 0);          // HPF off -> KBAS OFF
+      CHECK(ins::sc_mode(2) == sc::kPump && ins::sc_param(2, 4) == 40);    // PUMP's lines are as they were
+      CHECK(ins::sc_param(5, 4) == 99 && ins::sc_param(5, 5) == 33);       // SCK: as written
+      printf("card: an old DUCK line's HPF %d -> KBAS %d (%.0f Hz, was %.0f Hz), KWID OFF\n", 100, k1, sc::kbas_hz(k1), old_hz(100));
+      // MON is not saved: a card written with it on, read back, has it off
+      ins::set_sc_param(0, 0, 51);   // (a change, so the file is written)
+      ins::set_sc_mon(0, true);
+      CHECK(ins::sc_mon(0));
+      host_fake_time(true, us += 1100000);
+      for (int i = 0; i < 64; ++i) idle_save();
+      char got[1200] = {};
+      fp = fopen(fn.c_str(), "rb");
+      size_t n = fp ? fread(got, 1, sizeof got - 1, fp) : 0;
+      if (fp) fclose(fp);
+      CHECK(n > 0 && strstr(got, "SCK V1 DUCK BD 51 70 10 50 ") && !strstr(got, "SC V1 DUCK") && !strstr(got, "MON") && !strstr(got, "mon"));
+      ins::kit_changed(4), ins::kit_changed(13);
+      CHECK(!ins::sc_mon(0) && ins::sc_param(0, 4) == k1 && ins::sc_param(0, 0) == 51);
+      printf("card: migrated, rewritten as SCK, MON not saved\n");
       ins::reset();
     }
     // the OUT route (core/fx/out.h) in the kit's file: "OUT V3 POST 90 20 100 30", read back; a default voice no line

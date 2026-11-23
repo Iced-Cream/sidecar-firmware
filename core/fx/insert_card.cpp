@@ -119,15 +119,22 @@ bool from_line(const char* b) {
     set_sc_mode(c, sc::kOff);
     return true;
   }
-  if (n >= 4 && same_ci(w[0], "SC")) {   // 0.5.0 SIDECHAIN: SC V1 PUMP BD 90 0 20 60 40 50 (MODE SRC P1..P6; a missing P keeps the mode's default)
+  // 0.5.0 SIDECHAIN: SC V1 PUMP BD 90 0 20 60 40 50 (MODE SRC P1..P6; a missing P keeps the mode's default). 0.5.2: a DUCK stage is
+  // written "SCK V1 DUCK BD 50 70 10 50 KBAS KWID"; an older card's "SC V1 DUCK ..." has HPF in its fifth knob (0.5.0 / 0.5.1): it
+  // loads as the nearest KBAS (the same corner) with KWID OFF
+  if (n >= 4 && (same_ci(w[0], "SC") || same_ci(w[0], "SCK"))) {
     int c = chain_from_name(w[1]), m = sc::mode_from_name(w[2]), sr = sc::src_from_name(w[3]);
     if (c < 0 || m <= 0 || sr < 0) return false;
+    const bool old_duck = m == sc::kDuck && same_ci(w[0], "SC");
     set_sc_mode(c, m);
     set_sc_src(c, sr);
     for (int k = 0; k < sc::kParams && 4 + k < n; ++k) {
       int v = num(w[4 + k]);
+      if (old_duck && k == 4 && v >= 0) v = sc::kbas_from_old_hpf(v);
+      if (old_duck && k == 5) v = 0;
       if (v >= 0) set_sc_param(c, k, v);
     }
+    if (old_duck && n < 9) set_sc_param(c, 4, 0), set_sc_param(c, 5, 0);   // (a line without the knob: the defaults, which are OFF)
     return true;
   }
   if (n < 3) return false;
@@ -288,7 +295,7 @@ static bool save_text(bool queue) {
   }
   for (int c = 0; c < kChains; ++c) {   // 0.5.0 SIDECHAIN: only a chain whose stage is on (the knobs, never a modulation)
     if (!sc_on(c)) continue;
-    add(b, sniprintf(b, sizeof b, CORE_STR("SC %s %s %s %d %d %d %d %d %d\n"), chain_name(c), sc::mode_name(sc_mode(c)),
+    add(b, sniprintf(b, sizeof b, CORE_STR("%s %s %s %s %d %d %d %d %d %d\n"), sc_mode(c) == sc::kDuck ? "SCK" : "SC", chain_name(c), sc::mode_name(sc_mode(c)),
                      sc::src_name(sc_src(c)), sc_param(c, 0), sc_param(c, 1), sc_param(c, 2), sc_param(c, 3), sc_param(c, 4),
                      sc_param(c, 5)));
   }

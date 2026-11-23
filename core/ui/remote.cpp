@@ -621,6 +621,7 @@ CORE_COLD bool scrolls_updown(const ExtraPage* x);   // (below, with the mask's 
 CORE_COLD void lfo_left(int from, int to) {
   const ExtraPage* x = extra_of(from);
   if (from != to && x && !strcmp(x->title, "LFO")) lfo_page_reset();
+  if (from != to && x && (!strcmp(x->title, "INSERT") || !strcmp(x->title, "MASTER"))) sc_mon_page_left();   // 0.5.2: MON ends with the page
 }
 
 CORE_COLD void shortcut_over(int from) {   // a page shown by a shortcut over `from` (the MENU's pick: none)
@@ -2186,6 +2187,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
       keys_map_drop(), s.map_over = false;   // (a release lost with the link: no map left up)
+      sc_mon_page_left();                    // 0.5.2: and no MON left on
       release_held();                        // 0.5.0: and every key a page holds
       s.up_down = false;
       // A status popup goes with the old link. The pairing code's modal does not: it is owed until it has been on

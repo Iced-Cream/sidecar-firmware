@@ -63,7 +63,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
   c.clear();
   char lab[8][6], val[8][8], b[kTextLen + 1];
   int e = mp.touched;
-  if (mp.sc) return sc_view_draw(c, page, npages, ins::kM0 + mp.mch, "MASTER SC", mp.mch ? "M2" : "M1", "LEFT: BACK  YES: M1 M2");
+  if (mp.sc) return sc_view_draw(c, page, npages, ins::kM0 + mp.mch, "MASTER SC", mp.mch ? "M2" : "M1", "YES: M1 M2  T1: MON");
   if (mp.eq) {
     header(c, "MASTER EQ", page, npages, "");
     strip(c);
@@ -175,9 +175,10 @@ CORE_COLD uint16_t mfx_enc_tid(int e) {
 
 CORE_COLD bool mfx_key(int code) {
   if (code == 0x43 && mp.eq && !mp.sc) return mp.sc = true, mp.touched = -1, true;   // DOWN on the EQ view: the SIDECHAIN view
-  if ((code == 0x40 || code == 0x43) && mp.sc) return mp.sc = false, mp.touched = -1, true;   // LEFT, DOWN: back to the EQ view
-  if (code == 0x44 && mp.sc) return mp.mch ^= 1, true;                                // YES: M1 <-> M2
-  if (code == 0x45 && mp.sc) return mp.sc = mp.eq = false, mp.touched = -1, true;     // NO: out
+  if (mp.sc && sc_view_key(ins::kM0 + mp.mch, code)) return true;                     // 0.5.2 T1: MON
+  if ((code == 0x40 || code == 0x43) && mp.sc) return ins::sc_mon_off_all(), mp.sc = false, mp.touched = -1, true;   // LEFT, DOWN: back to the EQ view
+  if (code == 0x44 && mp.sc) return ins::sc_mon_off_all(), mp.mch ^= 1, true;         // YES: M1 <-> M2
+  if (code == 0x45 && mp.sc) return ins::sc_mon_off_all(), mp.sc = mp.eq = false, mp.touched = -1, true;     // NO: out
   if (code == 0x41 && !mp.eq) return mp.eq = true, mp.touched = -1, true;    // RIGHT: the EQ view
   if ((code == 0x40 || code == 0x45) && mp.eq) return mp.eq = false, mp.touched = -1, true;   // LEFT, NO: back
   if (code == 0x44) return master::set_byp(!master::control.byp), true;      // YES: bypass
@@ -196,7 +197,10 @@ CORE_COLD bool mfx_shown() {
 
 }  // namespace
 
-UI_ROM const ExtraPage kMasterPage = {"MASTER", mfx_shown, mfx_draw, mfx_enc, mfx_key, 0xFF, false, nullptr, nullptr, nullptr,
+CORE_COLD uint16_t mfx_trigs() { return mp.sc ? sc_view_trigs(ins::kM0 + mp.mch) : 0; }   // 0.5.2: T1 is MON's in the SIDECHAIN view
+CORE_COLD bool mfx_leds(uint8_t c[16]) { return mp.sc && sc_view_leds(ins::kM0 + mp.mch, c); }
+
+UI_ROM const ExtraPage kMasterPage = {"MASTER", mfx_shown, mfx_draw, mfx_enc, mfx_key, 0xFF, false, nullptr, mfx_trigs, mfx_leds,
                                       false, nullptr, mfx_enc_tid};
 
 #if CORE_UI_TOOLS

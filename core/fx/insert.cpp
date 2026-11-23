@@ -406,8 +406,8 @@ const char* const kSrcNames[kSrcs] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", 
                                       "AINL", "AINR", "AINLR", "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8"};
 const char* const kLabelsM[kModes][kParams] = {{"-", "-", "-", "-", "-", "-"},
                                               {"DPTH", "ATT", "HOLD", "REL", "SHAP", "THR"},
-                                              {"THR", "RAT", "ATT", "REL", "HPF", "-"}};
-const uint8_t kDefs[kModes][kParams] = {{0, 0, 0, 0, 0, 0}, {90, 0, 20, 60, 40, 50}, {50, 70, 10, 50, 40, 0}};
+                                              {"THR", "RAT", "ATT", "REL", "KBAS", "KWID"}};
+const uint8_t kDefs[kModes][kParams] = {{0, 0, 0, 0, 0, 0}, {90, 0, 20, 60, 40, 50}, {50, 70, 10, 50, 0, 0}};
 bool same_c(const char* a, const char* b) {
   for (; *a && *b; ++a, ++b) {
     char x = *a >= 'a' && *a <= 'z' ? (char)(*a - 32) : *a, y = *b >= 'a' && *b <= 'z' ? (char)(*b - 32) : *b;
@@ -466,12 +466,17 @@ void sc_vt(int m, int k, int v, char* b, int cap) {
       }
       case 2: return sc::ms_text((int)((0.3f + 30.0f * p * p) * 10.0f + 0.5f), b, cap);
       case 3: return sc::ms_text((int)((40.0f + 600.0f * p) * 10.0f + 0.5f), b, cap);
-      case 4: {
+      case 4: {   // KBAS
         if (!v) return (void)sniprintf(b, cap, "OFF");
-        int h = (int)(40.0f * fast_exp2(6.0f * p) + 0.5f);
+        const int h = (int)(sc::kbas_hz(v) + 0.5f);
         if (h < 1000) sniprintf(b, cap, CORE_STR("%dHZ"), h);
         else sniprintf(b, cap, CORE_STR("%d.%dK"), h / 1000, (h % 1000) / 100);
         return;
+      }
+      case 5: {   // KWID, octaves
+        if (!v) return (void)sniprintf(b, cap, "OFF");
+        const int o10 = (int)(sc::kwid_oct(v) * 10.0f + 0.5f);
+        return (void)sniprintf(b, cap, CORE_STR("%d.%d OCT"), o10 / 10, o10 % 10);
       }
       default: break;
     }
@@ -498,7 +503,7 @@ void sc_wanted() {
 }
 void sc_clear() {
   for (int c = 0; c < kChains; ++c) {
-    control.scmode[c] = sc::kOff, control.scsrc[c] = 0;
+    control.scmode[c] = sc::kOff, control.scsrc[c] = 0, control.scmon[c] = 0;
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = 0, sc_refresh(c, k);
   }
   sc_wanted();
@@ -512,6 +517,7 @@ void set_sc_mode(int c, int m, bool keep) {
   if (!keep)
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = sc::def(m, k);
   control.scmode[c] = (uint8_t)m;
+  control.scmon[c] = 0;   // 0.5.2: MON ends with a mode change
   for (int k = 0; k < sc::kParams; ++k) sc_refresh(c, k);
   sc_wanted();
   ++g_stats.sets;
@@ -519,6 +525,7 @@ void set_sc_mode(int c, int m, bool keep) {
 }
 void set_sc_src(int c, int s) {
   if (!sc_valid(c) || s < 0 || s >= sc::kSrcs) return;
+  if (control.scsrc[c] != s) control.scmon[c] = 0;   // 0.5.2: MON ends with a source change
   control.scsrc[c] = (uint8_t)s;
   sc_wanted();
   ++g_stats.sets;
@@ -530,6 +537,18 @@ void set_sc_param(int c, int k, int v) {
   sc_refresh(c, k);
   ++g_stats.sets;
   changed();
+}
+// 0.5.2 MON: DUCK plays its filtered key instead of the chain's output. Per chain, never saved; only on a DUCK stage
+void set_sc_mon(int c, bool on) {
+  if (!sc_valid(c)) return;
+  const uint8_t v = on && control.scmode[c] == sc::kDuck ? 1 : 0;
+  if (control.scmon[c] == v) return;
+  control.scmon[c] = v;
+  ++g_stats.sets;
+}
+bool sc_mon(int c) { return sc_valid(c) && control.scmon[c] != 0; }
+void sc_mon_off_all() {
+  for (int c = 0; c < kChains; ++c) control.scmon[c] = 0;
 }
 int sc_mode(int c) { return sc_valid(c) ? control.scmode[c] : 0; }
 int sc_src(int c) { return sc_valid(c) ? control.scsrc[c] : 0; }
@@ -756,7 +775,7 @@ bool command(const char* p, char* o, int cap) {
   int c = chain_from_name(a);
   static const char kHelp[] =
       "ins=C:S:type:T|p1..p4:V|off (C V1..V8 B1..B3, S A|B), ins=Bn:S:mix:V (a send TYPE's), ins=C:eq:hpf|lpf|low|high|base|width:V|off, "
-      "ins=C:sc:mode:off|pump|duck, ins=C:sc:src:bd..cb|ainl|ainr|ainlr|v1..v8, ins=C:sc:p1..p6:V (C V1..V8 B1..B3 M1 M2), "
+      "ins=C:sc:mode:off|pump|duck, ins=C:sc:src:bd..cb|ainl|ainr|ainlr|v1..v8, ins=C:sc:p1..p6:V, ins=C:sc:mon:on|off (DUCK: hear the filtered key; C V1..V8 B1..B3 M1 M2), "
       "ins=Vn:send:B:V (B 1..3), ins=b3:route:pre|post, ins=reset";
   if (c < 0) {
     sniprintf(o, cap, "%s", kHelp);
@@ -828,6 +847,12 @@ bool command(const char* p, char* o, int cap) {
         return true;
       }
       set_sc_src(c, sr);
+    } else if (same_ci(key, "mon")) {
+      if (!same_ci(val, "on") && !same_ci(val, "off") && !same_ci(val, "1") && !same_ci(val, "0")) {
+        sniprintf(o, cap, "%s", kHelp);
+        return true;
+      }
+      set_sc_mon(c, same_ci(val, "on") || same_ci(val, "1"));
     } else if ((key[0] == 'p' || key[0] == 'P') && key[1] >= '1' && key[1] <= '0' + sc::kParams && !key[2] && num(val) >= 0) {
       set_sc_param(c, key[1] - '1', num(val)), fx::edited(mod::tid(mod::kIns, c, 12 + key[1] - '1'));
     } else {
@@ -838,9 +863,9 @@ bool command(const char* p, char* o, int cap) {
     char v6[sc::kParams][8], why[16];
     for (int k = 0; k < sc::kParams; ++k) sc_value_text(m, k, sc_param(c, k), v6[k], sizeof v6[k]);
     sc_status(c, why, sizeof why);
-    sniprintf(o, cap, CORE_STR("ins: %s SIDECHAIN %s src %s %s %s %s %s %s %s %s %s %s %s %s %s (%s)"), kChainNames[c], sc::mode_name(m),
+    sniprintf(o, cap, CORE_STR("ins: %s SIDECHAIN %s src %s %s %s %s %s %s %s %s %s %s %s %s %s (%s)%s"), kChainNames[c], sc::mode_name(m),
               sc::src_name(sc_src(c)), sc::label(m, 0), v6[0], sc::label(m, 1), v6[1], sc::label(m, 2), v6[2], sc::label(m, 3), v6[3],
-              sc::label(m, 4), v6[4], sc::label(m, 5), v6[5], why);
+              sc::label(m, 4), v6[4], sc::label(m, 5), v6[5], why, sc_mon(c) ? " MON" : "");
     return true;
   }
   int s = same_ci(b, "A") || same_ci(b, "1") ? 0 : same_ci(b, "B") || same_ci(b, "2") ? 1 : -1;
@@ -953,11 +978,11 @@ int json(char* o, int cap) {
       char why[16];
       sc_status(c, why, sizeof why);
       k = sniprintf(o + n, cap - n,
-                    CORE_STR("%s{\"m\":\"%s\",\"s\":\"%s\",\"p\":[%d,%d,%d,%d,%d,%d],\"l\":[%d,%d,%d,%d,%d,%d],\"n\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"],\"st\":\"%s\"}"),
+                    CORE_STR("%s{\"m\":\"%s\",\"s\":\"%s\",\"p\":[%d,%d,%d,%d,%d,%d],\"l\":[%d,%d,%d,%d,%d,%d],\"n\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"],\"st\":\"%s\",\"mon\":%d}"),
                     c ? "," : "", sc::mode_name(m), sc::src_name(sc_src(c)), sc_param(c, 0), sc_param(c, 1), sc_param(c, 2),
                     sc_param(c, 3), sc_param(c, 4), sc_param(c, 5), sc_playing(c, 0), sc_playing(c, 1), sc_playing(c, 2),
                     sc_playing(c, 3), sc_playing(c, 4), sc_playing(c, 5), sc::label(m, 0), sc::label(m, 1), sc::label(m, 2),
-                    sc::label(m, 3), sc::label(m, 4), sc::label(m, 5), why);
+                    sc::label(m, 3), sc::label(m, 4), sc::label(m, 5), why, sc_mon(c) ? 1 : 0);
     }
     if (k < 0 || k >= cap - n) return cap;
     n += k;

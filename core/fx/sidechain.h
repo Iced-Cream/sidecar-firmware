@@ -5,7 +5,8 @@
 //
 // MODE  OFF (the default: the stage is skipped, bit for bit, no CPU)
 //       PUMP  a trig-driven gain envelope: DPTH ATT HOLD REL SHAP (and THR, the onset level for a source with no trigs)
-//       DUCK  the INSERT COMP keyed by the source: THR RAT ATT REL, HPF on the key
+//       DUCK  the INSERT COMP keyed by the source: THR RAT ATT REL, and the key's band-pass KBAS (high pass, 18 dB/oct) and
+//             KWID (low pass, 12 dB/oct, KWID octaves above it); MON plays the filtered key instead of the chain (0.5.2)
 // SRC   0..11 a Rytm track BD SD RS CP BT LT MT HT CH OH CY CB (its Overbridge stem, shared by pairs; its trig is the
 //       Rytm's note-out on the track's channel), 12 AINL 13 AINR 14 AINLR (AUDIO IN: no trig, a level onset), 15..22
 //       V1..V8 (a Sidecar voice's pre-chain signal; its trig is the note that started it).
@@ -13,6 +14,7 @@
 // chain that runs on any core: one writer per ring, a published counter, never a lock. Stems exist only in Overbridge mode:
 // a source whose ring does not move is "missing", and the stage does nothing (key 0, no trigs).
 #pragma once
+#include <math.h>
 #include <stdint.h>
 
 #include "platform.h"
@@ -103,6 +105,18 @@ inline bool read(int key, float* out, int m, uint32_t* last_w, uint32_t* since, 
   const float* r = b.ring[key];
   for (int i = 0; i < m; ++i) out[i] = r[(w - (uint32_t)late - (uint32_t)m + (uint32_t)i) & (kRing - 1)];
   return true;
+}
+
+// ---- DUCK's key band-pass (0.5.2): the knobs' scales. KBAS (knob 4): 0 OFF, else 20 Hz .. 19.6 kHz, log (knob 1 .. 127). KWID
+// (knob 5): 0 OFF, else 0.5 .. 9.9 octaves (linear in the knob) above KBAS (above 20 Hz while KBAS is OFF)
+constexpr float kKbasOct = 9.93709f;   // log2(19600 / 20)
+inline float kbas_hz(int v) { return v <= 0 ? 0.0f : 20.0f * exp2f(kKbasOct * (float)((v > 127 ? 127 : v) - 1) / 126.0f); }
+inline float kwid_oct(int v) { return v <= 0 ? 0.0f : 0.5f + 9.4f * (float)((v > 127 ? 127 : v) - 1) / 126.0f; }
+// an older card's DUCK HPF knob (0 off, else 40 Hz x 2^(6 v / 127), 12 dB/oct) as the nearest KBAS (the same corner)
+inline int kbas_from_old_hpf(int v) {
+  if (v <= 0) return 0;
+  const int k = 1 + (int)(126.0f * log2f(2.0f * exp2f(6.0f * (float)(v > 127 ? 127 : v) / 127.0f)) / kKbasOct + 0.5f);
+  return k < 1 ? 1 : k > 127 ? 127 : k;
 }
 
 // ---- the control side (insert.cpp)
