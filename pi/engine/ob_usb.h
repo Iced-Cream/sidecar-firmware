@@ -20,7 +20,7 @@
 //                  routing at run time: a target that comes while the box streams tops the lead up with the next IN
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
-//   obgate=MS      usb=mirror: a box is shown to the computer only once its IN and OUT both run at full rate for 2 s,
+//   obgate=MS      usb=mirror: a box is shown to the computer only once its IN runs and its OUT keeps up with it for 2 s,
 //                  held at most MS (default 10000, then shown anyway with a warning; 0: shown at once, as before).
 //                  Overbridge Engine measures a box's latency once, as soon as it streams, and latches a Fault when
 //                  the pulse never comes back (attach_gate.h). A held box starved for 3 s is restarted on the Pi (its

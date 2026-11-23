@@ -10,7 +10,10 @@
 // reached the box and the Engine faulted. An Engine restart measured into the same dead OUT; a Pi reboot cleared it.
 //
 // The gate (while a box is held, once a second from CObUsb::Log):
-//   - its IN and OUT both at kFullRate or more (OUT not judged with obout=off) for kNeedSeconds in a row: Show.
+//   - its IN alive (kMinIn/s or more) and its OUT keeping up with it (kKeepPct % of IN or more; not judged with
+//     obout=off) for kNeedSeconds in a row: Show. Judged against IN, not a fixed rate: the controller's starvation is
+//     OUT short of IN with IN full (LT9: IN 6,860/s, OUT 0), while a stream that runs slower as a whole (the emulator's
+//     ~6,000/s) still carries the Engine's pulse back.
 //   - not full for kRestartAfter seconds: Restart (once per hold): its audio interfaces to alt 0 and back, and its
 //     audio endpoints dropped and added again on the controller (new transfer rings, a new place in its schedule).
 //   - still not full kReEnumAfter seconds after that: ReEnum (once per hold, only if allowed): the box removed and
@@ -29,7 +32,9 @@
 
 namespace obgate {
 
-static const unsigned kFullRate = 6700;		// blocks/s: a box streams ~6,860 (48 kHz / 7 frames); a starved one 0..6,890 in steps
+static const unsigned kMinIn = 3000;		// blocks/s: a box streams ~6,860 (48 kHz / 7 frames); a starved endpoint runs in
+						// steps of ~984/s (k services a ms), so k <= 3 is caught on IN as well
+static const unsigned kKeepPct = 98;		// OUT at least this share of IN
 static const unsigned kNeedSeconds = 2;
 static const unsigned kRestartAfter = 3;	// seconds not full while held (periodic_starve.h names it after 3 too)
 static const unsigned kReEnumAfter = 3;		// seconds not full after the restart
@@ -82,7 +87,7 @@ inline void gone (Gate &g)
 
 inline bool full (unsigned in_rate, unsigned out_rate, bool out_judged)
 {
-	return in_rate >= kFullRate && (!out_judged || out_rate >= kFullRate);
+	return in_rate >= kMinIn && (!out_judged || (unsigned long long) out_rate * 100 >= (unsigned long long) in_rate * kKeepPct);
 }
 
 // once a second while held: the second's IN and OUT rates. allow_reenum: obgatereenum (default on)

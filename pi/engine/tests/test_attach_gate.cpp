@@ -75,6 +75,14 @@ int main ()
 	}
 	{	// a short OUT (k = 6 of 7 services a ms, 5,906/s) is not full either
 		CHECK (!full (kIn, 5906, true) && full (kIn, 6851, true) && !full (0, 0, false));
+		CHECK (full (6000, 5995, true) && full (4461, 4459, true));	// the emulator's slower stream: OUT keeps up
+		CHECK (!full (2952, 2952, true) && !full (kIn, 0, true));	// IN served 3 times a ms; LT9's OUT
+	}
+	{	// a whole stream slower than a box's (the emulator): shown, not restarted
+		Gate g;
+		begin (g, 0);
+		CHECK (tick (g, 6014, 6015, true, 1000, kHoldMs, true) == Wait);
+		CHECK (tick (g, 5940, 5936, true, 2000, kHoldMs, true) == Show);
 	}
 	{	// unplugged while held: the hold ends; the next attach is a hold of its own
 		Gate g;
