@@ -870,6 +870,13 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		pOut->Append (Fx);
 	}
 	{
+		// the Rytm's hellos heard since the core started; capsKnown: at least one (0: its hello was missed, a Pi started after
+		// the Rytm's port-up: the caps-gated features are off, only the UP + RIGHT claim is sent on a guess)
+		CString Rui;
+		Rui.Format (",\"hellos\":%u,\"capsKnown\":%s", bridge::rytm_hellos (), bridge::rytm_greeted () ? "true" : "false");
+		pOut->Append (Rui);
+	}
+	{
 		static char Lfo[bridge::kLfoJsonCap];	// the LFO tab: every LFO's settings, phase and params' names, 26 LFOs' room (core/lfo.h; core 3's, plain reads)
 		bridge::lfo_json (Lfo, sizeof Lfo);
 		pOut->Append (",");

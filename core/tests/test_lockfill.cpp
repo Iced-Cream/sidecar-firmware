@@ -18,6 +18,7 @@
 #include "check.h"
 #include "screens_util.h"
 #include "core.h"
+#include "device/device.h"
 #include "host/core_port.h"
 #include "hooks.h"
 #include "machines.h"
@@ -595,7 +596,7 @@ int main() {
   }
 
   // ================= the pattern writer against a fake Rytm
-  hooks.to_rytm = out;
+  hooks.to_rytm = ::out;
   host_fake_time(true, g_us);
   {
     auto r = make_record();
@@ -928,6 +929,70 @@ int main() {
     CHECK(engine_begin() && card_ok);
     // a hello with caps2 bit 0: the host claims UP + LEFT / RIGHT; without it, no claim
     const std::vector<uint8_t> claim = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 0x01, 0x7E, 0x01, 0xF7};
+    // 2026-11-23 (hardware: the Pi started after the Rytm's hello, caps 0, a quick UP + RIGHT never claimed): a core that
+    // has seen Rytm traffic but no hello (the Rytm says hello only at its USB port-up) claims anyway, and the 2 s claim
+    // then runs; the first hello afterwards decides as before (an older mod: no claim; with caps2: the caps)
+    {
+      ui::remote_reset();
+      g_out.clear();
+      CHECK(ui::remote_caps2() == 0 && ui::remote_stats().hellos == 0);
+      send(msg(0x49, {4, 0}));   // (Rytm traffic, no hello)
+      CHECK(sent(claim));
+      const uint32_t t0 = now_ms() + 50000;
+      ui::remote_tick(t0);
+      g_out.clear();
+      ui::remote_tick(t0 + 1000);
+      CHECK(!sent(claim));
+      ui::remote_tick(t0 + 2100);
+      CHECK(sent(claim));   // the 2 s claim runs
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      CHECK(!sent(claim));   // (once, not with each message)
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));   // then a hello with caps2 bit 0: the claim goes again, caps known
+      CHECK(sent(claim) && ui::remote_caps2() == ui::kCaps2Arrows && ui::remote_stats().hellos == 1);
+      ui::remote_reset();
+      // ... the hello of an older mod: the claim state is dropped, none again
+      send(msg(0x49, {4, 0}));
+      send(msg(0x35, {0, 5, 127}));
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      CHECK(!sent(claim));
+      ui::remote_tick(t0 + 9000);
+      CHECK(!sent(claim));
+      ui::remote_reset();
+      // fill=keys:off with traffic and no hello: nothing; keys:on claims
+      cmd("fill=keys:off");
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 20000);
+      CHECK(!sent(claim));
+      cmd("fill=keys:on");
+      CHECK(sent(claim));
+      ui::remote_reset();
+      // going down with traffic and no hello: nothing
+      ui::remote_going_down();
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 30000);
+      CHECK(!sent(claim));
+      ui::remote_reset();
+      // a box (A4 / Digitakt: foreign) is never claimed for on a guess: no hello, no 4A 7E, not at the tick either
+      {
+        static device::Screen sc = {{"A", "B", "C", "D", "E", "F", "G", "H"}, ""};
+        static device::Profile pf;
+        pf.screen = &sc;
+        device::g_link.box = &pf;
+        g_out.clear();
+        const std::vector<uint8_t> m = msg(0x49, {4, 0});
+        ui::remote_sysex(m.data(), (int)m.size());
+        ui::remote_tick(t0 + 40000);
+        ui::remote_tick(t0 + 43000);
+        ui::remote_sysex(m.data(), (int)m.size());
+        CHECK(!sent(claim));
+        device::g_link.box = nullptr;
+      }
+      ui::remote_reset();
+    }
     g_out.clear();
     send(msg(0x35, {0, 5, 127}));
     CHECK(!sent(claim) && ui::remote_caps2() == 0);
