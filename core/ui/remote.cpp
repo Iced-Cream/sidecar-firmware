@@ -2018,6 +2018,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     case kDisplay: {   // rui1036b
       if (n < 2) break;
       if (b[0] == 4 && n >= 2) {   // rui1044: UP held alone on the stock screen (1) / let go (0): the combo map
+        // 0.5.2: the Rytm drops the claim at every USB port drop and the host claimed at a hello only: UP held 0.4 s
+        // shows a quick UP + RIGHT may be unclaimed; claim again (idempotent on the Rytm; not when off / going down)
+        if (b[1] && !g_going_down) fill_claim();
         keys_map(b[1] != 0);
         return;
       }

@@ -967,6 +967,39 @@ int main() {
       CHECK(!sent(claim));
       send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));   // (the tests go on with the keys claimed)
       CHECK(sent(claim));
+      // owner 2026-11-22 (hardware: a quick UP + RIGHT does nothing): the Rytm drops the claim at every USB port drop and
+      // the host claimed only at a hello. UP held 0.4 s (49 1 4 1) with the keys claimed claims again (idempotent on the
+      // Rytm); not with fill=keys:off, not without caps2, not after remote_going_down().
+      g_out.clear();
+      send(msg(0x49, {4, 1}));
+      CHECK(sent(claim));
+      send(msg(0x49, {4, 0}));
+      g_out.clear();
+      send(msg(0x49, {4, 1}));
+      CHECK(sent(claim));   // (every time)
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      CHECK(!sent(claim));   // (the release is no claim)
+      cmd("fill=keys:off");
+      g_out.clear();
+      send(msg(0x49, {4, 1}));
+      CHECK(!sent(claim));
+      send(msg(0x49, {4, 0}));
+      cmd("fill=keys:on");
+      send(msg(0x35, {0, 5, 127}));   // an older mod: no caps2
+      g_out.clear();
+      send(msg(0x49, {4, 1}));
+      CHECK(!sent(claim));
+      send(msg(0x49, {4, 0}));
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
+      ui::remote_going_down();
+      ui::remote_tick(2000);
+      g_out.clear();
+      send(msg(0x49, {4, 1}));
+      CHECK(!sent(claim));
+      send(msg(0x49, {4, 0}));
+      cmd("fill=keys:on");   // (the tests go on with the keys claimed)
+      CHECK(sent(claim));
     }
     // the tracks: BD PLAITS, the rest Rytm machines
     std::vector<uint8_t> a33 = {0, 12};
