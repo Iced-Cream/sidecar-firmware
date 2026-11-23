@@ -303,7 +303,7 @@ yellow or blue anywhere, in the same layout (`viper_apply`, `OS` in `sidecar_the
 
 WCAG: bright on bg 14.5, mid 9.7, dim 5.7, peak 17.0, ink on a bright fill 14.5, the border on bg 5.7. **Warnings, REC and "bad"** have no hue to use: they are the peak green as an
 **inverted** bar (dark text on a peak fill: health lines, the REC banner and the recorder line, the power warning in the header), and **every inverted bar has notched corners**
-(a stair-stepped cut at both top corners, `notch`), so an alert is told from a selection (a bright, plain fill) by shape and not only by a 1.18:1 difference in colour. Danger keys keep
+(a stair-stepped cut at both top corners, `notch`), so an alert is told from a selection (a bright, plain fill) by shape and not only by a 1.18:1 difference in colour. The bar is drawn by `label_alert`, not as the label's background: it is as wide as the text (not the space the label was given) and padded round it (the label's box is only its font's line height, which cut the descenders and put the first glyph against the notch; the pale slab across a whole panel on HOME was this). `th_alert_bar` and a check in `shot` keep it that way. Danger keys keep
 a peak edge. Panels at least 150 x 100 px carry a graticule: 8 columns of 1 px divisions, a brighter centre cross with minor ticks, under the widgets. Meters, knob arcs and the
 roll are bright traces over graticule-coloured tracks.
 
@@ -312,6 +312,15 @@ dot-face hero of the old SIDECAR, `uistyle=square` and the Display row's item, `
 
 The shots: `make -C pi/ui/host shots-grid [SIZE=1024x600|1280x720]` writes `grid-*.png` beside the others (`./shot DIR [WxH] grid` is one theme, as `hc` / `hcg` are looks of SIDECAR), and `bounds`
 runs OLED + SIDECAR, both high contrast looks and GRID at 800x480, 1024x600 and 1280x720 (the text-fit and check runs, then the layout comparison).
+
+### The pixel accent (SIDECAR, 0.5.2)
+
+The Rytm's pixel font (the OLED look's 5x9 and 5x7 dot tables) comes back as a sparing accent in the four SIDECAR contrasts, drawn bold (two columns a stroke) as round dots, integer scales
+only (`f_pxv`, `f_pxh`, `f_pxs`; 0 in GRID and OLED): the **value** face (5x9 at 2 / 2 / 3 on 800x480 / 1024x600 / 1280x720) for the knob values inside the VOICE and INSERT FX arcs and the SEQ
+tempo, the **hero** face (5x9 at 3 / 4 / 5) for HOME's pattern, the **small** face (5x7 at 2) for INSERT FX's value row under the captions (in the window ink, with a little more air than the
+Arimo row had) and the header strip. The strip (1024x600 and 1280x720, none at 800x480) is a small black box in the header with the Rytm's top line: the pattern, the tempo and PLAY / PAUS /
+STOP / REC (`---` for what is not known, `----` without the Rytm). The tempo is `bpm10` in `sidecar_ui_status_t` (from `core::seq::tempo()`, 0 unknown) and in the remote UI's STATUS view
+(appended to the live section, schema 1.1: an older app ignores it, an older Pi leaves it 0). Labels, lists, buttons and the other values stay Arimo.
 
 ## Sections and sub-page rows (0.5.1)
 
