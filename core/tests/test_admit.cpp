@@ -63,7 +63,7 @@ static void model() {
     admit::Load p = l;
     p.amps[2] = 2;   // core 2: 68 + 10 = 78 %
     CHECK(!admit::amp_fits(2, p) && admit::amp_fits(1, p));
-    CHECK(admit::amp_fits(3, p) && admit::amp_fits(0, p));   // core 3 (slot 0's master chain): not modelled
+    CHECK(admit::amp_fits(3, p) && admit::amp_fits(0, p));   // core 3 (slot 0's master chain: lt6 below), another core
     admit::set_enforce(false);
     CHECK(admit::amp_fits(2, p));   // admit=report: nothing refused
     admit::set_enforce(true);
@@ -189,6 +189,42 @@ static void lt4() {
   CHECK(admit::amp_fits(1, r));
   r.amps[1] = 2;
   CHECK(admit::core_bp(1, r) == 1955 + 2 * 2010 && admit::amp_fits(1, r));
+  admit::reset();
+}
+
+// LT6 (2026-11-23, A4 base + Rytm, full load): slot 0's master AMP pair on core 3 at 1500 MHz played clean, at 1200 it
+// made core 3's passes 10-19 ms and the engine underran. Core 3 is counted for AMP and the master's INSERT types: control
+// 13.4 % + the master chain 8 % at 1500, each AMP 20.1 % (4.02 x 500 %), within 70 %.
+static void lt6() {
+  admit::reset();
+  admit::set_costs({1500, 157, 205, 402, 3028});
+  admit::set_clock(1500);
+  admit::Load l = {{4, 8}, {true, true}, {4, 8}};
+  CHECK(admit::core3_bp(l) == (kVoiceSlots > 1 ? 2140u : 0u));
+  if (kVoiceSlots > 1) {
+    CHECK(admit::amp_fits(3, l));
+    l.amps[3] = 1;
+    CHECK(admit::core3_bp(l) == 4150 && admit::amp_fits(3, l));   // the pair at 1500: 61.6 %
+    l.amps[3] = 2;
+    CHECK(admit::core3_bp(l) == 6160 && !admit::amp_fits(3, l));   // (a third would be 81.7 %)
+    admit::set_clock(1200);                                        // 1200: the pair is 77 %, over 70 %
+    CHECK(admit::core3_bp(l) == 7700 && admit::core3_bp(l) > admit::kC3LimitBp);
+    l.amps[3] = 1;
+    CHECK(admit::core3_bp(l) == 5188 && !admit::amp_fits(3, l));   // one plays, the second does not fit
+    // the master's INSERT types on core 3 (stereo: twice the mono row): a SAT at 0.9 % a slot fits beside one AMP
+    admit::Costs co = admit::costs();
+    co.type_bp[ins::kSat] = 90;
+    admit::set_costs(co);
+    CHECK(admit::ins3_fits(l, ins::kSat));
+    l.amps[3] = 2;
+    CHECK(!admit::ins3_fits(l, ins::kSat) && admit::ins3_fits(l, ins::kOff));
+    l.held[0] = false;   // no box in slot 0: its master chain not counted
+    l.amps[3] = 0;
+    CHECK(admit::core3_bp(l) == 1675);
+    admit::set_enforce(false);
+    l.held[0] = true, l.amps[3] = 3;
+    CHECK(admit::amp_fits(3, l) && admit::ins3_fits(l, ins::kSat));   // admit=report: nothing refused
+  }
   admit::reset();
 }
 
@@ -389,6 +425,7 @@ int main() {
   model();
   lt3();
   lt4();
+  lt6();
   engine();
   printf("test_admit: PASS\n");
   return 0;

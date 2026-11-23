@@ -338,8 +338,14 @@ scaled to the CPU clock setting, so that each render core stays under 80 % in th
 - **Where the chains run** (decided 2026-11-22): slot 0's send FX on render core 2, slot 1's send FX and master chain on
   render core 1, each after its voices (`cores.cpp` `ChainCore`). Slot 0's master chain (the base box's while it is held,
   with its AMP pair) runs on core 3 during RenderBlock's wait for cores 1 and 2 (`MasterCore`, `admit::master_core`; an
-  8-voice engine keeps it on core 2): the stats line prints its time as `c3 mfx`, inside `c3 own`. Core 3's load is not
-  modelled, only measured. LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
+  8-voice engine keeps it on core 2): the stats line prints its time as `c3 mfx`, inside `c3 own`. Core 3 is counted
+  (decided 2026-11-23 after LT6: at 1200 MHz slot 0's master AMP pair there made core 3's passes 10-19 ms and the engine
+  underran; with it off, none): `admit::core3_bp` is core 3's control work (13.4 %) and slot 0's master chain (8 %, its POST
+  EQ and send TYPEs) as fixed shares at 1500 MHz, plus every master INSERT type admitted (its bench row, twice: stereo)
+  and the master AMPs playing, within 70 % (`kC3LimitBp`: core 3 also waits for cores 1 and 2). A master type or AMP with
+  no room plays dry and shows `NO CPU`; at a lower clock `shed_over` sheds the master AMPs, then the master types. At 1500
+  the pair fits (61.6 %), at 1200 one AMP of it. `/status` `admit` has `core3Bp` and `amps3`. The send TYPEs have no bench
+  row of their own yet (in the fixed share). LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
   ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches
   or leaves; core 3 waits for both cores' chains before a pass whose base box changed (AMP's master rows follow the base).
 - **Placement:** a box's voices are its 0..n-1; 0..s-1 render on core 1 and s..7 on core 2, s its split: `split=` (4), or

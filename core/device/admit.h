@@ -22,7 +22,9 @@
 // The first box keeps its voices (it was alone: nothing to take them from). The second gets the most that fit beside the
 // first one's (never more than it asked for), is told (a popup on its screen), and /status shows the shortfall. A box whose
 // partner leaves gets back what it asked for. Nothing here runs per sample; the render cores read the counts (device.h
-// admitted) once per voice. Core 3's own load (slot 0's master chain and its AMP pair there) is not modelled: measured only.
+// admitted) once per voice. Core 3 (two-slot builds: slot 0's master chain there, master_core) is counted for AMP only
+// (decided 2026-11-23 after LT6): its control work and slot 0's master chain dry as fixed shares (kC3BaseBp, kC3MasterBp)
+// and the AMPs playing there, within kC3LimitBp; core 3 also waits for cores 1 and 2 each block, so its limit is lower.
 // No bench (bench=0, the host, the Teensy): nothing measured, so nothing is refused (every box its count; /status says so).
 #pragma once
 #include <stdint.h>
@@ -33,6 +35,13 @@ namespace core {
 namespace admit {
 
 constexpr unsigned kLimitBp = 8000;   // 80 % of a render core, in 1/100 % (bp)
+// Core 3 (decided 2026-11-23; LT6, project file gates/rebalance-core2-03f19b4/LT6-RESULTS.md, A4 base + Rytm, full load):
+// at 1500 MHz with slot 0's master AMP pair core 3's own load was 53.8 % (master chain 40.4 %), no underruns; at 1200 MHz
+// 54.7-61 % (master chain 44.7-49.7 %) and 27-82 underruns a minute, core 3's passes 10-19 ms; the pair off at 1200: 28.6 %
+// (master chain 10.0 %), no underruns. Its control work (own minus the master chain at 1500: 13.4 %) and slot 0's master
+// chain dry (10.0 % at 1200: 8.0 % at 1500) are fixed shares at 1500 MHz, scaled by the clock like the rest; the limit
+// keeps the pair at 1500 (21.4 + 2 x 20.1 = 61.6 %) and one AMP of it at 1200 (26.8 + 25.1 = 51.9 %; both: 77 %).
+constexpr unsigned kC3BaseBp = 1340, kC3MasterBp = 800, kC3LimitBp = 7000;
 
 // What the bench's rows cost under the two-box load, in % of the row (LT3, 2026-11-22, chains-core1 64fdd7b, 1500 MHz;
 // project file gates/chains-core1-64fdd7b/RESULTS-LT3.md). The bench runs each row alone on core 0; under load all four
@@ -98,8 +107,9 @@ struct Load {
   uint8_t voices[2];
   bool held[2];
   uint8_t asked[2];
-  uint8_t amps[3];
-  uint32_t ins[3];   // the voice INSERT slots admitted on render core c (1, 2), at the bench (type_bp; [0] unused)
+  uint8_t amps[4];   // [3]: core 3's (slot 0's master AMPs, master_core)
+  uint32_t ins[4];   // the INSERT slots admitted on core c, at the bench (type_bp; [0] unused): 1, 2 the voices'; 3 slot 0's
+                     // master chain's (stereo: each slot twice its mono row; decided 2026-11-23)
 };
 // The render core of slot b's box's voice chain c (0..7): by its box's split
 int voice_core(int b, int c, const Load& l);
@@ -110,12 +120,20 @@ int base_of(const Load& l);   // the base box's slot in l: 0 while held, else 1
 // The core that runs AMP row r (fx/amp.cpp's rows: the base box's voices 0..7, its master chains from master_row on): a voice
 // row its voice's (by the base box's split), a master row master_core(the base box)
 int amp_core(int row, int master_row, const Load& l);
-// AMP admission: one more AMP slot may play on core c (1 or 2) beside l (its amps[] those playing): core_bp + one AMP at its
-// load factor within kLimitBp. Always: no bench, admit=report, core 3 (not modelled) or another core.
+// AMP admission: one more AMP slot may play on core c (1, 2 or 3) beside l (its amps[] those playing): core_bp + one AMP at
+// its load factor within kLimitBp (core 3: kC3LimitBp). Always: no bench, admit=report or another core.
 bool amp_fits(int c, const Load& l);
 // Render core 1 or 2's worst load for l, in bp at the clock now, each row at its load factor (kAmpLoadPct and the rest):
 // its voices, the chains it runs, the INSERT slots (l.ins[c]) and AMPs (l.amps[c]) admitted on it. Another core: 0.
 unsigned core_bp(int core, const Load& l);
+// Core 3's load for l on a two-slot build, in bp at the clock now: kC3BaseBp, slot 0's master chain while it is held
+// (kC3MasterBp: its POST EQ and send TYPEs, measured whole), its INSERT types admitted (l.ins[3]) at the chain load factor
+// and the AMPs playing there (l.amps[3]) at the AMP load factor. An 8-voice build (no core 3 chain): 0.
+unsigned core3_bp(const Load& l);
+// One more master INSERT slot of type t (stereo) on core 3 beside l within kC3LimitBp. Always: no bench, admit=report,
+// an 8-voice build.
+bool ins3_fits(const Load& l, int t);
+unsigned limit_bp(int core);   // kLimitBp, core 3's kC3LimitBp
 // The most voices (<= want, which is also what it asked for: its split) slot s may render beside the other slot's in l, so that every render core this box's voices land
 // on stays within kLimitBp. A core already over without this box's voices (by the chains alone) takes none of them.
 int fit(int s, int want, const Load& l);

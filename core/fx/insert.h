@@ -91,9 +91,10 @@ struct Control {
   volatile uint8_t route3;                           // bus 3: 0 PRE (host -> Rytm 2/3), 1 POST (0/1)
   volatile int8_t peq[kChains][kEqParams];           // ins1112 the POST EQ as it plays (eq_store: 0 = does nothing)
   volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
-  // CPU admission (core/device/admit.h ins_fits, decided 2026-11-22): 1 the voice slot's type was not admitted when it was
-  // set (no room on its render core): it plays dry (bypassed) and shows NO CPU until it is (set_cpu_check). 0: plays
-  volatile uint8_t refused[kVoices][kSlots];
+  // CPU admission (core/device/admit.h ins_fits, decided 2026-11-22; the master's chains too since 2026-11-23, on core 3):
+  // 1 the slot's type was not admitted when it was set, or was shed (no room on its render core): it plays dry (bypassed)
+  // and shows NO CPU until it is (set_cpu_check). 0: plays. The buses' chains are never refused
+  volatile uint8_t refused[kChains][kSlots];
 };
 extern Control control;
 // Slot 1's: its voices 8..15 play through chains of their own, alone or beside a Rytm (every chain OFF until slot 1's
@@ -269,7 +270,7 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !(c < kVoices && k.refused[c][s])) || slot_[c][s].cur ||
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s]) || slot_[c][s].cur ||
           slot_[c][s].wet > 0.0f)
         return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
@@ -323,7 +324,7 @@ class Engine {
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !(c < kVoices && k.refused[c][s])
+    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s]
                          ? k.type[c][s]
                          : kOff;   // (no AMP: dry; not admitted: dry, CPU admission)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
@@ -845,7 +846,7 @@ void set_cpu_check(bool (*fits)(int box, int c, int s, int t));
 int regrant();                               // the refused slots now admitted
 // Shed for CPU (decided 2026-11-22: the clock lowered for heat): box slot box's voice chain c, slot s plays dry and shows
 // NO CPU, as if refused, until regrant() finds room. false: OFF, AMP (amp::shed) or already refused.
-bool shed(int box, int c, int s);
+bool shed(int box, int c, int s);   // (a voice or master chain)
 bool refused(int c, int s);                  // the slot in hand's voice slot plays dry for CPU (the pages: NO CPU)
 int refused_count(int box);                  // box slot's voice slots set but refused now (/status admit insRefused)
 struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks, refused; };

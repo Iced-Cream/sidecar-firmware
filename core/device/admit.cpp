@@ -65,6 +65,19 @@ CORE_COLD unsigned core_bp(int c, const Load& l) {
   return scaled(bp);
 }
 
+CORE_COLD unsigned core3_bp(const Load& l) {
+  if (master_core(0) != 3) return 0;
+  const unsigned long long bp = kC3BaseBp + (l.held[0] ? kC3MasterBp : 0) +
+                                ((unsigned long long)l.ins[3] * s_pct.chain + 99) / 100 +
+                                ((unsigned long long)l.amps[3] * s_costs.amp_bp * s_pct.amp + 99) / 100;
+  return scaled(bp);
+}
+CORE_COLD bool ins3_fits(const Load& l, int t) {
+  if (!on() || !s_enforce || master_core(0) != 3 || !type_bp(t)) return true;   // (a send TYPE: in kC3MasterBp)
+  return core3_bp(l) + scaled((2ull * type_bp(t) * s_pct.chain + 99) / 100) <= kC3LimitBp;
+}
+unsigned limit_bp(int core) { return core == 3 ? kC3LimitBp : kLimitBp; }
+
 unsigned type_bp(int t) {
   if (t <= 0 || t >= 16 || t == 9) return 0;   // OFF; AMP (fx/insert.h kAmp): amp_bp, admitted by amp.h
   return s_costs.type_bp[t] ? s_costs.type_bp[t] : s_costs.slot_bp;
@@ -85,8 +98,11 @@ int amp_core(int row, int master_row, const Load& l) {
 }
 
 CORE_COLD bool amp_fits(int c, const Load& l) {
-  if (!on() || !s_enforce || (c != 1 && c != 2)) return true;
-  return core_bp(c, l) + scaled(((unsigned long long)s_costs.amp_bp * s_pct.amp + 99) / 100) <= kLimitBp;
+  if (!on() || !s_enforce) return true;
+  const unsigned one = scaled(((unsigned long long)s_costs.amp_bp * s_pct.amp + 99) / 100);
+  if (c == 3) return master_core(0) != 3 || core3_bp(l) + one <= kC3LimitBp;
+  if (c != 1 && c != 2) return true;
+  return core_bp(c, l) + one <= kLimitBp;
 }
 
 CORE_COLD int fit(int s, int want, const Load& l) {

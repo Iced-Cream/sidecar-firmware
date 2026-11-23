@@ -214,7 +214,7 @@ void load_now(admit::Load* out) {
     for (int s = 0; s < amp::kSlots; ++s)
       if (amp::slot_playing(r, s)) {
         const int c = admit::amp_core(r, m, ld);
-        if (c == 1 || c == 2) ++ld.amps[c];
+        if (c >= 1 && c <= 3) ++ld.amps[c];
       }
   static_assert(ins::kAmp == 9 && ins::kTypes <= 16, "admit.cpp type_bp: AMP is 9, every voice type under 16");
   for (int b = 0; b < kVoiceSlots && b < 2; ++b) {   // the voice INSERT slots admitted (insert.h refused: not counted)
@@ -225,11 +225,23 @@ void load_now(admit::Load* out) {
       for (int s = 0; s < ins::kSlots; ++s)
         if (!k.refused[c][s]) ld.ins[admit::voice_core(b, c, ld)] += admit::type_bp(k.type[c][s]);
   }
+  if (ld.held[0] && admit::master_core(0) == 3) {   // slot 0's master chain on core 3: its INSERT types (stereo: twice)
+    const ins::Control& k = ins::control_of(0);
+    for (int c = ins::kM0; c < ins::kChains; ++c)
+      for (int s = 0; s < ins::kSlots; ++s)
+        if (!k.refused[c][s]) ld.ins[3] += 2 * admit::type_bp(k.type[c][s]);
+  }
 }
 // INSERT's CPU check (ins::set_cpu_check): box slot b's voice chain c, slot s may play type t, beside everything admitted
 // now but what that slot plays (it is replaced). A chain its box does not render (not held, past what it asked): yes.
 static CORE_COLD bool ins_room(int b, int c, int s, int t) {
   admit::Load ld = load_now();
+  if (c >= ins::kM0) {   // a master chain: slot 0's on core 3 (counted there); slot 1's on core 1 is in its box's chains row
+    if (b != 0 || !ld.held[0] || admit::master_core(0) != 3) return true;
+    const ins::Control& k = ins::control_of(0);
+    if (!k.refused[c][s]) ld.ins[3] -= 2 * admit::type_bp(k.type[c][s]);
+    return admit::ins3_fits(ld, t);
+  }
   if (b < 0 || b > 1 || !ld.held[b] || c >= ld.asked[b]) return true;
   const int core = admit::voice_core(b, c, ld);
   const ins::Control& k = ins::control_of(b);
@@ -250,6 +262,24 @@ static CORE_COLD void shed_over() {
   if (!admit::on() || !admit::enforce()) return;
   admit::Load ld;
   load_now(&ld);
+  {   // core 3 (slot 0's master chain: its master AMPs, the highest row first)
+    const int m = amp::master_row();
+    if (admit::core3_bp(ld) > admit::kC3LimitBp)
+      for (int r = amp::rows() - 1; r >= m; --r)
+        for (int s = amp::kSlots - 1; s >= 0; --s)
+          if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == 3 && amp::shed(r, s)) {
+            log(CORE_STR("device: core 3 over 70 %% at %u MHz: master AMP row %d %c shed (NO CPU)"), admit::clock(), r, 'A' + s);
+            return;
+          }
+    if (admit::core3_bp(ld) > admit::kC3LimitBp && ld.held[0])   // then its master INSERT types, the last slot first
+      for (int c = ins::kChains - 1; c >= ins::kM0; --c)
+        for (int s = ins::kSlots - 1; s >= 0; --s)
+          if (admit::type_bp(ins::control_of(0).type[c][s]) && ins::shed(0, c, s)) {
+            log(CORE_STR("device: core 3 over 70 %% at %u MHz: master %d %c shed (NO CPU)"), admit::clock(), c - ins::kM0 + 1,
+                'A' + s);
+            return;
+          }
+  }
   for (int core = 1; core <= 2; ++core) {
     if (admit::core_bp(core, ld) <= admit::kLimitBp) continue;
     const int m = amp::master_row();

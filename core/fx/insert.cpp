@@ -344,17 +344,17 @@ void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
 
 static bool (*g_cpu_fits)(int box, int c, int s, int t) = nullptr;
 void set_cpu_check(bool (*fits)(int box, int c, int s, int t)) { g_cpu_fits = fits; }
-bool refused(int c, int s) { return valid(c, s) && c < kVoices && K(c).refused[c][s] && K(c).type[c][s] != kOff; }
+bool refused(int c, int s) { return valid(c, s) && K(c).refused[c][s] && K(c).type[c][s] != kOff; }
 int refused_count(int box) {
   if (box < 0 || box >= kVoiceSlots) return 0;
   const Control& k = control_of(box);
   int n = 0;
-  for (int c = 0; c < kVoices; ++c)
+  for (int c = 0; c < kChains; ++c)
     for (int s = 0; s < kSlots; ++s) n += k.refused[c][s] && k.type[c][s] != kOff;
   return n;
 }
 CORE_COLD bool shed(int box, int c, int s) {
-  if (box < 0 || box >= kVoiceSlots || c < 0 || c >= kVoices || s < 0 || s >= kSlots) return false;
+  if (box < 0 || box >= kVoiceSlots || c < 0 || c >= kChains || (c >= kBus0 && c < kM0) || s < 0 || s >= kSlots) return false;
   Control& k = control_of(box);
   const int t = k.type[c][s];
   if (t == kOff || t == kAmp || k.refused[c][s]) return false;
@@ -367,7 +367,7 @@ CORE_COLD int regrant() {
   if (!g_cpu_fits) return 0;
   for (int b = 0; b < kVoiceSlots; ++b) {
     Control& k = control_of(b);
-    for (int c = 0; c < kVoices; ++c)
+    for (int c = 0; c < kChains; ++c)
       for (int s = 0; s < kSlots; ++s) {
         if (!k.refused[c][s]) continue;
         const int t = k.type[c][s];
@@ -382,7 +382,7 @@ void set_type(int c, int s, int t, bool keep) {
   if (t >= kTypes && c < kBus0) return;               // a send TYPE: the buses' and the master's chains (core 2's) only
   if (c >= kBus0 && !master::accept(c, s, t)) return;   // no room for another send TYPE (master.h kFxSlots)
   if (K(c).type[c][s] == t && keep) return;
-  if (c < kVoices) {   // CPU admission: the type's place on its render core first (refused: it plays dry, NO CPU)
+  if (c < kVoices || c >= kM0) {   // CPU admission: the type's place on its render core first (refused: it plays dry, NO CPU)
     const bool ok = t == kOff || t == kAmp || !g_cpu_fits || g_cpu_fits(slot_in_hand(), c, s, t);
     if (!ok && !K(c).refused[c][s]) ++g_stats.refused;
     K(c).refused[c][s] = !ok;
