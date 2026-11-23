@@ -533,7 +533,7 @@ static void status_init (int style)
 	s.ui_look = -1;
 	s.ui_contrast = s_nContrastSt;
 	s.poly = 1u << 7;		// RS/CP (voice 7, WAVE): a poly track
-	s.pattern = 3, s.transport = 1;	// A04 playing (HOME's NOW)
+	s.pattern = 3, s.transport = 1, s.bpm10 = 1215;	// A04 playing (HOME's NOW)
 	{ static const int vl[8] = {38, 64, 140, 120, 22, 57, 93, 210}; for (int v = 0; v < 8; v++) s.vload[v] = vl[v]; }	// HOME's voice tiles: tenths of a percent
 	s_St = s;
 }

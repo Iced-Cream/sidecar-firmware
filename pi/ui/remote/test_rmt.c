@@ -145,7 +145,7 @@ static int wire_total (int view, const void *v)
 static void test_views (void)
 {
 	// pinned wire sizes: a field added to a view struct and not to the table fails here (and the schema hash moves)
-	static const int kWire[RMT_V_COUNT] = {0, 582, 782, 2570, 425, 9840, 4, 11156};
+	static const int kWire[RMT_V_COUNT] = {0, 586, 782, 2570, 425, 9840, 4, 11156};
 	for (int view = 1; view < RMT_V_COUNT; view++)
 	{
 		const rmt_view_info_t *vi = rmt_view_info (view);

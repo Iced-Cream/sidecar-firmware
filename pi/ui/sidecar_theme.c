@@ -63,7 +63,8 @@ static const void *dot_bitmap (lv_font_glyph_dsc_t *g, lv_draw_buf_t *buf)
 			for (int k = 0; k < w; k++)
 			{
 				uint8_t v = (bits >> (w - 1 - k) & 1) ? 0xFF : 0x00;
-				if (d->round && v) for (int i = 0; i < s; i++) o[k * s + i] = dot_alpha (s, i, j);
+				if (d->round == 2 && v && s == 2) for (int i = 0; i < s; i++) o[k * s + i] = (uint8_t) (i + j == 0 ? 255 : i + j == 1 ? 215 : 170);	// the pixel faces' 2x2 dot: brighter than the OLED cell
+				else if (d->round && v) for (int i = 0; i < s; i++) o[k * s + i] = dot_alpha (s, i, j);
 				else for (int i = 0; i < s; i++) o[k * s + i] = v;
 			}
 		}
@@ -301,6 +302,26 @@ static const void *up_bitmap (lv_font_glyph_dsc_t *g, lv_draw_buf_t *buf)
 }
 
 // the sets of faces: mixed case (SIDECAR) and capitals (GRID) over the Arimo Bold tables, symbols from the Regular ones
+// ---- the pixel font as a sparing accent on SIDECAR (values, the hero pattern, the header strip). Integer scales only:
+// value face 5x9 at 2 / 2 / 3 (18 / 18 / 27 px glyphs on 800x480 / 1024x600 / 1280x720), hero 5x9 at 3 / 4 / 5 (27 / 36 / 45 px),
+// small 5x7 at 2 (14 px). Bold round dots, no anti-aliasing: the Rytm's OLED. [z][0] value, [z][1] hero, [z][2] small
+static dotlv_t s_PxD[3][3];
+static lv_font_t s_PxF[3][3];
+static void px_init (void)
+{
+	static const struct { const dotfont_t *f; uint8_t s[3]; } k[3] = {
+		{&dotfont_5x9, {2, 2, 3}}, {&dotfont_5x9, {3, 4, 5}}, {&dotfont_5x7, {2, 2, 2}},
+	};
+	for (int z = 0; z < 3; z++)
+		for (int i = 0; i < 3; i++)
+		{
+			const int s = k[i].s[z];
+			s_PxD[z][i] = (dotlv_t) {k[i].f, (uint8_t) s, 1, 2};	// bold (two columns a stroke), round dots
+			s_PxF[z][i] = (lv_font_t) {.get_glyph_dsc = dot_dsc, .get_glyph_bitmap = dot_bitmap, .line_height = (k[i].f->h + 2) * s,
+						   .base_line = s, .dsc = &s_PxD[z][i]};
+		}
+}
+
 static void faces_init (void)
 {
 	for (int z = 0; z < FACE_SETS; z++)
@@ -316,6 +337,7 @@ static void faces_init (void)
 			s_Caps[z][i].dsc = base;
 			s_Caps[z][i].fallback = kSym[i];
 		}
+	px_init ();
 }
 
 // GRID: the painters' palette (UV_*) in the guide's colours. cor / mag / cor2 (the warm hues of SIDECAR's painters: a
@@ -349,6 +371,12 @@ void sidecar_theme_set (int id)
 		s_Cur.f_small = s_Cur.f_body = &f[1];
 		s_Cur.f_big = s_Cur.f_title = s_Cur.f_mid = s_Cur.f_mid2 = s_Cur.f_num = &f[2];
 		s_Cur.f_hero = &f[3];
+		s_Cur.f_pxv = s_Cur.f_pxh = s_Cur.f_pxs = 0;
+		if (id == THEME_SIDECAR)
+		{
+			const int z = s_bBig ? 2 : s_bWide ? 1 : 0;
+			s_Cur.f_pxv = &s_PxF[z][0], s_Cur.f_pxh = &s_PxF[z][1], s_Cur.f_pxs = &s_PxF[z][2];
+		}
 	}
 	if (s_bWide)						// 1024x600: the dots / pixels it has
 	{
@@ -1469,13 +1497,13 @@ static void meter_draw (lv_event_t *e)
 	int w = lv_area_get_width (&c), h = lv_area_get_height (&c), v = sv < 0 ? 0 : sv > m->max ? m->max : sv;
 	if (m->kind == TH_METER_KNOB)
 	{
-		const lv_font_t *fv = TH->f_micro;
+		const lv_font_t *fv = TH->f_pxs ? TH->f_pxs : TH->f_micro;
 		int ch = m->cap[0] ? TH->f_micro->line_height : 0, vh = m->val[0] ? fv->line_height : 0;
 		lv_area_t k = c;
 		if (!oled () && vh)					// SIDECAR: the value inside the arc, in the dot font, when it fits
 		{
 			int kh = h - ch, kr = (w < kh ? w : kh) / 2 - 1, in = 2 * kr - 2 * LU (8);
-			const lv_font_t *fn = TH->f_num;
+			const lv_font_t *fn = TH->f_pxv ? TH->f_pxv : TH->f_num;
 			if (th_text_width (fn, m->val) <= in && fn->line_height <= in)
 			{
 				k.y2 -= ch;

@@ -69,6 +69,9 @@ typedef struct
 	int		gap;			// between controls
 	int		touch;			// the smallest touch target (about 40 physical px)
 	int		edge_w;			// SIDECAR: a card's / control's border width (1; 2 in the high-contrast look)
+	// SIDECAR's pixel accent (the bold round-dot 5x9 / 5x7 faces, integer scales; 0 in GRID and OLED): knob and tempo values,
+	// the hero pattern, the small face (INSERT FX values, the header strip)
+	const lv_font_t	*f_pxv, *f_pxh, *f_pxs;
 	int		hc;			// SIDECAR: 0 standard, 1 high contrast with the blue accent, 2 with the green one, 3 Viper: phosphor greens (sidecar_theme_contrast)
 } sidecar_theme_t;
 

@@ -221,6 +221,7 @@ uint64_t mfx_bench(uint32_t* worst_block);   // the master chain without AMP (co
 uint64_t sfxins_bench(int set, uint32_t* worst_block);
 const char* sfxins_bench_name(int set);
 unsigned poly_voices();
+int rytm_bpm10();                  // the Rytm's tempo x 10 (core/seq's last report), 0: not known
 int rytm_pattern(int* transport);   // UX review T1: the Rytm's pattern (-1 not known) and transport (core/seq's view)   // UX review S1: bit vi - a Rytm track on voice vi is a poly track (the Sidecar sequences it)
 uint32_t machine_gen(int voice);       // with machine_name, the guard's key: 0, or a user voice's slot + 1 and the
                                        // plugin loader's epoch (um::code_epoch): another plugin or a reload is new

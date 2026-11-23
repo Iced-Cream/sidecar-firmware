@@ -606,6 +606,14 @@ unsigned poly_voices() {
 #endif
   return m;
 }
+int rytm_bpm10() {
+#if CORE_POLY
+  const double b = core::seq::tempo();   // (a plain read: drawing only; NaN, a negative or a wild value is "not known")
+  return b >= 1.0 && b <= 999.0 ? (int)(b * 10 + 0.5) : 0;
+#else
+  return 0;
+#endif
+}
 int rytm_pattern(int* transport) {
 #if CORE_POLY
   int tr = core::seq::transport_now();   // (plain reads: drawing only)

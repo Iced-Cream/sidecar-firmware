@@ -1869,6 +1869,7 @@ void CKernel::FillUi (void)
 	for (int v = 0; v < SIDECAR_UI_TRACKS; v++) u.voice[v] = Box.screen ? Box.screen->names[v] : 0;
 	u.poly = bridge::poly_voices ();	// UX review S1: the POLY badges
 	u.pattern = bridge::rytm_pattern (&u.transport);	// T1: HOME's NOW panel
+	u.bpm10 = bridge::rytm_bpm10 ();			// the header strip's tempo
 	u.note = m_pTransport == &m_Tcp ? "link: tcp" : m_pTransport == &m_SelfTest ? "link: self-test" : "link: usb";
 	static char s_Note[64];				// a keyboard on the Pi (core/keys.h): where its notes go, after the link
 	char Keys[40];
@@ -2087,7 +2088,7 @@ public:
 		sidecar_status_view_t &sv = *v;
 		status_pi::Core (&sv);
 		lib_pi::ui_fill (&sv);
-		sv.underruns = Ui.underruns, sv.rytm = Ui.rytm, sv.mac = Ui.mac;
+		sv.underruns = Ui.underruns, sv.rytm = Ui.rytm, sv.mac = Ui.mac, sv.bpm10 = Ui.bpm10;
 		memcpy (sv.fx_type, Ui.fx_type, sizeof sv.fx_type);
 		memcpy (sv.fx_post, Ui.fx_post, sizeof sv.fx_post);
 		memcpy (sv.ip, Ui.ip, sizeof sv.ip);

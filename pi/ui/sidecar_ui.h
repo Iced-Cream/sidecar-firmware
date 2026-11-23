@@ -52,6 +52,7 @@ typedef struct
 	unsigned	poly;				// UX review S1: bit v - voice v plays a poly track (a POLY badge on HOME)
 	int		pattern;			// UX review T1: the Rytm's pattern 0..127 (-1 not known) and transport (0 stop,
 	int		transport;			// 1 play, 2 pause): HOME's NOW panel
+	int		bpm10;				// the Rytm's tempo x 10 (1215: 121.5 BPM), 0: not known (the header strip at 1024x600 and up)
 	int		touch_cal;			// 1: the touch is calibrated (touchcal=, Settings > Display), 0: the default
 	int		temp_c;				// the SoC's temperature, 0: not known
 	int		temp_warn;			// 1: the temperature warning is on (80 C up, off below 75 C: pi/engine/thermal.h): a banner
