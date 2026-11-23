@@ -21,7 +21,7 @@
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
 //   obgate=MS      usb=mirror: a box is shown to the computer only once its IN runs and its OUT keeps up with it for 2 s,
-//                  held at most MS (default 10000, then shown anyway with a warning; 0: shown at once, as before).
+//                  held at most MS (default 12000, then shown anyway with a warning; 0: shown at once, as before).
 //                  Overbridge Engine measures a box's latency once, as soon as it streams, and latches a Fault when
 //                  the pulse never comes back (attach_gate.h). A held box starved for 3 s is restarted on the Pi (its
 //                  audio interfaces to alt 0 and back, its endpoints added again), then re-enumerated

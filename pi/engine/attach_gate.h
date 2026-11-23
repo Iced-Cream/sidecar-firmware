@@ -38,7 +38,9 @@ static const unsigned kKeepPct = 98;		// OUT at least this share of IN
 static const unsigned kNeedSeconds = 2;
 static const unsigned kRestartAfter = 3;	// seconds not full while held (periodic_starve.h names it after 3 too)
 static const unsigned kReEnumAfter = 3;		// seconds not full after the restart
-static const uint32_t kHoldMs = 10000;		// default obgate= (0: the gate off, a box shown at once as before)
+static const uint32_t kHoldMs = 12000;		// default obgate= (0: the gate off, a box shown at once as before). 12 s, not 10:
+						// on the unit the first tick comes ~1 s into the hold, so a forced recovery shows at
+						// ~9.1 s (GT2, 2026-11-23); 12 s leaves ~3 s for a boot-time stall inside the hold
 static const unsigned kShownRestarts = 2;	// per stream, for a box already shown
 
 enum Act { Wait, Show, ShowLate, Restart, ReEnum };
