@@ -133,10 +133,33 @@ project's chord words, which read as TBL B rows at MIX 0, claim no card slot, an
 B. The mix is faded: it moves 1/40 a block (10 ms) toward MIX while B is wanted and in, and back to 0 when B goes (B's
 table stays 40 ms for that); with TBL B OFF it is exactly A. Under FM / RM B is read at the note's own mip level (plain),
 A at the warp's. Old projects' WARP
-values land in other zones now (nine zones, not four: an old SYNC at 40 is PWM now); P13..P16 of an old project were
+values land in other zones now (nine zones, not four, see the table); P13..P16 of an old project were
 the chord (CHD INV SPR VOI): a CHD value reads as a TBL B row now (CHD 1 = A001 = BASIC as B, MIX 0: nothing audible
-until MIX moves), INV / SPR are POS B / MIX, VOI an FTYPE zone: they are all zero on a project without a chord, and
-those sound as before.
+until MIX moves; an SPR of 1..2 reads as a MIX of about 0.01, inaudible), INV / SPR are POS B / MIX, VOI an FTYPE zone: they
+are all zero on a project without a chord, and those sound as before.
+
+**Old WARP values (0.5.1.1: four zones, zone = (v * 4) >> 7; now nine, zone = (v * 9) >> 7).** The new zones are OFF 0..14,
+SYNC 15..28, PWM 29..42, FM 43..56, FORMANT 57..71, QUANT 72..85, BEND 86..99, SQUEEZE 100..113, RM 114..127. Only 0..14 (OFF)
+sounds as before; the AMT laws of SYNC, PWM and FM are unchanged.
+
+| old WARP value | old zone | now |
+|---|---|---|
+| 0..14 | OFF | OFF (same) |
+| 15..28 | OFF | SYNC |
+| 29..31 | OFF | PWM |
+| 32..42 | SYNC | PWM |
+| 43..56 | SYNC | FM |
+| 57..63 | SYNC | FORMANT |
+| 64..71 | PWM | FORMANT |
+| 72..85 | PWM | QUANT |
+| 86..95 | PWM | BEND |
+| 96..99 | FM | BEND |
+| 100..113 | FM | SQUEEZE |
+| 114..127 | FM | RM |
+
+**Release note (0.5.2):** WAVETABLE v2: old WARP settings above 14 sound different (the table above); chords are gone (a sound
+with a chord plays its root); P13..P16 are now TBL B / POS B / MIX / FTYPE (p-locks on them lock those now); the Rytm shows the
+old labels for them until its 0.5.2 mod.
 
 The filters (FTYPE): DJ is the engine's own (CUT as before: a project with FTYPE 0 sounds as before, sample for sample
 with B off). The others are Vital's: a digital state-variable filter (12 dB, or two stages for 24 dB: LP, BP, HP by blend;

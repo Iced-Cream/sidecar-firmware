@@ -215,11 +215,9 @@ contrast entry either (it would need a Rytm mods change).
 | knob | track `#2c2950`, value accent, light dot | track `#767676` (4.6:1), value accent, white dot with a black edge |
 | piano roll | lavender rows and lines | rows `#000` / `#161616`, root rows the accent at 16 %, lines `#333` step / `#777` beat / `#fff` page, play head white, notes the accent with black text, the selected note yellow; keys `#e6e6e6` and black, each edged white |
 | meters, sliders | filled tracks | a white outline, the accent inside (yellow past 90 %); a slider's track `#767676` |
-| disabled key | `#2c2950` outline | `#a6a6a6` and a **dashed** edge |
+| disabled key | `#2c2950` outline | `#767676` outline, `#a6a6a6` text |
 
-Disabled keys are dashed along their straight top and bottom edges (gaps cut in the outline; the rounded ends stay solid), so
-disabled does not rest on colour alone. A p-lock keeps the Rytm page's own cues besides its colour (the dotted underline under a
-trig). What is still drawn in its own colours in this look: the boot screen (`sidecar_splash.c`, drawn before the setting is read), and the help
+Disabled keys keep a solid outline in the muted track colour and the faint text colour (high contrast: `#767676` and `#a6a6a6`, both readable on black); the dashed edge belongs to the OLED look's dotted disabled keys only. A p-lock keeps the Rytm page's own cues besides its colour (the dotted underline under a trig). What is still drawn in its own colours in this look: the boot screen (`sidecar_splash.c`, drawn before the setting is read), and the help
 texts that name colours ("Lavender: FX 1, coral: FX 2" on Send FX).
 
 The shots: `make -C pi/ui/host shots-hc` (`sidecar-hc-*`, `sidecar-hcg-*` beside the others; `./shot DIR [WxH] hc|hcg` is one look), and the plain
@@ -298,7 +296,7 @@ yellow or blue anywhere, in the same layout (`viper_apply`, `OS` in `sidecar_the
 |---|---|---|
 | bg | `#001000` | screen and every panel |
 | graticule / track | `#0c3410` | scope divisions, empty meter / track, roll steps (decor, never text) |
-| dim | `#28a030` | borders (2 px), disabled text (and a dashed edge) |
+| dim | `#28a030` | borders (2 px), disabled text |
 | mid | `#48d050` | secondary text, labels, hints |
 | bright | `#78f880` | primary text, traces, meters, accent, selection fill (dark text) |
 | peak | `#c0ffc0` | alerts, REC, warnings, the play head, the selected note's frame |
