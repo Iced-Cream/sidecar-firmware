@@ -1,8 +1,8 @@
-**Draft: not run on a unit yet.** Two parts for #423, in three commits: a storage field's `offset` (pins), then core-ar2 0.20's `ev_store_adopt`, then one docs line that ties them together.
+**Draft: not run on a unit yet.** Two parts for [#423](https://github.com/elekloader/elekloader/issues/423), in three commits: a storage field's `offset` (pins), then core-ar2 0.20's `ev_store_adopt`, then one docs line that ties them together.
 
 ## Part 1: a field's `offset`
 
-A storage field in mod.json can take `"offset": N`, its first bit in the scope, and the allocator places it there in every lockfile, the first build's too. A mod moving data that an older build of its own kept in these bytes can then pin its fields to those bits, so a project saved by either build reads the same. This is for #423: sidecar-mods' arp code (10 bits) and machine tag (14 bits) at sound offsets 30 and 42 land on stored +0x78..+0x7b, the slots their current build reads. A hand-written lockfile can't do this, because each user's build (web page or app) keeps its own.
+A storage field in mod.json can take `"offset": N`, its first bit in the scope, and the allocator places it there in every lockfile, the first build's too. A mod moving data that an older build of its own kept in these bytes can then pin its fields to those bits, so a project saved by either build reads the same. This is for [#423](https://github.com/elekloader/elekloader/issues/423): sidecar-mods' arp code (10 bits) and machine tag (14 bits) at sound offsets 30 and 42 land on stored +0x78..+0x7b, the slots their current build reads. A hand-written lockfile can't do this, because each user's build (web page or app) keeps its own.
 
 - **Repacks keep pins.** A repack places the pinned fields at their offsets and packs the others around them, each at the lowest bits clear (mod, sym order; widest first where that leaves one out). Another mod adding a sound or kit field no longer moves a pinned field. With no pins, the order and bits are the ones it has always packed: the existing store vectors are unchanged.
 - **Gaps.** A new field may take the gaps pins leave below `next`, since those bits never held anything. A pin on another field's bits, or on a freed field's, repacks the scope.
@@ -42,7 +42,7 @@ A mod that recognises its own older bytes in `src` sets its fields with `core_st
 - **No subscriber, no change.** With no handler the loads behave as in 0.19, apart from one extra table test.
 - **Storage fields only.** Lock rows and scene entries of another layout are dropped as before.
 
-It comes from issue #423. sidecar-mods keeps its arp code, machine tag and FX words in stored sound and kit bytes from before core storage, and this lets it take them over once when it ports to `core_store`. With its fields pinned by `offset` (part 1), the handler has nothing to move and its older build still reads the same projects.
+It comes from issue [#423](https://github.com/elekloader/elekloader/issues/423). sidecar-mods keeps its arp code, machine tag and FX words in stored sound and kit bytes from before core storage, and this lets it take them over once when it ports to `core_store`. With its fields pinned by `offset` (part 1), the handler has nothing to move and its older build still reads the same projects.
 
 ### Changes
 
