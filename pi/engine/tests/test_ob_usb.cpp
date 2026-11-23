@@ -154,6 +154,14 @@ extern "C" const char *__asan_default_options () { return "detect_leaks=0"; }
 
 Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pulls it
 
+// the host link's USB MIDI is box ob's (the same USB strings, as Circle copies them; the kernel's SetMidiDevices each pass):
+// its MIDI OUT's failures go with that box's endpoints (MidiHalted, BoxWaits)
+static void host_link_is(CUSBFunction* ob) {
+  static CDevice midi;
+  ob->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), midi.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+  CObUsb::SetMidiDevices(&midi, nullptr);
+}
+
 int main() {
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);
   CHECK(g_rytm[kOutAlt3Mps] == 0x70 && g_rytm[kOutAlt3Mps + 1] == 0x01);
@@ -852,6 +860,7 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
     auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     {
@@ -996,6 +1005,8 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
+    CHECK(CObUsb::MidiSlot(0) == 0);
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     m.fail = 1;
     g_ToHost.q.push_back(rec);
@@ -1005,6 +1016,7 @@ int main() {
     CHECK(r.host.ctl.size() == c0 && xi->resets == 0 && xo->resets == 1 && m.resets == 0);   // nothing sent meanwhile
     g_ToHost.q.clear();
     t.SetMIDI(nullptr);
+    CObUsb::SetMidiDevices(nullptr, nullptr);
     xi->ring = xo->ring = nullptr;
     CTimer::s_now = 0;
   }
@@ -1058,6 +1070,7 @@ int main() {
     CObUsbTransport t;
     CUSBMIDIDevice m;
     t.SetMIDI(&m);
+    host_link_is(r.ob);
     auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
     const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
     unsigned held = CObUsb::HaltHeld(), t0 = CTimer::s_now;
@@ -1115,6 +1128,45 @@ int main() {
     CHECK(xo->resets == 2 && CObFollow::HaltHeld() == held + 1);
     xi->ring = xo->ring = nullptr;
     opt->num.clear();
+    CTimer::s_now = 0;
+  }
+  {  // SR1 / SR2 (T469, T472): the box that stays when the other is unplugged can freeze with its device still there:
+     // nothing completes, the endpoint is not halted (state 1), the resubmits never bring it back. After ob_freeze.h's
+     // kHoldMs it is removed and its port enumerated again (the software replug); a short stall is not
+    struct Port : CUSBHCIRootPort {
+      int rescans = 0;
+      boolean ReScanDevices() override { ++rescans; return TRUE; }
+    } port;
+    CTimer::s_now64 = 0, CTimer::s_now = 1000000;
+    auto has = [](const char* t) { for (auto& l : CLogger::Get()->lines) if (l.find(t) != std::string::npos) return true; return false; };
+    {
+      Bus r(g_rytm, 0x0b48);
+      r.dev.root = &port;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();
+      CXHCIEndpoint* xi = r.host.in.front()->ep->GetXHCIEndpoint();
+      xi->state = 1;
+      // a short stall (about 846 ms): resubmits, then the stream goes on: nothing removed
+      for (int t = 0; t < 9; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      CHECK(r.dev.removes == 0);
+      r.in(1, c), r.out_done();
+      // frozen: nothing completes for 5 s
+      for (int t = 0; t < 50 && r.dev.removes == 0; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && port.rescans == 1 && CObUsb::FreezeReEnums() == 1);
+      CHECK(has("its stream froze with the box still on the bus: enumerating it again (try 1 of 3"));
+    }   // (the Bus deletes the function, as RemoveDevice would)
+    {  // obreenum=0: at the next pass, whatever the stream does
+      Bus r(g_rytm, 0x0b48);
+      r.dev.root = &port;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c), r.out_done();
+      CHECK(CObUsb::Command("obreenum=0") && !CObUsb::Command("obreen"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && port.rescans == 2 && has("asked (obreenum): enumerating it again"));
+      CHECK(CObUsb::Command("obreenum"));   // the counts line
+    }
     CTimer::s_now = 0;
   }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again

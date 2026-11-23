@@ -93,8 +93,8 @@ void FillMaster(sidecar_mfx_view_t* o) {
   sidecar_mfx_view_t v;
   memset(&v, 0, sizeof v);
   v.valid = 1, v.on = m::on(sl), v.byp = mc.byp, v.mix = mc.src == m::kMix, v.lev = mc.lev;
-  // the stems' report is the Rytm's (slot 0's master)
-  v.rep = mc.known, v.onmain = (unsigned char)(sl == 0 ? m::stems_on_main() : 0);
+  // the stems' report is the Rytm's (its slot's master: m::rytm(); known is set there only)
+  v.rep = mc.known, v.onmain = (unsigned char)(mc.known ? m::stems_on_main() : 0);
   v.in = (unsigned char)(in >= 1.0f ? 127 : in * 127.0f), v.out = (unsigned char)(out >= 1.0f ? 127 : out * 127.0f);
   for (int i = 0; i < m::kSlots; ++i) {
     const int c = m::chain(i), s = m::slot(i), ty = control.type[c][s];
