@@ -22,6 +22,7 @@
 #include "shared.h"
 #include "side_out.h"
 #include "device/admit.h"
+#include "fx/fx_guard.h"
 #include "user/lists.h"
 #include "user/um.h"
 #if SIDECAR_SEQED
@@ -80,6 +81,27 @@ static inline unsigned ChainCore (int b) { return bridge::kVoiceSlots > 1 && b =
 // its send FX ~29-34 % more): slot 0's on core 3 in a two-slot engine, during RenderBlock's wait for cores 1 and 2 (core 3's
 // own work there was 3-12 %), slot 1's on core 1 with its send FX. Fixed by slot like ChainCore (masterfx_pi's rings: one
 // consumer). An 8-voice engine keeps it on core 2. core/device/admit.h master_core says the same.
+// The measured guard's hot core (core/fx/fx_guard.h, decided 2026-11-23): render cores 1 and 2 when a block's voices and
+// chains took kFxHotPct of a block (the voice guard's kHotPct); core 3 when slot 0's master chain took what core 3's limit
+// leaves after its own control work (admit.h kC3LimitBp - kC3BaseBp, at the clock now: ~57 % of a block at 1500 MHz).
+static const unsigned kFxHotPct = 80;
+static inline u64 FxHotTicks (void)
+{
+	return TickRate () * 12 / 48000 * kFxHotPct / 100;	// (of a 12-frame block)
+}
+static inline u64 FxHot3Ticks (void)
+{
+	static unsigned s_nMHz = ~0u;
+	static u64 s_n = 0;
+	if (core::admit::clock () != s_nMHz)	// (the clock setting moved: core 3's own share scales with it)
+	{
+		s_nMHz = core::admit::clock ();
+		const unsigned nBase = core::admit::core3_bp (core::admit::Load {});
+		const unsigned nShare = nBase < core::admit::kC3LimitBp - 1000 ? core::admit::kC3LimitBp - nBase : 1000;
+		s_n = TickRate () * 12 / 48000 * nShare / 10000;
+	}
+	return s_n;
+}
 static inline unsigned MasterCore (int b) { return bridge::kVoiceSlots > 1 ? (b == 1 ? 1 : 3) : 2; }
 static_assert (core::admit::master_core (0) == (bridge::kVoiceSlots > 1 ? 3 : 2) && core::admit::master_core (1) == 1, "admit.h's master_core is MasterCore");
 static volatile u64 s_nSleep[4];			// ticks in a wfe, per core, and how many wfe returned (TakeStats: the last second)
@@ -466,6 +488,10 @@ void CEngineCores::Worker (unsigned nCore)
 				masterfx_pi::Render (nFxBox);	// the master chain, after the send FX (else core 3's: MasterCore)
 			s_nChainTicks[nCore] += Ticks () - tC;
 		}
+		// the measured guard of every effect (core/fx/fx_guard.h, decided 2026-11-23): this core's block, voices and chains,
+		// hot at kFxHotPct of a block (as the voice guard's 80 %): its effects' overs count, and 16 hot blocks in a row mute
+		// the dearest effect on it
+		core::fx::guard::core_done ((int) nCore, Ticks () - s_nT0[nCore] >= FxHotTicks ());
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 	}
@@ -520,6 +546,7 @@ void CEngineCores::RenderBlock (int nSide)
 			const u64 dM = Ticks () - tM;
 			s_nChainTicks[3] += dM;
 			t0 += dM;
+			core::fx::guard::core_done (3, dM >= FxHot3Ticks ());	// (core 3: its master chain against its share, FxHot3Ticks)
 		}
 	}
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under

@@ -344,7 +344,10 @@ void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
 
 static bool (*g_cpu_fits)(int box, int c, int s, int t) = nullptr;
 void set_cpu_check(bool (*fits)(int box, int c, int s, int t)) { g_cpu_fits = fits; }
-bool refused(int c, int s) { return valid(c, s) && K(c).refused[c][s] && K(c).type[c][s] != kOff; }
+// (the measured guard's mute shows the same NO CPU: fx_guard.h, decided 2026-11-23)
+bool refused(int c, int s) {
+  return valid(c, s) && (K(c).refused[c][s] || fx::guard::ins_muted(slot_in_hand(), c, s)) && K(c).type[c][s] != kOff;
+}
 int refused_count(int box) {
   if (box < 0 || box >= kVoiceSlots) return 0;
   const Control& k = control_of(box);
@@ -389,6 +392,7 @@ void set_type(int c, int s, int t, bool keep) {
     __atomic_thread_fence(__ATOMIC_RELEASE);   // (before the type: the render core never plays one not admitted)
   }
   K(c).type[c][s] = (uint8_t)t;
+  fx::guard::clear(fx::guard::ins_unit(slot_in_hand(), c, s));   // set again: the measured guard's mute released (fx_guard.h)
   if (!keep)
     for (int k = 0; k < kParams; ++k) S(c).knob[c][s][k] = kLabels[t].def[k];
   for (int k = 0; k < kParams; ++k) refresh(c, s, k);
