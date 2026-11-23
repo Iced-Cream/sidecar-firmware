@@ -1539,7 +1539,9 @@ static uint32_t g_claim_ms = 0;   // the last claim's tick time
 static volatile bool g_going_down = false;
 CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims the Rytm's UP + RIGHT)
 #if CORE_POLY
-  if (!(s.caps2 & kCaps2Arrows)) {   // an older mod: the Rytm's claim is gone at the hello, and 4A 7E 0 would be a bad message
+  // (no hello seen yet is unknown, not an older mod: the Rytm says hello only at its USB port-up, so a host that started
+  // after it never hears one and would never claim; an older Rytm mod counts the 4A 7E as one bad message)
+  if (s.stats.hellos > 0 && !(s.caps2 & kCaps2Arrows)) {   // an older mod: the Rytm's claim is gone at the hello, and 4A 7E 0 would be a bad message
     g_fill_claimed = false;
     return;
   }
@@ -1714,6 +1716,11 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
   const uint8_t* b = d + 6;
   int n = len - 7;
   if (d[4] == kSrcView || d[4] == kSrcVals || d[4] == kSrcDiag) src_capable = true;
+#if CORE_POLY
+  // 2026-11-23: Rytm traffic and no hello (the host started after the Rytm's port-up): claim UP + LEFT / RIGHT once; the
+  // 2 s claim (remote_tick) goes on from there, and the first hello, if one ever comes, decides as before
+  if (s.stats.hellos == 0 && !g_fill_claimed && !g_going_down && d[4] != kHello) fill_claim();
+#endif
 #if CORE_POLY && CORE_MSAMP
   // an UP combo the mod ate (UP + T1..T14 49 1 n, UP + YES / LFO / FX / AMP / TRIG 30, UP + SRC 29 / the bank list, the map
   // 49 1 5): UP's release that follows is no tap (CHOP's ALL toggle)

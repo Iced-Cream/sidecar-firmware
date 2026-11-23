@@ -371,6 +371,7 @@ void script(int s, int i) {
     case 10:   // the remote page's set_param / on_enc on a modulated param (their 0x03 and frames in group f)
       if (i < 0) {
         ui::list_pacing(false);
+        ui::remote_fill_keys(false);   // (no hello here: the host would claim the Rytm's keys, a stream this golden never had)
         voice_at(0x03, 0, kPlaits, 4);
         lfo_all(1, "V1", 1, lfo::kSine, 100, 0, lfo::kFree, 30);
         lfo_all(2, "V1", 0, lfo::kTri, 60, 0, lfo::kFree, 20);
