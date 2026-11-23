@@ -993,6 +993,78 @@ int main() {
       }
       ui::remote_reset();
     }
+    // 2026-11-24 re-hello: the link has seen Rytm traffic but no hello: the host asks for one (3C with flags bit 0), once,
+    // then at most every 5 s until a hello comes or 3 tries are spent. A hello turns every caps-gated feature on. Never
+    // for a box, never once a hello is known, never going down.
+    {
+      const std::vector<uint8_t> ask = {0xF0, 0x7D, 0x52, 0x54, 0x3C, 0x01, 0x01, 0xF7};
+      const uint32_t t0 = now_ms() + 100000;
+      ui::remote_reset();
+      g_out.clear();
+      ui::remote_tick(t0);
+      CHECK(!sent(ask));   // (no Rytm traffic yet: the link may be down)
+      send(msg(0x49, {4, 0}));   // Rytm traffic, no hello
+      ui::remote_tick(t0 + 10);
+      CHECK(sent(ask));
+      g_out.clear();
+      ui::remote_tick(t0 + 1000);
+      ui::remote_tick(t0 + 4900);
+      CHECK(!sent(ask));   // (rate: 5 s)
+      ui::remote_tick(t0 + 5100);
+      CHECK(sent(ask));    // the 2nd try
+      g_out.clear();
+      ui::remote_tick(t0 + 9000);
+      CHECK(!sent(ask));
+      ui::remote_tick(t0 + 10200);
+      CHECK(sent(ask));    // the 3rd
+      g_out.clear();
+      ui::remote_tick(t0 + 15500);
+      ui::remote_tick(t0 + 40000);
+      CHECK(!sent(ask));   // 3 tries spent
+      // a simulated reply: caps known, and what was gated on them turns on
+      ui::remote_reset();
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 50000);
+      CHECK(sent(ask) && ui::remote_caps() == 0 && ui::remote_caps2() == 0);
+      g_out.clear();
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows | ui::kCaps2Capture | ui::kCaps2Rehello}));
+      CHECK(ui::remote_caps() == 127 && ui::remote_caps2() == (ui::kCaps2Arrows | ui::kCaps2Capture | ui::kCaps2Rehello));
+      CHECK(sent(claim));                                                         // FILL's claim
+      CHECK(sent({0xF0, 0x7D, 0x52, 0x54, 0x5A, 0x01, 0x0B, 0x01, 0xF7}));       // the edit arm (host command, caps2 bit 2)
+      g_out.clear();
+      ui::remote_tick(t0 + 60000);
+      ui::remote_tick(t0 + 70000);
+      CHECK(!sent(ask));   // once caps are known: no request
+      // a hello before the first tick: nothing asked
+      ui::remote_reset();
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
+      ui::remote_tick(t0 + 80000);
+      CHECK(!sent(ask));
+      // a box is never asked; going down neither
+      ui::remote_reset();
+      {
+        static device::Screen sc = {{"A", "B", "C", "D", "E", "F", "G", "H"}, ""};
+        static device::Profile pf;
+        pf.screen = &sc;
+        device::g_link.box = &pf;
+        g_out.clear();
+        const std::vector<uint8_t> m = msg(0x49, {4, 0});
+        ui::remote_sysex(m.data(), (int)m.size());
+        ui::remote_tick(t0 + 90000);
+        CHECK(!sent(ask));
+        device::g_link.box = nullptr;
+      }
+      ui::remote_reset();
+      ui::remote_going_down();
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 100000);
+      CHECK(!sent(ask));
+      ui::remote_reset();
+    }
     g_out.clear();
     send(msg(0x35, {0, 5, 127}));
     CHECK(!sent(claim) && ui::remote_caps2() == 0);

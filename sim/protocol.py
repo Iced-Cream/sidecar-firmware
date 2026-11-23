@@ -1096,6 +1096,12 @@ def rui_keepalive() -> bytes:
     return _msg(RUI_KEEPALIVE, [])
 
 
+def rui_rehello() -> bytes:
+    """3C with flags bit 0: "say hello again" (only to a Rytm whose hello's caps2 has RUI_CAPS2_REHELLO; an older one
+    takes it as a plain keepalive: its 3C handler reads no payload)."""
+    return _msg(RUI_KEEPALIVE, [RUI_KEEP_REHELLO])
+
+
 def rui_mask(encs=(), keys=()) -> bytes:
     """37: the catch mask, encoders 0..15 and key codes 0..255 the page takes (the key bytes up to the highest code)."""
     e, k = [0, 0, 0], [0] * 37
@@ -1971,6 +1977,9 @@ RUI_BANK_LIST = 0x4A
 # caps2 has bit 0 (an older one counts it as a bad message), again after every hello: the Rytm clears it at each hello.
 RUI_FILL_CLAIM = 0x7E
 RUI_CAPS2_ARROWS = 1
+# caps2 bits: 0 ARROWS, 1 QP_MUTE, 2 CAPTURE, 3 morph (5A 01 09 / 0A, the morph-v2 branch), 4 REHELLO (below)
+RUI_CAPS2_REHELLO = 16   # the Rytm answers 3C <flags bit 0> with one hello (35), at most once a second
+RUI_KEEP_REHELLO = 1
 RUI_PAGE_GENERATOR, RUI_PAGE_FILL = 15, 16
 BANK_WHY = {0: "open", 1: "yes", 2: "no", 3: "knob", 4: "key", 5: "view", 6: "srcyes"}   # 6 (rui1049, on 3): FUNC + YES
 #                                                                                     on the SRC view: the host aims an OFF

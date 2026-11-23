@@ -459,6 +459,11 @@ struct State {
   bool mask_valid = false;
   bool splash = false;       // 1023: the connect splash runs (the page closed)
   uint32_t now_ms = 0, open_ms = 0;   // the last remote_tick's clock; when the page was last opened (30 on)
+  // 0.5.2 re-hello: Rytm traffic came but no hello (the host started after the Rytm's port-up hellos): 3C with flags bit 0
+  // asks for one (rehello_tick); tries counted, the last at rh_ms
+  bool rh_traffic = false;
+  uint8_t rh_tries = 0;
+  uint32_t rh_ms = 0;
   bool caps36 = false;       // the Rytm's hello said it understands 36 (the splash, the popups)
   int caps = 0;              // fix1049: the hello's caps byte whole (bit 1: 16 send FX label tables, rui1049)
   int caps2 = 0;             // 0.5.0 FILL: the hello's 4th byte (bit 0 kCaps2Arrows: UP + LEFT / RIGHT as 49 1 1 15 / 16)
@@ -1718,6 +1723,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
   const uint8_t* b = d + 6;
   int n = len - 7;
   if (d[4] == kSrcView || d[4] == kSrcVals || d[4] == kSrcDiag) src_capable = true;
+  if (s.stats.hellos == 0 && d[4] != kHello && !g_going_down && !device::foreign()) s.rh_traffic = true;   // (re-hello below)
 #if CORE_POLY
   // 2026-11-23: Rytm traffic and no hello (the host started after the Rytm's port-up): claim UP + LEFT / RIGHT once; the
   // 2 s claim (remote_tick) goes on from there, and the first hello, if one ever comes, decides as before. Never for a box.
@@ -2248,6 +2254,21 @@ static CORE_COLD void key_repeat_tick(uint32_t ms) {
   }
 }
 
+// 0.5.2 re-hello: the Rytm sends its hello only at its USB port-up, so a host that started later has no caps (host command,
+// QPERF, edit arm, the 36s ...). Once Rytm traffic has come and no hello, ask: 3C with flags bit 0 (kCaps2Rehello answers it
+// with one hello; an older mod takes it as a plain keepalive: its 3C reads no payload). Once, then every kRehelloMs, 3 tries.
+// Never for a box (A4 / Digitakt), never going down. A hello ends it (hellos > 0).
+constexpr uint32_t kRehelloMs = 5000;
+constexpr int kRehelloTries = 3;
+CORE_COLD void rehello_tick(uint32_t ms) {
+  if (!s.rh_traffic || s.stats.hellos > 0 || g_going_down || device::foreign() || s.rh_tries >= kRehelloTries) return;
+  if (s.rh_tries && (int32_t)(ms - s.rh_ms) < (int32_t)kRehelloMs) return;
+  const uint8_t flags = 1;
+  send_short(kAlive, &flags, 1);
+  s.rh_tries++, s.rh_ms = ms;
+  if (s.rh_tries == 1) core::log("rui: Rytm traffic but no hello: asking it to say hello again");
+}
+
 CORE_COLD void remote_tick(uint32_t ms) {
   if (g_going_down && !g_fill_keys_off) g_fill_keys_off = true, fill_unclaim();   // (a planned reboot: remote.h)
   // 0.5.2: the claim again every ~2 s while linked (the Rytm drops it at each USB port drop; a 4A 7E 1 only sets its flag)
@@ -2261,6 +2282,7 @@ CORE_COLD void remote_tick(uint32_t ms) {
     }
   }
   s.now_ms = ms;
+  rehello_tick(ms);
   vparam_tick(ms);   // the touchscreen's VOICE knob writes' answers (a few compares when none is followed)
   if (s.rep_code >= 0) key_repeat_tick(ms);
   page_two_tick(ms);   // rc5: a machine list choice's page-2 defaults

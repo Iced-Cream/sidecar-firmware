@@ -68,6 +68,9 @@ constexpr int kCaps2QpMute = 2;
 // 0.5.0 v2 P2: kCaps2Capture - PAGE + T15 / T16 on the Rytm's own pages is the MORPH scene edit, once armed (5A 01 0B 1,
 // sent after every hello: core/mod/rytm_out.h kOpEditArm); its reports 2D 01 12 / 13 (core/mod/scene.h capture)
 constexpr int kCaps2Capture = 4;
+// 0.5.2 re-hello: kCaps2Rehello - the Rytm answers 3C with flags bit 0 (the keepalive) with its hello again, at most once a
+// second (remote.cpp rehello_tick: sent when Rytm traffic came but no hello). Bit 3 is the morph-v2 branch's (5A 01 09 / 0A).
+constexpr int kCaps2Rehello = 16;
 // FILL's claim dropped (4A 7E 0: the Rytm's UP + LEFT / RIGHT stock's again) - fill-keys review L1: a claim left on a
 // Rytm whose host stopped answering. remote_fill_keys(false) (fill=keys:off): dropped, no claim after a hello until
 // remote_fill_keys(true) claims again; control core. remote_going_down(): a planned reboot or power-off (the Pi's
