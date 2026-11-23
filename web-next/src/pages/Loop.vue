@@ -56,7 +56,7 @@ watch(() => lp.value?.live, (m) => { if (m) livePerf.value = m; }, { immediate: 
 <template>
   <h1 class="visually-hidden" tabindex="-1">Loop</h1>
   <Card v-if="!lp" label="Loop">
-    <p>The master looper comes with Sidecar 0.5.0. This Sidecar does not report one.</p>
+    <p>The master looper comes with Sidecar 0.5.2. This Sidecar does not report one.</p>
   </Card>
   <Card v-else-if="!lp.on" label="Loop">
     <p>The looper is off on this Sidecar: <code>loopram=0</code> is set, or there was no RAM for it at boot. A 1 GB board keeps it off by default (it takes 80 MB from the sample pool); <code>loopram=48</code> in <code>cmdline.txt</code> turns it on.</p>

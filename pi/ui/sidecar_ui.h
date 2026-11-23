@@ -95,7 +95,8 @@ void sidecar_ui_set_command (sidecar_ui_command_t fn, void *param);
 // machine view's ALL POOLS), 16 SERVICE (settings), 17 CHOP (sidecar_chop.h: a CHOP voice's page; VOICE on a CHOP track), 18 PRESET (sidecar_preset.h: the POOL page's JUNO / 6-OP FM tabs),
 // 21 SAMPLE EDIT (sidecar_sedit.h: shown while the sample editor has an edit open), 22 XY PAD (sidecar_xy.h: Send FX > XY),
 // 23 settings/MIDI (0.5.0: the keyboards' route, auto channel, computer notes; MIDI learn's routes),
-// 24 HOME > Perform (0.5.1: the XY pad with HOLD and SETUP, the targets, kill tails and REC; sidecar_xy.h's second pad); page 0 is HOME > Overview
+// 24 HOME > Perform (0.5.1: the XY pad with HOLD and SETUP, the targets, kill tails and REC; sidecar_xy.h's second pad),
+// 25 LOOP (the master looper); page 0 is HOME > Overview
 void sidecar_ui_show (int page);
 // The remote UI's app (docs/remote-ui.md) feeds only some pages: a page it does not feed (on 0) shows "NOT IN THE REMOTE YET" over its
 // content, and its navigation key / sub-page pill is greyed (a section's key only when none of its pages is fed). Every page is fed
