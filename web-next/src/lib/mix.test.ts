@@ -1,6 +1,6 @@
 // web-next/src/lib/mix.test.ts
-import { describe, expect, it } from "vitest";
-import { EQ_FLAT, SC_CHAINS, eqDb, eqPath, eqText, insertText, mixCmd, pumpPath, scText, sidechains, slotTypes, strips, typeBlocked, typeOutcome } from "./mix";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EQ_FLAT, SC_CHAINS, eqDb, eqPath, eqText, insertText, mixCmd, monLease, pumpPath, scText, sidechains, slotTypes, strips, typeBlocked, typeOutcome } from "./mix";
 
 const status = {
   machines: ["plaits", "juno", "daisy", "dsps", "fm", "dd", "daisy", "plaits"],
@@ -168,5 +168,44 @@ describe("sidechain (0.5.0)", () => {
     expect(ys[ys.length - 1]).toBe(1);
     const shallow = [...pumpPath([32, 0, 20, 60, 64, 50], 360, 90).matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => Number(m[2]));
     expect(Math.max(...shallow)).toBeLessThan(40);
+  });
+});
+
+describe("MON lease (0.5.2)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  it("renews a MON it switched on, every second, with the renew-only line", () => {
+    const sent: string[] = [];
+    const lease = monLease((c) => sent.push(c), () => true);
+    lease.start();
+    lease.set("V2", true);
+    vi.advanceTimersByTime(3000);
+    expect(sent).toEqual(["ins=V2:sc:mon:on", "ins=V2:sc:mon:renew", "ins=V2:sc:mon:renew", "ins=V2:sc:mon:renew"]);
+    expect(sent.filter((c) => c.endsWith(":on"))).toHaveLength(1); // never an ON again
+    lease.stop();
+  });
+  it("sends nothing after an OFF or a chain change, whatever the status says", () => {
+    const sent: string[] = [];
+    const lease = monLease((c) => sent.push(c), () => true); // the status still shows it on (the push is late)
+    lease.start();
+    lease.set("V2", true);
+    lease.off("V2"); // monOff: the chain changed
+    sent.length = 0;
+    vi.advanceTimersByTime(5000);
+    expect(sent).toEqual([]);
+    lease.stop();
+  });
+  it("forgets a chain whose status shows MON off (a T1 off on the Rytm)", () => {
+    const sent: string[] = [];
+    let on = true;
+    const lease = monLease((c) => sent.push(c), () => on);
+    lease.start();
+    lease.set("M1", true);
+    vi.advanceTimersByTime(1000);
+    on = false;
+    sent.length = 0;
+    vi.advanceTimersByTime(3000);
+    expect(sent).toEqual([]);
+    lease.stop();
   });
 });

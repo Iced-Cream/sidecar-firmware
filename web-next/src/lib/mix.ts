@@ -244,6 +244,36 @@ export function pumpPath(p: number[], w: number, h: number, points = 64): string
   return d;
 }
 
+/** The web's MON lease (0.5.2): the Sidecar drops a MON from the web 3 s after the last line. Chains this page switched on are renewed
+ * every second with a renew-only line (it never switches MON on); an OFF, or a chain whose status no longer shows MON, forgets the id. */
+export function monLease(send: (cmd: string) => void, isOn: (id: string) => boolean) {
+  const ids = new Set<string>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  return {
+    set(id: string, on: boolean) {
+      if (on) ids.add(id);
+      else ids.delete(id);
+      send(mixCmd.scMon(id, on));
+    },
+    off(id: string) {
+      ids.delete(id);
+      send(mixCmd.scMon(id, false));
+    },
+    start() {
+      timer = setInterval(() => {
+        for (const id of [...ids]) {
+          if (isOn(id)) send(mixCmd.scMonRenew(id));
+          else ids.delete(id);
+        }
+      }, 1000);
+    },
+    stop() {
+      clearInterval(timer);
+      ids.clear();
+    },
+  };
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
 
 // ---- command lines (core/fx/insert.cpp, out.cpp, master.cpp kHelp)
@@ -264,6 +294,7 @@ export const mixCmd = {
   scMode: (id: string, m: ScMode) => `ins=${id}:sc:mode:${m.toLowerCase()}`,
   scSrc: (id: string, src: string) => `ins=${id}:sc:src:${src.toLowerCase()}`,
   scParam: (id: string, k: number, v: number) => `ins=${id}:sc:p${k + 1}:${clamp(v, 0, 127)}`,
+  scMonRenew: (id: string) => `ins=${id}:sc:mon:renew`,
   scMon: (id: string, on: boolean) => `ins=${id}:sc:mon:${on ? "on" : "off"}`,
   mix: (s: Strip, slot: number, v: number) => (s.chain < 0 ? `mfx=${slot + 1}:mix:${clamp(v, 0, 127)}` : `ins=${s.id}:${"AB"[slot]}:mix:${clamp(v, 0, 127)}`),
 };

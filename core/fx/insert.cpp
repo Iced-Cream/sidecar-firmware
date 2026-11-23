@@ -553,6 +553,9 @@ void set_sc_mon_lease(int c, bool on) {
   set_sc_mon(c, on);
   if (on && sc_mon(c)) g_mon_until[c] = now_ms() + 3000u | 1u;
 }
+void renew_sc_mon(int c) {   // the web's renew-only line: extends a lease that is running, never switches MON on
+  if (sc_valid(c) && control.scmon[c] && g_mon_until[c]) g_mon_until[c] = now_ms() + 3000u | 1u;
+}
 void sc_mon_tick() {   // from save(), every idle pass
   for (int c = 0; c < kChains; ++c)
     if (g_mon_until[c] && (int32_t)(now_ms() - g_mon_until[c]) > 0) g_mon_until[c] = 0, control.scmon[c] = 0;
@@ -786,7 +789,7 @@ bool command(const char* p, char* o, int cap) {
   int c = chain_from_name(a);
   static const char kHelp[] =
       "ins=C:S:type:T|p1..p4:V|off (C V1..V8 B1..B3, S A|B), ins=Bn:S:mix:V (a send TYPE's), ins=C:eq:hpf|lpf|low|high|base|width:V|off, "
-      "ins=C:sc:mode:off|pump|duck, ins=C:sc:src:bd..cb|ainl|ainr|ainlr|v1..v8, ins=C:sc:p1..p6:V, ins=C:sc:mon:on|off (DUCK: hear the filtered key; C V1..V8 B1..B3 M1 M2), "
+      "ins=C:sc:mode:off|pump|duck, ins=C:sc:src:bd..cb|ainl|ainr|ainlr|v1..v8, ins=C:sc:p1..p6:V, ins=C:sc:mon:on|off|renew (DUCK: hear the filtered key; C V1..V8 B1..B3 M1 M2), "
       "ins=Vn:send:B:V (B 1..3), ins=b3:route:pre|post, ins=reset";
   if (c < 0) {
     sniprintf(o, cap, "%s", kHelp);
@@ -858,6 +861,8 @@ bool command(const char* p, char* o, int cap) {
         return true;
       }
       set_sc_src(c, sr);
+    } else if (same_ci(key, "mon") && same_ci(val, "renew")) {
+      renew_sc_mon(c);
     } else if (same_ci(key, "mon")) {
       if (!same_ci(val, "on") && !same_ci(val, "off") && !same_ci(val, "1") && !same_ci(val, "0")) {
         sniprintf(o, cap, "%s", kHelp);

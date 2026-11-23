@@ -577,7 +577,7 @@ class Engine {
       }
     }
     // MON: the filtered key in place of the chain's output (both sides), a 5 ms ramp each way; PUMP has no key to play
-    // (kf exists only when the DUCK loop ran this call; a runaway or NaN key is not played: the same guard as the chain's)
+    // (kf exists only when the DUCK loop ran this call; a runaway or NaN key is not played: the chain's guard, on the sum of |key| over the block, so a sustained key above ~6000 a sample trips it)
     const float q0 = o.mw, q1 = haskf ? clampf(monw ? q0 + step : q0 - step, 0.0f, 1.0f) : 0.0f;
     o.mw = q1;
     float ck = 0.0f;
@@ -1008,6 +1008,7 @@ void set_sc_mode(int c, int mode, bool keep = false);
 void set_sc_src(int c, int src);
 void set_sc_param(int c, int k, int v);
 void set_sc_mon_lease(int c, bool on);   // the web's (console) MON: lapses after 3 s unless sent again; sc_mon_tick() (save()) lapses it
+void renew_sc_mon(int c);   // ins=C:sc:mon:renew: extends the web's lease while MON is on from the web; never switches it on
 void sc_mon_tick();
 void set_sc_mon(int c, bool on);   // 0.5.2 MON: DUCK plays its filtered key instead of the chain (not saved; a mode / source change ends it)
 bool sc_mon(int c);

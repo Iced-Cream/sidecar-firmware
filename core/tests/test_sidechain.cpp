@@ -479,6 +479,24 @@ int main() {
     CHECK(ins::sc_mon(1));
     ins::set_sc_mon(1, false);
     CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o) && ins::command("ins=V2:sc:mon:off", o, sizeof o) && !ins::sc_mon(1));
+    // renew-only: never switches MON on, only extends the web's lease
+    ins::set_sc_mode(1, sc::kDuck);
+    CHECK(ins::command("ins=V2:sc:mon:renew", o, sizeof o) && !ins::sc_mon(1));   // off: stays off
+    CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o) && ins::sc_mon(1));
+    for (int i = 0; i < 4; ++i) {   // renewed every 2 s: still on after 8 s
+      host_fake_time(true, us += 2000000);
+      CHECK(ins::command("ins=V2:sc:mon:renew", o, sizeof o));
+      ins::save();
+    }
+    CHECK(ins::sc_mon(1));
+    ins::set_sc_mon(1, false);                                                      // a T1 off on the Rytm
+    CHECK(ins::command("ins=V2:sc:mon:renew", o, sizeof o) && !ins::sc_mon(1));    // a late beat: stays off
+    ins::set_sc_mon(1, true);                                                       // T1 on: no lease, renew does not give it one
+    CHECK(ins::command("ins=V2:sc:mon:renew", o, sizeof o));
+    host_fake_time(true, us += 60000000);
+    ins::save();
+    CHECK(ins::sc_mon(1));
+    ins::set_sc_mon(1, false);
     host_fake_time(false, 0);
     ins::reset();
     printf("MON from the web lapses after 3 s without a refresh; T1's does not\n");

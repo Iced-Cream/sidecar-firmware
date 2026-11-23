@@ -316,8 +316,8 @@ signal with KBAS and KWID OFF it gives COMP's answer exactly [tested].
 **MON** (0.5.2) plays the filtered key (what the detector sees, before its level) in place of the chain's output, both
 sides, so KBAS and KWID can be set by ear. It is per chain, only on a DUCK stage, and a 5 ms ramp each way (no click). It
 is **not saved** with the kit's card (a card never loads with MON on) and it ends by itself with a mode or source change,
-another chain in the view, leaving the view, the page or the web page, and a kit change. MON from the web is a 3 s lease the page
-renews every second: a closed tab or a lost link lets it lapse (the Rytm's T1 has no lease). MON is clamped to +-2 and a runaway
+another chain in the view, leaving the view, the page or the web page, and a kit change. MON from the web is a lease of about 3 s the page
+renews every second with `ins=C:sc:mon:renew` (which never switches MON on): a closed tab or a lost link lets it lapse (the Rytm's T1 has no lease). MON is clamped to +-2 and a runaway
 or NaN key is not played (the same guard as the chain's). Rytm: T1 in the SIDECHAIN view (the
 INSERT and MASTER pages; its LED shows it; T1 is the page's only in that view, on a DUCK stage). Web: Mix > Sidechain >
 Monitor the key. Console: `ins=V2:sc:mon:on|off`; `/status` `"ins"` `"sc"` `"mon":0|1`.

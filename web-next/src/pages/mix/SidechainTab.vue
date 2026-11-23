@@ -7,7 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Card from "../../ui/Card.vue";
 import Fader from "../../ui/Fader.vue";
 import Segmented from "../../ui/Segmented.vue";
-import { SC_CHAINS, SC_MODES, SC_SOURCES, mixCmd, pumpPath, scText, sidechains, type ScMode } from "../../lib/mix";
+import { SC_CHAINS, SC_MODES, SC_SOURCES, mixCmd, monLease, pumpPath, scText, sidechains, type ScMode } from "../../lib/mix";
 import { useSidecar } from "../../lib/useSidecar";
 import { useSend } from "../../lib/useSend";
 
@@ -35,31 +35,15 @@ const path = computed(() => pumpPath(cur.value.p, 360, 90));
 
 // MON (0.5.2): the chain plays its filtered key instead of its output. Not saved; it ends with the page or the chain shown.
 const monOn = computed(() => sc.value.list.filter((x) => x.mon).map((x) => x.id));
-function monOff(ids: string[]) {
-  for (const id of ids) send(mixCmd.scMon(id, false));
-}
+const lease = monLease(send, (id) => monOn.value.includes(id));
+const monOff = (ids: string[]) => ids.forEach((id) => lease.off(id));
 watch(chain, (_n, old) => monOff(monOn.value.filter((id) => id === old)));
-// The Sidecar drops a MON from the web after 3 s unless it is sent again (a closed tab, a lost link): this page sends it every second
-// for the chains it switched on.
-const webMon = new Set<string>();
-function toggleMon(id: string, on: boolean) {
-  if (on) webMon.add(id);
-  else webMon.delete(id);
-  send(mixCmd.scMon(id, on));
-}
-let beat: ReturnType<typeof setInterval> | undefined;
-onMounted(() => {
-  beat = setInterval(() => {
-    for (const id of webMon) {
-      if (monOn.value.includes(id)) send(mixCmd.scMon(id, true));
-      else webMon.delete(id);
-    }
-  }, 1000);
-});
+// The Sidecar drops a MON from the web after 3 s unless it is renewed (a closed tab, a lost link): the lease renews it every second.
+const toggleMon = (id: string, on: boolean) => lease.set(id, on);
+onMounted(() => lease.start());
 onBeforeUnmount(() => {
-  clearInterval(beat);
+  lease.stop();
   monOff(monOn.value);
-  webMon.clear();
 });
 </script>
 
