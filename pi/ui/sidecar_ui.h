@@ -124,7 +124,7 @@ int sidecar_ui_nav_lit (void);					// the navigation key lit for it (-1: none; t
 // key ("T1"; "" when the device has no key for that page) - the tests hold the two to the same order (pi/ui/host/shot.c)
 const char *sidecar_ui_nav_page (int i);
 const char *sidecar_ui_nav_key (int i);
-void *sidecar_ui_home_obj (int what);	// the object behind a home_hit number (the host's checks)
+void *sidecar_ui_home_obj (int what);	// the object behind a home_hit number (the host's checks; 17: the header's Rytm text)
 int sidecar_ui_home_hit (int what, int *x, int *y);		// HOME's tiles (tests): 0..7 voices, 8 Now, 9 XY, 10 / 11 send FX, 12 recorder, 13 health, 14 links, 15 Perform's REC, 16 its Kill tails; 1: given
 unsigned sidecar_ui_taps (void);				// the touch test's TAP count (tests)
 int sidecar_ui_touch_test_shown (void);				// HOME shows the touch test (until the first tap)

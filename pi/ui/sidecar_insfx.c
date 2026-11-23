@@ -165,7 +165,7 @@ void sidecar_insfx_create (void *parent, int y0)
 	else
 	{
 		const int sp = LU (380) + dx / 2, kp = LU (94) + dx / 8, g = LU (8);
-		const int yv = LU (12), yt = yv + K + g, yk = yt + K + g, hk = LU (84) + e, yval = yk + hk + 2 + (TH->f_pxs ? LU (6) : 0), ys = yval + LU (18) + (TH->f_pxs ? LU (4) : 0), pit = LU (22) + e / 2;
+		const int yv = LU (12), yt = yv + K + g, yk = yt + K + g, hk = LU (84) + e, yval = yk + hk + 2 + (TH->f_pxs ? LU (6) : 0), ys = yval + LU (18) + (TH->f_pxs ? LU (10) : 0), pit = LU (22) + e / 2;
 		const int yo = ys + 3 * pit + LU (2);
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);

@@ -1433,8 +1433,8 @@ static void sc_build (lv_obj_t *scr)
 		if (TH->f_pxs && TH->w >= 1024)		// a small Rytm-OLED strip in the header: pattern, tempo, transport, in the pixel face on black
 		{
 			const lv_font_t *f = TH->f_pxs;
-			const int sw = th_text_width (f, "A04  121.5  PLAY") + 2 * LU (10), sh = f->line_height + LU (10);
-			s_Strip = th_label (bar, W - LU (16) - LU (240) - LU (14) - sw + LU (20), (LU (52) - sh) / 2, f, TH->ink, "");
+			const int sw = th_text_width (f, "H16  888.8  PAUS") + 2 * LU (10), sh = f->line_height + LU (10);
+			s_Strip = th_label (bar, W - LU (16) - LU (240) - LU (14) - sw, (LU (52) - sh) / 2, f, TH->ink, "");
 			lv_obj_set_style_bg_color (s_Strip, lv_color_hex (0x000000), 0);
 			lv_obj_set_style_bg_opa (s_Strip, LV_OPA_COVER, 0);
 			lv_obj_set_style_border_color (s_Strip, lv_color_hex (TH->win_edge), 0);
@@ -2381,7 +2381,7 @@ int sidecar_ui_combo_map_shown (void) { return s_Map && !lv_obj_has_flag (s_Map,
 void *sidecar_ui_home_obj (int what)
 {
 	return what >= 0 && what < 8 ? s_Track[what] : what == 8 ? s_NowPat : what == 9 ? s_OvXy : what == 10 || what == 11 ? s_OvFx[what - 10]
-	       : what == 12 ? s_NowRec : what == 13 ? s_Health : what == 14 ? s_OvLink[0] : what == 15 ? s_PerfRec : what == 16 ? s_PerfKill : 0;
+	       : what == 12 ? s_NowRec : what == 13 ? s_Health : what == 14 ? s_OvLink[0] : what == 15 ? s_PerfRec : what == 16 ? s_PerfKill : what == 17 ? s_Rytm : 0;
 }
 int sidecar_ui_home_hit (int what, int *x, int *y)
 {

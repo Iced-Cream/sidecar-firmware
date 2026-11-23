@@ -41,12 +41,12 @@ unknown message types, unknown views and unknown sections.
 | BYE 14 | both | `u16 code text`, then the connection closes |
 
 Views: 1 STATUS (2 Hz), 2 VOICE (10 Hz), 3 INSERT FX (10 Hz), 4 MASTER FX (10 Hz), 5 SEQ (10 Hz), 6 SEQ PLAY HEAD (30 Hz), 7 PAT (10 Hz). A view is a list of sections
-
-STATUS schema 1.1 (0.5.2) appends `bpm10` (the Rytm's tempo x 10, 0 unknown) to the live section; a decoder stops at the end of its own list, so an older app ignores it and an older Pi leaves it 0.
 (`rmt_views.c`); the Pi keeps, per client and view, the hash of each section as last sent and sends only the ones that
 changed, at the subscription's rate. Meters and traces are already 7/8-bit in the view structs (peaks 0..127, scope
 columns -127..127). A section instance is at most 1 KB. Sections are the struct's fields in the table's order, never the
 struct's memory.
+
+STATUS schema 1.1 (0.5.2) appends `bpm10` (the Rytm's tempo x 10, 0 unknown) to the live section; a decoder stops at the end of its own list, so an older app ignores it and an older Pi leaves it 0.
 
 Skew: the decoder applies the fields the data has and leaves the rest (an older Pi), ignores bytes past its last field
 (a newer Pi). WELCOME lists the views this Pi has (a build without core/seq does not list SEQ, the play head and PAT; a SUB for a view it does not offer is

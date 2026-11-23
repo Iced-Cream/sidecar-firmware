@@ -6,6 +6,7 @@
 //   ./shot anim OUTDIR [N]   the SEQ piano roll playing in the OLED theme: N frames (default 300) at 20 fps, frame-NNNN.png
 #include <zlib.h>
 #include "lvgl.h"
+#include "src/core/lv_obj_draw_private.h"
 #include "src/widgets/label/lv_label_private.h"	// dot_begin: a DOTS label cut (the text-fit check)
 #include "../sidecar_ui.h"
 #include "../sidecar_dot.h"
@@ -510,6 +511,34 @@ static double bench (const lv_area_t *a, int n)
 
 static sidecar_ui_status_t s_St;
 static int s_nContrastSt = -1;		// 0.5.1: the status's ui_contrast (-1: not known)
+// Viper's alert bars (REC, "1 thing to look at", "No Rytm link"): none in any other look; in Viper the bar covers the label's line with a pad,
+// holds the text where it is really drawn (left, centre or right in its box; from LVGL's own letter positions) and is no wider than text + pads,
+// inside its parent; the cached ext draw size takes in the pad ring (a partial redraw must invalidate it)
+static void alert_bars (int w)
+{
+	lv_obj_t *o = (lv_obj_t *) sidecar_ui_home_obj (w);
+	if (TH->f_pxs && w == 17)		// the header strip is sized for "H16  888.8  PAUS" and clips: no text it can show is wider
+	{
+		static const char *const t[] = {"H16  999.9  PAUS", "A04  121.5  PLAY", "A01  100.0  STOP", "G09  999.0  REC", "---  ---  ----", "D12  10.0  PLAY", "B16  222.2  PAUS", "C11  777.7  STOP"};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) EXPECT (th_text_width (TH->f_pxs, t[i]) <= th_text_width (TH->f_pxs, "H16  888.8  PAUS"));
+	}
+	lv_area_t bar, c, pc;
+	if (!o && w == 17) return;			// (a header without the Rytm text: the other looks' layouts)
+	const int on = o && th_alert_bar (o, &bar);
+	EXPECT (o && on == (s_nContrastSt == 3 && TH->id == THEME_SIDECAR && lv_label_get_text (o)[0]));
+	if (!on) return;
+	lv_obj_get_coords (o, &c);
+	lv_point_t p0, p1;
+	lv_label_get_letter_pos (o, 0, &p0);
+	lv_label_get_letter_pos (o, (uint32_t) strlen (lv_label_get_text (o)), &p1);
+	EXPECT (bar.y1 < c.y1 && bar.y2 > c.y2);
+	EXPECT (bar.x1 < c.x1 + p0.x && bar.x2 >= c.x1 + p1.x - 1);
+	EXPECT (bar.x2 - bar.x1 <= p1.x - p0.x + 3 * LU (5));
+	lv_obj_get_coords (lv_obj_get_parent (o), &pc);
+	EXPECT (bar.x2 <= pc.x2 && bar.x1 >= pc.x1);
+	EXPECT (lv_obj_get_ext_draw_size (o) >= LU (5));
+}
+
 static void status_init (int style)
 {
 	static const char *const tracks[8] = {"PLAITS", "FM", "JUNO", "DSPS", "DAISY", "MD", "GRAN", "WAVE"};
@@ -2083,21 +2112,7 @@ static void theme_run (int style, const char *pre)
 		sidecar_ui_show (0); run (2);
 		EXPECT (sidecar_xy_wanted () && !sidecar_xy_shown ());		// (the view is built for the XY tile)
 		xy_fake (4, 1, 1); sidecar_xy_set (&s_Xy); s_Last[0] = 0; sidecar_ui_status (&s_St); run (2); shot ("home-overview");
-		for (int w = 12; w <= 13; w++)		// Viper's alert bars (REC, "1 thing to look at"): they hug the text and cover its whole line with a pad, in no other look
-		{
-			lv_obj_t *o = (lv_obj_t *) sidecar_ui_home_obj (w);
-			lv_area_t bar, c;
-			const int on = o && th_alert_bar (o, &bar);
-			EXPECT (o && on == (s_nContrastSt == 3 && TH->id == THEME_SIDECAR));
-			if (!on) continue;
-			lv_obj_get_coords (o, &c);
-			const int tw = th_text_width (lv_obj_get_style_text_font (o, 0), lv_label_get_text (o));
-			EXPECT (bar.y1 < c.y1 && bar.y2 > c.y2 && bar.x1 < c.x1);			// the pad: the descenders and the first glyph are inside the bar
-			EXPECT (bar.x2 >= c.x1 + tw && bar.x2 - bar.x1 <= tw + 3 * LU (5));	// as wide as the text, not the label's whole width
-			lv_area_t pc;
-			lv_obj_get_coords (lv_obj_get_parent (o), &pc);
-			EXPECT (bar.x2 <= pc.x2 && bar.x1 >= pc.x1);
-		}
+		alert_bars (12), alert_bars (13);
 		s_St.vmuted[6] = 1, s_St.underruns = 3; sidecar_ui_status (&s_St); run (2); shot ("home-overview-trouble");
 		s_St.vmuted[6] = 0, s_St.underruns = 0; sidecar_ui_status (&s_St); run (2);
 		EXPECT (sidecar_ui_home_hit (9, &hx, &hy)); tap (hx, hy);	// the XY tile: Perform
@@ -2924,7 +2939,7 @@ static void theme_run (int style, const char *pre)
 	}
 	// F2: a mirror page (VOICE) while the Rytm is not connected says it shows the last it had
 	s_St.rytm = 0; sidecar_ui_status (&s_St);
-	sidecar_ui_show (8); run (40); shot ("voice-no-rytm");	// (after the link banner)
+	sidecar_ui_show (8); run (40); shot ("voice-no-rytm"); alert_bars (17);	// (after the link banner; the header's "No Rytm link")
 	s_St.rytm = 1; sidecar_ui_status (&s_St);
 	sidecar_ui_show (0); run (2);
 	// N3: the Rytm's UP held alone - the UP + T map over the screen, gone at the release

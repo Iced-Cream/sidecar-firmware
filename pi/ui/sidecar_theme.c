@@ -1428,13 +1428,18 @@ static void notch (lv_layer_t *l, const lv_area_t *c, int x, int y, int dx, int 
 // Viper's alert bar (REC, "1 thing to look at", the REC page's state): drawn here, not as the label's own background. The label's box is
 // only its font's line height (Arimo's is tight: the bar cut the descenders, the first glyph touched the notch) and as wide as the
 // space it was given (a pale slab across the whole panel). The bar hugs the text instead, with a pad round it, notched at both top corners.
-static void label_alert_area (lv_obj_t *o, lv_area_t *k)
+static int label_alert_area (lv_obj_t *o, lv_area_t *k)		// 0: an empty text (no bar)
 {
 	const int px = LU (5), py = LU (3);
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
-	const int tw = th_text_width (lv_obj_get_style_text_font (o, 0), lv_label_get_text (o)), w = lv_area_get_width (&c);
-	k->x1 = c.x1 - px, k->y1 = c.y1 - py, k->x2 = c.x1 + (tw < w ? tw : w) + px - 1, k->y2 = c.y2 + py;
+	int tw = th_text_width (lv_obj_get_style_text_font (o, 0), lv_label_get_text (o)), w = lv_area_get_width (&c);
+	if (tw <= 0) return 0;
+	if (tw > w) tw = w;					// (clipped)
+	const lv_text_align_t al = lv_obj_get_style_text_align (o, 0);	// the text's own x: left, centre or right in the box
+	const int x = c.x1 + (al == LV_TEXT_ALIGN_RIGHT ? w - tw : al == LV_TEXT_ALIGN_CENTER ? (w - tw) / 2 : 0);
+	k->x1 = x - px, k->y1 = c.y1 - py, k->x2 = x + tw + px - 1, k->y2 = c.y2 + py;
+	return 1;
 }
 static void label_alert (lv_event_t *e)
 {
@@ -1442,7 +1447,7 @@ static void label_alert (lv_event_t *e)
 	if (lv_event_get_code (e) == LV_EVENT_REFR_EXT_DRAW_SIZE) { lv_event_set_ext_draw_size (e, LU (5)); return; }
 	if (lv_event_get_code (e) != LV_EVENT_DRAW_MAIN_BEGIN) return;
 	lv_area_t k;
-	label_alert_area (o, &k);
+	if (!label_alert_area (o, &k)) return;
 	lv_layer_t *l = lv_event_get_layer (e);
 	th_fill (l, &k, 0, 0, lv_area_get_width (&k) - 1, lv_area_get_height (&k) - 1, TH->bad, LV_OPA_COVER, 0);
 	notch (l, &k, 0, 0, 1, 1);
@@ -1456,8 +1461,7 @@ int th_alert_bar (lv_obj_t *l, lv_area_t *bar)
 	for (uint32_t i = 0; i < lv_obj_get_event_count (l); i++)
 		if (lv_event_dsc_get_cb (lv_obj_get_event_dsc (l, i)) == label_alert) d = lv_obj_get_event_dsc (l, i);
 	if (!d) return 0;
-	label_alert_area (l, bar);
-	return 1;
+	return label_alert_area (l, bar);
 }
 
 void th_label_color (lv_obj_t *l, uint32_t rgb)
@@ -1471,7 +1475,7 @@ void th_label_color (lv_obj_t *l, uint32_t rgb)
 	{
 		const int had = lv_obj_remove_event_cb (l, label_alert);
 		if (alert) lv_obj_add_event_cb (l, label_alert, LV_EVENT_ALL, 0);
-		if (alert != had) lv_obj_invalidate (l);
+		if (alert != had) lv_obj_refresh_ext_draw_size (l), lv_obj_invalidate (l);	// (the cached size first: the pad ring is invalidated too)
 		return;
 	}
 	if (alert != (lv_obj_get_style_bg_opa (l, 0) == LV_OPA_COVER && lv_color_eq (lv_obj_get_style_bg_color (l, 0), lv_color_hex (TH->bad))))
