@@ -1535,13 +1535,15 @@ volatile uint16_t disp_owned = 0;   // bit p: the platform's touchscreen shows p
 // has claimed them with 4A 7E 1, after every hello (the Rytm clears the claim at each hello and when its USB port goes
 // down); without the claim they stay stock's. An older Rytm counts a 4A 7E as a bad message: only with the bit.
 static bool g_fill_keys_off = false, g_fill_claimed = false;
+static bool g_nohello_told = false;   // the log line of the no-hello claim, once per link
 static uint32_t g_claim_ms = 0;   // the last claim's tick time
 static volatile bool g_going_down = false;
 CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims the Rytm's UP + RIGHT)
 #if CORE_POLY
   // (no hello seen yet is unknown, not an older mod: the Rytm says hello only at its USB port-up, so a host that started
-  // after it never hears one and would never claim; an older Rytm mod counts the 4A 7E as one bad message)
-  if (s.stats.hellos > 0 && !(s.caps2 & kCaps2Arrows)) {   // an older mod: the Rytm's claim is gone at the hello, and 4A 7E 0 would be a bad message
+  // after it never hears one and would never claim; a 0.4.x mod counts the 4A 7E as one bad message. A box (A4 /
+  // Digitakt) never gets the guess: only its own hello's caps2 claims)
+  if ((s.stats.hellos > 0 || device::foreign()) && !(s.caps2 & kCaps2Arrows)) {   // an older mod: the Rytm's claim is gone at the hello, and 4A 7E 0 would be a bad message
     g_fill_claimed = false;
     return;
   }
@@ -1718,8 +1720,14 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
   if (d[4] == kSrcView || d[4] == kSrcVals || d[4] == kSrcDiag) src_capable = true;
 #if CORE_POLY
   // 2026-11-23: Rytm traffic and no hello (the host started after the Rytm's port-up): claim UP + LEFT / RIGHT once; the
-  // 2 s claim (remote_tick) goes on from there, and the first hello, if one ever comes, decides as before
-  if (s.stats.hellos == 0 && !g_fill_claimed && !g_going_down && d[4] != kHello) fill_claim();
+  // 2 s claim (remote_tick) goes on from there, and the first hello, if one ever comes, decides as before. Never for a box.
+  if (s.stats.hellos == 0 && !g_fill_claimed && !g_fill_keys_off && !g_going_down && d[4] != kHello && !device::foreign()) {
+    fill_claim();
+    if (g_fill_claimed && !g_nohello_told) {
+      g_nohello_told = true;   // (once per link: a hello clears it)
+      core::log("rui: Rytm traffic before any hello: claimed UP+RIGHT, caps unknown");
+    }
+  }
 #endif
 #if CORE_POLY && CORE_MSAMP
   // an UP combo the mod ate (UP + T1..T14 49 1 n, UP + YES / LFO / FX / AMP / TRIG 30, UP + SRC 29 / the bank list, the map
@@ -2150,6 +2158,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
 #endif
       return;
     case kHello: {   // 1023: <uptime >> 7> <uptime & 0x7F> <caps>: the splash when the Rytm was up before the link
+      g_nohello_told = false;
       s.presets_told = false;
       s.mlist = false, page_two_cancel();   // rc5: a new link: no list choice owed
       s.covered = false;   // (the Rytm's 2B says again)
@@ -2748,6 +2757,8 @@ CORE_COLD bool remote_key_repeating() { return s.rep_code >= 0; }
 
 CORE_COLD void remote_reset() {
   s = State();
+  g_fill_claimed = g_fill_keys_off = g_nohello_told = false;   // (tests: the claim statics too)
+  g_going_down = false;
   for (auto& w : g_vp) w = VParam();
   for (int t = 0; t < 12; ++t) g_vp_failed[t] = 0, g_vp_kind[t] = 0;
   detent_reset();
