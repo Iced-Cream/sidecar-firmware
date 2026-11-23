@@ -76,8 +76,14 @@ struct Costs {
                        // master AMP pair is added by core_bp (2 AMPs at kAmpLoadPct), not here (LT3)
   unsigned slot_bp;    // one INSERT slot at the worst TYPE pair (bench ins rows / 16): a type with no row of its own
   uint16_t type_bp[16];   // one voice INSERT slot of type t (bench ins T+T / 16), 0: not measured (slot_bp). AMP: amp_bp
+  uint16_t send_bp[6];    // one master send TYPE slot (fx/insert.h kMChorus..kMHalo: stereo already), a quarter of its
+                          // bench sfxins "T x4" row; 0: not measured (twice slot_bp)
 };
-unsigned type_bp(int t);   // a voice INSERT slot of type t at the bench (OFF, AMP: 0)
+constexpr int kSendType0 = 11, kSendTypes = 6;   // fx/insert.h kMChorus .. kMHalo (device.cpp checks)
+unsigned type_bp(int t);   // a voice INSERT slot of type t at the bench (OFF, AMP, a send TYPE: 0)
+// One master INSERT slot of type t at the bench: a voice type twice its row (the master chain is stereo), a send TYPE its
+// own row (send_bp), OFF / AMP 0 (AMP: amp_fits)
+unsigned master_slot_bp(int t);
 
 void set_costs(const Costs& c);
 const Costs& costs();
@@ -108,14 +114,16 @@ struct Load {
   bool held[2];
   uint8_t asked[2];
   uint8_t amps[4];   // [3]: core 3's (slot 0's master AMPs, master_core)
-  uint32_t ins[4];   // the INSERT slots admitted on core c, at the bench (type_bp; [0] unused): 1, 2 the voices'; 3 slot 0's
-                     // master chain's (stereo: each slot twice its mono row; decided 2026-11-23)
+  uint32_t ins[4];   // the INSERT slots admitted on core c, at the bench (type_bp; [0] unused): 1, 2 the voices' (a voice
+                     // on OUT PRE / POST in stereo: twice); 3 slot 0's master chain's (stereo: each slot twice its mono
+                     // row; decided 2026-11-23)
 };
 // The render core of slot b's box's voice chain c (0..7): by its box's split
 int voice_core(int b, int c, const Load& l);
 // INSERT admission: a voice slot of type t may play on core c beside l (its ins[] those playing): core_bp + the type's cost
 // at the voice load factor within kLimitBp. Always: no bench, admit=report, another core.
-bool ins_fits(int c, const Load& l, int t);
+// mul: 2 for a voice chain in stereo (OUT PRE / POST: ProcessVoiceStereo runs it on L and R, about twice its mono row)
+bool ins_fits(int c, const Load& l, int t, int mul = 1);
 int base_of(const Load& l);   // the base box's slot in l: 0 while held, else 1
 // The core that runs AMP row r (fx/amp.cpp's rows: the base box's voices 0..7, its master chains from master_row on): a voice
 // row its voice's (by the base box's split), a master row master_core(the base box)
@@ -127,7 +135,7 @@ bool amp_fits(int c, const Load& l);
 // its voices, the chains it runs, the INSERT slots (l.ins[c]) and AMPs (l.amps[c]) admitted on it. Another core: 0.
 unsigned core_bp(int core, const Load& l);
 // Core 3's load for l on a two-slot build, in bp at the clock now: kC3BaseBp, slot 0's master chain while it is held
-// (kC3MasterBp: its POST EQ and send TYPEs, measured whole), its INSERT types admitted (l.ins[3]) at the chain load factor
+// (kC3MasterBp: its POST EQ, measured whole), its INSERT and send TYPEs admitted (l.ins[3], master_slot_bp) at the chain load factor
 // and the AMPs playing there (l.amps[3]) at the AMP load factor. An 8-voice build (no core 3 chain): 0.
 unsigned core3_bp(const Load& l);
 // One more master INSERT slot of type t (stereo) on core 3 beside l within kC3LimitBp. Always: no bench, admit=report,

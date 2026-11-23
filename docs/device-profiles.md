@@ -317,8 +317,10 @@ scaled to the CPU clock setting, so that each render core stays under 80 % in th
   slot of each type`, a sixteenth of T+T on 8 voices x 2 slots; `admit::type_bp`, `ins_fits`, `voice_core`; the check is
   `ins::set_cpu_check`, set by `device.cpp`). Otherwise the slot plays dry and its strip shows `NO CPU`
   (`ins::Control::refused`), and each idle pass admits it again once there is room (`ins::regrant`). A type that plays is
-  never refused afterwards; a box attaching later counts it. Before, every voice reserved the worst TYPE pair. Gaps: a voice
-  chain in stereo (PRE / POST pairs) costs about twice its mono bench row; the bus and master chains stay in the box row.
+  never refused afterwards; a box attaching later counts it. Before, every voice reserved the worst TYPE pair. A voice on OUT
+  PRE / POST runs its chain in stereo, so its types count twice their row there (`device.cpp` `chain_mul`; a stereo-mix
+  box has every voice on POST); a type already playing when its voice goes stereo is shed if its core is then over. Gap:
+  the bus chains stay in the box row.
 - **A box's chains:** its send FX, bus and master chains at their worst set, dry, measured as one bench row
   (`master::box_bench`), counted on the core that runs its send FX. Before that row (LT1, 2026-11-22) the sum of
   overlapping rows.
@@ -342,10 +344,11 @@ scaled to the CPU clock setting, so that each render core stays under 80 % in th
   (decided 2026-11-23 after LT6: at 1200 MHz slot 0's master AMP pair there made core 3's passes 10-19 ms and the engine
   underran; with it off, none): `admit::core3_bp` is core 3's control work (13.4 %) and slot 0's master chain (8 %, its POST
   EQ and send TYPEs) as fixed shares at 1500 MHz, plus every master INSERT type admitted (its bench row, twice: stereo)
-  and the master AMPs playing, within 70 % (`kC3LimitBp`: core 3 also waits for cores 1 and 2). A master type or AMP with
+  and the master AMPs playing, within 70 % (`kC3LimitBp`: core 3 also waits for cores 1 and 2). The send TYPEs as master inserts (CHORUS, COMB, SPACE,
+  RINGS, CLOUD, HALO) count at their own boot rows, `bench sfxins T x4` / 4 (`admit::master_slot_bp`; stereo already, so
+  once). A master type or AMP with
   no room plays dry and shows `NO CPU`; at a lower clock `shed_over` sheds the master AMPs, then the master types. At 1500
-  the pair fits (61.6 %), at 1200 one AMP of it. `/status` `admit` has `core3Bp` and `amps3`. The send TYPEs have no bench
-  row of their own yet (in the fixed share). LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
+  the pair fits (61.6 %), at 1200 one AMP of it. `/status` `admit` has `core3Bp` and `amps3`. LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
   ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches
   or leaves; core 3 waits for both cores' chains before a pass whose base box changed (AMP's master rows follow the base).
 - **Placement:** a box's voices are its 0..n-1; 0..s-1 render on core 1 and s..7 on core 2, s its split: `split=` (4), or

@@ -122,7 +122,7 @@ extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
 
 static const char From[] = "engine";
 // BenchChains' results (core 0, before cores 1-3), LogBench's rows: [0] the master chain, [1..] the send TYPE insert sets
-static const int ChainBenches = 3;
+static const int ChainBenches = 8;	// the master chain, then each send TYPE insert set (core/fx/master.cpp kSfxSets)
 static struct { u64 nTicks; u32 nWorst; } s_ChainBench[ChainBenches];
 static struct { u64 nTicks; u32 nWorst; } s_BoxBench;	// one box's chains as one row (master::box_bench): CPU admission
 static const char RebootMagic[] = "RYTM-REBOOT";
@@ -1200,6 +1200,9 @@ void CKernel::LogBench (void)
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
 		if (nBp > nSfxWorstBp) nSfxWorstBp = nBp;
 		if (strcmp (pName, "CLOUD x4") == 0) nSfxCloudBp = nBp;
+		const int nType = bridge::sfxins_bench_type (nSet);	// CPU admission: one master send TYPE slot, a quarter of its x4 row
+		if (nType >= core::admit::kSendType0 && nType < core::admit::kSendType0 + core::admit::kSendTypes)
+			Adm.send_bp[nType - core::admit::kSendType0] = (u16) ((nBp + 3) / 4 < 65535 ? (nBp + 3) / 4 : 65535);
 		m_Logger.Write (From, LogNotice, "bench sfxins %s: %u.%02u %% of a core, worst block %u.%u %%",
 				pName, nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);

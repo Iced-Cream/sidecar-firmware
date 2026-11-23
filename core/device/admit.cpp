@@ -73,21 +73,28 @@ CORE_COLD unsigned core3_bp(const Load& l) {
   return scaled(bp);
 }
 CORE_COLD bool ins3_fits(const Load& l, int t) {
-  if (!on() || !s_enforce || master_core(0) != 3 || !type_bp(t)) return true;   // (a send TYPE: in kC3MasterBp)
-  return core3_bp(l) + scaled((2ull * type_bp(t) * s_pct.chain + 99) / 100) <= kC3LimitBp;
+  if (!on() || !s_enforce || master_core(0) != 3 || !master_slot_bp(t)) return true;
+  return core3_bp(l) + scaled(((unsigned long long)master_slot_bp(t) * s_pct.chain + 99) / 100) <= kC3LimitBp;
 }
 unsigned limit_bp(int core) { return core == 3 ? kC3LimitBp : kLimitBp; }
 
+unsigned master_slot_bp(int t) {
+  if (t >= kSendType0 && t < kSendType0 + kSendTypes) {
+    const unsigned s = s_costs.send_bp[t - kSendType0];
+    return s ? s : 2 * s_costs.slot_bp;
+  }
+  return 2 * type_bp(t);
+}
 unsigned type_bp(int t) {
-  if (t <= 0 || t >= 16 || t == 9) return 0;   // OFF; AMP (fx/insert.h kAmp): amp_bp, admitted by amp.h
+  if (t <= 0 || t >= kSendType0 || t == 9) return 0;   // (a send TYPE: master_slot_bp)   // OFF; AMP (fx/insert.h kAmp): amp_bp, admitted by amp.h
   return s_costs.type_bp[t] ? s_costs.type_bp[t] : s_costs.slot_bp;
 }
 
 int voice_core(int b, int c, const Load& l) { return (unsigned)c < split_for(l.asked[b & 1]) ? 1 : 2; }
 
-CORE_COLD bool ins_fits(int c, const Load& l, int t) {
+CORE_COLD bool ins_fits(int c, const Load& l, int t, int mul) {
   if (!on() || !s_enforce || (c != 1 && c != 2)) return true;
-  return core_bp(c, l) + scaled(((unsigned long long)type_bp(t) * s_pct.voice + 99) / 100) <= kLimitBp;
+  return core_bp(c, l) + scaled(((unsigned long long)mul * type_bp(t) * s_pct.voice + 99) / 100) <= kLimitBp;
 }
 
 int amp_core(int row, int master_row, const Load& l) {

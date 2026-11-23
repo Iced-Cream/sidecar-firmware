@@ -19,6 +19,7 @@
 #include "device/digitakt.h"
 #include "engine.h"
 #include "fx/insert.h"
+#include "fx/out.h"
 #include "host_link.h"
 #include "voices.h"
 
@@ -218,6 +219,19 @@ static void lt6() {
     CHECK(admit::ins3_fits(l, ins::kSat));
     l.amps[3] = 2;
     CHECK(!admit::ins3_fits(l, ins::kSat) && admit::ins3_fits(l, ins::kOff));
+    // the master's send TYPEs on core 3 at their own rows (bench sfxins "T x4" / 4, stereo already: once), a voice type
+    // twice, a send TYPE not measured twice the worst pair's slot. Beside one AMP at 1200 (51.9 %): a CLOUD at 10 % a slot
+    // (13.75 % at 1200 with the chain factor) fits, at 15 % (20.6 %) not
+    l.amps[3] = 1;
+    co.send_bp[ins::kMCloud - admit::kSendType0] = 1000;
+    admit::set_costs(co);
+    CHECK(admit::type_bp(ins::kMCloud) == 0 && admit::master_slot_bp(ins::kMCloud) == 1000);
+    CHECK(admit::master_slot_bp(ins::kSat) == 180 && admit::master_slot_bp(ins::kMHalo) == 0);
+    CHECK(admit::ins3_fits(l, ins::kMCloud));
+    co.send_bp[ins::kMCloud - admit::kSendType0] = 1500;
+    co.slot_bp = 100;
+    admit::set_costs(co);
+    CHECK(!admit::ins3_fits(l, ins::kMCloud) && admit::master_slot_bp(ins::kMHalo) == 200);
     l.held[0] = false;   // no box in slot 0: its master chain not counted
     l.amps[3] = 0;
     CHECK(admit::core3_bp(l) == 1675);
@@ -420,6 +434,28 @@ static void engine() {
     for (int i = 0; i < 10; ++i) idle_save();
     CHECK(!ins::refused(c, 0));
     idle_nosave(false);
+    // a voice on OUT PRE / POST runs its chain in stereo: its types count twice (12 % for the SAT). Core 2 70 % + 12 %
+    // is over 80 %: set again on a stereo voice, the SAT is refused; the voice back on TRK admits it again
+    ins::set_type(c, 0, ins::kOff);
+    out::set_route(c, out::kPre);
+    ins::set_type(c, 0, ins::kSat);
+    CHECK(ins::refused(c, 0));
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 0);
+    out::set_route(c, out::kTrk);
+    device::step(true);   // regrant
+    CHECK(!ins::refused(c, 0));
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 600);
+    // a SAT admitted on TRK, then its voice put on POST: over 80 % at once, the next idle pass sheds it
+    out::set_route(c, out::kPost);
+    device::load_now(&ld);
+    CHECK(ld.ins[2] == 1200);
+    device::step(true);
+    CHECK(ins::refused(c, 0));
+    out::set_route(c, out::kTrk);
+    device::step(true);
+    CHECK(!ins::refused(c, 0));
     ins::set_type(c, 0, ins::kOff);
     admit::set_clock(0);
   }

@@ -202,6 +202,9 @@ int voices_asked(const Profile* h) {
   return n > kBoxVoices ? kBoxVoices : n;
 }
 void load_now(admit::Load* out);
+// A voice chain's INSERT cost: twice its mono bench row while its voice is on OUT PRE / POST (the render cores run it in
+// stereo: voices.cpp stv, insert.h ProcessVoiceStereo); a stereo-mix box (out::kStereoMix) has every voice on POST
+static int chain_mul(int b, int c) { return out::control_of(b).route[c & 7] != out::kTrk ? 2 : 1; }
 static admit::Load load_now() {
   admit::Load ld;
   load_now(&ld);
@@ -219,20 +222,22 @@ void load_now(admit::Load* out) {
         const int c = admit::amp_core(r, m, ld);
         if (c >= 1 && c <= 3) ++ld.amps[c];
       }
-  static_assert(ins::kAmp == 9 && ins::kTypes <= 16, "admit.cpp type_bp: AMP is 9, every voice type under 16");
+  static_assert(ins::kAmp == 9 && ins::kTypes == admit::kSendType0 && ins::kMChorus == admit::kSendType0 &&
+                    ins::kAllTypes == admit::kSendType0 + admit::kSendTypes,
+                "admit.cpp type_bp / master_slot_bp: AMP is 9, the voice types under kSendType0, then the send TYPEs");
   for (int b = 0; b < kVoiceSlots && b < 2; ++b) {   // the voice INSERT slots admitted (insert.h refused: not counted)
     if (!ld.held[b]) continue;
     const ins::Control& k = ins::control_of(b);
     const int n = ld.asked[b] < ins::kVoices ? ld.asked[b] : ins::kVoices;   // (its chains past what it asked never render)
     for (int c = 0; c < n; ++c)
       for (int s = 0; s < ins::kSlots; ++s)
-        if (!k.refused[c][s]) ld.ins[admit::voice_core(b, c, ld)] += admit::type_bp(k.type[c][s]);
+        if (!k.refused[c][s]) ld.ins[admit::voice_core(b, c, ld)] += chain_mul(b, c) * admit::type_bp(k.type[c][s]);
   }
   if (ld.held[0] && admit::master_core(0) == 3) {   // slot 0's master chain on core 3: its INSERT types (stereo: twice)
     const ins::Control& k = ins::control_of(0);
     for (int c = ins::kM0; c < ins::kChains; ++c)
       for (int s = 0; s < ins::kSlots; ++s)
-        if (!k.refused[c][s]) ld.ins[3] += 2 * admit::type_bp(k.type[c][s]);
+        if (!k.refused[c][s]) ld.ins[3] += admit::master_slot_bp(k.type[c][s]);
   }
 }
 // INSERT's CPU check (ins::set_cpu_check): box slot b's voice chain c, slot s may play type t, beside everything admitted
@@ -242,14 +247,15 @@ static CORE_COLD bool ins_room(int b, int c, int s, int t) {
   if (c >= ins::kM0) {   // a master chain: slot 0's on core 3 (counted there); slot 1's on core 1 is in its box's chains row
     if (b != 0 || !ld.held[0] || admit::master_core(0) != 3) return true;
     const ins::Control& k = ins::control_of(0);
-    if (!k.refused[c][s]) ld.ins[3] -= 2 * admit::type_bp(k.type[c][s]);
+    if (!k.refused[c][s]) ld.ins[3] -= admit::master_slot_bp(k.type[c][s]);
     return admit::ins3_fits(ld, t);
   }
   if (b < 0 || b > 1 || !ld.held[b] || c >= ld.asked[b]) return true;
   const int core = admit::voice_core(b, c, ld);
   const ins::Control& k = ins::control_of(b);
-  if (!k.refused[c][s]) ld.ins[core] -= admit::type_bp(k.type[c][s]);
-  return admit::ins_fits(core, ld, t);
+  const int mul = chain_mul(b, c);
+  if (!k.refused[c][s]) ld.ins[core] -= mul * admit::type_bp(k.type[c][s]);
+  return admit::ins_fits(core, ld, t, mul);
 }
 // AMP's CPU check (amp::set_cpu_check): one more AMP slot on row's render core, beside what renders now
 static CORE_COLD bool amp_room(int row) {
@@ -277,7 +283,7 @@ static CORE_COLD void shed_over() {
     if (admit::core3_bp(ld) > admit::kC3LimitBp && ld.held[0])   // then its master INSERT types, the last slot first
       for (int c = ins::kChains - 1; c >= ins::kM0; --c)
         for (int s = ins::kSlots - 1; s >= 0; --s)
-          if (admit::type_bp(ins::control_of(0).type[c][s]) && ins::shed(0, c, s)) {
+          if (admit::master_slot_bp(ins::control_of(0).type[c][s]) && ins::shed(0, c, s)) {
             log(CORE_STR("device: core 3 over 70 %% at %u MHz: master %d %c shed (NO CPU)"), admit::clock(), c - ins::kM0 + 1,
                 'A' + s);
             return;
