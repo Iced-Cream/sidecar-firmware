@@ -1000,6 +1000,38 @@ int main() {
       send(msg(0x49, {4, 0}));
       cmd("fill=keys:on");   // (the tests go on with the keys claimed)
       CHECK(sent(claim));
+      // the same claim about every 2 s while linked (the first quick UP + RIGHT after a port drop): no key traffic needed
+      {
+        uint32_t t = now_ms() + 100000;
+        ui::remote_tick(t);
+        send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
+        g_out.clear();
+        ui::remote_tick(t + 1000);
+        CHECK(!sent(claim));   // (the hello's claim just went)
+        ui::remote_tick(t + 2100);
+        CHECK(sent(claim));
+        g_out.clear();
+        for (int i = 1; i <= 10; ++i) ui::remote_tick(t + 2100 + i * 100);
+        CHECK(!sent(claim));   // no flood
+        ui::remote_tick(t + 4200);
+        CHECK(sent(claim));
+        cmd("fill=keys:off");
+        g_out.clear();
+        ui::remote_tick(t + 9000);
+        CHECK(!sent(claim));
+        cmd("fill=keys:on");
+        send(msg(0x35, {0, 5, 127}));   // an older mod
+        g_out.clear();
+        ui::remote_tick(t + 12000);
+        CHECK(!sent(claim));
+        send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
+        ui::remote_going_down();
+        g_out.clear();
+        ui::remote_tick(t + 15000);
+        CHECK(!sent(claim));
+        cmd("fill=keys:on");   // (the tests go on with the keys claimed)
+        CHECK(sent(claim));
+      }
     }
     // the tracks: BD PLAITS, the rest Rytm machines
     std::vector<uint8_t> a33 = {0, 12};

@@ -1534,6 +1534,7 @@ volatile uint16_t disp_owned = 0;   // bit p: the platform's touchscreen shows p
 // has claimed them with 4A 7E 1, after every hello (the Rytm clears the claim at each hello and when its USB port goes
 // down); without the claim they stay stock's. An older Rytm counts a 4A 7E as a bad message: only with the bit.
 static bool g_fill_keys_off = false, g_fill_claimed = false;
+static uint32_t g_claim_ms = 0;   // the last claim's tick time
 static volatile bool g_going_down = false;
 CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims the Rytm's UP + RIGHT)
 #if CORE_POLY
@@ -1544,7 +1545,7 @@ CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims t
   if (g_fill_keys_off) return;
   const uint8_t m[9] = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 1, 0x7E, 1, 0xF7};
   to_rytm(m, 9);
-  g_fill_claimed = true;
+  g_fill_claimed = true, g_claim_ms = s.now_ms;
 #endif
 }
 // 0.5.0 v2 P2: the scene edit on the Rytm's own pages armed after every hello (the Rytm clears it at each); an older
@@ -2231,6 +2232,8 @@ static CORE_COLD void key_repeat_tick(uint32_t ms) {
 
 CORE_COLD void remote_tick(uint32_t ms) {
   if (g_going_down && !g_fill_keys_off) g_fill_keys_off = true, fill_unclaim();   // (a planned reboot: remote.h)
+  // 0.5.2: the claim again every ~2 s while linked (the Rytm drops it at each USB port drop; a 4A 7E 1 only sets its flag)
+  if (g_fill_claimed && !g_going_down && (int32_t)(ms - g_claim_ms) >= 2000) fill_claim(), g_claim_ms = ms;
   if (!s.presets_told && s.src_track >= 0) {
     int m = track_machine(s.src_track);
     if (m == core::kJuno || m == core::kFm) {
