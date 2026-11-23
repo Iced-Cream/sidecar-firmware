@@ -133,7 +133,9 @@ int this_core() {
 }
 void set_core(int c) { g_host_core = c & (kCores - 1); }
 
-uint32_t stamp() { return cycles(); }
+uint32_t (*g_clock)() = nullptr;
+uint32_t stamp() { return g_clock ? g_clock() : cycles(); }
+void set_clock(uint32_t (*clock)()) { g_clock = clock; }
 void note(int unit, uint32_t ticks, int frames) {
   if (unit < 0 || unit >= kBuiltin) return;
   Row& r = g_row[this_core()];
@@ -208,8 +210,8 @@ void core_done(int core, bool hot) {
 bool muted(int unit) { return unit >= 0 && unit < kBuiltin && __atomic_load_n(&g_m[unit], __ATOMIC_RELAXED); }
 uint32_t slow_us(int unit) { return unit >= 0 && unit < kBuiltin ? g_slow[unit] : 0; }
 void spin_us(uint32_t us) {
-  const uint32_t t0 = now_us();
-  while (now_us() - t0 < us) {
+  const uint32_t t0 = cycles(), n = (uint32_t)((uint64_t)us * cycles_per_second() / 1000000u);   // (the CPU-time counter: as note's)
+  while (cycles() - t0 < n) {
   }
 }
 

@@ -48,6 +48,7 @@ constexpr int user_unit(int u) { return kBuiltin + u; }
 // Unit `unit` ran `ticks` (core::cycles) over `frames` frames on the calling core. Any core; each core its own row.
 void note(int unit, uint32_t ticks, int frames);
 uint32_t stamp();   // core::cycles() (the CPU-time counter: the Pi's CNTPCT), for note's ticks
+void set_clock(uint32_t (*clock)());   // tests whose fake cycles() counts its calls: the guard's own clock (null: cycles)
 // API 3's user effect u ran us microseconds (um.cpp fx_run, after its own checks): counts toward its core's dearest.
 void note_user(int u, uint32_t us);
 // A core after its block's work (voices and chains on 1 / 2; slot 0's master chain on 3): hot = it took the share
