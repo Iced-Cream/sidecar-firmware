@@ -577,9 +577,15 @@ class Engine {
       }
     }
     // MON: the filtered key in place of the chain's output (both sides), a 5 ms ramp each way; PUMP has no key to play
+    // (kf exists only when the DUCK loop ran this call; a runaway or NaN key is not played: the same guard as the chain's)
     const float q0 = o.mw, q1 = haskf ? clampf(monw ? q0 + step : q0 - step, 0.0f, 1.0f) : 0.0f;
     o.mw = q1;
-    if (q0 > 0.0f || q1 > 0.0f) {
+    float ck = 0.0f;
+    if (haskf && (q0 > 0.0f || q1 > 0.0f))
+      for (int i = 0; i < m; ++i) ck += fabsf(kf[i]);
+    if (!(ck < 1e5f)) o.mw = 0.0f;
+    else if (haskf && (q0 > 0.0f || q1 > 0.0f)) {
+      for (int i = 0; i < m; ++i) kf[i] = clampf(kf[i], -2.0f, 2.0f);   // MON is never louder than a sane limit
       if (q0 >= 1.0f && q1 >= 1.0f) {
         for (int i = 0; i < m; ++i) x[i] = kf[i];
         if (r)
@@ -601,7 +607,7 @@ class Engine {
     if (ramp) o.xf = (int32_t)(0.005f * sr_);
     o.cs = (uint8_t)src, o.trig_seen = false, o.last_w = ~0u, o.since = (uint32_t)sc::kStale;
     if (mode != o.mode) {
-      o.env = 0.0f, o.key = ScCh();
+      o.env = 0.0f, o.key = ScCh(), o.mw = 0.0f;   // (MON ends with the mode: no blend of a key this mode does not make)
       o.gain = o.g0 = 1.0f, o.j = -1, o.fresh = true;
       o.oenv = 0.0f, o.ohp1 = 0.0f, o.ohp2 = 0.0f, o.oarm = true, o.olock = 0;
     }
@@ -1001,6 +1007,8 @@ bool eq_any_on();
 void set_sc_mode(int c, int mode, bool keep = false);
 void set_sc_src(int c, int src);
 void set_sc_param(int c, int k, int v);
+void set_sc_mon_lease(int c, bool on);   // the web's (console) MON: lapses after 3 s unless sent again; sc_mon_tick() (save()) lapses it
+void sc_mon_tick();
 void set_sc_mon(int c, bool on);   // 0.5.2 MON: DUCK plays its filtered key instead of the chain (not saved; a mode / source change ends it)
 bool sc_mon(int c);
 void sc_mon_off_all();

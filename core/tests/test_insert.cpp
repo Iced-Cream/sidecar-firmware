@@ -1341,7 +1341,7 @@ int main() {
     // with KWID OFF (the same corner); the new line is "SCK ..." and is read as it is; MON is never saved
     {
       const char hand[] = "SC V1 DUCK BD 50 70 10 50 100 0\nSC V2 DUCK CP 50 70 10 50 0 0\nSC V3 PUMP BD 90 0 20 60 40 50\n"
-                          "SC V4 DUCK RS 50 70 10 50 127 0\nSC V5 DUCK RS 50 70 10 50 1 0\nSCK V6 DUCK RS 50 70 10 50 99 33\n";
+                          "SC V4 DUCK RS 50 70 10 50 127 0\nSC V5 DUCK RS 50 70 10 50 1 0\nSCK V6 DUCK RS 50 70 10 50 99 33\nSC V7 DUCK BD 50 70 10 50\n";
       std::string fn = std::string(tmpl) + "/.rytm/ins/INS/k014.txt";
       FILE* fp = fopen(fn.c_str(), "wb");
       fwrite(hand, 1, sizeof hand - 1, fp);
@@ -1357,6 +1357,7 @@ int main() {
       CHECK(ins::sc_param(1, 4) == 0 && ins::sc_param(1, 5) == 0);          // HPF off -> KBAS OFF
       CHECK(ins::sc_mode(2) == sc::kPump && ins::sc_param(2, 4) == 40);    // PUMP's lines are as they were
       CHECK(ins::sc_param(5, 4) == 99 && ins::sc_param(5, 5) == 33);       // SCK: as written
+      CHECK(ins::sc_param(6, 4) == sc::kbas_from_old_hpf(40) && ins::sc_param(6, 5) == 0);   // L2: an old line without the knob: the old default HPF (40)
       printf("card: an old DUCK line's HPF %d -> KBAS %d (%.0f Hz, was %.0f Hz), KWID OFF\n", 100, k1, sc::kbas_hz(k1), old_hz(100));
       // MON is not saved: a card written with it on, read back, has it off
       ins::set_sc_param(0, 0, 51);   // (a change, so the file is written)

@@ -484,6 +484,7 @@ void sc_vt(int m, int k, int v, char* b, int cap) {
   sniprintf(b, cap, "-");
 }
 uint8_t g_scp[kChains][sc::kParams];
+uint32_t g_mon_until[kChains];   // the web's MON lease (ms; 0: none)
 int16_t g_sc_lfo[kChains][sc::kParams];
 bool sc_valid(int c) { return c >= 0 && c < kChains; }
 void sc_refresh(int c, int k) {
@@ -503,7 +504,7 @@ void sc_wanted() {
 }
 void sc_clear() {
   for (int c = 0; c < kChains; ++c) {
-    control.scmode[c] = sc::kOff, control.scsrc[c] = 0, control.scmon[c] = 0;
+    control.scmode[c] = sc::kOff, control.scsrc[c] = 0, control.scmon[c] = 0, g_mon_until[c] = 0;
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = 0, sc_refresh(c, k);
   }
   sc_wanted();
@@ -517,7 +518,7 @@ void set_sc_mode(int c, int m, bool keep) {
   if (!keep)
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = sc::def(m, k);
   control.scmode[c] = (uint8_t)m;
-  control.scmon[c] = 0;   // 0.5.2: MON ends with a mode change
+  control.scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a mode change
   for (int k = 0; k < sc::kParams; ++k) sc_refresh(c, k);
   sc_wanted();
   ++g_stats.sets;
@@ -525,7 +526,7 @@ void set_sc_mode(int c, int m, bool keep) {
 }
 void set_sc_src(int c, int s) {
   if (!sc_valid(c) || s < 0 || s >= sc::kSrcs) return;
-  if (control.scsrc[c] != s) control.scmon[c] = 0;   // 0.5.2: MON ends with a source change
+  if (control.scsrc[c] != s) control.scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a source change
   control.scsrc[c] = (uint8_t)s;
   sc_wanted();
   ++g_stats.sets;
@@ -539,16 +540,26 @@ void set_sc_param(int c, int k, int v) {
   changed();
 }
 // 0.5.2 MON: DUCK plays its filtered key instead of the chain's output. Per chain, never saved; only on a DUCK stage
-void set_sc_mon(int c, bool on) {
+void set_sc_mon(int c, bool on) {   // the Rytm's T1: no lease
   if (!sc_valid(c)) return;
   const uint8_t v = on && control.scmode[c] == sc::kDuck ? 1 : 0;
+  g_mon_until[c] = 0;
   if (control.scmon[c] == v) return;
   control.scmon[c] = v;
   ++g_stats.sets;
 }
+// the web's MON (the console line): it lapses 3 s after the last one unless the page sends it again (a closed tab, a lost link)
+void set_sc_mon_lease(int c, bool on) {
+  set_sc_mon(c, on);
+  if (on && sc_mon(c)) g_mon_until[c] = now_ms() + 3000u | 1u;
+}
+void sc_mon_tick() {   // from save(), every idle pass
+  for (int c = 0; c < kChains; ++c)
+    if (g_mon_until[c] && (int32_t)(now_ms() - g_mon_until[c]) > 0) g_mon_until[c] = 0, control.scmon[c] = 0;
+}
 bool sc_mon(int c) { return sc_valid(c) && control.scmon[c] != 0; }
 void sc_mon_off_all() {
-  for (int c = 0; c < kChains; ++c) control.scmon[c] = 0;
+  for (int c = 0; c < kChains; ++c) control.scmon[c] = 0, g_mon_until[c] = 0;
 }
 int sc_mode(int c) { return sc_valid(c) ? control.scmode[c] : 0; }
 int sc_src(int c) { return sc_valid(c) ? control.scsrc[c] : 0; }
@@ -852,7 +863,7 @@ bool command(const char* p, char* o, int cap) {
         sniprintf(o, cap, "%s", kHelp);
         return true;
       }
-      set_sc_mon(c, same_ci(val, "on") || same_ci(val, "1"));
+      set_sc_mon_lease(c, same_ci(val, "on") || same_ci(val, "1"));
     } else if ((key[0] == 'p' || key[0] == 'P') && key[1] >= '1' && key[1] <= '0' + sc::kParams && !key[2] && num(val) >= 0) {
       set_sc_param(c, key[1] - '1', num(val)), fx::edited(mod::tid(mod::kIns, c, 12 + key[1] - '1'));
     } else {

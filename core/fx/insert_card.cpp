@@ -134,7 +134,7 @@ bool from_line(const char* b) {
       if (old_duck && k == 5) v = 0;
       if (v >= 0) set_sc_param(c, k, v);
     }
-    if (old_duck && n < 9) set_sc_param(c, 4, 0), set_sc_param(c, 5, 0);   // (a line without the knob: the defaults, which are OFF)
+    if (old_duck && n < 9) set_sc_param(c, 4, sc::kbas_from_old_hpf(40)), set_sc_param(c, 5, 0);   // (a line without the knob: the old default HPF 40, ~148 Hz)
     return true;
   }
   if (n < 3) return false;
@@ -340,7 +340,7 @@ static bool save_text(bool queue) {
   settings_clean();
   return true;
 }
-bool save() { return save_text(false); }
+bool save() { sc_mon_tick(); return save_text(false); }
 
 void project_changed() {
   // the old kit's unsaved edits first, into its own file - never deferred past the load that clears the dirty flag

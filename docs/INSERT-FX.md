@@ -316,14 +316,17 @@ signal with KBAS and KWID OFF it gives COMP's answer exactly [tested].
 **MON** (0.5.2) plays the filtered key (what the detector sees, before its level) in place of the chain's output, both
 sides, so KBAS and KWID can be set by ear. It is per chain, only on a DUCK stage, and a 5 ms ramp each way (no click). It
 is **not saved** with the kit's card (a card never loads with MON on) and it ends by itself with a mode or source change,
-another chain in the view, leaving the view, the page or the web page, and a kit change. Rytm: T1 in the SIDECHAIN view (the
+another chain in the view, leaving the view, the page or the web page, and a kit change. MON from the web is a 3 s lease the page
+renews every second: a closed tab or a lost link lets it lapse (the Rytm's T1 has no lease). MON is clamped to +-2 and a runaway
+or NaN key is not played (the same guard as the chain's). Rytm: T1 in the SIDECHAIN view (the
 INSERT and MASTER pages; its LED shows it; T1 is the page's only in that view, on a DUCK stage). Web: Mix > Sidechain >
 Monitor the key. Console: `ins=V2:sc:mon:on|off`; `/status` `"ins"` `"sc"` `"mon":0|1`.
 
-**Older cards.** A 0.5.0 / 0.5.1 card's `SC V1 DUCK ...` line has HPF in its fifth knob (a 12 dB per octave high pass,
-40 Hz..2.5 kHz) and nothing in the sixth. It loads as the nearest KBAS (the same corner within half a step, 0 = OFF) and
-KWID OFF; the high pass is steeper now (18 dB per octave), nothing else changes. The next save writes the stage as
-`SCK V1 DUCK BD 50 70 10 50 KBAS KWID` (PUMP stays `SC`); a Sidecar older than 0.5.2 does not read an `SCK` line.
+**Trial cards.** The sidechain was never in a release before 0.5.2. A trial card from an earlier 0.5.2 development build has
+`SC V1 DUCK ...` with HPF in its fifth knob (a 12 dB per octave high pass, 40 Hz..2.5 kHz) and nothing in the sixth. It loads as
+the nearest KBAS (the same corner within half a step, 0 = OFF) and KWID OFF; the slope is now 18 dB per octave, so a key with
+energy below the corner reaches the detector 6 to 12 dB lower. A line with no HPF knob gets the old default (HPF 40, about 148 Hz). The next save writes the stage as
+`SCK V1 DUCK BD 50 70 10 50 KBAS KWID` (PUMP stays `SC`); a Sidecar older than 0.5.2 counts an `SCK` line as unreadable and keeps the file.
 
 **Control.** The six knobs take LFOs and scenes: targets `I3:S1`..`S6` (`B1:S1`, `M2:S6`; param 12..17 of the chain),
 labelled by the mode (`SDPT`, `STHR`; in DUCK S5 and S6 are KBAS and KWID, `SKBA`, `SKWI`). Mode and source are lists and are not modulated. No p-locks (the step-lock space
@@ -341,7 +344,7 @@ Mix > Sidechain. Console: `ins=V2:sc:mode:pump`, `ins=V2:sc:src:bd`, `ins=V2:sc:
 with KBAS and KWID on 0.06 % (stereo; mono 0.057 %), MON adds nothing worth naming.
 
 **Release note (0.5.2):** The sidechain's DUCK listens to a band of the key: KBAS (high pass, 18 dB per octave) and KWID
-(low pass, 12 dB per octave, that many octaves above), and MON lets you hear that key. Older cards load the same corner.
+(low pass, 12 dB per octave, that many octaves above), and MON lets you hear that key.
 
 ## Control: knob, p-lock, LFO
 

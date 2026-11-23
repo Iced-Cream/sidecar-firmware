@@ -3,7 +3,7 @@
      Rytm track's stem, the audio in, or a Sidecar voice. Stems exist only in Overbridge mode: without them DUCK does nothing (PUMP on a track runs on its MIDI trigs),
      and the page says so. -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Card from "../../ui/Card.vue";
 import Fader from "../../ui/Fader.vue";
 import Segmented from "../../ui/Segmented.vue";
@@ -39,7 +39,28 @@ function monOff(ids: string[]) {
   for (const id of ids) send(mixCmd.scMon(id, false));
 }
 watch(chain, (_n, old) => monOff(monOn.value.filter((id) => id === old)));
-onBeforeUnmount(() => monOff(monOn.value));
+// The Sidecar drops a MON from the web after 3 s unless it is sent again (a closed tab, a lost link): this page sends it every second
+// for the chains it switched on.
+const webMon = new Set<string>();
+function toggleMon(id: string, on: boolean) {
+  if (on) webMon.add(id);
+  else webMon.delete(id);
+  send(mixCmd.scMon(id, on));
+}
+let beat: ReturnType<typeof setInterval> | undefined;
+onMounted(() => {
+  beat = setInterval(() => {
+    for (const id of webMon) {
+      if (monOn.value.includes(id)) send(mixCmd.scMon(id, true));
+      else webMon.delete(id);
+    }
+  }, 1000);
+});
+onBeforeUnmount(() => {
+  clearInterval(beat);
+  monOff(monOn.value);
+  webMon.clear();
+});
 </script>
 
 <template>
@@ -83,11 +104,11 @@ onBeforeUnmount(() => monOff(monOn.value));
           class="pill"
           :aria-pressed="cur.mon"
           :disabled="!paired"
-          @click="send(mixCmd.scMon(cur.id, !cur.mon))"
+          @click="toggleMon(cur.id, !cur.mon)"
         >
           Monitor the key (MON)
         </button>
-        <span class="small">{{ cur.mon ? "You hear the filtered key instead of this chain. It switches off when you leave this page." : "Plays the filtered key in place of the chain, to set KBAS and KWID by ear." }}</span>
+        <span class="small">{{ cur.mon ? "You hear the filtered key instead of this chain. It switches off when you leave this page, and about 3 seconds after the page stops sending it." : "Plays the filtered key in place of the chain, to set KBAS and KWID by ear." }}</span>
       </div>
       <div class="faders">
         <template v-for="(n, k) in cur.names.slice(0, 6)" :key="`${cur.mode}${k}`">

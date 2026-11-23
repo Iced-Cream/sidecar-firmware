@@ -61,6 +61,10 @@ static std::vector<float> pump(Engine& e, int total, const std::vector<int>& tri
   }
   return y;
 }
+static void __attribute__((noinline)) poison_stack() {   // what an uninitialised local in the next calls would read
+  volatile float a[8192];
+  for (int i = 0; i < 8192; ++i) a[i] = 3.0e30f;
+}
 static float db(float g) { return 20.0f * std::log10(std::max(g, 1e-9f)); }
 
 int main() {
@@ -403,6 +407,81 @@ int main() {
     ins::reset();                             // a kit change / reset: off
     CHECK(!ins::sc_mon(1) && ins::control.scmon[1] == 0);
     printf("MON control: off by default, console + /status, off on a mode / source change, PUMP / OFF refuse it\n");
+  }
+
+  // ---- fix round 1: MON across a DUCK -> PUMP mode change (H1), a runaway key (M3), the web's lease (M1)
+  {
+    auto run = [&](bool mon) {
+      Engine e = fresh();
+      setsc(0, sc::kDuck, 0, {0, 0, 10, 10, 40, 60});
+      ins::control.scmon[0] = mon;
+      std::vector<float> y(2400, 0.5f), k(kB);
+      for (int i = 0; i < 2400; i += kB) {
+        for (int j = 0; j < kB; ++j) k[j] = 0.5f * std::sin(0.05f * (float)(i + j));
+        sc::write(0, k.data(), kB);
+        e.ProcessMono(0, &y[i], kB, ins::control);
+      }
+      setsc(0, sc::kPump, 0, {127, 0, 20, 20, 64, 50});   // the mode changes, MON gone (set_sc_mode clears it)
+      ins::control.scmon[0] = 0;
+      std::vector<float> o(960, 0.5f);
+      for (int i = 0; i < 960; i += kB) {
+        poison_stack();
+        sc::write(0, k.data(), kB);
+        e.ProcessMono(0, &o[i], kB, ins::control);
+      }
+      return o;
+    };
+    auto a = run(true), b = run(false);
+    bool fin = true;
+    for (float v : a) fin = fin && std::isfinite(v) && std::fabs(v) < 2.0f;
+    CHECK(fin);
+    CHECK(memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);   // the same as PUMP that never had MON
+    printf("MON then PUMP: finite, and the PUMP result without MON, bit for bit\n");
+  }
+  {
+    // a runaway key (full-scale x 1e6, then a NaN) does not get through MON
+    Engine e = fresh();
+    setsc(0, sc::kDuck, 0, {0, 0, 10, 10, 0, 0});
+    ins::control.scmon[0] = 1;
+    float peak = 0.0f;
+    bool fin = true;
+    for (int it = 0; it < 400; ++it) {
+      float k[kB], y[kB];
+      for (int j = 0; j < kB; ++j) k[j] = it < 200 ? 1.0e6f * std::sin(0.05f * (float)(it * kB + j)) : (j == 3 ? NAN : 0.1f), y[j] = 0.3f;
+      sc::write(0, k, kB);
+      e.ProcessMono(0, y, kB, ins::control);
+      for (int j = 0; j < kB; ++j) fin = fin && std::isfinite(y[j]), peak = std::max(peak, std::fabs(y[j]));
+    }
+    printf("MON with a runaway key: peak %.2f, finite %d\n", peak, (int)fin);
+    CHECK(fin && peak <= 2.0f);
+  }
+  {
+    // the web's MON (console) lapses unless refreshed (3 s); the Rytm's T1 path does not
+    ins::reset();
+    char o[400];
+    uint64_t us = 5000000000ull;
+    host_fake_time(true, us);
+    ins::set_sc_mode(1, sc::kDuck);
+    CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o) && ins::sc_mon(1));
+    host_fake_time(true, us += 2000000);
+    ins::save();
+    CHECK(ins::sc_mon(1));                                  // 2 s: still on
+    CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o));   // the web refreshes it
+    host_fake_time(true, us += 2000000);
+    ins::save();
+    CHECK(ins::sc_mon(1));                                  // 2 s after the refresh: still on
+    host_fake_time(true, us += 2000000);
+    ins::save();
+    CHECK(!ins::sc_mon(1) && ins::control.scmon[1] == 0);   // 4 s without one: lapsed
+    ins::set_sc_mon(1, true);                               // the Rytm's T1: no lease
+    host_fake_time(true, us += 60000000);
+    ins::save();
+    CHECK(ins::sc_mon(1));
+    ins::set_sc_mon(1, false);
+    CHECK(ins::command("ins=V2:sc:mon:on", o, sizeof o) && ins::command("ins=V2:sc:mon:off", o, sizeof o) && !ins::sc_mon(1));
+    host_fake_time(false, 0);
+    ins::reset();
+    printf("MON from the web lapses after 3 s without a refresh; T1's does not\n");
   }
 
   // ---- the Rytm's SIDECHAIN view: T1 toggles MON (a trig key the page takes in that view only, its LED shows it), the knobs
