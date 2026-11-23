@@ -2083,6 +2083,21 @@ static void theme_run (int style, const char *pre)
 		sidecar_ui_show (0); run (2);
 		EXPECT (sidecar_xy_wanted () && !sidecar_xy_shown ());		// (the view is built for the XY tile)
 		xy_fake (4, 1, 1); sidecar_xy_set (&s_Xy); s_Last[0] = 0; sidecar_ui_status (&s_St); run (2); shot ("home-overview");
+		for (int w = 12; w <= 13; w++)		// Viper's alert bars (REC, "1 thing to look at"): they hug the text and cover its whole line with a pad, in no other look
+		{
+			lv_obj_t *o = (lv_obj_t *) sidecar_ui_home_obj (w);
+			lv_area_t bar, c;
+			const int on = o && th_alert_bar (o, &bar);
+			EXPECT (o && on == (s_nContrastSt == 3 && TH->id == THEME_SIDECAR));
+			if (!on) continue;
+			lv_obj_get_coords (o, &c);
+			const int tw = th_text_width (lv_obj_get_style_text_font (o, 0), lv_label_get_text (o));
+			EXPECT (bar.y1 < c.y1 && bar.y2 > c.y2 && bar.x1 < c.x1);			// the pad: the descenders and the first glyph are inside the bar
+			EXPECT (bar.x2 >= c.x1 + tw && bar.x2 - bar.x1 <= tw + 3 * LU (5));	// as wide as the text, not the label's whole width
+			lv_area_t pc;
+			lv_obj_get_coords (lv_obj_get_parent (o), &pc);
+			EXPECT (bar.x2 <= pc.x2 && bar.x1 >= pc.x1);
+		}
 		s_St.vmuted[6] = 1, s_St.underruns = 3; sidecar_ui_status (&s_St); run (2); shot ("home-overview-trouble");
 		s_St.vmuted[6] = 0, s_St.underruns = 0; sidecar_ui_status (&s_St); run (2);
 		EXPECT (sidecar_ui_home_hit (9, &hx, &hy)); tap (hx, hy);	// the XY tile: Perform

@@ -1425,15 +1425,39 @@ static void notch (lv_layer_t *l, const lv_area_t *c, int x, int y, int dx, int 
 	for (int i = 0; i < n; i++)
 		th_fill (l, c, dx > 0 ? x : x - (n - i - 1), y + (dy > 0 ? i : 0), dx > 0 ? x + (n - i - 1) : x, y + (dy > 0 ? i : 0), OS_BG, LV_OPA_COVER, 0);
 }
-static void label_notch (lv_event_t *e)
+// Viper's alert bar (REC, "1 thing to look at", the REC page's state): drawn here, not as the label's own background. The label's box is
+// only its font's line height (Arimo's is tight: the bar cut the descenders, the first glyph touched the notch) and as wide as the
+// space it was given (a pale slab across the whole panel). The bar hugs the text instead, with a pad round it, notched at both top corners.
+static void label_alert_area (lv_obj_t *o, lv_area_t *k)
 {
-	lv_obj_t *o = lv_event_get_target_obj (e);
+	const int px = LU (5), py = LU (3);
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
-	if (lv_obj_get_style_bg_opa (o, 0) != LV_OPA_COVER) return;
+	const int tw = th_text_width (lv_obj_get_style_text_font (o, 0), lv_label_get_text (o)), w = lv_area_get_width (&c);
+	k->x1 = c.x1 - px, k->y1 = c.y1 - py, k->x2 = c.x1 + (tw < w ? tw : w) + px - 1, k->y2 = c.y2 + py;
+}
+static void label_alert (lv_event_t *e)
+{
+	lv_obj_t *o = lv_event_get_target_obj (e);
+	if (lv_event_get_code (e) == LV_EVENT_REFR_EXT_DRAW_SIZE) { lv_event_set_ext_draw_size (e, LU (5)); return; }
+	if (lv_event_get_code (e) != LV_EVENT_DRAW_MAIN_BEGIN) return;
+	lv_area_t k;
+	label_alert_area (o, &k);
 	lv_layer_t *l = lv_event_get_layer (e);
-	notch (l, &c, 0, 0, 1, 1);
-	notch (l, &c, lv_area_get_width (&c) - 1, 0, -1, 1);
+	th_fill (l, &k, 0, 0, lv_area_get_width (&k) - 1, lv_area_get_height (&k) - 1, TH->bad, LV_OPA_COVER, 0);
+	notch (l, &k, 0, 0, 1, 1);
+	notch (l, &k, lv_area_get_width (&k) - 1, 0, -1, 1);
+}
+
+// the host's check: 1 and the bar's area when the label carries Viper's alert bar
+int th_alert_bar (lv_obj_t *l, lv_area_t *bar)
+{
+	lv_event_dsc_t *d = 0;
+	for (uint32_t i = 0; i < lv_obj_get_event_count (l); i++)
+		if (lv_event_dsc_get_cb (lv_obj_get_event_dsc (l, i)) == label_alert) d = lv_obj_get_event_dsc (l, i);
+	if (!d) return 0;
+	label_alert_area (l, bar);
+	return 1;
 }
 
 void th_label_color (lv_obj_t *l, uint32_t rgb)
@@ -1443,15 +1467,17 @@ void th_label_color (lv_obj_t *l, uint32_t rgb)
 	int alert = (oled () || OS) && rgb == TH->bad;
 	lv_color_t c = lv_color_hex (alert ? (OS ? OS_BG : 0x000000) : rgb);
 	if (!lv_color_eq (lv_obj_get_style_text_color (l, 0), c)) lv_obj_set_style_text_color (l, c, 0);
+	if (OS)							// Viper: the bar is drawn by label_alert (hugs the text, padded, corners notched)
+	{
+		const int had = lv_obj_remove_event_cb (l, label_alert);
+		if (alert) lv_obj_add_event_cb (l, label_alert, LV_EVENT_ALL, 0);
+		if (alert != had) lv_obj_invalidate (l);
+		return;
+	}
 	if (alert != (lv_obj_get_style_bg_opa (l, 0) == LV_OPA_COVER && lv_color_eq (lv_obj_get_style_bg_color (l, 0), lv_color_hex (TH->bad))))
 	{
 		lv_obj_set_style_bg_color (l, lv_color_hex (TH->bad), 0);
 		lv_obj_set_style_bg_opa (l, alert ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-	}
-	if (OS)							// Viper: the inverted label's corner is notched (not only a brighter green than a selection)
-	{
-		lv_obj_remove_event_cb (l, label_notch);
-		if (alert) lv_obj_add_event_cb (l, label_notch, LV_EVENT_DRAW_POST, 0);
 	}
 }
 

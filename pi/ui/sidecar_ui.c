@@ -2145,7 +2145,7 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		{
 			char sb[40], tp[8] = "---";
 			if (s->bpm10 > 0 && s->bpm10 < 10000) lv_snprintf (tp, sizeof tp, "%d.%d", s->bpm10 / 10, s->bpm10 % 10);
-			lv_snprintf (sb, sizeof sb, "%s  %s  %s", s->pattern >= 0 ? b : "---", tp, !s->rytm ? "----" : s->transport == 1 ? "PLAY" : s->transport == 2 ? "PAUS" : "STOP");
+			lv_snprintf (sb, sizeof sb, "%s  %s  %s", s->pattern >= 0 ? b : "---", tp, !s->rytm ? "----" : s->rec == 2 ? "REC" : s->transport == 1 ? "PLAY" : s->transport == 2 ? "PAUS" : "STOP");
 			set_text (s_Strip, sb);
 		}
 		char nb[32];
@@ -2378,10 +2378,14 @@ void sidecar_ui_combo_map (int on)
 int sidecar_ui_combo_map_shown (void) { return s_Map && !lv_obj_has_flag (s_Map, LV_OBJ_FLAG_HIDDEN); }
 // HOME > Overview's parts, the middle of each (UI coordinates; the host's taps): 0..7 the voice tiles in their order, 8 Now, 9 the XY tile,
 // 10 / 11 the send FX tiles, 12 the recorder, 13 health, 14 links, 15 Perform's REC key
+void *sidecar_ui_home_obj (int what)
+{
+	return what >= 0 && what < 8 ? s_Track[what] : what == 8 ? s_NowPat : what == 9 ? s_OvXy : what == 10 || what == 11 ? s_OvFx[what - 10]
+	       : what == 12 ? s_NowRec : what == 13 ? s_Health : what == 14 ? s_OvLink[0] : what == 15 ? s_PerfRec : what == 16 ? s_PerfKill : 0;
+}
 int sidecar_ui_home_hit (int what, int *x, int *y)
 {
-	lv_obj_t *o = what >= 0 && what < 8 ? s_Track[what] : what == 8 ? s_NowPat : what == 9 ? s_OvXy : what == 10 || what == 11 ? s_OvFx[what - 10]
-		    : what == 12 ? s_NowRec : what == 13 ? s_Health : what == 14 ? s_OvLink[0] : what == 15 ? s_PerfRec : what == 16 ? s_PerfKill : 0;
+	lv_obj_t *o = (lv_obj_t *) sidecar_ui_home_obj (what);
 	if (!o) return 0;
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
