@@ -13,6 +13,7 @@
 #include <circle/usb/usbstandardhub.h>
 
 #include <circle/koptions.h>
+#include <circle/bcmpciehostbridge.h>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -1236,6 +1237,15 @@ int main() {
      // after 30 ms, and the first event after it told against the last one before
     opt->num["obprobe"] = 1;
     opt->num["obstallreadd"] = 1;
+    {  // circle-pcie-probe: a BCM2711 root complex (its PCIe capability at 0xac) and a VL805 behind it
+      auto& rc = CBcmPCIeHostBridge::s_cfg[0];
+      auto& vl = CBcmPCIeHostBridge::s_cfg[1];
+      rc[0] = 0x271114e4, rc[4] = 0x00100000, rc[8] = 0x06040010, rc[0x34] = 0x48;
+      rc[0x48] = 0x0000ac01, rc[0xac] = 0x00420010, rc[0xac + 0x10] = 0x10120003, rc[0x100] = 0x00010001;
+      vl[0] = 0x34831106, vl[4] = 0x00100000, vl[8] = 0x0c033001, vl[0x34] = 0x80, vl[0x50] = 0x000138c0;
+      vl[0x80] = 0x0000c401, vl[0xc4] = 0x00020010, vl[0xc4 + 0x10] = 0x10120042;
+      vl[0x100] = 0x14010001, vl[0x104] = 0x00004000, vl[0x110] = 0x00000001, vl[0x140] = 0x0001001e, vl[0x148] = 0x0000000f;
+    }
     {
       Bus r(g_rytm, 0x0b48);
       CHECK(r.ob && r.ob->Configure());
@@ -1249,12 +1259,23 @@ int main() {
         RytmXHCITransferEventHook(1, 7, 1, 0, 8);
         CObUsb::PollHalt();
       }
+      // the PCIe side once, at the probe's first pass: ids, ASPM, the VL805's firmware version and vendor dwords
+      CHECK(count_lines("pcie at start: rc 00:00.0 id 271114e4 class/rev 06040010 exp@172 ", l0) == 1);
+      CHECK(count_lines("LNKCTL/STA 10120003 (ASPM L0s+L1, Gen 2 x1)", l0) == 1);
+      CHECK(count_lines("pcie at start: vl805 01:00.0 id 34831106 class/rev 0c033001 exp@196 ", l0) == 1);
+      CHECK(count_lines("LNKCTL/STA 10120042 (ASPM L1, Gen 2 x1) AER uncorr 00004000 corr 00000001", l0) == 1);
+      CHECK(count_lines("pcie rc extended capabilities: 1@256", l0) == 1);
+      CHECK(count_lines("pcie vl805 extended capabilities: 1@256 30@320; L1SS cap 00000000 ctl1 0000000f", l0) == 1);
+      CHECK(count_lines("pcie vl805 firmware version (config 0x50) 000138c0; config 0x40-0x7c: 00000000 00000000 00000000 00000000 000138c0", l0) == 1);
+      CHECK(count_lines("pcie at start", l0) == 2);
       CHECK(count_lines("vl805probe", l0) == 0 || count_lines("stall", l0) == 0);
       const unsigned last_mf = CXHCIEndpoint::s_mfindex & 0x3FFF;
       CTimer::s_now += 25000, CXHCIEndpoint::s_mfindex += 200;   // 25 ms quiet, URBs queued
       CObUsb::PollHalt();
       CHECK(count_lines("stall 1: no box event for 25000 us with URBs queued", l0) == 1);
       CHECK(count_lines("ctx at the stall: box 0 IN slot 1", l0) == 1);
+      CHECK(count_lines("pcie at the stall: vl805 01:00.0 DEVCTL/STA 00000000 LNKCTL/STA 10120042 (ASPM L1, Gen 2 x1) AER uncorr", l0) == 1);
+      CHECK(count_lines("pcie at the stall: rc", l0) == 1 && count_lines("pcie at start", l0) == 2);
       CHECK(count_lines("before (10 ms each", l0) >= 1);
       CHECK(count_lines("its endpoints added again", l0) == 0);
       CTimer::s_now += 10000, CXHCIEndpoint::s_mfindex += 80;    // 35 ms: new endpoints
@@ -1266,6 +1287,7 @@ int main() {
       RytmXHCITransferEventHook(1, 7, 1, 0, 8);
       CObUsb::PollHalt();
       CHECK(count_lines("stall 1 back after 37000 us", l0) == 1);
+      CHECK(count_lines("pcie back: vl805 01:00.0 DEVCTL/STA", l0) == 1);
       char want[64];
       snprintf(want, sizeof want, "the first event at MFINDEX %u, 296 uframes", (last_mf + 296) & 0x3FFF);
       CHECK(count_lines(want, l0) == 1);

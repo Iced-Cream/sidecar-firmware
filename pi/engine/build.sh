@@ -304,6 +304,10 @@ grep -q circle-xhci-stopep include/circle/usb/xhciendpoint.h || patch -p1 < /rep
 grep -q circle-xhci-probe include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-probe.patch
 # then the obstallrs=1 experiment: one Run/Stop cycle of the controller and a doorbell (pi/circle/circle-xhci-runstop.patch)
 grep -q circle-xhci-runstop include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-runstop.patch
+# then PCIe config reads for the probe (pi/circle/circle-pcie-probe.patch: the root complex's and the VL805's config
+# space, the VL805 firmware version and the link's ASPM state; obprobe=1, read-only; lib/, so libcircle.a again)
+grep -q circle-pcie-probe include/circle/bcmpciehostbridge.h || patch -p1 < /repo/pi/circle/circle-pcie-probe.patch
+make -C lib -j$J >/dev/null
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

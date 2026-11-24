@@ -58,6 +58,10 @@
 #define XHCI_CONFIG_TRANSFER_RING_SIZE	64		// Circle's (the portable tests' shim has none)
 #endif
 #include <circle/koptions.h>
+#if RASPPI == 4 || defined (OB_USB_TEST)
+#include <circle/bcmpciehostbridge.h>	// circle-pcie-probe.patch: config reads for obprobe=1 (the VL805 is on PCIe)
+#define OB_PCIE_PROBE 1
+#endif
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
@@ -625,6 +629,70 @@ void CObUsb::ProbeContexts (const char *pWhen, boolean bFull)
 	}
 }
 
+#ifdef OB_PCIE_PROBE
+// obprobe=1: the PCIe side, read-only (circle-pcie-probe.patch): bus 0 is the root complex, 01:00.0 the VL805. bFull
+// (once, at the probe's first pass): ids, link capabilities and control (ASPM), the extended capabilities, the VL805's
+// vendor dwords 0x40-0x7c (0x50: its firmware version, as setpci -s 01:00.0 50.l reads it on Linux); else (at a
+// stall and when it ends) the status words only: device and link status, AER error status
+static void ProbePCIe (const char *pWhen, boolean bFull)
+{
+	typedef CBcmPCIeHostBridge B;
+	CLogger *pLog = CLogger::Get ();
+	if (B::ProbeConfig (0, 0, 0, 0) == ~0U)
+	{
+		if (bFull) pLog->Write ("vl805probe", LogNotice, "pcie %s: no host bridge", pWhen);
+		return;
+	}
+	static const char *const Aspm[4] = {"off", "L0s", "L1", "L0s+L1"};
+	for (unsigned nBus = 0; nBus < 2; nBus++)
+	{
+		unsigned nExp = B::ProbeFindCap (nBus, 0, 0, 0x10, FALSE);	// PCI_CAP_ID_EXP
+		if (nExp == 0 && nBus == 0) nExp = 0xac;			// the BCM2711 root complex's (BRCM_PCIE_CAP_REGS)
+		const unsigned nAer = B::ProbeFindCap (nBus, 0, 0, 0x01, TRUE);
+		ProbeLine L;
+		L.S ("pcie ").S (pWhen).S (": ").S (nBus ? "vl805 01:00.0" : "rc 00:00.0");
+		if (bFull) L.S (" id ").X (B::ProbeConfig (nBus, 0, 0, 0)).S (" class/rev ").X (B::ProbeConfig (nBus, 0, 0, 8));
+		if (nExp != 0)
+		{
+			const u32 nLnk = B::ProbeConfig (nBus, 0, 0, nExp + 0x10);
+			if (bFull)
+				L.S (" exp@").D (nExp).S (" DEVCAP ").X (B::ProbeConfig (nBus, 0, 0, nExp + 4))
+				 .S (" LNKCAP ").X (B::ProbeConfig (nBus, 0, 0, nExp + 0x0c))
+				 .S (" LNKCTL2/STA2 ").X (B::ProbeConfig (nBus, 0, 0, nExp + 0x30));
+			L.S (" DEVCTL/STA ").X (B::ProbeConfig (nBus, 0, 0, nExp + 8)).S (" LNKCTL/STA ").X (nLnk)
+			 .S (" (ASPM ").S (Aspm[nLnk & 3]).S (", Gen ").D ((nLnk >> 16) & 15).S (" x").D ((nLnk >> 20) & 63)
+			 .S (nLnk & 0x100 ? ", clock PM" : "").S (")");
+		}
+		else L.S (" no PCIe capability");
+		if (nAer != 0)
+			L.S (" AER uncorr ").X (B::ProbeConfig (nBus, 0, 0, nAer + 4)).S (" corr ").X (B::ProbeConfig (nBus, 0, 0, nAer + 0x10));
+		pLog->Write ("vl805probe", LogNotice, "%s", L.Buf);
+		if (!bFull) continue;
+		ProbeLine E;							// the extended capabilities: id@offset
+		E.S ("pcie ").S (nBus ? "vl805" : "rc").S (" extended capabilities:");
+		unsigned nPtr = 0x100, nL1ss = 0;
+		for (unsigned n = 0; nPtr >= 0x100 && nPtr <= 0xffc && n < 32; n++)
+		{
+			const u32 nHead = B::ProbeConfig (nBus, 0, 0, nPtr);
+			if (nHead == 0 || nHead == ~0U) break;
+			E.S (" ").D (nHead & 0xffff).S ("@").D (nPtr);
+			if ((nHead & 0xffff) == 0x1e) nL1ss = nPtr;		// L1 PM Substates
+			nPtr = (nHead >> 20) & 0xffc;
+		}
+		if (nL1ss != 0)
+			E.S ("; L1SS cap ").X (B::ProbeConfig (nBus, 0, 0, nL1ss + 4)).S (" ctl1 ").X (B::ProbeConfig (nBus, 0, 0, nL1ss + 8));
+		pLog->Write ("vl805probe", LogNotice, "%s", E.Buf);
+	}
+	if (!bFull) return;
+	ProbeLine V;
+	V.S ("pcie vl805 firmware version (config 0x50) ").X (B::ProbeConfig (1, 0, 0, 0x50)).S ("; config 0x40-0x7c:");
+	for (unsigned a = 0x40; a < 0x80; a += 4) V.S (" ").X (B::ProbeConfig (1, 0, 0, a));
+	pLog->Write ("vl805probe", LogNotice, "%s", V.Buf);
+}
+#else
+static void ProbePCIe (const char *, boolean) {}
+#endif
+
 boolean CObUsb::PollProbe (void)
 {
 	if (!s_bProbe) return FALSE;
@@ -632,6 +700,8 @@ boolean CObUsb::PollProbe (void)
 	const u32 nNow = CTimer::GetClockTicks ();
 	const u32 nMf = CXHCIEndpoint::ProbeMFIndex ();
 	if (nMf == ~0U) return FALSE;			// no controller yet
+	static boolean s_bSaidPCIe;
+	if (!s_bSaidPCIe) s_bSaidPCIe = TRUE, ProbePCIe ("at start", TRUE);
 	s_Probe.Sample (nNow, nMf);
 	boolean bPending = FALSE;
 	for (unsigned k = 0; k < Slots; k++)
@@ -669,6 +739,7 @@ boolean CObUsb::PollProbe (void)
 				pLog->Write ("vl805probe", LogNotice, "%s", B.Buf);
 			}
 			ProbeContexts ("at the stall", TRUE);
+			ProbePCIe ("at the stall", FALSE);
 			vl805::Other O[vl805::kOthers];		// what else the controller completed around the stop
 			const unsigned nO = s_Probe.Others (s_Probe.stall_last_us - vl805::kOtherUs, O);
 			ProbeLine T;
@@ -708,6 +779,7 @@ boolean CObUsb::PollProbe (void)
 			 .D (s_Probe.BackMfByClock ()).S (" mod 16384); now box0 IN ").D (s_Probe.ep_mf[0][0]).S (" OUT ")
 			 .D (s_Probe.ep_mf[0][1]).S (", box1 IN ").D (s_Probe.ep_mf[1][0]).S (" OUT ").D (s_Probe.ep_mf[1][1]);
 			pLog->Write ("vl805probe", LogWarning, "%s", L.Buf);
+			ProbePCIe ("back", FALSE);
 		}
 		break;
 
