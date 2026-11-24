@@ -574,6 +574,7 @@ void CObUsb::PollHalt (void)
 
 // ---- obprobe=1: the VL805 periodic-stall probe (vl805_probe.h) ----
 boolean CObUsb::s_bProbe, CObUsb::s_bStallReadd, CObUsb::s_bStallRunStop;
+unsigned CObUsb::s_nStallRunStop;
 unsigned CObUsb::s_nProbeSecUs, CObUsb::s_nReaddUs[2], CObUsb::s_nProbeEpN[2][2];
 
 // a line without CString or a printf (the host-test shim has neither): text, decimal, 8-digit hex
@@ -714,7 +715,12 @@ boolean CObUsb::PollProbe (void)
 		break;
 	}
 
-	if (s_bStallRunStop && s_Probe.WantRunStop (nNow))	// obstallrs=1: halt and run the controller once a stall
+	// obstallrs=2 (emulator test): one cycle forced 15 s after the first box event, stall or not
+	static u32 s_nFirstEvUs;
+	if (s_nFirstEvUs == 0 && s_Probe.events != 0) s_nFirstEvUs = nNow | 1;
+	const boolean bForced = s_nStallRunStop == 2 && s_Probe.rs_n == 0 && s_nFirstEvUs != 0
+				&& nNow - s_nFirstEvUs >= 15000000;
+	if (s_bStallRunStop && (bForced || s_Probe.WantRunStop (nNow)))	// obstallrs=1: halt and run once a stall
 	{
 		s_Probe.DidRunStop (nNow);
 		u32 I[7];
@@ -727,7 +733,7 @@ boolean CObUsb::PollProbe (void)
 			p->m_pOut->GetXHCIEndpoint ()->ProbeDoorbell ();
 		}
 		ProbeLine L;
-		L.S ("stall ").D (s_Probe.stalls).S (": run/stop (obstallrs=1) ")
+		L.S ("stall ").D (s_Probe.stalls).S (bForced ? ": run/stop FORCED (obstallrs=2) " : ": run/stop (obstallrs=1) ")
 		 .S (r == 0 ? "done" : r == 1 ? "no controller" : r == 2 ? "DID NOT HALT" : "DID NOT RUN AGAIN")
 		 .S (": MFINDEX ").D (I[0]).S (", halted after ").D (I[1]).S (" us at MFINDEX ").D (I[2]).S (", running after ")
 		 .D (I[3]).S (" us at MFINDEX ").D (I[4]).S ("; USBSTS ").X (I[5]).S (" USBCMD ").X (I[6])
@@ -1182,7 +1188,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 {
 	CKernelOptions *pOpt = CKernelOptions::Get ();
 	s_bStallReadd = pOpt->GetAppOptionDecimal ("obstallreadd", 0) != 0;
-	s_bStallRunStop = pOpt->GetAppOptionDecimal ("obstallrs", 0) != 0;
+	s_nStallRunStop = pOpt->GetAppOptionDecimal ("obstallrs", 0);
+	s_bStallRunStop = s_nStallRunStop != 0;
 	s_bProbe = s_bStallReadd || s_bStallRunStop || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
