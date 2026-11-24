@@ -1058,6 +1058,16 @@ inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
 }
+// the loop onto POST: with the make-up (set_out_gain) a loop grabbed above about -11 dBFS asks POST for more than full scale.
+// Under kKnee of full scale the sum is exact (as add); above it bends smoothly toward full scale (a tanh knee) instead of a
+// hard clip that a resample would record again
+constexpr float kKnee = 0.75f;
+inline int32_t add_soft(int32_t a, float x) {
+  float s = ((float)a + x) * (1.0f / 2147483648.0f), m = s < 0 ? -s : s;
+  if (!(m > kKnee)) return add(a, x);
+  float o = kKnee + (1.0f - kKnee) * tanhf((m - kKnee) / (1.0f - kKnee));
+  return (int32_t)((s < 0 ? -o : o) * 2147483520.0f);
+}
 
 Voice voice_of(const LpSnap& s, bool fade_in) {
   return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in};
@@ -1095,7 +1105,7 @@ void take_snapshot(uint64_t h0) {
 }
 }  // namespace
 
-uint32_t out_gain_bits_ = 0x3F800000u;   // 1.0f, as bits (the __atomic builtins take integers)
+static uint32_t out_gain_bits_ = 0x3F800000u;   // 1.0f, as bits (the __atomic builtins take integers)
 void set_out_gain(float g) {
   if (!(g > 0.0f && g < 16.0f)) g = 1.0f;
   uint32_t b;
@@ -1154,7 +1164,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }
     float lg = ramp_loop_.at_h(h) * mk;
-    F[f][0] = add(F[f][0], l * lg), F[f][1] = add(F[f][1], r * lg);
+    F[f][0] = add_soft(F[f][0], l * lg), F[f][1] = add_soft(F[f][1], r * lg);
   }
   // a stopped voice that has faded out is gone (its stop's end passed)
   if (cur_.active && cur_.stop_at && render_frame + (uint64_t)n >= cur_.stop_at + cur_.stop_len) cur_.active = false;

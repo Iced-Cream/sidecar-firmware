@@ -83,3 +83,8 @@ The ring records the master as heard: the loop plus the live Rytm. A grab while 
 about twice the level of the first grab when the Rytm is not muted. After one or two resamples with the Rytm live the master can clip:
 turn LEV down for the resample (LEV 100 is the level as grabbed), or use auto-mute / LIVE VIA so the live Rytm is down under the loop
 (then a resample is the loop alone, as the Octatrack's). The page and the console say nothing about this: it is the design.
+
+The Pi plays a loop out on POST, which reaches the Rytm's main about 10.9 dB down, so the looper makes that up (x3.5): LEV 100
+plays a loop at the level it was grabbed, and a resample of a loop alone keeps its level. POST cannot go above about -11 dBFS of
+the Rytm's main, so the loud peaks of a loop grabbed hotter than that are bent down by a soft knee (from 75 % of full scale
+on) rather than clipped.

@@ -89,12 +89,13 @@ int live_perf(int bal);                     // LIVE VIA's macro value: 127 down 
 
 // ---- the audio hooks (core 0)
 void in_block(const int32_t* lr, int n, uint64_t arrival, unsigned lost);   // MAIN L / R of an IN block (interleaved)
-void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);
+void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // the loop onto F[f][0..1], the rest by BAL
 // The loop's make-up gain onto F[.][0..1] (default 1). The Rytm's MAIN arrives over USB at its own level, but what the Pi
 // puts on POST (0/1) reaches the Rytm's main 10.9 dB down (masterfx_pi.h, measured 2026-11-01): the Pi sets 3.508 so a
-// loop plays back at the level it was heard. Any thread; out_mix reads it once a block.
+// loop plays back at the level it was heard. Any thread; out_mix reads it once a block. POST tops out about 10.9 dB under
+// the Rytm's full scale, so a loop grabbed louder than that bends into a soft knee (out_mix) instead of clipping.
 void set_out_gain(float g);
-float out_gain();              // the loop onto F[f][0..1], the rest by BAL
+float out_gain();
 bool wants_in();                            // the ring exists
 bool wants_out();                           // a loop is on its way or plays (out_mix does something)
 

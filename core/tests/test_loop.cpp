@@ -201,6 +201,12 @@ static int32_t played_at(uint64_t h) {
   loop::out_mix(F, 12, h);
   return F[0][0];
 }
+static int32_t played_over(uint64_t h, int32_t base) {   // what plays onto a POST frame that already holds `base`
+  int32_t F[12][12] = {};
+  F[0][0] = base;
+  loop::out_mix(F, 12, h);
+  return F[0][0];
+}
 
 // ---- Task 20: grabs
 static void test_grabs() {
@@ -230,6 +236,13 @@ static void test_grabs() {
   loop::set_out_gain(-1.0f);   // out of range: unity
   CHECK(loop::out_gain() == 1.0f && played_at(s0 + 63) == g->pcm[2 * 63]);
   loop::set_out_gain(1.0f);
+  // soft_knee_not_clip: under 75 % of full scale the loop adds exactly; above it bends under full scale, never a hard clip
+  { int32_t p = g->pcm[2 * 63];
+    CHECK(played_over(s0 + 63, 1000000000) == 1000000000 + p);
+    int32_t hot = played_over(s0 + 63, 2140000000), hot2 = played_over(s0 + 63, 2147000000);
+    CHECK(hot > 1610612736 && hot < 2147483520 && hot2 >= hot && hot2 < 2147483520);
+    int32_t neg = played_over(s0 + 63, -2147000000);
+    CHECK(neg < -1610612736 && neg > -2147483520); }
   to(s0 + 200);
   CHECK(loop::state() == loop::kPlaying);
 
