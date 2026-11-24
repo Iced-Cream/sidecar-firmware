@@ -106,6 +106,9 @@ constexpr uint32_t kPlayCommitMs = 200;
 // locks as they are turned) commits at most every kSrcUserMs while playing: twice the plain cap, half the Rytm's
 // render rate, so a turn follows the knob and a constant CC stream still does not redraw the Rytm at 20 Hz.
 constexpr uint32_t kSrcUserMs = 100;
+// A QUICK PERF knob's fader move on the open MORPH page (it arrives as the Rytm's 2D reports, not as a 31 / 32): a commit
+// at most every kQpCommitMs while playing; each commit makes the Rytm run its whole stock draw, so not every frame.
+constexpr uint32_t kQpCommitMs = 50;
 constexpr uint8_t kEchoNone = 0x7F;
 // 1023: the connect splash (rytm-mods 0026 1023): the Rytm's hello (35) carries its uptime in 50 ms ticks; when it has
 // been up kSplashMinUp or more (the link came up after the Rytm's boot, not with it: a cable plugged in, the Sidecar
@@ -406,6 +409,7 @@ struct State {
   bool self = false;         // remote's own 0x03 in voice_report: no hold logic
   bool input = false;        // a key or a turn since the last frame: draw at once
   bool user = false;         // 0.4.3: a key or a turn of the user's (31 / 32) since the last commit: not held while playing
+  bool qp_user = false;      // a QPERF fader move on the open MORPH page since the last commit (kQpCommitMs while playing)
   bool src_user = false;     // 0.4.4: a knob's value on the SRC view (a 2A of one value, or a held step's) since the last commit
   uint32_t commit_ms = 0;    // 0.4.3: the last page / SRC view commit (kPlayCommitMs) and what it showed (page_key)
   int commit_page = -1000;
@@ -1016,9 +1020,9 @@ CORE_COLD void src_unhold(int t) {
 CORE_COLD int page_key() { return s.open ? s.voice : 1000 + s.src_track; }
 CORE_COLD bool commit_held(uint32_t ms) {
   return !s.legacy && s.sent_valid && !s.user && page_key() == s.commit_page && rytm_plays() &&
-         ms - s.commit_ms < (s.src_user ? kSrcUserMs : kPlayCommitMs);
+         ms - s.commit_ms < (s.src_user ? kSrcUserMs : s.qp_user ? kQpCommitMs : kPlayCommitMs);
 }
-CORE_COLD void committed(uint32_t ms) { s.commit_ms = ms, s.user = false, s.src_user = false, s.commit_page = page_key(); }
+CORE_COLD void committed(uint32_t ms) { s.commit_ms = ms, s.user = false, s.src_user = false, s.qp_user = false, s.commit_page = page_key(); }
 
 // The tiles a rectangle touches (glass rows y..y+h-1: page 7 - row / 8).
 CORE_COLD void rect_tiles(const Rect& r, uint32_t m[4]) {
@@ -2163,6 +2167,10 @@ CORE_COLD void remote_show_page(const char* title) {
   remote_request(true);
 }
 
+CORE_COLD void remote_user_move() {
+  const char* t = remote_page_title();
+  if (t && !strcmp(t, "MORPH")) s.qp_user = true;   // other pages do not change with the fader: they keep the plain cap
+}
 CORE_COLD const char* remote_page_title() {
   const ExtraPage* x = s.open ? extra_of(s.voice) : nullptr;
   return x ? x->title : nullptr;
