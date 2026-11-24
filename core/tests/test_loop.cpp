@@ -635,10 +635,11 @@ static void test_resample_stop_mute() {
 // ---- Task 25: calibration, console, targets, settings
 static uint64_t g_click_c0 = 0;
 static int g_rtt = 0;
+static int32_t g_click_amp = 6000000;   // the level the clicks come back at
 static int32_t click_sig(uint64_t k) {   // the clicks as the Rytm hands them back: g_rtt frames after they were rendered
   for (int c = 0; c < 3; ++c) {
     int64_t kc = (int64_t)(g_click_c0 + (uint64_t)c * 9600 + (uint64_t)g_rtt) - kD;
-    if ((int64_t)k >= kc && (int64_t)k < kc + 24) return 6000000;
+    if ((int64_t)k >= kc && (int64_t)k < kc + 24) return g_click_amp;
   }
   return 0;
 }
@@ -963,6 +964,395 @@ static void test_wait_edges() {
   printf("  wait edges: a first loop's tap, an abandoned copy under a resample\n");
 }
 
+// ---- OUT = POST / PRE, the level cap from each loop's peak, the POST return's gain (loop=cal), loop.txt's `out` and `postgain`
+static int32_t g_sig_peak = 0;
+static int32_t peaked_sig(uint64_t k) {   // a source with a known peak (every 97th frame), a ramp under it
+  return k % 97 == 0 ? g_sig_peak : (int32_t)((k % 50) * (g_sig_peak / 50));
+}
+static int32_t fs(double x) { return (int32_t)(x * 2147483648.0); }   // x of full scale
+static uint32_t pcm_peak(const loop::Grab* g) {
+  uint32_t m = 0;
+  for (uint32_t i = 0; i < 2 * g->frames; ++i) {
+    int32_t x = g->pcm[i];
+    uint32_t a = x < 0 ? 0u - (uint32_t)x : (uint32_t)x;
+    m = a > m ? a : m;
+  }
+  return m;
+}
+// the loop's frames from h0 on, blocks of 12 as the OUT hook gets them: the largest |sample| on F[ch] / F[ch + 1]; `base` is on F[ch]
+// and F[ch + 1] before (the Sidecar's own signal there)
+static int32_t out_peak(uint64_t h0, int64_t frames, int ch, int32_t base = 0) {
+  uint32_t m = 0;
+  for (int64_t d = 0; d < frames; d += 12) {
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][ch] = F[f][ch + 1] = base;
+    loop::out_mix(F, 12, h0 + (uint64_t)d);
+    for (int f = 0; f < 12; ++f)
+      for (int c = ch; c < ch + 2; ++c) {
+        int32_t x = F[f][c] - base;
+        uint32_t a = x < 0 ? 0u - (uint32_t)x : (uint32_t)x;
+        m = a > m ? a : m;
+      }
+  }
+  return (int32_t)m;
+}
+static const loop::Grab* grab_loop(double peak_fs) {   // a bar grabbed from a source of this peak; plays from s0
+  g_sig_peak = fs(peak_fs);
+  g_sig = peaked_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  return loop::grab_at(0);
+}
+static const double kS0 = 41;   // the first loop's bar line (origin + kS0 x bar)
+static uint64_t s0_of() { return (uint64_t)(g_origin + kS0 * bar()); }
+
+static void test_out() {
+  const int32_t kKneeFs = fs(loop::kLoopCeil);
+  // peak_is_measured: the grab's peak is the store copy's (L or R)
+  fresh();
+  loop::set_out_gain(3.508f);
+  const loop::Grab* g = grab_loop(0.9);
+  CHECK(g->copied && g->peak == pcm_peak(g) && g->peak >= (uint32_t)fs(0.9) - 1 && g->peak <= (uint32_t)fs(0.9));
+  // post_hot_loop_stays_clean: a loop that peaks at 0.9 FS plays at under the knee (x3.508 would be 3.2 FS): no knee, no clip
+  int32_t pk = out_peak(s0_of(), (int64_t)bar(), 0);
+  CHECK(pk <= fs(0.95) && pk <= kKneeFs + 64);
+  CHECK(pk >= fs(0.70));   // ... and not quieter than it must be
+  // the same loop from the older-grab path (a tap) and with the Sidecar's own signal under it: the knee is the backstop, never a wrap
+  int32_t own = out_peak(s0_of(), 4800, 0, fs(0.6));
+  CHECK(own < 2147483520 && own > 0);
+
+  // post_quiet_loop_gets_full_makeup: -20 dBFS keeps the whole x3.508
+  fresh();
+  loop::set_out_gain(3.508f);
+  g = grab_loop(0.1);
+  pk = out_peak(s0_of(), (int64_t)bar(), 0);
+  double want = 3.508 * (double)g->peak;
+  CHECK(pk > want * 0.99 && pk < want * 1.01);
+  CHECK(g->peak < (uint32_t)fs(0.1) + 1 && g->peak > (uint32_t)fs(0.1) - 1000);
+
+  // pre_adds_on_2_3: OUT = PRE: the loop lands on F[2..3] x 1.259 on top of what is there; F[0..1] are not touched
+  fresh();
+  loop::set_out_gain(3.508f);
+  loop::set_pre_gain(3.508f / 2.786f);
+  loop::set_out(loop::kOutPre);
+  CHECK(loop::out() == loop::kOutPre && loop::dirty());
+  g = grab_loop(0.1);
+  {
+    uint64_t h = s0_of() + 64;
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][0] = 555, F[f][1] = -555, F[f][2] = 777, F[f][3] = -333;
+    loop::out_mix(F, 12, h);
+    for (int f = 0; f < 12; ++f) {
+      int64_t wl = 777 + (int64_t)(loop::pre_gain() * (float)g->pcm[2 * (64 + f)]), wr = -333 + (int64_t)(loop::pre_gain() * (float)g->pcm[2 * (64 + f) + 1]);
+      CHECK(F[f][0] == 555 && F[f][1] == -555);
+      CHECK(llabs(F[f][2] - wl) <= 64 && llabs(F[f][3] - wr) <= 64);
+      CHECK(F[f][4] == 0 && F[f][11] == 0);
+    }
+  }
+  // ... and a hot loop is capped there too (same peak rule)
+  fresh();
+  loop::set_out_gain(3.508f);
+  loop::set_pre_gain(3.508f / 2.786f);
+  loop::set_out(loop::kOutPre);
+  grab_loop(0.9);
+  pk = out_peak(s0_of(), (int64_t)bar(), 2);
+  CHECK(pk <= fs(0.95) && pk <= kKneeFs + 64 && pk >= fs(0.70));
+  CHECK(out_peak(s0_of() + 64, 4800, 0) == 0);   // (nothing on 0/1)
+
+  // postgain_replaces_the_makeup: the measured POST gain (1.5 .. 6.0) is used on POST instead of out_gain; insane: ignored
+  fresh();
+  loop::set_out_gain(3.508f);
+  g = grab_loop(0.05);
+  loop::set_postgain(2.0f);
+  CHECK(loop::postgain() == 2.0f && loop::makeup() == 2.0f);
+  { int64_t want2 = (int64_t)(2.0f * (float)g->pcm[2 * 70]), got = played_at(s0_of() + 70);
+    CHECK(llabs(got - want2) <= 64); }
+  loop::set_postgain(9.0f);
+  CHECK(loop::postgain() == 0.0f && loop::makeup() == 3.508f);
+  loop::set_postgain(1.0f);
+  CHECK(loop::postgain() == 0.0f);
+  loop::set_postgain(2.0f);
+  loop::set_out(loop::kOutPre);
+  loop::set_pre_gain(1.259f);
+  CHECK(loop::makeup() == 1.259f);   // (PRE: the measured POST gain is not for it)
+  loop::set_pre_gain(-1.0f);
+  CHECK(loop::pre_gain() == 1.0f);
+
+  // two_loops_in_a_row: a second grab while the first plays does not lower the first, and gets its own level; an older hot grab
+  // played again after a quiet one is capped from its own peak
+  fresh();
+  loop::set_out_gain(3.508f);
+  g = grab_loop(0.9);
+  g_sig_peak = fs(0.1);   // what the Rytm carries from here on (the next bar line on) is quiet
+  uint64_t s1 = s0_of();
+  to(s1 + (uint64_t)(bar() / 2));
+  CHECK(loop::state() == loop::kPlaying);
+  int32_t x1 = played_at(s1 + 5000);
+  CHECK(x1 != 0);
+  to((uint64_t)(line(42) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::grabs() == 2 && loop::grab_at(0)->copied);
+  uint64_t s2, st;
+  uint32_t ln;
+  CHECK(loop::playing_info(&st, &ln));
+  s2 = st;
+  CHECK(s2 > s1 + (uint64_t)(bar() / 2) + 5000);
+  CHECK(llabs((int64_t)played_at(s1 + 5000) - x1) <= 1);   // the first loop, heard until the second starts, is as loud as before
+  to(s2 + 200);
+  double want2 = 3.508 * (double)loop::grab_at(0)->peak;   // the second's own: the quiet one keeps the whole make-up
+  int32_t pk2 = out_peak(s2 + 64, (int64_t)bar() - 128, 0);
+  CHECK(pk2 > want2 * 0.99 && pk2 < want2 * 1.01);
+  CHECK(loop::grab_at(1)->peak > (uint32_t)fs(0.89));
+  CHECK(loop::play(1));   // the older, hot grab again
+  to(g_now + (uint64_t)(2 * bar()));
+  CHECK(loop::playing_info(&st, &ln) && st > s2);
+  CHECK(out_peak(st + 64, (int64_t)bar() - 128, 0) <= kKneeFs + 64);
+  // lev_bal_inside_the_cap: the cap is on the final gain: LEV 127 and any BAL never take a 0.9 FS loop over the ceiling (on L and R, both
+  // outs); LEV under unity is quieter as before; a quiet loop at LEV 127 is louder than at 100
+  for (int out : {loop::kOutPost, loop::kOutPre}) {
+    fresh();
+    loop::set_out_gain(3.508f);
+    loop::set_pre_gain(3.508f / 2.786f);
+    loop::set_out(out);
+    grab_loop(0.9);
+    const int c0 = out == loop::kOutPre ? 2 : 0;
+    loop::set_lev(127);
+    for (int bal : {127, 96, 64, 0}) {
+      loop::set_bal(bal);
+      pk = out_peak(s0_of(), (int64_t)bar(), c0);   // (both channels of the pair)
+      CHECK(pk <= kKneeFs + 64);
+      if (bal >= 64) CHECK(pk >= fs(0.70));
+    }
+    loop::set_bal(64);
+    loop::set_lev(50);
+    pk = out_peak(s0_of(), (int64_t)bar(), c0);
+    CHECK(pk > fs(0.375) * 0.98 && pk < fs(0.375) * 1.02);
+  }
+  fresh();
+  loop::set_out_gain(3.508f);
+  g = grab_loop(0.05);
+  loop::set_lev(127);
+  pk = out_peak(s0_of(), (int64_t)bar(), 0);
+  want = 3.508 * 1.27 * (double)g->peak;
+  CHECK(pk > want * 0.99 && pk < want * 1.01);
+
+  // soft_knee_leaves_the_base: content already on the pair (a hot PRE / POST signal) is never bent by the loop's knee: a silent loop
+  // gives the base back exactly, a tiny one adds plainly
+  for (int out : {loop::kOutPost, loop::kOutPre}) {
+    fresh();
+    loop::set_out_gain(3.508f);
+    loop::set_pre_gain(3.508f / 2.786f);
+    loop::set_out(out);
+    const int c0 = out == loop::kOutPre ? 2 : 0;
+    g = grab_loop(1e-7);   // (a tiny loop: peak ~ 200)
+    CHECK(g->peak > 0 && g->peak < 1000);
+    int32_t base = fs(0.9);
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][c0] = base, F[f][c0 + 1] = -base;
+    loop::out_mix(F, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) {
+      int64_t wl = base + (int64_t)(loop::makeup() * (float)g->pcm[2 * (64 + f)]);
+      CHECK(llabs(F[f][c0] - wl) <= 2048 && llabs(F[f][c0] - base) <= 2048 && F[f][c0] > base - 4096);
+    }
+    // ... and a silent loop (nothing in the ring): exactly the base
+    fresh();
+    loop::set_out_gain(3.508f);
+    loop::set_pre_gain(3.508f / 2.786f);
+    loop::set_out(out);
+    g_sig_peak = 0;
+    g = grab_loop(0.0);
+    CHECK(g->peak == 0);
+    int32_t E[12][12] = {};
+    for (int f = 0; f < 12; ++f) E[f][c0] = base, E[f][c0 + 1] = -base;
+    loop::out_mix(E, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) CHECK(E[f][c0] == base && E[f][c0 + 1] == -base);
+  }
+  // makeup_change_inside_the_cap: the cap follows a make-up change at once (a loop=cal result while a hot loop plays): no overshoot
+  fresh();
+  loop::set_out_gain(3.508f);
+  grab_loop(0.9);
+  { uint64_t h = s0_of();
+    pk = out_peak(h, 2400, 0);
+    CHECK(pk <= kKneeFs + 64);
+    loop::set_postgain(6.0f);
+    pk = out_peak(h + 2400, 4800, 0);
+    CHECK(pk <= kKneeFs + 64);
+    loop::set_postgain(1.6f);   // and down: the loop eases up, never over
+    pk = out_peak(h + 7200, 4800, 0);
+    CHECK(pk <= kKneeFs + 64); }
+
+  printf("  out: POST cap from the peak, quiet keeps the make-up, PRE onto 2/3, postgain, two loops in a row, LEV / BAL inside the cap ok\n");
+}
+
+static int32_t smooth_sig(uint64_t k) { return (int32_t)(0.1 * 2147483648.0 * sin((double)k * 0.01)); }
+// OUT switched while the loop plays: a 10 ms crossfade between the pairs, no step, the end state on the new pair only.
+// back_at: flip back at this block (inside the fade); stop_at: cut the loop at this block (inside the fade)
+static void switch_case(int to_pre, int back_at, int stop_at) {
+  const float kPostMk = 3.508f, kPreMk = 3.508f / 2.786f;
+  fresh();
+  loop::set_out_gain(kPostMk);
+  loop::set_pre_gain(kPreMk);
+  loop::set_out(to_pre ? loop::kOutPost : loop::kOutPre);
+  g_sig = smooth_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  uint64_t h = s0_of() + 64;
+  double prev_a = 0, prev_b = 0, worst = 0;
+  bool both = false;
+  const int nblk = 200;   // 2400 frames: the switch at block 40, 3 ms in; the fade is 480 frames = 40 blocks
+  for (int b = 0; b < nblk; ++b) {
+    if (b == 40) loop::set_out(to_pre ? loop::kOutPre : loop::kOutPost);
+    if (b == back_at) loop::set_out(to_pre ? loop::kOutPost : loop::kOutPre);
+    if (b == stop_at) loop::stop(true, true);
+    int32_t F[12][12] = {};
+    loop::out_mix(F, 12, h);
+    for (int f = 0; f < 12; ++f) {
+      double a = (double)F[f][0] / 2147483648.0, c = (double)F[f][2] / 2147483648.0;
+      if (b > 0 || f > 0) worst = fmax(worst, fmax(fabs(a - prev_a), fabs(c - prev_b)));
+      prev_a = a, prev_b = c;
+      if (F[f][0] != 0 && F[f][2] != 0) both = true;
+    }
+    h += 12;
+    if (b == 0) to(g_now + 48);   // (the control loop goes on: the stop is taken)
+    else if (b % 4 == 0) to(g_now + 48);
+  }
+  CHECK(worst < 0.004);   // a jump would be 0.1 x 3.5 = 0.35
+  CHECK(both);            // it did cross through both
+  int32_t F[12][12] = {};
+  loop::out_mix(F, 12, h);
+  const bool end_pre = back_at >= 0 ? !to_pre : to_pre;
+  for (int f = 0; f < 12; ++f) {
+    if (stop_at >= 0) CHECK(F[f][0] == 0 && F[f][1] == 0 && F[f][2] == 0 && F[f][3] == 0);
+    else if (end_pre) CHECK(F[f][0] == 0 && F[f][1] == 0 && F[f][2] != 0);
+    else CHECK(F[f][2] == 0 && F[f][3] == 0 && F[f][0] != 0);
+  }
+  if (stop_at >= 0) {   // the next loop starts on the pair OUT names now (no fade from the old one)
+    CHECK(loop::play(0));
+    to(g_now + (uint64_t)(2 * bar()));
+    uint64_t st;
+    uint32_t ln;
+    CHECK(loop::playing_info(&st, &ln));
+    int32_t G[12][12] = {};
+    loop::out_mix(G, 12, st + 100);
+    if (end_pre) CHECK(G[0][0] == 0 && G[0][2] != 0);
+    else CHECK(G[0][2] == 0 && G[0][0] != 0);
+  }
+}
+static void test_out_switch() {
+  for (int to_pre = 0; to_pre < 2; ++to_pre) {
+    switch_case(to_pre, -1, -1);   // one flip
+    switch_case(to_pre, 50, -1);   // flipped back 10 blocks (120 frames) into the fade: ends on the first pair
+    switch_case(to_pre, -1, 50);   // the loop is cut 10 blocks into the fade: silence, and the next loop starts on the new pair
+  }
+  printf("  out: switching OUT while a loop plays crossfades (also flipped twice, or the loop stopped, in the fade), no step, ends on the right pair only\n");
+}
+
+static void test_out_cal_settings() {
+  hooks.to_rytm = wire;
+  // cal_measures_the_return_gain: the clicks come back at 1 / 3.508 of what went out: the gain is found within 0.2 dB, saved and used
+  const double click_pk = 8.0e8 * sin(3.14159265358979 * 12.0 / 25.0);
+  for (double gain : {3.508, 2.2, 5.5}) {
+    fresh();
+    g_lat = 282, g_rtt = 282 + 30;
+    g_click_amp = (int32_t)(click_pk / gain);
+    g_sig = click_sig;
+    to((uint64_t)line(10));
+    loop::set_out_gain(1.0f);
+    loop::cal_start();
+    uint64_t first;
+    int n;
+    uint32_t gap;
+    CHECK(loop::cal_info(&first, &n, &gap));
+    g_click_c0 = first;
+    to(first + 3 * 9600 + 6000);
+    CHECK(!loop::cal_wanted() && loop::post_lat() == 30);
+    double db = 20.0 * log10((double)loop::postgain() / gain);
+    CHECK(loop::postgain() > 0.0f && std::fabs(db) < 0.2);
+    CHECK(loop::makeup() == loop::postgain() && loop::dirty());
+    std::string m = loop::last_message();
+    CHECK(m.find("POST LAT 30 X") == 0 && m.find("DB") != std::string::npos);
+    if (gain == 3.508) CHECK(m.find("X3.5") != std::string::npos && m.find("10.9DB") != std::string::npos);
+  }
+  // a return that is not a POST return (live signal on top, a gain of 30): ignored, the latency still taken
+  fresh();
+  g_lat = 282, g_rtt = 312;
+  g_click_amp = (int32_t)(click_pk / 30.0);
+  g_sig = click_sig;
+  to((uint64_t)line(10));
+  loop::cal_start();
+  { uint64_t first; int n; uint32_t gap;
+    CHECK(loop::cal_info(&first, &n, &gap));
+    g_click_c0 = first;
+    to(first + 3 * 9600 + 6000); }
+  CHECK(loop::post_lat() == 30 && loop::postgain() == 0.0f && std::string(loop::last_message()) == "POST LAT 30");
+  g_click_amp = 6000000;
+
+  // out_and_postgain_persist: loop.txt carries `out` and `postgain`; an unknown value is ignored
+  fresh();
+  char tmpl[] = "/tmp/core_loop_XXXXXX";
+  CHECK(mkdtemp(tmpl));
+  host_set_card(tmpl);
+  card_ok = true;
+  std::string file = std::string(tmpl) + "/.rytm/loop.txt";
+  auto put = [&](const char* txt) { system((std::string("mkdir -p ") + tmpl + "/.rytm; printf '" + txt + "' > " + file).c_str()); };
+  auto slurp = [&]() {
+    std::string r;
+    if (FILE* f = fopen(file.c_str(), "r")) {
+      char b[256];
+      size_t k;
+      while ((k = fread(b, 1, sizeof b, f)) > 0) r.append(b, k);
+      fclose(f);
+    }
+    return r;
+  };
+  put("other=1\\nout=pre\\npostgain=3508\\n");
+  loop::load();
+  CHECK(loop::out() == loop::kOutPre && std::fabs(loop::postgain() - 3.508f) < 1e-4f && !loop::dirty());
+  put("out=sideways\\npostgain=9000\\n");
+  loop::reset();
+  loop::load();
+  CHECK(loop::out() == loop::kOutPost && loop::postgain() == 0.0f);
+  put("postgain=1000\\n");
+  loop::load();
+  CHECK(loop::postgain() == 0.0f);
+  put("postgain=-3508\\nout=prefix\\n");
+  loop::load();
+  CHECK(loop::postgain() == 0.0f && loop::out() == loop::kOutPost);
+  put("out=post\\n");
+  loop::load();
+  CHECK(loop::out() == loop::kOutPost && loop::postgain() == 0.0f);
+  loop::reset();
+  loop::set_out(loop::kOutPre);
+  loop::set_postgain(2.5f);
+  CHECK(loop::dirty() && loop::save());
+  for (int i = 0; i < 2000 && fmt::post_busy(); ++i) {
+    fmt::post_step();
+    host_card_core(0);
+    while (cardq::service()) {
+    }
+    host_card_core(3);
+  }
+  std::string txt = slurp();
+  CHECK(txt.find("out=pre\n") != std::string::npos && txt.find("postgain=2500\n") != std::string::npos);
+  loop::reset();
+  CHECK(loop::out() == loop::kOutPost && loop::postgain() == 0.0f);
+  loop::load();
+  CHECK(loop::out() == loop::kOutPre && std::fabs(loop::postgain() - 2.5f) < 1e-4f && !loop::save());
+  // the console and the status
+  CHECK(cmd("loop=out:post").find("out post") != std::string::npos && loop::out() == loop::kOutPost && loop::dirty());
+  CHECK(cmd("loop=out:pre").find("out pre") != std::string::npos && loop::out() == loop::kOutPre);
+  CHECK(cmd("loop=out:sideways").find("out:post|pre") != std::string::npos && loop::out() == loop::kOutPre);
+  CHECK(cmd("loop").find("out pre") != std::string::npos);
+  { char j[1200];
+    CHECK(loop::json(j, sizeof j) > 0 && strstr(j, "\"out\":\"pre\"") && strstr(j, "\"postgain\":2500")); }
+  hooks.to_rytm = nullptr;
+  host_fake_time(false, 0);
+  printf("  out: the gain cal, loop.txt out and postgain, the console ok\n");
+}
+
 int main() {
   test_ring();
   test_ring_gap_cost();
@@ -971,6 +1361,9 @@ int main() {
   test_playback();
   test_resample_stop_mute();
   test_cal_console();
+  test_out();
+  test_out_switch();
+  test_out_cal_settings();
   test_resample_wait();
   test_room_without_drops();
   test_wait_edges();

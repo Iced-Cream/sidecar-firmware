@@ -42,6 +42,7 @@ void Initialize()
 	log->Write (From, LogNotice, "loop ring %u MB, grabs %u MB", (unsigned) (kRingBytes >> 20), nMB);
 	s_Keep.init (rec_pi::CardBackend (), core::loop::keep_finished);
 	core::loop::set_out_gain (masterfx_pi::kStemOnPost);	// POST reaches the Rytm's main 10.9 dB down: the loop at the level it was heard
+	core::loop::set_pre_gain (masterfx_pi::kStemOnPost / masterfx_pi::kPreOnPost);	// OUT = PRE reaches it 2.0 dB down: +2.0 dB
 }
 
 bool WantsIn () { return core::loop::wants_in (); }

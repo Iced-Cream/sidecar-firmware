@@ -125,7 +125,7 @@ static void open_page() {
 
 static void grab_keys() {
   open_page();
-  CHECK(g_mask_trigs == 0xFFFF && g_mask_encs == 0x3F && g_mask_func);   // all 16 trig keys, A..F, FUNC
+  CHECK(g_mask_trigs == 0xFFFF && g_mask_encs == 0x7F && g_mask_func);   // all 16 trig keys, A..G, FUNC
   CHECK(shows("LOOP") && shows("READY") && !shows("RING") && shows("T1-6 GRAB"));
   tap(0x01);   // T2: 1 bar
   bars(0.1);
@@ -248,10 +248,18 @@ static void encoders() {
   turn(5, 3);
   CHECK(ui::loop_page_sel() == 2);
   CHECK(shows("BAL") && shows("LEV") && shows("FADE") && shows("MUTE") && shows("LIVE") && shows("GRAB"));
+  // G: OUT, in the second row's third cell of the 4-column grid (x 80 .. 112), POST by default, PRE and back
+  CHECK(shows("OUT") && shows("POST") && loop::out() == loop::kOutPost);
+  for (const ui::TextItem& t : g_c.txt)
+    if (t.s[0] && !strcmp(t.s, "OUT")) CHECK(t.x >= 64 && t.x < 96 + 16 && t.y > 30);
+  turn(6, 1);
+  CHECK(loop::out() == loop::kOutPre && shows("PRE") && !shows("POST") && shows("OUT PRE"));
+  turn(6, -1);
+  CHECK(loop::out() == loop::kOutPost && shows("OUT POST"));
   // a manual BAL while a scene holds LOOP:BAL: the edit wins (mod::manual), and the encoders are scene-lockable
   CHECK(ui::kLoopPage.enc_tid(0) == mod::tid(mod::kLoop, 0, 0) && ui::kLoopPage.enc_tid(1) == mod::tid(mod::kLoop, 0, 1) && !ui::kLoopPage.enc_tid(2));
   png("loop_set.png");
-  printf("  encoders: A BAL, B LEV, C FADE, D AUTO-MUTE, E LIVE VIA, F the grab shown\n");
+  printf("  encoders: A BAL, B LEV, C FADE, D AUTO-MUTE, E LIVE VIA, F the grab shown, G OUT\n");
 }
 
 static void off_when_no_looper() {

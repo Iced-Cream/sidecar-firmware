@@ -57,6 +57,7 @@ struct Copy {
   uint32_t id;
   uint64_t k;       // next ring index to copy
   uint32_t done, total;   // frames
+  uint32_t peak;    // the largest |sample| of what is copied
 } cp_;
 int need_bpm_ = 47;
 
@@ -81,6 +82,7 @@ struct LpSnap {
   uint64_t start;       // the host render frame of sample 0
   uint64_t stop_at;     // 0: none
   uint32_t stop_len;    // frames of the fade
+  uint32_t peak;        // the loop's largest |sample| (the make-up is capped from it; while it is still copied: so far)
 };
 struct Snap {
   LpSnap cur;           // the loop that starts (or plays) now
@@ -145,6 +147,10 @@ CORE_COLD double arrival(const Map& m, double k, double grid) { return m.origin 
 // ------------------------------------------------------------------------------------------------ the settings
 int bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = -1, mod_lev_ = -1;
 bool auto_mute_ = false;
+// OUT and the make-ups: core 3 / the Pi's init write, core 0's out_mix reads once a block (atomics; floats as their bits)
+int out_ = kOutPost;
+uint32_t pre_gain_bits_ = 0x3F800000u;   // 1.0f
+uint32_t postgain_bits_ = 0;             // 0: none measured
 CORE_COLD int bal_now() { return mod_bal_ >= 0 ? mod_bal_ : bal_; }
 CORE_COLD int lev_now() { return mod_lev_ >= 0 ? mod_lev_ : lev_; }
 // the levels as they play: core 3 moves each from where it is to the new value over 10 ms
@@ -162,7 +168,8 @@ struct AutoMute {
   bool on;
   uint16_t set, seen;
 } am_;
-bool dirty_ = false;     // a setting changed (loop.txt)
+bool dirty_ = false;     // a setting changed (loop.txt). Every write (the setters, the cal, load / save) is on core 3: the page, the console and
+                         // the control loop run there; core 0 only reads out_ / postgain_bits_ / pre_gain_bits_ (atomics), never dirty_
 int post_lat_ = 0;
 fmt::KvKeep keep_lines_;   // the lines of loop.txt this build does not know, written back as they were
 char msg_[40];
@@ -176,6 +183,8 @@ KeepJob keep_job_;   // what core 0 is told (written before keep_state_ goes to 
 constexpr int kCalN = 3, kCalGap = 9600, kCalClick = 24, kCalWindow = 4800;
 uint64_t cal_at_ = 0;      // the first click's render frame (0: none)
 int32_t cal_found_[kCalN];   // the round trip found for each click (frames), -1 not yet
+uint32_t cal_peak_[kCalN];   // the largest |sample| back in the kCalPeakWin frames from each click's onset (what the Rytm's POST return made of it)
+constexpr int kCalPeakWin = 96;
 int32_t cal_floor_ = 0;
 uint8_t cal_state_ = 0;    // 0 idle, 1 clicks on their way
 bool via_on_ = false;   // LIVE VIA has set a macro that is not back at full yet
@@ -262,7 +271,7 @@ CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   } else {
     lpp_ = LoopInfo(), snap_.prev = LpSnap();
   }
-  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0};
+  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0, g.peak};
   lp_ = {true, g.id, start, g.frames, 0, 0, g.half_bars};
   publish();
 }
@@ -324,7 +333,7 @@ CORE_COLD void finalize(uint64_t now) {
   g_off_[0] = off;
   g_k0_[0] = k0;
   list_edit(false);
-  cp_ = {true, n.id, k0 - (uint64_t)kPre, 0, (uint32_t)(len + kPre)};
+  cp_ = {true, n.id, k0 - (uint64_t)kPre, 0, (uint32_t)(len + kPre), 0};
   ++stats_.grabs;
   bool replace = lp_.on && (lp_.stop_at == 0 || now < lp_.stop_end);
   if (replace) ++stats_.resamples;
@@ -390,6 +399,20 @@ CORE_COLD void pump_copy() {
     return;
   }
   if (n * 8 > stats_.worst_copy_bytes) stats_.worst_copy_bytes = n * 8;
+  {   // the loop's peak (L or R) for the level cap: the piece is in the cache, one pass over it
+    uint32_t pk = cp_.peak;
+    for (uint32_t i = 0; i < 2 * n; ++i) {
+      int32_t x = dst[i];
+      uint32_t a = x < 0 ? 0u - (uint32_t)x : (uint32_t)x;
+      pk = a > pk ? a : pk;
+    }
+    cp_.peak = pk;
+    g_[gi].peak = pk;
+    if (lp_.on && lp_.grab_id == cp_.id && snap_.cur.from_ring && snap_.cur.active && snap_.cur.peak != pk) {   // a loop playing from the ring: so far
+      snap_.cur.peak = pk;
+      publish();
+    }
+  }
   cp_.k += n, cp_.done += n;
   if (cp_.done >= cp_.total) {
     Grab& g = g_[gi];
@@ -425,6 +448,7 @@ CORE_COLD void reset() {
   ng_ = 0, next_id_ = 1, pend_ = Pending(), cp_ = Copy(), stats_ = Stats(), lp_ = LoopInfo(), lpp_ = LoopInfo(), am_ = AutoMute(), via_on_ = false;
   snap_ = Snap();
   bal_ = 64, lev_ = 100, fade_ = kFade1, live_via_ = 0, mod_bal_ = mod_lev_ = -1, auto_mute_ = false;
+  __atomic_store_n(&out_, (int)kOutPost, __ATOMIC_RELAXED), __atomic_store_n(&postgain_bits_, 0u, __ATOMIC_RELAXED);
   dirty_ = false, post_lat_ = 0, keep_state_ = 0, cal_state_ = 0, cal_at_ = 0, msg_[0] = 0, msg_gen_ = 0, keep_lines_.n = 0;
   core0_reset();
   if (on_) publish();
@@ -635,9 +659,13 @@ CORE_COLD void stop(bool cut, bool now) {
 }
 
 // ------------------------------------------------------------------------------------------------ calibration
+namespace {
+// the click's k-th frame (a half-sine burst, 8.0e8 at the top): out_mix renders it, cal_tick knows its peak
+inline int32_t click_at(uint64_t k) { return (int32_t)(8.0e8f * sinf(3.14159265f * (float)(k + 1) / (kCalClick + 1))); }
+}  // namespace
 CORE_COLD void cal_start() {
   if (!on_) return;
-  for (int i = 0; i < kCalN; ++i) cal_found_[i] = -1;
+  for (int i = 0; i < kCalN; ++i) cal_found_[i] = -1, __atomic_store_n(&cal_peak_[i], 0u, __ATOMIC_RELAXED);
   cal_floor_ = 0;
   cal_state_ = 1;
   __atomic_store_n(&cal_at_, frames_now() + 14400, __ATOMIC_RELEASE);   // 300 ms: the floor is measured first
@@ -682,6 +710,25 @@ CORE_COLD void cal_tick(uint64_t now) {
   ++stats_.cal_ok;
   char b[40];
   sniprintf(b, sizeof b, "POST LAT %d", post_lat_);
+  // the POST return's gain: the click's peak out / the peak back, each click that came back (the median); kept when it is sane
+  int32_t cp = 0;
+  for (int k = 0; k < kCalClick; ++k) cp = click_at((uint64_t)k) > cp ? click_at((uint64_t)k) : cp;
+  float gv[kCalN];
+  int ng = 0;
+  for (int i = 0; i < kCalN; ++i) {
+    uint32_t pk = __atomic_load_n(&cal_peak_[i], __ATOMIC_ACQUIRE);
+    if (__atomic_load_n(&cal_found_[i], __ATOMIC_ACQUIRE) >= 0 && pk > 0) gv[ng++] = (float)cp / (float)pk;
+  }
+  if (ng > 0) {
+    for (int i = 1; i < ng; ++i)
+      for (int j = i; j > 0 && gv[j] < gv[j - 1]; --j) { float t = gv[j]; gv[j] = gv[j - 1]; gv[j - 1] = t; }
+    float g = gv[ng / 2];
+    if (g >= 1.5f && g <= 6.0f) {
+      set_postgain(g);
+      int g100 = (int)(g * 100.0f + 0.5f), db10 = (int)(20.0f * log10f(g) * 10.0f + 0.5f);
+      sniprintf(b, sizeof b, "POST LAT %d X%d.%02d %d.%dDB", post_lat_, g100 / 100, g100 % 100, db10 / 10, db10 % 10);
+    }
+  }
   say(b);
 }
 }  // namespace
@@ -756,7 +803,7 @@ CORE_COLD void load() {
   memset(b, 0, sizeof b);
   int got = f.read(b, sizeof b - 1);
   f.close();
-  static const char* const kKnown[] = {"bal", "lev", "fade", "mute", "live", "postlat", nullptr};
+  static const char* const kKnown[] = {"bal", "lev", "fade", "mute", "live", "postlat", "out", "postgain", nullptr};
   if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &keep_lines_);
   auto num = [&](const char* key, int* out) {   // parsed by hand: the Pi's bare-metal build has no strtol
     size_t kl = strlen(key);
@@ -776,6 +823,13 @@ CORE_COLD void load() {
     return false;
   };
   int v;
+  // out=post|pre (anything else: POST); postgain in thousandths (3508 = x3.508), only 1500..6000 is taken
+  for (const char* l = b; l && *l; l = strchr(l, '\n'), l = l ? l + 1 : nullptr) {
+    if (strncmp(l, "out=", 4)) continue;
+    if (!strncmp(l + 4, "pre", 3) && (l[7] == 0 || l[7] == '\n' || l[7] == '\r')) set_out(kOutPre);
+    else if (!strncmp(l + 4, "post", 4) && (l[8] == 0 || l[8] == '\n' || l[8] == '\r')) set_out(kOutPost);
+  }
+  if (num("postgain", &v) && v >= 1500 && v <= 6000) set_postgain((float)v / 1000.0f);
   if (num("bal", &v)) bal_ = clamp127(v);
   if (num("lev", &v)) lev_ = clamp127(v);
   if (num("fade", &v)) fade_ = v < 0 ? 0 : v >= kFades ? kFades - 1 : v;
@@ -789,8 +843,10 @@ CORE_COLD bool save() {
   if (!dirty_) return false;
   char* t = fmt::post_begin();
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
-  uint32_t n = (uint32_t)sniprintf(t, 128, CORE_STR("bal=%d\nlev=%d\nfade=%d\nmute=%d\nlive=%d\npostlat=%d\n"), bal_, lev_, fade_,
-                                   auto_mute_ ? 1 : 0, live_via_, post_lat_);
+  int pg = (int)(postgain() * 1000.0f + 0.5f);
+  uint32_t n = (uint32_t)sniprintf(t, 160, CORE_STR("bal=%d\nlev=%d\nfade=%d\nmute=%d\nlive=%d\npostlat=%d\nout=%s\n"), bal_, lev_, fade_,
+                                   auto_mute_ ? 1 : 0, live_via_, post_lat_, out() == kOutPre ? "pre" : "post");
+  if (pg > 0) n += (uint32_t)sniprintf(t + n, 160 - n, CORE_STR("postgain=%d\n"), pg);
   n = fmt::kv_append(keep_lines_, t, n, fmt::kPostMax);
   if (!fmt::post_end(kFile, n)) return false;
   dirty_ = false;
@@ -853,8 +909,8 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     if (bar_position(&bar, &of)) sniprintf(pos, sizeof pos, " pos %d.%02d/%d", (int)bar, (int)(bar * 100) % 100, (int)of < 1 ? 1 : (int)of);   // (integers: the Pi's sniprintf has no %f)
     char lv[10] = "off";
     if (live_via_) sniprintf(lv, sizeof lv, "perf%d", live_via_);
-    sniprintf(o, cap, "loop: %s, ring %d s, %d grabs [%s]%s, bal %d lev %d fade %s mute %s live %s postlat %d", kStateName[state()],
-              ring_seconds(), ng_, gl, pos, bal_, lev_, kFadeName[fade_], auto_mute_ ? "on" : "off", lv, post_lat_);
+    sniprintf(o, cap, "loop: %s, ring %d s, %d grabs [%s]%s, bal %d lev %d fade %s mute %s live %s postlat %d out %s", kStateName[state()],
+              ring_seconds(), ng_, gl, pos, bal_, lev_, kFadeName[fade_], auto_mute_ ? "on" : "off", lv, post_lat_, out() == kOutPre ? "pre" : "post");
     return true;
   }
   const char* a = p + 5;
@@ -920,6 +976,9 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     if (!strcmp(a + 5, "0.5")) f = 1;
     if (f < 0) sniprintf(o, cap, "loop=fade:1/4|1/2|1|2|4 (bars)");
     else set_fade(f), sniprintf(o, cap, "loop: fade %s bars", kFadeName[f]);
+  } else if (!strncmp(a, "out:", 4)) {
+    if (!strcmp(a + 4, "post") || !strcmp(a + 4, "pre")) set_out(a[4 + 2] == 's' ? kOutPost : kOutPre), sniprintf(o, cap, "loop: out %s", out() == kOutPre ? "pre" : "post");
+    else sniprintf(o, cap, "loop=out:post|pre");
   } else if (!strncmp(a, "mute:", 5)) {
     if (!strcmp(a + 5, "on") || !strcmp(a + 5, "off")) set_auto_mute(a[5 + 1] == 'n'), sniprintf(o, cap, "loop: auto-mute %s", auto_mute_ ? "on" : "off");
     else sniprintf(o, cap, "loop=mute:on|off");
@@ -934,7 +993,7 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
     cal_start();
     sniprintf(o, cap, "loop: calibrating POST latency (3 clicks on POST 0 / 1, the Rytm playing or not)");
   } else {
-    sniprintf(o, cap, "loop: grab:L play:N stop[:cut|fade][:now] keep:N bal:V lev:V fade:B mute:on|off live:off|perfN cal");
+    sniprintf(o, cap, "loop: grab:L play:N stop[:cut|fade][:now] keep:N bal:V lev:V fade:B mute:on|off live:off|perfN out:post|pre cal");
   }
   return true;
 }
@@ -947,9 +1006,9 @@ CORE_COLD int json_once(char* o, int cap) {
   float bar, of;
   bool pos = bar_position(&bar, &of);
   n += sniprintf(o + n, cap - n,
-                 ",\"state\":\"%s\",\"ring_s\":%d,\"bal\":%d,\"lev\":%d,\"fade\":%d,\"mute\":%d,\"live\":%d,\"post_lat\":%d,\"pending\":%d,\"cal\":%d",
-                 kStateName[state()], ring_seconds(), bal_, lev_, fade_, auto_mute_ ? 1 : 0, live_via_, post_lat_, pend_.on ? 1 : 0,
-                 cal_state_ == 1 ? 1 : 0);
+                 ",\"state\":\"%s\",\"ring_s\":%d,\"bal\":%d,\"lev\":%d,\"fade\":%d,\"mute\":%d,\"live\":%d,\"post_lat\":%d,\"out\":\"%s\",\"postgain\":%d,\"pending\":%d,\"cal\":%d",
+                 kStateName[state()], ring_seconds(), bal_, lev_, fade_, auto_mute_ ? 1 : 0, live_via_, post_lat_, out() == kOutPre ? "pre" : "post",
+                 (int)(postgain() * 1000.0f + 0.5f), pend_.on ? 1 : 0, cal_state_ == 1 ? 1 : 0);
   if (pos) n += sniprintf(o + n, cap - n, ",\"bar\":%d.%03d,\"bars\":%d.%d", (int)bar, (int)(bar * 1000) % 1000, (int)of, (int)(of * 10) % 10);
   n += sniprintf(o + n, cap - n, ",\"msg\":\"%s\",\"msg_n\":%u,\"grabs\":[", msg_, (unsigned)msg_gen_);
   int pi = playing();
@@ -993,15 +1052,26 @@ void in_block(const int32_t* lr, int n, uint64_t arrival_frame, unsigned lost) {
   if (thr < (1 << 21)) thr = 1 << 21;   // -60 dBFS at least
   for (int c = 0; c < kCalN; ++c) {
     uint64_t t = c0 + (uint64_t)c * kCalGap;
-    if (arrival_frame < t || first >= t + kCalWindow || cal_found_[c] >= 0) continue;
+    int32_t found = cal_found_[c];   // (this thread is its only writer)
+    if (arrival_frame < t || first >= t + kCalWindow + (found >= 0 ? (uint64_t)found + kCalPeakWin : 0)) continue;
+    uint32_t pk = cal_peak_[c];
     for (int i = 0; i < n; ++i) {
       uint64_t h = first + (uint64_t)i;
+      if (h < t) continue;
       int32_t a = lr[2 * i] < 0 ? -lr[2 * i] : lr[2 * i];
-      if (h >= t && h < t + kCalWindow && a > thr) {
-        __atomic_store_n(&cal_found_[c], (int32_t)(h - t), __ATOMIC_RELEASE);
+      if (found < 0) {
+        if (h >= t + kCalWindow || a <= thr) continue;
+        found = (int32_t)(h - t);
+        __atomic_store_n(&cal_found_[c], found, __ATOMIC_RELEASE);
+      } else if (h >= t + (uint64_t)found + kCalPeakWin) {
         break;
       }
+      // the peak back (L or R, as heard) in kCalPeakWin frames from the onset
+      uint32_t ua = (uint32_t)a, ub = lr[2 * i + 1] < 0 ? 0u - (uint32_t)lr[2 * i + 1] : (uint32_t)lr[2 * i + 1];
+      uint32_t m = ua > ub ? ua : ub;
+      pk = m > pk ? m : pk;
     }
+    __atomic_store_n(&cal_peak_[c], pk, __ATOMIC_RELEASE);
   }
 }
 
@@ -1016,8 +1086,11 @@ struct Voice {
   uint64_t start, stop_at;
   uint32_t stop_len;
   bool fade_in;
+  uint32_t peak;   // the loop's largest |sample| (0: not known)
+  float trim[2];   // its level cap now on POST / PRE (<= 1): moves toward the target a block gives it, < 0 not set yet
 };
 Voice cur_, old_;
+float sw_[2] = {-1.0f, -1.0f};   // how much of the loop is on POST / PRE now (OUT crossfades over 10 ms; < 0: not set yet)
 Ramp ramp_own_, ramp_loop_;
 uint32_t seen_seq_ = 0;
 
@@ -1053,24 +1126,35 @@ inline bool vat(const Voice& v, uint64_t h, float* l, float* r) {
 }
 void core0_reset() {
   cur_ = Voice(), old_ = Voice(), ramp_own_ = Ramp(), ramp_loop_ = Ramp(), seen_seq_ = 0;
+  sw_[0] = sw_[1] = -1.0f;
 }
 inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
 }
-// the loop onto POST: with the make-up (set_out_gain) a loop grabbed above about -11 dBFS asks POST for more than full scale.
+// the loop onto POST or PRE: each loop's level is capped from its peak (out_mix), so one loop stays under kKnee; several summed
+// loops, or the Sidecar's own output under them, may ask for more than full scale.
 // Under kKnee of full scale the sum is exact (as add); above it bends smoothly toward full scale (a tanh knee) instead of a
 // hard clip that a resample would record again
 constexpr float kKnee = 0.75f;
 inline int32_t add_soft(int32_t a, float x) {
   float s = ((float)a + x) * (1.0f / 2147483648.0f), m = s < 0 ? -s : s;
   if (!(m > kKnee)) return add(a, x);
+  // what is already on the pair is not the loop's to bend: at or past the knee on its own, only the loop's share is shaped, into the
+  // headroom that is left above it (a tiny or silent loop is added as it is; a loop in the same direction never reaches full scale)
+  float ma = (float)a * (1.0f / 2147483648.0f);
+  if (ma >= kKnee || -ma >= kKnee) {
+    float hr = 2147483520.0f - fabsf((float)a);
+    if (!(hr > 0.0f) || x * (float)a <= 0.0f) return hr > 0.0f ? add(a, x) : a;   // (no room, or the loop pulls it back)
+    float y = hr * tanhf(fabsf(x) / hr);
+    return add(a, x < 0 ? -y : y);
+  }
   float o = kKnee + (1.0f - kKnee) * tanhf((m - kKnee) / (1.0f - kKnee));
   return (int32_t)((s < 0 ? -o : o) * 2147483520.0f);
 }
 
 Voice voice_of(const LpSnap& s, bool fade_in) {
-  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in};
+  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, {-1.0f, -1.0f}};
 }
 // a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
 float env_of(const Voice& v, uint64_t h) {
@@ -1097,10 +1181,16 @@ void take_snapshot(uint64_t h0) {
     return;
   }
   // the snapshot is the whole truth: what plays, and what it replaces while that is heard
-  if (s.prev.active) old_ = voice_of(s.prev, false);
+  const Voice was_cur = cur_, was_old = old_;
+  auto trim_of = [&](uint32_t id, float* t) {
+    const Voice* v = was_cur.active && was_cur.id == id ? &was_cur : was_old.active && was_old.id == id ? &was_old : nullptr;
+    t[0] = v ? v->trim[0] : -1.0f, t[1] = v ? v->trim[1] : -1.0f;
+  };
+  if (s.prev.active) old_ = voice_of(s.prev, false), trim_of(s.prev.id, old_.trim);   // (a loop keeps its level cap as it moves from cur to old)
   else if (s.cur.id != cur_.id) old_.active = false;
   Voice c = voice_of(s.cur, !s.prev.active);
   if (s.cur.id == cur_.id) c.fade_in = cur_.fade_in;
+  trim_of(s.cur.id, c.trim);
   cur_ = c;
 }
 }  // namespace
@@ -1119,6 +1209,40 @@ float out_gain() {
   return g;
 }
 
+static uint32_t fbits(float g) {
+  uint32_t b;
+  memcpy(&b, &g, 4);
+  return b;
+}
+static float fof(uint32_t b) {
+  float g;
+  memcpy(&g, &b, 4);
+  return g;
+}
+void set_pre_gain(float g) {
+  if (!(g > 0.0f && g < 16.0f)) g = 1.0f;
+  __atomic_store_n(&pre_gain_bits_, fbits(g), __ATOMIC_RELAXED);
+}
+float pre_gain() { return fof(__atomic_load_n(&pre_gain_bits_, __ATOMIC_RELAXED)); }
+void set_postgain(float g) {
+  uint32_t b = g >= 1.5f && g <= 6.0f ? fbits(g) : 0u;
+  if (b != __atomic_load_n(&postgain_bits_, __ATOMIC_RELAXED)) dirty_ = true;
+  __atomic_store_n(&postgain_bits_, b, __ATOMIC_RELAXED);
+}
+float postgain() { return fof(__atomic_load_n(&postgain_bits_, __ATOMIC_RELAXED)); }
+void set_out(int o) {
+  int v = o == kOutPre ? kOutPre : kOutPost;
+  if (v != __atomic_load_n(&out_, __ATOMIC_RELAXED)) dirty_ = true;
+  __atomic_store_n(&out_, v, __ATOMIC_RELAXED);
+}
+int out() { return __atomic_load_n(&out_, __ATOMIC_RELAXED); }
+static float makeup_of(int pair) {
+  if (pair) return pre_gain();
+  float pg = postgain();
+  return pg > 0.0f ? pg : out_gain();
+}
+float makeup() { return makeup_of(out() == kOutPre ? 1 : 0); }
+
 bool wants_out() { return on_; }
 
 void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
@@ -1129,19 +1253,48 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
     for (int f = 0; f < n; ++f) {
       uint64_t h = render_frame + (uint64_t)f;
       if (h < c0 || (h - c0) / kCalGap >= (uint64_t)kCalN || (h - c0) % kCalGap >= (uint64_t)kCalClick) continue;
-      int32_t x = (int32_t)(8.0e8f * sinf(3.14159265f * (float)((h - c0) % kCalGap + 1) / (kCalClick + 1)));
+      int32_t x = click_at((h - c0) % kCalGap);
       F[f][0] = add(F[f][0], (float)x), F[f][1] = add(F[f][1], (float)x);
     }
   }
-  if (!cur_.active && !old_.active) return;
-  const float mk = out_gain();   // the USB return's make-up (set_out_gain)
+  if (!cur_.active && !old_.active) {
+    sw_[0] = -1.0f;   // (idle: the next loop starts on the pair OUT names, no fade)
+    return;
+  }
+  const float mkp[2] = {makeup_of(0), makeup_of(1)};   // the returns' make-ups (POST: postgain or set_out_gain; PRE: set_pre_gain)
+  const int want = out() == kOutPre ? 1 : 0;
+  if (sw_[0] < 0.0f) sw_[0] = want ? 0.0f : 1.0f, sw_[1] = want ? 1.0f : 0.0f;
+  // each loop's level cap from its own peak: the loop alone stays under kLoopCeil of full scale, LEV and BAL (ramp_loop_) included
+  // (a quiet one keeps all the make-up; LEV under unity just makes it quieter). The gain on a pair is min(make-up x LEV x BAL, cap / peak)
+  const float rg = fmaxf(ramp_loop_.at_h(render_frame), ramp_loop_.at_h(render_frame + (uint64_t)n));
+  auto cap = [&](const Voice& v, int p) {
+    if (!v.peak) return 1.0f;
+    float t = kLoopCeil * 2147483648.0f / ((float)v.peak * mkp[p] * (rg > 1.0f ? rg : 1.0f));
+    return t < 1.0f ? t : 1.0f;
+  };
+  float tc[2] = {cap(cur_, 0), cap(cur_, 1)}, to[2] = {cap(old_, 0), cap(old_, 1)};
+  for (int p = 0; p < 2; ++p) {
+    if (cur_.trim[p] < 0.0f) cur_.trim[p] = tc[p];
+    if (old_.trim[p] < 0.0f) old_.trim[p] = to[p];
+    // the make-up is read raw, so a cap that falls (a make-up change, e.g. a cal result) is taken at once: trim x make-up stays as it was;
+    // only a cap that rises is eased in over 10 ms (below)
+    if (tc[p] < cur_.trim[p]) cur_.trim[p] = tc[p];
+    if (to[p] < old_.trim[p]) old_.trim[p] = to[p];
+  }
+  constexpr float kTrimStep = 1.0f / kRampFrames;   // a cap that changes (a copy still coming in, LEV, the make-up) and OUT move over 10 ms
   for (int f = 0; f < n; ++f) {
+    for (int p = 0; p < 2; ++p) {
+      cur_.trim[p] += fminf(kTrimStep, fmaxf(-kTrimStep, tc[p] - cur_.trim[p]));
+      old_.trim[p] += fminf(kTrimStep, fmaxf(-kTrimStep, to[p] - old_.trim[p]));
+      const float t = p == want ? 1.0f : 0.0f;
+      sw_[p] += fminf(kTrimStep, fmaxf(-kTrimStep, t - sw_[p]));
+    }
     uint64_t h = render_frame + (uint64_t)f;
-    float l = 0, r = 0, a, b;
+    float l[2] = {0, 0}, r[2] = {0, 0}, a, b;   // the loop's frame as it goes onto POST / PRE (each pair's own cap)
     bool any = false;
     if (vat(cur_, h, &a, &b)) {
       float w = h - cur_.start < (uint64_t)kSeam ? (float)(h - cur_.start + 1) / kSeam : 1.0f;   // a start fades in; a swap crossfades
-      l += a * w, r += b * w;
+      for (int p = 0; p < 2; ++p) l[p] += a * w * cur_.trim[p], r[p] += b * w * cur_.trim[p];
       any = true;
     }
     if (old_.active) {
@@ -1150,7 +1303,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       if (xf && h >= cur_.start + kSeam) old_.active = false;
       else if (vat(old_, h, &c, &d)) {
         float w = xf ? 1.0f - (float)(h - cur_.start + 1) / kSeam : 1.0f;
-        l += c * w, r += d * w;
+        for (int p = 0; p < 2; ++p) l[p] += c * w * old_.trim[p], r[p] += d * w * old_.trim[p];
         any = true;
       }
     }
@@ -1163,8 +1316,12 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       float m = 1.0f + (og - 1.0f) * e;
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }
-    float lg = ramp_loop_.at_h(h) * mk;
-    F[f][0] = add_soft(F[f][0], l * lg), F[f][1] = add_soft(F[f][1], r * lg);
+    const float lv = ramp_loop_.at_h(h);
+    for (int p = 0; p < 2; ++p) {
+      if (!(sw_[p] > 0.0f)) continue;
+      const float lg = lv * mkp[p] * sw_[p];
+      F[f][2 * p] = add_soft(F[f][2 * p], l[p] * lg), F[f][2 * p + 1] = add_soft(F[f][2 * p + 1], r[p] * lg);
+    }
   }
   // a stopped voice that has faded out is gone (its stop's end passed)
   if (cur_.active && cur_.stop_at && render_frame + (uint64_t)n >= cur_.stop_at + cur_.stop_len) cur_.active = false;
