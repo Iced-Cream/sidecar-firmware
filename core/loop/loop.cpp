@@ -168,7 +168,8 @@ struct AutoMute {
   bool on;
   uint16_t set, seen;
 } am_;
-bool dirty_ = false;     // a setting changed (loop.txt)
+bool dirty_ = false;     // a setting changed (loop.txt). Every write (the setters, the cal, load / save) is on core 3: the page, the console and
+                         // the control loop run there; core 0 only reads out_ / postgain_bits_ / pre_gain_bits_ (atomics), never dirty_
 int post_lat_ = 0;
 fmt::KvKeep keep_lines_;   // the lines of loop.txt this build does not know, written back as they were
 char msg_[40];
@@ -1139,6 +1140,15 @@ constexpr float kKnee = 0.75f;
 inline int32_t add_soft(int32_t a, float x) {
   float s = ((float)a + x) * (1.0f / 2147483648.0f), m = s < 0 ? -s : s;
   if (!(m > kKnee)) return add(a, x);
+  // what is already on the pair is not the loop's to bend: at or past the knee on its own, only the loop's share is shaped, into the
+  // headroom that is left above it (a tiny or silent loop is added as it is; a loop in the same direction never reaches full scale)
+  float ma = (float)a * (1.0f / 2147483648.0f);
+  if (ma >= kKnee || -ma >= kKnee) {
+    float hr = 2147483520.0f - fabsf((float)a);
+    if (!(hr > 0.0f) || x * (float)a <= 0.0f) return hr > 0.0f ? add(a, x) : a;   // (no room, or the loop pulls it back)
+    float y = hr * tanhf(fabsf(x) / hr);
+    return add(a, x < 0 ? -y : y);
+  }
   float o = kKnee + (1.0f - kKnee) * tanhf((m - kKnee) / (1.0f - kKnee));
   return (int32_t)((s < 0 ? -o : o) * 2147483520.0f);
 }
@@ -1266,6 +1276,10 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
   for (int p = 0; p < 2; ++p) {
     if (cur_.trim[p] < 0.0f) cur_.trim[p] = tc[p];
     if (old_.trim[p] < 0.0f) old_.trim[p] = to[p];
+    // the make-up is read raw, so a cap that falls (a make-up change, e.g. a cal result) is taken at once: trim x make-up stays as it was;
+    // only a cap that rises is eased in over 10 ms (below)
+    if (tc[p] < cur_.trim[p]) cur_.trim[p] = tc[p];
+    if (to[p] < old_.trim[p]) old_.trim[p] = to[p];
   }
   constexpr float kTrimStep = 1.0f / kRampFrames;   // a cap that changes (a copy still coming in, LEV, the make-up) and OUT move over 10 ms
   for (int f = 0; f < n; ++f) {

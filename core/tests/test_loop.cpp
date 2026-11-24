@@ -1138,49 +1138,116 @@ static void test_out() {
   want = 3.508 * 1.27 * (double)g->peak;
   CHECK(pk > want * 0.99 && pk < want * 1.01);
 
+  // soft_knee_leaves_the_base: content already on the pair (a hot PRE / POST signal) is never bent by the loop's knee: a silent loop
+  // gives the base back exactly, a tiny one adds plainly
+  for (int out : {loop::kOutPost, loop::kOutPre}) {
+    fresh();
+    loop::set_out_gain(3.508f);
+    loop::set_pre_gain(3.508f / 2.786f);
+    loop::set_out(out);
+    const int c0 = out == loop::kOutPre ? 2 : 0;
+    g = grab_loop(1e-7);   // (a tiny loop: peak ~ 200)
+    CHECK(g->peak > 0 && g->peak < 1000);
+    int32_t base = fs(0.9);
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][c0] = base, F[f][c0 + 1] = -base;
+    loop::out_mix(F, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) {
+      int64_t wl = base + (int64_t)(loop::makeup() * (float)g->pcm[2 * (64 + f)]);
+      CHECK(llabs(F[f][c0] - wl) <= 2048 && llabs(F[f][c0] - base) <= 2048 && F[f][c0] > base - 4096);
+    }
+    // ... and a silent loop (nothing in the ring): exactly the base
+    fresh();
+    loop::set_out_gain(3.508f);
+    loop::set_pre_gain(3.508f / 2.786f);
+    loop::set_out(out);
+    g_sig_peak = 0;
+    g = grab_loop(0.0);
+    CHECK(g->peak == 0);
+    int32_t E[12][12] = {};
+    for (int f = 0; f < 12; ++f) E[f][c0] = base, E[f][c0 + 1] = -base;
+    loop::out_mix(E, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) CHECK(E[f][c0] == base && E[f][c0 + 1] == -base);
+  }
+  // makeup_change_inside_the_cap: the cap follows a make-up change at once (a loop=cal result while a hot loop plays): no overshoot
+  fresh();
+  loop::set_out_gain(3.508f);
+  grab_loop(0.9);
+  { uint64_t h = s0_of();
+    pk = out_peak(h, 2400, 0);
+    CHECK(pk <= kKneeFs + 64);
+    loop::set_postgain(6.0f);
+    pk = out_peak(h + 2400, 4800, 0);
+    CHECK(pk <= kKneeFs + 64);
+    loop::set_postgain(1.6f);   // and down: the loop eases up, never over
+    pk = out_peak(h + 7200, 4800, 0);
+    CHECK(pk <= kKneeFs + 64); }
+
   printf("  out: POST cap from the peak, quiet keeps the make-up, PRE onto 2/3, postgain, two loops in a row, LEV / BAL inside the cap ok\n");
 }
 
 static int32_t smooth_sig(uint64_t k) { return (int32_t)(0.1 * 2147483648.0 * sin((double)k * 0.01)); }
-// OUT switched while the loop plays: a 10 ms crossfade between the pairs, no step, the end state on the new pair only
-static void test_out_switch() {
+// OUT switched while the loop plays: a 10 ms crossfade between the pairs, no step, the end state on the new pair only.
+// back_at: flip back at this block (inside the fade); stop_at: cut the loop at this block (inside the fade)
+static void switch_case(int to_pre, int back_at, int stop_at) {
   const float kPostMk = 3.508f, kPreMk = 3.508f / 2.786f;
-  for (int to_pre = 0; to_pre < 2; ++to_pre) {
-    fresh();
-    loop::set_out_gain(kPostMk);
-    loop::set_pre_gain(kPreMk);
-    loop::set_out(to_pre ? loop::kOutPost : loop::kOutPre);
-    g_sig = smooth_sig;
-    to((uint64_t)(line(40) + bar() / 3));
-    CHECK(loop::grab(loop::k1) == loop::kOk);
-    run_ms(60);
-    uint64_t h = s0_of() + 64;
-    double prev_a = 0, prev_b = 0, worst = 0;
-    bool both = false;
-    const int nblk = 120;   // 1440 frames: the switch at block 40, 3 ms in
-    for (int b = 0; b < nblk; ++b) {
-      if (b == 40) loop::set_out(to_pre ? loop::kOutPre : loop::kOutPost);
-      int32_t F[12][12] = {};
-      loop::out_mix(F, 12, h);
-      for (int f = 0; f < 12; ++f) {
-        double a = (double)F[f][0] / 2147483648.0, c = (double)F[f][2] / 2147483648.0;
-        if (b > 0 || f > 0) worst = fmax(worst, fmax(fabs(a - prev_a), fabs(c - prev_b)));
-        prev_a = a, prev_b = c;
-        if (F[f][0] != 0 && F[f][2] != 0) both = true;
-      }
-      h += 12;
-    }
-    CHECK(worst < 0.004);   // a jump would be 0.1 x 3.5 = 0.35
-    CHECK(both);            // it did cross through both
-    // the end state: only the new pair
+  fresh();
+  loop::set_out_gain(kPostMk);
+  loop::set_pre_gain(kPreMk);
+  loop::set_out(to_pre ? loop::kOutPost : loop::kOutPre);
+  g_sig = smooth_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  uint64_t h = s0_of() + 64;
+  double prev_a = 0, prev_b = 0, worst = 0;
+  bool both = false;
+  const int nblk = 200;   // 2400 frames: the switch at block 40, 3 ms in; the fade is 480 frames = 40 blocks
+  for (int b = 0; b < nblk; ++b) {
+    if (b == 40) loop::set_out(to_pre ? loop::kOutPre : loop::kOutPost);
+    if (b == back_at) loop::set_out(to_pre ? loop::kOutPost : loop::kOutPre);
+    if (b == stop_at) loop::stop(true, true);
     int32_t F[12][12] = {};
     loop::out_mix(F, 12, h);
     for (int f = 0; f < 12; ++f) {
-      if (to_pre) CHECK(F[f][0] == 0 && F[f][1] == 0 && F[f][2] != 0);
-      else CHECK(F[f][2] == 0 && F[f][3] == 0 && F[f][0] != 0);
+      double a = (double)F[f][0] / 2147483648.0, c = (double)F[f][2] / 2147483648.0;
+      if (b > 0 || f > 0) worst = fmax(worst, fmax(fabs(a - prev_a), fabs(c - prev_b)));
+      prev_a = a, prev_b = c;
+      if (F[f][0] != 0 && F[f][2] != 0) both = true;
     }
+    h += 12;
+    if (b == 0) to(g_now + 48);   // (the control loop goes on: the stop is taken)
+    else if (b % 4 == 0) to(g_now + 48);
   }
-  printf("  out: switching OUT while a loop plays crossfades, no step, ends on the new pair only\n");
+  CHECK(worst < 0.004);   // a jump would be 0.1 x 3.5 = 0.35
+  CHECK(both);            // it did cross through both
+  int32_t F[12][12] = {};
+  loop::out_mix(F, 12, h);
+  const bool end_pre = back_at >= 0 ? !to_pre : to_pre;
+  for (int f = 0; f < 12; ++f) {
+    if (stop_at >= 0) CHECK(F[f][0] == 0 && F[f][1] == 0 && F[f][2] == 0 && F[f][3] == 0);
+    else if (end_pre) CHECK(F[f][0] == 0 && F[f][1] == 0 && F[f][2] != 0);
+    else CHECK(F[f][2] == 0 && F[f][3] == 0 && F[f][0] != 0);
+  }
+  if (stop_at >= 0) {   // the next loop starts on the pair OUT names now (no fade from the old one)
+    CHECK(loop::play(0));
+    to(g_now + (uint64_t)(2 * bar()));
+    uint64_t st;
+    uint32_t ln;
+    CHECK(loop::playing_info(&st, &ln));
+    int32_t G[12][12] = {};
+    loop::out_mix(G, 12, st + 100);
+    if (end_pre) CHECK(G[0][0] == 0 && G[0][2] != 0);
+    else CHECK(G[0][2] == 0 && G[0][0] != 0);
+  }
+}
+static void test_out_switch() {
+  for (int to_pre = 0; to_pre < 2; ++to_pre) {
+    switch_case(to_pre, -1, -1);   // one flip
+    switch_case(to_pre, 50, -1);   // flipped back 10 blocks (120 frames) into the fade: ends on the first pair
+    switch_case(to_pre, -1, 50);   // the loop is cut 10 blocks into the fade: silence, and the next loop starts on the new pair
+  }
+  printf("  out: switching OUT while a loop plays crossfades (also flipped twice, or the loop stopped, in the fade), no step, ends on the right pair only\n");
 }
 
 static void test_out_cal_settings() {

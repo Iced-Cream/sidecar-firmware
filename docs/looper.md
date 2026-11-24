@@ -116,3 +116,9 @@ is measured on POST only: PRE keeps its x1.259. Play nothing loud on the Rytm wh
 the peak back and lowers the gain it finds).
 
 Switching OUT while a loop plays crossfades between the pairs over 10 ms (no click).
+
+Known limits of the cap: a loop that starts playing from the ring while its copy is still running uses the peak found so far (it can
+only fall as louder parts are copied, over 10 ms); the peak includes the 64 frames before the loop's start; the measured POST gain
+comes from a 24-frame click, which the Rytm's converters round off a little, so it can read slightly high (the cap still holds), and
+a Rytm playing loud during `loop=cal` lowers it: keep the Rytm quiet while it runs. The soft knee never bends what is already on
+the pair (a hot PRE or POST signal): only the loop's share is shaped, into the headroom left.
