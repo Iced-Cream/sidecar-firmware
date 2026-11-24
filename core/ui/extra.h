@@ -365,7 +365,9 @@ void src_names_resend();
 // the host answers 4A 01 <track> 1 (the Rytm's YES / NO then the browser's, 31) and 4A 01 <track> 0 when the browser
 // ends (a file set into the row through the pool's rules - core/lib/pools.h set_file / set_special: one entry per hash,
 // P3's ask on a row in use, refused while the Rytm plays - or NO / LEFT at its top).
-void src_bank_list(int t, int vi, int machine, int code, int on, int why);
+// 2026-11-24 TBLB: param 12 (4A's optional 6th byte, only on WAVETABLE) aims the list at P13, table B: its YES writes P13 (48 k = 12) and
+// the names bank follows P13 while it was the knob touched last; 0 (no byte) the machine's own P1 / P11.
+void src_bank_list(int t, int vi, int machine, int code, int on, int why, int param = 0);
 // 0.5.0 (the sample browser, docs/SRC-BANKS.md "0.5.0"): down 0 a release, 1 a press, 2 a press with FUNC held (the 0.5.0
 // 0026 inside its open list / browser; an older 0026 never sends 2). The new keys (RIGHT quick load and re-entry, FUNC +
 // LEFT / RIGHT banks, FUNC + YES preview, FUNC + RIGHT the file menu, FUNC + UP OFF) only with a Rytm that has them:
@@ -376,7 +378,7 @@ bool src_bank_key(int code, int down);
 bool src_bank_new_keys();   // the new keys are on (above)
 bool src_bank_enc(int e, int delta, bool func);
 const Page* src_bank_page(int t, int machine);
-struct BankListState { bool on; int track, machine, bank, row, commits; bool browse; int cur, assigns, refusals, menu; };
+struct BankListState { bool on; int track, machine, bank, row, commits; bool browse; int cur, assigns, refusals, menu, param; };
 BankListState src_bank_state();   // tests
 // P1's value as a name on those machines' pages (the bottom bar, no echo): null on any other page / parameter.
 const char* src_value_name(const Page& p, int param, const Source& s);

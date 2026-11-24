@@ -1092,8 +1092,20 @@ def rui_fill_claim(on=True) -> bytes:
     return bytes([0xF0, 0x7D, 0x52, 0x54, 0x4A, PROTO_VER, RUI_FILL_CLAIM, 1 if on else 0, 0xF7])
 
 
+def rui_list_p13_announce() -> bytes:
+    """host -> Rytm 4A 7D 1: "the host draws the bank list of P13 (WAVETABLE's table B)", after every hello and only to a Rytm
+    whose hello's caps2 has RUI_CAPS2_LISTP13 (an older one counts it as a bad message)."""
+    return bytes([0xF0, 0x7D, 0x52, 0x54, 0x4A, PROTO_VER, RUI_LIST_P13, 1, 0xF7])
+
+
 def rui_keepalive() -> bytes:
     return _msg(RUI_KEEPALIVE, [])
+
+
+def rui_rehello() -> bytes:
+    """3C with flags bit 0: "say hello again" (only to a Rytm whose hello's caps2 has RUI_CAPS2_REHELLO; an older one
+    takes it as a plain keepalive: its 3C handler reads no payload)."""
+    return _msg(RUI_KEEPALIVE, [RUI_KEEP_REHELLO])
 
 
 def rui_mask(encs=(), keys=()) -> bytes:
@@ -1971,6 +1983,16 @@ RUI_BANK_LIST = 0x4A
 # caps2 has bit 0 (an older one counts it as a bad message), again after every hello: the Rytm clears it at each hello.
 RUI_FILL_CLAIM = 0x7E
 RUI_CAPS2_ARROWS = 1
+# caps2 bits: 0 ARROWS, 1 QP_MUTE, 2 CAPTURE, 3 morph (5A 01 09 / 0A, the morph-v2 branch), 4 REHELLO, 5 LISTP13 (below)
+RUI_CAPS2_REHELLO = 16   # the Rytm answers 3C <flags bit 0> with one hello (35), at most once a second
+# 2026-11-24 TBLB: the Rytm opens the host's bank list for WAVETABLE's table B (P13) from the SMPL page. Rytm -> host 4A gets an
+# optional 6th byte, the list's parameter (12 = P13, the only value; without it the machine's own P1 / SMP P11); the host's
+# commit (YES, why 1) writes that parameter (48 k = 12), the bank kept. Host -> Rytm 4A 7D 1 (rui_list_p13_announce) after every
+# hello, only to a Rytm whose hello's caps2 has RUI_CAPS2_LISTP13: it opens no P13 list before that.
+RUI_LIST_P13 = 0x7D
+RUI_CAPS2_LISTP13 = 32
+RUI_BANK_PARAM_P13 = 12
+RUI_KEEP_REHELLO = 1
 RUI_PAGE_GENERATOR, RUI_PAGE_FILL = 15, 16
 BANK_WHY = {0: "open", 1: "yes", 2: "no", 3: "knob", 4: "key", 5: "view", 6: "srcyes"}   # 6 (rui1049, on 3): FUNC + YES
 #                                                                                     on the SRC view: the host aims an OFF
@@ -2002,14 +2024,19 @@ def rui_names_bank(lst, replace, bank, names) -> bytes:
 
 
 def decode_bank_list(payload):
-    """Rytm -> host 4A's payload (<ver> <track> <on> <hi> <lo> <why>, as parse() gives it) -> dict(track, on, code, why)
-    or None"""
+    """Rytm -> host 4A's payload (<ver> <track> <on> <hi> <lo> <why> [<param>], as parse() gives it) -> dict(track, on, code,
+    why[, param]) or None. param (the optional 6th byte, TBLB): 12 = P13, the only value."""
     if not payload or payload[0] != PROTO_VER:
         return None
     b = payload[1:]
-    if len(b) != 5 or b[0] > 11 or (b[1] > 1 and b[1] != 3):   # rui1040: on 3 = FUNC + YES (the row's files)
+    if len(b) not in (5, 6) or b[0] > 11 or (b[1] > 1 and b[1] != 3):   # rui1040: on 3 = FUNC + YES (the row's files)
         return None
-    return dict(track=b[0], on=b[1], code=src_of_wire(b[2], b[3]), why=BANK_WHY.get(b[4], b[4]))
+    if len(b) == 6 and b[5] != RUI_BANK_PARAM_P13:
+        return None
+    d = dict(track=b[0], on=b[1], code=src_of_wire(b[2], b[3]), why=BANK_WHY.get(b[4], b[4]))
+    if len(b) == 6:
+        d["param"] = b[5]
+    return d
 
 
 def rui_bank_browse(track, on):

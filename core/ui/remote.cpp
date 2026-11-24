@@ -211,7 +211,7 @@ CORE_COLD bool juno_partner(int t) {
 // used (SAMPLE EDIT: sedit::open_track; the SRC view draws the 2A's), the voice's state left as its reports set it.
 // Only on a voice whose last report was that machine (its flags) and no other track of ours on the voice with the same
 // machine (whose sound the voice plays is the one that trigged last: unknown here).
-CORE_COLD void src_to_voice(int t, int c14) {
+CORE_COLD void src_to_voice(int t, int c14, int k = 0) {
   if (!have_tracks || t < 0 || t >= 12 || track_vb[t] == kNotOurs || c14 < 0) return;
 #if CORE_MSAMP
   const int m = machine_of(track_vb[t]), vi = kTrackVoice[t];
@@ -219,6 +219,10 @@ CORE_COLD void src_to_voice(int t, int c14) {
     if (u != t && kTrackVoice[u] == vi && track_vb[u] != kNotOurs && machine_of(track_vb[u]) == m) return;
   const V& x = v[vi];
   const int e = srclib::code_of14(c14);
+  if (k == 12) {   // 2026-11-24 TBLB: WAVETABLE's table B (P13)
+    if (m == kWaveMachine && x.wt) wt::kit_src_b(vi, e);
+    return;
+  }
   if (m == kWaveMachine && x.wt) wt::kit_src(vi, e);
   else if (m == kGranMachine && x.gr) gr::kit_src(vi, e);
   else if (m == kMultiMachine && x.ms) msamp::kit_src(vi, e);
@@ -459,8 +463,14 @@ struct State {
   bool mask_valid = false;
   bool splash = false;       // 1023: the connect splash runs (the page closed)
   uint32_t now_ms = 0, open_ms = 0;   // the last remote_tick's clock; when the page was last opened (30 on)
+  // 0.5.2 re-hello: Rytm traffic came but no hello (the host started after the Rytm's port-up hellos): 3C with flags bit 0
+  // asks for one (rehello_tick); tries counted, the last at rh_ms
+  bool rh_traffic = false;
+  uint8_t rh_tries = 0;
+  uint32_t rh_ms = 0;
   bool caps36 = false;       // the Rytm's hello said it understands 36 (the splash, the popups)
   int caps = 0;              // fix1049: the hello's caps byte whole (bit 1: 16 send FX label tables, rui1049)
+  uint16_t p13_last = 0;     // 2026-11-24 TBLB: bit t, the last P(k+1) touched on track t was P13 (the names bank follows it)
   int caps2 = 0;             // 0.5.0 FILL: the hello's 4th byte (bit 0 kCaps2Arrows: UP + LEFT / RIGHT as 49 1 1 15 / 16)
   bool presets_told = false; // 0.4.0: the Rytm knows, since its last hello, that JUNO's / FM's PAT lists are drawn here (4A 7F 1)
   bool popup = false, popup_clock = false;   // F1 / F4: a popup owed / running (the page closed)
@@ -1560,6 +1570,16 @@ CORE_COLD void edit_arm() {
   if (s.caps2 & kCaps2Capture) mod::rytm_edit_arm(true);
 #endif
 }
+// 2026-11-24 TBLB (rytm-mods 0026): "the host draws the bank list of P13" (4A 7D 1), after every hello, only to a Rytm whose hello's
+// caps2 has kCaps2ListP13: it opens a P13 list (4A with the param byte) only after this, so a host that cannot draw it never gets one
+// (an older host would read the frame as P1's); an older mod counts the 4A 7D as a bad message and never asks for one
+CORE_COLD void list_p13_announce() {
+#if CORE_MSAMP
+  if (!(s.caps2 & kCaps2ListP13)) return;
+  const uint8_t m[9] = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 1, 0x7D, 1, 0xF7};
+  to_rytm(m, 9);
+#endif
+}
 CORE_COLD void fill_unclaim() {
   if (!g_fill_claimed) return;
   g_fill_claimed = false;
@@ -1718,6 +1738,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
   const uint8_t* b = d + 6;
   int n = len - 7;
   if (d[4] == kSrcView || d[4] == kSrcVals || d[4] == kSrcDiag) src_capable = true;
+  if (s.stats.hellos == 0 && d[4] != kHello && !g_going_down && !device::foreign()) s.rh_traffic = true;   // (re-hello below)
 #if CORE_POLY
   // 2026-11-23: Rytm traffic and no hello (the host started after the Rytm's port-up): claim UP + LEFT / RIGHT once; the
   // 2 s claim (remote_tick) goes on from there, and the first hello, if one ever comes, decides as before. Never for a box.
@@ -1948,8 +1969,14 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     }
     case kBankList: {   // rui1038: <track> <on> <hi> <lo> <why>
       if (n < 5 || b[0] >= 12 || (b[1] > 1 && b[1] != 3)) break;   // rui1040: on 3 FUNC + YES (the files for the row)
-      int t = b[0];
-      src_bank_list(t, kTrackVoice[t], track_named(t), srclib::code_of14(b[2] << 7 | b[3]), b[1], b[4]);
+      int t = b[0], param = 0;
+      if (n >= 6 && b[1] == 0) {   // a close frame closes whatever its param byte says (the list's own state is reset)
+        if (b[5] == 12) param = 12;
+      } else if (n >= 6) {   // 2026-11-24 TBLB: the optional 6th byte, the list's parameter: 12 (P13, WAVETABLE's table B) is the only value
+        if (b[5] != 12 || (b[1] == 1 && track_named(t) != kWaveMachine)) break;
+        param = 12;
+      }
+      src_bank_list(t, kTrackVoice[t], track_named(t), srclib::code_of14(b[2] << 7 | b[3]), b[1], b[4], param);
       s.input = true;
       return;
     }
@@ -2001,18 +2028,34 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       } else if (!held) {
         s.keep_mask &= (uint16_t)~(1u << t);   // the sound's own values come with it
       }
+      const bool has13 = !held && b[1] <= 12 && 12 < b[1] + b[2];   // 2026-11-24 TBLB: this frame carries P13
+      const int old13 = has13 && (s.src_known[t] >> 12 & 1) ? s.srcv[t][12] << 7 | s.srcl[t][12] : -1;
       for (int i = 0; i < b[2]; ++i) {
         s.srcv[t][b[1] + i] = b[3 + 2 * i] & 0x7F;
         s.srcl[t][b[1] + i] = b[4 + 2 * i] & 0x7F;
         s.src_known[t] |= (uint16_t)(1u << (b[1] + i));
       }
+      bool p1_changed = false;
       if (!held) {   // rui1038: the banked knob's 14 bits (song): P1, or DSP SAMPLE's SMP P11 (rui1045)
         int kb = remote_track_src_param(t);
         if (b[1] <= kb && kb < b[1] + b[2]) {
           const int16_t c14 = (int16_t)((b[3 + 2 * (kb - b[1])] & 0x7F) << 7 | (b[4 + 2 * (kb - b[1])] & 0x7F));
-          if (c14 != s.src14[t]) src_to_voice(t, c14);   // 0.5.0: an idle voice's pick (src_to_voice)
+          p1_changed = c14 != s.src14[t];
+          if (p1_changed) src_to_voice(t, c14);   // 0.5.0: an idle voice's pick (src_to_voice)
           s.src14[t] = c14, s.src14_at[t] = ++s.at_n;
         }
+      }
+      if (has13 && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kWaveMachine) {   // 2026-11-24 TBLB: WAVETABLE's table B
+        const int w13 = s.srcv[t][12] << 7 | s.srcl[t][12];
+        const bool p13_changed = w13 != old13;
+        // the names bank follows the knob touched last; P1 and P13 changed in one frame (a kit load): P1 first (the names are P1's)
+        if (p1_changed) s.p13_last &= (uint16_t)~(1u << t);
+        else if (p13_changed) s.p13_last |= (uint16_t)(1u << t);
+        // an idle voice's pick of B (as P1's above): only a real change of one knob (the first sight of P13 and a frame of
+        // several values are a kit's load or a report: the voice's own reports set B then)
+        if (p13_changed && old13 >= 0 && b[2] == 1) src_to_voice(t, w13, 12);
+      } else if (p1_changed) {
+        s.p13_last &= (uint16_t)~(1u << t);
       }
 #if CORE_MSAMP
       if (!held && have_tracks && track_vb[t] != kNotOurs && (track_vb[t] & kMidiMachine) && s.src_known[t] == 0xFFFF) {
@@ -2182,6 +2225,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
         fill_claim();
         edit_arm();
+        list_p13_announce();
 #if CORE_POLY
         mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
@@ -2199,6 +2243,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       mod::rytm_host_cmd((b[2] & mod::kCapsHostCmd) != 0);   // 0.5.0: the mod command (core/mod/rytm_out.h)
       fill_claim();
       edit_arm();
+      list_p13_announce();
 #if CORE_POLY
       mod::rp_hello(b[2]);   // 0.5.0: the Rytm's own params (caps bit 64; core/mod/rytm_param.h): what was sent is gone
 #endif
@@ -2248,6 +2293,24 @@ static CORE_COLD void key_repeat_tick(uint32_t ms) {
   }
 }
 
+// 0.5.2 re-hello: the Rytm sends its hello only at its USB port-up, so a host that started later has no caps (host command,
+// QPERF, edit arm, the 36s ...). Once Rytm traffic has come and no hello, ask: 3C with flags bit 0 (kCaps2Rehello answers it
+// with one hello; an older mod takes it as a plain keepalive: its 3C reads no payload). Once, then every kRehelloMs, 3 tries.
+// Never for a box (A4 / Digitakt), never going down. A hello ends it (hellos > 0).
+constexpr uint32_t kRehelloMs = 5000;
+constexpr int kRehelloTries = 3;
+CORE_COLD void rehello_tick(uint32_t ms) {
+  if (!s.rh_traffic || s.stats.hellos > 0 || g_going_down || device::foreign() || s.rh_tries >= kRehelloTries) return;
+  if (s.rh_tries && (int32_t)(ms - s.rh_ms) < (int32_t)kRehelloMs) return;
+  const uint8_t flags = 1;
+  send_short(kAlive, &flags, 1);
+  s.rh_tries++, s.rh_ms = ms;
+  if (s.rh_tries == 1) core::log("rui: Rytm traffic but no hello: asking it to say hello again");
+}
+
+// The Rytm's USB MIDI is gone (core::link_lost): the next one starts the asking again (a new Rytm, or one that missed its hello)
+CORE_COLD void remote_link_lost() { s.rh_traffic = false, s.rh_tries = 0, s.rh_ms = 0; }
+
 CORE_COLD void remote_tick(uint32_t ms) {
   if (g_going_down && !g_fill_keys_off) g_fill_keys_off = true, fill_unclaim();   // (a planned reboot: remote.h)
   // 0.5.2: the claim again every ~2 s while linked (the Rytm drops it at each USB port drop; a 4A 7E 1 only sets its flag)
@@ -2261,6 +2324,7 @@ CORE_COLD void remote_tick(uint32_t ms) {
     }
   }
   s.now_ms = ms;
+  rehello_tick(ms);
   vparam_tick(ms);   // the touchscreen's VOICE knob writes' answers (a few compares when none is followed)
   if (s.rep_code >= 0) key_repeat_tick(ms);
   page_two_tick(ms);   // rc5: a machine list choice's page-2 defaults
@@ -2601,6 +2665,12 @@ CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], ui
   if (label) memcpy(label, disp.label, sizeof disp.label);
   return disp.info_gen;
 }
+// 2026-11-24 TBLB: a written P13 (WAVETABLE) is the track's P13 word at once: the names bank follows it and the Rytm's echo is no change
+static void p13_written(int t, int value, int lo) {
+  s.p13_last |= (uint16_t)(1u << t);
+  s.srcv[t][12] = (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), s.srcl[t][12] = (uint8_t)(lo & 0x7f);
+  s.src_known[t] |= (uint16_t)(1u << 12);
+}
 CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) {
   int n = 0;
   for (int t = 0; t < 12; ++t) {
@@ -2608,6 +2678,8 @@ CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) 
     uint8_t b[4] = {(uint8_t)t, (uint8_t)(k & 15), (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), (uint8_t)(lo & 0x7f)};
     send_short(kWrite, b, lo > 0 ? 4 : 3);   // rui1038: the fraction byte (a bank) only when there is one: older builds too
     if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
+    if (k == 12 && machine == kWaveMachine) p13_written(t, value, lo);   // 2026-11-24 TBLB: the names bank follows the knob touched last
+    else if (k == remote_track_src_param(t)) s.p13_last &= (uint16_t)~(1u << t);
     ++n;
   }
   return n;
@@ -2618,6 +2690,8 @@ CORE_COLD bool remote_track_write(int t, int k, int value, int lo, int flags) {
                   (uint8_t)(flags & 0x7f)};
   send_short(kWrite, b, flags ? 5 : lo > 0 ? 4 : 3);
   if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
+  if (k == 12 && machine_of(track_vb[t]) == kWaveMachine) p13_written(t, value, lo);   // 2026-11-24 TBLB (see remote_param_write)
+  else if (k == remote_track_src_param(t)) s.p13_last &= (uint16_t)~(1u << t);
   if (k == 0) s.wr_pat[t] = b[2];   // (its answer: kWrite)
   s.wr_ans[t][b[1]] = 1;
   return true;
@@ -2737,6 +2811,10 @@ CORE_COLD int remote_track_src14_fresh(int t) {
       return s.src14[t];
   return s.src14_at[t] > s.rep_at[kTrackVoice[t]] ? s.src14[t] : -1;
 }
+CORE_COLD int remote_track_src_word(int t, int k) {
+  return t >= 0 && t < 12 && k >= 0 && k < 16 && (s.src_known[t] >> k & 1) ? s.srcv[t][k] << 7 | s.srcl[t][k] : -1;
+}
+CORE_COLD bool remote_track_names_p13(int t) { return t >= 0 && t < 12 && (s.p13_last >> t & 1); }
 CORE_COLD int remote_track_src_value(int t, int k) {
   return t >= 0 && t < 12 && k >= 0 && k < 16 && (s.src_known[t] >> k & 1) ? s.srcv[t][k] : -1;
 }

@@ -140,6 +140,16 @@ uint32_t fill_pool(sidecar_wg_view_t* o, int l, int vi, int p0) {
   if (o->sel > 0) m.note(o->sel, o->note, sizeof o->note);
   h = mix(h, (uint32_t)(o->sel + 1));
   for (const char* q = o->note; *q; ++q) h = mix(h, (uint8_t)*q);
+  // WAVETABLE's table B (TBLB, P13): its code, name and whether MIX leaves it silent (the pick for B shows the same list)
+  o->sel_b = -1, o->name_b[0] = 0, o->mix0 = 0;
+  if (vi >= 0 && o->kind == WGV_WAVETABLE) {
+    const int cb = core::wt::table_b_code(vi);
+    if (list_of(o->kind) == l) o->sel_b = m.sel(vi, cb);
+    if (o->sel_b >= 0) sniprintf(o->name_b, sizeof o->name_b, "%s", core::wt::entry_name(o->sel_b));
+    o->mix0 = !core::wt::b_open(vi);
+  }
+  h = mix(h, (uint32_t)(o->sel_b + 1) * 31u + (uint32_t)o->mix0);
+  for (const char* q = o->name_b; *q; ++q) h = mix(h, (uint8_t)*q);
   // the browser (srclib's kind = the list's number): again when its folder / listing or the list changed
   // (the rows already holding its files only while FILES is shown: a search of the list an item)
   bool rows = sidecar_wgview_lib_shown();
