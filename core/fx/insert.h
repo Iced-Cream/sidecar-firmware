@@ -333,12 +333,13 @@ class Engine {
                          : kOff;   // (no AMP: dry; not admitted: dry, CPU admission; muted for its measured time: dry)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
     const uint32_t t0 = fx::guard::stamp();
-    RunSlot(o, c, s, want, x, r, m, k);
+    // (muted by a late block: out over 1 ms, guard::kShortFadeFrames, as the slot still costs its time on a late core)
+    RunSlot(o, c, s, want, x, r, m, k, want == kOff && fx::guard::short_fade(gu) ? fx::guard::kShortFadeFrames : kFadeFrames);
     if (const uint32_t sl = fx::guard::slow_us(gu)) fx::guard::spin_us(sl);   // (a test's slow effect: fxguard=slow:)
     fx::guard::note(gu, fx::guard::stamp() - t0, m);
   }
-  void RunSlot(Slot& o, int c, int s, int want, float* x, float* r, int m, const Control& k) {
-    const float step = (float)m / kFadeFrames;
+  void RunSlot(Slot& o, int c, int s, int want, float* x, float* r, int m, const Control& k, int fade = kFadeFrames) {
+    const float step = (float)m / fade;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
       __atomic_store_n(&o.cur, (uint8_t)want, __ATOMIC_RELEASE);
       o.fresh = true;

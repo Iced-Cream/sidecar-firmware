@@ -32,6 +32,13 @@ effect is muted only when its core is hot, since its cost is known from the benc
    starts again; a core still hot mutes the next one 16 blocks later. After any mute on a core (any rule), its dearest
    rule waits 32 blocks (8 ms: the muted slot's 5 ms fade still counts its time), so one slot over its budget never
    takes a second effect with it (found in the LT12 prep, 2026-11-24).
+4. A late block (the core took more than a whole block, so the output FIFO drains): the block's effect most over its
+   budget is muted at once; if none is over its budget, the block's dearest after 4 late blocks in a row (1 ms), so one
+   block made late by something else never takes an effect. A late mute fades out over 1 ms instead of the TYPE's 5 ms
+   (send FX: 1 ms instead of 10 ms), because the slot still costs its time while it fades on a core already late.
+   Decided 2026-11-24 (Connor) after LT12b: a slot 180 us over a core at ~61 % made every block late for the 16-block
+   wait and the 5 ms fade, ~18 ms of underruns heard as a loud hit. Core 3: late when slot 0's master chain took what a
+   block leaves after core 3's own control work.
 
 The NaN / runaway check stays as before (the slot cleared, it fades in again).
 

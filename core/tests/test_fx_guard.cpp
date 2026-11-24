@@ -36,13 +36,13 @@ static std::string cmd(const char* c) {
   return out;
 }
 // one 12-frame block of chain c (mono) on core 1, then the core's verdict
-static float block(ins::Engine& e, int c, bool hot, float amp = 0.25f, bool done = true) {
+static float block(ins::Engine& e, int c, bool hot, float amp = 0.25f, bool done = true, bool late = false) {
   static int ph = 0;
   for (int i = 0; i < 12; ++i, ++ph) g_x[i] = amp * std::sin(2 * M_PI * 440.0 * ph / kSr);
   float x[12];
   memcpy(x, g_x, sizeof x);
   e.ProcessMono(c, x, 12, ins::control);
-  if (done) g::core_done(1, hot);
+  if (done) g::core_done(1, hot, late);
   float d = 0;   // how far from dry
   for (int i = 0; i < 12; ++i) d = std::max(d, std::fabs(x[i] - g_x[i]));
   return d;
@@ -112,6 +112,49 @@ int main() {
     for (int b = 0; b < 30; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true);   // (still hot, within the settle)
     CHECK(!g::ins_muted(0, 1, 0) && g::stats().dearest == 0);
     printf("test_fx_guard: an over-budget slot mutes alone; the dearest rule waits while it fades\n");
+  }
+  // ---- a late block (the core past a whole block): the slot over its budget at once, a 1 ms fade (LT12b, 2026-11-24)
+  {
+    g::reset();
+    ins::Engine e(kSr);
+    fresh_ins(e);
+    set(0, 0, ins::kDrive), set(1, 0, ins::kDrive);
+    for (int b = 0; b < 40; ++b) block(e, 0, false, 0.25f, false), block(e, 1, false);   // (both faded in)
+    cmd("fxguard=slow:0:V1:A:180");
+    cmd("fxguard=slow:0:V2:A:40");
+    block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);   // one late block
+    CHECK(g::ins_muted(0, 0, 0) && !g::ins_muted(0, 1, 0) && g::stats().late == 1);
+    CHECK(g::short_fade(g::ins_unit(0, 0, 0)));
+    g::poll();
+    printf("test_fx_guard: late V1 A: %s\n", g::why(g::ins_unit(0, 0, 0)));
+    CHECK(strstr(g::why(g::ins_unit(0, 0, 0)), "made core 1 late"));
+    // out in 1 ms (48 frames: 4 blocks), the slot still costing its time; the core still late meanwhile takes nothing else
+    float d = 1;
+    for (int b = 0; b < 5; ++b) d = block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);
+    CHECK(d < 1e-6f);
+    CHECK(!g::ins_muted(0, 1, 0) && g::stats().late == 1);
+    // released (set again): it fades back in over the TYPE's 5 ms, not 1 ms
+    cmd("fxguard=slow:0:V1:A:0");
+    set(0, 0, ins::kFilter, {40, 0, 0, 0});
+    g::poll();
+    CHECK(!g::ins_muted(0, 0, 0) && !g::short_fade(g::ins_unit(0, 0, 0)));
+    printf("test_fx_guard: a late block mutes the slot over its budget at once, out in 1 ms, alone\n");
+  }
+  // ---- a late core with no effect over its budget: its dearest after 4 late blocks in a row, never after one
+  {
+    g::reset();
+    ins::Engine e(kSr);
+    fresh_ins(e);
+    set(0, 0, ins::kDrive), set(1, 0, ins::kDrive);
+    cmd("fxguard=slow:0:V1:A:30");
+    cmd("fxguard=slow:0:V2:A:90");
+    for (int b = 0; b < 3; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);
+    block(e, 0, true, 0.25f, false), block(e, 1, true);   // one on time: the run starts again
+    for (int b = 0; b < 3; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);
+    CHECK(!g::ins_muted(0, 0, 0) && !g::ins_muted(0, 1, 0) && g::stats().late == 0);
+    block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);
+    CHECK(!g::ins_muted(0, 0, 0) && g::ins_muted(0, 1, 0) && g::stats().late == 1);
+    printf("test_fx_guard: a late core's dearest after 4 late blocks in a row, not after one\n");
   }
   // ---- one call past 2 ms: at once, hot or not
   {

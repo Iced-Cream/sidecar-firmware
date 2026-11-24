@@ -89,6 +89,14 @@ static inline u64 FxHotTicks (void)
 {
 	return TickRate () * 12 / 48000 * kFxHotPct / 100;	// (of a 12-frame block)
 }
+// ... and late (decided 2026-11-24 after LT12b: a slot past its budget on a loaded core made every block late, the FIFO
+// drained for ~18 ms, heard as a loud hit): a render core whose block took a whole block; core 3 when its master chain
+// took what a whole block leaves after core 3's own control work. A late block mutes its dearest effect at once.
+static inline u64 FxLateTicks (void)
+{
+	return TickRate () * 12 / 48000;
+}
+static u64 s_nFxLate3 = 0;
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -99,6 +107,7 @@ static inline u64 FxHot3Ticks (void)
 		const unsigned nBase = core::admit::core3_bp (core::admit::Load {});
 		const unsigned nShare = nBase < core::admit::kC3LimitBp - 1000 ? core::admit::kC3LimitBp - nBase : 1000;
 		s_n = TickRate () * 12 / 48000 * nShare / 10000;
+		s_nFxLate3 = TickRate () * 12 / 48000 * (nBase < 9000 ? 10000 - nBase : 1000) / 10000;
 	}
 	return s_n;
 }
@@ -491,7 +500,8 @@ void CEngineCores::Worker (unsigned nCore)
 		// the measured guard of every effect (core/fx/fx_guard.h, decided 2026-11-23): this core's block, voices and chains,
 		// hot at kFxHotPct of a block (as the voice guard's 80 %): its effects' overs count, and 16 hot blocks in a row mute
 		// the dearest effect on it
-		core::fx::guard::core_done ((int) nCore, Ticks () - s_nT0[nCore] >= FxHotTicks ());
+		const u64 nBlk = Ticks () - s_nT0[nCore];
+		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks ());
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 	}
@@ -546,7 +556,8 @@ void CEngineCores::RenderBlock (int nSide)
 			const u64 dM = Ticks () - tM;
 			s_nChainTicks[3] += dM;
 			t0 += dM;
-			core::fx::guard::core_done (3, dM >= FxHot3Ticks ());	// (core 3: its master chain against its share, FxHot3Ticks)
+			const u64 nHot3 = FxHot3Ticks ();	// (sets s_nFxLate3 too)
+			core::fx::guard::core_done (3, dM >= nHot3, dM >= s_nFxLate3);	// (core 3: its master chain against its share)
 		}
 	}
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under

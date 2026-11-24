@@ -28,7 +28,7 @@ bool (*user_state)(int u, const char** why, const char** id) = nullptr;
 
 namespace {
 
-enum Kind : uint8_t { kNone = 0, kHuge = 1, kSlow = 2, kDearest = 3, kForced = 4 };
+enum Kind : uint8_t { kNone = 0, kHuge = 1, kSlow = 2, kDearest = 3, kForced = 4, kLate = 5 };
 enum Mode : uint8_t { kModeOff = 0, kModeOn = 1, kModeReport = 2 };
 
 // each core's own (only that core writes it, but core_done's caller and the host tests)
@@ -42,10 +42,11 @@ struct Row {
   uint8_t over[kBuiltin];        // blocks over the budget in a row while hot
   uint8_t hot_run;               // hot blocks in a row
   uint8_t settle;                // blocks left after a mute on this core with the dearest rule off (kSettle)
+  uint8_t late_run;              // late blocks in a row with no effect over its budget (kLateRun)
 };
 Row g_row[kCores];
 
-volatile uint8_t g_m[kBuiltin];            // 1: muted (the render side reads it)
+volatile uint8_t g_m[kBuiltin];            // 1: muted, 2: muted with the short fade (kLate) (the render side reads it)
 volatile uint64_t g_news = 0;              // muted (or would be: report) since the last poll, bit unit
 volatile uint64_t g_would = 0;             // report mode: what would have been muted (logged once)
 struct Rec { uint8_t kind, core, type, worded; uint32_t us; };
@@ -69,7 +70,7 @@ uint32_t num(const char* p) {
 }
 
 const char* kind_text(uint8_t k) {
-  return k == kHuge ? "huge" : k == kSlow ? "slow" : k == kDearest ? "dearest" : k == kForced ? "forced" : "-";
+  return k == kHuge ? "huge" : k == kSlow ? "slow" : k == kDearest ? "dearest" : k == kForced ? "forced" : k == kLate ? "late" : "-";
 }
 
 // a unit's place: "V1 A" .. "M2 B", "FX1", "FX2", "UFX1".."UFX4"
@@ -114,7 +115,7 @@ void mute(int u, uint32_t us, uint8_t kind, int core) {
     return;
   }
   for (Row& w : g_row) w.over[u] = 0;
-  __atomic_store_n(&g_m[u], (uint8_t)1, __ATOMIC_RELEASE);
+  __atomic_store_n(&g_m[u], (uint8_t)(kind == kLate ? 2 : 1), __ATOMIC_RELEASE);
   __atomic_or_fetch(&g_news, bit(u), __ATOMIC_RELEASE);
 }
 bool user_muted(int k) {
@@ -155,9 +156,15 @@ void note_user(int u, uint32_t us) {
 // its time still counted) and the core is still hot from it, so without the wait one slot over its budget took the next
 // dearest with it in the same block, and a third 16 blocks later (LT12 prep, 2026-11-24). Per-slot rules go on.
 constexpr uint8_t kSettle = 2 * kOverMax;
-void core_done(int core, bool hot) {
+constexpr uint8_t kLateRun = 4;   // late blocks in a row (1 ms) before a late core's dearest goes, none over its budget
+void core_done(int core, bool hot, bool late) {
   Row& r = g_row[core & (kCores - 1)];
   bool muted_here = false;   // (a mute in this call: the dearest rule waits)
+  // a late block (the core past a whole block: the FIFO drains): this block's effect to mute at once, the one most over
+  // its budget, else the dearest in the block (decided 2026-11-24 after LT12b: waiting kOverMax blocks and a 5 ms fade
+  // while the slot still costs its time underran for ~18 ms, heard as a loud hit)
+  int late_over = -1, late_most = -1;
+  uint32_t late_over_by = 0, late_us = 0, late_most_us = 0;
   uint64_t t = r.touched;
   r.touched = 0;
   while (t) {
@@ -185,12 +192,25 @@ void core_done(int core, bool hot) {
         } else {
           r.over[u] = 0;
         }
+        if (!g_m[u] && us > b && us - b > late_over_by) late_over_by = us - b, late_over = u, late_us = us;
+        if (!g_m[u] && us > late_most_us) late_most_us = us, late_most = u;
       }
     } else {
       us = r.user_us[u - kBuiltin];
       r.user_us[u - kBuiltin] = 0;
+      if (us > late_most_us && !user_muted(u - kBuiltin)) late_most_us = us, late_most = u;
     }
     if (hot) r.win_us[u] += us, r.win |= bit(u);
+  }
+  // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
+  // made late by something else, a burst of notes, never takes an effect)
+  r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  if (late && !muted_here && !r.settle && (late_over >= 0 || (late_most >= 0 && r.late_run >= kLateRun))) {
+    ++g_stats.late;
+    if (late_over >= 0) mute(late_over, late_us, kLate, core);
+    else mute(late_most, late_most_us, kLate, core);
+    muted_here = true;
+    r.late_run = 0;
   }
   if (muted_here) r.settle = kSettle;
   if (!hot || r.settle) {
@@ -219,6 +239,7 @@ void core_done(int core, bool hot) {
 }
 
 bool muted(int unit) { return unit >= 0 && unit < kBuiltin && __atomic_load_n(&g_m[unit], __ATOMIC_RELAXED); }
+bool short_fade(int unit) { return unit >= 0 && unit < kBuiltin && __atomic_load_n(&g_m[unit], __ATOMIC_RELAXED) == 2; }
 uint32_t slow_us(int unit) { return unit >= 0 && unit < kBuiltin ? g_slow[unit] : 0; }
 void spin_us(uint32_t us) {
   const uint32_t t0 = cycles(), n = (uint32_t)((uint64_t)us * cycles_per_second() / 1000000u);   // (the CPU-time counter: as note's)
@@ -262,6 +283,8 @@ void poll() {
                (unsigned)g_budget_us, (int)r.core);
     else if (r.kind == kDearest)
       sniprintf(y, sizeof g_why[u], "muted: ran %u us, dearest on core %d while hot", (unsigned)r.us, (int)r.core);
+    else if (r.kind == kLate)
+      sniprintf(y, sizeof g_why[u], "muted: ran %u us in a block that made core %d late", (unsigned)r.us, (int)r.core);
     else
       sniprintf(y, sizeof g_why[u], "muted: by the console (test)");
     log(CORE_STR("fxguard: box %d %s %s %s"), box_of_unit(u), at, type_label(u, r.type), y);
@@ -370,10 +393,10 @@ bool command(const char* p, char* out, int cap) {
   if (strncmp(p, "fxguard", 7) != 0 || (p[7] && p[7] != '=')) return false;
   const char* a = p[7] ? p + 8 : "";
   if (!a[0]) {
-    int n = sniprintf(out, cap, "fxguard: %s, budget %u us a block, huge %u us; mutes %u (huge %u slow %u dearest %u user %u), released %u, muted now %d + %d",
+    int n = sniprintf(out, cap, "fxguard: %s, budget %u us a block, huge %u us; mutes %u (huge %u slow %u dearest %u late %u user %u), released %u, muted now %d + %d",
                      g_mode == kModeOn ? "on" : g_mode == kModeReport ? "report" : "off", (unsigned)g_budget_us,
                      (unsigned)kHugeUs, (unsigned)g_stats.mutes, (unsigned)g_stats.huge, (unsigned)g_stats.slow,
-                     (unsigned)g_stats.dearest, (unsigned)g_stats.user_mutes, (unsigned)g_stats.released, muted_count(0),
+                     (unsigned)g_stats.dearest, (unsigned)g_stats.late, (unsigned)g_stats.user_mutes, (unsigned)g_stats.released, muted_count(0),
                      muted_count(1));
     for (int u = 0; u < kBuiltin && n < cap - 40; ++u)
       if (g_m[u]) {

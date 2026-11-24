@@ -14,7 +14,10 @@
 //   - a core hot kOverMax blocks in a row: the dearest effect on it over those blocks (built-in or a user effect: API 3's
 //     UFX1..UFX4 add their time with note_user) is muted, and the count starts again; after any mute on a core its
 //     dearest rule waits 2 x kOverMax blocks (the muted slot's fade), so one slow slot never takes a second with it
-// A muted slot fades out (the 5 ms TYPE fade), plays dry and shows NO CPU on the box (insert slots; ins::refused), its
+//   - a late block (the core past a whole block: the FIFO drains): the block's effect most over its budget muted at once
+//     (none over: the block's dearest after 4 late blocks in a row), with a 1 ms fade (kShortFadeFrames; decided
+//     2026-11-24 after LT12b's underrun burst)
+// A muted slot fades out (the 5 ms TYPE fade; 1 ms after a late block), plays dry and shows NO CPU on the box (insert slots; ins::refused), its
 // reason on the web page (/status "fxMuted", the user effects' beside them). It holds until the slot is set again (its
 // TYPE changes, set_type) or its box attaches again (clear_box): no retry when the Pi cools, and the admission's
 // regrant never brings it back (decided 2026-11-23). User effects keep um.cpp's own guard; a user effect picked as the
@@ -54,7 +57,10 @@ void set_clock(uint32_t (*clock)());   // tests whose fake cycles() counts its c
 void note_user(int u, uint32_t us);
 // A core after its block's work (voices and chains on 1 / 2; slot 0's master chain on 3): hot = it took the share
 // that hurts (the Pi's cores.cpp). The per-slot and per-core rules run here, over what note() saw since the last call.
-void core_done(int core, bool hot);
+// late: the core's block took more than a whole block (the FIFO drains): this block's effect most over its budget (else
+// its dearest, a user effect too) is muted at once, with the short fade (kShortFadeFrames), unless a mute on this core
+// is still settling.
+void core_done(int core, bool hot, bool late = false);
 // The core the caller runs on (the Pi: rytm_render_core(); the host: the one set_core named, 0 by default)
 int this_core();
 void set_core(int c);   // host tests
@@ -63,6 +69,10 @@ void set_core(int c);   // host tests
 bool muted(int unit);
 inline bool ins_muted(int box, int c, int s) { return muted(ins_unit(box, c, s)); }
 inline bool send_muted(int box, int s) { return muted(send_unit(box, s)); }
+// muted by a late block: the slot fades out over kShortFadeFrames (1 ms), not its TYPE fade (it still costs its time
+// while it fades, on a core already late)
+bool short_fade(int unit);
+constexpr int kShortFadeFrames = 48;
 // test only (fxguard=slow:): extra busy time added inside the unit's call, us (0 none)
 uint32_t slow_us(int unit);
 void spin_us(uint32_t us);   // the busy wait slow_us asks for (render cores)
@@ -94,7 +104,7 @@ extern bool (*user_state)(int u, const char** why, const char** id);
 int type_now(int unit);
 const char* type_label(int unit, int type);
 
-struct Stats { uint32_t mutes, huge, slow, dearest, released, user_mutes; };
+struct Stats { uint32_t mutes, huge, slow, dearest, released, user_mutes, late; };
 const Stats& stats();
 void reset();   // tests: every count, mute and setting back to its default
 

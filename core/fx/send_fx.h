@@ -694,8 +694,9 @@ class SendFx {
       }
 #if RYTM_SENDFX_LARGE
       if (t == kStutter) {   // the insert: only its fade here, the DSP once below
+        const int down = guard::short_fade(guard::send_unit(ub, s)) ? kFadeFrames / guard::kShortFadeFrames : 1;   // (late: 1 ms)
         for (int i = 0; i < n; ++i) {
-          int f = fade_[s] + (same ? 1 : -1);
+          int f = fade_[s] + (same ? 1 : -down);
           fade_[s] = f < 0 ? 0 : f > kFadeFrames ? kFadeFrames : f;
           gs_[i] += (float)fade_[s] * (1.0f / kFadeFrames);
         }
@@ -714,10 +715,11 @@ class SendFx {
       any = true;
       {   // the measured guard (fx_guard.h): a built-in TYPE's time on this core (a user effect's: um.cpp's own, fx_run)
         const bool timed = t < kFirstUser;
+        const int gu = guard::send_unit(ub, s);
         const uint32_t t0 = timed ? guard::stamp() : 0;
-        Run(s, t, Gate(s, same, xs[s], xf, n), n, y, c);
+        // (muted by a late block: out over 1 ms, guard::kShortFadeFrames)
+        Run(s, t, Gate(s, same, xs[s], xf, n, timed && !same && guard::short_fade(gu)), n, y, c);
         if (timed) {
-          const int gu = guard::send_unit(ub, s);
           if (const uint32_t sl = guard::slow_us(gu)) guard::spin_us(sl);
           guard::note(gu, guard::stamp() - t0, n);
         }
@@ -874,8 +876,8 @@ class SendFx {
   }
   // the TYPE fade into g_: down while another TYPE (or structure zone) waits, up otherwise; the input to run (x, or x
   // faded into xf)
-  FX_DSP const float* Gate(int s, bool same, const float* x, float* xf, int n) {
-    const int step = same ? 1 : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
+  FX_DSP const float* Gate(int s, bool same, const float* x, float* xf, int n, bool quick = false) {
+    const int step = same ? 1 : quick ? -(kFadeFrames / guard::kShortFadeFrames) : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
     int f = fade_[s];
     if (step > 0 && f >= kFadeFrames)   // fully in (the usual case): unity
       for (int i = 0; i < n; ++i) g_[i] = 1.0f;
