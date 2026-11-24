@@ -629,6 +629,8 @@ void CObUsb::ProbeContexts (const char *pWhen, boolean bFull)
 	}
 }
 
+static boolean s_bAspmOff;		// obaspmoff=1 (PCIeWatchPoll)
+
 #ifdef OB_PCIE_PROBE
 // obprobe=1: the PCIe side, read-only (circle-pcie-probe.patch): bus 0 is the root complex, 01:00.0 the VL805. bFull
 // (once, at the probe's first pass): ids, link capabilities and control (ASPM), the extended capabilities, the VL805's
@@ -689,8 +691,119 @@ static void ProbePCIe (const char *pWhen, boolean bFull)
 	for (unsigned a = 0x40; a < 0x80; a += 4) V.S (" ").X (B::ProbeConfig (1, 0, 0, a));
 	pLog->Write ("vl805probe", LogNotice, "%s", V.Buf);
 }
+
+// obprobe=1: the PCIe status watched (every 1 ms, read-only): the VL805's link control/status, both ends' device status
+// and AER correctable/uncorrectable status. Each change is logged at once with its time, MFINDEX and how long after the
+// last box event (20 lines a second at most; the rest counted), and the last 8 are listed again at a stall.
+// obaspmoff=1 (an experiment; the one write): whenever the VL805's ASPM control bits (LNKCTL 1:0) read set, they are
+// written back to 0 (the dword with its status half 0: LNKSTA's two RW1C bits are left alone).
+struct PCIeWatch
+{
+	enum { RcDev, RcCorr, RcUncorr, VlLnk, VlDev, VlCorr, VlUncorr, Words };
+	unsigned Off[Words];		// config offsets (0: not there)
+	u32 Val[Words];
+	boolean bInit, bHave;
+	u32 nLastUs, nSecUs, nLines, nQuiet, nAspmOffs, nAspmOffFails;
+	struct Change { u32 us, mf, last_ev_us; u8 w; u32 from, to; } Ring[8];
+	unsigned nRing;
+};
+static PCIeWatch s_PW;
+static const char *const PWName[PCIeWatch::Words] =
+	{"rc DEVCTL/STA", "rc AER corr", "rc AER uncorr", "vl805 LNKCTL/STA", "vl805 DEVCTL/STA", "vl805 AER corr", "vl805 AER uncorr"};
+
+static void PCIeWatchInit (void)
+{
+	typedef CBcmPCIeHostBridge B;
+	PCIeWatch &W = s_PW;
+	W.bInit = TRUE;
+	if (B::ProbeConfig (0, 0, 0, 0) == ~0U) return;
+	unsigned nRcExp = B::ProbeFindCap (0, 0, 0, 0x10, FALSE);
+	if (nRcExp == 0) nRcExp = 0xac;
+	const unsigned nVlExp = B::ProbeFindCap (1, 0, 0, 0x10, FALSE);
+	const unsigned nRcAer = B::ProbeFindCap (0, 0, 0, 0x01, TRUE), nVlAer = B::ProbeFindCap (1, 0, 0, 0x01, TRUE);
+	W.Off[PCIeWatch::RcDev] = nRcExp + 8;
+	W.Off[PCIeWatch::RcCorr] = nRcAer ? nRcAer + 0x10 : 0;
+	W.Off[PCIeWatch::RcUncorr] = nRcAer ? nRcAer + 4 : 0;
+	W.Off[PCIeWatch::VlLnk] = nVlExp ? nVlExp + 0x10 : 0;
+	W.Off[PCIeWatch::VlDev] = nVlExp ? nVlExp + 8 : 0;
+	W.Off[PCIeWatch::VlCorr] = nVlAer ? nVlAer + 0x10 : 0;
+	W.Off[PCIeWatch::VlUncorr] = nVlAer ? nVlAer + 4 : 0;
+	for (unsigned i = 0; i < PCIeWatch::Words; i++)
+		W.Val[i] = W.Off[i] ? B::ProbeConfig (i < PCIeWatch::VlLnk ? 0 : 1, 0, 0, W.Off[i]) : 0;
+	W.bHave = TRUE;
+}
+
+static void PCIeWatchPoll (u32 nNow, u32 nMf, u32 nLastEvUs)
+{
+	typedef CBcmPCIeHostBridge B;
+	PCIeWatch &W = s_PW;
+	if (!W.bInit) PCIeWatchInit ();
+	if (!W.bHave || nNow - W.nLastUs < 1000) return;
+	W.nLastUs = nNow;
+	if (nNow - W.nSecUs >= 1000000) W.nSecUs = nNow, W.nLines = 0;
+	CLogger *pLog = CLogger::Get ();
+	for (unsigned i = 0; i < PCIeWatch::Words; i++)
+	{
+		if (W.Off[i] == 0) continue;
+		const unsigned nBus = i < PCIeWatch::VlLnk ? 0 : 1;
+		const u32 v = B::ProbeConfig (nBus, 0, 0, W.Off[i]);
+		if (v != W.Val[i])
+		{
+			PCIeWatch::Change &C = W.Ring[W.nRing++ % 8];
+			C.us = nNow, C.mf = nMf, C.last_ev_us = nLastEvUs, C.w = (u8) i, C.from = W.Val[i], C.to = v;
+			if (W.nLines < 20)
+			{
+				W.nLines++;
+				ProbeLine L;
+				L.S ("pcie change: ").S (PWName[i]).S (" ").X (W.Val[i]).S (" -> ").X (v).S (" at MFINDEX ").D (nMf)
+				 .S (", ").D (nNow - nLastEvUs).S (" us after the last box event");
+				if (i == PCIeWatch::VlLnk) L.S (" (ASPM ").D (W.Val[i] & 3).S (" -> ").D (v & 3).S (")");
+				if (W.nQuiet != 0) L.S (" (").D (W.nQuiet).S (" changes not logged before it)"), W.nQuiet = 0;
+				pLog->Write ("vl805probe", LogNotice, "%s", L.Buf);
+			}
+			else W.nQuiet++;
+			W.Val[i] = v;
+		}
+		if (i == PCIeWatch::VlLnk && s_bAspmOff && (v & 3) != 0)
+		{
+			const boolean bOK = B::ProbeConfigWrite (1, 0, 0, W.Off[i], v & 0xfffc);
+			const u32 nAfter = B::ProbeConfig (1, 0, 0, W.Off[i]);
+			if (!bOK || (nAfter & 3) != 0) W.nAspmOffFails++;
+			W.nAspmOffs++;
+			W.Val[i] = nAfter;
+			if (W.nLines < 20 || W.nAspmOffs <= 3)
+			{
+				W.nLines++;
+				ProbeLine L;
+				L.S ("pcie aspm off (obaspmoff=1) #").D (W.nAspmOffs).S (": vl805 LNKCTL/STA ").X (v).S (" written ")
+				 .X (v & 0xfffc).S (", reads ").X (nAfter).S (bOK && (nAfter & 3) == 0 ? "" : " - DID NOT TAKE").S ("; failed ")
+				 .D (W.nAspmOffFails);
+				pLog->Write ("vl805probe", LogNotice, "%s", L.Buf);
+			}
+		}
+	}
+}
+
+// at a stall: the last changes (oldest first), us before the stall's last box event (+: after it)
+static void PCIeWatchStall (u32 nLastEvUs)
+{
+	PCIeWatch &W = s_PW;
+	if (!W.bHave) return;
+	ProbeLine L;
+	L.S ("pcie changes before the stall (us vs the last box event, what, from -> to): ").D (W.nRing < 8 ? W.nRing : 8);
+	for (unsigned k = W.nRing < 8 ? 0 : W.nRing - 8; k < W.nRing; k++)
+	{
+		const PCIeWatch::Change &C = W.Ring[k % 8];
+		const int dt = (int) (C.us - nLastEvUs);
+		L.S (" ").S (dt < 0 ? "-" : "+").D (dt < 0 ? -dt : dt).S (" ").S (PWName[C.w]).S (" ").X (C.from).S ("->").X (C.to).S (";");
+	}
+	if (s_bAspmOff) L.S (" aspm off writes ").D (W.nAspmOffs).S (", failed ").D (W.nAspmOffFails);
+	CLogger::Get ()->Write ("vl805probe", LogNotice, "%s", L.Buf);
+}
 #else
 static void ProbePCIe (const char *, boolean) {}
+static void PCIeWatchPoll (u32, u32, u32) {}
+static void PCIeWatchStall (u32) {}
 #endif
 
 boolean CObUsb::PollProbe (void)
@@ -703,6 +816,7 @@ boolean CObUsb::PollProbe (void)
 	static boolean s_bSaidPCIe;
 	if (!s_bSaidPCIe) s_bSaidPCIe = TRUE, ProbePCIe ("at start", TRUE);
 	s_Probe.Sample (nNow, nMf);
+	PCIeWatchPoll (nNow, nMf, s_Probe.last_us);
 	boolean bPending = FALSE;
 	for (unsigned k = 0; k < Slots; k++)
 	{
@@ -740,6 +854,7 @@ boolean CObUsb::PollProbe (void)
 			}
 			ProbeContexts ("at the stall", TRUE);
 			ProbePCIe ("at the stall", FALSE);
+			PCIeWatchStall (s_Probe.stall_last_us);
 			vl805::Other O[vl805::kOthers];		// what else the controller completed around the stop
 			const unsigned nO = s_Probe.Others (s_Probe.stall_last_us - vl805::kOtherUs, O);
 			ProbeLine T;
@@ -1262,7 +1377,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 	s_bStallReadd = pOpt->GetAppOptionDecimal ("obstallreadd", 0) != 0;
 	s_nStallRunStop = pOpt->GetAppOptionDecimal ("obstallrs", 0);
 	s_bStallRunStop = s_nStallRunStop != 0;
-	s_bProbe = s_bStallReadd || s_bStallRunStop || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
+	s_bAspmOff = pOpt->GetAppOptionDecimal ("obaspmoff", 0) != 0;
+	s_bProbe = s_bStallReadd || s_bStallRunStop || s_bAspmOff || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);

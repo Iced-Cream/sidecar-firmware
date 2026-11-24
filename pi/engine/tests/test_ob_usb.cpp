@@ -1257,8 +1257,14 @@ int main() {
         CTimer::s_now += 125, CXHCIEndpoint::s_mfindex++;
         r.in(1, c);
         RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+        if (i == 20) CBcmPCIeHostBridge::s_cfg[1][0xc4 + 0x10] = 0x10120043;   // the VL805 turns ASPM L0s+L1 on
+        if (i == 30) CBcmPCIeHostBridge::s_cfg[0][0x110] = 0x40;                // the rc logs a Bad TLP
         CObUsb::PollHalt();
       }
+      // the PCIe status watched: each change logged with how long after the last box event
+      CHECK(count_lines("pcie change: vl805 LNKCTL/STA 10120042 -> 10120043 at MFINDEX ", l0) == 1);
+      CHECK(count_lines(" us after the last box event (ASPM 2 -> 3)", l0) == 1);
+      CHECK(count_lines("pcie change: rc AER corr 00000000 -> 00000040", l0) == 1);
       // the PCIe side once, at the probe's first pass: ids, ASPM, the VL805's firmware version and vendor dwords
       CHECK(count_lines("pcie at start: rc 00:00.0 id 271114e4 class/rev 06040010 exp@172 ", l0) == 1);
       CHECK(count_lines("LNKCTL/STA 10120003 (ASPM L0s+L1, Gen 2 x1)", l0) == 1);
@@ -1274,8 +1280,11 @@ int main() {
       CObUsb::PollHalt();
       CHECK(count_lines("stall 1: no box event for 25000 us with URBs queued", l0) == 1);
       CHECK(count_lines("ctx at the stall: box 0 IN slot 1", l0) == 1);
-      CHECK(count_lines("pcie at the stall: vl805 01:00.0 DEVCTL/STA 00000000 LNKCTL/STA 10120042 (ASPM L1, Gen 2 x1) AER uncorr", l0) == 1);
+      CHECK(count_lines("pcie at the stall: vl805 01:00.0 DEVCTL/STA 00000000 LNKCTL/STA 10120043 (ASPM L0s+L1, Gen 2 x1) AER uncorr", l0) == 1);
       CHECK(count_lines("pcie at the stall: rc", l0) == 1 && count_lines("pcie at start", l0) == 2);
+      CHECK(count_lines("pcie changes before the stall (us vs the last box event, what, from -> to): 2 -", l0) == 1);
+      CHECK(count_lines(" vl805 LNKCTL/STA 10120042->10120043; -", l0) == 1 && count_lines(" rc AER corr 00000000->00000040;", l0) == 1);
+      CHECK(count_lines("aspm off writes", l0) == 0);
       CHECK(count_lines("before (10 ms each", l0) >= 1);
       CHECK(count_lines("its endpoints added again", l0) == 0);
       CTimer::s_now += 10000, CXHCIEndpoint::s_mfindex += 80;    // 35 ms: new endpoints
@@ -1361,6 +1370,34 @@ int main() {
       CXHCIEndpoint::s_runstop_rc = 0;
     }
     opt->num.erase("obstallrs");
+    CTimer::s_now = 0;
+  }
+  {  // obaspmoff=1: the VL805's ASPM bits written back to 0 whenever they read set (its status half left 0)
+    opt->num["obaspmoff"] = 1;
+    {
+      Bus r(g_rytm, 0x0b48);
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      size_t l0 = CLogger::Get()->lines.size();
+      CTimer::s_now = 20000000;
+      CBcmPCIeHostBridge::s_writes = 0;
+      auto& lnk = CBcmPCIeHostBridge::s_cfg[1][0xc4 + 0x10];
+      lnk = 0x10120040;
+      for (int i = 0; i < 40; i++) {
+        CTimer::s_now += 125, CXHCIEndpoint::s_mfindex++;
+        r.in(1, c);
+        RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+        if (i == 10) lnk = 0x10120043;
+        if (i == 30) CBcmPCIeHostBridge::s_write_ok = false, lnk = 0x10120041;
+        CObUsb::PollHalt();
+      }
+      CHECK(count_lines("pcie aspm off (obaspmoff=1) #", l0) >= 2);
+      CHECK(count_lines("vl805 LNKCTL/STA 10120043 written 00000040, reads 10120040; failed 0", l0) == 1);
+      CHECK(count_lines("written 00000040, reads 10120041 - DID NOT TAKE; failed 1", l0) == 1);
+      CHECK(CBcmPCIeHostBridge::s_writes >= 2);
+      CBcmPCIeHostBridge::s_write_ok = true;
+    }
+    opt->num.erase("obaspmoff");
     CTimer::s_now = 0;
   }
   printf("test_ob_usb: ok\n");

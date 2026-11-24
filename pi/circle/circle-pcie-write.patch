@@ -1,0 +1,34 @@
+diff -ruN a/include/circle/bcmpciehostbridge.h b/include/circle/bcmpciehostbridge.h
+--- a/include/circle/bcmpciehostbridge.h	2026-11-24 12:07:38.203158619 +0000
++++ b/include/circle/bcmpciehostbridge.h	2026-11-24 12:07:38.250734494 +0000
+@@ -88,6 +88,9 @@
+ 	static u32 ProbeConfig (unsigned nBus, unsigned nSlot, unsigned nFunc, unsigned nWhere);
+ 	// the offset of a capability (bExtended: an extended one, from 0x100) in that config space; 0 when it has none
+ 	static unsigned ProbeFindCap (unsigned nBus, unsigned nSlot, unsigned nFunc, unsigned nCapID, boolean bExtended);
++	// circle-pcie-write (obaspmoff=1, an experiment; not read-only): one config space dword written; FALSE when there is
++	// no host bridge or the arguments are out of range
++	static boolean ProbeConfigWrite (unsigned nBus, unsigned nSlot, unsigned nFunc, unsigned nWhere, u32 nValue);
+ 
+ private:
+ 	int pcie_probe(void);
+diff -ruN a/lib/bcmpciehostbridge.cpp b/lib/bcmpciehostbridge.cpp
+--- a/lib/bcmpciehostbridge.cpp	2026-11-24 12:07:38.205973931 +0000
++++ b/lib/bcmpciehostbridge.cpp	2026-11-24 12:07:38.250919642 +0000
+@@ -362,6 +362,17 @@
+ 	return conf == 0 ? ~0U : read32 (conf);
+ }
+ 
++// circle-pcie-write
++boolean CBcmPCIeHostBridge::ProbeConfigWrite (unsigned nBus, unsigned nSlot, unsigned nFunc, unsigned nWhere, u32 nValue)
++{
++	CBcmPCIeHostBridge *p = s_pProbe;
++	if (p == 0 || nBus > 1 || nSlot >= 32 || nFunc >= 8 || nWhere > 0xffc) return FALSE;
++	const uintptr conf = p->pcie_map_conf (nBus, PCI_DEVFN (nSlot, nFunc), nWhere & ~3U);
++	if (conf == 0) return FALSE;
++	write32 (conf, nValue);
++	return TRUE;
++}
++
+ unsigned CBcmPCIeHostBridge::ProbeFindCap (unsigned nBus, unsigned nSlot, unsigned nFunc, unsigned nCapID,
+ 					   boolean bExtended)
+ {

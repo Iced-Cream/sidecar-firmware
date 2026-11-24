@@ -307,6 +307,9 @@ grep -q circle-xhci-runstop include/circle/usb/xhciendpoint.h || patch -p1 < /re
 # then PCIe config reads for the probe (pi/circle/circle-pcie-probe.patch: config space of the root complex and of the
 # VL805, the VL805 firmware version and the ASPM state of the link; obprobe=1, read-only; lib/, so libcircle.a again)
 grep -q circle-pcie-probe include/circle/bcmpciehostbridge.h || patch -p1 < /repo/pi/circle/circle-pcie-probe.patch
+# then one config write for the obaspmoff=1 experiment (pi/circle/circle-pcie-write.patch: the VL805 ASPM bits kept off;
+# after circle-pcie-probe, idempotent)
+grep -q circle-pcie-write include/circle/bcmpciehostbridge.h || patch -p1 < /repo/pi/circle/circle-pcie-write.patch
 make -C lib -j$J >/dev/null
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
