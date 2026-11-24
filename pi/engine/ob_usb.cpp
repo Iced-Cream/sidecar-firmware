@@ -58,6 +58,10 @@
 #define XHCI_CONFIG_TRANSFER_RING_SIZE	64		// Circle's (the portable tests' shim has none)
 #endif
 #include <circle/koptions.h>
+#if RASPPI == 4 || defined (OB_USB_TEST)
+#include <circle/bcmpciehostbridge.h>	// circle-pcie-config.patch: the VL805 ASPM bits kept off (PollAspm)
+#define OB_VL805_ASPM 1
+#endif
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
@@ -484,8 +488,52 @@ boolean CObUsb::s_bResetDone;
 // At most one endpoint is reset a main-loop pass, the Rytm MIDI's included (CObUsbTransport::Poll asks ResetDone): its
 // waits are Circle's, 3 s at most each (EP0's CLEAR_FEATURE, Reset Endpoint, Set TR Dequeue), so one pass stays well under
 // the 15 s watchdog.
+#ifdef OB_VL805_ASPM
+// The Pi 4's VL805 turns ASPM (L0s+L1) on in its own PCIe Link Control about 9 s after boot, with no host write, then
+// toggles it on a fixed 10 s timetable. While it was on the root complex logged correctable link errors and the
+// controller's whole periodic schedule stopped for one MFINDEX wrap, 2.048 s, with every box quiet (VP1, PP1). Written
+// back to off at once (every 10 ms), it was set once a boot and never again, and the stalls were gone: PW1 (2026-11-24)
+// 2 stalls in 2 boots as found, 0 in 3 boots kept off. obaspmoff=0 leaves it as the VL805 sets it. The status half of
+// the dword is written 0: LNKSTA's two write-1-to-clear bits are left alone, the rest are read-only.
+static void PollAspm (void)
+{
+	typedef CBcmPCIeHostBridge B;
+	static boolean s_bInit, s_bOn;
+	static unsigned s_nLnk, s_nWrites, s_nFailed;
+	static u32 s_nLastUs;
+	if (!s_bInit)
+	{
+		s_bInit = TRUE;
+		s_bOn = CKernelOptions::Get ()->GetAppOptionDecimal ("obaspmoff", 1) != 0;
+		if (!s_bOn || B::ConfigRead (1, 0, 0, 0) == ~0U) { s_bOn = FALSE; return; }
+		const unsigned nExp = B::FindCapability (1, 0, 0, 0x10);	// PCI_CAP_ID_EXP
+		if (nExp == 0) { s_bOn = FALSE; return; }
+		s_nLnk = nExp + 0x10;
+		CLogger::Get ()->Write ("rytmob", LogNotice, "VL805 ASPM kept off (obaspmoff=1): Link Control/Status %08x",
+					B::ConfigRead (1, 0, 0, s_nLnk));
+	}
+	if (!s_bOn) return;
+	const u32 nNow = CTimer::GetClockTicks ();
+	if (nNow - s_nLastUs < 10000) return;
+	s_nLastUs = nNow;
+	const u32 v = B::ConfigRead (1, 0, 0, s_nLnk);
+	if (v == ~0U || (v & 3) == 0) return;
+	const boolean bOK = B::ConfigWrite (1, 0, 0, s_nLnk, v & 0xfffc);
+	const u32 nAfter = B::ConfigRead (1, 0, 0, s_nLnk);
+	++s_nWrites;
+	if (!bOK || (nAfter & 3) != 0) ++s_nFailed;
+	if (s_nWrites <= 5 || s_nWrites % 100 == 0)
+		CLogger::Get ()->Write ("rytmob", s_nFailed != 0 ? LogWarning : LogNotice,
+					"VL805 ASPM was on (Link Control/Status %08x): set off, reads %08x%s (%u times, %u did not take)",
+					v, nAfter, (nAfter & 3) != 0 ? " - DID NOT TAKE" : "", s_nWrites, s_nFailed);
+}
+#else
+static void PollAspm (void) {}
+#endif
+
 void CObUsb::PollHalt (void)
 {
+	PollAspm ();
 	s_bResetDone = FALSE;
 	for (unsigned k = 0; k < Slots && !s_bResetDone; k++)	// (one reset a pass, every box's together)
 	{
