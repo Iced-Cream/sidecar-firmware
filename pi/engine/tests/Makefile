@@ -171,6 +171,12 @@ build/test_voice_gate: test_voice_gate.cpp ../voice_pi.cpp ../voice_pi.h ../../u
 	sed '/#include "core_port.h"/d' ../voice_pi.cpp > build/voice_pi_mac.cpp
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. -I$(ENG)/Plaits -I$(ENG)/Juno -I$(ENG)/DaisySP -I$(ENG)/Sampler -I$(CORE)/../sdk -I$(RMPSRC) \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_voice_gate.cpp build/voice_pi_mac.cpp ../seditview_pi.cpp ../../ui/rytm_pattern.c $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# TBLB: the machine view's table B fields (wgview_pi.cpp Fill) on the core's Mac library. wgview_pi.cpp includes platform.h (the
+# core's host/ one here); the sidecar_wgview_* state it asks the display for is the test's own (LVGL is not built here)
+build/test_wgview_pi: test_wgview_pi.cpp ../wgview_pi.cpp ../wgview_pi.h ../../ui/sidecar_wgview.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. -I$(ENG)/Plaits -I$(ENG)/Juno -I$(ENG)/DaisySP -I$(ENG)/Sampler -I$(CORE)/../sdk -I$(RMPSRC) \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_wgview_pi.cpp ../wgview_pi.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 # 0.5.0: the display's LOOP page view (loopview_pi.cpp) from the looper (core/loop/loop.h) on the core's Mac library
 build/test_loopview_pi: test_loopview_pi.cpp ../loopview_pi.cpp ../loopview_pi.h ../../ui/sidecar_loop.h $(CORE)/loop/loop.h check.h $(CORE)/build/libcore.dylib
 	@mkdir -p build

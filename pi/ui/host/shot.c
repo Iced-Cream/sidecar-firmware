@@ -570,6 +570,7 @@ static void status_init (int style)
 // ---- the machine view's made-up state (the Pi fills it from core/granular, core/wavetable: wgview_pi.cpp): GRANULAR on
 // a bells-like source with a cloud around a head that ANIM moves, or WAVETABLE morphing sine -> saw -> square
 static sidecar_wg_view_t s_Wg;
+static int s_WgSelB = -1, s_WgMix0;		// TBLB: the code table B is set to, and B silent for lack of MIX (wgview_pi.cpp's sel_b / mix0)
 // rui1036b: the VOICE page's view, faked: an analog BD (BD PLASTIC: its SRC labels, a kick on the scope, locks on a
 // few steps of a 16-step pattern) or a Sidecar track (MULTISAMPLE / 6-OP FM)
 static sidecar_voice_view_t s_Vv;
@@ -939,6 +940,8 @@ static void wg_fake (int kind, double t)
 	// the POOL: the bank of the list the view shows (sidecar_wgview_list_id, _bank), the RAM, the used set
 	int l = sidecar_wgview_list_id (), b = sidecar_wgview_bank ();
 	v->list = l, v->bank = b, v->sel = -1, v->playing = s_WgPlaying;
+	v->sel_b = s_WgSelB, v->mix0 = s_WgMix0;
+	if (s_WgSelB >= 0) snprintf (v->name_b, sizeof v->name_b, "%s", s_WgSelB ? "BASIC" : "OFF");
 	v->count[0] = 22, v->count[1] = 8, v->count[2] = 6;
 	v->ram_known = s_WgRamKnown, v->ram_mb = 412, v->ram_budget_mb = 1024, v->ram_pct = 40;
 	snprintf (v->warn, sizeof v->warn, "NOT SEEN PLAYING - A RYTM LOCK MAY STILL USE IT");
@@ -1615,6 +1618,30 @@ static void theme_run (int style, const char *pre)
 	tap (WG_SRC_X, WG_KY); WG_PUSH (); shot ("pool-tables");
 	EXPECT (sidecar_wgview_list_shown () && sidecar_wgview_list_id () == WGV_TABLES);
 	tap (wlx, WG_ROW (1 + 2)); EXPECT_CMD ("wt=pick:2:A002");
+	// TBLB: the middle key picks the table the rows set: B (P13: wt=pickb), the title says so; silent at MIX 0 (FM / RM aside) is
+	// said, briefly; the next pick of B at an open MIX, a pick of A and the key again take it back; every open starts on A
+	EXPECT (!sidecar_wgview_target_b ());
+	tap (WG_MID_X, WG_KY); WG_PUSH ();
+	EXPECT (sidecar_wgview_target_b ());
+	s_WgSelB = 3, s_WgMix0 = 0; WG_PUSH (); shot ("pool-tables-b");
+	tap (wlx, WG_ROW (1 + 4)); EXPECT_CMD ("wt=pickb:2:A004");
+	EXPECT (!sidecar_wgview_message ()[0]);
+	s_WgMix0 = 1; WG_PUSH ();
+	tap (wlx, WG_ROW (1 + 5)); EXPECT_CMD ("wt=pickb:2:A005");
+	EXPECT (!strcmp (sidecar_wgview_message (), o ? "B IS SILENT: MIX IS 0" : "B is silent: MIX is 0"));
+	shot ("pool-tables-b-silent");
+	tap (wlx, WG_ROW (1 + 0)); EXPECT_CMD ("wt=pickb:2:A000");			// B off: nothing to say
+	EXPECT (!sidecar_wgview_message ()[0]);
+	tap (wlx, WG_ROW (1 + 5)); EXPECT (!strcmp (sidecar_wgview_message (), o ? "B IS SILENT: MIX IS 0" : "B is silent: MIX is 0"));
+	tap (WG_MID_X, WG_KY); WG_PUSH ();						// back to A
+	EXPECT (!sidecar_wgview_target_b () && !sidecar_wgview_message ()[0]);
+	tap (wlx, WG_ROW (1 + 2)); EXPECT_CMD ("wt=pick:2:A002");
+	tap (WG_MID_X, WG_KY); WG_PUSH ();
+	EXPECT (sidecar_wgview_target_b ());
+	tap (WG_SRC_X, WG_KY);			// DONE
+	tap (WG_SRC_X, WG_KY); WG_PUSH ();	// POOL again: A
+	EXPECT (sidecar_wgview_list_shown () && !sidecar_wgview_target_b ());
+	s_WgSelB = -1, s_WgMix0 = 0; WG_PUSH ();
 	tap (wlx, WG_ROW (1 + 8)); WG_PUSH ();
 	EXPECT (sidecar_wgview_target () == 8);
 	tap (wlx, WG_ROW (5)); EXPECT_CMD ("pool=wt:assign:A008:3");
