@@ -66,10 +66,13 @@ struct Probe {
   uint32_t stall_us = 0, stall_last_us = 0, stall_last_mf = 0, still_us = 0, stalls = 0;
   uint32_t stall_ep_mf[kBoxes][kDirs] = {}, stall_ep_n[kBoxes][kDirs] = {};
 
-  // obstallrs=1: one Run/Stop cycle a stall, at most one a second
+  // obstallrs=1: one Run/Stop cycle a stall, at most kRsMax a boot, and none for a stall whose last event came less than
+  // kRsQuietUs after a cycle (a cycle can restart MFINDEX at 0: a stall it caused could be cycled into another, and so on)
+  static constexpr uint32_t kRsMax = 8, kRsQuietUs = 3000000;
   uint32_t rs_stall = 0, rs_us = 0, rs_n = 0;
   bool WantRunStop(uint32_t now_us) const {
-    return stalled && rs_stall != stalls && (rs_n == 0 || now_us - rs_us >= 1000000);
+    (void)now_us;
+    return stalled && rs_stall != stalls && rs_n < kRsMax && (rs_n == 0 || stall_last_us - rs_us >= kRsQuietUs);
   }
   void DidRunStop(uint32_t now_us) { rs_stall = stalls, rs_us = now_us, ++rs_n; }
 

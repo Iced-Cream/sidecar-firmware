@@ -1316,13 +1316,24 @@ int main() {
       CTimer::s_now += 25000;
       CObUsb::PollHalt();
       CHECK(count_lines(": no box event", l0) == 1 && CXHCIEndpoint::s_runstops == 1);
-      CTimer::s_now += 1000000;                                    // a second on: allowed again
+      CTimer::s_now += 1000000;                                    // still none: it began 0.1 s after the cycle's stall
+      CObUsb::PollHalt();
+      CHECK(CXHCIEndpoint::s_runstops == 1);
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);                     // back; 3 s of streaming, then a stall: cycled
+      CObUsb::PollHalt();
+      CTimer::s_now += 3000000;
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+      CObUsb::PollHalt();
+      CTimer::s_now += 25000;
       CObUsb::PollHalt();
       CHECK(CXHCIEndpoint::s_runstops == 2);
       CXHCIEndpoint::s_runstop_rc = 2;
       RytmXHCITransferEventHook(1, 7, 1, 0, 8);
       CObUsb::PollHalt();
-      CTimer::s_now += 1100000;
+      CTimer::s_now += 3100000;
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+      CObUsb::PollHalt();
+      CTimer::s_now += 25000;
       CObUsb::PollHalt();
       CHECK(count_lines("DID NOT HALT", l0) == 1);
       CXHCIEndpoint::s_runstop_rc = 0;

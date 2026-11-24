@@ -717,7 +717,7 @@ boolean CObUsb::PollProbe (void)
 
 	// obstallrs=2 (emulator test): one cycle forced 15 s after the first box event, stall or not
 	static u32 s_nFirstEvUs;
-	if (s_nFirstEvUs == 0 && s_Probe.events != 0) s_nFirstEvUs = nNow | 1;
+	if (s_nFirstEvUs == 0 && s_Probe.events != 0) s_nFirstEvUs = nNow != 0 ? nNow : 1;
 	const boolean bForced = s_nStallRunStop == 2 && s_Probe.rs_n == 0 && s_nFirstEvUs != 0
 				&& nNow - s_nFirstEvUs >= 15000000;
 	if (s_bStallRunStop && (bForced || s_Probe.WantRunStop (nNow)))	// obstallrs=1: halt and run once a stall
