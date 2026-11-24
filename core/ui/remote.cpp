@@ -2269,6 +2269,9 @@ CORE_COLD void rehello_tick(uint32_t ms) {
   if (s.rh_tries == 1) core::log("rui: Rytm traffic but no hello: asking it to say hello again");
 }
 
+// The Rytm's USB MIDI is gone (core::link_lost): the next one starts the asking again (a new Rytm, or one that missed its hello)
+CORE_COLD void remote_link_lost() { s.rh_traffic = false, s.rh_tries = 0, s.rh_ms = 0; }
+
 CORE_COLD void remote_tick(uint32_t ms) {
   if (g_going_down && !g_fill_keys_off) g_fill_keys_off = true, fill_unclaim();   // (a planned reboot: remote.h)
   // 0.5.2: the claim again every ~2 s while linked (the Rytm drops it at each USB port drop; a 4A 7E 1 only sets its flag)

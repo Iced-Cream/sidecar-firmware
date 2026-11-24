@@ -234,7 +234,7 @@ the edit arm, the `36` splash and popups, the label tables). Two things heal tha
   the uptime current; at most one a second; it also owes the machine / kit / pattern reports again, as at port-up). The
   hello sets caps, caps2, caps36 and runs the same code as any hello, so everything gated on them turns on.
 - **An older Rytm mod:** every 0026 build so far handles `3C` as `case 0x3c: break;` and never reads the payload: the request
-  is a plain keepalive. Nothing is counted (not even `rx_bad`), no reply. The host asks 3 times (15 s) and stops; the 0.5.2
+  is a plain keepalive. Nothing is counted (not even `rx_bad`), no reply. The host asks 3 times (about 10 s) and stops; the 0.5.2
   claim fallback stays for such a mod.
 
 The hello's **caps2** bit table (the 4th data byte; a bit says "this build has it", 0 = an older Rytm):

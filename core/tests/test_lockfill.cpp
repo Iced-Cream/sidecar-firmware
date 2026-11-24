@@ -21,6 +21,7 @@
 #include "device/device.h"
 #include "host/core_port.h"
 #include "hooks.h"
+#include "host_link.h"
 #include "machines.h"
 #include "seq/filltargets.h"
 #include "seq/lockfill.h"
@@ -1021,6 +1022,17 @@ int main() {
       ui::remote_tick(t0 + 15500);
       ui::remote_tick(t0 + 40000);
       CHECK(!sent(ask));   // 3 tries spent
+      // M1: the tries are spent, then the Rytm's USB MIDI goes (core::link_lost) and comes back: asking starts over
+      core::link_lost();
+      g_out.clear();
+      ui::remote_tick(t0 + 41000);
+      CHECK(!sent(ask));   // (no traffic since the loss)
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 41010);
+      CHECK(sent(ask));
+      g_out.clear();
+      ui::remote_tick(t0 + 41100);
+      CHECK(!sent(ask));   // (the 5 s rate holds again)
       // a simulated reply: caps known, and what was gated on them turns on
       ui::remote_reset();
       g_out.clear();

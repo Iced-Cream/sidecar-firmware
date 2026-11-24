@@ -54,6 +54,7 @@ inline constexpr const char kStatusTitle[] = "SIDECAR MINI";
 
 void remote_sysex(const uint8_t* d, int len);   // a whole 0x30..0x3F message from the Rytm
 void remote_tick(uint32_t ms);                  // every pass of the platform's control loop (any ms clock)
+void remote_link_lost();                        // the Rytm's USB MIDI gone: the re-hello asking starts over at the next Rytm traffic
 void remote_resync();                           // records for the Rytm were lost (no hello comes): what is owed goes again
 void remote_request(bool on);                   // the host opens / closes the page (3A 0 on)
 bool remote_open();
