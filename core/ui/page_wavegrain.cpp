@@ -1229,7 +1229,7 @@ CORE_COLD const Page* src_bank_page(int t, int machine) {
       lib::ref_for_path(path, &r);
       int e = pools::find_hash(k, r);
       if (e >= 0 && bl.machine == kGranMachine) gr::preview(bl.vi, e);   // (rui1045: not on a DSP SAMPLE voice)
-      else if (e >= 0 && bl.machine == kWaveMachine) wt::preview(bl.vi, e);
+      else if (e >= 0 && bl.machine == kWaveMachine && bl.param != 12) wt::preview(bl.vi, e);   // (a TBLB list: no preview, it would play as A)
     }
   }
   if (!bl.browse && !bl.previewed && now_ms() - bl.ms >= kSettleMs) {   // the cursor rested: GRANULAR / WAVETABLE preview it (loads it)
@@ -1237,7 +1237,7 @@ CORE_COLD const Page* src_bank_page(int t, int machine) {
     int e = bank_entry(bl.bank, bl.row), k = bank_kind();
     if (lst_lib(k, e) == srclib::kLibNone) {
       if (bl.machine == kGranMachine) gr::preview(bl.vi, e);   // (rui1045: no GRANULAR preview on a DSP SAMPLE voice)
-      else if (bl.machine == kWaveMachine) wt::preview(bl.vi, e);
+      else if (bl.machine == kWaveMachine && bl.param != 12) wt::preview(bl.vi, e);   // (a TBLB list: no preview, it would play as A)
     }
   }
   return machine == kGranMachine || machine == kChopMachine ? &kGrBankPage : machine == kWaveMachine ? (bl.param == 12 ? &kWtBankPageB : &kWtBankPage)

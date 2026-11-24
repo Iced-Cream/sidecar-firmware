@@ -1638,6 +1638,13 @@ static void theme_run (int style, const char *pre)
 	tap (wlx, WG_ROW (1 + 2)); EXPECT_CMD ("wt=pick:2:A002");
 	tap (WG_MID_X, WG_KY); WG_PUSH ();
 	EXPECT (sidecar_wgview_target_b ());
+	sidecar_wgview_pool_page (1);		// the POOL page by another route than DONE: no table B there (the TABLES tab marks A)
+	EXPECT (!sidecar_wgview_target_b ());
+	sidecar_wgview_pool_page (0); WG_PUSH ();
+	tap (WG_SRC_X, WG_KY); WG_PUSH ();	// the list again, on A, and B once more
+	EXPECT (sidecar_wgview_list_shown () && !sidecar_wgview_target_b ());
+	tap (WG_MID_X, WG_KY); WG_PUSH ();
+	EXPECT (sidecar_wgview_target_b ());
 	tap (WG_SRC_X, WG_KY);			// DONE
 	tap (WG_SRC_X, WG_KY); WG_PUSH ();	// POOL again: A
 	EXPECT (sidecar_wgview_list_shown () && !sidecar_wgview_target_b ());

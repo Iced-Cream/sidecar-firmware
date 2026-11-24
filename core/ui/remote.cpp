@@ -1970,7 +1970,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
     case kBankList: {   // rui1038: <track> <on> <hi> <lo> <why>
       if (n < 5 || b[0] >= 12 || (b[1] > 1 && b[1] != 3)) break;   // rui1040: on 3 FUNC + YES (the files for the row)
       int t = b[0], param = 0;
-      if (n >= 6) {   // 2026-11-24 TBLB: the optional 6th byte, the list's parameter: 12 (P13, WAVETABLE's table B) is the only value
+      if (n >= 6 && b[1] == 0) {   // a close frame closes whatever its param byte says (the list's own state is reset)
+        if (b[5] == 12) param = 12;
+      } else if (n >= 6) {   // 2026-11-24 TBLB: the optional 6th byte, the list's parameter: 12 (P13, WAVETABLE's table B) is the only value
         if (b[5] != 12 || (b[1] == 1 && track_named(t) != kWaveMachine)) break;
         param = 12;
       }
@@ -2046,9 +2048,12 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (has13 && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kWaveMachine) {   // 2026-11-24 TBLB: WAVETABLE's table B
         const int w13 = s.srcv[t][12] << 7 | s.srcl[t][12];
         const bool p13_changed = w13 != old13;
-        if (p13_changed && !p1_changed) s.p13_last |= (uint16_t)(1u << t);   // the names bank follows the knob touched last
-        else if (p1_changed && !p13_changed) s.p13_last &= (uint16_t)~(1u << t);
-        if (p13_changed) src_to_voice(t, w13, 12);   // an idle voice's pick of B (as P1's above)
+        // the names bank follows the knob touched last; P1 and P13 changed in one frame (a kit load): P1 first (the names are P1's)
+        if (p1_changed) s.p13_last &= (uint16_t)~(1u << t);
+        else if (p13_changed) s.p13_last |= (uint16_t)(1u << t);
+        // an idle voice's pick of B (as P1's above): only a real change of one knob (the first sight of P13 and a frame of
+        // several values are a kit's load or a report: the voice's own reports set B then)
+        if (p13_changed && old13 >= 0 && b[2] == 1) src_to_voice(t, w13, 12);
       } else if (p1_changed) {
         s.p13_last &= (uint16_t)~(1u << t);
       }
@@ -2660,6 +2665,12 @@ CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], ui
   if (label) memcpy(label, disp.label, sizeof disp.label);
   return disp.info_gen;
 }
+// 2026-11-24 TBLB: a written P13 (WAVETABLE) is the track's P13 word at once: the names bank follows it and the Rytm's echo is no change
+static void p13_written(int t, int value, int lo) {
+  s.p13_last |= (uint16_t)(1u << t);
+  s.srcv[t][12] = (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), s.srcl[t][12] = (uint8_t)(lo & 0x7f);
+  s.src_known[t] |= (uint16_t)(1u << 12);
+}
 CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) {
   int n = 0;
   for (int t = 0; t < 12; ++t) {
@@ -2667,7 +2678,7 @@ CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) 
     uint8_t b[4] = {(uint8_t)t, (uint8_t)(k & 15), (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), (uint8_t)(lo & 0x7f)};
     send_short(kWrite, b, lo > 0 ? 4 : 3);   // rui1038: the fraction byte (a bank) only when there is one: older builds too
     if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
-    if (k == 12) s.p13_last |= (uint16_t)(1u << t);   // 2026-11-24 TBLB: the names bank follows the knob touched last
+    if (k == 12 && machine == kWaveMachine) p13_written(t, value, lo);   // 2026-11-24 TBLB: the names bank follows the knob touched last
     else if (k == remote_track_src_param(t)) s.p13_last &= (uint16_t)~(1u << t);
     ++n;
   }
@@ -2679,7 +2690,7 @@ CORE_COLD bool remote_track_write(int t, int k, int value, int lo, int flags) {
                   (uint8_t)(flags & 0x7f)};
   send_short(kWrite, b, flags ? 5 : lo > 0 ? 4 : 3);
   if (k == remote_track_src_param(t)) s.src14[t] = (int16_t)(b[2] << 7 | b[3]);
-  if (k == 12) s.p13_last |= (uint16_t)(1u << t);   // 2026-11-24 TBLB (see remote_param_write)
+  if (k == 12 && machine_of(track_vb[t]) == kWaveMachine) p13_written(t, value, lo);   // 2026-11-24 TBLB (see remote_param_write)
   else if (k == remote_track_src_param(t)) s.p13_last &= (uint16_t)~(1u << t);
   if (k == 0) s.wr_pat[t] = b[2];   // (its answer: kWrite)
   s.wr_ans[t][b[1]] = 1;

@@ -752,6 +752,7 @@ CORE_COLD void kit_src_b(int vi, int e) {   // the Rytm's own P13 on an idle voi
   vi &= 7;
   if (!job || !list || e < 0 || e >= nlist) return;
   vp[vi][12] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
+  if (!b_heard(vi)) return;   // not audible by the voice's last values (they may be another sound's): no load, no "used" mark
   select_b(vi);
   pools::seen(pools::kTables, e);
 }

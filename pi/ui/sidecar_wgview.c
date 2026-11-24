@@ -244,7 +244,7 @@ static const char *mname (void)
 	return s_V.kind == WGV_GRANULAR ? "GRANULAR" : s_V.kind == WGV_WAVETABLE ? "WAVETABLE" : s_V.kind == WGV_MULTISAMPLE ? "MULTISAMPLE" : "";
 }
 static int rows_ok (void) { return s_V.list == cur_list () && s_V.bank == s_nBank; }	// the view holds the bank shown
-static int pick_b (void) { return s_nB && s_V.kind == WGV_WAVETABLE && s_V.list == WGV_TABLES; }	// the list picks for table B
+static int pick_b (void) { return s_nB && !s_bPage && s_V.kind == WGV_WAVETABLE && s_V.list == WGV_TABLES; }	// the list picks for table B
 static int sel_now (void) { return pick_b () ? s_V.sel_b : s_V.sel; }				// the code the pick's table plays
 static int r_type (int r) { return r == 0 ? WGV_RT_OFF : rows_ok () ? s_V.rtype[r] : WGV_RT_EMPTY; }
 static int r_flags (int r) { return rows_ok () ? s_V.rflags[r] : 0; }
@@ -939,6 +939,7 @@ void sidecar_wgview_pool_page (int on)
 	if (!s_Page) return;
 	s_bPage = on;
 	s_bList = on;
+	s_nB = 0, s_nSilentAt = 0;
 	modes_off ();
 	s_nTop = 0;
 	rows_build ();
@@ -1039,6 +1040,7 @@ static void title_update (void)
 		int l = cur_list ();
 		if (s_bPage) lv_snprintf (t, sizeof t, "POOL  %s", lname (l));
 		else lv_snprintf (t, sizeof t, "%s  %s %s%s", lname (l), mname (), sidecar_ui_voice (v->voice), pick_b () ? " B" : "");
+		if (pick_b () && v->name_b[0]) { size_t n = strlen (t); lv_snprintf (t + n, sizeof t - n, " %.10s", v->name_b); }	// table B's name
 		if (s_bSelect) lv_snprintf (r, sizeof r, "%d SELECTED", n_selected ());
 		else if (v->locked && v->list == l) lv_snprintf (r, sizeof r, "LOCKED");
 		else if (v->ram_known) lv_snprintf (r, sizeof r, "RAM %u MB %d%%", v->ram_mb, v->ram_pct);

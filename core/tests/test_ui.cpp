@@ -1091,6 +1091,16 @@ int main() {
     core::engine_sysex(o5, 13);
     remote_tick(t += 30);
     CHECK(!src_bank_state().on);
+    // a close frame (on 0) closes the list whatever its param byte says (a bad byte on it is not a reason to leave it open)
+    src_view(0, 1);
+    core::engine_sysex(o13, 13);
+    remote_tick(t += 30);
+    CHECK(src_bank_state().on && src_bank_state().param == 12);
+    const uint8_t c5[13] = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 1, 0, 0, 2, 0x50, 0, 5, 0xF7};
+    core::engine_sysex(c5, 13);
+    remote_tick(t += 30);
+    CHECK(!src_bank_state().on);
+    src_view(0, 0);
     // 12 on a machine without a table B: refused too (GRANULAR, DSP SAMPLE)
     machines(0, 1, gran_bd);
     core::engine_sysex(o13, 13);
