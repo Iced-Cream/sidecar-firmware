@@ -98,15 +98,18 @@ LOOP page, encoder G (second row, third cell: OUT, POST / PRE; `loop=out:post|pr
   PRE return, the computer's OUT, which the master FX take first). PRE reaches the main only 2.0 dB down (make-up x1.259 instead of x3.508), but it
   enters before the Rytm's analog distortion and compressor, so a loud loop is shaped by them a second time.
 
-The limiter and the cap, on both. When a loop is grabbed it is copied to the store, and once, on that copy (core 3, never in the audio
+The limiter and the cap, on both. When a loop is grabbed it is copied to the store, and once, while it is copied (core 3, never in the audio
 thread), run through a look-ahead peak limiter: stereo-linked, 1.5 ms look-ahead (the gain is down before the peak arrives), a smooth
 20 ms release (about 60 ms to settle), at most 6 dB of gain reduction. Its threshold is the level at which the loop, played with the
 make-up OUT has now at LEV 100, reaches the ceiling: 0.98 / make-up, so -11.1 dBFS on POST (x3.508) and -2.2 dBFS on PRE (x1.259).
-Under the threshold the limiter changes nothing (bit for bit). Over it the peaks come down, so the whole loop can play with more
+The limiter does not touch the audio: it writes a gain envelope next to the grab (one 16-bit value every 16 frames, 2 bytes per 16 frames:
+1.6 % on top of the audio, 190 KB for 16 bars), which the audio thread interpolates and multiplies in. Under the threshold the envelope is
+exactly 1 (and after a release it snaps back to exactly 1). Over it the peaks come down, so the whole loop can play with more
 gain: a drum loop with 0.9 FS transients over a 0.1 FS body comes back about 7 dB louder (RMS) than with the cap alone. Each grab
 is limited on its own copy, a second grab never touches the first (a resample is a new grab, limited again). A grab that is still
 being copied plays from the ring with the cap from its peak so far (not yet limited), and moves to the limited copy when it is
-done. The take KEEP writes is the limited copy.
+done (the envelope fades in over 10 ms as the cap's gain eases up: no step). KEEP saves the grab as it was, the original, never the
+limited loop.
 
 Then the cap: the loop is played with the make-up, or less if that would put the loop alone above 98 % of full scale: gain =
 min(make-up x LEV x BAL, 0.98 / peak) with the peak of the limited loop. So one loop never clips and the soft knee (it starts at the
@@ -131,7 +134,7 @@ the peak back and lowers the gain it finds).
 Switching OUT while a loop plays crossfades between the pairs over 10 ms (no click).
 
 Known limits of the cap: a loop that starts playing from the ring while its copy is still running uses the peak found so far (not yet limited; the gain steps down at once when a louder part is copied,
-and moves to the limited copy when it is done); the peak includes the 64 frames before the loop's start; the measured POST gain
+and it moves to the limited copy with a 10 ms fade when it is done); the peak includes the 64 frames before the loop's start; the measured POST gain
 comes from a 24-frame click, which the Rytm's converters round off a little, so it can read slightly high (the cap still holds), and
 a Rytm playing loud during `loop=cal` lowers it: keep the Rytm quiet while it runs. The soft knee never bends what is already on
 the pair (a hot PRE or POST signal): only the loop's share is shaped, into the headroom left.

@@ -1,5 +1,6 @@
 // core/tests/test_loop.cpp - the master looper (core/loop, spec-050 section 3): the MAIN ring and its frame map (Task 19),
 // the grabs (20), playback (21), resample / stop / auto-mute / LIVE VIA (22), calibration and console (25).
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -281,7 +282,7 @@ static void test_grabs() {
   g_per16 = 16000;
   to((uint64_t)(line(17) + bar() * 3 / 4));
   CHECK(loop::grab(loop::k16) == loop::kErrTooLong);
-  CHECK(std::string(loop::err_text(loop::kErrTooLong, loop::k16, t, sizeof t)) == "16 BARS NEEDS 47 BPM");
+  CHECK(std::string(loop::err_text(loop::kErrTooLong, loop::k16, t, sizeof t)) == "16 BARS NEEDS 48 BPM");   // (47 while a piece counted 4.8 frames; now 48 frames a 64 KB piece: 24000 frames for the longest grab)
   CHECK(loop::grab(loop::k8) == loop::kOk);   // 8 bars at 45 BPM: fine
   fresh();
   g_per16 = 16000;
@@ -331,13 +332,13 @@ static void test_store() {
   CHECK(std::string(loop::err_text(loop::kErrNoRoom, loop::k2, t, sizeof t)) == "NO ROOM");
   CHECK(loop::grabs() == 1 && loop::stats().dropped == 0);
 
-  // copy_in_pieces: a 16-bar grab at 120 BPM (12.3 MB), never more than 256 KB in a tick
+  // copy_in_pieces: a 16-bar grab at 120 BPM (12.3 MB), never more than 64 KB in a tick (188 ticks)
   fresh(32u << 20);
   to((uint64_t)(line(40) + bar() / 4));
   CHECK(loop::grab(loop::k16) == loop::kOk);
   run_ms(2);
   CHECK(loop::grabs() == 1 && !loop::grab_at(0)->copied);
-  run_ms(100);
+  run_ms(250);
   CHECK(loop::grab_at(0)->copied && loop::stats().worst_copy_bytes <= loop::kPieceBytes && loop::stats().worst_copy_bytes > 0);
   CHECK(loop::stats().copies == 1);
 
@@ -352,7 +353,7 @@ static void test_store() {
   CHECK(!g->copied);
   int32_t early = played_at(s0 + 200);
   CHECK(early == srcval(line(40 - 16) + 200));   // the ring's own frames (the grab starts 16 bars back)
-  run_ms(120);
+  run_ms(300);
   CHECK(g->copied && played_at(s0 + 200) == early);
 
   // copy_stays_ahead_of_writer: at 47 BPM a 16-bar grab barely fits; a tick a second (the writer 1.5 x the copy) overtakes it
@@ -1013,8 +1014,10 @@ static void test_out() {
   fresh();
   loop::set_out_gain(3.508f);
   const loop::Grab* g = grab_loop(0.9);
-  // (the grab limiter takes a 0.9 FS peak down by 6 dB at most: 0.45 FS, as the store holds it)
-  CHECK(g->copied && g->peak == pcm_peak(g) && g->peak >= (uint32_t)fs(0.449) && g->peak <= (uint32_t)fs(0.46));
+  // (the store keeps the grab as it was, 0.9 FS; the peak the cap uses is the loop as played through the limiter's envelope: the limiter
+  // takes it down by 6 dB at most, 0.45 FS, a little more where the envelope's points are conservative)
+  CHECK(g->copied && pcm_peak(g) >= (uint32_t)fs(0.9) - 1 && pcm_peak(g) <= (uint32_t)fs(0.9));
+  CHECK(g->peak >= (uint32_t)fs(0.449) && g->peak <= (uint32_t)fs(0.47));
   // post_hot_loop_stays_clean: a loop that peaks at 0.9 FS plays at under the knee (x3.508 would be 3.2 FS): no knee, no clip
   int32_t pk = out_peak(s0_of(), (int64_t)bar(), 0);
   CHECK(pk <= kKneeFs + 64);
@@ -1260,14 +1263,47 @@ static void test_limiter() {
   run_ms(60);
   g = loop::grab_at(0);
   CHECK(g->copied);
-  double minr = 2, maxr = 0, maxstep = 0, prev = -1, e_src = 0, srcpk = 0;
-  uint64_t limited = 0;
+  // the store is the audio as grabbed, bit for bit (KEEP saves it): not a sample changed by the limiter
+  int same2 = 0;
+  double e_src = 0, srcpk = 0;
   for (uint32_t i = 0; i < g->frames; ++i) {
-    double sv = (double)src_at(g, i), pv = (double)g->pcm[2 * i];
-    e_src += sv * sv;
-    srcpk = fmax(srcpk, fabs(sv));
+    double sv = (double)src_at(g, i);
+    if (g->pcm[2 * i] == src_at(g, i) && g->pcm[2 * i + 1] == -src_at(g, i)) ++same2;
+    e_src += sv * sv, srcpk = fmax(srcpk, fabs(sv));
+  }
+  CHECK(same2 == (int)g->frames);
+  { loop::KeepJob job;
+    char kmsg[48];
+    CHECK(loop::keep(0, kmsg, sizeof kmsg) && loop::keep_take(&job));
+    CHECK(job.pcm == g->pcm && job.frames == g->frames);
+    int ksame = 0;
+    for (uint32_t i = 0; i < job.frames; ++i)
+      if (job.pcm[2 * i] == src_at(g, i)) ++ksame;
+    CHECK(ksame == (int)job.frames);   // KEEP's source is the original, the limited hot loop included
+    loop::keep_finished(job.id, true, "x");
+    run_ms(5); }
+  // the played loop is the original x the envelope x the cap's gain G: the envelope never steps more than 0.5 / 72 a frame, never takes
+  // more than 6 dB, never adds
+  const double G = fmin(3.508, 0.98 * 2147483648.0 / (double)g->peak);
+  double minr = 2, maxr = 0, maxstep = 0, prev = -1;
+  uint64_t limited = 0;
+  double e_out = 0;
+  int64_t n = 0;
+  int32_t pk = 0;
+  std::vector<double> played((size_t)bar());
+  for (int64_t d = 0; d < (int64_t)bar(); d += 12) {
+    int32_t F[12][12] = {};
+    loop::out_mix(F, 12, s0_of() + (uint64_t)d);
+    for (int f = 0; f < 12; ++f) {
+      played[(size_t)(d + f)] = (double)F[f][0];
+      e_out += (double)F[f][0] * (double)F[f][0], ++n;
+      pk = std::max<int32_t>(pk, std::abs(F[f][0]));
+    }
+  }
+  for (uint32_t i = 80; i + 80 < g->frames && i < played.size(); ++i) {   // (past the start's fade, short of the seam's crossfade)
+    double sv = (double)src_at(g, i);
     if (fabs(sv) > 67108864.0) {   // (> 1/32 FS: the ratio is exact enough)
-      double r = pv / sv;
+      double r = played[i] / (sv * G);
       minr = fmin(minr, r), maxr = fmax(maxr, r);
       if (prev >= 0) maxstep = fmax(maxstep, fabs(r - prev));
       prev = r;
@@ -1277,26 +1313,14 @@ static void test_limiter() {
     }
   }
   CHECK(limited > 100);
-  CHECK(minr >= 0.495 && maxr <= 1.0001);   // never more than 6 dB (0.5), never a boost
+  CHECK(minr >= 0.495 && maxr <= 1.0002);   // never more than 6 dB (0.5), never a boost
   CHECK(maxstep < 0.0075);                   // 0.5 / 72 frames at the fastest
   // louder than on the 0.75 cap without the limiter (225824e): its gain was min(3.508, 0.75 / peak) on the whole loop
   double rms_old = sqrt(e_src / g->frames) * fmin(3.508, 0.75 * 2147483648.0 / srcpk);
-  double e_out = 0;
-  int64_t n = 0;
-  int32_t pk = 0;
-  for (int64_t d = 0; d < (int64_t)bar(); d += 12) {
-    int32_t F[12][12] = {};
-    loop::out_mix(F, 12, s0_of() + (uint64_t)d);
-    for (int f = 0; f < 12; ++f) {
-      double x = (double)F[f][0];
-      e_out += x * x, ++n;
-      pk = std::max<int32_t>(pk, std::abs(F[f][0]));
-    }
-  }
   double gain_db = 20.0 * log10(sqrt(e_out / (double)n) / rms_old);
   printf("  limiter: drum loop %.1f dB louder in RMS than the 0.75 cap alone (peak out %.3f FS)\n", gain_db, (double)pk / 2147483648.0);
-  CHECK(gain_db >= 4.0);
-  CHECK(pk <= fs(0.98) + 64 && pk >= fs(0.975));   // the loop alone: under the ceiling, not bent by the knee
+  CHECK(gain_db >= 4.0 && gain_db >= 7.0);   // (7.5 with the limiter writing the audio in place: the envelope is within 0.5 dB of it)
+  CHECK(pk <= fs(0.98) + 128 && pk >= fs(0.975));   // the loop alone: under the ceiling, not bent by the knee
 
   // a second grab does not touch the first's store copy
   uint64_t h1 = 1469598103934665603ull;
@@ -1318,8 +1342,7 @@ static void test_limiter() {
   g_sig = drum_sig;
   to((uint64_t)(line(40) + bar() / 3));
   CHECK(loop::grab(loop::k16) == loop::kOk);
-  double worst = 0, total = 0;
-  int pieces = 0;
+  std::vector<double> piece_us;
   for (int it = 0; it < 4000 && !(loop::grabs() && loop::grab_at(0)->copied); ++it) {
     g_now += 48, g_us += 1000, g_fake += 1000;
     host_fake_time(true, g_fake);
@@ -1329,12 +1352,109 @@ static void test_limiter() {
     auto t0 = std::chrono::steady_clock::now();
     loop::tick(g_us);
     double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
-    if (copying && loop::stats().worst_copy_bytes == loop::kPieceBytes) worst = fmax(worst, us), total += us, ++pieces;
+    if (copying && loop::stats().worst_copy_bytes == loop::kPieceBytes) piece_us.push_back(us);
   }
-  CHECK(loop::grabs() && loop::grab_at(0)->copied && pieces > 20);
-  printf("  limiter timing (core 3, Mac): %d pieces of 256 KB, mean %.0f us, worst %.0f us per tick (copy + peak + limiter); Pi 4 at ~1/4 the speed: ~%.0f / %.0f us\n",
-         pieces, total / pieces, worst, 4 * total / pieces, 4 * worst);
-  CHECK(worst < 10000);
+  CHECK(loop::grabs() && loop::grab_at(0)->copied && piece_us.size() > 150);
+  std::sort(piece_us.begin(), piece_us.end());
+  double med = piece_us[piece_us.size() / 2], worst = piece_us.back(), total = 0;
+  for (double u : piece_us) total += u;
+  printf("  limiter timing (core 3, Mac): %zu pieces of 64 KB, median %.0f us, mean %.0f us, worst %.0f us per tick (copy + peak + envelope); Pi 4 at ~1/4 the speed: ~%.0f us median, ~%.0f us mean\n",
+         piece_us.size(), med, total / (double)piece_us.size(), worst, 4 * med, 4 * total / (double)piece_us.size());
+  // the budget: a piece on the Pi must stay near 1 ms (the control pass, 48 frames, and the send FX's 2 ms margin): 250 us on the Mac (3x
+  // what is measured: ~85 us). The median, not the worst: a loaded machine delays single ticks
+  CHECK(med < 250);
+
+  // a loop still being copied plays from the ring, unlimited, with the cap from the peak so far: it cannot exceed the ceiling
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig = drum_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k16) == loop::kOk);
+  for (int it = 0; it < 200 && !loop::grabs(); ++it) run_ms(1);
+  CHECK(loop::grabs() == 1 && !loop::grab_at(0)->copied);
+  run_ms(3);   // (the loop starts at the next bar line, 2 ms away at the soonest: by then a piece or more is scanned)
+  CHECK(!loop::grab_at(0)->copied && loop::grab_at(0)->peak > 0);
+  uint64_t st;
+  uint32_t ln;
+  CHECK(loop::playing_info(&st, &ln));
+  int32_t mp = out_peak(st + 100, 20000, 0);   // (the copy has not moved: the ring, the peak so far)
+  CHECK(!loop::grab_at(0)->copied && mp <= fs(0.98) + 128 && mp > fs(0.5));
+}
+
+// ---- the envelope: the floor, the release, the tail, the ring -> store switch
+static int32_t burst_sig(uint64_t k) {   // a quiet sine and, once a bar, 200 frames at 0.9 FS
+  double v = 0.05 * sin((double)k * 0.01);
+  uint64_t m = k % 96000;
+  if (m >= 30000 && m < 30200) v = 0.9 * sin((double)k * 0.5);
+  return (int32_t)(v * 2147483648.0);
+}
+static void test_envelope() {
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig = burst_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  const loop::Grab* g = loop::grab_at(0);
+  CHECK(g->copied && g->env);
+  const uint32_t pts = (g->frames + loop::kPre + 15) / 16 + 2;
+  int64_t first = -1, last = -1;
+  for (uint32_t i = 0; i < g->frames; ++i)
+    if (llabs((long long)src_at(g, i)) > fs(0.5)) {
+      if (first < 0) first = i;
+      last = i;
+    }
+  CHECK(first > 0 && last > first);
+  uint32_t minv = 65535, maxstep = 0;
+  for (uint32_t j = 0; j < pts; ++j) {
+    minv = std::min<uint32_t>(minv, g->env[j]);
+    if (j) maxstep = std::max<uint32_t>(maxstep, (uint32_t)abs((int)g->env[j] - (int)g->env[j - 1]));
+  }
+  CHECK(minv == 16384);       // the 6 dB floor: a burst that needs 10 dB gets exactly 6 (x 32768)
+  CHECK(maxstep <= 3642);     // a point every 16 frames, 0.5 / 72 a frame at the fastest: 0.111 x 32768
+  const uint32_t jb = (uint32_t)(first + loop::kPre) / 16, je = (uint32_t)(last + loop::kPre) / 16;
+  for (uint32_t j = 0; j + 8 < jb; ++j) CHECK(g->env[j] == 32768);   // (before the look-ahead: unity)
+  CHECK(g->env[je + 2880 / 16] < 32768 && g->env[je + 2880 / 16] > 16384);   // 60 ms after the burst: still coming back
+  for (uint32_t j = je + 9600 / 16; j < pts; ++j) CHECK(g->env[j] == 32768);  // 200 ms after it: exactly unity, to the end
+  // a loop whose tail is quiet plays it at the make-up alone (the envelope is 1 there)
+  printf("  envelope: floor 6 dB exactly, step <= %u of 32768 per point, release past 60 ms, unity from 200 ms\n", maxstep);
+
+  // ring_to_store_switch: a loop that plays from the ring while its copy runs (unlimited, the cap from its peak so far) moves to the
+  // limited copy without a step: the envelope fades in over 10 ms as the cap's gain eases up
+  fresh(32u << 20);
+  loop::set_out_gain(3.508f);
+  g_sig_peak = fs(0.8);
+  g_sig = sine_sig;
+  to((uint64_t)(line(40) + bar() / 4));
+  CHECK(loop::grab(loop::k16) == loop::kOk);
+  for (int it = 0; it < 300 && !loop::grabs(); ++it) run_ms(1);
+  run_ms(3);
+  g = loop::grab_at(0);
+  uint64_t st;
+  uint32_t ln;
+  CHECK(!g->copied && g->peak > 0 && loop::playing_info(&st, &ln));
+  double prev = 0, worst2 = 0, late_peak = 0;
+  int sw_it = -1;
+  for (int it = 0; it < 500; ++it) {
+    jump(st + 48u * (uint64_t)it);
+    g_us += 1000;
+    loop::tick(g_us);
+    if (sw_it < 0 && g->copied) sw_it = it;
+    for (int b = 0; b < 4; ++b) {
+      int32_t F[12][12] = {};
+      loop::out_mix(F, 12, st + 48u * (uint64_t)it + 12u * (uint64_t)b);
+      for (int f = 0; f < 12; ++f) {
+        double x = (double)F[f][0] / 2147483648.0;
+        if (it >= 3) worst2 = fmax(worst2, fabs(x - prev));
+        prev = x;
+        if (sw_it >= 0 && it >= sw_it + 40) late_peak = fmax(late_peak, fabs(x));
+      }
+    }
+  }
+  CHECK(sw_it > 10 && sw_it < 450);   // it did switch, in the middle of the playing
+  CHECK(worst2 < 0.03);               // a sine at 0.98 FS moves 0.01 a frame; an envelope of 0.5 appearing at once would step 0.49
+  CHECK(late_peak > 0.9 && late_peak < 0.985);   // and the loop is at the ceiling again after the switch (limited copy x the cap's gain)
+  printf("  envelope: ring -> store switch at tick %d: largest step %.4f FS\n", sw_it, worst2);
 }
 
 static int32_t smooth_sig(uint64_t k) { return (int32_t)(0.1 * 2147483648.0 * sin((double)k * 0.01)); }
@@ -1514,6 +1634,7 @@ int main() {
   test_cal_console();
   test_out();
   test_limiter();
+  test_envelope();
   test_out_switch();
   test_out_cal_settings();
   test_resample_wait();

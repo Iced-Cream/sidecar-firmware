@@ -20,7 +20,8 @@ enum Len { kHalf = 1, k1 = 2, k2 = 4, k4 = 8, k8 = 16, k16 = 32 };   // a grab's
 enum Err { kOk = 0, kErrStopped = 1, kErrTooLong, kErrNoRoom, kErrOff, kErrBadArg };
 enum State { kRing = 0, kWait, kPlaying, kFading };   // no loop / its start is ahead / playing / stop scheduled or fading
 constexpr int kMaxGrabs = 8;
-constexpr uint32_t kPieceBytes = 256 * 1024;   // one tick's copy at most
+constexpr uint32_t kPieceBytes = 64 * 1024;    // one tick's copy at most (with its peak scan and the limiter: ~0.1 ms on a Pi 4)
+constexpr double kPieceFrames = 48;            // the frames one control pass takes (1 ms): what the press rule counts a piece as
 constexpr int kSeam = 64;                      // frames: the loop seam, a swap, a start
 constexpr int kCutFrames = 480;                // 10 ms
 constexpr int kPre = kSeam;                    // frames kept before a grab's first (the seam's other side)
@@ -34,8 +35,9 @@ struct Grab {
   uint8_t kept, gap; // KEEP wrote it; the ring had a gap in it
   uint8_t copied;    // the copy into the store is done (until then it plays from the ring)
   uint32_t peak;     // the largest |sample| (L or R, 2^31 = full scale): of what is copied so far (not limited yet), once `copied` of the
-                     // limited loop (the store's copy is run through the grab limiter in loop.cpp: at most 6 dB off the peaks)
-  int32_t* pcm;      // the store's copy (frame 0; kPre frames before it), null while not copied
+                     // loop as played through the grab limiter's envelope (loop.cpp: at most 6 dB off the peaks; the store's audio itself is untouched)
+  int32_t* pcm;      // the store's copy (frame 0; kPre frames before it), null while not copied; as grabbed, never changed
+  const uint16_t* env;   // the limiter's gain envelope for it (uint16 every 16 frames, 32768 = 1), null while not copied
 };
 
 // the time and the Rytm as the looper sees them (the sequencer's, by default; tests put theirs in)
