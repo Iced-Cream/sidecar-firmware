@@ -259,6 +259,72 @@ CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
 }
 
 // ------------------------------------------------------------------------------------------------ the grabs
+// ------------------------------------------------------------------------------------------------ the grab's limiter
+// Run once on each grab as it is copied to the store (core 3, never in the audio thread): a stereo-linked look-ahead peak limiter
+// that takes the loop's peaks down by at most 6 dB toward kThr, the level at which the loop, played with the make-up OUT has now at
+// LEV 100, reaches kLoopCeil. Its peak is then lower, so the cap (out_mix) gives the whole loop more gain. Look-ahead kLimL frames
+// (1.5 ms): the gain is the boxcar (kLimL) of the sliding minimum (kLimL + 1) of what each frame needs, so it reaches its target
+// before the peak and moves at most 0.5 / kLimL a frame; the release is exponential (tau 20 ms, ~60 ms to settle). Under the threshold
+// the gain is exactly 1 and not one sample is written. The frames are changed in place kLimL frames behind the copy.
+constexpr int kLimL = 72;
+constexpr float kLimRel = 1.0412e-3f;   // 1 - exp(-1 / (0.020 s x 48000))
+struct Limiter {
+  float thr;                  // store units
+  uint32_t t;                 // frames fed
+  float dv[kLimL + 2];        // the sliding minimum's deque: values and frame numbers (a ring)
+  uint32_t di[kLimL + 2];
+  int dh, dn;
+  float ring[kLimL];          // the last kLimL window minima (the boxcar)
+  double sum;
+  float gf;                   // the gain now
+  uint32_t peak;              // the largest |sample| after limiting, of the frames written so far
+} lim_;
+CORE_COLD void lim_begin() {
+  float mk = makeup();
+  lim_.thr = mk > 0.0f ? kLoopCeil * 2147483648.0f / mk : 3.0e9f;
+  lim_.t = 0, lim_.dh = lim_.dn = 0, lim_.sum = (double)kLimL, lim_.gf = 1.0f, lim_.peak = 0;
+  for (int i = 0; i < kLimL; ++i) lim_.ring[i] = 1.0f;
+}
+// one frame in (amp: its larger |sample|), the frame kLimL behind it out
+CORE_COLD void lim_step(int32_t* base, float amp) {
+  Limiter& L = lim_;
+  float r = 1.0f;
+  if (amp > L.thr) {
+    r = L.thr / amp;
+    if (r < 0.5f) r = 0.5f;   // at most 6 dB
+  }
+  const uint32_t t = L.t++;
+  while (L.dn && L.dv[(L.dh + L.dn - 1) % (kLimL + 2)] >= r) --L.dn;
+  const int at = (L.dh + L.dn) % (kLimL + 2);
+  L.dv[at] = r, L.di[at] = t, ++L.dn;
+  while (L.di[L.dh] + (uint32_t)kLimL < t) L.dh = (L.dh + 1) % (kLimL + 2), --L.dn;
+  const float gmin = L.dv[L.dh];
+  float& slot = L.ring[t % kLimL];
+  L.sum += (double)gmin - (double)slot;
+  slot = gmin;
+  float g = (float)(L.sum / kLimL);
+  if (g > 1.0f) g = 1.0f;
+  const float up = L.gf + (1.0f - L.gf) * kLimRel;
+  L.gf = g < up ? g : up;
+  if (t < (uint32_t)kLimL) return;
+  int32_t* f = base + 2 * (size_t)(t - kLimL);
+  if (L.gf < 1.0f) f[0] = (int32_t)lrintf((float)f[0] * L.gf), f[1] = (int32_t)lrintf((float)f[1] * L.gf);
+  for (int c = 0; c < 2; ++c) {
+    uint32_t a = f[c] < 0 ? 0u - (uint32_t)f[c] : (uint32_t)f[c];
+    L.peak = a > L.peak ? a : L.peak;
+  }
+}
+CORE_COLD void lim_feed(int32_t* base, uint32_t from, uint32_t n) {   // frames from .. from + n - 1 of the copy (not yet limited)
+  for (uint32_t i = from; i < from + n; ++i) {
+    int32_t a = base[2 * i], b = base[2 * i + 1];
+    float ua = (float)(a < 0 ? 0u - (uint32_t)a : (uint32_t)a), ub = (float)(b < 0 ? 0u - (uint32_t)b : (uint32_t)b);
+    lim_step(base, ua > ub ? ua : ub);
+  }
+}
+CORE_COLD void lim_flush(int32_t* base) {
+  for (int i = 0; i < kLimL; ++i) lim_step(base, 0.0f);
+}
+
 CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   const Grab& g = g_[gi];
   uint64_t now = frames_now();
@@ -334,6 +400,7 @@ CORE_COLD void finalize(uint64_t now) {
   g_k0_[0] = k0;
   list_edit(false);
   cp_ = {true, n.id, k0 - (uint64_t)kPre, 0, (uint32_t)(len + kPre), 0};
+  lim_begin();
   ++stats_.grabs;
   bool replace = lp_.on && (lp_.stop_at == 0 || now < lp_.stop_end);
   if (replace) ++stats_.resamples;
@@ -413,9 +480,12 @@ CORE_COLD void pump_copy() {
       publish();
     }
   }
+  lim_feed((int32_t*)(store_ + g_off_[gi]), cp_.done, n);
   cp_.k += n, cp_.done += n;
   if (cp_.done >= cp_.total) {
     Grab& g = g_[gi];
+    lim_flush((int32_t*)(store_ + g_off_[gi]));
+    g.peak = lim_.peak;   // (the grab's own, after limiting: the cap gives the limited loop more gain)
     g.pcm = (int32_t*)(store_ + g_off_[gi]) + 2 * kPre;
     g.copied = 1;
     cp_.on = false;
@@ -423,6 +493,7 @@ CORE_COLD void pump_copy() {
     if (lp_.on && lp_.grab_id == g.id && snap_.cur.from_ring && snap_.cur.active) {   // the loop goes on from the store, the same frames
       snap_.cur.from_ring = false;
       snap_.cur.pcm = g.pcm;
+      snap_.cur.peak = g.peak;
       publish();
     }
   }
@@ -1132,11 +1203,11 @@ inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
 }
-// the loop onto POST or PRE: each loop's level is capped from its peak (out_mix), so one loop stays under kKnee; several summed
+// the loop onto POST or PRE: each loop's level is capped from its peak (out_mix), so one loop stays under kKnee (= kLoopCeil); several summed
 // loops, or the Sidecar's own output under them, may ask for more than full scale.
 // Under kKnee of full scale the sum is exact (as add); above it bends smoothly toward full scale (a tanh knee) instead of a
 // hard clip that a resample would record again
-constexpr float kKnee = 0.75f;
+constexpr float kKnee = kLoopCeil;   // a loop alone (capped to kLoopCeil) is never shaped; a sum with the base or other loops is
 inline int32_t add_soft(int32_t a, float x) {
   float s = ((float)a + x) * (1.0f / 2147483648.0f), m = s < 0 ? -s : s;
   if (!(m > kKnee)) return add(a, x);
@@ -1145,7 +1216,8 @@ inline int32_t add_soft(int32_t a, float x) {
   float ma = (float)a * (1.0f / 2147483648.0f);
   if (ma >= kKnee || -ma >= kKnee) {
     float hr = 2147483520.0f - fabsf((float)a);
-    if (!(hr > 0.0f) || x * (float)a <= 0.0f) return hr > 0.0f ? add(a, x) : a;   // (no room, or the loop pulls it back)
+    if (x * (float)a <= 0.0f) return add(a, x);   // (the loop pulls it back: as it is, also from a base on the rail)
+    if (!(hr > 0.0f)) return a;                   // (no room)
     float y = hr * tanhf(fabsf(x) / hr);
     return add(a, x < 0 ? -y : y);
   }

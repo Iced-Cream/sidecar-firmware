@@ -33,7 +33,8 @@ struct Grab {
   uint64_t start;    // the host render frame of its first sample's source (arrival frame of the grab's start)
   uint8_t kept, gap; // KEEP wrote it; the ring had a gap in it
   uint8_t copied;    // the copy into the store is done (until then it plays from the ring)
-  uint32_t peak;     // the largest |sample| (L or R, 2^31 = full scale) of what is copied so far; final once `copied`
+  uint32_t peak;     // the largest |sample| (L or R, 2^31 = full scale): of what is copied so far (not limited yet), once `copied` of the
+                     // limited loop (the store's copy is run through the grab limiter in loop.cpp: at most 6 dB off the peaks)
   int32_t* pcm;      // the store's copy (frame 0; kPre frames before it), null while not copied
 };
 
@@ -110,7 +111,7 @@ float pre_gain();
 void set_postgain(float g);
 float postgain();
 float makeup();                             // what the loop is multiplied by now (POST: postgain, else out_gain; PRE: pre_gain)
-constexpr float kLoopCeil = 0.75f;          // the loop alone is capped to this part of full scale (the soft knee's start)
+constexpr float kLoopCeil = 0.98f;          // the loop alone is capped to this part of full scale (also the soft knee's start)
 bool wants_in();                            // the ring exists
 bool wants_out();                           // a loop is on its way or plays (out_mix does something)
 

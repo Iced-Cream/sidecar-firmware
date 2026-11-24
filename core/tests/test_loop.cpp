@@ -1013,11 +1013,12 @@ static void test_out() {
   fresh();
   loop::set_out_gain(3.508f);
   const loop::Grab* g = grab_loop(0.9);
-  CHECK(g->copied && g->peak == pcm_peak(g) && g->peak >= (uint32_t)fs(0.9) - 1 && g->peak <= (uint32_t)fs(0.9));
+  // (the grab limiter takes a 0.9 FS peak down by 6 dB at most: 0.45 FS, as the store holds it)
+  CHECK(g->copied && g->peak == pcm_peak(g) && g->peak >= (uint32_t)fs(0.449) && g->peak <= (uint32_t)fs(0.46));
   // post_hot_loop_stays_clean: a loop that peaks at 0.9 FS plays at under the knee (x3.508 would be 3.2 FS): no knee, no clip
   int32_t pk = out_peak(s0_of(), (int64_t)bar(), 0);
-  CHECK(pk <= fs(0.95) && pk <= kKneeFs + 64);
-  CHECK(pk >= fs(0.70));   // ... and not quieter than it must be
+  CHECK(pk <= kKneeFs + 64);
+  CHECK(pk >= fs(0.975));   // ... and not quieter than it must be: the loop alone is not bent by the knee (it starts at the ceiling)
   // the same loop from the older-grab path (a tap) and with the Sidecar's own signal under it: the knee is the backstop, never a wrap
   int32_t own = out_peak(s0_of(), 4800, 0, fs(0.6));
   CHECK(own < 2147483520 && own > 0);
@@ -1057,7 +1058,7 @@ static void test_out() {
   loop::set_out(loop::kOutPre);
   grab_loop(0.9);
   pk = out_peak(s0_of(), (int64_t)bar(), 2);
-  CHECK(pk <= fs(0.95) && pk <= kKneeFs + 64 && pk >= fs(0.70));
+  CHECK(pk <= kKneeFs + 64 && pk >= fs(0.975));
   CHECK(out_peak(s0_of() + 64, 4800, 0) == 0);   // (nothing on 0/1)
 
   // postgain_replaces_the_makeup: the measured POST gain (1.5 .. 6.0) is used on POST instead of out_gain; insane: ignored
@@ -1104,7 +1105,7 @@ static void test_out() {
   double want2 = 3.508 * (double)loop::grab_at(0)->peak;   // the second's own: the quiet one keeps the whole make-up
   int32_t pk2 = out_peak(s2 + 64, (int64_t)bar() - 128, 0);
   CHECK(pk2 > want2 * 0.99 && pk2 < want2 * 1.01);
-  CHECK(loop::grab_at(1)->peak > (uint32_t)fs(0.89));
+  CHECK(loop::grab_at(1)->peak > (uint32_t)fs(0.44));
   CHECK(loop::play(1));   // the older, hot grab again
   to(g_now + (uint64_t)(2 * bar()));
   CHECK(loop::playing_info(&st, &ln) && st > s2);
@@ -1123,12 +1124,12 @@ static void test_out() {
       loop::set_bal(bal);
       pk = out_peak(s0_of(), (int64_t)bar(), c0);   // (both channels of the pair)
       CHECK(pk <= kKneeFs + 64);
-      if (bal >= 64) CHECK(pk >= fs(0.70));
+      if (bal >= 64) CHECK(pk >= fs(0.97));
     }
     loop::set_bal(64);
     loop::set_lev(50);
     pk = out_peak(s0_of(), (int64_t)bar(), c0);
-    CHECK(pk > fs(0.375) * 0.98 && pk < fs(0.375) * 1.02);
+    CHECK(pk > fs(0.49) * 0.98 && pk < fs(0.49) * 1.02);   // LEV 50: half of the ceiling
   }
   fresh();
   loop::set_out_gain(3.508f);
@@ -1148,7 +1149,7 @@ static void test_out() {
     const int c0 = out == loop::kOutPre ? 2 : 0;
     g = grab_loop(1e-7);   // (a tiny loop: peak ~ 200)
     CHECK(g->peak > 0 && g->peak < 1000);
-    int32_t base = fs(0.9);
+    int32_t base = fs(0.99);   // (past the knee on its own)
     int32_t F[12][12] = {};
     for (int f = 0; f < 12; ++f) F[f][c0] = base, F[f][c0 + 1] = -base;
     loop::out_mix(F, 12, s0_of() + 64);
@@ -1169,6 +1170,35 @@ static void test_out() {
     loop::out_mix(E, 12, s0_of() + 64);
     for (int f = 0; f < 12; ++f) CHECK(E[f][c0] == base && E[f][c0 + 1] == -base);
   }
+  // hot base + a loud loop: shaped into the headroom, never above 2147483520, above the base
+  fresh();
+  loop::set_out_gain(3.508f);
+  loop::set_pre_gain(3.508f / 2.786f);
+  loop::set_out(loop::kOutPre);
+  g = grab_loop(0.14);
+  for (int base : {fs(0.9), fs(0.99)}) {
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][2] = base;
+    loop::out_mix(F, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) {
+      if (g->pcm[2 * (64 + f)] > 100000000) CHECK(F[f][2] > base && F[f][2] < 2147483520);
+    }
+  }
+  // a base hard-clipped on the rail, the loop pulling it back: added as it is (no jump between the rail and a little off it)
+  fresh();
+  loop::set_out_gain(3.508f);
+  g = grab_loop(0.1);
+  for (int rail : {INT32_MIN, INT32_MIN + 64, INT32_MIN + 4096}) {
+    int32_t F[12][12] = {};
+    for (int f = 0; f < 12; ++f) F[f][0] = rail, F[f][1] = -(rail + 1);   // L on the negative rail, R on the positive one
+    loop::out_mix(F, 12, s0_of() + 64);
+    for (int f = 0; f < 12; ++f) {
+      int64_t wl = (int64_t)rail + (int64_t)(3.508f * (float)g->pcm[2 * (64 + f)]);   // (the loop's L is positive: pulls L back)
+      int64_t wr = -((int64_t)rail + 1) - (int64_t)(3.508f * (float)g->pcm[2 * (64 + f)]);
+      CHECK(llabs(F[f][0] - wl) <= 64 && llabs(F[f][1] - wr) <= 64);
+    }
+  }
+
   // makeup_change_inside_the_cap: the cap follows a make-up change at once (a loop=cal result while a hot loop plays): no overshoot
   fresh();
   loop::set_out_gain(3.508f);
@@ -1184,6 +1214,127 @@ static void test_out() {
     CHECK(pk <= kKneeFs + 64); }
 
   printf("  out: POST cap from the peak, quiet keeps the make-up, PRE onto 2/3, postgain, two loops in a row, LEV / BAL inside the cap ok\n");
+}
+
+// ---- the grab limiter
+static int32_t drum_sig(uint64_t k) {   // a body at 0.1 FS and a short, loud transient (0.8 FS, decaying over a few ms) every 12000 frames
+  uint64_t m = k % 12000;
+  double body = 0.1 * sin((double)k * 0.01), tr = m < 400 ? 0.8 * exp(-(double)m / 60.0) * sin((double)k * 0.9) : 0.0;
+  return (int32_t)((body + tr) * 2147483648.0);
+}
+static int32_t sine_sig(uint64_t k) { return (int32_t)((double)g_sig_peak * sin((double)k * 0.01)); }
+static int32_t src_at(const loop::Grab* g, uint32_t i) { return g_sig((uint64_t)((int64_t)g->start - kD) + i); }   // the loop's L as it was in the ring
+static void test_limiter() {
+  loop::set_out_gain(3.508f);
+  // below_threshold_is_bit_identical: a sine at 0.27 FS never reaches the threshold (0.98 / 3.508 = 0.279 FS): not a bit changes
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig_peak = fs(0.27);
+  g_sig = sine_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  const loop::Grab* g = loop::grab_at(0);
+  CHECK(g->copied);
+  int same = 0;
+  for (uint32_t i = 0; i < g->frames; ++i)
+    if (g->pcm[2 * i] == src_at(g, i) && g->pcm[2 * i + 1] == -src_at(g, i)) ++same;
+  CHECK(same == (int)g->frames);   // (also proves the alignment of src_at)
+  // a sine just above it is changed, by at most 6 dB
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig_peak = fs(0.4);
+  g_sig = sine_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  g = loop::grab_at(0);
+  CHECK(g->copied && g->peak < (uint32_t)fs(0.4) - 1000 && g->peak >= (uint32_t)fs(0.2) - 1000);
+
+  // drum-like loop: the limiter's gain moves smoothly, never takes more than 6 dB, never raises; the loop is louder than it was
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig = drum_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  g = loop::grab_at(0);
+  CHECK(g->copied);
+  double minr = 2, maxr = 0, maxstep = 0, prev = -1, e_src = 0, srcpk = 0;
+  uint64_t limited = 0;
+  for (uint32_t i = 0; i < g->frames; ++i) {
+    double sv = (double)src_at(g, i), pv = (double)g->pcm[2 * i];
+    e_src += sv * sv;
+    srcpk = fmax(srcpk, fabs(sv));
+    if (fabs(sv) > 67108864.0) {   // (> 1/32 FS: the ratio is exact enough)
+      double r = pv / sv;
+      minr = fmin(minr, r), maxr = fmax(maxr, r);
+      if (prev >= 0) maxstep = fmax(maxstep, fabs(r - prev));
+      prev = r;
+      if (r < 0.999) ++limited;
+    } else {
+      prev = -1;
+    }
+  }
+  CHECK(limited > 100);
+  CHECK(minr >= 0.495 && maxr <= 1.0001);   // never more than 6 dB (0.5), never a boost
+  CHECK(maxstep < 0.0075);                   // 0.5 / 72 frames at the fastest
+  // louder than on the 0.75 cap without the limiter (225824e): its gain was min(3.508, 0.75 / peak) on the whole loop
+  double rms_old = sqrt(e_src / g->frames) * fmin(3.508, 0.75 * 2147483648.0 / srcpk);
+  double e_out = 0;
+  int64_t n = 0;
+  int32_t pk = 0;
+  for (int64_t d = 0; d < (int64_t)bar(); d += 12) {
+    int32_t F[12][12] = {};
+    loop::out_mix(F, 12, s0_of() + (uint64_t)d);
+    for (int f = 0; f < 12; ++f) {
+      double x = (double)F[f][0];
+      e_out += x * x, ++n;
+      pk = std::max<int32_t>(pk, std::abs(F[f][0]));
+    }
+  }
+  double gain_db = 20.0 * log10(sqrt(e_out / (double)n) / rms_old);
+  printf("  limiter: drum loop %.1f dB louder in RMS than the 0.75 cap alone (peak out %.3f FS)\n", gain_db, (double)pk / 2147483648.0);
+  CHECK(gain_db >= 4.0);
+  CHECK(pk <= fs(0.98) + 64 && pk >= fs(0.975));   // the loop alone: under the ceiling, not bent by the knee
+
+  // a second grab does not touch the first's store copy
+  uint64_t h1 = 1469598103934665603ull;
+  for (uint32_t i = 0; i < 2 * g->frames; ++i) h1 = (h1 ^ (uint32_t)g->pcm[i]) * 1099511628211ull;
+  uint32_t first_id = g->id;
+  to((uint64_t)(line(42) + bar() / 3));
+  CHECK(loop::grab(loop::k1) == loop::kOk);
+  run_ms(60);
+  CHECK(loop::grabs() == 2 && loop::grab_at(0)->copied);
+  const loop::Grab* old = loop::grab_at(1);
+  CHECK(old->id == first_id);
+  uint64_t h2 = 1469598103934665603ull;
+  for (uint32_t i = 0; i < 2 * old->frames; ++i) h2 = (h2 ^ (uint32_t)old->pcm[i]) * 1099511628211ull;
+  CHECK(h1 == h2);
+
+  // timing on core 3: a full-length loop (16 bars at 120 BPM = 12 MB, 47 pieces of 256 KB), the time of each tick that copies a piece
+  fresh();
+  loop::set_out_gain(3.508f);
+  g_sig = drum_sig;
+  to((uint64_t)(line(40) + bar() / 3));
+  CHECK(loop::grab(loop::k16) == loop::kOk);
+  double worst = 0, total = 0;
+  int pieces = 0;
+  for (int it = 0; it < 4000 && !(loop::grabs() && loop::grab_at(0)->copied); ++it) {
+    g_now += 48, g_us += 1000, g_fake += 1000;
+    host_fake_time(true, g_fake);
+    mod::rytm_out_tick(now_ms());
+    feed();
+    bool copying = loop::grabs() && !loop::grab_at(0)->copied;
+    auto t0 = std::chrono::steady_clock::now();
+    loop::tick(g_us);
+    double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    if (copying && loop::stats().worst_copy_bytes == loop::kPieceBytes) worst = fmax(worst, us), total += us, ++pieces;
+  }
+  CHECK(loop::grabs() && loop::grab_at(0)->copied && pieces > 20);
+  printf("  limiter timing (core 3, Mac): %d pieces of 256 KB, mean %.0f us, worst %.0f us per tick (copy + peak + limiter); Pi 4 at ~1/4 the speed: ~%.0f / %.0f us\n",
+         pieces, total / pieces, worst, 4 * total / pieces, 4 * worst);
+  CHECK(worst < 10000);
 }
 
 static int32_t smooth_sig(uint64_t k) { return (int32_t)(0.1 * 2147483648.0 * sin((double)k * 0.01)); }
@@ -1362,6 +1513,7 @@ int main() {
   test_resample_stop_mute();
   test_cal_console();
   test_out();
+  test_limiter();
   test_out_switch();
   test_out_cal_settings();
   test_resample_wait();
