@@ -45,6 +45,14 @@ uint64_t g_k0_[kMaxGrabs];    // its first frame's absolute ring index (the ring
 int ng_ = 0;
 uint32_t list_seq_ = 0;   // odd while the grab list is being shifted (json, read on core 0, retries around it)
 uint32_t next_id_ = 1;
+// a grab's extent in the store: its frames (kPre before the first), then the limiter's gain envelope (one uint16 a kEnvStep frames,
+// 32768 = unity; the audio is never written after the copy: KEEP saves it as it was grabbed). Memory: 8 bytes a frame + 2 bytes a 16
+// frames = 1.6 % over the audio (12 MB of audio: +190 KB)
+constexpr uint32_t kEnvStep = 16;
+constexpr float kEnvOne = 32768.0f;
+inline uint64_t env_off(uint32_t frames) { return ((uint64_t)(frames + kPre) * 8 + 15) & ~15ull; }
+inline uint32_t env_pts(uint32_t frames) { return (frames + kPre + kEnvStep - 1) / kEnvStep + 2; }
+inline uint64_t extent(uint32_t frames) { return (env_off(frames) + (uint64_t)env_pts(frames) * 2 + 15) & ~15ull; }
 
 struct Pending {
   bool on;
@@ -83,6 +91,8 @@ struct LpSnap {
   uint64_t stop_at;     // 0: none
   uint32_t stop_len;    // frames of the fade
   uint32_t peak;        // the loop's largest |sample| (the make-up is capped from it; while it is still copied: so far)
+  const uint16_t* env;  // the limiter's gain envelope (null: none, gain 1)
+  uint32_t peak_unl;    // the loop's peak without the envelope (what it was playing from the ring with), while it fades in
 };
 struct Snap {
   LpSnap cur;           // the loop that starts (or plays) now
@@ -218,7 +228,7 @@ CORE_COLD bool first_fit(uint64_t bytes, uint64_t* off, bool fixed) {
     bool clash = false;
     for (int i = 0; i < ng_; ++i) {
       if (fixed && !keeps_extent(i)) continue;
-      uint64_t a = g_off_[i], b = a + (uint64_t)(g_[i].frames + kPre) * 8;
+      uint64_t a = g_off_[i], b = a + extent(g_[i].frames);
       if (a < pos + bytes && b > pos) clash = true, end_of_overlap = b > end_of_overlap ? b : end_of_overlap;
     }
     if (!clash) {
@@ -242,7 +252,7 @@ CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
       uint64_t end_of_overlap = pos;
       bool clash = false;
       for (int i = 0; i < ng_; ++i) {
-        uint64_t a = g_off_[i], b = a + (uint64_t)(g_[i].frames + kPre) * 8;
+        uint64_t a = g_off_[i], b = a + extent(g_[i].frames);
         if (a < pos + bytes && b > pos) clash = true, end_of_overlap = b > end_of_overlap ? b : end_of_overlap;
       }
       if (!clash) {
@@ -259,6 +269,122 @@ CORE_COLD bool find_room(uint64_t bytes, uint64_t* off) {
 }
 
 // ------------------------------------------------------------------------------------------------ the grabs
+// ------------------------------------------------------------------------------------------------ the grab's limiter
+// Run once on each grab as it is copied to the store (core 3, never in the audio thread): a stereo-linked look-ahead peak limiter that
+// takes the loop's peaks down by at most 6 dB toward kThr, the level at which the loop, played with the make-up OUT has now at LEV 100,
+// reaches kLoopCeil. It does not touch the audio: it writes a gain envelope next to it (one uint16 every kEnvStep frames, linearly
+// interpolated by the audio thread), so the store keeps the grab as it was (KEEP saves the original). The loop's peak (what the cap uses)
+// is measured after the envelope, as it is played. Look-ahead kLimL frames (1.5 ms): the gain is the boxcar (kLimL) of the sliding minimum
+// (kLimL + 1) of what each frame needs, so it reaches its target before the peak and moves at most 0.5 / kLimL a frame; the release is
+// exponential (tau 20 ms, ~60 ms to settle). Each envelope point is the lowest gain within kEnvStep - 1 frames around it, so the
+// interpolation never gives a frame more gain than the limiter did. Under the threshold the envelope is exactly 1.
+constexpr int kLimL = 72;
+constexpr float kLimRel = 1.0412e-3f;   // 1 - exp(-1 / (0.020 s x 48000))
+struct Limiter {
+  float thr;                  // store units
+  uint32_t t;                 // frames fed
+  float dv[kLimL + 2];        // the sliding minimum's deque: values and frame numbers (a ring)
+  uint32_t di[kLimL + 2];
+  int dh, dn;
+  float ring[kLimL];          // the last kLimL window minima (the boxcar)
+  double sum;
+  float gf;                   // the gain now
+  float gbuf[32];             // the gain of the last 32 frames out (for the envelope's points)
+  const int32_t* base;        // the copy (frame 0 = its first pre-roll frame), read only
+  uint16_t* env;
+  uint32_t total, next_pt, pko;   // frames; the next envelope point to set; the first frame whose peak is not measured yet
+  uint32_t peak;              // the largest |sample| as played (after the envelope) of the frames measured
+} lim_;
+// the envelope's gain at store frame i (also what the audio thread does)
+inline float env_gain(const uint16_t* e, uint32_t i) {
+  const uint32_t j = i / kEnvStep;
+  const float a = (float)e[j] * (1.0f / kEnvOne), b = (float)e[j + 1] * (1.0f / kEnvOne);
+  return a + (b - a) * ((float)(i % kEnvStep) * (1.0f / kEnvStep));
+}
+CORE_COLD void lim_begin(const int32_t* base, uint16_t* env, uint32_t total) {
+  float mk = makeup();
+  lim_.thr = mk > 0.0f ? kLoopCeil * 2147483648.0f / mk : 3.0e9f;
+  lim_.t = 0, lim_.dh = lim_.dn = 0, lim_.sum = (double)kLimL, lim_.gf = 1.0f, lim_.peak = 0;
+  lim_.base = base, lim_.env = env, lim_.total = total, lim_.next_pt = 0, lim_.pko = 0;
+  for (int i = 0; i < kLimL; ++i) lim_.ring[i] = 1.0f;
+  for (int i = 0; i < 32; ++i) lim_.gbuf[i] = 1.0f;
+}
+CORE_COLD void lim_peaks(uint32_t to) {   // the played peak of frames pko .. to - 1 (their envelope points are set)
+  Limiter& L = lim_;
+  uint32_t pk = L.peak;
+  while (L.pko < to) {
+    const uint32_t j = L.pko / kEnvStep, e = (j + 1) * kEnvStep < to ? (j + 1) * kEnvStep : to;   // this segment's frames
+    const uint16_t ea = L.env[j], eb = L.env[j + 1];
+    const float a = (float)ea * (1.0f / kEnvOne), b = (float)eb * (1.0f / kEnvOne);
+    for (uint32_t i = L.pko; i < e; ++i) {
+      const int32_t* x = L.base + 2 * (size_t)i;
+      const uint32_t ax = x[0] < 0 ? 0u - (uint32_t)x[0] : (uint32_t)x[0], ay = x[1] < 0 ? 0u - (uint32_t)x[1] : (uint32_t)x[1];
+      uint32_t m = ax > ay ? ax : ay;
+      if (ea != (uint16_t)kEnvOne || eb != (uint16_t)kEnvOne) {   // (unity: the sample itself)
+        const float g = a + (b - a) * ((float)(i % kEnvStep) * (1.0f / kEnvStep));   // (as env_gain)
+        const float p = (float)m * g;
+        m = p >= 4294967040.0f ? 0xFFFFFF00u : (uint32_t)p;
+      }
+      pk = m > pk ? m : pk;
+    }
+    L.pko = e;
+  }
+  L.peak = pk;
+}
+CORE_COLD void lim_point(uint32_t j, uint32_t hi_cap) {   // envelope point j: the lowest gain of frames 16j - 15 .. 16j + 15 (those that exist)
+  Limiter& L = lim_;
+  const int64_t lo = (int64_t)j * kEnvStep - (kEnvStep - 1), hi = (int64_t)j * kEnvStep + (kEnvStep - 1);
+  const int64_t a = lo < 0 ? 0 : lo, b = hi < (int64_t)hi_cap ? hi : (int64_t)hi_cap - 1;
+  float m = L.gf;
+  for (int64_t o = a; o <= b; ++o) m = L.gbuf[o & 31] < m ? L.gbuf[o & 31] : m;
+  L.env[j] = (uint16_t)lrintf(m * kEnvOne);
+}
+// one frame in (amp: its larger |sample|); the gain of the frame kLimL behind it comes out
+CORE_COLD void lim_step(float amp) {
+  Limiter& L = lim_;
+  float r = 1.0f;
+  if (amp > L.thr) {
+    r = L.thr / amp;
+    if (r < 0.5f) r = 0.5f;   // at most 6 dB
+  }
+  const uint32_t t = L.t++;
+  while (L.dn && L.dv[(L.dh + L.dn - 1) % (kLimL + 2)] >= r) --L.dn;
+  const int at = (L.dh + L.dn) % (kLimL + 2);
+  L.dv[at] = r, L.di[at] = t, ++L.dn;
+  while (L.di[L.dh] + (uint32_t)kLimL < t) L.dh = (L.dh + 1) % (kLimL + 2), --L.dn;
+  const float gmin = L.dv[L.dh];
+  float& slot = L.ring[t % kLimL];
+  L.sum += (double)gmin - (double)slot;
+  slot = gmin;
+  float g = (float)(L.sum / kLimL);
+  if (g > 1.0f) g = 1.0f;
+  const float up = L.gf + (1.0f - L.gf) * kLimRel;
+  L.gf = g < up ? g : up;
+  if (L.gf > 1.0f - 1e-4f) L.gf = 1.0f;   // (back to exactly unity after a release: a loop with a quiet tail has an envelope of exactly 1 there)
+  if (t < (uint32_t)kLimL) return;
+  const uint32_t o = t - kLimL;   // the frame this gain is for
+  L.gbuf[o & 31] = L.gf;
+  if (o % kEnvStep == kEnvStep - 1) {   // 16j + 15: point j can be set (its window is complete); the segment before it can be measured
+    lim_point(L.next_pt, o + 1);
+    if (L.next_pt > 0) lim_peaks(L.next_pt * kEnvStep);
+    ++L.next_pt;
+  }
+}
+CORE_COLD void lim_feed(uint32_t from, uint32_t n) {   // frames from .. from + n - 1 of the copy
+  for (uint32_t i = from; i < from + n; ++i) {
+    int32_t a = lim_.base[2 * (size_t)i], b = lim_.base[2 * (size_t)i + 1];
+    float ua = (float)(a < 0 ? 0u - (uint32_t)a : (uint32_t)a), ub = (float)(b < 0 ? 0u - (uint32_t)b : (uint32_t)b);
+    lim_step(ua > ub ? ua : ub);
+  }
+}
+CORE_COLD void lim_flush() {   // the last kLimL frames' gains, the points still to set, the rest of the peak
+  Limiter& L = lim_;
+  for (int i = 0; i < kLimL; ++i) lim_step(0.0f);
+  const uint32_t pts = env_pts(L.total - kPre);
+  for (; L.next_pt < pts; ++L.next_pt) lim_point(L.next_pt, L.total);
+  lim_peaks(L.total);
+}
+
 CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   const Grab& g = g_[gi];
   uint64_t now = frames_now();
@@ -271,7 +397,7 @@ CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   } else {
     lpp_ = LoopInfo(), snap_.prev = LpSnap();
   }
-  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0, g.peak};
+  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0, g.peak, g.copied ? g.env : nullptr, g.peak};
   lp_ = {true, g.id, start, g.frames, 0, 0, g.half_bars};
   publish();
 }
@@ -301,7 +427,7 @@ CORE_COLD void finalize(uint64_t now) {
     ++stats_.refused;
     return;
   }
-  uint64_t bytes = (uint64_t)(len + kPre) * 8;
+  uint64_t bytes = extent((uint32_t)len);
   uint64_t off;
   if (!room_possible(bytes)) {   // not even with the others gone: none is dropped for it
     pend_.on = false;
@@ -334,6 +460,7 @@ CORE_COLD void finalize(uint64_t now) {
   g_k0_[0] = k0;
   list_edit(false);
   cp_ = {true, n.id, k0 - (uint64_t)kPre, 0, (uint32_t)(len + kPre), 0};
+  lim_begin((const int32_t*)(store_ + g_off_[0]), (uint16_t*)(store_ + g_off_[0] + env_off(n.frames)), (uint32_t)(len + kPre));
   ++stats_.grabs;
   bool replace = lp_.on && (lp_.stop_at == 0 || now < lp_.stop_end);
   if (replace) ++stats_.resamples;
@@ -409,13 +536,17 @@ CORE_COLD void pump_copy() {
     cp_.peak = pk;
     g_[gi].peak = pk;
     if (lp_.on && lp_.grab_id == cp_.id && snap_.cur.from_ring && snap_.cur.active && snap_.cur.peak != pk) {   // a loop playing from the ring: so far
-      snap_.cur.peak = pk;
+      snap_.cur.peak = pk, snap_.cur.peak_unl = pk;
       publish();
     }
   }
+  lim_feed(cp_.done, n);
   cp_.k += n, cp_.done += n;
   if (cp_.done >= cp_.total) {
     Grab& g = g_[gi];
+    lim_flush();
+    g.peak = lim_.peak;   // (the grab's own, as played through the envelope: the cap gives the limited loop more gain)
+    g.env = (const uint16_t*)(store_ + g_off_[gi] + env_off(g.frames));
     g.pcm = (int32_t*)(store_ + g_off_[gi]) + 2 * kPre;
     g.copied = 1;
     cp_.on = false;
@@ -423,6 +554,9 @@ CORE_COLD void pump_copy() {
     if (lp_.on && lp_.grab_id == g.id && snap_.cur.from_ring && snap_.cur.active) {   // the loop goes on from the store, the same frames
       snap_.cur.from_ring = false;
       snap_.cur.pcm = g.pcm;
+      snap_.cur.peak = g.peak;
+      snap_.cur.peak_unl = cp_.peak;   // (the unlimited one: the envelope fades in against it)
+      snap_.cur.env = g.env;
       publish();
     }
   }
@@ -480,7 +614,7 @@ CORE_COLD int grab(int half_bars) {
   // spec 3.3: it must fit with what has been written since its first frame: the grab, the part of the grid in progress,
   // the round trip, the copy's time (a 256 KB piece a control pass, taken as 0.1 ms) and a 0.5 s margin
   double cap = (double)ring_.capacity();
-  double copy = (len + kPre) * 8 / (double)kPieceBytes * 4.8;   // frames of the copy (a piece = 4.8 frames of 0.1 ms)
+  double copy = (len + kPre) * 8 / (double)kPieceBytes * kPieceFrames;   // frames of the copy (a piece a control pass: kPieceFrames)
   if (at - (a_e - len) + m.lat + copy + 24000.0 > cap) {
     // the BPM a grab of this many bars needs at the worst point of the bar (a whole bar in progress)
     double bars = (double)half_bars / 2.0, room = cap - m.lat - 24000.0 - copy;
@@ -494,7 +628,7 @@ CORE_COLD int grab(int half_bars) {
     ++stats_.refused;
     return kErrNoRoom;   // (the ring has not got that far back: just started)
   }
-  uint64_t bytes = (uint64_t)((len + kPre) * 8);
+  uint64_t bytes = extent((uint32_t)(len + 0.5));
   if (bytes > store_bytes_) {
     ++stats_.refused;
     return kErrNoRoom;
@@ -1087,6 +1221,9 @@ struct Voice {
   uint32_t stop_len;
   bool fade_in;
   uint32_t peak;   // the loop's largest |sample| (0: not known)
+  const uint16_t* env;   // the limiter's gain envelope (null: gain 1)
+  uint32_t peak_unl;     // the peak without the envelope: the cap blends from it to `peak` as the envelope fades in (ew)
+  float ew;        // how much of the envelope is applied (0..1): a loop that moves from the ring to the store fades it in over 10 ms
   float trim[2];   // its level cap now on POST / PRE (<= 1): moves toward the target a block gives it, < 0 not set yet
 };
 Voice cur_, old_;
@@ -1100,7 +1237,9 @@ inline void vframe(const Voice& v, int64_t k, float* l, float* r) {
     ring_.frame(v.idx0 + (uint64_t)k, &a, &b);
     *l = (float)a, *r = (float)b;
   } else {
-    *l = (float)v.pcm[2 * k], *r = (float)v.pcm[2 * k + 1];
+    float g = v.env ? env_gain(v.env, (uint32_t)(k + kPre)) : 1.0f;   // (the limiter's envelope; k < 0: the pre-roll)
+    if (v.ew < 1.0f) g = 1.0f + (g - 1.0f) * v.ew;
+    *l = (float)v.pcm[2 * k] * g, *r = (float)v.pcm[2 * k + 1] * g;
   }
 }
 // the voice's frame at host frame h (with its seam and its own stop's fade); false: silent
@@ -1132,11 +1271,11 @@ inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
   return s > 2147483647 ? 2147483647 : s < INT32_MIN ? INT32_MIN : (int32_t)s;
 }
-// the loop onto POST or PRE: each loop's level is capped from its peak (out_mix), so one loop stays under kKnee; several summed
+// the loop onto POST or PRE: each loop's level is capped from its peak (out_mix), so one loop stays under kKnee (= kLoopCeil); several summed
 // loops, or the Sidecar's own output under them, may ask for more than full scale.
 // Under kKnee of full scale the sum is exact (as add); above it bends smoothly toward full scale (a tanh knee) instead of a
 // hard clip that a resample would record again
-constexpr float kKnee = 0.75f;
+constexpr float kKnee = kLoopCeil;   // a loop alone (capped to kLoopCeil) is never shaped; a sum with the base or other loops is
 inline int32_t add_soft(int32_t a, float x) {
   float s = ((float)a + x) * (1.0f / 2147483648.0f), m = s < 0 ? -s : s;
   if (!(m > kKnee)) return add(a, x);
@@ -1145,7 +1284,8 @@ inline int32_t add_soft(int32_t a, float x) {
   float ma = (float)a * (1.0f / 2147483648.0f);
   if (ma >= kKnee || -ma >= kKnee) {
     float hr = 2147483520.0f - fabsf((float)a);
-    if (!(hr > 0.0f) || x * (float)a <= 0.0f) return hr > 0.0f ? add(a, x) : a;   // (no room, or the loop pulls it back)
+    if (x * (float)a <= 0.0f) return add(a, x);   // (the loop pulls it back: as it is, also from a base on the rail)
+    if (!(hr > 0.0f)) return a;                   // (no room)
     float y = hr * tanhf(fabsf(x) / hr);
     return add(a, x < 0 ? -y : y);
   }
@@ -1154,7 +1294,7 @@ inline int32_t add_soft(int32_t a, float x) {
 }
 
 Voice voice_of(const LpSnap& s, bool fade_in) {
-  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, {-1.0f, -1.0f}};
+  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, s.env, s.peak_unl, 1.0f, {-1.0f, -1.0f}};
 }
 // a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
 float env_of(const Voice& v, uint64_t h) {
@@ -1182,15 +1322,17 @@ void take_snapshot(uint64_t h0) {
   }
   // the snapshot is the whole truth: what plays, and what it replaces while that is heard
   const Voice was_cur = cur_, was_old = old_;
-  auto trim_of = [&](uint32_t id, float* t) {
-    const Voice* v = was_cur.active && was_cur.id == id ? &was_cur : was_old.active && was_old.id == id ? &was_old : nullptr;
-    t[0] = v ? v->trim[0] : -1.0f, t[1] = v ? v->trim[1] : -1.0f;
+  // a loop keeps its level cap as it moves from cur to old; one that moves from the ring to the store fades its envelope in
+  auto trim_of = [&](Voice* nv) {
+    const Voice* v = was_cur.active && was_cur.id == nv->id ? &was_cur : was_old.active && was_old.id == nv->id ? &was_old : nullptr;
+    nv->trim[0] = v ? v->trim[0] : -1.0f, nv->trim[1] = v ? v->trim[1] : -1.0f;
+    if (v) nv->ew = v->from_ring && !nv->from_ring ? 0.0f : v->ew;
   };
-  if (s.prev.active) old_ = voice_of(s.prev, false), trim_of(s.prev.id, old_.trim);   // (a loop keeps its level cap as it moves from cur to old)
+  if (s.prev.active) old_ = voice_of(s.prev, false), trim_of(&old_);
   else if (s.cur.id != cur_.id) old_.active = false;
   Voice c = voice_of(s.cur, !s.prev.active);
   if (s.cur.id == cur_.id) c.fade_in = cur_.fade_in;
-  trim_of(s.cur.id, c.trim);
+  trim_of(&c);
   cur_ = c;
 }
 }  // namespace
@@ -1268,8 +1410,13 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
   // (a quiet one keeps all the make-up; LEV under unity just makes it quieter). The gain on a pair is min(make-up x LEV x BAL, cap / peak)
   const float rg = fmaxf(ramp_loop_.at_h(render_frame), ramp_loop_.at_h(render_frame + (uint64_t)n));
   auto cap = [&](const Voice& v, int p) {
-    if (!v.peak) return 1.0f;
-    float t = kLoopCeil * 2147483648.0f / ((float)v.peak * mkp[p] * (rg > 1.0f ? rg : 1.0f));
+    // the peak the loop reaches as played: original x (1 + (envelope - 1) x ew) is at most unl x (1 - ew) + lim x ew while the envelope
+    // fades in (ring -> store); no peak yet while it plays from the ring (no piece scanned): as if full scale
+    float pk = (float)v.peak;
+    if (v.ew < 1.0f && v.peak_unl > v.peak) pk = (float)v.peak_unl + ((float)v.peak - (float)v.peak_unl) * v.ew;
+    if (!v.peak && v.from_ring) pk = 2147483648.0f;
+    if (!(pk > 0.0f)) return 1.0f;
+    float t = kLoopCeil * 2147483648.0f / (pk * mkp[p] * (rg > 1.0f ? rg : 1.0f));
     return t < 1.0f ? t : 1.0f;
   };
   float tc[2] = {cap(cur_, 0), cap(cur_, 1)}, to[2] = {cap(old_, 0), cap(old_, 1)};
@@ -1289,6 +1436,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       const float t = p == want ? 1.0f : 0.0f;
       sw_[p] += fminf(kTrimStep, fmaxf(-kTrimStep, t - sw_[p]));
     }
+    cur_.ew = fminf(1.0f, cur_.ew + kTrimStep), old_.ew = fminf(1.0f, old_.ew + kTrimStep);
     uint64_t h = render_frame + (uint64_t)f;
     float l[2] = {0, 0}, r[2] = {0, 0}, a, b;   // the loop's frame as it goes onto POST / PRE (each pair's own cap)
     bool any = false;
