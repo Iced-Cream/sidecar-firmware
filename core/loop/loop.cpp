@@ -1086,9 +1086,10 @@ struct Voice {
   uint32_t stop_len;
   bool fade_in;
   uint32_t peak;   // the loop's largest |sample| (0: not known)
-  float trim;      // its level cap now (<= 1): moves toward the target a block gives it, < 0 not set yet
+  float trim[2];   // its level cap now on POST / PRE (<= 1): moves toward the target a block gives it, < 0 not set yet
 };
 Voice cur_, old_;
+float sw_[2] = {-1.0f, -1.0f};   // how much of the loop is on POST / PRE now (OUT crossfades over 10 ms; < 0: not set yet)
 Ramp ramp_own_, ramp_loop_;
 uint32_t seen_seq_ = 0;
 
@@ -1124,6 +1125,7 @@ inline bool vat(const Voice& v, uint64_t h, float* l, float* r) {
 }
 void core0_reset() {
   cur_ = Voice(), old_ = Voice(), ramp_own_ = Ramp(), ramp_loop_ = Ramp(), seen_seq_ = 0;
+  sw_[0] = sw_[1] = -1.0f;
 }
 inline int32_t add(int32_t a, float x) {
   int64_t s = (int64_t)a + (int64_t)x;
@@ -1142,7 +1144,7 @@ inline int32_t add_soft(int32_t a, float x) {
 }
 
 Voice voice_of(const LpSnap& s, bool fade_in) {
-  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, -1.0f};
+  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, {-1.0f, -1.0f}};
 }
 // a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
 float env_of(const Voice& v, uint64_t h) {
@@ -1170,12 +1172,15 @@ void take_snapshot(uint64_t h0) {
   }
   // the snapshot is the whole truth: what plays, and what it replaces while that is heard
   const Voice was_cur = cur_, was_old = old_;
-  auto trim_of = [&](uint32_t id) { return was_cur.active && was_cur.id == id ? was_cur.trim : was_old.active && was_old.id == id ? was_old.trim : -1.0f; };
-  if (s.prev.active) old_ = voice_of(s.prev, false), old_.trim = trim_of(s.prev.id);   // (a loop keeps its level cap as it moves from cur to old)
+  auto trim_of = [&](uint32_t id, float* t) {
+    const Voice* v = was_cur.active && was_cur.id == id ? &was_cur : was_old.active && was_old.id == id ? &was_old : nullptr;
+    t[0] = v ? v->trim[0] : -1.0f, t[1] = v ? v->trim[1] : -1.0f;
+  };
+  if (s.prev.active) old_ = voice_of(s.prev, false), trim_of(s.prev.id, old_.trim);   // (a loop keeps its level cap as it moves from cur to old)
   else if (s.cur.id != cur_.id) old_.active = false;
   Voice c = voice_of(s.cur, !s.prev.active);
   if (s.cur.id == cur_.id) c.fade_in = cur_.fade_in;
-  c.trim = trim_of(s.cur.id);
+  trim_of(s.cur.id, c.trim);
   cur_ = c;
 }
 }  // namespace
@@ -1221,11 +1226,12 @@ void set_out(int o) {
   __atomic_store_n(&out_, v, __ATOMIC_RELAXED);
 }
 int out() { return __atomic_load_n(&out_, __ATOMIC_RELAXED); }
-float makeup() {
-  if (out() == kOutPre) return pre_gain();
+static float makeup_of(int pair) {
+  if (pair) return pre_gain();
   float pg = postgain();
   return pg > 0.0f ? pg : out_gain();
 }
+float makeup() { return makeup_of(out() == kOutPre ? 1 : 0); }
 
 bool wants_out() { return on_; }
 
@@ -1241,28 +1247,40 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       F[f][0] = add(F[f][0], (float)x), F[f][1] = add(F[f][1], (float)x);
     }
   }
-  if (!cur_.active && !old_.active) return;
-  const float mk = makeup();   // the return's make-up (POST: postgain or set_out_gain; PRE: set_pre_gain)
-  const int ch = out() == kOutPre ? 2 : 0;   // OUT: POST is F 0/1, PRE F 2/3
-  // each loop's level cap from its own peak: the loop alone stays under kLoopCeil of full scale (a quiet one keeps all the make-up)
-  auto cap = [&](const Voice& v) {
+  if (!cur_.active && !old_.active) {
+    sw_[0] = -1.0f;   // (idle: the next loop starts on the pair OUT names, no fade)
+    return;
+  }
+  const float mkp[2] = {makeup_of(0), makeup_of(1)};   // the returns' make-ups (POST: postgain or set_out_gain; PRE: set_pre_gain)
+  const int want = out() == kOutPre ? 1 : 0;
+  if (sw_[0] < 0.0f) sw_[0] = want ? 0.0f : 1.0f, sw_[1] = want ? 1.0f : 0.0f;
+  // each loop's level cap from its own peak: the loop alone stays under kLoopCeil of full scale, LEV and BAL (ramp_loop_) included
+  // (a quiet one keeps all the make-up; LEV under unity just makes it quieter). The gain on a pair is min(make-up x LEV x BAL, cap / peak)
+  const float rg = fmaxf(ramp_loop_.at_h(render_frame), ramp_loop_.at_h(render_frame + (uint64_t)n));
+  auto cap = [&](const Voice& v, int p) {
     if (!v.peak) return 1.0f;
-    float t = kLoopCeil * 2147483648.0f / ((float)v.peak * mk);
+    float t = kLoopCeil * 2147483648.0f / ((float)v.peak * mkp[p] * (rg > 1.0f ? rg : 1.0f));
     return t < 1.0f ? t : 1.0f;
   };
-  const float tc = cap(cur_), to = cap(old_);
-  if (cur_.trim < 0.0f) cur_.trim = tc;
-  if (old_.trim < 0.0f) old_.trim = to;
-  constexpr float kTrimStep = 1.0f / kRampFrames;   // a cap that changes (a copy still coming in, OUT or the make-up) moves over 10 ms
+  float tc[2] = {cap(cur_, 0), cap(cur_, 1)}, to[2] = {cap(old_, 0), cap(old_, 1)};
+  for (int p = 0; p < 2; ++p) {
+    if (cur_.trim[p] < 0.0f) cur_.trim[p] = tc[p];
+    if (old_.trim[p] < 0.0f) old_.trim[p] = to[p];
+  }
+  constexpr float kTrimStep = 1.0f / kRampFrames;   // a cap that changes (a copy still coming in, LEV, the make-up) and OUT move over 10 ms
   for (int f = 0; f < n; ++f) {
-    cur_.trim += fminf(kTrimStep, fmaxf(-kTrimStep, tc - cur_.trim));
-    old_.trim += fminf(kTrimStep, fmaxf(-kTrimStep, to - old_.trim));
+    for (int p = 0; p < 2; ++p) {
+      cur_.trim[p] += fminf(kTrimStep, fmaxf(-kTrimStep, tc[p] - cur_.trim[p]));
+      old_.trim[p] += fminf(kTrimStep, fmaxf(-kTrimStep, to[p] - old_.trim[p]));
+      const float t = p == want ? 1.0f : 0.0f;
+      sw_[p] += fminf(kTrimStep, fmaxf(-kTrimStep, t - sw_[p]));
+    }
     uint64_t h = render_frame + (uint64_t)f;
-    float l = 0, r = 0, a, b;
+    float l[2] = {0, 0}, r[2] = {0, 0}, a, b;   // the loop's frame as it goes onto POST / PRE (each pair's own cap)
     bool any = false;
     if (vat(cur_, h, &a, &b)) {
       float w = h - cur_.start < (uint64_t)kSeam ? (float)(h - cur_.start + 1) / kSeam : 1.0f;   // a start fades in; a swap crossfades
-      l += a * w * cur_.trim, r += b * w * cur_.trim;
+      for (int p = 0; p < 2; ++p) l[p] += a * w * cur_.trim[p], r[p] += b * w * cur_.trim[p];
       any = true;
     }
     if (old_.active) {
@@ -1271,7 +1289,7 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       if (xf && h >= cur_.start + kSeam) old_.active = false;
       else if (vat(old_, h, &c, &d)) {
         float w = xf ? 1.0f - (float)(h - cur_.start + 1) / kSeam : 1.0f;
-        l += c * w * old_.trim, r += d * w * old_.trim;
+        for (int p = 0; p < 2; ++p) l[p] += c * w * old_.trim[p], r[p] += d * w * old_.trim[p];
         any = true;
       }
     }
@@ -1284,8 +1302,12 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
       float m = 1.0f + (og - 1.0f) * e;
       for (int c = 0; c < 12; ++c) F[f][c] = (int32_t)((float)F[f][c] * m);
     }
-    float lg = ramp_loop_.at_h(h) * mk;
-    F[f][ch] = add_soft(F[f][ch], l * lg), F[f][ch + 1] = add_soft(F[f][ch + 1], r * lg);
+    const float lv = ramp_loop_.at_h(h);
+    for (int p = 0; p < 2; ++p) {
+      if (!(sw_[p] > 0.0f)) continue;
+      const float lg = lv * mkp[p] * sw_[p];
+      F[f][2 * p] = add_soft(F[f][2 * p], l[p] * lg), F[f][2 * p + 1] = add_soft(F[f][2 * p + 1], r[p] * lg);
+    }
   }
   // a stopped voice that has faded out is gone (its stop's end passed)
   if (cur_.active && cur_.stop_at && render_frame + (uint64_t)n >= cur_.stop_at + cur_.stop_len) cur_.active = false;

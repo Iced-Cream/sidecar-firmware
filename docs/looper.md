@@ -104,7 +104,7 @@ min(make-up, 0.75 / peak). So one loop never reaches the knee: clean, never clip
 or -4.5 dBFS (PRE) keeps the whole make-up, a louder one is exactly as much quieter as it is louder than that (a peak at
 -6 dBFS: 7.4 dB quieter on POST; at 0 dBFS: 13.4 dB). PRE is the way to get a loud loop back at full level, at the price of the
 Rytm's compressor and distortion again. The cap follows the loop (each loop its own peak: a second grab never changes the one
-that plays), LEV and BAL work on top of it (LEV above 100 can take a loop into the soft knee), and the knee stays the backstop
+that plays), LEV and BAL are inside it (the cap is on the final gain: LEV 127 never takes a loop over the ceiling, LEV below 100 makes it quieter), and the knee stays the backstop
 for several loops, or the Sidecar's own output, summed. A resample's loop is a new grab with its own peak.
 
 ## Calibrating the POST return (`loop=cal`)
@@ -114,3 +114,5 @@ the return's gain: the click's peak out / the peak that comes back (the result l
 in 1.5 .. 6.0 is saved as `postgain` (thousandths, in loop.txt) and replaces the x3.508 on POST; anything else is ignored. It
 is measured on POST only: PRE keeps its x1.259. Play nothing loud on the Rytm while it runs (a live signal at the click raises
 the peak back and lowers the gain it finds).
+
+Switching OUT while a loop plays crossfades between the pairs over 10 ms (no click).
