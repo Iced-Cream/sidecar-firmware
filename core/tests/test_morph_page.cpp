@@ -18,6 +18,7 @@
 #include "mod/mod.h"
 #include "mod/scene.h"
 #include "mod/target.h"
+#include "seq/rytm_dump.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
 
@@ -31,6 +32,7 @@ static uint32_t g_mask_trigs = 0;
 static bool g_mask_func = false;
 static uint8_t g_led[16];
 static bool g_leds_on = false;
+static std::vector<uint32_t> g_commit_ms;   // when each frame commit (0x39) went out
 static int g_closes = 0;   // 3A 0 0: the host asks the page closed (nav044: NO on a shortcut's page)
 static void out(const uint8_t* d, int len) {
   if (len < 7 || d[0] != 0xF0 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
@@ -41,6 +43,8 @@ static void out(const uint8_t* d, int len) {
     for (int c = 0; c < 16; ++c)
       if (c / 7 < nk && (k[c / 7] >> (c % 7) & 1)) g_mask_trigs |= 1u << c;
     g_mask_func = 0x80 / 7 < nk && (k[0x80 / 7] >> (0x80 % 7) & 1);
+  } else if (d[4] == 0x39) {
+    g_commit_ms.push_back(now_ms());
   } else if (d[4] == 0x3A && len >= 9 && d[7] == 0) {
     ++g_closes;
   } else if (d[4] == 0x34) {
@@ -610,6 +614,85 @@ static void qperf_tick_when_knob_differs() {
   CHECK(!lit(kx2, 33));
   printf("  qperf_tick_when_knob_differs: a tick under the bar where the QPERF knob is, when the fader is elsewhere\n");
 }
+// a QPERF knob turn while the sequencer plays: the bar is committed every kQpCommitMs, not at the 200 ms play cap
+static int qperf_run(bool playing, bool encoder, uint32_t* min_gap, bool* settled) {
+  open_page();
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_ab(0, 1);
+  scene::qperf(0, 0, 2);   // a baseline
+  tick(10);
+  rytm_dump::set_playing(playing);
+  g_commit_ms.clear();
+  for (int ms = 0; ms < 400; ++ms) {
+    at(g_us + 1000);
+    if (ms % 8 == 0) {
+      if (encoder) turn(0, 1);
+      else scene::qperf(ms * 255 / 400, 0, 2);
+    }
+    scene::tick(now_ms());
+    ui::remote_tick(now_ms());
+  }
+  *min_gap = 100000;
+  for (size_t i = 1; i < g_commit_ms.size(); ++i)
+    if (g_commit_ms[i] - g_commit_ms[i - 1] < *min_gap) *min_gap = g_commit_ms[i] - g_commit_ms[i - 1];
+  const int n = (int)g_commit_ms.size();
+  for (int i = 0; i < 20; ++i) at(g_us + 30000), scene::tick(now_ms()), ui::remote_tick(now_ms());
+  uint8_t fb[ui::kBytes], sent[ui::kBytes];
+  draw();
+  ui::preview(g_c, fb);
+  ui::preview_sent(sent);
+  *settled = !memcmp(fb, sent, ui::kBytes);
+  rytm_dump::set_playing(false);
+  return n;
+}
+static void qperf_follows_while_playing() {
+  uint32_t gap = 0;
+  bool settled = false;
+  const int n = qperf_run(true, false, &gap, &settled);
+  printf("    playing, QPERF: %d commits in 400 ms, min gap %u ms\n", n, (unsigned)gap);
+  CHECK(n >= 6 && gap >= 50 && settled);
+  const int stopped = qperf_run(false, false, &gap, &settled);
+  CHECK(stopped >= 6 && settled);
+  qperf_run(true, true, &gap, &settled);   // encoder A while playing: a user event, as before (no 50 ms floor)
+  CHECK(settled);
+  printf("  qperf_follows_while_playing: a QPERF turn while playing commits every 50 ms (stopped: %d)\n", stopped);
+}
+// the glide's last step: a QPERF move then the knob stops; the bar's final frame goes out within ~50 ms of the glide's end
+static void qperf_glide_end_not_held() {
+  open_page();
+  scene::set_qp_mode(scene::kQpAlways);
+  scene::set_ab(0, 1);
+  scene::qperf(0, 0, 2);   // a baseline
+  tick(10);
+  rytm_dump::set_playing(true);
+  for (int ms = 0; ms < 113; ++ms) {   // a turn: reports every 8 ms up to ms 112
+    at(g_us + 1000);
+    if (ms % 8 == 0) scene::qperf(ms * 100 / 112, 0, 2);
+    scene::tick(now_ms());
+    ui::remote_tick(now_ms());
+  }
+  g_commit_ms.clear();
+  at(g_us + 51000);
+  scene::tick(now_ms()), ui::remote_tick(now_ms());
+  scene::qperf(255, 0, 2);   // one more move, ~51 ms after the last report: an 80 ms glide; the last commit must carry the target
+  const uint32_t t0 = now_ms();
+  for (int ms = 0; ms < 600; ++ms) {
+    at(g_us + 1000);
+    scene::tick(now_ms());
+    ui::remote_tick(now_ms());
+  }
+  CHECK(scene::fader_played() == scene::state().fader);
+  uint8_t fb[ui::kBytes], sent[ui::kBytes];
+  draw();
+  ui::preview(g_c, fb);
+  ui::preview_sent(sent);
+  CHECK(!memcmp(fb, sent, ui::kBytes));
+  CHECK(!g_commit_ms.empty());
+  const uint32_t last = g_commit_ms.empty() ? 0 : g_commit_ms.back() - t0;
+  printf("    glide end: last commit %u ms after the move\n", (unsigned)last);
+  CHECK(last <= 51 + 50);   // the glide + the cap (not the 200 ms play cap)
+  rytm_dump::set_playing(false);
+}
 static void hint_turn_quick_perf() {
   open_page();
   scene::set_qp_mode(scene::kQpAlways);
@@ -807,6 +890,8 @@ int main() {
   not_lockable_note();
   header_shows_source_tag();
   qperf_tick_when_knob_differs();
+  qperf_follows_while_playing();
+  qperf_glide_end_not_held();
   hint_turn_quick_perf();
   edit_tag_on_morph_page();
   ab_boxed_in_row();
