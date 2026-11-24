@@ -4,9 +4,9 @@
 // Trig keys (all 16 taken): T1..T6 grab the last 1/2, 1, 2, 4, 8, 16 bars (while a loop plays: a resample, swapped in at
 // the next bar line); T8 STOP (a fade at the next bar line; FUNC + T8: a cut at once); T9..T16 the 8 grabs, the newest at
 // T9 (a tap shows it and plays it from the next bar line). YES KEEPs the grab shown (a take on the card), NO is back.
-// Encoders: A BAL, B LEV, C FADE, D AUTO-MUTE, E LIVE VIA, F the grab shown (G, H nothing).
+// Encoders: A BAL, B LEV, C FADE, D AUTO-MUTE, E LIVE VIA, F the grab shown, G OUT (POST / PRE) (H nothing).
 // Screen: the state (RING 34S / PLAYING / WAIT / FADING / RESAMPLE) with the bar position, the 8 grabs (length, a dot when
-// kept, a bar under the one playing, the shown one inverted), then BAL LEV FADE MUTE LIVE GRAB and a footer.
+// kept, a bar under the one playing, the shown one inverted), then BAL LEV FADE MUTE LIVE GRAB OUT and a footer.
 // LEDs: a grab green while it plays, blue when kept, dim white when held; T1..T6 dim white, T8 red while a loop is on.
 #include <string.h>
 
@@ -25,7 +25,7 @@ namespace {
 // t050-d (the owner: "this also looks messy"): the grabs in 16 px boxes, the six knobs on the stock grid's four columns
 // (A..D over E..F, as the encoders sit), the ring's length once (the header)
 constexpr int kBoxW = 16, kBox0 = 0, kRowY = 11, kGrabY = 19;
-constexpr int kCols = 6, kLabY = 30, kRowDy = 13;
+constexpr int kCols = 7, kLabY = 30, kRowDy = 13;
 constexpr uint32_t kNoteMs = 2500;   // a refusal / result shows this long
 constexpr uint8_t kLedWhiteDim = 107, kLedGreen = 31, kLedRed = 15;
 
@@ -107,8 +107,8 @@ CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   c.put_text(kSlotFree + 8, kRSmall, 2, kRowY, st);
   c.put_text(kSlotFree + 9, kRSmall, kW - 2, kRowY, pos, kAlignRight);
   for (int i = 0; i < loop::kMaxGrabs; ++i) grab_box(c, i);
-  // BAL LEV FADE MUTE LIVE GRAB
-  static UI_ROM const char kLab[kCols][6] = {"BAL", "LEV", "FADE", "MUTE", "LIVE", "GRAB"};
+  // BAL LEV FADE MUTE LIVE GRAB OUT (the 4-column grid, A..D over E..G: OUT is the second row's third cell)
+  static UI_ROM const char kLab[kCols][6] = {"BAL", "LEV", "FADE", "MUTE", "LIVE", "GRAB", "OUT"};
   static UI_ROM const char kFades[loop::kFades][4] = {"1/4", "1/2", "1", "2", "4"};
   char val[kCols][8];
   sniprintf(val[0], 8, "%d", loop::bal());
@@ -119,6 +119,7 @@ CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   else strcpy(val[4], "OFF");
   if (loop::grab_at(lp.sel)) sniprintf(val[5], 8, "%d/%d", lp.sel + 1, loop::grabs());
   else strcpy(val[5], "-");
+  strcpy(val[6], loop::out() == loop::kOutPre ? "PRE" : "POST");
   for (int k = 0; k < kCols; ++k) {
     int x = (k % 4) * kCellW + kCellW / 2, y = kLabY + (k / 4) * kRowDy;
     c.put_text(kSlotLabels + k, kRSmall, x, y, kLab[k], kAlignCentre);
@@ -134,6 +135,8 @@ CORE_COLD void loop_draw(Canvas& c, int page, int npages, uint32_t ms) {
   } else if (lp.touched == 1) {
     sniprintf(f, sizeof f, "LOOP LEVEL:%d", loop::lev());
     footer(c, f, loop::lev());
+  } else if (lp.touched == 6) {
+    footer(c, loop::out() == loop::kOutPre ? "OUT PRE: FULL, THRU FX" : "OUT POST: CLEAN, CAPPED");
   } else if (lp.touched == 4 && loop::live_via()) {
     sniprintf(f, sizeof f, "PERF %d: BAL 64..127 DOWN", loop::live_via());
     footer(c, f);
@@ -166,6 +169,9 @@ CORE_COLD void loop_enc(int e, int d, bool func) {
       break;
     case 5:
       if ((l = list_turn(e, d))) sync_sel(), lp.sel = clampi(lp.sel + l, 0, loop::grabs() ? loop::grabs() - 1 : 0), remember_sel();
+      break;
+    case 6:
+      if ((l = list_turn(e, d))) loop::set_out(l > 0 ? loop::kOutPre : loop::kOutPost);
       break;
     default: return;
   }
@@ -236,7 +242,7 @@ CORE_COLD uint16_t loop_enc_tid(int e) { return e == 0 ? mod::tid(mod::kLoop, 0,
 
 }  // namespace
 
-UI_ROM const ExtraPage kLoopPage = {"LOOP", is_on, loop_draw, loop_enc, loop_key, 0x3F, false, nullptr, loop_trigs, loop_leds, true,
+UI_ROM const ExtraPage kLoopPage = {"LOOP", is_on, loop_draw, loop_enc, loop_key, 0x7F, false, nullptr, loop_trigs, loop_leds, true,
                                     loop_key_up, loop_enc_tid};
 
 CORE_COLD void loop_page_reset() { lp = LoopPage(); }

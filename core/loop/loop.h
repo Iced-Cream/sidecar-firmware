@@ -33,6 +33,7 @@ struct Grab {
   uint64_t start;    // the host render frame of its first sample's source (arrival frame of the grab's start)
   uint8_t kept, gap; // KEEP wrote it; the ring had a gap in it
   uint8_t copied;    // the copy into the store is done (until then it plays from the ring)
+  uint32_t peak;     // the largest |sample| (L or R, 2^31 = full scale) of what is copied so far; final once `copied`
   int32_t* pcm;      // the store's copy (frame 0; kPre frames before it), null while not copied
 };
 
@@ -73,6 +74,9 @@ void set_lev(int v);                        // 0..127 (100 unity)
 void set_fade(int f);
 void set_auto_mute(bool on);
 void set_live_via(int perf);                // 0 off, 1..12
+enum { kOutPost = 0, kOutPre = 1 };         // OUT: the loop onto the Rytm's POST return (F 0/1) or its PRE return (F 2/3)
+void set_out(int o);
+int out();
 int bal();
 int lev();
 int fade();
@@ -93,13 +97,25 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // th
 // The loop's make-up gain onto F[.][0..1] (default 1). The Rytm's MAIN arrives over USB at its own level, but what the Pi
 // puts on POST (0/1) reaches the Rytm's main 10.9 dB down (masterfx_pi.h, measured 2026-11-01): the Pi sets 3.508 so a
 // loop plays back at the level it was heard. Any thread; out_mix reads it once a block. POST tops out about 10.9 dB under
-// the Rytm's full scale, so a loop grabbed louder than that bends into a soft knee (out_mix) instead of clipping.
+// the Rytm's full scale, so each loop's make-up is capped from its own peak (grab.peak): the loop alone stays under
+// kLoopCeil of full scale, a quiet loop gets the whole make-up, a hot one less. Several loops summed still meet the soft
+// knee (out_mix) instead of clipping.
 void set_out_gain(float g);
 float out_gain();
+// OUT = PRE: the same for the PRE return (F 2/3), which reaches the main 2.0 dB down (the Pi sets kStemOnPost / kPreOnPost)
+void set_pre_gain(float g);
+float pre_gain();
+// the measured POST make-up (loop=cal: click out / peak back; loop.txt `postgain`): in 1.5 .. 6.0 it replaces out_gain on POST,
+// anything else is none (0)
+void set_postgain(float g);
+float postgain();
+float makeup();                             // what the loop is multiplied by now (POST: postgain, else out_gain; PRE: pre_gain)
+constexpr float kLoopCeil = 0.75f;          // the loop alone is capped to this part of full scale (the soft knee's start)
 bool wants_in();                            // the ring exists
 bool wants_out();                           // a loop is on its way or plays (out_mix does something)
 
-// ---- POST latency calibration (loop=cal): clicks on POST 0 / 1 (the OUT hook), found again in MAIN IN (the IN hook)
+// ---- POST latency and level calibration (loop=cal): clicks on POST 0 / 1 (the OUT hook), found again in MAIN IN (the IN hook):
+// when they come back, the round trip (post_lat) and each click's peak back (the return gain, postgain). POST only
 void cal_start();
 bool cal_wanted();                          // clicks are on their way
 bool cal_info(uint64_t* first_click, int* n, uint32_t* gap);   // the render frames of the clicks (tests, the OUT hook)
