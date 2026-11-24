@@ -24,7 +24,7 @@ namespace {
 
 State g_st;
 // the played fader: from g_from at g_set_ms to g_st.fader g_smooth_ms later, linearly
-int g_played = 0, g_from = 0;
+int g_played = 0, g_from = 0, g_last_played = 0;   // g_last_played: g_played at the last tick
 uint32_t g_set_ms = 0, g_now_ms = 0;
 uint32_t g_smooth_ms = kSmoothMs;   // this move's smoothing (the QPERF knob's: its reports' interval)
 int g_src = 0;                      // the fader's last source (Source), 0 none
@@ -298,9 +298,8 @@ CORE_COLD void tick(uint32_t ms) {
   uint32_t el = ms - g_set_ms;
   int to = g_st.fader;
   g_played = el >= g_smooth_ms ? to : g_from + (to - g_from) * (int)el / (int)g_smooth_ms;
-  static int last_played = 0;
-  if (g_played != last_played && g_src == kQperf) ui::remote_morph_qperf_move();   // the glide, its last step too, is not held
-  last_played = g_played;
+  if (g_played != g_last_played && g_src == kQperf) ui::remote_morph_qperf_move();   // the glide, its last step too, is not held
+  g_last_played = g_played;
   float f = (float)g_played / (float)kFaderMax;
   constexpr float kH = 1.0f / 64.0f;
   if (g_st.a != g_last_a || g_st.b != g_last_b) {
@@ -353,7 +352,7 @@ CORE_COLD void tick(uint32_t ms) {
 CORE_COLD void reset() {
   memset(&g_st, 0, sizeof g_st);
   g_st.a = g_st.b = -1;
-  g_played = g_from = 0;
+  g_played = g_from = g_last_played = 0;
   g_set_ms = now_ms(), g_now_ms = g_set_ms;
   g_smooth_ms = kSmoothMs, g_src = 0;
   g_qp_pos = -1, g_qp_seen = false, g_qp_ms = 0;
