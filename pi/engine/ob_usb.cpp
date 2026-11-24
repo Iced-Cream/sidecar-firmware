@@ -511,6 +511,10 @@ void RytmXHCITransferEventHook (unsigned nSlotID, unsigned nEndpointID, unsigned
 
 void CObUsb::XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending)
 {
+	if (s_bProbe && (s_ProbeSlotBox[s_nProbeSlot & 63] == 0 || (nCode != 1 && nCode != 13)
+			 || (nEndpointID != kInEpID && nEndpointID != kOutEpID)))
+		s_Probe.OnOther (CTimer::GetClockTicks (), CXHCIEndpoint::ProbeMFIndex (), s_nProbeSlot, nEndpointID, nCode,
+				 nResidue);		// anything else: EP0, MIDI, the hub, the relay, or an error code
 	TEvStats *s = nEndpointID == kInEpID ? &s_EvIn : nEndpointID == kOutEpID ? &s_EvOut : 0;
 	if (s == 0) return;
 	if (s_bProbe && (nCode == 1 || nCode == 13))	// a completed transfer (a Stopped one is the Pi's doing, not the controller's)
@@ -569,7 +573,7 @@ void CObUsb::PollHalt (void)
 }
 
 // ---- obprobe=1: the VL805 periodic-stall probe (vl805_probe.h) ----
-boolean CObUsb::s_bProbe, CObUsb::s_bStallReadd;
+boolean CObUsb::s_bProbe, CObUsb::s_bStallReadd, CObUsb::s_bStallRunStop;
 unsigned CObUsb::s_nProbeSecUs, CObUsb::s_nReaddUs[2], CObUsb::s_nProbeEpN[2][2];
 
 // a line without CString or a printf (the host-test shim has neither): text, decimal, 8-digit hex
@@ -664,6 +668,23 @@ boolean CObUsb::PollProbe (void)
 				pLog->Write ("vl805probe", LogNotice, "%s", B.Buf);
 			}
 			ProbeContexts ("at the stall", TRUE);
+			vl805::Other O[vl805::kOthers];		// what else the controller completed around the stop
+			const unsigned nO = s_Probe.Others (s_Probe.stall_last_us - vl805::kOtherUs, O);
+			ProbeLine T;
+			T.S ("others from 50 ms before the last box event (us vs it, MFINDEX, slot.ep, code, residue): ").D (nO);
+			for (unsigned i = 0; i < nO; i++)
+			{
+				if (T.n > sizeof T.Buf - 60)
+				{
+					pLog->Write ("vl805probe", LogNotice, "%s", T.Buf);
+					T.n = 0;
+					T.S ("others (more):");
+				}
+				const int dt = (int) (O[i].us - s_Probe.stall_last_us);
+				T.S (" ").S (dt < 0 ? "-" : "+").D (dt < 0 ? -dt : dt).S ("/").D (O[i].mf).S ("/").D (O[i].slot).S (".")
+				 .D (O[i].ep).S ("/").D (O[i].code).S ("/").D (O[i].len);
+			}
+			pLog->Write ("vl805probe", LogNotice, "%s", T.Buf);
 		}
 		break;
 
@@ -691,6 +712,27 @@ boolean CObUsb::PollProbe (void)
 
 	default:
 		break;
+	}
+
+	if (s_bStallRunStop && s_Probe.WantRunStop (nNow))	// obstallrs=1: halt and run the controller once a stall
+	{
+		s_Probe.DidRunStop (nNow);
+		u32 I[7];
+		const int r = CXHCIEndpoint::ProbeRunStop (I);
+		for (unsigned k = 0; k < Slots; k++)		// then every box stream's doorbell
+		{
+			CObUsb *p = s_pBox[k];
+			if (p == 0 || !p->m_bStreaming || p->m_pIn == 0 || p->m_pOut == 0) continue;
+			p->m_pIn->GetXHCIEndpoint ()->ProbeDoorbell ();
+			p->m_pOut->GetXHCIEndpoint ()->ProbeDoorbell ();
+		}
+		ProbeLine L;
+		L.S ("stall ").D (s_Probe.stalls).S (": run/stop (obstallrs=1) ")
+		 .S (r == 0 ? "done" : r == 1 ? "no controller" : r == 2 ? "DID NOT HALT" : "DID NOT RUN AGAIN")
+		 .S (": MFINDEX ").D (I[0]).S (", halted after ").D (I[1]).S (" us at MFINDEX ").D (I[2]).S (", running after ")
+		 .D (I[3]).S (" us at MFINDEX ").D (I[4]).S ("; USBSTS ").X (I[5]).S (" USBCMD ").X (I[6])
+		 .S ("; doorbells rung; ").D ((nNow - s_Probe.stall_last_us) / 1000).S (" ms after the last box event");
+		pLog->Write ("vl805probe", LogWarning, "%s", L.Buf);
 	}
 
 	if (nNow - s_nProbeSecUs >= 1000000)		// one line a second
@@ -1140,7 +1182,8 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 {
 	CKernelOptions *pOpt = CKernelOptions::Get ();
 	s_bStallReadd = pOpt->GetAppOptionDecimal ("obstallreadd", 0) != 0;
-	s_bProbe = s_bStallReadd || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
+	s_bStallRunStop = pOpt->GetAppOptionDecimal ("obstallrs", 0) != 0;
+	s_bProbe = s_bStallReadd || s_bStallRunStop || pOpt->GetAppOptionDecimal ("obprobe", 0) != 0;
 	m_nURBs = Clamp (pOpt->GetAppOptionDecimal ("oburbs", 8), 1, MaxURBs);
 	m_nBlocks = Clamp (pOpt->GetAppOptionDecimal ("obblocks", 1), 1, MaxBlocks);
 	m_nOutDelay = pOpt->GetAppOptionDecimal ("oboutdelay", 0);

@@ -1,0 +1,57 @@
+diff -ruN a/include/circle/usb/xhciendpoint.h b/include/circle/usb/xhciendpoint.h
+--- a/include/circle/usb/xhciendpoint.h
++++ b/include/circle/usb/xhciendpoint.h
+@@ -93,6 +93,15 @@
+ 	unsigned ProbeSlotID (void) const;
+ 	unsigned ProbeEndpointID (void) const	{ return m_uchEndpointID; }
+ 
++	// circle-xhci-runstop (obstallrs=1, an experiment; not read-only): one Run/Stop cycle of the whole controller:
++	// clear USBCMD R/S, wait for USBSTS HCHalted (20 ms at most), set R/S again, wait for HCHalted to clear (20 ms at
++	// most). Busy-waits; main loop only. pInfo (7 words): MFINDEX before, us to halt, MFINDEX halted, us to run,
++	// MFINDEX after, USBSTS after, USBCMD after. 0 done; 1 no controller; 2 did not halt (R/S set again anyway);
++	// 3 did not run again.
++	static int ProbeRunStop (u32 *pInfo);
++	// ring this endpoint's doorbell (its queued TRBs are looked at again; harmless on a running endpoint)
++	void ProbeDoorbell (void);
++
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+ #endif
+diff -ruN a/lib/usb/xhciendpoint.cpp b/lib/usb/xhciendpoint.cpp
+--- a/lib/usb/xhciendpoint.cpp
++++ b/lib/usb/xhciendpoint.cpp
+@@ -930,3 +930,34 @@
+ 	for (unsigned i = 0; i < n; i++) pDW[i] = pSrc[i];
+ 	return n;
+ }
++
++// circle-xhci-runstop
++int CXHCIEndpoint::ProbeRunStop (u32 *pInfo)
++{
++	CXHCIMMIOSpace *p = s_pProbeMMIO;
++	for (unsigned i = 0; i < 7; i++) pInfo[i] = 0;
++	if (p == 0) return 1;
++	CTimer *pTimer = CTimer::Get ();
++	pInfo[0] = p->rt_read32 (XHCI_REG_RT_MFINDEX) & XHCI_REG_RT_MFINDEX_INDEX__MASK;
++	unsigned t0 = pTimer->GetClockTicks ();
++	p->op_write32 (XHCI_REG_OP_USBCMD, p->op_read32 (XHCI_REG_OP_USBCMD) & ~XHCI_REG_OP_USBCMD_RUN_STOP);
++	const boolean bHalted = p->op_wait32 (XHCI_REG_OP_USBSTS, XHCI_REG_OP_USBSTS_HCH, XHCI_REG_OP_USBSTS_HCH, 20000);
++	unsigned t1 = pTimer->GetClockTicks ();
++	pInfo[1] = (t1 - t0) / (CLOCKHZ / 1000000);
++	pInfo[2] = p->rt_read32 (XHCI_REG_RT_MFINDEX) & XHCI_REG_RT_MFINDEX_INDEX__MASK;
++	p->op_write32 (XHCI_REG_OP_USBCMD, p->op_read32 (XHCI_REG_OP_USBCMD) | XHCI_REG_OP_USBCMD_RUN_STOP);
++	const boolean bRunning = p->op_wait32 (XHCI_REG_OP_USBSTS, XHCI_REG_OP_USBSTS_HCH, 0, 20000);
++	unsigned t2 = pTimer->GetClockTicks ();
++	pInfo[3] = (t2 - t1) / (CLOCKHZ / 1000000);
++	pInfo[4] = p->rt_read32 (XHCI_REG_RT_MFINDEX) & XHCI_REG_RT_MFINDEX_INDEX__MASK;
++	pInfo[5] = p->op_read32 (XHCI_REG_OP_USBSTS);
++	pInfo[6] = p->op_read32 (XHCI_REG_OP_USBCMD);
++	return !bHalted ? 2 : !bRunning ? 3 : 0;
++}
++
++void CXHCIEndpoint::ProbeDoorbell (void)
++{
++	if (!m_bValid || m_pDevice == 0 || !XHCI_IS_ENDPOINTID (m_uchEndpointID) || m_pDevice->GetSlotID () == 0) return;
++	DataSyncBarrier ();
++	m_pMMIO->db_write32 (m_pDevice->GetSlotID (), XHCI_REG_DB_TARGET_EP0 + m_uchEndpointID-1);
++}

@@ -1277,6 +1277,59 @@ int main() {
     opt->num.erase("obstallreadd");
     CTimer::s_now = 0;
   }
+  {  // obstallrs=1: one Run/Stop cycle a stall (doorbells after it), the other events around the stop listed
+    opt->num["obstallrs"] = 1;
+    {
+      Bus r(g_rytm, 0x0b48);
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      size_t l0 = CLogger::Get()->lines.size();
+      CTimer::s_now = 9000000;
+      CXHCIEndpoint::s_mfindex = 100;
+      CXHCIEndpoint::s_runstops = CXHCIEndpoint::s_doorbells = 0;
+      for (int i = 0; i < 40; i++) {
+        CTimer::s_now += 125, CXHCIEndpoint::s_mfindex++;
+        r.in(1, c);
+        RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+        if (i == 30) RytmXHCITransferEventHook(1, 1, 1, 0, 1);    // an EP0 completion 1.125 ms before the last box event
+        if (i == 35) RytmXHCITransferEventHook(1, 7, 6, 0, 8);    // a stream event with another code (6: stall)
+        CObUsb::PollHalt();
+      }
+      CHECK(CXHCIEndpoint::s_runstops == 0);
+      l0 = CLogger::Get()->lines.size();       // (the probe is static: the earlier block's stalls count on)
+      CTimer::s_now += 25000, CXHCIEndpoint::s_mfindex += 200;
+      CObUsb::PollHalt();
+      CHECK(count_lines("no box event for 25000 us", l0) == 1);
+      CHECK(count_lines("others from 50 ms before the last box event (us vs it, MFINDEX, slot.ep, code, residue): 2", l0) == 1);
+      CHECK(count_lines(" -1125/", l0) == 1 && count_lines("/1.1/1/0 -500/", l0) == 1 && count_lines("/1.7/6/0", l0) == 1);
+      CHECK(CXHCIEndpoint::s_runstops == 1 && CXHCIEndpoint::s_doorbells == 2);
+      CHECK(count_lines("run/stop (obstallrs=1) done: MFINDEX 0, halted after 120 us", l0) == 1);
+      CTimer::s_now += 30000;
+      CObUsb::PollHalt();
+      CHECK(CXHCIEndpoint::s_runstops == 1);                       // once a stall
+      CTimer::s_now += 1000, CXHCIEndpoint::s_mfindex += 8;
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+      CObUsb::PollHalt();
+      CHECK(count_lines("back after", l0) == 1);
+      l0 = CLogger::Get()->lines.size();
+      CTimer::s_now += 100000;                                     // a second stall 0.1 s later: not within the second
+      CTimer::s_now += 25000;
+      CObUsb::PollHalt();
+      CHECK(count_lines(": no box event", l0) == 1 && CXHCIEndpoint::s_runstops == 1);
+      CTimer::s_now += 1000000;                                    // a second on: allowed again
+      CObUsb::PollHalt();
+      CHECK(CXHCIEndpoint::s_runstops == 2);
+      CXHCIEndpoint::s_runstop_rc = 2;
+      RytmXHCITransferEventHook(1, 7, 1, 0, 8);
+      CObUsb::PollHalt();
+      CTimer::s_now += 1100000;
+      CObUsb::PollHalt();
+      CHECK(count_lines("DID NOT HALT", l0) == 1);
+      CXHCIEndpoint::s_runstop_rc = 0;
+    }
+    opt->num.erase("obstallrs");
+    CTimer::s_now = 0;
+  }
   printf("test_ob_usb: ok\n");
   return 0;
 }

@@ -356,7 +356,7 @@ private:
 	static boolean PollProbe (void);		// main loop, PollHalt's first step; TRUE: a restart was done (the pass's)
 	static void ProbeContexts (const char *pWhen, boolean bFull);
 	void ProbeMap (void);				// this box's xHCI slot for the IRQ's events (after its endpoints are made)
-	static boolean s_bProbe, s_bStallReadd;
+	static boolean s_bProbe, s_bStallReadd, s_bStallRunStop;	// obstallrs=1: one Run/Stop cycle of the controller a stall
 	static unsigned s_nProbeSecUs, s_nReaddUs[2];
 	static unsigned s_nProbeEpN[2][2];
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug

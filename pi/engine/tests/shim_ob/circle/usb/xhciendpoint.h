@@ -30,6 +30,10 @@ class CXHCIEndpoint {
   unsigned ProbeSlotID() const { return slot_id; }
   unsigned ProbeEndpointID() const { return 0; }
   static inline unsigned s_mfindex = 0;
+  // circle-xhci-runstop.patch: the test counts the cycles and doorbells (s_runstop_rc: what ProbeRunStop returns)
+  static int ProbeRunStop(unsigned* info) { for (unsigned i = 0; i < 7; i++) info[i] = 0; info[1] = 120; ++s_runstops; return s_runstop_rc; }
+  void ProbeDoorbell() { ++s_doorbells; }
+  static inline int s_runstops = 0, s_doorbells = 0, s_runstop_rc = 0;
   unsigned slot_id = 1;
   static inline unsigned s_iv1 = 0, s_iv1_busy = 0;
   static inline const char* s_iv1_list = "";

@@ -24,6 +24,8 @@ constexpr unsigned kBuckets = 32;		// the last 320 ms before a stall
 constexpr uint32_t kStallUs = 20000;		// no box event for 20 ms with URBs queued: a stall (the 8 URBs last 1 ms)
 constexpr uint32_t kStillUs = 500000;		// a line every 500 ms while it lasts
 constexpr unsigned kBoxes = 2, kDirs = 2;	// box slot 0/1, IN 0 / OUT 1
+constexpr unsigned kOthers = 32;		// the last transfer events of anything else (EP0, MIDI, hub, relay ...)
+constexpr uint32_t kOtherUs = 50000;		// logged at a stall: those from 50 ms before its last box event on
 
 // microframes from a to b, forward (mod 2^14)
 inline uint32_t mf_ahead(uint32_t a, uint32_t b) { return (b - a) & kMfMask; }
@@ -36,6 +38,12 @@ struct Bucket {
   uint16_t mf_dev_us = 0;	// largest |MFINDEX step - clock step| of the main loop's samples, capped
 };
 
+// a transfer event that is not a box stream's completed transfer: another endpoint, or a box stream's other code
+struct Other {
+  uint32_t us = 0, mf = 0, len = 0;
+  uint8_t slot = 0, ep = 0, code = 0;
+};
+
 struct Probe {
   // written by the IRQ (OnEvent), read by the main loop
   volatile uint32_t last_us = 0, last_mf = 0, events = 0;
@@ -44,6 +52,9 @@ struct Probe {
   volatile uint8_t pend_min[kBoxes][kDirs] = {{255, 255}, {255, 255}};	// this second's
   Bucket hist[kBuckets];
   volatile unsigned cur = 0;			// the bucket being filled
+
+  Other other[kOthers];
+  volatile uint32_t others = 0;			// written so far (the next one at others % kOthers)
 
   // the main loop's
   uint32_t samp_us = 0, samp_mf = 0;
@@ -54,6 +65,13 @@ struct Probe {
   bool stalled = false;
   uint32_t stall_us = 0, stall_last_us = 0, stall_last_mf = 0, still_us = 0, stalls = 0;
   uint32_t stall_ep_mf[kBoxes][kDirs] = {}, stall_ep_n[kBoxes][kDirs] = {};
+
+  // obstallrs=1: one Run/Stop cycle a stall, at most one a second
+  uint32_t rs_stall = 0, rs_us = 0, rs_n = 0;
+  bool WantRunStop(uint32_t now_us) const {
+    return stalled && rs_stall != stalls && (rs_n == 0 || now_us - rs_us >= 1000000);
+  }
+  void DidRunStop(uint32_t now_us) { rs_stall = stalls, rs_us = now_us, ++rs_n; }
 
   static uint32_t clamp16(uint32_t v) { return v > 65535 ? 65535 : v; }
 
@@ -80,6 +98,24 @@ struct Probe {
     if (p < pend_min[box][dir]) pend_min[box][dir] = p;
     ep_us[box][dir] = now_us, ep_mf[box][dir] = mf & kMfMask, ++ep_n[box][dir];
     last_us = now_us, last_mf = mf & kMfMask, ++events;
+  }
+
+  // any other transfer event (xHCI IRQ)
+  void OnOther(uint32_t now_us, uint32_t mf, unsigned slot, unsigned ep, unsigned code, uint32_t len) {
+    Other& o = other[others % kOthers];
+    o.us = now_us, o.mf = mf & kMfMask, o.len = len;
+    o.slot = (uint8_t)slot, o.ep = (uint8_t)ep, o.code = (uint8_t)code;
+    ++others;
+  }
+  // the other events from from_us on, oldest first (at most kOthers; a race with the IRQ can tear the newest one)
+  unsigned Others(uint32_t from_us, Other* out) const {
+    const uint32_t n = others, first = n > kOthers ? n - kOthers : 0;
+    unsigned k = 0;
+    for (uint32_t i = first; i < n; i++) {
+      const Other& o = other[i % kOthers];
+      if ((int32_t)(o.us - from_us) >= 0) out[k++] = o;
+    }
+    return k;
   }
 
   // the main loop's MFINDEX sample: its step against the clock's (only over less than half a wrap: ambiguous beyond)
