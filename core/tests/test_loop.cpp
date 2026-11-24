@@ -349,6 +349,7 @@ static void test_store() {
   const loop::Grab* g = loop::grab_at(0);
   uint64_t s0 = (uint64_t)(g_origin + 41 * bar());
   CHECK(g && !g->copied);
+  run_ms(3);   // (a piece is scanned: before it a loop from the ring is capped as if full scale)
   jump(s0 + 10);
   CHECK(!g->copied);
   int32_t early = played_at(s0 + 200);
@@ -1433,7 +1434,7 @@ static void test_envelope() {
   uint64_t st;
   uint32_t ln;
   CHECK(!g->copied && g->peak > 0 && loop::playing_info(&st, &ln));
-  double prev = 0, worst2 = 0, late_peak = 0;
+  double prev = 0, worst2 = 0, late_peak = 0, all_peak = 0;
   int sw_it = -1;
   for (int it = 0; it < 500; ++it) {
     jump(st + 48u * (uint64_t)it);
@@ -1446,6 +1447,7 @@ static void test_envelope() {
       for (int f = 0; f < 12; ++f) {
         double x = (double)F[f][0] / 2147483648.0;
         if (it >= 3) worst2 = fmax(worst2, fabs(x - prev));
+        all_peak = fmax(all_peak, fabs(x));
         prev = x;
         if (sw_it >= 0 && it >= sw_it + 40) late_peak = fmax(late_peak, fabs(x));
       }
@@ -1453,7 +1455,21 @@ static void test_envelope() {
   }
   CHECK(sw_it > 10 && sw_it < 450);   // it did switch, in the middle of the playing
   CHECK(worst2 < 0.03);               // a sine at 0.98 FS moves 0.01 a frame; an envelope of 0.5 appearing at once would step 0.49
+  CHECK(all_peak <= 0.98 + 128.0 / 2147483648.0);   // every frame through the switch: under the ceiling (the cap follows the envelope's fade)
   CHECK(late_peak > 0.9 && late_peak < 0.985);   // and the loop is at the ceiling again after the switch (limited copy x the cap's gain)
+
+  // first_pass_held_back: a grab whose first control pass has not scanned a piece yet (peak 0) plays capped as if full scale
+  fresh(32u << 20);
+  loop::set_out_gain(3.508f);
+  g_sig_peak = fs(0.8);
+  g_sig = sine_sig;
+  to((uint64_t)(line(40) + bar() / 4));
+  CHECK(loop::grab(loop::k16) == loop::kOk);
+  for (int it = 0; it < 300 && !loop::grabs(); ++it) run_ms(1);
+  g = loop::grab_at(0);
+  CHECK(g && !g->copied && g->peak == 0 && loop::playing_info(&st, &ln));
+  int32_t held = out_peak(st + 100, 20000, 0);   // (no tick since: the peak is still 0)
+  CHECK(held <= fs(0.98) + 128 && held > 0);
   printf("  envelope: ring -> store switch at tick %d: largest step %.4f FS\n", sw_it, worst2);
 }
 

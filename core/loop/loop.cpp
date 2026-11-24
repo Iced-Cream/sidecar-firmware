@@ -92,6 +92,7 @@ struct LpSnap {
   uint32_t stop_len;    // frames of the fade
   uint32_t peak;        // the loop's largest |sample| (the make-up is capped from it; while it is still copied: so far)
   const uint16_t* env;  // the limiter's gain envelope (null: none, gain 1)
+  uint32_t peak_unl;    // the loop's peak without the envelope (what it was playing from the ring with), while it fades in
 };
 struct Snap {
   LpSnap cur;           // the loop that starts (or plays) now
@@ -396,7 +397,7 @@ CORE_COLD void make_loop(int gi, uint64_t start, bool replace) {
   } else {
     lpp_ = LoopInfo(), snap_.prev = LpSnap();
   }
-  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0, g.peak, g.copied ? g.env : nullptr};
+  snap_.cur = LpSnap{++loop_ids_, true, !g.copied, g.copied ? g.pcm : nullptr, g_k0_[gi], g.frames, start, 0, 0, g.peak, g.copied ? g.env : nullptr, g.peak};
   lp_ = {true, g.id, start, g.frames, 0, 0, g.half_bars};
   publish();
 }
@@ -535,7 +536,7 @@ CORE_COLD void pump_copy() {
     cp_.peak = pk;
     g_[gi].peak = pk;
     if (lp_.on && lp_.grab_id == cp_.id && snap_.cur.from_ring && snap_.cur.active && snap_.cur.peak != pk) {   // a loop playing from the ring: so far
-      snap_.cur.peak = pk;
+      snap_.cur.peak = pk, snap_.cur.peak_unl = pk;
       publish();
     }
   }
@@ -554,6 +555,7 @@ CORE_COLD void pump_copy() {
       snap_.cur.from_ring = false;
       snap_.cur.pcm = g.pcm;
       snap_.cur.peak = g.peak;
+      snap_.cur.peak_unl = cp_.peak;   // (the unlimited one: the envelope fades in against it)
       snap_.cur.env = g.env;
       publish();
     }
@@ -1220,6 +1222,7 @@ struct Voice {
   bool fade_in;
   uint32_t peak;   // the loop's largest |sample| (0: not known)
   const uint16_t* env;   // the limiter's gain envelope (null: gain 1)
+  uint32_t peak_unl;     // the peak without the envelope: the cap blends from it to `peak` as the envelope fades in (ew)
   float ew;        // how much of the envelope is applied (0..1): a loop that moves from the ring to the store fades it in over 10 ms
   float trim[2];   // its level cap now on POST / PRE (<= 1): moves toward the target a block gives it, < 0 not set yet
 };
@@ -1291,7 +1294,7 @@ inline int32_t add_soft(int32_t a, float x) {
 }
 
 Voice voice_of(const LpSnap& s, bool fade_in) {
-  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, s.env, 1.0f, {-1.0f, -1.0f}};
+  return Voice{s.active, s.id, s.from_ring, s.pcm, s.idx0, s.len, s.start, s.stop_at, s.stop_len, fade_in, s.peak, s.env, s.peak_unl, 1.0f, {-1.0f, -1.0f}};
 }
 // a loop's presence 0..1 at host frame h: its start's ramp times its stop's fade (BAL's own-output gain follows it)
 float env_of(const Voice& v, uint64_t h) {
@@ -1407,8 +1410,13 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame) {
   // (a quiet one keeps all the make-up; LEV under unity just makes it quieter). The gain on a pair is min(make-up x LEV x BAL, cap / peak)
   const float rg = fmaxf(ramp_loop_.at_h(render_frame), ramp_loop_.at_h(render_frame + (uint64_t)n));
   auto cap = [&](const Voice& v, int p) {
-    if (!v.peak) return 1.0f;
-    float t = kLoopCeil * 2147483648.0f / ((float)v.peak * mkp[p] * (rg > 1.0f ? rg : 1.0f));
+    // the peak the loop reaches as played: original x (1 + (envelope - 1) x ew) is at most unl x (1 - ew) + lim x ew while the envelope
+    // fades in (ring -> store); no peak yet while it plays from the ring (no piece scanned): as if full scale
+    float pk = (float)v.peak;
+    if (v.ew < 1.0f && v.peak_unl > v.peak) pk = (float)v.peak_unl + ((float)v.peak - (float)v.peak_unl) * v.ew;
+    if (!v.peak && v.from_ring) pk = 2147483648.0f;
+    if (!(pk > 0.0f)) return 1.0f;
+    float t = kLoopCeil * 2147483648.0f / (pk * mkp[p] * (rg > 1.0f ? rg : 1.0f));
     return t < 1.0f ? t : 1.0f;
   };
   float tc[2] = {cap(cur_, 0), cap(cur_, 1)}, to[2] = {cap(old_, 0), cap(old_, 1)};
