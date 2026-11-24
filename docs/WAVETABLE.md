@@ -240,7 +240,7 @@ once a kernel with this branch boots. Boot: the built-ins take 24 ms on the Mac 
 ## 6. Console and the Rytm side
 
 - `wt` stats; `wt=voice:V` / `wt=voice:V:off` (the override); `wt=list` (the tables in the log); `wt=rescan` (failed
-  tables tried again); `wt=pick:V:ROW` (writes the Rytm's TBL through 48); `wt=fenv:V:PERCENT` (the filter envelope's
+  tables tried again); `wt=pick:V:ROW` (writes the Rytm's TBL through 48); `wt=pickb:V:ROW` (the same for table B: the Rytm's TBLB, P13, 48 with k = 12); `wt=fenv:V:PERCENT` (the filter envelope's
   depth, -100..100, not saved). The list itself: `pool=wt:...` (docs/POOLS.md).
 - Rytm mod (rytm-mods 0021 + 0026 + 0029, not in this branch): a machine slot reported with **0x28** in the voice byte
   (one of 0021's free hidden machines: `us_flag_tab` entries that are 0 now, machines 43 / 46..50; e.g. 46 -> 0x28, and
@@ -256,8 +256,15 @@ once a kernel with this branch boots. Boot: the built-ins take 24 ms on the Mac 
     last four words 0).
   - **P13 is a 14-bit row word** like P1: the bank rides in the value's fraction (`srclib::code_of`: bank * 128 + row,
     `lo_of`), so 0026's TBL handling (the bank byte of 47 / 48, the list view that opens the WAVETABLES list, the
-    pick that writes the knob) has to serve P13 as well as P1. The host reads it as it reads P1 (`select_b`); only the
-    touchscreen's own pick (`wt::pick`, from the TABLE list) writes P1 and has no B yet.
+    pick that writes the knob) has to serve P13 as well as P1. The host reads it as it reads P1 (`select_b`). The host's
+    side of the TABLE list for P13 (2026-11-24, docs/core.md "The P13 list"): `4A` carries an optional 6th byte (12 = P13)
+    and its YES writes P13; the host announces `4A 7D 1` after each hello, only to a Rytm whose hello's caps2 has bit 5 (32);
+    the names bank (47) follows whichever of P1 / P13 was touched last. The touchscreen's pick for B is `wt::pick_b`
+    (`wt=pickb`): the pool list's middle key picks the target, A or B (every open starts on A); a 2A for P13 on an idle voice
+    selects table B as P1's does (`wt::kit_src_b`).
+  - **B is silent at MIX 0** unless WARP is FM or RM (`select_b`: it is wanted, loaded and played only while it can be heard):
+    a table picked for B at MIX 0 is stored and does not sound. The touchscreen says so after such a pick ("B IS SILENT:
+    MIX IS 0", a few seconds).
   - **WARP** (P3), value texts for the **nine zones**, zone = (v * 9) >> 7: `OFF SYNC PWM FM FORMANT QUANT BEND SQUEEZE
     RM` (a four-letter set if the display wants one: `OFF SYNC PWM FM FRMT QNT BEND SQZE RM`). 0029's stepped list
     knob for WARP: 9 zones (was 4).

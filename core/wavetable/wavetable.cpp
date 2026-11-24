@@ -254,12 +254,16 @@ CORE_COLD void select_a(int vi) {
 // its slot) only while it can be heard: MIX above 0, or FM / RM using it as the modulator (an old project's chord words
 // read as TBL B rows at MIX 0: they claim no slot). A B that goes keeps its table kFadeMs more, for the render core's
 // fade out (b_fade_step); a table loading leaves the B it had (none: silent until it is in).
+CORE_COLD bool b_heard(int vi) {   // MIX above 0, or FM / RM using B as the modulator: B can be heard
+  vi &= 7;
+  int wz = eng_zone(vp[vi][2], kWarps);
+  return vp[vi][14] > 0 || wz == kWFm || wz == kWRm;
+}
 CORE_COLD void select_b(int vi) {
   int e = srclib::code_of(vp[vi][12]);
   if (!list || e < 0 || e >= nlist) return;
   if (!(v[vi].wt || force[vi])) return;
-  int wz = eng_zone(vp[vi][2], kWarps);
-  bool on = !srclib::silent(list, e) && (vp[vi][14] > 0 || wz == kWFm || wz == kWRm);
+  bool on = !srclib::silent(list, e) && b_heard(vi);
   if (!on) {
     wantb[vi] = -1;
     __atomic_store_n(&bwant[vi], 0u, __ATOMIC_SEQ_CST);
@@ -732,6 +736,31 @@ CORE_COLD void kit_src(int vi, int e) {
   vp[vi][0] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
   select(vi);
   pools::seen(pools::kTables, e);   // (the used set, as a report)
+}
+// 2026-11-24 TBLB: the touchscreen's choice for table B (P13): the Rytm's TBLB written (48, k = 12: the kit keeps it), table B
+// selected (select_b alone: table A is untouched). A row 000 is B off. B is silent at MIX 0 unless the warp is FM or RM (b_silent).
+CORE_COLD bool pick_b(int vi, int e) {
+  vi &= 7;
+  if (!job || !list || e < 0 || e >= nlist) return false;
+  ui::remote_param_write(vi, kWaveMachine, 12, e & 127, srclib::lo_of(e));
+  vp[vi][12] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
+  select_b(vi);
+  log(CORE_STR("wt: voice %d: TBLB %c%03d %s"), vi, 'A' + srclib::bank_of(e), e & 127, entry_name(e));
+  return true;
+}
+CORE_COLD void kit_src_b(int vi, int e) {   // the Rytm's own P13 on an idle voice (kit_src's for table B)
+  vi &= 7;
+  if (!job || !list || e < 0 || e >= nlist) return;
+  vp[vi][12] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
+  select_b(vi);
+  pools::seen(pools::kTables, e);
+}
+CORE_COLD bool b_open(int vi) { return b_heard(vi & 7); }
+CORE_COLD int table_b_code(int vi) { return srclib::code_of(vp[vi & 7][12]); }
+CORE_COLD bool b_silent(int vi) {   // a table is set for B and MIX / the warp keep it from being heard
+  vi &= 7;
+  int e = srclib::code_of(vp[vi][12]);
+  return list && e >= 0 && e < nlist && !srclib::silent(list, e) && !b_heard(vi);
 }
 CORE_COLD void preview(int vi, int e) {
   vi &= 7;
@@ -1342,6 +1371,18 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     }
     if (!pick(vi, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, nlist);
     else sniprintf(out, cap, "wt: voice %d TBL %s", vi, entry_name(want[vi]));
+    return true;
+  }
+  if (!strncmp(a, "pickb:", 6)) {   // pickb:V:ROW (or a code): table B (TBLB, P13)
+    const char* q = a + 6;
+    int vi = q[0] - '0', e = -1;
+    const char* r = q[1] == ':' ? q + 2 : "";
+    if (vi < 0 || vi > 7 || (!pools::parse_row(r, &e) && !parse_num(&r, &e))) {
+      sniprintf(out, cap, "wt: pickb:V:ROW (V 0..7, ROW A001..H127)");
+      return true;
+    }
+    if (!pick_b(vi, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, nlist);
+    else sniprintf(out, cap, "wt: voice %d TBLB %s%s", vi, entry_name(e), b_silent(vi) ? " (silent: MIX 0)" : "");
     return true;
   }
   if (!strcmp(a, "list")) {

@@ -246,6 +246,24 @@ The hello's **caps2** bit table (the 4th data byte; a bit says "this build has i
 | 2 | 4 | `kCaps2Capture` | the MORPH scene edit on the Rytm's own pages (`5A 01 0B`) |
 | 3 | 8 | (morph-v2 branch) | the Rytm-side morph, `5A 01 09` MORPH-SET / `0A` FADER |
 | 4 | 16 | `kCaps2Rehello` | answers `3C` with flags bit 0 by one hello again |
+| 5 | 32 | `kCaps2ListP13` | opens the host's bank list for WAVETABLE's table B (P13): `4A`'s optional 6th byte; the host announces `4A 7D 1` |
+
+The P13 list (TBLB's pool browser, `core/ui/remote.cpp`, `core/ui/page_wavegrain.cpp`):
+
+- **`4A`'s 6th byte.** The Rytm's `4A 01 <track> <on> <hi> <lo> <why>` may carry one more byte, the list's parameter. `12` (P13,
+  WAVETABLE's table B) is the only value; any other value, or `12` on a track that is not WAVETABLE (on an open), is a bad
+  message and opens no list. Without the byte nothing changes: the list is the machine's own (P1, DSP SAMPLE / SAMPLER P11). The
+  list opened with the byte keeps it for its life: its YES writes P13 (`48 01 <track> 12 <index> <bank<<4> 1`, the bank kept, flags
+  1 as for P1), never P1; its page is titled TABLE B. The list's turns come from encoder 0 or, for this list, encoder 4 (the SMPL
+  page's knob E).
+- **The announce `4A 7D 1`** (host -> Rytm, 9 bytes: `F0 7D 52 54 4A 01 7D 01 F7`) goes out after every hello, and only to a Rytm
+  whose hello's caps2 has bit 5 (value 32). The Rytm opens a P13 list only after it: an older host would read the frame as P1's.
+  An older mod would count the `4A 7D` as a bad message, so it is never sent without the bit.
+- **The names bank.** TBL and TBLB share the Rytm's list 1 names (`47`, one bank): the host sends the bank of whichever of P1 or
+  P13 was touched last (the SRC view's `2A`, a list's commit, a touchscreen pick). The knob not in hand can read a placeholder
+  until touched.
+- **The touchscreen** (host only): `wt=pickb:V:ROW` writes P13 (`48` k = 12) and selects table B; the Rytm's own pick of P13 on an
+  idle voice (`2A` k = 12) selects it as P1's does. Table B is silent at MIX 0 unless WARP is FM or RM (`select_b`).
 
 Tests: `core/tests/test_lockfill.cpp` (the FILL block: no request without traffic, once, the 5 s rate, 3 tries, a simulated
 reply turns the claim and the edit arm on, none for a box, going down, or once caps are known).

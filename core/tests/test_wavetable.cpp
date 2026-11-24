@@ -972,6 +972,126 @@ static void test_retry_release() {
   wt::reset();
 }
 
+// 2026-11-24 TBLB (the pool browser for table B, P13). pick_b is pick for P13: 48 with k = 12 (never k = 0), vp[12], select_b; A is
+// untouched, and a pick of A is as before. B is silent at MIX 0 unless the warp is FM or RM (select_b): b_silent says so (the
+// touchscreen's note). The Rytm's own pick of P13 on an idle voice (2A, k = 12) is kit_src_b: the table loads with no note.
+static std::vector<std::vector<uint8_t>> g_tx;
+static void test_pick_b() {
+  const int t = 0, vi = 0;
+  const int ea = entry("harm"), eb = entry("clm256");
+  CHECK(ea > 0 && eb > 0);
+  void (*old_tx)(const uint8_t*, int) = hooks.to_rytm;
+  hooks.to_rytm = [](const uint8_t* d, int n) { g_tx.emplace_back(d, d + n); };
+  auto w48 = [&](int k) {   // 48 <track> <k> sent since the last clear
+    for (auto& m : g_tx)
+      if (m.size() >= 10 && m[4] == 0x48 && m[6] == t && m[7] == k) return true;   // (10 bytes: no bank byte in bank A)
+    return false;
+  };
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 46, (uint8_t)(kW | vi), 0xF7});   // BD on WAVETABLE
+  wg::params(kW, vi, P((float)ea, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, 0, 0, 64));          // MIX 64, B OFF
+  idle();
+  CHECK(wt::voice_entry(vi) == ea && wt::voice_entry_b(vi) == -1 && !wt::b_silent(vi));
+  g_tx.clear();
+  CHECK(wt::pick_b(vi, eb));
+  idle();
+  CHECK(wt::voice_entry_b(vi) == eb && wt::voice_entry(vi) == ea);   // B in, A as it was
+  CHECK(w48(12) && !w48(0));                                         // P13 written, never P1
+  CHECK(!wt::b_silent(vi));
+  // a pick of A: P1 only, B stays (the same as before this change)
+  g_tx.clear();
+  CHECK(wt::pick(vi, eb) && w48(0) && !w48(12));
+  idle();
+  CHECK(wt::voice_entry(vi) == eb && wt::voice_entry_b(vi) == eb);
+  CHECK(wt::pick(vi, ea));
+  idle();
+  // MIX 0: B is picked and silent (no table wanted, nothing playing from it); FM / RM use it as the modulator
+  wg::params(kW, vi, P((float)ea, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)eb, 0, 0));
+  idle();
+  CHECK(wt::voice_entry_b(vi) == -1 && wt::b_silent(vi));
+  CHECK(wt::pick_b(vi, eb) && wt::b_silent(vi) && wt::voice_entry_b(vi) == -1);
+  wg::params(kW, vi, P((float)ea, 0, wz(kWFm), 64, 0, 0, 64, 0, 0, 127, 127, 64, (float)eb, 0, 0));
+  idle();
+  CHECK(!wt::b_silent(vi) && wt::voice_entry_b(vi) == eb);
+  wg::params(kW, vi, P((float)ea, 0, wz(kWRm), 64, 0, 0, 64, 0, 0, 127, 127, 64, (float)eb, 0, 0));
+  idle();
+  CHECK(!wt::b_silent(vi) && wt::voice_entry_b(vi) == eb);
+  wg::params(kW, vi, P((float)ea, 0, 0, 0, 0, 0, 64, 0, 0, 127, 127, 64, (float)eb, 0, 64));
+  idle();
+  CHECK(!wt::b_silent(vi) && wt::voice_entry_b(vi) == eb);
+  // OFF (row 000): B off, and that is not "silent by MIX"
+  CHECK(wt::pick_b(vi, 0));
+  idle();
+  CHECK(wt::voice_entry_b(vi) == -1 && !wt::b_silent(vi));
+  g_tx.clear();
+  CHECK(!wt::pick_b(vi, wt::entries()) && !wt::pick_b(vi, -1) && g_tx.empty());   // no such entry: nothing written
+  // the console: wt=pickb:V:ROW
+  char o[200];
+  g_tx.clear();
+  CHECK(wt::command("wt=pickb:0:A010", o, sizeof o));
+  idle();
+  CHECK(wt::voice_entry_b(vi) == 10 && w48(12) && !w48(0) && strstr(o, "TBLB"));
+  CHECK(wt::command("wt=pickb:9:A010", o, sizeof o) && strstr(o, "pickb:V:ROW"));
+  // the Rytm's own pick of P13 on an idle voice (the SRC view's 2A, k = 12): kit_src_b, no note, no write back
+  CHECK(wt::pick_b(vi, 0));
+  idle();
+  CHECK(wt::voice_entry_b(vi) == -1);
+  uint32_t trigs = wt::stats().trigs;
+  g_tx.clear();
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 1, 0xF7});   // its SRC view
+  g_tx.clear();
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, (uint8_t)t, 12, 1, (uint8_t)(eb & 127), (uint8_t)srclib::lo_of(eb), 0xF7});
+  idle();
+  CHECK(wt::voice_entry_b(vi) == eb && wt::voice_entry(vi) == ea && wt::stats().trigs == trigs && !w48(12));
+  wt::kit_src_b(vi, 0);   // OFF via the same path
+  idle();
+  CHECK(wt::voice_entry_b(vi) == -1);
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 0, 0xF7});
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 0, 0x7F, 0xF7});   // not ours again
+  wt::reset();
+  hooks.to_rytm = old_tx;
+  printf("test_wavetable: pick_b writes P13 only (48 k = 12), A as before, silent at MIX 0 (not FM / RM), OFF, wt=pickb, 2A's P13 on an idle voice\n");
+}
+
+// The Rytm's value text names one list's bank (47's bank byte): the bank of the SRC view's P1, now of whichever of P1 / P13 was
+// touched last (TBL and TBLB share list 1 and so one slot); a list open for a P13 follows its own bank.
+static void test_names_bank() {
+  const int t = 0, vi = 0;
+  void (*old_tx)(const uint8_t*, int) = hooks.to_rytm;
+  hooks.to_rytm = [](const uint8_t* d, int n) { g_tx.emplace_back(d, d + n); };
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 46, (uint8_t)(kW | vi), 0xF7});
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 1, 0xF7});   // the SRC view on
+  uint32_t ms = now_ms() + 100000;
+  auto bank47 = [&]() {   // the bank byte of the last 47 for list 1 (TBL) in g_tx, -1 none
+    int b = -1;
+    for (auto& m : g_tx)
+      if (m.size() >= 11 && m[4] == 0x47 && m[6] == 1) b = m[9];
+    return b;
+  };
+  auto touch = [&](int k, int row, int bank) {   // a single 2A value, then the host's tick
+    g_tx.clear();
+    wg::send({0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, (uint8_t)t, (uint8_t)k, 1, (uint8_t)row, (uint8_t)(bank << 4), 0xF7});
+    for (int i = 0; i < 3; ++i) ui::remote_tick(ms += 100);
+  };
+  touch(0, 3, 0);
+  CHECK(bank47() == 0);   // P1 in bank A: A's names
+  touch(12, 2, 5);
+  CHECK(bank47() == 5);   // P13 touched last, in bank F: F's names (the knob in hand reads right)
+  touch(0, 4, 2);
+  CHECK(bank47() == 2);   // P1 again (bank C)
+  touch(0, 4, 3);         // P1 by itself: its own bank
+  CHECK(bank47() == 3);
+  touch(12, 6, 7);
+  CHECK(bank47() == 7);
+  g_tx.clear();
+  for (int i = 0; i < 3; ++i) ui::remote_tick(ms += 100);
+  CHECK(bank47() == -1);   // (nothing changed: no resend)
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 0, 0xF7});
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 0, 0x7F, 0xF7});
+  wt::reset();
+  hooks.to_rytm = old_tx;
+  printf("test_wavetable: the names bank follows the knob last touched (P1 or P13)\n");
+}
+
 int main() {
   test_wav_read();
   test_frames();
@@ -992,6 +1112,8 @@ int main() {
   idle();
   test_list_and_load();
   test_idle_pick();
+  test_pick_b();
+  test_names_bank();
   test_morph();
   test_alias();
   test_unison();

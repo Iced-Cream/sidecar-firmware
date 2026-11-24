@@ -1055,6 +1055,27 @@ int main() {
       send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
       ui::remote_tick(t0 + 80000);
       CHECK(!sent(ask));
+      // 2026-11-24 TBLB: the host announces "I draw the P13 lists" (4A 7D 1) after each hello, and only to a Rytm whose
+      // caps2 has kCaps2ListP13 (an older mod counts the 4A 7D as a bad message and never asks for a P13 list)
+      {
+        const std::vector<uint8_t> p13 = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 0x01, 0x7D, 0x01, 0xF7};
+        CHECK(ui::kCaps2ListP13 == 32 && !(ui::kCaps2ListP13 & (ui::kCaps2Arrows | ui::kCaps2QpMute | ui::kCaps2Capture | 8 | ui::kCaps2Rehello)));
+        ui::remote_reset();
+        g_out.clear();
+        send(msg(0x49, {4, 0}));   // Rytm traffic, no hello: nothing announced
+        CHECK(!sent(p13));
+        send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows | ui::kCaps2ListP13}));
+        CHECK(sent(p13) && ui::remote_caps2() == (ui::kCaps2Arrows | ui::kCaps2ListP13));
+        g_out.clear();
+        send(msg(0x35, {0, 6, 127, ui::kCaps2ListP13}));   // after each hello
+        CHECK(sent(p13));
+        g_out.clear();
+        send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows | ui::kCaps2Capture | ui::kCaps2Rehello}));   // an old Rytm: no bit 32
+        CHECK(!sent(p13) && sent(claim));
+        g_out.clear();
+        send(msg(0x35, {0, 5, 127}));   // and one with no caps2 at all
+        CHECK(!sent(p13));
+      }
       // a box is never asked; going down neither
       ui::remote_reset();
       {

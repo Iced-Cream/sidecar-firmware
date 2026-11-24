@@ -70,7 +70,7 @@ int voice_notes(int vi);
 float headroom(int vi);              // tests: the voice's headroom gain now (as msamp's)
 const char* entry_name(int e);       // "" none
 int entries();
-bool command(const char* p, char* out, int cap);   // "wt", "wt=voice:V[:off]", "wt=list", "wt=rescan", "wt=pick:V:ROW"
+bool command(const char* p, char* out, int cap);   // "wt", "wt=voice:V[:off]", "wt=list", "wt=rescan", "wt=pick:V:ROW", "wt=pickb:V:ROW"
 // The TBL list as the displays show it (as gr's): entry e = code e of the WAVETABLES pool. entry_state: 0 none (OFF,
 // empty, missing) 1 on the card 2 loading 3 in RAM 5 failed; entry_note: "LOADING", "TOO BIG: 8 MB MAX", "NOT A WAV IT
 // READS", "MISSING", "<n> FRAMES". list_gen changes with every new list.
@@ -88,6 +88,15 @@ bool voice_picked(int vi);           // (always false)
 // come only while it plays): the voice selects entry e as at its next report, so its table loads and the pages show it
 // with no trig (0.5.0, owner 2026-11-15). The Rytm's own value: nothing is written back.
 void kit_src(int vi, int e);
+// 2026-11-24 TBLB: the same for table B (P13). pick_b writes only P13 (48 k = 12) and selects table B (A untouched; row 000 is B off);
+// kit_src_b is the Rytm's own P13 on an idle voice (the SRC view's 2A). B is silent at MIX 0 unless the warp is FM or RM: b_open
+// says whether MIX / the warp let it be heard, b_silent whether a table is set for B and they do not (the touchscreen's note);
+// table_b_code the code P13 holds.
+bool pick_b(int vi, int e);
+void kit_src_b(int vi, int e);
+bool b_open(int vi);
+bool b_silent(int vi);
+int table_b_code(int vi);
 void preview(int vi, int e);         // a ~0.7 s note at C4 once the table is in (e < 0: the voice's own)
 
 struct Stats {
