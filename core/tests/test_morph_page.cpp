@@ -688,6 +688,9 @@ static void qperf_glide_end_not_held() {
   ui::preview_sent(sent);
   CHECK(!memcmp(fb, sent, ui::kBytes));
   CHECK(!g_commit_ms.empty());
+  scene::reset();   // the tick's last-played memory goes with the state (a stale one would flag the next tick)
+  scene::tick(now_ms());
+  CHECK(scene::fader_played() == 0);
   const uint32_t last = g_commit_ms.empty() ? 0 : g_commit_ms.back() - t0;
   printf("    glide end: last commit %u ms after the move\n", (unsigned)last);
   CHECK(last <= 51 + 50);   // the glide + the cap (not the 200 ms play cap)
