@@ -29,7 +29,9 @@ effect is muted only when its core is hot, since its cost is known from the benc
 2. A slot over its budget (120 us a 12-frame block, scaled by the frames: API 3's) for 16 blocks in a row while its core
    is hot.
 3. A core hot 16 blocks in a row: the dearest effect on it over those blocks (built-in or user) is muted, and the count
-   starts again; a core still hot mutes the next one 16 blocks later.
+   starts again; a core still hot mutes the next one 16 blocks later. After any mute on a core (any rule), its dearest
+   rule waits 32 blocks (8 ms: the muted slot's 5 ms fade still counts its time), so one slot over its budget never
+   takes a second effect with it (found in the LT12 prep, 2026-11-24).
 
 The NaN / runaway check stays as before (the slot cleared, it fades in again).
 

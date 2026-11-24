@@ -41,6 +41,7 @@ struct Row {
   uint32_t win_us[kUnits];       // the hot run's sums (the dearest's pick)
   uint8_t over[kBuiltin];        // blocks over the budget in a row while hot
   uint8_t hot_run;               // hot blocks in a row
+  uint8_t settle;                // blocks left after a mute on this core with the dearest rule off (kSettle)
 };
 Row g_row[kCores];
 
@@ -150,8 +151,13 @@ void note_user(int u, uint32_t us) {
   r.touched |= bit(user_unit(u));
 }
 
+// After a mute on a core, its dearest rule waits kSettle blocks: the muted slot is still fading out (5 ms, ~20 blocks,
+// its time still counted) and the core is still hot from it, so without the wait one slot over its budget took the next
+// dearest with it in the same block, and a third 16 blocks later (LT12 prep, 2026-11-24). Per-slot rules go on.
+constexpr uint8_t kSettle = 2 * kOverMax;
 void core_done(int core, bool hot) {
   Row& r = g_row[core & (kCores - 1)];
+  bool muted_here = false;   // (a mute in this call: the dearest rule waits)
   uint64_t t = r.touched;
   r.touched = 0;
   while (t) {
@@ -167,12 +173,14 @@ void core_done(int core, bool hot) {
         if (us >= kHugeUs) {
           ++g_stats.huge;
           mute(u, us, kHuge, core);
+          muted_here = true;
         } else if (hot && us > b) {
           if (r.over[u] < 255) ++r.over[u];
           if (r.over[u] >= kOverMax) {
             ++g_stats.slow;
             r.over[u] = 0;
             mute(u, us, kSlow, core);
+            muted_here = true;
           }
         } else {
           r.over[u] = 0;
@@ -184,7 +192,9 @@ void core_done(int core, bool hot) {
     }
     if (hot) r.win_us[u] += us, r.win |= bit(u);
   }
-  if (!hot) {
+  if (muted_here) r.settle = kSettle;
+  if (!hot || r.settle) {
+    if (r.settle) --r.settle;
     r.hot_run = 0;
     for (uint64_t w = r.win; w; w &= w - 1) r.win_us[__builtin_ctzll(w)] = 0;
     r.win = 0;
@@ -204,6 +214,7 @@ void core_done(int core, bool hot) {
   if (best >= 0) {
     ++g_stats.dearest;
     mute(best, most / kOverMax, kDearest, core);   // (its mean a block over the run)
+    r.settle = kSettle;
   }
 }
 

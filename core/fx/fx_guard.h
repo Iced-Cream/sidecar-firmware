@@ -12,7 +12,8 @@
 //     blocks in a row, counted only while its core is hot (the core's block took 80 % or more of a block; core 3 70 %:
 //     the cores report it, core_done)
 //   - a core hot kOverMax blocks in a row: the dearest effect on it over those blocks (built-in or a user effect: API 3's
-//     UFX1..UFX4 add their time with note_user) is muted, and the count starts again
+//     UFX1..UFX4 add their time with note_user) is muted, and the count starts again; after any mute on a core its
+//     dearest rule waits 2 x kOverMax blocks (the muted slot's fade), so one slow slot never takes a second with it
 // A muted slot fades out (the 5 ms TYPE fade), plays dry and shows NO CPU on the box (insert slots; ins::refused), its
 // reason on the web page (/status "fxMuted", the user effects' beside them). It holds until the slot is set again (its
 // TYPE changes, set_type) or its box attaches again (clear_box): no retry when the Pi cools, and the admission's

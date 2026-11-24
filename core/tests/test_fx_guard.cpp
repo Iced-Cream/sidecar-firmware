@@ -99,6 +99,20 @@ int main() {
     CHECK(d > 1e-3f);
     printf("test_fx_guard: slow slot muted on a hot core only, faded to dry, held, released on a new TYPE\n");
   }
+  // ---- one slot over its budget mutes that slot only: the dearest rule waits while it fades (kSettle, LT12 prep)
+  {
+    g::reset();
+    ins::Engine e(kSr);
+    fresh_ins(e);
+    set(0, 0, ins::kDrive), set(1, 0, ins::kDrive);
+    cmd("fxguard=slow:0:V1:A:180");
+    cmd("fxguard=slow:0:V2:A:40");
+    for (int b = 0; b < 16; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true);
+    CHECK(g::ins_muted(0, 0, 0) && !g::ins_muted(0, 1, 0));
+    for (int b = 0; b < 30; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true);   // (still hot, within the settle)
+    CHECK(!g::ins_muted(0, 1, 0) && g::stats().dearest == 0);
+    printf("test_fx_guard: an over-budget slot mutes alone; the dearest rule waits while it fades\n");
+  }
   // ---- one call past 2 ms: at once, hot or not
   {
     g::reset();
@@ -130,11 +144,13 @@ int main() {
     g::poll();
     printf("test_fx_guard: dearest V2 A: %s\n", g::why(g::ins_unit(0, 1, 0)));
     CHECK(strstr(g::why(g::ins_unit(0, 1, 0)), "dearest on core 1"));
+    for (int b = 0; b < 30; ++b) block(e, 0, true, 0.25f, false), block(e, 1, true);   // V2 A fading, the core still hot
+    CHECK(!g::ins_muted(0, 0, 0) && g::stats().dearest == 1);   // V1 A not taken with it
     // set again with the same TYPE (set_type, keep: false): released
     ins::set_type(1, 0, ins::kDrive, false);
     CHECK(!g::ins_muted(0, 1, 0));
-    // the next 16 hot blocks take the next dearest
-    for (int b = 0; b < 16; ++b) block(e, 0, true);
+    // the settle's last 2 blocks, then the next 16 hot blocks take the next dearest
+    for (int b = 0; b < 2 + 16; ++b) block(e, 0, true);
     CHECK(g::ins_muted(0, 0, 0));
     // a box attaching again releases its slot's mutes
     g::clear_box(0);
