@@ -83,7 +83,7 @@ constexpr int kPageGenerator = 15, kPageFill = 16;
 // The page drawn by code titled `title` (extra.h: "SEQ", "LFO" ..) shown: at once when the page is open, else the page
 // opened (3A 0 1) and that page shown when the Rytm says it is open (30).
 void remote_show_page(const char* title);
-void remote_user_move();   // a QUICK PERF fader move (scene): on the open MORPH page its frames commit every 50 ms while playing
+void remote_morph_qperf_move();   // a QUICK PERF fader move (scene): on the open MORPH page its frames commit every 50 ms while playing
 const char* remote_page_title();   // the page shown now when it is one drawn by code (open), else null
 
 // The platform's numbers for the SYSTEM page (any time; plain words, a stale value at worst). The fields after cpu

@@ -240,7 +240,7 @@ CORE_COLD void move_fader(uint16_t v, int source, uint32_t smooth_ms) {   // whi
   g_from = g_played, g_set_ms = now_ms(), g_smooth_ms = smooth_ms;
   g_st.fader = v;
   g_src = source;
-  if (source == kQperf) ui::remote_user_move();
+  if (source == kQperf) ui::remote_morph_qperf_move();
   mod::fader_moved();   // a held manual edit lets go (spec-050 2.5)
 }
 }  // namespace
@@ -298,7 +298,9 @@ CORE_COLD void tick(uint32_t ms) {
   uint32_t el = ms - g_set_ms;
   int to = g_st.fader;
   g_played = el >= g_smooth_ms ? to : g_from + (to - g_from) * (int)el / (int)g_smooth_ms;
-  if (g_played != g_st.fader && g_src == kQperf) ui::remote_user_move();   // the glide's tail is not held either
+  static int last_played = 0;
+  if (g_played != last_played && g_src == kQperf) ui::remote_morph_qperf_move();   // the glide, its last step too, is not held
+  last_played = g_played;
   float f = (float)g_played / (float)kFaderMax;
   constexpr float kH = 1.0f / 64.0f;
   if (g_st.a != g_last_a || g_st.b != g_last_b) {
