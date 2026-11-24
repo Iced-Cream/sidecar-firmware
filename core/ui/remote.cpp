@@ -990,7 +990,9 @@ CORE_COLD bool seq_updown() { return true; }
 // scrolls with it".
 CORE_COLD bool claims_updown(const ExtraPage* x) {
   if (x && !strcmp(x->title, "SEQ")) return seq_updown();
-  return !standalone(x) || x->updown;
+  // t050-d (the owner: "insert eq and then the down key does nothing"): INSERT stands alone, so UP / DOWN stay the Rytm's
+  // except on its EQ and SIDECHAIN views, where DOWN goes in and out of SIDECHAIN
+  return !standalone(x) || x->updown || (x == &kInsPage && ins_wants_updown());
 }
 // 0.5.0 UI feel: the page really moves with UP / DOWN (its rows, its banks), so UP held on it is a scroll and the combo map
 // (49 1 5 1) stays closed. claims_updown, less the ring pages that leave UP alone (a voice page, SCOPE: DOWN is their next

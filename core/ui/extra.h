@@ -195,6 +195,7 @@ struct NeRoll {   // the last NOTE EDIT frame's roll (tests)
 };
 NeRoll ne_roll_shown();
 extern const ExtraPage kSongPage;  // SONG RECORD (page_song.cpp, core/song/song.h), last
+bool ins_wants_updown();   // the INSERT page takes UP / DOWN now (its EQ / SIDECHAIN view: DOWN in and out of SIDECHAIN)
 extern const ExtraPage kInsPage;   // fx-ins: the INSERT page (page_ins.cpp, core/fx/insert.h), after SEQ
 extern const ExtraPage kMasterPage;   // the master FX (page_mfx.cpp, core/fx/master.h), after INSERT
 // 0.5.0 SIDECHAIN view of chain ch (insert.h), drawn / turned by the INSERT page and the MASTER FX page; nav: the footer's hint
