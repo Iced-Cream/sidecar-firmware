@@ -84,7 +84,33 @@ about twice the level of the first grab when the Rytm is not muted. After one or
 turn LEV down for the resample (LEV 100 is the level as grabbed), or use auto-mute / LIVE VIA so the live Rytm is down under the loop
 (then a resample is the loop alone, as the Octatrack's). The page and the console say nothing about this: it is the design.
 
-The Pi plays a loop out on POST, which reaches the Rytm's main about 10.9 dB down, so the looper makes that up (x3.5): LEV 100
-plays a loop at the level it was grabbed, and a resample of a loop alone keeps its level. POST cannot go above about -11 dBFS of
-the Rytm's main, so the loud peaks of a loop grabbed hotter than that are bent down by a soft knee (from 75 % of full scale
-on) rather than clipped.
+The Pi plays a loop out on POST, which reaches the Rytm's main about 10.9 dB down, so the looper makes that up (x3.508). A quiet
+loop comes back at the level it was grabbed (and a resample of a loop alone keeps its level). POST itself tops out about 10.9 dB
+under the Rytm's full scale, so a loud loop cannot come back as loud as it was heard: the make-up is capped per loop.
+
+## OUT: POST or PRE, and the level cap
+
+LOOP page, encoder G (second row, third cell: OUT, POST / PRE; `loop=out:post|pre`; saved as `out=post|pre` in loop.txt).
+
+- **POST** (default): the loop goes onto the Rytm's POST return (the Pi's outputs 0/1). The Rytm's USB IN levels are fixed in
+  Overbridge mode, so this return always reaches the main 10.9 dB down, after the Rytm's own distortion and compressor.
+- **PRE**: the loop goes onto the PRE return (outputs 2/3), added to whatever is already there (voices on OUT PRE, the send FX's
+  PRE return, the computer's OUT, which the master FX take first). PRE reaches the main only 2.0 dB down (make-up x1.259 instead of x3.508), but it
+  enters before the Rytm's analog distortion and compressor, so a loud loop is shaped by them a second time.
+
+The cap, on both: when a loop is grabbed its largest sample (L or R) is measured while it is copied to the store. The loop is
+played with the make-up, or less if that would put the loop alone above 75 % of full scale (the soft knee's start): gain =
+min(make-up, 0.75 / peak). So one loop never reaches the knee: clean, never clipped. A loop with a peak under -13.4 dBFS (POST)
+or -4.5 dBFS (PRE) keeps the whole make-up, a louder one is exactly as much quieter as it is louder than that (a peak at
+-6 dBFS: 7.4 dB quieter on POST; at 0 dBFS: 13.4 dB). PRE is the way to get a loud loop back at full level, at the price of the
+Rytm's compressor and distortion again. The cap follows the loop (each loop its own peak: a second grab never changes the one
+that plays), LEV and BAL work on top of it (LEV above 100 can take a loop into the soft knee), and the knee stays the backstop
+for several loops, or the Sidecar's own output, summed. A resample's loop is a new grab with its own peak.
+
+## Calibrating the POST return (`loop=cal`)
+
+`loop=cal` sends three clicks onto POST 0/1 and listens for them in the Rytm's MAIN. Besides the POST latency it now measures
+the return's gain: the click's peak out / the peak that comes back (the result line shows it, `POST LAT 12 X3.51 10.9DB`). A gain
+in 1.5 .. 6.0 is saved as `postgain` (thousandths, in loop.txt) and replaces the x3.508 on POST; anything else is ignored. It
+is measured on POST only: PRE keeps its x1.259. Play nothing loud on the Rytm while it runs (a live signal at the click raises
+the peak back and lowers the gain it finds).
