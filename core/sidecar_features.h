@@ -4,5 +4,5 @@
    and a project's scene and XY data is read and written unchanged. 0.5.2 turns it on: change the 0 below to 1. */
 #pragma once
 #ifndef SIDECAR_MORPH
-#define SIDECAR_MORPH 0
+#define SIDECAR_MORPH 1
 #endif
