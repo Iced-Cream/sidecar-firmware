@@ -1,5 +1,6 @@
 // pi/engine/loop_pi.cpp - see loop_pi.h. Circle's side: the boot reservation and the KEEP writer's card backend.
 #include "loop_pi.h"
+#include "masterfx_pi.h"
 
 #include <circle/koptions.h>
 #include <circle/logger.h>
@@ -40,6 +41,7 @@ void Initialize()
 	core::loop::init ((int32_t *) pRing, kRingFrames, pStore, (uint64_t) nMB << 20);
 	log->Write (From, LogNotice, "loop ring %u MB, grabs %u MB", (unsigned) (kRingBytes >> 20), nMB);
 	s_Keep.init (rec_pi::CardBackend (), core::loop::keep_finished);
+	core::loop::set_out_gain (masterfx_pi::kStemOnPost);	// POST reaches the Rytm's main 10.9 dB down: the loop at the level it was heard
 }
 
 bool WantsIn () { return core::loop::wants_in (); }

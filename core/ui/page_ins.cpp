@@ -537,6 +537,10 @@ CORE_COLD void ins_open_out() {
 CORE_COLD uint16_t ins_trigs() { return ip.sc ? sc_view_trigs(chain_now()) : 0; }   // 0.5.2: T1 is MON's in the SIDECHAIN view
 CORE_COLD bool ins_leds(uint8_t c[16]) { return ip.sc && sc_view_leds(chain_now(), c); }
 
+// t050-d: the page stands alone, so UP / DOWN are the Rytm's (updown044, CHRO's octave) except on the EQ and SIDECHAIN
+// views, where DOWN goes in and out of SIDECHAIN (remote.cpp claims_updown)
+CORE_COLD bool ins_wants_updown() { return ip.eq || ip.sc; }
+
 UI_ROM const ExtraPage kInsPage = {"INSERT", ins_shown, ins_draw, ins_enc, ins_key, 0xFF, false, nullptr, ins_trigs, ins_leds,
                                    false, nullptr, ins_enc_tid};
 

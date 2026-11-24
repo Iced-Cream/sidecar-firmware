@@ -1131,9 +1131,10 @@ int main() {
   // ---- ux1027 (the user, 2026-10-27): UP + FX / UP + AMP's page replaces the Rytm's screen, as the SRC view does - no
   // LEFT / RIGHT siblings (RIGHT the EQ view, LEFT back out of it, nothing more); the same UP + key again leaves it
   {
-    static int closes = 0;
+    static int closes = 0, down_caught = -1;   // down_caught: DOWN (0x43) in the last key mask (37), -1 none sent
     hooks.to_rytm = [](const uint8_t* d, int len) {
       if (len >= 9 && d[4] == 0x3A && d[7] == 0) ++closes;
+      if (len >= 6 + 3 + 0x43 / 7 + 2 && d[4] == 0x37) down_caught = d[6 + 3 + 0x43 / 7] >> (0x43 % 7) & 1;
     };
     ins::reset();
     ins::set_type(0, 0, ins::kFilter);
@@ -1147,6 +1148,16 @@ int main() {
     auto on = [](const char* t) { return ui::remote_page_title() && !strcmp(ui::remote_page_title(), t); };
     rytm(0x30, 2, 1, 0);   // UP + FX on the stock screen
     CHECK(on("INSERT"));
+    // t050-d (the owner, 2026-11-14: "insert eq and then the down key does nothing"): the page stands alone, so DOWN is
+    // the Rytm's (updown044) until the EQ view, which names it in its key mask; else the SIDECHAIN view never opens
+    ui::remote_tick(1000);
+    CHECK(down_caught == 0);
+    key(0x41), ui::remote_tick(1100);   // RIGHT: the EQ view
+    CHECK(down_caught == 1);
+    key(0x43), ui::remote_tick(1200);   // DOWN: SIDECHAIN, DOWN still the page's (DOWN again: back)
+    CHECK(down_caught == 1);
+    key(0x43), key(0x40), ui::remote_tick(1300);   // back to EQ, LEFT out of it: the Rytm's again
+    CHECK(down_caught == 0);
     for (int c : {0x40, 0x40, 0x41, 0x41, 0x41, 0x43, 0x84, 0x40, 0x40}) {   // RIGHT: EQ; again nothing; LEFT: out
       key(c);
       CHECK(on("INSERT"));
