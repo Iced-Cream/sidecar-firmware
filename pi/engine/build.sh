@@ -296,6 +296,11 @@ grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /r
 # Transfer, ResetFromHalted, GetEPState and the endpoint setup fail on it instead; after circle-xhci-iv1count, idempotent)
 grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/circle/circle-xhci-slotgone.patch
 make -C lib/usb -j$J >/dev/null
+# then PCIe config access for the VL805 (pi/circle/circle-pcie-config.patch: ob_usb.cpp keeps the VL805 ASPM bits off, its
+# own link power saving: with it on, the whole periodic schedule stopped for one MFINDEX wrap, 2.048 s, PW1; lib/, so
+# libcircle.a again; idempotent)
+grep -q circle-pcie-config include/circle/bcmpciehostbridge.h || patch -p1 < /repo/pi/circle/circle-pcie-config.patch
+make -C lib -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null
 [ -f addon/wlan/hostap/wpa_supplicant/libwpa_supplicant.a ] || make -C addon/wlan/hostap/wpa_supplicant -f Makefile.circle -j$J >/dev/null
