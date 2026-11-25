@@ -96,6 +96,7 @@ void set_budget_us(uint32_t us);
 uint32_t budget_us();
 void set_enabled(bool on);   // off: nothing is muted (timing goes on; /status says so)
 bool enabled();
+bool fifo_late();   // the engine's FIFO under a block counts as a late block for its busiest render core (fxguard=fifo:on|off)
 
 // ---- the hooks (set at boot)
 // um.cpp: mute user effect u, the dearest on core `core` (its us in the window); and its state for json (muted, why)

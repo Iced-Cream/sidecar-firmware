@@ -39,6 +39,12 @@ effect is muted only when its core is hot, since its cost is known from the benc
    Decided 2026-11-24 (Connor) after LT12b: a slot 180 us over a core at ~61 % made every block late for the 16-block
    wait and the 5 ms fade, ~18 ms of underruns heard as a loud hit. Core 3: late when slot 0's master chain took what a
    block leaves after core 3's own control work.
+   A render core's block is also late when its base pass began with the output FIFO under a block (12 frames) and it
+   took longer than the other render core in the last block: the busiest core is late for the whole block path, its
+   own time plus core 3's work around it. Not for 64 passes after a stream (re)start, whose FIFO begins empty.
+   Decided 2026-11-25 (Connor) after LT12g P5: two slots 20 + 40 us slower put core 1 at 83 % with its chains, no core
+   past a whole block and never 16 hot blocks in a row, yet the FIFO drained for 14 s (underruns heard as clusters of
+   metallic sounds) and no rule fired. fxguard=fifo:off turns this part off (QEMU, whose FIFO is short under any load).
 
 The NaN / runaway check stays as before (the slot cleared, it fades in again).
 

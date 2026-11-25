@@ -97,6 +97,13 @@ static inline u64 FxLateTicks (void)
 	return TickRate () * 12 / 48000;
 }
 static u64 s_nFxLate3 = 0;
+// ... and the audio buffer's view (decided 2026-11-25 after LT12g P5: two slow slots put core 1 at 83 % with its chains,
+// no core past a whole block, yet core 1 plus core 3's own work overran every block; the FIFO drained for 14 s and the
+// guard said nothing): a base pass begun with the FIFO under a block is late for the render core that took longer in the
+// last block. Not for kFifoLateGrace passes after a stream (re)start (its FIFO begins empty). fxguard=fifo:off stops it.
+static const unsigned kFifoLateGrace = 64;
+static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
+static volatile u64 s_nLastBlk[3];		// each render core's last block, voices and chains
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -122,7 +129,7 @@ static volatile unsigned s_nBlocks, s_nMaxBlock, s_nMaxPass, s_nFifoMin = ~0u, s
 static volatile unsigned s_nNoteChans;	// bit c: a note-on on MIDI channel c+1 this second
 static u64 s_nLastTake;
 static unsigned s_nTarget = 96;
-static volatile unsigned s_nRunCapped = 0;	// passes that stopped rendering at the cap (the FIFO still short: an overload)
+static volatile unsigned s_nRunCapped = 0, s_nFifoLateCount = 0;	// passes that stopped rendering at the cap (the FIFO still short: an overload)
 static volatile boolean s_bTargetFixed = FALSE;	// a fifo= set it: the link's default does not
 static boolean s_bNotes = TRUE;
 static boolean s_bReportLog = FALSE;
@@ -417,6 +424,7 @@ void CEngineCores::Worker (unsigned nCore)
 	static volatile u32 s_nSeen[3];		// the last block generation this core finished
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
+	static volatile bool s_nFifoLateNow[3];	// its pass late by the FIFO (s_nFifoLate)
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
 	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders each box's voices %s its split (split=%u, or half its voices), %s", nCore,
@@ -453,6 +461,7 @@ void CEngineCores::Worker (unsigned nCore)
 			crumb::BeatEnter (nCore, 200);
 			s_nGenNow[nCore] = nGen;
 			s_nPassNow[nCore] = __atomic_load_n (&s_nPass, __ATOMIC_RELAXED);	// (published before nGen)
+			s_nFifoLateNow[nCore] = __atomic_load_n (&s_nFifoLate, __ATOMIC_RELAXED) == nCore;	// (so is this)
 			s_nT0[nCore] = Ticks ();
 			vFirst = 0;
 		}
@@ -502,7 +511,8 @@ void CEngineCores::Worker (unsigned nCore)
 		// hot at kFxHotPct of a block (as the voice guard's 80 %): its effects' overs count, and 16 hot blocks in a row mute
 		// the dearest effect on it
 		const u64 nBlk = Ticks () - s_nT0[nCore];
-		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks ());
+		s_nLastBlk[nCore] = nBlk;
+		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks () || s_nFifoLateNow[nCore]);
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 	}
@@ -544,6 +554,18 @@ void CEngineCores::RenderBlock (int nSide)
 		t0 = Ticks ();
 	}
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
+	{	// the FIFO under a block at a base pass: late for the render core that took longer (s_nFifoLate, above)
+		static unsigned s_nGrace = kFifoLateGrace, s_nStreamsSeen = 0;
+		u32 nLate = 0;
+		if (nSide < 0)
+		{
+			if (g_Output.Streams () != s_nStreamsSeen) s_nStreamsSeen = g_Output.Streams (), s_nGrace = kFifoLateGrace;
+			if (s_nGrace) s_nGrace--;
+			else if (g_Output.Level () < bridge::kBlock && core::fx::guard::fifo_late ())
+				nLate = s_nLastBlk[1] >= s_nLastBlk[2] ? 1 : 2, s_nFifoLateCount++;
+		}
+		__atomic_store_n (&s_nFifoLate, nLate, __ATOMIC_RELAXED);	// (the release below publishes it)
+	}
 	u32 nGen = nPrev + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
 	asm volatile ("dsb sy; sev");
@@ -985,6 +1007,7 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nMaxBlockUs = s_nMaxBlock; s_nMaxBlock = 0;
 	s->nMaxPassUs = s_nMaxPass; s_nMaxPass = 0;
 	s->nRunCapped = s_nRunCapped; s_nRunCapped = 0;
+	s->nFifoLate = s_nFifoLateCount; s_nFifoLateCount = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();
