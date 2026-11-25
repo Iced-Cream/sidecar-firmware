@@ -122,6 +122,7 @@ static volatile unsigned s_nBlocks, s_nMaxBlock, s_nMaxPass, s_nFifoMin = ~0u, s
 static volatile unsigned s_nNoteChans;	// bit c: a note-on on MIDI channel c+1 this second
 static u64 s_nLastTake;
 static unsigned s_nTarget = 96;
+static volatile unsigned s_nRunCapped = 0;	// passes that stopped rendering at the cap (the FIFO still short: an overload)
 static volatile boolean s_bTargetFixed = FALSE;	// a fifo= set it: the link's default does not
 static boolean s_bNotes = TRUE;
 static boolean s_bReportLog = FALSE;
@@ -736,10 +737,15 @@ void CEngineCores::Control (void)
 		if (nLevel < s_nFifoMin) s_nFifoMin = nLevel;
 		if (nLevel > s_nFifoMax) s_nFifoMax = nLevel;
 		// each stage's FIFO to its target: the base box's, and beside a Rytm slot 1's (side_out.h), each paced by its
-		// own box's stream; the emptier first
-		for (;;)
+		// own box's stream; the emptier first. At most a FIFO target's worth of blocks a pass (each stage's), then this
+		// loop's other work: under an overload that never fills the FIFO, an unbounded loop never left, so the console's
+		// commands, the measured guard's poll and CPU admission's shed all stopped (LT12g QEMU, 2026-11-25: after
+		// fxguard=clear under the full load, fxguard=report never ran and the command queue filled)
+		for (unsigned nRun = 0;; nRun++)
 		{
 			const int nSide = core::device::side_slot ();
+			const unsigned nMaxRun = (nSide >= 0 ? 2 : 1) * (s_nTarget / bridge::kBlock > 2 ? s_nTarget / bridge::kBlock : 2);
+			if (nRun >= nMaxRun) { s_nRunCapped++; break; }
 			const int nPick = side_out::pick (g_Output.Level (), nSide >= 0, g_OutputSide.Level (), s_nTarget, bridge::kBlock);
 			if (nPick < 0) break;
 			RenderBlock (nPick == 1 ? nSide : -1);
@@ -978,6 +984,7 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nBlocks = s_nBlocks; s_nBlocks = 0;
 	s->nMaxBlockUs = s_nMaxBlock; s_nMaxBlock = 0;
 	s->nMaxPassUs = s_nMaxPass; s_nMaxPass = 0;
+	s->nRunCapped = s_nRunCapped; s_nRunCapped = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();

@@ -24,6 +24,7 @@ public:
 		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)
 		u64 nVoice[16];			// touch2: render ticks per engine voice (bridge::kVoices; the STATUS page shows the base box's)
 		unsigned nBlocks, nMaxBlockUs, nMaxPassUs, nFifoMin, nFifoMax, nMidiBytes, nSysEx, nNotes, nNoteChans;
+		unsigned nRunCapped;	// control passes that stopped rendering at the cap, the FIFO still short (an overload)
 	};
 
 	// The boot bench (bridge::bench, docs/pi-engine.md "Measurements"): each machine on one voice, on every core
