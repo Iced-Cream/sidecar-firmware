@@ -55,6 +55,7 @@ char g_why[kBuiltin][72];                   // the control core's words
 volatile uint32_t g_slow[kBuiltin];        // test: extra us inside the unit's call
 uint32_t g_budget_us = 120;                // API 3's per call budget, a 12-frame block
 volatile uint8_t g_mode = kModeOn;
+volatile bool g_fifo_late = true;   // the engine's FIFO under a block counts as late (fxguard=fifo:on|off)
 Stats g_stats;
 int g_host_core = 0;
 
@@ -388,6 +389,7 @@ void set_budget_us(uint32_t us) { g_budget_us = us < 5 ? 5 : us > kHugeUs ? kHug
 uint32_t budget_us() { return g_budget_us; }
 void set_enabled(bool on) { g_mode = on ? kModeOn : kModeOff; }
 bool enabled() { return g_mode == kModeOn; }
+bool fifo_late() { return g_fifo_late; }
 
 bool command(const char* p, char* out, int cap) {
   if (strncmp(p, "fxguard", 7) != 0 || (p[7] && p[7] != '=')) return false;
@@ -414,6 +416,11 @@ bool command(const char* p, char* out, int cap) {
   if (!strncmp(a, "budget:", 7)) {
     set_budget_us((uint32_t)num(a + 7));
     sniprintf(out, cap, "fxguard: budget %u us a block", (unsigned)g_budget_us);
+    return true;
+  }
+  if (!strcmp(a, "fifo:on") || !strcmp(a, "fifo:off")) {
+    g_fifo_late = a[6] == 'n';
+    sniprintf(out, cap, "fxguard: the FIFO under a block counts as late: %s", g_fifo_late ? "on" : "off");
     return true;
   }
   if (!strcmp(a, "clear")) {
@@ -447,7 +454,7 @@ bool command(const char* p, char* out, int cap) {
     }
     return true;
   }
-  sniprintf(out, cap, "fxguard: fxguard, fxguard=on|off|report|budget:<us>|clear|mute:<box>:<at>|slow:<box>:<at>:<us>");
+  sniprintf(out, cap, "fxguard: fxguard, fxguard=on|off|report|budget:<us>|fifo:on|off|clear|mute:<box>:<at>|slow:<box>:<at>:<us>");
   return true;
 }
 

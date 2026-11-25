@@ -155,6 +155,9 @@ int main() {
     block(e, 0, true, 0.25f, false), block(e, 1, true, 0.25f, true, true);
     CHECK(!g::ins_muted(0, 0, 0) && g::ins_muted(0, 1, 0) && g::stats().late == 1);
     printf("test_fx_guard: a late core's dearest after 4 late blocks in a row, not after one\n");
+    CHECK(g::fifo_late());   // the FIFO's lateness (the Pi's cores.cpp): on by default, fxguard=fifo:off|on
+    CHECK(cmd("fxguard=fifo:off").find("off") != std::string::npos && !g::fifo_late());
+    CHECK(cmd("fxguard=fifo:on").find(": on") != std::string::npos && g::fifo_late());
   }
   // ---- one call past 2 ms: at once, hot or not
   {
