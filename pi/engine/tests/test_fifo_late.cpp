@@ -50,7 +50,9 @@ int main() {
     s.step(23, 0, kBlock, true, &dip);
     CHECK(dip);
     s.step(60, 0, kBlock, true);
-    CHECK(s.step(23, 0, kBlock, true));   // the second dip within the window: late
+    CHECK(!s.step(23, 0, kBlock, true));   // the second dip within the window, but both shallow: not late (LT14 P6)
+    s.step(60, 0, kBlock, true);
+    CHECK(s.step(11, 0, kBlock, true));   // ... a third, under a block, with the second in the window: late
     for (unsigned i = 1; i < fifo_late::State::kHold; ++i) CHECK(s.step(90, 0, kBlock, true));
     CHECK(!s.step(90, 0, kBlock, true));
   }
@@ -111,6 +113,15 @@ int main() {
     p.rearm();
     CHECK(!p.step(true, kTarget, 0, kBlock, true, true));
     CHECK(fifo_late::blame(90, 160, 120, 70) == 1 && fifo_late::blame(90, 0, 120, 0) == 2);
+  }
+  {  // LT14 P6 (T511): shallow dips at 1200 MHz (FIFO min 30 a second, low runs of 2 passes, no underrun): never late
+    fifo_late::State s;
+    warm(s);
+    for (int i = 0; i < 2000; ++i) CHECK(!s.step(i % 20 < 2 ? 14 + i % 7 : 40 + i % 40, 0, kBlock, true));
+    // ... but the same with one dip under a block is (the second of the pair deep)
+    s.step(20, 0, kBlock, true), s.step(60, 0, kBlock, true);
+    CHECK(s.step(4, 0, kBlock, true));
+    printf("test_fifo_late: shallow dips never late, a deep second dip is\n");
   }
   printf("test_fifo_late: PASS\n");
   return 0;
