@@ -2,7 +2,7 @@
 // test builds it as it is.
 //
 // The FIFO is low under kLowBlocks blocks at a base pass's start. Each low run's first block is a dip (one control pass
-// that came late or one render pass that fell short). Two dips within kHold base passes make the render core that took
+// that came late or one render pass that fell short). Two dips within kHold base passes, one of them under a block, make the render core that took
 // longer in the last block late, and keep it late for kHold passes from the second dip.
 //   2026-11-25 LT12g P5: no core past a block, yet the FIFO drained 14 s: the FIFO's view decided (Connor).
 //   LT12h P5: the control loop refills the FIFO over a pass, so only a pass's first block began low; late and on-time
@@ -32,22 +32,34 @@ struct State {
   unsigned grace = kGrace, left = 0, streams = 0, since = kHold;   // since: base passes since the last dip
   unsigned run = 0, mark = 0;   // passes in a row begun low (the log's too); the level kArm passes back in the run
   bool low = false;                                                // the last base pass began low
+  // LT14 P6 (2026-11-25, T511): two shallow dips (FIFO min 30, no underrun) at 1200 MHz armed the hold and the late core's
+  // 8 us dearest (a CLOUD insert) went. Two dips arm it only once one of them went under a block (decided 2026-11-25:
+  // "two dips must go deep"); an overload that never refills is the low run's (kArm), not the dips'.
+  bool pair = false, deep = false, was_deep = false;   // this low run is a second dip; it / the last went under a block
   // one base pass: true when it is late. dip: set when this pass began a low run (the dips counted)
   bool step(uint32_t level, unsigned streams_now, uint32_t block, bool on, bool* dip = nullptr) {
     if (dip) *dip = false;
-    if (streams_now != streams) streams = streams_now, grace = kGrace, left = 0, since = kHold, run = 0, low = false;
+    if (streams_now != streams)
+      streams = streams_now, grace = kGrace, left = 0, since = kHold, run = 0, low = false, pair = deep = was_deep = false;
     if (grace) {
       --grace;
       return false;
     }
-    if (!on) return left = 0, run = 0, low = false, false;
+    if (!on) return left = 0, run = 0, low = false, pair = false, false;
     const bool now_low = level < kLowBlocks * block;
-    if (now_low && !low) {   // a dip: a second within kHold passes arms the hold
-      if (since < kHold) left = kHold;
+    if (now_low && !low) {   // a dip: a second within kHold passes arms the hold, once one of the two went deep
+      pair = since < kHold;
+      was_deep = deep, deep = false;
       since = 0;
       if (dip) *dip = true;
     } else if (since < kHold) {
       ++since;
+    }
+    if (now_low) {
+      if (level < block) deep = true;
+      if (pair && (deep || was_deep)) left = kHold, pair = false;
+    } else {
+      pair = false;
     }
     if (!now_low) {
       run = 0;
@@ -67,7 +79,7 @@ struct State {
   // after a late mute (cores.cpp): the hold ends and the next takes two new dips, so one low-buffer event mutes one
   // effect while the FIFO refills (LT12k, 2026-11-25, Connor: one event muted 8 effects in ~40 ms)
   // A low run starts again too: a FIFO still low after the mute takes kArm more passes with no gain before the next.
-  void rearm() { left = 0, since = kHold, run = 0; }
+  void rearm() { left = 0, since = kHold, run = 0, pair = false, deep = false, was_deep = false; }
   // the hold still on, without a pass of its own (the other FIFO's passes: cores.cpp)
   bool held() const { return grace == 0 && left > 0; }
 };
