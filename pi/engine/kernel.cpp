@@ -2240,6 +2240,8 @@ void CKernel::LogStats (void)
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);
+	if (s.nRunCapped)	// (cores.cpp: a pass rendered its cap of blocks with the FIFO still short, then did its other work)
+		m_Logger.Write (From, LogWarning, "engine: overloaded: %u control passes stopped rendering at the cap", s.nRunCapped);
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
 	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
