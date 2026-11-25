@@ -1,8 +1,9 @@
 // The measured FX guard's audio-buffer view (cores.cpp RenderBlock; docs/fx-measured-mute.md rule 4). Header only: its
 // test builds it as it is.
 //
-// A base pass begun with the output FIFO under a block makes the render core that took longer in the last block late
-// (decided 2026-11-25 after LT12g P5). Held for kHold base passes after each dip (LT12h P5, 2026-11-25: the control
+// A base pass begun with the output FIFO under kLowBlocks blocks makes the render core that took longer in the last
+// block late (decided 2026-11-25 after LT12g P5; 2 blocks, not 1, after LT12i P5: at 1 block the mute came only once
+// the FIFO was empty, 138 underruns heard as a scrape; the drain is slow, so 2 blocks lets it land first). Held for kHold base passes after each dip (LT12h P5, 2026-11-25: the control
 // loop renders up to a FIFO target of blocks a pass, so only a pass's first block began low and the next ones began with
 // it refilled; late and on-time blocks alternated, the late rule's 4 in a row never came, and nothing was muted while
 // the FIFO drained). Not for kGrace passes after a stream (re)start, whose FIFO begins empty.
@@ -13,6 +14,7 @@ namespace fifo_late {
 
 struct State {
   static constexpr unsigned kGrace = 64;   // base passes after a stream (re)start
+  static constexpr unsigned kLowBlocks = 2;   // under this many blocks in the FIFO: low
   static constexpr unsigned kHold = 32;    // base passes late after a dip (8 ms: the late rule's 4, its 32-block settle)
   unsigned grace = kGrace, left = 0, streams = 0;
   // one base pass: true when it is late. dip: set when the FIFO was under a block at this pass (the dips counted)
@@ -24,7 +26,7 @@ struct State {
       return false;
     }
     if (!on) return left = 0, false;
-    if (level < block) {
+    if (level < kLowBlocks * block) {
       left = kHold;
       if (dip) *dip = true;
     }

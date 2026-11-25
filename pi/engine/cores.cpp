@@ -100,7 +100,7 @@ static inline u64 FxLateTicks (void)
 static u64 s_nFxLate3 = 0;
 // ... and the audio buffer's view (decided 2026-11-25 after LT12g P5: two slow slots put core 1 at 83 % with its chains,
 // no core past a whole block, yet core 1 plus core 3's own work overran every block; the FIFO drained for 14 s and the
-// guard said nothing): a base pass begun with the FIFO under a block, and the passes held after it, are late for the
+// guard said nothing): a base pass begun with the FIFO low (under 2 blocks), and the passes held after it, are late for the
 // render core that took longer in the last block (fifo_late.h). fxguard=fifo:off stops it.
 static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
 static volatile u64 s_nLastBlk[3];		// each render core's last block, voices and chains

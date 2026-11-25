@@ -35,6 +35,12 @@ int main() {
     for (unsigned i = 1; i < fifo_late::State::kHold; ++i) CHECK(s.step(90, 0, kBlock, true, &dip) && !dip);
     CHECK(!s.step(90, 0, kBlock, true));
   }
+  {  // the mark: 2 blocks (LT12i P5): 23 frames is low, 24 is not
+    fifo_late::State s;
+    for (unsigned i = 0; i < fifo_late::State::kGrace; ++i) s.step(kTarget, 0, kBlock, true);
+    CHECK(!s.step(24, 0, kBlock, true));
+    CHECK(s.step(23, 0, kBlock, true));
+  }
   {  // fxguard=fifo:off: never, and the hold ends at once
     fifo_late::State s;
     for (unsigned i = 0; i < fifo_late::State::kGrace; ++i) s.step(kTarget, 0, kBlock, true);

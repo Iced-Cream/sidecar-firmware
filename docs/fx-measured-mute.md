@@ -39,7 +39,7 @@ effect is muted only when its core is hot, since its cost is known from the benc
    Decided 2026-11-24 (Connor) after LT12b: a slot 180 us over a core at ~61 % made every block late for the 16-block
    wait and the 5 ms fade, ~18 ms of underruns heard as a loud hit. Core 3: late when slot 0's master chain took what a
    block leaves after core 3's own control work.
-   A render core's block is also late when its base pass began with the output FIFO under a block (12 frames) and it
+   A render core's block is also late when its base pass began with the output FIFO under 2 blocks (24 frames) and it
    took longer than the other render core in the last block: the busiest core is late for the whole block path, its
    own time plus core 3's work around it. Each dip holds for 32 base passes (8 ms), since the control loop refills the
    FIFO over a pass and only its first block begins low (LT12h P5: unheld, late and on-time blocks alternated and the
