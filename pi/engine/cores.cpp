@@ -554,11 +554,20 @@ void CEngineCores::RenderBlock (int nSide)
 		t0 = Ticks ();
 	}
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
-	{	// the FIFO under a block at a base pass: late for the render core that took longer (s_nFifoLate, above)
-		static fifo_late::State s_FifoLate;
+	{	// a FIFO low at its own pass (the base box's at a base pass, the side stage's at a side pass), or either FIFO's
+		// hold still on: late for the render core that took longer (s_nFifoLate, above). Both kinds of pass carry it:
+		// the two boxes take turns on cores 1 and 2, and LT12j (2026-11-25) set it at base passes only, so the guard saw
+		// the A4's effects alone while the Rytm's (the side stage's) cost the time, and its late run broke every other pass.
+		static fifo_late::State s_FifoLate, s_FifoLateSide;
 		u32 nLate = 0;
 		bool bDip = false;
-		if (nSide < 0 && s_FifoLate.step (g_Output.Level (), g_Output.Streams (), bridge::kBlock, core::fx::guard::fifo_late (), &bDip))
+		const bool bOn = core::fx::guard::fifo_late ();
+		const bool bLate = nSide < 0
+			? s_FifoLate.step (g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, &bDip)
+				|| (bOn && core::device::side_slot () >= 0 && s_FifoLateSide.held ())
+			: s_FifoLateSide.step (g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, &bDip)
+				|| (bOn && s_FifoLate.held ());
+		if (bLate)
 			nLate = s_nLastBlk[1] >= s_nLastBlk[2] ? 1 : 2;
 		if (bDip) s_nFifoLateCount++;
 		__atomic_store_n (&s_nFifoLate, nLate, __ATOMIC_RELAXED);	// (the release below publishes it)

@@ -62,6 +62,18 @@ int main() {
     CHECK(!s.step(0, 0, kBlock, false));
     CHECK(!s.step(90, 0, kBlock, true));
   }
+  {  // held(): the hold seen from the other FIFO's passes, never in the grace
+    fifo_late::State s;
+    CHECK(!s.held());
+    for (unsigned i = 0; i < fifo_late::State::kGrace; ++i) s.step(90, 0, kBlock, true);
+    CHECK(!s.held());
+    s.step(0, 0, kBlock, true), s.step(90, 0, kBlock, true);
+    CHECK(!s.held());
+    CHECK(s.step(0, 0, kBlock, true) && s.held());   // the second dip: held for the other passes too
+    for (unsigned i = 1; i < fifo_late::State::kHold; ++i) s.step(90, 0, kBlock, true);
+    CHECK(!s.held());
+    printf("test_fifo_late: held() for the other FIFO's passes\n");
+  }
   printf("test_fifo_late: PASS\n");
   return 0;
 }
