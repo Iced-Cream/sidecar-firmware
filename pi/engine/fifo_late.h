@@ -43,6 +43,9 @@ struct State {
     --left;
     return true;
   }
+  // after a late mute (cores.cpp): the hold ends and the next takes two new dips, so one low-buffer event mutes one
+  // effect while the FIFO refills (LT12k, 2026-11-25, Connor: one event muted 8 effects in ~40 ms)
+  void rearm() { left = 0, since = kHold; }
   // the hold still on, without a pass of its own (the other FIFO's passes: cores.cpp)
   bool held() const { return grace == 0 && left > 0; }
 };

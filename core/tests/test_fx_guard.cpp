@@ -173,6 +173,22 @@ int main() {
     CHECK(!g::ins_muted(0, 0, 0) && g::ins_muted(0, 1, 0) && g::stats().late == 1);
     printf("test_fx_guard: a late core's dearest over the last blocks, not the 4th block's own\n");
   }
+  // ---- a late core whose effects are all near free (LT12k, 2026-11-25): nothing muted, under the 8 us floor
+  {
+    g::reset();
+    ins::Engine e(kSr);
+    fresh_ins(e);
+    set(0, 0, ins::kDrive), set(1, 0, ins::kDrive);
+    cmd("fxguard=slow:0:V1:A:2");
+    cmd("fxguard=slow:0:V2:A:4");
+    // (not hot: the hot core's dearest rule is its own)
+    for (int b = 0; b < 64; ++b) block(e, 0, false, 0.25f, false), block(e, 1, false, 0.25f, true, true);
+    CHECK(!g::ins_muted(0, 0, 0) && !g::ins_muted(0, 1, 0) && g::stats().late == 0);
+    cmd("fxguard=slow:0:V2:A:12");   // one at 12 us a block: muted
+    for (int b = 0; b < 32; ++b) block(e, 0, false, 0.25f, false), block(e, 1, false, 0.25f, true, true);
+    CHECK(!g::ins_muted(0, 0, 0) && g::ins_muted(0, 1, 0) && g::stats().late == 1);
+    printf("test_fx_guard: a late core's near-free effects stay (8 us floor), a 12 us one goes\n");
+  }
   // ---- one call past 2 ms: at once, hot or not
   {
     g::reset();
