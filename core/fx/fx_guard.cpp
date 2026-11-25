@@ -159,6 +159,7 @@ void note_user(int u, uint32_t us) {
 // its time still counted) and the core is still hot from it, so without the wait one slot over its budget took the next
 // dearest with it in the same block, and a third 16 blocks later (LT12 prep, 2026-11-24). Per-slot rules go on.
 constexpr uint8_t kSettle = 2 * kOverMax;
+constexpr uint32_t kLateFloorUs = 8;   // a late core's dearest (none over budget) only from this mean a block (LT12k)
 constexpr uint8_t kLateRun = 4;   // late blocks in a row (1 ms) before a late core's dearest goes, none over its budget
 void core_done(int core, bool hot, bool late) {
   Row& r = g_row[core & (kCores - 1)];
@@ -216,6 +217,9 @@ void core_done(int core, bool hot, bool late) {
     if (!r.ew_us[u]) r.ew &= ~bit(u);
   }
   late_most_us = (late_most_us + 15) >> 4;   // (about its time a block, for the log)
+  // under kLateFloorUs a block muting it frees nothing (LT12k, 2026-11-25, Connor: a FIFO dip muted 1-5 us SAT inserts
+  // while the two slowed slots ran 12 and 21 us; at 1200 MHz one harmless dip took four of them)
+  if (late_most_us < kLateFloorUs) late_most = -1;
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
   // made late by something else, a burst of notes, never takes an effect)
   r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;

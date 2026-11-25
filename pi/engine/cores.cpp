@@ -561,6 +561,14 @@ void CEngineCores::RenderBlock (int nSide)
 		static fifo_late::State s_FifoLate, s_FifoLateSide;
 		u32 nLate = 0;
 		bool bDip = false;
+		static u32 s_nLateMutes = 0;	// the guard's late mutes seen: a new one rearms both FIFOs (fifo_late.h rearm)
+		const u32 nLateMutes = core::fx::guard::stats ().late;
+		if (nLateMutes != s_nLateMutes)
+		{
+			s_nLateMutes = nLateMutes;
+			s_FifoLate.rearm ();
+			s_FifoLateSide.rearm ();
+		}
 		const bool bOn = core::fx::guard::fifo_late ();
 		const bool bLate = nSide < 0
 			? s_FifoLate.step (g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, &bDip)

@@ -74,6 +74,17 @@ int main() {
     CHECK(!s.held());
     printf("test_fifo_late: held() for the other FIFO's passes\n");
   }
+  {  // rearm() after a late mute: the hold ends, the next needs two new dips (LT12k)
+    fifo_late::State s;
+    warm(s);
+    s.step(0, 0, kBlock, true), s.step(90, 0, kBlock, true);
+    CHECK(s.step(0, 0, kBlock, true));   // held
+    s.rearm();
+    CHECK(!s.held() && !s.step(0, 0, kBlock, true));   // still low: no new dip
+    CHECK(!s.step(90, 0, kBlock, true) && !s.step(0, 0, kBlock, true));   // one new dip: not yet
+    CHECK(!s.step(90, 0, kBlock, true) && s.step(0, 0, kBlock, true));    // the second: late again
+    printf("test_fifo_late: rearm() takes two new dips\n");
+  }
   printf("test_fifo_late: PASS\n");
   return 0;
 }
