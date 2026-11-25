@@ -33,8 +33,11 @@ effect is muted only when its core is hot, since its cost is known from the benc
    rule waits 32 blocks (8 ms: the muted slot's 5 ms fade still counts its time), so one slot over its budget never
    takes a second effect with it (found in the LT12 prep, 2026-11-24).
 4. A late block (the core took more than a whole block, so the output FIFO drains): the block's effect most over its
-   budget is muted at once; if none is over its budget, the block's dearest after 4 late blocks in a row (1 ms), so one
-   block made late by something else never takes an effect. A late mute fades out over 1 ms instead of the TYPE's 5 ms
+   budget is muted at once; if none is over its budget, the core's dearest after 4 late blocks in a row (1 ms), so one
+   block made late by something else never takes an effect. The dearest here is the most time over the core's last
+   ~16 blocks (each block's time added, then 1/16 off), not the block's own: with two boxes the base box's pass and the
+   side stage's take turns on the same core, so one block holds one box's effects only (LT12j P5, 2026-11-25: a 2 us
+   A4 amp was taken in the A4's pass while the Rytm's slowed effects cost the time in the other). A late mute fades out over 1 ms instead of the TYPE's 5 ms
    (send FX: 1 ms instead of 10 ms), because the slot still costs its time while it fades on a core already late.
    Decided 2026-11-24 (Connor) after LT12b: a slot 180 us over a core at ~61 % made every block late for the 16-block
    wait and the 5 ms fade, ~18 ms of underruns heard as a loud hit. Core 3: late when slot 0's master chain took what a
@@ -47,6 +50,8 @@ effect is muted only when its core is hot, since its cost is known from the benc
    block begins low (LT12h P5: unheld, late and on-time blocks alternated and the 4-in-a-row never came). 2 blocks, not
    1, after LT12i P5 (Connor): at 1 block the mute landed only once the FIFO was empty, 138 underruns heard as a scrape.
    Not for 64 passes after a stream (re)start, whose FIFO begins empty (pi/engine/fifo_late.h).
+   The side stage's FIFO is watched the same way at its own passes, and either FIFO's hold makes both kinds of pass
+   late: LT12j set it at base passes only, so the late run broke at every side pass and the guard never saw the Rytm.
    Decided 2026-11-25 (Connor) after LT12g P5: two slots 20 + 40 us slower put core 1 at 83 % with its chains, no core
    past a whole block and never 16 hot blocks in a row, yet the FIFO drained for 14 s (underruns heard as clusters of
    metallic sounds) and no rule fired. fxguard=fifo:off turns this part off (QEMU, whose FIFO is short under any load).

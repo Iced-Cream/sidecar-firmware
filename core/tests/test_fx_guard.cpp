@@ -159,6 +159,19 @@ int main() {
     CHECK(cmd("fxguard=fifo:off").find("off") != std::string::npos && !g::fifo_late());
     CHECK(cmd("fxguard=fifo:on").find(": on") != std::string::npos && g::fifo_late());
   }
+  // ---- two boxes take turns on a core, one box's effects a block (LT12j, 2026-11-25): a late core's dearest over the
+  // last blocks, not the block's own, so a cheap effect in the 4th late block is not taken for a costly one in the 3rd
+  {
+    g::reset();
+    ins::Engine e(kSr);
+    fresh_ins(e);
+    set(0, 0, ins::kDrive), set(1, 0, ins::kDrive);
+    cmd("fxguard=slow:0:V1:A:2");
+    cmd("fxguard=slow:0:V2:A:80");
+    for (int b = 0; b < 2; ++b) block(e, 1, true, 0.25f, true, true), block(e, 0, true, 0.25f, true, true);
+    CHECK(!g::ins_muted(0, 0, 0) && g::ins_muted(0, 1, 0) && g::stats().late == 1);
+    printf("test_fx_guard: a late core's dearest over the last blocks, not the 4th block's own\n");
+  }
   // ---- one call past 2 ms: at once, hot or not
   {
     g::reset();

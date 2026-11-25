@@ -43,6 +43,8 @@ struct Row {
   uint8_t hot_run;               // hot blocks in a row
   uint8_t settle;                // blocks left after a mute on this core with the dearest rule off (kSettle)
   uint8_t late_run;              // late blocks in a row with no effect over its budget (kLateRun)
+  uint64_t ew;                   // units with time in ew_us
+  uint32_t ew_us[kUnits];        // each unit's time over the last ~16 blocks on this core, decaying (a late core's dearest)
 };
 Row g_row[kCores];
 
@@ -194,15 +196,26 @@ void core_done(int core, bool hot, bool late) {
           r.over[u] = 0;
         }
         if (!g_m[u] && us > b && us - b > late_over_by) late_over_by = us - b, late_over = u, late_us = us;
-        if (!g_m[u] && us > late_most_us) late_most_us = us, late_most = u;
       }
     } else {
       us = r.user_us[u - kBuiltin];
       r.user_us[u - kBuiltin] = 0;
-      if (us > late_most_us && !user_muted(u - kBuiltin)) late_most_us = us, late_most = u;
     }
+    r.ew_us[u] += us, r.ew |= bit(u);
     if (hot) r.win_us[u] += us, r.win |= bit(u);
   }
+  // a late core's dearest, none over its budget: the most time over the last ~16 blocks (ew_us, each block's time
+  // added, then 1/16 off), not this block's alone. Two boxes take turns on the same core (the base box's pass, then
+  // the side stage's), so one block holds one box's effects only: LT12j (2026-11-25) took a 2 us A4 amp in the A4's
+  // pass while the Rytm's 80 us effects were in the other pass.
+  for (uint64_t w = r.ew; w; w &= w - 1) {
+    const int u = __builtin_ctzll(w);
+    const bool gone = u < kBuiltin ? g_m[u] != 0 : user_muted(u - kBuiltin);
+    if (!gone && r.ew_us[u] > late_most_us) late_most_us = r.ew_us[u], late_most = u;
+    r.ew_us[u] -= (r.ew_us[u] + 15) >> 4;
+    if (!r.ew_us[u]) r.ew &= ~bit(u);
+  }
+  late_most_us = (late_most_us + 15) >> 4;   // (about its time a block, for the log)
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
   // made late by something else, a burst of notes, never takes an effect)
   r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;

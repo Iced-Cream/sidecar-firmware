@@ -43,6 +43,8 @@ struct State {
     --left;
     return true;
   }
+  // the hold still on, without a pass of its own (the other FIFO's passes: cores.cpp)
+  bool held() const { return grace == 0 && left > 0; }
 };
 
 }  // namespace fifo_late
