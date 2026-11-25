@@ -41,7 +41,9 @@ effect is muted only when its core is hot, since its cost is known from the benc
    block leaves after core 3's own control work.
    A render core's block is also late when its base pass began with the output FIFO under a block (12 frames) and it
    took longer than the other render core in the last block: the busiest core is late for the whole block path, its
-   own time plus core 3's work around it. Not for 64 passes after a stream (re)start, whose FIFO begins empty.
+   own time plus core 3's work around it. Each dip holds for 32 base passes (8 ms), since the control loop refills the
+   FIFO over a pass and only its first block begins low (LT12h P5: unheld, late and on-time blocks alternated and the
+   4-in-a-row never came). Not for 64 passes after a stream (re)start, whose FIFO begins empty (pi/engine/fifo_late.h).
    Decided 2026-11-25 (Connor) after LT12g P5: two slots 20 + 40 us slower put core 1 at 83 % with its chains, no core
    past a whole block and never 16 hot blocks in a row, yet the FIFO drained for 14 s (underruns heard as clusters of
    metallic sounds) and no rule fired. fxguard=fifo:off turns this part off (QEMU, whose FIFO is short under any load).

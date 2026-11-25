@@ -21,6 +21,7 @@
 #include "rec_pi.h"
 #include "shared.h"
 #include "side_out.h"
+#include "fifo_late.h"
 #include "device/admit.h"
 #include "fx/fx_guard.h"
 #include "user/lists.h"
@@ -99,9 +100,8 @@ static inline u64 FxLateTicks (void)
 static u64 s_nFxLate3 = 0;
 // ... and the audio buffer's view (decided 2026-11-25 after LT12g P5: two slow slots put core 1 at 83 % with its chains,
 // no core past a whole block, yet core 1 plus core 3's own work overran every block; the FIFO drained for 14 s and the
-// guard said nothing): a base pass begun with the FIFO under a block is late for the render core that took longer in the
-// last block. Not for kFifoLateGrace passes after a stream (re)start (its FIFO begins empty). fxguard=fifo:off stops it.
-static const unsigned kFifoLateGrace = 64;
+// guard said nothing): a base pass begun with the FIFO under a block, and the passes held after it, are late for the
+// render core that took longer in the last block (fifo_late.h). fxguard=fifo:off stops it.
 static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
 static volatile u64 s_nLastBlk[3];		// each render core's last block, voices and chains
 static inline u64 FxHot3Ticks (void)
@@ -555,15 +555,12 @@ void CEngineCores::RenderBlock (int nSide)
 	}
 	__atomic_store_n (&s_nPass, nPass, __ATOMIC_RELAXED);	// (the release below publishes it)
 	{	// the FIFO under a block at a base pass: late for the render core that took longer (s_nFifoLate, above)
-		static unsigned s_nGrace = kFifoLateGrace, s_nStreamsSeen = 0;
+		static fifo_late::State s_FifoLate;
 		u32 nLate = 0;
-		if (nSide < 0)
-		{
-			if (g_Output.Streams () != s_nStreamsSeen) s_nStreamsSeen = g_Output.Streams (), s_nGrace = kFifoLateGrace;
-			if (s_nGrace) s_nGrace--;
-			else if (g_Output.Level () < bridge::kBlock && core::fx::guard::fifo_late ())
-				nLate = s_nLastBlk[1] >= s_nLastBlk[2] ? 1 : 2, s_nFifoLateCount++;
-		}
+		bool bDip = false;
+		if (nSide < 0 && s_FifoLate.step (g_Output.Level (), g_Output.Streams (), bridge::kBlock, core::fx::guard::fifo_late (), &bDip))
+			nLate = s_nLastBlk[1] >= s_nLastBlk[2] ? 1 : 2;
+		if (bDip) s_nFifoLateCount++;
 		__atomic_store_n (&s_nFifoLate, nLate, __ATOMIC_RELAXED);	// (the release below publishes it)
 	}
 	u32 nGen = nPrev + 1;
