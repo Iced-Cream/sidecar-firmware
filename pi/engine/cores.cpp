@@ -101,9 +101,10 @@ static u64 s_nFxLate3 = 0;
 // ... and the audio buffer's view (decided 2026-11-25 after LT12g P5: two slow slots put core 1 at 83 % with its chains,
 // no core past a whole block, yet core 1 plus core 3's own work overran every block; the FIFO drained for 14 s and the
 // guard said nothing): a base pass begun with the FIFO low (under 2 blocks), and the passes held after it, are late for the
-// render core that took longer in the last block (fifo_late.h). fxguard=fifo:off stops it.
+// render core that took longer over its last base pass and side pass together (fifo_late.h blame). fxguard=fifo:off stops it.
 static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
-static volatile u64 s_nLastBlk[3];		// each render core's last block, voices and chains
+static volatile u64 s_nLastBlk[2][3];		// each render core's last block, voices and chains: [0] a base pass's, [1] a side pass's
+static volatile unsigned s_nFifoHeld[3], s_nFifoRunMax;	// the late log: passes late for core 1 / 2, the longest low run
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -511,7 +512,7 @@ void CEngineCores::Worker (unsigned nCore)
 		// hot at kFxHotPct of a block (as the voice guard's 80 %): its effects' overs count, and 16 hot blocks in a row mute
 		// the dearest effect on it
 		const u64 nBlk = Ticks () - s_nT0[nCore];
-		s_nLastBlk[nCore] = nBlk;
+		s_nLastBlk[(nPass & kBasePass) ? 0 : 1][nCore] = nBlk;
 		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks () || s_nFifoLateNow[nCore]);
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
@@ -558,7 +559,9 @@ void CEngineCores::RenderBlock (int nSide)
 		// hold still on: late for the render core that took longer (s_nFifoLate, above). Both kinds of pass carry it:
 		// the two boxes take turns on cores 1 and 2, and LT12j (2026-11-25) set it at base passes only, so the guard saw
 		// the A4's effects alone while the Rytm's (the side stage's) cost the time, and its late run broke every other pass.
-		static fifo_late::State s_FifoLate, s_FifoLateSide;
+		// LT13 (2026-11-25): the core that took longer in the last pass alone flipped between 1 and 2 as the boxes took
+		// turns, so the late rule's run never came; and a FIFO pinned low gave one dip and no hold (fifo_late.h)
+		static fifo_late::Pair s_FifoLate;
 		u32 nLate = 0;
 		bool bDip = false;
 		static u32 s_nLateMutes = 0;	// the guard's late mutes seen: a new one rearms both FIFOs (fifo_late.h rearm)
@@ -567,16 +570,20 @@ void CEngineCores::RenderBlock (int nSide)
 		{
 			s_nLateMutes = nLateMutes;
 			s_FifoLate.rearm ();
-			s_FifoLateSide.rearm ();
 		}
 		const bool bOn = core::fx::guard::fifo_late ();
+		const bool bSideOn = core::device::side_slot () >= 0;
+		if (!bSideOn) s_nLastBlk[1][1] = s_nLastBlk[1][2] = 0;	// (no side stage: its last blocks count nothing)
 		const bool bLate = nSide < 0
-			? s_FifoLate.step (g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, &bDip)
-				|| (bOn && core::device::side_slot () >= 0 && s_FifoLateSide.held ())
-			: s_FifoLateSide.step (g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, &bDip)
-				|| (bOn && s_FifoLate.held ());
+			? s_FifoLate.step (false, g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, bSideOn, &bDip)
+			: s_FifoLate.step (true, g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, bSideOn, &bDip);
 		if (bLate)
-			nLate = s_nLastBlk[1] >= s_nLastBlk[2] ? 1 : 2;
+		{
+			nLate = fifo_late::blame (s_nLastBlk[0][1], s_nLastBlk[1][1], s_nLastBlk[0][2], s_nLastBlk[1][2]);
+			s_nFifoHeld[nLate]++;
+		}
+		const unsigned nRun = nSide < 0 ? s_FifoLate.base.run : s_FifoLate.side.run;
+		if (nRun > s_nFifoRunMax) s_nFifoRunMax = nRun;
 		if (bDip) s_nFifoLateCount++;
 		__atomic_store_n (&s_nFifoLate, nLate, __ATOMIC_RELAXED);	// (the release below publishes it)
 	}
@@ -1022,6 +1029,9 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nMaxPassUs = s_nMaxPass; s_nMaxPass = 0;
 	s->nRunCapped = s_nRunCapped; s_nRunCapped = 0;
 	s->nFifoLate = s_nFifoLateCount; s_nFifoLateCount = 0;
+	s->nFifoHeld1 = s_nFifoHeld[1]; s_nFifoHeld[1] = 0;
+	s->nFifoHeld2 = s_nFifoHeld[2]; s_nFifoHeld[2] = 0;
+	s->nFifoRunMax = s_nFifoRunMax; s_nFifoRunMax = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();

@@ -45,6 +45,11 @@ struct Row {
   uint8_t late_run;              // late blocks in a row with no effect over its budget (kLateRun)
   uint64_t ew;                   // units with time in ew_us
   uint32_t ew_us[kUnits];        // each unit's time over the last ~16 blocks on this core, decaying (a late core's dearest)
+  // the late log (late_report): late blocks since the last report, and why each that muted nothing did not
+  uint32_t n_late, n_muted, n_run, n_settle, n_floor, n_other;
+  uint8_t run_max;               // the longest late_run seen
+  int8_t cand;                   // the late dearest last seen (before the floor), its time a block
+  uint32_t cand_us;
 };
 Row g_row[kCores];
 
@@ -218,14 +223,24 @@ void core_done(int core, bool hot, bool late) {
     if (!r.ew_us[u]) r.ew &= ~bit(u);
   }
   late_most_us = (late_most_us + 15) >> 4;   // (about its time a block, for the log)
+  if (late && late_most >= 0) r.cand = (int8_t)late_most, r.cand_us = late_most_us;
   // under kLateFloorUs a block muting it frees nothing (LT12k, 2026-11-25, Connor: a FIFO dip muted 1-5 us SAT inserts
   // while the two slowed slots ran 12 and 21 us; at 1200 MHz one harmless dip took four of them)
   if (late_most_us < kLateFloorUs) late_most = -1;
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
   // made late by something else, a burst of notes, never takes an effect)
   r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  if (r.late_run > r.run_max) r.run_max = r.late_run;
+  if (late) {   // (the late log: what this late block did, and if nothing, why)
+    ++r.n_late;
+    if (muted_here) ++r.n_other;
+    else if (r.settle) ++r.n_settle;
+    else if (late_over < 0 && late_most < 0) ++r.n_floor;
+    else if (late_over < 0 && r.late_run < kLateRun) ++r.n_run;
+  }
   if (late && !muted_here && !r.settle && (late_over >= 0 || (late_most >= 0 && r.late_run >= kLateRun))) {
     ++g_stats.late;
+    ++r.n_muted;
     if (late_over >= 0) mute(late_over, late_us, kLate, core);
     else mute(late_most, late_most_us, kLate, core);
     muted_here = true;
@@ -480,9 +495,34 @@ bool command(const char* p, char* out, int cap) {
   return true;
 }
 
+int late_report(char* out, int cap) {
+  int n = 0;
+  if (cap > 0) out[0] = 0;
+  for (int c = 0; c < kCores && n < cap; ++c) {
+    Row& r = g_row[c];
+    const uint32_t late = __atomic_exchange_n(&r.n_late, 0u, __ATOMIC_RELAXED);
+    const uint32_t muted = __atomic_exchange_n(&r.n_muted, 0u, __ATOMIC_RELAXED);
+    const uint32_t run = __atomic_exchange_n(&r.n_run, 0u, __ATOMIC_RELAXED);
+    const uint32_t settle = __atomic_exchange_n(&r.n_settle, 0u, __ATOMIC_RELAXED);
+    const uint32_t floor = __atomic_exchange_n(&r.n_floor, 0u, __ATOMIC_RELAXED);
+    const uint32_t other = __atomic_exchange_n(&r.n_other, 0u, __ATOMIC_RELAXED);
+    const unsigned run_max = __atomic_exchange_n(&r.run_max, (uint8_t)0, __ATOMIC_RELAXED);
+    if (!late) continue;
+    char at[12] = "-";
+    const int u = r.cand;
+    if (u >= 0 && u < kUnits) where(u, at, sizeof at);
+    n += sniprintf(out + n, cap - n, "%sc%d late %u muted %u, none: run<%u %u settle %u floor %u other %u, run max %u, dearest box %d %s %u us",
+                   n ? " | " : "", c, (unsigned)late, (unsigned)muted, (unsigned)kLateRun, (unsigned)run, (unsigned)settle,
+                   (unsigned)floor, (unsigned)other, run_max, u >= 0 ? box_of_unit(u) : -1, at, (unsigned)r.cand_us);
+    if (n >= cap) n = cap - 1;
+  }
+  return n;
+}
+
 const Stats& stats() { return g_stats; }
 void reset() {
   memset(g_row, 0, sizeof g_row);
+  for (Row& w : g_row) w.cand = -1;
   memset(g_rec, 0, sizeof g_rec);
   memset(g_why, 0, sizeof g_why);
   for (int u = 0; u < kBuiltin; ++u) g_m[u] = 0, g_slow[u] = 0;

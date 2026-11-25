@@ -2242,6 +2242,12 @@ void CKernel::LogStats (void)
 		nTemp);
 	if (s.nRunCapped || s.nFifoLate)	// (cores.cpp: a pass rendered its cap of blocks with the FIFO still short; a base pass began with it under a block)
 		m_Logger.Write (From, LogWarning, "overloaded: %u control passes stopped rendering at the cap, %u blocks begun with the FIFO under a block", s.nRunCapped, s.nFifoLate);
+	{	// the measured FX guard's late rule, once a second while any core was late: why a late block muted nothing (LT13)
+		char Late[400];
+		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2)
+			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u | %s",
+					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, Late);
+	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
 	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
