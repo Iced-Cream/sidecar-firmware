@@ -136,7 +136,8 @@ int this_core() {
 void set_core(int c) { g_host_core = c & (kCores - 1); }
 
 uint32_t (*g_clock)() = nullptr;
-uint32_t stamp() { return g_clock ? g_clock() : cycles(); }
+uint32_t g_spun = 0;   // (a test clock's: spin_us's waits added to it, so a test sees only the slowness it asked for)
+uint32_t stamp() { return g_clock ? g_clock() + g_spun : cycles(); }
 void set_clock(uint32_t (*clock)()) { g_clock = clock; }
 void note(int unit, uint32_t ticks, int frames) {
   if (unit < 0 || unit >= kBuiltin) return;
@@ -243,6 +244,10 @@ bool short_fade(int unit) { return unit >= 0 && unit < kBuiltin && __atomic_load
 uint32_t slow_us(int unit) { return unit >= 0 && unit < kBuiltin ? g_slow[unit] : 0; }
 void spin_us(uint32_t us) {
   const uint32_t t0 = cycles(), n = (uint32_t)((uint64_t)us * cycles_per_second() / 1000000u);   // (the CPU-time counter: as note's)
+  if (g_clock) {   // (a test's clock: no real wait, the time counted as spent)
+    g_spun += n;
+    return;
+  }
   while (cycles() - t0 < n) {
   }
 }

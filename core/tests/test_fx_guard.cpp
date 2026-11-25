@@ -54,6 +54,7 @@ static void set(int c, int s, int t, std::vector<int> p = {100, 100, 64, 64}) {
 
 int main() {
   g::set_core(1);
+  g::set_clock([] { return 0u; });   // only fxguard=slow: time counts (a CI runner's preemption read as a 2 ms huge block)
   // ---- a slot over its budget: muted after 16 hot blocks, never on a cool core
   {
     g::reset();
