@@ -105,6 +105,12 @@ extern bool (*user_state)(int u, const char** why, const char** id);
 int type_now(int unit);
 const char* type_label(int unit, int type);
 
+// The late log (the control core, once a second: kernel.cpp): each core's late blocks since the last call, how many
+// muted, and why the rest did not (run: under kLateRun late blocks in a row; settle: a mute on the core still fading;
+// floor: no effect over its budget and the dearest under kLateFloorUs; other: another rule muted in that block), the
+// longest late run and the late dearest last seen. Empty (0) when no core was late. Resets the counts.
+int late_report(char* out, int cap);
+
 struct Stats { uint32_t mutes, huge, slow, dearest, released, user_mutes, late; };
 const Stats& stats();
 void reset();   // tests: every count, mute and setting back to its default

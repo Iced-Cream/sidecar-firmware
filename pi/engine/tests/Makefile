@@ -99,6 +99,10 @@ build/test_display_hint: test_display_hint.cpp ../../ui/display_hint.h ../../ui/
 build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# fifo_late.h with the measured FX guard: LT13 P5's two-box overload, the late mute within 20 ms (2026-11-25)
+build/test_fifo_late_guard: test_fifo_late_guard.cpp ../fifo_late.h $(CORE)/fx/fx_guard.cpp $(CORE)/fx/fx_guard.h $(CORE)/fx/insert.cpp $(CORE)/fx/send_fx.cpp check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE)/fx/fx_guard.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the send FX's Pi part with the core's (card-free) send FX
 build/test_sendfx_pi: test_sendfx_pi.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h ../spectrum.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/stutter_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build

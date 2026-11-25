@@ -85,6 +85,33 @@ int main() {
     CHECK(!s.step(90, 0, kBlock, true) && s.step(0, 0, kBlock, true));    // the second: late again
     printf("test_fifo_late: rearm() takes two new dips\n");
   }
+  {  // LT13 P5: an overload the control loop cannot refill: the FIFO low at every pass, one dip, yet late once a low run
+     // gains nothing over kArm passes, and late while it stays so
+    fifo_late::State s;
+    warm(s);
+    unsigned first = 0;
+    for (unsigned i = 1; i <= 200; ++i)
+      if (s.step(3 + i % 5, 0, kBlock, true) && !first) first = i;
+    CHECK(first > 0 && first <= 2 * fifo_late::State::kArm);
+    for (unsigned i = 0; i < 100; ++i) CHECK(s.step(2, 0, kBlock, true));
+    printf("test_fifo_late: a FIFO pinned low: late from pass %u of the low run\n", first);
+  }
+  {  // ... but a FIFO climbing back slowly after one long control pass near a full load (a frame a pass) never is
+    fifo_late::State s;
+    warm(s);
+    for (unsigned i = 0; i < 2 * kBlock; ++i) CHECK(!s.step(i, 0, kBlock, true));
+    for (unsigned i = 0; i < 200; ++i) CHECK(!s.step(60, 0, kBlock, true));
+  }
+  {  // Pair: a side pass late while the base FIFO's hold is on; rearm ends both
+    fifo_late::Pair p;
+    for (unsigned i = 0; i < fifo_late::State::kGrace + fifo_late::State::kHold; ++i)
+      p.step(false, kTarget, 0, kBlock, true, true), p.step(true, kTarget, 0, kBlock, true, true);
+    for (unsigned i = 0; i < fifo_late::State::kArm; ++i) p.step(false, 1, 0, kBlock, true, true), p.step(true, kTarget, 0, kBlock, true, true);
+    CHECK(p.step(true, kTarget, 0, kBlock, true, true));
+    p.rearm();
+    CHECK(!p.step(true, kTarget, 0, kBlock, true, true));
+    CHECK(fifo_late::blame(90, 160, 120, 70) == 1 && fifo_late::blame(90, 0, 120, 0) == 2);
+  }
   printf("test_fifo_late: PASS\n");
   return 0;
 }
