@@ -13,6 +13,7 @@
 #include <circle/usb/usbstandardhub.h>
 
 #include <circle/koptions.h>
+#include <circle/bcmpciehostbridge.h>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -45,13 +46,18 @@ const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {   // dev
 static int g_rytm_usb = 0;   // the Rytm's slot held (usb_attach / usb_detach)
 // device.cpp's attach order without the engine: a box's slot already, else the lowest free one; freed when its device goes
 static const core::device::Profile* g_slot_of[2];
+static uint32_t g_slot_uid[2];
 namespace core { namespace device {
-int usb_attach(const Profile* p) {
+uint32_t g_attach_uid = 0;   // the UID the last usb_attach was given
+int g_midi_slot[2] = {-1, -1};   // set_midi_slot's
+void set_midi_slot(int t, int s) { if (t >= 0 && t < 2) g_midi_slot[t] = s; }
+int usb_attach(const Profile* p, uint32_t uid) {
+  g_attach_uid = uid;
   for (int k = 0; k < 2; ++k)
-    if (g_slot_of[k] == p) return k;
+    if (g_slot_of[k] == p && (!uid || !g_slot_uid[k] || g_slot_uid[k] == uid)) return k;   // (two of a type: by UID)
   for (int k = 0; k < 2; ++k)
     if (!g_slot_of[k]) {
-      g_slot_of[k] = p;
+      g_slot_of[k] = p, g_slot_uid[k] = uid;
       if (p->audio == &out::kRytmMk2) ++g_rytm_usb;
       return k;
     }
@@ -100,9 +106,16 @@ struct Bus {
   CUSBHostController host;
   CUSBFunction parent{&dev, &host};
   CUSBFunction* ob = nullptr;
-  Bus(const uint8_t* cfg, uint16_t pid) {
+  Bus(const uint8_t* cfg, uint16_t pid, uint32_t uid = 0) {
     dev.config = cfg;
     dev.desc.idVendor = 0x1935, dev.desc.idProduct = pid;
+    if (uid)   // the box answers the vendor request 0 (ObReadUid): a word 1, then its UID, big-endian (as the units)
+      host.vendor_in = [uid](u8 r, u8* b, unsigned n) {
+        if (r != 0 || n != 8) return -1;
+        const u8 a[8] = {0, 0, 0, 1, (u8)(uid >> 24), (u8)(uid >> 16), (u8)(uid >> 8), (u8)uid};
+        memcpy(b, a, 8);
+        return 8;
+      };
     ob = RytmObDeviceCreate(&parent);
   }
   ~Bus() { delete ob; }
@@ -157,12 +170,18 @@ Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pul
 // the host link's USB MIDI is box ob's (the same USB strings, as Circle copies them; the kernel's SetMidiDevices each pass):
 // its MIDI OUT's failures go with that box's endpoints (MidiHalted, BoxWaits)
 static void host_link_is(CUSBFunction* ob) {
-  static CDevice midi;
+  static CUSBMIDIDevice midi;
   ob->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), midi.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
   CObUsb::SetMidiDevices(&midi, nullptr);
 }
 
 int main() {
+  {  // a VL805 behind the root complex (PollAspm reads it at its first pass): ASPM off, its PCIe capability at 0xc4
+    auto& rc = CBcmPCIeHostBridge::s_cfg[0];
+    auto& vl = CBcmPCIeHostBridge::s_cfg[1];
+    rc[0] = 0x271114e4;
+    vl[0] = 0x34831106, vl[4] = 0x00100000, vl[0x34] = 0x80, vl[0x80] = 0x0000c401, vl[0xc4] = 0x00020010, vl[0xd4] = 0x10120040;
+  }
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);
   CHECK(g_rytm[kOutAlt3Mps] == 0x70 && g_rytm[kOutAlt3Mps + 1] == 0x01);
   g_digitakt[kOutAlt3Mps] = 0x58, g_digitakt[kOutAlt3Mps + 1] = 0x00;
@@ -1169,6 +1188,159 @@ int main() {
     }
     CTimer::s_now = 0;
   }
+  {  // RL1 (T516): the frozen box hangs off the Pi's own hub (2109:3431) and the hub no longer answers: the port disable
+     // waits its 3 s and removes nothing. No rescan (it would wait 3 s on each port); the hub's root port is reset
+     // instead (obhubreset=1, twice a boot, a minute apart); otherwise nothing goes to the hub for a
+     // minute. A quick refusal (the hub answered no) is a try spent, without the rescan.
+    struct Port : CUSBHCIRootPort {
+      int rescans = 0;
+      boolean ReScanDevices() override { ++rescans; return TRUE; }
+    } port;
+    CUSBDevice hd;
+    hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+    hd.root = &port;
+    CUSBStandardHub vl805(&hd);
+    CTimer::s_now64 = 0, CTimer::s_now = 200000000;   // 200 s: the SR1 budget forgotten once a box streams
+    size_t l0 = CLogger::Get()->lines.size();
+    // one frozen spell of the slot-0 Rytm on the hub: streams, the budget forgotten, then nothing completes
+    auto freeze = [&](CUSBDevice& dev, Bus& r) {
+      uint16_t c = 0;
+      for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();
+      CObUsb::PollHalt();   // streaming, no failures: a budget older than kForgetMs is forgotten
+      r.host.in.front()->ep->GetXHCIEndpoint()->state = 1;
+      int n0 = dev.removes;
+      for (int t = 0; t < 60 && dev.removes == n0; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      return dev.removes - n0;
+    };
+    {  // 1: no answer (3 s): the hub reset at its root port, once (a try: the box is enumerated again with the hub)
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(vl805.rescans == 0 && port.removes == 1 && port.rescans == 1 && CObUsb::HubResets() == 1);
+      CHECK(count_lines("the Pi's USB hub did not answer (the port disable waited 3000 ms): resetting it at its root "
+                        "port (reset 1 of 2 since boot)", l0) == 1);
+      CHECK(count_lines("the Pi's USB hub is back after its reset", l0) == 1);
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2)", l0) == 1);
+    }   // (the Bus deletes the function, as the hub's removal would)
+    {  // 2: again 10 s later: no second reset within the minute; nothing sent to the hub for a minute after
+      CTimer::s_now += 10000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(port.removes == 1 && vl805.rescans == 0 && CObUsb::HubResets() == 1);
+      CHECK(count_lines("nothing removed, nothing sent to the hub for 60 s (its last reset was less than a minute ago)", l0) == 1);
+      // still frozen: the watch asks again every kHoldMs, but no request goes out, and the budget is untouched (its 1:
+      // the reset's try 10 s ago)
+      for (int t = 0; t < 200; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && port.removes == 1);
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2, it did not answer)", l0) == 1);
+    }
+    {  // a minute on, the hub may be asked again: it answers no at once (a refusal): a try spent, no rescan, no reset
+      CTimer::s_now += 60000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 1000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(vl805.rescans == 0 && port.removes == 1);
+      CHECK(count_lines("its hub refused to disable the port (1 ms): nothing removed, not enumerated again", l0) == 1);
+      size_t l1 = CLogger::Get()->lines.size();
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2)", l1) == 1);
+    }
+    {  // 3: obhubreset=0: no reset, said so
+      CTimer::s_now += 120000000;
+      opt->num["obhubreset"] = 0;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(port.removes == 1 && CObUsb::HubResets() == 1 && count_lines("(obhubreset=0)", l0) == 1);
+      opt->num.erase("obhubreset");
+    }
+    {  // 4: the second and last reset of the boot, then spent
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && port.removes == 2 && CObUsb::HubResets() == 2);
+    }
+    {
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && port.removes == 2 && count_lines("(its resets for this boot spent)", l0) == 1);
+    }
+    {  // 5: a hub that answers: removed and rescanned as before (the SR1 path), no reset
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && vl805.rescans == 1 && port.removes == 2);
+    }
+    {  // 6: obhubreset!: the root-port reset at the next pass, the hub answering; outside the hub's budget
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c), r.out_done();
+      size_t l1 = CLogger::Get()->lines.size();
+      CHECK(CObUsb::Command("obhubreset!"));
+      CObUsb::PollHalt();
+      CHECK(port.removes == 3 && port.rescans == 3 && CObUsb::HubResets() == 2 && r.dev.removes == 0);
+      CHECK(count_lines("obhubreset!: resetting the Pi's USB hub at its root port (Analog Rytm MKII in slot 0 on it; 1 asked", l1) == 1);
+      CHECK(count_lines("the Pi's USB hub is back after its reset", l1) == 1);
+    }
+    {  // 7: behind another hub (not the Pi's own): never re-enumerated, and the budget is spent as before: three lines, then
+       // the "frozen again" line once (no try given back: the hub was never asked)
+      CTimer::s_now += 120000000;
+      CUSBDevice ed;
+      ed.desc.idVendor = 0x05e3, ed.desc.idProduct = 0x0608, ed.root = &port;
+      CUSBStandardHub ext(&ed);
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &ext;
+      CHECK(r.ob && r.ob->Configure());
+      size_t l1 = CLogger::Get()->lines.size();
+      uint16_t c = 0;
+      for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();
+      CObUsb::PollHalt();
+      r.host.in.front()->ep->GetXHCIEndpoint()->state = 1;
+      for (int t = 0; t < 400; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();   // 40 s frozen
+      CHECK(count_lines("but it hangs off another hub: no re-enumeration", l1) == 3);
+      CHECK(count_lines("its stream is frozen again after 3 re-enumerations", l1) == 1);
+      CHECK(r.dev.removes == 0 && ext.rescans == 0);
+    }
+    {  // 8: obhubnoanswer=0 (a test of HubNoAnswer on a hub that answers): nothing sent to the hub, the no-answer handling
+       // runs (here the boot's two resets are spent: the quiet spell); armed again inside the spell it is used up, not kept;
+       // past the spell the hub is asked as usual
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c), r.out_done();
+      size_t l1 = CLogger::Get()->lines.size();
+      int pr = port.removes, vr = vl805.rescans;
+      CHECK(CObUsb::Command("obhubnoanswer=0") && !CObUsb::Command("obhubnoanswer=2"));
+      CHECK(CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 0 && port.removes == pr && vl805.rescans == vr);
+      CHECK(count_lines("obhubnoanswer: slot 0's port disable not sent, taken as not answered (a test)", l1) == 1);
+      CHECK(count_lines("the Pi's USB hub did not answer (the port disable waited 3000 ms): nothing removed, nothing sent "
+                        "to the hub for 60 s (its resets for this boot spent)", l1) == 1);
+      CTimer::s_now += 10000000;
+      CHECK(CObUsb::Command("obhubnoanswer=0") && CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 0 && count_lines("obhubnoanswer: not used: the hub did not answer 10 s ago", l1) == 1);
+      CTimer::s_now += 60000000;
+      CHECK(CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && vl805.rescans == vr + 1 && port.removes == pr);   // asked as usual: answered, rescanned
+    }
+    CTimer::s_now = 0;
+  }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
     struct Port : CUSBHCIRootPort {
       int rescans = 0;
@@ -1188,7 +1360,7 @@ int main() {
     CHECK(port.rescans == 0);
     CTimer::s_now64 = 12000000, CObUsb::PollReEnum(), CObUsb::PollReEnum();
     CHECK(port.rescans == 1);   // once
-    CHECK(port.removed == 1);   // the refused box removed first: its MIDI kept it on the port (SR4, T482)
+    CHECK(port.removes == 1);   // the refused box removed first: its MIDI kept it on the port (SR4, T482)
     {  // the port's new reset gives high speed: streams, and the budget is back
       Bus b(g_rytm, 0x0b48);
       b.dev.root = &port;
@@ -1247,6 +1419,56 @@ int main() {
     CTimer::s_now64 = 0;
   }
 
+  {  // obaspmoff (default 1): the VL805 ASPM bits written back to off within 10 ms whenever they read set
+    auto& lnk = CBcmPCIeHostBridge::s_cfg[1][0xd4];
+    size_t l0 = CLogger::Get()->lines.size();
+    CTimer::s_now = 50000000;
+    CObUsb::PollHalt();
+    CHECK(count_lines("VL805 ASPM was on", l0) == 0 && lnk == 0x10120040);
+    lnk = 0x10120043;                                   // the VL805 turns L0s+L1 on
+    CTimer::s_now += 5000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120043);                           // not within 10 ms of the last look
+    CTimer::s_now += 6000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120040);
+    CHECK(count_lines("VL805 ASPM was on (Link Control/Status 10120043): set off, reads 10120040 (", l0) == 1);
+    CHECK(count_lines(" did not take)", l0) == 1 && count_lines(", 0 did not take)", l0) == 1);
+    CBcmPCIeHostBridge::s_write_ok = false;             // a write that does not take: counted, said
+    lnk = 0x10120041;
+    CTimer::s_now += 11000;
+    CObUsb::PollHalt();
+    CHECK(count_lines("reads 10120041 - DID NOT TAKE (", l0) == 1 && count_lines(", 1 did not take)", l0) == 1);
+    CBcmPCIeHostBridge::s_write_ok = true;
+    CTimer::s_now += 11000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120040);
+    CHECK(count_lines("VL805 ASPM kept off (obaspmoff=1): Link Control/Status 10120040", 0) == 1);
+    CTimer::s_now = 0;
+  }
+  {  // same type twice (design 2026-11-26): two Rytms, told apart by the UID of the vendor request 0, each its own slot; their
+     // USB MIDI devices carry the same strings, and each is matched to its own stream by its USB device
+    Bus a(g_rytm, 0x0b48, 0x1234abcd);
+    CHECK(a.ob && core::device::g_attach_uid == 0x1234abcd && ((CObUsb*)a.ob)->Uid() == 0x1234abcd);
+    CHECK(a.host.vendor.size() == 1 && a.host.vendor[0].type == 0xC0 && a.host.vendor[0].req == 0 && a.host.vendor[0].index == 0);
+    Bus b(g_rytm, 0x0b48, 0x9f003fa2);
+    CHECK(b.ob && ((CObUsb*)b.ob)->Uid() == 0x9f003fa2);
+    const unsigned sa = ((CObUsb*)a.ob)->Slot(), sb = ((CObUsb*)b.ob)->Slot();
+    CHECK(sa != sb && CObUsb::Box(sa) == (CObUsb*)a.ob && CObUsb::Box(sb) == (CObUsb*)b.ob);
+    CUSBMIDIDevice ma, mb;   // the same strings, as Circle copies them from two Rytms
+    for (CDevice* d : {(CDevice*)&ma, (CDevice*)&mb, (CDevice*)a.ob, (CDevice*)b.ob}) d->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+    ma.usb = &a.dev, mb.usb = &b.dev;
+    CObUsb::SetMidiDevices(&mb, &ma);   // B's MIDI on the host link, A's on link1
+    CHECK(CObUsb::MidiSlot(0) == (int)sb && CObUsb::MidiSlot(1) == (int)sa);
+    CHECK(core::device::g_midi_slot[0] == (int)sb && core::device::g_midi_slot[1] == (int)sa);
+    CObUsb::SetMidiDevices(&ma, &mb);
+    CHECK(CObUsb::MidiSlot(0) == (int)sa && CObUsb::MidiSlot(1) == (int)sb);
+    CObUsb::SetMidiDevices(nullptr, nullptr);
+    CHECK(CObUsb::MidiSlot(0) == -1 && core::device::g_midi_slot[0] == -1);
+    // a box that does not answer the vendor request: no UID (the core asks by MIDI)
+    Bus c(g_rytm, 0x0b48);
+    CHECK(c.ob == nullptr && core::device::g_attach_uid == 0 && c.host.vendor.size() == 1);   // (a third box: no slot)
+  }
   printf("test_ob_usb: ok\n");
   return 0;
 }

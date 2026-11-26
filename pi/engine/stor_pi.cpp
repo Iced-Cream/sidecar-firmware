@@ -36,7 +36,7 @@ FATFS *s_pFs[stor::kVols];
 FIL *s_pFil[2];
 u8 *s_pSector = 0;
 u8 *s_pBench = 0;			// the bench's two 1 MB buffers, 64 KB-aligned (made at the first bench)
-volatile boolean s_bPlaying = FALSE;
+volatile u32 s_nPlaying = 0;	// bit s: box slot s plays (the bench is refused while any box plays, 2026-11-26)
 unsigned s_nPollAt = 0, s_nSdAt = 0;
 unsigned s_nLoopMax = 0, s_nLoopSum = 0, s_nLoopN = 0;
 unsigned s_nHeldBack = 0;		// bench steps held back for the SD's streams (cardq busy)
@@ -367,7 +367,7 @@ boolean Command (const char *p)
 		storbench::Cond c;
 		unsigned nSecs;
 		c.mounted = stor::mounted (Args.vol);
-		c.playing = s_bPlaying || g_Play.active ();
+		c.playing = s_nPlaying != 0 || g_Play.active ();
 		c.recording = rec_pi::UiState (&nSecs) != 0;	// armed too: a take may start any moment
 		c.running = storbench::state () == storbench::kRunning;
 		c.sdtest = bridge::sdtest_running ();
@@ -506,10 +506,11 @@ void NoteLoop (unsigned nUs)
 	if (nUs > s_nLoopMax) s_nLoopMax = nUs;
 }
 
-void Transport (u8 nStatus)
+void Transport (int nSlot, u8 nStatus)
 {
-	if (nStatus == 0xFA || nStatus == 0xFB) s_bPlaying = TRUE;
-	else if (nStatus == 0xFC) s_bPlaying = FALSE;
+	if (nSlot < 0 || nSlot >= 32) return;
+	if (nStatus == 0xFA || nStatus == 0xFB) __atomic_or_fetch (&s_nPlaying, 1u << nSlot, __ATOMIC_RELAXED);
+	else if (nStatus == 0xFC) __atomic_and_fetch (&s_nPlaying, ~(1u << nSlot), __ATOMIC_RELAXED);
 }
 
 boolean Mounted (int nVol) { return stor::mounted (nVol); }

@@ -58,6 +58,10 @@
 #define XHCI_CONFIG_TRANSFER_RING_SIZE	64		// Circle's (the portable tests' shim has none)
 #endif
 #include <circle/koptions.h>
+#if RASPPI == 4 || defined (OB_USB_TEST)
+#include <circle/bcmpciehostbridge.h>	// circle-pcie-config.patch: the VL805 ASPM bits kept off (PollAspm)
+#define OB_VL805_ASPM 1
+#endif
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
@@ -157,8 +161,10 @@ void CObUsb::Rebind (void)
 	s_pThis = s_pBox[0] != 0 ? s_pBox[0] : s_pBox[1];
 }
 
-// Circle's USB MIDI device has no link back to its USB device, but it carries that device's vendor, product and serial
-// strings (CDevice's properties, copied from its function), as each slot's stream does: the same three strings, the same box
+// A MIDI device is a slot's box when it is part of the same USB device as the slot's stream (circle-midi-usbdevice.patch:
+// CUSBMIDIDevice::GetUSBDevice, the USB MIDI host function's device). Two boxes of one type carry the same vendor, product
+// and serial strings (every Elektron box says serial 000000000001), so the strings below are only the fallback for a MIDI
+// device that names no USB device: the same three strings, the same box, as before two boxes of one type.
 static boolean SameStrings (const CDevice *pA, const CDevice *pB)
 {
 	static const CDevice::TProperty P[] = {CDevice::PropertyVendor, CDevice::PropertyProduct, CDevice::PropertySerialNumber};
@@ -170,14 +176,16 @@ static boolean SameStrings (const CDevice *pA, const CDevice *pB)
 	return TRUE;
 }
 
-void CObUsb::SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1)
+void CObUsb::SetMidiDevices (CUSBMIDIDevice *pHostLink, CUSBMIDIDevice *pLink1)
 {
-	const CDevice *const pMidi[2] = {pHostLink, pLink1};
+	CUSBMIDIDevice *const pMidi[2] = {pHostLink, pLink1};
 	for (unsigned t = 0; t < 2; t++)
 	{
 		int nSlot = -1;
+		const CUSBDevice *pUsb = pMidi[t] != 0 ? pMidi[t]->GetUSBDevice () : 0;
 		for (unsigned k = 0; k < Slots && pMidi[t] != 0; k++)
-			if (s_pBox[k] != 0 && SameStrings (s_pBox[k], pMidi[t])) nSlot = (int) k;
+			if (s_pBox[k] != 0 && (pUsb != 0 ? s_pBox[k]->GetDevice () == pUsb : SameStrings (s_pBox[k], pMidi[t]))) nSlot = (int) k;
+		core::device::set_midi_slot ((int) t, nSlot);
 		if (nSlot == s_nMidiSlot[t]) continue;
 		s_nMidiSlot[t] = nSlot;
 		if (nSlot < 0) CLogger::Get ()->Write (From, LogNotice, "midi: %s is no slot's box", t == 0 ? "the host link" : "link1");
@@ -454,6 +462,22 @@ static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
 	return pHub;
 }
 
+// The box's DeviceUID by the vendor request Overbridge sends (IOCTL_OB_PROPERTIES_GET_UID: bmRequestType 0xC0, bRequest 0,
+// 8 bytes, a word 1 then the UID, both big-endian as the box stores them; Rytm 1.74 FUN_40003be6/FUN_40004294; the units
+// answer 00 00 00 01 then the UID MSB first, step 0 2026-11-26), on EP0 before anything
+// else: the same 32-bit value as the MIDI RPC 0x03 (design 2026-11-26, findings). 0: no answer (the core asks by MIDI).
+u32 ObReadUid (CUSBFunction *pParent)
+{
+	static u8 *Buf = 0;			// (DMA: a heap block, not the kernel image - the xHCI asserts so; once, 64 B
+	if (Buf == 0) Buf = AllocDmaBuf ();	// aligned; the factory runs on core 0, one device at a time)
+	memset (Buf, 0, 64);
+	CUSBHostController *pHost = pParent->GetHost ();
+	const int n = pHost != 0 ? pHost->ControlMessage (pParent->GetEndpoint0 (), 0xC0, 0, 0, 0, Buf, 8) : -1;
+	const u32 nUid = n == 8 ? (u32) Buf[4] << 24 | (u32) Buf[5] << 16 | (u32) Buf[6] << 8 | (u32) Buf[7] : 0;
+	(void) n;
+	return nUid;
+}
+
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
@@ -467,7 +491,8 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	const core::out::Device *pAudio = p->audio;
 	// attach order (core/device/device.h): its slot already, else the lowest free one, reserved for it now; the control core
 	// makes it the box's at its next pass (a stock box, a stock Rytm too: its USB is its hello)
-	const int nSlot = core::device::usb_attach (p);
+	const u32 nUid = ObReadUid (pParent);		// two boxes of one type: which one this is (design 2026-11-26)
+	const int nSlot = core::device::usb_attach (p, nUid);
 	if (nSlot < 0 || nSlot >= (int) CObUsb::Slots || CObUsb::Box ((unsigned) nSlot) != 0)	// one box a slot: a third keeps its MIDI, Circle goes on to its interfaces
 	{
 		CLogger::Get ()->Write (From, LogWarning, "%s: no slot free (two boxes stream already), no audio from this one", pAudio->name);
@@ -479,7 +504,9 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
 		return 0;
 	}
-	return new CObUsb (pParent, pAudio, (unsigned) nSlot);
+	CObUsb *pBox = new CObUsb (pParent, pAudio, (unsigned) nSlot);
+	pBox->SetUid (nUid);
+	return pBox;
 }
 
 void CObUsb::PollReEnum (void)
@@ -537,10 +564,59 @@ boolean CObUsb::s_bResetDone;
 // At most one endpoint is reset a main-loop pass, the Rytm MIDI's included (CObUsbTransport::Poll asks ResetDone): its
 // waits are Circle's, 3 s at most each (EP0's CLEAR_FEATURE, Reset Endpoint, Set TR Dequeue), so one pass stays well under
 // the 15 s watchdog.
+#ifdef OB_VL805_ASPM
+// The Pi 4's VL805 turns ASPM (L0s+L1) on in its own PCIe Link Control about 9 s after boot, with no host write, then
+// toggles it on a fixed 10 s timetable. While it was on the root complex logged correctable link errors and the
+// controller's whole periodic schedule stopped for one MFINDEX wrap, 2.048 s, with every box quiet (VP1, PP1). Written
+// back to off at once (every 10 ms), it was set once a boot and never again, and the stalls were gone: PW1 (2026-11-24)
+// 2 stalls in 2 boots as found, 0 in 3 boots kept off. obaspmoff=0 leaves it as the VL805 sets it. The status half of
+// the dword is written 0: LNKSTA's two write-1-to-clear bits are left alone, the rest are read-only.
+static void PollAspm (void)
+{
+	typedef CBcmPCIeHostBridge B;
+	static boolean s_bInit, s_bOn;
+	static unsigned s_nLnk, s_nWrites, s_nFailed;
+	static u32 s_nLastUs;
+	if (!s_bInit)
+	{
+		s_bInit = TRUE;
+		s_bOn = CKernelOptions::Get ()->GetAppOptionDecimal ("obaspmoff", 1) != 0;
+		if (!s_bOn || B::ConfigRead (1, 0, 0, 0) == ~0U) { s_bOn = FALSE; return; }
+		const unsigned nExp = B::FindCapability (1, 0, 0, 0x10);	// PCI_CAP_ID_EXP
+		if (nExp == 0) { s_bOn = FALSE; return; }
+		s_nLnk = nExp + 0x10;
+		CLogger::Get ()->Write ("rytmob", LogNotice, "VL805 ASPM kept off (obaspmoff=1): Link Control/Status %08x",
+					B::ConfigRead (1, 0, 0, s_nLnk));
+	}
+	if (!s_bOn) return;
+	const u32 nNow = CTimer::GetClockTicks ();
+	if (nNow - s_nLastUs < 10000) return;
+	s_nLastUs = nNow;
+	const u32 v = B::ConfigRead (1, 0, 0, s_nLnk);
+	if (v == ~0U || (v & 3) == 0) return;
+	const boolean bOK = B::ConfigWrite (1, 0, 0, s_nLnk, v & 0xfffc);
+	const u32 nAfter = B::ConfigRead (1, 0, 0, s_nLnk);
+	++s_nWrites;
+	if (!bOK || (nAfter & 3) != 0) ++s_nFailed;
+	if (s_nWrites <= 5 || s_nWrites % 100 == 0)
+		CLogger::Get ()->Write ("rytmob", s_nFailed != 0 ? LogWarning : LogNotice,
+					"VL805 ASPM was on (Link Control/Status %08x): set off, reads %08x%s (%u times, %u did not take)",
+					v, nAfter, (nAfter & 3) != 0 ? " - DID NOT TAKE" : "", s_nWrites, s_nFailed);
+}
+#else
+static void PollAspm (void) {}
+#endif
+
 void CObUsb::PollHalt (void)
 {
+	PollAspm ();
 	s_bResetDone = FALSE;
 	if (PollFreeze ())				// a frozen box enumerated again: its object is gone, the pass is spent
+	{
+		s_bResetDone = TRUE;
+		return;
+	}
+	if (PollGate ())				// the attach gate showed, restarted or re-enumerated a box (attach_gate.h)
 	{
 		s_bResetDone = TRUE;
 		return;
@@ -562,6 +638,7 @@ unsigned CObUsb::s_nFreezeReEnums;
 // TRUE: a box was removed and its hub asked to enumerate it again (ob_freeze.h). At most one a pass.
 boolean CObUsb::PollFreeze (void)
 {
+	if (PollForcedHubReset ()) return TRUE;	// obhubreset! (a test)
 	const u32 nNowMs = NowMs ();
 	for (unsigned k = 0; k < Slots && k < 2; k++)
 	{
@@ -581,7 +658,9 @@ boolean CObUsb::PollFreeze (void)
 							"unplug it at the box and plug it in again", p->m_pAudio->name, k, obfreeze::kTries);
 			continue;
 		}
-		if (p->ReEnumerate (bForce ? "asked (obreenum)" : "its stream froze with the box still on the bus")) return TRUE;
+		boolean bSent = TRUE;
+		if (p->ReEnumerate (bForce ? "asked (obreenum)" : "its stream froze with the box still on the bus", &bSent)) return TRUE;
+		if (!bSent && !bForce && s_FreezeBudget[k].tries > 0) s_FreezeBudget[k].tries--;	// given back: nothing happened to the box
 	}
 	return FALSE;
 }
@@ -589,32 +668,345 @@ boolean CObUsb::PollFreeze (void)
 // The software replug (ob_freeze.h): CUSBDevice::RemoveDevice is Circle's hot-unplug path (the hub port disabled, the
 // xHCI slot freed, this driver and the box's other functions deleted: its MIDI too), and the parent's ReScanDevices its
 // hot-plug path (the port reset, a fresh slot, address and Configure). Main loop only. Nothing of this object is used
-// once RemoveDevice is called.
-boolean CObUsb::ReEnumerate (const char *pWhy)
+// once RemoveDevice is called. On a hub port the removal is a request to the hub (CLEAR_FEATURE PORT_ENABLE), and a
+// hub that does not answer it removes nothing (RL1, ob_freeze.h "The hub that does not answer"): no rescan then.
+boolean CObUsb::ReEnumerate (const char *pWhy, boolean *pSent)
 {
 	CUSBDevice *pDevice = GetDevice ();
 	CUSBHCIRootPort *pPort = pDevice->GetParentRootPort ();
 	CUSBStandardHub *pHub = pPort == 0 ? BuiltInHub (pDevice) : 0;
 	const char *pName = m_pAudio->name;		// (a static table: still good after the delete)
 	const unsigned nSlot = m_nSlot;
+	if (pSent != 0) *pSent = TRUE;			// FALSE only where the hub did not answer (a try given back)
 	if (pPort == 0 && pHub == 0)
 	{
 		CLogger::Get ()->Write (From, LogError, "%s (slot %u): %s, but it hangs off another hub: no re-enumeration; unplug "
 					"it at the box and plug it in again", pName, nSlot, pWhy);
 		return FALSE;
 	}
+	if (pHub != 0 && obfreeze::quiet (s_Hub, NowMs ()))
+	{
+		if (!s_Hub.told)
+		{
+			s_Hub.told = TRUE;
+			CLogger::Get ()->Write (From, LogError, "%s (slot %u): %s, but the Pi's USB hub did not answer %u s ago: nothing "
+						"sent to it; unplug the box and plug it in again, or power the Pi off and on", pName,
+						nSlot, pWhy, (unsigned) ((NowMs () - s_Hub.dead_ms) / 1000));
+		}
+		if (s_nForceNoAnswer == (int) nSlot)
+		{
+			s_nForceNoAnswer = -1;
+			CLogger::Get ()->Write (From, LogNotice, "obhubnoanswer: not used: the hub did not answer %u s ago, nothing "
+						"is sent to it (slot %u)", (unsigned) ((NowMs () - s_Hub.dead_ms) / 1000), nSlot);
+		}
+		if (pSent != 0) *pSent = FALSE;
+		return FALSE;
+	}
 	s_nFreezeReEnums++;
 	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: enumerating it again (try %u of %u, %u since boot)", pName,
 				nSlot, pWhy, nSlot < 2 ? s_FreezeBudget[nSlot].tries : 0, obfreeze::kTries, s_nFreezeReEnums);
-	pDevice->RemoveDevice ();			// deletes this
+	if (pHub != 0 && s_nForceNoAnswer == (int) nSlot)	// obhubnoanswer=<slot> (a test): nothing is sent to the hub; the
+	{							// port disable is taken as Circle's 3 s timeout
+		s_nForceNoAnswer = -1;
+		CLogger::Get ()->Write (From, LogWarning, "obhubnoanswer: slot %u's port disable not sent, taken as not answered (a test)",
+					nSlot);
+		if (pSent != 0) *pSent = FALSE;
+		return HubNoAnswer (pHub, pName, nSlot, 3000000);
+	}
+	const unsigned nStartUs = CTimer::GetClockTicks ();
+	if (!pDevice->RemoveDevice ())			// deletes this - unless its hub did not disable the port (a root port always does)
+	{
+		const unsigned nTookUs = CTimer::GetClockTicks () - nStartUs;
+		if (pHub != 0 && obfreeze::no_answer (nTookUs))
+		{
+			if (pSent != 0) *pSent = FALSE;		// (only the hub was asked: the try is given back)
+			return HubNoAnswer (pHub, pName, nSlot, nTookUs);
+		}
+		CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): its hub refused to disable the port (%u ms): nothing "
+					"removed, not enumerated again", pName, nSlot, nTookUs / 1000);
+		return FALSE;
+	}
 	if (!(pPort != 0 ? pPort->ReScanDevices () : pHub->ReScanDevices ()))
 		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it again (unplugged meanwhile?)");
+	return TRUE;
+}
+
+obfreeze::Hub CObUsb::s_Hub;
+
+namespace teensy_flash { void HubGone (void) __attribute__ ((weak)); }	// a Teensy write's hub pointer (teensy_flash.cpp)
+
+// The Pi's own hub (BuiltInHub) did not answer a port disable (nTookUs: the request's 3 s timeout). Nothing more is sent
+// to it: its root port is reset instead (obhubreset=1, the default; ob_freeze.h Hub), which the xHC does by itself and
+// Circle takes as an unplug and a replug of the hub: the hub, every device behind it (this box, the other one, the relay)
+// deleted, then the hub enumerated again with all of them. TRUE: done (this object is gone); FALSE: not now (nothing
+// goes to that hub for obfreeze::kDeadMs).
+boolean CObUsb::HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs)
+{
+	CUSBDevice *pHubDevice = pHub->GetDevice ();
+	CUSBHCIRootPort *pRoot = pHubDevice != 0 ? pHubDevice->GetParentRootPort () : 0;	// (BuiltInHub: on one)
+	const boolean bAllowed = pRoot != 0 && CKernelOptions::Get ()->GetAppOptionDecimal ("obhubreset", 1) != 0;
+	if (!obfreeze::dead_now (s_Hub, NowMs (), bAllowed))
+	{
+		CLogger::Get ()->Write (From, LogError, "%s (slot %u): the Pi's USB hub did not answer (the port disable waited %u ms): "
+					"nothing removed, nothing sent to the hub for %u s (%s); unplug the box and plug it in again, "
+					"or power the Pi off and on", pName, nSlot, nTookUs / 1000, (unsigned) (obfreeze::kDeadMs / 1000),
+					!bAllowed ? "obhubreset=0" : s_Hub.resets >= obfreeze::kHubResets ? "its resets for this boot "
+					"spent" : "its last reset was less than a minute ago");
+		return FALSE;
+	}
+	CLogger::Get ()->Write (From, LogError, "%s (slot %u): the Pi's USB hub did not answer (the port disable waited %u ms): "
+				"resetting it at its root port (reset %u of %u since boot): every box and the relay on it leave and "
+				"are enumerated again", pName, nSlot, nTookUs / 1000, s_Hub.resets, obfreeze::kHubResets);
+	ResetHub (pRoot);
+	return TRUE;
+}
+
+// The hub on pRoot, and every device behind it, deleted (Circle's unplug of the hub: no request goes to it, each device's
+// slot disabled by a command to the xHC), then the root port reset by the xHC (PORTSC) and the hub enumerated again with
+// its ports. Main loop only; every CObUsb behind the hub is gone afterwards.
+// Worst case (not bounded here): a hub that comes back half-alive can add 3 s request timeouts in this same pass on top
+// of the port disable's 3 s; past the 15 s watchdog the Pi reboots, which resets the VL805 too.
+void CObUsb::ResetHub (CUSBHCIRootPort *pRoot)
+{
+	s_pRetryPort = 0, s_pRetryHub = 0;		// a full-speed retry's hub goes with it (PollReEnum: nothing due)
+	if (teensy_flash::HubGone != 0) teensy_flash::HubGone ();
+	const unsigned nStartUs = CTimer::GetClockTicks ();
+	pRoot->RemoveDevice ();				// deletes the hub and everything behind it
+	if (pRoot->ReScanDevices ())
+		CLogger::Get ()->Write (From, LogNotice, "the Pi's USB hub is back after its reset (%u ms)",
+					(CTimer::GetClockTicks () - nStartUs) / 1000);
+	else
+		CLogger::Get ()->Write (From, LogError, "the Pi's USB hub did not come back after its reset: power the Pi off and on");
+}
+
+// obhubreset!: the root-port reset above at the next pass, of the Pi's hub that a streaming box hangs off, the hub
+// answering or not (a test of the teardown and the re-enumeration; not counted in the hub's reset budget)
+boolean CObUsb::s_bForceHubReset;
+int CObUsb::s_nForceNoAnswer = -1;
+unsigned CObUsb::s_nForcedHubResets;
+
+boolean CObUsb::PollForcedHubReset (void)
+{
+	if (!s_bForceHubReset) return FALSE;
+	s_bForceHubReset = FALSE;
+	for (unsigned k = 0; k < Slots && k < 2; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		if (p == 0) continue;
+		CUSBStandardHub *pHub = BuiltInHub (p->GetDevice ());
+		CUSBDevice *pHubDevice = pHub != 0 ? pHub->GetDevice () : 0;
+		CUSBHCIRootPort *pRoot = pHubDevice != 0 ? pHubDevice->GetParentRootPort () : 0;
+		if (pRoot == 0) continue;
+		s_nForcedHubResets++;
+		CLogger::Get ()->Write (From, LogWarning, "obhubreset!: resetting the Pi's USB hub at its root port (%s in slot %u "
+					"on it; %u asked since boot)", p->m_pAudio->name, k, s_nForcedHubResets);
+		ResetHub (pRoot);
+		return TRUE;
+	}
+	CLogger::Get ()->Write (From, LogWarning, "obhubreset!: no box on the Pi's own hub");
+	return FALSE;
+}
+
+// ---- the attach gate (attach_gate.h) ------------------------------------------------------------------------------
+
+obgate::Gate CObUsb::s_Gate[2];
+int CObUsb::s_nForceRestart = -1;
+int CObUsb::s_nGateTest = -2;			// -2: cmdline not read yet
+unsigned CObUsb::s_nStreamRestarts;
+static boolean s_bGateTestDone[2];		// obgatetest: the gate re-enumerated that slot once (the faking ends)
+
+uint32_t CObUsb::GateHoldMs (void)
+{
+	return CKernelOptions::Get ()->GetAppOptionDecimal ("obgate", obgate::kHoldMs);
+}
+
+// Main loop: what Log decided for each box (and obrestart=). TRUE: something was done this pass (a show, a restart, or
+// a re-enumeration, after which that box's object is gone).
+boolean CObUsb::PollGate (void)
+{
+	for (unsigned k = 0; k < Slots && k < 2; k++)
+	{
+		CObUsb *p = s_pBox[k];
+		const boolean bForce = s_nForceRestart == (int) k;
+		if (bForce) s_nForceRestart = -1;
+		if (p == 0 || !p->m_bStreaming)
+		{
+			if (bForce) CLogger::Get ()->Write (From, LogWarning, "obrestart: no box streams in slot %u", k);
+			continue;
+		}
+		if (bForce)
+		{
+			p->RestartStream ("asked (obrestart)");
+			return TRUE;
+		}
+		const int a = p->m_nGateAct;
+		if (a == obgate::Wait) continue;
+		switch (a)
+		{
+		case obgate::Show:
+		case obgate::ShowLate:
+			p->m_nGateAct = obgate::Wait;
+			p->Show (a == obgate::ShowLate);
+			return TRUE;
+		case obgate::Restart:
+			if (!p->RestartStream (p->m_bShowDue ? "held from the computer, its audio not running both ways"
+							      : "its OUT starved by the host controller")) continue;	// (EP0 busy: next pass)
+			p->m_nGateAct = obgate::Wait;
+			return TRUE;
+		case obgate::ReEnum:
+			p->m_nGateAct = obgate::Wait;
+			if (s_nGateTest == (int) k) s_bGateTestDone[k] = TRUE;
+			if (p->ReEnumerate ("held from the computer, still starved after a stream restart")) return TRUE;
+			s_Gate[k].reenum_due = false;			// (not removed: the hold goes on to its limit)
+			continue;
+		default:
+			p->m_nGateAct = obgate::Wait;
+			continue;
+		}
+	}
+	return FALSE;
+}
+
+// The held box to its computer (the target's MirrorBoxUp): the Engine's latency measurement starts now
+void CObUsb::Show (boolean bLate)
+{
+	const obgate::Gate &g = s_Gate[m_nSlot < 2 ? m_nSlot : 1];
+	m_bShowDue = FALSE;
+	IMirrorTarget *pT = Target ();
+	if (pT == 0 || !m_bMirror) return;		// (moved off its target meanwhile: the next MirrorAttach holds it again)
+	m_bShown = TRUE;
+	if (bLate)
+		CLogger::Get ()->Write (From, LogWarning, "usb=mirror: %s shown to the computer after %u ms although its audio "
+					"does not run both ways (the hold's limit, obgate=%u): Overbridge may fail its latency "
+					"measurement (%u restarts, %u re-enumerations since boot)", m_pAudio->name, g.last_wait_ms,
+					GateHoldMs (), g.total_restarts, g.total_reenums);
+	else
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %s shown to the computer after %u ms, its audio running "
+					"both ways", m_pAudio->name, g.last_wait_ms);
+	pT->MirrorBoxUp (TRUE);
+}
+
+// The stream again on the same device (TRUE: done, FALSE: not now, EP0 busy): the controller lets go of every queued transfer (Stop Endpoint, the URBs
+// dropped), the box's audio interfaces to alt 0 and back to alt 3 (its stream engine off and on, as Configure), then
+// new endpoint objects: each one's Configure Endpoint drops and adds that endpoint on the xHC with a new transfer ring
+// (a new place in the controller's periodic schedule, which a resubmit or a Reset Endpoint does not give: LT9, T426).
+// Then the URBs go in as at Configure. Main loop only, the box's pipes and MIDI untouched.
+boolean CObUsb::RestartStream (const char *pWhy)
+{
+	if (m_bMirror && m_bCtlBusy) return FALSE;	// a forwarded request of the computer's holds EP0
+	s_nStreamRestarts++;
+	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: its audio stream restarted on the Pi (alt 0 and back, "
+				"its endpoints added again; %u since boot)", m_pAudio->name, m_nSlot, pWhy, s_nStreamRestarts);
+	EnterCritical (IRQ_LEVEL);
+	m_bStreaming = FALSE;				// no completion resubmits from here
+	LeaveCritical ();
+	CXHCIEndpoint *pXIn = m_pIn->GetXHCIEndpoint (), *pXOut = m_pOut->GetXHCIEndpoint ();
+	const unsigned nDropIn = pXIn->StopAndDrop (), nDropOut = pXOut->StopAndDrop ();
+	EnterCritical (IRQ_LEVEL);
+	for (unsigned i = 0; i < m_nURBs; i++) m_bInBusy[i] = m_bOutBusy[i] = FALSE;
+	m_nInPending = m_nOutPending = 0;
+	LeaveCritical ();
+
+	CUSBHostController *pHost = GetHost ();
+	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface; nIface++)
+		if (pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, 0, nIface, 0, 0) < 0)
+			CLogger::Get ()->Write (From, LogWarning, "restart: SET_INTERFACE %u alt 0 failed", (unsigned) nIface);
+	CTimer::Get ()->MsDelay (100);
+	for (u8 nIface = ob::kInIface; nIface <= ob::kOutIface; nIface++)
+		if (pHost->ControlMessage (GetEndpoint0 (), REQUEST_OUT | REQUEST_TO_INTERFACE, SET_INTERFACE, ob::kAlt, nIface, 0, 0) < 0)
+			CLogger::Get ()->Write (From, LogError, "restart: SET_INTERFACE %u alt %u failed", (unsigned) nIface,
+						(unsigned) ob::kAlt);
+
+	CUSBEndpoint *pNewIn = new CUSBEndpoint (GetDevice (), m_pInDesc);
+	CUSBEndpoint *pNewOut = new CUSBEndpoint (GetDevice (), m_pOutDesc);
+	const boolean bNew = pNewIn->GetXHCIEndpoint ()->IsValid () && pNewOut->GetXHCIEndpoint ()->IsValid ();
+	if (bNew)
+	{
+		CUSBEndpoint *pOldIn = m_pIn, *pOldOut = m_pOut;
+		m_pIn = pNewIn, m_pOut = pNewOut;
+		const unsigned nLen = m_nBlocks * m_nInBlk, nOutLen = m_nBlocks * m_nOutBlk;
+		for (unsigned i = 0; i < m_nURBs; i++)
+		{
+			delete m_pInURB[i];
+			delete m_pOutURB[i];
+			m_pInURB[i] = new CUSBRequest (m_pIn, m_pInBuf[i], nLen);
+			m_pInURB[i]->SetCompletionRoutine (InStub, (void *) (uintptr) i, this);
+			m_pOutURB[i] = new CUSBRequest (m_pOut, m_pOutBuf[i], nOutLen);
+			m_pOutURB[i]->SetCompletionRoutine (OutStub, (void *) (uintptr) i, this);
+		}
+		delete pOldIn;					// (the device's endpoint table points at the new ones now)
+		delete pOldOut;
+	}
+	else
+	{
+		// refused (the new endpoint's Configure Endpoint failed: it registered nothing): the old ones stay; their
+		// doorbells (the submits below) run them again from where Stop Endpoint left them
+		CLogger::Get ()->Write (From, LogError, "restart: the controller refused the new endpoints: the old ones go on");
+		delete pNewIn;
+		delete pNewOut;
+	}
+
+	// a new stream: its counters from 0 (the box's too, after alt 0), the recoveries' state cleared
+	m_nOutCounter = 0;
+	m_bOutCounterSet = FALSE;
+	m_bHaveIn = FALSE;
+	m_nExpectIn = 0;
+	m_nCredit = 0;
+	m_bLeadDue = TRUE;
+	m_nLeadGiven = 0;
+	m_InHalt.halted = m_InHalt.erred = m_OutHalt.halted = m_OutHalt.erred = false;
+	m_InHalt.fails = m_OutHalt.fails = 0;
+	m_Freeze = obfreeze::Watch ();
+	m_Starve = PeriodicStarve ();
+	if (m_bShown && !m_bShowDue)			// shown: its target's counter offset and rings start again (as a box back)
+		if (IMirrorTarget *pT = Target ()) pT->MirrorBoxUp (TRUE);
+
+	EnterCritical (IRQ_LEVEL);
+	m_nLastInUs = m_nLastOutUs = CTimer::GetClockTicks ();
+	m_bStreaming = TRUE;
+	boolean bOK = TRUE;
+	for (unsigned i = 0; i < m_nURBs && bOK; i++) bOK = SubmitIn (i);
+	if (bOK && m_OutMode == OutFree)
+		for (unsigned i = 0; i < m_nURBs && bOK; i++)
+		{
+			FillOut (m_pOutBuf[i], m_nBlocks);
+			bOK = SubmitOut (i);
+		}
+	LeaveCritical ();
+	CLogger::Get ()->Write (From, bOK ? LogNotice : LogError, "restart: %s (%u IN and %u OUT transfers dropped at the "
+				"controller)%s", bNew ? "new endpoints" : "old endpoints", nDropIn, nDropOut,
+				bOK ? "" : ": cannot submit the first URBs");
 	return TRUE;
 }
 
 // obreenum=<slot>: the re-enumeration above at the next main-loop pass, whatever the stream does (a test of the path)
 boolean CObUsb::Command (const char *pText)
 {
+	if (strncmp (pText, "obrestart", 9) == 0)
+	{
+		if (pText[9] == '=' && (pText[10] == '0' || pText[10] == '1') && pText[11] == 0)
+		{
+			s_nForceRestart = pText[10] - '0';
+			CLogger::Get ()->Write (From, LogNotice, "obrestart: slot %d at the next pass", s_nForceRestart);
+		}
+		else
+			CLogger::Get ()->Write (From, LogNotice, "obrestart=0|1 (restart that slot's audio stream; %u restarts "
+						"since boot)", s_nStreamRestarts);
+		return TRUE;
+	}
+	if (strncmp (pText, "obhubnoanswer=", 14) == 0 && (pText[14] == '0' || pText[14] == '1') && pText[15] == 0)
+	{
+		s_nForceNoAnswer = pText[14] - '0';
+		CLogger::Get ()->Write (From, LogNotice, "obhubnoanswer: slot %d's next re-enumeration takes the hub as not answering",
+					s_nForceNoAnswer);
+		return TRUE;
+	}
+	if (strcmp (pText, "obhubreset!") == 0)
+	{
+		s_bForceHubReset = TRUE;
+		CLogger::Get ()->Write (From, LogNotice, "obhubreset!: the Pi's USB hub at the next pass");
+		return TRUE;
+	}
 	if (strncmp (pText, "obreenum", 8) != 0) return FALSE;
 	if (pText[8] == '=' && (pText[9] == '0' || pText[9] == '1') && pText[10] == 0)
 	{
@@ -624,8 +1016,9 @@ boolean CObUsb::Command (const char *pText)
 	else
 	{
 		CLogger::Get ()->Write (From, LogNotice, "obreenum=0|1 (re-enumerate that slot's box; frozen-stream re-enumerations "
-					"since boot %u, budget slot 0 %u/%u, slot 1 %u/%u)", s_nFreezeReEnums, s_FreezeBudget[0].tries,
-					obfreeze::kTries, s_FreezeBudget[1].tries, obfreeze::kTries);
+					"since boot %u, budget slot 0 %u/%u, slot 1 %u/%u; the Pi's hub reset %u/%u%s)", s_nFreezeReEnums,
+					s_FreezeBudget[0].tries, obfreeze::kTries, s_FreezeBudget[1].tries, obfreeze::kTries,
+					s_Hub.resets, obfreeze::kHubResets, s_Hub.dead ? ", it did not answer" : "");
 	}
 	return TRUE;
 }
@@ -794,6 +1187,10 @@ CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio, unsign
 	m_nGen = ++s_nGen;
 	m_bUp = FALSE;
 	m_bConfigured = FALSE;
+	m_bShowDue = FALSE;
+	m_bShown = FALSE;
+	m_nStarveRestarts = 0;
+	m_nGateAct = obgate::Wait;
 
 	m_nSlot = nSlot < Slots ? nSlot : Slots - 1;	// its core slot (attach order): its buffers, its side stage, its FX
 	m_pInBuf = s_InBuf[m_nSlot];
@@ -814,6 +1211,7 @@ CObUsb::~CObUsb (void)
 	(void) pTarget;					// (no mirror in this build)
 	if (s_pBox[m_nSlot] == this) s_pBox[m_nSlot] = 0;
 	Rebind ();
+	if (m_bShowDue && m_nSlot < 2) obgate::gone (s_Gate[m_nSlot]);	// (the gate's own re-enumeration: the hold goes on)
 	if (m_bUp) { s_Assign.up[m_nSlot] = false; s_Assign.gone_at[m_nSlot] = NowUs (); }	// USB-C's place held (mirror_assign.h)
 	if (this == s_pRelayBox)			// gone, not moved: the relay holds it for mirrorhold, as ever
 	{
@@ -916,6 +1314,8 @@ boolean CObUsb::Configure (void)
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
 				(unsigned) pDevDesc->idProduct);
+	if (m_nUid != 0) CLogger::Get ()->Write (From, LogNotice, "slot %u: UID %08x (vendor request 0)", m_nSlot, (unsigned) m_nUid);
+	else CLogger::Get ()->Write (From, LogNotice, "slot %u: no UID from the vendor request (the core asks by MIDI)", m_nSlot);
 
 	// Overbridge needs high speed. Below it the stream cannot start ("cannot submit the first URBs"), so refuse at
 	// once and have the root port enumerate the box again (ob_speed.h): a new port reset, a new chance at high speed
@@ -1270,7 +1670,24 @@ void CObUsb::MirrorAttach (void)
 	}
 	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %u strings (language %04x), %u pipes (%s)", nGot, (unsigned) nLang, m_nPipes,
 				m_nSlot < 2 ? s_PipeInfo[m_nSlot] : "");
-	pGadget->MirrorBoxUp (TRUE);
+	// the attach gate (attach_gate.h): shown to the computer once its audio runs both ways. A box already shown (moved
+	// to another target, PollAssign) is shown at once
+	if (m_bShown || GateHoldMs () == 0 || m_nSlot >= 2)
+	{
+		m_bShowDue = FALSE;
+		m_bShown = TRUE;
+		pGadget->MirrorBoxUp (TRUE);
+		return;
+	}
+	if (m_bShowDue) return;				// held already (a new target meanwhile): the same hold
+	const boolean bGoesOn = s_Gate[m_nSlot].reenum_due;
+	m_bShowDue = TRUE;
+	m_nGateAct = obgate::Wait;
+	obgate::begin (s_Gate[m_nSlot], NowMs (), GateHoldMs ());
+	CLogger::Get ()->Write (From, LogNotice, "usb=mirror: %s held from the computer until its audio runs both ways "
+				"(obgate=%u ms%s)", m_pAudio->name, GateHoldMs (),
+				bGoesOn && s_Gate[m_nSlot].held && s_Gate[m_nSlot].holds > 0 ? ", the hold goes on after the gate's "
+				"re-enumeration" : "");
 }
 
 boolean CObUsb::SubmitPipeIn (unsigned i)
@@ -1982,7 +2399,8 @@ void CObUsb::Log (CLogger *pLogger)
 	// the controller starving this box's OUT (periodic_starve.h): every OUT URB queued at the xHC and OUT still short of IN
 	unsigned nInRate = (nIn - m_nPrevIn) * 1000 / nMs, nOutRate = (nOut - m_nPrevOut) * 1000 / nMs;
 	boolean bAllQueued = nOutPend >= m_nURBs && nQOut >= m_nURBs;
-	switch (m_OutMode == OutOff ? PeriodicStarve::None : m_Starve.Tick (nInRate, nOutRate, bAllQueued))
+	const PeriodicStarve::Say Say = m_OutMode == OutOff ? PeriodicStarve::None : m_Starve.Tick (nInRate, nOutRate, bAllQueued);
+	switch (Say)
 	{
 	case PeriodicStarve::Start:
 		{
@@ -2000,6 +2418,30 @@ void CObUsb::Log (CLogger *pLogger)
 		break;
 	default:
 		break;
+	}
+
+	// the attach gate (attach_gate.h): a held box shown, restarted or re-enumerated; a box not held whose OUT starves
+	// restarted (PollGate acts in the main loop)
+	if (m_nGateAct == obgate::Wait && m_nSlot < 2)
+	{
+		if (s_nGateTest == -2) s_nGateTest = (int) CKernelOptions::Get ()->GetAppOptionDecimal ("obgatetest", (unsigned) -1);
+		obgate::Gate &g = s_Gate[m_nSlot];
+		if (m_bShowDue && g.held)
+		{
+			const boolean bFake = s_nGateTest == (int) m_nSlot && !s_bGateTestDone[m_nSlot];
+			const boolean bReEnum = CKernelOptions::Get ()->GetAppOptionDecimal ("obgatereenum", 1) != 0;
+			const obgate::Act a = obgate::tick (g, nInRate, bFake ? 0 : nOutRate, m_OutMode != OutOff, NowMs (),
+							   GateHoldMs (), bReEnum);
+			if (a != obgate::Wait)
+			{
+				pLogger->Write (m_nSlot ? "rytmob2" : From, a == obgate::Show ? LogNotice : LogWarning, "gate: %s (IN %u/s, "
+						"OUT %u/s%s, held %u ms)", obgate::act_name (a), nInRate, nOutRate,
+						bFake ? " read as 0: obgatetest" : "", NowMs () - g.since_ms);
+				m_nGateAct = a;
+			}
+		}
+		else if (Say == PeriodicStarve::Start && obgate::starved (m_nStarveRestarts))
+			m_nGateAct = obgate::Restart;
 	}
 
 	m_nPrevIn = nIn;

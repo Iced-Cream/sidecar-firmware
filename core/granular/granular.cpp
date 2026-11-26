@@ -19,6 +19,7 @@
 #include "../samp/out.h"
 #include "../voices.h"
 #include "../machines.h"
+#include "device/device.h"   // voice_in: a console voice V is the slot in hand's box voice (box=S: prefix)
 #include "../ui/remote.h"
 #include "../wavetable/wav_read.h"
 
@@ -1326,8 +1327,9 @@ CORE_COLD bool command(const char* p, char* out, int cap_) {
       return true;
     }
     bool on = strcmp(a + 7, ":off") != 0;
-    if (force[vi] && !on) silence(vi);
-    force[vi] = on;
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi (box=S: on the console)
+    if (force[ev] && !on) silence(ev);
+    force[ev] = on;
     sniprintf(out, cap_, "gr: voice %d %s", vi, on ? "plays GRANULAR (any built-in machine the Rytm reports)" : "plays its own machine");
     return true;
   }
@@ -1344,15 +1346,16 @@ CORE_COLD bool command(const char* p, char* out, int cap_) {
       sniprintf(out, cap_, "gr: the entry: a row (A001..H127) or a code (gr=list)");
       return true;
     }
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi (box=S: on the console)
     if (!pk) {
-      preview(vi, e);
-      sniprintf(out, cap_, "gr: voice %d previews %s", vi, entry_name(e >= 0 ? e : knobs[vi].src));
+      preview(ev, e);
+      sniprintf(out, cap_, "gr: voice %d previews %s", vi, entry_name(e >= 0 ? e : knobs[ev].src));
       return true;
     }
-    if (!pick(vi, e)) sniprintf(out, cap_, "gr: no entry %d (%d listed)", e, LV(vi).nlist);
+    if (!pick(ev, e)) sniprintf(out, cap_, "gr: no entry %d (%d listed)", e, LV(ev).nlist);
     else {
-      if (e >= 0) preview(vi, -1);
-      sniprintf(out, cap_, "gr: voice %d SRC %s", vi, entry_name(knobs[vi].src));
+      if (e >= 0) preview(ev, -1);
+      sniprintf(out, cap_, "gr: voice %d SRC %s", vi, entry_name(knobs[ev].src));
     }
     return true;
   }

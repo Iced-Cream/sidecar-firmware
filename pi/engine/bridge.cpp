@@ -227,7 +227,7 @@ bool save_settled() { return core::idle_settled(); }
 bool samp_command(const char* p, char* out, int cap) {
   return core::samp::command(p, out, cap) || core::samp::asamp_command(p, out, cap);
 }
-void samp_transport(uint8_t st) { core::samp::transport(st); }
+void samp_transport(int slot, uint8_t st) { core::samp::transport(slot, st); }
 bool samp_wants_in() { return core::samp::wants_in() || core::samp::asamp_wants_in(); }
 void samp_in(const int32_t* f, int n, int stride) {
   core::samp::in_block(f, n, stride);
@@ -275,9 +275,25 @@ void midim_set_out(bool (*f)(int, const uint8_t*, int)) { core::midim::set_out(f
 void rytm_gone() { core::midim::link_lost(); core::arp::link_lost(); core::master::link_lost(); core::mod::rp_link_lost(); core::link_lost(); }
 void rytm_resync() { core::ui::remote_resync(); core::midim::resync(); }
 void rytm_link(bool up) { core::midim::link_state(up); }
-void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
+void midim_realtime(int slot, uint8_t status) { if (status != 0xF2) core::midim::realtime(slot, status); }
 int realtime_link(int t, uint8_t status, uint16_t spp) { return core::engine_realtime_link(t, status, spp); }
 int base_slot() { return core::device::g_base ? core::device::g_base->index : 0; }
+bool box_command(const char* p, void (*run)(void*, const char*), void* ctx) {
+  const char* rest;
+  const int s = core::device::box_prefix(p, &rest);
+  if (s == -1) return false;
+  if (s < 0) {
+    core::log(CORE_STR("console: %s: %s"), p, rest);
+    return true;
+  }
+  if (!strncmp(rest, "name=", 5)) {   // box=S:name=<text>: the box's name, in its UID folder's name.txt (design 2026-11-26)
+    if (!core::device::set_label(s, rest + 5)) core::log(CORE_STR("console: %s: not named (no UID folder, or an empty name)"), p);
+    return true;
+  }
+  core::device::Scope in(core::device::g_links[s]);
+  run(ctx, rest);
+  return true;
+}
 int transport_slot(int t) {
   const int s = core::device::slot_of(t, nullptr, 0);
   return s >= 0 && s < core::kVoiceSlots ? s : -1;
@@ -391,6 +407,9 @@ static void rytm_read(uint8_t b) {
 void rytm_byte(int t, uint8_t b) {
   const int h = core::device::rytm_route(t);   // its slot when t carries it (transport 0 with no route yet: as ever)
   if (h < 0) return;
+  // two Rytms (design 2026-11-26): the pattern dump reader and FILL's writer are one, the first Rytm's (a named gap: the
+  // second Rytm's pattern view and FILL); its bytes never mix into the first's records
+  if (core::kVoiceSlots > 1 && h != core::device::rytm_slot()) return;
   if (h >= core::device::kLinks || &core::device::g_links[h] == core::device::g_cur) {
     rytm_read(b);
     return;

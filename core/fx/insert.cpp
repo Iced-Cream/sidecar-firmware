@@ -17,6 +17,7 @@ namespace ins {
 Control control;
 Control control1;   // zero: every chain OFF, no post EQ, no sends (insert.h: slot 1's)
 int (*slot_fn)() = nullptr;
+bool (*rytm_fn)(int) = nullptr;
 void (*send_insert)(int, int, int, const float*, const float*, const float*, float*, float*, int) = nullptr;
 
 namespace {
@@ -195,7 +196,9 @@ void clear_settings() {
     for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
   control_of(hand()).route3 = 0;
   master::clear();   // (the slot in hand's: master.cpp asks slot_in_hand)
-  if (hand()) {      // 3(c) step 8: another slot's send FX is its file's (SFX lines; slot 0's are the Rytm's kit's 0x20s)
+  // 3(c) step 8: a box's send FX are its file's (SFX lines) unless the slot is a Rytm's (its kit's 0x20s, in either slot: two
+  // Rytms, design 2026-11-26). An A4 or Digitakt in slot 0 too
+  if (rytm_fn ? !rytm_fn(hand()) : hand() != 0) {
     fx::Control& f = fx::control_of(hand());
     for (int s = 0; s < fx::kSlots; ++s)
       for (int k = 0; k < fx::kKnobs; ++k) f.knob[s][k] = 0;

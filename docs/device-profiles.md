@@ -192,7 +192,7 @@ engine, read for facts only; no code of it is here. [The community Digitakt port
 
 ## State folders
 
-A box with `state_dir` set (`/.digitakt` for the Digitakt) keeps its projects, settings and pools there, and the Rytm keeps
+A box with `state_dir` set (`/.dt` for the Digitakt) keeps its projects, settings and pools there, and the Rytm keeps
 its own in `/.rytm`, so they never mix. Shared content stays shared: `/Samples`, `/Plugins`, `/JUNO`, `/DX7` and the rest of
 the card's top level. The engine's own code keeps saying `/.rytm/...`. Every file call passes through one path function per
 port (`full` in `pi/engine/platform_pi.cpp`, `host_path` in `core/host/platform_host.cpp`), and those call
@@ -204,7 +204,7 @@ clock, the black box, the update and web app, and the indexes of the shared libr
 build has them in `/.rytm` and the first boot moves them. A box's folder holds only that box's state.
 
 **Slots by attach order, folders by box type (decided 2026-11-21), and nothing restarts.** The first box to attach is slot 0,
-the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.digitakt`) from then on, on
+the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.dt`) from then on, on
 whichever transport it spoke (`device::slot_of`), and its project, lists, store and settings are read from that folder at its
 attach (`project_attach_step`, either slot). No file stores a slot number. A box attaches with its hello (`4F`), the Rytm with
 its 35, and on the Pi any box with its USB device (`device::usb_attach`
@@ -283,6 +283,7 @@ changes nothing here.
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
 | kits | `bundle/kits` | own queue, RELOAD ALL scan and records in its own folder; a box's 3B ends only its own voices' MIDI and arp notes |
 | MIDI clock | `host_link.cpp` `engine_realtime_link` | each transport's F8 FA FB FC F2 clock its own slot's send FX grid, LFOs, arpeggiator and plugins |
+| the Pi-wide jobs' clock | `rec_pi::Transport(slot, ..)`, `samp::transport(slot, ..)` | each on the clock of the box it belongs to (decided 2026-11-26): a sampler take follows the box it was armed for (the slot in hand: `box=S:samp=arm`, the page's box), its PLAY / next-bar start, STOP, bars and tempo; the recorder arms on the base box's (whose output stage it records); the bundles' card writes slow and the storage bench is refused while any box plays (a box that stops or leaves clears its own); the MIDI machine's clock out to the Pi's USB-A devices is the box's whose voices alone send there, none while both boxes' do |
 | fxin, keys, MIDI learn, preview | | read from a box's folder at its attach, saved there |
 | remote UI | `ui/remote.cpp` | own pages, canvases, track tables and display reports; the touchscreen follows the box whose page opened or whose 49 came last |
 | SONG RECORD | `core/song` | own takes, journal, clock, lanes; each transport's whole MIDI stream taps its own slot's song. The A4's start snapshot, restore and UNDO REPLAY use its own dumps and GLOBAL MIDI settings |
@@ -317,12 +318,23 @@ older stock-firmware path: an A4 with no mod streamed beside the Rytm, audio onl
 The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow its
 slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) are in `/.sidecar`, no box's.
 
+### The console's box selector
+
+Console commands run for the base box (`g_base`) as they always did. `box=S:<command>` runs one in another box's slot (design
+point 8): S is a slot (`0`, `1`) or a box type by its folder's name (`rytm`, `a4`, `dt`), which names the same box whatever its
+attach order (`device::box_prefix`). Inside it, the voice forms (`gr=`, `wt=`, `msamp=` `voice:V` and `pick:V:..`,
+`livein=voice:V`) take that box's own voice V (0..7), so `box=dt:wt=voice:2` forces the Digitakt's voice 3 whichever slot it is
+in. A selector naming no box attached now is logged and does nothing.
+
+The Rytm's project slots (`prjslot`, its 4B reports) and the RENAMED FROM? question on its PROJECT page run only for the Rytm's
+slot (`rytm_at`): another box's project name only names its project, in its own folder.
+
 ### Named gaps
 
 What the second box does not have yet, or has differently:
 
-- **The recorder, sampler, bundle and storage waits** follow the base box's transport only, and the recorder and the meters
-  read the base box's output stage. The web's bus meters show the base box's send FX (`/status` `slotFx` has both slots'
+- **The recorder and the meters** read the base box's output stage, so the recorder arms on the base box's transport
+  only. The web's bus meters show the base box's send FX (`/status` `slotFx` has both slots'
   counters).
 - **Sequencer on slot 1:** a lock's base for P1..P16 is 64 (the box's knob value is not known here); no SEED MOD source; no
   latency calibration (`seq=cal` is the Rytm's slot only; a box keeps `seq=lat`); the touch editor's undo history is the
@@ -330,17 +342,56 @@ What the second box does not have yet, or has differently:
 - **Kits:** the A4's mod sends no 4C yet, so its slot's kit records exist only once it reports SAVE / RELOAD KIT.
 - **SONG RECORD on the A4:** its stopped program change is not traced, so a restore or undo writes only once its mod has
   reported the pattern selected (2D 02); `midi_config()` is the Rytm's.
-- **Rytm-only project machinery** (`prjslot::take_10`, `prjslot::resolve`, `rename::intercept`) also runs for a box's
-  project names.
 - **Readers off the control core** (`gr` / `wt` / `msamp` `entry_note`, the `srclib` browser, `page_gfx`, `preset_index`)
-  read the slot in hand's lists. The console's `gr=pick`, `wt=pick`, `msamp=pick` and `voice:` forms take voices 0..7 only.
+  read the slot in hand's lists.
 - **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.
-- **Two boxes of one type** (two A4s, two Digitakts): both are the one slot of that type (one folder), so the second's hello
-  is that slot's. Two boxes of a type served at once
-  would need a third slot and folders keyed by something that stays with the box, such as its USB serial number.
+- **Two boxes of one type:** see "Two boxes of one type" below for what is built and what is still a gap.
 - **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet.
+
+## Two boxes of one type
+
+Two Rytms (or two A4s, two Digitakts) on one Pi, design decided 2026-11-26. A box is its type **and its DeviceUID**: the stock
+firmware's 32-bit unit ID, the answer to the Elektron MIDI RPC `0x03` (answer `0x83`) and to the USB vendor request Overbridge
+sends (`0xC0`, bRequest 0, 8 bytes). Nothing is written to the box. The USB serial cannot tell two units apart: every Elektron
+box says `000000000001`.
+
+- **Identity.** `Link::uid` (0: not known) beside `held`. A slot is box (p, uid)'s when the holder is p and the UIDs match
+  (`device::slot_of_box`); a holder whose UID was not known (the presumed Rytm, a box by its hello) takes the first known UID
+  while it is the one box of its type. A box whose UID is not known, with a box of its type already here, waits (status 4).
+- **Where the UID comes from.** On the Pi, `ObReadUid` (`pi/engine/ob_usb.cpp`) sends the vendor request when the box's
+  stream enumerates and passes the UID to `usb_attach`. When that gives nothing, the core asks the MIDI RPC on the box's own
+  transport every 500 ms for 2 s (`device::ask_uid`), never while its stream is frozen (`device::g_frozen`). The Teensy, one
+  slot, never asks.
+- **Folders.** A box's state is in `<type folder>/<uid>/` (`/.rytm/3fa2c001/`, `/.a4/...`, `/.dt/...`; 8 lowercase hex
+  digits). `<type folder>/last` names the UID attached last: a box whose UID is not known, alone of its type, uses that folder,
+  and the presumed Rytm reads it at boot. A card no UID was ever read for keeps using the type folder itself, as before.
+- **Migration.** The first box of a type to attach with a known UID inherits the type folder's old layout: every entry that is
+  not a UID folder, `last` or a Pi-wide name is renamed into its UID folder (FAT: a rename, nothing copied). A marker
+  `.moving` is written first and removed last; a boot that finds it finishes the move. Nothing is overwritten or deleted. On
+  the Pi the move runs on the card core (`cardq::kFnReq`), after the card requests queued before it. **An older build on a
+  migrated card** sees an empty `/.rytm` (as with the `/.sidecar` move): say so in the release notes.
+- **Names.** Each UID folder has `name.txt`, default the type and the UID's last 4 hex digits (`Rytm 3fa2`). `/status`
+  `boxes` rows are keyed by type and UID and carry `uid` and `label`; the web page renames a box with a double-click
+  (`box=<uid>:name=<text>`).
+- **MIDI to its box.** Circle's USB MIDI device names its USB device (`pi/circle/circle-midi-usbdevice.patch`), so
+  `CObUsb::SetMidiDevices` matches each transport to the stream of the same USB device, not by strings, and tells the core
+  (`device::set_midi_slot`): a hello or a Rytm's 35 on that transport is that slot's box.
+- **The console's selector** also takes `rytm2` (the second of a type) and a box's UID (8 hex digits, or the last 4).
+- **The Rytm per slot.** `rytm_home()` is the Rytm in hand when the slot in hand is a Rytm; a Rytm in slot 1 takes its send
+  FX from its kit's 0x20s, not the SFX lines; arp's track tables are each Rytm's own.
+
+Named gaps of this part:
+
+- **Byte order (step 0, 2026-11-26):** the units answer the vendor request with `00 00 00 01` and then the UID MSB first,
+  and that UID is the MIDI RPC 0x03 answer. This was read from Overbridge's and Transfer's own records of the bench Rytm, A4
+  and Digitone, not by a run of ours. `ObReadUid` reads bytes 4..7 big-endian. The emulator's `usb-rytm` sends its `uid`
+  property as 8 big-endian bytes, so the folder is the property's low 32 bits; its leading word is 0, not 1 (nothing reads it).
+- **The second Rytm's pattern view and FILL:** the pattern dump reader and FILL's writer are one, the first Rytm's.
+- **Two A4s, two Digitakts:** covered by the same code, not run.
+- **Two Rytms on the computer:** the mirror and the relay forward the UID request to their own box; not run with two units.
+- **Two Rytms' FX cost** on one core: measure in the QEMU FX load gate, then on units.
 
 ## Remote UI on a box
 

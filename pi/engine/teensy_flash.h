@@ -25,6 +25,8 @@ void Put (uint64_t nOff, uint64_t nTotal, uint32_t nCrc, const uint8_t *pData, u
 void Start (const char *pExpect, fsweb::Result *r);
 // the state as JSON (bytes written, <= 0: no room)
 int StateJson (char *pOut, unsigned nCap);
+// the Pi's hub is about to be deleted (ob_usb.cpp's root-port reset of a hub that does not answer): no more polls of it
+void HubGone (void);
 
 }	// namespace teensy_flash
 

@@ -20,6 +20,14 @@
 //                  routing at run time: a target that comes while the box streams tops the lead up with the next IN
 //   obctr=MODE     zero (default): the OUT frame counter starts at 0; in: at the first IN
 //                  block's counter
+//   obgate=MS      usb=mirror: a box is shown to the computer only once its IN runs and its OUT keeps up with it for 2 s,
+//                  held at most MS (default 12000, then shown anyway with a warning; 0: shown at once, as before).
+//                  Overbridge Engine measures a box's latency once, as soon as it streams, and latches a Fault when
+//                  the pulse never comes back (attach_gate.h). A held box starved for 3 s is restarted on the Pi (its
+//                  audio interfaces to alt 0 and back, its endpoints added again), then re-enumerated
+//   obgatereenum=0 the held box is not re-enumerated (default 1: once a hold, only while the computer cannot see it)
+//   obgatetest=S   a test: slot S's OUT read as 0/s by the gate until the gate has re-enumerated it (restart and
+//                  re-enumeration both exercised); the console's obrestart=S restarts slot S's stream at once
 //
 #ifndef _ob_usb_h
 #define _ob_usb_h
@@ -27,15 +35,20 @@
 #include "periodic_starve.h"
 #include "ep_halt.h"
 #include "ob_freeze.h"
+#include "attach_gate.h"
 #include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
+#include <circle/usb/usbmidi.h>		// SetMidiDevices (circle-midi-usbdevice.patch: GetUSBDevice)
 #include <circle/usb/usb.h>
 #include <circle/logger.h>
 #include <circle/types.h>
 #include "fx/out.h"
 #include "mirror_target.h"
+
+class CUSBStandardHub;
+class CUSBHCIRootPort;
 
 // One CObUsb per box streaming (two at most): the Rytm's (slot 0) and another box's (slot 1, its profile's audio row). The
 // primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
@@ -61,6 +74,10 @@ public:
 	static CObUsb *Box (unsigned nSlot)	{ return nSlot < Slots ? s_pBox[nSlot] : 0; }
 	static boolean Streaming (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bStreaming; }
 	unsigned Slot (void) const		{ return m_nSlot; }
+	u32 Uid (void) const			{ return m_nUid; }	// its DeviceUID (ObReadUid at enumeration), 0 none
+	void SetUid (u32 nUid)			{ m_nUid = nUid; }
+	// slot nSlot's stream is in a failing run (ob_freeze.h): no MIDI to its box (core::device::g_frozen, the UID asked by MIDI)
+	static boolean Frozen (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_Freeze.run; }
 	boolean Primary (void) const		{ return this == s_pThis; }
 	const core::out::Device *Audio (void) const	{ return m_pAudio; }
 	// usb=mirror with two boxes (mirror_assign.h): which box USB-C shows and which a Teensy relay shows is decided at run
@@ -73,10 +90,12 @@ public:
 	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
 	// A box's MIDI by its transport, not its slot (slots by attach order: the Rytm, on the host link, may be slot 1 and an
 	// A4, on link1, slot 0). Transport 0 is the host link (the kernel's m_pMIDI: a Rytm or a Digitakt), 1 link1 (link1.h:
-	// an A4, or a second host-type box). MidiSlot: the slot whose box that MIDI device is part of (the same USB vendor,
-	// product and serial strings as the slot's stream), -1 none (no such MIDI, or its box has no stream). SetMidiDevices: core 0's loop, each pass
-	// (0: none); the slots are worked out there and read anywhere (IRQs too).
-	static void SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1);
+	// an A4, or a second host-type box). MidiSlot: the slot whose box that MIDI device is part of (the same USB device as the
+	// slot's stream: circle-midi-usbdevice.patch; two boxes of one type have the same vendor, product and serial strings, so
+	// those are only the fallback for a MIDI device that names no USB device), -1 none (no such MIDI, or its box has no stream).
+	// SetMidiDevices: core 0's loop, each pass (0: none); the slots are worked out there, read anywhere (IRQs too), and told to
+	// the core (core::device::set_midi_slot: a hello or a Rytm's 35 on that transport is that slot's box, design 2026-11-26).
+	static void SetMidiDevices (CUSBMIDIDevice *pHostLink, CUSBMIDIDevice *pLink1);
 	static int MidiSlot (unsigned nTransport)	{ return nTransport < 2 ? s_nMidiSlot[nTransport] : -1; }
 	// usb=mirror: USB-C shows the host link's box (or none is chosen: the host link's MIDI goes to USB-C, as before two
 	// boxes); USB-C shows link1's box; the relay shows the host link's box. A transport's MIDI goes to the computer of the
@@ -111,6 +130,12 @@ public:
 	// again, as a replug would (PollHalt's first step); obreenum=<slot> asks for it at once (a test)
 	static boolean Command (const char *pText);
 	static unsigned FreezeReEnums (void)	{ return s_nFreezeReEnums; }
+	static unsigned HubResets (void)	{ return s_Hub.resets; }	// the Pi's hub reset at its root port (ob_freeze.h Hub)
+	// usb=mirror's attach gate (attach_gate.h): a slot's gate (holds, restarts, re-enumerations since boot), whether its
+	// box is held from the computer now, and the stream restarts since boot (the gate's and a starved shown box's)
+	static const obgate::Gate &AttachGate (unsigned nSlot)	{ return s_Gate[nSlot < 2 ? nSlot : 1]; }
+	static boolean GateHolds (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bShowDue; }
+	static unsigned StreamRestarts (void)		{ return s_nStreamRestarts; }
 	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
 	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
 	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
@@ -242,6 +267,7 @@ private:
 	static void Rebind (void);			// s_pThis from s_pBox
 	IMirrorTarget *Target (void);			// this box's mirror target now (the gadget's adapter, a slot's own, or 0)
 	unsigned m_nSlot;
+	u32 m_nUid = 0;					// the box's DeviceUID (same type twice, design 2026-11-26), 0 none
 	u8 **m_pInBuf, **m_pOutBuf;			// this slot's DMA buffers (AllocBufs)
 
 	// usb=mirror
@@ -323,7 +349,30 @@ private:
 	static int s_nForceReEnum;			// obreenum=<slot>: -1 none
 	static unsigned s_nFreezeReEnums;		// since boot
 	static boolean PollFreeze (void);
-	boolean ReEnumerate (const char *pWhy);		// TRUE: removed (this object is deleted)
+	// TRUE: removed (this object is deleted; after a hub reset the other box's too). FALSE: still here; *pSent FALSE only
+	// when the hub did not answer, now or less than obfreeze::kDeadMs ago (a freeze try given back)
+	boolean ReEnumerate (const char *pWhy, boolean *pSent = 0);
+	static obfreeze::Hub s_Hub;			// the Pi 4's own hub (BuiltInHub): did it answer, its root-port resets
+	static boolean HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs);
+	static void ResetHub (CUSBHCIRootPort *pRoot);	// the hub on that root port reset and enumerated again
+	static boolean s_bForceHubReset;		// obhubreset!: at the next pass (a test)
+	static int s_nForceNoAnswer;			// obhubnoanswer=<slot>: that slot's next re-enumeration takes the hub as
+							// not answering, nothing sent to it (a test of HubNoAnswer); -1 none
+	static unsigned s_nForcedHubResets;		// since boot
+	static boolean PollForcedHubReset (void);	// TRUE: done (every box on the hub is gone)
+	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop
+	static obgate::Gate s_Gate[2];			// per slot: outlives this object, which a re-enumeration deletes
+	static int s_nForceRestart;			// obrestart=<slot>: -1 none
+	static int s_nGateTest;				// obgatetest=<slot>: -1 none
+	static unsigned s_nStreamRestarts;		// since boot
+	boolean m_bShowDue;				// descriptors at the target, held from its computer (MirrorAttach)
+	boolean m_bShown;				// shown to a computer (a later target shows it at once)
+	unsigned m_nStarveRestarts;			// this stream's restarts for a starvation named while not held
+	volatile int m_nGateAct;			// obgate::Act for PollGate
+	static boolean PollGate (void);
+	static uint32_t GateHoldMs (void);
+	void Show (boolean bLate);
+	boolean RestartStream (const char *pWhy);	// FALSE: not now (EP0 busy), or the new endpoints were refused
 	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
 	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
 	unsigned m_nMidiFailUs;

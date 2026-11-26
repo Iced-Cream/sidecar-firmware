@@ -89,22 +89,23 @@ CORE_COLD int rand_below(Sl& l, int n) {
   return (int)((rnd >> 8) % (uint32_t)n);
 }
 // The Rytm's track tables (its 33s) are its remote UI's, read in its slot's Scope (10b: the remote UI one per slot, the
-// slot in hand's; attach order: the Rytm's slot either) whatever slot is in hand
+// slot in hand's; attach order: the Rytm's slot either) whatever slot is in hand. s: the Rytm's slot (two Rytms, design
+// 2026-11-26: each its own 33s), else the first Rytm's
 inline bool rytm_slot(int s) { return device::rytm_at(s); }
-template <class F> CORE_COLD auto rytm_ui(F f) -> decltype(f()) {
-  const int r = device::rytm_slot();
+template <class F> CORE_COLD auto rytm_ui(int s, F f) -> decltype(f()) {
+  const int r = rytm_slot(s) ? s : device::rytm_slot();
   if (kVoiceSlots < 2 || r < 0 || cur_slot() == r) return f();
   device::Scope in(device::g_links[r]);
   return f();
 }
 // slot s's track t plays on this voice (-1 none): the Rytm's from its 33s, a box's track t on its own voice t
 CORE_COLD int track_voice(int s, int t) {
-  if (rytm_slot(s)) return rytm_ui([&] { return ui::remote_track_voice(t); });
+  if (rytm_slot(s)) return rytm_ui(s, [&] { return ui::remote_track_voice(t); });
   return t < kBoxVoices ? s * kBoxVoices + t : -1;
 }
 CORE_COLD bool sidecar_track(int s, int t) {
   if (!rytm_slot(s)) return t < kBoxVoices;   // (a box's tracks on its own voices: every one a Sidecar voice)
-  int vb = rytm_ui([&] { return ui::remote_track_machine(t); });
+  int vb = rytm_ui(s, [&] { return ui::remote_track_machine(t); });
   return vb != 0x7F;   // (-1: not reported yet, a test's or a first report's: the voice's reports say it is ours)
 }
 CORE_COLD bool code_on(int c) { return c < kCodes && c % kModes != kOff; }   // (past the table: decode's 0, OFF)
@@ -489,7 +490,7 @@ CORE_COLD void machines() {
     if (!rytm_slot(vslot(vi))) continue;   // (the Rytm's 33s: its own voices' tracks)
     uint16_t sig = 0;
     for (int t = 0; t < 12; ++t)
-      if (track_voice(vslot(vi), t) == vi) sig = (uint16_t)(sig * 31 + (uint16_t)(rytm_ui([&] { return ui::remote_track_machine(t); }) + 1));
+      if (track_voice(vslot(vi), t) == vi) sig = (uint16_t)(sig * 31 + (uint16_t)(rytm_ui(vslot(vi), [&] { return ui::remote_track_machine(t); }) + 1));
     if (sig != vo[vi].sig) {
       vo[vi].sig = sig;
       end(vi);

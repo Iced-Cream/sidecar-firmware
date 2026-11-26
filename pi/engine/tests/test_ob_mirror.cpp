@@ -50,7 +50,11 @@ static int g_rytm_usb = 0;   // the Rytm's slot held (usb_attach / usb_detach)
 // device.cpp's attach order without the engine: a box's slot already, else the lowest free one; freed when its device goes
 static const core::device::Profile* g_slot_of[2];
 namespace core { namespace device {
-int usb_attach(const Profile* p) {
+uint32_t g_attach_uid = 0;   // the UID the last usb_attach was given
+int g_midi_slot[2] = {-1, -1};   // set_midi_slot's
+void set_midi_slot(int t, int s) { if (t >= 0 && t < 2) g_midi_slot[t] = s; }
+int usb_attach(const Profile* p, uint32_t uid) {
+  g_attach_uid = uid;
   for (int k = 0; k < 2; ++k)
     if (g_slot_of[k] == p) return k;
   for (int k = 0; k < 2; ++k)
@@ -175,6 +179,7 @@ int main() {
   g_a4[kInAlt3Mps] = 0x00, g_a4[kInAlt3Mps + 1] = 0x01;
   g_a4[kOutAlt3Mps] = 0xc8, g_a4[kOutAlt3Mps + 1] = 0x00;
   CTimer::s_ticks = 1000;
+  CKernelOptions::Get()->num["obgate"] = 0;   // the attach gate off (a box shown at once) but in its own block below
 
   {  // attach: the pipes of interface 3 (bulk OUT 0x02, interrupt IN 0x82), nothing on the audio interfaces' alternates
      // and no SET_INTERFACE beyond the stream's four (interface 3 has only alt 0); MIDI is not a pipe
@@ -452,7 +457,7 @@ int main() {
       CHECK(sl(r) == 1 - sa && CObUsb::UsbcSlot() == sa && relay.box == r.box() && relay.up.back() == 1);
       // the MIDI routes follow the boxes, not the slot numbers (RXQ1/2/4, T470/T471/T478: the A4 first, the Rytm's host link
       // in slot 1 went to USB-C and the relay got none): the host link is slot 1's box, shown by the relay; link1 slot 0's on USB-C
-      CDevice hm, lm;
+      CUSBMIDIDevice hm, lm;
       a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
       r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
       CObUsb::SetMidiDevices(&hm, &lm);
@@ -482,7 +487,7 @@ int main() {
       Box a(true);
       CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.up.back() == 1);
       {   // the Rytm first (slot 0, USB-C), the A4 the relay (slot 1): as before two boxes, now by the boxes' own MIDI
-        CDevice hm, lm;
+        CUSBMIDIDevice hm, lm;
         a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
         r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
         CObUsb::SetMidiDevices(&hm, &lm);
@@ -656,6 +661,112 @@ int main() {
     CObUsb::SetRelayTarget(nullptr);
     core::device::g_a4_chosen = false;
     CTimer::s_now64 = 0;
+  }
+  CHECK(CUSBRequest::live() == 0);
+
+  {  // the attach gate (attach_gate.h, obgate=10000): a box is held from the computer until its IN and OUT both run full
+     // for 2 s, then shown; a held box starved for 3 s is restarted on the Pi (alt 0 and back, new endpoints), then (here
+     // its device hangs off no root port or VL805 hub: no re-enumeration) shown late at the hold's limit; a shown box
+     // whose OUT starves is restarted, its target told the box is up again (a new stream), twice a stream at most
+    CKernelOptions::Get()->num["obgate"] = 10000;
+    static std::deque<CUSBRequest*>* s_q[2];
+    CXHCIEndpoint::s_on_stop = [](CXHCIEndpoint* x) {   // the controller forgets that endpoint's URBs (Stop + drop)
+      for (auto* q : s_q)
+        for (auto i = q->begin(); i != q->end();) i = (*i)->ep && (*i)->ep->GetXHCIEndpoint() == x ? q->erase(i) : i + 1;
+    };
+    uint16_t ctr = 0;
+    auto in = [&](Box& b) {
+      CUSBRequest* u = b.pipe(0x83);
+      CHECK(u != nullptr);
+      if (!u) return;
+      memset(u->buf, 0, u->len);
+      u->buf[0] = 0x07, u->buf[2] = ctr >> 8, u->buf[3] = (uint8_t)ctr;
+      ctr += 7;
+      b.complete(u, true, u->len);
+    };
+    auto second = [&](Box& b, bool out_ok) {   // a second of the box's stream (6,860 blocks); OUT served or starved
+      for (int k = 0; k < 6860; ++k) {
+        in(b);
+        if (out_ok) for (CUSBRequest* u; (u = b.pipe(0x03)) != nullptr;) b.complete(u, true, u->len);
+      }
+      CTimer::s_now += 1000000;
+      CObUsb::LogAllStats(CLogger::Get());
+      CObUsb::PollHalt();
+    };
+    auto ring = [&](Box& b) {                   // the OUT endpoint's queue at the controller (periodic_starve.h asks it)
+      in(b);                                   // (an OUT URB in flight to find the endpoint by)
+      CUSBRequest* u = b.pipe(0x03);
+      CHECK(u != nullptr);
+      if (u) u->ep->GetXHCIEndpoint()->ring = &b.host.out;
+    };
+    auto count = [](const char* what) {
+      int n = 0;
+      for (const std::string& l : CLogger::Get()->lines) n += l.find(what) != std::string::npos;
+      return n;
+    };
+    {
+      const size_t n0 = g_gadget.box.size();
+      Box b;
+      s_q[0] = &b.host.in, s_q[1] = &b.host.out;
+      CHECK(g_gadget.box.size() == n0 && CObUsb::GateHolds(0) && count("held from the computer until its audio runs both ways") == 1);
+      second(b, true);
+      CHECK(g_gadget.box.size() == n0 && CObUsb::GateHolds(0));
+      second(b, true);
+      CHECK(g_gadget.box.size() == n0 + 1 && g_gadget.box.back() == 1 && !CObUsb::GateHolds(0));
+      CHECK(count("gate: show (IN 6860/s, OUT 6860/s, held 2000 ms)") == 1 && count("shown to the computer after 2000 ms") == 1);
+      CHECK(CObUsb::AttachGate(0).holds >= 1 && CObUsb::AttachGate(0).total_restarts == 0);
+
+      // shown, then its OUT starves: named after 3 s, restarted; the gadget told the box is up again (its offset anew)
+      const size_t ctl0 = b.host.ctl.size(), n1 = g_gadget.box.size();
+      const unsigned r0 = CObUsb::StreamRestarts();
+      CUSBRequest* old_in = b.pipe(0x83);
+      CUSBEndpoint* old_ep = old_in ? old_in->ep : nullptr;
+      ring(b);
+      for (int k = 0; k < 4; ++k) second(b, false);
+      CHECK(count("periodic starvation: OUT") == 1 && CObUsb::StreamRestarts() == r0 + 1);
+      CHECK(count("its OUT starved by the host controller: its audio stream restarted on the Pi") == 1);
+      CHECK(b.host.ctl.size() == ctl0 + 4);   // interfaces 1 and 2 to alt 0, then alt 3
+      CHECK(b.host.ctl[ctl0].req == SET_INTERFACE && b.host.ctl[ctl0].value == 0 && b.host.ctl[ctl0 + 2].value == 3);
+      CUSBRequest* new_in = b.pipe(0x83);
+      CHECK(new_in != nullptr && new_in->ep != old_ep && count("restart: new endpoints (") == 1);
+      CHECK(g_gadget.box.size() == n1 + 1 && g_gadget.box.back() == 1);
+      ring(b);
+      second(b, true), second(b, true);         // it streams again
+      for (int k = 0; k < 4; ++k) second(b, false);
+      CHECK(CObUsb::StreamRestarts() == r0 + 2);
+      ring(b);
+      second(b, true), second(b, true);
+      for (int k = 0; k < 4; ++k) second(b, false);
+      CHECK(CObUsb::StreamRestarts() == r0 + 2);   // kShownRestarts a stream: not a third
+      second(b, true);
+    }
+    CHECK(CUSBRequest::live() == 0);
+    {
+      const size_t n0 = g_gadget.box.size();
+      const unsigned r0 = CObUsb::StreamRestarts();
+      Box b;
+      s_q[0] = &b.host.in, s_q[1] = &b.host.out;
+      const size_t ctl0 = b.host.ctl.size();
+      for (int k = 0; k < 3; ++k) second(b, false);
+      CHECK(CObUsb::StreamRestarts() == r0 + 1 && b.host.ctl.size() == ctl0 + 4 && CObUsb::GateHolds(0));
+      CHECK(count("held from the computer, its audio not running both ways: its audio stream restarted") == 1);
+      CHECK(g_gadget.box.size() == n0);
+      for (int k = 0; k < 3; ++k) second(b, false);
+      CHECK(count("gate: reenum") == 1 && count("hangs off another hub: no re-enumeration") >= 1 && CObUsb::GateHolds(0));
+      for (int k = 0; k < 3; ++k) second(b, false);
+      CHECK(g_gadget.box.size() == n0);
+      second(b, false);                         // 10 s: shown anyway
+      CHECK(g_gadget.box.size() == n0 + 1 && g_gadget.box.back() == 1 && !CObUsb::GateHolds(0));
+      CHECK(count("although its audio does not run both ways") == 1 && CObUsb::AttachGate(0).shown_late == 1);
+    }
+    CHECK(CUSBRequest::live() == 0);
+    {  // gone while held: nothing shown; the next attach holds again
+      const size_t n0 = g_gadget.box.size();
+      { Box b; s_q[0] = &b.host.in, s_q[1] = &b.host.out; CHECK(CObUsb::GateHolds(0)); }
+      CHECK(!CObUsb::AttachGate(0).held && g_gadget.box.size() >= n0);
+    }
+    CXHCIEndpoint::s_on_stop = nullptr;
+    CKernelOptions::Get()->num["obgate"] = 0;
   }
   CHECK(CUSBRequest::live() == 0);
 

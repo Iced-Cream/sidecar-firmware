@@ -28,6 +28,10 @@ build/test_mirror_assign: test_mirror_assign.cpp ../mirror_assign.h check.h
 build/test_periodic_starve: test_periodic_starve.cpp ../periodic_starve.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# usb=mirror: a box shown only once its audio runs both ways; a starved stream restarted (attach_gate.h)
+build/test_attach_gate: test_attach_gate.cpp ../attach_gate.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -237,7 +241,8 @@ build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(w
 # the engine's patch stack (pi/engine/build.sh's order), copied into build/umh and patched there; built for the xHCI
 # (RASPPI 4: both buffers in flight, no pause after a zero-length packet) and the DWHCI (RASPPI 3: Circle's behaviour)
 UMH_PATCHES := ../../circle/spike2/circle-xhci-urbqueue.patch $(addprefix ../../circle/,circle-midi-async.patch circle-xhci-dropurbs.patch \
-	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch)
+	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch \
+	       circle-midi-usbdevice.patch)
 build/umh/.patched: $(UMH_PATCHES)
 	@test -f $(DWC_ROOT)/lib/usb/usbmidihost.cpp || { echo "test_midi_rxqueue: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
 	@rm -rf build/umh && mkdir -p build/umh/lib/usb

@@ -10,17 +10,20 @@
 #include <unistd.h>   // mkdtemp
 #include <vector>
 
+#include "bundle/rename.h"
 #include "check.h"
 #include "device/a4.h"
 #include "device/device.h"
 #include "device/digitakt.h"
 #include "engine.h"
 #include "fx/master.h"
+#include "fx/send_fx.h"
 #include "host_link.h"
 #include "lfo.h"
 #include "pool/pool.h"
 #include "seq/seq.h"
 #include "voices.h"
+#include "wavetable/wavetable.h"
 
 using namespace core;
 
@@ -94,6 +97,11 @@ static double rms(int vi) {   // voice vi over kRows frames rendered now
   for (int i = kRows / 2; i < kRows; ++i) s += (double)ring[i][vi] * ring[i][vi];
   return std::sqrt(s / (kRows / 2));
 }
+static std::string sfx_line(char ab, const char* type) {   // "\nSFX B <type id> " (its file's line for that FX)
+  char b[40];
+  snprintf(b, sizeof b, "\nSFX %c %d ", ab, fx::type_from_name(type));
+  return b;
+}
 static int lfo_depth(int s) {   // slot s's T1A's depth, 0 when it has no target (a project without an LFO file)
   device::Scope in(device::g_links[s]);
   return lfo::get(0).target ? lfo::get(0).depth : 0;
@@ -108,13 +116,13 @@ int main() {
   CHECK(mkdtemp(tmpl));
   host_set_card(tmpl);
   Fs fs;
-  CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4") && fs.mkdir("/.digitakt"));
-  CHECK(fs.mkdir("/.a4/lfo") && fs.mkdir("/.digitakt/lfo"));
+  CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4") && fs.mkdir("/.dt"));
+  CHECK(fs.mkdir("/.a4/lfo") && fs.mkdir("/.dt/lfo"));
   put("/.rytm/project", "RYP");
   put("/.a4/project", "A4P");
-  put("/.digitakt/project", "DTP");
+  put("/.dt/project", "DTP");
   put("/.a4/lfo/A4P.txt", "# the A4's\nT1A V2 3 0 100 0 0 20 64\n");
-  put("/.digitakt/lfo/DTP.txt", "# the Digitakt's\nT1A V3 2 0 100 0 0 11 64\n");
+  put("/.dt/lfo/DTP.txt", "# the Digitakt's\nT1A V3 2 0 100 0 0 11 64\n");
   hooks.to_rytm = out0;
   CHECK(engine_begin());
   device::set_out(1, out1);
@@ -138,6 +146,41 @@ int main() {
   CHECK(device::g_base == &device::g_links[0] && device::voice_base(device::g_links[1]) == kBoxVoices);
   printf("  A4 then Digitakt: slot 0 %s (%s), slot 1 %s (%s)\n", key(0).c_str(), device::g_links[0].state, key(1).c_str(),
          device::g_links[1].state);
+
+  // ---- the console's box selector (design point 8): box=S: by slot or by the box's type, whatever its attach order
+  {
+    const char* r = nullptr;
+    CHECK(device::box_prefix("wt=list", &r) == -1 && !strcmp(r, "wt=list"));   // no selector: the base box's, as ever
+    CHECK(device::box_prefix("box=a4:wt=voice:1", &r) == 0 && !strcmp(r, "wt=voice:1"));
+    CHECK(device::box_prefix("box=dt:wt=voice:1", &r) == 1 && !strcmp(r, "wt=voice:1"));
+    CHECK(device::box_prefix("box=1:lfo", &r) == 1 && !strcmp(r, "lfo"));
+    CHECK(device::box_prefix("box=rytm:lfo", &r) == -2);   // no Rytm attached
+    CHECK(device::box_prefix("box=7:lfo", &r) == -2 && device::box_prefix("box=a4:", &r) == -2 && device::box_prefix("box=", &r) == -2);
+    CHECK(!strcmp(device::type_word(&device::kDigitakt), "dt") && !strcmp(device::type_word(&device::rytm()), "rytm"));
+    // a voice form takes the box's voice V in the slot in hand: the Digitakt's voice 2 is engine voice 10, the A4's voice 2 is 2
+    char o[200];
+    {
+      device::Scope in(device::g_links[device::box_prefix("box=dt:x", &r)]);
+      CHECK(wt::command("wt=voice:2", o, sizeof o) && wt::forced(kBoxVoices + 2) && !wt::forced(2));
+      CHECK(wt::command("wt=voice:2:off", o, sizeof o) && !wt::forced(kBoxVoices + 2));
+    }
+    CHECK(wt::command("wt=voice:2", o, sizeof o) && wt::forced(2) && !wt::forced(kBoxVoices + 2));   // the base box (the A4)
+    CHECK(wt::command("wt=voice:2:off", o, sizeof o) && !wt::forced(2));
+  }
+  // ---- a box's project name is only its name: no Rytm project-slot step and no rename question on the Rytm's PROJECT page
+  //      (the A4's project has files, a new name has none: on the Rytm that asks RENAMED FROM?, on the A4 it just switches)
+  {
+    device::Scope in(device::g_links[0]);
+    const uint8_t nm[] = {'A', '4', 'N', 0xf7};
+    set_project(nm, (int)sizeof nm);
+    CHECK(key(0) == "A4N" && rename::state() == rename::kIdle);
+    const uint8_t back[] = {'A', '4', 'P', 0xf7};
+    set_project(back, (int)sizeof back);
+    CHECK(key(0) == "A4P" && rename::state() == rename::kIdle);
+  }
+  settle();
+  CHECK(key(0) == "A4P" && lfo_depth(0) == 20 && key(1) == "DTP");
+  printf("  box=a4: / box=dt: select the box; voice forms take its own voices; its project names skip the Rytm's steps\n");
   // a third box finds no slot: it is told to wait (a Rytm's USB as well: nothing taken)
   CHECK(device::claim(&device::rytm()) == -1 && device::rytm_slot() < 0);
   CHECK(device::usb_attach(&device::rytm()) == -1);
@@ -147,13 +190,26 @@ int main() {
   CHECK(v[1].live && !v[kBoxVoices + 1].live && rms(1) > 100);
   // the same box's hello again: its slot, kOk
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0);
-  // the same type twice: its slot is that box's (a second A4 on the other transport would share it: a named gap)
+  // the same type twice: its hello again is its slot (two of a type by their UIDs: test_same_type.cpp)
+
+  // ---- an A4 in slot 0 (it attached first) keeps its send FX in its own INSERT file, as a box in slot 1 does (before: slot 0's
+  //      FX were taken for the Rytm's kit's, so an A4 there never wrote them and a replug or reboot brought back OFF)
+  {
+    device::Scope in(device::g_links[0]);
+    char o[256];
+    CHECK(fx::command("sendfx=2:halo", o, sizeof o) && fx::control.knob[1][0] == fx::type_from_name("halo"));
+  }
+  settle();
+  printf("  slot 0's A4 FX B set: its file %s\n", get("/.a4/ins/A4P.txt").find(sfx_line('B', "halo")) != std::string::npos ? "has SFX B HALO" : "has no SFX B");
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('B', "halo")) != std::string::npos);
+  CHECK(fx::control1.knob[1][0] == fx::kOff);   // (the Digitakt's in slot 1: untouched)
 
   // ---- the A4 leaves with an edit unsaved: its voices stop, its edit lands in /.a4, the Digitakt stays in slot 1
   {
     device::Scope in(device::g_links[0]);
     char o[256];
     CHECK(lfo::command("lfo=1:dep:33", o, sizeof o) && lfo::get(0).depth == 33);
+    CHECK(fx::command("sendfx=1:cloudseed", o, sizeof o));   // (its FX A too: saved as it leaves)
   }
   device::usb_detach(0);   // (its USB device gone: the driver's call, taken at the control core's next pass)
   device::step(false);
@@ -166,7 +222,7 @@ int main() {
   settle();
   CHECK(!device::g_links[0].parting && !device::leaving());
   CHECK(get("/.a4/lfo/A4P.txt").find(" 33 ") != std::string::npos);
-  CHECK(get("/.digitakt/lfo/DTP.txt").find(" 33 ") == std::string::npos && get("/.rytm/lfo/A4P.txt").empty());
+  CHECK(get("/.dt/lfo/DTP.txt").find(" 33 ") == std::string::npos && get("/.rytm/lfo/A4P.txt").empty());
   printf("  the A4 left: its edit saved in /.a4, the Digitakt still slot 1\n");
 
   // ---- a Rytm on USB-C now: the lowest free slot, 0, in /.rytm, its project read again; the Digitakt does not move
@@ -175,6 +231,8 @@ int main() {
   CHECK(device::slot_held_by(&device::kDigitakt) == 1 && device::route_of(1) == 1 && device::g_base == &device::g_links[0]);
   settle();
   CHECK(key(0) == "RYP" && lfo_depth(0) == 0 && key(1) == "DTP" && lfo_depth(1) == 11);
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('A', "cloudseed")) != std::string::npos);   // the A4's, saved as it left
+  CHECK(get("/.rytm/ins/RYP.txt").find("SFX") == std::string::npos);   // the Rytm's FX are its kit's: never SFX lines
 
   // ---- the Rytm leaves, the A4 comes back on USB-C: slot 0 again, its project and its saved edit from /.a4
   device::rytm_on_usb(false);
@@ -183,7 +241,9 @@ int main() {
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0);
   settle();
   CHECK(key(0) == "A4P" && lfo_depth(0) == 33);
-  printf("  the A4 back: slot 0 %s, its LFO depth %d (saved before it left)\n", key(0).c_str(), lfo_depth(0));
+  printf("  the A4 back: slot 0 %s, its LFO depth %d (saved before it left), its FX A %s B %s\n", key(0).c_str(), lfo_depth(0),
+         fx::type_name(fx::control.knob[0][0]), fx::type_name(fx::control.knob[1][0]));
+  CHECK(fx::control.knob[0][0] == fx::type_from_name("cloudseed") && fx::control.knob[1][0] == fx::type_from_name("halo"));
 
   // ---- the other order: both leave, the Digitakt attaches first (slot 0), then the A4 (slot 1)
   device::set_out(1, nullptr);   // the relay's box gone (the Digitakt)
@@ -196,7 +256,7 @@ int main() {
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 1 && device::route_of(0) == 1);
   settle();
   CHECK(key(0) == "DTP" && lfo_depth(0) == 11 && key(1) == "A4P" && lfo_depth(1) == 33);
-  CHECK(!strcmp(device::g_links[0].state, "/.digitakt") && !strcmp(device::g_links[1].state, "/.a4"));
+  CHECK(!strcmp(device::g_links[0].state, "/.dt") && !strcmp(device::g_links[1].state, "/.a4"));
   voices_init();
   send(0, trig(1, 60));   // the A4 on USB-C, in slot 1: engine voice 8 + 1
   CHECK(v[kBoxVoices + 1].live && !v[1].live);
@@ -238,6 +298,47 @@ int main() {
   CHECK(key(0) == "A4P" && key(1) == "R2");
   CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // the A4 on transport 1: not the Rytm's
 
+  // ---- the Rytm in slot 1 sends its kit's send FX (0x20): they are its slot's, never the A4's in slot 0 (before: every 0x20
+  //      wrote slot 0's settings and tags, and the 0x22 answers read them, whichever slot the Rytm held)
+  {
+    device::Scope in(device::g_links[0]);
+    char o[256];
+    CHECK(fx::command("sendfx=1:cloudseed", o, sizeof o) && fx::command("sendfx=2:crush", o, sizeof o));
+    CHECK(fx::command("sendlvl=1:3:90", o, sizeof o));   // (a send of the A4's own)
+  }
+  settle();
+  uint8_t a4_knob[fx::kSlots][fx::kKnobs], a4_send[fx::kTracks][fx::kSlots];
+  for (int s = 0; s < fx::kSlots; ++s)
+    for (int k = 0; k < fx::kKnobs; ++k) a4_knob[s][k] = fx::control.knob[s][k];
+  for (int t = 0; t < fx::kTracks; ++t)
+    for (int s = 0; s < fx::kSlots; ++s) a4_send[t][s] = fx::control.send[t][s];
+  const uint16_t a4_tag0 = fx::kit_tag[0], a4_tag1 = fx::kit_tag[1];
+  g_out.clear();
+  send(0, sidecar({0x20, 1, 12, fx::kHalo, 70, fx::kChorus, 40, 1, 2, 3, 4, 5, 6, 7, 8}));   // track 12: FX 1 CHORUS, FX 2 HALO
+  send(0, sidecar({0x20, 1, 3, 111, 22}));                                                    // track 4's sends
+  send(0, sidecar({0x20, 1, 13, 0x12, 0x34, 0x05, 0x06}));                                    // the kit's tags
+  printf("  the Rytm in slot 1 sends FX %s / %s: slot 1 has %s / %s, the A4's slot 0 keeps %s / %s\n", fx::type_name(fx::kChorus),
+         fx::type_name(fx::kHalo), fx::type_name(fx::control1.knob[0][0]), fx::type_name(fx::control1.knob[1][0]),
+         fx::type_name(fx::control.knob[0][0]), fx::type_name(fx::control.knob[1][0]));
+  CHECK(fx::control1.knob[0][0] == fx::kChorus && fx::control1.knob[1][0] == fx::kHalo);
+  CHECK(fx::control1.send[3][0] == 111 && fx::control1.send[3][1] == 22);
+  CHECK(fx::kit_tag1[0] == (0x12 << 7 | 0x34) && fx::kit_tag1[1] == (0x05 << 7 | 0x06));
+  CHECK(fx::control.knob[0][0] == fx::type_from_name("cloudseed") && fx::control.knob[1][0] == fx::type_from_name("crush"));
+  for (int s = 0; s < fx::kSlots; ++s)
+    for (int k = 0; k < fx::kKnobs; ++k) CHECK(fx::control.knob[s][k] == a4_knob[s][k]);
+  for (int t = 0; t < fx::kTracks; ++t)
+    for (int s = 0; s < fx::kSlots; ++s) CHECK(fx::control.send[t][s] == a4_send[t][s]);
+  CHECK(fx::kit_tag[0] == a4_tag0 && fx::kit_tag[1] == a4_tag1);
+  {   // its 0x22 answers (to the Rytm) are its own slot's FX: the last for each FX (its first 0x20 sent the states before)
+    int last[2] = {-1, -1};
+    for (const auto& m : g_out)
+      if (m.size() > 8 && m[4] == 0x22 && m[5] == 1 && m[6] < 2) last[m[6]] = m[7];
+    CHECK(last[0] == fx::kChorus && last[1] == fx::kHalo);
+  }
+  settle();
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('A', "cloudseed")) != std::string::npos);   // the A4's file: its own FX still
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('B', "crush")) != std::string::npos);
+
   // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
   // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)
   device::reset();
@@ -255,6 +356,18 @@ int main() {
   device::step(true);
   CHECK(device::rytm_slot() == 1 && device::slot_held_by(&device::kA4) == 0);
   printf("  self-check before any box: slot 0 still presumed; the A4's USB first takes slot 0, the Rytm's slot 1\n");
+
+  // ---- a stock box (no hello) whose USB MIDI the Pi matches only after its stream took the slot: its transport routed then
+  // (unit run CK2, T521: the A4 on link1 had no route, its clock dropped)
+  CHECK(device::route_of(1) < 0);
+  CHECK(engine_realtime_link(1, 0xF8, 0) < 0);   // (dropped: no slot)
+  device::set_midi_slot(1, 0);
+  device::step(true);
+  CHECK(device::route_of(1) == 0 && engine_realtime_link(1, 0xF8, 0) == 0);
+  device::step(true);
+  CHECK(device::route_of(1) == 0);
+  device::set_midi_slot(1, -1);
+  printf("  a stock box's USB MIDI matched after its stream: its transport routed, its clock reaches its slot\n");
 
   // ---- a Rytm whose USB enumerates at boot, on the slot 0 presumed the Rytm's: its USB confirms it, so an A4 after it takes slot 1
   // (the QEMU gate's rytm-a4 order, 2026-11-21)

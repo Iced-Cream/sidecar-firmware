@@ -125,7 +125,8 @@ inline Control& control_of(int box) { return box ? control1 : control; }
 inline int box_of(const Control& c) { return &c == &control1 ? 1 : 0; }
 // 3(c) step 8: the settings code (the console, set_knob_base / set_send_base, the route file, the LFOs' and the mod
 // layer's writers) works on the slot in hand's: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0).
-// take_sendfx and the 0x21 / 0x22 replies are the Rytm's (slot 0's, `control`).
+// take_sendfx and the 0x22 replies are the box in hand's (the Rytm's message is taken in its slot's Scope: either slot); the
+// 0x21 list's user effects are still box 0's (send_fx_card.cpp slots_load).
 extern int (*slot_fn)();
 int slot_in_hand();
 Control& cur();
@@ -163,6 +164,11 @@ extern void (*clock_listener)(int box, uint8_t status, uint16_t spp);   // box c
 // (spec-050 2.5); v the value set, -1 an offset kind's (its knob, read there). An inline variable (one definition, no
 // .cpp): out.cpp, insert.cpp and master.cpp also link without send_fx.cpp (the Pi portable tests' test_ob_usb)
 inline void (*manual_edit)(uint16_t tid, float v) = nullptr;
+// A TYPE or knob of FX slot s set from the Sidecar (the console and what calls it: the web; never a 0x20 or a file) on the
+// slot in hand (core/fx/insert_card.cpp sets it: a box's send FX that its INSERT file keeps as SFX lines): its file to be
+// written, and an edit made while the slot's project loads held over the file's line once it is loaded (before: the
+// load's clear put the TYPE back to OFF, and an edit alone never marked the file, so a replug lost it). Inline: as above.
+inline void (*settings_edit)(int s) = nullptr;
 inline void edited(uint16_t tid, float v = -1) {
   if (manual_edit) manual_edit(tid, v);
 }

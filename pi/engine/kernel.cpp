@@ -345,6 +345,7 @@ boolean CKernel::Initialize (void)
 	t0 = m_Timer.GetClockTicks ();
 	bridge::selftest_content ();
 	boolean bCard = bridge::begin (ToHost);
+	core::device::g_frozen = [] (int nSlot) { return nSlot >= 0 && CObUsb::Frozen ((unsigned) nSlot) != FALSE; };	// (the UID's MIDI ask)
 	m_Logger.Write (From, LogNotice, "engine: begin %s in %u ms (%d folders, project \"%s\", pool %d)",
 			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,
 			bridge::card_folders (), bridge::project (), bridge::pool_slots ());
@@ -685,6 +686,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	pOut->Append (s);
 	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
 	// are cleared by the console's `sendfx` line, which reports them)
+	// each transport's MIDI realtime as it reached the engine (cores.cpp RealtimeIn): whether a box's clock arrives at all
+	pOut->Append (",\"realtime\":[");
+	for (unsigned t = 0; t < 2; t++)
+	{
+		const CEngineCores::TRealtime R = CEngineCores::Realtime (t);
+		s.Format ("%s{\"transport\":%u,\"slot\":%d,\"clock\":%u,\"start\":%u,\"stop\":%u,\"songPos\":%u,\"noSlot\":%u}",
+			  t ? "," : "", t, R.nSlot, R.nClock, R.nStart, R.nStop, R.nSongPos, R.nNoSlot);
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	pOut->Append (",\"slotFx\":[");
 	for (int b = 0; b < 2; b++)
 	{
@@ -720,6 +731,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? CObUsb::SlotName (CObUsb::RelaySlot ()) : "none",
 		  CTeensyTarget::Relaying () ? "true" : "false", CObUsb::MidiSlot (0), CObUsb::MidiSlot (1));
 	pOut->Append (s);
+	// the attach gate (attach_gate.h, obgate=): per slot whether its box is held from the computer now, its holds, late
+	// shows, re-enumerations and the last hold's length since boot; the stream restarts since boot (all boxes)
+	{
+		const obgate::Gate &g0 = CObUsb::AttachGate (0), &g1 = CObUsb::AttachGate (1);
+		s.Format (",\"gate\":{\"held\":[%s,%s],\"holds\":[%u,%u],\"late\":[%u,%u],\"reenums\":[%u,%u],\"waitMs\":[%u,%u],"
+			  "\"restarts\":%u}", CObUsb::GateHolds (0) ? "true" : "false", CObUsb::GateHolds (1) ? "true" : "false",
+			  g0.holds, g1.holds, g0.shown_late, g1.shown_late, g0.total_reenums, g1.total_reenums,
+			  (unsigned) g0.last_wait_ms, (unsigned) g1.last_wait_ms, CObUsb::StreamRestarts ());
+		pOut->Append (s);
+	}
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
@@ -945,7 +966,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		pOut->Append (Sd);
 	}
 	{
-		static char Sa[640];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
+		static char Sa[1024];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
 		bridge::samp_json (Sa, sizeof Sa);
 		pOut->Append (Sa);
 	}
@@ -1826,7 +1847,10 @@ void CKernel::UpdateMIDI (void)
 		u16 nId = usb_box_id (pProduct);
 		if (nId == 0 && p == m_pMIDI) nId = core::device::active ().id;
 		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
-		s_Boxes.add (nId, n, Role, pProduct);
+		// its UID and name: the slot its transport carries (two of one type, design 2026-11-26; plain reads of the control core's)
+		const int t = p == m_pMIDI ? 0 : p == s_pHelloBox ? 1 : -1, s = t < 0 ? -1 : core::device::route_of (t);
+		const core::device::Link *pLink = s >= 0 && s < core::device::kLinks ? &core::device::g_links[s] : 0;
+		s_Boxes.add (nId, n, Role, pProduct, pLink != 0 && pLink->held ? pLink->uid : 0, pLink != 0 && pLink->held ? pLink->label : 0);
 	}
 }
 
