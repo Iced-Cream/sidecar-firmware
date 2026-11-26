@@ -466,8 +466,9 @@ static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
 // else: the same 32-bit value as the MIDI RPC 0x03 (design 2026-11-26, findings). 0: no answer (the core asks by MIDI).
 u32 ObReadUid (CUSBFunction *pParent)
 {
-	alignas (64) static u8 Buf[64];		// (DMA: cache-line aligned; the factory runs on core 0, one device at a time)
-	memset (Buf, 0, sizeof Buf);
+	static u8 *Buf = 0;			// (DMA: a heap block, not the kernel image - the xHCI asserts so; once, 64 B
+	if (Buf == 0) Buf = AllocDmaBuf ();	// aligned; the factory runs on core 0, one device at a time)
+	memset (Buf, 0, 64);
 	CUSBHostController *pHost = pParent->GetHost ();
 	const int n = pHost != 0 ? pHost->ControlMessage (pParent->GetEndpoint0 (), 0xC0, 0, 0, 0, Buf, 8) : -1;
 	const u32 nUid = n == 8 ? (u32) Buf[4] | (u32) Buf[5] << 8 | (u32) Buf[6] << 16 | (u32) Buf[7] << 24 : 0;
