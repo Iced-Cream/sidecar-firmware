@@ -126,9 +126,10 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
 // A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
-// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). The base box's also arm the
-// recorder and drive the sampler, the bundles' and the storage bench's waits (rec_pi::Transport) and MIDI's on USB-A
-// (core/midim/midim.h), as the Rytm's did; another box's reach only its own clock.
+// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). Then the Pi-wide jobs, each
+// on the clock of the box it belongs to (rec_pi::Transport, decided 2026-11-26): the recorder arms on the base box's,
+// a sampler take follows its own box's, the bundles' and the storage bench's waits hold while any box plays. MIDI's
+// USB-A clock out (core/midim/midim.h) is the box's whose voices alone send there (none while both boxes' do).
 // A box's CC 120 (All Sound Off, any channel; the Rytm's STOP STOP) on transport t other than the host link's: its own
 // box's send FX fade out and clear (3(c); the host link's comes through OnChannel)
 static void AllSoundOffIn (int nTransport)
@@ -136,12 +137,34 @@ static void AllSoundOffIn (int nTransport)
 	int nSlot = bridge::transport_slot (nTransport);
 	if (nSlot >= 0) sendfx_pi::AllSoundOff (nSlot);
 }
+static volatile CEngineCores::TRealtime s_Rt[2] = {{0, 0, 0, 0, 0, -1}, {0, 0, 0, 0, 0, -1}};
+CEngineCores::TRealtime CEngineCores::Realtime (unsigned nTransport)
+{
+	TRealtime r = {0, 0, 0, 0, 0, -1};
+	if (nTransport < 2)
+	{
+		const volatile TRealtime &v = s_Rt[nTransport];
+		r.nClock = v.nClock, r.nStart = v.nStart, r.nStop = v.nStop, r.nSongPos = v.nSongPos, r.nNoSlot = v.nNoSlot;
+		r.nSlot = v.nSlot;
+	}
+	return r;
+}
 static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 {
 	int nSlot = bridge::realtime_link (nTransport, s, spp);
-	if (nSlot < 0 || nSlot != bridge::base_slot ()) return;
-	rec_pi::Transport (s, spp);
-	bridge::midim_realtime (s);
+	if (nTransport >= 0 && nTransport < 2)
+	{
+		volatile CEngineCores::TRealtime &r = s_Rt[nTransport];
+		if (nSlot < 0) r.nNoSlot++;
+		else if (s == 0xF8) r.nClock++;
+		else if (s == 0xFA || s == 0xFB) r.nStart++;
+		else if (s == 0xFC) r.nStop++;
+		else if (s == 0xF2) r.nSongPos++;
+		r.nSlot = nSlot;
+	}
+	if (nSlot < 0) return;
+	rec_pi::Transport (nSlot, s, spp);
+	bridge::midim_realtime (nSlot, s);
 }
 static void OnRealtime (uint8_t s, uint16_t spp) { RealtimeIn (0, s, spp); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);

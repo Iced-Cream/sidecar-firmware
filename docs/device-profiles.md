@@ -283,6 +283,7 @@ changes nothing here.
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
 | kits | `bundle/kits` | own queue, RELOAD ALL scan and records in its own folder; a box's 3B ends only its own voices' MIDI and arp notes |
 | MIDI clock | `host_link.cpp` `engine_realtime_link` | each transport's F8 FA FB FC F2 clock its own slot's send FX grid, LFOs, arpeggiator and plugins |
+| the Pi-wide jobs' clock | `rec_pi::Transport(slot, ..)`, `samp::transport(slot, ..)` | each on the clock of the box it belongs to (decided 2026-11-26): a sampler take follows the box it was armed for (the slot in hand: `box=S:samp=arm`, the page's box), its PLAY / next-bar start, STOP, bars and tempo; the recorder arms on the base box's (whose output stage it records); the bundles' card writes slow and the storage bench is refused while any box plays (a box that stops or leaves clears its own); the MIDI machine's clock out to the Pi's USB-A devices is the box's whose voices alone send there, none while both boxes' do |
 | fxin, keys, MIDI learn, preview | | read from a box's folder at its attach, saved there |
 | remote UI | `ui/remote.cpp` | own pages, canvases, track tables and display reports; the touchscreen follows the box whose page opened or whose 49 came last |
 | SONG RECORD | `core/song` | own takes, journal, clock, lanes; each transport's whole MIDI stream taps its own slot's song. The A4's start snapshot, restore and UNDO REPLAY use its own dumps and GLOBAL MIDI settings |
@@ -332,8 +333,8 @@ slot (`rytm_at`): another box's project name only names its project, in its own 
 
 What the second box does not have yet, or has differently:
 
-- **The recorder, sampler, bundle and storage waits** follow the base box's transport only, and the recorder and the meters
-  read the base box's output stage. The web's bus meters show the base box's send FX (`/status` `slotFx` has both slots'
+- **The recorder and the meters** read the base box's output stage, so the recorder arms on the base box's transport
+  only. The web's bus meters show the base box's send FX (`/status` `slotFx` has both slots'
   counters).
 - **Sequencer on slot 1:** a lock's base for P1..P16 is 64 (the box's knob value is not known here); no SEED MOD source; no
   latency calibration (`seq=cal` is the Rytm's slot only; a box keeps `seq=lat`); the touch editor's undo history is the

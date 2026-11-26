@@ -65,7 +65,11 @@ void resync();                                                 // records for th
 void link_state(bool up);                                      // each control pass: records can reach the Rytm
 bool echo(int dest, int ch, int note, int vel);                // a note-on came in from dest's port: true when it is our own, drop it
 void stop(int slot = -1);                                      // slot's transport left PLAY: its voices' trig and sequencer notes off (-1 every voice's)
-void realtime(uint8_t status);                                 // the Rytm's F8 FA FB FC: to USB-A while a voice sends there
+// Box slot's F8 FA FB FC: to USB-A while that box's voices, and no other box's, send there (decided 2026-11-26: with
+// both boxes on USB-A no clock goes). realtime(status) is slot 0's.
+void realtime(int slot, uint8_t status);
+void realtime(uint8_t status);
+int usba_slots();                                              // bit s: a voice of box slot s sends to USB-A
 void tick(uint32_t ms);                                        // every control pass: what the budget held back
 
 struct Stats {

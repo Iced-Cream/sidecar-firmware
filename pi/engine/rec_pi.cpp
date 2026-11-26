@@ -617,6 +617,11 @@ namespace rec_pi {
 static void ModsTransport (int nSlot, uint8_t nStatus)
 {
 	if (nSlot == bridge::base_slot ()) g_Rec.transport (nStatus);
+	if (nStatus == 0xFC)	// a box stopped or left (seq::slot_left): its PLAY no longer holds the card's waits
+	{
+		bundle_pi::transport (nSlot, nStatus);
+		stor_pi::Transport (nSlot, nStatus);
+	}
 }
 
 void Init (void)
@@ -1057,12 +1062,13 @@ void Status (CString *pOut)
 	pOut->Append (t);
 }
 
-void Transport (u8 nStatus, u16 nSPP)
+void Transport (int nSlot, u8 nStatus, u16 nSPP)
 {
-	if (nStatus == 0xFA || nStatus == 0xFB || nStatus == 0xFC) g_Rec.transport (nStatus);
-	bundle_pi::transport (nStatus);	// project bundles: card writes wait while the Rytm plays (bundle_pi.h)
-	stor_pi::Transport (nStatus);		// the storage bench is refused while the Rytm plays (stor_pi.h)
-	bridge::samp_transport (nStatus);	// the sampler: PLAY / next-bar starts, the tempo (core/samp/sampler.h)
+	if (nSlot == bridge::base_slot () && (nStatus == 0xFA || nStatus == 0xFB || nStatus == 0xFC))
+		g_Rec.transport (nStatus);	// the recorder records the base box's output stage: its transport
+	bundle_pi::transport (nSlot, nStatus);	// project bundles: card writes slow while any box plays (bundle_pi.h)
+	stor_pi::Transport (nSlot, nStatus);	// the storage bench is refused while any box plays (stor_pi.h)
+	bridge::samp_transport (nSlot, nStatus);	// the sampler: its take's box's PLAY / next-bar starts, tempo (core/samp/sampler.h)
 	(void) nSPP;	// (STUTTER's grid: the box's own clock, cores.cpp RealtimeIn -> bridge::realtime_link, 3(c) step 10)
 }
 

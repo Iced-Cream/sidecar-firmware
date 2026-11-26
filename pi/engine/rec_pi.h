@@ -21,7 +21,10 @@ bool Command (const char *pCmd);	// rec, rec=start|stop|arm|ch:LIST|bits:16|24|n
 					// fix:VOL|del:TAKE (a drive's: del:USB:TAKE); play, play=start|stop|scan|take:N|ch:N|
 					// level:N|start:TAKE/NN (true: handled). A take on a drive is "USB:take_004" everywhere.
 void Status (CString *pOut);		// ,"rec":{...},"play":{...}
-void Transport (u8 nStatus, u16 nSPP);	// MIDI realtime (core 3): PLAY/STOP for an armed recorder; then the send FX's clock
+// Box slot's MIDI realtime (core 3), each box its own (decided 2026-11-26): the recorder arms on the base box's (the box
+// whose output stage it records); the bundles' and the storage bench's waits hold while any box plays; the sampler
+// keeps every box's clock and a take follows its own box's.
+void Transport (int nSlot, u8 nStatus, u16 nSPP);
 int UiState (unsigned *pSecs);		// the display: 0 off, 1 armed, 2 recording (and its seconds)
 // The display's REC page (pi/ui/sidecar_rec.h), core 0: UiWant while it shows (the recorder's meters on, the takes
 // read again on the way in); UiFill at most 25 times a second (the meters' peaks since the last fill)

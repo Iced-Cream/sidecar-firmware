@@ -316,14 +316,19 @@ CORE_COLD void stop(int slot) {
     if (h.used && (h.src == kTrigSrc || h.src == poly::kSeqCh) && of_slot(h.vi, slot)) off_entry(h);
 }
 
-CORE_COLD void realtime(uint8_t status) {
-  if (!out_fn) return;
-  for (const Vo& x : vo)
-    if (x.dst == kUsbA) {
-      out_fn(kUsbA, &status, 1);
-      return;
-    }
+// Each box's own clock (decided 2026-11-26): the USB-A devices are every box's, so a box's realtime bytes go there only
+// while its voices alone send there. With both boxes' voices on USB-A no clock goes at all (a device follows one clock).
+CORE_COLD int usba_slots() {
+  int m = 0;
+  for (int vi = 0; vi < kVoices; ++vi)
+    if (vo[vi].dst == kUsbA) m |= 1 << slot_of_voice(vi);
+  return m;
 }
+CORE_COLD void realtime(int slot, uint8_t status) {
+  if (!out_fn || slot < 0 || slot >= kVoiceSlots) return;
+  if (usba_slots() == 1 << slot) out_fn(kUsbA, &status, 1);
+}
+CORE_COLD void realtime(uint8_t status) { realtime(0, status); }
 
 void tick(uint32_t ms) {
   uint32_t dt = ms - last_ms;

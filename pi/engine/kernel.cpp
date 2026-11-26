@@ -686,6 +686,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	pOut->Append (s);
 	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
 	// are cleared by the console's `sendfx` line, which reports them)
+	// each transport's MIDI realtime as it reached the engine (cores.cpp RealtimeIn): whether a box's clock arrives at all
+	pOut->Append (",\"realtime\":[");
+	for (unsigned t = 0; t < 2; t++)
+	{
+		const CEngineCores::TRealtime R = CEngineCores::Realtime (t);
+		s.Format ("%s{\"transport\":%u,\"slot\":%d,\"clock\":%u,\"start\":%u,\"stop\":%u,\"songPos\":%u,\"noSlot\":%u}",
+			  t ? "," : "", t, R.nSlot, R.nClock, R.nStart, R.nStop, R.nSongPos, R.nNoSlot);
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	pOut->Append (",\"slotFx\":[");
 	for (int b = 0; b < 2; b++)
 	{
@@ -956,7 +966,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		pOut->Append (Sd);
 	}
 	{
-		static char Sa[640];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
+		static char Sa[1024];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
 		bridge::samp_json (Sa, sizeof Sa);
 		pOut->Append (Sa);
 	}
