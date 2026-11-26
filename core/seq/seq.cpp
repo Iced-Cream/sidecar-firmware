@@ -2222,6 +2222,10 @@ CORE_COLD void on_state(const uint8_t* a, int n) {
       scene::capture(a[1], a[2], a[3], d, a[5] != 0, (uint16_t)(a[6] << 7 | a[7]));
       return;
     }
+    case kCaptureClear:   // 2D 01 14 <side> <t> <w>: a DATA ENTRY knob pressed under PAGE + T15 / T16 (an older host ignores it)
+      if (n < 4) break;
+      scene::capture_clear(a[1], a[2], a[3]);
+      return;
     case kEditKey:   // 2D 01 13 <ev 1 held / 0 let go / 2 picked> <side> <n 0..11, 7F>
       if (n < 4) break;
       scene::stock_edit(a[1], a[2], a[3]);

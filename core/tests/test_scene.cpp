@@ -739,6 +739,10 @@ static void cap18(int side, int t, int w, int d, int func, int base) {
                        (uint8_t)func, (uint8_t)(base >> 7 & 0x7F), (uint8_t)(base & 0x7F), 0xF7};
   engine_sysex(m, (int)sizeof m);
 }
+static void clr20(int side, int t, int w) {   // 2D 01 14: a knob press under the side (0.5.2)
+  const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x2D, 1, 0x14, (uint8_t)side, (uint8_t)t, (uint8_t)w, 0xF7};
+  engine_sysex(m, (int)sizeof m);
+}
 static std::string readout() {   // the last 5A 01 08 <n> <text> sent to the Rytm, "" none
   std::string r;
   for (const auto& o : g_rytm)
@@ -846,6 +850,71 @@ static void capture_stepped_word_steps() {
   hooks.to_rytm = nullptr;
   printf("scene: a stepped word steps one entry a report\n");
 }
+static void capture_clear_removes_only_that_entry() {
+  edit_start(2, 5);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  const Tid frq = mod::rytm_tid(0, 30), frq3 = mod::rytm_tid(3, 30), lev = mod::rytm_tid(0, 33);
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  cap18(0, 3, 30, 2, 0, 64 * 128);
+  cap18(0, 0, 33, 1, 0, 100 * 128);
+  edit19(scene::kEditLetGo, 0, 0x7F);
+  edit19(scene::kEditHeld, 1, 0x7F);
+  cap18(1, 0, 30, 4, 0, 64 * 128);   // B's own FRQ lock
+  edit19(scene::kEditLetGo, 1, 0x7F);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  CHECK(scene::state().s[2].n == 3 && scene::state().s[5].n == 1);
+  clr20(0, 0, 30);
+  CHECK(lock_of(2, frq) < 0 && lock_of(2, frq3) == 66 * 128 && lock_of(2, lev) == 101 * 128 && scene::state().s[2].n == 2);
+  CHECK(scene::state().s[5].n == 1 && lock_of(5, frq) == 68 * 128);   // B's FRQ and the other scenes untouched
+  CHECK(readout() == "A FRQ CLR");
+  clr20(0, 0, 30);                    // none left: nothing else goes
+  CHECK(scene::state().s[2].n == 2 && readout() == "A FRQ NO LOCK");
+  clr20(0, 3, 30);
+  CHECK(lock_of(2, frq3) < 0 && lock_of(2, lev) == 101 * 128 && scene::state().s[2].n == 1);
+  hooks.to_rytm = nullptr;
+  printf("scene: a knob press under the side (2D 01 14) removes that parameter's lock only, A's, the readout\n");
+}
+static void capture_clear_b_side_and_machine() {
+  edit_start(2, 5);
+  const uint8_t m33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 40, (uint8_t)kPlaits, 0xF7};   // BD on a Sidecar machine
+  engine_sysex(m33, (int)sizeof m33);
+  const Tid p3 = mod::tid(mod::kV, ui::remote_track_voice(0), 2);
+  edit19(scene::kEditHeld, 1, 0x7F);
+  cap18(1, 0, 9 + 2, 4, 0, 50 * 128);
+  cap18(1, 0, 30, 1, 0, 0);
+  CHECK(lock_of(5, p3) == 54 * 128 && lock_of(5, mod::rytm_tid(0, 30)) == 128);
+  clr20(1, 0, 11);                    // SRC word 11 on a Sidecar machine: its voice's P3
+  CHECK(lock_of(5, p3) < 0 && lock_of(5, mod::rytm_tid(0, 30)) == 128 && scene::state().s[5].n == 1);
+  CHECK(readout().compare(0, 2, "B ") == 0 && readout().find("CLR") != std::string::npos);
+  const uint8_t r33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 0, 0x7F, 0xF7};
+  engine_sysex(r33, (int)sizeof r33);
+  hooks.to_rytm = nullptr;
+  printf("scene: the press clears B's lock; a Sidecar machine's SRC word clears its voice's P\n");
+}
+static void capture_clear_refused() {
+  edit_start(2, 5);
+  const Tid frq = mod::rytm_tid(0, 30);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  cap18(0, 0, 30, 3, 0, 64 * 128);
+  CHECK(lock_of(2, frq) == 67 * 128);
+  clr20(2, 0, 30);                    // an unknown side
+  clr20(0, 13, 30);                   // an unknown track
+  clr20(0, 0, 4);                     // a word with no target
+  clr20(0, 0, 0x7F);                  // a word out of range
+  CHECK(lock_of(2, frq) == 67 * 128 && scene::state().s[2].n == 1);
+  CHECK(readout() == "NOT LOCKABLE");
+  clr20(1, 0, 30);                    // the other side is not held
+  CHECK(lock_of(2, frq) == 67 * 128 && readout() == "EDIT ENDED");
+  edit19(scene::kEditLetGo, 0, 0x7F);
+  clr20(0, 0, 30);                    // the side let go (a kit change): nothing is removed
+  CHECK(lock_of(2, frq) == 67 * 128 && readout() == "EDIT ENDED");
+  edit_start(-1, -1);
+  edit19(scene::kEditHeld, 0, 0x7F);
+  clr20(0, 0, 30);                    // A has no scene
+  CHECK(readout() == "SET A FIRST");
+  hooks.to_rytm = nullptr;
+  printf("scene: a press with an unknown side / track / word, the other side, no gesture, no scene: refused, nothing removed\n");
+}
 static void capture_after_kit_change_refused() {
   edit_start(2, 5);
   edit19(scene::kEditHeld, 0, 0x7F);
@@ -952,6 +1021,9 @@ int main() {
   capture_fx_track_rfx();
   capture_stepped_word_steps();
   capture_after_kit_change_refused();
+  capture_clear_removes_only_that_entry();
+  capture_clear_b_side_and_machine();
+  capture_clear_refused();
   readout_wire_format();
   hello_arms_edit();
   printf("test_scene: PASS\n");

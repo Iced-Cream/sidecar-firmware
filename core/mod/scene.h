@@ -132,6 +132,13 @@ bool lock_side(int side, mod::Tid t, uint16_t v);   // lock() into that side's s
 enum : uint8_t { kEditLetGo = 0, kEditHeld = 1, kEditPicked = 2 };
 void stock_edit(int ev, int side, int n);
 bool capture(int side, int track, int word, int delta, bool func, uint16_t base);
+// 0.5.2: a DATA ENTRY knob pressed under the same gesture (2D 01 14 <side> <t> <w>; the Rytm eats the press, as it does the
+// turns, so stock's p-lock clear does not run) removes that parameter's lock from that side's scene - only that entry,
+// nothing else: the target is the turn's (the same track / word -> Tid rule). A readout like "A FRQ CLR"; "A FRQ NO LOCK"
+// when the scene had none. Refused (a readout, nothing removed) as a turn is: the gesture ended, the side's scene unset,
+// a word with no target. True: a lock removed. An older host never sees the op's effect: it ignores the unknown 2D 01 14
+// (the press is eaten on the Rytm and nothing else happens).
+bool capture_clear(int side, int track, int word);
 // ---- the console and /status (spec-050 2.10): "scene" (the state), "scene=ab:A:B" (1..12, 0 none), "scene=fader:V"
 // (0..16383), "scene=sel:N", "scene=lock:N:NAME:V" (V the target's value, 0..127.99, kept x 128), "scene=unlock:N:NAME",
 // "scene=clear:N", "scene=copy:N:M"; each edit answers with the state. "scene=qperf:muted|off|always" (QPERF FADER)

@@ -150,7 +150,7 @@ const source = computed(() => SOURCES[sc.value?.src ?? 0] ?? "");
         <button type="button" :disabled="!paired" @click="sc.b === sel ? unset('b') : setB()">{{ sc.b === sel ? `Take ${sel + 1} off B` : `Scene ${sel + 1} on B` }}</button>
       </div>
       <p class="small">EDIT on the Rytm: hold PAGE + T15 (scene A) or PAGE + T16 (scene B) and turn a knob on a Sidecar page;
-        T1–T12 while holding picks that side's scene.<template v-if="sideNote"> EDIT {{ sideNote }} is held now.</template></p>
+        on the Rytm's own pages a knob press removes that parameter's lock. T1–T12 while holding picks that side's scene.<template v-if="sideNote"> EDIT {{ sideNote }} is held now.</template></p>
     </Card>
 
     <Card :label="`Scene ${sel + 1} · ${locks.length} of ${LOCKS} locks`">

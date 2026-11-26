@@ -427,6 +427,15 @@ CORE_COLD int state_line(char* o, int cap) {
   if (g_locked && n > 0 && n < cap) n += sniprintf(o + n, cap - n, CORE_STR(" - SCENES LOCKED (NEWER FILE)"));
   return n;
 }
+CORE_COLD mod::Tid stock_target(int track, int word) {   // a stock page's (track, word) -> its scene target, 0 none
+  mod::Tid tg = 0;
+  const int vi = ui::remote_track_voice(track), m = ui::remote_track_machine(track);
+  if (track >= 0 && track < 12 && word >= 9 && word <= 24 && vi >= 0 && m >= 0 && m != 0x7F)
+    tg = mod::tid(mod::kV, vi, word - 9);   // a Sidecar machine: its voice's P1..P16
+  else
+    tg = mod::rytm_tid(track, word);
+  return tg && mod::valid(tg) ? tg : 0;
+}
 }  // namespace
 
 CORE_COLD void set_edit_side(int side) { g_side = side == 0 || side == 1 ? side : -1; }
@@ -466,13 +475,8 @@ CORE_COLD bool capture(int side, int track, int word, int delta, bool func, uint
     mod::rytm_readout(t);
     return false;
   }
-  mod::Tid tg = 0;
-  const int vi = ui::remote_track_voice(track), m = ui::remote_track_machine(track);
-  if (track >= 0 && track < 12 && word >= 9 && word <= 24 && vi >= 0 && m >= 0 && m != 0x7F)
-    tg = mod::tid(mod::kV, vi, word - 9);   // a Sidecar machine: its voice's P1..P16
-  else
-    tg = mod::rytm_tid(track, word);
-  if (!tg || !mod::valid(tg)) {
+  const mod::Tid tg = stock_target(track, word);
+  if (!tg) {
     mod::rytm_readout("NOT LOCKABLE");
     return false;
   }
@@ -503,6 +507,32 @@ CORE_COLD bool capture(int side, int track, int word, int delta, bool func, uint
   sniprintf(t, sizeof t, CORE_STR("%c %s %d %c%d"), sd, pl, sv, sv > kv ? '>' : sv < kv ? '<' : '=', kv);
   mod::rytm_readout(t);
   return true;
+}
+
+CORE_COLD bool capture_clear(int side, int track, int word) {
+  char t[mod::kReadoutMax + 1];
+  const char sd = side ? 'B' : 'A';
+  if ((side != 0 && side != 1) || g_side != side) {   // the gesture ended here (a kit change) before its press came
+    mod::rytm_readout("EDIT ENDED");
+    return false;
+  }
+  const int n = side_scene(side);
+  if (n < 0) {
+    sniprintf(t, sizeof t, CORE_STR("SET %c FIRST"), sd);
+    mod::rytm_readout(t);
+    return false;
+  }
+  const mod::Tid tg = stock_target(track, word);
+  if (!tg) {
+    mod::rytm_readout("NOT LOCKABLE");
+    return false;
+  }
+  char pl[8];
+  mod::param_label(tg, pl, sizeof pl);
+  const bool had = unlock(n, tg);   // this entry only
+  sniprintf(t, sizeof t, CORE_STR("%c %s %s"), sd, pl, had ? "CLR" : "NO LOCK");
+  mod::rytm_readout(t);
+  return had;
 }
 
 CORE_COLD bool command(const char* p, char* o, int cap) {
