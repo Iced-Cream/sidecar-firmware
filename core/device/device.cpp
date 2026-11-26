@@ -136,7 +136,7 @@ static CORE_COLD void filtered_out(const uint8_t* m, int n) {
   }
 }
 
-// hooks.to_rytm from the links: the Rytm's own sender while she is the one slot held and nothing else is linked (the Rytm's
+// hooks.to_rytm from the links: the Rytm's own sender while it is the one slot held and nothing else is linked (the Rytm's
 // path as it always was: no test, no filter), else filtered_out. Transport 0's sender is the platform's to_rytm, taken the
 // first time it is not already ours, and given to the slot transport 0 goes to.
 static int8_t s_route[kLinks] = {0, -1};
@@ -444,7 +444,7 @@ CORE_COLD int usb_attach(const Profile* p) {
     if (__atomic_load_n(&s_usb_want[l.index], __ATOMIC_ACQUIRE) == p) return l.index;
     if (__atomic_load_n(&l.held, __ATOMIC_RELAXED) != p) continue;
     // its slot already (the Rytm's presumed at boot): reserved for it all the same, so usb_take confirms it (a stock Rytm
-    // says no 35: her USB is her hello) and routes her MIDI
+    // says no 35: its USB is its hello) and routes its MIDI
     const Profile* none = nullptr;
     __atomic_compare_exchange_n(&s_usb_want[l.index], &none, p, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
     return l.index;
@@ -475,7 +475,7 @@ static CORE_COLD void usb_take() {   // (the control core: step, claim)
       if (l.held && l.presumed) release(l.index);   // (the presumed Rytm never spoke: the box's USB came first)
       if (!l.held) select(l, w), log(CORE_STR("device: %s attached (USB): slot %d"), w->name, l.index);
     }
-    if (w == &kRytm && l.held == w && s_route[0] < 0) route(0, l.index);   // (her MIDI on the host link: a stock Rytm says no 35)
+    if (w == &kRytm && l.held == w && s_route[0] < 0) route(0, l.index);   // (its MIDI on the host link: a stock Rytm says no 35)
     l.presumed = false;
     __atomic_store_n(&s_usb_want[l.index], (const Profile*)nullptr, __ATOMIC_RELEASE);
   }
@@ -506,7 +506,7 @@ CORE_COLD void release(int s) {
   if (s < 0 || s >= kLinks || !g_links[s].held) return;
   Link& l = g_links[s];
   const Profile* h = l.held;
-  const bool quiet = l.presumed;   // (a Rytm presumed at boot never spoke: nothing of hers to save beyond what idle_save does anyway)
+  const bool quiet = l.presumed;   // (a Rytm presumed at boot never spoke: nothing of its own to save beyond what idle_save does anyway)
   slot_left(s);   // its transport, sequencer, arpeggiator and MIDI stop, in its Scope (host_link.h)
   select(l, nullptr);   // its voices silenced (link_reset); its folder kept for its saves
   l.parting = !quiet, l.holding = false, l.left_ms = now_ms();
@@ -519,9 +519,9 @@ CORE_COLD void release(int s) {
 void rytm_on_usb(bool on) {
   if (on) {
     const int s = claim(&kRytm);
-    if (s >= 0 && s_route[0] < 0) route(0, s);   // her MIDI on the host link (a stock Rytm says no 35), unless a box has it
+    if (s >= 0 && s_route[0] < 0) route(0, s);   // its MIDI on the host link (a stock Rytm says no 35), unless a box has it
   }
-  else release(slot_held_by(&kRytm));   // (her link: rytm_slot() is 0 on one slot)
+  else release(slot_held_by(&kRytm));   // (its link: rytm_slot() is 0 on one slot)
 }
 
 CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
@@ -535,6 +535,11 @@ CORE_COLD void set_out(int link, void (*out)(const uint8_t*, int)) {
 
 // The slot the bytes of transport t are for, -1 none.
 int route_of(int t) { return t >= 0 && t < kLinks ? s_route[t] : -1; }
+int rytm_route(int t) {
+  const int s = route_of(t);
+  if (s < 0) return t == 0 ? rytm_home() : -1;
+  return rytm_at(s) ? s : -1;
+}
 
 // A hello's profile when the box may have a slot (known, this protocol); null: its answer is kUnknown / kBadProto
 static CORE_COLD const Profile* hello_profile(const uint8_t* d, int len) {
@@ -547,7 +552,7 @@ CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
   const int r = s_route[t];
   if (!d || len < 6) return r;
   if (r >= 0 && d[4] != kCmdHello && d[4] != 0x35) {   // (every other message of a slot's box: two compares, and the presumed test)
-    if (g_links[r].presumed && is_sidecar(d, len)) g_links[r].presumed = false;   // the presumed Rytm spoke: slot 0 is hers
+    if (g_links[r].presumed && is_sidecar(d, len)) g_links[r].presumed = false;   // the presumed Rytm spoke: slot 0 is the Rytm's
     return r;
   }
   if (!s_tx[0] && hooks.to_rytm && hooks.to_rytm != filtered_out) s_tx[0] = hooks.to_rytm;
@@ -562,7 +567,7 @@ CORE_COLD int slot_of(int t, const uint8_t* d, int len) {
     return s;
   }
   if (d[4] != 0x35) return r;   // (a transport that goes nowhere: only a hello or a Rytm's 35 gives it a slot)
-  // a Rytm's 35, her hello (a remote-UI box's slot keeps its own: translate drops a 35 from it)
+  // a Rytm's 35, its hello (a remote-UI box's slot keeps its own: translate drops a 35 from it)
   if (r >= 0 && (g_links[r].held == &kRytm || (g_links[r].box && (g_links[r].box->features & kRemoteUi)))) {
     if (g_links[r].presumed) g_links[r].presumed = false;
     return r;

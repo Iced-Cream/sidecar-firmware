@@ -407,9 +407,22 @@ bool tap_on() { return core::ui::tap_on(); }
 bool cal_on() { return core::seq::cal_wanted(); }
 void cal_in(const int32_t* f, int n, int stride) { core::seq::cal_audio(f + 2, n, stride, (int64_t)core::seq::frames()); }
 void rytm_byte(uint8_t b) {
+  rytm_byte(0, b);
+  link_byte(0, b);   // SONG RECORD (core/song/song.h): the whole stream
+}
+static void rytm_read(uint8_t b) {
   core::rytm_dump::byte(b);
   core::patwrite::byte(b);   // 0.5.0 FILL: the pattern writer's answers (core/seq/patwrite.h)
-  link_byte(0, b);   // SONG RECORD (core/song/song.h): the whole stream
+}
+void rytm_byte(int t, uint8_t b) {
+  const int h = core::device::rytm_route(t);   // its slot when t carries it (transport 0 with no route yet: as ever)
+  if (h < 0) return;
+  if (h >= core::device::kLinks || &core::device::g_links[h] == core::device::g_cur) {
+    rytm_read(b);
+    return;
+  }
+  core::device::Scope in(core::device::g_links[h]);
+  rytm_read(b);
 }
 // SONG RECORD's tap (step 10c): transport t's every byte, as the slot it carries (each box its own song)
 void link_byte(int t, uint8_t b) {

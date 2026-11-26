@@ -206,7 +206,7 @@ volatile uint32_t g_lanes_n[kVoiceSlots] = {};
 
 // the slot in hand (pool.h prj_slot: device::cur()'s, clamped)
 inline int sl() { return prj_slot(); }
-// the slot's box is the Rytm (her slot, attach order): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and
+// the slot's box is the Rytm (its slot, attach order): its stock dumps, MIDI CONFIG, replay, the pattern view's dumps and
 // FILL's writer. Another slot's box records without them (song.h "Per slot")
 inline bool rytm() { return device::rytm_at(sl()); }
 // the slot's box's stock dumps: the Rytm's (0x07), the A4's (0x06, traced: song.h), 0 none known (no start snapshot,

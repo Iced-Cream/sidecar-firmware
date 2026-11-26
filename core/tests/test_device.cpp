@@ -237,7 +237,7 @@ int main() {
   CHECK(device::slot_held_by(nullptr) == 1 && !device::held(0) && device::g_links[0].parting && device::cur().index == 1);
   CHECK(device::route_of(0) == 1 && device::leaving());
   device::step(true);   // its edits saved: slot 0 free for any box
-  CHECK(!device::g_links[0].parting && !device::leaving() && device::slot_held_by(nullptr) == 1);   // (the Rytm stays where she is)
+  CHECK(!device::g_links[0].parting && !device::leaving() && device::slot_held_by(nullptr) == 1);   // (the Rytm stays where it is)
   {
     char b[64];
     const char* p = "/.rytm/pools/P.txt";
@@ -382,7 +382,7 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    device::rytm_on_usb(true);                         // the Rytm on USB first: the A4 after her takes slot 1
+    device::rytm_on_usb(true);                         // the Rytm on USB first: the A4 after it takes slot 1
     send(hello(device::kA4.id));                       // its hello again: the A4's trim on its slot, nothing else
     out::Control& a4b = out::control_of(kVoiceSlots - 1);
     CHECK(a4b.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));

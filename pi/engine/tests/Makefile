@@ -28,6 +28,10 @@ build/test_mirror_assign: test_mirror_assign.cpp ../mirror_assign.h check.h
 build/test_periodic_starve: test_periodic_starve.cpp ../periodic_starve.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# usb=mirror: a box shown only once its audio runs both ways; a starved stream restarted (attach_gate.h)
+build/test_attach_gate: test_attach_gate.cpp ../attach_gate.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -122,6 +126,10 @@ build/test_slotfx_ref: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../ma
 	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # ... on 16 voices (the Pi's): slot 1's instances beside slot 0's (SLOTFX_BOX1=1)
 build/test_slotfx_ref16: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+# the Rytm in either slot (attach order): its stems pace its slot's send FX and SRC MIX alike; a box's voices pace its own
+build/test_rytm_slot1: test_rytm_slot1.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the recorder (WAV writer, ring, channel lists) on a temp folder
@@ -233,6 +241,25 @@ build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(w
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
 	  -Ishim_dwc -Ibuild/dwc/include -I. -I.. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
 	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp
+# the USB MIDI host's IN requests (test_midi_rxqueue.cpp, pi/circle/circle-midi-rxqueue.patch): Circle's usbmidihost.cpp with
+# the engine's patch stack (pi/engine/build.sh's order), copied into build/umh and patched there; built for the xHCI
+# (RASPPI 4: both buffers in flight, no pause after a zero-length packet) and the DWHCI (RASPPI 3: Circle's behaviour)
+UMH_PATCHES := ../../circle/spike2/circle-xhci-urbqueue.patch $(addprefix ../../circle/,circle-midi-async.patch circle-xhci-dropurbs.patch \
+	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch)
+build/umh/.patched: $(UMH_PATCHES)
+	@test -f $(DWC_ROOT)/lib/usb/usbmidihost.cpp || { echo "test_midi_rxqueue: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
+	@rm -rf build/umh && mkdir -p build/umh/lib/usb
+	@cp -R $(DWC_ROOT)/include build/umh/ && cp $(DWC_ROOT)/lib/usb/usbmidihost.cpp $(DWC_ROOT)/lib/usb/xhciendpoint.cpp $(DWC_ROOT)/lib/usb/usbmidi.cpp \
+	  $(DWC_ROOT)/lib/usb/usbrequest.cpp build/umh/lib/usb/
+	@# a patch already in the checkout (pi/circle/build.sh puts spike2's into pi/circle/build/circle) is not applied again
+	@cd build/umh && for p in $(UMH_PATCHES); do patch -s -f -R -p1 --dry-run < ../../$$p >/dev/null 2>&1 || patch -s -p1 < ../../$$p || exit 1; done
+	@touch $@
+UMH_CXX = $(CXX) -std=c++17 -O1 -g -Wall -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -fno-exceptions -fno-rtti \
+	  -DAARCH=64 -Ibuild/umh/include -I.
+build/test_midi_rxqueue: test_midi_rxqueue.cpp build/umh/.patched check.h
+	$(UMH_CXX) -DRASPPI=4 -o $@ $< build/umh/lib/usb/usbmidihost.cpp
+	$(UMH_CXX) -DRASPPI=3 -o $@_dwhci $< build/umh/lib/usb/usbmidihost.cpp
+	./$@_dwhci
 build/test_stor_fatfs: build/fatfs-fat/ff.h $(FATFS_DEPS)
 	cc -O1 -g -w -c -o build/fatfs-fat/ff.o build/fatfs-fat/ff.c && cc -O1 -g -w -c -o build/fatfs-fat/ffunicode.o build/fatfs-fat/ffunicode.c
 	$(CXX) $(CXXFLAGS) -Ibuild/fatfs-fat -o $@ test_stor_fatfs.cpp ../stor_vol.cpp build/fatfs-fat/ff.o build/fatfs-fat/ffunicode.o

@@ -137,7 +137,7 @@ int main() {
   CHECK(!strcmp(prj(0).key, "RYP"));   // boot: slot 0's folder; slot 1 has no box yet
 
   // the A4 attached after the Rytm (slot 1), then the Rytm leaves: a lone A4 in slot 1 (attach order: it does not move), its
-  // own project from /.a4; the Rytm's stays in slot 0, saved, until she comes back
+  // own project from /.a4; the Rytm's stays in slot 0, saved, until it comes back
   device::rytm_on_usb(true);
   hello_a4();
   device::rytm_on_usb(false);

@@ -207,13 +207,13 @@ build has them in `/.rytm` and the first boot moves them. A box's folder holds o
 the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.digitakt`) from then on, on
 whichever transport it spoke (`device::slot_of`), and its project, lists, store and settings are read from that folder at its
 attach (`project_attach_step`, either slot). No file stores a slot number. A box attaches with its hello (`4F`), the Rytm with
-her 35, and on the Pi any box with its USB device (`device::usb_attach`
+its 35, and on the Pi any box with its USB device (`device::usb_attach`
 at enumeration: the same type is the same slot both ways). Status 3 (restart) is no longer sent, and `/.rytm/device` chooses
 nothing any more.
 
-**At boot** slot 0 is presumed the Rytm's (`Link::presumed`): her project is read from `/.rytm` as it always was, so a *stock*
-Rytm (no mods, so no 35) is slot 0 as it always was. Her first message confirms it. A box whose hello (or USB) comes before
-any word from her takes slot 0 instead, and its folder is read into it.
+**At boot** slot 0 is presumed the Rytm's (`Link::presumed`): its project is read from `/.rytm` as it always was, so a *stock*
+Rytm (no mods, so no 35) is slot 0 as it always was. Its first message confirms it. A box whose hello (or USB) comes before
+any word from it takes slot 0 instead, and its folder is read into it.
 
 **A box that leaves** (`device::release`: its USB device gone, its transport down, another box's hello or a Rytm's 35 on its
 transport): its voices, transport, arpeggiator and MIDI notes stop, its transports route nowhere, and its edits are saved into
@@ -253,10 +253,13 @@ changes nothing here.
   tick runs once per live slot inside that slot's Scope (`device::live`: held, saving after its box left, or the base).
   Outside any Scope it is `g_base`: slot 0 while it is held, else the slot that is, so code that never names a slot does
   what it always did.
-- **The Rytm's own machinery** (her params, scene and QPERF, kSnd, rytm_dump and patwrite, the calibration and her stems, the
-  recorder's fxin, the JUNO / FM names to her, her MIDI CONFIG and SONG replay, `hooks.transport`) follows her slot:
-  `device::rytm_at(s)`, `rytm_slot()` (-1 none), `rytm_home()` (her slot, else 0, where her state is read). Never slot 0 as
+- **The Rytm's own machinery** (its params, scene and QPERF, kSnd, rytm_dump and patwrite, the calibration and its stems, the
+  recorder's fxin, the JUNO / FM names to it, its MIDI CONFIG and SONG replay, `hooks.transport`) follows its slot:
+  `device::rytm_at(s)`, `rytm_slot()` (-1 none), `rytm_home()` (its slot, else 0, where its state is read). Never slot 0 as
   such. On one slot (the Teensy) `rytm_at` is always true, as slot 0 always was.
+  On the Pi, its pattern dumps and FILL's answers are read from whichever transport is routed to its slot
+  (`bridge::rytm_byte(t, b)` through `device::rytm_route(t)`: transport 0 unless it carries another box, transport 1 while it
+  carries it), in its Scope.
 - **Per-slot module state** is one struct per slot, `[kVoiceSlots]` (or `Per<T>`), read through an accessor of the slot in
   hand (`prj()`, `pools::S()`, `ins::control_of(slot)`, `out::control_of(slot)`, `fx::control_of(slot)`,
   `master::control_of(slot)`).
@@ -274,7 +277,7 @@ changes nothing here.
 | LFOs and the modulation layer | `core/mod` | a box's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is the Rytm's slot's |
 | INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines |
 | output stage | `pi/engine/output.*`, `side_out.h` | beside a Rytm, slot 1's voices go to a side stage paced by its own box's stream; alone, a box has the base stage |
-| send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s |
+| send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s. The Rytm's instance, in either slot, is paced by its stems from its own stream's IN (`sendfx_pi::FromRytm(slot)`, SRC MIX `masterfx_pi::Stems(slot)`; its report 50 in `master::rytm()`); another box's by its voices |
 | user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport |
 | scenes and the XY pad | `core/ui` | |
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
@@ -376,7 +379,7 @@ older stock-firmware path: an A4 with no mod streamed beside the Rytm, audio onl
 
 ### One per Sidecar by design
 
-The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow her
+The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow its
 slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) are in `/.sidecar`, no box's.
 
 ### Named gaps
@@ -396,9 +399,6 @@ What the second box does not have yet, or has differently:
   project names.
 - **Readers off the control core** (`gr` / `wt` / `msamp` `entry_note`, the `srclib` browser, `page_gfx`, `preset_index`)
   read the slot in hand's lists. The console's `gr=pick`, `wt=pick`, `msamp=pick` and `voice:` forms take voices 0..7 only.
-- **The Rytm in slot 1** (she attached second): her stems into her send FX and SRC MIX on the Pi (`ob_usb.cpp`
-  `FromRytm`, `masterfx_pi::Stems`) run only while she is slot 0; the Pi's `rytm_byte` tap (her pattern dumps, FILL's
-  writer) reads transport 0 only.
 - **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.

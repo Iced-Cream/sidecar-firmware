@@ -279,6 +279,12 @@ grep -q circle-hub-poll lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circl
 # transfers to the second box were 64 bytes, an A4 OS image through the relay ran at 28.5 KiB/s, RF2; after
 # circle-midi-async, idempotent; the object is rebuilt, as a header constant is not tracked by lib/usb'"'"'s make)
 grep -q circle-midi-async512 include/circle/usb/usbmidihost.h || { patch -p1 < /repo/pi/circle/circle-midi-async512.patch && rm -f lib/usb/usbmidihost.o lib/usb/libusb.a; }
+# then the USB MIDI IN kept served on the xHCI (pi/circle/circle-midi-rxqueue.patch: both receive buffers in flight, and a
+# zero-length completion asks again at once instead of after 10 ms; the Rytm overran its own 4 KB transmit buffer while
+# the Pi did not read, one event packet replaced by the one 1008 later in a Data RPC reply, T464; the DWHCI keeps one
+# request and the pause; after circle-usb-urb-free and circle-midi-async512, idempotent; the class layout changes, so
+# the objects that use it are rebuilt)
+grep -q circle-midi-rxqueue include/circle/usb/usbmidihost.h || { patch -p1 < /repo/pi/circle/circle-midi-rxqueue.patch && rm -f lib/usb/usbmidihost.o lib/usb/usbdevicefactory.o lib/usb/libusb.a; }
 # then the endpoints polled every microframe counted (pi/circle/circle-xhci-iv1count.patch: "xhciep: periodic iv1 N (+ slot S
 # ep 0xAA ...)" each time one is configured or removed, a warning past 5, and CXHCIEndpoint::GetPeriodicIv1 for ob_usb.cpp'"'"'s
 # "periodic starvation" line: the VL805 starved one of them at 6 busy, XV1/XR1, diagnosis-periodic-starvation.md; no change to
@@ -289,6 +295,10 @@ grep -q circle-xhci-iv1count include/circle/usb/xhciendpoint.h || patch -p1 < /r
 # when a Rytm came back after its restart - core 0 halted, the 15 s watchdog rebooted the Pi; GetSlotID gives 0 then, and
 # Transfer, ResetFromHalted, GetEPState and the endpoint setup fail on it instead; after circle-xhci-iv1count, idempotent)
 grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/circle/circle-xhci-slotgone.patch
+# then Stop Endpoint and the queued URBs dropped, for a box stream restarted on the Pi (pi/circle/circle-xhci-stopep.patch:
+# CObUsb::RestartStream, attach_gate.h - a box the VL805 starves gets its endpoints added again; after
+# circle-xhci-slotgone, idempotent)
+grep -q circle-xhci-stopep include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-stopep.patch
 make -C lib/usb -j$J >/dev/null
 # then PCIe config access for the VL805 (pi/circle/circle-pcie-config.patch: ob_usb.cpp keeps the VL805 ASPM bits off, its
 # own link power saving: with it on, the whole periodic schedule stopped for one MFINDEX wrap, 2.048 s, PW1; lib/, so

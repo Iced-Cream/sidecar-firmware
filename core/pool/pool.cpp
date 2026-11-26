@@ -13,6 +13,7 @@
 #include "../seq/seq.h"
 #include "../song/song.h"
 #include "../fx/insert.h"
+#include "../fx/master.h"
 #include "../fx/out.h"
 #include "../fx/send_fx.h"
 #include "../host_link.h"
@@ -73,6 +74,13 @@ static struct SlotFns {
 static struct FxSlotFn {
   FxSlotFn() { fx::slot_fn = fx_slot; }
 } g_fx_slot_fn;
+#if CORE_POLY
+// the Rytm's report 50 (core/fx/master.h rytm()): its slot's master control, whichever slot it holds
+static int rytm_home_slot() { const int s = device::rytm_home(); return s < kVoiceSlots ? s : 0; }
+static struct MasterRytmFn {
+  MasterRytmFn() { master::rytm_slot_fn = rytm_home_slot; }
+} g_master_rytm_fn;
+#endif
 
 CORE_COLD int pool_slot(float p11) {
 #if CORE_MSAMP

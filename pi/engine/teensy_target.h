@@ -65,7 +65,7 @@ public:
 	static void MidiTap (const u8 *pEventPacket);	// xHCI IRQ (link1::Tap): the box's USB MIDI, for the computer
 	static boolean Relaying (void);			// a relay is here and started (not relaytest=1)
 	// the Rytm (slot 0, the host link) on the relay: its USB MIDI both ways, as the gadget does for it on USB-C
-	static boolean ShowsRytm (void);		// the relay is started and shows slot 0
+	static boolean ShowsRytm (void);		// the relay is started and shows the host link's box (any slot)
 	static void RytmTap (const u8 *pEventPacket);	// xHCI IRQ (MIDIPacketHandler): the Rytm's packet, for the computer
 	static boolean ForRytm (u32 *pPacket);		// core 0's loop (the USB merge): the computer's next packet for the Rytm
 	static boolean ForRytmInSysEx (void);		// a SysEx of the computer's is half sent to the Rytm
@@ -204,7 +204,10 @@ private:
 	volatile boolean m_bCutRytm;			// the box went: MirrorPoll cuts m_ToRytmPath
 	unsigned MidiRoom (void) const;			// packets the box-bound MIDI queue (link1's, or the Rytm's) takes now
 	void QueueToPc (const u8 *pEventPacket);	// IRQ level: one packet onto m_MidiIn, flushed to the Teensy
-	static const unsigned MidiInRing = 512;
+	// T463/T464: 512 packets (2 KB) dropped part of a Data RPC reply when the computer read late; the box is never held
+	// back for it (a Rytm made to wait overruns its own transmit buffer), so the ring holds the largest reply whole:
+	// 37457 SysEx bytes, 12486 packets
+	static const unsigned MidiInRing = 16384;
 	u32 m_MidiIn[MidiInRing];			// the box's event packets for the computer
 	volatile unsigned m_nMidiInHead, m_nMidiInTail;
 	volatile unsigned m_nTakenDue;

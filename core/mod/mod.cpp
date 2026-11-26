@@ -401,7 +401,7 @@ CORE_COLD uint8_t fx_knob(int slot, int knob, uint8_t val) {
 }
 
 CORE_COLD uint8_t fx_send(int track, int slot, uint8_t val) {
-  Entry* e = find_e(L(device::rytm_home()), tid(kSnd, track, slot & 1));   // (the Rytm's sends: her slot's layer)
+  Entry* e = find_e(L(device::rytm_home()), tid(kSnd, track, slot & 1));   // (the Rytm's sends: its slot's layer)
   if (!e) return val;
   e->base = val;
   int iv = rnd0(clampf(start_of(*e) + e->off, 0.0f, 127.0f));
@@ -418,7 +418,7 @@ CORE_COLD uint8_t knob_base(int slot, int knob) {
 CORE_COLD uint8_t send_base(int track, int slot) {
   if (track < 0 || track >= fx::kTracks) return 0;
   const Entry* e = find_e(L(device::rytm_home()), tid(kSnd, track, slot & 1));
-  return e ? (uint8_t)e->base : fx::control_of(device::rytm_home()).send[track][slot & 1];   // (the Rytm's: her slot's)
+  return e ? (uint8_t)e->base : fx::control_of(device::rytm_home()).send[track][slot & 1];   // (the Rytm's: its slot's)
 }
 
 CORE_COLD float base_of(int vi, int k, float cur) {

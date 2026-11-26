@@ -1437,6 +1437,21 @@ int main() {
     m[100] ^= 1;   // a damaged one: refused, the last good kept
     for (uint8_t c : m) rytm_dump::byte(c);
     CHECK(rytm_dump::stats().bad == 1 && rytm_dump::record(nullptr, &gen) && gen == 1);
+    {   // a stock Rytm says no 2D 02: a test's rytmpat=fetch:n asks for pattern n (a data byte; 0x80 would not pass USB MIDI)
+      const int was = rytm_dump::active_pattern();
+      char o[160];
+      g_out.clear();
+      CHECK(rytm_dump::command("rytmpat=fetch:5", o, sizeof o) && rytm_dump::active_pattern() == 5);
+      rytm_dump::tick(now_ms());
+      CHECK(rq() == 1 && g_out.back()[9] == 5);
+      for (uint8_t c : dump_of(rec, 5)) rytm_dump::byte(c);
+      CHECK(rytm_dump::command("rytmpat=fetch:128", o, sizeof o) && rytm_dump::active_pattern() == 5);
+      CHECK(rytm_dump::record(&pat, &gen) && pat == 5 && gen == 2);
+      rytm_dump::pattern_changed(was);   // (back as it was: its fetch answered, nothing left pending)
+      advance_ms(1000), rytm_dump::tick(now_ms());
+      for (uint8_t c : dump_of(rec, was < 0 ? 3 : was)) rytm_dump::byte(c);
+      CHECK(!rytm_dump::pending() || rytm_dump::stats().requests == rytm_dump::stats().answers);
+    }
     g_out.clear();
     rytm_dump::set_playing(false);
     auto tk = [] { rytm_dump::tick(now_ms()); };   // the dump's own tick: the transport as set here, not seq's

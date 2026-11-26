@@ -116,7 +116,7 @@ CORE_COLD void mfx_draw(Canvas& c, int page, int npages, uint32_t ms) {
   } else if (master::cur().src == master::kMix) {
     const int on = master::stems_on_main();
     if (on) sniprintf(b, sizeof b, CORE_STR("%d VOICES STILL ON MAIN"), on);
-    footer(c, on ? b : master::control.known ? "THROUGH: PANS FROM THE RYTM" : "MONO: TRACKS OFF MAIN");
+    footer(c, on ? b : master::rytm().known ? "THROUGH: PANS FROM THE RYTM" : "MONO: TRACKS OFF MAIN");
   } else {
     footer(c, "RYTM MIX NOT IN THE CHAIN");
   }
