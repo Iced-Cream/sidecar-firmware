@@ -10,6 +10,7 @@
 #include "fmt/fmt.h"
 #include "fx/amp.h"
 #include "fx/insert.h"
+#include "fx/fx_guard.h"
 #include "fx/out.h"
 #include "host_link.h"
 #if CORE_POLY
@@ -172,6 +173,7 @@ CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
 }
 static void shed_over();
 CORE_COLD void cpu_step() {
+  fx::guard::poll();   // the measured guard's mutes worded and logged, and released once their slot is set again (fx/fx_guard.h)
   shed_over();
   if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
 }
@@ -408,6 +410,7 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   if (h || kVoiceSlots > 1) out::control_of(slot_of_voice(voice_base(l))).trk10 = p ? p->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, h ? h->name : "free", l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
+  if (h) fx::guard::clear_box(l.index);   // its box attached (again): the measured guard's mutes of its slot released
   if (h) admit_slot(l, back);
   else admit_left(l);
 }

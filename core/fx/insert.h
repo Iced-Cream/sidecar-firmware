@@ -40,6 +40,7 @@
 #include <string.h>
 
 #include "fx/amp.h"
+#include "fx/fx_guard.h"
 #include "machines.h"
 #include "fx/sat_fx.h"
 
@@ -270,7 +271,8 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s]) || slot_[c][s].cur ||
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s] && !fx::guard::ins_muted(box_, c, s)) ||
+          slot_[c][s].cur ||
           slot_[c][s].wet > 0.0f)
         return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
@@ -322,13 +324,22 @@ class Engine {
 
  private:
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
+  // (the measured guard, fx_guard.h: a running slot's time on its core; a slot it muted fades out like a refused one)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s]
+    const int gu = fx::guard::ins_unit(box_, c, s);
+    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s] && !fx::guard::muted(gu)
                          ? k.type[c][s]
-                         : kOff;   // (no AMP: dry; not admitted: dry, CPU admission)
+                         : kOff;   // (no AMP: dry; not admitted: dry, CPU admission; muted for its measured time: dry)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
-    const float step = (float)m / kFadeFrames;
+    const uint32_t t0 = fx::guard::stamp();
+    // (muted by a late block: out over 1 ms, guard::kShortFadeFrames, as the slot still costs its time on a late core)
+    RunSlot(o, c, s, want, x, r, m, k, want == kOff && fx::guard::short_fade(gu) ? fx::guard::kShortFadeFrames : kFadeFrames);
+    if (const uint32_t sl = fx::guard::slow_us(gu)) fx::guard::spin_us(sl);   // (a test's slow effect: fxguard=slow:)
+    fx::guard::note(gu, fx::guard::stamp() - t0, m);
+  }
+  void RunSlot(Slot& o, int c, int s, int want, float* x, float* r, int m, const Control& k, int fade = kFadeFrames) {
+    const float step = (float)m / fade;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
       __atomic_store_n(&o.cur, (uint8_t)want, __ATOMIC_RELEASE);
       o.fresh = true;
