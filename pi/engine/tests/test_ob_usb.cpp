@@ -46,13 +46,18 @@ const Profile* by_usb(uint16_t vid, uint16_t pid, bool without_hello) {   // dev
 static int g_rytm_usb = 0;   // the Rytm's slot held (usb_attach / usb_detach)
 // device.cpp's attach order without the engine: a box's slot already, else the lowest free one; freed when its device goes
 static const core::device::Profile* g_slot_of[2];
+static uint32_t g_slot_uid[2];
 namespace core { namespace device {
-int usb_attach(const Profile* p) {
+uint32_t g_attach_uid = 0;   // the UID the last usb_attach was given
+int g_midi_slot[2] = {-1, -1};   // set_midi_slot's
+void set_midi_slot(int t, int s) { if (t >= 0 && t < 2) g_midi_slot[t] = s; }
+int usb_attach(const Profile* p, uint32_t uid) {
+  g_attach_uid = uid;
   for (int k = 0; k < 2; ++k)
-    if (g_slot_of[k] == p) return k;
+    if (g_slot_of[k] == p && (!uid || !g_slot_uid[k] || g_slot_uid[k] == uid)) return k;   // (two of a type: by UID)
   for (int k = 0; k < 2; ++k)
     if (!g_slot_of[k]) {
-      g_slot_of[k] = p;
+      g_slot_of[k] = p, g_slot_uid[k] = uid;
       if (p->audio == &out::kRytmMk2) ++g_rytm_usb;
       return k;
     }
@@ -101,9 +106,16 @@ struct Bus {
   CUSBHostController host;
   CUSBFunction parent{&dev, &host};
   CUSBFunction* ob = nullptr;
-  Bus(const uint8_t* cfg, uint16_t pid) {
+  Bus(const uint8_t* cfg, uint16_t pid, uint32_t uid = 0) {
     dev.config = cfg;
     dev.desc.idVendor = 0x1935, dev.desc.idProduct = pid;
+    if (uid)   // the box answers the vendor request 0 (ObReadUid): a word 1, then its UID, little-endian
+      host.vendor_in = [uid](u8 r, u8* b, unsigned n) {
+        if (r != 0 || n != 8) return -1;
+        const u8 a[8] = {1, 0, 0, 0, (u8)uid, (u8)(uid >> 8), (u8)(uid >> 16), (u8)(uid >> 24)};
+        memcpy(b, a, 8);
+        return 8;
+      };
     ob = RytmObDeviceCreate(&parent);
   }
   ~Bus() { delete ob; }
@@ -158,7 +170,7 @@ Output g_OutputSide;   // the side stage (side_out.h): a box beside the Rytm pul
 // the host link's USB MIDI is box ob's (the same USB strings, as Circle copies them; the kernel's SetMidiDevices each pass):
 // its MIDI OUT's failures go with that box's endpoints (MidiHalted, BoxWaits)
 static void host_link_is(CUSBFunction* ob) {
-  static CDevice midi;
+  static CUSBMIDIDevice midi;
   ob->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), midi.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
   CObUsb::SetMidiDevices(&midi, nullptr);
 }
@@ -1264,6 +1276,29 @@ int main() {
     CHECK(lnk == 0x10120040);
     CHECK(count_lines("VL805 ASPM kept off (obaspmoff=1): Link Control/Status 10120040", 0) == 1);
     CTimer::s_now = 0;
+  }
+  {  // same type twice (design 2026-11-26): two Rytms, told apart by the UID of the vendor request 0, each its own slot; their
+     // USB MIDI devices carry the same strings, and each is matched to its own stream by its USB device
+    Bus a(g_rytm, 0x0b48, 0x1234abcd);
+    CHECK(a.ob && core::device::g_attach_uid == 0x1234abcd && ((CObUsb*)a.ob)->Uid() == 0x1234abcd);
+    CHECK(a.host.vendor.size() == 1 && a.host.vendor[0].type == 0xC0 && a.host.vendor[0].req == 0 && a.host.vendor[0].index == 0);
+    Bus b(g_rytm, 0x0b48, 0x9f003fa2);
+    CHECK(b.ob && ((CObUsb*)b.ob)->Uid() == 0x9f003fa2);
+    const unsigned sa = ((CObUsb*)a.ob)->Slot(), sb = ((CObUsb*)b.ob)->Slot();
+    CHECK(sa != sb && CObUsb::Box(sa) == (CObUsb*)a.ob && CObUsb::Box(sb) == (CObUsb*)b.ob);
+    CUSBMIDIDevice ma, mb;   // the same strings, as Circle copies them from two Rytms
+    for (CDevice* d : {(CDevice*)&ma, (CDevice*)&mb, (CDevice*)a.ob, (CDevice*)b.ob}) d->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
+    ma.usb = &a.dev, mb.usb = &b.dev;
+    CObUsb::SetMidiDevices(&mb, &ma);   // B's MIDI on the host link, A's on link1
+    CHECK(CObUsb::MidiSlot(0) == (int)sb && CObUsb::MidiSlot(1) == (int)sa);
+    CHECK(core::device::g_midi_slot[0] == (int)sb && core::device::g_midi_slot[1] == (int)sa);
+    CObUsb::SetMidiDevices(&ma, &mb);
+    CHECK(CObUsb::MidiSlot(0) == (int)sa && CObUsb::MidiSlot(1) == (int)sb);
+    CObUsb::SetMidiDevices(nullptr, nullptr);
+    CHECK(CObUsb::MidiSlot(0) == -1 && core::device::g_midi_slot[0] == -1);
+    // a box that does not answer the vendor request: no UID (the core asks by MIDI)
+    Bus c(g_rytm, 0x0b48);
+    CHECK(c.ob == nullptr && core::device::g_attach_uid == 0 && c.host.vendor.size() == 1);   // (a third box: no slot)
   }
   printf("test_ob_usb: ok\n");
   return 0;

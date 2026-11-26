@@ -161,8 +161,10 @@ void CObUsb::Rebind (void)
 	s_pThis = s_pBox[0] != 0 ? s_pBox[0] : s_pBox[1];
 }
 
-// Circle's USB MIDI device has no link back to its USB device, but it carries that device's vendor, product and serial
-// strings (CDevice's properties, copied from its function), as each slot's stream does: the same three strings, the same box
+// A MIDI device is a slot's box when it is part of the same USB device as the slot's stream (circle-midi-usbdevice.patch:
+// CUSBMIDIDevice::GetUSBDevice, the USB MIDI host function's device). Two boxes of one type carry the same vendor, product
+// and serial strings (every Elektron box says serial 000000000001), so the strings below are only the fallback for a MIDI
+// device that names no USB device: the same three strings, the same box, as before two boxes of one type.
 static boolean SameStrings (const CDevice *pA, const CDevice *pB)
 {
 	static const CDevice::TProperty P[] = {CDevice::PropertyVendor, CDevice::PropertyProduct, CDevice::PropertySerialNumber};
@@ -174,14 +176,16 @@ static boolean SameStrings (const CDevice *pA, const CDevice *pB)
 	return TRUE;
 }
 
-void CObUsb::SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1)
+void CObUsb::SetMidiDevices (CUSBMIDIDevice *pHostLink, CUSBMIDIDevice *pLink1)
 {
-	const CDevice *const pMidi[2] = {pHostLink, pLink1};
+	CUSBMIDIDevice *const pMidi[2] = {pHostLink, pLink1};
 	for (unsigned t = 0; t < 2; t++)
 	{
 		int nSlot = -1;
+		const CUSBDevice *pUsb = pMidi[t] != 0 ? pMidi[t]->GetUSBDevice () : 0;
 		for (unsigned k = 0; k < Slots && pMidi[t] != 0; k++)
-			if (s_pBox[k] != 0 && SameStrings (s_pBox[k], pMidi[t])) nSlot = (int) k;
+			if (s_pBox[k] != 0 && (pUsb != 0 ? s_pBox[k]->GetDevice () == pUsb : SameStrings (s_pBox[k], pMidi[t]))) nSlot = (int) k;
+		core::device::set_midi_slot ((int) t, nSlot);
 		if (nSlot == s_nMidiSlot[t]) continue;
 		s_nMidiSlot[t] = nSlot;
 		if (nSlot < 0) CLogger::Get ()->Write (From, LogNotice, "midi: %s is no slot's box", t == 0 ? "the host link" : "link1");
@@ -457,6 +461,20 @@ static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
 	return pHub;
 }
 
+// The box's DeviceUID by the vendor request Overbridge sends (IOCTL_OB_PROPERTIES_GET_UID: bmRequestType 0xC0, bRequest 0,
+// 8 bytes, a word 1 then the UID, little-endian as the box stores it; Rytm 1.74 FUN_40004294), on EP0 before anything
+// else: the same 32-bit value as the MIDI RPC 0x03 (design 2026-11-26, findings). 0: no answer (the core asks by MIDI).
+u32 ObReadUid (CUSBFunction *pParent)
+{
+	alignas (64) static u8 Buf[64];		// (DMA: cache-line aligned; the factory runs on core 0, one device at a time)
+	memset (Buf, 0, sizeof Buf);
+	CUSBHostController *pHost = pParent->GetHost ();
+	const int n = pHost != 0 ? pHost->ControlMessage (pParent->GetEndpoint0 (), 0xC0, 0, 0, 0, Buf, 8) : -1;
+	const u32 nUid = n == 8 ? (u32) Buf[4] | (u32) Buf[5] << 8 | (u32) Buf[6] << 16 | (u32) Buf[7] << 24 : 0;
+	(void) n;
+	return nUid;
+}
+
 CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 {
 	CUSBFunction *pFollow = CObFollow::Create (pParent);		// a4=1: an A4's stream beside the Rytm's (ob_follow.h)
@@ -470,7 +488,8 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 	const core::out::Device *pAudio = p->audio;
 	// attach order (core/device/device.h): its slot already, else the lowest free one, reserved for it now; the control core
 	// makes it the box's at its next pass (a stock box, a stock Rytm too: its USB is its hello)
-	const int nSlot = core::device::usb_attach (p);
+	const u32 nUid = ObReadUid (pParent);		// two boxes of one type: which one this is (design 2026-11-26)
+	const int nSlot = core::device::usb_attach (p, nUid);
 	if (nSlot < 0 || nSlot >= (int) CObUsb::Slots || CObUsb::Box ((unsigned) nSlot) != 0)	// one box a slot: a third keeps its MIDI, Circle goes on to its interfaces
 	{
 		CLogger::Get ()->Write (From, LogWarning, "%s: no slot free (two boxes stream already), no audio from this one", pAudio->name);
@@ -482,7 +501,9 @@ CUSBFunction *RytmObDeviceCreate (CUSBFunction *pParent)
 					(unsigned) pAudio->in_channels, (unsigned) pAudio->channels);
 		return 0;
 	}
-	return new CObUsb (pParent, pAudio, (unsigned) nSlot);
+	CObUsb *pBox = new CObUsb (pParent, pAudio, (unsigned) nSlot);
+	pBox->SetUid (nUid);
+	return pBox;
 }
 
 void CObUsb::PollReEnum (void)
@@ -1148,6 +1169,8 @@ boolean CObUsb::Configure (void)
 	const TUSBDeviceDescriptor *pDevDesc = GetDevice ()->GetDeviceDescriptor ();
 	CLogger::Get ()->Write (From, LogNotice, "%s (%04x:%04x) claimed", m_pAudio->name, (unsigned) pDevDesc->idVendor,
 				(unsigned) pDevDesc->idProduct);
+	if (m_nUid != 0) CLogger::Get ()->Write (From, LogNotice, "slot %u: UID %08x (vendor request 0)", m_nSlot, (unsigned) m_nUid);
+	else CLogger::Get ()->Write (From, LogNotice, "slot %u: no UID from the vendor request (the core asks by MIDI)", m_nSlot);
 
 	// Overbridge needs high speed. Below it the stream cannot start ("cannot submit the first URBs"), so refuse at
 	// once and have the root port enumerate the box again (ob_speed.h): a new port reset, a new chance at high speed

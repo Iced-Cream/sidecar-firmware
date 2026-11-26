@@ -241,7 +241,8 @@ build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(w
 # the engine's patch stack (pi/engine/build.sh's order), copied into build/umh and patched there; built for the xHCI
 # (RASPPI 4: both buffers in flight, no pause after a zero-length packet) and the DWHCI (RASPPI 3: Circle's behaviour)
 UMH_PATCHES := ../../circle/spike2/circle-xhci-urbqueue.patch $(addprefix ../../circle/,circle-midi-async.patch circle-xhci-dropurbs.patch \
-	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch)
+	       circle-midi-reset.patch circle-midi-reset2.patch circle-usb-urb-free.patch circle-midi-async512.patch circle-midi-rxqueue.patch \
+	       circle-midi-usbdevice.patch)
 build/umh/.patched: $(UMH_PATCHES)
 	@test -f $(DWC_ROOT)/lib/usb/usbmidihost.cpp || { echo "test_midi_rxqueue: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
 	@rm -rf build/umh && mkdir -p build/umh/lib/usb

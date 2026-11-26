@@ -299,6 +299,16 @@ grep -q circle-xhci-slotgone lib/usb/xhciusbdevice.cpp || patch -p1 < /repo/pi/c
 # CObUsb::RestartStream, attach_gate.h - a box the VL805 starves gets its endpoints added again; after
 # circle-xhci-slotgone, idempotent)
 grep -q circle-xhci-stopep include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-stopep.patch
+# then a USB MIDI device names its USB device (pi/circle/circle-midi-usbdevice.patch: CUSBMIDIDevice::GetUSBDevice, set by the USB
+# MIDI host; CObUsb::SetMidiDevices matches a box'"'"'s MIDI to its stream by it: two boxes of one type have the same USB strings,
+# design 2026-11-26; after circle-midi-reset2, idempotent). The class grows a member, so every object that makes one is
+# rebuilt: lib/usb, and the gadget library when the tree has one
+if ! grep -q circle-midi-usbdevice include/circle/usb/usbmidi.h; then
+  patch -p1 < /repo/pi/circle/circle-midi-usbdevice.patch
+  G=; [ -f lib/usb/gadget/libusbgadget.a ] && G=1
+  rm -f lib/usb/*.o lib/usb/libusb.a lib/usb/gadget/*.o lib/usb/gadget/libusbgadget.a
+  [ -z "$G" ] || make -C lib/usb/gadget -j$J >/dev/null
+fi
 make -C lib/usb -j$J >/dev/null
 # then PCIe config access for the VL805 (pi/circle/circle-pcie-config.patch: ob_usb.cpp keeps the VL805 ASPM bits off, its
 # own link power saving: with it on, the whole periodic schedule stopped for one MFINDEX wrap, 2.048 s, PW1; lib/, so
