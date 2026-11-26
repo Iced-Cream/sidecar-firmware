@@ -105,6 +105,10 @@ static u64 s_nFxLate3 = 0;
 static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
 static volatile u64 s_nLastBlk[2][3];		// each render core's last block, voices and chains: [0] a base pass's, [1] a side pass's
 static volatile unsigned s_nFifoHeld[3], s_nFifoRunMax;	// the late log: passes late for core 1 / 2, the longest low run
+// ... but only for a core over admission's limit or after a real underrun (decided 2026-11-26 after VA1, T515: fifo_late.h
+// counts): the passes the FIFO's hold left on time because the late core measured within the limit with no underrun (the
+// late log's "fits")
+static volatile unsigned s_nFifoFits[3];
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -577,10 +581,19 @@ void CEngineCores::RenderBlock (int nSide)
 		const bool bLate = nSide < 0
 			? s_FifoLate.step (false, g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, bSideOn, &bDip)
 			: s_FifoLate.step (true, g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, bSideOn, &bDip);
+		// admission's word at the limit (fifo_late.h counts, decided 2026-11-26 after VA1): the late core must measure at or
+		// over kLimitBp for its time a block (Load), or an output must have underrun lately; else the pass stays on time ("fits")
+		static fifo_late::Load s_Load[3];
+		static fifo_late::Under s_Under;
+		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
+		s_Under.step (g_Output.Underflows () + g_OutputSide.Underflows ());
 		if (bLate)
 		{
 			nLate = fifo_late::blame (s_nLastBlk[0][1], s_nLastBlk[1][1], s_nLastBlk[0][2], s_nLastBlk[1][2]);
-			s_nFifoHeld[nLate]++;
+			if (fifo_late::counts (s_Load[nLate].bp (FxLateTicks ()), core::admit::kLimitBp, s_Under.recent ()))
+				s_nFifoHeld[nLate]++;
+			else
+				s_nFifoFits[nLate]++, nLate = 0;
 		}
 		const unsigned nRun = nSide < 0 ? s_FifoLate.base.run : s_FifoLate.side.run;
 		if (nRun > s_nFifoRunMax) s_nFifoRunMax = nRun;
@@ -1032,6 +1045,8 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nFifoHeld1 = s_nFifoHeld[1]; s_nFifoHeld[1] = 0;
 	s->nFifoHeld2 = s_nFifoHeld[2]; s_nFifoHeld[2] = 0;
 	s->nFifoRunMax = s_nFifoRunMax; s_nFifoRunMax = 0;
+	s->nFifoFits1 = s_nFifoFits[1]; s_nFifoFits[1] = 0;
+	s->nFifoFits2 = s_nFifoFits[2]; s_nFifoFits[2] = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();

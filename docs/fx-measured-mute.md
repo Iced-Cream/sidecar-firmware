@@ -53,6 +53,13 @@ effect is muted only when its core is hot, since its cost is known from the benc
    block begins low (LT12h P5: unheld, late and on-time blocks alternated and the 4-in-a-row never came). 2 blocks, not
    1, after LT12i P5 (Connor): at 1 block the mute landed only once the FIFO was empty, 138 underruns heard as a scrape.
    Not for 64 passes after a stream (re)start, whose FIFO begins empty (pi/engine/fifo_late.h).
+   Admission's word at the limit (decided 2026-11-26 after VA1, T515): a pass the FIFO makes late counts for its core
+   only when that core measures at or over admission's limit (admit.h kLimitBp, 80 %) for its time a block (its last base
+   pass plus its last side pass, voices and chains, a running mean over 32 passes; at a steady load the stats' "c1 with
+   chains"), or when an output really underran within the last 64 passes. Else the pass stays on time and the late log
+   counts it under "fits". VA1 at 1200 MHz, admitted 79.77 %: the FIFO dipped and the late core's 8-9 us send effect was
+   muted three times while that core measured 74 % (core 1) and 63-69 % (core 2); every overload this rule is for
+   (LT12g-LT13) measured 82-83 %. One of VA1's three came with +4 underruns: that one still mutes.
    The side stage's FIFO is watched the same way at its own passes, and either FIFO's hold makes both kinds of pass
    late: LT12j set it at base passes only, so the late run broke at every side pass and the guard never saw the Rytm.
    One mute per low-buffer event: after any late mute both FIFOs' holds end and the next takes two new dips, so the

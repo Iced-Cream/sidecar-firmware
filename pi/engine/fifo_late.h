@@ -84,6 +84,52 @@ struct State {
   bool held() const { return grace == 0 && left > 0; }
 };
 
+// Admission's word at the limit (decided 2026-11-26 after VA1, T515): admission (core/device/admit.h) keeps each render
+// core within kLimitBp (80 %) in its worst case, and the FIFO's view must not mute an effect on a core that measures
+// within it. VA1 at 1200 MHz, admitted 79.77 %: the FIFO dipped and the late core's 8-9 us send effect was muted three
+// times, with the late core measuring 74 % (core 1) and 63-69 % (core 2); every overload this rule is for (LT12g, LT12h,
+// LT12j, LT13) measured 82-83 %. So a pass the FIFO makes late counts for its core only when the core measures at or over
+// the limit (Load), or an output really ran empty within Under::kRecent passes (an underrun, not a dip: O1 P1 had +4 in
+// its mute's 10 s, and a dropout is never left unanswered; decided 2026-11-26).
+//
+// Load: a render core's measured share as admission counts it: its time for one block of audio (its last base pass plus
+// its last side pass, voices and chains, as blame() sums them: both boxes' 12 frames are due every 250 us) over a
+// block's time, a running mean over ~2^kShift passes (~4-8 ms). Per block, not per wall second: the hold comes right
+// after a long control pass, when the render cores catch up back to back, and a core's share of the wall time then
+// looks near 100 % whatever its load; its time per block does not change. At a steady load it equals the stats'
+// "c1 with chains" (VA1 O1 P1: 74 %), which admission's limit is checked against.
+// cycle: the core's last base + side pass ticks; block: a 12-frame block's ticks.
+struct Load {
+  static constexpr unsigned kShift = 5;
+  uint64_t mean = 0;   // << kShift
+  bool primed = false;
+  void step(uint64_t cycle) {
+    if (!primed) primed = true, mean = cycle << kShift;
+    else mean += cycle - (mean >> kShift);
+  }
+  unsigned bp(uint64_t block) const {   // in 1/100 % (bp, as admit.h)
+    if (!block || !primed) return 0;
+    const uint64_t v = (mean >> kShift) * 10000u / block;
+    return v > 0xFFFFu ? 0xFFFFu : (unsigned)v;
+  }
+};
+// The FIFO really ran empty lately: the outputs' underflow counts (output.h Underflows: glitches while playing, not a
+// stream's restart) moved within the last kUnderRecent passes.
+struct Under {
+  static constexpr unsigned kRecent = 64;   // passes: two holds (State::kHold)
+  uint32_t last = 0;
+  unsigned since = kRecent;
+  bool primed = false;
+  void step(uint32_t underflows) {
+    if (!primed) primed = true, last = underflows;
+    if (underflows != last) last = underflows, since = 0;
+    else if (since < kRecent) ++since;
+  }
+  bool recent() const { return since < kRecent; }
+};
+// a pass the FIFO makes late counts for its core (cores.cpp): the core measures at or over the limit, or a real underrun
+inline bool counts(unsigned core_bp, unsigned limit_bp, bool underran) { return core_bp >= limit_bp || underran; }
+
 // The render core a late pass is for: 1 or 2, the one that took longer over its last base pass and its last side pass
 // together (each core's block, voices and chains: cores.cpp). No side stage: its blocks are 0 (cores.cpp clears them).
 inline unsigned blame(uint64_t c1_base, uint64_t c1_side, uint64_t c2_base, uint64_t c2_side) {
