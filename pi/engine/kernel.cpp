@@ -2263,6 +2263,10 @@ void CKernel::LogStats (void)
 		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2 || s.nFifoFits1 || s.nFifoFits2)
 			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u, fits c1 %u c2 %u | %s",
 					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, s.nFifoFits1, s.nFifoFits2, Late);
+		// (the late rule's two-box cycles: fifo_late.h cycle_late; a line of its own, so the late line's readers stay as they are)
+		if (s.nCycleLate1 || s.nCycleLate2 || s.nCycleFits1 || s.nCycleFits2)
+			m_Logger.Write (From, LogNotice, "fxguard cycles: late c1 %u c2 %u, fits c1 %u c2 %u",
+					s.nCycleLate1, s.nCycleLate2, s.nCycleFits1, s.nCycleFits2);
 	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)

@@ -130,6 +130,19 @@ struct Under {
 // a pass the FIFO makes late counts for its core (cores.cpp): the core measures at or over the limit, or a real underrun
 inline bool counts(unsigned core_bp, unsigned limit_bp, bool underran) { return core_bp >= limit_bp || underran; }
 
+// A late cycle (decided 2026-11-26 after AL1, T526, the owner's pick A): with two boxes a render core runs a base pass and
+// a side pass a block, and each alone is judged against a whole block. AL1's P5 (core 1 at 84 % with its chains): 222-265
+// passes a second went past a block, all the Rytm's side passes, and each A4 base pass between them was on time, so the
+// late rule's run (fx_guard.cpp kLateRun) never passed 2 and its backstop was dead whenever two boxes ran. So the run counts
+// cycles: at the side pass, the core's last base pass plus this side pass against a block (the base pass holds the run:
+// fx_guard.h core_done hold_run), and kLateRun late cycles in a row (1 ms) take the dearest as one box's 4 blocks do.
+// Gated as the FIFO's view is (counts): a late cycle counts only when the core measures at or over admission's limit
+// (Load), or an output really underran lately. P5's clean overload (84 %, its FIFO at 35-58, underruns +0) is to mute
+// nothing, as picked: its shape in the host test (test_fifo_late_guard) has cycles past a block, never 4 in a row.
+inline bool cycle_late(uint64_t base, uint64_t side, uint64_t block, unsigned core_bp, unsigned limit_bp, bool underran) {
+  return block && base + side >= block && counts(core_bp, limit_bp, underran);
+}
+
 // The render core a late pass is for: 1 or 2, the one that took longer over its last base pass and its last side pass
 // together (each core's block, voices and chains: cores.cpp). No side stage: its blocks are 0 (cores.cpp clears them).
 inline unsigned blame(uint64_t c1_base, uint64_t c1_side, uint64_t c2_base, uint64_t c2_side) {

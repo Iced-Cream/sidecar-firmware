@@ -60,6 +60,16 @@ effect is muted only when its core is hot, since its cost is known from the benc
    counts it under "fits". VA1 at 1200 MHz, admitted 79.77 %: the FIFO dipped and the late core's 8-9 us send effect was
    muted three times while that core measured 74 % (core 1) and 63-69 % (core 2); every overload this rule is for
    (LT12g-LT13) measured 82-83 %. One of VA1's three came with +4 underruns: that one still mutes.
+   Two boxes, late cycles (decided 2026-11-26 after AL1, T526, the owner's pick A): each render core runs a base pass and
+   a side pass a block, and each alone was judged against a whole block. In AL1's P5 (core 1 at 84 % with its chains)
+   222-265 passes a second went past a block, all the Rytm's side passes, with an on-time A4 base pass between each, so
+   the run never passed 2 and the 4-in-a-row backstop was dead whenever two boxes ran. With a side stage the run now
+   counts cycles: the base pass holds it, and the side pass counts the cycle, late when the core's last base pass plus
+   this side pass took a block (or the pass alone, or the FIFO's view, as before). A late cycle counts only when the core
+   measures at or over admission's limit (as the FIFO's gate above) or an output underran within the last 64 passes; else
+   the log counts it under "fits" (`fxguard cycles: late c1 N c2 N, fits c1 N c2 N`, once a second while any). 4 late
+   cycles in a row (1 ms) take the dearest, as one box's 4 late blocks do. P5's clean overload (FIFO 35-58, underruns +0)
+   still mutes nothing, as picked (pi/engine/fifo_late.h cycle_late; host test: test_fifo_late_guard).
    The side stage's FIFO is watched the same way at its own passes, and either FIFO's hold makes both kinds of pass
    late: LT12j set it at base passes only, so the late run broke at every side pass and the guard never saw the Rytm.
    One mute per low-buffer event: after any late mute both FIFOs' holds end and the next takes two new dips, so the

@@ -167,7 +167,7 @@ void note_user(int u, uint32_t us) {
 constexpr uint8_t kSettle = 2 * kOverMax;
 constexpr uint32_t kLateFloorUs = 8;   // a late core's dearest (none over budget) only from this mean a block (LT12k)
 constexpr uint8_t kLateRun = 4;   // late blocks in a row (1 ms) before a late core's dearest goes, none over its budget
-void core_done(int core, bool hot, bool late) {
+void core_done(int core, bool hot, bool late, bool hold_run) {
   Row& r = g_row[core & (kCores - 1)];
   bool muted_here = false;   // (a mute in this call: the dearest rule waits)
   // a late block (the core past a whole block: the FIFO drains): this block's effect to mute at once, the one most over
@@ -229,7 +229,11 @@ void core_done(int core, bool hot, bool late) {
   if (late_most_us < kLateFloorUs) late_most = -1;
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
   // made late by something else, a burst of notes, never takes an effect)
-  r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  // (hold_run: a pass inside a two-box cycle, the base pass; the side pass counts the cycle: fx_guard.h)
+  if (!hold_run)
+    r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  else if (muted_here || r.settle)
+    r.late_run = 0;
   if (r.late_run > r.run_max) r.run_max = r.late_run;
   if (late) {   // (the late log: what this late block did, and if nothing, why)
     ++r.n_late;

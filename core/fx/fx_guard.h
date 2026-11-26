@@ -15,7 +15,7 @@
 //     UFX1..UFX4 add their time with note_user) is muted, and the count starts again; after any mute on a core its
 //     dearest rule waits 2 x kOverMax blocks (the muted slot's fade), so one slow slot never takes a second with it
 //   - a late block (the core past a whole block: the FIFO drains): the block's effect most over its budget muted at once
-//     (none over: the block's dearest after 4 late blocks in a row), with a 1 ms fade (kShortFadeFrames; decided
+//     (none over: the block's dearest after 4 late blocks in a row; with two boxes 4 late cycles, hold_run), with a 1 ms fade (kShortFadeFrames; decided
 //     2026-11-24 after LT12b's underrun burst)
 // A muted slot fades out (the 5 ms TYPE fade; 1 ms after a late block), plays dry and shows NO CPU on the box (insert slots; ins::refused), its
 // reason on the web page (/status "fxMuted", the user effects' beside them). It holds until the slot is set again (its
@@ -61,7 +61,10 @@ void note_user(int u, uint32_t us);
 // late: the core's block took more than a whole block (the FIFO drains): this block's effect most over its budget (else
 // its dearest, a user effect too) is muted at once, with the short fade (kShortFadeFrames), unless a mute on this core
 // is still settling.
-void core_done(int core, bool hot, bool late = false);
+// hold_run: the late rule's run neither grows nor resets in this call. With two boxes each render core runs a base pass and
+// a side pass a block (one cycle); the Pi passes it at the base pass, so the run counts cycles at the side pass, its late
+// the cycle's (decided 2026-11-26, the owner's pick A: kLateRun late cycles in a row; pi/engine/fifo_late.h cycle_late).
+void core_done(int core, bool hot, bool late = false, bool hold_run = false);
 // The core the caller runs on (the Pi: rytm_render_core(); the host: the one set_core named, 0 by default)
 int this_core();
 void set_core(int c);   // host tests

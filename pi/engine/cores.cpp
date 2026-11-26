@@ -109,6 +109,12 @@ static volatile unsigned s_nFifoHeld[3], s_nFifoRunMax;	// the late log: passes 
 // counts): the passes the FIFO's hold left on time because the late core measured within the limit with no underrun (the
 // late log's "fits")
 static volatile unsigned s_nFifoFits[3];
+// ... and a late cycle (decided 2026-11-26 after AL1, the owner's pick A: fifo_late.h cycle_late): with a side stage the late
+// rule's run counts cycles, the core's last base pass plus its side pass against a block, gated as above. RenderBlock
+// publishes the gate's inputs with each pass (s_nGen): each core's measured share and a recent underrun
+static volatile unsigned s_nLoadBp[3];			// fifo_late Load bp, cores 1 and 2
+static volatile bool s_bUnderRecent, s_bSideOnPass;	// an output underran lately; a side stage runs
+static volatile unsigned s_nCycleLate[3], s_nCycleFits[3];	// the log: cycles late (counted), past a block but gated off
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -430,6 +436,8 @@ void CEngineCores::Worker (unsigned nCore)
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
 	static volatile bool s_nFifoLateNow[3];	// its pass late by the FIFO (s_nFifoLate)
+	static volatile bool s_bSideNow[3], s_bUnderNow[3];	// a side stage runs; an output underran lately (s_bUnderRecent)
+	static volatile unsigned s_nLoadNow[3];	// its measured share (s_nLoadBp)
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
 	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders each box's voices %s its split (split=%u, or half its voices), %s", nCore,
@@ -467,6 +475,7 @@ void CEngineCores::Worker (unsigned nCore)
 			s_nGenNow[nCore] = nGen;
 			s_nPassNow[nCore] = __atomic_load_n (&s_nPass, __ATOMIC_RELAXED);	// (published before nGen)
 			s_nFifoLateNow[nCore] = __atomic_load_n (&s_nFifoLate, __ATOMIC_RELAXED) == nCore;	// (so is this)
+			s_bSideNow[nCore] = s_bSideOnPass, s_bUnderNow[nCore] = s_bUnderRecent, s_nLoadNow[nCore] = s_nLoadBp[nCore];	// (and these)
 			s_nT0[nCore] = Ticks ();
 			vFirst = 0;
 		}
@@ -517,7 +526,20 @@ void CEngineCores::Worker (unsigned nCore)
 		// the dearest effect on it
 		const u64 nBlk = Ticks () - s_nT0[nCore];
 		s_nLastBlk[(nPass & kBasePass) ? 0 : 1][nCore] = nBlk;
-		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks () || s_nFifoLateNow[nCore]);
+		// late: this pass past a whole block, or the FIFO's. With a side stage the late rule's run counts cycles (fifo_late.h
+		// cycle_late, decided 2026-11-26 after AL1): the base pass holds it, the side pass counts the cycle, late too when
+		// its base pass plus itself took a block and the core is over admission's limit or an output underran lately
+		bool bLate = nBlk >= FxLateTicks () || s_nFifoLateNow[nCore], bHold = false;
+		if (s_bSideNow[nCore])
+		{
+			if (nPass & kBasePass)
+				bHold = true;
+			else if (fifo_late::cycle_late (s_nLastBlk[0][nCore], nBlk, FxLateTicks (), s_nLoadNow[nCore], core::admit::kLimitBp, s_bUnderNow[nCore]))
+				bLate = true, s_nCycleLate[nCore]++;
+			else if (s_nLastBlk[0][nCore] + nBlk >= FxLateTicks ())
+				s_nCycleFits[nCore]++;
+		}
+		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), bLate, bHold);
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 	}
@@ -587,6 +609,8 @@ void CEngineCores::RenderBlock (int nSide)
 		static fifo_late::Under s_Under;
 		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
 		s_Under.step (g_Output.Underflows () + g_OutputSide.Underflows ());
+		for (unsigned c = 1; c <= 2; c++) s_nLoadBp[c] = s_Load[c].bp (FxLateTicks ());	// (the late cycle's gate: published below)
+		s_bUnderRecent = s_Under.recent (), s_bSideOnPass = bSideOn;
 		if (bLate)
 		{
 			nLate = fifo_late::blame (s_nLastBlk[0][1], s_nLastBlk[1][1], s_nLastBlk[0][2], s_nLastBlk[1][2]);
@@ -1047,6 +1071,10 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nFifoRunMax = s_nFifoRunMax; s_nFifoRunMax = 0;
 	s->nFifoFits1 = s_nFifoFits[1]; s_nFifoFits[1] = 0;
 	s->nFifoFits2 = s_nFifoFits[2]; s_nFifoFits[2] = 0;
+	s->nCycleLate1 = s_nCycleLate[1]; s_nCycleLate[1] = 0;
+	s->nCycleLate2 = s_nCycleLate[2]; s_nCycleLate[2] = 0;
+	s->nCycleFits1 = s_nCycleFits[1]; s_nCycleFits[1] = 0;
+	s->nCycleFits2 = s_nCycleFits[2]; s_nCycleFits[2] = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();
