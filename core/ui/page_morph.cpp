@@ -8,7 +8,8 @@
 // list (7 rows, B..H edit their values, LEFT / RIGHT scroll, NO removes B's row, YES asks to clear the scene, YES
 // again clears), its last row ADD (v2 Task 5): scrolled to the top, B the track (RT1..RT12, RFX, V1..V8), C its page,
 // D the param, E the value (from the target's base when the Sidecar knows it, else 64); YES adds it. EDIT on the other
-// Sidecar pages is PAGE + T15 / T16 held (remote.cpp; 0.5.0 v2, momentary).
+// Sidecar pages is PAGE + T15 / T16 held (remote.cpp; 0.5.0 v2, momentary); on the Rytm's own pages a knob press under it
+// removes that parameter's lock (0.5.2, 2D 01 14: scene::capture_clear).
 // LEDs: A blue, B orange, the selected scene white (blinking slowly when it is A or B too), a scene with locks dim white,
 // T15 / T16 their colours.
 // v2 Task 7: the header's right names the fader's source (KNOB, MIDI, PAGE, TCH, WEB; EDIT A / B while held; for 2 s

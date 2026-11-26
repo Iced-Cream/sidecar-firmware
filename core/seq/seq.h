@@ -56,7 +56,8 @@ enum : uint8_t { kTransport = 1, kPattern = 2, kSwitch = 3, kScale = 4, kMutes =
                  kHostAck = 16,     // 0.5.0: the mod command's answer (core/mod/rytm_out.h)
                  kPmStatus = 17,    // 0.5.0: the Rytm's params' STATUS answer (core/mod/rytm_param.h op 07)
                  kCapture = 18,     // 0.5.0 v2: a turn under PAGE + T15 / T16 on a Rytm page (core/mod/scene.h capture)
-                 kEditKey = 19 };   // 0.5.0 v2: that gesture's side held / let go, a scene picked (scene.h stock_edit)
+                 kEditKey = 19,     // 0.5.0 v2: that gesture's side held / let go, a scene picked (scene.h stock_edit)
+                 kCaptureClear = 20 };   // 0.5.2: a knob press under that gesture: that parameter's lock removed (capture_clear)
 // 2D 0A EDIT's ops (rytm-mods 0026 "1033"): the stock edit functions the Rytm ran (src 0) or seq mode's own gesture
 // (src 1: a host trig / PAGE held + FUNC + RECORD / STOP / PLAY)
 enum : uint8_t { kPCopy = 1, kPPaste, kPClear, kPUndo, kTCopy, kTPaste, kTClear, kTUndo, kGCopy, kGPaste, kGClear, kGUndo,
