@@ -2259,9 +2259,10 @@ void CKernel::LogStats (void)
 		m_Logger.Write (From, LogWarning, "overloaded: %u control passes stopped rendering at the cap, %u blocks begun with the FIFO under a block", s.nRunCapped, s.nFifoLate);
 	{	// the measured FX guard's late rule, once a second while any core was late: why a late block muted nothing (LT13)
 		char Late[400];
-		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2)
-			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u | %s",
-					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, Late);
+		// (fits: passes the FIFO's hold left on time, the late core within admission's limit and no underrun: cores.cpp)
+		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2 || s.nFifoFits1 || s.nFifoFits2)
+			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u, fits c1 %u c2 %u | %s",
+					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, s.nFifoFits1, s.nFifoFits2, Late);
 	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)

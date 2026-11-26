@@ -49,7 +49,21 @@ static const uint32_t kTicksUs = 54;   // cycles_per_second / 1e6
 
 struct Fx { int unit; int core; bool side; uint32_t us; };
 
-struct Result { int mutes; int first_mute_pass; int muted_unit; uint32_t under; uint32_t level_end; };
+struct Result { int mutes; int first_mute_pass; int muted_unit; uint32_t under; uint32_t level_end; uint32_t fits; };
+
+// cores.cpp's gate (fifo_late.h counts, decided 2026-11-26 after VA1): a FIFO-late pass counts for its core only at or
+// over admission's limit for its time a block, or after a real underrun. g_gate off: the guard as before (the shape's
+// precondition). g_stall_every: every so many passes a long control pass (g_stall_us) and 22 passes later a shorter one
+// (g_stall2_us), rendering nothing while both FIFOs play on: two dips (VA1: pass max 2-3 ms in normal play, 7 dips in the
+// mute's second).
+static bool g_gate = true;
+static int g_stall_every = 0;
+static uint32_t g_stall_us = 0, g_stall2_us = 0;
+static uint32_t stall(int p) {
+  if (!g_stall_every || p < 2 * (int)fifo_late::State::kGrace) return 0;
+  const int k = p % g_stall_every;
+  return k == 0 ? g_stall_us : k == 22 ? g_stall2_us : 0;
+}
 
 // passes: base and side alternate (pass 0 base). slow_at: the pass the slow commands land. Per pass kind, each core's
 // own work outside the listed effects (voices, other chains), us.
@@ -59,8 +73,10 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
   fifo_late::Pair fl;
   uint64_t last[2][3] = {};
   double level[2] = {kTarget, kTarget};
-  Result r = {0, -1, -1, 0, 0};
+  Result r = {0, -1, -1, 0, 0, 0};
   uint32_t late_seen = 0;
+  fifo_late::Load load[3];
+  fifo_late::Under under;
   // the grace and a quiet window first
   for (int p = 0; p < passes; ++p) {
     const bool side = p & 1;
@@ -68,7 +84,10 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
     const uint32_t nl = g::stats().late;
     if (nl != late_seen) late_seen = nl, fl.rearm();
     const bool late = fl.step(side, lvl, 1, kBlock, true, true);
-    const unsigned lc = late ? fifo_late::blame(last[0][1], last[1][1], last[0][2], last[1][2]) : 0;
+    for (int c = 1; c <= 2; ++c) load[c].step(last[0][c] + last[1][c]);
+    under.step(r.under);
+    unsigned lc = late ? fifo_late::blame(last[0][1], last[1][1], last[0][2], last[1][2]) : 0;
+    if (lc && g_gate && !fifo_late::counts(load[lc].bp(250), 8000, under.recent())) lc = 0, ++r.fits;
     uint32_t t[3] = {0, own[side][1], own[side][2]};
     for (int c = 1; c <= 2; ++c) {
       g::set_core(c);
@@ -85,7 +104,7 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
       g::core_done(c, t[c] >= 200, lc == (unsigned)c);
     }
     // the FIFO: drained by this pass's time (the slower core, then core 3's own), refilled by the block
-    const uint32_t pass_us = (t[1] > t[2] ? t[1] : t[2]) + c3_us;
+    const uint32_t pass_us = (t[1] > t[2] ? t[1] : t[2]) + c3_us + stall(p);
     for (int k = 0; k < 2; ++k) {
       level[k] -= 12.0 * pass_us / 250.0;   // (each FIFO plays 12 frames every 250 us)
       if (k == (int)side) level[k] += 12;   // (the block this pass rendered)
@@ -130,6 +149,46 @@ int main() {
     CHECK(r.muted_unit == v2a);
     CHECK(ms >= 0 && ms < 20);
     CHECK(r.level_end >= 2 * kBlock);
+  }
+  {  // LT13 P5 with the gate: core 1 at ~90 % a block once slowed, over the limit: the same one mute, no later
+    Result r = run(kPasses, kSlowAt, own, fx, 5, c3, 20, 40, v1a, v2a);
+    CHECK(r.mutes == 1 && r.muted_unit == v2a && r.first_mute_pass >= kSlowAt && (r.first_mute_pass - kSlowAt) * 0.125 < 20);
+    g_gate = false;
+    Result o = run(kPasses, kSlowAt, own, fx, 5, c3, 20, 40, v1a, v2a);
+    g_gate = true;
+    CHECK(o.mutes == 1 && o.first_mute_pass == r.first_mute_pass && o.under == r.under);
+    printf("test_fifo_late_guard: LT13 P5 gated: first mute at the same pass as ungated (%d), %u underrun passes both\n",
+           r.first_mute_pass - kSlowAt, r.under);
+  }
+  {  // VA1 (2026-11-26, T515) at 1200 MHz, admitted 79.77 %: core 1 measures ~73 % a block (the Rytm's FX1 CLOUDSEED
+     // 18 us in its passes, ~9 us a pass as the guard counts it); two long control passes dip both FIFOs under a block,
+     // no underrun. Ungated the guard muted FX1 (VA1's three mutes); gated nothing goes, nothing underruns.
+    const int fx1 = g::send_unit(1, 0);
+    const Fx va1[] = {
+        {g::ins_unit(0, 0, 0), 1, false, 3},   // A4 V1 A, core 1
+        {g::ins_unit(0, 2, 0), 2, false, 4},   // A4 V3 A, core 2
+        {v1a, 1, true, 6},                     // Rytm V1 A SAT, core 1
+        {v2a, 1, true, 5},                     // Rytm V2 A SAT, core 1
+        {fx1, 1, true, 18},                    // Rytm FX1 CLOUDSEED, core 1 (slot 1's send FX)
+        {g::ins_unit(1, 4, 0), 2, true, 3},    // Rytm V5 A, core 2
+    };
+    const uint32_t own1[2][3] = {{0, 70, 60}, {0, 80, 50}};   // core 1: 73 + 109 = 182 us a block (73 %)
+    const uint32_t c3v = 5;                                   // (core 3's own: the cycle 192 us, the FIFOs refill)
+    g_stall_every = 400, g_stall_us = 1900, g_stall2_us = 600;   // 91 frames of the 96 gone, then 29: under a block, not empty
+    g_gate = false;
+    Result o = run(kPasses, 1 << 30, own1, va1, 6, c3v, 0, 0, v1a, v2a);
+    g_gate = true;
+    printf("test_fifo_late_guard: VA1 shape ungated: %d mute(s) (unit %d, FX1 %d), %u underrun passes\n", o.mutes, o.muted_unit, fx1, o.under);
+    CHECK(o.under == 0);
+    CHECK(o.mutes >= 1);   // (the precondition: the old rule mutes in this shape)
+    Result r = run(kPasses, 1 << 30, own1, va1, 6, c3v, 0, 0, v1a, v2a);
+    CHECK(r.under == 0 && r.mutes == 0 && r.fits > 0);
+    printf("test_fifo_late_guard: VA1 shape: ungated %d mute(s), gated %d (%u passes fit), 0 underruns\n", o.mutes, r.mutes, r.fits);
+    g_stall_us = 2300;   // 110 frames: the FIFO runs empty (VA1 O1 P1's +4): a real underrun still mutes
+    Result u = run(kPasses, 1 << 30, own1, va1, 6, c3v, 0, 0, v1a, v2a);
+    CHECK(u.under > 0 && u.mutes >= 1);
+    printf("test_fifo_late_guard: VA1 shape with underruns: %d mute(s), %u underrun passes\n", u.mutes, u.under);
+    g_stall_every = 0, g_stall_us = 0, g_stall2_us = 0;
   }
   {  // blame: the cycle, not the last pass (LT13: the last pass's longer core flipped between 1 and 2)
     CHECK(fifo_late::blame(90, 160, 120, 70) == 1);   // core 1 longer over the cycle, core 2 in the base pass

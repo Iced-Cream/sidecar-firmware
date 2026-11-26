@@ -123,6 +123,37 @@ int main() {
     CHECK(s.step(4, 0, kBlock, true));
     printf("test_fifo_late: shallow dips never late, a deep second dip is\n");
   }
+  {  // Load: a core's time a block (its last base + side pass) over a block, a running mean
+    fifo_late::Load l;
+    const uint64_t block = 1000;
+    CHECK(l.bp(block) == 0);
+    for (int i = 0; i < 400; ++i) l.step(740);   // VA1 O1 P1: core 1 at 74 %
+    CHECK(l.bp(block) >= 7350 && l.bp(block) <= 7400);
+    CHECK(!fifo_late::counts(l.bp(block), 8000, false));
+    unsigned n = 0;   // LT12g P5: two slots slower, 83 %: over the limit within a few ms of passes
+    while (!fifo_late::counts(l.bp(block), 8000, false) && n < 1000) l.step(830), ++n;
+    CHECK(n > 0 && n <= 64);
+    for (int i = 0; i < 400; ++i) l.step(830);
+    CHECK(l.bp(block) >= 8250 && l.bp(block) <= 8300);
+    printf("test_fifo_late: Load: 74 %% fits, 83 %% over the limit after %u passes\n", n);
+  }
+  {  // Under: an underflow counts for kRecent passes, then no more; the first reading is not an underrun
+    fifo_late::Under u;
+    u.step(2568);
+    CHECK(!u.recent());
+    for (int i = 0; i < 100; ++i) u.step(2568);
+    CHECK(!u.recent());
+    u.step(2572);   // VA1 O1 P1: +4
+    CHECK(u.recent());
+    for (unsigned i = 1; i < fifo_late::Under::kRecent; ++i) {
+      u.step(2572);
+      CHECK(u.recent());
+    }
+    u.step(2572);
+    CHECK(!u.recent());
+    CHECK(fifo_late::counts(7400, 8000, true) && fifo_late::counts(8000, 8000, false) && !fifo_late::counts(7999, 8000, false));
+    printf("test_fifo_late: Under: an underrun counts for %u passes\n", fifo_late::Under::kRecent);
+  }
   printf("test_fifo_late: PASS\n");
   return 0;
 }
