@@ -277,7 +277,7 @@ bool command(const char* p, char* o, int cap) {
         return true;
       }
       int v = c[0] >= '1' && c[0] <= '8' ? c[0] - '1' : 0;
-      meas::start(same_ci(b, "trk"), v);
+      meas::start(same_ci(b, "trk"), v, hand());   // (the slot in hand's box: the console's base box, or box=S:)
       sniprintf(o, cap, CORE_STR("stereo: measuring (about %d s): tones and impulses on POST, PRE%s; the Rytm's MAIN IN read back "
                                  "(stereo=measure:result when done)"), same_ci(b, "trk") ? 6 : 4, same_ci(b, "trk") ? ", TRK" : "");
       return true;

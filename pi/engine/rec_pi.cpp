@@ -611,12 +611,29 @@ void ClockSync (void)
 
 namespace rec_pi {
 
+// The recorder's box (decided 2026-11-26: slot 0 and slot 1 the same): armed, the first box whose PLAY comes takes it;
+// recording, only that box's PLAY / STOP reach the recorder (the other box's transport is its own business). A manual
+// start records the base box (the console's, as ever).
+static volatile int s_nRecSlot = 0;
+int Slot (void) { return s_nRecSlot; }
+static void RecTransport (int nSlot, u8 nStatus)
+{
+	if (nStatus != 0xFA && nStatus != 0xFB && nStatus != 0xFC) return;
+	if (nStatus != 0xFC && g_Rec.state () == rec::Recorder::kArmed)
+	{
+		if (nSlot != s_nRecSlot)
+			CLogger::Get ()->Write (From, LogNotice, "armed: slot %d's PLAY: recording that box", nSlot);
+		s_nRecSlot = nSlot;
+	}
+	if (nSlot == s_nRecSlot) g_Rec.transport (nStatus);
+}
+
 // the mods' transport report (core/seq: whatever the Rytm's MIDI TRANSPORT SEND is): the recorder's arm only - the
 // other Transport () users keep the MIDI messages (the sampler's PLAY starts, the send FX's clock). 3(c): every box's
-// sequencer reports its own; the recorder (one, the primary stream's) arms on the base box's, as RealtimeIn (cores.cpp)
+// sequencer reports its own; the recorder (one) takes the box whose PLAY started it (RecTransport)
 static void ModsTransport (int nSlot, uint8_t nStatus)
 {
-	if (nSlot == bridge::base_slot ()) g_Rec.transport (nStatus);
+	RecTransport (nSlot, nStatus);
 	if (nStatus == 0xFC)	// a box stopped or left (seq::slot_left): its PLAY no longer holds the card's waits
 	{
 		bundle_pi::transport (nSlot, nStatus);
@@ -743,7 +760,7 @@ static void RuiPoll (void)
 		char err[64] = "";
 		bool ok = true;
 		if ((nReq == 1 || nReq == 3) && g_Play.active ()) g_Play.stop ();	// never play while recording
-		if (nReq == 1) ok = g_Rec.start (err, sizeof err);
+		if (nReq == 1) s_nRecSlot = bridge::base_slot (), ok = g_Rec.start (err, sizeof err);
 		else if (nReq == 3) ok = g_Rec.arm (err, sizeof err);
 		else if (nReq == 2 || nReq == 4) g_Rec.stop ();
 		static const char *Name[] = {"", "start", "stop", "arm", "disarm"};
@@ -961,7 +978,7 @@ bool Command (const char *p)
 	{
 		const char *v = p + 4;
 		if ((strcmp (v, "start") == 0 || strcmp (v, "arm") == 0)) g_Play.stop ();	// never both (a pause's position goes too)
-		if (strcmp (v, "start") == 0) ok = g_Rec.start (err, sizeof err);
+		if (strcmp (v, "start") == 0) s_nRecSlot = bridge::base_slot (), ok = g_Rec.start (err, sizeof err);
 		else if (strcmp (v, "arm") == 0) ok = g_Rec.arm (err, sizeof err);
 		else if (strcmp (v, "stop") == 0) g_Rec.stop ();
 		else if (strncmp (v, "ch:", 3) == 0)
@@ -1064,8 +1081,7 @@ void Status (CString *pOut)
 
 void Transport (int nSlot, u8 nStatus, u16 nSPP)
 {
-	if (nSlot == bridge::base_slot () && (nStatus == 0xFA || nStatus == 0xFB || nStatus == 0xFC))
-		g_Rec.transport (nStatus);	// the recorder records the base box's output stage: its transport
+	RecTransport (nSlot, nStatus);	// the recorder records the box whose PLAY started it: its output stage, its transport
 	bundle_pi::transport (nSlot, nStatus);	// project bundles: card writes slow while any box plays (bundle_pi.h)
 	stor_pi::Transport (nSlot, nStatus);	// the storage bench is refused while any box plays (stor_pi.h)
 	bridge::samp_transport (nSlot, nStatus);	// the sampler: its take's box's PLAY / next-bar starts, tempo (core/samp/sampler.h)

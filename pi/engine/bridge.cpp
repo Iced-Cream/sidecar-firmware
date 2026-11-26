@@ -229,6 +229,7 @@ bool samp_command(const char* p, char* out, int cap) {
 }
 void samp_transport(int slot, uint8_t st) { core::samp::transport(slot, st); }
 bool samp_wants_in() { return core::samp::wants_in() || core::samp::asamp_wants_in(); }
+int samp_slot() { return core::samp::clock_slot(); }
 void samp_in(const int32_t* f, int n, int stride) {
   core::samp::in_block(f, n, stride);
   core::samp::asamp_in_block(f, n, stride);
@@ -395,6 +396,7 @@ bool rui_play_take(int* toggle, int* channel, int* take, int* level) {
 bool tap_on() { return core::ui::tap_on(); }
 // seq-p2: the sequencer's latency calibration (a click due or on its way back) and the Rytm pattern dump's reader
 bool cal_on() { return core::seq::cal_wanted(); }
+int cal_slot() { const int r = core::device::rytm_slot(); return r >= 0 ? r : base_slot(); }
 void cal_in(const int32_t* f, int n, int stride) { core::seq::cal_audio(f + 2, n, stride, (int64_t)core::seq::frames()); }
 void rytm_byte(uint8_t b) {
   rytm_byte(0, b);

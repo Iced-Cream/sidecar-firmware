@@ -1932,13 +1932,26 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
 			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
 			float FD[ob::kFramesPerBlock][ob::kVoices] = {};	// the Rytm's PRE / POST voices' stand-ins for their stems (a box's: unused)
-			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V, FD);
+			// the recorder records this box (rec_pi::Slot, decided 2026-11-26: either box alike): its voices' L / R planes
+			// and pairs too, as the primary stream gives them
+			const boolean bRec = rec_pi::Slot () == (int) m_nSlot && g_Rec.wants_side ();
+			s16 LR[ob::kFramesPerBlock][2 * ob::kVoices] = {};
+			float PR[ob::kFramesPerBlock][4] = {};
+			float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
+			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V, FD, bRec ? LR : 0, bRec ? PR : 0);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
 			{
 				sendfx_pi::FromVoices (m_nSlot, *m_pAudio, V, ob::kFramesPerBlock, FD);	// the Rytm here: paced by its stems
-				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
+				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock, X);
 				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
+			}
+			if (bRec && side_out::g_on)
+			{
+				u8 nSt = 0;				// its voices on PRE / POST: their take files stereo
+				for (int v = 0; v < ob::kVoices; v++) nSt |= core::out::control_of (m_nSlot).route[v] != core::out::kTrk ? 1u << v : 0;
+				g_Rec.set_stereo_voices (nSt);
+				g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);
 			}
 			for (int f = 0; f < ob::kFramesPerBlock; f++)
 				core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
@@ -1976,10 +1989,11 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 #endif
 		{
 			u8 nSt = 0;					// the voices on PRE / POST: their take files stereo
-			for (int v = 0; v < ob::kVoices; v++) nSt |= core::out::control.route[v] != core::out::kTrk ? 1u << v : 0;
-			g_Rec.set_stereo_voices (nSt);
+			for (int v = 0; v < ob::kVoices; v++) nSt |= core::out::control_of (nBase).route[v] != core::out::kTrk ? 1u << v : 0;
+			if (rec_pi::Slot () == nBase) g_Rec.set_stereo_voices (nSt);
 		}
-		if (g_Rec.wants_side ()) g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);	// the voices as rendered, the FX, the pairs
+		if (rec_pi::Slot () == nBase && g_Rec.wants_side ())	// the recorder's box (rec_pi::Slot): the base box here
+			g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);	// the voices as rendered, the FX, the pairs
 		if (bridge::samp_wants_voices ()) bridge::samp_voices (V, ob::kFramesPerBlock, LR, X);	// the sampler's Sidecar voice (X: its FX, CHOP)
 #if RASPPI >= 5
 		if (s_bFading)					// FadeOut: every channel, a frame at a time
@@ -2151,9 +2165,30 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
 				if (s < 0) s = -s;
 				if (s > m_nInPeak) m_nInPeak = s;
+				// While it is the side box (both attached), what is this box's takes its IN here, either box alike (decided
+				// 2026-11-26): the recorder's box (rec_pi::Slot), the sampler's take's box, stereo=measure of this box, the
+				// latency click of the Rytm here
+				if (core::device::side_slot () != (int) m_nSlot) continue;
+				const boolean bRec = rec_pi::Slot () == (int) m_nSlot && g_Rec.wants_in ();
+				const boolean bSamp = bridge::samp_slot () == (int) m_nSlot && bridge::samp_wants_in ();
+				const boolean bCal = bridge::cal_slot () == (int) m_nSlot && bridge::cal_on ();
+				if (bRec || bSamp || bCal)
+				{
+					s32 I[ob::kFramesPerBlock][ob::kChannels];
+					for (int f = 0; f < ob::kFramesPerBlock; f++)
+						for (int c = 0; c < ob::kChannels; c++) I[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
+					if (bRec) g_Rec.in_block (I, ob::kFramesPerBlock);
+					if (bSamp) bridge::samp_in (&I[0][0], ob::kFramesPerBlock, ob::kChannels);
+					if (bCal) bridge::cal_in (&I[0][0], ob::kFramesPerBlock, ob::kChannels);
+				}
+				if (core::out::meas::active () && core::out::meas::slot () == (int) m_nSlot)
+					for (int f = 0; f < ob::kFramesPerBlock; f++)
+						core::out::meas::in_frame (ob::block_sample (pBlk, ob::kChannels, f, 0), ob::block_sample (pBlk, ob::kChannels, f, 1));
 				continue;
 			}
-			boolean bRecIn = g_Rec.wants_in (), bSampIn = bridge::samp_wants_in ();
+			const boolean bRecHere = rec_pi::Slot () == core::out::g_base_slot;	// the recorder's box is the base box
+			boolean bRecIn = bRecHere && g_Rec.wants_in ();
+			boolean bSampIn = bridge::samp_wants_in () && (bridge::samp_slot () == core::out::g_base_slot || core::device::side_slot () != bridge::samp_slot ());
 			if (bRecIn || bSampIn)		// the recorder: the selected channels into its ring (rec_pi.h); the sampler's (core/samp)
 			{
 				s32 I[ob::kFramesPerBlock][ob::kChannels];
@@ -2183,10 +2218,10 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					for (int c = 0; c < ob::kChannels; c++) L[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::livein_in (&L[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
-			if (core::out::meas::active ())	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h)
+			if (core::out::meas::active () && core::out::meas::slot () == core::out::g_base_slot)	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h), the base box's
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					core::out::meas::in_frame (ob::block_sample (pBlk, ob::kChannels, f, 0), ob::block_sample (pBlk, ob::kChannels, f, 1));
-			if (bridge::cal_on ())		// the sequencer's latency click on its way back (core/seq/seq.h cal_audio)
+			if (bridge::cal_on () && (bridge::cal_slot () == core::out::g_base_slot || core::device::side_slot () != bridge::cal_slot ()))	// the sequencer's latency click on its way back (core/seq/seq.h cal_audio): the base box's, unless the side box's stream takes it
 			{
 				s32 C[ob::kFramesPerBlock][ob::kChannels];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
