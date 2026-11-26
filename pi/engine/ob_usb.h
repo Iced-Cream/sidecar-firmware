@@ -131,6 +131,9 @@ public:
 	static boolean Command (const char *pText);
 	static unsigned FreezeReEnums (void)	{ return s_nFreezeReEnums; }
 	static unsigned HubResets (void)	{ return s_Hub.resets; }	// the Pi's hub reset at its root port (ob_freeze.h Hub)
+#ifdef OB_USB_TEST
+	static void ForgetHub (void)		{ s_Hub = obfreeze::Hub (); }	// a fresh boot's hub state (the unit test)
+#endif
 	// usb=mirror's attach gate (attach_gate.h): a slot's gate (holds, restarts, re-enumerations since boot), whether its
 	// box is held from the computer now, and the stream restarts since boot (the gate's and a starved shown box's)
 	static const obgate::Gate &AttachGate (unsigned nSlot)	{ return s_Gate[nSlot < 2 ? nSlot : 1]; }
@@ -358,6 +361,8 @@ private:
 	static boolean s_bForceHubReset;		// obhubreset!: at the next pass (a test)
 	static int s_nForceNoAnswer;			// obhubnoanswer=<slot>: that slot's next re-enumeration takes the hub as
 							// not answering, nothing sent to it (a test of HubNoAnswer); -1 none
+	static int s_nForceFs;				// obfsnext=<slot>: that slot's next Configure refuses it as full speed
+							// (a test of the full-speed retry, PollReEnum); -1 none
 	static unsigned s_nForcedHubResets;		// since boot
 	static boolean PollForcedHubReset (void);	// TRUE: done (every box on the hub is gone)
 	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop
