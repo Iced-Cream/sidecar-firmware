@@ -62,6 +62,10 @@ public:
 	// (cardq::here_take). Racy reads from core 0 (a diagnostic).
 	struct TStall { unsigned gap_us, at_frames, gaps_over_2ms, sec_us[6], step_us, step_sum, here_us; };
 	static TStall Stall (void);
+	// Each transport's MIDI realtime as RealtimeIn took it (CK1, 2026-11-26: does a box's clock reach the Pi at all?):
+	// counts since boot of F8, FA / FB, FC, F2, and of bytes whose transport carried no slot (dropped). Racy reads.
+	struct TRealtime { unsigned nClock, nStart, nStop, nSongPos, nNoSlot; int nSlot; };
+	static TRealtime Realtime (unsigned nTransport);
 	static const char *StallStep (void);		// that slowest step's name, "" none. Kept here, /log's 64 KB are gone in 30 s
 	// The last kGaps gaps over 2 ms since the Reset, oldest first: {gap us, frames pulled at its end, us of that pass spent
 	// in its wfe (gap minus it: the pass itself), cntkctl_el1 then (the event stream's bits), DAIF (interrupt masks),

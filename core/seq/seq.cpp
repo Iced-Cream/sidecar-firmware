@@ -4400,7 +4400,7 @@ static CORE_COLD bool idle_here() {
 }
 
 // ---- the calibration click (render side) and its return (the platform's stream side; on the Pi an interrupt: only
-// the volatile words of `cal` are touched) (3(c): the Rytm's slot's, her stems; another slot keeps its latency as set)
+// the volatile words of `cal` are touched) (3(c): the Rytm's slot's, its stems; another slot keeps its latency as set)
 static const int kStem[8] = {0, 3, 1, 4, 6, 5, 7, 2};   // physical voice -> the stream's voice channel (BD SD RS/CP ..)
 void cal_render(int16_t (*ring)[kVoices], const int* rows, int v0, int v1) {
   const int R = device::rytm_home();
@@ -4425,7 +4425,7 @@ void cal_audio(const int32_t* s, int n, int stride, int64_t arrival) {
   const int R = device::rytm_home();
   auto& c = cal.at(R);
   c.fed_ms = now_ms();
-  int st_ = c.state, vi = c.vi - device::voice_base(device::g_links[R]);   // (her box voice: the stream's stem)
+  int st_ = c.state, vi = c.vi - device::voice_base(device::g_links[R]);   // (its box voice: the stream's stem)
   if (!st_ || vi < 0 || vi > 7 || c.found >= 0) return;
   const int32_t* x = s + kStem[vi];
   int32_t fl = c.floor;

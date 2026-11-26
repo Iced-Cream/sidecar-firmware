@@ -42,9 +42,13 @@ const unsigned kLimFade = 240;      // the limiter in and out, 5 ms: the direct 
 void Process(int32_t (*out)[12], unsigned n);
 void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned n);   // box's, on dev's pairs
 // SRC MIX: core 0, the IN completion: the Rytm's stems IN 2..9 while it is asked for (WantStems): each stem panned as the
-// Rytm reports it (master::report), none that is still on main; no report: all of them, centred
+// Rytm reports it (master::report), none that is still on main; no report: all of them, centred. box: the Rytm's slot
+// (its stream's, slot 0 or 1: its slot's SRC, TRIM and report, master::rytm()); Process mixes them on its stream only
+// (dev == core::out::kRytmMk2). The calls without a box are box 0's.
 bool WantStems();
+bool WantStems(int box);
 void Stems(const int32_t (*stems)[8], unsigned n);
+void Stems(int box, const int32_t (*stems)[8], unsigned n);
 void Render();          // box 0's render core (cores.cpp MasterCore), after its pass: the frames queued
 void Render(int box);   // ... box's, after its own send FX
 bool Command(const char* p);   // core 3: mfx=stats (logged): since the last one, its render core's load, underruns, drops

@@ -109,11 +109,15 @@ void midim_set_out(bool (*f)(int dest, const uint8_t* m, int n));   // the MIDI 
 void rytm_gone();                                                   // the Rytm's USB MIDI removed: the MIDI machine's USB notes off, the arpeggios end
 void rytm_resync();                                                 // records for the Rytm were lost: the remote UI sends what it owes again (remote_resync), DIN's recent note-offs too
 void rytm_link(bool up);                                            // records can reach the Rytm (core 0's word, each control pass)
-void midim_realtime(uint8_t status);                                // the base box's realtime bytes, the control core
+void midim_realtime(int slot, uint8_t status);                      // box slot's realtime bytes (USB-A: while its voices alone send there), the control core
 // 3(c) step 10: transport t's realtime byte / song position (F8 FA FB FC F2, spp in 16ths) into its box's slot's clock
 // (core::engine_realtime_link: its LFOs, its send FX's STUTTER grid); the slot, -1 none. The control core.
 int realtime_link(int t, uint8_t status, uint16_t spp);
 int base_slot();                                                    // the base box's slot (core::device::g_base)
+// The console's box selector (core/device/device.h box_prefix): "box=S:<command>" runs <command> through run(ctx, command)
+// inside slot S's Scope (S 0..1, or rytm / a4 / dt). False: no selector (p is the base box's, as ever). A selector naming
+// no box attached is logged and taken. The control core (CEngineCores::Command).
+bool box_command(const char* p, void (*run)(void* ctx, const char* cmd), void* ctx);
 int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
@@ -143,7 +147,7 @@ void going_down();
 // the OUT fill), the card side (core 0's loop: true when it did a step), /status's ,"samp":{...},"asamp":{...}.
 // Their control-core tick runs in tick().
 bool samp_command(const char* p, char* out, int cap);
-void samp_transport(uint8_t st);
+void samp_transport(int slot, uint8_t st);   // box slot's realtime byte: the sampler keeps every box's clock, a take follows its own
 bool samp_wants_in();
 void samp_in(const int32_t* f, int n, int stride);
 bool samp_wants_voices();
@@ -181,7 +185,11 @@ int livein_status(int vi, char* b, int cap);
 // MIDI, as it comes (core 3), to the pattern dump's reader (its answer is longer than MidiIn's SysEx buffer).
 bool cal_on();
 void cal_in(const int32_t* f, int n, int stride);
-void rytm_byte(uint8_t b);
+void rytm_byte(uint8_t b);   // transport 0's (g_MidiIn): rytm_byte(0, b) and SONG RECORD's link_byte(0, b)
+// transport t's byte to the pattern dump's reader and FILL's writer while t carries the Rytm, whichever slot it holds: transport 0
+// unless it is routed to another box's slot, transport 1 only while it is routed to its slot (core::device::rytm_at). Read in its
+// slot's Scope (what it sends back goes to it). One parser each: only its transport feeds them.
+void rytm_byte(int transport, uint8_t b);
 void link_byte(int transport, uint8_t b);   // SONG RECORD's tap of a transport's whole MIDI stream (its slot's song)
 // The remote UI's REC page (core/ui/extra.h RecInfo): the recorder's state from core 0 (rec_pi.cpp), and the page's
 // request for it taken there: 0 none, 1 start, 2 stop, 3 arm, 4 disarm. state 0: no recorder (the page hidden).

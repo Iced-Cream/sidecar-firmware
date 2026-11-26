@@ -1077,6 +1077,7 @@ const boxWords = [];   // the page's own text with the Rytm in it, as written
 })();
 let boxShort = "Rytm", boxSeen = "";
 function boxLabel(b, all) {
+  if (b.label) return b.label;   // its own name (two of one type: name.txt in its UID folder)
   const name = BOX_SHORT[b.id] || b.name || "Unknown box";
   return all.filter((x) => x.id === b.id).length > 1 ? `${name} ${b.n}` : name;
 }
@@ -1094,7 +1095,11 @@ function boxRender(boxes) {
     e.setAttribute("role", "listitem");
     e.textContent = boxLabel(b, boxes);
     s.textContent = word;
-    e.title = `${b.name}: ${why}`;
+    e.title = `${b.name}: ${why}` + (b.uid ? ` (UID ${b.uid}; double-click to rename)` : "");
+    if (b.uid) e.addEventListener("dblclick", () => {   // its name, kept in its own folder on the card
+      const n = prompt(`Name for ${boxLabel(b, boxes)}`, b.label || "");
+      if (n && n.trim()) cmd(`box=${b.uid}:name=${n.trim()}`);
+    });
     e.append(s);
     return e;
   }));

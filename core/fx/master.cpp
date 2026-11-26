@@ -73,7 +73,7 @@ int trim_word(const char* p) {
   return num(p) == 0 ? 0 : 1;
 }
 // 3(d): the settings code (book .. clear, the line, the console, json) works on the slot in hand's (ins::slot_in_hand:
-// prj_slot on the control core, each slot in turn in ins::reset); report / stems_on_main are the Rytm's (slot 0's)
+// prj_slot on the control core, each slot in turn in ins::reset); report / stems_on_main are the Rytm's (its slot's: rytm())
 Control& M() { return control_of(ins::slot_in_hand()); }
 ins::Control& IK() { return ins::control_of(ins::slot_in_hand()); }
 void book(int i, int f) { M().fx[i] = (int8_t)f; }
@@ -290,22 +290,29 @@ void clear() {
 // first (sidecar-mods re/subsystems/compressor-hardware.md); here each stem's bit
 static constexpr uint8_t kRouteBit[kStems] = {3, 1, 7, 2, 0, 5, 4, 6};
 
+int (*rytm_slot_fn)() = nullptr;
+Control& rytm() { return control_of(rytm_slot_fn ? rytm_slot_fn() : 0); }
+
 bool report(const uint8_t* d, int len) {
   if (len < 16 || d[4] != 0x50 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return false;
   const int route = (d[13] & 1) << 7 | (d[14] & 0x7F);
   int off = 0;
+  Control& c = rytm();
   for (int v = 0; v < kStems; ++v) {
-    control.pan[v] = d[5 + v] & 0x7F;
+    c.pan[v] = d[5 + v] & 0x7F;
     if ((route >> kRouteBit[v]) & 1) off |= 1 << v;
   }
-  control.off_main = (uint8_t)off;
-  control.known = 1;
+  c.off_main = (uint8_t)off;
+  c.known = 1;
   return true;
 }
 
-void link_lost() { control.known = 0; }
+void link_lost() {   // (both slots': it may have left its slot already; no other box reports)
+  for (int b = 0; b < kBoxes; ++b) control_of(b).known = 0;
+}
 
 int stems_on_main() {
+  const Control& control = rytm();
   if (!control.known) return 0;
   int n = 0;
   for (int v = 0; v < kStems; ++v) n += !((control.off_main >> v) & 1);
@@ -682,7 +689,7 @@ int json(char* o, int cap) {
   }
   int k = sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR("],\"peq\":[%d,%d,%d,%d],\"fxcap\":%d,\"fxused\":%d,\"rep\":%d,\"onmain\":%d}"),
                     ins::eq_param(kEqChain, 0), ins::eq_param(kEqChain, 1), ins::eq_param(kEqChain, 2), ins::eq_param(kEqChain, 3),
-                    kFxSlots, fx_used(), control.known, stems_on_main());
+                    kFxSlots, fx_used(), rytm().known, stems_on_main());
   return n + (k > 0 ? k : 0);
 }
 

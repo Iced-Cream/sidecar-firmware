@@ -5,9 +5,9 @@
 // sdtest.txt), the firmware update (update/) and the web app (www-next/), and the indexes of the shared libraries (the
 // card index env / folders.bin / files.bin, library/, dx7.bin: /Samples, /DX7 and the rest are every box's to read).
 //
-// Each box's own state stays in its type's folder (/.rytm, /.a4, /.digitakt: core/device/device.h state_path); a path in
+// Each box's own state stays in its type's folder (/.rytm, /.a4, /.dt: core/device/device.h state_path); a path in
 // /.sidecar never passes through a box's folder. Before this build these files were in /.rytm (the Rytm's folder, which a
-// second box's state_path then turned into its own folder: a Digitakt in slot 1 read a /.digitakt/library that was never
+// second box's state_path then turned into its own folder: a Digitakt in slot 1 read a /.dt/library that was never
 // built). migrate() moves them over once, at the engine's first boot on the card.
 #pragma once
 

@@ -351,6 +351,7 @@ boolean CKernel::Initialize (void)
 	t0 = m_Timer.GetClockTicks ();
 	bridge::selftest_content ();
 	boolean bCard = bridge::begin (ToHost);
+	core::device::g_frozen = [] (int nSlot) { return nSlot >= 0 && CObUsb::Frozen ((unsigned) nSlot) != FALSE; };	// (the UID's MIDI ask)
 	m_Logger.Write (From, LogNotice, "engine: begin %s in %u ms (%d folders, project \"%s\", pool %d)",
 			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,
 			bridge::card_folders (), bridge::project (), bridge::pool_slots ());
@@ -722,6 +723,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	pOut->Append (s);
 	// each slot's send FX and master chain (phase 3(d)): rendered frames, underruns, ring drops (slot 0's under / drops
 	// are cleared by the console's `sendfx` line, which reports them)
+	// each transport's MIDI realtime as it reached the engine (cores.cpp RealtimeIn): whether a box's clock arrives at all
+	pOut->Append (",\"realtime\":[");
+	for (unsigned t = 0; t < 2; t++)
+	{
+		const CEngineCores::TRealtime R = CEngineCores::Realtime (t);
+		s.Format ("%s{\"transport\":%u,\"slot\":%d,\"clock\":%u,\"start\":%u,\"stop\":%u,\"songPos\":%u,\"noSlot\":%u}",
+			  t ? "," : "", t, R.nSlot, R.nClock, R.nStart, R.nStop, R.nSongPos, R.nNoSlot);
+		pOut->Append (s);
+	}
+	pOut->Append ("]");
 	pOut->Append (",\"slotFx\":[");
 	for (int b = 0; b < 2; b++)
 	{
@@ -750,12 +761,23 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	}
 	// usb=mirror with two boxes (mirror_assign.h): prefer (cmdline mirror=), first (mirrorfirst=: the route filled first),
 	// the box USB-C shows and the one the Teensy relay shows ("none": none chosen yet / not there), and whether a relay is up
-	s.Format (",\"mirror\":{\"prefer\":\"%s\",\"first\":\"%s\",\"usbc\":\"%s\",\"relay\":\"%s\",\"relayUp\":%s}",
+	// and midiSlots: the slot of the host link's box and of link1's (-1 none), which the MIDI routes follow (attach order)
+	s.Format (",\"mirror\":{\"prefer\":\"%s\",\"first\":\"%s\",\"usbc\":\"%s\",\"relay\":\"%s\",\"relayUp\":%s,\"midiSlots\":[%d,%d]}",
 		  mirror_assign::prefer_name (CObUsb::MirrorPrefer ()), CObUsb::MirrorRelayFirst () ? "relay" : "usbc",
 		  CObUsb::UsbcSlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::UsbcSlot ()) != 0 ? CObUsb::SlotName (CObUsb::UsbcSlot ()) : "none",
 		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? CObUsb::SlotName (CObUsb::RelaySlot ()) : "none",
-		  CTeensyTarget::Relaying () ? "true" : "false");
+		  CTeensyTarget::Relaying () ? "true" : "false", CObUsb::MidiSlot (0), CObUsb::MidiSlot (1));
 	pOut->Append (s);
+	// the attach gate (attach_gate.h, obgate=): per slot whether its box is held from the computer now, its holds, late
+	// shows, re-enumerations and the last hold's length since boot; the stream restarts since boot (all boxes)
+	{
+		const obgate::Gate &g0 = CObUsb::AttachGate (0), &g1 = CObUsb::AttachGate (1);
+		s.Format (",\"gate\":{\"held\":[%s,%s],\"holds\":[%u,%u],\"late\":[%u,%u],\"reenums\":[%u,%u],\"waitMs\":[%u,%u],"
+			  "\"restarts\":%u}", CObUsb::GateHolds (0) ? "true" : "false", CObUsb::GateHolds (1) ? "true" : "false",
+			  g0.holds, g1.holds, g0.shown_late, g1.shown_late, g0.total_reenums, g1.total_reenums,
+			  (unsigned) g0.last_wait_ms, (unsigned) g1.last_wait_ms, CObUsb::StreamRestarts ());
+		pOut->Append (s);
+	}
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
@@ -981,7 +1003,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		pOut->Append (Sd);
 	}
 	{
-		static char Sa[640];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
+		static char Sa[1024];		// SAMPLING and the AUTO-SAMPLER (core/samp; plain reads)
 		bridge::samp_json (Sa, sizeof Sa);
 		pOut->Append (Sa);
 	}
@@ -1711,10 +1733,11 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 	// event packet's MIDI bytes, its header byte is the one before them in the endpoint's buffer
 	// (usbmidi=os: on or emu: only while USB is the host; under link=tcp the emulator's MIDI goes to the computer, tcp_link.cpp)
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
-	// (the A4 on USB-C: the computer talks to the A4, through link 1's tap below; the Rytm's goes to the relay, if it shows it)
-	if (pSidecar != 0 && !(pSidecar->Mirror () && CObUsb::GadgetSlot () == 1) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
+	// (USB-C showing the other box, whichever slot: the computer talks to that box, through link 1's tap below; the host
+	// link's MIDI goes to the relay, if it shows its box)
+	if (pSidecar != 0 && !(pSidecar->Mirror () && !CObUsb::UsbcShowsHostLink ()) && (!pSidecar->OsUpdate () || CObUsb::Active ()))
 		pSidecar->FromRytmMIDI (pPacket - 1);
-	// the Rytm on the Teensy relay (CObUsb::RelaySlot 0): its MIDI to the relay's computer, as to USB-C's otherwise
+	// the host link's box on the Teensy relay (CObUsb::RelayShowsHostLink, any slot): its MIDI to the relay's computer
 	if (CTeensyTarget::ShowsRytm ()) CTeensyTarget::RytmTap (pPacket - 1);	// (its own usbmidi=os: gate inside)
 	midibridge_pi::FromRytm (pPacket, nLength);	// and to the Rytm MIDI bridge's client, if one is connected
 	if (!CObUsb::Active ()) return;	// the TCP link is the host: a real Rytm's MIDI is not the engine's
@@ -1729,8 +1752,8 @@ void CKernel::MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength)
 static CDevice *volatile s_pHelloBox;
 static volatile boolean s_bHelloHeard;				// it has the mod: its hello came (box_list.h)
 static HelloGate s_HelloGate;
-// usb=mirror with the A4 on USB-C (CObUsb::GadgetSlot 1): the box of slot 1 is the one on USB-C, its MIDI to the computer as the
-// Rytm's is otherwise (xHCI IRQ, through link1's tap); the computer's MIDI goes to it from core 0's loop (link1::FromComputer)
+// usb=mirror with link1's box on USB-C (CObUsb::UsbcShowsLink1, whichever slot it holds): its MIDI to the computer as the host
+// link's is otherwise (xHCI IRQ, through link1's tap); the computer's MIDI goes to it from core 0's loop (link1::FromComputer)
 static void GadgetTap (const uint8_t *pEventPacket)
 {
 	CSidecarGadget *pSidecar = CSidecarGadget::Get ();
@@ -1801,7 +1824,7 @@ static void AsampMidiSend (CSidecarGadget *pSidecar)
 		if (nPort == 1)
 		{
 			// the Rytm's computer: the relay's when it shows the Rytm and USB-C does not, else USB-C's
-			if (CObUsb::GadgetSlot () != 0 && CTeensyTarget::ShowsRytm ()) CTeensyTarget::MidiToComputer (w);
+			if (CTeensyTarget::ShowsRytm ()) CTeensyTarget::MidiToComputer (w);
 			else if (pSidecar != 0) pSidecar->MIDIToComputer (w);
 		}
 		else if (nPort == 2 || nPort == 3)
@@ -1940,9 +1963,15 @@ void CKernel::UpdateMIDI (void)
 		if (p == 0 || (m_pGadget != 0 && m_pGadget->IsMIDIDevice (p))) continue;
 		if (p != m_pMIDI && BoxOf (p) == UsbBoxKeyboard) continue;
 		const char *pProduct = p->GetProperty (CDevice::PropertyProduct);
-		u16 nId = p == m_pMIDI ? core::device::active ().id : usb_box_id (pProduct);
+		// its own type by its USB name (the host link's box need not be the base box: an A4 first, then the Rytm on the
+		// host link in slot 1); the profile in use only for a name usb_box_id does not know
+		u16 nId = usb_box_id (pProduct);
+		if (nId == 0 && p == m_pMIDI) nId = core::device::active ().id;
 		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
-		s_Boxes.add (nId, n, Role, pProduct);
+		// its UID and name: the slot its transport carries (two of one type, design 2026-11-26; plain reads of the control core's)
+		const int t = p == m_pMIDI ? 0 : p == s_pHelloBox ? 1 : -1, s = t < 0 ? -1 : core::device::route_of (t);
+		const core::device::Link *pLink = s >= 0 && s < core::device::kLinks ? &core::device::g_links[s] : 0;
+		s_Boxes.add (nId, n, Role, pProduct, pLink != 0 && pLink->held ? pLink->uid : 0, pLink != 0 && pLink->held ? pLink->label : 0);
 	}
 }
 
@@ -2738,10 +2767,11 @@ void CKernel::Run (void)
 		g_bComputerMidi = m_pSidecar != 0;
 		AsampMidiSend (m_pSidecar);
 		CObUsb::PollAssign ();			// usb=mirror with two boxes: who goes where, USB-C first (mirror_assign.h)
-		// the A4's USB MIDI (link1) to the computer of whichever port shows it: USB-C (GadgetTap above) or the relay
-		link1::SetTap (CObUsb::GadgetSlot () == 1 ? GadgetTap
-			       : CObUsb::RelaySlot () == 1 && CTeensyTarget::Relaying () ? CTeensyTarget::MidiTap : 0);
-		if (CObUsb::GadgetSlot () == 1)		// the A4 on USB-C: the computer's MIDI to the A4, not the Rytm
+		CObUsb::SetMidiDevices (m_pMIDI, link1::Device ());	// which slot's box each MIDI transport is (attach order)
+		// link1's box's USB MIDI to the computer of whichever port shows it, in whichever slot: USB-C (GadgetTap above) or the relay
+		link1::SetTap (CObUsb::UsbcShowsLink1 () ? GadgetTap
+			       : CObUsb::RelayShowsLink1 () && CTeensyTarget::Relaying () ? CTeensyTarget::MidiTap : 0);
+		if (CObUsb::UsbcShowsLink1 ())		// link1's box on USB-C: the computer's MIDI to it, not to the host link's
 		{
 			u32 w;
 			if (m_pSidecar != 0 && m_pSidecar->Mirror ())

@@ -237,7 +237,7 @@ int main() {
   CHECK(device::slot_held_by(nullptr) == 1 && !device::held(0) && device::g_links[0].parting && device::cur().index == 1);
   CHECK(device::route_of(0) == 1 && device::leaving());
   device::step(true);   // its edits saved: slot 0 free for any box
-  CHECK(!device::g_links[0].parting && !device::leaving() && device::slot_held_by(nullptr) == 1);   // (the Rytm stays where she is)
+  CHECK(!device::g_links[0].parting && !device::leaving() && device::slot_held_by(nullptr) == 1);   // (the Rytm stays where it is)
   {
     char b[64];
     const char* p = "/.rytm/pools/P.txt";
@@ -245,7 +245,7 @@ int main() {
   }
   CHECK(!fs.exists("/.rytm/pools/P.txt"));
 
-  // A Digitakt and a stock Rytm (its USB id, never a 35): no restart ever. The Digitakt in /.digitakt from its hello, in slot 0
+  // A Digitakt and a stock Rytm (its USB id, never a 35): no restart ever. The Digitakt in /.dt from its hello, in slot 0
   // (the first attached); the Rytm on USB after it takes slot 1, the Digitakt keeps slot 0 and the base
   {
     using device::kIdDigitakt;
@@ -256,18 +256,18 @@ int main() {
     auto folder = [] { return device::cur().state ? device::cur().state : "/.rytm"; };
     g_restarts = 0;
     device::reset();
-    CHECK(hello(kIdDigitakt) == device::kOk && !strcmp(folder(), "/.digitakt"));
+    CHECK(hello(kIdDigitakt) == device::kOk && !strcmp(folder(), "/.dt"));
     CHECK(device::foreign() && device::box_screen() == device::kDigitakt.screen && !strcmp(voice_name(0), "T1"));   // its words (L7: one read of the box)
     CHECK(device::g_links[0].box == &device::kDigitakt && !device::held(1));
     device::rytm_on_usb(true);
     device::step();
-    CHECK(!strcmp(folder(), "/.digitakt") && device::foreign() && device::g_links[0].box == &device::kDigitakt);
+    CHECK(!strcmp(folder(), "/.dt") && device::foreign() && device::g_links[0].box == &device::kDigitakt);
     CHECK(device::slot_held_by(nullptr) == 1 && !device::g_links[1].state && (kVoiceSlots == 1 || device::side_slot() == 1));
-    CHECK(!strcmp(device::g_links[0].state, "/.digitakt"));
+    CHECK(!strcmp(device::g_links[0].state, "/.dt"));
     CHECK(hello(kIdDigitakt) == device::kOk);   // its periodic hello: still its slot
     device::rytm_on_usb(false);
     device::step();
-    CHECK(!strcmp(folder(), "/.digitakt") && g_restarts == 0);
+    CHECK(!strcmp(folder(), "/.dt") && g_restarts == 0);
     device::reset();
   }
 
@@ -382,7 +382,7 @@ int main() {
     hooks.user_report = nullptr;
     device::reset();                                   // back to the Rytm
     CHECK(!device::foreign() && out::control.trk10 == 0);
-    device::rytm_on_usb(true);                         // the Rytm on USB first: the A4 after her takes slot 1
+    device::rytm_on_usb(true);                         // the Rytm on USB first: the A4 after it takes slot 1
     send(hello(device::kA4.id));                       // its hello again: the A4's trim on its slot, nothing else
     out::Control& a4b = out::control_of(kVoiceSlots - 1);
     CHECK(a4b.trk10 == 180 && (kVoiceSlots == 1 || out::control.trk10 == 0));

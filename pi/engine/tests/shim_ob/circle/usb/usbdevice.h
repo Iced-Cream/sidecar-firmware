@@ -10,6 +10,8 @@ class CUSBDevice {
   unsigned GetSpeed() { return speed; }
   CUSBHCIRootPort* GetParentRootPort() const { return root; }
   CUSBStandardHub* GetParentHub() const { return hub; }
+  boolean RemoveDevice() { ++removes; return TRUE; }   // (the test deletes the function itself)
+  int removes = 0;
   CUSBStandardHub* hub = nullptr;
   unsigned speed = USBSpeedHigh;
   CUSBHCIRootPort* root = nullptr;
