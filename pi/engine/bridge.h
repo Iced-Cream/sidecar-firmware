@@ -144,7 +144,7 @@ void going_down();
 // the OUT fill), the card side (core 0's loop: true when it did a step), /status's ,"samp":{...},"asamp":{...}.
 // Their control-core tick runs in tick().
 bool samp_command(const char* p, char* out, int cap);
-void samp_transport(uint8_t st);
+void samp_transport(int slot, uint8_t st);   // box slot's realtime byte: the sampler keeps every box's clock, a take follows its own
 bool samp_wants_in();
 void samp_in(const int32_t* f, int n, int stride);
 bool samp_wants_voices();

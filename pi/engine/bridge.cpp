@@ -227,7 +227,7 @@ bool save_settled() { return core::idle_settled(); }
 bool samp_command(const char* p, char* out, int cap) {
   return core::samp::command(p, out, cap) || core::samp::asamp_command(p, out, cap);
 }
-void samp_transport(uint8_t st) { core::samp::transport(st); }
+void samp_transport(int slot, uint8_t st) { core::samp::transport(slot, st); }
 bool samp_wants_in() { return core::samp::wants_in() || core::samp::asamp_wants_in(); }
 void samp_in(const int32_t* f, int n, int stride) {
   core::samp::in_block(f, n, stride);

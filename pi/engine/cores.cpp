@@ -126,9 +126,10 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
 // A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
-// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). The base box's also arm the
-// recorder and drive the sampler, the bundles' and the storage bench's waits (rec_pi::Transport) and MIDI's on USB-A
-// (core/midim/midim.h), as the Rytm's did; another box's reach only its own clock.
+// first, its LFOs' and its send FX's STUTTER grid (bridge::realtime_link, 3(c) step 10). Then the Pi-wide jobs, each
+// on the clock of the box it belongs to (rec_pi::Transport, decided 2026-11-26): the recorder arms on the base box's,
+// a sampler take follows its own box's, the bundles' and the storage bench's waits hold while any box plays. MIDI's
+// USB-A clock out (core/midim/midim.h) is the base box's.
 // A box's CC 120 (All Sound Off, any channel; the Rytm's STOP STOP) on transport t other than the host link's: its own
 // box's send FX fade out and clear (3(c); the host link's comes through OnChannel)
 static void AllSoundOffIn (int nTransport)
@@ -139,9 +140,9 @@ static void AllSoundOffIn (int nTransport)
 static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 {
 	int nSlot = bridge::realtime_link (nTransport, s, spp);
-	if (nSlot < 0 || nSlot != bridge::base_slot ()) return;
-	rec_pi::Transport (s, spp);
-	bridge::midim_realtime (s);
+	if (nSlot < 0) return;
+	rec_pi::Transport (nSlot, s, spp);
+	if (nSlot == bridge::base_slot ()) bridge::midim_realtime (s);
 }
 static void OnRealtime (uint8_t s, uint16_t spp) { RealtimeIn (0, s, spp); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
