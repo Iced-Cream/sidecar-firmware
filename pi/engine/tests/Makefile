@@ -28,6 +28,10 @@ build/test_mirror_assign: test_mirror_assign.cpp ../mirror_assign.h check.h
 build/test_periodic_starve: test_periodic_starve.cpp ../periodic_starve.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
+# usb=mirror: a box shown only once its audio runs both ways; a starved stream restarted (attach_gate.h)
+build/test_attach_gate: test_attach_gate.cpp ../attach_gate.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
 build/test_slip_detect: test_slip_detect.cpp ../slip_detect.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
