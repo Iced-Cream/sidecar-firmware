@@ -345,6 +345,7 @@ boolean CKernel::Initialize (void)
 	t0 = m_Timer.GetClockTicks ();
 	bridge::selftest_content ();
 	boolean bCard = bridge::begin (ToHost);
+	core::device::g_frozen = [] (int nSlot) { return nSlot >= 0 && CObUsb::Frozen ((unsigned) nSlot) != FALSE; };	// (the UID's MIDI ask)
 	m_Logger.Write (From, LogNotice, "engine: begin %s in %u ms (%d folders, project \"%s\", pool %d)",
 			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,
 			bridge::card_folders (), bridge::project (), bridge::pool_slots ());
@@ -1836,7 +1837,10 @@ void CKernel::UpdateMIDI (void)
 		u16 nId = usb_box_id (pProduct);
 		if (nId == 0 && p == m_pMIDI) nId = core::device::active ().id;
 		TBoxRole Role = p == m_pMIDI ? BoxHost : p == s_pHelloBox ? (s_bHelloHeard ? BoxWaiting : BoxListening) : nId != 0 ? BoxSpare : BoxOther;
-		s_Boxes.add (nId, n, Role, pProduct);
+		// its UID and name: the slot its transport carries (two of one type, design 2026-11-26; plain reads of the control core's)
+		const int t = p == m_pMIDI ? 0 : p == s_pHelloBox ? 1 : -1, s = t < 0 ? -1 : core::device::route_of (t);
+		const core::device::Link *pLink = s >= 0 && s < core::device::kLinks ? &core::device::g_links[s] : 0;
+		s_Boxes.add (nId, n, Role, pProduct, pLink != 0 && pLink->held ? pLink->uid : 0, pLink != 0 && pLink->held ? pLink->label : 0);
 	}
 }
 

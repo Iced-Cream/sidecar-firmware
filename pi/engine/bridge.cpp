@@ -286,6 +286,10 @@ bool box_command(const char* p, void (*run)(void*, const char*), void* ctx) {
     core::log(CORE_STR("console: %s: %s"), p, rest);
     return true;
   }
+  if (!strncmp(rest, "name=", 5)) {   // box=S:name=<text>: the box's name, in its UID folder's name.txt (design 2026-11-26)
+    if (!core::device::set_label(s, rest + 5)) core::log(CORE_STR("console: %s: not named (no UID folder, or an empty name)"), p);
+    return true;
+  }
   core::device::Scope in(core::device::g_links[s]);
   run(ctx, rest);
   return true;
@@ -403,6 +407,9 @@ static void rytm_read(uint8_t b) {
 void rytm_byte(int t, uint8_t b) {
   const int h = core::device::rytm_route(t);   // its slot when t carries it (transport 0 with no route yet: as ever)
   if (h < 0) return;
+  // two Rytms (design 2026-11-26): the pattern dump reader and FILL's writer are one, the first Rytm's (a named gap: the
+  // second Rytm's pattern view and FILL); its bytes never mix into the first's records
+  if (core::kVoiceSlots > 1 && h != core::device::rytm_slot()) return;
   if (h >= core::device::kLinks || &core::device::g_links[h] == core::device::g_cur) {
     rytm_read(b);
     return;

@@ -40,6 +40,7 @@
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
+#include <circle/usb/usbmidi.h>		// SetMidiDevices (circle-midi-usbdevice.patch: GetUSBDevice)
 #include <circle/usb/usb.h>
 #include <circle/logger.h>
 #include <circle/types.h>
@@ -70,6 +71,10 @@ public:
 	static CObUsb *Box (unsigned nSlot)	{ return nSlot < Slots ? s_pBox[nSlot] : 0; }
 	static boolean Streaming (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_bStreaming; }
 	unsigned Slot (void) const		{ return m_nSlot; }
+	u32 Uid (void) const			{ return m_nUid; }	// its DeviceUID (ObReadUid at enumeration), 0 none
+	void SetUid (u32 nUid)			{ m_nUid = nUid; }
+	// slot nSlot's stream is in a failing run (ob_freeze.h): no MIDI to its box (core::device::g_frozen, the UID asked by MIDI)
+	static boolean Frozen (unsigned nSlot)	{ return Box (nSlot) != 0 && Box (nSlot)->m_Freeze.run; }
 	boolean Primary (void) const		{ return this == s_pThis; }
 	const core::out::Device *Audio (void) const	{ return m_pAudio; }
 	// usb=mirror with two boxes (mirror_assign.h): which box USB-C shows and which a Teensy relay shows is decided at run
@@ -82,10 +87,12 @@ public:
 	static int RelaySlot (void);			// the box the relay shows: the other one, -1 none
 	// A box's MIDI by its transport, not its slot (slots by attach order: the Rytm, on the host link, may be slot 1 and an
 	// A4, on link1, slot 0). Transport 0 is the host link (the kernel's m_pMIDI: a Rytm or a Digitakt), 1 link1 (link1.h:
-	// an A4, or a second host-type box). MidiSlot: the slot whose box that MIDI device is part of (the same USB vendor,
-	// product and serial strings as the slot's stream), -1 none (no such MIDI, or its box has no stream). SetMidiDevices: core 0's loop, each pass
-	// (0: none); the slots are worked out there and read anywhere (IRQs too).
-	static void SetMidiDevices (const CDevice *pHostLink, const CDevice *pLink1);
+	// an A4, or a second host-type box). MidiSlot: the slot whose box that MIDI device is part of (the same USB device as the
+	// slot's stream: circle-midi-usbdevice.patch; two boxes of one type have the same vendor, product and serial strings, so
+	// those are only the fallback for a MIDI device that names no USB device), -1 none (no such MIDI, or its box has no stream).
+	// SetMidiDevices: core 0's loop, each pass (0: none); the slots are worked out there, read anywhere (IRQs too), and told to
+	// the core (core::device::set_midi_slot: a hello or a Rytm's 35 on that transport is that slot's box, design 2026-11-26).
+	static void SetMidiDevices (CUSBMIDIDevice *pHostLink, CUSBMIDIDevice *pLink1);
 	static int MidiSlot (unsigned nTransport)	{ return nTransport < 2 ? s_nMidiSlot[nTransport] : -1; }
 	// usb=mirror: USB-C shows the host link's box (or none is chosen: the host link's MIDI goes to USB-C, as before two
 	// boxes); USB-C shows link1's box; the relay shows the host link's box. A transport's MIDI goes to the computer of the
@@ -256,6 +263,7 @@ private:
 	static void Rebind (void);			// s_pThis from s_pBox
 	IMirrorTarget *Target (void);			// this box's mirror target now (the gadget's adapter, a slot's own, or 0)
 	unsigned m_nSlot;
+	u32 m_nUid = 0;					// the box's DeviceUID (same type twice, design 2026-11-26), 0 none
 	u8 **m_pInBuf, **m_pOutBuf;			// this slot's DMA buffers (AllocBufs)
 
 	// usb=mirror

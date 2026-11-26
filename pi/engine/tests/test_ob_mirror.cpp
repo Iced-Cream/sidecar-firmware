@@ -50,7 +50,11 @@ static int g_rytm_usb = 0;   // the Rytm's slot held (usb_attach / usb_detach)
 // device.cpp's attach order without the engine: a box's slot already, else the lowest free one; freed when its device goes
 static const core::device::Profile* g_slot_of[2];
 namespace core { namespace device {
-int usb_attach(const Profile* p) {
+uint32_t g_attach_uid = 0;   // the UID the last usb_attach was given
+int g_midi_slot[2] = {-1, -1};   // set_midi_slot's
+void set_midi_slot(int t, int s) { if (t >= 0 && t < 2) g_midi_slot[t] = s; }
+int usb_attach(const Profile* p, uint32_t uid) {
+  g_attach_uid = uid;
   for (int k = 0; k < 2; ++k)
     if (g_slot_of[k] == p) return k;
   for (int k = 0; k < 2; ++k)
@@ -453,7 +457,7 @@ int main() {
       CHECK(sl(r) == 1 - sa && CObUsb::UsbcSlot() == sa && relay.box == r.box() && relay.up.back() == 1);
       // the MIDI routes follow the boxes, not the slot numbers (RXQ1/2/4, T470/T471/T478: the A4 first, the Rytm's host link
       // in slot 1 went to USB-C and the relay got none): the host link is slot 1's box, shown by the relay; link1 slot 0's on USB-C
-      CDevice hm, lm;
+      CUSBMIDIDevice hm, lm;
       a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
       r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
       CObUsb::SetMidiDevices(&hm, &lm);
@@ -483,7 +487,7 @@ int main() {
       Box a(true);
       CHECK(CObUsb::UsbcSlot() == 0 && relay.box == a.box() && relay.up.back() == 1);
       {   // the Rytm first (slot 0, USB-C), the A4 the relay (slot 1): as before two boxes, now by the boxes' own MIDI
-        CDevice hm, lm;
+        CUSBMIDIDevice hm, lm;
         a.box()->SetProperty(CDevice::PropertyProduct, "Analog Four MKII"), lm.SetProperty(CDevice::PropertyProduct, "Analog Four MKII");
         r.box()->SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII"), hm.SetProperty(CDevice::PropertyProduct, "Analog Rytm MKII");
         CObUsb::SetMidiDevices(&hm, &lm);
