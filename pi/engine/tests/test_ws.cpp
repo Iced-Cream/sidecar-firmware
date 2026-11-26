@@ -452,6 +452,10 @@ static void test_cmd_policy ()
 	CHECK (webcmd::refused ("seqed=nsel:0:4:60:1", true, false) == 0 && webcmd::refused ("seqed=nedit:0:0:1", true, false) == 0);	// NOTE EDIT from the page
 	CHECK (webcmd::refused ("wifi=join:a:b", true, false) == 0);
 	CHECK (webcmd::refused ("wifi=join:a:b", false, false) != 0);
+	// box=S:<command> (the console's box selector) is judged by its command: no way round the list
+	CHECK (webcmd::refused ("box=a4:wt=voice:1", true, false) == 0 && webcmd::refused ("box=1:box=0:lfo", true, false) == 0);
+	CHECK (webcmd::refused ("box=a4:usbmidi=os:on", true, false) != 0 && webcmd::refused ("box=0:box=1:midibridge=on", true, false) != 0);
+	CHECK (webcmd::refused ("box=rytm:wifi=join:a:b", false, false) != 0 && webcmd::refused ("box=0:", true, false) != 0);
 	CHECK (webcmd::refused ("midibridge=on", true, false) != 0);
 	CHECK (webcmd::refused ("usbmidi=os:on", true, false) != 0);
 	CHECK (webcmd::refused ("osupdate=1", true, false) != 0);
