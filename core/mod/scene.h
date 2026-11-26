@@ -134,7 +134,7 @@ void stock_edit(int ev, int side, int n);
 bool capture(int side, int track, int word, int delta, bool func, uint16_t base);
 // 0.5.2: a DATA ENTRY knob pressed under the same gesture (2D 01 14 <side> <t> <w>; the Rytm eats the press, as it does the
 // turns, so stock's p-lock clear does not run) removes that parameter's lock from that side's scene - only that entry,
-// nothing else: the target is the turn's (the same track / word -> Tid rule). A readout like "A FRQ CLR"; "A FRQ NO LOCK"
+// nothing else: the target is the turn's (the same track / word -> Tid rule). A readout like "A FRQ CLR"; "A FRQ NONE"
 // when the scene had none. Refused (a readout, nothing removed) as a turn is: the gesture ended, the side's scene unset,
 // a word with no target. True: a lock removed. An older host never sees the op's effect: it ignores the unknown 2D 01 14
 // (the press is eaten on the Rytm and nothing else happens).

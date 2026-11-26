@@ -868,7 +868,7 @@ static void capture_clear_removes_only_that_entry() {
   CHECK(scene::state().s[5].n == 1 && lock_of(5, frq) == 68 * 128);   // B's FRQ and the other scenes untouched
   CHECK(readout() == "A FRQ CLR");
   clr20(0, 0, 30);                    // none left: nothing else goes
-  CHECK(scene::state().s[2].n == 2 && readout() == "A FRQ NO LOCK");
+  CHECK(scene::state().s[2].n == 2 && readout() == "A FRQ NONE" && readout().size() <= (size_t)mod::kReadoutMax);
   clr20(0, 3, 30);
   CHECK(lock_of(2, frq3) < 0 && lock_of(2, lev) == 101 * 128 && scene::state().s[2].n == 1);
   hooks.to_rytm = nullptr;

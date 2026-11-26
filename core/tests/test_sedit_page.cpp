@@ -24,6 +24,7 @@
 #include "screens_util.h"
 #include "samp/dsp.h"
 #include "samp/sedit.h"
+#include "mod/scene.h"
 #include "samp/sedit_dsp.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
@@ -235,6 +236,30 @@ static void t_screens() {
   tap(0x43);   // any key ends the turn display
   draw();
   CHECK(!strcmp(g_c.txt[ui::kSlotTitle].s, "SAMPLE EDIT") && !strcmp(g_c.txt[ui::kSlotFoot].s, "YES"));
+}
+
+static void t_push_under_side() {   // 0.5.2: a knob press under PAGE + T15 / T16 is the scene edit's, not the SRC view's
+  ui::remote_reset();
+  ui::sedit_page_reset();
+  from_rytm({0x33, 1, 0, 1, 49, (uint8_t)(kDspSample | 0)});
+  from_rytm({0x29, 1, 0, 1});
+  tick();
+  CHECK(ui::remote_src_track() == 0 && !ui::remote_open());
+  cmd_close();
+  tick();
+  CHECK(vw().st == sedit::kClosed);
+  scene::set_edit_side(1);
+  down(0x71);   // under the side: no SAMPLE EDIT
+  CHECK(vw().st == sedit::kClosed);
+  scene::set_edit_side(-1);   // the side let go before the release: the release is still the gesture's
+  up(0x71);
+  CHECK(vw().st == sedit::kClosed);
+  down(0x71);   // no side: the view's push as before
+  up(0x71);
+  CHECK(vw().st != sedit::kClosed);
+  cmd_close();
+  tick();
+  printf("sedit: a push under the held side does not reach the SRC view\n");
 }
 
 static void t_send_mask() {   // A..E and FUNC (FUNC + YES, FUNC + A / B / D) are the page's
@@ -829,6 +854,7 @@ int main() {
   t_sampler_idle_pick();
   t_sampler_src();
   t_wavetable_make();
+  t_push_under_side();
   CHECK(system(("rm -rf '" + g_card + "'").c_str()) == 0);
   printf("test_sedit_page: PASS\n");
   return 0;

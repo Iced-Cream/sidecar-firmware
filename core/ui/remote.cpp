@@ -423,6 +423,7 @@ struct State {
   // that side's scene), their releases its too; the target a turn locked last while the side is held (the bottom bar
   // shows its locked value), 0 none
   bool page_down = false, page_owed = false;
+  uint8_t push_eaten = 0;   // 0.5.2: the SRC view's pushes (A..H) a held side took (their releases too)
   uint16_t edit_keys = 0;
   uint16_t edit_tid = 0;
   bool edit_refused = false;   // review: a knob with no target turned under the held side (NOT LOCKABLE)
@@ -1874,6 +1875,15 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         return;
       }
       if (!s.open && s.src_track >= 0 && b[0] == 0 && b[1] >= 0x70 && b[1] <= 0x77) {   // rui1036: the SRC view's pushes
+        // 0.5.2: a knob press under PAGE + T15 / T16 is the scene edit's (2D 01 14), not the view's: no slice editor, no list,
+        // no row action; the release of a press it took goes the same way, a side let go in between or not
+        const uint8_t pbit = (uint8_t)(1u << (b[1] - 0x70));
+        if (b[2] != 0 && scene::edit_side() >= 0) s.push_eaten |= pbit;
+        if (s.push_eaten & pbit) {
+          if (b[2] == 0) s.push_eaten &= (uint8_t)~pbit;
+          s.input = true;
+          return;
+        }
 #if CORE_POLY && CORE_MSAMP
         if (chop_src_push(s.src_track, b[1], b[2] != 0)) {   // CHOP: a push of B..H opens the slice editor
           s.input = true;
