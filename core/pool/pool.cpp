@@ -693,6 +693,7 @@ bool project_loading() { return g_loading[prj_slot()]; }   // the slot in hand's
 namespace {
 struct Attach {
   const device::Profile* from;   // the holder whose folder its project was read from, null none yet
+  char from_dir[sizeof device::Link::dir];   // and its UID folder ("" its type folder): two boxes of one type are two folders
   bool reading;
   cardq::Req rq;
   char buf[24];
@@ -735,12 +736,14 @@ CORE_COLD bool project_attach_step(int s) {
   device::Link& l = device::g_links[s];
   Attach& a = g_attach[s];
   if (!l.held) return false;
-  if (!a.from && !a.reading && s == 0 && l.held == &device::rytm()) a.from = l.held, a.set = kNSettings;   // (the boot's Rytm: project_load's)
-  if (a.from == l.held && !a.reading) return settings_attach_step(s, a);   // then its box settings, one file a step
+  if (!a.from && !a.reading && s == 0 && l.held == &device::rytm())
+    a.from = l.held, a.set = kNSettings, strcpy(a.from_dir, l.dir);   // (the boot's Rytm: project_load's)
+  if (a.from == l.held && !strcmp(a.from_dir, l.dir) && !a.reading) return settings_attach_step(s, a);   // then its box settings, one file a step
   if (!a.reading) a.reading = true, memset(a.buf, 0, sizeof a.buf);
   if (!cardq::async(&a.rq, cardq::kSmallReq, nullptr, "/.rytm/project", 0, (uint8_t*)a.buf, sizeof a.buf - 1, s)) return true;
   a.buf[a.rq.got > 0 ? a.rq.got : 0] = 0;
   a.reading = false, a.from = l.held, a.set = 0, a.set_reading = false;
+  strcpy(a.from_dir, l.dir);
   device::Scope in(l);
   Project& j = prj(s);
   sniprintf(j.key, sizeof j.key, "%s", a.buf);
@@ -780,6 +783,7 @@ CORE_COLD void project_load() {
 #if CORE_MSAMP
   Attach& a = g_attach[prj_slot()];   // (the boot's: its holder's project and settings read here and by engine_begin)
   a.from = device::cur().held, a.set = kNSettings, a.reading = a.set_reading = false;
+  strcpy(a.from_dir, device::cur().dir);
 #endif
 }
 

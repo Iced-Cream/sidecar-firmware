@@ -184,7 +184,7 @@ int main() {
   CHECK(v[1].live && !v[kBoxVoices + 1].live && rms(1) > 100);
   // the same box's hello again: its slot, kOk
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0);
-  // the same type twice: its slot is that box's (a second A4 on the other transport would share it: a named gap)
+  // the same type twice: its hello again is its slot (two of a type by their UIDs: test_same_type.cpp)
 
   // ---- the A4 leaves with an edit unsaved: its voices stop, its edit lands in /.a4, the Digitakt stays in slot 1
   {
