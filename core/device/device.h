@@ -250,6 +250,9 @@ inline bool live(int s) {
 // slot s is held by the Rytm (its own words, kits, scenes, stems, calibration: its alone). One slot (the Teensy): always, as
 // slot 0 always was
 bool rytm_at(int s);
+// slot s's folder state is a Rytm's: held by one, or its last holder (Link::was) a Rytm whose edits are still being saved.
+// Its send FX are its kit's 0x20s, never its INSERT file's SFX lines, in either slot. One slot (the Teensy): always
+bool rytm_state_at(int s);
 int rytm_slot();                       // the (first) Rytm's slot, -1 none (one slot: 0)
 // Where the Rytm's own state is read: the slot in hand when that is a Rytm (two Rytms: each its own; control core), else the
 // first Rytm's slot, else 0

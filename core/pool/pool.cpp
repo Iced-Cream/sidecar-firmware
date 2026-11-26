@@ -67,7 +67,7 @@ static int fx_slot() {
 // 3(c): the INSERT and OUT settings are the slot in hand's (core/fx/insert.h, out.h: their control side builds without
 // core/device, so it asks through these)
 static struct SlotFns {
-  SlotFns() { ins::slot_fn = fx_slot, out::slot_fn = fx_slot, ins::rytm_fn = device::rytm_at; }
+  SlotFns() { ins::slot_fn = fx_slot, out::slot_fn = fx_slot, ins::rytm_fn = device::rytm_state_at; }
 } g_slot_fns;
 #endif
 // 3(c) step 8: the send FX settings too (core/fx/send_fx.h; its control side builds without core/device)

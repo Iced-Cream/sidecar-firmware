@@ -90,6 +90,12 @@ const Profile& rytm() { return kRytm; }
 const Profile& active() { return cur().box ? *cur().box : kRytm; }
 uint32_t dropped() { return cur().dropped; }
 bool rytm_at(int s) { return kVoiceSlots < 2 || (s >= 0 && s < kLinks && g_links[s].held == &kRytm); }
+bool rytm_state_at(int s) {
+  if (kVoiceSlots < 2) return true;
+  if (s < 0 || s >= kLinks) return false;
+  const Profile* h = __atomic_load_n(&g_links[s].held, __ATOMIC_RELAXED);
+  return (h ? h : g_links[s].was) == &kRytm;
+}
 int rytm_slot() { return kVoiceSlots < 2 ? 0 : slot_held_by(&kRytm); }
 int rytm_home() {
   if (kVoiceSlots < 2) return 0;
