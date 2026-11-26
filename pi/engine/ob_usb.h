@@ -47,6 +47,9 @@
 #include "fx/out.h"
 #include "mirror_target.h"
 
+class CUSBStandardHub;
+class CUSBHCIRootPort;
+
 // One CObUsb per box streaming (two at most): the Rytm's (slot 0) and another box's (slot 1, its profile's audio row). The
 // primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
 // device follow, as the one stream did; the other streams in step with its own box (its own clock), its OUT silent until the
@@ -127,6 +130,7 @@ public:
 	// again, as a replug would (PollHalt's first step); obreenum=<slot> asks for it at once (a test)
 	static boolean Command (const char *pText);
 	static unsigned FreezeReEnums (void)	{ return s_nFreezeReEnums; }
+	static unsigned HubResets (void)	{ return s_Hub.resets; }	// the Pi's hub reset at its root port (ob_freeze.h Hub)
 	// usb=mirror's attach gate (attach_gate.h): a slot's gate (holds, restarts, re-enumerations since boot), whether its
 	// box is held from the computer now, and the stream restarts since boot (the gate's and a starved shown box's)
 	static const obgate::Gate &AttachGate (unsigned nSlot)	{ return s_Gate[nSlot < 2 ? nSlot : 1]; }
@@ -345,7 +349,17 @@ private:
 	static int s_nForceReEnum;			// obreenum=<slot>: -1 none
 	static unsigned s_nFreezeReEnums;		// since boot
 	static boolean PollFreeze (void);
-	boolean ReEnumerate (const char *pWhy);		// TRUE: removed (this object is deleted)
+	// TRUE: removed (this object is deleted; after a hub reset the other box's too). FALSE: still here; *pSent FALSE only
+	// when the hub did not answer, now or less than obfreeze::kDeadMs ago (a freeze try given back)
+	boolean ReEnumerate (const char *pWhy, boolean *pSent = 0);
+	static obfreeze::Hub s_Hub;			// the Pi 4's own hub (BuiltInHub): did it answer, its root-port resets
+	static boolean HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs);
+	static void ResetHub (CUSBHCIRootPort *pRoot);	// the hub on that root port reset and enumerated again
+	static boolean s_bForceHubReset;		// obhubreset!: at the next pass (a test)
+	static int s_nForceNoAnswer;			// obhubnoanswer=<slot>: that slot's next re-enumeration takes the hub as
+							// not answering, nothing sent to it (a test of HubNoAnswer); -1 none
+	static unsigned s_nForcedHubResets;		// since boot
+	static boolean PollForcedHubReset (void);	// TRUE: done (every box on the hub is gone)
 	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop
 	static obgate::Gate s_Gate[2];			// per slot: outlives this object, which a re-enumeration deletes
 	static int s_nForceRestart;			// obrestart=<slot>: -1 none
