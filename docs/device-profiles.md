@@ -384,9 +384,10 @@ box says `000000000001`.
 
 Named gaps of this part:
 
-- **Not read on a unit yet** (step 0 of the design): the UID by the vendor request and by the MIDI RPC, and that the two are
-  the same number. `ObReadUid` reads the second word little-endian (the box's own byte order in the firmware trace); the
-  emulator's `usb-rytm` answers it big-endian with no leading word, so the emulator's folders differ from its `uid` property.
+- **Byte order (step 0, 2026-11-26):** the units answer the vendor request with `00 00 00 01` and then the UID MSB first,
+  and that UID is the MIDI RPC 0x03 answer. This was read from Overbridge's and Transfer's own records of the bench Rytm, A4
+  and Digitone, not by a run of ours. `ObReadUid` reads bytes 4..7 big-endian. The emulator's `usb-rytm` sends its `uid`
+  property as 8 big-endian bytes, so the folder is the property's low 32 bits; its leading word is 0, not 1 (nothing reads it).
 - **The second Rytm's pattern view and FILL:** the pattern dump reader and FILL's writer are one, the first Rytm's.
 - **Two A4s, two Digitakts:** covered by the same code, not run.
 - **Two Rytms on the computer:** the mirror and the relay forward the UID request to their own box; not run with two units.
