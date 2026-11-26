@@ -140,9 +140,41 @@ int main() {
   // own project from /.a4; the Rytm's stays in slot 0, saved, until it comes back
   device::rytm_on_usb(true);
   hello_a4();
+  // its send FX B set before its project is loaded (its store not filled yet; its file has no SFX B line): kept, not put
+  // back to OFF by the load's clear (the QEMU two-box check, 2026-11-26), and written into its file
+  {
+    device::Scope in(device::g_links[1]);
+    char o[256];
+    CHECK(!store::ready() && fx::command("sendfx=2:halo", o, sizeof o));
+  }
   device::rytm_on_usb(false);
   settle();
   CHECK(device::g_links[1].box == &device::kA4 && device::g_base == &device::g_links[1]);
+  printf("  slot 1's send FX B set while it loaded: type %d (HALO %d)\n", fx::control1.knob[1][0], fx::type_from_name("halo"));
+  CHECK(fx::control1.knob[1][0] == fx::type_from_name("halo") && fx::control.knob[1][0] == fx::kOff);
+  CHECK(strstr(get("/.a4/ins/A4P.txt").c_str(), "\nSFX A 1 70 11 22 33 44\n"));   // (the file's own A line: kept)
+  {
+    char want[32];
+    snprintf(want, sizeof want, "\nSFX B %d ", fx::type_from_name("halo"));
+    CHECK(strstr(get("/.a4/ins/A4P.txt").c_str(), want));
+  }
+  // a TYPE set alone (no other INSERT edit) once it is loaded: its file written (before: only another edit's save took it)
+  {
+    device::Scope in(device::g_links[1]);
+    char o[256];
+    CHECK(store::ready() && fx::command("sendfx=1:comb", o, sizeof o));
+  }
+  settle();
+  {
+    char want[40];
+    snprintf(want, sizeof want, "\nSFX A %d 70 11 22 33 44\n", fx::type_from_name("comb"));
+    printf("  slot 1's file after a TYPE alone: %s\n", strstr(get("/.a4/ins/A4P.txt").c_str(), want) ? "SFX A COMB" : "unchanged");
+    CHECK(strstr(get("/.a4/ins/A4P.txt").c_str(), want));
+    device::Scope in(device::g_links[1]);
+    char o[256];
+    CHECK(fx::command("sendfx=1:1", o, sizeof o));   // (back to the file's TYPE 1 for the checks below)
+  }
+  settle();
   printf("  after the A4's hello: slot 0 %s, slot 1 %s\n", prj(0).key, prj(1).key);
   CHECK(!strcmp(prj(1).key, "A4P") && !strcmp(prj(0).key, "RYP"));
   {

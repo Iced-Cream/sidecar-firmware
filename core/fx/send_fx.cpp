@@ -341,6 +341,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
   }
   if (strcmp(p, "sendfx=off") == 0) {
     C.knob[0][0] = C.knob[1][0] = kOff;
+    if (settings_edit) settings_edit(0), settings_edit(1);
     show(r, max);
     return true;
   }
@@ -351,6 +352,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
       return true;
     }
     C.knob[s][0] = (uint8_t)t;
+    if (settings_edit) settings_edit(s);
     show(r, max);
     return true;
   }
@@ -398,6 +400,7 @@ CORE_COLD bool command(const char* p, char* r, int max) {
     }
     set_knob_base(s, i, (uint8_t)v);   // 0.5.0: through the knob filter (a live entry's base), a manual edit (spec-050 2.5)
     if (i >= 2) edited(mod::tid(mod::kFx, s, i - 2), (float)v);
+    if (settings_edit) settings_edit(s);
     show(r, max);
     return true;
   }

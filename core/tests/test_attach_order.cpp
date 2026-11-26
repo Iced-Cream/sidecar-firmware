@@ -17,6 +17,7 @@
 #include "device/digitakt.h"
 #include "engine.h"
 #include "fx/master.h"
+#include "fx/send_fx.h"
 #include "host_link.h"
 #include "lfo.h"
 #include "pool/pool.h"
@@ -95,6 +96,11 @@ static double rms(int vi) {   // voice vi over kRows frames rendered now
   double s = 0;
   for (int i = kRows / 2; i < kRows; ++i) s += (double)ring[i][vi] * ring[i][vi];
   return std::sqrt(s / (kRows / 2));
+}
+static std::string sfx_line(char ab, const char* type) {   // "\nSFX B <type id> " (its file's line for that FX)
+  char b[40];
+  snprintf(b, sizeof b, "\nSFX %c %d ", ab, fx::type_from_name(type));
+  return b;
 }
 static int lfo_depth(int s) {   // slot s's T1A's depth, 0 when it has no target (a project without an LFO file)
   device::Scope in(device::g_links[s]);
@@ -186,11 +192,24 @@ int main() {
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0);
   // the same type twice: its hello again is its slot (two of a type by their UIDs: test_same_type.cpp)
 
+  // ---- an A4 in slot 0 (it attached first) keeps its send FX in its own INSERT file, as a box in slot 1 does (before: slot 0's
+  //      FX were taken for the Rytm's kit's, so an A4 there never wrote them and a replug or reboot brought back OFF)
+  {
+    device::Scope in(device::g_links[0]);
+    char o[256];
+    CHECK(fx::command("sendfx=2:halo", o, sizeof o) && fx::control.knob[1][0] == fx::type_from_name("halo"));
+  }
+  settle();
+  printf("  slot 0's A4 FX B set: its file %s\n", get("/.a4/ins/A4P.txt").find(sfx_line('B', "halo")) != std::string::npos ? "has SFX B HALO" : "has no SFX B");
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('B', "halo")) != std::string::npos);
+  CHECK(fx::control1.knob[1][0] == fx::kOff);   // (the Digitakt's in slot 1: untouched)
+
   // ---- the A4 leaves with an edit unsaved: its voices stop, its edit lands in /.a4, the Digitakt stays in slot 1
   {
     device::Scope in(device::g_links[0]);
     char o[256];
     CHECK(lfo::command("lfo=1:dep:33", o, sizeof o) && lfo::get(0).depth == 33);
+    CHECK(fx::command("sendfx=1:cloudseed", o, sizeof o));   // (its FX A too: saved as it leaves)
   }
   device::usb_detach(0);   // (its USB device gone: the driver's call, taken at the control core's next pass)
   device::step(false);
@@ -212,6 +231,8 @@ int main() {
   CHECK(device::slot_held_by(&device::kDigitakt) == 1 && device::route_of(1) == 1 && device::g_base == &device::g_links[0]);
   settle();
   CHECK(key(0) == "RYP" && lfo_depth(0) == 0 && key(1) == "DTP" && lfo_depth(1) == 11);
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('A', "cloudseed")) != std::string::npos);   // the A4's, saved as it left
+  CHECK(get("/.rytm/ins/RYP.txt").find("SFX") == std::string::npos);   // the Rytm's FX are its kit's: never SFX lines
 
   // ---- the Rytm leaves, the A4 comes back on USB-C: slot 0 again, its project and its saved edit from /.a4
   device::rytm_on_usb(false);
@@ -220,7 +241,9 @@ int main() {
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 0);
   settle();
   CHECK(key(0) == "A4P" && lfo_depth(0) == 33);
-  printf("  the A4 back: slot 0 %s, its LFO depth %d (saved before it left)\n", key(0).c_str(), lfo_depth(0));
+  printf("  the A4 back: slot 0 %s, its LFO depth %d (saved before it left), its FX A %s B %s\n", key(0).c_str(), lfo_depth(0),
+         fx::type_name(fx::control.knob[0][0]), fx::type_name(fx::control.knob[1][0]));
+  CHECK(fx::control.knob[0][0] == fx::type_from_name("cloudseed") && fx::control.knob[1][0] == fx::type_from_name("halo"));
 
   // ---- the other order: both leave, the Digitakt attaches first (slot 0), then the A4 (slot 1)
   device::set_out(1, nullptr);   // the relay's box gone (the Digitakt)
