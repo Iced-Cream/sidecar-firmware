@@ -891,6 +891,42 @@ static void capture_clear_b_side_and_machine() {
   hooks.to_rytm = nullptr;
   printf("scene: the press clears B's lock; a Sidecar machine's SRC word clears its voice's P\n");
 }
+// 0.5.2 rc4: a Sidecar machine's source / preset list knob (GRANULAR SRC P1, SAMPLER / DSP SAMPLE SMP P11, WAVETABLE
+// TBLB P13, JUNO's preset P1) is NOT LOCKABLE: a morph of it would sweep through the pool; the other P words lock as before
+static void capture_src_list_not_lockable() {
+  struct M { int rm, vb, word; } ms[] = {{47, kGranMachine, 9}, {43, kDspSample, 19}, {45, kDspSample, 19},
+                                         {46, kWaveMachine, 21}, {46, kWaveMachine, 9}, {41, kJuno, 9},
+                                         {52, kMultiMachine, 9}, {49, kChopMachine, 9}, {40, kFm, 9}};
+  for (const M& m : ms) {
+    edit_start(2, 5);
+    const uint8_t m33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, (uint8_t)m.rm, (uint8_t)m.vb, 0xF7};
+    engine_sysex(m33, (int)sizeof m33);
+    const Tid p = mod::tid(mod::kV, ui::remote_track_voice(0), m.word - 9);
+    edit19(scene::kEditHeld, 0, 0x7F);
+    cap18(0, 0, m.word, 2, 0, 50 * 128);
+    CHECK(lock_of(2, p) < 0 && scene::state().s[2].n == 0 && readout() == "NOT LOCKABLE");
+    clr20(0, 0, m.word);
+    CHECK(readout() == "NOT LOCKABLE");
+    cap18(0, 0, 10, 2, 0, 50 * 128);   // P2: lockable as before
+    CHECK(lock_of(2, mod::tid(mod::kV, ui::remote_track_voice(0), 1)) == 52 * 128 && scene::state().s[2].n == 1);
+    const uint8_t r33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 0, 0x7F, 0xF7};
+    engine_sysex(r33, (int)sizeof r33);
+  }
+  // the same P on a machine where it is no list stays lockable: DSP SAMPLE's P1 (ENG), PLAITS' P1, GRANULAR's P11
+  struct L { int rm, vb, word; } ls[] = {{45, kDspSample, 9}, {40, kPlaits, 9}, {47, kGranMachine, 19}};
+  for (const L& l : ls) {
+    edit_start(2, 5);
+    const uint8_t m33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, (uint8_t)l.rm, (uint8_t)l.vb, 0xF7};
+    engine_sysex(m33, (int)sizeof m33);
+    edit19(scene::kEditHeld, 0, 0x7F);
+    cap18(0, 0, l.word, 2, 0, 50 * 128);
+    CHECK(lock_of(2, mod::tid(mod::kV, ui::remote_track_voice(0), l.word - 9)) == 52 * 128 && readout() != "NOT LOCKABLE");
+    const uint8_t r33[] = {0xF0, 0x7D, 0x52, 0x54, 0x33, 1, 0, 1, 0, 0x7F, 0xF7};
+    engine_sysex(r33, (int)sizeof r33);
+  }
+  hooks.to_rytm = nullptr;
+  printf("scene: a Sidecar machine's source / preset list word is NOT LOCKABLE, its other P words lock\n");
+}
 static void capture_clear_refused() {
   edit_start(2, 5);
   const Tid frq = mod::rytm_tid(0, 30);
@@ -1024,6 +1060,7 @@ int main() {
   capture_clear_removes_only_that_entry();
   capture_clear_b_side_and_machine();
   capture_clear_refused();
+  capture_src_list_not_lockable();
   readout_wire_format();
   hello_arms_edit();
   printf("test_scene: PASS\n");

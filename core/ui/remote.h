@@ -268,6 +268,10 @@ int remote_track_src_word(int t, int k);
 // P13 (WAVETABLE's table B) was the knob touched last on track t, P1 not since (the names bank for the Rytm's value text follows it)
 bool remote_track_names_p13(int t);
 int remote_track_src_param(int t);
+// 0.5.2 rc4: P(k+1) of track t picks a source or preset from a list (the Rytm's bank list: GRANULAR SRC, WAVETABLE TBL /
+// TBLB, MULTISAMPLE INST, CHOP SRC, JUNO / 6-OP FM's preset, DSP SAMPLE / SAMPLER's SMP): never a MORPH scene lock (a
+// morph would sweep through the pool)
+bool remote_track_src_list(int t, int k);
 // The Rytm's mods are 0.4.0's or newer (its slot asks say 36 names, core/user/um.cpp): DSP SAMPLE's knob A is SMP (rytm-mods 7h)
 void remote_rytm_040(bool on);
 bool remote_rytm_040();

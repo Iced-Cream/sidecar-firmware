@@ -2846,6 +2846,12 @@ CORE_COLD bool remote_rytm_040() { return g_rytm_040; }
 CORE_COLD int remote_track_src_param(int t) {
   return t >= 0 && t < 12 && have_tracks && track_vb[t] != kNotOurs && (track_vb[t] & 0x78) == kDspSample ? 10 : 0;
 }
+CORE_COLD bool remote_track_src_list(int t, int k) {
+  if (t < 0 || t >= 12 || !have_tracks || track_vb[t] == kNotOurs) return false;
+  const int m = track_named(t);
+  if (k == 0) return m == kGranMachine || m == kWaveMachine || m == kMultiMachine || m == kChopMachine || m == kJuno || m == kFm;
+  return (k == 10 && sample_machine(m)) || (k == 12 && m == kWaveMachine);
+}
 CORE_COLD int remote_track_param(int t, int k) {
   if (t < 0 || t >= 12) return 0;
   tsrc.t = t;
