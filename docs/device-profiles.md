@@ -275,10 +275,10 @@ changes nothing here.
 | project, its name and saves | `core/pool/pool.cpp` (`prj()`) | read from its folder at its attach (either slot); a 0x10 names its own box's project |
 | pool lists, JUNO / FM lists, the RAM store | `pools::S()`, `user/lists.cpp`, `store` | GRANULAR, WAVETABLE, MULTISAMPLE, CHOP resolve a voice's rows through its own slot; a file both lists hold loads once |
 | LFOs and the modulation layer | `core/mod` | a box's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is the Rytm's slot's |
-| INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines |
+| INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines; AMP plays on every box's voice and master chains, each box its own 6 (+2 master) (decided 2026-11-26); PRE / POST / TRK trims per slot (`stereo=trim` the slot in hand's, `trimpre=` / `trimpost=` every slot's) |
 | output stage | `pi/engine/output.*`, `side_out.h` | beside a Rytm, slot 1's voices go to a side stage paced by its own box's stream; alone, a box has the base stage |
 | send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s. The Rytm's instance, in either slot, is paced by its stems from its own stream's IN (`sendfx_pi::FromRytm(slot)`, SRC MIX `masterfx_pi::Stems(slot)`; its report 50 in `master::rytm()`); another box's by its voices |
-| user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport |
+| user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport. A Rytm in either slot gets its own fxslots names in its 0x21 list, its own labels, and its own 2 s BASE / WIDTH refresh (`sendfx_step` runs in each slot's Scope) |
 | scenes and the XY pad | `core/ui` | |
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
 | kits | `bundle/kits` | own queue, RELOAD ALL scan and records in its own folder; a box's 3B ends only its own voices' MIDI and arp notes |

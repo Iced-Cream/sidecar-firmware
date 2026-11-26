@@ -110,8 +110,8 @@ inline const Control& ctl(int) {
   return control_of(sl > 0 && sl < kVoiceSlots ? sl : 0);
 }
 int slot_in_hand();
-// AMP plays on the base box's voice chains (out::g_base_slot: AMP's state is keyed by chain, one box's at a time); the
-// other slot's AMP slots play dry.
+// AMP plays on every box's voice and master chains (decided 2026-11-26: slot 0 and slot 1 the same; amp.h keys its state by
+// box and chain).
 
 // ---- small DSP helpers (no tables; the Pi's hosted side has libm)
 inline float flush(float x) { return (x > -1e-20f && x < 1e-20f) ? 0.0f : x; }
@@ -327,7 +327,7 @@ class Engine {
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
       __atomic_store_n(&o.cur, (uint8_t)want, __ATOMIC_RELEASE);
       o.fresh = true;
-      if (want == kAmp) amp::fresh(c, s);
+      if (want == kAmp) amp::fresh(box_, c, s);
       o.d[0].Clear(), o.d[1].Clear();
       if (want == kDelay) o.d[0].ClearLine(), o.d[1].ClearLine();
       o.key = -1.0f;
@@ -349,7 +349,7 @@ class Engine {
     float y[2][kChunk];
     o.feed0 = w0, o.feed1 = w1;
     if (o.cur == kAmp) {
-      amp::run(c, s, o.sp, x, r, y[0], y[1], m);   // mono: (L + R) / 2 onto both sides
+      amp::run(box_, c, s, o.sp, x, r, y[0], y[1], m);   // mono: (L + R) / 2 onto both sides (this box's own rows)
     } else if (o.cur >= kTypes && send_insert) {
       send_insert(box_, c, s, o.sp, x, r, y[0], y[1], m);   // a master slot's send TYPE (core/fx/master.h), this box's
     } else {
@@ -708,7 +708,7 @@ class Engine {
   bool st_[kChains] = {};   // a voice chain ran in stereo last
   float sr_;
   int box_ = 0;
-  bool amp_ = true;         // AMP plays (SetAmp: the chains of the slot that is not out::g_base_slot play it dry)
+  bool amp_ = true;         // AMP plays (SetAmp: false plays an AMP slot dry; every box's chains play it, amp.h)
   uint32_t faults_ = 0;
 };
 
@@ -758,6 +758,8 @@ void set_param(int c, int s, int k, int v);
 void set_send(int vi, int bus, int v);       // voice vi -> bus 0..2
 void set_route3(int post);                   // bus 3: 0 PRE, 1 POST
 int param(int c, int s, int k);              // the knob (0..127)
+void set_param_in(int slot, int c, int s, int k, int v);   // the same, slot's (not the slot in hand's: amp.cpp's own step)
+int param_in(int slot, int c, int s, int k);
 // seq-ux p-locks (core/seq/seq.cpp): a step's lock of voice chain vi's slot s param k in place of the knob (v 0..127),
 // -1 the knob again
 void lock(int vi, int s, int k, int v);
@@ -820,8 +822,7 @@ bool settings_dirty(uint32_t* since);   // the slot in hand's
 bool settings_dirty_any();              // any slot's (the idle pass's settled)
 void settings_clean();
 void settings_due();                    // every slot's
-// an AMP slot's capture by name (the INSERT file's AMP line): the AMP engine's while the slot in hand is
-// out::g_base_slot (or the master's chains), else kept for the file only (AMP plays dry there: amp.h)
+// an AMP slot's capture by name (the INSERT file's AMP line): the slot in hand's own AMP rows (amp.h: every box's chains)
 void want_amp(int c, int s, const char* file);
 const char* amp_file(int c, int s);
 void set_kit(int kit);

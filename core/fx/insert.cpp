@@ -339,7 +339,7 @@ void value_text(int t, int k, int v, char* b, int cap) {
 
 void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
   int t = valid(c, s, k) ? K(c).type[c][s] : kOff;
-  if (t == kAmp && k == 0) return amp::knob_text(c, s, v, b, cap);
+  if (t == kAmp && k == 0) return amp::knob_text(hand(), c, s, v, b, cap);
   value_text(t, k, v, b, cap);
 }
 
@@ -384,6 +384,15 @@ void set_route3(int post) {
   mark(hand());
 }
 int param(int c, int s, int k) { return valid(c, s, k) ? S(c).knob[c][s][k] : 0; }
+void set_param_in(int slot, int c, int s, int k, int v) {
+  const int was = g_force;
+  g_force = slot >= 0 && slot < kVoiceSlots ? slot : 0;
+  set_param(c, s, k, v);
+  g_force = was;
+}
+int param_in(int slot, int c, int s, int k) {
+  return valid(c, s, k) ? g_set[slot > 0 && slot < kVoiceSlots ? slot : 0].knob[c][s][k] : 0;
+}
 // ---- ins1112, the POST EQ (end of the chain, after both slots)
 const Labels& eq_labels() { return kEqLabels; }
 static void eq_write(int c, int k, int v) {
@@ -494,9 +503,8 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
   const int c = box_voice(vi);   // its box voice's chain, in its slot's engine
   Engine& e = engine(slot);
   const Control& k = control_of(slot);
-  const bool amp = slot == out::g_base_slot;
-  e.SetAmp(amp);
-  if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
+  e.SetAmp(true);              // AMP on every box's chains (amp.h: each box its own rows)
+  amp::service(slot, c);       // an AMP capture offered to a slot not playing AMP: taken now
   if (!ring_r) e.MarkMono(c);
   if (!e.Active(c, k)) return;
   float x[64], r[64];
@@ -622,15 +630,15 @@ void settings_clean() { g_set[hand()].dirty = false; }
 void settings_due() {   // every slot's (a restart or a power-off is coming)
   for (Set& t : g_set) t.dirty_ms = now_ms() - 1000;
 }
-bool amp_here() { return hand() == out::g_base_slot; }   // AMP plays on the slot in hand's chains (amp.h, 3(b))
+// AMP plays on every box's chains (decided 2026-11-26): the slot in hand's own rows (amp.h)
 void want_amp(int c, int s, const char* file) {
   if (c < 0 || c >= kChains || s < 0 || s >= kSlots) return;
   if (c < kVoices) sniprintf(S(c).amp_file[c][s], amp::kNameMax, "%s", file ? file : "");
-  if (c >= kVoices || amp_here()) amp::want_file(c, s, file);
+  amp::want_file(hand(), c, s, file);
 }
 const char* amp_file(int c, int s) {
   if (c < 0 || c >= kChains || s < 0 || s >= kSlots) return "";
-  return c < kVoices && !amp_here() ? S(c).amp_file[c][s] : amp::slot_file(c, s);
+  return amp::slot_file(hand(), c, s);
 }
 void clear() {
   clear_settings();

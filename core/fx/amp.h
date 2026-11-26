@@ -26,8 +26,14 @@
 //     what played (another capture, or dry) over kXfadeFrames; the old instance goes back to the control core.
 // The cap: kMaxRunning AMP slots play at once (6 x 3.98 % of a Pi 4 core [measured, the boot bench 2026-10-23: worst
 // block 5.5 %], at most 2 a voice: 8 % of the 20 % a voice may take); a slot past it plays dry and shows MAX 6.
+// Two boxes (decided 2026-11-26: slot 0 and slot 1 the same): AMP plays on every box's voice and master chains, each box
+// its own rows (its chains in its slot's ins::Engine, its settings ins::control_of(box)); kCapBoxes says whether each box
+// has its own kMaxRunning / kMaxMaster (each box: 6 x 3.98 % more of the render cores at worst) or the boxes share one.
+// The pool holds every box's instances.
 #pragma once
 #include <stdint.h>
+
+#include "machines.h"   // kVoiceSlots
 
 #ifndef NAM_A2LITE_MAX_BUFFER_SIZE
 #define NAM_A2LITE_MAX_BUFFER_SIZE 16   // ins::kChunk: the largest piece Engine::Run passes
@@ -40,7 +46,10 @@ namespace amp {
 constexpr int kVoices = 8, kSlots = 2;   // one box's voice chains (ins::kVoices, machines.h kBoxVoices)
 constexpr int kMaxRunning = 6;              // AMP slots playing at once (the CPU cap; fix1049: 8 -> 6)
 constexpr int kMaxMaster = 2;               // the master chain's own, outside that cap: one L/R pair, or two slots
-constexpr int kInstances = kMaxRunning + kMaxMaster + 1; // + one for a capture change's crossfade
+// each box its own cap (decided 2026-11-26: 6 per box; the voice guard, pi/engine/guard.h, mutes a voice whose render with
+// its chains overloads its core)
+constexpr int kCapBoxes = kVoiceSlots;
+constexpr int kInstances = kCapBoxes * (kMaxRunning + kMaxMaster) + 1;   // + one for a capture change's crossfade
 constexpr int kWeights = 1871;              // A2-Lite's weight count (the only shape it runs)
 constexpr int kMaxModels = 64;              // /NAM/'s files listed at most
 constexpr int kNameMax = 48;                // a file's name (longer: left out of the list)
@@ -112,12 +121,13 @@ unsigned long heap_bytes();
 void heap_place(void* mem);        // zeroed by the caller; before any run()
 bool placed();
 
-// ---- the audio side (the voice's render core): slot (c 0..7, s 0..1) over m <= 16 frames. x / r the input (r null:
-// mono), y0 / y1 the output (y1 used when r). p: the smoothed params 0..1.
-void run(int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
-void fresh(int c, int s);          // the slot starts AMP from clean (its tone / DC state; not its capture)
-void service(int vi);              // voice_out's, every block: offers to voice vi's slots that did not run AMP
-void service_master();             // the same for the master's slots and pairs (master::render)
+// ---- the audio side (the voice's render core): box's slot (c 0..7 or a master chain, s 0..1) over m <= 16 frames. x / r
+// the input (r null: mono), y0 / y1 the output (y1 used when r). p: the smoothed params 0..1. box: the voice slot whose
+// chains these are (ins::Engine's own).
+void run(int box, int c, int s, const float* p, const float* x, const float* r, float* y0, float* y1, int m);
+void fresh(int box, int c, int s);   // the slot starts AMP from clean (its tone / DC state; not its capture)
+void service(int box, int vi);       // voice_out's, every block: offers to box voice vi's slots that did not run AMP
+void service_master(int box);        // the same for box's master slots and pairs (master::render)
 
 // ---- the control side (core 3)
 void begin(bool card_ok);          // /NAM/ listed at the next steps
@@ -129,14 +139,14 @@ const char* model_short(int i);    // "PLEXICR"
 int model_for_knob(int v);         // P1 0..127 -> the file, -1 none
 int knob_for_model(int i);         // the middle of the file's range
 int find_model(const char* file);  // by name (case ignored), -1 none
-Status status(int c, int s);
-// P1's text for slot (c, s) with the knob at v: the file's short name, or the reason it does not play
-void knob_text(int c, int s, int v, char* b, int cap);
-// The card's AMP line ("AMP V1 A Plexi Crunch.namb"): the slot's capture by name, resolved once /NAM/ is listed
-void want_file(int c, int s, const char* file);
-const char* slot_file(int c, int s);   // the file the slot's knob picks ("" none)
-int running();                     // the voices' AMP slots with a capture (playing or fading)
-int running_master();              // the master's instances
+Status status(int box, int c, int s);
+// P1's text for box's slot (c, s) with the knob at v: the file's short name, or the reason it does not play
+void knob_text(int box, int c, int s, int v, char* b, int cap);
+// The card's AMP line ("AMP V1 A Plexi Crunch.namb"): box's slot's capture by name, resolved once /NAM/ is listed
+void want_file(int box, int c, int s, const char* file);
+const char* slot_file(int box, int c, int s);   // the file the slot's knob picks ("" none)
+int running(int box = -1);         // the voices' AMP slots with a capture (playing or fading): box's, -1 every box's
+int running_master(int box = -1);  // the master's instances
 // The console: "amp" (the state), "amp=rescan"; false: not an amp command
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);      // "\"amp\":{...}"
