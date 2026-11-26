@@ -11,6 +11,7 @@
 #include "mod/rytm_out.h"
 #include "platform.h"
 #include "seq/seq.h"
+#include "sidecar_features.h"
 
 namespace core {
 namespace loop {
@@ -568,6 +569,7 @@ CORE_COLD void pump_copy() {
 CORE_COLD void set_env(const Env* e) { env_ = e ? *e : Env(); }
 
 CORE_COLD void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes) {
+  if (!SIDECAR_LOOPER) ring = nullptr, store = nullptr, store_bytes = 0;   // 0.5.2: the looper is off (sidecar_features.h): no ring, no store, on_ stays false and nothing below acts
   on_ = ring && ring_frames && store && store_bytes;
   store_ = store, store_bytes_ = store_bytes;
   if (ring && ring_frames) ring_.init(ring, ring_frames);
@@ -651,6 +653,7 @@ CORE_COLD const char* err_text(int err, int half_bars, char* b, int cap) {
 
 // auto-mute and LIVE VIA follow the loop: on at its start, off at the start of its fade back (or cut)
 CORE_COLD void live_and_mutes(uint64_t now) {
+  if (!SIDECAR_LOOPER) return;   // 0.5.2: off (sidecar_features.h): never a Rytm track mute, never a LIVE VIA move
   auto heard = [&](const LoopInfo& x) { return x.on && now >= x.start && !(x.stop_at && now >= x.stop_at); };
   bool audible = heard(lp_) || heard(lpp_);   // (a resample's wait: the old loop is still heard)
   if (audible && auto_mute_ && !am_.on) {
@@ -683,7 +686,7 @@ CORE_COLD void keep_tick();
 }
 CORE_COLD void tick(uint32_t us) {
   (void)us;
-  if (!on_) return;
+  if (!SIDECAR_LOOPER || !on_) return;
   seq::set_clock_tracks(seq::kClockLoop, 1);   // (seq::init in engine_begin resets the users: asked again each pass, a store)
   uint64_t now = frames_now();
   pump_pending(now);
@@ -741,8 +744,8 @@ CORE_COLD int clamp127(int v) { return v < 0 ? 0 : v > 127 ? 127 : v; }
 CORE_COLD void set_bal(int v) { bal_ = clamp127(v), dirty_ = true, retarget(); }
 CORE_COLD void set_lev(int v) { lev_ = clamp127(v), dirty_ = true, retarget(); }
 CORE_COLD void set_fade(int f) { fade_ = f < 0 ? 0 : f >= kFades ? kFades - 1 : f, dirty_ = true; }
-CORE_COLD void set_auto_mute(bool on) { auto_mute_ = on, dirty_ = true; }
-CORE_COLD void set_live_via(int perf) { live_via_ = perf < 0 ? 0 : perf > 12 ? 12 : perf, dirty_ = true; }
+CORE_COLD void set_auto_mute(bool on) { if (SIDECAR_LOOPER) auto_mute_ = on, dirty_ = true; }
+CORE_COLD void set_live_via(int perf) { if (SIDECAR_LOOPER) live_via_ = perf < 0 ? 0 : perf > 12 ? 12 : perf, dirty_ = true; }
 CORE_COLD int bal() { return bal_; }
 CORE_COLD int lev() { return lev_; }
 CORE_COLD int fade() { return fade_; }
@@ -928,6 +931,7 @@ const char kFile[] = "/.rytm/loop.txt";
 }
 CORE_COLD bool dirty() { return dirty_; }
 CORE_COLD void load() {
+  if (!SIDECAR_LOOPER) return;   // 0.5.2: off (sidecar_features.h): a loop.txt on the card is left alone and turns nothing on
   keep_lines_.n = 0;
   fmt::post_wait(kFile);
   fmt::recover(kFile);
@@ -974,7 +978,7 @@ CORE_COLD void load() {
   retarget();
 }
 CORE_COLD bool save() {
-  if (!dirty_) return false;
+  if (!SIDECAR_LOOPER || !dirty_) return false;   // (off: nothing is ever dirty, and the card's loop.txt is never rewritten)
   char* t = fmt::post_begin();
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
   int pg = (int)(postgain() * 1000.0f + 0.5f);
@@ -1027,6 +1031,10 @@ CORE_COLD bool command(const char* p, char* o, int cap) {
   if (strncmp(p, "loop", 4) != 0 || (p[4] && p[4] != '=')) return false;
   if (cap <= 0) return true;
   o[0] = 0;
+  if (!SIDECAR_LOOPER) {
+    sniprintf(o, cap, CORE_STR("loop: not in this release"));
+    return true;
+  }
   if (!on_) {
     sniprintf(o, cap, "loop: off (loopram=0, or no RAM for it)");
     return true;

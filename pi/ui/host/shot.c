@@ -2916,7 +2916,7 @@ static void theme_run (int style, const char *pre)
 	{
 #define NAVTAP(k)	do { if (o) tap_raw (NAV_X, NAV_Y (k)); else tap_raw (CNAV_X (k), CNAV_Y (k)); } while (0)
 #define PILL(n, i)	tap_raw (SUBX (n, i), SUBY)
-		const int nfx = SIDECAR_MORPH ? 4 : 3;
+		const int nfx = 3 + SIDECAR_MORPH + SIDECAR_LOOPER;	// Sends Master [Morph] XY [Loop]
 		sidecar_ui_show (8); sidecar_ui_show (2); sidecar_ui_show (0); run (2);	// (VOICE remembers Sound, FX Sends)
 		PILL (3, 1); EXPECT (sidecar_ui_page () == 13 && sidecar_ui_nav_lit () == 0);		// HOME: Status
 		PILL (3, 2); EXPECT (sidecar_ui_page () == 14 && sidecar_project_shown ());		// Project
@@ -2931,7 +2931,7 @@ static void theme_run (int style, const char *pre)
 		PILL (4, 0); EXPECT (sidecar_ui_page () == 8); EXPECT_CMD ("voicepick=-1");		// Sound: the Rytm's track again
 		NAVTAP (4); EXPECT (sidecar_ui_page () == 2 && sidecar_ui_nav_lit () == 4);			// FX: Sends
 		PILL (nfx, 1); EXPECT (sidecar_ui_page () == 19 && sidecar_mfx_shown ());			// Master
-		PILL (nfx, nfx - 1); EXPECT (sidecar_ui_page () == 22 && sidecar_xy_shown ());		// XY
+		PILL (nfx, nfx - 1 - SIDECAR_LOOPER); EXPECT (sidecar_ui_page () == 22 && sidecar_xy_shown ());		// XY
 		NAVTAP (7); NAVTAP (4); EXPECT (sidecar_ui_page () == 22);					// FX remembers XY
 		PILL (nfx, 0); EXPECT (sidecar_ui_page () == 2);
 		NAVTAP (5); PILL (2, 1); EXPECT (sidecar_ui_page () == 10 && sidecar_song_explain_shown ());	// SONG: Setup (the how-to)

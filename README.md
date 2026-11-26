@@ -36,8 +36,8 @@ High green and Viper) with sections and sub-page rows, HOME as Overview and Perf
 **catalog** in the web page, the **BP303** bass machine, the headless remote service on the USB-C cable (the protocol is open,
 docs/remote-ui.md), and a fix for a USB-C cable pulled in the middle of traffic. Sidecar 0.5.0 added the SAMPLER machine, a better CHOP, SAMPLE EDIT, FILL,
 the Rytm's own parameters on the XY pad, MIDI learn and poly-track p-locks, A and B LFOs, user send effects, the MIST texture machine,
-the new web page (web-next), updating from the web page and SD card images. MORPH, the looper, sidechain, the MIDI page's learn
-rows and a new WAVETABLE come in 0.5.2.
+the new web page (web-next), updating from the web page and SD card images. MORPH, sidechain, the MIDI page's learn
+rows and a new WAVETABLE come in 0.5.2; the looper is not in 0.5.2 (switched off in the build, it comes back redesigned).
 The release notes have each item's status: <https://trigcondition.github.io/sidecar-expander/release-notes/#sidecar-0511>.
 
 - Release and binaries: <https://github.com/trigcondition/sidecar-firmware/releases/tag/v0.5.1.1> (the update file,

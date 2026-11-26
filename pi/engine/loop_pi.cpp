@@ -8,6 +8,7 @@
 #include <circle/string.h>
 
 #include "loop/loop.h"
+#include "sidecar_features.h"
 #include "loop_keep.h"
 #include "rec_pi.h"
 
@@ -19,6 +20,11 @@ static loop_pi::Keep s_Keep;
 void Initialize()
 {
 	CLogger *log = CLogger::Get ();
+	if (!SIDECAR_LOOPER)
+	{	// 0.5.2: the looper is off (core/sidecar_features.h): no ring, no grab store (the pool gets that RAM), core::loop::init never runs
+		log->Write (From, LogNotice, "loop off (not in this release)");
+		return;
+	}
 	u64 nMemMB = CMemorySystem::Get ()->GetMemSize () >> 20;
 	int nOpt = CKernelOptions::Get ()->GetAppOptionDecimal ("loopram", 0xFFFFFFFFu) == 0xFFFFFFFFu
 			   ? -1 : (int) CKernelOptions::Get ()->GetAppOptionDecimal ("loopram", 0);

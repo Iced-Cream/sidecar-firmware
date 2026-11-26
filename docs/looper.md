@@ -1,3 +1,9 @@
+> **Not in 0.5.2.** The master looper is switched off in 0.5.2 (`core/sidecar_features.h`, `SIDECAR_LOOPER 0`): no LOOP page on the
+> Pi screen or the Rytm, no Loop page in the web, the console's `loop` commands answer "loop: not in this release", and the engine
+> keeps no ring, records and plays nothing and never mutes a Rytm track or moves a PERF macro. A `loop.txt` on the card is left
+> alone. The code stays built and tested with the switch on; the redesign (the loop at unity on the POST path) turns it back on.
+> Read this page as the design notes of that work.
+
 # Looper: per-track or master grid? (2026-10-08)
 
 ## What the Rytm gives a USB host

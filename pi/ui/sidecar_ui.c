@@ -108,13 +108,23 @@ static const char *const kHomeMap[] = {"Overview", "Status", "Project", "Perform
 static const int kHomePg[] = {PG_HOME, PG_STATUS, PG_PROJECT, PG_PERFORM};
 static const char *const kVoiceMap[] = {"Sound", "Insert", "Source", "Scope", ""};
 static const int kVoicePg[] = {PG_VOICE, PG_INS, PG_MACH, PG_SCOPE};
+// FX's sub-pages: Morph (0.5.0) and Loop (0.5.2) are out with SIDECAR_MORPH / SIDECAR_LOOPER 0 (core/sidecar_features.h)
 #if SIDECAR_MORPH
-static const char *const kFxMap[] = {"Sends", "Master", "Morph", "XY", "Loop", ""};
-static const int kFxPg[] = {PG_FX, PG_MFX, PG_MORPH, PG_XY, PG_LOOP};
+#define FX_MORPH_N	"Morph",
+#define FX_MORPH_P	PG_MORPH,
 #else
-static const char *const kFxMap[] = {"Sends", "Master", "XY", "Loop", ""};
-static const int kFxPg[] = {PG_FX, PG_MFX, PG_XY, PG_LOOP};
+#define FX_MORPH_N
+#define FX_MORPH_P
 #endif
+#if SIDECAR_LOOPER
+#define FX_LOOP_N	"Loop",
+#define FX_LOOP_P	, PG_LOOP
+#else
+#define FX_LOOP_N
+#define FX_LOOP_P
+#endif
+static const char *const kFxMap[] = {"Sends", "Master", FX_MORPH_N "XY", FX_LOOP_N ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, FX_MORPH_P PG_XY FX_LOOP_P};
 static const char *const kSongMap[] = {"Timeline", "Setup", ""};
 static const int kSongPg[] = {PG_SONG, PG_SONG};
 static const char *const kRecMap[] = {"Record", "Takes", ""};
