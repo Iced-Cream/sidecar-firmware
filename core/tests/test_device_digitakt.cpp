@@ -69,7 +69,7 @@ int main() {
     fmt::post_step();
   }
   CHECK(restarts == 0);
-  CHECK(!strcmp(device::cur().state, "/.digitakt") && device::active().id == device::kIdDigitakt);
+  CHECK(!strcmp(device::cur().state, "/.dt") && device::active().id == device::kIdDigitakt);
   g_out.clear();
 
   int hellos = 0, trigs = 0, reports = 0, controls = 0, offs = 0;

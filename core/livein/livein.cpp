@@ -7,6 +7,7 @@
 
 #include "fx/out.h"
 #include "machines.h"
+#include "device/device.h"   // voice_in: a console voice V is the slot in hand's box voice (box=S: prefix)
 #include "platform.h"
 #include "voices.h"
 
@@ -311,7 +312,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
     bool on = strcmp(a + 7, ":off") != 0;
-    force(vi, on);
+    force(device::voice_in((uint8_t)vi), on);   // the slot in hand's box voice vi (box=S: on the console)
     sniprintf(out, cap, "livein: voice %d %s", vi, on ? "plays LIVE IN (AUDIO IN through its INSERT chain and route)"
                                                      : "plays its own machine");
     return true;

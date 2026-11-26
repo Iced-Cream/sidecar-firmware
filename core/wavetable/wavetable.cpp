@@ -13,6 +13,7 @@
 #include "../lib/srclib.h"
 #include "../msamp/cardq.h"
 #include "../machines.h"
+#include "device/device.h"   // voice_in: a console voice V is the slot in hand's box voice (box=S: prefix)
 #include "../pool/pool.h"
 #include "../ui/remote.h"
 #include "../poly.h"
@@ -943,8 +944,9 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
     bool on = strcmp(a + 7, ":off") != 0;
-    if (force[vi] && !on) silence(vi);
-    force[vi] = on;
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi (box=S: on the console)
+    if (force[ev] && !on) silence(ev);
+    force[ev] = on;
     sniprintf(out, cap, "wt: voice %d %s", vi, on ? "plays WAVETABLE (any built-in machine the Rytm reports)" : "plays its own machine");
     return true;
   }
@@ -956,8 +958,9 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       sniprintf(out, cap, "wt: pick:V:ROW (V 0..7, ROW A001..H127)");
       return true;
     }
-    if (!pick(vi, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, LV(vi).nlist);
-    else sniprintf(out, cap, "wt: voice %d TBL %s", vi, entry_name(want[vi]));
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi
+    if (!pick(ev, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, LV(ev).nlist);
+    else sniprintf(out, cap, "wt: voice %d TBL %s", vi, entry_name(want[ev]));
     return true;
   }
   if (!strcmp(a, "list")) {

@@ -561,9 +561,12 @@ CORE_COLD void set_project(const uint8_t* d, int len) {
   n[k] = 0;
   if (is_slot_key(n)) n[0] = '_';   // 2026-10-27: a Rytm name never names a slot key (today's key for it)
 #if CORE_MSAMP
-  if (prjslot::take_10(n)) return;   // slot mode (core/bundle/prjslot.h): the 4B reports switch, not the 10
+  // The Rytm's project slots (its 4B reports, prjslot) and the rename question on its PROJECT page are the Rytm's alone: a
+  // box's 10 (an A4's, a Digitakt's) is its project's name and nothing more, in its own folder (design 2026-11-21)
+  const bool rytm = device::rytm_at(prj_slot());
+  if (rytm && prjslot::take_10(n)) return;   // slot mode (core/bundle/prjslot.h): the 4B reports switch, not the 10
   char rk[kKeyMax];
-  if (prjslot::resolve(n, rk, sizeof rk)) {   // name mode on a card keyed by slot (older mods): the slot of that name
+  if (rytm && prjslot::resolve(n, rk, sizeof rk)) {   // name mode on a card keyed by slot (older mods): the slot of that name
     bool first = !prj().seen;
     prj().seen = true;
     if (strcmp(rk, prj().key) != 0) {
@@ -583,7 +586,7 @@ CORE_COLD void set_project(const uint8_t* d, int len) {
   prj().seen = true;
   if (strcmp(n, prj().key) != 0) {
 #if CORE_MSAMP
-    if (rename::intercept(prj().key, n)) {   // UX review B1: no files under the new name, some under the old: asked first
+    if (rytm && rename::intercept(prj().key, n)) {   // UX review B1: no files under the new name, some under the old: asked first
       if (first && rename::busy()) announce();   // (the old project's tables meanwhile)
       return;
     }
@@ -591,7 +594,7 @@ CORE_COLD void set_project(const uint8_t* d, int len) {
     switch_to(n);
   } else {
 #if CORE_MSAMP
-    rename::back();   // (a question about another name is moot: the Rytm is back on this one)
+    if (rytm) rename::back();   // (a question about another name is moot: the Rytm is back on this one)
 #endif
     if (!first) return;
   }
