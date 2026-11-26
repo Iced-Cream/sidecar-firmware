@@ -224,7 +224,7 @@ void core_done(int core, bool hot, bool late) {
   }
   late_most_us = (late_most_us + 15) >> 4;   // (about its time a block, for the log)
   if (late && late_most >= 0) r.cand = (int8_t)(late_most + 1), r.cand_us = late_most_us;
-  // under kLateFloorUs a block muting it frees nothing (LT12k, 2026-11-25, Connor: a FIFO dip muted 1-5 us SAT inserts
+  // under kLateFloorUs a block muting it frees nothing (LT12k, 2026-11-25: a FIFO dip muted 1-5 us SAT inserts
   // while the two slowed slots ran 12 and 21 us; at 1200 MHz one harmless dip took four of them)
   if (late_most_us < kLateFloorUs) late_most = -1;
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block

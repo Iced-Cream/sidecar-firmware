@@ -4,10 +4,10 @@
 // The FIFO is low under kLowBlocks blocks at a base pass's start. Each low run's first block is a dip (one control pass
 // that came late or one render pass that fell short). Two dips within kHold base passes, one of them under a block, make the render core that took
 // longer in the last block late, and keep it late for kHold passes from the second dip.
-//   2026-11-25 LT12g P5: no core past a block, yet the FIFO drained 14 s: the FIFO's view decided (Connor).
+//   2026-11-25 LT12g P5: no core past a block, yet the FIFO drained 14 s: the FIFO's view decided.
 //   LT12h P5: the control loop refills the FIFO over a pass, so only a pass's first block began low; late and on-time
 //   blocks alternated and the late rule's 4 in a row never came: hence the hold.
-//   LT12i P5: at 1 block the mute landed only once the FIFO was empty (138 underruns, a scrape): 2 blocks (Connor).
+//   LT12i P5: at 1 block the mute landed only once the FIFO was empty (138 underruns, a scrape): 2 blocks.
 //   Two dips, not one: a single long control pass (pass max reaches ~3 ms in normal play) dips the FIFO once and refills
 //   it; an overload dips it at every pass. Not for kGrace passes after a stream (re)start, whose FIFO begins empty.
 //   LT13 P5 (2026-11-25): an overload the control loop cannot refill keeps the FIFO low at every pass, one low run, one
@@ -77,7 +77,7 @@ struct State {
     return true;
   }
   // after a late mute (cores.cpp): the hold ends and the next takes two new dips, so one low-buffer event mutes one
-  // effect while the FIFO refills (LT12k, 2026-11-25, Connor: one event muted 8 effects in ~40 ms)
+  // effect while the FIFO refills (LT12k, 2026-11-25: one event muted 8 effects in ~40 ms)
   // A low run starts again too: a FIFO still low after the mute takes kArm more passes with no gain before the next.
   void rearm() { left = 0, since = kHold, run = 0, pair = false, deep = false, was_deep = false; }
   // the hold still on, without a pass of its own (the other FIFO's passes: cores.cpp)

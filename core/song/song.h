@@ -127,7 +127,7 @@ struct MidiConfig {
 // notes scenes050]; byte 11 = AUTO CHANNEL - 1 [inferred: 0x0d with AUTO 14, not varied]
 constexpr int kGlobalPerfCh = 27, kGlobalAutoCh = 11;
 void config_default(MidiConfig* c);   // the Rytm's defaults (channels 1..12, FX 13, auto 14, PERF 15), not valid
-// The A4 MKII's (OS 1.56, traced in Ghidra 2026-11-16: project file a4-song-dumps.md; not yet run on a unit or in
+// The A4 MKII's (OS 1.56; the offsets of its GLOBAL dump as a host reads them, not yet run on a unit or in
 // a4-emu): its GLOBAL (0x5D) unpacked payload, one byte a setting, channels 0..15 = 1..16 and 0xFF OFF: 0x0B AUTO
 // CHANNEL, 0x0C..0x0F TRACK 1..4, 0x10 FX, 0x11 CV, 0x12 PROG CH IN CH (OFF: the AUTO CHANNEL), 0x13 PROG CH OUT CH,
 // 0x14 PERF, 0x19 PARAM OUTPUT (0 NRPN, 1 CC), 0x1B CLOCK SEND, 0x1C TRANSPORT RECEIVE, 0x1D TRANSPORT SEND, 0x1E PROG
