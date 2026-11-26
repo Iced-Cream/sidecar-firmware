@@ -720,6 +720,16 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 		  CObUsb::RelaySlot () >= 0 && CObUsb::Box ((unsigned) CObUsb::RelaySlot ()) != 0 ? CObUsb::SlotName (CObUsb::RelaySlot ()) : "none",
 		  CTeensyTarget::Relaying () ? "true" : "false", CObUsb::MidiSlot (0), CObUsb::MidiSlot (1));
 	pOut->Append (s);
+	// the attach gate (attach_gate.h, obgate=): per slot whether its box is held from the computer now, its holds, late
+	// shows, re-enumerations and the last hold's length since boot; the stream restarts since boot (all boxes)
+	{
+		const obgate::Gate &g0 = CObUsb::AttachGate (0), &g1 = CObUsb::AttachGate (1);
+		s.Format (",\"gate\":{\"held\":[%s,%s],\"holds\":[%u,%u],\"late\":[%u,%u],\"reenums\":[%u,%u],\"waitMs\":[%u,%u],"
+			  "\"restarts\":%u}", CObUsb::GateHolds (0) ? "true" : "false", CObUsb::GateHolds (1) ? "true" : "false",
+			  g0.holds, g1.holds, g0.shown_late, g1.shown_late, g0.total_reenums, g1.total_reenums,
+			  (unsigned) g0.last_wait_ms, (unsigned) g1.last_wait_ms, CObUsb::StreamRestarts ());
+		pOut->Append (s);
+	}
 	s.Format (",\"usbmidi\":{\"os\":\"%s\",\"osUpgrade\":%s,\"aborted\":%u}",	// usbmidi=os: (sidecar_gadget.h); osUpgrade: they
 		  k->m_pSidecar ? k->m_pSidecar->OsUpdateName () : "off",	// pass now; aborted: upgrades cut after a loss
 		  k->m_pSidecar && k->m_pSidecar->OsPass () ? "true" : "false", k->m_pSidecar ? k->m_pSidecar->OsAborts () : 0);
