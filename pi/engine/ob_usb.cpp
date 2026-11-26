@@ -646,7 +646,9 @@ boolean CObUsb::PollFreeze (void)
 							"unplug it at the box and plug it in again", p->m_pAudio->name, k, obfreeze::kTries);
 			continue;
 		}
-		if (p->ReEnumerate (bForce ? "asked (obreenum)" : "its stream froze with the box still on the bus")) return TRUE;
+		boolean bSent = TRUE;
+		if (p->ReEnumerate (bForce ? "asked (obreenum)" : "its stream froze with the box still on the bus", &bSent)) return TRUE;
+		if (!bSent && !bForce && s_FreezeBudget[k].tries > 0) s_FreezeBudget[k].tries--;	// given back: nothing happened to the box
 	}
 	return FALSE;
 }
@@ -654,26 +656,88 @@ boolean CObUsb::PollFreeze (void)
 // The software replug (ob_freeze.h): CUSBDevice::RemoveDevice is Circle's hot-unplug path (the hub port disabled, the
 // xHCI slot freed, this driver and the box's other functions deleted: its MIDI too), and the parent's ReScanDevices its
 // hot-plug path (the port reset, a fresh slot, address and Configure). Main loop only. Nothing of this object is used
-// once RemoveDevice is called.
-boolean CObUsb::ReEnumerate (const char *pWhy)
+// once RemoveDevice is called. On a hub port the removal is a request to the hub (CLEAR_FEATURE PORT_ENABLE), and a
+// hub that does not answer it removes nothing (RL1, ob_freeze.h "The hub that does not answer"): no rescan then.
+boolean CObUsb::ReEnumerate (const char *pWhy, boolean *pSent)
 {
 	CUSBDevice *pDevice = GetDevice ();
 	CUSBHCIRootPort *pPort = pDevice->GetParentRootPort ();
 	CUSBStandardHub *pHub = pPort == 0 ? BuiltInHub (pDevice) : 0;
 	const char *pName = m_pAudio->name;		// (a static table: still good after the delete)
 	const unsigned nSlot = m_nSlot;
+	if (pSent != 0) *pSent = FALSE;
 	if (pPort == 0 && pHub == 0)
 	{
 		CLogger::Get ()->Write (From, LogError, "%s (slot %u): %s, but it hangs off another hub: no re-enumeration; unplug "
 					"it at the box and plug it in again", pName, nSlot, pWhy);
 		return FALSE;
 	}
+	if (pHub != 0 && obfreeze::quiet (s_Hub, NowMs ()))
+	{
+		if (!s_Hub.told)
+		{
+			s_Hub.told = TRUE;
+			CLogger::Get ()->Write (From, LogError, "%s (slot %u): %s, but the Pi's USB hub did not answer %u s ago: nothing "
+						"sent to it; unplug the box and plug it in again, or power the Pi off and on", pName,
+						nSlot, pWhy, (unsigned) ((NowMs () - s_Hub.dead_ms) / 1000));
+		}
+		return FALSE;
+	}
 	s_nFreezeReEnums++;
 	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: enumerating it again (try %u of %u, %u since boot)", pName,
 				nSlot, pWhy, nSlot < 2 ? s_FreezeBudget[nSlot].tries : 0, obfreeze::kTries, s_nFreezeReEnums);
-	pDevice->RemoveDevice ();			// deletes this
+	if (pSent != 0) *pSent = TRUE;
+	const unsigned nStartUs = CTimer::GetClockTicks ();
+	if (!pDevice->RemoveDevice ())			// deletes this - unless its hub did not disable the port (a root port always does)
+	{
+		const unsigned nTookUs = CTimer::GetClockTicks () - nStartUs;
+		if (pHub != 0 && obfreeze::no_answer (nTookUs))
+		{
+			if (pSent != 0) *pSent = FALSE;		// (only the hub was asked: the try is given back)
+			return HubNoAnswer (pHub, pName, nSlot, nTookUs);
+		}
+		CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): its hub refused to disable the port (%u ms): nothing "
+					"removed, not enumerated again", pName, nSlot, nTookUs / 1000);
+		return FALSE;
+	}
 	if (!(pPort != 0 ? pPort->ReScanDevices () : pHub->ReScanDevices ()))
 		CLogger::Get ()->Write (From, LogWarning, "the port did not enumerate it again (unplugged meanwhile?)");
+	return TRUE;
+}
+
+obfreeze::Hub CObUsb::s_Hub;
+
+namespace teensy_flash { void HubGone (void) __attribute__ ((weak)); }	// a Teensy write's hub pointer (teensy_flash.cpp)
+
+// The Pi's own hub (BuiltInHub) did not answer a port disable (nTookUs: the request's 3 s timeout). Nothing more is sent
+// to it: its root port is reset instead (obhubreset=1, the default; ob_freeze.h Hub), which the xHC does by itself and
+// Circle takes as an unplug and a replug of the hub: the hub, every device behind it (this box, the other one, the relay)
+// deleted, then the hub enumerated again with all of them. TRUE: done (this object is gone); FALSE: not now (nothing
+// goes to that hub for obfreeze::kDeadMs).
+boolean CObUsb::HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs)
+{
+	CUSBDevice *pHubDevice = pHub->GetDevice ();
+	CUSBHCIRootPort *pRoot = pHubDevice != 0 ? pHubDevice->GetParentRootPort () : 0;	// (BuiltInHub: on one)
+	const boolean bAllowed = pRoot != 0 && CKernelOptions::Get ()->GetAppOptionDecimal ("obhubreset", 1) != 0;
+	if (!obfreeze::dead_now (s_Hub, NowMs (), bAllowed))
+	{
+		CLogger::Get ()->Write (From, LogError, "%s (slot %u): the Pi's USB hub did not answer (the port disable waited %u ms): "
+					"nothing removed, nothing sent to the hub for %u s (%s); unplug the box and plug it in again, "
+					"or power the Pi off and on", pName, nSlot, nTookUs / 1000, (unsigned) (obfreeze::kDeadMs / 1000),
+					!bAllowed ? "obhubreset=0" : s_Hub.resets >= obfreeze::kHubResets ? "its resets for this boot "
+					"spent" : "its last reset was less than a minute ago");
+		return FALSE;
+	}
+	CLogger::Get ()->Write (From, LogError, "%s (slot %u): the Pi's USB hub did not answer (the port disable waited %u ms): "
+				"resetting it at its root port (reset %u of %u since boot): every box and the relay on it leave and "
+				"are enumerated again", pName, nSlot, nTookUs / 1000, s_Hub.resets, obfreeze::kHubResets);
+	s_pRetryPort = 0, s_pRetryHub = 0;		// a full-speed retry's hub goes with it (PollReEnum: nothing due)
+	if (teensy_flash::HubGone != 0) teensy_flash::HubGone ();
+	pRoot->RemoveDevice ();				// deletes the hub and everything behind it: this object too
+	if (pRoot->ReScanDevices ())
+		CLogger::Get ()->Write (From, LogNotice, "the Pi's USB hub is back after its reset");
+	else
+		CLogger::Get ()->Write (From, LogError, "the Pi's USB hub did not come back after its reset: power the Pi off and on");
 	return TRUE;
 }
 
@@ -873,8 +937,9 @@ boolean CObUsb::Command (const char *pText)
 	else
 	{
 		CLogger::Get ()->Write (From, LogNotice, "obreenum=0|1 (re-enumerate that slot's box; frozen-stream re-enumerations "
-					"since boot %u, budget slot 0 %u/%u, slot 1 %u/%u)", s_nFreezeReEnums, s_FreezeBudget[0].tries,
-					obfreeze::kTries, s_FreezeBudget[1].tries, obfreeze::kTries);
+					"since boot %u, budget slot 0 %u/%u, slot 1 %u/%u; the Pi's hub reset %u/%u%s)", s_nFreezeReEnums,
+					s_FreezeBudget[0].tries, obfreeze::kTries, s_FreezeBudget[1].tries, obfreeze::kTries,
+					s_Hub.resets, obfreeze::kHubResets, s_Hub.dead ? ", it did not answer" : "");
 	}
 	return TRUE;
 }

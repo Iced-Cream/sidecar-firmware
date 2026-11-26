@@ -447,6 +447,11 @@ int StateJson (char *pOut, unsigned nCap)
 	return n > 0 && (unsigned) n < nCap ? n : -1;
 }
 
+void HubGone (void)
+{
+	s_pHub = 0;
+}
+
 }	// namespace teensy_flash
 
 #ifdef TEENSY_FLASH_TEST	// tests/test_teensy_flash.cpp: the task's step, driven by the test

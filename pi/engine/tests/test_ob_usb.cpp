@@ -1188,6 +1188,99 @@ int main() {
     }
     CTimer::s_now = 0;
   }
+  {  // RL1 (T516): the frozen box hangs off the Pi's own hub (2109:3431) and the hub no longer answers: the port disable
+     // waits its 3 s and removes nothing. No rescan (it would wait 3 s on each port); the hub's root port is reset
+     // instead (obhubreset=1, twice a boot, a minute apart); otherwise nothing goes to the hub for a
+     // minute. A quick refusal (the hub answered no) is a try spent, without the rescan.
+    struct Port : CUSBHCIRootPort {
+      int rescans = 0;
+      boolean ReScanDevices() override { ++rescans; return TRUE; }
+    } port;
+    CUSBDevice hd;
+    hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+    hd.root = &port;
+    CUSBStandardHub vl805(&hd);
+    CTimer::s_now64 = 0, CTimer::s_now = 200000000;   // 200 s: the SR1 budget forgotten once a box streams
+    size_t l0 = CLogger::Get()->lines.size();
+    // one frozen spell of the slot-0 Rytm on the hub: streams, the budget forgotten, then nothing completes
+    auto freeze = [&](CUSBDevice& dev, Bus& r) {
+      uint16_t c = 0;
+      for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();
+      CObUsb::PollHalt();   // streaming, no failures: a budget older than kForgetMs is forgotten
+      r.host.in.front()->ep->GetXHCIEndpoint()->state = 1;
+      int n0 = dev.removes;
+      for (int t = 0; t < 60 && dev.removes == n0; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      return dev.removes - n0;
+    };
+    {  // 1: no answer (3 s): the hub reset at its root port, once (a try: the box is enumerated again with the hub)
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(vl805.rescans == 0 && port.removes == 1 && port.rescans == 1 && CObUsb::HubResets() == 1);
+      CHECK(count_lines("the Pi's USB hub did not answer (the port disable waited 3000 ms): resetting it at its root "
+                        "port (reset 1 of 2 since boot)", l0) == 1);
+      CHECK(count_lines("the Pi's USB hub is back after its reset", l0) == 1);
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2)", l0) == 1);
+    }   // (the Bus deletes the function, as the hub's removal would)
+    {  // 2: again 10 s later: no second reset within the minute; nothing sent to the hub for a minute after
+      CTimer::s_now += 10000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(port.removes == 1 && vl805.rescans == 0 && CObUsb::HubResets() == 1);
+      CHECK(count_lines("nothing removed, nothing sent to the hub for 60 s (its last reset was less than a minute ago)", l0) == 1);
+      // still frozen: the watch asks again every kHoldMs, but no request goes out, and the budget is untouched (its 1:
+      // the reset's try 10 s ago)
+      for (int t = 0; t < 200; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && port.removes == 1);
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2, it did not answer)", l0) == 1);
+    }
+    {  // a minute on, the hub may be asked again: it answers no at once (a refusal): a try spent, no rescan, no reset
+      CTimer::s_now += 60000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 1000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(vl805.rescans == 0 && port.removes == 1);
+      CHECK(count_lines("its hub refused to disable the port (1 ms): nothing removed, not enumerated again", l0) == 1);
+      size_t l1 = CLogger::Get()->lines.size();
+      CHECK(CObUsb::Command("obreenum") && count_lines("budget slot 0 1/3, slot 1 0/3; the Pi's hub reset 1/2)", l1) == 1);
+    }
+    {  // 3: obhubreset=0: no reset, said so
+      CTimer::s_now += 120000000;
+      opt->num["obhubreset"] = 0;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1);
+      CHECK(port.removes == 1 && CObUsb::HubResets() == 1 && count_lines("(obhubreset=0)", l0) == 1);
+      opt->num.erase("obhubreset");
+    }
+    {  // 4: the second and last reset of the boot, then spent
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && port.removes == 2 && CObUsb::HubResets() == 2);
+    }
+    {
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805, r.dev.remove_ok = FALSE, r.dev.remove_us = 3000000;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && port.removes == 2 && count_lines("(its resets for this boot spent)", l0) == 1);
+    }
+    {  // 5: a hub that answers: removed and rescanned as before (the SR1 path), no reset
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      CHECK(freeze(r.dev, r) == 1 && vl805.rescans == 1 && port.removes == 2);
+    }
+    CTimer::s_now = 0;
+  }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again
     struct Port : CUSBHCIRootPort {
       int rescans = 0;
