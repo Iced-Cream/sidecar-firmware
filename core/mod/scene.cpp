@@ -520,7 +520,7 @@ CORE_COLD bool capture_clear(int side, int track, int word) {
   char pl[8];
   mod::param_label(tg, pl, sizeof pl);
   const bool had = unlock(n, tg);   // this entry only
-  sniprintf(t, sizeof t, CORE_STR("%c %s %s"), sd, pl, had ? "CLR" : "NO LOCK");
+  sniprintf(t, sizeof t, CORE_STR("%c %s %s"), sd, pl, had ? "CLR" : "NONE");
   mod::rytm_readout(t);
   return had;
 }
