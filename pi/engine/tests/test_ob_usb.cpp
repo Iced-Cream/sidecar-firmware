@@ -13,6 +13,7 @@
 #include <circle/usb/usbstandardhub.h>
 
 #include <circle/koptions.h>
+#include <circle/bcmpciehostbridge.h>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -163,6 +164,12 @@ static void host_link_is(CUSBFunction* ob) {
 }
 
 int main() {
+  {  // a VL805 behind the root complex (PollAspm reads it at its first pass): ASPM off, its PCIe capability at 0xc4
+    auto& rc = CBcmPCIeHostBridge::s_cfg[0];
+    auto& vl = CBcmPCIeHostBridge::s_cfg[1];
+    rc[0] = 0x271114e4;
+    vl[0] = 0x34831106, vl[4] = 0x00100000, vl[0x34] = 0x80, vl[0x80] = 0x0000c401, vl[0xc4] = 0x00020010, vl[0xd4] = 0x10120040;
+  }
   memcpy(g_digitakt, g_rytm, sizeof g_rytm);
   CHECK(g_rytm[kOutAlt3Mps] == 0x70 && g_rytm[kOutAlt3Mps + 1] == 0x01);
   g_digitakt[kOutAlt3Mps] = 0x58, g_digitakt[kOutAlt3Mps + 1] = 0x00;
@@ -1231,6 +1238,33 @@ int main() {
     CTimer::s_now64 = 0;
   }
 
+  {  // obaspmoff (default 1): the VL805 ASPM bits written back to off within 10 ms whenever they read set
+    auto& lnk = CBcmPCIeHostBridge::s_cfg[1][0xd4];
+    size_t l0 = CLogger::Get()->lines.size();
+    CTimer::s_now = 50000000;
+    CObUsb::PollHalt();
+    CHECK(count_lines("VL805 ASPM was on", l0) == 0 && lnk == 0x10120040);
+    lnk = 0x10120043;                                   // the VL805 turns L0s+L1 on
+    CTimer::s_now += 5000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120043);                           // not within 10 ms of the last look
+    CTimer::s_now += 6000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120040);
+    CHECK(count_lines("VL805 ASPM was on (Link Control/Status 10120043): set off, reads 10120040 (", l0) == 1);
+    CHECK(count_lines(" did not take)", l0) == 1 && count_lines(", 0 did not take)", l0) == 1);
+    CBcmPCIeHostBridge::s_write_ok = false;             // a write that does not take: counted, said
+    lnk = 0x10120041;
+    CTimer::s_now += 11000;
+    CObUsb::PollHalt();
+    CHECK(count_lines("reads 10120041 - DID NOT TAKE (", l0) == 1 && count_lines(", 1 did not take)", l0) == 1);
+    CBcmPCIeHostBridge::s_write_ok = true;
+    CTimer::s_now += 11000;
+    CObUsb::PollHalt();
+    CHECK(lnk == 0x10120040);
+    CHECK(count_lines("VL805 ASPM kept off (obaspmoff=1): Link Control/Status 10120040", 0) == 1);
+    CTimer::s_now = 0;
+  }
   printf("test_ob_usb: ok\n");
   return 0;
 }
