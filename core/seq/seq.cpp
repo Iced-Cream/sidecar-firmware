@@ -1452,7 +1452,7 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
   // swing: every second step late; P1 (Q3): under another direction the tick's, so the groove stays (the grid's count:
   // a, less SPD's offset)
   bool ord = has_order(t, p);   // (H1's jumps: the tick's too)
-  const int64_t ga = pred ? a : a - voff[r];
+  const int64_t ga = pred ? a : a - voff()[r];
   if (t.swing > 50 && ((t.dir || ord ? (int)(ga & 1) : idx) & 1)) fs += (t.swing / 50.0 - 1.0) * per;
   // H1's plan-time commands of the step (each column unless the other's CHN fails)
   int dly = 0, cut = -1, oct = 0, trs = 0, rnr = 0, rnv = 0, rtg = 0;
@@ -1642,8 +1642,8 @@ CORE_COLD void plan() {
     Track* nt = there ? track_of(*nxt(), r, false) : nullptr;
     Ratio q = rat_of(t), nq = rat_of(nt);   // P2: the track's own step clock (1:1 FOLLOW)
     double per = c.period * q.den / q.num, nper = c.period * nq.den / nq.num;
-    if (t && vq[r].num && (vq[r].num != q.num || vq[r].den != q.den)) replan(r);   // (a ratio changed: continue from there)
-    if (t) vq[r] = q;
+    if (t && vq()[r].num && (vq()[r].num != q.num || vq()[r].den != q.den)) replan(r);   // (a ratio changed: continue from there)
+    if (t) vq()[r] = q;
     int64_t v0 = vceil_i(q, c.abs);
     if (planned()[r] < v0) planned()[r] = v0;   // behind the Rytm (a jump, a late start): from its step on
     for (int guard = 0; guard < 32; ++guard) {
@@ -4066,7 +4066,7 @@ CORE_COLD int enc_list_n(int e, bool func, bool shown) {
   }
 }
 
-CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
+static CORE_COLD bool ui_enc_here(int e, int delta, bool func, bool shown) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   // U1 NOTE EDIT: DATA (encoder 8; the page catches it on a poly track only, data_wanted) walks the highlight
   if (e == 8) {

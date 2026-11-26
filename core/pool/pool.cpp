@@ -754,7 +754,7 @@ CORE_COLD bool project_attach_step(int s) {
   Project& j = prj(s);
   sniprintf(j.key, sizeof j.key, "%s", a.buf);
   sniprintf(j.name, sizeof j.name, "%s", a.buf);
-  j.next[0] = 0, j.dirty = false, j.seen = false, ++j.gen;
+  j.next[0] = 0, j.dirty = false, j.seen = false, ++j.epoch;
   log(CORE_STR("project: slot %d (%s): %s"), s, l.state ? l.state : "/.rytm", j.key[0] ? j.key : "(none yet)");
   pool_load();
   if (cardq::worker()) lists_begin();   // its JUNO / FM lists, read from its folder (one reader: in turn)

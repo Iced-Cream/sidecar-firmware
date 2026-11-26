@@ -229,11 +229,11 @@ CORE_COLD bool juno_partner(int t) {
 // Only on a voice whose last report was that machine (its flags) and no other track of ours on the voice with the same
 // machine (whose sound the voice plays is the one that trigged last: unknown here).
 CORE_COLD void src_to_voice(int t, int c14) {
-  if (!have_tracks || t < 0 || t >= 12 || track_vb[t] == kNotOurs || c14 < 0) return;
+  if (!TK().have_tracks || t < 0 || t >= 12 || TK().track_vb[t] == kNotOurs || c14 < 0) return;
 #if CORE_MSAMP
-  const int m = machine_of(track_vb[t]), vi = kTrackVoice[t];
+  const int m = machine_of(TK().track_vb[t]), vi = tv(t);   // (the slot in hand's box: its engine voice)
   for (int u = 0; u < 12; ++u)
-    if (u != t && kTrackVoice[u] == vi && track_vb[u] != kNotOurs && machine_of(track_vb[u]) == m) return;
+    if (u != t && kTrackVoice[u] == kTrackVoice[t] && TK().track_vb[u] != kNotOurs && machine_of(TK().track_vb[u]) == m) return;
   const V& x = v[vi];
   const int e = srclib::code_of14(c14);
   if (m == kWaveMachine && x.wt) wt::kit_src(vi, e);
@@ -864,8 +864,8 @@ CORE_COLD bool key_held(int code) { return code >= 0 && code < 256 && (S().held_
 // over a page, 49 1 5). FILL itself keeps its own UP + RIGHT (it closes: the combo toggles).
 CORE_COLD bool up_right_fill() {
 #if CORE_POLY
-  if (!s.up_down && !keys_map_on() && !s.map_over) return false;
-  const ExtraPage* x = extra_of(s.voice);
+  if (!S().up_down && !keys_map_on() && !S().map_over) return false;
+  const ExtraPage* x = extra_of(S().voice);
   if (x && !strcmp(x->title, "FILL")) {   // FILL's own UP + RIGHT (it closes), also when UP went down before FILL opened
     if (x->key) x->key(kKeyUp);           // (its press never reached FILL: the map's, or held over the open)
     return false;
@@ -904,7 +904,7 @@ CORE_COLD void on_key(int code, bool down) {
       }
       // 0.5.0: UP / DOWN of a page that scrolls with them, LEFT / RIGHT it took: they repeat while held
       if (code == kKeyLeft || code == kKeyRight || ((code == kKeyUp || code == kKeyDown) && scrolls_updown(x)))
-        s.rep_code = code, s.rep_voice = s.voice, s.rep_t0 = now_ms(), s.rep_next = s.rep_t0 + kRepeatFirstMs;
+        S().rep_code = code, S().rep_voice = S().voice, S().rep_t0 = now_ms(), S().rep_next = S().rep_t0 + kRepeatFirstMs;
 #if CORE_POLY && CORE_MSAMP
       // SAMPLE EDIT's DISCARD EDIT? YES closed the edit: the page is out of the list, so back where it was opened from
       // (SAMPLE EDIT alone: other pages a key hides keep their own way, PROJECT's answer note among them)
@@ -1310,7 +1310,7 @@ CORE_COLD void src_tick(uint32_t ms) {
   }
   if (!p) return;
   const bool covered = src_covered(ms);   // (the engine follows the machine at once; only the drawing waits)
-  if (covered) s.sent_valid = false;
+  if (covered) S().sent_valid = false;
   wave_idle(ms);   // the sample overview of the Rytm's SMP being read (one column at most)
   if (!S().clock_set) S().clock_set = true, S().last_draw = ms - kTickMs, S().last_tx = ms;
   // a 2A at once (the Rytm sends one a 20 Hz tick at most; the 2As a USB read brought are taken before this tick, so a
@@ -1807,7 +1807,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         S().shortcut = false, S().via = -1, S().sedit_back = kNoPage;
         keys_map_drop(), S().map_over = false;   // (UP's map goes with the page)
         release_held();                        // 0.5.0: and every key a page holds
-        s.up_down = false;
+        S().up_down = false;
 #if CORE_POLY
         seq::page_closed();   // seq-ux: a prompt, TRK + TRIG's view end with the page
         poly_page_closed();   // rui1048
@@ -1981,9 +1981,9 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       static uint32_t last = 0xFFFFFFFFu;
       const bool st_cov = b[0] & 2;
       uint32_t vt = (uint32_t)b[2] << 28 | (uint32_t)b[3] << 21 | (uint32_t)b[4] << 14 | (uint32_t)b[5] << 7 | b[6];
-      if (st_cov) s.covered = true, s.cover_ms = s.now_ms;   // (the tick's clock, as src_covered's)
-      else if (s.covered) {
-        if (s.open) s.covered = false;   // a Sidecar page is up: nothing of the SRC view to redraw
+      if (st_cov) S().covered = true, S().cover_ms = S().now_ms;   // (the tick's clock, as src_covered's)
+      else if (S().covered) {
+        if (S().open) S().covered = false;   // a Sidecar page is up: nothing of the SRC view to redraw
         else cover_ended();
       }
       machine_list(vt == kMachineListVt173 || vt == kMachineListVt174);   // rc5: the list's choice gets page 2's defaults once it closes
@@ -2174,7 +2174,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       if (n < 3) break;
       S().stats.hellos++;
       int up = b[0] << 7 | b[1];
-      if (s.stats.hellos > 1) voice_reports_forget();   // the Rytm restarted: its 33 re-seeds the engines (not the Pi's own boot)
+      if (S().stats.hellos > 1) voice_reports_forget();   // the Rytm restarted: its 33 re-seeds the engines (not the Pi's own boot)
       // A new link (a replug, the Rytm's or our restart): whatever the Rytm showed before is gone - its page left by its
       // 1 s timeout, its SRC view says 29 t 1 again after this hello if it is on. Stale state here (the page open, a
       // view's track, a splash running when the cable went) blocked the splash and the view until a restart.
@@ -2209,7 +2209,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
 #endif
       keys_map_drop(), S().map_over = false;   // (a release lost with the link: no map left up)
       release_held();                        // 0.5.0: and every key a page holds
-      s.up_down = false;
+      S().up_down = false;
       // A status popup goes with the old link. The pairing code's modal does not: it is owed until it has been on
       // this Rytm's screen, and a hello arriving while it was owed or up (the Rytm restarting, or saying hello again
       // after a silence) dropped it, so the code was never seen (audit 2026-10-26). It starts again, on this link.
@@ -2432,7 +2432,7 @@ CORE_COLD void remote_src_log(bool on) { src_log = on; }
 CORE_COLD void remote_params(int vi, int m, float* p, int np) {
   vi = voice_wrap(vi);
   reported[vi] = true;
-  S().rep_at[vi] = ++S().at_n;
+  if (slot_box_voice(vi) >= 0) S().rep_at[slot_box_voice(vi)] = ++S().at_n;   // (by its box's voice number, as kTrackVoice)
   if (S().self) return;
   if (S().held_m[vi] != m) S().held[vi] = 0, S().held_m[vi] = (uint8_t)m;   // another machine: its edits go
   for (int k = 0; k < np && k < 16; ++k) {
@@ -2631,7 +2631,7 @@ CORE_COLD bool remote_track_write(int t, int k, int value, int lo, int flags) {
   S().wr_ans[t][b[1]] = 1;
   return true;
 }
-CORE_COLD uint16_t remote_track_write_answers(int t, int k) { return t >= 0 && t < 12 && k >= 0 && k < 16 ? s.wr_cnt[t][k] : 0; }
+CORE_COLD uint16_t remote_track_write_answers(int t, int k) { return t >= 0 && t < 12 && k >= 0 && k < 16 ? S().wr_cnt[t][k] : 0; }
 CORE_COLD int remote_track_write_answer(int t, int k) {
   if (t < 0 || t >= 12 || k < 0 || k >= 16) return -2;
   const int a = S().wr_ans[t][k];
