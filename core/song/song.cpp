@@ -1349,8 +1349,9 @@ void publish_lanes() {
 
 }  // namespace
 
-const MidiConfig& midi_config() { return eng_of(0).cfg; }
-void set_midi_config(const MidiConfig& c) { eng_of(0).cfg = c; }
+// the Rytm's (rytm_home: the slot in hand when it is a Rytm, else the first Rytm's), whichever slot it holds
+const MidiConfig& midi_config() { return eng_of(device::rytm_home()).cfg; }
+void set_midi_config(const MidiConfig& c) { eng_of(device::rytm_home()).cfg = c; }
 
 CORE_COLD const char* state_name(int s) {
   static const char* const k[] = {"off", "arming", "armed", "recording", "saving", "confirm", "restoring", "replay ready",

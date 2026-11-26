@@ -1639,7 +1639,7 @@ void fx_take(const char* b, int n) {
   M().fx_locked = false;
   M().fx_big = false;
   M().fx_raw_n = 0;
-  if (g_bw) core::fx::slots_text(g_bw, b, n);   // (another box's names for its kits: box 0's are the Rytm's, sendfx_project)
+  if (g_bw) core::fx::slots_text(g_bw, b, n);   // (another box's names for its kits; every box's also come from its own sendfx_project)
   if (n == -1) return;
   const bool unread = n < 0;
   if (unread) n = 0;

@@ -236,7 +236,7 @@ void samp_in(const int32_t* f, int n, int stride) {
 bool samp_wants_voices() { return core::samp::wants_voices(); }
 void samp_voices(const int16_t (*v)[kBoxVoices], int n, const int16_t (*lr)[2 * kBoxVoices], const float (*fx)[4]) { core::samp::voice_block(v, n, lr, fx); }
 void pool_mono(bool on) { core::pcache::set_mono(on); }
-void stereo_trim(int pair, int db10) { core::out::set_trim(pair, db10); }
+void stereo_trim(int pair, int db10) { core::out::set_trim_all(pair, db10); }
 void stream_bench(int vol, unsigned mbps_x100, unsigned p99_us) {
   core::sbudget::set_bench(vol, mbps_x100 / 100.0f, p99_us / 1000.0f);
 }
