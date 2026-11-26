@@ -28,7 +28,7 @@ struct Inst {
   volatile float BusPk[3];   // the buses' peaks since TakeBusPeaks (core 2 writes, core 0 takes: racy floats, a meter)
   Spsc<Ret, kRing> Rets;
   core::fx::SendFx* volatile pFx;
-  // nCycles (render core 2's busy ticks) and nFrames only ever grow (see Command)
+  // nCycles (its render core's busy ticks: box 0 core 2, box 1 core 1, cores.cpp ChainCore) and nFrames only ever grow (see Command)
   volatile uint64_t nCycles;
   volatile uint32_t nFrames, nUnder, nDropIn, nDropOut;
   volatile float Peak;
@@ -51,7 +51,7 @@ static core::fx::SendFx& Fx(Inst& x) {
   if (!x.pFx) x.pFx = new core::fx::SendFx(48000.0f);
   return *x.pFx;
 }
-// nCycles (render core 2's busy ticks) and nFrames only ever grow: Command (core 3) reads them and keeps what it saw
+// nCycles (the render core's busy ticks) and nFrames only ever grow: Command (core 3) reads them and keeps what it saw
 // last, so there is no read-and-clear shared with core 2 (a clear lost what core 2 added in between). The busy total is
 // 64-bit and the elapsed time milliseconds: core::cycles() is 32-bit and wraps every 79.5 s at 54 MHz, so a "sendfx" a
 // few minutes after the last one (or after boot) measured against the wrapped difference - 1-2 % read as ~60 %.
@@ -65,6 +65,8 @@ void Init(void* mem) {
   for (int b = 0; b < kBoxes; ++b)
     if (!s_I[b].pFx) s_I[b].pFx = new ((char*)mem + b * kFxBytes) core::fx::SendFx(48000.0f);
 }
+
+core::fx::SendFx* Instance(int box) { return &Fx(I(box)); }
 
 void Clock(uint8_t status, uint16_t spp) { ClockBox(0, status, spp); }
 void ClockBox(int box, uint8_t status, uint16_t spp) { core::fx::clock_in(core::fx::control_of(box), status, spp); }
@@ -275,9 +277,9 @@ bool Command(const char* p) {
     unsigned ns = frames ? (unsigned)((double)busy * 1e9 / core::cycles_per_second() * 12 / frames) : 0;   // (a long window: busy x 1e9 passes 2^64)
     unsigned pk = (unsigned)(x.Peak * 1000.0f);
     x.Peak = 0.0f;
-    core::log("sendfx: %s%u frames, core 2 load %u.%03u percent, %u ns a 12-frame block, underruns %u, drops in %u out %u, "
+    core::log("sendfx: %s%u frames, core %u load %u.%03u percent, %u ns a 12-frame block, underruns %u, drops in %u out %u, "
               "peak %u/1000, faults %u",
-              sl, frames, load / 1000, load % 1000, ns, Take(&x.nUnder), Take(&x.nDropIn), Take(&x.nDropOut), pk,
+              sl, frames, b ? 1u : 2u, load / 1000, load % 1000, ns, Take(&x.nUnder), Take(&x.nDropIn), Take(&x.nDropOut), pk,
               Fx(x).Faults());
   }
   return true;

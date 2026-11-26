@@ -31,6 +31,7 @@
 
 namespace core {
 namespace out { struct Device; }
+namespace admit { struct Load; }
 namespace device {
 
 constexpr uint8_t kCmdHello = 0x4F;
@@ -154,6 +155,13 @@ struct Link {
   uint32_t was_uid;                       // whose folder state is, with was
   char dir[20];                           // its UID folder, "/.rytm/3fa2c001" (state points here); "" the type folder itself
   char label[24];                         // the box's name for the user (dir/name.txt; default "<type> <last 4 hex>"), "" none
+  // CPU admission (admit.h): the voices its box asked for (its type's count, or voices=) and the ones admitted, 0 while free.
+  // Its box voices 0..voices-1 render and play; a report for another is dropped. order: its attach (the first box keeps its
+  // voices). tell: its box is to be told its count (a popup on its screen) until tell_until.
+  uint8_t want, voices;
+  uint32_t order;
+  bool tell;
+  uint32_t tell_until;
 };
 constexpr int kLinks = 2;
 extern Link g_links[kLinks];
@@ -278,6 +286,9 @@ uint32_t dropped();                    // messages from the box not translated, 
 void boot();
 bool leaving();                        // a slot whose box left is saving its edits (idle_save: what waits to settle goes now)
 bool step(bool settled = true);        // false: nothing to do (kept for the engine's idle saves)
+// CPU admission's own pass (in step): shed what no longer fits at the clock now, admit refused INSERT types again. The
+// load test (loadtest=on: idle_save returns before step) runs it too, so a lowered clock sheds there as it does in use.
+void cpu_step();
 // A Rytm is on USB (claim), or gone (release): the control core's (the tests'). The Pi's driver uses usb_attach / usb_detach.
 void rytm_on_usb(bool on);
 // The Pi's Overbridge driver, core 0, when box p's USB device enumerates: the slot its stream is (its slot already, else the
@@ -287,6 +298,26 @@ void rytm_on_usb(bool on);
 int usb_attach(const Profile* p, uint32_t uid = 0);
 void usb_detach(int s);
 constexpr uint32_t kSettleMs = 10000;
+// CPU admission (admit.h; decided 2026-11-21). voices_asked: what box h (null or rytm(): the Rytm) asks for, its type's
+// voices= or its profile's count. admitted: slot s's box voices that render and play now (0 free); any core, one byte load.
+// readmit: every held slot again in attach order (the kernel's boot, once the bench and voices= are in: before a box can attach).
+int voices_asked(const Profile* h);
+inline int admitted(int s) {
+  return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].voices, __ATOMIC_RELAXED) : 0;
+}
+// engine voice vi plays: its box voice is under its slot's count (one slot: link 0's), or its slot is free (nothing of a box's
+// plays there: the self-test's drone, the tests)
+inline bool voice_admitted(int vi) {
+  const int s = kVoiceSlots > 1 ? slot_of_voice(vi) : 0;
+  return !held(s) || box_voice(vi) < admitted(s);
+}
+void readmit();
+// The load admission counts now (admit.h Load): the held boxes' admitted voices, what they asked for, and the AMP slots playing
+// on each render core (the first ask wins: amp_fits). /status's core1Bp / core2Bp
+void load_now(admit::Load* out);
+// what slot s's box asked for (0 free): the Pi's core 3 reads it for the render split (admit::split_for), one byte load
+inline int wanted(int s) { return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].want, __ATOMIC_RELAXED) : 0; }
+constexpr uint32_t kTellMs = 30000;   // a box is told its count while its screen may take a popup, this long after its attach
 // The sequencer played voice vi, or let it go (vel 0; note -1: every note held there, one off each): a box with note_out hears it as MIDI; its mod's report of that very note is dropped (kEchoMs): the voice plays once.
 void box_note(int vi, int note, int vel);
 constexpr uint32_t kEchoMs = 40;

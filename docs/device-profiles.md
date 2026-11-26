@@ -306,6 +306,71 @@ handled (`host_sysex_slot`, `voice_report`), and `box_voice` turns it back.
 - **Resets:** `link_reset(why, slot)` silences that slot's eight only, with its own send FX; a box's hello leaves the
   Rytm's voices playing.
 
+### Voices and CPU admission
+
+Decided 2026-11-21 (`core/device/admit.h`). Each box asks for its type's voices (`Profile::voices`: the Rytm 8, the A4 4,
+the Digitakt 8). `voices=` in cmdline.txt lowers a type's count (`voices=rytm:6,a4:2,dt:4`, each 0..8, never above its
+profile's: a box's reports past its profile's voices are dropped anyway).
+
+When a box attaches (`device::select`, both by hello and by USB), its voices are admitted against the Pi's boot bench,
+scaled to the CPU clock setting, so that each render core stays under 80 % in the worst case:
+
+- **A voice** costs the worst machine of the bench (any voice may play any machine) and its POST EQ (`bench ins OFF+OFF` / 8).
+- **INSERT types are admitted when set** (decided 2026-11-22, like AMP below): a voice slot's type plays only while its
+  voice's render core stays under 80 % with the types already admitted there, each at its own boot bench row (`bench ins a
+  slot of each type`, a sixteenth of T+T on 8 voices x 2 slots; `admit::type_bp`, `ins_fits`, `voice_core`; the check is
+  `ins::set_cpu_check`, set by `device.cpp`). Otherwise the slot plays dry and its strip shows `NO CPU`
+  (`ins::Control::refused`), and each idle pass admits it again once there is room (`ins::regrant`). A type that plays is
+  never refused afterwards; a box attaching later counts it. Before, every voice reserved the worst TYPE pair. A voice on OUT
+  PRE / POST runs its chain in stereo, so its types count twice their row there (`device.cpp` `chain_mul`; a stereo-mix
+  box has every voice on POST); a type already playing when its voice goes stereo is shed if its core is then over. Gap:
+  the bus chains stay in the box row.
+- **A box's chains:** its send FX, bus and master chains at their worst set, dry, measured as one bench row
+  (`master::box_bench`), counted on the core that runs its send FX. Before that row (LT1, 2026-11-22) the sum of
+  overlapping rows.
+- **AMP is admitted when a slot loads a capture** (decided 2026-11-22), not reserved at attach: an AMP slot (a base-box
+  voice's, or the master pair's) starts playing only while its render core stays under 80 % with the AMPs already playing
+  there (`admit::amp_fits`, `amp_core`; the check is `amp::set_cpu_check`, set by `device.cpp`). Otherwise it plays dry
+  and shows `NO CPU` (`amp::kCpu`) until there is room (another AMP stops, a box leaves). AMPs playing when a box attaches
+  count against that box: the first ask wins. AMP plays on the base box's chains only, the other box's AMP slots play dry;
+  the cap of 6 voice AMP slots (`MAX 6`) still holds. `/status` `admit` has `amps1` / `amps2`, the AMPs counted per core.
+- **Under load** (LT3, 2026-11-22): each row alone on core 0 reads low against the two-box load, where all four cores share
+  the L2. The model scales them (`admit.h` `kAmpLoadPct` 500 since LT4 (300 at LT3), `kVoiceLoadPct` 135, `kChainLoadPct` 110; the boot's `admit:`
+  line prints them): the base box's master AMP pair measured ~26 % of a core against the bench's 2 x 4 %. With them,
+  reserved at attach (an AMP on every base-box voice, the pair on core 2), a Rytm or Digitakt base box was over on core 2
+  even alone; hence AMPs on load and the master chain on core 3 (below). Model with LT3's bench
+  (`design/rebalance-core2/MODEL.md` in the project files): Rytm+A4 4/4, Rytm+Digitakt 8/8, A4+Rytm 8/8, with room for one
+  AMP a core beside an A4 and none beside two 8-voice boxes.
+- **Where the chains run** (decided 2026-11-22): slot 0's send FX on render core 2, slot 1's send FX and master chain on
+  render core 1, each after its voices (`cores.cpp` `ChainCore`). Slot 0's master chain (the base box's while it is held,
+  with its AMP pair) runs on core 3 during RenderBlock's wait for cores 1 and 2 (`MasterCore`, `admit::master_core`; an
+  8-voice engine keeps it on core 2): the stats line prints its time as `c3 mfx`, inside `c3 own`. Core 3 is counted
+  (decided 2026-11-23 after LT6: at 1200 MHz slot 0's master AMP pair there made core 3's passes 10-19 ms and the engine
+  underran; with it off, none): `admit::core3_bp` is core 3's control work (13.4 %) and slot 0's master chain (8 %, its POST
+  EQ and send TYPEs) as fixed shares at 1500 MHz, plus every master INSERT type admitted (its bench row, twice: stereo)
+  and the master AMPs playing, within 70 % (`kC3LimitBp`: core 3 also waits for cores 1 and 2). The send TYPEs as master inserts (CHORUS, COMB, SPACE,
+  RINGS, CLOUD, HALO) count at their own boot rows, `bench sfxins T x4` / 4 (`admit::master_slot_bp`; stereo already, so
+  once). A master type or AMP with
+  no room plays dry and shows `NO CPU`; at a lower clock `shed_over` sheds the master AMPs, then the master types. At 1500
+  the pair fits (61.6 %), at 1200 one AMP of it. `/status` `admit` has `core3Bp` and `amps3`. LT1 found core 2 full with both boxes' chains on it (~95 % in config A) while core 1 was
+  ~70 % idle. Fixed by slot, never by which box is the base, so each box's rings keep one render core whatever attaches
+  or leaves; core 3 waits for both cores' chains before a pass whose base box changed (AMP's master rows follow the base).
+- **Placement:** a box's voices are its 0..n-1; 0..s-1 render on core 1 and s..7 on core 2, s its split: `split=` (4), or
+  half the voices its box asks for if fewer (an A4's 4 as 2 + 2), so a box's voices share both cores with the chains.
+  Core 3 puts each slot's split in every pass, so cores 1 and 2 never split a slot differently.
+
+The first box keeps its voices. The second gets the most that keep every core its voices land on under 80 % (a core
+already over by the chains alone takes none of them), never more than it asked for. Its reports past them are dropped
+(`host_sysex_slot`), the render cores skip those voices (`device::voice_admitted`), the box is told by a popup on its
+screen (`SIDECAR 4/8 VOICES` / `CPU FULL`, for 30 s while its screen can take one), and `/status` `slots[]` has `voices`,
+`asked` and `short`, with `admit` (bench, MHz, the limit and each render core's worst case now, in 1/100 % of a core).
+When its partner leaves, a box gets back what it asked for, once the partner's slot is no longer kept for it (saving, then `slothold=`, 5 s by default): a plug or unplug on one of the Pi's hub ports knocks the box on the other port off and back (re-enumerated; seen on a unit 2026-11-21, 8 of 8), and a box back to its kept slot keeps its place in the attach order, so a first box stays first with its voices. A clock change after an attach does not take voices away; it
+applies to the next attach (the boot log's `admit at N MHz, the second box's voices:` line lists each pair). No bench
+(`bench=0`, the host, the Teensy): nothing is refused.
+
+Not settled yet: the costs are an upper bound from the boot bench rows; the two-box worst-case measurement on a unit (full
+voices, the worst machine, expensive user FX on both boxes) checks them before the rule ships.
+
 ### Audio
 
 Each box's audio stays its own: each slot's voices go back to its own box's stream (`CObUsb::Slot` is the core slot
@@ -348,7 +413,8 @@ What the second box does not have yet, or has differently:
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.
 - **Two boxes of one type:** see "Two boxes of one type" below for what is built and what is still a gap.
-- **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet.
+- **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet (CPU admission's upper
+  bound stands in for it until then: "Voices and CPU admission").
 
 ## Two boxes of one type
 

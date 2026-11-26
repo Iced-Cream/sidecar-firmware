@@ -31,6 +31,8 @@
 
 #include <new>
 
+#include "fx/fx_guard.h"
+
 // RINGS (rings_fx.h, 72 KB a slot) and CLOUDSEED (cloudseed_fx.h, 1.25 MB a slot): built where RYTM_SENDFX_LARGE is 1,
 // by default everywhere but the Teensy (1 MB of RAM in all, no PSRAM required), where the ids stay reserved:
 // silent and reported MISSING. -DRYTM_SENDFX_LARGE=0 / =1 overrides. The Teensy plays the small set (CHORUS, COMB,
@@ -685,6 +687,7 @@ class SendFx {
     for (int s = 0; s < kSlots; ++s) {
       uint8_t want = c.knob[s][0];
       if (want == kStutter && s != sslot) want = kOff;   // the other slot has it: this one silent (MISSING)
+      if (want != kOff && want < kFirstUser && guard::send_muted(ub, s)) want = kOff;   // muted for its measured time: faded out (fx_guard.h)
       if (want >= kFirstUser && !box_plays_at(ub, want, s)) want = kOff;   // a user effect not loaded, or the kit's another: off, faded
       if (cur_[s] >= kFirstUser && !box_plays(ub, cur_[s])) cur_[s] = kOff, fade_[s] = 0;   // (gone: it fades in again when back)
       bool same;
@@ -697,8 +700,9 @@ class SendFx {
       }
 #if RYTM_SENDFX_LARGE
       if (t == kStutter) {   // the insert: only its fade here, the DSP once below
+        const int down = guard::short_fade(guard::send_unit(ub, s)) ? kFadeFrames / guard::kShortFadeFrames : 1;   // (late: 1 ms)
         for (int i = 0; i < n; ++i) {
-          int f = fade_[s] + (same ? 1 : -1);
+          int f = fade_[s] + (same ? 1 : -down);
           fade_[s] = f < 0 ? 0 : f > kFadeFrames ? kFadeFrames : f;
           gs_[i] += (float)fade_[s] * (1.0f / kFadeFrames);
         }
@@ -715,7 +719,17 @@ class SendFx {
       float xf[kMaxFrames];
       for (int i = 0; i < n; ++i) y[i][0] = y[i][1] = 0.0f;
       any = true;
-      Run(s, t, Gate(s, same, xs[s], xf, n), n, y, c);
+      {   // the measured guard (fx_guard.h): a built-in TYPE's time on this core (a user effect's: um.cpp's own, fx_run)
+        const bool timed = t < kFirstUser;
+        const int gu = guard::send_unit(ub, s);
+        const uint32_t t0 = timed ? guard::stamp() : 0;
+        // (muted by a late block: out over 1 ms, guard::kShortFadeFrames)
+        Run(s, t, Gate(s, same, xs[s], xf, n, timed && !same && guard::short_fade(gu)), n, y, c);
+        if (timed) {
+          if (const uint32_t sl = guard::slow_us(gu)) guard::spin_us(sl);
+          guard::note(gu, guard::stamp() - t0, n);
+        }
+      }
       if (bus_insert) bus_insert(c, s, y, n);   // the bus's insert chain (core/fx/insert.h), in c's box
       upre |= pb[s][0] < 1.0f || pb[s][n - 1] < 1.0f;
       upost |= pb[s][0] > 0.0f || pb[s][n - 1] > 0.0f;
@@ -747,7 +761,9 @@ class SendFx {
       uint8_t k[4];
       int ks = sslot >= 0 ? sslot : cur_[0] == kStutter ? 0 : 1;   // fading out: the slot that had it
       for (int j = 0; j < 4; ++j) k[j] = c.knob[ks][2 + j];
+      const uint32_t t0 = guard::stamp();
       stutter_.Process(x, n, y, c.clock, c.stutter_lag, k);
+      guard::note(guard::send_unit(ub, ks), guard::stamp() - t0, n);   // (STUTTER's time: its slot's, fx_guard.h)
       for (int i = 0; i < n; ++i) {
         float v = gs_[i] == 1.0f ? y[i] : gs_[i] * y[i];
         if (!(v == v) || v > 1e6f || v < -1e6f) v = 0.0f, ++faults_;
@@ -866,8 +882,8 @@ class SendFx {
   }
   // the TYPE fade into g_: down while another TYPE (or structure zone) waits, up otherwise; the input to run (x, or x
   // faded into xf)
-  FX_DSP const float* Gate(int s, bool same, const float* x, float* xf, int n) {
-    const int step = same ? 1 : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
+  FX_DSP const float* Gate(int s, bool same, const float* x, float* xf, int n, bool quick = false) {
+    const int step = same ? 1 : quick ? -(kFadeFrames / guard::kShortFadeFrames) : kill_[s] ? -2 : -1;   // All Sound Off: out in 5 ms
     int f = fade_[s];
     if (step > 0 && f >= kFadeFrames)   // fully in (the usual case): unity
       for (int i = 0; i < n; ++i) g_[i] = 1.0f;

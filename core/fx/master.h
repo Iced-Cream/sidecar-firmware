@@ -11,7 +11,7 @@
 // 0.5.0, send FX as insert FX: the bus chains B1..B3 take the send TYPEs too, under one cap with the master's slots
 // (kFxSlots, 4 at once, anywhere among the master's 4 slots and the buses' 6). The room is booked here (accept): a slot
 // with a send TYPE holds one of the kFxSlots SendFx slots, on two more fx::SendFx (kFxUnits, 5.9 MB each, the send FX's
-// own SendFx untouched). Every chain that runs them runs on the send FX's core (the Pi's render core 2: the buses inside
+// own SendFx untouched). Every chain that runs them runs on the send FX's core (the Pi: slot 0's render core 2, slot 1's core 1; the buses inside
 // sendfx_pi::Render, the master in masterfx_pi::Render, one after the other), so the bookings and the SendFx are that
 // core's alone. The voice chains stay refused: they run on the core that renders the voice (core 1 for voices 1..4).
 // A bus slot's MIX is kept here (mix[] after the master's 4) and saved on its slot line ("B3 A RINGS P1 P2 P3 P4 MIX").
@@ -24,6 +24,9 @@
 #include "fx/insert.h"
 
 namespace core {
+namespace fx {
+class SendFx;
+}
 namespace master {
 
 constexpr int kSlots = ins::kMasters * ins::kSlots;   // 4
@@ -156,7 +159,13 @@ uint64_t bench(uint32_t* worst_block);
 // buses 1 / 2, ins::bus3, render()). Ticks as bench(). 0 (nothing touched) unless every insert slot of the buses and the
 // master is OFF and no room is taken.
 uint64_t sfx_bench(int set, uint32_t* worst_block);
-const char* sfx_bench_name(int set);   // "RINGS CLOUD SPACE HALO", "CLOUD x4"; null past the last set
+const char* sfx_bench_name(int set);   // "RINGS CLOUD SPACE HALO", "CLOUD x4", "CHORUS x4" .. "HALO x4"; null past the last set
+int sfx_bench_type(int set);           // the send TYPE (ins::kMChorus..) a set runs x4, -1 a mixed set or none
+// The boot bench of one box's chains as core 2 runs them, at the worst insert set the rooms allow together (LT1's config A
+// without its AMP pair, which the caller adds from the amp row): send (the box's send FX, at CLOUDSEED x2, every track sent)
+// with buses 1 / 2's chains inside it, bus 3's, the master chain, over 1 s in 12-frame blocks. Ticks as bench(). 0 (nothing
+// touched) unless every bus and master slot is OFF, no room is taken and box 0's send FX are off. send is left Reset.
+uint64_t box_bench(fx::SendFx* send, uint32_t* worst_block);
 unsigned long heap_bytes();        // the inserts' SendFx (on CORE_HEAP_BUFFERS ports; else built on first use)
 void heap_place(void* mem);
 

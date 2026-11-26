@@ -15,15 +15,19 @@
 // Rytm's, slot 0 or 1 by attach order) is what a lone Rytm always had: its stems from its stream's IN completion pace it
 // (FromRytm with its slot). Another box (an A4, a Digitakt: either slot, alone or beside the Rytm) has no stems the send FX
 // understands: its voices' sends (FromVoices, its own stream's OUT fill) are its input frame by frame and pace it. Which of
-// the two a box is: its stream's device row (FromVoices with dev: the Rytm's row, core::out::kRytmMk2, has stems). Each is
-// rendered on core 2 after its own render pass (the base pass when it is the base box, else a side pass), its return added
-// in its own stream's OUT fill. The calls without a box are box 0's, and box 0 alone has stems where no dev is named.
+// the two a box is: its stream's device row (FromVoices with dev: the Rytm's row, core::out::kRytmMk2, has stems). Box 0's
+// is rendered on core 2 and box 1's on render core 1 (2026-11-22: cores.cpp ChainCore), each after its own render pass (the
+// base pass when it is the base box, else a side pass), its return added in its own stream's OUT fill. The calls without a
+// box are box 0's, and box 0 alone has stems where no dev is named.
 #pragma once
 #include <stdint.h>
 
 namespace core {
 namespace out {
 struct Device;
+}
+namespace fx {
+class SendFx;
 }
 }  // namespace core
 
@@ -33,6 +37,8 @@ const unsigned kRing = 1024, kPrime = 96, kMaxPerRender = 96;   // frames
 // once at boot from Circle's heap, so its ~4.8 MB is not in the image's .bss). Hosted: Fx() builds it on first use.
 unsigned long Bytes();                                    // every box's SendFx (2 x ~5.9 MB on 16 voices)
 void Init(void* mem);
+// box's SendFx (built on first use hosted): the boot's box chains bench (core/fx/master.h box_bench), core 0 before the cores start
+core::fx::SendFx* Instance(int box);
 bool On();                                                // a playable TYPE on FX 1 or 2
 bool On(int box);
 void FromRytm(const int32_t (*stems)[8], unsigned n);    // core 0, IN completion: IN 2..9 (int32 full scale)
@@ -61,7 +67,7 @@ void AddReturn(int32_t (*out)[12], unsigned n,            // core 0, OUT fill: o
 // box's return onto its stream's pairs (dev: that box's device row, its pre / post; core::out::device() for the primary)
 void AddReturn(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned n, float (*slots)[4] = nullptr);
 // The console's sendfx commands (core 3, cores.cpp's Command); the answer logged; `sendfx` adds the stats since the
-// last `sendfx`: frames, render-core 2 load, underruns, ring drops, the return's peak.
+// last `sendfx`: frames, its render core's load (box 0 core 2, box 1 core 1), underruns, ring drops, the return's peak.
 bool Command(const char* p);
 // MIDI CC 120 with the note adapter off (with it on, core::NoteAdapter makes the same request): both FX fade out,
 // clear and return (core::fx::all_sound_off); logged.

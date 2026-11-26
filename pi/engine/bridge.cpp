@@ -13,7 +13,9 @@
 #include "mod/scene.h"
 #include "mod/xypad.h"
 #include "device/device.h"
+#include "device/admit.h"
 #include "fx/insert.h"
+#include "fx/fx_guard.h"
 #include "fx/master.h"
 #include "fx/out.h"
 #include "heap_buffers.h"
@@ -26,6 +28,7 @@
 #include "seq/seq.h"
 #include "song/song.h"
 #include "song_pi.h"
+#include "sendfx_pi.h"   // its box 0 SendFx for the box chains bench (box_bench)
 #include "morph_pi.h"   // 0.5.0: the display's MORPH page
 #include "xypad_pi.h"   // 0.5.0: the display's XY page
 #include "msamp/msamp.h"
@@ -134,6 +137,28 @@ bool begin(void (*to_host)(const uint8_t*, int)) {
 void sysex(const uint8_t* d, int len) { core::engine_sysex(d, len); }
 void sysex_link(int link, const uint8_t* d, int len) { core::engine_sysex_link(link, d, len); }
 void sysex_self(const uint8_t* d, int len) { core::engine_sysex_self(d, len); }
+void sysex_self_slot(int slot, const uint8_t* d, int len) { core::engine_sysex_self_slot(slot, d, len); }
+bool in_slot(int slot, void (*fn)(void*), void* arg) {   // the load test's slot=S: (cores.cpp): fn in slot S's Scope
+  if (slot < 0 || slot >= core::device::kLinks) return false;
+  core::device::Scope s(core::device::g_links[slot]);
+  fn(arg);
+  return true;
+}
+bool admit_command(const char* p) {   // admit=report|enforce (core/device/admit.h), loadtest=on|off (core/engine.h idle_nosave)
+  if (!strcmp(p, "admit=report") || !strcmp(p, "admit=enforce")) {
+    core::admit::set_enforce(p[6] == 'e');
+    core::device::readmit();
+    core::log("admit: %s (slot voices %d / %d)", core::admit::enforce() ? "enforced" : "report only: no box refused",
+              core::device::admitted(0), core::device::admitted(1));
+    return true;
+  }
+  if (!strcmp(p, "loadtest=on") || !strcmp(p, "loadtest=off")) {
+    core::idle_nosave(p[10] == 'n');
+    core::log("loadtest: %s", core::idle_nosave() ? "on: edits are not saved to the card until a reboot or loadtest=off" : "off: saves again");
+    return true;
+  }
+  return false;
+}
 int out_base() { return core::device::base_voice_base(); }
 bool slot_renders(int slot) {   // a box holds it (attach order: either slot), or it is the base
   if (slot < 0 || slot >= core::device::kLinks) return false;
@@ -258,6 +283,7 @@ bool poly_command(const char* p, char* out, int cap) {
          core::ins::command(p, out, cap) ||   // fx-ins: "ins", "ins=..." (core/fx/insert.h)
          core::master::command(p, out, cap) ||   // the master FX: "mfx", "mfx=..." (core/fx/master.h)
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
+         core::fx::guard::command(p, out, cap) ||   // the measured guard of every effect: "fxguard", "fxguard=..." (core/fx/fx_guard.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
          core::livein::command(p, out, cap) ||  // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)
@@ -640,6 +666,8 @@ uint64_t amp_bench(uint32_t* worst_block) { return core::amp::bench(worst_block)
 uint64_t mfx_bench(uint32_t* worst_block) { return core::master::bench(worst_block); }
 uint64_t sfxins_bench(int set, uint32_t* worst_block) { return core::master::sfx_bench(set, worst_block); }
 const char* sfxins_bench_name(int set) { return core::master::sfx_bench_name(set); }
+int sfxins_bench_type(int set) { return core::master::sfx_bench_type(set); }
+uint64_t box_bench(uint32_t* worst_block) { return core::master::box_bench(sendfx_pi::Instance(0), worst_block); }
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);
   if (n > 0 && n < cap - 2) {

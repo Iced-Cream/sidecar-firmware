@@ -23,6 +23,9 @@ bool begin(void (*to_host)(const uint8_t* m, int n));   // core::hooks.to_rytm =
 void sysex(const uint8_t* d, int len);                  // core::engine_sysex
 void sysex_link(int link, const uint8_t* d, int len);    // core::engine_sysex_link: the second box's (link1.h)
 void sysex_self(const uint8_t* d, int len);             // core::engine_sysex_self: the Pi's own (self-check, bench)
+void sysex_self_slot(int slot, const uint8_t* d, int len);   // the same as slot's box's (the load test's notes)
+bool in_slot(int slot, void (*fn)(void*), void* arg);        // fn in slot's Scope (the load test's slot=S:); false: no such slot
+bool admit_command(const char* p);                           // admit=report|enforce, loadtest=on|off
 uint32_t render(int16_t (*block)[kVoices], int v0, int v1, uint64_t* mach,   // one block of voices v0..v1-1
                 int16_t (*block_r)[kVoices] = nullptr, uint8_t* st = nullptr);  // (R, real-stereo bytes: core/voices.h)
 bool idle_prepare();
@@ -232,6 +235,8 @@ uint64_t mfx_bench(uint32_t* worst_block);   // the master chain without AMP (co
 // 0.5.0: 4 send TYPE inserts at once across B1 / B2 / B3 / M1 (core/fx/master.h sfx_bench), set 0.. while its name is not null
 uint64_t sfxins_bench(int set, uint32_t* worst_block);
 const char* sfxins_bench_name(int set);
+int sfxins_bench_type(int set);   // the send TYPE a set runs on all four slots, -1 a mixed set
+uint64_t box_bench(uint32_t* worst_block);   // one box's chains as one row (core/fx/master.h box_bench): CPU admission
 unsigned poly_voices();
 int rytm_pattern(int* transport);   // UX review T1: the Rytm's pattern (-1 not known) and transport (core/seq's view)   // UX review S1: bit vi - a Rytm track on voice vi is a poly track (the Sidecar sequences it)
 uint32_t machine_gen(int voice);       // with machine_name, the guard's key: 0, or a user voice's slot + 1 and the

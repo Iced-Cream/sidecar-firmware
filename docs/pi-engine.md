@@ -96,6 +96,7 @@ At boot, before the render loops start, every core runs the bench in turn (cores
 | `idlewfe=0` | 1 | turns off the idle sleep added for the heat (core 0's loop, core 3's render wait; "Idle sleep" below); `:idlewfe=0` / `:idlewfe=1` on the console do it live, for an A/B |
 | `blocklimit=N` | 20 | **QEMU gates only, never on a unit.** A render core that has not finished its block after N ms is fatal (`a render core did not finish its block in N ms`, clean stop, reboot); N is 20..10000, below 20 is taken as 20. Under QEMU without icount the counter is the host's clock, so a vCPU thread the host does not schedule for 20 ms failed about 1 boot in 6 on every kernel (T421/T422 gates). The boot logs `blocklimit: a render core's block limit is N ms (not 20): emulator gates only`; a unit's cmdline without it keeps the 20 ms limit |
 | `split=N` | 4 | voices 0..N-1 render on core 1, N..7 on core 2 (1..7) |
+| `voices=T:N,...` | the profiles' | a box type's voices, lowered: `rytm`, `a4`, `dt` (or `digitakt`), each 0..8 and at most its profile's (Rytm 8, A4 4, Digitakt 8). A second box gets what fits beside the first by the boot bench (CPU admission, docs/device-profiles.md "Voices and CPU admission") |
 | `display=0\|1` | 1 | the HDMI display and its USB touch, drawn from core 0's loop (`docs/pi-display.md`); `width=` `height=` (Circle's) set the frame buffer's size, else the firmware's mode |
 | `bench=0\|1` | 1 | the boot bench (6 machines x 4 cores, 1 s of audio each; see Measurements). A core that does not finish its bench in 20 s is fatal (`bench: core N did not finish ...`, clean stop, reboot into the bootloader); `bench=0` then boots without it |
 | `tohost=0\|1` | 1 | the engine's host-link replies (1D slots, 1A EMPTY, 1B, 0E listings, 14 pool, 16/17 names, 15) go to the Rytm's USB MIDI OUT (umidi1, cable 0), as the Teensy's do; 0 drops them (counted), the behaviour before 2026-10-16 |
@@ -129,6 +130,10 @@ Commands are `:<command>` and a newline, at most 47 characters. The control core
 | `notemach=V:NAME` | voice V (0-7) plays machine NAME on its MIDI channel V+1: `plaits juno fm daisy dsps grain md` (`md`: the built-in MD, core/md/md.h, in DIGIDRUM's `dd` place since 2026-10-29). Defaults that sound: PLAITS VA, JUNO factory patch 0, 6-OP FM ROM voice 0, DAISYSP MODAL, MD FM BD, DSP SAMPLE pool slot 1 (the pools build: SAMPLES row A001) (`grain`: the same in GRAIN from the sample RAM, dense: every retrigger stops sounding grains) |
 | `drone=V\|all\|off` | the engine's own notes for tests: every 0.5 s a note-off and a note-on (note 48 + 2V) on voice V or on all eight |
 | `notes=0\|1` | MIDI notes off/on (as `notes=` at boot) |
+| `slot=S:<command>` | the two-box load test (S 0 or 1): the command as slot S's box's, in its Scope (`ins=`, `mfx=`, `sendfx=`, ...); `drone=` and `notemach=` there use slot S's own note adapter, whose notes go in as the Pi's own on that box's voices (`core::engine_sysex_self_slot`), so a stock box's voices play with no mod on it. A voice past the box's admitted count is dropped |
+| `admit=report\|enforce` | CPU admission (core/device/admit.h): `report` admits every box its count (the costs, `/status` `admit` core1Bp / core2Bp and the boot log's `admit at` line stay), so the worst case can be measured against the estimate; `enforce` (the default) refuses again; both readmit at once. `/status` `admit.enforce` says which |
+| `loadtest=on\|off` | while on, `idle_save` writes no edits to the card (a box that attaches still loads its project): the load test's settings stay in RAM and go at the next reboot |
+| `amp=synthetic:on\|off` | lists a synthetic A2-Lite capture `~TSYNTH.namb` beside `/NAM/`'s files (the boot bench's weights, loaded without the card), so AMP inserts cost what they do with a real capture on a card without one |
 | `out=main\|tracks` | the output mode (as `out=`) |
 | `fifo=N` | the FIFO target (as `fifo=`; the Task 7 sweep). It stays across `link=` switches until the next `fifo=` |
 | `usbmode=class\|overbridge\|cmdline` | the USB-C mode (`docs/usb-mirror.md` "The setting"; opt-in, never a default): CLASS COMPLIANT (the Sidecar device) or OVERBRIDGE (the box passed through; Pi 4 since 0.4.1, the Pi 5 since 0.4.2), stored in `/.sidecar/display.txt` (it then wins over cmdline `usb=`) and applied at once (USB-C replugs: not during a transfer or an OS update); `/cmd` takes `overbridge` only same-origin (strict); `cmdline` drops the stored one; `usbmode` alone logs the mode, where it came from and what the computer sees. Core 0's (kernel.cpp) |
@@ -247,9 +252,10 @@ SEND FX 1 and 2 (`core/fx/send_fx.h`, docs/core.md "Send FX"; route A of
 
 - **In:** the IN completion (`ob_usb.cpp`, core 0) copies the Rytm's voice stems, IN 2..9, into a ring, only while
   an FX has a playable TYPE (`fx::any_on()`: off costs nothing).
-- **Render:** render core 2, after it has published its block (`cores.cpp` Worker: the block is not delayed), runs
-  `fx::SendFx` on what is queued (at most 96 frames a call). The voices' render state is not touched; the send FX's
-  state is core 2's alone; the values come from the control core (0x20, the console) as bytes.
+- **Render:** the box's render core (slot 0's: core 2; slot 1's: core 1, decided 2026-11-22: `cores.cpp` ChainCore), after
+  it has published its block (`cores.cpp` Worker: the block is not delayed), runs
+  `fx::SendFx` on what is queued (at most 96 frames a call). The voices' render state is not touched; each box's send FX
+  state is its render core's alone; the values come from the control core (0x20, the console) as bytes.
 - **Out:** the OUT fill (`ob_usb.cpp` FillOut, after the Sidecar's computer OUT) adds the return onto host -> Rytm
   2/3 (MAIN FX: PRE, before the Rytm's analog distortion and compressor) and 0/1 (MAIN: POST, clean), each FX on the pair
   its P1 names (0..63 PRE, 64..127 POST; STUTTER too; `sendfxout=fx|main` forces all, `slot` is the default),
@@ -1023,6 +1029,16 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
   Rytm's popup `SOC 80C CLOCK LOWERED / TO 600 MHZ (UP+T10)`, the STATUS page's CPU title line `600 MHz: clock lowered
   (hot)` in the alert colour (OLED `CLOCK LOWERED`) and `/status` `"clockLow":600` (the web page's Temperature tile).
   Lowered under the warning (78-79 C): the same STATUS line and tile, quietly - no banner, no popup.
+- **The step-down for a Pi without cooling** (decided 2026-11-22 after LT4: a bare Pi 4 under the full two-box load
+  reached 77 C in about 15 minutes, Circle dropped it from 1500 to 600 MHz at once, and the render cores fell behind:
+  ~150,000 underruns in 4 s). Before that cliff the engine lowers the clock itself (`thermal::step`, `CKernel::ThermalCapStep`):
+  a cap of 1200 MHz from 74 C, 1000 from 76 C, the board's minimum only at 78 C; each cap is raised a step after 30
+  readings in a row at or below 70 C, and never above the Settings clock. It goes through `SetClock` (the mailbox; Circle's
+  `Update` is not called while a cap holds), so the voice budget and CPU admission follow the clock. What no longer fits a
+  render core's 80 % at the lower clock is shed, one item an idle pass (`device.cpp` `shed_over`): AMPs first, then the
+  INSERT types of the box attached last; each plays dry and shows `NO CPU` and is admitted again when it fits. Voices are
+  never shed. The log says `thermal: SoC 74 C, clock cap 0 -> 1200 MHz ...` and `device: core 1 over 80 % at 1200 MHz: ...
+  shed (NO CPU)`; `/status` `cpu.heatCapMhz` (0: none). `thermalstep=off` on the cmdline leaves the clock to Circle as before.
 - **Where it shows.** The STATUS page's CPU panel (the temperature, right of the FIFO row, in the alert colour with
   HOT); a banner over the touchscreen's title bar (the same one as the supply's warning, which wins when both are on);
   `/status` `"tempWarn"` (and `"clockLow"`) and the web page's Temperature tile; the Rytm's screen once (below).

@@ -15,11 +15,20 @@ public:
 	{
 		u64 nTicks;			// generic-timer ticks since the last TakeStats
 		u64 nBusy[4];			// ticks working, per core
+		u64 nChain1;			// core 1's send FX and master chains: slot 1's (not in nBusy[1]: after its voices)
+		u64 nChain2;			// core 2's: slot 0's send FX (its master chain too on an 8-voice engine; not in nBusy[2])
+		u64 nChain3;			// core 3's: slot 0's master chain in a two-slot engine (inside nBusy[3], outside nWait3)
+		u64 nWait3;			// core 3 waiting for cores 1 and 2 in RenderBlock (inside nBusy[3])
 		u64 nSleep[4];			// ticks asleep in a counted wfe, per core
 		unsigned nWakes[4];		// how many of those wfe returned
 		u64 nMach[7];			// render ticks per machine (bridge::stat_name order, bridge::kMachines)
 		u64 nVoice[16];			// touch2: render ticks per engine voice (bridge::kVoices; the STATUS page shows the base box's)
 		unsigned nBlocks, nMaxBlockUs, nMaxPassUs, nFifoMin, nFifoMax, nMidiBytes, nSysEx, nNotes, nNoteChans;
+		unsigned nRunCapped;	// control passes that stopped rendering at the cap, the FIFO still short (an overload)
+		unsigned nFifoLate;	// base passes begun with the FIFO under a block (late for the busier render core)
+		unsigned nFifoHeld1, nFifoHeld2;	// passes late by the FIFO (fifo_late.h) for core 1, core 2
+		unsigned nFifoRunMax;	// the longest run of passes begun with a FIFO low
+		unsigned nFifoFits1, nFifoFits2;	// passes the FIFO's hold left on time: core 1 / 2 within admission's limit, no underrun
 	};
 
 	// The boot bench (bridge::bench, docs/pi-engine.md "Measurements"): each machine on one voice, on every core
@@ -93,6 +102,7 @@ private:
 	void Control (void);
 	void RenderBlock (int nSide);		// -1 the base box's block; a slot: the side stage's (side_out.h)
 	void Command (const char *pText);
+	static void SlotCommand (void *pArg);	// slot=S:<command> in slot S's Scope (cores.cpp, bridge::in_slot)
 };
 
 #endif

@@ -226,8 +226,8 @@ bool Command(const char* p) {
   uint64_t window = (uint64_t)dt * core::cycles_per_second() / 1000;
   unsigned load = window ? (unsigned)(busy * 100000 / window) : 0;   // 1/1000 %
   unsigned gr = (unsigned)core::master::gr10(b);
-  core::log("mfx: %s%u frames, core 2 load %u.%03u percent, wet %u %%, underruns %u, drops in %u out %u, stems short %u, limiter %u.%u dB",
-            b ? "slot 1: " : "", frames,
+  core::log("mfx: %s%u frames, core %u load %u.%03u percent, wet %u %%, underruns %u, drops in %u out %u, stems short %u, limiter %u.%u dB",
+            b ? "slot 1: " : "", frames, b ? 1u : 2u,
             load / 1000, load % 1000, (unsigned)(x.fWet * 100.0f), x.nUnder, x.nDropIn, x.nDropOut, x.nStemUnder, gr / 10, gr % 10);
   return true;
 }

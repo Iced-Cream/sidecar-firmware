@@ -507,6 +507,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
   }
   if (len < 7 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
   int cmd = d[4], vi = device::voice_in(d[5]);   // the link's box voice -> engine voice (slot 1's: 8 + k)
+  if (cmd == 0x04 && !device::voice_admitted(vi)) return;   // CPU admission (device/admit.h): a voice its box was not given
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
     if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate

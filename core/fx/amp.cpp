@@ -87,6 +87,7 @@ struct Ctl {
   uint32_t fail_gen = 0;
   Status fail_st = kIdle;
   bool refused = false;      // the cap's refusal counted once
+  bool shed = false;         // shed(): stop at the next step, NO CPU until there is room again
   char pending[kNameMax];    // the card's AMP line, resolved once listed
 };
 Ctl g_k[kRows][kSlots];
@@ -176,7 +177,7 @@ inline float db_gain(float db) { return ins::fast_exp2(db * 0.16609640f); }   //
 // ---------------------------------------------------------------------------------------------------- texts
 
 const char* status_short(int s) {
-  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM", "MAX 2"};
+  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM", "MAX 2", "NO CPU"};
   static_assert(kMaxRunning == 6 && kMaxMaster == 2, "the MAX texts name the caps");
   return s >= 0 && s < kStatuses ? t[s] : "";
 }
@@ -191,7 +192,8 @@ const char* status_long(int s) {
       "the capture is not 48 kHz (no resampler)",
       "6 AMP inserts play already (the CPU cap)",
       "no memory for the AMP engines",
-      "2 AMP instances play on the master already (its own cap)"};
+      "2 AMP instances play on the master already (its own cap)",
+      "no CPU room on its render core (CPU admission: each under 80 %)"};
   return s >= 0 && s < kStatuses ? t[s] : "?";
 }
 Status parse_status(Parse p) {
@@ -580,8 +582,11 @@ int find_model(const char* f) {
 // the list being built (control core) into the unpublished buffer
 namespace {
 List& building() { return g_list[(__atomic_load_n(&g_pub, __ATOMIC_RELAXED) & 1) ^ 1]; }
+bool g_synth = false;   // amp=synthetic:on (the load test): a synthetic A2-Lite capture listed beside /NAM/'s files
+constexpr const char* kSynthFile = "~TSYNTH.namb";   // (never read: its weights are synthetic_weights(seed 1), the bench's)
 void publish() {
   List& b = building();
+  if (g_synth && b.n < kMaxModels) sniprintf(b.file[b.n++], kNameMax, "%s", kSynthFile);
   for (int i = 1; i < b.n; ++i)   // sorted by name, case ignored (insertion: 64 at most)
     for (int j = i; j > 0 && cmp_ci(b.file[j - 1], b.file[j]) > 0; --j) {
       char t[kNameMax];
@@ -623,6 +628,24 @@ const char* slot_file(int c, int s) {
   if (!row_on(c) || s < 0 || s >= kSlots) return "";
   if (g_k[c][s].pending[0]) return g_k[c][s].pending;   // not listed yet: kept as the card has it
   return model_file(model_for_knob(ins::param(c, s, 0)));
+}
+static bool (*g_cpu_fits)(int row) = nullptr;
+void set_cpu_check(bool (*fits)(int row)) { g_cpu_fits = fits; }
+int rows() { return kRows; }
+int refused_cpu() {
+  int n = 0;
+  for (int c = 0; c < kRows; ++c)
+    for (int s = 0; s < kSlots; ++s) n += g_k[c][s].st == kCpu;
+  return n;
+}
+int master_row() { return ins::kM0; }
+bool slot_playing(int row, int s) {
+  return row >= 0 && row < kRows && s >= 0 && s < kSlots && g_k[row][s].cur >= 0 && !g_k[row][s].shed;
+}
+bool shed(int row, int s) {
+  if (!slot_playing(row, s)) return false;
+  g_k[row][s].shed = true;
+  return true;
 }
 int running_master() {
   int n = 0;
@@ -904,6 +927,14 @@ bool step() {
         if (k.cur >= 0) offer(c, s, -1), did = true;
         continue;
       }
+      if (k.shed) {   // shed for CPU (the clock lowered: device.cpp shed_over): dry, NO CPU, admitted again when it fits
+        k.shed = false;
+        if (!k.refused) ++g_stats.refused, k.refused = true;
+        k.st = kCpu;
+        if (k.cur >= 0) offer(c, s, -1), did = true;
+        log(CORE_STR("amp: %s %c: NO CPU (shed: its render core over 80 %% at the clock now)"), ins::chain_name(parent(c)), 'A' + s);
+        continue;
+      }
       if (k.cur >= 0 && g_meta[k.cur].model == want && g_meta[k.cur].gen == g_gen) {
         k.st = kPlaying;
         continue;
@@ -918,6 +949,11 @@ bool step() {
         k.st = c < kVoices ? kCap : kCapM;
         continue;
       }
+      if (k.cur < 0 && g_cpu_fits && !g_cpu_fits(c)) {   // CPU admission: the AMPs already playing on its core first
+        if (!k.refused) ++g_stats.refused, k.refused = true;
+        k.st = kCpu;
+        continue;
+      }
       int i = pick_inst(want);
       if (i < 0) {   // every instance plays or fades: a little later
         k.st = kLoading;
@@ -929,6 +965,10 @@ bool step() {
       sniprintf(j.path, sizeof j.path, "%s/%s", kFolder, model_file(want));
       k.st = kLoading;
       j.ph = g_meta[i].model == want && g_meta[i].gen == g_gen ? kInit : kNone;
+      if (j.ph == kNone && g_synth && same_ci(model_file(want), kSynthFile)) {   // the load test's: no card, the bench's weights
+        synthetic_weights(g_w, 1);
+        j.ph = kInit;
+      }
 #if CORE_MSAMP
       if (j.ph == kNone) j.rq.state = cardq::kFree, j.ph = kOpen;
 #endif
@@ -946,13 +986,19 @@ bool step() {
 
 bool command(const char* p, char* o, int cap) {
   if (strncmp(p, "amp", 3) != 0 || (p[3] && p[3] != '=')) return false;
+  if (p[3] == '=' && (same_ci(p + 4, "synthetic:on") || same_ci(p + 4, "synthetic:off"))) {
+    g_synth = same_ci(p + 4, "synthetic:on");
+    rescan();
+    sniprintf(o, cap, "amp: synthetic capture %s (%s), listing %s again", g_synth ? "listed" : "off", kSynthFile, kFolder);
+    return true;
+  }
   if (p[3] == '=' && same_ci(p + 4, "rescan")) {
     rescan();
     sniprintf(o, cap, "amp: listing %s again", kFolder);
     return true;
   }
   if (p[3]) {
-    sniprintf(o, cap, "amp (the AMP inserts), amp=rescan (list %s again)", kFolder);
+    sniprintf(o, cap, "amp (the AMP inserts), amp=rescan (list %s again), amp=synthetic:on|off (a test capture listed)", kFolder);
     return true;
   }
   int n = sniprintf(o, cap, "amp: %d captures in %s, %d of %d playing, loads %u reuses %u refused %u",
@@ -1002,6 +1048,7 @@ void reset() {
   for (int c = 0; c < kRows; ++c)
     for (int s = 0; s < kSlots; ++s) g_a[c][s] = Audio();
   for (int i = 0; i < kInstances; ++i) g_meta[i].busy = false;
+  g_synth = false;
   bool lw = g_job.list_wanted || (g_job.ph == kList);
   g_job = Job();
   g_job.list_wanted = lw;   // a listing asked for (or under way) is still made

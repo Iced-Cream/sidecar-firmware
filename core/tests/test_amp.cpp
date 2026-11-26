@@ -526,6 +526,48 @@ int main() {
     settle();
     CHECK(amp::running() == 0);
   }
+  // CPU admission's check (set_cpu_check; core/device/admit.h amp_fits): AMP admitted when a slot loads one. Here room for 2
+  // on voices 0..3 and none on 4..7: those play dry with NO CPU, and one takes its place when the check lets it
+  {
+    static int s_room = 2;
+    amp::set_cpu_check([](int row) {
+      if (row >= 4) return false;
+      int n = 0;
+      for (int c = 0; c < 4; ++c)
+        for (int s = 0; s < amp::kSlots; ++s) n += amp::slot_playing(c, s);
+      return n < s_room;
+    });
+    CHECK(amp::rows() > 8 && amp::master_row() >= 8 && amp::master_row() < amp::rows());
+    for (int c = 0; c < 8; ++c) ins::set_type(c, 0, ins::kAmp), ins::set_param(c, 0, 0, amp::knob_for_model(2 + (c & 1)));
+    auto run = [] {
+      std::vector<float> blk(12, 0.1f);
+      for (int b = 0; b < 3000; ++b) {
+        amp::step();
+        for (int c = 0; c < 8; ++c) {
+          amp::service(c);
+          std::vector<float> v = blk;
+          ins::engine().ProcessMono(c, v.data(), 12, ins::control);
+        }
+      }
+    };
+    run();
+    int playing = 0, cpu = 0;
+    for (int c = 0; c < 8; ++c) playing += amp::status(c, 0) == amp::kPlaying, cpu += amp::status(c, 0) == amp::kCpu;
+    printf("CPU check: %d playing, %d NO CPU\n", playing, cpu);
+    CHECK(amp::refused_cpu() == 6);
+    CHECK(playing == 2 && cpu == 6 && amp::running() == 2 && text(4, 0) == "NO CPU" && amp::slot_playing(0, 0) + amp::slot_playing(1, 0) + amp::slot_playing(2, 0) + amp::slot_playing(3, 0) == 2);
+    s_room = 3;   // room again (a box left): one more of 0..3 plays
+    run();
+    CHECK(amp::running() == 3);
+    amp::set_cpu_check(nullptr);
+    for (int c = 0; c < 8; ++c) ins::set_type(c, 0, ins::kOff);
+    for (int b = 0; b < 200; ++b) {
+      amp::step();
+      for (int c = 0; c < 8; ++c) amp::service(c);
+    }
+    settle();
+    CHECK(amp::running() == 0);
+  }
   // the labels and texts fit (4 / 7 characters), every value and state
   {
     const ins::Labels& L = ins::labels(ins::kAmp);
@@ -639,6 +681,27 @@ int main() {
     CHECK(n > 0 && n < (int)sizeof j);
     CHECK(strstr(j, "\"amp\":{\"models\":5"));
     printf("json: %s\n", strstr(j, "\"amp\""));
+  }
+  // amp=synthetic:on (the two-box load test): a synthetic capture listed beside /NAM/'s files, loaded without the card
+  {
+    char o[256];
+    const int n1 = amp::models();
+    const uint32_t ld = amp::stats().loads;
+    CHECK(amp::command("amp=synthetic:on", o, sizeof o) && strstr(o, "listed"));
+    settle();
+    const int i = amp::find_model("~TSYNTH.namb");
+    CHECK(amp::models() == n1 + 1 && i >= 0);
+    ins::set_type(0, 0, ins::kAmp);
+    ins::set_param(0, 0, 0, amp::knob_for_model(i));
+    std::vector<float> y = play(guitarish(24000));
+    settle();
+    CHECK(amp::status(0, 0) == amp::kPlaying && amp::stats().loads == ld + 1);
+    for (float v : y) CHECK(std::isfinite(v));
+    printf("amp=synthetic:on: %s, slot V1 A plays it (%s)\n", o, text(0, 0).c_str());
+    CHECK(amp::command("amp=synthetic:off", o, sizeof o));
+    ins::set_type(0, 0, ins::kOff);
+    settle();
+    CHECK(amp::models() == n1);
   }
   // the CPU: one instance's cost on this Mac (the Pi 4 estimate: x 4.4, the boot bench's PLAITS ratio)
   {
