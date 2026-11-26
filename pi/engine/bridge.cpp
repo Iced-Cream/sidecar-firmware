@@ -15,6 +15,7 @@
 #include "device/device.h"
 #include "device/admit.h"
 #include "fx/insert.h"
+#include "fx/fx_guard.h"
 #include "fx/master.h"
 #include "fx/out.h"
 #include "heap_buffers.h"
@@ -282,6 +283,7 @@ bool poly_command(const char* p, char* out, int cap) {
          core::ins::command(p, out, cap) ||   // fx-ins: "ins", "ins=..." (core/fx/insert.h)
          core::master::command(p, out, cap) ||   // the master FX: "mfx", "mfx=..." (core/fx/master.h)
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
+         core::fx::guard::command(p, out, cap) ||   // the measured guard of every effect: "fxguard", "fxguard=..." (core/fx/fx_guard.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
          core::livein::command(p, out, cap) ||  // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)

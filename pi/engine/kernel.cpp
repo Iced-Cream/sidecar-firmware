@@ -70,6 +70,7 @@ static int s_nRytmPatIndex = -1;
 #include "device/digitakt.h"
 #include "fx/amp.h"		// CPU admission's refusals in /status (amp::refused_cpu)
 #include "fx/insert.h"		// ... and ins::refused_count
+#include "fx/fx_guard.h"	// ... and the measured guard's mutes (fxMuted)
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"
@@ -409,6 +410,14 @@ boolean CKernel::Initialize (void)
 				 strcmp (m_Options.GetAppOptionString ("notes", "off"), "on") == 0
 				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
 	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
+	if (const char *pG = m_Options.GetAppOptionString ("fxguard", 0))	// fxguard=off|report|on (core/fx/fx_guard.h; on by default)
+	{
+		char Out[64], Cmd[24] = "fxguard=";
+		strncpy (Cmd + 8, pG, sizeof Cmd - 9);
+		Cmd[sizeof Cmd - 1] = 0;
+		core::fx::guard::command (Cmd, Out, sizeof Out);
+		m_Logger.Write (From, LogNotice, "%s", Out);
+	}
 	if (const char *pVoices = m_Options.GetAppOptionString ("voices", 0))	// voices=a4:2,dt:6: per box type (core/device/admit.h)
 	{
 		if (core::admit::parse_override (pVoices)) core::device::readmit ();
@@ -700,6 +709,11 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL), core::admit::core3_bp (AL), AL.amps[1], AL.amps[2], AL.amps[3], (unsigned) AL.ins[1], (unsigned) AL.ins[2],
 			  core::ins::refused_count (0), core::ins::refused_count (1), core::amp::refused_cpu ());
 		pOut->Append (s);
+		// the measured guard of every effect (core/fx/fx_guard.h): what it muted, built-in and user, with the reasons
+		static char Fm[2048];
+		pOut->Append (",");
+		core::fx::guard::json (Fm, sizeof Fm);
+		pOut->Append (Fm);
 	}
 	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
 	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
@@ -2241,6 +2255,14 @@ void CKernel::LogStats (void)
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);
+	if (s.nRunCapped || s.nFifoLate)	// (cores.cpp: a pass rendered its cap of blocks with the FIFO still short; a base pass began with it under a block)
+		m_Logger.Write (From, LogWarning, "overloaded: %u control passes stopped rendering at the cap, %u blocks begun with the FIFO under a block", s.nRunCapped, s.nFifoLate);
+	{	// the measured FX guard's late rule, once a second while any core was late: why a late block muted nothing (LT13)
+		char Late[400];
+		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2)
+			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u | %s",
+					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, Late);
+	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
 	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
