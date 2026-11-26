@@ -8,6 +8,9 @@
 #include <string.h>
 
 #include "fmt/fmt.h"
+#include "fx/amp.h"
+#include "fx/insert.h"
+#include "fx/fx_guard.h"
 #include "fx/out.h"
 #include "host_link.h"
 #if CORE_POLY
@@ -159,12 +162,20 @@ CORE_COLD const char* state_path_box(const char* state, const char* path, char* 
 // Boot: nothing to choose. Slot 0 is presumed the Rytm's, in /.rytm, from the first file on; boxes take slots by attach order
 // (docs/device-profiles.md "Several devices"). An older card's /.rytm/device (the last box, read here before two slots) is
 // left as it is and never read.
-CORE_COLD void boot() {}
+static bool amp_room(int row);
+static bool ins_room(int b, int c, int s, int t);
+CORE_COLD void boot() { amp::set_cpu_check(amp_room), ins::set_cpu_check(ins_room); }
 
 CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
   for (const Link& l : g_links)
     if (l.parting) return true;
   return false;
+}
+static void shed_over();
+CORE_COLD void cpu_step() {
+  fx::guard::poll();   // the measured guard's mutes worded and logged, and released once their slot is set again (fx/fx_guard.h)
+  shed_over();
+  if (ins::regrant()) log(CORE_STR("device: INSERT types admitted again (CPU room)"));
 }
 CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is saved, a slot whose box left is free for any box)
   usb_take();   // the USB devices that came or went (core 0's)
@@ -179,6 +190,7 @@ CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is sav
   for (Link& l : g_links)
     if (l.holding && !l.parting && now_ms() - l.left_ms >= g_hold_ms) l.holding = false, log(CORE_STR("device: slot %d free"), l.index);
   admit_alone();
+  cpu_step();
   rebase();
   return false;
 }
@@ -191,11 +203,117 @@ int voices_asked(const Profile* h) {
   const int n = o >= 0 && o < h->voices ? o : h->voices;   // (voices= lowers a count: a box's reports past its profile's are dropped)
   return n > kBoxVoices ? kBoxVoices : n;
 }
+void load_now(admit::Load* out);
+// A voice chain's INSERT cost: twice its mono bench row while its voice is on OUT PRE / POST (the render cores run it in
+// stereo: voices.cpp stv, insert.h ProcessVoiceStereo); a stereo-mix box (out::kStereoMix) has every voice on POST
+static int chain_mul(int b, int c) { return out::control_of(b).route[c & 7] != out::kTrk ? 2 : 1; }
 static admit::Load load_now() {
-  admit::Load ld = {};
+  admit::Load ld;
+  load_now(&ld);
+  return ld;
+}
+void load_now(admit::Load* out) {
+  admit::Load& ld = *out;
+  ld = {};
   for (int k = 0; k < kLinks && k < 2; ++k)
     ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr, ld.asked[k] = g_links[k].want;
-  return ld;
+  const int m = amp::master_row();   // the AMPs playing, each on its render core (admit.h amp_core): the first ask wins
+  for (int r = 0; r < amp::rows(); ++r)
+    for (int s = 0; s < amp::kSlots; ++s)
+      if (amp::slot_playing(r, s)) {
+        const int c = admit::amp_core(r, m, ld);
+        if (c >= 1 && c <= 3) ++ld.amps[c];
+      }
+  static_assert(ins::kAmp == 9 && ins::kTypes == admit::kSendType0 && ins::kMChorus == admit::kSendType0 &&
+                    ins::kAllTypes == admit::kSendType0 + admit::kSendTypes,
+                "admit.cpp type_bp / master_slot_bp: AMP is 9, the voice types under kSendType0, then the send TYPEs");
+  for (int b = 0; b < kVoiceSlots && b < 2; ++b) {   // the voice INSERT slots admitted (insert.h refused: not counted)
+    if (!ld.held[b]) continue;
+    const ins::Control& k = ins::control_of(b);
+    const int n = ld.asked[b] < ins::kVoices ? ld.asked[b] : ins::kVoices;   // (its chains past what it asked never render)
+    for (int c = 0; c < n; ++c)
+      for (int s = 0; s < ins::kSlots; ++s)
+        if (!k.refused[c][s]) ld.ins[admit::voice_core(b, c, ld)] += chain_mul(b, c) * admit::type_bp(k.type[c][s]);
+  }
+  if (ld.held[0] && admit::master_core(0) == 3) {   // slot 0's master chain on core 3: its INSERT types (stereo: twice)
+    const ins::Control& k = ins::control_of(0);
+    for (int c = ins::kM0; c < ins::kChains; ++c)
+      for (int s = 0; s < ins::kSlots; ++s)
+        if (!k.refused[c][s]) ld.ins[3] += admit::master_slot_bp(k.type[c][s]);
+  }
+}
+// INSERT's CPU check (ins::set_cpu_check): box slot b's voice chain c, slot s may play type t, beside everything admitted
+// now but what that slot plays (it is replaced). A chain its box does not render (not held, past what it asked): yes.
+static CORE_COLD bool ins_room(int b, int c, int s, int t) {
+  admit::Load ld = load_now();
+  if (c >= ins::kM0) {   // a master chain: slot 0's on core 3 (counted there); slot 1's on core 1 is in its box's chains row
+    if (b != 0 || !ld.held[0] || admit::master_core(0) != 3) return true;
+    const ins::Control& k = ins::control_of(0);
+    if (!k.refused[c][s]) ld.ins[3] -= admit::master_slot_bp(k.type[c][s]);
+    return admit::ins3_fits(ld, t);
+  }
+  if (b < 0 || b > 1 || !ld.held[b] || c >= ld.asked[b]) return true;
+  const int core = admit::voice_core(b, c, ld);
+  const ins::Control& k = ins::control_of(b);
+  const int mul = chain_mul(b, c);
+  if (!k.refused[c][s]) ld.ins[core] -= mul * admit::type_bp(k.type[c][s]);
+  return admit::ins_fits(core, ld, t, mul);
+}
+// AMP's CPU check (amp::set_cpu_check): one more AMP slot on row's render core, beside what renders now
+static CORE_COLD bool amp_room(int row) {
+  const admit::Load ld = load_now();
+  return admit::amp_fits(admit::amp_core(row, amp::master_row(), ld), ld);
+}
+// The clock lowered (admit::set_clock: the engine's step-down for heat, decided 2026-11-22 for a Pi without cooling, or
+// cpumhz=) leaves a render core over kLimitBp with what is admitted: shed one item a step until each is within it. AMPs
+// first (the costliest: the highest voice row first), then the voice INSERT slots of the box attached last (the first ask
+// wins), its highest voice and slot first. Each plays dry and shows NO CPU, and is admitted again when it fits (amp_fits,
+// ins::regrant: the same limit with its own cost added, so nothing flickers). Voices are never shed here.
+static CORE_COLD void shed_over() {
+  if (!admit::on() || !admit::enforce()) return;
+  admit::Load ld;
+  load_now(&ld);
+  {   // core 3 (slot 0's master chain: its master AMPs, the highest row first)
+    const int m = amp::master_row();
+    if (admit::core3_bp(ld) > admit::kC3LimitBp)
+      for (int r = amp::rows() - 1; r >= m; --r)
+        for (int s = amp::kSlots - 1; s >= 0; --s)
+          if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == 3 && amp::shed(r, s)) {
+            log(CORE_STR("device: core 3 over 70 %% at %u MHz: master AMP row %d %c shed (NO CPU)"), admit::clock(), r, 'A' + s);
+            return;
+          }
+    if (admit::core3_bp(ld) > admit::kC3LimitBp && ld.held[0])   // then its master INSERT types, the last slot first
+      for (int c = ins::kChains - 1; c >= ins::kM0; --c)
+        for (int s = ins::kSlots - 1; s >= 0; --s)
+          if (admit::master_slot_bp(ins::control_of(0).type[c][s]) && ins::shed(0, c, s)) {
+            log(CORE_STR("device: core 3 over 70 %% at %u MHz: master %d %c shed (NO CPU)"), admit::clock(), c - ins::kM0 + 1,
+                'A' + s);
+            return;
+          }
+  }
+  for (int core = 1; core <= 2; ++core) {
+    if (admit::core_bp(core, ld) <= admit::kLimitBp) continue;
+    const int m = amp::master_row();
+    for (int r = m - 1; r >= 0; --r)
+      for (int s = amp::kSlots - 1; s >= 0; --s)
+        if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == core && amp::shed(r, s)) {
+          log(CORE_STR("device: core %d over 80 %% at %u MHz: AMP row %d %c shed (NO CPU)"), core, admit::clock(), r, 'A' + s);
+          return;
+        }
+    int order[2] = {0, 1};
+    if (g_links[0].order < g_links[1].order) order[0] = 1, order[1] = 0;   // the box attached last first
+    for (int b : order) {
+      if (b >= kVoiceSlots || !ld.held[b]) continue;
+      const int n = ld.asked[b] < ins::kVoices ? ld.asked[b] : ins::kVoices;
+      for (int c = n - 1; c >= 0; --c)
+        for (int s = ins::kSlots - 1; s >= 0; --s)
+          if (admit::voice_core(b, c, ld) == core && ins::shed(b, c, s)) {
+            log(CORE_STR("device: core %d over 80 %% at %u MHz: slot %d V%d %c shed (NO CPU)"), core, admit::clock(), b, c + 1,
+                'A' + s);
+            return;
+          }
+    }
+  }
 }
 static CORE_COLD void set_voices(Link& l, int n, bool tell) {
   __atomic_store_n(&l.voices, (uint8_t)n, __ATOMIC_RELAXED);
@@ -292,6 +410,7 @@ static CORE_COLD void select(Link& l, const Profile* h) {
   if (h || kVoiceSlots > 1) out::control_of(slot_of_voice(voice_base(l))).trk10 = p ? p->trk10 : 0;
   log(CORE_STR("device: slot %d: %s, state in %s"), l.index, h ? h->name : "free", l.state ? l.state : "/.rytm");
   link_reset("device", l.index);   // the box before it: its notes and transport unknown (its slot's voices)
+  if (h) fx::guard::clear_box(l.index);   // its box attached (again): the measured guard's mutes of its slot released
   if (h) admit_slot(l, back);
   else admit_left(l);
 }
@@ -466,6 +585,7 @@ CORE_COLD void reset() {
   for (int k = 0; k < kLinks; ++k) s_usb_want[k] = nullptr, s_usb_gone[k] = false;
   hooks.to_rytm = plat;          // back to the platform's sender (taken again: a test may set another)
   strip::reset();
+  amp::set_cpu_check(amp_room), ins::set_cpu_check(ins_room);
 }
 
 CORE_COLD bool add(const Profile* p) {

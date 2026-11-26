@@ -153,6 +153,9 @@ CORE_COLD bool idle_save() {
   }
 #endif
   if (g_nosave) {   // the load test: a box that attaches still loads its project; nothing is saved (the edits are the test's)
+    // CPU admission's shed and regrant first: device::step below is never reached here, and an attach step can stay due
+    // (LT7 2026-11-23: at 1200 MHz core 3 read 82 % with the master AMP pair still playing, nothing shed)
+    TV_("cpu", device::cpu_step());
     for (int k = 0; k < kVoiceSlots; ++k)
       if (T_("attach", project_attach_step(k))) return true;
     return false;

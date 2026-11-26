@@ -25,6 +25,7 @@ namespace cardq = core::cardq;
 #include "rmp_resolve.h"
 #include "rmp_slots.h"
 #include "device/device.h"
+#include "fx/fx_guard.h"
 #include "ui/remote.h"
 #include "voices.h"
 
@@ -213,7 +214,8 @@ void fx_stop(int u);
 uint8_t* g_fxst[kFx][2];
 volatile uint8_t g_fx_live[kFx], g_fx_busy[kFx];
 volatile uint64_t g_fx_fault[kFx];   // core 2's fault address (the control core words the why)
-volatile uint8_t g_fx_total[kFx];
+volatile uint8_t g_fx_total[kFx];   // 1: the dearest of its box's effects over the 150 us share; 2: the dearest on a hot core (fx_guard.h)
+volatile uint8_t g_fx_dear_core[kFx];   // (2: that core)
 volatile uint32_t g_render_faults = 0;   // voices whose render faulted (render_fault, any core): bit vi    // core 2 muted it as the dearest when its effects together were over their share
 uint32_t g_fx_lastgen[kFx][2];       // the gen of each state's last call (N5: edges older than that are not news)
 volatile uint32_t g_fx_slow_us[kFx]; // core 2: the render that took the effect over its budget (the why), 0 none
@@ -2654,6 +2656,7 @@ void fx_run(int u, int sl, const float* xin, int n, float (*y)[2], const uint8_t
         g_fx_over[u][sl] = 0;
       }
       fx_account(g, u, us, n);
+      core::fx::guard::note_user(u, us);   // (the measured guard of every effect: this core's dearest, fx_guard.h)
     }
   }
   __atomic_store_n(&g_fx_busy[u], 0, __ATOMIC_SEQ_CST);
@@ -2664,7 +2667,9 @@ void fx_faults() {
     uint32_t slow = g_fx_slow_us[u];
     if (slow && strncmp(g_why[kMach + u], "muted", 5)) {
       char w[96];
-      if (g_fx_total[u])
+      if (g_fx_total[u] == 2)   // (fx_guard.h: its core hot 16 blocks in a row, this the dearest effect on it)
+        sniprintf(w, sizeof w, "muted: ran %u us, dearest on core %u while hot", (unsigned)slow, (unsigned)g_fx_dear_core[u]);
+      else if (g_fx_total[u])
         sniprintf(w, sizeof w, "muted: ran %u us, dearest over core 2's share (%u us)",
                   (unsigned)slow, (unsigned)g_fx_total_us);
       else
@@ -3460,6 +3465,21 @@ void begin(const Exec* e, const char* d) {
   core::hooks.user_render2 = on_render2;
   core::fx::user_ready = fx_ready;   // API 3's user effects in the send FX's UFX TYPEs (core/fx/send_fx.h)
   core::fx::user_run = fx_run;
+  // the measured guard of every effect (fx_guard.h): a user effect it picks as the dearest on a hot core is muted here,
+  // as the box's own share does (fx_faults words it); /status "fxMuted" lists it beside the built-ins
+  core::fx::guard::user_mute = [](int u, uint32_t us, int core) {
+    if (u < 0 || u >= kFx || muted(kMach + u)) return;
+    g_fx_dear_core[u] = (uint8_t)core;
+    g_fx_total[u] = 2;
+    g_fx_slow_us[u] = us ? us : 1;
+    __atomic_or_fetch(&g_muted, 1u << (kMach + u), __ATOMIC_RELEASE);
+  };
+  core::fx::guard::user_state = [](int u, const char** why, const char** id) {
+    if (u < 0 || u >= kFx || !g_fxmap[u].id[0] || !muted(kMach + u)) return false;
+    *why = g_why[kMach + u];
+    *id = g_fxmap[u].id;
+    return true;
+  };
   core::fx::user_fresh_req = fx_fresh_req;
   core::fx::user_fresh_done = fx_fresh_done;
   core::fx::user_labels = fx_labels;

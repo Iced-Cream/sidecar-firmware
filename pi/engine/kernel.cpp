@@ -68,6 +68,9 @@ static int s_nRytmPatIndex = -1;
 #include "device/a4.h"
 #include "device/admit.h"
 #include "device/digitakt.h"
+#include "fx/amp.h"		// CPU admission's refusals in /status (amp::refused_cpu)
+#include "fx/insert.h"		// ... and ins::refused_count
+#include "fx/fx_guard.h"	// ... and the measured guard's mutes (fxMuted)
 #include "card_pass.h"	// MIDI between the card requests
 #include "sendfx_pi.h"
 #include "masterfx_pi.h"
@@ -120,7 +123,7 @@ extern bool g_bCardGuard;			// card_guard.cpp: testcard=1
 
 static const char From[] = "engine";
 // BenchChains' results (core 0, before cores 1-3), LogBench's rows: [0] the master chain, [1..] the send TYPE insert sets
-static const int ChainBenches = 3;
+static const int ChainBenches = 8;	// the master chain, then each send TYPE insert set (core/fx/master.cpp kSfxSets)
 static struct { u64 nTicks; u32 nWorst; } s_ChainBench[ChainBenches];
 static struct { u64 nTicks; u32 nWorst; } s_BoxBench;	// one box's chains as one row (master::box_bench): CPU admission
 static const char RebootMagic[] = "RYTM-REBOOT";
@@ -407,6 +410,14 @@ boolean CKernel::Initialize (void)
 				 strcmp (m_Options.GetAppOptionString ("notes", "off"), "on") == 0
 				 || strcmp (m_Options.GetAppOptionString ("notes", "off"), "1") == 0);
 	CEngineCores::SetSplit (m_Options.GetAppOptionDecimal ("split", 4));	// voices 0-3 core 1, 4-7 core 2
+	if (const char *pG = m_Options.GetAppOptionString ("fxguard", 0))	// fxguard=off|report|on (core/fx/fx_guard.h; on by default)
+	{
+		char Out[64], Cmd[24] = "fxguard=";
+		strncpy (Cmd + 8, pG, sizeof Cmd - 9);
+		Cmd[sizeof Cmd - 1] = 0;
+		core::fx::guard::command (Cmd, Out, sizeof Out);
+		m_Logger.Write (From, LogNotice, "%s", Out);
+	}
 	if (const char *pVoices = m_Options.GetAppOptionString ("voices", 0))	// voices=a4:2,dt:6: per box type (core/device/admit.h)
 	{
 		if (core::admit::parse_override (pVoices)) core::device::readmit ();
@@ -691,13 +702,18 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	}
 	pOut->Append ("]");
 	{	// CPU admission (core/device/admit.h): the render cores' worst case for the voices admitted now, 1/100 % of a core
-		core::admit::Load AL = {};
-		for (int k = 0; k < 2 && k < core::device::kLinks; k++)
-			AL.held[k] = core::device::held (k), AL.voices[k] = AL.held[k] ? (u8) core::device::admitted (k) : 0;
-		s.Format (",\"admit\":{\"bench\":%s,\"enforce\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u}",
+		core::admit::Load AL;
+		core::device::load_now (&AL);	// with the AMPs playing on each core (admitted when loaded: admit.h amp_fits)
+		s.Format (",\"admit\":{\"bench\":%s,\"enforce\":%s,\"mhz\":%u,\"limitBp\":%u,\"core1Bp\":%u,\"core2Bp\":%u,\"core3Bp\":%u,\"amps1\":%u,\"amps2\":%u,\"amps3\":%u,\"ins1Bp\":%u,\"ins2Bp\":%u,\"insRefused\":[%d,%d],\"ampRefused\":%d}",
 			  core::admit::on () ? "true" : "false", core::admit::enforce () ? "true" : "false", core::admit::clock (), core::admit::kLimitBp,
-			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL));
+			  core::admit::core_bp (1, AL), core::admit::core_bp (2, AL), core::admit::core3_bp (AL), AL.amps[1], AL.amps[2], AL.amps[3], (unsigned) AL.ins[1], (unsigned) AL.ins[2],
+			  core::ins::refused_count (0), core::ins::refused_count (1), core::amp::refused_cpu ());
 		pOut->Append (s);
+		// the measured guard of every effect (core/fx/fx_guard.h): what it muted, built-in and user, with the reasons
+		static char Fm[2048];
+		pOut->Append (",");
+		core::fx::guard::json (Fm, sizeof Fm);
+		pOut->Append (Fm);
 	}
 	// the side stage (side_out.h): slot 1's voices beside a Rytm, paced by slot 1's own stream (slot -1: none now)
 	s.Format (",\"sideOut\":{\"slot\":%d,\"level\":%u,\"underruns\":%u,\"restartUnderruns\":%u,\"streams\":%u}",
@@ -788,10 +804,10 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 	}
 	// setting: cpumhz=, where 1500 means the board's full clock; mhz: what the firmware says it set; fullMhz, minMhz: its range;
 	// measuredMhz: what it measured (MeasureClock, up to 10 s old, 0: none yet); socMaxC: Circle's throttle (socmaxtemp)
-	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s}",
+	s.Format (",\"cpu\":{\"setting\":%u,\"mhz\":%u,\"budgetUs\":%u,\"askedMhz\":%u,\"fullMhz\":%u,\"minMhz\":%u,\"measuredMhz\":%u,\"socMaxC\":%u,\"capped\":%s,\"heatCapMhz\":%d}",
 		  k->m_nClockSetting, k->m_nClockMHz, k->m_nBudgetUs, k->AskedMHz (), k->m_CPUThrottle.GetMaxClockRate () / 1000000,
 		  k->m_CPUThrottle.GetMinClockRate () / 1000000, k->m_nMeasuredMHz, k->m_Options.GetSoCMaxTemp (),
-		  k->m_bClockCapped ? "true" : "false");
+		  k->m_bClockCapped ? "true" : "false", k->m_ThermalCap.cap_mhz);
 	pOut->Append (s);
 #if RASPPI >= 5
 	{	// the fan header (fan.h): mode (auto, on, off), from (default, card, cmdline, console), level 0..4, duty (of 255),
@@ -1133,6 +1149,22 @@ void CKernel::LogBench (void)
 				nBlk / 10, nBlk % 10, nHash);
 		m_Timer.MsDelay (2);
 	}
+	{	// CPU admission's INSERT types (core/device/admit.h type_bp; decided 2026-11-22: a voice slot's type is admitted when
+		// it is set): each voice type on its own, T+T on 8 voices x 2 slots (the post EQ flat), its sixteenth a slot
+		static const int Types[] = {1, 2, 3, 4, 5, 6, 7, 8, 10};	// FILTER CRUSH DRIVE EQ COMP DELAY TREMOLO RINGMOD SAT (AMP: its own row)
+		CString Line;
+		for (int t : Types)
+		{
+			u32 nWorst = 0;
+			const unsigned nBp = (unsigned) (bridge::ins_bench (t, t, &nWorst) * 10000 / nCntFrq), nSlot = (nBp + 15) / 16;
+			Adm.type_bp[t] = (u16) (nSlot < 65535 ? nSlot : 65535);
+			CString One;
+			One.Format (" %s %u.%02u", bridge::ins_bench_name (t), nSlot / 100, nSlot % 100);
+			Line.Append (One);
+		}
+		m_Logger.Write (From, LogNotice, "bench ins a slot of each type, %% of a core:%s", (const char *) Line);
+		m_Timer.MsDelay (2);
+	}
 	{	// SAT on every slot of the buses and the master: what it can add to core 2
 		u32 nWorst = 0;
 		u64 nTicks = bridge::ins_bus_bench (&nWorst);
@@ -1182,6 +1214,9 @@ void CKernel::LogBench (void)
 		unsigned nBp = (unsigned) (nTicks * 10000 / nCntFrq), nBlk = (unsigned) (nWorst * 1000 / nBlock);
 		if (nBp > nSfxWorstBp) nSfxWorstBp = nBp;
 		if (strcmp (pName, "CLOUD x4") == 0) nSfxCloudBp = nBp;
+		const int nType = bridge::sfxins_bench_type (nSet);	// CPU admission: one master send TYPE slot, a quarter of its x4 row
+		if (nType >= core::admit::kSendType0 && nType < core::admit::kSendType0 + core::admit::kSendTypes)
+			Adm.send_bp[nType - core::admit::kSendType0] = (u16) ((nBp + 3) / 4 < 65535 ? (nBp + 3) / 4 : 65535);
 		m_Logger.Write (From, LogNotice, "bench sfxins %s: %u.%02u %% of a core, worst block %u.%u %%",
 				pName, nBp / 100, nBp % 100, nBlk / 10, nBlk % 10);
 		m_Timer.MsDelay (2);
@@ -1198,16 +1233,17 @@ void CKernel::LogBench (void)
 		m_Timer.MsDelay (2);
 	}
 	// CPU admission (core/device/admit.h): a voice's INSERT chain is the worst pair's eighth and the POST EQ's; a box's chains
-	// on its render core the box chains row, dry (the boot has no capture loaded for the row's M2 and M3: core_bp adds the base
-	// box's AMP pair). No box row (a slot already set): the earlier sum of the overlapping rows, an upper bound. core_bp scales
-	// each row by its LT3 load factor (admit.h kAmpLoadPct, kVoiceLoadPct, kChainLoadPct), logged here.
-	Adm.ins_bp = (nInsPairBp + nInsPostBp + 7) / 8;
-	Adm.fx_bp = nBoxBp ? nBoxBp : nMfxBp + nSfxWorstBp + nBusBp + nSfxCloudBp / 2;	// dry: core_bp adds the base box's AMP pair (LT3)
+	// on its render core the box chains row, dry (the boot has no capture loaded for the row's M2 and M3: an AMP counts when a
+	// slot loads one, amp_fits). No box row (a slot already set): the earlier sum of the overlapping rows, an upper bound.
+	// core_bp scales each row by its LT3 load factor (admit.h kAmpLoadPct, kVoiceLoadPct, kChainLoadPct), logged here.
+	Adm.ins_bp = (nInsPostBp + 7) / 8;	// a voice's POST EQ (its INSERT types count when set: type_bp)
+	Adm.slot_bp = (nInsPairBp + 15) / 16;	// a type without a row of its own: the worst pair's slot
+	Adm.fx_bp = nBoxBp ? nBoxBp : nMfxBp + nSfxWorstBp + nBusBp + nSfxCloudBp / 2;	// dry: AMPs count when loaded (amp_fits)
 	core::admit::set_costs (Adm);
 	core::admit::set_clock (m_nClockMHz);
 	const core::admit::LoadPct &Lp = core::admit::load_pct ();
 	core::device::readmit ();
-	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + INSERT %u.%02u), AMP %u.%02u %%, a box's chains %u.%02u %% (%s, dry; slot 0's on core 2, slot 1's on core 1); under load x%u.%02u voice, x%u.%02u AMP (the base box's master pair 2 AMPs), x%u.%02u chains (LT3); limit 80 %% a render core",
+	m_Logger.Write (From, LogNotice, "admit: at %u MHz a voice %u.%02u %% (machine %u.%02u + POST EQ %u.%02u; INSERT types admitted when set), AMP %u.%02u %%, a box's chains %u.%02u %% (%s, dry; slot 0's on core 2, its master chain on core 3; slot 1's on core 1); under load x%u.%02u voice, x%u.%02u AMP (admitted when a slot loads one), x%u.%02u chains (LT3); limit 80 %% a render core",
 			nMHz, (Adm.voice_bp + Adm.ins_bp) / 100, (Adm.voice_bp + Adm.ins_bp) % 100, Adm.voice_bp / 100, Adm.voice_bp % 100,
 			Adm.ins_bp / 100, Adm.ins_bp % 100, Adm.amp_bp / 100, Adm.amp_bp % 100, Adm.fx_bp / 100, Adm.fx_bp % 100,
 			nBoxBp ? "box row" : "no box row: the rows' sum", Lp.voice / 100, Lp.voice % 100,
@@ -2112,6 +2148,7 @@ void CKernel::LogStats (void)
 	{ mbtrace::Scope Mb (3); nTemp = m_CPUThrottle.GetTemperature (); }
 	s_nTempC = m_nTempC = nTemp;
 	ThermalStep (nTemp);
+	ThermalCapStep (nTemp);
 	UpdateNoticeStep ();
 #if RASPPI >= 5
 	FanStep (nTemp, 0);
@@ -2143,9 +2180,10 @@ void CKernel::LogStats (void)
 		Chans.Append (One);
 	}
 	unsigned c1 = pct (s.nBusy[1]), c2 = pct (s.nBusy[2]), c3 = pct (s.nBusy[3]);
-	// CPU admission's check (core/device/admit.h): cores 1 and 2 with their chains (slot 1's on core 1, slot 0's on core 2),
-	// core 3 without its render wait
+	// CPU admission's check (core/device/admit.h): cores 1 and 2 with their chains (slot 1's on core 1, slot 0's send FX on
+	// core 2), core 3 without its render wait (slot 0's master chain in it: c3 mfx, cores.cpp MasterCore)
 	unsigned c1all = pct (s.nBusy[1] + s.nChain1), c2all = pct (s.nBusy[2] + s.nChain2), c3own = pct (s.nBusy[3] > s.nWait3 ? s.nBusy[3] - s.nWait3 : 0);
+	unsigned c3mfx = pct (s.nChain3);
 	bridge::RuiMore More = {};			// the remote UI's SIDECAR page (core 3 reads it)
 	unsigned nRec = 0;
 	int nRecState = rec_pi::UiState (&nRec);	// 0 off (idle), 1 armed, 2 recording
@@ -2195,13 +2233,21 @@ void CKernel::LogStats (void)
 					m_pDisplay->TakeRotateDiag (), m_pDisplay->TakeTouchDiag ());
 	}
 	m_Logger.Write (From, LogNotice,
-		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% (with chains c1 %u.%u c2 %u.%u, c3 own %u.%u) | "
+		"engine: fifo min %u max %u target %u under %u (restart %u, streams %u) | blocks %u max %u us | cpu c1 %u.%u c2 %u.%u c3 %u.%u %% (with chains c1 %u.%u c2 %u.%u, c3 own %u.%u, c3 mfx %u.%u) | "
 		"pass max %u us | %s| midi %u B (lost %u) sysex %u notes %u%s | to-host sent %u B %u msgs fail %u dropped %u | peak %u/1000 | %u C",
 		s.nFifoMin, s.nFifoMax, CEngineCores::FifoTarget (), g_Output.Underflows (), g_Output.RestartUnderflows (), g_Output.Streams (), s.nBlocks, s.nMaxBlockUs,
-		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, c1all / 10, c1all % 10, c2all / 10, c2all % 10, c3own / 10, c3own % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
+		c1 / 10, c1 % 10, c2 / 10, c2 % 10, c3 / 10, c3 % 10, c1all / 10, c1all % 10, c2all / 10, c2all % 10, c3own / 10, c3own % 10, c3mfx / 10, c3mfx % 10, s.nMaxPassUs, (const char *) Mach, s.nMidiBytes, s_nMidiInLost, s.nSysEx, s.nNotes, (const char *) Chans,
 		m_Usb.MIDIOutBytes (), m_Usb.MIDIOutMessages (), m_Usb.MIDIOutFailed (),
 		m_Usb.MIDIOutDropped () + m_SelfTest.MIDIOutDropped () + m_Tcp.MIDIOutDropped () + g_nToHostFull + bridge::to_host_dropped (), (unsigned) (StatsPeak () * 1000),
 		nTemp);
+	if (s.nRunCapped || s.nFifoLate)	// (cores.cpp: a pass rendered its cap of blocks with the FIFO still short; a base pass began with it under a block)
+		m_Logger.Write (From, LogWarning, "overloaded: %u control passes stopped rendering at the cap, %u blocks begun with the FIFO under a block", s.nRunCapped, s.nFifoLate);
+	{	// the measured FX guard's late rule, once a second while any core was late: why a late block muted nothing (LT13)
+		char Late[400];
+		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2)
+			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u | %s",
+					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, Late);
+	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)
 	else if (g_bObPowerAsk) { g_bObPowerAsk = FALSE; mbtrace::Scope Mb (1); ReadPower (TRUE); }	// a box dropped: was it the supply? (AO2)
@@ -2318,7 +2364,10 @@ void CKernel::SetClock (unsigned nSettingMHz)
 		m_Logger.Write (From, LogWarning, "cpu: the firmware gave no clock range, the CPU clock is left as it is");
 		return;
 	}
-	const unsigned nHz = cpuclock::target_hz (nSettingMHz, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
+	unsigned nHz = cpuclock::target_hz (nSettingMHz, m_CPUThrottle.GetMinClockRate (), m_CPUThrottle.GetMaxClockRate ());
+	if (m_ThermalCap.cap_mhz > 0 && (unsigned) m_ThermalCap.cap_mhz * 1000000u < nHz)	// the step-down for heat (ThermalCapStep)
+		nHz = (unsigned) m_ThermalCap.cap_mhz * 1000000u < m_CPUThrottle.GetMinClockRate () ? m_CPUThrottle.GetMinClockRate ()
+										 : (unsigned) m_ThermalCap.cap_mhz * 1000000u;
 	const boolean bFull = nHz >= m_CPUThrottle.GetMaxClockRate ();
 	if (m_nClockMHz != 0 && nHz / 1000000 < m_nClockMHz) ApplyBudget (nHz / 1000000, FALSE);	// lowering: the budget first
 	if (bFull)
@@ -2423,6 +2472,30 @@ void CKernel::ThermalStep (unsigned nTempC)
 	}
 }
 
+// The step-down for a Pi without cooling (thermal.h step; decided 2026-11-22 after LT4, where a bare Pi 4 reached 77 C under
+// the full two-box load and Circle's throttle dropped it from 1500 to 600 MHz at once: ~150,000 underruns in 4 s). From
+// 74 C the clock is capped at 1200, from 76 C at 1000, and only at 78 C (socmaxtemp) at the board's minimum; each cap is
+// raised a step after 30 s at or below 70 C. The cap goes through SetClock (the mailbox: Circle's Update stops while it
+// holds, m_bClockCapped), so the voice budget and CPU admission follow; what no longer fits on a render core at the lower
+// clock (AMPs, then INSERT types) plays dry and shows NO CPU until it fits again (device.cpp shed_over). thermalstep=off
+// on the cmdline leaves the clock to Circle's throttle as before.
+void CKernel::ThermalCapStep (unsigned nTempC)
+{
+	static int s_nOn = -1;
+	if (s_nOn < 0)
+	{
+		const char *p = m_Options.GetAppOptionString ("thermalstep", 0);
+		s_nOn = p != 0 && strcmp (p, "off") == 0 ? 0 : 1;
+	}
+	if (!s_nOn || !m_CPUThrottle.IsDynamic ()) return;
+	const int nWas = m_ThermalCap.cap_mhz;
+	if (!thermal::step (m_ThermalCap, (int) nTempC, (int) AskedMHz (), (int) (m_CPUThrottle.GetMinClockRate () / 1000000))) return;
+	m_Logger.Write (From, m_ThermalCap.cap_mhz && (nWas == 0 || m_ThermalCap.cap_mhz < nWas) ? LogWarning : LogNotice,
+			"thermal: SoC %u C, clock cap %u -> %u MHz (0: none; setting %u, step %u this boot)", nTempC, nWas,
+			m_ThermalCap.cap_mhz, m_nClockSetting, m_ThermalCap.steps);
+	SetClock (m_nClockSetting);
+}
+
 #if RASPPI >= 5
 // The fan header (fan.h, fan_pi.h, docs/pi5.md "The fan"). fan= in /.sidecar/display.txt (auto, on, off), cmdline.txt's
 // wins; the default AUTO. The pin starts here, before the bench, and is set from a first reading at once (the
@@ -2494,6 +2567,7 @@ void CKernel::FollowClock (void)
 			nMHz, m_nClockMHz, m_nClockSetting, m_nTempC);
 	m_nClockMHz = nMHz;
 	ApplyBudget (nMHz, TRUE);
+	core::admit::set_clock (nMHz);		// CPU admission follows too: what no longer fits is shed (device.cpp shed_over)
 }
 
 // What the firmware measures, not what it says it set: GET_CLOCK_RATE repeats the rate asked for, so the firmware's own

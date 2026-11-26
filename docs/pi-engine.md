@@ -1029,6 +1029,16 @@ The SoC's temperature is read once a second (the stats line's reading: one mailb
   Rytm's popup `SOC 80C CLOCK LOWERED / TO 600 MHZ (UP+T10)`, the STATUS page's CPU title line `600 MHz: clock lowered
   (hot)` in the alert colour (OLED `CLOCK LOWERED`) and `/status` `"clockLow":600` (the web page's Temperature tile).
   Lowered under the warning (78-79 C): the same STATUS line and tile, quietly - no banner, no popup.
+- **The step-down for a Pi without cooling** (decided 2026-11-22 after LT4: a bare Pi 4 under the full two-box load
+  reached 77 C in about 15 minutes, Circle dropped it from 1500 to 600 MHz at once, and the render cores fell behind:
+  ~150,000 underruns in 4 s). Before that cliff the engine lowers the clock itself (`thermal::step`, `CKernel::ThermalCapStep`):
+  a cap of 1200 MHz from 74 C, 1000 from 76 C, the board's minimum only at 78 C; each cap is raised a step after 30
+  readings in a row at or below 70 C, and never above the Settings clock. It goes through `SetClock` (the mailbox; Circle's
+  `Update` is not called while a cap holds), so the voice budget and CPU admission follow the clock. What no longer fits a
+  render core's 80 % at the lower clock is shed, one item an idle pass (`device.cpp` `shed_over`): AMPs first, then the
+  INSERT types of the box attached last; each plays dry and shows `NO CPU` and is admitted again when it fits. Voices are
+  never shed. The log says `thermal: SoC 74 C, clock cap 0 -> 1200 MHz ...` and `device: core 1 over 80 % at 1200 MHz: ...
+  shed (NO CPU)`; `/status` `cpu.heatCapMhz` (0: none). `thermalstep=off` on the cmdline leaves the clock to Circle as before.
 - **Where it shows.** The STATUS page's CPU panel (the temperature, right of the FIFO row, in the alert colour with
   HOT); a banner over the touchscreen's title bar (the same one as the supply's warning, which wins when both are on);
   `/status` `"tempWarn"` (and `"clockLow"`) and the web page's Temperature tile; the Rytm's screen once (below).

@@ -99,27 +99,31 @@ build/test_display_hint: test_display_hint.cpp ../../ui/display_hint.h ../../ui/
 build/test_touch_cal: test_touch_cal.cpp ../../ui/touch_cal.c ../../ui/touch_cal.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $<
-# the send FX's Pi part with the core's (card-free) send FX
-build/test_sendfx_pi: test_sendfx_pi.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h ../spectrum.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/stutter_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+# fifo_late.h with the measured FX guard: LT13 P5's two-box overload, the late mute within 20 ms (2026-11-25)
+build/test_fifo_late_guard: test_fifo_late_guard.cpp ../fifo_late.h $(CORE)/fx/fx_guard.cpp $(CORE)/fx/fx_guard.h $(CORE)/fx/insert.cpp $(CORE)/fx/send_fx.cpp check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CORE)/fx/fx_guard.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+# the send FX's Pi part with the core's (card-free) send FX
+build/test_sendfx_pi: test_sendfx_pi.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h ../spectrum.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/stutter_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/master.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the master FX: the OUT fill's crossfade, the ring to core 2 and back, bit for bit while bypassed, latency, cost
 # the spectrum (spectrum.h: the tap, the FFT bands, the reader; spectrum_pi.cpp: the engine's taps) and its /ws topic, with
 # the analysis's cost on the Mac (printed; the sanitizers make it slower than a plain -O2 build)
 build/test_spectrum: test_spectrum.cpp ../spectrum.h ../spectrum_pi.cpp ../spectrum_pi.h ../ws_topics.h ../ws_session.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< ../spectrum_pi.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
-build/test_masterfx_pi: test_masterfx_pi.cpp ../masterfx_pi.cpp ../masterfx_pi.h $(CORE)/fx/limiter.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+build/test_masterfx_pi: test_masterfx_pi.cpp ../masterfx_pi.cpp ../masterfx_pi.h $(CORE)/fx/limiter.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../masterfx_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< ../masterfx_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # two links, phase 3(d): slot 0's send FX and master chain bit for bit against the hash before the per-slot change
-build/test_slotfx_ref: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+build/test_slotfx_ref: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # ... on 16 voices (the Pi's): slot 1's instances beside slot 0's (SLOTFX_BOX1=1)
-build/test_slotfx_ref16: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
+build/test_slotfx_ref16: test_slotfx_ref.cpp ../sendfx_pi.cpp ../sendfx_pi.h ../masterfx_pi.cpp ../masterfx_pi.h ../spectrum_pi.cpp ../spectrum_pi.h $(CORE)/fx/master.cpp $(CORE)/fx/master.h $(CORE)/fx/send_fx.cpp $(CORE)/fx/send_fx.h $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/insert.h $(CORE)/fx/amp.cpp $(CORE)/fx/amp.h $(CORE)/fx/out.cpp $(CORE)/fx/out.h ../spsc.h check.h
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
+	$(CXX) $(CXXFLAGS) -DCORE_VOICES=16 -o $@ $< ../sendfx_pi.cpp ../masterfx_pi.cpp ../spectrum_pi.cpp $(CORE)/fx/master.cpp $(CORE)/fx/send_fx.cpp $(CORE)/fx/insert.cpp $(CORE)/fx/fx_guard.cpp $(CORE)/fx/amp.cpp $(CORE)/fx/out.cpp $(CORE)/fx/out_measure.cpp
 # the recorder (WAV writer, ring, channel lists) on a temp folder
 # (core/rec/rec_names.cpp: the parts shared with the Sidecar Mini's recorder, with the Mac's port of the core)
 build/test_recorder: test_recorder.cpp ../recorder.cpp ../recorder.h ../rec_wav.h $(CORE)/rec/rec_wav.h $(CORE)/rec/rec_names.h $(CORE)/rec/rec_names.cpp ../spsc.h check.h

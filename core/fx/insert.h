@@ -40,6 +40,7 @@
 #include <string.h>
 
 #include "fx/amp.h"
+#include "fx/fx_guard.h"
 #include "machines.h"
 #include "fx/sat_fx.h"
 
@@ -91,6 +92,10 @@ struct Control {
   volatile uint8_t route3;                           // bus 3: 0 PRE (host -> Rytm 2/3), 1 POST (0/1)
   volatile int8_t peq[kChains][kEqParams];           // ins1112 the POST EQ as it plays (eq_store: 0 = does nothing)
   volatile uint8_t mpair[kMasters][kSlots];          // the master's AMP slots: 1 an L/R pair (amp.h), 0 one instance on (L + R) / 2
+  // CPU admission (core/device/admit.h ins_fits, decided 2026-11-22; the master's chains too since 2026-11-23, on core 3):
+  // 1 the slot's type was not admitted when it was set, or was shed (no room on its render core): it plays dry (bypassed)
+  // and shows NO CPU until it is (set_cpu_check). 0: plays. The buses' chains are never refused
+  volatile uint8_t refused[kChains][kSlots];
 };
 extern Control control;
 // Slot 1's: its voices 8..15 play through chains of their own, alone or beside a Rytm (every chain OFF until slot 1's
@@ -266,7 +271,10 @@ class Engine {
   // Chain c runs or fades (anything to do): a type set, a fade not yet at dry, or a post EQ set or still releasing
   bool Active(int c, const Control& k) const {
     for (int s = 0; s < kSlots; ++s)
-      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp)) || slot_[c][s].cur || slot_[c][s].wet > 0.0f) return true;
+      if ((k.type[c][s] && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s] && !fx::guard::ins_muted(box_, c, s)) ||
+          slot_[c][s].cur ||
+          slot_[c][s].wet > 0.0f)
+        return true;
     return peq_set(k, c) || !peq_[c].idle;   // ins1112
   }
   // A voice's chain, mono, in place (n any; processed in kChunk pieces)
@@ -316,11 +324,22 @@ class Engine {
 
  private:
   // one slot over m <= kChunk frames: L in x, R in r (null: mono)
+  // (the measured guard, fx_guard.h: a running slot's time on its core; a slot it muted fades out like a refused one)
   void Run(int c, int s, float* x, float* r, int m, const Control& k) {
     Slot& o = slot_[c][s];
-    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) ? k.type[c][s] : kOff;   // (no AMP: dry)
+    const int gu = fx::guard::ins_unit(box_, c, s);
+    const int want = k.type[c][s] < kAllTypes && (amp_ || k.type[c][s] != kAmp) && !k.refused[c][s] && !fx::guard::muted(gu)
+                         ? k.type[c][s]
+                         : kOff;   // (no AMP: dry; not admitted: dry, CPU admission; muted for its measured time: dry)
     if (o.cur == kOff && want == kOff && o.wet <= 0.0f) return;   // off (the usual case): nothing
-    const float step = (float)m / kFadeFrames;
+    const uint32_t t0 = fx::guard::stamp();
+    // (muted by a late block: out over 1 ms, guard::kShortFadeFrames, as the slot still costs its time on a late core)
+    RunSlot(o, c, s, want, x, r, m, k, want == kOff && fx::guard::short_fade(gu) ? fx::guard::kShortFadeFrames : kFadeFrames);
+    if (const uint32_t sl = fx::guard::slow_us(gu)) fx::guard::spin_us(sl);   // (a test's slow effect: fxguard=slow:)
+    fx::guard::note(gu, fx::guard::stamp() - t0, m);
+  }
+  void RunSlot(Slot& o, int c, int s, int want, float* x, float* r, int m, const Control& k, int fade = kFadeFrames) {
+    const float step = (float)m / fade;
     if (want != o.cur && o.wet <= 0.0f) {   // faded out (or off): the new effect from clean
       __atomic_store_n(&o.cur, (uint8_t)want, __ATOMIC_RELEASE);
       o.fresh = true;
@@ -829,7 +848,19 @@ void card_forget();
 // "ins=b3:route:pre|post", "ins=reset"; the answer in out. False: not an ins command.
 bool command(const char* p, char* out, int cap);
 int json(char* out, int cap);                // "\"ins\":{...}" (docs/INSERT-FX.md)
-struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks; };
+// CPU admission of the voice slots' types (decided 2026-11-22; core/device/admit.h ins_fits): a type is admitted when it is set
+// (set_type), not reserved per voice at attach. The check (device.cpp sets it; null, the default: every type plays): may box
+// slot `box`'s voice chain c, slot s play type t beside what plays now? OFF and AMP (amp.h admits its own) always may. A type
+// refused plays dry with NO CPU (Control::refused); regrant() admits what fits again (a box left, a slot went OFF), each
+// idle pass, never refusing one that plays. Control core, never per sample.
+void set_cpu_check(bool (*fits)(int box, int c, int s, int t));
+int regrant();                               // the refused slots now admitted
+// Shed for CPU (decided 2026-11-22: the clock lowered for heat): box slot box's voice chain c, slot s plays dry and shows
+// NO CPU, as if refused, until regrant() finds room. false: OFF, AMP (amp::shed) or already refused.
+bool shed(int box, int c, int s);   // (a voice or master chain)
+bool refused(int c, int s);                  // the slot in hand's voice slot plays dry for CPU (the pages: NO CPU)
+int refused_count(int box);                  // box slot's voice slots set but refused now (/status admit insRefused)
+struct Stats { uint32_t sets, locks, lfo_sets, saves, loads, voice_blocks, bus_blocks, refused; };
 const Stats& stats();
 void reset();                                // tests: every chain off, sends 0, the engine cleared
 

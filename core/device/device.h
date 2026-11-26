@@ -31,6 +31,7 @@
 
 namespace core {
 namespace out { struct Device; }
+namespace admit { struct Load; }
 namespace device {
 
 constexpr uint8_t kCmdHello = 0x4F;
@@ -229,6 +230,9 @@ uint32_t dropped();                    // messages from the box not translated, 
 void boot();                           // engine_begin: nothing to choose any more (slot 0 is /.rytm)
 bool leaving();                        // a slot whose box left is saving its edits (idle_save: what waits to settle goes now)
 bool step(bool settled = true);        // false: nothing to do (kept for the engine's idle saves)
+// CPU admission's own pass (in step): shed what no longer fits at the clock now, admit refused INSERT types again. The
+// load test (loadtest=on: idle_save returns before step) runs it too, so a lowered clock sheds there as it does in use.
+void cpu_step();
 // A Rytm is on USB (claim), or gone (release): the control core's (the tests'). The Pi's driver uses usb_attach / usb_detach.
 void rytm_on_usb(bool on);
 // The Pi's Overbridge driver, core 0, when box p's USB device enumerates: the slot its stream is (its slot already, else the
@@ -251,6 +255,9 @@ inline bool voice_admitted(int vi) {
   return !held(s) || box_voice(vi) < admitted(s);
 }
 void readmit();
+// The load admission counts now (admit.h Load): the held boxes' admitted voices, what they asked for, and the AMP slots playing
+// on each render core (the first ask wins: amp_fits). /status's core1Bp / core2Bp
+void load_now(admit::Load* out);
 // what slot s's box asked for (0 free): the Pi's core 3 reads it for the render split (admit::split_for), one byte load
 inline int wanted(int s) { return s >= 0 && s < kLinks ? __atomic_load_n(&g_links[s].want, __ATOMIC_RELAXED) : 0; }
 constexpr uint32_t kTellMs = 30000;   // a box is told its count while its screen may take a popup, this long after its attach

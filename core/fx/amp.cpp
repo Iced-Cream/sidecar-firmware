@@ -87,6 +87,7 @@ struct Ctl {
   uint32_t fail_gen = 0;
   Status fail_st = kIdle;
   bool refused = false;      // the cap's refusal counted once
+  bool shed = false;         // shed(): stop at the next step, NO CPU until there is room again
   char pending[kNameMax];    // the card's AMP line, resolved once listed
 };
 Ctl g_k[kRows][kSlots];
@@ -176,7 +177,7 @@ inline float db_gain(float db) { return ins::fast_exp2(db * 0.16609640f); }   //
 // ---------------------------------------------------------------------------------------------------- texts
 
 const char* status_short(int s) {
-  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM", "MAX 2"};
+  static const char* const t[kStatuses] = {"", "", "LOADING", "NO NAM", "NOTLITE", "BADFILE", "NOT 48K", "MAX 6", "NO RAM", "MAX 2", "NO CPU"};
   static_assert(kMaxRunning == 6 && kMaxMaster == 2, "the MAX texts name the caps");
   return s >= 0 && s < kStatuses ? t[s] : "";
 }
@@ -191,7 +192,8 @@ const char* status_long(int s) {
       "the capture is not 48 kHz (no resampler)",
       "6 AMP inserts play already (the CPU cap)",
       "no memory for the AMP engines",
-      "2 AMP instances play on the master already (its own cap)"};
+      "2 AMP instances play on the master already (its own cap)",
+      "no CPU room on its render core (CPU admission: each under 80 %)"};
   return s >= 0 && s < kStatuses ? t[s] : "?";
 }
 Status parse_status(Parse p) {
@@ -627,6 +629,24 @@ const char* slot_file(int c, int s) {
   if (g_k[c][s].pending[0]) return g_k[c][s].pending;   // not listed yet: kept as the card has it
   return model_file(model_for_knob(ins::param(c, s, 0)));
 }
+static bool (*g_cpu_fits)(int row) = nullptr;
+void set_cpu_check(bool (*fits)(int row)) { g_cpu_fits = fits; }
+int rows() { return kRows; }
+int refused_cpu() {
+  int n = 0;
+  for (int c = 0; c < kRows; ++c)
+    for (int s = 0; s < kSlots; ++s) n += g_k[c][s].st == kCpu;
+  return n;
+}
+int master_row() { return ins::kM0; }
+bool slot_playing(int row, int s) {
+  return row >= 0 && row < kRows && s >= 0 && s < kSlots && g_k[row][s].cur >= 0 && !g_k[row][s].shed;
+}
+bool shed(int row, int s) {
+  if (!slot_playing(row, s)) return false;
+  g_k[row][s].shed = true;
+  return true;
+}
 int running_master() {
   int n = 0;
   for (int c = ins::kM0; c < kRows; ++c)
@@ -907,6 +927,14 @@ bool step() {
         if (k.cur >= 0) offer(c, s, -1), did = true;
         continue;
       }
+      if (k.shed) {   // shed for CPU (the clock lowered: device.cpp shed_over): dry, NO CPU, admitted again when it fits
+        k.shed = false;
+        if (!k.refused) ++g_stats.refused, k.refused = true;
+        k.st = kCpu;
+        if (k.cur >= 0) offer(c, s, -1), did = true;
+        log(CORE_STR("amp: %s %c: NO CPU (shed: its render core over 80 %% at the clock now)"), ins::chain_name(parent(c)), 'A' + s);
+        continue;
+      }
       if (k.cur >= 0 && g_meta[k.cur].model == want && g_meta[k.cur].gen == g_gen) {
         k.st = kPlaying;
         continue;
@@ -919,6 +947,11 @@ bool step() {
       if (k.cur < 0 && (c < kVoices ? running() >= kMaxRunning : running_master() >= kMaxMaster)) {
         if (!k.refused) ++g_stats.refused, k.refused = true;
         k.st = c < kVoices ? kCap : kCapM;
+        continue;
+      }
+      if (k.cur < 0 && g_cpu_fits && !g_cpu_fits(c)) {   // CPU admission: the AMPs already playing on its core first
+        if (!k.refused) ++g_stats.refused, k.refused = true;
+        k.st = kCpu;
         continue;
       }
       int i = pick_inst(want);

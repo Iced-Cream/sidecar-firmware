@@ -342,13 +342,57 @@ void slot_value_text(int c, int s, int k, int v, char* b, int cap) {
 
 // ---------------------------------------------------------------------------------------------------- settings
 
+static bool (*g_cpu_fits)(int box, int c, int s, int t) = nullptr;
+void set_cpu_check(bool (*fits)(int box, int c, int s, int t)) { g_cpu_fits = fits; }
+// (the measured guard's mute shows the same NO CPU: fx_guard.h, decided 2026-11-23)
+bool refused(int c, int s) {
+  return valid(c, s) && (K(c).refused[c][s] || fx::guard::ins_muted(slot_in_hand(), c, s)) && K(c).type[c][s] != kOff;
+}
+int refused_count(int box) {
+  if (box < 0 || box >= kVoiceSlots) return 0;
+  const Control& k = control_of(box);
+  int n = 0;
+  for (int c = 0; c < kChains; ++c)
+    for (int s = 0; s < kSlots; ++s) n += k.refused[c][s] && k.type[c][s] != kOff;
+  return n;
+}
+CORE_COLD bool shed(int box, int c, int s) {
+  if (box < 0 || box >= kVoiceSlots || c < 0 || c >= kChains || (c >= kBus0 && c < kM0) || s < 0 || s >= kSlots) return false;
+  Control& k = control_of(box);
+  const int t = k.type[c][s];
+  if (t == kOff || t == kAmp || k.refused[c][s]) return false;
+  k.refused[c][s] = 1;   // (the render core reads it each block: dry from the next)
+  ++g_stats.refused;
+  return true;
+}
+CORE_COLD int regrant() {
+  int n = 0;
+  if (!g_cpu_fits) return 0;
+  for (int b = 0; b < kVoiceSlots; ++b) {
+    Control& k = control_of(b);
+    for (int c = 0; c < kChains; ++c)
+      for (int s = 0; s < kSlots; ++s) {
+        if (!k.refused[c][s]) continue;
+        const int t = k.type[c][s];
+        if (t == kOff || t == kAmp || g_cpu_fits(b, c, s, t)) k.refused[c][s] = 0, ++n;   // (a refused slot is not counted)
+      }
+  }
+  return n;
+}
 void set_type(int c, int s, int t, bool keep) {
   if (!valid(c, s) || t < 0 || t >= kAllTypes) return;
   if (t == kAmp && c >= kVoices && c < kM0) return;   // AMP: the voice chains and the master (amp.h)
   if (t >= kTypes && c < kBus0) return;               // a send TYPE: the buses' and the master's chains (core 2's) only
   if (c >= kBus0 && !master::accept(c, s, t)) return;   // no room for another send TYPE (master.h kFxSlots)
   if (K(c).type[c][s] == t && keep) return;
+  if (c < kVoices || c >= kM0) {   // CPU admission: the type's place on its render core first (refused: it plays dry, NO CPU)
+    const bool ok = t == kOff || t == kAmp || !g_cpu_fits || g_cpu_fits(slot_in_hand(), c, s, t);
+    if (!ok && !K(c).refused[c][s]) ++g_stats.refused;
+    K(c).refused[c][s] = !ok;
+    __atomic_thread_fence(__ATOMIC_RELEASE);   // (before the type: the render core never plays one not admitted)
+  }
   K(c).type[c][s] = (uint8_t)t;
+  fx::guard::clear(fx::guard::ins_unit(slot_in_hand(), c, s));   // set again: the measured guard's mute released (fx_guard.h)
   if (!keep)
     for (int k = 0; k < kParams; ++k) S(c).knob[c][s][k] = kLabels[t].def[k];
   for (int k = 0; k < kParams; ++k) refresh(c, s, k);
@@ -870,6 +914,7 @@ void reset() {
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) g_send_g[0][v][b] = g_send_g[1][v][b] = 0.0f;
   g_engine.Reset();
+  memset((void*)control.refused, 0, sizeof control.refused);
 #if CORE_VOICES > 8
   memset((void*)&control1, 0, sizeof control1);
   g_engine1.Reset();

@@ -227,6 +227,7 @@ uint64_t mfx_bench(uint32_t* worst_block);   // the master chain without AMP (co
 // 0.5.0: 4 send TYPE inserts at once across B1 / B2 / B3 / M1 (core/fx/master.h sfx_bench), set 0.. while its name is not null
 uint64_t sfxins_bench(int set, uint32_t* worst_block);
 const char* sfxins_bench_name(int set);
+int sfxins_bench_type(int set);   // the send TYPE a set runs on all four slots, -1 a mixed set
 uint64_t box_bench(uint32_t* worst_block);   // one box's chains as one row (core/fx/master.h box_bench): CPU admission
 unsigned poly_voices();
 int rytm_pattern(int* transport);   // UX review T1: the Rytm's pattern (-1 not known) and transport (core/seq's view)   // UX review S1: bit vi - a Rytm track on voice vi is a poly track (the Sidecar sequences it)

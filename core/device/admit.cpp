@@ -49,23 +49,67 @@ static unsigned on_core(int c, unsigned n, unsigned sp) {
   return c == 1 ? one : n - one;
 }
 
+int base_of(const Load& l) { return l.held[0] ? 0 : 1; }
+
 CORE_COLD unsigned core_bp(int c, const Load& l) {
   if (c != 1 && c != 2) return 0;
-  const int base = l.held[0] ? 0 : 1;   // the base box: AMP plays on its voices' and master chains only
-  unsigned v = 0, amps = 0;
+  unsigned v = 0;
   unsigned long long chains = 0;
   for (int s = 0; s < 2; ++s) {
-    const unsigned n = on_core(c, l.voices[s] > 8 ? 8 : l.voices[s], split_for(l.asked[s]));
-    v += n;
-    if (s == base) amps = n < (unsigned)kAmpCap ? n : (unsigned)kAmpCap;
-    if (l.held[s] && chain_core(s) == c) {   // its chains, on the core that runs them; the base box's with its master AMP pair
-      chains += s_costs.fx_bp;
-      if (s == base) amps += 2;
-    }
+    v += on_core(c, l.voices[s] > 8 ? 8 : l.voices[s], split_for(l.asked[s]));
+    if (l.held[s] && chain_core(s) == c) chains += s_costs.fx_bp;   // its chains (dry) on the core that runs its send FX
   }
-  const unsigned long long bp = (chains * s_pct.chain + (unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) * s_pct.voice +
-                                 (unsigned long long)amps * s_costs.amp_bp * s_pct.amp + 99) / 100;
+  const unsigned long long bp = (chains * s_pct.chain +
+                                 ((unsigned long long)v * (s_costs.voice_bp + s_costs.ins_bp) + l.ins[c]) * s_pct.voice +
+                                 (unsigned long long)l.amps[c] * s_costs.amp_bp * s_pct.amp + 99) / 100;
   return scaled(bp);
+}
+
+CORE_COLD unsigned core3_bp(const Load& l) {
+  if (master_core(0) != 3) return 0;
+  const unsigned long long bp = kC3BaseBp + (l.held[0] ? kC3MasterBp : 0) +
+                                ((unsigned long long)l.ins[3] * s_pct.chain + 99) / 100 +
+                                ((unsigned long long)l.amps[3] * s_costs.amp_bp * s_pct.amp + 99) / 100;
+  return scaled(bp);
+}
+CORE_COLD bool ins3_fits(const Load& l, int t) {
+  if (!on() || !s_enforce || master_core(0) != 3 || !master_slot_bp(t)) return true;
+  return core3_bp(l) + scaled(((unsigned long long)master_slot_bp(t) * s_pct.chain + 99) / 100) <= kC3LimitBp;
+}
+unsigned limit_bp(int core) { return core == 3 ? kC3LimitBp : kLimitBp; }
+
+unsigned master_slot_bp(int t) {
+  if (t >= kSendType0 && t < kSendType0 + kSendTypes) {
+    const unsigned s = s_costs.send_bp[t - kSendType0];
+    return s ? s : 2 * s_costs.slot_bp;
+  }
+  return 2 * type_bp(t);
+}
+unsigned type_bp(int t) {
+  if (t <= 0 || t >= kSendType0 || t == 9) return 0;   // (a send TYPE: master_slot_bp)   // OFF; AMP (fx/insert.h kAmp): amp_bp, admitted by amp.h
+  return s_costs.type_bp[t] ? s_costs.type_bp[t] : s_costs.slot_bp;
+}
+
+int voice_core(int b, int c, const Load& l) { return (unsigned)c < split_for(l.asked[b & 1]) ? 1 : 2; }
+
+CORE_COLD bool ins_fits(int c, const Load& l, int t, int mul) {
+  if (!on() || !s_enforce || (c != 1 && c != 2)) return true;
+  return core_bp(c, l) + scaled(((unsigned long long)mul * type_bp(t) * s_pct.voice + 99) / 100) <= kLimitBp;
+}
+
+int amp_core(int row, int master_row, const Load& l) {
+  const int b = base_of(l);
+  if (row >= master_row) return master_core(b);
+  if (row < 0 || row >= 8) return 0;   // a bus: AMP plays dry there
+  return (unsigned)row < split_for(l.asked[b]) ? 1 : 2;
+}
+
+CORE_COLD bool amp_fits(int c, const Load& l) {
+  if (!on() || !s_enforce) return true;
+  const unsigned one = scaled(((unsigned long long)s_costs.amp_bp * s_pct.amp + 99) / 100);
+  if (c == 3) return master_core(0) != 3 || core3_bp(l) + one <= kC3LimitBp;
+  if (c != 1 && c != 2) return true;
+  return core_bp(c, l) + one <= kLimitBp;
 }
 
 CORE_COLD int fit(int s, int want, const Load& l) {

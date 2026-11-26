@@ -4,7 +4,7 @@
 Both boxes may be on stock OS: every voice and setting comes from the Pi (pi/engine/cores.cpp slot=S:, docs/pi-engine.md).
 Needs a kernel with the load test (sidecar-firmware b73c0c1 or later) and the pairing gate off (paircode=0).
 
-  lt1_load.py --base http://HOST[:PORT] setup [--worst NAME] [--config A|B]   load on (loadtest=on first: nothing saved)
+  lt1_load.py --base http://HOST[:PORT] setup [--worst NAME] [--config A|B] [--enforce]   load on (loadtest=on first: nothing saved)
   lt1_load.py --base ... config B                                             AMP on the first box's voices 1-6 (INSERT A)
   lt1_load.py --base ... read --secs 30 --tag NAME                            stats lines for SECS, /status, mfx / sendfx
   lt1_load.py --base ... stop                                                 drones off, admit=enforce
@@ -18,12 +18,12 @@ import argparse, json, os, re, sys, time, urllib.parse, urllib.request
 DRONE_OK = ['plaits', 'juno', 'fm', 'daisy', 'dsps', 'wt', 'gr', 'md']   # the bench machines the note adapter plays as benched
 BAD = re.compile(r'unknown command|no type|not taken|at most|refused|no such slot|not understood|no machine|is for the|'
                  r'command too long|queue full', re.I)
-NOTBAD = re.compile(r'requests, \d+ refused|no box refused|web: command :')   # (the web stats line, admit=report's answer, the echo)
+NOTBAD = re.compile(r'requests, \d+ refused|reuses \d+ refused \d+|no box refused|web: command :')   # (the web stats line, the amp readback's counters, admit=report's answer, the echo)
 STATS = re.compile(r'engine: fifo min \d+ max \d+ target \d+ under (\d+).*?\| cpu c1 (\d+)\.(\d) c2 (\d+)\.(\d) c3 (\d+)\.(\d) %')
 BENCH = re.compile(r'bench (\w+): (\d+)\.(\d+) % of a core per voice at (\d+) MHz')
 ADMIT = re.compile(r'admit: at \d+ MHz a voice .*')
 # stats with chains (945da9a: c2 only; 64fdd7b: c1 and c2) and core 3 without its render wait; the idle line's asleep %
-CHAINS = re.compile(r'\((?:with chains c1 (\d+\.\d) c2 (\d+\.\d)|c2 with chains (\d+\.\d)), c3 own (\d+\.\d)\)')
+CHAINS = re.compile(r'\((?:with chains c1 (\d+\.\d) c2 (\d+\.\d)|c2 with chains (\d+\.\d)), c3 own (\d+\.\d)(?:, c3 mfx (\d+\.\d))?\)')
 ASLEEP = re.compile(r'idle: asleep (\d+) (\d+) (\d+) (\d+) %')
 MUTE = re.compile(r'engine: muted|guard: voice \d.*(crash|over budget|muted)', re.I)
 
@@ -87,8 +87,10 @@ def worst_machine(pi):
     return max(play, key=play.get), rows
 
 
-def setup_cmds(worst, slots_voices):
-    c = ['loadtest=on', 'admit=report', 'amp=synthetic:on']
+def setup_cmds(worst, slots_voices, enforce=False):
+    # --enforce (LT4, rebalance-core2): admission stays on, so each INSERT type and AMP is admitted as it is set (or refused,
+    # NO CPU: /status admit insRefused / ampRefused) and the voices are the admitted counts; else admit=report (all of it)
+    c = ['loadtest=on', 'admit=enforce' if enforce else 'admit=report', 'amp=synthetic:on']
     for s, n in slots_voices:
         for v in range(n):
             c.append('slot=%d:notemach=%d:%s' % (s, v, worst))
@@ -106,9 +108,9 @@ def setup_cmds(worst, slots_voices):
     return c
 
 
-def light_cmds(worst, slots_voices):
+def light_cmds(worst, slots_voices, enforce=False):
     """--profile qemu: every kind of command once per slot, on one voice (QEMU can't carry the full load: its engine stalls)."""
-    c = ['loadtest=on', 'admit=report', 'amp=synthetic:on']
+    c = ['loadtest=on', 'admit=enforce' if enforce else 'admit=report', 'amp=synthetic:on']
     for s, n in slots_voices:
         c += ['slot=%d:notemach=0:%s' % (s, worst), 'slot=%d:ins=V1:A:type:sat' % s, 'slot=%d:ins=V1:B:type:sat' % s,
               'slot=%d:ins=V1:eq:hpf:40' % s, 'slot=%d:ins=V1:send:3:80' % s, 'slot=%d:ins=B3:A:type:cloud' % s,
@@ -159,6 +161,7 @@ def read(pi, secs, tag):
             'c1_chains': [float(m.group(1)) for m in ch if m.group(1)],
             'c2_chains': [float(m.group(2) or m.group(3)) for m in ch],
             'c3_own': [float(m.group(4)) for m in ch],
+            'c3_mfx': [float(m.group(5)) for m in ch if m.group(5)],
             'asleep': sl,
             'mutes': mutes[:20], 'uptime': st.get('uptime'), 'commit': st.get('commit') or st.get('version')}
     if cpu:
@@ -166,7 +169,7 @@ def read(pi, secs, tag):
             v = summ[k]
             summ[k + '_mean'] = round(sum(v) / len(v), 1)
             summ[k + '_max'] = max(v)
-        for k in ('c1_chains', 'c2_chains', 'c3_own'):
+        for k in ('c1_chains', 'c2_chains', 'c3_own', 'c3_mfx'):
             v = summ[k]
             if v:
                 summ[k + '_mean'] = round(sum(v) / len(v), 1)
@@ -176,7 +179,7 @@ def read(pi, secs, tag):
     json.dump(summ, open(os.path.join(pi.out, 'summary-%s.json' % tag), 'w'), indent=1)
     print(json.dumps({k: summ.get(k) for k in ('tag', 'samples', 'c1_mean', 'c1_max', 'c1_chains_mean', 'c1_chains_max',
                                                'c1_estimate', 'c2_mean', 'c2_max', 'c2_chains_mean', 'c2_chains_max',
-                                               'c2_estimate', 'c3_mean', 'c3_own_mean', 'under_first', 'under_last', 'slots', 'mutes')},
+                                               'c2_estimate', 'c3_mean', 'c3_own_mean', 'c3_mfx_mean', 'under_first', 'under_last', 'slots', 'mutes')},
                      indent=1))
     return summ
 
@@ -191,6 +194,7 @@ def main():
     ap.add_argument('--secs', type=int, default=30)
     ap.add_argument('--tag', default='read')
     ap.add_argument('--profile', choices=['unit', 'qemu'], default='unit')
+    ap.add_argument('--enforce', action='store_true', help='setup with admission on (admit=enforce): types and AMPs admitted as set')
     a = ap.parse_args()
     pi = Pi(a.base, a.out)
     pi.log()
@@ -233,7 +237,7 @@ def main():
     if len(hs) != 2:
         print('not two boxes held: %s' % [(h[0], h[1]) for h in hs])
         return 2
-    cmds = (light_cmds if a.profile == 'qemu' else setup_cmds)(worst, [(h[0], min(8, h[1])) for h in hs])
+    cmds = (light_cmds if a.profile == 'qemu' else setup_cmds)(worst, [(h[0], min(8, h[1])) for h in hs], a.enforce)
     if a.what == 'cmds':
         print('\n'.join(cmds))
         return 0

@@ -15,6 +15,7 @@
 #include "device/device.h"
 #include "device/admit.h"
 #include "fx/insert.h"
+#include "fx/fx_guard.h"
 #include "fx/master.h"
 #include "fx/out.h"
 #include "heap_buffers.h"
@@ -282,6 +283,7 @@ bool poly_command(const char* p, char* out, int cap) {
          core::ins::command(p, out, cap) ||   // fx-ins: "ins", "ins=..." (core/fx/insert.h)
          core::master::command(p, out, cap) ||   // the master FX: "mfx", "mfx=..." (core/fx/master.h)
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
+         core::fx::guard::command(p, out, cap) ||   // the measured guard of every effect: "fxguard", "fxguard=..." (core/fx/fx_guard.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
          core::livein::command(p, out, cap) ||  // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)
@@ -632,6 +634,7 @@ uint64_t amp_bench(uint32_t* worst_block) { return core::amp::bench(worst_block)
 uint64_t mfx_bench(uint32_t* worst_block) { return core::master::bench(worst_block); }
 uint64_t sfxins_bench(int set, uint32_t* worst_block) { return core::master::sfx_bench(set, worst_block); }
 const char* sfxins_bench_name(int set) { return core::master::sfx_bench_name(set); }
+int sfxins_bench_type(int set) { return core::master::sfx_bench_type(set); }
 uint64_t box_bench(uint32_t* worst_block) { return core::master::box_bench(sendfx_pi::Instance(0), worst_block); }
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);

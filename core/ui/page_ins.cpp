@@ -88,7 +88,8 @@ CORE_COLD void strip(Canvas& c, int ch) {
     // an effect: its name alone (the box's place says the slot; "A TREMOLO" did not fit the 38 px box, 7 letters of
     // the Rytm's small font do); an empty slot keeps its letter
     char b[12];
-    if (t) sniprintf(b, sizeof b, "%s", ins::type_name(t));
+    if (t && ins::refused(ch, s)) sniprintf(b, sizeof b, "NO CPU");   // CPU admission: set, but plays dry (insert.h)
+    else if (t) sniprintf(b, sizeof b, "%s", ins::type_name(t));
     else sniprintf(b, sizeof b, CORE_STR("%c -"), 'A' + s);
     c.put_text(kSlotFree + s, kRSmall, r.x + 19, kStripY + 4, b, kAlignCentre | (sel ? kTextInvert : 0));
     c.hline(r.x + 38, r.x + 40, kStripY + kStripH / 2, kOn);   // the arrow's shaft

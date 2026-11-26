@@ -439,13 +439,30 @@ uint64_t bench(uint32_t* worst_block) {
   return sum;
 }
 
-static const uint8_t kSfxSets[2][4] = {{ins::kMRings, ins::kMCloud, ins::kMSpace, ins::kMHalo},
-                                       {ins::kMCloud, ins::kMCloud, ins::kMCloud, ins::kMCloud}};
-const char* sfx_bench_name(int set) { return set == 0 ? "RINGS CLOUD SPACE HALO" : set == 1 ? "CLOUD x4" : nullptr; }
+// set 0 a mix; 1.. one send TYPE x4 each (CPU admission's master send TYPE rows, admit.h send_bp: CLOUD first, as before)
+static const uint8_t kSfxSets[][4] = {{ins::kMRings, ins::kMCloud, ins::kMSpace, ins::kMHalo},
+                                      {ins::kMCloud, ins::kMCloud, ins::kMCloud, ins::kMCloud},
+                                      {ins::kMChorus, ins::kMChorus, ins::kMChorus, ins::kMChorus},
+                                      {ins::kMComb, ins::kMComb, ins::kMComb, ins::kMComb},
+                                      {ins::kMSpace, ins::kMSpace, ins::kMSpace, ins::kMSpace},
+                                      {ins::kMRings, ins::kMRings, ins::kMRings, ins::kMRings},
+                                      {ins::kMHalo, ins::kMHalo, ins::kMHalo, ins::kMHalo}};
+constexpr int kSfxSetCount = (int)(sizeof kSfxSets / sizeof kSfxSets[0]);
+const char* sfx_bench_name(int set) {
+  static const char* const kName[kSfxSetCount] = {"RINGS CLOUD SPACE HALO", "CLOUD x4", "CHORUS x4", "COMB x4",
+                                                  "SPACE x4", "RINGS x4", "HALO x4"};
+  return set >= 0 && set < kSfxSetCount ? kName[set] : nullptr;
+}
+int sfx_bench_type(int set) {
+  if (set < 0 || set >= kSfxSetCount) return -1;
+  for (int i = 1; i < 4; ++i)
+    if (kSfxSets[set][i] != kSfxSets[set][0]) return -1;
+  return kSfxSets[set][0];
+}
 
 uint64_t sfx_bench(int set, uint32_t* worst_block) {
   *worst_block = 0;
-  if (set < 0 || set > 1) return 0;
+  if (set < 0 || set >= kSfxSetCount) return 0;
   for (int c = ins::kBus0; c < ins::kChains; ++c)   // the buses' and the master's slots all OFF, no room taken
     for (int s = 0; s < ins::kSlots; ++s)
       if (ins::control.type[c][s] != ins::kOff) return 0;
