@@ -462,7 +462,8 @@ static CUSBStandardHub *BuiltInHub (CUSBDevice *pDevice)
 }
 
 // The box's DeviceUID by the vendor request Overbridge sends (IOCTL_OB_PROPERTIES_GET_UID: bmRequestType 0xC0, bRequest 0,
-// 8 bytes, a word 1 then the UID, little-endian as the box stores it; Rytm 1.74 FUN_40004294), on EP0 before anything
+// 8 bytes, a word 1 then the UID, both big-endian as the box stores them; Rytm 1.74 FUN_40003be6/FUN_40004294; the units
+// answer 00 00 00 01 then the UID MSB first, step 0 2026-11-26), on EP0 before anything
 // else: the same 32-bit value as the MIDI RPC 0x03 (design 2026-11-26, findings). 0: no answer (the core asks by MIDI).
 u32 ObReadUid (CUSBFunction *pParent)
 {
@@ -471,7 +472,7 @@ u32 ObReadUid (CUSBFunction *pParent)
 	memset (Buf, 0, 64);
 	CUSBHostController *pHost = pParent->GetHost ();
 	const int n = pHost != 0 ? pHost->ControlMessage (pParent->GetEndpoint0 (), 0xC0, 0, 0, 0, Buf, 8) : -1;
-	const u32 nUid = n == 8 ? (u32) Buf[4] | (u32) Buf[5] << 8 | (u32) Buf[6] << 16 | (u32) Buf[7] << 24 : 0;
+	const u32 nUid = n == 8 ? (u32) Buf[4] << 24 | (u32) Buf[5] << 16 | (u32) Buf[6] << 8 | (u32) Buf[7] : 0;
 	(void) n;
 	return nUid;
 }

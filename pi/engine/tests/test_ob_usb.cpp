@@ -109,10 +109,10 @@ struct Bus {
   Bus(const uint8_t* cfg, uint16_t pid, uint32_t uid = 0) {
     dev.config = cfg;
     dev.desc.idVendor = 0x1935, dev.desc.idProduct = pid;
-    if (uid)   // the box answers the vendor request 0 (ObReadUid): a word 1, then its UID, little-endian
+    if (uid)   // the box answers the vendor request 0 (ObReadUid): a word 1, then its UID, big-endian (as the units)
       host.vendor_in = [uid](u8 r, u8* b, unsigned n) {
         if (r != 0 || n != 8) return -1;
-        const u8 a[8] = {1, 0, 0, 0, (u8)uid, (u8)(uid >> 8), (u8)(uid >> 16), (u8)(uid >> 24)};
+        const u8 a[8] = {0, 0, 0, 1, (u8)(uid >> 24), (u8)(uid >> 16), (u8)(uid >> 8), (u8)uid};
         memcpy(b, a, 8);
         return 8;
       };
