@@ -102,6 +102,9 @@ inline Control& control_of(int slot) { return slot ? control1 : control; }
 // control_of). slot_fn names the slot in hand (core/pool/pool.cpp sets it to prj_slot; null: 0, the DSP benches).
 // ctl(c): what chain c of the slot in hand plays (the pages). slot_in_hand: that slot (master.cpp's settings follow it).
 extern int (*slot_fn)();
+// rytm_fn(s): slot s is held by a Rytm (its send FX are its kit's 0x20s, not SFX lines: two Rytms). core/pool/pool.cpp sets it
+// to device::rytm_at; null: no slot past 0 is a Rytm (the DSP benches)
+extern bool (*rytm_fn)(int);
 inline const Control& ctl(int) {
   int sl = slot_fn ? slot_fn() : 0;
   return control_of(sl > 0 && sl < kVoiceSlots ? sl : 0);
