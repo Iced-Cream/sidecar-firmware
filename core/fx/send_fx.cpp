@@ -174,20 +174,25 @@ CORE_COLD bool take_sendfx(const uint8_t* d, int len) {
   const uint8_t* b = d + 7;
   for (int i = 0; i < nb; ++i)
     if (b[i] > 0x7F) return false;
+  // The box in hand's (its slot's Scope: engine_sysex_link), never slot 0's whichever slot the Rytm holds (a Rytm in slot 1
+  // beside an A4 in slot 0 overwrote the A4's FX and tags before)
+  const int box = slot_in_hand();
+  Control& c = control_of(box);
   if (t < kTracks) {
-    control.send[t][0] = send(t, 0, b[0]);   // a modulation on top (core/mod kSnd)
-    control.send[t][1] = send(t, 1, b[1]);
+    c.send[t][0] = send(t, 0, b[0]);   // a modulation on top (core/mod kSnd)
+    c.send[t][1] = send(t, 1, b[1]);
   } else if (t == kTracks) {
     for (int s = 0; s < kSlots; ++s)
       for (int j = 0; j < 3; ++j) {
-        control.knob[s][2 * j] = knob(s, 2 * j, b[2 * kKnobPairs[s][j]]);   // an LFO's on top (core/lfo.h)
-        control.knob[s][2 * j + 1] = knob(s, 2 * j + 1, b[2 * kKnobPairs[s][j] + 1]);
+        c.knob[s][2 * j] = knob(s, 2 * j, b[2 * kKnobPairs[s][j]]);   // an LFO's on top (core/lfo.h)
+        c.knob[s][2 * j + 1] = knob(s, 2 * j + 1, b[2 * kKnobPairs[s][j] + 1]);
       }
   } else {
-    kit_tag[0] = (uint16_t)(b[0] << 7 | b[1]);
-    kit_tag[1] = (uint16_t)(b[2] << 7 | b[3]);
+    volatile uint16_t* kt = kit_tag_of(box);
+    kt[0] = (uint16_t)(b[0] << 7 | b[1]);
+    kt[1] = (uint16_t)(b[2] << 7 | b[3]);
   }
-  control.messages = control.messages + 1;
+  c.messages = c.messages + 1;
   return true;
 }
 
@@ -276,12 +281,14 @@ CORE_COLD int sysex_labels(uint8_t* m, int id) {
   return n;
 }
 
-CORE_COLD int sysex_state(uint8_t* m, int slot) {
-  int n = head(m, 0x22), id = control.knob[slot][0];
+CORE_COLD int sysex_state(uint8_t* m, int slot) {   // the box in hand's FX `slot` (its Rytm's page)
+  const int box = slot_in_hand();
+  const Control& c = control_of(box);
+  int n = head(m, 0x22), id = c.knob[slot][0];
   m[n++] = (uint8_t)slot;
   m[n++] = (uint8_t)id;
-  m[n++] = state(slot);
-  n += name_n(m + n, type_name(id, slot), 10);
+  m[n++] = state(c, slot);
+  n += name_n(m + n, type_name_in(box, id), 10);
   m[n++] = 0xF7;
   return n;
 }

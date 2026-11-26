@@ -237,7 +237,7 @@ CORE_COLD float base_now(Tid t) {
     case kV: return v[device::voice_in((uint8_t)i)].p[p & 15];   // the slot in hand's voice i (3(c): each slot's layer its own box's)
     case kFx: return fx::cur().knob[i & 1][2 + (p & 3)];
 #if CORE_POLY
-    case kSnd: return fx::control.send[i % fx::kTracks][p & 1];   // (the Rytm's tracks: slot 0's)
+    case kSnd: return fx::control_of(device::rytm_home()).send[i % fx::kTracks][p & 1];   // (the Rytm's tracks: its slot's)
 #endif
     default: return 0;   // the offset kinds: the offset is on the knob (their base is read where it is applied)
   }
@@ -272,7 +272,7 @@ CORE_COLD void put(Tid t, float val) {
       else ins::mod_offset(i, (p >> 2) & 1, p & 3, (int)val);
       break;
     case kOut: out::mod_offset(i, p % 3, (int)val); break;
-    case kSnd: fx::control.send[i % fx::kTracks][p & 1] = (uint8_t)val; break;   // (the Rytm's: slot 0's)
+    case kSnd: fx::control_of(device::rytm_home()).send[i % fx::kTracks][p & 1] = (uint8_t)val; break;   // (the Rytm's: its slot's)
     case kIsnd: ins::send_offset(i, p, (int)val); break;
     case kMfx: master::mod_offset(p, (int)val); break;
     case kRytm:   // the Rytm's own scene / a PERF macro (spec-050 2.7: never the kit), on change, at most every 5 ms
