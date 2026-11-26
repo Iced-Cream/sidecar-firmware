@@ -391,6 +391,12 @@ static void test_sampler_box_clock() {
   printf("test_sampling: box clock: started at %d ms, bpm %.2f, state %d\n", started_at, s.bpm, s.state);
   CHECK(started_at >= 1000 && started_at <= 1002);
   CHECK(std::fabs(s.bpm - 100) < 0.5f);
+  {   // /status's samp: the followed slot and every slot's own clock (slot 0 at 125 bpm, slot 1 at 100)
+    char j[1024];
+    json(j, sizeof j);
+    printf("test_sampling: box clock json: %s\n", strstr(j, "\"clockSlot\""));
+    CHECK(strstr(j, "\"clockSlot\":1,") && strstr(j, "{\"bpm10\":1250,") && strstr(j, "{\"bpm10\":1000,"));
+  }
   cancel();
   transport(0, 0xFC), transport(1, 0xFC);
   command("samp=name:auto", o, sizeof o);

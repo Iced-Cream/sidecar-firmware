@@ -38,7 +38,7 @@ volatile float lvl = 0, pk = 0;
 // Each box's MIDI clock (the control core's), one per voice slot (decided 2026-11-26: the sampler follows the box the
 // take belongs to). Every slot's is kept so a take armed mid-play starts on its box's next bar; only the followed slot's
 // (follow: the slot in hand at arm()) moves play_gen / bar_gen / stop_gen and running / clock_bpm.
-struct SlotClock { uint32_t ticks = 0, last_tick_us = 0; bool run = false; float tick_us = 0, bpm = 0; };
+struct SlotClock { uint32_t ticks = 0, last_tick_us = 0, seen = 0; bool run = false; float tick_us = 0, bpm = 0; };   // seen: every F8
 SlotClock sclk[kVoiceSlots];
 volatile int follow = 0;     // the take's box (its slot)
 volatile bool running = false;
@@ -367,6 +367,7 @@ CORE_COLD void transport(int slot, uint8_t s) {
       }
     }
     c.last_tick_us = now;
+    ++c.seen;
     if (c.run && ++c.ticks % 96 == 0 && mine) sto(&bar_gen, bar_gen + 1);   // 4/4: 96 ticks a bar
   } else {
     return;
@@ -460,13 +461,18 @@ CORE_COLD void status(Status* o) {
 CORE_COLD int json(char* out, int cap_) {
   Status s;
   status(&s);
+  // every box's clock as the sampler keeps it (CK1: what each slot hears whichever slot a take follows): bpm x10, ticks, run
+  char slot_clocks[96] = "";
+  for (int k = 0, n = 0; k < kVoiceSlots; ++k)
+    n += sniprintf(slot_clocks + n, sizeof slot_clocks - n, "%s{\"bpm10\":%d,\"ticks\":%lu,\"run\":%d}", k ? "," : "",
+                   (int)(sclk[k].bpm * 10 + 0.5f), (unsigned long)sclk[k].seen, sclk[k].run ? 1 : 0);
   const Config& c = s.cfg;
   return sniprintf(out, cap_, "{\"state\":%d,\"src\":%d,\"sub\":%d,\"start\":%d,\"thr\":%d,\"preMs\":%lu,\"bars\":%d,"
                    "\"maxS\":%lu,\"slices\":%d,\"grid\":%d,\"ms\":%lu,\"level\":%d,\"peak\":%d,\"bpm\":%d,\"nSlices\":%d,"
-                   "\"gainDb\":%d,\"wav\":\"%s\",\"row\":\"%s\",\"error\":\"%s\"}", s.state, c.src, c.sub, c.start, (int)c.thr_db,
+                   "\"gainDb\":%d,\"wav\":\"%s\",\"row\":\"%s\",\"error\":\"%s\",\"clockSlot\":%d,\"slotClock\":[%s]}", s.state, c.src, c.sub, c.start, (int)c.thr_db,
                    (unsigned long)c.pre_ms, c.bars, (unsigned long)c.max_s, c.slices, c.grid_n,
                    (unsigned long)((uint64_t)s.frames * 1000 / kRate), (int)(s.level * 1000), (int)(s.peak * 1000),
-                   (int)(s.bpm + 0.5f), s.slices, (int)s.gain_db, s.wav, s.row, s.error);
+                   (int)(s.bpm + 0.5f), s.slices, (int)s.gain_db, s.wav, s.row, s.error, (int)follow, slot_clocks);
 }
 
 CORE_COLD const float* take_audio(uint32_t* frames, int* c) {

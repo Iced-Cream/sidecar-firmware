@@ -137,9 +137,31 @@ static void AllSoundOffIn (int nTransport)
 	int nSlot = bridge::transport_slot (nTransport);
 	if (nSlot >= 0) sendfx_pi::AllSoundOff (nSlot);
 }
+static volatile CEngineCores::TRealtime s_Rt[2] = {{0, 0, 0, 0, 0, -1}, {0, 0, 0, 0, 0, -1}};
+CEngineCores::TRealtime CEngineCores::Realtime (unsigned nTransport)
+{
+	TRealtime r = {0, 0, 0, 0, 0, -1};
+	if (nTransport < 2)
+	{
+		const volatile TRealtime &v = s_Rt[nTransport];
+		r.nClock = v.nClock, r.nStart = v.nStart, r.nStop = v.nStop, r.nSongPos = v.nSongPos, r.nNoSlot = v.nNoSlot;
+		r.nSlot = v.nSlot;
+	}
+	return r;
+}
 static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 {
 	int nSlot = bridge::realtime_link (nTransport, s, spp);
+	if (nTransport >= 0 && nTransport < 2)
+	{
+		volatile CEngineCores::TRealtime &r = s_Rt[nTransport];
+		if (nSlot < 0) r.nNoSlot++;
+		else if (s == 0xF8) r.nClock++;
+		else if (s == 0xFA || s == 0xFB) r.nStart++;
+		else if (s == 0xFC) r.nStop++;
+		else if (s == 0xF2) r.nSongPos++;
+		r.nSlot = nSlot;
+	}
 	if (nSlot < 0) return;
 	rec_pi::Transport (nSlot, s, spp);
 	bridge::midim_realtime (nSlot, s);
