@@ -346,10 +346,50 @@ What the second box does not have yet, or has differently:
 - **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.
-- **Two boxes of one type** (two A4s, two Digitakts): both are the one slot of that type (one folder), so the second's hello
-  is that slot's. Two boxes of a type served at once
-  would need a third slot and folders keyed by something that stays with the box, such as its USB serial number.
+- **Two boxes of one type:** see "Two boxes of one type" below for what is built and what is still a gap.
 - **Cost:** two boxes' expensive user effects on one core (core 2) are not measured on the Pi yet.
+
+## Two boxes of one type
+
+Two Rytms (or two A4s, two Digitakts) on one Pi, design decided 2026-11-26. A box is its type **and its DeviceUID**: the stock
+firmware's 32-bit unit ID, the answer to the Elektron MIDI RPC `0x03` (answer `0x83`) and to the USB vendor request Overbridge
+sends (`0xC0`, bRequest 0, 8 bytes). Nothing is written to the box. The USB serial cannot tell two units apart: every Elektron
+box says `000000000001`.
+
+- **Identity.** `Link::uid` (0: not known) beside `held`. A slot is box (p, uid)'s when the holder is p and the UIDs match
+  (`device::slot_of_box`); a holder whose UID was not known (the presumed Rytm, a box by its hello) takes the first known UID
+  while it is the one box of its type. A box whose UID is not known, with a box of its type already here, waits (status 4).
+- **Where the UID comes from.** On the Pi, `ObReadUid` (`pi/engine/ob_usb.cpp`) sends the vendor request when the box's
+  stream enumerates and passes the UID to `usb_attach`. When that gives nothing, the core asks the MIDI RPC on the box's own
+  transport every 500 ms for 2 s (`device::ask_uid`), never while its stream is frozen (`device::g_frozen`). The Teensy, one
+  slot, never asks.
+- **Folders.** A box's state is in `<type folder>/<uid>/` (`/.rytm/3fa2c001/`, `/.a4/...`, `/.dt/...`; 8 lowercase hex
+  digits). `<type folder>/last` names the UID attached last: a box whose UID is not known, alone of its type, uses that folder,
+  and the presumed Rytm reads it at boot. A card no UID was ever read for keeps using the type folder itself, as before.
+- **Migration.** The first box of a type to attach with a known UID inherits the type folder's old layout: every entry that is
+  not a UID folder, `last` or a Pi-wide name is renamed into its UID folder (FAT: a rename, nothing copied). A marker
+  `.moving` is written first and removed last; a boot that finds it finishes the move. Nothing is overwritten or deleted. On
+  the Pi the move runs on the card core (`cardq::kFnReq`), after the card requests queued before it. **An older build on a
+  migrated card** sees an empty `/.rytm` (as with the `/.sidecar` move): say so in the release notes.
+- **Names.** Each UID folder has `name.txt`, default the type and the UID's last 4 hex digits (`Rytm 3fa2`). `/status`
+  `boxes` rows are keyed by type and UID and carry `uid` and `label`; the web page renames a box with a double-click
+  (`box=<uid>:name=<text>`).
+- **MIDI to its box.** Circle's USB MIDI device names its USB device (`pi/circle/circle-midi-usbdevice.patch`), so
+  `CObUsb::SetMidiDevices` matches each transport to the stream of the same USB device, not by strings, and tells the core
+  (`device::set_midi_slot`): a hello or a Rytm's 35 on that transport is that slot's box.
+- **The console's selector** also takes `rytm2` (the second of a type) and a box's UID (8 hex digits, or the last 4).
+- **The Rytm per slot.** `rytm_home()` is the Rytm in hand when the slot in hand is a Rytm; a Rytm in slot 1 takes its send
+  FX from its kit's 0x20s, not the SFX lines; arp's track tables are each Rytm's own.
+
+Named gaps of this part:
+
+- **Not read on a unit yet** (step 0 of the design): the UID by the vendor request and by the MIDI RPC, and that the two are
+  the same number. `ObReadUid` reads the second word little-endian (the box's own byte order in the firmware trace); the
+  emulator's `usb-rytm` answers it big-endian with no leading word, so the emulator's folders differ from its `uid` property.
+- **The second Rytm's pattern view and FILL:** the pattern dump reader and FILL's writer are one, the first Rytm's.
+- **Two A4s, two Digitakts:** covered by the same code, not run.
+- **Two Rytms on the computer:** the mirror and the relay forward the UID request to their own box; not run with two units.
+- **Two Rytms' FX cost** on one core: measure in the QEMU FX load gate, then on units.
 
 ## Remote UI on a box
 
