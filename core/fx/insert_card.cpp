@@ -33,6 +33,7 @@ struct Card {
   char proj[24] = "";
   int kit = -1, rytm_kit = -1;
   bool locked = false;
+  uint8_t held = 0;   // send FX slots (bit s) set from the Sidecar while this slot's project loaded: kept over its SFX lines
 };
 Card g_card[kVoiceSlots];
 Card& C() { return g_card[prj_slot()]; }
@@ -115,6 +116,7 @@ bool from_line(const char* b) {
     int s = same_ci(w[1], "A") ? 0 : same_ci(w[1], "B") ? 1 : -1;   // has no kit of its own for it (not the Rytm's: its
     int t = fx::type_from_name(w[2]);                                // 0x20s are its kit's), in its own file
     if (s < 0 || t < 0 || !prj_slot()) return false;
+    if (C().held & 1u << s) return true;   // set while the project loaded: that edit stays (load)
     fx::set_knob_base(s, 0, (uint8_t)t);
     for (int k = 1; k < fx::kKnobs && 2 + k < n; ++k)
       if (num(w[2 + k]) >= 0) fx::set_knob_base(s, k, (uint8_t)num(w[2 + k]));
@@ -170,9 +172,18 @@ void want_files() {
 }
 #endif
 
+// another box's send FX (not a Rytm's: its kit's 0x20s) are its file's SFX lines, cleared to OFF before they are read
+bool sfx_from_file() { return prj_slot() && !device::rytm_at(prj_slot()); }
+
 void load() {
   Card& cd = C();
   cd.locked = false;
+  // a TYPE or knob set while this load was on its way (a box's first attach: its store filling): the user's, newer than
+  // the file. Kept through the clear and over the file's SFX line, then written (before: put back to OFF here)
+  const uint8_t held = sfx_from_file() ? cd.held : 0;
+  uint8_t keep[fx::kSlots][fx::kKnobs];
+  for (int s = 0; s < fx::kSlots; ++s)
+    for (int k = 0; k < fx::kKnobs; ++k) keep[s][k] = fx::cur().knob[s][k];
   clear();
   strncpy(cd.proj, prj().key, sizeof cd.proj - 1);
   cd.proj[sizeof cd.proj - 1] = 0;
@@ -229,7 +240,30 @@ void load() {
   }
 #endif
   settings_clean();
+  cd.held = 0;
+  if (held) {
+    for (int s = 0; s < fx::kSlots; ++s)
+      if (held & 1u << s)
+        for (int k = 0; k < fx::kKnobs; ++k) fx::cur().knob[s][k] = keep[s][k];
+    touch();   // into its file (the next save)
+    log(CORE_STR("ins: send FX %s%s set while %s loaded: kept"), held & 1 ? "A" : "", held & 2 ? "B" : "", cd.proj[0] ? cd.proj : "its project");
+  }
 }
+
+// fx::settings_edit (send_fx.h): FX slot s of the slot in hand set from the Sidecar
+static void sfx_edited(int s) {
+  if (!sfx_from_file() || s < 0 || s >= fx::kSlots) return;
+#if CORE_MSAMP
+  if (!store::ready()) {   // its project still on its way: held (load); not marked, so no save puts it in the old project's file
+    C().held = (uint8_t)(C().held | 1u << s);
+    return;
+  }
+#endif
+  touch();
+}
+static struct SfxHook {
+  SfxHook() { fx::settings_edit = sfx_edited; }
+} g_sfx_hook;
 
 // 0.3.0 power-cut safety: as the LFOs' save, posted to the card core as one atomic write (fmt.h), so a cut leaves the
 // kit's chains whole - old or new - and the control core does no card I/O for it (write_atomic makes the folders).

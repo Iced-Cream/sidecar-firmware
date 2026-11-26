@@ -163,6 +163,11 @@ extern void (*clock_listener)(int box, uint8_t status, uint16_t spp);   // box c
 // (spec-050 2.5); v the value set, -1 an offset kind's (its knob, read there). An inline variable (one definition, no
 // .cpp): out.cpp, insert.cpp and master.cpp also link without send_fx.cpp (the Pi portable tests' test_ob_usb)
 inline void (*manual_edit)(uint16_t tid, float v) = nullptr;
+// A TYPE or knob of FX slot s set from the Sidecar (the console and what calls it: the web; never a 0x20 or a file) on the
+// slot in hand (core/fx/insert_card.cpp sets it: a box's send FX that its INSERT file keeps as SFX lines): its file to be
+// written, and an edit made while the slot's project loads held over the file's line once it is loaded (before: the
+// load's clear put the TYPE back to OFF, and an edit alone never marked the file, so a replug lost it). Inline: as above.
+inline void (*settings_edit)(int s) = nullptr;
 inline void edited(uint16_t tid, float v = -1) {
   if (manual_edit) manual_edit(tid, v);
 }
