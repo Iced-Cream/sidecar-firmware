@@ -1312,6 +1312,33 @@ int main() {
       CHECK(count_lines("its stream is frozen again after 3 re-enumerations", l1) == 1);
       CHECK(r.dev.removes == 0 && ext.rescans == 0);
     }
+    {  // 8: obhubnoanswer=0 (a test of HubNoAnswer on a hub that answers): nothing sent to the hub, the no-answer handling
+       // runs (here the boot's two resets are spent: the quiet spell); armed again inside the spell it is used up, not kept;
+       // past the spell the hub is asked as usual
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c), r.out_done();
+      size_t l1 = CLogger::Get()->lines.size();
+      int pr = port.removes, vr = vl805.rescans;
+      CHECK(CObUsb::Command("obhubnoanswer=0") && !CObUsb::Command("obhubnoanswer=2"));
+      CHECK(CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 0 && port.removes == pr && vl805.rescans == vr);
+      CHECK(count_lines("obhubnoanswer: slot 0's port disable not sent, taken as not answered (a test)", l1) == 1);
+      CHECK(count_lines("the Pi's USB hub did not answer (the port disable waited 3000 ms): nothing removed, nothing sent "
+                        "to the hub for 60 s (its resets for this boot spent)", l1) == 1);
+      CTimer::s_now += 10000000;
+      CHECK(CObUsb::Command("obhubnoanswer=0") && CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 0 && count_lines("obhubnoanswer: not used: the hub did not answer 10 s ago", l1) == 1);
+      CTimer::s_now += 60000000;
+      CHECK(CObUsb::Command("obreenum=0"));
+      CObUsb::PollHalt();
+      CHECK(r.dev.removes == 1 && vl805.rescans == vr + 1 && port.removes == pr);   // asked as usual: answered, rescanned
+    }
     CTimer::s_now = 0;
   }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again

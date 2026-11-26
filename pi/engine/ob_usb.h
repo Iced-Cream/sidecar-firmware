@@ -356,6 +356,8 @@ private:
 	static boolean HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs);
 	static void ResetHub (CUSBHCIRootPort *pRoot);	// the hub on that root port reset and enumerated again
 	static boolean s_bForceHubReset;		// obhubreset!: at the next pass (a test)
+	static int s_nForceNoAnswer;			// obhubnoanswer=<slot>: that slot's next re-enumeration takes the hub as
+							// not answering, nothing sent to it (a test of HubNoAnswer); -1 none
 	static unsigned s_nForcedHubResets;		// since boot
 	static boolean PollForcedHubReset (void);	// TRUE: done (every box on the hub is gone)
 	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop

@@ -682,12 +682,26 @@ boolean CObUsb::ReEnumerate (const char *pWhy, boolean *pSent)
 						"sent to it; unplug the box and plug it in again, or power the Pi off and on", pName,
 						nSlot, pWhy, (unsigned) ((NowMs () - s_Hub.dead_ms) / 1000));
 		}
+		if (s_nForceNoAnswer == (int) nSlot)
+		{
+			s_nForceNoAnswer = -1;
+			CLogger::Get ()->Write (From, LogNotice, "obhubnoanswer: not used: the hub did not answer %u s ago, nothing "
+						"is sent to it (slot %u)", (unsigned) ((NowMs () - s_Hub.dead_ms) / 1000), nSlot);
+		}
 		if (pSent != 0) *pSent = FALSE;
 		return FALSE;
 	}
 	s_nFreezeReEnums++;
 	CLogger::Get ()->Write (From, LogWarning, "%s (slot %u): %s: enumerating it again (try %u of %u, %u since boot)", pName,
 				nSlot, pWhy, nSlot < 2 ? s_FreezeBudget[nSlot].tries : 0, obfreeze::kTries, s_nFreezeReEnums);
+	if (pHub != 0 && s_nForceNoAnswer == (int) nSlot)	// obhubnoanswer=<slot> (a test): nothing is sent to the hub; the
+	{							// port disable is taken as Circle's 3 s timeout
+		s_nForceNoAnswer = -1;
+		CLogger::Get ()->Write (From, LogWarning, "obhubnoanswer: slot %u's port disable not sent, taken as not answered (a test)",
+					nSlot);
+		if (pSent != 0) *pSent = FALSE;
+		return HubNoAnswer (pHub, pName, nSlot, 3000000);
+	}
 	const unsigned nStartUs = CTimer::GetClockTicks ();
 	if (!pDevice->RemoveDevice ())			// deletes this - unless its hub did not disable the port (a root port always does)
 	{
@@ -757,6 +771,7 @@ void CObUsb::ResetHub (CUSBHCIRootPort *pRoot)
 // obhubreset!: the root-port reset above at the next pass, of the Pi's hub that a streaming box hangs off, the hub
 // answering or not (a test of the teardown and the re-enumeration; not counted in the hub's reset budget)
 boolean CObUsb::s_bForceHubReset;
+int CObUsb::s_nForceNoAnswer = -1;
 unsigned CObUsb::s_nForcedHubResets;
 
 boolean CObUsb::PollForcedHubReset (void)
@@ -966,6 +981,13 @@ boolean CObUsb::Command (const char *pText)
 		else
 			CLogger::Get ()->Write (From, LogNotice, "obrestart=0|1 (restart that slot's audio stream; %u restarts "
 						"since boot)", s_nStreamRestarts);
+		return TRUE;
+	}
+	if (strncmp (pText, "obhubnoanswer=", 14) == 0 && (pText[14] == '0' || pText[14] == '1') && pText[15] == 0)
+	{
+		s_nForceNoAnswer = pText[14] - '0';
+		CLogger::Get ()->Write (From, LogNotice, "obhubnoanswer: slot %d's next re-enumeration takes the hub as not answering",
+					s_nForceNoAnswer);
 		return TRUE;
 	}
 	if (strcmp (pText, "obhubreset!") == 0)
