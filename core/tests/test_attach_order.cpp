@@ -298,6 +298,47 @@ int main() {
   CHECK(key(0) == "A4P" && key(1) == "R2");
   CHECK(device::rytm_route(0) == 1 && device::rytm_route(1) < 0);   // the A4 on transport 1: not the Rytm's
 
+  // ---- the Rytm in slot 1 sends its kit's send FX (0x20): they are its slot's, never the A4's in slot 0 (before: every 0x20
+  //      wrote slot 0's settings and tags, and the 0x22 answers read them, whichever slot the Rytm held)
+  {
+    device::Scope in(device::g_links[0]);
+    char o[256];
+    CHECK(fx::command("sendfx=1:cloudseed", o, sizeof o) && fx::command("sendfx=2:crush", o, sizeof o));
+    CHECK(fx::command("sendlvl=1:3:90", o, sizeof o));   // (a send of the A4's own)
+  }
+  settle();
+  uint8_t a4_knob[fx::kSlots][fx::kKnobs], a4_send[fx::kTracks][fx::kSlots];
+  for (int s = 0; s < fx::kSlots; ++s)
+    for (int k = 0; k < fx::kKnobs; ++k) a4_knob[s][k] = fx::control.knob[s][k];
+  for (int t = 0; t < fx::kTracks; ++t)
+    for (int s = 0; s < fx::kSlots; ++s) a4_send[t][s] = fx::control.send[t][s];
+  const uint16_t a4_tag0 = fx::kit_tag[0], a4_tag1 = fx::kit_tag[1];
+  g_out.clear();
+  send(0, sidecar({0x20, 1, 12, fx::kHalo, 70, fx::kChorus, 40, 1, 2, 3, 4, 5, 6, 7, 8}));   // track 12: FX 1 CHORUS, FX 2 HALO
+  send(0, sidecar({0x20, 1, 3, 111, 22}));                                                    // track 4's sends
+  send(0, sidecar({0x20, 1, 13, 0x12, 0x34, 0x05, 0x06}));                                    // the kit's tags
+  printf("  the Rytm in slot 1 sends FX %s / %s: slot 1 has %s / %s, the A4's slot 0 keeps %s / %s\n", fx::type_name(fx::kChorus),
+         fx::type_name(fx::kHalo), fx::type_name(fx::control1.knob[0][0]), fx::type_name(fx::control1.knob[1][0]),
+         fx::type_name(fx::control.knob[0][0]), fx::type_name(fx::control.knob[1][0]));
+  CHECK(fx::control1.knob[0][0] == fx::kChorus && fx::control1.knob[1][0] == fx::kHalo);
+  CHECK(fx::control1.send[3][0] == 111 && fx::control1.send[3][1] == 22);
+  CHECK(fx::kit_tag1[0] == (0x12 << 7 | 0x34) && fx::kit_tag1[1] == (0x05 << 7 | 0x06));
+  CHECK(fx::control.knob[0][0] == fx::type_from_name("cloudseed") && fx::control.knob[1][0] == fx::type_from_name("crush"));
+  for (int s = 0; s < fx::kSlots; ++s)
+    for (int k = 0; k < fx::kKnobs; ++k) CHECK(fx::control.knob[s][k] == a4_knob[s][k]);
+  for (int t = 0; t < fx::kTracks; ++t)
+    for (int s = 0; s < fx::kSlots; ++s) CHECK(fx::control.send[t][s] == a4_send[t][s]);
+  CHECK(fx::kit_tag[0] == a4_tag0 && fx::kit_tag[1] == a4_tag1);
+  {   // its 0x22 answers (to the Rytm) are its own slot's FX: the last for each FX (its first 0x20 sent the states before)
+    int last[2] = {-1, -1};
+    for (const auto& m : g_out)
+      if (m.size() > 8 && m[4] == 0x22 && m[5] == 1 && m[6] < 2) last[m[6]] = m[7];
+    CHECK(last[0] == fx::kChorus && last[1] == fx::kHalo);
+  }
+  settle();
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('A', "cloudseed")) != std::string::npos);   // the A4's file: its own FX still
+  CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('B', "crush")) != std::string::npos);
+
   // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
   // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)
   device::reset();

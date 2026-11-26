@@ -90,27 +90,33 @@ static CORE_COLD void sendfx_labels_out() {
       else usent |= (uint8_t)(1u << (id - fx::kFirstUser));
     }
   };
-  one(fx::control.knob[0][0]);
-  one(fx::control.knob[1][0]);
+  one(fx::cur().knob[0][0]);   // (the box in hand's: the Rytm this goes to, whichever slot it holds)
+  one(fx::cur().knob[1][0]);
   for (int id = 1; id < fx::kFirstUser + fx::kUserSlots; ++id) one(id);
   s_labels_sent = sent, s_ulabels_sent = usent;
 }
 // a slot's TYPE has labels the Rytm was not sent (the cap above)
 static CORE_COLD bool sendfx_labels_missing() {
   for (int s = 0; s < fx::kSlots; ++s) {
-    int id = fx::control.knob[s][0];
+    int id = fx::cur().knob[s][0];
     if (label_id(id) && fx::labels(id) && !label_sent(id, s_labels_sent, s_ulabels_sent)) return true;
   }
   return false;
 }
-static uint8_t fx_sent_id[fx::kSlots] = {0xFF, 0xFF}, fx_sent_st[fx::kSlots];
-static bool s_sendfx_hello;   // names + labels + states sent since boot (asked or not)
+// Each box's own (the box in hand's FX and its link: a Rytm in either slot, two Rytms each theirs)
+static uint8_t fx_sent_id[kVoiceSlots][fx::kSlots], fx_sent_st[kVoiceSlots][fx::kSlots];
+static bool fx_sent_any[kVoiceSlots];        // a state went to this box's Rytm (else the next goes in full)
+static bool s_sendfx_hello_b[kVoiceSlots];   // names + labels + states sent since boot (asked or not)
+static inline bool& sendfx_hello() { return s_sendfx_hello_b[fx::slot_in_hand()]; }
 
 static CORE_COLD void sendfx_state_out(bool all) {
+  const int b = fx::slot_in_hand();
+  const fx::Control& c = fx::control_of(b);
+  if (!fx_sent_any[b]) all = fx_sent_any[b] = true;
   for (int s = 0; s < fx::kSlots; ++s) {
-    uint8_t id = fx::control.knob[s][0], st = fx::state(s);
-    if (!all && id == fx_sent_id[s] && st == fx_sent_st[s]) continue;
-    fx_sent_id[s] = id, fx_sent_st[s] = st;
+    uint8_t id = c.knob[s][0], st = fx::state(c, s);
+    if (!all && id == fx_sent_id[b][s] && st == fx_sent_st[b][s]) continue;
+    fx_sent_id[b][s] = id, fx_sent_st[b][s] = st;
     uint8_t m[32];
     if (hooks.to_rytm) hooks.to_rytm(m, fx::sysex_state(m, s));
   }
@@ -178,7 +184,7 @@ CORE_COLD void sendfx_project() {
 static uint32_t s_list_ms = 0;
 CORE_COLD bool sendfx_step() {
 #if CORE_POLY
-  if (s_sendfx_hello && s_bw_up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
+  if (sendfx_hello() && s_bw_up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
 #endif
   // a user effect slot changed (fx::list_changed): the list, the labels and the states again, at most every 100 ms
   if (fx::list_dirty && !fx_owed && now_ms() - s_list_ms >= 100) {
@@ -428,8 +434,8 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
     if (d[4] == 0x20) {   // SENDFX (send levels, FX TYPE + params, tags): a TYPE or state change answered by 0x22
       // The Rytm asks (0x23) only until it has a name list, so after this engine (re)starts it may never ask again:
       // the first 0x20 since boot, with no ASK seen yet, sends the names, labels and states unasked, as an ASK would.
-      if (!s_sendfx_hello) {
-        s_sendfx_hello = true;
+      if (!sendfx_hello()) {
+        sendfx_hello() = true;
         sendfx_names_out();
         sendfx_labels_out();
         sendfx_state_out(true);
@@ -448,7 +454,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
       return;
     }
     if (d[4] == 0x23) {   // SENDFX ASK: the TYPE list and both states
-      s_sendfx_hello = true;
+      sendfx_hello() = true;
       sendfx_names_out();
       sendfx_labels_out();
       sendfx_state_out(true);
@@ -477,7 +483,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
 #endif
     if (d[4] == 0x35) link_reset("hello");   // the Rytm's USB port came up: its transport and notes unknown
 #if CORE_POLY
-    if (d[4] == 0x35 && s_sendfx_hello) sendfx_bw_all();   // (sfx-basewidth: a Rytm that came up again shows its defaults)
+    if (d[4] == 0x35 && sendfx_hello()) sendfx_bw_all();   // (sfx-basewidth: a Rytm that came up again shows its defaults)
 #endif
     if ((d[4] >= 0x30 && d[4] <= 0x3F) || d[4] == 0x29 || d[4] == 0x2A || d[4] == 0x2B || d[4] == 0x48 || d[4] == 0x49 ||
         d[4] == 0x4A) {
@@ -485,7 +491,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int l
       // rui1038: 4A the bank list)
       int caps0 = ui::remote_caps();
       ui::remote_sysex(d, len);
-      if (d[4] == 0x35 && s_sendfx_hello && (ui::remote_caps() & 2) && !(caps0 & 2)) {   // fix1049 (review): a rui1049
+      if (d[4] == 0x35 && sendfx_hello() && (ui::remote_caps() & 2) && !(caps0 & 2)) {   // fix1049 (review): a rui1049
         sendfx_names_out();                                                              // hello after the labels went:
         sendfx_labels_out();                                                             // its 16 tables filled now
         sendfx_state_out(true);

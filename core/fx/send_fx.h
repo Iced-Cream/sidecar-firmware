@@ -125,7 +125,8 @@ inline Control& control_of(int box) { return box ? control1 : control; }
 inline int box_of(const Control& c) { return &c == &control1 ? 1 : 0; }
 // 3(c) step 8: the settings code (the console, set_knob_base / set_send_base, the route file, the LFOs' and the mod
 // layer's writers) works on the slot in hand's: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0).
-// take_sendfx and the 0x21 / 0x22 replies are the Rytm's (slot 0's, `control`).
+// take_sendfx and the 0x22 replies are the box in hand's (the Rytm's message is taken in its slot's Scope: either slot); the
+// 0x21 list's user effects are still box 0's (send_fx_card.cpp slots_load).
 extern int (*slot_fn)();
 int slot_in_hand();
 Control& cur();
