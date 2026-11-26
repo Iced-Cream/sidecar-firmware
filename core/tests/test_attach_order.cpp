@@ -293,6 +293,18 @@ int main() {
   CHECK(device::rytm_slot() == 1 && device::slot_held_by(&device::kA4) == 0);
   printf("  self-check before any box: slot 0 still presumed; the A4's USB first takes slot 0, the Rytm's slot 1\n");
 
+  // ---- a stock box (no hello) whose USB MIDI the Pi matches only after its stream took the slot: its transport routed then
+  // (unit run CK2, T521: the A4 on link1 had no route, its clock dropped)
+  CHECK(device::route_of(1) < 0);
+  CHECK(engine_realtime_link(1, 0xF8, 0) < 0);   // (dropped: no slot)
+  device::set_midi_slot(1, 0);
+  device::step(true);
+  CHECK(device::route_of(1) == 0 && engine_realtime_link(1, 0xF8, 0) == 0);
+  device::step(true);
+  CHECK(device::route_of(1) == 0);
+  device::set_midi_slot(1, -1);
+  printf("  a stock box's USB MIDI matched after its stream: its transport routed, its clock reaches its slot\n");
+
   // ---- a Rytm whose USB enumerates at boot, on the slot 0 presumed the Rytm's: its USB confirms it, so an A4 after it takes slot 1
   // (the QEMU gate's rytm-a4 order, 2026-11-21)
   device::reset();
