@@ -109,7 +109,7 @@ extern volatile int8_t g_base_slot;
 extern int (*slot_fn)();
 const Control& ctl();
 
-inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
+inline bool stereo(int vi) { return control_of(g_base_slot).route[vi & 7] != kTrk; }   // the base box's voice vi (its stage's taps)
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }
 int route_from_name(const char* s);          // "trk" / "pre" / "post" (any case), -1 neither
 // DEC's decay a sample for t60 at value v (1..127: 20 ms .. 10 s, exponential), 1 for OFF
