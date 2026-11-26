@@ -19,7 +19,7 @@ namespace fsweb {
 namespace {
 
 // WHAT /fs/* CAN REACH AT ALL (docs/pi-engine.md "Pairing code" > "What the file API can reach"). The split is:
-// /fs/* is content, TCP 7310 is firmware, /.sidecar and the boxes' /.rytm, /.a4, /.digitakt are neither and are reachable through neither. Deny by default: a
+// /fs/* is content, TCP 7310 is firmware, /.sidecar and the boxes' /.rytm, /.a4, /.dt are neither and are reachable through neither. Deny by default: a
 // path that is not one of these folders, or inside one, does not exist as far as this API is concerned, for every
 // operation - list, get, put, del, mkdir and both ends of a mv.
 //
@@ -101,7 +101,7 @@ bool read_only(const char* p) {
 }
 
 bool kept_dir(const char* p) {
-  static const char* const kKept[] = {"/.rytm", "/.sidecar", "/.digitakt", "/.a4", "/Samples", "/Plugins", "/Bundles"};   // Bundles: docs/BUNDLES.md
+  static const char* const kKept[] = {"/.rytm", "/.sidecar", "/.dt", "/.a4", "/Samples", "/Plugins", "/Bundles"};   // Bundles: docs/BUNDLES.md
   for (const char* k : kKept) if (ieq(p, k, strlen(k) + 1)) return true;
   return false;
 }

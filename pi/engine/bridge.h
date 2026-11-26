@@ -111,6 +111,10 @@ void midim_realtime(uint8_t status);                                // the base 
 // (core::engine_realtime_link: its LFOs, its send FX's STUTTER grid); the slot, -1 none. The control core.
 int realtime_link(int t, uint8_t status, uint16_t spp);
 int base_slot();                                                    // the base box's slot (core::device::g_base)
+// The console's box selector (core/device/device.h box_prefix): "box=S:<command>" runs <command> through run(ctx, command)
+// inside slot S's Scope (S 0..1, or rytm / a4 / dt). False: no selector (p is the base box's, as ever). A selector naming
+// no box attached is logged and taken. The control core (CEngineCores::Command).
+bool box_command(const char* p, void (*run)(void* ctx, const char* cmd), void* ctx);
 int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();

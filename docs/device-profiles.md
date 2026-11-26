@@ -192,7 +192,7 @@ engine, read for facts only; no code of it is here. [The community Digitakt port
 
 ## State folders
 
-A box with `state_dir` set (`/.digitakt` for the Digitakt) keeps its projects, settings and pools there, and the Rytm keeps
+A box with `state_dir` set (`/.dt` for the Digitakt) keeps its projects, settings and pools there, and the Rytm keeps
 its own in `/.rytm`, so they never mix. Shared content stays shared: `/Samples`, `/Plugins`, `/JUNO`, `/DX7` and the rest of
 the card's top level. The engine's own code keeps saying `/.rytm/...`. Every file call passes through one path function per
 port (`full` in `pi/engine/platform_pi.cpp`, `host_path` in `core/host/platform_host.cpp`), and those call
@@ -204,7 +204,7 @@ clock, the black box, the update and web app, and the indexes of the shared libr
 build has them in `/.rytm` and the first boot moves them. A box's folder holds only that box's state.
 
 **Slots by attach order, folders by box type (decided 2026-11-21), and nothing restarts.** The first box to attach is slot 0,
-the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.digitakt`) from then on, on
+the second slot 1, whatever their types; each is in its type's folder (`/.rytm`, `/.a4`, `/.dt`) from then on, on
 whichever transport it spoke (`device::slot_of`), and its project, lists, store and settings are read from that folder at its
 attach (`project_attach_step`, either slot). No file stores a slot number. A box attaches with its hello (`4F`), the Rytm with
 its 35, and on the Pi any box with its USB device (`device::usb_attach`
@@ -317,6 +317,17 @@ older stock-firmware path: an A4 with no mod streamed beside the Rytm, audio onl
 The Rytm's own parameters, scene and QPERF, its 0x21 / 0x22 names and core_c's host API belong to the Rytm and follow its
 slot (`rytm_at`, `rytm_home`). The Pi's own files (network, pairing, screen, black box) are in `/.sidecar`, no box's.
 
+### The console's box selector
+
+Console commands run for the base box (`g_base`) as they always did. `box=S:<command>` runs one in another box's slot (design
+point 8): S is a slot (`0`, `1`) or a box type by its folder's name (`rytm`, `a4`, `dt`), which names the same box whatever its
+attach order (`device::box_prefix`). Inside it, the voice forms (`gr=`, `wt=`, `msamp=` `voice:V` and `pick:V:..`,
+`livein=voice:V`) take that box's own voice V (0..7), so `box=dt:wt=voice:2` forces the Digitakt's voice 3 whichever slot it is
+in. A selector naming no box attached now is logged and does nothing.
+
+The Rytm's project slots (`prjslot`, its 4B reports) and the RENAMED FROM? question on its PROJECT page run only for the Rytm's
+slot (`rytm_at`): another box's project name only names its project, in its own folder.
+
 ### Named gaps
 
 What the second box does not have yet, or has differently:
@@ -330,10 +341,8 @@ What the second box does not have yet, or has differently:
 - **Kits:** the A4's mod sends no 4C yet, so its slot's kit records exist only once it reports SAVE / RELOAD KIT.
 - **SONG RECORD on the A4:** its stopped program change is not traced, so a restore or undo writes only once its mod has
   reported the pattern selected (2D 02); `midi_config()` is the Rytm's.
-- **Rytm-only project machinery** (`prjslot::take_10`, `prjslot::resolve`, `rename::intercept`) also runs for a box's
-  project names.
 - **Readers off the control core** (`gr` / `wt` / `msamp` `entry_note`, the `srclib` browser, `page_gfx`, `preset_index`)
-  read the slot in hand's lists. The console's `gr=pick`, `wt=pick`, `msamp=pick` and `voice:` forms take voices 0..7 only.
+  read the slot in hand's lists.
 - **A box replaced before its saves land:** a different box can take its slot only once `idle_save` has settled; until then
   it waits (status 4) or takes the other slot. A Rytm presumed at boot who never spoke gives slot 0 up at once (no save first).
 - **An Engine of SONG RECORD** keeps the MIDI CONFIG kind (the Rytm's default or none) its slot had when it was first made.

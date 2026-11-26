@@ -73,6 +73,32 @@ const Profile& active() { return cur().box ? *cur().box : kRytm; }
 uint32_t dropped() { return cur().dropped; }
 bool rytm_at(int s) { return kVoiceSlots < 2 || (s >= 0 && s < kLinks && g_links[s].held == &kRytm); }
 int rytm_slot() { return kVoiceSlots < 2 ? 0 : slot_held_by(&kRytm); }
+CORE_COLD const char* type_word(const Profile* h) {
+  if (!h || h == &kRytm || !h->state_dir) return "rytm";
+  return h->state_dir[0] == '/' && h->state_dir[1] == '.' ? h->state_dir + 2 : h->state_dir;
+}
+CORE_COLD int box_prefix(const char* p, const char** rest) {
+  *rest = p;
+  if (strncmp(p, "box=", 4)) return -1;
+  const char* a = p + 4;
+  const char* c = strchr(a, ':');
+  if (!c || c == a || !c[1]) return *rest = "box=S:<command>, S 0..1 or rytm / a4 / dt", -2;
+  const int n = (int)(c - a);
+  int s = -2;
+  if (n == 1 && a[0] >= '0' && a[0] < '0' + kLinks) {
+    s = a[0] - '0';
+    if (!held(s)) return *rest = "no box in that slot", -2;
+  } else {
+    for (int k = 0; k < kLinks; ++k) {
+      const Profile* h = __atomic_load_n(&g_links[k].held, __ATOMIC_RELAXED);
+      const char* w = h ? type_word(h) : nullptr;
+      if (w && (int)strlen(w) == n && !strncmp(w, a, n)) s = k;
+    }
+    if (s < 0) return *rest = "no such box attached (rytm / a4 / dt)", -2;
+  }
+  *rest = c + 1;
+  return s;
+}
 CORE_COLD int slot_held_by(const Profile* p) {
   if (!p) p = &kRytm;
   for (int k = 0; k < kLinks; ++k)

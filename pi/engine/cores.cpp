@@ -668,6 +668,8 @@ void CEngineCores::Control (void)
 void CEngineCores::Command (const char *p)
 {
 	CLogger *L = CLogger::Get ();
+	if (bridge::box_command (p, [] (void *c, const char *q) { static_cast<CEngineCores *> (c)->Command (q); }, this))	// box=S:<command>: in that box's slot
+		return;
 	if (strncmp (p, "notemach=", 9) == 0 && p[9] >= '0' && p[9] <= '7' && p[10] == ':')
 	{
 		int v = p[9] - '0';

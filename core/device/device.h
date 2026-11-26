@@ -106,7 +106,7 @@ struct Profile {
   // Optional, for a box whose reports do not fit the layout above: its message into a whole engine message in m
   // (kMaxMessage bytes), the length, 0 drop. Null: the table above.
   int (*translate)(const Profile& p, const uint8_t* d, int len, uint8_t* m);
-  const char* state_dir;   // its state folder ("/.digitakt"); null: the Rytm's /.rytm
+  const char* state_dir;   // its state folder ("/.dt"); null: the Rytm's /.rytm
   // Engine commands it may send as they are, on the Sidecar's head (bit c of word c / 32): a box that reports like the Rytm
   // and names each voice's machine in the voice byte. For 03 / 04 / 11 the voice must be under `voices`.
   uint32_t in_allow[4];
@@ -194,6 +194,12 @@ void release(int s);
 // The Pi's cmdline slothold= (ms, default 5000); 0 in the host tests.
 extern uint32_t g_hold_ms;
 int slot_held_by(const Profile* p);    // the slot box p (null: the Rytm) holds, -1 none
+// The console's box selector (design 2026-11-21 point 8: commands touching box state name their box): "box=S:<command>", S a
+// slot (0, 1) or a box type by its folder's name ("rytm", "a4", "dt": the same box whatever its attach order). The slot the
+// command is for, *rest the command after the selector; -1: no selector (*rest = p: the base box's, as ever); -2: a selector
+// that names no box attached now (*rest the reason). The platform runs *rest in that slot's Scope.
+int box_prefix(const char* p, const char** rest);
+const char* type_word(const Profile* held);   // a holder's folder name without "/.": "rytm", "a4", "dt"
 inline bool held(int s) { return s >= 0 && s < kLinks && __atomic_load_n(&g_links[s].held, __ATOMIC_RELAXED) != nullptr; }
 // slot s's modules run (tick, saves, its folder's work): held, or its box left and its edits are still being saved, or it is the
 // base (the slot in hand outside any Scope, held or not). One slot (the Teensy): slot 0 always. Control core.

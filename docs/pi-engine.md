@@ -19,7 +19,7 @@ Spec: `docs/superpowers/specs/2026-10-14-pi-engine-design.md`. Plan: `docs/super
   - The kernel lives in RAM only: the SD card is not touched, and the next reboot or power cycle boots the card's `engine.img` again (below).
   - Use SECS >= 45 (a 1.55 MB kernel: the go about 29 s after the start). A flasher killed while it writes can hang the Mac's FT232R adapter: the Mac's writes then never complete, so the Pi hears nothing, not even the reboot magic (measured 2026-10-16). `uv run --with pyusb python pi/circle/sdboot.py usbreset` (a USB reset of the adapter, Homebrew's libusb) clears it; earlier "the Pi wedged until a power cycle" was probably this.
 - The Pi boots `sdboot` from its SD card: Circle's serial bootloader, patched to start the card's `engine.img` when no flasher answers within 1 s (next section). Without the sdboot lines in `config.txt` it boots Circle's stock serial bootloader as before (`docs/pi-circle-spike.md`, "flash.sh").
-- The SD card's FAT32 partition is also the engine's card: `/Samples`, `/JUNO`, `/DX7` (the shared libraries, read by every box), the Pi's own folder `/.sidecar/` and each box's state folder (`/.rytm/`, `/.a4/`, `/.digitakt/`). The first boot writes the self-test content (below).
+- The SD card's FAT32 partition is also the engine's card: `/Samples`, `/JUNO`, `/DX7` (the shared libraries, read by every box), the Pi's own folder `/.sidecar/` and each box's state folder (`/.rytm/`, `/.a4/`, `/.dt/`). The first boot writes the self-test content (below).
 
 **The card's folders (decided 2026-11-21).** `/.sidecar/` holds what belongs to the Pi whichever boxes are attached: the network (`wifi.txt`, `wpa.conf`, `wifi.try`), the pairing (`pair.txt`), the screen, CPU clock, fan and USB mode (`display.txt`), the black box (`blackbox.log`, `logs/`), the previous boot's report (`prevboot.txt`), the storage benches (`recspeed.txt`, `storbench-*.txt`, `sdtest.txt`), the firmware update (`update/`), the web app (`www-next/`) and the indexes of the shared libraries (`env`, `folders.bin`, `files.bin`, `library/`, `dx7.bin`). Every box write (projects, pools, lists, kits, sequencer, songs, scenes, the RAM store's files) goes to that box's own folder only (`core/device/device.h` state_path); `/Samples`, `/JUNO`, `/DX7` are shared. A card from an older build has these files in `/.rytm/`: the engine's first boot moves them to `/.sidecar/` (`core/device/sidecar_dir.h`, before anything reads the card; a name already in `/.sidecar/` is kept and the `/.rytm/` copy left, logged). An older build booted afterwards does not see them (Wi-Fi, pairing and screen settings back to defaults there).
 - Options go in `cmdline.txt` on the SD card, one line, as for the spikes. The firmware hands it to every kernel, the SD's `engine.img` and a flashed RAM kernel alike. Without one, the build's defaults apply (`build.sh`'s `PI_IP`, `PI_NETMASK`, `EMUHOST`, `GADGET`). `pi/circle/sdboot.py cmdline` shows it, `sdboot.py cmdline "notes=on out=main ip=..."` writes it with the card in the Pi (the original kept as `cmdline.txt.bak`). The card had no `cmdline.txt` on 2026-10-16.
@@ -122,7 +122,7 @@ Keys:
   - The markers channel marks the MIDI arrivals only (no trigger marker); `spike3/latency.py` then takes the voice's onsets in OUT as sent.
 - `s`: the stats now.
 
-Commands are `:<command>` and a newline, at most 47 characters. The control core (core 3) runs them:
+Commands are `:<command>` and a newline, at most 47 characters. The control core (core 3) runs them, for the base box; `box=S:<command>` runs one for another box (S `0`, `1`, `rytm`, `a4` or `dt`; docs/device-profiles.md "The console's box selector"):
 
 | command | |
 |---|---|
@@ -668,7 +668,7 @@ Not verified here: whether the `36` frame wakes a Rytm whose screen has gone to 
 
 #### What the file API can reach
 
-Separately from the gate, and underneath it: **`/fs/*` is content, TCP 7310 is firmware, `/.sidecar/` and the boxes' state folders (`/.rytm/`, `/.a4/`, `/.digitakt/`) are neither and are reachable through neither.**
+Separately from the gate, and underneath it: **`/fs/*` is content, TCP 7310 is firmware, `/.sidecar/` and the boxes' state folders (`/.rytm/`, `/.a4/`, `/.dt/`) are neither and are reachable through neither.**
 
 `fsweb::reachable()` decides whether a path exists as far as `/fs/*` is concerned, for **every** operation — `ls`, `get`, `put`, `del`, `mkdir` and both ends of a `mv` — and denies by default. The content folders are `/Samples`, `/Plugins`, `/Recordings`, `/Bundles`, `/MULTISAMPLE`, `/WAVETABLES`, `/GRANULAR`, `/PRESETS`, `/MACHINES`, `/NAM`, `/CHOP`, `/JUNO` and `/DX7` — the set the engine and the page actually use (docs/LIBRARY.md, docs/POOLS.md, docs/BUNDLES.md, docs/CHOP.md, docs/plugins.md). The card's root lists those folders and nothing else. Anything outside them answers `404 no such path`.
 

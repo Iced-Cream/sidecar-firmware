@@ -16,6 +16,7 @@
 #include "../pool/stream_budget.h"
 #include "../lib/srclib.h"
 #include "../machines.h"
+#include "device/device.h"   // voice_in: a console voice V is the slot in hand's box voice (box=S: prefix)
 #include "../pool/pool.h"
 #include "../ui/remote.h"
 #include "../poly.h"
@@ -2186,8 +2187,9 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
     bool on = strcmp(a + 7, ":off") != 0;
-    if (force[vi] && !on) silence(vi);
-    force[vi] = on;
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi (box=S: on the console)
+    if (force[ev] && !on) silence(ev);
+    force[ev] = on;
     sniprintf(out, cap, "msamp: voice %d %s", vi, on ? "plays MULTISAMPLE (any built-in machine the Rytm reports)" : "plays its own machine");
     return true;
   }
@@ -2216,7 +2218,8 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
     if (e < 0) e = to_int(r);
-    if (!pick(vi, e)) sniprintf(out, cap, "msamp: no entry %d (%d listed)", e, LV(vi).nlist);
+    const int ev = device::voice_in((uint8_t)vi);   // the slot in hand's box voice vi
+    if (!pick(ev, e)) sniprintf(out, cap, "msamp: no entry %d (%d listed)", e, LV(ev).nlist);
     else sniprintf(out, cap, "msamp: voice %d INST %s", vi, entry_name(e));
     return true;
   }

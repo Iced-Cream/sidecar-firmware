@@ -278,6 +278,18 @@ void rytm_link(bool up) { core::midim::link_state(up); }
 void midim_realtime(uint8_t status) { if (status != 0xF2) core::midim::realtime(status); }
 int realtime_link(int t, uint8_t status, uint16_t spp) { return core::engine_realtime_link(t, status, spp); }
 int base_slot() { return core::device::g_base ? core::device::g_base->index : 0; }
+bool box_command(const char* p, void (*run)(void*, const char*), void* ctx) {
+  const char* rest;
+  const int s = core::device::box_prefix(p, &rest);
+  if (s == -1) return false;
+  if (s < 0) {
+    core::log(CORE_STR("console: %s: %s"), p, rest);
+    return true;
+  }
+  core::device::Scope in(core::device::g_links[s]);
+  run(ctx, rest);
+  return true;
+}
 int transport_slot(int t) {
   const int s = core::device::slot_of(t, nullptr, 0);
   return s >= 0 && s < core::kVoiceSlots ? s : -1;

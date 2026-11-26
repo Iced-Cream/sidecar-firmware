@@ -10,6 +10,7 @@
 #include <unistd.h>   // mkdtemp
 #include <vector>
 
+#include "bundle/rename.h"
 #include "check.h"
 #include "device/a4.h"
 #include "device/device.h"
@@ -21,6 +22,7 @@
 #include "pool/pool.h"
 #include "seq/seq.h"
 #include "voices.h"
+#include "wavetable/wavetable.h"
 
 using namespace core;
 
@@ -108,13 +110,13 @@ int main() {
   CHECK(mkdtemp(tmpl));
   host_set_card(tmpl);
   Fs fs;
-  CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4") && fs.mkdir("/.digitakt"));
-  CHECK(fs.mkdir("/.a4/lfo") && fs.mkdir("/.digitakt/lfo"));
+  CHECK(fs.begin() && fs.mkdir("/Samples") && fs.mkdir("/.rytm") && fs.mkdir("/.a4") && fs.mkdir("/.dt"));
+  CHECK(fs.mkdir("/.a4/lfo") && fs.mkdir("/.dt/lfo"));
   put("/.rytm/project", "RYP");
   put("/.a4/project", "A4P");
-  put("/.digitakt/project", "DTP");
+  put("/.dt/project", "DTP");
   put("/.a4/lfo/A4P.txt", "# the A4's\nT1A V2 3 0 100 0 0 20 64\n");
-  put("/.digitakt/lfo/DTP.txt", "# the Digitakt's\nT1A V3 2 0 100 0 0 11 64\n");
+  put("/.dt/lfo/DTP.txt", "# the Digitakt's\nT1A V3 2 0 100 0 0 11 64\n");
   hooks.to_rytm = out0;
   CHECK(engine_begin());
   device::set_out(1, out1);
@@ -138,6 +140,41 @@ int main() {
   CHECK(device::g_base == &device::g_links[0] && device::voice_base(device::g_links[1]) == kBoxVoices);
   printf("  A4 then Digitakt: slot 0 %s (%s), slot 1 %s (%s)\n", key(0).c_str(), device::g_links[0].state, key(1).c_str(),
          device::g_links[1].state);
+
+  // ---- the console's box selector (design point 8): box=S: by slot or by the box's type, whatever its attach order
+  {
+    const char* r = nullptr;
+    CHECK(device::box_prefix("wt=list", &r) == -1 && !strcmp(r, "wt=list"));   // no selector: the base box's, as ever
+    CHECK(device::box_prefix("box=a4:wt=voice:1", &r) == 0 && !strcmp(r, "wt=voice:1"));
+    CHECK(device::box_prefix("box=dt:wt=voice:1", &r) == 1 && !strcmp(r, "wt=voice:1"));
+    CHECK(device::box_prefix("box=1:lfo", &r) == 1 && !strcmp(r, "lfo"));
+    CHECK(device::box_prefix("box=rytm:lfo", &r) == -2);   // no Rytm attached
+    CHECK(device::box_prefix("box=7:lfo", &r) == -2 && device::box_prefix("box=a4:", &r) == -2 && device::box_prefix("box=", &r) == -2);
+    CHECK(!strcmp(device::type_word(&device::kDigitakt), "dt") && !strcmp(device::type_word(&device::rytm()), "rytm"));
+    // a voice form takes the box's voice V in the slot in hand: the Digitakt's voice 2 is engine voice 10, the A4's voice 2 is 2
+    char o[200];
+    {
+      device::Scope in(device::g_links[device::box_prefix("box=dt:x", &r)]);
+      CHECK(wt::command("wt=voice:2", o, sizeof o) && wt::forced(kBoxVoices + 2) && !wt::forced(2));
+      CHECK(wt::command("wt=voice:2:off", o, sizeof o) && !wt::forced(kBoxVoices + 2));
+    }
+    CHECK(wt::command("wt=voice:2", o, sizeof o) && wt::forced(2) && !wt::forced(kBoxVoices + 2));   // the base box (the A4)
+    CHECK(wt::command("wt=voice:2:off", o, sizeof o) && !wt::forced(2));
+  }
+  // ---- a box's project name is only its name: no Rytm project-slot step and no rename question on the Rytm's PROJECT page
+  //      (the A4's project has files, a new name has none: on the Rytm that asks RENAMED FROM?, on the A4 it just switches)
+  {
+    device::Scope in(device::g_links[0]);
+    const uint8_t nm[] = {'A', '4', 'N', 0xf7};
+    set_project(nm, (int)sizeof nm);
+    CHECK(key(0) == "A4N" && rename::state() == rename::kIdle);
+    const uint8_t back[] = {'A', '4', 'P', 0xf7};
+    set_project(back, (int)sizeof back);
+    CHECK(key(0) == "A4P" && rename::state() == rename::kIdle);
+  }
+  settle();
+  CHECK(key(0) == "A4P" && lfo_depth(0) == 20 && key(1) == "DTP");
+  printf("  box=a4: / box=dt: select the box; voice forms take its own voices; its project names skip the Rytm's steps\n");
   // a third box finds no slot: it is told to wait (a Rytm's USB as well: nothing taken)
   CHECK(device::claim(&device::rytm()) == -1 && device::rytm_slot() < 0);
   CHECK(device::usb_attach(&device::rytm()) == -1);
@@ -166,7 +203,7 @@ int main() {
   settle();
   CHECK(!device::g_links[0].parting && !device::leaving());
   CHECK(get("/.a4/lfo/A4P.txt").find(" 33 ") != std::string::npos);
-  CHECK(get("/.digitakt/lfo/DTP.txt").find(" 33 ") == std::string::npos && get("/.rytm/lfo/A4P.txt").empty());
+  CHECK(get("/.dt/lfo/DTP.txt").find(" 33 ") == std::string::npos && get("/.rytm/lfo/A4P.txt").empty());
   printf("  the A4 left: its edit saved in /.a4, the Digitakt still slot 1\n");
 
   // ---- a Rytm on USB-C now: the lowest free slot, 0, in /.rytm, its project read again; the Digitakt does not move
@@ -196,7 +233,7 @@ int main() {
   CHECK(hello(0, device::kIdA4) == device::kOk && device::slot_held_by(&device::kA4) == 1 && device::route_of(0) == 1);
   settle();
   CHECK(key(0) == "DTP" && lfo_depth(0) == 11 && key(1) == "A4P" && lfo_depth(1) == 33);
-  CHECK(!strcmp(device::g_links[0].state, "/.digitakt") && !strcmp(device::g_links[1].state, "/.a4"));
+  CHECK(!strcmp(device::g_links[0].state, "/.dt") && !strcmp(device::g_links[1].state, "/.a4"));
   voices_init();
   send(0, trig(1, 60));   // the A4 on USB-C, in slot 1: engine voice 8 + 1
   CHECK(v[kBoxVoices + 1].live && !v[1].live);
