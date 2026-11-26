@@ -113,6 +113,10 @@ uint32_t list_gen();
 int src_entry(int vi, int v);
 bool pick(int vi, int e);             // a choice: INST written on the Rytm (48: the kit keeps it)
 bool voice_picked(int vi);            // (always false)
+// The kit's INST known while the voice is idle (the SRC view's 2A: a pick in the Rytm's list, a turn; its 0x03 reports
+// come only while it plays): the voice selects entry e as at its next report, so its instrument loads and the pages show it
+// with no trig (0.5.0, owner 2026-11-15). The Rytm's own value: nothing is written back.
+void kit_src(int vi, int e);
 bool command(const char* p, char* out, int cap);   // "msamp", "msamp=rescan", "msamp=voice:V[:off]", "msamp=list",
                                                    // "msamp=head:MS", "msamp=ahead:MS", "msamp=streams:N", "msamp=keep:0|1",
                                                    // "msamp=pick:V:ROW"

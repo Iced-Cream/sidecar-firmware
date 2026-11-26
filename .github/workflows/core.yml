@@ -28,3 +28,5 @@ jobs:
         run: make -C core engines
       - name: Core tests
         run: make -C core test -j3
+      - name: Library walk depth test under ASan + UBSan
+        run: make -C core test-lib-san

@@ -42,7 +42,8 @@ export const routes: RouteRecordRaw[] = [
     { path: "sends", title: "Send FX", component: () => import("./pages/mix/SendsTab.vue"), needs: "sendfx" },
     { path: "sidechain", title: "Sidechain", component: () => import("./pages/mix/SidechainTab.vue") },
   ]),
-  { path: "/morph", name: "morph", component: () => import("./pages/Morph.vue"), meta: { title: "Morph" } },
+  // 0.5.0: the Morph page is off (the scene morph comes in 0.5.2: core/sidecar_features.h SIDECAR_MORPH); 0.5.2 puts this line back
+  // { path: "/morph", name: "morph", component: () => import("./pages/Morph.vue"), meta: { title: "Morph" } },
   { path: "/seq", name: "seq", component: () => import("./pages/Seq.vue"), meta: { title: "Seq" } },
   sections("/rec", "rec", "Rec", [
     { path: "recorder", title: "Recorder", component: () => import("./pages/rec/RecorderCard.vue") },

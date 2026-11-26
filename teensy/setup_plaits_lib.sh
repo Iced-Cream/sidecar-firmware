@@ -13,7 +13,8 @@ SHIM=$D/../sim/plaits/shim/plaits/user_data.h
 RNG=$D/../sim/plaits/shim/stmlib/utils/random.h
 if [ "${1:-}" = --if-stale ] && [ -d "$L" ] && cmp -s "$D/../sim/plaits/fm_machine.h" "$L/src/fm_machine.h" &&
    cmp -s "$SHIM" "$L/user_data.h.src" && cmp -s "$RNG" "$L/src/stmlib/utils/random.h" &&
-   cmp -s "$D/../sim/plaits/operator_neon.h" "$L/src/plaits/dsp/fm/operator_neon.h"; then
+   cmp -s "$D/../sim/plaits/operator_neon.h" "$L/src/plaits/dsp/fm/operator_neon.h" &&
+   cmp -s "$D/setup_plaits_lib.sh" "$L/setup_plaits_lib.sh.src"; then
   exit 0
 fi
 "$D/../sim/plaits/build.sh" >/dev/null   # makes sure the vendor checkout exists
@@ -29,6 +30,7 @@ done
 # here): the simulator's stand-in (no user data, except a DX7 bank handed over by
 # the 6-OP FM machine, fm_machine.h), which comes along.
 cp "$SHIM" "$L/src/plaits/user_data.h"
+cp "$D/setup_plaits_lib.sh" "$L/setup_plaits_lib.sh.src"   # this script as run, so --if-stale regenerates when it changes
 cp "$SHIM" "$L/user_data.h.src"   # the shim as copied, for --if-stale (outside src/: not compiled)
 # stmlib's Random with a state per render core when RYTM_RENDER_CORES > 1 (the Pi); unset, stmlib's own
 cp "$RNG" "$L/src/stmlib/utils/random.h"
@@ -46,6 +48,21 @@ sed -i '' 's|^#include "plaits/resources.h"$|#include "plaits/resources.h"\n#inc
 perl -0pi -e 's|(void SixOpEngine::LoadUserData\(const uint8_t\* user_data\) \{\n)|$1  if (user_data \&\& user_data == fm_user_bank()) {   // rytm: one voice, into patch fm_user_slot()\n    fm::Patch* target = \&patches_[fm_user_slot() \& 1];\n    target->Unpack(user_data);\n    for (int i = 0; i < kNumSixOpVoices; ++i) {\n      if ((fm_user_slot() \& 2) ? true : voice_[i].patch() == target) voice_[i].UnloadPatch();\n    }\n    return;\n  }\n|' "$S"
 grep -q 'rytm: one voice, into patch fm_user_slot()' "$S" || { echo "six_op_engine.cc: patch failed"; exit 1; }
 cp "$D/../sim/plaits/fm_machine.h" "$L/src/fm_machine.h"
+# SPEECH's word banks: stock Plaits scans a bank continuously when HARM changes the bank (or returns from the
+# phonemes) with no word playing, and with a trigger patched (the voices always patch it) SpeechEngine's
+# already_enveloped bypasses the LPG: a drone after the note off, its level moving with HARM. No word, no sound.
+perl -0pi -e 's|(  if \(playback_frame_ == -1 && remaining_frame_samples_ == 0\) \{\n)|  if (bank != -1 && !free_running && playback_frame_ == -1) {   // rytm: a bank with no word to play is silent\n    fill(&sample_[0], &sample_[2], 0.0f);\n    fill(&next_sample_[0], &next_sample_[2], 0.0f);\n    fill(excitation, excitation + size, 0.0f);\n    fill(output, output + size, 0.0f);\n    return;\n  }\n$1|' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc"
+# A word in flight (word_playing_, set when a trigger starts a word, cleared when it ends or a bank loads) plays from the word
+# bank's frames whatever bank HARM asks for now (the phonemes' table has 15 frames, a word's indexes run to 1000+), and
+# finishes before the new bank loads or the phonemes take over. A resting word frame is not a phoneme frame: bank -1 without a
+# word restarts the phoneme scan. Playback never indexes past the active table.
+perl -0pi -e 's#(  int last_playback_frame_;\n)#$1  bool word_playing_;   // rytm\n#' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.h"
+perl -0pi -e 's#(  last_playback_frame_ = -1;\n  remaining_frame_samples_ = 0;\n)#$1  word_playing_ = false;\n#' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc"
+perl -0pi -e 's#  if \(bank != -1\) \{\n    bool reset_everything = word_bank_->Load\(bank\);\n    if \(reset_everything\) \{\n      playback_frame_ = -1;\n      last_playback_frame_ = -1;\n#  // rytm: a word in flight finishes on its own bank (no reload until it ends, or a trigger)\n  if (bank == -1 && !word_playing_ && !trigger) playback_frame_ = -1;   // a resting word frame is no phoneme frame\n  if (bank != -1 && (trigger \|\| free_running \|\| !word_playing_)) {\n    bool reset_everything = word_bank_->Load(bank);\n    if (reset_everything) {\n      playback_frame_ = -1;\n      last_playback_frame_ = -1;\n      word_playing_ = false;\n#' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc"
+perl -0pi -e 's#  const int num_frames = bank == -1\n      \? kLPCSpeechSynthNumVowels\n      : word_bank_->num_frames\(\);\n\n  const LPCSpeechSynth::Frame\* frames = bank == -1\n      \? phonemes_\n      : word_bank_->frames\(\);\n#  const bool use_words = bank != -1 \|\| (word_playing_ \&\& !trigger);   // rytm\n  const int num_frames = !use_words\n      ? kLPCSpeechSynthNumVowels\n      : word_bank_->num_frames();\n\n  const LPCSpeechSynth::Frame* frames = !use_words\n      ? phonemes_\n      : word_bank_->frames();\n  if (use_words && playback_frame_ >= num_frames) {   // rytm: never past the word table\n    playback_frame_ = -1;\n    last_playback_frame_ = -1;\n    word_playing_ = false;\n  }\n#' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc"
+perl -0pi -e 's#(      playback_frame_ \+= kLPCSpeechSynthNumVowels;\n)#$1      word_playing_ = false;\n#; s#(          &last_playback_frame_\);\n)#$1      word_playing_ = true;\n#; s#(      if \(playback_frame_ >= last_playback_frame_\) \{\n)#$1        word_playing_ = false;\n#' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc"
+grep -q 'rytm: a word in flight finishes on its own bank' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc" && grep -c 'word_playing_' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc" | grep -qx 9 && grep -q 'word_playing_;   // rytm' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.h" || { echo "lpc_speech_synth_controller: word-in-flight patch failed"; exit 1; }
+grep -q 'rytm: a bank with no word to play is silent' "$L/src/plaits/dsp/speech/lpc_speech_synth_controller.cc" || { echo "lpc_speech_synth_controller.cc: patch failed"; exit 1; }
 # The FM operators' NEON path on AArch64 (sim/plaits/operator_neon.h, inside plaits::fm, after the C renamed RenderOperatorsC)
 O="$L/src/plaits/dsp/fm/operator.h"
 cp "$D/../sim/plaits/operator_neon.h" "$L/src/plaits/dsp/fm/operator_neon.h"

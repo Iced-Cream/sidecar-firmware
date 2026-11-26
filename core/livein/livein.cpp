@@ -533,8 +533,12 @@ void render(int vi, const float* p, float* l, float* rr, bool stereo, int n) {
   }
 }
 
-// one click sample (1 kHz, 2 ms, -9 dBFS from its first sample on), int16 units of the voice's return (0.7 headroom)
-static inline float click(int k) { return 0.355f * sinf(6.2831853f * 1000.0f * (float)k / kSr + 0.3f) * 0.7f * 32767.0f; }
+// one click sample (1 kHz, 2 ms, -9 dBFS from its first sample on), int16 units of the voice's return (0.7 headroom),
+// / kVoiceGain: post() runs before render_voices' kVoiceGain (voices.h), and the click must leave at its own level
+// (0.355 x 0.7 of full scale, 8143; 23266 here, within int16), as seq=cal's click (written after the gain) does
+static inline float click(int k) {
+  return 0.355f * sinf(6.2831853f * 1000.0f * (float)k / kSr + 0.3f) * 0.7f * 32767.0f / kVoiceGain;
+}
 
 void post(int vi, int16_t (*ring)[kVoices], int16_t (*ring_r)[kVoices], const int* row, int n) {
   R& s = r[vi];

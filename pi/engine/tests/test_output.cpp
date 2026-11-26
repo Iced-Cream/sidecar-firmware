@@ -1,5 +1,6 @@
 // pi/engine/tests/test_output.cpp - the output stage: main mode sums onto MAIN L/R, tracks mode puts each voice on its
-// Overbridge channel, the fade-in over 200 ms, the -12 dBFS limit, silence (counted) when the FIFO runs dry.
+// Overbridge channel, the fade-in over 200 ms, the -12 dBFS limit (a soft knee: no flat top), silence (counted) when the
+// FIFO runs dry.
 #include <cmath>
 
 #include "check.h"
@@ -13,7 +14,7 @@ int main() {
   o.Pull(f, 7);   // empty: silence, counted
   CHECK(o.Underflows() == 0 && o.RestartUnderflows() == 7 && f[3][0] == 0);   // no target yet: never armed
   o.SetFifoTarget(96);
-  for (int s = 0; s < 12; ++s) for (int v = 0; v < 8; ++v) blk[s][v] = (v == 2) ? 8192 : 0;   // voice 2 at 0.25
+  for (int s = 0; s < 12; ++s) for (int v = 0; v < 8; ++v) blk[s][v] = (v == 2) ? 4096 : 0;   // voice 2 at 0.125 (under the knee)
   for (int k = 0; k < 2000; ++k) CHECK(o.Push(blk, 12) == 12 || o.Level() > 2000);
   CHECK(o.Level() == Output::kFifo);
   o.Reset();                                                  // a new stream: the old frames are dropped
@@ -26,18 +27,45 @@ int main() {
     o.Pull(f, 7);
   }
   float main_l = f[6][0] / 2147483648.0f;
-  CHECK(std::fabs(main_l - 0.25f * Output::kMainGain) < 1e-4f && f[6][0] == f[6][1]);
+  CHECK(std::fabs(main_l - 0.125f * Output::kMainGain) < 1e-4f && f[6][0] == f[6][1]);
   CHECK(f[6][Output::kVoiceToChannel[2]] == 0);                // main mode: the voice channels silent
   o.SetMode(Output::kTracks);
   o.Pull(f, 7);
   CHECK(f[0][0] == 0 && f[0][1] == 0);
-  CHECK(std::fabs(f[0][Output::kVoiceToChannel[2]] / 2147483648.0f - 0.25f) < 1e-4f);
-  for (int s = 0; s < 12; ++s) blk[s][2] = 32767;                // full scale: limited to -12 dBFS
+  CHECK(std::fabs(f[0][Output::kVoiceToChannel[2]] / 2147483648.0f - 0.125f) < 1e-4f);   // under the knee: as it came
+  for (int s = 0; s < 12; ++s) blk[s][2] = 32767;                // full scale: limited to -12 dBFS (the knee's top)
   while (o.Level()) o.Pull(f, 7);
   o.Push(blk, 12);
   o.Pull(f, 7);
-  CHECK(f[0][Output::kVoiceToChannel[2]] == (int32_t)(Output::kLimit * 2147483648.0f));
+  CHECK(f[0][Output::kVoiceToChannel[2]] <= (int32_t)(Output::kLimit * 2147483648.0f) &&
+        f[0][Output::kVoiceToChannel[2]] > (int32_t)(0.9999f * Output::kLimit * 2147483648.0f));
   CHECK(o.TakePeak() > 0.24f && o.TakePeak() == 0.0f);
+  {  // a voice over -12 dBFS (a 262 Hz sine peaking at 0.3, as hot engines did before kVoiceGain): the knee rounds its
+     // top, it is not flat. The old hard clamp held 0.25 for a run of samples each half cycle (odd harmonics, the clipping
+     // users heard); the knee rises to the peak and leaves at most the peak's two samples within 1e-5 of it.
+    static int16_t sb[12][8];
+    float top = 0.0f;
+    int at_top = 0;
+    while (o.Level()) o.Pull(f, 7);
+    for (int b = 0; b < 16; ++b) {                               // 192 frames: one half cycle and more
+      for (int s = 0; s < 12; ++s) {
+        for (int v = 0; v < 8; ++v) sb[s][v] = 0;
+        sb[s][2] = (int16_t)(0.3f * 32768.0f * std::sin(2.0f * 3.14159265f * 262.0f * (b * 12 + s) / 48000.0f));
+      }
+      o.Push(sb, 12);
+      for (int k = 0; k < 2; ++k) {
+        int32_t g[6][12];
+        o.Pull(g, 6);
+        for (int i = 0; i < 6; ++i) {
+          float y = g[i][Output::kVoiceToChannel[2]] / 2147483648.0f;
+          if (y > top + 1e-5f) top = y, at_top = 1;
+          else if (y > top - 1e-5f) ++at_top;
+        }
+      }
+    }
+    CHECK(top < Output::kLimit && top > 0.2f && at_top <= 2);
+    o.TakePeak();
+  }
   {  // stereo=trim:trk, the voices' own channels only. Up: the gain first, one soft knee to full scale, so a hot voice is not cut at -12 dBFS and clipped again.
      // Down or 0: the -12 dBFS limit, then the gain
     static core::out::Control c;

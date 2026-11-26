@@ -747,6 +747,24 @@ as MD: DIGIDRUM's ENG picks the closest ENGINE / TYPE (EFM-BD..CY -> FM BD..CY, 
 its controls carried over where they are the same. The MD user machine and MD-PI / MD-EFM / MD-TRX stay installable
 as before. Not on the Teensy (a PI voice's state is over its RAM): 0x40 is silent there.
 
+### 10.3 BP303 (plugins/bp303, `bp303.bass`, MIT)
+
+A 303-style bass line voice as a user machine (API 2, mono, pitched; `bp303.a64.rmp`, installed like any package). The
+voice is **BLACKPYRAMIDS_303's** (Zac Kyoti and the OT Kyoti FW contributors, MIT:
+https://github.com/Zac-Kyoti/octatrack-kyoti-fw, an Octatrack track machine), which is built on **Open303** (Robin
+Schmidt, 2009, MIT) and recalibrated on the TB-303's circuit. `bp303.c` is a float rewrite of that project's reference
+code of the voice (not its DSP assembly): a polyBLEP saw / tanh-shaped square blend, Open303's TeeBee ladder 4x
+oversampled (192 kHz) behind two half-band decimators, the couplings 0.7 Hz in / 55 Hz in the resonance loop / 110 Hz
+out, the fitted resonance curve, the accent RC and the accent sweep capacitor, the VCA (tau 1.35 s), a soft drive on
+VOL 65..127, glided knobs. Both licences and the source files are in the folder (`LICENSE.kyoti`, `LICENSE.open303`,
+`NOTICE`); `README.md` has the knobs, what differs from the original and the checks.
+
+P1 CUT, P2 RES, P3 ENV, P4 DEC, P5 ACC, P6 WAVE, P7 SLID, P8 VOL, P9 TUNE (the original's ranges and defaults). **A
+note with velocity above 100 is an accent** (by the ACC knob's amount); **a trig while the gate is still open is a
+slide** (it glides there, no retrigger); the gate is the track's note length. `make check` runs the package on the Mac
+as the Pi runs it (silence at rest, CUT x RES under the ceiling, a slide keeps one note, accents, the CPU estimate);
+`make demo` writes acid lines as WAV files.
+
 ## 11. User slots on the Rytm (sub-project 2)
 
 The Rytm (rytm-mods 0021, machines 35..39 as U1..U5) shows each slot's machine, knobs and status from the Teensy: the
@@ -823,8 +841,13 @@ ignored on both sides; spec 2.1). Everything below is answered from `loop()` bet
 - `voice_enter(state)` (`reserved[2]`) after `voice_init` each time a voice starts the slot; `voice_leave(state)`
   (`reserved[3]`) before the voice plays another machine or slot, the slot reloads or the voice is released by a sound
   tag mismatch (section 6; not for a muted slot). In `voice_leave`, `pool_info` answers EMPTY and `pool_read` 0.
-- `pool_info(slot, &info)` / `pool_read(slot, pos, buf, n)` (`rmp_host.reserved[0..1]`): the project's pool slot 1..127
-  for the voice being called. **Without PSRAM** (and before a sample is resident) the voice reads through its own DSP
+- `pool_info(slot, &info)` / `pool_read(slot, pos, buf, n)` (`rmp_host.reserved[0..1]`): the project's pool slot for
+  the voice being called. `slot` is bank A's row 1..127 (the old meaning, unchanged), or, on the Pi (0.5.1.1), the list
+  code **bank * 128 + row** (bank 0..7 = A..H, row 1..127, 128..1023; row 0 of a bank is OFF) that the SAMPLES lists
+  and the Rytm use: `rmp_pool_code(bank, row)` builds it, `rmp_pool_code_of_knob(p[k])` turns a SAMPLES knob's value
+  (the integer is the row, the fraction the bank) into one, where `(int)p[k]` is only the row. Before 0.5.1.1 a slot above
+  127 was the host's internal line (bank * 127 + row), which no plugin had a reason to compute and the lists never use.
+  The Teensy's pool is bank A: a code above 127 answers EMPTY there. **Without PSRAM** (and before a sample is resident) the voice reads through its own DSP
   SAMPLE buffers (`rmp_pool`): the first 8 KB with random access (4096 frames of 16-bit mono, 2048 of 16-bit stereo,
   1365 of 24-bit stereo), the rest streamed in order through the 16 KB ring, 8 KB a read between requests; a frame
   outside head and ring restarts the stream there (silence until refilled, ~0.75 ms a read); one sample a voice at a
@@ -902,6 +925,43 @@ slot's TYPE moves to another effect: TYPE back to BBD can replay the old repeats
 
 Defaults: TIME 40 (FREE, about 240 ms), FDBK 56, W/F 24, TONE 80.
 
+### NIMBUS (plugins/ufx_nimbus, `fx.nimbus`, MIT)
+
+A big ambient reverb with an ensemble: a pad that follows the harmony of what is sent to it (the idea of the Strymon
+Cloudburst's ensemble; written for this repo). 48 band analysers a semitone apart (C3 .. B6) listen to the send; the
+bands that stand out each drive a sine at the frequency they heard (nothing is retuned to a grid), with a slow swell
+and a release that follows the decay time, through a three-voice string-ensemble chorus, into the reverb. The reverb:
+a 25 ms pre-delay, four modulated allpass diffusers a side, 16 delay lines mixed by a Hadamard matrix. The lines live
+in the slot arena (610 KB for each of its two states). Drums make the pad too: a kick or a snare with a clear pitch
+leaves a held tone.
+
+| Knob | Label | Values | What it does |
+|---|---|---|---|
+| P2 | DCY | 0..127 | the decay time, 0.5 s .. 64 s, exponential (64: about 6 s; 96: about 20 s) |
+| P3 | ENS | 0..127 | how much of the pad goes into the reverb; 0 is the reverb alone |
+| P4 | TONE | 0..127 | the damping in the reverb's loop, 500 Hz .. 18 kHz |
+| P5 | MOD | 0..127 | the depth of the delay lines' slow modulation, x0 .. x2 (64: as designed) |
+
+Defaults: DCY 96, ENS 64, TONE 80, MOD 64.
+
+### GALACTIC (plugins/ufx_galactic, `fx.galactic`, MIT)
+
+Airwindows' Galactic by Chris Johnson, ported to C: a huge, soft, drifting space made for endless washes. Kept: the
+whole signal path at its 1x rate, the delay times, the knob laws. Changed: the delay memory is 32-bit float in the
+slot arena (528 KB for each of its two states), the send's mono sum feeds both sides (the stereo comes from the
+pre-delay vibrato's two phases), always fully wet, 12 dB of gain on the output so it sits level with the other send
+FX, no dither. With Detune at 0 the port equalled Airwindows' own code to about -136 dB (checked once on the Mac against the
+original built there; not a test in this repo).
+
+| Knob | Label | Values | What it does |
+|---|---|---|---|
+| P2 | REPL | 0..127 | Replace: how fast new sound replaces the old. Low: the tail regenerates for longer; 0 holds what is in it and lets nothing new in |
+| P3 | BRT | 0..127 | Brightness: the low-pass before and after the tank |
+| P4 | DTUN | 0..127 | Detune: the speed of the pre-delay's vibrato, the drifting, chorused character |
+| P5 | BIG | 0..127 | Bigness: the size of the space (every delay time) |
+
+Defaults: REPL 38, BRT 64, DTUN 64, BIG 127.
+
 **Tests and tools.** `core/tests/test_ufx.cpp` loads both packages (kept built in core/tests/api3_pkgs: `make -C
 plugins/ufx_phaser fixtures`, `make -C plugins/ufx_bbd fixtures`) and plays them through the send FX: the labels, the
 phaser's notches against theory, feedback, spread and tempo sync, the delay's timing, darkening, hiss, feedback decay
@@ -910,6 +970,10 @@ through each native build into plugins/build-wav/ for listening (`make -C plugin
 first; `--p1..--p4`, `--bpm`). `core/tests/bench/ufx_bench.sh` builds each render with the Pi's flags and costs it with
 the A72 model: PHASER about 1.9 k instructions and 1.5 k model cycles a 12-frame block, BBD 3.4 k and 2.5 k (the send
 FX's budget for one call is 120 us: about 180 k cycles on a Pi 4 at 1.5 GHz).
+`core/tests/test_ufx_ambient.cpp` does the same for NIMBUS and GALACTIC (`make -C plugins/ufx_nimbus fixtures`, `make -C
+plugins/ufx_galactic fixtures`): the labels, the decay and tone knobs, the ensemble's pad, stereo, GALACTIC's freeze and a size change in a
+tail, and the loudest settings (not muted, the tail alive and falling). The A72 model: NIMBUS about 52 k instructions and 41 k model cycles a block (the dearest
+effect: about a quarter of one call's budget on a Pi 4 by the model, which is a floor), GALACTIC 12 k and 12 k.
 
 ## 13. Presets
 

@@ -68,7 +68,7 @@ static std::vector<double> render(int frames, std::vector<int16_t>* raw = nullpt
     idle_stream();
     render_voices(ring, kBlock, 0, 0, kVoices, mach);
     for (int i = 0; i < kBlock; ++i) {
-      o.push_back(atanh(ring[i][0] / (0.7 * 32767.0)));
+      o.push_back(atanh(ring[i][0] / (core::kVoiceGain * 0.7 * 32767.0)));
       if (raw) raw->push_back(ring[i][0]);
     }
   }
@@ -183,7 +183,7 @@ static void t_no_resonator() {
   trig();
   render(4800, &smpl);
   CHECK(dry == smpl);
-  CHECK(near(atanh(dry[0] / (0.7 * 32767.0)), ramp(0)));
+  CHECK(near(atanh(dry[0] / (core::kVoiceGain * 0.7 * 32767.0)), ramp(0)));
   g_tag = 0;
   trig();
   render(4800, &dsps);

@@ -137,6 +137,9 @@ struct FakeIo : UsbMidiMerge::Io {
   }
   unsigned engine_drain() override { unsigned n = 0; for (auto& r : engine) n += r.size(); engine.clear(); return n; }
   void warn(const char*) override { warns++; }
+  unsigned send_wait = 0, queued = 0;		// what last_send_us / engine_pending answer
+  uint32_t last_send_us() override { return send_wait; }
+  unsigned engine_pending() override { return queued; }
 };
 static uint32_t pk(uint8_t a, uint8_t b, uint8_t c, uint8_t d) { return (uint32_t)a | b << 8 | c << 16 | (uint32_t)d << 24; }
 
@@ -1033,7 +1036,38 @@ static void test_from_rytm() {
 }
 
 
+// lagdiag.h part 3: the engine's records the merge sent, by type, with the queue's peak and the longest send
+static void test_tx_accounting() {
+  UsbMidiMerge m;
+  FakeIo io;
+  Bytes ka = {0xF0, 0x7D, 0x52, 0x54, 0x3C, 0x01, 0xF7};
+  Bytes frame = {0xF0, 0x7D, 0x52, 0x54, 0x38, 1, 2, 3, 4, 5, 6, 0xF7};
+  Bytes wr = {0xF0, 0x7D, 0x52, 0x54, 0x48, 2, 3, 4, 0xF7};
+  io.engine = {ka, frame, frame, wr};
+  io.queued = 3000;
+  io.send_wait = 700;
+  m.poll(io, true, true, nullptr, nullptr, 1000);
+  io.queued = 80;
+  io.send_wait = 90;
+  io.engine = {frame};
+  m.poll(io, true, true, nullptr, nullptr, 2000);
+  lagdiag::TxDiag::Second s;
+  CHECK(m.tx().take(&s));
+  CHECK(s.n[lagdiag::kKeepalive] == 1 && s.bytes[lagdiag::kKeepalive] == 7);
+  CHECK(s.n[lagdiag::kFrame] == 3 && s.bytes[lagdiag::kFrame] == 36);
+  CHECK(s.n[lagdiag::kWrite] == 1 && s.bytes[lagdiag::kWrite] == 9);
+  CHECK(s.pend_max == 3000 && s.wait_max_us == 700);
+  // what was not sent is not counted: a send that fails, and records dropped while the Rytm is gone
+  io.engine = {frame};
+  io.fail_always = true;
+  m.poll(io, true, true, nullptr, nullptr, 3000);
+  io.engine = {wr};
+  m.poll(io, false, true, nullptr, nullptr, 4000);
+  CHECK(!m.tx().take(&s) && s.n[lagdiag::kFrame] == 0 && s.n[lagdiag::kWrite] == 0);
+}
+
 int main() {
+  test_tx_accounting();
   test_merge_poll();
   test_realtime_through_holds();
   test_not_reading();

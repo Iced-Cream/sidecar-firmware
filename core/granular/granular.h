@@ -95,6 +95,10 @@ int src_entry(int vi, int v);   // the entry SRC value v plays (the code itself)
 // turn: the kit keeps it). False: no such entry.
 bool pick(int vi, int e);
 bool voice_picked(int vi);    // (always false: no picks over SRC)
+// The kit's SRC known while the voice is idle (the SRC view's 2A: a pick in the Rytm's list, a turn; its 0x03 reports
+// come only while it plays): the voice selects entry e as at its next report, so its sample loads and the pages show it
+// with no trig (0.5.0, owner 2026-11-15). The Rytm's own value: nothing is written back.
+void kit_src(int vi, int e);
 // A short preview of entry e (< 0: the voice's own) on voice vi: a ~0.9 s note at key 60 with the voice's knobs, when
 // the sample is in RAM (loaded first). The Rytm's SRC list after a turn settles, the touchscreen's pick.
 void preview(int vi, int e);

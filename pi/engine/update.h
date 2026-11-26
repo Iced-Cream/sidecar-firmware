@@ -34,7 +34,7 @@ struct Header { char version[24], commit[24]; uint32_t flags; int n; Part part[k
 // The header's checks (magic, format, its sha256, the parts in order and in bounds, ending at the file's end).
 // nullptr: good; else the reason, a sentence.
 const char* parse_header(const uint8_t* h, uint64_t file_size, Header* out);
-// MAJOR.MINOR.PATCH[-pre]: <0 a older than b, 0 the same, >0 newer; a release is above its pre-releases and "-dev"
+// MAJOR.MINOR.PATCH[.BUILD][-pre] (BUILD: 0.5.1.1, 0 when absent): <0 a older than b, 0 the same, >0 newer; a release is above its pre-releases and "-dev"
 // below every other pre-release. Unparseable: compared as text (never "newer" by accident: -2).
 int cmp_version(const char* a, const char* b);
 // The marker every kernel with this code carries ("sidecar-webupdate-1 v=<version> c=<commit>"): the update file's

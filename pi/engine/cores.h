@@ -54,6 +54,7 @@ public:
 	static const TBench &BenchResult (unsigned nCore, unsigned nMachine);
 	void Run (unsigned nCore) override;
 	static void TakeStats (TStats *pStats);		// core 0
+	static unsigned TakeRxLine (char *pOut, unsigned nMax);	// core 0: the Rytm report stream's last second as a log line (lagdiag.h), 0 none
 	static unsigned FifoTarget (void);
 	// The control loop's longest gap between two pass starts since the last Output::Reset (a new stream), with where that
 	// pass's time went: the sections midi keys cmds tick render idle (us each). at_frames: frames pulled since the Reset

@@ -28,6 +28,7 @@
 #include "sidecar_rec.h"		// page 11: REC, the Overbridge multitrack recorder (UP + T7, the home page's REC status)
 #include "sidecar_scope.h"		// page 12: SCOPE, an Overbridge channel's trace and the meters (UP + T9, VOICE's scope)
 #include "sidecar_status.h"		// page 13: SIDECAR STATUS (UP + T10, the home page's ENGINE / Status panel)
+#include "../../core/sidecar_features.h"	// SIDECAR_MORPH (0.5.0: the scene morph is off)
 #include "../../core/ui/page_keys.h"	// the device's shortcuts (the captions, the map): one table, device-agnostic
 #include "sidecar_project.h"		// page 14: PROJECT (project bundles: a tap on the home page's PROJECT panel)
 #include "sidecar_preset.h"		// page 18: PRESET, the POOL page's JUNO / 6-OP FM lists (the preset index; the pool tabs 4 and 5)
@@ -37,14 +38,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-enum { SEG_TAB, SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_N };
+enum { SEG_NOTES, SEG_OUT, SEG_MAC, SEG_VOICE, SEG_MACH, SEG_DRONE, SEG_SAVER, SEG_STYLE, SEG_LOOK, SEG_CONTRAST, SEG_CLOCK, SEG_USB, SEG_KEYS, SEG_KEYSMAC, SEG_SUB, SEG_N = SEG_SUB + 8 };	// SEG_SUB + section: that section's sub-page row (0.5.1)
 enum { PG_HOME, PG_SOUND, PG_FX, PG_ABOUT, PG_SEQ, PG_RYTM, PG_DISPLAY, PG_MACH, PG_VOICE, PG_INS, PG_SONG, PG_REC, PG_SCOPE, PG_STATUS, PG_PROJECT, PG_POOL,
-       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
+       PG_SERVICE, PG_CHOP, PG_PRESET, PG_MFX, PG_MORPH, PG_SEDIT, PG_XY, PG_MIDI, PG_PERFORM, PG_N };	// SERVICE (UX review T18): FIFO and the test drone, out of the musician's Sound page; the tab is called System: the CPU clock too
 
-// the settings tabs; Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
-#define N_TABS 7
-static const char *const kTabMap[] = {"Sound", "MIDI", "Send FX", "Display", "Pool", "System", "About", ""};
-static const int kTabPage[N_TABS] = {PG_SOUND, PG_MIDI, PG_FX, PG_DISPLAY, PG_POOL, PG_SERVICE, PG_ABOUT};
+// Pool: the POOL page (the three lists, sidecar_wgview.h), a page of its own
 static const char *const kOnOff[] = {"Off", "On", ""};
 static const char *const kOutMap[] = {"Main", "Tracks", ""};
 static const char *s_VoiceMap[9], *s_VoiceMap2[10];	// the voices' keys in list order (voice_maps: the box's names)
@@ -63,15 +61,18 @@ static const char *const kUsbMap2[] = {"Class", "Overbridge", ""};			// (OLED: t
 static const char *const kUsbCmd[2] = {"usbmode=class", "usbmode=overbridge"};
 static const char *const kKeysMap[] = {"Selected track", "By channel", ""};	// Settings > MIDI: keys= (core/keys.h)
 static const char *const kKeysMap2[] = {"Selected", "Channel", ""};			// (OLED)
-static const char *const kStyleMap[] = {"OLED", "Sidecar", ""};
+static const char *const kStyleMap[] = {"OLED", "Sidecar", "Grid", ""};
+static const char *const kStyleCmd[3] = {"uistyle=oled", "uistyle=sidecar", "uistyle=guide"};
 static const char *const kLookMap[] = {"Studio", "Stage", ""};	// L1: the OLED look
+static const char *const kContrastMap[] = {"Standard", "High blue", "High green", "Viper", ""};	// 0.5.1: the SIDECAR theme's high contrast
+static const char *const kContrastCmd[4] = {"uicontrast=off", "uicontrast=blue", "uicontrast=green", "uicontrast=viper"};
 static const char *const kSendName[SIDECAR_UI_SENDS] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"};
 static const char *const kAboutName[8] = {"Web page", "Address", "IP", "Web server", "Link", "USB-C", "Version", "Libraries"};
 
 // ---- the objects (both themes build all of them)
-static lv_obj_t *s_Title, *s_Rytm, *s_Blocks, *s_Underruns, *s_Note, *s_Rec;
-static lv_obj_t *s_NowPat, *s_NowTr, *s_NowRec, *s_Health;	// HOME's NOW panel (UX review T1)
-static lv_obj_t *s_Project, *s_USlot[5];
+static lv_obj_t *s_Title, *s_Rytm, *s_Blocks, *s_Underruns;
+static lv_obj_t *s_NowPat, *s_NowTr, *s_NowRec, *s_Health;	// HOME > Overview: Now, the recorder, the health line
+static lv_obj_t *s_Project, *s_USlot[5];	// (the project's name; s_USlot: the user slots' state, the health line reads it)
 static char s_UText[5][24];
 static int s_UState[5] = {-1, -1, -1, -1, -1};
 static uint32_t s_UErrT0[5];
@@ -79,19 +80,18 @@ static lv_timer_t *s_UTimer;
 
 static lv_obj_t *s_Track[SIDECAR_UI_TRACKS];
 static lv_obj_t *s_Load[SIDECAR_UI_CORES];
-static lv_obj_t *s_Touch, *s_Taps, *s_SliderVal, *s_Dot;
+static lv_obj_t *s_Dot;
 static lv_obj_t *s_Touch2, *s_Taps2;
 static lv_obj_t *s_Map;				// the UP + T map (N3)
 static lv_obj_t *s_Stale;				// F2: a mirror page while the Rytm is not connected
 static int s_nMap;			// Settings > Display's touch test (UX review T1)
-static lv_obj_t *s_TouchPanel, *s_InfoPanel, *s_Info[4];
 // UX review N1: one navigation for both themes, mirroring the device's page requests (each key captioned with its key
 // from the device's table, core/ui/page_keys.h: the Rytm's UP + T1..T13). rui1052: the table's first eight rows are
 // this column, in this order, so the captions read T1..T8 top to bottom. OLED: the column at the right edge; SIDECAR: a
 // rail at the right edge from 1024x600, a row in the header at 800x480.
 enum { NAV_HOME, NAV_SEQ, NAV_PAT, NAV_VOICE, NAV_FX, NAV_SONG, NAV_REC, NAV_SET, NAV_N };
 static const char *const kNavName[NAV_N] = {"HOME", "SEQ", "PAT", "VOICE", "FX", "SONG", "REC", "SET"};
-static const char *const kNavPage[NAV_N] = {"HOME", "SEQ", "PAT", "VOICE", "INSERT FX", "SONG", "REC", "SET"};	// the table's names
+static const char *const kNavPage[NAV_N] = {"HOME", "SEQ", "PAT", "VOICE", "FX", "SONG", "REC", "SET"};	// the table's names
 static const char *nav_t (int i)		// its caption ("T11"; "" when the device has no key for it)
 {
 	static char b[NAV_N][8];
@@ -99,6 +99,32 @@ static const char *nav_t (int i)		// its caption ("T11"; "" when the device has 
 	if (k) lv_snprintf (b[i], sizeof b[i], "%s%d", sc_keymap ()->map_key, k->code); else b[i][0] = 0;
 	return b[i];
 }
+// 0.5.1: every section has a row of sub-pages under the header (44 px keys); the first is where the T key lands, the section
+// remembers the last one used. SEQ and PAT have none here: their pages carry their own row (the tracks, the pattern's pages).
+// A pill is a page, SONG's Setup and REC's Takes are a view of theirs.
+static const char *const kHomeMap[] = {"Overview", "Status", "Project", "Perform", ""};
+static const int kHomePg[] = {PG_HOME, PG_STATUS, PG_PROJECT, PG_PERFORM};
+static const char *const kVoiceMap[] = {"Sound", "Insert", "Source", "Scope", ""};
+static const int kVoicePg[] = {PG_VOICE, PG_INS, PG_MACH, PG_SCOPE};
+#if SIDECAR_MORPH
+static const char *const kFxMap[] = {"Sends", "Master", "Morph", "XY", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_MORPH, PG_XY};
+#else
+static const char *const kFxMap[] = {"Sends", "Master", "XY", ""};
+static const int kFxPg[] = {PG_FX, PG_MFX, PG_XY};
+#endif
+static const char *const kSongMap[] = {"Timeline", "Setup", ""};
+static const int kSongPg[] = {PG_SONG, PG_SONG};
+static const char *const kRecMap[] = {"Record", "Takes", ""};
+static const int kRecPg[] = {PG_REC, PG_REC};
+static const char *const kSetMap[] = {"Sound", "MIDI", "Display", "Pool", "System", "About", ""};
+static const int kSetPg[] = {PG_SOUND, PG_MIDI, PG_DISPLAY, PG_POOL, PG_SERVICE, PG_ABOUT};
+typedef struct { const char *const *map; const int *page; int n; } sub_t;
+#define SUB(m, p)	{m, p, (int) (sizeof p / sizeof *p)}
+static const sub_t kSub[NAV_N] = {SUB (kHomeMap, kHomePg), {0, 0, 0}, {0, 0, 0}, SUB (kVoiceMap, kVoicePg), SUB (kFxMap, kFxPg),
+				  SUB (kSongMap, kSongPg), SUB (kRecMap, kRecPg), SUB (kSetMap, kSetPg)};
+static int s_nSub[NAV_N];				// each section's last pill
+
 // N3: the map's text from the same table (the device's modifier + each page request, then its combos with a map
 // text), two columns (two labels: the SIDECAR font is proportional). Each entry's first word is the key, as on the
 // Rytm; SIDECAR writes the page's words in its case ("T6 Insert FX"): a word of up to three letters is an abbreviation
@@ -143,12 +169,12 @@ static void map_cols (int mixed, char *c1, char *c2, int cap)	// c1: the title a
 static lv_obj_t *s_Home, *s_Pages, *s_Pg[PG_N], *s_Nav[NAV_N], *s_SetTitle;
 static lv_obj_t *s_PageName;			// SIDECAR's header from 1024x600: the page's name in the dot font
 static const char *const kPageName[PG_N] = {"HOME", "SOUND", "SEND FX", "ABOUT", "SEQ", "PAT", "DISPLAY", "MACHINE", "VOICE",
-	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI"};
+	"INSERT FX", "SONG", "REC", "SCOPE", "STATUS", "PROJECT", "POOL", "SYSTEM", "CHOP", "PRESET", "MASTER FX", "MORPH", "EDIT", "XY PAD", "MIDI", "PERFORM"};
 static lv_obj_t *s_UsbInfo;			// Settings > Sound: what USB-C is now, OVERBRIDGE's warning
 static lv_obj_t *s_KeysAuto, *s_KeysIn, *s_KeysLast, *s_LearnInfo;	// Settings > MIDI
 static int s_nAutoLocal;				// the auto channel the - / + keys asked for (0: none waits)
 static uint32_t s_AutoAt;				// when (lv_tick): held until the engine's state says so, or 1 s
-static lv_obj_t *s_Seg[SEG_N], *s_FifoVal, *s_DroneInfo, *s_FxName[2], *s_Bar[2][SIDECAR_UI_SENDS], *s_Kill;
+static lv_obj_t *s_Seg[SEG_N], *s_FifoVal, *s_DroneInfo, *s_FxName[2], *s_FxRoute[2], *s_Bar[2][SIDECAR_UI_SENDS], *s_Kill;
 static lv_obj_t *s_Bw[2][2];	// 0.5.0: FX k's return filter, BASE / WIDTH as dials (read only: the Rytm's SEND FX knobs G / H)
 static lv_obj_t *s_About[8], *s_Bright, *s_BrightVal, *s_Dim, *s_Power;
 static char s_Banner[96];				// the warning banner's text (s_Power draws it itself: tests read it here)
@@ -165,7 +191,7 @@ static int s_PhysW, s_PhysH;				// the screen's size (the display as the caller 
 static int s_nNavLit = -1;				// the navigation key lit now (-1: none)
 static int s_nTouchShown = 1, s_nTouchSeen = -1, s_bTouchDown;	// the touch test shown now; the caller's last value (-1: none yet)
 static unsigned s_nTaps;
-static int s_nRytm = -1, s_nPage, s_nLast = PG_SOUND, s_nPoolFrom = PG_HOME;
+static int s_nRytm = -1, s_nPage, s_nPoolFrom = PG_HOME;
 static sidecar_ui_command_t s_Cmd;
 static void *s_CmdParam;
 static sidecar_ui_status_t s_St;			// the last state given: the voice selector and a rebuild re-read it
@@ -250,31 +276,13 @@ static void tap_cb (lv_obj_t *o, int i, void *ud)
 	(void) o; (void) i; (void) ud;
 	char b[24];
 	lv_snprintf (b, sizeof b, oled () ? "TAPS %u" : "taps: %u", ++s_nTaps);
-	set_text (s_Taps, b);
 	set_text (s_Taps2, b);
 }
 
-static void slider_cb (lv_obj_t *o, int v, void *ud)
-{
-	(void) o; (void) ud;
-	char b[8];
-	lv_snprintf (b, sizeof b, "%d", v & 0xFFFF);
-	set_text (s_SliderVal, b);
-}
-
-static void touch_view (int shown)
+static void touch_view (int shown)		// HOME's touch test is the dot under the first finger (Settings > Display keeps the test)
 {
 	s_nTouchShown = shown;
-	if (shown) lv_obj_remove_flag (s_TouchPanel, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_TouchPanel, LV_OBJ_FLAG_HIDDEN);
-	if (shown) lv_obj_add_flag (s_InfoPanel, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag (s_InfoPanel, LV_OBJ_FLAG_HIDDEN);
 	if (!shown) lv_obj_add_flag (s_Dot, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void hide_cb (lv_obj_t *o, int i, void *ud)
-{
-	(void) o; (void) i; (void) ud;
-	touch_view (0);
-	command ("touchtest=0");
 }
 
 // ---- the touch calibration (Settings > Display > CALIBRATE; touch_cal.h): a cross at each of the 4 targets in turn, the
@@ -330,6 +338,66 @@ static void notice_apply (const sidecar_ui_status_t *s)
 	lv_obj_move_foreground (s_NoteOv);
 }
 
+// ---- a computer started its USB network after the boot (net=auto): "restart to use it?" (pi/engine/usbnet_cfg.h LatePrompt).
+// mode 1 asks (RESTART / NOT NOW), mode 2 says the card's work did not settle so the unit did not restart (OK); 0 hides it. The
+// answer is taken by the caller (sidecar_ui_latenet_take: 1 RESTART, 2 NOT NOW / OK); this page never reboots anything itself.
+static lv_obj_t *s_LateOv, *s_LateT1, *s_LateT2, *s_LateYes, *s_LateNo;
+static int s_nLateMode, s_nLateAns;
+static void late_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; s_nLateAns = (int) (intptr_t) ud; }
+static void late_geom (int *yx, int *nx, int *ky, int *kw, int *kh)
+{
+	*kw = LU (oled () ? 100 : 220), *kh = LU (oled () ? 28 : 60);
+	*ky = TH->h / 2 + (oled () ? LU (20) : LU (50));
+	*yx = TH->w / 2 - *kw - LU (oled () ? 8 : 16), *nx = TH->w / 2 + LU (oled () ? 8 : 16);
+}
+void sidecar_ui_latenet (int mode)
+{
+	if (mode == s_nLateMode && (mode == 0 || s_LateOv)) return;
+	s_nLateMode = mode;
+	if (mode == 0) { if (s_LateOv) lv_obj_add_flag (s_LateOv, LV_OBJ_FLAG_HIDDEN); s_nLateAns = 0; return; }
+	if (!s_LateOv)
+	{
+		s_LateOv = th_box (lv_layer_top (), 0, 0, TH->w, TH->h);
+		lv_obj_set_style_bg_color (s_LateOv, lv_color_hex (oled () ? 0x000000 : TH->bg), 0);
+		lv_obj_set_style_bg_opa (s_LateOv, LV_OPA_COVER, 0);
+		lv_obj_add_flag (s_LateOv, LV_OBJ_FLAG_CLICKABLE);		// the touches stop here
+		int tw = TH->w - 2 * LU (20), yx, nx, ky, kw, kh;
+		late_geom (&yx, &nx, &ky, &kw, &kh);
+		s_LateT1 = label_w (s_LateOv, LU (20), TH->h / 2 - (oled () ? LU (40) : LU (80)), tw, oled () ? TH->f_body : TH->f_title, TH->ink, "-");
+		lv_obj_set_style_text_align (s_LateT1, LV_TEXT_ALIGN_CENTER, 0);
+		s_LateT2 = label_w (s_LateOv, LU (20), TH->h / 2 - (oled () ? LU (14) : LU (24)), tw, oled () ? TH->f_micro : TH->f_small, TH->dim, "-");
+		lv_obj_set_style_text_align (s_LateT2, LV_TEXT_ALIGN_CENTER, 0);
+		s_LateYes = th_key (s_LateOv, yx, ky, kw, kh, "RESTART", TH_KEY_DANGER, late_cb, (void *) (intptr_t) 1);
+		s_LateNo = th_key (s_LateOv, nx, ky, kw, kh, "NOT NOW", TH_KEY, late_cb, (void *) (intptr_t) 2);
+	}
+	if (mode == 1)
+	{
+		set_text (s_LateT1, oled () ? "COMPUTER CONNECTED ON USB-C" : "Computer connected on USB-C");
+		set_text (s_LateT2, oled () ? "RESTART TO USE IT? (THE SOUND STOPS FOR THE BOOT)" : "Restart to use it? The sound stops for the boot.");
+		th_key_text (s_LateNo, "NOT NOW");
+		lv_obj_remove_flag (s_LateYes, LV_OBJ_FLAG_HIDDEN);
+	}
+	else
+	{
+		set_text (s_LateT1, oled () ? "NOT RESTARTING" : "Not restarting");
+		set_text (s_LateT2, oled () ? "THE CARD'S SAVES DID NOT FINISH IN TIME" : "The card's saves did not finish in time.");
+		th_key_text (s_LateNo, "OK");
+		lv_obj_add_flag (s_LateYes, LV_OBJ_FLAG_HIDDEN);
+	}
+	s_nLateAns = 0;
+	lv_obj_remove_flag (s_LateOv, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_move_foreground (s_LateOv);
+}
+int sidecar_ui_latenet_take (void) { int a = s_nLateAns; s_nLateAns = 0; return a; }
+int sidecar_ui_latenet_hit (int what, int *x, int *y)		// tests: 0 RESTART's middle, 1 NOT NOW / OK's; 1: it is there
+{
+	if (!s_LateOv || lv_obj_has_flag (s_LateOv, LV_OBJ_FLAG_HIDDEN) || (what == 0 && s_nLateMode != 1)) return 0;
+	int yx, nx, ky, kw, kh;
+	late_geom (&yx, &nx, &ky, &kw, &kh);
+	*x = (what ? nx : yx) + kw / 2, *y = ky + kh / 2;
+	return 1;
+}
+
 static void cal_end (void)
 {
 	s_nCalStep = -1;
@@ -355,7 +423,7 @@ static void cal_cb (lv_obj_t *o, int i, void *ud)
 	lv_obj_set_style_bg_color (s_CalV, lv_color_hex (TH->ink), 0);
 	lv_obj_set_style_bg_opa (s_CalV, LV_OPA_COVER, 0);
 	const lv_font_t *f = oled () ? TH->f_body : TH->f_title;
-	int tw = LU (oled () ? 260 : 560) + (TH->big && !oled () ? 60 : 0);
+	int tw = LU (oled () ? 260 : 620) + (TH->big && !oled () ? 60 : 0);
 	s_CalText = label_w (s_CalOv, (TH->w - tw) / 2, TH->h / 2 - (oled () ? LU (30) : LU (60)), tw, f, TH->ink, "-");
 	lv_obj_set_style_text_align (s_CalText, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_t *l = label_w (s_CalOv, (TH->w - tw) / 2, TH->h / 2 - (oled () ? LU (14) : LU (28)), tw, oled () ? TH->f_micro : TH->f_small,
@@ -406,12 +474,68 @@ static int cal_touch (int pressed, int raw_x, int raw_y, int x, int y)
 // ---- pages
 
 static void stale_view (void);
+static int pool_from_voice (void);
+// the section a page belongs to (-1: none) and its pill in that section's row (-1: none: SEQ, PAT)
+static int page_sec (int page)
+{
+	switch (page)
+	{
+	case PG_HOME: case PG_PROJECT: case PG_STATUS: case PG_PERFORM: return NAV_HOME;
+	case PG_SEQ: return NAV_SEQ;
+	case PG_RYTM: return NAV_PAT;
+	case PG_VOICE: case PG_MACH: case PG_SCOPE: case PG_CHOP: case PG_SEDIT: case PG_INS: return NAV_VOICE;
+	case PG_FX: case PG_MFX: case PG_MORPH: case PG_XY: return NAV_FX;
+	case PG_SONG: return NAV_SONG;
+	case PG_REC: return NAV_REC;
+	case PG_POOL: case PG_PRESET: return pool_from_voice () ? NAV_VOICE : NAV_SET;
+	default: return NAV_SET;
+	}
+}
+static int page_pill (int page, int sec)
+{
+	if (sec < 0 || !kSub[sec].n) return -1;
+	if (sec == NAV_SONG) return sidecar_song_explain_shown ();
+	if (sec == NAV_REC) return sidecar_rec_takes_shown ();
+	if (page == PG_CHOP || page == PG_SEDIT || (sec == NAV_VOICE && (page == PG_POOL || page == PG_PRESET))) page = PG_MACH;
+	else if (page == PG_PRESET) page = PG_POOL;
+	for (int i = 0; i < kSub[sec].n; i++) if (kSub[sec].page[i] == page) return i;
+	return -1;
+}
+// ---- pages the caller does not feed (the remote UI's app, docs/remote-ui.md): "NOT IN THE REMOTE YET" over the page, and the page's
+// navigation key / pill greyed. All pages are fed by default (the Pi's own screen never calls sidecar_ui_page_enable).
+static unsigned char s_PageOff[PG_N];
+static lv_obj_t *s_NoFeed, *s_NoFeedName;
+static void nofeed_view (void)
+{
+	const int off = s_nPage >= 0 && s_nPage < PG_N && s_PageOff[s_nPage];
+	if (s_NoFeed)
+	{
+		if (off) { set_text (s_NoFeedName, kPageName[s_nPage]); lv_obj_remove_flag (s_NoFeed, LV_OBJ_FLAG_HIDDEN); }
+		else lv_obj_add_flag (s_NoFeed, LV_OBJ_FLAG_HIDDEN);
+	}
+	for (int i = 0; i < NAV_N; i++)
+	{
+		int any = 0;
+		if (kSub[i].n)
+		{
+			for (int j = 0; j < kSub[i].n; j++)
+			{
+				any |= !s_PageOff[kSub[i].page[j]];
+				if (s_Seg[SEG_SUB + i]) th_seg_enable (s_Seg[SEG_SUB + i], j, !s_PageOff[kSub[i].page[j]]);
+			}
+		}
+		else any = !s_PageOff[i == NAV_SEQ ? PG_SEQ : PG_RYTM];
+		if (s_Nav[i]) th_key_enable (s_Nav[i], any);
+	}
+}
+
 static void show_page (int page)
 {
 	s_nPage = page;
-	int set = page == PG_SOUND || page == PG_FX || page == PG_ABOUT || page == PG_DISPLAY || page == PG_SERVICE || page == PG_MIDI;
+	int set = page == PG_SOUND || page == PG_FX || page == PG_ABOUT || page == PG_DISPLAY || page == PG_SERVICE || page == PG_MIDI;	// (Send FX: FX's first page, in the settings' box)
 	if (page) lv_obj_add_flag (s_Home, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag (s_Home, LV_OBJ_FLAG_HIDDEN);
 	if (set) lv_obj_remove_flag (s_Pages, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
+	if (s_SetTitle) th_titlebar_set (s_SetTitle, page == PG_FX ? "SEND FX" : "SETTINGS", "", 0);
 	sidecar_seqed_show (page == PG_SEQ);
 	sidecar_rytmpat_show (page == PG_RYTM);
 	if (sidecar_wgview_pool_page_shown () != (page == PG_POOL)) sidecar_wgview_pool_page (page == PG_POOL);
@@ -422,6 +546,8 @@ static void show_page (int page)
 	sidecar_mfx_show (page == PG_MFX);
 	sidecar_morph_show (page == PG_MORPH);
 	sidecar_xy_show (page == PG_XY);
+	sidecar_xy_perform_show (page == PG_PERFORM);
+	sidecar_xy_overview (page == PG_HOME);
 	sidecar_song_show (page == PG_SONG);
 	sidecar_rec_show (page == PG_REC);
 	sidecar_scope_show (page == PG_SCOPE);
@@ -434,23 +560,21 @@ static void show_page (int page)
 		if (!s_Pg[i]) continue;
 		if (i == page) lv_obj_remove_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN);
 	}
-	if (set)
-	{
-		s_nLast = page;
-		for (int i = 0; i < N_TABS; i++) if (kTabPage[i] == page) seg_set (SEG_TAB, i);
-	}
-	// the page's own key (UX review N1 / N2): a page reached from another lights that one (PROJECT, STATUS: HOME; the
-	// machine view, SCOPE: VOICE; POOL: SET); never SET for a page that is not a setting
-	int nav = page == PG_HOME || page == PG_PROJECT || page == PG_STATUS ? NAV_HOME : page == PG_SEQ ? NAV_SEQ
-		: page == PG_RYTM ? NAV_PAT : page == PG_VOICE || page == PG_MACH || page == PG_SCOPE || page == PG_CHOP || page == PG_SEDIT ? NAV_VOICE
-		: page == PG_INS || page == PG_MFX || page == PG_MORPH || page == PG_XY ? NAV_FX : page == PG_SONG ? NAV_SONG : page == PG_REC ? NAV_REC : set || page == PG_POOL || page == PG_PRESET ? NAV_SET : -1;
+	// the page's own key (UX review N1 / N2): a page reached from another lights that one (the machine view, SCOPE: VOICE; POOL:
+	// SET, or VOICE when the machine view opened it); never SET for a page that is not a setting
+	const int nav = page_sec (page), pill = page_pill (page, nav);
+	if (pill >= 0) s_nSub[nav] = pill;
 	s_nNavLit = nav;
 	for (int i = 0; i < NAV_N; i++) if (s_Nav[i]) th_key_check (s_Nav[i], i == nav);
-	if (s_PageName) set_text (s_PageName, kPageName[page]);
-	if (!oled ())
+	for (int i = 0; i < NAV_N; i++)			// the section's row, its pill lit
 	{
-		if (set) lv_obj_remove_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
+		lv_obj_t *r = s_Seg[SEG_SUB + i];
+		if (!r) continue;
+		if (i == nav && pill >= 0) { lv_obj_remove_flag (r, LV_OBJ_FLAG_HIDDEN); seg_set (SEG_SUB + i, pill); }
+		else lv_obj_add_flag (r, LV_OBJ_FLAG_HIDDEN);
 	}
+	if (s_PageName) set_text (s_PageName, kPageName[page]);
+	nofeed_view ();
 	stale_view ();
 }
 
@@ -484,18 +608,20 @@ static void voice_view (void)		// the machine and drone controls for s_nVoice, f
 	set_text (s_DroneInfo, b);
 }
 
+static void rebuild (void);
 static void style_async (void *p) { sidecar_ui_style ((int) (intptr_t) p); }
+static void contrast_async (void *p) { (void) p; rebuild (); }
 
+static void sub_go (int sec, int i);
 static void seg_cb (lv_obj_t *m, int i, void *ud)
 {
 	(void) m;
 	int id = (int) (intptr_t) ud;
 	s_Sel[id] = i;							// the control has checked it already
 	char b[40];
+	if (id >= SEG_SUB) { sub_go (id - SEG_SUB, i); return; }
 	switch (id)
 	{
-	case SEG_TAB:	if (kTabPage[i] == PG_POOL) s_nPoolFrom = s_nPage;
-			show_page (kTabPage[i]); break;
 	case SEG_NOTES:	command (i ? "notes=1" : "notes=0"); break;
 	case SEG_OUT:	command (i ? "out=tracks" : "out=main"); break;
 	case SEG_MAC:	command (i ? "mac=on" : "mac=off"); break;
@@ -520,8 +646,13 @@ static void seg_cb (lv_obj_t *m, int i, void *ud)
 		command (i ? "uilook=stage" : "uilook=studio");
 		lv_obj_invalidate (lv_screen_active ());
 		break;
+	case SEG_CONTRAST:
+		command (kContrastCmd[i < 0 || i > 3 ? 0 : i]);
+		sidecar_theme_contrast (i);
+		lv_async_call (contrast_async, 0);			// rebuilt after this event (its key is deleted then), as a theme change
+		return;
 	case SEG_STYLE:
-		command (i ? "uistyle=sidecar" : "uistyle=oled");
+		command (kStyleCmd[i < 0 || i > 2 ? 0 : i]);
 		lv_async_call (style_async, (void *) (intptr_t) i);	// rebuilt after this event (its key is deleted then)
 		return;
 	case SEG_DRONE:
@@ -565,18 +696,26 @@ static void keys_auto_cb (lv_obj_t *o, int i, void *ud)	// Settings > MIDI: the 
 	set_text (s_KeysAuto, b);
 }
 static void show_page (int page);
-static void ins_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_INS); }	// fx-ins
-static void mfx_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MFX); }
-static void morph_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_MORPH); }
-static void xy_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; show_page (PG_XY); }
+// a pill (or a section's key: its remembered pill): the page, and for SONG's Setup and REC's Takes the view of it
+static int pool_from_voice (void) { return s_nPoolFrom != PG_POOL && s_nPoolFrom != PG_PRESET && s_nPoolFrom != PG_HOME && page_sec (s_nPoolFrom) == NAV_VOICE; }
+static void sub_go (int sec, int i)
+{
+	if (i < 0 || i >= kSub[sec].n) i = 0;
+	const int page = kSub[sec].page[i];
+	if (page == PG_POOL && s_nPage != PG_POOL && s_nPage != PG_PRESET) s_nPoolFrom = s_nPage;	// PRESET is POOL's own sub-page: keep where POOL came from
+	if (sec == NAV_SONG) sidecar_song_explain (i == 1);
+	if (sec == NAV_REC) sidecar_rec_takes (i == 1);
+	if (page == PG_MACH) sidecar_wgview_want (-1);			// the Rytm's selected voice, as the VOICE page's source tap
+	if (sec == NAV_VOICE && i == 0) command ("voicepick=-1");
+	if (sec == NAV_VOICE && i == 0 && sidecar_sedit_open ()) { show_page (PG_SEDIT); return; }	// an edit open: Sound goes back to it
+	show_page (page);
+}
 static void nav_cb (lv_obj_t *o, int i, void *ud)
 {
 	(void) o; (void) i;
-	static const int kPage[NAV_N] = {PG_HOME, PG_SEQ, PG_RYTM, PG_VOICE, PG_INS, PG_SONG, PG_REC, -1};
+	static const int kPage[NAV_N] = {PG_HOME, PG_SEQ, PG_RYTM};
 	int n = (int) (intptr_t) ud;
-	if (n == NAV_VOICE) command ("voicepick=-1");		// VOICE: the Rytm's selected track again
-	if (n == NAV_VOICE && sidecar_sedit_open ()) { show_page (PG_SEDIT); return; }	// an edit open: VOICE goes back to it
-	show_page (n == NAV_SET ? s_nLast : kPage[n]);
+	if (kSub[n].n) sub_go (n, s_nSub[n]); else show_page (kPage[n]);
 }
 static void track_cb (lv_obj_t *o, int i, void *ud)		// a voice on the home page: VOICE for its first track (UX review
 {								// T3; GRANULAR / WAVETABLE: their machine view, as UP + T4 on the Rytm)
@@ -626,7 +765,7 @@ static void project_hit (lv_obj_t *parent, int x, int y, int w, int h)	// the ho
 // the POOL page: the machine view's ALL POOLS or Settings > Pool opens it, its DONE goes back to where it came from
 static void pool_page (int open)
 {
-	if (open) { if (s_nPage != PG_POOL) s_nPoolFrom = s_nPage; show_page (PG_POOL); }
+	if (open) { if (s_nPage != PG_POOL && s_nPage != PG_PRESET) s_nPoolFrom = s_nPage; show_page (PG_POOL); }
 	else show_page (s_nPoolFrom == PG_POOL ? PG_HOME : s_nPoolFrom);
 }
 // the POOL page's JUNO / 6-OP tabs open the preset page (sidecar_preset.h); its SAMPLES / TABLES / INSTR tabs go back to the
@@ -676,6 +815,188 @@ static void bright_cb (lv_obj_t *o, int v, void *ud)
 #define TBH	LU (13)			// a title bar
 #define VS(v)	((v) * (UH - LU (41)) / 199)	// a settings page's y and heights, stretched to its panel (199 or 259 dots)
 
+// 0.5.1: a page's content below the sub-page row (the page's own title bar stays at the top): everything but its first child
+// (the title bar) moves down by the row, and the page lays itself out for that much less (TH->pdy)
+static void oled_under_row (lv_obj_t *pg)
+{
+	for (uint32_t i = 1; i < lv_obj_get_child_count (pg); i++)
+	{
+		lv_obj_t *c = lv_obj_get_child (pg, (int32_t) i);
+		lv_obj_set_y (c, lv_obj_get_style_y (c, LV_PART_MAIN) + LU (25));
+	}
+}
+#define OLED_UNDER(scr, create)	do { uint32_t n0_ = lv_obj_get_child_count (scr); create; oled_under_row (lv_obj_get_child (scr, (int32_t) n0_)); } while (0)
+static void sub_build (lv_obj_t *scr)			// the rows of sub-pages: one a section, the one of the page shown is shown
+{
+	const int O = oled ();
+	for (int sec = 0; sec < NAV_N; sec++)
+	{
+		const sub_t *t = &kSub[sec];
+		if (!t->n) continue;
+		int w = t->n * LU (O ? 60 : 130), full = O ? OW : th_page_w () - LU (24);
+		lv_obj_t *m = seg (scr, SEG_SUB + sec, O ? 0 : LU (12), O ? LU (16) : LU (58), w > full ? full : w, O ? LU (22) : LU (44), t->map, TH_KEY);
+		if (!O) th_seg_font (m, TH->f_body);
+		lv_obj_add_flag (m, LV_OBJ_FLAG_HIDDEN);
+	}
+}
+
+// ---- HOME (0.5.1): Overview and Perform, one builder each for all four themes (OLED in its dots, the others from px)
+// Overview (boards T2, T12): Now, the Perform summary, the eight voices (a tap opens VOICE on it), one status line (800x480:
+// Recorder | Health | Links) that from 1024x600 up is three cards. Perform: the XY pad with HOLD and SETUP on the sub-page row,
+// the targets and two quick keys right of it. A field the UI has no data for is not drawn (docs/UI-THEMES.md "HOME").
+static lv_obj_t *s_OvMeter[SIDECAR_UI_TRACKS], *s_OvPct[SIDECAR_UI_TRACKS], *s_OvPoly[SIDECAR_UI_TRACKS];
+static lv_obj_t *s_OvXy, *s_OvFx[2], *s_OvRecDot, *s_HealthD, *s_HealthC, *s_OvLink[3], *s_PerfRec, *s_PerfKill, *s_PerfTitle;
+static int s_bOvWide;				// the status line is three cards (1024x600 and up)
+static int s_nTrouble[SIDECAR_UI_TRACKS];	// a voice tile shown as in trouble (muted)
+
+static void page_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; show_page ((int) (intptr_t) ud); }
+static void perform_setup (void) { sidecar_xy_setup (1); show_page (PG_XY); }
+static void perf_rec_cb (lv_obj_t *o, int i, void *ud)	// a take running: stop it; else the REC page (its warnings, its channels)
+{
+	(void) o; (void) i; (void) ud;
+	if (s_bHaveSt && s_St.rec == 2) command ("rec=stop"); else show_page (PG_REC);
+}
+static lv_obj_t *vline (lv_obj_t *p, int x, int y, int h)	// a divider of the status line
+{
+	lv_obj_t *l = th_box (p, x, y, 1, h);
+	lv_obj_set_style_bg_color (l, lv_color_hex (oled () ? DOT_DOTTED : TH->win_edge), 0);
+	lv_obj_set_style_bg_opa (l, LV_OPA_COVER, 0);
+	return l;
+}
+
+static void home_overview (lv_obj_t *h)
+{
+	const int O = oled (), M = O ? 0 : LU (8), g = O ? LU (3) : LU (12), E = TH->dy;
+	const int W = O ? OW : th_page_w (), cw = W - 2 * M, y0 = O ? LU (41) : LU (114);
+	const int avail = TH->h - y0 - (O ? 0 : M), wide = E > 0;
+	const lv_font_t *lab = O || THEME_BOXED (TH->id) ? TH->f_micro : TH->f_small, *val = TH->f_body;	// (SIDECAR, GRID: the guide's 11 px for supporting text)
+	if (THEME_BOXED (TH->id)) { lab = TH->f_body; val = TH->f_title; }	// SIDECAR, GRID: HOME one step bigger: supporting text the body face, values the title face
+	const uint32_t ink = O ? TH->ink : TH->win_ink, dim = O ? TH->dim : TH->win_dim;
+	const int kind = O ? TH_PANEL_GROUP : TH_PANEL_WINDOW, pad = O ? LU (4) : LU (10), top = th_panel_top ();
+	const int r1 = (O ? LU (66) : LU (110)) + E / 6, r3 = (O ? LU (47) : LU (72)) + (wide ? (O ? E / 3 : LU (40)) : 0), r2 = avail - r1 - r3 - 2 * g;
+	s_bOvWide = wide;
+	if (O)
+	{
+		s_Title = th_titlebar (h, 0, 0, OW, TBH);
+		th_titlebar_set (s_Title, "SIDECAR EXPANDER", "", 0);
+	}
+
+	// NOW: the pattern, the transport, the project
+	const int nw = (O ? LU (124) : LU (236)) + TH->dx / 4;
+	lv_obj_t *np = th_panel (h, M, y0, nw, r1, O ? "NOW" : "Now", kind);
+	s_NowPat = label (np, O ? LU (6) : LU (12), O ? LU (12) : THEME_BOXED (TH->id) ? LU (28) : LU (22), O ? TH->f_big : TH->f_hero, ink, "-");
+	const int tx = O ? LU (56) : LU (124);
+	s_NowTr = label_w (np, tx, O ? LU (14) : LU (30), nw - tx - pad, val, dim, "-");
+	label (np, O ? LU (6) : LU (12), r1 - (O ? LU (27) : LU (44)), lab, dim, O ? "PROJECT" : "Project");
+	s_Project = label_w (np, O ? LU (6) : LU (12), r1 - (O ? LU (18) : LU (28)), nw - (O ? LU (10) : LU (24)), val, ink, "-");
+	lv_label_set_long_mode (s_Project, LV_LABEL_LONG_MODE_DOTS);
+	const int pjy = r1 - (O ? LU (29) : LU (48));		// the pattern and transport open STATUS, the project's lines PROJECT
+	status_hit (np, 0, 0, nw, pjy);
+	project_hit (np, 0, pjy, nw, r1 - pjy);
+
+	// PERFORM: what the pad and the send FX are doing; a tap opens that page
+	const int px = M + nw + g, pw = cw - nw - g, tg = O ? LU (3) : LU (8), ty = O ? LU (11) : THEME_BOXED (TH->id) ? top - LU (2) : LU (18), tw = (pw - 2 * pad - 2 * tg) / 3, th = r1 - ty - pad;
+	lv_obj_t *pp = th_panel (h, px, y0, pw, r1, O ? "PERFORM" : "Perform", kind);
+	static const char *const kTileCap[3] = {"XY PAD", "SEND FX 1", "SEND FX 2"};
+	lv_obj_t **tile[3] = {&s_OvXy, &s_OvFx[0], &s_OvFx[1]};
+	for (int i = 0; i < 3; i++)
+	{
+		*tile[i] = th_key (pp, pad + i * (tw + tg), ty, tw, th, "-", TH_KEY_PAD | TH_KEY_LEFT, page_cb, (void *) (intptr_t) (i ? PG_FX : PG_PERFORM));
+		th_key_font (*tile[i], val);
+		label (*tile[i], O ? LU (4) : LU (12), O ? LU (2) : LU (7), lab, dim, kTileCap[i]);	// (the key's text edge)
+	}
+
+	// VOICES: machine, load, trouble; a tap opens VOICE on it
+	const int y1 = y0 + r1 + g;
+	lv_obj_t *vp = th_panel (h, M, y1, cw, r2, O ? "VOICES" : "Voices", kind);
+	const int vg = O ? LU (1) : LU (4), vpad = O ? LU (2) : LU (10), vw = (cw - 2 * vpad - 7 * vg) / 8, vt = O ? LU (11) : THEME_BOXED (TH->id) ? top - LU (2) : LU (18), vh = r2 - vt - vpad;
+	const int mw = O ? LU (4) : LU (8), mx = vw - mw - LU (8), lh = lv_font_get_line_height (lab);
+	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
+	{
+		s_Track[i] = th_key (vp, vpad + i * (vw + vg), vt, vw, vh, "-", TH_KEY_PAD | TH_KEY_LEFT, track_cb, (void *) (intptr_t) sidecar_ui_voice_at (i));
+		th_key_font (s_Track[i], O ? TH->f_micro : val);
+		if (O)	// a bar under the machine (a vertical one would sit on its name)
+			s_OvMeter[i] = th_meter (s_Track[i], LU (3), vh - lh - LU (8), vw - LU (6), 4, 500, TH_METER_H, TH->ink);
+		else
+			s_OvMeter[i] = th_meter (s_Track[i], mx, LU (8), mw, vh - LU (16), 500, TH_METER_V, TH->accent);
+		th_meter_set (s_OvMeter[i], -1);
+		s_OvPct[i] = label_w (s_Track[i], O ? LU (3) : LU (12), vh - lh - (O ? LU (3) : LU (7)), O ? vw - LU (6) : mx - LU (14), lab, dim, "-");
+		s_OvPoly[i] = label_w (s_Track[i], O ? LU (3) : LU (12), O ? LU (3) : LU (7), O ? vw - LU (6) : mx - LU (14), lab, dim, "");
+	}
+
+	// the status line
+	const int y2 = y1 + r2 + g;
+	memset (s_OvLink, 0, sizeof s_OvLink);
+	s_HealthC = 0;
+	const int dot = O ? LU (5) : LU (10);
+	if (!wide)
+	{
+		lv_obj_t *sp = th_panel (h, M, y2, cw, r3, "", kind);
+		const int c1 = cw * 31 / 100, c2 = cw * 67 / 100, ly = O ? LU (6) : LU (12), hy = r3 - (O ? LU (7) : LU (12)) - lv_font_get_line_height (lab);
+		vline (sp, c1, ly, r3 - 2 * ly);
+		vline (sp, c2, ly, r3 - 2 * ly);
+		s_OvRecDot = th_box (sp, pad + (O ? 0 : LU (4)), r3 / 2 - dot / 2, dot, dot);
+		s_NowRec = label_w (sp, pad + dot + (O ? LU (6) : LU (14)), r3 / 2 - lv_font_get_line_height (O ? val : TH->f_title) / 2, c1 - pad - dot - (O ? LU (8) : LU (22)), O ? val : TH->f_title, dim, "-");
+		s_Health = label_w (sp, c1 + pad, ly, c2 - c1 - 2 * pad, val, ink, "-");
+		s_HealthD = label_w (sp, c1 + pad, hy, c2 - c1 - 2 * pad, lab, dim, "");
+		s_OvLink[0] = label_w (sp, c2 + pad, ly, cw - c2 - 2 * pad, val, ink, "-");
+		s_OvLink[1] = label_w (sp, c2 + pad, hy, cw - c2 - 2 * pad, lab, dim, "");
+		rec_hit (sp, 0, 0, c1, r3);
+		status_hit (sp, c1, 0, cw - c1, r3);
+	}
+	else
+	{
+		const int a = (cw - 2 * g) * 30 / 100, b = (cw - 2 * g) * 32 / 100, c = cw - 2 * g - a - b, lh = lv_font_get_line_height (val) + (O ? LU (3) : LU (6));
+		lv_obj_t *rp = th_panel (h, M, y2, a, r3, O ? "RECORDER" : "Recorder", kind);
+		s_OvRecDot = th_box (rp, pad + (O ? 0 : LU (4)), top + (O ? 2 : lh / 2 - dot / 2 + 4), dot, dot);
+		s_NowRec = label_w (rp, pad + dot + (O ? LU (6) : LU (14)), top + (O ? 0 : 4), a - 2 * pad - dot - LU (10), O ? val : TH->f_title, dim, "-");
+		label_w (rp, pad, top + (O ? 1 : 4) + lh + (O ? LU (3) : LU (6)), a - 2 * pad, lab, dim, O ? "TAP: THE RECORDER" : "Tap: the recorder");
+		rec_hit (rp, 0, 0, a, r3);
+		lv_obj_t *hp = th_panel (h, M + a + g, y2, b, r3, O ? "HEALTH" : "Health", kind);
+		s_Health = label_w (hp, pad, top + (O ? 0 : 2), b - 2 * pad, O ? val : TH->f_title, ink, "-");
+		s_HealthD = label_w (hp, pad, top + (O ? 0 : 2) + lh + (O ? LU (2) : LU (6)), b - 2 * pad, lab, dim, "");
+		s_HealthC = label_w (hp, pad, r3 - pad - lv_font_get_line_height (lab) - (O ? 0 : LU (4)), b - 2 * pad, lab, dim, "");
+		status_hit (hp, 0, 0, b, r3);
+		lv_obj_t *kp = th_panel (h, M + a + b + 2 * g, y2, c, r3, O ? "LINKS" : "Links", kind);
+		static const char *const kLk[3] = {"Rytm", "USB-C", "Web"};
+		const int lx = O ? LU (36) : LU (58);
+		for (int i = 0; i < 3; i++)
+		{
+			label (kp, pad, top + (O ? 0 : 2) + i * lh, lab, dim, O ? (i == 0 ? "RYTM" : i == 1 ? "USB-C" : "WEB") : kLk[i]);
+			s_OvLink[i] = label_w (kp, pad + lx, top + (O ? 0 : 2) + i * lh - (O ? 0 : 2), c - 2 * pad - lx, lab, ink, "-");
+		}
+		status_hit (kp, 0, 0, c, r3);
+	}
+	if (O) rec_hit (h, OW / 2, 0, OW / 2, LU (21));		// over the title bar's REC status
+}
+
+static void home_perform (lv_obj_t *pg)
+{
+	const int O = oled (), M = O ? 0 : LU (8), g = O ? LU (3) : LU (8);
+	const int W = O ? OW : th_page_w (), cw = W - 2 * M, y0 = O ? LU (41) : LU (114), avail = TH->h - y0 - (O ? 0 : M);
+	const int kh = O ? LU (22) : LU (44), pad = O ? LU (4) : LU (12), top = th_panel_top ();
+	const int rw = (O ? LU (124) : LU (336)) + TH->dx / 3, padw = cw - rw - g, rx = M + padw + g;
+	if (O)
+	{
+		s_PerfTitle = th_titlebar (pg, 0, 0, OW, TBH);
+		th_titlebar_set (s_PerfTitle, "PERFORM", "", 0);
+	}
+	// HOLD and SETUP: at the right end of the sub-page row
+	const int sw = O ? LU (52) : LU (92), hw = O ? LU (46) : LU (80), ky = O ? LU (16) : LU (58), kg = O ? LU (3) : LU (6);
+	// the quick keys at the bottom of the right column, the targets above
+	const int qh = top + kh + (O ? LU (5) : LU (14)), qy = y0 + avail - qh, tpH = avail - qh - g;
+	const int kind = O ? TH_PANEL_GROUP : TH_PANEL_WINDOW;
+	lv_obj_t *tp = th_panel (pg, rx, y0, rw, tpH, O ? "TARGETS" : "Targets", kind);
+	lv_obj_t *qp = th_panel (pg, rx, qy, rw, qh, O ? "QUICK KEYS" : "Quick keys", kind);
+	const int qw = (rw - 2 * pad - kg) / 2;
+	lv_obj_t *k = s_PerfKill = th_key (qp, pad, top, qw, kh, O ? "KILL TAILS" : "Kill tails", TH_KEY_DANGER | (O ? TH_KEY_SMALL : 0), kill_cb, 0);
+	th_key_led (k, LED_RED + 15);
+	s_PerfRec = th_key (qp, pad + qw + kg, top, qw, kh, "REC", TH_KEY_DANGER | (O ? TH_KEY_SMALL : 0), perf_rec_cb, 0);
+	sidecar_xy_perform_t geo = {{M, y0, padw, avail}, {W - M - sw - kg - hw, ky, hw, kh}, {W - M - sw, ky, sw, kh},
+				    {pad, top + (O ? LU (2) : LU (4)), rw - 2 * pad, tpH - top - pad}, tp, perform_setup};
+	sidecar_xy_perform_create (pg, &geo);
+}
+
 static void oled_nav (lv_obj_t *scr)
 {
 	const int p = UH / NAV_N;		// 30 or 37 dots a key (60 / 74 px: above the 42 px touch minimum)
@@ -684,71 +1005,6 @@ static void oled_nav (lv_obj_t *scr)
 		s_Nav[i] = th_key (scr, NAVX, i * p, LU (45), (i == NAV_N - 1 ? UH - i * p : p) - 1, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
 		th_key_sub (s_Nav[i], nav_t (i));		// its UP + T trig, in the key's corner
 	}
-}
-
-static void oled_home (lv_obj_t *h)
-{
-	s_Title = th_titlebar (h, 0, 0, OW, TBH);
-	th_titlebar_set (s_Title, "SIDECAR EXPANDER", "", 0);
-	const int cw = (OW - LU (4)) / 2, ew = cw - LU (174);		// a column: 174 or 230 dots
-	const int th = LU (106) + TH->dy / 2, by = LU (124) + TH->dy / 2, bh = UH - by, ey = TH->dy / 6;
-
-	lv_obj_t *tp = th_panel (h, 0, LU (15), cw, th, "VOICES", TH_PANEL_GROUP);
-	const int kp = (th - LU (14)) / 4, kw = (cw - LU (8)) / 2;	// 23 / 30 dots a row, keys 83 / 111 wide
-	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
-	{
-		s_Track[i] = th_key (tp, 3 + (i / 4) * (kw + 2), LU (12) + (i % 4) * kp, kw, kp - 2, "-", TH_KEY | TH_KEY_LEFT, track_cb, (void *) (intptr_t) sidecar_ui_voice_at (i));
-	}
-
-	// UX review T1: NOW - what matters on stage: the pattern (L3: the page's hero value) and the transport, the
-	// recorder, one health line (the core loads and Overbridge numbers are STATUS's: a tap opens it)
-	lv_obj_t *ep = th_panel (h, cw + LU (4), LU (15), cw, th, "NOW", TH_PANEL_GROUP);
-	(void) ew;
-	s_NowPat = label (ep, LU (6), LU (14), TH->f_big, TH->ink, "-");
-	s_NowTr = label_w (ep, LU (66), LU (20), cw - LU (72), TH->f_body, TH->dim, "-");
-	label (ep, LU (6), LU (44) + ey, TH->f_micro, TH->dim, "REC");
-	s_NowRec = label_w (ep, LU (50), LU (42) + ey, cw - LU (56), TH->f_body, TH->ink, "-");
-	label (ep, LU (6), th - LU (32), TH->f_micro, TH->dim, "HEALTH");
-	s_Health = label_w (ep, LU (50), th - LU (34), cw - LU (56), TH->f_body, TH->ink, "-");
-	label_w (ep, LU (6), th - LU (16), cw - LU (12), TH->f_micro, TH->faint, "TAP: STATUS");
-	status_hit (ep, 0, 0, cw, th);
-
-	lv_obj_t *up = th_panel (h, 0, by, cw, bh, "PROJECT", TH_PANEL_GROUP);
-	s_Project = label_w (up, LU (6), LU (13), cw - LU (10), TH->f_title, TH->ink, "-");
-	const int sp = LU (16) + TH->dy / 10;
-	for (int i = 0; i < 5; i++)
-	{
-		char n[4];
-		lv_snprintf (n, sizeof n, "U%d", i + 1);
-		label (up, LU (6), LU (34) + i * sp, TH->f_micro, TH->dim, n);
-		s_USlot[i] = label_w (up, LU (24), LU (33) + i * sp, cw - LU (28), TH->f_body, TH->dim, "-");
-	}
-	project_hit (up, 0, 0, cw, bh);
-
-	// the touch test (until hidden), and in its place what the display already knows
-	s_TouchPanel = th_panel (h, cw + LU (4), by, cw, bh, "TOUCH TEST", TH_PANEL_GROUP);
-	th_key (s_TouchPanel, LU (4), LU (13), LU (60), LU (27) + ey, "TAP", TH_KEY_ACCENT, tap_cb, 0);
-	s_Taps = label (s_TouchPanel, LU (6), LU (44) + ey, TH->f_micro, TH->ink, "TAPS 0");
-	lv_obj_t *sl = th_slider (s_TouchPanel, LU (72), LU (16) + ey / 2, LU (69) + ew, LU (21), 0, 127, slider_cb, 0);
-	th_slider_set (sl, 0);
-	s_SliderVal = label (s_TouchPanel, LU (147) + ew, LU (21) + ey / 2, TH->f_body, TH->ink, "0");
-	label (s_TouchPanel, LU (72), LU (44) + ey, TH->f_micro, TH->dim, "RAW > SCREEN");
-	s_Touch = label_w (s_TouchPanel, LU (6), LU (56) + ey, cw - LU (10), TH->f_micro, TH->ink, "NO TOUCH YET");
-	s_Note = label_w (s_TouchPanel, LU (6), LU (68) + ey, cw - LU (10), TH->f_micro, TH->dim, "");
-	th_key (s_TouchPanel, LU (4), LU (82) + ey, cw - LU (8), LU (29) + 2 * ey, "WORKS - HIDE", TH_KEY, hide_cb, 0);
-
-	s_InfoPanel = th_panel (h, cw + LU (4), by, cw, bh, "SIDECAR", TH_PANEL_GROUP);
-	static const char *const kInfoName[4] = {"NET", "WEB", "LINK", "REC"};
-	const int ip = LU (23) + TH->dy / 8;
-	for (int i = 0; i < 4; i++)
-	{
-		label (s_InfoPanel, LU (6), LU (19) + i * ip, TH->f_micro, TH->dim, kInfoName[i]);
-		s_Info[i] = label_w (s_InfoPanel, LU (36), LU (17) + i * ip, cw - LU (40), TH->f_body, TH->ink, "-");
-	}
-	s_Rec = s_Info[3];
-	rec_hit (s_InfoPanel, 0, LU (17) + 3 * ip - 3, cw, ip);
-	lv_obj_add_flag (s_InfoPanel, LV_OBJ_FLAG_HIDDEN);
-	rec_hit (h, OW / 2, 0, OW / 2, LU (21));					// over the title bar's REC status
 }
 
 static void oled_sound (lv_obj_t *pg)
@@ -848,19 +1104,11 @@ static void oled_fx (lv_obj_t *pg)
 		int x = 9 + t * tp;
 		for (int k = 0; k < 2; k++)
 		{
-			s_Bar[k][t] = th_meter (p, x + k * (bw + 2), LU (50), bw, LU (107) + dy, 127, TH_METER_V, k ? TH->ink : th_oled_secondary (127));
+			s_Bar[k][t] = th_meter (p, x + k * (bw + 2), LU (50), bw, LU (121) + dy, 127, TH_METER_V, k ? TH->ink : th_oled_secondary (127));
 			th_meter_set (s_Bar[k][t], 0);
 			label (p, x + k * (bw + 2) + (bw - LU (5)) / 2, LU (41), TH->f_micro, k ? TH->ink : th_oled_secondary (127), k ? "2" : "1");	// T19
 		}
-		label (p, x + bw - LU (5), LU (160) + dy, TH->f_micro, TH->dim, kSendName[t]);
-	}
-	// the other FX pages: one row of four keys as tall as KILL TAILS (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
-	{
-		static const char *const kName[4] = {"INSERTS", "MASTER", "MORPH", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		const int kw = (OW - LU (12) - 3 * LU (6)) / 4;
-		for (int i = 0; i < 4; i++)
-			th_key (p, LU (6) + i * (kw + LU (6)), LU (172) + dy, kw, LU (24), kName[i], TH_KEY | TH_KEY_SMALL, kCb[i], 0);
+		label (p, x + bw - LU (5), LU (174) + dy, TH->f_micro, TH->dim, kSendName[t]);
 	}
 }
 
@@ -892,10 +1140,10 @@ static void oled_display (lv_obj_t *pg)
 	s_BrightVal = label (p, LU (297) + dx, VS (106) + (VS (22) - LU (12)) / 2, TH->f_body, TH->ink, "100 %");
 	label (p, LU (6), VS (136) + (VS (24) - LU (7)) / 2, TH->f_micro, TH->dim, "LOOK");			// UX review L1
 	seg (p, SEG_LOOK, LU (84), VS (136), LU (262) + dx, VS (24), kLookMap, TH_KEY);
-	label (p, LU (6), VS (166) + (VS (20) - LU (7)) / 2, TH->f_micro, TH->dim, "TOUCH CAL");		// touch_cal.h
-	th_key (p, LU (84), VS (166), LU (80), VS (20), "CALIBRATE", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
-	th_key (p, LU (170), VS (166), LU (50), VS (20), "RESET", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
-	s_CalState = label_w (p, LU (228), VS (166) + (VS (20) - LU (7)) / 2, LU (118) + dx, TH->f_micro, TH->ink, "DEFAULT");
+	label (p, LU (6), VS (166) + (VS (22) - LU (7)) / 2, TH->f_micro, TH->dim, "TOUCH CAL");		// touch_cal.h
+	th_key (p, LU (84), VS (166), LU (80), VS (22), "CALIBRATE", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
+	th_key (p, LU (170), VS (166), LU (50), VS (22), "RESET", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
+	s_CalState = label_w (p, LU (228), VS (166) + (VS (22) - LU (7)) / 2, LU (118) + dx, TH->f_micro, TH->ink, "DEFAULT");
 	label_w (p, LU (6), VS (190), LU (340) + dx, TH->f_micro, TH->faint, "STAGE: WHOLE DOTS. STORED ON THE CARD (/.RYTM/DISPLAY.TXT).");
 }
 
@@ -906,7 +1154,6 @@ static void oled_build (lv_obj_t *scr)
 	lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
 	s_SetTitle = th_titlebar (s_Pages, 0, 0, OW, TBH);
 	th_titlebar_set (s_SetTitle, "SETTINGS", "", 0);
-	seg (s_Pages, SEG_TAB, 0, LU (16), OW, LU (22), kTabMap, TH_KEY);
 	for (int i = 0; i < PG_N; i++)
 		if (i == PG_SOUND || i == PG_FX || i == PG_ABOUT || i == PG_DISPLAY || i == PG_SERVICE || i == PG_MIDI)
 		{
@@ -919,36 +1166,41 @@ static void oled_build (lv_obj_t *scr)
 	oled_about (s_Pg[PG_ABOUT]);
 	oled_display (s_Pg[PG_DISPLAY]);
 	oled_service (s_Pg[PG_SERVICE]);
-	oled_home (s_Home);
+	s_Pg[PG_PERFORM] = th_box (scr, 0, 0, OW, UH);
+	lv_obj_add_flag (s_Pg[PG_PERFORM], LV_OBJ_FLAG_HIDDEN);
+	home_overview (s_Home);
 	sidecar_seqed_create (scr, 0, seq_cmd, 0);
 	sidecar_seqed_set_rytm_cb (to_rytm);
 	sidecar_rytmpat_create (scr, 0, to_seq);
-	sidecar_wgview_create (scr, 0);
+	OLED_UNDER (scr, sidecar_wgview_create (scr, 0));
 	sidecar_wgview_set_command (command);
 	sidecar_wgview_set_page (pool_page);
 	sidecar_wgview_set_preset (preset_page);
-	sidecar_preset_create (scr, 0);
+	OLED_UNDER (scr, sidecar_preset_create (scr, 0));
 	sidecar_preset_set_command (command);
 	sidecar_preset_set_pool (preset_back);
-	sidecar_voice_create (scr, 0);
-	sidecar_insfx_create (scr, 0);
+	OLED_UNDER (scr, sidecar_voice_create (scr, 0));
+	sidecar_voice_set_command (command);
+	OLED_UNDER (scr, sidecar_insfx_create (scr, 0));
 	sidecar_insfx_set_command (command);
-	sidecar_mfx_create (scr, 0);
+	OLED_UNDER (scr, sidecar_mfx_create (scr, 0));
 	sidecar_mfx_set_command (command);
-	sidecar_morph_create (scr, 0);
+	OLED_UNDER (scr, sidecar_morph_create (scr, 0));
 	sidecar_morph_set_command (command);
-	sidecar_xy_create (scr, 0);
+	OLED_UNDER (scr, sidecar_xy_create (scr, 0));
 	sidecar_xy_set_command (command);
-	sidecar_song_create (scr, 0, song_cmd);
-	sidecar_rec_create (scr, 0, rec_cmd);
-	sidecar_scope_create (scr, 0);
-	sidecar_status_create (scr, 0);
-	sidecar_project_create (scr, 0, project_cmd);
-	sidecar_chop_create (scr, 0);
+	home_perform (s_Pg[PG_PERFORM]);
+	OLED_UNDER (scr, sidecar_song_create (scr, 0, song_cmd));
+	OLED_UNDER (scr, sidecar_rec_create (scr, 0, rec_cmd));
+	OLED_UNDER (scr, sidecar_scope_create (scr, 0));
+	OLED_UNDER (scr, sidecar_status_create (scr, 0));
+	OLED_UNDER (scr, sidecar_project_create (scr, 0, project_cmd));
+	OLED_UNDER (scr, sidecar_chop_create (scr, 0));
 	sidecar_chop_set_command (command);
-	sidecar_sedit_create (scr, 0);
+	OLED_UNDER (scr, sidecar_sedit_create (scr, 0));
 	sidecar_sedit_set_command (command);
 	sidecar_voice_set_tap (voice_tap);
+	sub_build (scr);
 	oled_nav (scr);
 }
 
@@ -1046,44 +1298,45 @@ static void sc_service (lv_obj_t *pg)	// UX review T18: the engineering controls
 	lv_label_set_long_mode (h, LV_LABEL_LONG_MODE_WRAP);
 }
 
-static void sc_fx (lv_obj_t *pg)
+static void sc_fx (lv_obj_t *pg)		// FX > Sends (board T4): the two FX cards, Kill tails, the send levels
 {
-	const int dx = TH->dx, dy = TH->dy;
-	lv_obj_t *p = th_panel (pg, LU (12), 0, LU (776) + dx, LU (358) + dy, "Send FX  -  the Rytm's kit sets these, read only", TH_PANEL_GROUP);
+	const int dx = TH->dx, dy = TH->dy, ph = LU (358) + dy, ch = LU (118) + dy / 6, gap = LU (8), g = THEME_BOXED (TH->id);
+	const int kw = LU (200), cw = (LU (776) + dx - kw - 2 * gap) / 2, sx = LU (12);
 	for (int k = 0; k < 2; k++)
-		s_FxName[k] = label (p, LU (12) + k * (LU (250) + dx / 4), LU (34), TH->f_big, k ? TH->bad : TH->accent, "-");
-	s_Kill = th_key (p, LU (614) + dx, LU (26), LU (150), LU (52), "Kill tails", TH_KEY_DANGER, kill_cb, 0);
+	{
+		lv_obj_t *c = th_panel (pg, sx + k * (cw + gap), 0, cw, ch, k ? "FX 2" : "FX 1", TH_PANEL_GROUP);
+		s_FxName[k] = label_w (c, LU (12), LU (34), cw - LU (12) - 2 * LU (72) - LU (12), TH->f_big, k ? TH->bad : TH->accent, "-");
+		s_FxRoute[k] = label_w (c, LU (12), LU (34) + TH->f_big->line_height + LU (10), LU (80), TH->f_small, TH->sub, "");
+		for (int j = 0; j < 2; j++)	// 0.5.0: the return filter, BASE / WIDTH as dials (read only: the Rytm's SEND FX knobs G / H)
+		{
+			s_Bw[k][j] = th_meter (c, cw - LU (8) - (2 - j) * LU (72), LU (22), LU (68), ch - LU (30), 127, TH_METER_KNOB, k ? TH->bad : TH->accent_hi);
+			th_meter_label (s_Bw[k][j], j ? "WIDTH" : "BASE");
+		}
+	}
+	lv_obj_t *kc = th_panel (pg, sx + 2 * (cw + gap), 0, kw, ch, "", TH_PANEL_GROUP);
+	s_Kill = th_key (kc, LU (8), LU (8), kw - LU (16), ch - LU (16), "Kill tails", TH_KEY_DANGER, kill_cb, 0);
 	th_key_font (s_Kill, TH->f_title);
 	th_key_led (s_Kill, LED_RED + 15);
-	// the other FX pages: one row of four keys as tall as Kill tails (fx-ins INSERT FX, MASTER FX, 0.5.0 the scenes, the XY pad)
-	{
-		static const char *const kName[4] = {"Inserts", "Master", "Morph", "XY"};
-		static const th_cb_t kCb[4] = {ins_cb, mfx_cb, morph_cb, xy_cb};
-		const int kw = (LU (760) + dx - 3 * LU (8)) / 4;
-		for (int i = 0; i < 4; i++)
-			th_key_font (th_key (p, LU (8) + i * (kw + LU (8)), LU (88), kw, LU (52), kName[i], TH_KEY, kCb[i], 0), TH->f_title);
-	}
-	lv_obj_t *w = th_panel (p, LU (8), LU (148), LU (760) + dx, LU (148) + dy, "", TH_PANEL_WINDOW);
-	const int tp = LU (62) + dx / 12, bw = LU (22) + dx / 48;		// 62 / 80 px a track, bars 22 / 26
+	lv_obj_t *kh = label_w (kc, LU (16), ch - LU (46), kw - LU (32), TH->f_micro, TH->sub, "clears both FX, like the Rytm's double STOP");
+	lv_label_set_long_mode (kh, LV_LABEL_LONG_MODE_WRAP);
+	lv_obj_set_style_text_align (kh, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_add_flag (kh, LV_OBJ_FLAG_EVENT_BUBBLE);
+	const int py = ch + gap, pph = ph - py;
+	lv_obj_t *p = th_panel (pg, sx, py, LU (776) + dx, pph, "Send levels, read only", TH_PANEL_GROUP);
+	const int hy = pph - LU (26), wy = LU (26), wh = hy - wy - LU (4);
+	lv_obj_t *w = th_panel (p, LU (8), wy, LU (760) + dx, wh, "", TH_PANEL_WINDOW);
+	const int tp = LU (62) + dx / 12, bw = LU (22) + dx / 48, bt = LU (10), bh = wh - bt - LU (26);	// 62 / 80 px a track
 	for (int t = 0; t < SIDECAR_UI_SENDS; t++)
 	{
 		int x = 10 + t * tp;
 		for (int k = 0; k < 2; k++)
 		{
-			s_Bar[k][t] = th_meter (w, x + k * (bw + LU (4)), LU (12), bw, LU (100) + dy, 127, TH_METER_V, k ? TH->bad : TH->accent_hi);
+			s_Bar[k][t] = th_meter (w, x + k * (bw + LU (4)), bt, bw, bh, 127, TH_METER_V, k ? TH->bad : TH->accent_hi);
 			th_meter_set (s_Bar[k][t], 0);
 		}
-		label (w, x + bw - LU (16), LU (118) + dy, TH->f_body, TH->win_ink, kSendName[t]);
+		label (w, x + bw - LU (16), bt + bh + LU (6), TH->f_body, TH->win_ink, kSendName[t]);
 	}
-	lv_obj_t *h = label_w (p, LU (12), LU (302) + dy, LU (440) + dx, TH->f_small, TH->sub, "Lavender: FX 1, coral: FX 2. Kill tails clears both FX "
-			       "(as the Rytm's double STOP). Base / width: each return's filter, the Rytm's SEND FX knobs G and H.");
-	// 0.5.0: each FX's return filter, BASE / WIDTH as dials (read only), right of the hint
-	for (int k = 0; k < 2; k++)
-		for (int j = 0; j < 2; j++)
-		{
-			s_Bw[k][j] = th_meter (p, LU (464) + dx + (2 * k + j) * LU (76), LU (296) + dy, LU (72), LU (58), 127, TH_METER_KNOB, k ? TH->bad : TH->accent_hi);
-		}
-	lv_label_set_long_mode (h, LV_LABEL_LONG_MODE_WRAP);
+	label_w (p, LU (12), hy, LU (740) + dx, g ? TH->f_micro : TH->f_small, TH->sub, TH->hc ? "Accent: FX 1, yellow: FX 2. The Rytm's kit sets the levels." : THEME_BOXED (TH->id) ? "Sage: FX 1, brick: FX 2. The Rytm's kit sets the levels." : "Lavender: FX 1, coral: FX 2. The Rytm's kit sets the levels.");
 }
 
 static void sc_about (lv_obj_t *pg)
@@ -1103,100 +1356,32 @@ static void sc_display (lv_obj_t *pg)
 	const lv_font_t *sm = TH->f_small;
 	const int dx = TH->dx, d = (CH (48) - LU (48)) / 2;	// labels stay centred on their taller controls
 	lv_obj_t *p = th_panel (pg, LU (12), 0, LU (776) + dx, LU (358) + TH->dy, "Display", TH_PANEL_GROUP);
-	label (p, LU (16), CY (36) + LU (14) + d, sm, TH->ink, "UI style");
-	seg (p, SEG_STYLE, LU (190), CY (36), LU (300), CH (48), kStyleMap, TH_KEY);
-	label (p, LU (504), CY (36) + LU (8) + d, sm, TH->sub, "OLED: the screen as dots.");
-	label (p, LU (504), CY (36) + LU (26) + d, sm, TH->sub, "Sidecar: cards, the web app's colours.");
-	label (p, LU (16), CY (98) + LU (14) + d, sm, TH->ink, "Screensaver");
-	seg (p, SEG_SAVER, LU (190), CY (98), LU (570) + dx, CH (48), kSaverMap, TH_KEY);
-	label (p, LU (16), CY (160) + LU (14) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
-	lv_obj_t *tk = th_key (p, LU (190), CY (160), LU (110), CH (48), "TAP", TH_KEY_FUNC, tap_cb, 0);
+	// (0.5.1: seven rows 48 px apart instead of 62, for the Contrast row; every control 44 px, the touch size)
+	label (p, LU (16), CY (22) + LU (12) + d, sm, TH->ink, "UI style");
+	seg (p, SEG_STYLE, LU (190), CY (22), LU (320), CH (44), kStyleMap, TH_KEY);
+	label (p, LU (528), CY (22) + LU (6) + d, sm, TH->sub, "OLED dots, Sidecar night blue,");
+	label (p, LU (528), CY (22) + LU (24) + d, sm, TH->sub, "Grid army green.");
+	label (p, LU (16), CY (70) + LU (12) + d, sm, TH->ink, "Screensaver");
+	seg (p, SEG_SAVER, LU (190), CY (70), LU (570) + dx, CH (44), kSaverMap, TH_KEY);
+	label (p, LU (16), CY (118) + LU (12) + d, sm, TH->ink, "Touch test");			// (UX review T1: here, not on Home)
+	lv_obj_t *tk = th_key (p, LU (190), CY (118), LU (110), CH (44), "TAP", TH_KEY_FUNC, tap_cb, 0);
 	th_key_font (tk, TH->f_title);
-	s_Taps2 = label (p, LU (316), CY (160) + LU (14) + d, sm, TH->ink, "taps: 0");
-	s_Touch2 = label_w (p, LU (420), CY (160) + LU (14) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
-	label (p, LU (16), CY (222) + LU (14) + d, sm, TH->ink, "Brightness");
-	label (p, LU (16), CY (222) + LU (32) + d, TH->f_micro, TH->sub, "(dims the picture)");
-	s_Bright = th_slider (p, LU (190), CY (222), LU (460) + dx, CH (48), 5, 100, bright_cb, 0);
-	s_BrightVal = label (p, LU (672) + dx, CY (222) + LU (14) + d, TH->f_body, TH->ink, "100 %");
-	label (p, LU (16), CY (284) + LU (14) + d, sm, TH->ink, "OLED look");						// UX review L1
-	seg (p, SEG_LOOK, LU (190), CY (284), LU (300), CH (40), kLookMap, TH_KEY);
-	label (p, LU (504), CY (284) + LU (14) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
-	label (p, LU (16), CY (330) + LU (4), sm, TH->ink, "Touch");					// touch_cal.h
-	th_key (p, LU (190), CY (330) - (TH->big ? 8 : 0), LU (130), TH->big ? 46 : 26, "Calibrate", TH_KEY | TH_KEY_SMALL, cal_cb, 0);
-	th_key (p, LU (330), CY (330) - (TH->big ? 8 : 0), LU (80), TH->big ? 46 : 26, "Reset", TH_KEY | TH_KEY_SMALL, calreset_cb, 0);
-	s_CalState = label_w (p, LU (424), CY (330) + LU (4), LU (336) + dx, sm, TH->sub, "default (the device's range)");
-}
-
-static void sc_home (lv_obj_t *h)
-{
-	const int dx = TH->dx, dy = TH->dy;
-	const int tw = LU (476) + dx * 3 / 4, th = LU (232) + dy / 2, by = LU (308) + dy / 2, bh = LU (160) + dy / 2;
-	lv_obj_t *tp = th_panel (h, LU (12), LU (64), tw, th, "Tracks", TH_PANEL_GROUP);
-	const int kw = (tw - LU (36)) / 2, kp = LU (48) + dy / 8;		// keys 220 / 304 wide, a row 48 / 63 px
-	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
-	{
-		int x = 12 + (i / 4) * (kw + 10), y = 32 + (i % 4) * kp;
-		s_Track[i] = th_key (tp, x, y, kw, kp - LU (6), "-", TH_KEY_PAD | TH_KEY_LEFT, track_cb, (void *) (intptr_t) sidecar_ui_voice_at (i));
-		th_key_font (s_Track[i], TH->f_body);
-	}
-
-	const int sx = LU (24) + tw, sw = LU (800) + dx - LU (12) - sx;		// 500 + 288, or 668 + 344
-	lv_obj_t *sp = th_panel (h, sx, LU (64), sw, th, "Now", TH_PANEL_WINDOW);	// UX review T1 (STATUS: a tap)
-	s_NowPat = label (sp, LU (12), LU (30), TH->f_hero, TH->win_ink, "-");		// the dot font: the page's hero value
-	s_NowTr = label_w (sp, LU (110), LU (36), sw - LU (122), TH->f_body, TH->win_dim, "-");
-	label (sp, LU (12), LU (80) + dy / 8, TH->f_small, TH->win_dim, "Recorder");
-	s_NowRec = label_w (sp, LU (110), LU (78) + dy / 8, sw - LU (122), TH->f_body, TH->win_ink, "-");
-	s_Rec = 0;
-	rec_hit (sp, 0, LU (70) + dy / 8, sw, LU (36));
-	label (sp, LU (12), LU (120) + dy / 4, TH->f_small, TH->win_dim, "Health");
-	s_Health = label_w (sp, LU (110), LU (118) + dy / 4, sw - LU (122), TH->f_body, TH->win_ink, "-");
-	label (sp, LU (12), th - LU (26), TH->f_micro, TH->win_dim, "Tap: the status page");
-	status_hit (sp, 0, 0, sw, LU (70) + dy / 8);
-	status_hit (sp, 0, LU (108) + dy / 4, sw, th - LU (108) - dy / 4);
-
-	const int lw = LU (380) + dx / 2, px = LU (24) + lw, pw = LU (800) + dx - LU (12) - px;	// touch test 380 / 492, project 384 / 496
-	lv_obj_t *up = th_panel (h, px, by, pw, bh, "Project", TH_PANEL_WINDOW);
-	s_Project = label_w (up, LU (12), LU (30), pw - LU (24), TH->f_body, TH->win_ink, "-");
-	lv_label_set_long_mode (s_Project, LV_LABEL_LONG_MODE_DOTS);
-	const int uc = (pw - LU (18)) / 3;
-	for (int i = 0; i < 5; i++)
-	{
-		int x = 12 + (i % 3) * uc, y = 62 + (i / 3) * (44 + dy / 4);
-		char n[4];
-		lv_snprintf (n, sizeof n, "U%d", i + 1);
-		label (up, x, y, TH->f_micro, TH->accent, n);
-		s_USlot[i] = label_w (up, x, y + LU (16), uc - LU (8), TH->f_small, TH->win_dim, "-");
-		lv_label_set_long_mode (s_USlot[i], LV_LABEL_LONG_MODE_DOTS);
-	}
-	project_hit (up, 0, 0, pw, bh);
-
-	const int e = dy / 6, ew = dx / 2;
-	s_TouchPanel = th_panel (h, LU (12), by, lw, bh, "Touch test", TH_PANEL_GROUP);
-	lv_obj_t *k = th_key (s_TouchPanel, LU (12), LU (32), LU (110), LU (48) + e, "TAP", TH_KEY_FUNC, tap_cb, 0);
-	th_key_font (k, TH->f_title);
-	s_Taps = label (s_TouchPanel, LU (12), LU (84) + e, TH->f_small, TH->ink, "taps: 0");
-	lv_obj_t *sl = th_slider (s_TouchPanel, LU (140), LU (30), LU (170) + ew, LU (40), 0, 127, slider_cb, 0);
-	th_slider_set (sl, 0);
-	s_SliderVal = label (s_TouchPanel, LU (322) + ew, LU (38), TH->f_title, TH->ink, "0");
-	label (s_TouchPanel, LU (140), LU (66) + e / 2, TH->f_micro, TH->sub, "raw -> screen");
-	s_Touch = label (s_TouchPanel, LU (140), LU (82) + e / 2, TH->f_small, TH->ink, "no touch yet");
-	s_Note = label_w (s_TouchPanel, LU (150), LU (8), LU (218) + ew, TH->f_micro, TH->dim, "");
-	lv_obj_set_style_text_align (s_Note, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_label_set_long_mode (s_Note, LV_LABEL_LONG_MODE_DOTS);
-	k = th_key (s_TouchPanel, LU (12), LU (104) + 2 * e, lw - LU (26), LU (48) + e, "Touch works - hide", TH_KEY, hide_cb, 0);
-	th_key_font (k, TH->f_title);
-
-	s_InfoPanel = th_panel (h, LU (12), by, lw, bh, "Sidecar", TH_PANEL_WINDOW);
-	static const char *const kInfoName[4] = {"Network", "Web page", "Link", "Recorder"};
-	const int ip = LU (28) + dy / 8;
-	for (int i = 0; i < 4; i++)
-	{
-		label (s_InfoPanel, LU (12), LU (36) + i * ip, TH->f_small, TH->win_dim, kInfoName[i]);
-		s_Info[i] = label_w (s_InfoPanel, LU (110), LU (34) + i * ip, lw - LU (122), TH->f_body, TH->win_ink, "-");
-		lv_label_set_long_mode (s_Info[i], LV_LABEL_LONG_MODE_DOTS);
-	}
-	rec_hit (s_InfoPanel, 0, LU (34) + 3 * ip - LU (8), lw, ip);			// the Recorder row
-	lv_obj_add_flag (s_InfoPanel, LV_OBJ_FLAG_HIDDEN);
+	s_Taps2 = label (p, LU (316), CY (118) + LU (12) + d, sm, TH->ink, "taps: 0");
+	s_Touch2 = label_w (p, LU (420), CY (118) + LU (12) + d, LU (340) + dx, sm, TH->sub, "no touch yet");
+	label (p, LU (16), CY (166) + LU (10) + d, sm, TH->ink, "Brightness");
+	label (p, LU (16), CY (166) + LU (28) + d, TH->f_micro, TH->sub, "(dims the picture)");
+	s_Bright = th_slider (p, LU (190), CY (166), LU (460) + dx, CH (44), 5, 100, bright_cb, 0);
+	s_BrightVal = label (p, LU (672) + dx, CY (166) + LU (12) + d, TH->f_body, TH->ink, "100 %");
+	label (p, LU (16), CY (214) + LU (10) + d, sm, TH->ink, "OLED look");						// UX review L1
+	seg (p, SEG_LOOK, LU (190), CY (214), LU (320), CH (44), kLookMap, TH_KEY);
+	label (p, LU (528), CY (214) + LU (10) + d, sm, TH->sub, "Stage: whole dots, lighter greys.");
+	label (p, LU (16), CY (262) + LU (10) + d, sm, TH->ink, "Contrast");						// 0.5.1: SIDECAR only
+	seg (p, SEG_CONTRAST, LU (190), CY (262), LU (570) + dx, CH (44), kContrastMap, TH_KEY);
+	if (TH->id != THEME_SIDECAR) th_seg_enable (s_Seg[SEG_CONTRAST], -1, 0);				// (the other themes keep their palette)
+	label (p, LU (16), CY (310) + LU (10) + d, sm, TH->ink, "Touch");					// touch_cal.h
+	th_key (p, LU (190), CY (310), LU (130), CH (44), "Calibrate", TH_KEY, cal_cb, 0);
+	th_key (p, LU (330), CY (310), LU (80), CH (44), "Reset", TH_KEY, calreset_cb, 0);
+	s_CalState = label_w (p, LU (424), CY (310) + LU (10) + d, LU (336) + dx, sm, TH->sub, "default (the device's range)");
 }
 
 static void logo_draw (lv_event_t *e)
@@ -1210,14 +1395,16 @@ static void sc_build (lv_obj_t *scr)
 {
 	const int W = th_page_w ();				// the rail (1024x600 and up) right of the pages
 	s_Home = th_box (scr, 0, 0, W, TH->h);
-	s_Pages = th_box (scr, 0, LU (114), W, TH->h - LU (114));		// the settings pages below their tab strip
+	s_Pages = th_box (scr, 0, LU (110), W, TH->h - LU (110));		// the settings pages below the sub-page row
 	lv_obj_add_flag (s_Pages, LV_OBJ_FLAG_HIDDEN);
 	for (int i = 0; i < PG_N; i++)
 		if (i == PG_SOUND || i == PG_FX || i == PG_ABOUT || i == PG_DISPLAY || i == PG_SERVICE || i == PG_MIDI)
 		{
-			s_Pg[i] = th_box (s_Pages, 0, 0, W, TH->h - LU (114));
+			s_Pg[i] = th_box (s_Pages, 0, 0, W, TH->h - LU (110));
 			lv_obj_add_flag (s_Pg[i], LV_OBJ_FLAG_HIDDEN);
 		}
+	s_Pg[PG_PERFORM] = th_box (scr, 0, 0, W, TH->h);		// HOME > Perform: its keys sit on the sub-page row
+	lv_obj_add_flag (s_Pg[PG_PERFORM], LV_OBJ_FLAG_HIDDEN);
 
 	// the header: the gradient band, the Docked logo, SIDECAR; from 1024x600 the page's name in the dot font and the Rytm's
 	// state at the right (the T1..T8 keys are the rail), at 800x480 the state under SIDECAR and the keys a row of pills
@@ -1226,24 +1413,29 @@ static void sc_build (lv_obj_t *scr)
 	th_titlebar_set (bar, "", "", 0);
 	lv_obj_t *logo = th_box (bar, LU (14), (LU (52) - LU (40) * 40 / 46) / 2, LU (40), LU (40) * 40 / 46);
 	lv_obj_add_event_cb (logo, logo_draw, LV_EVENT_DRAW_MAIN, 0);
-	lv_obj_t *word = label (bar, LU (64), rail ? (LU (52) - TH->f_small->line_height) / 2 : LU (9), TH->f_small, TH->dim, "SIDECAR");
-	lv_obj_set_style_text_letter_space (word, LU (3), 0);
+	// (SIDECAR, GRID: the wordmark 18 px with 2 px tracking, the page's name in 18 px, not the hero face)
+	const int gsq = THEME_BOXED (TH->id);
+	const lv_font_t *fw = gsq ? TH->f_title : TH->f_small, *fp = gsq ? TH->f_title : TH->f_hero;
+	const int ls = gsq ? 2 : LU (3);
+	lv_obj_t *word = label (bar, LU (64), rail ? (LU (52) - fw->line_height) / 2 : LU (gsq ? 5 : 9), fw, gsq ? TH->ink : TH->dim, "SIDECAR");
+	lv_obj_set_style_text_letter_space (word, ls, 0);
 	if (rail)
 	{
-		s_PageName = label (bar, LU (64) + th_text_width (TH->f_small, "SIDECAR") + 7 * LU (3) + LU (22), (LU (52) - TH->f_hero->line_height) / 2 + 1,
-				    TH->f_hero, TH->ink, "");
+		s_PageName = label (bar, LU (64) + th_text_width (fw, "SIDECAR") + 7 * ls + LU (22), (LU (52) - fp->line_height) / 2 + 1,
+				    fp, TH->ink, "");
 		s_Rytm = label_w (bar, W - LU (16) - LU (240), (LU (52) - TH->f_small->line_height) / 2, LU (240), TH->f_small, TH->win_dim, "");
 		lv_obj_set_style_text_align (s_Rytm, LV_TEXT_ALIGN_RIGHT, 0);
 		lv_obj_t *r = th_box (scr, W, 0, rail, TH->h);		// the rail: the Rytm's T1..T8, the page's key a light pill
-		lv_obj_set_style_bg_color (r, lv_color_hex (0x0D0A2A), 0);	// (the rail's own night blue; its keys at 0: the border shifts the content by 1)
+		lv_obj_set_style_bg_color (r, lv_color_hex (TH->hc ? 0x000000 : THEME_BOXED (TH->id) ? TH->bg : 0x0D0A2A), 0);	// (the rail's own night blue, black in high contrast; its keys at 0: the border shifts the content by 1)
 		lv_obj_set_style_bg_opa (r, LV_OPA_COVER, 0);
-		lv_obj_set_style_border_color (r, lv_color_hex (TH->win_edge), 0);
-		lv_obj_set_style_border_width (r, 1, 0);
+		lv_obj_set_style_border_color (r, lv_color_hex (TH->hc ? TH->accent : TH->win_edge), 0);
+		lv_obj_set_style_border_width (r, TH->hc ? 3 : gsq ? 0 : TH->edge_w, 0);	// (SIDECAR, GRID: the keys' own left edge is the line)		// (high contrast: the accent line along the rail's inner edge)
 		lv_obj_set_style_border_side (r, LV_BORDER_SIDE_LEFT, 0);
 		const int p = (TH->h - LU (6)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - 1, p, kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
+			// (SIDECAR, GRID: a pixel taller, so the keys share their edge)
+			s_Nav[i] = th_key (r, 0, LU (3) + i * p, rail - (TH->hc ? 3 : gsq ? 0 : TH->edge_w), p + (gsq && i < NAV_N - 1 ? 1 : 0), kNavName[i], TH_KEY_NAV, nav_cb, (void *) (intptr_t) i);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
 	}
@@ -1255,7 +1447,7 @@ static void sc_build (lv_obj_t *scr)
 		const int nx0 = LU (300), nkw = (W - LU (12) - nx0 + LU (4)) / NAV_N;
 		for (int i = 0; i < NAV_N; i++)
 		{
-			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4), LU (46), kNavName[i], i == NAV_SET ? TH_KEY_FUNC : TH_KEY, nav_cb, (void *) (intptr_t) i);
+			s_Nav[i] = th_key (bar, nx0 + i * nkw, 3, nkw - LU (4) + (gsq ? LU (4) + (i < NAV_N - 1) : 0), LU (46), kNavName[i], (i == NAV_SET ? TH_KEY_FUNC : TH_KEY) | TH_KEY_TAB, nav_cb, (void *) (intptr_t) i);
 			th_key_font (s_Nav[i], TH->f_small);
 			th_key_sub (s_Nav[i], nav_t (i));
 		}
@@ -1264,43 +1456,43 @@ static void sc_build (lv_obj_t *scr)
 	sidecar_seqed_create (scr, LU (52), seq_cmd, 0);
 	sidecar_seqed_set_rytm_cb (to_rytm);
 	sidecar_rytmpat_create (scr, LU (52), to_seq);
-	sidecar_wgview_create (scr, LU (52));
+	sidecar_wgview_create (scr, LU (110));
 	sidecar_wgview_set_command (command);
 	sidecar_wgview_set_page (pool_page);
 	sidecar_wgview_set_preset (preset_page);
-	sidecar_preset_create (scr, LU (52));
+	sidecar_preset_create (scr, LU (110));
 	sidecar_preset_set_command (command);
 	sidecar_preset_set_pool (preset_back);
-	sidecar_voice_create (scr, LU (52));
-	sidecar_insfx_create (scr, LU (52));
+	sidecar_voice_create (scr, LU (110));
+	sidecar_voice_set_command (command);
+	sidecar_insfx_create (scr, LU (110));
 	sidecar_insfx_set_command (command);
-	sidecar_mfx_create (scr, LU (52));
+	sidecar_mfx_create (scr, LU (110));
 	sidecar_mfx_set_command (command);
-	sidecar_morph_create (scr, LU (52));
+	sidecar_morph_create (scr, LU (110));
 	sidecar_morph_set_command (command);
-	sidecar_xy_create (scr, LU (52));
+	sidecar_xy_create (scr, LU (110));
 	sidecar_xy_set_command (command);
-	sidecar_song_create (scr, LU (52), song_cmd);
-	sidecar_rec_create (scr, LU (52), rec_cmd);
-	sidecar_scope_create (scr, LU (52));
-	sidecar_status_create (scr, LU (52));
-	sidecar_project_create (scr, LU (52), project_cmd);
-	sidecar_chop_create (scr, LU (52));
+	home_perform (s_Pg[PG_PERFORM]);
+	sidecar_song_create (scr, LU (110), song_cmd);
+	sidecar_rec_create (scr, LU (110), rec_cmd);
+	sidecar_scope_create (scr, LU (110));
+	sidecar_status_create (scr, LU (110));
+	sidecar_project_create (scr, LU (110), project_cmd);
+	sidecar_chop_create (scr, LU (110));
 	sidecar_chop_set_command (command);
-	sidecar_sedit_create (scr, LU (52));
+	sidecar_sedit_create (scr, LU (110));
 	sidecar_sedit_set_command (command);
 	sidecar_voice_set_tap (voice_tap);
 
-	seg (scr, SEG_TAB, LU (12), LU (60), W - LU (24), LU (48), kTabMap, TH_KEY);
-	th_seg_font (s_Seg[SEG_TAB], TH->f_body);
-	lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
+	sub_build (scr);
 	sc_sound (s_Pg[PG_SOUND]);
 	sc_midi (s_Pg[PG_MIDI]);
 	sc_fx (s_Pg[PG_FX]);
 	sc_about (s_Pg[PG_ABOUT]);
 	sc_display (s_Pg[PG_DISPLAY]);
 	sc_service (s_Pg[PG_SERVICE]);
-	sc_home (s_Home);
+	home_overview (s_Home);
 }
 
 // ---- the supply warning's close key (s_PowerShut above): an x painted at the banner's right end, its touch target
@@ -1470,11 +1662,19 @@ static void build (void)
 	memset (s_Seg, 0, sizeof s_Seg);
 	memset (s_Pg, 0, sizeof s_Pg);
 	memset (s_Nav, 0, sizeof s_Nav);
-	s_Title = s_Rytm = s_Rec = s_SetTitle = s_Note = s_Taps2 = s_Touch2 = s_Map = s_Stale = s_PageName = 0;
+	s_Title = s_Rytm = s_SetTitle = s_Taps2 = s_Touch2 = s_Map = s_Stale = s_PageName = 0;
+	s_NoFeed = s_NoFeedName = 0;
 	s_CalOv = s_CalState = 0;					// (the top layer was cleaned)
 	s_nCalStep = -1;
 	s_nCalCal = -1;
-	s_Blocks = s_Underruns = s_NowPat = s_NowTr = s_NowRec = s_Health = 0;
+	s_Blocks = s_Underruns = s_NowPat = s_NowTr = s_NowRec = s_Health = s_Project = 0;
+	s_OvXy = s_OvFx[0] = s_OvFx[1] = s_OvRecDot = s_HealthD = s_HealthC = s_PerfRec = s_PerfKill = s_PerfTitle = 0;
+	memset (s_OvMeter, 0, sizeof s_OvMeter);
+	memset (s_OvPct, 0, sizeof s_OvPct);
+	memset (s_OvPoly, 0, sizeof s_OvPoly);
+	memset (s_OvLink, 0, sizeof s_OvLink);
+	memset (s_nTrouble, 0, sizeof s_nTrouble);
+	s_FxRoute[0] = s_FxRoute[1] = 0;
 	memset (s_Load, 0, sizeof s_Load);
 	memset (s_USlot, 0, sizeof s_USlot);
 	if (s_UTimer) { lv_timer_delete (s_UTimer); s_UTimer = 0; }
@@ -1484,10 +1684,24 @@ static void build (void)
 	lv_obj_set_style_text_font (scr, TH->f_body, 0);
 	lv_obj_remove_flag (scr, LV_OBJ_FLAG_SCROLLABLE);
 	if (oled ()) oled_build (scr); else sc_build (scr);
-	if (!oled ()) lv_obj_add_flag (s_Seg[SEG_TAB], LV_OBJ_FLAG_HIDDEN);
 
 	// the dot under the finger (top layer, never clickable), the power warning's banner, the dimming layer
 	lv_obj_t *top = lv_layer_top ();
+	{	// the panel for a page the caller does not feed: over the content, never the navigation (under the finger's dot)
+		const int y0 = oled () ? 0 : LU (52), w = oled () ? NAVX : th_page_w (), h = TH->h - y0;
+		const lv_font_t *ft = oled () ? TH->f_body : TH->f_title;
+		s_NoFeed = th_box (top, 0, y0, w, h);
+		lv_obj_add_flag (s_NoFeed, LV_OBJ_FLAG_CLICKABLE);			// (the page under it does not get the touch)
+		lv_obj_set_style_bg_color (s_NoFeed, lv_color_hex (TH->bg), 0);
+		lv_obj_set_style_bg_opa (s_NoFeed, LV_OPA_COVER, 0);
+		lv_obj_t *l1 = label_w (s_NoFeed, 0, h / 2 - ft->line_height * 2, w, ft, TH->ink, "NOT IN THE REMOTE YET");
+		s_NoFeedName = label_w (s_NoFeed, 0, h / 2, w, ft, TH->accent, "");
+		lv_obj_t *l3 = label_w (s_NoFeed, 0, h / 2 + ft->line_height * 2, w, TH->f_micro, TH->dim, "USE THE SIDECAR SCREEN FOR THIS PAGE");
+		lv_obj_set_style_text_align (l1, LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_set_style_text_align (s_NoFeedName, LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_set_style_text_align (l3, LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_add_flag (s_NoFeed, LV_OBJ_FLAG_HIDDEN);
+	}
 	s_Dot = th_box (top, 0, 0, oled () ? LU (11) : LU (16), oled () ? LU (11) : LU (16));
 	lv_obj_set_style_radius (s_Dot, oled () ? 0 : LV_RADIUS_CIRCLE, 0);
 	lv_obj_set_style_border_color (s_Dot, lv_color_hex (oled () ? TH->ink : TH->accent), 0);
@@ -1536,11 +1750,11 @@ static void build (void)
 	}
 	char b[24];
 	lv_snprintf (b, sizeof b, oled () ? "TAPS %u" : "taps: %u", s_nTaps);
-	set_text (s_Taps, b);
 	set_text (s_Taps2, b);
 	touch_view (s_nTouchShown);
 	seg_set (SEG_STYLE, s_nStyle);
 	seg_set (SEG_LOOK, sidecar_dot_get_look ());
+	seg_set (SEG_CONTRAST, sidecar_theme_get_contrast ());
 	if (s_Seg[SEG_VOICE]) { th_seg_set (s_Seg[SEG_VOICE], sidecar_ui_voice_pos (s_nVoice)); s_Sel[SEG_VOICE] = sidecar_ui_voice_pos (s_nVoice); }
 	show_page (s_nPage);
 }
@@ -1575,7 +1789,7 @@ static void wipe_cb (lv_timer_t *t)
 
 void sidecar_ui_style (int style)
 {
-	style = style == THEME_SIDECAR ? THEME_SIDECAR : THEME_OLED;
+	style = style == THEME_SIDECAR || style == THEME_GRID ? style : THEME_OLED;
 	if (style == s_nStyle && s_nBuilt) return;
 	s_nStyle = style;
 	if (!s_nBuilt) return;					// sidecar_ui_create builds it
@@ -1589,6 +1803,7 @@ static void rebuild (void)
 	// while the pages are rebuilt, then the screen is redrawn band by band (wipe_cb)
 	lv_display_t *d = lv_display_get_default ();
 	lv_display_enable_invalidation (d, false);
+	s_LateOv = s_LateT1 = s_LateT2 = s_LateYes = s_LateNo = 0;	// (the late-computer prompt too: on the top layer, made again on demand)
 	s_NoteOv = s_Note1 = s_Note2 = 0;	// (the notice is on the top layer: cleaned with it, made again on demand)
 	lv_obj_clean (lv_layer_top ());
 	lv_obj_clean (lv_screen_active ());
@@ -1668,6 +1883,93 @@ static void fmt_rec (char *b, int cap, const sidecar_ui_status_t *s, const char 
 	else lv_snprintf (b, cap, "%s", s->rec == 1 ? (oled () ? "ARMED" : "REC armed") : off);
 }
 
+// HOME > Overview: the Perform summary, the recorder, the one thing wrong, the links (everything from the status the UI is given)
+static void home_lines (const sidecar_ui_status_t *s, int power)
+{
+	const int O = oled ();
+	const uint32_t ink = O ? TH->ink : TH->win_ink, dim = O ? TH->dim : TH->win_dim;
+	char b[80], p[6][48];
+	int np = 0;
+	// what is wrong, first the engine's, then the voices', then the user machines'
+	if (s->underruns) lv_snprintf (p[np++], sizeof p[0], O ? "%u UNDERRUNS" : "%u underruns", s->underruns);
+	if (power) lv_snprintf (p[np++], sizeof p[0], "%s", O ? "POWER TOO WEAK" : "power too weak");
+	int hi = -1, hc = -1;
+	for (int c = 0; c < SIDECAR_UI_CORES; c++) if (s->load[c] > hi) hi = s->load[c], hc = c;
+	if (hi >= 85) lv_snprintf (p[np++], sizeof p[0], O ? "CORE %d AT %d%%" : "core %d at %d %%", hc, hi);
+	if (s->temp_warn) lv_snprintf (p[np++], sizeof p[0], O ? "SOC %dC TOO HOT" : "SoC %d \xC2\xB0" "C too hot", s->temp_c);
+	if (s->lfo_full) lv_snprintf (p[np++], sizeof p[0], O ? "%s LINK FULL" : "%s link full", O ? s_BoxUp : s_Box);
+	for (int i = 0; i < SIDECAR_UI_TRACKS && np < 6; i++)
+		if (s->vmuted[sidecar_ui_voice_at (i)]) lv_snprintf (p[np++], sizeof p[0], O ? "%s MUTED BY THE GUARD" : "%s muted by the guard", sidecar_ui_voice (sidecar_ui_voice_at (i)));
+	for (int i = 0; i < 5 && np < 6; i++)
+		if (s_UState[i] >= 2 && s_UState[i] <= 5) lv_snprintf (p[np++], sizeof p[0], "U%d: %s", i + 1, s_UText[i]);
+	char cpu[64];
+	if (hi >= 0 && s->temp_c > 0) lv_snprintf (cpu, sizeof cpu, O ? "CPU %d%%  %dC  %u UNDERRUNS" : "CPU %d %% - %d \xC2\xB0" "C - %u underruns", hi, s->temp_c, s->underruns);
+	else if (hi >= 0) lv_snprintf (cpu, sizeof cpu, O ? "CPU %d%%  %u UNDERRUNS" : "CPU %d %% - %u underruns", hi, s->underruns);
+	else lv_snprintf (cpu, sizeof cpu, "%s", "");
+	if (np == 0) lv_snprintf (b, sizeof b, "%s", O ? "ALL FINE" : "All fine");
+	else if (np == 1) lv_snprintf (b, sizeof b, "%s", O ? "1 THING TO LOOK AT" : "1 thing to look at");
+	else lv_snprintf (b, sizeof b, O ? "%d THINGS TO LOOK AT" : "%d things to look at", np);
+	set_text (s_Health, b);
+	if (s_Health) th_label_color (s_Health, np ? TH->bad : O ? TH->ink : TH->ok);
+	set_text (s_HealthD, np ? p[0] : s_bOvWide ? "" : cpu);
+	set_text (s_HealthC, np ? cpu : "");
+	// the recorder
+	fmt_rec (b, sizeof b, s, O ? "OFF" : "off");
+	set_text (s_NowRec, b);
+	if (s_NowRec) th_label_color (s_NowRec, s->rec == 2 ? TH->bad : s->rec == 1 ? ink : dim);
+	if (s_OvRecDot)
+	{
+		lv_obj_set_style_bg_color (s_OvRecDot, lv_color_hex (s->rec == 2 ? TH->bad : s->rec == 1 ? ink : O ? TH->dim : TH->faint), 0);
+		lv_obj_set_style_bg_opa (s_OvRecDot, LV_OPA_COVER, 0);
+		lv_obj_set_style_radius (s_OvRecDot, O || THEME_BOXED (TH->id) ? 0 : LV_RADIUS_CIRCLE, 0);
+	}
+	// the links
+	const char *host = s->host[0] ? s->host : "sidecar.local";
+	char gad[32];
+	if (s->gadget[0]) lv_snprintf (gad, sizeof gad, "%s", s->gadget); else lv_snprintf (gad, sizeof gad, "%s", O ? "NONE" : "none");
+	if (s_bOvWide)
+	{
+		lv_snprintf (b, sizeof b, s->rytm ? (s->blocks ? (O ? "CONNECTED, OVERBRIDGE" : "connected, Overbridge") : (O ? "CONNECTED" : "connected")) : (O ? "NOT CONNECTED" : "not connected"));
+		set_text (s_OvLink[0], b);
+		if (s_OvLink[0]) th_label_color (s_OvLink[0], s->rytm ? ink : TH->bad);
+		lv_snprintf (b, sizeof b, s->mac > 0 ? (O ? "%s, AUDIO ON" : "%s, computer audio on") : "%s", gad);
+		set_text (s_OvLink[1], b);
+		if (O) lv_snprintf (b, sizeof b, "%s", s->ip[0] ? s->ip : "NOT UP");
+		else lv_snprintf (b, sizeof b, "%s - %s", host, s->ip[0] ? s->ip : "not up");
+		set_text (s_OvLink[2], b);
+	}
+	else
+	{
+		set_text (s_OvLink[0], host);
+		if (O) lv_snprintf (b, sizeof b, "%s", s->ip[0] ? s->ip : "NOT UP");
+		else lv_snprintf (b, sizeof b, "%s%s%s%s", s->ip[0] ? s->ip : "not up", s->gadget[0] ? " - USB-C " : "", s->gadget[0] ? gad : "", "");
+		set_text (s_OvLink[1], b);
+	}
+	// the Perform summary: the pad's HOLD and its first targets (while the engine's view is wanted: sidecar_xy_wanted), the send FX
+	char xn[16], yn[16], t2[40];
+	sidecar_xy_axes (xn, yn, sizeof xn);
+	if (xn[0] || yn[0]) lv_snprintf (t2, sizeof t2, "%s%s%s%s%s", xn[0] ? "X " : "", xn, xn[0] && yn[0] ? "  " : "", yn[0] ? "Y " : "", yn);
+	else lv_snprintf (t2, sizeof t2, "%s", O ? "NO TARGETS" : "no targets");
+	if (s_OvXy)
+	{
+		th_key_text (s_OvXy, sidecar_xy_hold_shown () ? (O ? "HOLD ON" : "Hold on") : (O ? "HOLD OFF" : "Hold off"));
+		char t3[40];
+		const lv_font_t *tf = O ? TH->f_micro : TH->f_small;
+		const int tfw = lv_obj_get_width (s_OvXy) - (O ? LU (10) : LU (22));
+		if (th_text_width (tf, t2) > tfw && xn[0]) lv_snprintf (t2, sizeof t2, "X %s", xn);		// both do not fit: X's
+		th_fit_middle (t3, sizeof t3, tf, t2, tfw);
+		th_key_sub (s_OvXy, t3);
+	}
+	for (int k = 0; k < 2; k++)
+	{
+		if (!s_OvFx[k]) continue;
+		int off = !s->fx_type[k][0] || !strcmp (s->fx_type[k], "OFF");
+		th_key_text (s_OvFx[k], s->fx_type[k][0] ? s->fx_type[k] : "-");
+		th_key_sub (s_OvFx[k], off ? "" : s->fx_post[k] ? (O ? "POST" : "post") : (O ? "PRE" : "pre"));
+	}
+	if (s_PerfRec) th_key_text (s_PerfRec, s->rec == 2 ? (O ? "STOP REC" : "Stop rec") : "REC");
+}
+
 // HOME's U1..U5 as the last status gave them: the text, the state (rmp_slot_state: 0 empty 1 ready 2..5 a problem
 // 6 loading) and when an error began; a timer moves the loading dots and blinks a new error (L2: 1 Hz for 3 s)
 static void uslot_tick (lv_timer_t *t);
@@ -1704,9 +2006,22 @@ static void uslot_paint (void)
 }
 static void uslot_tick (lv_timer_t *t) { (void) t; uslot_paint (); }
 
+// the lit pill follows the page's own view (SONG's how-to closed by its CANCEL, REC's TAKES)
+static void sub_sync (void)
+{
+	const int sec = s_nNavLit;
+	if (sec < 0 || !s_Seg[SEG_SUB + sec]) return;
+	const int p = page_pill (s_nPage, sec);
+	if (p >= 0) { s_nSub[sec] = p; seg_set (SEG_SUB + sec, p); }
+}
+
 void sidecar_ui_status (const sidecar_ui_status_t *s)
 {
+	sub_sync ();
 	char b[80];
+	const int cin = s->ui_contrast >= 0 && s->ui_contrast <= 3 ? s->ui_contrast : s->ui_contrast >= 0 ? 0 : -1;	// (what sidecar_theme_contrast keeps of it)
+	const int cchg = cin >= 0 && cin != sidecar_theme_get_contrast ();	// the stored high contrast (SIDECAR only)
+	if (cchg) sidecar_theme_contrast (s->ui_contrast);		// (before any rebuild below: its build reads it)
 	if (box_take (s) && s_nBuilt)					// another box: its words on every page, built anew
 	{
 		s_St = *s;
@@ -1724,6 +2039,13 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 			sidecar_ui_style (s->ui_style);			// its build applies s
 			return;
 		}
+	}
+	if (cchg && s_nStyle == THEME_SIDECAR)				// (the other themes keep the value and ignore it)
+	{
+		s_St = *s;
+		s_bHaveSt = 1;
+		rebuild ();						// its build applies s
+		return;
 	}
 	if (s->ui_look >= 0 && s->ui_look != sidecar_dot_get_look ())		// the stored look (L1)
 	{
@@ -1792,8 +2114,8 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		lv_obj_add_flag (s_Power, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_add_flag (s_PowerX, LV_OBJ_FLAG_HIDDEN);
 	}
-	{	// HOME's NOW panel (UX review T1): the pattern, the transport, the recorder, one health line (an alert inverted)
-		uint32_t ink = oled () ? TH->ink : TH->win_ink, dim = oled () ? TH->dim : TH->win_dim;
+	{	// HOME > Overview's Now: the pattern and the transport (the recorder, the health and the links: after the user slots below)
+		uint32_t dim = oled () ? TH->dim : TH->win_dim;
 		if (s->pattern >= 0) lv_snprintf (b, sizeof b, "%c%02d", 'A' + s->pattern / 16 % 8, s->pattern % 16 + 1);
 		else lv_snprintf (b, sizeof b, "-");
 		set_text (s_NowPat, b);
@@ -1802,29 +2124,12 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		set_text (s_NowTr, !s->rytm ? nb : s->transport == 1 ? (oled () ? "PLAYING" : "playing")
 				    : s->transport == 2 ? (oled () ? "PAUSED" : "paused") : (oled () ? "STOPPED" : "stopped"));
 		if (s_NowTr) th_label_color (s_NowTr, s->transport == 1 ? (oled () ? 0xFFFFFF : TH->ok) : dim);
-		fmt_rec (b, sizeof b, s, oled () ? "OFF" : "off");
-		set_text (s_NowRec, b);
-		if (s_NowRec) th_label_color (s_NowRec, s->rec == 2 ? TH->bad : s->rec == 1 ? ink : dim);
-		int hi = -1, hc = -1;
-		for (int c = 0; c < SIDECAR_UI_CORES; c++) if (s->load[c] > hi) hi = s->load[c], hc = c;
-		if (s->underruns) lv_snprintf (b, sizeof b, oled () ? "UNDERRUNS %u" : "%u underruns", s->underruns);
-		else if (power) lv_snprintf (b, sizeof b, "%s", oled () ? "POWER TOO WEAK" : "power too weak");	// (its banner's reminder)
-		else if (hi >= 85) lv_snprintf (b, sizeof b, oled () ? "CORE %d AT %d%%" : "core %d at %d %%", hc, hi);
-		else lv_snprintf (b, sizeof b, oled () ? "ALL FINE" : "all fine");
-		set_text (s_Health, b);
-		if (s_Health) th_label_color (s_Health, s->underruns || power || hi >= 85 ? TH->bad : ink);
 	}
 	lv_snprintf (b, sizeof b, "%u", s->blocks);
 	set_text (s_Blocks, b);
 	lv_snprintf (b, sizeof b, "%u", s->underruns);
 	set_text (s_Underruns, b);
 	if (s_Underruns) th_label_color (s_Underruns, s->underruns ? TH->bad : oled () ? TH->ink : TH->win_ink);
-	if (!oled () && s_Rec)
-	{
-		if (s->rec == 2 || s->rec == 1) fmt_rec (b, sizeof b, s, ""); else b[0] = 0;
-		set_text (s_Rec, b);
-		th_label_color (s_Rec, s->rec == 2 ? TH->bad : TH->win_dim);
-	}
 	for (int c = 0; c < SIDECAR_UI_CORES; c++)
 	{
 		if (!s_Load[c]) continue;
@@ -1834,18 +2139,26 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		th_meter_label (s_Load[c], b);
 		th_meter_set (s_Load[c], l < 0 ? -1 : l > 100 ? 100 : l);
 	}
-	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)
+	for (int i = 0; i < SIDECAR_UI_TRACKS; i++)		// HOME's voice tiles: the machine, the render load, trouble
 	{
-		int vi = sidecar_ui_voice_at (i);
+		const int vi = sidecar_ui_voice_at (i), l = s->vload[vi], muted = s->vmuted[vi];
 		const char *n = s->track[vi] && s->track[vi][0] ? s->track[vi] : "-";
-		if (oled ()) lv_snprintf (b, sizeof b, "%s %s", sidecar_ui_voice (vi), n);
-		else lv_snprintf (b, sizeof b, "%s   %s", sidecar_ui_voice (vi), n);
-		th_key_text (s_Track[i], b);
-		th_key_sub (s_Track[i], s->poly >> vi & 1 ? (oled () ? "POLY TRACK" : "poly track") : "");	// S1
+		th_key_text (s_Track[i], sidecar_ui_voice (vi));
+		th_key_sub (s_Track[i], n);
+		th_meter_set (s_OvMeter[i], l < 0 ? -1 : l > 500 ? 500 : l);
+		if (muted) lv_snprintf (b, sizeof b, "%s", oled () ? "MUTED" : "muted");
+		else if (l < 0) lv_snprintf (b, sizeof b, "-");
+		else if (l < 100) lv_snprintf (b, sizeof b, "%d.%d%%", l / 10, l % 10);
+		else lv_snprintf (b, sizeof b, "%d%%", (l + 5) / 10);
+		set_text (s_OvPoly[i], s->poly >> vi & 1 ? (oled () ? "POLY" : "poly") : "");		// S1: a poly track
+		set_text (s_OvPct[i], b);
+		if (s_OvPct[i]) th_label_color (s_OvPct[i], muted ? TH->bad : oled () ? TH->dim : TH->win_dim);
+		if (s_Track[i] && s_nTrouble[i] != muted + 1)
+		{
+			s_nTrouble[i] = muted + 1;
+			th_key_kind (s_Track[i], (muted ? TH_KEY_DANGER : TH_KEY_PAD) | TH_KEY_LEFT);
+		}
 	}
-	set_text (s_Note, s->note && !power ? s->note : "");		// (the supply warning: in the title bar)
-	if (s_Note) th_label_color (s_Note, TH->dim);
-	set_text (s_Project, s->project[0] ? s->project : "-");
 	for (int i = 0; i < 5; i++)
 	{
 		// UX review T2 / L2: an error is inverted with its reason spelled out ("!" no longer a glyph that reads as I),
@@ -1866,7 +2179,7 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 				for (int k = 0; k < 6; k++)
 					if ((int) strlen (kTag[k][0]) == sp - t && !strncmp (t, kTag[k][0], (size_t) (sp - t))) word = kTag[k][1], name = sp + 1;
 			lv_snprintf (b, sizeof b, "%s %s", word, name);
-			if (th_text_width (lv_obj_get_style_text_font (s_USlot[i], 0), b) > (int) lv_obj_get_style_width (s_USlot[i], 0))
+			if (s_USlot[i] && th_text_width (lv_obj_get_style_text_font (s_USlot[i], 0), b) > (int) lv_obj_get_style_width (s_USlot[i], 0))
 				lv_snprintf (b, sizeof b, "%s", word);		// (label_w: a plain width)
 		}
 		else
@@ -1894,16 +2207,8 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 		s_nTouchSeen = s->touch_hidden;
 		touch_view (!s->touch_hidden);
 	}
-	lv_snprintf (b, sizeof b, "%s", s->ip[0] ? s->ip : "not up");
-	set_text (s_Info[0], b);
-	if (oled ()) lv_snprintf (b, sizeof b, "%s", s->host[0] ? s->host : "sidecar.local");
-	else lv_snprintf (b, sizeof b, "http://%s/", s->host[0] ? s->host : "sidecar.local");
-	set_text (s_Info[1], b);
-	lv_snprintf (b, sizeof b, "%s%s%s", s->link, s->gadget[0] ? (oled () ? ", USB-C " : ", USB-C ") : "", s->gadget);
-	set_text (s_Info[2], b);
-	fmt_rec (b, sizeof b, s, oled () ? "OFF" : "off");
-	set_text (s_Info[3], b);
-	if (oled ()) th_label_color (s_Info[3], s->rec == 2 ? TH->bad : TH->ink);
+	set_text (s_Project, s->project[0] ? s->project : "-");
+	home_lines (s, power);
 
 	// the settings pages: only what changed reaches LVGL (and a hidden page costs no drawing)
 	s_St = *s;
@@ -1924,23 +2229,17 @@ void sidecar_ui_status (const sidecar_ui_status_t *s)
 	{
 		const char *t = s->fx_type[k][0] ? s->fx_type[k] : "-";
 		const char *pp = s->fx_type[k][0] && strcmp (s->fx_type[k], "OFF") ? (s->fx_post[k] ? "  POST" : "  PRE") : "";
-		lv_snprintf (b, sizeof b, "FX %d  %s%s", k + 1, t, pp);
+		if (oled ()) lv_snprintf (b, sizeof b, "FX %d  %s%s", k + 1, t, pp);
+		else lv_snprintf (b, sizeof b, "%s", t);			// (the card says which FX)
 		set_text (s_FxName[k], b);
+		if (s_FxRoute[k]) set_text (s_FxRoute[k], pp + (pp[0] ? 2 : 0));
 		for (int t2 = 0; t2 < SIDECAR_UI_SENDS; t2++) th_meter_set (s_Bar[k][t2], s->send[k][t2]);
 		for (int j = 0; j < 2; j++)
 			if (s_Bw[k][j])
 			{
 				th_meter_set (s_Bw[k][j], s->fx_bw[k][j]);
-				if (oled ())
-				{
-					lv_snprintf (b, sizeof b, "%d", s->fx_bw[k][j]);
-					th_meter_value (s_Bw[k][j], b);
-				}
-				else	// SIDECAR: one caption line, so all four knobs draw alike (the value fits inside the ring only when short)
-				{
-					lv_snprintf (b, sizeof b, "%d %s %d", k + 1, j ? "WID" : "BASE", s->fx_bw[k][j]);
-					th_meter_label (s_Bw[k][j], b);
-				}
+				lv_snprintf (b, sizeof b, "%d", s->fx_bw[k][j]);
+				th_meter_value (s_Bw[k][j], b);
 			}
 	}
 	lv_snprintf (b, sizeof b, "http://%s/", s->host[0] ? s->host : "sidecar.local");
@@ -2048,6 +2347,18 @@ void sidecar_ui_combo_map (int on)
 	if (on) lv_obj_remove_flag (s_Map, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag (s_Map, LV_OBJ_FLAG_HIDDEN);
 }
 int sidecar_ui_combo_map_shown (void) { return s_Map && !lv_obj_has_flag (s_Map, LV_OBJ_FLAG_HIDDEN); }
+// HOME > Overview's parts, the middle of each (UI coordinates; the host's taps): 0..7 the voice tiles in their order, 8 Now, 9 the XY tile,
+// 10 / 11 the send FX tiles, 12 the recorder, 13 health, 14 links, 15 Perform's REC key
+int sidecar_ui_home_hit (int what, int *x, int *y)
+{
+	lv_obj_t *o = what >= 0 && what < 8 ? s_Track[what] : what == 8 ? s_NowPat : what == 9 ? s_OvXy : what == 10 || what == 11 ? s_OvFx[what - 10]
+		    : what == 12 ? s_NowRec : what == 13 ? s_Health : what == 14 ? s_OvLink[0] : what == 15 ? s_PerfRec : what == 16 ? s_PerfKill : 0;
+	if (!o) return 0;
+	lv_area_t c;
+	lv_obj_get_coords (o, &c);
+	*x = (c.x1 + c.x2) / 2, *y = (c.y1 + c.y2) / 2;
+	return 1;
+}
 unsigned sidecar_ui_taps (void) { return s_nTaps; }
 int sidecar_ui_touch_test_shown (void) { return s_nTouchShown; }
 void sidecar_ui_touch_cal_start (void) { cal_cb (0, 0, 0); }
@@ -2058,11 +2369,22 @@ void sidecar_ui_show (int page)
 	show_page (page < 0 || page >= PG_N ? PG_HOME : page);
 }
 
+int sidecar_ui_nofeed_shown (void) { return s_NoFeed && !lv_obj_has_flag (s_NoFeed, LV_OBJ_FLAG_HIDDEN); }
+int sidecar_ui_nav_enabled (int i) { return i >= 0 && i < NAV_N && s_Nav[i] && !lv_obj_has_state (s_Nav[i], LV_STATE_DISABLED); }
+
+int sidecar_ui_page_count (void)	{ return PG_N; }
+
+void sidecar_ui_page_enable (int page, int on)
+{
+	if (page < 0 || page >= PG_N || s_PageOff[page] == !on) return;
+	s_PageOff[page] = !on;
+	if (s_nBuilt) nofeed_view ();
+}
+
 void sidecar_ui_touch (int pressed, int raw_x, int raw_y, int x, int y)
 {
 	char b[48];
 	lv_snprintf (b, sizeof b, "%d,%d > %d,%d%s", raw_x, raw_y, x, y, pressed ? "" : (oled () ? " UP" : " (up)"));
-	set_text (s_Touch, b);
 	set_text (s_Touch2, b);
 	if (cal_touch (pressed, raw_x, raw_y, x, y)) return;
 	// UX review T1: HOME's touch test goes once a tap was seen (the first one, at its release): stored as hidden; it

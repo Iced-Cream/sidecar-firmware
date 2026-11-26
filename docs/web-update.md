@@ -10,6 +10,10 @@ download by the Sidecar or the page: you download one file from the release page
 3. Pick the file. The page checks it at once: a damaged or incomplete download, a file that is not a Sidecar update or
    one without this board's firmware is refused here, before anything is sent. It then says what it will do:
    "Update from 0.5.0 to 0.5.1". The same version again, or an older one, needs the box "Install it anyway".
+   **0.5.1.1 and a Sidecar before it:** a version with a fourth number (0.5.1.1) is read from 0.5.1.1 on. A Sidecar that
+   runs 0.5.1 or 0.5.0 cannot compare it ("The versions cannot be compared"): tick "Install it anyway" once; the file is
+   still checked completely and installs as a trial like any other. From 0.5.1.1 on the page and the Sidecar order
+   0.5.1 < 0.5.1.1 < 0.5.2 and offer the update without the box.
 4. Install. The file goes up (a progress bar), the Sidecar checks it again and restarts into the new version *on
    trial*: audio stops for about a minute. Leave the Sidecar switched on until the page says it is done.
 5. After the restart the page reconnects by itself and follows the trial: "Trying 0.5.1 (abc1234): permanent in 20 s",

@@ -40,8 +40,8 @@ typedef struct
 
 static const seq_geo_t kGeoSidecar = {
 	.pg_h = 428,
-	.strip_x = 430, .strip_y = 4, .strip_w = 222, .strip_h = 48, .cell = 28,
-	.tracks_x = 254, .tracks_y = 4, .tracks_w = 168, .tracks_h = 48,
+	.strip_x = 430, .strip_y = 6, .strip_w = 222, .strip_h = 44, .cell = 28,	// (the header row: 44 px keys, as the sub-page rows of the other sections)
+	.tracks_x = 254, .tracks_y = 6, .tracks_w = 168, .tracks_h = 44,
 	.rul_y = 56, .rul_h = 14, .grid_x = 52, .grid_y = 70, .grid_w = 640, .grid_h = 280, .keys_x = 8, .keys_w = 40,
 	.lane_x = 8, .lane_y = 354, .lane_w = 684, .lane_h = 70,
 	.tools_x = 700, .tools_y = 56, .tools_w = 92, .tools_h = 6 * 42 + 5 * 4,	// (touch2: six tools of 42 px; seqx: seven of 35)
@@ -137,6 +137,7 @@ static void geo_size (const seq_geo_t *b)
 
 
 static lv_obj_t *s_Page, *s_Grid, *s_Keys, *s_Ruler, *s_Strip, *s_Lane, *s_Head, *s_Card, *s_CardText, *s_CardSub;
+static lv_obj_t *s_Cell[3];		// GRID's info row: the tempo's label, value and unit
 static lv_obj_t *s_Title, *s_TitleBar, *s_Where, *s_Tracks, *s_Tools, *s_Snap, *s_Undo, *s_Redo, *s_Empty, *s_Zoom;
 static lv_obj_t *s_Panel[SEQED_TOOLS];			// the lane's place for CHORD, STRUM, HUMAN, KEY, SWING, POLY (index = tool)
 static lv_obj_t *s_ChordM, *s_InvM, *s_ChStrM, *s_StrumM, *s_DirM, *s_HumTM, *s_HumVM, *s_RootM, *s_ScaleM, *s_PanelInfo[SEQED_TOOLS];
@@ -315,8 +316,9 @@ static uint32_t note_rgb (int step, int micro, int len, int vel, int muted, int 
 		return notes_at (step) > 1 ? th_oled_accent (vel) : th_oled_secondary (vel);
 	}
 	if (muted) return TH->muted;
-	if (sel) return TH->bad;
-	uint32_t c = th_mix (0x6A66CC, TH->accent_hi, clampi (vel * 256 / 127, 0, 256));	// (dark text on it >= 4.5:1)
+	if (sel) return THEME_BOXED (TH->id) ? TH->accent : TH->bad;				// (SIDECAR, GRID: the selected is green)
+	uint32_t c = th_mix (THEME_BOXED (TH->id) ? th_mix (TH->bg, TH->accent_hi, 150) : 0x6A66CC, TH->accent_hi, clampi (vel * 256 / 127, 0, 256));	// (dark text on it >= 4.5:1; SIDECAR, GRID: sage, 60 % .. 100 %)
+	if (TH->hc) c = TH->accent;				// high contrast: the accent, whatever the velocity (the lane shows it)
 	return lit ? th_mix (c, TH->ink, 170) : c;
 }
 
@@ -397,7 +399,7 @@ static void draw_note (lv_layer_t *l, const lv_area_t *c, int step, int micro, i
 	{
 		if (sel)						// held: a white frame, the resize grip a dark column
 		{
-			frame (l, c, a.x1 - 1, a.y1 - 1, a.x2 + 1, a.y2 + 1, 0xFFFFFF, 1, 0);
+			frame (l, c, a.x1 - 1, a.y1 - 1, a.x2 + 1, a.y2 + 1, TH->hc == 3 ? TH->accent_hi : 0xFFFFFF, 1, 0);
 			if (a.x2 - a.x1 >= 6) fill (l, c, a.x2 - 2, a.y1, a.x2 - 2, a.y2, 0x000000, LV_OPA_COVER, 0);
 		}
 		if (s_RowH >= LU (8) && a.x2 - a.x1 >= LU (20))		// the name in the micro face (7 rows) on a bar of 7 rows or more (T4)
@@ -498,6 +500,7 @@ static void keys_draw (lv_event_t *e)
 			continue;
 		}
 		fill (l, &c, 0, y + 1, KEYS_W - 1, y2 - 1, black_key (p) ? TH->key_black : TH->key_white, LV_OPA_COVER, 3);
+		if (TH->hc) frame (l, &c, 0, y + 1, KEYS_W - 1, y2 - 1, TH->hc == 3 ? TH->accent : 0xFFFFFF, 1, 3);	// high contrast: every key edged white
 		if (s_Scale && in_scale (p))
 			fill (l, &c, KEYS_W - 4, y + 2, KEYS_W - 2, y2 - 3, p % 12 == s_Root % 12 ? TH->accent : TH->line_beat, LV_OPA_COVER, 1);
 		if (p % 12 == 0 || (p % 12 == s_Root % 12 && s_RowH >= 12))
@@ -505,7 +508,7 @@ static void keys_draw (lv_event_t *e)
 			char b[8];
 			note_name (p, b, sizeof b);
 			text (l, &c, 3, y + (s_RowH - LU (14)) / 2, KEYS_W - LU (8), TH->f_micro,
-			      p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->win_dim, LV_TEXT_ALIGN_LEFT, b);
+			      TH->hc ? 0x000000 : p % 12 == s_Root % 12 && s_Scale ? TH->accent_hi : TH->win_dim, LV_TEXT_ALIGN_LEFT, b);	// (high contrast: on a light key)
 		}
 	}
 	if (oled ())					// the C labels last: micro text on a black patch over the 5-dot rows
@@ -590,7 +593,7 @@ static void lane_draw (lv_event_t *e)
 		if (x0 < 0 || x0 >= GRID_W) continue;
 		if (x1 < x0) x1 = x0;
 		int k = nl > SEQED_LOCKS ? SEQED_LOCKS : nl;
-		uint32_t col = oled () ? (k >= 4 ? TH->ink : TH->dim) : th_mix (TH->win_edge, TH->lock, 80 + 176 * k / SEQED_LOCKS);
+		uint32_t col = TH->hc ? TH->lock : oled () ? (k >= 4 ? TH->ink : TH->dim) : th_mix (TH->win_edge, TH->lock, 80 + 176 * k / SEQED_LOCKS);
 		fill (l, &c, ox + x0, 0, ox + x1, oled () ? 2 : 4, col, LV_OPA_COVER, 0);
 	}
 	// seqtop: a step's extras, one mark each (the most telling): R a ratchet / arp, F an FX command, ~ random notes,
@@ -1531,11 +1534,25 @@ static void header_update (void)
 		else lv_snprintf (pg, sizeof pg, "%d/%d", s_First + 1, npages ());
 		if (s_V.bpm10 > 0) lv_snprintf (b, sizeof b, "%s %d.%d  %s%s", tr, s_V.bpm10 / 10, s_V.bpm10 % 10, pg, sw);
 		else lv_snprintf (b, sizeof b, "%s  %s%s", tr, pg, sw);
-		set_text (s_Title, b);
-		if (s_V.track >= 0)
-			lv_snprintf (b, sizeof b, "%s  %s  T%d", s_V.project[0] ? s_V.project : "-", pat, s_V.track + 1);
-		else lv_snprintf (b, sizeof b, "%s  %s", s_V.project[0] ? s_V.project : "-", pat);
-		set_text (s_Where, b);
+		if (THEME_BOXED (TH->id))	// the grid's table cells: a 11 px label over an 18 px value, the unit 11 px
+		{
+			if (s_V.track >= 0) lv_snprintf (b, sizeof b, "SEQUENCER / %s / T%d", pat, s_V.track + 1);
+			else lv_snprintf (b, sizeof b, "SEQUENCER / %s", pat);
+			set_text (s_Title, b);
+			set_text (s_Where, s_V.project[0] ? s_V.project : "-");
+			if (s_V.bpm10 > 0) lv_snprintf (b, sizeof b, "%d.%d", s_V.bpm10 / 10, s_V.bpm10 % 10); else lv_snprintf (b, sizeof b, "-");
+			set_text (s_Cell[1], b);
+			lv_obj_set_x (s_Cell[2], lv_obj_get_x (s_Cell[1]) + th_text_width (TH->f_title, b) + LU (4));
+			set_text (s_Cell[2], s_V.bpm10 > 0 ? "BPM" : "");
+		}
+		else
+		{
+			set_text (s_Title, b);
+			if (s_V.track >= 0)
+				lv_snprintf (b, sizeof b, "%s  %s  T%d", s_V.project[0] ? s_V.project : "-", pat, s_V.track + 1);
+			else lv_snprintf (b, sizeof b, "%s  %s", s_V.project[0] ? s_V.project : "-", pat);
+			set_text (s_Where, b);
+		}
 	}
 	int changed = 0, sel = -1;
 	for (int i = 0; i < SEQED_TRACKS; i++)
@@ -1804,10 +1821,27 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		s_Where = label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
 		lv_obj_set_width (s_Where, LU (226) + dx / 4);
 		lv_label_set_long_mode (s_Where, LV_LABEL_LONG_MODE_DOTS);
+		memset (s_Cell, 0, sizeof s_Cell);
+		if (THEME_BOXED (TH->id))	// info row as table cells: SEQUENCER / A04 over the project, TEMPO over its value and unit
+		{
+			lv_obj_add_flag (acc, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag (t, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_set_pos (s_Title, LU (12), LU (9));
+			lv_obj_set_style_text_color (s_Title, lv_color_hex (TH->sub), 0);
+			lv_obj_set_width (s_Title, LU (150));
+			lv_label_set_long_mode (s_Title, LV_LABEL_LONG_MODE_DOTS);
+			lv_obj_set_pos (s_Where, LU (12), LU (24));
+			lv_obj_set_width (s_Where, LU (150));
+			lv_obj_set_style_text_font (s_Where, TH->f_title, 0);
+			const int cx = LU (170);
+			label (pg, cx, LU (9), TH->f_micro, TH->sub, "TEMPO");
+			s_Cell[1] = label (pg, cx, LU (24), TH->f_title, TH->ink, "-");
+			s_Cell[2] = label (pg, cx + LU (50), LU (30), TH->f_micro, TH->sub, "");
+		}
 		s_Tracks = th_seg (pg, G->tracks_x, G->tracks_y, G->tracks_w, G->tracks_h, (const char *const[]) {"-", "-", "-", "-", ""},
-				   TH_KEY, track_cb, 0);
+				   TH_KEY | TH_KEY_ROUND, track_cb, 0);	// (SIDECAR, GRID: circles, the grid's track selectors)
 		th_seg_font (s_Tracks, TH->f_small);
-		button (pg, LU (660) + dx, LU (4), LU (132), LU (48), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
+		button (pg, LU (660) + dx, LU (6), LU (132), LU (44), "RYTM " LV_SYMBOL_RIGHT, TH_KEY_FUNC, rytm_cb, TH->f_body);
 		s_Snap = button (pg, G->snap_x, G->snap_y, G->snap_w, G->snap_h, snap_text (), TH_KEY, snap_cb, TH->f_micro);
 	}
 	s_Strip = drawn (pg, G->strip_x, G->strip_y, G->strip_w, G->strip_h, strip_draw, strip_cb, 0, 0);
@@ -1843,7 +1877,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		if (!oled ())
 		{
 			lv_obj_set_style_border_color (p, lv_color_hex (TH->win_edge), 0);
-			lv_obj_set_style_border_width (p, 1, 0);
+			lv_obj_set_style_border_width (p, TH->edge_w, 0);
 			lv_obj_set_style_radius (p, TH->radius, 0);
 		}
 		lv_obj_add_flag (p, LV_OBJ_FLAG_HIDDEN);
@@ -2015,7 +2049,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 		lv_obj_set_style_bg_color (s_Card, lv_color_hex (0x000000), 0);
 		lv_obj_set_style_bg_opa (s_Card, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent_hi), 0);
-		lv_obj_set_style_border_width (s_Card, 1, 0);
+		lv_obj_set_style_border_width (s_Card, TH->edge_w, 0);
 		s_CardText = label (s_Card, LU (5), 3, TH->f_body, TH->ink, "");
 		s_CardSub = label (s_Card, LU (5), LU (21), mic, TH->dim, "");
 		button (s_Card, G->card_w - LU (33), 3, LU (30), LU (30), LV_SYMBOL_TRASH, TH_KEY_DANGER, delete_cb, 0);
@@ -2024,7 +2058,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	{
 		s_Card = th_panel (pg, 0, 0, G->card_w, G->card_h, "", TH_PANEL_WINDOW);
 		lv_obj_set_style_border_color (s_Card, lv_color_hex (TH->accent), 0);
-		lv_obj_set_style_border_width (s_Card, 1, 0);
+		lv_obj_set_style_border_width (s_Card, TH->edge_w, 0);
 		lv_obj_set_style_radius (s_Card, TH->radius, 0);
 		s_CardText = label (s_Card, LU (10), LU (6), TH->f_body, TH->win_ink, "");
 		s_CardSub = label (s_Card, LU (10), LU (30), TH->f_micro, TH->win_dim, "");
@@ -2036,7 +2070,7 @@ void sidecar_seqed_create (void *parent, int y0, sidecar_seqed_command_t cmd, vo
 	lv_obj_set_style_bg_color (s_Toast, lv_color_hex (oled () ? 0x000000 : TH->win), 0);
 	lv_obj_set_style_bg_opa (s_Toast, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_color (s_Toast, lv_color_hex (oled () ? TH->ink : TH->accent), 0);
-	lv_obj_set_style_border_width (s_Toast, 1, 0);
+	lv_obj_set_style_border_width (s_Toast, TH->edge_w, 0);
 	lv_obj_set_style_pad_all (s_Toast, oled () ? 2 : 5, 0);
 	lv_obj_add_flag (s_Toast, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_event_cb (s_Grid, grid_cb, LV_EVENT_LONG_PRESSED, 0);

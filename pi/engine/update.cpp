@@ -584,13 +584,15 @@ const char* parse_header(const uint8_t* h, uint64_t file_size, Header* out) {
 }
 
 namespace {
-bool vparse(const char* v, unsigned* m, const char** pre) {
-  for (int i = 0; i < 3; ++i) {
+bool vparse(const char* v, unsigned* m, const char** pre) {   // MAJOR.MINOR.PATCH[.BUILD][-pre]: BUILD (0.5.1.1) is 0 when absent
+  m[3] = 0;
+  for (int i = 0; i < 4; ++i) {
     if (*v < '0' || *v > '9') return false;
     unsigned x = 0;
     while (*v >= '0' && *v <= '9') { x = x * 10 + (unsigned)(*v - '0'); if (x > 1000000) return false; ++v; }
     m[i] = x;
-    if (i < 2) { if (*v != '.') return false; ++v; }
+    if (i < 2 || (i == 2 && *v == '.')) { if (*v != '.') return false; ++v; }
+    else break;
   }
   if (*v == 0) { *pre = nullptr; return true; }
   if (*v != '-' || !v[1]) return false;
@@ -600,10 +602,10 @@ bool vparse(const char* v, unsigned* m, const char** pre) {
 }  // namespace
 
 int cmp_version(const char* a, const char* b) {
-  unsigned x[3], y[3];
+  unsigned x[4], y[4];
   const char *pa, *pb;
   if (!vparse(a, x, &pa) || !vparse(b, y, &pb)) return strcmp(a, b) == 0 ? 0 : -2;
-  for (int i = 0; i < 3; ++i) if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+  for (int i = 0; i < 4; ++i) if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
   if (!pa || !pb) return !pa && !pb ? 0 : !pa ? 1 : -1;   // a release is above its pre-releases
   bool da = strcmp(pa, "dev") == 0, db = strcmp(pb, "dev") == 0;
   if (da != db) return da ? -1 : 1;

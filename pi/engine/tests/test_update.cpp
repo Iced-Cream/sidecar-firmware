@@ -325,6 +325,14 @@ static void t_versions() {
   CHECK(upd::cmp_version("0.5.0-dev", "0.5.0-rc1") == -1 && upd::cmp_version("0.5.0-rc2", "0.5.0-rc1") == 1);
   CHECK(upd::cmp_version("0.5.0-dev", "0.4.4") == 1);
   CHECK(upd::cmp_version("junk", "0.5.0") == -2);
+  // a 4th number (0.5.1.1, the fixes release between 0.5.1 and 0.5.2): 0.5.1 < 0.5.1.1 < 0.5.2, both ways
+  CHECK(upd::cmp_version("0.5.1.1", "0.5.1") == 1 && upd::cmp_version("0.5.1", "0.5.1.1") == -1);
+  CHECK(upd::cmp_version("0.5.2", "0.5.1.1") == 1 && upd::cmp_version("0.5.1.1", "0.5.2") == -1);
+  CHECK(upd::cmp_version("0.5.1.1", "0.5.1.1") == 0 && upd::cmp_version("0.5.1.0", "0.5.1") == 0);
+  CHECK(upd::cmp_version("0.5.1.10", "0.5.1.9") == 1 && upd::cmp_version("0.5.1.1", "0.5.0") == 1);
+  CHECK(upd::cmp_version("0.5.1.1-rc1", "0.5.1.1") == -1 && upd::cmp_version("0.5.1.1-rc1", "0.5.1") == 1);
+  CHECK(upd::cmp_version("0.5.1.1-dev", "0.5.1.1-rc1") == -1);
+  CHECK(upd::cmp_version("0.5.1.", "0.5.1") == -2 && upd::cmp_version("0.5.1.1.1", "0.5.1") == -2);
   printf("versions: ok\n");
 }
 

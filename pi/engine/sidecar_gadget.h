@@ -150,12 +150,15 @@ public:
 	void OnResume (void) override			{ m_Wake.wake (*this); }	// (a resume without a reset)
 	boolean Active (void) const			{ return m_bActive; }
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
+	void OnTransferDropped (boolean bIn) override;	// circle-gadget-unplug.patch: armed again (IRQ level)
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
 	void Resume (void);				// OUT, usbmidi=os: re-arm a held endpoint (IRQs masked)
 	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
+	void Cancel (void)				{ CancelTransfer (); }	// ep_stop.h
 
 private:
+	void Stop (void);				// what is armed stopped (ep_stop.h), IRQ level or IRQs masked
 	CSidecarGadget *m_pSidecar;
 	mirror::EpWake m_Wake;				// a bus suspend and a resume without a reset (mirror_ep.h)
 	boolean m_bActive, m_bBusy;
@@ -177,6 +180,7 @@ public:
 	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h: back at the resume
 	void OnResume (void) override;
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
+	void OnTransferDropped (boolean bIn) override;	// circle-gadget-unplug.patch: armed again (IRQ level)
 	boolean Active (void) const			{ return m_bActive; }
 	void Kick (void);				// IN, notify: the next transfer if idle and something waits (IRQ level, or IRQs masked)
 	void ArmOut (void);				// OUT: the next block (IRQ level, or IRQs masked)
@@ -210,6 +214,7 @@ public:
 	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h
 	void OnResume (void) override			{ m_Wake.wake (*this); }	// a resume without a reset
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
+	void OnTransferDropped (boolean bIn) override;	// circle-gadget-unplug.patch: armed again (IRQ level)
 	void Kick (void);				// IN: send the next packet if idle (IRQ level, or IRQs masked)
 	void Rearm (void);				// OUT: take the computer's next packet (the box took this one)
 	boolean Send (const u8 *pData, unsigned nLength);	// pipe IN: one packet of the box (FALSE: inactive or busy)
@@ -445,9 +450,11 @@ private:
 	{
 		unsigned nRxBlocks, nRxFrames, nRxBad, nRxRefused, nRxDrop, nRxHeld;
 		unsigned nTxBlocks, nTxFrames, nTxDown, nUps, nReq, nBadReq;
+		unsigned nEpIrq, nEpDrop, nEpTimeout;	// circle-gadget-unplug.patch: EP disabled interrupts handled, transfers dropped, IN timeouts (all endpoints, since boot; filled by NetLogStats)
 	} m_NetStats, m_NetLast;
 	unsigned m_nNetLogSecs;
 	void NetLogStats (CLogger *pLogger);
+	void LogSuspendStops (CLogger *pLogger);	// ep_stop.h: the time the endpoints' stops took, once per bus suspend
 	// usbnet trace (diagnosis: the Pi 5 died ~16 s after the link came up, 2026-11-07): the network endpoints' events
 	// at IRQ level into a ring, logged by Poll (core 0's loop), with a register line every second for 60 s after the
 	// first SET_INTERFACE of the data interface. At most kNetTraceMax events a boot.

@@ -28,9 +28,13 @@ int main() {
   CHECK(r.Next(&len) == nullptr);
   CHECK(r.Drain() == 0);
   put(&q, a, 4);
+  CHECK(r.Waiting() == 3);   // (the first four bytes are in the reader already: Waiting counts the ring)
   const uint8_t* p = r.Next(&len);
   CHECK(p != nullptr && len == 5);
   for (int i = 0; i < 5; ++i) CHECK(p[i] == a[i]);
+  put(&q, a);
+  CHECK(r.Waiting() == 7);   // the lag diagnostics' "pend": a record and its two length bytes
+  CHECK(r.Next(&len) != nullptr && r.Waiting() == 0);
   CHECK(r.Next(&len) == nullptr);
   // the length split across calls
   std::vector<uint8_t> b = {0x90, 60, 100};

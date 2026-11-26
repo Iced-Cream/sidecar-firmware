@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "check.h"
+#include "ui/remote.h"
 #include "fx/out.h"
 #include "granular/granular.h"
 #include "pool/pool.h"
@@ -141,6 +142,26 @@ static void test_list_and_load() {
   idle();
   CHECK(gr::stats().load_fails == fails + 1);
   gr::reset();
+}
+
+// 0.5.0 (owner 2026-11-15, the same gap as WAVETABLE's): a sample picked on an idle GRANULAR voice reaches the host as
+// the SRC view's 2A (P1) only; it loads and the voice selects it with no note
+static void test_idle_pick() {
+  const int t = 0, vi = ui::remote_track_voice(t);
+  CHECK(vi == 0);
+  gr::silence(vi);
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 46, (uint8_t)(kG | vi), 0xF7});   // the machine chosen
+  wg::params(kG, vi, P(0));   // its first report: SRC OFF
+  idle();
+  int e = entry("wrap220");
+  uint32_t loads = gr::stats().loads;
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 1, 0xF7});
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, (uint8_t)t, 0, 1, (uint8_t)(e & 127), (uint8_t)srclib::lo_of(e), 0xF7});
+  idle();
+  CHECK(gr::voice_entry(vi) == e && gr::stats().loads == loads + 1);
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 0, 0x7F, 0xF7});
+  gr::reset();
+  printf("test_granular: a sample picked on an idle voice (2A) loads with no note\n");
 }
 
 // scheduling: DENS grains a second a note; a chord's notes each their own stream; size sets each grain's length
@@ -650,6 +671,7 @@ int main() {
   pool_layout();
   idle();
   test_list_and_load();
+  test_idle_pick();
   test_density();
   test_live_ring();
   test_reverse_cap();

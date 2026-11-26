@@ -53,13 +53,14 @@ static const int kV = 2;   // the voice under test (LT on the Rytm)
 static int16_t ring[kBlock][kVoices], ring_r[kBlock][kVoices];
 static uint8_t st[kVoices];
 static uint64_t mach[kMachines];
-static std::vector<float> outl, outr;   // voice kV's output, -1..1 of the voice's return (int16 / 32767)
+static std::vector<float> outl, outr;   // voice kV's output, -1..1 of the voice's return (int16 / 32767, before kVoiceGain: voices.h)
 
 // One block: n input frames (l / r, null: none: an underrun) into the ring, then render_voices with the R ring
 static void block(const float* l, const float* r, int nin = kBlock) {
   if (l && nin > 0) livein::in_frames(l, r, nin);
   render_voices(ring, kBlock, 0, 0, kVoices, mach, ring_r, st);
-  for (int s = 0; s < kBlock; ++s) outl.push_back(ring[s][kV] / 32767.0f), outr.push_back(ring_r[s][kV] / 32767.0f);
+  for (int s = 0; s < kBlock; ++s)
+    outl.push_back(ring[s][kV] / (kVoiceGain * 32767.0f)), outr.push_back(ring_r[s][kV] / (kVoiceGain * 32767.0f));
 }
 // n blocks of a generator g(frame, &l, &r)
 static long g_f = 0;   // the generators' frame (fresh() starts it again)
@@ -527,6 +528,12 @@ int main() {
       f0 += kBlock;
     }
     livein::step();
+    // the clicks at the output at their level from before kVoiceGain (0.355 x 0.7 of int16 full scale, as seq=cal's
+    // click is): outl is in the voice's units (/ kVoiceGain), so its peak x kVoiceGain is the rows' own
+    float cpk = 0.0f;
+    for (float x : outl) cpk = std::fabs(x) > cpk ? std::fabs(x) : cpk;
+    printf("measure: the clicks' peak in the rows %.4f of full scale (before kVoiceGain 0.2485)\n", cpk * kVoiceGain);
+    CHECK(std::fabs(cpk * kVoiceGain - 0.355f * 0.7f) < 0.005f);
     livein::Stats s = livein::stats(kV);
     bool m = false;
     int ms10 = livein::latency_ms10(kV, &m);

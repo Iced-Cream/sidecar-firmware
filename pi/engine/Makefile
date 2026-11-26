@@ -19,6 +19,9 @@ OBJS += link1.o                # the second box's USB MIDI, the engine's slot 1 
 OBJS += teensy_target.o        # usb=mirror through a Teensy relay (teensy_target.h; portable: relay_proto.h, mirror_stream.h)
 OBJS += teensy_flash.o         # the Pi writes the Teensy relay's program (teensy_flash.h; the portable part is teensy_hex.h)
 OBJS += midibridge_pi.o        # the Rytm MIDI bridge (midibridge_pi.h; the portable part is the header midibridge.h)
+OBJS += remote_views_pi.o       # the remote UI's views, built with or without a display (remote_views_pi.h; portable, tested on the Mac)
+OBJS += remote_srv.o remote_pi.o   # the remote UI service over the USB-C cable (remote_pi.h, docs/remote-ui.md; the portable part is remote_srv.cpp)
+OBJS += ../ui/remote/rmt_proto.o ../ui/remote/rmt_views.o ../ui/remote/rmt_sha256.o	# its wire protocol (pi/ui/remote, portable C)
 OBJS += usbnet_pi.o            # the USB-C network (usbnet_pi.h; the portable parts are ncm_ntb.h, dhcpd_lite.h, usbnet_cfg.h)
 OBJS += usbc_pi.o              # the USB-C mode for the SIDECAR MENU > USB-C on the Rytm (usbc_pi.h; the portable part is usb_mode.h)
 OBJS += update_pi.o             # the firmware update from the web page (update_pi.h; the portable part update.cpp is in PORT_SRC)
@@ -59,8 +62,10 @@ endif
 OBJS += ../ui/sidecar_display.o ../ui/sidecar_ui.o ../ui/sidecar_splash.o ../ui/sidecar_wordmark.o
 # the pattern pages (docs/TOUCH-EDITOR.md): the SEQ editor and the Rytm pattern view, LVGL only
 OBJS += ../ui/sidecar_seqed.o ../ui/sidecar_rytmpat.o ../ui/rytm_pattern.o ../ui/sidecar_theme.o ../ui/sidecar_dot.o ../ui/sidecar_dotfont.o
-# the SIDECAR theme's text faces: Space Grotesk Medium, 12..28 px (pi/ui/fonts/gen.sh)
-OBJS += $(patsubst %,../ui/fonts/sidecar_sg%.o,12 14 16 18 20 22 24 28)
+# the SIDECAR and GRID themes' text faces: Arimo Bold, 11..44 px, and the Regular tables that carry the symbols
+# (pi/ui/fonts/gen-arimo.sh)
+OBJS += $(patsubst %,../ui/fonts/sidecar_arb%.o,11 12 14 16 18 19 20 24 30 36 44)
+OBJS += $(patsubst %,../ui/fonts/sidecar_ar%.o,13 18 28)
 # the WAVETABLE / GRANULAR machine view (pi/ui/sidecar_wgview.h), filled by wgview_pi.cpp
 OBJS += ../ui/sidecar_wgview.o
 # the CHOP page (pi/ui/sidecar_chop.h), filled by chopview_pi.cpp
@@ -110,7 +115,7 @@ CORE_SRC += $(CORE)/msamp/cardq.cpp $(wildcard $(CORE)/samp/*.cpp)   # the card 
 RMPSRC := ../../teensy/libraries/RytmPlugins/src
 RMP_SRC := rmp_loader.cpp rmp_manifest.cpp rmp_meta.cpp rmp_proto.cpp rmp_resolve.cpp rmp_slots.cpp rmp_presets.cpp rmp_pool.cpp
 PORT_SRC := neon_bench.cpp output.cpp a4_in.cpp midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp sendfx_pi.cpp spectrum_pi.cpp masterfx_pi.cpp fsweb.cpp update.cpp bundleweb.cpp poolweb.cpp bundle_pi.cpp recorder.cpp rec_play.cpp wifi_conf.cpp paircode.cpp power_state.cpp wgview_pi.cpp preset_pi.cpp chopview_pi.cpp seditview_pi.cpp presetweb.cpp voice_pi.cpp insfx_pi.cpp song_pi.cpp morph_pi.cpp xypad_pi.cpp \
-            scope_pi.cpp status_pi.cpp stor_vol.cpp stor_bench.cpp lib_pi.cpp
+            scope_pi.cpp status_pi.cpp stor_vol.cpp stor_bench.cpp lib_pi.cpp sdgrow.cpp
 # the SEQ page's engine side (seqed_pi.cpp, ../ui/seq_touch.cpp): only with the sequencer's engine in the tree
 # (core/seq/seq.cpp, the seq-mvp branch); without it the page says there is no sequencer
 SEQED := $(if $(wildcard $(CORE)/seq/seq.cpp),1,)

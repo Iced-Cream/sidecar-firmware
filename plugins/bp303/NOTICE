@@ -1,0 +1,25 @@
+plugins/bp303 - notices for the BP303 package (bp303.bass, bp303.a64.rmp)
+
+BP303's voice is BLACKPYRAMIDS_303's, the TB-303 voice of the OT Kyoti FW project (a track machine for the Octatrack
+MKI), ported to floating point C for the Sidecar. BLACKPYRAMIDS_303 began as a port of Robin Schmidt's Open303 and was
+recalibrated on the TB-303's circuit and against recordings of a real one; its reference/BLACKPYRAMIDS_303.md says
+which part is whose.
+  Taken from:  https://github.com/Zac-Kyoti/octatrack-kyoti-fw  commit 109f54c
+               reference/BLACKPYRAMIDS_303.md      the voice and every value
+               tools/ot303/twin.h                  the engine (the integer twin of the DSP code), step for step
+               tools/ot303/cf/params.c, record.c   the knobs to the engine's words, the eases, the accent sweep
+               tools/ot303/cf/body_tables.h, params_const.h, halfband2x.h, body/gen_body.py   the tables and constants
+               tools/ot303/body/bp_cf.cpp          the reference renderer (the note rules; the comparison in README.md)
+  Licence:     MIT, Copyright (c) 2026 Zac Kyoti and the OT Kyoti FW contributors (LICENSE.kyoti, that project's
+               LICENSE unchanged)
+  Built on:    Open303, https://github.com/RobinSchmidt/Open303 (pinned by that project at 313bf0d9): the oscillator
+               blend and square shaper, the TeeBee ladder and its fitted coefficient formulas, the envelopes, accent,
+               slide, the post filters' structure, the knob-to-parameter formulas.
+               MIT, Copyright (c) 2009 Robin Schmidt (LICENSE.open303, as that project carries it)
+The DSP56300 assembly, the ColdFire runtime and the Octatrack parts of that project are not ported and not in this
+package. bp303_tables.h holds six of its generated tables unchanged (the knob laws); bp303.c is a rewrite of the voice
+in float (its header lists what is whose and what the Sidecar changes). No Elektron or Roland material is in either.
+"BP303" names the machine after BLACKPYRAMIDS_303; it is not affiliated with or endorsed by any synthesizer maker.
+
+The port and the glue (bp303.c, manifest.json, the Makefile, tests/): MIT, Copyright 2026 trigcondition and
+contributors (LICENSE). The package links sdk/rmp/shim (MIT).

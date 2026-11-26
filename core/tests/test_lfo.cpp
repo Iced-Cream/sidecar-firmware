@@ -628,10 +628,16 @@ int main() {
   CHECK(lfo::get(0).depth == 36);
   CHECK(texts.find("|+36|") != std::string::npos && texts.find("|T1 A DEPTH:+36|") != std::string::npos);
   texts = "|";
-  rytm(0x32, 3, 64 - 40, 0);
+  rytm(0x32, 3, 64 - 40, 0);   // (0.5.0: the turn through 0 stops on it; the next ones pass its detent)
+  for (int i = 0; i < 10; ++i) ui::remote_tick(ms += 10);
+  CHECK(lfo::get(0).depth == 0);
+  rytm(0x32, 3, 64 - (ui::kDetentCounts + 4), 0);
   for (int i = 0; i < 10; ++i) ui::remote_tick(ms += 10);
   CHECK(lfo::get(0).depth == -4 && texts.find("|-4|") != std::string::npos && texts.find("|T1 A DEPTH:-4|") != std::string::npos);
   rytm(0x32, 3, 64 + 40, 0);
+  for (int i = 0; i < 10; ++i) ui::remote_tick(ms += 10);
+  CHECK(lfo::get(0).depth == 0);
+  rytm(0x32, 3, 64 + 36 + ui::kDetentCounts, 0);
   for (int i = 0; i < 10; ++i) ui::remote_tick(ms += 10);
   CHECK(lfo::get(0).depth == 36);
   key(0x44);   // YES: the design view takes T1..T16 and A..D
@@ -642,7 +648,8 @@ int main() {
   for (int i = 0; i < 10; ++i) ui::remote_tick(ms += 10);
   lfo::Settings d0;
   lfo::defaults(&d0);
-  CHECK(lfo::get(0).step[4] == d0.step[4] - 10 && lfo::get(0).shape[4] == (d0.shape[4] + 1 > 2 ? 2 : d0.shape[4] + 1));
+  CHECK(d0.step[4] == 0 && lfo::get(0).step[4] == d0.step[4] - 10 + ui::kDetentCounts &&   // (0.5.0: a step leaves its 0 past the detent)
+         lfo::get(0).shape[4] == (d0.shape[4] + 1 > 2 ? 2 : d0.shape[4] + 1));
   key(0x45);   // NO: the main view (not SIDECAR)
   CHECK(ui::remote_stats().page == 3 && mask_encs == 0xFF && mask_trigs == 0);
   closes = 0;

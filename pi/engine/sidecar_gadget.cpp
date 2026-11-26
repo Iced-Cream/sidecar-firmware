@@ -210,7 +210,17 @@ void CSidecarMIDIEP::OnDeactivate (void)
 	m_bBusy = FALSE;
 	m_bHeld = FALSE;
 	if (GetDirection () == DirectionIn) m_pSidecar->HostUp (FALSE);	// reset or deconfigured: idle again
-	CancelTransfer ();
+	Stop ();
+}
+
+// the MIDI endpoints are armed all the time (OUT) or while packets go out (IN): a bus suspend (the USB-C cable pulled) or a
+// reset cancels them with the transfer armed, and CancelTransfer alone left "EP4 disabled" to Circle's IRQ handler (the
+// Pi 5 halted on it, 2026-11-17; circle-gadget-unplug.patch makes that non-fatal too). Stopped and waited for as the
+// network's endpoints (CNcmEP::Stop)
+void CSidecarMIDIEP::Stop (void)
+{
+	if (!IsTransferActive ()) return;
+	ep_stop::stop (*this, GetEPNumber (), GetDirection () == DirectionIn);
 }
 
 void CSidecarMIDIEP::Kick (void)
@@ -234,6 +244,20 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 		return;
 	}
 	m_bBusy = FALSE;
+	Kick ();
+}
+
+// circle-gadget-unplug.patch: the core disabled the endpoint and dropped what was armed (a host that vanished mid-traffic).
+// OUT: armed again (the OUT endpoint is armed all the time); IN: the packet is lost, the next one goes out
+void CSidecarMIDIEP::OnTransferDropped (boolean bIn)
+{
+	m_bBusy = FALSE;
+	if (!m_bActive) return;
+	if (!bIn)
+	{
+		if (!m_bHeld) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
+		return;
+	}
 	Kick ();
 }
 
@@ -340,6 +364,20 @@ void CNcmEP::Resume (void)
 	m_pSidecar->NetTrace (CSidecarGadget::TrResume, m_pSidecar->m_NetRx.free ());
 	m_bHeld = FALSE;
 	ArmOut ();
+}
+
+// circle-gadget-unplug.patch: the core disabled the endpoint and dropped what was armed (a host that vanished mid-traffic):
+// not busy any more, and armed again as after a completion (OUT: unless held; a block lost is the computer's TCP to repeat)
+void CNcmEP::OnTransferDropped (boolean bIn)
+{
+	m_bBusy = FALSE;
+	if (!m_bActive) return;
+	if (m_Role == RoleOut)
+	{
+		if (!m_bHeld) ArmOut ();
+		return;
+	}
+	Kick ();
 }
 
 void CNcmEP::OnTransferComplete (boolean bIn, size_t nLength)
@@ -1375,7 +1413,11 @@ void CSidecarGadget::NetLogStats (CLogger *pLogger)
 	EnterCritical ();
 	TNetStats s = m_NetStats;
 	LeaveCritical ();
-	const boolean bWrong = s.nRxBad != m_NetLast.nRxBad || s.nRxRefused != m_NetLast.nRxRefused
+#ifdef CIRCLE_GADGET_UNPLUG
+	s.nEpIrq = CDWUSBGadgetEndpoint::GetUnplugCount (), s.nEpDrop = CDWUSBGadgetEndpoint::GetDropCount ();
+	s.nEpTimeout = CDWUSBGadgetEndpoint::GetTimeoutCount ();
+#endif
+	const boolean bWrong = s.nRxBad != m_NetLast.nRxBad || s.nEpDrop != m_NetLast.nEpDrop || s.nEpTimeout != m_NetLast.nEpTimeout || s.nRxRefused != m_NetLast.nRxRefused
 			       || s.nRxDrop != m_NetLast.nRxDrop || s.nBadReq != m_NetLast.nBadReq || s.nUps != m_NetLast.nUps;
 	const boolean bTime = m_bNetUp && ++m_nNetLogSecs >= 10;
 	if (!bWrong && !bTime) return;
@@ -1383,9 +1425,9 @@ void CSidecarGadget::NetLogStats (CLogger *pLogger)
 	m_NetLast = s;
 	pLogger->Write (From, LogNotice,
 		"usbnet %s (ups %u) | from computer %u blocks %u frames bad %u refused %u drop %u held %u | "
-		"to computer %u blocks %u frames down %u | ntb in %u | req %u bad %u",
+		"to computer %u blocks %u frames down %u | ntb in %u | req %u bad %u | ep disabled %u dropped %u in timeout %u",
 		m_bNetUp ? "up" : "down", s.nUps, s.nRxBlocks, s.nRxFrames, s.nRxBad, s.nRxRefused, s.nRxDrop, s.nRxHeld,
-		s.nTxBlocks, s.nTxFrames, s.nTxDown, m_NcmCtl.ntb_in_size (), s.nReq, s.nBadReq);
+		s.nTxBlocks, s.nTxFrames, s.nTxDown, m_NcmCtl.ntb_in_size (), s.nReq, s.nBadReq, s.nEpIrq, s.nEpDrop, s.nEpTimeout);
 }
 
 void CSidecarGadget::NetTrace (u8 uchCode, u32 a, u32 b)
@@ -1450,8 +1492,24 @@ void CSidecarGadget::NetTraceDump (void)
 		st.nTxBlocks, nTxUsed);
 }
 
+// how long the endpoints' stops kept the IRQ (ep_stop.h; the waits are cut short while the bus is suspended): a bus suspend
+// stops them at IRQ level (HandleUSBSuspend's OnSuspend of each endpoint), not through CSidecarGadget::OnSuspend, which
+// only UpdatePlugAndPlay / SoftConnect call. So it is read here (once a second), and logged once per suspend that happened,
+// for the Pi 5 trial to measure
+void CSidecarGadget::LogSuspendStops (CLogger *pLogger)
+{
+	ep_stop::Stats StopStats;
+	EnterCritical ();
+	ep_stop::take (&StopStats);
+	LeaveCritical ();
+	if (StopStats.nSuspStops != 0)
+		pLogger->Write (From, LogNotice, "suspend: %u endpoint stops (%u with the bus suspended), longest %u us (suspended: %u us)",
+				StopStats.nStops, StopStats.nSuspStops, StopStats.maxUs, StopStats.maxSuspUs);
+}
+
 void CSidecarGadget::LogStats (CLogger *pLogger)
 {
+	LogSuspendStops (pLogger);
 	NetLogStats (pLogger);
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) { MirrorLogStats (pLogger); return; }
@@ -1598,6 +1656,31 @@ void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
 	case mirror::kPipeOut:
 		m_Out.taken ();					// NAKed until the box took it (MirrorPipeOutDone)
 		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
+		break;
+	case mirror::kPipeIn:
+		m_bBusy = FALSE;
+		m_pSidecar->MirrorPipeInSent (m_uchAddr);
+		break;
+	default:
+		break;
+	}
+}
+
+// circle-gadget-unplug.patch: the core disabled the endpoint and dropped what was armed: as after a completion that was
+// not delivered (the pipe IN's URB goes on, the OUT endpoints are armed again)
+void CMirrorEP::OnTransferDropped (boolean bIn)
+{
+	switch (m_Role)
+	{
+	case mirror::kAudioIn:
+		m_bBusy = FALSE;
+		Kick ();
+		break;
+	case mirror::kAudioOut:
+		Rearm ();
+		break;
+	case mirror::kPipeOut:
+		m_Out.arm (*this);
 		break;
 	case mirror::kPipeIn:
 		m_bBusy = FALSE;
@@ -1955,6 +2038,12 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 #else
 	unsigned nStray = 0, nSetupAborts = 0;
 #endif
+#ifdef CIRCLE_GADGET_UNPLUG				// circle-gadget-unplug.patch: EP disabled, transfers dropped, IN timeouts
+	unsigned nEpIrq = CDWUSBGadgetEndpoint::GetUnplugCount (), nEpDrop = CDWUSBGadgetEndpoint::GetDropCount ();
+	unsigned nEpTimeout = CDWUSBGadgetEndpoint::GetTimeoutCount ();
+#else
+	unsigned nEpIrq = 0, nEpDrop = 0, nEpTimeout = 0;
+#endif
 	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
 	for (int i = 0; i < nLast; i++)
 	{
@@ -1965,13 +2054,13 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
 		"ctl %u stall %u abort %u (setup %u) late %u stray %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
-		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u to-keys %u",
+		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u to-keys %u | ep disabled %u dropped %u in timeout %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
 		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, nSetupAborts, s.nCtlLate, nStray,
 		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm,
-		m_Stats.nMidiToKeys);
+		m_Stats.nMidiToKeys, nEpIrq, nEpDrop, nEpTimeout);
 }
 
 #endif	// CIRCLE_GADGET_MIRROR

@@ -16,6 +16,7 @@ enum { E_UP, E_DN, E_LEFT, E_RIGHT, E_MINUS, E_PLUS, E_N };
 typedef struct { int x, y, w, h; } rc_t;
 static lv_obj_t *s_Page, *s_TitleBar, *s_Title, *s_Wave, *s_Tabs, *s_Pads, *s_List, *s_EditLab, *s_Key[K_N], *s_Ed[E_N];
 static rc_t r_wave, r_tabs, r_pads, r_list, r_edit, r_keys;
+static int s_nPadCols = 4;			// 0.5.1: 8 (two rows) where four rows of pads would be under the touch size (800x480)
 static sidecar_chop_view_t s_V;
 static int s_bHave, s_nSel, s_nZoom, s_nBank, s_nFcol, s_nTop, s_nGridI = 2, s_nWant = -1;
 static long s_nPan;
@@ -219,8 +220,9 @@ static void wave_cb (lv_event_t *e)
 // ---- the pads
 static void pad_rect (int i, int w, int h, int *x0, int *y0, int *x1, int *y1)
 {
-	int g = TH->gap, cw = (w - 3 * g) / 4, ch = (h - 3 * g) / 4;
-	int col = i % 4, row = 3 - i / 4;	// pad 1 bottom left (the MPC's and the Rytm's way up)
+	const int nc = s_nPadCols, nr = 16 / nc;
+	int g = TH->gap, cw = (w - (nc - 1) * g) / nc, ch = (h - (nr - 1) * g) / nr;
+	int col = i % nc, row = nr - 1 - i / nc;	// pad 1 bottom left (the MPC's and the Rytm's way up)
 	*x0 = col * (cw + g), *y0 = row * (ch + g), *x1 = *x0 + cw - 1, *y1 = *y0 + ch - 1;
 }
 static void pads_draw (lv_event_t *e)
@@ -239,6 +241,8 @@ static void pads_draw (lv_event_t *e)
 		lv_snprintf (t, sizeof t, "%d", s + 1);
 		int have = s_bHave && s_V.valid && s < s_V.n;
 		if (have && s_V.lazy) lv_snprintf (sub, sizeof sub, oled () ? "TAP" : "tap");
+		else if (have && s_nPadCols == 8)	// (two rows of eight: a narrow pad, whole ms)
+			lv_snprintf (sub, sizeof sub, "%u", (unsigned) ((unsigned long long) (s_V.end[s] - s_V.start[s]) * 1000 / (s_V.rate ? s_V.rate : 48000)));
 		else if (have) ms_text (s_V.end[s] - s_V.start[s], s_V.rate, sub, sizeof sub);
 		int led = !have ? 0 : s == s_V.played ? 52 : s == s_V.slc ? 47 : 43;
 		th_paint_key (l, &a, t, sub, f_body (), TH_KEY_PAD, have && s == s_nSel, s == s_nPressPad, !have && !(s_bHave && s_V.lazy), led);
@@ -286,12 +290,13 @@ static void tabs_cb (lv_obj_t *o, int idx, void *ud)
 }
 
 // ---- the list (M8's): rows of slices, the cursor's column one of four settings of a page
-static int row_h (void) { return lv_font_get_line_height (f_small ()) + (oled () ? 1 : 4); }
+static int hd_h (void) { return lv_font_get_line_height (f_small ()) + (oled () ? 1 : 4); }	// the header row
+static int row_h (void) { int m = oled () ? LU (18) : LU (36); return hd_h () > m ? hd_h () : m; }	// (0.5.1: a slice's row at the touch size, 36 px)
 static int list_rows (void)
 {
 	lv_area_t c;
 	lv_obj_get_coords (s_List, &c);
-	return (lv_area_get_height (&c) - row_h () - 2) / row_h ();
+	return (lv_area_get_height (&c) - hd_h () - 2) / row_h ();
 }
 static int nf (void) { return (oled () ? 1 : 2) + (TH->dx > 0); }	// the settings' columns: OLED 1, SIDECAR 2 (+1 wide)
 static void col_x (int w, int *x)	// S START LEN F1..Fnf (x[3 + nf]: the end)
@@ -309,7 +314,7 @@ static void list_draw (lv_event_t *e)
 	lv_layer_t *l = lv_event_get_layer (e);
 	lv_area_t c;
 	lv_obj_get_coords (o, &c);
-	int O = oled (), w = lv_area_get_width (&c), rh = row_h (), u = U ();
+	int O = oled (), w = lv_area_get_width (&c), rh = row_h (), hh = hd_h (), u = U ();
 	if (!O) th_fill (l, &c, 0, 0, w - 1, lv_area_get_height (&c) - 1, TH->win, LV_OPA_COVER, 0);
 	else th_frame (l, &c, 0, 0, w - 1, lv_area_get_height (&c) - 1, DOT_DOTTED, 1, 0);
 	const lv_font_t *fs = f_small ();
@@ -325,7 +330,7 @@ static void list_draw (lv_event_t *e)
 		const char *nm = s_bHave && f < SCH_FIELDS ? s_V.fname[f] : "";
 		th_text (l, &c, x[3 + j], 1, x[4 + j] - x[3 + j] - u, fs, f == s_nFcol ? c_ink () : c_dim (), LV_TEXT_ALIGN_LEFT, nm);
 	}
-	th_fill (l, &c, 1, rh, w - 2, rh, O ? DOT_DOTTED : c_dim (), LV_OPA_COVER, 0);
+	th_fill (l, &c, 1, hh, w - 2, hh, O ? DOT_DOTTED : c_dim (), LV_OPA_COVER, 0);
 	if (!s_bHave || !s_V.valid) return;
 	int nr = list_rows ();
 	if (s_nSel < s_nTop) s_nTop = s_nSel;
@@ -334,22 +339,22 @@ static void list_draw (lv_event_t *e)
 	char t[24];
 	for (int r = 0; r < nr && s_nTop + r < s_V.n; r++)
 	{
-		int s = s_nTop + r, y = rh + 2 + r * rh;
+		int s = s_nTop + r, y = hh + 2 + r * rh, ty = y + (rh - lv_font_get_line_height (fs)) / 2;
 		int sel = s == s_nSel;
 		if (sel) th_fill (l, &c, 1, y, w - 2, y + rh - 1, TH->sel_bg, LV_OPA_COVER, 0);
 		uint32_t ink = sel ? TH->sel_ink : c_ink ();
 		lv_snprintf (t, sizeof t, "%02d", s + 1);
-		th_text (l, &c, x[0], y + 1, x[1] - x[0], fs, ink, LV_TEXT_ALIGN_LEFT, t);
+		th_text (l, &c, x[0], ty, x[1] - x[0], fs, ink, LV_TEXT_ALIGN_LEFT, t);
 		ms_text (s_V.start[s], s_V.rate, t, sizeof t);
-		th_text (l, &c, x[1], y + 1, x[2] - x[1], fs, ink, LV_TEXT_ALIGN_LEFT, t);
+		th_text (l, &c, x[1], ty, x[2] - x[1], fs, ink, LV_TEXT_ALIGN_LEFT, t);
 		ms_text (s_V.end[s] - s_V.start[s], s_V.rate, t, sizeof t);
-		th_text (l, &c, x[2], y + 1, x[3] - x[2], fs, ink, LV_TEXT_ALIGN_LEFT, t);
+		th_text (l, &c, x[2], ty, x[3] - x[2], fs, ink, LV_TEXT_ALIGN_LEFT, t);
 		for (int j = 0; j < n; j++)
 		{
 			int f = pg * n + j;
 			if (f >= SCH_FIELDS) continue;
 			if (sel && f == s_nFcol) th_frame (l, &c, x[3 + j] - u, y, x[4 + j] - 2 * u, y + rh - 1, ink, 1, 0);
-			th_text (l, &c, x[3 + j], y + 1, x[4 + j] - x[3 + j] - 2 * u, fs, ink, LV_TEXT_ALIGN_LEFT, s_V.ftext[s][f]);
+			th_text (l, &c, x[3 + j], ty, x[4 + j] - x[3 + j] - 2 * u, fs, ink, LV_TEXT_ALIGN_LEFT, s_V.ftext[s][f]);
 		}
 	}
 }
@@ -360,9 +365,9 @@ static void list_cb (lv_event_t *e)
 	lv_indev_get_point (lv_indev_active (), &p);
 	lv_area_t c;
 	lv_obj_get_coords (s_List, &c);
-	int r = (p.y - c.y1 - row_h () - 2) / row_h (), x[8], n = nf ();
+	int r = (p.y - c.y1 - hd_h () - 2) / row_h (), x[8], n = nf ();
 	col_x (lv_area_get_width (&c), x);
-	if (r >= 0 && s_nTop + r < s_V.n) s_nSel = s_nTop + r;
+	if (r >= 0 && r < list_rows () && s_nTop + r < s_V.n) s_nSel = s_nTop + r;	// (not the band under the last row shown)
 	for (int j = 0; j < n; j++)
 		if (p.x - c.x1 >= x[3 + j] && p.x - c.x1 < x[4 + j] && (s_nFcol / n) * n + j < SCH_FIELDS) s_nFcol = (s_nFcol / n) * n + j;
 	inval_all ();
@@ -482,10 +487,10 @@ static void layout (void)
 	int O = oled (), u = U ();
 	int pw = th_page_w ();
 	int x0 = O ? 0 : LU (8), top = LU (O ? 15 : 8), kh = LU (O ? 22 : 52);
-	int ph = O ? TH->h : LU (428) + TH->dy;
+	int ph = O ? TH->h - LU (25) : LU (428) + TH->pdy;
 	int ky = ph - kh - (O ? 0 : LU (4));
 	int lw = (pw - 2 * x0) * 58 / 100;
-	r_wave = (rc_t) {x0, top, lw, LU (O ? 78 : 150) + TH->dy / 2};
+	r_wave = (rc_t) {x0, top, lw, LU (O ? 78 : 150) + TH->pdy / 2};
 	r_tabs = (rc_t) {x0, r_wave.y + r_wave.h + 2 * u, lw, TH->big ? (O ? 23 : 50) : O ? 12 : 30};	// 1280x720: a key's height
 	r_pads = (rc_t) {x0, r_tabs.y + r_tabs.h + 2 * u, lw, ky - (r_tabs.y + r_tabs.h + 2 * u) - 3 * u};
 	int lx = x0 + lw + 4 * u, lwid = pw - x0 - lx;
@@ -499,7 +504,7 @@ void sidecar_chop_create (void *parent, int y0)
 	int O = oled (), u = U ();
 	int pw = th_page_w ();
 	layout ();
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->pdy);
 	s_Page = pg;
 	s_nGen = ~0u, s_nGridI = 2;
 	if (O)
@@ -513,6 +518,15 @@ void sidecar_chop_create (void *parent, int y0)
 		r_wave.y += LU (30), r_list.y += LU (30), r_list.h -= LU (30), r_wave.h -= LU (6);
 		r_tabs.y += LU (24), r_pads.y += LU (24), r_pads.h -= LU (24);
 		s_Title = th_label (pg, LU (12), LU (8), TH->f_mid, TH->ink, "CHOP");
+	}
+	{	// 0.5.1: the bank keys and the pads at the touch size (44 px, OLED 22 dots); where four rows of pads would be smaller (800x480,
+		// below the sub-page row) they are two rows of eight, and the wave gives the height the bank keys need
+		const int kmin = LU (O ? 22 : 44), g = TH->gap, d = r_tabs.h < kmin ? kmin - r_tabs.h : 0;
+		s_nPadCols = (r_pads.h - d - 3 * g) / 4 < kmin ? 8 : 4;
+		const int ph2 = s_nPadCols == 8 ? 2 * kmin + g : r_pads.h - d, grow = r_pads.h - d - ph2;	// what the pads give back
+		r_wave.h += grow;
+		r_tabs.y += grow, r_tabs.h += d;
+		r_pads.y += grow + d, r_pads.h = ph2;
 	}
 	s_Wave = th_box (pg, r_wave.x, r_wave.y, r_wave.w, r_wave.h);
 	lv_obj_add_flag (s_Wave, LV_OBJ_FLAG_CLICKABLE);
@@ -590,7 +604,7 @@ int sidecar_chop_hit (int what, int i, int *x, int *y)
 		return 1;
 	case 3:
 		lv_obj_get_coords (s_List, &c);
-		*x = c.x1 + 6 * U (), *y = c.y1 + row_h () + 2 + i * row_h () + row_h () / 2;
+		*x = c.x1 + 6 * U (), *y = c.y1 + hd_h () + 2 + i * row_h () + row_h () / 2;
 		return i >= 0 && i < list_rows ();
 	default:
 		lv_obj_get_coords (s_Wave, &c);

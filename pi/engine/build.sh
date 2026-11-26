@@ -17,7 +17,7 @@
 # PI5_GADGET (RASPPI=5 only, default 1): 1 the USB-C gadget compiled in (docs/pi5.md "USB device side"), in a Circle tree
 # of its own, pi/circle/build/circle-engine-pi5usb (circle-gadget.patch, circle-gadget-wake.patch, circle-pi5-gadget.patch,
 # circle-gadget-reset.patch, then the usb=mirror patches as on the Pi 4: circle-gadget-mirror.patch,
-# circle-gadget-softconnect.patch, circle-gadget-stray.patch, docs/usb-mirror.md; Overbridge passthrough on the Pi 5 is in
+# circle-gadget-softconnect.patch, circle-gadget-stray.patch, circle-gadget-unplug.patch, docs/usb-mirror.md; Overbridge passthrough on the Pi 5 is in
 # testing for 0.4.2; a changed patch is put in again). The first run also stops at the hostap clone, as for any
 # new tree: run it twice. On at run time as on the Pi 4 (GADGET default sidecar; gadget=0 in cmdline.txt turns it off).
 # 0: the gadget compiled out, in pi/circle/build/circle-engine-pi5 (the host-side patches only), as before 0.4.0.
@@ -57,7 +57,7 @@ fi
 "$REPO/tools/gen_version.sh"   # core/version.h: VERSION, the commit (docs/versioning.md); on the host, the container has no git
 if [ "$(cat hosted/.board 2>/dev/null || echo 'RASPPI=4 PI5_UART=0')" != "$STAMP" ]; then
   echo "board changed to $STAMP: removing the other board's objects"
-  rm -rf hosted; rm -f ./*.o ./*.d ../ui/*.o ../ui/*.d
+  rm -rf hosted; rm -f ./*.o ./*.d ../ui/*.o ../ui/*.d ../ui/remote/*.o ../ui/remote/*.d
 fi
 mkdir -p hosted
 echo "$STAMP" > hosted/.board
@@ -122,7 +122,7 @@ if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: all the patches, again when one ch
   # after circle-gadget-reset.patch, in the Pi 4 order, and CIRCLE_GADGET_MIRROR is defined here. A tree patched before
   # (0.4.1 without them, or an older version of one) has a different sum: every patched file back clean, then all of PP
   P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"
-  PP="$PP $P/circle-gadget-mirror.patch $P/circle-gadget-softconnect.patch $P/circle-gadget-stray.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
+  PP="$PP $P/circle-gadget-mirror.patch $P/circle-gadget-softconnect.patch $P/circle-gadget-stray.patch $P/circle-gadget-unplug.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
   if [ "$(cat .pi5-gadget-sum 2>/dev/null)" != "$S" ]; then
     for f in $(cat $PP | sed -n "s,^+++ b/,,p" | sort -u); do cp /repo/pi/circle/build/circle/$f $f; done
     cp $P/gadget_wake.h include/circle/usb/gadget/gadgetwake.h
@@ -156,6 +156,14 @@ elif [ "$R" = 4 ]; then	# the Pi 4 (a Pi 5 with PI5_GADGET=0: no gadget, docs/pi
     echo "circle-gadget-stray.patch: this Circle tree has an earlier version (0.4.1 rc5): build from a fresh Circle copy"; exit 1
   fi
   grep -q circle-gadget-stray lib/usb/gadget/dwusbgadgetendpoint.cpp || patch -p1 < /repo/pi/circle/circle-gadget-stray.patch
+  # then a host that vanishes mid-traffic (pi/circle/circle-gadget-unplug.patch: the USB-C cable pulled with a bulk or interrupt
+  # transfer armed; an EP the core disabled and an IN timeout are acknowledged and counted, no longer LOGPANIC - the Pi 5 halted
+  # and rebooted on "EP4 disabled", 2026-11-17; a dropped transfer is reported to the function driver, which arms the EP again;
+  # tests/test_gadget_ep0.cpp); its own marker; idempotent, also on a built tree
+  if grep -q circle-gadget-unplug lib/usb/gadget/dwusbgadgetendpoint.cpp && ! grep -q s_nTimeout lib/usb/gadget/dwusbgadgetendpoint.cpp; then
+    echo "circle-gadget-unplug.patch: this Circle tree has an earlier version (no IN timeout counter): build from a fresh Circle copy"; exit 1
+  fi
+  grep -q circle-gadget-unplug lib/usb/gadget/dwusbgadgetendpoint.cpp || patch -p1 < /repo/pi/circle/circle-gadget-unplug.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi
 # f_expand in FatFs (pi/circle/circle-fatfs-expand.patch: FF_USE_EXPAND 1 - the recorder reserves the space of each

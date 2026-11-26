@@ -112,7 +112,8 @@ At boot, before the render loops start, every core runs the bench in turn (cores
 | `usbnet=on\|off` | on | the USB-C network function (CDC-NCM) in the CLASS COMPLIANT device; off: the device as in 0.4.2, byte for byte (`docs/usb-network.md`) |
 | `usbip=A.B.C.D` | 172.31.77.1 | the Pi's address on the cable (/24); the computer gets .2 by DHCP (.1 when the Pi is .2). No router, no DNS: the computer's internet stays its own |
 | `usbwait=S` `usbquiet=MS` | 5, 700 | net=auto's wait at boot: no start-of-frame on USB-C within `usbquiet` ms (from the gadget's start, overlapping the Wi-Fi chip's) is no computer; a computer that has not started its USB network driver within `usbwait` s keeps today's network (1..30 s, 100..5000 ms) |
-| `usbtrust=1\|0` | 1 | the USB-C cable is trusted: no pairing code on it (web page, /ws, port 7310). 0 asks for the code there too |
+| `usbtrust=1\|0` | 1 | the USB-C cable is trusted: no pairing code on it (web page, /ws, port 7310, the remote UI's 7340). 0 asks for the code there too |
+| `remote=1\|0` | 1 | the remote UI service (TCP 7340, `docs/remote-ui.md`): served only while the network is the USB-C cable and a display is up; 0 turns it off |
 | `oburbs=1..16` `obblocks=1..8` `obout=paced\|free\|off` `oboutdelay=N` `obctr=zero\|in` | 8, 1, paced, 0, zero | spike2's Overbridge host tuning, unchanged (`docs/pi-circle-spike.md`) |
 
 ## Console (921600 baud, the flasher's serial cable)
@@ -222,6 +223,45 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
 - **Design lesson: `/status` only answers 20 to 40 s after boot and `/log` holds ~25 s, so anything needed about boot must be frozen, not rolling.** A rolling ring was overwritten before anyone could read it (this one, and the USB hub descriptor line earlier the same day). Freeze at the event (`mbBoot`), or keep a counter that carries enough to reconstruct it (`outDiag`).
 - Two bugs this found on the device that the host tests passed: arming at an unset target (target 0 armed at once), and a trace ring flooded by once-a-second reads.
 
+### Lag diagnostics (the black box, `pi/engine/lagdiag.h`)
+
+**Download it from the web page (0.5.1.1):** Settings > About > **Download black box** saves one text file for a bug report: the last crashed boot's report (`prevboot.txt`, when there is one), `blackbox.1.log` (the previous file) and `blackbox.log`, under a header with the version, the commit and the board. The page reads them in 64 KB pieces over the paired connection (so the browser must be paired), follows a file that is still growing, and masks the pairing code, passwords and tokens before the file is offered. Save it before restarting the Sidecar. The same page's **Lag now** button writes a marker into the black box (below).
+
+For a Rytm that feels laggy while no Sidecar counter moves (the 2026-11-20 black box analysis). Everything here goes into the log, so the black box keeps it. Size: `rxrep` and `txacc` are each up to a line a second (about 150 bytes with the log prefix) while the Rytm modulates or the remote UI draws, on top of the ~1 KB/s the other lines make: about 30 % more log lines, so the 8 MB black box file rotates a little sooner (about every 1.5 h instead of 2 h) and the 32 KB crumb ring holds about 23 s instead of ~30 s (the writer waits up to 10 s for the SD's streams, so it is still safe). Nothing is added to the Rytm's mods.
+
+**Lag now (`lagnow`).** A button in the web app (the header on every page, so it is within reach while playing, and Settings > About) sends the console command `lagnow`. The Sidecar answers with two log lines:
+
+```
+lag-marker 3 at 00:48:21.15
+lag-snap: fifo min 71 under 411 | block max 17 us | cpu c1 5.3 c2 2.3 c3 11.9 % | pass max 121 us | midi 8391 B sysex 103262 | to-host 545408 B 20631 msgs fail 0 dropped 0
+```
+
+- `lag-marker N at HH:MM:SS.cc`: N counts the markers since the boot; the time is the Sidecar's uptime, the same clock as the log's time stamps. One marker a second at most (a held or double-tapped button is one); the page keeps the same rule.
+- `lag-snap`: the last `engine:` line's per-second figures (FIFO minimum, `under` total, longest audio block, the cores' busy share, longest control pass, the Rytm's MIDI bytes and SysEx count, what was sent to the Rytm and dropped), so the marker and the counters of that second sit together. The last `rxrep` and `txacc` lines follow it as `| rx: ...` and `| tx: ...` when they are less than 5 s old (below).
+- The command is exactly `lagnow` and takes no argument; `lagnow=anything` is refused with a fixed warning (one a second at most) that does not repeat the text. The engine's own lines never contain client text; the web layer's generic `command :<text> (ws)` line (web.cpp) does, as it does for every command, so a client can still put its own text there. Like every console command it needs a paired browser (`POST /cmd`, `/ws` `cmd`); it runs on core 0, where the log lines are written.
+
+**The Rytm's report stream (`rxrep:`, once a second, only while a voice reports).** The Rytm sends its voices' parameters itself (03 PARAMS, 04 TRIG+PARAMS, the MIDI machine's 43 and 44), up to 94 a second a voice. No Pi counter shows the Rytm's own load, but a Rytm whose audio interrupt runs late sends these late. One line, the voices that reported only:
+
+```
+rxrep: v0 n3 gap400000us m0ff0 | v5 n94 gap10700us m0003 | sx n121 max11200us jit410us
+```
+
+- `vV nN gapG mMMMM`: voice V (0..7, the report's track byte) sent N reports in the second; `gap` is the longest time between two reports **of that voice**, in microseconds (the first of a second reaches back to the last of the second before; a gap over 1 s is a pause and only restarts the measuring); `m` is a mask, in hex, of the parameter words P1..P16 (bit 0 = P1) that differed from the voice's previous report at least once in the second. The first report of a voice has nothing to differ from.
+- `sx nN maxMus jitJus`: every SysEx from the Rytm, reports or not: the count, the longest time between two, and the jitter (the mean change from one interval to the next). The times are those of the control core when it takes the message from the 8 KB MIDI queue: a message that waited behind a long control pass is late by that, which is also what the Rytm's own lateness looks like from here. Compare `pass max` in the `engine:` line.
+- The line is capped (200 bytes); voices that do not fit are left out and counted: `| +3 more`. No line in a second without a report (a quiet Rytm costs no log).
+- Which core: the control core (core 3) measures (`RxDiag::on_sysex` in `FromRytm`: one timer read and a compare of the report's 32 parameter bytes, no allocation, no logging; `tick` in its pass closes a second with no message), core 0's once-a-second logger prints it. They meet in one published second (a seqlock).
+
+**What the Pi sends the Rytm (`txacc:`, once a second, when more than keepalives went or a send waited).** The engine's records for the Rytm's USB MIDI (the remote UI's frames, the parameter writes, host-link replies), counted when they are sent, by type:
+
+```
+txacc: ka n1 b7 | frm n150 b24000 | c39 n2 b16 | w48 n3 b27 | sx n1 b15 | oth n2 b6 | pend 4096 B | wait 840us
+```
+
+- `ka` the keepalive (SysEx `3C`), `frm` the frames (`38` rects, `3D` text, `3E` text clear, `36` splash), `c39` the commit (`39`), `w48` the parameter writes (`48`), `sx` any other SysEx (the host-link replies, other remote UI commands), `oth` everything else (the LFOs' CCs, a piece of a long SysEx). `nN` the records, `bB` their bytes as messages (F0..F7), not as USB packets. A type that sent nothing is left out. Records dropped or failed are not counted here (the `engine:` line's `dropped` and `fail` have them).
+- `pend`: the most bytes of the engine's queue (`g_MidiOut`, 32 KB, two length bytes a record) waiting at the start of a Poll in that second. `wait`: the longest one bulk send to the Rytm took, in microseconds: Circle's transfer blocks core 0 until the Rytm's USB MIDI endpoint accepts the packets (3 s at most, then it fails), so a Rytm that is slow to read shows here. This stands in for the mods' `txsx_wait` (how long the Rytm holds its output), which the Pi cannot see.
+- The line is not written for a second in which nothing but keepalives went and no send took 2 ms or more (a bulk send of a few packets takes tens of microseconds); then `ka` counts of that second are lost, by design: the keepalive is every ~0.7 s and a line each would be noise.
+- Which core: core 0 does everything (the merge's Poll counts, the same core's logger prints): one array increment a record, one timer read around a send.
+
 ## The RAM store (2026-10-26)
 
 **The rule: after a project has loaded, core 3 (the control core) never calls FatFs.** Every card call on core 3 is an audible dropout (the FIFO holds 2 ms; a card read or write is 5 to 40 ms and waits behind core 0's card service). Spec: docs/superpowers/specs/2026-10-26-ram-store-design.md; plan: docs/superpowers/plans/2026-10-26-ram-store.md.
@@ -236,6 +276,8 @@ Each file is written whole (a `.tmp` file, then a rename), and nothing that exis
 - `oldestMs`: the age in ms of the oldest of those (`cardq::oldest_ms()` from the oldest request's `posted_us`, and the oldest queued or slot write in fmt, taken from when it was first queued); 0 when none. This is the age of the oldest unwritten edit after it was posted, so a card that is stuck shows as a climbing `oldestMs` with `unwritten` above 0.
 - `held`: how many posted writes the card core had not taken after 200 ms since boot (`fmt::post_held()`, also in the stats line); a climbing `held` means the card core is held up. The edits are safe in RAM and land in order when it runs again.
 - `heapFree`: bytes of the low heap (where core's `new` allocates, the store's buffers too) never yet handed out (`CMemorySystem::GetHeapFreeSpace(HEAP_LOW)`: Circle's untouched heap, not counting freed blocks waiting on its free lists). Circle halts with an "Out of memory" panic once an allocation would reach into the heap's last 256 KB - `new` never returns 0 there - so this is the room left before that, not a soft limit.
+
+**The project load's one long pass (found 2026-11-20 in a tester's black box, fixed after 0.5.1).** Every project load held the control pass for 10.3 ms on a Pi 5 (24 ms at 1 GHz) with ~400 output underflows. It was the first call of the load, `project_fill_begin` (pool.cpp), in the pass of the switch: it registers every path the fill will read (~1000: 2 x 129 LFO / INSERT files, 257 of the sequencer's, 256 kit records, the scenes', the song backups) with `store::want`, and `want` compared each path with every one wanted before it (a `strcmp` over 96-byte slots: ~500,000 compares). Now a hash table finds a repeat (`store.cpp`, 8 KB), and the call is about 0.8 ms on the Pi's scale, of which `want` itself is 0.4 ms for 1536 paths. `tests/test_projload_cost.cpp` switches a project of 128 patterns both ways with the card model on and checks that call and every control-core call of the whole switch (the Mac's CPU x 4.4) stay under the FIFO's 2 ms with no card time on the control core; `test_store.cpp` checks `want` (a repeat ignored, the cap, a cleared list wanted afresh, 1536 paths under 2 ms). It was found by timing the steps of a switch on the host (no device): the 10 ms was this call's CPU, not the card. What is left of the call is the paths' formatting in each module's `want_files`.
 
 **`/status` `slowSx`** stays (the longest SysEx/MIDI handlers on core 3, with their ids), and so do `gaps` and `stall` above. The temporary kit-change profile (`kitProf`, `core/prof.h`, the `rytmtx=` console command) is gone.
 

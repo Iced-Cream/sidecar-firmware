@@ -127,6 +127,16 @@ Per<StepClock[kRytmTracks]> clk;
 Per<bool[kRytmTracks]> restart;
 Per<int64_t[kRytmTracks]> planned;   // the next step count to plan
 Per<int64_t[kRytmTracks]> play_abs;  // the last tick's step count
+// P2: an SPD change mid-play continues from the step that was next (owner, 2026-11-15): planned[] keeps counting the
+// track's own steps on the Rytm's grid (timing), and the step that plays at count a is the one of count a + voff[r]
+// (vstep: map_step's count, the keyed RNG's, the loop behind A:B / 1ST). Set at a change (replan), 0 at PLAY and at a
+// pattern switch (restart_all, on_stop). vq: the ratio planned[] counts in (num 0: none yet). Each slot's own.
+Per<int64_t[kRytmTracks]> voff;
+Per<Ratio[kRytmTracks]> vq;
+CORE_COLD int64_t vstep(int r, int64_t a) {
+  int64_t s = a + voff()[r];
+  return s < 0 ? 0 : s;
+}
 Per<uint64_t> hframes{0};
 Per<int> transport{kStop};
 // Every change of `transport` goes through here: the platform hears it as MIDI realtime (hooks.transport: the Pi's
@@ -1439,9 +1449,11 @@ CORE_COLD void plan_step(const Pattern& p, Track& t, int r, int64_t a, double fs
   int vi = voice_of(r);
   if (vi < 0) return;
   double fs0 = fs;   // the step's place on the grid (X1: a slide's target is counted from it)
-  // swing: every second step late; P1 (Q3): under another direction the tick's, so the groove stays
+  // swing: every second step late; P1 (Q3): under another direction the tick's, so the groove stays (the grid's count:
+  // a, less SPD's offset)
   bool ord = has_order(t, p);   // (H1's jumps: the tick's too)
-  if (t.swing > 50 && ((t.dir || ord ? (int)(a & 1) : idx) & 1)) fs += (t.swing / 50.0 - 1.0) * per;
+  const int64_t ga = pred ? a : a - voff[r];
+  if (t.swing > 50 && ((t.dir || ord ? (int)(ga & 1) : idx) & 1)) fs += (t.swing / 50.0 - 1.0) * per;
   // H1's plan-time commands of the step (each column unless the other's CHN fails)
   int dly = 0, cut = -1, oct = 0, trs = 0, rnr = 0, rnv = 0, rtg = 0;
   for (int col = 0; col < 2; ++col) {
@@ -1613,6 +1625,7 @@ CORE_COLD void update_prediction() {
   }
 }
 
+void replan(int r);
 CORE_COLD void plan() {
   if (transport() != kPlay || !fol().valid) return;
   int64_t horizon = (int64_t)hframes() + kBlock + kLookahead;
@@ -1629,6 +1642,8 @@ CORE_COLD void plan() {
     Track* nt = there ? track_of(*nxt(), r, false) : nullptr;
     Ratio q = rat_of(t), nq = rat_of(nt);   // P2: the track's own step clock (1:1 FOLLOW)
     double per = c.period * q.den / q.num, nper = c.period * nq.den / nq.num;
+    if (t && vq[r].num && (vq[r].num != q.num || vq[r].den != q.den)) replan(r);   // (a ratio changed: continue from there)
+    if (t) vq[r] = q;
     int64_t v0 = vceil_i(q, c.abs);
     if (planned()[r] < v0) planned()[r] = v0;   // behind the Rytm (a jump, a late start): from its step on
     for (int guard = 0; guard < 32; ++guard) {
@@ -1646,7 +1661,7 @@ CORE_COLD void plan() {
       double fs = c.frame_of(x);
       int64_t earliest = fol().to_host((int64_t)(fs - per)) - latency();   // a note up to a step early
       if (earliest > horizon) break;
-      if (t) plan_step(*cur(), *t, r, a, fs, per, false);
+      if (t) plan_step(*cur(), *t, r, vstep(r, a), fs, per, false);   // (the step continued after an SPD change)
       planned()[r] = a + 1;
     }
   }
@@ -1655,7 +1670,8 @@ CORE_COLD void plan() {
 Per<int[kRytmTracks]> restart_skip;   // steps of the new pattern a confirmed prediction planned already (the restart's tick)
 CORE_COLD void restart_all() {
   ++seg_gen();   // R1b: a new segment (the predicted pattern's steps were planned in it already)
-  for (int r = 0; r < kRytmTracks; ++r) restart()[r] = true, planned()[r] = 0, play_abs()[r] = 0, restart_skip()[r] = 0;
+  for (int r = 0; r < kRytmTracks; ++r)
+    restart()[r] = true, planned()[r] = 0, play_abs()[r] = 0, restart_skip()[r] = 0, voff()[r] = 0, vq()[r] = Ratio{0, 1};
   pat_start() = -1, pat_start_track() = -1;
   memset(cond_last(), 0, sizeof cond_last());   // rui1040: PRE / NEI start false at PLAY and at a switch
 }
@@ -1671,7 +1687,8 @@ CORE_COLD void on_stop() {
   drop_prediction(false);
   release(-1);
   unlock_all();   // seq-ux: every locked param back to its base
-  for (int r = 0; r < kRytmTracks; ++r) clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1;
+  for (int r = 0; r < kRytmTracks; ++r)
+    clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1, voff()[r] = 0, vq()[r] = Ratio{0, 1};
   for (Open& o : opens()) o.used = false;
   if (dirty()) save_now() = true;
 }
@@ -1754,19 +1771,33 @@ CORE_COLD void on_switch(int to, const uint8_t* blk) {
 // one's go (by their step), the steps before keep theirs (seqtop: before, a replan between a step's start and its tick's
 // arrival - the tick comes up to a round trip late - planned that started step again, a second, late note). The
 // predicted next pattern's steps stay (an edit changes the current pattern only).
+// P2: a ratio changed since the last plan (SPD, either edit path: the knob, seq=spd): the first step on the new grid plays
+// the step that would have played next (voff), so the playhead continues instead of jumping to abs x the new ratio.
 CORE_COLD void replan(int r) {
   for (int t = 0; t < kRytmTracks; ++t) {
     if (r >= 0 && t != r) continue;
     StepClock& c = clk()[t];
+    Ratio q = rat_of(track_of(*cur(), t)), qo = vq()[t];
+    bool moved = qo.num && (qo.num != q.num || qo.den != q.den);
     if (!c.on || c.period <= 0 || !fol().valid) {
       cancel_ons(t, (int64_t)hframes());
-      if (c.on) planned()[t] = vfloor_i(rat_of(track_of(*cur(), t)), c.abs) + 1;
+      if (c.on) {   // (paused, the clock off: a change waits for continue, plan()'s replan then works from its anchor)
+        int64_t v = vfloor_i(q, c.abs) + 1;
+        if (moved) voff()[t] += vfloor_i(qo, c.abs) + 1 - v, vq()[t] = q;
+        planned()[t] = v;
+      }
       continue;
     }
-    Ratio q = rat_of(track_of(*cur(), t));
     int64_t v = vceil_d(q, c.step_at((double)fol().to_rytm((int64_t)hframes() + latency())));   // its micro-0 note not started
     int64_t v1 = vfloor_i(q, c.abs) + 1;
     if (v < v1) v = v1;
+    if (moved) {   // the old grid's next step: the first one not planned yet or cut below (its start at / after v's)
+      int64_t o = planned()[t], o0 = vceil_i(qo, c.abs), oc = vceil_d(qo, vpos(q, v));
+      if (o < o0) o = o0;
+      if (o > oc) o = oc;
+      voff()[t] += o - v;
+    }
+    vq()[t] = q;
     cancel_ons(t, fol().to_host((int64_t)c.frame_of(vpos(q, v))) - 1, true, 2);
     planned()[t] = v;
   }
@@ -2843,7 +2874,7 @@ CORE_COLD int play_step_of(int r, const Track* t) {
   if (transport() != kPlay || !clk()[r].on || play_abs()[r] < 0) return -1;
   Ratio q = rat_of(t);
   int64_t v = q.num == q.den ? play_abs()[r] : (int64_t)vnow(r, t);
-  return map_step(*cur(), t, r, v).index;
+  return map_step(*cur(), t, r, vstep(r, v)).index;
 }
 
 }  // namespace
@@ -2890,7 +2921,8 @@ CORE_COLD void reset() {
   if (sq_rytm()) rytm_dump::reset();
   sav_pending() = false;
   fol().reset();
-  for (int r = 0; r < kRytmTracks; ++r) clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1;
+  for (int r = 0; r < kRytmTracks; ++r)
+    clk()[r].reset(), restart()[r] = true, planned()[r] = 0, play_abs()[r] = -1, voff()[r] = 0, vq()[r] = Ratio{0, 1};
   set_transport(kStop);   // a take recording through a project load / hello ends (FC), as at the Rytm's STOP
   hframes() = 0, transport_frame() = INT64_MIN, bpm() = 0, mask() = 0, legacy_mask() = 0, clock_now() = 0, mask_sent() = -1, hello_due() = true, mutes() = 0, solos() = 0;
   out::set_mutes(sq_slot(), 0);   // (the slot's own mute gate)
@@ -3234,7 +3266,7 @@ static CORE_COLD void note_here(int vi, bool on, int pitch, int vel, int track) 
     int64_t sa = (int64_t)(x + 0.5 + 1e6) - 1000000;   // the nearest step (floor of x + 0.5)
     int micro = quant() ? 0 : clampi((int)((x - (double)sa) * kSub + (x >= (double)sa ? 0.5 : -0.5)), -kSub / 2, kSub / 2);
     if (sa < 0) sa = 0;
-    int idx = map_step(*cur(), t, r, sa).index;
+    int idx = map_step(*cur(), t, r, vstep(r, sa)).index;   // (the step heard there: SPD's offset)
     Note n = new_note(*t, pitch, d2);
     n.micro = (int8_t)micro;
     n.fresh = sa >= planned()[r] ? 1 : 0;   // its step is not planned yet: not again on top of the pad's own sound
@@ -4020,7 +4052,21 @@ static CORE_COLD bool ui_key_here(int code, bool down, bool shown) {
   return false;
 }
 
-static CORE_COLD bool ui_enc_here(int e, int delta, bool func, bool shown) {
+// The size of the small list under encoder e on the track pages (ui::list_turn: a touch after a rest changes none of
+// them), 0 for the rest (values, long lists, the held trigs' pages: as before)
+CORE_COLD int enc_list_n(int e, bool func, bool shown) {
+  if (!shown || ui().held || ui().ne) return 0;
+  switch (ui().tv) {
+    case kTvNotes: return e == 1 || e == 3 || e == 4 ? 2 : 0;            // the track on / off, QNT, FOLW
+    case kTvDefaults: return e == 4 ? kDirs : e == 5 ? (func ? kSpeeds : 7) : 0;   // DIR, SPD (FUNC: all ten)
+    case kTvScale: return e == 2 ? kQnts : 0;                            // QNT (KEY 12, SCL: as before)
+    case kTvRandom:                                                      // RNG, WGHT, MODE, SQNT, SAFF
+      return e == 1 ? 4 : e == 2 ? kWeights : e == 3 ? kRndModes : e == 5 ? kSqs : e == 6 ? kAffs : 0;
+    default: return 0;
+  }
+}
+
+CORE_COLD bool ui_enc(int e, int delta, bool func, bool shown) {
   if (!cur()) reset();   // (before engine_begin: the tests that skip it)
   // U1 NOTE EDIT: DATA (encoder 8; the page catches it on a poly track only, data_wanted) walks the highlight
   if (e == 8) {
@@ -4031,10 +4077,12 @@ static CORE_COLD bool ui_enc_here(int e, int delta, bool func, bool shown) {
     return true;
   }
   if ((!seqmode() && !shown) || e < 0 || e > 7 || !delta) return false;
+  if (!shown && !ui().held) return false;   // trk-rec: another page open in seq mode, no step held: the page's knob
   ui().touched = e;
   if (ui().prompt && shown) return true;   // seq-ux: nothing under a prompt
   // the lists, switches and small counts below (ui::list_turn, once a report; the long ones: the conditions); the rest values
-  const int l = ui().held && (e == ui().cond_e || (ui().sv == kSvTrig && e == 4)) ? ui::list_turn_long(e, delta) : ui::list_turn(e, delta);
+  const int l = ui().held && (e == ui().cond_e || (ui().sv == kSvTrig && e == 4)) ? ui::list_turn_long(e, delta)
+                                                                            : ui::list_turn(e, delta, enc_list_n(e, func, shown));
   if (ui().held && ui().lockpg >= 0) {      // seq-ux: the lock page: the held steps' locks (rui1050: a knob on COND, its condition)
     if (e == ui().cond_e && lock_param_of(ui().lockpg, e) >= 0) {
       if (l) lcond_turn(lock_param_of(ui().lockpg, e), l, func);
@@ -4456,7 +4504,7 @@ double play_pos(int r) {
   int len = eff_len(t, r);
   double x = vnow(r, t);   // P2: in the track's own steps
   int64_t v = (int64_t)x;
-  StepAt at = map_step(*cur(), t, r, v);   // E1: the mapped step plus how far into it the playhead is
+  StepAt at = map_step(*cur(), t, r, vstep(r, v));   // E1: the mapped step plus how far into it the playhead is
   double m = (double)at.index + (x - (double)v);
   return m >= len ? m - len : m;
 }
@@ -4746,6 +4794,7 @@ View view() {
   w.prompt_n = ui().prompt_n, w.prompt_locks = ui().prompt_locks;
   w.prompt_undo = ne_hooks_now() && ne_hooks_now()->save;
   w.prompt_why = ui().prompt == kPromptExplain ? can_seq(ui().prompt_track) : 0;
+  w.can_make = can_seq(r) == 1;
   w.prompt_sel = ui().prompt_sel;
   w.off_hint = ui().off_hint_ms && (int32_t)(now_ms() - ui().off_hint_ms) < 3000;
   w.lock_page = ui().held ? ui().lockpg : -1;
@@ -4821,17 +4870,29 @@ CORE_COLD void view_request(int r) {
 }
 CORE_COLD void selected_track(int t) {
   if (!cur()) reset();
-  if (t < 0 || t >= kRytmTracks || t == ui().track || ui().prompt) return;
+  // (a make or explain prompt up goes with the selection, "Follow, never close"; the menu, restore and off questions wait
+  // for their answer)
+  if (t < 0 || t >= kRytmTracks || t == ui().track) return;
+  if (ui().prompt && !(seq_shown() && (ui().prompt == kPromptMake || ui().prompt == kPromptExplain))) return;
   ui().held = 0, ui().page_held = false, ui().lockpg = -1, ui().touched = -1, ui().cond_e = -1, ui().push_down = 0, ui().func = false, ui().msg_ms = 0;
   if (in_mask(t)) {
-    ui().track = t, ui().page = 0;
+    ui().track = t, ui().page = 0, ui().prompt = 0;
     return;
   }
-  if ((ui().view_opened || we_opened()) && ui::remote_open()) {
-    ui().view_opened = false, we_opened() = false;
-    ui::remote_request(false);
-    log(CORE_STR("seq: track %d selected (no seq track): the SEQ page closed"), t + 1);
+  // Owner 2026-11-15 (hardware testing): a selection of a track that is no poly track (TRK + pad, a plain pad press; a
+  // Sidecar track with no poly track, or a track of the Rytm's own synth) CLOSES the SEQ page, whoever opened it (TRK +
+  // TRIG, seq mode, the ring, UP + T2): "they just want to edit that tracks trigs, seq or not". The page asks the Rytm to
+  // close (3A 0 0, as every page leaves); its 30 0 0 comes back and books TRK's release (remote.cpp), so TRK is never left
+  // held. A poly track follows (above). INSERT, ARP and POLY follow, never close (remote.cpp). An explicit open on a track
+  // that is no poly track (TRK + TRIG, UP + T2) keeps its make / explain prompt: only a selection closes.
+  if (!seq_shown()) return;
+  if (seqmode()) {   // seq mode's page: the Rytm leaves seq mode on a track that is no seq track (its 08 0 follows)
+    if (ui().ne) ne_leave();
+    seqmode() = false;
   }
+  we_opened() = false, ui().view_opened = false, ui().prompt = 0;
+  ui::remote_request(false);
+  log(CORE_STR("seq: track %d selected (no poly track): the SEQ page closed"), t + 1);
 }
 CORE_COLD void page_closed() {
   if (!cur()) reset();
@@ -5123,7 +5184,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     if (r < 0 || r >= kRytmTracks) return sniprintf(out, cap, CORE_STR("seq=print:T[:LOOP]")), true;
     const Track* t = track_of(*cur(), r);
     int64_t loop = q ? atoi(q + 1) - 1 : 0;
-    if (!q && t && transport() == kPlay && play_abs()[r] >= 0) loop = map_step(*cur(), t, r, (int64_t)vnow(r, t)).loop;
+    if (!q && t && transport() == kPlay && play_abs()[r] >= 0) loop = map_step(*cur(), t, r, vstep(r, (int64_t)vnow(r, t))).loop;
     if (loop < 0) loop = 0;
     int n = print_rnd(r, loop);
     replan(r);

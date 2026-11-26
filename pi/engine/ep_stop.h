@@ -12,19 +12,65 @@
 // stop (): called at IRQ level or with IRQs masked (the gadget's IRQ is core 0's), so the "EP disabled" it waits for is
 // acknowledged here before the handler can see it. A completion that raced the cancel is acknowledged too (the
 // transfer is forgotten either way). An IN endpoint's TX FIFO is flushed.
+//
+// Bus suspended (DSTS.SuspSts, the USB-C cable pulled or the computer idling the device): the host is gone and the PHY
+// may be gated, the core may never raise GOUTNAKEff / EPDisbld. The waits are cut short then (kSuspPolls reads instead of
+// kPolls), or stop () at IRQ level stalls core 0's other interrupts for as long as the full polls take. The time each stop
+// took is kept (Stats, maximum per suspend) for the Pi 5 trial: CSidecarGadget::LogSuspendStops (the once-a-second LogStats; a bus suspend never reaches CSidecarGadget::OnSuspend)
+// logs it once per suspend.
 // EP: Cancel () (CancelTransfer)
 #ifndef _ep_stop_h
 #define _ep_stop_h
 
 #include <circle/usb/dwhciregister.h>
+#include <circle/timer.h>
 
 namespace ep_stop {
 
 constexpr unsigned kPolls = 5000;	// as Circle's DisableEndpoint: a few microseconds on hardware
+constexpr unsigned kSuspPolls = 50;	// bus suspended: the same waits, cut short
+constexpr u32 kSuspSts = 1u << 0;	// DSTS bit 0, suspend status (DWHCI_DEV_STS)
+
+struct Stats
+{
+	unsigned nStops = 0, nSuspStops = 0;	// stop () calls since the last take, of them with the bus suspended
+	unsigned maxUs = 0, maxSuspUs = 0;	// the longest of each
+};
+inline Stats g_Stats;				// IRQ level and task level: read with IRQs masked
+
+// the stats since the last call, cleared; false when no stop ran
+inline bool take (Stats *pOut)
+{
+	*pOut = g_Stats;
+	g_Stats = Stats ();
+	return pOut->nStops != 0;
+}
+
+// the time of one stop () into g_Stats
+struct Timing
+{
+	const bool bSusp;
+	const unsigned nStart;
+	Timing (bool b) : bSusp (b), nStart (CTimer::GetClockTicks ()) {}
+	~Timing ()
+	{
+		const unsigned nUs = CTimer::GetClockTicks () - nStart;
+		g_Stats.nStops++;
+		if (nUs > g_Stats.maxUs) g_Stats.maxUs = nUs;
+		if (bSusp)
+		{
+			g_Stats.nSuspStops++;
+			if (nUs > g_Stats.maxSuspUs) g_Stats.maxSuspUs = nUs;
+		}
+	}
+};
 
 template <class EP>
 void stop (EP &e, unsigned nEP, bool bIn)
 {
+	const bool bSusp = (CDWHCIRegister (DWHCI_DEV_STS).Read () & kSuspSts) != 0;
+	const unsigned nPolls = bSusp ? kSuspPolls : kPolls;
+	Timing Time (bSusp);
 	if (bIn)
 	{
 		CDWHCIRegister Ctrl (DWHCI_DEV_IN_EP_CTRL (nEP));
@@ -39,7 +85,7 @@ void stop (EP &e, unsigned nEP, bool bIn)
 		if (bEnabled)
 		{
 			CDWHCIRegister Int (DWHCI_DEV_IN_EP_INT (nEP));
-			for (unsigned i = 0; i < kPolls && !(Int.Read () & DWHCI_DEV_IN_EP_INT_EP_DISABLED); i++) {}
+			for (unsigned i = 0; i < nPolls && !(Int.Read () & DWHCI_DEV_IN_EP_INT_EP_DISABLED); i++) {}
 		}
 		CDWHCIRegister Ack (DWHCI_DEV_IN_EP_INT (nEP), DWHCI_DEV_IN_EP_INT_EP_DISABLED | DWHCI_DEV_IN_EP_INT_XFER_COMPLETE);
 		Ack.Write ();
@@ -49,7 +95,7 @@ void stop (EP &e, unsigned nEP, bool bIn)
 			Reset.Or (DWHCI_CORE_RESET_TX_FIFO_FLUSH);
 			Reset.Or (nEP << DWHCI_CORE_RESET_TX_FIFO_NUM__SHIFT);
 			Reset.Write ();
-			for (unsigned i = 0; i < kPolls && (Reset.Read () & DWHCI_CORE_RESET_TX_FIFO_FLUSH); i++) {}
+			for (unsigned i = 0; i < nPolls && (Reset.Read () & DWHCI_CORE_RESET_TX_FIFO_FLUSH); i++) {}
 		}
 		return;
 	}
@@ -62,13 +108,13 @@ void stop (EP &e, unsigned nEP, bool bIn)
 		DevCtrl.Or (DWHCI_DEV_CTRL_SET_GLOBAL_OUT_NAK);
 		DevCtrl.Write ();
 		CDWHCIRegister IntStat (DWHCI_CORE_INT_STAT);
-		for (unsigned i = 0; i < kPolls && !(IntStat.Read () & DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF); i++) {}
+		for (unsigned i = 0; i < nPolls && !(IntStat.Read () & DWHCI_CORE_INT_STAT_GLOBAL_OUT_NAK_EFF); i++) {}
 	}
 	e.Cancel ();
 	if (bEnabled)
 	{
 		CDWHCIRegister Int (DWHCI_DEV_OUT_EP_INT (nEP));
-		for (unsigned i = 0; i < kPolls && !(Int.Read () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED); i++) {}
+		for (unsigned i = 0; i < nPolls && !(Int.Read () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED); i++) {}
 	}
 	CDWHCIRegister Ack (DWHCI_DEV_OUT_EP_INT (nEP), DWHCI_DEV_OUT_EP_INT_EP_DISABLED | DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
 	Ack.Write ();

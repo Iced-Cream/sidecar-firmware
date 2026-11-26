@@ -51,6 +51,18 @@ build/test_teensy_flash: test_teensy_flash.cpp ../teensy_flash.cpp ../teensy_fla
 	@mkdir -p build/tf_src
 	cp ../teensy_flash.cpp build/tf_src/
 	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ishim_tf -I.. -I$(CORE) -DTEENSY_FLASH_TEST -o $@ test_teensy_flash.cpp build/tf_src/teensy_flash.cpp $(CORE)/lib/sha256.cpp
+# the remote UI service's portable part (remote_srv.cpp) against the protocol library's C files (ui/remote), with the real client
+RMT := ../../ui/remote
+RMT_C := $(RMT)/rmt_proto.c $(RMT)/rmt_views.c $(RMT)/rmt_cli.c $(RMT)/rmt_sha256.c
+build/test_remote_srv: test_remote_srv.cpp ../remote_srv.cpp ../remote_srv.h $(RMT_C) $(wildcard $(RMT)/*.h) check.h
+	@mkdir -p build/rmt
+	for f in $(RMT_C); do cc -std=c11 -O1 -g -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=all -c $$f -o build/rmt/$$(basename $$f .c).o || exit 1; done
+	$(CXX) $(CXXFLAGS) -o $@ test_remote_srv.cpp ../remote_srv.cpp build/rmt/*.o
+# the remote UI's views with no display (remote_views_pi.cpp, the kernel's view section): a fake engine, the real service and client; links no LVGL
+build/test_remote_views: test_remote_views.cpp ../remote_views_pi.cpp ../remote_views_pi.h ../remote_srv.cpp ../remote_srv.h $(RMT_C) $(wildcard $(RMT)/*.h) check.h
+	@mkdir -p build/rmt
+	for f in $(RMT_C); do cc -std=c11 -O1 -g -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=all -c $$f -o build/rmt/$$(basename $$f .c).o || exit 1; done
+	$(CXX) $(CXXFLAGS) -DSIDECAR_SEQED=1 -o $@ test_remote_views.cpp ../remote_views_pi.cpp ../remote_srv.cpp build/rmt/*.o
 # usb=mirror's descriptor and per-block helpers (mirror_desc.h) with the Overbridge block layout (ob_block.h)
 build/test_mirror_desc: test_mirror_desc.cpp ../mirror_desc.h ../../../teensy/libraries/RytmHost/ob_block.h check.h
 	@mkdir -p build
@@ -189,6 +201,19 @@ build/test_morph_pi: test_morph_pi.cpp ../morph_pi.cpp ../morph_pi.h ../../ui/si
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_morph_pi.cpp ../morph_pi.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# the INSERT FX / MASTER FX views' touch bases and defaults (insfx_pi.cpp) on the core's Mac library. insfx_pi.cpp's own
+# core_port.h is the Pi's (sniprintf = the newlib subset): the copy built here leaves it out, the core's Mac port has sniprintf
+build/test_insfx_pi: test_insfx_pi.cpp ../insfx_pi.cpp ../insfx_pi.h ../../ui/sidecar_insfx.h ../../ui/sidecar_mfx.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	sed '/#include "core_port.h"/d' ../insfx_pi.cpp > build/insfx_pi_mac.cpp
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_insfx_pi.cpp build/insfx_pi_mac.cpp $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
+# which VOICE knobs take a finger (voice_pi.cpp EditGate) on the core's Mac library; voice_pi.cpp's own core_port.h is the Pi's: left out
+build/test_voice_gate: test_voice_gate.cpp ../voice_pi.cpp ../voice_pi.h ../../ui/sidecar_voice.h check.h $(CORE)/build/libcore.dylib
+	@mkdir -p build
+	sed '/#include "core_port.h"/d' ../voice_pi.cpp > build/voice_pi_mac.cpp
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_POLY=1 -DCORE_MSAMP=1 -I$(CORE)/host -I$(CORE) -I.. -I$(ENG)/Plaits -I$(ENG)/Juno -I$(ENG)/DaisySP -I$(ENG)/Sampler -I$(CORE)/../sdk -I$(RMPSRC) \
+	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ test_voice_gate.cpp build/voice_pi_mac.cpp ../seditview_pi.cpp ../../ui/rytm_pattern.c $(CORE)/build/libcore.dylib -Wl,-rpath,$(abspath $(CORE)/build)
 # 0.5.0: the display's XY page view (xypad_pi.cpp) from the XY pad (core/mod/xypad.h) on the core's Mac library
 build/test_xypad_pi: test_xypad_pi.cpp ../xypad_pi.cpp ../xypad_pi.h ../../ui/sidecar_xy.h $(CORE)/mod/xypad.h check.h $(CORE)/build/libcore.dylib
 	@mkdir -p build
@@ -202,6 +227,10 @@ build/test_scope_pi: test_scope_pi.cpp ../scope_pi.cpp ../scope_pi.h ../../ui/si
 	@mkdir -p build
 	$(CXX) -I$(CORE)/host $(CXXFLAGS) -Wno-unused-parameter -o $@ $< ../scope_pi.cpp
 # the storage layer (docs/STORAGE.md): the volumes' state machine and rules, the bench on a simulated drive and a temp folder
+# the first boot's grow of the SD image (sdgrow.cpp) on in-memory disks laid out by sdimg_fixture.h
+build/test_sdgrow: test_sdgrow.cpp ../sdgrow.cpp ../sdgrow.h sdimg_fixture.h check.h
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $< ../sdgrow.cpp
 build/test_stor_vol: test_stor_vol.cpp ../stor_vol.cpp ../stor_vol.h ../stor_out.h check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< ../stor_vol.cpp
@@ -224,11 +253,12 @@ build/fatfs-%/ff.h: $(FATFS_SRC)/ff.c $(FATFS_SRC)/ffconf.h
 	sed $(FATFS_HOST) $(if $(filter exfat,$*),$(STOR_EXFAT_SED),) $(FATFS_SRC)/ffconf.h > $(dir $@)ffconf.h
 FATFS_DEPS = test_stor_fatfs.cpp ../stor_vol.cpp ../stor_vol.h check.h
 # the DWC2 gadget's EP0 and endpoint cancel (test_gadget_ep0.cpp): Circle's dwusbgadgetendpoint*.cpp with the Pi 4
-# gadget patch stack (pi/engine/build.sh's order, up to circle-gadget-stray.patch), copied into build/dwc and patched
+# gadget patch stack (pi/engine/build.sh's order, up to circle-gadget-unplug.patch), copied into build/dwc and patched
 # there, on a fake register file (shim_dwc/)
 DWC_ROOT := $(if $(filter %/circle,$(CIRCLE_BUILD)),$(CIRCLE_BUILD),$(CIRCLE_BUILD)/circle)
 DWC_PATCHES := $(addprefix ../../circle/,circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch \
-	       circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch)
+	       circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch \
+	       circle-gadget-unplug.patch)
 build/dwc/.patched: $(DWC_PATCHES) ../../circle/gadget_wake.h ../../circle/gadget_flush.h
 	@test -f $(DWC_ROOT)/lib/usb/gadget/dwusbgadgetendpoint0.cpp || { echo "test_gadget_ep0: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
 	@rm -rf build/dwc && mkdir -p build/dwc/lib/usb
@@ -237,7 +267,25 @@ build/dwc/.patched: $(DWC_PATCHES) ../../circle/gadget_wake.h ../../circle/gadge
 	@cp ../../circle/gadget_flush.h build/dwc/include/circle/usb/gadget/gadgetflush.h
 	@cd build/dwc && for p in $(DWC_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
 	@touch $@
-build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
+# the real OnTransferDropped bodies of CSidecarMIDIEP, CNcmEP and CMirrorEP (the text between the braces), included by the
+# test's stand-ins (they name the members as the classes do): a changed body is compiled and run, a renamed one fails here
+build/drop_midi.inc: DROPCLS := CSidecarMIDIEP
+build/drop_ncm.inc: DROPCLS := CNcmEP
+build/drop_mirror.inc: DROPCLS := CMirrorEP
+build/drop_%.inc: ../sidecar_gadget.cpp
+	@mkdir -p build
+	@awk -v cls=$(DROPCLS) 'index($$0, "void " cls "::OnTransferDropped (boolean bIn)") == 1 {f=1; next} f && !s && /^\{$$/ {s=1; next} f && s && /^\}$$/ {exit} f && s {print}' ../sidecar_gadget.cpp > $@
+	@test -s $@ || { echo "test_gadget_ep0: no $(DROPCLS)::OnTransferDropped in sidecar_gadget.cpp"; exit 1; }
+build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h ../ep_stop.h ../sidecar_gadget.cpp build/dwc/.patched build/drop_midi.inc build/drop_ncm.inc build/drop_mirror.inc $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
+	@# the stand-ins stop an endpoint as the real classes do (the descriptor's number and direction): the statement is in the source
+	@grep -q 'ep_stop::stop (\*this, GetEPNumber (), GetDirection () == DirectionIn);' ../sidecar_gadget.cpp || { echo "test_gadget_ep0: CSidecarMIDIEP::Stop changed (the stand-in CMidiTestEP follows it)"; exit 1; }
+	@grep -q 'ep_stop::stop (\*this, m_nEP, m_Role != RoleOut);' ../sidecar_gadget.cpp || { echo "test_gadget_ep0: CNcmEP::Stop changed (CNcmTestEP follows it)"; exit 1; }
+	@# the stop times are logged where a real bus suspend reaches them (LogStats), not in CSidecarGadget::OnSuspend (UpdatePlugAndPlay / SoftConnect only)
+	@grep -q '^	LogSuspendStops (pLogger);' ../sidecar_gadget.cpp || { echo "test_gadget_ep0: LogStats does not call LogSuspendStops"; exit 1; }
+	@awk '/^void CSidecarGadget::OnSuspend/ {f=1} f && /ep_stop::take/ {bad=1} f && /^}/ {f=0} END {exit bad}' ../sidecar_gadget.cpp || { echo "test_gadget_ep0: CSidecarGadget::OnSuspend takes the stop stats again (a bus suspend never calls it)"; exit 1; }
+	@# the real dwusbgadget.cpp (the suspended-state acknowledgement of the OUT EP's EP disabled) compiles against the patched headers
+	@grep -q 'DWHCI_DEV_OUT_EP_INT_EP_DISABLED);.*circle-gadget-unplug' build/dwc/lib/usb/gadget/dwusbgadget.cpp || { echo "test_gadget_ep0: dwusbgadget.cpp has no suspended-state EP disabled ack"; exit 1; }
+	$(CXX) -std=c++17 -fsyntax-only -w -Ibuild/dwc/include build/dwc/lib/usb/gadget/dwusbgadget.cpp
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
 	  -Ishim_dwc -Ibuild/dwc/include -I. -I.. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
 	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp

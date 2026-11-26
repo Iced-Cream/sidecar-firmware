@@ -6,7 +6,8 @@
  *
  * The only device so far: the Analog Rytm MKII with rytm-mods 0026 (rui1046; UP + AMP rui1047; POLY CONFIG rui1048). Its one modifier is UP (TRK is stock's
  * busiest key; UP held alone shows the map): UP + T1..T13 request a page (49 1 <n>), UP + a key is a combo the Rytm
- * handles itself (it tells the host by 30 / 2D as before). The TRK / FUNC forms of rui1026..1045 still work (legacy).
+ * handles itself (it tells the host by 30 / 2D as before). The T + FUNC forms still work (legacy); the TRK forms of
+ * rui1026..1045 are no longer listed (0.5.0, owner: UP is the Sidecar key, TRK is stock's: the pages no longer catch it).
  * rui1050: the SEQ page's own gestures (TRIG cycling its pages, a lock page's long push / FUNC + push) are KEYS rows
  * only (no UP combo: UP's map stays one page).
  * rui1048: POLY CONFIG is an item of the Rytm's own track menu (FUNC + CHRO, the last item), not a combo: the row "poly"
@@ -28,6 +29,8 @@
 #ifndef CORE_UI_PAGE_KEYS_H
 #define CORE_UI_PAGE_KEYS_H
 
+#include "../sidecar_features.h"
+
 typedef struct {
 	unsigned char code;	/* the device's page request (49 1 <code>); on the Rytm UP + T<code> */
 	const char *name;	/* the page: the touchscreen's page of that name, its navigation caption, the TOUCH: popup */
@@ -41,7 +44,7 @@ typedef struct {
 	const char *keys;	/* as the KEYS page writes it: "UP+TRIG" (T+: a trig held first, on a poly track) */
 	const char *what;	/* the KEYS page's text */
 	const char *map;	/* UP's combo map: the key and its page in at most 12 characters ("TRIG SEQ"), 0: not on it */
-	const char *legacy;	/* the older form that still works ("TRK+TRIG"), 0 none */
+	const char *legacy;	/* the older form that still works ("T+FUNC+REC"), 0 none */
 	const char *rytm;	/* the page it opens on the device's screen (the SIDECAR MENU's shortcut column), 0 none */
 	const char *alone;	/* rui1052: as `map`, on the map drawn with no touchscreen connected - the rows the
 				   touchscreen's own pages free there (page_menu.cpp map_draw), 0: not on it either */
@@ -65,37 +68,39 @@ typedef struct {
    rytm-mods tools/emu/rled_emu.py stockup / stockupkeys]: UP held + the key leaves what the key alone leaves (in a list
    what UP tapped and then the key leave).
    rui1052: T1..T8 are the touchscreen's sidebar, top to bottom (pi/ui/sidecar_ui.c kNavPage: HOME SEQ PAT VOICE FX SONG
-   REC SET - the sidebar's FX is INSERT FX here); T9..T13 are the pages with no sidebar row, on the keys they have had
-   since rui1046 (SCOPE STATUS SAMPLE PROJECT POOL: only SAMPLE moved, into the row SONG left). Which screen a page
+   REC SET - the sidebar's FX is the FX section, SEND FX first; INSERT FX is VOICE > Insert); T9..T13 are the pages
+   with no sidebar row, on the keys they have had since rui1046 (SCOPE STATUS SAMPLE PROJECT POOL: only SAMPLE moved, into the row SONG left). Which screen a page
    belongs to is the row's `rytm` field, not its number (0: the touchscreen's alone - before rui1052 that was the
    leading run 1..6, and UP's map read the number). */
 static const sc_page_key_t sc_rytm_mk2_pages[] = {
 	{1, "HOME", 0, ""},		{2, "SEQ", 0, ""},		{3, "PAT", 0, ""},
-	{4, "VOICE", 0, ""},		{5, "INSERT FX", 0, ""},	{6, "SONG", "SONG", ""},
+	{4, "VOICE", 0, ""},		{5, "FX", 0, ""},		{6, "SONG", "SONG", ""},
 	{7, "REC", "REC", ""},		{8, "SET", 0, ""},		{9, "SCOPE", "SCOPE", ""},
 	{10, "STATUS", "SIDECAR", ""},	{11, "SAMPLE", "SAMPLE", ", AGAIN: AUTO"},
 	{12, "PROJECT", "PROJECT", ""},	{13, "POOL", "POOL", ""},
+#if SIDECAR_MORPH
 	{14, "MORPH", "MORPH", ""},	/* 0.5.0 (spec-050 2.6): needs the 0.5.0 flash's 0026 (UP + T14: rui.c forwards
 					   UP + T1..T13 today); until then the SIDECAR MENU's row */
+#endif	/* 0.5.0: the MORPH page is off (SIDECAR_MORPH 0): UP + T14, which the rc5b mod still forwards, finds no row (remote.cpp shows a "MORPH: 0.5.2" popup) */
 };
 static const sc_combo_t sc_rytm_mk2_combos[] = {
-	{"pages", "UP+YES", "SIDECAR (YES: MENU)", "YES PAGES", "TRK+YES", 0},
-	{"seq", "UP+TRIG", "SEQ (POLY TRACK)", "TRIG SEQ", "TRK+TRIG", "SEQ"},
+	{"pages", "UP+YES", "SIDECAR (YES: MENU)", "YES PAGES", 0, 0},
+	{"seq", "UP+TRIG", "SEQ (POLY TRACK)", "TRIG SEQ", 0, "SEQ"},
 	{"srclist", "UP+SRC", "SOURCE LIST", "SRC LIST", 0, 0},
-	{"lfo", "UP+LFO", "SIDECAR LFOS", "LFO LFOS", "TRK+LFO", "LFO"},
-	{"ins", "UP+FX", "INSERT FX", "FX INSERT FX", "TRK+FX", "INSERT"},
+	{"lfo", "UP+LFO", "SIDECAR LFOS", "LFO LFOS", 0, "LFO"},
+	{"ins", "UP+FX", "INSERT FX", "FX INSERT FX", 0, "INSERT"},
 	{"out", "UP+AMP", "INSERT OUT VIEW", "AMP OUT", 0, 0},
 	{"arp", "UP+FLTR", "ARPEGGIATOR", "FLTR ARP", 0, "ARP"},	/* 7ae: 30 page 4 (rytm-mods 0026) */
 	/* 0.5.0 FILL: the 0.5.0 0026 sends UP + RIGHT / LEFT as 49 1 1 16 / 15 (hello caps2 bit 0, the host's claim 4A 7E 1;
 	   remote.h kPageFill). Not on UP's map: both maps are full (18 rows) */
 	{"fill", "UP+RIGHT", "FILL (TRACK LOCKS)", 0, 0, "FILL"},
-	{"gen", "UP+LEFT", "GENERATOR (0.5.1)", 0, 0, 0},
+	{"gen", "UP+LEFT", "GENERATOR (0.5.2)", 0, 0, 0},
 	{"copy", "T+UP+REC", "COPY STEPS (SEQ)", 0, "T+FUNC+REC", 0, "T+REC COPY"},
 	{"paste", "T+UP+STOP", "PASTE STEPS", 0, "T+FUNC+STOP", 0, "T+STOP PASTE"},
 	{"clear", "T+UP+PLAY", "CLEAR STEPS", 0, "T+FUNC+PLAY", 0, "T+PLAY CLEAR"},
 	{"poly", "FUNC+CHRO", "MENU: POLY CONFIG", 0, 0, "POLY"},
 	{"chop", "PUSH ON SRC", "CHOP EDITOR (B..H)", 0, 0, "CHOP"},	/* CHOP: a push of encoder B..H on its SRC view */
-	{0, "SRC: PUSH B", "SAMPLE EDIT (DSP SMPL)", 0, 0, "SAMPLE EDIT"},	/* DSP SAMPLE: a push of encoder B on its SRC view */
+	{0, "SRC: PUSH B", "SAMPLE EDIT (DSP)", 0, 0, "SAMPLE EDIT"},	/* DSP SAMPLE: a push of encoder B on its SRC view */
 	{0, "FUNC+PAGE", "SCALE (SEQ)", 0, 0, 0},
 	{0, "AMP AMP", "SENDS (AMP 2/2)", 0, 0, 0},
 	{0, "FX: SRC/SMPL", "SEND FX 1 / 2", 0, 0, 0},
@@ -124,15 +129,15 @@ static const sc_combo_t sc_rytm_mk2_combos[] = {
 	{0, "STOP STOP", "SIDECAR FX CLEARED", 0, 0, 0},
 	{0, "NO", "BACK A LEVEL", 0, 0, 0},
 	{0, "CHOP: PAGE", "EDIT SLICE 1 2 3", 0, 0, 0},	/* the CHOP editor's own keys (core/ui/page_chop.cpp) */
-	{0, "CHOP: PUSH A-D", "ADD DEL MERGE UNDO", 0, 0, 0},
-	{0, "CHOP: PUSH E-H", "GRID TRANS LAZY RSMP", 0, 0, 0},
+	{0, "CHOP: PUSH A-D", "ADD DEL MRG UNDO", 0, 0, 0},
+	{0, "CHOP: PUSH E-H", "GRID TRN LZY RSMP", 0, 0, 0},
 	{0, "CHOP: T1..T16", "SLICE (LAZY: TAP)", 0, 0, 0},
-	{0, "CHOP: UP TAP", "EDIT ONE / ALL SLICES", 0, 0, 0},	/* 0.5.0: a tap of UP (no other key between) toggles the edit target */
+	{0, "CHOP: UP TAP", "EDIT ONE/ALL SLICES", 0, 0, 0},	/* 0.5.0: a tap of UP (no other key between) toggles the edit target */
 	{0, "SEDIT: FUNC+YES", "SAVE (+USE)", 0, 0, 0},	/* SAMPLE EDIT's own keys (core/ui/page_sedit.cpp) */
 	{0, "SEDIT: NO", "UNDO, AGAIN: BACK", 0, 0, 0},
 	{0, "SEDIT: A / B", "START / END (AT 0)", 0, 0, 0},	/* sedit-050: on zero crossings */
-	{0, "SEDIT: FUNC+A/B", "TO NEXT TRANSIENT", 0, 0, 0},
-	{0, "SEDIT: C / D / E", "ZOOM / PAN / FUNC", 0, 0, 0},
+	{0, "SEDIT: FUNC+A/B", "NEXT TRANSIENT", 0, 0, 0},
+	{0, "SEDIT: C/D/E", "ZOOM / PAN / FUNC", 0, 0, 0},
 	{0, "MENU: MIDI", "KEYBOARD ROUTE", 0, 0, 0},	/* 0.5.0: SIDECAR MENU > MIDI (page_midi.cpp); no key of its own */
 };
 /* rui1051 (the user's report on rui1050): pages that work on what the selected track holds - its poly sequence (SEQ,

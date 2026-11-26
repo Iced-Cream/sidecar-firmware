@@ -105,6 +105,7 @@ struct Stats {
   uint32_t hashed, gone, unreadable, recordings;  // gone: on the card at the last walk, not now; recordings: indexed only
   uint64_t hashed_bytes, dup_bytes;
   uint32_t walked;                                // entries the walk has seen (WALKING's progress)
+  uint32_t deep_skipped;                          // folders at the first level below the walk's depth limit, skipped in the last walk
   uint32_t log_lines, compactions, pending_log;   // the log on the card, compactions, lines waiting for a write
   char waiting[16];                               // "PLAYING" ... while held back ("" running)
   uint32_t seq;                                   // bumped with every change of these

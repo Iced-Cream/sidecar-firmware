@@ -211,6 +211,11 @@ CORE_COLD int speed_step(int spd, int d, bool func) {
   }
   return kSpeedOrder[at];
 }
+CORE_COLD int speed_pos(int spd) {
+  for (int i = 0; i < kSpeeds; ++i)
+    if (kSpeedOrder[i] == spd) return i;
+  return 6;   // FOLLOW
+}
 
 // ---- seqtop H1: the FX column's commands
 namespace {

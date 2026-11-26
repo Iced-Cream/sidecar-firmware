@@ -66,9 +66,9 @@ static void rows (lv_obj_t *p, int y, int rp, int w, int capw, int n, const char
 
 void sidecar_status_create (void *parent, int y0)
 {
-	const int O = oled (), dx = TH->dx, dy = TH->dy;
-	const int pw = th_page_w (), ph = O ? TH->h : LU (428) + dy;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int O = oled (), dx = TH->dx, dy = TH->pdy;
+	const int pw = th_page_w (), ph = O ? TH->h - LU (25) : LU (428) + dy;
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (O ? LU (25) : 0));
 	s_Page = pg;
 	s_nGen = ~0u;
 	memset (&s_V, 0, sizeof s_V);
@@ -77,7 +77,7 @@ void sidecar_status_create (void *parent, int y0)
 	const int top = O ? LU (15) : LU (6), gap = O ? LU (4) : LU (8), mx = O ? 0 : LU (8);
 	const int cw = (pw - 2 * mx - gap) / 2, rx = mx + cw + gap, H = ph - top - (O ? 0 : LU (4));
 	const int pt = O ? LU (12) : LU (26);				// the panel's title (its rows start below it)
-	const int rp = O ? LU (12) + dy / 16 : LU (22) + dy / 16;	// a row
+	const int rp = O ? LU (10) + TH->dy / 16 : LU (22) + dy / 10;	// a row
 	if (O)
 	{
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
@@ -121,7 +121,7 @@ void sidecar_status_create (void *parent, int y0)
 	int vrp = (verh - pt - (LU (O ? 2 : 6))) / V_N;		// (five rows: tighter where the panel is short)
 	if (vrp > rp) vrp = rp;
 	int vy = (verh - pt - V_N * vrp - (LU (O ? 2 : 6))) / 2;
-	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? LU (54) : LU (96), V_N, O ? kVerCap : kVerCapC, s_Ver);
+	rows (verp, pt + (vy > 0 ? vy : 0), vrp, cw, O ? LU (54) : THEME_BOXED (TH->id) ? LU (84) : LU (96), V_N, O ? kVerCap : kVerCapC, s_Ver);
 	// ---- right: CPU (4 cores, 4 rows), LINKS (9 rows)
 	const int cph = pt + 4 * rp + C_N * rp + (O ? LU (4) : LU (10));
 	lv_obj_t *cp = th_panel (pg, rx, top, cw, cph, O ? "CPU" : "CPU", kind);
@@ -226,7 +226,7 @@ static void lib_text (char *b, int cap, const sidecar_status_view_t *v)
 	else lv_snprintf (f, sizeof f, "%u", v->lib_files);
 	int n;
 	if (v->lib_state == 3)
-		n = lv_snprintf (b, cap, O ? "%s FILES %u%%" : "%s files, %u %%, %u to go", f, v->lib_pct, v->lib_pending);
+		n = lv_snprintf (b, cap, O ? "%s FILES %u%%" : "%s files, %u%%, %u left", f, v->lib_pct, v->lib_pending);
 	else if (O && v->lib_dups && v->lib_missing)
 		n = lv_snprintf (b, cap, "%s %u DUP %u MISS", f, v->lib_dups, v->lib_missing);
 	else
@@ -241,7 +241,7 @@ static void lib_text (char *b, int cap, const sidecar_status_view_t *v)
 		int k = 0;
 		for (const char *c = v->lib_waiting; *c && k < 15; c++) w[k++] = *c >= 'A' && *c <= 'Z' ? *c + 32 : *c;
 		w[k] = 0;
-		lv_snprintf (b + n, cap - n, " (%s)", w);
+		lv_snprintf (b + n, cap - n, " %s", w);
 	}
 }
 

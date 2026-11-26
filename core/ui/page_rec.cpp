@@ -225,11 +225,11 @@ CORE_COLD bool rec_busy() {   // a take records (or closes): no playback, its ke
   return rec_get(&i) && (i.state == kRecRecording || i.state == kRecFinishing);
 }
 
-CORE_COLD void rec_enc(int e, int delta, bool) {
+CORE_COLD void rec_enc(int e, int delta, bool func) {
   if (!delta) return;
   if (e >= 1 && e <= 3) {   // B the channel, C the take, D the level
     if (!p_have || rec_busy()) return;
-    int n = e == 1 ? list_turn(e, delta) : e == 2 ? list_turn_long(e, delta) : delta;
+    int n = e == 1 ? list_turn(e, delta) : e == 2 ? list_turn_long(e, delta) : delta * (func ? 8 : 1);   // D the level: FUNC x 8
     __atomic_fetch_add(e == 1 ? &p_dch : e == 2 ? &p_dtake : &p_dlev, n, __ATOMIC_ACQ_REL);
     p_touched = true;
     return;

@@ -102,7 +102,13 @@ read as the same WIDTH whatever came before [tested, `test_insert`]. The shelves
   is connected, so a lost message or a turn that crossed one of ours leaves the Rytm's knobs off for 2 s at most.
 - **Saving**: a turn writes the bus's post EQ, which marks the kit file dirty; the file is written once, 1 s after the
   last change (`idle_save`), not per message.
-- **Touchscreen**: Settings > Send FX shows each FX's BASE and WIDTH as dials (read only).
+- **Touchscreen**: Settings > Send FX shows each FX's BASE and WIDTH as dials (read only: the Rytm owns them).
+  The INSERT FX page itself takes a finger: the eight dials (a vertical drag: up is more; five touch sizes of drag are the
+  whole range), the three send bars and OUT's LEV / PAN / WID (while the route is PRE or POST; a drag along the bar) change relative to
+  where the finger landed, from the value as set (not as it plays: an LFO or a lock does not move the start), a double tap sets the
+  default (the TYPE's, a send 0, LEV 100, PAN 64, WID 64). They send an encoder turn's lines (`ins=Vn:S:pK:V`, `ins=Vn:send:B:V`,
+  `out=Vn:lev|pan|wid:V`), at most one every 30 ms while dragging and always the value at the lift; the dial shows the finger's value
+  while down and 300 ms after, then the engine's. A dial with no TYPE set takes no touch.
 - **Web**: the old page's Send FX tab, and web-next's bus 1 / 2 strip: BASE and WIDTH sliders / knobs (`/status`
   `"ins"` bus chains carry `"bw":[base,width]`).
 - **Console**: `ins=B1:eq:base:40`, `ins=B2:eq:width:60`; `ins` shows `(BASE b WIDTH w)` on bus 1 / 2's eq line.
@@ -336,8 +342,9 @@ already were on the master (docs/MASTER-FX.md). Bus 3, the dry bus of the voices
   bus 3's ROUTE, seen and set whatever the slots hold.
 - **Pi touchscreen INSERT FX** page (both themes, OLED default; page 9): the voice's two slots as dials with labels and
   values, a TYPE key per slot (tap: the next TYPE), V1..V8 keys, the three sends as bars, each bus's chain and return.
-  It follows the Rytm's selected track. Open it from Settings > Send FX > **Inserts**, or with the Rytm's UP + T5
-  (`49 1 5` since rui1052, `49 1 6` before it); UP + FX (rui1046; TRK + FX before) opens the Rytm's own INSERT page.
+  It follows the Rytm's selected track. Open it from Settings > Send FX > **Inserts** (VOICE > Insert). UP + T5
+  (`49 1 5`) opens the sidebar's FX page (Send FX) since 0.5.1.1; from rui1052 to 0.5.1 it opened this page. UP + FX
+  (rui1046; TRK + FX before) opens the Rytm's own INSERT page.
 - **Web**: `/status` carries `"ins"` (every chain, params as set and as playing, sends, bus 3's route); the LFO tab
   lists the new targets. Editing on the web page: the console (`ins=...`), no dedicated tab yet.
 - **Console**: `ins`, `ins=V3:A:type:filter`, `ins=V3:A:p1:90`, `ins=V3:B:off`, `ins=V3:send:2:100`,
@@ -359,7 +366,7 @@ already were on the master (docs/MASTER-FX.md). Bus 3, the dry bus of the voices
    screen (`core/ui/remote.cpp display_remote_page`: the touchscreen has no such pages).
 3. **rui1046: UP is the Sidecar's one modifier.** UP + FX opens the INSERT page as TRK + FX does (TRK + FX still works,
    the legacy form); UP + T11..T13 (SONG, PROJECT, POOL) join T1..T10. (rui1052 then put T1..T8 in the touchscreen
-   sidebar's order - INSERT FX is UP + T5 now, SONG UP + T6; the table holds the current keys.) The page map is no
+   sidebar's order - UP + T5 is the sidebar's FX (Send FX since 0.5.1.1), SONG UP + T6; the table holds the current keys.) The page map is no
    longer written out here or in the code: the device's table `core/ui/page_keys.h` (docs/UI-THEMES.md "The device's
    shortcuts") names every UP + key and every page request, and the KEYS page, UP's map, the SIDECAR MENU and the
    touchscreen read it.

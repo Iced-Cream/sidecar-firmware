@@ -1,0 +1,157 @@
+--- a/include/circle/usb/gadget/dwusbgadgetendpoint.h
++++ b/include/circle/usb/gadget/dwusbgadgetendpoint.h
+@@ -74,6 +74,17 @@
+ #define CIRCLE_GADGET_STRAY	1
+ 	static unsigned GetStrayCount (void)	{ return s_nStray; }
+ 
++	/// \brief circle-gadget-unplug: the core disabled this non-isochronous EP while a transfer was armed and the transfer was
++	///	   dropped (a host that vanished mid-traffic; IRQ level). Override this to arm the EP again (the transfer's data
++	///	   is lost; a driver that tracks "busy" clears it here). A completion that raced the disable is not reported here.
++	virtual void OnTransferDropped (boolean bIn) {}
++#define CIRCLE_GADGET_UNPLUG	1
++	/// \brief EP disabled interrupts handled (not fatal) since boot, and armed transfers dropped by them; IN timeouts
++	///	   (acknowledged, not fatal) are counted on their own
++	static unsigned GetUnplugCount (void)	{ return s_nUnplug; }
++	static unsigned GetDropCount (void)	{ return s_nDrop; }
++	static unsigned GetTimeoutCount (void)	{ return s_nTimeout; }
++
+ 	/// \brief Set the maximum packet size of this EP (e.g. after speed negotiation)
+ 	/// \param nMaxPacketSize New maximum packet size in bytes
+ 	void SetMaxPacketSize (size_t nMaxPacketSize);
+@@ -183,6 +194,12 @@
+ 	virtual void OnStraySetup (void) {}
+ 	void NoteStray (const char *pWhat);
+ 	static volatile unsigned s_nStray;
++
++	// circle-gadget-unplug: a non-isochronous EP disabled by the core, an IN timeout (a vanished host): not fatal
++	void HandleEPDisabled (boolean bIn);
++	void NoteUnplug (const char *pWhat, boolean bIn, boolean bTimeout = FALSE);
++	static volatile unsigned s_nUnplug, s_nDrop, s_nTimeout;
++	static unsigned s_nUnplugEP[3][16];		// per EP and kind (OUT disabled, IN disabled, IN timeout): the WARN backoff
+ 
+ 	friend class CDWUSBGadget;
+ 	friend class CDWUSBGadgetEndpoint0;
+--- a/lib/usb/gadget/dwusbgadget.cpp
++++ b/lib/usb/gadget/dwusbgadget.cpp
+@@ -817,7 +817,8 @@
+ 			{
+ 				CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (nEP));
+ 				OutEPIntAck.Set (  DWHCI_DEV_OUT_EP_INT_SETUP_DONE
+-						 | DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE);
++						 | DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE
++						 | DWHCI_DEV_OUT_EP_INT_EP_DISABLED);	// circle-gadget-unplug: a cancel's late interrupt
+ 				OutEPIntAck.Write ();
+ 			}
+ 		}
+--- a/lib/usb/gadget/dwusbgadgetendpoint.cpp
++++ b/lib/usb/gadget/dwusbgadgetendpoint.cpp
+@@ -559,6 +559,58 @@
+ 	}
+ }
+ 
++// circle-gadget-unplug (IRQ level): a non-isochronous EP the core disabled. That is what a host that vanishes mid-traffic
++// (the USB-C cable pulled with a bulk or interrupt transfer armed) or a cancel with a transfer armed leaves behind, not
++// an error: Circle had LOGPANIC ("EP%u disabled") here. The interrupt is acknowledged by the caller.
++//  - a completion pending on this EP (XFER_COMPLETE in its INT register, the transfer finished after the handler read
++//    the register: the core clears EPEna on completion): left to the completion path, which runs when the level interrupt
++//    comes again. Dropping the transfer here would lose the completion (a MIDI OUT never armed again, a network
++//    endpoint "busy" for good).
++//  - a transfer still armed and the EP no longer enabled: the core dropped it. It is forgotten (the TX FIFO of an IN EP
++//    flushed) and the function driver told (OnTransferDropped), which arms the EP again.
++//  - the EP enabled again: this was the late interrupt of an earlier cancel, the transfer armed since is left alone.
++// Counted; logged at WARN the first time and then at powers of two, for each EP and kind (OUT disabled, IN disabled,
++// IN timeout) on its own; an IN timeout has its own counter too.
++volatile unsigned CDWUSBGadgetEndpoint::s_nUnplug = 0;
++volatile unsigned CDWUSBGadgetEndpoint::s_nDrop = 0;
++volatile unsigned CDWUSBGadgetEndpoint::s_nTimeout = 0;
++unsigned CDWUSBGadgetEndpoint::s_nUnplugEP[3][16];
++
++void CDWUSBGadgetEndpoint::NoteUnplug (const char *pWhat, boolean bIn, boolean bTimeout)
++{
++	if (bTimeout) s_nTimeout = s_nTimeout + 1;
++	else s_nUnplug = s_nUnplug + 1;
++	unsigned n = ++s_nUnplugEP[bTimeout ? 2 : (bIn ? 1 : 0)][m_nEP & 15];
++	if ((n & (n - 1)) == 0)
++	{
++		LOGWARN ("EP%u: %s, transfer %s (%u so far on this EP)", m_nEP, pWhat, IsTransferActive () ? "armed" : "idle", n);
++	}
++}
++
++void CDWUSBGadgetEndpoint::HandleEPDisabled (boolean bIn)
++{
++	CDWHCIRegister EPCtrl (bIn ? DWHCI_DEV_IN_EP_CTRL (m_nEP) : DWHCI_DEV_OUT_EP_CTRL (m_nEP));
++	CDWHCIRegister EPInt (bIn ? DWHCI_DEV_IN_EP_INT (m_nEP) : DWHCI_DEV_OUT_EP_INT (m_nEP));
++	CDWHCIRegister EPMask (bIn ? DWHCI_DEV_IN_EP_COMMON_INT_MASK : DWHCI_DEV_OUT_EP_COMMON_INT_MASK);
++	const u32 nComplete = bIn ? DWHCI_DEV_IN_EP_INT_XFER_COMPLETE : DWHCI_DEV_OUT_EP_INT_XFER_COMPLETE;
++
++	NoteUnplug (bIn ? "IN disabled" : "OUT disabled", bIn);
++
++	if (EPInt.Read () & EPMask.Read () & nComplete)
++	{
++		return;			// its completion is still to be handled: not a drop
++	}
++
++	boolean bEnabled = (EPCtrl.Read () & DWHCI_DEV_EP_CTRL_EP_ENABLE) != 0;
++	if (IsTransferActive () && !bEnabled)
++	{
++		DisableEndpoint ();	// nothing to wait for (not enabled): acknowledges, flushes the TX FIFO of an IN EP
++		InitTransfer ();
++		s_nDrop = s_nDrop + 1;
++		OnTransferDropped (bIn);
++	}
++}
++
+ size_t CDWUSBGadgetEndpoint::FinishTransfer (void)
+ {
+ 	assert (m_TransferMode < TransferUnknown);
+@@ -714,13 +766,13 @@
+ 
+ 	if (OutEPInt.Get () & DWHCI_DEV_OUT_EP_INT_EP_DISABLED)
+ 	{
++		CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_EP_DISABLED);
++		OutEPIntAck.Write ();
++
+ 		if (m_Type != TypeIsochronous)
+ 		{
+-			LOGPANIC ("EP%u disabled", m_nEP);
++			HandleEPDisabled (FALSE);	// circle-gadget-unplug: was LOGPANIC ("EP%u disabled")
+ 		}
+-
+-		CDWHCIRegister OutEPIntAck (DWHCI_DEV_OUT_EP_INT (m_nEP), DWHCI_DEV_OUT_EP_INT_EP_DISABLED);
+-		OutEPIntAck.Write ();
+ 	}
+ }
+ 
+@@ -769,7 +821,13 @@
+ 
+ 	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_TIMEOUT)
+ 	{
+-		LOGPANIC ("Timeout (EP %u)", m_nEP);
++		// circle-gadget-unplug: the host did not answer an IN transfer (a cable pulled mid-traffic): acknowledged and
++		// counted. The transfer stays armed, the core serves it at the host's next token; a bus suspend or reset
++		// after the unplug tears it down as for any EP.
++		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP), DWHCI_DEV_IN_EP_INT_TIMEOUT);
++		InEPIntAck.Write ();
++
++		NoteUnplug ("IN timeout", TRUE, TRUE);
+ 	}
+ 
+ 	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_AHB_ERROR)
+@@ -779,13 +837,13 @@
+ 
+ 	if (InEPInt.Get () & DWHCI_DEV_IN_EP_INT_EP_DISABLED)
+ 	{
++		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP), DWHCI_DEV_IN_EP_INT_EP_DISABLED);
++		InEPIntAck.Write ();
++
+ 		if (m_Type != TypeIsochronous)
+ 		{
+-			LOGPANIC ("EP%u disabled", m_nEP);
++			HandleEPDisabled (TRUE);	// circle-gadget-unplug: was LOGPANIC ("EP%u disabled")
+ 		}
+-
+-		CDWHCIRegister InEPIntAck (DWHCI_DEV_IN_EP_INT (m_nEP), DWHCI_DEV_IN_EP_INT_EP_DISABLED);
+-		InEPIntAck.Write ();
+ 	}
+ }
+ 

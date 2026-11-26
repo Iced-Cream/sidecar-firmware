@@ -180,7 +180,7 @@ static void draw_ms (lv_layer_t *l, const lv_area_t *c, int w, int h)
 	for (int k = k0; k <= k1; k++)			// white keys first, their octave's C named
 	{
 		if (ms_black (k)) continue;
-		th_fill (l, c, KX (k), ky, KR (k) - 1, h - 1, ms_on (k) ? TH->accent : o ? 0x848484 : 0xD8D6F0, LV_OPA_COVER, 0);
+		th_fill (l, c, KX (k), ky, KR (k) - 1, h - 1, ms_on (k) ? TH->accent : o ? 0x848484 : THEME_BOXED (TH->id) ? TH->dim : 0xD8D6F0, LV_OPA_COVER, 0);
 	}
 	for (int k = (k0 + 11) / 12 * 12; k <= k1; k += 12)	// (after all of them: a name spans two keys)
 	{
@@ -220,7 +220,7 @@ enum { M_REPLACE, M_UNLOAD, M_ACCEPT, M_CANCEL };
 #define UNLOAD_PER	19			// rows a command ("pool=inst:unload:" + "A010:yes," each: the console's 191)
 #define UNLOAD_CMDS	8			// commands a tap (the control core's queue holds 16)
 
-static int row_h (void) { return oled () ? LU (18) : LU (31); }
+static int row_h (void) { return oled () ? LU (18) : LU (36); }	// (0.5.1: a touch target of 36 px, 18 dots; at 800x480 fewer rows show below the sub-page row, the list scrolls)
 static int bar_w (void) { return oled () ? LU (5) : LU (8); }
 static int hdr (void) { return s_bLib ? 0 : s_bPage ? 2 : 1; }	// the tab rows on top (not scrolled)
 static int nvis (void) { return lv_obj_get_height (s_List) / row_h (); }
@@ -828,6 +828,7 @@ int sidecar_wgview_bank (void) { return s_nBank; }
 int sidecar_wgview_pool_page_shown (void) { return s_Page && s_bPage; }
 int sidecar_wgview_page_list (void) { return s_nPageList; }
 int sidecar_wgview_list_id (void) { return cur_list (); }
+int sidecar_wgview_rows (int *top, int *head) { *top = s_nTop < 0 ? 0 : s_nTop, *head = hdr (); return rows_shown (); }
 int sidecar_wgview_selecting (void) { return s_bList && s_bSelect; }
 int sidecar_wgview_target (void) { return s_bLib ? s_nTarget : -1; }
 const char *sidecar_wgview_message (void) { return s_nAsk ? s_Ask1 : s_Msg; }
@@ -904,7 +905,7 @@ void sidecar_wgview_create (void *parent, int y0)
 	memset (&s_V, 0, sizeof s_V);
 	s_V.list = -1, s_V.sel = -1;
 	// 1024x600: the picture and the list take what the screen adds (TH->dx, dy: more rows), the keys get wider
-	const int dx = TH->dx, dy = TH->dy, q = dx / 4;
+	const int dx = TH->dx, dy = TH->pdy, q = dx / 4;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, th_page_w (), o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)

@@ -5,6 +5,7 @@
 #include "sidecar_xy.h"
 #include "sidecar_theme.h"
 #include "lvgl.h"
+#include "../../core/sidecar_features.h"	// SIDECAR_MORPH
 #include <stdlib.h>
 #include <string.h>
 
@@ -64,13 +65,25 @@ static const xy_kind_t kKinds[K_N] = {
 	{"ARP", "R", 12, 0, kArpP, 5, 0},
 	{"RFX", "RFX", 0, 0, kRfxP, 25, 0},
 };
+#if SIDECAR_MORPH
 static const char *const kKindMap[] = {"PERF", "MORPH", "SCN", "TRACK", "FX", "SEND", "LOOP", "\n",
 				       "INS", "BUS", "MFX", "OUT", "SEQ", "ARP", "RFX", ""};
 static int kind_of_item (int i) { return i; }	// (the map's items in kKinds' order; "\n" is not an item)
+static int item_of_kind (int k) { return k; }
+#else	// 0.5.0: MORPH is not offered as a target: its kind has no key (a saved MORPH slot can still be cleared with NONE)
+static const char *const kKindMap[] = {"PERF", "SCN", "TRACK", "FX", "SEND", "LOOP", "\n",
+				       "INS", "BUS", "MFX", "OUT", "SEQ", "ARP", "RFX", ""};
+static int kind_of_item (int i) { return i >= K_MORPH ? i + 1 : i; }
+static int item_of_kind (int k) { return k == K_MORPH ? -1 : k > K_MORPH ? k - 1 : k; }
+#endif
 
 static lv_obj_t *s_Page, *s_TitleBar, *s_Title, *s_Pad, *s_Hold, *s_SetupK, *s_Pos, *s_Sum[2 * SXY_SLOTS], *s_Info;
 static lv_obj_t *s_Setup, *s_AxT[2], *s_SlotK[2][SXY_SLOTS], *s_SlotV[2][SXY_SLOTS], *s_SlotS[2][SXY_SLOTS];
 static lv_obj_t *s_Pick, *s_PickT, *s_Kinds, *s_IdxL, *s_IdxM, *s_IdxP, *s_ParL, *s_ParM, *s_ParP, *s_PSet, *s_PNone;
+// HOME > Perform (0.5.1): a second pad (the same drawing and logic), HOLD and SETUP keys and the slots' list, built by the page
+static lv_obj_t *s_PPad, *s_PHold, *s_PSetupK, *s_PSum[2 * SXY_SLOTS];
+static int s_nPSum, s_bPerform, s_bOverview;
+static void (*s_PSetup) (void);
 static sidecar_xy_view_t s_V;
 static unsigned s_nGen = ~0u;
 static sidecar_xy_command_t s_Cmd;
@@ -200,6 +213,21 @@ static int find_name (const char *n, int *k, int *i, int *p)	// a name back into
 }
 
 // ---- the pad
+static void short_name (const char *n, char *b, int cap);
+static void axis_names (int a, char *b, int cap, int all)	// axis a's targets, "PERF12, MORPH" (all) or the first one; "" none
+{
+	b[0] = 0;
+	for (int k = 0; k < SXY_SLOTS; k++)
+	{
+		const sidecar_xy_slot_t *s = &s_V.s[a][k];
+		if (!s->name[0]) continue;
+		char n[16];
+		short_name (s->label[0] ? s->label : s->name, n, sizeof n);
+		int len = (int) strlen (b);
+		lv_snprintf (b + len, cap - len, "%s%s", len ? ", " : "", n);
+		if (!all) return;
+	}
+}
 static void pad_draw (lv_event_t *e)
 {
 	lv_obj_t *o = lv_event_get_target_obj (e);
@@ -216,16 +244,49 @@ static void pad_draw (lv_event_t *e)
 		th_fill (l, &c, 2 * u, q * h / 4, w - 1 - 2 * u, q * h / 4, grid, LV_OPA_COVER, 0);
 	}
 	const lv_font_t *f = O ? TH->f_micro : TH->f_small;
-	const int fh = lv_font_get_line_height (f);
-	th_text (l, &c, 3 * u, 2 * u, w / 4, f, c_dim (), LV_TEXT_ALIGN_LEFT, "Y");
-	th_text (l, &c, w - w / 4 - 3 * u, h - fh - 2 * u, w / 4, f, c_dim (), LV_TEXT_ALIGN_RIGHT, "X");
+	const int fh = lv_font_get_line_height (f), perf = lv_event_get_user_data (e) != 0;
+	if (perf)	// Perform: each axis's targets in its corner ("Y  MFX MIX4, PERF1"), the position in the other
+	{
+		char t[64];
+		for (int a = 0; a < 2; a++)	// the names that fit, ".." for the rest
+		{
+			const int room = w - w / 3 - 6 * u;
+			int n = 0;
+			lv_snprintf (t, sizeof t, "%c ", a ? 'Y' : 'X');
+			for (int k = 0; k < SXY_SLOTS; k++)
+			{
+				const sidecar_xy_slot_t *sl = &s_V.s[a][k];
+				if (!sl->name[0]) continue;
+				char nm[16], tt[64];
+				short_name (sl->label[0] ? sl->label : sl->name, nm, sizeof nm);
+				lv_snprintf (tt, sizeof tt, "%s%s%s", t, n ? ", " : " ", nm);
+				if (th_text_width (f, tt) > room) { if (n) lv_snprintf (t + strlen (t), sizeof t - strlen (t), "%s", ".."); break; }
+				lv_snprintf (t, sizeof t, "%s", tt);
+				n++;
+			}
+			if (a) th_text (l, &c, 3 * u, 2 * u, room, f, c_dim (), LV_TEXT_ALIGN_LEFT, t);
+			else th_text (l, &c, w - room - 3 * u, h - fh - 2 * u, room, f, c_dim (), LV_TEXT_ALIGN_RIGHT, t);
+		}
+	}
+	else
+	{
+		th_text (l, &c, 3 * u, 2 * u, w / 4, f, c_dim (), LV_TEXT_ALIGN_LEFT, "Y");
+		th_text (l, &c, w - w / 4 - 3 * u, h - fh - 2 * u, w / 4, f, c_dim (), LV_TEXT_ALIGN_RIGHT, "X");
+	}
 	if (s_V.valid && !any_slot ())
 		th_text (l, &c, 0, h / 2 - fh / 2, w, O ? TH->f_body : TH->f_mid, c_dim (), LV_TEXT_ALIGN_CENTER,
 			 O ? "NO TARGETS: TAP SETUP" : "No targets yet: tap SETUP");
 	int have = s_bDown || (s_V.valid && s_V.active);
 	if (!have) return;
 	int x = s_bDown ? s_nX : s_V.x, y = s_bDown ? s_nY : s_V.y;
-	int px = x * (w - 1) / SXY_MAX, py = (h - 1) - y * (h - 1) / SXY_MAX, r = O ? 4 : 10 + TH->dy / 24;
+	if (perf)
+	{
+		char t[24];
+		lv_snprintf (t, sizeof t, "X %d  Y %d", (x * 100 + SXY_MAX / 2) / SXY_MAX, (y * 100 + SXY_MAX / 2) / SXY_MAX);
+		th_text (l, &c, 3 * u, h - lv_font_get_line_height (O ? TH->f_body : TH->f_title) - 2 * u, w / 2, O ? TH->f_body : TH->f_title, O ? TH->ink : TH->win_ink,
+			 LV_TEXT_ALIGN_LEFT, t);
+	}
+	int px = x * (w - 1) / SXY_MAX, py = (h - 1) - y * (h - 1) / SXY_MAX, r = O ? 4 : 10 + TH->pdy / 24;
 	const uint32_t dot = O ? TH->ink : TH->accent, cross = O ? DOT_DOTTED : th_mix (TH->win, TH->accent, 90);
 	th_fill (l, &c, px, 1, px, h - 2, cross, LV_OPA_COVER, 0);
 	th_fill (l, &c, 1, py, w - 2, py, cross, LV_OPA_COVER, 0);
@@ -268,12 +329,14 @@ static void pad_cb (lv_event_t *e)
 		cmd ("xy=up");
 		s_bDown = 0, s_nTrail = 0, s_bPend = 0;
 		lv_obj_invalidate (s_Pad);
+		if (s_PPad) lv_obj_invalidate (s_PPad);
 		return;
 	}
 	lv_point_t p;
 	lv_indev_get_point (lv_indev_active (), &p);
 	lv_area_t c;
-	lv_obj_get_coords (s_Pad, &c);
+	lv_obj_t *pad = lv_event_get_target_obj (e);
+	lv_obj_get_coords (pad, &c);
 	int w = lv_area_get_width (&c), h = lv_area_get_height (&c), x = p.x - c.x1, y = c.y2 - p.y;
 	x = x < 0 ? 0 : x > w - 1 ? w - 1 : x;
 	y = y < 0 ? 0 : y > h - 1 ? h - 1 : y;
@@ -289,6 +352,7 @@ static void pad_cb (lv_event_t *e)
 	if (code != LV_EVENT_PRESSED) s_TrX[s_nTrail] = s_nX, s_TrY[s_nTrail] = s_nY, s_nTrail++;
 	s_nX = nx, s_nY = ny;
 	lv_obj_invalidate (s_Pad);
+	if (s_PPad) lv_obj_invalidate (s_PPad);
 	pos_text ();
 	// live while dragging, at most every 30 ms (each line is a console command on core 3); the touch's first at once
 	if (code != LV_EVENT_PRESSED && now - s_nAt < 30) { s_bPend = 1; return; }
@@ -344,10 +408,11 @@ static void pick_refresh (void)
 	kind_label (s_nKind, s_nIdx, s_nPar, n, sizeof n);
 	lv_snprintf (t, sizeof t, "%c%d: %s", s_nPickA ? 'Y' : 'X', s_nPickS + 1, n);
 	th_label_set (s_PickT, t);
-	th_seg_set (s_Kinds, s_nKind);
+	th_seg_set (s_Kinds, item_of_kind (s_nKind));
 	index_name (s_nKind, s_nIdx, t, sizeof t);
 	th_label_set (s_IdxL, t);
 	th_key_enable (s_IdxM, d->ni > 1), th_key_enable (s_IdxP, d->ni > 1);
+	if (s_PSet) th_key_enable (s_PSet, SIDECAR_MORPH || s_nKind != K_MORPH);	// 0.5.0: a saved MORPH slot shows, NONE clears it, SET is refused
 	if (s_nKind == K_MORPH) lv_snprintf (t, sizeof t, "THE SCENES' FADER");
 	else if (s_nKind == K_INS)	// "A1 CUT", "E1 HPF" (the label's slot letter / Q dropped), "A1 -" (the slot OFF)
 	{
@@ -406,14 +471,16 @@ void sidecar_xy_create (void *parent, int y0)
 {
 	const int o = oled ();
 	s_nGen = ~0u, s_bSetup = 0, s_nPickA = -1, s_bDown = 0, s_nTrail = 0;
+	s_PPad = s_PHold = s_PSetupK = 0, s_nPSum = 0, s_bPerform = 0;
+	memset (s_PSum, 0, sizeof s_PSum);
 	memset (&s_V, 0, sizeof s_V);
-	const int pw = th_page_w (), ph = TH->h - y0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph);
+	const int pw = th_page_w (), ph = TH->h - y0 - (o ? LU (25) : 0);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, ph + (o ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
 	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY, ink = o ? TH->ink : TH->win_ink, dim = o ? TH->dim : TH->win_dim;
 	const int x0 = o ? 0 : LU (24), w = o ? pw : pw - LU (48), top = o ? LU (16) : LU (44), g = o ? LU (3) : LU (8);
-	const int lh = lv_font_get_line_height (f), foot = o ? lh + LU (4) : lh + LU (10), keyh = o ? LU (20) + TH->dy / 12 : LU (40) + TH->dy / 8;
+	const int lh = lv_font_get_line_height (f), foot = o ? lh + LU (4) : lh + LU (10), keyh = o ? LU (22) + (TH->pdy > 0 ? TH->pdy / 12 : 0) : LU (44) + (TH->pdy > 0 ? TH->pdy / 8 : 0);	// (0.5.1: touch size)
 	if (o)
 	{
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
@@ -451,7 +518,7 @@ void sidecar_xy_create (void *parent, int y0)
 	lv_obj_add_event_cb (s_Pad, pad_cb, LV_EVENT_ALL, 0);
 	// SETUP: X left, Y right; a slot: its target key and the depth's value, the depth slider under them
 	s_Setup = th_box (pg, x0, top, aw, ah);
-	const int cw = (aw - 2 * g) / 2, vw = o ? LU (26) : LU (56), rh = (ah - lh - g) / SXY_SLOTS, kh = rh / 2 - (o ? 1 : 3);
+	const int cw = (aw - 2 * g) / 2, vw = o ? LU (26) : LU (56), rh = (ah - lh - g) / SXY_SLOTS, kh0 = rh / 2 - (o ? 1 : 3), kh = kh0 < keyh && rh - keyh >= (o ? 10 : 14) ? keyh : kh0;
 	for (int a = 0; a < 2; a++)
 	{
 		int cx = a * (cw + 2 * g);
@@ -505,6 +572,55 @@ void sidecar_xy_show (int on)
 }
 
 int sidecar_xy_shown (void) { return s_Page && !lv_obj_has_flag (s_Page, LV_OBJ_FLAG_HIDDEN); }
+// the engine's view is built while the XY page, HOME > Perform or HOME > Overview (its XY tile) shows
+int sidecar_xy_wanted (void) { return sidecar_xy_shown () || s_bPerform ? 1 : s_bOverview ? 2 : 0; }	// 2: only Overview's tile (a slow feed will do)
+void sidecar_xy_overview (int on) { s_bOverview = !!on; }
+void sidecar_xy_perform_show (int on)
+{
+	if (!s_PPad) return;
+	if (!on && s_bDown) send_pos (), cmd ("xy=up"), s_bDown = 0, s_nTrail = 0, s_bPend = 0;	// the page left under the finger: released
+	s_bPerform = !!on;
+	if (on) refresh ();
+}
+int sidecar_xy_perform_hit (int what, int *x, int *y, int *w, int *h)	// Perform's pad (0), HOLD (1), SETUP (2): its area in UI coordinates
+{
+	lv_obj_t *o = what == 0 ? s_PPad : what == 1 ? s_PHold : what == 2 ? s_PSetupK : 0;
+	if (!o) return 0;
+	lv_area_t c;
+	lv_obj_get_coords (o, &c);
+	*x = c.x1, *y = c.y1, *w = lv_area_get_width (&c), *h = lv_area_get_height (&c);
+	return 1;
+}
+void sidecar_xy_axes (char *x, char *y, int cap)	// the first target of X and of Y, "" none
+{
+	axis_names (0, x, cap, 0);
+	axis_names (1, y, cap, 0);
+}
+static void perform_hold_cb (lv_obj_t *o, int i, void *ud) { hold_cb (o, i, ud); }
+static void perform_setup_cb (lv_obj_t *o, int i, void *ud) { (void) o; (void) i; (void) ud; if (s_PSetup) s_PSetup (); }
+void sidecar_xy_perform_create (void *parent, const sidecar_xy_perform_t *g)
+{
+	const int o = oled ();
+	lv_obj_t *pg = (lv_obj_t *) parent;
+	s_PSetup = g->setup;
+	s_PPad = th_box (pg, g->pad[0], g->pad[1], g->pad[2], g->pad[3]);
+	lv_obj_add_flag (s_PPad, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_event_cb (s_PPad, pad_draw, LV_EVENT_DRAW_MAIN, (void *) 1);
+	lv_obj_add_event_cb (s_PPad, pad_cb, LV_EVENT_ALL, 0);
+	const int kind = o ? TH_KEY | TH_KEY_SMALL : TH_KEY;
+	s_PHold = th_key (pg, g->hold[0], g->hold[1], g->hold[2], g->hold[3], "HOLD", kind | TH_KEY_HOLD, perform_hold_cb, 0);
+	s_PSetupK = th_key (pg, g->setup_key[0], g->setup_key[1], g->setup_key[2], g->setup_key[3], "SETUP", kind, perform_setup_cb, 0);
+	const lv_font_t *f = o ? TH->f_micro : TH->f_small;
+	const int lh = lv_font_get_line_height (f) + (o ? 2 : 4);
+	s_nPSum = g->list[3] / lh;
+	if (s_nPSum > 2 * SXY_SLOTS) s_nPSum = 2 * SXY_SLOTS;
+	for (int i = 0; i < s_nPSum; i++)
+	{
+		s_PSum[i] = th_label ((lv_obj_t *) g->list_parent, g->list[0], g->list[1] + i * lh, f, o ? TH->ink : TH->win_ink, "");
+		lv_obj_set_width (s_PSum[i], g->list[2]);
+	}
+	refresh ();
+}
 
 void sidecar_xy_setup (int on)
 {
@@ -573,6 +689,22 @@ static void refresh (void)
 			}
 		}
 	for (; line < 2 * SXY_SLOTS; line++) th_label_set (s_Sum[line], "");
+	if (s_PHold)
+	{
+		th_key_check (s_PHold, v->hold);
+		int pl = 0;
+		for (int a = 0; a < 2; a++)
+			for (int k = 0; k < SXY_SLOTS; k++)
+			{
+				const sidecar_xy_slot_t *s = &v->s[a][k];
+				if (!s->name[0] || pl >= s_nPSum) continue;
+				short_name (s->label[0] ? s->label : s->name, n, sizeof n);
+				lv_snprintf (t, sizeof t, "%c  %s  %+d", a ? 'Y' : 'X', n, s->depth);
+				th_label_fit (s_PSum[pl++], t);
+			}
+		if (!pl && s_nPSum) th_label_fit (s_PSum[pl++], v->valid ? (o ? "NO TARGETS: TAP SETUP" : "No targets yet: tap Setup") : (o ? "WAITING FOR THE ENGINE" : "Waiting for the engine"));
+		for (; pl < s_nPSum; pl++) th_label_set (s_PSum[pl], "");
+	}
 	th_label_set (s_Info, !v->valid ? "WAITING FOR THE ENGINE"
 		: v->locked ? (o ? "XY LOCKED: THE FILE IS FROM A NEWER BUILD, NOT SAVED" : "XY locked: the file is from a newer build, not saved")
 		: s_nPickA >= 0 ? (o ? "PICK A KIND, THEN ITS INDEX AND PARAMETER; SET" : "Pick a kind, then its index and parameter; SET")
@@ -581,6 +713,7 @@ static void refresh (void)
 		: (o ? "DRAG ON THE PAD. LIFT: THE VALUES RETURN" : "Drag on the pad; lift and the values return"));
 	if (s_nPickA >= 0) pick_refresh ();
 	lv_obj_invalidate (s_Pad);
+	if (s_PPad) lv_obj_invalidate (s_PPad);
 }
 
 void sidecar_xy_set (const sidecar_xy_view_t *v)

@@ -34,7 +34,7 @@ enum { L_PROJECTS, L_BUNDLES, L_TRASH };
 
 static int oled (void) { return TH->id == THEME_OLED; }
 static int W (void) { return th_page_w (); }
-static int H (void) { return oled () ? TH->h : LU (428) + TH->dy; }
+static int H (void) { return oled () ? TH->h - LU (25) : LU (428) + TH->pdy; }
 static uint32_t c_ink (void) { return oled () ? TH->ink : TH->win_ink; }
 static uint32_t c_dim (void) { return oled () ? TH->dim : TH->win_dim; }
 static uint32_t c_alert (void) { return oled () ? TH->accent_hi : TH->bad; }
@@ -173,7 +173,7 @@ static void info_update (void)
 		set (s_Info[2], b, c_ink ());
 		if (t->date[0]) { lv_snprintf (b, sizeof b, O ? "MOVED %.10s %.5s" : "moved here %.10s %.5s", t->date, t->date + 11); set (s_Info[3], b, c_dim ()); }
 		set (s_Info[4], O ? "RESTORE: TO ITS SLOT" : "Restore: back under its slot", c_dim ());
-		set (s_Info[5], O ? "NEVER OVER FILES" : "(never over files or the current one)", c_dim ());
+		set (s_Info[5], O ? "NEVER OVER FILES" : "(never over files in use)", c_dim ());
 		return;
 	}
 	if (s_nListing)
@@ -600,7 +600,7 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 	s_nListing = 0, s_nSel = s_nBSel = s_nTSel = s_nTop = 0;	// (a theme switch starts the page over)
 	if (!s_bHave) memset (&s_V, 0, sizeof s_V);
 	s_bHave = 0;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, Hd);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, Hd + (oled () ? LU (25) : 0));
 	s_Page = pg;
 	// the top: the title (OLED: its bar carries the free space), the picker, the job's line, EJECT
 	const int top = O ? LU (15) : LU (6), th = O ? LU (22) : LU (56), ky = Hd - (O ? LU (23) : LU (62)), kh = O ? LU (22) : LU (56);
@@ -655,8 +655,8 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 	}
 	s_Empty = label_w (pg, lx, ly + lh / 2 - LU (8), lw, f_cap (), c_dim (), -1);
 	th_panel (pg, rx, ly, rw, lh, O ? "" : "", O ? TH_PANEL_GROUP : TH_PANEL_WINDOW);
-	const int ip = O ? LU (14) + TH->dy / 12 : LU (30) + TH->dy / 10;
-	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? LU (4) : LU (14)), ly + (O ? LU (4) : LU (12)) + k * ip, rw - (O ? LU (8) : LU (28)), k ? f_cap () : f_val (), c_ink (), 0);
+	const int ip = O ? LU (14) + TH->pdy / 12 : LU (30) + TH->pdy / 10;
+	for (int k = 0; k < 6; k++) s_Info[k] = label_w (pg, rx + (O ? LU (4) : LU (14)), ly + (O ? LU (4) : LU (12)) + k * ip, rw - (O ? LU (8) : THEME_BOXED (TH->id) ? LU (16) : LU (28)), k ? f_cap () : f_val (), c_ink (), 0);
 	// the keys
 	static const char *const kO[6] = {"EXPORT CARD", "IMPORT...", "DELETE", "UP", "DOWN", "TRASH"};
 	static const char *const kC[6] = {"Export > card", "Import...", "Delete", "Up", "Down", "Trash"};
@@ -680,18 +680,18 @@ void sidecar_project_create (void *parent, int y0, sidecar_project_cmd_t c)
 		lv_obj_set_style_bg_opa (s_Scrim, LV_OPA_50, 0);
 	}
 	lv_obj_add_flag (s_Scrim, LV_OBJ_FLAG_HIDDEN);
-	const int dw = O ? LU (330) + dx / 2 : LU (680) + dx / 2, dh = O ? LU (196) + TH->dy / 2 : LU (384) + TH->dy / 2;
+	const int dw = O ? LU (330) + dx / 2 : LU (680) + dx / 2, dh = O ? LU (196) + TH->pdy / 2 : LU (384) + TH->pdy / 2;
 	s_Dlg = th_box (pg, (Wd - dw) / 2, (Hd - dh) / 2, dw, dh);
 	if (O)
 	{
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 	}
 	else th_panel (s_Dlg, 0, 0, dw, dh, "", TH_PANEL_WINDOW);
 	lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);
-	const int lp = O ? LU (13) + TH->dy / 16 : LU (30) + TH->dy / 12, tx = O ? LU (6) : LU (20), tw = dw - 2 * tx;
+	const int lp = O ? LU (13) + TH->pdy / 16 : LU (30) + TH->pdy / 12, tx = O ? LU (6) : LU (20), tw = dw - 2 * tx;
 	for (int i = 0; i < NDLG; i++)
 	{
 		int ly2 = (LU (O ? 5 : 14)) + (i < 6 ? i * lp : 5 * lp + (LU (O ? 21 : 44)) + (LU (O ? 4 : 10)));	// (6: under the machines' keys)

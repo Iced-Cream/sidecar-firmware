@@ -1,5 +1,6 @@
 // core/tests/test_main_out.cpp - core::MainOut (the voices on MAIN L/R for a stock Rytm): the sum at kGain, the
-// fade-in from 0 over 200 ms after Reset, the -12 dBFS limit both ways, Next16 the same in int16, the peak.
+// fade-in from 0 over 200 ms after Reset, the -12 dBFS limit both ways with its soft knee (linear to kKnee x kLimit,
+// a tanh above, never past kLimit, no flat top), Next16 the same in int16, the peak.
 #include <cmath>
 
 #include "check.h"
@@ -10,21 +11,33 @@ using core::MainOut;
 int main() {
   MainOut m;
   int16_t v[8] = {0};
-  v[0] = 8192;                                    // voice 0 at 0.25, voice 3 at 0.125
-  v[3] = 4096;
+  v[0] = 4096;                                    // voice 0 at 0.125, voice 3 at 0.0625: their sum under the knee
+  v[3] = 2048;
   CHECK(m.Fading() && m.Next(v) == 0.0f);         // the fade starts at 0
   float x1 = m.Next(v);
   CHECK(x1 > 0.0f && x1 < 0.001f);
   for (uint32_t i = 2; i < MainOut::kFadeFrames; ++i) m.Next(v);
   CHECK(!m.Fading());
-  CHECK(std::fabs(m.Next(v) - 0.375f * MainOut::kGain) < 1e-6f);   // the sum at kGain, faded in
-  CHECK(m.Next16(v) == (int16_t)(0.375f * MainOut::kGain * 32768.0f));
-  CHECK(std::fabs(m.TakePeak() - 0.1875f) < 1e-6f && m.TakePeak() == 0.0f);
-  for (int i = 0; i < 8; ++i) v[i] = 32767;       // all full scale: held at -12 dBFS
-  CHECK(m.Next(v) == MainOut::kLimit && m.Next16(v) == 8192);
+  CHECK(std::fabs(m.Next(v) - 0.1875f * MainOut::kGain) < 1e-6f);   // the sum at kGain, faded in, under the knee: exact
+  CHECK(m.Next16(v) == (int16_t)(0.1875f * MainOut::kGain * 32768.0f));
+  CHECK(std::fabs(m.TakePeak() - 0.09375f) < 1e-6f && m.TakePeak() == 0.0f);
+  for (int i = 0; i < 8; ++i) v[i] = 32767;       // all full scale: held at -12 dBFS (the knee's top)
+  CHECK(m.Next(v) <= MainOut::kLimit && m.Next(v) > 0.9999f * MainOut::kLimit && m.Next16(v) >= 8191 && m.Next16(v) <= 8192);
   for (int i = 0; i < 8; ++i) v[i] = -32768;
-  CHECK(m.Next(v) == -MainOut::kLimit && m.Next16(v) == -8192);
-  CHECK(m.TakePeak() == MainOut::kLimit);
+  CHECK(m.Next(v) >= -MainOut::kLimit && m.Next(v) < -0.9999f * MainOut::kLimit && m.Next16(v) <= -8191 && m.Next16(v) >= -8192);
+  CHECK(m.TakePeak() <= MainOut::kLimit);
+  // the knee: sample-exact up to kKnee x kLimit, then rising and smooth toward kLimit (the old hard clamp sat flat at
+  // kLimit from 0.25 on, and its step in slope put odd harmonics on every voice over -12 dBFS)
+  const float k = MainOut::kKnee * MainOut::kLimit;
+  CHECK(MainOut::Limit(0.9f * k) == 0.9f * k && MainOut::Limit(-k) == -k);
+  float last = 0.0f, dlast = 1.0f;
+  for (int i = 1; i <= 2000; ++i) {               // 0 .. 0.5 in steps of 0.00025: rising, its slope never jumps up (within float steps)
+    float x = i * 0.00025f, y = MainOut::Limit(x), d = (y - last) / 0.00025f;
+    CHECK(y >= last && y <= MainOut::kLimit && d <= dlast + 0.002f);
+    CHECK(MainOut::Limit(-x) == -y);
+    last = y, dlast = d;
+  }
+  CHECK(MainOut::Limit(0.25f) < MainOut::kLimit && MainOut::Limit(0.25f) > MainOut::Limit(0.24f));
   m.Reset();                                      // a new stream: from silence again
   CHECK(m.Fading() && m.Next(v) == 0.0f);
   float g = m.Gain();                             // the two halves = Next

@@ -519,7 +519,7 @@ CORE_COLD uint8_t project_encs() { return 0x81; }   // A the cursor, H the card 
 CORE_COLD void project_page_reset() { memset(&P, 0, sizeof P), F_at = ~0u; }
 
 UI_ROM const ExtraPage kProjectPage = {"PROJECT", project_shown, project_draw, project_enc, project_key, 0x81, false,
-                                       project_encs, project_trigs, project_leds};
+                                       project_encs, project_trigs, project_leds, false, nullptr, nullptr, true};   // 0.5.0: UP / DOWN its rows (the mask names them anyway: a ring page)
 
 }  // namespace ui
 }  // namespace core

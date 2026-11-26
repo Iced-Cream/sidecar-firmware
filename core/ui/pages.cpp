@@ -139,6 +139,55 @@ CORE_COLD bool is_list(const Page& p, int param) {
   return false;
 }
 
+namespace {
+struct Detent {
+  const void* key = nullptr;   // the parameter holding the centre (null: none)
+  int scope = 0;               // ... of which voice (detent_scope)
+  int acc = 0;                 // the counts pushed into the detent since it caught, signed as the turns
+  uint32_t ms = 0;             // the last turn into it
+};
+Detent detents[9];   // A..H, DATA
+int g_scope = 0;
+constexpr uint32_t kDetentIdleMs = 1500;   // left alone this long, the detent holds again from its centre
+}  // namespace
+
+CORE_COLD void detent_scope(int scope) { g_scope = scope; }
+CORE_COLD void detent_reset() {
+  for (Detent& d : detents) d = Detent();
+}
+
+CORE_COLD int detent_step(int e, const void* key, int v, int step, int neutral, bool coarse) {
+  Detent& d = detents[e < 0 || e > 8 ? 8 : e];
+  if (!step) return v;
+  if (v == neutral) {   // held on the centre (landed there, or found there): the turns push into the detent
+    const uint32_t now = now_ms();
+    if (d.key != key || d.scope != g_scope || now - d.ms >= kDetentIdleMs) d.key = key, d.scope = g_scope, d.acc = 0;
+    d.ms = now;
+    if (coarse) {   // FUNC: a coarse step leaves the centre whole (a tune's octave stays one)
+      d.key = nullptr, d.acc = 0;
+      return neutral + step;
+    }
+    d.acc += step;
+    if (d.acc >= -kDetentCounts && d.acc <= kDetentCounts) return neutral;
+    const int out = d.acc > 0 ? neutral + d.acc - kDetentCounts : neutral + d.acc + kDetentCounts;
+    d.key = nullptr, d.acc = 0;
+    return out;
+  }
+  const int nv = v + step;
+  if ((v < neutral && nv >= neutral) || (v > neutral && nv <= neutral)) {   // crosses or lands: stops
+    d.key = key, d.scope = g_scope, d.acc = 0, d.ms = now_ms();
+    return neutral;
+  }
+  if (d.key == key) d.key = nullptr;
+  return nv;
+}
+
+CORE_COLD int list_size(const Page& p, int param) {
+  for (int i = 0; i < p.ncells; ++i)
+    if (p.cells[i].kind == kList && p.cells[i].in[0] == param) return list_count(p.cells[i].names);
+  return 0;
+}
+
 CORE_COLD int step_value(const Page& p, int param, int v, int delta, bool func) {
   for (int i = 0; i < p.ncells; ++i) {
     const Cell& c = p.cells[i];
@@ -148,7 +197,20 @@ CORE_COLD int step_value(const Page& p, int param, int v, int delta, bool func) 
     z = z < 0 ? 0 : z >= n ? n - 1 : z;
     return (z * 128 + 64) / n;   // the zone's centre: eng_zone() of it is z
   }
-  v += delta * (func ? 8 : 1);
+  const Cell* centred = nullptr;   // a bipolar cell: 64 is its neutral value
+  for (int i = 0; i < p.ncells; ++i) {
+    const Cell& c = p.cells[i];
+    if (((c.kind == kKnobBi || c.kind == kPan) && c.in[0] == param) || (c.kind == kLfo && c.in[1] == param)) centred = &c;
+  }
+  int e = 8;
+  for (int i = 0; i < 8; ++i)
+    if (p.enc[i] != kNone && (p.enc[i] & 15) == param) {
+      e = i;
+      break;
+    }
+  // FUNC: a coarse step, 1/16 of the range; a tune (the encoder labelled TUN, in semitones) an octave
+  const int step = delta * (!func ? 1 : e < 8 && !strcmp(p.label[e], "TUN") ? kOctaveStep : kCoarseStep);
+  v = centred ? detent_step(e, centred, v, step, 64, func) : v + step;
   return v < 0 ? 0 : v > 127 ? 127 : v;
 }
 
@@ -163,7 +225,7 @@ bool list_paced = true;
 
 CORE_COLD void list_pacing(bool on) { list_paced = on; }
 
-CORE_COLD int list_turn(int e, int delta) {
+CORE_COLD int list_turn(int e, int delta, int n) {
   if (!delta || !list_paced) return delta;
   const int dir = delta > 0 ? 1 : -1;
   if (e < 0 || e > 8) return dir;
@@ -173,7 +235,8 @@ CORE_COLD int list_turn(int e, int delta) {
   k.turn_ms = ms;
   if (rest || (k.acc > 0) != (delta > 0)) k.acc = 0;
   k.acc += delta;
-  if (!rest && ((k.acc < 0 ? -k.acc : k.acc) < kListCounts || ms - k.step_ms < kListGapMs)) return 0;
+  const bool at_once = rest && !(n > 0 && n <= kListSmall);   // (a small list: a touch after a rest is no step)
+  if (!at_once && ((k.acc < 0 ? -k.acc : k.acc) < kListCounts || ms - k.step_ms < kListGapMs)) return 0;
   k.acc = 0, k.step_ms = ms;
   return dir;
 }

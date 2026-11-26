@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../fx/out.h"
+#include "../voices.h"
 #include "../granular/granular.h"
 #include "../lib/pools.h"
 #include "../msamp/msamp.h"
@@ -406,17 +407,23 @@ CORE_COLD void in_block(const int32_t* f, int n, int stride) {
   }
 }
 
+// A voice's take at the voice's own level: its rows (and the send FX's returns, fed from them) carry render_voices'
+// kVoiceGain (voices.h), undone here, so a take (CHOP's RESAMPLE: no normalise) plays as loud as what it was taken
+// from and does not lose kVoiceGain at each generation. Clamped at full scale: a voice's rows were int16 before the
+// gain (so they come back within it, as the take had them before kVoiceGain); only the FX returns can go over.
 CORE_COLD void voice_block(const int16_t (*v)[8], int n, const int16_t (*lr)[16], const float (*fx)[4]) {
   int s = st();
   if ((s != kArmed && s != kRecording) || run.src != kSrcVoice) return;
   const int k = run.sub & 7;
+  const float u = 1.0f / (32768.0f * kVoiceGain), g = 1.0f / kVoiceGain;
   for (int i = 0; i < n; ++i) {
-    float x[2] = {v[i][k] * (1.0f / 32768.0f), 0.0f};
+    float x[2] = {v[i][k] * u, 0.0f};
     if (ch == 2) {   // a PRE / POST voice: its L and R (no planes given: its mono on both)
-      if (lr && out::stereo(k)) x[0] = lr[i][k] * (1.0f / 32768.0f), x[1] = lr[i][8 + k] * (1.0f / 32768.0f);
+      if (lr && out::stereo(k)) x[0] = lr[i][k] * u, x[1] = lr[i][8 + k] * u;
       else x[1] = x[0];
     }
-    if (run.fx && fx) x[0] += fx[i][0] + fx[i][2], x[1] += fx[i][1] + fx[i][3];   // CHOP's RESAMPLE with FX
+    if (run.fx && fx) x[0] += (fx[i][0] + fx[i][2]) * g, x[1] += (fx[i][1] + fx[i][3]) * g;   // CHOP's RESAMPLE with FX
+    for (int c = 0; c < 2; ++c) x[c] = x[c] > 1.0f ? 1.0f : x[c] < -1.0f ? -1.0f : x[c];
     feed(x);
   }
 }

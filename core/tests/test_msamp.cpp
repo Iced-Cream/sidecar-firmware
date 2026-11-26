@@ -22,6 +22,7 @@
 #include "host_link.h"
 #include "msamp/cardq.h"
 #include "msamp/msamp.h"
+#include "ui/remote.h"
 #include "fx/out.h"
 #include "pool/stream_budget.h"
 #include "poly.h"
@@ -389,6 +390,28 @@ static void test_list_and_load() {
   render(400);
 }
 
+// 0.5.0 (owner 2026-11-15, the same gap as WAVETABLE's): an instrument picked on an idle MULTISAMPLE voice reaches the
+// host as the SRC view's 2A (P1) only; it loads and the voice selects it with no note
+static void test_idle_pick() {
+  const int t = 4, vi = ui::remote_track_voice(t);   // BT: voice 1
+  CHECK(vi == 1);
+  send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 46, (uint8_t)(kMultiMachine | vi), 0xF7});   // the machine chosen
+  send(report(0x03, kMultiMachine | vi, -1, 0, ms(0)));   // its first report: INST OFF
+  render(20);
+  CHECK(voice_slot(vi) < 0);
+  int e = entry("SidecarTest.sfz");
+  uint32_t trigs = stats().trigs;
+  send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 1, 0xF7});
+  send({0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, (uint8_t)t, 0, 1, (uint8_t)(e & 127), (uint8_t)srclib::lo_of(e), 0xF7});
+  restart();
+  render(40);
+  CHECK(voice_slot(vi) >= 0 && stats().trigs == trigs);
+  send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 0, 0x7F, 0xF7});
+  for (int v = 0; v < kVoices; ++v) msamp::silence(v);
+  render(100);
+  printf("test_msamp: an instrument picked on an idle voice (2A) loads with no note\n");
+}
+
 // A sequenced chord (core/seq: poly::seq_on per note -> msamp::live_on) as the very first trig on a voice whose
 // instrument is not loaded yet: its notes wait and start when it is (kLateMs); a note-off before that drops its note.
 static void test_seq_chord_before_load() {
@@ -408,7 +431,7 @@ static void test_seq_chord_before_load() {
   render(40);   // loaded: the three held notes start
   CHECK(voice_slot(2) >= 0 && voice_notes(2) >= 3);
   render(400);
-  CHECK(rms(2, 4800, 9600) > 300);
+  CHECK(rms(2, 4800, 9600) > 300 * kVoiceGain);   // (the thresholds in voice rows: kVoiceGain, voices.h)
   poly::seq_off(2, -1);
   render(8000);
   CHECK(voice_notes(2) == 0);
@@ -451,10 +474,10 @@ static void test_play() {
   restart();
   send(report(0x04, kFmB | 0, 60, 60, ms(e)));
   render(8000);   // 2 s
-  CHECK(rms(0, 48000 * 1 + 24000, 48000 * 2 - 1) > 0.8 * rms(0, 14400, 24000) && rms(0, 14400, 24000) > 300);
+  CHECK(rms(0, 48000 * 1 + 24000, 48000 * 2 - 1) > 0.8 * rms(0, 14400, 24000) && rms(0, 14400, 24000) > 300 * kVoiceGain);
   off(0);   // released: the loop runs out (the region's loop_sustain), the release fades
   render(8000);
-  CHECK(rms(0, 48000 * 3 + 24000, 48000 * 4 - 1) < 5);
+  CHECK(rms(0, 48000 * 3 + 24000, 48000 * 4 - 1) < 5 * kVoiceGain);
   CHECK(stats().active == 0);
 }
 
@@ -545,7 +568,7 @@ static void test_cap_and_ram() {
   CHECK(rms(0, 0, 4800) < 1);
   send(report(0x04, kFmB | 0, 48, 100, ms(entry("big.sfz"))));
   render(400);
-  CHECK(rms(0, 4800, 9600) > 500);
+  CHECK(rms(0, 4800, 9600) > 500 * kVoiceGain);
   for (int v = 0; v < kVoices; ++v) msamp::silence(v);
   render(100);
   msamp::set_head_ms(kHeadMs);
@@ -622,7 +645,7 @@ static void test_headroom() {
     for (int i = 0; i < 19200; ++i) {
       int x = std::abs((int)ring[i][0]);
       r.peak = (int16_t)std::max<int>(r.peak, std::min(x, 32767));
-      r.full += x >= 32767;
+      r.full += x >= (int)(32767 * kVoiceGain);   // the voice's full scale in its rows (kVoiceGain, voices.h)
     }
     if (live) msamp::live_off(0, 3, -1);
     else off(0);
@@ -634,20 +657,20 @@ static void test_headroom() {
   };
   uint32_t lim0 = voice_limited(0);
   Run one = run(ms(e), false, 0);
-  // the sine 0.95 + its 0.05 partial, times the voices' 0.7: as before the headroom
-  double want = 0.7 * 32767 * std::sqrt((0.95 * 0.95 + 0.05 * 0.05) / 2);
+  // the sine 0.95 + its 0.05 partial, times the voices' 0.7 and kVoiceGain: as before the headroom
+  double want = kVoiceGain * 0.7 * 32767 * std::sqrt((0.95 * 0.95 + 0.05 * 0.05) / 2);
   printf("test_msamp: one key rms %.0f (want %.0f, %.2f dB), headroom %.3f\n", one.rms, want, 20 * std::log10(one.rms / want), one.g);
   CHECK(std::fabs(20 * std::log10(one.rms / want)) < 0.5 && one.dmax == 0 && one.g == 1.0f && voice_limited(0) == lim0);
   for (int voi : {3, 6}) {
     Run c = run(ms(e, 0, 1, voi), false, 0);   // MAJ, VOI 3 / 6
     printf("test_msamp: %d keys: peak %d (%.2f dBFS), headroom %.3f, step %.4f, limited %lu\n", voi, c.peak,
            20 * std::log10(c.peak / 32767.0), c.g, c.dmax, (unsigned long)voice_limited(0));
-    CHECK(c.full == 0 && c.peak <= (int)(kSoftCeil * 32767) + 1 && c.dmax < 0.06f);
+    CHECK(c.full == 0 && c.peak <= (int)(kSoftCeil * 32767 * kVoiceGain) + 1 && c.dmax < 0.06f);
     CHECK(std::fabs(c.g - 1 / std::sqrt((float)voi)) < 0.02f);
   }
   CHECK(voice_limited(0) > lim0);   // the 6 keys' overs: limited, not clipped
   Run l = run({}, true, 6);   // six live pads at 0.6 each
-  CHECK(l.full == 0 && l.peak <= (int)(kSoftCeil * 32767) + 1 && std::fabs(l.g - 1 / std::sqrt(6.0f)) < 0.02f);
+  CHECK(l.full == 0 && l.peak <= (int)(kSoftCeil * 32767 * kVoiceGain) + 1 && std::fabs(l.g - 1 / std::sqrt(6.0f)) < 0.02f);
   // the Rytm's mono pads on MULTISAMPLE (core/poly.h kStealMs): channel 14 bound to voice 0 by two note-on / 0x04
   // pairs; three pads 20 ms apart, each pad's note-on followed by the previous pad's note-off: all three keep
   // sounding (the hot sine loops while held), the last pad's note-off releases them all
@@ -701,7 +724,7 @@ static void test_streaming() {
     render(8000);
     for (int i = 0; i < 192000; ++i) outs[k].push_back(ring[i][0]);
   }
-  CHECK(outs[0] == outs[1] && rms(0, 0, 96000) > 300);
+  CHECK(outs[0] == outs[1] && rms(0, 0, 96000) > 300 * kVoiceGain);
   for (int v = 0; v < kVoices; ++v) msamp::silence(v);
   render(100);
 
@@ -894,9 +917,10 @@ static void test_stereo() {
     fclose(fp);
     for (int i = 0; i < frames; ++i) L[i] = d[2 * i], R[i] = d[2 * i + 1];
   }
-  auto want = [](int16_t x) {   // the voice's soft_out at unity: x / 32768 x 0.7 (linear below the knee)
+  auto want = [](int16_t x) {   // the voice's soft_out at unity: x / 32768 x 0.7 (linear below the knee), then kVoiceGain (Q15, rounded)
     float y = (float)x * (1.0f / 32768.0f) * 0.7f * 32767.0f;
-    return (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
+    int32_t r = (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
+    return (int16_t)((r * (int32_t)(kVoiceGain * 32768.0f + 0.5f) + 16384) >> 15);
   };
   char o[200];
   const int vi = 4;
@@ -1038,6 +1062,7 @@ int main() {
   }
   render(400);   // the list
   test_list_and_load();
+  test_idle_pick();
   test_seq_chord_before_load();
   test_play();
   test_short_trig();

@@ -21,7 +21,8 @@ using core::out::kTrk;
 
 static const int kB = 7;   // a transport block's frames (ob::kFramesPerBlock)
 
-// the output stage before the OUT route (output.cpp at 814bdb5), for the bit-for-bit comparison
+// the output stage before the OUT route (output.cpp at 814bdb5), for the bit-for-bit comparison; its -12 dBFS limit
+// with the soft knee that replaced the hard clamp (core::MainOut::Limit, 2026-11-15) on the tracks as on main
 struct OldOut {
   core::MainOut main;
   bool tracks = true;
@@ -34,7 +35,7 @@ struct OldOut {
     }
     for (int k = 0; k < 8; ++k) {
       float x = v[k] / 32768.0f * g;
-      x = x > 0.25f ? 0.25f : x < -0.25f ? -0.25f : x;
+      x = core::MainOut::Limit(x);
       out[Output::kVoiceToChannel[k]] = (int32_t)(x * 2147483648.0f);
     }
   }

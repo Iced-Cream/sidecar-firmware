@@ -21,6 +21,7 @@
 #include "msamp/cardq.h"
 #endif
 #include "pool/pool.h"
+#include "ui/widgets.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
 #include "voices.h"
@@ -322,12 +323,13 @@ CORE_COLD void bracket(Canvas& c, int x, int y, int h, int dir) {   // a loop en
 }
 
 // DSP SAMPLE: in[0] STA, in[1] END, in[2] LOP, in[3] MOD
-CORE_COLD void draw_sample(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot) {
+// slot < 0: no mode name (the caller boxes the returned one); wd: the waveform's width (0: the cell's, less 28 for the name)
+CORE_COLD const char* draw_sample(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot, int wd_in = 0) {
   int vi = s.voice() < 0 ? 0 : s.voice();
   int st = 0, prog = 0;
   const Overview* w = (const Overview*)wave_of_slot(smp_slot(s), &st, &prog);
   // rows 11..24 of the top row; the waveform in x 1..100, the mode's name in the column right of it
-  int x0 = r.x + 1, wd = r.w - 28, y0 = r.y + 2, h = kLabelDy - 3;
+  int x0 = r.x + 1, wd = wd_in ? wd_in : r.w - 28, y0 = r.y + 2, h = kLabelDy - 3;
   int sta = s.param(cell.in[0]), end = s.param(cell.in[1]), lop = s.param(cell.in[2]);
   int xs = xpos(x0, wd, sta), xe = xpos(x0, wd, end);
   // SAMPLER (remote_voice_smpl): PLAY's REV / RLP reverse (END < STA then forward), FLP / RLP loop, from LOOP's point
@@ -370,18 +372,19 @@ CORE_COLD void draw_sample(Canvas& c, const Rect& r, const Cell& cell, const Sou
   }
   const char* name = z >= 0 ? core::dsps_play_name(true, (float)s.param(11))
                      : mode < 0 ? (lop >= 1 ? "LOOP" : "ONE") : rytm::SampleModes::Name(mode);
-  c.put_text(slot, kRSmall, r.x + r.w - 13, y0 + h / 2 - 2, name, kAlignCentre);
+  if (slot >= 0) c.put_text(slot, kRSmall, r.x + r.w - 13, y0 + h / 2 - 2, name, kAlignCentre);
   status(c, w, s, x0, wd, y0, h, kSlotStatus);
   int ph = core::dsp_playhead(vi);   // the playhead: as CHOP's, an inverted column
   if (ph >= 0) c.vline(x0 + ph * (wd - 1) / 65534, y0, y0 + h - 1, kXor);
+  return name;
 }
 
 // GRAIN: in[0] POS (STA), in[1] SIZE (END), in[2] DENS (LOP)
-CORE_COLD void draw_grain(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot) {
+CORE_COLD void draw_grain(Canvas& c, const Rect& r, const Cell& cell, const Source& s, int slot, int wd_in = 0) {
   int vi = s.voice() < 0 ? 0 : s.voice();
   int st = 0, prog = 0;
   const Overview* w = (const Overview*)wave_of_slot(smp_slot(s), &st, &prog);
-  int x0 = r.x + 1, wd = r.w - 2, y0 = r.y + 2, h = kLabelDy - 3;
+  int x0 = r.x + 1, wd = wd_in ? wd_in : r.w - 2, y0 = r.y + 2, h = kLabelDy - 3;
   plot(c, w, x0, y0, wd, h, 1, 0);
   int pos = s.param(cell.in[0]), size = s.param(cell.in[1]);
   int xc = xpos(x0, wd, pos);
@@ -468,15 +471,15 @@ UI_ROM const Page kDspsSrcPage = {
 // and DENS (G) under GRAIN's picture.
 UI_ROM const Cell kSmplCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawSample, nullptr},
-    {kKnob, 0, 1, 1, 1, {8, kNone, kNone, kNone}, 0, nullptr},
-    {kKnob, 1, 1, 1, 1, {9, kNone, kNone, kNone}, 0, nullptr},
+    {kKnobBi, 0, 1, 1, 1, {8, kNone, kNone, kNone}, 0, nullptr},
+    {kKnobBi, 1, 1, 1, 1, {9, kNone, kNone, kNone}, 0, nullptr},
     {kKnob, 2, 1, 1, 1, {14, kNone, kNone, kNone}, 0, nullptr},
     {kBar, 3, 1, 1, 1, {15, kNone, kNone, kNone}, 0, nullptr},
 };
 UI_ROM const Cell kSmplGrainCells[] = {
     {kDraw, 0, 0, 4, 1, {12, 13, 14, 11}, kDrawGrain, nullptr},
-    {kKnob, 0, 1, 1, 1, {8, kNone, kNone, kNone}, 0, nullptr},
-    {kKnob, 1, 1, 1, 1, {9, kNone, kNone, kNone}, 0, nullptr},
+    {kKnobBi, 0, 1, 1, 1, {8, kNone, kNone, kNone}, 0, nullptr},
+    {kKnobBi, 1, 1, 1, 1, {9, kNone, kNone, kNone}, 0, nullptr},
     {kDraw, 2, 1, 1, 1, {13, 14, kNone, kNone}, kDrawCloud, nullptr},   // the cloud: SIZE wide grains, DENS many
     {kBar, 3, 1, 1, 1, {15, kNone, kNone, kNone}, 0, nullptr},
 };
@@ -515,6 +518,90 @@ UI_ROM const Page kGrainSrcPage030 = {
 };
 
 }  // namespace
+
+// ---- the 0.5.0 screens (the UI system, GRAPH): SAMPLER and GRAIN (its PLAY zone), CHOP's SRC view. The page's pieces are as
+// they were (the waveform, the grain window, the cloud, the dials); new are the frame (the touched knob named in full on the
+// title bar), the mode as a boxed word beside the waveform, dials with their marks, the touched label inverted, and the bottom
+// bar (the touched knob's name, a bar and its value; idle on the SRC view the pushes: A the list, B the editor).
+namespace {
+UI_ROM const char* const kFullSmpl[8] = {"SAMPLE", "SAMPLE START", "SAMPLE END", "PLAY MODE", "TUNE", "FINE TUNE", "LOOP POINT", "LEVEL"};
+UI_ROM const char* const kFullGrain[8] = {"SAMPLE", "GRAIN POSITION", "GRAIN SIZE", "PLAY MODE", "TUNE", "FINE TUNE", "GRAIN DENSITY", "LEVEL"};
+constexpr uint32_t kScrTurnMs = 1500;
+
+// A bar's fill for a value as the page shows it: STRT / END span 0..120
+CORE_COLD int smpl_bar(int e, int v) { return (e == 1 || e == 2) ? clampi(v * 127 / 120, 0, 127) : clampi(v, 0, 127); }
+
+CORE_COLD void smpl_screen(Canvas& c, const Page& p, const Source& s, const char* right, int page, int npages, int touched, bool src_view) {
+  const bool grain = &p == &kGrainPageDt;
+  const Cell* cells = grain ? kSmplGrainCells : kSmplCells;
+  c.clear();
+  header(c, touched >= 0 ? fit_title((grain ? kFullGrain : kFullSmpl)[touched], p.label[touched], npages, right) : p.title, page, npages, right);
+  Rect wave = {1, 10, 96, 16};
+  c.clip(wave);
+  const char* mode = "GRAIN";
+  if (grain) draw_grain(c, Rect{0, 9, 96, 22}, cells[0], s, -1, 95);
+  else mode = draw_sample(c, Rect{0, 9, 96, 22}, cells[0], s, -1, 95);
+  c.unclip();
+  box_word(c, kSlotCells, 3, 0, mode, 28);
+  for (int e = 0; e < 4; ++e) cell_label(c, e, 0, p.label[e], touched == e);
+  for (int e = 4; e < 8; ++e) cell_label(c, e - 4, 1, p.label[e], touched == e);
+  dial(c, 0, 1, s.param(8), true);
+  dial(c, 1, 1, s.param(9), true);
+  if (grain) draw_custom(c, cell(2, 1), cells[3], s, kSlotCells + 3);
+  else dial(c, 2, 1, s.param(14));
+  fader(c, 3, 1, s.param(15));
+  int e = touched >= 0 ? touched : (src_view ? -1 : 0);   // (the Sidecar's own page: encoder A's, as it was)
+  if (e < 0) {
+    footer_keys(c, "PUSH A", "LIST", "PUSH B", "EDIT");   // the SRC view's pushes (31 0x70 the list, 0x71 SAMPLE EDIT)
+    return;
+  }
+  const int k = p.enc[e], v = s.param(k);
+  char b[16];
+  if (e == 3) sniprintf(b, sizeof b, "%s", grain ? "GRAIN" : mode);
+  else if (e == 4 || e == 5) sniprintf(b, sizeof b, CORE_STR("%s%d"), v < 64 ? "-" : "+", v < 64 ? 64 - v : v - 64);
+  else sniprintf(b, sizeof b, CORE_STR("%d"), v);
+  footer_value(c, p.label[e], smpl_bar(e, v), e == 4 || e == 5, b);
+}
+}  // namespace
+
+// The voice page `p` drawn whole by code when it is one of the 0.5.0 screens (true), else not touched (false). PageView keeps
+// its cache: it draws first, and the screen is drawn again when it drew anything or the knob / track / page changed.
+// touched: the encoder turned last (0..7) within the last moments, else -1; src_view: the Rytm's SRC page (its pushes)
+CORE_COLD bool voice_screen(Canvas& c, PageView& view, const Page& p, const Source& s, const char* right, int page, int npages,
+                            int touched, bool src_view, int* drawn) {
+  const bool smpl = &p == &kDspsPageDt || &p == &kGrainPageDt;
+#if CORE_POLY && CORE_MSAMP
+  const bool chop = &p == &kChopSrcPage;
+#else
+  const bool chop = false;
+#endif
+  if (!smpl && !chop) return false;
+  *drawn = view.draw(c, p, s, right, page, npages);
+  static const Page* last_p = nullptr;
+  static uint32_t last_h = 0;
+  uint32_t h = 2166136261u;
+  auto mix = [&](uint32_t x) { h = (h ^ x) * 16777619u; };
+  for (const char* q = right ? right : ""; *q; ++q) mix((uint8_t)*q);
+  mix((uint32_t)page), mix((uint32_t)npages), mix((uint32_t)(touched + 1)), mix(src_view);
+  for (int i = 0; i < 16; ++i) mix((uint32_t)s.param(i));
+  mix((uint32_t)s.code(0)), mix((uint32_t)(s.voice() + 1));
+  if (!*drawn && last_p == &p && last_h == h) return true;
+  last_p = &p, last_h = h;
+  ++*drawn;
+  if (smpl) smpl_screen(c, p, s, right, page, npages, touched, src_view);
+#if CORE_POLY && CORE_MSAMP
+  else chop_src_screen(c, p, s, right, page, npages, touched, src_view);
+#endif
+  return true;
+}
+
+CORE_COLD int voice_screen_echo_slot(const Page* p, int e) {
+  if (p == &kDspsPageDt || p == &kGrainPageDt) return e == 3 ? 0 : kSlotFoot + 1;   // (PLAY: a mode word, not a number)
+#if CORE_POLY && CORE_MSAMP
+  if (p == &kChopSrcPage) return e == 1 ? 0 : kSlotFoot + 1;   // (SLC's value is 6/16, not a number the Rytm can echo)
+#endif
+  return kSlotFoot;
+}
 
 CORE_COLD const Page* src_view_page(const Page* p) {
   bool now = remote_rytm_040();

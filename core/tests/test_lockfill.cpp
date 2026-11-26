@@ -16,7 +16,9 @@
 #include <unistd.h>
 
 #include "check.h"
+#include "screens_util.h"
 #include "core.h"
+#include "device/device.h"
 #include "host/core_port.h"
 #include "hooks.h"
 #include "machines.h"
@@ -594,7 +596,7 @@ int main() {
   }
 
   // ================= the pattern writer against a fake Rytm
-  hooks.to_rytm = out;
+  hooks.to_rytm = ::out;
   host_fake_time(true, g_us);
   {
     auto r = make_record();
@@ -927,6 +929,70 @@ int main() {
     CHECK(engine_begin() && card_ok);
     // a hello with caps2 bit 0: the host claims UP + LEFT / RIGHT; without it, no claim
     const std::vector<uint8_t> claim = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 0x01, 0x7E, 0x01, 0xF7};
+    // 2026-11-23 (hardware: the Pi started after the Rytm's hello, caps 0, a quick UP + RIGHT never claimed): a core that
+    // has seen Rytm traffic but no hello (the Rytm says hello only at its USB port-up) claims anyway, and the 2 s claim
+    // then runs; the first hello afterwards decides as before (an older mod: no claim; with caps2: the caps)
+    {
+      ui::remote_reset();
+      g_out.clear();
+      CHECK(ui::remote_caps2() == 0 && ui::remote_stats().hellos == 0);
+      send(msg(0x49, {4, 0}));   // (Rytm traffic, no hello)
+      CHECK(sent(claim));
+      const uint32_t t0 = now_ms() + 50000;
+      ui::remote_tick(t0);
+      g_out.clear();
+      ui::remote_tick(t0 + 1000);
+      CHECK(!sent(claim));
+      ui::remote_tick(t0 + 2100);
+      CHECK(sent(claim));   // the 2 s claim runs
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      CHECK(!sent(claim));   // (once, not with each message)
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));   // then a hello with caps2 bit 0: the claim goes again, caps known
+      CHECK(sent(claim) && ui::remote_caps2() == ui::kCaps2Arrows && ui::remote_stats().hellos == 1);
+      ui::remote_reset();
+      // ... the hello of an older mod: the claim state is dropped, none again
+      send(msg(0x49, {4, 0}));
+      send(msg(0x35, {0, 5, 127}));
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      CHECK(!sent(claim));
+      ui::remote_tick(t0 + 9000);
+      CHECK(!sent(claim));
+      ui::remote_reset();
+      // fill=keys:off with traffic and no hello: nothing; keys:on claims
+      cmd("fill=keys:off");
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 20000);
+      CHECK(!sent(claim));
+      cmd("fill=keys:on");
+      CHECK(sent(claim));
+      ui::remote_reset();
+      // going down with traffic and no hello: nothing
+      ui::remote_going_down();
+      g_out.clear();
+      send(msg(0x49, {4, 0}));
+      ui::remote_tick(t0 + 30000);
+      CHECK(!sent(claim));
+      ui::remote_reset();
+      // a box (A4 / Digitakt: foreign) is never claimed for on a guess: no hello, no 4A 7E, not at the tick either
+      {
+        static device::Screen sc = {{"A", "B", "C", "D", "E", "F", "G", "H"}, ""};
+        static device::Profile pf;
+        pf.screen = &sc;
+        device::g_link.box = &pf;
+        g_out.clear();
+        const std::vector<uint8_t> m = msg(0x49, {4, 0});
+        ui::remote_sysex(m.data(), (int)m.size());
+        ui::remote_tick(t0 + 40000);
+        ui::remote_tick(t0 + 43000);
+        ui::remote_sysex(m.data(), (int)m.size());
+        CHECK(!sent(claim));
+        device::g_link.box = nullptr;
+      }
+      ui::remote_reset();
+    }
     g_out.clear();
     send(msg(0x35, {0, 5, 127}));
     CHECK(!sent(claim) && ui::remote_caps2() == 0);
@@ -967,6 +1033,29 @@ int main() {
       send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));   // (the tests go on with the keys claimed)
       CHECK(sent(claim));
     }
+    // the claim again about every 2 s while linked (a quick UP + RIGHT after a port drop): no key traffic needed, no flood
+    {
+      ui::remote_reset();
+      const uint32_t t = now_ms() + 100000;
+      ui::remote_tick(t);
+      send(msg(0x35, {0, 6, 127, ui::kCaps2Arrows}));
+      g_out.clear();
+      ui::remote_tick(t + 1000);
+      CHECK(!sent(claim));   // (the hello's claim just went)
+      ui::remote_tick(t + 2100);
+      CHECK(sent(claim));
+      g_out.clear();
+      for (int i = 1; i <= 10; ++i) ui::remote_tick(t + 2100 + i * 100);
+      CHECK(!sent(claim));
+      ui::remote_tick(t + 4200);
+      CHECK(sent(claim));
+      cmd("fill=keys:off");
+      g_out.clear();
+      ui::remote_tick(t + 9000);
+      CHECK(!sent(claim));
+      cmd("fill=keys:on");   // (the tests go on with the keys claimed)
+      CHECK(sent(claim));
+    }
     // the tracks: BD PLAITS, the rest Rytm machines
     std::vector<uint8_t> a33 = {0, 12};
     a33.push_back(1), a33.push_back(0x00);
@@ -980,35 +1069,66 @@ int main() {
     // 49 1 1 15: GENERATOR, a popup only
     ui::fill_page_reset();
     send(msg(0x49, {1, ui::kPageGenerator}));
-    CHECK(!ui::fill_page_view().on && !strcmp(ui::remote_popup_text(), "GENERATOR: 0.5.1"));   // L3: its text
+    CHECK(!ui::fill_page_view().on && !strcmp(ui::remote_popup_text(), "GENERATOR: 0.5.2"));   // L3: its text
     // the console: open on BD, ENGINE first (UP, the first .. last engine), VELOCITY 60..127 RND; a fresh seed
     cmd("fill=open:0");
     auto v = ui::fill_page_view();
     CHECK(v.on && v.track == 0 && v.ntargets == 2 && v.target == 0 && v.order == lf::kUp && v.from == 0 && v.to == kPlaitsEngs - 1);
     CHECK(v.trigs == lf::kAll && v.every == 1 && v.offset == 0 && v.seed >= 0 && v.seed < 1000 && !v.undo);
-    {   // the owner's test (2026-11-13): each control's label starts with its encoder's letter (A..H, the Rytm's knobs);
-        // the left column (A..D, x 2) within 13 characters, the right (E..H, x 66) within 12: at 5 px a character
-        // (kRSmall's widest) neither runs into the other column nor off the screen
+    {   // the FILL screen (0.5.0, the UI system's LIST with values): two columns, the label (its encoder's letter first: the
+        // owner's test, 2026-11-13) at the left of its cell and the value right-aligned, the summary line, the key boxes
       static ui::Canvas c;
       auto drawn = [&](const char* want_a) {
         ui::kFillPage.draw(c, 0, 1, now_ms());
         for (int i = 0; i < 8; ++i) {
-          const char* t = c.txt[ui::kSlotFree + i].s;
-          CHECK(t[0] == "ABCDEFGH"[i] && t[1] == ' ' && (int)strlen(t) <= (i < 4 ? 13 : 12));
-          CHECK(c.txt[ui::kSlotFree + i].x == (i < 4 ? 2 : 66));
+          const ui::TextItem& l = c.txt[ui::kSlotFree + 2 * i];
+          const ui::TextItem& v = c.txt[ui::kSlotFree + 2 * i + 1];
+          CHECK(l.s[0] == "ABCDEFGH"[i] && (l.s[1] == ' ' || !l.s[1]));
+          CHECK(l.x == (i < 4 ? 2 : 67) && (l.flags & 3) == ui::kAlignLeft);
+          CHECK((v.flags & 3) == ui::kAlignRight && v.x == (i < 4 ? 61 : 124) && v.y == l.y && l.y == 12 + 9 * (i % 4));
+          CHECK((int)l.x + (int)strlen(l.s) * 5 + 2 < (int)v.x - (int)strlen(v.s) * 5 + 1);   // the label never runs into its value
         }
-        CHECK(!strcmp(c.txt[ui::kSlotFree].s, want_a));
-        printf("lockfill: FILL's labels: %s | %s | %s | %s || %s | %s | %s | %s\n", c.txt[ui::kSlotFree].s, c.txt[ui::kSlotFree + 1].s,
-               c.txt[ui::kSlotFree + 2].s, c.txt[ui::kSlotFree + 3].s, c.txt[ui::kSlotFree + 4].s, c.txt[ui::kSlotFree + 5].s,
-               c.txt[ui::kSlotFree + 6].s, c.txt[ui::kSlotFree + 7].s);
+        CHECK(!strcmp(c.txt[ui::kSlotFree + 1].s, want_a));
+        CHECK(scr_items(c) < 64);
       };
-      drawn("A TGT ENGINE");
-      CHECK(!strncmp(c.txt[ui::kSlotFree + 1].s, "B FR ", 5) && !strncmp(c.txt[ui::kSlotFree + 2].s, "C TO ", 5) &&
-            !strcmp(c.txt[ui::kSlotFree + 3].s, "D ORD UP") && !strcmp(c.txt[ui::kSlotFree + 4].s, "E TRG ALL") &&
-            !strcmp(c.txt[ui::kSlotFree + 5].s, "F EVRY 1") && !strcmp(c.txt[ui::kSlotFree + 6].s, "G OFS 0") &&
-            !strncmp(c.txt[ui::kSlotFree + 7].s, "H SEED ", 7));
+      drawn("ENGINE");
+      CHECK(!strcmp(c.txt[ui::kSlotFree].s, "A TGT") && !strcmp(c.txt[ui::kSlotFree + 2].s, "B FR") && !strcmp(c.txt[ui::kSlotFree + 4].s, "C TO") &&
+            !strcmp(c.txt[ui::kSlotFree + 6].s, "D ORD") && !strcmp(c.txt[ui::kSlotFree + 7].s, "UP") && !strcmp(c.txt[ui::kSlotFree + 8].s, "E TRG") &&
+            !strcmp(c.txt[ui::kSlotFree + 9].s, "ALL") && !strcmp(c.txt[ui::kSlotFree + 10].s, "F EVRY") && !strcmp(c.txt[ui::kSlotFree + 11].s, "1") &&
+            !strcmp(c.txt[ui::kSlotFree + 12].s, "G OFS") && !strcmp(c.txt[ui::kSlotFree + 13].s, "0") && !strcmp(c.txt[ui::kSlotFree + 14].s, "H SEED"));
+      // the title, the summary line (FROM > TO), the key boxes: YES FILL | NO BACK, with FUNC YES CLEAR | NO UNDO
+      CHECK(!strcmp(c.txt[ui::kSlotTitle].s, "FILL BD"));
+      CHECK(strstr(c.txt[ui::kSlotFree + 16].s, " > "));
+      CHECK(!strcmp(c.txt[ui::kSlotFoot].s, "YES") && !strcmp(c.txt[ui::kSlotFoot + 1].s, "FILL") &&
+            !strcmp(c.txt[ui::kSlotFoot + 2].s, "NO") && !strcmp(c.txt[ui::kSlotFoot + 3].s, "BACK"));
+      scr_shot("fill_idle.png", c);
+      CHECK(ui::kFillPage.key(0x80));
+      ui::kFillPage.draw(c, 0, 1, now_ms());
+      CHECK(!strcmp(c.txt[ui::kSlotFoot + 1].s, "CLEAR") && !strcmp(c.txt[ui::kSlotFoot + 3].s, "UNDO"));
+      scr_shot("fill_func.png", c);
+      ui::kFillPage.key_up(0x80);
+      // turning B (FROM): its whole name and the target on the title bar, the track on the right, the row inverted, the
+      // name and the value in the bottom bar; any key ends it
+      ui::kFillPage.enc(1, 1, false);
+      ui::kFillPage.draw(c, 0, 1, now_ms());
+      CHECK(!strncmp(c.txt[ui::kSlotTitle].s, "B FROM ENGINE", 13) && !strcmp(c.txt[ui::kSlotRight].s, "BD"));
+      CHECK(!strcmp(c.txt[ui::kSlotFoot].s, "FROM") && c.txt[ui::kSlotFoot + 1].x == 70 && (c.txt[ui::kSlotFoot + 1].flags & ui::kTextInvert));
+      CHECK((c.txt[ui::kSlotFree + 2].flags & ui::kTextInvert) && !(c.txt[ui::kSlotFree + 4].flags & ui::kTextInvert));
+      CHECK(scr_items(c) < 64);
+      scr_shot("fill_turning_b.png", c);
+      ui::kFillPage.enc(1, -1, false);   // (FROM back where it was)
+      ui::kFillPage.enc(7, 1, false);
+      ui::kFillPage.draw(c, 0, 1, now_ms());
+      CHECK(!strcmp(c.txt[ui::kSlotTitle].s, "H SEED") && !strcmp(c.txt[ui::kSlotFoot].s, "SEED") &&
+            !strcmp(c.txt[ui::kSlotFoot + 1].s, c.txt[ui::kSlotFree + 15].s));   // the value as in its row
+      ui::kFillPage.draw(c, 0, 1, now_ms() + 5000);   // (the turn timed out)
+      CHECK(!strcmp(c.txt[ui::kSlotTitle].s, "FILL BD") && !strcmp(c.txt[ui::kSlotFoot].s, "YES"));
+      CHECK(ui::kFillPage.key(0x43));   // DOWN: any key
+      ui::kFillPage.draw(c, 0, 1, now_ms());
+      CHECK(!strcmp(c.txt[ui::kSlotTitle].s, "FILL BD"));
       CHECK(ui::kFillPage.key(0x41) && ui::fill_page_view().target == 1);   // VELOCITY: 8 letters, the TGT word dropped
-      drawn("A VELOCITY");
+      drawn("VELOCITY");
+      CHECK(!strcmp(c.txt[ui::kSlotFree].s, "A"));
       CHECK(ui::kFillPage.key(0x40) && ui::fill_page_view().target == 0);
     }
     // YES: the Rytm's pattern filled on BD's trigs, only its ENGINE lock slot added
@@ -1043,9 +1163,9 @@ int main() {
       ui::kFillPage.draw(c, 0, 1, now_ms());
       lf::Target g0 = {lf::kLock, 0, false};
       char want_r[16];
-      snprintf(want_r, sizeof want_r, "LOCK TRK %d/72", lf::slots_after(F.rec.data(), 0, g0));
+      snprintf(want_r, sizeof want_r, "LOCK %d/72", lf::slots_after(F.rec.data(), 0, g0));
       const char* hr = c.txt[ui::kSlotRight].s;
-      CHECK(!strcmp(hr, want_r) && 2 + (int)strlen(c.txt[ui::kSlotTitle].s) * 5 + 2 < ui::kW - 3 - (int)strlen("LOCK TRK 72/72") * 5);
+      CHECK(!strcmp(hr, want_r) && 2 + (int)strlen(c.txt[ui::kSlotTitle].s) * 5 + 2 < ui::kW - 3 - (int)strlen("LOCK 72/72") * 5);
     }
     cmd("fill=undo");
     CHECK(!strcmp(ui::fill_page_view().note, "NOTHING TO UNDO"));
@@ -1108,6 +1228,125 @@ int main() {
     send(msg(0x31, {0, 0x41, 0}));
     send(msg(0x31, {0, 0x42, 0}));
     CHECK(!ui::fill_page_view().on);
+    // owner 2026-11-15 (hardware, t050-f + rc5b: "UP + RIGHT (FILL mode) doesn't do anything"): the whole path with the
+    // bytes rc5b's 0026 sends, on a Sidecar track (BD) and on a track of the Rytm's own synth (SD).
+    // - The page closed, UP + RIGHT at once: 49 1 1 16, the host asks the page open (3A 0 1), the Rytm opens it for the
+    //   host (30 0 1 1, R_HOST): FILL on the selected track.
+    // - The page closed, UP held 0.4 s first (as a hand does): the Rytm asks the combo map (49 1 4 1), the host opens the
+    //   page on KEYS, and RIGHT then is the open page's (31 41: rc5b forwards UP + RIGHT only with the page closed). It
+    //   did nothing there and UP's release (49 1 4 0) closed the map: nothing at all. Now FILL, and it stays at the release.
+    // - The page open (SIDECAR, a ring page; UP and RIGHT are its 31s): UP held + RIGHT opens FILL, with or without UP's
+    //   map over the page (49 1 5 1 after 0.4 s).
+    {
+      auto sel = [](int t) {
+        std::vector<uint8_t> b = {2, (uint8_t)t, 46};
+        for (int i = 0; i < 12; ++i) b.push_back('A');
+        send(msg(0x49, b));
+      };
+      auto asked = [](int on) {
+        for (auto& o : g_out)
+          if (o.size() == 9 && o[4] == 0x3A && o[7] == on) return true;
+        return false;
+      };
+      auto title_is = [](const char* t) { return ui::remote_open() && ui::remote_page_title() && !strcmp(ui::remote_page_title(), t); };
+      auto fill_shown = [&](int t) { return title_is("FILL") && ui::fill_page_view().on && ui::fill_page_view().track == t; };
+      uint32_t tk = now_ms();
+      auto ticks = [&](int n) { for (int i = 0; i < n; ++i) ui::remote_tick(tk += 50); };
+      auto up_right = [&](bool map) {   // with the page open: UP down, (UP's map over the page), RIGHT down / up, UP up
+        send(msg(0x31, {0, 0x42, 1}));
+        ticks(8);
+        if (map) send(msg(0x49, {5, 1}));
+        ticks(1);
+        send(msg(0x31, {0, 0x41, 1}));
+        send(msg(0x31, {0, 0x41, 0}));
+        ticks(1);
+        if (map) send(msg(0x49, {5, 0}));
+        send(msg(0x31, {0, 0x42, 0}));
+        ticks(4);
+      };
+      for (int t : {0, 1}) {
+        // the page closed, UP + RIGHT at once
+        send(msg(0x30, {0, 0, 0}));
+        ui::fill_page_reset();
+        sel(t);
+        ticks(1);
+        g_out.clear();
+        send(msg(0x49, {1, ui::kPageFill}));
+        ticks(1);
+        CHECK(asked(1));
+        send(msg(0x30, {0, 1, 1}));   // the Rytm opens the page for the host (enter R_HOST)
+        ticks(4);
+        CHECK(fill_shown(t));
+        // the page closed, UP held first: the map, then RIGHT on the open page, then UP let go
+        send(msg(0x30, {0, 0, 0}));
+        ui::fill_page_reset();
+        ticks(1);
+        g_out.clear();
+        send(msg(0x49, {4, 1}));
+        ticks(1);
+        CHECK(asked(1));
+        send(msg(0x30, {0, 1, 1}));
+        ticks(1);
+        CHECK(title_is("KEYS"));
+        send(msg(0x31, {0, 0x41, 1}));
+        send(msg(0x31, {0, 0x41, 0}));
+        ticks(1);
+        g_out.clear();
+        send(msg(0x49, {4, 0}));
+        ticks(4);
+        CHECK(fill_shown(t) && !asked(0));
+        // review: FILL opened with UP still held (the map's), a second RIGHT with UP still held closes it (the combo toggles)
+        send(msg(0x30, {0, 0, 0}));
+        ui::fill_page_reset();
+        ticks(1);
+        send(msg(0x49, {4, 1}));
+        send(msg(0x30, {0, 1, 1}));
+        ticks(1);
+        send(msg(0x31, {0, 0x41, 1}));
+        send(msg(0x31, {0, 0x41, 0}));
+        ticks(1);
+        CHECK(fill_shown(t));
+        send(msg(0x31, {0, 0x41, 1}));
+        send(msg(0x31, {0, 0x41, 0}));
+        ticks(1);
+        CHECK(!ui::fill_page_view().on);
+        send(msg(0x49, {4, 0}));
+        ticks(2);
+        // the page open: SIDECAR, then a ring page (LFO); without and with UP's map over it
+        for (int via : {0, 1})
+          for (bool map : {false, true}) {
+            send(msg(0x30, {0, 0, 0}));
+            ui::fill_page_reset();
+            send(msg(0x30, {0, 1, 0}));   // a user open (SIDECAR)
+            ticks(1);
+            if (via) ui::remote_show_page("LFO");
+            ticks(1);
+            CHECK(ui::remote_open() && (via ? title_is("LFO") : !ui::remote_page_title()));   // (SIDECAR: no extra page)
+            up_right(map);
+            CHECK(fill_shown(t));
+          }
+        // UP tapped, then RIGHT alone: the page's own RIGHT (no FILL)
+        send(msg(0x30, {0, 0, 0}));
+        ui::fill_page_reset();
+        send(msg(0x30, {0, 1, 0}));
+        ticks(1);
+        ui::remote_show_page("LFO");
+        ticks(1);
+        send(msg(0x31, {0, 0x42, 1}));
+        send(msg(0x31, {0, 0x42, 0}));
+        send(msg(0x31, {0, 0x41, 1}));
+        send(msg(0x31, {0, 0x41, 0}));
+        ticks(2);
+        CHECK(!ui::fill_page_view().on && !title_is("FILL"));
+        // on FILL itself UP + RIGHT still closes it (the combo toggles)
+        cmd(t ? "fill=open:1" : "fill=open:0");
+        ticks(1);
+        CHECK(fill_shown(t));
+        up_right(false);
+        CHECK(!ui::fill_page_view().on);
+      }
+      send(msg(0x30, {0, 0, 0}));
+    }
     // fix/fill-persist: no 2D 02 seen yet: the page says why nothing is written
     writer_reset(r, -1);
     cmd("fill=open:0");
@@ -1160,12 +1399,55 @@ int main() {
       ui::kFillPage.draw(c, 0, 1, t + 40000);
       CHECK(strcmp(c.txt[ui::kSlotFoot].s, "UNDONE") != 0);
     }
+    // the Rytm repeating its report of the SAME project (10, again and again) is no project load: the undo stays
+    writer_reset(r);
+    cmd("fill=open:0");
+    project_switch_named("SAME", "SAME", false);
+    cmd("fill=yes");
+    pump(400);
+    CHECK(ui::fill_page_view().undo);
+    {
+      std::vector<uint8_t> same = {0xF0, 0x7D, 0x52, 0x54, 0x10};   // (the project as it is now)
+      for (const char* c = project; *c; ++c) same.push_back((uint8_t)*c);
+      same.push_back(0xF7);
+      send(same), send(same);
+    }
+    cmd("fill=undo");
+    pump(400);
+    CHECK(!strcmp(ui::fill_page_view().note, "UNDONE"));
+    // the Rytm naming ANOTHER project while its switch is held back (the test card is keyed by slot, no 4B yet: set_project returns
+    // early): the undo is gone, a job running ends, all the same; a project reloaded under its own key too
+    writer_reset(r);
+    cmd("fill=open:0");
+    project_switch_named("HELD", "HELD", false);
+    cmd("fill=yes");
+    pump(400);
+    CHECK(ui::fill_page_view().undo);
+    send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'H', 'E', 'L', 'D', '2', 0xF7});
+    CHECK(!strcmp(project, "HELD"));   // (held: the project is still the old one)
+    cmd("fill=undo");
+    CHECK(!strcmp(ui::fill_page_view().note, "UNDO EXPIRED (PROJECT)"));
+    writer_reset(r);
+    CHECK(patwrite::start(patch_set, nullptr));
+    send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'H', 'E', 'L', 'D', '3', 0xF7});   // (before the answer is taken)
+    pump(400);
+    CHECK(patwrite::why() == patwrite::kWhyProject && F.writes == 0);
+    writer_reset(r);
+    cmd("fill=open:0");
+    project_switch_named("RELOAD", "RELOAD", false);
+    cmd("fill=yes");
+    pump(400);
+    CHECK(ui::fill_page_view().undo);
+    project_switch_named("RELOAD", "RELOAD", true);   // (a cleared slot loaded again, a restore: the same key)
+    cmd("fill=undo");
+    CHECK(!strcmp(ui::fill_page_view().note, "UNDO EXPIRED (PROJECT)"));
     // a project load (the Rytm's 10, the same pattern number): expired
     writer_reset(r);
     cmd("fill=open:0");
     cmd("fill=yes");
     pump(400);
     CHECK(ui::fill_page_view().undo);
+    project_switch_named("OTHER", "OTHER", false);   // (another project: its key moves; the 10 below is held in the test card's mode)
     send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'O', 'T', 'H', 'E', 'R', 0xF7});
     cmd("fill=undo");
     CHECK(!strcmp(ui::fill_page_view().note, "UNDO EXPIRED (PROJECT)"));
@@ -1225,16 +1507,35 @@ int main() {
       F.answer = false;
       cmd("fill=undo");
       CHECK(patwrite::busy());
+      project_switch_named("PROJ2", "PROJ2", false);
       send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', '2', 0xF7});
       F.answer = true;
       pump(3000);
       CHECK(!patwrite::busy() && F.rec == filled && F.writes == wn1);
       CHECK(!strcmp(ui::fill_page_view().note, "CHANGED SINCE: NO UNDO"));
     }
+    // the Rytm repeating its report of the SAME project while a job reads / writes does not end it
+    writer_reset(r);
+    project_switch_named("PROJS", "PROJS", false);
+    CHECK(patwrite::start(patch_set, nullptr));
+    send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', 'S', 0xF7});   // (before the answer is taken)
+    project_switch_named("PROJS", "PROJS", false);
+    pump(400);
+    CHECK(patwrite::why() != patwrite::kWhyProject && patwrite::why() != patwrite::kWhyChanged && F.writes == 1);
+    CHECK(!patwrite::busy() && patwrite::state() == patwrite::kDone);
+    writer_reset(r);   // ... nor after the write (settling / verifying)
+    CHECK(patwrite::start(patch_set, nullptr));
+    pump(30);
+    CHECK(patwrite::state() == patwrite::kSettle && F.writes == 1);
+    send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', 'S', 0xF7});
+    project_switch_named("PROJS", "PROJS", false);
+    pump(400);
+    CHECK(!patwrite::busy() && patwrite::state() == patwrite::kDone && F.writes == 1);
     // fix round 1 (review M2): a project load between the read and the write: the pattern read may be the old
     // project's, the write would land in the new one's stored pattern: nothing written (PROJECT LOADED: STOPPED)
     writer_reset(r);
     CHECK(patwrite::start(patch_set, nullptr));
+    project_switch_named("PROJ3", "PROJ3", false);   // (another project: the key moves)
     send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', '3', 0xF7});   // (before the answer is taken)
     pump(400);
     CHECK(patwrite::why() == patwrite::kWhyProject && F.writes == 0 && F.rec == r && F.stored == r);
@@ -1245,6 +1546,7 @@ int main() {
     CHECK(patwrite::start(patch_set, nullptr));
     pump(30);
     CHECK(patwrite::state() == patwrite::kSettle && F.writes == 1);
+    project_switch_named("PROJ4", "PROJ4", false);   // (another project: the key moves)
     send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', '4', 0xF7});
     pump(400);
     CHECK(patwrite::why() == patwrite::kWhyChanged && F.writes == 1 && patwrite::stats().restores == 0);
@@ -1255,6 +1557,7 @@ int main() {
     cmd("fill=yes");
     pump(30);
     CHECK(patwrite::state() == patwrite::kSettle && F.writes == 1);
+    project_switch_named("PROJ5", "PROJ5", false);   // (another project: the key moves)
     send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', '5', 0xF7});
     pump(400);
     CHECK(patwrite::why() == patwrite::kWhyChanged && F.writes == 1 && patwrite::stats().restores == 0);
@@ -1265,6 +1568,7 @@ int main() {
     CHECK(patwrite::start(patch_set, nullptr));
     pump(200);
     CHECK(patwrite::state() == patwrite::kVerifying);
+    project_switch_named("PROJ6", "PROJ6", false);   // (another project: the key moves)
     send({0xF0, 0x7D, 0x52, 0x54, 0x10, 'P', 'R', 'O', 'J', '6', 0xF7});
     {
       auto a = answer_of(F.rec, 0x54);   // a good verify answer arriving before a tick

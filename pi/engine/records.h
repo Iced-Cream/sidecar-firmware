@@ -39,6 +39,8 @@ class RecordReader {
     return n;
   }
   uint64_t Oversize() const { return oversize_; }
+  // Bytes in the ring not read yet (records and their length bytes; lagdiag.h's "pend"). Any core may ask.
+  unsigned Waiting() const { return ring_->size(); }
 
  private:
   Ring* ring_;

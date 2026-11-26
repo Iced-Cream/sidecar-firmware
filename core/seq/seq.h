@@ -221,6 +221,7 @@ const char* speed_name(int spd);     // "FOLLOW" "1/8" .. "7/8"
 bool speed_elektron(int spd);        // one of Elektron's set (the knob's main range; the others on FUNC: Q8)
 int speed_parse(const char* s);      // "follow" / "1/2" / "3/2" / "2" ... -> the id, -1 none
 int speed_step(int spd, int d, bool func);   // the knob: d steps through Elektron's set (func: every ratio, by size)
+int speed_pos(int spd);              // its place in the knob's order, 0 (1/8) .. kSpeeds - 1 (2): the knob's arc
 // seqtop P1: the play directions' names ("FWD" "REV" "PEND" "PING" "RND" "BROWN"; kDir* in core/seq/rng.h)
 const char* dir_name(int dir);
 int dir_parse(const char* s);        // "fwd" / "REV" ... -> the id, -1 none
@@ -544,6 +545,7 @@ struct View {
   int prompt_why;         // kPromptExplain: 0 an analog machine, 2 JUNO (mono), 3 another mono Sidecar machine
   int prompt_sel;         // kPromptMenu: the row (0 BACK, 1 TURN OFF, 2 LENGTH, 3 QUANTISE)
   bool off_hint;          // R2: B was turned down on a poly track (the footer says how to turn it off)
+  bool can_make;          // the shown track can be made a poly track (a Sidecar machine; not the Rytm's own synth)
   int lock_page;          // trigs held + a page key: kLp* (the held steps' locks), -1 none
   bool view_opened;       // the Rytm's TRK + TRIG opened the page (NO closes it; rui1036's FUNC + LFO)
   bool trigview;          // rui1040: the TRIG key's view (the step's / the track's trig values), else the notes

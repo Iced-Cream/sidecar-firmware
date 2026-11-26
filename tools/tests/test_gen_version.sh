@@ -56,6 +56,14 @@ git rev-parse --short=7 HEAD >/dev/null
 expect "git status fails" 1
 cp "$T/index.ok" .git/index
 expect "readable again" 0
+# a 4th number (0.5.1.1) is a version too; a malformed one is refused
+echo 0.5.1.1 > VERSION
+run
+[ "$(sed -n 's/^#define SIDECAR_VERSION\t"\(.*\)"$/\1/p' v.h)" = "0.5.1.1" ] || fail "4-number version: $(cat v.h)"
+echo 0.5 > VERSION
+if tools/gen_version.sh "$T/v2.h" 2>/dev/null; then fail "0.5 accepted"; fi
+echo 0.1.0 > VERSION
+run
 # rewritten only when the content changes (a build that has not moved recompiles nothing)
 mtime() { stat -f %m v.h 2>/dev/null || stat -c %Y v.h; }
 touch -t 202001010000 v.h

@@ -220,7 +220,7 @@ CORE_COLD bool slots_shown() { return hooks != nullptr; }
 
 // encoders A..H all taken (C..H do nothing here): a stray turn does not edit the stock parameter under the page
 UI_ROM const ExtraPage kSlotsPage = {"USER SLOTS", slots_shown, slots_draw, slots_enc, slots_key, 0xFF, false, nullptr,
-                                     nullptr, nullptr, false};
+                                     nullptr, nullptr, false, nullptr, nullptr, true};   // 0.5.0: UP / DOWN its rows (a ring page: named anyway)
 
 CORE_COLD void remote_slots(const RemoteSlots* h) { hooks = h; }
 CORE_COLD const RemoteSlots* remote_slots() { return hooks; }

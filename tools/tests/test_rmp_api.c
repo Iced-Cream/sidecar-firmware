@@ -19,6 +19,15 @@ int main(void) {
   assert(RMP_P_PARSE == 0 && RMP_P_LOAD_ENTRY == 1 && RMP_P_VOICE_ENTER == 2 && RMP_P_VOICE_LEAVE == 3);
   assert(RMP_H_POOL_INFO == 0 && RMP_H_POOL_READ == 1);
   assert(sizeof(rmp_pool_info) == 20 && offsetof(rmp_pool_info, head_frames) == 16);
+  /* the pool code: bank * 128 + row; a knob's fraction (bank * 16 / 128) names the bank */
+  assert(rmp_pool_code(0, 5) == 5 && rmp_pool_code(2, 5) == 261 && rmp_pool_code(7, 127) == 1023);
+  assert(rmp_pool_code_of_knob(0.0f) == 0 && rmp_pool_code_of_knob(5.0f) == 5 && rmp_pool_code_of_knob(127.0f) == 127);
+  assert(rmp_pool_code_of_knob(5.0f + 32 / 128.0f) == 261 && rmp_pool_code_of_knob(127.0f + 112 / 128.0f) == 1023);
+  assert(rmp_pool_code_of_knob(0.0f + 32 / 128.0f) == 256 && rmp_pool_code_of_knob(-1.0f) == 0);
+  assert(rmp_pool_code_of_knob(128.0f) == 127 && rmp_pool_code_of_knob(200.0f) == 127 && rmp_pool_code_of_knob(1e30f) == 127);
+  assert(rmp_pool_code_of_knob(0.0f / 0.0f) == 0 && rmp_pool_code_of_knob(-1e30f) == 0);
+  assert(rmp_pool_code_of_knob(5.0f + 0.4f / 128) == 5 && rmp_pool_code_of_knob(5.0f + 15.6f / 128) == 5 + 128);   /* the +0.5 rounds: lo 0, lo 16 */
+  assert(rmp_pool_code_of_knob(5.0f + 127.6f / 128) == 5 + 7 * 128 && rmp_pool_code_of_knob(5.9999f) == 5 + 7 * 128);
   /* the accessors: a v1 table has no v2 functions, a v2 table the ones it fills */
   rmp_plugin p = {RMP_PLUGIN_MAGIC, 1u, 0, 0, 0, 0, 0, 0, 0, 0, {0, RMP_FN(le), RMP_FN(ve), RMP_FN(ve), 0, 0, 0, 0}};
   assert(rmp_load_entry_of(&p) == 0 && rmp_voice_enter_of(&p) == 0 && rmp_voice_leave_of(&p) == 0);

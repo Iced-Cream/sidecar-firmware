@@ -551,15 +551,20 @@ CORE_COLD static void announce() {   // the Rytm's tables for the project (its f
   send_fm_names();
 }
 
-uint32_t project_gen() { return prj().gen; }
+static uint32_t name_hash(const char* c) {
+  uint32_t h = 2166136261u;   // FNV-1a
+  for (; *c; ++c) h = (h ^ (uint8_t)*c) * 16777619u;
+  return h;
+}
+CORE_COLD uint32_t project_id() { return (name_hash(prj().key) * 16777619u + prj().reported) * 16777619u + prj().epoch; }
 
 CORE_COLD void set_project(const uint8_t* d, int len) {
-  ++prj().gen;
   char n[24];
   int k = 0;
   for (int i = 0; i < len && k < 23 && d[i] != 0xf7 && d[i]; ++i) n[k++] = d[i] & 0x7f;
   n[k] = 0;
   if (is_slot_key(n)) n[0] = '_';   // 2026-10-27: a Rytm name never names a slot key (today's key for it)
+  prj().reported = name_hash(n);   // before any early return below (slot mode, the rename question): the Rytm HAS named this project
 #if CORE_MSAMP
   // The Rytm's project slots (its 4B reports, prjslot) and the rename question on its PROJECT page are the Rytm's alone: a
   // box's 10 (an A4's, a Digitakt's) is its project's name and nothing more, in its own folder (design 2026-11-21)
@@ -610,7 +615,8 @@ CORE_COLD void project_switch(const char* n) {
 // 2026-10-27 (core/bundle/prjslot.h): the switch to a slot key with the Rytm's name for it; reload: the same key again
 // (its files changed under it: a cleared slot reloaded, a restore). A new name for the same key only renames it.
 CORE_COLD void project_switch_named(const char* key, const char* name, bool reload) {
-  ++prj().gen;
+  prj().reported = name_hash(name ? name : key);
+  if (reload) ++prj().epoch;
   prj().seen = true;
   if (reload || strcmp(key, prj().key) != 0) {
     sniprintf(prj().next, sizeof prj().next, "%s", name ? name : key);

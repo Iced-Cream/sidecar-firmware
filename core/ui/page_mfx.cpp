@@ -127,13 +127,20 @@ CORE_COLD void mfx_enc(int e, int d, bool func) {
   mp.touched = e;
   const int st = func ? 8 : 1, l = list_turn(e, d);   // the slot, type and switches: lists; the rest values
   if (mp.eq) {
-    if (e < ins::kEqParams) ins::set_eq(master::kEqChain, e, ins::eq_param(master::kEqChain, e) + d * st), mod::manual_knob(mod::tid(mod::kIns, master::kEqChain, 8 + e));
+    if (e < ins::kEqParams) {
+      const int cur = ins::eq_param(master::kEqChain, e);   // LOW / HIGH: 64 is flat, the detent
+      ins::set_eq(master::kEqChain, e, e >= 2 ? detent_step(e, detent_tag(0x400 + e), cur, d * st, 64, func) : cur + d * st), mod::manual_knob(mod::tid(mod::kIns, master::kEqChain, 8 + e));
+    }
     else if (e == 7) master::set_lev(master::cur().lev + d * st), mod::manual_knob(mod::tid(mod::kMfx, 0, 0));
     return;
   }
   const int ch = master::chain(mp.slot), s = master::slot(mp.slot), t = ins::ctl(ch).type[ch][s];
   if (e < 4) {
-    if (t) ins::set_param(ch, s, e, ins::param(ch, s, e) + d * st), mod::manual_knob(mod::tid(mod::kIns, ch, s * 4 + e));
+    if (t) {
+      const int cur = ins::param(ch, s, e);   // AMP / SAT TONE (P3): 64 is flat, the detent
+      ins::set_param(ch, s, e, e == 2 && (t == ins::kAmp || t == ins::kSat) ? detent_step(e, detent_tag(0x500 + ch * 8 + s), cur, d * st, 64, func) : cur + d * st);
+      mod::manual_knob(mod::tid(mod::kIns, ch, s * 4 + e));
+    }
   } else if (e == 4) {
     mp.slot = clampi(mp.slot + l, 0, master::kSlots - 1);
   } else if (e == 5) {

@@ -7,6 +7,7 @@
 //                       network (Wi-Fi not joined this boot: its chip stays up for scans, so Wi-Fi can be set up from
 //                       the page); no computer on the bus within usbquiet= ms, or none that starts the network -> as
 //                       before (Wi-Fi with a stored network, else Ethernet). A Wi-Fi join being tried (wifi.try) wins.
+//                       A computer that starts its driver later is asked about on the touchscreen (LatePrompt), never rebooted by itself.
 //   net=usb             the USB-C network whatever is connected (a computer plugged in later gets it)
 //   net=wifi            never the USB-C network: Wi-Fi as before (Ethernet without a stored network)
 //   net=lan             Ethernet, Wi-Fi not joined (its chip for scans as wifi= says)
@@ -164,6 +165,48 @@ private:
 	bool m_bSof = false, m_bStarted = false;
 	unsigned m_nFirst = 0;
 	Probe m_Result = kWaiting;
+};
+
+// ---- the late computer (net=auto): asked on the touchscreen, never rebooted by itself ---------------------------------
+//
+// Circle runs one stack on one device, chosen at boot, and it cannot be moved at run time (CNetSubSystem is one object whose
+// tasks and sockets hold the device). A computer that starts its USB network driver AFTER the boot chose Wi-Fi or Ethernet
+// (net=auto, nothing on the cable at the time) is therefore answered by a question on the Sidecar's touchscreen, "Computer
+// connected on USB-C: restart to use it?", with RESTART and NOT NOW. The unit never reboots on its own: only a tap on RESTART
+// does, and only after the card's work has drained (the caller says so: drain_failed () otherwise, and the prompt says it).
+// NOT NOW is for this plug: the question comes back at the next plug (the link dropping and coming up again), not repeatedly.
+// A unit with no touchscreen never asks (the page's Reboot onto USB-C and net=usb remain).
+class LatePrompt
+{
+public:
+	static const unsigned kSettleMs = 2000;		// the driver must have held the link this long (a flapping one is not asked about)
+	enum Mode { kHidden = 0, kAsk = 1, kFailed = 2 };	// what the screen shows
+	enum Ans { kNoAns = 0, kRestart = 1, kNotNow = 2 };	// what a tap on it said
+	// every loop: the clock (ms, wrapping), whether a computer's driver has the link though the stack is on another device
+	// (CSidecarGadget::NetLate), whether there is a touchscreen, the tap's answer. TRUE exactly once per RESTART: the caller
+	// drains the card and reboots, or calls drain_failed ().
+	bool step (unsigned nMs, bool bLate, bool bScreen, int nAns)
+	{
+		if (!bLate || !bScreen) { m_State = sIdle; return false; }		// the plug is gone (or nowhere to ask): the next one asks again
+		switch (m_State)
+		{
+		case sIdle:	m_State = sSettling, m_nSince = nMs; break;
+		case sSettling:	if (nMs - m_nSince >= kSettleMs) m_State = sAsking; break;
+		case sAsking:
+			if (nAns == kRestart) { m_State = sDismissed; return true; }	// (a failed drain shows kFailed, it never asks again for this plug)
+			if (nAns == kNotNow) m_State = sDismissed;
+			break;
+		case sFailed:	if (nAns != kNoAns) m_State = sDismissed; break;
+		case sDismissed: break;
+		}
+		return false;
+	}
+	void drain_failed ()	{ m_State = sFailed; }	// the card's work did not settle in time: no reboot, say so
+	int mode () const	{ return m_State == sAsking ? kAsk : m_State == sFailed ? kFailed : kHidden; }
+private:
+	enum State { sIdle, sSettling, sAsking, sDismissed, sFailed };
+	State m_State = sIdle;
+	unsigned m_nSince = 0;
 };
 
 // ---- trust ---------------------------------------------------------------------------------------------------------

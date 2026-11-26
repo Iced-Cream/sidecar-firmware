@@ -176,7 +176,7 @@ static void render(int blocks) {   // from row 0, wrapping
 // The sample's own level over the first frames rows after a trig (MIX 0: tanh(x) * 0.7 full scale, inverted)
 static double level(int frames) {
   double s = 0;
-  for (int i = 0; i < frames; ++i) s += atanh(ring[i][0] / (0.7 * 32767.0));
+  for (int i = 0; i < frames; ++i) s += atanh(ring[i][0] / (core::kVoiceGain * 0.7 * 32767.0));
   return s / frames;
 }
 // Frames voice 0 sounds from a trig on (rendered in blocks of kBlock until it stops)

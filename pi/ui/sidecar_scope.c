@@ -71,9 +71,9 @@ static const char *src_name (int s)
 // ---- geometry: the 800x480 layouts plus what the screen adds (TH->dx, dy): the trace gets two thirds of the height,
 // the meters the rest, every column wider
 static int PW (void) { return th_page_w (); }
-static int area_h (void) { return oled () ? LU (133) + TH->dy * 2 / 3 : LU (196) + TH->dy * 2 / 3; }
-static int strip_y (void) { return oled () ? LU (18) + area_h () : LU (254) + TH->dy * 2 / 3; }
-static int strip_h (void) { return oled () ? LU (63) + TH->dy / 3 : LU (108) + TH->dy / 3; }
+static int area_h (void) { return oled () ? LU (133) + TH->pdy * 2 / 3 : LU (196) + TH->pdy * 2 / 3; }
+static int strip_y (void) { return oled () ? LU (18) + area_h () : LU (254) + TH->pdy * 2 / 3; }
+static int strip_h (void) { return oled () ? LU (63) + TH->pdy / 3 : LU (108) + TH->pdy / 3; }
 static int strip_x (void) { return oled () ? 0 : LU (8); }
 static int strip_w (void) { return oled () ? PW () : PW () - LU (16); }
 static int col_gap (void) { return oled () ? 2 : LU (8); }
@@ -297,7 +297,7 @@ static void meters_draw (lv_event_t *e)
 			lv_area_t a = {c.x1 + x, c.y1, c.x1 + x + cw - 1, c.y2 - 3};
 			th_paint_key (l, &a, "", 0, fl, TH_KEY, cs.sel, cs.press, 0, 0);
 			th_fill (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->row_out, LV_OPA_COVER, 5);	// the meter's window
-			th_frame (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->win_edge, 1, 5);
+			th_frame (l, &c, x0 - LU (4), y0 - LU (8), x1 + LU (4), y0 + h + 2, TH->win_edge, TH->edge_w, 5);
 			th_text (l, &c, x, y0 + h + LU (6), cw, fl, cs.sel ? TH->sel_ink : TH->sub, LV_TEXT_ALIGN_CENTER, src_name (k));
 		}
 		// the ladders: MAIN two (L, R), the others one; the clip lamp on top
@@ -417,7 +417,7 @@ void sidecar_scope_create (void *parent, int y0)
 {
 	int O = oled ();
 	const int pw = PW (), dx = TH->dx;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->dy);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, pw, O ? TH->h : LU (428) + TH->pdy);
 	s_Page = pg;
 	memset (s_Drawn, 0, sizeof s_Drawn);
 	s_nTraceGen = ~0u;
@@ -427,7 +427,7 @@ void sidecar_scope_create (void *parent, int y0)
 		s_TitleBar = th_titlebar (pg, 0, 0, pw, LU (13));
 		s_Title = s_Info = 0;
 		s_Area = th_box (pg, 0, LU (15), pw, area_h ());
-		const int ky = TH->h - LU (22), q = dx / 4;			// the keys: 22 dots (44 px) tall
+		const int ky = TH->h - LU (25) - LU (22), q = dx / 4;			// the keys: 22 dots (44 px) tall
 		s_Freeze = th_key (pg, 0, ky, LU (76) + q, LU (22), "FREEZE", TH_KEY_FUNC, key_cb, (void *) 0);
 		s_TbDn = th_key (pg, LU (80) + q, ky, LU (40), LU (22), LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);
 		lv_obj_t *box = th_panel (pg, LU (123) + q, ky, LU (76) + q, LU (22), "", TH_PANEL_BARE);
@@ -446,7 +446,7 @@ void sidecar_scope_create (void *parent, int y0)
 		lv_obj_set_width (s_Info, pw / 2 - LU (24));
 		lv_obj_set_style_text_align (s_Info, LV_TEXT_ALIGN_RIGHT, 0);
 		s_Area = th_box (pg, LU (24), LU (42), pw - LU (48), area_h ());
-		const int ky = LU (372) + TH->dy, q = dx / 4;		// the keys: 52 px
+		const int ky = LU (372) + TH->pdy, q = dx / 4;		// the keys: 52 px
 		s_Freeze = th_key (pg, LU (8), ky, LU (150) + q, LU (52), "Freeze", TH_KEY_FUNC, key_cb, (void *) 0);
 		th_key_font (s_Freeze, TH->f_title);
 		s_TbDn = th_key (pg, LU (166) + q, ky, LU (80), LU (52), LV_SYMBOL_LEFT, TH_KEY, key_cb, (void *) 1);

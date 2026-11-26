@@ -13,12 +13,15 @@ namespace voice_pi {
 // ~10 times a second while the VOICE page shows: o from the newest data; pat the newest decoded Rytm pattern (null
 // none), its number. o->gen changes only when something to draw changed. scope false (the web's "voices" topic): no
 // scope and level (the input tap is the display's: reading it here would steal its entries and peaks).
+// Which of the eight knobs take a finger, and the Rytm's P index each writes (Fill's gate, apart for the test): sidecar a Sidecar track,
+// picked a HOME tile's track the Rytm has not selected, mm the machine (machine_of), smpl SAMPLER, vi its voice, label the knobs' labels
+void EditGate(bool sidecar, bool picked, int mm, bool smpl, int vi, const char (*label)[5], unsigned char* wedit, unsigned char* wk);
 void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern, bool scope = true);
 // A HOME tile's track (0..11) shown on VOICE instead of the Rytm's selected track, until the Rytm selects another one
 // (-1: follow the Rytm). Core 0 (the display's command, voicepick=T).
 void Pick(int track);
 // The page the Rytm asked for since *seen (sidecar_ui's page number, -1 none; *seen updated): 1 HOME, 2 SEQ, 3 PAT,
-// 4 VOICE (the machine view for a GRANULAR / WAVETABLE track, else VOICE), 5 SET, 6 INSERT FX (fx-ins: 9), 8 REC (11,
+// 4 VOICE (the machine view for a GRANULAR / WAVETABLE track, else VOICE), 5 SET, 6 FX (SEND FX, 2), 8 REC (11,
 // sidecar_rec.h), 9 SCOPE (12, sidecar_scope.h), 10 SIDECAR STATUS (13, sidecar_status.h); 7 none (SAMPLE / AUTO: the
 // Rytm's own screen, core/ui/remote.cpp). Also while on VOICE / the machine view (`voice_mode`): a track change on
 // the Rytm, or a machine change of the selected track, moves between the two as the track's machine needs (never to

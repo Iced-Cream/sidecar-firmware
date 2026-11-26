@@ -181,9 +181,10 @@ int main() {
       if (dt->cells[i].row == 1 && dt->cells[i].col < 4) below[dt->cells[i].col] = dt->cells[i].in[0];
     CHECK(below[0] == 8 && below[1] == 9 && below[2] == 14 && below[3] == 15);
     CHECK(vl(0, 8) == "TUNE" && vl(0, 14) == "LOOP" && vl(0, 10) == "SMP" && vl(0, 4) == "");   // (P1..P8: no knobs on SAMPLER)
+    tick(1600);   // (0.5.0 screens: a turned knob names itself on the title for 1.5 s)
     CHECK(shown("SAMPLER"));
     // (STRT 60 END 90 still: the page's own turns above are held over the reports)
-    const int xs = 1 + (int)core::v[0].p[12] * 99 / 120, xe = 1 + (int)core::v[0].p[13] * 99 / 120;
+    const int xs = 1 + (int)core::v[0].p[12] * 94 / 120, xe = 1 + (int)core::v[0].p[13] * 94 / 120;
     CHECK(shown("FWD") && !px(xs + 1, 10));
     png("sampler_fwd.png");
     const int arrow = px(xs + 4, 12), l0 = (int)core::v[0].p[14];
@@ -193,7 +194,7 @@ int main() {
     from_rytm(0x32, 3, 64 + 14, 0), tick(30);   // PLAY 29: FLP, brackets over the whole region (LOOP 0: OFF)
     CHECK(shown("FLP") && px(xs + 1, 10) && px(xe - 1, 10));
     from_rytm(0x32, 6, 64 + 75 - (int)core::v[0].p[14], 0), tick(30);   // LOOP 75: the loop from there, not from STRT
-    int xl = 1 + 75 * 99 / 120;
+    int xl = 1 + 75 * 94 / 120;
     CHECK((int)core::v[0].p[14] == 75 && px(xl + 1, 10) && !px(xs + 1, 10) && px(xe - 1, 10));
     png("sampler_flp_loop75.png");
     from_rytm(0x32, 3, 64 + 28, 0), tick(30);   // PLAY 57: SLICE (DSP SAMPLE's GRAIN zone)

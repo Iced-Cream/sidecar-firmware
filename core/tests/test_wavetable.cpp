@@ -11,8 +11,10 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <sys/stat.h>   // chmod
 
 #include "check.h"
+#include "ui/remote.h"
 #include "poly.h"
 #include "voices.h"
 #include "wavetable/tables.h"
@@ -199,6 +201,32 @@ static void test_list_and_load() {
   char o[400];
   CHECK(wt::command("wt", o, sizeof o) && strstr(o, "3/4 card tables resident"));
   wt::reset();
+}
+
+// owner 2026-11-15 (hardware): WAVETABLE knew its table only once a note had played with it. The voice is idle: its first
+// report (the machine chosen, TBL OFF), then the pick in the Rytm's list reaches the host as the SRC view's 2A (P1) only.
+// The table loads and the voice shows it (the SRC view draws voice_entry / viz_frame) with no note.
+static void test_idle_pick() {
+  const int t = 0, vi = ui::remote_track_voice(t);   // BD: voice 0
+  CHECK(vi == 0);
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 46, (uint8_t)(kW | vi), 0xF7});   // the machine chosen
+  wg::params(kW, vi, P(0, 0));   // its first report: TBL OFF
+  idle();
+  CHECK(wt::voice_entry(vi) != entry("clm256"));
+  uint32_t trigs = wt::stats().trigs;
+  int e = entry("clm256");
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x29, 1, (uint8_t)t, 1, 0xF7});   // its SRC view
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x2A, 1, (uint8_t)t, 0, 1, (uint8_t)(e & 127), (uint8_t)srclib::lo_of(e), 0xF7});   // the pick
+  idle();
+  CHECK(wt::voice_entry(vi) == e && wt::table_frames(e) == 4);
+  int nf = 0;
+  float y[64];
+  wt::viz_pos(vi, &nf);
+  CHECK(nf == 4 && wt::viz_frame(vi, 0, 64, y) == 64);
+  CHECK(wt::stats().trigs == trigs);   // (no note played)
+  wg::send({0xF0, 0x7D, 0x52, 0x54, 0x33, 1, (uint8_t)t, 1, 0, 0x7F, 0xF7});   // not ours again
+  wt::reset();
+  printf("test_wavetable: a table picked on an idle voice (2A) loads and shows with no note\n");
 }
 
 // frames morph smoothly: a POS sweep over the harmonic table, no step beyond what the waves themselves have
@@ -411,6 +439,61 @@ static void test_cpu() {
   wt::reset();
 }
 
+// a table that failed to load (here: a card file it could not open) is tried again when TBL picks it again; a voice
+// that leaves WAVETABLE gives its card table back (with four card slots, four voices that left must not keep a fifth
+// table from loading)
+static void test_retry_release() {
+  std::string W = g_card + "/WAVETABLES";
+  auto tone = [](int h) {
+    return wg::wav_bytes(4 * 2048, 1, 16, 48000, 1, "", [h](int i, int) { return 0.5 * std::sin(2 * M_PI * h * (i % 2048) / 2048.0); });
+  };
+  wg::write_file(W + "/t5.wav", tone(3));
+  wg::write_file(W + "/t6.wav", tone(5));
+  wg::write_file(W + "/late.wav", tone(7));
+  CHECK(pu::put(pools::kTables, "A011", "/WAVETABLES/t5.wav") == pools::kOk);
+  CHECK(pu::put(pools::kTables, "A012", "/WAVETABLES/t6.wav") == pools::kOk);
+  idle();
+  const int t5 = entry("t5"), t6 = entry("t6");
+  CHECK(t5 > 0 && t6 > 0);
+  // four voices on four card tables: every slot selected
+  const int four[4] = {entry("harm"), entry("clm256"), entry("akwf600"), t5};
+  for (int vi = 0; vi < 4; ++vi) wg::params(kW, vi, P((float)four[vi], 0));
+  idle();
+  for (int vi = 0; vi < 4; ++vi) CHECK(wt::table_frames(four[vi]) > 0 && wt::voice_entry(vi) == four[vi]);
+  // they leave WAVETABLE (PLAITS): a fifth table on voice 4 loads into a slot they gave back
+  for (int vi = 0; vi < 4; ++vi) wg::params(kPlaits, vi, {0, 64, 64, 64, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100});
+  // a pool change after they left (the list composed again, every voice's selection redone) does not take them back
+  CHECK(pu::put(pools::kTables, "A013", "/WAVETABLES/late.wav") == pools::kOk);
+  idle();
+  const int late = entry("late");
+  CHECK(late > 0);
+  for (int vi = 0; vi < 4; ++vi) CHECK(wt::voice_entry(vi) == -1);
+  wg::params(kW, 4, P((float)t6, 0));
+  idle();
+  CHECK(wt::table_frames(t6) > 0 && wt::voice_entry(4) == t6);
+  // a load that fails (the file cannot be opened), the log says so, the old table plays on (root opens any file:
+  // the case needs a user)
+  if (geteuid() == 0) {
+    wt::reset();
+    return;
+  }
+  CHECK(chmod((W + "/late.wav").c_str(), 0) == 0);
+  uint32_t fails = wt::stats().load_fails;
+  wg::params(kW, 5, P((float)late, 0));
+  idle();
+  CHECK(wt::stats().load_fails == fails + 1 && wt::entry_state(late) == 5 && wt::table_frames(late) == 0);
+  CHECK(chmod((W + "/late.wav").c_str(), 0644) == 0);
+  wg::params(kW, 5, P((float)late, 0));   // the same TBL again (a report, a trig): no new load
+  idle();
+  CHECK(wt::stats().load_fails == fails + 1 && wt::entry_state(late) == 5);
+  wg::params(kW, 5, P(1, 0));             // TBL away and back: tried again, and in
+  wg::params(kW, 5, P((float)late, 0));
+  idle();
+  CHECK(wt::table_frames(late) > 0 && wt::voice_entry(5) == late && wt::entry_state(late) == 3);
+  for (int vi = 0; vi < 6; ++vi) wg::off(vi);
+  wt::reset();
+}
+
 int main() {
   test_wav_read();
   test_frames();
@@ -430,12 +513,14 @@ int main() {
   CHECK(pu::put(pools::kTables, "A010", "/WAVETABLES/sub/clm256.wav") == pools::kOk);
   idle();
   test_list_and_load();
+  test_idle_pick();
   test_morph();
   test_alias();
   test_unison();
   test_chords_live();
   test_golden();
   test_cpu();
+  test_retry_release();
   system(("rm -rf '" + g_card + "'").c_str());
   printf("test_wavetable: PASS\n");
   return 0;

@@ -12,6 +12,7 @@
 
 #include "device/device.h"
 #include "rec/rec_names.h"
+#include "sidecar_features.h"
 #include "ui/extra.h"
 #include "ui/remote.h"
 #include "ui/widgets.h"
@@ -341,12 +342,20 @@ CORE_COLD void scope_enc(int e, int delta, bool) {
 CORE_COLD bool scope_key(int) { return false; }
 
 UI_ROM const ExtraPage kScopePage = {"SCOPE", nullptr, scope_draw, scope_enc, scope_key, 0x07, true, nullptr, nullptr};
-#if CORE_POLY && CORE_MSAMP
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kSlotsPage, &kPoolPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kChopPage, &kSeditPage, &kArpPage, &kMorphPage, &kMidiPage, &kFillPage};   // SAMPLE (core/samp) where REC shows, USER SLOTS after AUTO (a box without the Rytm's pages: after SCOPE, the ring's last), POOL (core/lib/pools.h) after it; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
-#elif CORE_POLY
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSlotsPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kArpPage, &kMorphPage, &kMidiPage, &kFillPage};   // USER SLOTS, SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
+// 0.5.0: the MORPH page is off (sidecar_features.h SIDECAR_MORPH): out of the ring and the lists, the code stays built
+#if SIDECAR_MORPH
+#define MORPH_PAGE_ENTRY &kMorphPage,
+#define MORPH_PAGE_LAST , &kMorphPage
 #else
-UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kMorphPage};   // the page order: LFO, REC (where shown), SCOPE last
+#define MORPH_PAGE_ENTRY
+#define MORPH_PAGE_LAST
+#endif
+#if CORE_POLY && CORE_MSAMP
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSampPage, &kAutoPage, &kSlotsPage, &kPoolPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kProjectPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kChopPage, &kSeditPage, &kArpPage, MORPH_PAGE_ENTRY &kMidiPage, &kFillPage};   // SAMPLE (core/samp) where REC shows, USER SLOTS after AUTO (a box without the Rytm's pages: after SCOPE, the ring's last), POOL (core/lib/pools.h) after it; INSERT (fx-ins), SONG (core/song), PROJECT (bundles) last
+#elif CORE_POLY
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kSlotsPage, &kSeqPage, &kInsPage, &kMasterPage, &kSongPage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage, &kPolyPage, &kArpPage, MORPH_PAGE_ENTRY &kMidiPage, &kFillPage};   // USER SLOTS, SEQ (core/seq), INSERT (fx-ins), SONG (core/song) last: LEFT on SIDECAR
+#else
+UI_ROM const ExtraPage* const kPages[] = {&kLfoPage, &kRecPage, &kScopePage, &kMenuPage, &kKeysPage, &kWebUiPage, &kUsbPage MORPH_PAGE_LAST};   // the page order: LFO, REC (where shown), SCOPE last
 #endif
 
 #if CORE_UI_TOOLS
@@ -360,6 +369,7 @@ CORE_COLD int extra_pages() { return (int)(sizeof kPages / sizeof kPages[0]); }
 #endif
 // A box's pages: what each needs of the Rytm's side (device.h Feature). The rest draw from the engine alone: REC, SCOPE, LFO, MENU, WEB UI
 CORE_COLD bool extra_for_box(const char* title) {
+  if (!SIDECAR_MORPH && !strcmp(title, "MORPH")) return false;   // 0.5.0: off (the menu, a page request by title)
   if (!device::foreign()) return true;
   struct Need { const char* title; uint32_t f; };
   static UI_ROM const Need kNeeds[] = {{"SAMPLE", device::kPools}, {"AUTO", device::kPools}, {"POOL", device::kPools}, {"CHOP", device::kPools}, {"SAMPLE EDIT", device::kPools}, {"SEQ", device::kPatterns},

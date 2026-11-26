@@ -51,7 +51,7 @@ static std::vector<double> render(int frames) {
   for (int b = 0; b < frames / kBlock; ++b) {
     idle_stream();
     render_voices(ring, kBlock, 0, 0, kVoices, mach);
-    for (int i = 0; i < kBlock; ++i) o.push_back(atanh(ring[i][0] / (0.7 * 32767.0)));
+    for (int i = 0; i < kBlock; ++i) o.push_back(atanh(ring[i][0] / (core::kVoiceGain * 0.7 * 32767.0)));
   }
   return o;
 }

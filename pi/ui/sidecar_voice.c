@@ -14,6 +14,10 @@ static lv_obj_t *s_Page, *s_TitleBar, *s_Title, *s_Name, *s_Knob[8], *s_Scope, *
 static sidecar_voice_view_t s_V;
 static unsigned s_nGen = ~0u;
 static void (*s_Tap) (int what);
+static void (*s_Cmd) (const char *cmd);
+static lv_timer_t *s_Tm;		// the refusal's words go after a moment (one shot)
+static unsigned s_nWgen;		// the failures seen (the first view's count: those are older)
+static int s_bWseen;
 static const char *const kTrack[12] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"};
 
 static int oled (void) { return TH->id == THEME_OLED; }
@@ -27,6 +31,7 @@ static int level_draw (lv_layer_t *l, const lv_area_t *c)
 	int w = lv_area_get_width (c), h = lv_area_get_height (c), lw = LU (oled () ? 7 : 14);
 	int lh = s_V.level * (h - 2) / 127, x0 = w - lw;
 	th_fill (l, c, x0, 0, w - 1, h - 1, oled () ? 0x262626 : th_mix (c_bg (), c_dim (), 40), LV_OPA_COVER, 0);
+	if (TH->hc) th_frame (l, c, x0, 0, w - 1, h - 1, TH->hc == 3 ? TH->accent : 0xFFFFFF, 1, 0);		// high contrast: a white outline
 	if (lh > 0) th_fill (l, c, x0, h - 1 - lh, w - 1, h - 1, s_V.level > 96 ? TH->accent : c_ink (), LV_OPA_COVER, 0);
 	return w - lw - (LU (oled () ? 4 : 8));
 }
@@ -364,6 +369,17 @@ static void heat_draw (lv_event_t *e)
 	for (int s = 0; s < n; s++)
 	{
 		int x0 = s * w / n, x1 = (s + 1) * w / n - (oled () ? 1 : 2);
+		if (TH->hc)						// high contrast: an empty step black with a grey outline (a trig: a light one), a locked step
+		{							// full yellow with a black dot; no tints. The page split is white
+			if (s_V.locks[s])
+			{
+				th_fill (l, &c, x0, 0, x1, h - 1, TH->lock, LV_OPA_COVER, 0);
+				th_fill (l, &c, (x0 + x1) / 2 - 2, h / 2 - 2, (x0 + x1) / 2 + 2, h / 2 + 2, 0x000000, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+			}
+			else th_frame (l, &c, x0, 0, x1, h - 1, s_V.trig[s] ? TH->dim : TH->hc == 3 ? TH->faint : 0x767676, 1, 0);
+			if (s % 16 == 0 && s) th_fill (l, &c, x0 - 1, 0, x0, h - 1, c_ink (), LV_OPA_COVER, 0);
+			continue;
+		}
 		uint32_t base = s_V.trig[s] ? th_mix (c_bg (), c_dim (), 140) : (oled () ? 0x262626 : th_mix (c_bg (), c_dim (), 50));
 		th_fill (l, &c, x0, 0, x1, h - 1, base, LV_OPA_COVER, 0);
 		if (s_V.locks[s])
@@ -382,14 +398,46 @@ static void tap_cb (lv_event_t *e)
 	if (s_Tap) s_Tap (what);
 }
 
+// The touch edit of knob k (th_meter_edit: at most every 30 ms while dragging, the final value at the lift): the Rytm's P(wk + 1)
+// of the shown track as a knob turn ("vparam=T:K:V", core/ui/remote.h). The value's text follows the finger at once; the knob
+// holds the dragged value after the lift until the Rytm's own moves (2 s at most): the write has to go to the Rytm and back.
+static void knob_cb (lv_obj_t *o, int v, void *ud)
+{
+	int k = (int) (intptr_t) ud;
+	char c[40], nb[8];
+	const int final = v & TH_RELEASED;
+	v &= 0xFFFF;
+	lv_snprintf (nb, sizeof nb, "%d", v);
+	th_meter_value_local (o, nb);
+	lv_snprintf (c, sizeof c, "vparam=%d:%d:%d%s", s_V.track, s_V.wk[k], v, final ? "" : ":0");	// (only the lift's line is followed)
+	if (s_Cmd) s_Cmd (c);
+}
+
+static void info_text (char *t, int n)
+{
+	if (s_V.pattern >= 0) lv_snprintf (t, n, "PATTERN %c%02d  UP + T4: HERE", 'A' + s_V.pattern / 16, s_V.pattern % 16 + 1);
+	else lv_snprintf (t, n, "UP + T1..T8 ON THE RYTM: PAGES");
+}
+static void info_back (lv_timer_t *t)
+{
+	char b[48];
+	(void) t;
+	s_Tm = 0;			// (one shot: LVGL deletes it after this call)
+	info_text (b, sizeof b);
+	th_label_set (s_Info, b);
+}
+
 void sidecar_voice_create (void *parent, int y0)
 {
+	if (s_Tm) lv_timer_delete (s_Tm);	// (the page made again: a theme change)
+	s_Tm = 0;
+	s_bWseen = 0;
 	int o = oled ();
 	s_nGen = ~0u;
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the knobs wider apart and taller, the machine's panel (keyboard, algorithm, scope) gets most
 	// of the extra room, the heatmap the full width
-	const int dx = TH->dx, dy = TH->dy;
+	const int dx = TH->dx, dy = TH->pdy;
 	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, th_page_w (), o ? TH->h : LU (428) + dy);
 	s_Page = pg;
 	if (o)
@@ -401,23 +449,33 @@ void sidecar_voice_create (void *parent, int y0)
 		// keyboard's white keys 8 dots wide, the FM algorithm's boxes and wires with room), the p-locks at the foot
 		const int kp = (LU (352) + dx) / 8, ky = dy / 6;
 		s_Name = th_label (pg, 3, LU (16), TH->f_body, TH->ink, "");
-		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, k * kp, LU (29), kp - 1, LU (52) + ky, 127, TH_METER_KNOB, TH->ink);
-		s_Scope = th_box (pg, 3, LU (91) + ky, LU (349) + dx, LU (104) + (dy - ky) * 4 / 5);
-		s_Mode = th_box (pg, 3, LU (87) + ky, LU (349) + dx, LU (110) + (dy - ky) * 4 / 5);
+		for (int k = 0; k < 8; k++)
+		{
+			s_Knob[k] = th_meter (pg, k * kp, LU (29), kp - 1, LU (52) + ky, 127, TH_METER_KNOB, TH->ink);
+			th_meter_edit (s_Knob[k], knob_cb, (void *) (intptr_t) k);
+			th_meter_edit_hold (s_Knob[k], 2000);
+		}
+		s_Scope = th_box (pg, 3, LU (91) + ky, LU (349) + dx, LU (104) + (dy - ky));
+		s_Mode = th_box (pg, 3, LU (87) + ky, LU (349) + dx, LU (110) + (dy - ky));
 		s_HeatCap = th_label (pg, 3, LU (205) + dy, TH->f_micro, TH->dim, "P-LOCKS");
 		s_Heat = th_box (pg, LU (50), LU (202) + dy, LU (302) + dx, LU (16));
 		s_Info = th_label (pg, 3, LU (226) + dy, TH->f_micro, TH->dim, "");
 	}
 	else
 	{
-		const int kp = LU (100) + dx / 16, kh = LU (124) + dy / 4, sx = LU (440) + dx / 4;
+		const int kp = LU (100) + dx / 16, kh = LU (124) + dy / 2, sx = LU (440) + dx / 4;
 		s_TitleBar = 0;
 		th_panel (pg, LU (8), LU (6), LU (784) + dx, LU (414) + dy, "", TH_PANEL_WINDOW);
 		s_Title = th_label (pg, LU (24), LU (14), TH->f_mid, TH->win_ink, "VOICE");
 		s_Name = th_label (pg, LU (24), LU (40), TH->f_big, TH->win_ink, "");
-		for (int k = 0; k < 8; k++) s_Knob[k] = th_meter (pg, LU (24) + (k & 3) * kp, LU (84) + (k >> 2) * (kh + LU (6)), kp - LU (8), kh, 127, TH_METER_KNOB, TH->accent);
-		s_Scope = th_box (pg, sx, LU (84), LU (336) + dx * 3 / 4, LU (250) + dy * 3 / 4);
-		s_Mode = th_box (pg, sx, LU (80), LU (336) + dx * 3 / 4, LU (258) + dy * 3 / 4);
+		for (int k = 0; k < 8; k++)
+		{
+			s_Knob[k] = th_meter (pg, LU (24) + (k & 3) * kp, LU (84) + (k >> 2) * (kh + LU (6)), kp - LU (8), kh, 127, TH_METER_KNOB, TH->accent);
+			th_meter_edit (s_Knob[k], knob_cb, (void *) (intptr_t) k);
+			th_meter_edit_hold (s_Knob[k], 2000);
+		}
+		s_Scope = th_box (pg, sx, LU (84), LU (336) + dx * 3 / 4, LU (250) + dy);
+		s_Mode = th_box (pg, sx, LU (80), LU (336) + dx * 3 / 4, LU (258) + dy);
 		s_HeatCap = th_label (pg, LU (24), LU (348) + dy, TH->f_small, TH->win_dim, "P-LOCKS (THE RYTM'S PATTERN)");
 		s_Heat = th_box (pg, LU (24), LU (370) + dy, LU (752) + dx, LU (30));
 		s_Info = th_label (pg, sx, LU (14), TH->f_small, TH->win_dim, "");
@@ -435,6 +493,8 @@ void sidecar_voice_create (void *parent, int y0)
 }
 
 void sidecar_voice_set_tap (void (*fn) (int what)) { s_Tap = fn; }
+void sidecar_voice_set_command (void (*fn) (const char *cmd)) { s_Cmd = fn; }
+void *sidecar_voice_knob (int k) { return k >= 0 && k < 8 ? s_Knob[k] : 0; }
 
 void sidecar_voice_show (int on)
 {
@@ -449,7 +509,8 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 	if (!s_Page || v->gen == s_nGen) return;
 	int texts = v->track != s_V.track || v->machine != s_V.machine || strcmp (v->name, s_V.name) || v->valid != s_V.valid ||
 		    v->pattern != s_V.pattern || v->sidecar != s_V.sidecar;
-	int knobs = texts || memcmp (v->val, s_V.val, sizeof v->val) || memcmp (v->label, s_V.label, sizeof v->label);
+	int knobs = texts || memcmp (v->val, s_V.val, sizeof v->val) || memcmp (v->label, s_V.label, sizeof v->label) ||
+		    v->wedit != s_V.wedit || memcmp (v->wk, s_V.wk, sizeof v->wk);
 	int scope = v->ncols != s_V.ncols || v->level != s_V.level || memcmp (v->smin, s_V.smin, sizeof v->smin) ||
 		    memcmp (v->smax, s_V.smax, sizeof v->smax);
 	int heat = v->steps != s_V.steps || memcmp (v->locks, s_V.locks, sizeof v->locks) || memcmp (v->trig, s_V.trig, sizeof v->trig);
@@ -457,6 +518,8 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 		   memcmp ((const char *) v + offsetof (sidecar_voice_view_t, fm_name), (const char *) &s_V + offsetof (sidecar_voice_view_t, fm_name),
 			   offsetof (sidecar_voice_view_t, gen) - offsetof (sidecar_voice_view_t, fm_name))));
 	int swap = v->mode != s_V.mode;
+	const int other = v->track != s_V.track || v->machine != s_V.machine;
+	const unsigned oldfail = s_V.wfail;	// (another track or machine: no drag, no held value goes on)
 	s_V = *v;
 	s_nGen = v->gen;
 	if (swap)				// the machine changed: its panel or the scope (the page follows it live)
@@ -477,9 +540,8 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 		else { lv_snprintf (t, sizeof t, "VOICE  %s", r); th_label_set (s_Title, t); }
 		lv_snprintf (t, sizeof t, "WAITING FOR THE %s", sidecar_ui_box_up ());
 		th_label_set (s_Name, v->valid ? v->name : t);
-		if (v->pattern >= 0) lv_snprintf (t, sizeof t, "PATTERN %c%02d  UP + T4: HERE", 'A' + v->pattern / 16, v->pattern % 16 + 1);
-		else lv_snprintf (t, sizeof t, "UP + T1..T8 ON THE RYTM: PAGES");
-		th_label_set (s_Info, t);
+		info_text (t, sizeof t);
+		if (!s_Tm) th_label_set (s_Info, t);
 	}
 	if (knobs)
 		for (int k = 0; k < 8; k++)
@@ -487,10 +549,33 @@ void sidecar_voice_set (const sidecar_voice_view_t *v)
 			int used = v->valid && v->label[k][0];
 			char nb[8];
 			lv_snprintf (nb, sizeof nb, "%u", v->val[k]);
+			if (other) th_meter_edit_cancel (s_Knob[k]);
 			th_meter_set (s_Knob[k], used ? v->val[k] : -1);
 			th_meter_label (s_Knob[k], used ? v->label[k] : "");
-			th_meter_value (s_Knob[k], used ? nb : v->valid ? "" : "---");	// UX review T7: the value; waiting: ---
+			th_meter_value (s_Knob[k], used ? nb : v->valid ? "" : "---");	// UX review T7: the value; waiting: --- (a held knob shows the finger's till the hold ends)
+			th_meter_edit_set (s_Knob[k], v->val[k], -1, v->valid && (v->wedit >> k & 1));
 		}
+	if (!s_bWseen) s_nWgen = v->wgen, s_bWseen = 1;
+	if (v->wgen != s_nWgen)				// the Rytm refused or locked a write: the knob is the Rytm's again, and it is said
+	{
+		s_nWgen = v->wgen;
+		const unsigned newfail = v->wfail & ~oldfail;	// (only a failure not seen before: the mask stays set until the knob's next write)
+		for (int k = 0; k < 8; k++)
+			if (newfail >> k & 1)
+			{
+				char nb[8];
+				th_meter_edit_cancel (s_Knob[k]);
+				lv_snprintf (nb, sizeof nb, "%u", v->val[k]);
+				th_meter_set (s_Knob[k], v->val[k]);
+				th_meter_value (s_Knob[k], nb);
+			}
+		if (newfail)
+		{
+			th_label_set (s_Info, v->wkind == 1 ? "LOCKED ON THE HELD STEPS: NOT SET" : "THE RYTM REFUSED THE VALUE");
+			if (s_Tm) lv_timer_reset (s_Tm);
+			else { s_Tm = lv_timer_create (info_back, 3000, 0); lv_timer_set_repeat_count (s_Tm, 1); }
+		}
+	}
 	if (scope && v->mode == SVV_PLAIN) lv_obj_invalidate (s_Scope);
 	if (mode) lv_obj_invalidate (s_Mode);
 	if (heat) lv_obj_invalidate (s_Heat);

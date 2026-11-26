@@ -48,6 +48,7 @@ bool forced(int vi);                 // wt=voice:V
 void report(int vi, int note, int vel, const float* p);
 void note_off(int vi);
 void silence(int vi);
+void leave(int vi);                  // the voice left WAVETABLE: silenced, its table no longer selected (a card slot freed)
 void render_add(int vi, float* out, int n);   // the render core's: the voice's notes added into out (-1..1)
 void live_on(int vi, int key, int vel, int ch, int mnote);
 void live_off(int vi, int ch, int mnote);
@@ -70,6 +71,10 @@ int src_entry(int vi, int v);        // the entry TBL v plays (the code itself)
 // A choice (the touchscreen): the Rytm's TBL of the voice's track written (48: the kit keeps it)
 bool pick(int vi, int e);
 bool voice_picked(int vi);           // (always false)
+// The kit's TBL known while the voice is idle (the SRC view's 2A: a pick in the Rytm's list, a turn; its 0x03 reports
+// come only while it plays): the voice selects entry e as at its next report, so its table loads and the pages show it
+// with no trig (0.5.0, owner 2026-11-15). The Rytm's own value: nothing is written back.
+void kit_src(int vi, int e);
 void preview(int vi, int e);         // a ~0.7 s note at C4 once the table is in (e < 0: the voice's own)
 
 struct Stats {

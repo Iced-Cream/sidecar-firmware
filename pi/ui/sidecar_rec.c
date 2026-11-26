@@ -88,7 +88,7 @@ static lv_obj_t *label_w (lv_obj_t *p, int x, int y, int w, const lv_font_t *f, 
 // ---- geometry (the 800x480 layouts plus what the screen adds: TH->dx, dy)
 static int W (void) { return th_page_w (); }
 static int grid_y (void) { return oled () ? LU (72) : LU (88); }
-static int grid_h (void) { return oled () ? LU (168) + TH->dy : LU (336) + TH->dy; }
+static int grid_h (void) { return oled () ? LU (168) + TH->pdy : LU (336) + TH->pdy; }
 static int pitch (void) { return grid_h () / ROWS; }			// 21 / 28 dots, 42 / 57 px
 static int col_w (void) { return oled () ? (W () - LU (4)) / 3 : (W () - LU (16) - LU (16)) / 3; }
 static int col_x (int c) { return oled () ? c * (col_w () + 2) : LU (8) + c * (col_w () + LU (8)); }
@@ -105,7 +105,7 @@ static void meter_geo (int c, int r, int *x0, int *x1, int *y0, int *bh, int *cl
 	else
 	{
 		*x0 = x + LU (112) + TH->dx / 12, *x1 = x + w - LU (40), *clipx = *x1 + LU (4);	// the clip lamp inside the window
-		*bh = LU (12) + TH->dy / 20;
+		*bh = LU (12) + TH->pdy / 20;
 		*y0 = y + (h - *bh) / 2;
 	}
 }
@@ -347,7 +347,7 @@ static void grid_draw (lv_event_t *e)
 			th_text (l, &c, x + LU (32), y + (ph - fh) / 2, x0 - x - LU (40), f, cs.armed ? TH->ink : busy () ? TH->faint : TH->sub,
 				 LV_TEXT_ALIGN_LEFT, name);
 			th_fill (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->row_out, LV_OPA_COVER, 5);	// the meter's window
-			th_frame (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->win_edge, 1, 5);
+			th_frame (l, &c, x0 - LU (4), y0 - LU (4), clipx + LU (10), y0 + bh + 3, TH->win_edge, TH->edge_w, 5);
 		}
 	meter:;
 		int n = nseg (x0, x1), st = sidecar_rec_stereo (id);
@@ -480,11 +480,11 @@ static void warn_show (const char *c)
 	if (O) lv_snprintf (b, sizeof b, drv ? "THE %s DRIVE MAY FALL BEHIND" : "THE CARD MAY FALL BEHIND", s_V.vol);
 	else lv_snprintf (b, sizeof b, drv ? "The %s drive may fall behind" : "The SD card may fall behind", s_V.vol);
 	th_label_set (s_DlgText[0], b);
-	lv_snprintf (b, sizeof b, O ? "NEEDS %s: %u %% OF ITS %s %s" : "This take needs %s, %u %% of its %s (%s).", nd, s_V.warn_pct, sp,
+	lv_snprintf (b, sizeof b, O ? "NEEDS %s: %u %% OF ITS %s %s" : "This take needs %s, %u%% of %s (%s)", nd, s_V.warn_pct, sp,
 		     s_V.speed_measured ? (O ? "(BENCH)" : "measured") : (O ? "(GUESS)" : "not measured: STATUS > Storage bench"));
 	for (char *q = b; O && *q; q++) if (*q >= 'a' && *q <= 'z') *q -= 32;	// (MB/S on the OLED)
 	th_label_set (s_DlgText[1], b);
-	th_label_set (s_DlgText[2], O ? "BLOCKS IT MISSES ARE SILENCE" : "Missed blocks are written as silence: fewer channels?");
+	th_label_set (s_DlgText[2], O ? "BLOCKS IT MISSES ARE SILENCE" : "Missed blocks become silence: fewer channels?");
 	lv_obj_remove_flag (s_Scrim, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_remove_flag (s_Dlg, LV_OBJ_FLAG_HIDDEN);
 }
@@ -701,13 +701,13 @@ static void arm_cb (lv_obj_t *o, int idx, void *ud)
 void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 {
 	int O = oled ();
-	const int dx = TH->dx, dy = TH->dy, Wd = W (), H = O ? TH->h : LU (428) + dy;
+	const int dx = TH->dx, dy = TH->pdy, Wd = W (), H = O ? TH->h - LU (25) : LU (428) + dy;
 	s_Cmd = c;
 	s_bTakes = 0, s_nDel = -1, s_nPress = -1, s_nTakesGen = ~0u, s_nRows = TROWS, s_nTop = 0, s_nDlg = DLG_NONE, s_nDragY = -1;
 	s_nStatusW = -1, s_nValidWas = -1, s_nClock = ~0u;
 	memset (s_Drawn, 0, sizeof s_Drawn);
 	if (!s_bHave) { memset (&s_V, 0, sizeof s_V); s_V.ntakes = -1; s_V.bits = 24; s_V.rate = 48000; }
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, H);
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, Wd, H + (O ? LU (25) : 0));
 	s_Page = pg;
 	const lv_font_t *mi = mi_font ();
 	if (O)
@@ -723,16 +723,17 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_Status = label_w (pg, LU (114), LU (51), LU (120) + dx / 2, mi, TH->dim, 0);
 		for (int i = 0; i < 4; i++) s_Info[i] = label_w (pg, LU (237) + dx / 2, LU (16) + i * LU (11), LU (62) + dx / 2, mi, i == 0 ? TH->ink : TH->dim, 0);
 		s_TakesKey = th_key (pg, LU (301) + dx, LU (15), LU (51), LU (46), "TAKES", TH_KEY | TH_KEY_SMALL, takes_cb, 0);
+		lv_obj_add_flag (s_TakesKey, LV_OBJ_FLAG_HIDDEN);	// (a pill of the REC row now)
 		for (int g = 0; g < 3; g++) s_Group[g] = th_label (pg, col_x (g) + 3, LU (63), mi, TH->faint, group (g, 0));
 	}
 	else
 	{
 		s_TitleBar = 0;
-		const int ww = LU (508) + dx;		// the display window; the keys at its right
+		const int ww = Wd - LU (210);		// the display window; REC and ARM at its right (TAKES is a pill of the REC row)
 		th_panel (pg, LU (8), LU (6), ww, LU (62), "", TH_PANEL_WINDOW);
 		s_Clock = th_box (pg, LU (20), LU (6), LU (156), LU (62));
-		s_Take = label_w (pg, LU (188), LU (12), ww - LU (188) - LU (112), TH->f_mid, TH->win_ink, 0);
-		s_State = label_w (pg, ww - LU (112), LU (15), LU (106), TH->f_small, TH->win_dim, 1);
+		s_Take = label_w (pg, LU (188), LU (12), ww - LU (188) - LU (118), TH->f_mid, TH->win_ink, 0);
+		s_State = label_w (pg, ww - LU (118), LU (15), LU (112), TH->f_small, TH->win_dim, 1);
 		s_Status = label_w (pg, LU (188), LU (41), ww - LU (188) - LU (6), mi, TH->win_dim, 0);
 		s_Info[0] = label_w (pg, LU (188) + LU (150), LU (41), ww - LU (188) - LU (150) - LU (6), mi, TH->win_dim, 1);
 		s_Info[1] = s_Info[2] = s_Info[3] = 0;
@@ -744,6 +745,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_TakesKey = th_key (pg, kx + LU (192), LU (6), Wd - LU (8) - (kx + LU (192)), LU (62), "TAKES", TH_KEY, takes_cb, 0);
 		th_key_font (s_ArmKey, TH->f_body);
 		th_key_font (s_TakesKey, TH->f_body);
+		lv_obj_add_flag (s_TakesKey, LV_OBJ_FLAG_HIDDEN);
 		for (int g = 0; g < 3; g++)
 		{
 			s_Group[g] = th_label (pg, col_x (g) + 2, LU (72), TH->f_micro, TH->sub, group (g, 1));
@@ -767,8 +769,8 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		static const char *const kH[4] = {"TAKE", "LENGTH", "SIZE", "FILES"};
 		const int hx[4] = {3, LU (150) + dx / 3, LU (202) + dx / 2, LU (258) + 2 * dx / 3};
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], 1, mi, TH->faint, kH[k]);
-		const int rh = pitch ();
-		s_nRowH = rh;
+		const int rh = pitch () < LU (18) ? LU (18) : pitch (), fit = (H - LU (62) - 10) / rh;	// (0.5.1: 18 dots a row at least; 800x480 shows seven)
+		s_nRows = fit < TROWS ? fit : TROWS, s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{
 			int y = 10 + i * rh, ty = y + (rh - 11) / 2 + 1;
@@ -791,9 +793,9 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		s_TBox = th_box (pg, 0, LU (72), Wd, H - LU (72));
 		th_panel (s_TBox, LU (8), 0, Wd - LU (16), H - LU (76), "", TH_PANEL_WINDOW);
 		static const char *const kH[4] = {"Take", "Length", "Size", "Files"};
-		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, 600 + 2 * dx / 3};
+		const int hx[4] = {LU (28), 360 + dx / 3, 480 + dx / 2, (THEME_BOXED (TH->id) ? LU (600) : 600) + 2 * dx / 3};	// (SIDECAR, GRID: the faces keep their size at 1280x720, the last column follows the layout)
 		for (int k = 0; k < 4; k++) s_THead[k] = th_label (s_TBox, hx[k], LU (10), TH->f_small, TH->win_dim, kH[k]);
-		const int nr = (H - LU (76) - LU (40)) / LU (44) < TROWS ? (H - LU (76) - LU (40)) / LU (44) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 7 rows of 44 px, 8 of 54
+		const int nr = (H - LU (76) - LU (40)) / LU (40) < TROWS ? (H - LU (76) - LU (40)) / LU (40) : TROWS, rh = (H - LU (76) - LU (40)) / nr;	// 6 rows of 42 px at 800x480 (the sub-page row took 58), 8 of 47 at 1280x720
 		s_nRows = nr, s_nRowH = rh;
 		for (int i = 0; i < TROWS; i++)
 		{
@@ -835,7 +837,7 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 		lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);		// taps stop here
 		for (int i = 0; i < 3; i++) s_DlgText[i] = label_w (s_Dlg, LU (8), LU (8) + i * LU (16) + (i ? LU (4) : 0), LU (284), i ? mi : TH->f_body, i == 2 ? TH->accent_hi : TH->ink, 0);
 		s_DlgNo = th_key (s_Dlg, LU (8), LU (70), LU (136), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);
@@ -843,14 +845,14 @@ void sidecar_rec_create (void *parent, int y0, sidecar_rec_cmd_t c)
 	}
 	else
 	{
-		s_Dlg = th_box (pg, (Wd - LU (520)) / 2, LU (100) + dy / 2, LU (520), LU (220));
-		th_panel (s_Dlg, 0, 0, LU (520), LU (220), "", TH_PANEL_WINDOW);
+		s_Dlg = th_box (pg, (Wd - LU (536)) / 2, LU (100) + dy / 2, LU (536), LU (220));
+		th_panel (s_Dlg, 0, 0, LU (536), LU (220), "", TH_PANEL_WINDOW);
 		lv_obj_add_flag (s_Dlg, LV_OBJ_FLAG_CLICKABLE);
 		for (int i = 0; i < 3; i++)
-			s_DlgText[i] = label_w (s_Dlg, LU (24), LU (20) + i * LU (34) + (i ? LU (6) : 0), LU (472), i ? TH->f_body : TH->f_mid2,
+			s_DlgText[i] = label_w (s_Dlg, LU (24), LU (20) + i * LU (34) + (i ? LU (6) : 0), LU (488), i ? TH->f_body : TH->f_mid2,
 						i == 2 ? TH->warn : TH->win_ink, 0);
-		s_DlgNo = th_key (s_Dlg, LU (24), LU (146), LU (224), LU (56), "Cancel", TH_KEY, dlg_cb, (void *) 0);
-		s_DlgYes = th_key (s_Dlg, LU (272), LU (146), LU (224), LU (56), "Delete", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
+		s_DlgNo = th_key (s_Dlg, LU (24), LU (146), LU (232), LU (56), "Cancel", TH_KEY, dlg_cb, (void *) 0);
+		s_DlgYes = th_key (s_Dlg, LU (280), LU (146), LU (232), LU (56), "Delete", TH_KEY_DANGER | TH_KEY_FILL, dlg_cb, (void *) 1);
 		th_key_font (s_DlgNo, TH->f_title);
 		th_key_font (s_DlgYes, TH->f_title);
 	}
@@ -914,7 +916,7 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 	char b[80], r[64];
 	// the title / state
 	static const char *const kSt[4] = {"IDLE", "ARMED: PLAY STARTS", "RECORDING", "SAVING"};
-	static const char *const kStC[4] = {"Idle", "Armed: PLAY", "Recording", "Saving..."};	// (the state's box: 106 px)
+	static const char *const kStC[4] = {"Idle", "Armed: PLAY", "Recording", "Saving..."};	// (the state's box: 112 px)
 	const char *sn = st >= 0 && st < 4 ? (O ? kSt : kStC)[st] : "";
 	if (st == SRV_REC && v->arm_mode) sn = O ? "RECORDING: STOP ENDS" : "Rec: STOP ends";
 	if (!v->valid) sn = O ? "OFF" : "Off";
@@ -933,7 +935,7 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 	if (O) lv_snprintf (b, sizeof b, "%s", v->take[0] ? v->take : "NO TAKE YET");
 	else lv_snprintf (b, sizeof b, "REC   %s", v->take[0] ? v->take : "no take yet");
 	th_label_fit (s_Take, b);
-	th_label_color (s_Take, st == SRV_REC ? (O ? TH->accent_hi : 0xFFFFFF) : v->take[0] ? (O ? TH->ink : TH->win_ink) : (O ? TH->dim : TH->win_dim));
+	th_label_color (s_Take, st == SRV_REC ? (O ? TH->accent_hi : TH->hc == 3 ? TH->accent_hi : 0xFFFFFF) : v->take[0] ? (O ? TH->ink : TH->win_ink) : (O ? TH->dim : TH->win_dim));
 	unsigned files = 0;
 	for (int id = 0; id < SRV_CH; id++) files += v->mask >> id & 1;
 	unsigned left = v->need_kbps ? (unsigned) ((unsigned long long) v->free_mb * 1024 / v->need_kbps) : 0;
@@ -981,7 +983,7 @@ void sidecar_rec_set (const sidecar_rec_view_t *v)
 		else lv_snprintf (r, sizeof r, "%u kHz  %u-bit  %u file%s", v->rate / 1000, v->bits, files, files == 1 ? "" : "s");
 		th_label_set (s_Status, r);
 		th_label_color (s_Status, warn ? TH->warn : TH->win_dim);
-		int full = lv_obj_get_width (s_Take) + 112 - 6, sw = warn ? full : th_text_width (mi_font (), r) + 8;
+		int full = lv_obj_get_width (s_Take) + 112 - 6, sw = warn ? full : th_text_width (mi_font (), r) + (THEME_BOXED (TH->id) ? 2 : 8);	// (SIDECAR, GRID: capitals are wider, the time left keeps the room)
 		if (sw > full) sw = full;
 		if (sw != s_nStatusW)				// (only a change moves them)
 		{

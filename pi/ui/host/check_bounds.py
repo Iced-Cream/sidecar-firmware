@@ -7,11 +7,12 @@
   left in the 1024x600 corner),
 - an object sits away from its 1024x600 place, by more than 12 % of the screen (a control lost, not moved with the layout),
 - a touch target is not bigger than at 1024x600: each side at least 1.12 x its size there, or already 60 px,
-- two clickable siblings overlap (one inside the other is a hit area on a panel, and a dialog of a quarter of the screen sits on top: neither an overlap).
+- two clickable siblings overlap by more than the line (edge width, 3 px at most) the frames share (one inside the other is a hit area on a panel, and a dialog of a quarter of the screen sits on top: neither an overlap).
 The PROJECT pages build as many list rows as fit, so their objects are not compared with 1024x600's (the rest still is)."""
 import glob, os, sys
 
 W0, H0, W1, H1 = 1024, 600, 1280, 720
+SHARED = 3	# the frames share a line of the edge width (2 px; 3 in the high contrast)
 
 
 def load(p):
@@ -77,7 +78,8 @@ def main():
                     u, v = l[i][1], l[j][1]
                     inside = (u[0] <= v[0] and u[1] <= v[1] and u[2] >= v[2] and u[3] >= v[3]) or (v[0] <= u[0] and v[1] <= u[1] and v[2] >= u[2] and v[3] >= u[3])
                     modal = max((u[2] - u[0]) * (u[3] - u[1]), (v[2] - v[0]) * (v[3] - v[1])) >= W1 * H1 / 4	# a dialog takes the screen's taps
-                    if u[0] <= v[2] and v[0] <= u[2] and u[1] <= v[3] and v[1] <= u[3] and not inside and not modal:
+                    share = min(u[2], v[2]) - max(u[0], v[0]) < SHARED or min(u[3], v[3]) - max(u[1], v[1]) < SHARED	# one line in common: GRID's keys share their edge
+                    if u[0] <= v[2] and v[0] <= u[2] and u[1] <= v[3] and v[1] <= u[3] and not inside and not modal and not share:
                         fail("overlap", page, "%s %s / %s %s" % (l[i][0], u[:4], l[j][0], v[:4]))
     for k, l in sorted(fails.items()):
         print("%s: %d, e.g." % (k, len(l)))

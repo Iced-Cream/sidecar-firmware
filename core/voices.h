@@ -145,6 +145,7 @@ void voice_report(int cmd, const uint8_t* d, int len);   // the voice: d[5] & 7 
 void voice_report_at(int vi, int cmd, const uint8_t* d, int len);   // engine voice vi (d[5]'s low bits not read)
 // polyuser-4 F-b1: a 33 names voice vi's Sidecar machine (vb): the voice takes it while no 0x03 / 0x04 has come yet
 void voice_machine_hint(int vi, uint8_t vb);
+void voice_reports_forget();   // a new link (the Rytm restarted): the next 33 names the machines again
 void voice_note_off(int vi);
 void voice_params_changed(int vi);   // x.p changed on the control side (core/lfo.h): the machine takes it
 void voice_silence(int vi);   // MIDI CC 120: note-off and the output ramped out in 5 ms, silent until the next trig
@@ -165,6 +166,20 @@ void voice_play(int vi, int note, int vel);
 // stereo pair (L != R somewhere), for the output stage's PAN law (one byte a voice: cores render disjoint voices).
 // Null: mono only, as before (the Teensy, the tests).
 enum { kMFm, kMJuno, kMDsps, kMDaisy, kMMd, kMPlaits, kMUser, kMachines };
+// Every voice's level on its way out: render_voices scales each voice's rows (L and R) by kVoiceGain after the voice's
+// INSERT chain, so every path a voice takes gets it alike (TRK, out=main, OUT PRE / POST and the send FX, the recorder's
+// taps, the Teensy's return). Why (owner's decision 2026-11-15): the engines write o x 0.7 (-3 dBFS) and peaked at
+// -3..-8 dBFS at their default knobs (LEV 100, the rest 64, vel 127), but the output stage limits every voice at
+// -12 dBFS (core/main_out.h), so most engines were clipped by up to 10 dB. Measured at the defaults (the voice row
+// before this gain): DAISYSP STRING -4.4 dBFS (the loudest; -2.7 at DMP 0), PLAITS MODAL -5.2, MD -5.4, a 0 dBFS
+// sample on DSP SAMPLE / SAMPLER at LEV 100 -5.5, PLAITS CHORDS -7.7, DAISYSP MODAL -6.7, JUNO -8.0, 6-OP FM -11.0,
+// WAVETABLE -18.8. 0.35 (-9.1 dB; the owner's choice 2026-11-15, over the 0.25 that would have kept every default
+// under the knee) puts the loudest at -13.5 dBFS: inside the limit's soft knee (linear to -15.1 dBFS, the ceiling
+// -12.0 dBFS: core/main_out.h), under the ceiling, where the knee takes off at most 0.6 dB; PLAITS MODAL (-14.3) is in
+// the knee too. The other engines stay under it and keep their levels against each other. Hotter than the defaults (STRING at DMP 0: -11.8, LEV 127,
+// PLAITS VOL 127) the knee rounds the peaks toward -12 dBFS, never a hard clip. The rows are requantised (Q15,
+// rounded, no dither): a quiet engine keeps 1.5 bits fewer above the int16 floor.
+constexpr float kVoiceGain = 0.35f;
 uint32_t render_voices(int16_t (*ring)[kVoices], int ring_len, int w, int v0, int v1, uint64_t* mach,
                        int16_t (*ring_r)[kVoices] = nullptr, uint8_t* st = nullptr);
 // DSP SAMPLE's DEC on PRE / POST (core/fx/out.h): its trig / note-off counters (the control core bumps, the render

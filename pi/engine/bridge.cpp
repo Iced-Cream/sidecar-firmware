@@ -285,6 +285,7 @@ bool poly_command(const char* p, char* out, int cap) {
          core::amp::command(p, out, cap) ||   // INSERT AMP: "amp", "amp=rescan" (core/fx/amp.h)
          core::fx::guard::command(p, out, cap) ||   // the measured guard of every effect: "fxguard", "fxguard=..." (core/fx/fx_guard.h)
          core::out::command(p, out, cap) ||   // the OUT route: "out=Vn:...", "stereo..." (core/fx/out.h)
+         core::ui::vparam_command(p, out, cap) ||   // the touchscreen's VOICE knobs: "vparam=T:K:V" (core/ui/remote.h)
          core::sbudget::command(p, out, cap) ||   // the streaming budget: "stream" (core/pool/stream_budget.h)
          core::livein::command(p, out, cap) ||  // LIVE IN: "livein", "livein=voice:V", "livein=measure" (core/livein/livein.h)
          core::midim::command(p, out, cap) ||   // MIDI: "midim" (core/midim/midim.h)

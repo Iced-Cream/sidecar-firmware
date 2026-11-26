@@ -14,7 +14,7 @@ B        := build
 ENG      := $(B)/engines
 include engines/engines.mk
 RMPSRC   := ../teensy/libraries/RytmPlugins/src
-CXXFLAGS := -std=c++17 -O2 -DCORE_UI_TOOLS=1 -DCORE_POLY=1 -DCORE_MSAMP=1 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=fast -fPIC -I. -Ihost -I$(RMPSRC) -I../sdk $(ENG_INC) $(ENG_FLAGS)
+CXXFLAGS := -std=c++17 -O2 -DCORE_UI_TOOLS=1 -DCORE_POLY=1 -DCORE_MSAMP=1 -DSIDECAR_MORPH=1 -g -Wall -Wextra -Wno-unused-parameter -ffp-contract=fast -fPIC -I. -Ihost -I$(RMPSRC) -I../sdk $(ENG_INC) $(ENG_FLAGS)
 CFLAGS   := -std=c99 -O2 -g -ffp-contract=fast -fPIC -w $(ENG_INC)
 # The core's own sources (grows task by task) and the Mac port.
 CORE_SRC := engine.cpp project_key.cpp md/md.cpp $(wildcard device/*.cpp) $(wildcard bundle/*.cpp) lfo.cpp hooks.cpp notes.cpp voices.cpp poly.cpp inst.cpp inst_alloc.cpp keys.cpp sysex.cpp host_link.cpp slots.cpp fx/send_fx.cpp fx/send_fx_card.cpp fx/insert.cpp fx/fx_guard.cpp fx/insert_card.cpp fx/master.cpp fx/amp.cpp fx/out.cpp fx/out_measure.cpp ui/canvas.cpp ui/widgets.cpp ui/pages.cpp ui/remote.cpp $(wildcard ui/page_*.cpp) $(wildcard seq/*.cpp) $(wildcard song/*.cpp) $(wildcard rec/*.cpp) pool/card_index.cpp pool/pool.cpp pool/pcache.cpp pool/sample_ram_pool.cpp pool/stream_budget.cpp presets/libs.cpp presets/preset_index.cpp msamp/sfz.cpp msamp/elmulti.cpp msamp/msamp.cpp msamp/sdtest.cpp msamp/cardq.cpp $(wildcard samp/*.cpp) $(wildcard wavetable/*.cpp) $(wildcard granular/*.cpp) livein/livein.cpp midim/midim.cpp arp/arp.cpp $(wildcard chop/*.cpp) $(wildcard lib/*.cpp) $(wildcard fmt/*.cpp) $(wildcard store/*.cpp) $(wildcard mod/*.cpp) host/platform_host.cpp host/newlib_rand.cpp \
@@ -33,7 +33,7 @@ CORE_OBJ    := $(addprefix $(B)/obj/,$(CORE_O))
 MC_CORE_OBJ := $(addprefix $(MC)/obj/,$(CORE_O))
 .SECONDARY:   # (make would delete the objects after a run as intermediates, and compile them all again the next)
 
-.PHONY: engines test lib clean demo-wavegrain demo-insfx demo-tape demo-amp demo-livein demo-chop bundle-tool fuzz-fmt
+.PHONY: engines test lib clean demo-wavegrain demo-insfx demo-tape demo-amp demo-livein demo-chop bundle-tool fuzz-fmt test-lib-san
 # the format registry's fuzz target (tests/fuzz_fmt.cpp; docs/LIBRARY.md "Tests"): libFuzzer + ASan + UBSan with
 # Homebrew's clang (FUZZ_CXX; brew install llvm) for FUZZ_SECS seconds (default 60) from the golden files; without it
 # the same target under ASan + UBSan with its own driver (FUZZ_RUNS mutated inputs, default 200000)
@@ -52,6 +52,13 @@ fuzz-fmt:
 	  $(CXX) $(FUZZ_FLAGS) -fsanitize=address,undefined -DFUZZ_STANDALONE -o $(B)/fuzz/fuzz_fmt $(FUZZ_SRC) && \
 	  ./$(B)/fuzz/fuzz_fmt tests/golden $(or $(FUZZ_RUNS),200000); \
 	fi
+# the library walk's depth test (tests/test_library_depth.cpp) with library.cpp and the test under ASan + UBSan: a plain
+# build does not see an out-of-bounds close of the walk's level table, the sanitizers do (the rest are the plain objects)
+SAN_DIR := $(B)/san
+test-lib-san: $(CORE_OBJ) $(DEPS_H) $(B)/libengines.a
+	@mkdir -p $(SAN_DIR)
+	$(CXX) $(CXXFLAGS) -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -Itests -o $(SAN_DIR)/test_library_depth tests/test_library_depth.cpp lib/library.cpp $(filter-out $(B)/obj/lib/library.o,$(CORE_OBJ)) $(B)/libengines.a
+	./$(SAN_DIR)/test_library_depth
 # WAVETABLE's and GRANULAR's demo renders (tests/demo/render_wavegrain.cpp) into OUT (default build/)
 demo-wavegrain: $(B)/render_wavegrain
 	./$(B)/render_wavegrain $(or $(OUT),$(B))
@@ -146,14 +153,30 @@ $(SMALL)/test_%: tests/small/test_%.cpp $(SMALL_CORE_OBJ) $(DEPS_H) $(B)/libengi
 	@mkdir -p $(SMALL)
 	$(CXX) $(CXXFLAGS) $(SMALL_FLAGS) -Itests -o $@ $< $(SMALL_CORE_OBJ) $(B)/libengines.a
 
+# The 0.5.0 shipping configuration of the scene morph (SIDECAR_MORPH 0, core/sidecar_features.h): the tests above run with
+# the morph ON (their engine is still built and kept for 0.5.2); tests/nomorph runs the core with it off
+NOMORPH       := $(B)/nomorph
+NOMORPH_FLAGS := -USIDECAR_MORPH -DSIDECAR_MORPH=0
+NOMORPH_TESTS := $(patsubst tests/nomorph/%.cpp,$(NOMORPH)/%,$(wildcard tests/nomorph/test_*.cpp))
+NOMORPH_CORE_OBJ := $(addprefix $(NOMORPH)/obj/,$(CORE_O))
+$(NOMORPH)/obj/_up/%.o: ../%.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(NOMORPH_FLAGS) -Itests -c -o $@ $<
+$(NOMORPH)/obj/%.o: %.cpp $(DEPS_H) | $(B)/libengines.a
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(NOMORPH_FLAGS) -Itests -c -o $@ $<
+$(NOMORPH)/test_%: tests/nomorph/test_%.cpp $(NOMORPH_CORE_OBJ) $(DEPS_H) $(B)/libengines.a
+	@mkdir -p $(NOMORPH)
+	$(CXX) $(CXXFLAGS) $(NOMORPH_FLAGS) -Itests -o $@ $< $(NOMORPH_CORE_OBJ) $(B)/libengines.a
+
 # Every test run is its own target, so `make -j10 test` runs them side by side (2026-10-26: the one-after-another loop
 # took ~45 min with the builds; every test works in its own mkdtemp folder). A run's output goes to <test>.log and is
 # shown when the test fails; test-serial keeps the old ordered run with all output.
-ALL_TESTS := $(TESTS) $(MC_TESTS) $(SMALL_TESTS)
+ALL_TESTS := $(TESTS) $(MC_TESTS) $(SMALL_TESTS) $(NOMORPH_TESTS)
 # The tests that check a wall-clock bound (a control pass under the FIFO, a call under 50 us): run one at a time after
 # the parallel batch, when nothing else loads the CPU (under -j10 test_library_stall measured a 2142 us pass, 1835 alone)
 TIMING_TESTS := $(addprefix $(B)/,test_bundle_stall test_library_stall test_loadstall test_insert test_sat test_library test_tape \
-                  test_send_fx test_srclib test_seqtop test_noteedit test_stereo test_msamp_load)
+                  test_send_fx test_srclib test_seqtop test_noteedit test_stereo test_msamp_load test_projload_cost)
 # The Teensy's configuration (no CORE_POLY, no CORE_MSAMP: no built-in MD), compiled for syntax only on the files the
 # MD change touched that build there today (voices.cpp, ui/remote.cpp, lfo.cpp and a few more already fail in that
 # configuration on integ-1028, unrelated: not listed); core/mod (spec-050 1.7: kV and kFx only there)

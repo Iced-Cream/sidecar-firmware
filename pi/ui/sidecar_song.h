@@ -73,6 +73,7 @@ void sidecar_song_show (int on);
 int sidecar_song_shown (void);
 void sidecar_song_set (const sidecar_song_view_t *v);	// copied; the timeline redrawn only when gen moved
 void sidecar_song_explain (int on);			// the MIDI CONFIG how-to over the timeline (CFG)
+int sidecar_song_explain_shown (void);		// 1: the how-to is over the timeline (the Setup pill)
 int sidecar_song_zoom (void);				// bars across the timeline (0: the whole take)
 
 #ifdef __cplusplus

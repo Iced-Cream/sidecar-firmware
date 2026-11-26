@@ -122,12 +122,42 @@ int main() {
     }
     CHECK(xypad_pi::NamesBuilt() == nv);
   }
+  // slow (only HOME > Overview's tile wants it): one view a second; fast again at once when the page opens
+  {
+    xypad_pi::Slow(true);
+    g_us += 1100000, host_fake_time(true, g_us);
+    xypad_pi::Tick();
+    (void)xypad_pi::View(&a, &seen);
+    int got = 0;
+    bool h = false;
+    for (int ms = 0; ms < 3000; ms += 60) {
+      xypad::set_hold(h = !h);   // (a change each time)
+      g_us += 60000, host_fake_time(true, g_us);
+      xypad_pi::Tick();
+      got += xypad_pi::View(&a, &seen);
+    }
+    CHECK(got >= 2 && got <= 3);       // (3 s: not 50)
+    xypad_pi::Slow(false);
+    g_us += 60000, host_fake_time(true, g_us);
+    xypad_pi::Tick();
+    CHECK(xypad_pi::View(&a, &seen));
+    xypad::set_hold(false);
+  }
   xypad_pi::Want(false);
   xypad::reset();
   // a drag's lines (the pad's, the morph slider's) are not logged, and do not hold the status push back
   CHECK(xypad_pi::Quiet("xy=pos:100:200") && xypad_pi::Quiet("xy=up") && xypad_pi::Quiet("scene=fader:8000"));
   CHECK(!xypad_pi::Quiet("xy=hold:1") && !xypad_pi::Quiet("xy=set:x:1:MORPH:10") && !xypad_pi::Quiet("xy=upx") &&
         !xypad_pi::Quiet("xy") && !xypad_pi::Quiet("scene=ab:1") && !xypad_pi::Quiet("sendlvl=1:1:2"));
+  // the touch edits' value lines (INSERT FX, MASTER FX, VOICE drags) are quiet; a TYPE, a route, an EQ line, a bad one is not
+  static const char* const kDrag[] = {"ins=V1:A:p1:0", "ins=V8:B:p4:127", "ins=V3:send:2:90", "out=V3:lev:100", "out=V1:pan:64", "out=V8:wid:5",
+                                      "mfx=1:p1:99", "mfx=4:p4:0", "mfx=2:mix:70", "mfx=lev:100", "vparam=4:2:90", "vparam=11:7:127", "vparam=4:2:90:0", "vparam=0:15:127:0"};
+  for (const char* d : kDrag) CHECK(xypad_pi::Quiet(d));
+  static const char* const kLoud[] = {"ins=V1:A:type:FILTER", "ins=V9:A:p1:5", "ins=V1:C:p1:5", "ins=V1:A:p5:5", "ins=V1:A:p1:", "ins=V1:A:p1:x", "ins=V1:send:4:5",
+                                      "ins=V1:send:1:", "ins=V1:eq:hpf:40", "ins=B1:A:p1:5", "out=V3:pre", "out=V3:dec:5", "out=V3:lev:", "out=V3:lev:12345",
+                                      "mfx=5:p1:5", "mfx=1:type:comp", "mfx=1:pair:1", "mfx=eq:hpf:40", "mfx=byp:1", "mfx=lev", "mfx=1:p1:5:6",
+                                      "vparam=4:2", "vparam=4:2:x", "vparam=123:2:5", "vparam=4:2:90:1"};
+  for (const char* d : kLoud) CHECK(!xypad_pi::Quiet(d));
   printf("test_xypad_pi: ok (names, depths, HOLD, the position; the hash; publish / take; the quiet lines)\n");
   return 0;
 }

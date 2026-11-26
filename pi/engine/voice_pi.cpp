@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stddef.h>
 #include "platform.h"
+#include "sidecar_features.h"
 #include <string.h>
 
 #include "lib/srclib.h"
@@ -18,15 +19,18 @@
 namespace voice_pi {
 
 namespace {
-constexpr int kPgHome = 0, kPgSound = 1, kPgSeq = 4, kPgRytm = 5, kPgVoice = 8, kPgIns = 9, kPgSong = 10, kPgRec = 11,
+constexpr int kPgHome = 0, kPgSound = 1, kPgFx = 2, kPgSeq = 4, kPgRytm = 5, kPgVoice = 8, kPgSong = 10, kPgRec = 11,
               kPgScope = 12, kPgStatus = 13, kPgProject = 14, kPgPool = 15, kPgMorph = 20;
 // the touchscreen's pages by the device table's names (ui/page_keys.h; sidecar_ui.h's page numbers); a name not here
 // (SAMPLE) is the Rytm's screen's alone. VOICE: VoicePage (the machine view or VOICE).
 struct TouchPage { const char* name; int page; };
 constexpr TouchPage kTouch[] = {{"HOME", kPgHome}, {"SEQ", kPgSeq}, {"PAT", kPgRytm}, {"VOICE", kPgVoice}, {"SET", kPgSound},
-                                {"INSERT FX", kPgIns}, {"REC", kPgRec}, {"SCOPE", kPgScope}, {"STATUS", kPgStatus},
-                                {"SONG", kPgSong}, {"PROJECT", kPgProject}, {"POOL", kPgPool},
-                                {"MORPH", kPgMorph}};
+                                {"FX", kPgFx}, {"REC", kPgRec}, {"SCOPE", kPgScope}, {"STATUS", kPgStatus},
+                                {"SONG", kPgSong}, {"PROJECT", kPgProject}, {"POOL", kPgPool}
+#if SIDECAR_MORPH
+                                , {"MORPH", kPgMorph}   // 0.5.0: off (core/sidecar_features.h)
+#endif
+};
 int touch_page(const char* name) {
   for (const TouchPage& t : kTouch) if (sc_streq(t.name, name)) return t.page;
   return -1;
@@ -159,6 +163,25 @@ void Pick(int track) {
   core::ui::remote_selected_track(&g_pick_sel);
 }
 
+// the knobs a finger may turn (sidecar_voice.h wedit): a Sidecar track the Rytm has selected, a knob in use (a label), written
+// as the Rytm's P(wk + 1) (SAMPLER's page maps its knobs); not a list cell (a model, a pattern, a bank list: the Rytm's own
+// pick), not the banked SRC knob (P1 of the machines with a source list, DSP SAMPLE's / SAMPLER's SMP P11: its value is
+// index << 7 | bank, a 7-bit write would drop the bank), not MIDI's. No default is known for a machine's knob: no double tap.
+void EditGate(bool sidecar, bool picked, int mm, bool smpl, int vi, const char (*label)[5], unsigned char* wedit, unsigned char* wk) {
+  *wedit = 0;
+  for (int e = 0; e < 8; ++e) wk[e] = (unsigned char)e;
+  if (!sidecar || picked || vi < 0) return;
+  const core::ui::Page* sp = smpl ? core::ui::src_view_page(core::ui::page_for_voice(core::kSmplMachine, vi)) : nullptr;
+  const bool src_p1 = mm == core::kMultiMachine || mm == core::kWaveMachine || mm == core::kGranMachine || mm == core::kChopMachine ||
+                      mm == core::kLiveMachine || mm == core::kJuno || mm == core::kFm;
+  for (int e = 0; e < 8; ++e) {
+    const int k = sp ? sp->enc[e] & 15 : e;
+    wk[e] = (unsigned char)k;
+    const bool banked = (k == 0 && src_p1) || (k == 10 && (smpl || core::sample_machine(mm)));
+    if (label[e][0] && mm != core::kMidiMachine && !banked && !core::ui::remote_is_list(vi, k)) *wedit |= (unsigned char)(1u << e);
+  }
+}
+
 void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern, bool scope) {
   int t = -1, m = -1;
   char name[13];
@@ -168,8 +191,9 @@ void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern, bool 
   uint32_t sel = 0;
   core::ui::remote_selected_track(&sel);
   if (g_pick >= 0 && sel != g_pick_sel) g_pick = -1;   // the Rytm selected a track since: follow it again
+  bool picked = false;   // a tile's track the Rytm has not selected: shown, not edited (its SRC records are the selected track's)
   if (g_pick >= 0 && g_pick != t) {   // a tile's track: a Sidecar machine's P1..P8 as the host has them, its labels
-    t = g_pick, m = -1;
+    t = g_pick, m = -1, picked = true;
     int vb = core::ui::remote_track_machine(t), vi = core::ui::remote_track_voice(t);
     memset(name, 0, sizeof name), memset(val, 0, sizeof val), memset(label, 0, sizeof label);
     if (vb >= 0 && vb != 0x7F)
@@ -249,6 +273,20 @@ void Fill(sidecar_voice_view_t* o, const rytm_pattern_t* pat, int pattern, bool 
     int nl = p * 127 / 32767;
     lev = nl > lev ? nl : lev - 6 < nl ? nl : lev - 6;   // rise at once, fall ~60 a second
     v.level = lev < 0 ? 0 : lev;
+  }
+  // the knobs a finger may turn (sidecar_voice.h wedit): a Sidecar track the Rytm has selected, a knob in use (a label), written
+  // as the Rytm's P(wk + 1) (SAMPLER's page maps its knobs); not a list cell (a model, a pattern, a bank list: the Rytm's own
+  // pick), not the banked SRC knob (P1 of the machines with a source list, DSP SAMPLE's / SAMPLER's SMP P11: its value is
+  // index << 7 | bank, a 7-bit write would drop the bank), not MIDI's. No default is known for a machine's knob: no double tap.
+  if (v.sidecar && t >= 0) {
+    EditGate(true, picked, core::machine_of((uint8_t)vb), core::ui::remote_track_voice(t) >= 0 && core::ui::remote_track_smpl(t),
+             core::ui::remote_track_voice(t), label, &v.wedit, v.wk);
+    int kind = 0;
+    v.wgen = core::ui::remote_vparam_gen();   // (first: core 3 publishes it after the mask)
+    const unsigned f = core::ui::remote_vparam_failed(t, &kind);
+    for (int e = 0; e < 8; ++e)
+      if (f >> v.wk[e] & 1) v.wfail |= (unsigned char)(1u << e);
+    v.wkind = (unsigned char)(v.wfail ? kind : 0);
   }
   // the machine's panel
   int mach = v.sidecar ? core::machine_of((uint8_t)vb) : -1;

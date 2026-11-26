@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "device/device.h"
+#include "sidecar_features.h"
 #include "ui/extra.h"
 #include "ui/page_keys.h"
 #include "ui/remote.h"
@@ -40,7 +41,10 @@ struct Entry {
 // tests hold the list to that rule (test_ui)
 UI_ROM const Entry kEntries[] = {
     {"POLY CONFIG", "POLY"}, {"ARP", "ARP"},         {"SAMPLE", "SAMPLE"},   {"AUTO SAMPLE", "AUTO"}, {"SONG", "SONG"},     {"REC", "REC"},
-    {"SCOPE", "SCOPE"},      {"LFO", "LFO"},         {"MORPH", "MORPH"},
+    {"SCOPE", "SCOPE"},      {"LFO", "LFO"},
+#if SIDECAR_MORPH
+    {"MORPH", "MORPH"},   // 0.5.0: off (sidecar_features.h)
+#endif
 #if CORE_POLY && CORE_MSAMP
     {"SAMPLE EDIT", "SAMPLE EDIT"},   // the selected track's sample (page_sedit.cpp), or the edit open
 #endif
@@ -78,7 +82,7 @@ CORE_COLD const char* shortcut(const char* page, char* b, int cap) {
   return nullptr;
 }
 
-// KEYS' rows: the page requests, the combos, then the legacy forms ("TRK+TRIG" "= UP+TRIG")
+// KEYS' rows: the page requests, the combos, then the legacy forms ("T+FUNC+REC" "= T+UP+REC")
 CORE_COLD int keys_rows() {
   const sc_keymap_t* m = sc_keymap();
   int n = m->npages + m->ncombos;

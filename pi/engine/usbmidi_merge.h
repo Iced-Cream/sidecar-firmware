@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "lagdiag.h"
 #include "midibridge.h"
 #include "usbmidi_pack.h"
 
@@ -60,6 +61,9 @@ class UsbMidiMerge {
     virtual const uint8_t* engine_next(int* len) = 0;		// the next whole record, 0 none
     virtual unsigned engine_drain() = 0;			// drop every record, their bytes
     virtual void warn(const char* what) = 0;			// a failed send turned the sending off (log it)
+    // lag diagnostics (lagdiag.h TxDiag): how long the last send() took, us; the engine's bytes waiting in the queue
+    virtual uint32_t last_send_us() { return 0; }
+    virtual unsigned engine_pending() { return 0; }
   };
   static constexpr unsigned kChunk = 512;		// one bulk transfer: the endpoint's max packet (high speed)
   static constexpr unsigned kEngineBudget = 4096;	// engine bytes (and computer packets x 4) a Poll at most
@@ -171,12 +175,14 @@ class UsbMidiMerge {
   unsigned retries() const { return retries_; }
   unsigned deferred() const { return dn_; }
   unsigned deferred_dropped() const { return deferred_dropped_; }
+  lagdiag::TxDiag& tx() { return tx_; }			// the engine's records sent, by type (core 0's logger takes it)
 
  private:
   void engine(Io& io) {
     unsigned budget = kEngineBudget;
     int len;
     const uint8_t* rec;
+    tx_.pending(io.engine_pending());
     while (budget > 0 && (rec = io.engine_next(&len)) != nullptr) {
       budget = budget > (unsigned)len ? budget - len : 0;
       int npk = usbmidi_pack(rec, len, pkt_);		// a SysEx, a piece of one, or a channel / realtime message
@@ -185,7 +191,10 @@ class UsbMidiMerge {
         continue;
       }
       bool ok = true;
-      for (int i = 0; ok && i < npk; i += kChunk) ok = io.send(pkt_ + i, (unsigned)npk - i < kChunk ? npk - i : kChunk);
+      for (int i = 0; ok && i < npk; i += kChunk) {
+        ok = io.send(pkt_ + i, (unsigned)npk - i < kChunk ? npk - i : kChunk);
+        tx_.waited(io.last_send_us());
+      }
       if (!ok) {
         dropped_ += len;
         failures_++;
@@ -196,6 +205,7 @@ class UsbMidiMerge {
       sent_ok();
       sent_ += len;
       msgs_++;
+      tx_.record(rec, len);
       engine_idle_ = 0;
       if (rec[0] == 0xF0 || !(rec[0] & 0x80)) engine_open_ = rec[len - 1] != 0xF7;	// a SysEx or a piece of one
     }
@@ -236,6 +246,7 @@ class UsbMidiMerge {
   uint32_t def_[kDefer];
   unsigned dh_ = 0, dn_ = 0;
   unsigned engine_idle_ = 0, engine_stalls_ = 0;
+  lagdiag::TxDiag tx_;
   unsigned dropped_ = 0, sent_ = 0, msgs_ = 0, failures_ = 0, mac_failed_ = 0, bridge_failed_ = 0;
   uint8_t keys_[kChunk], mac_[kChunk];
   uint8_t pkt_[4 * ((4096 + 2) / 3)];			// RecordReader's kMax bytes, packed

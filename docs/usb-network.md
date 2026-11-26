@@ -44,8 +44,24 @@ The wait at boot runs while the Wi-Fi chip starts (about 1-2 s), so it rarely ad
 When the boot chooses Wi-Fi or Ethernet, the network function stays in the USB-C device (removing it would replug the
 computer's audio), but it tells the computer the cable is not connected and takes nothing from it.
 
-The choice is made once per boot. Plugging a computer in later does not move the network to the cable, and pulling the
-cable does not move it back to Wi-Fi: reboot the Sidecar (from the page, or its power) to choose again.
+The stack itself is chosen once per boot: Circle's network stack is one object whose tasks and sockets hold the device, so it
+cannot be moved to the cable (or back) while the engine runs. Pulling the cable does not move the network back to Wi-Fi either.
+
+**A computer plugged in after the boot (`net=auto`): the Sidecar asks, it never restarts by itself.** When the boot chose Wi-Fi or
+Ethernet because no computer was on the cable, and a computer then starts its USB network driver, the touchscreen asks
+"Computer connected on USB-C: restart to use it?" with **RESTART** and **NOT NOW** (the rules are `LatePrompt` in
+`usbnet_cfg.h`, tested):
+
+- the driver must have held the link for 2 s before it asks (a flapping driver is not asked about);
+- **NOT NOW** dismisses it for this plug; it asks again at the next plug (the link dropping and coming back), not repeatedly;
+- **RESTART** does the power-off's drain first (a take ends, core 3's saves settle, the card's posted writes go out, 3 s at most)
+  and only then reboots; the next boot picks the cable. If the saves do not settle in time the screen says "Not restarting" and
+  nothing reboots;
+- a unit without a touchscreen does not ask and does not reboot: the page's **Reboot onto USB-C** (below) and `net=usb` remain;
+- only `net=auto` with the cable chosen by the probe asks: `net=wifi`, `net=lan`, `net=usb`, a Wi-Fi join being tried and `link=tcp`
+  behave as before; OVERBRIDGE mode has no network function, so there is nothing to detect.
+
+Nothing is written to the card for this and nothing reboots without a tap on RESTART.
 
 ## Trust: no pairing code on the cable
 
@@ -141,3 +157,10 @@ Tried on the Pi 5 with a Mac: enumeration, net=auto choosing the cable, the DHCP
 the card with `sdboot.py`. Not yet: Windows 11, Windows 10, Linux, the Pi 4, /ws over the cable, an `sdboot.py` install
 over the cable, a computer asleep and awake (bus suspend and resume), unplugging and plugging back, audio and MIDI
 under network load, OVERBRIDGE mode with `usbnet=on`, the late link and its Reboot onto USB-C button.
+
+## Unplugging the cable (0.5.1)
+
+A computer that vanishes in the middle of traffic (the cable pulled, or the computer asleep or restarting) no longer halts the Pi:
+the gadget's endpoints are disabled and re-armed, an IN transfer that gets no answer times out and is counted
+(`in timeout` in the usbnet and mirror stats lines), and a bus suspend logs one line with the endpoint stops and the
+longest one. The audio, MIDI and network functions come back when the cable is plugged in again.

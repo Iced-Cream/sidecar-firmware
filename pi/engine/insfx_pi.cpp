@@ -44,6 +44,8 @@ void Fill(sidecar_insfx_view_t* o, const float (*peaks)[2]) {
       for (int k = 0; k < kParams; ++k) {
         strncpy(x.label[k], L.label[k], sizeof x.label[k] - 1);
         x.v[k] = control.play[c][s][k];
+        x.base[k] = (uint8_t)param(c, s, k);   // as set: where a touch drag starts (the played value carries an LFO / a lock)
+        x.def[k] = L.def[k];
         if (ty) slot_value_text(c, s, k, param(c, s, k), x.val[k], sizeof x.val[k]);
       }
     }
@@ -66,10 +68,14 @@ void Fill(sidecar_insfx_view_t* o, const float (*peaks)[2]) {
     v.bus_post[k] = fxc.route == core::fx::kRouteMain || (fxc.route == core::fx::kRouteSlot && fxc.knob[k][1] >= 64);
   }
   v.bus_post[2] = control.route3;
+  v.out_def[0] = 100, v.out_def[1] = 64, v.out_def[2] = 64;   // LEV unity, PAN centre, WID as rendered (core/fx/out.h)
   for (int i = 0; i < kVoices; ++i) {   // the OUT route
     v.out_route[i] = oc.route[i];
     const uint8_t pv[3] = {oc.lev[i], oc.pan[i], oc.wid[i]};
-    for (int k = 0; k < 3; ++k) v.out_v[i][k] = pv[k], core::out::value_text(k, core::out::param(i, k), v.out_val[i][k], sizeof v.out_val[i][k]);
+    for (int k = 0; k < 3; ++k) {
+      v.out_v[i][k] = pv[k], v.out_base[i][k] = (uint8_t)core::out::param(i, k);
+      core::out::value_text(k, core::out::param(i, k), v.out_val[i][k], sizeof v.out_val[i][k]);
+    }
     for (int c = 0; c < 2 && peaks; ++c) {
       float lim = v.out_route[i] == core::out::kPre ? core::out::kLimitPre : core::out::kLimitPost, p = peaks[i][c] / lim;
       v.out_peak[i][c] = (unsigned char)(p >= 1.0f ? 127 : p <= 0.0f ? 0 : p * 127.0f);
@@ -93,6 +99,7 @@ void FillMaster(sidecar_mfx_view_t* o) {
   sidecar_mfx_view_t v;
   memset(&v, 0, sizeof v);
   v.valid = 1, v.on = m::on(sl), v.byp = mc.byp, v.mix = mc.src == m::kMix, v.lev = mc.lev;
+  v.lev_def = m::kLevUnity;
   // the stems' report is the Rytm's (its slot's master: m::rytm(); known is set there only)
   v.rep = mc.known, v.onmain = (unsigned char)(mc.known ? m::stems_on_main() : 0);
   v.in = (unsigned char)(in >= 1.0f ? 127 : in * 127.0f), v.out = (unsigned char)(out >= 1.0f ? 127 : out * 127.0f);
@@ -106,8 +113,11 @@ void FillMaster(sidecar_mfx_view_t* o) {
     for (int k = 0; k < kParams; ++k) {
       strncpy(x.label[k], L.label[k], sizeof x.label[k] - 1);
       x.v[k] = control.play[c][s][k];
+      x.base[k] = (uint8_t)param(c, s, k);   // as set: where a touch drag starts
+      x.def[k] = L.def[k];
       if (ty) slot_value_text(c, s, k, param(c, s, k), x.val[k], sizeof x.val[k]);
     }
+    x.mixdef = m::kMixDef;
     x.send = m::send_type(ty), x.mix = mc.mix[i], x.amp = ty == kAmp, x.pair = m::pair(i);
   }
   if (eq_on(m::kEqChain)) {

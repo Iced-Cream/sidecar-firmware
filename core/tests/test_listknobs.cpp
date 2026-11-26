@@ -43,7 +43,7 @@ static void spin(const ExtraPage& p, int e, int counts, int n, bool func = false
 }
 // a fast hard turn: 12 reports of 30 counts; a single detent after a rest
 static void flick(const ExtraPage& p, int e, int dir) { rest(), spin(p, e, 30 * dir, 12); }
-static void detent(const ExtraPage& p, int e, int dir, bool func = false) { rest(), p.enc(e, 4 * dir, func), wait_ms(67); }
+static void detent(const ExtraPage& p, int e, int dir, bool func = false) { rest(), p.enc(e, kListCounts * dir, func), wait_ms(67); }
 
 static void test_helper() {
   // a lone turn, any size: one entry, at once
@@ -57,18 +57,19 @@ static void test_helper() {
   for (int i = 0; i < 10; ++i) rest(), sum += list_turn(1, 1);
   CHECK(sum == 10);
   // a detent a report: one entry each; a detent spread over reports: one entry a detent, the first at once
+  CHECK(kListCounts == 6);   // (0.5.0: stock's enums; was 4)
   rest(), sum = 0;
-  for (int i = 0; i < 12; ++i) sum += report(2, 4);
+  for (int i = 0; i < 12; ++i) sum += report(2, kListCounts);
   CHECK(sum == 12);
   rest(), sum = 0;
   for (int i = 0; i < 12; ++i) sum += report(2, 1);
-  CHECK(sum == 1 + 2);   // counts 1, 5, 9
+  CHECK(sum == 1 + 1);   // counts 1, 7
   rest(), sum = 0;
   for (int i = 0; i < 12; ++i) sum += report(2, 2);
-  CHECK(sum == 1 + 5);
+  CHECK(sum == 1 + 3);   // counts 2, 8, 14, 20
   // click, pause shorter than a rest, click: a step each
   rest(), sum = 0;
-  for (int i = 0; i < 5; ++i) sum += list_turn(2, 4), wait_ms(150);
+  for (int i = 0; i < 5; ++i) sum += list_turn(2, kListCounts), wait_ms(150);
   CHECK(sum == 5);
   // an accelerated turn does not skip: one entry a report, whatever its size
   rest(), sum = 0;
@@ -90,7 +91,7 @@ static void test_helper() {
   CHECK(sum == 0);
   rest(); CHECK(list_turn(4, 4) == 1);
   wait_ms(67); CHECK(list_turn(4, -3) == 0);
-  wait_ms(67); CHECK(list_turn(4, -1) == -1);   // a whole detent back
+  wait_ms(67); CHECK(list_turn(4, -(kListCounts - 3)) == -1);   // a whole entry's counts back
   // each knob its own
   rest();
   CHECK(list_turn(5, 1) == 1 && list_turn(6, 1) == 1 && list_turn(5, 1) == 0 && list_turn(8, -1) == -1);
@@ -110,13 +111,25 @@ static void test_helper() {
   printf("127 entries: spin %.1f s\n", reports * 0.067);
   CHECK(reports * 67 < 2300);
   rest(), at = 0, reports = 0;
-  while (at < 126) at += list_turn_long(7, 4), wait_ms(67), ++reports;
+  while (at < 126) at += list_turn_long(7, kListCounts), wait_ms(67), ++reports;
   CHECK(reports * 67 < 9000);
+  // a small list (n 2..8: switches, SPD, DIR): no step at once after a rest; a touch changes nothing, a turn does
+  rest(); CHECK(list_turn(0, 1, 2) == 0);
+  rest(); CHECK(list_turn(0, -5, 7) == 0);
+  wait_ms(67); CHECK(list_turn(0, -1, 7) == -1);              // the entry's counts: one
+  wait_ms(67); CHECK(list_turn(0, -5, 7) == 0);
+  rest(); CHECK(list_turn(0, 1, 8) == 0);
+  rest(); CHECK(list_turn(0, 40, 2) == 1);                    // a hard turn after a rest: at once
+  rest(); CHECK(list_turn(0, 1, 9) == 1 && (rest(), list_turn(0, 1, 0) == 1));   // longer lists, unknown: as before
+  rest(), sum = 0;
+  for (int i = 0; i < 12; ++i) sum += list_turn(5, 1, 4), wait_ms(67);
+  CHECK(sum == 2);                                            // a slow turn, a count a report: counts 6, 12
 }
 
 static void test_step_value() {
   const Page* plaits = page_for_machine(0x00);
   CHECK(plaits);
+  CHECK(list_size(*plaits, 0) == 17 && list_size(*plaits, 1) == 0);   // ENG: 17 models (list_turn's n); HRM a value
   CHECK(eng_zone(step_value(*plaits, 0, 64, 3, false), 17) == 8 + 1);    // one zone, whatever the size
   CHECK(eng_zone(step_value(*plaits, 0, 64, -50, false), 17) == 8 - 1);
   CHECK(eng_zone(step_value(*plaits, 0, 127, 50, false), 17) == 16);     // the end holds
@@ -165,7 +178,7 @@ static void test_master() {
   rest(), kMasterPage.enc(5, 30, false), wait_ms(20), kMasterPage.enc(5, 30, false);   // the second, inside the gap
   int t2 = ins::control.type[master::chain(0)][master::slot(0)];
   CHECK(t2 == master::next_type(0, t1, 1));
-  rest(), spin(kMasterPage, 7, 4, 3);
+  rest(), spin(kMasterPage, 7, kListCounts, 3);
   CHECK(master::control.src == master::kMix);
   // a jitter on SRC does not bounce
   rest(), kMasterPage.enc(7, 1, false); CHECK(master::control.src == master::kMix);
@@ -188,12 +201,12 @@ static void test_lfo() {
   // TARGET: a detent, one; a spin, four a report
   detent(kLfoPage, 1, 1); CHECK(lfo::target_pos(lfo::get(0).target) == 1);   // list positions (the display order): one entry a step
   CHECK(lfo::get(0).target == lfo::kTVoice);   // the stored ids stay the ids: BD is V1
-  rest(), spin(kLfoPage, 1, 4, 2); CHECK(lfo::target_pos(lfo::get(0).target) == 3 && lfo::get(0).target == lfo::kTVoice + 7);   // RS (unknown: the pair's owner): V8
+  rest(), spin(kLfoPage, 1, kListCounts, 2); CHECK(lfo::target_pos(lfo::get(0).target) == 3 && lfo::get(0).target == lfo::kTVoice + 7);   // RS (unknown: the pair's owner): V8
   rest(), spin(kLfoPage, 1, 20, 2); CHECK(lfo::target_pos(lfo::get(0).target) == 3 + 4 + 4 && lfo::get(0).target == lfo::target_from_name("I1"));   // past the 8 voices, FX1 FX2: I1 (no Rytm track entries since the owner's test)
   // DEPTH and RATE (free) stay continuous
-  s = lfo::get(0), s.depth = 0, s.rate = 64, lfo::set(0, s);
-  kLfoPage.enc(3, 5, false); CHECK(lfo::get(0).depth == 5);
-  kLfoPage.enc(3, 5, true); CHECK(lfo::get(0).depth == 45);
+  s = lfo::get(0), s.depth = 10, s.rate = 64, lfo::set(0, s);   // (away from 0: its centre holds, test_uifeel)
+  kLfoPage.enc(3, 5, false); CHECK(lfo::get(0).depth == 15);
+  kLfoPage.enc(3, 5, true); CHECK(lfo::get(0).depth == 55);
   kLfoPage.enc(5, 3, false); CHECK(lfo::get(0).rate == 67);
   // the design view (YES): step, shape, preset. A report the gap holds back leaves the design alone
   kLfoPage.key(0x44);
@@ -327,10 +340,33 @@ static void test_seq_page() {
   one_entry(kSeqPage, 3);
   seq::ui_key(0x30, true, true), seq::ui_key(0x30, false, true);
   one_entry(kSeqPage, 4), one_entry(kSeqPage, 5);
+  {   // SPD, DIR (small lists): a touch after a rest changes nothing (it moved the playhead: SPD), a detent does
+    seq::Track* t = seq::edit_track(0, false);
+    CHECK(t);
+    const int sp = t->speed, dir = t->dir;
+    rest(), kSeqPage.enc(5, 1, false), rest(), kSeqPage.enc(5, -2, false), rest(), kSeqPage.enc(4, 1, false);
+    CHECK(t->speed == sp && t->dir == dir);
+    detent(kSeqPage, 5, 1);
+    CHECK(t->speed == seq::speed_step(sp, 1, false));
+    detent(kSeqPage, 5, -1);
+    CHECK(t->speed == sp);
+    rest(), kSeqPage.enc(5, 1, true);   // FUNC: all ten ratios, a longer list: a touch steps at once, as before
+    CHECK(t->speed == seq::speed_step(sp, 1, true));
+    flick(kSeqPage, 5, -1);
+  }
   seq::ui_key(0x30, true, true), seq::ui_key(0x30, false, true);
   one_entry(kSeqPage, 0), one_entry(kSeqPage, 1);
   seq::ui_key(0x30, true, true), seq::ui_key(0x30, false, true);
   one_entry(kSeqPage, 2), one_entry(kSeqPage, 3);
+  {   // RANDOM's WGHT (6 values): a touch after a rest changes nothing
+    seq::Track* t = seq::edit_track(0, false);
+    const int w = t->rnd_wght;
+    rest(), kSeqPage.enc(2, 2, false);
+    CHECK(t->rnd_wght == w);
+    detent(kSeqPage, 2, 1);
+    CHECK(t->rnd_wght == w + 1);
+    low(kSeqPage, 2);
+  }
   seq::ui_key(0x30, true, true), seq::ui_key(0x30, false, true);
   // a held trig: TRIG's COND a long list, CHD, INV a list
   seq::ui_key(0, true, true);

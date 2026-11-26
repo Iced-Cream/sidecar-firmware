@@ -123,6 +123,28 @@ describe("cmpVersion (update.cpp's cmp_version)", () => {
     expect(cmpVersion("x", "0.5.0")).toBe(-2);
     expect(cmpVersion("x", "x")).toBe(0);
   });
+  it("takes a 4th number (0.5.1.1 sits between 0.5.1 and 0.5.2)", () => {
+    expect(cmpVersion("0.5.1.1", "0.5.1")).toBe(1);
+    expect(cmpVersion("0.5.1", "0.5.1.1")).toBe(-1);
+    expect(cmpVersion("0.5.2", "0.5.1.1")).toBe(1);
+    expect(cmpVersion("0.5.1.1", "0.5.2")).toBe(-1);
+    expect(cmpVersion("0.5.1.1", "0.5.1.1")).toBe(0);
+    expect(cmpVersion("0.5.1.0", "0.5.1")).toBe(0);
+    expect(cmpVersion("0.5.1.10", "0.5.1.9")).toBe(1);
+    expect(cmpVersion("0.5.1.1-rc1", "0.5.1.1")).toBe(-1);
+    expect(cmpVersion("0.5.1.1-rc1", "0.5.1")).toBe(1);
+    expect(cmpVersion("0.5.1.", "0.5.1")).toBe(-2);
+    expect(cmpVersion("0.5.1.1.1", "0.5.1")).toBe(-2);
+  });
+});
+
+describe("verdict for 0.5.1.1", () => {
+  const h = parseHeader(scu([[PART.pi4, rnd(10)], [PART.pi5, rnd(10)]], "0.5.1.1", "bbbbbbb"), HEADER + 20);
+  const on = (v: string): UpdateState => ({ api: `sidecar-webupdate-1 v=${v} c=aaaaaaa`, enabled: true, board: 4, version: v, commit: "aaaaaaa", state: "idle" });
+  it("offers it to 0.5.1, not to 0.5.2", () => {
+    expect(verdict(h, on("0.5.1"))).toEqual({ ok: true, force: false, text: "Update from 0.5.1 (aaaaaaa) to 0.5.1.1 (bbbbbbb)." });
+    expect(verdict(h, on("0.5.2")).ok && (verdict(h, on("0.5.2")) as { force: boolean }).force).toBe(true);
+  });
 });
 
 describe("verdict", () => {

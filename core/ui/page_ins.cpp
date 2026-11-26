@@ -284,7 +284,7 @@ CORE_COLD void ins_draw(Canvas& c, int page, int npages, uint32_t ms) {
     sniprintf(b, sizeof b, CORE_STR("SEND FX %d OFF: SILENT"), ip.busel + 1);
     footer(c, b);
   } else if (!ip.bus && remote_track_machine(tr) == 0x7F) {
-    footer(c, "ANALOG TRACK: NO SIDECAR VOICE");
+    footer(c, "NO SIDECAR VOICE ON TRACK");   // (the Rytm's own synth; 25 characters fit)
   } else {
     footer(c, ip.bus ? "NO: TRACK  RIGHT: EQ" : "YES: BUSES  RIGHT: EQ");
   }
@@ -296,7 +296,10 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
   const int l = list_turn(e, d);   // the slot, type, route, track and bus: lists; the rest values
   if (ip.eq) {   // ins1112: A HPF, B LPF, C LOW, D HIGH; G the bus (FUNC + G another track, as elsewhere)
     int ch = chain_now();
-    if (e < ins::kEqParams) ins::set_eq(ch, e, ins::eq_param(ch, e) + d * (func ? 8 : 1)), mod::manual_knob(mod::tid(mod::kIns, ch, 8 + e));
+    if (e < ins::kEqParams) {
+      const int cur = ins::eq_param(ch, e), st = d * (func ? 8 : 1);   // LOW / HIGH: 64 is flat, the detent
+      ins::set_eq(ch, e, e >= 2 ? detent_step(e, detent_tag(0x100 + ch * 8 + e), cur, st, 64, func) : cur + st), mod::manual_knob(mod::tid(mod::kIns, ch, 8 + e));
+    }
     else if (e == 6) {
       if (func && !ip.bus) ip.track = clampi(track_now() + l, 0, 11), ip.manual = true;
       else ip.busel = clampi(ip.busel + l, 0, ins::kBuses - 1);
@@ -307,14 +310,19 @@ CORE_COLD void ins_enc(int e, int d, bool func) {
     int vi = voice_now();
     if (e == 0) out::set_route(vi, clampi(out::ctl().route[vi] + l, 0, out::kRoutes - 1));
     else if (e <= 3 || (e == 4 && dsp_sample_now())) {
-      out::set_param(vi, e - 1, out::param(vi, e - 1) + d * (func ? 8 : 1));
+      const int cur = out::param(vi, e - 1), st = d * (func ? 8 : 1);   // C PAN: 64 is the centre, the detent
+      out::set_param(vi, e - 1, e == 2 ? detent_step(e, detent_tag(0x200 + vi), cur, st, 64, func) : cur + st);
       if (e <= 3) mod::manual_knob(mod::tid(mod::kOut, vi, e - 1));
     }
     return;
   }
   int ch = chain_now(), t = ins::ctl(ch).type[ch][ip.slot];
   if (e < 4) {
-    if (t) ins::set_param(ch, ip.slot, e, ins::param(ch, ip.slot, e) + d * (func ? 8 : 1)), mod::manual_knob(mod::tid(mod::kIns, ch, ip.slot * 4 + e));
+    if (t) {
+      const int cur = ins::param(ch, ip.slot, e), st = d * (func ? 8 : 1);   // AMP / SAT TONE (P3): 64 is flat, the detent
+      ins::set_param(ch, ip.slot, e, e == 2 && (t == ins::kAmp || t == ins::kSat) ? detent_step(e, detent_tag(0x300 + ch * 8 + ip.slot), cur, st, 64, func) : cur + st);
+      mod::manual_knob(mod::tid(mod::kIns, ch, ip.slot * 4 + e));
+    }
     return;
   }
   if (e == 4 || e == 6) ip.full = false;   // another slot or bus: the room note was the last one's

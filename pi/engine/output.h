@@ -114,7 +114,7 @@ class Output {
     int16_t v[kVoices], r[kVoices];
     uint8_t st;
   };
-  static float Limit(float x) { return x > kLimit ? kLimit : x < -kLimit ? -kLimit : x; }
+  static float Limit(float x) { return core::MainOut::Limit(x); }   // -12 dBFS, its soft knee (core/main_out.h)
   static int32_t To32(float x) { return (int32_t)(x * 2147483648.0f); }
   static float Own(float x, float t);   // a voice for its own channel, the trim's gain t
   static int32_t Add(int32_t a, float x) {

@@ -48,7 +48,6 @@ namespace ft = filltargets;
 namespace lf = lockfill;
 enum : int { kLeft = 0x40, kRight = 0x41, kUp = 0x42, kDown = 0x43, kYes = 0x44, kNo = 0x45, kFunc = 0x80 };
 enum Job : uint8_t { kJobNone = 0, kJobFill, kJobClear, kJobUndo };
-constexpr int kRowY = 11, kRowH = 7, kColX = 66;
 constexpr uint32_t kNoteMs = 2500;
 constexpr int kSetMax = 1024;
 
@@ -61,6 +60,8 @@ struct FillPage {
   uint8_t order[ft::kMax] = {};
   lf::Options o;
   bool func = false, up = false;
+  int turn_e = -1;                // the encoder turned last (the title and the bottom bar name it), -1 none
+  uint32_t turn_ms = 0;
   char note[28] = "";
   bool note_new = false;
   uint32_t note_ms = 0;
@@ -72,7 +73,7 @@ struct FillPage {
   lf::Saved pending, undo;        // the target as it was before the job's patch; the undo a done job leaves
   lf::Saved pafter, after;        // the target as the patch left it: the undo refuses once it changed (CHANGED SINCE)
   int undo_pattern = -1;          // the pattern the job read (patwrite::read_pattern): another active pattern ends the undo
-  uint32_t jproject = 0, undo_project = 0;   // core::project_gen() at the job's start: a project load ends it too
+  uint32_t jproject = 0, undo_project = 0;   // core::project_id() at the job's start: another project ends it too (a repeated report of the same one does not)
   // the job's own copy of what it writes (the page may change while the job runs)
   ft::Def jd;
   int jtrack = -1, jfrom = 0, jto = 0;
@@ -116,7 +117,7 @@ CORE_COLD int patch_undo(uint8_t* rec, void*) {
   // bound to the fill's own pattern and project, not to the content alone (a copy of the pattern holds the same)
   // (owner 2026-11-13: by the pattern's number, not the switch count: a Rytm hello's resync to the same pattern counted
   // as a switch and expired the undo right after a fill; the content check below guards a changed track)
-  if (patwrite::read_pattern() != P.undo_pattern || project_gen() != P.undo_project) return lf::kChanged;
+  if (patwrite::read_pattern() != P.undo_pattern || project_id() != P.undo_project) return lf::kChanged;
   lf::Saved now;   // M2 (fix round): the target edited since the fill (on the Rytm, by a take): not put back over that
   lf::save(rec, P.undo.track, P.undo.g, &now);
   if (!lf::equal(now, P.after)) return lf::kChanged;
@@ -166,7 +167,7 @@ CORE_COLD bool begin(uint8_t job) {
     if (!P.undo.valid) { note("NOTHING TO UNDO"); return false; }
     int ap = rytm_dump::active_pattern();
     if (ap >= 0 && ap != P.undo_pattern) { P.undo = lf::Saved(); note("UNDO EXPIRED (PATTERN)"); return false; }
-    if (project_gen() != P.undo_project) { P.undo = lf::Saved(); note("UNDO EXPIRED (PROJECT)"); return false; }
+    if (project_id() != P.undo_project) { P.undo = lf::Saved(); note("UNDO EXPIRED (PROJECT)"); return false; }
   } else if (!def()) {
     return false;
   }
@@ -174,7 +175,7 @@ CORE_COLD bool begin(uint8_t job) {
     P.jd = *def(), P.jtrack = P.track, P.jfrom = P.from[P.cur], P.jto = P.to[P.cur], P.jo = P.o;
     P.jo.order = P.order[P.cur];
   }
-  P.filled = 0, P.jproject = project_gen();
+  P.filled = 0, P.jproject = project_id();
   patwrite::PatchFn fn = job == kJobFill ? patch_fill : job == kJobClear ? patch_clear : patch_undo;
   if (!patwrite::start(fn, nullptr)) { note(patwrite::why_text(patwrite::why())); return false; }
   P.job = job, P.jobs_seen = patwrite::jobs();
@@ -217,51 +218,100 @@ CORE_COLD void fit_name(char* out, int cap, const ft::Def& d, int i, int room) {
   name_fit(out, cap, nm, room);
 }
 
+// The LIST-with-values screen (the UI system, 0.5.0): two columns A..D | E..H as the Rytm's knobs, a label left and its
+// value right in each row, a dotted rule, one summary line, the bottom bar as key boxes. The row turned last is
+// inverted, its whole name on the title bar and its value in the bottom bar (kTurnMs after the turn, until a key).
+const char* const kFull[8] = {"TARGET", "FROM", "TO", "ORDER", "TRIGS", "EVERY", "OFFSET", "SEED"};
+constexpr int kRowStep = 9, kRowTop = 10, kTurnMs = 1500;
+constexpr int kRowSlots = kSlotFree;          // 16 items: label, value of each row
+constexpr int kSumSlot = kSlotFree + 16;
+
 CORE_COLD void fill_draw(Canvas& c, int page, int npages, uint32_t ms) {
   poll();
   c.clear();
   char t[24], r[16] = "";
   static const char* const kTrack[12] = {"BD", "SD", "RS", "CP", "BT", "LT", "MT", "HT", "CH", "OH", "CY", "CB"};
-  sniprintf(t, sizeof t, "FILL %s", P.track >= 0 && P.track < 12 ? kTrack[P.track] : "-");
+  const char* trk = P.track >= 0 && P.track < 12 ? kTrack[P.track] : "-";
   int pat = -1;
   const uint8_t* rec = rytm_dump::record(&pat, nullptr);
   const ft::Def* d = def();
-  if (rec && d && P.track >= 0) sniprintf(r, sizeof r, "LOCK TRK %d/72", lf::slots_after(rec, P.track, d->g));
-  header(c, t, page, npages, r[0] ? r : nullptr);
+  const bool turning = d && P.turn_e >= 0 && turn_live(ms, P.turn_ms, kTurnMs);
   if (!d) {
+    sniprintf(t, sizeof t, "FILL %s", trk);
+    header(c, t, page, npages, nullptr);
     c.put_text(kSlotFree, kRSmall, 64, 30, P.track < 0 ? "SELECT A TRACK" : "NOTHING TO FILL", kAlignCentre);
-    footer(c, "NO: BACK");
+    footer_keys(c, nullptr, nullptr, "NO", "BACK");
     return;
   }
-  // the owner's test (2026-11-13): each label starts with its encoder's letter (A..D the left column, E..H the right, as
-  // the Rytm's knobs). At kRSmall's widest 5 px the left column holds 13 characters (x 2..65, the right starts at 66),
-  // the right 12: an 8-letter target ("VELOCITY") drops the TGT word ("A VELOCITY")
-  char b[8][20];
-  char nm[16];
-  if (strlen(d->label) + 6 <= 13) sniprintf(b[0], 20, "A TGT %s", d->label);
-  else sniprintf(b[0], 20, "A %.11s", d->label);
-  fit_name(nm, sizeof nm, *d, P.from[P.cur], 8);
-  sniprintf(b[1], 20, "B FR %s", nm);
-  fit_name(nm, sizeof nm, *d, P.to[P.cur], 8);
-  sniprintf(b[2], 20, "C TO %s", nm);
-  sniprintf(b[3], 20, "D ORD %s", lf::order_name(P.order[P.cur]));
-  sniprintf(b[4], 20, "E TRG %s", lf::trigs_name(P.o.trigs));
-  sniprintf(b[5], 20, "F EVRY %d", P.o.every);
-  sniprintf(b[6], 20, "G OFS %d", P.o.offset);
-  sniprintf(b[7], 20, "H SEED %d", P.o.seed);
-  for (int i = 0; i < 4; ++i) {
-    c.put_text(kSlotFree + i, kRSmall, 2, kRowY + i * kRowH, b[i]);
-    c.put_text(kSlotFree + 4 + i, kRSmall, kColX, kRowY + i * kRowH, b[4 + i]);
+  // the title: FILL and the track on the left, the lock slots in use on the right; turning: the parameter's whole name
+  // (B / C with the target) and the track
+  if (turning) {
+    if (P.turn_e == 1 || P.turn_e == 2) sniprintf(t, sizeof t, "%c %s %.11s", 'A' + P.turn_e, kFull[P.turn_e], d->label);
+    else sniprintf(t, sizeof t, "%c %s", 'A' + P.turn_e, kFull[P.turn_e]);
+    header(c, t, page, npages, trk);
+  } else {
+    sniprintf(t, sizeof t, "FILL %s", trk);
+    if (rec && P.track >= 0) sniprintf(r, sizeof r, "LOCK %d/72", lf::slots_after(rec, P.track, d->g));
+    header(c, t, page, npages, r[0] ? r : nullptr);
   }
-  char line[32], full[40];   // FROM and TO by their whole names
-  fit_name(line, sizeof line, *d, P.from[P.cur], 19);
-  sniprintf(full, sizeof full, "FROM %s", line);
-  c.put_text(kSlotFree + 8, kRSmall, 2, kRowY + 4 * kRowH, full);
-  fit_name(line, sizeof line, *d, P.to[P.cur], 19);
-  sniprintf(full, sizeof full, "TO   %s", line);
-  c.put_text(kSlotFree + 9, kRSmall, 2, kRowY + 5 * kRowH, full);
+  // the rows: label (its encoder's letter first: the owner's test, 2026-11-13) and value
+  char lab[8][8], val[8][20], nm[24];
+  sniprintf(lab[0], 8, "A TGT");
+  if (strlen(d->label) > 6) sniprintf(lab[0], 8, "A");
+  sniprintf(val[0], 20, "%.12s", d->label);
+  sniprintf(lab[1], 8, "B FR"), sniprintf(lab[2], 8, "C TO");
+  fit_name(val[1], 20, *d, P.from[P.cur], 7);
+  fit_name(val[2], 20, *d, P.to[P.cur], 7);
+  sniprintf(lab[3], 8, "D ORD"), sniprintf(val[3], 20, "%s", lf::order_name(P.order[P.cur]));
+  sniprintf(lab[4], 8, "E TRG"), sniprintf(val[4], 20, "%s", lf::trigs_name(P.o.trigs));
+  sniprintf(lab[5], 8, "F EVRY"), sniprintf(val[5], 20, "%d", P.o.every);
+  sniprintf(lab[6], 8, "G OFS"), sniprintf(val[6], 20, "%d", P.o.offset);
+  sniprintf(lab[7], 8, "H SEED"), sniprintf(val[7], 20, "%d", P.o.seed);
+  for (int i = 0; i < 8; ++i) {
+    const int col = i / 4, row = i % 4;
+    const int x0 = col ? 65 : 0, x1 = col ? 125 : 62, y = kRowTop + kRowStep * row;
+    const bool on = turning && i == P.turn_e;
+    if (on) c.fill(Rect{(int16_t)x0, (int16_t)y, (int16_t)(x1 - x0 + 1), kRowStep});
+    c.put_text(kRowSlots + 2 * i, kRSmall, x0 + 2, y + 2, lab[i], on ? kTextInvert : kAlignLeft);
+    c.put_text(kRowSlots + 2 * i + 1, kRSmall, x1 - 1, y + 2, val[i], kAlignRight | (on ? kTextInvert : 0));
+  }
+  dotted_v(c, 63, kRowTop, kRowTop + 4 * kRowStep - 1);
+  dotted_h(c, 0, kW - 1, kRowTop + 4 * kRowStep + 1);
+  // the summary: what the fill will write (FROM > TO), and how many trigs (counted on the Rytm's pattern as read)
+  char a[24], b[24], sum[32];
+  fit_name(a, sizeof a, *d, P.from[P.cur], 6);
+  fit_name(b, sizeof b, *d, P.to[P.cur], 6);
+  uint8_t steps[lf::kSteps];
+  if (rec && P.track >= 0) {
+    lf::Options o = P.o;
+    o.order = P.order[P.cur];
+    sniprintf(sum, sizeof sum, "%s > %s %d TRIGS", a, b, lf::steps_for(rec, P.track, d->g, o, steps));
+  } else {
+    fit_name(a, sizeof a, *d, P.from[P.cur], 11);
+    fit_name(b, sizeof b, *d, P.to[P.cur], 11);
+    sniprintf(sum, sizeof sum, "%s > %s", a, b);
+  }
+  c.put_text(kSumSlot, kRSmall, 2, kRowTop + 4 * kRowStep + 3, sum);
   if (P.note_new || P.note_stick || (P.note_ms && ms - P.note_ms < kNoteMs) || P.job) footer(c, P.note);
-  else footer(c, P.func ? "YES: CLEAR  NO: UNDO" : "YES: FILL  FN: CLR/UNDO");
+  else if (turning) {   // the touched parameter: its name, a bar, its value
+    int bar = 0;
+    const ft::Def& dd = *d;
+    switch (P.turn_e) {
+      case 0: bar = P.nd > 1 ? P.cur * 127 / (P.nd - 1) : 0; break;
+      case 1: bar = dd.n > 1 ? P.from[P.cur] * 127 / (dd.n - 1) : 0; break;
+      case 2: bar = dd.n > 1 ? P.to[P.cur] * 127 / (dd.n - 1) : 0; break;
+      case 3: bar = P.order[P.cur] * 127 / (lf::kOrders - 1); break;
+      case 4: bar = P.o.trigs * 127 / (lf::kTrigsModes - 1); break;
+      case 5: bar = (P.o.every - 1) * 127 / 15; break;
+      case 6: bar = P.o.every > 1 ? P.o.offset * 127 / (P.o.every - 1) : 0; break;
+      default: bar = P.o.seed * 127 / 999; break;
+    }
+    if (P.turn_e == 1) fit_name(nm, sizeof nm, dd, P.from[P.cur], 11);
+    else if (P.turn_e == 2) fit_name(nm, sizeof nm, dd, P.to[P.cur], 11);
+    else sniprintf(nm, sizeof nm, "%s", val[P.turn_e]);
+    footer_value(c, kFull[P.turn_e], bar, false, nm);
+  } else if (P.func) footer_keys(c, "YES", "CLEAR", "NO", "UNDO");
+  else footer_keys(c, "YES", "FILL", "NO", "BACK");
   if (P.note_new) P.note_new = false, P.note_ms = ms | 1;
 }
 
@@ -285,6 +335,7 @@ CORE_COLD void set_target(int k) {
 }
 CORE_COLD void fill_enc(int e, int delta, bool func) {
   if (!delta) return;
+  P.turn_e = e, P.turn_ms = now_ms();
   const int l = e == 1 || e == 2 ? list_turn_long(e, delta) : list_turn(e, delta);
   if (!l) return;
   switch (e) {
@@ -310,6 +361,7 @@ CORE_COLD void close_page() {
 
 CORE_COLD bool fill_key(int code) {
   P.note_stick = false;
+  P.turn_e = -1;
   poll();
   if (code == kFunc) { P.func = true; return true; }
   if (code == kUp) { P.up = true; return true; }

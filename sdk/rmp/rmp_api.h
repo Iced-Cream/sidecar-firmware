@@ -37,7 +37,10 @@ typedef struct rmp_host {
   void (*log)(const char *msg); /* a line in the Teensy's log, not from render() */
   uint32_t (*random)(uint32_t *state);   /* xorshift32 on the caller's state */
   /* API 2: [RMP_H_POOL_INFO] int32_t pool_info(int32_t slot, rmp_pool_info *info):
-       pool slot 1..127 of the project; RMP_POOL_OK with *info, RMP_POOL_NOT_READY while the host
+       pool slot of the project: 1..127 is bank A's row, or the list code bank * 128 + row (bank 0..7 =
+       A..H, row 1..127; row 0 is OFF): rmp_pool_code() builds it, rmp_pool_code_of_knob() reads a SAMPLES knob's
+       value as one (Pi host; the Teensy's pool is bank A, 1..127). pool_read takes the same code.
+       RMP_POOL_OK with *info, RMP_POOL_NOT_READY while the host
        prepares it (asked for a slot this voice does not stream: a job between render requests),
        RMP_POOL_EMPTY when there is no such sample. Call it about once a block (render, note_on), not
        per sample: the Teensy runs it from flash. Asked in voice_init, its prepare starts once the voice
@@ -103,6 +106,18 @@ static inline rmp_voice_fn rmp_voice_leave_of(const rmp_plugin *p) {
   return p->api >= 2u ? (rmp_voice_fn)p->reserved[RMP_P_VOICE_LEAVE] : (rmp_voice_fn)0;
 }
 /* A plugin reads the host's API-2 functions only through these (NULL from an API-1 host table). */
+/* The pool code of bank (0..7 = A..H) and row (1..127): what pool_info / pool_read take. Bank A's code is the row. */
+static inline int32_t rmp_pool_code(int32_t bank, int32_t row) { return bank * 128 + row; }
+/* A SAMPLES knob's value (P1..P16 as params() gets it) as a pool code: the integer is the row, the fraction
+   (1/128 steps, bank * 16) the bank. A knob without a bank in its fraction gives bank A's row, as (int)value does. */
+static inline int32_t rmp_pool_code_of_knob(float value) {
+  int32_t row, lo;
+  if (!(value > 0.0f)) return 0;   /* 0, negative, NaN */
+  if (value >= 128.0f) return 127;   /* out of a knob's range: bank A's last row, as the host reads it */
+  row = (int32_t)value;
+  lo = (int32_t)((value - (float)row) * 128.0f + 0.5f);
+  return rmp_pool_code(lo > 127 ? 7 : lo >> 4, row);
+}
 static inline rmp_pool_info_fn rmp_pool_info_of(const rmp_host *h) {
   return h->api >= 2u ? (rmp_pool_info_fn)h->reserved[RMP_H_POOL_INFO] : (rmp_pool_info_fn)0;
 }

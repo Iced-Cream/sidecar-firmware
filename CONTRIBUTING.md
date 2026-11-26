@@ -7,6 +7,23 @@ to `dev`. Releases reach `main` from `dev`, and the maintainer merges those. Fea
 broken; it is not a release. On every branch: no firmware (see Rules), and run the tests below before you open the pull
 request.
 
+## Before you start
+
+- **AI coding agents:** read [AGENTS.md](AGENTS.md) first. It has the build and test commands, the safety rules and the known traps.
+- **Find or open an issue first** for anything bigger than a small fix, and say you'd like to take it. Wait for a
+  "go" (the `claimed` label and your name on the issue) before you build. The roadmap (trigcondition/sidecar-firmware#68, pinned; board: https://github.com/users/trigcondition/projects/3) shows what is
+  planned and who is on it.
+- **One topic per pull request**, linked with `Closes #n`. A pull request that bundles several topics, or depends on
+  another open one, is hard to review: say the order in the description.
+- **Changes on both sides** (a Sidecar message and the Rytm mod that uses it) get one issue and two pull requests
+  that link each other. Both must work with the other side's previous release: an older Sidecar with your mod, and
+  your Sidecar with the previous mod release.
+- **Protocol additions** (a new message, a new version of one, a new kit-file line) are documented in the same pull
+  request: what it carries, who sends it, and what an older side does with it.
+- **Sound changes** for existing kits, cards or plugins (a default that moves, a range that changes) get a line for the
+  release notes in the pull request.
+- AI-assisted code is fine; you are still the one who tested it. Say what you ran and on what.
+
 ## Workflow
 
 1. **Fork** this repository on GitHub and clone your fork, then `git checkout dev`.

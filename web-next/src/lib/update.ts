@@ -131,21 +131,22 @@ export async function checkParts(f: Source, h: UpdateHeader, onProgress?: (frac:
   }
 }
 
-// ---- versions (update.cpp's cmp_version: MAJOR.MINOR.PATCH[-pre], a release above its pre-releases, -dev lowest) ----
-function parseVersion(v: string): [number, number, number, string | null] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim());
-  return m ? [+m[1], +m[2], +m[3], m[4] ?? null] : null;
+// ---- versions (update.cpp's cmp_version: MAJOR.MINOR.PATCH[.BUILD][-pre], a release above its pre-releases, -dev lowest;
+// BUILD is the 4th number of 0.5.1.1, 0 when absent) ----
+function parseVersion(v: string): [number, number, number, number, string | null] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/.exec(v.trim());
+  return m ? [+m[1], +m[2], +m[3], +(m[4] ?? 0), m[5] ?? null] : null;
 }
 /** -1 / 0 / 1; -2 when either is not a version. */
 export function cmpVersion(a: string, b: string): number {
   const x = parseVersion(a), y = parseVersion(b);
   if (!x || !y) return a === b ? 0 : -2;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return (x[i] as number) < (y[i] as number) ? -1 : 1;
-  if (x[3] === y[3]) return 0;
-  if (x[3] === null) return 1;
-  if (y[3] === null) return -1;
-  if ((x[3] === "dev") !== (y[3] === "dev")) return x[3] === "dev" ? -1 : 1;   // -dev below every other pre-release
-  return x[3] < y[3] ? -1 : 1;
+  for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return (x[i] as number) < (y[i] as number) ? -1 : 1;
+  if (x[4] === y[4]) return 0;
+  if (x[4] === null) return 1;
+  if (y[4] === null) return -1;
+  if ((x[4] === "dev") !== (y[4] === "dev")) return x[4] === "dev" ? -1 : 1;   // -dev below every other pre-release
+  return x[4] < y[4] ? -1 : 1;
 }
 
 // ---- /update/state ----

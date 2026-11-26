@@ -1,0 +1,13 @@
+{
+  "id": "fx.galactic",
+  "version": "0.1.0",
+  "name": "GALACTIC",
+  "short": "GLXY",
+  "licence": "MIT",
+  "knobs": [
+    {"p": 1, "long": "Replace", "short": "REPL", "default": 38},
+    {"p": 2, "long": "Brightness", "short": "BRT", "default": 64},
+    {"p": 3, "long": "Detune", "short": "DTUN", "default": 64},
+    {"p": 4, "long": "Bigness", "short": "BIG", "default": 127}
+  ]
+}

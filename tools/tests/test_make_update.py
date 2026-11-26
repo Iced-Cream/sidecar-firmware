@@ -53,6 +53,12 @@ def main():
         w = data[woff:woff + wsize]
         assert w[:8] == b"SCWEB001" and struct.unpack_from("<I", w, 8)[0] == 3
         assert b"index.html.gz" in w and b"assets/a.js.gz" in w and b"assets/f.woff2" in w and b"index.html\x00" not in w
+        # a 4th number (0.5.1.1): stamped, built and checked like any other version
+        s4, s5 = save("v4", kernel(4, v="0.5.1.1", net=True)), save("v5", kernel(5, v="0.5.1.1", net=True))
+        with contextlib.redirect_stdout(io.StringIO()):
+            mu.main(["--pi4", s4, "--pi5", s5, "--version", "0.5.1.1", "--release", "--out", p("v.scu")])
+        assert mu.check(open(p("v.scu"), "rb").read())[:2] == ("0.5.1.1", "bbbbbbb")
+        refused(["--pi4", s4, "--pi5", s5, "--version", "0.5.1", "--out", p("x")], "not 0.5.1")
         # an engine.img as --pi4 is the same file
         save("e4", mu.wrap(open(k4, "rb").read()))
         with contextlib.redirect_stdout(io.StringIO()):

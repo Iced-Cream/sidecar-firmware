@@ -1,10 +1,11 @@
 <!-- Voices › user machines (core/user/um.h; the old page's User machines tab): the project's slots U1..U5 (assign a
      package that fits, clear), the user effects UFX1..UFX4 (Plugin API 3: pick an installed effect, or none; the
      console's um=fx, as the Rytm's USER SLOTS page), the packages on the card, rescan. Upload and delete go through
-     Library › Files. -->
+     Library › Files. The community Catalog (CatalogCard.vue) sits below. -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import Card from "../../ui/Card.vue";
+import CatalogCard from "./CatalogCard.vue";
 import { useSidecar } from "../../lib/useSidecar";
 import { confirmAsk } from "../../lib/confirm";
 import { effectChoices, machineChoices, ufxAvailable, ufxCommand, ufxSlots } from "../../lib/ufx";
@@ -103,6 +104,7 @@ async function clear(n: number) {
     </template>
     <p v-if="err" class="small warm" role="status">{{ err }}</p>
   </Card>
+  <CatalogCard :installed="plugins" @done="run('um=rescan')" />
 </template>
 
 <style scoped>

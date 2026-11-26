@@ -365,8 +365,8 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 	s_bExplain = 0;
 	memset (&s_V, 0, sizeof s_V);
 	// 1024x600 (TH->dx, dy): the timeline gets the extra room, the keys wider, the overlay stays its size, centred
-	const int dx = TH->dx, dy = TH->dy, W = th_page_w (), H = O ? TH->h : LU (428) + dy;
-	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, W, H);
+	const int dx = TH->dx, dy = TH->pdy, W = th_page_w (), H = O ? TH->h - LU (25) : LU (428) + dy;
+	lv_obj_t *pg = th_box ((lv_obj_t *) parent, 0, y0, W, H + (O ? LU (25) : 0));
 	s_Page = pg;
 	static const char *const kKeys[8] = {"ARM", "REPLAY", "<", ">", "ZOOM -", "ZOOM +", "FOLLOW", "CFG"};	// (T12: zoom named)
 	if (O)
@@ -401,6 +401,7 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 	lv_obj_add_flag (s_Area, LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_add_event_cb (s_Area, area_cb, LV_EVENT_ALL, 0);
 	th_key_check (s_Key[K_FOLLOW], s_bFollow);
+	lv_obj_add_flag (s_Key[K_CFG], LV_OBJ_FLAG_HIDDEN);		// (the Setup pill of the SONG row opens the how-to)
 	lv_obj_add_flag (s_Undo, LV_OBJ_FLAG_HIDDEN);
 	// the overlay: the confirmation / the how-to
 	if (O)
@@ -409,7 +410,7 @@ void sidecar_song_create (void *parent, int y0, sidecar_song_cmd_t c)
 		lv_obj_set_style_bg_color (s_Dlg, lv_color_hex (TH->bg), 0);
 		lv_obj_set_style_bg_opa (s_Dlg, LV_OPA_COVER, 0);
 		lv_obj_set_style_border_color (s_Dlg, lv_color_hex (TH->ink), 0);
-		lv_obj_set_style_border_width (s_Dlg, 1, 0);
+		lv_obj_set_style_border_width (s_Dlg, TH->edge_w, 0);
 		for (int i = 0; i < 10; i++) s_DlgText[i] = th_label (s_Dlg, LU (6), LU (5) + i * LU (16) + (i ? 2 : 0), i ? TH->f_micro : TH->f_body, TH->ink, "");
 		s_DlgYes = th_key (s_Dlg, LU (180), LU (178), LU (146), LU (32), "CONFIRM", TH_KEY_ACCENT, dlg_cb, (void *) 1);	// (filled while it overwrites: dlg_show)
 		s_DlgNo = th_key (s_Dlg, LU (8), LU (178), LU (146), LU (32), "CANCEL", TH_KEY, dlg_cb, (void *) 0);
@@ -435,6 +436,7 @@ void sidecar_song_show (int on)
 }
 
 int sidecar_song_shown (void) { return s_Page && !lv_obj_has_flag (s_Page, LV_OBJ_FLAG_HIDDEN); }
+int sidecar_song_explain_shown (void) { return s_bExplain; }
 int sidecar_song_zoom (void) { return kZoom[s_nZoom]; }
 
 void sidecar_song_explain (int on)
@@ -471,7 +473,7 @@ void sidecar_song_set (const sidecar_song_view_t *v)
 	lv_snprintf (t, sizeof t, "%u EV  BAR %u.%u  %c%02d  %d.%d BPM  TAKE %d/%d%s", v->events, at / SSG_BAR + 1, at % SSG_BAR / SSG_PPQ + 1,
 		     'A' + pat / 16, pat % 16 + 1, v->bpm10 / 10, v->bpm10 % 10, v->take_i + 1, v->takes, v->recovered ? "  RECOVERED" : "");
 	th_label_set (s_Info, t);
-	if (v->config[0]) lv_snprintf (t, sizeof t, "MIDI CONFIG: SEE CFG  %s", v->msg);	// (the settings: CFG's checklist)
+	if (v->config[0]) lv_snprintf (t, sizeof t, "MIDI CONFIG: SEE SETUP  %s", v->msg);	// (the settings: CFG's checklist)
 	else lv_snprintf (t, sizeof t, "%s", v->msg);
 	th_label_set (s_Msg, t);
 	keys_update ();

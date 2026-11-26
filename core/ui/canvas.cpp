@@ -181,7 +181,12 @@ CORE_COLD void Canvas::put_text(int slot, const RFont& f, int x, int y, const ch
 #if CORE_UI_TOOLS
   if (fit_report && str) {
     int len = (int)strlen(str);
+    // centred or right-aligned text that starts left of x 0: the Rytm drops a glyph that starts off the screen (a
+    // list's 8-letter name centred in column 0 lost its first letter on the unit; its 7-letter names did not). Its width
+    // at kRSmall's mean advance, 4.5 px (glyphs of 4 and 5)
+    int w = len ? len * (2 * f.advance - 1) / 2 - 1 : 0, x0 = (flags & 3) == kAlignCentre ? x - w / 2 : (flags & 3) == kAlignRight ? x - w : x;
     if (len > room) fit_report(str, len, room);
+    else if (len && x0 < 0) fit_report(str, w, w + x0);
     else if (len && y + f.h + f.desc > kH) fit_report(str, y + f.h + f.desc, kH - y);
   }
 #endif

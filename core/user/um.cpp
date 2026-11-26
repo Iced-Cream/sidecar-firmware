@@ -886,13 +886,21 @@ void block_fill(rmp3_block* b, int n, float* l, float* r, uint32_t place, int bo
   b->sig_value = g_sig_val[c];
 }
 
+}  // namespace
+int32_t pool_line(int32_t slot) {
+  if (slot < 1) return 0;
+  int32_t bank = slot >> 7, row = slot & 127, line = bank * core::kPool + row;
+  return row && line <= core::kPoolLines ? line : 0;
+}
+namespace {
 void upool_drop(int vi) {   // the voice's pin and entry go
   UPool& u = g_up[vi];
   if (u.pcm && core::psram) core::psram->unpin(u.folder, u.file);
   u.slot = 0, u.pcm = nullptr, u.want = 0, u.bad = 0, u.waiting = false;
 }
-int32_t h_pool_info(int32_t slot, rmp_pool_info* info) {
+int32_t h_pool_info(int32_t code, rmp_pool_info* info) {
   int vi = g_vnow[this_core()];
+  int32_t slot = pool_line(code);   // (the list code or bank A's slot: the pool line from here on)
   if (vi < 0 || !info || slot < 1 || slot > core::prj(core::slot_of_voice(vi)).npool ||
       core::pool[core::pool_line(core::slot_of_voice(vi), slot)].folder < 0)
     return RMP_POOL_EMPTY;
@@ -906,9 +914,10 @@ int32_t h_pool_info(int32_t slot, rmp_pool_info* info) {
   u.want = slot;
   return RMP_POOL_NOT_READY;
 }
-int32_t h_pool_read(int32_t slot, uint32_t pos, float* buf, int32_t n) {
+int32_t h_pool_read(int32_t code, uint32_t pos, float* buf, int32_t n) {
   int vi = g_vnow[this_core()];
   if (vi < 0 || !buf || n <= 0) return 0;
+  int32_t slot = pool_line(code);
   const UPool& u = g_up[vi];
   if (u.slot != slot || !u.pcm) return 0;
   if (u.ch != 2) return rmp_pool_decode((const uint8_t*)u.pcm, u.frames, 1, 16, pos, buf, n);
@@ -957,6 +966,21 @@ void on_pool_changed(int line) {   // a pool slot (or the pool: -1) changed: the
   for (int vi = 0; vi < core::kVoices; ++vi)
     if (line < 0 || g_up[vi].slot == line + 1 || g_up[vi].bad == line + 1 || g_up[vi].want == line + 1) upool_drop(vi);
 }
+
+}  // namespace
+// Test hooks (core/tests/test_pool_code.cpp): the API 2 pool host functions as voice vi's plugin calls them, without a plugin
+// image; test_pool_voice puts the voice on a slot (g_cur) so the control core's pass resolves what pool_info asked for.
+void test_pool_voice(int vi) { g_cur[vi] = 0; }
+int32_t test_pool_info(int vi, int32_t slot, rmp_pool_info* info) {
+  VNow now(vi);
+  return h_pool_info(slot, info);
+}
+int32_t test_pool_read(int vi, int32_t slot, uint32_t pos, float* buf, int32_t n) {
+  VNow now(vi);
+  return h_pool_read(slot, pos, buf, n);
+}
+bool test_pool_pass() { return upool_pass(); }
+namespace {
 
 // ---- presets
 void pre_invalidate(int s) {

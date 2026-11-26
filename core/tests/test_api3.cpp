@@ -104,7 +104,7 @@ static std::vector<float> block(int vi) {
   um::pre_block();
   render_voices(g_ring, 1024, g_w, 0, kVoices, g_mach);
   std::vector<float> r(kBlock);
-  for (int k = 0; k < kBlock; ++k) r[k] = g_ring[(g_w + k) % 1024][vi] / (0.7f * 32767.0f);
+  for (int k = 0; k < kBlock; ++k) r[k] = g_ring[(g_w + k) % 1024][vi] / (core::kVoiceGain * 0.7f * 32767.0f);
   g_w = (g_w + kBlock) % 1024;
   return r;
 }
@@ -118,8 +118,8 @@ static void block2(int vi, std::vector<float>* l, std::vector<float>* r) {
   render_voices(g_ring, 1024, g_w, 0, kVoices, g_mach, g_ring_r, g_stm);
   l->assign(kBlock, 0.0f), r->assign(kBlock, 0.0f);
   for (int k = 0; k < kBlock; ++k) {
-    (*l)[k] = g_ring[(g_w + k) % 1024][vi] / (0.7f * 32767.0f);
-    (*r)[k] = g_ring_r[(g_w + k) % 1024][vi] / (0.7f * 32767.0f);
+    (*l)[k] = g_ring[(g_w + k) % 1024][vi] / (core::kVoiceGain * 0.7f * 32767.0f);
+    (*r)[k] = g_ring_r[(g_w + k) % 1024][vi] / (core::kVoiceGain * 0.7f * 32767.0f);
   }
   g_w = (g_w + kBlock) % 1024;
 }

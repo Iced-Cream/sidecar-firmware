@@ -41,15 +41,20 @@ a number of entries, and a report is not a detent: a slow turn gives a count or 
 Every list, enumerated value, small count and switch goes through `list_turn` (`list_turn_long` for long lists, page.h,
 pages.cpp); continuous values keep the counts and FUNC x 8.
 
-- The first report after 300 ms of rest (`kListRestMs`) steps at once, whatever its size: a nudge is never lost.
-- While turning, one entry every 4 counts (`kListCounts`), at most one every 60 ms (`kListGapMs`); the counts over a step
-  are dropped, so a hard turn walks the list and skips nothing. The gap is a little under the report period: it holds
-  back only reports that bunch up, and such a report's counts wait for the next.
+- The first report after 300 ms of rest (`kListRestMs`) steps at once, whatever its size: a nudge is never lost. Not
+  on a small list (2 to 8 values, `kListSmall`, when the caller passes the size: the voice pages' lists, the SEQ track
+  pages' DIR SPD QNT RNG WGHT MODE SQNT SAFF, the track switch, QNT and FOLW): there the first entry takes
+  `kListCounts` counts too, so a touch does not flip a switch or move SPD (0.5.0 stopgap). The other pages give no size
+  yet and keep the step at once.
+- While turning, one entry every 6 counts (`kListCounts`, stock's enums; 4 before 0.5.0), at most one every 60 ms
+  (`kListGapMs`); the counts over a step are dropped, so a hard turn walks the list and skips nothing. The gap is a
+  little under the report period: it holds back only reports that bunch up, and such a report's counts wait for the
+  next.
 - A reversal starts the count over, so a knob jittering on a detent does not bounce a switch. Lists clamp, none wraps.
 - Long lists (LFO TARGET and PARAM, the bank list's rows, files and presets, POOL's rows and files, the PROJECT cursor,
   AUTO's entries, REC's takes, SAMPLE's bars, CHOP's slices, COND): a report of 8 counts or more (`kListFastCounts`, where
   stock's own acceleration starts) moves 4 entries (`kListFast`), about 60 entries a second, and FUNC multiplies as it
-  did: 127 entries take about 2 s of spin, about 8.5 s of steady turning, a second with FUNC.
+  did: 127 entries take about 2 s of spin, about 8.5 s of steady turning (6 counts a report), a second with FUNC.
 
 Timing feel needs the real Rytm: the constants are in page.h. `list_pacing(false)` gives the counts through, for tests of what a page does (a test turns faster than a hand).
 

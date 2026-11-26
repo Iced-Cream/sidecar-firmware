@@ -16,24 +16,21 @@ Display > UI style switches them live; docs/UI-THEMES.md has the design system. 
 shows the same content on 400x240 dots (512x300 on a 1024x600 screen).
 
 - Title bar "Sidecar | Expander", with "Rytm connected" (green) or "Rytm not connected" (red) on the right.
-- TRACKS: voices 1-8 with their current machine (PLAITS, FM, JUNO, DSPS, DAISY, MD, USER; MD in DIGIDRUM's place since 2026-10-29).
-- STATUS:
-  - Overbridge blocks since boot.
-  - Underruns (red once nonzero).
-  - Load bars for cores 1-3. Core 0 is not measured and shows "-".
-  - The status updates once a second, from the stats line.
-- TOUCH TEST:
-  - A TAP button with a counter.
-  - A 0-127 slider.
-  - The touch readout `raw x,y -> screen x,y`.
-  - A green ring under the finger.
-  - The link (usb, tcp or self-test) in the panel's title row.
-  - **Touch works - hide** (48 px high) hides the panel and stores `touchtest=0`, so it stays hidden after a reboot.
-  - Hidden, a SIDECAR panel takes its place: network (IP), web page address, link and USB-C mode, and the recorder's state. No Wi-Fi name or key.
-  - **Settings > About > Touch test (home): Hide / Show** (or the console command `touchtest=0|1`) switches it.
+- HOME > Overview (0.5.1; docs/UI-THEMES.md "HOME: Overview and Perform"), the page the T1 key lands on first:
+  - NOW: the pattern, the transport, the project.
+  - PERFORM: the XY pad's HOLD and first targets, send FX 1 and 2 (tap: Perform, FX > Sends).
+  - VOICES: voices 1-8 with their machine (PLAITS, FM, JUNO, DSPS, DAISY, MD, USER), the render load as a bar, `poly`, `muted`; a tap opens VOICE on it.
+  - The status line: the recorder (tap: REC), Health (names the one thing wrong: underruns, power, a core over 85 %, temperature, a muted voice, a
+    user machine missing; tap: Status), the links (host, address, USB-C). From 1024x600 three cards.
+  - The status updates once a second, from the stats line. Core 0 is not measured.
+- HOME > Perform: the XY pad, HOLD, SETUP (opens FX > XY), the slots, Kill tails and REC.
+- TOUCH TEST: the first tap anywhere hides HOME's ring under the finger and stores `touchtest=0`; the test itself (TAP, a 0-127 slider, the raw
+  readout, calibration) is on Settings > Display. **Settings > About > Touch test (home): Hide / Show** (or the console command `touchtest=0|1`)
+  switches the first-tap ring.
 
-The title bar's **Settings** button (48 px high, top right) opens the settings pages and becomes **Home**; a tab strip
-(Sound, MIDI, Send FX, Display, Pool, System, About) switches between them, and Settings reopens the page last used. Every control is at least 48 px
+The navigation (0.5.1, docs/UI-THEMES.md "Sections and sub-page rows"): the keys T1..T8 (HOME SEQ PAT VOICE FX SONG REC SET) are sections; under the
+header each has a row of sub-pages (HOME: Overview, Status, Project, Perform; VOICE: Sound, Insert, Source, Scope; FX: Sends, Master, XY; SONG: Timeline, Setup;
+REC: Record, Takes; SET: Sound, MIDI, Display, Pool, System, About), and a T key lands on the pill used last. SEQ and PAT carry their own header row. Every control is at least 48 px
 high and sends a console command through `CConsole::Command`, the web page's path (`UiCommand` in kernel.cpp logs
 `display: command "..."`). Commands only queue (core 3 applies them), so a tap never waits for the engine. About 150 ms
 after a command, and every second, `CKernel::PushUi` reads the state back the way `/status` does, so a change from the web
@@ -51,13 +48,13 @@ page, the serial console or the display shows on all of them.
   Rytm's own auto channel), **Computer notes (USB-C)** Off / On (`keys=mac:off|on`); stored in `/.rytm/keys.txt`, at once.
   Read only: the USB-A devices by name, where the last key went, the MIDI-learn routes (cleared on the Rytm: SIDECAR
   MENU > MIDI; stored in `/.rytm/learn.txt`). Until the engine's first state the controls are greyed.
-- **Send FX**:
+- **Send FX** (FX > Sends since 0.5.1; before: Settings > Send FX):
   - FX 1 / FX 2 TYPE and the 12 tracks' send levels, read only: the Rytm's kit owns them, and a console override
     (`sendlvl=`) lasts only until the next 0x20 message.
   - **Kill tails** sends `killfx`: the CC 120 request (`core::fx::all_sound_off`, both FX fade out in about 5 ms, clear and
     return). Needs a build with the cc120-kill change.
   - **XY** opens the XY pad (0.5.0, docs/XY-PAD.md): a touch controller for up to 4 targets per axis, HOLD and SETUP.
-- **Display**: UI style (OLED / SIDECAR, `uistyle=`), screensaver, the home page's touch test, brightness.
+- **Display**: UI style (OLED / SIDECAR / GRID, `uistyle=`), screensaver, the home page's touch test, brightness.
 - **About**: the web page address, IP, whether the web server runs (cmdline `web=`, not switchable at run time), link,
   USB-C gadget mode, the engine's build time, Circle and LVGL versions.
 
@@ -95,6 +92,20 @@ With the display up, UP + T7 / T9 / T10 open REC / SCOPE / STATUS on the touchsc
 (`voice_pi::OwnPages`, `core::ui::remote_display_owns`); without a display (display=0) they open the Rytm's own pages,
 and UP's map leaves out the keys that would open nothing at all (rui1052; docs/UI-THEMES.md "The device's shortcuts").
 
+**Touching the VOICE knobs**: the eight dials of a Sidecar track the Rytm has selected take a finger: a vertical drag changes the
+value relative to where the finger landed, from the value the Rytm reports (that is the knob as the Rytm shows it: with a p-lock on
+the step it is playing, the p-locked value, not the kit's), and the page writes it to the Rytm as a knob turn (the console's
+`vparam=T:K:V`: track, the Rytm's P(K+1), 0..127; a drag's live lines end in `:0`, the lift's line does not; `vparam_command` in
+core/ui/remote.cpp, the Rytm mod's 48 write). The Rytm answers 48 with 0 written, 1 refused (shared SRC / page 2 records not set up
+for the machine), 2 no such parameter, 3 lock slots full, 4 locked; there is no "busy", and a full write queue on the Rytm drops a
+write without any answer (builds without 48 never answer). Only the lift's line is followed: status 1 is sent again every 100 ms,
+10 times at most within a second, then refused; 2, 3 and 4 are refused at once; a refusal puts the knob back and says so for three
+seconds ("THE RYTM REFUSED THE VALUE", status 4 "LOCKED ON THE HELD STEPS"); no answer is nothing to follow. The knob keeps the
+dragged value, number and ring, after the lift until the Rytm's own moves (2 s at most, then the Rytm's value is shown again whatever
+came). Not editable: a knob not in use, a list cell (a model, a pattern, a bank list), the banked SRC knob (P1 of the machines with a
+source list, DSP SAMPLE's and SAMPLER's SMP P11: its value is index << 7 | bank), MIDI's, an analog track, a tile's track the Rytm has
+not selected. There is no double tap (no machine knob has a default table).
+
 **MULTISAMPLE** in the machine view (touch2): a tap on a MULTI voice on the home page, or on the VOICE page's MULTISAMPLE
 panel (`TAP: BANKS`), opens the machine view for it: the instrument's key zones over a piano of its span (the keys
 sounding lit), and its POOL (below).
@@ -104,7 +115,8 @@ view's POOL key shows the selected voice's own list - GRANULAR the SAMPLES, WAVE
 INSTRUMENTS - as a tab row A..H (all banks alike; a change sends `pool=smp|wt|inst:shown:B`, takes go to the bank last
 shown) and the bank's rows `000 OFF`, `001 name`, `---`. Row states: LOADING, RAM, `!name` MISSING (the theme's alert),
 `~name` CHANGED, and an in-use marker (filled: voices on it now, `x3` right; an outline: seen playing in this project).
-The title shows the list and the pool RAM (`RAM 412 MB 40%`, `RAM -` until the shared cache counts).
+The title shows the list and the pool RAM (`RAM 412 MB 40%`, `RAM -` until the shared cache counts). Rows are 36 px (a touch
+target); what does not fit is paged with UP / DOWN (at 800x480 about five rows show under the tab row).
 - a tap on a row with content: the voice plays it (`gr=pick:V:C005`, `wt=pick:V:C005`, `msamp=pick:V:C005`: the Rytm's P1);
   on an empty row: FILES aimed at it - the list machine's browser (`browse=gr|wt|ms:open:I`, `up`, `root`; the root shows
   `@INPUTS/` and `@BUILT-IN/` where the list takes them), a file or virtual item goes into the row
@@ -550,7 +562,7 @@ A USB mouse on this panel still moves in the panel's portrait range: not handled
 - The settings are stored in `/.sidecar/display.txt` (`screensaver=60`, `brightness=100`, `touchtest=1`, `uistyle=oled`, and
   `res=` when one was added by hand: "Screen sizes"), written by core 0 as a whole file (tmp + rename). `screensaver=`, `brightness=`, `touchtest=` and `uistyle=` in cmdline.txt override
   the file at boot.
-- **UI style:** `uistyle=oled|sidecar` (console, web page, the Display page; an older card's `classic` reads as `sidecar`): the theme, switched live (docs/UI-THEMES.md).
+- **UI style:** `uistyle=oled|sidecar|guide` (console, web page, the Display page; an older card's `classic` reads as `sidecar`, a `square`, `2` or `3` from the 0.5.1 test build as `guide`, the stored word of GRID, which `grid` also reads): the theme, switched live (docs/UI-THEMES.md).
 - `/status` carries `screensaver`, `brightness`, `touchtest` (1 shown, 0 hidden), `display` (a display is attached) and `blank`.
 
 ## Cost
@@ -561,8 +573,8 @@ A USB mouse on this panel still moves in the panel's portrait range: not handled
   - Adding the send FX's 2.7 MB of bss gives about 5.3 MB, inside the 8 MB `KERNEL_MAX_SIZE`.
   - Since pi-heap (2026-10-17) the send FX (4.7 MB) and the core's big buffers (578 KB: core/heap_buffers.h) come from Circle's heap at boot (kernel.cpp BootAlloc), not .bss: `_end` went from 0x82ee88 to 0x30e6c8 (bss 5.95 MB to 575 KB).
   - LVGL is about 549 KB of code and 99 KB of fonts (Montserrat 12-24), plus 1 KB of bss. Since SIDECAR the pages use
-    Montserrat no more (only LVGL's default, 14, stays referenced); SIDECAR's Space Grotesk tables are 89 KB
-    (`pi/ui/fonts/`, 12-28 px), and the Montserrat 28 table (37 KB, `sidecar_font28.c`) is gone.
+    Montserrat no more (only LVGL's default, 14, stays referenced); the SIDECAR and GRID Arimo Bold tables are about 148 KB with the three symbol tables
+    (`pi/ui/fonts/`, 11-44 px), and the Montserrat 28 table (37 KB, `sidecar_font28.c`) is gone.
 - **Heap**, outside the kernel image (Circle's heap):
   - One draw buffer of 48 lines: 77 KB from `HEAP_DMA30`.
   - LVGL's objects use `malloc` (`LV_STDLIB_CLIB`): tens of KB for this screen.

@@ -45,8 +45,13 @@
 class CWifi;				// wifi.h: Wi-Fi (off by default)
 class CSidecarDisplay;			// pi/ui/sidecar_display.h: the HDMI display (docs/pi-display.md)
 
+class CKernelEngine;			// kernel.cpp: the remote UI's views read m_Ui, m_Timer and m_pDisplay
+class CKernelDisplay;
+
 class CKernel
 {
+	friend class CKernelEngine;
+	friend class CKernelDisplay;
 public:
 	CKernel (void);
 	boolean Initialize (void);
@@ -86,7 +91,8 @@ private:
 	void FanStep (unsigned nTempC, const char *pWhy);	// the fan's level (fan.h) from a reading, the pin set on a change
 #endif
 	void ReadPower (boolean bLog);				// the supply (power_state.h): at boot, every 10 s, logged on a change and once a minute
-	void PushUi (void);					// the display's state, read back from the engine (docs/pi-display.md)
+	void PushUi (void);
+	void FillUi (void);					// PushUi without the display: m_Ui from the engine (the remote UI's STATUS needs it with no screen)					// the display's state, read back from the engine (docs/pi-display.md)
 	// the USB-C mode (usb_mode.h, docs/usb-mirror.md "The setting"): the mode chosen from display.txt / cmdline, run on the
 	// gadget (live: CSidecarGadget::SetMirror), and published to the Rytm's SIDECAR MENU > USB-C (usbc_pi.h); core 0
 	void ApplyUsbMode (void);
@@ -99,6 +105,11 @@ private:
 	void UseLink (const char *pSpec);			// usb | tcp | tcp:IP:PORT
 	// net=auto at boot (usbnet_pi.h): a computer on USB-C whose network driver starts in time gets the network
 	boolean UsbNetProbe (const usbnet::Options &rOpt, unsigned nGadgetT0, const char **ppWhy);
+	// net=auto chose Wi-Fi or Ethernet at boot: a computer that starts its USB network later is asked about on the touchscreen
+	// (usbnet_cfg.h LatePrompt); m_bLateAsk: this boot may ask (net=auto's probe chose the other network; the touch screen is checked live)
+	boolean m_bLateAsk = FALSE;
+	usbnet::LatePrompt m_LatePrompt;
+	boolean DrainForRestart (void);			// the card's work done (bounded) before a restart the owner asked for
 	static void WebStatus (CString *pOut, void *pParam);
 	static void WebHealth (CString *pOut, void *pParam);	// GET /health: the open one (paircode.h's open set)	// the web page's /status (web.h)
 
@@ -184,7 +195,7 @@ private:
 	volatile boolean	m_bTouchHidden;		// touchtest=0: the home page's touch test is hidden
 	boolean			m_bTouchCal;		// touchcal=X0,X1,Y0,Y1,SWAP (pi/ui/touch_cal.h): the 4-point calibration
 	touch_cal_t		m_TouchCal;
-	unsigned		m_nUiStyle;		// uistyle=oled|sidecar ("classic" read as 1): the theme (sidecar_theme.h), 0 OLED
+	unsigned		m_nUiStyle;		// uistyle=oled|sidecar|guide ("classic" read as 1): the theme (sidecar_theme.h), 0 OLED
 	volatile boolean	m_bSaveDisplay;		// written by core 0's loop (tmp + rename)
 	unsigned		m_nResW, m_nResH;	// res=800x480|1024x600|1280x720 (display.txt / cmdline): the UI's size, 0: automatic
 	unsigned		m_nResFileW, m_nResFileH;	// display.txt's res= alone (kept when the file is written)

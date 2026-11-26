@@ -1,6 +1,7 @@
 // plugins/v2_test/v2.c - a test machine for plugin API 2 (sim/tests/test_rmp.py, sim/rmp_e2e.py).
 //   P1 PRE (the preset knob), P2 LEVEL and P3 TONE (role preset), P4 DETUNE (role offset, 64 = 0,
-//   +-1 semitone), P5 SMP (a pool slot, 0 OFF), P6 MODE (SINE, POOL in two zones), P7 JUMP (POOL: a
+//   +-1 semitone), P5 SMP (a SAMPLES row, 0 OFF; the bank the value's fraction names is reached
+//   through rmp_pool_code_of_knob, pool code bank * 128 + row), P6 MODE (SINE, POOL in two zones), P7 JUMP (POOL: a
 //   trig starts at (JUMP - 64) x 1000 frames when JUMP >= 64, else at 0), P8 GAIN (free), P9 ROOT
 //   (note text), P10 SPARE (range 10..20). TONE, GAIN, ROOT and SPARE do not change the sound: they are
 //   there for the knob kinds, roles and ranges the Rytm shows.
@@ -53,7 +54,7 @@ static void v2_params(void *st, const float *p) {
   v2_state *s = st;
   s->level = p[1] / 127.0f;
   s->offs = (p[3] - 64.0f) / 64.0f;
-  s->smp = (int32_t)p[4];
+  s->smp = rmp_pool_code_of_knob(p[4]);   /* the pool code: bank * 128 + row (bank A: the row) */
   s->mode = ((int32_t)p[5] * 2) >> 7;
   s->jump = (int32_t)p[6];
   retune(s);

@@ -21,6 +21,7 @@
 #include "msamp/cardq.h"
 #include "nmach.h"
 #include "rui_png.h"
+#include "screens_util.h"
 #include "samp/dsp.h"
 #include "samp/sedit.h"
 #include "samp/sedit_dsp.h"
@@ -154,7 +155,9 @@ static bool shows(const char* s) {
     if (t.s[0] && strstr(t.s, s)) return true;
   return false;
 }
-static void png(const char* name) {   // PNGs to $RUI_OUT, default build/rui_sedit
+static void png(const char* name) {
+  draw();
+  CHECK(scr_items(g_c) < 64);   // PNGs to $RUI_OUT, default build/rui_sedit
   static std::string dir = rui_png_dir("RUI_OUT", "build/rui_sedit");
   uint8_t fb[ui::kBytes];
   draw();
@@ -192,8 +195,45 @@ static void t_open_from_src() {
   run();
   CHECK(vw().st == sedit::kReady && vw().frames == kN && vw().a == 0 && vw().b == kN);
   tick();
-  CHECK(shows("E:CROP  YES:DO") && shows("KICK.WAV")   /* (the Rytm's font: capitals) */);
+  CHECK(shows("DO") && shows("BACK") && shows("CROP") && shows("KICK.WAV")   /* (the Rytm's font: capitals) */);
   png("sedit-ready.png");
+}
+
+// 0.5.0 screens (the UI system, AROUND): names over the wave, the function's tag, the key boxes, the turned knob's name on
+// the title bar and its value in the bottom bar, the modals without the page's own text; always under the item budget
+static const ui::TextItem* item(const char* s) { return scr_find(g_c, s); }
+static void t_screens() {
+  tick(80);
+  draw();
+  CHECK(scr_items(g_c) < 64);
+  const char* nm[4] = {"STRT", "END", "ZOOM", "VIEW"};
+  for (int i = 0; i < 4; ++i) CHECK(item(nm[i]) && item(nm[i])->x == i * 32 + 16 && item(nm[i])->y == 10 && (item(nm[i])->flags & 3) == ui::kAlignCentre);
+  CHECK(item("CROP") && (item("CROP")->flags & ui::kTextInvert) && item("CROP")->y == 49);   // the function as a filled tag
+  CHECK(!strcmp(g_c.txt[ui::kSlotTitle].s, "SAMPLE EDIT") && !strcmp(g_c.txt[ui::kSlotRight].s, "KICK.WAV"));
+  CHECK(!strcmp(g_c.txt[ui::kSlotFoot].s, "YES") && !strcmp(g_c.txt[ui::kSlotFoot + 1].s, "DO") && !strcmp(g_c.txt[ui::kSlotFoot + 2].s, "NO") &&
+        !strcmp(g_c.txt[ui::kSlotFoot + 3].s, "BACK"));   // nothing to undo, nothing unsaved: NO leaves
+  CHECK(!item("E:CROP  YES:DO"));
+  png("sedit-idle.png");
+  down(0x80);   // FUNC held: A and B jump to the transients, YES saves
+  draw();
+  CHECK(item("TRNS") && !item("STRT") && !item("END") && item("ZOOM") && item("VIEW"));
+  CHECK(!strcmp(g_c.txt[ui::kSlotFoot + 1].s, "SAVE") && !strcmp(g_c.txt[ui::kSlotFoot + 3].s, "BACK"));
+  png("sedit-func.png");
+  up(0x80);
+  turn(0, -1);   // A at its left limit: the name and value show, nothing moves
+  draw();
+  CHECK(!strcmp(g_c.txt[ui::kSlotTitle].s, "REGION START") && !strcmp(g_c.txt[ui::kSlotFoot].s, "START") && !strcmp(g_c.txt[ui::kSlotFoot + 1].s, "0.000S") &&
+        g_c.txt[ui::kSlotFoot + 1].x == 70 && (g_c.txt[ui::kSlotFoot + 1].flags & ui::kTextInvert));
+  CHECK(item("STRT") && (item("STRT")->flags & ui::kTextInvert) && !(item("END")->flags & ui::kTextInvert) && scr_items(g_c) < 64);
+  png("sedit-turning-a.png");
+  turn(4, +1);   // E: the function, its whole name
+  draw();
+  CHECK(!strcmp(g_c.txt[ui::kSlotTitle].s, "FUNCTION") && !strcmp(g_c.txt[ui::kSlotFoot].s, "FUNC") && !strcmp(g_c.txt[ui::kSlotFoot + 1].s, "NORMALISE") && item("NORM"));
+  turn(4, -1);
+  CHECK(vw().fn == sedit::kCrop);
+  tap(0x43);   // any key ends the turn display
+  draw();
+  CHECK(!strcmp(g_c.txt[ui::kSlotTitle].s, "SAMPLE EDIT") && !strcmp(g_c.txt[ui::kSlotFoot].s, "YES"));
 }
 
 static void t_send_mask() {   // A..E and FUNC (FUNC + YES, FUNC + A / B / D) are the page's
@@ -221,7 +261,7 @@ static void t_knobs() {
   tick(80);   // (past the message)
   turn(4, +2);   // E: the function
   CHECK(vw().fn == sedit::kTrim);
-  CHECK(shows("E:TRIM"));
+  CHECK(shows("TRIM") && !shows("CROP"));
   turn(4, -5);   // clamped at CROP
   CHECK(vw().fn == sedit::kCrop);
   CHECK(vw().zoom == 0 && vw().wa == 0);
@@ -262,6 +302,9 @@ static void t_func_yes_save() {
   tap(0x44);
   up(0x80);
   CHECK(shows("SAVE+USE") && shows("CANCEL"));
+  CHECK(shows("SAVE REGION  A: PICK") && shows("TRACK USES IT") && shows("NEW FILE") && shows("NOTHING SAVED"));
+  CHECK(!shows("STRT") && !shows("ZOOM") && !shows("VIEW") && scr_items(g_c) < 64);   // under the box the page's own text is not put
+  CHECK(!strcmp(g_c.txt[ui::kSlotFoot].s, "YES") && !strcmp(g_c.txt[ui::kSlotFoot + 1].s, "OK") && !strcmp(g_c.txt[ui::kSlotFoot + 3].s, "BACK"));
   png("sedit-save.png");
   turn(0, +5);   // A: the pick, clamped at CANCEL
   turn(0, -5);   // back to SAVE+USE, the default
@@ -279,7 +322,7 @@ static void t_func_yes_save() {
   tap(0x45);
   CHECK(!shows("SAVE+USE") && title_is("SAMPLE EDIT"));
   tick(80);   // (past a message's 2 s)
-  CHECK(shows("E:CROP  YES:DO"));
+  CHECK(shows("CROP") && shows("DO"));
   CHECK(!exists("/Samples/k/kick-ed2.wav"));
 }
 
@@ -328,8 +371,13 @@ static void t_no_undo_then_discard() {
   tap(0x45);   // the second undone
   run();
   CHECK(!vw().undo && vw().dirty);
+  tick(80);
+  draw();
+  CHECK(!strcmp(g_c.txt[ui::kSlotFoot + 3].s, "DISCARD"));   // what NO will do: it asks
   tap(0x45);   // nothing to undo, an edit: asked
   CHECK(shows("DISCARD EDIT?") && vw().st == sedit::kReady);
+  CHECK(shows("UNSAVED CHANGES") && !shows("STRT") && !strcmp(g_c.txt[ui::kSlotFoot + 1].s, "DISCARD") && !strcmp(g_c.txt[ui::kSlotFoot + 3].s, "KEEP"));
+  png("sedit-discard.png");
   tap(0x45);   // NO: kept
   CHECK(!shows("DISCARD EDIT?") && vw().st == sedit::kReady);
   tap(0x45);
@@ -550,6 +598,66 @@ static void t_sampler_src() {
   printf("sedit page: SAMPLER - B on its SRC view opens its sample, SAVE+USE writes its SMP\n");
 }
 
+// owner 2026-11-15 (hardware): a new SAMPLER on a track, a sample picked in the pool list (YES), SAMPLE EDIT said NO
+// SAMPLE until the sample had played once. The voice is idle: the Rytm's 0x03 reports come only while it plays (its first
+// one, at the machine's choice, has SMP OFF), and the pick reaches the host as the SRC view's 2A (P11). SAMPLE EDIT
+// takes the kit's SMP from it with no trig (SAMPLER's waveform on the SRC view already drew the 2A's: test_ui_wave).
+static void t_sampler_idle_pick() {
+  if (vw().st != sedit::kClosed) cmd_close();
+  ui::remote_reset();
+  ui::sedit_page_reset();
+  for (int i = 0; i < 20; ++i) pass();
+  from_rytm({0x33, 1, 4, 1, kRytmSampler, (uint8_t)(kDspSample | 1)});   // BT (track 4, voice 1): a new SAMPLER
+  dsp_report(1, 0, 0);   // its first report: SMP OFF
+  CHECK(pool_slot(v[1].p[10]) == 0);
+  from_rytm({0x29, 1, 4, 1});   // BT's SRC view (the SMPL page with the pool list)
+  tick();
+  from_rytm({0x2A, 1, 4, 10, 1, 8, 0});   // the pick: SMP A008 (beat.wav), no trig
+  tick();
+  CHECK(pool_slot(v[1].p[10]) == 0);   // (the voice's state untouched: SAMPLE EDIT reads the kit's SMP, the 2A's)
+  ui::sedit_page_open(4, -1);
+  CHECK(!shows("NO SAMPLE") && vw().has_track && vw().track == 4 && vw().st != sedit::kClosed);
+  from_rytm({0x30, 1, 0, 1, 0});
+  tick();
+  run();
+  CHECK(title_is("SAMPLE EDIT") && vw().st == sedit::kReady && vw().frames == kN / 2);
+  tick();
+  CHECK(shows("BEAT.WAV"));
+  cmd_close();
+  from_rytm({0x2A, 1, 4, 10, 1, 2, 1 << 4});   // another pick, bank B: B002 (rim.wav)
+  tick();
+  CHECK(sedit::open_track(4) == 0);
+  run();
+  CHECK(vw().st == sedit::kReady && vw().frames == kN / 4);
+  cmd_close();
+  // a report after the 2A (the voice played): its SMP is the newer word
+  dsp_report(1, 8, 0);
+  CHECK(ui::remote_track_src14_fresh(4) == -1 && sedit::open_track(4) == 0);
+  run();
+  CHECK(vw().st == sedit::kReady && vw().frames == kN / 2);   // A008 (the report's), not B002 (the older 2A)
+  cmd_close();
+  // a kit change: the old kit's SMP is forgotten until its 2A comes again
+  from_rytm({0x2A, 1, 4, 10, 1, 2, 1 << 4});
+  CHECK(ui::remote_track_src14_fresh(4) >= 0);
+  from_rytm({0x3B, 1, 9});
+  CHECK(ui::remote_track_src14(4) == -1);
+  from_rytm({0x30, 1, 0, 0, 0});
+  from_rytm({0x33, 1, 4, 1, 49, 0x7F});
+  CHECK(ui::remote_track_src14(4) == -1);   // (another machine: its knob is no SMP)
+  // a voice shared by two SAMPLER tracks (RS and CP, voice 7): CP's trig reports on the voice after RS's pick; RS's
+  // edit still opens RS's pick (the report may be CP's)
+  from_rytm({0x33, 1, 2, 2, kRytmSampler, (uint8_t)(kDspSample | 7), kRytmSampler, (uint8_t)(kDspSample | 7)});
+  from_rytm({0x2A, 1, 2, 10, 1, 8, 0});   // RS: A008
+  dsp_report(7, 2, 1 << 4);               // the voice: B002 (CP's trig)
+  CHECK(ui::remote_track_src14_fresh(2) == (8 << 7) && sedit::open_track(2) == 0);
+  run();
+  CHECK(vw().st == sedit::kReady && vw().frames == kN / 2);   // A008
+  cmd_close();
+  from_rytm({0x33, 1, 2, 2, 0, 0x7F, 0, 0x7F});
+  for (int i = 0; i < 20; ++i) pass();
+  printf("sedit page: SAMPLER - a pool pick on an idle voice (2A) opens in SAMPLE EDIT with no trig\n");
+}
+
 int main() {
   char tmpl[] = "/tmp/sedit-page-XXXXXX";
   CHECK(mkdtemp(tmpl));
@@ -575,6 +683,7 @@ int main() {
 
   t_open_from_src();
   t_send_mask();
+  t_screens();
   t_knobs();
   t_yes_apply();
   t_func_yes_save();
@@ -587,6 +696,7 @@ int main() {
   t_closed_elsewhere();
   t_back_keeps_shortcut();
   t_open_other_slots();
+  t_sampler_idle_pick();
   t_sampler_src();
   CHECK(system(("rm -rf '" + g_card + "'").c_str()) == 0);
   printf("test_sedit_page: PASS\n");

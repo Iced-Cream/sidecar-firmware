@@ -181,7 +181,7 @@ static std::vector<double> play(int frames) {
   for (int b = 0; b < frames / kB; ++b) {
     for (int k = 0; k < 4; ++k) idle_stream();
     render_voices(rg, kB, 0, 0, kVoices, mach);
-    for (int i = 0; i < kB; ++i) o.push_back(atanh(rg[i][5] / (0.7 * 32767.0)));
+    for (int i = 0; i < kB; ++i) o.push_back(atanh(rg[i][5] / (core::kVoiceGain * 0.7 * 32767.0)));
   }
   return o;
 }

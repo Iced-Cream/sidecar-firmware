@@ -302,7 +302,7 @@ static void test_model() {
   tick();
   printf("ui slots: rows, knob B through the list, YES um=assign / um=clear, NO keeps, a pick dropped on a row change or leaving\n");
 
-  // list knobs: one machine every 4 counts while turning, the first report after a rest at once, a hard turn skips none
+  // list knobs: one machine every kListCounts (6) counts while turning, the first report after a rest at once, a hard turn skips none
   list_pacing(true);
   M.list.clear();
   for (int i = 0; i < 20; ++i) M.list.push_back({"M" + std::to_string(i), "rytm.m" + std::to_string(i)});
@@ -312,17 +312,17 @@ static void test_model() {
   kSlotsPage.enc(1, 1, false);   // after a rest: at once, whatever its size
   CHECK(slots_page_pick() == 1);
   wait_ms(67), kSlotsPage.enc(1, 1, false);
-  wait_ms(67), kSlotsPage.enc(1, 2, false);
-  CHECK(slots_page_pick() == 1);   // 3 counts: not yet
+  wait_ms(67), kSlotsPage.enc(1, kListCounts - 2, false);
+  CHECK(slots_page_pick() == 1);   // one count short: not yet
   wait_ms(67), kSlotsPage.enc(1, 1, false);
-  CHECK(slots_page_pick() == 2);   // the 4th: one entry
+  CHECK(slots_page_pick() == 2);   // the entry's last count: one entry
   for (int i = 0; i < 12; ++i) wait_ms(67), kSlotsPage.enc(1, 30, false);   // a hard turn: one a report at most
   CHECK(slots_page_pick() == 14);
   wait_ms(1000), kSlotsPage.enc(1, -63, false);
   CHECK(slots_page_pick() == 13);
   list_pacing(false);
   key(kNo);
-  printf("ui slots: knob B one machine a detent (list_turn: 4 counts, a lone report at once, a hard turn one a report)\n");
+  printf("ui slots: knob B one machine a detent (list_turn: 6 counts, a lone report at once, a hard turn one a report)\n");
 
   // an empty /Plugins: says so; "---" is still there to clear a slot
   M.list.clear();

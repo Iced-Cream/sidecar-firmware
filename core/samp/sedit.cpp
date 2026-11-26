@@ -767,8 +767,11 @@ CORE_COLD int open_track(int track) {
     say("NOT A SAMPLE TRACK");
     return -1;
   }
-  int vi = ui::remote_track_voice(track);
-  int slot = vi < 0 ? 0 : pool_slot(v[vi].p[10]);   // SMP (P11)
+  // SMP (P11): the voice's last report, or the kit's as the Rytm said it since (the SRC view's 2A, our own 48:
+  // remote_track_src14_fresh). 0.5.0 (owner 2026-11-15): a sample picked on an idle voice reaches the host only as the
+  // 2A (the 0x03s come while it plays), and the edit said NO SAMPLE until the sample had played once.
+  int vi = ui::remote_track_voice(track), c14 = vi < 0 ? -1 : ui::remote_track_src14_fresh(track);
+  int slot = c14 >= 0 ? pool_slot((float)(c14 >> 7 & 127) + (float)(c14 & 127) / 128.0f) : vi < 0 ? 0 : pool_slot(v[vi].p[10]);
   if (slot <= 0) {
     say("NO SAMPLE");
     return -1;

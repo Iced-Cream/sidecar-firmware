@@ -146,7 +146,7 @@ static void grid_draw (lv_event_t *e)
 			{
 				uint32_t col = vel_rgb (vel_of (k, s));
 				fill (l, &c, bx1, by1, bx2, by2, col, LV_OPA_COVER, o ? 0 : 2);
-				if (tr & RYTM_TRIG_ACCENT) fill (l, &c, bx1, by1, bx2, by1 + (o ? 0 : 1), o ? 0xFFFFFF : 0xE8E8E8, LV_OPA_COVER, 0);
+				if (tr & RYTM_TRIG_ACCENT) fill (l, &c, bx1, by1, bx2, by1 + (o ? 0 : 1), o ? 0xFFFFFF : TH->hc == 3 ? TH->accent_hi : 0xE8E8E8, LV_OPA_COVER, 0);
 				int len = k->len[s] == RYTM_DEFAULT ? k->dlen : k->len[s];
 				int lw = (len + 1) * w / 32;		// the length bar: about LEN / 32 steps [scale inferred]
 				if (lw > 4 * w) lw = 4 * w;
@@ -251,7 +251,11 @@ static void locks_draw (lv_event_t *e)
 			if (v == 0xFF)
 			{
 				if (o) fill (l, &c, x, y + G->lane_h / 2 - 1, x, y + G->lane_h / 2 - 1, 0x1E1E1E, LV_OPA_COVER, 0);
-				else fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->row_in, LV_OPA_COVER, 2);
+				else
+				{
+					fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->row_in, LV_OPA_COVER, 2);
+					if (TH->hc) frame (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->hc == 3 ? TH->faint : 0x767676, 1, 2);	// high contrast: an empty step outlined
+				}
 				continue;
 			}
 			if (o)						// a bar: the value as height, the amber ramp as brightness
@@ -260,11 +264,12 @@ static void locks_draw (lv_event_t *e)
 				fill (l, &c, x, y2 - bh + 1, x + (w > 2 ? w - 2 : 0), y2, lock_rgb (v), LV_OPA_COVER, 0);
 				continue;
 			}
-			fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, lock_rgb (v), LV_OPA_COVER, 2);
+			fill (l, &c, x + 1, y + 1, x + w - 2, y + 15, TH->hc ? TH->lock : lock_rgb (v), LV_OPA_COVER, 2);	// (high contrast: any lock full yellow, the number or a dot says it)
+			if (TH->hc && w < 30) fill (l, &c, x + w / 2 - 2, y + 6, x + w / 2 + 1, y + 9, 0x000000, LV_OPA_COVER, 2);
 			if (w >= 30)
 			{
 				lv_snprintf (b, sizeof b, "%d", v);
-				text (l, &c, x, y + 1, w, TH->f_micro, v > 70 ? TH->bg : TH->win_ink, LV_TEXT_ALIGN_CENTER, b);
+				text (l, &c, x, y + 1, w, TH->f_micro, TH->hc || v > 70 ? TH->bg : TH->win_ink, LV_TEXT_ALIGN_CENTER, b);
 			}
 		}
 		lane++;
@@ -481,9 +486,9 @@ void sidecar_rytmpat_create (void *parent, int y0, void (*back) (void))
 		s_Info = th_label (pg, LU (22), LU (25), TH->f_mid, TH->ink, "-");
 		lv_obj_set_size (s_Info, LU (376) + dx, LU (24));
 		lv_label_set_long_mode (s_Info, LV_LABEL_LONG_MODE_DOTS);
-		s_PageM = th_seg (pg, LU (404) + dx, LU (4), LU (260), LU (48), kPages, TH_KEY_TRIG, page_cb, 0);
+		s_PageM = th_seg (pg, LU (404) + dx, LU (6), LU (260), LU (44), kPages, TH_KEY_TRIG, page_cb, 0);
 		th_seg_font (s_PageM, TH->f_body);
-		lv_obj_t *b = th_key (pg, LU (672) + dx, LU (4), LU (120), LU (48), "SEQ", TH_KEY_FUNC, back_cb, 0);
+		lv_obj_t *b = th_key (pg, LU (672) + dx, LU (6), LU (120), LU (44), "SEQ", TH_KEY_FUNC, back_cb, 0);
 		th_key_font (b, TH->f_body);
 		th_panel (pg, 2, G->rul_y - LU (4), GX + GW, GH + LU (22), "", TH_PANEL_WINDOW);	// the grid's display window
 	}

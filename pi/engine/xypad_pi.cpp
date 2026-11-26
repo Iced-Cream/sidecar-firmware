@@ -16,7 +16,7 @@ namespace {
 // even and unchanged across the copy (0: nothing published yet)
 sidecar_xy_view_t g_buf;
 volatile uint32_t g_n = 0;
-volatile bool g_want = false;
+volatile bool g_want = false, g_slow = false;
 volatile bool g_names = false;   // the picker is open: its name tables wanted
 bool g_named = false;            // built since it opened
 uint32_t g_ms = 0, g_names_ms = 0;
@@ -76,7 +76,7 @@ void FillView(sidecar_xy_view_t* o, bool names) {
 
 void Tick() {
   uint32_t ms = core::now_ms();
-  if (!g_want || ms - g_ms < 50) return;
+  if (!g_want || ms - g_ms < (g_slow ? 1000u : 50u)) return;
   g_ms = ms;
   if (!g_names) g_named = false;
   bool names = g_names && (!g_named || ms - g_names_ms >= 250);   // (at once when it opens, then 4 a second)
@@ -106,10 +106,67 @@ bool View(sidecar_xy_view_t* out, unsigned* seen) {
 }
 
 void Want(bool on, bool names) { g_want = on, g_names = on && names; }
+void Slow(bool on) { g_slow = on; }
 unsigned NamesBuilt() { return g_built; }
 
+namespace {
+// a number: 1..4 digits, nothing after
+bool Num(const char* c) {
+  int n = 0;
+  for (; *c >= '0' && *c <= '9'; ++c) ++n;
+  return n >= 1 && n <= 4 && !*c;
+}
+// the next ':' field of *c equals w (case as the display writes it); *c moves past the ':'
+bool Field(const char** c, const char* w) {
+  size_t n = strlen(w);
+  if (strncmp(*c, w, n) != 0 || (*c)[n] != ':') return false;
+  *c += n + 1;
+  return true;
+}
+// A touch drag's value line (the knobs and bars of INSERT FX and MASTER FX, VOICE): "ins=V3:A:p2:90", "ins=V3:send:2:90",
+// "out=V3:lev|pan|wid:90", "mfx=2:p3:90", "mfx=2:mix:90", "mfx=lev:90", "vparam=4:2:90". Not a TYPE, a route, an EQ.
+bool DragLine(const char* c) {
+  if (!strncmp(c, "ins=V", 5)) {
+    c += 5;
+    if (*c < '1' || *c > '8' || c[1] != ':') return false;
+    c += 2;
+    if (Field(&c, "send")) return *c >= '1' && *c <= '3' && c[1] == ':' && Num(c + 2);
+    return (*c == 'A' || *c == 'B') && c[1] == ':' && c[2] == 'p' && c[3] >= '1' && c[3] <= '4' && c[4] == ':' && Num(c + 5);
+  }
+  if (!strncmp(c, "out=V", 5)) {
+    c += 5;
+    if (*c < '1' || *c > '8' || c[1] != ':') return false;
+    c += 2;
+    return (Field(&c, "lev") || Field(&c, "pan") || Field(&c, "wid")) && Num(c);
+  }
+  if (!strncmp(c, "mfx=", 4)) {
+    c += 4;
+    if (Field(&c, "lev")) return Num(c);
+    if (*c < '1' || *c > '4' || c[1] != ':') return false;
+    c += 2;
+    if (Field(&c, "mix")) return Num(c);
+    return c[0] == 'p' && c[1] >= '1' && c[1] <= '4' && c[2] == ':' && Num(c + 3);
+  }
+  if (!strncmp(c, "vparam=", 7)) {
+    c += 7;
+    int n = 0;
+    while (*c >= '0' && *c <= '9') ++c, ++n;
+    if (n < 1 || n > 2 || *c != ':') return false;
+    ++c, n = 0;
+    while (*c >= '0' && *c <= '9') ++c, ++n;
+    if (n < 1 || n > 2 || *c != ':') return false;
+    ++c;
+    const char* e = c;
+    while (*e >= '0' && *e <= '9') ++e;
+    if (*e == ':') return e[1] == '0' && !e[2] && e - c >= 1 && e - c <= 4;   // a drag's live line: vparam=T:K:V:0
+    return Num(c);
+  }
+  return false;
+}
+}  // namespace
+
 bool Quiet(const char* c) {
-  return !strncmp(c, "xy=pos:", 7) || !strcmp(c, "xy=up") || !strncmp(c, "scene=fader:", 12);
+  return !strncmp(c, "xy=pos:", 7) || !strcmp(c, "xy=up") || !strncmp(c, "scene=fader:", 12) || DragLine(c);
 }
 
 }  // namespace xypad_pi

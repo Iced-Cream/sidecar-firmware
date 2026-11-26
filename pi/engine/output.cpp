@@ -43,7 +43,7 @@ uint32_t Output::Push(const int16_t (*frames)[kVoices], uint32_t n, const int16_
   return k;
 }
 
-// x before any limit. No gain or down: the -12 dBFS limit, then the gain, the Rytm's path bit for bit. Up (a box whose insert point sits low): the gain first and one knee
+// x before any limit. No gain or down: the -12 dBFS limit (its soft knee, core/main_out.h), then the gain. Up (a box whose insert point sits low): the gain first and one knee
 // toward full scale, so a hot voice is not cut at the limit and clipped again.
 float Output::Own(float x, float t) {
   if (t > 1.0f) return core::out::Mixer::Limit(x * t, 0.9999f);

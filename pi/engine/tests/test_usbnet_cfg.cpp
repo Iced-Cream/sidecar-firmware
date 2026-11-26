@@ -131,6 +131,61 @@ int main ()
 	CHECK (!trusted (kIfUsb, false));
 	CHECK (!trusted (kIfWifi, true) && !trusted (kIfEthernet, true) && !trusted (kIfNone, true));
 
+	// ---- the late computer (net=auto): asked on the touchscreen, never rebooted by itself
+	{
+		typedef LatePrompt L;
+		L p;
+		CHECK (p.mode () == L::kHidden && !p.step (0, false, true, L::kNoAns));		// nothing on the cable
+		CHECK (!p.step (1000, true, true, L::kNoAns) && p.mode () == L::kHidden);		// a driver came up: let it settle
+		CHECK (!p.step (1000 + L::kSettleMs - 1, true, true, L::kNoAns) && p.mode () == L::kHidden);
+		CHECK (!p.step (1000 + L::kSettleMs, true, true, L::kNoAns) && p.mode () == L::kAsk);
+		for (unsigned t2 = 4000; t2 < 600000; t2 += 7000) CHECK (!p.step (t2, true, true, L::kNoAns) && p.mode () == L::kAsk);	// it waits for the answer, for ever
+		// NOT NOW: gone for this plug, never asked again while the computer stays
+		CHECK (!p.step (700000, true, true, L::kNotNow) && p.mode () == L::kHidden);
+		for (unsigned t2 = 701000; t2 < 900000; t2 += 9000) CHECK (!p.step (t2, true, true, L::kNoAns) && p.mode () == L::kHidden);
+		CHECK (!p.step (900000, true, true, L::kRestart));					// (a stray answer when nothing is asked is nothing)
+		// the cable pulled and plugged again: asked again
+		CHECK (!p.step (910000, false, true, L::kNoAns));
+		CHECK (!p.step (920000, true, true, L::kNoAns) && p.mode () == L::kHidden);
+		CHECK (!p.step (920000 + L::kSettleMs, true, true, L::kNoAns) && p.mode () == L::kAsk);
+		// RESTART: true exactly once; the drain succeeded (the caller reboots) or failed (a message, no reboot, no second ask)
+		L r;
+		r.step (0, true, true, L::kNoAns), r.step (L::kSettleMs, true, true, L::kNoAns);
+		CHECK (r.mode () == L::kAsk);
+		CHECK (r.step (3000, true, true, L::kRestart));
+		CHECK (!r.step (3010, true, true, L::kRestart) && !r.step (3020, true, true, L::kNoAns));	// not twice
+		L f;
+		f.step (0, true, true, L::kNoAns), f.step (L::kSettleMs, true, true, L::kNoAns);
+		CHECK (f.step (3000, true, true, L::kRestart));
+		f.drain_failed ();									// the saves did not settle
+		CHECK (f.mode () == L::kFailed);
+		CHECK (!f.step (3010, true, true, L::kNoAns) && f.mode () == L::kFailed);			// the message stays until OK
+		CHECK (!f.step (3020, true, true, L::kRestart) && f.mode () == L::kHidden);			// (OK is not a RESTART: it never restarts)
+		for (unsigned t2 = 4000; t2 < 200000; t2 += 5000) CHECK (!f.step (t2, true, true, L::kNoAns) && f.mode () == L::kHidden);
+		CHECK (!f.step (210000, false, true, L::kNoAns));
+		CHECK (!f.step (220000, true, true, L::kNoAns));						// a new plug asks again
+		CHECK (!f.step (220000 + L::kSettleMs, true, true, L::kNoAns) && f.mode () == L::kAsk);
+		// a flapping driver never settles
+		L g;
+		CHECK (!g.step (0, true, true, L::kNoAns) && !g.step (1500, false, true, L::kNoAns) && !g.step (2500, true, true, L::kNoAns));
+		CHECK (!g.step (4400, true, true, L::kNoAns) && g.mode () == L::kHidden && !g.step (4500, true, true, L::kNoAns) && g.mode () == L::kAsk);
+		// no touchscreen: never asks, never restarts, whatever arrives
+		L u;
+		for (unsigned t2 = 0; t2 < 100000; t2 += 1000) CHECK (!u.step (t2, true, false, t2 > 50000 ? L::kRestart : L::kNoAns) && u.mode () == L::kHidden);
+		// the touch screen comes and goes (a USB panel plugged in late, unplugged while asked): no touch, no question
+		L v;
+		for (unsigned t2 = 0; t2 < 20000; t2 += 1000) CHECK (!v.step (t2, true, false, L::kNoAns) && v.mode () == L::kHidden);	// a display without touch
+		CHECK (!v.step (20000, true, true, L::kNoAns) && v.mode () == L::kHidden);						// the touch appears: it settles first
+		CHECK (!v.step (20000 + L::kSettleMs, true, true, L::kNoAns) && v.mode () == L::kAsk);
+		CHECK (!v.step (23000, true, false, L::kNoAns) && v.mode () == L::kHidden);						// it goes away: the question goes
+		CHECK (!v.step (24000, true, false, L::kRestart) && v.mode () == L::kHidden);						// (an answer nobody could give does nothing)
+		// the millisecond clock wraps
+		L w;
+		w.step (0xFFFFFF00u, true, true, L::kNoAns);
+		CHECK (!w.step (0xFFFFFF00u + L::kSettleMs, true, true, L::kNoAns) && w.mode () == L::kAsk);
+		CHECK (w.step (0xFFFFFF00u + L::kSettleMs + 10, true, true, L::kRestart));
+	}
+
 	// ---- MACs: locally administered unicast, stable, different ends
 	uint8_t pi[6], host[6];
 	macs (0x10000000abcdef12ull, pi, host);

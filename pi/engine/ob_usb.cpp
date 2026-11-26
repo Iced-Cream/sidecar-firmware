@@ -2489,12 +2489,17 @@ struct TCircleIo : UsbMidiMerge::Io
 	CSidecarGadget *pSidecar;
 	bool bFailed = false;				// a send failed in this Poll, first at nFailUs (EpBox: the MIDI OUT's error time)
 	unsigned nFailUs = 0;
+	unsigned nSendUs = 0;				// how long the last send () blocked (lagdiag.h TxDiag: the Rytm taking its input)
 	bool send (const u8 *p, unsigned n) override
 	{
+		unsigned t0 = CTimer::GetClockTicks ();
 		bool ok = pMIDI != 0 && pMIDI->SendEventPackets (p, n);
+		nSendUs = CTimer::GetClockTicks () - t0;
 		if (!ok && !bFailed) bFailed = true, nFailUs = CTimer::GetClockTicks ();
 		return ok;
 	}
+	uint32_t last_send_us (void) override			{ return nSendUs; }
+	unsigned engine_pending (void) override			{ return g_ToHost.Waiting (); }
 	bool key (u32 *w) override				{ return g_KeysToRytm.pop (w); }
 	// the host link's computer: USB-C's gadget, or the Teensy relay's when the relay shows the host link's box (any slot;
 	// USB-C then shows the other box)

@@ -14,6 +14,7 @@ struct TToHostStub {   // the engine's records for the Rytm, as the test queues 
     *len = (int)cur.size();
     return cur.data();
   }
+  unsigned Waiting() const { unsigned n = 0; for (auto& r : q) n += (unsigned)r.size() + 2; return n; }
   unsigned Drain() { unsigned n = 0; for (auto& r : q) n += (unsigned)r.size(); q.clear(); return n; }
 };
 inline Output g_Output;

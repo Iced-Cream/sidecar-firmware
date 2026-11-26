@@ -32,8 +32,22 @@ int main() {
   CHECK(sc_page_max() == 14 && m->npages == 14 && sc_streq(m->modifier, "UP"));
   for (int c = 1; c <= 14; ++c) CHECK(sc_page_of_code(c) && sc_page_of_code(c)->name && sc_page_of_code(c)->name[0]);
   CHECK(!sc_page_of_code(0) && !sc_page_of_code(15));
+  // 0.5.0 (owner: "UP is now the Sidecar key"): the first version's TRK shortcuts are gone from the KEYS rows; the
+  // T + FUNC forms stay
+  int legacy = 0;
+  for (int i = 0; i < m->ncombos; ++i) {
+    const char* x = m->combos[i].legacy;
+    if (!x) continue;
+    ++legacy;
+    CHECK(!strstr(x, "TRK"));
+    CHECK(!strstr(m->combos[i].keys, "TRK"));
+  }
+  CHECK(legacy == 3);   // T+FUNC+REC / STOP / PLAY
+  // every KEYS row fits beside its keys (page_menu.cpp keys_draw: the keys from x 2, the text right-aligned at 126, 4 px a
+  // character at the narrowest: 31 characters together at most, else they overlap whatever the glyphs)
+  for (int i = 0; i < m->ncombos; ++i) CHECK(strlen(m->combos[i].keys) + strlen(m->combos[i].what) <= 31);
   // rui1052: the order, as the rows stand - T1..T8 the touchscreen's sidebar top to bottom, then the rest
-  static const char* const kOrder[14] = {"HOME", "SEQ",  "PAT",     "VOICE",  "INSERT FX", "SONG",   "REC",
+  static const char* const kOrder[14] = {"HOME", "SEQ",  "PAT",     "VOICE",  "FX",        "SONG",   "REC",
                                          "SET",  "SCOPE", "STATUS", "SAMPLE", "PROJECT",   "POOL",  "MORPH"};
   for (int c = 1; c <= 14; ++c) {
     CHECK(sc_streq(sc_page_of_code(c)->name, kOrder[c - 1]));
@@ -80,7 +94,7 @@ int main() {
 
   // ---- the Pi's routing: each code to its touchscreen page (sidecar_ui.h's numbers), SAMPLE none
   ui::remote_reset();
-  static const int want[15] = {-1, 0, 4, 5, 8, 9, 10, 11, 1, 12, 13, -1, 14, 15, 20};   // (4: VOICE, an analog track)
+  static const int want[15] = {-1, 0, 4, 5, 8, 2, 10, 11, 1, 12, 13, -1, 14, 15, 20};   // (4: VOICE, an analog track)
   uint32_t seen = 0, tseen = 0;
   voice_pi::Seen(&seen, &tseen);
   for (int c = 1; c <= 14; ++c) {

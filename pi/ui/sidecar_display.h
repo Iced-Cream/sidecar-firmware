@@ -53,6 +53,8 @@ public:
 	// the bound input's contacts: 0 none, 1 single touch (no pinch: e.g. an absolute-pointer USB panel, a mouse),
 	// 2+ multi-touch; from C: sidecar_touch_contacts() (0 before the display is up)
 	unsigned GetTouchContacts (void) const;
+	// a touch SCREEN is bound now (the USB digitizer or the DSI panel's touch; a mouse is not one): the late-computer prompt's gate
+	boolean HasTouchScreen (void) const	{ return m_pTouch != 0 || m_pDsiTouch != 0; }
 	// the 4-point calibration (touch_cal.h, "touchcal=" in /.sidecar/display.txt): raw -> the UI's pixels; 0: none (then
 	// cmdline touchscreen=, else the USB descriptor's logical range). It wins over both.
 	void SetTouchCal (const touch_cal_t *pCal);

@@ -8,6 +8,7 @@
 #include "mod/rytm_out.h"
 #include "mod/scene.h"
 #include "platform.h"
+#include "sidecar_features.h"
 #include "pool/pool.h"
 #include "project_key.h"
 #if CORE_MSAMP
@@ -51,10 +52,11 @@ CORE_COLD Sl& S() { return g_sl[prj_slot()]; }
 
 CORE_COLD bool ok_axis(int a) { return a >= 0 && a < kAxes; }
 CORE_COLD bool ok_slot(int s) { return s >= 0 && s < kSlots; }
-CORE_COLD bool ok_target(mod::Tid t) { return t == kMorph || mod::valid(t); }
+CORE_COLD bool ok_target(mod::Tid t) { return (SIDECAR_MORPH && t == kMorph) || mod::valid(t); }   // MORPH is not offered in 0.5.0: a saved MORPH slot loads (take_line) and does nothing
 // a target with no base the layer reads: the pad sets it from its range's end (xypad.h)
 CORE_COLD bool value_only(mod::Kind k) { return k == mod::kSeq || k == mod::kArp || k == mod::kLoop || k == mod::kRytm; }
 CORE_COLD bool any_morph() {
+  if (!SIDECAR_MORPH) return false;
   for (const auto& ax : S().cfg.s)
     for (const Slot& s : ax)
       if (s.t == kMorph) return true;

@@ -31,6 +31,26 @@ void header(Canvas& c, const char* title, int page, int npages, const char* righ
 void header_tag(const char* tag);
 // The bottom bar: text on the left; v >= 0: a level box on the right (bipolar: from its centre).
 void footer(Canvas& c, const char* text, int v = -1, bool bipolar = false);
+// 0.5.0 screens (the UI system's bottom bar as two boxes, a vertical rule at x 67): footer_keys: a key cap and its word
+// in each box ("YES" "FILL" | "NO" "BACK"; a null cap leaves that box empty); slots kSlotFoot..+3. footer_value: the
+// touched parameter's name and a value bar (0..127, bipolar from the middle) in the left box, `value` in the right;
+// slots kSlotFoot, +1. dotted_h / dotted_v: a dotted rule (every other pixel).
+void footer_keys(Canvas& c, const char* k1, const char* w1, const char* k2, const char* w2);
+void footer_value(Canvas& c, const char* name, int v, bool bipolar, const char* value);
+void dotted_h(Canvas& c, int x0, int x1, int y);
+void dotted_v(Canvas& c, int x, int y0, int y1);
+// 0.5.0 screens, cells of the grid (col 0..3, row 0..1): cell_label: an encoder's name centred in the cell's label row (text
+// slot kSlotLabels + the encoder), inverted on a filled box while it is the one turned; dial: knob() with its minimum and
+// maximum marks; fader: bar() with ticks either side; box_word: a word in an outlined box (a mode, as a list's value).
+// the title that fits the title bar beside `right` and npages's dots at 5 px a character: `full`, else `shorter`
+const char* fit_title(const char* full, const char* shorter, int npages, const char* right);
+// a turn at `since` still shows at ms (a signed difference: a clock read a moment after ms does not wrap)
+inline bool turn_live(uint32_t ms, uint32_t since, uint32_t span) { int32_t d = (int32_t)(ms - since); return d >= 0 && (uint32_t)d < span; }
+bool header_tag_on();   // a tag stands in the header's right part (header_tag)
+void cell_label(Canvas& c, int col, int row, const char* s, bool touched);
+void dial(Canvas& c, int col, int row, int v, bool bipolar = false);
+void fader(Canvas& c, int col, int row, int v);
+void box_word(Canvas& c, int slot, int col, int row, const char* s, int w = 28);
 // Text in up to n lines (slots slot..slot + n - 1, rows y, y + dy ..), broken at spaces so each line fits the screen at
 // kRSmall's widest advance from x (flags' alignment as put_text's). A word too long for a line is cut there (the
 // text-fit check reports it). Returns the lines used; the slots after them are emptied.

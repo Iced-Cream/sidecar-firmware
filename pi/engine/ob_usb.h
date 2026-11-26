@@ -419,6 +419,7 @@ public:
 
 	void SetMIDI (CUSBMIDIDevice *pMIDI);		// core 0's loop, before Poll: umidi1 or 0
 	void SetSend (boolean bSend)			{ m_bSend = bSend; }
+	lagdiag::TxDiag &Tx (void)			{ return m_Merge.tx (); }	// core 0: the engine's records sent, by type (lagdiag.h)
 	unsigned MIDIOutBytes (void) const		{ return m_Merge.sent (); }
 	unsigned MIDIOutMessages (void) const		{ return m_Merge.msgs (); }
 	unsigned MIDIOutFailed (void) const		{ return m_Merge.failures (); }

@@ -2,8 +2,11 @@
 // sample: the resonator (MIX 0 and above, its three models), ONE / LOP / LOOP / SLICE, END before STA, TUN / FIN, a mono
 // and a stereo file on OUT TRK and PRE, each from the card (no sample RAM: the Teensy's path) and from the sample RAM
 // (the Pi's). Voice 0's rows (L, and R on PRE) are hashed (FNV-1a 64) and compared with
-// tests/golden/dsps/v1/render.txt, which the host before SAMPLER (f9330b8^, the 0.4.x engine) wrote with
-// DSPS_GOLDEN_WRITE=1. The same source builds against both hosts: it uses no 0.5.0 name and sends no sound tag.
+// tests/golden/dsps/v2/render.txt. v1/render.txt is what the host before SAMPLER (f9330b8^, the 0.4.x engine) wrote with
+// DSPS_GOLDEN_WRITE=1. v2 is v1's rows scaled as render_voices' kVoiceGain (voices.h, 0.35: Q15 11469, rounded) scales
+// them: written by this engine built with kVoiceGain 1, which matched v1 (DSPS_GOLDEN=tests/golden/dsps/v1/render.txt),
+// with DSPS_GOLDEN_WRITE=1 DSPS_GOLDEN_GAIN_Q15=11469. The same source builds against both hosts: it uses no 0.5.0
+// name and sends no sound tag.
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cmath>
@@ -90,10 +93,14 @@ static uint64_t play(const Case& c, bool ram) {
   static int16_t ring[kBlock][kVoices], ring_r[kBlock][kVoices];
   uint64_t mach[kMachines] = {0};
   uint64_t h = 1469598103934665603ull;
+  const char* gq = getenv("DSPS_GOLDEN_GAIN_Q15");   // (writing v2 from an engine without the gain: see the top)
+  const int32_t q = gq ? atoi(gq) : 0;
   for (int b = 0; b < 9600 / kBlock; ++b) {
     memset(ring, 0, sizeof ring), memset(ring_r, 0, sizeof ring_r);
     tick();
     render_voices(ring, kBlock, 0, 0, kVoices, mach, ring_r);
+    for (int i = 0; i < kBlock && q; ++i)
+      ring[i][0] = (int16_t)((ring[i][0] * q + 16384) >> 15), ring_r[i][0] = (int16_t)((ring_r[i][0] * q + 16384) >> 15);
     for (int i = 0; i < kBlock; ++i) {
       h = fnv(h, &ring[i][0], 2);
       if (c.pre) h = fnv(h, &ring_r[i][0], 2);
@@ -179,11 +186,12 @@ int main() {
     all += std::string(buf, len);
     free(buf);
   }
-  const char* golden = "tests/golden/dsps/v1/render.txt";
+  const char* golden = getenv("DSPS_GOLDEN") ? getenv("DSPS_GOLDEN") : "tests/golden/dsps/v2/render.txt";
   if (getenv("DSPS_GOLDEN_WRITE")) {
     FILE* g = fopen(golden, "w");
     CHECK(g);
-    fputs("# DSP SAMPLE's voice 0, 9600 frames a case (core/tests/test_dsps_golden.cpp), written by the 0.4.x engine\n", g);
+    fputs(getenv("DSPS_GOLDEN_GAIN_Q15") ? "# DSP SAMPLE's voice 0, 9600 frames a case (core/tests/test_dsps_golden.cpp): v1's rows scaled by kVoiceGain\n"
+                                         : "# DSP SAMPLE's voice 0, 9600 frames a case (core/tests/test_dsps_golden.cpp), written by the 0.4.x engine\n", g);
     fputs(all.c_str(), g);
     fclose(g);
     printf("test_dsps_golden: wrote %s\n", golden);

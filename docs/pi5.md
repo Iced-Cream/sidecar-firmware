@@ -438,7 +438,7 @@ What replaces it for now:
   risk to that system's boot partition. `make-sd-dual.sh` refuses a kernel with the test mode (`testsecs=`). Build:
   `PI5_GADGET=1 PI5_TESTMODE=1 RASPPI=5 pi/engine/build.sh` (same Circle tree; switching the flag rebuilds the objects).
   `testcard=1` with `testsecs=`: the engine uses the card as usual, so projects, presets and plugins can be tested on a tryboot.
-  The watchdog and the reboot stay, `/usbtest.log` goes on, and the black box writes `/.sidecar/blackbox.log`. FatFs's name-changing
+  The watchdog and the reboot stay, `/usbtest.log` goes on, and the black box writes `/.sidecar/blackbox.log` (besides the stats lines it carries the lag diagnostics: `lag-marker`, `lag-snap`, `rxrep`, `txacc`; docs/pi-engine.md "Lag diagnostics"). FatFs's name-changing
   calls go through a gate in these kernels only (`card_guard.h`, `--wrap`): on the card only `/.rytm` and fsweb's content folders
   may change. `config.txt`, `cmdline.txt`, the kernels, `overlays/` and anything else at the root are refused with `FR_DENIED`
   and a `cardguard: testcard: ...` log line, whichever path asks: port 7310's PUT and DEL, the Wi-Fi import `sidecar-wifi.txt`,

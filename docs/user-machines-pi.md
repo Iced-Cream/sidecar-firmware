@@ -41,6 +41,11 @@ Not done this round:
   (`RMP_POOL_PSRAM`, mono int16 as the RAM holds it). The first `pool_info` for a slot answers NOT_READY; the
   sample is there once loaded. Without sample RAM (`sampleram=0`), or a sample not in RAM after 10 s, it answers
   EMPTY. The Teensy's head/ring reader for boards without PSRAM is not ported.
+  Which slot (0.5.1.1): `pool_info` / `pool_read` take bank A's row 1..127 as before, or the list code `bank * 128 + row`
+  (A..H = bank 0..7, 128..1023, row 0 of a bank is OFF) of the SAMPLES lists and the Rytm, so a plugin reaches every
+  bank: `rmp_pool_code(bank, row)`, or `rmp_pool_code_of_knob(p[k])` for a SAMPLES knob (`(int)p[k]` is the row only).
+  Both spellings name the same sample in bank A; before 0.5.1.1 a value above 127 meant the host's internal line
+  (`bank * 127 + row`) and so, from a list code, the wrong sample past bank A.
 
 Presets (2026-10-18), as the Teensy's (`teensy/libraries/RytmPlugins/src/rmp_presets.h`, the same code):
 `/PRESETS/<id>/<name>.txt` ("P<n> <value>" lines) and `<name>.<preset_ext>` (the plugin's `load_entry`), one list

@@ -30,7 +30,10 @@ namespace ui {
 namespace {
 
 constexpr int kYes = 0x44, kNo = 0x45, kFunc = 0x80, kPushA = 0x70, kPushD = 0x73;
-constexpr int kWaveY = 10, kWaveH = 38, kInfoY = 49;   // the outline in rows 10..47, the region's line under it
+// 0.5.0 screens (the UI system, AROUND): the encoders' names in row 10, the outline in rows 16..43, the window's place in
+// row 46, the function's tag and the region's line in rows 48..54, the bottom bar's key boxes
+constexpr int kWaveY = 16, kWaveH = 28, kPlaceY = 46, kNamesY = 10, kInfoY = 49;
+constexpr int kTurnMs = 1500;
 constexpr uint32_t kNoteMs = 2000;
 enum Ask : uint8_t { kAskNone, kAskSave, kAskDiscard };
 enum Opt : uint8_t { kOptUse, kOptSave, kOptCancel };
@@ -44,9 +47,11 @@ struct Pg {
   char note[32];      // the footer's message (kNoteMs)
   uint32_t note_ms;
   char seen[32];      // the editor's msg last seen: a new one becomes the note
+  int turn_e;         // the encoder turned last (-1 none): its name on the title bar and its value in the bottom bar
+  uint32_t turn_ms;
   bool was_open;      // an edit open at the last refresh (its close elsewhere drops the page's question)
 };
-Pg pg = {};
+Pg pg = {false, 0, 0, false, "", "", 0, "", -1, 0, false};
 sedit::View g_v;   // (4 KB: the outline; not on the stack)
 
 CORE_COLD int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -126,7 +131,7 @@ CORE_COLD void draw_wave(Canvas& c, const sedit::View& v) {
 // sedit-050 #4: zoomed in, where the window is in the sample: a solid bar over a dithered line in row kWaveY + kWaveH
 CORE_COLD void draw_place(Canvas& c, const sedit::View& v) {
   if (!v.frames || v.wb - v.wa >= v.frames) return;
-  const int y = kWaveY + kWaveH;
+  const int y = kPlaceY;
   int x0 = (int)((uint64_t)v.wa * kW / v.frames), x1 = (int)((uint64_t)v.wb * kW / v.frames) - 1;
   if (x1 < x0 + 1) x1 = x0 + 1;
   if (x1 > kW - 1) x1 = kW - 1, x0 = x0 > kW - 2 ? kW - 2 : x0;
@@ -134,61 +139,112 @@ CORE_COLD void draw_place(Canvas& c, const sedit::View& v) {
   c.hline(x0, x1, y, kOn);
 }
 
+CORE_COLD void modal_box(Canvas& c, const Rect& r) {
+  c.fill(r, kOff);
+  c.rect(r);
+}
+
 CORE_COLD void sedit_draw(Canvas& c, int page, int npages, uint32_t ms) {
-  (void)ms;
   c.clear();
   const sedit::View& v = refresh();
-  // the name in the header's room right of the title (and left of the page dots)
+  // the file's whole name in the header's room right of the title (and left of the page dots)
   int dots = npages > 1 ? (npages > 12 ? 12 : npages) : 0;
   int room = (kW - 2 - dots * 4 - 1 - (2 + 12 * kRSmall.advance)) / kRSmall.advance;   // (the title 11 + a gap)
   char name[24] = "";
   if (v.st != sedit::kClosed && room > 0) name_fit(name, sizeof name, v.name, room);
-  header(c, "SAMPLE EDIT", page, npages, name);
   if (v.st == sedit::kClosed) {   // the open refused (or the edit closed elsewhere)
+    header(c, "SAMPLE EDIT", page, npages, name);
     c.put_text(kSlotFree, kRSmall, 64, 26, pg.refused && pg.why[0] ? pg.why : "NOTHING OPEN", kAlignCentre);
-    footer(c, "NO: BACK");
+    footer_keys(c, nullptr, nullptr, "NO", "BACK");
     return;
   }
+  const bool modal = pg.ask != kAskNone;
+  const bool turning = !modal && pg.turn_e >= 0 && turn_live(ms, pg.turn_ms, kTurnMs);
+  static const char* const kFull[5] = {"REGION START", "REGION END", "ZOOM", "VIEW", "FUNCTION"};
+  static const char* const kShort[5] = {"START", "END", "ZOOM", "VIEW", "FUNC"};
+  header(c, turning ? kFull[pg.turn_e] : "SAMPLE EDIT", page, npages, name);
   draw_wave(c, v);
-  char b[kTextLen + 1];
-  if (pg.ask == kAskSave) {   // the save choice: the pick inverted
-    uint8_t o[3];
-    int n = opts(o), x = 2;
-    pg.pick = (uint8_t)clampi(pg.pick, 0, n - 1);
-    for (int i = 0; i < n; ++i) {
-      const char* s = kOptNames[o[i]];
-      int w = (int)strlen(s) * kRSmall.advance + 2;
-      bool on = i == pg.pick;
-      if (on) c.fill(Rect{(int16_t)(x - 1), (int16_t)(kInfoY - 1), (int16_t)w, 7}, kOn);
-      c.put_text(kSlotFree + i, kRSmall, x, kInfoY, s, (uint8_t)(kAlignLeft | (on ? kTextInvert : 0)));
-      x += w + 6;
+  draw_place(c, v);
+  char b[kTextLen + 1], s0[12], s1[12];
+  secs_text(v.a, v.rate, s0, sizeof s0);
+  secs_text(v.b, v.rate, s1, sizeof s1);
+  const char* fn = sedit::kFnNames[v.fn < sedit::kFns ? v.fn : 0];
+  if (!modal) {   // under a modal the page's text items are not put (the Rytm draws them over the pixels)
+    static const char* const kNames[4] = {"STRT", "END", "ZOOM", "VIEW"};
+    static const char* const kTag[sedit::kFns] = {"CROP", "NORM", "TRIM", "FD IN", "FD OUT", "REV", "GAIN+3", "GAIN-3"};
+    for (int i = 0; i < 4; ++i) {   // the encoders' names over their columns; FUNC held: A and B jump to the transients
+      const char* t = pg.func && i < 2 ? "TRNS" : kNames[i];
+      bool on = turning && pg.turn_e == i;
+      int w = (int)strlen(t) * kRSmall.advance + 3;
+      if (on) c.fill(Rect{(int16_t)(i * kCellW + kCellW / 2 - w / 2), kNamesY - 1, (int16_t)w, 7});
+      c.put_text(kSlotLabels + i, kRSmall, i * kCellW + kCellW / 2, kNamesY, t, (uint8_t)(kAlignCentre | (on ? kTextInvert : 0)));
     }
-  } else {
-    draw_place(c, v);
-    char s0[12], s1[12];
-    secs_text(v.a, v.rate, s0, sizeof s0);
-    secs_text(v.b, v.rate, s1, sizeof s1);
+    c.fill(Rect{0, kInfoY - 1, kCellW, 7});   // E: the function as a filled tag
+    c.put_text(kSlotLabels + 4, kRSmall, kCellW / 2, kInfoY, kTag[v.fn < sedit::kFns ? v.fn : 0], (uint8_t)(kAlignCentre | kTextInvert));
     sniprintf(b, sizeof b, CORE_STR("%s-%sS"), s0, s1);
-    c.put_text(kSlotFree, kRSmall, 2, kInfoY, b, kAlignLeft);
+    c.put_text(kSlotFree, kRSmall, kCellW + 4, kInfoY, b, kAlignLeft);
     sniprintf(b, sizeof b, CORE_STR("%sX%d"), v.dirty ? "* " : "", 1 << v.zoom);   // (the window's zoom: X1 X2 .. X256)
     c.put_text(kSlotFree + 1, kRSmall, 126, kInfoY, b, kAlignRight);
   }
-  const char* fn = sedit::kFnNames[v.fn < sedit::kFns ? v.fn : 0];
-  if (pg.ask == kAskDiscard) sniprintf(b, sizeof b, "DISCARD EDIT? YES/NO");
-  else if (pg.ask == kAskSave) sniprintf(b, sizeof b, "A:PICK  YES:OK  NO:BACK");
-  else if (pg.note_ms && now_ms() - pg.note_ms < kNoteMs) sniprintf(b, sizeof b, "%s", pg.note);
-  else if (v.st == sedit::kLoading) sniprintf(b, sizeof b, CORE_STR("LOADING %d%%"), v.progress);
-  else if (v.st == sedit::kSaving) sniprintf(b, sizeof b, CORE_STR("SAVING %d%%"), v.progress);
-  else if (v.st == sedit::kBusy) sniprintf(b, sizeof b, CORE_STR("%s %d%%"), fn, v.progress);
-  else if (v.st == sedit::kError) sniprintf(b, sizeof b, "%s", v.msg[0] ? v.msg : "ERROR");
-  else sniprintf(b, sizeof b, CORE_STR("E:%s  YES:DO"), fn);
-  footer(c, b);
+  const char* no = v.undo ? "UNDO" : v.dirty ? "DISCARD" : "BACK";   // what NO does now
+  if (pg.ask == kAskSave) {   // the save choice: a box with a line a choice, the pick inverted
+    uint8_t o[3];
+    int n = opts(o);
+    pg.pick = (uint8_t)clampi(pg.pick, 0, n - 1);
+    static const char* const kDesc[3] = {"TRACK USES IT", "NEW FILE", "NOTHING SAVED"};
+    modal_box(c, Rect{4, 11, 120, 42});
+    c.put_text(kSlotFree, kRSmall, 64, 14, "SAVE REGION  A: PICK", kAlignCentre);
+    dotted_h(c, 5, 122, 21);
+    for (int i = 0; i < n; ++i) {
+      int y = 24 + 9 * i;
+      bool on = i == pg.pick;
+      if (on) c.fill(Rect{6, (int16_t)(y - 1), 116, 8});
+      c.put_text(kSlotFree + 1 + 2 * i, kRSmall, 9, y, kOptNames[o[i]], on ? kTextInvert : kAlignLeft);
+      c.put_text(kSlotFree + 2 + 2 * i, kRSmall, 119, y, kDesc[o[i]], (uint8_t)(kAlignRight | (on ? kTextInvert : 0)));
+    }
+    footer_keys(c, "YES", "OK", "NO", "BACK");
+  } else if (pg.ask == kAskDiscard) {
+    modal_box(c, Rect{16, 18, 96, 28});
+    c.put_text(kSlotFree, kRSmall, 64, 22, "DISCARD EDIT?", kAlignCentre);
+    dotted_h(c, 17, 110, 29);
+    c.put_text(kSlotFree + 1, kRSmall, 64, 34, "UNSAVED CHANGES", kAlignCentre);
+    footer_keys(c, "YES", "DISCARD", "NO", "KEEP");
+  } else if (pg.note_ms && now_ms() - pg.note_ms < kNoteMs) {
+    footer(c, pg.note);
+  } else if (v.st == sedit::kLoading) {
+    sniprintf(b, sizeof b, CORE_STR("LOADING %d%%"), v.progress), footer(c, b);
+  } else if (v.st == sedit::kSaving) {
+    sniprintf(b, sizeof b, CORE_STR("SAVING %d%%"), v.progress), footer(c, b);
+  } else if (v.st == sedit::kBusy) {
+    sniprintf(b, sizeof b, CORE_STR("%s %d%%"), fn, v.progress), footer(c, b);
+  } else if (v.st == sedit::kError) {
+    footer(c, v.msg[0] ? v.msg : "ERROR");
+  } else if (turning) {   // the touched knob: its name, a bar, its value
+    const uint32_t fr = v.frames ? v.frames : 1;
+    int bar = 0;
+    switch (pg.turn_e) {
+      case 0: bar = (int)((uint64_t)v.a * 127 / fr), sniprintf(b, sizeof b, CORE_STR("%sS"), s0); break;
+      case 1: bar = (int)((uint64_t)v.b * 127 / fr), sniprintf(b, sizeof b, CORE_STR("%sS"), s1); break;
+      case 2: bar = v.zoom * 127 / 8, sniprintf(b, sizeof b, CORE_STR("X%d"), 1 << v.zoom); break;
+      case 3: {
+        char w0[12];
+        secs_text(v.wa, v.rate, w0, sizeof w0);
+        bar = (int)((uint64_t)v.wa * 127 / fr), sniprintf(b, sizeof b, CORE_STR("%sS"), w0);
+        break;
+      }
+      default: bar = v.fn * 127 / (sedit::kFns - 1), sniprintf(b, sizeof b, "%s", fn); break;
+    }
+    footer_value(c, kShort[pg.turn_e], bar, false, b);
+  } else {
+    footer_keys(c, "YES", pg.func ? "SAVE" : "DO", "NO", no);
+  }
 }
 
 CORE_COLD void sedit_enc(int e, int d, bool func) {
   if (!d) return;
   const sedit::View& v = refresh();
   if (v.st == sedit::kClosed) return;
+  if (e <= 4) pg.turn_e = e, pg.turn_ms = now_ms();
   if (pg.ask == kAskSave) {   // A picks; the rest wait for the answer
     uint8_t o[3];
     if (e == 0) pg.pick = (uint8_t)clampi(pg.pick + d, 0, opts(o) - 1);
@@ -212,6 +268,7 @@ CORE_COLD void drop_state() { pg.ask = kAskNone, pg.pick = 0, pg.refused = false
 
 CORE_COLD bool sedit_key(int code) {
   const sedit::View& v = refresh();
+  pg.turn_e = -1;
   if (code == kFunc) {   // FUNC (both sides': the Rytm keeps it too)
     pg.func = true;
     return true;
@@ -287,7 +344,7 @@ UI_ROM const ExtraPage kSeditPage = {"SAMPLE EDIT", sedit_shown, sedit_draw, sed
 CORE_COLD void sedit_page_open(int track, int code) {
   const sedit::View& v = refresh();
   bool open = v.st != sedit::kClosed;
-  pg.ask = kAskNone, pg.pick = 0, pg.func = false, pg.note_ms = 0, pg.refused = false;
+  pg.ask = kAskNone, pg.pick = 0, pg.func = false, pg.note_ms = 0, pg.refused = false, pg.turn_e = -1;
   sniprintf(pg.seen, sizeof pg.seen, "%s", v.msg);   // (an old message is not news)
   if (open && ((track < 0 && code < 0) || (track >= 0 && v.has_track && v.track == track))) {   // back to the edit
     remote_show_page("SAMPLE EDIT");
@@ -317,7 +374,7 @@ CORE_COLD bool sedit_src_push(int track, int code, bool down) {
   return true;
 }
 #if CORE_UI_TOOLS
-CORE_COLD void sedit_page_reset() { pg = Pg{}; }
+CORE_COLD void sedit_page_reset() { pg = Pg{false, 0, 0, false, "", "", 0, "", -1, 0, false}; }
 #endif
 
 }  // namespace ui

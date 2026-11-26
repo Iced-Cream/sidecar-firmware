@@ -107,7 +107,11 @@ the POST EQ), `MFX` for LEV and MIX1..4, and (0.5.0) B1A..B3B: the bus slots' se
 
 - **Rytm**: page MASTER, host-drawn, so it takes no Rytm code space: on the LEFT / RIGHT ring and in the SIDECAR MENU; no UP key (T1..T13 are
   taken, a new key is a Rytm mod). A..D P1..P4, E SLOT, F TYPE, G MIX or MODE, H SRC, YES bypass, RIGHT the EQ view (H LEV there).
-- **Touchscreen**: Settings > Send FX > Master. Every size. Tap a TYPE for the next, ON, SRC, the AMP's mode; the knobs are shown, set from the Rytm or the web.
+- **Touchscreen**: Settings > Send FX > Master. Every size. Tap a TYPE for the next, ON, SRC, the AMP's mode. The P1..P4 bars, MIX (a send
+  TYPE) and LEV take a finger: a drag along the bar changes the value relative to where the finger landed (it never jumps to the
+  finger; a dead zone of a quarter touch size keeps a tap a tap), from the value as set (not as it plays: an LFO or a scene does not move
+  the start); a double tap sets the default (the TYPE's, MIX 40, LEV 100). The lines are an encoder turn's (`mfx=S:pK:V`, `mfx=S:mix:V`,
+  `mfx=lev:V`, so a manual edit wins over a scene's morph), at most one every 30 ms while dragging and always the value at the lift.
 - **Web**: the Send FX tab; the STEM TRIM and the limiter's reading only here and on the console.
 - **Console**: `mfx`, `mfx=byp:0|1`, `mfx=src:ret|mix`, `mfx=lev:V`, `mfx=trim:DB` (0 or -1..-24), `mfx=S:type:T`, `mfx=S:p1..p4:V`, `mfx=S:mix:V`, `mfx=S:pair:0|1`,
   `mfx=S:off` (S 1..4), `mfx=eq:hpf|lpf|low|high:V`, `mfx=eq:off`, `mfx=reset`, `mfx=stats` (core 2's load, underruns, the limiter's reduction).

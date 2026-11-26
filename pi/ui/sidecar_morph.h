@@ -1,6 +1,6 @@
 // pi/ui/sidecar_morph.h - the Pi display's MORPH page (spec-050 2.10, core/mod/scene.h): the twelve scenes as pads in two
 // rows (a tap selects; a tap on the A or B key, then a pad, assigns that end), the selected scene's locks as a list (a
-// slider and a delete key a row, scrolled), and the crossfader across the bottom (drag: absolute). Every edit goes
+// slider and a delete key a row, scrolled), and the crossfader across the bottom (drag: absolute; a double tap sets it to A). Every edit goes
 // back as a console line (scene=sel:N, scene=ab:A:B, scene=fader:V, scene=lock:N:NAME:V, scene=unlock:N:NAME) through
 // the command callback, as the MASTER FX page's do. LVGL only; both themes, every size from TH->w / TH->h.
 #ifndef SIDECAR_MORPH_H
@@ -43,6 +43,7 @@ void sidecar_morph_show (int on);
 int sidecar_morph_shown (void);
 int sidecar_morph_top (void);				// the list's scroll: the first row the page wants filled
 void sidecar_morph_set (const sidecar_morph_view_t *v);	// copied; cheap when gen is unchanged
+void *sidecar_morph_fader (void);			// the crossfader's slider (tests; the lv_obj_t)
 
 #ifdef __cplusplus
 }

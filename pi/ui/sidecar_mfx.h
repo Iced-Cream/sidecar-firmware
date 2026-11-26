@@ -1,7 +1,9 @@
 // pi/ui/sidecar_mfx.h - the Pi display's MASTER FX page (docs/MASTER-FX.md): the master chain's four slots, each a TYPE key
 // (a tap: the next TYPE the slot can take, the caller runs "mfx=N:type:T"), P1..P4 as bars with the TYPE's labels and values,
 // MIX for a send TYPE and L/R for an AMP; ON / BYPASS, SRC RET / MIX; LEV, the chain's in and out meters, the POST EQ's line;
-// and a line saying what the chain processes. LVGL only; both themes, every size: the layout comes from TH->w / TH->h, not
+// and a line saying what the chain processes. The P1..P4 bars, MIX and LEV take a finger (th_meter_edit: a drag along the
+// bar relative to where it lands, a double tap the default) and send the console's lines ("mfx=S:pK:V", "mfx=S:mix:V",
+// "mfx=lev:V"). LVGL only; both themes, every size: the layout comes from TH->w / TH->h, not
 // from fixed places, so 800x480, 1024x600 and 1280x720 are one code path.
 #ifndef SIDECAR_MFX_H
 #define SIDECAR_MFX_H
@@ -20,8 +22,11 @@ typedef struct
 	char		label[4][5];		// "THR" ..
 	char		val[4][8];		// "-20DB" ..
 	unsigned char	v[4];			// 0..127 as it plays
+	unsigned char	base[4];		// 0..127 as set: where a touch drag starts (not the played value)
+	unsigned char	def[4];			// the TYPE's defaults (a double tap)
 	unsigned char	send;			// 1: a send TYPE (MIX means something)
-	unsigned char	mix;			// 0..127
+	unsigned char	mix;			// 0..127, as set
+	unsigned char	mixdef;			// MIX's default (a double tap)
 	unsigned char	amp;			// 1: AMP
 	unsigned char	pair;			// 1: an L/R pair
 } sidecar_mfx_slot_t;
@@ -34,7 +39,8 @@ typedef struct
 	unsigned char		mix;		// SRC MIX
 	unsigned char		rep;		// the Rytm reports pans and routing
 	unsigned char		onmain;		// stems still on ROUTE TO MAIN (with rep)
-	unsigned char		lev;		// 0..127, 100 unity
+	unsigned char		lev;		// 0..127, 100 unity (as set)
+	unsigned char		lev_def;	// LEV's default (a double tap)
 	unsigned char		in, out;	// peaks, 0..127
 	sidecar_mfx_slot_t	slot[SMF_SLOTS];
 	char			peq[56];	// "" flat, else "HPF 420  LPF 6.2K ..."
@@ -47,6 +53,7 @@ void sidecar_mfx_set_command (sidecar_mfx_command_t fn);
 void sidecar_mfx_show (int on);
 int sidecar_mfx_shown (void);
 void sidecar_mfx_set (const sidecar_mfx_view_t *v);	// copied; cheap when gen is unchanged
+void *sidecar_mfx_obj (int what);			// the touch-editable meters (tests; the lv_obj_t): slot * 8 + row (row 0..3 P1..P4, 4 MIX), 100 LEV; 0 none
 
 #ifdef __cplusplus
 }

@@ -69,6 +69,16 @@ static void test_plaits() {
   while (inst::voice_notes(0) && blocks < 48000) render(10, 0), blocks += 10;
   CHECK(!inst::voice_notes(0) && !inst::active(0));
   printf("  PLAITS tails free after %.2f s\n", blocks * kBlock / 48000.0);
+  // an instance's level: LEV x velocity as the mono voice's output gain (VEL 120: velocity 20 about 12 dB under 127)
+  int pv[2];
+  for (int k = 0; k < 2; ++k) {
+    CHECK(inst::seq_on(0, 60, k ? 20 : 127, cfg(4)));
+    pv[k] = render(400, 0);
+    inst::seq_off(0, -1);
+    inst::silence(0);
+    render(10, 0);
+  }
+  CHECK(20 * std::log10((double)pv[1] / pv[0]) < -9.0);
   // VOICES 8: the 8 notes of a chord at once, and the headroom keeps the sum in range
   for (int n = 0; n < 8; ++n) CHECK(inst::seq_on(0, 48 + 3 * n, 127, cfg(8)));
   CHECK(inst::voice_notes(0) == 8 && inst::stat(0).instances == 8);

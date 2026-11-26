@@ -9,7 +9,8 @@
 //   the feedback loop); MULTISAMPLE the instrument's name, its key zones over a keyboard of its span with the keys
 //   sounding lit, and the ATK DEC SUS REL envelope; DAISYSP the model (MODAL / STRING / RESON) and what STR BRI DMP
 //   make of it (the resonator's modes as lines, or the string's shape). The page follows the track's machine live.
-// GRANULAR and WAVETABLE tracks get the machine view (sidecar_wgview.h) instead (sidecar_ui chooses). LVGL only (builds
+// GRANULAR and WAVETABLE tracks get the machine view (sidecar_wgview.h) instead (sidecar_ui chooses). The eight dials take a
+// finger (touch edits, below). LVGL only (builds
 // on the Mac too, pi/ui/host); both themes. The caller hands it a view (sidecar_voice_set, ~15 times a second while it
 // shows); it redraws only the parts whose data changed.
 #ifndef SIDECAR_VOICE_H
@@ -43,6 +44,14 @@ typedef struct
 	unsigned char	trig[SVV_STEPS];	// 1: a trig on that step
 	int		pattern;		// 0..127, -1
 	int		mode;			// SVV_*: the machine's own panel (0: the scope)
+	// the touch edits: a knob takes a finger (a drag relative to where it lands; the value goes to the Rytm as a knob turn,
+	// "vparam=T:K:V") when its bit is set: a Sidecar track the Rytm has selected, a knob in use, not a list cell, not the
+	// banked SRC knob (its value is index << 7 | bank), not MIDI's; wk[k]: the Rytm's P index knob k writes (usually k)
+	unsigned char	wedit;			// bit k: knob k takes a finger
+	unsigned char	wk[8];
+	unsigned char	wfail;			// bit k: the Rytm refused / locked the last write of knob k (the page puts the knob back)
+	unsigned char	wkind;			// 1 locked on the steps held, 2 refused
+	unsigned	wgen;			// counts the failures
 	// SVV_FM: the patch PAT picks (core/ui/extra.h FmInfo)
 	char		fm_name[12];		// the DX7 voice's name ("" none)
 	int		fm_alg, fm_fb;		// the algorithm 0..31 (-1 no patch), feedback 0..7
@@ -75,6 +84,11 @@ void sidecar_voice_set (const sidecar_voice_view_t *v);	// copied; cheap when ge
 // instrument banks: the machine view's SOURCES). The panel says so ("TAP: BANKS").
 enum { SIDECAR_VOICE_TAP_SCOPE = 0, SIDECAR_VOICE_TAP_SOURCES = 1 };
 void sidecar_voice_set_tap (void (*fn) (int what));
+// The console line of a knob's touch edit ("vparam=T:K:V": track, the Rytm's P index, value 0..127), at most every 30 ms while
+// dragging and the final value at the lift (th_meter_edit); there is no double tap: no machine knob has a known default.
+// The value stays on the knob after the lift until the Rytm's own moves (at most 2 s), a refusal puts it back.
+void sidecar_voice_set_command (void (*fn) (const char *cmd));
+void *sidecar_voice_knob (int k);			// the knob's meter (tests; the lv_obj_t)
 
 #ifdef __cplusplus
 }

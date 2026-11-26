@@ -1,0 +1,13 @@
+{
+  "id": "fx.nimbus",
+  "version": "0.1.0",
+  "name": "NIMBUS",
+  "short": "NIMB",
+  "licence": "MIT",
+  "knobs": [
+    {"p": 1, "long": "Decay", "short": "DCY", "default": 96},
+    {"p": 2, "long": "Ensemble", "short": "ENS", "default": 64},
+    {"p": 3, "long": "Tone", "short": "TONE", "default": 80},
+    {"p": 4, "long": "Modulation", "short": "MOD", "default": 64}
+  ]
+}

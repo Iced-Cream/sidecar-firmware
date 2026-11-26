@@ -183,12 +183,12 @@ static void test_pool() {
   CHECK(v[4].fm && v[4].live && poly::stats().active == 0);
   render(400);
   double mono = rms(4, 4800);
-  CHECK(mono > 100);
+  CHECK(mono > 100 * kVoiceGain);   // (levels in voice rows: kVoiceGain, voices.h)
   // CHD MAJ: three notes in the pool, on voice 4 only
   send(report(0x04, kFm | 4, 60, 100, fm(1)));
   CHECK(poly::stats().active == 3 && poly::stats().chords == 1 && poly::active(4) && !poly::active(0));
   render(400);
-  CHECK(rms(4, 4800) > 100 && rms(0, 4800) == 0);
+  CHECK(rms(4, 4800) > 100 * kVoiceGain && rms(0, 4800) == 0);
   // 0x11: released, then free once quiet (or 10 s on)
   uint8_t off[] = {0xF0, 0x7D, 0x52, 0x54, 0x11, 0x04, 0xF7};
   host_sysex(off, sizeof off);
@@ -263,7 +263,7 @@ static void test_live() {
   poly::midi(0x9D, 43, 127);
   CHECK(poly::stats().swallowed == sw + 3 && poly::stats().live_notes == ln + 3);
   render(400);
-  CHECK(rms(4, 4800) > 100);
+  CHECK(rms(4, 4800) > 100 * kVoiceGain);
   advance_ms(poly::kGestureMs + 2);
   CHECK(count_cmd(0x28, 0x01) == 2);
   auto& w2 = g_out.back();
@@ -308,7 +308,7 @@ static int16_t peak_abs(int voice, int frames, int* at_full) {
   for (int i = 0; i < frames; ++i) {
     int x = ring[i][voice] < 0 ? -ring[i][voice] : ring[i][voice];
     if (x > p) p = (int16_t)(x > 32767 ? 32767 : x);
-    *at_full += x >= 32767;
+    *at_full += x >= (int)(32767 * core::kVoiceGain);   // the voice's full scale in its rows (kVoiceGain, voices.h)
   }
   return p;
 }
@@ -338,7 +338,7 @@ static void test_headroom() {
   uint32_t lim0 = voice_limited(3);
   float d = render_watch(3, 400);
   double mono = rms(3, 4800);
-  CHECK(mono > 300 && d == 0 && poly::headroom(3) == 1.0f && voice_limited(3) == lim0);
+  CHECK(mono > 300 * kVoiceGain && d == 0 && poly::headroom(3) == 1.0f && voice_limited(3) == lim0);
   printf("  one note: rms %.0f, headroom %g\n", mono, poly::headroom(3));
   // live pads (a host keyboard, poly=bind): one note at 0.6 as before; 3 and 6 at full velocity: no hard clip
   char line[400];
@@ -357,7 +357,7 @@ static void test_headroom() {
     printf("  live %d notes: peak %d (%.2f dBFS), headroom %.3f (1/sqrt(n) %.3f), step %.4f a block, limited %lu\n", n,
            pk, 20 * std::log10(pk / 32767.0), poly::headroom(3), 1 / std::sqrt((double)n), dmax,
            (unsigned long)voice_limited(3));
-    CHECK(full == 0 && pk <= (int)(core::kSoftCeil * 32767) + 1);
+    CHECK(full == 0 && pk <= (int)(core::kSoftCeil * 32767 * core::kVoiceGain) + 1);
     CHECK(std::fabs(poly::headroom(3) - 1 / std::sqrt((float)n)) < 0.02f);
     CHECK(dmax < 0.06f);   // (3 ms down: about 0.08 of the change a 0.25 ms block)
     if (n == 1) {
@@ -381,7 +381,7 @@ static void test_headroom() {
     float dmax = render_watch(3, 400);
     int full;
     int16_t pk = peak_abs(3, core::kBlock * 400, &full);
-    CHECK(full == 0 && pk <= (int)(core::kSoftCeil * 32767) + 1 && dmax < 0.06f);
+    CHECK(full == 0 && pk <= (int)(core::kSoftCeil * 32767 * core::kVoiceGain) + 1 && dmax < 0.06f);
     CHECK(std::fabs(poly::headroom(3) - 1 / std::sqrt((float)voi)) < 0.02f);
   }
   CHECK(poly::command("poly", line, sizeof line));
@@ -519,7 +519,7 @@ static void test_first_note() {
     std::vector<int16_t> o;
     for (int i = 0; i < 2400; ++i) o.push_back(ring[i][3]);
     if (k == 0) first = o;
-    CHECK(rms(3, 2400) > 300 && o == first);
+    CHECK(rms(3, 2400) > 300 * kVoiceGain && o == first);
     send({0xf0, 0x7d, 0x52, 0x54, 0x11, 3, 0xf7});
     for (int j = 0; j < 40 && poly::active(3); ++j) render(400), advance_ms(200);
     CHECK(!poly::active(3));

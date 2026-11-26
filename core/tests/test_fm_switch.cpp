@@ -71,7 +71,7 @@ int main() {
       if (k) {
         double first = rms_rows(0, 12);
         printf("chain step %d: rms of the first 12 frames %.0f\n", k, first);
-        CHECK(first > 1000);
+        CHECK(first > 1000 * kVoiceGain);   // (levels in voice rows: kVoiceGain, voices.h)
       }
     }
   }
@@ -81,7 +81,7 @@ int main() {
     auto t = report(0x04, kFm | 0, 48, 110, {0, 64, 64, 127, 64, 64, 110, 127});
     voice_report(0x04, t.data(), (int)t.size());
     render(600 / kBlock);
-    CHECK(rms_rows(0, 600) > 1000);
+    CHECK(rms_rows(0, 600) > 1000 * kVoiceGain);
     auto pl = report(0x03, kPlaits | 0, 0, 0, {124, 64, 64, 64, 64, 64, 64, 100, 64, 64, 0, 0, 0, 120, 0, 100});
     voice_report(0x03, pl.data(), (int)pl.size());
     render(600 / kBlock);
@@ -90,7 +90,7 @@ int main() {
     render(1200 / kBlock);
     double r = rms_rows(240, 960);   // after Plaits' engine switch: no trig, so silence
     printf("FM -> PLAITS -> FM, no trig: rms %.0f\n", r);
-    CHECK(r < 50);
+    CHECK(r < 50 * kVoiceGain);
   }
   {   // a held note, then a reload with no note (another DX7 voice handed over without a trig), then a trig with
       // another PAT: the held note's voice is not the one the trig's load unloads. (The cut would show from row 12:
@@ -107,7 +107,7 @@ int main() {
     render(48 / kBlock);
     double held = rms_rows(12, 36);
     printf("held, reload without a note, trig: rms of frames 12..47 %.0f\n", held);
-    CHECK(held > 1000);
+    CHECK(held > 1000 * kVoiceGain);
   }
   for (int b : {1, 5, 9}) {   // three ROM voices after voice 0
     std::vector<double> same = run(0, 0), sw = run(0, b);
@@ -117,7 +117,7 @@ int main() {
     for (int i = 25; i < 48; ++i) typ = std::fmax(typ, std::fabs(sw[i] - sw[i - 1]));
     printf("PAT 0 -> %d: rms before %.0f, after %.0f (same patch %.0f), step %.0f (largest before %.0f)\n", b, before,
            after, ref, step, typ);
-    CHECK(before > 200);           // the note sounds
+    CHECK(before > 200 * kVoiceGain);   // the note sounds
     CHECK(after > 0.5 * before);   // not cut at the switch
     (void)step; (void)typ;   // (printed only: the waveform's own steps are as large; "after" is the proof)
   }

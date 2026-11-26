@@ -12,8 +12,12 @@ void Tick();                                         // core 3 (bridge::tick)
 bool View(sidecar_xy_view_t* out, unsigned* seen);   // core 0: the newest view if *seen differs (then updated)
 void Want(bool on, bool names = false);              // core 0: the page shows; names: its picker is open (the
                                                      // tables built at once, then every 250 ms; not while closed)
+void Slow(bool on);                                  // core 0: only a summary is shown (HOME > Overview's tile): one view a
+                                                     // second instead of 20
 unsigned NamesBuilt();                               // tests: how often the tables were built
-bool Quiet(const char* cmd);                         // a drag's line (xy=pos, xy=up, scene=fader, ~33 a second):
+bool Quiet(const char* cmd);                         // a drag's line (xy=pos, xy=up, scene=fader, and the touch edits' value
+                                                     // lines: ins=Vn:S:pK:V, ins=Vn:send:B:V, out=Vn:lev|pan|wid:V,
+                                                     // mfx=S:pK:V, mfx=S:mix:V, mfx=lev:V, vparam=T:K:V; ~33 a second):
                                                      // the display neither logs it nor holds its status push back
 
 }  // namespace xypad_pi

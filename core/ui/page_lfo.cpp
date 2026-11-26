@@ -241,7 +241,7 @@ CORE_COLD void lfo_enc(int e, int d, bool func) {
   if (e == 0) return lfo_walk(l, func && !lp.design);
   if (lp.design) {
     lp.touched = e;
-    if (e == 1) s.step[lp.step] = (int8_t)clampi(s.step[lp.step] + d * (func ? 8 : 1), -64, 63);
+    if (e == 1) s.step[lp.step] = (int8_t)clampi(detent_step(e, detent_tag(0x700 + lp.sel * 32 + lp.step), s.step[lp.step], d * (func ? 8 : 1), 0, func), -64, 63);   // 0 the detent
     else if (e == 2) s.shape[lp.step] = (uint8_t)clampi(s.shape[lp.step] + l, 0, lfo::kShapes - 1);
     else if (e == 3 && l) lp.preset = clampi(lp.preset + l, 0, lfo::kPresets - 1), lfo::preset(&s, lp.preset);
     lfo::set(lp.sel, s);
@@ -254,7 +254,7 @@ CORE_COLD void lfo_enc(int e, int d, bool func) {
       break;
     }
     case 2: lfo::param_step(&s, l); break;   // the target's own params
-    case 3: s.depth = (int8_t)clampi(s.depth + d * (func ? 8 : 1), -64, 63); break;
+    case 3: s.depth = (int8_t)clampi(detent_step(e, detent_tag(0x600 + lp.sel), s.depth, d * (func ? 8 : 1), 0, func), -64, 63); break;   // 0 the detent
     case 4: s.wave = (uint8_t)clampi(s.wave + l, 0, lfo::kWaves - 1); break;
     case 5: s.rate = (uint8_t)clampi(s.rate + (s.sync ? l : d * (func ? 8 : 1)), 0, s.sync ? lfo::kDivs - 1 : lfo::kFreeRates - 1); break;
     case 6: {

@@ -1,5 +1,7 @@
 # XY pad
 
+> MORPH as a target (the scenes' fader) comes in 0.5.2: in 0.5.0 it is switched off (`core/sidecar_features.h`, `SIDECAR_MORPH`) and not offered. A saved MORPH slot is kept and does nothing.
+
 The touchscreen as a "Kaoss pad" controller (0.5.0, Pi). A finger on the pad moves up to four targets on X and four
 on Y at once, each with its own depth. Set up on the touchscreen only; saved per kit, with a project default.
 
