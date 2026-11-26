@@ -6,6 +6,7 @@
 // 0.5.0: a bus slot with a send TYPE adds its MIX ("B3 A RINGS 50 0 80 60 40"); a line set_type refuses (past the send
 // TYPEs' room, a send TYPE on a voice) is logged and locks the file, as a line this build does not read.
 #include <string.h>
+#include "device/device.h"
 
 #include "fmt/fmt.h"
 #include "fx/insert.h"
@@ -294,7 +295,9 @@ static bool save_text(bool queue) {
     add(b, sniprintf(b, sizeof b, CORE_STR("SEND %s %d %d %d\n"), chain_name(v), send_knob(v, 0), send_knob(v, 1),
                      send_knob(v, 2)));
   }
-  if (prj_slot())   // 3(c) step 8: another slot's send FX (slot 0's are the Rytm's kit's 0x20s)
+  // 3(c) step 8: another slot's send FX (slot 0's are the Rytm's kit's 0x20s; a Rytm in slot 1, two Rytms (design 2026-11-26):
+  // its own kit's, not the file's)
+  if (prj_slot() && !device::rytm_at(prj_slot()))
     for (int s = 0; s < fx::kSlots; ++s) {
       const fx::Control& f = fx::cur();
       if (f.knob[s][0] == fx::kOff) continue;

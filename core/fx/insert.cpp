@@ -2,6 +2,7 @@
 // console, the card (per kit), and the DSP hooks the render cores and the send FX's core call. CORE_POLY builds only
 // (the Pi and the Mac).
 #include "fx/insert.h"
+#include "device/device.h"
 
 #include <string.h>
 
@@ -195,7 +196,9 @@ void clear_settings() {
     for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
   control_of(hand()).route3 = 0;
   master::clear();   // (the slot in hand's: master.cpp asks slot_in_hand)
-  if (hand()) {      // 3(c) step 8: another slot's send FX is its file's (SFX lines; slot 0's are the Rytm's kit's 0x20s)
+  // 3(c) step 8: another slot's send FX is its file's (SFX lines; slot 0's are the Rytm's kit's 0x20s, and so are a Rytm's in
+  // slot 1: two Rytms, design 2026-11-26)
+  if (hand() && !device::rytm_at(hand())) {
     fx::Control& f = fx::control_of(hand());
     for (int s = 0; s < fx::kSlots; ++s)
       for (int k = 0; k < fx::kKnobs; ++k) f.knob[s][k] = 0;
