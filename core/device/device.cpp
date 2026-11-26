@@ -273,8 +273,10 @@ CORE_COLD bool leaving() {   // a box left and its edits are not all saved yet
   return false;
 }
 static void ask_step();
+static void midi_late();
 CORE_COLD bool step(bool settled) {   // (each idle pass: once every edit is saved, a slot whose box left is free for any box)
   usb_take();   // the USB devices that came or went (core 0's)
+  midi_late();  // a box's MIDI that enumerated after its USB stream took the slot
   ask_step();   // the MIDI RPC's DeviceUID asked where no USB gave it
   if (settled)
     for (Link& l : g_links)
@@ -654,6 +656,23 @@ static CORE_COLD void usb_take() {   // (the control core: step, claim)
     }
     l.presumed = false;
     __atomic_store_n(&s_usb_want[l.index], (const Profile*)nullptr, __ATOMIC_RELEASE);
+  }
+}
+
+// A box held by its USB whose MIDI interface the Pi matched to it only after usb_take ran (set_midi_slot came later: the
+// link1 scan, every 250 ms, after the stream's attach) got no route, so a stock box (no hello, no 35) never had its
+// transport routed: its realtime bytes (its own clock) were dropped (unit run CK2, T521, 2026-11-26: the A4 on link1). Each
+// pass, a transport the Pi says is a held slot's box, routed nowhere, while no other transport carries that slot: routed.
+static CORE_COLD void midi_late() {
+  for (int t = 0; t < kLinks; ++t) {
+    const int s = s_midi_slot[t];
+    if (s < 0 || s_route[t] >= 0 || !g_links[s].held || g_links[s].presumed) continue;
+    bool carried = false;
+    for (int k = 0; k < kLinks; ++k) carried = carried || s_route[k] == s;
+    if (carried) continue;
+    route(t, s);
+    log(CORE_STR("device: transport %d is slot %d's box (its USB MIDI): routed"), t, s);
+    if (!g_links[s].uid) ask_uid(t, g_links[s].held);
   }
 }
 
