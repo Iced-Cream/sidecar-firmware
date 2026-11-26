@@ -430,9 +430,10 @@ CORE_COLD int state_line(char* o, int cap) {
 CORE_COLD mod::Tid stock_target(int track, int word) {   // a stock page's (track, word) -> its scene target, 0 none
   mod::Tid tg = 0;
   const int vi = ui::remote_track_voice(track), m = ui::remote_track_machine(track);
-  if (track >= 0 && track < 12 && word >= 9 && word <= 24 && vi >= 0 && m >= 0 && m != 0x7F)
+  if (track >= 0 && track < 12 && word >= 9 && word <= 24 && vi >= 0 && m >= 0 && m != 0x7F) {
+    if (ui::remote_track_src_list(track, word - 9)) return 0;   // 0.5.2 rc4: a source / preset list: NOT LOCKABLE
     tg = mod::tid(mod::kV, vi, word - 9);   // a Sidecar machine: its voice's P1..P16
-  else
+  } else
     tg = mod::rytm_tid(track, word);
   return tg && mod::valid(tg) ? tg : 0;
 }
