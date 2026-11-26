@@ -1279,6 +1279,39 @@ int main() {
       CHECK(r.ob && r.ob->Configure());
       CHECK(freeze(r.dev, r) == 1 && vl805.rescans == 1 && port.removes == 2);
     }
+    {  // 6: obhubreset!: the root-port reset at the next pass, the hub answering; outside the hub's budget
+      CTimer::s_now += 120000000;
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &vl805;
+      CHECK(r.ob && r.ob->Configure());
+      uint16_t c = 0;
+      r.in(1, c), r.out_done();
+      size_t l1 = CLogger::Get()->lines.size();
+      CHECK(CObUsb::Command("obhubreset!"));
+      CObUsb::PollHalt();
+      CHECK(port.removes == 3 && port.rescans == 3 && CObUsb::HubResets() == 2 && r.dev.removes == 0);
+      CHECK(count_lines("obhubreset!: resetting the Pi's USB hub at its root port (Analog Rytm MKII in slot 0 on it; 1 asked", l1) == 1);
+      CHECK(count_lines("the Pi's USB hub is back after its reset", l1) == 1);
+    }
+    {  // 7: behind another hub (not the Pi's own): never re-enumerated, and the budget is spent as before: three lines, then
+       // the "frozen again" line once (no try given back: the hub was never asked)
+      CTimer::s_now += 120000000;
+      CUSBDevice ed;
+      ed.desc.idVendor = 0x05e3, ed.desc.idProduct = 0x0608, ed.root = &port;
+      CUSBStandardHub ext(&ed);
+      Bus r(g_rytm, 0x0b48);
+      r.dev.hub = &ext;
+      CHECK(r.ob && r.ob->Configure());
+      size_t l1 = CLogger::Get()->lines.size();
+      uint16_t c = 0;
+      for (int k = 0; k < 20; ++k) r.in(1, c), r.out_done();
+      CObUsb::PollHalt();
+      r.host.in.front()->ep->GetXHCIEndpoint()->state = 1;
+      for (int t = 0; t < 400; ++t) CTimer::s_now += 100000, CObUsb::PollHalt();   // 40 s frozen
+      CHECK(count_lines("but it hangs off another hub: no re-enumeration", l1) == 3);
+      CHECK(count_lines("its stream is frozen again after 3 re-enumerations", l1) == 1);
+      CHECK(r.dev.removes == 0 && ext.rescans == 0);
+    }
     CTimer::s_now = 0;
   }
   {  // a Rytm at full speed (issue 11, the A4 replug): refused before any request, its root port enumerates it again

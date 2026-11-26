@@ -48,6 +48,7 @@
 #include "mirror_target.h"
 
 class CUSBStandardHub;
+class CUSBHCIRootPort;
 
 // One CObUsb per box streaming (two at most): the Rytm's (slot 0) and another box's (slot 1, its profile's audio row). The
 // primary stream (the Rytm's while it is there, else the other box's) is the one the engine's output stage and the Sidecar
@@ -348,11 +349,15 @@ private:
 	static int s_nForceReEnum;			// obreenum=<slot>: -1 none
 	static unsigned s_nFreezeReEnums;		// since boot
 	static boolean PollFreeze (void);
-	// TRUE: removed (this object is deleted; after a hub reset the other box's too). FALSE: still here; *pSent FALSE when
-	// nothing at all was sent (the hub did not answer, now or less than obfreeze::kDeadMs ago: a freeze try given back)
+	// TRUE: removed (this object is deleted; after a hub reset the other box's too). FALSE: still here; *pSent FALSE only
+	// when the hub did not answer, now or less than obfreeze::kDeadMs ago (a freeze try given back)
 	boolean ReEnumerate (const char *pWhy, boolean *pSent = 0);
 	static obfreeze::Hub s_Hub;			// the Pi 4's own hub (BuiltInHub): did it answer, its root-port resets
 	static boolean HubNoAnswer (CUSBStandardHub *pHub, const char *pName, unsigned nSlot, unsigned nTookUs);
+	static void ResetHub (CUSBHCIRootPort *pRoot);	// the hub on that root port reset and enumerated again
+	static boolean s_bForceHubReset;		// obhubreset!: at the next pass (a test)
+	static unsigned s_nForcedHubResets;		// since boot
+	static boolean PollForcedHubReset (void);	// TRUE: done (every box on the hub is gone)
 	// the attach gate (attach_gate.h): Log decides once a second (m_nGateAct), PollGate acts in the main loop
 	static obgate::Gate s_Gate[2];			// per slot: outlives this object, which a re-enumeration deletes
 	static int s_nForceRestart;			// obrestart=<slot>: -1 none

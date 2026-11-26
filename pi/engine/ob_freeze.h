@@ -20,8 +20,10 @@
 // replug by hand.
 //
 // The hub that does not answer (RL1, KB T516, 2026-11-26): the frozen-stream path fired on a unit for the first time
-// after a plug-in knock, and the Pi's own USB 2 hub (the VL805's 2109:3431) was not answering by then: the A4 and the
-// hub's port reports had gone silent at 00:16:45.84, 7 s before the first try. Its port disable timed out (3 s), and
+// after a plug-in knock. Seen: the A4 went silent at 00:16:45.84 (a lone IN error, then its CLEAR_FEATURE timed out), and
+// the first request to the Pi's own USB 2 hub after that (the VL805's 2109:3431), this path's port disable 7 s later,
+// got no answer. Inferred, not seen: the hub stopped at about 45.84 too (the Rytm plugged into its port 4 was never
+// reported; earlier cycles reported it within about 1 s). Why it stopped is not known. The port disable timed out (3 s), and
 // the removal was ignored: nothing was deleted, the rescan that followed waited 3 s on each of three more requests to
 // the same hub, and the next two tries did the same (12 s of the main loop each, 15 s with the relay's poll after it).
 // Circle also leaves a timed-out control transfer on the endpoint's ring (CXHCIEndpoint::Transfer only drops the URB),
@@ -31,7 +33,9 @@
 // device behind it - the other box and the relay too, each held its 5 s slot - and enumerates it again (a freeze try
 // spent: the box comes back with the hub). kHubResets a boot, kHubGapMs apart. Spent or off: no request goes to that
 // hub for kDeadMs, said once, and the freeze tries meanwhile are given back (nothing happened to the box). A quick
-// refusal (the hub answered no) is a try spent, without the rescan.
+// refusal (the hub answered no) is a try spent, without the rescan. obhubreset! runs the root-port reset at once (a
+// test of the teardown and the re-enumeration, the hub answering or not). Not known: whether that reset brings a hub
+// in RL1's state back (RL1 needed two Pi power cycles).
 //
 // Freestanding C++ (stdint.h only), so the timeline can be replayed on the Mac.
 #ifndef SIDECAR_OB_FREEZE_H
