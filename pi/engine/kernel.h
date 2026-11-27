@@ -93,7 +93,9 @@ private:
 	boolean UsbCommand (const char *pCmd);			// usbmode, usbmode=class|overbridge|cmdline (TRUE: it was one)
 	static void UiCommand (const char *pCmd, void *pParam);	// a display control: the console's parser, then a re-read
 	void StopAndReboot (const char *pWhy, boolean bTryboot = FALSE);
-	void BootStep (unsigned nStep);			// the boot screen's bar (1..CSidecarDisplay::SplashSteps)	// bTryboot: the firmware reads tryboot.txt once
+	void BootStep (unsigned nStep);			// the boot screen's bar (1..CSidecarDisplay::SplashSteps), the watchdog fed
+	void BootFeed (void);				// the boot watchdog fed (m_bBootWd): between the steps and in their long waits
+	void BootHang (unsigned nAt);			// boothang=N (the boot watchdog's test): core 0 hangs here when N == nAt	// bTryboot: the firmware reads tryboot.txt once
 	void UseLink (const char *pSpec);			// usb | tcp | tcp:IP:PORT
 	// net=auto at boot (usbnet_pi.h): a computer on USB-C whose network driver starts in time gets the network
 	boolean UsbNetProbe (const usbnet::Options &rOpt, unsigned nGadgetT0, const char **ppWhy);
@@ -188,6 +190,8 @@ private:
 	void LoadDisplayRes (boolean bCard);
 	void LoadDisplaySettings (boolean bCard);
 	boolean			m_bUpdTrial = FALSE;	// updtrial=1: the web update's trial boot (update_pi.h): the watchdog from the start
+	boolean			m_bBootWd = TRUE;	// the watchdog from Initialize's start (bootwd=0: from Run, as before; updtrial / testsecs keep it)
+	unsigned		m_nBootHang = 0;	// boothang=N: core 0 hangs at boot point N (BootHang), 0: never
 #ifdef SIDECAR_PI5_TESTMODE
 	unsigned		m_nTestSecs = 0;	// testsecs= (docs/pi5.md "Engine test mode"): 0 off
 	boolean			m_bTestCard = FALSE;	// testcard=1 with testsecs=: the card in use, Sidecar's folders only (card_guard.h)
