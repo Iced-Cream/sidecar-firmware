@@ -8,7 +8,7 @@
    record, no play, no Rytm track mute, no LIVE VIA, loop.txt on the card ignored), but the code stays built and tested with
    it on. The redesign (POST at unity) turns it on: change the 0 below to 1. */
 #ifndef SIDECAR_LOOPER
-#define SIDECAR_LOOPER 0
+#define SIDECAR_LOOPER 1
 #endif
 #ifndef SIDECAR_MORPH
 #define SIDECAR_MORPH 1
