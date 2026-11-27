@@ -1360,6 +1360,7 @@ int main() {
     CHECK(port.rescans == 0);
     CTimer::s_now64 = 12000000, CObUsb::PollReEnum(), CObUsb::PollReEnum();
     CHECK(port.rescans == 1);   // once
+    CHECK(port.removes == 1);   // the refused box removed first: its MIDI kept it on the port (SR4, T482)
     {  // the port's new reset gives high speed: streams, and the budget is back
       Bus b(g_rytm, 0x0b48);
       b.dev.root = &port;
@@ -1387,11 +1388,12 @@ int main() {
       CUSBStandardHub vl805(&hd);
       for (int k = 0; k < 3; ++k) {
         Bus b(g_rytm, 0x0b48);
-        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 3;   // Pi port 4 (0-based 3), as SR4's Rytm
         CHECK(b.ob && !b.ob->Configure());
         CHECK(CLogger::Get()->lines.back().find("(try " + std::to_string(k + 1) + " of 3)") != std::string::npos);
         CTimer::s_now64 += 10000000, CObUsb::PollReEnum();
         CHECK(vl805.rescans == k + 1);
+        CHECK(vl805.removes == k + 1 && vl805.removed_at == 3);   // that port emptied before the rescan, else it is skipped
       }
       Bus b(g_rytm, 0x0b48);   // still at full speed after three: stays off, says so
       b.dev.speed = USBSpeedFull, b.dev.hub = &vl805;
@@ -1399,6 +1401,105 @@ int main() {
       CHECK(CLogger::Get()->lines.back().find("still at FS after 3 tries") != std::string::npos);
       CTimer::s_now64 += 60000000, CObUsb::PollReEnum();
       CHECK(vl805.rescans == 3 && port.rescans == 1);
+    }
+    {  // the hub refuses to disable the port: no rescan (it would skip the port anyway), the log says so
+      CUSBDevice hd;
+      hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+      hd.root = &port;
+      CUSBStandardHub vl805(&hd);
+      vl805.remove_ok = FALSE;
+      CTimer::s_now64 += 60000000;   // a new plug: the budget is full again
+      Bus b(g_rytm, 0x0b48);
+      b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 2;
+      CHECK(b.ob && !b.ob->Configure());
+      CTimer::s_now64 += 2000000, CObUsb::PollReEnum();
+      CHECK(vl805.removes == 1 && vl805.removed_at == 2 && vl805.rescans == 0);
+      CHECK(CLogger::Get()->lines.back().find("its hub refused to disable the port (0 ms): the box stays as it is") != std::string::npos);
+    }
+    {  // the hub does not answer the port disable (its 3 s timeout): #51's no-answer handling, the hub reset at its root
+       // port (that enumerates the box again with the rest); with the boot's resets spent, nothing more sent to it
+      struct RPort : CUSBHCIRootPort {
+        int rescans = 0;
+        boolean ReScanDevices() override { ++rescans; return TRUE; }
+      } rport;
+      CUSBDevice hd;
+      hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+      hd.root = &rport;
+      CUSBStandardHub vl805(&hd);
+      vl805.remove_ok = FALSE, vl805.remove_us = 3000000;
+      CObUsb::ForgetHub();
+      size_t l1 = CLogger::Get()->lines.size();
+      for (int k = 0; k < 3; ++k) {   // two resets a boot, a minute apart; the third finds them spent
+        CTimer::s_now64 += 60000000;   // a new plug each time
+        Bus b(g_rytm, 0x0b48);
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 1;
+        CHECK(b.ob && !b.ob->Configure());
+        CTimer::s_now64 += 2000000, CObUsb::PollReEnum();
+        CHECK(vl805.removes == k + 1 && vl805.rescans == 0);
+        CHECK(rport.removes == (k < 2 ? k + 1 : 2) && rport.rescans == (k < 2 ? k + 1 : 2));
+      }
+      CHECK(CObUsb::HubResets() == 2);
+      CHECK(count_lines("Analog Rytm MKII (slot 0): the Pi's USB hub did not answer (the port disable waited 3000 ms): resetting "
+                        "it at its root port", l1) == 2);
+      CHECK(count_lines("nothing sent to the hub for 60 s (its resets for this boot spent)", l1) == 1);
+      {  // inside the quiet spell the next retry sends nothing to it
+        Bus b(g_rytm, 0x0b48);
+        b.dev.speed = USBSpeedFull, b.dev.hub = &vl805, b.dev.hub_port = 1;
+        CHECK(b.ob && !b.ob->Configure());
+        CTimer::s_now64 += 5000000, CObUsb::PollReEnum();   // (try 2 of this plug: 5 s)
+        CHECK(vl805.removes == 3 && rport.removes == 2);
+        CHECK(count_lines("the Pi's USB hub did not answer 5 s ago: nothing sent to it, the box stays off", l1) == 1);
+      }
+      CObUsb::ForgetHub();
+    }
+    {  // obfsnext=<slot> (a test): a box at high speed in that slot refused once as if at full speed, then enumerated again
+       // as SR4's needs (removed, rescanned); it comes back at high speed and streams. Used once; another slot untouched.
+       // With obhubnoanswer=<slot> too, the retry's port disable is taken as not answered: the hub reset
+      struct RPort : CUSBHCIRootPort {
+        int rescans = 0;
+        boolean ReScanDevices() override { ++rescans; return TRUE; }
+      } rport;
+      CUSBDevice hd;
+      hd.desc.idVendor = 0x2109, hd.desc.idProduct = 0x3431;
+      hd.root = &rport;
+      CUSBStandardHub vl805(&hd);
+      size_t l1 = CLogger::Get()->lines.size();
+      CHECK(CObUsb::Command("obfsnext=0") && !CObUsb::Command("obfsnext=2") && !CObUsb::Command("obfsnext="));
+      CTimer::s_now64 += 60000000;
+      {
+        Bus b(g_rytm, 0x0b48);
+        b.dev.hub = &vl805, b.dev.hub_port = 3;   // at high speed
+        CHECK(b.ob && !b.ob->Configure());
+        CHECK(b.host.ctl.empty() && b.host.in.empty());
+        CHECK(count_lines("obfsnext: slot 0 taken as full speed (a test; it is at HS)", l1) == 1);
+        CHECK(CLogger::Get()->lines.back().find("came up at FS, Overbridge needs HS: enumerating it again in 2 s (try 1 of 3)") != std::string::npos);
+      }
+      CTimer::s_now64 += 2000000, CObUsb::PollReEnum();
+      CHECK(vl805.removes == 1 && vl805.removed_at == 3 && vl805.rescans == 1);
+      {
+        Bus b(g_rytm, 0x0b48);   // back at high speed: streams; the hook is used up
+        b.dev.hub = &vl805, b.dev.hub_port = 3;
+        CHECK(b.ob && b.ob->Configure());
+      }
+      CTimer::s_now64 += 60000000, CObUsb::PollReEnum();
+      CHECK(vl805.rescans == 1);
+      CHECK(CObUsb::Command("obfsnext=1"));
+      {
+        Bus b(g_rytm, 0x0b48);   // slot 0 again: not this one's
+        b.dev.hub = &vl805;
+        CHECK(b.ob && b.ob->Configure());
+      }
+      CHECK(CObUsb::Command("obfsnext=0") && CObUsb::Command("obhubnoanswer=0"));   // (slot 1's overwritten)
+      CTimer::s_now64 += 60000000;
+      {
+        Bus b(g_rytm, 0x0b48);
+        b.dev.hub = &vl805, b.dev.hub_port = 2;
+        CHECK(b.ob && !b.ob->Configure());
+      }
+      CTimer::s_now64 += 2000000, CObUsb::PollReEnum();
+      CHECK(vl805.removes == 1 && rport.removes == 1 && rport.rescans == 1 && CObUsb::HubResets() == 1);
+      CHECK(count_lines("obhubnoanswer: slot 0's port disable not sent, taken as not answered (a test)", l1) == 1);
+      CObUsb::ForgetHub();
     }
     CTimer::s_now64 = 0;
   }
