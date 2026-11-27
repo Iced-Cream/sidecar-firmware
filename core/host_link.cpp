@@ -70,8 +70,9 @@ static CORE_COLD void sendfx_names_out() {
 // left out sends the list and the labels again (0x20 below).
 constexpr int kRytmLabelTables = 8, kRytmLabelTables1049 = 16;
 static CORE_COLD int rytm_label_tables() { return ui::remote_caps() & 2 ? kRytmLabelTables1049 : kRytmLabelTables; }
-static uint64_t s_labels_sent;   // bit id: its 0x24 went in the last burst (ids 1..63)
-static uint8_t s_ulabels_sent;   // bit u: user TYPE 64 + u's (Plugin API 3's user effects, from their manifests)
+// each box's own (the box in hand's: its Rytm, whichever slot it holds)
+static uint64_t s_labels_sent_b[kVoiceSlots];   // bit id: its 0x24 went in the last burst (ids 1..63)
+static uint8_t s_ulabels_sent_b[kVoiceSlots];   // bit u: user TYPE 64 + u's (Plugin API 3's user effects, from their manifests)
 static CORE_COLD bool label_sent(int id, uint64_t lo, uint8_t hi) {
   return id < fx::kFirstUser ? (lo >> id & 1) : (hi >> (id - fx::kFirstUser) & 1);
 }
@@ -93,13 +94,14 @@ static CORE_COLD void sendfx_labels_out() {
   one(fx::cur().knob[0][0]);   // (the box in hand's: the Rytm this goes to, whichever slot it holds)
   one(fx::cur().knob[1][0]);
   for (int id = 1; id < fx::kFirstUser + fx::kUserSlots; ++id) one(id);
-  s_labels_sent = sent, s_ulabels_sent = usent;
+  s_labels_sent_b[fx::slot_in_hand()] = sent, s_ulabels_sent_b[fx::slot_in_hand()] = usent;
 }
 // a slot's TYPE has labels the Rytm was not sent (the cap above)
 static CORE_COLD bool sendfx_labels_missing() {
   for (int s = 0; s < fx::kSlots; ++s) {
     int id = fx::cur().knob[s][0];
-    if (label_id(id) && fx::labels(id) && !label_sent(id, s_labels_sent, s_ulabels_sent)) return true;
+    const int b = fx::slot_in_hand();
+    if (label_id(id) && fx::labels(id) && !label_sent(id, s_labels_sent_b[b], s_ulabels_sent_b[b])) return true;
   }
   return false;
 }
@@ -132,14 +134,22 @@ static CORE_COLD void sendfx_state_out(bool all) {
 // and a value of ours can cross a turn of the Rytm's in flight (it then shows ours while we keep its turn). The
 // refresh puts its knobs back on what plays within 2 s either way; 20 bytes per 2 s.
 static const uint32_t kBwRefreshMs = 2000;
-static int16_t s_bw_sent[fx::kSlots][2] = {{-1, -1}, {-1, -1}};
-static uint32_t s_bw_ms, s_bw_all_ms;
-static bool s_bw_up;   // the Rytm listens: set by its ASK, first 0x20, hello or a turn; cleared by link_lost()
+// Each box's own (decided 2026-11-26: slot 0 and slot 1 the same): what its Rytm was told of its own buses (ins:: the slot
+// in hand's), its 20 ms pace and 2 s refresh, whether it listens. The idle step runs in each slot's Scope (sendfx_idle).
+struct Bw {
+  int16_t sent[fx::kSlots][2] = {{-1, -1}, {-1, -1}};
+  uint32_t ms = 0, all_ms = 0;
+  bool up = false;   // the Rytm listens: set by its ASK, first 0x20, hello or a turn; cleared by link_lost() / slot_left()
+};
+static Bw s_bw_b[kVoiceSlots];
+static inline Bw& BW() { return s_bw_b[fx::slot_in_hand()]; }
 static CORE_COLD bool sendfx_bw_out() {
-  if (!hooks.to_rytm || now_ms() - s_bw_ms < 20) return false;
-  if (now_ms() - s_bw_all_ms >= kBwRefreshMs) {
+  Bw& w0 = BW();
+  auto& s_bw_sent = w0.sent;
+  if (!hooks.to_rytm || now_ms() - w0.ms < 20) return false;
+  if (now_ms() - w0.all_ms >= kBwRefreshMs) {
     for (auto& x : s_bw_sent) x[0] = x[1] = -1;
-    s_bw_all_ms = now_ms();
+    w0.all_ms = now_ms();
   }
   bool sent = false;
   for (int s = 0; s < fx::kSlots; ++s) {
@@ -151,12 +161,13 @@ static CORE_COLD bool sendfx_bw_out() {
     s_bw_sent[s][0] = (int16_t)b, s_bw_sent[s][1] = (int16_t)w;
     sent = true;
   }
-  if (sent) s_bw_ms = now_ms();
+  if (sent) w0.ms = now_ms();
   return sent;
 }
 static CORE_COLD void sendfx_bw_all() {   // the Rytm asked or came up: what its knobs show may be its defaults
-  for (auto& x : s_bw_sent) x[0] = x[1] = -1;
-  s_bw_ms = now_ms() - 20, s_bw_all_ms = now_ms(), s_bw_up = true;
+  Bw& w0 = BW();
+  for (auto& x : w0.sent) x[0] = x[1] = -1;
+  w0.ms = now_ms() - 20, w0.all_ms = now_ms(), w0.up = true;
   sendfx_bw_out();
 }
 static CORE_COLD void sendfx_bw_in(int s, int base, int width) {
@@ -164,39 +175,44 @@ static CORE_COLD void sendfx_bw_in(int s, int base, int width) {
   ins::set_eq_bw(c, base, width);
   fx::edited(mod::tid(mod::kIns, c, 8)), fx::edited(mod::tid(mod::kIns, c, 9));   // (the Rytm's page: a Sidecar edit)
   ins::eq_bw(c, &base, &width);
-  s_bw_sent[s][0] = (int16_t)base, s_bw_sent[s][1] = (int16_t)width;
-  s_bw_up = true;
+  BW().sent[s][0] = (int16_t)base, BW().sent[s][1] = (int16_t)width;
+  BW().up = true;
 }
 #endif
 
-static char fx_project[24] = "\x01";   // the project whose fxslots file is loaded (never a real name at boot)
-
-static bool fx_owed = false;           // the Rytm is told the slots' names when the card core has read them
+// Each box's own (the slot in hand's project, its own fxslots file in its folder, its own Rytm told)
+static char fx_project_b[kVoiceSlots][24];   // the project whose fxslots file is loaded
+static bool fx_loaded_b[kVoiceSlots];         // one was (none at boot: the first project, an empty name too, is read)
+static bool fx_owed_b[kVoiceSlots];                    // the box is told the slots' names when the card core has read them
+static uint32_t s_list_ms_b[kVoiceSlots];
 
 CORE_COLD void sendfx_project() {
-  if (strcmp(fx_project, prj().key) == 0) return;
-  strcpy(fx_project, prj().key);
+  const int b = fx::slot_in_hand();
+  if (fx_loaded_b[b] && strcmp(fx_project_b[b], prj().key) == 0) return;
+  fx_loaded_b[b] = true;
+  strncpy(fx_project_b[b], prj().key, sizeof fx_project_b[b] - 1);
   fx::slots_load(prj().key);
-  fx_owed = true;
+  fx_owed_b[b] = true;
   sendfx_step();
 }
 
-static uint32_t s_list_ms = 0;
 CORE_COLD bool sendfx_step() {
+  const int b = fx::slot_in_hand();
+  bool& fx_owed = fx_owed_b[b];
 #if CORE_POLY
-  if (sendfx_hello() && s_bw_up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
+  if (sendfx_hello() && BW().up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
 #endif
   // a user effect slot changed (fx::list_changed): the list, the labels and the states again, at most every 100 ms
-  if (fx::list_dirty && !fx_owed && now_ms() - s_list_ms >= 100) {
-    fx::list_dirty = false;
-    s_list_ms = now_ms();
+  if ((fx::list_dirty >> b & 1) && !fx_owed && now_ms() - s_list_ms_b[b] >= 100) {
+    fx::list_dirty = (uint8_t)(fx::list_dirty & ~(1u << b));
+    s_list_ms_b[b] = now_ms();
     sendfx_names_out();
     sendfx_labels_out();
     sendfx_state_out(true);
     return true;
   }
   if (!fx_owed || !fx::slots_step()) return false;
-  fx::list_dirty = false;   // (the list below has it)
+  fx::list_dirty = (uint8_t)(fx::list_dirty & ~(1u << b));   // (the list below has it)
   fx_owed = false;
   sendfx_names_out();
   sendfx_labels_out();
@@ -332,6 +348,7 @@ CORE_COLD void slot_left(int slot) {
   if (slot < 0 || slot >= device::kLinks) return;
   device::Scope in(device::g_links[slot]);
 #if CORE_POLY
+  BW().up = false;   // sfx-basewidth: its Rytm went (whichever slot it held); its next hello / ASK sends all again
   seq::slot_left();   // (its transport to STOP: its MIDI and arpeggiator end there; its edits saved by idle)
 #endif
 #if CORE_MSAMP
@@ -346,7 +363,7 @@ CORE_COLD void link_lost() {
   chop::release_gates();   // a GATE slice would hold to its end: the Rytm's 0x11 will not come
 #endif
 #if CORE_POLY
-  s_bw_up = false;   // sfx-basewidth: no 2 s refresh (nor change) into a port nobody listens on; its hello sends all
+  BW().up = false;   // sfx-basewidth: no 2 s refresh (nor change) into a port nobody listens on; its hello sends all
 #endif
 }
 

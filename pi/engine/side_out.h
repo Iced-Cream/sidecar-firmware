@@ -31,8 +31,10 @@ inline void Restart() { g_restart = true; }
 // n frames for slot `slot`'s own stream (dev: its box's device row): its voices through the side stage, or silence
 // (and nothing popped) while that slot has no side stage. voices, feed (optional): as Output::Pull's (feed: Taps::feed, the
 // PRE / POST voices' stand-ins for their stems: the Rytm's send FX when it is the side box; left as is while silent).
+// lr, pairs (optional): Taps::lr / pairs, for the recorder when it records this box (rec_pi::Slot)
 inline void Pull(int slot, const core::out::Device* dev, int32_t (*out)[Output::kChannels], uint32_t n,
-                 int16_t (*voices)[Output::kVoices] = nullptr, float (*feed)[Output::kVoices] = nullptr) {
+                 int16_t (*voices)[Output::kVoices] = nullptr, float (*feed)[Output::kVoices] = nullptr,
+                 int16_t (*lr)[2 * Output::kVoices] = nullptr, float (*pairs)[4] = nullptr) {
   const bool on = core::device::side_slot() == slot;
   if (on && (!g_on || g_restart)) {   // a new stream, or the side stage just began: from an empty FIFO, faded in
     g_restart = false;
@@ -45,12 +47,12 @@ inline void Pull(int slot, const core::out::Device* dev, int32_t (*out)[Output::
     if (voices) memset(voices, 0, sizeof(int16_t) * Output::kVoices * n);
     return;
   }
-  if (!feed) {
+  if (!feed && !lr && !pairs) {
     g_OutputSide.Pull(out, n, voices);
     return;
   }
   Output::Taps t;
-  t.feed = feed;
+  t.feed = feed, t.lr = lr, t.pairs = pairs;
   g_OutputSide.Pull(out, n, voices, &t);
 }
 

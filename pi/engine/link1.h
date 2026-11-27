@@ -40,7 +40,8 @@ CUSBMIDIDevice *Device (void);
 void Send (void);
 typedef void TRealtime (int nTransport, uint8_t nStatus, uint16_t nSPP);
 typedef void TAllSoundOff (int nTransport);
-void Poll (TRealtime *pRealtime = 0, TAllSoundOff *pAllSoundOff = 0);	// pRealtime: the box's F8 FA FB FC, and F2 with its position in 16ths
+typedef void TByte (uint8_t nByte);
+void Poll (TRealtime *pRealtime = 0, TAllSoundOff *pAllSoundOff = 0, TByte *pByte = 0);	// pByte: each byte of the box's (its notes: cores.cpp)	// pRealtime: the box's F8 FA FB FC, and F2 with its position in 16ths
 void ToBox (const uint8_t *pData, int nLength);	// core::device::set_out(1, ...): records into g_Out
 
 // usb=mirror through a Teensy relay (teensy_target.cpp, docs/teensy-mirror.md): the box's USB MIDI to and from the relay's

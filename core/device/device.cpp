@@ -558,11 +558,11 @@ void load_now(admit::Load* out) {
   ld = {};
   for (int k = 0; k < kLinks && k < 2; ++k)
     ld.voices[k] = g_links[k].held ? g_links[k].voices : 0, ld.held[k] = g_links[k].held != nullptr, ld.asked[k] = g_links[k].want;
-  const int m = amp::master_row();   // the AMPs playing, each on its render core (admit.h amp_core): the first ask wins
+  const int m = amp::master_row();   // every box's AMPs playing, each on its render core (admit.h amp_core_of): the first ask wins
   for (int r = 0; r < amp::rows(); ++r)
     for (int s = 0; s < amp::kSlots; ++s)
       if (amp::slot_playing(r, s)) {
-        const int c = admit::amp_core(r, m, ld);
+        const int c = admit::amp_core_of(amp::row_box(r), amp::row_chain(r), m, ld);
         if (c >= 1 && c <= 3) ++ld.amps[c];
       }
   static_assert(ins::kAmp == 9 && ins::kTypes == admit::kSendType0 && ins::kMChorus == admit::kSendType0 &&
@@ -603,7 +603,7 @@ static CORE_COLD bool ins_room(int b, int c, int s, int t) {
 // AMP's CPU check (amp::set_cpu_check): one more AMP slot on row's render core, beside what renders now
 static CORE_COLD bool amp_room(int row) {
   const admit::Load ld = load_now();
-  return admit::amp_fits(admit::amp_core(row, amp::master_row(), ld), ld);
+  return admit::amp_fits(admit::amp_core_of(amp::row_box(row), amp::row_chain(row), amp::master_row(), ld), ld);
 }
 // The clock lowered (admit::set_clock: the engine's step-down for heat, decided 2026-11-22 for a Pi without cooling, or
 // cpumhz=) leaves a render core over kLimitBp with what is admitted: shed one item a step until each is within it. AMPs
@@ -617,9 +617,10 @@ static CORE_COLD void shed_over() {
   {   // core 3 (slot 0's master chain: its master AMPs, the highest row first)
     const int m = amp::master_row();
     if (admit::core3_bp(ld) > admit::kC3LimitBp)
-      for (int r = amp::rows() - 1; r >= m; --r)
+      for (int r = amp::rows() - 1; r >= 0; --r)
         for (int s = amp::kSlots - 1; s >= 0; --s)
-          if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == 3 && amp::shed(r, s)) {
+          if (amp::row_chain(r) >= m && amp::slot_playing(r, s) && admit::amp_core_of(amp::row_box(r), amp::row_chain(r), m, ld) == 3 &&
+              amp::shed(r, s)) {
             log(CORE_STR("device: core 3 over 70 %% at %u MHz: master AMP row %d %c shed (NO CPU)"), admit::clock(), r, 'A' + s);
             return;
           }
@@ -635,9 +636,9 @@ static CORE_COLD void shed_over() {
   for (int core = 1; core <= 2; ++core) {
     if (admit::core_bp(core, ld) <= admit::kLimitBp) continue;
     const int m = amp::master_row();
-    for (int r = m - 1; r >= 0; --r)
+    for (int r = amp::rows() - 1; r >= 0; --r)   // (every box's voice and master AMPs on this core, the highest row first)
       for (int s = amp::kSlots - 1; s >= 0; --s)
-        if (amp::slot_playing(r, s) && admit::amp_core(r, m, ld) == core && amp::shed(r, s)) {
+        if (amp::slot_playing(r, s) && admit::amp_core_of(amp::row_box(r), amp::row_chain(r), m, ld) == core && amp::shed(r, s)) {
           log(CORE_STR("device: core %d over 80 %% at %u MHz: AMP row %d %c shed (NO CPU)"), core, admit::clock(), r, 'A' + s);
           return;
         }

@@ -13,6 +13,8 @@ inline uint64_t g_render_frames = 0;   // seq::frames(): the test sets it before
 inline uint64_t render_frames() { return g_render_frames; }
 inline uint64_t render_frames(int) { return g_render_frames; }
 inline bool sidechain_on(int) { return false; }
+inline int samp_slot() { return 0; }
+inline int cal_slot() { return 0; }
 inline void samp_voices(const int16_t (*)[8], unsigned, const int16_t (*)[16], const float (*)[4]) {}
 inline void samp_in(const int32_t*, unsigned, unsigned) {}
 inline void tap_in(const int32_t*, unsigned, unsigned) {}

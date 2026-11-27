@@ -128,7 +128,7 @@ void Process(int box, const core::out::Device& dev, int32_t (*out)[12], unsigned
   // stereo=measure reads the plain return, so all of this stands aside for it whatever BYP says
   // SRC MIX: the Rytm's stems, on its stream (dev is its row) whichever slot it holds; another box has no stems to mix
   const bool rytm = &dev == &core::out::kRytmMk2;
-  const bool on = core::master::on(box), meas = box == 0 && core::out::meas::active(), mix = rytm && c.src == core::master::kMix;
+  const bool on = core::master::on(box), meas = box == core::out::meas::slot() && core::out::meas::active(), mix = rytm && c.src == core::master::kMix;
   const bool chain = on && !c.byp && !meas;
   // The limiter is first in and last out: the stems and the chain's output, neither of them clipped, reach 0/1 only with it
   // fully in, so its crossfade has nothing over full scale on the direct side, and BYP and SRC RET still end bit for bit

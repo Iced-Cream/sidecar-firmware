@@ -348,7 +348,7 @@ void render(int box, float (*y)[2], int n) {
     float a = fabsf(y[i][0]), b = fabsf(y[i][1]);
     pi = fmaxf(pi, fmaxf(a, b));
   }
-  if (box == out::g_base_slot) amp::service_master();   // AMP: the base box's chains only (keyed by chain, ins::voice_out)
+  amp::service_master(box);   // AMP: this box's own master rows (amp.h: each box its own)
   ins::Engine& e = ins::engine(box);
   const ins::Control& k = ins::control_of(box);
   for (int c = ins::kM0; c < ins::kChains; ++c)

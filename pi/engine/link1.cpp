@@ -168,7 +168,7 @@ void ToBox (const uint8_t *pData, int nLength)
 	for (int i = 0; i < nLength; i++) g_Out.push (pData[i]);
 }
 
-void Poll (TRealtime *pRealtime, TAllSoundOff *pAllSoundOff)
+void Poll (TRealtime *pRealtime, TAllSoundOff *pAllSoundOff, TByte *pByte)
 {
 	static boolean s_bUp;
 	boolean bUp = s_pDevice != 0;
@@ -188,6 +188,7 @@ void Poll (TRealtime *pRealtime, TAllSoundOff *pAllSoundOff)
 			if (pRealtime != 0) pRealtime (1, s_Rt.status (), s_Rt.spp ());	// transport 1's: its box's clock
 		}
 		if (s_Cc.feed (b) && pAllSoundOff != 0) pAllSoundOff (1);
+		if (pByte != 0) pByte (b);
 		unsigned n = s_Asm.feed (b);
 		if (n == 0) continue;
 		s_Stats.nSysEx++;

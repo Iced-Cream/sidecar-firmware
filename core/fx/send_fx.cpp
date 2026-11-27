@@ -119,7 +119,7 @@ uint8_t (*send_filter)(int track, int slot, uint8_t v) = nullptr;
 void (*clock_listener)(int box, uint8_t status, uint16_t spp) = nullptr;
 void (*bus_insert)(const Control& c, int slot, float (*y)[2], int n) = nullptr;
 bool (*user_ready)(int u) = nullptr;
-volatile bool list_dirty = false;
+volatile uint8_t list_dirty = 0;
 bool (*user_loaded)(int u) = nullptr;
 const KnobLabels* (*user_labels)(int u) = nullptr;
 void (*user_fresh_req)(int u, int slot) = nullptr;
@@ -217,16 +217,19 @@ static const uint8_t kPlayable[] = {kOff, kChorus, kComb,
 #endif
                                     kCrush, kRingMod, kHalo};
 static const int kNumPlayable = sizeof kPlayable / sizeof kPlayable[0];
+// The 0x21 list is the box in hand's: its own user effects (the Rytm it goes to, whichever slot it holds)
 static CORE_COLD int list_id(int k) {
   if (k < kNumPlayable) return kPlayable[k];
+  const UserFx* us = user_of(slot_in_hand());
   for (int u = 0, n = kNumPlayable; u < kUserSlots; ++u)
-    if (user[u].tag && n++ == k) return kFirstUser + u;
+    if (us[u].tag && n++ == k) return kFirstUser + u;
   return -1;
 }
 
 CORE_COLD int names_total() {
+  const UserFx* us = user_of(slot_in_hand());
   int n = kNumPlayable;
-  for (int u = 0; u < kUserSlots; ++u) n += user[u].tag != 0;
+  for (int u = 0; u < kUserSlots; ++u) n += us[u].tag != 0;
   return n;
 }
 
@@ -237,7 +240,7 @@ CORE_COLD int sysex_names(uint8_t* m, bool replace, int total, int first, int co
   for (int k = first; k < first + count; ++k) {
     int id = list_id(k);
     m[n++] = (uint8_t)(id < 0 ? 0 : id);
-    n += name_n(m + n, id < 0 ? "" : type_name(id), 13);
+    n += name_n(m + n, id < 0 ? "" : type_name_in(slot_in_hand(), id), 13);
   }
   m[n++] = 0xF7;
   return n;
@@ -246,7 +249,8 @@ CORE_COLD int sysex_names(uint8_t* m, bool replace, int total, int first, int co
 // 0x24 SENDFX LABELS (sim/protocol.py sendfx_labels): F0 7D 52 54 24 01 <id> <4 x 4 label bytes> then per zone
 // <knob | show << 2 | step << 3> <lo> <base> <5 name bytes>, F7. Only for an id this build plays.
 CORE_COLD const KnobLabels* labels(int id) {
-  if (id >= kFirstUser && id < kFirstUser + kUserSlots) return user_labels ? user_labels(id - kFirstUser) : nullptr;
+  if (id >= kFirstUser && id < kFirstUser + kUserSlots)   // (the box in hand's own UFX: um's index box * kUserSlots + u)
+    return user_labels ? user_labels(slot_in_hand() * kUserSlots + id - kFirstUser) : nullptr;
   if (!plays(id)) return nullptr;
   switch (id) {
     case kChorus: return &kChorusLabels;

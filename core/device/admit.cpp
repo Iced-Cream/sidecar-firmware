@@ -104,6 +104,13 @@ int amp_core(int row, int master_row, const Load& l) {
   return (unsigned)row < split_for(l.asked[b]) ? 1 : 2;
 }
 
+int amp_core_of(int b, int c, int master_row, const Load& l) {
+  if (b < 0 || b > 1) return 0;
+  if (c >= master_row) return master_core(b);
+  if (c < 0 || c >= 8) return 0;   // a bus: AMP plays dry there
+  return voice_core(b, c, l);
+}
+
 CORE_COLD bool amp_fits(int c, const Load& l) {
   if (!on() || !s_enforce) return true;
   const unsigned one = scaled(((unsigned long long)s_costs.amp_bp * s_pct.amp + 99) / 100);

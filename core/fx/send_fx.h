@@ -127,8 +127,8 @@ inline Control& control_of(int box) { return box ? control1 : control; }
 inline int box_of(const Control& c) { return &c == &control1 ? 1 : 0; }
 // 3(c) step 8: the settings code (the console, set_knob_base / set_send_base, the route file, the LFOs' and the mod
 // layer's writers) works on the slot in hand's: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0).
-// take_sendfx and the 0x22 replies are the box in hand's (the Rytm's message is taken in its slot's Scope: either slot); the
-// 0x21 list's user effects are still box 0's (send_fx_card.cpp slots_load).
+// take_sendfx, the 0x21 list, its labels and the 0x22 replies are the box in hand's (the Rytm's message is taken in its slot's
+// Scope: either slot), its user effects too (slots_load reads the slot in hand's map).
 extern int (*slot_fn)();
 int slot_in_hand();
 Control& cur();
@@ -192,13 +192,14 @@ extern bool (*user_fresh_done)(int u, int slot);
 inline bool user_plays(int t) { return t >= kFirstUser && t < kFirstUser + 4 && user_ready && user_ready(t - kFirstUser); }
 // The TYPE list (0x21) changed under the Rytm: a user effect slot was assigned, emptied, loaded again, muted or
 // remapped (core/user/um.cpp). The host link sends the list, the labels and the states again (sendfx_step,
-// rate-limited) - the Rytm asks for the list only once.
-extern volatile bool list_dirty;
+// rate-limited, each box's in its own Scope: bit s for slot s; a change is told to every box, which costs one list) - the
+// Rytm asks for the list only once.
+extern volatile uint8_t list_dirty;
 extern bool (*user_loaded)(int u);   // UFX u holds a loaded effect (READY, muted or not): its name is kept (slots_load)
 // UFX u's P2..P5 labels and zones for the Rytm (0x24), from its manifest (core/user/um.cpp fx_labels_build): null while
 // it holds no loaded effect. labels(64 + u) answers through it.
 extern const KnobLabels* (*user_labels)(int u);
-inline void list_changed() { list_dirty = true; }
+inline void list_changed() { list_dirty = 0xFF; }   // (every slot's bit)
 // The slot that is the STUTTER, or -1: FX 1 if both are (FX 2 is then MISSING: one ring, one insert).
 inline int stutter_slot(const Control& c) {
   return !plays(kStutter) ? -1 : c.knob[0][0] == kStutter ? 0 : c.knob[1][0] == kStutter ? 1 : -1;
