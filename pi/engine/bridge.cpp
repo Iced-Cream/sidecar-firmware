@@ -368,6 +368,7 @@ int scene_json(char* out, int cap) {   // the base box's scenes (core 0: names t
 bool loop_command(const char* p, char* out, int cap) { return core::loop::command(p, out, cap); }
 int loop_json(char* out, int cap) { return core::loop::json(out, cap); }
 uint64_t render_frames() { return core::seq::frames(); }
+uint64_t render_frames(int slot) { return core::seq::frames(slot); }
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {

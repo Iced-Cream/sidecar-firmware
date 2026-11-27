@@ -7,6 +7,7 @@
 #include <circle/memory.h>
 #include <circle/string.h>
 
+#include "fx/out.h"
 #include "loop/loop.h"
 #include "sidecar_features.h"
 #include "loop_keep.h"
@@ -57,11 +58,26 @@ void Initialize()
 	for (int s = 0; s < core::loop::kSlots; s++)
 	{
 		core::loop::init (s, (int32_t *) pRing[s], kRingFrames, pStore[s], (uint64_t) nEach << 20);
-		core::loop::set_out_gain (s, masterfx_pi::kStemOnPost);	// POST reaches the Rytm's main 10.9 dB down: the loop at the level it was heard
-		core::loop::set_pre_gain (s, masterfx_pi::kStemOnPost / masterfx_pi::kPreOnPost);	// OUT = PRE reaches it 2.0 dB down: +2.0 dB
+		SetBox (s, &core::out::kRytmMk2);	// (until a box's stream starts there: the Rytm's)
 	}
 	log->Write (From, LogNotice, "loop ring %u MB x %d, grabs %u MB x %d", (unsigned) (kRingBytes >> 20), core::loop::kSlots, nEach, core::loop::kSlots);
 	s_Keep.init (rec_pi::CardBackend (), KeepDone);
+}
+
+void SetBox (unsigned nSlot, const core::out::Device *pDev)
+{
+	if (pDev == 0) pDev = &core::out::kRytmMk2;
+	core::loop::set_returns ((int) nSlot, pDev->post, pDev->pre);
+	if (pDev == &core::out::kRytmMk2)
+	{
+		core::loop::set_out_gain ((int) nSlot, masterfx_pi::kStemOnPost);	// POST reaches the Rytm's main 10.9 dB down: the loop at the level it was heard
+		core::loop::set_pre_gain ((int) nSlot, masterfx_pi::kStemOnPost / masterfx_pi::kPreOnPost);	// OUT = PRE reaches it 2.0 dB down: +2.0 dB
+	}
+	else
+	{	// not measured on another box (a named gap): unity until loop=cal measures its POST return (postgain)
+		core::loop::set_out_gain ((int) nSlot, 1.0f);
+		core::loop::set_pre_gain ((int) nSlot, 1.0f);
+	}
 }
 
 bool WantsIn (unsigned nSlot) { return core::loop::wants_in ((int) nSlot); }

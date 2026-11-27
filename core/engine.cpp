@@ -208,13 +208,10 @@ CORE_COLD bool idle_save() {
 #if CORE_MSAMP
     if (T_("preview", preview::save())) return true;   // PREVIEW LEVEL (core/samp/preview.h)
 #endif
-  }
 #if CORE_POLY
-  {   // the looper (core/loop): one for the Pi, kept in the Rytm's slot's folder
-    device::Scope in(device::g_links[device::rytm_home()]);
-    if (T_("loop", loop::save())) return true;
-  }
+    if (T_("loop", loop::save())) return true;   // each box's looper (core/loop), in its own folder
 #endif
+  }
 #if CORE_POLY
   if (leaving) seq::save_due();
   if (T_("seq", seq::idle())) return true;   // the sequencer's pattern files: load, prefetch, save

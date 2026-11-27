@@ -9,6 +9,7 @@
 
 #include "check.h"
 #include "core.h"
+#include "device/device.h"
 #include "fmt/fmt.h"
 #include "host/core_port.h"
 #include "loop/loop.h"
@@ -20,6 +21,16 @@ static const uint32_t kRingFrames = 1u << 20;   // 21.8 s: room for a bar at bot
 static const int64_t kD = 1000;                 // a block's last frame arrives this late (host frame = ring index + kD)
 static int g_hand = 0;                          // the slot in hand (the pages' / console's)
 static int hand() { return g_hand; }
+static std::string read_file(const std::string& p) {
+  std::string t;
+  if (FILE* f = fopen(p.c_str(), "rb")) {
+    char b[512];
+    size_t n;
+    while ((n = fread(b, 1, sizeof b, f)) > 0) t.append(b, n);
+    fclose(f);
+  }
+  return t;
+}
 
 // each box's own clock (its own transport and tempo) and its own source
 struct Box {
@@ -151,20 +162,25 @@ static void test_own_settings_and_card() {
   static const uint8_t post1[2] = {6, 7};
   loop::set_returns(1, post1, nullptr);
   in_hand(1);
-  CHECK(loop::out() == loop::kOutPost && !loop::has_pre(1) && loop::has_pre(0));
+  CHECK(!loop::has_pre(1) && loop::has_pre(0));
+  CHECK(loop::out() == loop::kOutPre);   // (kept as set: it plays on POST while the box has no PRE, test_post_channels)
+  loop::set_out(loop::kOutPost);
   loop::set_out(loop::kOutPre);
   CHECK(loop::out() == loop::kOutPost);
-  // each box's loop.txt in its own folder
+  // each box's loop.txt in its own folder: written and read in its slot's Scope (state_path), as the engine's per-slot save
+  // loop and its attach read (core/pool/pool.cpp kSettings) do
   char tmpl[] = "/tmp/core_loop2_XXXXXX";
   CHECK(mkdtemp(tmpl));
   host_set_card(tmpl);
   card_ok = true;
   system((std::string("mkdir -p ") + tmpl + "/.rytm " + tmpl + "/.a4").c_str());
-  loop::set_dir_fn([](int s) { return s ? "/.a4" : "/.rytm"; });
+  device::g_links[1].state = "/.a4";
   in_hand(0), loop::set_bal(20);
   in_hand(1), loop::set_bal(110);
-  for (int pass = 0; pass < 4 && loop::dirty(); ++pass) {
-    loop::save();
+  for (int s = 0; s < 2; ++s) {
+    device::Scope in(device::g_links[s]);
+    in_hand(s);
+    CHECK(loop::dirty() && loop::save());
     for (int i = 0; i < 2000 && fmt::post_busy(); ++i) {
       fmt::post_step();
       host_card_core(0);
@@ -172,15 +188,26 @@ static void test_own_settings_and_card() {
       }
       host_card_core(3);
     }
+    CHECK(!loop::dirty());
   }
-  CHECK(!loop::dirty());
+  CHECK(read_file(std::string(tmpl) + "/.rytm/loop.txt").find("bal=20\n") != std::string::npos);
+  CHECK(read_file(std::string(tmpl) + "/.a4/loop.txt").find("bal=110\n") != std::string::npos);
   loop::reset();
-  loop::load();
+  for (int s = 0; s < 2; ++s) {
+    device::Scope in(device::g_links[s]);
+    in_hand(s);
+    loop::load();
+  }
   in_hand(0);
   CHECK(loop::bal() == 20 && loop::lev() == 100);
   in_hand(1);
   CHECK(loop::bal() == 110 && loop::lev() == 50 && loop::fade() == loop::kFade4);
-  loop::set_dir_fn(nullptr);
+  // the attach read: the text taken into the slot in hand's settings
+  loop::take_text("bal=33\nlev=90\n", 14);
+  CHECK(loop::bal() == 33 && loop::lev() == 90);
+  in_hand(0);
+  CHECK(loop::bal() == 20);
+  device::g_links[1].state = nullptr;
   card_ok = false;
   printf("  each box its own settings, returns and loop.txt ok\n");
 }
@@ -188,6 +215,8 @@ static void test_own_settings_and_card() {
 static void test_post_channels() {
   fresh();
   static const uint8_t post1[2] = {6, 7};
+  in_hand(1);
+  loop::set_out(loop::kOutPre);   // set while the box had a PRE return, then a box without one: on its POST
   loop::set_returns(1, post1, nullptr);
   grab_on(1);
   to(g_now + 48 * 60);

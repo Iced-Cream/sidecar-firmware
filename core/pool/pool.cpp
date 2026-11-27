@@ -18,6 +18,7 @@
 #include "../fx/send_fx.h"
 #include "../host_link.h"
 #include "../keys.h"
+#include "../loop/loop.h"
 #include "../mod/learn.h"
 #include "../samp/preview.h"
 #include "../mod/scene.h"
@@ -67,7 +68,7 @@ static int fx_slot() {
 // 3(c): the INSERT and OUT settings are the slot in hand's (core/fx/insert.h, out.h: their control side builds without
 // core/device, so it asks through these)
 static struct SlotFns {
-  SlotFns() { ins::slot_fn = fx_slot, out::slot_fn = fx_slot, ins::rytm_fn = device::rytm_state_at; }
+  SlotFns() { ins::slot_fn = fx_slot, out::slot_fn = fx_slot, ins::rytm_fn = device::rytm_state_at, loop::set_slot_fn(fx_slot); }   // (the looper: core/loop)
 } g_slot_fns;
 #endif
 // 3(c) step 8: the send FX settings too (core/fx/send_fx.h; its control side builds without core/device)
@@ -720,6 +721,7 @@ const SettingsFile kSettings[] = {
 #if CORE_POLY
     {"/.rytm/keys.txt", keys::take_text},
     {"/.rytm/learn.txt", learn::take_text},
+    {"/.rytm/loop.txt", loop::take_text},   // its looper's settings (core/loop)
 #endif
     {"/.rytm/preview.txt", preview::take_text},
 };

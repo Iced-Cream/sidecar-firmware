@@ -2,12 +2,14 @@
 // Core 0: in_block (the ring) and out_mix (the playback), which take what to play from one published snapshot.
 // One looper per box (kSlots): every piece of state below is a Looper's, so slot 0's and slot 1's never meet. The public
 // functions at the end pick the Looper: the core 0 hooks, init and KEEP by the slot they are given, the controls by the
-// slot in hand (set_slot_fn), tick / load / save every slot.
+// slot in hand (set_slot_fn: the engine's fx_slot), tick every slot in its own Scope (its clock, its mutes, its box).
+// Settings: loop.txt is a box setting, read and written in the slot's Scope (state_path: its own folder).
 #include "loop/loop.h"
 
 #include <math.h>
 #include <string.h>
 
+#include "device/device.h"
 #include "fmt/fmt.h"
 #include "lfo.h"
 #include "mod/mod.h"
@@ -21,32 +23,26 @@ namespace loop {
 
 namespace {
 
-const char* def_dir(int) { return "/.rytm"; }
-const char* (*dir_fn_)(int slot) = def_dir;
-
 struct Looper {
   int slot_ = 0;
   // the box's returns the loop plays onto: [0] POST (after its master FX), [1] PRE (before them); L / R channel of F, kNone: the
   // box has none (set_returns; the Rytm's 0/1 and 2/3 by default)
   static constexpr uint8_t kNone = kNoReturn;
   uint8_t ret_[2][2] = {{0, 1}, {2, 3}};
-  char file_[40] = "";
-  CORE_COLD const char* file() {
-    sniprintf(file_, sizeof file_, "%s/loop.txt", dir_fn_(slot_));
-    return file_;
-  }
+  static constexpr const char* kFile = "/.rytm/loop.txt";   // (in the slot's Scope: its box's folder)
 
 
 
   // ------------------------------------------------------------------------------------------------ the environment
-  CORE_COLD bool def_beat_map(double* o, double* p, int* l) { return seq::beat_map(o, p, l); }
-  CORE_COLD uint64_t def_frames() { return seq::frames(); }
+  // (each its own box's: its clock, its pass's frames; muted: the slot in hand's, tick runs in the slot's Scope)
+  CORE_COLD bool def_beat_map(double* o, double* p, int* l) { return seq::beat_map(slot_, o, p, l); }
+  CORE_COLD uint64_t def_frames() { return seq::frames(slot_); }
   CORE_COLD uint16_t def_muted() { return seq::muted(); }
   CORE_COLD bool def_clock(float* t, float* us, bool* run) {
     lfo::ClockState c;
-    lfo::clock_state(&c);
+    lfo::clock_state(slot_, &c);
     *run = c.run && c.ticking;
-    return lfo::clock_now(t, us);
+    return lfo::clock_now(slot_, t, us);
   }
   Env env_;
   CORE_COLD bool beat_map(double* o, double* p, int* l) { return env_.beat_map ? env_.beat_map(o, p, l) : def_beat_map(o, p, l); }
@@ -669,7 +665,8 @@ struct Looper {
 
   // auto-mute and LIVE VIA follow the loop: on at its start, off at the start of its fade back (or cut)
   CORE_COLD void live_and_mutes(uint64_t now) {
-    if (!SIDECAR_LOOPER) return;   // 0.5.2: off (sidecar_features.h): never a Rytm track mute, never a LIVE VIA move
+    if (!SIDECAR_LOOPER) return;
+    if (!device::rytm_at(slot_)) return;   // the Rytm's track mutes and PERF macros: a Rytm's looper only (another box: a named gap)   // 0.5.2: off (sidecar_features.h): never a Rytm track mute, never a LIVE VIA move
     auto heard = [&](const LoopInfo& x) { return x.on && now >= x.start && !(x.stop_at && now >= x.stop_at); };
     bool audible = heard(lp_) || heard(lpp_);   // (a resample's wait: the old loop is still heard)
     if (audible && auto_mute_ && !am_.on) {
@@ -937,7 +934,6 @@ struct Looper {
   CORE_COLD void load() {
     if (!SIDECAR_LOOPER) return;   // 0.5.2: off (sidecar_features.h): a loop.txt on the card is left alone and turns nothing on
     keep_lines_.n = 0;
-    const char* kFile = file();
     fmt::post_wait(kFile);
     fmt::recover(kFile);
     File f;
@@ -946,6 +942,17 @@ struct Looper {
     memset(b, 0, sizeof b);
     int got = f.read(b, sizeof b - 1);
     f.close();
+    take_text(b, got);
+  }
+  // loop.txt's text into this looper's settings (load; another slot's at its box's attach: core/pool/pool.cpp kSettings)
+  CORE_COLD void take_text(const char* t, int got) {
+    if (!SIDECAR_LOOPER) return;
+    keep_lines_.n = 0;
+    static char b[512];
+    if (got < 0) got = 0;
+    if (got > (int)sizeof b - 1) got = (int)sizeof b - 1;
+    if (t != b) memcpy(b, t, (size_t)got);
+    b[got] = 0;
     static const char* const kKnown[] = {"bal", "lev", "fade", "mute", "live", "postlat", "out", "postgain", nullptr};
     if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &keep_lines_);
     auto num = [&](const char* key, int* out) {   // parsed by hand: the Pi's bare-metal build has no strtol
@@ -991,7 +998,7 @@ struct Looper {
                                      auto_mute_ ? 1 : 0, live_via_, post_lat_, out() == kOutPre ? "pre" : "post");
     if (pg > 0) n += (uint32_t)sniprintf(t + n, 160 - n, CORE_STR("postgain=%d\n"), pg);
     n = fmt::kv_append(keep_lines_, t, n, fmt::kPostMax);
-    if (!fmt::post_end(file(), n)) return false;
+    if (!fmt::post_end(kFile, n)) return false;
     dirty_ = false;
     return true;
   }
@@ -1412,7 +1419,7 @@ struct Looper {
       return;
     }
     const float mkp[2] = {makeup_of(0), makeup_of(1)};   // the returns' make-ups (POST: postgain or set_out_gain; PRE: set_pre_gain)
-    const int want = out() == kOutPre ? 1 : 0;
+    const int want = out() == kOutPre && ret_[1][0] != kNone && ret_[1][1] != kNone ? 1 : 0;   // (a box without a PRE return: POST)
     if (sw_[0] < 0.0f) sw_[0] = want ? 0.0f : 1.0f, sw_[1] = want ? 1.0f : 0.0f;
     // each loop's level cap from its own peak: the loop alone stays under kLoopCeil of full scale, LEV and BAL (ramp_loop_) included
     // (a quiet one keeps all the make-up; LEV under unity just makes it quieter). The gain on a pair is min(make-up x LEV x BAL, cap / peak)
@@ -1499,7 +1506,6 @@ inline bool valid(int slot) { return slot >= 0 && slot < kSlots; }
 // ------------------------------------------------------------------------------------------------ the public side: which box
 CORE_COLD void set_slot_fn(int (*fn)()) { slot_fn_ = fn; }
 CORE_COLD int slot_in_hand() { return &hand() - box_; }
-CORE_COLD void set_dir_fn(const char* (*fn)(int slot)) { dir_fn_ = fn ? fn : def_dir; }
 CORE_COLD void set_returns(int slot, const uint8_t post[2], const uint8_t pre[2]) {
   if (!valid(slot)) return;
   Looper& b = at(slot);
@@ -1507,7 +1513,6 @@ CORE_COLD void set_returns(int slot, const uint8_t post[2], const uint8_t pre[2]
     b.ret_[0][c] = post && post[c] < 12 ? post[c] : kNoReturn;
     b.ret_[1][c] = pre && pre[c] < 12 ? pre[c] : kNoReturn;
   }
-  if (b.out() == kOutPre && (b.ret_[1][0] == kNoReturn || b.ret_[1][1] == kNoReturn)) b.set_out(kOutPost);
 }
 CORE_COLD bool has_pre(int slot) { return valid(slot) && at(slot).ret_[1][0] != kNoReturn && at(slot).ret_[1][1] != kNoReturn; }
 
@@ -1515,6 +1520,7 @@ CORE_COLD void set_env(const Env* e) { hand().set_env(e); }
 CORE_COLD void init(int slot, int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes) {
   if (!valid(slot)) return;
   at(slot).slot_ = slot;
+  device::Scope in(device::g_links[slot < device::kLinks ? slot : 0]);   // (its clock's users: the slot's)
   at(slot).init(ring, ring_frames, store, store_bytes);
 }
 CORE_COLD void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes) { init(slot_in_hand(), ring, ring_frames, store, store_bytes); }
@@ -1528,8 +1534,12 @@ CORE_COLD int grab(int half_bars) { return hand().grab(half_bars); }
 CORE_COLD bool play(int g) { return hand().play(g); }
 CORE_COLD void stop(bool cut, bool now) { hand().stop(cut, now); }
 CORE_COLD bool keep(int g, char* msg, int cap) { return hand().keep(g, msg, cap); }
-CORE_COLD void tick(uint32_t us) {
-  for (int s = 0; s < kSlots; ++s) box_[s].tick(us);
+CORE_COLD void tick(uint32_t us) {   // each slot in its own Scope: its clock's users, its box's mutes and PERF
+  for (int s = 0; s < kSlots && s < device::kLinks; ++s) {
+    if (!box_[s].on()) continue;
+    device::Scope in(device::g_links[s]);
+    box_[s].tick(us);
+  }
 }
 CORE_COLD const char* err_text(int err, int half_bars, char* b, int cap) { return hand().err_text(err, half_bars, b, cap); }
 
@@ -1591,20 +1601,10 @@ CORE_COLD bool cal_info(uint64_t* first_click, int* n, uint32_t* gap) { return h
 CORE_COLD int post_lat() { return hand().post_lat(); }
 CORE_COLD void set_post_lat(int f) { hand().set_post_lat(f); }
 
-CORE_COLD void load() {
-  for (int s = 0; s < kSlots; ++s) box_[s].load();
-}
-CORE_COLD void load(int slot) { if (valid(slot)) at(slot).load(); }
-CORE_COLD bool save() {   // one write a pass (fmt's posted write holds one): the next dirty slot at a later pass
-  for (int s = 0; s < kSlots; ++s)
-    if (box_[s].dirty()) return box_[s].save();
-  return false;
-}
-CORE_COLD bool dirty() {
-  for (int s = 0; s < kSlots; ++s)
-    if (box_[s].dirty()) return true;
-  return false;
-}
+CORE_COLD void load() { hand().load(); }
+CORE_COLD void take_text(const char* t, int n) { hand().take_text(t, n); }
+CORE_COLD bool save() { return hand().save(); }
+CORE_COLD bool dirty() { return hand().dirty(); }
 CORE_COLD bool command(const char* p, char* out, int cap) { return hand().command(p, out, cap); }
 CORE_COLD int json(char* out, int cap) { return hand().json(out, cap); }
 CORE_COLD int json(int slot, char* out, int cap) { return valid(slot) ? at(slot).json(out, cap) : 0; }

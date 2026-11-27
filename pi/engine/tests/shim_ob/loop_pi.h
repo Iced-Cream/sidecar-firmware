@@ -20,5 +20,7 @@ inline void OutMix(unsigned slot, int32_t (*F)[12], unsigned n, uint64_t render_
   g_out_frames.push_back(render_frame), g_out_slots.push_back(slot);
   if (g_out_hook) g_out_hook(F, n);
 }
+inline std::vector<unsigned> g_box_slots;                           // the slot each SetBox got
+inline void SetBox(unsigned slot, const void*) { g_box_slots.push_back(slot); }
 inline void Poll() {}
 }  // namespace loop_pi

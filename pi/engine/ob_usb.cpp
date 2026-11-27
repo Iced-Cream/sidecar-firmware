@@ -1405,6 +1405,7 @@ boolean CObUsb::Configure (void)
 	}
 
 	if (s_bActive && Primary ()) core::out::set_device (m_pAudio);	// the voices' channels and routes follow the box; not while the TCP link owns g_Output
+	loop_pi::SetBox (m_nSlot, m_pAudio);	// its looper's returns and make-ups: this box's (core/loop)
 
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
@@ -1933,6 +1934,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 			s32 F[ob::kFramesPerBlock][ob::kChannels] = {};
 			s16 V[ob::kFramesPerBlock][ob::kVoices] = {};
 			float FD[ob::kFramesPerBlock][ob::kVoices] = {};	// the Rytm's PRE / POST voices' stand-ins for their stems (a box's: unused)
+			const uint64_t nRender = core::device::side_slot () == (int) m_nSlot ? g_OutputSide.PulledFrame () : g_Output.PulledFrame ();	// its pass's render frame (its looper's playback)
 			if (s_bActive) side_out::Pull (m_nSlot, m_pAudio, F, ob::kFramesPerBlock, V, FD);
 			if (pTarget != 0) pTarget->ToBox (F, V, ob::kFramesPerBlock);	// the computer's OUT, when it mirrors this box
 			if (s_bActive && side_out::g_on)	// its own send FX and master chain (phase 3(d): sendfx_pi.h, masterfx_pi.h)
@@ -1941,6 +1943,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 				sendfx_pi::AddReturn (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 				masterfx_pi::Process (m_nSlot, *m_pAudio, F, ob::kFramesPerBlock);
 			}
+			if (s_bActive) loop_pi::OutMix (m_nSlot, F, ob::kFramesPerBlock, nRender);	// its own looper's loop onto its returns, after its master FX (core/loop)
 			for (int f = 0; f < ob::kFramesPerBlock; f++)
 				core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
 			continue;
@@ -1971,7 +1974,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
-		if (s_bActive) loop_pi::OutMix (nBase, F, ob::kFramesPerBlock, nRender);	// the base box's looper's loop onto its returns, after the master FX (core/loop, spec-050 3.5)
+		if (s_bActive) loop_pi::OutMix (m_nSlot, F, ob::kFramesPerBlock, nRender);	// this box's looper's loop onto its returns, after the master FX (core/loop, spec-050 3.5)
 		spectrum_pi::FromOut (V, X, F, ob::kFramesPerBlock);	// the spectrum's strip, while a reader wants it (a copy)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 #if CORE_MSAMP
@@ -2151,12 +2154,12 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					if (bMix) masterfx_pi::Stems (m_nSlot, S, ob::kFramesPerBlock);
 				}
 			}
-			if (m_pAudio == &core::out::kRytmMk2 && m_nInCh == ob::kChannels && loop_pi::WantsIn (m_nSlot))	// the master looper's ring: MAIN L / R (a Rytm; the A4's waits for its check)
+			if (loop_pi::WantsIn (m_nSlot))	// the box's own looper's ring: its MAIN L / R (IN 0 / 1 on every box: the Rytm, the A4 widened, the Digitakt)
 			{
 				int32_t LR[2 * ob::kFramesPerBlock];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					LR[2 * f] = ob::block_sample (pBlk, ob::kChannels, f, 0), LR[2 * f + 1] = ob::block_sample (pBlk, ob::kChannels, f, 1);
-				loop_pi::InBlock (m_nSlot, LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ());
+				loop_pi::InBlock (m_nSlot, LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ((int) m_nSlot));
 			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{

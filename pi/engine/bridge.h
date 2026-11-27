@@ -100,6 +100,7 @@ int scene_json(char* out, int cap);
 bool loop_command(const char* p, char* out, int cap);
 int loop_json(char* out, int cap);
 uint64_t render_frames();
+uint64_t render_frames(int slot);   // slot s's own pass's count (seq::frames(s)): each box's looper stamps its IN blocks with it
 // Poly FM (core/poly.h): the Rytm's channel messages (its pads' notes: live chords), the console's `poly` (its stats;
 // false: not a poly command)
 void poly_midi(uint8_t st, uint8_t d1, uint8_t d2);

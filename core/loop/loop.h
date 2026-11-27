@@ -10,10 +10,11 @@
 // block). Times are the host's render frames (seq::frames()); a bar's time is seq::beat_map's, `lat` early.
 //
 // Two boxes (one looper per box, decided 2026-11-27): each slot (0, 1) has a looper of its own: its own ring of its box's MAIN,
-// its own grabs and store, its bars from its own clock, its settings in its own folder (set_dir_fn) and its loop on its own box's
+// its own grabs and store, its bars from its own clock, its loop.txt in its own box's folder and its loop on its own box's
 // returns (set_returns). Nothing is shared and slot 0 and slot 1 are the same. The core 0 hooks, init and KEEP take the slot;
-// the controls, the settings, the console and json act on the slot in hand (set_slot_fn: the pages', the console's); tick, load
-// and save run every slot.
+// the controls, the settings (load / save in the slot's Scope), the console and json act on the slot in hand (set_slot_fn: the
+// pages', the console's); tick runs every slot in its own Scope. Auto-mute and LIVE VIA move a Rytm's tracks and macros: a
+// Rytm's looper only (another box's: a named gap).
 #pragma once
 #include <stdint.h>
 
@@ -56,11 +57,10 @@ struct Env {
   bool (*clock)(float* ticks, float* tick_us, bool* run) = nullptr;   // the MIDI clock's, the fallback for the bars
 };
 void set_env(const Env* e);                 // null: the defaults (the slot in hand's)
-// which box: the slot the controls act on (null: 0); a slot's folder for loop.txt (null: /.rytm for every slot); a slot's returns,
-// POST and PRE (L / R channels of out_mix's F, kNoReturn none: OUT = PRE is refused on a box without one)
+// which box: the slot the controls act on (null: 0); a slot's returns, POST and PRE (L / R channels of out_mix's F, kNoReturn
+// none: OUT = PRE is refused on a box without one, and a PRE kept from before plays on POST)
 void set_slot_fn(int (*fn)());
 int slot_in_hand();
-void set_dir_fn(const char* (*fn)(int slot));
 void set_returns(int slot, const uint8_t post[2], const uint8_t pre[2]);
 bool has_pre(int slot);
 void init(int slot, int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes);
@@ -148,11 +148,11 @@ bool cal_info(uint64_t* first_click, int* n, uint32_t* gap);   // the render fra
 int post_lat();                             // frames the POST path takes beyond the voice path's latency (0 default)
 void set_post_lat(int f);
 
-// ---- settings on the card (<the box's folder>/loop.txt, a box setting) and the console / status
-void load();                                // every slot's
-void load(int slot);                        // one box's (its box attached: its folder is known)
-bool save();                                // true: a posted write was queued (one slot's a call)
-bool dirty();                               // any slot's
+// ---- settings on the card (/.rytm/loop.txt in the slot's Scope: its box's folder, a box setting) and the console / status
+void load();                                // the slot in hand's
+void take_text(const char* b, int n);       // a read loop.txt into the slot in hand's settings (another slot's at its attach)
+bool save();                                // the slot in hand's; true: a posted write was queued
+bool dirty();
 bool command(const char* p, char* out, int cap);   // "loop", "loop=grab:L", ... (spec 3.12): false when not "loop..."
 int json(char* out, int cap);               // "\"loop\":{...}"
 int json(int slot, char* out, int cap);
