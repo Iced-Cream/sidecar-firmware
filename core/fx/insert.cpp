@@ -686,7 +686,7 @@ bool sc_any_on() {
 bool sc_status(int c, char* why, int cap) {
   sniprintf(why, cap, "OK");
   if (!sc_on(c)) return sniprintf(why, cap, "OFF"), true;
-  if (c >= kBus0 && c < kBus0 + 2 && fx::control.knob[c - kBus0][0] == fx::kOff)   // bus 1 / 2's chain runs inside its send FX's return
+  if (c >= kBus0 && c < kBus0 + 2 && fx::control_of(hand()).knob[c - kBus0][0] == fx::kOff)   // bus 1 / 2's chain runs inside its send FX's return
     return sniprintf(why, cap, "SEND FX OFF"), false;
   const int key = sc::key_of(SC().scsrc[c]);
   if (key < 0) return sniprintf(why, cap, "NO SRC"), false;
