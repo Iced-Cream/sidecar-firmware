@@ -10,3 +10,4 @@ struct TRecStub {
 struct TPlayStub { void mix(int32_t (*)[12], unsigned) {} };
 inline TRecStub g_Rec;
 inline TPlayStub g_Play;
+namespace rec_pi { inline int Slot() { return 0; } }   // the recorder's box (rec_pi.h): the base box here

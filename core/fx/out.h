@@ -101,15 +101,15 @@ inline void defaults(Control& c) {
 extern Control control1;
 inline Control& control_of(int slot) { return slot ? control1 : control; }
 // The base box's slot (core/device sets it as the base changes: 1 for a box alone, else 0): the slot whose settings the
-// base box's output stage plays, the console's stereo=trim:trk sets, and whose voice chains play AMP (core/fx/insert.h)
+// base box's output stage plays
 extern volatile int8_t g_base_slot;
 // 3(c): the settings below (set_route .. mod_offset, line, clear, the console) are the slot in hand's, in its own
 // control_of: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0). The mute gate is each slot's (named:
-// set_mutes / trig_track below); the PRE / POST trims are slot 0's. ctl(): what the slot in hand's voices play (the pages).
+// set_mutes / trig_track below), its PRE / POST / TRK trims too. ctl(): what the slot in hand's voices play (the pages).
 extern int (*slot_fn)();
 const Control& ctl();
 
-inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
+inline bool stereo(int vi) { return control_of(g_base_slot).route[vi & 7] != kTrk; }   // the base box's voice vi (its stage's taps)
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }
 int route_from_name(const char* s);          // "trk" / "pre" / "post" (any case), -1 neither
 // DEC's decay a sample for t60 at value v (1..127: 20 ms .. 10 s, exponential), 1 for OFF
@@ -132,7 +132,8 @@ void set_mutes(int slot, uint16_t mask);
 void trig_track(int slot, int vi, int track);
 bool any_stereo();                           // a voice is routed PRE or POST
 bool any_stereo(int slot);                   // ... of slot's (control_of(slot))
-void set_trim(int pair, int db10);           // stereo=trim:pre|post|trk:DB10; pair 0 pre, 1 post, 2 trk
+void set_trim(int pair, int db10);           // stereo=trim:pre|post|trk:DB10; pair 0 pre, 1 post, 2 trk: the slot in hand's
+void set_trim_all(int pair, int db10);       // trimpre= / trimpost= (cmdline): every slot's
 // The kit file's line ("OUT V3 POST 100 64 64 0"): from_line takes one (false: not an OUT line it reads); line(vi)
 // writes the voice's when it is not the default (0 none)
 bool from_line(const char* const* w, int n);

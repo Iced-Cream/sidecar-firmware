@@ -122,7 +122,11 @@ CORE_COLD bool idle_prepare() {
   TV_("streams", streams_step());
   TV_("lists", project_lists_step());
   TV_("closes", pool_closes_step());
-  TV_("fxslots", sendfx_step());
+  for (int k = 0; k < kVoiceSlots; ++k) {   // each box's FX names and BASE / WIDTH to its own Rytm, whichever slot it holds
+    if (!device::live(k)) continue;
+    device::Scope in(device::g_links[k]);
+    TV_("fxslots", sendfx_step());
+  }
 #if CORE_MSAMP
   TV_("presets", presets::step());
 #endif

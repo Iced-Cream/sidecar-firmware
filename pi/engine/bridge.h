@@ -116,6 +116,7 @@ int base_slot();                                                    // the base 
 // no box attached is logged and taken. The control core (CEngineCores::Command).
 bool box_command(const char* p, void (*run)(void* ctx, const char* cmd), void* ctx);
 int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
+int slot_in_hand();                                                 // the slot the console's command works on (box=S: sets it; else the base box's)
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard
@@ -146,6 +147,7 @@ void going_down();
 bool samp_command(const char* p, char* out, int cap);
 void samp_transport(int slot, uint8_t st);   // box slot's realtime byte: the sampler keeps every box's clock, a take follows its own
 bool samp_wants_in();
+int samp_slot();   // the box whose IN the sampler takes (its take's box: core::samp::clock_slot)
 void samp_in(const int32_t* f, int n, int stride);
 bool samp_wants_voices();
 void samp_voices(const int16_t (*v)[kBoxVoices], int n, const int16_t (*lr)[2 * kBoxVoices] = nullptr, const float (*fx)[4] = nullptr);   // fx: the send FX returns (CHOP RESAMPLE)
@@ -181,6 +183,7 @@ int livein_status(int vi, char* b, int cap);
 // IN block's frames as tap_in's (an interrupt: the calibration only compares and stores); every byte of the Rytm's USB
 // MIDI, as it comes (core 3), to the pattern dump's reader (its answer is longer than MidiIn's SysEx buffer).
 bool cal_on();
+int cal_slot();    // the box whose IN the latency click comes back on (the Rytm's slot: seq=cal is its; else the base box)
 void cal_in(const int32_t* f, int n, int stride);
 void rytm_byte(uint8_t b);   // transport 0's (g_MidiIn): rytm_byte(0, b) and SONG RECORD's link_byte(0, b)
 // transport t's byte to the pattern dump's reader and FILL's writer while t carries the Rytm, whichever slot it holds: transport 0

@@ -8,6 +8,8 @@ inline bool tap_on() { return false; }
 inline bool gr_live_on() { return false; }
 inline bool livein_on() { return false; }
 inline bool cal_on() { return false; }
+inline int samp_slot() { return 0; }
+inline int cal_slot() { return 0; }
 inline void samp_voices(const int16_t (*)[8], unsigned, const int16_t (*)[16], const float (*)[4]) {}
 inline void samp_in(const int32_t*, unsigned, unsigned) {}
 inline void tap_in(const int32_t*, unsigned, unsigned) {}

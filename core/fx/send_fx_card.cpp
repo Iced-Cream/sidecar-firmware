@@ -88,7 +88,7 @@ static CORE_COLD int hexv(char c) {
 }
 
 // The map's text txt[0..n) into box's user names (box 0: user[], 1: user1[])
-static char g_stext[CORE_MSAMP ? 4096 : 512];   // (formats.cpp: 4 KB at most; only the first lines are read)
+static char g_stext[kVoiceSlots][CORE_MSAMP ? 4096 : 512];   // (formats.cpp: 4 KB at most; only the first lines are read)
 static CORE_COLD void slots_parse(int box, const char* txt, uint32_t n) {
   UserFx* user = user_of(box);
   uint32_t at = 0;
@@ -127,55 +127,62 @@ CORE_COLD void slots_text(int box, const char* t, int n) {
   if (n > 0) slots_parse(box, t, (uint32_t)n);
 }
 
-static char g_spath[72];
-static CORE_COLD void slots_name() {
+// Each box's own map (two links, decided 2026-11-26: slot 0 and slot 1 the same): the slot in hand's project, read in its
+// folder (the card core's request carries the link it was queued in), into that slot's user names. The Rytm's 0x10 comes in
+// its own slot's Scope, whichever slot it holds.
+static char g_spath[kVoiceSlots][72];
+static CORE_COLD void slots_name(int box) {
   char safe[48];
   pool_file(safe, sizeof safe);   // "/.rytm/pools/<safe>.txt": the same safe name
-  sniprintf(g_spath, sizeof g_spath, "/.rytm/fxslots/%s", safe + 13);
+  sniprintf(g_spath[box], sizeof g_spath[box], "/.rytm/fxslots/%s", safe + 13);
 }
 
 #if CORE_MSAMP
 // A project change's read on the card core (core/msamp/cardq.h), never here: the 0x10 comes on the control core, and an open behind core 0's
 // read or the recorder's write would hold it for that call, a card's pause too (100-137 ms measured). Another project while one is read: read again.
-static cardq::Req g_sreq;
-static bool g_sbusy, g_sagain;
+static cardq::Req g_sreq[kVoiceSlots];
+static bool g_sbusy[kVoiceSlots], g_sagain[kVoiceSlots];
 
 CORE_COLD void slots_load(const char* project) {
   (void)project;
-  slots_clear(0);   // (the Rytm's: box 0's)
-  if (g_sbusy) {
-    g_sagain = true;
+  const int box = slot_in_hand();
+  slots_clear(box);   // (the slot in hand's)
+  if (g_sbusy[box]) {
+    g_sagain[box] = true;
     return;
   }
-  slots_name();
-  g_sbusy = true;
+  slots_name(box);
+  g_sbusy[box] = true;
 }
 
 CORE_COLD bool slots_step() {
-  while (g_sbusy) {
-    if (!cardq::async(&g_sreq, cardq::kSmallReq, nullptr, g_spath, 0, (uint8_t*)g_stext, sizeof g_stext)) return false;
-    if (g_sagain) {
-      g_sagain = false;
-      slots_name();
+  const int box = slot_in_hand();
+  while (g_sbusy[box]) {
+    if (!cardq::async(&g_sreq[box], cardq::kSmallReq, nullptr, g_spath[box], 0, (uint8_t*)g_stext[box], sizeof g_stext[box]))
+      return false;
+    if (g_sagain[box]) {
+      g_sagain[box] = false;
+      slots_name(box);
       continue;
     }
-    g_sbusy = false;
-    if (g_sreq.got > 0) slots_parse(0, g_stext, (uint32_t)g_sreq.got);
+    g_sbusy[box] = false;
+    if (g_sreq[box].got > 0) slots_parse(box, g_stext[box], (uint32_t)g_sreq[box].got);
   }
   return true;
 }
 #else
 CORE_COLD void slots_load(const char* project) {
   (void)project;
-  slots_clear(0);   // (the Rytm's: box 0's)
-  slots_name();
+  const int box = slot_in_hand();
+  slots_clear(box);   // (the slot in hand's)
+  slots_name(box);
   File f;
-  if (!f.open(g_spath, kRead)) return;
+  if (!f.open(g_spath[box], kRead)) return;
   int c;
   uint32_t n = 0;
-  while (n < sizeof g_stext && (c = f.read()) >= 0) g_stext[n++] = (char)c;
+  while (n < sizeof g_stext[box] && (c = f.read()) >= 0) g_stext[box][n++] = (char)c;
   f.close();
-  slots_parse(0, g_stext, n);
+  slots_parse(box, g_stext[box], n);
 }
 CORE_COLD bool slots_step() { return true; }
 #endif
