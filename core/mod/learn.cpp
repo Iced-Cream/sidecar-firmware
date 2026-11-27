@@ -295,16 +295,19 @@ CORE_COLD void take_text(const char* t, int len) {
   said(n, bad);
 }
 
+// QPERF FADER is the Rytm's (its knob): only its slot's learn.txt carries the QP line, so a free slot (whose folder is /.rytm
+// too) never writes over it
+static CORE_COLD bool qp_here() { return prj_slot() == device::rytm_home(); }
 CORE_COLD bool save() {
   if (!dirty()) return false;
   if (L().locked) {   // 1042
-    L().dirty = false, L().qp_saved = scene::qp_mode();
+    L().dirty = false, L().qp_saved = qp_here() ? scene::qp_mode() : (int)scene::kQpMutedOnly;
     log(CORE_STR("learn: not saved: %s has lines this build does not read (kept as it is)"), kFile);
     return true;
   }
   char* t = fmt::post_begin();
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
-  const int qp = scene::qp_mode();
+  const int qp = qp_here() ? scene::qp_mode() : (int)scene::kQpMutedOnly;
   int n = sniprintf(t, (int)fmt::kPostMax, CORE_STR("#sidecar learn 1\n"));
   if (qp != scene::kQpMutedOnly) n += sniprintf(t + n, (int)fmt::kPostMax - n, CORE_STR("QP %s\n"), scene::qp_mode_name(qp));
   for (int i = 0; i < L().n; ++i) {
@@ -318,7 +321,7 @@ CORE_COLD bool save() {
   L().dirty = false, L().qp_saved = qp;
   return true;
 }
-CORE_COLD bool dirty() { return L().dirty || scene::qp_mode() != L().qp_saved; }
+CORE_COLD bool dirty() { return L().dirty || (qp_here() && scene::qp_mode() != L().qp_saved); }
 CORE_COLD bool locked() { return L().locked; }
 
 CORE_COLD void reset() {

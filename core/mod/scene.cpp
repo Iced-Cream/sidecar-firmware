@@ -67,7 +67,7 @@ uint32_t g_qp_ms = 0;
 uint8_t g_qp_mode = kQpMutedOnly;   // QPERF FADER (v2 Task 6): a box setting, kept in learn.txt
 bool g_qp_muted = false;            // the macros' mute as last reported (only from a mod with kCaps2QpMute)
 QpView g_qv = {-1, false, false, 0};   // the screens' readout (v2 Task 7)
-uint32_t S().kit_ms = 0;              // when the Rytm's kit last changed (the MORPH header's note), 0 never
+
 int g_rscn = -1;                    // the Rytm's own scene as reported (2D 01 0F), -1 none
 
 CORE_COLD bool ok_scene(int n) { return n >= 0 && n < kScenes; }

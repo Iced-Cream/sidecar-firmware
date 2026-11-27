@@ -811,11 +811,11 @@ CORE_COLD bool edit_page(const ExtraPage* x) {
 CORE_COLD uint16_t page_trigs(const ExtraPage* x) {
   uint16_t t = x && x->trigs_now ? x->trigs_now() : 0;
   if (!edit_page(x)) return t;
-  return (uint16_t)(t | (scene::edit_side() >= 0 ? 0xCFFF : s.page_down ? 0xC000 : 0));
+  return (uint16_t)(t | (scene::edit_side() >= 0 ? 0xCFFF : S().page_down ? 0xC000 : 0));
 }
 CORE_COLD void edit_end() {   // the side let go (or the gesture dropped): EDIT off
   scene::set_edit_side(-1);
-  s.edit_tid = 0, s.edit_refused = false, s.edit_unset = false;
+  S().edit_tid = 0, S().edit_refused = false, S().edit_unset = false;
 }
 // the side's lock of t moved by `units` (whole units of the target; lo..hi its range there), from the lock, else from
 // the base; the value a voice page's step gives when `voice_nv` >= 0
@@ -1639,7 +1639,7 @@ CORE_COLD void fill_claim() {   // (L7: only a build with the FILL page claims t
 // mod (no kCaps2Capture) counts 5A 01 0B as a refused command: never sent to it
 CORE_COLD void edit_arm() {
 #if CORE_POLY
-  if (s.caps2 & kCaps2Capture) mod::rytm_edit_arm(true);
+  if (S().caps2 & kCaps2Capture) mod::rytm_edit_arm(true);
 #endif
 }
 // 2026-11-24 TBLB (rytm-mods 0026): "the host draws the bank list of P13" (4A 7D 1), after every hello, only to a Rytm whose hello's
@@ -1647,7 +1647,7 @@ CORE_COLD void edit_arm() {
 // (an older host would read the frame as P1's); an older mod counts the 4A 7D as a bad message and never asks for one
 CORE_COLD void list_p13_announce() {
 #if CORE_MSAMP
-  if (!(s.caps2 & kCaps2ListP13)) return;
+  if (!(S().caps2 & kCaps2ListP13)) return;
   const uint8_t m[9] = {0xF0, 0x7D, 0x52, 0x54, 0x4A, 1, 0x7D, 1, 0xF7};
   to_rytm(m, 9);
 #endif
@@ -1963,7 +1963,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         return;
       }
       // v2: PAGE held, whoever takes it (seq mode's sequencer too): PAGE + T15 / T16 start EDIT on a page that locks
-      if (s.open && (b[0] << 7 | b[1]) == kKeyPage) s.page_down = b[2] != 0;
+      if (S().open && (b[0] << 7 | b[1]) == kKeyPage) S().page_down = b[2] != 0;
 #if CORE_POLY
       {   // the sequencer's trig keys and PAGE: in seq mode (the page open or not) and on its SEQ page
         const ExtraPage* x = S().open ? extra_of(S().voice) : nullptr;
@@ -2116,7 +2116,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
         S().keep_mask &= (uint16_t)~(1u << t);   // the sound's own values come with it
       }
       const bool has13 = !held && b[1] <= 12 && 12 < b[1] + b[2];   // 2026-11-24 TBLB: this frame carries P13
-      const int old13 = has13 && (s.src_known[t] >> 12 & 1) ? s.srcv[t][12] << 7 | s.srcl[t][12] : -1;
+      const int old13 = has13 && (S().src_known[t] >> 12 & 1) ? S().srcv[t][12] << 7 | S().srcl[t][12] : -1;
       for (int i = 0; i < b[2]; ++i) {
         S().srcv[t][b[1] + i] = b[3 + 2 * i] & 0x7F;
         S().srcl[t][b[1] + i] = b[4 + 2 * i] & 0x7F;
@@ -2132,17 +2132,17 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
           S().src14[t] = c14, S().src14_at[t] = ++S().at_n;
         }
       }
-      if (has13 && track_vb[t] != kNotOurs && machine_of(track_vb[t]) == kWaveMachine) {   // 2026-11-24 TBLB: WAVETABLE's table B
-        const int w13 = s.srcv[t][12] << 7 | s.srcl[t][12];
+      if (has13 && TK().track_vb[t] != kNotOurs && machine_of(TK().track_vb[t]) == kWaveMachine) {   // 2026-11-24 TBLB: WAVETABLE's table B
+        const int w13 = S().srcv[t][12] << 7 | S().srcl[t][12];
         const bool p13_changed = w13 != old13;
         // the names bank follows the knob touched last; P1 and P13 changed in one frame (a kit load): P1 first (the names are P1's)
-        if (p1_changed) s.p13_last &= (uint16_t)~(1u << t);
-        else if (p13_changed) s.p13_last |= (uint16_t)(1u << t);
+        if (p1_changed) S().p13_last &= (uint16_t)~(1u << t);
+        else if (p13_changed) S().p13_last |= (uint16_t)(1u << t);
         // an idle voice's pick of B (as P1's above): only a real change of one knob (the first sight of P13 and a frame of
         // several values are a kit's load or a report: the voice's own reports set B then)
         if (p13_changed && old13 >= 0 && b[2] == 1) src_to_voice(t, w13, 12);
       } else if (p1_changed) {
-        s.p13_last &= (uint16_t)~(1u << t);
+        S().p13_last &= (uint16_t)~(1u << t);
       }
 #if CORE_MSAMP
       if (!held && TK().have_tracks && TK().track_vb[t] != kNotOurs && (TK().track_vb[t] & kMidiMachine) && S().src_known[t] == 0xFFFF) {
@@ -2524,7 +2524,7 @@ CORE_COLD void remote_show_page(const char* title) {
 
 CORE_COLD void remote_morph_qperf_move() {
   const char* t = remote_page_title();
-  if (t && !strcmp(t, "MORPH")) s.qp_user = true, s.qp_ms = s.now_ms;   // other pages do not change with the fader: they keep the plain cap
+  if (t && !strcmp(t, "MORPH")) S().qp_user = true, S().qp_ms = S().now_ms;   // other pages do not change with the fader: they keep the plain cap
 }
 CORE_COLD const char* remote_page_title() {
   const ExtraPage* x = S().open ? extra_of(S().voice) : nullptr;
@@ -2771,9 +2771,9 @@ CORE_COLD uint32_t remote_track_info(int* track, int* machine, char name[13], ui
 }
 // 2026-11-24 TBLB: a written P13 (WAVETABLE) is the track's P13 word at once: the names bank follows it and the Rytm's echo is no change
 static void p13_written(int t, int value, int lo) {
-  s.p13_last |= (uint16_t)(1u << t);
-  s.srcv[t][12] = (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), s.srcl[t][12] = (uint8_t)(lo & 0x7f);
-  s.src_known[t] |= (uint16_t)(1u << 12);
+  S().p13_last |= (uint16_t)(1u << t);
+  S().srcv[t][12] = (uint8_t)(value < 0 ? 0 : value > 127 ? 127 : value), S().srcl[t][12] = (uint8_t)(lo & 0x7f);
+  S().src_known[t] |= (uint16_t)(1u << 12);
 }
 CORE_COLD int remote_param_write(int vi, int machine, int k, int value, int lo) {
   int n = 0;
@@ -2916,9 +2916,9 @@ CORE_COLD int remote_track_src14_fresh(int t) {
   return S().src14_at[t] > S().rep_at[kTrackVoice[t]] ? S().src14[t] : -1;
 }
 CORE_COLD int remote_track_src_word(int t, int k) {
-  return t >= 0 && t < 12 && k >= 0 && k < 16 && (s.src_known[t] >> k & 1) ? s.srcv[t][k] << 7 | s.srcl[t][k] : -1;
+  return t >= 0 && t < 12 && k >= 0 && k < 16 && (S().src_known[t] >> k & 1) ? S().srcv[t][k] << 7 | S().srcl[t][k] : -1;
 }
-CORE_COLD bool remote_track_names_p13(int t) { return t >= 0 && t < 12 && (s.p13_last >> t & 1); }
+CORE_COLD bool remote_track_names_p13(int t) { return t >= 0 && t < 12 && (S().p13_last >> t & 1); }
 CORE_COLD int remote_track_src_value(int t, int k) {
   return t >= 0 && t < 12 && k >= 0 && k < 16 && (S().src_known[t] >> k & 1) ? S().srcv[t][k] : -1;
 }
@@ -2929,7 +2929,7 @@ CORE_COLD int remote_track_src_param(int t) {
   return t >= 0 && t < 12 && TK().have_tracks && TK().track_vb[t] != kNotOurs && (TK().track_vb[t] & 0x78) == kDspSample ? 10 : 0;
 }
 CORE_COLD bool remote_track_src_list(int t, int k) {
-  if (t < 0 || t >= 12 || !have_tracks || track_vb[t] == kNotOurs) return false;
+  if (t < 0 || t >= 12 || !TK().have_tracks || TK().track_vb[t] == kNotOurs) return false;
   const int m = track_named(t);
   if (k == 0) return m == kGranMachine || m == kWaveMachine || m == kMultiMachine || m == kChopMachine || m == kJuno || m == kFm;
   return (k == 10 && sample_machine(m)) || (k == 12 && m == kWaveMachine);

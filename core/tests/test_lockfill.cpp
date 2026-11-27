@@ -1082,13 +1082,13 @@ int main() {
         static device::Screen sc = {{"A", "B", "C", "D", "E", "F", "G", "H"}, ""};
         static device::Profile pf;
         pf.screen = &sc;
-        device::g_link.box = &pf;
+        device::g_links[0].box = &pf;
         g_out.clear();
         const std::vector<uint8_t> m = msg(0x49, {4, 0});
         ui::remote_sysex(m.data(), (int)m.size());
         ui::remote_tick(t0 + 90000);
         CHECK(!sent(ask));
-        device::g_link.box = nullptr;
+        device::g_links[0].box = nullptr;
       }
       ui::remote_reset();
       ui::remote_going_down();

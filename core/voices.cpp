@@ -1147,7 +1147,7 @@ static CORE_COLD void play_mono(int vi, int note, int vel) {
 CORE_COLD void voice_play(int vi, int note, int vel) {
   vi = voice_wrap(vi);
 #if CORE_POLY
-  sc::trig_voice(vi);   // 0.5.0: a SIDECHAIN source: the sequencer's / a pad's note on this voice
+  if (vi < kBoxVoices) sc::trig_voice(vi);   // 0.5.0: a SIDECHAIN source: the sequencer's / a pad's note on this voice (slot 0's chains only, for now)
 #endif
   V& x = v[vi];
   silenced[vi] = false;

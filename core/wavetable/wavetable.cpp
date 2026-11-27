@@ -272,15 +272,17 @@ CORE_COLD void select_a(int vi) {
 // read as TBL B rows at MIX 0: they claim no slot). A B that goes keeps its table kFadeMs more, for the render core's
 // fade out (b_fade_step); a table loading leaves the B it had (none: silent until it is in).
 CORE_COLD bool b_heard(int vi) {   // MIX above 0, or FM / RM using B as the modulator: B can be heard
-  vi &= 7;
+  vi = voice_wrap(vi);
   int wz = eng_zone(vp[vi][2], kWarps);
   return vp[vi][14] > 0 || wz == kWFm || wz == kWRm;
 }
 CORE_COLD void select_b(int vi) {
   int e = srclib::code_of(vp[vi][12]);
-  if (!list || e < 0 || e >= nlist) return;
+  const int ls = slot_of_voice(vi);
+  Lists& L = g_ls[ls];   // (the voice's own box's list)
+  if (!L.list || e < 0 || e >= L.nlist) return;
   if (!(v[vi].wt || force[vi])) return;
-  bool on = !srclib::silent(list, e) && b_heard(vi);
+  bool on = !srclib::silent(L.list, e) && b_heard(vi);
   if (!on) {
     wantb[vi] = -1;
     __atomic_store_n(&bwant[vi], 0u, __ATOMIC_SEQ_CST);
@@ -288,10 +290,10 @@ CORE_COLD void select_b(int vi) {
     return;
   }
   b_off[vi] = false;
-  if (e != wantb[vi] && failed[e]) failed[e] = 0, why[e] = 0;
+  if (e != wantb[vi] && L.failed[e]) L.failed[e] = 0, L.why[e] = 0;
   wantb[vi] = (int16_t)e;
   __atomic_store_n(&bwant[vi], 1u, __ATOMIC_SEQ_CST);
-  int t = resident(e);
+  int t = resident(ls, e);
   if (t >= kBuiltins) slots[t - kBuiltins].used_ms = now_ms();
   if (t >= 0) __atomic_store_n(&selb[vi], (uint32_t)t, __ATOMIC_SEQ_CST);
 }
@@ -641,8 +643,8 @@ CORE_COLD bool step() {
 
 CORE_COLD bool forced(int vi) { return force[voice_wrap(vi)]; }
 
-CORE_COLD void set_fenv(int vi, float a) { fenv_amt[vi & 7] = a < -1 ? -1 : a > 1 ? 1 : a; }
-CORE_COLD float fenv_get(int vi) { return fenv_amt[vi & 7]; }
+CORE_COLD void set_fenv(int vi, float a) { fenv_amt[voice_wrap(vi)] = a < -1 ? -1 : a > 1 ? 1 : a; }
+CORE_COLD float fenv_get(int vi) { return fenv_amt[voice_wrap(vi)]; }
 
 CORE_COLD void report(int vi, int note, int vel, const float* p) {
   vi = voice_wrap(vi);
@@ -790,8 +792,8 @@ CORE_COLD void kit_src(int vi, int e) {   // the kit's TBL for the voice (its ow
 // 2026-11-24 TBLB: the touchscreen's choice for table B (P13): the Rytm's TBLB written (48, k = 12: the kit keeps it), table B
 // selected (select_b alone: table A is untouched). A row 000 is B off. B is silent at MIX 0 unless the warp is FM or RM (b_silent).
 CORE_COLD bool pick_b(int vi, int e) {
-  vi &= 7;
-  if (!job || !list || e < 0 || e >= nlist) return false;
+  vi = voice_wrap(vi);
+  if (!job || !LV(vi).list || e < 0 || e >= LV(vi).nlist) return false;
   ui::remote_param_write(vi, kWaveMachine, 12, e & 127, srclib::lo_of(e));
   vp[vi][12] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
   select_b(vi);
@@ -799,19 +801,20 @@ CORE_COLD bool pick_b(int vi, int e) {
   return true;
 }
 CORE_COLD void kit_src_b(int vi, int e) {   // the Rytm's own P13 on an idle voice (kit_src's for table B)
-  vi &= 7;
-  if (!job || !list || e < 0 || e >= nlist) return;
+  vi = voice_wrap(vi);
+  if (!job || !LV(vi).list || e < 0 || e >= LV(vi).nlist) return;
   vp[vi][12] = (float)(e & 127) + (float)srclib::lo_of(e) / 128.0f;
   if (!b_heard(vi)) return;   // not audible by the voice's last values (they may be another sound's): no load, no "used" mark
   select_b(vi);
-  pools::seen(pools::kTables, e);
+  pools::seen_in(slot_of_voice(vi), pools::kTables, e);
 }
-CORE_COLD bool b_open(int vi) { return b_heard(vi & 7); }
-CORE_COLD int table_b_code(int vi) { return srclib::code_of(vp[vi & 7][12]); }
+CORE_COLD bool b_open(int vi) { return b_heard(voice_wrap(vi)); }
+CORE_COLD int table_b_code(int vi) { return srclib::code_of(vp[voice_wrap(vi)][12]); }
 CORE_COLD bool b_silent(int vi) {   // a table is set for B and MIX / the warp keep it from being heard
-  vi &= 7;
+  vi = voice_wrap(vi);
   int e = srclib::code_of(vp[vi][12]);
-  return list && e >= 0 && e < nlist && !srclib::silent(list, e) && !b_heard(vi);
+  const Lists& L = LV(vi);
+  return L.list && e >= 0 && e < L.nlist && !srclib::silent(L.list, e) && !b_heard(vi);
 }
 CORE_COLD void preview(int vi, int e) {
   vi = voice_wrap(vi);
@@ -1435,7 +1438,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       sniprintf(out, cap, "wt: pickb:V:ROW (V 0..7, ROW A001..H127)");
       return true;
     }
-    if (!pick_b(vi, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, nlist);
+    if (!pick_b(vi, e)) sniprintf(out, cap, "wt: no entry %d (%d listed)", e, LH().nlist);
     else sniprintf(out, cap, "wt: voice %d TBLB %s%s", vi, entry_name(e), b_silent(vi) ? " (silent: MIX 0)" : "");
     return true;
   }
@@ -1486,7 +1489,7 @@ int voice_entry(int vi) {
   return -1;
 }
 bool denormal_state(int vi) {
-  for (const Note& n : notes[vi & 7]) {
+  for (const Note& n : notes[voice_wrap(vi)]) {
     float x[] = {n.ic1, n.ic2, n.ic1p, n.ic2p, n.lin, n.ls[0][0], n.ls[0][1], n.ls[0][2], n.ls[1][0], n.ls[1][1], n.ls[1][2],
                  n.ls[2][0], n.ls[2][1], n.ls[2][2], n.ls[3][0], n.ls[3][1], n.ls[3][2]};
     for (float y : x)
@@ -1495,10 +1498,11 @@ bool denormal_state(int vi) {
   return false;
 }
 int voice_entry_b(int vi) {
-  uint32_t t = __atomic_load_n(&selb[vi & 7], __ATOMIC_SEQ_CST);
-  int e = wantb[vi & 7];
+  uint32_t t = __atomic_load_n(&selb[voice_wrap(vi)], __ATOMIC_SEQ_CST);
+  int e = wantb[voice_wrap(vi)];
   if (t >= (uint32_t)kTables || e < 0) return -1;
-  return resident(e) == (int)t || fixed_tab(e) == (int)t ? e : -1;
+  const int ls = slot_of_voice(voice_wrap(vi));
+  return resident(ls, e) == (int)t || fixed_tab(ls, e) == (int)t ? e : -1;
 }
 uint64_t ram_bytes(uint64_t* capacity) {   // the tables' mip frames in RAM (the pool RAM figure's "tables")
   uint64_t u = 0, c = 0;

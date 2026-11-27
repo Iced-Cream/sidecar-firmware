@@ -373,7 +373,7 @@ CORE_COLD bool trig(int vi, int note, int vel, const float* p) {
   vo[vi].trig_ms = now_ms();
   return true;
 }
-CORE_COLD int held(int vi) { return vo[vi & 7].n; }
+CORE_COLD int held(int vi) { return vo[voice_wrap(vi)].n; }
 CORE_COLD bool trig_off(int vi) { return vi >= 0 && vi < kVoices && release(vi, kLiveTrig, -1, -1) > 0; }
 
 CORE_COLD void lock(int vi, int track, int mask, const uint8_t* val, int64_t until) {

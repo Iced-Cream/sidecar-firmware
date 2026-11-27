@@ -3296,7 +3296,7 @@ static CORE_COLD void note_here(int vi, bool on, int pitch, int vel, int track) 
     int64_t sa = (int64_t)(x + 0.5 + 1e6) - 1000000;   // the nearest step (floor of x + 0.5)
     int micro = quant() ? 0 : clampi((int)((x - (double)sa) * kSub + (x >= (double)sa ? 0.5 : -0.5)), -kSub / 2, kSub / 2);
     if (sa < 0) sa = 0;
-    int idx = map_step(*cur, t, r, vstep(r, sa)).index;   // (the step heard there: SPD's offset)
+    int idx = map_step(*cur(), t, r, vstep(r, sa)).index;   // (the step heard there: SPD's offset)
     // CHORD REC OFF (the default): live recording is a mono line. The note still held ends here (its recorded length
     // is cut at this note's start) and its release later records nothing; a note that landed on this very step is
     // replaced, so one pass of live rec never puts two notes on a step. Playing is not touched (poly's own notes).
@@ -5343,7 +5343,7 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
     const char* q = strchr(p + 9, ':');
     if (r < 0 || r >= kRytmTracks)
       return sniprintf(out, cap, CORE_STR("seq=poly:T[:auto|voices=0..8,alloc=reassign|rotate|reset,unison=1..8,detune=0..127,spread=0..127,group=0..4,oct=-3..3,chord=0..1]")), true;
-    Track* t = q ? slot_for(r) : track_of(*cur, r, false);
+    Track* t = q ? slot_for(r) : track_of(*cur(), r, false);
     PolyCfg c = cfg_of(t, r);
     if (q) {
       char err[80];
