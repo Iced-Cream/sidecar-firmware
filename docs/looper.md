@@ -2,7 +2,8 @@
 > Pi screen or the Rytm, no Loop page in the web, the console's `loop` commands answer "loop: not in this release", and the engine
 > keeps no ring, records and plays nothing and never mutes a Rytm track or moves a PERF macro. A `loop.txt` on the card is left
 > alone. The code stays built and tested with the switch on; the redesign (the loop at unity on the POST path) turns it back on.
-> Read this page as the design notes of that work.
+> The LFO and MIDI-learn target lists still show LOOP:BAL and LOOP:LEV in 0.5.2; they set a value nothing reads. The next release
+> hides them. Read this page as the design notes of that work.
 
 # Looper: per-track or master grid? (2026-10-08)
 

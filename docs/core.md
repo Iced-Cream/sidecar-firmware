@@ -225,16 +225,16 @@ The Rytm says hello (`35 1 <up hi> <up lo> <caps> <caps2>`) only at its USB port
 starts later never hears one, so caps and caps2 stay 0 and everything gated on them stays off (the host command `5A`, QPERF,
 the edit arm, the `36` splash and popups, the label tables). Two things heal that:
 
-- **The claim fallback (0.5.2):** `fill_claim()` treats "no hello yet" as unknown and claims UP + LEFT / RIGHT anyway (never
+- **The claim fallback (0.5.1.2):** `fill_claim()` treats "no hello yet" as unknown and claims UP + LEFT / RIGHT anyway (never
   for a box). This works for any mod, old or new.
-- **The re-hello request (this change):** the host sends `3C 1 01 F7`, the keepalive with a flags byte, bit 0 = "hello
+- **The re-hello request (0.5.2):** the host sends `3C 1 01 F7`, the keepalive with a flags byte, bit 0 = "hello
   again". It goes out when the link has seen Rytm traffic but no hello (`stats.hellos == 0`, `/status` `capsKnown` false):
   once, then at most every 5 s, 3 tries at most; a hello (any) ends it. Never for a box (A4 / Digitakt), never while going
   down. One log line, once. A Rytm whose hello has caps2 bit 4 answers with exactly one hello (the same bytes as at port-up,
   the uptime current; at most one a second; it also owes the machine / kit / pattern reports again, as at port-up). The
   hello sets caps, caps2, caps36 and runs the same code as any hello, so everything gated on them turns on.
 - **An older Rytm mod:** every 0026 build so far handles `3C` as `case 0x3c: break;` and never reads the payload: the request
-  is a plain keepalive. Nothing is counted (not even `rx_bad`), no reply. The host asks 3 times (about 10 s) and stops; the 0.5.2
+  is a plain keepalive. Nothing is counted (not even `rx_bad`), no reply. The host asks 3 times (about 10 s) and stops; the 0.5.1.2
   claim fallback stays for such a mod.
 
 The hello's **caps2** bit table (the 4th data byte; a bit says "this build has it", 0 = an older Rytm):
@@ -244,7 +244,7 @@ The hello's **caps2** bit table (the 4th data byte; a bit says "this build has i
 | 0 | 1 | `kCaps2Arrows` | UP + LEFT / RIGHT forwarded as `49 1 1 15 / 16` once claimed (`4A 7E 1`) |
 | 1 | 2 | `kCaps2QpMute` | the QPERF report's flags bit 2 = the macros muted |
 | 2 | 4 | `kCaps2Capture` | the MORPH scene edit on the Rytm's own pages (`5A 01 0B`) |
-| 3 | 8 | (morph-v2 branch) | the Rytm-side morph, `5A 01 09` MORPH-SET / `0A` FADER |
+| 3 | 8 | `kCaps2Morph` | the Rytm-side morph, `5A 01 09` MORPH-SET / `0A` FADER |
 | 4 | 16 | `kCaps2Rehello` | answers `3C` with flags bit 0 by one hello again |
 | 5 | 32 | `kCaps2ListP13` | opens the host's bank list for WAVETABLE's table B (P13): `4A`'s optional 6th byte; the host announces `4A 7D 1` |
 

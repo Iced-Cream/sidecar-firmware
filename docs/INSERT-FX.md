@@ -272,7 +272,7 @@ NOTLITE, the cap, silence, noise at every knob corner, the texts and the INSERT 
 -> AMP; -> AMP with GAIN up; -> AMP -> SPACE H1 slapback; H123 synced 1/8 with REPEAT and AGE; a dub throw). Without
 MODEL capture A is SYNTHETIC (random weights, not an amp: no amp colour); with MODEL a real A2-Lite capture.
 
-## SIDECHAIN (0.5.0, DUCK's key filter and MON 0.5.2): pump and duck from a source
+## SIDECHAIN (0.5.2): pump and duck from a source
 
 One gain stage per insert chain (V1..V8, B1..B3, M1, M2), after the chain's two slots and before its POST EQ. Off is the
 default: the stage is skipped, bit for bit, and costs nothing.

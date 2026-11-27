@@ -335,7 +335,7 @@ numbers (`sidecar_ui_show`, the Rytm's UP + T requests in `voice_pi`) are unchan
 | T2 SEQ | (own row) | the pattern editor; its header row holds the tracks (T9 / T10 ...), the pattern's pages and RYTM |
 | T3 PAT | (own row) | the Rytm's pattern, read only; its header row holds the pages 1 2 3 4 ALL and SEQ |
 | T4 VOICE | Sound, Insert, Source, Scope | VOICE; INSERT FX (moved here from FX); the machine view with POOL, PRESET, CHOP and SAMPLE EDIT under it; SCOPE |
-| T5 FX | Sends, Master, (Morph), XY | Send FX (moved here from Settings); MASTER FX; MORPH (only in a build with `SIDECAR_MORPH`); the XY pad |
+| T5 FX | Sends, Master, (Morph), XY | Send FX (moved here from Settings); MASTER FX; MORPH (in 0.5.2; hidden in a build without `SIDECAR_MORPH`); the XY pad |
 | T6 SONG | Timeline, Setup | the timeline; the MIDI CONFIG how-to (the CFG key became the pill) |
 | T7 REC | Record, Takes | the recorder; its takes list (the TAKES key became the pill) |
 | T8 SET | Sound, MIDI, Display, Pool, System, About | the settings pages (Send FX moved out; the touch test and calibration stay on Display, power and service on System) |
@@ -377,8 +377,8 @@ set the captions and supporting lines in the body face and the values in the tit
 row (Setup opens FX > XY on its setup), the **Targets** (X and Y slots, depth) and the **Quick keys**: **Kill tails** (`killfx`) and **REC** (a take
 running: `rec=stop`; else the REC page, which asks first when the card may fall behind).
 
-**Left out (no data or no engine support in the UI today):** MORPH tile and fader (`SIDECAR_MORPH` is off), LOOP tile, loop keys and Loop mute (the
-looper has no console or view), LFO tile ("5 of 8 on": the LFO state is not in the UI's status), Song arm (the song view is fed only while SONG
+**Left out (no data or no engine support in the UI today):** MORPH tile and fader (not on HOME: the MORPH page has them), LOOP tile, loop keys and Loop mute (the
+looper is not in 0.5.2: no page, no console command), LFO tile ("5 of 8 on": the LFO state is not in the UI's status), Song arm (the song view is fed only while SONG
 shows, so no armed state), BPM, the kit name ("shared set": only the project name exists), the recorder's file name, bit depth and the card's free
 space (REC's view only), a per-voice live level (only the selected voice's stem has one; the bar is the render load), the header's "A04 playing
 121.5" on Perform.
@@ -390,7 +390,7 @@ the key height; where four rows of pads would be under it, 800x480, the pads are
 rows 36 px under a header of the font's height), SAMPLE EDIT on the OLED, the machine view's POOL, the POOL page and PRESET (36 px rows: the list
 pages with UP / DOWN), REC's OLED take rows, and SET > Display (every row 44 px, 48 px apart). Not changed: SEQ's tool column and arp rows (a dense
 editor of its own, 23 to 26 px keys before this work too), the XY setup's depth sliders (a 12 px track with the slider's wider touch area), the
-take rows' DELETE keys (the row's height, 36 to 42 px, with their touch area widened to the row), MORPH (the feature is off).
+take rows' DELETE keys (the row's height, 36 to 42 px, with their touch area widened to the row).
 
 ## Components
 
@@ -561,7 +561,7 @@ page's make prompt says `FUNC+CHRO: POLY CONFIG`. An older host reads page 0x20 
 UP + AMP), POOL (UP + T13, or SRC LIST's) and CHOP (a push on its SRC view) work on what the selected track holds, so
 they are not in the SIDECAR MENU and not on the LEFT / RIGHT ring (`page_keys.h sc_rytm_mk2_only`, read by
 `sc_shortcut_only`; `core/ui/remote.cpp page_ids`): they open from that track by their keys. The SIDECAR MENU lists
-POLY CONFIG, ARP, SAMPLE, AUTO SAMPLE, SONG, REC, SCOPE, LFO, MORPH (off until 0.5.2), SAMPLE EDIT, PROJECT, STATUS, SYSTEM, USER SLOTS, MIDI (0.5.0, docs/pi-engine.md "Keyboards and MIDI settings"), USB-C, WEB UI and KEYS (ALL COMBOS) (`test_ui` holds
+POLY CONFIG, ARP, SAMPLE, AUTO SAMPLE, SONG, REC, SCOPE, LFO, MORPH (0.5.2), SAMPLE EDIT, PROJECT, STATUS, SYSTEM, USER SLOTS, MIDI (0.5.0, docs/pi-engine.md "Keyboards and MIDI settings"), USB-C, WEB UI and KEYS (ALL COMBOS) (`test_ui` holds
 the rule, not the count). NO on a page opened by a shortcut goes back to where it was opened from: the stock screen
 (the page closes, `3A 0 0`, one NO not two) when it was opened there, the Sidecar page under it when it was opened over
 one (two levels kept: SCOPE, then UP + LFO, then UP + T12: NO PROJECT -> LFO -> SCOPE -> SIDECAR); a page opened from
