@@ -321,6 +321,25 @@ static void engine() {
   CHECK(hello(0, device::kIdA4) == device::kOk);
   CHECK(device::slot_held_by(&device::kA4) == 0 && device::admitted(0) == 4 && device::admitted(1) == 3);
   CHECK(device::g_links[0].order < device::g_links[1].order);
+  // the same box is its type and, where both are known, its DeviceUID (two boxes of one type): the A4 comes back once more by
+  // its USB UID, leaves, and another A4 (another UID) does not take the slot kept for it; the first one back keeps its place
+  const uint32_t kUidA = 0x0a4a4a4a, kUidB = 0x0b4b4b4b;
+  device::release(0);
+  t += 1000000, host_fake_time(true, t);
+  CHECK(device::usb_attach(&device::kA4, kUidA) == 0);
+  device::step(true);
+  CHECK(device::g_links[0].uid == kUidA && device::admitted(0) == 4 && device::g_links[0].order < device::g_links[1].order);
+  device::release(0);
+  device::step(true);
+  t += 1000000, host_fake_time(true, t);
+  CHECK(device::usb_attach(&device::kA4, kUidB) == -1);   // (slot 0 is kept for A, slot 1 is the Rytm's: no stream for B)
+  device::step(true);
+  CHECK(device::admitted(0) == 0 && device::admitted(1) == 3);
+  CHECK(device::usb_attach(&device::kA4, kUidA) == 0);
+  device::step(true);
+  CHECK(device::g_links[0].uid == kUidA && device::admitted(0) == 4 && device::admitted(1) == 3);
+  CHECK(device::g_links[0].order < device::g_links[1].order);
+  printf("  the same A4 (its UID) back in its kept slot keeps its place; another A4 does not take that slot\n");
   // the A4 leaves for good: the Rytm is alone once its slot is no longer kept, and gets her 8 back (and is told)
   device::release(0);
   device::step(true);

@@ -228,7 +228,7 @@ CORE_COLD void sc_view_draw(Canvas& c, int page, int npages, int ch, const char*
   header(c, title, page, npages, right);
   for (int s = 0; s < ins::kSlots; ++s) {   // [A][B] > [SIDECH] > [POST EQ]
     Rect r{(int16_t)(s * 17), (int16_t)kStripY, 14, (int16_t)kStripH};
-    bool set = ins::control.type[ch][s] != 0;
+    bool set = ins::ctl(ch).type[ch][s] != 0;   // (the slot in hand's chains)
     if (set) c.fill(r, kOn);
     else c.rect(r, kOn);
     char b[4];
