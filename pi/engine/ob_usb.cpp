@@ -2161,6 +2161,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					LR[2 * f] = ob::block_sample (pBlk, ob::kChannels, f, 0), LR[2 * f + 1] = ob::block_sample (pBlk, ob::kChannels, f, 1);
 				loop_pi::InBlock (m_nSlot, LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ((int) m_nSlot));
 			}
+			if (bridge::sidechain_on ((int) m_nSlot))	// SIDECHAIN (core/fx/sidechain.h): this box's stems and AUDIO IN into its slot's key bus
+			{
+				s32 K[ob::kFramesPerBlock][ob::kChannels];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (int c = 0; c < ob::kChannels; c++) K[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
+				bridge::sidechain_in ((int) m_nSlot, m_pAudio, &K[0][0], ob::kFramesPerBlock, ob::kChannels);
+			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{
 				int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;
@@ -2197,13 +2204,6 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					for (int c = 0; c < ob::kChannels; c++) L[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::livein_in (&L[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (bridge::sidechain_on ())	// SIDECHAIN (core/fx/sidechain.h): the stems and AUDIO IN into the key bus, as they come
-			{
-				s32 K[ob::kFramesPerBlock][ob::kChannels];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int c = 0; c < ob::kChannels; c++) K[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				bridge::sidechain_in (&K[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
 			if (core::out::meas::active ())	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)

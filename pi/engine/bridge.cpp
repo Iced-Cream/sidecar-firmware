@@ -466,9 +466,10 @@ void link_byte(int t, uint8_t b) {
 void tap_in(const int32_t* f, int n, int stride) { core::ui::tap_in(f, n, stride); }
 bool livein_on() { return core::livein::wanted(); }
 void livein_in(const int32_t* f, int n, int stride) { core::livein::in_block(f, n, stride); }
-bool sidechain_on() { return core::sc::wants_in(); }
-void sidechain_in(const int32_t* f, int n, int stride) {
-  core::sc::in_block(f, n, stride, 2, core::out::device().audio_in);   // the stems are IN 2..9 (core/fx/sidechain.h)
+bool sidechain_on(int slot) { return core::sc::wants_in(slot); }
+void sidechain_in(int slot, const core::out::Device* d, const int32_t* f, int n, int stride) {
+  if (!d) return;   // a Rytm's stems are IN 2..9 (core/fx/sidechain.h); another box has none of the Rytm's tracks, its AUDIO IN only
+  core::sc::in_block(slot, f, n, stride, d == &core::out::kRytmMk2 ? 2 : -1, d->audio_in);
 }
 void livein_fifo(unsigned frames) { core::livein::set_fifo((int)frames); }
 int livein_status(int vi, char* b, int cap) {

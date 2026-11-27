@@ -498,11 +498,11 @@ class Engine {
     float kb[kChunk];
     bool live = false;
     if (key >= 0) {
-      live = sc::read(key, kb, m, &o.last_w, &o.since, late < 224 ? late : 224);
+      live = sc::read(box_, key, kb, m, &o.last_w, &o.since, late < 224 ? late : 224);
       if (live && src == sc::kAinLR) {   // L + R: the mean (the R ring's own freshness is not asked: L's is)
         float kr[kChunk];
         uint32_t lw = 0, sn = 0;
-        if (sc::read(key + 1, kr, m, &lw, &sn, late < 224 ? late : 224))
+        if (sc::read(box_, key + 1, kr, m, &lw, &sn, late < 224 ? late : 224))
           for (int i = 0; i < m; ++i) kb[i] = 0.5f * (kb[i] + kr[i]);
       }
     }
@@ -529,7 +529,7 @@ class Engine {
       const int tg = sc::trig_of(src);
       int fire = -1;   // the frame a trig starts on (a source's trig: this chunk's first; AUDIO IN's onset: the frame itself)
       if (tg >= 0) {
-        const uint32_t cnt = __atomic_load_n(&sc::bus().trig[tg], __ATOMIC_ACQUIRE);
+        const uint32_t cnt = __atomic_load_n(&sc::bus(box_).trig[tg], __ATOMIC_ACQUIRE);
         if (!o.trig_seen) o.last_trig = cnt, o.trig_seen = true;   // what came before the stage engaged is not a trig
         else if (cnt != o.last_trig) {
           o.last_trig = cnt;

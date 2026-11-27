@@ -899,7 +899,7 @@ __attribute__((noinline)) CORE_COLD void voice_report_at(int vi, int cmd, const 
   if (cmd == 0x04) silenced[vi] = false;
   if (cmd == 0x04 && hooks.trig_seen) hooks.trig_seen();
 #if CORE_POLY
-  if (cmd == 0x04 && slot_of_voice(vi) == device::rytm_home()) sc::trig_voice(vi);   // 0.5.0: a SIDECHAIN source: this voice's trig (fx/sidechain.h)
+  if (cmd == 0x04) sc::trig_voice(slot_of_voice(vi), vi);   // 0.5.0: a SIDECHAIN source: this voice's trig (fx/sidechain.h)
 #endif
   V& x = v[vi];
   bool was_juno = x.juno, was_fm = x.fm;
@@ -1147,7 +1147,7 @@ static CORE_COLD void play_mono(int vi, int note, int vel) {
 CORE_COLD void voice_play(int vi, int note, int vel) {
   vi = voice_wrap(vi);
 #if CORE_POLY
-  if (slot_of_voice(vi) == device::rytm_home()) sc::trig_voice(vi);   // 0.5.0: a SIDECHAIN source: the sequencer's / a pad's note on this voice (the Rytm's slot's chains only, for now)
+  sc::trig_voice(slot_of_voice(vi), vi);   // 0.5.0: a SIDECHAIN source of its slot's chains: the sequencer's / a pad's note on this voice
 #endif
   V& x = v[vi];
   silenced[vi] = false;

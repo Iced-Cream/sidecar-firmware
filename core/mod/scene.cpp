@@ -52,6 +52,15 @@ struct Sl {
   uint32_t dirty_ms = 0;
   int file_fader = -1;   // the F the kit's file has (loaded or saved), -1 none (review M2)
   bool said = false;     // a locked file's "not saved" logged (once a load, review L8)
+  // the box's QPERF knob (Task 47): the position last acted on (a baseline or a take), -1 none since the link came up
+  // (Phase 7 review M2); whether a take since then sets the smoothing's interval, and when. Each box's own: its fader
+  int qp_pos = -1;
+  bool qp_seen = false;
+  uint32_t qp_ms = 0;
+  uint8_t qp_mode = kQpMutedOnly;   // QPERF FADER (v2 Task 6): a box setting, kept in its learn.txt
+  bool qp_muted = false;            // the macros' mute as last reported (only from a mod with kCaps2QpMute)
+  QpView qv = {-1, false, false, 0};   // the screens' readout (v2 Task 7)
+  int rscn = -1;                    // the box's own scene as reported (2D 01 0F), -1 none
   int side = -1;                    // EDIT (v2): the side held, 0 A (PAGE + T15), 1 B (PAGE + T16), -1 none
   int last_played = 0;              // played at the last tick
   uint32_t kit_ms = 0;              // when its kit last changed (kit_note)
@@ -61,14 +70,7 @@ CORE_COLD Sl& S() { return g_sl[prj_slot()]; }
 CORE_COLD Sl& S(int slot) { return g_sl[slot > 0 && slot < kVoiceSlots ? slot : 0]; }
 // the QPERF knob (Task 47, the Rytm's: its slot's fader): the position last acted on (a baseline or a take), -1 none since
 // the link came up (Phase 7 review M2); whether a take since then sets the smoothing's interval, and when
-int g_qp_pos = -1;
-bool g_qp_seen = false;
-uint32_t g_qp_ms = 0;
-uint8_t g_qp_mode = kQpMutedOnly;   // QPERF FADER (v2 Task 6): a box setting, kept in learn.txt
-bool g_qp_muted = false;            // the macros' mute as last reported (only from a mod with kCaps2QpMute)
-QpView g_qv = {-1, false, false, 0};   // the screens' readout (v2 Task 7)
 
-int g_rscn = -1;                    // the Rytm's own scene as reported (2D 01 0F), -1 none
 
 CORE_COLD bool ok_scene(int n) { return n >= 0 && n < kScenes; }
 // 0.5.0 v2 (S7): the Rytm's own scene and PERF macros are no scene targets (the XY pad and MIDI learn keep them)
@@ -271,50 +273,49 @@ CORE_COLD void set_fader(uint16_t v, int source) { move_fader(v, source, kSmooth
 CORE_COLD uint16_t fader_played() { return (uint16_t)S().played; }
 CORE_COLD int fader_source() { return S().src; }
 
-CORE_COLD void set_qp_mode(int m) { g_qp_mode = (uint8_t)(m == kQpOff || m == kQpAlways ? m : kQpMutedOnly); }
-CORE_COLD int qp_mode() { return g_qp_mode; }
+CORE_COLD void set_qp_mode(int m) { S().qp_mode = (uint8_t)(m == kQpOff || m == kQpAlways ? m : kQpMutedOnly); }
+CORE_COLD int qp_mode() { return S().qp_mode; }
 CORE_COLD const char* qp_mode_name(int m) { return m == kQpOff ? "off" : m == kQpAlways ? "always" : "muted"; }
 
 CORE_COLD void qperf(int pos, uint16_t mask, uint8_t flags) {   // (the Rytm's knob: its slot's fader)
   if (!SIDECAR_MORPH) return;   // 0.5.0: the morph is off (sidecar_features.h): no edits, the data stays as loaded
-  device::Scope in(device::g_links[device::rytm_home()]);
-  (void)mask;
+  (void)mask;   // (the box in hand's knob: its own slot's fader)
   if (!(flags & kQpMoved) || pos < 0 || pos > 255) return;   // the hello's report before the knob ever sent: no position
   // QPERF FADER (v2 Task 6): bit 2 only from a mod that reports the mute; its edge makes this position a baseline
   const bool muted = (ui::remote_caps2() & ui::kCaps2QpMute) && (flags & kQpMuted);
-  if (muted != g_qp_muted) g_qp_muted = muted, qperf_rebase();
-  const int was = g_qv.pos;
-  g_qv.pos = pos, g_qv.moved = true, g_qv.muted = muted;
-  if (g_qp_mode == kQpOff || (g_qp_mode == kQpMutedOnly && !muted)) {   // not the fader now: the next allowed one a baseline
-    if (g_qp_mode == kQpMutedOnly && pos != was) g_qv.ignored_ms = now_ms() | 1;   // (the page's FUNC+QPER hint)
+  if (muted != S().qp_muted) S().qp_muted = muted, qperf_rebase();
+  const int was = S().qv.pos;
+  S().qv.pos = pos, S().qv.moved = true, S().qv.muted = muted;
+  if (S().qp_mode == kQpOff || (S().qp_mode == kQpMutedOnly && !muted)) {   // not the fader now: the next allowed one a baseline
+    if (S().qp_mode == kQpMutedOnly && pos != was) S().qv.ignored_ms = now_ms() | 1;   // (the page's FUNC+QPER hint)
     qperf_rebase();
     return;
   }
-  if (g_qp_pos < 0) {   // the first report since the link came up: a baseline only, the knob takes on a change (M2)
-    g_qp_pos = pos;
+  if (S().qp_pos < 0) {   // the first report since the link came up: a baseline only, the knob takes on a change (M2)
+    S().qp_pos = pos;
     return;
   }
-  int d = pos > g_qp_pos ? pos - g_qp_pos : g_qp_pos - pos;
+  int d = pos > S().qp_pos ? pos - S().qp_pos : S().qp_pos - pos;
   if (d == 0) return;   // FUNC or the mask changed: the fader stays where it is
   // another source has the fader (or a held manual edit plays): a 1-step flicker of the pot does not take it (M1)
   if ((S().src != kQperf || mod::held_any()) && d < kQpTakeSteps) return;
   uint16_t v = (uint16_t)(pos * kFaderMax / 255);
-  uint32_t ms = now_ms(), gap = ms - g_qp_ms;
+  uint32_t ms = now_ms(), gap = ms - S().qp_ms;
   // the first take after a baseline catches up over kHandoverMs (the 2-step guard's start jump, UX 2b); then the
   // reports' interval
-  uint32_t sm = !g_qp_seen ? kHandoverMs : gap <= kQpSmoothMaxMs ? (gap > kSmoothMs ? gap : kSmoothMs) : kSmoothMs;
-  g_qp_seen = true, g_qp_pos = pos, g_qp_ms = ms;
+  uint32_t sm = !S().qp_seen ? kHandoverMs : gap <= kQpSmoothMaxMs ? (gap > kSmoothMs ? gap : kSmoothMs) : kSmoothMs;
+  S().qp_seen = true, S().qp_pos = pos, S().qp_ms = ms;
   move_fader(v, kQperf, sm);
 }
-CORE_COLD void qperf_rebase() { g_qp_pos = -1, g_qp_seen = false; }
-CORE_COLD QpView qperf_view() { return g_qv; }
+CORE_COLD void qperf_rebase() { S().qp_pos = -1, S().qp_seen = false; }
+CORE_COLD QpView qperf_view() { return S().qv; }
 CORE_COLD bool qp_wants_knob() {
-  return g_qp_mode == kQpAlways || (g_qp_mode == kQpMutedOnly && (ui::remote_caps2() & ui::kCaps2QpMute));
+  return S().qp_mode == kQpAlways || (S().qp_mode == kQpMutedOnly && (ui::remote_caps2() & ui::kCaps2QpMute));
 }
-CORE_COLD int rytm_kit() { return S(device::rytm_home()).rytm_kit; }
-CORE_COLD int kit_note(uint32_t now) { return S(device::rytm_home()).kit_ms && now - S(device::rytm_home()).kit_ms < 2000 && S(device::rytm_home()).rytm_kit >= 0 ? S(device::rytm_home()).rytm_kit : -1; }
-CORE_COLD void rytm_scene_seen(int n) { g_rscn = n >= 0 && n <= kScenes ? n : 0; }
-CORE_COLD int rytm_scene() { return g_rscn; }
+CORE_COLD int rytm_kit() { return S().rytm_kit; }
+CORE_COLD int kit_note(uint32_t now) { return S().kit_ms && now - S().kit_ms < 2000 && S().rytm_kit >= 0 ? S().rytm_kit : -1; }
+CORE_COLD void rytm_scene_seen(int n) { S().rscn = n >= 0 && n <= kScenes ? n : 0; }
+CORE_COLD int rytm_scene() { return S().rscn; }
 
 CORE_COLD void tick(uint32_t ms) {
   if (!SIDECAR_MORPH) return;   // 0.5.0: the morph is off (sidecar_features.h): no edits, the data stays as loaded
@@ -385,10 +386,11 @@ CORE_COLD void reset() {
     l.mn = 0, l.stale = true;
     l.dirty = l.locked = false, l.kit = l.rytm_kit = -1;
     l.side = -1, l.kit_ms = 0;
+    l.qp_pos = -1, l.qp_seen = false, l.qp_ms = 0;
+    l.qp_mode = kQpMutedOnly, l.qp_muted = false, l.qv = QpView{-1, false, false, 0};
+    l.rscn = -1;
   }
-  g_qp_pos = -1, g_qp_seen = false, g_qp_ms = 0;
-  g_qp_mode = kQpMutedOnly, g_qp_muted = false, g_qv = QpView{-1, false, false, 0};
-  g_rscn = -1;
+
 }
 
 // ---------------------------------------------------------------------------------------------------- the card
@@ -701,7 +703,7 @@ CORE_COLD int json(char* o, int cap, int vslot) {   // (any core: never the slot
   if (!ok) n = at;   // (no room: the old fields only)
 #endif
   if (n >= cap) return cap;
-  n += sniprintf(o + n, cap - n, CORE_STR(",\"src\":%d,\"rscn\":%d}"), l.src, g_rscn);
+  n += sniprintf(o + n, cap - n, CORE_STR(",\"src\":%d,\"rscn\":%d}"), l.src, l.rscn);
   return n >= cap ? cap : n;
 }
 CORE_COLD int kit() { return S().kit; }
