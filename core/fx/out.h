@@ -38,7 +38,7 @@
 namespace core {
 namespace out {
 
-constexpr int kVoices = 8;
+constexpr int kVoices = 8;   // one box's voices (machines.h kBoxVoices): the OUT knobs and a Device's rows are per box
 enum Route : uint8_t { kTrk = 0, kPre = 1, kPost = 2, kRoutes };
 constexpr int kXfadeFrames = 384;    // 8 ms: an OUT change (the send FX route's kPanFrames)
 constexpr int kGateFrames = 240;     // 5 ms: the mute gate
@@ -96,6 +96,18 @@ inline void defaults(Control& c) {
   for (int v = 0; v < kVoices; ++v) c.route[v] = kTrk, c.lev[v] = 100, c.pan[v] = 64, c.wid[v] = 64, c.dec[v] = 0, c.open[v] = 1;
   c.trim10[0] = c.trim10[1] = 0, c.trk10 = 0;
 }
+// Slot 1's (its voices 8..15, alone or beside a Rytm: a box's OUT settings are its own): the defaults until slot 1's
+// settings are loaded into it; no mute gate from the Rytm. `control` is slot 0's (the Rytm's). control_of(slot of a voice).
+extern Control control1;
+inline Control& control_of(int slot) { return slot ? control1 : control; }
+// The base box's slot (core/device sets it as the base changes: 1 for a box alone, else 0): the slot whose settings the
+// base box's output stage plays, the console's stereo=trim:trk sets, and whose voice chains play AMP (core/fx/insert.h)
+extern volatile int8_t g_base_slot;
+// 3(c): the settings below (set_route .. mod_offset, line, clear, the console) are the slot in hand's, in its own
+// control_of: slot_fn names it (core/pool/pool.cpp sets it to prj_slot; null: 0). The mute gate is each slot's (named:
+// set_mutes / trig_track below); the PRE / POST trims are slot 0's. ctl(): what the slot in hand's voices play (the pages).
+extern int (*slot_fn)();
+const Control& ctl();
 
 inline bool stereo(int vi) { return control.route[vi & 7] != kTrk; }
 inline const char* route_name(int r) { return r == kPre ? "PRE" : r == kPost ? "POST" : "TRK"; }
@@ -114,7 +126,12 @@ int param(int vi, int k);                    // the knob
 void mod_offset(int vi, int k, int off);     // core/mod kOut (O1..O8, k 0..2: LEV PAN WID; the LFOs), -127..127
 void set_mutes(uint16_t mask);               // the Rytm's 12 tracks muted (seq: 2D 01 05 / CC 94)
 void trig_track(int vi, int track);          // the track that triggered voice vi (the Sidecar sequencer's), -1 unknown
+// 3(c) step 8: slot `slot`'s mute gate (its box's tracks muted; its box voice vi 0..7): slot 0 the Rytm's (its shared
+// voices), another a box whose voice v plays its track v. The calls above are slot 0's.
+void set_mutes(int slot, uint16_t mask);
+void trig_track(int slot, int vi, int track);
 bool any_stereo();                           // a voice is routed PRE or POST
+bool any_stereo(int slot);                   // ... of slot's (control_of(slot))
 void set_trim(int pair, int db10);           // stereo=trim:pre|post|trk:DB10; pair 0 pre, 1 post, 2 trk
 // The kit file's line ("OUT V3 POST 100 64 64 0"): from_line takes one (false: not an OUT line it reads); line(vi)
 // writes the voice's when it is not the default (0 none)

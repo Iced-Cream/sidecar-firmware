@@ -90,27 +90,33 @@ static CORE_COLD void sendfx_labels_out() {
       else usent |= (uint8_t)(1u << (id - fx::kFirstUser));
     }
   };
-  one(fx::control.knob[0][0]);
-  one(fx::control.knob[1][0]);
+  one(fx::cur().knob[0][0]);   // (the box in hand's: the Rytm this goes to, whichever slot it holds)
+  one(fx::cur().knob[1][0]);
   for (int id = 1; id < fx::kFirstUser + fx::kUserSlots; ++id) one(id);
   s_labels_sent = sent, s_ulabels_sent = usent;
 }
 // a slot's TYPE has labels the Rytm was not sent (the cap above)
 static CORE_COLD bool sendfx_labels_missing() {
   for (int s = 0; s < fx::kSlots; ++s) {
-    int id = fx::control.knob[s][0];
+    int id = fx::cur().knob[s][0];
     if (label_id(id) && fx::labels(id) && !label_sent(id, s_labels_sent, s_ulabels_sent)) return true;
   }
   return false;
 }
-static uint8_t fx_sent_id[fx::kSlots] = {0xFF, 0xFF}, fx_sent_st[fx::kSlots];
-static bool s_sendfx_hello;   // names + labels + states sent since boot (asked or not)
+// Each box's own (the box in hand's FX and its link: a Rytm in either slot, two Rytms each theirs)
+static uint8_t fx_sent_id[kVoiceSlots][fx::kSlots], fx_sent_st[kVoiceSlots][fx::kSlots];
+static bool fx_sent_any[kVoiceSlots];        // a state went to this box's Rytm (else the next goes in full)
+static bool s_sendfx_hello_b[kVoiceSlots];   // names + labels + states sent since boot (asked or not)
+static inline bool& sendfx_hello() { return s_sendfx_hello_b[fx::slot_in_hand()]; }
 
 static CORE_COLD void sendfx_state_out(bool all) {
+  const int b = fx::slot_in_hand();
+  const fx::Control& c = fx::control_of(b);
+  if (!fx_sent_any[b]) all = fx_sent_any[b] = true;
   for (int s = 0; s < fx::kSlots; ++s) {
-    uint8_t id = fx::control.knob[s][0], st = fx::state(s);
-    if (!all && id == fx_sent_id[s] && st == fx_sent_st[s]) continue;
-    fx_sent_id[s] = id, fx_sent_st[s] = st;
+    uint8_t id = c.knob[s][0], st = fx::state(c, s);
+    if (!all && id == fx_sent_id[b][s] && st == fx_sent_st[b][s]) continue;
+    fx_sent_id[b][s] = id, fx_sent_st[b][s] = st;
     uint8_t m[32];
     if (hooks.to_rytm) hooks.to_rytm(m, fx::sysex_state(m, s));
   }
@@ -168,9 +174,9 @@ static char fx_project[24] = "\x01";   // the project whose fxslots file is load
 static bool fx_owed = false;           // the Rytm is told the slots' names when the card core has read them
 
 CORE_COLD void sendfx_project() {
-  if (strcmp(fx_project, project) == 0) return;
-  strcpy(fx_project, project);
-  fx::slots_load(project);
+  if (strcmp(fx_project, prj().key) == 0) return;
+  strcpy(fx_project, prj().key);
+  fx::slots_load(prj().key);
   fx_owed = true;
   sendfx_step();
 }
@@ -178,7 +184,7 @@ CORE_COLD void sendfx_project() {
 static uint32_t s_list_ms = 0;
 CORE_COLD bool sendfx_step() {
 #if CORE_POLY
-  if (s_sendfx_hello && s_bw_up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
+  if (sendfx_hello() && s_bw_up && sendfx_bw_out()) return true;   // (after the Rytm was first heard: its ASK / 20 send them all)
 #endif
   // a user effect slot changed (fx::list_changed): the list, the labels and the states again, at most every 100 ms
   if (fx::list_dirty && !fx_owed && now_ms() - s_list_ms >= 100) {
@@ -207,31 +213,44 @@ CORE_COLD void host_project_changed() {
 
 namespace fxin {
 static const char kFile[] = "/.rytm/fxin.txt";
-static bool s_want, s_dirty, s_hello, s_pending;   // setting, unsaved, first contact since boot, a 26 awaiting its 27
-static int8_t s_rytm = -1;
-static uint32_t s_ask_ms, s_sent_ms;   // when the oldest unanswered 26 went out (0: none); when the last went
+// 3(c) step 8: each box's own (its file in its own folder, its 26 / 27 with its own box), the slot in hand's
+struct Sl {
+  bool want, dirty, hello, pending;   // setting, unsaved, first contact since boot, a 26 awaiting its 27
+  int8_t rytm = -1;
+  uint32_t ask_ms, sent_ms;   // when the oldest unanswered 26 went out (0: none); when the last went
+  fmt::KvKeep keep;           // the lines a newer build wrote that this one does not read (fmt.h, class S: kept)
+};
+static Sl g_sl[kVoiceSlots];
+static inline Sl& S() { return g_sl[prj_slot()]; }
 
-CORE_COLD bool wanted() { return s_want; }
-CORE_COLD int rytm() { return s_rytm; }
-CORE_COLD bool active() { return s_rytm == 1; }
+CORE_COLD bool wanted() { return S().want; }
+CORE_COLD int rytm() { return S().rytm; }
+CORE_COLD bool active() { return S().rytm == 1; }
 CORE_COLD const char* state() {
-  if (s_rytm >= 0) return s_rytm ? "on" : "off";
-  return s_ask_ms && now_ms() - s_ask_ms >= 3000 ? "unsupported" : "unknown";
+  if (S().rytm >= 0) return S().rytm ? "on" : "off";
+  return S().ask_ms && now_ms() - S().ask_ms >= 3000 ? "unsupported" : "unknown";
 }
 static CORE_COLD void send26(uint8_t v) {
   const uint8_t m[] = {0xF0, 0x7D, 0x52, 0x54, 0x26, v, 0xF7};
   if (!hooks.to_rytm) return;
-  hooks.to_rytm(m, (int)sizeof m);
-  if (s_rytm < 0 && !s_ask_ms) s_ask_ms = now_ms() | 1;
-  s_pending = true;
-  s_sent_ms = now_ms();
+  hooks.to_rytm(m, (int)sizeof m);   // (the box in hand's link)
+  if (S().rytm < 0 && !S().ask_ms) S().ask_ms = now_ms() | 1;
+  S().pending = true;
+  S().sent_ms = now_ms();
 }
 CORE_COLD void ask() { send26(0x7F); }
-static fmt::KvKeep s_keep;   // the lines a newer build wrote that this one does not read (fmt.h, class S: kept)
+// the file's text into the slot in hand's setting
+CORE_COLD void take_text(const char* b, int got) {
+  Sl& x = S();
+  x.want = got > 0 && strncmp(b, "src=fx", 6) == 0;
+  x.keep.n = 0;
+  static const char* const kKnown[] = {"src", nullptr};
+  if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &x.keep);
+}
 CORE_COLD void load() {
   File f;
-  s_want = false;
-  s_keep.n = 0;
+  S().want = false;
+  S().keep.n = 0;
   fmt::post_wait(kFile);   // 0.3.0: a posted save of it lands before we read it back (fmt.h)
   fmt::recover(kFile);   // a power cut between write_atomic's renames: the previous file back, a stray .tmp removed
   if (!f.open(kFile, kRead)) return;
@@ -239,34 +258,34 @@ CORE_COLD void load() {
   memset(b, 0, sizeof b);
   int got = f.read(b, sizeof b - 1);
   f.close();
-  s_want = strncmp(b, "src=fx", 6) == 0;
-  static const char* const kKnown[] = {"src", nullptr};
-  if (got > 0) fmt::kv_keep(b, (uint32_t)got, kKnown, &s_keep);
+  take_text(b, got);
 }
 // 0.3.0 power-cut safety: posted to the card core as one atomic write (fmt.h), a newer build's keys kept (class S)
 CORE_COLD bool save() {
-  if (!s_dirty) return false;
+  Sl& x = S();
+  if (!x.dirty) return false;
   char* t = fmt::post_begin();
   if (!t) return false;   // another settings write is in flight: at a later pass (still dirty)
-  uint32_t n = (uint32_t)sniprintf(t, 16, "%s", s_want ? "src=fx\n" : "src=in\n");
-  n = fmt::kv_append(s_keep, t, n, fmt::kPostMax);
+  uint32_t n = (uint32_t)sniprintf(t, 16, "%s", x.want ? "src=fx\n" : "src=in\n");
+  n = fmt::kv_append(x.keep, t, n, fmt::kPostMax);
   if (!fmt::post_end(kFile, n)) return false;
-  s_dirty = false;
+  x.dirty = false;
   return true;
 }
 CORE_COLD void set(bool on) {
-  if (on != s_want) s_dirty = true;
-  s_want = on;
+  if (on != S().want) S().dirty = true;
+  S().want = on;
   send26(on ? 1 : 0);
 }
-// 27 <s> from the Rytm: a reply to a 26, or the unasked one at USB port-up (the cue to send the setting again)
+// 27 <s> from the box in hand: a reply to a 26, or the unasked one at USB port-up (the cue to send the setting again)
 static CORE_COLD void on_state(uint8_t s) {
-  bool reply = s_pending && now_ms() - s_sent_ms < 1000;   // (a 26 sent into a closed port is no one's reply)
-  s_pending = false;
-  s_rytm = s ? 1 : 0;
-  s_ask_ms = 0;
-  rec::set_fxin(s != 0);
-  if (!reply && s_want && s == 0) send26(1);   // a connect: the Rytm forgot; a 00 in reply to our 01 is not repeated
+  Sl& x = S();
+  bool reply = x.pending && now_ms() - x.sent_ms < 1000;   // (a 26 sent into a closed port is no one's reply)
+  x.pending = false;
+  x.rytm = s ? 1 : 0;
+  x.ask_ms = 0;
+  if (device::rytm_at(prj_slot())) rec::set_fxin(s != 0);   // (the recorder is the Rytm's: its slot's)
+  if (!reply && x.want && s == 0) send26(1);   // a connect: the box forgot; a 00 in reply to our 01 is not repeated
 }
 CORE_COLD bool command(const char* p, char* out, int cap) {
   if (strncmp(p, "fxin", 4) != 0 || (p[4] && p[4] != '=')) return false;
@@ -280,29 +299,45 @@ CORE_COLD bool command(const char* p, char* out, int cap) {
       return true;
     }
   }
-  sniprintf(out, cap, CORE_STR("fxin: IN L/R source %s, the Rytm %s%s"), s_want ? "FX return" : "inputs", state(),
+  sniprintf(out, cap, CORE_STR("fxin: IN L/R source %s, the Rytm %s%s"), S().want ? "FX return" : "inputs", state(),
             strcmp(state(), "unsupported") == 0 ? " (not supported by this Rytm build)" : "");
   return true;
 }
 CORE_COLD int json(char* out, int cap) {
-  return sniprintf(out, cap, CORE_STR("\"fxin\":{\"want\":%d,\"state\":\"%s\",\"rytm\":%d}"), s_want, state(), s_rytm);
+  return sniprintf(out, cap, CORE_STR("\"fxin\":{\"want\":%d,\"state\":\"%s\",\"rytm\":%d}"), S().want, state(), S().rytm);
 }
-// the first message since boot is the host's first contact: tell the Rytm the setting (or ask)
+// the first message since boot is the host's first contact: tell the box the setting (or ask)
 static CORE_COLD void contact() {
-  if (s_hello) return;
-  s_hello = true;
-  if (s_want) send26(1);
+  if (S().hello) return;
+  S().hello = true;
+  if (S().want) send26(1);
   else send26(0x7F);
 }
 }  // namespace fxin
 
-CORE_COLD void link_reset(const char* why) {
-  for (int vi = 0; vi < kVoices; ++vi) voice_silence(vi);
+CORE_COLD void link_reset(const char* why, int slot) {
+  // the link's own voices (slot 1's 8..15 leave the Rytm's playing); on 8 voices every link's are 0..7
+  const int b = slot < 0 ? device::voice_base() : device::voice_base(device::g_links[slot]);
+  for (int vi = b; vi < b + kBoxVoices; ++vi) voice_silence(vi);
   scene::qperf_rebase();   // the QPERF knob's next report a baseline, not a move (core/mod/scene.h)
 #if CORE_MSAMP
-  midim::kit_changed();   // the Rytm starts over: PRG and the rest again at the next report
+  midim::kit_changed(slot < 0 ? device::cur().index : slot);   // the box starts over: PRG and the rest of its voices again at the next report
 #endif
-  if (fx::all_sound_off()) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+  // 3(c): the link's own box's send FX (each box its own, its own 100 ms window)
+  const int s = slot < 0 ? device::cur().index : slot;
+  if (fx::all_sound_off(fx::control_of(s >= 0 && s < kVoiceSlots ? s : 0))) log(CORE_STR("link %s: voices silenced, send FX cleared"), why);
+}
+
+CORE_COLD void slot_left(int slot) {
+  if (slot < 0 || slot >= device::kLinks) return;
+  device::Scope in(device::g_links[slot]);
+#if CORE_POLY
+  seq::slot_left();   // (its transport to STOP: its MIDI and arpeggiator end there; its edits saved by idle)
+#endif
+#if CORE_MSAMP
+  midim::stop(slot);
+#endif
+  arp::stop(slot);
 }
 
 CORE_COLD void link_lost() {
@@ -315,11 +350,25 @@ CORE_COLD void link_lost() {
 #endif
 }
 
-__attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
+// Transport 0's (the host link's) whole SysEx: its slot (a box's hello moves it to slot 1), then handled as that slot's.
+CORE_COLD void host_sysex(const uint8_t* d, int len) { engine_sysex_link(0, d, len); }
+
+// 3(c) step 10: a box's MIDI clock is its own slot's. Transport t's realtime byte / song position goes to the slot its
+// messages go to (device::slot_of: a box's hello moved it), into that box's send FX clock (its STUTTER's grid), which
+// hands it on to that slot's LFOs (fx::clock_listener -> lfo::clock(slot, ..)). Nothing of it reaches another box's.
+CORE_COLD int engine_realtime_link(int t, uint8_t status, uint16_t spp) {
+  const int slot = device::slot_of(t, nullptr, 0);
+  if (slot < 0) return -1;
+  device::Scope in(device::g_links[slot]);
+  fx::clock_in(fx::control_of(slot), status, spp);
+  return slot;
+}
+
+__attribute__((noinline)) CORE_COLD void host_sysex_slot(const uint8_t* d, int len) {
   uint8_t box[device::kMaxMessage];   // a box's message as the engine's own (core/device/device.h); the Rytm: never
-  if (device::foreign() && !device::translate(device::g_link, d, len, box)) return;
+  if (device::foreign() && !device::translate(device::cur(), d, len, box)) return;
   if (len >= 6 && d[4] == device::kCmdHello && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54) {   // a box says what it is
-    device::hello(device::g_link, d, len);
+    device::hello(device::cur(), d, len);
     return;
   }
   // F0 7D 52 54 cmd voice ...
@@ -386,8 +435,8 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     if (d[4] == 0x20) {   // SENDFX (send levels, FX TYPE + params, tags): a TYPE or state change answered by 0x22
       // The Rytm asks (0x23) only until it has a name list, so after this engine (re)starts it may never ask again:
       // the first 0x20 since boot, with no ASK seen yet, sends the names, labels and states unasked, as an ASK would.
-      if (!s_sendfx_hello) {
-        s_sendfx_hello = true;
+      if (!sendfx_hello()) {
+        sendfx_hello() = true;
         sendfx_names_out();
         sendfx_labels_out();
         sendfx_state_out(true);
@@ -406,7 +455,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
       return;
     }
     if (d[4] == 0x23) {   // SENDFX ASK: the TYPE list and both states
-      s_sendfx_hello = true;
+      sendfx_hello() = true;
       sendfx_names_out();
       sendfx_labels_out();
       sendfx_state_out(true);
@@ -435,7 +484,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
 #endif
     if (d[4] == 0x35) link_reset("hello");   // the Rytm's USB port came up: its transport and notes unknown
 #if CORE_POLY
-    if (d[4] == 0x35 && s_sendfx_hello) sendfx_bw_all();   // (sfx-basewidth: a Rytm that came up again shows its defaults)
+    if (d[4] == 0x35 && sendfx_hello()) sendfx_bw_all();   // (sfx-basewidth: a Rytm that came up again shows its defaults)
 #endif
     if ((d[4] >= 0x30 && d[4] <= 0x3F) || d[4] == 0x29 || d[4] == 0x2A || d[4] == 0x2B || d[4] == 0x48 || d[4] == 0x49 ||
         d[4] == 0x4A) {
@@ -443,7 +492,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
       // rui1038: 4A the bank list)
       int caps0 = ui::remote_caps();
       ui::remote_sysex(d, len);
-      if (d[4] == 0x35 && s_sendfx_hello && (ui::remote_caps() & 2) && !(caps0 & 2)) {   // fix1049 (review): a rui1049
+      if (d[4] == 0x35 && sendfx_hello() && (ui::remote_caps() & 2) && !(caps0 & 2)) {   // fix1049 (review): a rui1049
         sendfx_names_out();                                                              // hello after the labels went:
         sendfx_labels_out();                                                             // its 16 tables filled now
         sendfx_state_out(true);
@@ -458,7 +507,8 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     if (d[4] == 0x12 && len >= 11) { pool_assign(d[5], d[6] << 7 | d[7], d[8] << 7 | d[9]); return; }
   }
   if (len < 7 || d[1] != 0x7D || d[2] != 0x52 || d[3] != 0x54) return;
-  int cmd = d[4], vi = d[5] & 7;
+  int cmd = d[4], vi = device::voice_in(d[5]);   // the link's box voice -> engine voice (slot 1's: 8 + k)
+  if (cmd == 0x04 && !device::voice_admitted(vi)) return;   // CPU admission (device/admit.h): a voice its box was not given
   if (cmd == 0x11) {   // NOTE_OFF: the voice's gate closed (plain voice, no flags)
 #if CORE_POLY
     if (arp::trig_off(vi)) return;    // the arpeggiator held that trig: its notes end, the note sounding plays out its gate
@@ -467,7 +517,7 @@ __attribute__((noinline)) CORE_COLD void host_sysex(const uint8_t* d, int len) {
     voice_note_off(vi);
     return;
   }
-  voice_report(cmd, d, len);
+  voice_report_at(vi, cmd, d, len);
 }
 
 }  // namespace core
