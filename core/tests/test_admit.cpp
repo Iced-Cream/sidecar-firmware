@@ -92,6 +92,11 @@ static void model() {
     CHECK(admit::master_core(0) == (kVoiceSlots > 1 ? 3 : 2) && admit::master_core(1) == 1);
     admit::Load b1 = {{0, 8}, {false, true}, {0, 8}};   // slot 1 alone is the base box: split 4, its master on core 1
     CHECK(admit::base_of(b1) == 1 && admit::amp_core(4, 10, b1) == 2 && admit::amp_core(10, 10, b1) == 1);
+    // AMP on both boxes (amp_core_of): each box's voice chains by its own split, its master chains on its own master_core
+    admit::Load two = {{4, 8}, {true, true}, {4, 8}};   // an A4 in slot 0 (2 + 2), a Rytm in slot 1 (4 + 4)
+    CHECK(admit::amp_core_of(0, 1, 10, two) == 1 && admit::amp_core_of(0, 2, 10, two) == 2);
+    CHECK(admit::amp_core_of(1, 3, 10, two) == 1 && admit::amp_core_of(1, 4, 10, two) == 2 && admit::amp_core_of(1, 8, 10, two) == 0);
+    CHECK(admit::amp_core_of(0, 10, 10, two) == admit::master_core(0) && admit::amp_core_of(1, 11, 10, two) == admit::master_core(1));
   }
   admit::set_costs({1500, 1000, 200, 300, 400});
   {
