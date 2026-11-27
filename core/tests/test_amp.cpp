@@ -544,7 +544,7 @@ int main() {
       for (int b = 0; b < 3000; ++b) {
         amp::step();
         for (int c = 0; c < 8; ++c) {
-          amp::service(c);
+          amp::service(0, c);
           std::vector<float> v = blk;
           ins::engine().ProcessMono(c, v.data(), 12, ins::control);
         }
@@ -552,7 +552,7 @@ int main() {
     };
     run();
     int playing = 0, cpu = 0;
-    for (int c = 0; c < 8; ++c) playing += amp::status(c, 0) == amp::kPlaying, cpu += amp::status(c, 0) == amp::kCpu;
+    for (int c = 0; c < 8; ++c) playing += amp::status(0, c, 0) == amp::kPlaying, cpu += amp::status(0, c, 0) == amp::kCpu;
     printf("CPU check: %d playing, %d NO CPU\n", playing, cpu);
     CHECK(amp::refused_cpu() == 6);
     CHECK(playing == 2 && cpu == 6 && amp::running() == 2 && text(4, 0) == "NO CPU" && amp::slot_playing(0, 0) + amp::slot_playing(1, 0) + amp::slot_playing(2, 0) + amp::slot_playing(3, 0) == 2);
@@ -563,7 +563,7 @@ int main() {
     for (int c = 0; c < 8; ++c) ins::set_type(c, 0, ins::kOff);
     for (int b = 0; b < 200; ++b) {
       amp::step();
-      for (int c = 0; c < 8; ++c) amp::service(c);
+      for (int c = 0; c < 8; ++c) amp::service(0, c);
     }
     settle();
     CHECK(amp::running() == 0);
@@ -695,7 +695,7 @@ int main() {
     ins::set_param(0, 0, 0, amp::knob_for_model(i));
     std::vector<float> y = play(guitarish(24000));
     settle();
-    CHECK(amp::status(0, 0) == amp::kPlaying && amp::stats().loads == ld + 1);
+    CHECK(amp::status(0, 0, 0) == amp::kPlaying && amp::stats().loads == ld + 1);
     for (float v : y) CHECK(std::isfinite(v));
     printf("amp=synthetic:on: %s, slot V1 A plays it (%s)\n", o, text(0, 0).c_str());
     CHECK(amp::command("amp=synthetic:off", o, sizeof o));
