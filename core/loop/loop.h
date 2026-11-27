@@ -8,6 +8,12 @@
 // audio hooks, in_block (the IN completion: the ring) and out_mix (FillOut: the loop's frames onto MAIN, after the master
 // FX); core 3 hands core 0 what to play through one published command (a generation counter; core 0 takes it at the next
 // block). Times are the host's render frames (seq::frames()); a bar's time is seq::beat_map's, `lat` early.
+//
+// Two boxes (one looper per box, decided 2026-11-27): each slot (0, 1) has a looper of its own: its own ring of its box's MAIN,
+// its own grabs and store, its bars from its own clock, its settings in its own folder (set_dir_fn) and its loop on its own box's
+// returns (set_returns). Nothing is shared and slot 0 and slot 1 are the same. The core 0 hooks, init and KEEP take the slot;
+// the controls, the settings, the console and json act on the slot in hand (set_slot_fn: the pages', the console's); tick, load
+// and save run every slot.
 #pragma once
 #include <stdint.h>
 
@@ -25,6 +31,8 @@ constexpr double kPieceFrames = 48;            // the frames one control pass ta
 constexpr int kSeam = 64;                      // frames: the loop seam, a swap, a start
 constexpr int kCutFrames = 480;                // 10 ms
 constexpr int kPre = kSeam;                    // frames kept before a grab's first (the seam's other side)
+constexpr int kSlots = 2;                      // loopers: one a box
+constexpr uint8_t kNoReturn = 0xFF;            // set_returns: the box has no such return
 
 struct Grab {
   uint32_t id;       // counts up, never reused
@@ -47,10 +55,19 @@ struct Env {
   uint16_t (*muted)() = nullptr;
   bool (*clock)(float* ticks, float* tick_us, bool* run) = nullptr;   // the MIDI clock's, the fallback for the bars
 };
-void set_env(const Env* e);                 // null: the defaults
+void set_env(const Env* e);                 // null: the defaults (the slot in hand's)
+// which box: the slot the controls act on (null: 0); a slot's folder for loop.txt (null: /.rytm for every slot); a slot's returns,
+// POST and PRE (L / R channels of out_mix's F, kNoReturn none: OUT = PRE is refused on a box without one)
+void set_slot_fn(int (*fn)());
+int slot_in_hand();
+void set_dir_fn(const char* (*fn)(int slot));
+void set_returns(int slot, const uint8_t post[2], const uint8_t pre[2]);
+bool has_pre(int slot);
+void init(int slot, int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes);
 void init(int32_t* ring, uint32_t ring_frames, uint8_t* store, uint64_t store_bytes);   // null ring: the looper is off
 void reset();                               // tests: everything stopped, the settings default
 bool on();
+bool on(int slot);
 
 // ---- the controls (core 3)
 int grab(int half_bars);                    // Err; a grab while a loop plays is a resample (swapped in at the next bar line)
@@ -95,8 +112,10 @@ float loop_gain(int bal);                   // the loop's
 int live_perf(int bal);                     // LIVE VIA's macro value: 127 down to 0 over BAL 64..127
 
 // ---- the audio hooks (core 0)
-void in_block(const int32_t* lr, int n, uint64_t arrival, unsigned lost);   // MAIN L / R of an IN block (interleaved)
-void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // the loop onto F[f][0..1], the rest by BAL
+void in_block(int slot, const int32_t* lr, int n, uint64_t arrival, unsigned lost);   // MAIN L / R of slot's box's IN block (interleaved)
+void out_mix(int slot, int32_t (*F)[12], int n, uint64_t render_frame);              // slot's loop onto its box's F (its returns), the rest by BAL
+void in_block(const int32_t* lr, int n, uint64_t arrival, unsigned lost);   // (tests: the slot in hand's)
+void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);
 // The loop's make-up gain onto F[.][0..1] (default 1). The Rytm's MAIN arrives over USB at its own level, but what the Pi
 // puts on POST (0/1) reaches the Rytm's main 10.9 dB down (masterfx_pi.h, measured 2026-11-01): the Pi sets 3.508 so a
 // loop plays back at the level it was heard. Any thread; out_mix reads it once a block. POST tops out about 10.9 dB under
@@ -104,9 +123,11 @@ void out_mix(int32_t (*F)[12], int n, uint64_t render_frame);              // th
 // kLoopCeil of full scale, a quiet loop gets the whole make-up, a hot one less. Several loops summed still meet the soft
 // knee (out_mix) instead of clipping.
 void set_out_gain(float g);
+void set_out_gain(int slot, float g);
 float out_gain();
 // OUT = PRE: the same for the PRE return (F 2/3), which reaches the main 2.0 dB down (the Pi sets kStemOnPost / kPreOnPost)
 void set_pre_gain(float g);
+void set_pre_gain(int slot, float g);
 float pre_gain();
 // the measured POST make-up (loop=cal: click out / peak back; loop.txt `postgain`): in 1.5 .. 6.0 it replaces out_gain on POST,
 // anything else is none (0)
@@ -116,6 +137,8 @@ float makeup();                             // what the loop is multiplied by no
 constexpr float kLoopCeil = 0.98f;          // the loop alone is capped to this part of full scale (also the soft knee's start)
 bool wants_in();                            // the ring exists
 bool wants_out();                           // a loop is on its way or plays (out_mix does something)
+bool wants_in(int slot);
+bool wants_out(int slot);
 
 // ---- POST latency and level calibration (loop=cal): clicks on POST 0 / 1 (the OUT hook), found again in MAIN IN (the IN hook):
 // when they come back, the round trip (post_lat) and each click's peak back (the return gain, postgain). POST only
@@ -125,12 +148,14 @@ bool cal_info(uint64_t* first_click, int* n, uint32_t* gap);   // the render fra
 int post_lat();                             // frames the POST path takes beyond the voice path's latency (0 default)
 void set_post_lat(int f);
 
-// ---- settings on the card (/.rytm/loop.txt, a box setting) and the console / status
-void load();
-bool save();                                // true: a posted write was queued
-bool dirty();
+// ---- settings on the card (<the box's folder>/loop.txt, a box setting) and the console / status
+void load();                                // every slot's
+void load(int slot);                        // one box's (its box attached: its folder is known)
+bool save();                                // true: a posted write was queued (one slot's a call)
+bool dirty();                               // any slot's
 bool command(const char* p, char* out, int cap);   // "loop", "loop=grab:L", ... (spec 3.12): false when not "loop..."
 int json(char* out, int cap);               // "\"loop\":{...}"
+int json(int slot, char* out, int cap);
 const char* last_message();                 // the last refusal / result text the pages show ("PLAY FIRST"), "" none
 uint32_t message_gen();                     // counts up with each one
 
@@ -143,13 +168,16 @@ struct KeepJob {
   int half_bars;
   uint64_t start;       // the grab's first frame's host render frame
 };
-bool keep_take(KeepJob* j);                 // core 0: the next job (false: none)
+bool keep_take(int slot, KeepJob* j);       // core 0: slot's next job (false: none)
+void keep_finished(int slot, uint32_t id, bool ok, const char* take_name);
+bool keep_take(KeepJob* j);                 // (the slot in hand's)
 void keep_finished(uint32_t id, bool ok, const char* take_name);
 struct Stats {
   uint32_t grabs, refused, resamples, copies, abandoned, dropped, cal_ok, cal_fail, kept;
   uint32_t worst_copy_bytes;
 };
 const Stats& stats();
+const Stats& stats(int slot);
 
 }  // namespace loop
 }  // namespace core

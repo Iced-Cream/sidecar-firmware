@@ -1971,7 +1971,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
-		if (s_bActive) loop_pi::OutMix (F, ob::kFramesPerBlock, nRender);	// the master looper's loop onto MAIN L / R, after the master FX (core/loop, spec-050 3.5)
+		if (s_bActive) loop_pi::OutMix (nBase, F, ob::kFramesPerBlock, nRender);	// the base box's looper's loop onto its returns, after the master FX (core/loop, spec-050 3.5)
 		spectrum_pi::FromOut (V, X, F, ob::kFramesPerBlock);	// the spectrum's strip, while a reader wants it (a copy)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 #if CORE_MSAMP
@@ -2151,12 +2151,12 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					if (bMix) masterfx_pi::Stems (m_nSlot, S, ob::kFramesPerBlock);
 				}
 			}
-			if (m_pAudio == &core::out::kRytmMk2 && m_nInCh == ob::kChannels && loop_pi::WantsIn ())	// the master looper's ring: MAIN L / R (a Rytm; the A4's waits for its check)
+			if (m_pAudio == &core::out::kRytmMk2 && m_nInCh == ob::kChannels && loop_pi::WantsIn (m_nSlot))	// the master looper's ring: MAIN L / R (a Rytm; the A4's waits for its check)
 			{
 				int32_t LR[2 * ob::kFramesPerBlock];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					LR[2 * f] = ob::block_sample (pBlk, ob::kChannels, f, 0), LR[2 * f + 1] = ob::block_sample (pBlk, ob::kChannels, f, 1);
-				loop_pi::InBlock (LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ());
+				loop_pi::InBlock (m_nSlot, LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ());
 			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{
