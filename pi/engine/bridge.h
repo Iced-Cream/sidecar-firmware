@@ -116,6 +116,7 @@ int base_slot();                                                    // the base 
 // no box attached is logged and taken. The control core (CEngineCores::Command).
 bool box_command(const char* p, void (*run)(void* ctx, const char* cmd), void* ctx);
 int transport_slot(int t);                                          // the slot transport t's box is (core::device::slot_of), -1 none
+int slot_in_hand();                                                 // the slot the console's command works on (box=S: sets it; else the base box's)
 void asamp_set_midi_out(bool (*f)(int port, const uint8_t* m, int n));   // the auto-sampler's EXT outputs (core/samp/autosamp.h)
 bool keys_computer_on();
 const char* keys_line(char* b, int cap);   // "KEYS MPKMINI > SD POLY", null: no keyboard

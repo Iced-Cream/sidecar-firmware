@@ -295,6 +295,7 @@ bool box_command(const char* p, void (*run)(void*, const char*), void* ctx) {
   run(ctx, rest);
   return true;
 }
+int slot_in_hand() { return core::ins::slot_in_hand(); }
 int transport_slot(int t) {
   const int s = core::device::slot_of(t, nullptr, 0);
   return s >= 0 && s < core::kVoiceSlots ? s : -1;

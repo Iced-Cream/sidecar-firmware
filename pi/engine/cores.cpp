@@ -68,7 +68,7 @@ static unsigned s_nTarget = 96;
 static volatile boolean s_bTargetFixed = FALSE;	// a fifo= set it: the link's default does not
 static boolean s_bNotes = TRUE;
 static boolean s_bReportLog = FALSE;
-static int s_nDrone = -1;			// -1 off, 0..7 one voice, 8 all
+static int s_nDrone[2] = {-1, -1};		// transport t's box's (0 the host link's, 1 the second box's): -1 off, 0..7 one voice, 8 all
 static unsigned s_nSplit = 4;			// voices 0..s_nSplit-1 on core 1, the rest on core 2
 static volatile u32 s_nBenchTurn = 4;		// the core whose bench runs now (4: none, every core done)
 static CEngineCores::TBench s_Bench[4][CEngineCores::BenchMachines];
@@ -106,15 +106,19 @@ static void ToCore (const u8 *pData, int nLength)
 		s_nSlowSx++;
 	}
 }
-static core::NoteAdapter s_Notes (ToCore);
+static void ToCore1 (const u8 *pData, int nLength) { bridge::sysex_link (1, pData, nLength); }
+// The note adapter of each transport's box (0 the host link's, 1 the second box's, link1.h): its MIDI channels 1..8 play
+// its own slot's voices, and :drone= / :notemach= (box=S: for the other box) set that box's alone (slots symmetric,
+// decided 2026-11-26)
+static core::NoteAdapter s_Notes[2] = {core::NoteAdapter (ToCore), core::NoteAdapter (ToCore1)};
 // A Rytm running the mods (any F0 7D 52 54 from it) reports its voices itself (0021's 03 / 04, 0026's 33): the note
 // adapter (a stock Rytm's notes on channels 1..8 as PLAITS reports) then steps aside, or each MIDI note the Rytm
 // sends out over USB turned the voice it just set to JUNO / DSP SAMPLE / ... back into the adapter's PLAITS (the
 // sound, and the voice pages' waveform / GRAIN view, which read the voice's state).
-static volatile boolean s_bModded = FALSE;
+static volatile boolean s_bModded[2] = {FALSE, FALSE};	// transport t's box runs the mods
 static void FromRytm (const u8 *pData, int nLength)
 {
-	if (nLength >= 5 && pData[1] == 0x7D && pData[2] == 0x52 && pData[3] == 0x54) s_bModded = TRUE;
+	if (nLength >= 5 && pData[1] == 0x7D && pData[2] == 0x52 && pData[3] == 0x54) s_bModded[0] = TRUE;
 	ToCore (pData, nLength);
 }
 static void OnChannel (u8 s, u8 a, u8 b)
@@ -122,7 +126,7 @@ static void OnChannel (u8 s, u8 a, u8 b)
 	if ((s & 0xF0) == 0x90 && b) { s_nNotes++; s_nNoteChans |= 1u << (s & 0x0F); }
 	bridge::lfo_midi (s, a, b);		// the LFOs: a Rytm track's trig (an FX target's TRIG, core/lfo.h)
 	bridge::poly_midi (s, a, b);		// poly FM: the pads' notes, live chords (core/poly.h)
-	if (s_bNotes && !s_bModded) s_Notes.Channel (s, a, b);
+	if (s_bNotes && !s_bModded[0]) s_Notes[0].Channel (s, a, b);
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
 // A box's realtime bytes, transport t's (0 the host link's g_MidiIn, 1 the second box's, link1.h): its own slot's clock
@@ -168,6 +172,26 @@ static void RealtimeIn (int nTransport, uint8_t s, uint16_t spp)
 }
 static void OnRealtime (uint8_t s, uint16_t spp) { RealtimeIn (0, s, spp); }
 static MidiIn s_Midi (FromRytm, OnChannel, OnRealtime);
+// The second box's bytes (link1::Poll hands each on): its notes through its own note adapter, as the host link's box's
+// through OnChannel (its SysEx goes to the engine in link1.cpp; here only a mods box's F0 7D 52 54 is noticed)
+static void Sysex1 (const u8 *pData, int nLength)
+{
+	if (nLength >= 5 && pData[1] == 0x7D && pData[2] == 0x52 && pData[3] == 0x54) s_bModded[1] = TRUE;
+}
+static void OnChannel1 (u8 s, u8 a, u8 b)
+{
+	if ((s & 0xF0) == 0x90 && b) { s_nNotes++; s_nNoteChans |= 1u << (s & 0x0F); }
+	if (s_bNotes && !s_bModded[1]) s_Notes[1].Channel (s, a, b);
+}
+static MidiIn s_Midi1 (Sysex1, OnChannel1);
+static void Byte1 (uint8_t b) { s_Midi1.Feed (b); }
+// The transport whose box holds the slot in hand (box=S: sets it; else the base box's): 0 when no transport's does
+static int TransportInHand (void)
+{
+	const int nSlot = bridge::slot_in_hand ();
+	for (int t = 1; t >= 0; t--) if (bridge::transport_slot (t) == nSlot) return t;
+	return 0;
+}
 // The Pi's own keyboards' notes for the Rytm (core/keys.h: an analog track's, a forwarded one's): one USB MIDI event
 // packet each into g_KeysToRytm (core 0's transport sends them between whole messages); a full queue drops it
 static volatile unsigned s_nKeysLost;
@@ -292,7 +316,7 @@ void CEngineCores::EventStream (void)
 static unsigned ClampTarget (unsigned n) { return n < 24 ? 24 : n > 1024 ? 1024 : n; }
 
 boolean CEngineCores::NotesOn (void)	{ return s_bNotes; }
-int CEngineCores::DroneVoice (void)		{ return s_nDrone; }
+int CEngineCores::DroneVoice (void)		{ return s_nDrone[0] >= 0 ? s_nDrone[0] : s_nDrone[1]; }
 
 void CEngineCores::Configure (unsigned nFifoTarget, boolean bNotes)
 {
@@ -505,14 +529,15 @@ void CEngineCores::RenderBlock (int nSide)
 static void Drone (void)
 {
 	u64 now = Ticks ();
-	if (s_nDrone < 0 || now - s_nDroneAt < TickRate () / 2) return;
+	if ((s_nDrone[0] < 0 && s_nDrone[1] < 0) || now - s_nDroneAt < TickRate () / 2) return;
 	s_nDroneAt = now;
-	for (int v = 0; v < 8; v++)
-	{
-		if (s_nDrone != 8 && s_nDrone != v) continue;
-		s_Notes.Channel (0x80 | v, 48 + 2 * v, 0);
-		s_Notes.Channel (0x90 | v, 48 + 2 * v, 100);
-	}
+	for (int t = 0; t < 2; t++)
+		for (int v = 0; v < 8; v++)
+		{
+			if (s_nDrone[t] < 0 || (s_nDrone[t] != 8 && s_nDrone[t] != v)) continue;
+			s_Notes[t].Channel (0x80 | v, 48 + 2 * v, 0);
+			s_Notes[t].Channel (0x90 | v, 48 + 2 * v, 100);
+		}
 }
 
 void CEngineCores::Control (void)
@@ -587,7 +612,7 @@ void CEngineCores::Control (void)
 			s_nMidiBytes++;
 			bWorked = TRUE;
 		}
-		link1::Poll (RealtimeIn, AllSoundOffIn);	// the second box's messages, as the engine's slot 1, its clock and its CC 120 (link1.h)
+		link1::Poll (RealtimeIn, AllSoundOffIn, Byte1);	// the second box's messages, as the engine's slot 1, its clock and its CC 120 (link1.h)
 		Mark (0);
 		u32 nKey;
 		while (g_KeysIn.pop (&nKey))
@@ -696,19 +721,24 @@ void CEngineCores::Command (const char *p)
 	if (strncmp (p, "notemach=", 9) == 0 && p[9] >= '0' && p[9] <= '7' && p[10] == ':')
 	{
 		int v = p[9] - '0';
-		if (s_Notes.SetMachine (v, p + 11)) L->Write (From, LogNotice, "notes: voice %d plays %s", v, p + 11);
+		const int t = TransportInHand ();
+		if (s_Notes[t].SetMachine (v, p + 11)) L->Write (From, LogNotice, "notes: transport %d voice %d plays %s", t, v, p + 11);
 		else L->Write (From, LogWarning, "notes: no machine \"%s\" (plaits juno daisy dsps fm md)", p + 11);
 	}
 	else if (strncmp (p, "drone=", 6) == 0)
 	{
-		s_nDrone = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
-		if (s_nDrone > 8) s_nDrone = -1;
-		L->Write (From, LogNotice, "drone %s", p + 6);
+		const int t = TransportInHand ();
+		int d = strcmp (p + 6, "all") == 0 ? 8 : strcmp (p + 6, "off") == 0 ? -1 : atoi (p + 6);
+		if (d > 8) d = -1;
+		if (d < 0)		// off: its sounding notes ended
+			for (int v = 0; v < 8; v++) if (s_nDrone[t] == 8 || s_nDrone[t] == v) s_Notes[t].Channel (0x80 | v, 48 + 2 * v, 0);
+		s_nDrone[t] = d;
+		L->Write (From, LogNotice, "drone %s (transport %d, slot %d)", p + 6, t, bridge::transport_slot (t));
 	}
 	else if (strncmp (p, "notes=", 6) == 0)
 	{
 		s_bNotes = p[6] == '1';
-		L->Write (From, LogNotice, "MIDI notes %s%s", s_bNotes ? "on" : "off", s_bNotes && s_bModded ? " (idle: the Rytm runs the mods and reports its voices)" : "");
+		L->Write (From, LogNotice, "MIDI notes %s%s", s_bNotes ? "on" : "off", s_bNotes && s_bModded[0] ? " (idle: the Rytm runs the mods and reports its voices)" : "");
 	}
 	else if (strcmp (p, "out=main") == 0 || strcmp (p, "out=tracks") == 0)	// (out=Vn:...: the OUT route, core/fx/out.h)
 	{
