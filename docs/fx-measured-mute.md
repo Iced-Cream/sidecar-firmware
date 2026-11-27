@@ -66,10 +66,14 @@ effect is muted only when its core is hot, since its cost is known from the benc
    the run never passed 2 and the 4-in-a-row backstop was dead whenever two boxes ran. With a side stage the run now
    counts cycles: the base pass holds it, and the side pass counts the cycle, late when the core's last base pass plus
    this side pass took a block (or the pass alone, or the FIFO's view, as before). A late cycle counts only when the core
-   measures at or over admission's limit (as the FIFO's gate above) or an output underran within the last 64 passes; else
-   the log counts it under "fits" (`fxguard cycles: late c1 N c2 N, fits c1 N c2 N`, once a second while any). 4 late
+   measures at or over 95 % (kCycleLimitBp) for its time a block; else the log counts it under "fits" (`fxguard cycles: late c1 N c2 N, fits c1 N c2 N`, once a second while any). 4 late
    cycles in a row (1 ms) take the dearest, as one box's 4 late blocks do. P5's clean overload (FIFO 35-58, underruns +0)
    still mutes nothing, as picked (pi/engine/fifo_late.h cycle_late; host test: test_fifo_late_guard).
+   The first gate was admission's 80 % or an underrun, as the FIFO's. LC1 (2026-11-27) disproved it: at 1200 MHz with core
+   1 at 75-80 % (no underrun, heard clean) a short run of cycles past a block lifted the core's own mean over 80 % and took
+   a 10 us CLOUD, and the next load setup's reload underruns took CLOUD and both CLOUDSEEDs. A spike opens an 80 % gate by
+   itself, and an underrun is the FIFO's view's evidence, which that view answers. So the cycle's gate is 95 % alone: a
+   sustained overload (P7's ~108 %), never a core admission keeps within 80 % (P5's 84 % included).
    The side stage's FIFO is watched the same way at its own passes, and either FIFO's hold makes both kinds of pass
    late: LT12j set it at base passes only, so the late run broke at every side pass and the guard never saw the Rytm.
    One mute per low-buffer event: after any late mute both FIFOs' holds end and the next takes two new dips, so the

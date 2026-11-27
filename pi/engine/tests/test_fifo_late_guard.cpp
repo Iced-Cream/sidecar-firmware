@@ -50,7 +50,7 @@ static const uint32_t kTicksUs = 54;   // cycles_per_second / 1e6
 struct Fx { int unit; int core; bool side; uint32_t us; };
 
 struct Result { int mutes; int first_mute_pass; int muted_unit; uint32_t under; uint32_t level_end; uint32_t fits;
-                uint32_t cyc_late, cyc_fits, pass_late; };
+                uint32_t cyc_late, cyc_fits, pass_late, ext_under; };
 
 // cores.cpp's gate (fifo_late.h counts, decided 2026-11-26 after VA1): a FIFO-late pass counts for its core only at or
 // over admission's limit for its time a block, or after a real underrun. g_gate off: the guard as before (the shape's
@@ -67,6 +67,11 @@ static uint32_t g_stall_us = 0, g_stall2_us = 0;
 static bool g_cycle = true, g_fifo = true;
 static int g_spike_every = 0, g_burst_at = -1, g_burst_len = 0;
 static uint32_t g_spike_us = 0, g_burst_us = 0;
+// g_cycle_gate80: the late cycle's first gate (PR #58 1722936-bae3fb4: admission's 80 % or an underrun, as the FIFO's),
+// which LC1 disproved (2026-11-27). g_burst_every: the burst again every so many passes. g_ext_under_at: the outputs
+// underrun for g_ext_under_len passes from there with the core's work untouched (LC1: a load setup's reload, +234).
+static bool g_cycle_gate80 = false;
+static int g_burst_every = 0, g_ext_under_at = -1, g_ext_under_len = 0;
 static uint32_t stall(int p) {
   if (!g_stall_every || p < 2 * (int)fifo_late::State::kGrace) return 0;
   const int k = p % g_stall_every;
@@ -81,7 +86,7 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
   fifo_late::Pair fl;
   uint64_t last[2][3] = {};
   double level[2] = {kTarget, kTarget};
-  Result r = {0, -1, -1, 0, 0, 0, 0, 0, 0};
+  Result r = {0, -1, -1, 0, 0, 0, 0, 0, 0, 0};
   uint32_t late_seen = 0;
   fifo_late::Load load[3];
   fifo_late::Under under;
@@ -93,12 +98,14 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
     if (nl != late_seen) late_seen = nl, fl.rearm();
     const bool late = fl.step(side, lvl, 1, kBlock, g_fifo, true);
     for (int c = 1; c <= 2; ++c) load[c].step(last[0][c] + last[1][c]);
-    under.step(r.under);
+    if (g_ext_under_at >= 0 && p >= g_ext_under_at && p < g_ext_under_at + g_ext_under_len) ++r.ext_under;
+    under.step(r.under + r.ext_under);
     unsigned lc = late ? fifo_late::blame(last[0][1], last[1][1], last[0][2], last[1][2]) : 0;
     if (lc && g_gate && !fifo_late::counts(load[lc].bp(250), 8000, under.recent())) lc = 0, ++r.fits;
     uint32_t t[3] = {0, own[side][1], own[side][2]};
     if (side && g_spike_every && (p / 2) % g_spike_every == 0) t[1] += g_spike_us;
-    if (g_burst_at >= 0 && p >= g_burst_at && p < g_burst_at + g_burst_len) t[1] += g_burst_us;
+    if (g_burst_at >= 0 && p >= g_burst_at &&
+        (g_burst_every ? (p - g_burst_at) % g_burst_every : p - g_burst_at) < g_burst_len) t[1] += g_burst_us;
     for (int c = 1; c <= 2; ++c) {
       g::set_core(c);
       for (int i = 0; i < nfx; ++i) {
@@ -115,7 +122,9 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
       if (t[c] >= 250) ++r.pass_late;
       if (g_cycle) {
         if (!side) hold = true;
-        else if (fifo_late::cycle_late(last[0][c], t[c], 250, load[c].bp(250), 8000, under.recent())) lt = true, ++r.cyc_late;
+        else if (g_cycle_gate80 ? last[0][c] + t[c] >= 250 && fifo_late::counts(load[c].bp(250), 8000, under.recent())
+                                : fifo_late::cycle_late(last[0][c], t[c], 250, load[c].bp(250)))
+          lt = true, ++r.cyc_late;
         else if (last[0][c] + t[c] >= 250) ++r.cyc_fits;
       }
       g::core_done(c, t[c] >= 200, lt, hold);
@@ -225,7 +234,7 @@ int main() {
     printf("test_fifo_late_guard: AL1 P5 shape: passes alone late %u; per pass %d mute(s), per cycle %d mute(s) (cycles late %u, "
            "gated off %u), %u underrun passes\n", r.pass_late, o.mutes, r.mutes, r.cyc_late, r.cyc_fits, r.under);
     CHECK(o.pass_late > 0 && o.mutes == 0 && o.under == 0);   // (the precondition: late passes, never 4 in a row)
-    CHECK(r.cyc_late > 0);                                    // (the gate is open: core 1 over 80 %)
+    CHECK(r.cyc_fits > 0 && r.cyc_late == 0);                 // (cycles past a block, gated off: core 1 under 95 %)
     CHECK(r.mutes == 0 && r.under == 0);
     g_spike_every = 0, g_spike_us = 0;
   }
@@ -251,6 +260,14 @@ int main() {
     CHECK(o.pass_late == 0 && o.mutes == 0 && o.under > 1000);   // (the precondition: the old backstop is dead here)
     CHECK(r.mutes == 1 && r.muted_unit == v2a && ms >= 0 && ms < 2);
     CHECK(r.level_end >= 2 * kBlock && r.under < o.under / 10);
+    // just over a block (V2 A +21 us: core 1 at 255 us, 102 %; LC1 P7's ~108 % is an estimate): the 95 % gate still opens
+    g_fifo = false;
+    Result j = run(kPasses, kSlowAt, ownbs, bs, 4, 5, 0, 21, v1a, v2a);
+    g_fifo = true;
+    const double jms = j.first_mute_pass < 0 ? -1 : (j.first_mute_pass - kSlowAt) * 0.125;
+    printf("test_fifo_late_guard: two-box backstop at 102 %%: %d mute(s) (unit %d) %.2f ms after the slow\n", j.mutes,
+           j.muted_unit, jms);
+    CHECK(j.mutes == 1 && j.muted_unit == v2a && jms >= 0 && jms < 20);
   }
   {  // harmless lateness: a burst of 5 cycles past a block on a core at ~70 % (a burst of notes), the FIFO riding it out:
      // the gate holds (core 1 under 80 %, no underrun), nothing mutes
@@ -268,12 +285,56 @@ int main() {
            r.mutes, r.cyc_late, r.cyc_fits, r.under);
     CHECK(r.cyc_fits >= 4 && r.cyc_late == 0 && r.mutes == 0 && r.under == 0);
   }
-  {  // cycle_late: past a block and over the limit or after an underrun
-    CHECK(fifo_late::cycle_late(120, 140, 250, 8000, 8000, false));
-    CHECK(!fifo_late::cycle_late(120, 140, 250, 7999, 8000, false));
-    CHECK(fifo_late::cycle_late(120, 140, 250, 7000, 8000, true));
-    CHECK(!fifo_late::cycle_late(120, 120, 250, 9000, 8000, true));
-    CHECK(!fifo_late::cycle_late(120, 140, 0, 9000, 8000, true));
+  {  // LC1 SOAK (2026-11-27): core 1 at ~78 % with its chains (admitted, never overloaded), now and then a short run of
+     // cycles past a block (a burst of notes), underruns +0. The first gate (80 % or an underrun) let the run's own cycles
+     // lift the core's mean over 80 % and took a 10 us CLOUD; at 95 % nothing mutes
+    const Fx sk[] = {
+        {g::ins_unit(0, 0, 0), 1, false, 3},
+        {v1a, 1, true, 20},                    // Rytm V1 A: a CLOUD (the guard's window reads it ~10 us, as LC1's)
+        {v2a, 1, true, 6},
+        {g::ins_unit(1, 4, 0), 2, true, 3},
+    };
+    const uint32_t ownsk[2][3] = {{0, 80, 30}, {0, 86, 20}};   // core 1: 83 + 112 = 195 us (78 %)
+    g_burst_at = kSlowAt, g_burst_len = 12, g_burst_every = 400, g_burst_us = 70;   // 6 cycles at 265 us every 50 ms
+    g_cycle_gate80 = true;
+    Result o = run(kPasses, 1 << 30, ownsk, sk, 4, 5, 0, 0, v1a, v2a);
+    g_cycle_gate80 = false;
+    Result r = run(kPasses, 1 << 30, ownsk, sk, 4, 5, 0, 0, v1a, v2a);
+    g_burst_at = -1, g_burst_len = 0, g_burst_every = 0, g_burst_us = 0;
+    printf("test_fifo_late_guard: LC1 SOAK shape (78 %%, short bursts): gate 80 %% %d mute(s) (cycles late %u); gate 95 %% "
+           "%d mute(s) (cycles late %u, gated off %u), %u underrun passes\n", o.mutes, o.cyc_late, r.mutes, r.cyc_late,
+           r.cyc_fits, r.under);
+    CHECK(o.mutes >= 1);                                      // (the precondition: LC1's false mute)
+    CHECK(r.mutes == 0 && r.cyc_late == 0 && r.cyc_fits > 0 && r.under == 0);
+  }
+  {  // LC1 load setup (2026-11-27): the reload's underruns (+234, the outputs, not core 1) with core 1 at ~70 % and a burst
+     // of cycles past a block: the first gate's underrun leg took CLOUD and both CLOUDSEEDs; at 95 % nothing mutes
+    const Fx ls[] = {
+        {g::ins_unit(0, 0, 0), 1, false, 3},
+        {v1a, 1, true, 20},
+        {v2a, 1, true, 8},
+        {g::ins_unit(1, 4, 0), 2, true, 3},
+    };
+    const uint32_t ownls[2][3] = {{0, 60, 30}, {0, 85, 20}};   // core 1: 63 + 113 = 176 us (70 %)
+    g_ext_under_at = kSlowAt, g_ext_under_len = 40;
+    g_burst_at = kSlowAt + 20, g_burst_len = 12, g_burst_us = 80;   // 6 cycles at 256 us inside the underruns' window
+    g_cycle_gate80 = true;
+    Result o = run(kPasses, 1 << 30, ownls, ls, 4, 5, 0, 0, v1a, v2a);
+    g_cycle_gate80 = false;
+    Result r = run(kPasses, 1 << 30, ownls, ls, 4, 5, 0, 0, v1a, v2a);
+    g_ext_under_at = -1, g_ext_under_len = 0, g_burst_at = -1, g_burst_len = 0, g_burst_us = 0;
+    printf("test_fifo_late_guard: LC1 reload shape (70 %%, outputs underran): gate 80 %% %d mute(s); gate 95 %% %d mute(s) "
+           "(gated off %u)\n", o.mutes, r.mutes, r.cyc_fits);
+    CHECK(o.mutes >= 1);
+    CHECK(r.mutes == 0 && r.cyc_late == 0 && r.cyc_fits >= 4);
+  }
+  {  // cycle_late: past a block and at or over kCycleLimitBp (95 %); no underrun leg (LC1)
+    CHECK(fifo_late::kCycleLimitBp == 9500);
+    CHECK(fifo_late::cycle_late(120, 140, 250, 9500));
+    CHECK(!fifo_late::cycle_late(120, 140, 250, 9499));
+    CHECK(!fifo_late::cycle_late(120, 140, 250, 8000));
+    CHECK(!fifo_late::cycle_late(120, 120, 250, 9900));
+    CHECK(!fifo_late::cycle_late(120, 140, 0, 9900));
   }
   {  // /status's fxMuted with many mutes (LC1 gate, 2026-11-27: ~49 mutes ran past kernel.cpp's 2 KB buffer and the reply
      // was cut mid-entry): every built-in unit muted, the JSON stays valid at 2 KB (what does not fit counted) and at 8 KB

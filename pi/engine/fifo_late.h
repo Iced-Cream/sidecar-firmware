@@ -139,8 +139,16 @@ inline bool counts(unsigned core_bp, unsigned limit_bp, bool underran) { return 
 // Gated as the FIFO's view is (counts): a late cycle counts only when the core measures at or over admission's limit
 // (Load), or an output really underran lately. P5's clean overload (84 %, its FIFO at 35-58, underruns +0) is to mute
 // nothing, as picked: its shape in the host test (test_fifo_late_guard) has cycles past a block, never 4 in a row.
-inline bool cycle_late(uint64_t base, uint64_t side, uint64_t block, unsigned core_bp, unsigned limit_bp, bool underran) {
-  return block && base + side >= block && counts(core_bp, limit_bp, underran);
+//   LC1 (2026-11-27, PR #58 bae3fb4) disproved that gate: at 1200 MHz with core 1 at 75-80 % (admitted, never overloaded,
+//   underruns +0, heard clean) a run of 4 cycles past a block lifted the core's own mean over 80 % and took a 10 us CLOUD;
+//   at the next load setup the reload's underruns (+234) opened the other leg and took CLOUD and both CLOUDSEEDs (8 us).
+//   A short spike opens an 80 % gate by itself (4 cycles at ~260 us over a 78 % core read ~84 %), and an underrun is the
+//   FIFO's evidence, which the FIFO's view already answers. So a late cycle counts only when the core measures at or over
+//   kCycleLimitBp (95 %) by itself: a sustained overload, whose cycles go past a block on their own (P7's ~108 %), and
+//   never a core admission keeps within 80 % with its spikes (P5's 84 % included). No underrun leg.
+static constexpr unsigned kCycleLimitBp = 9500;
+inline bool cycle_late(uint64_t base, uint64_t side, uint64_t block, unsigned core_bp, unsigned limit_bp = kCycleLimitBp) {
+  return block && base + side >= block && core_bp >= limit_bp;
 }
 
 // The render core a late pass is for: 1 or 2, the one that took longer over its last base pass and its last side pass
