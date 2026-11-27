@@ -90,7 +90,8 @@ void clear_box(int box);               // a box attached: every built-in mute of
 int muted_count(int box);              // built-in units muted now, box slot box's
 const char* why(int unit);             // "muted: ..." ("" not muted)
 // /status: "\"fxMuted\":[...]": every muted effect, built-in and user, {"box","at","type","why"} ("at": V1 A .. M2 B,
-// FX1, FX2, UFX1..UFX4). Returns the length written.
+// FX1, FX2, UFX1..UFX4). Entries that do not fit in CAP are left out whole and counted in "fxMutedMore":N (only
+// when N > 0), so the reply is valid JSON at any CAP of 128 or more. Returns the length written.
 int json(char* out, int cap);
 // The console: "fxguard" (the state), "fxguard=budget:<us>" (the per-slot budget, a 12-frame block), "fxguard=off|on",
 // "fxguard=mute:<box>:<at>" / "fxguard=slow:<box>:<at>:<us>" (tests, the gates), "fxguard=clear". False: not ours.

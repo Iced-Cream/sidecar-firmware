@@ -382,11 +382,16 @@ int jput(char* o, int cap, int n, const char* s) {
 }
 }  // namespace
 
+// Each entry is built whole and listed only when it fits beside the tail (kJsonTail), so the reply stays valid JSON
+// however many effects are muted: what does not fit is counted in "fxMutedMore" (LC1 gate, 2026-11-27: ~49 mutes ran
+// past kernel.cpp's 2 KB buffer and /status was cut mid-entry, which the drivers could not parse).
+constexpr int kJsonTail = 112;   // "],\"fxMutedMore\":N,\"fxGuard\":{...}" at its longest, and the NUL
 int json(char* o, int cap) {
   if (cap <= 0) return 0;
   int n = jput(o, cap, 0, "\"fxMuted\":[");
   bool first = true;
-  char t[32];
+  int more = 0;
+  char t[32], e[256];
   for (int u = 0; u < kUnits; ++u) {
     const char* w = "";
     const char* ty = "";
@@ -400,21 +405,33 @@ int json(char* o, int cap) {
       ty = id ? id : "";
       if (!w || !w[0]) w = "muted";
     }
-    if (!first) n = jput(o, cap, n, ",");
-    first = false;
+    const int ec = (int)sizeof e - 1;
+    int k = jput(e, ec, 0, first ? "" : ",");
     sniprintf(t, sizeof t, "{\"box\":%d,\"at\":", box_of_unit(u));
-    n = jput(o, cap, n, t);
+    k = jput(e, ec, k, t);
     where(u, t, sizeof t);
-    n = jstr(o, cap, n, t);
-    n = jput(o, cap, n, ",\"type\":");
-    n = jstr(o, cap, n, ty);
-    n = jput(o, cap, n, ",\"user\":");
-    n = jput(o, cap, n, u >= kBuiltin ? "true" : "false");
-    n = jput(o, cap, n, ",\"why\":");
-    n = jstr(o, cap, n, w);
-    n = jput(o, cap, n, "}");
+    k = jstr(e, ec, k, t);
+    k = jput(e, ec, k, ",\"type\":");
+    k = jstr(e, ec, k, ty);
+    k = jput(e, ec, k, ",\"user\":");
+    k = jput(e, ec, k, u >= kBuiltin ? "true" : "false");
+    k = jput(e, ec, k, ",\"why\":");
+    k = jstr(e, ec, k, w);
+    k = jput(e, ec, k, "}");
+    e[k] = 0;
+    if (k >= ec || n + k + kJsonTail > cap) {   // (an entry cut short, or no room: counted, not listed)
+      ++more;
+      continue;
+    }
+    n = jput(o, cap, n, e);
+    first = false;
   }
-  n = jput(o, cap, n, "],\"fxGuard\":");
+  n = jput(o, cap, n, "]");
+  if (more) {
+    sniprintf(t, sizeof t, ",\"fxMutedMore\":%d", more);
+    n = jput(o, cap, n, t);
+  }
+  n = jput(o, cap, n, ",\"fxGuard\":");
   sniprintf(t, sizeof t, "{\"mode\":\"%s\",", g_mode == kModeOn ? "on" : g_mode == kModeReport ? "report" : "off");
   n = jput(o, cap, n, t);
   sniprintf(t, sizeof t, "\"budgetUs\":%u,", (unsigned)g_budget_us);

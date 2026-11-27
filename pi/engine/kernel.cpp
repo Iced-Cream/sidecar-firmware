@@ -710,7 +710,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 			  core::ins::refused_count (0), core::ins::refused_count (1), core::amp::refused_cpu ());
 		pOut->Append (s);
 		// the measured guard of every effect (core/fx/fx_guard.h): what it muted, built-in and user, with the reasons
-		static char Fm[2048];
+		static char Fm[8192];	// (every unit muted fits: 64 x ~130 B; the guard lists what fits and counts the rest)
 		pOut->Append (",");
 		core::fx::guard::json (Fm, sizeof Fm);
 		pOut->Append (Fm);

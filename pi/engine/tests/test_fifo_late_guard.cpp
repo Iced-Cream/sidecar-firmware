@@ -275,6 +275,43 @@ int main() {
     CHECK(!fifo_late::cycle_late(120, 120, 250, 9000, 8000, true));
     CHECK(!fifo_late::cycle_late(120, 140, 0, 9000, 8000, true));
   }
+  {  // /status's fxMuted with many mutes (LC1 gate, 2026-11-27: ~49 mutes ran past kernel.cpp's 2 KB buffer and the reply
+     // was cut mid-entry): every built-in unit muted, the JSON stays valid at 2 KB (what does not fit counted) and at 8 KB
+    g::reset();
+    static const char* at[] = {"V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "B1", "B2", "B3", "M1", "M2"};
+    char c[64], rep[256];
+    for (int b = 0; b < 2; ++b) {
+      for (const char* a : at)
+        for (const char* sl : {"A", "B"}) snprintf(c, sizeof c, "fxguard=mute:%d:%s:%s", b, a, sl), g::command(c, rep, sizeof rep);
+      for (const char* f : {"FX1", "FX2"}) snprintf(c, sizeof c, "fxguard=mute:%d:%s", b, f), g::command(c, rep, sizeof rep);
+    }
+    int muted = 0;
+    for (int u = 0; u < g::kBuiltin; ++u) muted += g::muted(u);
+    auto valid = [](const char* j) {   // brackets balanced outside strings, strings closed
+      int d = 0;
+      bool str = false;
+      for (const char* p = j; *p; ++p) {
+        if (str) { if (*p == '\\') ++p; else if (*p == '"') str = false; continue; }
+        if (*p == '"') str = true;
+        else if (*p == '{' || *p == '[') ++d;
+        else if (*p == '}' || *p == ']') --d;
+        if (d < 0) return false;
+      }
+      return !str && d == 0;
+    };
+    static char small[2048], big[8192];
+    const int ns = g::json(small, sizeof small), nb = g::json(big, sizeof big);
+    std::string w = std::string("{") + small + "}", W = std::string("{") + big + "}";
+    printf("test_fifo_late_guard: fxMuted with %d mutes: 2 KB %d B (%s), 8 KB %d B (%s)\n", muted, ns,
+           strstr(small, "fxMutedMore") ? "some counted" : "all listed", nb, strstr(big, "fxMutedMore") ? "some counted" : "all listed");
+    CHECK(muted == g::kBuiltin);
+    CHECK(valid(w.c_str()) && strstr(small, "fxMutedMore") && strstr(small, "\"fxGuard\":{") && ns < (int)sizeof small);
+    CHECK(valid(W.c_str()) && !strstr(big, "fxMutedMore") && strstr(big, "\"fxGuard\":{"));
+    char tiny[128];
+    g::json(tiny, sizeof tiny);
+    CHECK(valid((std::string("{") + tiny + "}").c_str()) && strstr(tiny, "fxMutedMore"));
+    g::reset();
+  }
   {  // blame: the cycle, not the last pass (LT13: the last pass's longer core flipped between 1 and 2)
     CHECK(fifo_late::blame(90, 160, 120, 70) == 1);   // core 1 longer over the cycle, core 2 in the base pass
     CHECK(fifo_late::blame(120, 0, 90, 0) == 1);      // one box: its pass alone
