@@ -71,6 +71,8 @@ static uint32_t g_spike_us = 0, g_burst_us = 0;
 // which LC1 disproved (2026-11-27). g_burst_every: the burst again every so many passes. g_ext_under_at: the outputs
 // underrun for g_ext_under_len passes from there with the core's work untouched (LC1: a load setup's reload, +234).
 static bool g_cycle_gate80 = false;
+// g_gate_fast: the FIFO view's gate on the fast mean (Load, ~4-8 ms) as before LC2; else the slow mean (LoadSlow, ~64 ms)
+static bool g_gate_fast = false;
 static int g_burst_every = 0, g_ext_under_at = -1, g_ext_under_len = 0;
 static uint32_t stall(int p) {
   if (!g_stall_every || p < 2 * (int)fifo_late::State::kGrace) return 0;
@@ -89,6 +91,7 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
   Result r = {0, -1, -1, 0, 0, 0, 0, 0, 0, 0};
   uint32_t late_seen = 0;
   fifo_late::Load load[3];
+  fifo_late::LoadSlow loads[3];
   fifo_late::Under under;
   // the grace and a quiet window first
   for (int p = 0; p < passes; ++p) {
@@ -97,11 +100,12 @@ static Result run(int passes, int slow_at, const uint32_t own[2][3], const Fx* f
     const uint32_t nl = g::stats().late;
     if (nl != late_seen) late_seen = nl, fl.rearm();
     const bool late = fl.step(side, lvl, 1, kBlock, g_fifo, true);
-    for (int c = 1; c <= 2; ++c) load[c].step(last[0][c] + last[1][c]);
+    for (int c = 1; c <= 2; ++c) load[c].step(last[0][c] + last[1][c]), loads[c].step(last[0][c] + last[1][c]);
     if (g_ext_under_at >= 0 && p >= g_ext_under_at && p < g_ext_under_at + g_ext_under_len) ++r.ext_under;
     under.step(r.under + r.ext_under);
     unsigned lc = late ? fifo_late::blame(last[0][1], last[1][1], last[0][2], last[1][2]) : 0;
-    if (lc && g_gate && !fifo_late::counts(load[lc].bp(250), 8000, under.recent())) lc = 0, ++r.fits;
+    if (lc && g_gate && !fifo_late::counts(g_gate_fast ? load[lc].bp(250) : loads[lc].bp(250), 8000, under.recent()))
+      lc = 0, ++r.fits;
     uint32_t t[3] = {0, own[side][1], own[side][2]};
     if (side && g_spike_every && (p / 2) % g_spike_every == 0) t[1] += g_spike_us;
     if (g_burst_at >= 0 && p >= g_burst_at &&
@@ -176,15 +180,17 @@ int main() {
     CHECK(ms >= 0 && ms < 20);
     CHECK(r.level_end >= 2 * kBlock);
   }
-  {  // LT13 P5 with the gate: core 1 at ~90 % a block once slowed, over the limit: the same one mute, no later
+  {  // LT13 P5 with the gate: core 1 at ~90 % a block once slowed, over the limit: the same one mute, within 20 ms
     Result r = run(kPasses, kSlowAt, own, fx, 5, c3, 20, 40, v1a, v2a);
     CHECK(r.mutes == 1 && r.muted_unit == v2a && r.first_mute_pass >= kSlowAt && (r.first_mute_pass - kSlowAt) * 0.125 < 20);
     g_gate = false;
     Result o = run(kPasses, kSlowAt, own, fx, 5, c3, 20, 40, v1a, v2a);
     g_gate = true;
-    CHECK(o.mutes == 1 && o.first_mute_pass == r.first_mute_pass && o.under == r.under);
-    printf("test_fifo_late_guard: LT13 P5 gated: first mute at the same pass as ungated (%d), %u underrun passes both\n",
-           r.first_mute_pass - kSlowAt, r.under);
+    // (the slow mean, after LC2: the gate opens a little later than ungated, and a few underrun passes may come first,
+    // which open it at once; the fast mean opened it at the ungated pass)
+    CHECK(o.mutes == 1 && o.first_mute_pass <= r.first_mute_pass && r.under <= o.under + 16);
+    printf("test_fifo_late_guard: LT13 P5 gated: first mute %.1f ms after the slow (ungated %.1f ms), %u underrun passes "
+           "(ungated %u)\n", (r.first_mute_pass - kSlowAt) * 0.125, (o.first_mute_pass - kSlowAt) * 0.125, r.under, o.under);
   }
   {  // VA1 (2026-11-26, T515) at 1200 MHz, admitted 79.77 %: core 1 measures ~73 % a block (the Rytm's FX1 CLOUDSEED
      // 18 us in its passes, ~9 us a pass as the guard counts it); two long control passes dip both FIFOs under a block,
@@ -215,6 +221,31 @@ int main() {
     CHECK(u.under > 0 && u.mutes >= 1);
     printf("test_fifo_late_guard: VA1 shape with underruns: %d mute(s), %u underrun passes\n", u.mutes, u.under);
     g_stall_every = 0, g_stall_us = 0, g_stall2_us = 0;
+  }
+  {  // LC2 SOAK (2026-11-27, T535) at 1200 MHz: core 1 at ~73 % (VA1's shape), the FIFO dipping under a block at long
+     // control passes, no underrun, and a few long passes (a burst of notes) in each dip's hold. On the fast mean the
+     // burst lifted core 1 over 80 % in the hold and the 8 us CLOUDSEED went; on the slow mean (~64 ms) nothing goes
+    const int fx1 = g::send_unit(1, 0);
+    const Fx lc2[] = {
+        {g::ins_unit(0, 0, 0), 1, false, 3},
+        {g::ins_unit(0, 2, 0), 2, false, 4},
+        {v1a, 1, true, 6},
+        {v2a, 1, true, 5},
+        {fx1, 1, true, 18},                    // Rytm FX1 CLOUDSEED (~9 us a pass as the guard counts it)
+        {g::ins_unit(1, 4, 0), 2, true, 3},
+    };
+    const uint32_t own1[2][3] = {{0, 70, 60}, {0, 80, 50}};   // core 1: 182 us a block (73 %)
+    g_stall_every = 400, g_stall_us = 1700, g_stall2_us = 600;
+    g_burst_at = 400 * 2 + 24, g_burst_len = 12, g_burst_every = 400, g_burst_us = 50;   // 12 passes +50 us in each dip's hold
+    g_gate_fast = true;
+    Result o = run(kPasses, 1 << 30, own1, lc2, 6, 5, 0, 0, v1a, v2a);
+    g_gate_fast = false;
+    Result r = run(kPasses, 1 << 30, own1, lc2, 6, 5, 0, 0, v1a, v2a);
+    g_stall_every = 0, g_stall_us = g_stall2_us = 0, g_burst_at = -1, g_burst_len = 0, g_burst_every = 0, g_burst_us = 0;
+    printf("test_fifo_late_guard: LC2 SOAK shape (73 %%, a burst in each dip): fast mean %d mute(s) (unit %d, FX1 %d), "
+           "slow mean %d mute(s) (%u passes fit), %u underrun passes\n", o.mutes, o.muted_unit, fx1, r.mutes, r.fits, r.under);
+    CHECK(o.under == 0 && o.mutes >= 1);   // (the precondition: LC2's false mute)
+    CHECK(r.under == 0 && r.mutes == 0 && r.fits > 0);
   }
   {  // AL1 P5 (2026-11-26, T526): V1 A +20, V2 A +40 put core 1 at 84 % with its chains, the Rytm's side passes heavy and the
      // A4's base passes light; ~6 % of side passes went past a block alone, each followed by an on-time base pass, and the

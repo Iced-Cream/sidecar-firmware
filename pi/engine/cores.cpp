@@ -604,17 +604,19 @@ void CEngineCores::RenderBlock (int nSide)
 			? s_FifoLate.step (false, g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, bSideOn, &bDip)
 			: s_FifoLate.step (true, g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, bSideOn, &bDip);
 		// admission's word at the limit (fifo_late.h counts, decided 2026-11-26 after VA1): the late core must measure at or
-		// over kLimitBp for its time a block (Load), or an output must have underrun lately; else the pass stays on time ("fits")
+		// over kLimitBp for its time a block (LoadSlow, ~64 ms, after LC2), or an output must have underrun lately; else the
+		// pass stays on time ("fits"). The late cycle's gate reads the fast mean (Load, kCycleLimitBp)
 		static fifo_late::Load s_Load[3];
+		static fifo_late::LoadSlow s_LoadSlow[3];
 		static fifo_late::Under s_Under;
-		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
+		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]), s_LoadSlow[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
 		s_Under.step (g_Output.Underflows () + g_OutputSide.Underflows ());
 		for (unsigned c = 1; c <= 2; c++) s_nLoadBp[c] = s_Load[c].bp (FxLateTicks ());	// (the late cycle's gate: published below)
 		s_bSideOnPass = bSideOn;
 		if (bLate)
 		{
 			nLate = fifo_late::blame (s_nLastBlk[0][1], s_nLastBlk[1][1], s_nLastBlk[0][2], s_nLastBlk[1][2]);
-			if (fifo_late::counts (s_Load[nLate].bp (FxLateTicks ()), core::admit::kLimitBp, s_Under.recent ()))
+			if (fifo_late::counts (s_LoadSlow[nLate].bp (FxLateTicks ()), core::admit::kLimitBp, s_Under.recent ()))
 				s_nFifoHeld[nLate]++;
 			else
 				s_nFifoFits[nLate]++, nLate = 0;

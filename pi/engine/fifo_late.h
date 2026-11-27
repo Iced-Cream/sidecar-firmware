@@ -99,8 +99,9 @@ struct State {
 // looks near 100 % whatever its load; its time per block does not change. At a steady load it equals the stats'
 // "c1 with chains" (VA1 O1 P1: 74 %), which admission's limit is checked against.
 // cycle: the core's last base + side pass ticks; block: a 12-frame block's ticks.
-struct Load {
-  static constexpr unsigned kShift = 5;
+template <unsigned Shift>
+struct LoadT {
+  static constexpr unsigned kShift = Shift;
   uint64_t mean = 0;   // << kShift
   bool primed = false;
   void step(uint64_t cycle) {
@@ -113,6 +114,14 @@ struct Load {
     return v > 0xFFFFu ? 0xFFFFu : (unsigned)v;
   }
 };
+// The fast mean (~4-8 ms): the late cycle's gate (kCycleLimitBp), which only a sustained overload reaches.
+using Load = LoadT<5>;
+// The slow mean (~2^9 passes, ~64 ms): the FIFO's view's gate against admission's kLimitBp (decided 2026-11-27 after LC2,
+// T535, the owner's pick). LC2's soak at 1200 MHz (core 1 at 74 % with its chains, max 80.2 % a second, underruns flat):
+// the FIFO dipped (min 14, 5 dips, a low run with no gain) and the fast mean, lifted over 80 % by a few long passes,
+// opened the gate: an 8 us CLOUDSEED went. Admission's limit is a steady load; every overload the FIFO's view is for
+// (LT12g-LT13: 82-83 % for seconds) holds it for far longer than 64 ms, so it still opens, ~tens of ms later.
+using LoadSlow = LoadT<9>;
 // The FIFO really ran empty lately: the outputs' underflow counts (output.h Underflows: glitches while playing, not a
 // stream's restart) moved within the last kUnderRecent passes.
 struct Under {
