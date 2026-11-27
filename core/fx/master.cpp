@@ -184,7 +184,7 @@ bool on(int box) {
   for (int i = 0; i < kSlots; ++i)
     if (k.type[chain(i)][slot(i)]) return true;
   for (int c = ins::kM0; c < ins::kChains; ++c)
-    if (ins::peq_set(k, c)) return true;
+    if (ins::peq_set(k, c) || k.scmode[c]) return true;   // (0.5.0: a SIDECHAIN stage too)
   return false;
 }
 

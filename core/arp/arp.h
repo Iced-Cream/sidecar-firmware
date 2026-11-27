@@ -83,6 +83,7 @@ void kit_changed(int slot = -1);            // slot >= 0: that box's voices only
 void link_lost();                           // the Rytm's USB gone: every note ends, no 0x11 will come
 void end(int vi);                           // vi's notes end now (a machine change, a silence)
 void machines();                            // the Rytm's 33: a voice whose machine changed ends
+int held(int vi);                           // tests: the notes the arp holds on voice vi
 bool busy(int vi);                          // holding notes or sounding one (the pin's silence, seq.cpp)
 void tick(uint32_t ms);                     // every control pass, in each slot's Scope: what its sequencer must clock (and the Rytm's, pin)
 

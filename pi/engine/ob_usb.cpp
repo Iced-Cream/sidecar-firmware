@@ -76,6 +76,7 @@
 #include "masterfx_pi.h"		// the master FX chain
 #include "spectrum_pi.h"
 #include "rec_pi.h"
+#include "loop_pi.h"
 #include "bridge.h"
 #include "device/device.h"
 #include "device/a4.h"
@@ -1952,6 +1953,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		float PR[ob::kFramesPerBlock][4];			// the PRE and POST pairs as sent (the recorder's 23 / 24)
 		Output::Taps T;
 		T.lr = LR, T.feed = FD, T.pairs = PR;
+		const uint64_t nRender = g_Output.PulledFrame ();	// this block's first frame's render frame (the looper's playback, core/loop)
 		if (s_bActive) g_Output.Pull (F, ob::kFramesPerBlock, V, &T);
 		else
 		{
@@ -1969,6 +1971,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 		if (s_bActive) sendfx_pi::AddReturn (nBase, core::out::device (), F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
 		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
 		if (s_bActive) masterfx_pi::Process (nBase, core::out::device (), F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
+		if (s_bActive) loop_pi::OutMix (F, ob::kFramesPerBlock, nRender);	// the master looper's loop onto MAIN L / R, after the master FX (core/loop, spec-050 3.5)
 		spectrum_pi::FromOut (V, X, F, ob::kFramesPerBlock);	// the spectrum's strip, while a reader wants it (a copy)
 		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
 #if CORE_MSAMP
@@ -2110,6 +2113,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			}
 
 			u16 c = ob::block_counter (pBlk);
+			unsigned nLostFrames = 0;		// frames the counter says never came before this block (the looper's ring: silence)
 			if (m_bHaveIn && c != m_nExpectIn)
 			{
 				u16 d = (u16) (c - m_nExpectIn);
@@ -2119,6 +2123,7 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				else
 				{
 					unsigned lost = d / ob::kFramesPerBlock;
+					nLostFrames = lost * ob::kFramesPerBlock;
 					m_nInLost += lost;
 					if (lost > m_nInMaxGap) m_nInMaxGap = lost;
 					if (s_bCapOn) s_nCapLost += lost;
@@ -2145,6 +2150,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 					if (bFx) sendfx_pi::FromRytm (m_nSlot, S, ob::kFramesPerBlock);
 					if (bMix) masterfx_pi::Stems (m_nSlot, S, ob::kFramesPerBlock);
 				}
+			}
+			if (m_pAudio == &core::out::kRytmMk2 && m_nInCh == ob::kChannels && loop_pi::WantsIn ())	// the master looper's ring: MAIN L / R (a Rytm; the A4's waits for its check)
+			{
+				int32_t LR[2 * ob::kFramesPerBlock];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					LR[2 * f] = ob::block_sample (pBlk, ob::kChannels, f, 0), LR[2 * f + 1] = ob::block_sample (pBlk, ob::kChannels, f, 1);
+				loop_pi::InBlock (LR, ob::kFramesPerBlock, nLostFrames, bridge::render_frames ());
 			}
 			if (!Primary ())			// a box beside the primary stream: its audio is not the engine's (yet)
 			{
@@ -2182,6 +2194,13 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					for (int c = 0; c < ob::kChannels; c++) L[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
 				bridge::livein_in (&L[0][0], ob::kFramesPerBlock, ob::kChannels);
+			}
+			if (bridge::sidechain_on ())	// SIDECHAIN (core/fx/sidechain.h): the stems and AUDIO IN into the key bus, as they come
+			{
+				s32 K[ob::kFramesPerBlock][ob::kChannels];
+				for (int f = 0; f < ob::kFramesPerBlock; f++)
+					for (int c = 0; c < ob::kChannels; c++) K[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
+				bridge::sidechain_in (&K[0][0], ob::kFramesPerBlock, ob::kChannels);
 			}
 			if (core::out::meas::active ())	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h)
 				for (int f = 0; f < ob::kFramesPerBlock; f++)

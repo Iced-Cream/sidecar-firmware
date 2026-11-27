@@ -11,6 +11,8 @@
 #include "mod/rytm_param.h"
 #include "mod/learn.h"
 #include "mod/scene.h"
+#include "loop/loop.h"
+#include "loopview_pi.h"
 #include "mod/xypad.h"
 #include "device/device.h"
 #include "device/admit.h"
@@ -213,11 +215,13 @@ void tick() {
     core::idle_note("remote", us > w ? us - w : 0);
   }
   timed_tick("mod", [] { core::mod::tick(core::now_us()); });        // the modulation layer (core/mod/mod.h): the LFOs, once a millisecond at most
+  timed_tick("loop", [] { core::loop::tick(core::now_us()); });      // 0.5.0: the master looper's grabs, copies and state (core/loop/loop.h)
   timed_tick("device", [] { core::device::tick(core::now_us()); });  // a box's envelopes (core/device/strip.h): the Rytm has none
   timed_tick("poly", [] { core::poly::tick(core::now_ms()); });      // poly FM: a held trig's time, a live chord's window (core/poly.h)
   timed_tick("seq", [] { core::seq::tick(core::now_ms()); });        // the Sidecar sequencer: its LEDs, its 2E (core/seq/seq.h)
   timed_tick("song", [] { core::song::tick(core::now_ms()); });      // SONG RECORD (core/song/song.h)
   timed_tick("songview", [] { song_pi::Tick(); });                   // its view for the display's SONG page
+  timed_tick("loopview", [] { loopview_pi::Tick(); });                 // 0.5.0: the display's LOOP page (the looper)
   timed_tick("morphview", [] { morph_pi::Tick(); });                 // 0.5.0: the display's MORPH page (scenes)
   timed_tick("xyview", [] { xypad_pi::Tick(); });                    // 0.5.0: the display's XY page (the XY pad)
 #if SIDECAR_SEQED
@@ -361,6 +365,9 @@ int scene_json(char* out, int cap) {   // the base box's scenes (core 0: names t
   const core::device::Link* b = __atomic_load_n(&core::device::g_base, __ATOMIC_RELAXED);
   return core::scene::json(out, cap, b ? b->index : 0);
 }
+bool loop_command(const char* p, char* out, int cap) { return core::loop::command(p, out, cap); }
+int loop_json(char* out, int cap) { return core::loop::json(out, cap); }
+uint64_t render_frames() { return core::seq::frames(); }
 int poly_json(char* out, int cap) {
   int n = core::seq::poly_json(out, cap);
   if (n > 0 && n + 2 < cap) {
@@ -458,6 +465,10 @@ void link_byte(int t, uint8_t b) {
 void tap_in(const int32_t* f, int n, int stride) { core::ui::tap_in(f, n, stride); }
 bool livein_on() { return core::livein::wanted(); }
 void livein_in(const int32_t* f, int n, int stride) { core::livein::in_block(f, n, stride); }
+bool sidechain_on() { return core::sc::wants_in(); }
+void sidechain_in(const int32_t* f, int n, int stride) {
+  core::sc::in_block(f, n, stride, 2, core::out::device().audio_in);   // the stems are IN 2..9 (core/fx/sidechain.h)
+}
 void livein_fifo(unsigned frames) { core::livein::set_fifo((int)frames); }
 int livein_status(int vi, char* b, int cap) {
   if (!core::v[core::voice_wrap(vi)].li) return 0;
@@ -669,6 +680,7 @@ uint64_t sfxins_bench(int set, uint32_t* worst_block) { return core::master::sfx
 const char* sfxins_bench_name(int set) { return core::master::sfx_bench_name(set); }
 int sfxins_bench_type(int set) { return core::master::sfx_bench_type(set); }
 uint64_t box_bench(uint32_t* worst_block) { return core::master::box_bench(sendfx_pi::Instance(0), worst_block); }
+static_assert(kInsJsonCap == core::ins::kInsJsonCap, "bridge.h's buffer size is the core's");
 int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{...} (the OUT route, the streaming budget)
   int n = core::ins::json(out, cap);
   if (n > 0 && n < cap - 2) {
@@ -677,6 +689,8 @@ int ins_json(char* out, int cap) {   // "ins":{... "out":[...]}, then "stream":{
     int k = core::sbudget::json(out + n, cap - n);
     if (k > 0 && k < cap - n) n += k;
     else out[--n] = 0;
+  } else {   // cut off by the buffer: never a truncated json in /status, a short valid one instead
+    n = sniprintf(out, cap > 0 ? cap : 0, "\"ins\":{\"err\":\"too long\"}");
   }
   return n;
 }
@@ -687,6 +701,14 @@ unsigned poly_voices() {
     if (core::seq::owns_track(t)) m |= 1u << (core::ui::remote_track_voice(t) & 7);   // (a plain read: drawing only)
 #endif
   return m;
+}
+int rytm_bpm10() {
+#if CORE_POLY
+  const double b = core::seq::tempo();   // (a plain read: drawing only; NaN, a negative or a wild value is "not known")
+  return b >= 1.0 && b <= 999.0 ? (int)(b * 10 + 0.5) : 0;
+#else
+  return 0;
+#endif
 }
 int rytm_pattern(int* transport) {
 #if CORE_POLY

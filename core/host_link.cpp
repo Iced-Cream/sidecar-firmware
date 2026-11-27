@@ -341,6 +341,7 @@ CORE_COLD void slot_left(int slot) {
 }
 
 CORE_COLD void link_lost() {
+  ui::remote_link_lost();   // the re-hello asking starts over (remote.cpp rehello_tick)
 #if CORE_MSAMP
   chop::release_gates();   // a GATE slice would hold to its end: the Rytm's 0x11 will not come
 #endif
