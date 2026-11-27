@@ -194,7 +194,7 @@ void clear_settings() {
   for (int c = 0; c < nc; ++c)
     for (int k = 0; k < kEqParams; ++k) S(c).eq[c][k] = kEqFlat(k), eq_refresh(c, k);   // ins1112
   for (int c = 0; c < nc; ++c) S(c).bw_width[c] = 127;   // sfx-basewidth: no WIDTH remembered
-  if (hand() == device::rytm_home()) sc_clear();   // 0.5.0 SIDECHAIN (the Rytm's slot's chains only, for now)
+  sc_clear();   // 0.5.0 SIDECHAIN (the slot's own)
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
   control_of(hand()).route3 = 0;
@@ -580,12 +580,15 @@ void sc_vt(int m, int k, int v, char* b, int cap) {
   }
   sniprintf(b, cap, "-");
 }
-// 0.5.0 SIDECHAIN: one set of settings, the Rytm's slot's chains (device::rytm_home(): its stems and tracks key it); a box
-// in the other slot has no SIDECHAIN stage yet
-static Control& SC() { return control_of(device::rytm_home()); }
-uint8_t g_scp[kChains][sc::kParams];
-uint32_t g_mon_until[kChains];   // the web's MON lease (ms; 0: none)
-int16_t g_sc_lfo[kChains][sc::kParams];
+// 0.5.0 SIDECHAIN: each slot's own (its chains, keyed from its own box's bus: sc::bus(slot)); the settings below are the
+// slot in hand's, as the chains' (hand(): reset's g_force, else the slot in hand)
+static Control& SC() { return control_of(hand()); }
+uint8_t g_scp_[kVoiceSlots][kChains][sc::kParams];
+#define g_scp g_scp_[hand()]
+uint32_t g_mon_until_[kVoiceSlots][kChains];   // the web's MON lease (ms; 0: none), each slot's
+#define g_mon_until g_mon_until_[hand()]
+int16_t g_sc_lfo_[kVoiceSlots][kChains][sc::kParams];
+#define g_sc_lfo g_sc_lfo_[hand()]
 bool sc_valid(int c) { return c >= 0 && c < kChains; }
 void sc_refresh(int c, int k) {
   SC().scp[c][k] = (uint8_t)clampi((int)g_scp[c][k] + g_sc_lfo[c][k], 0, 127);
@@ -600,7 +603,7 @@ void sc_wanted() {
     if (s == sc::kAinLR) keys |= 1u << (sc::kStems + 1);
     if (tg >= 0) trigs |= 1u << tg;
   }
-  sc::bus().wanted = keys, sc::bus().wanted_trig = trigs;
+  sc::bus(hand()).wanted = keys, sc::bus(hand()).wanted_trig = trigs;
 }
 void sc_clear() {
   for (int c = 0; c < kChains; ++c) {
@@ -689,7 +692,7 @@ bool sc_status(int c, char* why, int cap) {
   if (key < 0) return sniprintf(why, cap, "NO SRC"), false;
   if (SC().scmode[c] == sc::kPump && sc::trig_of(SC().scsrc[c]) >= 0) return true;   // PUMP on a track runs on its MIDI trigs
   if (key < sc::kStems + 2) {   // the Overbridge IN side's: stems, AUDIO IN. A voice's ring is written by its own render
-    const sc::Bus& b = sc::bus();
+    const sc::Bus& b = sc::bus(hand());
     if (!b.w[key] || now_ms() - b.ms[key] > 300) return sniprintf(why, cap, key < sc::kStems ? "NO STEMS" : "NO AUDIO IN"), false;
   }
   return true;
@@ -747,13 +750,13 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
   e.SetAmp(amp);
   if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
   if (!ring_r) e.MarkMono(c);
-  if (slot == device::rytm_home() && sc::wants_voice(c)) {   // 0.5.0: a SIDECHAIN source (the Rytm's slot's): this voice as it was rendered, before its own chain
+  if (sc::wants_voice(slot, c)) {   // 0.5.0: a SIDECHAIN source of its slot's chains: this voice as it was rendered, before its own chain
     float kb[64];
     const int m = n > 64 ? 64 : n;
     for (int i = 0; i < m; ++i) kb[i] = ring[row[i]][vi] * (1.0f / 32768.0f);
     if (ring_r)
       for (int i = 0; i < m; ++i) kb[i] = 0.5f * (kb[i] + ring_r[row[i]][vi] * (1.0f / 32768.0f));
-    sc::write(sc::kStems + 2 + c, kb, m);
+    sc::write(slot, sc::kStems + 2 + c, kb, m);
   }
   if (!e.Active(c, k)) return;
   float x[64], r[64];
@@ -1188,9 +1191,8 @@ void reset() {
       for (int b = 0; b < kBuses; ++b) S(v).send_off[v][b] = 0, send_refresh(v, b);
     memset(S(0).amp_file, 0, sizeof S(0).amp_file);
     S(0).dirty = false, S(0).kit_now = -1;
-    if (sl == 0)
-      for (int c = 0; c < kChains; ++c)
-        for (int k = 0; k < sc::kParams; ++k) g_sc_lfo[c][k] = 0, sc_refresh(c, k);   // 0.5.0 SIDECHAIN (slot 0's chains)
+    for (int c = 0; c < kChains; ++c)
+      for (int k = 0; k < sc::kParams; ++k) g_sc_lfo[c][k] = 0, sc_refresh(c, k);   // 0.5.0 SIDECHAIN (each slot's)
   }
   g_force = -1;
   for (int v = 0; v < kVoices; ++v)

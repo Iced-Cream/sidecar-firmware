@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 
+namespace core { namespace out { struct Device; } }   // (sidechain_in's: the box's row)
 namespace bridge {
 const int kVoices = 16, kBlock = 12, kMachines = 7;   // core::kVoices, kBlock, kMachines (bridge.cpp checks)
 // Two boxes' voices: slot 0's (the Rytm's) 0..7, slot 1's 8..15 (core/machines.h). The output stage carries one box's
@@ -185,8 +186,8 @@ bool livein_on();
 void livein_in(const int32_t* f, int n, int stride);
 // 0.5.0 SIDECHAIN (core/fx/sidechain.h): sidechain_on() while an insert chain's stage reads a stem or AUDIO IN, then each IN block's
 // frames (as livein_in's) into the key bus
-bool sidechain_on();
-void sidechain_in(const int32_t* f, int n, int stride);
+bool sidechain_on(int slot);   // (each slot's chains key from their own box's IN)
+void sidechain_in(int slot, const core::out::Device* d, const int32_t* f, int n, int stride);
 void livein_fifo(unsigned frames);
 int livein_status(int vi, char* b, int cap);
 // seq-p2 (core/seq/seq.h, rytm_dump.h): cal_on() while the sequencer's latency click is due or on its way back, then each

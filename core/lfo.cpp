@@ -774,7 +774,7 @@ CORE_COLD void midi_in(uint8_t st, uint8_t d1, uint8_t d2) {
   if ((st & 0x0F) > 12 || (st & 0xF0) != 0x90 || !d2) return;
   Sl& l = S(device::rytm_home());   // 3(c): the Rytm's notes (its port), so its slot's LFOs, whatever slot is in hand
 #if CORE_POLY
-  if ((st & 0x0F) < sc::kTracks) sc::trig_track(st & 0x0F);   // 0.5.0: a SIDECHAIN source: the Rytm track's trig (its note out)
+  if ((st & 0x0F) < sc::kTracks) sc::trig_track(device::rytm_home(), st & 0x0F);   // (the Rytm's slot's chains)   // 0.5.0: a SIDECHAIN source: the Rytm track's trig (its note out)
 #endif
   for (int i = 0; i < kLfos; ++i)   // a trig on one of the Rytm's tracks (its note out): the FX targets' TRIG
     if (l.set[i].retrig == kOnTrig && is_fx(l.set[i].target)) l.run[i].retrig = true;
