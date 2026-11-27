@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "device/device.h"   // rytm_home: the SIDECHAIN settings are the Rytm's slot's
 #include "fx/master.h"
 #include "fx/out.h"
 #include "fx/send_fx.h"
@@ -193,7 +194,7 @@ void clear_settings() {
   for (int c = 0; c < nc; ++c)
     for (int k = 0; k < kEqParams; ++k) S(c).eq[c][k] = kEqFlat(k), eq_refresh(c, k);   // ins1112
   for (int c = 0; c < nc; ++c) S(c).bw_width[c] = 127;   // sfx-basewidth: no WIDTH remembered
-  if (hand() == 0) sc_clear();   // 0.5.0 SIDECHAIN (slot 0's chains only, for now)
+  if (hand() == device::rytm_home()) sc_clear();   // 0.5.0 SIDECHAIN (the Rytm's slot's chains only, for now)
   for (int v = 0; v < kVoices; ++v)
     for (int b = 0; b < kBuses; ++b) S(v).send_knob[v][b] = 0, send_refresh(v, b);
   control_of(hand()).route3 = 0;
@@ -579,19 +580,22 @@ void sc_vt(int m, int k, int v, char* b, int cap) {
   }
   sniprintf(b, cap, "-");
 }
+// 0.5.0 SIDECHAIN: one set of settings, the Rytm's slot's chains (device::rytm_home(): its stems and tracks key it); a box
+// in the other slot has no SIDECHAIN stage yet
+static Control& SC() { return control_of(device::rytm_home()); }
 uint8_t g_scp[kChains][sc::kParams];
 uint32_t g_mon_until[kChains];   // the web's MON lease (ms; 0: none)
 int16_t g_sc_lfo[kChains][sc::kParams];
 bool sc_valid(int c) { return c >= 0 && c < kChains; }
 void sc_refresh(int c, int k) {
-  control.scp[c][k] = (uint8_t)clampi((int)g_scp[c][k] + g_sc_lfo[c][k], 0, 127);
+  SC().scp[c][k] = (uint8_t)clampi((int)g_scp[c][k] + g_sc_lfo[c][k], 0, 127);
 }
 // which key rings and trigs a chain reads: the writers skip the others
 void sc_wanted() {
   uint32_t keys = 0, trigs = 0;
   for (int c = 0; c < kChains; ++c) {
-    if (!control.scmode[c]) continue;
-    const int s = control.scsrc[c], key = sc::key_of(s), tg = sc::trig_of(s);
+    if (!SC().scmode[c]) continue;
+    const int s = SC().scsrc[c], key = sc::key_of(s), tg = sc::trig_of(s);
     if (key >= 0) keys |= 1u << key;
     if (s == sc::kAinLR) keys |= 1u << (sc::kStems + 1);
     if (tg >= 0) trigs |= 1u << tg;
@@ -600,7 +604,7 @@ void sc_wanted() {
 }
 void sc_clear() {
   for (int c = 0; c < kChains; ++c) {
-    control.scmode[c] = sc::kOff, control.scsrc[c] = 0, control.scmon[c] = 0, g_mon_until[c] = 0;
+    SC().scmode[c] = sc::kOff, SC().scsrc[c] = 0, SC().scmon[c] = 0, g_mon_until[c] = 0;
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = 0, sc_refresh(c, k);
   }
   sc_wanted();
@@ -610,11 +614,11 @@ void sc_clear() {
 void sc_value_text(int mode, int k, int v, char* b, int cap) { sc_vt(mode, k, v, b, cap); }
 void set_sc_mode(int c, int m, bool keep) {
   if (!sc_valid(c) || m < 0 || m >= sc::kModes) return;
-  if (control.scmode[c] == m) return;   // the mode it is in: nothing reloaded, the knobs stay
+  if (SC().scmode[c] == m) return;   // the mode it is in: nothing reloaded, the knobs stay
   if (!keep)
     for (int k = 0; k < sc::kParams; ++k) g_scp[c][k] = sc::def(m, k);
-  control.scmode[c] = (uint8_t)m;
-  control.scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a mode change
+  SC().scmode[c] = (uint8_t)m;
+  SC().scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a mode change
   for (int k = 0; k < sc::kParams; ++k) sc_refresh(c, k);
   sc_wanted();
   ++g_stats.sets;
@@ -622,8 +626,8 @@ void set_sc_mode(int c, int m, bool keep) {
 }
 void set_sc_src(int c, int s) {
   if (!sc_valid(c) || s < 0 || s >= sc::kSrcs) return;
-  if (control.scsrc[c] != s) control.scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a source change
-  control.scsrc[c] = (uint8_t)s;
+  if (SC().scsrc[c] != s) SC().scmon[c] = 0, g_mon_until[c] = 0;   // 0.5.2: MON ends with a source change
+  SC().scsrc[c] = (uint8_t)s;
   sc_wanted();
   ++g_stats.sets;
   changed();
@@ -638,10 +642,10 @@ void set_sc_param(int c, int k, int v) {
 // 0.5.2 MON: DUCK plays its filtered key instead of the chain's output. Per chain, never saved; only on a DUCK stage
 void set_sc_mon(int c, bool on) {   // the Rytm's T1: no lease
   if (!sc_valid(c)) return;
-  const uint8_t v = on && control.scmode[c] == sc::kDuck ? 1 : 0;
+  const uint8_t v = on && SC().scmode[c] == sc::kDuck ? 1 : 0;
   g_mon_until[c] = 0;
-  if (control.scmon[c] == v) return;
-  control.scmon[c] = v;
+  if (SC().scmon[c] == v) return;
+  SC().scmon[c] = v;
   ++g_stats.sets;
 }
 // the web's MON (the console line): it lapses 3 s after the last one unless the page sends it again (a closed tab, a lost link)
@@ -650,30 +654,30 @@ void set_sc_mon_lease(int c, bool on) {
   if (on && sc_mon(c)) g_mon_until[c] = now_ms() + 3000u | 1u;
 }
 void renew_sc_mon(int c) {   // the web's renew-only line: extends a lease that is running, never switches MON on
-  if (sc_valid(c) && control.scmon[c] && g_mon_until[c]) g_mon_until[c] = now_ms() + 3000u | 1u;
+  if (sc_valid(c) && SC().scmon[c] && g_mon_until[c]) g_mon_until[c] = now_ms() + 3000u | 1u;
 }
 void sc_mon_tick() {   // from save(), every idle pass
   for (int c = 0; c < kChains; ++c)
-    if (g_mon_until[c] && (int32_t)(now_ms() - g_mon_until[c]) > 0) g_mon_until[c] = 0, control.scmon[c] = 0;
+    if (g_mon_until[c] && (int32_t)(now_ms() - g_mon_until[c]) > 0) g_mon_until[c] = 0, SC().scmon[c] = 0;
 }
-bool sc_mon(int c) { return sc_valid(c) && control.scmon[c] != 0; }
+bool sc_mon(int c) { return sc_valid(c) && SC().scmon[c] != 0; }
 void sc_mon_off_all() {
-  for (int c = 0; c < kChains; ++c) control.scmon[c] = 0, g_mon_until[c] = 0;
+  for (int c = 0; c < kChains; ++c) SC().scmon[c] = 0, g_mon_until[c] = 0;
 }
-int sc_mode(int c) { return sc_valid(c) ? control.scmode[c] : 0; }
-int sc_src(int c) { return sc_valid(c) ? control.scsrc[c] : 0; }
+int sc_mode(int c) { return sc_valid(c) ? SC().scmode[c] : 0; }
+int sc_src(int c) { return sc_valid(c) ? SC().scsrc[c] : 0; }
 int sc_param(int c, int k) { return sc_valid(c) && k >= 0 && k < sc::kParams ? g_scp[c][k] : 0; }
-int sc_playing(int c, int k) { return sc_valid(c) && k >= 0 && k < sc::kParams ? control.scp[c][k] : 0; }
+int sc_playing(int c, int k) { return sc_valid(c) && k >= 0 && k < sc::kParams ? SC().scp[c][k] : 0; }
 void sc_mod_offset(int c, int k, int off) {
   if (!sc_valid(c) || k < 0 || k >= sc::kParams) return;
   g_sc_lfo[c][k] = (int16_t)clampi(off, -127, 127);
   sc_refresh(c, k);
   ++g_stats.lfo_sets;
 }
-bool sc_on(int c) { return sc_valid(c) && control.scmode[c] != sc::kOff; }
+bool sc_on(int c) { return sc_valid(c) && SC().scmode[c] != sc::kOff; }
 bool sc_any_on() {
   for (int c = 0; c < kChains; ++c)
-    if (control.scmode[c]) return true;
+    if (SC().scmode[c]) return true;
   return false;
 }
 bool sc_status(int c, char* why, int cap) {
@@ -681,9 +685,9 @@ bool sc_status(int c, char* why, int cap) {
   if (!sc_on(c)) return sniprintf(why, cap, "OFF"), true;
   if (c >= kBus0 && c < kBus0 + 2 && fx::control.knob[c - kBus0][0] == fx::kOff)   // bus 1 / 2's chain runs inside its send FX's return
     return sniprintf(why, cap, "SEND FX OFF"), false;
-  const int key = sc::key_of(control.scsrc[c]);
+  const int key = sc::key_of(SC().scsrc[c]);
   if (key < 0) return sniprintf(why, cap, "NO SRC"), false;
-  if (control.scmode[c] == sc::kPump && sc::trig_of(control.scsrc[c]) >= 0) return true;   // PUMP on a track runs on its MIDI trigs
+  if (SC().scmode[c] == sc::kPump && sc::trig_of(SC().scsrc[c]) >= 0) return true;   // PUMP on a track runs on its MIDI trigs
   if (key < sc::kStems + 2) {   // the Overbridge IN side's: stems, AUDIO IN. A voice's ring is written by its own render
     const sc::Bus& b = sc::bus();
     if (!b.w[key] || now_ms() - b.ms[key] > 300) return sniprintf(why, cap, key < sc::kStems ? "NO STEMS" : "NO AUDIO IN"), false;
@@ -743,7 +747,7 @@ void voice_out(int vi, int16_t (*ring)[core::kVoices], const int* row, int n, in
   e.SetAmp(amp);
   if (amp) amp::service(c);   // an AMP capture offered to a slot not playing AMP: taken now (the AMP slot's chains)
   if (!ring_r) e.MarkMono(c);
-  if (slot == 0 && sc::wants_voice(c)) {   // 0.5.0: a chain's SIDECHAIN source (slot 0's): this voice as it was rendered, before its own chain
+  if (slot == device::rytm_home() && sc::wants_voice(c)) {   // 0.5.0: a SIDECHAIN source (the Rytm's slot's): this voice as it was rendered, before its own chain
     float kb[64];
     const int m = n > 64 ? 64 : n;
     for (int i = 0; i < m; ++i) kb[i] = ring[row[i]][vi] * (1.0f / 32768.0f);
