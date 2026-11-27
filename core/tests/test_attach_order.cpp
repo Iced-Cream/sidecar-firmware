@@ -17,6 +17,7 @@
 #include "device/digitakt.h"
 #include "engine.h"
 #include "fx/master.h"
+#include "fx/out.h"
 #include "fx/send_fx.h"
 #include "host_link.h"
 #include "lfo.h"
@@ -338,6 +339,55 @@ int main() {
   settle();
   CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('A', "cloudseed")) != std::string::npos);   // the A4's file: its own FX still
   CHECK(get("/.a4/ins/A4P.txt").find(sfx_line('B', "crush")) != std::string::npos);
+
+  // ---- slot 0 and slot 1 the same (decided 2026-11-26): the Rytm in slot 1 beside the A4 in slot 0 gets what it got in slot 0
+  //      - its project's user-FX map (fxslots) in its own slot's names, never the A4's; its 0x21 list names them, to it alone
+  //      - the 2 s BASE / WIDTH refresh (sfx-basewidth) to its own link (before: the idle step ran outside any Scope, so it
+  //        went to the base box's, the A4's)
+  //      - the PRE / POST trims the slot in hand's (the console's box=), trimpre= / trimpost= every slot's
+  {
+    char p[96];
+    {
+      device::Scope in(device::g_links[1]);
+      const char* d = device::state_path("/.rytm/fxslots", p, sizeof p);
+      fs.mkdir(d);
+      put(device::state_path("/.rytm/fxslots/R3.txt", p, sizeof p), "0123 MYVERB\n");
+    }
+    const fx::UserFx a4u = fx::user[0];
+    g_out.clear(), g_out1.clear();
+    send(0, sidecar({0x10, 'R', '3'}));   // the Rytm's project: its own map
+    send(0, sidecar({0x23}));             // its ASK: the list, labels, states and BASE / WIDTH (it listens)
+    settle();
+    CHECK(key(1) == "R3" && key(0) == "A4P");
+    printf("  the Rytm in slot 1, project R3: its UFX1 %04x %s; the A4's UFX1 %04x '%s'\n", fx::user1[0].tag, fx::user1[0].name,
+           fx::user[0].tag, fx::user[0].name);
+    CHECK(fx::user1[0].tag == 0x123 && !strcmp(fx::user1[0].name, "MYVERB"));
+    CHECK(fx::user[0].tag == a4u.tag && !strcmp(fx::user[0].name, a4u.name));
+    auto names_has = [](const std::vector<std::vector<uint8_t>>& o, const char* n) {
+      for (const auto& m : o)
+        if (m.size() > 6 && m[4] == 0x21 && std::string(m.begin(), m.end()).find(n) != std::string::npos) return true;
+      return false;
+    };
+    CHECK(names_has(g_out, "MYVERB") && !names_has(g_out1, "MYVERB"));
+    auto bw = [](const std::vector<std::vector<uint8_t>>& o) {
+      int n = 0;
+      for (const auto& m : o) n += m.size() == 10 && m[4] == 0x22 && m[5] == 2;
+      return n;
+    };
+    g_out.clear(), g_out1.clear();
+    const uint32_t t0 = now_ms();
+    while (now_ms() - t0 < 2300) idle_prepare();   // past one 2 s refresh
+    printf("  BASE / WIDTH refresh in 2.3 s: %d to the Rytm (slot 1), %d to the A4 (slot 0)\n", bw(g_out), bw(g_out1));
+    CHECK(bw(g_out) >= 2 && bw(g_out1) == 0);
+    {
+      device::Scope in(device::g_links[1]);
+      out::set_trim(0, -30);
+    }
+    CHECK(out::control1.trim10[0] == -30 && out::control.trim10[0] == 0);
+    out::set_trim_all(1, 15);
+    CHECK(out::control1.trim10[1] == 15 && out::control.trim10[1] == 15);
+    out::set_trim_all(0, 0), out::set_trim_all(1, 0);
+  }
 
   // ---- the Pi's own messages (the boot self-check's trig, the bench) are no box speaking: slot 0 stays presumed, and an
   // A4 whose USB comes first still takes slot 0 (the QEMU gate's a4-rytm order, 2026-11-21)

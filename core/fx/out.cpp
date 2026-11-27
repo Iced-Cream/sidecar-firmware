@@ -25,7 +25,7 @@ int (*slot_fn)() = nullptr;
 namespace {
 
 // 3(c): each voice slot's OUT knobs, offsets and routes as set, playing in control_of(slot) - the slot in hand's
-// (slot_fn). The mute gate is each slot's own (set_mutes / trig_track name the slot); the PRE / POST trims are slot 0's.
+// (slot_fn). The mute gate is each slot's own (set_mutes / trig_track name the slot); the PRE / POST / TRK trims too.
 struct Set {
   uint8_t knob[kVoices][4];      // LEV PAN WID DEC
   int16_t lfo[kVoices][3];
@@ -178,17 +178,25 @@ void trig_track(int slot, int vi, int track) {
   g_track[slot][vi] = (int8_t)(track >= 0 && track < 12 ? track : -1);
   gates(slot);
 }
-bool any_stereo() { return any_stereo(0); }   // (slot 0's: the output stage's PRE / POST pairs)
+bool any_stereo() { return any_stereo(g_base_slot); }   // (the base box's: its output stage's PRE / POST pairs)
 bool any_stereo(int slot) {
   const Control& c = control_of(slot);
   for (int v = 0; v < kVoices; ++v)
     if (c.route[v] != kTrk) return true;
   return false;
 }
+// the slot in hand's (the console: the base box's, box=S: that box's), either slot alike (decided 2026-11-26)
 void set_trim(int pair, int db10) {
-  if (pair == 2) control_of(g_base_slot).trk10 = (int16_t)clampi(db10, -240, 240);   // the base box's
+  if (pair == 2) K().trk10 = (int16_t)clampi(db10, -240, 240);
   if (pair < 0 || pair > 1) return;
-  control.trim10[pair] = (int16_t)clampi(db10, -240, 120);
+  K().trim10[pair] = (int16_t)clampi(db10, -240, 120);
+}
+void set_trim_all(int pair, int db10) {   // the cmdline's: every slot's stage the same, whichever slot a box takes
+  for (int s = 0; s < kVoiceSlots; ++s) {
+    g_force = s;
+    set_trim(pair, db10);
+  }
+  g_force = -1;
 }
 
 bool from_line(const char* const* w, int n) {
@@ -269,7 +277,7 @@ bool command(const char* p, char* o, int cap) {
         return true;
       }
       int v = c[0] >= '1' && c[0] <= '8' ? c[0] - '1' : 0;
-      meas::start(same_ci(b, "trk"), v);
+      meas::start(same_ci(b, "trk"), v, hand());   // (the slot in hand's box: the console's base box, or box=S:)
       sniprintf(o, cap, CORE_STR("stereo: measuring (about %d s): tones and impulses on POST, PRE%s; the Rytm's MAIN IN read back "
                                  "(stereo=measure:result when done)"), same_ci(b, "trk") ? 6 : 4, same_ci(b, "trk") ? ", TRK" : "");
       return true;
@@ -280,7 +288,7 @@ bool command(const char* p, char* o, int cap) {
       sniprintf(o, cap, "stereo, stereo=trim:pre|post|trk:DB10, stereo=measure[:trk[:V]]|measure:stop, stereo=result");
       return true;
     }
-    int n = sniprintf(o, cap, CORE_STR("stereo: trim PRE %d POST %d TRK %d (0.1 dB)"), control.trim10[0], control.trim10[1], control.trk10);
+    int n = sniprintf(o, cap, CORE_STR("stereo: trim PRE %d POST %d TRK %d (0.1 dB)"), K().trim10[0], K().trim10[1], K().trk10);
     for (int v = 0; v < kVoices && n > 0 && n < cap; ++v)
       if (K().route[v] != kTrk) {
         int k = sniprintf(o + n, cap - n, ", ");
@@ -339,7 +347,7 @@ int json(char* o, int cap) {
     if (k < 0 || k >= cap - n) return cap;
     n += k;
   }
-  int k = sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR("],\"trim\":[%d,%d],"), control.trim10[0], control.trim10[1]);
+  int k = sniprintf(o + n, n < cap ? cap - n : 0, CORE_STR("],\"trim\":[%d,%d],"), K().trim10[0], K().trim10[1]);
   if (k > 0) n += k;
   if (n < cap) n += meas::json(o + n, cap - n);
   return n;

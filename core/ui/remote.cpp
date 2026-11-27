@@ -2282,7 +2282,7 @@ CORE_COLD void remote_sysex(const uint8_t* d, int len) {
       }
 #if CORE_POLY
       ins::kit_changed(b[0]);   // the inserts are per kit too (core/fx/insert.h)
-      if (slot == 0) mod::rp_kit(b[0]);   // the Rytm's own params: the kit byte of every message (core/mod/rytm_param.h)
+      if (device::rytm_at(slot)) mod::rp_kit(b[0]);   // the Rytm's own params: the kit byte of every message (core/mod/rytm_param.h), its slot either one
       xypad::kit_changed(b[0]);   // the XY pad (core/mod/xypad.h): released first, its fader back before the scenes save
       scene::kit_changed(b[0]);   // and the scenes (core/mod/scene.h)
 #endif

@@ -128,6 +128,9 @@ int base_of(const Load& l);   // the base box's slot in l: 0 while held, else 1
 // The core that runs AMP row r (fx/amp.cpp's rows: the base box's voices 0..7, its master chains from master_row on): a voice
 // row its voice's (by the base box's split), a master row master_core(the base box)
 int amp_core(int row, int master_row, const Load& l);
+// AMP on every box's chains (fx/amp.h: each box its own rows): the core that runs box b's chain c, a voice chain by b's own
+// split (voice_core), a master chain master_core(b), a bus 0 (AMP plays dry there)
+int amp_core_of(int b, int c, int master_row, const Load& l);
 // AMP admission: one more AMP slot may play on core c (1, 2 or 3) beside l (its amps[] those playing): core_bp + one AMP at
 // its load factor within kLimitBp (core 3: kC3LimitBp). Always: no bench, admit=report or another core.
 bool amp_fits(int c, const Load& l);

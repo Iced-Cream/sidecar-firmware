@@ -275,15 +275,15 @@ changes nothing here.
 | project, its name and saves | `core/pool/pool.cpp` (`prj()`) | read from its folder at its attach (either slot); a 0x10 names its own box's project |
 | pool lists, JUNO / FM lists, the RAM store | `pools::S()`, `user/lists.cpp`, `store` | GRANULAR, WAVETABLE, MULTISAMPLE, CHOP resolve a voice's rows through its own slot; a file both lists hold loads once |
 | LFOs and the modulation layer | `core/mod` | a box's layer takes its own voices, its INSERT chains, its send FX and master; kSnd (the Rytm's track sends) is the Rytm's slot's |
-| INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines |
+| INSERT and OUT | `ins::control_of(slot)`, `out::control_of(slot)` | buses, master chains, route; another slot's file holds its bus, ROUTE, PEQ, MFX and SFX lines; AMP plays on every box's voice and master chains, each box its own 6 (+2 master) (decided 2026-11-26); PRE / POST / TRK trims per slot (`stereo=trim` the slot in hand's, `trimpre=` / `trimpost=` every slot's) |
 | output stage | `pi/engine/output.*`, `side_out.h` | beside a Rytm, slot 1's voices go to a side stage paced by its own box's stream; alone, a box has the base stage |
 | send FX and master | `fx::control_of(slot)`, `master::control_of(slot)` | own TYPE, knobs, route (`sendfx.txt`), rooms; slot 0's TYPE and knobs stay the Rytm's kit 0x20s. The Rytm's instance, in either slot, is paced by its stems from its own stream's IN (`sendfx_pi::FromRytm(slot)`, SRC MIX `masterfx_pi::Stems(slot)`; its report 50 in `master::rytm()`); another box's by its voices |
-| user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport |
+| user slots U1..U5, user effects UFX1..UFX4 | `um.cpp` | four effects per box, own `/.a4/fxslots`; own effects budget; plugins get their own box's transport. A Rytm in either slot gets its own fxslots names in its 0x21 list, its own labels, and its own 2 s BASE / WIDTH refresh (`sendfx_step` runs in each slot's Scope) |
 | scenes and the XY pad | `core/ui` | |
 | sequencer | `seq.cpp` (`Per<T>`) | a box's tracks on its own voices; own mute gate; 31 / 32 / 08 counted per slot (`seq=ui[:S]`) |
 | kits | `bundle/kits` | own queue, RELOAD ALL scan and records in its own folder; a box's 3B ends only its own voices' MIDI and arp notes |
 | MIDI clock | `host_link.cpp` `engine_realtime_link` | each transport's F8 FA FB FC F2 clock its own slot's send FX grid, LFOs, arpeggiator and plugins |
-| the Pi-wide jobs' clock | `rec_pi::Transport(slot, ..)`, `samp::transport(slot, ..)` | each on the clock of the box it belongs to (decided 2026-11-26): a sampler take follows the box it was armed for (the slot in hand: `box=S:samp=arm`, the page's box), its PLAY / next-bar start, STOP, bars and tempo; the recorder arms on the base box's (whose output stage it records); the bundles' card writes slow and the storage bench is refused while any box plays (a box that stops or leaves clears its own); the MIDI machine's clock out to the Pi's USB-A devices is the box's whose voices alone send there, none while both boxes' do |
+| the Pi-wide jobs' clock | `rec_pi::Transport(slot, ..)`, `samp::transport(slot, ..)` | each on the clock of the box it belongs to (decided 2026-11-26): a sampler take follows the box it was armed for (the slot in hand: `box=S:samp=arm`, the page's box), its PLAY / next-bar start, STOP, bars and tempo; the recorder records the box whose PLAY started it while armed (its output stage, FX returns, IN channels and meters; a manual `rec=start` the base box's; decided 2026-11-26); the bundles' card writes slow and the storage bench is refused while any box plays (a box that stops or leaves clears its own); the MIDI machine's clock out to the Pi's USB-A devices is the box's whose voices alone send there, none while both boxes' do |
 | fxin, keys, MIDI learn, preview | | read from a box's folder at its attach, saved there |
 | remote UI | `ui/remote.cpp` | own pages, canvases, track tables and display reports; the touchscreen follows the box whose page opened or whose 49 came last |
 | SONG RECORD | `core/song` | own takes, journal, clock, lanes; each transport's whole MIDI stream taps its own slot's song. The A4's start snapshot, restore and UNDO REPLAY use its own dumps and GLOBAL MIDI settings |
@@ -398,9 +398,9 @@ slot (`rytm_at`): another box's project name only names its project, in its own 
 
 What the second box does not have yet, or has differently:
 
-- **The recorder and the meters** read the base box's output stage, so the recorder arms on the base box's transport
-  only. The web's bus meters show the base box's send FX (`/status` `slotFx` has both slots'
-  counters).
+- **The web's bus meters and spectrum strip** show the base box's send FX (`/status` `slotFx` has both slots' counters).
+  The recorder, its meters and `stereo=measure` are either box's (decided 2026-11-26: the recorder takes the box whose
+  PLAY started the take; `box=S:stereo=measure` measures that box's own stage and MAIN IN).
 - **Sequencer on slot 1:** a lock's base for P1..P16 is 64 (the box's knob value is not known here); no SEED MOD source; no
   latency calibration (`seq=cal` is the Rytm's slot only; a box keeps `seq=lat`); the touch editor's undo history is the
   Rytm's slot's.

@@ -448,8 +448,9 @@ boolean CKernel::Initialize (void)
 	// the voices' OUT routes (core/fx/out.h, docs/STEREO.md): each slot's own; the base box's stage follows the base box
 	g_Output.FollowControl ([] () -> const core::out::Control * { return &core::out::control_of (core::slot_of_voice (core::device::base_voice_base ())); });
 	g_OutputSide.SetMode (OutMode);			// slot 1's voices beside a Rytm (side_out.h): slot 1's OUT routes,
-	g_OutputSide.SetOutControl (&core::out::control1);	// their box's channels (set by its stream), no stereo=measure
-	g_OutputSide.SetMeasured (false);
+	g_OutputSide.SetOutControl (&core::out::control1);	// their box's channels (set by its stream)
+	g_OutputSide.SetMeasured (TRUE, [] () { return core::device::side_slot (); });	// stereo=measure: either box's own stage
+	g_Output.SetMeasured (TRUE, [] () { return (int) core::out::g_base_slot; });
 	// poolmono=1: stereo files summed at load (half the pool RAM for them; PRE / POST voices then play them centred)
 	bridge::pool_mono (m_Options.GetAppOptionDecimal ("poolmono", 0) != 0);
 	// trimpre= / trimpost= (tenths of a dB, may be negative): the PRE / POST pairs' calibration from stereo=measure

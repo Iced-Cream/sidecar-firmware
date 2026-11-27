@@ -61,7 +61,9 @@ void Output::Pull(int32_t (*out)[kChannels], uint32_t n, int16_t (*voices)[kVoic
   if (!armed_ && streams_ && target_ && fifo_.size() + kArmSlack >= target_)
     armed_ = true, d_.arm_at = base, d_.arm_level = fifo_.size();
   const Mode mode = GetMode();
-  const bool test = measured_ && core::out::meas::active();   // stereo=measure: its test signals (core/fx/out_measure.h)
+  const bool test = measured_ && core::out::meas::active() &&   // stereo=measure: its test signals (core/fx/out_measure.h),
+                    (!measured_slot_ || measured_slot_() == core::out::meas::slot());   // its box's
+
   const float trk_gain = c.trk10 ? powf(10.0f, (float)c.trk10 / 200.0f) : 1.0f;   // stereo=trim:trk (once a block: a change is a step, a test setting)
   int32_t tp[kVoices] = {};   // each voice's largest |sample| on its own track this call (the web's meters, TakeTrkPeaks)
   float tg = 0.0f;
