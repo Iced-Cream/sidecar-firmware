@@ -1,6 +1,6 @@
 # usb=mirror through a Teensy: a second box shown on a second cable
 
-Current state (2026-11-15, KB analog-four-mkii hardware-tests T335-T351): the real A4 (on the Pi's USB) works through the
+Current state (2026-11-15, unit runs T335-T351): the real A4 (on the Pi's USB) works through the
 relay with the Overbridge Engine and an app: nothing is lost or late anywhere in the relay (Teensy and link drops 0, the
 Pi's buffers clean), latency 19.8 ms (Engine's measurement). A 60 s / 10 min ASIO sine loop still shows 1-6 sample slips,
 ~5 per 10 minutes; they happen in the A4 while the Pi streams to it (the Pi's detectors: the computer's audio arrives
@@ -111,7 +111,7 @@ replies came back with one event packet replaced by the one 1008 packets (4032 b
   SysEx bytes). It was 512, and a computer that read late lost part of a reply (T463: 420 bytes); a drop is still counted
   in the relay line's `to-pc N drop M`.
 
-## Pi runs (KB analog-four-mkii hardware-tests T314-T326)
+## Pi runs (unit runs T314-T326)
 
 **State (2026-11-14, T326):** check 3 passes on the Pi with relaytest=1: every bench stage PASS (control requests, Pi ->
 computer audio with no corrupt or duplicated block, computer -> Pi audio, pipe echo lossless), worst Teensy wait 625 us
