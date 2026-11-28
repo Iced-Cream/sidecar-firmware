@@ -1,6 +1,7 @@
 //
 // ob_usb.cpp - Rytm MKII Overbridge host for Circle (Raspberry Pi 4, xHCI/VL805), and any box whose device profile has an
-// audio row: only the block size of OUT and its channel count differ (IN is 12 channels for every box so far).
+// audio row: the channel counts and block sizes each way differ (IN 12 or 8: an A4's 8 are widened to the 12 its consumers
+// take, WidenIn; OUT 2..12, the first channels of the 12 the engine fills).
 //
 // What it does:
 //   1. logs the whole configuration descriptor (interfaces, alternate settings, endpoints);
@@ -417,7 +418,7 @@ unsigned CObUsb::UsbRequestsLimit (void)
 void CObUsb::SetActive (boolean bActive)
 {
 	s_bActive = bActive;
-	core::out::set_device (bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// the TCP link's host is 12 channels, the Rytm's
+	core::out::set_device (bActive && s_pThis != 0 ? s_pThis->m_pAudio : 0);	// under link=tcp the Rytm's table (the emulator's link frames are 12 channels; a box takes their first ones)
 }
 
 CObUsb::CObUsb (CUSBFunction *pFunction, const core::out::Device *pAudio)

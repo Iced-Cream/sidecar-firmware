@@ -66,6 +66,10 @@ build/test_generic_pi: test_generic_pi.cpp ../bridge.cpp ../audio_return.cpp ../
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I$(CORE)/host -I$(CORE) -I.. \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ $< ../bridge.cpp ../audio_return.cpp $(GENERIC_CORE)
+# an A4's mod over link=tcp: the emulator's stream (emu_proto) through MidiIn into the generic core, the answers as 'M'
+build/test_a4_tcp: test_a4_tcp.cpp ../emu_proto.cpp ../emu_proto.h ../midi_in.cpp ../midi_in.h $(GENERIC_CORE) check.h
+	@mkdir -p build
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I$(CORE)/host -I$(CORE) -I.. 	  -fsanitize=address,undefined -fno-sanitize-recover=all -o $@ $< ../emu_proto.cpp ../midi_in.cpp $(GENERIC_CORE)
 # the power supply's state (power_state.cpp): get_throttled and the Pi 5's max_current to the warning and /status
 build/test_power_state: test_power_state.cpp ../power_state.cpp ../power_state.h check.h
 	@mkdir -p build

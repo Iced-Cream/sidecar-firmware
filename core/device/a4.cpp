@@ -1,5 +1,6 @@
 // core/device/a4.cpp - see a4.h. Its mod reports as the Rytm's does, the engine's own 03 / 04 / 11 with P1..P16 and the machine in the voice byte, so the
-// profile lists those commands and nothing is translated.
+// profile lists those commands and nothing is translated. On the generic engine (2026-11-28) its filters also pass the generic services both
+// ways, as the Rytm has them: 0D / 0E the card browser, 2C / 2D the step clock, 30..3E the remote screen, 51..53 STORE (core/tests/test_a4_generic.cpp).
 //
 // The stream [read in OS 1.56]: host -> A4 6 channels / 200 B. 0, 1 MAIN: added to the effects' return on the DAC, after everything but the analog output
 // stage, through USB TO MAIN's gain. 2..5 the synth voices: each added to that voice's own DAC word, the one its digital noise takes, so a Sidecar voice goes
@@ -28,10 +29,21 @@ const Profile kA4 = {
     0x04, 0x03, 0x11,
     kUserSlots | kRemoteUi,   // U1..U5 on its SIDECAR page; the web's User machines tab fills them, in /.a4/slots. Remote UI: the pages on its screen, text drawn here
     0, 0, {}, {},
-    {0, 1u << (0x36 - 32) | 1u << (0x37 - 32) | 1u << (0x38 - 32) | 1u << (0x39 - 32) | 1u << (0x3A - 32) | 1u << (0x3C - 32)},   // the pages alone: 36 37 38 39 3A 3C, and the hello's answer
+    // what goes back, the generic engine's services (the hello's answer is never filtered): 0E a card folder's listing
+    // (core/browse), the remote screen's 36..3A 3C 3D 3E (core/screen: splash, mask, rects, commit, open, alive, text),
+    // 51 STORE's answers (core/kv: records, locks, route and graph ops inside 51)
+    {1u << 0x0E,
+     1u << (0x36 - 32) | 1u << (0x37 - 32) | 1u << (0x38 - 32) | 1u << (0x39 - 32) | 1u << (0x3A - 32) | 1u << (0x3C - 32) |
+         1u << (0x3D - 32) | 1u << (0x3E - 32),
+     1u << (0x51 - 64)},
     nullptr,
     "/.a4",
-    {1u << 0x03 | 1u << 0x04 | 1u << 0x11, 1u << (0x30 - 32) | 1u << (0x31 - 32) | 1u << (0x32 - 32) | 1u << (0x3B - 32)},   // 3B its kit; 30 31 32 its screen
+    // what it may send: 03 / 04 / 11 its voices (the generic engine counts them dropped), 0D a card folder (core/browse),
+    // 2C / 2D the step clock (core/clock: tracks 0..5), 30 31 32 its screen (36, its screen's hello, is taken above),
+    // 3B its kit (dropped here), 51..53 STORE (core/kv)
+    {1u << 0x03 | 1u << 0x04 | 1u << 0x11 | 1u << 0x0D,
+     1u << (0x2C - 32) | 1u << (0x2D - 32) | 1u << (0x30 - 32) | 1u << (0x31 - 32) | 1u << (0x32 - 32) | 1u << (0x3B - 32),
+     1u << (0x51 - 64) | 1u << (0x52 - 64) | 1u << (0x53 - 64)},
     kBracketFull, &kA4Audio, nullptr,
     true, true,
     180,   // +18 dB: the insert point's gain rests at 0.25 [on a unit: MAIN peaks 0.17-0.36 at +12 with two tracks, still under the A4's own oscillators by ear; +18 set live, the owner's ear]; peaks past full scale go through Own's knee
