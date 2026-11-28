@@ -1,10 +1,256 @@
-// core/fmt/fmt.cpp - see fmt.h: the line readers. The atomic writes: atomic.cpp.
+// core/fmt/fmt.cpp - see fmt.h: load(), the header conventions, the line readers. The table of formats: formats.cpp;
+// the atomic writes: atomic.cpp. (load() and the headers as 3a8bf7d had them, before the 2026-11-04 strip-down.)
 #include "fmt.h"
 
 #include <string.h>
 
 namespace core {
 namespace fmt {
+
+const char* class_name(int c) {
+  static const char* const n[] = {"project", "setting", "derived", "exchange"};
+  return c >= 0 && c <= kExchange ? n[c] : "?";
+}
+const char* shape_name(int s) {
+  static const char* const n[] = {"text", "key=value", "json", "binary"};
+  return s >= 0 && s <= kBinary ? n[s] : "?";
+}
+const char* status_name(int s) {
+  static const char* const n[] = {"ok", "upgraded", "foreign-newer", "newer", "unreadable"};
+  return s >= 0 && s <= kUnreadable ? n[s] : "?";
+}
+
+const Format* find(const char* name) {
+  if (!name) return nullptr;
+  for (int i = 0; i < count(); ++i)
+    if (!strcmp(at(i)->name, name)) return at(i);
+  return nullptr;
+}
+
+namespace {
+Status done(Info* info, Status st, uint16_t v, uint16_t m, const char* why) {
+  if (info) {
+    info->st = st;
+    info->version = v, info->min_reader = m;
+    info->locked = st == kNewer || st == kUnreadable || st == kForeignNewer;
+    info->read_only = st == kForeignNewer;
+    sniprintf(info->why, sizeof info->why, "%s", why ? why : "");
+  }
+  return st;
+}
+bool copy_out(Buf* out, const Bytes& b) {
+  if (!out) return true;
+  if (b.n > out->cap) return false;
+  if (b.n) memmove(out->p, b.p, b.n);
+  out->n = b.n;
+  return true;
+}
+}  // namespace
+
+Status load(const Format& f, const Bytes& in, Buf* out, Info* info, Ctx* c) {
+  if (info) memset(info, 0, sizeof *info);
+  if (out) out->n = 0;
+  if (f.max_bytes && in.n > f.max_bytes) return done(info, kUnreadable, 0, 0, "too big");
+  Sniffed s = {0, 0, 0};
+  if (!f.sniff || !f.sniff(in, &s)) return done(info, kUnreadable, 0, 0, "not this format");
+  if (!s.min_reader) s.min_reader = s.version;
+  if (s.version > f.current) {
+    if (s.min_reader > f.current) return done(info, kNewer, s.version, s.min_reader, "a newer version");
+    char why[120] = "";
+    if (f.read && !f.read(in, s, why, sizeof why)) return done(info, kNewer, s.version, s.min_reader, why);
+    if (!copy_out(out, in)) return done(info, kUnreadable, s.version, s.min_reader, "too big");
+    return done(info, kForeignNewer, s.version, s.min_reader, "a newer version this build may read (not written back)");
+  }
+  if (s.version < f.oldest || s.version == 0) return done(info, kUnreadable, s.version, s.min_reader, "an older version this build has no upgrade for");
+  Status st = kOk;
+  Bytes cur = in;
+  if (s.version < f.native) {   // the chain, in memory: out holds each step's result (a step reads the previous)
+    if (!out || !out->p) return done(info, kUnreadable, s.version, s.min_reader, "an upgrade needs a buffer");
+    for (uint16_t v = s.version; v < f.native; ++v) {
+      const Upgrade* u = nullptr;
+      for (int k = 0; k < f.nchain; ++k)
+        if (f.chain[k].from == v) u = &f.chain[k];
+      if (!u) return done(info, kUnreadable, s.version, s.min_reader, "no upgrade from this version");
+      Buf step = {out->p, 0, out->cap};
+      Ctx none = {"", nullptr};
+      if (cur.p == out->p) {   // the step reads its input from out: copied out of the way first (the input's end)
+        if (cur.n * 2 > out->cap) return done(info, kUnreadable, s.version, s.min_reader, "too big to upgrade");
+        memmove(out->p + out->cap - cur.n, cur.p, cur.n);
+        cur.p = out->p + out->cap - cur.n;
+        step.cap = out->cap - cur.n;
+      }
+      if (!u->up(cur, &step, c ? c : &none)) return done(info, kUnreadable, s.version, s.min_reader, "the upgrade refused it");
+      cur.p = step.p, cur.n = step.n;
+    }
+    out->n = cur.n;
+    Sniffed u;
+    if (!f.sniff(cur, &u) || u.version != f.native) return done(info, kUnreadable, s.version, s.min_reader, "the upgrade's output");
+    char why[120] = "";
+    if (f.read && !f.read(cur, u, why, sizeof why)) return done(info, kUnreadable, s.version, s.min_reader, why[0] ? why : "damaged");
+    return done(info, kUpgraded, s.version, s.min_reader, "");   // (info: the file's own version)
+  }
+  char why[120] = "";
+  if (f.read && !f.read(cur, s, why, sizeof why)) return done(info, kUnreadable, s.version, s.min_reader, why[0] ? why : "damaged");
+  if (!copy_out(out, in)) return done(info, kUnreadable, s.version, s.min_reader, "too big");
+  return done(info, st, s.version, s.min_reader, "");
+}
+
+int refusal(const Format& f, const Info& i, const char* file, char* out, int cap) {
+  if (i.st == kNewer)
+    return sniprintf(out, cap, "%s: made by a newer Sidecar (format %s v%u); this Sidecar reads up to v%u. Not loaded, not changed.",
+                     file, f.name, (unsigned)i.version, (unsigned)f.current);
+  if (i.st == kForeignNewer)
+    return sniprintf(out, cap, "%s: made by a newer Sidecar (format %s v%u): read, never written back here.", file, f.name,
+                     (unsigned)i.version);
+  if (i.st == kUnreadable)
+    return sniprintf(out, cap, "%s: not a %s file this Sidecar can read (%s). Not loaded, not changed.", file, f.name,
+                     i.why[0] ? i.why : "damaged");
+  return out && cap ? (out[0] = 0, 0) : 0;
+}
+
+// ---- headers
+namespace {
+uint32_t line_end(const Bytes& in, uint32_t from) {
+  uint32_t e = from;
+  while (e < in.n && in.p[e] != '\n') ++e;
+  return e;
+}
+bool num(const uint8_t*& p, const uint8_t* e, uint32_t* v) {
+  if (p >= e || *p < '0' || *p > '9') return false;
+  uint32_t x = 0;
+  while (p < e && *p >= '0' && *p <= '9') {
+    x = x * 10 + (uint32_t)(*p++ - '0');
+    if (x > 65535) return false;
+  }
+  *v = x;
+  return true;
+}
+}  // namespace
+
+bool text_header(const Bytes& in, const char* name, Sniffed* out) {
+  static const char kTag[] = "#sidecar ";
+  size_t tl = sizeof kTag - 1, nl = strlen(name);
+  uint32_t e = line_end(in, 0);
+  if (e < tl + nl + 2 || memcmp(in.p, kTag, tl) || memcmp(in.p + tl, name, nl) || in.p[tl + nl] != ' ') return false;
+  const uint8_t* p = in.p + tl + nl + 1;
+  const uint8_t* end = in.p + e;
+  if (end > p && end[-1] == '\r') --end;
+  uint32_t v, m = 0;
+  if (!num(p, end, &v)) return false;
+  if (p < end) {
+    if (end - p < 6 || memcmp(p, " min=", 5)) return false;
+    p += 5;
+    if (!num(p, end, &m) || p != end) return false;
+  }
+  out->version = (uint16_t)v;
+  out->min_reader = (uint16_t)(m ? m : v);
+  out->body = e < in.n ? e + 1 : e;
+  return true;
+}
+int put_text_header(char* out, int cap, const char* name, uint16_t version, uint16_t min_reader) {
+  if (min_reader && min_reader != version)
+    return sniprintf(out, cap, "#sidecar %s %u min=%u\n", name, (unsigned)version, (unsigned)min_reader);
+  return sniprintf(out, cap, "#sidecar %s %u\n", name, (unsigned)version);
+}
+
+bool kv_header(const Bytes& in, const char* name, Sniffed* out) {
+  static const char kTag[] = "format=";
+  size_t tl = sizeof kTag - 1, nl = strlen(name);
+  uint32_t e = line_end(in, 0);
+  if (e < tl + nl + 2 || memcmp(in.p, kTag, tl) || memcmp(in.p + tl, name, nl) || in.p[tl + nl] != '/') return false;
+  const uint8_t* p = in.p + tl + nl + 1;
+  const uint8_t* end = in.p + e;
+  if (end > p && end[-1] == '\r') --end;
+  uint32_t v;
+  if (!num(p, end, &v) || p != end) return false;
+  out->version = out->min_reader = (uint16_t)v;
+  out->body = e < in.n ? e + 1 : e;
+  return true;
+}
+int put_kv_header(char* out, int cap, const char* name, uint16_t version) {
+  return sniprintf(out, cap, "format=%s/%u\n", name, (unsigned)version);
+}
+
+// The top object's first keys (up to 16, before any nested value): "format", "version", "min_reader". A small scanner:
+// strings with escapes, numbers; anything nested ends the scan (the header keys come first by convention).
+bool json_header(const Bytes& in, const char* name, Sniffed* out) {
+  const uint8_t *p = in.p, *e = in.p + in.n;
+  auto ws = [&]() { while (p < e && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) ++p; };
+  auto str = [&](const uint8_t** a, int* l) -> bool {
+    if (p >= e || *p != '"') return false;
+    *a = ++p;
+    while (p < e && *p != '"') {
+      if (*p == '\\') ++p;
+      ++p;
+    }
+    if (p >= e) return false;
+    *l = (int)(p - *a);
+    ++p;
+    return true;
+  };
+  ws();
+  if (p >= e || *p != '{') return false;
+  ++p;
+  bool fmt_ok = false, have_v = false;
+  uint32_t v = 0, m = 0;
+  char want[48];
+  int wl = sniprintf(want, sizeof want, "sidecar-%s", name);
+  for (int k = 0; k < 16; ++k) {
+    ws();
+    const uint8_t* key;
+    int kl;
+    if (!str(&key, &kl)) break;
+    ws();
+    if (p >= e || *p != ':') return false;
+    ++p;
+    ws();
+    if (p < e && *p == '"') {
+      const uint8_t* a;
+      int al;
+      if (!str(&a, &al)) return false;
+      if (kl == 6 && !memcmp(key, "format", 6)) {
+        if (al != wl || memcmp(a, want, (size_t)wl)) return false;
+        fmt_ok = true;
+      }
+    } else if (p < e && *p >= '0' && *p <= '9') {
+      uint32_t x;
+      if (!num(p, e, &x)) return false;
+      if (kl == 7 && !memcmp(key, "version", 7)) v = x, have_v = true;
+      else if (kl == 10 && !memcmp(key, "min_reader", 10)) m = x;
+    } else {
+      break;   // a nested value, true / false / null: the header keys are over
+    }
+    ws();
+    if (p < e && *p == ',') ++p;
+    else break;
+  }
+  if (!fmt_ok || !have_v) return false;
+  out->version = (uint16_t)v;
+  out->min_reader = (uint16_t)(m ? m : v);
+  out->body = 0;
+  return true;
+}
+
+static uint32_t rd32(const uint8_t* p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+static void wr32(uint8_t* p, uint32_t v) { p[0] = (uint8_t)v, p[1] = (uint8_t)(v >> 8), p[2] = (uint8_t)(v >> 16), p[3] = (uint8_t)(v >> 24); }
+bool bin_header(const Bytes& in, const char magic[4], Sniffed* out, uint32_t* body_crc) {
+  if (in.n < kBinHeader || memcmp(in.p, magic, 4)) return false;
+  uint32_t hb = rd32(in.p + 8);
+  if (hb < kBinHeader || hb > in.n) return false;
+  out->version = (uint16_t)(in.p[4] | in.p[5] << 8);
+  out->min_reader = (uint16_t)(in.p[6] | in.p[7] << 8);
+  out->body = hb;
+  if (body_crc) *body_crc = rd32(in.p + 12);
+  return out->version != 0;
+}
+void put_bin_header(uint8_t* out, const char magic[4], uint16_t version, uint16_t min_reader, uint32_t header_bytes,
+                    uint32_t body_crc) {
+  memcpy(out, magic, 4);
+  out[4] = (uint8_t)version, out[5] = (uint8_t)(version >> 8);
+  out[6] = (uint8_t)min_reader, out[7] = (uint8_t)(min_reader >> 8);
+  wr32(out + 8, header_bytes);
+  wr32(out + 12, body_crc);
+}
 
 CORE_COLD int LineReader::line(char* out, int max) {
   int k = 0;
