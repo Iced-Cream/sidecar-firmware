@@ -384,7 +384,11 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
 	m_nQuietSecs (0), m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
-	s_pThis = this;
+	// s_pThis (Get) only at the end, once every field is set (decided 2026-11-28): the xHCI IRQ reaches the gadget through
+	// Get while this runs (CObUsb's target: FromRytmBlock, MirrorOutExtra, ToRytm), and after a warm reboot this memory
+	// still holds the last boot's bytes. Published first, the IRQ read them: a stale m_bShowMirror and m_MirExtra sent it
+	// round pop_into for seconds, core 0 never left the IRQ, and the boot hung after the display settings (QEMU, 1 warm
+	// reboot in 23; reproduced with planted stale bytes)
 	m_Gate.SetMode (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
 						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
@@ -465,6 +469,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 		m_pTone[c] = new s32[TonePeriod[c]];
 		sidecar_tone_table (TonePeriod[c], 0.25, m_pTone[c]);
 	}
+	__atomic_store_n (&s_pThis, this, __ATOMIC_RELEASE);	// last (above): the IRQ side sees a whole gadget or none
 }
 
 boolean CSidecarGadget::Start (void)
