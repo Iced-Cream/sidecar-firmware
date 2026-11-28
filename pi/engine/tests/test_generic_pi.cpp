@@ -72,7 +72,7 @@ int main() {
   CHECK(!bridge::generic_command("notemach=0:juno", out, sizeof out));
 
   // ---- /status's members: one JSON object's members, no client on the screen, no slot filled
-  char js[1024];
+  char js[4096];   // the kernel's /status buffer
   int n = bridge::generic_json(js, sizeof js);
   CHECK(n > 0 && n < (int)sizeof js);
   CHECK(strstr(js, "\"generic\":{\"project\":\"KIT\",\"projectId\":48879,"));
@@ -81,6 +81,8 @@ int main() {
   CHECK(strstr(js, ",\"kv\":{\"project\":130,\"records\":0,\"hellos\":1,\"reads\":0,\"writes\":0,"));
   CHECK(strstr(js, ",\"locks\":{\"sets\":1,\"ops\":1,\"bad\":1,\"values\":"));
   CHECK(strstr(js, ",\"queued\":-1,\"bpm10\":"));
+  CHECK(strstr(js, ",\"code\":{\"offers\":0,") && strstr(js, "\"blobs\":[]}"));   // shipped code: none yet
+  CHECK(bridge::generic_command("code", out, sizeof out) && strstr(out, "code: 0 loaded"));
 
   // ---- core 0's popup and address, handed to the screen at the control core's tick
   in({0x35, 1, 0, 80, 1});    // (version 1) the Rytm's hello: up 4 s (50 ms ticks), caps 1 (it understands 36)
