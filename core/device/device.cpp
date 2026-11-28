@@ -1,5 +1,7 @@
 // core/device/device.cpp - see device.h. Per message, never per sample: cold.
 #include "device/device.h"
+#include "device/a4.h"
+#include "device/digitakt.h"
 
 #include <string.h>
 
@@ -22,13 +24,13 @@ static constexpr Profile kRytm = {
     0x04, 0x03, 0x11,
     kRemoteUi | kProject | kKits | kPatterns | kSendFx | kUserSlots | kSrcView | kFxIn | kPools,
     0, 0, {}, {}, {}, nullptr, nullptr, {},
-    kBracketFull, &out::kRytmMk2, nullptr};
+    kBracketFull, &out::kRytmMk2, nullptr, false, false, 0, false, nullptr, "Rytm"};
 static_assert(kRytm.voices == kVoices, "the Rytm's voices are the engine's");
 static_assert(kRytm.params == kMaxParams, "the Rytm's reports carry P1..P16");
 
 static constexpr int kMax = 8;
-static const Profile* s_list[kMax] = {&kRytm};
-static int s_n = 1;
+static const Profile* s_list[kMax] = {&kRytm, &kDigitakt, &kA4};
+static int s_n = 3;
 Link g_link = {};
 static volatile bool s_rytm_usb;          // core 0 writes (rytm_on_usb), the control core reads
 static bool s_said;                       // a box's hello was taken this boot
@@ -44,9 +46,15 @@ const Profile& active() { return g_link.box ? *g_link.box : kRytm; }
 uint32_t dropped() { return g_link.dropped; }
 void rytm_on_usb(bool on) { s_rytm_usb = on; }
 
+CORE_COLD const Profile* by_id(uint16_t id) {
+  for (int k = 0; k < s_n; ++k)
+    if (s_list[k]->id == id) return s_list[k];
+  return nullptr;
+}
+
 CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid) {
   for (int k = 0; k < s_n; ++k)
-    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio) return s_list[k];
+    if (s_list[k]->usb_vid == vid && s_list[k]->usb_pid == pid && s_list[k]->audio && (!s_list[k]->audio_by_hello || g_link.box == s_list[k])) return s_list[k];
   return nullptr;
 }
 
@@ -215,7 +223,13 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (len < 5 || d[len - 1] != 0xF7) return ++l.dropped, false;
   if (is_sidecar(d, len) && d[4] == kCmdHello) return hello(l, d, len), false;
-  if (is_sidecar(d, len) && d[4] == 0x35 && !(l.box->features & kRemoteUi)) {   // a Rytm's USB port came up
+  if (is_sidecar(d, len) && d[4] == 0x36 && (l.box->features & kRemoteUi) && len <= kMaxMessage) {   // a box's screen says hello: 35 is the Rytm's, and asks for /.rytm
+    memcpy(m, d, (size_t)len);
+    m[4] = 0x35;
+    d = m;
+    return true;
+  }
+  if (is_sidecar(d, len) && d[4] == 0x35) {   // a Rytm's USB port came up
     if (other_folder(l, nullptr)) {
       if (hooks.device_restart) change_folder(l, nullptr);
       return ++l.dropped, false;

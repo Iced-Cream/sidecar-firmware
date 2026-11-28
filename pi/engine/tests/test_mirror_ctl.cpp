@@ -108,12 +108,13 @@ int main ()
 		CHECK (!c.answer (s) && !c.box_gone ());
 	}
 
-	{	// the pipes: only a busy, active pipe OUT endpoint is dropped and re-armed
+	{	// the pipes: a busy pipe OUT endpoint is dropped and re-armed (an inactive one too: its packet is the box's
+		// until then, mirror_ep.h OutGate, and it arms at its activation)
 		FakeEP po {mirror::kPipeOut, true, true}, idle {mirror::kPipeOut, true, false}, off {mirror::kPipeOut, false, true};
 		FakeEP pi {mirror::kPipeIn, true, true}, au {mirror::kAudioOut, true, true};
 		FakeEP *eps[mirror::kMaxEps] = {&po, nullptr, &idle, &off, &pi, &au};
-		CHECK (mirror::drop_pipe_outs (eps, mirror::kMaxEps) == 1);
-		CHECK (po.rearms == 1 && !po.busy && idle.rearms == 0 && off.rearms == 0 && pi.rearms == 0 && au.rearms == 0);
+		CHECK (mirror::drop_pipe_outs (eps, mirror::kMaxEps) == 2);
+		CHECK (po.rearms == 1 && !po.busy && idle.rearms == 0 && off.rearms == 1 && !off.busy && pi.rearms == 0 && au.rearms == 0);
 		CHECK (mirror::drop_pipe_outs (eps, mirror::kMaxEps) == 0);
 	}
 

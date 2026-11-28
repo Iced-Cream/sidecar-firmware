@@ -1,11 +1,16 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
-#include "usb_mode.h"
 
 #include <circle/string.h>
 #include <circle/usb/usb.h>
 #include <circle/util.h>
 #include <circle/koptions.h>
+#include <circle/timer.h>
+#include <circle/bcmpropertytags.h>
+#include <circle/usb/dwhci.h>
+#include <circle/usb/dwhciregister.h>
+#include "ep_stop.h"
+#include <assert.h>
 
 #include "ob_block.h"
 #include "ob_usb.h"
@@ -18,7 +23,7 @@ CSidecarGadget *CSidecarGadget::s_pThis = 0;
 
 // ---- descriptors -----------------------------------------------------------------------------------------------
 
-enum { StrManufacturer = 1, StrProduct, StrSerial, StrAudio, StrMIDI, StrOutCh = 16, StrInCh = 32 };
+using namespace sidecar_desc;			// the string indexes (StrManufacturer ..., StrNet, StrNetMac)
 static const char *const OutNames[12] =
 	{"MAIN L", "MAIN R", "MAIN FX L", "MAIN FX R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY"};
 static const char *const InNames[12] =
@@ -32,82 +37,20 @@ static TUSBDeviceDescriptor s_Device =
 	0x0300, StrManufacturer, StrProduct, StrSerial, 1
 };
 
-static u8 s_Config[400];
-static unsigned s_nConfig, s_nOffOut, s_nOffFb, s_nOffIn, s_nOffMIDIOut, s_nOffMIDIIn;
-
-static void Put (const u8 *p, unsigned n)	{ memcpy (s_Config + s_nConfig, p, n); s_nConfig += n; }
-#define D(...)	do { const u8 d_[] = {__VA_ARGS__}; Put (d_, sizeof d_); } while (0)
 #define U16(v)	(u8) ((v) & 0xFF), (u8) (((v) >> 8) & 0xFF)
 #define U32(v)	(u8) ((v) & 0xFF), (u8) (((v) >> 8) & 0xFF), (u8) (((v) >> 16) & 0xFF), (u8) (((v) >> 24) & 0xFF)
 
-// UAC2 (Audio Device Class 2.0 4.7-4.10, the Teensy T1 layout): interfaces 0 AC, 1 AS OUT (EP 0x01, feedback 0x82),
-// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); channels
-// named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
-// Windows' shared mode (bStereo): with all channels raw (bmChannelConfig 0) its engine mixed the 12 IN channels to 2
-// with L == R and 3-12 at zero, while exclusive mode had all 12 [hw, T191]; channels 1-2 marked front L/R alone still
-// gave channel 1 on both sides [hw, T192/T194]. So, with bStereo: both clusters' bmChannelConfig 0x3 (channels 1-2 front
-// left / right, the rest non-predefined, UAC2 4.1), the IN terminal a line connector (0x0603, not a microphone), and IN
-// alt 2 = channels 1-2 only (MAIN L/R), a format shared mode carries as it is. uac2lr=0 (cmdline) serves the old layout.
-static const unsigned StereoCh = 2;
+// the configuration: sidecar_desc.h (UAC2 + MIDI as in 0.4.2; the USB-C network's CDC-NCM function after them while it
+// is in the device). With it the device says bcdDevice 3.10: Windows keeps a device's drivers per VID/PID/revision.
+// uac2lr=1 (default): channels 1-2 front L/R, the IN terminal a line input and IN alt 2 = MAIN L/R only (Windows' shared
+// mode, T191/T192/T195; sidecar_desc.h); uac2lr=0 the old layout
 static boolean s_bStereo = TRUE;
-static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut, boolean bStereo)
+void CSidecarGadget::BuildDescriptor (void)
 {
-	const u32 nMaskIn = bStereo && nIn >= 2 ? 0x3 : 0, nMaskOut = bStereo && nOut >= 2 ? 0x3 : 0;
-	const u16 nInTerm = bStereo ? 0x0603 : 0x0201;
-	const unsigned nMaxIn2 = nMaxIn / nIn * StereoCh;
-	const unsigned Clock = 0x10, AcCs = 9 + 8 + 17 + 12 + 17 + 12, MsCs = 7 + 6 + 6 + 9 + 9 + 9 + 5 + 9 + 5;
-	s_nConfig = 0;
-	D (9, DESCRIPTOR_CONFIGURATION, 0, 0, 5, 1, 0, 0x80, 250);
-	D (8, 11, 0, 3, 0x01, 0x00, 0x20, StrAudio);
-	D (9, DESCRIPTOR_INTERFACE, 0, 0, 0, 0x01, 0x01, 0x20, 0);
-	D (9, 0x24, 0x01, U16 (0x0200), 0x08, U16 (AcCs), 0x00);
-	D (8, 0x24, 0x0A, Clock, 0x01, 0x05, 0, 0);
-	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (u8) nOut, U32 (nMaskOut), StrOutCh, U16 (0), 0);
-	D (12, 0x24, 0x03, 0x02, U16 (0x0301), 0, 0x01, Clock, U16 (0), 0);
-	D (17, 0x24, 0x02, 0x03, U16 (nInTerm), 0, Clock, (u8) nIn, U32 (nMaskIn), StrInCh, U16 (0), 0);
-	D (12, 0x24, 0x03, 0x04, U16 (0x0101), 0, 0x03, Clock, U16 (0), 0);
-	D (9, DESCRIPTOR_INTERFACE, 1, 0, 0, 0x01, 0x02, 0x20, 0);
-	D (9, DESCRIPTOR_INTERFACE, 1, 1, 2, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (u8) nOut, U32 (nMaskOut), StrOutCh);
-	D (6, 0x24, 0x02, 0x01, 3, 24);
-	s_nOffOut = s_nConfig;
-	D (7, DESCRIPTOR_ENDPOINT, 0x01, 0x05, U16 (nMaxOut), 2);
-	D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
-	s_nOffFb = s_nConfig;
-	D (7, DESCRIPTOR_ENDPOINT, 0x82, 0x11, U16 (4), 4);
-	D (9, DESCRIPTOR_INTERFACE, 2, 0, 0, 0x01, 0x02, 0x20, 0);
-	D (9, DESCRIPTOR_INTERFACE, 2, 1, 1, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) nIn, U32 (nMaskIn), StrInCh);
-	D (6, 0x24, 0x02, 0x01, 3, 24);
-	s_nOffIn = s_nConfig;
-	D (7, DESCRIPTOR_ENDPOINT, 0x83, 0x05, U16 (nMaxIn), 2);
-	D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
-	if (bStereo)			// alt 2: MAIN L/R only, the same endpoint with short packets
-	{
-		D (9, DESCRIPTOR_INTERFACE, 2, 2, 1, 0x01, 0x02, 0x20, 0);
-		D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) StereoCh, U32 (0x3), StrInCh);
-		D (6, 0x24, 0x02, 0x01, 3, 24);
-		D (7, DESCRIPTOR_ENDPOINT, 0x83, 0x05, U16 (nMaxIn2), 2);
-		D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
-	}
-	// MIDI
-	D (8, 11, 3, 2, 0x01, 0x03, 0x00, StrMIDI);
-	D (9, DESCRIPTOR_INTERFACE, 3, 0, 0, 0x01, 0x01, 0x00, 0);
-	D (9, 0x24, 0x01, U16 (0x0100), U16 (9), 1, 4);
-	D (9, DESCRIPTOR_INTERFACE, 4, 0, 2, 0x01, 0x03, 0x00, 0);
-	D (7, 0x24, 0x01, U16 (0x0100), U16 (MsCs));
-	D (6, 0x24, 0x02, 0x01, 1, StrMIDI);		// IN jack, embedded (from the computer)
-	D (6, 0x24, 0x02, 0x02, 2, 0);			// IN jack, external
-	D (9, 0x24, 0x03, 0x01, 3, 1, 2, 1, StrMIDI);	// OUT jack, embedded (to the computer), from jack 2
-	D (9, 0x24, 0x03, 0x02, 4, 1, 1, 1, 0);		// OUT jack, external, from jack 1
-	s_nOffMIDIOut = s_nConfig;
-	D (9, DESCRIPTOR_ENDPOINT, 0x04, 0x02, U16 (512), 0, 0, 0);
-	D (5, 0x25, 0x01, 1, 1);
-	s_nOffMIDIIn = s_nConfig;
-	D (9, DESCRIPTOR_ENDPOINT, 0x85, 0x02, U16 (512), 0, 0, 0);
-	D (5, 0x25, 0x01, 1, 3);
-	s_Config[2] = s_nConfig & 0xFF;
-	s_Config[3] = s_nConfig >> 8;
+	s_bStereo = CKernelOptions::Get ()->GetAppOptionDecimal ("uac2lr", 1) != 0;
+	m_nConfig = sidecar_desc::build (m_Config, sizeof m_Config, ChIn, ChOut, MaxIn, MaxOut, m_bNet, &m_Desc, s_bStereo);
+	assert (m_nConfig != 0);
+	s_Device.bcdDevice = m_bNet ? 0x0310 : 0x0300;
 }
 
 const void *CSidecarGadget::String (const char *p, size_t *pLength)
@@ -159,8 +102,8 @@ const void *CSidecarGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 		return &s_Device;
 	case DESCRIPTOR_CONFIGURATION:
 		if (i) break;
-		*pLength = s_nConfig;
-		return s_Config;
+		*pLength = m_nConfig;
+		return m_Config;
 	case DESCRIPTOR_STRING:
 		if (i == 0)
 		{
@@ -171,7 +114,8 @@ const void *CSidecarGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 		// "Sidecar | Expander (Pi)" (the Teensy: "Sidecar | Expander (Mini)"): CoreAudio and CoreMIDI name the device by it, so the
 		// test tools pick it by its exact name (teensy/uac2/coreaudio_pick.py, UAC2_NAME)
 		if (i == StrManufacturer) return String ("Sidecar", pLength);
-		if (i == StrProduct || i == StrAudio || i == StrMIDI) return String (SIDECAR_NAME, pLength);
+		if (i == StrProduct || i == StrAudio || i == StrMIDI || (i == StrNet && m_bNet)) return String (SIDECAR_NAME, pLength);
+		if (i == StrNetMac && m_bNet) return String (m_NetHostMacText, pLength);	// the computer's end of the cable
 #if RASPPI >= 5
 		if (i == StrSerial) return String ("PI5", pLength);
 #else
@@ -254,6 +198,7 @@ CSidecarMIDIEP::CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGad
 
 void CSidecarMIDIEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
 	m_bHeld = FALSE;
@@ -287,7 +232,7 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 		m_pSidecar->MIDIFromHost (m_Buffer, nLength);
 		// usbmidi=os: an OS file comes faster than the Rytm takes it; instead of dropping packets (nMidiFull), the
 		// endpoint waits (the computer's transfer is NAKed) until core 0's loop has sent enough (Poll: Resume)
-		if (m_pSidecar->OsUpdate () && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
+		if (m_pSidecar->m_Gate.Hold (m_pSidecar->ToRytmRoom ())) m_bHeld = TRUE;
 		else if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 		return;
 	}
@@ -302,16 +247,137 @@ void CSidecarMIDIEP::Resume (void)
 	if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 }
 
+// ---- the USB-C network's endpoints (CDC-NCM, docs/usb-network.md) ----------------------------------------------
+
+CNcmEP::CNcmEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget, TRole Role)
+:	CDWUSBGadgetEndpoint (pDesc, pGadget), m_pSidecar (pGadget), m_Role (Role),
+	m_bActive (FALSE), m_bBusy (FALSE), m_bHeld (FALSE), m_bResuming (FALSE), m_nEP (pDesc->bEndpointAddress & 0x0F)
+{
+}
+
+// a new configuration: the data interface at alt 0 (no SET_INTERFACE follows a reset); a resume without a reset: the
+// link as it was, its transfers started again
+void CNcmEP::OnActivate (void)
+{
+	m_pSidecar->NetTrace (CSidecarGadget::TrActivate, m_nEP | (m_Role << 8), m_bResuming);
+	m_Wake.activated ();
+	m_bActive = TRUE;
+	m_bBusy = FALSE;
+	m_bHeld = FALSE;
+	if (!m_bResuming)
+	{
+		m_pSidecar->m_uchNetAlt = 0;
+		m_pSidecar->m_bNetUp = FALSE;
+		m_pSidecar->m_nNotify = 0;
+		m_pSidecar->m_NcmCtl.reset ();
+		return;
+	}
+	if (m_Role == RoleOut) ArmOut ();
+	else Kick ();
+}
+
+void CNcmEP::OnDeactivate (void)
+{
+	m_pSidecar->NetTrace (CSidecarGadget::TrDeactivate, m_nEP | (m_Role << 8), IsTransferActive ());
+	m_bActive = FALSE;
+	m_bBusy = FALSE;
+	m_bHeld = FALSE;
+	Stop ();
+}
+
+// what is armed stopped and waited for (ep_stop.h): CancelTransfer alone panics ("EP7 disabled") once the core has
+// disabled an armed bulk endpoint, as at a link change, a bus suspend and NetDetach
+void CNcmEP::Stop (void)
+{
+	if (!IsTransferActive ()) return;
+	m_pSidecar->NetTrace (CSidecarGadget::TrStop, m_nEP | (m_Role << 8));
+	ep_stop::stop (*this, m_nEP, m_Role != RoleOut);
+}
+
+void CNcmEP::OnResume (void)
+{
+	m_bResuming = TRUE;
+	m_Wake.wake (*this);
+	m_bResuming = FALSE;
+}
+
+void CNcmEP::Kick (void)
+{
+	if (!m_bActive || m_bBusy || m_Role == RoleOut) return;
+	unsigned n;
+	if (m_Role == RoleIn) n = m_pSidecar->m_bNetUp ? m_pSidecar->NetForHost (m_Buffer) : 0;
+	else n = m_pSidecar->NetNotification (m_Buffer);
+	if (n == 0) return;
+	m_pSidecar->NetTrace (CSidecarGadget::TrInArm, m_nEP | (m_Role << 8), n);
+	m_bBusy = TRUE;
+	BeginTransfer (TransferDataIn, m_Buffer, n);
+}
+
+void CNcmEP::ArmOut (void)
+{
+	const u32 nWhy = (!m_bActive ? 1 : 0) | (m_bBusy ? 2 : 0) | (m_bHeld ? 4 : 0) | (m_Role != RoleOut ? 8 : 0)
+			 | (!m_pSidecar->m_bNetUp ? 16 : 0) | (!m_pSidecar->m_bNetAttached ? 32 : 0);
+	m_pSidecar->NetTrace (CSidecarGadget::TrArmOut, m_nEP, nWhy);	// 0: armed, else why not
+	if (nWhy) return;
+	m_bBusy = TRUE;
+	BeginTransfer (TransferDataOut, m_Buffer, ncm::kNtbOutMax);
+}
+
+void CNcmEP::Halt (void)
+{
+	Stop ();
+	m_bBusy = FALSE;
+	m_bHeld = FALSE;
+	// SET_INTERFACE resets the host's data toggle: ours goes back to DATA0 too (the endpoint is disabled now)
+	if (m_Role == RoleNotify) return;
+	CDWHCIRegister Ctrl (m_Role == RoleIn ? DWHCI_DEV_IN_EP_CTRL (m_nEP) : DWHCI_DEV_OUT_EP_CTRL (m_nEP));
+	Ctrl.Read ();
+	Ctrl.And (~(DWHCI_DEV_EP_CTRL_EP_ENABLE | DWHCI_DEV_EP_CTRL_EP_DISABLE | DWHCI_DEV_EP_CTRL_CLEAR_NAK));	// (nothing armed)
+	Ctrl.Or (DWHCI_DEV_EP_CTRL_SETDPID_D0);
+	Ctrl.Write ();
+}
+
+void CNcmEP::Resume (void)
+{
+	if (!m_bHeld) return;
+	m_pSidecar->NetTrace (CSidecarGadget::TrResume, m_pSidecar->m_NetRx.free ());
+	m_bHeld = FALSE;
+	ArmOut ();
+}
+
+void CNcmEP::OnTransferComplete (boolean bIn, size_t nLength)
+{
+	m_bBusy = FALSE;
+	m_pSidecar->NetTrace (bIn ? CSidecarGadget::TrInDone : CSidecarGadget::TrOutDone, m_nEP | (m_Role << 8), nLength);
+	if (m_Role == RoleOut)
+	{
+		m_pSidecar->NetFromHost (m_Buffer, nLength);
+		// the reader (the network task) is behind: the computer's next block waits (NAKed) instead of being dropped
+		// (one block holds at most kOutMaxDatagrams, GET_NTB_PARAMETERS)
+		if (m_pSidecar->m_NetRx.free () < ncm::kOutMaxDatagrams)
+		{
+			m_bHeld = TRUE;
+			m_pSidecar->m_NetStats.nRxHeld++;
+			m_pSidecar->NetTrace (CSidecarGadget::TrHold, m_pSidecar->m_NetRx.free ());
+		}
+		else ArmOut ();
+		return;
+	}
+	if (m_Role == RoleIn) m_pSidecar->m_NetStats.nTxBlocks++;
+	Kick ();
+}
+
 // ---- the gadget ------------------------------------------------------------------------------------------------
 
 static const unsigned TonePeriod[CSidecarGadget::ChIn - 2] = {480, 400, 320, 300, 240, 200, 192, 160, 150, 128};
 
 CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
-	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
+	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0), m_pNetNotify (0), m_pNetIn (0), m_pNetOut (0), m_nConfig (0),
+	m_bNetWanted (FALSE), m_bNet (FALSE), m_bNetUp (FALSE), m_bNetAttached (TRUE), m_bNetLate (FALSE), m_bNetLateLogged (FALSE), m_bNetRxFlush (FALSE), m_uchNetAlt (0), m_nNotify (0), m_nNtbSeq (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_bMirror (FALSE),
-	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE), m_bUsbReboot (FALSE),
+	m_bMirror (FALSE), m_bMirUsed (FALSE),
+	m_bUsbReboot (FALSE),
 	m_nInHead (0), m_nInTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
@@ -319,14 +385,13 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_bWinStarted (FALSE), m_bWinRytm (FALSE), m_nWinUFrames (0), m_nLastFrameNo (0), m_nWinQ16 (0),
 	m_nFbBase (6 << 16),
 	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
-	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
+	m_nQuietSecs (0), m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
-	m_nOsUpdate = ModeFrom (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
-							   CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
+	m_Gate.SetMode (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
+						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 #ifdef CIRCLE_GADGET_MIRROR
-	m_bMirror = usb_mode::get () == usb_mode::kMirror;
 	memset (m_MirDev, 0, sizeof m_MirDev);
 	m_nMirCfg = 0;
 	memset (&m_MirLayout, 0, sizeof m_MirLayout);
@@ -364,7 +429,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_Ctl = mirror::Ctl ();
 	memset (&m_MirStats, 0, sizeof m_MirStats);
 #endif
-	UpdateOsPass ();
+	ApplyGate (m_ToRytmPath, m_Gate, FALSE);		// no IRQ yet
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
 	memset (m_nOutLast, 0, sizeof m_nOutLast);
@@ -373,8 +438,26 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (m_nCntFrq));
 	asm volatile ("mrs %0, cntpct_el0" : "=r" (m_nT0));
 	s_Device.idVendor = USB_GADGET_VENDOR_ID;
-	s_bStereo = CKernelOptions::Get ()->GetAppOptionDecimal ("uac2lr", 1) != 0;
-	BuildConfig (ChIn, ChOut, MaxIn, MaxOut, s_bStereo);
+	// the USB-C network (usbnet_cfg.h): in the device unless usbnet=off; an OVERBRIDGE boot drops it again in Start
+	m_bNetWanted = m_bNet = usbnet::parse_onoff (CKernelOptions::Get ()->GetAppOptionString ("usbnet"), true);
+#ifndef CIRCLE_GADGET_MIRROR
+	m_bNetWanted = m_bNet = FALSE;			// EP 7 IN + OUT on one number needs circle-gadget-mirror.patch
+#endif
+	m_NcmCtl.reset ();
+	memset (&m_NetStats, 0, sizeof m_NetStats);
+	memset (&m_NetLast, 0, sizeof m_NetLast);
+	m_nNetLogSecs = 0;
+	{
+		// the cable's two MACs from the board's serial number: stable per board, locally administered
+		u64 nSerial = 0;
+		CBcmPropertyTags Tags;
+		TPropertyTagSerial Serial;
+		if (Tags.GetTag (PROPTAG_GET_BOARD_SERIAL, &Serial, sizeof Serial))
+			nSerial = (u64) Serial.Serial[1] << 32 | Serial.Serial[0];
+		usbnet::macs (nSerial, m_NetPiMac, m_NetHostMac);
+		usbnet::mac_text (m_NetHostMac, m_NetHostMacText);
+	}
+	BuildDescriptor ();
 	for (unsigned c = 0; c < ChIn; c++)
 	{
 		m_nPhase[c] = 0;
@@ -395,7 +478,72 @@ boolean CSidecarGadget::Start (void)
 		CLogger::Get ()->Write (From, LogWarning, "usb=mirror (usbmidi=os:%s): the box's vendor requests and async channel "
 					"are relayed unfiltered; the OS-update filter covers MIDI only", OsUpdateName ());
 #endif
+	// the USB-C network only in CLASS COMPLIANT: an OVERBRIDGE boot shows the box itself soon (docs/usb-network.md); a later
+	// switch keeps what this boot built
+	if (m_bMirror && m_bNet)
+	{
+		m_bNet = FALSE;
+		BuildDescriptor ();
+	}
 	return Initialize ();				// usb=mirror too: the Sidecar device until the box has been read
+}
+
+boolean CSidecarGadget::MirrorBuilt (void)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+void CSidecarGadget::SetMirror (boolean bOn)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	if (bOn == m_bMirror) return;
+	m_bMirror = bOn;
+	if (bOn)
+	{
+		m_bMirUsed = TRUE;
+		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
+		return;
+	}
+	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
+	else if (m_bShowMirror)
+	{
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the mode is CLASS COMPLIANT: USB-C leaves the bus, back as the Sidecar device");
+		MirrorSwitch (FALSE);
+	}
+#else
+	(void) bOn;
+#endif
+}
+
+boolean CSidecarGadget::MirrorShown (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bShowMirror;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorBoxThere (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bMirBoxUp;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorSwitching (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bSwitching;
+#else
+	return FALSE;
+#endif
 }
 
 u64 CSidecarGadget::Now (void)
@@ -415,12 +563,18 @@ void CSidecarGadget::AddEndpoints (void)
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) { MirrorAddEndpoints (); return; }
 #endif
-	m_pIso[EPOut] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffOut], this, CSidecarIsoEP::RoleOut);
-	m_pIso[EPFeedback] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffFb], this,
+	m_pIso[EPOut] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.out], this, CSidecarIsoEP::RoleOut);
+	m_pIso[EPFeedback] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.fb], this,
 					       CSidecarIsoEP::RoleFeedback);
-	m_pIso[EPIn] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffIn], this, CSidecarIsoEP::RoleIn);
-	m_pMIDIOut = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffMIDIOut], this);
-	m_pMIDIIn = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) &s_Config[s_nOffMIDIIn], this);
+	m_pIso[EPIn] = new CSidecarIsoEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.in], this, CSidecarIsoEP::RoleIn);
+	m_pMIDIOut = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.midi_out], this);
+	m_pMIDIIn = new CSidecarMIDIEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.midi_in], this);
+	if (m_bNet)
+	{
+		m_pNetNotify = new CNcmEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.net.notify], this, CNcmEP::RoleNotify);
+		m_pNetIn = new CNcmEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.net.in], this, CNcmEP::RoleIn);
+		m_pNetOut = new CNcmEP ((const TUSBEndpointDescriptor *) &m_Config[m_Desc.net.out], this, CNcmEP::RoleOut);
+	}
 }
 
 void CSidecarGadget::OnSuspend (void)
@@ -429,11 +583,17 @@ void CSidecarGadget::OnSuspend (void)
 	// masked first: the xHCI IRQ reaches the endpoints through them (FromRytmMIDI, MirrorAudioIn)
 	CSidecarIsoEP *pIso[4];
 	CSidecarMIDIEP *pMIDIOut, *pMIDIIn;
+	CNcmEP *pNet[3];
 #ifdef CIRCLE_GADGET_MIRROR
 	CMirrorEP *pMir[mirror::kMaxEps];
 #endif
 	EnterCritical ();
 	HostUp (FALSE);
+	m_bNetUp = FALSE;				// the network's link goes with the configuration
+	m_uchNetAlt = 0;
+	m_nNotify = 0;
+	pNet[0] = m_pNetNotify; pNet[1] = m_pNetIn; pNet[2] = m_pNetOut;
+	m_pNetNotify = m_pNetIn = m_pNetOut = 0;
 	for (unsigned i = 0; i < 4; i++) { pIso[i] = m_pIso[i]; m_pIso[i] = 0; }
 	pMIDIOut = m_pMIDIOut;
 	pMIDIIn = m_pMIDIIn;
@@ -445,6 +605,7 @@ void CSidecarGadget::OnSuspend (void)
 	for (unsigned i = 1; i < 4; i++) delete pIso[i];
 	delete pMIDIOut;
 	delete pMIDIIn;
+	for (unsigned k = 0; k < 3; k++) delete pNet[k];
 #ifdef CIRCLE_GADGET_MIRROR
 	for (unsigned k = 0; k < mirror::kMaxEps; k++) delete pMir[k];
 #endif
@@ -455,6 +616,17 @@ int CSidecarGadget::OnClassOrVendorRequest (const TSetupData *pSetup, u8 *pData)
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) return -1;			// every one was deferred (OnControlRequest); this is a leftover: STALL
 #endif
+	// the USB-C network's requests (ncm_ntb.h): class, to the communication interface. A host-to-device one comes here
+	// after its status stage (Circle's EP0), so a refused value cannot STALL any more: it is left unchanged
+	if (m_bNet && (pSetup->bmRequestType & 0x7F) == 0x21 && (pSetup->wIndex & 0xFF) == sidecar_desc::kNetIface)
+	{
+		const boolean bIn = (pSetup->bmRequestType & REQUEST_IN) != 0;
+		int n = m_NcmCtl.request (pSetup->bmRequestType, pSetup->bRequest, pSetup->wValue, pSetup->wLength,
+					  bIn ? 0 : pData, bIn ? pData : 0);
+		if (n < 0) m_NetStats.nBadReq++;
+		else m_NetStats.nReq++;
+		return n;
+	}
 	if (!(pSetup->bmRequestType & REQUEST_IN)) return 0;		// SET CUR: one fixed rate, accepted
 	unsigned n = 0;
 	if ((pSetup->wIndex & 0xFF) == 0 && (pSetup->wIndex >> 8) == 0x10)
@@ -484,11 +656,18 @@ void CSidecarGadget::OutReset (void)
 
 boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 {
+	if (m_bNet) NetTrace (TrSetIntf, uchInterface, uchAlt);
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) return MirrorSetInterface (uchInterface, uchAlt);
 #endif
 	if (uchInterface == 0 || uchInterface == 3 || uchInterface == 4) return uchAlt == 0;
+	if (m_bNet && uchInterface == sidecar_desc::kNetIface) return uchAlt == 0;
 	if (uchAlt > (uchInterface == 2 && s_bStereo ? 2 : 1)) return FALSE;
+	if (m_bNet && uchInterface == sidecar_desc::kNetIface + 1)
+	{
+		NetSetAlt (uchAlt);
+		return TRUE;
+	}
 	if (uchInterface == 1)
 	{
 		m_uchOutAlt = uchAlt;
@@ -523,6 +702,8 @@ int CSidecarGadget::OnGetInterface (u8 uchInterface)
 #endif
 	if (uchInterface == 1) return m_uchOutAlt;
 	if (uchInterface == 2) return m_uchInAlt;
+	if (m_bNet && uchInterface == sidecar_desc::kNetIface + 1) return m_uchNetAlt;
+	if (m_bNet && uchInterface == sidecar_desc::kNetIface) return 0;
 	return uchInterface <= 4 ? 0 : -1;
 }
 
@@ -688,7 +869,7 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 	m_Stats.nInHist[n - (Nominal - 1)]++;
 	m_Stats.nInFrames += n;
 
-	const unsigned nCh = m_uchInAlt == 2 ? StereoCh : ChIn;	// alt 2: channels 1-2 of every frame
+	const unsigned nCh = m_uchInAlt == 2 ? kStereoCh : ChIn;	// alt 2: channels 1-2 of every frame
 	for (unsigned f = 0; f < n; f++)
 	{
 		if (m_bTest)
@@ -824,12 +1005,7 @@ void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 		if (pBuffer[i] == 0) continue;				// padding
 		m_Stats.nMidiFromHost++;
 		if (m_bUsbReboot) m_Reboot.Feed (pBuffer + i);		// the request is a host-link SysEx: dropped below
-		m_ToRytmFilter.Feed (pBuffer + i, [this] (const u8 *p)
-		{
-			u32 w;
-			memcpy (&w, p, 4);
-			if (!m_ToRytm.push (w)) m_Stats.nMidiFull++;
-		});
+		if (!m_ToRytmPath.FromHost (pBuffer + i)) m_Stats.nMidiFull++;
 	}
 }
 
@@ -858,29 +1034,57 @@ boolean CSidecarGadget::TakeReboot (void)
 	return TRUE;
 }
 
-unsigned CSidecarGadget::ModeFrom (unsigned nMode)
+// the filter's pass from m_Gate, in one step with the cut (both under the gadget IRQ's mask): no packet of the old
+// pass state's SysEx gets in between. bCut: everything on its way to the Rytm (or the emulator) is dropped - the queue,
+// the rest of the SysEx in the filter, the half-sent state - and a held OUT endpoint is re-armed (the queue is empty)
+void CSidecarGadget::UpdateOsPass (boolean bCut, const char *pWhy)
 {
-	return nMode == usbmidi_os::kOn ? OsUpdateRytm : nMode == usbmidi_os::kEmu ? OsUpdateEmu : OsUpdateOff;
-}
-
-const char *CSidecarGadget::OsUpdateName (void) const
-{
-	return usbmidi_os::name (m_nOsUpdate == OsUpdateRytm ? usbmidi_os::kOn : m_nOsUpdate == OsUpdateEmu ? usbmidi_os::kEmu
-										 : usbmidi_os::kOff);
-}
-
-void CSidecarGadget::UpdateOsPass (void)
-{
-	EnterCritical ();					// the filter runs in the gadget IRQ
-	m_ToRytmFilter.SetPassOsUpdate (OsPass ());
+	unsigned n = 0;
+	EnterCritical ();					// the filter and the queue's producer run in the gadget IRQ
+	n = ApplyGate (m_ToRytmPath, m_Gate, bCut);		// the pass turning on: a new start first (usbmidi_os_path.h)
+	if (bCut && m_pMIDIOut != 0) m_pMIDIOut->Resume ();
 	LeaveCritical ();
+	if (bCut) CLogger::Get ()->Write (From, LogNotice, "usbmidi=os: %s: the computer's MIDI on its way to the Rytm dropped (%u packets)",
+					  pWhy, n);
 }
 
+// a send of the computer's packets failed (the USB merge, the TCP link): they are gone
+void CSidecarGadget::ComputerSendFailed (void)
+{
+	OsLost (TRUE, "a send to the Rytm failed");
+}
+
+void CSidecarGadget::RytmMIDIConnected (boolean bOn)
+{
+	if (m_bRytmMIDI && !bOn) OsLost (FALSE, "the Rytm stopped taking MIDI");	// what waits is drained (Poll)
+	m_bRytmMIDI = bOn;
+}
+
+// usbmidi=os:, an upgrade under way and data lost on the way: rather than let the rest through with a hole in it, the
+// path is cut and OS messages are dropped until the computer has sent none for OsGate::kQuietUs (Poll), loudly
+void CSidecarGadget::OsLost (boolean bSendFailed, const char *pWhy)
+{
+	if (!m_Gate.Lost (bSendFailed, m_ToRytmPath.Busy (), m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))
+		return;
+	UpdateOsPass (TRUE, "an OS upgrade aborted");
+	CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: %s during it, part of the image is lost. "
+				"The Rytm did not get the whole OS: start the upgrade again (OS messages are dropped until the "
+				"computer stops sending them for %u s)", pWhy, OsGate::kQuietUs / 1000000);
+}
+
+// core 0's loop, at the switch itself (kernel.cpp UseLink, before the next Poll of either link)
 void CSidecarGadget::SetLinkTcp (boolean bTcp)
 {
-	if (bTcp == m_bLinkTcp) return;
-	m_bLinkTcp = bTcp;
-	UpdateOsPass ();
+	if (bTcp == m_Gate.Tcp ()) return;
+	boolean bCut = m_Gate.SetLink (bTcp);
+	// an upgrade under way is aborted (also with on, where the pass stays): the rest of the image meant for the old host
+	// never reaches the new one
+	boolean bAbort = m_Gate.Switched (bCut, m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ());
+	UpdateOsPass (bCut, bAbort ? "an OS upgrade aborted" : "a host switch");	// the emulator's image never reaches the Rytm
+	if (bAbort)
+		CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: the host switched during it. Neither host "
+					"got the whole OS: start the upgrade again (OS messages are dropped until the computer stops "
+					"sending them for %u s)", OsGate::kQuietUs / 1000000);
 	if (OsUpdate ())		// another source for the computer: half a SysEx of the old one never lands before the new one's
 	{
 		EnterCritical ();
@@ -892,18 +1096,15 @@ void CSidecarGadget::SetLinkTcp (boolean bTcp)
 				OsPass () ? "pass" : "are dropped", bTcp ? "the emulator" : "USB");
 }
 
-// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
+// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (MidiFilter::kHoldPackets)
 boolean CSidecarGadget::ToRytmRoom (void) const
 {
-	return m_ToRytm.size () + 512 / 4 + 3 <= MIDIQueue;
+	return m_ToRytmPath.Room (CSidecarMIDIEP::BufSize / 4);
 }
 
 boolean CSidecarGadget::ForRytm (u32 *pPacket)
 {
-	if (!m_ToRytm.pop (pPacket)) return FALSE;
-	u8 cin = *pPacket & 0x0F, b1 = (*pPacket >> 8) & 0xFF;
-	if (cin == 0x4 && b1 == 0xF0) m_bToRytmSysEx = TRUE;
-	else if (cin == 0x5 || cin == 0x6 || cin == 0x7) { if (m_bToRytmSysEx || b1 == 0xF7) m_bToRytmSysEx = FALSE; }
+	if (!m_ToRytmPath.Pop (pPacket)) return FALSE;
 	m_Stats.nMidiToRytm++;
 	return TRUE;
 }
@@ -911,10 +1112,25 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 #ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror) MirrorPoll ();
+	if (m_bMirUsed) MirrorPoll ();
 #endif
 	UpdatePlugAndPlay ();
-	if (OsUpdate () && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
+	NetTraceDump ();
+	if (m_bNetLate && !m_bNetLateLogged)
+	{
+		m_bNetLateLogged = TRUE;
+		CLogger::Get ()->Write (From, LogWarning, "usbnet: a computer started its USB-C network after the boot chose "
+					"Wi-Fi or Ethernet (a Mac locked at first connection?): reboot the Sidecar to use it "
+					"(cmdline net=usb forces it)");
+	}
+	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
+	{
+		UpdateOsPass (FALSE, 0);		// the pass on again: from a new start (ApplyGate)
+		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one, from a new start",
+					OsUpdateName (), OsPass () ? "pass" : "are dropped");
+	}
+	// a held OUT endpoint: re-armed when there is room, or at once when the setting is off (turned off while held)
+	if (m_pMIDIOut != 0 && m_Gate.Resume (m_pMIDIOut->Held (), ToRytmRoom ()))
 	{
 		EnterCritical ();
 		m_pMIDIOut->Resume ();
@@ -960,10 +1176,9 @@ boolean CSidecarGadget::Command (const char *p)
 		if (n == usbmidi_os::kInvalid) L->Write (From, LogWarning, "usbmidi=os:on|off|emu, not \"%s\"", p);
 		else
 		{
-			m_nOsUpdate = ModeFrom (n);
-			UpdateOsPass ();
+			UpdateOsPass (m_Gate.SetMode (n), "the setting");	// the pass off: nothing of an upgrade goes on
 			L->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s (host: %s)", OsUpdateName (),
-				  OsPass () ? "pass" : "are dropped", m_bLinkTcp ? "the emulator" : "USB");
+				  OsPass () ? "pass" : "are dropped", m_Gate.Tcp () ? "the emulator" : "USB");
 		}
 		return TRUE;
 	}
@@ -974,11 +1189,256 @@ boolean CSidecarGadget::Command (const char *p)
 	return TRUE;
 }
 
+// ---- the USB-C network: the gadget's side ------------------------------------------------------------------------
+
+// SET_INTERFACE on the data interface (gadget IRQ): alt 1 the computer's driver took the link, alt 0 it let it go. Either
+// way the NTB parameters go back to their defaults (NCM 1.0 7.2) and what was queued is dropped
+void CSidecarGadget::NetSetAlt (u8 uchAlt)
+{
+	if (m_pNetIn) m_pNetIn->Halt ();
+	if (m_pNetOut) m_pNetOut->Halt ();
+	m_uchNetAlt = uchAlt;
+	m_bNetUp = uchAlt != 0;
+	if (!uchAlt) m_NcmCtl.reset ();		// NCM 1.0 7.2: at alt 0 (a size set before alt 1 is kept)
+	m_nNtbSeq = 0;
+	m_NetTx.drain ();				// this side reads it
+	m_bNetRxFlush = TRUE;				// the network task reads that one: it drops it (NetReceive)
+	if (!uchAlt)
+	{
+		m_nNotify = 0;
+		return;
+	}
+	m_NetStats.nUps++;
+	if (!m_bNetAttached) m_bNetLate = TRUE;		// told "not connected" below; Poll logs it once
+	m_nNotify = 2;					// the speed, then "connected"
+	if (m_pNetNotify) m_pNetNotify->Kick ();
+	if (m_pNetOut) m_pNetOut->ArmOut ();
+	if (m_pNetIn) m_pNetIn->Kick ();
+}
+
+unsigned CSidecarGadget::NetNotification (u8 *pBuffer)
+{
+	if (m_nNotify == 2)
+	{
+		m_nNotify = 1;
+		return ncm::notify_speed (pBuffer, sidecar_desc::kNetIface, 480000000);	// high speed
+	}
+	if (m_nNotify == 1)
+	{
+		m_nNotify = 0;
+		return ncm::notify_connection (pBuffer, sidecar_desc::kNetIface, m_bNetUp && m_bNetAttached);
+	}
+	return 0;
+}
+
+// an OUT block (gadget IRQ): its datagrams into the reader's queue; a malformed block is dropped whole, counted
+void CSidecarGadget::NetFromHost (const u8 *pBlock, size_t nLength)
+{
+	m_NetStats.nRxBlocks++;
+	ncm::ParseStats St;
+	ncm::Parse r = ncm::parse16 (pBlock, nLength, ncm::kOutMaxDatagrams,
+		[this] (const u8 *pFrame, unsigned nFrame)
+		{
+			if (m_NetRx.push (pFrame, nFrame)) m_NetStats.nRxFrames++;
+			else m_NetStats.nRxDrop++;
+		}, &St);
+	if (r != ncm::kOk) m_NetStats.nRxRefused++;
+	m_NetStats.nRxBad += St.bad;
+	NetTrace (TrOutDone, 0x100 | r, St.datagrams | St.bad << 16);	// (ep 0: the parse) result, datagrams, bad
+}
+
+// the next IN block (gadget IRQ, or IRQs masked): as many queued frames as fit the size the computer asked for
+unsigned CSidecarGadget::NetForHost (u8 *pBuffer)
+{
+	if (m_NetTx.used () == 0) return 0;
+	size_t nCap = m_NcmCtl.ntb_in_size ();
+	if (nCap > ncm::kNtbInMax) nCap = ncm::kNtbInMax;
+	m_NtbBuild.begin (pBuffer, nCap, m_nNtbSeq++);
+	const u8 *p;
+	unsigned n;
+	while (m_NetTx.peek (&p, &n))
+	{
+		if (!m_NtbBuild.add (p, n))
+		{
+			if (m_NtbBuild.count () != 0) break;	// the next block
+			m_NetTx.release ();			// fits no block (cannot happen: 1514 < 2048): dropped
+			continue;
+		}
+		m_NetTx.release ();
+		m_NetStats.nTxFrames++;
+	}
+	return m_NtbBuild.count () ? m_NtbBuild.finish () : 0;
+}
+
+// one Ethernet frame to the computer (the network task)
+boolean CSidecarGadget::NetSend (const void *pFrame, unsigned nLength)
+{
+	if (!m_bNetUp)
+	{
+		m_NetStats.nTxDown++;
+		return FALSE;
+	}
+	if (!m_NetTx.push ((const u8 *) pFrame, nLength)) return FALSE;
+	EnterCritical ();
+	if (m_pNetIn) m_pNetIn->Kick ();
+	LeaveCritical ();
+	return TRUE;
+}
+
+// one Ethernet frame from the computer (the network task); a held OUT endpoint is armed again once there is room
+boolean CSidecarGadget::NetReceive (void *pBuffer, unsigned *pLength)
+{
+	if (m_bNetRxFlush)
+	{
+		m_bNetRxFlush = FALSE;
+		m_NetRx.drain ();
+	}
+	const u8 *p;
+	unsigned n;
+	const boolean bGot = m_NetRx.peek (&p, &n);
+	if (bGot)
+	{
+		memcpy (pBuffer, p, n);
+		*pLength = n;
+		m_NetRx.release ();
+		m_nNetRecv++;
+	}
+	// a held OUT endpoint is armed again whenever there is room, also after a drain or with the queue empty
+	if (m_NetRx.free () >= ncm::kOutMaxDatagrams)
+	{
+		EnterCritical ();
+		if (m_pNetOut && m_pNetOut->Held ()) m_pNetOut->Resume ();
+		LeaveCritical ();
+	}
+	return bGot;
+}
+
+// M4: a frame goes only while the link is up, the stack is on USB-C and the bus is not suspended (the IN endpoint is
+// deactivated then): otherwise the net device drops it, so nothing piles up while the computer sleeps
+boolean CSidecarGadget::NetLive (void)
+{
+	EnterCritical ();
+	boolean b = m_bNetUp && m_bNetAttached && m_pNetIn != 0 && m_pNetIn->Active ();
+	LeaveCritical ();
+	return b;
+}
+
+// the boot chose Wi-Fi or Ethernet: the function stays in the device (removing it would replug USB-C), but the
+// computer is told the cable is not connected and nothing it sends is taken
+void CSidecarGadget::NetDetach (void)
+{
+	EnterCritical ();
+	NetTrace (TrDetach, m_bNetUp);
+	m_bNetAttached = FALSE;
+	if (m_pNetOut) m_pNetOut->Halt ();
+	m_NetTx.drain ();
+	m_bNetRxFlush = TRUE;
+	if (m_bNetUp)
+	{
+		m_nNotify = 1;				// "not connected"
+		if (m_pNetNotify) m_pNetNotify->Kick ();
+	}
+	LeaveCritical ();
+}
+
+// the frame number of the last start-of-frame (DSTS bits 8..21): it moves while a computer drives the bus
+unsigned CSidecarGadget::BusFrame (void) const
+{
+	return (CDWHCIRegister (DWHCI_DEV_STS).Read () >> 8) & 0x3FFF;
+}
+
+void CSidecarGadget::NetLogStats (CLogger *pLogger)
+{
+	if (!m_bNet) return;
+	EnterCritical ();
+	TNetStats s = m_NetStats;
+	LeaveCritical ();
+	const boolean bWrong = s.nRxBad != m_NetLast.nRxBad || s.nRxRefused != m_NetLast.nRxRefused
+			       || s.nRxDrop != m_NetLast.nRxDrop || s.nBadReq != m_NetLast.nBadReq || s.nUps != m_NetLast.nUps;
+	const boolean bTime = m_bNetUp && ++m_nNetLogSecs >= 10;
+	if (!bWrong && !bTime) return;
+	m_nNetLogSecs = 0;
+	m_NetLast = s;
+	pLogger->Write (From, LogNotice,
+		"usbnet %s (ups %u) | from computer %u blocks %u frames bad %u refused %u drop %u held %u | "
+		"to computer %u blocks %u frames down %u | ntb in %u | req %u bad %u",
+		m_bNetUp ? "up" : "down", s.nUps, s.nRxBlocks, s.nRxFrames, s.nRxBad, s.nRxRefused, s.nRxDrop, s.nRxHeld,
+		s.nTxBlocks, s.nTxFrames, s.nTxDown, m_NcmCtl.ntb_in_size (), s.nReq, s.nBadReq);
+}
+
+void CSidecarGadget::NetTrace (u8 uchCode, u32 a, u32 b)
+{
+	if (m_nNetTraced >= kNetTraceMax) return;
+	m_nNetTraced++;
+	const unsigned h = m_nNetTraceHead;
+	if (h - m_nNetTraceTail >= NetTraceSize) { m_nNetTraceLost++; return; }
+	TNetEvent &e = m_NetTrace[h % NetTraceSize];
+	e.nUs = CTimer::GetClockTicks ();
+	e.uchCode = uchCode;
+	e.a = a;
+	e.b = b;
+	__atomic_store_n (&m_nNetTraceHead, h + 1, __ATOMIC_RELEASE);
+}
+
+// core 0's loop: the events so far, then (for 60 s after the first SET_INTERFACE of the network) a line a second with
+// the network endpoints' registers and counters. Each line flushed as it goes: what came last before a hang is in the log
+void CSidecarGadget::NetTraceDump (void)
+{
+	static const char *const Names[] = {"?", "set_interface", "arm_out", "out_done", "in_arm", "in_done", "stop",
+					    "activate", "deactivate", "hold", "detach", "resume"};
+	if (!m_bNet) return;
+	for (;;)
+	{
+		EnterCritical ();
+		const unsigned h = __atomic_load_n (&m_nNetTraceHead, __ATOMIC_ACQUIRE);
+		boolean bAny = m_nNetTraceTail != h;
+		TNetEvent e = m_NetTrace[m_nNetTraceTail % NetTraceSize];
+		unsigned nLost = m_nNetTraceLost;
+		m_nNetTraceLost = 0;
+		if (bAny) m_nNetTraceTail++;
+		LeaveCritical ();
+		if (nLost) CLogger::Get ()->Write (From, LogNotice, "usbnet trace: %u events lost (ring full)", nLost);
+		if (!bAny) break;
+		if (m_nNetTraceT0 == 0 && e.uchCode == TrSetIntf) m_nNetTraceT0 = e.nUs ? e.nUs : 1;
+		CLogger::Get ()->Write (From, LogNotice, "usbnet trace %u us: %s 0x%X 0x%X", e.nUs,
+					e.uchCode < sizeof Names / sizeof Names[0] ? Names[e.uchCode] : "?", e.a, e.b);
+	}
+	if (m_nNetTraceT0 == 0) return;
+	const u32 nNow = CTimer::GetClockTicks ();
+	if (nNow - m_nNetTraceT0 > 60000000u || nNow - m_nNetTraceLastSec < 1000000u) return;
+	m_nNetTraceLastSec = nNow;
+	EnterCritical ();
+	TNetStats st = m_NetStats;
+	const unsigned nRecv = m_nNetRecv, nRxUsed = m_NetRx.used (), nTxUsed = m_NetTx.used ();
+	const boolean bUp = m_bNetUp, bAtt = m_bNetAttached;
+	const boolean bOutBusy = m_pNetOut != 0 && m_pNetOut->IsBusy (), bOutAct = m_pNetOut != 0 && m_pNetOut->Active ();
+	const boolean bInBusy = m_pNetIn != 0 && m_pNetIn->IsBusy ();
+	LeaveCritical ();
+	const unsigned nOut = sidecar_desc::kEpNetOut & 0x0F, nIn = sidecar_desc::kEpNetIn & 0x0F;
+	CLogger::Get ()->Write (From, LogNotice,
+		"usbnet regs %u ms: up %u att %u out act %u busy %u in busy %u | DOEPCTL %08X DOEPINT %08X DOEPTSIZ %08X DOEPDMA %08X | "
+		"DIEPCTL %08X DIEPINT %08X DIEPTSIZ %08X | GINTSTS %08X GINTMSK %08X DCTL %08X DAINTMSK %08X | rx blocks %u frames %u "
+		"recv %u ring %u | tx frames %u blocks %u ring %u", (nNow - m_nNetTraceT0) / 1000, bUp, bAtt, bOutAct, bOutBusy, bInBusy,
+		CDWHCIRegister (DWHCI_DEV_OUT_EP_CTRL (nOut)).Read (), CDWHCIRegister (DWHCI_DEV_OUT_EP_INT (nOut)).Read (),
+		CDWHCIRegister (DWHCI_DEV_OUT_EP_XFER_SIZ (nOut)).Read (), CDWHCIRegister (DWHCI_DEV_OUT_EP_DMA_ADDR (nOut)).Read (),
+		CDWHCIRegister (DWHCI_DEV_IN_EP_CTRL (nIn)).Read (), CDWHCIRegister (DWHCI_DEV_IN_EP_INT (nIn)).Read (),
+		CDWHCIRegister (DWHCI_DEV_IN_EP_XFER_SIZ (nIn)).Read (), CDWHCIRegister (DWHCI_CORE_INT_STAT).Read (),
+		CDWHCIRegister (DWHCI_CORE_INT_MASK).Read (), CDWHCIRegister (DWHCI_DEV_CTRL).Read (),
+		CDWHCIRegister (DWHCI_DEV_ALL_EPS_INT_MASK).Read (), st.nRxBlocks, st.nRxFrames, nRecv, nRxUsed, st.nTxFrames,
+		st.nTxBlocks, nTxUsed);
+}
+
 void CSidecarGadget::LogStats (CLogger *pLogger)
 {
+	NetLogStats (pLogger);
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) { MirrorLogStats (pLogger); return; }
 #endif
+	// No computer on USB-C (none has configured the device, no stream, no test source): a line a minute, not a second.
+	// A Pi on a plain power supply never sees a USB reset (the Pi 5's USB-C is its power input too), so this is its
+	// normal state; the counters below simply cover the whole minute.
+	if (!m_ToHost.IsUp () && !m_uchOutAlt && !m_uchInAlt && !m_bTest && ++m_nQuietSecs < 60) return;
+	m_nQuietSecs = 0;
 	unsigned nIRQs;
 	u64 nTicks, nNow = Now ();
 	GetIRQStats (&nIRQs, &nTicks);
@@ -1051,9 +1511,10 @@ CMirrorEP::CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget)
 
 void CMirrorEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
-	m_bBusy = FALSE;
-	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
+	m_bBusy = FALSE;				// (IN: the held packet went back to the box at the deactivation)
+	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) m_Out.arm (*this);	// not while the box owns one
 	else Kick ();
 }
 
@@ -1061,16 +1522,20 @@ void CMirrorEP::OnDeactivate (void)
 {
 	boolean bHeld = m_bBusy;
 	m_bActive = FALSE;
-	m_bBusy = FALSE;
-	CancelTransfer ();
+	m_bBusy = FALSE;				// pipe OUT: the box's ownership stays (m_Out)
+	mirror::cancel (*this);				// isochronous: stopped and waited for (mirror_ep.h)
 	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
 }
 
-// OUT: the next packet (whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer)
+// OUT: the box took the last packet (or it was dropped): the next one, when active (mirror_ep.h OutGate)
 void CMirrorEP::Rearm (void)
 {
-	if (!m_bActive) return;
-	m_bBusy = FALSE;
+	m_Out.done (*this);
+}
+
+// whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer
+void CMirrorEP::ArmOut (void)
+{
 	BeginTransfer (TransferDataOut, m_Buffer, (m_nMps + 3) & ~3u);
 }
 
@@ -1109,7 +1574,7 @@ void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
 		Rearm ();
 		break;
 	case mirror::kPipeOut:
-		m_bBusy = TRUE;					// NAKed until the box took it (MirrorPipeOutDone)
+		m_Out.taken ();					// NAKed until the box took it (MirrorPipeOutDone)
 		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
 		break;
 	case mirror::kPipeIn:
@@ -1301,12 +1766,12 @@ void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
 	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
 	// The offset is set again when this block would be due in a block the Pi has already sent (the computer's stream
-	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the queue holds (the Pi's
-	// counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
+	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the margin plus the queue
+	// (the Pi's counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
 	// from counter 0, so MirrorBoxUp sets it again too: kept, the old offset left the computer's bytes due up to a
 	// whole counter wrap (about 1.4 s) ahead, and they were lost (T141 [hw]: lost 1126, late 128 after a replug).
 	u16 nComp = ob::block_counter (p), nPi = CObUsb::OutCounter ();
-	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi))
+	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi, m_nExtraMargin))
 	{
 		if ((s16) (u16) (nComp + m_nExtraOff - nPi) > 0) m_MirExtra.flush ();	// queued under a counter that went back
 		m_bExtraOff = FALSE;
@@ -1363,7 +1828,7 @@ int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutDa
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
 	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
 		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
-	m_Ctl.request ();
+	(void) m_Ctl.request ();			// true: pending was checked above (the setup is copied before it is published)
 	m_MirStats.nCtl++;
 	return ControlDeferred;
 }
@@ -1409,7 +1874,7 @@ void CSidecarGadget::MirrorPoll (void)
 	{
 		if (nNow - m_nSwitchAt < m_nCntFrq * 3 / 10) return;
 		EnterCritical ();
-		m_bShowMirror = m_bSwitchTo && m_bMirHave;
+		m_bShowMirror = m_bSwitchTo && m_bMirHave && m_bMirror;
 		m_uchOutAlt = m_uchInAlt = 0;
 		OutReset ();
 		memset (m_MirAlt, 0, sizeof m_MirAlt);
@@ -1426,7 +1891,8 @@ void CSidecarGadget::MirrorPoll (void)
 		return;
 	}
 	boolean bWant = m_bShowMirror;
-	if (m_bMirBoxUp) bWant = TRUE;
+	if (!m_bMirror) bWant = FALSE;			// the mode is CLASS COMPLIANT (SetMirror switched already: a leftover)
+	else if (m_bMirBoxUp) bWant = TRUE;
 	else if (m_bShowMirror && nNow - m_nBoxGoneAt >= (u64) m_nHoldSecs * m_nCntFrq) bWant = FALSE;
 	if (bWant != m_bShowMirror)
 	{
@@ -1462,6 +1928,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	u8 Last[MidiFilter::kHead];
 	int nLast = m_ToRytmFilter.LastDropped (Last);
 	LeaveCritical ();
+#ifdef CIRCLE_GADGET_STRAY				// circle-gadget-stray.patch: completions with no transfer armed
+	unsigned nStray = CDWUSBGadgetEndpoint::GetStrayCount (), nSetupAborts = CDWUSBGadgetEndpoint0::GetSetupAbortCount ();
+#else
+	unsigned nStray = 0, nSetupAborts = 0;
+#endif
 	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
 	for (int i = 0; i < nLast; i++)
 	{
@@ -1471,11 +1942,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	}
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
-		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u | alt bad %u | "
+		"ctl %u stall %u abort %u (setup %u) late %u stray %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
 		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
-		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), s.nAltBad,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, nSetupAborts, s.nCtlLate, nStray,
+		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
 }

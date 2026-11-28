@@ -93,8 +93,13 @@ grep -q circle-midi-async $T/include/circle/usb/usbmidi.h || (cd $T && patch -p1
 # the USB-C gadget (pi/circle/circle-gadget.patch: IRQ stats, the MIDI device accessor, isochronous endpoints;
 # idempotent, also on a tree made before it), then its library (up to date: nothing to do)
 cd $T
-if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: both patches, again when either changed (the patched files back from the clean tree first)
-  P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
+if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: all the patches, again when one changed (the patched files back from the clean tree first)
+  # usb=mirror (docs/usb-mirror.md) on the Pi 5 too, in testing for 0.4.2: the same DWC2 core and driver as the Pi 4 with
+  # circle-pi5-gadget.patch on top, so circle-gadget-mirror.patch, -softconnect.patch and -stray.patch go on unchanged
+  # after circle-gadget-reset.patch, in the Pi 4 order, and CIRCLE_GADGET_MIRROR is defined here. A tree patched before
+  # (0.4.1 without them, or an older version of one) has a different sum: every patched file back clean, then all of PP
+  P=/repo/pi/circle; PP="$P/circle-gadget.patch $P/circle-gadget-wake.patch $P/circle-pi5-gadget.patch $P/circle-gadget-reset.patch"
+  PP="$PP $P/circle-gadget-mirror.patch $P/circle-gadget-softconnect.patch $P/circle-gadget-stray.patch"; S=$(cat $PP $P/gadget_wake.h $P/gadget_flush.h | md5sum)
   if [ "$(cat .pi5-gadget-sum 2>/dev/null)" != "$S" ]; then
     for f in $(cat $PP | sed -n "s,^+++ b/,,p" | sort -u); do cp /repo/pi/circle/build/circle/$f $f; done
     cp $P/gadget_wake.h include/circle/usb/gadget/gadgetwake.h
@@ -103,7 +108,7 @@ if [ "$P5G" = 1 ]; then	# Pi 5, PI5_GADGET=1: both patches, again when either ch
     echo "$S" > .pi5-gadget-sum
   fi
   make -C lib/usb/gadget -j$J >/dev/null
-elif [ "$R" = 4 ]; then	# Pi 5 without PI5_GADGET: no gadget (docs/pi5.md)
+elif [ "$R" = 4 ]; then	# the Pi 4 (a Pi 5 with PI5_GADGET=0: no gadget, docs/pi5.md)
   grep -q GetIRQStats include/circle/usb/gadget/dwusbgadget.h || patch -p1 < /repo/pi/circle/circle-gadget.patch
   # then the bus resume (circle-gadget-wake.patch: its own file and marker, as circle-hid-reenum2.patch; idempotent)
   cmp -s /repo/pi/circle/gadget_wake.h include/circle/usb/gadget/gadgetwake.h || cp /repo/pi/circle/gadget_wake.h include/circle/usb/gadget/gadgetwake.h
@@ -118,6 +123,16 @@ elif [ "$R" = 4 ]; then	# Pi 5 without PI5_GADGET: no gadget (docs/pi5.md)
   # then leaving the bus and coming back as a replug (pi/circle/circle-gadget-softconnect.patch): usb=mirror switches
   # between the box and the Sidecar device when the box comes and goes; its own file and marker; idempotent
   grep -q circle-gadget-softconnect lib/usb/gadget/dwusbgadget.cpp || patch -p1 < /repo/pi/circle/circle-gadget-softconnect.patch
+  # then a SETUP that comes while EP0 waits for a deferred answer (nothing armed) is read back from where the core
+  # wrote it instead of asserted, and a completion with no transfer armed is counted and ignored; nothing else of
+  # the EP0 or endpoint flow of Circle changes (pi/circle/circle-gadget-stray.patch: the Pi 4 crashed so at a live switch,
+  # 2026-11-06; tests/test_gadget_ep0.cpp); its own marker; idempotent
+  # (a tree patched with an earlier version of it - the one of 0.4.1 rc5, which broke the data endpoints - is refused: the marker
+  # would keep it; build from a fresh Circle copy)
+  if grep -q circle-gadget-stray lib/usb/gadget/dwusbgadgetendpoint.cpp && ! grep -q FindStraySetup lib/usb/gadget/dwusbgadgetendpoint0.cpp; then
+    echo "circle-gadget-stray.patch: this Circle tree has an earlier version (0.4.1 rc5): build from a fresh Circle copy"; exit 1
+  fi
+  grep -q circle-gadget-stray lib/usb/gadget/dwusbgadgetendpoint.cpp || patch -p1 < /repo/pi/circle/circle-gadget-stray.patch
   make -C lib/usb/gadget -j$J >/dev/null
 fi
 # f_expand in FatFs (pi/circle/circle-fatfs-expand.patch: FF_USE_EXPAND 1 - the recorder reserves the space of each
@@ -136,6 +151,19 @@ grep -q circle-http-origin include/circle/net/httpdaemon.h || patch -p1 < /repo/
 # and the X-Sidecar-Auth header (pi/circle/circle-http-auth.patch: the pairing code'"'"'s session token, paircode.h; after
 # circle-http-origin.patch, idempotent). web.cpp calls GetRequestAuth(), so a tree without this patch does not build.
 grep -q circle-http-auth include/circle/net/httpdaemon.h || patch -p1 < /repo/pi/circle/circle-http-auth.patch
+# then the header names case-insensitive (pi/circle/circle-http-case.patch: Content-Type and Content-Length; Chrome sends
+# "content-type" for a fetch() with a Headers object, and the form was then not read: /cmd refused every paired change;
+# after circle-http-auth.patch, idempotent)
+grep -q circle-http-case lib/net/httpdaemon.cpp || patch -p1 < /repo/pi/circle/circle-http-case.patch
+# then the WebSocket upgrade (pi/circle/circle-http-ws.patch: the Upgrade / Sec-WebSocket-* headers and the
+# UpgradeConnection hook that hands the socket to web_ws.cpp, docs/web-ws.md; after circle-http-case.patch, idempotent).
+# web.cpp overrides UpgradeConnection, so a tree without this patch does not build.
+grep -q circle-http-ws include/circle/net/httpdaemon.h || patch -p1 < /repo/pi/circle/circle-http-ws.patch
+# the slot of a connection is freed only after its CSocket gave the handle up (pi/circle/circle-net-release.patch: before,
+# a connection reset by its peer was freed at once, the next Listen took its slot, and a late Disconnect by the old owner
+# closed that listener - the next segment to its port asserted m_bValid in ipaddress.cpp; after circle-http-ws.patch, which
+# touches netconnection.h too; idempotent)
+grep -q circle-net-release include/circle/net/netconnection.h || patch -p1 < /repo/pi/circle/circle-net-release.patch
 make -C lib/net -j$J >/dev/null
 # the HID endpoint recovery and diagnostics (pi/circle/circle-hid.patch: a halted xHCI interrupt endpoint is reset
 # and resubmitted from the main loop; counters for the display log line; idempotent), then lib/usb
@@ -176,27 +204,47 @@ grep -q circle-usbdevicefactory2 lib/usb/usbdevicefactory.cpp || patch -p1 < /re
 # a device that drops off USB and comes back before the change is handled (the Rytm rebooting after an OS update) is
 # enumerated again (pi/circle/circle-replug.patch: the hub and xHCI root port; idempotent)
 grep -q circle-replug lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-replug.patch
+# then a failed enumeration tried again (pi/circle/circle-address-retry.patch: Cannot set device address after a pull and
+# replug left the port dead until a reboot; twice more, each with a port reset, a fresh slot and 200 ms, only after a fast
+# failure; a hub port given up on is disabled and skipped by rescans until a replug; hub and xHCI root port; after
+# circle-replug, idempotent). A tree patched by its first build (ba8a58d, no m_bPortGivenUp) cannot take it: stop and say so
+if ! grep -q circle-address-retry lib/usb/usbstandardhub.cpp; then
+  patch -p1 < /repo/pi/circle/circle-address-retry.patch
+elif ! grep -q m_bPortGivenUp lib/usb/usbstandardhub.cpp; then
+  echo "$T: an unreleased circle-address-retry (ba8a58d) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1
+fi
+# the queued URBs of a halted xHCI endpoint dropped after its reset (pi/circle/circle-xhci-dropurbs.patch: CObUsb::PollHalt, the
+# Overbridge OUT after a transfer error); idempotent
+grep -q circle-xhci-dropurbs include/circle/usb/xhciendpoint.h || patch -p1 < /repo/pi/circle/circle-xhci-dropurbs.patch
+# then the USB MIDI bulk OUT of the Rytm reset when a transfer error halted it (pi/circle/circle-midi-reset.patch: CUSBMIDIDevice
+# ResetOutHalted, after circle-midi-async.patch and the dropurbs one; CObUsbTransport::Poll); idempotent
+grep -q circle-midi-reset include/circle/usb/usbmidi.h || patch -p1 < /repo/pi/circle/circle-midi-reset.patch
+# then v2 (pi/circle/circle-midi-reset2.patch: CLEAR_FEATURE(ENDPOINT_HALT) to the Rytm before the reset, the state read after it,
+# OutHalted). A tree patched by the unreleased 8f5c3ab build of circle-midi-reset (ENDPOINT_HALT already in usbmidihost.cpp, no v2
+# marker) cannot take it: stop and say so. Idempotent
+if ! grep -q circle-midi-reset2 include/circle/usb/usbmidi.h; then
+  if grep -q ENDPOINT_HALT lib/usb/usbmidihost.cpp; then echo "$T: an unreleased circle-midi-reset (8f5c3ab) is in this Circle tree: remove the tree and build again (a fresh copy)"; exit 1; fi
+  patch -p1 < /repo/pi/circle/circle-midi-reset2.patch
+fi
 # the hub'"'"'s status-change request is armed again after an error (pi/circle/circle-hub-rearm.patch: Circle dropped it on
-# any xHCI error and the hub reported no port change until a reboot - T103, a Rytm OS update whose re-attach was never
-# seen; the endpoint is reset, every port read, the request re-armed and a line logged; after circle-replug, idempotent)
+# any xHCI error, and the hub reported no port change until a reboot - a Rytm restarting after an OS update was never
+# seen again; the xHCI endpoint is reset and the request re-armed from a timer, nothing is sent to the hub; after
+# circle-replug, idempotent)
 grep -q circle-hub-rearm lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm.patch
-# then the recovery from a rate-limited kernel timer (circle-hub-rearm2.patch: v1 asked for it from the completion, so a
-# request that failed again at once kept UpdatePlugAndPlay'"'"'s loop going until the watchdog rebooted the Pi - v6.3, flash 1;
-# its own file and marker, as -reenum2; idempotent)
-grep -q circle-hub-rearm2 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
-# then a recovery that sends nothing to the hub (circle-hub-rearm3.patch: v2 cleared the halt on the hub and read every
-# port at once, synchronously, and a failed port read is a LogPanic - likely the Pi reboots of v6.3/v6.4; 250 ms first;
-# its own file and marker; idempotent)
-grep -q circle-hub-rearm3 include/circle/usb/usbstandardhub.h || patch -p1 < /repo/pi/circle/circle-hub-rearm3.patch
+# a hub that is deleted drops the port-status events it queued, and its recovery timer is cancelled with IRQs off
+# (pi/circle/circle-hub-rearm2.patch: the recovery of an unplugged hub could otherwise leave an event for freed memory;
+# after circle-hub-rearm, idempotent)
+grep -q circle-hub-rearm2 lib/usb/usbhostcontroller.cpp || patch -p1 < /repo/pi/circle/circle-hub-rearm2.patch
+# then no USB request leaked when a device leaves (pi/circle/circle-usb-urb-free.patch: the USB MIDI host'"'"'s IN and OUT
+# URBs in flight are freed with the device, as ob_usb.cpp and ob_follow.cpp now free their own; and CUSBRequest counts its
+# instances for /status usbreq: Circle'"'"'s allocator holds 256 and its LogPanic past that rebooted the Pi after ~15 Rytm
+# restarts on one boot; after circle-midi-reset2, idempotent)
+grep -q circle-usb-urb-free include/circle/usb/usbrequest.h || patch -p1 < /repo/pi/circle/circle-usb-urb-free.patch
 # then no halt on a failed request to the hub (circle-hub-noportpanic.patch: a port read or a change clear that fails
 # while a device restarts was a LogPanic - core 0 halted, the 15 s watchdog rebooted the Pi, the panic line lost; now
-# logged, and the hub status-change request armed again from the recovery timer, so the latched change is read again; idempotent)
+# logged, and the hub status-change request armed again from the recovery timer, so the latched change is read again;
+# after circle-hub-rearm, idempotent)
 grep -q circle-hub-noportpanic lib/usb/usbstandardhub.cpp || patch -p1 < /repo/pi/circle/circle-hub-noportpanic.patch
-# then no USB request leaked when a device leaves (pi/circle/circle-usb-urb-free.patch: the USB MIDI host'"'"'s IN and OUT
-# URBs in flight are freed with the device, as ob_usb.cpp now frees its own; and CUSBRequest counts its instances for
-# /status, usbreq: Circle'"'"'s allocator holds 256 and its LogPanic past that rebooted the Pi after ~15 Rytm restarts on
-# one boot - 2026-11-09; after circle-midi-async, idempotent)
-grep -q circle-usb-urb-free include/circle/usb/usbrequest.h || patch -p1 < /repo/pi/circle/circle-usb-urb-free.patch
 make -C lib/usb -j$J >/dev/null
 # the WLAN driver (the Plan 9 ether4330 port) and wpa_supplicant, once (libwlan.a, libwpa_supplicant.a)
 [ -f addon/wlan/libwlan.a ] || make -C addon/wlan -j$J >/dev/null

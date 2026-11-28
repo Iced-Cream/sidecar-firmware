@@ -1,126 +1,85 @@
-diff -ruN a/include/circle/usb/usbstandardhub.h b/include/circle/usb/usbstandardhub.h
---- a/include/circle/usb/usbstandardhub.h
-+++ b/include/circle/usb/usbstandardhub.h
-@@ -27,6 +27,7 @@
- #include <circle/usb/usbdevice.h>
- #include <circle/usb/usbhostcontroller.h>
- #include <circle/numberpool.h>
-+#include <circle/timer.h>
- #include <circle/types.h>
+diff -ruN a/include/circle/usb/usbhostcontroller.h b/include/circle/usb/usbhostcontroller.h
+--- a/include/circle/usb/usbhostcontroller.h
++++ b/include/circle/usb/usbhostcontroller.h
+@@ -93,6 +93,7 @@
  
- class CUSBStandardHub : public CUSBFunction
-@@ -70,12 +71,20 @@
- 	void HandlePortStatusChange (void);
- 	friend class CUSBHostController;
- 
-+	// circle-hub-rearm2.patch: the recovery is asked for from a kernel timer, never from the completion or from
-+	// HandlePortStatusChange itself - an endpoint that fails at once again would otherwise keep
-+	// CUSBHostController::UpdatePlugAndPlay's loop going for ever (core 0 held, the watchdog)
-+	void ScheduleRecovery (void);			// IRQ or task level
-+	static void RecoveryTimer (TKernelTimerHandle hTimer, void *pParam, void *pContext);
-+
  private:
- 	TUSBHubDescriptor *m_pHubDesc;
+ 	void PortStatusChanged (CUSBStandardHub *pHub);
++	void RemovePortStatusEvents (CUSBStandardHub *pHub);	// circle-hub-rearm2.patch
+ 	friend class CUSBStandardHub;
  
- 	CUSBEndpoint *m_pInterruptEndpoint;
- 	u8 *m_pStatusChangeBuffer;
--	volatile boolean m_bStatusError;		// circle-hub-rearm.patch: set in the completion (IRQ), handled at task level
-+	volatile boolean m_bStatusError;
-+	volatile TKernelTimerHandle m_hRecoveryTimer;	// circle-hub-rearm2.patch
-+	volatile unsigned m_nConsecErrors;		// circle-hub-rearm2.patch: since the last good completion		// circle-hub-rearm.patch: set in the completion (IRQ), handled at task level
- 
- 	unsigned m_nPorts;
- 	boolean m_bPowerIsOn;
-diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
---- a/lib/usb/usbstandardhub.cpp
-+++ b/lib/usb/usbstandardhub.cpp
-@@ -45,6 +45,8 @@
- 	m_pInterruptEndpoint (0),
- 	m_pStatusChangeBuffer (0),
- 	m_bStatusError (FALSE),
-+	m_hRecoveryTimer (0),
-+	m_nConsecErrors (0),
- 	m_nPorts (0),
- 	m_bPowerIsOn (FALSE)
- #if RASPPI >= 4
-@@ -62,6 +64,12 @@
- 
- CUSBStandardHub::~CUSBStandardHub (void)
- {
-+	if (m_hRecoveryTimer != 0)			// circle-hub-rearm2.patch
-+	{
-+		CTimer::Get ()->CancelKernelTimer (m_hRecoveryTimer);
-+		m_hRecoveryTimer = 0;
-+	}
-+
- 	if (m_nDeviceNumber != 0)
- 	{
- 		CDeviceNameService::Get ()->RemoveDevice (DevicePrefix, m_nDeviceNumber, FALSE);
-@@ -583,6 +591,7 @@
- 	{
- 		assert (pURB->GetResultLength () > 0);
- 
-+		m_nConsecErrors = 0;			// circle-hub-rearm2.patch
- 		GetHost ()->PortStatusChanged (this);
- 	}
- 	else
-@@ -601,8 +610,7 @@
- 			CXHCIEndpoint *pXHCI = m_pInterruptEndpoint->GetXHCIEndpoint ();
- 			s_nStatusLastError = pXHCI != 0 ? pXHCI->GetLastErrorCode () : 0;
- #endif
--			m_bStatusError = TRUE;
--			GetHost ()->PortStatusChanged (this);
-+			ScheduleRecovery ();		// circle-hub-rearm2.patch: from a timer, rate-limited
- 		}
- 	}
- 
-@@ -758,8 +766,46 @@
- 	{
- 		CLogger::Get ()->Write (FromHub, LogError, "Cannot restart request");
- 
--		s_nRearmFailures++;			// circle-hub-rearm.patch: tried again at the next update
--		m_bStatusError = TRUE;
--		GetHost ()->PortStatusChanged (this);
-+		s_nRearmFailures++;			// circle-hub-rearm.patch: tried again
-+		ScheduleRecovery ();			// circle-hub-rearm2.patch: later, from a timer
- 	}
+ private:
+diff -ruN a/lib/usb/usbhostcontroller.cpp b/lib/usb/usbhostcontroller.cpp
+--- a/lib/usb/usbhostcontroller.cpp
++++ b/lib/usb/usbhostcontroller.cpp
+@@ -237,6 +237,41 @@
+ 	m_SpinLock.Release ();
  }
-+
-+// circle-hub-rearm2.patch: one recovery at a time, 20 ms after the first error, backing off to 1 s; after 50 errors
-+// in a row (no good completion between) the hub is given up, as Circle did before, with a line saying so.
-+void CUSBStandardHub::ScheduleRecovery (void)
+ 
++// circle-hub-rearm2.patch: a hub that is deleted drops the events it queued. Its recovery timer queues one after an
++// error, and a hub that is unplugged gets errors, so an event of a hub deleted meanwhile (by its parent's port change,
++// handled with the spin lock released) would otherwise reach HandlePortStatusChange() on freed memory.
++void CUSBHostController::RemovePortStatusEvents (CUSBStandardHub *pHub)
 +{
-+	if (m_hRecoveryTimer != 0)
-+	{
-+		return;					// one is due already
-+	}
++	assert (pHub != 0);
 +
-+	unsigned nErrors = ++m_nConsecErrors;
-+	if (nErrors > 50)
++	if (!m_bPlugAndPlay)
 +	{
-+		if (nErrors == 51)
-+		{
-+			CLogger::Get ()->Write (FromHub, LogError, "Status change request failed 50 times in a row: given up");
-+		}
-+
 +		return;
 +	}
 +
-+	unsigned nDelayMs = nErrors < 50 ? 20 * nErrors : 1000;
-+	if (nDelayMs > 1000)
++	m_SpinLock.Acquire ();
++
++	TPtrListElement *pElement = m_HubList.GetFirst ();
++	while (pElement != 0)
 +	{
-+		nDelayMs = 1000;
++		TPtrListElement *pNext = m_HubList.GetNext (pElement);
++
++		TPortStatusEvent *pEvent = (TPortStatusEvent *) m_HubList.GetPtr (pElement);
++		assert (pEvent != 0);
++		if (   !pEvent->bFromRootPort
++		    && pEvent->pHub == pHub)
++		{
++			m_HubList.Remove (pElement);
++
++			delete pEvent;
++		}
++
++		pElement = pNext;
 +	}
 +
-+	m_hRecoveryTimer = CTimer::Get ()->StartKernelTimer (MSEC2HZ (nDelayMs), RecoveryTimer, 0, this);
++	m_SpinLock.Release ();
 +}
 +
-+void CUSBStandardHub::RecoveryTimer (TKernelTimerHandle hTimer, void *pParam, void *pContext)
-+{
-+	CUSBStandardHub *pThis = (CUSBStandardHub *) pContext;
-+	assert (pThis != 0);
-+
-+	pThis->m_hRecoveryTimer = 0;
-+	pThis->m_bStatusError = TRUE;
-+	pThis->GetHost ()->PortStatusChanged (pThis);
-+}
+ #if RASPPI <= 4
+ 
+ CUSBHostController *CUSBHostController::Get (void)
+diff -ruN a/lib/usb/usbstandardhub.cpp b/lib/usb/usbstandardhub.cpp
+--- a/lib/usb/usbstandardhub.cpp
++++ b/lib/usb/usbstandardhub.cpp
+@@ -25,6 +25,7 @@
+ #endif
+ #include <circle/devicenameservice.h>
+ #include <circle/logger.h>
++#include <circle/synchronize.h>		// circle-hub-rearm2.patch
+ #include <circle/timer.h>
+ #include <circle/koptions.h>
+ #include <circle/debug.h>
+@@ -64,11 +65,16 @@
+ 
+ CUSBStandardHub::~CUSBStandardHub (void)
+ {
+-	if (m_hRecoveryTimer != 0)			// circle-hub-rearm.patch
++	// circle-hub-rearm2.patch: with IRQs off, so the recovery timer cannot fire between reading its handle and
++	// cancelling it; then the events it may have queued already are dropped (they would reach a deleted hub)
++	EnterCritical ();
++	if (m_hRecoveryTimer != 0)
+ 	{
+ 		CTimer::Get ()->CancelKernelTimer (m_hRecoveryTimer);
+ 		m_hRecoveryTimer = 0;
+ 	}
++	GetHost ()->RemovePortStatusEvents (this);
++	LeaveCritical ();
+ 
+ 	if (m_nDeviceNumber != 0)
+ 	{

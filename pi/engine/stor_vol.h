@@ -25,7 +25,7 @@ enum State : uint8_t
 	kPresent,		// the device is there but not mounted: no FAT32 / exFAT volume FatFs can read (err, why)
 	kMounted,
 	kEjected,		// unmounted and taken off the USB tree: safe to pull (until a device shows again)
-	kUnavailable		// not on this board (NVME on the Pi 4) or turned off (nvme=0)
+	kUnavailable		// not on this board (NVME on the Pi 4) or not turned on (no nvme=1)
 };
 enum Fs : uint8_t { kFsNone = 0, kFat12, kFat16, kFat32, kExfat };	// FatFs's FS_FAT12.. FS_EXFAT order
 enum Link : uint8_t { kLinkNone = 0, kUsbLow, kUsbFull, kUsbHigh, kUsbSuper, kSdHs, kPcie };
@@ -68,7 +68,7 @@ struct Ops
 };
 void set_ops (const Ops *pOps);
 void reset (void);				// every volume absent (the tests; boot)
-void set_available (int v, bool bOn);		// NVME: false on the Pi 4, or nvme=0
+void set_available (int v, bool bOn);		// NVME: false on the Pi 4, or without nvme=1
 void set_sd (uint64_t nTotal, uint64_t nFree);	// the boot card as the platform reads it (SD is never mounted here)
 // A hot-plug pass: after UpdatePlugAndPlay reported a change, and once a second. A new device is mounted (once: a failed
 // mount is not retried until it is plugged again or mount_again); a pulled one unmounted (counted in pulls when it was

@@ -175,13 +175,52 @@ int main ()
 		r.flush ();
 		CHECK (r.head == r.tail && r.dropped == 2 && r.late == 1);
 		CHECK (r.push_block (blk, 7) && r.pop_into (out, 7));
-		// when the offset is set again: due in a block already sent, or further ahead than the ring holds (the Pi's
-		// counter went back to 0 under an offset set for a counter near 40000); a margin's distance is kept
-		CHECK (!ExtraRing::stale (56, 0) && !ExtraRing::stale (0, 0));
-		CHECK (ExtraRing::stale (65530, 3));				// behind, across the wrap
-		CHECK (!ExtraRing::stale (3 + ExtraRing::kSlots * 7, 3));
-		CHECK (ExtraRing::stale (4 + ExtraRing::kSlots * 7, 3));
-		CHECK (ExtraRing::stale ((uint16_t) (40000 + 56), 14));
+		// when the offset is set again: due in a block already sent, or further ahead than the margin plus the ring
+		// (the Pi's counter went back to 0 under an offset set for a counter near 40000); a margin's distance is kept
+		CHECK (!ExtraRing::stale (56, 0, 8) && !ExtraRing::stale (0, 0, 8));
+		CHECK (ExtraRing::stale (65530, 3, 8));				// behind, across the wrap
+		CHECK (!ExtraRing::stale (3 + (8 + ExtraRing::kSlots) * 7, 3, 8));
+		CHECK (ExtraRing::stale (4 + (8 + ExtraRing::kSlots) * 7, 3, 8));
+		CHECK (ExtraRing::stale ((uint16_t) (40000 + 56), 14, 8));
+		CHECK (ExtraRing::stale ((uint16_t) (40000 + 56), 14, 256));	// the largest mirrormargin= too
+		// a margin above the ring's slots (mirrormargin= takes up to 256): a fresh offset is not stale (with the ring
+		// alone as the bound it was, and every block re-anchored and flushed)
+		CHECK (!ExtraRing::stale (3 + 200 * 7, 3, 200) && !ExtraRing::stale (3 + 256 * 7, 3, 256));
+		CHECK (ExtraRing::stale (3 + 200 * 7, 3, 0));
+	}
+
+	// mirrormargin=200, the way MirrorAudioOut and FillOut use the ring: the computer's and the Pi's blocks in step,
+	// about every third with bytes (a plugin open). One anchor, and every block's bytes reach the Pi's block exactly
+	// 200 blocks later: none lost, none late
+	{
+		static ExtraRing r;
+		r.clear ();
+		const unsigned margin = 200;
+		uint8_t blk[368] = {}, out[368];
+		uint16_t off = 0;
+		bool set = false;
+		unsigned anchors = 0, pushed = 0, popped = 0, wrong = 0;
+		for (unsigned n = 0; n < 3000; n++)
+		{
+			const uint16_t comp = (uint16_t) (5000 + 7 * n), pi = (uint16_t) (100 + 7 * n);	// both wrap the counter
+			if (set && ExtraRing::stale ((uint16_t) (comp + off), pi, margin))
+			{
+				if ((int16_t) (uint16_t) (comp + off - pi) > 0) r.flush ();
+				set = false;
+				anchors++;
+			}
+			if (!set) off = (uint16_t) (pi - comp + margin * 7), set = true;
+			blk[4] = n % 3 == 0 ? (uint8_t) (1 + n / 3 % 200) : 0;
+			if (r.push_block (blk, (uint16_t) (comp + off))) pushed++;
+			memset (out, 0, sizeof out);
+			if (r.pop_into (out, pi))
+			{
+				popped++;
+				wrong += n < margin || out[4] != (uint8_t) (1 + (n - margin) / 3 % 200);	// the block 200 before
+			}
+		}
+		CHECK (anchors == 0 && r.dropped == 0 && r.late == 0 && wrong == 0);
+		CHECK (pushed == 1000 && popped == 934 && r.head - r.tail == 66);	// the last 200 blocks: 66 not due yet
 	}
 
 	printf ("test_mirror_desc: ok\n");

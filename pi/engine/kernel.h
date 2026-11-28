@@ -25,6 +25,7 @@
 #include "sidecar_gadget.h"
 #include "guard.h"
 #include "ob_usb.h"
+#include "usb_mode.h"
 #include "tcp_link.h"
 #include "web.h"
 #include "power_state.h"
@@ -52,6 +53,10 @@ private:
 	static void MIDIPacketHandler (unsigned nCable, u8 *pPacket, unsigned nLength);
 	static void MIDIRemoved (CDevice *pDevice, void *pContext);
 	static boolean Core0Command (const char *pCmd, void *pParam);	// the console's, for the Sidecar
+	// the USB-C mode (usb_mode.h; docs/usb-mirror.md "The setting"): usbmode= on the console, cmdline usb=
+	void ApplyUsbMode (void);
+	int UsbShown (void) const;			// what the computer sees: -1 no Sidecar gadget, 0 the Sidecar device, 1 the box, 2 between
+	boolean UsbCommand (const char *pCmd);
 	static void ToHost (const u8 *pData, int nLength);	// the engine's SysEx for the host (control core)
 	void SelfCheck (void);
 	void LogStats (void);
@@ -93,6 +98,12 @@ private:
 	CBcmWatchdog		m_Watchdog;
 	CTransport		*m_pTransport;
 	CUSBMIDIDevice *volatile m_pMIDI;
+	usb_mode::Mode		m_UsbMode = usb_mode::kSidecar;	// the mode in force (ApplyUsbMode)
+	usb_mode::From		m_UsbFrom = usb_mode::kDefault;
+	unsigned		m_nUsbModes = 0;		// the modes this unit can show (usb_mode::modes: bit m)
+	boolean			m_bUsbStored = FALSE;		// usbmode= chose one this boot
+	usb_mode::Mode		m_UsbStored = usb_mode::kSidecar;
+	volatile boolean	m_bUsbApply = FALSE;		// a usbmode= to apply in Run's loop
 	CSidecarGadget		*m_pSidecar;		// USB-C: "Sidecar", UAC2 + MIDI (sidecar_gadget.h), gadget=sidecar
 	CSidecarMIDIGadget	*m_pGadget;		// or P1's MIDI echo (gadget.h), gadget=midi; both 0 with gadget=0
 	unsigned		m_nLastStats;

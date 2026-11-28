@@ -2,7 +2,7 @@
 // the default; an unknown hello or another protocol told so; a known box taken at its hello (its output filtered, its
 // reports translated into the engine's 0x04 / 0x03 / 0x11 by its table, its other messages dropped); the Rytm's 35
 // giving the link back; a box with a state folder of its own answered kRestart and the choice saved before one restart;
-// the Digitakt's profile accepted by add().
+// the Digitakt's and the A4's profiles registered.
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
@@ -12,6 +12,7 @@
 #include "check.h"
 #include "device/device.h"
 #include "device/audio.h"
+#include "device/a4.h"
 #include "device/digitakt.h"
 #include "fmt/fmt.h"
 #include "generic/generic.h"
@@ -134,8 +135,10 @@ int main() {
     CHECK(atoi(b) == kBoxId + 1);
   }
 
-  // the Digitakt's profile (docs/device-profiles.md): a table add() accepts (not registered by the engine itself)
-  CHECK(device::add(&device::kDigitakt));
+  // the Digitakt's and the A4's profiles (docs/device-profiles.md): registered by the engine itself, so add() refuses them again
+  CHECK(device::by_id(device::kIdDigitakt) == &device::kDigitakt && !device::add(&device::kDigitakt));
+  CHECK(device::by_id(device::kIdA4) == &device::kA4 && device::kA4.audio && device::kA4.audio->in_channels == device::kA4InChannels);
+  CHECK(device::kA4.audio_by_hello && device::by_usb(device::kA4Vid, device::kA4Pid) == nullptr);   // a stock A4 claims nothing by its id
   CHECK(device::kDigitakt.audio && device::kDigitakt.audio->ret == out::kStereoMix);
 
   printf("test_device: ok\n");

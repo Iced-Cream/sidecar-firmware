@@ -8,9 +8,10 @@ CIRCLEHOME ?= ../circle/build/circle-engine
 CORE := ../../core
 
 # Circle-side objects: Circle's flags and headers (Rules.mk's %.o: %.cpp)
-OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o cores.o console.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o wifi.o
+OBJS = main.o kernel.o platform_pi.o shared.o ob_usb.o ob_follow.o cores.o console.o guard.o tcp_link.o $(GADGET_OBJS) web.o sdfiles.o wifi.o
 OBJS += paircode_pi.o          # the pairing code's Pi side (paircode_pi.h; the portable paircode.cpp is in PORT_SRC)
 OBJS += midibridge_pi.o        # the Rytm MIDI bridge (midibridge_pi.h; the portable part is the header midibridge.h)
+OBJS += usbnet_pi.o            # the USB-C network (usbnet_pi.h; the portable parts are ncm_ntb.h, dhcpd_lite.h, usbnet_cfg.h)
 # the volumes besides the card and the storage bench (docs/STORAGE.md): Circle's side; the logic is hosted (PORT_SRC)
 OBJS += stor_pi.o
 OBJS += blackbox_pi.o          # the black box: the log to /.rytm/blackbox.log (blackbox.h)
@@ -40,9 +41,9 @@ endif
 # clock, the processor slots, the device hello, the card's atomic writes and the RAM store, the card queue, 51 STORE
 # and the Pi-side locks, the card browse, the USB-A MIDI devices; sha256 for the pairing code and the file service.
 CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
-            msamp/cardq.cpp lib/sha256.cpp device/device.cpp device/digitakt.cpp browse/browse.cpp devmidi/devmidi.cpp)
+            msamp/cardq.cpp lib/sha256.cpp device/device.cpp device/digitakt.cpp device/a4.cpp browse/browse.cpp devmidi/devmidi.cpp)
 CORE_SRC += $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp
-PORT_SRC := midi_in.cpp bridge.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
+PORT_SRC := midi_in.cpp a4_in.cpp bridge.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
             stor_vol.cpp stor_bench.cpp audio_return.cpp
 HOSTED_OBJS := $(patsubst $(CORE)/%,hosted/core/%.o,$(CORE_SRC)) $(patsubst %,hosted/%.o,$(PORT_SRC))
 OBJS += $(HOSTED_OBJS)

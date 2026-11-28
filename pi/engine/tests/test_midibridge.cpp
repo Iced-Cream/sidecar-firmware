@@ -741,6 +741,77 @@ static void test_rpc_table() {
   CHECK(plain == sizeof reads);
 }
 
+// The owner's rule: the bridge and the USB-C port's filter decide OS upgrades by one rule (midi_filter.h os_upgrade).
+// Over one input set: the same verdict on both paths, setting off and on; neither path drops less than its dev rule
+// (both copied from origin/dev ccab290) with the setting off; on, both pass exactly os_upgrade::pass.
+static Kind dev_classify(const uint8_t* m, unsigned n) {
+  if (n < 8 || m[0] != 0xF0 || m[1] != 0x00 || m[2] != 0x20 || m[3] != 0x3C || m[5] != 0x00) return kPlain;
+  if (m[6] == 0x7E || m[6] == 0x7F) return kOsUpgrade;
+  if (m[4] == 0x7D) return kPlain;
+  if (m[4] == 0x07 && m[6] >= 0x50 && m[6] <= 0x6F) return kPlain;
+  if (n < 13) return kPlain;
+  uint8_t cmd = (uint8_t)((m[11] | ((m[6] & (0x40 >> 4)) ? 0x80 : 0)) & 0x7F);
+  if (cmd >= 0x50 && cmd <= 0x52) return kOsUpgrade;
+  return rpc_read(cmd) ? kPlain : kDataWrite;
+}
+static bool dev_filter_os(const uint8_t* h, int n) {	// dev's MidiFilter::OsUpdate on its 9-byte head
+  if (n > 9) n = 9;
+  return n >= 7 && h[1] == 0x00 && h[2] == 0x20 && h[3] == 0x3C && h[5] == 0x00 && (h[6] == 0x7E || h[6] == 0x7F);
+}
+static Bytes as_packets(const Bytes& m) {
+  Bytes out(usbmidi_sysex_bytes((int)m.size()));
+  out.resize(usbmidi_pack_sysex(m.data(), (int)m.size(), out.data()));
+  return out;
+}
+static bool filter_drops(const Bytes& m, bool pass) {
+  MidiFilter f(true);
+  f.SetPassOsUpdate(pass);
+  Bytes p = as_packets(m);
+  bool out = false;
+  for (size_t i = 0; i < p.size(); i += 4) f.Feed(&p[i], [&](const uint8_t*) { out = true; });
+  return !out;
+}
+static void test_os_rule() {
+  std::vector<Bytes> in;
+  for (int dev = 0; dev < 0x80; dev++) {
+    for (uint8_t c6 : {0x7E, 0x7F, 0x7D, 0x52, 0x10})
+      in.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, 0x00, c6, 0x01, 0x07, 0x00, 0x01, 0x72, 0x00, 0x72, 0x68, 0xF7});
+    in.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, 0x00, 0x7E, 0xF7});
+    in.push_back({0xF0, 0x00, 0x20, 0x3C, (uint8_t)dev, 0x01, 0x7E, 0x00, 0xF7});
+  }
+  for (uint8_t dev : {0x00, 0x07, 0x0C, 0x10, 0x7C, 0x7D})
+    for (unsigned c = 0; c < 0x100; c++) in.push_back(rpc_dev(dev, (uint8_t)c, {0, 0, 0, 1}));
+  in.push_back({0xF0, 0x00, 0x20, 0x3C, 0x07, 0x00, 0x52, 0x01, 0x01, 0x00, 0x00, 0x51, 0x05, 0xF7});	// a kit dump
+  in.push_back({0xF0, 0x00, 0x20, 0x3C, 0x07, 0x00, 0x62, 0x01, 0x01, 0x00, 0x00, 0x5C, 0x05, 0xF7});	// a request
+  in.push_back({0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7});			// not Elektron
+  ToRytm* t = new ToRytm;
+  unsigned os = 0, pass = 0;
+  for (const Bytes& m : in) {
+    unsigned n = (unsigned)m.size();
+    Kind k = classify(m.data(), n);
+    bool is_os = k == kOsUpgrade;
+    CHECK(k == dev_classify(m.data(), n));			// the bridge: as before, off
+    CHECK(is_os == os_upgrade::any(m.data(), (int)n));
+    bool f_off = filter_drops(m, false), f_on = filter_drops(m, true);
+    CHECK(f_off == is_os);					// off: the same verdict on both paths
+    CHECK(!dev_filter_os(m.data(), (int)n) || f_off);		// the filter: never less than dev
+    // the bridge with its switches off and on, through its own gate
+    for (bool on : {false, true}) {
+      t->allow(on, true);					// data writes on: only the OS verdict counts here
+      uint64_t before = t->stats().blocked;
+      CHECK(t->feed(m.data(), n) == n);
+      drain(*t);
+      bool b_block = t->stats().blocked != before;
+      CHECK(b_block == (on ? f_on : f_off));			// the same verdict on both paths
+      CHECK(b_block == (is_os && !(on && os_upgrade::pass(m.data(), (int)n))));
+    }
+    os += is_os;
+    pass += is_os && !f_on;
+  }
+  CHECK(os > 2 * 128 && pass > 6);
+  delete t;
+}
+
 static uint8_t g_rng = 1;
 static void rng(uint8_t* p, unsigned n) { for (unsigned i = 0; i < n; i++) p[i] = (uint8_t)(g_rng = (uint8_t)(g_rng * 37 + 11)); }
 
@@ -973,6 +1044,7 @@ int main() {
   test_backpressure();
   test_os_block();
   test_rpc_table();
+  test_os_rule();
   test_hmac();
   test_answer_matches_python();
   test_hello_line();

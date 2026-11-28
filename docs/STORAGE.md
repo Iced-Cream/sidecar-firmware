@@ -105,10 +105,15 @@ Pi 5's NVMe SSD):
   Utility on the Mac does it). 512-byte LBA format only (Circle's driver refuses 4Kn namespaces).
 - **Circle's NVMe driver is experimental** (`addon/nvme`, Circle 50.1+: "Be sure that your SSD does not contain
   important data"). Use an SSD with nothing on it you cannot lose; keep the SD as the boot drive and the place of record.
-- At boot the Pi 5 kernel looks for it once (`stor: NVME: looking for an SSD...`): no hot-plug. With no SSD the PCIe link
-  stays down and the search costs about 100 ms [inferred: Circle's link-up wait, `lib/bcmpciehostbridge.cpp`]; a drive
-  that answers the link but hangs costs its own controller timeout (`CAP.TO`, up to seconds) [inferred]. `nvme=0` in
-  `cmdline.txt` skips it. PCIe runs at gen 2 x1 (Circle's `PCIE_GEN 2`), ~400 MB/s on the wire [inferred].
+- **Turn it on with `nvme=1` in `cmdline.txt`**: without it the Pi 5 does not look for an SSD (`stor: NVME: off`).
+  It was on by default until a boot where the Rytm, already on USB, dropped off 100 ms into the search and was not
+  found again (issue 11). On the Pi 5 the USB ports sit behind the RP1 on PCIe; whether the search disturbs them is not
+  proven, so it stays off unless you fit an SSD.
+- With `nvme=1` the Pi 5 kernel looks for it once at boot (`stor: NVME: looking for an SSD...`): no hot-plug. With no
+  SSD the PCIe link stays down and the search costs about 200 ms (the tester's log: 5.37 s to 5.57 s; Circle's 100 ms
+  after PERST# and up to 100 ms of link-up wait, `lib/bcmpciehostbridge.cpp`); a drive that answers the link but hangs
+  costs its own controller timeout (`CAP.TO`, up to seconds) [inferred]. PCIe runs at gen 2 x1 (Circle's `PCIE_GEN 2`),
+  ~400 MB/s on the wire [inferred].
 - Eject (`stor=eject:NVME`) unmounts it; the driver cannot detach the device, so it stays listed as ejected until the
   next boot (`stor=mount:NVME` mounts it again).
 

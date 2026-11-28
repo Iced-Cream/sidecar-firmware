@@ -5,7 +5,11 @@ $(shell ../../../tools/gen_version.sh)
 CXX ?= c++
 CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -I.. -I../../../core -Ishim -fsanitize=address,undefined -fno-sanitize-recover=all
 SRC := ../midi_in.cpp ../emu_proto.cpp
-TESTS := $(patsubst %.cpp,build/%,$(wildcard test_*.cpp)) build/test_stor_fatfs_exfat build/test_stor_fatfs_lfn3
+# test_ws: the /ws API's voice topics (seqview_json.h, voiceview_json.h) are not here; it comes back with S8i's per-box topics.
+# test_gadget_ep0: Circle's DWC2 sources read cntpct_el0 inline (an arm64 host only, as upstream's Mac).
+HOST_ARM := $(filter arm64 aarch64,$(shell uname -m))
+NOT_HERE := test_ws.cpp $(if $(HOST_ARM),,test_gadget_ep0.cpp)
+TESTS := $(patsubst %.cpp,build/%,$(filter-out $(NOT_HERE),$(wildcard test_*.cpp))) build/test_stor_fatfs_exfat build/test_stor_fatfs_lfn3
 CORE := ../../../core
 .PHONY: all clean fatfs-mac
 all: $(TESTS)
@@ -14,16 +18,16 @@ build/%: %.cpp $(SRC) $(wildcard ../*.h) $(wildcard shim/circle/*.h) check.h
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SRC)
 # the real ob_usb.cpp on a fake Circle (shim_ob/); copied, so its quoted includes find the shim's neighbours before the real ones
-build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(CORE)/device/audio.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
+build/test_ob_usb: test_ob_usb.cpp ../ob_usb.cpp ../ob_usb.h ../ep_halt.h ../ob_follow.cpp ../ob_follow.h ../a4_in.cpp ../a4_in.h ../drift_src.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/device/a4.h $(CORE)/device/device.h $(CORE)/device/audio.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
 	@mkdir -p build/ob_src
-	cp ../ob_usb.cpp ../ob_usb.h build/ob_src/
-	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp $(CORE)/device/digitakt.cpp -DOB_USB_TEST
+	cp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h build/ob_src/
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_usb.cpp build/ob_src/ob_usb.cpp build/ob_src/ob_follow.cpp ../a4_in.cpp $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp -DOB_USB_TEST
 # usb=mirror's box side: the same, built with CIRCLE_GADGET_MIRROR and RASPPI=4 (the xHC's Reset Endpoint), against the
 # recording gadget of shim_ob/sidecar_gadget.h
-build/test_ob_mirror: test_ob_mirror.cpp ../ob_usb.cpp ../ob_usb.h ../mirror_desc.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/device.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
+build/test_ob_mirror: test_ob_mirror.cpp ../mirror_desc.h ../ob_usb.cpp ../ob_usb.h ../ep_halt.h ../ob_follow.cpp ../ob_follow.h ../a4_in.cpp ../a4_in.h ../drift_src.h ../ob_block.h $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp $(CORE)/device/a4.h $(CORE)/device/device.h $(CORE)/device/audio.h $(wildcard shim_ob/*.h) $(wildcard shim_ob/circle/*.h) $(wildcard shim_ob/circle/usb/*.h) check.h
 	@mkdir -p build/ob_mirror_src
-	cp ../ob_usb.cpp ../ob_usb.h build/ob_mirror_src/
-	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_mirror_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_mirror.cpp build/ob_mirror_src/ob_usb.cpp $(CORE)/device/digitakt.cpp -DOB_USB_TEST -DCIRCLE_GADGET_MIRROR -DRASPPI=4
+	cp ../ob_usb.cpp ../ob_usb.h ../ob_follow.cpp ../ob_follow.h build/ob_mirror_src/
+	$(CXX) -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all -Ibuild/ob_mirror_src -Ishim_ob -I.. -I../../../core -o $@ test_ob_mirror.cpp build/ob_mirror_src/ob_usb.cpp build/ob_mirror_src/ob_follow.cpp ../a4_in.cpp $(CORE)/device/digitakt.cpp $(CORE)/device/a4.cpp -DOB_USB_TEST -DCIRCLE_GADGET_MIRROR -DRASPPI=4
 # usb=mirror's forwarded request and the box going away (mirror_ctl.h), as sidecar_gadget.cpp drives them
 build/test_mirror_ctl: test_mirror_ctl.cpp ../mirror_ctl.h ../mirror_desc.h check.h
 	@mkdir -p build
@@ -54,7 +58,7 @@ build/test_fsweb: test_fsweb.cpp ../fsweb.cpp ../fsweb.h $(CORE)/lib/sha256.cpp 
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -DFSWEB_HOST -o $@ $< ../fsweb.cpp $(CORE)/lib/sha256.cpp
 # the generic engine's Pi side: bridge.cpp and the audio return over the generic core (core/generic)
-GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp \
+GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp device/device.cpp device/a4.cpp \
                 device/digitakt.cpp store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp lib/sha256.cpp \
                 host/platform_host.cpp browse/browse.cpp devmidi/devmidi.cpp) \
                 $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp
@@ -122,5 +126,23 @@ fatfs-mac: build/test_stor_fatfs build/test_stor_fatfs_exfat
 	hdiutil create -quiet -size 64m -fs ExFAT -layout MBRSPUD -volname SIDECAR -o $(MACIMG)/exfat-mbr.dmg
 	hdiutil create -quiet -size 64m -fs ExFAT -layout GPTSPUD -volname SIDECAR -o $(MACIMG)/exfat-gpt.dmg
 	./build/test_stor_fatfs $(MACIMG) && ./build/test_stor_fatfs_exfat $(MACIMG); s=$$?; rm -rf $(MACIMG); exit $$s
+# the DWC2 gadget's EP0 and endpoint cancel (test_gadget_ep0.cpp): Circle's dwusbgadgetendpoint*.cpp with the Pi 4
+# gadget patch stack (pi/engine/build.sh's order, up to circle-gadget-stray.patch), copied into build/dwc and patched
+# there, on a fake register file (shim_dwc/)
+DWC_ROOT := $(if $(filter %/circle,$(CIRCLE_BUILD)),$(CIRCLE_BUILD),$(CIRCLE_BUILD)/circle)
+DWC_PATCHES := $(addprefix ../../circle/,circle-gadget.patch circle-gadget-wake.patch circle-gadget-reset.patch \
+	       circle-gadget-mirror.patch circle-gadget-softconnect.patch circle-gadget-stray.patch)
+build/dwc/.patched: $(DWC_PATCHES) ../../circle/gadget_wake.h ../../circle/gadget_flush.h
+	@test -f $(DWC_ROOT)/lib/usb/gadget/dwusbgadgetendpoint0.cpp || { echo "test_gadget_ep0: no Circle at $(DWC_ROOT) (CIRCLE_BUILD=.../pi/circle/build)"; exit 1; }
+	@rm -rf build/dwc && mkdir -p build/dwc/lib/usb
+	@cp -R $(DWC_ROOT)/include build/dwc/ && cp -R $(DWC_ROOT)/lib/usb/gadget build/dwc/lib/usb/
+	@cp ../../circle/gadget_wake.h build/dwc/include/circle/usb/gadget/gadgetwake.h
+	@cp ../../circle/gadget_flush.h build/dwc/include/circle/usb/gadget/gadgetflush.h
+	@cd build/dwc && for p in $(DWC_PATCHES); do patch -s -p1 < ../../$$p || exit 1; done
+	@touch $@
+build/test_gadget_ep0: test_gadget_ep0.cpp ../mirror_ep.h build/dwc/.patched $(wildcard shim_dwc/*.h shim_dwc/circle/*.h shim_dwc/circle/usb/*.h shim_dwc/circle/usb/gadget/*.h) check.h
+	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -fsanitize=address,undefined -fno-sanitize-recover=all \
+	  -Ishim_dwc -Ibuild/dwc/include -I. -I.. -o $@ $< build/dwc/lib/usb/gadget/dwusbgadgetendpoint.cpp \
+	  build/dwc/lib/usb/gadget/dwusbgadgetendpoint0.cpp
 clean:
 	rm -rf build

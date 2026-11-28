@@ -1,6 +1,6 @@
 # pi/circle/sidecar-reboot.ps1 - reboots a Sidecar (Pi 4B) over its USB-C MIDI port, Windows: the reboot SysEx of
 # pi/engine/reboot_sysex.h, obeyed only with usbreboot=1 in cmdline.txt. With the rpiboot GPIO held low and an rpiboot
-# loop on the computer (docs: pi4-rpiboot), the Pi boots again from the loop's folder. Needs no network.
+# loop on the computer (docs/pi-engine.md, usbreboot=1), the Pi boots again from the loop's folder. Needs no network.
 #   powershell -ExecutionPolicy Bypass -File sidecar-reboot.ps1 [-Port "Sidecar"]
 # -Port: a part of the MIDI output's name (default "Sidecar"); the first match is used. Close apps holding the port
 # exclusively first (Windows MIDI ports are single-client).

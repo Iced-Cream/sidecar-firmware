@@ -94,7 +94,7 @@ bool read_only(const char* p) {
 }
 
 bool kept_dir(const char* p) {
-  static const char* const kKept[] = {"/.rytm", "/Samples"};
+  static const char* const kKept[] = {"/.rytm", "/.digitakt", "/.a4", "/Samples"};
   for (const char* k : kKept) if (ieq(p, k, strlen(k) + 1)) return true;
   return false;
 }
