@@ -12,6 +12,10 @@
  *             engine export whose name hashes to `hash` (scx_hash), plus the addend already in the slot
  * The bss (bss_size zero bytes) follows the image in memory. Every offset in the header is an image offset except
  * reloc_off / import_off, which are file offsets.
+ * Once loaded, the blob's memory is read + execute (its constructors ran while it was still writable), except with
+ * flags SCX_F_DATA (2026-11-10, a C++ library with mutable globals such as stmlib's Random): [data_off, image_size +
+ * bss_size) stays read + write. data_off is a multiple of SCX_DATA_ALIGN (the Pi's 64 KB code unit), above the entry
+ * and below no code; a write below it, or a jump past it, faults.
  *
  * Rules every blob keeps from day one, so a sandbox (LFI, decided 2026-11-07) can be added to the loader later without
  * changing blob sources:
@@ -36,11 +40,13 @@ extern "C" {
 #define SCX_PARAMS_MAX 64
 #define SCX_CHANNELS 12
 #define SCX_SLOT_IO 2
+#define SCX_F_DATA 1u          /* header flags: a writable data part from data_off */
+#define SCX_DATA_ALIGN 65536u
 
 struct scx_header {
   uint32_t magic;          /* SCX_MAGIC */
   uint16_t abi;            /* SCX_ABI the blob was built for: the Pi refuses any other */
-  uint16_t flags;          /* 0 */
+  uint16_t flags;          /* 0, or SCX_F_DATA */
   char name[SCX_NAME_MAX]; /* PLACE's name: upper case ASCII, NUL padded */
   uint32_t image_size;     /* bytes of image after the header */
   uint32_t bss_size;       /* zero bytes after the image */
@@ -51,7 +57,8 @@ struct scx_header {
   uint32_t reloc_count;
   uint32_t import_off;     /* file offset */
   uint32_t import_count;
-  uint32_t reserved[3];
+  uint32_t data_off;       /* SCX_F_DATA: image offset where the writable part starts; else 0 */
+  uint32_t reserved[2];
 };
 
 struct scx_import {

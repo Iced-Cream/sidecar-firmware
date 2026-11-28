@@ -287,7 +287,14 @@ void load_ready(const Ready& r) {
   run_init(b.mem, h);
   const scx_block* d = describe(b.mem, h, dsp::kSlotBytes - kAdapter, &c);
   if (!d) { fail(c); return; }
-  protect(b.mem, (size_t)units * kUnit, kProtRX);
+  static_assert(SCX_DATA_ALIGN == kUnit, "the writable part starts on a unit");
+  if (h.flags & SCX_F_DATA) {   // read + execute below data_off, read + write from it (whole units: SCX_DATA_ALIGN = kUnit)
+    const size_t rx = h.data_off;
+    protect(b.mem, rx, kProtRX);
+    protect(b.mem + rx, (size_t)units * kUnit - rx, kProtRW);
+  } else {
+    protect(b.mem, (size_t)units * kUnit, kProtRX);
+  }
   b.d = d;
   for (uint32_t p = 0; p < d->nparams; ++p) b.params[p] = dsp::ParamInfo{d->params[p].name, d->params[p].def};
   b.info.name = b.name;

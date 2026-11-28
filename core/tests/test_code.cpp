@@ -130,6 +130,8 @@ struct Synth {
   uint32_t init_off = 0, init_count = 0;
   int extra = 0;                                       // trailing bytes
   uint32_t fill = 0;                                   // image bytes: (i * 7 + fill) & 0xFF, so hashes differ
+  uint16_t flags = 0;
+  uint32_t data_off = 0;
 };
 static Bytes synth(const Synth& s) {
   scx_header h{};
@@ -137,6 +139,7 @@ static Bytes synth(const Synth& s) {
   h.abi = s.abi;
   strncpy(h.name, s.name, sizeof h.name);
   h.image_size = s.image, h.bss_size = s.bss, h.entry = s.entry;
+  h.flags = s.flags, h.data_off = s.data_off;
   h.init_off = s.init_off, h.init_count = s.init_count;
   h.reloc_off = code::kHeader + s.image, h.reloc_count = (uint32_t)s.relocs.size();
   h.import_off = h.reloc_off + 4 * h.reloc_count, h.import_count = (uint32_t)s.imports.size();
@@ -172,6 +175,14 @@ static void test_check() {
   { Synth s = ok; s.relocs = {{8, 256}}; CHECK(chk(synth(s)) == code::kBad); }   // pointing past image + bss
   { Synth s = ok; s.bss = 64; s.relocs = {{8, 300}}; CHECK(chk(synth(s)) == code::kOk); }   // into the bss
   { Synth s = ok; s.imports = {{scx_hash("fopen"), 24}}; CHECK(chk(synth(s)) == code::kImport); }
+  // the writable part (SCX_F_DATA): from a 64 KB boundary inside the image, above the entry; none without the flag
+  { Synth s = ok; s.image = 0x10100; s.flags = SCX_F_DATA; s.data_off = 0x10000; CHECK(chk(synth(s)) == code::kOk); }
+  { Synth s = ok; s.image = 0x10100; s.flags = SCX_F_DATA; s.data_off = 0x8000; CHECK(chk(synth(s)) == code::kBad); }
+  { Synth s = ok; s.image = 0x10100; s.flags = SCX_F_DATA; s.data_off = 0x20000; CHECK(chk(synth(s)) == code::kBad); }
+  { Synth s = ok; s.image = 0x10100; s.flags = SCX_F_DATA; s.data_off = 0; CHECK(chk(synth(s)) == code::kBad); }
+  { Synth s = ok; s.image = 0x10100; s.data_off = 0x10000; CHECK(chk(synth(s)) == code::kBad); }
+  { Synth s = ok; s.image = 0x10100; s.flags = SCX_F_DATA; s.data_off = 0x10000; s.entry = 0x10010; CHECK(chk(synth(s)) == code::kBad); }
+  { Synth s = ok; s.flags = 2; CHECK(chk(synth(s)) == code::kBad); }
   { Synth s = ok; s.entry = 254; CHECK(chk(synth(s)) == code::kBad); }
   { Synth s = ok; s.init_off = 32, s.init_count = 1; CHECK(chk(synth(s)) == code::kBad); }   // not relocated
   { Synth s = ok; s.init_off = 8, s.init_count = 1; CHECK(chk(synth(s)) == code::kOk); }
@@ -478,6 +489,54 @@ static void test_tgain(const Bytes& tg) {
   CHECK(place(37, 9, 0x7F, "TGAIN") >= 0);
   printf("test_code: TGAIN loaded, placed and run (%zu bytes)\n", tg.size());
 }
+
+// ---- a voice blob (SCX_VOICE=<plaits.scx>, sidecar-mods' PLAITS voice): trigs and knobs through TRIG / PARAM ----
+static float peak_of(int ch, int from, int to) {
+  float m = 0.0f;
+  for (int f = from; f < to; ++f) m = std::fmax(m, std::fabs(g_o[ch][f]));
+  return m;
+}
+static void test_voice_blob(const Bytes& vb) {
+  Ans r = ship(40, 0x44, vb, "PLAITS");
+  CHECK(r.op == code::kLoaded && r.name == "PLAITS");
+  int slot = place(41, 0x44, 0x7F, "PLAITS");
+  CHECK(slot >= 0);
+  if (slot < 0) return;
+  CHECK(rt(42, 0x44, route::slot_chan(slot, 0), 4, 8192) >= 0);   // onto BD's Overbridge input
+  settle();
+  memset(g_in, 0, sizeof g_in);
+  block(128);
+  CHECK(peak_of(4, 0, 128) < 1e-4f);                            // silent before a trig
+  // knobs: LEV 100, ENG zone 5 (VA), HRM TIM MOR 64, DEC 80, LPG 64, TUN 64 (as the Rytm's words >> 2: value x 64)
+  CHECK(send({0x38, 0x44, (uint8_t)slot, 0, 8, 100 * 64 >> 7, 0, 40 * 64 >> 7, 0, 64 * 64 >> 7, 0, 64 * 64 >> 7, 0,
+              64 * 64 >> 7, 0, 80 * 64 >> 7, 0, 64 * 64 >> 7, 0, 64 * 64 >> 7, 0}));
+  CHECK(send({0x37, 0x44, (uint8_t)slot, 0, 48, 110, 0, 0, 0, 1}));
+  float early = 0.0f, late = 0.0f;
+  bool finite = true;
+  for (int i = 0; i < 375; ++i) {                                 // 1 s at 48 kHz
+    block(128);
+    for (int f = 0; f < 128; ++f) finite = finite && std::isfinite(g_o[4][f]);
+    if (i < 20) early = std::fmax(early, peak_of(4, 0, 128));
+    if (i >= 360) late = std::fmax(late, peak_of(4, 0, 128));
+    CHECK(peak_of(5, 0, 128) == 0.0f);                            // nothing on SD's input
+  }
+  CHECK(finite && early > 0.05f && early <= 1.5f);               // sounds on the trig
+  // each zone of ENG renders without NaN, after a trig with its knobs as the tail
+  for (int z = 0; z < 17; ++z) {
+    int v = (z * 128 + 64) / 17;
+    CHECK(send({0x37, 0x44, (uint8_t)slot, 0, 60, 100, 0, 0, 0, 2, 1, 1, (uint8_t)(v * 64 >> 7), 0}));
+    bool ok = true;
+    float pk = 0.0f;
+    for (int i = 0; i < 40; ++i) {
+      block(128);
+      for (int f = 0; f < 128; ++f) ok = ok && std::isfinite(g_o[4][f]);
+      pk = std::fmax(pk, peak_of(4, 0, 128));
+    }
+    CHECK(ok && pk < 4.0f);
+    if (!ok || pk >= 4.0f) printf("test_code: PLAITS zone %d: finite %d peak %f\n", z, (int)ok, pk);
+  }
+  printf("test_code: PLAITS loaded, placed, trigged (peak %.3f, after 1 s %.3f; %zu bytes)\n", early, late, vb.size());
+}
 #endif
 
 int main() {
@@ -515,6 +574,16 @@ int main() {
   while ((k = fread(buf, 1, sizeof buf, f)) > 0) tg.insert(tg.end(), buf, buf + k);
   fclose(f);
   test_tgain(tg);
+  if (const char* vp = getenv("SCX_VOICE")) {
+    FILE* g = fopen(vp, "rb");
+    CHECK(g);
+    Bytes vb;
+    while (g && (k = fread(buf, 1, sizeof buf, g)) > 0) vb.insert(vb.end(), buf, buf + k);
+    if (g) fclose(g);
+    test_voice_blob(vb);
+  } else {
+    printf("test_code: no voice blob (SCX_VOICE=<plaits.scx> runs one)\n");
+  }
 #else
   printf("test_code: blob code not run (not AArch64; make -C core test-aarch64 runs it)\n");
 #endif

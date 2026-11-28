@@ -99,9 +99,15 @@ int check(const uint8_t* f, uint32_t n, scx_header* out) {
   memcpy(&h, f, sizeof h);
   if (h.magic != SCX_MAGIC) return kBad;
   if (h.abi != SCX_ABI) return kAbi;
-  if (h.flags != 0 || !name_ok(h.name)) return kBad;
+  if ((h.flags & ~SCX_F_DATA) || !name_ok(h.name)) return kBad;
   const uint64_t img = h.image_size, mem = (uint64_t)h.image_size + h.bss_size;
   if (img == 0 || !inside(kHeader, img, n) || mem > kMaxBlob * 4ull) return kBad;
+  // the writable part: from a 64 KB boundary inside the image, above the entry; none without the flag
+  if (h.flags & SCX_F_DATA) {
+    if (h.data_off == 0 || h.data_off % SCX_DATA_ALIGN || h.data_off > img || h.entry >= h.data_off) return kBad;
+  } else if (h.data_off) {
+    return kBad;
+  }
   const uint64_t rel_n = (uint64_t)h.reloc_count * 4, imp_n = (uint64_t)h.import_count * sizeof(scx_import);
   // the tables follow the image, relocations first, and end the file
   if (h.reloc_off != kHeader + img || !inside(h.reloc_off, rel_n, n)) return kBad;
@@ -176,8 +182,11 @@ const scx_block* describe(uint8_t* mem, const scx_header& h, uint32_t max_state,
   for (uint32_t i = 0; i < d->nparams; ++i)
     if (!in(d->params[i].name) || d->params[i].def > 16383) return nullptr;
   if (d->state_bytes > max_state) { c = kFull; return nullptr; }
-  if (!in((const void*)d->make) || !in((const void*)d->process) || !in((const void*)d->set_param)) return nullptr;
-  if ((d->midi && !in((const void*)d->midi)) || (d->link_reset && !in((const void*)d->link_reset))) return nullptr;
+  // the functions: in the read + execute part
+  const uint8_t* xhi = mem + rx_bytes(h);
+  auto rx = [&](const void* p) { return (const uint8_t*)p >= lo && (const uint8_t*)p < xhi; };
+  if (!rx((const void*)d->make) || !rx((const void*)d->process) || !rx((const void*)d->set_param)) return nullptr;
+  if ((d->midi && !rx((const void*)d->midi)) || (d->link_reset && !rx((const void*)d->link_reset))) return nullptr;
   c = kOk;
   return d;
 }
