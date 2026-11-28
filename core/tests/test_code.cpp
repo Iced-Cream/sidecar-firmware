@@ -574,7 +574,10 @@ int main() {
   while ((k = fread(buf, 1, sizeof buf, f)) > 0) tg.insert(tg.end(), buf, buf + k);
   fclose(f);
   test_tgain(tg);
-  if (const char* vp = getenv("SCX_VOICE")) {
+  // The voice blob needs core/dsp's TRIG (37) / PARAM (38) ops, which come with the voice-graphs port (after S8e);
+  // until then SCX_VOICE is not run. That port sets kVoiceOps.
+  constexpr bool kVoiceOps = false;
+  if (const char* vp = getenv("SCX_VOICE"); vp && kVoiceOps) {
     FILE* g = fopen(vp, "rb");
     CHECK(g);
     Bytes vb;
@@ -582,7 +585,8 @@ int main() {
     if (g) fclose(g);
     test_voice_blob(vb);
   } else {
-    printf("test_code: no voice blob (SCX_VOICE=<plaits.scx> runs one)\n");
+    printf(kVoiceOps ? "test_code: no voice blob (SCX_VOICE=<plaits.scx> runs one)\n"
+                     : "test_code: voice blob not run (needs TRIG / PARAM, voice-graphs port)\n");
   }
 #else
   printf("test_code: blob code not run (not AArch64; make -C core test-aarch64 runs it)\n");
