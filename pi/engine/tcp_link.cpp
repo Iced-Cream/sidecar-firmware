@@ -8,13 +8,13 @@
 #include <circle/timer.h>
 #include <circle/util.h>
 
-#include "output.h"
+#include "audio_return.h"	// the generic engine: what the processor slots add (silence otherwise)
 #include "shared.h"
 #include "sidecar_gadget.h"
 
 static const char From[] = "tcp";
 static const u8 HelloMidi = 1, HelloNoR = 2, HelloVoices = 4;		// oblink.rs's hello bits
-static const u8 HelloFlags = HelloMidi | HelloNoR | HelloVoices;
+static const u8 HelloFlags = HelloMidi | HelloNoR;		// 12-channel frames only: no voices of its own
 static const unsigned MaxFramesPerMessage = 256;			// the emulator drops a host above 65536
 static const u32 MaxWanted = 48000;					// 1 s of requests: more is clamped (counted)
 
@@ -99,7 +99,8 @@ void CTcpTransport::Adopt (CSocket *pSocket)
 	m_nWanted = 0;
 	m_nWaitSince = 0;
 	m_nConnects++;
-	g_Output.Reset ();				// a new stream: fade in again
+	aret::Reset ();
+	g_nStreams = g_nStreams + 1, g_nFramesSinceReset = 0;
 	u8 h[3];
 	int nHello = emu_hello (h, HelloFlags);
 	if (m_pSocket->Send (h, nHello, 0) != nHello)
@@ -272,53 +273,29 @@ void CTcpTransport::SendComputerMIDI (void)
 // Answer the emulator's requests from the output stage: what the FIFO holds now, or, once it has been empty for
 // 2 ms, silence (counted) for every frame still requested - the emulator plays zeros either way, its N requests
 // are answered at their own count (its clock), and the stream keeps moving. Real frames end the silence.
+// The generic engine: every frame requested answered at once, silence with what the processor slots add
+// (audio_return.h; the emulator sends no audio this way, so they process silence here)
 void CTcpTransport::SendFrames (void)
 {
 	while (m_nWanted > 0 && m_pSocket != 0 && PollRoom ())	// the rest at the next Poll
 	{
-		unsigned nLevel = g_Output.Level ();
 		unsigned k = m_nWanted < MaxFramesPerMessage ? m_nWanted : MaxFramesPerMessage;
-		if (nLevel > 0)
-		{
-			if (nLevel < k) k = nLevel;
-			m_nWaitSince = 0;
-		}
-		else
-		{
-			unsigned now = CTimer::GetClockTicks ();
-			if (m_nWaitSince == 0) m_nWaitSince = now | 1;
-			if (now - m_nWaitSince < 2000) return;
-			m_nSilence += k;			// still empty: m_nWaitSince stays, the rest follows as silence
-		}
-		static s32 F[MaxFramesPerMessage][Output::kChannels];
-		g_Output.Pull (F, k);				// silence when it runs out
-		asm volatile ("dsb sy; sev");			// the control core refills
-		boolean bVoices = (m_nGranted & HelloVoices) && g_Output.GetMode () == Output::kTracks;
-		unsigned nLen = emu_frames_head (m_Tx, bVoices ? 'a' : 'A', k);
+		static s32 F[MaxFramesPerMessage][aret::kChannels];
+		memset (F, 0, sizeof F[0] * k);
+		for (unsigned f = 0; f < k; f += aret::kMaxFrames)
+			aret::Fill (F + f, k - f < (unsigned) aret::kMaxFrames ? (int) (k - f) : aret::kMaxFrames);
+		unsigned nLen = emu_frames_head (m_Tx, 'A', k);
 		for (unsigned f = 0; f < k; f++)
-		{
-			if (bVoices)
+			for (int c = 0; c < aret::kChannels; c++)
 			{
-				for (int v = 0; v < Output::kVoices; v++)
-				{
-					s16 x = (s16) (F[f][Output::kVoiceToChannel[v]] >> 16);
-					m_Tx[nLen++] = (u8) x;
-					m_Tx[nLen++] = (u8) (x >> 8);
-				}
+				u32 x = (u32) F[f][c];
+				for (int b = 0; b < 4; b++) m_Tx[nLen++] = (u8) (x >> (8 * b));
 			}
-			else
-			{
-				for (int c = 0; c < Output::kChannels; c++)
-				{
-					u32 x = (u32) F[f][c];
-					for (int b = 0; b < 4; b++) m_Tx[nLen++] = (u8) (x >> (8 * b));
-				}
-			}
-		}
 		if (!SendAll (m_Tx, nLen, "frames")) return;
 		m_nWanted -= k;
 		m_nFrames += k;
 		m_nRequests++;
+		g_nFramesSinceReset = g_nFramesSinceReset + k;
 	}
 }
 

@@ -2,17 +2,14 @@
 #include "device/device.h"
 #include "device/a4.h"
 #include "device/digitakt.h"
-#include "device/strip.h"
 
 #include <string.h>
 
 #include "fmt/fmt.h"
-#include "fx/out.h"
-#include "host_link.h"
-#if CORE_POLY
-#include "inst.h"
-#endif
-#include "keys.h"
+#include "device/audio.h"
+#include "hooks.h"
+#include "machines.h"
+namespace core { void link_reset(const char* why); }
 #include "platform.h"
 
 namespace core {
@@ -61,7 +58,6 @@ CORE_COLD const Profile* by_usb(uint16_t vid, uint16_t pid) {
   return nullptr;
 }
 
-void strip_tick(uint32_t us) { strip::tick(*g_link.box->controls, us); }
 
 static inline bool is_sidecar(const uint8_t* d, int len) { return len >= 6 && d[1] == 0x7D && d[2] == 0x52 && d[3] == 0x54; }
 
@@ -109,7 +105,6 @@ CORE_COLD void boot() {
     l.out = hooks.to_rytm;
     hooks.to_rytm = filtered_out;
     l.box = s_list[k];
-    out::set_trim(2, l.box->trk10);   // (its hello finds it selected: this is the usual way in)
     log(CORE_STR("device: %s, state in %s"), l.box->name, l.state ? l.state : "/.rytm");
   }
 }
@@ -149,23 +144,17 @@ CORE_COLD bool step(bool settled) {
   return false;
 }
 
-static uint32_t s_held[kVoices][4];   // box_note's
-static struct { uint8_t n, vb, notes[kChordNotes]; uint32_t at; } s_chord[kVoices];   // chord_note's: the notes so far, the machine, the newest note's time
 static CORE_COLD void select(Link& l, const Profile* p) {   // p null: the Rytm
   if (p == l.box) return;
-  memset(s_held, 0, sizeof s_held);   // the box before it: what it held is not the next one's
-  memset(s_chord, 0, sizeof s_chord);
   if (!l.box) l.out = hooks.to_rytm;
   hooks.to_rytm = p ? filtered_out : l.out;
   l.box = p;
-  out::set_trim(2, active().trk10);   // a live stereo=trim:trk lasts until the box changes
   log(CORE_STR("device: %s"), active().name);
   link_reset("device");   // the box before it: its notes and transport unknown
 }
 
 CORE_COLD void reset() {
   select(g_link, nullptr);
-  strip::reset();
   s_rytm_usb = s_said = s_by_usb = s_settle = false;
   g_link.state = nullptr;   // (a board restart, for the tests: the choice is made once a boot)
 }
@@ -231,69 +220,6 @@ static CORE_COLD int table(const Profile& p, const uint8_t* d, int len, uint8_t*
   return n;
 }
 
-// What the sequencer sent the box: its echoes, the mod's report of each note it plays, a chord's as well; and what is held there, so that an all-off is an off for each
-static struct { uint8_t note; bool on; uint32_t at; } s_sent[kVoices][kChordNotes];
-static uint8_t s_sent_w[kVoices];
-
-static CORE_COLD bool is_echo(int vi, uint8_t note) {
-  uint32_t ms = now_ms();
-  for (auto& s : s_sent[vi])
-    if (s.on && s.note == note && ms - s.at < kEchoMs) return s.on = false, true;
-  return false;
-}
-
-CORE_COLD void box_note(int vi, int note, int vel) {
-  const Profile* p = g_link.box;
-  if (!p || !p->note_out || vi < 0 || vi >= p->voices || note > 127) return;
-  const uint8_t off = (uint8_t)(0x80 | vi);
-  if (note < 0) {   // inst::seq_off's -1: every note of the voice
-    for (int n = 0; n < 128; ++n)
-      if (s_held[vi][n >> 5] >> (n & 31) & 1) keys::forward_note(off, (uint8_t)n, 0);
-    memset(s_held[vi], 0, sizeof s_held[vi]);
-    return;
-  }
-  uint32_t bit = 1u << (note & 31);
-  if (vel) {
-    auto& s = s_sent[vi][s_sent_w[vi]++ % kChordNotes];
-    s.note = (uint8_t)note, s.on = true, s.at = now_ms();
-    s_held[vi][note >> 5] |= bit;
-    keys::forward_note((uint8_t)(0x90 | vi), (uint8_t)note, (uint8_t)vel);
-  } else {
-    s_held[vi][note >> 5] &= ~bit;
-    keys::forward_note(off, (uint8_t)note, 0);
-  }
-}
-
-// A box's trig on a voice, with Profile::chords: true when it joined the voice's chord, so the message goes no further. The first
-// note is the 0x04 it always was, on the voice's own machine: nothing waits, and a lone trig never comes here for more.
-static CORE_COLD bool chord_note(int vi, uint8_t vb, uint8_t note, uint8_t vel) {
-#if CORE_POLY
-  auto& c = s_chord[vi];
-  uint32_t ms = now_ms();
-  bool near = c.n && c.vb == vb && ms - c.at < kChordMs;
-  if (near)
-    for (int k = 0; k < c.n; ++k)
-      if (c.notes[k] == note) return c.n > 1;   // a note of the chord twice is one; alone, a retrig as ever
-  if (near && c.n < kChordNotes && inst::chord_on(vi, note, vel)) {
-    c.notes[c.n++] = note, c.at = ms;
-    return true;
-  }
-  if (near && inst::chord_single(vi)) return c.at = ms, true;   // one hit, as the box's own step: 04s this close are a flam
-  if (c.n > 1) inst::chord_off(vi);   // a new note, no off before it: the amp's tail, as a mono retrig
-  c.n = 1, c.vb = vb, c.notes[0] = note, c.at = ms;
-#else
-  (void)vi, (void)vb, (void)note, (void)vel;
-#endif
-  return false;
-}
-
-static CORE_COLD void chord_end(int vi) {
-#if CORE_POLY
-  if (s_chord[vi].n > 1) inst::chord_off(vi);
-#endif
-  s_chord[vi].n = 0;
-}
-
 CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
   if (len < 5 || d[len - 1] != 0xF7) return ++l.dropped, false;
   if (is_sidecar(d, len) && d[4] == kCmdHello) return hello(l, d, len), false;
@@ -311,20 +237,9 @@ CORE_COLD bool translate(Link& l, const uint8_t*& d, int& len, uint8_t* m) {
     select(l, nullptr);
     return true;
   }
-  if (is_sidecar(d, len) && d[4] == kCmdControls && l.box->controls) {
-    const Controls& c = *l.box->controls;
-    if (len != 7 + 2 * c.n || d[5] >= l.box->voices) return ++l.dropped, false;
-    strip::report(c, d[5], d + 6);
-    return false;
-  }
   if (is_sidecar(d, len) && (l.box->in_allow[(d[4] & 0x7f) >> 5] >> (d[4] & 31) & 1)) {
     bool voiced = d[4] == 0x03 || d[4] == 0x04 || d[4] == 0x11;
     if (voiced && (d[5] & 7) >= l.box->voices) return ++l.dropped, false;
-    if (d[4] == 0x04 && len > 7 && is_echo(d[5] & 7, d[6])) return false;
-    if (l.box->chords && d[4] == 0x04 && len > 7 && chord_note(d[5] & 7, d[5] & 0x78, d[6], d[7])) return false;
-    if (l.box->chords && d[4] == 0x11) chord_end(d[5] & 7);
-    if (l.box->controls && d[4] == 0x04) strip::trig(d[5] & 7);
-    if (l.box->controls && d[4] == 0x11) strip::off(d[5] & 7);
     return true;
   }
   int n = l.box->translate ? l.box->translate(*l.box, d, len, m) : table(*l.box, d, len, m);

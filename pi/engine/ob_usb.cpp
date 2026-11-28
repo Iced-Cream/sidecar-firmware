@@ -40,7 +40,6 @@
 //     the endpoint state is printed so a halt shows.
 //
 #include "ob_usb.h"
-#include "simd.h"
 #include "usbmidi_pack.h"
 #include "sidecar_gadget.h"
 #include "midibridge_pi.h"
@@ -63,15 +62,20 @@
 #include "ob_block.h"
 #include "ob_follow.h"
 #include "ob_speed.h"
-#include "sendfx_pi.h"
-#include "masterfx_pi.h"		// the master FX chain
-#include "spectrum_pi.h"
-#include "rec_pi.h"
+#include "audio_return.h"		// the generic engine's OUT: the computer's audio and the processor slots
 #include "bridge.h"
 #include "device/device.h"
-#include "fx/out_measure.h"		// stereo=measure's read-back (MAIN L/R)
-#include "samp/preview.h"		// the sample browser's preview (POST)
 #include "shared.h"
+
+// the OUT block's samples, big-endian (24-bit audio in the top bytes of each 32-bit word)
+static inline void Be32 (u8 *d, const s32 *x, int n)
+{
+	for (int i = 0; i < n; i++)
+	{
+		u32 v = (u32) x[i];
+		d[4 * i] = (u8) (v >> 24), d[4 * i + 1] = (u8) (v >> 16), d[4 * i + 2] = (u8) (v >> 8), d[4 * i + 3] = (u8) v;
+	}
+}
 
 static const char From[] = "rytmob";
 
@@ -660,8 +664,7 @@ boolean CObUsb::Configure (void)
 
 	// the completions run in the xHCI IRQ: start everything with it held off, so the
 	// TRB order on each ring is the submit order and the counters stay consistent
-	if (s_bActive) g_Output.Reset ();	// fade in again on every new stream (not while the TCP link owns g_Output)
-	if (s_bActive) masterfx_pi::Reset ();
+	if (s_bActive) aret::Reset (), g_nStreams = g_nStreams + 1, g_nFramesSinceReset = 0;	// a new stream: the processors' IN frames start over
 	EnterCritical (IRQ_LEVEL);
 	m_nStartUs = m_nLastInUs = m_nLastOutUs = m_nLastLogUs = CTimer::GetClockTicks ();
 	m_InHalt.halted = m_OutHalt.halted = false;	// (a stream starts with nothing to recover)
@@ -1020,9 +1023,8 @@ unsigned CObUsb::MirrorPipeResets (void)				{ return 0; }
 
 #endif
 
-// host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels from the output stage
-// (output.h: the voices mapped, faded in, limited; silence when its FIFO is empty). Capture channel 2: OUT MAIN L
-// as sent. The control core is woken to refill the FIFO (sev).
+// host -> device blocks: header (0x07FF, counter +7 per block) + 7 frames x 12 channels: the computer's audio and
+// the processor slots' (below). Capture channel 2: OUT MAIN L as sent. The control core is woken to refill the FIFO (sev).
 void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 {
 	for (unsigned b = 0; b < nBlocks; b++)
@@ -1034,41 +1036,13 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 #endif
 		m_nOutCounter += ob::kFramesPerBlock;
 
+		// the generic engine: no voices of its own. OUT is the computer's audio (the USB-C Sidecar's UAC2 OUT 1-12)
+		// and what the processor slots add (audio_return.h: nothing while every slot is empty)
 		s32 F[ob::kFramesPerBlock][ob::kChannels];
-		s16 V[ob::kFramesPerBlock][ob::kVoices];
-		s16 LR[ob::kFramesPerBlock][2 * ob::kVoices];		// the voices' L and R planes (core/fx/out.h: PRE / POST in stereo)
-		float FD[ob::kFramesPerBlock][ob::kVoices];		// the PRE / POST voices' stand-ins for their silent stems
-		float PR[ob::kFramesPerBlock][4];			// the PRE and POST pairs as sent (the recorder's 23 / 24)
-		Output::Taps T;
-		T.lr = LR, T.feed = FD, T.pairs = PR;
-		if (s_bActive) g_Output.Pull (F, ob::kFramesPerBlock, V, &T);
-		else
-		{
-			memset (F, 0, sizeof F);
-			memset (V, 0, sizeof V);
-			memset (LR, 0, sizeof LR);
-			memset (FD, 0, sizeof FD);
-			memset (PR, 0, sizeof PR);
-		}
-		if (CSidecarGadget::Get () != 0)		// the computer's OUT added (UAC2 OUT 1-12), the voices kept
-			CSidecarGadget::Get ()->ToRytm (F, V, ob::kFramesPerBlock, FALSE);
-		float X[ob::kFramesPerBlock][4] = {};		// each FX's own return (the recorder's FX1/FX2)
-		if (s_bActive) sendfx_pi::FromVoices (V, ob::kFramesPerBlock, FD);	// fx-ins: the voices' sends to the FX buses; PRE / POST voices' stems
-		if (s_bActive) sendfx_pi::AddReturn (F, ob::kFramesPerBlock, X);	// the send FX's return on 2/3 or 0/1
-		if (s_bActive) CObFollow::Mix (F, ob::kFramesPerBlock);		// a4=1: the A4's MAIN on 2/3 (ob_follow.h)
-		if (s_bActive) masterfx_pi::Process (F, ob::kFramesPerBlock);	// the master chain over all that (masterfx_pi.h)
-		spectrum_pi::FromOut (V, X, F, ob::kFramesPerBlock);	// the spectrum's strip, while a reader wants it (a copy)
-		g_Play.mix (F, ob::kFramesPerBlock);		// a take's playback onto MAIN L / R (rec_play.h; idle: nothing)
-#if CORE_MSAMP
-		core::preview::mix (F, ob::kFramesPerBlock, core::out::device ().post[0], core::out::device ().post[1]);	// the browser's preview on POST (core/samp/preview.h; idle: nothing)
-#endif
-		{
-			u8 nSt = 0;					// the voices on PRE / POST: their take files stereo
-			for (int v = 0; v < ob::kVoices; v++) nSt |= core::out::control.route[v] != core::out::kTrk ? 1u << v : 0;
-			g_Rec.set_stereo_voices (nSt);
-		}
-		if (g_Rec.wants_side ()) g_Rec.out_block (V, X, ob::kFramesPerBlock, LR, PR);	// the voices as rendered, the FX, the pairs
-		if (bridge::samp_wants_voices ()) bridge::samp_voices (V, ob::kFramesPerBlock, LR, X);	// the sampler's Sidecar voice (X: its FX, CHOP)
+		memset (F, 0, sizeof F);
+		if (CSidecarGadget::Get () != 0)		// the computer's OUT (UAC2 OUT 1-12)
+			CSidecarGadget::Get ()->ToRytm (F, ob::kFramesPerBlock, FALSE);
+		if (s_bActive) aret::Fill (F, ob::kFramesPerBlock), g_nFramesSinceReset = g_nFramesSinceReset + ob::kFramesPerBlock;
 #if RASPPI >= 5
 		if (s_bFading)					// FadeOut: every channel, a frame at a time
 			for (int f = 0; f < ob::kFramesPerBlock; f++)
@@ -1080,7 +1054,7 @@ void CObUsb::FillOut (u8 *pBuf, unsigned nBlocks)
 #endif
 		for (int f = 0; f < ob::kFramesPerBlock; f++)
 		{
-			core::simd::be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
+			Be32 (pBlock + ob::kHeaderBytes + 4 * m_nOutCh * f, F[f], m_nOutCh);
 		}
 
 		if (s_bCapOn)
@@ -1222,60 +1196,12 @@ void CObUsb::InDone (unsigned i, CUSBRequest *pURB)
 			m_nInBlocks++;
 			good++;
 			if (CSidecarGadget::Get () != 0) CSidecarGadget::Get ()->FromRytmBlock (pBlk);	// UAC2 IN 1-12
-			boolean bRecIn = g_Rec.wants_in (), bSampIn = bridge::samp_wants_in ();
-			if (bRecIn || bSampIn)		// the recorder: the selected channels into its ring (rec_pi.h); the sampler's (core/samp)
+			if (s_bActive && aret::Wanted ())	// the processor slots' input (audio_return.h): only while one is filled
 			{
 				s32 I[ob::kFramesPerBlock][ob::kChannels];
 				for (int f = 0; f < ob::kFramesPerBlock; f++)
 					for (int c = 0; c < ob::kChannels; c++) I[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				if (bRecIn) g_Rec.in_block (I, ob::kFramesPerBlock);
-				if (bSampIn) bridge::samp_in (&I[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (bridge::tap_on ())		// the remote UI's SCOPE / meters (core/ui/extra.h): compares and stores only
-			{
-				s32 T[ob::kFramesPerBlock][ob::kChannels];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int c = 0; c < ob::kChannels; c++) T[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				bridge::tap_in (&T[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (bridge::gr_live_on ())	// GRANULAR's live sources (core/granular/granular.h): into its capture ring
-			{
-				s32 G[ob::kFramesPerBlock][ob::kChannels];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int c = 0; c < ob::kChannels; c++) G[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				bridge::gr_live_in (&G[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (bridge::livein_on ())	// LIVE IN's AUDIO IN (core/livein/livein.h): into its ring, as it comes
-			{
-				s32 L[ob::kFramesPerBlock][ob::kChannels];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int c = 0; c < ob::kChannels; c++) L[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				bridge::livein_in (&L[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (core::out::meas::active ())	// stereo=measure: MAIN L/R read back (core/fx/out_measure.h)
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					core::out::meas::in_frame (ob::block_sample (pBlk, ob::kChannels, f, 0), ob::block_sample (pBlk, ob::kChannels, f, 1));
-			if (bridge::cal_on ())		// the sequencer's latency click on its way back (core/seq/seq.h cal_audio)
-			{
-				s32 C[ob::kFramesPerBlock][ob::kChannels];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int c = 0; c < ob::kChannels; c++) C[f][c] = ob::block_sample (pBlk, ob::kChannels, f, c);
-				bridge::cal_in (&C[0][0], ob::kFramesPerBlock, ob::kChannels);
-			}
-			if (sendfx_pi::On ())		// the voice stems (IN 2..9) into the send FX
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				sendfx_pi::FromRytm (S, ob::kFramesPerBlock);
-			}
-
-			if (masterfx_pi::WantStems ())	// SRC MIX: the stems onto 0/1 (core/fx/master.h)
-			{
-				s32 S[ob::kFramesPerBlock][8];
-				for (int f = 0; f < ob::kFramesPerBlock; f++)
-					for (int v = 0; v < 8; v++) S[f][v] = ob::block_sample (pBlk, ob::kChannels, f, 2 + v);
-				masterfx_pi::Stems (S, ob::kFramesPerBlock);
+				aret::In (I, ob::kFramesPerBlock);
 			}
 
 			int32_t s = ob::block_sample (pBlk, ob::kChannels, 0, 0) >> 8;

@@ -26,9 +26,8 @@ CSidecarGadget *CSidecarGadget::s_pThis = 0;
 using namespace sidecar_desc;			// the string indexes (StrManufacturer ..., StrNet, StrNetMac)
 static const char *const OutNames[12] =
 	{"MAIN L", "MAIN R", "MAIN FX L", "MAIN FX R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY"};
-static const char *const InNames[20] =
-	{"MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO IN L", "AUDIO IN R",
-	 "VOICE 1", "VOICE 2", "VOICE 3", "VOICE 4", "VOICE 5", "VOICE 6", "VOICE 7", "VOICE 8"};
+static const char *const InNames[12] =
+	{"MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO IN L", "AUDIO IN R"};
 
 static TUSBDeviceDescriptor s_Device =
 {
@@ -42,10 +41,14 @@ static TUSBDeviceDescriptor s_Device =
 #define U32(v)	(u8) ((v) & 0xFF), (u8) (((v) >> 8) & 0xFF), (u8) (((v) >> 16) & 0xFF), (u8) (((v) >> 24) & 0xFF)
 
 // the configuration: sidecar_desc.h (UAC2 + MIDI as in 0.4.2; the USB-C network's CDC-NCM function after them while it
-// is in the device). With it the device says bcdDevice 3.10: Windows keeps a device's drivers per VID/PID/revision
+// is in the device). With it the device says bcdDevice 3.10: Windows keeps a device's drivers per VID/PID/revision.
+// uac2lr=1 (default): channels 1-2 front L/R, the IN terminal a line input and IN alt 2 = MAIN L/R only (Windows' shared
+// mode, T191/T192/T195; sidecar_desc.h); uac2lr=0 the old layout
+static boolean s_bStereo = TRUE;
 void CSidecarGadget::BuildDescriptor (void)
 {
-	m_nConfig = sidecar_desc::build (m_Config, sizeof m_Config, ChIn, ChOut, MaxIn, MaxOut, m_bNet, &m_Desc);
+	s_bStereo = CKernelOptions::Get ()->GetAppOptionDecimal ("uac2lr", 1) != 0;
+	m_nConfig = sidecar_desc::build (m_Config, sizeof m_Config, ChIn, ChOut, MaxIn, MaxOut, m_bNet, &m_Desc, s_bStereo);
 	assert (m_nConfig != 0);
 	s_Device.bcdDevice = m_bNet ? 0x0310 : 0x0300;
 }
@@ -366,7 +369,7 @@ void CNcmEP::OnTransferComplete (boolean bIn, size_t nLength)
 
 // ---- the gadget ------------------------------------------------------------------------------------------------
 
-static const unsigned TonePeriod[18] = {480, 400, 320, 300, 240, 200, 192, 160, 150, 128, 120, 100, 96, 80, 75, 64, 60, 50};
+static const unsigned TonePeriod[CSidecarGadget::ChIn - 2] = {480, 400, 320, 300, 240, 200, 192, 160, 150, 128};
 
 CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
@@ -375,7 +378,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
 	m_bMirror (FALSE), m_bMirUsed (FALSE),
 	m_bUsbReboot (FALSE),
-	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
+	m_nInHead (0), m_nInTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
 	m_nLoopHead (0), m_nLoopTail (0), m_bLoopPriming (TRUE),
@@ -455,12 +458,12 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 		usbnet::mac_text (m_NetHostMac, m_NetHostMacText);
 	}
 	BuildDescriptor ();
-	for (unsigned c = 0; c < 20; c++)
+	for (unsigned c = 0; c < ChIn; c++)
 	{
 		m_nPhase[c] = 0;
 		m_pTone[c] = 0;
 	}
-	for (unsigned c = 0; c + 2 < ChIn && c < 18; c++)
+	for (unsigned c = 0; c + 2 < ChIn; c++)
 	{
 		m_pTone[c] = new s32[TonePeriod[c]];
 		sidecar_tone_table (TonePeriod[c], 0.25, m_pTone[c]);
@@ -659,7 +662,7 @@ boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 #endif
 	if (uchInterface == 0 || uchInterface == 3 || uchInterface == 4) return uchAlt == 0;
 	if (m_bNet && uchInterface == sidecar_desc::kNetIface) return uchAlt == 0;
-	if (uchAlt > 1) return FALSE;
+	if (uchAlt > (uchInterface == 2 && s_bStereo ? 2 : 1)) return FALSE;
 	if (m_bNet && uchInterface == sidecar_desc::kNetIface + 1)
 	{
 		NetSetAlt (uchAlt);
@@ -681,7 +684,6 @@ boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 		{
 			// the IN ring trimmed to its target: the stream starts with a short delay, not the backlog
 			while (m_nInHead - m_nInTail > InTarget) m_nInTail++;
-			while (m_nVoiceHead - m_nVoiceTail > InTarget) m_nVoiceTail++;
 			m_bInPrimed = FALSE;
 			m_bInRunning = FALSE;
 			m_nInPos = (TimerQ16 () >> 16) - Nominal;
@@ -755,18 +757,12 @@ void CSidecarGadget::FromEngine (const s32 (*pFrames)[12], unsigned n)
 	LeaveCritical ();
 }
 
-// One OUT block toward the Rytm (or the self-test): the computer's frames added, the voices kept for IN 13-20.
-void CSidecarGadget::ToRytm (s32 (*F)[12], const s16 (*V)[8], unsigned n, boolean bTask)
+// One OUT block toward the Rytm (or the self-test): the computer's frames added.
+void CSidecarGadget::ToRytm (s32 (*F)[12], unsigned n, boolean bTask)
 {
 	if (bTask) EnterCritical ();
 	for (unsigned f = 0; f < n; f++)
 	{
-		if (ChIn > 12 && V != 0)
-		{
-			if (m_nVoiceHead - m_nVoiceTail >= Ring) m_nVoiceTail++;
-			memcpy (m_VoiceRing[m_nVoiceHead % Ring], V[f], sizeof m_VoiceRing[0]);
-			m_nVoiceHead++;
-		}
 		if (m_bTest || !m_uchOutAlt) continue;
 		unsigned nLevel = m_nOutHead - m_nOutTail;
 		if (m_bOutPriming)
@@ -843,7 +839,6 @@ void CSidecarGadget::InSent (void)
 	if (m_bInRunning) return;
 	m_bInRunning = TRUE;
 	while (m_nInHead - m_nInTail > InTarget) m_nInTail++;
-	while (m_nVoiceHead - m_nVoiceTail > InTarget) m_nVoiceTail++;
 }
 
 static inline void Put24 (u8 *&p, s32 v)	{ *p++ = v; *p++ = v >> 8; *p++ = v >> 16; }
@@ -874,6 +869,7 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 	m_Stats.nInHist[n - (Nominal - 1)]++;
 	m_Stats.nInFrames += n;
 
+	const unsigned nCh = m_uchInAlt == 2 ? kStereoCh : ChIn;	// alt 2: channels 1-2 of every frame
 	for (unsigned f = 0; f < n; f++)
 	{
 		if (m_bTest)
@@ -881,7 +877,7 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 			// tones on 1..N-2, the loopbacks of OUT 1 and OUT 12 on N-1, N
 			for (unsigned c = 0; c + 2 < ChIn; c++)
 			{
-				Put24 (p, m_pTone[c] ? m_pTone[c][m_nPhase[c]] : 0);
+				if (c < nCh) Put24 (p, m_pTone[c] ? m_pTone[c][m_nPhase[c]] : 0);
 				if (m_pTone[c] && ++m_nPhase[c] == TonePeriod[c]) m_nPhase[c] = 0;
 			}
 			s32 a = 0, b = 0;
@@ -897,8 +893,7 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 					m_nLoopTail++;
 				}
 			}
-			Put24 (p, a);
-			Put24 (p, b);
+			if (nCh == ChIn) { Put24 (p, a); Put24 (p, b); }
 			continue;
 		}
 		const s32 *pFrame = 0;
@@ -907,19 +902,9 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 			if (m_nInHead != m_nInTail) pFrame = m_InRing[m_nInTail++ % Ring];
 			else { m_Stats.nInUnder++; m_bInPrimed = FALSE; }
 		}
-		for (unsigned c = 0; c < 12; c++) Put24 (p, pFrame ? pFrame[c] : 0);
-		if (ChIn > 12)
-		{
-			const s16 *pV = 0;
-			if (pFrame)
-			{
-				if (m_nVoiceHead != m_nVoiceTail) pV = m_VoiceRing[m_nVoiceTail++ % Ring];
-				else m_Stats.nVoiceUnder++;
-			}
-			for (unsigned v = 0; v < Voices; v++) Put24 (p, pV ? (s32) pV[v] << 8 : 0);
-		}
+		for (unsigned c = 0; c < nCh; c++) Put24 (p, pFrame ? pFrame[c] : 0);
 	}
-	return n * ChIn * 3;
+	return n * nCh * 3;
 }
 
 // Every feedback packet (1 ms): the source's frames (the Rytm's, the stand-in's, else the generic timer's) against
@@ -1011,9 +996,7 @@ unsigned CSidecarGadget::MIDIForHost (u8 *pBuffer, unsigned nMax)
 	return m_ToHost.Pop (pBuffer, nMax);
 }
 
-boolean (*g_pSidecarKeysTap) (const u8 *pPacket) = 0;
-
-// the computer's packets (gadget IRQ) -> the keys tap (its notes) -> the Rytm-bound filter -> the queue core 0's loop
+// the computer's packets (gadget IRQ) -> the Rytm-bound filter -> the queue core 0's loop
 // sends from
 void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 {
@@ -1022,7 +1005,6 @@ void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 		if (pBuffer[i] == 0) continue;				// padding
 		m_Stats.nMidiFromHost++;
 		if (m_bUsbReboot) m_Reboot.Feed (pBuffer + i);		// the request is a host-link SysEx: dropped below
-		if (g_pSidecarKeysTap != 0 && (*g_pSidecarKeysTap) (pBuffer + i)) continue;
 		if (!m_ToRytmPath.FromHost (pBuffer + i)) m_Stats.nMidiFull++;
 	}
 }
@@ -1486,14 +1468,14 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 	unsigned nFbmHz = (unsigned) ((u64) s.nFb * 4000 * 1000 / 65536);
 	pLogger->Write (From, LogNotice,
 		"%s alt %u/%u mac %s pk %u | out %u pkts (11/12/13 %u/%u/%u) bad %u over %u under %u ring %u..%u | "
-		"in %u pkts (11/12/13 %u/%u/%u) ring %u..%u under %u over %u vunder %u | fb %u.%03u | late %u/%u/%u incompl %u/%u/%u | "
+		"in %u pkts (11/12/13 %u/%u/%u) ring %u..%u under %u over %u | fb %u.%03u | late %u/%u/%u incompl %u/%u/%u | "
 		"midi from %u to-mac %u to-rytm %u full %u norytm %u drop %u/%u mac-midi %s (up %u) | irq %u/s %u.%02u %% gap max %u us handler max %u us >300us %u, last late %u ms ago",
 		m_bTest ? "test" : bSource ? (m_bSrcRytm ? "rytm" : "standin") : "timer", m_uchOutAlt, m_uchInAlt,
 		m_bMac ? "on" : "off", s.nMacPeak,
 		s.nOutPkts, s.nOutHist[0], s.nOutHist[1], s.nOutHist[2], s.nOutBad, s.nOutOver, s.nOutUnder,
 		s.nRingMin == ~0u ? 0 : s.nRingMin, s.nRingMax,
 		s.nInPkts, s.nInHist[0], s.nInHist[1], s.nInHist[2], s.nInMin == ~0u ? 0 : s.nInMin, s.nInMax, s.nInUnder, s.nInOver,
-		s.nVoiceUnder, nFbmHz / 1000, nFbmHz % 1000,
+		nFbmHz / 1000, nFbmHz % 1000,
 		m_pIso[EPOut] ? m_pIso[EPOut]->Late () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Late () : 0,
 		m_pIso[EPIn] ? m_pIso[EPIn]->Late () : 0,
 		m_pIso[EPOut] ? m_pIso[EPOut]->Incomplete () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Incomplete () : 0,

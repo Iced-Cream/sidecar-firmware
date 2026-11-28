@@ -17,18 +17,27 @@ enum { StrManufacturer = 1, StrProduct, StrSerial, StrAudio, StrMIDI, StrNet, St
 // interfaces 0..4 audio + MIDI (unchanged), 5..6 the network; its endpoints 0x86 (notify), 0x87 + 0x07 (data): EP 6 and
 // 7 were free, and 7 IN + 7 OUT share a number as the mirror's box endpoints do (circle-gadget-mirror.patch)
 constexpr uint8_t kNetIface = 5, kEpNotify = 0x86, kEpNetIn = 0x87, kEpNetOut = 0x07;
-constexpr unsigned kCap = 512;				// 318 bytes (12 in) / 318 (20 in) without the network, + 85 with it
+constexpr unsigned kCap = 512;				// 318 bytes (12 in) without the network (364 with bStereo), + 85 with it
 
 struct Offsets { unsigned out, fb, in, midi_out, midi_in; usbnet::DescOffsets net; };
 
 // UAC2 (Audio Device Class 2.0 4.7-4.10, the Teensy T1 layout): interfaces 0 AC, 1 AS OUT (EP 0x01, feedback 0x82),
-// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); raw
-// channels (bmChannelConfig 0) named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
-// Its length (0: does not fit nCap).
+// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); channels
+// named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
+// Windows' shared mode (bStereo, uac2lr=1 the default): with all channels raw (bmChannelConfig 0) its engine mixed the 12
+// IN channels to 2 with L == R and 3-12 at zero, while exclusive mode had all 12 [hw, T191]; channels 1-2 marked front L/R
+// alone still gave channel 1 on both sides [hw, T192/T194]. So, with bStereo: both clusters' bmChannelConfig 0x3
+// (channels 1-2 front left / right, the rest non-predefined, UAC2 4.1), the IN terminal a line connector (0x0603, not a
+// microphone), and IN alt 2 = channels 1-2 only (MAIN L/R, kStereoCh), a format shared mode carries as it is. Without it
+// (uac2lr=0) the bytes are 0.4.2's. Its length (0: does not fit nCap).
+constexpr unsigned kStereoCh = 2;
 inline unsigned build (uint8_t *pBuf, unsigned nCap, unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut, bool bNet,
-		       Offsets *pOff)
+		       Offsets *pOff, bool bStereo = false)
 {
 	if (nCap < kCap) return 0;
+	const uint32_t nMaskIn = bStereo && nIn >= 2 ? 0x3 : 0, nMaskOut = bStereo && nOut >= 2 ? 0x3 : 0;
+	const uint16_t nInTerm = bStereo ? 0x0603 : 0x0201;
+	const unsigned nMaxIn2 = nMaxIn / nIn * kStereoCh;
 	const unsigned Clock = 0x10, AcCs = 9 + 8 + 17 + 12 + 17 + 12, MsCs = 7 + 6 + 6 + 9 + 9 + 9 + 5 + 9 + 5;
 	const uint8_t kConfiguration = 2, kInterface = 4, kEndpoint = 5;
 	unsigned n = 0;
@@ -40,13 +49,13 @@ inline unsigned build (uint8_t *pBuf, unsigned nCap, unsigned nIn, unsigned nOut
 	D (9, kInterface, 0, 0, 0, 0x01, 0x01, 0x20, 0);
 	D (9, 0x24, 0x01, U16 (0x0200), 0x08, U16 (AcCs), 0x00);
 	D (8, 0x24, 0x0A, Clock, 0x01, 0x05, 0, 0);
-	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (uint8_t) nOut, U32 (0), StrOutCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (uint8_t) nOut, U32 (nMaskOut), StrOutCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x02, U16 (0x0301), 0, 0x01, Clock, U16 (0), 0);
-	D (17, 0x24, 0x02, 0x03, U16 (0x0201), 0, Clock, (uint8_t) nIn, U32 (0), StrInCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x03, U16 (nInTerm), 0, Clock, (uint8_t) nIn, U32 (nMaskIn), StrInCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x04, U16 (0x0101), 0, 0x03, Clock, U16 (0), 0);
 	D (9, kInterface, 1, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, kInterface, 1, 1, 2, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (uint8_t) nOut, U32 (0), StrOutCh);
+	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (uint8_t) nOut, U32 (nMaskOut), StrOutCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	pOff->out = n;
 	D (7, kEndpoint, 0x01, 0x05, U16 (nMaxOut), 2);
@@ -55,11 +64,19 @@ inline unsigned build (uint8_t *pBuf, unsigned nCap, unsigned nIn, unsigned nOut
 	D (7, kEndpoint, 0x82, 0x11, U16 (4), 4);
 	D (9, kInterface, 2, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, kInterface, 2, 1, 1, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (uint8_t) nIn, U32 (0), StrInCh);
+	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (uint8_t) nIn, U32 (nMaskIn), StrInCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	pOff->in = n;
 	D (7, kEndpoint, 0x83, 0x05, U16 (nMaxIn), 2);
 	D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
+	if (bStereo)			// alt 2: MAIN L/R only, the same endpoint with short packets
+	{
+		D (9, kInterface, 2, 2, 1, 0x01, 0x02, 0x20, 0);
+		D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (uint8_t) kStereoCh, U32 (0x3), StrInCh);
+		D (6, 0x24, 0x02, 0x01, 3, 24);
+		D (7, kEndpoint, 0x83, 0x05, U16 (nMaxIn2), 2);
+		D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
+	}
 	// MIDI
 	D (8, 11, 3, 2, 0x01, 0x03, 0x00, StrMIDI);
 	D (9, kInterface, 3, 0, 0, 0x01, 0x01, 0x00, 0);

@@ -9,7 +9,7 @@
 // 12 channels its consumers take: 0..5 as they are, 6..9 silent, INPUT on 10 / 11. So this row's `audio_in` is the wide block's.
 #include "device/a4.h"
 
-#include "fx/out.h"
+#include "device/audio.h"
 
 namespace core {
 namespace device {

@@ -39,6 +39,10 @@ struct Device {
 // sent in OUT -> back in MAIN on IN, FIFO not included]
 inline constexpr Device kRytmMk2 = {"Analog Rytm MKII", 12, {0, 1}, {2, 3}, {4, 7, 5, 8, 10, 9, 11, 6}, {0, 3, 1, 4, 6, 5, 7, 2},
                                     {{0, -1}, {4, -1}, {1, -1}, {5, -1}, {8, 9}, {6, 7}, {10, 11}, {2, 3}}, {10, 11}, 289, 12, kPerVoice};
+// the device connected: the Rytm until the Pi's Overbridge driver claims another (a device's own row: its profile, core/device)
+inline const Device* g_device = &kRytmMk2;
+inline const Device& device() { return *g_device; }
+inline void set_device(const Device* d) { g_device = d ? d : &kRytmMk2; }   // the driver, before its stream starts; null: the Rytm
 
 }  // namespace out
 }  // namespace core
