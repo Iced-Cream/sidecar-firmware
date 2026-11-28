@@ -14,7 +14,7 @@ namespace dsp {
 namespace {
 // ---- the library: one entry per primitive (blocks.h) ----
 template <class T>
-proc::Proc* make(void* mem) { return new (mem) T(); }
+proc::Proc* make(void* mem, const void*) { return new (mem) T(); }
 
 const ParamInfo kDelayP[] = {{"TIME", 11000}, {"FEEDBACK", 6000}, {"DAMP", 16383}, {"TONE", 0},
                              {"DRIVE", 0},    {"MODDEPTH", 0},   {"MODRATE", 6000}, {"SPREAD", 0}};
@@ -31,6 +31,9 @@ const BlockInfo kLibrary[] = {
     {"WIDTH", 3, kWidthP, sizeof(Width), make<Width>},
 };
 constexpr int kLibSize = (int)(sizeof kLibrary / sizeof kLibrary[0]);
+// the shipped blocks (core/code), in load order
+const BlockInfo* s_ship[kShipped];
+int s_nship;
 
 // ---- the slots (control side) ----
 struct Slot {
@@ -88,11 +91,38 @@ int text(uint8_t* b, const char* name) {
 }
 }  // namespace
 
-int library_size() { return kLibSize; }
-const BlockInfo* library(int i) { return i >= 0 && i < kLibSize ? &kLibrary[i] : nullptr; }
+int library_size() { return kLibSize + s_nship; }
+const BlockInfo* library(int i) {
+  if (i >= 0 && i < kLibSize) return &kLibrary[i];
+  if (i >= kLibSize && i < kLibSize + s_nship) return s_ship[i - kLibSize];
+  return nullptr;
+}
+bool builtin(const char* name) {
+  for (const BlockInfo& b : kLibrary) if (!strcmp(b.name, name)) return true;
+  return false;
+}
 const BlockInfo* find(const char* name) {
   for (const BlockInfo& b : kLibrary) if (!strcmp(b.name, name)) return &b;
+  for (int i = 0; i < s_nship; ++i) if (!strcmp(s_ship[i]->name, name)) return s_ship[i];
   return nullptr;
+}
+bool add_block(const BlockInfo* b) {
+  if (!b || !b->name || find(b->name) || s_nship >= kShipped || b->bytes > kSlotBytes) return false;
+  s_ship[s_nship++] = b;
+  return true;
+}
+void remove_block(const BlockInfo* b) {
+  for (int i = 0; i < s_nship; ++i)
+    if (s_ship[i] == b) {
+      for (int k = i; k + 1 < s_nship; ++k) s_ship[k] = s_ship[k + 1];
+      s_ship[--s_nship] = nullptr;
+      return;
+    }
+}
+int users(const BlockInfo* b) {
+  int n = 0;
+  for (const Slot& s : s_slot) n += s.state != kEmpty && s.info == b;
+  return n;
 }
 
 bool begin(void* arena, size_t bytes) {
@@ -122,7 +152,7 @@ bool sysex(const uint8_t* m, int n) {
       for (int i = 3; i < bn; ++i) name[k++] = (char)b[i];
       name[k] = 0;
       const BlockInfo* info = find(name);
-      if (!info) return refuse(seq, owner, kUnknown);
+      if (!info || (info->owner != -1 && info->owner != owner)) return refuse(seq, owner, kUnknown);
       if (!s_arena) return refuse(seq, owner, kFull);
       int slot = -1;
       if (want == 0x7F) {
@@ -134,7 +164,8 @@ bool sysex(const uint8_t* m, int n) {
         slot = want;
       }
       Slot& s = s_slot[slot];
-      proc::Proc* p = info->make(s_arena + (size_t)slot * kSlotBytes);
+      proc::Proc* p = info->make(s_arena + (size_t)slot * kSlotBytes, info->ctx);
+      if (!p) return refuse(seq, owner, kBad);
       if (!proc::register_slot(slot, p)) { p->~Proc(); return refuse(seq, owner, kFull); }
       s = Slot{kPlacedState, (uint8_t)owner, info, p};
       ++s_st.placed;

@@ -47,11 +47,20 @@ struct BlockInfo {
   int nparams;
   const ParamInfo* params;
   size_t bytes;                // sizeof the block
-  proc::Proc* (*make)(void* mem);   // placement new into mem (kSlotBytes, 64-byte aligned)
+  proc::Proc* (*make)(void* mem, const void* ctx);   // built into mem (kSlotBytes, 64-byte aligned); null: refused
+  const void* ctx = nullptr;   // make's own (a shipped block: its loaded blob, core/code)
+  int owner = -1;              // -1 any owner may PLACE it; -2 none; else only this owner (a shipped block's offerer)
 };
-int library_size();
+int library_size();                       // the built-ins, then the shipped blocks loaded now (core/code)
 const BlockInfo* library(int i);          // null past the end
 const BlockInfo* find(const char* name);  // null: unknown
+// Shipped code (core/code, control core): a loaded blob joins the library under its name until removed. add: false
+// when the name is taken or there is no room (kShipped). The caller keeps *b alive while it is in the library.
+constexpr int kShipped = 16;
+bool add_block(const BlockInfo* b);
+void remove_block(const BlockInfo* b);
+bool builtin(const char* name);           // a built-in block's name
+int users(const BlockInfo* b);            // slots holding b (in any state but empty)
 
 // arena: kSlots x kSlotBytes, 64-byte aligned (the Pi: from the heap at boot; tests: any buffer). False: too small.
 bool begin(void* arena, size_t bytes);

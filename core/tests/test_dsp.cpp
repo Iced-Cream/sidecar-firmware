@@ -129,18 +129,18 @@ static void test_primitives() {
 
   // SHAPER and WIDTH at their defaults: the identity
   {
-    proc::Proc* p = dsp::find("SHAPER")->make(mem);
+    proc::Proc* p = dsp::find("SHAPER")->make(mem, nullptr);
     auto x = noise(4096), y = run_block(*p, x);
     for (size_t i = 0; i < x.size(); ++i) CHECK(std::fabs(y[i] - x[i]) < 1e-6f);
     p->~Proc();
-    p = dsp::find("WIDTH")->make(mem);
+    p = dsp::find("WIDTH")->make(mem, nullptr);
     y = run_block(*p, x);
     for (size_t i = 0; i < x.size(); ++i) CHECK(std::fabs(y[i] - x[i]) < 1e-5f);
     p->~Proc();
   }
   // DELAY: an impulse comes back after TIME; with FEEDBACK 0 once, with FEEDBACK it repeats, quieter each time
   {
-    auto* d = (dsp::Delay*)dsp::find("DELAY")->make(mem);
+    auto* d = (dsp::Delay*)dsp::find("DELAY")->make(mem, nullptr);
     // TIME for 10 ms: expmap(v, 0.05, 2000) = 10 -> v = 16383 * ln(200) / ln(40000)
     int v = (int)std::lround(16383.0 * std::log(10.0 / 0.05) / std::log(2000.0 / 0.05));
     d->set_param(0, v);
@@ -173,7 +173,7 @@ static void test_primitives() {
   }
   // FILTER: LP at 1 kHz takes a 10 kHz sine down by more than 30 dB and leaves 100 Hz alone; HP the other way round
   {
-    proc::Proc* f = dsp::find("FILTER")->make(mem);
+    proc::Proc* f = dsp::find("FILTER")->make(mem, nullptr);
     int v = (int)std::lround(16383.0 * std::log(1000.0 / 20.0) / std::log(20000.0 / 20.0));
     f->set_param(1, v);
     run_block(*f, std::vector<float>(4800, 0.0f));   // (the cutoff smoother settles)
@@ -193,7 +193,7 @@ static void test_primitives() {
   }
   // SHAPER: CLIP with drive keeps within +-LEVEL x 2; BITS 1 gives two levels; RATE holds samples
   {
-    proc::Proc* s = dsp::find("SHAPER")->make(mem);
+    proc::Proc* s = dsp::find("SHAPER")->make(mem, nullptr);
     s->set_param(1, 16383);
     CHECK(peak(run_block(*s, noise(4800, 1.0f))) <= 1.0f + 1e-6f);
     s->set_param(1, 0);
@@ -210,7 +210,7 @@ static void test_primitives() {
   }
   // MOD: RING at depth 1 on DC gives the oscillator (mean ~0); AMP at depth 0 is the identity
   {
-    proc::Proc* m = dsp::find("MOD")->make(mem);
+    proc::Proc* m = dsp::find("MOD")->make(mem, nullptr);
     auto y = run_block(*m, std::vector<float>(48000, 0.5f));
     double mean = 0;
     for (float v : y) mean += v;

@@ -26,6 +26,7 @@ sim/digidrum/vendor/
 sim/juno/build/
 sim/amy/vendor/
 core/build/
+core/build-aarch64/
 sim/golden/
 teensy/cores-uac2/
 core/version.h
