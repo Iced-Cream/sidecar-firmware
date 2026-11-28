@@ -86,6 +86,7 @@ int fxin_json(char* out, int cap);
 // The Sidecar's LFOs (core/lfo.h): the Rytm's channel messages (a track's trig retrigs, its knob's CC is the base), the
 // console's `lfo`, `lfo=N:KEY:VALUE` (false: not an lfo command) and /status's "lfo":{...} (any core, plain reads).
 void lfo_midi(uint8_t st, uint8_t d1, uint8_t d2);
+void rytm_channel(int t, uint8_t st, uint8_t d1, uint8_t d2);   // transport t's channel messages: lfo_midi + poly_midi if its box is the Rytm
 bool lfo_command(const char* p, char* out, int cap);
 bool lfo_link_full();   // 0.5.0 LFO FINAL: the Rytm link full while an LFO is on it (core/lfo.h link_full): the banner
 // the modulation layer (core/mod/mod.h): "mod" (the live targets), "mod=stats"; "\"mod\":{...}" for /status
