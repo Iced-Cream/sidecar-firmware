@@ -159,6 +159,11 @@ grep -q circle-http-case lib/net/httpdaemon.cpp || patch -p1 < /repo/pi/circle/c
 # UpgradeConnection hook that hands the socket to web_ws.cpp, docs/web-ws.md; after circle-http-case.patch, idempotent).
 # web.cpp overrides UpgradeConnection, so a tree without this patch does not build.
 grep -q circle-http-ws include/circle/net/httpdaemon.h || patch -p1 < /repo/pi/circle/circle-http-ws.patch
+# the slot of a connection is freed only after its CSocket gave the handle up (pi/circle/circle-net-release.patch: before,
+# a connection reset by its peer was freed at once, the next Listen took its slot, and a late Disconnect by the old owner
+# closed that listener - the next segment to its port asserted m_bValid in ipaddress.cpp; after circle-http-ws.patch, which
+# touches netconnection.h too; idempotent)
+grep -q circle-net-release include/circle/net/netconnection.h || patch -p1 < /repo/pi/circle/circle-net-release.patch
 make -C lib/net -j$J >/dev/null
 # the HID endpoint recovery and diagnostics (pi/circle/circle-hid.patch: a halted xHCI interrupt endpoint is reset
 # and resubmitted from the main loop; counters for the display log line; idempotent), then lib/usb
