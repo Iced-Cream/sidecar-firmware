@@ -78,6 +78,11 @@ effect is muted only when its core is hot, since its cost is known from the benc
    a 10 us CLOUD, and the next load setup's reload underruns took CLOUD and both CLOUDSEEDs. A spike opens an 80 % gate by
    itself, and an underrun is the FIFO's view's evidence, which that view answers. So the cycle's gate is 95 % alone: a
    sustained overload (P7's ~108 %), never a core admission keeps within 80 % (P5's 84 % included).
+   Each late mute's line names its gate (decided 2026-11-28 after LC4, T542, the owner's pick; log only): `... made core 1
+   late (gate: underrun+load)`, the reasons seen in the late run that led to it: `pass` (a pass alone past a block),
+   `underrun` (the FIFO's view, opened by a recent underrun), `load` (the FIFO's view, opened by the slow mean at 80 %),
+   `cycle` (a late cycle at 95 %). The report mode's "would be muted" line carries it too. LC4's stats could not order a
+   mute against the underruns in the same second; the line tells a mute that answered a real dropout from one on load alone.
    The side stage's FIFO is watched the same way at its own passes, and either FIFO's hold makes both kinds of pass
    late: LT12j set it at base passes only, so the late run broke at every side pass and the guard never saw the Rytm.
    One mute per low-buffer event: after any late mute both FIFOs' holds end and the next takes two new dips, so the

@@ -64,7 +64,18 @@ void note_user(int u, uint32_t us);
 // hold_run: the late rule's run neither grows nor resets in this call. With two boxes each render core runs a base pass and
 // a side pass a block (one cycle); the Pi passes it at the base pass, so the run counts cycles at the side pass, its late
 // the cycle's (decided 2026-11-26, the owner's pick A: kLateRun late cycles in a row; pi/engine/fifo_late.h cycle_late).
-void core_done(int core, bool hot, bool late = false, bool hold_run = false);
+// why: what made the block late, LateWhy bits (log only: the late mute's line and the report name them; decided
+// 2026-11-28 after LC4, the owner's pick: the judge tells a mute that answered a real dropout from one on load alone).
+// A late mute names every reason seen in its late run (the cycles or blocks that led to it), not the last block's alone.
+enum LateWhy : uint8_t {
+  kWhyPass = 1,    // the pass alone took a whole block
+  kWhyUnder = 2,   // the audio buffer's view, gated open by a recent underrun (pi/engine/fifo_late.h counts)
+  kWhyLoad = 4,    // the audio buffer's view, gated open by the core's slow load mean at the limit
+  kWhyCycle = 8,   // a two-box cycle (base + side pass) took a block at kCycleLimitBp
+};
+void core_done(int core, bool hot, bool late = false, bool hold_run = false, uint8_t why = 0);
+// The words for LateWhy bits into b ("underrun+load"; "" for none)
+void why_words(uint8_t why, char* b, int cap);
 // The core the caller runs on (the Pi: rytm_render_core(); the host: the one set_core named, 0 by default)
 int this_core();
 void set_core(int c);   // host tests
