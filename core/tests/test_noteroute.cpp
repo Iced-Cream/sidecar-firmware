@@ -202,6 +202,20 @@ int main() {
   nr::reset(0);
   CHECK(g_ev.size() == 1 && has(0, 1, 0x80, 60, 0));
   CHECK(!nr::route(0, 0).open && nr::route(1, 0).open && nr::route(1, 0).held == 1);   // the other box untouched
+  // queued answers of the old link go with it (a 6A after a plug nobody drained, a NOTED)
+  nr::plugged();
+  send(0, {nr::kNotes, 40, 1, 0, 0, 1});
+  nr::reset(0);
+  CHECK(take(0).empty() && !take(1).empty());
+  // an answer longer than the caller's buffer is dropped, not left to block the queue
+  nr::clear_all();
+  g_dev[0] = "KEYSTEP";
+  CHECK(send(0, {nr::kDevices, 1}) && send(0, {nr::kDevices, 2}));
+  uint8_t small[8];
+  CHECK(nr::take_answer(0, small, sizeof small) == 0 && nr::stats(0).ops_bad == 1);
+  auto d2 = take(0);
+  CHECK(d2.size() > 9 && d2[7] == 2);
+  g_dev[0] = "";
 
   // ---- a freed slot: held notes forgotten without note-offs, the route stays ----
   fresh();

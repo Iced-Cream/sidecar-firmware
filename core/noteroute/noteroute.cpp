@@ -219,9 +219,9 @@ int take_answer(int box, uint8_t* out, int cap) {
   Box& x = s_box[box];
   if (x.rd == x.wr) return 0;
   const Answer& a = x.ans[x.rd % kAnswers];
-  if (a.n > cap) return 0;
-  memcpy(out, a.d, a.n);
   ++x.rd;
+  if (a.n > cap) { ++x.st.ops_bad; return 0; }   // dropped, never left to block the queue (a 6A takes up to 114)
+  memcpy(out, a.d, a.n);
   return a.n;
 }
 
@@ -261,6 +261,7 @@ void reset(int box) {
     ++x.st.closed;
   }
   count_open(x);
+  x.rd = x.wr;   // answers to the old link's requests are not the new one's
 }
 
 void slot_freed(int box, int slot) {

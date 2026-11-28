@@ -23,6 +23,9 @@
 //     note-off (8x n 0) and every channel it left sustained a CC 64 0, at once. A slot that was freed (core/dsp FREE)
 //     loses its held notes without note-offs (no processor to tell); its routes stay open for a new processor.
 //   - Both boxes keep their own table of kRoutes routes; route numbers are per box.
+//   - A link reset also drops the box's queued answers.
+// Proposed, for the owner to confirm with the wiring (it changes what slots get today): a processor slot gets keyboard
+// notes only through a note route (wiring step 1), not every USB-A message as devmidi's step 2 gives every filled slot.
 //
 // Host link (51 STORE, version 1, box <-> Pi; sim/protocol.py "note routes"):
 //   box -> Pi  28 NOTES   <seq> <owner> <src> <chan> <slot>            a new route; answer 68 or 69
@@ -37,11 +40,12 @@
 //
 // Wiring (after S2, which reworks kernel / bridge / cores / ob_usb / core/device; not done in this step):
 //   1. set_sink(): to the box's processor slot (the per-box core/proc S2 brings), replacing devmidi's step 2 (every
-//      USB-A message to every filled slot): a slot gets keyboard notes only through a note route.
+//      USB-A message to every filled slot), if the owner confirms the proposal above.
 //   2. feed(): devmidi::on_midi(listener -> feed(src, -1, ...)) for the USB-A devices (its unplug note-offs come the
 //      same way), and the USB-C gadget's per-cable MIDI OUT path (S8c) with the cable's box.
 //   3. devmidi plug / unplug -> plugged() (6A to each box) and gone(); a USB-C port gone -> gone(kUsbC, box).
-//   4. kv/link: is_op(m[6]) -> sysex(box, m, n) beside route::sysex; host_step drains take_answer(box) per box; the
+//   4. kv/link: is_op(m[6]) -> sysex(box, m, n) beside route::sysex; host_step drains take_answer(box) per box into a
+//      buffer of at least 128 bytes (link.cpp's is 32: a 6A takes up to 114; a longer answer than cap is dropped); the
 //      box's store HELLO and link reset -> reset(box). core/dsp's FREE -> slot_freed(box, slot).
 //
 // Threads: everything on the control side (the Pi's core 3), one producer; the sink is called from feed / the
@@ -73,7 +77,7 @@ bool is_op(uint8_t op);
 // a whole 51 message with a note-route op from box `box`; false: malformed, refused or not ours (answers queued
 // for NOTES / RENOTE / DEVICES either way)
 bool sysex(int box, const uint8_t* m, int n);
-// box's next queued answer, whole F0..F7; 0: none
+// box's next queued answer, whole F0..F7; 0: none (or it was longer than cap: dropped, counted in ops_bad)
 int take_answer(int box, uint8_t* out, int cap);
 
 // one message from a source: src 0..3 a USB-A device (box ignored), kUsbC the USB-C port of `box`
