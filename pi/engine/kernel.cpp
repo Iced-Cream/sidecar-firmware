@@ -278,12 +278,25 @@ static void CrumbToCard (CLogger *pLogger)
 boolean CKernel::Initialize (void)
 {
 	crumb::Begin ();				// first: the previous boot's breadcrumb aside, before anything logs (crumb.h)
+	// the boot watchdog (decided 2026-11-27): on from here, not from Run's loop, so a hang anywhere in the start (the
+	// card, the USB host and its hub, the gadget, the network) resets the Pi in 15 s instead of leaving it silent. The
+	// BCM watchdog's longest is 15 s, so each step below feeds it (BootStep, BootFeed), and so do its long waits
+	// (net=auto's probe). A failed Initialize (main.cpp halts) and a panic during the start reboot the same way.
+	// bootwd=0: from Run's loop, as before (updtrial= and testsecs= keep theirs).
+	m_bBootWd = m_Options.GetAppOptionDecimal ("bootwd", 1) != 0;
+	if (m_bBootWd) m_Watchdog.Start (15);
+	m_nBootHang = m_Options.GetAppOptionDecimal ("boothang", 0);
 	boolean bOK = m_Interrupt.Initialize ();
 	if (bOK) bOK = m_Serial.Initialize (921600);
 	if (bOK) bOK = m_Logger.Initialize (&m_LogTee);	// the serial port, and the web page's copy
 	if (bOK) bOK = m_Timer.Initialize ();
 	if (!bOK) return FALSE;
 	m_Logger.Write (From, LogNotice, "==== rytm-pi engine ==== Sidecar " SIDECAR_VERSION_FULL ", CPU %u MHz", m_CPUThrottle.GetClockRate () / 1000000);
+	m_Logger.Write (From, LogNotice, m_bBootWd ? "boot: the watchdog on from the start (15 s, fed at each boot step)"
+						   : "boot: bootwd=0: the watchdog from the main loop on");
+	if (m_nBootHang != 0)		// the QEMU gates only: a unit's cmdline never has it
+		m_Logger.Write (From, LogWarning, "boothang=%u: core 0 hangs at boot point %u (the boot watchdog's test)", m_nBootHang, m_nBootHang);
+	BootHang (1);
 #ifdef SIDECAR_PI5_TESTMODE
 	// testsecs=S (docs/pi5.md "Engine test mode"): a run on a card that is not Sidecar's, a tryboot on Raspberry Pi OS. The
 	// card is never mounted for the engine, so nothing is written to that system's boot partition; the watchdog runs
@@ -296,6 +309,7 @@ boolean CKernel::Initialize (void)
 		g_bCardOff = !m_bTestCard;
 		g_bCardGuard = m_bTestCard;
 		m_Watchdog.Start (15);
+		m_bBootWd = TRUE;			// fed by BootFeed through the boot
 		m_Logger.Write (From, LogNotice, "testsecs=%u: %s, the watchdog on, a reboot at the end", m_nTestSecs,
 				m_bTestCard ? "testcard=1: the card in use, Sidecar's folders only" : "no card for the engine");
 	}
@@ -307,6 +321,7 @@ boolean CKernel::Initialize (void)
 	if (m_bUpdTrial)
 	{
 		m_Watchdog.Start (15);
+		m_bBootWd = TRUE;			// fed by BootFeed through the boot
 		m_Logger.Write (From, LogNotice, "updtrial=1: the web update's trial boot, the watchdog on from here");
 	}
 	m_Logger.RegisterPanicHandler (CrumbPanic);
@@ -324,6 +339,7 @@ boolean CKernel::Initialize (void)
 		else m_Logger.Write (From, LogNotice, "boot screen: %ux%u in %u us", m_pDisplay->GetFrameWidth (),
 				     m_pDisplay->GetFrameHeight (), m_Timer.GetClockTicks () - ts);
 	}
+	BootFeed ();
 	if (!m_EMMC.Initialize ()) m_Logger.Write (From, LogError, "SD: no card");
 	BootStep (1);
 	// the big fixed buffers, reserved once here from Circle's heap (cached normal memory, as .bss) rather than in .bss,
@@ -345,13 +361,16 @@ boolean CKernel::Initialize (void)
 	t0 = m_Timer.GetClockTicks ();
 	bridge::selftest_content ();
 	boolean bCard = bridge::begin (ToHost);
+	BootFeed ();
 	core::device::g_frozen = [] (int nSlot) { return nSlot >= 0 && CObUsb::Frozen ((unsigned) nSlot) != FALSE; };	// (the UID's MIDI ask)
 	m_Logger.Write (From, LogNotice, "engine: begin %s in %u ms (%d folders, project \"%s\", pool %d)",
 			bCard ? "ok" : "WITHOUT a card", (m_Timer.GetClockTicks () - t0) / 1000,
 			bridge::card_folders (), bridge::project (), bridge::pool_slots ());
 	// the user machines (um_pi.h): the code arena, the card's /Plugins scanned by core 3 once it runs
 	if (bCard && m_Options.GetAppOptionDecimal ("um", 1) != 0) CUserMachines::Initialize ();
+	BootFeed ();
 	if (bCard) rec_pi::Init ();		// the recorder's memory (recbuf=MB) and the boot scan of /Recordings
+	BootFeed ();
 	// the web update (update_pi.h): a trial waits for its commit; any other boot finishes or cleans up after one.
 	// webupdate=0 turns the page's Update off; the test modes never update.
 	{
@@ -362,11 +381,13 @@ boolean CKernel::Initialize (void)
 #endif
 		update_pi::Boot (bCard, bUpdOn, pUpdOff, m_bUpdTrial);
 	}
+	BootFeed ();
 	s_pBundleConsole = &m_Console;
 	bundle_pi::init (BundleCommand);	// project bundles: the job on this core's loop (bridge::begin ran the boot recovery)
 	lib_pi::begin (bCard);			// the sample library: its index read and the card walked, a piece a pass (lib_pi.h)
 	// the card queue (core/msamp/cardq.h): the streams' reads on this core, before the recorder's writes; cardq=0: on
 	// core 3, as before
+	BootFeed ();
 	bridge::card_worker (m_Options.GetAppOptionDecimal ("cardq", 1) != 0);
 	BootStep (3);
 	// a slot whose box left stays that box's this long after its edits are saved (core/device/device.h g_hold_ms): a box
@@ -378,9 +399,13 @@ boolean CKernel::Initialize (void)
 #if RASPPI >= 5
 	LoadFan (bCard);				// the fan header: running from here on (fan.h)
 #endif
+	BootFeed ();
 	if (bBench) CEngineCores::BenchCore (0);		// cores 1-3 bench as they start (LogBench)
+	BootFeed ();
 	if (bBench) BenchChains ();			// the master / send TYPE insert rows: before cores 1-3 start (LogBench)
+	BootFeed ();
 	SelfCheck ();
+	BootFeed ();
 	// boot defaults (the user's decision, 2026-10-16): out=tracks, the voices on their tracks' inputs, through the
 	// Rytm's filters and FX (the mod build); MIDI notes off (notes=on is for a stock Rytm, with out=main); no drone
 	// (only :drone=). cmdline.txt or the console override them.
@@ -438,6 +463,7 @@ boolean CKernel::Initialize (void)
 		}
 		else m_pDisplay = 0;			// no frame buffer: left alone (no destructor)
 	}
+	BootFeed ();
 	LoadDisplaySettings (bCard);
 	m_Console.SetCore0Handler (Core0Command, this);	// screensaver=, brightness= (and the Sidecar's commands)
 	// USB-C, the computer's side: gadget=sidecar (default: UAC2 + USB MIDI, sidecar_gadget.h), midi (P1's MIDI
@@ -459,6 +485,7 @@ boolean CKernel::Initialize (void)
 	if (strcmp (pGadgetMode, "sidecar") == 0)
 #endif
 	{
+		BootFeed ();
 		CSidecarGadget *pSidecar = new CSidecarGadget (&m_Interrupt);
 		m_nUsbModes = usb_mode::modes (CSidecarGadget::MirrorBuilt (), true);
 		ApplyUsbMode ();				// the USB-C mode (usb_mode.h): display.txt's usbmode=, else usb=
@@ -490,6 +517,8 @@ boolean CKernel::Initialize (void)
 	else m_Logger.Write (From, LogNotice, "gadget: off");
 #endif
 	if (m_pSidecar == 0) ApplyUsbMode ();		// no Sidecar gadget: the setting read (/status, the pages), none runs
+	BootFeed ();
+	BootHang (10);					// (the boot watchdog's test: after the gadget, before the network)
 #ifdef SIDECAR_PI5_TESTMODE
 	if (m_nTestSecs != 0)
 	{
@@ -520,7 +549,9 @@ boolean CKernel::Initialize (void)
 	UsbIn.link_tcp = strncmp (pLinkOpt, "tcp", 3) == 0 && (pLinkOpt[3] == 0 || pLinkOpt[3] == ':');
 	const char *pUsbWhy = "";
 	const usbnet::Plan UsbPlan = usbnet::plan (UsbIn, &pUsbWhy);
+	BootFeed ();
 	if (WifiMode != CWifi::ModeOff && !m_pWifi->StartChip ()) WifiMode = CWifi::ModeOff;	// (net=auto's wait runs meanwhile)
+	BootFeed ();
 	boolean bUsbNet = UsbPlan == usbnet::kForced;
 	if (UsbPlan == usbnet::kProbe) bUsbNet = UsbNetProbe (UsbOpt, nGadgetT0, &pUsbWhy);
 	if (bUsbNet || UsbOpt.net == usbnet::kLan)
@@ -549,8 +580,9 @@ boolean CKernel::Initialize (void)
 	}
 	else new (m_NetStore) CNetSubSystem (NetOption (&m_Options, "ip", NET_DEFAULT_IP, m_IP),
 					     NetOption (&m_Options, "netmask", NET_DEFAULT_NETMASK, m_NetMask), 0, 0, "sidecar");
-	if (m_bUpdTrial) m_Watchdog.Start (15);		// (the trial's watchdog, fed: the network's start can take seconds)
+	BootFeed ();					// (the network's start can take seconds)
 	m_bNetOK = m_Net.Initialize (FALSE);
+	BootFeed ();
 	if (!m_bNetOK) m_Logger.Write (From, LogError, "network: init failed (link=tcp refused, usb only)");
 	else if (bUsbNet)
 	{
@@ -568,6 +600,7 @@ boolean CKernel::Initialize (void)
 			     m_IP[0], m_IP[1], m_IP[2], m_IP[3], m_NetMask[0], m_NetMask[1], m_NetMask[2], m_NetMask[3],
 			     WifiMode == CWifi::ModeScan ? "; Wi-Fi chip up for scans" : "");
 	m_pWifi->StartSupplicant (m_bNetOK);		// ModeNet: joins; any mode: a join's trial may judge from now on
+	BootFeed ();
 	usbnet_pi::Use (bUsbNet ? usbnet::kIfUsb : WifiMode == CWifi::ModeNet ? usbnet::kIfWifi : usbnet::kIfEthernet, UsbOpt,
 			pUsbWhy);
 	UseLink (m_Options.GetAppOptionString ("link", "usb"));
@@ -589,6 +622,8 @@ boolean CKernel::Initialize (void)
 	// the Rytm's USB MIDI over TCP 7330 for hardware testing (midibridge_pi.h): listening, but OFF until turned on.
 	// Not on the USB-C network: the computer has the Rytm's MIDI on that cable already (USB MIDI)
 	if (m_bNetOK && !bUsbNet) midibridge_pi::Start (&m_Net);
+	BootFeed ();					// Run's loop feeds it from here
+	BootHang (11);					// (the boot watchdog's test: Initialize's end, before Run)
 	return TRUE;
 }
 
@@ -996,6 +1031,7 @@ boolean CKernel::UsbNetProbe (const usbnet::Options &rOpt, unsigned nGadgetT0, c
 	do
 	{
 		m_Timer.MsDelay (2);			// a frame is 1 ms: two reads this far apart differ while a computer drives the bus
+		BootFeed ();				// (usbwait= may be up to 30 s)
 		m_pSidecar->Poll ();
 		r = Probe.step ((CTimer::GetClockTicks () - nGadgetT0) / 1000, m_pSidecar->BusFrame () != nFrame0,
 				m_pSidecar->NetUp ());
@@ -1074,7 +1110,14 @@ void CKernel::UseLink (const char *pSpec)
 // worst core's numbers, in the plan's format (pi_run.py bench parses both).
 void CKernel::LogBench (void)
 {
-	if (!CEngineCores::BenchWait (20000))
+	boolean bBenchDone = FALSE;		// 20 s, the boot watchdog fed each second meanwhile (its longest is 15 s)
+	for (unsigned nSec = 0; nSec < 20 && !bBenchDone; nSec++)
+	{
+		BootFeed ();
+		bBenchDone = CEngineCores::BenchWait (1000);
+	}
+	BootFeed ();
+	if (!bBenchDone)
 	{
 		// that core never reaches its loop, so no block would ever render: fatal (core 0's loop stops cleanly and
 		// reboots: a RAM kernel is gone then; an SD card that boots engine.img (sdboot) boots it again, each time
@@ -2457,11 +2500,27 @@ void CKernel::MeasureClock (void)
 
 void CKernel::BootStep (unsigned nStep)
 {
-#ifdef SIDECAR_PI5_TESTMODE
-	if (m_nTestSecs != 0) m_Watchdog.Start (15);	// fed through the boot
-#endif
-	if (m_bUpdTrial) m_Watchdog.Start (15);		// the web update's trial: fed through the boot as well
+	BootFeed ();
+	BootHang (nStep + 1);				// boot points 2..9 (BootStep 1..8)
 	if (m_pDisplay != 0) m_pDisplay->SplashStep (nStep);
+}
+
+// The boot watchdog (Initialize): fed; with bootwd=0 (and no updtrial= / testsecs=) it is not running, nothing to feed.
+void CKernel::BootFeed (void)
+{
+	if (m_bBootWd) m_Watchdog.Start (15);
+}
+
+// boothang=N, the boot watchdog's test (the QEMU gates): core 0 hangs at boot point N, interrupts still on (the log line
+// goes out), as the watchdog test in Run's loop does. 1: the logger's start; 2..9: BootStep 1..8 (9: a display only);
+// 10: after the gadget, before the network; 11: Initialize's end.
+// With the boot watchdog the Pi resets 15 s later; with bootwd=0 it stays hung (the failure before 2026-11-27).
+void CKernel::BootHang (unsigned nAt)
+{
+	if (m_nBootHang == 0 || m_nBootHang != nAt) return;
+	m_Logger.Write (From, LogWarning, "boothang=%u: core 0 hangs here (the watchdog %s)", nAt,
+			m_bBootWd ? "resets the Pi in 15 s" : "is off: no reset");
+	for (;;) asm volatile ("");
 }
 
 void CKernel::StopAndReboot (const char *pWhy, boolean bTryboot)
