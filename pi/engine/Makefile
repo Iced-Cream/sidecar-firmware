@@ -18,6 +18,7 @@ OBJS += blackbox_pi.o          # the black box: the log to /.rytm/blackbox.log (
 # FatFs's disk layer in place of Circle's addon/fatfs/diskio.cpp (linked before libfatfs.a, so the archive's diskio.o
 # is never pulled in): the USB drives' transfers kept to the 64 KB TRB rule below FatFs (stor_diskio.cpp)
 OBJS += stor_diskio.o
+OBJS += pi_display.o           # the Pi-attached display's frame buffer and touch (pi_display.h; the logic is core/pidisplay)
 OBJS += code_mmu.o            # shipped code: the code arena's pages (code_mmu.h, core/code), every board
 GADGET_OBJS = gadget.o sidecar_gadget.o
 ifeq ($(strip $(RASPPI)),5)
@@ -44,6 +45,7 @@ endif
 CORE_SRC := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock/clock.cpp proc/proc.cpp hooks.cpp ui/canvas.cpp \
             msamp/cardq.cpp lib/sha256.cpp device/device.cpp device/digitakt.cpp device/a4.cpp browse/browse.cpp devmidi/devmidi.cpp)
 CORE_SRC += $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/store/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp $(CORE)/code/loader.cpp $(CORE)/code/code.cpp
+CORE_SRC += $(wildcard $(CORE)/pidisplay/*.cpp)   # the Pi-attached display (S8k): stack, soft keys, touch calibration
 PORT_SRC := midi_in.cpp a4_in.cpp bridge.cpp emu_proto.cpp tones.cpp fsweb.cpp wifi_conf.cpp paircode.cpp power_state.cpp \
             stor_vol.cpp stor_bench.cpp audio_return.cpp
 HOSTED_OBJS := $(patsubst $(CORE)/%,hosted/core/%.o,$(CORE_SRC)) $(patsubst %,hosted/%.o,$(PORT_SRC))

@@ -29,6 +29,13 @@ bool rytm_greeted();
 void rytm_gone();                          // the Rytm's USB MIDI removed: the link reset
 void rytm_resync();                        // records for the Rytm were lost: the screen sends what it owes again
 
+// The Pi-attached display (core/pidisplay, S8k; pi_display.h): the panel and its touch source from core 0 at boot, taken
+// over by tick() on the control core, which then reads the touches (at most a few a pass) and draws. The pairing code's
+// popup and the network's address (above) go to the display too.
+using PanelPut = void (*)(void* ctx, int x, int y, int w, int h, const uint16_t* px, int stride);
+using TouchTake = bool (*)(int* x, int* y, bool* down);   // the next touch event, false: none
+void pidisplay_attach(int w, int h, PanelPut put, void* ctx, TouchTake take);
+
 // The card queue (core/msamp/cardq.h): card_worker(true) at boot (cmdline cardq=1, the default): core 0's loop runs the
 // card requests (card_service, at most n a call: the count run; 51 STORE's ops and the card browse's reads too) while
 // card_busy() holds uploads off. Off: the control core runs them itself.

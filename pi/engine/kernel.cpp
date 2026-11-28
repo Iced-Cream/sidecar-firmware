@@ -46,6 +46,7 @@ static const char NoMirrorWhy[] = "no circle-gadget-mirror.patch";	// a build wi
 #include "wifi.h"
 #include "fmt/fmt.h"		// write_atomic (SdWriteWhole)
 #include "stor_pi.h"
+#include "pi_display.h"	// the Pi-attached display (S8k): pidisplay=1
 #include "code_mmu.h"		// shipped code: the code arena's pages
 #include "version.h"
 #include <circle/new.h>
@@ -256,6 +257,8 @@ boolean CKernel::Initialize (void)
 	// the volumes besides the card (stor_pi.h, docs/STORAGE.md): USB drives as they come (core 0's loop); the Pi 5's
 	// NVMe SSD now if one answers (nvme=0 in cmdline.txt skips it)
 	stor_pi::Init (&m_USBHCI, &m_Interrupt, m_Options.GetAppOptionDecimal ("nvme", 1) != 0);
+	// the Pi-attached display (pi_display.h, docs/pi-display.md): a third screen target, off unless pidisplay=1
+	pi_display::Init ();
 	BootStep (7);
 	m_Console.SetCore0Handler (Core0Command, this);	// cpumhz= (and the Sidecar's commands)
 	// USB-C, the computer's side: gadget=sidecar (default: UAC2 + USB MIDI, sidecar_gadget.h), midi (P1's MIDI
@@ -1149,6 +1152,7 @@ void CKernel::Run (void)
 		};
 		CardPass ();								// the streams' card requests first (core/msamp/cardq.h)
 		{ mbtrace::Scope Mb (19, 200); stor_pi::Poll (bPlugAndPlay); }		// USB drives in and out, the bench's step (stor_pi.h)
+		pi_display::Poll (bPlugAndPlay);		// the Pi display's touch bound and polled (pidisplay=1 only)
 #if RASPPI >= 5 && !defined (SIDECAR_NO_GADGET)
 		if (m_nTestSecs == 0 || m_bTestCard)
 #endif

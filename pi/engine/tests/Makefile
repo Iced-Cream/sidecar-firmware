@@ -62,7 +62,7 @@ GENERIC_CORE := $(addprefix $(CORE)/,generic/generic.cpp screen/screen.cpp clock
                 device/digitakt.cpp store/store.cpp msamp/cardq.cpp hooks.cpp ui/canvas.cpp lib/sha256.cpp \
                 host/platform_host.cpp browse/browse.cpp devmidi/devmidi.cpp) \
                 $(wildcard $(CORE)/fmt/*.cpp) $(wildcard $(CORE)/kv/*.cpp) $(wildcard $(CORE)/locks/*.cpp) $(CORE)/route/route.cpp $(CORE)/dsp/dsp.cpp \
-                $(CORE)/code/loader.cpp $(CORE)/code/code.cpp
+                $(CORE)/code/loader.cpp $(CORE)/code/code.cpp $(wildcard $(CORE)/pidisplay/*.cpp)
 build/test_generic_pi: test_generic_pi.cpp ../bridge.cpp ../audio_return.cpp ../audio_return.h ../bridge.h $(GENERIC_CORE) check.h
 	@mkdir -p build
 	$(CXX) -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -DCORE_UI_TOOLS=1 -I$(CORE)/host -I$(CORE) -I.. \

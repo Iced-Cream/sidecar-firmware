@@ -17,6 +17,7 @@
 #include "kv/link.h"
 #include "locks/locks.h"
 #include "msamp/cardq.h"
+#include "pidisplay/pidisplay.h"
 #include "platform.h"
 #include "proc/proc.h"
 #include "route/route.h"
@@ -93,19 +94,48 @@ void screen_address(const char* ip) {
   g_addr_q.push(a);
 }
 
+// The Pi-attached display's panel (core 0 at boot -> the control core)
+namespace {
+struct PanelMsg { int w, h; PanelPut put; void* ctx; TouchTake take; };
+Spsc<PanelMsg, 2> g_panel_q;
+core::pidisplay::Panel g_panel;
+TouchTake g_touch_take = nullptr;
+void pidisplay_tick() {
+  PanelMsg pm;
+  if (g_panel_q.pop(&pm)) {
+    g_panel = core::pidisplay::Panel{pm.w, pm.h, pm.put, pm.ctx};
+    if (core::pidisplay::attach(&g_panel)) g_touch_take = pm.take;
+    else core::log("pi display: %dx%d is too small for the canvas and its keys: off", pm.w, pm.h);
+  }
+  int x, y;
+  bool down;
+  for (int i = 0; i < 4 && g_touch_take && g_touch_take(&x, &y, &down); ++i) core::pidisplay::touch(x, y, down);
+  core::pidisplay::tick(core::now_ms());
+}
+}  // namespace
+void pidisplay_attach(int w, int h, PanelPut put, void* ctx, TouchTake take) { g_panel_q.push(PanelMsg{w, h, put, ctx, take}); }
+
 void tick() {
   PopupMsg m;
   while (g_popup_q.pop(&m)) core::screen::popup(m.l1, m.l2[0] ? m.l2 : nullptr);
   AddrMsg a;
   bool have = false;
   while (g_addr_q.pop(&a)) have = true;   // the newest counts
-  if (have) core::screen::set_address(a.ip);
+  if (have) core::screen::set_address(a.ip), core::pidisplay::set_address(a.ip);
   core::gen::tick(core::now_ms());
+  pidisplay_tick();
 }
 
-// The pairing code on the Rytm's screen: 30 s, over an open page (a client's) as well
-bool pair_popup(const char* line) { return core::screen::popup("SIDECAR PAIR CODE", line, core::screen::kPopupMaxMs, true); }
-void pair_popup_end() { core::screen::popup_end(); }
+// The pairing code on the Rytm's screen: 30 s, over an open page (a client's) as well; on the Pi display too, over its
+// top entry (the return value stays the Rytm's: paircode_pi's retry is about the box)
+bool pair_popup(const char* line) {
+  core::pidisplay::popup("SIDECAR PAIR CODE", line, core::screen::kPopupMaxMs);
+  return core::screen::popup("SIDECAR PAIR CODE", line, core::screen::kPopupMaxMs, true);
+}
+void pair_popup_end() {
+  core::pidisplay::popup_end();
+  core::screen::popup_end();
+}
 uint32_t rytm_hellos() { return core::screen::hellos(); }
 bool rytm_greeted() { return core::screen::greeted(); }
 

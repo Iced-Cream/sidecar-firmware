@@ -64,8 +64,8 @@ const screen::Client* top(int* slot = nullptr);  // null: empty
 bool on_stack(int slot, const screen::Client* c);
 void redraw();                                   // the top's frame changed: drawn at the next tick (also polled, kPollMs)
 
-// ---- Pi-wide popups (the pairing code): over the top entry, every touch ends them. hold_ms 0 = 0.8 s, at most
-// screen::kPopupMaxMs.
+// ---- Pi-wide popups (the pairing code): over the top entry, every touch ends them. hold_ms 0 = 0.8 s, at most 30 s.
+// False: no panel attached (nothing is kept for later).
 bool popup(const char* l1, const char* l2 = nullptr, uint32_t hold_ms = 0);
 void popup_end();
 bool popup_up();

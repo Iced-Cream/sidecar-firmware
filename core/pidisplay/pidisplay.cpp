@@ -243,6 +243,7 @@ bool on_stack(int slot, const screen::Client* c) { return find(slot, c) >= 0; }
 void redraw() { s.dirty = true; }
 
 bool popup(const char* l1, const char* l2, uint32_t hold_ms) {
+  if (!s.have) return false;   // no panel: nothing owed for later
   sniprintf(s.popup_l1, sizeof s.popup_l1, "%s", l1 ? l1 : "");
   sniprintf(s.popup_l2, sizeof s.popup_l2, "%s", l2 ? l2 : "");
   s.popup_ms = hold_ms > kPopupMaxMs ? kPopupMaxMs : hold_ms;
