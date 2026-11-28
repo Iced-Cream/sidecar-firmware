@@ -5,7 +5,7 @@
 
 #include "device/a4.h"
 #include "drift_src.h"
-#include "fx/out.h"
+#include "device/audio.h"
 #include "ob_block.h"
 
 namespace a4in {

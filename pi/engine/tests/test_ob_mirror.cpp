@@ -5,7 +5,7 @@
 // Rytm's that test_ob_usb.cpp uses (the emulator's; the pipes on interface 3, USB MIDI on 4-5).
 #include "check.h"
 #include "device/digitakt.h"
-#include "fx/out.h"
+#include "device/audio.h"
 #include "ob_block.h"
 #include "ob_usb.h"
 #include "ob_follow.h"

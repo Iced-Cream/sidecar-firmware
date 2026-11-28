@@ -1,10 +1,12 @@
 // pi/engine/tests/test_ob_usb.cpp - the real ob_usb.cpp on a fake Circle (shim_ob/): the descriptors a Digitakt and a Rytm send, the
-// sequence on the control endpoint, the URBs' sizes, OUT paced by IN whatever the two sizes are, the bytes of an OUT block. The
+// sequence on the control endpoint, the URBs' sizes, OUT paced by IN whatever the two sizes are, the bytes of an OUT block (silence, or what a processor slot
+// adds: shim_ob/audio_return.h). The
 // descriptors are what the firmware sent an emulated host (rytm-emu dtusb 692c4cc, dtboot --usb-host: Digitakt OS 1.53 and 1.54,
 // OVERBRIDGE; Rytm OS 1.73): the Digitakt's matches a physical capture byte for byte (docs/device-profiles.md, "Audio").
 #include "check.h"
 #include "device/digitakt.h"
-#include "fx/out.h"
+#include "device/audio.h"
+#include "audio_return.h"
 #include "ob_block.h"
 #include "ob_usb.h"
 #include "ob_follow.h"
@@ -160,17 +162,20 @@ int main() {
     CHECK(b.host.in.size() == 8 && b.host.in.front()->len == 368);
     CHECK(&core::out::device() == &core::out::kRytmMk2);
     CHECK(CLogger::Get()->lines[0] == "Analog Rytm MKII (1935:0b48) claimed");
-    g_Output.SetMode(Output::kTracks);
-    int16_t fr[32][8] = {};
-    for (auto& f : fr) f[2] = 8000;
-    g_Output.Push(fr, 32);
     uint16_t c = 0;
     b.in(1, c);
     CHECK(b.host.out.size() == 1 && b.host.out[0]->len == 368);
-    // a voice on its track's channel and nowhere else, as ever
+    // no processor slot: silence on every channel
     const uint8_t* o = b.host.out[0]->buf;
-    for (int ch = 0; ch < 12; ++ch) CHECK((ob::block_sample(o, 12, 6, ch) != 0) == (ch == ob::kVoiceToRytm[2]));
-    g_Output.SetMode(Output::kMain);
+    for (int ch = 0; ch < 12; ++ch) CHECK(ob::block_sample(o, 12, 6, ch) == 0);
+    // a slot filled: what it adds is on every channel of the next block
+    aret::g_slot = true, aret::g_level = 1 << 20;
+    b.out_done();
+    b.in(1, c);
+    o = b.host.out[0]->buf;
+    for (int ch = 0; ch < 12; ++ch) CHECK(ob::block_sample(o, 12, 6, ch) != 0);
+    CHECK(aret::g_in > 0);   // the IN frames handed over while a slot runs
+    aret::g_slot = false;
   }
 
   CHECK(g_rytm_usb == 0);   // the Rytm gone
@@ -191,14 +196,9 @@ int main() {
     same_sequence(b.host);
     CHECK(b.host.in.size() == 8 && b.host.in.front()->len == 368);
     CHECK(&core::out::device() == core::device::kDigitakt.audio);
-    for (int v = 0; v < 8; ++v) CHECK(core::out::control.route[v] == core::out::kPost);
-    CHECK(g_Output.GetMode() == Output::kMain);   // whatever was set: no voice channels
+    aret::g_slot = true, aret::g_level = 1 << 20;   // a processor slot's output on both channels
 
-    // voices in, one OUT block per IN block: 88 B, header, counter + 7, two channels
-    int16_t fr[64][8] = {};
-    for (auto& f : fr) f[0] = 8000, f[7] = 8000;
-    g_Output.Push(fr, 64);
-    g_Output.Push(fr, 64);
+    // one OUT block per IN block: 88 B, header, counter + 7, two channels
     uint16_t c = 0;
     b.in(1, c);
     CHECK(b.host.out.size() == 1 && b.host.out[0]->len == 88);
@@ -223,10 +223,10 @@ int main() {
     }
     uint16_t last = b.host.out[7]->buf[2] << 8 | b.host.out[7]->buf[3];
     CHECK(last == 7 * 13);   // blocks 0..13, one per IN, in order
-    // the voices' sum on both channels, L = R (TRK-less: POST, centred), and the block ends at 88 B: frames 7 x 2 x 4 after 32
+    // the slot's output on both channels, L = R, and the block ends at 88 B: frames 7 x 2 x 4 after 32
     const uint8_t* l = b.host.out[7]->buf;
     CHECK(ob::block_sample(l, 2, 6, 0) != 0 && ob::block_sample(l, 2, 6, 0) == ob::block_sample(l, 2, 6, 1));
-    CHECK(g_Output.Underflows() == 0);
+    aret::g_slot = false;
   }
   CHECK(&core::out::device() == &core::out::kRytmMk2);   // the box gone: the Rytm's table again
 
@@ -254,12 +254,7 @@ int main() {
     CHECK(a.host.in.size() == 8 && a.host.in.front()->len == 256);
     CHECK(&core::out::device() == core::device::kA4.audio);
     CHECK(g_rytm_usb == 0);
-    int16_t fr[64][8] = {};
-    for (auto& f : fr)
-      for (int v = 0; v < 8; ++v) f[v] = (int16_t)(1000 * (v + 1));
-    g_Output.SetMode(Output::kTracks);
-    g_Output.Push(fr, 64);
-    g_Output.Push(fr, 64);
+    aret::g_slot = true, aret::g_level = 1 << 20;   // a processor slot's output: on all six of the A4's channels
     uint16_t c = 0;
     long at = 0;
     a.in_a4(1, c, at, 1000.0);
@@ -269,12 +264,10 @@ int main() {
     for (int k = 0; k < 12; ++k) {         // past the fade-in
       a.in_a4(1, c, at, 1000.0);
       o = a.host.out.front()->buf;
-      if (k == 11)
-        for (int ch = 0; ch < 4; ++ch) CHECK(ob::block_sample(o, 6, 6, 2 + ch) != 0);
-      CHECK(ob::block_sample(o, 6, 6, 0) == 0 && ob::block_sample(o, 6, 6, 1) == 0);
+      for (int ch = 0; ch < 6; ++ch) CHECK(ob::block_sample(o, 6, 6, ch) != 0);
       a.out_done();
     }
-    CHECK(g_Output.Underflows() == 0);
+    aret::g_slot = false;
     uint8_t in[256], w[368];
     memset(in, 0, 256);
     for (int f = 0; f < 7; ++f)
@@ -344,9 +337,9 @@ int main() {
       }
       r.out_done();
     }
-    CHECK(fabs(peak_l / 2147483648.0 - 0.5) < 0.01 && fabs(peak_r / 2147483648.0 - 0.5) < 0.01);   // unity at a4att=0, the tone on PRE L and R
-    CHECK(antiphase);
-    CHECK(other < 3e7);                   // what the voices left there, not the A4
+    // the generic engine routes no box's audio into another's (no cross-box route): the A4's tone is not on the Rytm's PRE
+    CHECK(peak_l == 0 && peak_r == 0 && other == 0);
+    (void)antiphase;
     CLogger::Get()->lines.clear();
     CObFollow::LogStats(CLogger::Get());
     uint16_t c2 = cr;
@@ -392,15 +385,11 @@ int main() {
     CHECK(CLogger::Get()->lines.back().find("OUT endpoint halted") != std::string::npos);
     CHECK(r.host.ctl.back().req == CLEAR_FEATURE && r.host.ctl.back().value == ENDPOINT_HALT && r.host.ctl.back().index == 0x03 &&
           r.host.ctl.back().type == (REQUEST_OUT | REQUEST_TO_ENDPOINT));   // the Rytm's toggle follows the host's
-    int16_t fr[64][8] = {};
-    g_Output.Push(fr, 64);
-    unsigned lvl = g_Output.Level();
-    for (int k = 0; k < 8; ++k) {   // OUT again, from the next IN on: every new URB completes, the FIFO is pulled
+    for (int k = 0; k < 8; ++k) {   // OUT again, from the next IN on: every new URB completes
       r.in(1, c);
       CHECK(!r.host.out.empty());
       while (!r.host.out.empty()) r.out_done();
     }
-    CHECK(g_Output.Level() < lvl);
     CObUsb::PollHalt();
     CHECK(x->resets == 1);   // nothing to do while it runs
     {  // a reset the controller refuses: tried again later, not in a loop

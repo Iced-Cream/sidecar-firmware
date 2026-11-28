@@ -12,7 +12,8 @@ make -C "$R/core" CXX="$CXX" test
 
 # The FatFs tests copy Circle's addon/fatfs (pi/circle/build.sh's checkout); without it they are named as skipped.
 PT=$R/pi/engine/tests
-skip=()
+skip=(test_ws)   # the /ws API's voice topics are not on the generic line (pi/engine/tests/Makefile NOT_HERE)
+case $(uname -m) in arm64|aarch64) ;; *) skip+=(test_gadget_ep0);; esac   # Circle's DWC2 sources read cntpct_el0 inline
 [ -f "$R/pi/circle/build/circle/addon/fatfs/ff.c" ] || skip+=(test_stor_fatfs test_stor_fatfs_exfat test_stor_fatfs_lfn3)
 tests=()
 for f in "$PT"/test_*.cpp test_stor_fatfs_exfat test_stor_fatfs_lfn3; do
