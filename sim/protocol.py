@@ -439,6 +439,104 @@ STORE = 0x51
 ROUTE, MOVE, UNROUTE, ROUTE_GAIN, ROUTED, ROUTE_REFUSED = 0x20, 0x21, 0x22, 0x23, 0x60, 0x61
 ROUTE_FULL, ROUTE_BAD, ROUTE_LOOP = 3, 5, 7
 
+# 51 note routes (2026-11-28, generic-two-box S8l; core/noteroute/noteroute.h): a box's mod asks for a keyboard's notes
+# (a USB-A MIDI device, or the computer's MIDI on the box's own USB-C port, by device and channel) to go to one of its own
+# box's processor slots 0..15. The box is the link the request came on; thru to both boxes is unchanged. A route carries
+# the channel voice messages 8x..Ex of its source and channel (notes, bend, CC, pressure), no realtime, no SysEx; one
+# message reaches a slot once however many routes match; a moved / closed route, a link reset and an unplug end the
+# notes it holds (8x n 0, and CC 64 0 where it left sustain down). Routes are per box, kRoutes (8) each.
+#   src: 0..3 a USB-A device in plug order, 0F any USB-A device, 10 the asking box's own USB-C port (no other box's)
+#   chan: 0..15, 7F any channel
+#   box -> Pi  28 NOTES <seq> <owner> <src> <chan> <slot> | 29 RENOTE <seq> <owner> <route> <src> <chan> <slot>
+#              2A UNNOTE <owner> <route | 7F every route of owner> (no answer) | 2B DEVICES <seq>
+#   Pi -> box  68 NOTED <seq> <owner> <route> | 69 REFUSED <seq> <owner> <code>: 3 full, 5 bad (a field out of range,
+#              not the owner, no such route)
+#              6A DEVICES <seq | 7F> <n> {<src 0..3> <len> <name, up to 24 ASCII>} x n: the USB-A devices present; also
+#              unasked (seq 7F) to every box after a plug or unplug
+#   6B kept free for the service. No hello caps bit.
+NOTES, RENOTE, UNNOTE, NOTE_DEVICES = 0x28, 0x29, 0x2A, 0x2B
+NOTED, NOTE_REFUSED, NOTE_DEVICE_LIST = 0x68, 0x69, 0x6A
+NOTE_USBA_ANY, NOTE_USBC, NOTE_ANY_CHAN, NOTE_EVERY, NOTE_UNASKED = 0x0F, 0x10, 0x7F, 0x7F, 0x7F
+NOTE_FULL, NOTE_BAD = 3, 5
+NOTE_ROUTES, NOTE_SLOTS, NOTE_NAME_LEN = 8, 16, 24
+# The 51 op space as used and reserved across the generic line (box -> Pi low, Pi -> box high): kv 00-04 / 40-43 7F,
+# locks 10-15, S8h screen stack 18-1C / 58-5C (reserved, design-s8h), route 20-24 / 60-61, note routes 28-2B / 68-6B,
+# dsp 30-32 37-39 / 70-72, code 33-36 / 73-75, samples 3A-3D / 76-77.
+STORE_OPS = {
+    "kv": (list(range(0x00, 0x05)) + list(range(0x40, 0x44)) + [0x7F]),
+    "locks": list(range(0x10, 0x16)),
+    "screen stack (S8h)": list(range(0x18, 0x1D)) + list(range(0x58, 0x5D)),
+    "route": list(range(0x20, 0x25)) + [0x60, 0x61],
+    "note routes": list(range(0x28, 0x2C)) + list(range(0x68, 0x6C)),
+    "dsp": [0x30, 0x31, 0x32, 0x37, 0x38, 0x39, 0x70, 0x71, 0x72],
+    "code": [0x33, 0x34, 0x35, 0x36, 0x73, 0x74, 0x75],
+    "samples": [0x3A, 0x3B, 0x3C, 0x3D, 0x76, 0x77],
+}
+
+
+def _store(op, body):
+    return _msg(STORE, [op] + list(body))
+
+
+def note_route(seq, owner, src, chan, slot) -> bytes:
+    return _store(NOTES, [seq, owner, src, chan, slot])
+
+
+def note_reroute(seq, owner, route, src, chan, slot) -> bytes:
+    return _store(RENOTE, [seq, owner, route, src, chan, slot])
+
+
+def note_unroute(owner, route=NOTE_EVERY) -> bytes:
+    return _store(UNNOTE, [owner, route])
+
+
+def note_devices_ask(seq) -> bytes:
+    return _store(NOTE_DEVICES, [seq])
+
+
+def note_noted(seq, owner, route) -> bytes:
+    return _store(NOTED, [seq, owner, route])
+
+
+def note_refused(seq, owner, code) -> bytes:
+    return _store(NOTE_REFUSED, [seq, owner, code])
+
+
+def note_device_list(seq, devices) -> bytes:
+    """devices: [(src 0..3, name)]; names ASCII 0x20..0x7e (else '_'), cut to 24."""
+    body = [seq, len(devices)]
+    for src, name in devices:
+        nm = [ord(c) if 0x20 <= ord(c) < 0x7F else 0x5F for c in name[:NOTE_NAME_LEN]]
+        body += [src, len(nm)] + nm
+    return _store(NOTE_DEVICE_LIST, body)
+
+
+def decode_note_route(payload):
+    """A 51 note-route payload (after the command byte: <ver> <op> ...) -> dict, or None (not a note-route op)."""
+    if len(payload) < 2 or payload[0] != PROTO_VER:
+        return None
+    op, b = payload[1], list(payload[2:])
+    if op == NOTES and len(b) == 5:
+        return {"op": "NOTES", "seq": b[0], "owner": b[1], "src": b[2], "chan": b[3], "slot": b[4]}
+    if op == RENOTE and len(b) == 6:
+        return {"op": "RENOTE", "seq": b[0], "owner": b[1], "route": b[2], "src": b[3], "chan": b[4], "slot": b[5]}
+    if op == UNNOTE and len(b) == 2:
+        return {"op": "UNNOTE", "owner": b[0], "route": b[1]}
+    if op == NOTE_DEVICES and len(b) == 1:
+        return {"op": "DEVICES", "seq": b[0]}
+    if op in (NOTED, NOTE_REFUSED) and len(b) == 3:
+        k = "route" if op == NOTED else "code"
+        return {"op": "NOTED" if op == NOTED else "REFUSED", "seq": b[0], "owner": b[1], k: b[2]}
+    if op == NOTE_DEVICE_LIST and len(b) >= 2:
+        devs, i = [], 2
+        for _ in range(b[1]):
+            if i + 2 > len(b) or i + 2 + b[i + 1] > len(b):
+                return None
+            devs.append((b[i], bytes(b[i + 2:i + 2 + b[i + 1]]).decode("ascii")))
+            i += 2 + b[i + 1]
+        return {"op": "DEVICES", "seq": b[0], "devices": devs} if i == len(b) else None
+    return None
+
 
 def mix_report(pans, route):
     return _msg(MIX_REPORT, list(pans) + [(route >> 7) & 1, route & 0x7F])
