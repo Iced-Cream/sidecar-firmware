@@ -99,8 +99,9 @@ struct State {
 // looks near 100 % whatever its load; its time per block does not change. At a steady load it equals the stats'
 // "c1 with chains" (VA1 O1 P1: 74 %), which admission's limit is checked against.
 // cycle: the core's last base + side pass ticks; block: a 12-frame block's ticks.
-struct Load {
-  static constexpr unsigned kShift = 5;
+template <unsigned Shift>
+struct LoadT {
+  static constexpr unsigned kShift = Shift;
   uint64_t mean = 0;   // << kShift
   bool primed = false;
   void step(uint64_t cycle) {
@@ -113,6 +114,14 @@ struct Load {
     return v > 0xFFFFu ? 0xFFFFu : (unsigned)v;
   }
 };
+// The fast mean (~4-8 ms): the late cycle's gate (kCycleLimitBp), which only a sustained overload reaches.
+using Load = LoadT<5>;
+// The slow mean (~2^9 passes, ~64 ms): the FIFO's view's gate against admission's kLimitBp (decided 2026-11-27 after LC2,
+// T535, the owner's pick). LC2's soak at 1200 MHz (core 1 at 74 % with its chains, max 80.2 % a second, underruns flat):
+// the FIFO dipped (min 14, 5 dips, a low run with no gain) and the fast mean, lifted over 80 % by a few long passes,
+// opened the gate: an 8 us CLOUDSEED went. Admission's limit is a steady load; every overload the FIFO's view is for
+// (LT12g-LT13: 82-83 % for seconds) holds it for far longer than 64 ms, so it still opens, ~tens of ms later.
+using LoadSlow = LoadT<9>;
 // The FIFO really ran empty lately: the outputs' underflow counts (output.h Underflows: glitches while playing, not a
 // stream's restart) moved within the last kUnderRecent passes.
 struct Under {
@@ -129,6 +138,27 @@ struct Under {
 };
 // a pass the FIFO makes late counts for its core (cores.cpp): the core measures at or over the limit, or a real underrun
 inline bool counts(unsigned core_bp, unsigned limit_bp, bool underran) { return core_bp >= limit_bp || underran; }
+
+// A late cycle (decided 2026-11-26 after AL1, T526, the owner's pick A): with two boxes a render core runs a base pass and
+// a side pass a block, and each alone is judged against a whole block. AL1's P5 (core 1 at 84 % with its chains): 222-265
+// passes a second went past a block, all the Rytm's side passes, and each A4 base pass between them was on time, so the
+// late rule's run (fx_guard.cpp kLateRun) never passed 2 and its backstop was dead whenever two boxes ran. So the run counts
+// cycles: at the side pass, the core's last base pass plus this side pass against a block (the base pass holds the run:
+// fx_guard.h core_done hold_run), and kLateRun late cycles in a row (1 ms) take the dearest as one box's 4 blocks do.
+// Gated as the FIFO's view is (counts): a late cycle counts only when the core measures at or over admission's limit
+// (Load), or an output really underran lately. P5's clean overload (84 %, its FIFO at 35-58, underruns +0) is to mute
+// nothing, as picked: its shape in the host test (test_fifo_late_guard) has cycles past a block, never 4 in a row.
+//   LC1 (2026-11-27, PR #58 bae3fb4) disproved that gate: at 1200 MHz with core 1 at 75-80 % (admitted, never overloaded,
+//   underruns +0, heard clean) a run of 4 cycles past a block lifted the core's own mean over 80 % and took a 10 us CLOUD;
+//   at the next load setup the reload's underruns (+234) opened the other leg and took CLOUD and both CLOUDSEEDs (8 us).
+//   A short spike opens an 80 % gate by itself (4 cycles at ~260 us over a 78 % core read ~84 %), and an underrun is the
+//   FIFO's evidence, which the FIFO's view already answers. So a late cycle counts only when the core measures at or over
+//   kCycleLimitBp (95 %) by itself: a sustained overload, whose cycles go past a block on their own (P7's ~108 %), and
+//   never a core admission keeps within 80 % with its spikes (P5's 84 % included). No underrun leg.
+static constexpr unsigned kCycleLimitBp = 9500;
+inline bool cycle_late(uint64_t base, uint64_t side, uint64_t block, unsigned core_bp, unsigned limit_bp = kCycleLimitBp) {
+  return block && base + side >= block && core_bp >= limit_bp;
+}
 
 // The render core a late pass is for: 1 or 2, the one that took longer over its last base pass and its last side pass
 // together (each core's block, voices and chains: cores.cpp). No side stage: its blocks are 0 (cores.cpp clears them).

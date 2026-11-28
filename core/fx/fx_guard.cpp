@@ -50,15 +50,16 @@ struct Row {
   uint8_t run_max;               // the longest late_run seen
   int8_t cand;                   // the late dearest last seen (before the floor) + 1 (0: none yet), its time a block
   uint32_t cand_us;
+  uint8_t run_why;               // LateWhy bits seen in this late run (the mute's line)
 };
 Row g_row[kCores];
 
 volatile uint8_t g_m[kBuiltin];            // 1: muted, 2: muted with the short fade (kLate) (the render side reads it)
 volatile uint64_t g_news = 0;              // muted (or would be: report) since the last poll, bit unit
 volatile uint64_t g_would = 0;             // report mode: what would have been muted (logged once)
-struct Rec { uint8_t kind, core, type, worded; uint32_t us; };
+struct Rec { uint8_t kind, core, type, worded, why; uint32_t us; };
 Rec g_rec[kUnits];                          // the mute's facts (render side writes before g_m / g_news)
-char g_why[kBuiltin][72];                   // the control core's words
+char g_why[kBuiltin][96];                   // the control core's words
 volatile uint32_t g_slow[kBuiltin];        // test: extra us inside the unit's call
 uint32_t g_budget_us = 120;                // API 3's per call budget, a 12-frame block
 volatile uint8_t g_mode = kModeOn;
@@ -80,6 +81,18 @@ uint32_t num(const char* p) {
 const char* kind_text(uint8_t k) {
   return k == kHuge ? "huge" : k == kSlow ? "slow" : k == kDearest ? "dearest" : k == kForced ? "forced" : k == kLate ? "late" : "-";
 }
+
+}   // namespace
+
+void why_words(uint8_t why, char* b, int cap) {
+  static const char* const kWord[] = {"pass", "underrun", "load", "cycle"};
+  int n = 0;
+  if (cap > 0) b[0] = 0;
+  for (int i = 0; i < 4; ++i)
+    if (why & (1u << i) && n < cap) n += sniprintf(b + n, cap - n, "%s%s", n ? "+" : "", kWord[i]);
+}
+
+namespace {
 
 // a unit's place: "V1 A" .. "M2 B", "FX1", "FX2", "UFX1".."UFX4"
 void where(int u, char* b, int cap) {
@@ -107,11 +120,11 @@ int unit_from(int box, const char* at) {   // "V1:A" / "V1 A" / "FX1" / "fx2"
 }
 
 // the render side: unit u muted (or, in report mode, noted)
-void mute(int u, uint32_t us, uint8_t kind, int core) {
+void mute(int u, uint32_t us, uint8_t kind, int core, uint8_t why = 0) {
   Rec& r = g_rec[u];
   if (u < kBuiltin && g_m[u]) return;
   if (g_mode == kModeOff) return;
-  r.kind = kind, r.core = (uint8_t)core, r.us = us ? us : 1, r.worded = 0;
+  r.kind = kind, r.core = (uint8_t)core, r.us = us ? us : 1, r.worded = 0, r.why = why;
   r.type = (uint8_t)(u < kBuiltin ? type_now(u) : 0);
   if (g_mode == kModeReport) {
     __atomic_or_fetch(&g_would, bit(u), __ATOMIC_RELEASE);
@@ -167,7 +180,7 @@ void note_user(int u, uint32_t us) {
 constexpr uint8_t kSettle = 2 * kOverMax;
 constexpr uint32_t kLateFloorUs = 8;   // a late core's dearest (none over budget) only from this mean a block (LT12k)
 constexpr uint8_t kLateRun = 4;   // late blocks in a row (1 ms) before a late core's dearest goes, none over its budget
-void core_done(int core, bool hot, bool late) {
+void core_done(int core, bool hot, bool late, bool hold_run, uint8_t why) {
   Row& r = g_row[core & (kCores - 1)];
   bool muted_here = false;   // (a mute in this call: the dearest rule waits)
   // a late block (the core past a whole block: the FIFO drains): this block's effect to mute at once, the one most over
@@ -229,8 +242,13 @@ void core_done(int core, bool hot, bool late) {
   if (late_most_us < kLateFloorUs) late_most = -1;
   // (an effect over its budget in a late block: at once; none over: kLateRun late blocks in a row first, so one block
   // made late by something else, a burst of notes, never takes an effect)
-  r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  // (hold_run: a pass inside a two-box cycle, the base pass; the side pass counts the cycle: fx_guard.h)
+  if (!hold_run)
+    r.late_run = late && !muted_here && !r.settle && late_over < 0 ? (uint8_t)(r.late_run < 255 ? r.late_run + 1 : 255) : 0;
+  else if (muted_here || r.settle)
+    r.late_run = 0;
   if (r.late_run > r.run_max) r.run_max = r.late_run;
+  if (late) r.run_why |= why;
   if (late) {   // (the late log: what this late block did, and if nothing, why)
     ++r.n_late;
     if (muted_here) ++r.n_other;
@@ -241,11 +259,13 @@ void core_done(int core, bool hot, bool late) {
   if (late && !muted_here && !r.settle && (late_over >= 0 || (late_most >= 0 && r.late_run >= kLateRun))) {
     ++g_stats.late;
     ++r.n_muted;
-    if (late_over >= 0) mute(late_over, late_us, kLate, core);
-    else mute(late_most, late_most_us, kLate, core);
+    if (late_over >= 0) mute(late_over, late_us, kLate, core, r.run_why);
+    else mute(late_most, late_most_us, kLate, core, r.run_why);
     muted_here = true;
     r.late_run = 0;
   }
+  // (the run's reasons end with it: a mute, or a block that left the run at 0; a base pass holds them as it holds the run)
+  if (muted_here || (!late && !hold_run && !r.late_run)) r.run_why = 0;
   if (muted_here) r.settle = kSettle;
   if (!hot || r.settle) {
     if (r.settle) --r.settle;
@@ -321,8 +341,15 @@ void poll() {
                (unsigned)g_budget_us, (int)r.core);
     else if (r.kind == kDearest)
       sniprintf(y, sizeof g_why[u], "muted: ran %u us, dearest on core %d while hot", (unsigned)r.us, (int)r.core);
-    else if (r.kind == kLate)
-      sniprintf(y, sizeof g_why[u], "muted: ran %u us in a block that made core %d late", (unsigned)r.us, (int)r.core);
+    else if (r.kind == kLate) {
+      char g[40];
+      why_words(r.why, g, sizeof g);
+      if (g[0])
+        sniprintf(y, sizeof g_why[u], "muted: ran %u us in a block that made core %d late (gate: %s)", (unsigned)r.us,
+                 (int)r.core, g);
+      else
+        sniprintf(y, sizeof g_why[u], "muted: ran %u us in a block that made core %d late", (unsigned)r.us, (int)r.core);
+    }
     else
       sniprintf(y, sizeof g_why[u], "muted: by the console (test)");
     log(CORE_STR("fxguard: box %d %s %s %s"), box_of_unit(u), at, type_label(u, r.type), y);
@@ -333,8 +360,10 @@ void poll() {
     const Rec& r = g_rec[u];
     char at[12];
     where(u, at, sizeof at);
-    log(CORE_STR("fxguard: report: box %d %s would be muted (%s, %u us, core %d)"), box_of_unit(u), at, kind_text(r.kind),
-        (unsigned)r.us, (int)r.core);
+    char g[40];
+    why_words(r.kind == kLate ? r.why : 0, g, sizeof g);
+    log(CORE_STR("fxguard: report: box %d %s would be muted (%s, %u us, core %d%s%s)"), box_of_unit(u), at, kind_text(r.kind),
+        (unsigned)r.us, (int)r.core, g[0] ? ", gate: " : "", g);
   }
   // the slot set again since its mute (another TYPE, OFF, a kit): released, it fades in (the insert's and send FX's own fades)
   for (int u = 0; u < kBuiltin; ++u)
@@ -378,11 +407,16 @@ int jput(char* o, int cap, int n, const char* s) {
 }
 }  // namespace
 
+// Each entry is built whole and listed only when it fits beside the tail (kJsonTail), so the reply stays valid JSON
+// however many effects are muted: what does not fit is counted in "fxMutedMore" (LC1 gate, 2026-11-27: ~49 mutes ran
+// past kernel.cpp's 2 KB buffer and /status was cut mid-entry, which the drivers could not parse).
+constexpr int kJsonTail = 112;   // "],\"fxMutedMore\":N,\"fxGuard\":{...}" at its longest, and the NUL
 int json(char* o, int cap) {
   if (cap <= 0) return 0;
   int n = jput(o, cap, 0, "\"fxMuted\":[");
   bool first = true;
-  char t[32];
+  int more = 0;
+  char t[32], e[256];
   for (int u = 0; u < kUnits; ++u) {
     const char* w = "";
     const char* ty = "";
@@ -396,21 +430,33 @@ int json(char* o, int cap) {
       ty = id ? id : "";
       if (!w || !w[0]) w = "muted";
     }
-    if (!first) n = jput(o, cap, n, ",");
-    first = false;
+    const int ec = (int)sizeof e - 1;
+    int k = jput(e, ec, 0, first ? "" : ",");
     sniprintf(t, sizeof t, "{\"box\":%d,\"at\":", box_of_unit(u));
-    n = jput(o, cap, n, t);
+    k = jput(e, ec, k, t);
     where(u, t, sizeof t);
-    n = jstr(o, cap, n, t);
-    n = jput(o, cap, n, ",\"type\":");
-    n = jstr(o, cap, n, ty);
-    n = jput(o, cap, n, ",\"user\":");
-    n = jput(o, cap, n, u >= kBuiltin ? "true" : "false");
-    n = jput(o, cap, n, ",\"why\":");
-    n = jstr(o, cap, n, w);
-    n = jput(o, cap, n, "}");
+    k = jstr(e, ec, k, t);
+    k = jput(e, ec, k, ",\"type\":");
+    k = jstr(e, ec, k, ty);
+    k = jput(e, ec, k, ",\"user\":");
+    k = jput(e, ec, k, u >= kBuiltin ? "true" : "false");
+    k = jput(e, ec, k, ",\"why\":");
+    k = jstr(e, ec, k, w);
+    k = jput(e, ec, k, "}");
+    e[k] = 0;
+    if (k >= ec || n + k + kJsonTail > cap) {   // (an entry cut short, or no room: counted, not listed)
+      ++more;
+      continue;
+    }
+    n = jput(o, cap, n, e);
+    first = false;
   }
-  n = jput(o, cap, n, "],\"fxGuard\":");
+  n = jput(o, cap, n, "]");
+  if (more) {
+    sniprintf(t, sizeof t, ",\"fxMutedMore\":%d", more);
+    n = jput(o, cap, n, t);
+  }
+  n = jput(o, cap, n, ",\"fxGuard\":");
   sniprintf(t, sizeof t, "{\"mode\":\"%s\",", g_mode == kModeOn ? "on" : g_mode == kModeReport ? "report" : "off");
   n = jput(o, cap, n, t);
   sniprintf(t, sizeof t, "\"budgetUs\":%u,", (unsigned)g_budget_us);

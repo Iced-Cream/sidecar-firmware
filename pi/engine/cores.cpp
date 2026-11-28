@@ -103,12 +103,19 @@ static u64 s_nFxLate3 = 0;
 // guard said nothing): a base pass begun with the FIFO low (under 2 blocks), and the passes held after it, are late for the
 // render core that took longer over its last base pass and side pass together (fifo_late.h blame). fxguard=fifo:off stops it.
 static volatile u32 s_nFifoLate = 0;		// 1 or 2: this pass is late for that core (published with s_nGen)
+static volatile u32 s_nFifoWhy = 0;		// its gate, fx_guard.h LateWhy (kWhyUnder, kWhyLoad; log only, after LC4)
 static volatile u64 s_nLastBlk[2][3];		// each render core's last block, voices and chains: [0] a base pass's, [1] a side pass's
 static volatile unsigned s_nFifoHeld[3], s_nFifoRunMax;	// the late log: passes late for core 1 / 2, the longest low run
 // ... but only for a core over admission's limit or after a real underrun (decided 2026-11-26 after VA1, T515: fifo_late.h
 // counts): the passes the FIFO's hold left on time because the late core measured within the limit with no underrun (the
 // late log's "fits")
 static volatile unsigned s_nFifoFits[3];
+// ... and a late cycle (decided 2026-11-26 after AL1, the owner's pick A: fifo_late.h cycle_late): with a side stage the late
+// rule's run counts cycles, the core's last base pass plus its side pass against a block, gated at kCycleLimitBp (95 %,
+// after LC1). RenderBlock publishes the gate's input with each pass (s_nGen): each core's measured share
+static volatile unsigned s_nLoadBp[3];			// fifo_late Load bp, cores 1 and 2
+static volatile bool s_bSideOnPass;	// a side stage runs
+static volatile unsigned s_nCycleLate[3], s_nCycleFits[3];	// the log: cycles late (counted), past a block but gated off
 static inline u64 FxHot3Ticks (void)
 {
 	static unsigned s_nMHz = ~0u;
@@ -430,6 +437,9 @@ void CEngineCores::Worker (unsigned nCore)
 	static volatile u32 s_nGenNow[3];	// the one it renders
 	static volatile u32 s_nPassNow[3];	// its pass (s_nPass), kept for a fault's resume
 	static volatile bool s_nFifoLateNow[3];	// its pass late by the FIFO (s_nFifoLate)
+	static volatile u8 s_nFifoWhyNow[3];	// and the FIFO view's gate (s_nFifoWhy)
+	static volatile bool s_bSideNow[3];	// a side stage runs
+	static volatile unsigned s_nLoadNow[3];	// its measured share (s_nLoadBp)
 	static volatile unsigned s_nResume[3];	// after a fault: the voice to go on with (0: none)
 	static volatile u64 s_nT0[3];		// the block's start, for the busy time
 	CLogger::Get ()->Write (From, LogNotice, "core %u up: renders each box's voices %s its split (split=%u, or half its voices), %s", nCore,
@@ -467,6 +477,8 @@ void CEngineCores::Worker (unsigned nCore)
 			s_nGenNow[nCore] = nGen;
 			s_nPassNow[nCore] = __atomic_load_n (&s_nPass, __ATOMIC_RELAXED);	// (published before nGen)
 			s_nFifoLateNow[nCore] = __atomic_load_n (&s_nFifoLate, __ATOMIC_RELAXED) == nCore;	// (so is this)
+			s_nFifoWhyNow[nCore] = (u8) __atomic_load_n (&s_nFifoWhy, __ATOMIC_RELAXED);
+			s_bSideNow[nCore] = s_bSideOnPass, s_nLoadNow[nCore] = s_nLoadBp[nCore];	// (and these)
 			s_nT0[nCore] = Ticks ();
 			vFirst = 0;
 		}
@@ -517,7 +529,22 @@ void CEngineCores::Worker (unsigned nCore)
 		// the dearest effect on it
 		const u64 nBlk = Ticks () - s_nT0[nCore];
 		s_nLastBlk[(nPass & kBasePass) ? 0 : 1][nCore] = nBlk;
-		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), nBlk >= FxLateTicks () || s_nFifoLateNow[nCore]);
+		// late: this pass past a whole block, or the FIFO's. With a side stage the late rule's run counts cycles (fifo_late.h
+		// cycle_late, decided 2026-11-26 after AL1): the base pass holds it, the side pass counts the cycle, late too when
+		// its base pass plus itself took a block and the core measures at or over kCycleLimitBp (95 %, after LC1)
+		// (the guard's late mute names the gates that made its run late: fx_guard.h LateWhy, log only, after LC4)
+		bool bLate = nBlk >= FxLateTicks () || s_nFifoLateNow[nCore], bHold = false;
+		u8 nWhy = (nBlk >= FxLateTicks () ? core::fx::guard::kWhyPass : 0) | (s_nFifoLateNow[nCore] ? s_nFifoWhyNow[nCore] : 0);
+		if (s_bSideNow[nCore])
+		{
+			if (nPass & kBasePass)
+				bHold = true;
+			else if (fifo_late::cycle_late (s_nLastBlk[0][nCore], nBlk, FxLateTicks (), s_nLoadNow[nCore]))
+				bLate = true, nWhy |= core::fx::guard::kWhyCycle, s_nCycleLate[nCore]++;
+			else if (s_nLastBlk[0][nCore] + nBlk >= FxLateTicks ())
+				s_nCycleFits[nCore]++;
+		}
+		core::fx::guard::core_done ((int) nCore, nBlk >= FxHotTicks (), bLate, bHold, nWhy);
 		__atomic_store_n (&s_nChainDone[nCore], nGen, __ATOMIC_RELEASE);
 		asm volatile ("dsb sy; sev");
 	}
@@ -566,7 +593,7 @@ void CEngineCores::RenderBlock (int nSide)
 		// LT13 (2026-11-25): the core that took longer in the last pass alone flipped between 1 and 2 as the boxes took
 		// turns, so the late rule's run never came; and a FIFO pinned low gave one dip and no hold (fifo_late.h)
 		static fifo_late::Pair s_FifoLate;
-		u32 nLate = 0;
+		u32 nLate = 0, nFifoWhy = 0;
 		bool bDip = false;
 		static u32 s_nLateMutes = 0;	// the guard's late mutes seen: a new one rearms both FIFOs (fifo_late.h rearm)
 		const u32 nLateMutes = core::fx::guard::stats ().late;
@@ -582,16 +609,21 @@ void CEngineCores::RenderBlock (int nSide)
 			? s_FifoLate.step (false, g_Output.Level (), g_Output.Streams (), bridge::kBlock, bOn, bSideOn, &bDip)
 			: s_FifoLate.step (true, g_OutputSide.Level (), g_OutputSide.Streams (), bridge::kBlock, bOn, bSideOn, &bDip);
 		// admission's word at the limit (fifo_late.h counts, decided 2026-11-26 after VA1): the late core must measure at or
-		// over kLimitBp for its time a block (Load), or an output must have underrun lately; else the pass stays on time ("fits")
+		// over kLimitBp for its time a block (LoadSlow, ~64 ms, after LC2), or an output must have underrun lately; else the
+		// pass stays on time ("fits"). The late cycle's gate reads the fast mean (Load, kCycleLimitBp)
 		static fifo_late::Load s_Load[3];
+		static fifo_late::LoadSlow s_LoadSlow[3];
 		static fifo_late::Under s_Under;
-		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
+		for (unsigned c = 1; c <= 2; c++) s_Load[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]), s_LoadSlow[c].step (s_nLastBlk[0][c] + s_nLastBlk[1][c]);
 		s_Under.step (g_Output.Underflows () + g_OutputSide.Underflows ());
+		for (unsigned c = 1; c <= 2; c++) s_nLoadBp[c] = s_Load[c].bp (FxLateTicks ());	// (the late cycle's gate: published below)
+		s_bSideOnPass = bSideOn;
 		if (bLate)
 		{
 			nLate = fifo_late::blame (s_nLastBlk[0][1], s_nLastBlk[1][1], s_nLastBlk[0][2], s_nLastBlk[1][2]);
-			if (fifo_late::counts (s_Load[nLate].bp (FxLateTicks ()), core::admit::kLimitBp, s_Under.recent ()))
-				s_nFifoHeld[nLate]++;
+			const bool bLoad = s_LoadSlow[nLate].bp (FxLateTicks ()) >= core::admit::kLimitBp, bUnder = s_Under.recent ();
+			if (fifo_late::counts (s_LoadSlow[nLate].bp (FxLateTicks ()), core::admit::kLimitBp, bUnder))
+				s_nFifoHeld[nLate]++, nFifoWhy = (bUnder ? core::fx::guard::kWhyUnder : 0) | (bLoad ? core::fx::guard::kWhyLoad : 0);
 			else
 				s_nFifoFits[nLate]++, nLate = 0;
 		}
@@ -599,6 +631,7 @@ void CEngineCores::RenderBlock (int nSide)
 		if (nRun > s_nFifoRunMax) s_nFifoRunMax = nRun;
 		if (bDip) s_nFifoLateCount++;
 		__atomic_store_n (&s_nFifoLate, nLate, __ATOMIC_RELAXED);	// (the release below publishes it)
+		__atomic_store_n (&s_nFifoWhy, nFifoWhy, __ATOMIC_RELAXED);
 	}
 	u32 nGen = nPrev + 1;
 	__atomic_store_n (&s_nGen, nGen, __ATOMIC_RELEASE);
@@ -614,7 +647,7 @@ void CEngineCores::RenderBlock (int nSide)
 			s_nChainTicks[3] += dM;
 			t0 += dM;
 			const u64 nHot3 = FxHot3Ticks ();	// (sets s_nFxLate3 too)
-			core::fx::guard::core_done (3, dM >= nHot3, dM >= s_nFxLate3);	// (core 3: its master chain against its share)
+			core::fx::guard::core_done (3, dM >= nHot3, dM >= s_nFxLate3, false, dM >= s_nFxLate3 ? core::fx::guard::kWhyPass : 0);	// (core 3: its master chain against its share)
 		}
 	}
 	// wfe: each worker signals (sev) after publishing s_nDone, so the wake is the time a core takes to leave wfe (well under
@@ -1047,6 +1080,10 @@ void CEngineCores::TakeStats (TStats *s)
 	s->nFifoRunMax = s_nFifoRunMax; s_nFifoRunMax = 0;
 	s->nFifoFits1 = s_nFifoFits[1]; s_nFifoFits[1] = 0;
 	s->nFifoFits2 = s_nFifoFits[2]; s_nFifoFits[2] = 0;
+	s->nCycleLate1 = s_nCycleLate[1]; s_nCycleLate[1] = 0;
+	s->nCycleLate2 = s_nCycleLate[2]; s_nCycleLate[2] = 0;
+	s->nCycleFits1 = s_nCycleFits[1]; s_nCycleFits[1] = 0;
+	s->nCycleFits2 = s_nCycleFits[2]; s_nCycleFits[2] = 0;
 	if (s_nFifoMin == ~0u)		// no control-loop pass this second: the level now
 	{
 		s->nFifoMin = s->nFifoMax = g_Output.Level ();

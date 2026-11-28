@@ -137,6 +137,22 @@ int main() {
     CHECK(l.bp(block) >= 8250 && l.bp(block) <= 8300);
     printf("test_fifo_late: Load: 74 %% fits, 83 %% over the limit after %u passes\n", n);
   }
+  {  // LoadSlow (~64 ms, the FIFO view's gate after LC2): 74 % with a burst of 12 passes at 120 % stays under 80 %;
+     // a steady 83 % (LT12g) reaches the limit within ~2^10 passes (~128 ms)
+    fifo_late::LoadSlow l;
+    const uint64_t block = 1000;
+    for (int i = 0; i < 4000; ++i) l.step(740);
+    for (int i = 0; i < 12; ++i) l.step(1200);
+    CHECK(!fifo_late::counts(l.bp(block), 8000, false));
+    fifo_late::Load f;
+    for (int i = 0; i < 400; ++i) f.step(740);
+    for (int i = 0; i < 12; ++i) f.step(1200);
+    CHECK(fifo_late::counts(f.bp(block), 8000, false));   // (the fast mean opened: LC2)
+    unsigned n = 0;
+    while (!fifo_late::counts(l.bp(block), 8000, false) && n < 4000) l.step(830), ++n;
+    CHECK(n > 0 && n <= 1024);
+    printf("test_fifo_late: LoadSlow: a burst at 74 %% fits (the fast mean opens), 83 %% over the limit after %u passes\n", n);
+  }
   {  // Under: an underflow counts for kRecent passes, then no more; the first reading is not an underrun
     fifo_late::Under u;
     u.step(2568);

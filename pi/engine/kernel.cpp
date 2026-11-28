@@ -710,7 +710,7 @@ void CKernel::WebStatus (CString *pOut, void *pParam)
 			  core::ins::refused_count (0), core::ins::refused_count (1), core::amp::refused_cpu ());
 		pOut->Append (s);
 		// the measured guard of every effect (core/fx/fx_guard.h): what it muted, built-in and user, with the reasons
-		static char Fm[2048];
+		static char Fm[8192];	// (every unit muted fits: 64 x ~130 B; the guard lists what fits and counts the rest)
 		pOut->Append (",");
 		core::fx::guard::json (Fm, sizeof Fm);
 		pOut->Append (Fm);
@@ -2263,6 +2263,10 @@ void CKernel::LogStats (void)
 		if (core::fx::guard::late_report (Late, sizeof Late) > 0 || s.nFifoHeld1 || s.nFifoHeld2 || s.nFifoFits1 || s.nFifoFits2)
 			m_Logger.Write (From, LogNotice, "fxguard late: fifo dips %u, low run max %u, passes late c1 %u c2 %u, fits c1 %u c2 %u | %s",
 					s.nFifoLate, s.nFifoRunMax, s.nFifoHeld1, s.nFifoHeld2, s.nFifoFits1, s.nFifoFits2, Late);
+		// (the late rule's two-box cycles: fifo_late.h cycle_late; a line of its own, so the late line's readers stay as they are)
+		if (s.nCycleLate1 || s.nCycleLate2 || s.nCycleFits1 || s.nCycleFits2)
+			m_Logger.Write (From, LogNotice, "fxguard cycles: late c1 %u c2 %u, fits c1 %u c2 %u",
+					s.nCycleLate1, s.nCycleLate2, s.nCycleFits1, s.nCycleFits2);
 	}
 	static unsigned s_nPowerTick;
 	if (++s_nPowerTick % 10 == 0) { mbtrace::Scope Mb (1); ReadPower (FALSE); }	// every 10 s (a mailbox call)

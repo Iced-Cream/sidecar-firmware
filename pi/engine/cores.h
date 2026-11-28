@@ -29,6 +29,8 @@ public:
 		unsigned nFifoHeld1, nFifoHeld2;	// passes late by the FIFO (fifo_late.h) for core 1, core 2
 		unsigned nFifoRunMax;	// the longest run of passes begun with a FIFO low
 		unsigned nFifoFits1, nFifoFits2;	// passes the FIFO's hold left on time: core 1 / 2 within admission's limit, no underrun
+		unsigned nCycleLate1, nCycleLate2;	// two-box cycles late for core 1 / 2 (fifo_late.h cycle_late: past a block, gated)
+		unsigned nCycleFits1, nCycleFits2;	// cycles past a block the gate left on time (within the limit, no underrun)
 	};
 
 	// The boot bench (bridge::bench, docs/pi-engine.md "Measurements"): each machine on one voice, on every core
