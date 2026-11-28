@@ -27,7 +27,9 @@ the Pi because no box owns this screen (`core/pidisplay/pidisplay.h`):
 
 - Every request goes on top; a client already on the stack moves to the top. At most 8 entries.
 - A covered entry keeps its state and gets no draw or key calls.
-- Close removes an entry wherever it is. Closing the top shows the one below again with a whole frame (`opened (true)`).
+- Close removes an entry wherever it is. Closing the top shows the one below again with a whole frame.
+- Callbacks as S8h's Pi side gives them: `opened (true)` when an entry is new, `opened (false)` when it leaves; S8h's
+  `Client::shown` (covered / shown again) is called here once S8h is on `generic-two-box`.
 - Any client may open itself (S8h Q3); opening from the box is recommended.
 - An entry is (slot, client): the same client for the other box is another entry.
 

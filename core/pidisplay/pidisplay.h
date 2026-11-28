@@ -7,8 +7,12 @@
 //   - every request goes on top (the latest request is shown and takes the keys); a client already on the stack is moved to
 //     the top (no duplicates); at most kDepth entries;
 //   - the entry below keeps its state and gets no draw or key calls while covered;
-//   - close removes the entry wherever it is; closing the top shows the one below again with a whole frame
-//     (opened (true) again, as a Pi client gets on becoming top in S8h section 4); an empty stack shows the idle frame;
+//   - close removes the entry wherever it is; closing the top shows the one below again with a whole frame; an empty stack
+//     shows the idle frame;
+//   - callbacks as S8h's Pi side gives them (core/screen on g2b-s8h-screen-stack): opened (true) when an entry is new,
+//     opened (false) when it leaves; nothing when covered or shown again. S8h adds Client::shown (bool): once it is on
+//     generic-two-box, a covered top gets shown (false) and a top shown again shown (true) here too (one line each in
+//     push / close);
 //   - any client may open itself (Q3: allowed; documentation recommends a box mod opens Pi pages from the box);
 //   - Pi-wide popups (the pairing code) draw over the top entry and do not enter the stack; the top redraws after them.
 // An entry is (slot, client): slot 0/1 a box's client, kPiWide a client of the Pi's own. The same client may be open on a

@@ -1,7 +1,8 @@
 // core/tests/test_pidisplay.cpp - core/pidisplay (S8k, the Pi-attached display) on the host, against a fake panel: the
 // layout per panel size, the canvas scaled onto the panel (pixels and changed tiles only), the idle frame, the Pi-wide
 // stack's rules (S8h design section 2: latest on top, covered keep state and get no draws or keys, no duplicates, close
-// anywhere, closing the top shows the one below with a whole frame, a client may open itself, depth 8), the soft keys
+// anywhere, closing the top shows the one below with a whole frame, a client may open itself, depth 8; opened () as S8h's
+// Pi side calls it: once when new, once when gone), the soft keys
 // (to the top client only, CLOSE, the key map), Pi-wide popups over the top. Screenshots: build/pidisplay_*.ppm.
 #include <cstdio>
 #include <cstring>
@@ -192,13 +193,13 @@ int main() {
   tap(pd::kDown);
   tap(pd::kNo);
   CHECK(g_rec[1].keys_down == 6 && g_rec[1].last_key == 0x45);
-  // asked again while covered: moved to the top, no duplicate, opened (true) again with a whole frame
+  // asked again while covered: moved to the top, no duplicate, a whole frame (not opened again: it never closed)
   uint32_t full = pd::stats().full;
-  CHECK(pd::push(0, A) && pd::depth() == 2 && pd::top() == A && g_rec[0].opens == 2);
+  CHECK(pd::push(0, A) && pd::depth() == 2 && pd::top() == A && g_rec[0].opens == 1);
   run(30);
   CHECK(pd::stats().full == full + 1 && canvas_px(10, 40) == pd::kInk);
   // pushed again while on top: nothing changes
-  CHECK(pd::push(0, A) && pd::depth() == 2 && g_rec[0].opens == 2);
+  CHECK(pd::push(0, A) && pd::depth() == 2 && g_rec[0].opens == 1);
   // the same client for the other box is another entry
   CHECK(pd::push(1, A) && pd::depth() == 3 && pd::on_stack(0, A) && pd::on_stack(1, A));
   CHECK(pd::close(1, A) && pd::depth() == 2 && pd::top() == A);
@@ -215,14 +216,14 @@ int main() {
   run(30);
   CHECK(canvas_px(0, 8) == pd::kInk && canvas_px(10, 40) == pd::kPaper);
 
-  // ---- CLOSE: the top closed, the one below shown again with a whole frame and opened (true)
+  // ---- CLOSE: the top closed, the one below shown again with a whole frame
   fresh();
   pd::push(0, A);
   pd::push(1, B);
   run(30);
   full = pd::stats().full;
   tap(pd::kClose);
-  CHECK(pd::depth() == 1 && pd::top() == A && g_rec[1].closes == 1 && g_rec[0].opens == 2);
+  CHECK(pd::depth() == 1 && pd::top() == A && g_rec[1].closes == 1 && g_rec[0].opens == 1);
   CHECK(g_rec[1].keys_down == 0);   // CLOSE is not a key for the client
   run(30);
   CHECK(pd::stats().full == full + 1 && canvas_px(10, 40) == pd::kInk && canvas_px(11, 40) == pd::kPaper);

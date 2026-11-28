@@ -178,14 +178,9 @@ int find(int slot, const screen::Client* c) {
     if (s.e[i].c == c && s.e[i].slot == slot) return i;
   return -1;
 }
-// the top changed: the new top gets opened (true) and a whole frame
-void became_top() {
-  s.shown_valid = false, s.dirty = true;
-  if (s.n) {
-    const screen::Client* c = s.e[s.n - 1].c;
-    if (c->opened) c->opened(true, 0);
-  }
-}
+// the top changed: a whole frame (opened (true) only when an entry is new: S8h's Pi side gives a client that comes on
+// top again shown (true) instead, which Client gets with S8h; see pidisplay.h)
+void became_top() { s.shown_valid = false, s.dirty = true; }
 }  // namespace
 
 bool attach(const Panel* p) {
@@ -211,10 +206,12 @@ bool push(int slot, const screen::Client* c) {
     for (; i < s.n - 1; ++i) s.e[i] = s.e[i + 1];
     --s.n;
   }
+  bool fresh = i < 0;
   if (!s.n) s.bar_dirty = true;
   s.e[s.n++] = Entry{slot, c};
   s.st.pushes++;
   became_top();
+  if (fresh && c->opened) c->opened(true, 0);
   return true;
 }
 bool close(int slot, const screen::Client* c) {
