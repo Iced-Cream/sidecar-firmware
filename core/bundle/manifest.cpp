@@ -15,7 +15,8 @@ namespace bundle {
 namespace {
 const char* const kKindNames[kKinds] = {"box", "store", "sample"};
 const char* const kNeedNames[kNeedKinds] = {"code", "www"};
-const char* const kBoxTypes[] = {"rytm", "a4", "dt"};
+const char* const kDirs[kKinds] = {"box/", "store/", "samples/"};
+const char* const kBoxTypes[] = {"rytm", "a4", "digitakt"};   // core/device Profile state folders without the dot
 void cpy(char* d, const char* s, int cap) { sniprintf(d, cap, "%s", s ? s : ""); }
 bool path_ok(const char* p) {   // a card path in a manifest: absolute, a bundle-safe name after the '/'
   return p[0] == '/' && strlen(p) < (size_t)kCardPath && name_ok(p + 1);
@@ -51,6 +52,12 @@ bool hex_id(const char* s) {
     if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
   return s[kHexId] == 0;
 }
+const char* kind_dir(int k) { return k >= 0 && k < kKinds ? kDirs[k] : ""; }
+bool in_kind_dir(const char* name, int kind) {
+  const char* d = kind_dir(kind);
+  const size_t n = strlen(d);
+  return n && !strncmp(name, d, n) && name[n];
+}
 const char* kind_name(int k) { return k >= 0 && k < kKinds ? kKindNames[k] : "?"; }
 int kind_of(const char* s) {
   for (int k = 0; k < kKinds; ++k)
@@ -81,7 +88,7 @@ void Manifest::clear() {
 }
 int Manifest::add_entry(const char* name, int kind) {
   if (ne >= cap_e || !name_ok(name) || !strcmp(name, "manifest.json") || find_entry(name) >= 0) return -1;
-  if (kind < 0 || kind >= kKinds) return -1;
+  if (kind < 0 || kind >= kKinds || !in_kind_dir(name, kind)) return -1;
   MEntry& x = e[ne];
   memset(&x, 0, sizeof x);
   cpy(x.name, name, sizeof x.name);
@@ -137,7 +144,7 @@ int Manifest::count(int kind) const {
 bool write_manifest(const Manifest& m, JOut& o) {
   if (!box_type_ok(m.box_type) || !hex_id(m.box_uid) || !hex_id(m.project_id)) return false;
   for (int i = 0; i < m.ne; ++i)
-    if (!entry_fmt_ok(m.e[i])) return false;
+    if (!entry_fmt_ok(m.e[i]) || !in_kind_dir(m.e[i].name, m.e[i].kind)) return false;
   const fmt::Format& f = reg();
   char h[65];
   o.raw("{\"format\":\"sidecar-bundle\",\"version\":");
@@ -346,6 +353,7 @@ bool read_manifest(const char* text, uint32_t n, Manifest* m, char* err, int cap
         if (j.err) return r.bad(j.err);
         if (!name_ok(name)) return r.bad("an unsafe entry name");
         if (kind < 0) return r.bad("an entry of an unknown kind");
+        if (!in_kind_dir(name, kind)) return r.bad("an entry outside its kind's folder");
         if (size < 0) return r.bad("an entry without a size");
         if (m->find_entry(name) >= 0 || !strcmp(name, "manifest.json")) return r.bad("an entry named twice");
         if (m->ne >= m->cap_e) return r.bad("too many entries");

@@ -95,7 +95,7 @@ static void fill_manifest(Manifest* m) {
   sha256("www", 3, h);
   CHECK(m->add_need(kNeedWww, "lfo-page", h));
   CHECK(m->add_entry("box/project.bin", kKindBox) == 0);
-  int s1 = m->add_entry("store/c-0001.bin", kKindStore), s2 = m->add_entry("store/g-0002.bin", kKindStore);
+  int s1 = m->add_entry("store/1-0001.bin", kKindStore), s2 = m->add_entry("store/0-0002.bin", kKindStore);
   CHECK(s1 == 1 && s2 == 2);
   strcpy(m->e[s1].fmt, "store"), m->e[s1].fmt_ver = 1;
   strcpy(m->e[s2].fmt, "store"), m->e[s2].fmt_ver = 1;
@@ -306,9 +306,11 @@ int main() {
         h + box + "\"entries\":[{\"name\":\"samples/a\",\"kind\":\"sample\",\"size\":-1,\"sha256\":\"" + z64 + "\"}]}",
         h + box + "\"entries\":[{\"name\":\"samples/a\",\"kind\":\"sample\",\"size\":1.5,\"sha256\":\"" + z64 + "\"}]}",
         h + box + "\"entries\":[{\"name\":\"a\\u0000b\",\"kind\":\"sample\",\"size\":1,\"sha256\":\"" + z64 + "\"}]}",
-        h + box + "\"entries\":[{\"name\":\"store/c-0001.bin\",\"kind\":\"store\",\"size\":1,\"sha256\":\"" + z64 +
+        h + box + "\"entries\":[{\"name\":\"store/1-0001.bin\",\"kind\":\"store\",\"size\":1,\"sha256\":\"" + z64 +
             "\",\"format\":{\"name\":\"store\",\"version\":7}}]}",
         h + box + "\"entries\":[{\"name\":\"box/a\",\"kind\":\"rytm\",\"size\":1,\"sha256\":\"" + z64 + "\"}]}",
+        h + box + "\"entries\":[{\"name\":\"store/a\",\"kind\":\"box\",\"size\":1,\"sha256\":\"" + z64 + "\"}]}",
+        h + "\"box\":{\"type\":\"dt\",\"uid\":\"3fa2c001\"},\"project\":{\"id\":\"0000beef\"},\"entries\":[]}",
         h + box + "\"needs\":[{\"kind\":\"code\",\"name\":\"t\",\"sha256\":\"" + z64 + "\"},{\"kind\":\"code\",\"name\":\"u\",\"sha256\":\"" + z64 + "\"}],\"entries\":[]}",
         h + box + "\"entries\":[]} x",
         h + "\"project\":{\"id\":\"0000beef\"},\"entries\":[]}",
@@ -363,7 +365,8 @@ int main() {
     std::string bz(PL.total, '\0');
     Src s{&all};
     CHECK(render(pz.data(), PL, 0, (uint8_t*)&bz[0], (uint32_t)bz.size(), data_fn, &s));
-    printf("test_bundle_zip: round trip, %d entries, %llu bytes\n", pm.ne + 1, (unsigned long long)bz.size());
+    printf("test_bundle_zip: round trip, %d entries, %llu bytes, sha256 %s\n", pm.ne + 1, (unsigned long long)bz.size(), sha(bz).c_str());
+    CHECK(sha(bz) == "5bd5399103fdabb23a09e61ad4a7978cfc17deb4ca244d8ad0f98478f3705ebe");   // the v2 bundle pinned: a change to the manifest's text or the layout shows here
 
     // read it back as the import does: the manifest first, from the first bytes alone
     auto import = [&](const std::string& zb, Manifest* rm, std::string* why) -> bool {
@@ -409,7 +412,7 @@ int main() {
       fwrite(bz.data(), 1, bz.size(), g);
       fclose(g);
       CHECK(system(("python3 -I -c \"import zipfile,sys,json\nz=zipfile.ZipFile(sys.argv[1])\nassert z.testzip() is None\n"
-                    "n=[i.filename for i in z.infolist()]\nassert n==['manifest.json','box/project.bin','store/c-0001.bin','store/g-0002.bin',"
+                    "n=[i.filename for i in z.infolist()]\nassert n==['manifest.json','box/project.bin','store/1-0001.bin','store/0-0002.bin',"
                     "'samples/Drums/kick.wav'],n\nassert json.loads(z.read('manifest.json'))['project']['id']=='0000beef'\" '" + p4 + "'").c_str()) == 0);
     }
     // one wrong byte anywhere refuses it: in the data (sha / CRC), the manifest (CRC, or its reader), the headers
@@ -450,18 +453,28 @@ int main() {
       b2 = body;
       b2[3] += "!";
       CHECK(!import(rebuilt(pm, b2, names), &bm, &why) && why.find("size differs") != std::string::npos);
-      Manifest wm{};
+      Manifest wm{};   // a box entry under store/: the writer refuses it (the reader too: bad[] above; check() again)
       wm.alloc(64, 64, 8);
       fill_manifest(&wm);
-      for (int i = 0; i < wm.ne; ++i) wm.e[i].size = pm.e[i].size, memcpy(wm.e[i].sha, pm.e[i].sha, 32);
-      strcpy(wm.e[0].name, "store/project.bin");   // a box entry under store/
-      n2 = names;
-      n2[0] = "store/project.bin";
-      CHECK(!import(rebuilt(wm, body, n2), &bm, &why) && why.find("kind's folder") != std::string::npos);
+      strcpy(wm.e[0].name, "store/project.bin");
+      JOut x;
+      static char xt[1 << 16];
+      x.begin(xt, sizeof xt);
+      CHECK(!write_manifest(wm, x));
+      CHECK(wm.add_entry("samples/x.wav", kKindStore) < 0 && wm.add_entry("box/", kKindBox) < 0);
+      std::vector<ZEntry> rz;
+      CHECK(read_all(bz, rz, &why));
+      Manifest cm{};
+      cm.alloc(64, 64, 8);
+      uint64_t moff;
+      uint32_t msz;
+      CHECK(sniff_zip((const uint8_t*)bz.data(), 4096 + mo.n, &moff, &msz) && read_manifest(bz.data() + moff, msz, &cm, err, sizeof err));
+      cm.e[0].kind = kKindStore;
+      CHECK(!check(&cm, rz.data(), (int)rz.size(), err, sizeof err) && strstr(err, "kind's folder"));
     }
     // the names a packer makes
     char nb[kNameMax + 1];
-    CHECK(store_entry_name("c-0001.bin", nb, sizeof nb) && !strcmp(nb, "store/c-0001.bin"));
+    CHECK(store_entry_name("1-0001.bin", nb, sizeof nb) && !strcmp(nb, "store/1-0001.bin"));
     CHECK(!store_entry_name("a/b.bin", nb, sizeof nb) && !store_entry_name("..", nb, sizeof nb));
     CHECK(sample_entry_name("/Samples/Drums/kick.wav", nb, sizeof nb) && !strcmp(nb, "samples/Drums/kick.wav"));
     CHECK(!sample_entry_name("/CHOP/a.wav", nb, sizeof nb) && !sample_entry_name("/Samples/../x", nb, sizeof nb) &&

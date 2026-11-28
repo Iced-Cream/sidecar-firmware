@@ -18,10 +18,10 @@ Pi's pack / unpack service, and the listing of a project's STORE records and poo
   code writes a bundle to the card and could serve a download's ranges. The reader refuses anything else.
 - **Entries** (`core/bundle/pack.h`): `manifest.json` first, then the manifest's entries in its order:
   - `box/<name>`: what the box's mod streamed over, opaque to the Pi;
-  - `store/<scope>-<handle>.bin`: the project's STORE record files;
+  - `store/<scope>-<handle, 4 hex>.bin`: the project's STORE record files;
   - `samples/<path>`: a pool sample, `<path>` its card path under `/Samples`.
 - **Manifest** (`core/bundle/manifest.h`): `format` `sidecar-bundle`, `version`, `min_reader`, `created`, `clock`,
-  `sidecar` {version, board}, `box` {type (`rytm` `a4` `dt`), uid (DeviceUID, 8 lowercase hex), name}, `project` {id
+  `sidecar` {version, board}, `box` {type (`rytm` `a4` `digitakt`, the device state folder without its dot), uid (DeviceUID, 8 lowercase hex), name}, `project` {id
   (the STORE project ID, 8 lowercase hex), name}, `needs` [{kind `code` or `www`, name, sha256}] (never packed: the
   import asks for any the Pi lacks), `entries` [{name, kind `box` `store` `sample`, size, sha256, paths (samples),
   format {name, version}}], `missing` (samples named but not on the card), `totals`.
@@ -40,7 +40,8 @@ carried as it is.
 `sniff_zip()` finds `manifest.json` in the bundle's first bytes, so the manifest is read before the central
 directory. `check()` then refuses a zip whose entries are not exactly the manifest's (an extra, a missing or a reordered
 entry, a size that differs, a name outside its kind's folder), and `EntryHash` matches every entry's size, CRC-32 and
-SHA-256 as its bytes arrive: one wrong byte refuses the bundle before anything is written.
+SHA-256 as its bytes arrive: one wrong byte refuses the bundle before anything is written. manifest.json's own CRC (the
+zip's first entry) is the unpack service's to compare with the bytes it read (the test does it).
 
 Tests: `core/tests/test_bundle_zip.cpp` (`make -C core test`). Python's `zipfile` and `unzip -t` checks are skipped,
 with a line saying so, where those tools are missing.

@@ -31,6 +31,9 @@ constexpr int kHexId = 8;            // a box UID / a project ID: 8 lowercase he
 enum Kind : uint8_t { kKindBox = 0, kKindStore, kKindSample, kKinds };
 const char* kind_name(int k);        // "box" "store" "sample"
 int kind_of(const char* s);          // -1 unknown
+// An entry's folder in the zip by kind (core/bundle/pack.h): "box/" "store/" "samples/"; a name must be inside its own
+const char* kind_dir(int k);
+bool in_kind_dir(const char* name, int kind);
 
 enum NeedKind : uint8_t { kNeedCode = 0, kNeedWww, kNeedKinds };
 const char* need_name(int k);        // "code" "www"
@@ -52,7 +55,7 @@ struct Manifest {
   int version, min_reader;
   bool read_only;                    // read_manifest: a newer bundle this build may read (fmt kForeignNewer)
   char created[24], clock[12], sc_version[32], board[8];
-  char box_type[8];                  // "rytm" "a4" "dt" (core/device's type folder without the dot)
+  char box_type[12];                 // "rytm" "a4" "digitakt": core/device's state folder without the dot
   char box_uid[kHexId + 1];          // DeviceUID, 8 lowercase hex
   char box_name[24];                 // the box folder's name.txt (23 characters)
   char project_id[kHexId + 1];       // the STORE project ID (/store/<id>/), 8 lowercase hex

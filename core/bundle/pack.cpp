@@ -9,7 +9,6 @@ namespace core {
 namespace bundle {
 
 namespace {
-const char* const kDirs[kKinds] = {"box/", "store/", "samples/"};
 bool say(char* err, int cap, const char* what, const char* name = nullptr) {
   if (name) sniprintf(err, cap, "bundle: %s (%s)", what, name);
   else sniprintf(err, cap, "bundle: %s", what);
@@ -18,8 +17,6 @@ bool say(char* err, int cap, const char* what, const char* name = nullptr) {
 uint16_t get16(const uint8_t* p) { return (uint16_t)(p[0] | p[1] << 8); }
 uint32_t get32(const uint8_t* p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 }  // namespace
-
-const char* kind_dir(int kind) { return kind >= 0 && kind < kKinds ? kDirs[kind] : ""; }
 
 bool store_entry_name(const char* f, char* out, int cap) {
   if (!f || strchr(f, '/')) return false;
@@ -70,9 +67,7 @@ bool check(Manifest* m, const ZEntry* z, int nz, char* err, int cap) {
     MEntry& e = m->e[i];
     const ZEntry& x = z[i + 1];
     if (strcmp(e.name, x.name)) return say(err, cap, "entries differ from the manifest (name or order)", x.name);
-    const char* d = kind_dir(e.kind);
-    const size_t dl = strlen(d);
-    if (strncmp(e.name, d, dl) || !e.name[dl]) return say(err, cap, "an entry outside its kind's folder", e.name);
+    if (!in_kind_dir(e.name, e.kind)) return say(err, cap, "an entry outside its kind's folder", e.name);
     if (e.size != x.size) return say(err, cap, "an entry's size differs from the manifest", e.name);
     e.crc = x.crc;
   }

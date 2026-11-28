@@ -21,9 +21,8 @@ namespace bundle {
 
 constexpr int kEntriesMax = kZipEntriesMax - 1;   // the manifest's entries (manifest.json is the zip's first)
 
-const char* kind_dir(int kind);                   // "box/" "store/" "samples/"
 // A STORE record's / a sample's entry name; false: it does not make a bundle-safe name
-bool store_entry_name(const char* record_file, char* out, int cap);   // "c-0001.bin" -> "store/c-0001.bin"
+bool store_entry_name(const char* record_file, char* out, int cap);   // "1-0001.bin" -> "store/1-0001.bin"
 bool sample_entry_name(const char* card_path, char* out, int cap);    // "/Samples/Drums/k.wav" -> "samples/Drums/k.wav"
 
 // The zip's entries for m (each MEntry's size and crc set) after manifest.json (mlen bytes, CRC mcrc); epoch: the
