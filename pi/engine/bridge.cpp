@@ -352,6 +352,21 @@ void lfo_midi(uint8_t st, uint8_t d1, uint8_t d2) {
   core::lfo::midi_in(st, d1, d2);
   core::learn::midi(0, st, d1, d2);   // the Rytm's own CCs: a MIDI-learn route's (port 0)
 }
+// A box's channel messages, transport t's: the Rytm's (its note-out: the LFOs' TRIG, SIDECHAIN's track trigs, poly's pads)
+// whichever transport it is on (the host link's or the Teensy relay's), in its own slot's Scope. Another box's notes are not
+// the Rytm's tracks. Transport 0 with no box yet: the presumed Rytm, as ever.
+void rytm_channel(int t, uint8_t st, uint8_t d1, uint8_t d2) {
+  const int s = transport_slot(t);
+  if (s < 0 ? t != 0 : !core::device::rytm_at(s)) return;
+  if (s >= 0 && core::kVoiceSlots > 1) {
+    core::device::Scope in(core::device::g_links[s]);
+    lfo_midi(st, d1, d2);
+    poly_midi(st, d1, d2);
+    return;
+  }
+  lfo_midi(st, d1, d2);
+  poly_midi(st, d1, d2);
+}
 bool learn_command(const char* p, char* out, int cap) { return core::learn::command(p, out, cap); }
 bool lfo_command(const char* p, char* out, int cap) { return core::lfo::command(p, out, cap); }
 int lfo_json(char* out, int cap) {   // the base box's LFOs (core 0: names the slot, never the control core's slot in hand)

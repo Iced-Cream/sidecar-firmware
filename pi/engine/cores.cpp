@@ -212,8 +212,7 @@ static void FromRytm (const u8 *pData, int nLength)
 static void OnChannel (u8 s, u8 a, u8 b)
 {
 	if ((s & 0xF0) == 0x90 && b) { s_nNotes++; s_nNoteChans |= 1u << (s & 0x0F); }
-	bridge::lfo_midi (s, a, b);		// the LFOs: a Rytm track's trig (an FX target's TRIG, core/lfo.h)
-	bridge::poly_midi (s, a, b);		// poly FM: the pads' notes, live chords (core/poly.h)
+	bridge::rytm_channel (0, s, a, b);	// the Rytm's (if this transport's box is it): its LFO TRIGs, SIDECHAIN track trigs, poly FM pads
 	if (s_bNotes && !s_bModded[0]) s_Notes[0].Channel (s, a, b);
 	else if ((s & 0xF0) == 0xB0 && a == 120) sendfx_pi::AllSoundOff (bridge::transport_slot (0));	// the send FX hear it with the notes off too: this transport's box's (3(c))
 }
@@ -269,6 +268,7 @@ static void Sysex1 (const u8 *pData, int nLength)
 static void OnChannel1 (u8 s, u8 a, u8 b)
 {
 	if ((s & 0xF0) == 0x90 && b) { s_nNotes++; s_nNoteChans |= 1u << (s & 0x0F); }
+	bridge::rytm_channel (1, s, a, b);	// a Rytm on the second transport (the Teensy relay): its note-out, as on the host link
 	if (s_bNotes && !s_bModded[1]) s_Notes[1].Channel (s, a, b);
 }
 static MidiIn s_Midi1 (Sysex1, OnChannel1);
