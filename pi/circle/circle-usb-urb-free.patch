@@ -1,7 +1,7 @@
 diff -ruN a/include/circle/usb/usbmidihost.h b/include/circle/usb/usbmidihost.h
 --- a/include/circle/usb/usbmidihost.h
 +++ b/include/circle/usb/usbmidihost.h
-@@ -69,6 +69,11 @@
+@@ -71,6 +71,11 @@
  	u8 *m_pTxBuffer = 0;			// one transfer's, written only while none is in flight
  	volatile boolean m_bTxBusy = FALSE;
  	volatile boolean m_bTxFailed = FALSE;
@@ -32,7 +32,7 @@ diff -ruN a/include/circle/usb/usbrequest.h b/include/circle/usb/usbrequest.h
 diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
 --- a/lib/usb/usbmidihost.cpp
 +++ b/lib/usb/usbmidihost.cpp
-@@ -85,7 +85,12 @@
+@@ -88,7 +88,12 @@
  	delete m_pEndpointOut;
  	m_pEndpointOut = 0;
  
@@ -46,7 +46,7 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  	m_pTxBuffer = 0;
  }
  
-@@ -237,8 +242,10 @@
+@@ -242,8 +247,10 @@
  	pURB->SetCompletionRoutine (TxCompletionStub, 0, pThis);
  
  	pThis->m_bTxBusy = TRUE;
@@ -57,7 +57,7 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  		pThis->m_bTxBusy = FALSE;
  		delete pURB;
  
-@@ -273,6 +280,7 @@
+@@ -323,6 +330,7 @@
  	assert (pThis != 0);
  
  	pThis->m_bTxFailed = pURB->GetStatus () == 0;
@@ -65,7 +65,7 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  	delete pURB;
  	pThis->m_bTxBusy = FALSE;
  }
-@@ -300,7 +308,16 @@
+@@ -350,7 +358,16 @@
  		pURB->SetCompleteOnNAK (); // do not retry if request cannot be served immediately
  	}
  
@@ -83,7 +83,7 @@ diff -ruN a/lib/usb/usbmidihost.cpp b/lib/usb/usbmidihost.cpp
  }
  
  void CUSBMIDIHostDevice::CompletionRoutine (CUSBRequest *pURB)
-@@ -308,6 +325,8 @@
+@@ -358,6 +375,8 @@
  	assert (pURB != 0);
  	assert (m_pInterface != 0);
  

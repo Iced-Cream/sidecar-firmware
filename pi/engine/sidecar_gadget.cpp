@@ -1,11 +1,11 @@
 // pi/engine/sidecar_gadget.cpp - sidecar_gadget.h
 #include "sidecar_gadget.h"
-#include "usb_mode.h"
 
 #include <circle/string.h>
 #include <circle/usb/usb.h>
 #include <circle/util.h>
 #include <circle/koptions.h>
+#include <circle/timer.h>
 
 #include "ob_block.h"
 #include "ob_usb.h"
@@ -21,8 +21,9 @@ CSidecarGadget *CSidecarGadget::s_pThis = 0;
 enum { StrManufacturer = 1, StrProduct, StrSerial, StrAudio, StrMIDI, StrOutCh = 16, StrInCh = 32 };
 static const char *const OutNames[12] =
 	{"MAIN L", "MAIN R", "MAIN FX L", "MAIN FX R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY"};
-static const char *const InNames[12] =
-	{"MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO IN L", "AUDIO IN R"};
+static const char *const InNames[20] =
+	{"MAIN L", "MAIN R", "BD", "SD", "RS", "BT", "LT", "MT", "CH", "CY", "AUDIO IN L", "AUDIO IN R",
+	 "VOICE 1", "VOICE 2", "VOICE 3", "VOICE 4", "VOICE 5", "VOICE 6", "VOICE 7", "VOICE 8"};
 
 static TUSBDeviceDescriptor s_Device =
 {
@@ -41,20 +42,10 @@ static void Put (const u8 *p, unsigned n)	{ memcpy (s_Config + s_nConfig, p, n);
 #define U32(v)	(u8) ((v) & 0xFF), (u8) (((v) >> 8) & 0xFF), (u8) (((v) >> 16) & 0xFF), (u8) (((v) >> 24) & 0xFF)
 
 // UAC2 (Audio Device Class 2.0 4.7-4.10, the Teensy T1 layout): interfaces 0 AC, 1 AS OUT (EP 0x01, feedback 0x82),
-// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); channels
-// named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
-// Windows' shared mode (bStereo): with all channels raw (bmChannelConfig 0) its engine mixed the 12 IN channels to 2
-// with L == R and 3-12 at zero, while exclusive mode had all 12 [hw, T191]; channels 1-2 marked front L/R alone still
-// gave channel 1 on both sides [hw, T192/T194]. So, with bStereo: both clusters' bmChannelConfig 0x3 (channels 1-2 front
-// left / right, the rest non-predefined, UAC2 4.1), the IN terminal a line connector (0x0603, not a microphone), and IN
-// alt 2 = channels 1-2 only (MAIN L/R), a format shared mode carries as it is. uac2lr=0 (cmdline) serves the old layout.
-static const unsigned StereoCh = 2;
-static boolean s_bStereo = TRUE;
-static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut, boolean bStereo)
+// 2 AS IN (EP 0x83); one internal fixed 48 kHz clock 0x10; IT 0x01 (USB) -> OT 0x02, IT 0x03 -> OT 0x04 (USB); raw
+// channels (bmChannelConfig 0) named by strings. USB MIDI 1.0: interfaces 3 AC, 4 MS (bulk 0x04 / 0x85), one cable.
+static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned nMaxOut)
 {
-	const u32 nMaskIn = bStereo && nIn >= 2 ? 0x3 : 0, nMaskOut = bStereo && nOut >= 2 ? 0x3 : 0;
-	const u16 nInTerm = bStereo ? 0x0603 : 0x0201;
-	const unsigned nMaxIn2 = nMaxIn / nIn * StereoCh;
 	const unsigned Clock = 0x10, AcCs = 9 + 8 + 17 + 12 + 17 + 12, MsCs = 7 + 6 + 6 + 9 + 9 + 9 + 5 + 9 + 5;
 	s_nConfig = 0;
 	D (9, DESCRIPTOR_CONFIGURATION, 0, 0, 5, 1, 0, 0x80, 250);
@@ -62,13 +53,13 @@ static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned 
 	D (9, DESCRIPTOR_INTERFACE, 0, 0, 0, 0x01, 0x01, 0x20, 0);
 	D (9, 0x24, 0x01, U16 (0x0200), 0x08, U16 (AcCs), 0x00);
 	D (8, 0x24, 0x0A, Clock, 0x01, 0x05, 0, 0);
-	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (u8) nOut, U32 (nMaskOut), StrOutCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x01, U16 (0x0101), 0, Clock, (u8) nOut, U32 (0), StrOutCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x02, U16 (0x0301), 0, 0x01, Clock, U16 (0), 0);
-	D (17, 0x24, 0x02, 0x03, U16 (nInTerm), 0, Clock, (u8) nIn, U32 (nMaskIn), StrInCh, U16 (0), 0);
+	D (17, 0x24, 0x02, 0x03, U16 (0x0201), 0, Clock, (u8) nIn, U32 (0), StrInCh, U16 (0), 0);
 	D (12, 0x24, 0x03, 0x04, U16 (0x0101), 0, 0x03, Clock, U16 (0), 0);
 	D (9, DESCRIPTOR_INTERFACE, 1, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, DESCRIPTOR_INTERFACE, 1, 1, 2, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (u8) nOut, U32 (nMaskOut), StrOutCh);
+	D (16, 0x24, 0x01, 0x01, 0x00, 0x01, U32 (1), (u8) nOut, U32 (0), StrOutCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	s_nOffOut = s_nConfig;
 	D (7, DESCRIPTOR_ENDPOINT, 0x01, 0x05, U16 (nMaxOut), 2);
@@ -77,19 +68,11 @@ static void BuildConfig (unsigned nIn, unsigned nOut, unsigned nMaxIn, unsigned 
 	D (7, DESCRIPTOR_ENDPOINT, 0x82, 0x11, U16 (4), 4);
 	D (9, DESCRIPTOR_INTERFACE, 2, 0, 0, 0x01, 0x02, 0x20, 0);
 	D (9, DESCRIPTOR_INTERFACE, 2, 1, 1, 0x01, 0x02, 0x20, 0);
-	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) nIn, U32 (nMaskIn), StrInCh);
+	D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) nIn, U32 (0), StrInCh);
 	D (6, 0x24, 0x02, 0x01, 3, 24);
 	s_nOffIn = s_nConfig;
 	D (7, DESCRIPTOR_ENDPOINT, 0x83, 0x05, U16 (nMaxIn), 2);
 	D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
-	if (bStereo)			// alt 2: MAIN L/R only, the same endpoint with short packets
-	{
-		D (9, DESCRIPTOR_INTERFACE, 2, 2, 1, 0x01, 0x02, 0x20, 0);
-		D (16, 0x24, 0x01, 0x04, 0x00, 0x01, U32 (1), (u8) StereoCh, U32 (0x3), StrInCh);
-		D (6, 0x24, 0x02, 0x01, 3, 24);
-		D (7, DESCRIPTOR_ENDPOINT, 0x83, 0x05, U16 (nMaxIn2), 2);
-		D (8, 0x25, 0x01, 0, 0, 0, 0, 0);
-	}
 	// MIDI
 	D (8, 11, 3, 2, 0x01, 0x03, 0x00, StrMIDI);
 	D (9, DESCRIPTOR_INTERFACE, 3, 0, 0, 0x01, 0x01, 0x00, 0);
@@ -254,6 +237,7 @@ CSidecarMIDIEP::CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGad
 
 void CSidecarMIDIEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
 	m_bBusy = FALSE;
 	m_bHeld = FALSE;
@@ -287,7 +271,7 @@ void CSidecarMIDIEP::OnTransferComplete (boolean bIn, size_t nLength)
 		m_pSidecar->MIDIFromHost (m_Buffer, nLength);
 		// usbmidi=os: an OS file comes faster than the Rytm takes it; instead of dropping packets (nMidiFull), the
 		// endpoint waits (the computer's transfer is NAKed) until core 0's loop has sent enough (Poll: Resume)
-		if (m_pSidecar->OsUpdate () && !m_pSidecar->ToRytmRoom ()) m_bHeld = TRUE;
+		if (m_pSidecar->m_Gate.Hold (m_pSidecar->ToRytmRoom ())) m_bHeld = TRUE;
 		else if (m_bActive) BeginTransfer (TransferDataOut, m_Buffer, BufSize);
 		return;
 	}
@@ -304,29 +288,28 @@ void CSidecarMIDIEP::Resume (void)
 
 // ---- the gadget ------------------------------------------------------------------------------------------------
 
-static const unsigned TonePeriod[CSidecarGadget::ChIn - 2] = {480, 400, 320, 300, 240, 200, 192, 160, 150, 128};
+static const unsigned TonePeriod[18] = {480, 400, 320, 300, 240, 200, 192, 160, 150, 128, 120, 100, 96, 80, 75, 64, 60, 50};
 
 CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pIso {0, 0, 0, 0}, m_pMIDIOut (0), m_pMIDIIn (0),
 	m_uchOutAlt (0), m_uchInAlt (0), m_bMac (TRUE), m_bTest (FALSE), m_bFake (FALSE), m_bRytmMIDI (FALSE),
-	m_bMirror (FALSE),
-	m_nOsUpdate (OsUpdateOff), m_bLinkTcp (FALSE), m_bUsbReboot (FALSE),
-	m_nInHead (0), m_nInTail (0), m_nSrcFrames (0), m_nSrcTick (0),
+	m_bMirror (FALSE), m_bMirUsed (FALSE),
+	m_bUsbReboot (FALSE),
+	m_nInHead (0), m_nInTail (0), m_nVoiceHead (0), m_nVoiceTail (0), m_nSrcFrames (0), m_nSrcTick (0),
 	m_bSrcRytm (FALSE), m_nInPos (0), m_bInPrimed (FALSE), m_bInRunning (FALSE),
 	m_nOutHead (0), m_nOutTail (0), m_bOutPriming (TRUE), m_nLevelQ8 (0), m_nSinkPos (0), m_nLastConsume (0),
 	m_nLoopHead (0), m_nLoopTail (0), m_bLoopPriming (TRUE),
 	m_bWinStarted (FALSE), m_bWinRytm (FALSE), m_nWinUFrames (0), m_nLastFrameNo (0), m_nWinQ16 (0),
 	m_nFbBase (6 << 16),
 	m_ToRytmFilter (true), m_ToHostFilter (false), m_bToRytmSysEx (FALSE),
-	m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
+	m_nQuietSecs (0), m_nLastIRQs (0), m_nLastTicks (0), m_nLastStamp (0)
 {
 	s_pThis = this;
-	m_nOsUpdate = ModeFrom (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
-							   CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
+	m_Gate.SetMode (usbmidi_os::from_cmdline (CKernelOptions::Get ()->GetAppOptionString ("usbmidi"),
+						  CKernelOptions::Get ()->GetAppOptionString ("osupdate")));
 	m_bUsbReboot = CKernelOptions::Get ()->GetAppOptionDecimal ("usbreboot", 0) == 1;
 #ifdef CIRCLE_GADGET_MIRROR
-	m_bMirror = usb_mode::get () == usb_mode::kMirror;
 	memset (m_MirDev, 0, sizeof m_MirDev);
 	m_nMirCfg = 0;
 	memset (&m_MirLayout, 0, sizeof m_MirLayout);
@@ -364,7 +347,7 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	m_Ctl = mirror::Ctl ();
 	memset (&m_MirStats, 0, sizeof m_MirStats);
 #endif
-	UpdateOsPass ();
+	ApplyGate (m_ToRytmPath, m_Gate, FALSE);		// no IRQ yet
 	memset (&m_Stats, 0, sizeof m_Stats);
 #if RASPPI >= 5
 	memset (m_nOutLast, 0, sizeof m_nOutLast);
@@ -373,14 +356,13 @@ CSidecarGadget::CSidecarGadget (CInterruptSystem *pInterrupt)
 	asm volatile ("mrs %0, cntfrq_el0" : "=r" (m_nCntFrq));
 	asm volatile ("mrs %0, cntpct_el0" : "=r" (m_nT0));
 	s_Device.idVendor = USB_GADGET_VENDOR_ID;
-	s_bStereo = CKernelOptions::Get ()->GetAppOptionDecimal ("uac2lr", 1) != 0;
-	BuildConfig (ChIn, ChOut, MaxIn, MaxOut, s_bStereo);
-	for (unsigned c = 0; c < ChIn; c++)
+	BuildConfig (ChIn, ChOut, MaxIn, MaxOut);
+	for (unsigned c = 0; c < 20; c++)
 	{
 		m_nPhase[c] = 0;
 		m_pTone[c] = 0;
 	}
-	for (unsigned c = 0; c + 2 < ChIn; c++)
+	for (unsigned c = 0; c + 2 < ChIn && c < 18; c++)
 	{
 		m_pTone[c] = new s32[TonePeriod[c]];
 		sidecar_tone_table (TonePeriod[c], 0.25, m_pTone[c]);
@@ -396,6 +378,64 @@ boolean CSidecarGadget::Start (void)
 					"are relayed unfiltered; the OS-update filter covers MIDI only", OsUpdateName ());
 #endif
 	return Initialize ();				// usb=mirror too: the Sidecar device until the box has been read
+}
+
+boolean CSidecarGadget::MirrorBuilt (void)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+void CSidecarGadget::SetMirror (boolean bOn)
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	if (bOn == m_bMirror) return;
+	m_bMirror = bOn;
+	if (bOn)
+	{
+		m_bMirUsed = TRUE;
+		CObUsb::MirrorWanted ();		// a box up now and not read is read; MirrorPoll shows it once it is (MirrorBoxUp)
+		return;
+	}
+	if (m_bSwitching) m_bSwitchTo = FALSE;		// off the bus already: it comes back as the Sidecar device
+	else if (m_bShowMirror)
+	{
+		CLogger::Get ()->Write (From, LogNotice, "usb=mirror: the mode is CLASS COMPLIANT: USB-C leaves the bus, back as the Sidecar device");
+		MirrorSwitch (FALSE);
+	}
+#else
+	(void) bOn;
+#endif
+}
+
+boolean CSidecarGadget::MirrorShown (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bShowMirror;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorBoxThere (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bMirBoxUp;
+#else
+	return FALSE;
+#endif
+}
+
+boolean CSidecarGadget::MirrorSwitching (void) const
+{
+#ifdef CIRCLE_GADGET_MIRROR
+	return m_bSwitching;
+#else
+	return FALSE;
+#endif
 }
 
 u64 CSidecarGadget::Now (void)
@@ -488,7 +528,7 @@ boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 	if (m_bShowMirror) return MirrorSetInterface (uchInterface, uchAlt);
 #endif
 	if (uchInterface == 0 || uchInterface == 3 || uchInterface == 4) return uchAlt == 0;
-	if (uchAlt > (uchInterface == 2 && s_bStereo ? 2 : 1)) return FALSE;
+	if (uchAlt > 1) return FALSE;
 	if (uchInterface == 1)
 	{
 		m_uchOutAlt = uchAlt;
@@ -505,6 +545,7 @@ boolean CSidecarGadget::OnSetInterface (u8 uchInterface, u8 uchAlt)
 		{
 			// the IN ring trimmed to its target: the stream starts with a short delay, not the backlog
 			while (m_nInHead - m_nInTail > InTarget) m_nInTail++;
+			while (m_nVoiceHead - m_nVoiceTail > InTarget) m_nVoiceTail++;
 			m_bInPrimed = FALSE;
 			m_bInRunning = FALSE;
 			m_nInPos = (TimerQ16 () >> 16) - Nominal;
@@ -576,12 +617,18 @@ void CSidecarGadget::FromEngine (const s32 (*pFrames)[12], unsigned n)
 	LeaveCritical ();
 }
 
-// One OUT block toward the Rytm (or the self-test): the computer's frames added.
-void CSidecarGadget::ToRytm (s32 (*F)[12], unsigned n, boolean bTask)
+// One OUT block toward the Rytm (or the self-test): the computer's frames added, the voices kept for IN 13-20.
+void CSidecarGadget::ToRytm (s32 (*F)[12], const s16 (*V)[8], unsigned n, boolean bTask)
 {
 	if (bTask) EnterCritical ();
 	for (unsigned f = 0; f < n; f++)
 	{
+		if (ChIn > 12 && V != 0)
+		{
+			if (m_nVoiceHead - m_nVoiceTail >= Ring) m_nVoiceTail++;
+			memcpy (m_VoiceRing[m_nVoiceHead % Ring], V[f], sizeof m_VoiceRing[0]);
+			m_nVoiceHead++;
+		}
 		if (m_bTest || !m_uchOutAlt) continue;
 		unsigned nLevel = m_nOutHead - m_nOutTail;
 		if (m_bOutPriming)
@@ -658,6 +705,7 @@ void CSidecarGadget::InSent (void)
 	if (m_bInRunning) return;
 	m_bInRunning = TRUE;
 	while (m_nInHead - m_nInTail > InTarget) m_nInTail++;
+	while (m_nVoiceHead - m_nVoiceTail > InTarget) m_nVoiceTail++;
 }
 
 static inline void Put24 (u8 *&p, s32 v)	{ *p++ = v; *p++ = v >> 8; *p++ = v >> 16; }
@@ -688,7 +736,6 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 	m_Stats.nInHist[n - (Nominal - 1)]++;
 	m_Stats.nInFrames += n;
 
-	const unsigned nCh = m_uchInAlt == 2 ? StereoCh : ChIn;	// alt 2: channels 1-2 of every frame
 	for (unsigned f = 0; f < n; f++)
 	{
 		if (m_bTest)
@@ -696,7 +743,7 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 			// tones on 1..N-2, the loopbacks of OUT 1 and OUT 12 on N-1, N
 			for (unsigned c = 0; c + 2 < ChIn; c++)
 			{
-				if (c < nCh) Put24 (p, m_pTone[c] ? m_pTone[c][m_nPhase[c]] : 0);
+				Put24 (p, m_pTone[c] ? m_pTone[c][m_nPhase[c]] : 0);
 				if (m_pTone[c] && ++m_nPhase[c] == TonePeriod[c]) m_nPhase[c] = 0;
 			}
 			s32 a = 0, b = 0;
@@ -712,7 +759,8 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 					m_nLoopTail++;
 				}
 			}
-			if (nCh == ChIn) { Put24 (p, a); Put24 (p, b); }
+			Put24 (p, a);
+			Put24 (p, b);
 			continue;
 		}
 		const s32 *pFrame = 0;
@@ -721,9 +769,19 @@ unsigned CSidecarGadget::FillIn (u8 *p)
 			if (m_nInHead != m_nInTail) pFrame = m_InRing[m_nInTail++ % Ring];
 			else { m_Stats.nInUnder++; m_bInPrimed = FALSE; }
 		}
-		for (unsigned c = 0; c < nCh; c++) Put24 (p, pFrame ? pFrame[c] : 0);
+		for (unsigned c = 0; c < 12; c++) Put24 (p, pFrame ? pFrame[c] : 0);
+		if (ChIn > 12)
+		{
+			const s16 *pV = 0;
+			if (pFrame)
+			{
+				if (m_nVoiceHead != m_nVoiceTail) pV = m_VoiceRing[m_nVoiceTail++ % Ring];
+				else m_Stats.nVoiceUnder++;
+			}
+			for (unsigned v = 0; v < Voices; v++) Put24 (p, pV ? (s32) pV[v] << 8 : 0);
+		}
 	}
-	return n * nCh * 3;
+	return n * ChIn * 3;
 }
 
 // Every feedback packet (1 ms): the source's frames (the Rytm's, the stand-in's, else the generic timer's) against
@@ -815,7 +873,9 @@ unsigned CSidecarGadget::MIDIForHost (u8 *pBuffer, unsigned nMax)
 	return m_ToHost.Pop (pBuffer, nMax);
 }
 
-// the computer's packets (gadget IRQ) -> the Rytm-bound filter -> the queue core 0's loop
+boolean (*g_pSidecarKeysTap) (const u8 *pPacket) = 0;
+
+// the computer's packets (gadget IRQ) -> the keys tap (its notes) -> the Rytm-bound filter -> the queue core 0's loop
 // sends from
 void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 {
@@ -824,12 +884,8 @@ void CSidecarGadget::MIDIFromHost (const u8 *pBuffer, size_t nLength)
 		if (pBuffer[i] == 0) continue;				// padding
 		m_Stats.nMidiFromHost++;
 		if (m_bUsbReboot) m_Reboot.Feed (pBuffer + i);		// the request is a host-link SysEx: dropped below
-		m_ToRytmFilter.Feed (pBuffer + i, [this] (const u8 *p)
-		{
-			u32 w;
-			memcpy (&w, p, 4);
-			if (!m_ToRytm.push (w)) m_Stats.nMidiFull++;
-		});
+		if (g_pSidecarKeysTap != 0 && (*g_pSidecarKeysTap) (pBuffer + i)) continue;
+		if (!m_ToRytmPath.FromHost (pBuffer + i)) m_Stats.nMidiFull++;
 	}
 }
 
@@ -858,29 +914,57 @@ boolean CSidecarGadget::TakeReboot (void)
 	return TRUE;
 }
 
-unsigned CSidecarGadget::ModeFrom (unsigned nMode)
+// the filter's pass from m_Gate, in one step with the cut (both under the gadget IRQ's mask): no packet of the old
+// pass state's SysEx gets in between. bCut: everything on its way to the Rytm (or the emulator) is dropped - the queue,
+// the rest of the SysEx in the filter, the half-sent state - and a held OUT endpoint is re-armed (the queue is empty)
+void CSidecarGadget::UpdateOsPass (boolean bCut, const char *pWhy)
 {
-	return nMode == usbmidi_os::kOn ? OsUpdateRytm : nMode == usbmidi_os::kEmu ? OsUpdateEmu : OsUpdateOff;
-}
-
-const char *CSidecarGadget::OsUpdateName (void) const
-{
-	return usbmidi_os::name (m_nOsUpdate == OsUpdateRytm ? usbmidi_os::kOn : m_nOsUpdate == OsUpdateEmu ? usbmidi_os::kEmu
-										 : usbmidi_os::kOff);
-}
-
-void CSidecarGadget::UpdateOsPass (void)
-{
-	EnterCritical ();					// the filter runs in the gadget IRQ
-	m_ToRytmFilter.SetPassOsUpdate (OsPass ());
+	unsigned n = 0;
+	EnterCritical ();					// the filter and the queue's producer run in the gadget IRQ
+	n = ApplyGate (m_ToRytmPath, m_Gate, bCut);		// the pass turning on: a new start first (usbmidi_os_path.h)
+	if (bCut && m_pMIDIOut != 0) m_pMIDIOut->Resume ();
 	LeaveCritical ();
+	if (bCut) CLogger::Get ()->Write (From, LogNotice, "usbmidi=os: %s: the computer's MIDI on its way to the Rytm dropped (%u packets)",
+					  pWhy, n);
 }
 
+// a send of the computer's packets failed (the USB merge, the TCP link): they are gone
+void CSidecarGadget::ComputerSendFailed (void)
+{
+	OsLost (TRUE, "a send to the Rytm failed");
+}
+
+void CSidecarGadget::RytmMIDIConnected (boolean bOn)
+{
+	if (m_bRytmMIDI && !bOn) OsLost (FALSE, "the Rytm stopped taking MIDI");	// what waits is drained (Poll)
+	m_bRytmMIDI = bOn;
+}
+
+// usbmidi=os:, an upgrade under way and data lost on the way: rather than let the rest through with a hole in it, the
+// path is cut and OS messages are dropped until the computer has sent none for OsGate::kQuietUs (Poll), loudly
+void CSidecarGadget::OsLost (boolean bSendFailed, const char *pWhy)
+{
+	if (!m_Gate.Lost (bSendFailed, m_ToRytmPath.Busy (), m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))
+		return;
+	UpdateOsPass (TRUE, "an OS upgrade aborted");
+	CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: %s during it, part of the image is lost. "
+				"The Rytm did not get the whole OS: start the upgrade again (OS messages are dropped until the "
+				"computer stops sending them for %u s)", pWhy, OsGate::kQuietUs / 1000000);
+}
+
+// core 0's loop, at the switch itself (kernel.cpp UseLink, before the next Poll of either link)
 void CSidecarGadget::SetLinkTcp (boolean bTcp)
 {
-	if (bTcp == m_bLinkTcp) return;
-	m_bLinkTcp = bTcp;
-	UpdateOsPass ();
+	if (bTcp == m_Gate.Tcp ()) return;
+	boolean bCut = m_Gate.SetLink (bTcp);
+	// an upgrade under way is aborted (also with on, where the pass stays): the rest of the image meant for the old host
+	// never reaches the new one
+	boolean bAbort = m_Gate.Switched (bCut, m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ());
+	UpdateOsPass (bCut, bAbort ? "an OS upgrade aborted" : "a host switch");	// the emulator's image never reaches the Rytm
+	if (bAbort)
+		CLogger::Get ()->Write (From, LogError, "usbmidi=os: OS upgrade ABORTED: the host switched during it. Neither host "
+					"got the whole OS: start the upgrade again (OS messages are dropped until the computer stops "
+					"sending them for %u s)", OsGate::kQuietUs / 1000000);
 	if (OsUpdate ())		// another source for the computer: half a SysEx of the old one never lands before the new one's
 	{
 		EnterCritical ();
@@ -892,18 +976,15 @@ void CSidecarGadget::SetLinkTcp (boolean bTcp)
 				OsPass () ? "pass" : "are dropped", bTcp ? "the emulator" : "USB");
 }
 
-// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (3 packets)
+// a whole OUT transfer (BufSize / 4 packets) and what the filter still holds (MidiFilter::kHoldPackets)
 boolean CSidecarGadget::ToRytmRoom (void) const
 {
-	return m_ToRytm.size () + 512 / 4 + 3 <= MIDIQueue;
+	return m_ToRytmPath.Room (CSidecarMIDIEP::BufSize / 4);
 }
 
 boolean CSidecarGadget::ForRytm (u32 *pPacket)
 {
-	if (!m_ToRytm.pop (pPacket)) return FALSE;
-	u8 cin = *pPacket & 0x0F, b1 = (*pPacket >> 8) & 0xFF;
-	if (cin == 0x4 && b1 == 0xF0) m_bToRytmSysEx = TRUE;
-	else if (cin == 0x5 || cin == 0x6 || cin == 0x7) { if (m_bToRytmSysEx || b1 == 0xF7) m_bToRytmSysEx = FALSE; }
+	if (!m_ToRytmPath.Pop (pPacket)) return FALSE;
 	m_Stats.nMidiToRytm++;
 	return TRUE;
 }
@@ -911,10 +992,17 @@ boolean CSidecarGadget::ForRytm (u32 *pPacket)
 void CSidecarGadget::Poll (void)
 {
 #ifdef CIRCLE_GADGET_MIRROR
-	if (m_bMirror) MirrorPoll ();
+	if (m_bMirUsed) MirrorPoll ();
 #endif
 	UpdatePlugAndPlay ();
-	if (OsUpdate () && m_pMIDIOut != 0 && m_pMIDIOut->Held () && ToRytmRoom ())
+	if (m_Gate.Quiet (m_ToRytmPath.Filter ().OsMessages (), CTimer::GetClockTicks ()))	// an aborted upgrade's sender stopped
+	{
+		UpdateOsPass (FALSE, 0);		// the pass on again: from a new start (ApplyGate)
+		CLogger::Get ()->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s again after the aborted one, from a new start",
+					OsUpdateName (), OsPass () ? "pass" : "are dropped");
+	}
+	// a held OUT endpoint: re-armed when there is room, or at once when the setting is off (turned off while held)
+	if (m_pMIDIOut != 0 && m_Gate.Resume (m_pMIDIOut->Held (), ToRytmRoom ()))
 	{
 		EnterCritical ();
 		m_pMIDIOut->Resume ();
@@ -960,10 +1048,9 @@ boolean CSidecarGadget::Command (const char *p)
 		if (n == usbmidi_os::kInvalid) L->Write (From, LogWarning, "usbmidi=os:on|off|emu, not \"%s\"", p);
 		else
 		{
-			m_nOsUpdate = ModeFrom (n);
-			UpdateOsPass ();
+			UpdateOsPass (m_Gate.SetMode (n), "the setting");	// the pass off: nothing of an upgrade goes on
 			L->Write (From, LogNotice, "usbmidi=os:%s: OS upgrades %s (host: %s)", OsUpdateName (),
-				  OsPass () ? "pass" : "are dropped", m_bLinkTcp ? "the emulator" : "USB");
+				  OsPass () ? "pass" : "are dropped", m_Gate.Tcp () ? "the emulator" : "USB");
 		}
 		return TRUE;
 	}
@@ -979,6 +1066,11 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 #ifdef CIRCLE_GADGET_MIRROR
 	if (m_bShowMirror) { MirrorLogStats (pLogger); return; }
 #endif
+	// No computer on USB-C (none has configured the device, no stream, no test source): a line a minute, not a second.
+	// A Pi on a plain power supply never sees a USB reset (the Pi 5's USB-C is its power input too), so this is its
+	// normal state; the counters below simply cover the whole minute.
+	if (!m_ToHost.IsUp () && !m_uchOutAlt && !m_uchInAlt && !m_bTest && ++m_nQuietSecs < 60) return;
+	m_nQuietSecs = 0;
 	unsigned nIRQs;
 	u64 nTicks, nNow = Now ();
 	GetIRQStats (&nIRQs, &nTicks);
@@ -1008,14 +1100,14 @@ void CSidecarGadget::LogStats (CLogger *pLogger)
 	unsigned nFbmHz = (unsigned) ((u64) s.nFb * 4000 * 1000 / 65536);
 	pLogger->Write (From, LogNotice,
 		"%s alt %u/%u mac %s pk %u | out %u pkts (11/12/13 %u/%u/%u) bad %u over %u under %u ring %u..%u | "
-		"in %u pkts (11/12/13 %u/%u/%u) ring %u..%u under %u over %u | fb %u.%03u | late %u/%u/%u incompl %u/%u/%u | "
+		"in %u pkts (11/12/13 %u/%u/%u) ring %u..%u under %u over %u vunder %u | fb %u.%03u | late %u/%u/%u incompl %u/%u/%u | "
 		"midi from %u to-mac %u to-rytm %u full %u norytm %u drop %u/%u mac-midi %s (up %u) | irq %u/s %u.%02u %% gap max %u us handler max %u us >300us %u, last late %u ms ago",
 		m_bTest ? "test" : bSource ? (m_bSrcRytm ? "rytm" : "standin") : "timer", m_uchOutAlt, m_uchInAlt,
 		m_bMac ? "on" : "off", s.nMacPeak,
 		s.nOutPkts, s.nOutHist[0], s.nOutHist[1], s.nOutHist[2], s.nOutBad, s.nOutOver, s.nOutUnder,
 		s.nRingMin == ~0u ? 0 : s.nRingMin, s.nRingMax,
 		s.nInPkts, s.nInHist[0], s.nInHist[1], s.nInHist[2], s.nInMin == ~0u ? 0 : s.nInMin, s.nInMax, s.nInUnder, s.nInOver,
-		nFbmHz / 1000, nFbmHz % 1000,
+		s.nVoiceUnder, nFbmHz / 1000, nFbmHz % 1000,
 		m_pIso[EPOut] ? m_pIso[EPOut]->Late () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Late () : 0,
 		m_pIso[EPIn] ? m_pIso[EPIn]->Late () : 0,
 		m_pIso[EPOut] ? m_pIso[EPOut]->Incomplete () : 0, m_pIso[EPFeedback] ? m_pIso[EPFeedback]->Incomplete () : 0,
@@ -1051,9 +1143,10 @@ CMirrorEP::CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget)
 
 void CMirrorEP::OnActivate (void)
 {
+	m_Wake.activated ();
 	m_bActive = TRUE;
-	m_bBusy = FALSE;
-	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) Rearm ();
+	m_bBusy = FALSE;				// (IN: the held packet went back to the box at the deactivation)
+	if (m_Role == mirror::kAudioOut || m_Role == mirror::kPipeOut) m_Out.arm (*this);	// not while the box owns one
 	else Kick ();
 }
 
@@ -1061,16 +1154,20 @@ void CMirrorEP::OnDeactivate (void)
 {
 	boolean bHeld = m_bBusy;
 	m_bActive = FALSE;
-	m_bBusy = FALSE;
-	CancelTransfer ();
+	m_bBusy = FALSE;				// pipe OUT: the box's ownership stays (m_Out)
+	mirror::cancel (*this);				// isochronous: stopped and waited for (mirror_ep.h)
 	if (bHeld && m_Role == mirror::kPipeIn) m_pSidecar->MirrorPipeInSent (m_uchAddr);	// the box's URB goes on
 }
 
-// OUT: the next packet (whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer)
+// OUT: the box took the last packet (or it was dropped): the next one, when active (mirror_ep.h OutGate)
 void CMirrorEP::Rearm (void)
 {
-	if (!m_bActive) return;
-	m_bBusy = FALSE;
+	m_Out.done (*this);
+}
+
+// whole words for the DMA; the endpoint's size, so a full-size packet ends the transfer
+void CMirrorEP::ArmOut (void)
+{
 	BeginTransfer (TransferDataOut, m_Buffer, (m_nMps + 3) & ~3u);
 }
 
@@ -1109,7 +1206,7 @@ void CMirrorEP::OnTransferComplete (boolean bIn, size_t nLength)
 		Rearm ();
 		break;
 	case mirror::kPipeOut:
-		m_bBusy = TRUE;					// NAKed until the box took it (MirrorPipeOutDone)
+		m_Out.taken ();					// NAKed until the box took it (MirrorPipeOutDone)
 		m_pSidecar->MirrorPipeOut (this, m_Buffer, nLength);
 		break;
 	case mirror::kPipeIn:
@@ -1301,12 +1398,12 @@ void CSidecarGadget::MirrorAudioOut (const u8 *p, unsigned nLength)
 	// Overbridge's latency marker and the like: to the box, in the Pi's block a fixed distance from this one
 	// (mirrormargin= blocks past where the Pi's OUT stood at the computer's first block: the delay stays the same)
 	// The offset is set again when this block would be due in a block the Pi has already sent (the computer's stream
-	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the queue holds (the Pi's
-	// counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
+	// fell behind the box's, as when IN blocks to it were dropped), or further ahead than the margin plus the queue
+	// (the Pi's counter went back): counted as "anchor" in the mirror line. A box that went away and came back starts its stream
 	// from counter 0, so MirrorBoxUp sets it again too: kept, the old offset left the computer's bytes due up to a
 	// whole counter wrap (about 1.4 s) ahead, and they were lost (T141 [hw]: lost 1126, late 128 after a replug).
 	u16 nComp = ob::block_counter (p), nPi = CObUsb::OutCounter ();
-	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi))
+	if (m_bExtraOff && mirror::ExtraRing::stale ((u16) (nComp + m_nExtraOff), nPi, m_nExtraMargin))
 	{
 		if ((s16) (u16) (nComp + m_nExtraOff - nPi) > 0) m_MirExtra.flush ();	// queued under a counter that went back
 		m_bExtraOff = FALSE;
@@ -1363,7 +1460,7 @@ int CSidecarGadget::OnControlRequest (const TSetupData *pSetup, const u8 *pOutDa
 	if (pOutData && pSetup->wLength) memcpy (m_CtlData, pOutData, pSetup->wLength <= sizeof m_CtlData ? pSetup->wLength : sizeof m_CtlData);
 	if (pOutData && IsNameRequest (pSetup, 0x40) && pSetup->wLength == mirror::kNameLen)
 		mirror::name_store (m_CtlData, mirror::kNameLen, m_MirName);	// the box keeps its plain name
-	m_Ctl.request ();
+	(void) m_Ctl.request ();			// true: pending was checked above (the setup is copied before it is published)
 	m_MirStats.nCtl++;
 	return ControlDeferred;
 }
@@ -1409,7 +1506,7 @@ void CSidecarGadget::MirrorPoll (void)
 	{
 		if (nNow - m_nSwitchAt < m_nCntFrq * 3 / 10) return;
 		EnterCritical ();
-		m_bShowMirror = m_bSwitchTo && m_bMirHave;
+		m_bShowMirror = m_bSwitchTo && m_bMirHave && m_bMirror;
 		m_uchOutAlt = m_uchInAlt = 0;
 		OutReset ();
 		memset (m_MirAlt, 0, sizeof m_MirAlt);
@@ -1426,7 +1523,8 @@ void CSidecarGadget::MirrorPoll (void)
 		return;
 	}
 	boolean bWant = m_bShowMirror;
-	if (m_bMirBoxUp) bWant = TRUE;
+	if (!m_bMirror) bWant = FALSE;			// the mode is CLASS COMPLIANT (SetMirror switched already: a leftover)
+	else if (m_bMirBoxUp) bWant = TRUE;
 	else if (m_bShowMirror && nNow - m_nBoxGoneAt >= (u64) m_nHoldSecs * m_nCntFrq) bWant = FALSE;
 	if (bWant != m_bShowMirror)
 	{
@@ -1462,6 +1560,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	u8 Last[MidiFilter::kHead];
 	int nLast = m_ToRytmFilter.LastDropped (Last);
 	LeaveCritical ();
+#ifdef CIRCLE_GADGET_STRAY				// circle-gadget-stray.patch: completions with no transfer armed
+	unsigned nStray = CDWUSBGadgetEndpoint::GetStrayCount (), nSetupAborts = CDWUSBGadgetEndpoint0::GetSetupAbortCount ();
+#else
+	unsigned nStray = 0, nSetupAborts = 0;
+#endif
 	char LastHex[3 * MidiFilter::kHead + 2] = "-";	// the last SysEx the filter dropped toward the box: its head
 	for (int i = 0; i < nLast; i++)
 	{
@@ -1471,11 +1574,11 @@ void CSidecarGadget::MirrorLogStats (CLogger *pLogger)
 	}
 	pLogger->Write (From, LogNotice,
 		"mirror %s box %s | in ch %u blocks %u sent %u drop %u | out ch %u blocks %u bad %u under %u over %u extra %u lost %u late %u anchor %u | "
-		"ctl %u stall %u abort %u late %u | pipe in %u drop %u out %u drop %u gone %u reset %u | alt bad %u | "
+		"ctl %u stall %u abort %u (setup %u) late %u stray %u | pipe in %u drop %u out %u drop %u gone %u reset %u parked %u | alt bad %u | "
 		"midi from %u to-mac %u to-rytm %u filtered %u/%u (last %s) full %u norytm %u",
 		"shown", m_bMirBoxUp ? "up" : "none", m_nMirInCh, s.nInBlocks, s.nInSent, s.nInDrop,
-		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, s.nCtlLate,
-		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), s.nAltBad,
+		m_nMirOutCh, s.nOutBlocks, s.nOutBad, nOutUnder, nOutOver, s.nOutExtra, m_MirExtra.dropped, m_MirExtra.late, s.nOutAnchor, s.nCtl, s.nCtlStall, s.nCtlAbort, nSetupAborts, s.nCtlLate, nStray,
+		s.nPipeIn, s.nPipeInDrop, s.nPipeOut, s.nPipeOutDrop, s.nBoxGoneDrop, CObUsb::MirrorPipeResets (), CObUsb::MirrorParked (), s.nAltBad,
 		m_Stats.nMidiFromHost, m_Stats.nMidiToHost, m_Stats.nMidiToRytm,
 		m_ToRytmFilter.DroppedMessages (), m_ToRytmFilter.DroppedPackets (), LastHex, m_Stats.nMidiFull, m_Stats.nMidiNoRytm);
 }

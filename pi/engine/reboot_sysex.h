@@ -1,7 +1,7 @@
 // pi/engine/reboot_sysex.h - the computer's reboot request on the Sidecar's USB MIDI port (sidecar_gadget.cpp, cmdline
 // usbreboot=1): the exact SysEx F0 7D 52 54 7E 52 45 42 4F 4F 54 F7 (the host link's prefix, command 7E, "REBOOT").
 // A host-link SysEx toward the Rytm is dropped anyway (midi_filter.h), so the request never reaches it. With the
-// rpiboot GPIO held low (docs: pi4-rpiboot), the Pi boots again from the computer's rpiboot folder: a new build
+// rpiboot GPIO held low (docs/pi-engine.md, usbreboot=1), the Pi boots again from the computer's rpiboot folder: a new build
 // without a power cycle or the network. Fed every packet from the computer; Matched() once a whole request came.
 // Portable (Mac-tested: tests/test_reboot_sysex.cpp).
 #pragma once

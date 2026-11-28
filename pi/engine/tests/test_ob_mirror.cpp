@@ -5,18 +5,22 @@
 // Rytm's that test_ob_usb.cpp uses (the emulator's; the pipes on interface 3, USB MIDI on 4-5).
 #include "check.h"
 #include "device/digitakt.h"
-#include "device/audio.h"
-#include "audio_return.h"
+#include "fx/out.h"
 #include "ob_block.h"
 #include "ob_usb.h"
+#include "ob_follow.h"
 #include "shared.h"
 #include "sidecar_gadget.h"
 #include <circle/timer.h>
+#include <circle/usb/usbmidi.h>
+#include <circle/usb/usbstandardhub.h>
 
+#include <circle/koptions.h>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
-#include <string>
+#include <algorithm>
 
 CLogger* CLogger::Get() { static CLogger l; return &l; }
 void CLogger::Write(const char*, int, const char* f, ...) {
@@ -27,11 +31,18 @@ void CLogger::Write(const char*, int, const char* f, ...) {
   va_end(a);
   lines.push_back(b);
 }
+#include "device/a4.h"
 namespace core { namespace device {
+static bool g_a4_chosen = false;      // its hello chose it (device.cpp: audio_by_hello)
+const Profile& active() {             // (only ob_follow.cpp asks)
+  static Profile none;
+  return g_a4_chosen ? kA4 : none;
+}
 const Profile* by_usb(uint16_t vid, uint16_t pid) {   // device.cpp's list, without the engine it links
   static Profile rytm;
   rytm.audio = &out::kRytmMk2;
   if (vid == 0x1935 && pid == 0x0b48) return &rytm;
+  if (vid == kA4Vid && pid == kA4Pid) return g_a4_chosen ? &kA4 : nullptr;
   return vid == kDigitakt.usb_vid && pid == kDigitakt.usb_pid ? &kDigitakt : nullptr;
 }
 }}
@@ -64,7 +75,7 @@ static uint8_t g_rytm[263] = {
     0x00, 0x09, 0x05, 0x01, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x05, 0x25, 0x01, 0x01, 0x01, 0x09, 0x05, 0x81,
     0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x05, 0x25, 0x01, 0x01, 0x03};
 
-// leak checks on: the driver frees its URBs, endpoints and buffers when the box goes (2026-11-09), so a leak here is a bug
+// leak checks on: the driver frees its URBs, endpoints and buffers when the box goes, so a leak here is a bug
 extern "C" const char *__asan_default_options () { return "detect_leaks=1"; }
 
 static CSidecarGadget g_gadget;
@@ -73,11 +84,11 @@ struct Box {
   CUSBDevice dev;
   CUSBHostController host;
   CUSBFunction parent{&dev, &host};
-  CObUsb* ob = nullptr;
+  CUSBFunction* ob = nullptr;
   Box() {
     dev.config = g_rytm;
     dev.desc.idVendor = 0x1935, dev.desc.idProduct = 0x0b48;
-    ob = (CObUsb*)RytmObDeviceCreate(&parent);
+    ob = RytmObDeviceCreate(&parent);
     CHECK(ob && ob->Configure());
   }
   ~Box() { delete ob; }
@@ -140,13 +151,14 @@ int main() {
     CHECK(b.clears(0x82) == 0 && CObUsb::MirrorPipeResets() == 0);
 
     // the IN pipe halts (the box STALLed it): not resubmitted until MirrorPipePoll has cleared it on the box and on the
-    // xHC (Reset Endpoint, as the endpoint context is Halted); then running again, logged once
+    // xHC (Reset Endpoint, as the endpoint context is Halted: Stopped after it, as on Circle); then running again,
+    // logged once
     in = b.pipe(0x82);
     in->ep->GetXHCIEndpoint()->state = 2;
     b.complete(in, false);
     CHECK(b.pipe(0x82) == nullptr && g_gadget.pipe_in.size() == 1);
     poll_at(2000);
-    CHECK(b.clears(0x82) == 1 && in->ep->GetXHCIEndpoint()->resets == 1 && in->ep->GetXHCIEndpoint()->state == 1);
+    CHECK(b.clears(0x82) == 1 && in->ep->GetXHCIEndpoint()->resets == 1 && in->ep->GetXHCIEndpoint()->state == 3);
     CHECK(b.pipe(0x82) != nullptr && CObUsb::MirrorPipeResets() == 1);
     CHECK(logged("usb=mirror: pipe 0x82 halted: cleared, running again"));
 
@@ -167,11 +179,17 @@ int main() {
     b.complete(b.pipe(0x82), true, 1);
     in = b.pipe(0x82);
     CXHCIEndpoint* x = in->ep->GetXHCIEndpoint();
-    x->state = 2, x->reset_ok = false;            // Reset Endpoint fails: the pipe stays stopped
+    // Reset Endpoint refused: Circle's ResetFromHalted still says TRUE and the context stays Halted (2). The pipe stays
+    // stopped (nothing submitted into the halted ring, where it would never complete and leave the pipe busy for good),
+    // logged once as refused, never as running again, and tried again after the backoff
+    x->state = 2, x->reset_ok = false;
     b.complete(in, false);
+    size_t nRunning = std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                                    [](const std::string& l) { return l.find("running again") != std::string::npos; });
     unsigned t = 3000;
     poll_at(t);
-    CHECK(b.clears(0x82) == 2);
+    CHECK(b.clears(0x82) == 2 && x->resets == 2 && x->state == 2 && b.pipe(0x82) == nullptr);
+    CHECK(logged("usb=mirror: pipe 0x82 halted: the host refused its reset (state 2), trying again"));
     for (int k = 2; k <= 5; ++k) {
       poll_at(t + 9);                             // too soon
       CHECK(b.clears(0x82) == k);
@@ -184,7 +202,9 @@ int main() {
     CHECK(b.clears(0x82) == 6);
     t += 100;
     poll_at(t);
-    CHECK(b.clears(0x82) == 7 && b.pipe(0x82) == nullptr);
+    CHECK(b.clears(0x82) == 7 && b.pipe(0x82) == nullptr && x->resets == 7 && x->state == 2);
+    CHECK(std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                        [](const std::string& l) { return l.find("running again") != std::string::npos; }) == (long) nRunning);
 
     // a forwarded request holds EP0: MirrorPipePoll waits for its answer before it clears anything
     x->reset_ok = true;
@@ -198,7 +218,9 @@ int main() {
     b.complete(b.host.ep0[0], true, 5);
     CHECK(g_gadget.done.size() == 1 && g_gadget.done[0].seq == 41 && g_gadget.done[0].n == 5);
     poll_at(t);
-    CHECK(b.clears(0x82) == 8 && b.pipe(0x82) != nullptr);
+    CHECK(b.clears(0x82) == 8 && b.pipe(0x82) != nullptr && x->state == 3);   // the reset took: running again, logged
+    CHECK(std::count_if(CLogger::Get()->lines.begin(), CLogger::Get()->lines.end(),
+                        [](const std::string& l) { return l.find("running again") != std::string::npos; }) == (long) nRunning + 1);
 
     // the box STALLs a forwarded request: the gadget is told (< 0), and STALLs it to the computer
     CHECK(CObUsb::MirrorControl(&s, nullptr, 43));
@@ -278,6 +300,78 @@ int main() {
       CHECK(CUSBRequest::live() == 0);
     }
     CHECK(CObUsb::Detaches() == nDet + 40);
+  }
+
+  {  // The Pi 5 hardware order at a boot with usb=mirror and the box plugged in: the box is configured and read while
+     // the computer still sees the Sidecar device (MirrorAttach), the gadget leaves the bus and comes back as the box
+     // (MirrorPoll: shown), the computer's SET_CONFIGURATION activates the box's endpoints, and only then does the
+     // computer's Overbridge driver start its handshake on the async channel. The box has an async IN packet waiting from
+     // the Pi's own attach. Its IN request must be out from the attach and that packet drained while the Sidecar device
+     // is shown ("parked", as 428907d dropped it: "drop 1"); left in the box, it is the computer's first async packet,
+     // ahead of its own handshake (4ecee9a: "pipe in 1"). And nothing may hold the pipe once the box is shown: 3b80b2f's
+     // latched gate waited for CMirrorEP::OnActivate, which the hardware logs cannot show fired (rc3: parked 1, pipe in 0);
+     // whether the box's packets reach the gadget now follows only what the computer sees.
+    g_gadget.mirror = true;
+    g_gadget.hold_pipe_in = false;
+    auto packet = [&](Box& b, unsigned n) {    // the box answers the pipe IN request in flight, if any
+      CUSBRequest* u = b.pipe(0x82);
+      if (u == nullptr) return false;
+      b.complete(u, true, n);
+      return true;
+    };
+    const unsigned kStale = 33, kReply = 12;
+    g_gadget.shown = false;                    // the Sidecar device until the box has been read and the switch made
+    size_t nPkt = g_gadget.pipe_in.size();
+    unsigned nParked = CObUsb::MirrorParked();
+    Box b;                                     // the box configured and read (MirrorAttach)
+    CHECK(packet(b, kStale));                  // its request is out: the waiting packet comes now
+    CHECK(g_gadget.pipe_in.size() == nPkt);    // not to the gadget
+    CHECK(CObUsb::MirrorParked() == nParked + 1 && b.pipe(0x82) != nullptr);   // drained, renewed
+    poll_at(50000);                            // nothing on EP0 while the Sidecar device is shown
+    CHECK(b.clears(0x82) == 0);
+    // the switch (SoftDisconnect, 300 ms, SoftConnect), the hub and the computer's enumeration, SET_CONFIGURATION
+    g_gadget.shown = true;
+    CHECK(packet(b, kReply));                  // the computer's handshake: the box's reply
+    CHECK(g_gadget.pipe_in.size() == nPkt + 1);
+    CHECK(g_gadget.pipe_in[nPkt].n == kReply); // the computer's first async packet is the box's reply, not the stale one
+    CHECK(b.pipe(0x82) != nullptr);            // and the pipe goes on (the gadget did not keep it: renewed)
+    for (int i = 0; i < 100; i++) CHECK(packet(b, 20));
+    CHECK(g_gadget.pipe_in.size() == nPkt + 101 && CObUsb::MirrorParked() == nParked + 1);
+    // CLASS COMPLIANT (back as the Sidecar device): drained again, counted as parked, never stuck
+    g_gadget.shown = false;
+    for (int i = 0; i < 50; i++) CHECK(packet(b, 20));
+    CHECK(g_gadget.pipe_in.size() == nPkt + 101 && CObUsb::MirrorParked() == nParked + 51);
+    g_gadget.shown = true;
+    CHECK(packet(b, kReply) && g_gadget.pipe_in.size() == nPkt + 102);
+  }
+
+  {  // The Rytm's USB MIDI OUT halts while a forwarded request of the computer is at the box (its EP0, async): the MIDI
+     // reset (circle-midi-reset2: a synchronous CLEAR_FEATURE on the same EP0) waits until the request is answered. Sent
+     // meanwhile, it would queue behind the forwarded URB, and if the box never answers, Circle's 3 s timeout drops the
+     // forwarded URB's slot and leaves the caller's stack URB on the ring, to complete later into a dead object.
+    g_gadget.mirror = true, g_gadget.shown = true;
+    CTimer::s_now = 1000;
+    Box b;
+    CObUsbTransport t;
+    CUSBMIDIDevice m;
+    t.SetMIDI(&m);
+    TSetupData s = {0xC0, 0x01, 0, 0, 16};
+    CHECK(CObUsb::MirrorControl(&s, nullptr, 60) && CObUsb::MirrorCtlBusy());
+    const std::vector<uint8_t> rec = {0xF0, 0x00, 0x20, 0x3C, 0x24, 0x01, 0x02, 0xF7};
+    m.fail = 1;
+    g_ToHost.q.push_back(rec);
+    auto pass = [&] { CObUsb::PollHalt(), t.Poll(); };
+    pass();                                    // the send fails: the MIDI OUT is halted
+    CHECK(m.halted && m.resets == 0);
+    for (int k = 0; k < 10; ++k) CTimer::s_now += 1000, pass();   // past EpBox's moment (kTogetherUs): due, but EP0 is busy
+    CHECK(m.resets == 0 && b.host.ep0.size() == 1);
+    b.complete(b.host.ep0[0], true, 4);        // the box answers: EP0 free
+    CHECK(!CObUsb::MirrorCtlBusy() && g_gadget.done.back().seq == 60);
+    pass();
+    CHECK(m.resets == 1 && !m.halted && t.MIDIOutResets() == 1);   // then reset, on the next Poll
+    g_ToHost.q.clear();
+    t.SetMIDI(nullptr);
+    CTimer::s_now = 0;
   }
 
   {  // usb=mirror off (the default): a box is streamed as ever, no pipes, nothing told to the gadget

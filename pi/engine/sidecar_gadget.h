@@ -1,10 +1,11 @@
-// pi/engine/sidecar_gadget.h - P3 of the Overbridge pass-through (the pass-through spike's spec, in git
-// history: 3a8bf7d): "Sidecar" on the Pi 4's USB-C port, one composite device of our own descriptor (Circle has no composite
-// framework): USB Audio Class 2 (12 in / 12 out) + USB MIDI.
+// pi/engine/sidecar_gadget.h - P3 of the Overbridge pass-through (docs/superpowers/specs/2026-10-16-overbridge-passthrough-
+// spike.md): "Sidecar" on the Pi 4's USB-C port, one composite device of our own descriptor (Circle has no composite
+// framework): USB Audio Class 2 (12 in / 12 out, or 20 in with the build option SIDECAR_CH_IN=20) + USB MIDI.
 // Needs the isochronous endpoints of pi/circle/circle-gadget.patch.
 //
 // Channel map (the Teensy T3/T4's, so DAW templates work for both):
-//   IN  (to the computer)   1-2 the Rytm's MAIN L/R, 3-10 its tracks BD SD RS BT LT MT CH CY, 11-12 its AUDIO IN L/R
+//   IN  (to the computer)   1-2 the Rytm's MAIN L/R, 3-10 its tracks BD SD RS BT LT MT CH CY, 11-12 its AUDIO IN L/R,
+//                           13-20 (20-in build) the Pi's 8 voices as rendered (voice 0..7)
 //   OUT (from the computer) 1-2 the Rytm's MAIN L/R input, 3-4 MAIN FX L/R, 5-12 the tracks' inputs BD..CY: added
 //                           (saturating) to what the engine sends on the same Overbridge OUT channels; :mac=off drops it
 //
@@ -32,6 +33,7 @@
 #include <circle/interrupt.h>
 #include <circle/logger.h>
 #include <circle/types.h>
+inline boolean (*g_pSidecarKeysTap) (const u8 *pPacket) = 0;	// (no gadget: never called)
 
 class CSidecarGadget
 {
@@ -43,26 +45,36 @@ public:
 	void Poll (void)				{}
 	void LogStats (CLogger *)			{}
 	boolean MacOn (void) const			{ return FALSE; }
+	boolean HostOn (void) const			{ return FALSE; }
 	boolean Command (const char *)			{ return FALSE; }
 	void FromRytmBlock (const u8 *)			{}
 	void FromEngine (const s32 (*)[12], unsigned)	{}
-	void ToRytm (s32 (*)[12], unsigned, boolean) {}
-	boolean MirrorOutExtra (u8 *, u16) { return FALSE; }
+	void ToRytm (s32 (*)[12], const s16 (*)[8], unsigned, boolean) {}
 	void FromRytmMIDI (const u8 *)			{}
 	void MIDIToComputer (u32)			{}
 	boolean ForRytm (u32 *)				{ return FALSE; }
 	boolean ForRytmInSysEx (void) const		{ return FALSE; }
+	boolean EngineWaits (void) const		{ return FALSE; }
+	void ComputerSendFailed (void)			{}
+	unsigned OsAborts (void) const			{ return 0; }
 	void RytmMIDIConnected (boolean)		{}
 	boolean OsUpdate (void) const			{ return FALSE; }
 	const char *OsUpdateName (void) const		{ return "off"; }
+	boolean OsPass (void) const			{ return FALSE; }
 	void SetLinkTcp (boolean)			{}
 	boolean TakeReboot (void)			{ return FALSE; }
 	boolean UsbReboot (void) const			{ return FALSE; }
 	boolean Mirror (void) const			{ return FALSE; }
+	static boolean MirrorBuilt (void)		{ return FALSE; }
+	void SetMirror (boolean)			{}
+	boolean MirrorShown (void) const		{ return FALSE; }
+	boolean MirrorBoxThere (void) const		{ return FALSE; }
+	boolean MirrorSwitching (void) const		{ return FALSE; }
 };
 #else
 #include <circle/usb/gadget/dwusbgadget.h>
 #include <circle/usb/gadget/dwusbgadgetendpoint.h>
+#include <circle/usb/gadget/dwusbgadgetendpoint0.h>	// circle-gadget-stray: GetSetupAbortCount ()
 #include <circle/interrupt.h>
 #include <circle/logger.h>
 #include <circle/synchronize.h>
@@ -71,13 +83,18 @@ public:
 #include "midi_filter.h"
 #include "reboot_sysex.h"
 #include "usbmidi_os.h"
+#include "usbmidi_os_path.h"
 #include "spsc.h"
 #include "tohost_q.h"
 #include "mirror_desc.h"
 #include "mirror_ctl.h"
+#include "mirror_ep.h"
 
 #if __has_include("hosted/sidecar_config.h")
-#include "hosted/sidecar_config.h"			// pi/engine/build.sh: SIDECAR_NAME
+#include "hosted/sidecar_config.h"			// build.sh: SIDECAR_CH_IN=20 pi/engine/build.sh
+#endif
+#ifndef SIDECAR_CH_IN
+#define SIDECAR_CH_IN	12
 #endif
 #ifndef SIDECAR_NAME
 #define SIDECAR_NAME	"Sidecar | Expander (Pi)"	// the product, its audio and MIDI functions (the Teensy: "Sidecar | Expander (Mini)";
@@ -115,16 +132,20 @@ public:
 	CSidecarMIDIEP (const TUSBEndpointDescriptor *pDesc, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h: back at the resume
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// (a resume without a reset)
+	boolean Active (void) const			{ return m_bActive; }
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: start a transfer if idle and packets wait (IRQs masked)
 	boolean Held (void) const			{ return m_bHeld; }
 	void Resume (void);				// OUT, usbmidi=os: re-arm a held endpoint (IRQs masked)
+	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 
 private:
 	CSidecarGadget *m_pSidecar;
+	mirror::EpWake m_Wake;				// a bus suspend and a resume without a reset (mirror_ep.h)
 	boolean m_bActive, m_bBusy;
 	boolean m_bHeld;				// OUT, usbmidi=os: not re-armed while the Rytm-bound queue is full
-	static const unsigned BufSize = 512, InMax = 508;	// an IN transfer ends short: P1's finding
 	DMA_BUFFER (u8, m_Buffer, BufSize);
 };
 
@@ -137,7 +158,8 @@ public:
 	CMirrorEP (const mirror::Ep &rEp, CSidecarGadget *pGadget);
 	void OnActivate (void) override;
 	void OnDeactivate (void) override;
-	void OnSuspend (void) override			{ OnDeactivate (); }
+	void OnSuspend (void) override			{ m_Wake.suspend (*this); }	// mirror_ep.h
+	void OnResume (void) override			{ m_Wake.wake (*this); }	// a resume without a reset
 	void OnTransferComplete (boolean bIn, size_t nLength) override;
 	void Kick (void);				// IN: send the next packet if idle (IRQ level, or IRQs masked)
 	void Rearm (void);				// OUT: take the computer's next packet (the box took this one)
@@ -145,9 +167,16 @@ public:
 	mirror::Role Role (void) const			{ return m_Role; }
 	u8 Address (void) const				{ return m_uchAddr; }
 	boolean Active (void) const			{ return m_bActive; }
-	boolean Busy (void) const			{ return m_bBusy; }
+	boolean Busy (void) const			{ return m_Role == mirror::kPipeOut ? m_Out.box : m_bBusy; }
+	boolean Armed (void) const			{ return IsTransferActive (); }	// mirror::OutGate
+	void ArmOut (void);
+	boolean Iso (void) const			{ return GetType () == TypeIsochronous; }	// mirror::cancel ()
+	void StopIso (void)				{ StopIsoTransfer (); }
+	void Cancel (void)				{ CancelTransfer (); }
 
 private:
+	mirror::EpWake m_Wake;
+	mirror::OutGate m_Out;				// audio and pipe OUT
 	CSidecarGadget *m_pSidecar;
 	mirror::Role m_Role;
 	u8 m_uchAddr;
@@ -160,9 +189,9 @@ private:
 class CSidecarGadget : public CDWUSBGadget
 {
 public:
-	static const unsigned ChIn = 12, ChOut = 12, Subslot = 3;
+	static const unsigned ChIn = SIDECAR_CH_IN, ChOut = 12, Voices = 8, Subslot = 3;
 	static const unsigned Nominal = 12;				// frames per 250 us packet
-	static const unsigned MaxIn = (Nominal + 1) * ChIn * Subslot;	// 468
+	static const unsigned MaxIn = (Nominal + 1) * ChIn * Subslot;	// 468 / 780
 	static const unsigned MaxOut = (Nominal + 1) * ChOut * Subslot;	// 468
 	static const unsigned Ring = 512, InTarget = 40, OutTarget = 48;
 	static const unsigned MIDIQueue = 2048;			// event packets each way
@@ -174,36 +203,50 @@ public:
 	void Poll (void);				// core 0's loop: plug-and-play, :midifake
 	void LogStats (CLogger *pLogger);
 	boolean MacOn (void) const			{ return m_bMac; }	// :mac= (the web page's status)
+	boolean HostOn (void) const			{ return m_ToHost.IsUp (); }	// a computer has configured the device (/status "usbHost")
 	boolean Command (const char *pCmd);		// a console command for the Sidecar (TRUE: it was one)
 
 	// the engine's side (core 0)
 	void FromRytmBlock (const u8 *pBlock);		// xHCI IRQ: one Overbridge IN block (7 frames x 12 ch)
 	void FromEngine (const s32 (*pFrames)[12], unsigned nFrames);	// task: the self-test's output as the stand-in IN
-	void ToRytm (s32 (*pFrames)[12], unsigned nFrames, boolean bTask);
+	void ToRytm (s32 (*pFrames)[12], const s16 (*pVoices)[8], unsigned nFrames, boolean bTask);
 #ifdef CIRCLE_GADGET_MIRROR
 	boolean MirrorOutExtra (u8 *pBlock, u16 nCounter);	// ob_usb FillOut: the computer's per-block bytes into the box's block
 #endif
 	void FromRytmMIDI (const u8 *pPacket);		// xHCI IRQ: one event packet from the Rytm
 	void MIDIToComputer (u32 nPacket);		// core 0's loop: one event packet of the engine's own (the auto-sampler's notes)
 	boolean ForRytm (u32 *pPacket);			// core 0's loop: the next packet for the Rytm
-	boolean ForRytmInSysEx (void) const		{ return m_bToRytmSysEx; }
-	void RytmMIDIConnected (boolean bOn)		{ m_bRytmMIDI = bOn; }
+	boolean ForRytmInSysEx (void) const		{ return m_ToRytmPath.InSysEx (); }
+	// the TCP link: the engine's records wait behind the computer's half-sent SysEx (usbmidi=os: on or emu only)
+	boolean EngineWaits (void) const		{ return m_Gate.EngineWaits (m_ToRytmPath.InSysEx ()); }
+	void RytmMIDIConnected (boolean bOn);		// core 0's loop: the USB merge or the TCP link can take the computer's MIDI
+	void ComputerSendFailed (void);			// core 0's loop: a send of the computer's packets failed (they are lost)
+	unsigned OsAborts (void) const			{ return m_Gate.Aborts (); }	// usbmidi=os: upgrades aborted (/status)
 	// usbmidi=os:off|emu|on (cmdline, or the usbmidi= command; osupdate=off|emu|rytm the older name, usbmidi_os.h): off;
 	// emu: OS upgrades pass only while the TCP link (rytm-emu) is the host; on: also to a real Rytm on USB. Any but off:
 	// flow control and the emu relay
-	boolean OsUpdate (void) const			{ return m_nOsUpdate != OsUpdateOff; }
-	const char *OsUpdateName (void) const;
-	boolean OsPass (void) const			{ return m_nOsUpdate == OsUpdateRytm || (m_nOsUpdate == OsUpdateEmu && m_bLinkTcp); }
-	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp)
+	boolean OsUpdate (void) const			{ return m_Gate.On (); }
+	const char *OsUpdateName (void) const		{ return usbmidi_os::name (m_Gate.Mode ()); }
+	boolean OsPass (void) const			{ return m_Gate.Pass (); }
+	void SetLinkTcp (boolean bTcp);			// core 0's loop: the current host (kernel.cpp UseLink, at the switch)
 	boolean UsbReboot (void) const			{ return m_bUsbReboot; }
 	boolean TakeReboot (void);			// core 0's loop: the computer asked for a reboot (usbreboot=1, reboot_sysex.h)
 
-	// usb=mirror (cmdline; docs/usb-mirror.md): the computer sees the attached box itself - its device, configuration and
-	// string descriptors, read from it at run time (ob_usb.cpp) - and its audio, async channel (pipes), MIDI and class /
-	// vendor requests are relayed. Until the box has been read, and after it has been gone for mirrorhold= seconds (10),
-	// the computer sees the Sidecar device; each switch is a replug (SoftDisconnect, 300 ms, SoftConnect). Built only with
-	// pi/circle/circle-gadget-mirror.patch and -softconnect.patch (CIRCLE_GADGET_MIRROR); without them usb=mirror is ignored.
+	// usb=mirror, the USB-C mode OVERBRIDGE (usb_mode.h; docs/usb-mirror.md): the computer sees the attached box itself -
+	// its device, configuration and string descriptors, read from it at run time (ob_usb.cpp) - and its audio, async
+	// channel (pipes), MIDI and class / vendor requests are relayed. Until the box has been read, and after it has been
+	// gone for mirrorhold= seconds (10), the computer sees the Sidecar device; each switch is a replug (SoftDisconnect,
+	// 300 ms, SoftConnect). Built only with pi/circle/circle-gadget-mirror.patch and -softconnect.patch
+	// (CIRCLE_GADGET_MIRROR); without them the mode is CLASS COMPLIANT whatever is set.
+	static boolean MirrorBuilt (void);
+	// core 0, task level: the mode set (kernel.cpp, before Start and at run time). At run time OFF while the box is shown
+	// is a replug back as the Sidecar device; ON reads a box that is up (CObUsb::MirrorWanted) and MirrorPoll switches
+	// to it as at a plug-in. Nothing else changes: the Pi's own stream with the box runs on.
+	void SetMirror (boolean bOn);
 	boolean Mirror (void) const			{ return m_bMirror; }
+	boolean MirrorShown (void) const;		// the computer sees the box now
+	boolean MirrorBoxThere (void) const;		// the box has been read and is up (it is shown, or will be)
+	boolean MirrorSwitching (void) const;		// off the bus between the two
 #ifdef CIRCLE_GADGET_MIRROR
 	// the box's side (ob_usb.cpp): task level unless said
 	boolean MirrorSetDescriptors (const u8 *pDev, const u8 *pCfg, unsigned nCfg);	// FALSE: not one the gadget can carry
@@ -236,6 +279,7 @@ private:
 	unsigned Feedback (unsigned nFrame);
 	void MIDIFromHost (const u8 *pBuffer, size_t nLength);
 	boolean ToRytmRoom (void) const;		// usbmidi=os: room in the Rytm-bound queue for one more OUT transfer
+							// (CSidecarMIDIEP::BufSize / 4 packets and what the filter holds)
 	unsigned MIDIForHost (u8 *pBuffer, unsigned nMax);
 	void ToHost (const u8 *pPacket);		// one packet into the computer's queue (IRQs masked)
 	void HostUp (boolean bUp);			// the MIDI IN endpoint (de)activated (gadget IRQ), or torn down (OnSuspend)
@@ -308,24 +352,26 @@ private:
 	u64 m_nCntFrq, m_nT0;
 	u8 m_uchOutAlt, m_uchInAlt;
 	boolean m_bMac, m_bTest, m_bFake, m_bRytmMIDI;
-	boolean m_bMirror;				// usb=mirror
-	enum { OsUpdateOff, OsUpdateEmu, OsUpdateRytm };
-	unsigned m_nOsUpdate;				// usbmidi=os: see OsUpdate ()
-	boolean m_bLinkTcp;				// the TCP link is the host (SetLinkTcp)
+	OsGate m_Gate;					// usbmidi=os: the setting and the host (usbmidi_os_path.h)
+	boolean m_bMirror;				// usb=mirror: the USB-C mode is OVERBRIDGE (SetMirror)
+	boolean m_bMirUsed;				// it has been on this boot: MirrorPoll runs (a switch back, the box's pipes)
 	boolean m_bUsbReboot;				// usbreboot=1: the computer's reboot SysEx is obeyed
 	RebootSysEx m_Reboot;				// the computer's packets (gadget IRQ) -> TakeReboot (core 0)
-	void UpdateOsPass (void);			// the Rytm-bound filter's OS-update pass from the two above
-	static unsigned ModeFrom (unsigned nMode);	// usbmidi_os::Mode -> OsUpdateOff|Emu|Rytm
+	void UpdateOsPass (boolean bCut, const char *pWhy);	// the filter's pass from m_Gate; bCut: drop what is on its
+								// way to the Rytm first (usbmidi_os_path.h Cut)
+	void OsLost (boolean bSendFailed, const char *pWhy);	// usbmidi=os: an upgrade lost data on the way: abort it
 
-	// IN (to the computer): the Rytm's 12 channels
+	// IN (to the computer): the Rytm's 12 channels, and the voices (20-in build)
 	s32 m_InRing[Ring][12];
 	unsigned m_nInHead, m_nInTail;
+	s16 m_VoiceRing[Ring][8];
+	unsigned m_nVoiceHead, m_nVoiceTail;
 	u64 m_nSrcFrames;				// the source's frames (the Rytm's, or the stand-in's)
 	u64 m_nSrcTick;					// the generic timer at the last ones
 	boolean m_bSrcRytm;				// the last source was the Rytm (else the stand-in)
 	u64 m_nInPos;					// test source / no source: device frames consumed by IN
-	unsigned m_nPhase[ChIn];				// test tones' positions
-	s32 *m_pTone[ChIn];
+	unsigned m_nPhase[20];				// test tones' positions
+	s32 *m_pTone[20];
 	boolean m_bInPrimed;
 	boolean m_bInRunning;				// the computer has read an IN packet of this stream
 
@@ -351,11 +397,12 @@ private:
 	ToHostQueue<MIDIQueue> m_ToHost;		// producers: IRQs and the loop (IRQs masked); consumer: the IRQ. Up only while the
 							// computer has the MIDI IN endpoint configured (tohost_q.h): none there, nothing queued
 	boolean m_bToRytmSysEx;
+	ToRytmPath<MIDIQueue> m_ToRytmPath {m_ToRytmFilter, m_ToRytm, m_bToRytmSysEx};	// the three above (usbmidi_os_path.h)
 
 	struct TStats
 	{
 		unsigned nOutPkts, nOutFrames, nOutHist[3], nOutBad, nOutOver, nOutUnder;
-		unsigned nInPkts, nInFrames, nInHist[3], nInUnder, nInOver;
+		unsigned nInPkts, nInFrames, nInHist[3], nInUnder, nInOver, nVoiceUnder;
 		unsigned nRingMin, nRingMax, nInMin, nInMax;
 		unsigned nFbSent, nFb, nMacPeak;		// nMacPeak: the computer's largest |sample| mixed (24-bit)
 		unsigned nReq, nBadReq;
@@ -367,10 +414,15 @@ private:
 #if RASPPI >= 5
 	s32 m_nOutLast[ChOut];
 #endif
+	unsigned m_nQuietSecs;				// LogStats: seconds since the last line while no computer is there
 	unsigned m_nLastIRQs;
 	u64 m_nLastTicks, m_nLastStamp;
 	u8 m_StringBuffer[80];
 };
+
+// The computer's MIDI for the Rytm passes this tap first (gadget IRQ, one event packet): TRUE when it took the packet
+// (kernel.cpp: the notes for the Pi's own keyboard path, core/keys.h), else it goes to the Rytm as before. 0: none.
+extern boolean (*g_pSidecarKeysTap) (const u8 *pPacket);
 
 #endif	// SIDECAR_NO_GADGET
 

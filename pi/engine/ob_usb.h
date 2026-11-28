@@ -1,7 +1,7 @@
 //
 // ob_usb.h - Circle USB function driver for an Elektron box in OVERBRIDGE mode: the Analog Rytm MKII (VID 0x1935, PID 0x0b48)
 // and any box whose device profile has an audio row (core/device, docs/device-profiles.md "Audio"): alt 3, interrupt
-// IN 0x83 / OUT 0x03, each direction's block size from the profile (the Rytm 368 / 368, the Digitakt 368 / 88), the descriptor
+// IN 0x83 / OUT 0x03, each direction's block size from the profile (the Rytm 368 / 368, the Digitakt 368 / 88, an A4 256 / 200), the descriptor
 // checked against it. The log's prefix stays rytmob for every box.
 //
 // Run-time options (cmdline.txt on the SD card, one line, space separated; all optional):
@@ -17,13 +17,15 @@
 #ifndef _ob_usb_h
 #define _ob_usb_h
 
+#include "ep_halt.h"
+#include <circle/usb/xhciendpoint.h>
 #include <circle/usb/usbfunction.h>
 #include <circle/usb/usbendpoint.h>
 #include <circle/usb/usbrequest.h>
 #include <circle/usb/usb.h>
 #include <circle/logger.h>
 #include <circle/types.h>
-#include "device/audio.h"
+#include "fx/out.h"
 
 class CObUsb : public CUSBFunction
 {
@@ -42,16 +44,40 @@ public:
 	static void SetActive (boolean bActive);	// FALSE: silence out, MIDI in dropped (the TCP link is the host)
 	static boolean Active (void)		{ return s_bActive; }
 
+	static void WidenIn (const u8 *pIn, u8 *pWide, unsigned nCh);	// an 8-channel IN block as the 12-channel layout
+	// main loop, after UpdatePlugAndPlay: a box Configure refused below high speed is enumerated again on its root
+	// port when ob_speed.h says so (2, 5, 10 s later; then it stays off and the log says to replug it)
+	static void PollReEnum (void);
+	// main loop, task level (core 0): an IN or OUT transfer error halts that xHCI endpoint (code 4, a USB transaction
+	// error: the box did not answer three tries; 6, a STALL), or it goes quiet (URBs pending, none completed for 50 ms),
+	// and the URBs behind it never complete; reset it, drop the URBs the reset skipped and the stream goes on, with a
+	// back-off while it keeps failing (ep_halt.h). Also the A4 follower's. At most one endpoint reset a pass.
+	static void PollHalt (void);
+	static boolean ResetDone (void)		{ return s_bResetDone; }	// this pass's reset was sent (the MIDI path waits)
+	// since boot (every stream, the Rytm's and a box's): endpoint resets after a halt, IN and OUT, and refused resets
+	static unsigned HaltResets (boolean bIn)	{ return s_nHaltResets[bIn ? 0 : 1]; }
+	static unsigned HaltRefused (void)		{ return s_nHaltRefused; }
+	static unsigned HaltHeld (void)			{ return s_nHaltHeld; }	// resets held: endpoints failed together (EpBox)
+	// the transport's USB MIDI OUT, the Rytm's third endpoint in its EpBox: seen halted after a failed send (or not)
+	static void MidiHalted (boolean bHalted, unsigned nNowUs);
+	static boolean BoxWaits (unsigned nNowUs);	// TRUE: the Rytm's resets wait (EpBox::Wait), the MIDI OUT's too
+
 	static void Stop (void);			// task level: the stream stopped cleanly (alt 0)
 	static void EmergencyStop (void);		// exception context: no more resubmits
 
-	// The URBs of a box that left (2026-11-09): ~CObUsb frees every one, those still in flight too. Circle deletes a
+	// The URBs of a box that left: ~CObUsb (and ~CObFollow) free every one, those still in flight too. Circle deletes a
 	// configured function from ~CUSBDevice, which runs after ~CXHCIUSBDevice has disabled and freed the xHC slot, so the
 	// controller completes none of them any more. They used to be left allocated; with Circle's 256 CUSBRequest
 	// instances (a LogPanic past that) ~17 a Rytm restart rebooted the Pi after about 15 restarts on one boot.
 	static unsigned Detaches (void)		{ return s_nDetaches; }
 	static unsigned FreedInFlight (void)	{ return s_nFreedInFlight; }	// URBs in flight freed at detaches, all told
 	static unsigned KeptInFlight (void)	{ return s_nKeptInFlight; }	// left allocated: a Configure that failed
+	static void CountDetach (boolean bGone, unsigned nFreed, unsigned nKept)
+	{
+		if (bGone) s_nDetaches++;
+		s_nFreedInFlight += nFreed;
+		s_nKeptInFlight += nKept;
+	}
 	// Circle's CUSBRequest instances on the heap, every driver's (circle-usb-urb-free.patch): now, the most since boot,
 	// and the allocator's limit (XHCI_CONFIG_MAX_REQUESTS on the Pi 4 and 5; past it a LogPanic)
 	static unsigned UsbRequests (void)	{ return CUSBRequest::GetHeapInstances (); }
@@ -73,7 +99,8 @@ public:
 	static const s32 CaptureMarkerMIDI = 0x10000000, CaptureMarkerTrig = 0x20000000;
 	static void CaptureMarkMIDI (void);
 	static boolean CaptureAlloc (void);
-	static boolean CaptureStart (void);	// FALSE: no buffer, no stream, or busy
+	static boolean CaptureStart (boolean bSelfTest = FALSE);	// FALSE: no buffer, no stream, or busy
+	static void CaptureFeed (const s32 *pOutL, unsigned nFrames);	// the self-test's OUT MAIN L (no stream)
 	static void CaptureStop (void);			// abandon a capture (stream gone)
 	static boolean CaptureActive (void)	{ return s_bCapOn; }
 	static boolean CaptureFull (void)	{ return s_bCapFull; }
@@ -89,10 +116,15 @@ public:
 	static boolean MirrorControl (const TSetupData *pSetup, const u8 *pOutData, unsigned nSeq);	// core 0's loop
 	static boolean MirrorPipeOut (u8 uchAddr, const u8 *pData, unsigned nLength);	// gadget IRQ: one packet to the box
 	static void MirrorAttachLate (void);
+	static unsigned MirrorParked (void);		// pipe IN packets drained while the Sidecar device was shown (the mirror line)
+	static void MirrorWanted (void);		// core 0's loop: the USB-C mode turned to OVERBRIDGE: a box up and not yet read is read (MirrorAttachLate)
 	static u16 OutCounter (void)		{ return s_pThis != 0 ? s_pThis->m_nOutCounter : 0; }	// the next block's		// core 0's loop: the box was configured before the gadget existed
 	static void MirrorPipeInNext (u8 uchAddr);	// gadget IRQ: the computer has the last packet; the box's next one
 	static void MirrorPipePoll (void);		// core 0's loop: a halted pipe is cleared on the box and the host, then resubmitted
 	static unsigned MirrorPipeResets (void);	// those clears so far (the mirror line)
+	// a forwarded request of the computer's is on the box's EP0 (async, its answer not back): no synchronous EP0 transfer to
+	// the box meanwhile (Circle's 3 s timeout would drop the forwarded URB's slot and leave the caller's on the ring)
+	static boolean MirrorCtlBusy (void);
 
 	// every xHCI transfer event, from the patched CXHCIEndpoint::TransferEvent (IRQ)
 	static void XHCIEvent (unsigned nEndpointID, unsigned nCode, unsigned nResidue, unsigned nPending);
@@ -123,6 +155,8 @@ private:
 	void PumpOut (void);
 	void FillOut (u8 *pBuf, unsigned nBlocks);
 	void Log (CLogger *pLogger);
+	boolean Recover (boolean bIn, unsigned nNowUs);	// PollHalt, one endpoint: TRUE a reset was sent
+	boolean BoxWait (unsigned nNowUs);		// EpBox::Wait over IN, OUT and the MIDI OUT: TRUE no reset now
 	static void InStub (CUSBRequest *pURB, void *pParam, void *pContext);
 	static void OutStub (CUSBRequest *pURB, void *pParam, void *pContext);
 
@@ -145,6 +179,7 @@ private:
 		volatile unsigned nPackets, nErrors;
 		unsigned nTries;			// clears in a row that did not bring it back (slows the retries down)
 		unsigned nLastTry;			// CTimer ticks
+		boolean bRefused;			// the host refused the last reset: the next one that takes is logged
 	} m_Pipe[MaxPipes];
 	unsigned m_nPipes;
 	boolean m_bMirror;
@@ -164,6 +199,7 @@ private:
 private:
 	const core::out::Device *m_pAudio;		// the box's row: channels, what it is called
 	const unsigned m_nOutCh, m_nOutBlk;		// host -> device: channels a frame, bytes a block
+	const unsigned m_nInCh, m_nInBlk;		// device -> host
 
 	// options
 	unsigned m_nURBs, m_nBlocks, m_nOutDelay;
@@ -193,6 +229,12 @@ private:
 	volatile unsigned m_nInBlocks, m_nInShort, m_nInBadMagic, m_nInGaps, m_nInLost, m_nInMaxGap,
 			  m_nInOddGap, m_nInErrors, m_nInSubmitFail;
 	volatile unsigned m_nOutBlocks, m_nOutErrors, m_nOutSubmitFail, m_nCreditDrops;
+	EpHalt<CXHCIEndpoint> m_InHalt, m_OutHalt;	// a URB failed: none submitted on it until PollHalt reset it
+	EpBox m_Box;					// IN, OUT and the MIDI OUT failed together: a likely unplug
+	boolean m_bMidiErred;				// the MIDI OUT seen halted, not reset yet (MidiHalted)
+	unsigned m_nMidiFailUs;
+	static unsigned s_nHaltResets[2], s_nHaltRefused, s_nHaltHeld;
+	static boolean s_bResetDone;
 	volatile int m_nInPeak;				// largest |sample| seen on MAIN L (channel 0), per second
 	volatile unsigned m_nInMaxDt;			// longest time between IN completions (us), per second
 
@@ -237,13 +279,20 @@ public:
 	unsigned MIDIOutMessages (void) const		{ return m_Merge.msgs (); }
 	unsigned MIDIOutFailed (void) const		{ return m_Merge.failures (); }
 	unsigned MacMIDIFailed (void) const		{ return m_Merge.mac_failed (); }	// the computer's, for the Rytm
+	// a failed send on a halted bulk OUT (a transfer error: every later send fails too) reset it (circle-midi-reset.patch)
+	// and the sending went on at once instead of after the back-off; since boot
+	unsigned MIDIOutResets (void) const		{ return m_nMidiResets; }
+	unsigned MIDIOutRefused (void) const		{ return m_nMidiRefused; }	// resets the controller refused
 
 private:
 	// the order, the pacing and the failure rule: usbmidi_merge.h (portable, Mac-tested); Poll is its Circle side
 	UsbMidiMerge m_Merge;
 	DropResync m_Resync;
+	unsigned m_nMacFailedSeen = 0;			// m_Merge.mac_failed () told to the Sidecar gadget (usbmidi=os:)
 	CUSBMIDIDevice *m_pMIDI = 0;
 	boolean m_bSend = TRUE;
+	unsigned m_nFailSeen = 0;			// the merge's failed sends (engine, keys / computer, bridge) seen
+	unsigned m_nMidiResets = 0, m_nMidiRefused = 0, m_nMidiInRow = 0, m_nMsgsSeen = 0;
 };
 
 #endif

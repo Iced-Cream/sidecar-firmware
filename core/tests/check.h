@@ -10,6 +10,7 @@
 #if CORE_UI_TOOLS && __has_include("ui/ui.h")
 #include <cstring>
 #include <unistd.h>
+#include "ui/page.h"
 #include "ui/ui.h"
 inline bool text_fit_off = false;
 inline int text_fit_fails = 0;
@@ -26,4 +27,6 @@ inline void text_fit_atexit() {
   if (text_fit_fails) { fprintf(stderr, "TEXT-FIT: %d strings do not fit the Rytm's screen\n", text_fit_fails); fflush(stderr); _exit(1); }
 }
 inline const bool text_fit_installed = [] { core::ui::Canvas::fit_report = text_fit_report; atexit(text_fit_atexit); return true; }();
+// A test turns knobs faster than a hand: the list knobs' clock off, but in the test of that clock (test_listknobs)
+inline const bool list_pacing_off = [] { core::ui::list_pacing(false); return true; }();
 #endif
