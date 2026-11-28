@@ -175,6 +175,38 @@ bool rd_boxlast(const Bytes& in, const Sniffed& s, char* why, int cap) {
   return true;
 }
 
+// ---- a box project's bundle (core/bundle/manifest.h, port step S8n): the format is its manifest.json, the zip's first
+// entry (core/bundle/pack.h sniff_zip finds it in a bundle's first bytes). v2: the generic line's box project (box
+// type and UID, STORE records, pool samples, needed blobs by hash); v1 was the old line's Rytm project bundle (slots,
+// prints, sqp patterns), a different content with no upgrade: refused as an older version.
+bool sn_bundle(const Bytes& in, Sniffed* o) { return json_header(in, "bundle", o); }
+// the shape only (one JSON object, brackets balanced outside strings, nothing after it, min_reader <= version): the
+// fields are core/bundle's read_manifest, which takes this verdict first
+bool rd_bundle(const Bytes& in, const Sniffed& s, char* why, int cap) {
+  if (s.min_reader > s.version) return say(why, cap, "min_reader past its version");
+  int depth = 0;
+  bool str = false, esc = false, done = false;
+  for (uint32_t i = 0; i < in.n; ++i) {
+    const uint8_t c = in.p[i];
+    if (done) {
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return say(why, cap, "text after the manifest");
+    } else if (str) {
+      if (c < 0x20) return say(why, cap, "a control character in a string");
+      if (esc) esc = false;
+      else if (c == '\\') esc = true;
+      else if (c == '"') str = false;
+    } else if (c == '"') {
+      str = true;
+    } else if (c == '{' || c == '[') {
+      if (++depth > 12) return say(why, cap, "nested too deep");
+    } else if (c == '}' || c == ']') {
+      if (--depth < 0) return say(why, cap, "unbalanced");
+      done = depth == 0;
+    }
+  }
+  return done ? true : say(why, cap, "cut short");
+}
+
 const Format kFormats[] = {
     // name, class, shape, current, oldest, native, sniff, read, chain, nchain, min_reader_of, where, max bytes
     {"store", kProject, kBinary, 1, 1, 1, sn_store, rd_store, nullptr, 0, nullptr,
@@ -183,6 +215,8 @@ const Format kFormats[] = {
      "<type folder> (/.rytm, /.a4, /.dt): its listing; v2 a box's state in <type folder>/<uid>/", 64 * 1024},
     {"boxname", kSetting, kText, 1, 1, 1, sn_boxname, rd_boxname, nullptr, 0, nullptr, "<type folder>/<uid>/name.txt", 64},
     {"boxlast", kSetting, kText, 1, 1, 1, sn_boxlast, rd_boxlast, nullptr, 0, nullptr, "<type folder>/last", 32},
+    {"bundle", kExchange, kJson, 2, 2, 2, sn_bundle, rd_bundle, nullptr, 0, nullptr,
+     "/Bundles/*.sidecar.zip: manifest.json, the first entry", 1u << 20},
 };
 }  // namespace
 

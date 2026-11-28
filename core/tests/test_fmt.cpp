@@ -109,7 +109,7 @@ int main() {
   {
     struct Want { const char* name; int cls; int current; int oldest; };
     const Want inv[] = {{"store", fmt::kProject, 1, 1}, {"boxlayout", fmt::kProject, 2, 1}, {"boxname", fmt::kSetting, 1, 1},
-                        {"boxlast", fmt::kSetting, 1, 1}};
+                        {"boxlast", fmt::kSetting, 1, 1}, {"bundle", fmt::kExchange, 2, 2}};
     CHECK(fmt::count() == (int)(sizeof inv / sizeof inv[0]));
     for (const Want& w : inv) {
       const fmt::Format* f = fmt::find(w.name);

@@ -6,8 +6,9 @@
 // current version only; a file newer than this build reads is refused clearly (kNewer: locked) unless its min_reader says
 // this build may read it (kForeignNewer: read, never written back); a damaged file is locked the same way (kUnreadable);
 // upgrades are pure functions on bytes (no card I/O, no globals), vN -> vN+1, run in memory by load(). Entries: STORE
-// records, the per-box folder layout with the old-layout move, a box folder's name.txt and a type folder's last. The
-// code cache, the sample pool and the mods' web bundles register when their steps land (S8e, S8f, S8j).
+// records, the per-box folder layout with the old-layout move, a box folder's name.txt, a type folder's last and a box
+// project bundle's manifest (S8n). The code cache, the sample pool and the mods' web bundles register when their steps
+// land (S8e, S8f, S8j).
 //
 // The plumbing: one atomic write (core 0 only), the boot sweep that finishes a write a power cut left half done, the
 // posted settings writes from the control core, and the line readers.
