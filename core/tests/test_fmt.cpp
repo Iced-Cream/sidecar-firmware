@@ -1,4 +1,6 @@
-// core/tests/test_fmt.cpp - core/fmt's card writes: the atomic write (read back, power cut after every change: the file
+// core/tests/test_fmt.cpp - core/fmt: the format registry (S8m: every entry sniffed, read, refused when newer or damaged;
+// the old-layout move as boxlayout's upgrade; an upgrade chain in memory; the header conventions; a quick fuzz) and the
+// card writes: the atomic write (read back, power cut after every change: the file
 // old or new, never half; in pieces; through the card queue), the LineReader and the post queue.
 #include <dirent.h>
 #include <sys/stat.h>
@@ -12,6 +14,7 @@
 
 #include "check.h"
 #include "fmt/fmt.h"
+#include "kv/kv.h"
 #include "msamp/cardq.h"
 #include "platform.h"
 
@@ -57,11 +60,234 @@ static std::vector<std::string> list(const std::string& dir) {
   return v;
 }
 
+static fmt::Status ld(const char* name, const std::string& s, fmt::Info* i, std::string* out = nullptr) {
+  const fmt::Format* f = fmt::find(name);
+  CHECK(f);
+  static uint8_t buf[2 << 20];
+  fmt::Buf b = {buf, 0, sizeof buf};
+  fmt::Bytes in = {(const uint8_t*)s.data(), (uint32_t)s.size()};
+  fmt::Status st = fmt::load(*f, in, &b, i);
+  if (out) out->assign((const char*)buf, b.n);
+  return st;
+}
+
+// ---- an upgrade chain (a test format: v1 "a=1" lines -> v2 with a header -> v3 upper-cased keys), pure
+static bool up12(const fmt::Bytes& in, fmt::Buf* out, fmt::Ctx*) {
+  int n = fmt::put_text_header((char*)out->p, (int)out->cap, "demo", 2, 2);
+  if (n + in.n > out->cap) return false;
+  memcpy(out->p + n, in.p, in.n);
+  out->n = n + in.n;
+  return true;
+}
+static bool up23(const fmt::Bytes& in, fmt::Buf* out, fmt::Ctx*) {
+  fmt::Sniffed s;
+  if (!fmt::text_header(in, "demo", &s) || s.version != 2) return false;
+  int n = fmt::put_text_header((char*)out->p, (int)out->cap, "demo", 3, 2);
+  for (uint32_t i = s.body; i < in.n; ++i) out->p[n++] = (uint8_t)(in.p[i] >= 'a' && in.p[i] <= 'z' ? in.p[i] - 32 : in.p[i]);
+  out->n = (uint32_t)n;
+  return true;
+}
+static bool demo_sniff(const fmt::Bytes& in, fmt::Sniffed* o) {
+  if (fmt::text_header(in, "demo", o)) return true;
+  o->version = o->min_reader = 1, o->body = 0;
+  return true;
+}
+static bool demo_read(const fmt::Bytes& in, const fmt::Sniffed& s, char* why, int cap) {
+  return s.version == 3 || (snprintf(why, cap, "not v3"), false);
+}
+static const fmt::Upgrade kDemoChain[] = {{1, up12}, {2, up23}};
+
 int main() {
   char tmpl[] = "/tmp/fmt-test-XXXXXX";
   CHECK(mkdtemp(tmpl));
   g_card = tmpl;
   host_set_card(g_card.c_str());
+
+  // ---- the registry (S8m, 2026-11-28): the generic line's entries, at today's versions
+  fmt::Info info;
+  std::string out;
+  {
+    struct Want { const char* name; int cls; int current; int oldest; };
+    const Want inv[] = {{"store", fmt::kProject, 1, 1}, {"boxlayout", fmt::kProject, 2, 1}, {"boxname", fmt::kSetting, 1, 1},
+                        {"boxlast", fmt::kSetting, 1, 1}};
+    CHECK(fmt::count() == (int)(sizeof inv / sizeof inv[0]));
+    for (const Want& w : inv) {
+      const fmt::Format* f = fmt::find(w.name);
+      CHECK(f && f->cls == w.cls && f->current == w.current && f->oldest == w.oldest && f->sniff && f->read && f->where[0]);
+      CHECK(f->nchain == f->native - f->oldest);   // a chain step for every version below the native one
+    }
+    CHECK(!fmt::find("pool") && !fmt::find(nullptr) && !fmt::at(-1) && !fmt::at(fmt::count()));
+  }
+  uint64_t ch0 = host_changes();
+
+  // STORE records: a mod's bytes as they are (v1, no header); one past kv::kMaxRecord refused
+  {
+    std::string rec("\x00\x01\xff#sidecar store 9\n", 20);
+    CHECK(ld("store", rec, &info, &out) == fmt::kOk && info.version == 1 && out == rec);
+    CHECK(ld("store", "", &info, &out) == fmt::kOk && out.empty());
+    CHECK(ld("store", std::string(kv::kMaxRecord, 'x'), &info) == fmt::kOk);
+    CHECK(ld("store", std::string(kv::kMaxRecord + 1, 'x'), &info) == fmt::kUnreadable && info.locked);
+  }
+
+  // the per-box folder layout: v2 (no old entries) as it is; an empty or absent type folder is v2 too
+  {
+    CHECK(ld("boxlayout", "", &info, &out) == fmt::kOk && info.version == 2 && out.empty());
+    const char* v2 = "3fa2c001/\nlast\n3fa2c001/store/\n3fa2c001/name.txt\n";
+    CHECK(ld("boxlayout", v2, &info, &out) == fmt::kOk && info.version == 2 && out == v2);
+    // what is old: not a UID folder (8 hex, a folder), not last; a file named like a UID, a 7-hex folder are old
+    CHECK(!fmt::old_layout_entry("3FA2C001", 8, true) && !fmt::old_layout_entry("last", 4, false));
+    CHECK(fmt::old_layout_entry("3fa2c001", 8, false) && fmt::old_layout_entry("3fa2c00", 7, true));
+    CHECK(fmt::old_layout_entry("store", 5, true) && fmt::old_layout_entry("keys.txt", 8, false));
+    CHECK(!fmt::old_layout_entry(".", 1, true) && !fmt::old_layout_entry("..", 2, true));
+    // not a listing: a NUL, a control character, a '/' that is not "<uid>/", an empty name
+    CHECK(ld("boxlayout", std::string("a\0b\n", 4), &info) == fmt::kUnreadable);
+    CHECK(ld("boxlayout", "a\tb\n", &info) == fmt::kUnreadable);
+    CHECK(ld("boxlayout", "store/x/\n", &info) == fmt::kUnreadable);
+    CHECK(ld("boxlayout", "3fa2c001//\n", &info) == fmt::kUnreadable);
+    CHECK(ld("boxlayout", "/\n", &info) == fmt::kUnreadable);
+    CHECK(ld("boxlayout", "3fa2c001/a/b\n", &info) == fmt::kUnreadable);
+  }
+  // the old-layout move (v1 -> v2): a card from before the UID folders - STORE's folder, a box's files - upgraded in
+  // memory for UID 3fa2c001: every old entry under <uid>/, last and another box's UID folder stay; CRLF read
+  {
+    const char* v1 = "store/\r\nkeys.txt\nlast\n0000beef/\n3FA2C001\n";
+    fmt::Ctx c = {"3FA2C001", nullptr};
+    static uint8_t lb[4096];
+    fmt::Buf b = {lb, 0, sizeof lb};
+    fmt::Bytes in = {(const uint8_t*)v1, (uint32_t)strlen(v1)};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &b, &info, &c) == fmt::kUpgraded && info.version == 1 && !info.locked);
+    out.assign((const char*)lb, b.n);
+    CHECK(out == "last\n0000beef/\n3fa2c001/\n3fa2c001/store/\n3fa2c001/keys.txt\n3fa2c001/3FA2C001\n");
+    // the result is v2 and loads as it is (idempotent); the UID folder already there is listed once
+    CHECK(ld("boxlayout", out, &info) == fmt::kOk && info.version == 2);
+    const char* v1b = "3fa2c001/\nstore/\n";
+    in = {(const uint8_t*)v1b, (uint32_t)strlen(v1b)};
+    b = {lb, 0, sizeof lb};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &b, &info, &c) == fmt::kUpgraded);
+    CHECK(std::string((const char*)lb, b.n) == "3fa2c001/\n3fa2c001/store/\n");
+    // no UID (or a bad one): the step refuses, nothing upgraded (the layout stays locked until the box's UID is known)
+    b = {lb, 0, sizeof lb};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &b, &info) == fmt::kUnreadable && info.locked);
+    fmt::Ctx bad = {"3fa2c0g1", nullptr};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &b, &info, &bad) == fmt::kUnreadable);
+    fmt::Ctx longer = {"3fa2c0011", nullptr};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &b, &info, &longer) == fmt::kUnreadable);
+    // no buffer: an upgrade needs one
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, nullptr, &info, &c) == fmt::kUnreadable);
+    // no room: refused, never cut
+    fmt::Buf tiny = {lb, 0, 12};
+    CHECK(fmt::load(*fmt::find("boxlayout"), in, &tiny, &info, &c) == fmt::kUnreadable);
+    // a newer layout: refused, locked
+    CHECK(ld("boxlayout", "#sidecar boxlayout 3\n", &info) == fmt::kUnreadable);   // (a listing has no header: not one)
+  }
+  // a box folder's name.txt and a type folder's last
+  {
+    CHECK(ld("boxname", "Rytm 3fa2", &info) == fmt::kOk && info.version == 1);
+    CHECK(ld("boxname", "Studio Rytm #2\r\n", &info) == fmt::kOk);
+    CHECK(ld("boxname", "", &info) == fmt::kUnreadable && info.locked);
+    CHECK(ld("boxname", "a\nb\n", &info) == fmt::kUnreadable);
+    CHECK(ld("boxname", std::string(24, 'x'), &info) == fmt::kUnreadable);
+    CHECK(ld("boxname", "a\tb", &info) == fmt::kUnreadable);
+    CHECK(ld("boxname", "#sidecar boxname 2\nRytm\n", &info) == fmt::kNewer && info.locked && !info.read_only);
+    CHECK(ld("boxname", "#sidecar boxname 2 min=1\nRytm\n", &info) == fmt::kForeignNewer && info.read_only);
+    CHECK(ld("boxname", "#sidecar boxlast 1\nRytm\n", &info) == fmt::kUnreadable);   // another format's header
+    CHECK(ld("boxlast", "3fa2c001", &info) == fmt::kOk && ld("boxlast", "3FA2C001\n", &info) == fmt::kOk);
+    CHECK(ld("boxlast", "3fa2c00", &info) == fmt::kUnreadable && ld("boxlast", "3fa2c001\n0000beef\n", &info) == fmt::kUnreadable);
+    char line[200];
+    CHECK(ld("boxlast", "#sidecar boxlast 4\n3fa2c001\n", &info) == fmt::kNewer);
+    CHECK(fmt::refusal(*fmt::find("boxlast"), info, "/.rytm/last", line, sizeof line) > 0 && strstr(line, "boxlast v4"));
+    CHECK(ld("boxlast", "zz", &info) == fmt::kUnreadable);
+    CHECK(fmt::refusal(*fmt::find("boxlast"), info, "/.rytm/last", line, sizeof line) > 0 && strstr(line, "not a boxlast file"));
+    CHECK(ld("boxlast", "3fa2c001", &info) == fmt::kOk && fmt::refusal(*fmt::find("boxlast"), info, "x", line, sizeof line) == 0);
+  }
+  CHECK(host_changes() == ch0);   // loading and refusing never write the card
+  printf("test_fmt: registry: store, boxlayout (the old-layout move), boxname, boxlast\n");
+
+  // ---- an upgrade chain in memory: v1 -> v2 -> v3, the reader sees only v3; out has the upgraded bytes
+  {
+    fmt::Format demo = {"demo", fmt::kProject, fmt::kText, 3, 1, 3, demo_sniff, demo_read, kDemoChain, 2, nullptr, "/demo", 0};
+    static uint8_t buf[4096];
+    fmt::Buf b = {buf, 0, sizeof buf};
+    const char* v1 = "a=1\nb=2\n";
+    fmt::Bytes in = {(const uint8_t*)v1, (uint32_t)strlen(v1)};
+    CHECK(fmt::load(demo, in, &b, &info) == fmt::kUpgraded && info.version == 1 && !info.locked);
+    CHECK(std::string((char*)buf, b.n) == "#sidecar demo 3 min=2\nA=1\nB=2\n");
+    fmt::Bytes in3 = {buf, b.n};
+    static uint8_t buf2[4096];
+    fmt::Buf b2 = {buf2, 0, sizeof buf2};
+    CHECK(fmt::load(demo, in3, &b2, &info) == fmt::kOk && b2.n == in3.n);   // idempotent
+    fmt::Upgrade only12[] = {{1, up12}};
+    demo.chain = only12, demo.nchain = 1;
+    CHECK(fmt::load(demo, in, &b, &info) == fmt::kUnreadable && strstr(info.why, "no upgrade"));
+    fmt::Buf tiny = {buf, 0, 6};
+    demo.chain = kDemoChain, demo.nchain = 2;
+    CHECK(fmt::load(demo, in, &tiny, &info) == fmt::kUnreadable);   // no room: refused, never cut
+  }
+
+  // ---- header conventions
+  {
+    char h[64];
+    CHECK(fmt::put_text_header(h, sizeof h, "pool", 2, 1) > 0 && !strcmp(h, "#sidecar pool 2 min=1\n"));
+    fmt::Sniffed s;
+    fmt::Bytes b = {(const uint8_t*)h, (uint32_t)strlen(h)};
+    CHECK(fmt::text_header(b, "pool", &s) && s.version == 2 && s.min_reader == 1 && s.body == strlen(h));
+    CHECK(!fmt::text_header(b, "poo", &s) && !fmt::text_header(b, "pools", &s));
+    CHECK(fmt::put_kv_header(h, sizeof h, "keys", 7) > 0 && !strcmp(h, "format=keys/7\n"));
+    b = {(const uint8_t*)h, (uint32_t)strlen(h)};
+    CHECK(fmt::kv_header(b, "keys", &s) && s.version == 7);
+    const char* j = "{ \"format\": \"sidecar-project\", \"version\": 1, \"min_reader\": 1, \"formats\": {\"pool\": 2} }";
+    b = {(const uint8_t*)j, (uint32_t)strlen(j)};
+    CHECK(fmt::json_header(b, "project", &s) && s.version == 1 && s.min_reader == 1);
+    CHECK(!fmt::json_header(b, "song", &s));
+    uint8_t bin[32];
+    fmt::put_bin_header(bin, "SLIB", 2, 1, 16, 0xDEADBEEF);
+    uint32_t crc;
+    b = {bin, sizeof bin};
+    CHECK(fmt::bin_header(b, "SLIB", &s, &crc) && s.version == 2 && s.min_reader == 1 && s.body == 16 && crc == 0xDEADBEEF);
+    CHECK(!fmt::bin_header(b, "SQP1", &s, &crc));
+  }
+
+  // ---- a quick fuzz: every format's sniffer and reader on mutated seeds and random bytes: no crash, never a card write
+  {
+    uint64_t c0 = host_changes();
+    uint32_t seed = 12345;
+    auto rnd = [&]() { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+    const std::vector<std::string> seeds = {"store/\nkeys.txt\nlast\n3fa2c001/\n", "3fa2c001/\n3fa2c001/store/\n",
+                                            "Rytm 3fa2\n", "#sidecar boxname 2 min=1\nRytm\n", "3fa2c001\n",
+                                            std::string("\x00\x01\x02 record", 10), "#sidecar demo 3\nA=1\n"};
+    int runs = 0;
+    for (int it = 0; it < 4000; ++it) {
+      std::string s = seeds[rnd() % seeds.size()];
+      int m = (int)(rnd() % 6);
+      if (m == 0 && !s.empty()) {
+        s.resize(rnd() % s.size());   // cut short
+      } else if (m == 1) {
+        for (int k = 0; k < 4 && !s.empty(); ++k) s[rnd() % s.size()] = (char)rnd();   // bytes changed
+      } else if (m == 2) {
+        s.insert(s.empty() ? 0 : rnd() % s.size(), 1, '\0');   // a NUL
+      } else if (m == 3) {
+        for (char& ch : s)
+          if (ch == '\n' && rnd() % 2) ch = '\r';   // CR / LF mixed
+      } else if (m == 4) {
+        s = "";
+        for (int k = (int)(rnd() % 200); k > 0; --k) s += (char)rnd();   // junk
+      } else if (m == 5) {
+        s += "/" + s;   // slashes in odd places
+      }
+      for (int i = 0; i < fmt::count(); ++i) {
+        fmt::Info fi;
+        ld(fmt::at(i)->name, s, &fi);
+        static uint8_t fb[8192];
+        fmt::Buf b = {fb, 0, sizeof fb};
+        fmt::Ctx c = {"0000beef", nullptr};
+        fmt::load(*fmt::at(i), fmt::Bytes{(const uint8_t*)s.data(), (uint32_t)s.size()}, &b, &fi, &c);
+        runs += 2;
+      }
+    }
+    CHECK(host_changes() == c0);
+    printf("test_fmt: fuzz: %d loads, no crash, no card write\n", runs);
+  }
+
 
   // ---- write_atomic: read back, the three renames; a power cut after every change leaves the file old or new
   {
